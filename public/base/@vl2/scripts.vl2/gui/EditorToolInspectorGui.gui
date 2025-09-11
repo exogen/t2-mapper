@@ -1,0 +1,59 @@
+//--- OBJECT WRITE BEGIN ---
+
+new GuiControl(EditorToolInspectorGui)
+{
+   profile = "GuiButtonProfile";
+   position = "0 0";
+   extent = "200 200";
+   horizSizing = "width";
+   vertSizing = "height";
+   
+   new GuiButtonCtrl()
+   {
+      profile = "GuiButtonProfile";
+      position = "2 2";
+      extent = "40 20";
+      text = "Apply";
+      command = "inspector.apply(InspectorNameEdit.getValue());";
+   };
+   
+   new GuiTextEditCtrl(InspectorNameEdit)
+   {
+      profile = "GuiTextEditProfile";
+	   position = "44 2";
+	   extent = "160 20";
+	   text = "";
+	   horizSizing = "width";
+	   vertSizing = "bottom";
+   };
+         
+   new GuiScrollCtrl()
+   {
+      profile = "GuiScrollCtrlProfile";
+      vScrollBar = "alwaysOn";
+      hScrollBar = "dynamic";
+      vertSizing = "height";
+      horizSizing = "width";
+      position = "0 24";
+      
+      new GuiScrollContentCtrl()
+      {
+         profile = "GuiDefaultProfile";
+		   horizSizing = "width";
+		   vertSizing = "height";
+
+         new GuiInspector(Inspector)
+         {
+            profile = "GuiDefaultProfile";
+			   horizSizing = "width";
+			   vertSizing = "bottom";
+         };
+      };
+   };
+};
+
+//--- OBJECT WRITE END ---
+
+function Inspector::init()
+{
+}

@@ -1,0 +1,195 @@
+//--- OBJECT WRITE BEGIN ---
+new GuiControl(editortoolmissionareagui) {
+	profile = "EditorContentProfile";
+	horizSizing = "width";
+	vertSizing = "height";
+	position = "0 0";
+	extent = "640 480";
+	minExtent = "8 8";
+	visible = "1";
+	setFirstResponder = "0";
+	modal = "1";
+	helpTag = "0";
+
+	new GuiControl(AE_MainBar) {
+		profile = "GuiDefaultProfile";
+		horizSizing = "right";
+		vertSizing = "bottom";
+		position = "0 0";
+		extent = "640 20";
+		minExtent = "8 8";
+		visible = "1";
+		setFirstResponder = "0";
+		modal = "1";
+		helpTag = "0";
+
+		new GuiCheckBoxCtrl() {
+			profile = "GuiRadioProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "2 2";
+			extent = "60 18";
+			minExtent = "8 8";
+			visible = "1";
+			setFirstResponder = "0";
+			modal = "1";
+			variable = "AreaEditor.enableEditing";
+			command = "AreaEditor.enableEditing = $ThisControl.getValue();";
+			helpTag = "0";
+			text = "Edit Area";
+		};
+		new GuiButtonCtrl() {
+			profile = "GuiButtonProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "63 2";
+			extent = "60 18";
+			minExtent = "8 8";
+			visible = "1";
+			setFirstResponder = "0";
+			modal = "1";
+			command = "AreaEditor.centerWorld();";
+			helpTag = "0";
+			text = "Center";
+		};
+		new GuiButtonCtrl() {
+			profile = "GuiButtonProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "125 2";
+			extent = "60 18";
+			minExtent = "8 8";
+			visible = "1";
+			setFirstResponder = "0";
+			modal = "1";
+			command = "AreaEditor.enableMirroring = true;AE_MainBar.setVisible(0);AE_MirrorBar.setVisible(1);";
+			helpTag = "0";
+			text = "Mirror";
+		};
+	};
+	new GuiControl(AE_MirrorBar) {
+		profile = "GuiDefaultProfile";
+		horizSizing = "right";
+		vertSizing = "bottom";
+		position = "0 0";
+		extent = "640 20";
+		minExtent = "8 8";
+		visible = "0";
+		setFirstResponder = "0";
+		modal = "1";
+		helpTag = "0";
+
+		new GuiButtonCtrl() {
+			profile = "GuiButtonProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "4 1";
+			extent = "30 18";
+			minExtent = "8 8";
+			visible = "1";
+			setFirstResponder = "0";
+			modal = "1";
+			command = "if(AreaEditor.mirrorIndex == 0) AreaEditor.mirrorIndex = 7; else AreaEditor.mirrorIndex--;";
+			helpTag = "0";
+			text = "<--";
+		};
+		new GuiButtonCtrl() {
+			profile = "GuiButtonProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "37 1";
+			extent = "30 18";
+			minExtent = "8 8";
+			visible = "1";
+			setFirstResponder = "0";
+			modal = "1";
+			command = "if(AreaEditor.mirrorIndex == 7) AreaEditor.mirrorIndex = 0; else AreaEditor.mirrorIndex++;";
+			helpTag = "0";
+			text = "-->";
+		};
+		new GuiButtonCtrl() {
+			profile = "GuiButtonProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "78 1";
+			extent = "60 18";
+			minExtent = "8 8";
+			visible = "1";
+			setFirstResponder = "0";
+			modal = "1";
+			command = "AreaEditor.enableMirroring = false;tEditor.mirrorTerrain(AreaEditor.mirrorIndex);AreaEditor.updateTerrain();AE_MirrorBar.setVisible(0);AE_MainBar.setVisible(1);";
+			helpTag = "0";
+			text = "Apply";
+		};
+		new GuiButtonCtrl() {
+			profile = "GuiButtonProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "141 1";
+			extent = "60 18";
+			minExtent = "8 8";
+			visible = "1";
+			setFirstResponder = "0";
+			modal = "1";
+			command = "AreaEditor.enableMirroring = false;AE_MirrorBar.setVisible(0);AE_MainBar.setVisible(1);";
+			helpTag = "0";
+			text = "Cancel";
+		};
+	};
+	new MissionAreaEditor(AreaEditor) {
+		profile = "GuiDefaultProfile";
+		horizSizing = "right";
+		vertSizing = "bottom";
+		position = "0 20";
+		extent = "640 440";
+		minExtent = "8 8";
+		visible = "1";
+		setFirstResponder = "0";
+		modal = "1";
+		helpTag = "0";
+		wrap = "0";
+		squareBitmap = "1";
+		enableEditing = "0";
+		renderCamera = "1";
+		handleFrameColor = "255 255 255 255";
+		handleFillColor = "0 0 0 255";
+		defaultObjectColor = "0 255 0 100";
+		waterObjectColor = "0 0 255 100";
+		missionBoundsColor = "255 0 0 255";
+		cameraColor = "255 0 0 255";
+		enableMirroring = "0";
+		mirrorIndex = "0";
+		mirrorLineColor = "255 0 255 255";
+      mirrorArrowColor = "255 0 255 128";
+	};
+	new GuiTextCtrl(AreaEditingText) {
+		profile = "GuiTextProfile";
+		horizSizing = "right";
+		vertSizing = "top";
+		position = "5 460";
+		extent = "640 20";
+		minExtent = "8 8";
+		visible = "1";
+		setFirstResponder = "0";
+		modal = "1";
+		helpTag = "0";
+	};
+};
+//--- OBJECT WRITE END ---
+
+//------------------------------------------------------------------------------
+// Functions
+//------------------------------------------------------------------------------
+
+function AreaEditor::init(%this)
+{
+}
+
+function AreaEditor::onUpdate(%this, %area)
+{
+   AreaEditingText.setValue( "X: " @ getWord(%area,0) @ " Y: " @ getWord(%area,1) @ " W: " @ getWord(%area,2) @ " H: " @ getWord(%area,3));
+}
+
+function AreaEditor::onWorldOffset(%this, %offset)
+{
+}

@@ -1,0 +1,369 @@
+//--- OBJECT WRITE BEGIN ---
+new GuiControl(InventoryScreen) {
+	profile = "GuiDialogProfile";
+	horizSizing = "width";
+	vertSizing = "height";
+	position = "0 0";
+	extent = "640 480";
+	minExtent = "8 8";
+	visible = "1";
+	helpTag = "0";
+
+	new ShellPaneCtrl() {
+		profile = "ShellPaneProfile";
+		horizSizing = "center";
+		vertSizing = "center";
+		position = "45 12";
+		extent = "550 443";
+		minExtent = "48 92";
+		visible = "1";
+		helpTag = "0";
+		text = "INVENTORY";
+		noTitleBar = "0";
+
+      new ShellBitmapButton() {
+         profile = "ShellButtonProfile";
+	      horizSizing = "center";
+	      vertSizing = "top";
+	      position = "205 388";
+	      extent = "140 38";
+	      minExtent = "8 8";
+	      visible = "1";
+	      setFirstResponder = "0";
+	      modal = "1";
+	      helpTag = "0";
+         command = "InventoryScreen.onDone();";
+	      text = "DONE";
+      };      
+		new ShellFieldCtrl(INV_Root) {
+			profile = "GuiChatBackProfile";
+			horizSizing = "width";
+			vertSizing = "height";
+			position = "29 36";
+			extent = "492 351";
+			minExtent = "16 18";
+			visible = "1";
+			helpTag = "0";
+
+			new ShellTabFrame() {
+				profile = "ShellTabFrameProfile";
+				horizSizing = "left";
+				vertSizing = "height";
+				position = "207 9";
+				extent = "254 333";
+				minExtent = "254 26";
+				visible = "1";
+				helpTag = "0";
+				isVertical = "1";
+				useCloseButton = "0";
+				edgeInset = "0";
+			};
+		};
+	};
+};
+//--- OBJECT WRITE END ---
+
+//--- OBJECT WRITE BEGIN ---
+new GuiControl(vehicleHud) {
+	profile = "GuiDefaultProfile";
+	horizSizing = "right";
+	vertSizing = "bottom";
+	position = "0 0";
+	extent = "640 480";
+	minExtent = "8 8";
+	visible = "1";
+	helpTag = "0";
+
+	new ShellPaneCtrl() {
+		profile = "ShellPaneProfile";
+		horizSizing = "center";
+		vertSizing = "center";
+		position = "53 67";
+		extent = "542 328";
+		minExtent = "48 92";
+		visible = "1";
+		helpTag = "0";
+		text = "VEHICLE STATION";
+		noTitleBar = "0";
+
+		new ShellFieldCtrl(VIN_Root) {
+			profile = "GuiChatBackProfile";
+			horizSizing = "width";
+			vertSizing = "height";
+			position = "29 36";
+			extent = "484 236";
+			minExtent = "16 18";
+			visible = "1";
+			helpTag = "0";
+
+			new ShellTabFrame() {
+				profile = "ShellTabFrameProfile";
+				horizSizing = "right";
+				vertSizing = "height";
+				position = "206 9";
+				extent = "254 217";
+				minExtent = "254 26";
+				visible = "1";
+				helpTag = "0";
+				isVertical = "1";
+				useCloseButton = "0";
+				edgeInset = "0";
+			};
+			new HudBitmapCtrl(VIN_Picture) {
+				profile = "GuiDefaultProfile";
+				horizSizing = "right";
+				vertSizing = "bottom";
+				position = "215 19";
+				extent = "256 158";
+				minExtent = "8 8";
+				visible = "1";
+				helpTag = "0";
+				fillColor = "0.250000 0.250000 0.250000 1.000000";
+				frameColor = "0.000000 1.000000 0.000000 1.000000";
+				opacity = "1";
+				autoCenter = "0";
+				autoResize = "1";
+				flipVertical = "0";
+				flipHorizontal = "0";
+			};
+			new ShellFieldCtrl() {
+				profile = "GuiChatBackProfile";
+				horizSizing = "right";
+				vertSizing = "top";
+				position = "220 183";
+				extent = "133 29";
+				minExtent = "16 18";
+				visible = "1";
+				helpTag = "0";
+
+				new GuiTextCtrl(VIN_RemainingText) {
+					profile = "ShellMediumTextCenterProfile";
+					horizSizing = "width";
+					vertSizing = "bottom";
+					position = "8 5";
+					extent = "117 22";
+					minExtent = "8 8";
+					visible = "1";
+					helpTag = "0";
+					text = "3 Remaining";
+				};
+			};
+			new ShellBitmapButton(VIN_BuyBtn) {
+				profile = "ShellButtonProfile";
+				horizSizing = "right";
+				vertSizing = "top";
+				position = "356 180";
+				extent = "124 38";
+				minExtent = "32 38";
+				visible = "1";
+				command = "VehicleHud.onBuy();";
+				helpTag = "0";
+				text = "BUY";
+				simpleStyle = "0";
+			};
+		};
+		new ShellBitmapButton() {
+			profile = "ShellButtonProfile";
+			horizSizing = "center";
+			vertSizing = "top";
+			position = "201 273";
+			extent = "140 38";
+			minExtent = "32 38";
+			visible = "1";
+			command = "VehicleHud.onCancel();";
+			helpTag = "0";
+			text = "CANCEL";
+			simpleStyle = "0";
+		};
+	};
+};
+//--- OBJECT WRITE END ---
+
+//--- OBJECT WRITE BEGIN ---
+new GuiControl(ScoreScreen) {
+	profile = "GuiDialogProfile";
+	horizSizing = "width";
+	vertSizing = "height";
+	position = "0 0";
+	extent = "640 480";
+	minExtent = "8 8";
+	visible = "1";
+	helpTag = "0";
+
+	new ShellPaneCtrl(ScoreParent) {
+		profile = "ShellPaneProfile";
+		horizSizing = "center";
+		vertSizing = "center";
+		position = "0 0";
+		extent = "640 480";
+		minExtent = "48 92";
+		visible = "1";
+		helpTag = "0";
+		text = "SCORE";
+		noTitleBar = "0";
+
+		new ShellFieldCtrl(ScoreHeaderField) {
+			profile = "GuiChatBackProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "23 32";
+			extent = "594 36";
+			minExtent = "16 18";
+			visible = "1";
+			helpTag = "0";
+
+			new GuiMLTextCtrl(ScoreHeaderText) {
+				profile = "ScoreHeaderTextProfile";
+				horizSizing = "right";
+				vertSizing = "bottom";
+				position = "4 4";
+				extent = "586 28";
+				minExtent = "8 8";
+				visible = "1";
+				helpTag = "0";
+				lineSpacing = "2";
+				allowColorChars = "0";
+			};
+		};
+		new ShellFieldCtrl(ScoreField) {
+			profile = "GuiChatBackProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "23 72";
+			extent = "594 386";
+			minExtent = "16 18";
+			visible = "1";
+			helpTag = "0";
+
+			new GuiMLTextCtrl(ScoreSubheaderText) {
+				profile = "ScoreSubheaderTextProfile";
+				horizSizing = "right";
+				vertSizing = "bottom";
+				position = "4 4";
+				extent = "586 22";
+				minExtent = "8 8";
+				visible = "1";
+				helpTag = "0";
+				lineSpacing = "2";
+				allowColorChars = "0";
+			};
+			new ShellScrollCtrl(ScoreScroll) {
+				profile = "NewScrollCtrlProfile";
+				horizSizing = "right";
+				vertSizing = "height";
+				position = "1 26";
+				extent = "592 358";
+				minExtent = "24 24";
+				visible = "1";
+				helpTag = "0";
+				willFirstRespond = "1";
+				hScrollBar = "alwaysOff";
+				vScrollBar = "dynamic";
+				constantThumbHeight = "0";
+				defaultLineHeight = "15";
+				childMargin = "3 3";
+				fieldBase = "gui/shll_field";
+
+				new GuiScrollContentCtrl() {
+					profile = "GuiDefaultProfile";
+					horizSizing = "right";
+					vertSizing = "bottom";
+					position = "7 7";
+					extent = "578 344";
+					minExtent = "8 8";
+					visible = "1";
+					helpTag = "0";
+
+					new GuiControl(ScoreContent) {
+						profile = "GuiScrollContentProfile";
+						horizSizing = "width";
+						vertSizing = "height";
+						position = "0 0";
+						extent = "586 8";
+						minExtent = "8 8";
+						visible = "1";
+						helpTag = "0";
+					};
+				};
+			};
+		};
+	};
+};
+//--- OBJECT WRITE END ---
+
+//--- OBJECT WRITE BEGIN ---
+new GuiControl(MessageHud)
+{
+   profile = "GuiDefaultProfile";
+   horizSizing = "width";
+   vertSizing = "height";
+   position = "0 0";
+   extent = "640 480";
+   minExtent = "8 8";
+   visible = "0";
+	bypassHideCursor = "1";
+
+   new ShellFieldCtrl(MessageHud_Frame)
+   {
+      profile = "GuiChatBackProfile";
+      horizSizing = "right";
+      vertSizing = "bottom";
+      position = "120 375";
+      extent = "356 24";
+      minExtent = "8 8";
+      visible = "1";
+
+      new GuiTextCtrl(MessageHud_Text)
+      {
+         profile = "GuiMessageEditHudTextProfile";
+         horizSizing = "right";
+         vertSizing = "bottom";
+         position = "6 5";
+         extent = "10 22";
+         minExtent = "8 8";
+         visible = "1";
+      };
+
+      new GuiTextEditCtrl(MessageHud_Edit)
+      {
+         profile = "GuiMessageEditHudProfile";
+         horizSizing = "right";
+         vertSizing = "bottom";
+         position = "0 5";
+         extent = "10 22";
+         minExtent = "8 8";
+         visible = "1";
+         altCommand = "$ThisControl.eval();";
+         escapeCommand = "MessageHud_Edit.onEscape();";
+         historySize = "5";
+         maxLength = "120";
+      };
+   };
+};
+//--- OBJECT WRITE END ---
+
+//--- OBJECT WRITE BEGIN ---
+new GuiControl(ChatMenuHudDlg)
+{
+   profile = "GuiDefaultProfile";
+   horizSizing = "width";
+   vertSizing = "height";
+   position = "0 0";
+   extent = "640 480";
+   minExtent = "8 8";
+   visible = "0";
+	bypassHideCursor = "1";
+
+   new ShellFieldCtrl(ChatMenuHud)
+   {
+	   profile = "GuiVMenuProfile";
+      horizSizing = "right";
+      vertSizing = "top";
+      position = "8 209";
+      extent = "143 0";
+      minExtent = "8 8";
+      visible = "1";
+   };
+};
+//--- OBJECT WRITE END ---
+

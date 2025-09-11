@@ -1,0 +1,178 @@
+//--- OBJECT WRITE BEGIN ---
+new GuiControl(MouseConfigDlg) {
+	profile = "DlgBackProfile";
+	horizSizing = "width";
+	vertSizing = "height";
+	position = "0 0";
+	extent = "640 480";
+	minExtent = "8 8";
+	visible = "1";
+	helpTag = "0";
+
+	new ShellPaneCtrl() {
+		profile = "ShellDlgPaneProfile";
+		horizSizing = "center";
+		vertSizing = "center";
+		position = "125 104";
+		extent = "390 271";
+		minExtent = "48 92";
+		visible = "1";
+		helpTag = "0";
+		text = "CONFIGURE MOUSE";
+		noTitleBar = "0";
+
+		new ShellBitmapButton() {
+			profile = "ShellButtonProfile";
+			horizSizing = "right";
+			vertSizing = "top";
+			position = "50 216";
+			extent = "120 38";
+			minExtent = "32 38";
+			visible = "1";
+			command = "Canvas.popDialog(MouseConfigDlg);";
+			accelerator = "escape";
+			helpTag = "0";
+			text = "CANCEL";
+			simpleStyle = "0";
+		};
+		new ShellBitmapButton() {
+			profile = "ShellButtonProfile";
+			horizSizing = "right";
+			vertSizing = "top";
+			position = "220 216";
+			extent = "120 38";
+			minExtent = "32 38";
+			visible = "1";
+			command = "MouseConfigDlg::onOK();";
+			helpTag = "0";
+			text = "OK";
+			simpleStyle = "0";
+		};
+		new GuiTextCtrl() {
+			profile = "ShellTextProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "86 36";
+			extent = "94 22";
+			minExtent = "8 8";
+			visible = "1";
+			helpTag = "0";
+			text = "X-Axis Sensitivity:";
+		};
+		new GuiTextCtrl(MouseXText) {
+			profile = "ShellAltTextProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "185 36";
+			extent = "28 20";
+			minExtent = "8 8";
+			visible = "1";
+			helpTag = "0";
+			text = "(0.5)";
+		};
+		new ShellSliderCtrl(MouseXSlider) {
+			profile = "ShellSliderProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "96 51";
+			extent = "170 24";
+			minExtent = "12 24";
+			visible = "1";
+			variable = "value";
+			altCommand = "MouseXSlider.sync();";
+			helpTag = "0";
+			range = "0.000000 1.000000";
+			ticks = "1000";
+			value = "0.480769";
+			usePlusMinus = "1";
+		};
+		new ShellToggleButton() {
+			profile = "ShellRadioProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "247 73";
+			extent = "71 30";
+			minExtent = "26 27";
+			visible = "1";
+			variable = "$pref::Input::LinkMouseSensitivity";
+			helpTag = "0";
+			text = "LINK";
+		};
+		new GuiTextCtrl() {
+			profile = "ShellTextProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "86 85";
+			extent = "93 22";
+			minExtent = "8 8";
+			visible = "1";
+			helpTag = "0";
+			text = "Y-Axis Sensitivity:";
+		};
+		new GuiTextCtrl(MouseYText) {
+			profile = "ShellAltTextProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "184 85";
+			extent = "28 20";
+			minExtent = "8 8";
+			visible = "1";
+			helpTag = "0";
+			text = "(0.5)";
+		};
+		new ShellSliderCtrl(MouseYSlider) {
+			profile = "ShellSliderProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "96 100";
+			extent = "170 24";
+			minExtent = "12 24";
+			visible = "1";
+			variable = "value";
+			altCommand = "MouseYSlider.sync();";
+			helpTag = "0";
+			range = "0.000000 1.000000";
+			ticks = "1000";
+			value = "0.480769";
+			usePlusMinus = "1";
+		};
+		new ShellToggleButton(InvertMouseTgl) {
+			profile = "ShellRadioProfile";
+			horizSizing = "center";
+			vertSizing = "bottom";
+			position = "125 138";
+			extent = "140 30";
+			minExtent = "26 27";
+			visible = "1";
+			helpTag = "0";
+			text = "INVERT Y-AXIS";
+		};
+		new GuiTextCtrl() {
+			profile = "ShellTextRightProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "47 183";
+			extent = "100 22";
+			minExtent = "8 8";
+			visible = "1";
+			helpTag = "0";
+			text = "Mouse Wheel:";
+		};
+		new ShellPopupMenu(MouseZActionMenu) {
+			profile = "ShellPopupProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "144 174";
+			extent = "180 36";
+			minExtent = "49 36";
+			visible = "1";
+			helpTag = "0";
+			maxPopupHeight = "200";
+			buttonBitmap = "gui/shll_pulldown";
+			rolloverBarBitmap = "gui/shll_pulldownbar_rol";
+			selectedBarBitmap = "gui/shll_pulldownbar_act";
+			noButtonStyle = "0";
+		};
+	};
+};
+//--- OBJECT WRITE END ---

@@ -1,0 +1,162 @@
+//--- OBJECT WRITE BEGIN ---
+new GuiControl(LoginDlg) {
+	profile = "GuiDefaultProfile";
+	horizSizing = "right";
+	vertSizing = "bottom";
+	position = "0 0";
+	extent = "640 480";
+	minExtent = "8 8";
+	visible = "1";
+	helpTag = "0";
+
+	new ShellPaneCtrl() {
+		profile = "ShellDlgPaneProfile";
+		horizSizing = "center";
+		vertSizing = "center";
+		position = "72 143";
+		extent = "495 194";
+		minExtent = "48 92";
+		visible = "1";
+		helpTag = "0";
+		text = "LOGIN";
+		maxLength = "255";
+		noTitleBar = "0";
+
+		new GuiTextCtrl() {
+			profile = "ShellTextRightProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "37 47";
+			extent = "85 22";
+			minExtent = "8 8";
+			visible = "1";
+			helpTag = "0";
+			text = "Account Name:";
+			maxLength = "255";
+		};
+		new ShellTextEditCtrl(LoginEditBox) {
+			profile = "NewTextEditProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "118 39";
+			extent = "180 38";
+			minExtent = "32 38";
+			visible = "1";
+			variable = "$LoginName";
+			altCommand = "LoginProcess();";
+			helpTag = "0";
+			maxLength = "16";
+			historySize = "0";
+			password = "0";
+			glowOffset = "9 9";
+		};
+		new GuiTextCtrl() {
+			profile = "ShellTextRightProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "37 77";
+			extent = "85 22";
+			minExtent = "8 8";
+			visible = "1";
+			helpTag = "0";
+			text = "Password:";
+			maxLength = "255";
+		};
+		new GuiLoginPasswordCtrl(LoginPasswordBox) {
+			profile = "NewTextEditProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "118 69";
+			extent = "180 38";
+			minExtent = "32 38";
+			visible = "1";
+			variable = "$LoginPassword";
+			altCommand = "LoginProcess();";
+			helpTag = "0";
+			maxLength = "16";
+			historySize = "0";
+			password = "1";
+			glowOffset = "9 9";
+		};
+		new ShellBitmapButton() {
+			profile = "ShellButtonProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "300 39";
+			extent = "147 38";
+			minExtent = "32 38";
+			visible = "1";
+			command = "LoginProcess(false);";
+			helpTag = "0";
+			text = "LOG IN";
+			simpleStyle = "0";
+		};
+		new ShellBitmapButton() {
+			profile = "ShellButtonProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "300 69";
+			extent = "147 38";
+			minExtent = "32 38";
+			visible = "1";
+			command = "CreateAccount();";
+			helpTag = "0";
+			text = "CREATE NEW ACCOUNT";
+			simpleStyle = "0";
+		};
+		new ShellBitmapButton() {
+			profile = "ShellButtonProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "300 99";
+			extent = "147 38";
+			minExtent = "32 38";
+			visible = "1";
+			command = "LoginProcess(true);";
+			helpTag = "0";
+			text = "EDIT ACCOUNT";
+			simpleStyle = "0";
+		};
+		new ShellBitmapButton() {
+			profile = "ShellButtonProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "300 129";
+			extent = "147 38";
+			minExtent = "32 38";
+			visible = "1";
+			command = "quit();";
+			accelerator = "escape";
+			helpTag = "0";
+			text = "QUIT";
+			simpleStyle = "0";
+		};
+		new ShellToggleButton() {
+			profile = "ShellRadioProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "122 104";
+			extent = "167 27";
+			minExtent = "26 27";
+			visible = "1";
+			variable = "$pref::RememberPassword";
+			helpTag = "0";
+			text = "REMEMBER PASSWORD";
+			maxLength = "255";
+		};
+		new ShellBitmapButton() {
+			profile = "ShellButtonProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "118 129";
+			extent = "180 38";
+			minExtent = "32 38";
+			visible = "1";
+			command = "PasswordProcess(true);";
+			helpTag = "0";
+			text = "EMAIL ME MY PASSWORD";
+			simpleStyle = "0";
+		};
+	};
+};
+//--- OBJECT WRITE END ---

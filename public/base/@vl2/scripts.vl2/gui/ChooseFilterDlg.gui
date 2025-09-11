@@ -1,0 +1,148 @@
+//--- OBJECT WRITE BEGIN ---
+new GuiControl(ChooseFilterDlg) {
+	profile = "DlgBackProfile";
+	horizSizing = "width";
+	vertSizing = "height";
+	position = "0 0";
+	extent = "640 480";
+	minExtent = "8 8";
+	visible = "1";
+	helpTag = "0";
+
+	new ShellPaneCtrl() {
+		profile = "ShellDlgPaneProfile";
+		horizSizing = "center";
+		vertSizing = "center";
+		position = "95 78";
+		extent = "450 324";
+		minExtent = "48 92";
+		visible = "1";
+		helpTag = "0";
+		text = "CHANGE FILTER";
+		noTitleBar = "0";
+
+		new GuiTextCtrl() {
+			profile = "ShellTextProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "44 32";
+			extent = "98 22";
+			minExtent = "8 8";
+			visible = "1";
+			helpTag = "0";
+			text = "CHOOSE A FILTER:";
+		};
+		new ShellScrollCtrl() {
+			profile = "NewScrollCtrlProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "39 49";
+			extent = "218 220";
+			minExtent = "24 52";
+			visible = "1";
+			helpTag = "0";
+			willFirstRespond = "1";
+			hScrollBar = "alwaysOff";
+			vScrollBar = "alwaysOn";
+			constantThumbHeight = "0";
+			defaultLineHeight = "15";
+			childMargin = "3 3";
+			fieldBase = "gui/shll_field";
+
+			new GuiScrollContentCtrl() {
+				profile = "GuiDefaultProfile";
+				horizSizing = "right";
+				vertSizing = "bottom";
+				position = "7 7";
+				extent = "188 206";
+				minExtent = "8 8";
+				visible = "1";
+				helpTag = "0";
+
+				new ShellTextList(CF_FilterList) {
+					profile = "ShellTextArrayProfile";
+					horizSizing = "right";
+					vertSizing = "bottom";
+					position = "0 0";
+					extent = "188 8";
+					minExtent = "8 8";
+					visible = "1";
+					altCommand = "ChooseFilterDlg.editFilter();";
+					helpTag = "0";
+					enumerate = "0";
+					resizeCell = "1";
+					columns = "0";
+					fitParentWidth = "1";
+					clipColumnText = "0";
+				};
+			};
+		};
+		new ShellBitmapButton(CF_NewFilterBtn) {
+			profile = "ShellButtonProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "280 46";
+			extent = "128 38";
+			minExtent = "32 38";
+			visible = "1";
+			command = "ChooseFilterDlg.newFilter();";
+			helpTag = "0";
+			text = "NEW FILTER";
+			simpleStyle = "0";
+		};
+		new ShellBitmapButton(CF_EditFilterBtn) {
+			profile = "ShellButtonProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "280 76";
+			extent = "128 38";
+			minExtent = "32 38";
+			visible = "1";
+			command = "ChooseFilterDlg.editFilter();";
+			helpTag = "0";
+			text = "EDIT FILTER";
+			simpleStyle = "0";
+		};
+		new ShellBitmapButton(CF_DeleteFilterBtn) {
+			profile = "ShellButtonProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "280 106";
+			extent = "128 38";
+			minExtent = "32 38";
+			visible = "1";
+			command = "ChooseFilterDlg.deleteFilter();";
+			helpTag = "0";
+			text = "DELETE FILTER";
+			simpleStyle = "0";
+		};
+		new ShellBitmapButton() {
+			profile = "ShellButtonProfile";
+			horizSizing = "right";
+			vertSizing = "top";
+			position = "65 269";
+			extent = "128 38";
+			minExtent = "32 38";
+			visible = "1";
+			command = "Canvas.popDialog(ChooseFilterDlg);";
+			accelerator = "escape";
+			helpTag = "0";
+			text = "CANCEL";
+			simpleStyle = "0";
+		};
+		new ShellBitmapButton(CF_GoBtn) {
+			profile = "ShellButtonProfile";
+			horizSizing = "right";
+			vertSizing = "top";
+			position = "257 269";
+			extent = "128 38";
+			minExtent = "32 38";
+			visible = "1";
+			command = "ChooseFilterDlg.go();";
+			helpTag = "0";
+			text = "GO!";
+			simpleStyle = "0";
+		};
+	};
+};
+//--- OBJECT WRITE END ---

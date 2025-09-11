@@ -1,0 +1,8 @@
+Tribes2 Classic map pack version 2
+10/31/02
+
+The "classic_maps_v1.vl2" file should be put into
+your "...\Tribes2\GameData\base" directory, overwriting
+any existing earlier version.
+
+See the "classic_readme.txt" file for a list of changes.

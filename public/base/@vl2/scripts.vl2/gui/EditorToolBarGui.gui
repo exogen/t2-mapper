@@ -1,0 +1,71 @@
+//--- OBJECT WRITE BEGIN ---
+new GuiControl(EditorToolBarGui) {
+	profile = "GuiWindowProfile";
+	horizSizing = "right";
+	vertSizing = "bottom";
+	position = "0 0";
+	extent = "640 480";
+	minExtent = "8 8";
+	visible = "True";
+	setFirstResponder = "False";
+	modal = "True";
+	helpTag = "0";
+
+	new GuiButtonCtrl() {
+		profile = "GuiButtonProfile";
+		horizSizing = "right";
+		vertSizing = "bottom";
+		position = "2 2";
+		extent = "80 20";
+		minExtent = "8 8";
+		visible = "True";
+		setFirstResponder = "False";
+		modal = "True";
+		command = "Editor.close();";
+		helpTag = "0";
+		text = "Back";
+	};
+	new GuiButtonCtrl() {
+		profile = "GuiButtonProfile";
+		horizSizing = "right";
+		vertSizing = "bottom";
+		position = "452 2";
+		extent = "80 20";
+		minExtent = "8 8";
+		visible = "True";
+		setFirstResponder = "False";
+		modal = "True";
+		command = "Canvas.setContent(TerraformerGui);";
+		helpTag = "0";
+		text = "Terraformer";
+	};
+	new GuiButtonCtrl() {
+		profile = "GuiButtonProfile";
+		horizSizing = "right";
+		vertSizing = "bottom";
+		position = "370 2";
+		extent = "80 20";
+		minExtent = "8 8";
+		visible = "True";
+		setFirstResponder = "False";
+		modal = "True";
+		command = "Editor.setView(TerrainEditorView);";
+		helpTag = "0";
+		text = "Terrain Editor";
+	};
+	new GuiButtonCtrl() {
+		profile = "GuiButtonProfile";
+		horizSizing = "right";
+		vertSizing = "bottom";
+		position = "288 2";
+		extent = "80 20";
+		minExtent = "8 8";
+		visible = "True";
+		setFirstResponder = "False";
+		modal = "True";
+		command = "Editor.setView(WorldEditorView);";
+		helpTag = "0";
+		text = "World Editor";
+	};
+};
+//--- OBJECT WRITE END ---

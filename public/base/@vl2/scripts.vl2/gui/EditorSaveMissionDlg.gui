@@ -1,0 +1,336 @@
+//--- OBJECT WRITE BEGIN ---
+new GuiControl(EditorSaveMissionDlg) {
+	profile = "GuiDefaultProfile";
+	horizSizing = "right";
+	vertSizing = "bottom";
+	position = "0 0";
+	extent = "640 480";
+	minExtent = "8 8";
+	visible = "1";
+	setFirstResponder = "0";
+	modal = "1";
+	helpTag = "0";
+
+	new GuiWindowCtrl() {
+		profile = "GuiWindowProfile";
+		horizSizing = "right";
+		vertSizing = "bottom";
+		position = "168 81";
+		extent = "333 313";
+		minExtent = "8 8";
+		visible = "1";
+		setFirstResponder = "0";
+		modal = "1";
+		helpTag = "0";
+		text = "Save Mission...";
+		resizeWidth = "1";
+		resizeHeight = "1";
+		canMove = "1";
+		canClose = "1";
+		canMinimize = "1";
+		canMaximize = "1";
+		minSize = "50 50";
+
+		new GuiControl() {
+			profile = "GuiButtonProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "8 50";
+			extent = "317 226";
+			minExtent = "8 8";
+			visible = "1";
+			setFirstResponder = "0";
+			modal = "1";
+			helpTag = "0";
+
+			new GuiTextCtrl() {
+				profile = "GuiMediumBoldTextProfile";
+				horizSizing = "right";
+				vertSizing = "bottom";
+				position = "6 6";
+				extent = "249 20";
+				minExtent = "8 8";
+				visible = "1";
+				setFirstResponder = "0";
+				modal = "1";
+				helpTag = "0";
+				text = "Select the files which you wish to save:";
+			};
+			new GuiCheckBoxCtrl(SaveMissionCheckBox) {
+				profile = "GuiButtonProfile";
+				horizSizing = "right";
+				vertSizing = "bottom";
+				position = "10 32";
+				extent = "132 22";
+				minExtent = "8 8";
+				visible = "1";
+				setFirstResponder = "0";
+				modal = "1";
+				helpTag = "0";
+				text = "Mission File";
+			};
+			new GuiTextCtrl(SaveMissionText) {
+				profile = "GuiTextProfile";
+				horizSizing = "right";
+				vertSizing = "bottom";
+				position = "22 56";
+				extent = "64 18";
+				minExtent = "8 8";
+				visible = "1";
+				setFirstResponder = "0";
+				modal = "1";
+				helpTag = "0";
+			};
+			new GuiTextCtrl(SaveTerrainText) {
+				profile = "GuiTextProfile";
+				horizSizing = "right";
+				vertSizing = "bottom";
+				position = "22 102";
+				extent = "56 18";
+				minExtent = "8 8";
+				visible = "1";
+				setFirstResponder = "0";
+				modal = "1";
+				helpTag = "0";
+			};
+			new GuiCheckBoxCtrl(SaveTerrainCheckBox) {
+				profile = "GuiButtonProfile";
+				horizSizing = "right";
+				vertSizing = "bottom";
+				position = "10 77";
+				extent = "132 22";
+				minExtent = "8 8";
+				visible = "1";
+				setFirstResponder = "0";
+				modal = "1";
+				helpTag = "0";
+				text = "Terrain";
+			};
+			new GuiCheckBoxCtrl(SaveHeightFieldScriptCheckBox) {
+				profile = "GuiButtonProfile";
+				horizSizing = "right";
+				vertSizing = "bottom";
+				position = "10 122";
+				extent = "132 22";
+				minExtent = "8 8";
+				visible = "1";
+				setFirstResponder = "0";
+				modal = "1";
+				helpTag = "0";
+				text = "Heightfield Script";
+			};
+			new GuiTextCtrl(SaveHeightFieldScriptText) {
+				profile = "GuiTextProfile";
+				horizSizing = "right";
+				vertSizing = "bottom";
+				position = "22 148";
+				extent = "162 18";
+				minExtent = "8 8";
+				visible = "1";
+				setFirstResponder = "0";
+				modal = "1";
+				helpTag = "0";
+			};
+			new GuiTextCtrl(SaveTextureScriptText) {
+				profile = "GuiTextProfile";
+				horizSizing = "right";
+				vertSizing = "bottom";
+				position = "22 194";
+				extent = "132 18";
+				minExtent = "8 8";
+				visible = "1";
+				setFirstResponder = "0";
+				modal = "1";
+				helpTag = "0";
+			};
+			new GuiCheckBoxCtrl(SaveTerrainScriptCheckBox) {
+				profile = "GuiButtonProfile";
+				horizSizing = "right";
+				vertSizing = "bottom";
+				position = "10 167";
+				extent = "132 22";
+				minExtent = "8 8";
+				visible = "1";
+				setFirstResponder = "0";
+				modal = "1";
+				helpTag = "0";
+				text = "Texture Script";
+			};
+		};
+		new GuiButtonCtrl() {
+			profile = "GuiButtonProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "158 284";
+			extent = "72 22";
+			minExtent = "8 8";
+			visible = "1";
+			setFirstResponder = "0";
+			modal = "1";
+			command = "EditorSaveMissionDlg.doSave();Canvas.popDialog(EditorSaveMissionDlg);";
+			helpTag = "0";
+			text = "OK";
+		};
+		new GuiTextEditCtrl(MissionNameTextEdit) {
+			profile = "GuiTextEditProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "87 26";
+			extent = "238 18";
+			minExtent = "8 8";
+			visible = "1";
+			setFirstResponder = "0";
+			modal = "1";
+			altCommand = "EditorSaveMissionDlg.missionName = $ThisControl.getValue();EditorSaveMissionDlg.updateTextFields();";
+			helpTag = "0";
+			historySize = "0";
+		};
+		new GuiButtonCtrl() {
+			profile = "GuiButtonProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "241 284";
+			extent = "72 22";
+			minExtent = "8 8";
+			visible = "1";
+			setFirstResponder = "0";
+			modal = "1";
+			command = "Canvas.popDialog(EditorSaveMissionDlg);";
+			helpTag = "0";
+			text = "Cancel";
+		};
+		new GuiTextCtrl() {
+			profile = "GuiTextProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "13 28";
+			extent = "66 18";
+			minExtent = "8 8";
+			visible = "1";
+			setFirstResponder = "0";
+			modal = "1";
+			helpTag = "0";
+			text = "Mission Name";
+		};
+	};
+};
+//--- OBJECT WRITE END ---
+
+//------------------------------------------------------------------------------
+// Functions
+//------------------------------------------------------------------------------
+
+function EditorSaveMissionDlg::updateTextFields(%this)
+{
+   SaveMissionText.setValue("missions/" @ %this.missionName @ ".mis");
+   SaveTerrainText.setValue("terrains/" @ %this.missionName @ ".ter");
+   SaveTextureScriptText.setValue("terrains/texture/" @ %this.missionName @ "_texture.cs");
+   SaveHeightFieldScriptText.setValue("terrains/heightfield/" @ %this.missionName @ "_heightfield.cs");
+}
+
+function EditorSaveMissionDlg::onWake(%this)
+{
+   %this.missionName = fileBase($MissionName);
+
+   // 
+   MissionNameTextEdit.setValue(%this.missionName);
+   %this.updateTextFields();
+
+   // set all to be saved
+   if(%this.initialized != true)
+   {
+      SaveMissionCheckBox.setValue(1);
+      SaveTerrainCheckBox.setValue(1);
+      SaveTerrainScriptCheckBox.setValue(1);
+      SaveHeightFieldScriptCheckBox.setValue(1);
+
+      %this.initialized = true;
+   }
+}
+
+function EditorSaveMissionDlg::doSave(%this)
+{
+   //
+   if(!isObject(MissionGroup))
+   {
+      error("No mission exists to save!");
+      return;
+   }
+
+   // check the files for write access
+   //---------------------------------
+   if(SaveMissionCheckBox.getValue())
+   {
+      %file = "base/missions/" @ %this.missionName @ ".mis";
+      if(!isWriteableFileName(%file))
+      {
+         error("Mission file '" @ %file @ "' is not writeable.");
+         return; 
+      }
+   }
+
+   if(SaveTerrainCheckBox.getValue())
+   {
+      %file = "base/terrains/" @ %this.missionName @ ".ter";
+      if(!isWriteableFileName(%file))
+      {
+         error("Terrain file '" @ %file @ "' is not writeable.");
+         return; 
+      }
+   }
+
+   if(SaveTerrainScriptCheckBox.getValue())
+   {
+      %file = "base/terrains/texture/" @ %this.missionName @ "_texture.cs";
+      if(!isWriteableFileName(%file))
+      {
+         error("Terrain texture script file '" @ %file @ "' is not writeable.");
+         return; 
+      }
+   }
+
+   if(SaveHeightFieldScriptCheckBox.getValue())
+   {
+      %file = "base/terrains/heightfield/" @ %this.missionName @ "_heightfield.cs";
+      if(!isWriteableFileName(%file))
+      {
+         error("Terrain heightfield script file '" @ %file @ "' is not writeable.");
+         return; 
+      }
+   }
+
+   // Now, save out the files...
+   //---------------------------------
+   if(SaveMissionCheckBox.getValue())
+   {
+      // rename the terrainFile field in the TerrainBlock obj
+      if(SaveTerrainCheckBox.getValue())
+         if(isObject(terrain))
+            terrain.terrainFile = %this.missionName @ ".ter";
+
+      //
+      missionGroup.save("missions/" @ %this.missionName @ ".mis");
+      $MissionName = %this.missionName @ ".mis";
+   }
+
+   // requires that the terrain object be named 'terrain'
+   if(SaveTerrainCheckBox.getValue())
+      if(isObject(terrain))
+         terrain.save(%this.missionName @ ".ter");
+      else
+         warn("  Failed to save TerrainObject (no object exists)");
+
+   //
+   if(SaveTerrainScriptCheckBox.getValue())
+      if(Texture_material.rowCount())
+         Texture::save(%this.missionName @ "_texture.cs");
+      else
+         warn("  Failed to save Terrain Script file.  Nothing to save.");
+
+   //
+   if(SaveHeightFieldScriptCheckBox.getValue())
+      if(Heightfield_operation.rowCount())
+         HeightField::doSaveHeightfield(%this.missionName @ "_heightfield.cs");
+      else
+         warn("  Failed to save HeightField Script file.  Nothing to save.");
+}

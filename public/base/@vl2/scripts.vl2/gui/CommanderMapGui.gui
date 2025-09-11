@@ -1,0 +1,284 @@
+//--- OBJECT WRITE BEGIN ---
+new GuiControl(CommanderMapGui) 
+{
+   profile = "CommanderGuiProfile";
+   horizSizing = "width";
+   vertSizing = "height";
+   position = "0 0";
+   extent = "640 480";
+   visible = "1";
+
+   new GuiCommanderMap(CommanderMap) 
+   {
+      profile = "GuiDefaultProfile";
+      horizSizing = "width";
+      vertSizing = "height";
+      position = "0 0";
+      extent = "475 480";
+
+      // field data
+      defaultCursor = DefaultCursor;
+      arrowCursor = CMDCursorArrow;
+      handCursor = CMDCursorHandOpen;
+      moveCursor = CMDCursorHandClosed;
+      zoomCursor = CMDCursorZoom;
+      addCursor = CMDCursorSelectAdd;
+      removeCursor = CMDCursorSelectRemove;
+      mouseSelectRectColor = "255 255 0 255";
+      cameraOffset = 10;
+      cameraVelocity = 500;
+      defaultIconName = CMDDefaultIcon;
+      waypintIconName = CMDWaypointIcon;
+      assignedTaskIconName = CMDAssignedTaskIcon;
+      potentialTaskIconName = CMDPotentialTaskIcon;
+      sensorSphereFrameAlpha = 75;
+      sensorSphereFillAlpha = 30;
+      renderMissionArea = true;
+      missionAreaFillColor = "60 60 60 80";
+      missionAreaFrameColor = "128 0 0 255";
+      renderText = true;
+      textOffset = 2;
+      hilightedObjectColor = "234 154 4 200";
+      selectedObjectColor = "2 247 248 200";
+      playerMarkerAngle = 30;
+      playerMarkerOffset = 8;
+      playerMarkerLen = 8;
+      playerMarkerColor = "0 255 0 200";
+      minIconSize = 20;
+      maxIconSize = 64;
+      iconProjLen = "20.0";
+      minDistanceScale = "0.02";
+      maxDistanceScale = "0.05";
+      enableEdgeMarkers = true;
+      edgeMarkerSize = 32;
+      renderSensors = false;
+   };
+
+   new ShellScrollCtrl(CommanderTreeContainer)
+   {
+      profile = "NewScrollCtrlProfile";
+      horizSizing = "left";
+      vertSizing = "height";
+      vScrollBar = "alwaysOn";
+      hScrollBar = "alwaysOff";
+      position = "471 -4";
+      extent = "173 458";
+
+      new GuiScrollContentCtrl()
+      {
+         profile = "CommanderScrollContentProfile";
+         horizSizing = "left";
+         vertSizing = "height";
+
+         new GuiCommanderTree(CommanderTree)
+         {
+            profile = "CommanderTreeProfile";
+            position = "0 0";
+            extent = "150 459";
+            horizSizing = "left";
+            vertSizing = "height";
+            visible = "true";
+
+            // field data
+            backdropBitmapName = "commander/gui/cmd_gradient";
+            headerFontType = "Arial Bold";
+            entryFontType = "Arial";
+            clientNoneFontType = "Arial";
+            headerFontSize = 14;
+            entryFontSize = 13;
+            clientNoneFontSize = 13;
+            entryIconOffset = "2 1";
+            entryTextOffset = "20 3";
+            headerBitmapName = "commander/gui/cmd_columnheadbar";
+            headerTextOffset = "10 4";
+            clientNoneText = "None Selected";
+            headerHeight = 20;
+            entryHeight = 20;
+            entryHilightColor = "44 168 219 100";
+            entrySelectColor = "255 0 0 100";
+            categoryOpenTime = 250;
+            damageColors = "0 255 0 20 255 255 0 70 255 0 0 100";
+            objectControlRect = "128 2 16 16";
+            objectControlBitmapName = "commander/gui/cmd_control_checkbox";
+         };
+      };
+   };
+
+   // boob-tube
+   new GuiCommanderTV(CommanderTV)
+   {
+      profile = "CommanderButtonBackdropProfile";
+      position = "475 300";
+      extent = "165 150";
+      visible = "false";
+      vertSizing = "top";
+      horizSizing = "left";
+      frameBitmap = "commander/gui/cmd_tv_frame";
+      staticBitmap = "commander/gui/cmd_tv_static";
+      open = false;
+      target = -1;
+
+      new GuiMouseEventCtrl(CommanderTVScreen)
+      {
+         profile = "DefaultProfile";
+         position = "0 0";
+         extent = "165 150";
+         vertSizing = "top";
+         horizSizing = "left";
+         visible = "true";
+      };
+   };
+
+   // return to game
+   new GuiControl()
+   {
+      profile = "CommanderButtonBackdropProfile";
+      position = "475 450";
+      extent = "165 31";
+      horizSizing = "left";
+      vertSizing = "top";
+
+      new ShellBitmapButton() 
+      {
+         profile = "CommanderButtonProfile";
+         opaque = "true";
+         horizSizing = "left";
+         vertSizing = "top";
+         visible = "1";
+         position = "-6 -2";
+         extent = "177 31";
+         command = "CommanderMapGui.close();";
+         text = "RETURN TO GAME";
+         
+      };
+   };
+
+   // top button bar
+   new GuiControl()
+   {
+      profile = "DefaultProfile";
+      position = "437 -4";
+      extent = "44 228";
+      horizSizing = "left";
+      vertSizing = "bottom";
+      visible = "true";
+
+      new GuiCommanderMapCheckbox(CMDPlayersButton)
+      {
+         profile = "CommanderButtonProfile";
+         position = "0 0";
+         extent = "44 44";
+         bitmap = "commander/gui/cmd_icon_players";
+         mouseRegion = "7 7 31 31";
+      };
+      new GuiCommanderMapCheckbox(CMDTacticalButton)
+      {
+         profile = "CommanderButtonProfile";
+         position = "0 31";
+         extent = "44 44";
+         bitmap = "commander/gui/cmd_icon_tactical";
+         mouseRegion = "7 7 31 31";
+      };
+      new GuiCommanderMapCheckbox(CMDDeployedTacticalButton)
+      {
+         profile = "CommanderButtonProfile";
+         position = "0 62";
+         extent = "44 44";
+         bitmap = "commander/gui/cmd_icon_tactical_D";
+         mouseRegion = "7 7 31 31";
+      };
+      new GuiCommanderMapCheckbox(CMDMiscButton)
+      {
+         profile = "CommanderButtonProfile";
+         position = "0 93";
+         extent = "44 44";
+         bitmap = "commander/gui/cmd_icon_misc";
+         mouseRegion = "7 7 31 31";
+      };
+      new GuiCommanderMapCheckbox(CMDDeployedMiscButton)
+      {
+         profile = "CommanderButtonProfile";
+         position = "0 124";
+         extent = "44 44";
+         bitmap = "commander/gui/cmd_icon_misc_D";
+         mouseRegion = "7 7 31 31";
+      };
+      new GuiCommanderMapCheckbox(CMDWaypointsButton)
+      {
+         profile = "CommanderButtonProfile";
+         position = "0 155";
+         extent = "44 44";
+         bitmap = "commander/gui/cmd_icon_waypoints";
+         mouseRegion = "7 7 31 31";
+      };
+      new GuiCommanderMapCheckbox(CMDObjectivesButton)
+      {
+         profile = "CommanderButtonProfile";
+         position = "0 186";
+         extent = "44 44";
+         bitmap = "commander/gui/cmd_icon_objectives";
+         mouseRegion = "7 7 31 31";
+      };
+   };
+
+   // bottom button bar
+   new GuiControl()
+   {
+      profile = "DefaultProfile";
+      position = "437 286";
+      extent = "44 199";
+      horizSizing = "left";
+      vertSizing = "top";
+      visible = "true";
+
+      new GuiCommanderMapCheckbox(CMDShowSensorsButton)
+      {
+         profile = "CommanderButtonProfile";
+         position = "0 0";
+         extent = "44 44";
+         bitmap = "commander/gui/cmd_icon_sensor";
+         mouseRegion = "7 7 31 31";
+      };
+      new GuiCommanderMapCheckbox(CMDMoveSelectButton)
+      {
+         profile = "CommanderButtonProfile";
+         position = "0 31";
+         extent = "44 44";
+         bitmap = "commander/gui/cmd_icon_moveselect";
+         mouseRegion = "7 7 31 31";
+      };
+      new GuiCommanderMapCheckbox(CMDZoomButton)
+      {
+         profile = "CommanderButtonProfile";
+         position = "0 62";
+         extent = "44 44";
+         bitmap = "commander/gui/cmd_icon_zoom";
+         mouseRegion = "7 7 31 31";
+      };
+      new GuiCommanderMapButton(CMDCenterButton)
+      {
+         profile = "CommanderButtonProfile";
+         position = "0 93";
+         extent = "44 44";
+         bitmap = "commander/gui/cmd_icon_center";
+         mouseRegion = "7 7 31 31";
+      };
+      new GuiCommanderMapCheckbox(CMDTextButton)
+      {
+         profile = "CommanderButtonProfile";
+         position = "0 124";
+         extent = "44 44";
+         bitmap = "commander/gui/cmd_icon_text";
+         mouseRegion = "7 7 31 31";
+      };
+      new GuiCommanderMapCheckbox(CMDCameraButton)
+      {
+         profile = "CommanderButtonProfile";
+         position = "0 155";
+         extent = "44 44";
+         bitmap = "commander/gui/cmd_icon_camera";
+         mouseRegion = "7 7 31 31";
+      };
+   };
+};
+//--- OBJECT WRITE END ---

@@ -1,0 +1,121 @@
+//--- OBJECT WRITE BEGIN ---
+new GuiControl(GenDialog) {
+	profile = "ShellWindowProfile";
+	horizSizing = "right";
+	vertSizing = "bottom";
+	position = "0 0";
+	extent = "640 480";
+	minExtent = "8 8";
+	visible = "1";
+	hideCursor = "0";
+	bypassHideCursor = "0";
+	helpTag = "0";
+
+	new ShellDlgFrame() {
+		profile = "ShellDlgProfile";
+		horizSizing = "center";
+		vertSizing = "center";
+		position = "161 168";
+		extent = "317 143";
+		minExtent = "8 8";
+		visible = "1";
+		hideCursor = "0";
+		bypassHideCursor = "0";
+		helpTag = "0";
+		text = "LOCK TOPIC";
+		maxLength = "255";
+
+		new ShellBitmapButton() {
+			profile = "ShellButtonProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "169 99";
+			extent = "79 38";
+			minExtent = "32 38";
+			visible = "1";
+			hideCursor = "0";
+			bypassHideCursor = "0";
+			command = "Canvas.PopDIalog(\"GenDialog\");";
+			helpTag = "0";
+			text = "CANCEL";
+			simpleStyle = "0";
+		};
+		new ShellBitmapButton() {
+			profile = "ShellButtonProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "233 99";
+			extent = "79 38";
+			minExtent = "32 38";
+			visible = "1";
+			hideCursor = "0";
+			bypassHideCursor = "0";
+			command = "TopicsPopupMenu.ExecuteLock();";
+			helpTag = "0";
+			text = "OK";
+			simpleStyle = "0";
+		};
+		new ShellScrollCtrl() {
+			profile = "NewScrollCtrlProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "9 53";
+			extent = "298 52";
+			minExtent = "24 52";
+			visible = "1";
+			hideCursor = "0";
+			bypassHideCursor = "0";
+			helpTag = "0";
+			willFirstRespond = "1";
+			hScrollBar = "alwaysOff";
+			vScrollBar = "alwaysOn";
+			constantThumbHeight = "0";
+			defaultLineHeight = "15";
+			childMargin = "0 0";
+			fieldBase = "gui/shll_field";
+
+			new GuiScrollContentCtrl() {
+				profile = "GuiDefaultProfile";
+				horizSizing = "right";
+				vertSizing = "bottom";
+				position = "4 4";
+				extent = "274 44";
+				minExtent = "8 8";
+				visible = "1";
+				hideCursor = "0";
+				bypassHideCursor = "0";
+				helpTag = "0";
+
+				new GuiMLTextEditCtrl(LockTopicReason) {
+					profile = "ShellMessageTextProfile";
+					horizSizing = "width";
+					vertSizing = "height";
+					position = "0 0";
+					extent = "274 44";
+					minExtent = "8 8";
+					visible = "1";
+					helpTag = "0";
+					lineSpacing = "2";
+					allowColorChars = "1";
+					maxChars = "80";
+					deniedSound = "InputDeniedSound";
+				};
+			};
+		};
+		new GuiTextCtrl() {
+			profile = "GuiDefaultProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "16 40";
+			extent = "286 17";
+			minExtent = "8 8";
+			visible = "1";
+			hideCursor = "0";
+			bypassHideCursor = "0";
+			helpTag = "0";
+			text = "REASON";
+			maxLength = "255";
+		};
+	};
+};
+//--- OBJECT WRITE END ---

@@ -1,0 +1,31 @@
+{
+  "name": "t2-mapper",
+  "version": "1.0.0",
+  "description": "",
+  "keywords": [],
+  "author": "Brian Beck <exogen@gmail.com>",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "build:parser": "peggy mission.pegjs -o generated/mission.cjs",
+    "find": "find public -iname",
+    "start": "next dev"
+  },
+  "dependencies": {
+    "@react-three/fiber": "^9.3.0",
+    "next": "^15.5.2",
+    "peggy": "^5.0.6",
+    "react": "^19.1.1",
+    "react-dom": "^19.1.1",
+    "three": "^0.180.0",
+    "unzipper": "^0.12.3"
+  },
+  "devDependencies": {
+    "@types/node": "24.3.1",
+    "@types/react": "19.1.12",
+    "@types/three": "^0.180.0",
+    "@types/unzipper": "^0.10.11",
+    "tsx": "^4.20.5",
+    "typescript": "5.9.2"
+  }
+}

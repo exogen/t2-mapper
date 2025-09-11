@@ -1,0 +1,81 @@
+//--- OBJECT WRITE BEGIN ---
+new GuiCommanderNoFocusCtrl(CommanderChatDlg)
+{
+   profile = "GuiModelessDialogProfile";
+   horizSizing = "width";
+   vertSizing = "bottom";
+   position = "0 0";
+   extent = "640 480";
+   minExtent = "8 8";
+   visible = "1";
+   setFirstResponder = "0";
+   modal = "0";
+   helpTag = "0";
+
+   new HudFancyCtrl() 
+   {
+      profile = "GuiChatBackProfile";
+      horizSizing = "width";
+      vertSizing = "bottom";
+      position = "60 0";
+      extent = "330 80";
+      minExtent = "8 8";
+      visible = "1";
+      setFirstResponder = "0";
+      modal = "0";
+      helpTag = "0";
+
+      new GuiScrollCtrl()
+      {
+         profile = "GuiModelessDialogProfile";
+         horizSizing = "width";
+         vertSizing = "bottom";
+         position = "7 4";
+         extent = "320 70";
+         minExtent = "8 8";
+         visible = "1";
+         setFirstResponder = "0";
+         modal = "0";
+         helpTag = "0";
+         willFirstRespond = "1";
+         hScrollBar = "alwaysOff";
+         vScrollBar = "alwaysOff";
+         constantThumbHeight = "0";
+
+         new GuiMessageVectorCtrl(CommanderChatHud) 
+         {
+            profile = "GuiChatHudProfile";
+            horizSizing = "width";
+            vertSizing = "bottom";
+            position = "7 4";
+            extent = "320 70";
+            minExtent = "8 8";
+            visible = "1";
+            setFirstResponder = "0";
+            modal = "0";
+            helpTag = "0";
+            lineSpacing = "0";
+            lineContinuedIndex = "5";
+            allowedMatches[0] = "http";
+            allowedMatches[1] = "t2server";
+            matchColors[0] = "0 0 255 255";
+            matchColors[1] = "255 0 0 255";
+            matchColors[2] = "0 0 255 255";
+            matchColors[3] = "0 0 255 255";
+            matchColors[4] = "0 0 255 255";
+            matchColors[5] = "0 0 255 255";
+            matchColors[6] = "0 0 255 255";
+            matchColors[7] = "0 0 255 255";
+            matchColors[8] = "0 0 255 255";
+            matchColors[9] = "0 0 255 255";
+            matchColors[10] = "0 0 255 255";
+            matchColors[11] = "0 0 255 255";
+            matchColors[12] = "0 0 255 255";
+            matchColors[13] = "0 0 255 255";
+            matchColors[14] = "0 0 255 255";
+            matchColors[15] = "0 0 255 255";
+         };
+      };
+   };
+};
+//--- OBJECT WRITE END ---

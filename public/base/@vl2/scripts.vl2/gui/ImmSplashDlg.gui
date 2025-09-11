@@ -1,0 +1,36 @@
+//--- OBJECT WRITE BEGIN ---
+new GuiControl(ImmSplashDlg) {
+	profile = "GuiDefaultProfile";
+	horizSizing = "right";
+	vertSizing = "bottom";
+	position = "0 0";
+	extent = "640 480";
+	minExtent = "8 8";
+	visible = "1";
+	helpTag = "0";
+
+	new GuiControl() {
+		profile = "GuiModelessDialogProfile";
+		horizSizing = "center";
+		vertSizing = "center";
+		position = "40 150";
+		extent = "540 168";
+		minExtent = "8 8";
+		visible = "1";
+		helpTag = "0";
+
+		new GuiBitmapCtrl() {
+			profile = "GuiDefaultProfile";
+			horizSizing = "width";
+			vertSizing = "height";
+			position = "0 0";
+			extent = "540 168";
+			minExtent = "8 8";
+			visible = "1";
+			helpTag = "0";
+			bitmap = "gui/ImmersionLogo.png";
+			wrap = "0";
+		};
+	};
+};
+//--- OBJECT WRITE END ---

@@ -1,0 +1,95 @@
+//--- OBJECT WRITE BEGIN ---
+new GuiControl(TerraformerGui) {
+	profile = "GuiDefaultProfile";
+	horizSizing = "right";
+	vertSizing = "bottom";
+	position = "0 0";
+	extent = "640 480";
+	minExtent = "8 8";
+	visible = "True";
+	setFirstResponder = "True";
+	modal = "True";
+	helpTag = "0";
+};
+
+new GuiControl(TerraformerToolbarBackgroundGui) {
+	profile = "EditorContentProfile";
+	horizSizing = "width";
+	vertSizing = "bottom";
+	position = "0 0";
+	extent = "640 30";
+	minExtent = "8 8";
+	visible = "1";
+	setFirstResponder = "0";
+	modal = "0";
+	helpTag = "0";
+};
+
+//--- OBJECT WRITE END ---
+
+function TerraformerGui::getPrefs(%this)
+{
+   %this.currentView = getPrefSetting($pref::Terraformer::currentView, "HeightfieldView");
+}
+
+function TerraformerGui::setPrefs(%this)
+{
+   $pref::Terraformer::currentView = %this.currentView;
+}
+
+function TerraformerGui::init(%this)
+{
+   %this.getPrefs();
+
+   //   
+   if(!isObject("terraformer"))
+   {
+      echo("making a terraformer");
+      new Terraformer("terraformer");   
+      $SelectedOperation = -1;
+      $NextOperationId   = 1;
+      $HeightfieldDirtyRow = -1;
+   }
+
+   TerraformerHeightfieldGui.init();
+   TerraformerTextureGui.init();
+}
+
+function TerraformerGui::onWake(%this)
+{
+   if(!isObject("editor"))
+      %this.init();
+
+   %this.setView(%this.currentView);
+}
+
+function TerraformerGui::onSleep(%this)
+{
+   %this.setPrefs();
+}
+
+function TerraformerGui::setView(%this, %view)
+{
+   // clear
+   while(%this.getCount())
+      %this.remove(%this.getObject(0));
+
+   //
+   switch$(%view)
+   {
+      case "HeightfieldView":
+         %this.add(TerraformerHeightfieldGui);
+         TerraformerHeightfieldGui.refresh();
+
+      case "TextureView":
+         %this.add(TerraformerTextureGui);
+         TerraformerTextureGui.refresh();
+
+      default:
+         error("TerraformerGui::setView: invalid view '" @ %view @ "'");
+         return;
+   }
+
+   %this.add(TerraformerToolbarBackgroundGui);
+   %this.currentView = %view;
+}

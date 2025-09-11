@@ -1,0 +1,135 @@
+//--- OBJECT WRITE BEGIN ---
+new GuiControl(WorldEditorStatusbarDlg) {
+	profile = "GuiModelessDialogProfile";
+	horizSizing = "right";
+	vertSizing = "bottom";
+	position = "0 0";
+	extent = "640 480";
+	minExtent = "8 8";
+	visible = "1";
+	setFirstResponder = "0";
+	modal = "0";
+	helpTag = "0";
+
+	new GuiControl() {
+		profile = "EditorContentProfile";
+		horizSizing = "width";
+		vertSizing = "top";
+		position = "0 450";
+		extent = "640 30";
+		minExtent = "8 8";
+		visible = "1";
+		setFirstResponder = "0";
+		modal = "1";
+		helpTag = "0";
+
+		new GuiTextCtrl() {
+			profile = "GuiTextProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "6 8";
+			extent = "39 18";
+			minExtent = "8 8";
+			visible = "1";
+			setFirstResponder = "0";
+			modal = "1";
+			helpTag = "0";
+			text = "Mission:";
+		};
+		new GuiTextCtrl() {
+			profile = "GuiTextProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "244 8";
+			extent = "29 18";
+			minExtent = "8 8";
+			visible = "1";
+			setFirstResponder = "0";
+			modal = "1";
+			helpTag = "0";
+			text = "Mode:";
+		};
+		new GuiControl() {
+			profile = "GuiContentProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "274 6";
+			extent = "58 18";
+			minExtent = "8 8";
+			visible = "1";
+			setFirstResponder = "0";
+			modal = "1";
+			helpTag = "0";
+
+		   new GuiButtonCtrl(WEModeText) {
+			   profile = "GuiButtonProfile";
+			   horizSizing = "right";
+			   vertSizing = "bottom";
+			   position = "0 0";
+			   extent = "58 18";
+			   minExtent = "8 8";
+			   visible = "1";
+			   setFirstResponder = "0";
+			   modal = "1";
+			   helpTag = "0";
+            command = "nextMode();";
+		   };
+		};
+		new GuiControl() {
+			profile = "GuiContentProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "49 6";
+			extent = "188 18";
+			minExtent = "8 8";
+			visible = "1";
+			setFirstResponder = "0";
+			modal = "1";
+			helpTag = "0";
+
+		   new GuiTextCtrl(WEMissionNameText) {
+			   profile = "GuiTextProfile";
+			   horizSizing = "right";
+			   vertSizing = "bottom";
+			   position = "3 2";
+			   extent = "8 18";
+			   minExtent = "8 8";
+			   visible = "1";
+			   setFirstResponder = "0";
+			   modal = "1";
+			   helpTag = "0";
+		   };
+		};
+	};
+};
+//--- OBJECT WRITE END ---
+
+//------------------------------------------------------------------------------
+// Functions
+//------------------------------------------------------------------------------
+
+function WorldEditorStatusbarDlg::init(%this)
+{
+   %this.update();
+}
+
+function WorldEditorStatusBarDlg::update(%this)
+{
+   if($MissionName $= "")
+      WEMissionNameText.setValue("<none>");
+   else
+      WEMissionNameText.setValue($MissionName);
+   
+   if($aiEdit)
+      WEModeText.setValue(aiEdit.getMode());
+   else
+      WEModeText.setValue(wEditor.getMode());
+}
+
+function nextMode()
+{
+   if($aiEdit)
+      aiEdit.nextMode();
+   else
+      wEditor.nextMode();
+}

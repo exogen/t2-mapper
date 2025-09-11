@@ -1,0 +1,153 @@
+//--- OBJECT WRITE BEGIN ---
+new GuiControl(TribeAdminMemberDlg) {
+	profile = "DlgBackProfile";
+	horizSizing = "width";
+	vertSizing = "height";
+	position = "0 0";
+	extent = "640 480";
+	minExtent = "8 8";
+	visible = "1";
+	helpTag = "0";
+		vTribe = "T2 ADMINISTRATION";
+		vPerm = "4";
+		vPlayer = "QIX";
+
+	new ShellPaneCtrl() {
+		profile = "ShellDlgPaneProfile";
+		horizSizing = "center";
+		vertSizing = "center";
+		position = "167 110";
+		extent = "306 260";
+		minExtent = "48 92";
+		visible = "1";
+		helpTag = "0";
+		text = "MEMBER PROFILE";
+		maxLength = "255";
+		noTitleBar = "0";
+
+		new ShellTextEditCtrl(E_Title) {
+			profile = "NewTextEditProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "42 45";
+			extent = "221 38";
+			minExtent = "32 38";
+			visible = "1";
+			helpTag = "0";
+			maxLength = "16";
+			historySize = "0";
+			password = "0";
+			glowOffset = "9 9";
+		};
+		new GuiTextCtrl(t_whois) {
+			profile = "ShellTopicTextProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "53 34";
+			extent = "197 22";
+			minExtent = "8 8";
+			visible = "1";
+			helpTag = "0";
+			text = "WARRIOR TITLE";
+			maxLength = "255";
+		};
+		new ShellRadioButton(tb_sysAdmin) {
+			profile = "ShellRadioProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "47 83";
+			extent = "205 30";
+			minExtent = "26 27";
+			visible = "1";
+			command = "TAM_onAction(4);";
+			helpTag = "0";
+			text = " RANK 4: Tribe Admin 1";
+			maxLength = "255";
+			groupNum = "1";
+		};
+		new ShellRadioButton(tb_tribeController) {
+			profile = "ShellRadioProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "47 103";
+			extent = "205 30";
+			minExtent = "26 27";
+			visible = "1";
+			command = "TAM_onAction(3);";
+			helpTag = "0";
+			text = " RANK 3: Tribe Admin 2";
+			maxLength = "255";
+			groupNum = "1";
+		};
+		new ShellRadioButton(tb_tribeAdmin) {
+			profile = "ShellRadioProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "47 123";
+			extent = "205 30";
+			minExtent = "26 27";
+			visible = "1";
+			command = "TAM_onAction(2);";
+			helpTag = "0";
+			text = " RANK 2: Tribe Admin 3";
+			maxLength = "255";
+			groupNum = "1";
+		};
+		new ShellRadioButton(tb_tribeMember) {
+			profile = "ShellRadioProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "47 143";
+			extent = "205 30";
+			minExtent = "26 27";
+			visible = "1";
+			command = "TAM_onAction(1);";
+			helpTag = "0";
+			text = " RANK 1: Tribe Member";
+			maxLength = "255";
+			groupNum = "1";
+		};
+		new ShellRadioButton(tb_onProbation) {
+			profile = "ShellRadioProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "47 163";
+			extent = "205 30";
+			minExtent = "26 27";
+			visible = "1";
+			command = "TAM_onAction(0);";
+			helpTag = "0";
+			text = "RANK 0: On Probation";
+			maxLength = "255";
+			groupNum = "1";
+		};
+		new ShellBitmapButton(b_Cancel) {
+			profile = "ShellButtonProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "43 195";
+			extent = "115 38";
+			minExtent = "32 38";
+			visible = "1";
+			command = "Canvas.popDialog(TribeAdminMemberDlg);";
+			accelerator = "escape";
+			helpTag = "0";
+			text = "CANCEL";
+			simpleStyle = "0";
+		};
+		new ShellBitmapButton(b_Update) {
+			profile = "ShellButtonProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "141 195";
+			extent = "121 38";
+			minExtent = "32 38";
+			visible = "1";
+			command = "SetMemberProfile();";
+			helpTag = "0";
+			text = "UPDATE";
+			simpleStyle = "0";
+		};
+	};
+};
+//--- OBJECT WRITE END ---

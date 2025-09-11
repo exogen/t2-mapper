@@ -1,0 +1,157 @@
+//--- OBJECT WRITE BEGIN ---
+new GuiControl(TerrainEditorTextureSelectGui) {
+	profile = "GuiDialogProfile";
+	horizSizing = "right";
+	vertSizing = "bottom";
+	position = "0 0";
+	extent = "640 480";
+	minExtent = "8 8";
+	visible = "1";
+	setFirstResponder = "0";
+	modal = "1";
+	helpTag = "0";
+
+	new GuiWindowCtrl() {
+		profile = "GuiWindowProfile";
+		horizSizing = "right";
+		vertSizing = "bottom";
+		position = "134 84";
+		extent = "217 286";
+		minExtent = "8 8";
+		visible = "1";
+		setFirstResponder = "0";
+		modal = "1";
+		helpTag = "0";
+		text = "Texture group selection";
+		resizeWidth = "0";
+		resizeHeight = "0";
+		canMove = "1";
+		canClose = "1";
+		canMinimize = "0";
+		canMaximize = "0";
+		minSize = "50 50";
+		closeCommand = "Canvas.popDialog(TerrainEditorTextureSelectGui);";
+
+		new GuiControl() {
+			profile = "GuiButtonProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "8 50";
+			extent = "200 200";
+			minExtent = "8 8";
+			visible = "1";
+			setFirstResponder = "0";
+			modal = "1";
+			helpTag = "0";
+
+			new GuiBitmapCtrl(TerrainTextureBitmapCtrl) {
+				profile = "GuiButtonProfile";
+				horizSizing = "right";
+				vertSizing = "bottom";
+				position = "0 0";
+				extent = "200 200";
+				minExtent = "8 8";
+				visible = "1";
+				setFirstResponder = "0";
+				modal = "1";
+				helpTag = "0";
+				wrap = "0";
+			};
+		};
+		new GuiButtonCtrl() {
+			profile = "GuiButtonProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "113 257";
+			extent = "80 20";
+			minExtent = "8 8";
+			visible = "1";
+			setFirstResponder = "0";
+			modal = "1";
+			command = "setGroupIndex(TextureSelectionSlider.getValue());Canvas.popDialog(TerrainEditorTextureSelectGui);";
+			helpTag = "0";
+			text = "Ok";
+		};
+		new GuiButtonCtrl() {
+			profile = "GuiButtonProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "23 257";
+			extent = "80 20";
+			minExtent = "8 8";
+			visible = "1";
+			setFirstResponder = "0";
+			modal = "1";
+			command = "Canvas.popDialog(TerrainEditorTextureSelectGui);";
+			helpTag = "0";
+			text = "Cancel";
+		};
+		new GuiSliderCtrl(TextureSelectionSlider) {
+			profile = "GuiDefaultProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "8 24";
+			extent = "200 20";
+			minExtent = "8 8";
+			visible = "1";
+			setFirstResponder = "0";
+			modal = "1";
+			variable = "value";
+			command = "setTextureBitmap($ThisControl.getValue());";
+			helpTag = "0";
+			range = "0.000000 1.000000";
+			ticks = "0";
+			value = "0";
+				tab = "true";
+		};
+	};
+};
+//--- OBJECT WRITE END ---
+
+function TerrainTextureBitmapCtrl::onAction(%this)
+{
+   // dummy to remove console spam
+}
+
+function TerrainEditorTextureSelectGui::onWake(%this)
+{
+   %numTextures = tEditor.getNumTextures();
+   if(%numTextures == 0)
+      return;
+
+   if(tEditor.materialGroup < 0 || tEditor.materialGroup > %numTextures)
+      tEditor.materialGroup = 0;
+
+   TextureSelectionSlider.ticks = %numTextures - 1;
+   TextureSelectionSlider.range = "0 " @ %numTextures;
+   TextureSelectionSlider.setValue(tEditor.materialGroup + 0.5);
+
+   TerrainTextureBitmapCtrl.setBitmap(tEditor.getTextureName(tEditor.materialGroup));
+}
+
+function setGroupIndex(%val)
+{
+   %numTextures = tEditor.getNumTextures();
+   if(%val < 0 || (%val > %numTextures))
+      return;
+
+   %group = mFloor(%val);
+   if(%group == %numTextures)
+      %group--;
+
+   tEditor.materialGroup = %group;   
+}
+
+function setTextureBitmap(%val)
+{
+   %numTextures = tEditor.getNumTextures();
+   if(%val < 0 || (%val > %numTextures))
+      return;
+      
+   %idx = mFloor(%val);
+   if(%idx == %numTextures)
+      %idx--;
+
+   TerrainTextureBitmapCtrl.setBitmap(tEditor.getTextureName(%idx));
+}
+

@@ -1,0 +1,177 @@
+//--- OBJECT WRITE BEGIN ---
+new GuiControl(EditChatCommandDlg) {
+	profile = "DlgBackProfile";
+	horizSizing = "width";
+	vertSizing = "height";
+	position = "0 0";
+	extent = "640 480";
+	minExtent = "8 8";
+	visible = "1";
+	helpTag = "0";
+
+	new ShellPaneCtrl() {
+		profile = "ShellDlgPaneProfile";
+		horizSizing = "center";
+		vertSizing = "center";
+		position = "150 110";
+		extent = "340 260";
+		minExtent = "48 92";
+		visible = "1";
+		helpTag = "0";
+		text = "EDIT ITEM";
+		noTitleBar = "0";
+
+		new GuiTextCtrl() {
+			profile = "ShellTextRightProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "21 42";
+			extent = "80 22";
+			minExtent = "8 8";
+			visible = "1";
+			helpTag = "0";
+			text = "Key:";
+		};
+		new ShellTextEditCtrl() {
+			profile = "NewTextEditProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "97 34";
+			extent = "49 38";
+			minExtent = "32 38";
+			visible = "1";
+			variable = "$ECI::key";
+			helpTag = "0";
+			historySize = "0";
+			maxLength = "1";
+			password = "0";
+			glowOffset = "9 9";
+		};
+		new GuiTextCtrl() {
+			profile = "ShellTextRightProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "21 80";
+			extent = "80 22";
+			minExtent = "8 8";
+			visible = "1";
+			helpTag = "0";
+			text = "Menu text:";
+		};
+		new ShellTextEditCtrl() {
+			profile = "NewTextEditProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "97 72";
+			extent = "208 38";
+			minExtent = "32 38";
+			visible = "1";
+			variable = "$ECI::text";
+			helpTag = "0";
+			historySize = "0";
+			maxLength = "25";
+			password = "0";
+			glowOffset = "9 9";
+		};
+		new GuiTextCtrl() {
+			profile = "ShellTextRightProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "21 119";
+			extent = "80 22";
+			minExtent = "8 8";
+			visible = "1";
+			helpTag = "0";
+			text = "Command:";
+		};
+		new ShellPopupMenu(EditChatCommandList) {
+			profile = "ShellPopupProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "97 110";
+			extent = "209 36";
+			minExtent = "49 36";
+			visible = "1";
+			helpTag = "0";
+			maxPopupHeight = "200";
+			buttonBitmap = "gui/shll_pulldown";
+			rolloverBarBitmap = "gui/shll_pulldownbar_rol";
+			selectedBarBitmap = "gui/shll_pulldownbar_act";
+			noButtonStyle = "0";
+		};
+		new GuiTextCtrl() {
+			profile = "ShellTextRightProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "21 158";
+			extent = "80 22";
+			minExtent = "8 8";
+			visible = "1";
+			helpTag = "0";
+			text = "Message:";
+		};
+		new ShellFieldCtrl() {
+			profile = "ShellFieldProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "106 159";
+			extent = "191 36";
+			minExtent = "16 18";
+			visible = "1";
+			helpTag = "0";
+
+			new GuiMLTextCtrl(EditChatCommandMessage) {
+				profile = "ShellAltTextProfile";
+				horizSizing = "right";
+				vertSizing = "bottom";
+				position = "5 1";
+				extent = "187 16";
+				minExtent = "8 8";
+				visible = "1";
+				helpTag = "0";
+				lineSpacing = "2";
+				allowColorChars = "0";
+			};
+		};
+		new ShellBitmapButton(ChatCommandTestBtn) {
+			profile = "SoundTestButtonProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "80 175";
+			extent = "24 24";
+			minExtent = "24 24";
+			visible = "1";
+			command = "testChatCommand($ECI::command);";
+			helpTag = "0";
+			simpleStyle = "1";
+		};
+		new ShellBitmapButton() {
+			profile = "ShellButtonProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "180 205";
+			extent = "128 38";
+			minExtent = "32 38";
+			visible = "1";
+			command = "eval($ECI::OKCommand);";
+			helpTag = "0";
+			text = "OK";
+			simpleStyle = "0";
+		};
+		new ShellBitmapButton() {
+			profile = "ShellButtonProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "32 205";
+			extent = "128 38";
+			minExtent = "32 38";
+			visible = "1";
+			command = "Canvas.popDialog( EditChatCommandDlg );";
+			accelerator = "escape";
+			helpTag = "0";
+			text = "CANCEL";
+			simpleStyle = "0";
+		};
+	};
+};
+//--- OBJECT WRITE END ---

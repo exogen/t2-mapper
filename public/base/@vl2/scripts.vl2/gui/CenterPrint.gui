@@ -1,0 +1,26 @@
+//--- OBJECT WRITE BEGIN ---
+new GuiControl(CenterPrintDlg) {
+	profile = "GuiModelessDialogProfile";
+	horizSizing = "width";
+	vertSizing = "height";
+	position = "0 0";
+	extent = "638 480";
+	minExtent = "8 8";
+	visible = "1";
+	helpTag = "0";
+
+	new GuiMLTextCtrl(CenterPrintText) {
+		profile = "ShellProgressBarTextProfile";
+		horizSizing = "center";
+		vertSizing = "center";
+		position = "300 240";
+		extent = "640 128";
+		minExtent = "8 8";
+		visible = "1";
+		helpTag = "0";
+		lineSpacing = "6";
+	};
+};
+
+
+//--- OBJECT WRITE END ---

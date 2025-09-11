@@ -1,0 +1,81 @@
+//--- OBJECT WRITE BEGIN ---
+new GuiControl(EnterIPDlg) {
+	profile = "DlgBackProfile";
+	horizSizing = "right";
+	vertSizing = "bottom";
+	position = "0 0";
+	extent = "640 480";
+	minExtent = "8 8";
+	visible = "1";
+	hideCursor = "0";
+	bypassHideCursor = "0";
+	helpTag = "0";
+
+	new ShellPaneCtrl() {
+		profile = "ShellDlgPaneProfile";
+		horizSizing = "center";
+		vertSizing = "center";
+		position = "155 175";
+		extent = "330 130";
+		minExtent = "48 92";
+		visible = "1";
+		hideCursor = "0";
+		bypassHideCursor = "0";
+		helpTag = "0";
+		text = "ENTER IP ADDRESS";
+		maxLength = "255";
+		noTitleBar = "0";
+
+		new ShellTextEditCtrl(IPEntry) {
+			profile = "NewTextEditProfile";
+			horizSizing = "center";
+			vertSizing = "bottom";
+			position = "28 35";
+			extent = "273 38";
+			minExtent = "32 38";
+			visible = "1";
+			hideCursor = "0";
+			bypassHideCursor = "0";
+			altCommand = "EnterIPDlg.onDone();";
+			helpTag = "0";
+			maxLength = "24";
+			historySize = "0";
+			password = "0";
+			tabComplete = "0";
+			deniedSound = "InputDeniedSound";
+			glowOffset = "9 9";
+		};
+		new ShellBitmapButton() {
+			profile = "ShellButtonProfile";
+			horizSizing = "right";
+			vertSizing = "top";
+			position = "43 75";
+			extent = "100 38";
+			minExtent = "32 38";
+			visible = "1";
+			hideCursor = "0";
+			bypassHideCursor = "0";
+			command = "Canvas.popDialog( EnterIPDlg );";
+			accelerator = "escape";
+			helpTag = "0";
+			text = "CANCEL";
+			simpleStyle = "0";
+		};
+		new ShellBitmapButton() {
+			profile = "ShellButtonProfile";
+			horizSizing = "right";
+			vertSizing = "top";
+			position = "187 75";
+			extent = "100 38";
+			minExtent = "32 38";
+			visible = "1";
+			hideCursor = "0";
+			bypassHideCursor = "0";
+			command = "EnterIPDlg.onDone();";
+			helpTag = "0";
+			text = "DONE";
+			simpleStyle = "0";
+		};
+	};
+};
+//--- OBJECT WRITE END ---

@@ -1,0 +1,111 @@
+//--- OBJECT WRITE BEGIN ---
+new GuiControl(TestGui) {
+	profile = "GuiContentProfile";
+	horizSizing = "right";
+	vertSizing = "bottom";
+	position = "0 0";
+	extent = "640 480";
+	minExtent = "8 8";
+	visible = "1";
+	setFirstResponder = "0";
+	modal = "1";
+	helpTag = "0";
+
+	new GuiControl() {
+		profile = "GuiDefaultProfile";
+		horizSizing = "right";
+		vertSizing = "top";
+		position = "86 239";
+		extent = "171 194";
+		minExtent = "8 8";
+		visible = "1";
+		setFirstResponder = "1";
+		modal = "1";
+		helpTag = "0";
+
+		new GuiTextCtrl() {
+			profile = "GuiBigTextProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "14 13";
+			extent = "53 40";
+			minExtent = "8 8";
+			visible = "1";
+			setFirstResponder = "1";
+			modal = "1";
+			helpTag = "0";
+			text = "Test";
+		};
+		new GuiButtonCtrl() {
+			profile = "GuiButtonProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "84 85";
+			extent = "80 20";
+			minExtent = "8 8";
+			visible = "1";
+			setFirstResponder = "0";
+			modal = "1";
+			command = "Canvas.setContent(GuiTestGui);";
+			helpTag = "0";
+			text = "GUI Test";
+		};
+		new GuiButtonCtrl() {
+			profile = "GuiButtonProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "84 59";
+			extent = "80 20";
+			minExtent = "8 8";
+			visible = "1";
+			setFirstResponder = "0";
+			modal = "1";
+			command = "startShow();";
+			helpTag = "0";
+			text = "TS Show";
+		};
+		new GuiButtonCtrl() {
+			profile = "GuiButtonProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "70 7";
+			extent = "94 20";
+			minExtent = "8 8";
+			visible = "1";
+			setFirstResponder = "1";
+			modal = "1";
+			command = "Canvas.setContent(LaunchGui);";
+			helpTag = "0";
+			text = "Back to Launch";
+		};
+		new GuiButtonCtrl() {
+			profile = "GuiButtonProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "32 163";
+			extent = "100 20";
+			minExtent = "8 8";
+			visible = "1";
+			setFirstResponder = "0";
+			modal = "1";
+			command = "Canvas.pushDialog(NewMissionGui, 99);";
+			helpTag = "0";
+			text = "Create Mission";
+		};
+		new GuiButtonCtrl() {
+			profile = "GuiButtonProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "32 137";
+			extent = "100 20";
+			minExtent = "8 8";
+			visible = "1";
+			setFirstResponder = "0";
+			modal = "1";
+			command = "Canvas.setContent(EditChatMenuGui);";
+			helpTag = "0";
+			text = "Edit Chat Menu";
+		};
+	};
+};
+//--- OBJECT WRITE END ---

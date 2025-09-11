@@ -1,0 +1,143 @@
+//--- OBJECT WRITE BEGIN ---
+new GuiControl(loadFileDialog) {
+	profile = "GuiDefaultProfile";
+	horizSizing = "right";
+	vertSizing = "bottom";
+	position = "0 0";
+	extent = "640 480";
+	minExtent = "8 8";
+	visible = "True";
+	setFirstResponder = "True";
+	modal = "True";
+	helpTag = "0";
+
+	new GuiWindowCtrl() {
+		profile = "GuiWindowProfile";
+		horizSizing = "center";
+		vertSizing = "center";
+		position = "205 148";
+		extent = "360 242";
+		minExtent = "8 8";
+		visible = "True";
+		setFirstResponder = "False";
+		modal = "True";
+		helpTag = "0";
+		text = "LOAD FILE";
+		resizeWidth = "True";
+		resizeHeight = "True";
+		canMove = "True";
+		canClose = "True";
+		canMinimize = "True";
+		canMaximize = "True";
+		minSize = "50 50";
+		closeCommand = "Canvas.popDialog(loadFileDialog);";
+
+		new GuiScrollCtrl() {
+			profile = "GuiScrollCtrlProfile";
+			horizSizing = "width";
+			vertSizing = "height";
+			position = "4 24";
+			extent = "281 212";
+			minExtent = "8 8";
+			visible = "True";
+			setFirstResponder = "False";
+			modal = "True";
+			helpTag = "0";
+			willFirstRespond = "True";
+			hScrollBar = "dynamic";
+			vScrollBar = "alwaysOn";
+			constantThumbHeight = "False";
+
+			new GuiScrollContentCtrl() {
+				profile = "GuiScrollContentProfile";
+				horizSizing = "right";
+				vertSizing = "bottom";
+				position = "1 1";
+				extent = "261 210";
+				minExtent = "8 8";
+				visible = "True";
+				setFirstResponder = "False";
+				modal = "True";
+				helpTag = "0";
+
+				new GuiTextListCtrl(loadFileList) {
+					profile = "GuiTextArrayProfile";
+					horizSizing = "right";
+					vertSizing = "bottom";
+					position = "0 0";
+					extent = "64 64";
+					minExtent = "8 8";
+					visible = "True";
+					setFirstResponder = "False";
+					modal = "True";
+					altCommand = "eval($loadFileCommand); Canvas.popDialog(loadFileDialog);";
+					helpTag = "0";
+					enumerate = "False";
+					resizeCell = "True";
+					columns = "0";
+						noDuplicates = "false";
+				};
+			};
+		};
+		new GuiButtonCtrl() {
+			profile = "GuiButtonProfile";
+			horizSizing = "left";
+			vertSizing = "top";
+			position = "291 181";
+			extent = "60 20";
+			minExtent = "8 8";
+			visible = "True";
+			setFirstResponder = "False";
+			modal = "True";
+			command = "eval($loadFileCommand); Canvas.popDialog(loadFileDialog);";
+			helpTag = "0";
+			text = "LOAD";
+		};
+		new GuiButtonCtrl() {
+			profile = "GuiButtonProfile";
+			horizSizing = "left";
+			vertSizing = "top";
+			position = "291 205";
+			extent = "60 20";
+			minExtent = "8 8";
+			visible = "True";
+			setFirstResponder = "False";
+			modal = "True";
+			command = "Canvas.popDialog(loadFileDialog);";
+			helpTag = "0";
+			text = "CANCEL";
+		};
+	};
+};
+//--- OBJECT WRITE END ---
+
+
+function fillFileList(%filespec, %ctrl, %hidePath)
+{
+   %ctrl.clear();
+   %i = 0;
+   %f = 0;
+   for(%fld = getField(%filespec, 0); %fld !$= ""; %fld = getField(%filespec, %f++))
+   {
+      for(%file = findFirstFile(%fld); %file !$= ""; %file = findNextFile(%fld))
+      {  
+         if(%hidePath)
+            %ctrl.addRow(%i++, fileBase(%file) TAB %file);
+         else
+            %ctrl.addRow(%i++, %file TAB %file);
+      }
+   }
+   %ctrl.sort(0);
+}
+
+//------------------------------------------------------------------------------
+// ex: getLoadFilename("stuff\*.*", loadStuff);
+//     -- calls 'loadStuff(%filename)' on dblclick or ok
+//------------------------------------------------------------------------------
+function getLoadFilename(%filespec, %callback, %hidePath)
+{  
+   $loadFileCommand = "if(loadFileList.getSelectedId() >= 0)" @ %callback @ "(getField(loadFileList.getValue(), 1));";
+   Canvas.pushDialog(loadFileDialog, 99);
+   fillFileList(%filespec, loadFileList, %hidePath);
+}
+

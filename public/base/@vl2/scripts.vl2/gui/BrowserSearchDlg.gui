@@ -1,0 +1,147 @@
+//--- OBJECT WRITE BEGIN ---
+new GuiControl(BrowserSearchDlg) {
+	profile = "DlgBackProfile";
+	horizSizing = "width";
+	vertSizing = "height";
+	position = "0 0";
+	extent = "640 480";
+	minExtent = "8 8";
+	visible = "1";
+	helpTag = "0";
+
+	new ShellPaneCtrl(BrowserSearchPane) {
+		profile = "ShellDlgPaneProfile";
+		horizSizing = "center";
+		vertSizing = "center";
+		position = "120 61";
+		extent = "399 358";
+		minExtent = "48 92";
+		visible = "1";
+		helpTag = "0";
+		noTitleBar = "0";
+
+		new GuiTextCtrl() {
+			profile = "ShellTextProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "97 46";
+			extent = "44 16";
+			minExtent = "8 8";
+			visible = "1";
+			helpTag = "0";
+			text = "Search:";
+		};
+		new ShellScrollCtrl() {
+			profile = "NewScrollCtrlProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "84 93";
+			extent = "226 187";
+			minExtent = "24 52";
+			visible = "1";
+			helpTag = "0";
+			willFirstRespond = "1";
+			hScrollBar = "alwaysOff";
+			vScrollBar = "alwaysOn";
+			constantThumbHeight = "0";
+			defaultLineHeight = "15";
+			childMargin = "0 3";
+			fieldBase = "gui/shll_field";
+
+			new GuiScrollContentCtrl() {
+				profile = "GuiDefaultProfile";
+				horizSizing = "right";
+				vertSizing = "bottom";
+				position = "4 7";
+				extent = "202 173";
+				minExtent = "8 8";
+				visible = "1";
+				helpTag = "0";
+
+				new ShellTextList(BrowserSearchMatchList) {
+					profile = "ShellTextArrayProfile";
+					horizSizing = "right";
+					vertSizing = "bottom";
+					position = "0 0";
+					extent = "202 8";
+					minExtent = "8 8";
+					visible = "1";
+					altCommand = "BrowserSearchDone();";
+					helpTag = "0";
+					enumerate = "0";
+					resizeCell = "1";
+					columns = "0";
+					fitParentWidth = "1";
+				};
+			};
+		};
+		new ShellBitmapButton(BSearchOKBtn) {
+			profile = "ShellButtonProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "201 288";
+			extent = "115 38";
+			minExtent = "32 38";
+			visible = "1";
+			command = "BrowserSearchDone();";
+			helpTag = "0";
+			text = "OK";
+			simpleStyle = "0";
+		};
+		new GuiTextCtrl() {
+			profile = "ShellTextProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "172 80";
+			extent = "47 16";
+			minExtent = "8 8";
+			visible = "1";
+			helpTag = "0";
+			text = "Matches:";
+		};
+		new ShellTextEditCtrl(Search_EditField) {
+			profile = "NewTextEditProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "139 33";
+			extent = "133 38";
+			minExtent = "32 38";
+			visible = "1";
+			variable = "$BrowserSearchField";
+			altCommand = "BrowserStartSearch();";
+			helpTag = "0";
+			historySize = "0";
+			maxLength = "255";
+			password = "0";
+			glowOffset = "9 9";
+		};
+		new ShellBitmapButton() {
+			profile = "ShellButtonProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "80 288";
+			extent = "116 38";
+			minExtent = "32 38";
+			visible = "1";
+			command = "Canvas.popDialog(BrowserSearchDlg);";
+         accelerator = "escape";
+			helpTag = "0";
+			text = "CANCEL";
+			simpleStyle = "0";
+		};
+		new ShellBitmapButton() {
+			profile = "ShellButtonProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "262 33";
+			extent = "51 38";
+			minExtent = "32 38";
+			visible = "1";
+			command = "BrowserStartSearch();";
+			helpTag = "0";
+			text = "GO";
+			simpleStyle = "0";
+		};
+	};
+};
+//--- OBJECT WRITE END ---

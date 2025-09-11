@@ -1,0 +1,75 @@
+//--- OBJECT WRITE BEGIN ---
+new GuiChunkedBitmapCtrl(CreditsGui) {
+	profile = "GuiContentProfile";
+	horizSizing = "right";
+	vertSizing = "bottom";
+	position = "0 0";
+	extent = "640 480";
+	minExtent = "8 8";
+	visible = "1";
+	variable = "$ShellBackground";
+	helpTag = "0";
+	useVariable = "1";
+	hideCursor = "1";
+	qLineCount = "0";
+
+	new ShellPaneCtrl() {
+		profile = "ShellPaneProfile";
+		horizSizing = "width";
+		vertSizing = "height";
+		position = "28 13";
+		extent = "584 459";
+		minExtent = "48 92";
+		visible = "1";
+		helpTag = "0";
+		noTitleBar = "1";
+
+		new GuiControl() {
+			profile = "GuiDefaultProfile";
+			horizSizing = "relative";
+			vertSizing = "height";
+			position = "26 34";
+			extent = "312 402";
+			minExtent = "16 18";
+			visible = "1";
+			helpTag = "0";
+
+			new GuiMLTextCtrl(CREDITS_Text) {
+				profile = "ShellLoadTextProfile";
+				horizSizing = "width";
+				vertSizing = "bottom";
+				position = "0 0";
+				extent = "312 1";
+				minExtent = "8 8";
+				visible = "1";
+				helpTag = "0";
+				lineSpacing = "2";
+				allowColorChars = "0";
+			};
+		};
+		new GuiControl() {
+			profile = "ShellLoadFrameProfile";
+			horizSizing = "relative";
+			vertSizing = "relative";
+			position = "349 8";
+			extent = "212 428";
+			minExtent = "8 8";
+			visible = "1";
+			helpTag = "0";
+
+			new GuiChunkedBitmapCtrl(CREDITS_Pic) {
+				profile = "GuiDefaultProfile";
+				horizSizing = "width";
+				vertSizing = "height";
+				position = "1 1";
+				extent = "210 426";
+				minExtent = "8 8";
+				visible = "1";
+				helpTag = "0";
+				bitmap = "gui/loading";
+				useVariable = "0";
+			};
+		};
+	};
+};
+//--- OBJECT WRITE END ---

@@ -1,0 +1,108 @@
+//--- OBJECT WRITE BEGIN ---
+
+new GuiScrollCtrl(EditorToolTreeViewGui)
+{
+   profile = "GuiScrollCtrlProfile";
+   horizSizing = "width";
+   vertSizing = "height";
+   vScrollBar = "alwaysOn";
+   hScrollBar = "dynamic";
+   position = "0 0";
+   extent = "200 400";
+   
+   new GuiScrollContentCtrl()
+   {
+      profile = "GuiScrollContentProfile";
+
+//      new GuiTreeViewCtrl(EditorTree)
+      new GuiTreeView(EditorTree)
+      {
+         profile = "GuiTreeViewProfile";
+         position = "0 0";
+         extent = "300 300";
+         horizSizing = "width";
+         allowMultipleSelections = "true";
+         recurseSets = "true";
+      };
+   };
+};
+
+//--- OBJECT WRITE END ---
+
+//------------------------------------------------------------------------------
+// Functions
+//------------------------------------------------------------------------------
+
+function EditorTree::init(%this)
+{
+   %this.open(MissionGroup);
+
+   // context menu
+   new GuiControl(ETContextPopupDlg)
+   {
+      profile = "GuiModelessDialogProfile";
+	   horizSizing = "width";
+	   vertSizing = "height";
+	   position = "0 0";
+	   extent = "640 480";
+	   minExtent = "8 8";
+	   visible = "1";
+	   setFirstResponder = "0";
+	   modal = "1";
+      
+      new GuiPopUpMenuCtrl(ETContextPopup)
+      {
+         profile = "GuiButtonProfile";
+         position = "0 0";
+         extent = "0 0";
+         minExtent = "0 0";
+         maxPopupHeight = "200";
+         command = "canvas.popDialog(ETContextPopupDlg);";
+      };
+   };
+   ETContextPopup.setVisible(false);
+}
+
+function EditorTree::onInspect(%this, %obj)
+{
+   Inspector.inspect(%obj);
+   InspectorNameEdit.setValue(%obj.getName());
+}
+
+function EditorTree::onSelect(%this, %obj)
+{
+   if($AIEdit)   
+      aiEdit.selectObject(%obj);
+   else
+      wEditor.selectObject(%obj);
+
+}
+
+function EditorTree::onUnselect(%this, %obj)
+{
+   if($AIEdit)
+      aiEdit.unselectObject(%obj);
+   else
+      wEditor.unselectObject(%obj);
+}
+
+function EditorTree::onContextMenu(%this, %mousePos, %obj)
+{
+   ETContextPopup.position = %mousePos;
+   ETContextPopup.clear();
+   ETContextPopup.add("Delete", 0);
+
+   canvas.pushDialog(ETContextPopupDlg);
+   ETContextPopup.forceOnAction();
+
+   %this.contextObj = %obj;
+}
+
+function ETContextPopup::onSelect(%this, %index, %value)
+{
+   switch(%index)
+   {
+      case 0:
+         EditorTree.contextObj.delete();
+   }
+}

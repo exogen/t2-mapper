@@ -1,0 +1,187 @@
+//--- OBJECT WRITE BEGIN ---
+new GuiControl(TerrainEditorFrameSetDlg) {
+	profile = "GuiModelessDialogProfile";
+	horizSizing = "right";
+	vertSizing = "bottom";
+	position = "0 0";
+	extent = "640 480";
+	minExtent = "8 8";
+	visible = "1";
+	setFirstResponder = "0";
+	modal = "0";
+	helpTag = "0";
+
+	new GuiFrameSetCtrl(TerrainEditorFrameSet) {
+		profile = "EditorContentProfile";
+		horizSizing = "width";
+		vertSizing = "height";
+		position = "90 60";
+		extent = "550 390";
+		minExtent = "8 8";
+		visible = "1";
+		setFirstResponder = "0";
+		modal = "1";
+		helpTag = "0";
+		columns = "0 420";
+		rows = "0";
+		borderWidth = "4";
+		borderColor = "206 206 206 206";
+		borderEnable = "dynamic";
+		borderMovable = "dynamic";
+		autoBalance = "0";
+
+		new GuiControl(TerrainEditorFrame) {
+			profile = "EditTSControlProfile";
+			horizSizing = "width";
+			vertSizing = "height";
+			position = "0 0";
+			extent = "420 390";
+			minExtent = "8 8";
+			visible = "1";
+			setFirstResponder = "0";
+			modal = "1";
+			helpTag = "0";
+   		borderWidth = "2";
+		};
+		new GuiFrameSetCtrl(TerrainEditorToolFrameSet) {
+			profile = "EditorContentProfile";
+			horizSizing = "width";
+			vertSizing = "height";
+			position = "420 0";
+			extent = "130 390";
+			minExtent = "8 8";
+			visible = "1";
+			setFirstResponder = "0";
+			modal = "1";
+			helpTag = "0";
+			columns = "0";
+			rows = "0";
+			borderWidth = "2";
+			borderColor = "206 206 206 206";
+			borderEnable = "dynamic";
+			borderMovable = "dynamic";
+			autoBalance = "0";
+		};
+	};
+};
+//--- OBJECT WRITE END ---
+
+//------------------------------------------------------------------------------
+// Functions
+//------------------------------------------------------------------------------
+
+function TerrainEditorFrameSetDlg::getPrefs(%this)
+{
+   %toolPaneOffset = getPrefSetting($Pref::TerrainEditor::toolPaneOffset, 420);
+   %toolCount = getPrefSetting($Pref::TerrainEditor::activeToolCount, 0);
+
+   // set the tools
+   for(%i = 0; %i < %toolCount; %i++)
+   {  
+      if($pref::TerrainEditor::activeTool[%i] $= "")
+         return;
+
+      %this.addTool(getWord($pref::TerrainEditor::activeTool[%i], 0));
+      %offsets[%i] = getWord($pref::TerrainEditor::activeTool[%i], 1);
+   }
+
+   for(%i = 0; %i < %toolCount; %i++)
+      TerrainEditorToolFrameSet.setRowOffset(%i, %offsets[%i]);
+
+   if(%toolCount)
+      TerrainEditorFrameSet.setColumnOffset(1, %toolPaneOffset);
+}
+
+function TerrainEditorFrameSetDlg::setPrefs(%this)
+{
+   //
+   if(TerrainEditorFrameSet.getColumnCount() > 1)
+      $pref::TerrainEditor::toolPaneOffset = TerrainEditorFrameSet.getColumnOffset(1);
+   else
+      $pref::TerrainEditor::toolPaneOffset = %this.toolPaneOffset;
+   $pref::TerrainEditor::activeToolCount = %this.activeToolCount;
+
+   %tools = TerrainEditorToolFrameSet;
+
+   for(%i = 0; %i < %this.activeToolCount; %i++)
+   {
+      %obj = %tools.getObject(%i);
+      %offset = %tools.getRowOffset(%i);
+      %val = %obj.getName() @ " " @ %offset;
+
+      $pref::TerrainEditor::activeTool[%i] = %val;
+   }
+}
+
+function TerrainEditorFrameSetDlg::init(%this)
+{
+   TerrainEditorFrame.add(tEditor);
+   %this.resetFrames();
+   %this.getPrefs();
+}
+
+function TerrainEditorFrameSetDlg::onWake(%this)
+{
+   TerrainEditorMap.push();
+   %this.getPrefs();
+}
+
+function TerrainEditorFrameSetDlg::onSleep(%this)
+{
+   TerrainEditorMap.pop();
+   %this.setPrefs();
+}
+
+function TerrainEditorFrameSetDlg::resetFrames(%this)
+{
+   // update the tool pane
+   %tools = TerrainEditorToolFrameSet;
+   while(%tools.getRowCount() > %tools.getCount())
+      %tools.removeRow();
+   while(%tools.getRowCount() < %tools.getCount())
+      %tools.addRow();
+
+   // update the frame view
+   %frameSet = TerrainEditorFrameSet;
+   if(!%tools.getCount() && (%frameSet.getColumnCount() > 1))
+   {
+      %frameSet.toolPaneOffset = %frameSet.getColumnOffset(1);
+      %frameSet.removeColumn();
+   }
+   if(%tools.getCount() && (%frameSet.getColumnCount() == 1))
+   {
+      %frameSet.addColumn();
+      %frameSet.setColumnOffset(1, %frameSet.toolPaneOffset);
+   }
+
+   if(%tools.getCount())
+      %this.toolPaneOffset = TerrainEditorFrameSet.getColumnOffset(1);
+   %this.activeToolCount = %tools.getCount();
+}
+
+function TerrainEditorFrameSetDlg::addTool(%this, %tool)
+{
+   TerrainEditorToolFrameSet.add(%tool);
+   %this.resetFrames();
+}
+
+function TerrainEditorFrameSetDlg::removeTool(%this, %tool)
+{
+   TerrainEditorToolFrameSet.remove(%tool);
+   %this.resetFrames();
+}
+
+function TerrainEditorFrameSetDlg::update(%this)
+{
+   // check the frame to see if it is visible
+   if(TerrainEditorToolFrameSet.getCount())
+   {
+      %res = getResolution();
+
+      // 90 = width of button bar
+      %width = getWord(%res, 0) - 90;
+
+      if(TerrainEditorFrameSet.getColumnOffset(1) > %width - editor.minToolFrameWidth)
+         TerrainEditorFrameSet.setColumnOffset(1, %width - editor.minToolFrameWidth);
+   }
+}

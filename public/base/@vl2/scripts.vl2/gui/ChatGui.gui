@@ -1,0 +1,419 @@
+//--- OBJECT WRITE BEGIN ---
+new GuiChunkedBitmapCtrl(ChatGui) {
+	profile = "GuiContentProfile";
+	horizSizing = "right";
+	vertSizing = "bottom";
+	position = "0 0";
+	extent = "640 480";
+	minExtent = "8 8";
+	visible = "1";
+	hideCursor = "0";
+	bypassHideCursor = "0";
+	variable = "$ShellBackground";
+	helpTag = "0";
+	useVariable = "1";
+
+	new ShellPaneCtrl(ChatChannelPane) {
+		profile = "ShellPaneProfile";
+		horizSizing = "width";
+		vertSizing = "height";
+		position = "12 13";
+		extent = "620 423";
+		minExtent = "48 92";
+		visible = "1";
+		hideCursor = "0";
+		bypassHideCursor = "0";
+		helpTag = "0";
+		text = "CHAT";
+		longTextBuffer = "0";
+		maxLength = "255";
+		noTitleBar = "0";
+
+		new ShellTabFrame(ChatTabFrame) {
+			profile = "ShellHorzTabFrameProfile";
+			horizSizing = "width";
+			vertSizing = "height";
+			position = "22 54";
+			extent = "576 351";
+			minExtent = "26 254";
+			visible = "1";
+			hideCursor = "0";
+			bypassHideCursor = "0";
+			helpTag = "0";
+			isVertical = "0";
+			useCloseButton = "0";
+			edgeInset = "0";
+
+			new GuiBubbleTextCtrl(ChatChannelTopic) {
+				profile = "ShellTopicTextProfile";
+				horizSizing = "width";
+				vertSizing = "bottom";
+				position = "59 14";
+				extent = "328 22";
+				minExtent = "8 8";
+				visible = "1";
+				hideCursor = "0";
+				bypassHideCursor = "0";
+				helpTag = "0";
+				text = "This is a sample chat topic";
+				longTextBuffer = "0";
+				maxLength = "255";
+			};
+			new GuiTextCtrl() {
+				profile = "ShellTextRightProfile";
+				horizSizing = "right";
+				vertSizing = "bottom";
+				position = "15 14";
+				extent = "38 22";
+				minExtent = "8 8";
+				visible = "1";
+				hideCursor = "0";
+				bypassHideCursor = "0";
+				helpTag = "0";
+				text = "TOPIC:";
+				longTextBuffer = "0";
+				maxLength = "255";
+			};
+			new ShellBitmapButton(ChatOpenPaneBtn) {
+				profile = "ShellButtonProfile";
+				horizSizing = "left";
+				vertSizing = "bottom";
+				position = "444 5";
+				extent = "100 38";
+				minExtent = "32 38";
+				visible = "1";
+				hideCursor = "0";
+				bypassHideCursor = "0";
+				command = "ChatTabView.openNewPane();";
+				helpTag = "0";
+				text = "CHANNELS";
+				simpleStyle = "0";
+			};
+			new ShellBitmapButton(ChatClosePaneBtn) {
+				profile = "ShellButtonProfile";
+				horizSizing = "left";
+				vertSizing = "bottom";
+				position = "529 5";
+				extent = "43 38";
+				minExtent = "32 38";
+				visible = "1";
+				hideCursor = "0";
+				bypassHideCursor = "0";
+				command = "ChatTabView.closeCurrentPane();";
+				accelerator = "x";
+				helpTag = "0";
+				text = "X";
+				simpleStyle = "0";
+			};
+		};
+		new ShellFieldCtrl(WelcomePanel) {
+			profile = "ShellFieldProfile";
+			horizSizing = "width";
+			vertSizing = "height";
+			position = "31 92";
+			extent = "559 315";
+			minExtent = "16 18";
+			visible = "1";
+			hideCursor = "0";
+			bypassHideCursor = "0";
+			helpTag = "0";
+
+			new ShellScrollCtrl() {
+				profile = "NewScrollCtrlProfile";
+				horizSizing = "width";
+				vertSizing = "height";
+				position = "195 5";
+				extent = "360 303";
+				minExtent = "24 52";
+				visible = "1";
+				hideCursor = "0";
+				bypassHideCursor = "0";
+				helpTag = "0";
+				willFirstRespond = "1";
+				hScrollBar = "alwaysOff";
+				vScrollBar = "alwaysOn";
+				constantThumbHeight = "0";
+				defaultLineHeight = "15";
+				childMargin = "0 2";
+				fieldBase = "gui/shll_field";
+
+				new GuiScrollContentCtrl() {
+					profile = "GuiDefaultProfile";
+					horizSizing = "width";
+					vertSizing = "height";
+					position = "4 6";
+					extent = "336 291";
+					minExtent = "8 8";
+					visible = "1";
+					hideCursor = "0";
+					bypassHideCursor = "0";
+					helpTag = "0";
+
+					new GuiMLTextCtrl(WelcomeText) {
+						profile = "NewTextEditProfile";
+						horizSizing = "width";
+						vertSizing = "bottom";
+						position = "0 0";
+						extent = "362 2376";
+						minExtent = "8 8";
+						visible = "1";
+						hideCursor = "0";
+						bypassHideCursor = "0";
+						helpTag = "0";
+						lineSpacing = "2";
+						allowColorChars = "0";
+						maxChars = "-1";
+						deniedSound = "InputDeniedSound";
+					};
+				};
+			};
+			new ShellScrollCtrl() {
+				profile = "NewScrollCtrlProfile";
+				horizSizing = "right";
+				vertSizing = "height";
+				position = "2 21";
+				extent = "195 287";
+				minExtent = "24 52";
+				visible = "1";
+				hideCursor = "0";
+				bypassHideCursor = "0";
+				helpTag = "0";
+				willFirstRespond = "1";
+				hScrollBar = "alwaysOff";
+				vScrollBar = "dynamic";
+				constantThumbHeight = "0";
+				defaultLineHeight = "15";
+				childMargin = "0 3";
+				fieldBase = "gui/shll_field";
+
+				new GuiScrollContentCtrl() {
+					profile = "GuiDefaultProfile";
+					horizSizing = "right";
+					vertSizing = "bottom";
+					position = "4 7";
+					extent = "187 273";
+					minExtent = "8 8";
+					visible = "1";
+					hideCursor = "0";
+					bypassHideCursor = "0";
+					helpTag = "0";
+
+					new ShellTextList(WelcomeHeadlines) {
+						profile = "ShellTextArrayProfile";
+						horizSizing = "right";
+						vertSizing = "bottom";
+						position = "0 0";
+						extent = "187 180";
+						minExtent = "8 8";
+						visible = "1";
+						hideCursor = "0";
+						bypassHideCursor = "0";
+						helpTag = "0";
+						enumerate = "0";
+						resizeCell = "1";
+						columns = "0";
+						fitParentWidth = "1";
+						clipColumnText = "0";
+					};
+				};
+			};
+			new GuiTextCtrl() {
+				profile = "ShellAltTextProfile";
+				horizSizing = "right";
+				vertSizing = "bottom";
+				position = "12 6";
+				extent = "72 20";
+				minExtent = "8 8";
+				visible = "1";
+				hideCursor = "0";
+				bypassHideCursor = "0";
+				helpTag = "0";
+				text = "CONTENTS:";
+				longTextBuffer = "0";
+				maxLength = "255";
+			};
+		};
+		new ShellFieldCtrl(ChatPanel) {
+			profile = "ShellFieldProfile";
+			horizSizing = "width";
+			vertSizing = "height";
+			position = "31 92";
+			extent = "559 315";
+			minExtent = "16 18";
+			visible = "0";
+			hideCursor = "0";
+			bypassHideCursor = "0";
+			helpTag = "0";
+
+			new ShellTextEditCtrl(ChatMessageEntry) {
+				profile = "NewTextEditProfile";
+				horizSizing = "width";
+				vertSizing = "top";
+				position = "-2 279";
+				extent = "392 38";
+				minExtent = "32 38";
+				visible = "1";
+				hideCursor = "0";
+				bypassHideCursor = "0";
+				altCommand = "ChatSendText();";
+				helpTag = "0";
+				longTextBuffer = "0";
+				maxLength = "255";
+				historySize = "0";
+				password = "0";
+				IRCName = "0";
+				tabComplete = "1";
+				deniedSound = "InputDeniedSound";
+				glowOffset = "9 9";
+			};
+			new ShellScrollCtrl(MemberScroll) {
+				profile = "NewScrollCtrlProfile";
+				horizSizing = "left";
+				vertSizing = "height";
+				position = "383 1";
+				extent = "175 311";
+				minExtent = "24 52";
+				visible = "1";
+				hideCursor = "0";
+				bypassHideCursor = "0";
+				helpTag = "0";
+				willFirstRespond = "1";
+				hScrollBar = "alwaysOff";
+				vScrollBar = "alwaysOn";
+				constantThumbHeight = "0";
+				defaultLineHeight = "15";
+				childMargin = "0 2";
+				fieldBase = "gui/shll_field";
+
+				new GuiScrollContentCtrl() {
+					profile = "GuiDefaultProfile";
+					horizSizing = "right";
+					vertSizing = "bottom";
+					position = "4 6";
+					extent = "151 299";
+					minExtent = "8 8";
+					visible = "1";
+					hideCursor = "0";
+					bypassHideCursor = "0";
+					helpTag = "0";
+
+					new ShellChatMemberList(ChatRoomMemberList) {
+						profile = "ShellChatMemberListProfile";
+						horizSizing = "right";
+						vertSizing = "bottom";
+						position = "0 0";
+						extent = "151 8";
+						minExtent = "8 8";
+						visible = "1";
+						hideCursor = "0";
+						bypassHideCursor = "0";
+						altCommand = "ChatPrivate();";
+						helpTag = "0";
+						enumerate = "1";
+						resizeCell = "1";
+						columns = "0";
+						fitParentWidth = "1";
+						clipColumnText = "0";
+					};
+				};
+			};
+			new ShellScrollCtrl(ChatGuiScroll) {
+				profile = "NewScrollCtrlProfile";
+				horizSizing = "width";
+				vertSizing = "height";
+				position = "4 2";
+				extent = "381 282";
+				minExtent = "24 52";
+				visible = "1";
+				hideCursor = "0";
+				bypassHideCursor = "0";
+				helpTag = "0";
+				willFirstRespond = "1";
+				hScrollBar = "alwaysOff";
+				vScrollBar = "alwaysOn";
+				constantThumbHeight = "0";
+				defaultLineHeight = "15";
+				childMargin = "2 3";
+				fieldBase = "gui/shll_field";
+
+				new GuiScrollContentCtrl() {
+					profile = "GuiDefaultProfile";
+					horizSizing = "width";
+					vertSizing = "height";
+					position = "6 7";
+					extent = "353 268";
+					minExtent = "8 8";
+					visible = "1";
+					hideCursor = "0";
+					bypassHideCursor = "0";
+					helpTag = "0";
+
+					new GuiChannelVectorCtrl(ChatGuiMessageVector) {
+						profile = "GuiChannelVectorProfile";
+						horizSizing = "width";
+						vertSizing = "height";
+						position = "0 0";
+						extent = "357 8";
+						minExtent = "8 8";
+						visible = "1";
+						hideCursor = "0";
+						bypassHideCursor = "0";
+						helpTag = "0";
+						lineSpacing = "0";
+						lineContinuedIndex = "5";
+						allowedMatches[0] = "http";
+						matchColor = "4 235 105 255";
+						maxColorIndex = "9";
+					};
+				};
+			};
+		};
+		new ShellTabGroupCtrl(ChatTabView) {
+			profile = "TabGroupProfile";
+			horizSizing = "width";
+			vertSizing = "bottom";
+			position = "30 25";
+			extent = "560 29";
+			minExtent = "38 29";
+			visible = "1";
+			hideCursor = "0";
+			bypassHideCursor = "0";
+			helpTag = "0";
+			glowOffset = "7";
+			tabSpacing = "2";
+			maxTabWidth = "150";
+			stretchToFit = "0";
+		};
+		new ShellBitmapButton(ChatEditChannelBtn) {
+			profile = "ShellButtonProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "15 -5";
+			extent = "128 38";
+			minExtent = "32 38";
+			visible = "0";
+			hideCursor = "0";
+			bypassHideCursor = "0";
+			command = "EditChannelOptions();";
+			helpTag = "0";
+			text = "CHANNEL OPTIONS";
+			simpleStyle = "0";
+		};
+		new ShellBitmapButton(ChatEditOptionsBtn) {
+			profile = "ShellButtonProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "15 -5";
+			extent = "128 38";
+			minExtent = "32 38";
+			visible = "1";
+			hideCursor = "0";
+			bypassHideCursor = "0";
+			command = "EditChatOptions();";
+			helpTag = "0";
+			text = "CHAT OPTIONS";
+			simpleStyle = "0";
+		};
+	};
+};
+//--- OBJECT WRITE END ---

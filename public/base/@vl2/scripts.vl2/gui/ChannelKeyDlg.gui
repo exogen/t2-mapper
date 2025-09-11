@@ -1,0 +1,111 @@
+//--- OBJECT WRITE BEGIN ---
+new GuiControl(ChannelKeyDlg) {
+	profile = "DlgBackProfile";
+	horizSizing = "width";
+	vertSizing = "height";
+	position = "0 0";
+	extent = "640 480";
+	minExtent = "8 8";
+	visible = "1";
+	helpTag = "0";
+
+	new ShellPaneCtrl() {
+		profile = "ShellDlgPaneProfile";
+		horizSizing = "center";
+		vertSizing = "center";
+		position = "120 160";
+		extent = "400 159";
+		minExtent = "48 92";
+		visible = "1";
+		helpTag = "0";
+		text = "CHANNEL PASSWORD";
+		noTitleBar = "0";
+
+		new GuiTextCtrl() {
+			profile = "ShellTextRightProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "34 40";
+			extent = "80 22";
+			minExtent = "8 8";
+			visible = "1";
+			helpTag = "0";
+			text = "Channel:";
+		};
+		new ShellFieldCtrl() {
+			profile = "ShellFieldProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "119 38";
+			extent = "221 24";
+			minExtent = "16 18";
+			visible = "1";
+			helpTag = "0";
+
+			new GuiTextCtrl(KeyChannelName) {
+				profile = "ShellStaticTextProfile";
+				horizSizing = "center";
+				vertSizing = "bottom";
+				position = "8 3";
+				extent = "205 20";
+				minExtent = "8 8";
+				visible = "1";
+				helpTag = "0";
+			};
+		};
+		new GuiTextCtrl() {
+			profile = "ShellTextRightProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "34 70";
+			extent = "80 22";
+			minExtent = "8 8";
+			visible = "1";
+			helpTag = "0";
+			text = "Password:";
+		};
+		new ShellTextEditCtrl(EditChannelKey) {
+			profile = "NewTextEditProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "110 62";
+			extent = "238 38";
+			minExtent = "32 38";
+			visible = "1";
+			helpTag = "0";
+			historySize = "0";
+			maxLength = "255";
+			password = "1";
+			glowOffset = "9 9";
+			altCommand = "keyChannelJoin();";
+		};
+		new ShellBitmapButton() {
+			profile = "ShellButtonProfile";
+			horizSizing = "right";
+			vertSizing = "top";
+			position = "48 104";
+			extent = "128 38";
+			minExtent = "32 38";
+			visible = "1";
+			command = "Canvas.popDialog(ChannelKeyDlg);";
+			accelerator = "escape";
+			helpTag = "0";
+			text = "CANCEL";
+			simpleStyle = "0";
+		};
+		new ShellBitmapButton() {
+			profile = "ShellButtonProfile";
+			horizSizing = "left";
+			vertSizing = "top";
+			position = "224 104";
+			extent = "128 38";
+			minExtent = "32 38";
+			visible = "1";
+			command = "KeyChannelJoin();";
+			helpTag = "0";
+			text = "JOIN";
+			simpleStyle = "0";
+		};
+	};
+};
+//--- OBJECT WRITE END ---

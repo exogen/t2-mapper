@@ -1,0 +1,657 @@
+// MissionTypes = Hunters DM
+// DisplayName = Fracas
+
+//--- MISSION QUOTE BEGIN ---
+//A thousand worlds shall be rent with fire, and even the Immortals shall tremble.
+//  -- The Fenecian Prophecy, 3941 CE
+//--- MISSION QUOTE END ---
+
+//--- MISSION STRING BEGIN ---
+//[Hunters]Nexus is located atop center tower
+//Hidden weapon caches can be found in addition to inventory stations
+//--- MISSION STRING END ---
+
+//--- OBJECT WRITE BEGIN ---
+new SimGroup(MissionGroup) {
+		cdTrack = "4";
+		DM_timeLimit = "25";
+		powerCount = "0";
+		musicTrack = "badlands";
+		Hunters_timeLimit = "25";
+		DM_scoreLimit = "35";
+
+	new MissionArea(MissionArea) {
+		area = "-672 -8 656 832";
+		flightCeiling = "2000";
+		flightCeilingRange = "50";
+			locked = "true";
+	};
+	new Sun() {
+		direction = "0.57735 0.57735 -0.57735";
+		color = "0.600000 0.600000 0.600000 1.000000";
+		ambient = "0.200000 0.200000 0.200000 1.000000";
+			position = "-1024 -1024 0";
+			locked = "true";
+			rotation = "1 0 0 0";
+			scale = "1 1 1";
+	};
+	new TerrainBlock(Terrain) {
+		rotation = "1 0 0 0";
+		scale = "1 1 1";
+		detailTexture = "details/baddet2";
+		terrainFile = "Fracas.ter";
+		squareSize = "8";
+		emptySquares = "304722 436049 436305 436561 436817 437073 371794 437585 437841 438097 438353 438609 438865 439121 373841 308562 178509 178521 178765 178777 114259 245586 376913 246098";
+			position = "-1024 -1024 0";
+			locked = "true";
+			hazeDistance = "250";
+			visibleDistance = "1200";
+	};
+	new NavigationGraph(NavGraph) {
+		conjoinAngleDev = "60";
+		cullDensity = "0.3";
+		customArea = "0 0 0 0";
+			conjoinBowlDev = "20";
+			position = "0 0 0 1";
+			locked = "true";
+			rotation = "0 0 0 0";
+			coverage = "0";
+			scale = "1 1 1";
+			GraphFile = "Fracas.nav";
+	};
+	new SimGroup(BaseItems) {
+
+		new InteriorInstance() {
+			position = "-353 403.88 57.103";
+			rotation = "0 0 -1 89.9544";
+			scale = "1 1 1";
+			interiorFile = "xbase2.dif";
+			showTerrainInside = "0";
+			AudioProfile = "Universal_Base_3";
+				locked = "true";
+		};
+		new Item() {
+			position = "-360.86 74.72 145.245";
+			rotation = "1 0 0 0";
+			scale = "1 1 1";
+			dataBlock = "EnergyPack";
+			lockCount = "0";
+			homingCount = "0";
+			collideable = "0";
+			static = "1";
+			rotate = "0";
+				locked = "true";
+				Target = "-1";
+		};
+		new Item() {
+			position = "-361.446 76.38 165.035";
+			rotation = "1 0 0 0";
+			scale = "1 1 1";
+			dataBlock = "SniperRifle";
+			lockCount = "0";
+			homingCount = "0";
+			collideable = "0";
+			static = "1";
+			rotate = "0";
+				locked = "true";
+				Target = "-1";
+		};
+		new InteriorInstance() {
+			position = "-359.62 77.29 125.897";
+			rotation = "0 0 -1 66.4631";
+			scale = "1 1 1";
+			interiorFile = "xmiscb.dif";
+			showTerrainInside = "0";
+				locked = "true";
+		};
+		new Item() {
+			position = "-362.963 361 40.2874";
+			rotation = "1 0 0 0";
+			scale = "1 1 1";
+			dataBlock = "CloakingPack";
+			lockCount = "0";
+			homingCount = "0";
+			collideable = "0";
+			static = "1";
+			rotate = "0";
+				locked = "true";
+				Target = "-1";
+		};
+		new Item() {
+			position = "-342.921 361.09 39.5867";
+			rotation = "1 0 0 0";
+			scale = "1 1 1";
+			dataBlock = "RepairPack";
+			lockCount = "0";
+			homingCount = "0";
+			collideable = "0";
+			static = "1";
+			rotate = "0";
+				locked = "true";
+				Target = "-1";
+		};
+		new Trigger(NexusTrigger) {
+			position = "-375.375 531.501 117.54";
+			rotation = "1 0 0 0";
+			scale = "42.8074 38.259 27.2131";
+			dataBlock = "gameTrigger";
+			polyhedron = "0.0000000 0.0000000 0.0000000 1.0000000 0.0000000 0.0000000 -0.0000000 -1.0000000 -0.0000000 -0.0000000 -0.0000000 1.0000000";
+				locked = "true";
+				missionTypesList = "Hunters";
+		};
+		new Item() {
+			position = "-411.8 577.28 180.749";
+			rotation = "1 0 0 0";
+			scale = "1 1 1";
+			dataBlock = "Mine";
+			lockCount = "0";
+			homingCount = "0";
+			collideable = "0";
+			static = "1";
+			rotate = "0";
+				locked = "true";
+				Target = "-1";
+		};
+		new InteriorInstance() {
+			position = "-412.384 577.24 177.628";
+			rotation = "0 0 -1 45.2636";
+			scale = "1 1 1";
+			interiorFile = "xmiscc.dif";
+			showTerrainInside = "0";
+				locked = "true";
+		};
+		new WayPoint() {
+			position = "-354.953 515.87 117.964";
+			rotation = "1 0 0 0";
+			scale = "1 1 1";
+			dataBlock = "WayPointMarker";
+			lockCount = "0";
+			homingCount = "0";
+			name = "Nexus";
+			team = "0";
+				locked = "true";
+				missionTypesList = "Hunters";
+		};
+		new WayPoint() {
+			position = "-354.953 515.87 117.964";
+			rotation = "1 0 0 0";
+			scale = "1 1 1";
+			dataBlock = "WayPointMarker";
+			lockCount = "0";
+			homingCount = "0";
+			name = "Stronghold";
+			team = "0";
+				locked = "true";
+				missionTypesList = "DM";
+		};
+	};
+	new Sky(Sky) {
+		position = "-1024 -1024 0";
+		rotation = "1 0 0 0";
+		scale = "1 1 1";
+		cloudHeightPer[0] = "0.349971";
+		cloudHeightPer[1] = "0.25";
+		cloudHeightPer[2] = "0.199973";
+		cloudSpeed1 = "0.0001";
+		cloudSpeed2 = "0.0002";
+		cloudSpeed3 = "0.0003";
+		visibleDistance = "600";
+		useSkyTextures = "1";
+		SkySolidColor = "0.190000 0.235000 0.210000 0.000000";
+		fogDistance = "350";
+		fogColor = "0.900000 0.700000 0.500000 1.000000";
+		fogVolume1 = "120 100 100";
+		fogVolume2 = "0 0 0";
+		fogVolume3 = "0 0 0";
+		materialList = "sky_badlands_cloudy.dml";
+		windVelocity = "1 0 0";
+		windEffectPrecipitation = "0";
+		fogVolumeColor1 = "128.000000 128.000000 128.000000 0.000000";
+		fogVolumeColor2 = "128.000000 128.000000 128.000000 0.000000";
+		fogVolumeColor3 = "128.000000 128.000000 128.000000 0.000000";
+			locked = "true";
+			cloudSpeed0 = "0.001000 0.001000";
+	};
+	new SimGroup(ObserverDropPoints) {
+
+		new Camera() {
+			position = "-398.089 549.2 169.347";
+			rotation = "0 0 1 127.77";
+			scale = "1 1 1";
+			dataBlock = "Observer";
+			lockCount = "0";
+			homingCount = "0";
+				locked = "true";
+		};
+		new Camera() {
+			position = "-314.557 264.42 122.593";
+			rotation = "0 0 -1 15.4698";
+			scale = "1 1 1";
+			dataBlock = "Observer";
+			lockCount = "0";
+			homingCount = "0";
+				locked = "true";
+		};
+		new Camera() {
+			position = "-343.698 457.75 53.1268";
+			rotation = "0 0 1 175.898";
+			scale = "1 1 1";
+			dataBlock = "Observer";
+			lockCount = "0";
+			homingCount = "0";
+				locked = "true";
+		};
+		new Camera() {
+			position = "-352.099 402.705 36.1195";
+			rotation = "0 0 1 180.482";
+			scale = "1 1 0.887068";
+			dataBlock = "Observer";
+			lockCount = "0";
+			homingCount = "0";
+				locked = "true";
+		};
+		new Camera() {
+			position = "-366.087 443.905 50.1832";
+			rotation = "0.114121 -0.0397281 0.992672 38.6506";
+			scale = "1 1 1";
+			dataBlock = "Observer";
+			lockCount = "0";
+			homingCount = "0";
+				locked = "true";
+		};
+		new Camera() {
+			position = "-352.832 504.358 20.0556";
+			rotation = "-0.00759312 -0.0848953 0.996361 190.185";
+			scale = "1 1 1";
+			dataBlock = "Observer";
+			lockCount = "0";
+			homingCount = "0";
+				locked = "true";
+		};
+	};
+	new SimGroup(Teams) {
+			providesPower = "1";
+
+		new SimGroup(Team1) {
+
+			new SimGroup(spawnspheres) {
+
+				new SpawnSphere() {
+					position = "-351.764 404.28 80.2002";
+					rotation = "0 0 -1 89.9544";
+					scale = "1 1 1";
+					dataBlock = "SpawnSphereMarker";
+					lockCount = "0";
+					homingCount = "0";
+					radius = "160";
+					sphereWeight = "100";
+					indoorWeight = "65";
+					outdoorWeight = "35";
+						locked = "true";
+				};
+			};
+			new SimGroup(AIObjectives) {
+			};
+		};
+		new SimGroup(team0) {
+
+			new SimGroup(AIObjectives) {
+			};
+		};
+		new StaticShape() {
+			position = "-352.84 454.239 42.605";
+			rotation = "0 0 1 179.909";
+			scale = "1 1 1";
+			dataBlock = "StationInventory";
+			lockCount = "0";
+			homingCount = "0";
+				locked = "true";
+				Target = "33";
+		};
+		new StaticShape() {
+			position = "-340.288 510.131 11.105";
+			rotation = "0 0 1 89.9546";
+			scale = "1 1 1";
+			dataBlock = "StationInventory";
+			lockCount = "0";
+			homingCount = "0";
+				locked = "true";
+				Target = "34";
+		};
+		new StaticShape() {
+			position = "-347.276 514.106 101.61";
+			rotation = "0 0 1 89.9544";
+			scale = "1 1 1";
+			dataBlock = "StationInventory";
+			lockCount = "0";
+			homingCount = "0";
+				locked = "true";
+				Target = "35";
+		};
+		new StaticShape() {
+			position = "-293.885 463.911 81.1";
+			rotation = "0 0 1 89.9544";
+			scale = "1 1 1";
+			dataBlock = "StationInventory";
+			lockCount = "0";
+			homingCount = "0";
+				locked = "true";
+				Target = "36";
+		};
+		new StaticShape() {
+			position = "-356.287 350.896 31.1";
+			rotation = "1 0 0 0";
+			scale = "1 1 1";
+			dataBlock = "StationInventory";
+			lockCount = "0";
+			homingCount = "0";
+				locked = "true";
+				Target = "37";
+		};
+		new Item(Nexus) {
+			position = "-355.472 513.94 125.722";
+			rotation = "1 0 0 0";
+			scale = "1 1 1";
+			dataBlock = "Nexus";
+			lockCount = "0";
+			homingCount = "0";
+			collideable = "0";
+			static = "1";
+			rotate = "0";
+				flashThreadDir = "1";
+				locked = "true";
+				missionTypesList = "Hunters";
+				Target = "38";
+		};
+	};
+	new SimGroup(Ambiance) {
+
+		new TSStatic() {
+			position = "-309.457 287.51 58.8317";
+			rotation = "-0.273478 -0.961685 0.0192892 74.0213";
+			scale = "1 1 1";
+			shapeName = "stackable1m.dts";
+				locked = "true";
+		};
+		new TSStatic() {
+			position = "-361.169 319.13 65.1";
+			rotation = "0 0 -1 30.3667";
+			scale = "1 1 1";
+			shapeName = "stackable2l.dts";
+				locked = "true";
+		};
+		new TSStatic() {
+			position = "-336.526 334.973 59.1";
+			rotation = "1 0 0 0";
+			scale = "1 1 1";
+			shapeName = "stackable4l.dts";
+				locked = "true";
+		};
+		new TSStatic() {
+			position = "-331.166 329.89 59.1368";
+			rotation = "1 0 0 0";
+			scale = "1 1 1";
+			shapeName = "stackable3m.dts";
+				locked = "true";
+		};
+		new TSStatic() {
+			position = "-331.982 329.87 61.17";
+			rotation = "1 0 0 0";
+			scale = "1 1 1";
+			shapeName = "stackable2l.dts";
+				locked = "true";
+		};
+		new TSStatic() {
+			position = "-370.334 349.35 59.1814";
+			rotation = "0 0 1 89.3814";
+			scale = "1 1 1";
+			shapeName = "stackable3s.dts";
+				locked = "true";
+		};
+		new TSStatic() {
+			position = "-376.047 402.12 47.1708";
+			rotation = "0 0 -1 89.9543";
+			scale = "1 1 1";
+			shapeName = "stackable3m.dts";
+				locked = "true";
+		};
+		new TSStatic() {
+			position = "-340.807 410.82 47.1133";
+			rotation = "0 0 -1 23.4912";
+			scale = "1 1 1";
+			shapeName = "stackable3l.dts";
+				locked = "true";
+		};
+		new TSStatic() {
+			position = "-367.748 419.5 31.1066";
+			rotation = "0 0 1 89.9544";
+			scale = "1 1 1";
+			shapeName = "stackable1l.dts";
+				locked = "true";
+		};
+		new TSStatic() {
+			position = "-390.637 85.43 130.14";
+			rotation = "0 1 0 39.5341";
+			scale = "1 1 1";
+			shapeName = "stackable1m.dts";
+				locked = "true";
+		};
+		new AudioEmitter() {
+			position = "-438.696 678.97 238.174";
+			rotation = "1 0 0 0";
+			scale = "1 1 1";
+			fileName = "fx/environment/rockslide1.wav";
+			useProfileDescription = "0";
+			outsideAmbient = "1";
+			volume = "1";
+			isLooping = "1";
+			is3D = "1";
+			minDistance = "20";
+			maxDistance = "1280";
+			coneInsideAngle = "360";
+			coneOutsideAngle = "360";
+			coneOutsideVolume = "1";
+			coneVector = "0 0 1";
+			loopCount = "-1";
+			minLoopGap = "45000";
+			maxLoopGap = "90000";
+			type = "EffectAudioType";
+				locked = "true";
+		};
+		new AudioEmitter() {
+			position = "-97.966 463.1 156.539";
+			rotation = "1 0 0 0";
+			scale = "1 1 1";
+			fileName = "fx/environment/rockslide2.wav";
+			useProfileDescription = "0";
+			outsideAmbient = "1";
+			volume = "1";
+			isLooping = "1";
+			is3D = "1";
+			minDistance = "20";
+			maxDistance = "1280";
+			coneInsideAngle = "360";
+			coneOutsideAngle = "360";
+			coneOutsideVolume = "1";
+			coneVector = "0 0 1";
+			loopCount = "-1";
+			minLoopGap = "34000";
+			maxLoopGap = "66000";
+			type = "EffectAudioType";
+				locked = "true";
+		};
+		new AudioEmitter() {
+			position = "-278.391 22.41 204.287";
+			rotation = "1 0 0 0";
+			scale = "1 1 1";
+			fileName = "fx/environment/rockslide1.wav";
+			useProfileDescription = "0";
+			outsideAmbient = "1";
+			volume = "1";
+			isLooping = "1";
+			is3D = "1";
+			minDistance = "20";
+			maxDistance = "1280";
+			coneInsideAngle = "360";
+			coneOutsideAngle = "360";
+			coneOutsideVolume = "1";
+			coneVector = "0 0 1";
+			loopCount = "-1";
+			minLoopGap = "30000";
+			maxLoopGap = "50000";
+			type = "EffectAudioType";
+				locked = "true";
+		};
+		new AudioEmitter() {
+			position = "-39.82 373.21 122.06";
+			rotation = "1 0 0 0";
+			scale = "1 1 1";
+			fileName = "fx/environment/moaningwind1.wav";
+			useProfileDescription = "0";
+			outsideAmbient = "1";
+			volume = "1";
+			isLooping = "1";
+			is3D = "0";
+			minDistance = "20";
+			maxDistance = "1280";
+			coneInsideAngle = "360";
+			coneOutsideAngle = "360";
+			coneOutsideVolume = "1";
+			coneVector = "0 0 1";
+			loopCount = "-1";
+			minLoopGap = "0";
+			maxLoopGap = "0";
+			type = "EffectAudioType";
+				locked = "true";
+		};
+		new TSStatic() {
+			position = "-367.347 528.206 65.4362";
+			rotation = "-0.157476 -0.0524344 0.98613 135.494";
+			scale = "1 1 1";
+			shapeName = "stackable3m.dts";
+				locked = "true";
+		};
+		new TSStatic() {
+			position = "-375.934 512.892 65.7323";
+			rotation = "0 0 -1 89.5637";
+			scale = "1 1 1";
+			shapeName = "stackable3s.dts";
+				locked = "true";
+		};
+		new TSStatic() {
+			position = "-335.297 509.785 66.9075";
+			rotation = "0.57511 0.581353 0.575568 119.617";
+			scale = "1 1 1";
+			shapeName = "stackable3s.dts";
+				locked = "true";
+		};
+		new TSStatic() {
+			position = "-375.391 514.331 66.6247";
+			rotation = "-0.0210077 0.999777 0.00210784 90.5401";
+			scale = "1 1 1";
+			shapeName = "stackable1m.dts";
+				locked = "true";
+		};
+		new TSStatic() {
+			position = "-375.242 517.746 64.4774";
+			rotation = "-0.00261531 -0.0680204 -0.99768 88.2906";
+			scale = "1 1 1";
+			shapeName = "stackable3l.dts";
+				locked = "true";
+		};
+		new TSStatic() {
+			position = "-304.838 559.706 69.4229";
+			rotation = "-0.0545916 -0.11748 0.991574 50.2189";
+			scale = "1 1 1";
+			shapeName = "stackable1l.dts";
+				locked = "true";
+		};
+		new StaticShape() {
+			position = "-355.479 513.94 125.703";
+			rotation = "1 0 0 0";
+			scale = "1 1 1";
+			dataBlock = "NexusBase";
+			lockCount = "0";
+			homingCount = "0";
+				locked = "true";
+				missionTypesList = "Hunters";
+				Target = "-1";
+		};
+		new StaticShape() {
+			position = "-355.479 513.94 133.329";
+			rotation = "1 0 0 0";
+			scale = "1 1 1";
+			dataBlock = "NexusCap";
+			lockCount = "0";
+			homingCount = "0";
+				locked = "true";
+				missionTypesList = "Hunters";
+				Target = "-1";
+		};
+		new TSStatic() {
+			position = "-381.568 367.53 47.0343";
+			rotation = "0.0149336 0.0747557 0.99709 90.2762";
+			scale = "2.96362 2.42373 3.00128";
+			shapeName = "stackable3m.dts";
+				locked = "true";
+		};
+		new TSStatic() {
+			position = "-375.949 407.023 47.17";
+			rotation = "0 0 -1 89.9543";
+			scale = "1 1 1";
+			shapeName = "stackable3m.dts";
+				locked = "true";
+		};
+		new TSStatic() {
+			position = "-376.017 404.179 49.17";
+			rotation = "0 0 -1 89.9543";
+			scale = "1 1 1";
+			shapeName = "stackable3m.dts";
+				locked = "true";
+		};
+		new TSStatic() {
+			position = "-376.139 406.377 51.17";
+			rotation = "0 0 -1 89.9543";
+			scale = "1 1 1";
+			shapeName = "stackable3m.dts";
+				locked = "true";
+		};
+		new Lightning() {
+			position = "-326.556 397.364 234.911";
+			rotation = "1 0 0 0";
+			scale = "868.945 957.948 445.077";
+			dataBlock = "DefaultStorm";
+			strikesPerMinute = "9";
+			strikeWidth = "5";
+			chanceToHitTarget = "0.95";
+			strikeRadius = "27";
+			boltStartRadius = "20";
+			color = "1.000000 1.000000 1.000000 1.000000";
+			fadeColor = "0.100000 0.100000 1.000000 1.000000";
+			useFog = "1";
+				locked = "true";
+		};
+		new TSStatic() {
+			position = "-658.249 792.016 170.221";
+			rotation = "1 0 0 0";
+			scale = "1 1 1";
+			shapeName = "statue_base.dts";
+				locked = "true";
+		};
+		new TSStatic() {
+			position = "-658.276 792.143 173.5";
+			rotation = "1 0 0 0";
+			scale = "1 1 1";
+			shapeName = "statue_lfemale.dts";
+				locked = "true";
+		};
+		new TSStatic() {
+			position = "-376.306 407.68 49.17";
+			rotation = "1 0 0 0";
+			scale = "1 1 1";
+			shapeName = "stackable2l.dts";
+				locked = "true";
+		};
+	};
+};
+//--- OBJECT WRITE END ---

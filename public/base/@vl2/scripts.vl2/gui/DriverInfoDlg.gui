@@ -1,0 +1,77 @@
+//--- OBJECT WRITE BEGIN ---
+new GuiControl(DriverInfoDlg) {
+	profile = "DlgBackProfile";
+	horizSizing = "width";
+	vertSizing = "height";
+	position = "0 0";
+	extent = "640 480";
+	minExtent = "8 8";
+	visible = "1";
+	helpTag = "0";
+
+	new ShellPaneCtrl() {
+		profile = "ShellDlgPaneProfile";
+		horizSizing = "center";
+		vertSizing = "center";
+		position = "120 90";
+		extent = "400 300";
+		minExtent = "48 92";
+		visible = "1";
+		helpTag = "0";
+		text = "DRIVER INFO";
+
+		new ShellScrollCtrl() {
+			profile = "NewScrollCtrlProfile";
+			horizSizing = "center";
+			vertSizing = "bottom";
+			position = "27 35";
+			extent = "346 209";
+			minExtent = "24 52";
+			childMargin = "4 2";
+			visible = "1";
+			helpTag = "0";
+			willFirstRespond = "1";
+			hScrollBar = "alwaysOff";
+			vScrollBar = "alwaysOn";
+			constantThumbHeight = "0";
+
+			new GuiScrollContentCtrl() {
+				profile = "GuiDefaultProfile";
+				horizSizing = "right";
+				vertSizing = "bottom";
+				position = "4 4";
+				extent = "322 201";
+				minExtent = "8 8";
+				visible = "1";
+				helpTag = "0";
+
+				new GuiMLTextCtrl(DriverInfoText) {
+					profile = "ShellAltTextProfile";
+					horizSizing = "right";
+					vertSizing = "bottom";
+					position = "0 0";
+					extent = "313 420";
+					minExtent = "8 8";
+					visible = "1";
+					helpTag = "0";
+					lineSpacing = "2";
+				};
+			};
+		};
+		new ShellBitmapButton() {
+			profile = "ShellButtonProfile";
+			horizSizing = "center";
+			vertSizing = "bottom";
+			position = "136 245";
+			extent = "128 38";
+			minExtent = "32 38";
+			visible = "1";
+			command = "Canvas.popDialog(DriverInfoDlg);";
+         accelerator = "space";
+			helpTag = "0";
+			text = "OK";
+			simpleStyle = "0";
+		};
+	};
+};
+//--- OBJECT WRITE END ---

@@ -1,0 +1,481 @@
+// MissionTypes = Hunters TeamHunters
+
+//--- MISSION QUOTE BEGIN ---
+//Forget the Blood Eagle! The Hordes killed a half million of us at Ymir. That's a lot of kin to avenge, so lock and load. This is going to take awhile.
+//  -- Jarek Redmoon, Ur-Shaman of the Starwolf, 3941 CE
+//--- MISSION QUOTE END ---
+
+//--- MISSION STRING BEGIN ---
+//[Hunters TeamHunters]Nexus located in center of underground Great Hall
+//Inventory stations located at corner towers
+//--- MISSION STRING END ---
+
+//--- OBJECT WRITE BEGIN ---
+new SimGroup(MissionGroup) {
+		cdTrack = "5";
+		powerCount = "0";
+		musicTrack = "ice";
+		Team_Hunters_timeLimit = "25";
+		Hunters_timeLimit = "25";
+
+	new MissionArea(MissionArea) {
+		area = "-440 -312 848 880";
+		flightCeiling = "2000";
+		flightCeilingRange = "50";
+			locked = "true";
+	};
+	new Sun() {
+		direction = "0.57735 0.57735 -0.57735";
+		color = "0.700000 0.700000 0.700000 1.000000";
+		ambient = "0.600000 0.600000 0.620000 1.000000";
+			locked = "true";
+			position = "-1024 -1024 0";
+			rotation = "1 0 0 0";
+			scale = "1 1 1";
+	};
+	new TerrainBlock(Terrain) {
+		rotation = "1 0 0 0";
+		scale = "1 1 1";
+		detailTexture = "details/snowdet1";
+		terrainFile = "Rimehold.ter";
+		squareSize = "8";
+		emptySquares = "101741 101997 102253 299658 430985 431241 431497 366217";
+			hazeDistance = "250";
+			locked = "true";
+			visibleDistance = "1200";
+			position = "-1024 -1024 0";
+	};
+	new NavigationGraph(NavGraph) {
+		conjoinAngleDev = "55";
+		cullDensity = "0.3";
+		customArea = "0 0 0 0";
+			locked = "true";
+			XDimOverSize = "0";
+			YDimOverSize = "0";
+			GraphFile = "Rimehold.nav";
+			position = "0 0 0 1";
+			rotation = "0 0 0 0";
+			conjoinBowlDev = "20";
+			scale = "1 1 1";
+			coverage = "0";
+	};
+	new Sky(Sky) {
+		position = "-904 -1136 0";
+		rotation = "1 0 0 0";
+		scale = "1 1 1";
+		cloudHeightPer[0] = "0.349971";
+		cloudHeightPer[1] = "0.25";
+		cloudHeightPer[2] = "0.199973";
+		cloudSpeed1 = "0.0001";
+		cloudSpeed2 = "0.0002";
+		cloudSpeed3 = "0.0003";
+		visibleDistance = "600";
+		useSkyTextures = "1";
+		SkySolidColor = "0.365000 0.390000 0.420000 0.000000";
+		fogDistance = "0";
+		fogColor = "0.700000 0.700000 0.700000 1.000000";
+		fogVolume1 = "0 0 0";
+		fogVolume2 = "0 0 0";
+		fogVolume3 = "0 0 0";
+		materialList = "sky_ice_blue.dml";
+		windVelocity = "1 0 0";
+		windEffectPrecipitation = "0";
+		fogVolumeColor1 = "128.000000 128.000000 128.000000 0.000000";
+		fogVolumeColor2 = "128.000000 128.000000 128.000000 -0.000000";
+		fogVolumeColor3 = "128.000000 128.000000 128.000000 0.000000";
+			locked = "true";
+			cloudSpeed0 = "0.000000 0.000000";
+	};
+	new SimGroup(ObserverDropPoints) {
+			powerCount = "0";
+
+		new Camera() {
+			position = "-20.1378 130.534 175.57";
+			rotation = "0 0 -1 95.2935";
+			scale = "1 1 1";
+			dataBlock = "Observer";
+			lockCount = "0";
+			homingCount = "0";
+				locked = "true";
+		};
+		new Camera() {
+			position = "-98.5621 203.831 198.799";
+			rotation = "0.0328029 -0.0599317 0.997663 122.726";
+			scale = "1 1 1";
+			dataBlock = "Observer";
+			lockCount = "0";
+			homingCount = "0";
+				locked = "true";
+		};
+		new Camera() {
+			position = "-17.4677 159.05 77.7879";
+			rotation = "0 0 1 195.952";
+			scale = "1 1 1";
+			dataBlock = "Observer";
+			lockCount = "0";
+			homingCount = "0";
+				locked = "true";
+		};
+		new Camera() {
+			position = "163.16 -235.163 216.951";
+			rotation = "0.305024 0.0666097 -0.950012 25.8909";
+			scale = "1 1 1";
+			dataBlock = "Observer";
+			lockCount = "0";
+			homingCount = "0";
+				locked = "true";
+		};
+		new Camera() {
+			position = "-277.015 272.671 178.033";
+			rotation = "0.0190453 -0.0299901 0.999369 115.197";
+			scale = "1 1 1";
+			dataBlock = "Observer";
+			lockCount = "0";
+			homingCount = "0";
+				locked = "true";
+		};
+	};
+	new SimGroup(Teams) {
+			powerCount = "0";
+
+		new SimGroup(Team1) {
+				powerCount = "0";
+
+			new SimGroup(spawnspheres) {
+					powerCount = "0";
+
+				new SpawnSphere() {
+					position = "-0.966477 -50.0832 112.711";
+					rotation = "0 0 -1 84.7978";
+					scale = "1 1 1";
+					dataBlock = "SpawnSphereMarker";
+					lockCount = "0";
+					homingCount = "0";
+					radius = "100";
+					sphereWeight = "100";
+					indoorWeight = "0";
+					outdoorWeight = "120";
+						locked = "true";
+				};
+				new SpawnSphere() {
+					position = "-34.2901 125.288 201.689";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "SpawnSphereMarker";
+					lockCount = "0";
+					homingCount = "0";
+					radius = "300";
+					sphereWeight = "100";
+					indoorWeight = "0";
+					outdoorWeight = "100";
+						locked = "true";
+				};
+			};
+		};
+		new SimGroup(Team2) {
+				powerCount = "0";
+
+			new SimGroup(spawnspheres) {
+					powerCount = "0";
+
+				new SpawnSphere() {
+					position = "-87.5583 365.17 126.118";
+					rotation = "0 0 1 57.8687";
+					scale = "1 1 1";
+					dataBlock = "SpawnSphereMarker";
+					lockCount = "0";
+					homingCount = "0";
+					radius = "120";
+					sphereWeight = "100";
+					indoorWeight = "0";
+					outdoorWeight = "100";
+						locked = "true";
+				};
+			};
+		};
+		new SimGroup(team0) {
+				powerCount = "0";
+
+			new SimGroup(Stuff) {
+					powerCount = "1";
+
+				new InteriorInstance() {
+					position = "-277.883 464.884 214.117";
+					rotation = "0 0 1 90.5273";
+					scale = "1 1 1";
+					interiorFile = "stowr1.dif";
+					showTerrainInside = "0";
+						locked = "true";
+						team = "0";
+				};
+				new StaticShape() {
+					position = "31.9146 91.7929 -97.0133";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "GeneratorLarge";
+					lockCount = "0";
+					homingCount = "0";
+						locked = "true";
+						Target = "33";
+						team = "0";
+				};
+				new InteriorInstance() {
+					position = "223.424 372.998 217.978";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					interiorFile = "stowr1.dif";
+					showTerrainInside = "0";
+						locked = "true";
+						team = "0";
+				};
+				new StaticShape() {
+					position = "223.429 374.166 208.98";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "StationInventory";
+					lockCount = "0";
+					homingCount = "0";
+						locked = "true";
+						Target = "34";
+						team = "0";
+						Trigger = "3346";
+				};
+				new StaticShape() {
+					position = "157.765 -195.042 204.45";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "StationInventory";
+					lockCount = "0";
+					homingCount = "0";
+						locked = "true";
+						Target = "35";
+						team = "0";
+						Trigger = "3348";
+				};
+				new InteriorInstance() {
+					position = "157.83 -196.214 213.451";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					interiorFile = "stowr1.dif";
+					showTerrainInside = "0";
+						locked = "true";
+						team = "0";
+				};
+				new StaticShape() {
+					position = "-264.666 -196.208 217.09";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "StationInventory";
+					lockCount = "0";
+					homingCount = "0";
+						locked = "true";
+						Target = "36";
+						team = "0";
+						Trigger = "3351";
+				};
+				new InteriorInstance() {
+					position = "-264.726 -197.424 226.091";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					interiorFile = "stowr1.dif";
+					showTerrainInside = "0";
+						locked = "true";
+						team = "0";
+				};
+				new StaticShape() {
+					position = "-276.719 464.838 205.12";
+					rotation = "0 0 1 90.5273";
+					scale = "1 1 1";
+					dataBlock = "StationInventory";
+					lockCount = "0";
+					homingCount = "0";
+						locked = "true";
+						Target = "37";
+						team = "0";
+						Trigger = "3354";
+				};
+				new InteriorInstance() {
+					position = "-29.8911 124.026 57.2013";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					interiorFile = "sbase5.dif";
+					showTerrainInside = "0";
+						locked = "true";
+						team = "0";
+						AudioEnvironment = BigRoom;
+				};
+				new Item(Nexus) {
+					position = "-23.8753 84.0586 81.555";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "Nexus";
+					lockCount = "0";
+					homingCount = "0";
+					collideable = "0";
+					static = "1";
+					rotate = "0";
+						locked = "true";
+						Target = "38";
+						team = "0";
+						flashThreadDir = "1";
+				};
+				new Trigger(NexusTrigger) {
+					position = "-33.4285 100.14 55.34";
+					rotation = "1 0 0 0";
+					scale = "19.5116 30 38.3776";
+					dataBlock = "gameTrigger";
+					polyhedron = "0.0000000 0.0000000 0.0000000 1.0000000 0.0000000 0.0000000 -0.0000000 -1.0000000 -0.0000000 -0.0000000 -0.0000000 1.0000000";
+						locked = "true";
+						team = "0";
+						missionTypesList = "Hunters TeamHunters";
+				};
+				new WayPoint() {
+					position = "-23.8712 84.0586 81.555";
+					rotation = "1 0 0 0";
+					scale = "0.1 0.1 0.1";
+					nameTag = "The Nexus";
+					dataBlock = "WayPointMarker";
+					lockCount = "0";
+					homingCount = "0";
+					name = "The Nexus";
+					team = "0";
+						locked = "true";
+				};
+				new Item() {
+					position = "-37.617 208.163 174.667";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "RepairPack";
+					lockCount = "0";
+					homingCount = "0";
+					collideable = "0";
+					static = "1";
+					rotate = "0";
+						locked = "true";
+						Target = "-1";
+						team = "0";
+				};
+				new InteriorInstance() {
+					position = "-39.6396 208.086 110.813";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					interiorFile = "stowr6.dif";
+					showTerrainInside = "0";
+						locked = "true";
+						team = "0";
+				};
+			};
+			new WayPoint() {
+				position = "94.4419 164.733 129.701";
+				rotation = "1 0 0 0";
+				scale = "1 1 1";
+				nameTag = "East Nexus Entrance";
+				dataBlock = "WayPointMarker";
+				lockCount = "0";
+				homingCount = "0";
+				name = "East Nexus Entrance";
+				team = "0";
+					locked = "true";
+			};
+			new WayPoint() {
+				position = "-144.489 118.269 122.953";
+				rotation = "1 0 0 0";
+				scale = "1 1 1";
+				nameTag = "West Nexus Entrance";
+				dataBlock = "WayPointMarker";
+				lockCount = "0";
+				homingCount = "0";
+				name = "West Nexus Entrance";
+				team = "0";
+					locked = "true";
+			};
+		};
+	};
+	new SimGroup(Ambiance) {
+			powerCount = "0";
+
+		new Precipitation(Precipitation) {
+			position = "-72.3863 217.965 161.798";
+			rotation = "1 0 0 0";
+			scale = "1 1 1";
+			dataBlock = "Snow";
+			percentage = "1";
+			color1 = "1.000000 1.000000 1.000000 1.000000";
+			color2 = "-1.000000 0.000000 0.000000 1.000000";
+			color3 = "-1.000000 0.000000 0.000000 1.000000";
+			offsetSpeed = "0.25";
+			minVelocity = "0.25";
+			maxVelocity = "1.5";
+			maxNumDrops = "2000";
+			maxRadius = "125";
+				locked = "true";
+		};
+		new AudioEmitter() {
+			position = "-72.3863 217.965 161.798";
+			rotation = "1 0 0 0";
+			scale = "1 1 1";
+			fileName = "fx/environment/moaningwind1.wav";
+			useProfileDescription = "0";
+			outsideAmbient = "1";
+			volume = "1";
+			isLooping = "1";
+			is3D = "0";
+			minDistance = "20";
+			maxDistance = "1280";
+			coneInsideAngle = "360";
+			coneOutsideAngle = "360";
+			coneOutsideVolume = "1";
+			coneVector = "0 0 1";
+			loopCount = "-1";
+			minLoopGap = "0";
+			maxLoopGap = "0";
+			type = "EffectAudioType";
+				locked = "true";
+		};
+		new InteriorInstance() {
+			position = "-249.18 222.364 161.676";
+			rotation = "1 0 0 0";
+			scale = "1 1 1";
+			interiorFile = "sspir1.dif";
+			showTerrainInside = "0";
+				locked = "true";
+		};
+		new InteriorInstance() {
+			position = "-55.7404 39.1725 136.706";
+			rotation = "1 0 0 0";
+			scale = "1 1 1";
+			interiorFile = "sspir4.dif";
+			showTerrainInside = "0";
+				locked = "true";
+		};
+		new StaticShape() {
+			position = "-23.8753 84.0586 89.6089";
+			rotation = "1 0 0 0";
+			scale = "1 1 1";
+			dataBlock = "NexusCap";
+			lockCount = "0";
+			homingCount = "0";
+				locked = "true";
+				Target = "-1";
+		};
+		new InteriorInstance() {
+			position = "-120.189 283.025 148.859";
+			rotation = "1 0 0 0";
+			scale = "1 1 1";
+			interiorFile = "sspir2.dif";
+			showTerrainInside = "0";
+				locked = "true";
+		};
+		new StaticShape() {
+			position = "-23.8753 84.0586 81.6897";
+			rotation = "1 0 0 0";
+			scale = "1 1 1";
+			dataBlock = "NexusBase";
+			lockCount = "0";
+			homingCount = "0";
+				locked = "true";
+				Target = "-1";
+		};
+	};
+};
+//--- OBJECT WRITE END ---

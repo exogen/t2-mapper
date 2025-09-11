@@ -1,0 +1,76 @@
+//--- OBJECT WRITE BEGIN ---
+new GuiControl(LaunchToolbarDlg) {
+	profile = "GuiModelessDialogProfile";
+	horizSizing = "right";
+	vertSizing = "bottom";
+	position = "0 0";
+	extent = "640 480";
+	minExtent = "8 8";
+	visible = "1";
+	setFirstResponder = "0";
+	modal = "0";
+	helpTag = "0";
+		ctrlCount = "0";
+
+   new GuiControl(LaunchToolbarPane) {
+      profile = "GuiDefaultProfile";
+		horizSizing = "width";
+		vertSizing = "top";
+		position = "-2 436";
+		extent = "644 44";
+		minExtent = "8 8";
+		visible = "1";
+		setFirstResponder = "0";
+		modal = "1";
+		helpTag = "0";
+
+      new ShellLaunchMenu(LaunchToolbarMenu) {
+			profile = "LaunchMenuProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "3 0";
+			extent = "115 56";
+			minExtent = "8 8";
+			visible = "1";
+			setFirstResponder = "1";
+			modal = "1";
+			helpTag = "0";
+			text = "LAUNCH";
+			maxPopupHeight = "200";
+         buttonFontType = "Sui Generis";
+         buttonFontSize = "14";
+      };
+
+      new ShellTabGroupCtrl(LaunchTabView) {
+			profile = "LaunchTabProfile";
+			horizSizing = "width";
+			vertSizing = "bottom";
+			position = "120 11";
+			extent = "520 29";
+			minExtent = "38 29";
+			visible = "1";
+			helpTag = "0";
+			glowOffset = "0";
+			tabSpacing = "1";
+			maxTabWidth = "160";
+			stretchToFit = "0";
+      };
+	};
+   new ShellBitmapButton(LaunchToolbarCloseButton) {
+		profile = "CloseButtonProfile";
+		horizSizing = "left";
+		vertSizing = "bottom";
+		position = "583 13";
+		extent = "33 26";
+		minExtent = "8 8";
+		visible = "1";
+		setFirstResponder = "0";
+		modal = "1";
+		helpTag = "0";
+      command = "LaunchTabView.closeCurrentTab();";
+		text = "";
+      simpleStyle = "1";
+	};
+};
+//--- OBJECT WRITE END ---
+

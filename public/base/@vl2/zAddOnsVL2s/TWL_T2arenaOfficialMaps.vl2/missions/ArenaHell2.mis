@@ -1,0 +1,1884 @@
+// DisplayName = _ArenaHell II
+// MissionTypes = arena
+
+//--- MISSION QUOTE BEGIN ---
+//<font:verdana:10><color:FFFFFF>Warriors who lived disgraceful lives are now locked in an eternal struggle, in the darkest reaches of Hell.
+//<font:fixedsys:9><color:071010>.
+//<font:univers bold:16><color:6699CC>IIIIIIIIIII<color:C0C0C0>A HYBRID DESIGN<color:6699CC>IIIIIIIIIII
+//<font:univers bold:12><color:6699CC>--------<color:C0C0C0>FlyingElmo<color:6699CC>-------     <color:6699CC>-----<color:C0C0C0>flyingelmo@planettribes.com<color:6699CC>----
+//<font:tahoma bold:12><color:6699CC>_______<color:C0C0C0><a:www.planettribes.com/elmo>Click Here to Download</a><color:6699CC>_______
+//--- MISSION QUOTE END ---
+
+//--- MISSION STRING BEGIN ---
+//--- MISSION STRING END ---
+
+//--- OBJECT WRITE BEGIN ---
+new SimGroup(MissionGroup) {
+
+	cdTrack = "2";
+	CTF_timeLimit = "30";
+	CTF_scoreLimit = "6";
+	powerCount = "0";
+	musicTrack = "lush";
+
+	new MissionArea(MissionArea) {
+		area = "-928 704 336 544";
+		flightCeiling = "300";
+		flightCeilingRange = "20";
+
+		locked = "false";
+	};
+	new Lightning() {
+		position = "-746.666 972.417 206.097";
+		rotation = "1 0 0 0";
+		scale = "512 512 300";
+		dataBlock = "DefaultStorm";
+		lockCount = "0";
+		homingCount = "0";
+		strikesPerMinute = "8";
+		strikeWidth = "2.5";
+		chanceToHitTarget = "0";
+		strikeRadius = "1";
+		boltStartRadius = "20";
+		color = "1.000000 0.000000 0.000000 1.000000";
+		fadeColor = "0.100000 0.100000 1.000000 1.000000";
+		useFog = "1";
+	};
+	new TerrainBlock(Terrain) {
+		rotation = "1 0 0 0";
+		scale = "1 1 1";
+		detailTexture = "details/lushdet1";
+		terrainFile = "Magmatic.ter";
+		squareSize = "8";
+		emptySquares = "231229 231358 231485 231614 231741 231870 232509 232638 232765 232894 233021 233150 303052 303308 303564 107212";
+
+		visibleDistance = "1200";
+		hazeDistance = "250";
+		position = "-1024 -1024 0";
+		locked = "true";
+	};
+	new NavigationGraph(NavGraph) {
+		conjoinAngleDev = "45";
+		cullDensity = "0.3";
+		customArea = "0 0 0 0";
+
+		GraphFile = "Magmatic.nav";
+		XDimOverSize = "0";
+		position = "0 0 0 1";
+		locked = "true";
+		YDimOverSize = "0";
+		conjoinBowlDev = "20";
+		rotation = "0 0 0 0";
+		scale = "1 1 1";
+		coverage = "0";
+	};
+	new Sky(Sky) {
+		position = "-1024 -1024 0";
+		rotation = "1 0 0 0";
+		scale = "1 1 1";
+		cloudHeightPer[0] = "0.349971";
+		cloudHeightPer[1] = "0.25";
+		cloudHeightPer[2] = "0.199973";
+		cloudSpeed1 = "0.0001";
+		cloudSpeed2 = "0.0002";
+		cloudSpeed3 = "0.0003";
+		visibleDistance = "300";
+		useSkyTextures = "0";
+		renderBottomTexture = "0";
+		SkySolidColor = "0.388200 0.000000 0.011800 0.000000";
+		fogDistance = "50";
+		fogColor = "0.200000 0.000000 0.000000 1.000000";
+		fogVolume1 = "1 0 173";
+		fogVolume2 = "0 0 0";
+		fogVolume3 = "0 0 0";
+		materialList = "RedPlanet.dml";
+		windVelocity = "1 0 0";
+		windEffectPrecipitation = "0";
+		fogVolumeColor1 = "128.000000 128.000000 128.000000 -0.040112";
+		fogVolumeColor2 = "128.000000 128.000000 128.000000 0.742938";
+		fogVolumeColor3 = "128.000000 128.000000 128.000000 0.000000";
+		high_visibleDistance = "-1";
+		high_fogDistance = "-1";
+		high_fogVolume1 = "-1 0.533767 0.614598";
+		high_fogVolume2 = "-1 0.634901 0.469548";
+		high_fogVolume3 = "-1 0 0";
+
+		locked = "true";
+		cloudSpeed0 = "0.000000 0.000000";
+	};
+	new Sun() {
+		position = "680 -352 0";
+		rotation = "1 0 0 0";
+		scale = "1 1 1";
+		direction = "0.0569611 0.0578655 -0.996698";
+		color = "0.700000 0.000000 0.000000 1.000000";
+		ambient = "0.000000 0.000000 0.500000 1.000000";
+		texture[0] = "special/sunFlare";
+		texture[1] = "special/sunFlare02";
+		texture[2] = "special/LensFlare/flare01";
+		texture[3] = "special/LensFlare/flare02";
+		texture[4] = "special/LensFlare/flare03";
+		lensFlareScale = "0.7";
+		lensFlareIntensity = "1";
+		frontFlareSize = "300";
+		backFlareSize = "450";
+		flareColor = "1.000000 1.000000 1.000000 1.000000";
+
+		locked = "false";
+	};
+	new WaterBlock() {
+		position = "-448 1000 79.1342";
+		rotation = "1 0 0 0";
+		scale = "2048 2048 100";
+		liquidType = "Lava";
+		density = "1";
+		viscosity = "15";
+		waveMagnitude = "1";
+		surfaceTexture = "LiquidTiles/Lava";
+		surfaceOpacity = "1";
+		envMapTexture = "emap";
+		envMapIntensity = "0";
+		removeWetEdges = "0";
+
+		seedPoints = "0 0 1 0 1 1 0 1";
+		textureSize = "32 32";
+		params0 = "0.32 -0.67 0.066 0.5";
+		floodFill = "1";
+		params2 = "0.39 0.39 0.2 0.133";
+		params1 = "0.63 -2.41 0.33 0.21";
+		params3 = "1.21 -0.61 0.13 -0.33";
+		extent = "100 100 10";
+	};
+	new SimGroup(Teams) {
+
+		powerCount = "0";
+
+		new SimGroup(Team1) {
+
+			powerCount = "0";
+
+			new SimGroup(spawnspheres) {
+
+				powerCount = "0";
+
+				new SpawnSphere() {
+					position = "-677.363 1142.26 174.609";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "SpawnSphereMarker";
+					lockCount = "0";
+					homingCount = "0";
+					radius = "40";
+					sphereWeight = "100";
+					indoorWeight = "100";
+					outdoorWeight = "100";
+
+					spawnPos1 = "-707.363 1102.26 181.753";
+					spawnPos20 = "-677.363 1122.26 182.121";
+					spawnPos39 = "-667.363 1152.26 181.596";
+					spawnPos5 = "-667.363 1102.26 181.906";
+					spawnPos24 = "-717.363 1132.26 182.154";
+					spawnPos43 = "-707.363 1162.26 181.751";
+					spawnPosCount = "57";
+					spawnPos9 = "-707.363 1112.26 181.77";
+					spawnPos28 = "-697.363 1142.26 181.619";
+					spawnPos47 = "-667.363 1162.26 181.571";
+					spawnPos13 = "-667.363 1112.26 182.373";
+					spawnPos32 = "-657.363 1142.26 181.557";
+					spawnPos51 = "-707.363 1172.26 180.975";
+					spawnPos17 = "-707.363 1122.26 181.638";
+					spawnPos36 = "-697.363 1152.26 181.697";
+					spawnPos55 = "-667.363 1172.26 182.076";
+					spawnPos2 = "-697.363 1102.26 181.773";
+					spawnPos21 = "-667.363 1122.26 182.359";
+					spawnPos40 = "-657.363 1152.26 181.544";
+					spawnPos6 = "-657.363 1102.26 181.835";
+					spawnPos25 = "-707.363 1132.26 181.793";
+					spawnPos44 = "-697.363 1162.26 181.698";
+					spawnPos10 = "-697.363 1112.26 181.81";
+					spawnPos29 = "-687.363 1142.26 181.517";
+					spawnPos48 = "-657.363 1162.26 181.636";
+					spawnPos14 = "-657.363 1112.26 182.278";
+					spawnPos33 = "-647.363 1142.26 181.524";
+					spawnPos52 = "-697.363 1172.26 181.979";
+					spawnPos18 = "-697.363 1122.26 181.585";
+					spawnPos37 = "-687.363 1152.26 181.597";
+					spawnPos56 = "-657.363 1172.26 182.046";
+					spawnPos3 = "-687.363 1102.26 181.786";
+					spawnPos22 = "-657.363 1122.26 182.125";
+					spawnPos41 = "-647.363 1152.26 181.574";
+					spawnPos7 = "-647.363 1102.26 182.097";
+					spawnPos26 = "-717.363 1142.26 182.255";
+					spawnPos45 = "-687.363 1162.26 181.601";
+					spawnPos11 = "-687.363 1112.26 181.644";
+					spawnPos30 = "-677.363 1142.26 181.642";
+					spawnPos49 = "-647.363 1162.26 181.677";
+					spawnPos15 = "-647.363 1112.26 181.96";
+					spawnPos34 = "-717.363 1152.26 182.214";
+					spawnPos53 = "-687.363 1172.26 182.002";
+					spawnPos0 = "-717.363 1102.26 181.768";
+					spawnPos19 = "-687.363 1122.26 181.779";
+					spawnPos38 = "-677.363 1152.26 181.587";
+					spawnPos57 = "-647.363 1172.26 181.816";
+					spawnPos4 = "-677.363 1102.26 181.845";
+					spawnPos23 = "-647.363 1122.26 181.31";
+					spawnPos42 = "-717.363 1162.26 182.164";
+					spawnPos8 = "-717.363 1112.26 182.052";
+					spawnPos27 = "-707.363 1142.26 181.779";
+					spawnPos46 = "-677.363 1162.26 181.679";
+					spawnPos12 = "-677.363 1112.26 182.254";
+					spawnPos31 = "-667.363 1142.26 181.579";
+					spawnPos50 = "-717.363 1172.26 181.212";
+					spawnPos16 = "-717.363 1122.26 182.219";
+					spawnPos35 = "-707.363 1152.26 181.689";
+					spawnPos54 = "-677.363 1172.26 182.051";
+				};
+			};
+			new SimGroup(base0) {
+
+				powerCount = "1";
+
+				new InteriorInstance() {
+					position = "-647.881 1132.2 181.461";
+					rotation = "1 0 0 0";
+					scale = "1.77144 1.39997 1";
+					interiorFile = "xmisc3.dif";
+					showTerrainInside = "0";
+
+					team = "1";
+				};
+				new InteriorInstance() {
+					position = "-661.965 1132.18 181.461";
+					rotation = "1 0 0 0";
+					scale = "1.77144 1.39997 1";
+					interiorFile = "xmisc3.dif";
+					showTerrainInside = "0";
+
+					team = "1";
+				};
+				new InteriorInstance() {
+					position = "-676.21 1132.14 181.461";
+					rotation = "1 0 0 0";
+					scale = "1.77144 1.39997 1";
+					interiorFile = "xmisc3.dif";
+					showTerrainInside = "0";
+
+					team = "1";
+				};
+				new InteriorInstance() {
+					position = "-690.939 1132.11 181.461";
+					rotation = "1 0 0 0";
+					scale = "1.77144 1.39997 1";
+					interiorFile = "xmisc3.dif";
+					showTerrainInside = "0";
+
+					team = "1";
+				};
+				new StaticShape() {
+					position = "-648.043 1132.24 182.958";
+					rotation = "0 0 1 179.909";
+					scale = "1 1 1";
+					dataBlock = "StationInventory";
+					lockCount = "0";
+					homingCount = "0";
+
+					Trigger = "5504";
+					team = "1";
+					Target = "33";
+				};
+				new StaticShape() {
+					position = "-662.053 1132.03 182.905";
+					rotation = "0 0 1 179.909";
+					scale = "1 1 1";
+					dataBlock = "StationInventory";
+					lockCount = "0";
+					homingCount = "0";
+
+					Trigger = "5506";
+					team = "1";
+					Target = "34";
+				};
+				new StaticShape() {
+					position = "-676.232 1131.79 182.926";
+					rotation = "0 0 1 179.909";
+					scale = "1 1 1";
+					dataBlock = "StationInventory";
+					lockCount = "0";
+					homingCount = "0";
+
+					Trigger = "5508";
+					team = "1";
+					Target = "35";
+				};
+				new StaticShape() {
+					position = "-690.932 1131.81 182.901";
+					rotation = "0 0 1 179.909";
+					scale = "1 1 1";
+					dataBlock = "StationInventory";
+					lockCount = "0";
+					homingCount = "0";
+
+					Trigger = "5510";
+					team = "1";
+					Target = "36";
+				};
+				new StaticShape() {
+					position = "-672.26 1166.76 181.466";
+					rotation = "0 0 1 178.763";
+					scale = "1 1 1";
+					dataBlock = "GeneratorLarge";
+					lockCount = "0";
+					homingCount = "0";
+
+					team = "1";
+					Target = "37";
+				};
+			};
+		};
+		new SimGroup(team2) {
+
+			powerCount = "0";
+
+			new SimGroup(spawnspheres) {
+
+				powerCount = "0";
+
+				new SpawnSphere() {
+					position = "-855.135 767.666 171.678";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "SpawnSphereMarker";
+					lockCount = "0";
+					homingCount = "0";
+					radius = "40";
+					sphereWeight = "100";
+					indoorWeight = "100";
+					outdoorWeight = "100";
+
+					spawnPos1 = "-885.135 727.666 172.817";
+					spawnPos20 = "-855.135 747.666 177.306";
+					spawnPos39 = "-855.135 777.666 181.581";
+					spawnPos58 = "-825.135 797.666 181.772";
+					spawnPos5 = "-845.135 727.666 151.757";
+					spawnPos24 = "-895.135 757.666 181.623";
+					spawnPos43 = "-895.135 787.666 180.761";
+					spawnPosCount = "58";
+					spawnPos9 = "-885.135 737.666 178.778";
+					spawnPos28 = "-855.135 757.666 181.124";
+					spawnPos47 = "-855.135 787.666 181.454";
+					spawnPos13 = "-845.135 737.666 164.978";
+					spawnPos32 = "-895.135 767.666 181.672";
+					spawnPos51 = "-895.135 797.666 180.64";
+					spawnPos17 = "-885.135 747.666 181.792";
+					spawnPos36 = "-885.135 777.666 181.427";
+					spawnPos55 = "-855.135 797.666 181.386";
+					spawnPos2 = "-875.135 727.666 169.027";
+					spawnPos21 = "-845.135 747.666 174.629";
+					spawnPos40 = "-845.135 777.666 181.654";
+					spawnPos6 = "-835.135 727.666 147.607";
+					spawnPos25 = "-885.135 757.666 181.784";
+					spawnPos44 = "-885.135 787.666 180.676";
+					spawnPos10 = "-875.135 737.666 176.079";
+					spawnPos29 = "-845.135 757.666 180.334";
+					spawnPos48 = "-845.135 787.666 181.602";
+					spawnPos14 = "-835.135 737.666 161.318";
+					spawnPos33 = "-885.135 767.666 181.811";
+					spawnPos52 = "-885.135 797.666 180.772";
+					spawnPos18 = "-875.135 747.666 180.099";
+					spawnPos37 = "-875.135 777.666 181.368";
+					spawnPos56 = "-845.135 797.666 181.589";
+					spawnPos3 = "-865.135 727.666 162.833";
+					spawnPos22 = "-835.135 747.666 171.735";
+					spawnPos41 = "-835.135 777.666 181.725";
+					spawnPos7 = "-825.135 727.666 144.024";
+					spawnPos26 = "-875.135 757.666 181.819";
+					spawnPos45 = "-875.135 787.666 180.614";
+					spawnPos11 = "-865.135 737.666 172.225";
+					spawnPos30 = "-835.135 757.666 178.501";
+					spawnPos49 = "-835.135 787.666 181.661";
+					spawnPos15 = "-825.135 737.666 158.209";
+					spawnPos34 = "-825.135 767.666 181.454";
+					spawnPos53 = "-875.135 797.666 180.622";
+					spawnPos0 = "-895.135 727.666 176.074";
+					spawnPos19 = "-865.135 747.666 178.779";
+					spawnPos38 = "-865.135 777.666 181.434";
+					spawnPos57 = "-835.135 797.666 181.688";
+					spawnPos4 = "-855.135 727.666 156.929";
+					spawnPos23 = "-825.135 747.666 168.749";
+					spawnPos42 = "-825.135 777.666 181.77";
+					spawnPos8 = "-895.135 737.666 180.705";
+					spawnPos27 = "-865.135 757.666 181.361";
+					spawnPos46 = "-865.135 787.666 180.843";
+					spawnPos12 = "-855.135 737.666 168.808";
+					spawnPos31 = "-825.135 757.666 176.675";
+					spawnPos50 = "-825.135 787.666 181.78";
+					spawnPos16 = "-895.135 747.666 181.655";
+					spawnPos35 = "-895.135 777.666 181.51";
+					spawnPos54 = "-865.135 797.666 180.874";
+				};
+			};
+			new SimGroup(base0) {
+
+				powerCount = "1";
+
+				new Trigger() {
+					position = "-875.483 769.311 182.875";
+					rotation = "-0 0 -1 0.181308";
+					scale = "1 1 1";
+					dataBlock = "stationTrigger";
+					lockCount = "0";
+					homingCount = "0";
+					polyhedron = "-0.7500000 0.7500000 0.1000000 1.5000000 0.0000000 0.0000000 -0.0000000 -1.5000000 -0.0000000 -0.0000000 -0.0000000 2.3000000";
+
+					mainObj = "32564";
+					station = "32564";
+					team = "2";
+					disableObj = "32564";
+				};
+				new StaticShape() {
+					position = "-832.595 769.81 182.818";
+					rotation = "-0 0 -1 0.181308";
+					scale = "1 1 1";
+					dataBlock = "StationInventory";
+					lockCount = "0";
+					homingCount = "0";
+
+					Trigger = "5518";
+					team = "2";
+					Target = "38";
+				};
+				new Trigger() {
+					position = "-875.483 769.311 182.875";
+					rotation = "-0 0 -1 0.181308";
+					scale = "1 1 1";
+					dataBlock = "stationTrigger";
+					lockCount = "0";
+					homingCount = "0";
+					polyhedron = "-0.7500000 0.7500000 0.1000000 1.5000000 0.0000000 0.0000000 -0.0000000 -1.5000000 -0.0000000 -0.0000000 -0.0000000 2.3000000";
+
+					mainObj = "32473";
+					station = "32473";
+					team = "2";
+					disableObj = "32473";
+				};
+				new StaticShape() {
+					position = "-847.295 769.807 182.843";
+					rotation = "-0 0 -1 0.181308";
+					scale = "1 1 1";
+					dataBlock = "StationInventory";
+					lockCount = "0";
+					homingCount = "0";
+
+					Trigger = "5521";
+					team = "2";
+					Target = "39";
+				};
+				new Trigger() {
+					position = "-875.483 769.311 182.875";
+					rotation = "-0 0 -1 0.181308";
+					scale = "1 1 1";
+					dataBlock = "stationTrigger";
+					lockCount = "0";
+					homingCount = "0";
+					polyhedron = "-0.7500000 0.7500000 0.1000000 1.5000000 0.0000000 0.0000000 -0.0000000 -1.5000000 -0.0000000 -0.0000000 -0.0000000 2.3000000";
+
+					mainObj = "32357";
+					station = "32357";
+					team = "2";
+					disableObj = "32357";
+				};
+				new StaticShape() {
+					position = "-861.474 769.544 182.822";
+					rotation = "-0 0 -1 0.181308";
+					scale = "1 1 1";
+					dataBlock = "StationInventory";
+					lockCount = "0";
+					homingCount = "0";
+
+					Trigger = "5524";
+					team = "2";
+					Target = "40";
+				};
+				new StaticShape() {
+					position = "-875.483 769.311 182.875";
+					rotation = "-0 0 -1 0.181308";
+					scale = "1 1 1";
+					dataBlock = "StationInventory";
+					lockCount = "0";
+					homingCount = "0";
+
+					Trigger = "5526";
+					team = "2";
+					Target = "41";
+				};
+				new InteriorInstance() {
+					position = "-832.587 769.51 181.378";
+					rotation = "0 0 1 179.909";
+					scale = "1.77144 1.39997 1";
+					interiorFile = "xmisc3.dif";
+					showTerrainInside = "0";
+
+					team = "2";
+				};
+				new InteriorInstance() {
+					position = "-847.316 769.456 181.378";
+					rotation = "0 0 1 179.909";
+					scale = "1.77144 1.39997 1";
+					interiorFile = "xmisc3.dif";
+					showTerrainInside = "0";
+
+					team = "2";
+				};
+				new InteriorInstance() {
+					position = "-861.561 769.394 181.378";
+					rotation = "0 0 1 179.909";
+					scale = "1.77144 1.39997 1";
+					interiorFile = "xmisc3.dif";
+					showTerrainInside = "0";
+
+					team = "2";
+				};
+				new InteriorInstance() {
+					position = "-875.645 769.351 181.378";
+					rotation = "0 0 1 179.909";
+					scale = "1.77144 1.39997 1";
+					interiorFile = "xmisc3.dif";
+					showTerrainInside = "0";
+
+					team = "2";
+				};
+				new StaticShape() {
+					position = "-876.383 753.966 181.645";
+					rotation = "0 0 1 91.1003";
+					scale = "1 1 1";
+					dataBlock = "GeneratorLarge";
+					lockCount = "0";
+					homingCount = "0";
+
+					team = "2";
+					Target = "42";
+				};
+			};
+		};
+		new SimGroup(team0) {
+
+			powerCount = "0";
+
+			new Item() {
+				position = "-760.349 946.171 181.791";
+				rotation = "1 0 0 0";
+				scale = "1 1 1";
+				dataBlock = "RepairKit";
+				lockCount = "0";
+				homingCount = "0";
+				collideable = "0";
+				static = "1";
+				rotate = "0";
+
+				team = "0";
+				Target = "-1";
+			};
+			new Item() {
+				position = "-760.362 947.56 181.766";
+				rotation = "1 0 0 0";
+				scale = "1 1 1";
+				dataBlock = "RepairPatch";
+				lockCount = "0";
+				homingCount = "0";
+				collideable = "0";
+				static = "1";
+				rotate = "0";
+
+				team = "0";
+				Target = "-1";
+			};
+			new Item() {
+				position = "-760.344 944.84 181.74";
+				rotation = "1 0 0 0";
+				scale = "1 1 1";
+				dataBlock = "RepairPatch";
+				lockCount = "0";
+				homingCount = "0";
+				collideable = "0";
+				static = "1";
+				rotate = "0";
+
+				team = "0";
+				Target = "-1";
+			};
+			new Item() {
+				position = "-761.837 946.148 181.755";
+				rotation = "1 0 0 0";
+				scale = "1 1 1";
+				dataBlock = "RepairPatch";
+				lockCount = "0";
+				homingCount = "0";
+				collideable = "0";
+				static = "1";
+				rotate = "0";
+
+				team = "0";
+				Target = "-1";
+			};
+			new Item() {
+				position = "-758.91 946.21 181.768";
+				rotation = "1 0 0 0";
+				scale = "1 1 1";
+				dataBlock = "RepairPatch";
+				lockCount = "0";
+				homingCount = "0";
+				collideable = "0";
+				static = "1";
+				rotate = "0";
+
+				team = "0";
+				Target = "-1";
+			};
+			new Item() {
+				position = "-867.304 944.909 181.7";
+				rotation = "1 0 0 0";
+				scale = "1 1 1";
+				dataBlock = "DiscAmmo";
+				lockCount = "0";
+				homingCount = "0";
+				collideable = "0";
+				static = "1";
+				rotate = "0";
+
+				team = "0";
+				Target = "-1";
+			};
+			new Item() {
+				position = "-867.189 945.788 181.648";
+				rotation = "1 0 0 0";
+				scale = "1 1 1";
+				dataBlock = "DiscAmmo";
+				lockCount = "0";
+				homingCount = "0";
+				collideable = "0";
+				static = "1";
+				rotate = "0";
+
+				team = "0";
+				Target = "-1";
+			};
+			new Item() {
+				position = "-867.176 946.63 181.627";
+				rotation = "1 0 0 0";
+				scale = "1 1 1";
+				dataBlock = "DiscAmmo";
+				lockCount = "0";
+				homingCount = "0";
+				collideable = "0";
+				static = "1";
+				rotate = "0";
+
+				team = "0";
+				Target = "-1";
+			};
+			new Item() {
+				position = "-653.464 946.102 181.011";
+				rotation = "0 0 1 89.9544";
+				scale = "1 1 1";
+				dataBlock = "GrenadeLauncherAmmo";
+				lockCount = "0";
+				homingCount = "0";
+				collideable = "0";
+				static = "1";
+				rotate = "0";
+
+				team = "0";
+				Target = "-1";
+			};
+			new Item() {
+				position = "-653.435 946.874 181.027";
+				rotation = "0 0 1 89.9544";
+				scale = "1 1 1";
+				dataBlock = "GrenadeLauncherAmmo";
+				lockCount = "0";
+				homingCount = "0";
+				collideable = "0";
+				static = "1";
+				rotate = "0";
+
+				team = "0";
+				Target = "-1";
+			};
+			new Item() {
+				position = "-653.486 945.349 181.021";
+				rotation = "0 0 1 89.9544";
+				scale = "1 1 1";
+				dataBlock = "GrenadeLauncherAmmo";
+				lockCount = "0";
+				homingCount = "0";
+				collideable = "0";
+				static = "1";
+				rotate = "0";
+
+				team = "0";
+				Target = "-1";
+			};
+			new InteriorInstance() {
+				position = "-825.17 798.326 218.43";
+				rotation = "1 0 0 0";
+				scale = "0.189966 0.1 0.772255";
+				interiorFile = "xwall1.dif";
+				showTerrainInside = "0";
+
+				team = "0";
+			};
+			new InteriorInstance() {
+				position = "-827.828 798.308 215.385";
+				rotation = "0 1 0 89.9544";
+				scale = "0.204036 0.1 0.376836";
+				interiorFile = "xwall1.dif";
+				showTerrainInside = "0";
+
+				team = "0";
+			};
+			new StaticShape() {
+				position = "-825.059 799.893 214.623";
+				rotation = "-0.963248 -0.183097 0.196541 101.802";
+				scale = "1 1 1";
+				dataBlock = "LightMaleHuman_Dead";
+				lockCount = "0";
+				homingCount = "0";
+
+				team = "0";
+				Target = "-1";
+			};
+			new StaticShape() {
+				position = "-746.828 800.469 210.873";
+				rotation = "0.97381 0.124455 0.190274 83.7328";
+				scale = "1 1 1";
+				dataBlock = "LightMaleHuman_Dead";
+				lockCount = "0";
+				homingCount = "0";
+
+				team = "0";
+				Target = "-1";
+			};
+			new InteriorInstance() {
+				position = "-749.69 799.336 211.586";
+				rotation = "0 1 0 89.9544";
+				scale = "0.204036 0.1 0.376836";
+				interiorFile = "xwall1.dif";
+				showTerrainInside = "0";
+
+				team = "0";
+			};
+			new InteriorInstance() {
+				position = "-747.032 799.354 214.631";
+				rotation = "1 0 0 0";
+				scale = "0.189966 0.1 0.772255";
+				interiorFile = "xwall1.dif";
+				showTerrainInside = "0";
+
+				team = "0";
+			};
+			new InteriorInstance() {
+				position = "-810.655 781.736 211.477";
+				rotation = "-0.17166 0.97011 0.171524 91.693";
+				scale = "0.204036 0.1 0.376836";
+				interiorFile = "xwall1.dif";
+				showTerrainInside = "0";
+
+				team = "0";
+			};
+			new InteriorInstance() {
+				position = "-807.997 780.709 214.344";
+				rotation = "-1 0 -0 20.0535";
+				scale = "0.189966 0.1 0.772255";
+				interiorFile = "xwall1.dif";
+				showTerrainInside = "0";
+
+				team = "0";
+			};
+			new StaticShape() {
+				position = "-807.785 782.927 211.651";
+				rotation = "0.923765 0.196893 0.328468 65.9589";
+				scale = "1 1 1";
+				dataBlock = "MediumMaleHuman_Dead";
+				lockCount = "0";
+				homingCount = "0";
+
+				team = "0";
+				Target = "-1";
+			};
+			new StaticShape() {
+				position = "-718.596 786.609 207.934";
+				rotation = "1 0 0 179.909";
+				scale = "1 1 1";
+				dataBlock = "MediumMaleHuman_Dead";
+				lockCount = "0";
+				homingCount = "0";
+
+				team = "0";
+				Target = "-1";
+			};
+			new StaticShape() {
+				position = "-773.378 795.858 207.437";
+				rotation = "1 0 0 0";
+				scale = "1 1 1";
+				dataBlock = "HeavyMaleHuman_Dead";
+				lockCount = "0";
+				homingCount = "0";
+
+				team = "0";
+				Target = "-1";
+			};
+			new StaticShape() {
+				position = "-646.5 794.855 207.448";
+				rotation = "1 0 0 0";
+				scale = "1 1 1";
+				dataBlock = "LightMaleHuman_Dead";
+				lockCount = "0";
+				homingCount = "0";
+
+				team = "0";
+				Target = "-1";
+			};
+			new StaticShape() {
+				position = "-680.877 1103.69 210.533";
+				rotation = "-0.184833 0.743566 0.64261 193.452";
+				scale = "1 1 1";
+				dataBlock = "LightMaleHuman_Dead";
+				lockCount = "0";
+				homingCount = "0";
+
+				team = "0";
+				Target = "-1";
+			};
+			new InteriorInstance() {
+				position = "-678.302 1105.58 211.295";
+				rotation = "0.706275 0.0394486 0.706837 175.478";
+				scale = "0.204036 0.1 0.376836";
+				interiorFile = "xwall1.dif";
+				showTerrainInside = "0";
+
+				team = "0";
+			};
+			new InteriorInstance() {
+				position = "-680.941 1105.26 214.34";
+				rotation = "0 0 1 173.606";
+				scale = "0.189966 0.1 0.772255";
+				interiorFile = "xwall1.dif";
+				showTerrainInside = "0";
+
+				team = "0";
+			};
+			new InteriorInstance() {
+				position = "-728.818 1121.62 213.501";
+				rotation = "0.0138177 0.24738 0.96882 173.805";
+				scale = "0.189966 0.1 0.772255";
+				interiorFile = "xwall1.dif";
+				showTerrainInside = "0";
+
+				team = "0";
+			};
+			new InteriorInstance() {
+				position = "-726.179 1120.44 210.676";
+				rotation = "0.700088 0.214939 0.680939 195.676";
+				scale = "0.204036 0.1 0.376836";
+				interiorFile = "xwall1.dif";
+				showTerrainInside = "0";
+
+				team = "0";
+			};
+			new InteriorInstance() {
+				position = "-846.273 1109.01 214.689";
+				rotation = "0 0 1 173.606";
+				scale = "0.189966 0.1 0.772255";
+				interiorFile = "xwall1.dif";
+				showTerrainInside = "0";
+
+				team = "0";
+			};
+			new InteriorInstance() {
+				position = "-843.634 1109.33 211.644";
+				rotation = "0.706275 0.0394486 0.706837 175.478";
+				scale = "0.204036 0.1 0.376836";
+				interiorFile = "xwall1.dif";
+				showTerrainInside = "0";
+
+				team = "0";
+			};
+			new StaticShape() {
+				position = "-846.418 1107.84 211.744";
+				rotation = "-0.764216 0.432502 -0.478451 99.5771";
+				scale = "1 1 1";
+				dataBlock = "HeavyMaleHuman_Dead";
+				lockCount = "0";
+				homingCount = "0";
+
+				team = "0";
+				Target = "-1";
+			};
+			new StaticShape() {
+				position = "-856.676 1119.85 207.26";
+				rotation = "1 0 0 0";
+				scale = "1 1 1";
+				dataBlock = "MediumMaleHuman_Dead";
+				lockCount = "0";
+				homingCount = "0";
+
+				team = "0";
+				Target = "-1";
+			};
+			new StaticShape() {
+				position = "-776.126 1108.6 207.084";
+				rotation = "1 0 0 23.4912";
+				scale = "1 1 1";
+				dataBlock = "LightMaleHuman_Dead";
+				lockCount = "0";
+				homingCount = "0";
+
+				team = "0";
+				Target = "-1";
+			};
+			new StaticShape() {
+				position = "-689.095 1127.07 207.502";
+				rotation = "0 1 0 179.909";
+				scale = "1 1 1";
+				dataBlock = "MediumMaleHuman_Dead";
+				lockCount = "0";
+				homingCount = "0";
+
+				team = "0";
+				Target = "-1";
+			};
+			new InteriorInstance() {
+				position = "-724.435 1011.01 187.566";
+				rotation = "-0.0121885 -0.218213 0.975825 173.76";
+				scale = "0.189966 0.1 0.772255";
+				interiorFile = "xwall1.dif";
+				showTerrainInside = "0";
+
+				team = "0";
+			};
+			new InteriorInstance() {
+				position = "-721.796 1012.59 184.947";
+				rotation = "0.693071 -0.117869 0.711168 157.801";
+				scale = "0.204036 0.1 0.376836";
+				interiorFile = "xwall1.dif";
+				showTerrainInside = "0";
+
+				team = "0";
+			};
+			new Item() {
+				position = "-604.816 941.058 181.762";
+				rotation = "1 0 0 0";
+				scale = "1 1 1";
+				dataBlock = "RepairPatch";
+				lockCount = "0";
+				homingCount = "0";
+				collideable = "0";
+				static = "1";
+				rotate = "0";
+
+				team = "0";
+				Target = "-1";
+			};
+			new Item() {
+				position = "-604.811 939.068 181.768";
+				rotation = "1 0 0 0";
+				scale = "1 1 1";
+				dataBlock = "RepairPatch";
+				lockCount = "0";
+				homingCount = "0";
+				collideable = "0";
+				static = "1";
+				rotate = "0";
+
+				team = "0";
+				Target = "-1";
+			};
+			new Item() {
+				position = "-914.91 943.24 181.686";
+				rotation = "1 0 0 0";
+				scale = "1 1 1";
+				dataBlock = "RepairPatch";
+				lockCount = "0";
+				homingCount = "0";
+				collideable = "0";
+				static = "1";
+				rotate = "0";
+
+				team = "0";
+				Target = "-1";
+			};
+			new Item() {
+				position = "-914.915 945.23 181.68";
+				rotation = "1 0 0 0";
+				scale = "1 1 1";
+				dataBlock = "RepairPatch";
+				lockCount = "0";
+				homingCount = "0";
+				collideable = "0";
+				static = "1";
+				rotate = "0";
+
+				team = "0";
+				Target = "-1";
+			};
+			new SimSet(TrackerTeam_1) {
+
+				team = "0";
+
+				new ScriptObject() {
+
+					className = "PlayerRep";
+					chatMuted = "0";
+					teamId = "0";
+					isBot = "0";
+					name = "\x10\c8FlyingElmo\x11";
+					canListen = "0";
+					score = "0";
+					isAdmin = "1";
+					ping = "0";
+					voiceEnabled = "0";
+					isSuperAdmin = "1";
+					targetId = "32";
+					guid = "0";
+					packetLoss = "0";
+					clientId = "14561";
+					isListening = "0";
+					isSmurf = "1";
+				};
+			};
+			new SimGroup() {
+
+				powerCount = "0";
+			};
+			new SimSet(TrackerTeam_2) {
+
+				team = "0";
+
+				new ScriptObject() {
+
+					className = "PlayerRep";
+					chatMuted = "0";
+					teamId = "0";
+					isBot = "0";
+					name = "\x10\c8FlyingElmo\x11";
+					canListen = "0";
+					score = "0";
+					isAdmin = "1";
+					ping = "0";
+					voiceEnabled = "0";
+					isSuperAdmin = "1";
+					targetId = "32";
+					guid = "0";
+					packetLoss = "0";
+					clientId = "14561";
+					isListening = "0";
+					isSmurf = "1";
+				};
+			};
+			new SimSet(TrackerTeam_0) {
+
+				team = "0";
+
+				new ScriptObject() {
+
+					className = "PlayerRep";
+					chatMuted = "0";
+					teamId = "0";
+					isBot = "0";
+					name = "\x10\c8FlyingElmo\x11";
+					canListen = "0";
+					score = "0";
+					isAdmin = "1";
+					ping = "0";
+					voiceEnabled = "0";
+					isSuperAdmin = "1";
+					targetId = "32";
+					guid = "0";
+					packetLoss = "0";
+					clientId = "14561";
+					isListening = "0";
+					isSmurf = "1";
+				};
+			};
+		};
+	};
+	new SimGroup(thisisarenaHEL) {
+
+		powerCount = "0";
+
+		new InteriorInstance() {
+			position = "-619.49 783.976 183.564";
+			rotation = "0.576893 0.577353 0.577805 239.921";
+			scale = "0.733815 1 0.852686";
+			interiorFile = "dmisc_stonehenge3.dif";
+			showTerrainInside = "0";
+		};
+		new InteriorInstance() {
+			position = "-704.654 783.827 195.642";
+			rotation = "0.576279 0.577654 -0.578117 119.974";
+			scale = "0.733815 1 1";
+			interiorFile = "dmisc_stonehenge3.dif";
+			showTerrainInside = "0";
+		};
+		new InteriorInstance() {
+			position = "-897.045 893.023 187.703";
+			rotation = "0.000560656 -0.706543 0.70767 180";
+			scale = "0.733815 1 1";
+			interiorFile = "dmisc_stonehenge3.dif";
+			showTerrainInside = "0";
+		};
+		new InteriorInstance() {
+			position = "-897.133 984.965 175.625";
+			rotation = "2.80499e-07 0.707108 0.707105 179.936";
+			scale = "0.733815 1 1";
+			interiorFile = "dmisc_stonehenge3.dif";
+			showTerrainInside = "0";
+		};
+		new InteriorInstance() {
+			position = "-896.995 833.062 175.747";
+			rotation = "2.80499e-07 0.707108 0.707105 179.936";
+			scale = "0.733815 1 1";
+			interiorFile = "dmisc_stonehenge3.dif";
+			showTerrainInside = "0";
+		};
+		new InteriorInstance() {
+			position = "-896.907 741.12 187.825";
+			rotation = "0.000560656 -0.706543 0.70767 180";
+			scale = "0.733815 1 1";
+			interiorFile = "dmisc_stonehenge3.dif";
+			showTerrainInside = "0";
+		};
+		new InteriorInstance() {
+			position = "-897.255 1136.88 175.501";
+			rotation = "2.80499e-07 0.707108 0.707105 179.936";
+			scale = "0.733815 1 1";
+			interiorFile = "dmisc_stonehenge3.dif";
+			showTerrainInside = "0";
+		};
+		new InteriorInstance() {
+			position = "-897.167 1044.94 187.579";
+			rotation = "0.000560656 -0.706543 0.70767 180";
+			scale = "0.733815 1 1";
+			interiorFile = "dmisc_stonehenge3.dif";
+			showTerrainInside = "0";
+		};
+		new InteriorInstance() {
+			position = "-615.163 1045 187.529";
+			rotation = "0.000560656 -0.706543 0.70767 180";
+			scale = "0.733815 1 1";
+			interiorFile = "dmisc_stonehenge3.dif";
+			showTerrainInside = "0";
+		};
+		new InteriorInstance() {
+			position = "-615.251 1136.94 175.451";
+			rotation = "2.80499e-07 0.707108 0.707105 179.936";
+			scale = "0.733815 1 1";
+			interiorFile = "dmisc_stonehenge3.dif";
+			showTerrainInside = "0";
+		};
+		new InteriorInstance() {
+			position = "-614.903 741.182 187.775";
+			rotation = "0.000560656 -0.706543 0.70767 180";
+			scale = "0.733815 1 1";
+			interiorFile = "dmisc_stonehenge3.dif";
+			showTerrainInside = "0";
+		};
+		new InteriorInstance() {
+			position = "-614.991 833.124 175.697";
+			rotation = "2.80499e-07 0.707108 0.707105 179.936";
+			scale = "0.733815 1 1";
+			interiorFile = "dmisc_stonehenge3.dif";
+			showTerrainInside = "0";
+		};
+		new InteriorInstance() {
+			position = "-615.129 985.027 175.575";
+			rotation = "2.80499e-07 0.707108 0.707105 179.936";
+			scale = "0.733815 1 1";
+			interiorFile = "dmisc_stonehenge3.dif";
+			showTerrainInside = "0";
+		};
+		new InteriorInstance() {
+			position = "-615.041 893.085 187.653";
+			rotation = "0.000560656 -0.706543 0.70767 180";
+			scale = "0.733815 1 1";
+			interiorFile = "dmisc_stonehenge3.dif";
+			showTerrainInside = "0";
+		};
+		new InteriorInstance() {
+			position = "-901.502 1111.23 195.413";
+			rotation = "0.576279 0.577654 -0.578117 119.974";
+			scale = "0.733815 1 0.877035";
+			interiorFile = "dmisc_stonehenge3.dif";
+			showTerrainInside = "0";
+		};
+		new InteriorInstance() {
+			position = "-815.216 1111.39 183.344";
+			rotation = "0.576893 0.577353 0.577805 239.921";
+			scale = "0.733815 1 1";
+			interiorFile = "dmisc_stonehenge3.dif";
+			showTerrainInside = "0";
+		};
+		new InteriorInstance() {
+			position = "-663.303 1111.63 183.22";
+			rotation = "0.576893 0.577353 0.577805 239.921";
+			scale = "0.733815 1 1";
+			interiorFile = "dmisc_stonehenge3.dif";
+			showTerrainInside = "0";
+		};
+		new InteriorInstance() {
+			position = "-755.243 1111.47 195.298";
+			rotation = "0.576279 0.577654 -0.578117 119.974";
+			scale = "0.733815 1 1";
+			interiorFile = "dmisc_stonehenge3.dif";
+			showTerrainInside = "0";
+		};
+		new InteriorInstance() {
+			position = "-856.57 783.577 195.766";
+			rotation = "0.576279 0.577654 -0.578117 119.974";
+			scale = "0.733815 1 1";
+			interiorFile = "dmisc_stonehenge3.dif";
+			showTerrainInside = "0";
+		};
+		new InteriorInstance() {
+			position = "-764.628 783.747 183.688";
+			rotation = "0.576893 0.577353 0.577805 239.921";
+			scale = "0.733815 1 1";
+			interiorFile = "dmisc_stonehenge3.dif";
+			showTerrainInside = "0";
+		};
+		new InteriorInstance() {
+			position = "-873.268 945.858 173.025";
+			rotation = "0 0 1 90";
+			scale = "1 1 1";
+			interiorFile = "dmisc_stonehenge2.dif";
+			showTerrainInside = "0";
+		};
+		new InteriorInstance() {
+			position = "-853.224 945.858 181.814";
+			rotation = "0.706825 0.707388 0.000562931 179.935";
+			scale = "1 1 1";
+			interiorFile = "dmisc_stonehenge2.dif";
+			showTerrainInside = "0";
+		};
+		new InteriorInstance() {
+			position = "-833.268 945.858 173.025";
+			rotation = "0 0 1 90";
+			scale = "1 1 1";
+			interiorFile = "dmisc_stonehenge2.dif";
+			showTerrainInside = "0";
+		};
+		new InteriorInstance() {
+			position = "-813.668 945.858 173.025";
+			rotation = "0 0 1 90";
+			scale = "1 1 1";
+			interiorFile = "dmisc_stonehenge2.dif";
+			showTerrainInside = "0";
+		};
+		new InteriorInstance() {
+			position = "-793.824 945.905 181.814";
+			rotation = "0.706825 0.707388 0.000562931 179.935";
+			scale = "1 1 1";
+			interiorFile = "dmisc_stonehenge2.dif";
+			showTerrainInside = "0";
+		};
+		new InteriorInstance() {
+			position = "-773.806 945.857 172.976";
+			rotation = "0 0 1 90";
+			scale = "1 1 1";
+			interiorFile = "dmisc_stonehenge2.dif";
+			showTerrainInside = "0";
+		};
+		new InteriorInstance() {
+			position = "-739.206 945.857 172.976";
+			rotation = "0 0 1 90";
+			scale = "1 1 1";
+			interiorFile = "dmisc_stonehenge2.dif";
+			showTerrainInside = "0";
+		};
+		new InteriorInstance() {
+			position = "-719.424 945.953 181.814";
+			rotation = "0.706825 0.707388 0.000562931 179.935";
+			scale = "1 1 1";
+			interiorFile = "dmisc_stonehenge2.dif";
+			showTerrainInside = "0";
+		};
+		new InteriorInstance() {
+			position = "-699.514 945.864 173.146";
+			rotation = "0 0 1 90";
+			scale = "1 1 1";
+			interiorFile = "dmisc_stonehenge2.dif";
+			showTerrainInside = "0";
+		};
+		new InteriorInstance() {
+			position = "-679.914 945.864 173.146";
+			rotation = "0 0 1 90";
+			scale = "1 1 1";
+			interiorFile = "dmisc_stonehenge2.dif";
+			showTerrainInside = "0";
+		};
+		new InteriorInstance() {
+			position = "-660.024 946 181.813";
+			rotation = "0.706825 0.707388 0.000562931 179.935";
+			scale = "1 1 1";
+			interiorFile = "dmisc_stonehenge2.dif";
+			showTerrainInside = "0";
+		};
+		new InteriorInstance() {
+			position = "-640.114 945.864 172.252";
+			rotation = "0 0 1 90";
+			scale = "1 1 1";
+			interiorFile = "dmisc_stonehenge2.dif";
+			showTerrainInside = "0";
+		};
+		new InteriorInstance() {
+			position = "-757.551 945.867 171.231";
+			rotation = "0 0 1 90";
+			scale = "1 0.739665 1.26824";
+			interiorFile = "dmisc_stonehenge2.dif";
+			showTerrainInside = "0";
+		};
+		new InteriorInstance() {
+			position = "-691.837 1064.78 172.584";
+			rotation = "0.222542 -0.0710909 0.972328 214.511";
+			scale = "1 1 1";
+			interiorFile = "bwall2.dif";
+			showTerrainInside = "0";
+		};
+		new InteriorInstance() {
+			position = "-741.223 1045.23 175.063";
+			rotation = "0.837999 -0.174238 0.517106 43.8087";
+			scale = "1 1 1";
+			interiorFile = "bwall1.dif";
+			showTerrainInside = "0";
+		};
+		new InteriorInstance() {
+			position = "-807.733 1066.04 178.433";
+			rotation = "0 0 1 90.5273";
+			scale = "1 1 1";
+			interiorFile = "bwall1.dif";
+			showTerrainInside = "0";
+		};
+		new InteriorInstance() {
+			position = "-854.135 1008.78 175.92";
+			rotation = "1 0 0 0";
+			scale = "1 1 1";
+			interiorFile = "bwall4.dif";
+			showTerrainInside = "0";
+		};
+		new InteriorInstance() {
+			position = "-840.104 1044.41 172.771";
+			rotation = "1 0 0 0";
+			scale = "1 1 1";
+			interiorFile = "bwall4.dif";
+			showTerrainInside = "0";
+		};
+		new InteriorInstance() {
+			position = "-816.212 1025.51 177.573";
+			rotation = "0 -1 0 17.7617";
+			scale = "1 1 1";
+			interiorFile = "bwall4.dif";
+			showTerrainInside = "0";
+		};
+		new InteriorInstance() {
+			position = "-669.046 1023.49 177.324";
+			rotation = "0 0 1 142.094";
+			scale = "1 1 1";
+			interiorFile = "bwall3.dif";
+			showTerrainInside = "0";
+		};
+		new InteriorInstance() {
+			position = "-665.381 1041.8 172.384";
+			rotation = "0 0 1 40.107";
+			scale = "1 1 1";
+			interiorFile = "bwall3.dif";
+			showTerrainInside = "0";
+		};
+		new InteriorInstance() {
+			position = "-770.352 993.091 189.67";
+			rotation = "-0.364235 -0.870506 -0.330987 102.887";
+			scale = "1 1 1";
+			interiorFile = "bwall2.dif";
+			showTerrainInside = "0";
+		};
+		new InteriorInstance() {
+			position = "-835.641 830.625 174.19";
+			rotation = "0.0422458 -0.240099 0.969829 134.9";
+			scale = "1 1 1";
+			interiorFile = "bwall3.dif";
+			showTerrainInside = "0";
+		};
+		new InteriorInstance() {
+			position = "-776.958 859.708 177.248";
+			rotation = "-0.252748 0.277512 0.926879 85.0576";
+			scale = "1 1 1";
+			interiorFile = "bwall2.dif";
+			showTerrainInside = "0";
+		};
+		new InteriorInstance() {
+			position = "-854.502 894.987 176.265";
+			rotation = "0.0396956 -0.217217 0.975316 94.7902";
+			scale = "1 1 1";
+			interiorFile = "bwall1.dif";
+			showTerrainInside = "0";
+		};
+		new InteriorInstance() {
+			position = "-748.801 884.912 180.725";
+			rotation = "0 0 1 40.107";
+			scale = "1 1 1";
+			interiorFile = "bwall3.dif";
+			showTerrainInside = "0";
+		};
+		new InteriorInstance() {
+			position = "-738.296 875.035 175.783";
+			rotation = "0.281032 -0.629308 -0.724564 63.2938";
+			scale = "1 1 1";
+			interiorFile = "bwall3.dif";
+			showTerrainInside = "0";
+		};
+		new InteriorInstance() {
+			position = "-692.038 882.962 177.606";
+			rotation = "-1 0 0 38.9611";
+			scale = "1 1 1";
+			interiorFile = "bwall4.dif";
+			showTerrainInside = "0";
+		};
+		new InteriorInstance() {
+			position = "-682.204 907.319 178.787";
+			rotation = "1 0 0 0";
+			scale = "1 1 1";
+			interiorFile = "bwall4.dif";
+			showTerrainInside = "0";
+		};
+		new InteriorInstance() {
+			position = "-664.027 890.641 178.348";
+			rotation = "1 0 0 0";
+			scale = "1 1 1";
+			interiorFile = "bwall4.dif";
+			showTerrainInside = "0";
+		};
+		new InteriorInstance() {
+			position = "-848.251 883.438 124.098";
+			rotation = "0.966389 0.00149016 -0.25708 179.358";
+			scale = "1 1 3.70201";
+			interiorFile = "dmisc_nefflagstand3.dif";
+			showTerrainInside = "0";
+		};
+		new InteriorInstance() {
+			position = "-761.983 877.061 89.5743";
+			rotation = "0.99955 0.000173676 -0.0299952 179.336";
+			scale = "1 1 5.65075";
+			interiorFile = "dmisc_nefflagstand3.dif";
+			showTerrainInside = "0";
+		};
+		new InteriorInstance() {
+			position = "-676.099 916.181 57.9275";
+			rotation = "0.99955 0.000173676 -0.0299952 179.336";
+			scale = "0.480727 0.4572 5.65075";
+			interiorFile = "dmisc_nefflagstand3.dif";
+			showTerrainInside = "0";
+		};
+		new InteriorInstance() {
+			position = "-702.648 1033.09 94.6227";
+			rotation = "0.999388 -0.000203071 0.0349932 179.336";
+			scale = "1 1 5.65075";
+			interiorFile = "dmisc_nefflagstand3.dif";
+			showTerrainInside = "0";
+		};
+		new InteriorInstance() {
+			position = "-828.499 1023.29 105.363";
+			rotation = "0.995004 0.000578548 -0.0998331 179.339";
+			scale = "0.938656 1 4.69066";
+			interiorFile = "dmisc_nefflagstand3.dif";
+			showTerrainInside = "0";
+		};
+		new InteriorInstance() {
+			position = "-751.342 1077.7 83.2164";
+			rotation = "0.99955 0.000173676 -0.0299952 179.336";
+			scale = "0.480727 0.4572 5.65075";
+			interiorFile = "dmisc_nefflagstand3.dif";
+			showTerrainInside = "0";
+		};
+		new InteriorInstance() {
+			position = "-893.568 812.885 179.98";
+			rotation = "0 -1 0 41.253";
+			scale = "1 1 1.5285";
+			interiorFile = "rilke_domain2_boundrymarker.dif";
+			showTerrainInside = "0";
+		};
+		new InteriorInstance() {
+			position = "-893.568 872.085 179.98";
+			rotation = "0 -1 0 41.253";
+			scale = "1 1 1.5285";
+			interiorFile = "rilke_domain2_boundrymarker.dif";
+			showTerrainInside = "0";
+		};
+		new InteriorInstance() {
+			position = "-893.568 934.685 179.98";
+			rotation = "0 -1 0 41.253";
+			scale = "1 1 1.5285";
+			interiorFile = "rilke_domain2_boundrymarker.dif";
+			showTerrainInside = "0";
+		};
+		new InteriorInstance() {
+			position = "-893.568 990.885 179.98";
+			rotation = "0 -1 0 41.253";
+			scale = "1 1 1.5285";
+			interiorFile = "rilke_domain2_boundrymarker.dif";
+			showTerrainInside = "0";
+		};
+		new InteriorInstance() {
+			position = "-893.568 1055.88 179.98";
+			rotation = "0 -1 0 41.253";
+			scale = "1 1 1.5285";
+			interiorFile = "rilke_domain2_boundrymarker.dif";
+			showTerrainInside = "0";
+		};
+		new InteriorInstance() {
+			position = "-608.36 813.028 195.626";
+			rotation = "0 1 0 40.107";
+			scale = "1 1 1.5285";
+			interiorFile = "rilke_domain2_boundrymarker.dif";
+			showTerrainInside = "0";
+		};
+		new InteriorInstance() {
+			position = "-608.36 872.228 195.626";
+			rotation = "0 1 0 40.107";
+			scale = "1 1 1.5285";
+			interiorFile = "rilke_domain2_boundrymarker.dif";
+			showTerrainInside = "0";
+		};
+		new InteriorInstance() {
+			position = "-608.36 934.828 195.626";
+			rotation = "0 1 0 40.107";
+			scale = "1 1 1.5285";
+			interiorFile = "rilke_domain2_boundrymarker.dif";
+			showTerrainInside = "0";
+		};
+		new InteriorInstance() {
+			position = "-608.36 990.428 195.626";
+			rotation = "0 1 0 40.107";
+			scale = "1 1 1.5285";
+			interiorFile = "rilke_domain2_boundrymarker.dif";
+			showTerrainInside = "0";
+		};
+		new InteriorInstance() {
+			position = "-608.36 1056.02 195.626";
+			rotation = "0 1 0 40.107";
+			scale = "1 1 1.5285";
+			interiorFile = "rilke_domain2_boundrymarker.dif";
+			showTerrainInside = "0";
+		};
+	};
+	new SimGroup(AudioBubbling) {
+
+		powerCount = "0";
+
+		new AudioEmitter() {
+			position = "238.562 -247.204 77.5686";
+			rotation = "1 0 0 0";
+			scale = "1 1 1";
+			fileName = "fx/environment/lavahostile.wav";
+			useProfileDescription = "0";
+			outsideAmbient = "1";
+			volume = "1";
+			isLooping = "1";
+			is3D = "1";
+			minDistance = "20";
+			maxDistance = "800";
+			coneInsideAngle = "360";
+			coneOutsideAngle = "360";
+			coneOutsideVolume = "1";
+			coneVector = "0 0 1";
+			loopCount = "-1";
+			minLoopGap = "0";
+			maxLoopGap = "0";
+			type = "EffectAudioType";
+
+			locked = "false";
+		};
+		new AudioEmitter() {
+			position = "-102.723 207.676 74.2436";
+			rotation = "1 0 0 0";
+			scale = "1 1 1";
+			fileName = "fx/environment/lavahostile.wav";
+			useProfileDescription = "0";
+			outsideAmbient = "1";
+			volume = "1";
+			isLooping = "1";
+			is3D = "1";
+			minDistance = "20";
+			maxDistance = "800";
+			coneInsideAngle = "360";
+			coneOutsideAngle = "360";
+			coneOutsideVolume = "1";
+			coneVector = "0 0 1";
+			loopCount = "-1";
+			minLoopGap = "0";
+			maxLoopGap = "0";
+			type = "EffectAudioType";
+
+			locked = "false";
+		};
+		new AudioEmitter() {
+			position = "121.164 208.004 68.5667";
+			rotation = "1 0 0 0";
+			scale = "1 1 1";
+			fileName = "fx/environment/lavahostile.wav";
+			useProfileDescription = "0";
+			outsideAmbient = "1";
+			volume = "1";
+			isLooping = "1";
+			is3D = "1";
+			minDistance = "20";
+			maxDistance = "800";
+			coneInsideAngle = "360";
+			coneOutsideAngle = "360";
+			coneOutsideVolume = "1";
+			coneVector = "0 0 1";
+			loopCount = "-1";
+			minLoopGap = "0";
+			maxLoopGap = "0";
+			type = "EffectAudioType";
+
+			locked = "false";
+		};
+		new AudioEmitter() {
+			position = "-228.298 -244.157 67.0027";
+			rotation = "1 0 0 0";
+			scale = "1 1 1";
+			fileName = "fx/environment/lavahostile.wav";
+			useProfileDescription = "0";
+			outsideAmbient = "1";
+			volume = "1";
+			isLooping = "1";
+			is3D = "1";
+			minDistance = "20";
+			maxDistance = "800";
+			coneInsideAngle = "360";
+			coneOutsideAngle = "360";
+			coneOutsideVolume = "1";
+			coneVector = "0 0 1";
+			loopCount = "-1";
+			minLoopGap = "0";
+			maxLoopGap = "0";
+			type = "EffectAudioType";
+
+			locked = "false";
+		};
+		new AudioEmitter() {
+			position = "225.789 591.297 78.725";
+			rotation = "1 0 0 0";
+			scale = "1 1 1";
+			fileName = "fx/environment/lavahostile.wav";
+			useProfileDescription = "0";
+			outsideAmbient = "1";
+			volume = "1";
+			isLooping = "1";
+			is3D = "1";
+			minDistance = "20";
+			maxDistance = "800";
+			coneInsideAngle = "360";
+			coneOutsideAngle = "360";
+			coneOutsideVolume = "1";
+			coneVector = "0 0 1";
+			loopCount = "-1";
+			minLoopGap = "0";
+			maxLoopGap = "0";
+			type = "EffectAudioType";
+
+			locked = "false";
+		};
+		new AudioEmitter() {
+			position = "205.607 -91.1028 70.5774";
+			rotation = "1 0 0 0";
+			scale = "1 1 1";
+			fileName = "fx/environment/lavahostile.wav";
+			useProfileDescription = "0";
+			outsideAmbient = "1";
+			volume = "1";
+			isLooping = "1";
+			is3D = "1";
+			minDistance = "20";
+			maxDistance = "800";
+			coneInsideAngle = "360";
+			coneOutsideAngle = "360";
+			coneOutsideVolume = "1";
+			coneVector = "0 0 1";
+			loopCount = "-1";
+			minLoopGap = "0";
+			maxLoopGap = "0";
+			type = "EffectAudioType";
+
+			locked = "false";
+		};
+		new AudioEmitter() {
+			position = "390.492 -423.663 79.6071";
+			rotation = "1 0 0 0";
+			scale = "1 1 1";
+			fileName = "fx/environment/gravel3.wav";
+			useProfileDescription = "0";
+			outsideAmbient = "1";
+			volume = "1";
+			isLooping = "1";
+			is3D = "1";
+			minDistance = "45";
+			maxDistance = "800";
+			coneInsideAngle = "360";
+			coneOutsideAngle = "360";
+			coneOutsideVolume = "1";
+			coneVector = "0 0 1";
+			loopCount = "-1";
+			minLoopGap = "0";
+			maxLoopGap = "0";
+			type = "EffectAudioType";
+
+			locked = "false";
+		};
+		new AudioEmitter() {
+			position = "226.749 1008.86 88.647";
+			rotation = "1 0 0 0";
+			scale = "1 1 1";
+			fileName = "fx/environment/gravel3.wav";
+			useProfileDescription = "0";
+			outsideAmbient = "1";
+			volume = "1";
+			isLooping = "1";
+			is3D = "1";
+			minDistance = "45";
+			maxDistance = "800";
+			coneInsideAngle = "360";
+			coneOutsideAngle = "360";
+			coneOutsideVolume = "1";
+			coneVector = "0 0 1";
+			loopCount = "-1";
+			minLoopGap = "0";
+			maxLoopGap = "0";
+			type = "EffectAudioType";
+
+			locked = "false";
+		};
+		new AudioEmitter() {
+			position = "-252.43 1053.56 88.8209";
+			rotation = "1 0 0 0";
+			scale = "1 1 1";
+			fileName = "fx/environment/gravel3.wav";
+			useProfileDescription = "0";
+			outsideAmbient = "1";
+			volume = "1";
+			isLooping = "1";
+			is3D = "1";
+			minDistance = "45";
+			maxDistance = "800";
+			coneInsideAngle = "360";
+			coneOutsideAngle = "360";
+			coneOutsideVolume = "1";
+			coneVector = "0 0 1";
+			loopCount = "-1";
+			minLoopGap = "0";
+			maxLoopGap = "0";
+			type = "EffectAudioType";
+
+			locked = "false";
+		};
+		new AudioEmitter() {
+			position = "-880.136 600.957 91.7757";
+			rotation = "1 0 0 0";
+			scale = "1 1 1";
+			fileName = "fx/environment/gravel3.wav";
+			useProfileDescription = "0";
+			outsideAmbient = "1";
+			volume = "1";
+			isLooping = "1";
+			is3D = "1";
+			minDistance = "45";
+			maxDistance = "800";
+			coneInsideAngle = "360";
+			coneOutsideAngle = "360";
+			coneOutsideVolume = "1";
+			coneVector = "0 0 1";
+			loopCount = "-1";
+			minLoopGap = "0";
+			maxLoopGap = "0";
+			type = "EffectAudioType";
+
+			locked = "false";
+		};
+	};
+	new SimSet(TrackerTeam_0) {
+
+		new ScriptObject() {
+
+			className = "PlayerRep";
+			chatMuted = "0";
+			teamId = "0";
+			isBot = "0";
+			name = "\x10\c8FlyingElmo\x11";
+			canListen = "0";
+			score = "0";
+			isAdmin = "1";
+			ping = "1";
+			voiceEnabled = "0";
+			isSuperAdmin = "1";
+			targetId = "32";
+			guid = "0";
+			packetLoss = "0";
+			clientId = "14561";
+			isListening = "0";
+			isSmurf = "1";
+		};
+	};
+	new SimGroup(ObserverDropPoints) {
+
+		new Camera() {
+			position = "-757.722 889.642 338.833";
+			rotation = "1 0 0 65.8902";
+			scale = "1 1 1";
+			dataBlock = "Observer";
+			lockCount = "0";
+			homingCount = "0";
+
+			team = "0";
+		};
+		new Camera() {
+			position = "-668.603 922.147 265.027";
+			rotation = "0.57973 0.290845 -0.761132 66.7808";
+			scale = "1 1 1";
+			dataBlock = "Observer";
+			lockCount = "0";
+			homingCount = "0";
+
+			team = "0";
+		};
+		new Camera() {
+			position = "-759.325 844.427 205.89";
+			rotation = "1 0 0 0";
+			scale = "1 1 1";
+			dataBlock = "Observer";
+			lockCount = "0";
+			homingCount = "0";
+
+			team = "0";
+		};
+		new Camera() {
+			position = "-833.615 810.791 217.888";
+			rotation = "0 0 1 130.634";
+			scale = "1 1 1";
+			dataBlock = "Observer";
+			lockCount = "0";
+			homingCount = "0";
+
+			team = "0";
+		};
+		new Camera() {
+			position = "-775.842 769.477 192.958";
+			rotation = "0 0 1 89.9544";
+			scale = "1 1 1";
+			dataBlock = "Observer";
+			lockCount = "0";
+			homingCount = "0";
+
+			team = "0";
+		};
+	};
+};
+//--- OBJECT WRITE END ---

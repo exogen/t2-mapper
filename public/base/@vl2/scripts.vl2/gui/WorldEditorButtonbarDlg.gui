@@ -1,0 +1,299 @@
+//--- OBJECT WRITE BEGIN ---
+new GuiControl(WorldEditorButtonbarDlg) {
+	profile = "GuiModelessDialogProfile";
+	horizSizing = "right";
+	vertSizing = "bottom";
+	position = "0 0";
+	extent = "640 480";
+	minExtent = "8 8";
+	visible = "1";
+	setFirstResponder = "0";
+	modal = "0";
+	helpTag = "0";
+
+	new GuiChunkedBitmapCtrl() {
+		profile = "EditorContentProfile";
+		horizSizing = "right";
+		vertSizing = "height";
+		position = "0 30";
+		extent = "90 420";
+		minExtent = "8 8";
+		visible = "1";
+		setFirstResponder = "0";
+		modal = "1";
+		helpTag = "0";
+
+		new GuiButtonCtrl() {
+			profile = "GuiButtonProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "10 97";
+			extent = "32 32";
+			minExtent = "32 32";
+			visible = "1";
+			setFirstResponder = "0";
+			modal = "1";
+			command = "wEditor.copySelection();";
+			helpTag = "0";
+			text = "Copy";
+		};
+		new GuiButtonCtrl() {
+			profile = "GuiButtonProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "45 97";
+			extent = "32 32";
+			minExtent = "32 32";
+			visible = "1";
+			setFirstResponder = "0";
+			modal = "1";
+			command = "wEditor.pasteSelection();";
+			helpTag = "0";
+			text = "Paste";
+		};
+		new GuiButtonCtrl() {
+			profile = "GuiButtonProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "10 132";
+			extent = "32 32";
+			minExtent = "32 32";
+			visible = "1";
+			setFirstResponder = "0";
+			modal = "1";
+			command = "wEditor.copySelection();wEditor.deleteSelection();";
+			helpTag = "0";
+			text = "Cut";
+		};
+		new GuiButtonCtrl() {
+			profile = "GuiButtonProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "45 132";
+			extent = "32 32";
+			minExtent = "32 32";
+			visible = "1";
+			setFirstResponder = "0";
+			modal = "1";
+			command = "wEditor.deleteSelection();";
+			helpTag = "0";
+			text = "Delete";
+		};
+		new GuiButtonCtrl() {
+			profile = "GuiButtonProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "10 167";
+			extent = "32 32";
+			minExtent = "32 32";
+			visible = "1";
+			setFirstResponder = "0";
+			modal = "1";
+			command = "wEditor.undo();";
+			helpTag = "0";
+			text = "Undo";
+		};
+		new GuiButtonCtrl() {
+			profile = "GuiButtonProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "45 167";
+			extent = "32 32";
+			minExtent = "32 32";
+			visible = "1";
+			setFirstResponder = "0";
+			modal = "1";
+			command = "wEditor.redo();";
+			helpTag = "0";
+			text = "Redo";
+		};
+		new GuiTextCtrl() {
+			profile = "GuiMediumBoldTextProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "4 8";
+			extent = "80 20";
+			minExtent = "80 20";
+			visible = "1";
+			setFirstResponder = "0";
+			modal = "1";
+			helpTag = "0";
+			text = "File / Edit";
+		};
+		new GuiButtonCtrl() {
+			profile = "GuiButtonProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "10 61";
+			extent = "32 32";
+			minExtent = "32 32";
+			visible = "1";
+			setFirstResponder = "0";
+			modal = "1";
+			command = "wEditor.import();";
+			helpTag = "0";
+			text = "Import";
+		};
+		new GuiPopUpMenuCtrl(DropTypeMenu) {
+			profile = "GuiPopUpMenuProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "5 250";
+			extent = "80 24";
+			minExtent = "8 8";
+			visible = "1";
+			setFirstResponder = "0";
+			modal = "1";
+			helpTag = "0";
+			maxPopupHeight = "200";
+		};
+		new GuiButtonCtrl() {
+			profile = "GuiButtonProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "10 27";
+			extent = "32 32";
+			minExtent = "8 8";
+			visible = "1";
+			setFirstResponder = "0";
+			modal = "1";
+			command = "Canvas.pushDialog(EditorSaveMissionDlg);";
+			helpTag = "0";
+			text = "Save";
+		};
+		new GuiSliderCtrl() {
+			profile = "GuiDefaultProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "6 392";
+			extent = "80 20";
+			minExtent = "80 20";
+			visible = "1";
+			setFirstResponder = "0";
+			modal = "1";
+			variable = "value";
+			command = "$Camera::movementSpeed = $ThisControl.getValue();";
+			helpTag = "0";
+			range = "5.000000 200.000000";
+			ticks = "10";
+			value = "57.9286";
+		};
+		new GuiButtonCtrl() {
+			profile = "GuiButtonProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "6 323";
+			extent = "80 20";
+			minExtent = "8 8";
+			visible = "1";
+			setFirstResponder = "0";
+			modal = "1";
+			command = "Canvas.pushDialog(WorldEditorSettingsDlg);";
+			helpTag = "0";
+			text = "Settings...";
+		};
+		new GuiButtonCtrl() {
+			profile = "GuiButtonProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "45 62";
+			extent = "32 32";
+			minExtent = "32 32";
+			visible = "1";
+			setFirstResponder = "0";
+			modal = "1";
+			command = "wEditor.export();";
+			helpTag = "0";
+			text = "Export";
+		};
+		new GuiTextCtrl() {
+			profile = "GuiTextProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "9 231";
+			extent = "26 18";
+			minExtent = "8 8";
+			visible = "1";
+			setFirstResponder = "0";
+			modal = "1";
+			helpTag = "0";
+			text = "Drop:";
+		};
+		new GuiTextCtrl() {
+			profile = "GuiTextProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "9 377";
+			extent = "73 18";
+			minExtent = "8 8";
+			visible = "1";
+			setFirstResponder = "0";
+			modal = "1";
+			helpTag = "0";
+			text = "Camera speed:";
+		};
+		new GuiButtonCtrl() {
+			profile = "GuiButtonProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "6 299";
+			extent = "80 20";
+			minExtent = "8 8";
+			visible = "1";
+			setFirstResponder = "0";
+			modal = "1";
+			command = "lightScene(\"\", forceAlways);";
+			helpTag = "0";
+			text = "Relight";
+		};
+		new GuiCheckBoxCtrl() {
+			profile = "GuiCheckBoxProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "4 204";
+			extent = "80 20";
+			minExtent = "8 8";
+			visible = "1";
+			setFirstResponder = "0";
+			modal = "1";
+			variable = "wEditor.selectionLocked";
+			command = "wEditor.selectionLocked = $ThisControl.getValue();";
+			helpTag = "0";
+			text = "Selection Lock";
+		};
+	};
+};
+//--- OBJECT WRITE END ---
+
+//------------------------------------------------------------------------------
+// Functions
+//------------------------------------------------------------------------------
+
+function WorldEditorButtonBarDlg::getPrefs(%this)
+{
+   wEditor.dropType = getPrefSetting($Pref::WorldEditor::dropType, "atCamera");
+}
+
+function WorldEditorbuttonBarDlg::setPrefs(%this)
+{
+   $Pref::WorldEditor::dropType = wEditor.dropType;
+}
+
+function WorldEditorButtonBarDlg::init(%this)
+{
+   DropTypeMenu.setEnumContent(WorldEditor, dropType);
+   %this.getPrefs();
+   DropTypeMenu.setText(wEditor.dropType);
+}
+
+function WorldEditorButtonBarDlg::onSleep(%this)
+{
+   %this.setPrefs();
+}
+
+//------------------------------------------------------------------------------
+
+function DropTypeMenu::onSelect(%this, %id, %text)
+{
+   wEditor.dropType = %text;
+}

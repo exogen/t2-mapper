@@ -1,0 +1,161 @@
+//--- OBJECT WRITE BEGIN ---
+new GuiChunkedBitmapCtrl(LoadingGui) {
+	profile = "GuiContentProfile";
+	horizSizing = "right";
+	vertSizing = "bottom";
+	position = "0 0";
+	extent = "640 480";
+	minExtent = "8 8";
+	visible = "1";
+	variable = "$ShellBackground";
+	helpTag = "0";
+	useVariable = "1";
+		qLineCount = "0";
+
+	new ShellPaneCtrl() {
+		profile = "ShellPaneProfile";
+		horizSizing = "width";
+		vertSizing = "height";
+		position = "28 13";
+		extent = "584 459";
+		minExtent = "48 92";
+		visible = "1";
+		helpTag = "0";
+		maxLength = "255";
+		noTitleBar = "1";
+
+		new GuiProgressCtrl(LoadingProgress) {
+			profile = "ShellProgressBarProfile";
+			horizSizing = "right";
+			vertSizing = "top";
+			position = "81 410";
+			extent = "262 25";
+			minExtent = "8 8";
+			visible = "1";
+			helpTag = "0";
+
+			new GuiTextCtrl(LoadingProgressTxt) {
+				profile = "ShellProgressBarTextProfile";
+				horizSizing = "right";
+				vertSizing = "bottom";
+				position = "0 3";
+				extent = "262 19";
+				minExtent = "8 8";
+				visible = "1";
+				helpTag = "0";
+				text = "LOADING MISSION";
+				maxLength = "255";
+			};
+		};
+		new GuiTextCtrl(LOAD_MapName) {
+			profile = "ShellSubHeaderProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "24 6";
+			extent = "90 32";
+			minExtent = "8 8";
+			visible = "1";
+			helpTag = "0";
+			text = "Map Name";
+			maxLength = "255";
+		};
+		new GuiControl() {
+			profile = "GuiDefaultProfile";
+			horizSizing = "relative";
+			vertSizing = "bottom";
+			position = "26 34";
+			extent = "312 165";
+			minExtent = "16 18";
+			visible = "1";
+			helpTag = "0";
+
+			new GuiMLTextCtrl(LOAD_MapText) {
+				profile = "ShellLoadTextProfile";
+				horizSizing = "width";
+				vertSizing = "bottom";
+				position = "0 0";
+				extent = "312 18";
+				minExtent = "8 8";
+				visible = "1";
+				helpTag = "0";
+				lineSpacing = "2";
+				allowColorChars = "0";
+				maxChars = "-1";
+			};
+		};
+		new GuiTextCtrl(LOAD_MissionType) {
+			profile = "ShellSubHeaderProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "24 207";
+			extent = "115 32";
+			minExtent = "8 8";
+			visible = "1";
+			helpTag = "0";
+			text = "Mission Type";
+			maxLength = "255";
+		};
+		new GuiControl() {
+			profile = "GuiDefaultProfile";
+			horizSizing = "relative";
+			vertSizing = "bottom";
+			position = "26 235";
+			extent = "312 165";
+			minExtent = "16 18";
+			visible = "1";
+			helpTag = "0";
+
+			new GuiMLTextCtrl(LOAD_GameText) {
+				profile = "ShellLoadTextProfile";
+				horizSizing = "width";
+				vertSizing = "bottom";
+				position = "0 0";
+				extent = "312 18";
+				minExtent = "8 8";
+				visible = "1";
+				helpTag = "0";
+				lineSpacing = "2";
+				allowColorChars = "0";
+				maxChars = "-1";
+			};
+		};
+		new GuiControl() {
+			profile = "ShellLoadFrameProfile";
+			horizSizing = "relative";
+			vertSizing = "relative";
+			position = "349 8";
+			extent = "212 428";
+			minExtent = "8 8";
+			visible = "1";
+			helpTag = "0";
+
+			new GuiChunkedBitmapCtrl(LOAD_MapPic) {
+				profile = "GuiDefaultProfile";
+				horizSizing = "width";
+				vertSizing = "height";
+				position = "1 1";
+				extent = "210 426";
+				minExtent = "8 8";
+				visible = "1";
+				helpTag = "0";
+				bitmap = "gui/loading.png";
+				useVariable = "0";
+			};
+		};
+		new ShellBitmapButton() {
+			profile = "ShellButtonNoTabProfile";
+			horizSizing = "right";
+			vertSizing = "top";
+			position = "14 404";
+			extent = "70 38";
+			minExtent = "32 38";
+			visible = "1";
+			command = "Disconnect();";
+         accelerator = "escape";
+			helpTag = "0";
+			text = "CANCEL";
+			simpleStyle = "0";
+		};
+	};
+};
+//--- OBJECT WRITE END ---

@@ -1,0 +1,54 @@
+--------------------------------------------------
+Arena Support (Version 1.0) - By Teribaen
+--------------------------------------------------
+
+This script adds clientside support for the Tribes 2 Arena gametype, including:
+
+* ObjectiveHUD (HUD in the lower left)
+* Console commands for admins
+
+Possible future features:
+
+* Support for voting/admin lobby options
+
+This version is parallel with the 0.95 arena server and replaces both ArenaHUD versions (0.91 and 0.94d)
+
+
+--------------------------------------------------
+Admin Console Commands
+--------------------------------------------------
+
+These commands are entered into your client console (which must be enhanced by Arena Support) - not the server console
+
+To use these commands you must have admin or super admin access (depending on the command)
+
+
+arenaForceRoundEnd( # );
+The current round will end and the game will advance to the next round
+OPTIONAL: Specify the index of a team to win the round (ie: 1 or 2 )
+
+
+arenaSetCurrentRoundLimit( # )
+Changes the round limit to # - Effective Immediately
+IMPORTANT: The change lasts only until the server changes maps
+           
+           
+arenaSetCurrentTimeLimit( # ) - Requires Arena 0.95b+
+Changes the time limit to # - Effective at the start of the next round
+IMPORTANT: The change lasts only until the server changes maps
+           
+           
+arenaEnableDebugging()
+Enables debug output from arena and terAdmin (normally you want this off)
+
+
+arenaDisableDebugging()
+Disables debug output from arena and terAdmin
+
+
+SADsetJoinPassword( $ )
+Changes the server join password to $
+Set the password to "" to disable it
+IMPORTANT: In Arena 0.95a/b/y/c this lasts only until the map changes
+
+Example: SADsetJoinPassword( "leet" ); or SADsetJoinPassword( "" );

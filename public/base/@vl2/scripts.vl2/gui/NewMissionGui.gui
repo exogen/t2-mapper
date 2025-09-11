@@ -1,0 +1,290 @@
+//--- OBJECT WRITE BEGIN ---
+new GuiControl(NewMissionGui) {
+	profile = "GuiDialogProfile";
+	horizSizing = "right";
+	vertSizing = "bottom";
+	position = "0 0";
+	extent = "640 480";
+	minExtent = "8 8";
+	visible = "True";
+	setFirstResponder = "False";
+	modal = "True";
+	helpTag = "0";
+
+	new GuiWindowCtrl() {
+		profile = "GuiWindowProfile";
+		horizSizing = "right";
+		vertSizing = "bottom";
+		position = "236 83";
+		extent = "228 276";
+		minExtent = "100 100";
+		visible = "True";
+		setFirstResponder = "False";
+		modal = "True";
+		helpTag = "0";
+		text = "CREATE NEW MISSION";
+		resizeWidth = "False";
+		resizeHeight = "False";
+		canMove = "True";
+		canClose = "True";
+		canMinimize = "False";
+		canMaximize = "False";
+		minSize = "50 50";
+		closeCommand = "Canvas.popDialog(NewMissionGui);";
+
+		new GuiTextCtrl() {
+			profile = "GuiTextProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "11 30";
+			extent = "68 18";
+			minExtent = "8 8";
+			visible = "True";
+			setFirstResponder = "False";
+			modal = "True";
+			helpTag = "0";
+			text = "Mission Name:";
+		};
+		new GuiTextEditCtrl(MissionNameEdit) {
+			profile = "GuiTextEditProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "82 30";
+			extent = "120 18";
+			minExtent = "8 8";
+			visible = "True";
+			setFirstResponder = "False";
+			modal = "True";
+			helpTag = "0";
+			historySize = "0";
+		};
+		new GuiButtonCtrl() {
+			profile = "GuiButtonProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "27 239";
+			extent = "80 20";
+			minExtent = "8 8";
+			visible = "True";
+			setFirstResponder = "False";
+			modal = "True";
+			command = "CreateMission();Canvas.popDialog(NewMissionGui);";
+			helpTag = "0";
+			text = "OK";
+		};
+		new GuiButtonCtrl() {
+			profile = "GuiButtonProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "121 239";
+			extent = "80 20";
+			minExtent = "8 8";
+			visible = "True";
+			setFirstResponder = "False";
+			modal = "True";
+			command = "Canvas.popDialog(NewMissionGui);";
+			helpTag = "0";
+			text = "CANCEL";
+		};
+		new GuiControl() {
+			profile = "GuiScrollCtrlProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "15 110";
+			extent = "198 114";
+			minExtent = "8 8";
+			visible = "True";
+			setFirstResponder = "False";
+			modal = "True";
+			helpTag = "0";
+
+			new GuiTextCtrl() {
+				profile = "GuiTextProfile";
+				horizSizing = "right";
+				vertSizing = "bottom";
+				position = "20 40";
+				extent = "145 18";
+				minExtent = "8 8";
+				visible = "True";
+				setFirstResponder = "False";
+				modal = "True";
+				helpTag = "0";
+				text = "MISSION TYPE OPTIONS HERE";
+			};
+		};
+		new GuiTextCtrl() {
+			profile = "GuiTextProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "15 55";
+			extent = "64 18";
+			minExtent = "8 8";
+			visible = "True";
+			setFirstResponder = "False";
+			modal = "True";
+			helpTag = "0";
+			text = "Base Terrain:";
+		};
+		new GuiPopUpMenuCtrl(TerrainFileMenu) {
+			profile = "GuiRadioProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "82 55";
+			extent = "120 20";
+			minExtent = "8 8";
+			visible = "True";
+			setFirstResponder = "False";
+			modal = "True";
+			helpTag = "0";
+			maxPopupHeight = "200";
+		};
+		new GuiTextCtrl() {
+			profile = "GuiTextProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "27 88";
+			extent = "26 18";
+			minExtent = "8 8";
+			visible = "True";
+			setFirstResponder = "False";
+			modal = "True";
+			helpTag = "0";
+			text = "Type:";
+		};
+		new GuiPopUpMenuCtrl(MissionTypeMenu) {
+			profile = "GuiRadioProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "59 86";
+			extent = "120 20";
+			minExtent = "8 8";
+			visible = "True";
+			setFirstResponder = "False";
+			modal = "True";
+			helpTag = "0";
+			maxPopupHeight = "200";
+		};
+	};
+};
+//--- OBJECT WRITE END ---
+
+function CreateMission()
+{
+   if($MissionRunning)
+      return;
+
+   %missionName = MissionNameEdit.getValue() @ ".mis";
+   if(%missionName $= "")
+      return;
+
+   echo("--- Creating mission: " @ %missionName);
+
+   // do the terrain
+   %terrainName = MissionNameEdit.getValue() @ ".ter";
+   %baseTerrain = TerrainFileMenu.getValue() @ ".ter";
+   %graphName = MissionNameEdit.getValue() @ ".nav";
+   
+   %obj = new TerrainBlock(BaseTerrain)
+   {
+		position = "0 0 0 1";
+		rotation = "0 0 0 0";
+		scale = "1 1 1";
+		terrainFile = %baseTerrain;
+		squareSize = "8";
+		visibleDistance = "1200";
+		hazeDistance = "250";
+		emptySquares = "250";
+   };
+
+   if(%obj == -1)
+   {
+      echo("!!! Failed to create base terrain: " @ %baseTerrain);
+      return;
+   }
+
+   BaseTerrain.save(%terrainName);
+   BaseTerrain.delete();
+
+   rebuildModPaths();
+
+   // create a mission...
+   new SimGroup(MissionGroup) 
+   {
+      new MissionArea(MissionArea)
+      {
+         area = "512 512 1024 1024";
+      };
+
+      new Sun()
+      {
+         position = "0 0 0 1";
+         rotation = "0 0 0 0";
+         scale = "1 1 1";
+         direction = "0.5 0.5 -0.5";
+         ambient = "0.2 0.2 0.2 1.0";
+         color = "0.6 0.6 0.6 1.0";
+      };
+
+      new TerrainBlock(Terrain)
+      {
+		   position = "0 0 0 1";
+		   rotation = "0 0 0 0";
+		   scale = "1 1 1";
+		   terrainFile = %terrainName;
+		   squareSize = "8";
+		   visibleDistance = "1200";
+		   hazeDistance = "250";
+		   emptySquares = "250";
+      };
+
+	  new NavigationGraph(NavGraph)
+	  {
+		   position = "0 0 0 1";
+		   rotation = "0 0 0 0";
+		   scale = "1 1 1";
+		   GraphFile = %graphName;
+	  };
+   };
+
+   MissionGroup.save("missions/" @ %missionName);
+   MissionGroup.delete();
+
+   // create a server and connect
+   setNetPort($Host::Port);
+   $ServerName = $Host::GameName;
+   CreateServer(%missionName);
+   localConnect();
+   Canvas.setContent(PlayGui);
+}
+
+function NewMissionGui::onWake(%this)
+{
+   //
+   $NewMissionName = "NewMission";
+
+   MissionNameEdit.setValue("NewMission");
+
+   // fill the terrain list...
+   TerrainFileMenu.clear();
+
+   %spec = "terrains/*.ter";
+   %count = 0;
+
+   for(%file = findFirstFile(%spec); %file !$= ""; %file = findNextFile(%spec))
+   {
+      TerrainFileMenu.add(fileBase(%file), %count);
+      %count++;
+   }
+   TerrainFileMenu.setSelected(0);
+      
+   // fill the mission types.. bunk for now
+   MissionTypeMenu.clear();
+   MissionTypeMenu.add("Capture the Flag", 0);
+   MissionTypeMenu.add("Defend and Destroy", 1);
+   MissionTypeMenu.add("Find and Retrieve", 2);
+   MissionTypeMenu.add("Death Match", 3);
+   MissionTypeMenu.add("Rabbit", 4);
+   MissionTypeMenu.add("Football", 5);
+   MissionTypeMenu.add("Flag Hunters", 6);
+   MissionTypeMenu.setSelected(0);
+}

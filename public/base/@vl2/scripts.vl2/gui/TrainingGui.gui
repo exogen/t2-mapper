@@ -1,0 +1,262 @@
+//--- OBJECT WRITE BEGIN ---
+new GuiChunkedBitmapCtrl(TrainingGui) {
+	profile = "GuiContentProfile";
+	horizSizing = "width";
+	vertSizing = "height";
+	position = "0 0";
+	extent = "640 480";
+	minExtent = "8 8";
+	visible = "1";
+	hideCursor = "0";
+	bypassHideCursor = "0";
+	variable = "$ShellBackground";
+	helpTag = "0";
+	useVariable = "1";
+
+	new ShellPaneCtrl() {
+		profile = "ShellPaneProfile";
+		horizSizing = "width";
+		vertSizing = "height";
+		position = "12 13";
+		extent = "620 423";
+		minExtent = "48 92";
+		visible = "1";
+		hideCursor = "0";
+		bypassHideCursor = "0";
+		helpTag = "0";
+		text = "TRAINING";
+		maxLength = "255";
+		noTitleBar = "0";
+
+		new ShellFieldCtrl(TrainingPicFrame) {
+			profile = "ShellFieldProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "30 186";
+			extent = "175 175";
+			minExtent = "16 18";
+			visible = "1";
+			hideCursor = "0";
+			bypassHideCursor = "0";
+			helpTag = "0";
+
+			new GuiBitmapCtrl(TrainingPic) {
+				profile = "GuiDefaultProfile";
+				horizSizing = "width";
+				vertSizing = "height";
+				position = "2 3";
+				extent = "169 169";
+				minExtent = "8 8";
+				visible = "1";
+				hideCursor = "0";
+				bypassHideCursor = "0";
+				helpTag = "0";
+				wrap = "0";
+			};
+		};
+		new GuiTextCtrl() {
+			profile = "ShellTextRightProfile";
+			horizSizing = "left";
+			vertSizing = "top";
+			position = "236 377";
+			extent = "74 22";
+			minExtent = "8 8";
+			visible = "1";
+			hideCursor = "0";
+			bypassHideCursor = "0";
+			helpTag = "0";
+			text = "Difficulty:";
+			maxLength = "255";
+		};
+		new ShellPopupMenu(TrainingDifficultyMenu) {
+			profile = "ShellPopupProfile";
+			horizSizing = "left";
+			vertSizing = "top";
+			position = "307 368";
+			extent = "137 36";
+			minExtent = "49 36";
+			visible = "1";
+			hideCursor = "0";
+			bypassHideCursor = "0";
+			helpTag = "0";
+			maxLength = "255";
+			maxPopupHeight = "200";
+			buttonBitmap = "gui/shll_pulldown";
+			rolloverBarBitmap = "gui/shll_pulldownbar_rol";
+			selectedBarBitmap = "gui/shll_pulldownbar_act";
+			noButtonStyle = "0";
+		};
+		new ShellScrollCtrl() {
+			profile = "NewScrollCtrlProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "26 31";
+			extent = "183 146";
+			minExtent = "24 52";
+			visible = "1";
+			hideCursor = "0";
+			bypassHideCursor = "0";
+			helpTag = "0";
+			willFirstRespond = "1";
+			hScrollBar = "alwaysOff";
+			vScrollBar = "dynamic";
+			constantThumbHeight = "0";
+			defaultLineHeight = "15";
+			childMargin = "3 3";
+			fieldBase = "gui/shll_field";
+
+			new GuiScrollContentCtrl() {
+				profile = "GuiDefaultProfile";
+				horizSizing = "right";
+				vertSizing = "bottom";
+				position = "7 7";
+				extent = "169 132";
+				minExtent = "8 8";
+				visible = "1";
+				hideCursor = "0";
+				bypassHideCursor = "0";
+				helpTag = "0";
+
+				new ShellTextList(TrainingMissionList) {
+					profile = "ShellTextArrayProfile";
+					horizSizing = "right";
+					vertSizing = "bottom";
+					position = "0 0";
+					extent = "169 8";
+					minExtent = "8 8";
+					visible = "1";
+					hideCursor = "0";
+					bypassHideCursor = "0";
+					helpTag = "0";
+					enumerate = "1";
+					resizeCell = "1";
+					columns = "0 200";
+					fitParentWidth = "1";
+					clipColumnText = "0";
+				};
+			};
+		};
+		new ShellToggleButton(TrainingPlayTgl) {
+			profile = "ShellRadioProfile";
+			horizSizing = "left";
+			vertSizing = "bottom";
+			position = "448 27";
+			extent = "140 30";
+			minExtent = "26 27";
+			visible = "0";
+			hideCursor = "0";
+			bypassHideCursor = "0";
+			variable = "$pref::TrainingPlayBriefing";
+			helpTag = "0";
+			text = "Play Briefing";
+			maxLength = "255";
+		};
+		new GuiTextCtrl() {
+			profile = "ShellTextRightProfile";
+			horizSizing = "left";
+			vertSizing = "bottom";
+			position = "444 31";
+			extent = "122 22";
+			minExtent = "8 8";
+			visible = "1";
+			hideCursor = "0";
+			bypassHideCursor = "0";
+			helpTag = "0";
+			text = "Play Briefing:";
+			maxLength = "255";
+		};
+		new ShellBitmapButton(TrainingPlayBtn) {
+			profile = "SoundTestButtonProfile";
+			horizSizing = "left";
+			vertSizing = "bottom";
+			position = "568 28";
+			extent = "24 24";
+			minExtent = "24 24";
+			visible = "1";
+			hideCursor = "0";
+			bypassHideCursor = "0";
+			command = "TrainingGui.toggleBriefing();";
+			helpTag = "0";
+			simpleStyle = "1";
+		};
+		new GuiTextCtrl() {
+			profile = "ShellTextProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "219 31";
+			extent = "99 22";
+			minExtent = "8 8";
+			visible = "1";
+			hideCursor = "0";
+			bypassHideCursor = "0";
+			helpTag = "0";
+			text = "MISSION BRIEFING";
+			maxLength = "255";
+		};
+		new ShellScrollCtrl(TrainingBriefingScroll) {
+			profile = "NewScrollCtrlProfile";
+			horizSizing = "width";
+			vertSizing = "height";
+			position = "214 50";
+			extent = "378 318";
+			minExtent = "24 52";
+			visible = "1";
+			hideCursor = "0";
+			bypassHideCursor = "0";
+			helpTag = "0";
+			willFirstRespond = "1";
+			hScrollBar = "alwaysOff";
+			vScrollBar = "alwaysOn";
+			constantThumbHeight = "0";
+			defaultLineHeight = "15";
+			childMargin = "3 3";
+			fieldBase = "gui/shll_field";
+
+			new GuiScrollContentCtrl() {
+				profile = "GuiDefaultProfile";
+				horizSizing = "width";
+				vertSizing = "bottom";
+				position = "7 7";
+				extent = "348 304";
+				minExtent = "8 8";
+				visible = "1";
+				hideCursor = "0";
+				bypassHideCursor = "0";
+				helpTag = "0";
+
+				new GuiMLTextCtrl(TrainingBriefingText) {
+					profile = "ShellLoadTextProfile";
+					horizSizing = "width";
+					vertSizing = "bottom";
+					position = "0 0";
+					extent = "348 18";
+					minExtent = "8 8";
+					visible = "1";
+					hideCursor = "0";
+					bypassHideCursor = "0";
+					helpTag = "0";
+					lineSpacing = "2";
+					allowColorChars = "0";
+					maxChars = "-1";
+					deniedSound = "InputDeniedSound";
+				};
+			};
+		};
+		new ShellBitmapButton() {
+			profile = "ShellButtonProfile";
+			horizSizing = "left";
+			vertSizing = "top";
+			position = "469 368";
+			extent = "128 38";
+			minExtent = "32 38";
+			visible = "1";
+			hideCursor = "0";
+			bypassHideCursor = "0";
+			command = "TrainingGui.startTraining();";
+			helpTag = "0";
+			text = "START";
+			simpleStyle = "0";
+		};
+	};
+};
+//--- OBJECT WRITE END ---

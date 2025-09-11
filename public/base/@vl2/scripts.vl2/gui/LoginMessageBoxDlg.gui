@@ -1,0 +1,48 @@
+//--- OBJECT WRITE BEGIN ---
+new GuiControl(LoginMessageBoxDlg) {
+	profile = "DlgBackProfile";
+	horizSizing = "width";
+	vertSizing = "height";
+	position = "0 0";
+	extent = "640 480";
+	minExtent = "8 8";
+	visible = "1";
+	helpTag = "0";
+
+	new ShellPaneCtrl(LoginMessageBoxFrame) {
+		profile = "ShellDlgPaneProfile";
+		horizSizing = "center";
+		vertSizing = "center";
+		position = "170 137";
+		extent = "300 206";
+		minExtent = "48 92";
+		visible = "1";
+		helpTag = "0";
+
+		new GuiMLTextCtrl(LoginMessageBoxText) {
+			profile = "ShellMediumTextProfile";
+			horizSizing = "center";
+			vertSizing = "bottom";
+			position = "32 39";
+			extent = "236 18";
+			minExtent = "8 8";
+			visible = "1";
+			helpTag = "0";
+			lineSpacing = "2";
+		};
+		new ShellBitmapButton(LoginMessageBoxButton) {
+			profile = "ShellButtonProfile";
+			horizSizing = "center";
+			vertSizing = "bottom";
+			position = "70 140";
+			extent = "120 38";
+			minExtent = "32 38";
+			visible = "1";
+			command = "LoginMessageBoxButtonProcess();";
+			helpTag = "0";
+			text = "OK";
+			simpleStyle = "0";
+		};
+	};
+};
+//--- OBJECT WRITE END ---

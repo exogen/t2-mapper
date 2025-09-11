@@ -1,0 +1,211 @@
+//--- OBJECT WRITE BEGIN ---
+new GuiControl(CompTestGui) {
+	profile = "GuiContentProfile";
+	horizSizing = "right";
+	vertSizing = "bottom";
+	position = "0 0";
+	extent = "640 480";
+	minExtent = "8 8";
+	visible = "True";
+	setFirstResponder = "False";
+	modal = "True";
+	helpTag = "0";
+
+	new GuiScrollCtrl() {
+		profile = "GuiButtonProfile";
+		horizSizing = "right";
+		vertSizing = "bottom";
+		position = "10 10";
+		extent = "620 460";
+		minExtent = "8 8";
+		visible = "True";
+		setFirstResponder = "False";
+		modal = "True";
+		helpTag = "0";
+		willFirstRespond = "True";
+		hScrollBar = "alwaysOn";
+		vScrollBar = "alwaysOff";
+		constantThumbHeight = "False";
+
+		new GuiScrollContentCtrl() {
+			profile = "GuiButtonProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "1 1";
+			extent = "618 440";
+			minExtent = "8 8";
+			visible = "True";
+			setFirstResponder = "False";
+			modal = "True";
+			helpTag = "0";
+
+			new CompTest(compObj) {
+				profile = "GuiButtonProfile";
+				horizSizing = "right";
+				vertSizing = "bottom";
+				position = "0 0";
+				extent = "65536 460";
+				minExtent = "8 8";
+				visible = "True";
+				setFirstResponder = "False";
+				modal = "True";
+				helpTag = "0";
+			};
+		};
+	};
+	new GuiButtonCtrl() {
+		profile = "GuiButtonProfile";
+		horizSizing = "right";
+		vertSizing = "bottom";
+		position = "20 20";
+		extent = "100 20";
+		minExtent = "8 8";
+		visible = "True";
+		setFirstResponder = "False";
+		modal = "True";
+		command = "Canvas.setContent(MainMenuGui);";
+		helpTag = "0";
+		text = "Main Menu";
+	};
+	new GuiButtonCtrl(histoToggle) {
+		profile = "GuiButtonProfile";
+		horizSizing = "right";
+		vertSizing = "bottom";
+		position = "20 40";
+		extent = "100 20";
+		minExtent = "8 8";
+		visible = "True";
+		setFirstResponder = "False";
+		modal = "True";
+		command = "toggleHisto();";
+		helpTag = "0";
+		text = "Normal";
+	};
+	new GuiButtonCtrl() {
+		profile = "GuiButtonProfile";
+		horizSizing = "right";
+		vertSizing = "bottom";
+		position = "124 20";
+		extent = "100 20";
+		minExtent = "8 8";
+		visible = "True";
+		setFirstResponder = "False";
+		modal = "True";
+		command = "compTestOpenFile();";
+		helpTag = "0";
+		text = "Open File";
+	};
+	new GuiButtonCtrl() {
+		profile = "GuiButtonProfile";
+		horizSizing = "right";
+		vertSizing = "bottom";
+		position = "124 40";
+		extent = "100 20";
+		minExtent = "8 8";
+		visible = "True";
+		setFirstResponder = "False";
+		modal = "True";
+		command = "compTestSaveFile();";
+		helpTag = "0";
+		text = "Save File";
+	};
+	new GuiButtonCtrl() {
+		profile = "GuiButtonProfile";
+		horizSizing = "right";
+		vertSizing = "bottom";
+		position = "244 20";
+		extent = "100 20";
+		minExtent = "8 8";
+		visible = "True";
+		setFirstResponder = "False";
+		modal = "True";
+		command = "compObj.buildRep(baseline);$CompTestType = baseline;";
+		helpTag = "0";
+		text = "Baseline";
+	};
+	new GuiButtonCtrl() {
+		profile = "GuiButtonProfile";
+		horizSizing = "right";
+		vertSizing = "bottom";
+		position = "348 20";
+		extent = "100 20";
+		minExtent = "8 8";
+		visible = "True";
+		setFirstResponder = "False";
+		modal = "True";
+		command = "compObj.buildRep(hilbert);$CompTestType = hilbert;";
+		helpTag = "0";
+		text = "Hilbert";
+	};
+	new GuiButtonCtrl() {
+		profile = "GuiButtonProfile";
+		horizSizing = "right";
+		vertSizing = "bottom";
+		position = "452 20";
+		extent = "100 20";
+		minExtent = "8 8";
+		visible = "True";
+		setFirstResponder = "False";
+		modal = "True";
+		command = "compObj.buildRep(delta);$CompTestType = delta;";
+		helpTag = "0";
+		text = "Delta";
+	};
+	new GuiButtonCtrl() {
+		profile = "GuiButtonProfile";
+		horizSizing = "right";
+		vertSizing = "bottom";
+		position = "452 40";
+		extent = "100 20";
+		minExtent = "8 8";
+		visible = "True";
+		setFirstResponder = "False";
+		modal = "True";
+		command = "compObj.buildRep(delta2);$CompTestType = delta2;";
+		helpTag = "0";
+		text = "Delta2";
+	};
+	new GuiButtonCtrl() {
+		profile = "GuiButtonProfile";
+		horizSizing = "right";
+		vertSizing = "bottom";
+		position = "452 60";
+		extent = "100 20";
+		minExtent = "8 8";
+		visible = "True";
+		setFirstResponder = "False";
+		modal = "True";
+		command = "compObj.buildRep(delta3);$CompTestType = delta3;";
+		helpTag = "0";
+		text = "Delta3";
+	};
+};
+//--- OBJECT WRITE END ---
+
+function compTest()
+{
+   $CompTestShift = 0;
+   $CompTestHisto = 0;
+   $CompTestSaveHiLo = 0;
+   $CompTestFile = "heights.out";
+   $CompTestType = "baseline";
+   Canvas.setContent(CompTestGui);
+   compObj.buildRep($CompTestType);
+}
+
+
+function toggleHisto()
+{
+   if($CompTestHisto)
+   {
+      histoToggle.setValue(Normal);
+      $CompTestHisto = 0;
+   }
+   else
+   {
+      histoToggle.setValue(Histo);
+      $CompTestHisto = 1;
+   }
+   compObj.buildRep($CompTestType);
+}
+

@@ -1,0 +1,226 @@
+//--- OBJECT WRITE BEGIN ---
+new GuiControl(CreateTribeDlg) {
+	profile = "DlgBackProfile";
+	horizSizing = "right";
+	vertSizing = "bottom";
+	position = "0 0";
+	extent = "640 480";
+	minExtent = "8 8";
+	visible = "1";
+	helpTag = "0";
+
+	new ShellPaneCtrl() {
+		profile = "ShellDlgPaneProfile";
+		horizSizing = "center";
+		vertSizing = "center";
+		position = "70 36";
+		extent = "500 408";
+		minExtent = "48 92";
+		visible = "1";
+		helpTag = "0";
+		text = "CREATE TRIBE";
+		maxLength = "255";
+		noTitleBar = "0";
+
+		new GuiTextCtrl() {
+			profile = "ShellTextRightProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "18 38";
+			extent = "70 22";
+			minExtent = "8 8";
+			visible = "1";
+			helpTag = "0";
+			text = "Tribe Name:";
+			maxLength = "255";
+		};
+		new GuiTextCtrl() {
+			profile = "ShellTextRightProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "18 68";
+			extent = "70 22";
+			minExtent = "8 8";
+			visible = "1";
+			helpTag = "0";
+			text = "Tribe Tag:";
+			maxLength = "255";
+		};
+		new GuiTextCtrl() {
+			profile = "ShellTextRightProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "18 128";
+			extent = "70 22";
+			minExtent = "8 8";
+			visible = "1";
+			helpTag = "0";
+			text = "Description:";
+			maxLength = "255";
+		};
+		new ShellTextEditCtrl() {
+			profile = "NewTextEditProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "84 30";
+			extent = "260 38";
+			minExtent = "32 38";
+			visible = "1";
+			variable = "$CreateTribeName";
+			helpTag = "0";
+			maxLength = "24";
+			historySize = "0";
+			password = "0";
+			glowOffset = "9 9";
+         IRCName = true;
+		};
+		new ShellTextEditCtrl(CT_TagText) {
+			profile = "NewTextEditProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "84 60";
+			extent = "107 38";
+			minExtent = "32 38";
+			visible = "1";
+			variable = "$CreateTribeTag";
+			command = "updateTribeTagPreview();";
+			helpTag = "0";
+			maxLength = "8";
+			historySize = "0";
+			password = "0";
+			glowOffset = "9 9";
+         IRCName = true;
+		};
+		new ShellToggleButton(rbAppendTag) {
+			profile = "ShellRadioProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "189 64";
+			extent = "146 30";
+			minExtent = "26 27";
+			visible = "1";
+			variable = "$CreateTribeAppend";
+			command = "updateTribeTagPreview();";
+			helpTag = "0";
+			text = "APPEND TRIBE TAG";
+			maxLength = "255";
+		};
+		new ShellToggleButton(rbRecruiting) {
+			profile = "ShellRadioProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "308 95";
+			extent = "162 30";
+			minExtent = "26 27";
+			visible = "1";
+			variable = "$CreateTribeRecruiting";
+			helpTag = "0";
+			text = "RECRUITING";
+			maxLength = "255";
+		};
+		new GuiTextCtrl() {
+			profile = "ShellTextRightProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "18 98";
+			extent = "70 22";
+			minExtent = "8 8";
+			visible = "1";
+			helpTag = "0";
+			text = "Preview:";
+			maxLength = "255";
+		};
+		new ShellFieldCtrl() {
+			profile = "ShellFieldProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "93 97";
+			extent = "192 22";
+			minExtent = "16 18";
+			visible = "1";
+			helpTag = "0";
+
+			new GuiTextCtrl(CT_PreviewText) {
+				profile = "ShellAltTextCenterProfile";
+				horizSizing = "width";
+				vertSizing = "height";
+				position = "3 2";
+				extent = "186 20";
+				minExtent = "8 8";
+				visible = "1";
+				helpTag = "0";
+				maxLength = "255";
+			};
+		};
+		new ShellScrollCtrl() {
+			profile = "NewScrollCtrlProfile";
+			horizSizing = "right";
+			vertSizing = "height";
+			position = "26 143";
+			extent = "448 208";
+			minExtent = "24 52";
+			visible = "1";
+			helpTag = "0";
+			willFirstRespond = "1";
+			hScrollBar = "alwaysOff";
+			vScrollBar = "alwaysOn";
+			constantThumbHeight = "0";
+			defaultLineHeight = "15";
+			childMargin = "3 3";
+			fieldBase = "gui/shll_field";
+
+			new GuiScrollContentCtrl() {
+				profile = "GuiDefaultProfile";
+				horizSizing = "right";
+				vertSizing = "bottom";
+				position = "7 7";
+				extent = "418 194";
+				minExtent = "8 8";
+				visible = "1";
+				helpTag = "0";
+
+				new GuiMLTextEditCtrl(CreateTribeDescription) {
+					profile = "ShellMessageTextProfile";
+					horizSizing = "right";
+					vertSizing = "bottom";
+					position = "0 0";
+					extent = "418 194";
+					minExtent = "8 8";
+					visible = "1";
+					helpTag = "0";
+					lineSpacing = "2";
+					allowColorChars = "0";
+					maxChars = "3600";
+				};
+			};
+		};
+		new ShellBitmapButton() {
+			profile = "ShellButtonProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "81 354";
+			extent = "128 38";
+			minExtent = "32 38";
+			visible = "1";
+			command = "CreateTribeDlg.Cancel();";
+			accelerator = "escape";
+			helpTag = "0";
+			text = "CANCEL";
+			simpleStyle = "0";
+		};
+		new ShellBitmapButton(CreateTribeBtn) {
+			profile = "ShellButtonProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "291 354";
+			extent = "128 38";
+			minExtent = "32 38";
+			visible = "1";
+			command = "CreateTribeDlg.CreateTribe();";
+			helpTag = "0";
+			text = "CREATE";
+			simpleStyle = "0";
+		};
+	};
+};
+//--- OBJECT WRITE END ---

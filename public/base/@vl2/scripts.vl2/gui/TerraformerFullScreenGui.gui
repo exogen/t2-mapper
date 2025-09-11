@@ -1,0 +1,29 @@
+//--- OBJECT WRITE BEGIN ---
+new GameTSCtrl(TerraformerFullscreenGui) {
+	profile = "GuiDefaultProfile";
+	horizSizing = "right";
+	vertSizing = "bottom";
+	position = "0 0";
+	extent = "640 480";
+	minExtent = "8 8";
+	visible = "1";
+	setFirstResponder = "0";
+	modal = "1";
+	helpTag = "0";
+
+	new GuiButtonCtrl() {
+		profile = "GuiButtonProfile";
+		horizSizing = "right";
+		vertSizing = "bottom";
+		position = "19 541";
+		extent = "100 20";
+		minExtent = "8 8";
+		visible = "True";
+		setFirstResponder = "True";
+		modal = "True";
+		command = "quit();";
+		helpTag = "0";
+		text = "Exit";
+	};
+};
+//--- OBJECT WRITE END ---

@@ -1,0 +1,100 @@
+//--- OBJECT WRITE BEGIN ---
+new GuiControl(DemoPlaybackDlg) {
+	profile = "GuiModelessDialogProfile";
+	horizSizing = "width";
+	vertSizing = "height";
+	position = "0 0";
+	extent = "640 480";
+	minExtent = "8 8";
+	visible = "0";
+	hideCursor = "1";
+	bypassHideCursor = "0";
+	helpTag = "0";
+
+	new ShellFieldCtrl() {
+		profile = "GuiChatBackProfile";
+		horizSizing = "left";
+		vertSizing = "bottom";
+		position = "210 8";
+		extent = "217 82";
+		minExtent = "16 18";
+		visible = "1";
+		hideCursor = "0";
+		bypassHideCursor = "0";
+		helpTag = "0";
+
+		new GuiProgressCtrl() {
+			profile = "ShellProgressBarProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "9 34";
+			extent = "200 24";
+			minExtent = "8 8";
+			visible = "1";
+			hideCursor = "0";
+			bypassHideCursor = "0";
+			variable = "$DemoPlaybackProgress";
+			helpTag = "0";
+
+			new GuiTextCtrl(DemoPlayback_CurTime) {
+				profile = "ShellProgressBarTextProfile";
+				horizSizing = "right";
+				vertSizing = "bottom";
+				position = "0 2";
+				extent = "200 22";
+				minExtent = "8 8";
+				visible = "1";
+				hideCursor = "0";
+				bypassHideCursor = "0";
+				helpTag = "0";
+				longTextBuffer = "0";
+				maxLength = "255";
+			};
+		};
+		new GuiTextCtrl() {
+			profile = "ShellTextProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "12 59";
+			extent = "31 22";
+			minExtent = "8 8";
+			visible = "1";
+			hideCursor = "0";
+			bypassHideCursor = "0";
+			helpTag = "0";
+			text = "00:00";
+			longTextBuffer = "0";
+			maxLength = "255";
+		};
+		new GuiTextCtrl(DemoPlayback_EndTime) {
+			profile = "ShellTextRightProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "142 59";
+			extent = "64 22";
+			minExtent = "8 8";
+			visible = "1";
+			hideCursor = "0";
+			bypassHideCursor = "0";
+			helpTag = "0";
+			longTextBuffer = "0";
+			maxLength = "255";
+		};
+		new GuiTextCtrl(DemoPlayback_StatusText) {
+			profile = "ShellTextCenterProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "77 10";
+			extent = "64 22";
+			minExtent = "8 8";
+			visible = "1";
+			hideCursor = "0";
+			bypassHideCursor = "0";
+			helpTag = "0";
+			longTextBuffer = "0";
+			maxLength = "255";
+		};
+	};
+};
+//--- OBJECT WRITE END ---
+

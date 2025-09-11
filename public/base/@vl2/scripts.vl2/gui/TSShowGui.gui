@@ -1,0 +1,253 @@
+//--- OBJECT WRITE BEGIN ---
+new GuiControl(TSShowGui) {
+	profile = "GuiDialogProfile";
+	horizSizing = "right";
+	vertSizing = "bottom";
+	position = "0 0";
+	extent = "640 480";
+	minExtent = "8 8";
+	visible = "1";
+	setFirstResponder = "0";
+	modal = "1";
+	helpTag = "0";
+
+	new ShowTSCtrl() {
+		profile = "GuiButtonProfile";
+		horizSizing = "right";
+		vertSizing = "bottom";
+		position = "0 0";
+		extent = "800 600";
+		minExtent = "8 8";
+		visible = "1";
+		setFirstResponder = "0";
+		modal = "1";
+		helpTag = "0";
+	};
+	new GuiButtonCtrl() {
+		profile = "GuiButtonProfile";
+		horizSizing = "right";
+		vertSizing = "bottom";
+		position = "20 271";
+		extent = "100 20";
+		minExtent = "8 8";
+		visible = "1";
+		setFirstResponder = "0";
+		modal = "1";
+		command = "showSetFileList(\"base/shapes\",\"dts\",\"showShapeLoad(showFileList.getValue());\"); Canvas.pushDialog(TSShowLoadDlg,99);";
+		helpTag = "0";
+		text = "Load Shape";
+	};
+	new GuiButtonCtrl() {
+		profile = "GuiButtonProfile";
+		horizSizing = "right";
+		vertSizing = "bottom";
+		position = "20 301";
+		extent = "100 20";
+		minExtent = "8 8";
+		visible = "1";
+		setFirstResponder = "0";
+		modal = "1";
+		command = "showSetFileList(\"base/shapes\",\"dsq\",\"showSequenceLoad(showFileList.getValue());\"); Canvas.pushDialog(TSShowLoadDlg,99);";
+		helpTag = "0";
+		text = "Load Sequence";
+	};
+	new GuiButtonCtrl() {
+		profile = "GuiButtonProfile";
+		horizSizing = "right";
+		vertSizing = "bottom";
+		position = "20 361";
+		extent = "100 20";
+		minExtent = "8 8";
+		visible = "1";
+		setFirstResponder = "0";
+		modal = "1";
+		command = "Canvas.pushDialog(TSShowDetailControlDlg,99);";
+		helpTag = "0";
+		text = "Detail Control";
+	};
+	new GuiButtonCtrl() {
+		profile = "GuiButtonProfile";
+		horizSizing = "right";
+		vertSizing = "bottom";
+		position = "20 390";
+		extent = "100 20";
+		minExtent = "8 8";
+		visible = "1";
+		setFirstResponder = "0";
+		modal = "1";
+		command = "Canvas.pushDialog(TSShowLightDlg,99);";
+		helpTag = "0";
+		text = "Lighting";
+	};
+	new GuiButtonCtrl() {
+		profile = "GuiButtonProfile";
+		horizSizing = "right";
+		vertSizing = "bottom";
+		position = "20 420";
+		extent = "100 20";
+		minExtent = "8 8";
+		visible = "1";
+		setFirstResponder = "0";
+		modal = "1";
+		command = "Canvas.pushDialog(TSShowMiscDlg,99);";
+		helpTag = "0";
+		text = "Misc";
+	};
+	new GuiButtonCtrl(showExitButton) {
+		profile = "GuiButtonProfile";
+		horizSizing = "right";
+		vertSizing = "bottom";
+		position = "20 450";
+		extent = "100 20";
+		minExtent = "8 8";
+		visible = "1";
+		setFirstResponder = "0";
+		modal = "1";
+		command = "showPopAll(); showMoveMap.pop(); quit();";
+		helpTag = "0";
+		text = "Quit";
+	};
+	new GuiButtonCtrl() {
+		profile = "GuiButtonProfile";
+		horizSizing = "right";
+		vertSizing = "bottom";
+		position = "20 331";
+		extent = "100 20";
+		minExtent = "8 8";
+		visible = "1";
+		setFirstResponder = "0";
+		modal = "1";
+		command = "Canvas.pushDialog(TSShowThreadControlDlg,99); showUpdateThreadControl();";
+		helpTag = "0";
+		text = "Thread control";
+	};
+};
+//--- OBJECT WRITE END ---
+
+$showMission = "emptyMission";
+
+function showPopAll()
+{
+   Canvas.popDialog(TSShowThreadControlDlg); 
+   Canvas.popDialog(TSShowTransitionDlg);
+   Canvas.popDialog(TSShowLoadDialog); 
+   Canvas.popDialog(TSShowLightDlg); 
+   Canvas.popDialog(TSShowMiscDialog); 
+   Canvas.popDialog(TShowEditScale);
+   Canvas.popDialog(TSShowDetailControlDlg);
+}
+
+function startShow()
+{
+
+   $ServerName = "show";
+   CreateServer("emptyMission", "ctf");
+   localConnect();
+   Canvas.setContent(TSShowGui);
+
+//   if (!$missionRunning)
+//   {
+//      DestroyServer();
+//      $missionSequence = 0;
+//      new SimGroup( ServerGroup);
+//      loadMission($showMission, true);
+//      localConnect();
+//   }
+//
+//   allowConnections(false);
+}
+
+function showSetSpeed(%speed)
+{
+   if(%speed)
+      $showMovementSpeed = %speed;
+}
+
+function showMoveleft(%val)
+{
+   $showLeftAction = %val;
+}
+
+function showMoveright(%val)
+{
+   $showRightAction = %val;
+}
+
+function showMoveforward(%val)
+{
+   $showForwardAction = %val;
+}
+
+function showMovebackward(%val)
+{
+   $showBackwardAction = %val;
+}
+
+function showMoveup(%val)
+{
+   $showUpAction = %val;
+}
+
+function showMovedown(%val)
+{
+   $showDownAction = %val;
+}
+
+function showYaw(%val)
+{
+   $showYaw += %val * 0.01;
+}
+
+function showPitch(%val)
+{
+   $showPitch += %val * 0.01;
+}
+
+function toggleMouse()
+{
+   if(Canvas.isCursorOn())
+      CursorOff();
+   else
+      CursorOn();
+}
+
+function TSShowGui::onWake(%this)
+{
+   if ( !Canvas.isCursorOn() )
+      CursorOn();
+   GlobalActionMap.bindcmd(keyboard, "tab", "", "toggleMouse();");
+   showMoveMap.push();
+}
+
+function TSShowGui::onSleep(%this)
+{
+   GlobalActionMap.unbind(keyboard, "tab");
+   showMoveMap.pop();
+   lockMouse(false);
+   CursorOn();
+}
+
+new ActionMap(showMoveMap);
+showMoveMap.bind(keyboard, a, showMoveleft);
+showMoveMap.bind(keyboard, d, showMoveright);
+showMoveMap.bind(keyboard, w, showMoveforward);
+showMoveMap.bind(keyboard, s, showMovebackward);
+showMoveMap.bind(keyboard, e, showMoveup);
+showMoveMap.bind(keyboard, c, showMovedown);
+showMoveMap.bind(keyboard, z, showTurnLeft);
+showMoveMap.bind(keyboard, x, showTurnRight);
+
+showMoveMap.bind(keyboard, 1, S,  0.10, showSetSpeed);
+showMoveMap.bind(keyboard, 2, S,  0.25, showSetSpeed);
+showMoveMap.bind(keyboard, 3, S,  0.50, showSetSpeed);
+showMoveMap.bind(keyboard, 4, S,  1.00, showSetSpeed);
+showMoveMap.bind(keyboard, 5, S,  1.50, showSetSpeed);
+showMoveMap.bind(keyboard, 6, S,  2.00, showSetSpeed);
+showMoveMap.bind(keyboard, 7, S,  3.00, showSetSpeed);
+showMoveMap.bind(keyboard, 8, S,  5.00, showSetSpeed);
+showMoveMap.bind(keyboard, 9, S, 10.00, showSetSpeed);
+showMoveMap.bind(keyboard, 0, S, 20.00, showSetSpeed);
+
+showMoveMap.bind(mouse, xaxis, showYaw);
+showMoveMap.bind(mouse, yaxis, showPitch);
+

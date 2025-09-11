@@ -1,0 +1,14 @@
+//--- OBJECT WRITE BEGIN ---
+new GuiChunkedBitmapCtrl(LaunchGui) {
+	profile = "GuiContentProfile";
+	horizSizing = "right";
+	vertSizing = "bottom";
+	position = "0 0";
+	extent = "640 480";
+	minExtent = "8 8";
+	visible = "1";
+	variable = "$ShellBackground";
+	helpTag = "0";
+	useVariable = "1";
+};
+//--- OBJECT WRITE END ---

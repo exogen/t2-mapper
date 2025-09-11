@@ -1,0 +1,30 @@
+//--- OBJECT WRITE BEGIN ---
+
+new GuiScrollCtrl(ThumbnailView)
+{
+   profile = "GuiScrollCtrlProfile";
+   horizSizing = "width";
+   vertSizing = "height";
+   vScrollBar = "allwaysOn";
+   hScrollBar = "dynamic";
+   
+   new GuiScrollContentCtrl()
+   {
+      profile = "GuiScrollContentProfile";
+      
+      new GuiBitmapCtrl(ThumbnailPreview)
+      {
+         profile = "GuiScrollContentProfile";
+      };
+   };
+};
+
+//--- OBJECT WRITE END ---
+
+//------------------------------------------------------------------------------
+// Functions
+//------------------------------------------------------------------------------
+
+function ThumbnailPreview::init(%this)
+{
+}

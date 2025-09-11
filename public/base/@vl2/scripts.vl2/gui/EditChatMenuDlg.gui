@@ -1,0 +1,106 @@
+//--- OBJECT WRITE BEGIN ---
+new GuiControl(EditChatMenuDlg) {
+	profile = "DlgBackProfile";
+	horizSizing = "width";
+	vertSizing = "height";
+	position = "0 0";
+	extent = "640 480";
+	minExtent = "8 8";
+	visible = "1";
+	helpTag = "0";
+
+	new ShellPaneCtrl() {
+		profile = "ShellDlgPaneProfile";
+		horizSizing = "center";
+		vertSizing = "center";
+		position = "150 156";
+		extent = "340 167";
+		minExtent = "48 92";
+		visible = "1";
+		helpTag = "0";
+		text = "EDIT MENU";
+		noTitleBar = "0";
+
+		new GuiTextCtrl() {
+			profile = "ShellTextRightProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "21 42";
+			extent = "80 22";
+			minExtent = "8 8";
+			visible = "1";
+			helpTag = "0";
+			text = "Key:";
+		};
+		new ShellTextEditCtrl() {
+			profile = "NewTextEditProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "97 34";
+			extent = "50 38";
+			minExtent = "32 38";
+			visible = "1";
+			variable = "$ECI::key";
+			helpTag = "0";
+			historySize = "0";
+			maxLength = "1";
+			password = "0";
+			glowOffset = "9 9";
+		};
+		new GuiTextCtrl() {
+			profile = "ShellTextRightProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "21 80";
+			extent = "80 22";
+			minExtent = "8 8";
+			visible = "1";
+			helpTag = "0";
+			text = "Menu text:";
+		};
+		new ShellTextEditCtrl() {
+			profile = "NewTextEditProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "97 72";
+			extent = "208 38";
+			minExtent = "32 38";
+			visible = "1";
+			variable = "$ECI::text";
+			helpTag = "0";
+			historySize = "0";
+			maxLength = "25";
+			password = "0";
+			glowOffset = "9 9";
+		};
+		new ShellBitmapButton() {
+			profile = "ShellButtonProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "180 112";
+			extent = "128 38";
+			minExtent = "32 38";
+			visible = "1";
+			command = "eval($ECI::OKCommand);";
+			helpTag = "0";
+			text = "OK";
+			simpleStyle = "0";
+		};
+		new ShellBitmapButton() {
+			profile = "ShellButtonProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "32 112";
+			extent = "128 38";
+			minExtent = "32 38";
+			visible = "1";
+			command = "Canvas.popDialog( EditChatMenuDlg );";
+			accelerator = "escape";
+			helpTag = "0";
+			text = "CANCEL";
+			simpleStyle = "0";
+		};
+	};
+};
+//--- OBJECT WRITE END ---
+

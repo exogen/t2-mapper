@@ -1,0 +1,19 @@
+
+This file was packed using Emo1313's map zipping utility for Tribes2.
+Please visit Dopplegangers.com @ www.dopplegangers.com for all your Tribes file needs.
+Thank you.
+
+
+
+This file contains:
+======================================
+Centaur.mis.
+Centaur.ter.
+Centaur.spn.
+Centaur.nav.
+Centaur_heightfield.cs.
+Centaur_texture.cs.
+LOAD_Centaur.png.
+
+======================================
+

@@ -1,0 +1,322 @@
+//--- OBJECT WRITE BEGIN ---
+
+new GuiScrollCtrl(EditorToolCreatorGui)
+{
+   profile = "GuiScrollCtrlProfile";
+   horizSizing = "width";
+   vertSizing = "height";
+   vScrollBar = "allwaysOn";
+   hScrollBar = "dynamic";
+   
+   new GuiScrollContentCtrl()
+   {
+      profile = "GuiScrollContentProfile";
+      
+      new CreatorTree(Creator)
+      {
+         profile = "GuiTreeViewProfile";
+      };
+   };
+};
+
+//--- OBJECT WRITE END ---
+
+//------------------------------------------------------------------------------
+// Functions
+//------------------------------------------------------------------------------
+
+function Creator::init(%this)
+{
+   %this.clear();
+
+//   %this.currentSel = -1;
+//   %this.currentRoot = -1;
+//   %this.currentObj = -1;
+
+   $InstantGroup = "MissionGroup";
+
+   // *** INTERIORS   
+   %base = %this.addGroup(0, "Interiors");
+   %misc = %this.addGroup(%base, "Misc.");
+   
+   //
+   %shapeGroup[0] = "Blood Eagle - Lush";                   
+   %shapeGroup[1] = "Diamond Sword - Volcanic";
+   %shapeGroup[2] = "Star Wolf - Ice";
+   %shapeGroup[3] = "Children of the Phoenix - Desert";
+   %shapeGroup[4] = "Bioderm - Badlands";
+   
+   %groupShort[0] = "b";
+   %groupShort[1] = "d";
+   %groupShort[2] = "s";
+   %groupShort[3] = "p";
+   %groupShort[4] = "x";
+   
+   //
+   %shapeType[0] = "Towers";
+   %shapeType[1] = "Bunkers";
+   %shapeType[2] = "Base";
+   %shapeType[3] = "Platform";
+   %shapeType[4] = "Bridge";
+   %shapeType[5] = "Wall";
+   %shapeType[6] = "Unique";
+   %shapeType[7] = "Power";
+   %shapeType[8] = "Misc.";
+   %shapeType[9] = "Vehicle";
+   %shapeType[10] = "Rocks";
+   
+   %typeShort[0] = "towr";
+   %typeShort[1] = "bunk";
+   %typeShort[2] = "base";
+   %typeShort[3] = "plat";
+   %typeShort[4] = "brdg";
+   %typeShort[5] = "wall";
+   %typeShort[6] = "uniq";
+   %typeShort[7] = "powr";
+   %typeShort[8] = "misc";
+   %typeShort[9] = "vbay";
+   %typeShort[10] = "rock";
+   
+   // create the groups
+   %grpCount = 0;
+   for(%i = 0; %shapeGroup[%i] !$= ""; %i++)
+   {
+      %parent = Creator.addGroup(%base, %shapeGroup[%i]);
+      for(%j = 0; %shapeType[%j] !$= ""; %j++)
+      {
+         %group[%grpCount] = %this.addGroup(%parent, %shapeType[%j]);
+         %grpCount++;
+      }
+   }
+
+   // walk all the interiors and add them to the correct group
+   %file = findFirstFile("interiors/*.dif");
+   while(%file !$= "")
+   {
+      %file = fileBase(%file);
+      
+      %grpCount = 0;
+      %added = false;
+      for(%i = 0; !%added && %shapeGroup[%i] !$= ""; %i++)
+      {
+         for(%j = 0; %shapeType[%j] !$= ""; %j++)
+         {
+            if(%this.fileNameMatch(%groupShort[%i], %typeShort[%j], %file))
+            {
+               %this.addItem(%group[%grpCount], %file, "createInterior(" @ "\"" @ %file @ ".dif\"" @ ");");
+               %added = true;
+            }
+            %grpCount++;
+         }
+      }
+      
+      // throw it in the 'misc' directory
+      if(!%added)
+         %this.addItem(%misc, %file, "createInterior(" @ "\"" @ %file @ ".dif\"" @ ");");
+
+      %file = findNextFile("interiors/*.dif");
+   }
+   
+   // *** SHAPES - add in all the shapes now...
+   %base = %this.addGroup(0, "Shapes");
+   %dataGroup = "DataBlockGroup";
+   
+   for(%i = 0; %i < %dataGroup.getCount(); %i++)
+   {
+      %obj = %dataGroup.getObject(%i);
+      if(%obj.catagory !$= "" || %obj.catagory != 0)
+      {
+         %grp = %this.addGroup(%base, %obj.catagory);
+         %this.addItem(%grp, %obj.getName(), %obj.getClassName() @ "::create(" @ %obj.getName() @ ");");
+      }
+   }
+
+   // Statics
+   %staticBase = %this.addGroup(0, "Static Objects");
+   for (%i = 0; %i < $NumStaticTSObjects; %i++) {
+      echo("This: " SPC $StaticTSObjects[%i]);
+      echo(getWord($StaticTSObjects[%i], 2));
+
+      %grp = %this.addGroup(%staticBase, getWord($StaticTSObjects[%i], 0));
+      echo("TSStatic::create(" @ getWord($StaticTSObjects[%i], 2) @");");
+      %this.addItem(%grp, getWord($StaticTSObjects[%i], 1), "TSStatic::create(\"" @ getWord($StaticTSObjects[%i], 2) @"\");");
+   }
+
+
+   // *** OBJECTS - do the objects now...
+   %objGroup[0] = "Environment";
+   %objGroup[1] = "Mission";
+   %objGroup[2] = "System";
+   %objGroup[3] = "AI";
+
+   %Environment_Item[0] = "Sky";
+   %Environment_Item[1] = "Sun";
+   %Environment_Item[2] = "Lightning";
+   %Environment_Item[3] = "Water";
+   %Environment_Item[4] = "Terrain";
+   %Environment_Item[5] = "AudioEmitter";
+   %Environment_Item[6] = "Precipitation";
+   %Environment_Item[7] = "ParticleEmitter";
+
+   %Mission_Item[0] = "MissionArea";
+   %Mission_Item[1] = "GameType";
+   %Mission_Item[2] = "Marker";
+   %Mission_Item[3] = "Forcefield";
+   %Mission_Item[4] = "Trigger";
+   %Mission_Item[5] = "PhysicalZone";
+   %Mission_Item[6] = "Camera";
+
+   %System_Item[0] = "SimGroup";
+
+   %AI_Item[0] = "Objective";
+   //%AI_Item[1] = "NavigationGraph";
+
+   // objects group
+   %base = %this.addGroup(0, "Objects");
+
+   // create 'em
+   for(%i = 0; %objGroup[%i] !$= ""; %i++)
+   {
+      %grp = %this.addGroup(%base, %objGroup[%i]);
+
+      %groupTag = "%" @ %objGroup[%i] @ "_Item";
+
+      %done = false;
+      for(%j = 0; !%done; %j++)
+      {
+         eval("%itemTag = " @ %groupTag @ %j @ ";");
+         if(%itemTag $= "")
+            %done = true;
+         else
+            %this.addItem(%grp, %itemTag, "ObjectBuilderGui.build" @ %itemTag @ "();");
+      }
+   }
+}
+
+function createInterior(%name)
+{
+   %obj = new InteriorInstance()
+   {
+      position = "0 0 0";
+      rotation = "0 0 0";
+      interiorFile = %name;
+   };
+   
+   return(%obj);
+}
+
+function Creator::onAction(%this)
+{
+//   %this.currentSel = -1;
+//   %this.currentRoot = -1;
+//   %this.currentObj = -1;
+
+   %sel = %this.getSelected();
+   if(%sel == -1 || %this.isGroup(%sel) || !$MissionRunning)
+      return;
+      
+   // the value is the callback function..
+   if(%this.getValue(%sel) $= "")
+      return;
+
+   %this.currentSel = %sel;
+   %this.currentRoot = %this.getRootGroup(%sel);
+
+   %this.create(%sel);
+}
+
+function Creator::create(%this, %sel)
+{
+   // create the obj and add to the instant group
+   %obj = eval(%this.getValue(%sel));
+
+   if(%obj == -1 || %obj == 0)
+      return;
+
+//   %this.currentObj = %obj;
+
+   $InstantGroup.add(%obj);
+      
+   // drop it from the editor - only SceneObjects can be selected...
+   wEditor.clearSelection();
+   wEditor.selectObject(%obj);
+   wEditor.dropSelection();
+}
+
+//function Creator::getRootGroup(%sel)
+//{
+//   if(%sel == -1 || %sel == 0)
+//      return(-1);
+//
+//   %parent = %this.getParent(%sel);
+//   while(%parent != 0 || %parent != -1)
+//   {
+//      %sel = %parent;
+//      %parent = %this.getParent(%sel);
+//   }
+//
+//   return(%sel);
+//}
+//   
+//function Creator::getLastItem(%rootGroup)
+//{
+//   %traverse = %rootGroup + 1;
+//   while(%this.getRootGroup(%traverse) == %rootGroup)
+//      %traverse++;
+//   return(%traverse - 1);
+//}
+//
+//function Creator::createNext(%this)
+//{
+//   if(%this.currentSel == -1 || %this.currentRoot == -1 || %this.currentObj == -1)
+//      return;
+//
+//   %sel = %this.currentSel;
+//   %this.currentSel++;
+//
+//   while(%this.currentSel != %sel)
+//   {
+//      if(%this.getRootGroup(%this.currentSel) != %this.currentRoot)
+//         %this.currentSel = %this.currentRoot + 1;
+//
+//      if(%this.isGroup(%this.currentSel))
+//         %this.currentSel++;
+//      else
+//         %sel = %this.currentSel;
+//   }
+//
+//   //
+//   %this.currentObj.delete();
+//   %this.create(%sel);
+//}
+//
+//function Creator::createPrevious(%this)
+//{
+//   if(%this.currentSel == -1 || %this.currentGroup == -1 || %this.currentObj == -1)
+//      return;
+//
+//   %sel = %this.currentSel;
+//   %this.currentSel--;
+//
+//   while(%this.currentSel != %sel)
+//   {
+//      if(%this.getRootGroup(%this.currentSel) != %this.currentRoot)
+//         %this.currentSel = getLastItem(%this.currentRoot);
+//
+//      if(%this.isGroup(%this.currentSel))
+//         %this.currentSel--;
+//      else
+//         %sel = %this.currentSel;
+//   }
+//
+//   //
+//   %this.currentObj.delete();
+//   %this.create(%sel);
+//}
+
+
+
+
+
+
+

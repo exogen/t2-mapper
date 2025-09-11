@@ -1,0 +1,35 @@
+//--- OBJECT WRITE BEGIN ---
+new GuiControl(MessagePopupDlg) {
+	profile = "DlgBackProfile";
+	horizSizing = "width";
+	vertSizing = "height";
+	position = "0 0";
+	extent = "640 480";
+	minExtent = "8 8";
+	visible = "1";
+	helpTag = "0";
+
+	new ShellPaneCtrl(MessagePopFrame) {
+		profile = "ShellDlgPaneProfile";
+		horizSizing = "center";
+		vertSizing = "center";
+		position = "165 194";
+		extent = "310 108";
+		minExtent = "48 92";
+		visible = "1";
+		helpTag = "0";
+
+		new GuiMLTextCtrl(MessagePopText) {
+			profile = "ShellMediumTextProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "32 40";
+			extent = "247 32";
+			minExtent = "8 8";
+			visible = "1";
+			helpTag = "0";
+			lineSpacing = "2";
+		};
+	};
+};
+//--- OBJECT WRITE END ---

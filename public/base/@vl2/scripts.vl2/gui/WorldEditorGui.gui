@@ -1,0 +1,389 @@
+//--- OBJECT WRITE BEGIN ---
+
+new WorldEditor(wEditor)
+{
+   profile = "";
+	horizSizing = "width";
+	vertSizing = "height";
+	position = "0 0";
+	extent = "420 420";
+	minExtent = "8 8";
+	visible = "1";
+	setFirstResponder = "0";
+	modal = "1";
+};
+
+//--- OBJECT WRITE END ---
+
+//------------------------------------------------------------------------------
+// Functions
+//------------------------------------------------------------------------------
+
+function WorldEditor::getPrefs(%this)
+{
+   // same defaults as WorldEditor ctor
+   %this.planarMovement = getPrefSetting($pref::WorldEditor::planarMovement, true);
+   %this.undoLimit = getPrefSetting($pref::WorldEditor::undoLimit, 40);
+   %this.dropType = getPrefSetting($pref::WorldEditor::dropType, "screenCenter");
+   %this.projectDistance = getPrefSetting($pref::WorldEditor::projectDistance, 2000);
+   %this.boundingBoxCollision = getPrefSetting($pref::WorldEditor::boundingBoxCollision, true);
+   %this.renderPlane = getPrefSetting($pref::WorldEditor::renderPlane, true);
+   %this.renderPlaneHashes = getPrefSetting($pref::WorldEditor::renderPlaneHashes, true);
+   %this.gridColor = getPrefSetting($pref::WorldEditor::gridColor, "255 255 255 20");
+   %this.planeDim = getPrefSetting($pref::WorldEditor::planeDim, 500);
+   %this.gridSize = getPrefSetting($pref::WorldEditor::gridSize, "10 10 10");
+   %this.renderPopupBackground = getPrefSetting($pref::WorldEditor::renderPopupBackground, true);
+   %this.popupBackgroundColor = getPrefSetting($pref::WorldEditor::popupBackgroundColor, "100 100 100");
+   %this.popupTextColor = getPrefSetting($pref::WorldEditor::popupTextColor, "255 255 0");
+   %this.selectHandle = getPrefSetting($pref::WorldEditor::selectHandle, "gui/Editor_SelectHandle.png");
+   %this.defaultHandle = getPrefSetting($pref::WorldEditor::defaultHandle, "gui/Editor_DefaultHandle.png");
+   %this.lockedHandle = getPrefSetting($pref::WorldEditor::lockedHandle, "gui/Editor_LockedHandle.png");
+   %this.objectTextColor = getPrefSetting($pref::WorldEditor::objectTextColor, "255 255 255");
+   %this.objectsUseBoxCenter = getPrefSetting($pref::WorldEditor::objectsUseBoxCenter, true);
+   %this.axisGizmoMaxScreenLen = getPrefSetting($pref::WorldEditor::axisGizmoMaxScreenLen, 200);
+   %this.axisGizmoActive = getPrefSetting($pref::WorldEditor::axisGizmoActive, true);
+   %this.mouseMoveScale = getPrefSetting($pref::WorldEditor::mouseMoveScale, 0.2);
+   %this.mouseRotateScale = getPrefSetting($pref::WorldEditor::mouseRotateScale, 0.01);
+   %this.mouseScaleScale = getPrefSetting($pref::WorldEditor::mouseScaleScale, 0.01);
+   %this.minScaleFactor = getPrefSetting($pref::WorldEditor::minScaleFactor, 0.1);
+   %this.maxScaleFactor = getPrefSetting($pref::WorldEditor::maxScaleFactor, 4000);
+   %this.objSelectColor = getPrefSetting($pref::WorldEditor::objSelectColor, "255 0 0");
+   %this.objMouseOverSelectColor = getPrefSetting($pref::WorldEditor::objMouseOverSelectColor, "0 0 255");
+   %this.objMouseOverColor = getPrefSetting($pref::WorldEditor::objMouseOverColor, "0 255 0");
+   %this.showMousePopupInfo = getPrefSetting($pref::WorldEditor::showMousePopupInfo, true);
+   %this.dragRectColor = getPrefSetting($pref::WorldEditor::dragRectColor, "255 255 0");
+   %this.renderObjText = getPrefSetting($pref::WorldEditor::renderObjText, true);
+   %this.renderObjHandle = getPrefSetting($pref::WorldEditor::renderObjHandle, true);
+   %this.faceSelectColor = getPrefSetting($pref::WorldEditor::faceSelectColor, "0 0 100 100");
+   %this.renderSelectionBox = getPrefSetting($pref::WorldEditor::renderSelectionBox, true);
+   %this.selectionBoxColor = getPrefSetting($pref::WorldEditor::selectionBoxColor, "255 255 0");
+   %this.snapToGrid = getPrefSetting($pref::WorldEditor::snapToGrid, false);
+   %this.snapRotations = getPrefSetting($pref::WorldEditor::snapRotations, false);
+   %this.rotationSnap = getPrefSetting($pref::WorldEditor::rotationSnap, "15");
+   
+   //
+   %this.currentMode = "move";
+}
+
+function WorldEditor::setPrefs(%this)
+{
+   $pref::WorldEditor::planarMovement = %this.planarMovement;
+   $pref::WorldEditor::undoLimit = %this.undoLimit;
+   $pref::WorldEditor::dropType = %this.dropType;
+   $pref::WorldEditor::projectDistance = %this.projectDistance;
+   $pref::WorldEditor::boundingBoxCollision = %this.boundingBoxCollision;
+   $pref::WorldEditor::renderPlane = %this.renderPlane;
+   $pref::WorldEditor::renderPlaneHashes = %this.renderPlaneHashes;
+   $pref::WorldEditor::gridColor = %this.GridColor;
+   $pref::WorldEditor::planeDim = %this.planeDim;
+   $pref::WorldEditor::gridSize = %this.GridSize;
+   $pref::WorldEditor::renderPopupBackground = %this.renderPopupBackground;
+   $pref::WorldEditor::popupBackgroundColor = %this.PopupBackgroundColor;
+   $pref::WorldEditor::popupTextColor = %this.PopupTextColor;
+   $pref::WorldEditor::selectHandle = %this.selectHandle;
+   $pref::WorldEditor::defaultHandle = %this.defaultHandle;
+   $pref::WorldEditor::lockedHandle = %this.lockedHandle;
+   $pref::WorldEditor::objectTextColor = %this.ObjectTextColor;
+   $pref::WorldEditor::objectsUseBoxCenter = %this.objectsUseBoxCenter;
+   $pref::WorldEditor::axisGizmoMaxScreenLen = %this.axisGizmoMaxScreenLen;
+   $pref::WorldEditor::axisGizmoActive = %this.axisGizmoActive;
+   $pref::WorldEditor::mouseMoveScale = %this.mouseMoveScale;
+   $pref::WorldEditor::mouseRotateScale = %this.mouseRotateScale;
+   $pref::WorldEditor::mouseScaleScale = %this.mouseScaleScale;
+   $pref::WorldEditor::minScaleFactor = %this.minScaleFactor;
+   $pref::WorldEditor::maxScaleFactor = %this.maxScaleFactor;
+   $pref::WorldEditor::objSelectColor = %this.objSelectColor;
+   $pref::WorldEditor::objMouseOverSelectColor = %this.objMouseOverSelectColor;
+   $pref::WorldEditor::objMouseOverColor = %this.objMouseOverColor;
+   $pref::WorldEditor::showMousePopupInfo = %this.showMousePopupInfo;
+   $pref::WorldEditor::dragRectColor = %this.dragRectColor;
+   $pref::WorldEditor::renderObjText = %this.renderObjText;
+   $pref::WorldEditor::renderObjHandle = %this.renderObjHandle;
+   $pref::WorldEditor::raceSelectColor = %this.faceSelectColor;
+   $pref::WorldEditor::renderSelectionBox = %this.renderSelectionBox;
+   $pref::WorldEditor::selectionBoxColor = %this.selectionBoxColor;
+   $pref::WorldEditor::snapToGrid = %this.snapToGrid;
+   $pref::WorldEditor::snapRotations = %this.snapRotations;
+   $pref::WorldEditor::rotationSnap = %this.rotationSnap;
+}
+
+function WorldEditor::init(%this)
+{
+   %this.getPrefs();
+
+   // add objclasses which we do not want to collide with
+   %this.ignoreObjClass(TerrainBlock, Sky, AIObjective);
+
+   // editing modes
+   %this.numEditModes = 3;
+   %this.editMode[0]    = "move";
+   %this.editMode[1]    = "rotate";
+   %this.editMode[2]    = "scale";
+
+   %this.setMode(%this.currentMode);
+
+   // context menu
+   new GuiControl(WEContextPopupDlg)
+   {
+      profile = "GuiModelessDialogProfile";
+	   horizSizing = "width";
+	   vertSizing = "height";
+	   position = "0 0";
+	   extent = "640 480";
+	   minExtent = "8 8";
+	   visible = "1";
+	   setFirstResponder = "0";
+	   modal = "1";
+      
+      new GuiPopUpMenuCtrl(WEContextPopup)
+      {
+         profile = "GuiButtonProfile";
+         position = "0 0";
+         extent = "0 0";
+         minExtent = "0 0";
+         maxPopupHeight = "200";
+         command = "canvas.popDialog(WEContextPopupDlg);";
+      };
+   };
+   WEContextPopup.setVisible(false);
+}
+
+//------------------------------------------------------------------------------
+
+function WorldEditor::onDblClick(%this, %obj)
+{
+   Inspector.inspect(%obj);
+   InspectorNameEdit.setValue(%obj.getName());
+}
+
+//------------------------------------------------------------------------------
+
+function WorldEditor::doExport(%this, %file)
+{
+   missionGroup.save("editor/" @ %file, true);
+}
+
+function WorldEditor::export(%this)
+{
+   getSaveFilename("editor/*.mac", %this @ ".doExport", "selection.mac");
+}
+
+function WorldEditor::doImport(%this, %file)
+{
+   exec("editor/" @ %file);
+}
+
+function WorldEditor::import(%this)
+{
+   getLoadFilename("editor/*.mac", %this @ ".doImport");
+}
+
+//------------------------------------------------------------------------------
+// modes
+
+function WorldEditor::getModeIndex(%this)
+{
+   %mode = %this.getMode();
+   for(%i = 0; %i < %this.numEditModes; %i++)
+      if(%mode $= %this.editMode[%i])
+         return %i;
+
+   return 0;
+}
+
+function WorldEditor::nextMode(%this)
+{
+   %idx = %this.getModeIndex();
+
+   //
+   %idx++;
+   if(%idx == %this.numEditModes)
+      %idx = 0;
+
+   %this.setMode(%this.editMode[%idx]);   
+}
+
+function WorldEditor::previousMode(%this)
+{
+   %idx = %this.getModeIndex();
+
+   //
+   if(%idx == 0)
+      %idx = %this.numEditModes - 1;
+   else
+      %idx--;
+
+   %this.setMode(%this.editMode[%idx]);   
+}
+
+function WorldEditor::onGuiUpdate(%this, %text)
+{
+   WorldEditorFrameSetDlg.update();
+   AIEFrameSetDlg.update();
+   WorldEditorStatusbarDlg.update();
+}
+
+function WorldEditor::anyObjectLocked(%this)
+{
+   for(%i = 0; %i < %this.getSelectionSize(); %i++)
+   {
+      %obj = %this.getSelectedObject(%i);
+      if(%obj.locked $= "true")
+         return 1;
+   }
+   return 0;
+}
+
+function WorldEditor::anyObjectHidden(%this)
+{
+   for(%i = 0; %i < %this.getSelectionSize(); %i++)
+   {
+      %obj = %this.getSelectedObject(%i);
+      if(%obj.hidden $= "true")
+         return 1;
+   }
+   return 0;
+}
+
+function WorldEditor::onContextMenu(%this, %mousePos)
+{
+   if(!$missionRunning)
+      return;
+      
+   WEContextPopup.position = %mousePos;
+
+   WEContextPopup.clear();
+
+   if(%this.getSelectionSize() == 0)
+   {
+      if(%this.canPasteSelection())
+         WEContextPopup.add("Paste", 1);
+      else
+         return;
+   }
+   else
+   {
+      WEContextPopup.add("Copy", 0);
+
+      if(%this.canPasteSelection())
+         WEContextPopup.add("Paste", 1);
+
+      WEContextPopup.add("Cut", 2);
+
+      if(%this.anyObjectLocked())
+         WEContextPopup.add("Unlock", 3);
+      else
+         WEContextPopup.add("Lock", 3);
+
+      if(%this.anyObjectHidden())
+         WEContextPopup.add("Unhide", 4);
+      else
+         WEContextPopup.add("Hide", 4);
+   }
+
+   canvas.pushDialog(WEContextPopupDlg);
+   WEContextPopup.forceOnAction();
+}
+
+function WEContextPopup::onSelect(%this, %index, %value)
+{
+   switch(%index)
+   {
+      case 0:
+         if($AIedit)
+            aiEdit.copySelection();
+         else
+            wEditor.copySelection();
+      case 1:
+         if($AIedit)
+            aiEdit.pasteSelection();
+         else
+            wEditor.pasteSelection();
+      case 2:
+         if($AIedit)
+         {   
+            aiEdit.copySelection();
+            aiEdit.deleteSelection();
+         }
+         else
+         {   
+            wEditor.copySelection();
+            wEditor.deleteSelection();
+         }
+      case 3:
+         wEditor.lockSelection(!wEditor.anyObjectLocked());
+      case 4:
+         wEditor.hideSelection(!wEditor.anyObjectHidden());
+   }
+}
+
+function WorldEditor::dropCameraToSelection(%this)
+{
+   if(%this.getSelectionSize() == 0)
+      return;
+
+   %pos = %this.getSelectionCentroid();
+   %cam = 2.camera.getTransform();
+
+   // set the pnt
+   %cam = setWord(%cam, 0, getWord(%pos, 0));
+   %cam = setWord(%cam, 1, getWord(%pos, 1));
+   %cam = setWord(%cam, 2, getWord(%pos, 2));
+
+   2.camera.setTransform(%cam);
+}
+
+// * pastes the selection at the same place (used to move obj from a group to another)
+function WorldEditor::moveSelectionInPlace(%this)
+{
+   %saveDropType = %this.dropType;
+   %this.dropType = "atCentroid";
+   %this.copySelection();
+   %this.deleteSelection();
+   %this.pasteSelection();
+   %this.dropType = %saveDropType;
+}
+
+// resets the scale and rotation on the selection set
+function WorldEditor::resetTransforms(%this)
+{
+   %this.addUndoState();
+
+   for(%i = 0; %i < %this.getSelectionSize(); %i++)
+   {
+      %obj = %this.getSelectedObject(%i);
+      %transform = %obj.getTransform();
+
+      %transform = setWord(%transform, 3, "0");
+      %transform = setWord(%transform, 4, "0");
+      %transform = setWord(%transform, 5, "1");
+      %transform = setWord(%transform, 6, "0");
+         
+      //
+      %obj.setTransform(%transform);
+      %obj.setScale("1 1 1");
+   }
+}
+
+//------------------------------------------------------------------------------
+// keys
+
+new ActionMap(WorldEditorMap);
+WorldEditorMap.bindCmd(keyboard, "space", "wEditor.nextMode();", "");
+
+WorldEditorMap.bindCmd(keyboard, "ctrl c", "wEditor.copySelection();", "");
+WorldEditorMap.bindCmd(keyboard, "ctrl x", "wEditor.copySelection();wEditor.deleteSelection();", "");
+WorldEditorMap.bindCmd(keyboard, "delete", "wEditor.copySelection();wEditor.deleteSelection();", "");
+WorldEditorMap.bindCmd(keyboard, "ctrl v", "wEditor.pasteSelection();", "");
+
+WorldEditorMap.bindCmd(keyboard, "ctrl z", "wEditor.undo();", "");
+WorldEditorMap.bindCmd(keyboard, "ctrl y", "wEditor.redo();", "");
+
+WorldEditorMap.bindCmd(keyboard, "ctrl h", "wEditor.hideSelection(true);", "");
+WorldEditorMap.bindCmd(keyboard, "alt h", "wEditor.hideSelection(false);", "");
+WorldEditorMap.bindCmd(keyboard, "i", "Canvas.pushDialog(interiorDebugDialog);", "");
+WorldEditorMap.bindCmd(keyboard, "o", "Canvas.pushDialog(WorldEditorSettingsDlg);", "");
+WorldEditorMap.bindCmd(keyboard, "ctrl d", "wEditor.dropSelection();", "");
+WorldEditorMap.bindCmd(keyboard, "ctrl q", "wEditor.dropCameraToSelection();", "");
+WorldEditorMap.bindCmd(keyboard, "ctrl m", "wEditor.moveSelectionInPlace();", "");
+WorldEditorMap.bindCmd(keyboard, "ctrl r", "wEditor.resetTransforms();", "");

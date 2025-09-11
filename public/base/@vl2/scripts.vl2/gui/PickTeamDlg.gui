@@ -1,0 +1,74 @@
+//--- OBJECT WRITE BEGIN ---
+new GuiControl(PickTeamDlg) {
+	profile = "GuiDefaultProfile";
+	horizSizing = "width";
+	vertSizing = "height";
+	position = "0 0";
+	extent = "640 480";
+	minExtent = "8 8";
+	visible = "1";
+	helpTag = "0";
+		mouseOn = "1";
+
+	new ShellPaneCtrl(PickTeamFrame) {
+		profile = "ShellDlgPaneProfile";
+		horizSizing = "center";
+		vertSizing = "center";
+		position = "220 115";
+		extent = "250 250";
+		minExtent = "48 92";
+		visible = "1";
+		helpTag = "0";
+		noTitleBar = "0";
+	
+      new ShellBitmapButton("PickTeamAButton") {
+		   profile = "ShellButtonProfile";
+		   horizSizing = "center";
+		   vertSizing = "top";
+		   position = "158 60";
+		   extent = "120 60";
+		   minExtent = "8 8";
+		   visible = "1";
+		   helpTag = "0";
+         text = "";
+         command = "clientCmdprocessPickTeam(1);";
+	   };
+	   new ShellBitmapButton("PickTeamBButton") {
+		   profile = "ShellButtonProfile";
+		   horizSizing = "center";
+		   vertSizing = "top";
+		   position = "158 95";
+		   extent = "120 60";
+		   minExtent = "8 8";
+		   visible = "1";
+		   helpTag = "0";
+         text = "";
+         command = "clientCmdprocessPickTeam(2);";
+	   };
+	   new ShellBitmapButton() {
+		   profile = "ShellButtonProfile";
+		   horizSizing = "center";
+		   vertSizing = "top";
+		   position = "158 130";
+		   extent = "120 60";
+		   minExtent = "8 8";
+		   visible = "1";
+		   helpTag = "0";
+         text = "Observer";
+         command = "clientCmdprocessPickTeam(4);";
+	   };
+	   new ShellBitmapButton() {
+		   profile = "ShellButtonProfile";
+		   horizSizing = "center";
+		   vertSizing = "top";
+		   position = "158 165";
+		   extent = "120 60";
+		   minExtent = "8 8";
+		   visible = "1";
+		   helpTag = "0";
+         text = "Automatic";
+         command = "clientCmdprocessPickTeam(3);";
+	   };
+	};
+};
+//--- OBJECT WRITE END ---

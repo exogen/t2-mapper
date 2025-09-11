@@ -1,0 +1,84 @@
+//--- OBJECT WRITE BEGIN ---
+new GuiControl(TaskHudDlg) {
+	profile = "GuiDefaultProfile";
+	horizSizing = "right";
+	vertSizing = "bottom";
+	position = "0 0";
+	extent = "640 480";
+	minExtent = "8 8";
+	visible = "0";
+	helpTag = "0";
+	bypassHideCursor = "1";
+
+	new ShellFieldCtrl() {
+		profile = "GuiChatBackProfile";
+		horizSizing = "right";
+		vertSizing = "top";
+		position = "8 230";
+		extent = "380 204";
+		minExtent = "8 8";
+		visible = "1";
+		helpTag = "0";
+
+		new GuiControl() {
+			profile = "TaskHudBox";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "1 1";
+			extent = "378 19";
+			minExtent = "8 8";
+			visible = "1";
+			helpTag = "0";
+		};
+
+		new GuiTextCtrl() {
+			profile = "TaskHudTextProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "6 2";
+			extent = "60 16";
+			minExtent = "8 8";
+			visible = "1";
+			helpTag = "0";
+			text = "Issued By";
+		};
+
+		new GuiTextCtrl() {
+			profile = "TaskHudTextProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "164 2";
+			extent = "80 16";
+			minExtent = "8 8";
+			visible = "1";
+			helpTag = "0";
+			text = "Description";
+		};
+
+      new GuiControl()
+      {
+         profile = "GuiDefaultProfile";
+         horizSizing = "right";
+         vertSizing = "bottom";
+         position = "2 20";
+         extent = "377 200";
+
+		   new GuiTextListCtrl(TaskList) {
+			   profile = "TaskHudProfile";
+			   horizSizing = "right";
+			   vertSizing = "bottom";
+			   position = "0 0";
+			   extent = "377 8";
+			   minExtent = "8 8";
+			   visible = "1";
+			   helpTag = "0";
+			   enumerate = "0";
+			   resizeCell = "1";
+			   columns = "2 160";
+			   fitParentWidth = "1";
+            clipColumnText = "1";
+		   };
+      };
+	};
+};
+//--- OBJECT WRITE END ---

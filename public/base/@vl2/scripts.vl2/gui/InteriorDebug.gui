@@ -1,0 +1,155 @@
+new GuiControl(interiorDebugDialog) {
+
+   profile = "GuiDialogProfile";
+
+   new GuiWindowCtrl()
+   {
+      profile = GuiWindowProfile;
+      position = "25 25";
+      extent = "240 200";
+      text = "Interior Debug Options";
+      closeCommand = "Canvas.popDialog(interiorDebugDialog);";
+
+      
+      new GuiTextCtrl() {
+		   profile  = "GuiCenterTextProfile";
+         position = "20 25";
+		   extent = "200 20";
+			text     = "Render Mode:";
+      };
+	   new GuiPopUpMenuCtrl(InteriorRenderMode) {
+		   profile = "GuiButtonProfile";
+		   horizSizing = "right";
+		   vertSizing = "bottom";
+		   position = "20 45";
+		   extent = "200 20";
+		   minExtent = "8 8";
+		   visible = "True";
+		   setFirstResponder = "False";
+		   modal = "True";
+		   helpTag = "0";
+		   text = "Options";
+		   maxPopupHeight = "200";
+         setText = "false";
+	   };
+
+      new GuiTextCtrl() {
+		   profile  = "GuiCenterTextProfile";
+         position = "20 73";
+		   extent = "200 20";
+			text     = "Options:";
+      };
+	   new GuiButtonCtrl(InteriorAlarmMode) {
+		   profile = "GuiButtonProfile";
+		   horizSizing = "right";
+		   vertSizing = "bottom";
+		   position = "45 93";
+		   extent = "150 20";
+		   minExtent = "8 8";
+		   visible = "True";
+		   setFirstResponder = "false";
+		   modal = "True";
+		   helpTag = "0";
+		   text = "Toggle Alarm Mode";
+	   };
+
+	   new GuiCheckBoxCtrl(InteriorFocusDebugModes) {
+		   profile = "GuiButtonProfile";
+		   horizSizing = "right";
+		   vertSizing = "bottom";
+		   position = "45 115";
+		   extent = "150 20";
+		   minExtent = "8 8";
+		   visible = "True";
+		   setFirstResponder = "false";
+		   modal = "True";
+		   helpTag = "0";
+		   text = "Focus Debug Modes";
+	   };
+
+	   new GuiCheckBoxCtrl(InteriorDontRestrict) {
+		   profile = "GuiButtonProfile";
+		   horizSizing = "right";
+		   vertSizing = "bottom";
+		   position = "45 137";
+		   extent = "150 20";
+		   minExtent = "8 8";
+		   visible = "True";
+		   setFirstResponder = "false";
+		   modal = "True";
+		   helpTag = "0";
+		   text = "Don't Restrict outside";
+	   };
+   };
+};
+
+$InteriorRenderModes[0]  = "Normal";
+$InteriorRenderModes[1]  = "Render as Lines";
+$InteriorRenderModes[2]  = "Show Detail Polys";
+$InteriorRenderModes[3]  = "Show Ambiguous Polys";
+$InteriorRenderModes[4]  = "Show Orphaned Polys";
+$InteriorRenderModes[5]  = "Show Lightmap";
+$InteriorRenderModes[6]  = "Show Only Textures";
+$InteriorRenderModes[7]  = "Show Portal Zones";
+$InteriorRenderModes[8]  = "Show Ambient lit Surfaces";
+$InteriorRenderModes[9]  = "[* Show Collision Fans *]";
+$InteriorRenderModes[10] = "[* Show Triangle Strips *]";
+$InteriorRenderModes[11] = "[* Show Null Surfaces *]";
+$InteriorRenderModes[12] = "[* Show Large Textures *]";
+$InteriorRenderModes[13] = "[* Show Hull Surfaces *]";
+$InteriorRenderModes[14] = "[* Show Vehicle Hull Surfaces *]";
+$InteriorRenderModes[15] = "[* Show vertex colors *]";
+$InteriorRenderModes[16] = "[* Show detail level *]";
+$NumInteriorRenderModes = 17;
+
+for ($i = 0; $i < $NumInteriorRenderModes; $i++) {
+   InteriorRenderMode.add($InteriorRenderModes[$i], $i);
+}
+InteriorRenderMode.setText($InteriorRenderModes[0]);
+
+function InteriorRenderMode::onSelect(%object, %idNum)
+{
+   %name = %object.getValue();
+
+   %renderMode = 0;
+   for (%i = 0; %i < $NumInteriorRenderModes; %i++) {
+      if (%name $= $InteriorRenderModes[%i]) {
+         %renderMode = %i;
+         break;
+      }
+   }
+   setInteriorRenderMode(%renderMode);
+   if(%renderMode == 1) // line mode
+      $T2::renderoutline = true;
+   else
+      $T2::renderoutline = false;
+}
+
+$InteriorPreviewGuiAlarmMode = "off";
+function InteriorAlarmMode::onAction()
+{
+   if ($InteriorPreviewGuiAlarmMode $= "on")
+      $InteriorPreviewGuiAlarmMode = "off";
+   else
+      $InteriorPreviewGuiAlarmMode = "on";
+
+   TestObject.setAlarmMode($InteriorPreviewGuiAlarmMode);
+}
+
+function InteriorFocusDebugModes::onAction()
+{
+   setInteriorFocusedDebug(InteriorFocusDebugModes.getValue());
+}
+
+function InteriorDontRestrict::onAction()
+{
+   $Interior::DontRestrictOutside = InteriorDontRestrict.getValue();
+}
+
+function interiorDebugDialog::onWake( %this )
+{
+}
+
+function interiorDebugDialog::onSleep( %this )
+{
+}

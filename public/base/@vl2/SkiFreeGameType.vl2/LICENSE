@@ -1,0 +1,55 @@
+Red Shifter's License for Tribes 2 Works v1.4, updated 2021-03-07
+
+Copyright (c) 2021 "Red Shifter"
+
+1. SUMMARY
+The goal of this license is to
+- Forbid commercial use of this work and its derivatives
+- Forbid the solicitation of donations, except with permission
+- Preserve derivative works and keep server admins from holding onto them
+- Indemnify the creators of works, taking away all implications of liability and warranty
+
+2. PERSONAL USE
+Blanket permission is granted to keep a copy of the work and use it for your own personal use. Personal use is defined as any use on a game server with
+a maximum of 4 human players on it.
+
+Acceptance of this license is not required in order to play on a server using the work. Only to host the work on your own server.
+
+3. COMMERCIAL USE
+Commercial use is explicitly prohibited. This includes, but is not limited to running a server for money, pay-to-play servers, etc. There are three
+exceptions to this rule:
+
+- Server owners may solicit donations to continue running, as long as permission is received by the author of the work (and in cases of derivative
+works, the creators of those works as well). Such permission can be revoked at any time by the author(s).
+- Servers that run over a LAN, such as for a LAN party, may host this code as long as all hosted works and derivatives are publicly available. Such
+servers cannot accept outside connections (such as from VPN, dark web, etc.)
+- Server infrastructure providers (such as Branzone) are not part of commercial use, as long as it's the server operator (such as the person who paid
+for said server) is the one who made the decision to include the work on the server.
+
+4. DERIVATIVE WORKS
+In this license, a "derivative work" is any map, any code modification, any code addition with the explicit purpose of changing how the code works, etc.
+
+All derivative works are fine as long as such modifications are PUBLICLY AVAILABLE. It is EXPRESSLY PROHIBITED to run any derivative work on a server
+without making it publicly available, such as through website, FTP, public GitHub, etc. Works in progress, test versions, etc. do not need to be
+uploaded for public availability immediately. However, if said versions are requested and are still in active use on a server, it should be made
+available as soon as convenient, such as within 24 hours of the request, and such files could be made available informally through Discord, etc.
+
+Derivative works are implied to use this license, even if the license is not included with it. Derivative works that fully replace the existing code
+(such as a new version of the work not requiring the existing VL2) MUST include this license. Additional terms may be attached to the license, as long
+as this license is unmodified and does not conflict with the terms of this license. In all cases, this license will be considered to take priority.
+
+Derivative works based on this work cannot use licenses that are more inclusive, such as MIT License, etc.
+
+You may not solicit donations, commissions, etc to create a derivative work based on something using this license.
+
+Derivative works must not contain morally reprehensible or illegal content.
+
+5. INDEMNIFICATION
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
+IN THE SOFTWARE.
+
+6. TRICKERY CLAUSE
+This is not an ironclad contract. I am not a lawyer. This license will be interpreted how I see fit. Malicious attempts to get around loopholes in
+the license are considered a violatios of the license, and you immediately forfeit all rights to the work and its derivatives.

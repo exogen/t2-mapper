@@ -1,0 +1,224 @@
+//--- OBJECT WRITE BEGIN ---
+new GuiControl(ChannelOptionsDlg) {
+	profile = "DlgBackProfile";
+	horizSizing = "width";
+	vertSizing = "height";
+	position = "0 0";
+	extent = "640 480";
+	minExtent = "8 8";
+	visible = "1";
+	helpTag = "0";
+
+	new ShellPaneCtrl() {
+		profile = "ShellDlgPaneProfile";
+		horizSizing = "center";
+		vertSizing = "center";
+		position = "75 102";
+		extent = "490 276";
+		minExtent = "48 92";
+		visible = "1";
+		helpTag = "0";
+		text = "CHANNEL OPTIONS";
+		noTitleBar = "0";
+
+		new GuiTextCtrl() {
+			profile = "ShellTextRightProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "25 38";
+			extent = "60 22";
+			minExtent = "8 8";
+			visible = "1";
+			helpTag = "0";
+			text = "Channel:";
+		};
+		new ShellFieldCtrl() {
+			profile = "ShellFieldProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "91 36";
+			extent = "218 24";
+			minExtent = "16 18";
+			visible = "1";
+			helpTag = "0";
+
+			new GuiTextCtrl(EditChannelName) {
+				profile = "ShellStaticTextProfile";
+				horizSizing = "width";
+				vertSizing = "bottom";
+				position = "8 3";
+				extent = "202 20";
+				minExtent = "8 8";
+				visible = "1";
+				helpTag = "0";
+			};
+		};
+		new GuiTextCtrl() {
+			profile = "ShellTextRightProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "25 68";
+			extent = "60 22";
+			minExtent = "8 8";
+			visible = "1";
+			helpTag = "0";
+			text = "Topic:";
+		};
+		new ShellTextEditCtrl(EditChannelTopic) {
+			profile = "NewTextEditProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "81 60";
+			extent = "362 38";
+			minExtent = "32 38";
+			visible = "1";
+			helpTag = "0";
+			historySize = "0";
+			maxLength = "64";
+			password = "0";
+			glowOffset = "9 9";
+		};
+		new ShellToggleButton(ButtonChannelInvite) {
+			profile = "ShellRadioProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "63 106";
+			extent = "150 30";
+			minExtent = "26 27";
+			visible = "1";
+			variable = "$EditChannelInvite";
+			command = "ToggleChannelInvite();";
+			helpTag = "0";
+			text = "INVITE ONLY";
+		};
+		new ShellToggleButton(ButtonChannelModerate) {
+			profile = "ShellRadioProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "277 106";
+			extent = "150 30";
+			minExtent = "26 27";
+			visible = "1";
+			variable = "$EditChannelModerate";
+			helpTag = "0";
+			text = "MODERATE";
+		};
+		new ShellToggleButton(ButtonChannelLimit) {
+			profile = "ShellRadioProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "45 148";
+			extent = "150 30";
+			minExtent = "26 27";
+			visible = "1";
+			variable = "$EditChannelLimit";
+			command = "ToggleChannelLimit();";
+			helpTag = "0";
+			text = "LIMIT MEMBERS";
+		};
+		new GuiTextCtrl() {
+			profile = "ShellTextRightProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "201 151";
+			extent = "60 22";
+			minExtent = "8 8";
+			visible = "1";
+			helpTag = "0";
+			text = "Max:";
+		};
+		new ShellTextEditCtrl(EditChannelMaxMembers) {
+			profile = "NewTextEditNumericProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "256 143";
+			extent = "99 38";
+			minExtent = "32 38";
+			visible = "1";
+			helpTag = "0";
+			historySize = "0";
+			maxLength = "5";
+			password = "0";
+			glowOffset = "9 9";
+		};
+		new ShellToggleButton(ButtonChannelKey) {
+			profile = "ShellRadioProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "45 178";
+			extent = "150 30";
+			minExtent = "26 27";
+			visible = "1";
+			variable = "$EditChannelKey";
+			command = "ToggleChannelKey();";
+			helpTag = "0";
+			text = "REQUIRE PASSWORD";
+		};
+		new GuiTextCtrl() {
+			profile = "ShellTextRightProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "201 181";
+			extent = "60 22";
+			minExtent = "8 8";
+			visible = "1";
+			helpTag = "0";
+			text = "Password:";
+		};
+		new ShellTextEditCtrl(EditChannelPassword) {
+			profile = "NewTextEditProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "256 173";
+			extent = "198 38";
+			minExtent = "32 38";
+			visible = "1";
+			helpTag = "0";
+			historySize = "0";
+			maxLength = "16";
+			password = "1";
+			glowOffset = "9 9";
+		};
+		new ShellBitmapButton() {
+			profile = "ShellButtonProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "315 30";
+			extent = "128 38";
+			minExtent = "32 38";
+			visible = "1";
+			command = "Canvas.pushDialog(ChannelBanDlg);";
+			helpTag = "0";
+			text = "BAN LIST";
+			simpleStyle = "0";
+		};
+		new ShellBitmapButton() {
+			profile = "ShellButtonProfile";
+			horizSizing = "right";
+			vertSizing = "top";
+			position = "78 221";
+			extent = "128 38";
+			minExtent = "32 38";
+			visible = "1";
+			command = "CancelChannelOptions();";
+			accelerator = "escape";
+			helpTag = "0";
+			text = "CANCEL";
+			simpleStyle = "0";
+		};
+		new ShellBitmapButton(ButtonChannelAccept) {
+			profile = "ShellButtonProfile";
+			horizSizing = "right";
+			vertSizing = "top";
+			position = "284 221";
+			extent = "128 38";
+			minExtent = "32 38";
+			visible = "1";
+			command = "AcceptChannelOptions();";
+			helpTag = "0";
+			text = "ACCEPT";
+			simpleStyle = "0";
+		};
+	};
+};
+//--- OBJECT WRITE END ---

@@ -1,0 +1,436 @@
+new GuiControl(CmdMapHelpTextGui) {
+	profile = "GuiContentProfileNoClear";
+	horizSizing = "width";
+	vertSizing = "height";
+	position = "0 0";
+	extent = "640 480";
+	minExtent = "8 8";
+	visible = "0";
+	setFirstResponder = "1";
+	modal = "1";
+	helpTag = "0";
+
+	new GuiControl(teamButtonBox) {
+		profile = "GuiHelpBoxProfile";
+		horizSizing = "left";
+		vertSizing = "bottom";
+		position = "280 5";
+		extent = "160 50";
+		minExtent = "8 8";
+		visible = "1";
+		helpTag = "0";
+
+		new GuiTextCtrl(teamButtonHeader) {
+			profile = "GuiHelpHeaderProfile";
+			horizSizing = "width";
+			vertSizing = "height";
+			position = "4 1";
+			extent = "150 15";
+			minExtent = "8 8";
+			visible = "1";
+			text = "TEAMMATES";
+		};
+		new GuiMLTextCtrl(teamButtonText) {
+			profile = "GuiHelpTextProfile";
+			horizSizing = "width";
+			vertSizing = "height";
+			position = "4 15";
+			extent = "150 35";
+			minExtent = "8 8";
+			visible = "1";
+			lineSpacing = "1";
+		};
+	};
+	new HudHelpTag(teamButtonLine) {
+		profile = "GuiHelpLineProfile";
+		horizSizing = "left";
+		vertSizing = "bottom";
+		position = "435 8";
+		extent = "20 5";
+		flip = "0";
+		visible = "1";
+	};
+
+	new GuiControl(tacticalButtonBox) {
+		profile = "GuiHelpBoxProfile";
+		horizSizing = "left";
+		vertSizing = "bottom";
+		position = "270 57";
+		extent = "170 80";
+		minExtent = "8 8";
+		visible = "1";
+		helpTag = "0";
+
+		new GuiTextCtrl(tacticalButtonHeader) {
+			profile = "GuiHelpHeaderProfile";
+			horizSizing = "width";
+			vertSizing = "height";
+			position = "4 1";
+			extent = "170 15";
+			minExtent = "8 8";
+			visible = "1";
+			text = "TACTICAL ASSETS";
+		};
+		new GuiMLTextCtrl(tacticalButtonText) {
+			profile = "GuiHelpTextProfile";
+			horizSizing = "width";
+			vertSizing = "height";
+			position = "4 15";
+			extent = "170 65";
+			minExtent = "8 8";
+			visible = "1";
+			lineSpacing = "1";
+		};
+	};
+	new HudHelpTag(tacticalButtonLine) {
+		profile = "GuiHelpLineProfile";
+		horizSizing = "left";
+		vertSizing = "bottom";
+		position = "430 60";
+		extent = "20 5";
+		flip = "0";
+		visible = "1";
+	};
+
+	new GuiControl(supportButtonBox) {
+		profile = "GuiHelpBoxProfile";
+		horizSizing = "left";
+		vertSizing = "bottom";
+		position = "280 139";
+		extent = "160 65";
+		minExtent = "8 8";
+		visible = "1";
+		helpTag = "0";
+
+		new GuiTextCtrl(supportButtonHeader) {
+			profile = "GuiHelpHeaderProfile";
+			horizSizing = "width";
+			vertSizing = "height";
+			position = "4 1";
+			extent = "150 15";
+			minExtent = "8 8";
+			visible = "1";
+			text = "SUPPORT ASSETS";
+		};
+		new GuiMLTextCtrl(supportButtonText) {
+			profile = "GuiHelpTextProfile";
+			horizSizing = "width";
+			vertSizing = "height";
+			position = "4 15";
+			extent = "150 50";
+			minExtent = "8 8";
+			visible = "1";
+			lineSpacing = "1";
+		};
+	};
+
+	new GuiControl(waypointButtonBox) {
+		profile = "GuiHelpBoxProfile";
+		horizSizing = "left";
+		vertSizing = "bottom";
+		position = "160 110";
+		extent = "100 35";
+		minExtent = "8 8";
+		visible = "1";
+		lineSpacing = "1";
+
+		new GuiTextCtrl(waypointButtonHeader) {
+			profile = "GuiHelpHeaderProfile";
+			horizSizing = "width";
+			vertSizing = "height";
+			position = "4 1";
+			extent = "90 15";
+			minExtent = "8 8";
+			visible = "1";
+			text = "WAYPOINTS";
+		};
+		new GuiMLTextCtrl(waypointButtonText) {
+			profile = "GuiHelpTextProfile";
+			horizSizing = "width";
+			vertSizing = "height";
+			position = "4 15";
+			extent = "90 15";
+			minExtent = "8 8";
+			visible = "1";
+			lineSpacing = "1";
+		};
+	};
+
+	new GuiControl(objectiveButtonBox) {
+		profile = "GuiHelpBoxProfile";
+		horizSizing = "left";
+		vertSizing = "bottom";
+		position = "125 150";
+		extent = "150 35";
+		minExtent = "8 8";
+		visible = "1";
+		lineSpacing = "1";
+
+		new GuiTextCtrl(objectiveButtonHeader) {
+			profile = "GuiHelpHeaderProfile";
+			horizSizing = "width";
+			vertSizing = "height";
+			position = "4 1";
+			extent = "140 15";
+			minExtent = "8 8";
+			visible = "1";
+			text = "OBJECTIVES";
+		};
+		new GuiMLTextCtrl(objectiveButtonText) {
+			profile = "GuiHelpTextProfile";
+			horizSizing = "width";
+			vertSizing = "height";
+			position = "4 15";
+			extent = "140 20";
+			minExtent = "8 8";
+			visible = "1";
+			lineSpacing = "1";
+		};
+	};
+
+	new GuiControl(sensorToolBox) {
+		profile = "GuiHelpBoxProfile";
+		horizSizing = "left";
+		vertSizing = "top";
+		position = "160 208";
+		extent = "280 50";
+		minExtent = "8 8";
+		visible = "1";
+
+		new GuiTextCtrl(sensorToolHeader) {
+			profile = "GuiHelpHeaderProfile";
+			horizSizing = "width";
+			vertSizing = "height";
+			position = "4 1";
+			extent = "270 15";
+			minExtent = "8 8";
+			visible = "1";
+			text = "SENSOR";
+		};
+		new GuiMLTextCtrl(sensorToolText) {
+			profile = "GuiHelpTextProfile";
+			horizSizing = "width";
+			vertSizing = "height";
+			position = "4 15";
+			extent = "270 35";
+			minExtent = "8 8";
+			visible = "1";
+			lineSpacing = "1";
+		};
+	};
+
+	new GuiControl(handToolBox) {
+		profile = "GuiHelpBoxProfile";
+		horizSizing = "left";
+		vertSizing = "top";
+		position = "200 260";
+		extent = "240 65";
+		minExtent = "8 8";
+		visible = "1";
+		lineSpacing = "1";
+
+		new GuiTextCtrl(handToolHeader) {
+			profile = "GuiHelpHeaderProfile";
+			horizSizing = "width";
+			vertSizing = "height";
+			position = "4 1";
+			extent = "250 15";
+			minExtent = "8 8";
+			visible = "1";
+			text = "HAND/POINTER";
+		};
+		new GuiMLTextCtrl(handToolText) {
+			profile = "GuiHelpTextProfile";
+			horizSizing = "width";
+			vertSizing = "height";
+			position = "4 15";
+			extent = "250 50";
+			minExtent = "8 8";
+			visible = "1";
+			lineSpacing = "1";
+		};
+	};
+	new HudHelpTag(handToolLine) {
+		profile = "GuiHelpLineProfile";
+		horizSizing = "left";
+		vertSizing = "top";
+		position = "435 323";
+		extent = "20 5";
+		flip = "0";
+		visible = "1";
+	};
+
+	new GuiControl(zoomToolBox) {
+		profile = "GuiHelpBoxProfile";
+		horizSizing = "left";
+		vertSizing = "top";
+		position = "200 327";
+		extent = "240 50";
+		minExtent = "8 8";
+		visible = "1";
+
+		new GuiTextCtrl(zoomToolHeader) {
+			profile = "GuiHelpHeaderProfile";
+			horizSizing = "width";
+			vertSizing = "height";
+			position = "4 1";
+			extent = "235 15";
+			minExtent = "8 8";
+			visible = "1";
+			text = "ZOOM";
+		};
+		new GuiMLTextCtrl(zoomToolText) {
+			profile = "GuiHelpTextProfile";
+			horizSizing = "width";
+			vertSizing = "height";
+			position = "4 15";
+			extent = "230 35";
+			minExtent = "8 8";
+			visible = "1";
+			lineSpacing = "1";
+		};
+	};
+	new HudHelpTag(zoomToolLine) {
+		profile = "GuiHelpLineProfile";
+		horizSizing = "left";
+		vertSizing = "top";
+		position = "435 365";
+		extent = "20 5";
+		flip = "0";
+		visible = "1";
+	};
+
+	new GuiControl(centerToolBox) {
+		profile = "GuiHelpBoxProfile";
+		horizSizing = "left";
+		vertSizing = "top";
+		position = "200 379";
+		extent = "240 65";
+		minExtent = "8 8";
+		visible = "1";
+
+		new GuiTextCtrl(centerToolHeader) {
+			profile = "GuiHelpHeaderProfile";
+			horizSizing = "width";
+			vertSizing = "height";
+			position = "4 1";
+			extent = "230 15";
+			minExtent = "8 8";
+			visible = "1";
+			text = "CENTER MAP";
+		};
+		new GuiMLTextCtrl(centerToolText) {
+			profile = "GuiHelpTextProfile";
+			horizSizing = "width";
+			vertSizing = "height";
+			position = "4 15";
+			extent = "230 50";
+			minExtent = "8 8";
+			visible = "1";
+			lineSpacing = "1";
+		};
+	};
+	new HudHelpTag(centerToolLine) {
+		profile = "GuiHelpLineProfile";
+		horizSizing = "left";
+		vertSizing = "top";
+		position = "435 400";
+		extent = "20 5";
+		flip = "0";
+		visible = "1";
+	};
+
+	new GuiControl(textToolBox) {
+		profile = "GuiHelpBoxProfile";
+		horizSizing = "left";
+		vertSizing = "top";
+		position = "220 446";
+		extent = "220 35";
+		minExtent = "8 8";
+		visible = "1";
+
+		new GuiTextCtrl(textToolHeader) {
+			profile = "GuiHelpHeaderProfile";
+			horizSizing = "width";
+			vertSizing = "height";
+			position = "4 1";
+			extent = "210 15";
+			minExtent = "8 8";
+			visible = "1";
+			text = "TEXT ON/OFF";
+		};
+		new GuiMLTextCtrl(textToolText) {
+			profile = "GuiHelpTextProfile";
+			horizSizing = "width";
+			vertSizing = "height";
+			position = "4 15";
+			extent = "210 20";
+			minExtent = "8 8";
+			visible = "1";
+			lineSpacing = "1";
+		};
+	};
+
+	new GuiControl(cameraToolBox) {
+		profile = "GuiHelpBoxProfile";
+		horizSizing = "left";
+		vertSizing = "top";
+		position = "2 380";
+		extent = "190 95";
+		minExtent = "8 8";
+		visible = "1";
+
+		new GuiTextCtrl(cameraToolHeader) {
+			profile = "GuiHelpHeaderProfile";
+			horizSizing = "width";
+			vertSizing = "height";
+			position = "4 1";
+			extent = "180 15";
+			minExtent = "8 8";
+			visible = "1";
+			text = "CAMERA";
+		};
+		new GuiMLTextCtrl(cameraToolText) {
+			profile = "GuiHelpTextProfile";
+			horizSizing = "width";
+			vertSizing = "height";
+			position = "4 15";
+			extent = "180 80";
+			minExtent = "8 8";
+			visible = "1";
+			lineSpacing = "1";
+		};
+	};
+	new GuiControl(generalHelpBox) {
+		profile = "GuiHelpBoxProfile";
+		horizSizing = "right";
+		vertSizing = "bottom";
+		position = "2 140";
+		extent = "120 235";
+		minExtent = "8 8";
+		visible = "1";
+
+		new GuiTextCtrl(generalHelpHeader) {
+			profile = "GuiHelpHeaderProfile";
+			horizSizing = "width";
+			vertSizing = "height";
+			position = "4 1";
+			extent = "110 15";
+			minExtent = "8 8";
+			visible = "1";
+			text = "COMMAND MAP";
+		};
+		new GuiMLTextCtrl(generalHelpText) {
+			profile = "GuiHelpTextProfile";
+			horizSizing = "width";
+			vertSizing = "height";
+			position = "4 15";
+			extent = "110 225";
+			minExtent = "8 8";
+			visible = "1";
+			lineSpacing = "1";
+		};
+	};
+};
+
+commanderMapGui.add(CmdMapHelpTextGui);

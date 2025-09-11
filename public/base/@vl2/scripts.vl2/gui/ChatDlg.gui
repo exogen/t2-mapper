@@ -1,0 +1,138 @@
+new GuiControl(MainChatHud) {
+	profile = "GuiModelessDialogProfile";
+	horizSizing = "width";
+	vertSizing = "height";
+	position = "0 0";
+	extent = "640 480";
+	minExtent = "8 8";
+	visible = "1";
+   modal = "1";
+	bypassHideCursor = "1";
+	setFirstResponder = "0";
+
+	new GuiNoMouseCtrl() {
+      profile = "GuiDefaultProfile";
+		horizSizing = "relative";
+		vertSizing = "bottom";
+		position = "0 0";
+		extent = "300 300";
+		minExtent = "8 8";
+		visible = "1";
+      
+      new HudHorzCtrl(mainVoteHud) {
+		   profile = "HudVoteBackProfile";
+		   horizSizing = "width";
+		   vertSizing = "bottom";
+		   position = "8 75";
+		   extent = "256 5";
+		   minExtent = "2 2";
+		   visible = "0";
+
+         new GuiVoteCtrl(voteHud) {
+		      profile = "ShellProgressBarProfile";
+		      horizSizing = "width";
+		      vertSizing = "bottom";
+		      position = "6 2";
+		      extent = "244 3";
+		      minExtent = "2 2";
+		      visible = "1";
+	      };
+         
+	      new GuiBitmapCtrl(passHash)
+	      {
+		      profile = "GuiDefaultProfile";
+	         horizSizing = "left";
+	         vertSizing = "bottom";
+	         position = "151 -1";
+	         extent = "5 10";
+	         minExtent = "1 1";
+	         visible = "1";
+		      bitmap = "gui/voteMeterPassBar";
+	      };
+	   };
+      
+      new ShellFieldCtrl(OuterChatHud)
+	   {
+		   profile = "GuiChatBackProfile";
+		   horizSizing = "width";
+		   vertSizing = "bottom";
+		   position = "8 8";
+		   extent = "256 72";
+		   minExtent = "8 8";
+		   visible = "1";
+		   setFirstResponder = "0";
+         
+	      new GuiBitmapCtrl(chatPageDown)
+	      {
+		      profile = "GuiDefaultProfile";
+	         horizSizing = "right";
+	         vertSizing = "bottom";
+	         position = "250 50";
+	         extent = "13 13";
+	         minExtent = "8 8";
+	         visible = "0";
+		      bitmap = "gui/hud_chatPageDown";
+	      };
+		   
+         new GuiScrollCtrl(ChatScrollHud) 
+		   {
+			   profile = "GuiDefaultProfile";
+			   horizSizing = "width";
+			   vertSizing = "bottom";
+			   position = "4 4";
+			   extent = "252 64";
+			   minExtent = "8 8";
+			   visible = "1";
+			   setFirstResponder = "0";
+			   willFirstRespond = "1";
+			   hScrollBar = "alwaysOff";
+			   vScrollBar = "alwaysOff";
+			   constantThumbHeight = "0";
+            
+			   new GuiScrollContentCtrl() {
+				   profile = "GuiDefaultProfile";
+				   horizSizing = "width";
+				   vertSizing = "bottom";
+				   position = "4 4";
+				   extent = "252 64";
+				   minExtent = "8 8";
+				   visible = "1";
+				   helpTag = "0";
+
+			      new GuiMessageVectorCtrl(ChatHud) 
+			      {
+				      profile = "GuiChatHudProfile";
+				      horizSizing = "width";
+				      vertSizing = "height";
+				      position = "4 4";
+				      extent = "252 64";
+				      minExtent = "8 8";
+				      visible = "1";
+				      setFirstResponder = "0";
+				      lineSpacing = "0";
+				      lineContinuedIndex = "10";
+				      allowedMatches[0] = "http";
+				      allowedMatches[1] = "t2server";
+				      matchColors[0] = "0 0 255 255";
+				      matchColors[1] = "255 0 0 255";
+				      matchColors[2] = "0 0 255 255";
+				      matchColors[3] = "0 0 255 255";
+				      matchColors[4] = "0 0 255 255";
+				      matchColors[5] = "0 0 255 255";
+				      matchColors[6] = "0 0 255 255";
+				      matchColors[7] = "0 0 255 255";
+				      matchColors[8] = "0 0 255 255";
+				      matchColors[9] = "0 0 255 255";
+				      matchColors[10] = "0 0 255 255";
+				      matchColors[11] = "0 0 255 255";
+				      matchColors[12] = "0 0 255 255";
+				      matchColors[13] = "0 0 255 255";
+				      matchColors[14] = "0 0 255 255";
+				      matchColors[15] = "0 0 255 255";
+                  maxColorIndex = 5;
+			      };
+            };   
+		   };
+	   };
+   };
+};

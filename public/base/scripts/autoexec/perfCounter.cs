@@ -1,0 +1,1 @@
+setPerfCounterEnable(1);

@@ -1,0 +1,98 @@
+//--- OBJECT WRITE BEGIN ---
+new GuiControl(ShellLoadFileDlg) {
+	profile = "DlgBackProfile";
+	horizSizing = "width";
+	vertSizing = "height";
+	position = "0 0";
+	extent = "640 480";
+	minExtent = "8 8";
+	visible = "1";
+	helpTag = "0";
+
+	new ShellPaneCtrl(LOAD_Title) {
+		profile = "ShellDlgPaneProfile";
+		horizSizing = "center";
+		vertSizing = "center";
+		position = "135 95";
+		extent = "370 290";
+		minExtent = "48 92";
+		visible = "1";
+		helpTag = "0";
+		text = "LOAD FILE";
+		noTitleBar = "0";
+
+		new ShellScrollCtrl() {
+			profile = "NewScrollCtrlProfile";
+			horizSizing = "center";
+			vertSizing = "bottom";
+			position = "47 33";
+			extent = "276 200";
+			minExtent = "24 52";
+			visible = "1";
+			helpTag = "0";
+			willFirstRespond = "1";
+			hScrollBar = "alwaysOff";
+			vScrollBar = "dynamic";
+			constantThumbHeight = "0";
+			defaultLineHeight = "15";
+			childMargin = "3 3";
+			fieldBase = "gui/shll_field";
+
+			new GuiScrollContentCtrl() {
+				profile = "GuiDefaultProfile";
+				horizSizing = "right";
+				vertSizing = "bottom";
+				position = "7 7";
+				extent = "262 186";
+				minExtent = "8 8";
+				visible = "1";
+				helpTag = "0";
+
+				new ShellTextList(LOAD_FileList) {
+					profile = "ShellTextArrayProfile";
+					horizSizing = "right";
+					vertSizing = "bottom";
+					position = "0 0";
+					extent = "268 8";
+					minExtent = "8 8";
+					visible = "1";
+					altCommand = "Canvas.popDialog(ShellLoadFileDlg);";
+					helpTag = "0";
+					enumerate = "0";
+					resizeCell = "1";
+					columns = "0 275";
+					fitParentWidth = "1";
+					clipColumnText = "0";
+				};
+			};
+		};
+		new ShellBitmapButton() {
+			profile = "ShellButtonProfile";
+			horizSizing = "right";
+			vertSizing = "top";
+			position = "38 235";
+			extent = "128 38";
+			minExtent = "32 38";
+			visible = "1";
+			command = "Canvas.popDialog(ShellLoadFileDlg);";
+			accelerator = "escape";
+			helpTag = "0";
+			text = "CANCEL";
+			simpleStyle = "0";
+		};
+		new ShellBitmapButton(LOAD_LoadBtn) {
+			profile = "ShellButtonProfile";
+			horizSizing = "right";
+			vertSizing = "top";
+			position = "204 235";
+			extent = "128 38";
+			minExtent = "32 38";
+			visible = "1";
+			command = "Canvas.popDialog(ShellLoadFileDlg);";
+			helpTag = "0";
+			text = "LOAD";
+			simpleStyle = "0";
+		};
+	};
+};
+//--- OBJECT WRITE END ---

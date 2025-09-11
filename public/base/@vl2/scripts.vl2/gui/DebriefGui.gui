@@ -1,0 +1,253 @@
+//--- OBJECT WRITE BEGIN ---
+new GuiChunkedBitmapCtrl(DebriefGui) {
+	profile = "GuiContentProfile";
+	horizSizing = "width";
+	vertSizing = "height";
+	position = "0 0";
+	extent = "640 480";
+	minExtent = "8 8";
+	visible = "1";
+	variable = "$ShellBackground";
+	helpTag = "0";
+	useVariable = "1";
+
+	new ShellPaneCtrl(DB_Pane) {
+		profile = "ShellPaneProfile";
+		horizSizing = "width";
+		vertSizing = "height";
+		position = "28 13";
+		extent = "584 459";
+		minExtent = "48 92";
+		visible = "1";
+		helpTag = "0";
+		noTitleBar = "1";
+	};
+	new GuiProgressCtrl(DB_LoadingProgress) {
+		profile = "ShellProgressBarProfile";
+		horizSizing = "right";
+		vertSizing = "top";
+		position = "67 423";
+		extent = "300 25";
+		minExtent = "8 8";
+		visible = "1";
+		helpTag = "0";
+
+		new GuiTextCtrl(DB_LoadingProgressTxt) {
+			profile = "ShellProgressBarTextProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "0 3";
+			extent = "300 19";
+			minExtent = "8 8";
+			visible = "1";
+			helpTag = "0";
+			text = "LOADING MISSION...";
+		};
+	};
+	new GuiControl() {
+		profile = "GuiDefaultProfile";
+		horizSizing = "relative";
+		vertSizing = "relative";
+		position = "0 0";
+		extent = "300 236";
+		minExtent = "8 8";
+		visible = "1";
+		helpTag = "0";
+
+		new ShellScrollCtrl(DB_ChatScroll) {
+			profile = "NewScrollCtrlProfile";
+			horizSizing = "width";
+			vertSizing = "height";
+			position = "50 18";
+			extent = "251 184";
+			minExtent = "24 24";
+			visible = "1";
+			helpTag = "0";
+			willFirstRespond = "1";
+			hScrollBar = "alwaysOff";
+			vScrollBar = "alwaysOn";
+			constantThumbHeight = "0";
+			defaultLineHeight = "15";
+			childMargin = "3 3";
+			fieldBase = "gui/shll_field";
+
+			new GuiScrollContentCtrl() {
+				profile = "GuiDefaultProfile";
+				horizSizing = "width";
+				vertSizing = "height";
+				position = "7 7";
+				extent = "221 170";
+				minExtent = "8 8";
+				visible = "1";
+				helpTag = "0";
+
+				new GuiMessageVectorCtrl(DB_ChatVector) {
+					profile = "GuiChatHudProfile";
+					horizSizing = "width";
+					vertSizing = "height";
+					position = "0 0";
+					extent = "221 170";
+					minExtent = "8 8";
+					visible = "1";
+					helpTag = "0";
+					lineSpacing = "0";
+					lineContinuedIndex = "10";
+					allowedMatches[0] = "http";
+					allowedMatches[1] = "t2server";
+					matchColor = "0 0 255 255";
+					maxColorIndex = "5";
+						matchColors1 = "255 0 0 255";
+						matchColors0 = "0 0 255 255";
+				};
+			};
+		};
+	};
+	new GuiControl() {
+		profile = "GuiDefaultProfile";
+		horizSizing = "relative";
+		vertSizing = "height";
+		position = "300 15";
+		extent = "340 405";
+		minExtent = "8 8";
+		visible = "1";
+		helpTag = "0";
+
+		new ShellFieldCtrl(DB_ResultPane) {
+			profile = "ShellFieldProfile";
+			horizSizing = "width";
+			vertSizing = "height";
+			position = "5 7";
+			extent = "280 392";
+			minExtent = "16 18";
+			visible = "1";
+			helpTag = "0";
+
+			new GuiMLTextCtrl(DebriefResultText) {
+				profile = "DebriefHeadlineTextProfile";
+				horizSizing = "width";
+				vertSizing = "bottom";
+				position = "4 3";
+				extent = "272 28";
+				minExtent = "8 8";
+				visible = "1";
+				helpTag = "0";
+				lineSpacing = "2";
+				allowColorChars = "0";
+			};
+			new ShellScrollCtrl(DB_ResultScroll) {
+				profile = "NewScrollCtrlProfile";
+				horizSizing = "width";
+				vertSizing = "height";
+				position = "2 58";
+				extent = "276 332";
+				minExtent = "24 24";
+				visible = "1";
+				helpTag = "0";
+				willFirstRespond = "1";
+				hScrollBar = "alwaysOff";
+				vScrollBar = "dynamic";
+				constantThumbHeight = "0";
+				defaultLineHeight = "15";
+				childMargin = "3 3";
+				fieldBase = "gui/shll_field";
+
+				new GuiScrollContentCtrl() {
+					profile = "GuiDefaultProfile";
+					horizSizing = "width";
+					vertSizing = "height";
+					position = "7 7";
+					extent = "262 318";
+					minExtent = "8 8";
+					visible = "1";
+					helpTag = "0";
+
+					new GuiMLTextCtrl(DebriefText) {
+						profile = "DebriefTextProfile";
+						horizSizing = "width";
+						vertSizing = "height";
+						position = "0 0";
+						extent = "262 18";
+						minExtent = "8 8";
+						visible = "1";
+						helpTag = "0";
+						lineSpacing = "2";
+						allowColorChars = "1";
+					};
+				};
+			};
+		};
+	};
+	new ShellBitmapButton() {
+		profile = "ShellButtonNoTabProfile";
+		horizSizing = "left";
+		vertSizing = "top";
+		position = "372 417";
+		extent = "115 38";
+		minExtent = "32 38";
+		visible = "1";
+      setFirstResponder = "0";
+		command = "debriefDisconnect();";
+		helpTag = "0";
+		text = "DISCONNECT";
+		simpleStyle = "0";
+	};
+	new ShellBitmapButton() {
+		profile = "ShellButtonNoTabProfile";
+		horizSizing = "left";
+		vertSizing = "top";
+		position = "478 417";
+		extent = "115 38";
+		minExtent = "32 38";
+		visible = "1";
+      setFirstResponder = "0";
+		command = "debriefContinue();";
+		accelerator = "escape";
+		helpTag = "0";
+		text = "CONTINUE";
+		simpleStyle = "0";
+	};
+};
+//--- OBJECT WRITE END ---
+
+//--- OBJECT WRITE BEGIN ---
+new GuiControl(DB_ChatDlg) {
+	profile = "GuiModelessDialogProfile";
+	horizSizing = "width";
+	vertSizing = "height";
+	position = "0 0";
+	extent = "640 480";
+	minExtent = "8 8";
+	visible = "1";
+	helpTag = "0";
+
+	new GuiControl() {
+		profile = "GuiDefaultProfile";
+		horizSizing = "relative";
+		vertSizing = "relative";
+		position = "0 0";
+		extent = "300 236";
+		minExtent = "8 8";
+		visible = "1";
+		helpTag = "0";
+
+		new ShellTextEditCtrl(DB_ChatEntry) {
+			profile = "NewTextEditProfile";
+			horizSizing = "width";
+			vertSizing = "top";
+			position = "45 197";
+			extent = "261 38";
+			minExtent = "32 38";
+			visible = "1";
+         setFirstResponder = "0";
+			altCommand = "DB_ChatEntry.sendChat();";
+         escapeCommand = "DB_ChatEntry.onEscape();";
+			helpTag = "0";
+			historySize = "0";
+			maxLength = "120";
+			password = "0";
+			glowOffset = "9 9";
+		};
+   };
+};
+//--- OBJECT WRITE END ---
+

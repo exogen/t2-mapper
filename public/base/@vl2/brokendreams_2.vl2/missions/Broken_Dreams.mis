@@ -1,0 +1,6521 @@
+// DisplayName = Broken Dreams
+// MissionTypes = Hunters TeamHunters Bounty DM CTF CnH Rabbit Siege
+
+//--- MISSION QUOTE BEGIN ---
+//We used to dream about going back.
+//Finding out the dream is a nightmare...  I wouldn't wish that on my worst enemy.
+//Except the ones behind the destruction.
+//  Who did this to our home?
+// -- Unknown StarWolf soldier
+//--- MISSION QUOTE END ---
+
+//--- MISSION STRING BEGIN ---
+//[CnH]5000 points to win.
+//[CnH]Inferno has one less objective than shown. Will not affect gameplay.
+//[CTF]500 points to win.
+//[CTF]Destroy ForceField Generators to ease flag capture.
+//[DM Hunters TeamHunters Rabbit Bounty]Some Inventory Stations are not accessable.
+//[Siege]Attackers must repair their base first.
+//[Siege]After that, disable generators in waypointed order.
+//[Hunters]Flags tend to pool in the low areas of the map.
+//[Hunters]Nexus is in center of mission area.
+//[Rabbit]Flag is in center of mission area.
+//[Rabbit]Ignore redunant flag markers to either side of center.
+//[DM]20 kills to win.
+//[DM Rabbit Hunters Bounty]Can't use some Inventory Stations.  Check Command Circuit.
+//Caches aid rearming, and contain the disallowed Mortar.
+//--- MISSION STRING END ---
+
+//Ban the Mortar from the map
+//=+=+=+=+=+=+=+=+=+=+=+=+=+=+=
+//CleverClothe gets the thanks here.. I peeked at his .MIS file.
+//I knew how to ban the whole gamut of weapons using a <for> loop..
+//But I didn't know how to do individual items.
+$InvBanList[$CurrentMissionType, "Mortar"] = 1;
+//=+=+=+=+=+=+=+=+=+=+=+=+=+=+=
+
+//--- OBJECT WRITE BEGIN ---
+new SimGroup(MissionGroup) {
+		cdTrack = "1";
+		DM_scoreLimit = "20";
+		CTF_scoreLimit = "5";
+		powerCount = "0";
+		CnH_scoreLimit = "5000";
+
+	new MissionArea(MissionArea) {
+		area = "-712 -872 1152 1136";
+		flightCeiling = "300";
+		flightCeilingRange = "20";
+			locked = "true";
+	};
+	new SimGroup(Ambience) {
+			powerCount = "0";
+
+		new SimGroup(Sounds) {
+				powerCount = "0";
+
+			new AudioEmitter(GlobalWind) {
+				position = "-602.896 -239.553 353.722";
+				rotation = "1 0 0 0";
+				scale = "1 1 1";
+				fileName = "fx/environment/coldwind1.wav";
+				useProfileDescription = "0";
+				outsideAmbient = "1";
+				volume = "0.25";
+				isLooping = "1";
+				is3D = "0";
+				minDistance = "20";
+				maxDistance = "100";
+				coneInsideAngle = "360";
+				coneOutsideAngle = "360";
+				coneOutsideVolume = "1";
+				coneVector = "0 0 1";
+				loopCount = "-1";
+				minLoopGap = "0";
+				maxLoopGap = "0";
+				type = "EffectAudioType";
+					locked = "true";
+			};
+			new AudioEmitter(Howl1) {
+				position = "-599.172 -563.776 229.389";
+				rotation = "1 0 0 0";
+				scale = "1 1 1";
+				fileName = "fx/environment/yeti_howl2.wav";
+				useProfileDescription = "0";
+				outsideAmbient = "1";
+				volume = "0.01";
+				isLooping = "1";
+				is3D = "1";
+				minDistance = "325";
+				maxDistance = "600";
+				coneInsideAngle = "360";
+				coneOutsideAngle = "360";
+				coneOutsideVolume = "1";
+				coneVector = "0 0 1";
+				loopCount = "-1";
+				minLoopGap = "20000";
+				maxLoopGap = "40000";
+				type = "EffectAudioType";
+					locked = "true";
+			};
+			new AudioEmitter(BodyGrowl) {
+				position = "-204.052 195.76 79.3673";
+				rotation = "1 0 0 0";
+				scale = "1 1 1";
+				fileName = "fx/environment/growl1.wav";
+				useProfileDescription = "0";
+				outsideAmbient = "1";
+				volume = "0.5";
+				isLooping = "1";
+				is3D = "1";
+				minDistance = "5";
+				maxDistance = "5.5";
+				coneInsideAngle = "360";
+				coneOutsideAngle = "360";
+				coneOutsideVolume = "1";
+				coneVector = "0 0 1";
+				loopCount = "-1";
+				minLoopGap = "20000";
+				maxLoopGap = "35000";
+				type = "EffectAudioType";
+					locked = "true";
+			};
+			new AudioEmitter(Wind) {
+				position = "-509.95 215.856 189.377";
+				rotation = "1 0 0 0";
+				scale = "1 1 1";
+				fileName = "fx/environment/moaningwind1.wav";
+				useProfileDescription = "0";
+				outsideAmbient = "1";
+				volume = "1";
+				isLooping = "1";
+				is3D = "1";
+				minDistance = "50";
+				maxDistance = "100";
+				coneInsideAngle = "360";
+				coneOutsideAngle = "360";
+				coneOutsideVolume = "1";
+				coneVector = "0 0 1";
+				loopCount = "-1";
+				minLoopGap = "0";
+				maxLoopGap = "0";
+				type = "EffectAudioType";
+					locked = "true";
+			};
+			new AudioEmitter(Wind) {
+				position = "110.094 213.839 190.071";
+				rotation = "1 0 0 0";
+				scale = "1 1 1";
+				fileName = "fx/environment/moaningwind1.wav";
+				useProfileDescription = "0";
+				outsideAmbient = "1";
+				volume = "1";
+				isLooping = "1";
+				is3D = "1";
+				minDistance = "125";
+				maxDistance = "200";
+				coneInsideAngle = "360";
+				coneOutsideAngle = "360";
+				coneOutsideVolume = "1";
+				coneVector = "0 0 1";
+				loopCount = "-1";
+				minLoopGap = "0";
+				maxLoopGap = "0";
+				type = "EffectAudioType";
+					locked = "true";
+			};
+			new AudioEmitter(Wind) {
+				position = "321.584 -660.995 173.7";
+				rotation = "1 0 0 0";
+				scale = "1 1 1";
+				fileName = "fx/environment/howlingwind3.wav";
+				useProfileDescription = "0";
+				outsideAmbient = "1";
+				volume = "0.5";
+				isLooping = "1";
+				is3D = "1";
+				minDistance = "75";
+				maxDistance = "175";
+				coneInsideAngle = "360";
+				coneOutsideAngle = "360";
+				coneOutsideVolume = "1";
+				coneVector = "0 0 1";
+				loopCount = "-1";
+				minLoopGap = "0";
+				maxLoopGap = "0";
+				type = "EffectAudioType";
+					locked = "true";
+			};
+			new AudioEmitter(Wind) {
+				position = "-429.39 -693.895 175.514";
+				rotation = "1 0 0 0";
+				scale = "1 1 1";
+				fileName = "fx/environment/moaningwind1.wav";
+				useProfileDescription = "0";
+				outsideAmbient = "1";
+				volume = "1";
+				isLooping = "1";
+				is3D = "1";
+				minDistance = "250";
+				maxDistance = "400";
+				coneInsideAngle = "360";
+				coneOutsideAngle = "360";
+				coneOutsideVolume = "1";
+				coneVector = "0 0 1";
+				loopCount = "-1";
+				minLoopGap = "0";
+				maxLoopGap = "0";
+				type = "EffectAudioType";
+					locked = "true";
+			};
+			new AudioEmitter(Howl2) {
+				position = "129.503 -416.421 243.201";
+				rotation = "1 0 0 0";
+				scale = "1 1 1";
+				fileName = "fx/environment/yeti_howl1.wav";
+				useProfileDescription = "0";
+				outsideAmbient = "1";
+				volume = "0.75";
+				isLooping = "1";
+				is3D = "1";
+				minDistance = "175";
+				maxDistance = "300";
+				coneInsideAngle = "360";
+				coneOutsideAngle = "360";
+				coneOutsideVolume = "1";
+				coneVector = "0 0 1";
+				loopCount = "-1";
+				minLoopGap = "25000";
+				maxLoopGap = "50000";
+				type = "EffectAudioType";
+					locked = "true";
+			};
+			new AudioEmitter(Howl3) {
+				position = "-285.119 -135.516 169.338";
+				rotation = "1 0 0 0";
+				scale = "1 1 1";
+				fileName = "fx/environment/yeti_howl2.wav";
+				useProfileDescription = "0";
+				outsideAmbient = "1";
+				volume = "0.7";
+				isLooping = "1";
+				is3D = "1";
+				minDistance = "225";
+				maxDistance = "600";
+				coneInsideAngle = "360";
+				coneOutsideAngle = "360";
+				coneOutsideVolume = "1";
+				coneVector = "0 0 1";
+				loopCount = "-1";
+				minLoopGap = "20000";
+				maxLoopGap = "60000";
+				type = "EffectAudioType";
+					locked = "true";
+			};
+			new AudioEmitter(BaseWhispering) {
+				position = "-353.998 -531.987 82.269";
+				rotation = "1 0 0 0";
+				scale = "1 1 1";
+				fileName = "fx/environment/fog.wav";
+				useProfileDescription = "0";
+				outsideAmbient = "1";
+				volume = "1";
+				isLooping = "1";
+				is3D = "1";
+				minDistance = "40";
+				maxDistance = "55";
+				coneInsideAngle = "360";
+				coneOutsideAngle = "360";
+				coneOutsideVolume = "1";
+				coneVector = "0 0 1";
+				loopCount = "-1";
+				minLoopGap = "0";
+				maxLoopGap = "0";
+				type = "EffectAudioType";
+					locked = "true";
+			};
+			new AudioEmitter(BaseWhispering) {
+				position = "247.875 -102.36 60.6315";
+				rotation = "1 0 0 0";
+				scale = "1 1 1";
+				fileName = "fx/environment/fog.wav";
+				useProfileDescription = "0";
+				outsideAmbient = "1";
+				volume = "1";
+				isLooping = "1";
+				is3D = "1";
+				minDistance = "40";
+				maxDistance = "55";
+				coneInsideAngle = "360";
+				coneOutsideAngle = "360";
+				coneOutsideVolume = "1";
+				coneVector = "0 0 1";
+				loopCount = "-1";
+				minLoopGap = "0";
+				maxLoopGap = "0";
+				type = "EffectAudioType";
+					locked = "true";
+			};
+		};
+		new SimGroup(Visuals) {
+				powerCount = "0";
+
+			new StaticShape() {
+				position = "-205.218 195.633 77.2942";
+				rotation = "-0.880251 -0.473507 -0.0308214 8.4585";
+				scale = "1 1 1";
+				dataBlock = "LightMaleHuman_Dead";
+				lockCount = "0";
+				homingCount = "0";
+					Target = "-1";
+					locked = "true";
+			};
+			new TSStatic() {
+				position = "-217.282 198.707 75.2559";
+				rotation = "-0.103225 -0.0769917 0.991674 207.259";
+				scale = "1 1 1";
+				shapeName = "vehicle_air_scout_wreck.dts";
+					locked = "true";
+			};
+			new StaticShape() {
+				position = "-415.926 -239.176 76.4968";
+				rotation = "-0.606255 0.793591 -0.0516562 12.2565";
+				scale = "1 1 1";
+				dataBlock = "HeavyMaleHuman_Dead";
+				lockCount = "0";
+				homingCount = "0";
+					Target = "-1";
+					locked = "true";
+			};
+			new TSStatic() {
+				position = "280.889 -69.3907 79.7966";
+				rotation = "-0.954372 0.297667 -0.0238643 9.60375";
+				scale = "1 1 1";
+				shapeName = "statue_hmale.dts";
+					locked = "true";
+			};
+			new InteriorInstance() {
+				position = "283.714 -69.9407 85.3629";
+				rotation = "0.408561 -0.063839 -0.910496 19.4757";
+				scale = "0.791847 0.639489 1";
+				interiorFile = "swall1.dif";
+				showTerrainInside = "0";
+					locked = "true";
+			};
+			new TSStatic() {
+				position = "281.68 -413.824 74.7247";
+				rotation = "1 0 0 0";
+				scale = "1 1 1";
+				shapeName = "vehicle_land_assault_wreck.dts";
+					locked = "true";
+			};
+			new StaticShape() {
+				position = "282.289 -424.228 76.8741";
+				rotation = "-0.00505715 0.999187 -0.0399888 165.596";
+				scale = "1 1 1";
+				dataBlock = "MediumMaleHuman_Dead";
+				lockCount = "0";
+				homingCount = "0";
+					Target = "-1";
+					locked = "true";
+			};
+			new StaticShape() {
+				position = "283.688 -410.111 76.3208";
+				rotation = "0.299238 0.0604536 0.952262 176.758";
+				scale = "1 1 1";
+				dataBlock = "HeavyMaleHuman_Dead";
+				lockCount = "0";
+				homingCount = "0";
+					Target = "-1";
+					locked = "true";
+			};
+			new StaticShape() {
+				position = "279.441 -420.077 76.6224";
+				rotation = "0 0 -1 58.4417";
+				scale = "1 1 1";
+				dataBlock = "MediumMaleHuman_Dead";
+				lockCount = "0";
+				homingCount = "0";
+					Target = "-1";
+					locked = "true";
+			};
+			new StaticShape() {
+				position = "288.297 -415.759 76.594";
+				rotation = "1 0 0 0";
+				scale = "1 1 1";
+				dataBlock = "LightMaleHuman_Dead";
+				lockCount = "0";
+				homingCount = "0";
+					Target = "-1";
+					locked = "true";
+			};
+			new TSStatic() {
+				position = "47.9585 83.3087 71.6181";
+				rotation = "1 0 0 0";
+				scale = "1 1 1";
+				shapeName = "dorg16.dts";
+					locked = "true";
+			};
+			new InteriorInstance() {
+				position = "-393.469 -336.572 76.158";
+				rotation = "1 0 0 0";
+				scale = "1 1 1";
+				interiorFile = "dspir4.dif";
+				showTerrainInside = "0";
+					locked = "true";
+			};
+			new InteriorInstance() {
+				position = "-504.882 -163.061 59.756";
+				rotation = "1 0 0 0";
+				scale = "1 1 1";
+				interiorFile = "sspir4.dif";
+				showTerrainInside = "0";
+					locked = "true";
+			};
+			new InteriorInstance() {
+				position = "-601.023 24.9781 66.775";
+				rotation = "1 0 0 0";
+				scale = "1 1 1";
+				interiorFile = "sspir1.dif";
+				showTerrainInside = "0";
+					locked = "true";
+			};
+			new InteriorInstance() {
+				position = "-423.034 146.844 42.0959";
+				rotation = "1 0 0 0";
+				scale = "1 1 1";
+				interiorFile = "sspir3.dif";
+				showTerrainInside = "0";
+					locked = "true";
+			};
+			new InteriorInstance() {
+				position = "-205.093 215.541 53.6597";
+				rotation = "0 1 0 5.15661";
+				scale = "1 1 1";
+				interiorFile = "sspir2.dif";
+				showTerrainInside = "0";
+					locked = "true";
+			};
+			new InteriorInstance() {
+				position = "-63.2283 88.1122 51.1427";
+				rotation = "0.540003 -0.840811 0.0378621 9.53365";
+				scale = "1 1 1";
+				interiorFile = "sspir4.dif";
+				showTerrainInside = "0";
+					locked = "true";
+			};
+			new TSStatic() {
+				position = "-8.1747 217.033 170.039";
+				rotation = "1 0 0 0";
+				scale = "1 1 1";
+				shapeName = "dorg19.dts";
+					locked = "true";
+			};
+			new TSStatic() {
+				position = "103.354 157.473 142.584";
+				rotation = "1 0 0 0";
+				scale = "1 1 1";
+				shapeName = "dorg18.dts";
+					locked = "true";
+			};
+			new TSStatic() {
+				position = "161.868 54.7893 98.6659";
+				rotation = "-1 0 0 5.72983";
+				scale = "1 1 1";
+				shapeName = "dorg16.dts";
+					locked = "true";
+			};
+			new TSStatic() {
+				position = "79.0551 -148.162 140.479";
+				rotation = "1 0 0 0";
+				scale = "1 1 1";
+				shapeName = "dorg18.dts";
+					locked = "true";
+			};
+			new TSStatic() {
+				position = "-2.31753 -346.413 134.602";
+				rotation = "1 0 0 0";
+				scale = "1 1 1";
+				shapeName = "dorg16.dts";
+					locked = "true";
+			};
+			new TSStatic() {
+				position = "38.2932 -414.617 191.527";
+				rotation = "1 0 0 0";
+				scale = "1 1 1";
+				shapeName = "dorg17.dts";
+					locked = "true";
+			};
+			new TSStatic() {
+				position = "118.036 -604.14 107.247";
+				rotation = "1 0 0 0";
+				scale = "1 1 1";
+				shapeName = "dorg19.dts";
+					locked = "true";
+			};
+			new TSStatic() {
+				position = "128.227 -627.018 94.5042";
+				rotation = "1 0 0 0";
+				scale = "1 1 1";
+				shapeName = "dorg16.dts";
+					locked = "true";
+			};
+			new TSStatic() {
+				position = "269.002 -701.459 192.376";
+				rotation = "1 0 0 0";
+				scale = "1 1 1";
+				shapeName = "dorg16.dts";
+					locked = "true";
+			};
+			new TSStatic() {
+				position = "372.013 -735.786 182.903";
+				rotation = "1 0 0 0";
+				scale = "1 1 1";
+				shapeName = "dorg17.dts";
+					locked = "true";
+			};
+			new TSStatic() {
+				position = "-87.218 -735.2 158.474";
+				rotation = "1 0 0 0";
+				scale = "1 1 1";
+				shapeName = "dorg18.dts";
+					locked = "true";
+			};
+			new TSStatic() {
+				position = "-524.169 -524.458 189.06";
+				rotation = "1 0 0 0";
+				scale = "1 1 1";
+				shapeName = "dorg17.dts";
+					locked = "true";
+			};
+			new TSStatic() {
+				position = "-323.254 -483.525 98.1876";
+				rotation = "1 0 0 0";
+				scale = "1 1 1";
+				shapeName = "dorg19.dts";
+					locked = "true";
+			};
+			new TSStatic() {
+				position = "-147.002 -469.847 74.2065";
+				rotation = "1 0 0 0";
+				scale = "1 1 1";
+				shapeName = "dorg16.dts";
+					locked = "true";
+			};
+			new TSStatic() {
+				position = "-281.67 -332.749 76.2628";
+				rotation = "1 0 0 0";
+				scale = "1 1 1";
+				shapeName = "dorg18.dts";
+					locked = "true";
+			};
+			new TSStatic() {
+				position = "-137.825 -250.618 67.6876";
+				rotation = "1 0 0 0";
+				scale = "1 1 1";
+				shapeName = "dorg17.dts";
+					locked = "true";
+			};
+			new TSStatic() {
+				position = "-18.8406 -124.518 70.225";
+				rotation = "1 0 0 0";
+				scale = "1 1 1";
+				shapeName = "dorg16.dts";
+					locked = "true";
+			};
+			new Precipitation(Precipitation) {
+				position = "-614.742 -224.879 355.923";
+				rotation = "1 0 0 0";
+				scale = "1 1 1";
+				dataBlock = "Snow";
+				lockCount = "0";
+				homingCount = "0";
+				percentage = "1";
+				color1 = "0.630000 0.690000 0.630000 1.000000";
+				color2 = "-1.000000 0.000000 0.000000 1.000000";
+				color3 = "-1.000000 0.000000 0.000000 1.000000";
+				offsetSpeed = "0.25";
+				minVelocity = "0.1";
+				maxVelocity = "0.6";
+				maxNumDrops = "350";
+				maxRadius = "200";
+					locked = "true";
+			};
+		};
+		new SimGroup(lighting) {
+				powerCount = "0";
+
+			new Lightning(AmbientStorm) {
+				position = "3.83264 -252.181 466.997";
+				rotation = "1 0 0 0";
+				scale = "1823.68 2008.97 389.301";
+				dataBlock = "DefaultStorm";
+				lockCount = "0";
+				homingCount = "0";
+				strikesPerMinute = "1";
+				strikeWidth = "5";
+				chanceToHitTarget = "0.95";
+				strikeRadius = "20";
+				boltStartRadius = "20";
+				color = "0.900000 0.900000 0.900000 1.000000";
+				fadeColor = "0.000000 0.000000 0.000000 1.000000";
+				useFog = "0";
+					locked = "true";
+			};
+			new Lightning(MissionStorm) {
+				position = "-117.768 -387.028 431.014";
+				rotation = "1 0 0 0";
+				scale = "894.371 1065 300";
+				dataBlock = "DefaultStorm";
+				lockCount = "0";
+				homingCount = "0";
+				strikesPerMinute = "3";
+				strikeWidth = "2.5";
+				chanceToHitTarget = "0.95";
+				strikeRadius = "20";
+				boltStartRadius = "20";
+				color = "1.000000 1.000000 1.000000 1.000000";
+				fadeColor = "0.100000 0.100000 1.000000 1.000000";
+				useFog = "1";
+					locked = "true";
+			};
+		};
+	};
+	new Sky(Sky) {
+		position = "312 368 0";
+		rotation = "1 0 0 0";
+		scale = "1 1 1";
+		cloudHeightPer[0] = "0.349971";
+		cloudHeightPer[1] = "0.25";
+		cloudHeightPer[2] = "0.199973";
+		cloudSpeed1 = "0.0003";
+		cloudSpeed2 = "0.0005";
+		cloudSpeed3 = "0.0007";
+		visibleDistance = "1000";
+		useSkyTextures = "1";
+		renderBottomTexture = "0";
+		SkySolidColor = "0.165000 0.190000 0.220000 0.000000";
+		fogDistance = "600";
+		fogColor = "0.220000 0.227000 0.220000 1.000000";
+		fogVolume1 = "40 0 90";
+		fogVolume2 = "60 90 130";
+		fogVolume3 = "170 130 150";
+		materialList = "ice_dark.dml";
+		windVelocity = "1 0 0";
+		windEffectPrecipitation = "0";
+		fogVolumeColor1 = "128.000000 128.000000 128.000000 -0.000000";
+		fogVolumeColor2 = "128.000000 128.000000 128.000000 0.000000";
+		fogVolumeColor3 = "128.000000 128.000000 128.000000 0.000000";
+		high_visibleDistance = "-1";
+		high_fogDistance = "-1";
+		high_fogVolume1 = "-1 0 1.35096e-34";
+		high_fogVolume2 = "-1 2.15908e-34 2.46109e-38";
+		high_fogVolume3 = "-1 2.73253e-43 3.91291e-38";
+			cloudSpeed0 = "0.000000 0.000000";
+			locked = "true";
+	};
+	new Sun() {
+		position = "312 368 0";
+		rotation = "1 0 0 0";
+		scale = "1 1 1";
+		direction = "-0.909657 0.0101994 -0.415234";
+		color = "0.200000 0.213500 0.205000 1.000000";
+		ambient = "0.120000 0.125000 0.110000 1.000000";
+		texture[0] = "special/sunFlare";
+		texture[1] = "special/sunFlare02";
+		texture[2] = "special/LensFlare/flare01";
+		texture[3] = "special/LensFlare/flare02";
+		texture[4] = "special/LensFlare/flare03";
+		lensFlareScale = "0.7";
+		lensFlareIntensity = "1";
+		frontFlareSize = "300";
+		backFlareSize = "450";
+		flareColor = "1.000000 1.000000 1.000000 1.000000";
+			locked = "true";
+	};
+	new TerrainBlock(Terrain) {
+		rotation = "1 0 0 0";
+		scale = "1 1 1";
+		detailTexture = "details/snowdet2";
+		terrainFile = "Katabatic.ter";
+		squareSize = "8";
+		emptySquares = "277586 343378 212563 212819 225436 356763 422555 422811 357532";
+			position = "-1024 -1024 0";
+			locked = "true";
+	};
+	new NavigationGraph(NavGraph) {
+		conjoinAngleDev = "75";
+		cullDensity = "0.1";
+		customArea = "0 0 0 0";
+			conjoinBowlDev = "20";
+			GraphFile = "Katabatic.nav";
+			rotation = "0 0 0 0";
+			position = "0 0 0 1";
+			scale = "1 1 1";
+			locked = "true";
+			coverage = "0";
+	};
+	new SimGroup(ObserverDropPoints) {
+			powerCount = "0";
+
+		new Camera(ObserverMiddle) {
+			position = "-218.654 -338.884 278.185";
+			rotation = "-0.0772654 -0.704712 0.705274 188.843";
+			scale = "1 1 1";
+			dataBlock = "Observer";
+			lockCount = "0";
+			homingCount = "0";
+				missionTypesList = "Rabbit Hunters TeamHunters Bounty CnH DM";
+				locked = "true";
+		};
+		new Camera(ObserverT2B0) {
+			position = "-266.4 5.10799 249.639";
+			rotation = "-0.0190859 -0.174076 0.984547 192.322";
+			scale = "1 1 1";
+			dataBlock = "Observer";
+			lockCount = "0";
+			homingCount = "0";
+				missionTypesList = "CTF Siege CnH";
+				locked = "true";
+		};
+		new Camera(ObserverT1B0) {
+			position = "69.4721 -644.981 195.515";
+			rotation = "0.287628 0.154312 -0.945229 59.1573";
+			scale = "1 1 1";
+			dataBlock = "Observer";
+			lockCount = "0";
+			homingCount = "0";
+				missionTypesList = "CTF Siege CnH";
+				locked = "true";
+		};
+		new Camera(ObserverT2B1) {
+			position = "230.381 -74.2914 116.361";
+			rotation = "0.0600414 -0.294987 0.953613 158.031";
+			scale = "1 1 1";
+			dataBlock = "Observer";
+			lockCount = "0";
+			homingCount = "0";
+				missionTypesList = "Siege";
+				locked = "true";
+		};
+		new Camera(ObserverT1B1) {
+			position = "-337.842 -485.655 117.418";
+			rotation = "0.060042 -0.294987 0.953613 158.031";
+			scale = "1 1 1";
+			dataBlock = "Observer";
+			lockCount = "0";
+			homingCount = "0";
+				missionTypesList = "Siege";
+				locked = "true";
+		};
+		new Camera(ObserverCnHLow) {
+			position = "233.714 -467.55 156.495";
+			rotation = "0.348073 -0.179109 0.920199 58.4275";
+			scale = "1 1 1";
+			dataBlock = "Observer";
+			lockCount = "0";
+			homingCount = "0";
+				missionTypesList = "CnH";
+				locked = "true";
+		};
+		new Camera(ObserverCnHHigh) {
+			position = "-240.158 -654.107 290.144";
+			rotation = "0.060042 -0.294987 0.953613 158.031";
+			scale = "1 1 1";
+			dataBlock = "Observer";
+			lockCount = "0";
+			homingCount = "0";
+				missionTypesList = "CnH";
+				locked = "true";
+		};
+	};
+	new SimGroup(Teams) {
+			powerCount = "0";
+
+		new SimGroup(Team1) {
+				powerCount = "0";
+
+			new SimGroup(spawnspheres) {
+					powerCount = "0";
+
+				new SpawnSphere(Team1SS) {
+					position = "27.9231 -609.602 136.394";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "SpawnSphereMarker";
+					lockCount = "0";
+					homingCount = "0";
+					radius = "100";
+					sphereWeight = "100";
+					indoorWeight = "100";
+					outdoorWeight = "100";
+						missionTypesList = "CTF TeamHunters Bounty";
+						locked = "true";
+				};
+				new SpawnSphere() {
+					position = "36.0494 -278.331 169.782";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "SpawnSphereMarker";
+					lockCount = "0";
+					homingCount = "0";
+					radius = "100";
+					sphereWeight = "60";
+					indoorWeight = "100";
+					outdoorWeight = "100";
+						missionTypesList = "Hunters TeamHunters Rabbit DM CnH Bounty";
+						locked = "true";
+				};
+				new SpawnSphere() {
+					position = "-265.059 -340.457 82.6582";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "SpawnSphereMarker";
+					lockCount = "0";
+					homingCount = "0";
+					radius = "100";
+					sphereWeight = "80";
+					indoorWeight = "100";
+					outdoorWeight = "100";
+						missionTypesList = "Hunters TeamHunters Rabbit CnH DM Bounty CnH";
+						locked = "true";
+				};
+				new SpawnSphere(SiegeAttackersStart) {
+					position = "-521.392 -522.401 194.335";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "SpawnSphereMarker";
+					lockCount = "0";
+					homingCount = "0";
+					radius = "100";
+					sphereWeight = "1";
+					indoorWeight = "100";
+					outdoorWeight = "100";
+						missionTypesList = "Hunters TeamHunters Rabbit DM CnH Bounty Siege";
+						locked = "true";
+				};
+			};
+			new SimGroup(Base0) {
+					powerCount = "1";
+
+				new SimGroup(Structures) {
+						powerCount = "1";
+
+					new InteriorInstance(Team1MainBase) {
+						position = "29.9556 -613.612 78.0921";
+						rotation = "1 0 0 0";
+						scale = "1 1 1";
+						interiorFile = "stowr3.dif";
+						showTerrainInside = "0";
+							team = "1";
+							locked = "true";
+					};
+					new SimGroup(BaseCollar) {
+							powerCount = "1";
+
+						new InteriorInstance() {
+							position = "10.624 -613.636 118.945";
+							rotation = "0 0 1 179.908";
+							scale = "1.33947 0.601782 1";
+							interiorFile = "sbrdg5.dif";
+							showTerrainInside = "0";
+								team = "1";
+								locked = "true";
+						};
+						new InteriorInstance() {
+							position = "49.1958 -613.672 118.967";
+							rotation = "0 0 1 179.908";
+							scale = "1.33947 0.601782 1";
+							interiorFile = "sbrdg5.dif";
+							showTerrainInside = "0";
+								team = "1";
+								locked = "true";
+						};
+						new InteriorInstance() {
+							position = "29.9068 -594.368 118.958";
+							rotation = "0 0 -1 90.1376";
+							scale = "1.33947 0.601782 1";
+							interiorFile = "sbrdg5.dif";
+							showTerrainInside = "0";
+								team = "1";
+								locked = "true";
+						};
+						new InteriorInstance() {
+							position = "29.8904 -632.91 118.949";
+							rotation = "0 0 -1 90.1376";
+							scale = "1.33947 0.601782 1";
+							interiorFile = "sbrdg5.dif";
+							showTerrainInside = "0";
+								team = "1";
+								locked = "true";
+						};
+					};
+					new InteriorInstance() {
+						position = "-241.47 -183.383 166.858";
+						rotation = "1 0 0 0";
+						scale = "1 1 1";
+						interiorFile = "smisc3.dif";
+						showTerrainInside = "0";
+							team = "1";
+							locked = "true";
+					};
+					new InteriorInstance() {
+						position = "-241.565 -183.128 159.278";
+						rotation = "1 0 0 0";
+						scale = "1.1025 1.15207 1";
+						interiorFile = "smisc4.dif";
+						showTerrainInside = "0";
+							team = "1";
+							locked = "true";
+					};
+				};
+				new StaticShape(MainGenerator1) {
+					position = "17.6221 -603.334 148.06";
+					rotation = "0 0 1 179.909";
+					scale = "1 1 1";
+					nameTag = "Main";
+					dataBlock = "GeneratorLarge";
+					lockCount = "0";
+					homingCount = "0";
+						name = "Main";
+						missionTypesList = "CTF Siege";
+						Target = "33";
+						team = "1";
+						locked = "true";
+						repairedBy = "34206";
+				};
+				new SimGroup(Assets) {
+						powerCount = "1";
+
+					new StaticShape(Team1StationInventory1) {
+						position = "41.1853 -625.087 148.069";
+						rotation = "0 0 1 119.748";
+						scale = "1 1 1";
+						nameTag = "Main";
+						dataBlock = "StationInventory";
+						lockCount = "0";
+						homingCount = "0";
+							name = "Main";
+							Trigger = "12002";
+							Target = "34";
+							team = "1";
+							locked = "true";
+							repairedBy = "4356";
+					};
+					new StaticShape(Team1StationInventory2) {
+						position = "18.4435 -625.06 148.095";
+						rotation = "0 0 1 220.589";
+						scale = "1 1 1";
+						nameTag = "Main";
+						dataBlock = "StationInventory";
+						lockCount = "0";
+						homingCount = "0";
+							name = "Main";
+							Trigger = "12004";
+							Target = "35";
+							team = "1";
+							locked = "true";
+							repairedBy = "4334";
+					};
+					new Turret(BaseTurret1) {
+						position = "-26.7287 -615.575 142.012";
+						rotation = "-0 0 -1 66.6454";
+						scale = "1 1 1";
+						nameTag = "Main";
+						dataBlock = "TurretBaseLarge";
+						lockCount = "0";
+						homingCount = "0";
+						initialBarrel = "PlasmaBarrelLarge";
+							name = "Main";
+							missionTypesList = "CTF Siege";
+							Target = "36";
+							team = "1";
+							lastProjectile = "9039";
+							locked = "true";
+							originalBarrel = "PlasmaBarrelLarge";
+					};
+					new StaticShape(MainSensor) {
+						position = "-41.2967 -468.463 143.32";
+						rotation = "0 0 1 177.617";
+						scale = "1 1 1";
+						nameTag = "Main";
+						dataBlock = "SensorLargePulse";
+						lockCount = "0";
+						homingCount = "0";
+							name = "Main";
+							missionTypesList = "CTF Siege";
+							Target = "37";
+							team = "1";
+							locked = "true";
+					};
+					new Item(SiegeRepairPack) {
+						position = "29.556 -717.879 140.565";
+						rotation = "1 0 0 0";
+						scale = "1 1 1";
+						dataBlock = "RepairPack";
+						lockCount = "0";
+						homingCount = "0";
+						collideable = "0";
+						static = "1";
+						rotate = "1";
+							missionTypesList = "Siege";
+							Target = "-1";
+							team = "1";
+							locked = "true";
+					};
+				};
+				new SimGroup(FlagGroup) {
+						powerCount = "1";
+
+					new StaticShape(FlagStand) {
+						position = "30.1702 -613.603 138.106";
+						rotation = "1 0 0 0";
+						scale = "1 1 1";
+						dataBlock = "InteriorFlagStand";
+						lockCount = "0";
+						homingCount = "0";
+							missionTypesList = "CTF";
+							Target = "-1";
+							team = "1";
+							locked = "true";
+					};
+					new Item(ActualFlag) {
+						position = "30.1804 -613.523 138.385";
+						rotation = "1 0 0 0";
+						scale = "1 1 1";
+						dataBlock = "FLAG";
+						lockCount = "0";
+						homingCount = "0";
+						collideable = "0";
+						static = "0";
+						rotate = "1";
+							WayPoint = "12432";
+							missionTypesList = "CTF";
+							originalPosition = "30.1804 -613.523 138.385 1 0 0 0";
+							Target = "38";
+							team = "1";
+							isHome = "1";
+							locked = "true";
+							className = "FlagObj";
+					};
+				};
+			};
+			new SimGroup(Waypoints) {
+					powerCount = "0";
+
+				new WayPoint(Team1Base1) {
+					position = "-348.567 -529.092 85.6127";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "WayPointMarker";
+					lockCount = "0";
+					homingCount = "0";
+					name = "ForceField Base";
+					team = "1";
+						missionTypesList = "CTF TeamHunters";
+						locked = "true";
+				};
+			};
+			new SimGroup(MiddleTurrets) {
+					providesPower = "1";
+					powerCount = "1";
+
+				new Turret(CenterTurret1) {
+					position = "-203.539 -439.057 89.9086";
+					rotation = "1 0 0 89.9544";
+					scale = "1 1 1";
+					nameTag = "Center";
+					dataBlock = "SentryTurret";
+					lockCount = "0";
+					homingCount = "0";
+					initialBarrel = "SentryTurretBarrel";
+						name = "Center";
+						missionTypesList = "CTF";
+						Target = "39";
+						team = "1";
+						locked = "true";
+				};
+				new Turret(CenterTurret2) {
+					position = "-199.712 -435.425 90.0277";
+					rotation = "0 1 0 89.9544";
+					scale = "1 1 1";
+					nameTag = "Center";
+					dataBlock = "SentryTurret";
+					lockCount = "0";
+					homingCount = "0";
+					initialBarrel = "SentryTurretBarrel";
+						name = "Center";
+						missionTypesList = "CTF";
+						Target = "40";
+						team = "1";
+						locked = "true";
+				};
+			};
+			new SimGroup(AIObjectives) {
+					powerCount = "0";
+
+				new AIObjective(AIORepairObject) {
+					position = "-359.522 -581.17 57.7161";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "AIObjectiveMarker";
+					lockCount = "0";
+					homingCount = "0";
+					description = "Repair the GeneratorLarge";
+					targetObject = "Team1Base1Gen";
+					targetClientId = "-1";
+					targetObjectId = "4517";
+					location = "-359.522 -581.17 57.7161";
+					weightLevel1 = "5200";
+					weightLevel2 = "3600";
+					weightLevel3 = "0";
+					weightLevel4 = "0";
+					offense = "1";
+					defense = "1";
+					equipment = "RepairPack";
+					issuedByHuman = "0";
+					issuedByClientId = "-1";
+					forceClientId = "-1";
+					locked = "1";
+						group = "4674";
+						team = "1";
+						isInvalid = "0";
+						gameType = "Siege CTF";
+				};
+				new AIObjective(AIOAttackObject) {
+					position = "238.03 -88.4069 56.2966";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "AIObjectiveMarker";
+					lockCount = "0";
+					homingCount = "0";
+					description = "Attack the GeneratorLarge";
+					targetObject = "SecondSiegeGen";
+					targetClientId = "-1";
+					targetObjectId = "4676";
+					location = "238.03 -88.4069 56.2966";
+					weightLevel1 = "4400";
+					weightLevel2 = "3300";
+					weightLevel3 = "1000";
+					weightLevel4 = "0";
+					offense = "1";
+					defense = "0";
+					desiredEquipment = "ShieldPack";
+					buyEquipmentSet = "HeavyShieldSet";
+					issuedByHuman = "0";
+					issuedByClientId = "-1";
+					forceClientId = "-1";
+					locked = "1";
+						clientLevel2 = "4334";
+						team = "1";
+						clientLevel1 = "4346";
+						isInvalid = "0";
+						gameType = "Siege";
+				};
+				new AIObjective(AIOTouchObject) {
+					position = "-239.966 -350.477 228.366";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "AIObjectiveMarker";
+					lockCount = "0";
+					homingCount = "0";
+					description = "Grab the enemy flag";
+					mode = "FlagGrab";
+					targetObject = "RabbitFlag";
+					targetClientId = "-1";
+					targetObjectId = "4690";
+					location = "-239.966 -350.477 228.366";
+					weightLevel1 = "6850";
+					weightLevel2 = "2000";
+					weightLevel3 = "0";
+					weightLevel4 = "0";
+					offense = "1";
+					defense = "0";
+					desiredEquipment = "Light EnergyPack";
+					buyEquipmentSet = "LightEnergyDefault";
+					issuedByHuman = "0";
+					issuedByClientId = "-1";
+					forceClientId = "-1";
+					locked = "1";
+						group = "4557";
+						team = "1";
+						isInvalid = "0";
+						gameType = "Rabbit";
+				};
+				new AIObjective(AIOTouchObject) {
+					position = "-239.966 -350.477 228.366";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "AIObjectiveMarker";
+					lockCount = "0";
+					homingCount = "0";
+					description = "Capture the flag!";
+					mode = "FlagCapture";
+					targetObject = "RabbitFlag";
+					targetClientId = "-1";
+					targetObjectId = "4690";
+					location = "-239.966 -350.477 228.366";
+					weightLevel1 = "6000";
+					weightLevel2 = "0";
+					weightLevel3 = "0";
+					weightLevel4 = "0";
+					offense = "1";
+					defense = "1";
+					issuedByHuman = "0";
+					issuedByClientId = "-1";
+					forceClientId = "-1";
+					locked = "1";
+						group = "4557";
+						team = "1";
+						isInvalid = "0";
+						gameType = "Rabbit";
+				};
+				new AIObjective(AIOTouchObject) {
+					position = "-239.966 -350.477 228.366";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "AIObjectiveMarker";
+					lockCount = "0";
+					homingCount = "0";
+					description = "Grab the dropped enemy flag";
+					mode = "FlagDropped";
+					targetObject = "RabbitFlag";
+					targetClientId = "-1";
+					targetObjectId = "4690";
+					location = "-239.966 -350.477 228.366";
+					weightLevel1 = "6001";
+					weightLevel2 = "4100";
+					weightLevel3 = "0";
+					weightLevel4 = "0";
+					offense = "1";
+					defense = "1";
+					issuedByHuman = "0";
+					issuedByClientId = "-1";
+					forceClientId = "-1";
+					locked = "1";
+						group = "4557";
+						team = "1";
+						isInvalid = "0";
+						gameType = "Rabbit";
+				};
+				new AIObjective(AIOMortarObject) {
+					position = "-241.188 -183.122 169.886";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "AIObjectiveMarker";
+					lockCount = "0";
+					homingCount = "0";
+					description = "Mortar the TurretBaseLarge";
+					targetObject = "BaseTurret";
+					targetClientId = "-1";
+					targetObjectId = "12116";
+					location = "-241.188 -183.122 169.886";
+					weightLevel1 = "3400";
+					weightLevel2 = "1000";
+					weightLevel3 = "0";
+					weightLevel4 = "0";
+					offense = "1";
+					defense = "0";
+					equipment = "Mortar MortarAmmo";
+					buyEquipmentSet = "HeavyAmmoSet";
+					issuedByHuman = "0";
+					issuedByClientId = "-1";
+					forceClientId = "-1";
+					locked = "1";
+						team = "1";
+						isInvalid = "0";
+						gameType = "CTF";
+				};
+				new AIObjective(AIOAttackObject) {
+					position = "254.378 -85.0003 56.8008";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "AIObjectiveMarker";
+					lockCount = "0";
+					homingCount = "0";
+					description = "Attack the GeneratorLarge";
+					targetObject = "Team2FFGen";
+					targetClientId = "-1";
+					targetObjectId = "12218";
+					location = "254.378 -85.0003 56.8008";
+					weightLevel1 = "4000";
+					weightLevel2 = "1000";
+					weightLevel3 = "0";
+					weightLevel4 = "0";
+					offense = "1";
+					defense = "1";
+					desiredEquipment = "ShieldPack";
+					buyEquipmentSet = "HeavyAmmoSet";
+					issuedByHuman = "0";
+					issuedByClientId = "-1";
+					forceClientId = "-1";
+					locked = "1";
+						team = "1";
+						isInvalid = "0";
+						gameType = "CTF";
+				};
+				new AIObjective(AIOTouchObject) {
+					position = "-273.374 -54.3823 194.417";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "AIObjectiveMarker";
+					lockCount = "0";
+					homingCount = "0";
+					description = "Capture the SiegeFlipFlop";
+					mode = "TouchFlipFlop";
+					targetObject = "SiegeFlipFlop";
+					targetClientId = "-1";
+					targetObjectId = "4631";
+					location = "-273.374 -54.3823 194.417";
+					weightLevel1 = "2200";
+					weightLevel2 = "2000";
+					weightLevel3 = "1500";
+					weightLevel4 = "0";
+					offense = "1";
+					defense = "1";
+					desiredEquipment = "EnergyPack";
+					buyEquipmentSet = "LightEnergyDefault";
+					issuedByHuman = "0";
+					issuedByClientId = "-1";
+					forceClientId = "-1";
+					locked = "1";
+						team = "1";
+						clientLevel1 = "4350";
+						isInvalid = "0";
+						gameType = "Siege";
+				};
+				new AIObjective(AIOTouchObject) {
+					position = "-273.374 -54.3823 194.417";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "AIObjectiveMarker";
+					lockCount = "0";
+					homingCount = "0";
+					description = "Capture the SiegeFlipFlop";
+					mode = "TouchFlipFlop";
+					targetObject = "SiegeFlipFlop";
+					targetClientId = "-1";
+					targetObjectId = "4631";
+					location = "-273.374 -54.3823 194.417";
+					weightLevel1 = "2200";
+					weightLevel2 = "2000";
+					weightLevel3 = "1500";
+					weightLevel4 = "0";
+					offense = "1";
+					defense = "1";
+					desiredEquipment = "ShieldPack";
+					buyEquipmentSet = "MediumEnergyDefault";
+					issuedByHuman = "0";
+					issuedByClientId = "-1";
+					forceClientId = "-1";
+					locked = "1";
+						team = "1";
+						clientLevel1 = "4358";
+						isInvalid = "0";
+						gameType = "Siege";
+				};
+				new AIObjective(AIOTouchObject) {
+					position = "-273.374 -54.3823 194.417";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "AIObjectiveMarker";
+					lockCount = "0";
+					homingCount = "0";
+					description = "Capture the SiegeFlipFlop";
+					mode = "TouchFlipFlop";
+					targetObject = "SiegeFlipFlop";
+					targetClientId = "-1";
+					targetObjectId = "4631";
+					location = "-273.374 -54.3823 194.417";
+					weightLevel1 = "2200";
+					weightLevel2 = "2000";
+					weightLevel3 = "1500";
+					weightLevel4 = "0";
+					offense = "1";
+					defense = "1";
+					desiredEquipment = "ShieldPack";
+					buyEquipmentSet = "HeavyShieldDefault";
+					issuedByHuman = "0";
+					issuedByClientId = "-1";
+					forceClientId = "-1";
+					locked = "1";
+						team = "1";
+						clientLevel1 = "4362";
+						isInvalid = "0";
+						gameType = "Siege";
+				};
+				new AIObjective(AIORepairObject) {
+					position = "17.3543 -601.395 149.503";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "AIObjectiveMarker";
+					lockCount = "0";
+					homingCount = "0";
+					description = "Repair the GeneratorLarge";
+					targetObject = "MainGenerator1";
+					targetClientId = "-1";
+					targetObjectId = "8529";
+					location = "17.3543 -601.395 149.503";
+					weightLevel1 = "5200";
+					weightLevel2 = "3600";
+					weightLevel3 = "0";
+					weightLevel4 = "0";
+					offense = "1";
+					defense = "1";
+					equipment = "RepairPack";
+					buyEquipmentSet = "MediumRepairSet";
+					chat = "ChatSelfRepair";
+					issuedByHuman = "0";
+					issuedByClientId = "-1";
+					forceClientId = "-1";
+					locked = "1";
+						team = "1";
+						isInvalid = "0";
+						gameType = "CTF Siege";
+				};
+				new AIObjective(AIODefendLocation) {
+					position = "17.3543 -613.195 149.503";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "AIObjectiveMarker";
+					lockCount = "0";
+					homingCount = "0";
+					description = "Defend the GeneratorLarge";
+					targetObject = "MainGenerator";
+					targetClientId = "-1";
+					targetObjectId = "12122";
+					location = "17.3543 -613.195 149.503";
+					weightLevel1 = "3100";
+					weightLevel2 = "1500";
+					weightLevel3 = "0";
+					weightLevel4 = "0";
+					offense = "0";
+					defense = "1";
+					desiredEquipment = "ShieldPack Plasma PlasmaAmmo";
+					buyEquipmentSet = "HeavyShieldSet";
+					issuedByHuman = "0";
+					issuedByClientId = "-1";
+					forceClientId = "-1";
+					locked = "1";
+						team = "1";
+						isInvalid = "0";
+						gameType = "CTF";
+				};
+				new AIObjective(AIODefendLocation) {
+					position = "30.1804 -613.523 139.617";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "AIObjectiveMarker";
+					lockCount = "0";
+					homingCount = "0";
+					description = "Defend our flag";
+					targetObject = "ActualFlag";
+					targetClientId = "-1";
+					targetObjectId = "12124";
+					location = "30.1804 -613.523 139.617";
+					weightLevel1 = "1800";
+					weightLevel2 = "1000";
+					weightLevel3 = "0";
+					weightLevel4 = "0";
+					offense = "0";
+					defense = "1";
+					desiredEquipment = "ShieldPack Plasma PlasmaAmmo";
+					buyEquipmentSet = "HeavyShieldSet";
+					chat = "ChatSelfDefendFlag DefendBase";
+					issuedByHuman = "0";
+					issuedByClientId = "-1";
+					forceClientId = "-1";
+					locked = "1";
+						team = "1";
+						isInvalid = "0";
+						gameType = "CTF";
+				};
+				new AIObjective(AIOTouchObject) {
+					position = "30.1804 -613.523 139.617";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "AIObjectiveMarker";
+					lockCount = "0";
+					homingCount = "0";
+					description = "Return our flag";
+					mode = "FlagDropped";
+					targetObject = "ActualFlag";
+					targetClientId = "-1";
+					targetObjectId = "12124";
+					location = "30.1804 -613.523 139.617";
+					weightLevel1 = "6001";
+					weightLevel2 = "4100";
+					weightLevel3 = "0";
+					weightLevel4 = "0";
+					offense = "1";
+					defense = "1";
+					issuedByHuman = "0";
+					issuedByClientId = "-1";
+					forceClientId = "-1";
+					locked = "1";
+						team = "1";
+						isInvalid = "0";
+						gameType = "CTF";
+				};
+				new AIObjective(AIORepairObject) {
+					position = "18.4435 -625.06 149.661";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "AIObjectiveMarker";
+					lockCount = "0";
+					homingCount = "0";
+					description = "Repair the StationInventory";
+					targetObject = "Team1StationInventory2";
+					targetClientId = "-1";
+					targetObjectId = "12003";
+					location = "18.4435 -625.06 149.661";
+					weightLevel1 = "3100";
+					weightLevel2 = "2500";
+					weightLevel3 = "0";
+					weightLevel4 = "0";
+					offense = "0";
+					defense = "1";
+					desiredEquipment = "RepairPack";
+					buyEquipmentSet = "MediumRepairSet";
+					chat = "ChatSelfRepair";
+					issuedByHuman = "0";
+					issuedByClientId = "-1";
+					forceClientId = "-1";
+					locked = "1";
+						missionTypesList = "CTF Siege TeamHunters";
+						team = "1";
+						isInvalid = "0";
+				};
+				new AIObjective(AIORepairObject) {
+					position = "-27.4724 -615.498 143.716";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "AIObjectiveMarker";
+					lockCount = "0";
+					homingCount = "0";
+					description = "Repair the TurretBaseLarge";
+					targetObject = "BaseTurret";
+					targetClientId = "-1";
+					targetObjectId = "4579";
+					location = "-27.4724 -615.498 143.716";
+					weightLevel1 = "3100";
+					weightLevel2 = "1000";
+					weightLevel3 = "0";
+					weightLevel4 = "0";
+					offense = "0";
+					defense = "1";
+					equipment = "RepairPack";
+					buyEquipmentSet = "MediumRepairSet";
+					issuedByHuman = "0";
+					issuedByClientId = "-1";
+					forceClientId = "-1";
+					locked = "1";
+						group = "4524";
+						team = "1";
+						isInvalid = "0";
+						gameType = "CTF Siege";
+				};
+				new AIObjective(AIORepairObject) {
+					position = "-344.446 -548.842 61.6162";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "AIObjectiveMarker";
+					lockCount = "0";
+					homingCount = "0";
+					description = "Repair the GeneratorLarge";
+					targetObject = "Team1FFGen";
+					targetClientId = "-1";
+					targetObjectId = "12069";
+					location = "-344.446 -548.842 61.6162";
+					weightLevel1 = "5200";
+					weightLevel2 = "4600";
+					weightLevel3 = "200";
+					weightLevel4 = "0";
+					offense = "1";
+					defense = "1";
+					equipment = "RepairPack";
+					buyEquipmentSet = "MediumRepairSet";
+					issuedByHuman = "0";
+					issuedByClientId = "-1";
+					forceClientId = "-1";
+					locked = "1";
+						team = "1";
+						isInvalid = "0";
+						gameType = "CTF";
+				};
+				new AIObjective(AIOAttackObject) {
+					position = "-351.879 -566.087 73.7466";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "AIObjectiveMarker";
+					lockCount = "0";
+					homingCount = "0";
+					description = "Attack the SentryTurret";
+					targetObject = "Team1SentryTurret1";
+					targetClientId = "-1";
+					targetObjectId = "12106";
+					location = "-351.879 -566.087 73.7466";
+					weightLevel1 = "2900";
+					weightLevel2 = "1400";
+					weightLevel3 = "0";
+					weightLevel4 = "0";
+					offense = "1";
+					defense = "0";
+					desiredEquipment = "ShieldPack";
+					buyEquipmentSet = "HeavyAmmoSet";
+					issuedByHuman = "0";
+					issuedByClientId = "-1";
+					forceClientId = "-1";
+					locked = "1";
+						missionTypesList = "CTF Siege TeamHunters";
+						team = "1";
+						isInvalid = "0";
+				};
+				new AIObjective(AIORepairObject) {
+					position = "-344.603 -578.178 56.7963";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "AIObjectiveMarker";
+					lockCount = "0";
+					homingCount = "0";
+					description = "Repair the StationInventory";
+					targetObject = "Team1StationInventory3";
+					targetClientId = "-1";
+					targetObjectId = "12107";
+					location = "-344.603 -578.178 56.7963";
+					weightLevel1 = "2900";
+					weightLevel2 = "1400";
+					weightLevel3 = "0";
+					weightLevel4 = "0";
+					offense = "1";
+					defense = "0";
+					desiredEquipment = "RepairPack";
+					buyEquipmentSet = "LightRepairSet";
+					issuedByHuman = "0";
+					issuedByClientId = "-1";
+					forceClientId = "-1";
+					locked = "1";
+						missionTypesList = "CTF Siege TeamHunters";
+						team = "1";
+						isInvalid = "0";
+				};
+				new AIObjective(AIODefendLocation) {
+					position = "-344.446 -548.842 61.6162";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "AIObjectiveMarker";
+					lockCount = "0";
+					homingCount = "0";
+					description = "Defend the GeneratorLarge";
+					targetObject = "Team1FFGen";
+					targetClientId = "-1";
+					targetObjectId = "12069";
+					location = "-344.446 -548.842 61.6162";
+					weightLevel1 = "3100";
+					weightLevel2 = "1800";
+					weightLevel3 = "0";
+					weightLevel4 = "0";
+					offense = "0";
+					defense = "1";
+					desiredEquipment = "ShieldPack Plasma PlasmaAmmo";
+					buyEquipmentSet = "HeavyShieldSet";
+					issuedByHuman = "0";
+					issuedByClientId = "-1";
+					forceClientId = "-1";
+					locked = "1";
+						team = "1";
+						isInvalid = "0";
+						gameType = "CTF";
+				};
+				new AIObjective(AIOAttackPlayer) {
+					position = "30.1804 -613.523 139.617";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "AIObjectiveMarker";
+					lockCount = "0";
+					homingCount = "0";
+					description = "Kill the enemy flag carrier";
+					mode = "FlagCarrier";
+					targetObject = "ActualFlag";
+					targetClientId = "-1";
+					targetObjectId = "12124";
+					location = "30.1804 -613.523 139.617";
+					weightLevel1 = "4800";
+					weightLevel2 = "4800";
+					weightLevel3 = "0";
+					weightLevel4 = "0";
+					offense = "1";
+					defense = "0";
+					desiredEquipment = "Light EnergyPack";
+					buyEquipmentSet = "LightEnergySniper";
+					issuedByHuman = "0";
+					issuedByClientId = "-1";
+					forceClientId = "-1";
+					locked = "1";
+						team = "1";
+						isInvalid = "0";
+						gameType = "CTF";
+				};
+				new AIObjective(AIOTouchObject) {
+					position = "273.239 -418.92 88.1692";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "AIObjectiveMarker";
+					lockCount = "0";
+					homingCount = "0";
+					description = "Capture the LowFlipFlop";
+					mode = "TouchFlipFlop";
+					targetObject = "LowFlipFlop";
+					targetClientId = "-1";
+					targetObjectId = "4712";
+					location = "273.239 -418.92 88.1692";
+					weightLevel1 = "3850";
+					weightLevel2 = "1000";
+					weightLevel3 = "0";
+					weightLevel4 = "0";
+					offense = "1";
+					defense = "0";
+					desiredEquipment = "Light EnergyPack";
+					buyEquipmentSet = "LightEnergyDefault";
+					issuedByHuman = "0";
+					issuedByClientId = "-1";
+					forceClientId = "-1";
+					locked = "1";
+						team = "1";
+						isInvalid = "0";
+						gameType = "CnH";
+				};
+				new AIObjective(AIODefendLocation) {
+					position = "30.2078 -613.501 125.364";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "AIObjectiveMarker";
+					lockCount = "0";
+					homingCount = "0";
+					description = "Defend the FlipFlop";
+					targetObject = "Base2FlipFlop";
+					targetClientId = "-1";
+					targetObjectId = "4696";
+					location = "30.2078 -613.501 125.364";
+					weightLevel1 = "3900";
+					weightLevel2 = "2000";
+					weightLevel3 = "0";
+					weightLevel4 = "0";
+					offense = "0";
+					defense = "1";
+					desiredEquipment = "ShieldPack Plasma PlasmaAmmo";
+					buyEquipmentSet = "HeavyShieldSet";
+					issuedByHuman = "0";
+					issuedByClientId = "-1";
+					forceClientId = "-1";
+					locked = "1";
+						team = "1";
+						isInvalid = "0";
+						gameType = "CnH";
+				};
+				new AIObjective(AIOTouchObject) {
+					position = "-216.877 -691.348 270.323";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "AIObjectiveMarker";
+					lockCount = "0";
+					homingCount = "0";
+					description = "Capture the HighFlipFlop";
+					mode = "TouchFlipFlop";
+					targetObject = "HighFlipFlop";
+					targetClientId = "-1";
+					targetObjectId = "4707";
+					location = "-216.877 -691.348 270.323";
+					weightLevel1 = "3850";
+					weightLevel2 = "1000";
+					weightLevel3 = "0";
+					weightLevel4 = "0";
+					offense = "1";
+					defense = "0";
+					desiredEquipment = "Light EnergyPack";
+					buyEquipmentSet = "LightEnergyDefault";
+					issuedByHuman = "0";
+					issuedByClientId = "-1";
+					forceClientId = "-1";
+					locked = "1";
+						team = "1";
+						isInvalid = "0";
+						gameType = "CnH";
+				};
+				new AIObjective(AIOTouchObject) {
+					position = "30.2078 -613.501 125.364";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "AIObjectiveMarker";
+					lockCount = "0";
+					homingCount = "0";
+					description = "Capture the Base2FlipFlop";
+					mode = "TouchFlipFlop";
+					targetObject = "Base2FlipFlop";
+					targetClientId = "-1";
+					targetObjectId = "4696";
+					location = "30.2078 -613.501 125.364";
+					weightLevel1 = "3850";
+					weightLevel2 = "2500";
+					weightLevel3 = "0";
+					weightLevel4 = "0";
+					offense = "1";
+					defense = "0";
+					desiredEquipment = "Light EnergyPack";
+					buyEquipmentSet = "LightEnergyDefault";
+					issuedByHuman = "0";
+					issuedByClientId = "-1";
+					forceClientId = "-1";
+					locked = "1";
+						team = "1";
+						isInvalid = "0";
+						gameType = "CnH";
+				};
+				new AIObjective(AIOTouchObject) {
+					position = "-239.985 -350.472 228.57";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "AIObjectiveMarker";
+					lockCount = "0";
+					homingCount = "0";
+					description = "Capture the CenterFlipFlop";
+					mode = "TouchFlipFlop";
+					targetObject = "CenterFlipFlop";
+					targetClientId = "-1";
+					targetObjectId = "4703";
+					location = "-239.985 -350.472 228.57";
+					weightLevel1 = "3850";
+					weightLevel2 = "1000";
+					weightLevel3 = "0";
+					weightLevel4 = "0";
+					offense = "1";
+					defense = "0";
+					desiredEquipment = "Light EnergyPack";
+					buyEquipmentSet = "LightEnergyDefault";
+					issuedByHuman = "0";
+					issuedByClientId = "-1";
+					forceClientId = "-1";
+					locked = "1";
+						team = "1";
+						isInvalid = "0";
+						gameType = "CnH";
+				};
+				new AIObjective(AIODefendLocation) {
+					position = "-239.985 -350.472 228.57";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "AIObjectiveMarker";
+					lockCount = "0";
+					homingCount = "0";
+					description = "Defend the FlipFlop";
+					targetObject = "CenterFlipFlop";
+					targetClientId = "-1";
+					targetObjectId = "4703";
+					location = "-239.985 -350.472 228.57";
+					weightLevel1 = "3900";
+					weightLevel2 = "500";
+					weightLevel3 = "0";
+					weightLevel4 = "0";
+					offense = "0";
+					defense = "1";
+					desiredEquipment = "ShieldPack Plasma PlasmaAmmo";
+					buyEquipmentSet = "MediumShieldSet";
+					issuedByHuman = "0";
+					issuedByClientId = "-1";
+					forceClientId = "-1";
+					locked = "1";
+						team = "1";
+						isInvalid = "0";
+						gameType = "CnH";
+				};
+				new AIObjective(AIOTouchObject) {
+					position = "-264.699 -56.7215 179.499";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "AIObjectiveMarker";
+					lockCount = "0";
+					homingCount = "0";
+					description = "Capture the Base1FlipFlop";
+					mode = "TouchFlipFlop";
+					targetObject = "Base1FlipFlop";
+					targetClientId = "-1";
+					targetObjectId = "4700";
+					location = "-264.699 -56.7215 179.499";
+					weightLevel1 = "3850";
+					weightLevel2 = "2000";
+					weightLevel3 = "0";
+					weightLevel4 = "0";
+					offense = "1";
+					defense = "0";
+					desiredEquipment = "Light EnergyPack";
+					buyEquipmentSet = "LightEnergyDefault";
+					issuedByHuman = "0";
+					issuedByClientId = "-1";
+					forceClientId = "-1";
+					locked = "1";
+						team = "1";
+						isInvalid = "0";
+						gameType = "CnH";
+				};
+				new AIObjective(AIODefendLocation) {
+					position = "-264.699 -56.7215 179.499";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "AIObjectiveMarker";
+					lockCount = "0";
+					homingCount = "0";
+					description = "Defend the FlipFlop";
+					targetObject = "Base1FlipFlop";
+					targetClientId = "-1";
+					targetObjectId = "4700";
+					location = "-264.699 -56.7215 179.499";
+					weightLevel1 = "3900";
+					weightLevel2 = "2500";
+					weightLevel3 = "0";
+					weightLevel4 = "0";
+					offense = "0";
+					defense = "1";
+					desiredEquipment = "ShieldPack Plasma PlasmaAmmo";
+					buyEquipmentSet = "HeavyShieldSet";
+					issuedByHuman = "0";
+					issuedByClientId = "-1";
+					forceClientId = "-1";
+					locked = "1";
+						team = "1";
+						isInvalid = "0";
+						gameType = "CnH";
+				};
+				new AIObjective(AIOTouchObject) {
+					position = "-264.945 -57.1073 192.86";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "AIObjectiveMarker";
+					lockCount = "0";
+					homingCount = "0";
+					description = "Grab the dropped enemy flag";
+					mode = "FlagDropped";
+					targetObject = "ActualFlag";
+					targetClientId = "-1";
+					targetObjectId = "12124";
+					location = "-264.945 -57.1073 192.86";
+					weightLevel1 = "6001";
+					weightLevel2 = "4100";
+					weightLevel3 = "0";
+					weightLevel4 = "0";
+					offense = "1";
+					defense = "1";
+					issuedByHuman = "0";
+					issuedByClientId = "-1";
+					forceClientId = "-1";
+					locked = "1";
+						team = "1";
+						isInvalid = "0";
+						gameType = "CTF";
+				};
+				new AIObjective(AIOTouchObject) {
+					position = "-264.945 -57.1073 192.86";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "AIObjectiveMarker";
+					lockCount = "0";
+					homingCount = "0";
+					description = "Capture the flag!";
+					mode = "FlagCapture";
+					targetObject = "ActualFlag";
+					targetClientId = "-1";
+					targetObjectId = "12124";
+					location = "-264.945 -57.1073 192.86";
+					weightLevel1 = "6000";
+					weightLevel2 = "4000";
+					weightLevel3 = "0";
+					weightLevel4 = "0";
+					offense = "1";
+					defense = "1";
+					issuedByHuman = "0";
+					issuedByClientId = "-1";
+					forceClientId = "-1";
+					locked = "1";
+						team = "1";
+						isInvalid = "0";
+						gameType = "CTF";
+				};
+				new AIObjective(AIOTouchObject) {
+					position = "-264.945 -57.1073 192.86";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "AIObjectiveMarker";
+					lockCount = "0";
+					homingCount = "0";
+					description = "Grab the enemy flag";
+					mode = "FlagGrab";
+					targetObject = "ActualFlag";
+					targetClientId = "-1";
+					targetObjectId = "12124";
+					location = "-264.945 -57.1073 192.86";
+					weightLevel1 = "6850";
+					weightLevel2 = "2000";
+					weightLevel3 = "0";
+					weightLevel4 = "0";
+					offense = "1";
+					defense = "0";
+					desiredEquipment = "Light EnergyPack";
+					buyEquipmentSet = "LightEnergyDefault";
+					issuedByHuman = "0";
+					issuedByClientId = "-1";
+					forceClientId = "-1";
+					locked = "1";
+						team = "1";
+						isInvalid = "0";
+						gameType = "CTF";
+				};
+				new SimGroup(MyObjectiveSet) {
+						clientLevel1 = "4352";
+						powerCount = "0";
+
+					new AIObjective(AIODefendLocation) {
+						position = "18.5956 -602.438 159.586";
+						rotation = "1 0 0 0";
+						scale = "1 1 1";
+						dataBlock = "AIObjectiveMarker";
+						lockCount = "0";
+						homingCount = "0";
+						description = "Defend Base with Sniper";
+						targetObject = "Team2MainBase";
+						targetClientId = "-1";
+						targetObjectId = "12128";
+						location = "18.5956 -602.438 159.586";
+						weightLevel1 = "3000";
+						weightLevel2 = "1500";
+						weightLevel3 = "0";
+						weightLevel4 = "0";
+						offense = "0";
+						defense = "1";
+						equipment = "SniperRifle";
+						buyEquipmentSet = "LightEnergySniper";
+						chat = "ChatSelfDefend";
+						issuedByHuman = "0";
+						issuedByClientId = "-1";
+						forceClientId = "-1";
+						locked = "1";
+							group = "12050";
+							missionTypesList = "CTF";
+							team = "1";
+							isInvalid = "0";
+					};
+					new AIObjective(AIODefendLocation) {
+						position = "-275.207 -44.7128 148.735";
+						rotation = "1 0 0 0";
+						scale = "1 1 1";
+						dataBlock = "AIObjectiveMarker";
+						lockCount = "0";
+						homingCount = "0";
+						description = "Attack as Assasian";
+						targetObject = "Team1MainBase";
+						targetClientId = "-1";
+						targetObjectId = "11991";
+						location = "-275.207 -44.7128 148.735";
+						weightLevel1 = "3000";
+						weightLevel2 = "1500";
+						weightLevel3 = "0";
+						weightLevel4 = "0";
+						offense = "1";
+						defense = "0";
+						equipment = "CloakPack ShockLance";
+						desiredEquipment = "CloackPack ShockLance Chaingun ChaingunAmmo Blaster TargetingLaser RepairKit FlashGrenade Mine";
+						chat = "ChatSelfAttack";
+						issuedByHuman = "0";
+						issuedByClientId = "-1";
+						forceClientId = "-1";
+						locked = "1";
+							group = "12050";
+							missionTypesList = "CTF";
+							team = "1";
+							isInvalid = "0";
+					};
+					new AIObjective(AIODeployEquipment) {
+						position = "11.4284 -521.701 118.924";
+						rotation = "1 0 0 0";
+						scale = "1 1 1";
+						dataBlock = "AIObjectiveMarker";
+						lockCount = "0";
+						homingCount = "0";
+						description = "Deploy Inventory Station";
+						targetObject = "-1";
+						targetClientId = "-1";
+						targetObjectId = "-1";
+						location = "11.4284 -521.701 118.924";
+						weightLevel1 = "4100";
+						weightLevel2 = "0";
+						weightLevel3 = "0";
+						weightLevel4 = "0";
+						offense = "0";
+						defense = "1";
+						equipment = "InventoryDeployable";
+						buyEquipmentSet = "MediumInventorySet";
+						chat = "ChatSelfSetupD";
+						issuedByHuman = "0";
+						issuedByClientId = "-1";
+						forceClientId = "-1";
+						locked = "1";
+							group = "12050";
+							missionTypesList = "CTF";
+							team = "1";
+							isInvalid = "0";
+					};
+					new AIObjective(AIODeployEquipment) {
+						position = "39.112 -598.444 138.673";
+						rotation = "1 0 0 0";
+						scale = "1 1 1";
+						dataBlock = "AIObjectiveMarker";
+						lockCount = "0";
+						homingCount = "0";
+						description = "Deploy indoor Turret";
+						targetObject = "-1";
+						targetClientId = "-1";
+						targetObjectId = "-1";
+						location = "39.112 -598.444 138.673";
+						weightLevel1 = "4100";
+						weightLevel2 = "0";
+						weightLevel3 = "0";
+						weightLevel4 = "0";
+						offense = "0";
+						defense = "1";
+						equipment = "TurretIndoorDeployable";
+						buyEquipmentSet = "MediumIndoorTurretSet";
+						chat = "ChatSelfSetupD";
+						issuedByHuman = "0";
+						issuedByClientId = "-1";
+						forceClientId = "-1";
+						locked = "1";
+							group = "12050";
+							missionTypesList = "CTF";
+							team = "1";
+							isInvalid = "0";
+					};
+					new AIObjective(AIODeployEquipment) {
+						position = "-58.6283 -562.069 80.5566";
+						rotation = "1 0 0 0";
+						scale = "1 1 1";
+						dataBlock = "AIObjectiveMarker";
+						lockCount = "0";
+						homingCount = "0";
+						description = "Deploy outdoor Turret";
+						targetObject = "-1";
+						targetClientId = "-1";
+						targetObjectId = "-1";
+						location = "-58.6283 -562.069 80.5566";
+						weightLevel1 = "4100";
+						weightLevel2 = "0";
+						weightLevel3 = "0";
+						weightLevel4 = "0";
+						offense = "0";
+						defense = "1";
+						equipment = "TurretOutdoorDeployable";
+						buyEquipmentSet = "MediumOutdoorTurretSet";
+						chat = "ChatSelfSetupD";
+						issuedByHuman = "0";
+						issuedByClientId = "-1";
+						forceClientId = "-1";
+						locked = "1";
+							group = "12050";
+							missionTypesList = "CTF";
+							team = "1";
+							isInvalid = "0";
+					};
+					new AIObjective(AIODeployEquipment) {
+						position = "-279.65 -478.853 103.038";
+						rotation = "1 0 0 0";
+						scale = "1 1 1";
+						dataBlock = "AIObjectiveMarker";
+						lockCount = "0";
+						homingCount = "0";
+						description = "Deploy outdoor Turret";
+						targetObject = "-1";
+						targetClientId = "-1";
+						targetObjectId = "-1";
+						location = "-279.65 -478.853 103.038";
+						weightLevel1 = "4100";
+						weightLevel2 = "0";
+						weightLevel3 = "0";
+						weightLevel4 = "0";
+						offense = "0";
+						defense = "1";
+						equipment = "TurretOutdoorDeployable";
+						buyEquipmentSet = "MediumOutdoorTurretSet";
+						chat = "ChatSelfSetupD";
+						issuedByHuman = "0";
+						issuedByClientId = "-1";
+						forceClientId = "-1";
+						locked = "1";
+							group = "12050";
+							missionTypesList = "CTF";
+							team = "1";
+							isInvalid = "0";
+					};
+					new AIObjective(AIODeployEquipment) {
+						position = "-344.571 -530.402 85.5795";
+						rotation = "1 0 0 0";
+						scale = "1 1 1";
+						dataBlock = "AIObjectiveMarker";
+						lockCount = "0";
+						homingCount = "0";
+						description = "Deploy indoor Turret";
+						targetObject = "-1";
+						targetClientId = "-1";
+						targetObjectId = "-1";
+						location = "-344.571 -530.402 85.5795";
+						weightLevel1 = "4100";
+						weightLevel2 = "0";
+						weightLevel3 = "0";
+						weightLevel4 = "0";
+						offense = "0";
+						defense = "1";
+						equipment = "TurretIndoorDeployable";
+						buyEquipmentSet = "MediumIndoorTurretSet";
+						chat = "ChatSelfSetupD";
+						issuedByHuman = "0";
+						issuedByClientId = "-1";
+						forceClientId = "-1";
+						locked = "1";
+							group = "12050";
+							missionTypesList = "CTF";
+							team = "1";
+							isInvalid = "0";
+					};
+					new AIObjective(AIODeployEquipment) {
+						position = "-391.467 -552.798 86.8993";
+						rotation = "1 0 0 0";
+						scale = "1 1 1";
+						dataBlock = "AIObjectiveMarker";
+						lockCount = "0";
+						homingCount = "0";
+						description = "Deploy Inventory Station";
+						targetObject = "-1";
+						targetClientId = "-1";
+						targetObjectId = "-1";
+						location = "-391.467 -552.798 86.8993";
+						weightLevel1 = "4100";
+						weightLevel2 = "0";
+						weightLevel3 = "0";
+						weightLevel4 = "0";
+						offense = "0";
+						defense = "1";
+						equipment = "InventoryDeployable";
+						buyEquipmentSet = "MediumInventorySet";
+						chat = "ChatSelfSetupD";
+						issuedByHuman = "0";
+						issuedByClientId = "-1";
+						forceClientId = "-1";
+						locked = "1";
+							group = "12050";
+							missionTypesList = "CTF";
+							team = "1";
+							isInvalid = "0";
+					};
+				};
+				new AIObjective(AIOAttackObject) {
+					position = "-216.319 -691.775 270.645";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "AIObjectiveMarker";
+					lockCount = "0";
+					homingCount = "0";
+					description = "Attack the GeneratorLarge";
+					targetObject = "FirstSiegeGen";
+					targetClientId = "-1";
+					targetObjectId = "4744";
+					location = "-216.319 -691.775 270.645";
+					weightLevel1 = "4400";
+					weightLevel2 = "2300";
+					weightLevel3 = "1000";
+					weightLevel4 = "0";
+					offense = "1";
+					defense = "0";
+					desiredEquipment = "EnergyPack";
+					buyEquipmentSet = "MediumEnergySet";
+					issuedByHuman = "0";
+					issuedByClientId = "-1";
+					forceClientId = "-1";
+					locked = "1";
+						clientLevel2 = "4338";
+						team = "1";
+						clientLevel1 = "4354";
+						isInvalid = "0";
+						gameType = "Siege";
+				};
+				new AIObjective(AIORepairObject) {
+					position = "41.1853 -625.087 149.635";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "AIObjectiveMarker";
+					lockCount = "0";
+					homingCount = "0";
+					description = "Repair the StationInventory";
+					targetObject = "Team1StationInventory1";
+					targetClientId = "-1";
+					targetObjectId = "12001";
+					location = "41.1853 -625.087 149.635";
+					weightLevel1 = "3100";
+					weightLevel2 = "2500";
+					weightLevel3 = "0";
+					weightLevel4 = "0";
+					offense = "0";
+					defense = "1";
+					equipment = "RepairPack";
+					buyEquipmentSet = "MediumRepairSet";
+					chat = "ChatSelfRepair";
+					issuedByHuman = "0";
+					issuedByClientId = "-1";
+					forceClientId = "-1";
+					locked = "1";
+						missionTypesList = "CTF Siege TeamHunters";
+						team = "1";
+						isInvalid = "0";
+				};
+			};
+			new SimGroup(SeigeWaypoints) {
+					powerCount = "0";
+
+				new WayPoint(OmegaMark) {
+					position = "-271.593 -55.6229 215.885";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "WayPointMarker";
+					lockCount = "0";
+					homingCount = "0";
+					name = "Omega - Capture Base";
+					team = "1";
+						missionTypesList = "Siege";
+						locked = "true";
+				};
+				new WayPoint(StagingPoint) {
+					position = "-520.254 -521.643 194.664";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "WayPointMarker";
+					lockCount = "0";
+					homingCount = "0";
+					name = "Omicron - Staging Point";
+					team = "1";
+						missionTypesList = "Siege";
+						locked = "true";
+				};
+				new WayPoint(GammaMark) {
+					position = "237.899 -88.622 56.1972";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "WayPointMarker";
+					lockCount = "0";
+					homingCount = "0";
+					name = "Gamma - Destroy Generator";
+					team = "1";
+						missionTypesList = "Siege";
+						locked = "true";
+				};
+				new WayPoint(AlphaMark) {
+					position = "17.4962 -601.252 149.897";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "WayPointMarker";
+					lockCount = "0";
+					homingCount = "0";
+					name = "Alpha - Repair Base";
+					team = "1";
+						missionTypesList = "Siege";
+						locked = "true";
+				};
+				new WayPoint(BetaMark) {
+					position = "-216.203 -691.324 270.509";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "WayPointMarker";
+					lockCount = "0";
+					homingCount = "0";
+					name = "Beta - Destroy Generator";
+					team = "1";
+						missionTypesList = "Siege";
+						locked = "true";
+				};
+			};
+			new SimGroup(Base1) {
+					powerCount = "0";
+
+				new SimGroup(Forcefields) {
+						powerCount = "1";
+
+					new StaticShape(Team1FFGen) {
+						position = "-344.065 -550.717 60.1154";
+						rotation = "0.000462156 -0.0150019 0.999887 176.471";
+						scale = "1 1 1";
+						nameTag = "ForceField";
+						dataBlock = "GeneratorLarge";
+						lockCount = "0";
+						homingCount = "0";
+							wasDisabled = "0";
+							name = "ForceField";
+							missionTypesList = "CTF";
+							Target = "41";
+							team = "1";
+							locked = "true";
+							repairedBy = "4340";
+					};
+					new ForceFieldBare() {
+						position = "41.8885 -634.574 139.9";
+						rotation = "-0.000115087 0.144493 0.989506 179.91";
+						scale = "24.1282 0.1 6.04818";
+						dataBlock = "defaultTeamSlowFieldBare";
+						lockCount = "0";
+						homingCount = "0";
+							Target = "42";
+							team = "1";
+							locked = "true";
+					};
+					new ForceFieldBare() {
+						position = "50.9119 -625.604 140.052";
+						rotation = "0.156968 0.157343 -0.974989 91.5879";
+						scale = "24.1282 0.1 6.57484";
+						dataBlock = "defaultTeamSlowFieldBare";
+						lockCount = "0";
+						homingCount = "0";
+							Target = "43";
+							team = "1";
+							locked = "true";
+					};
+					new ForceFieldBare() {
+						position = "8.83143 -601.499 140.075";
+						rotation = "0.157456 -0.157331 0.974913 91.41";
+						scale = "24.1282 0.1 6.62236";
+						dataBlock = "defaultTeamSlowFieldBare";
+						lockCount = "0";
+						homingCount = "0";
+							Target = "44";
+							team = "1";
+							locked = "true";
+					};
+					new ForceFieldBare(MoonroofFF) {
+						position = "24.0893 -617.397 159.88";
+						rotation = "1 0 0 0";
+						scale = "7.66683 8.98676 0.210138";
+						dataBlock = "defaultTeamSlowFieldBare";
+						lockCount = "0";
+						homingCount = "0";
+							missionTypesList = "CTF TeamHunters";
+							Target = "45";
+							team = "1";
+							locked = "true";
+					};
+				};
+				new SimGroup(Structures) {
+						powerCount = "0";
+
+					new InteriorInstance(Outpost) {
+						position = "-346.893 -575.688 77.8044";
+						rotation = "0.0363941 -0.0488804 0.998141 176.117";
+						scale = "1 1 1";
+						interiorFile = "sbunk9.dif";
+						showTerrainInside = "0";
+							team = "1";
+							locked = "true";
+					};
+					new SimGroup(Wreckage) {
+							powerCount = "0";
+
+						new InteriorInstance() {
+							position = "-345.936 -553.127 64.3658";
+							rotation = "-0.101718 -0.056336 0.993217 215.395";
+							scale = "0.233635 0.542386 1";
+							interiorFile = "dwall1.dif";
+							showTerrainInside = "0";
+								team = "1";
+								locked = "true";
+						};
+						new InteriorInstance() {
+							position = "-363.128 -517.446 87.7246";
+							rotation = "0 0 1 176.471";
+							scale = "1 1 1";
+							interiorFile = "drock6.dif";
+							showTerrainInside = "0";
+								team = "1";
+								locked = "true";
+						};
+						new InteriorInstance() {
+							position = "-344.723 -544.445 59.2448";
+							rotation = "0.0199978 0.000616051 0.9998 176.472";
+							scale = "1 1 1";
+							interiorFile = "drock7.dif";
+							showTerrainInside = "0";
+								team = "1";
+								locked = "true";
+						};
+						new InteriorInstance() {
+							position = "-362.915 -548.56 60.6842";
+							rotation = "0.0256032 0.109742 0.99363 206.103";
+							scale = "1 1 1";
+							interiorFile = "drock7.dif";
+							showTerrainInside = "0";
+								team = "1";
+								locked = "true";
+						};
+						new InteriorInstance() {
+							position = "-353.761 -527.867 63.0891";
+							rotation = "0 0 1 176.471";
+							scale = "1 1 1";
+							interiorFile = "drock6.dif";
+							showTerrainInside = "0";
+								team = "1";
+								locked = "true";
+						};
+						new InteriorInstance() {
+							position = "-357.301 -542.383 60.9484";
+							rotation = "0 0 1 176.471";
+							scale = "1 1 1";
+							interiorFile = "drock7.dif";
+							showTerrainInside = "0";
+								team = "1";
+								locked = "true";
+						};
+						new InteriorInstance() {
+							position = "-354.9 -547.236 67.8951";
+							rotation = "0 0 1 176.471";
+							scale = "0.681088 0.403698 0.496752";
+							interiorFile = "drock7.dif";
+							showTerrainInside = "0";
+								team = "1";
+								locked = "true";
+						};
+						new InteriorInstance() {
+							position = "-352.634 -536.649 69.8225";
+							rotation = "0 0 1 176.471";
+							scale = "0.681088 0.403698 0.496752";
+							interiorFile = "drock7.dif";
+							showTerrainInside = "0";
+								team = "1";
+								locked = "true";
+						};
+						new InteriorInstance() {
+							position = "-358.369 -574.66 56.6466";
+							rotation = "0.0211066 -0.685136 0.72811 177.43";
+							scale = "1 1 1";
+							interiorFile = "drock6.dif";
+							showTerrainInside = "0";
+								team = "1";
+								locked = "true";
+						};
+						new InteriorInstance() {
+							position = "-359.162 -569.884 57.3251";
+							rotation = "0 0 1 176.471";
+							scale = "1 1 1";
+							interiorFile = "drock7.dif";
+							showTerrainInside = "0";
+								team = "1";
+								locked = "true";
+						};
+						new InteriorInstance() {
+							position = "-357.009 -517.324 80.499";
+							rotation = "0 0 -1 95.2935";
+							scale = "1 1 1";
+							interiorFile = "drock7.dif";
+							showTerrainInside = "0";
+								team = "1";
+								locked = "true";
+						};
+						new InteriorInstance() {
+							position = "-358.27 -515.255 79.7368";
+							rotation = "0 0 -1 95.2935";
+							scale = "1 1 1";
+							interiorFile = "drock6.dif";
+							showTerrainInside = "0";
+								team = "1";
+								locked = "true";
+						};
+						new InteriorInstance() {
+							position = "-356.025 -515.96 82.3585";
+							rotation = "-0.476341 0.879046 -0.0194442 175.89";
+							scale = "1 1 1";
+							interiorFile = "drock7.dif";
+							showTerrainInside = "0";
+								team = "1";
+								locked = "true";
+						};
+						new InteriorInstance() {
+							position = "-361.379 -535.846 85.1455";
+							rotation = "-0.189462 -0.209592 0.959258 86.6002";
+							scale = "1 1 1";
+							interiorFile = "drock6.dif";
+							showTerrainInside = "0";
+								team = "1";
+								locked = "true";
+						};
+						new InteriorInstance() {
+							position = "-298.401 -532.457 91.3696";
+							rotation = "0 0 1 151.261";
+							scale = "1.30309 1.36672 1.16977";
+							interiorFile = "drock8.dif";
+							showTerrainInside = "0";
+								team = "1";
+								locked = "true";
+						};
+						new InteriorInstance() {
+							position = "-338.235 -517.49 91.6595";
+							rotation = "-0.302241 0.0098171 0.953181 215.944";
+							scale = "0.233635 0.36212 1";
+							interiorFile = "dwall1.dif";
+							showTerrainInside = "0";
+								team = "1";
+								locked = "true";
+						};
+						new InteriorInstance() {
+							position = "-341.62 -527.107 84.6845";
+							rotation = "-0.180702 0.983407 -0.0160231 30.6193";
+							scale = "1 1 1";
+							interiorFile = "drock7.dif";
+							showTerrainInside = "0";
+								team = "1";
+								locked = "true";
+						};
+						new InteriorInstance() {
+							position = "-348.99 -524.013 94.6151";
+							rotation = "0.147889 -0.0555318 0.987444 132.318";
+							scale = "1 1 1";
+							interiorFile = "drock6.dif";
+							showTerrainInside = "0";
+								team = "1";
+								locked = "true";
+						};
+						new InteriorInstance() {
+							position = "-355.895 -525.893 94.035";
+							rotation = "0 0 1 176.471";
+							scale = "1 1 1";
+							interiorFile = "drock6.dif";
+							showTerrainInside = "0";
+								team = "1";
+								locked = "true";
+						};
+						new InteriorInstance() {
+							position = "-350.846 -537.166 92.9487";
+							rotation = "0.015305 -0.496822 0.867718 176.938";
+							scale = "1 1 1";
+							interiorFile = "drock6.dif";
+							showTerrainInside = "0";
+								team = "1";
+								locked = "true";
+						};
+						new InteriorInstance() {
+							position = "-350.754 -529.579 94.1857";
+							rotation = "0 0 1 176.471";
+							scale = "1 1 1";
+							interiorFile = "drock6.dif";
+							showTerrainInside = "0";
+								team = "1";
+								locked = "true";
+						};
+						new InteriorInstance() {
+							position = "-322.235 -517.217 90.456";
+							rotation = "-0.910748 0.216509 0.351656 114.295";
+							scale = "1 0.93047 1";
+							interiorFile = "drock8.dif";
+							showTerrainInside = "0";
+								team = "1";
+								locked = "true";
+						};
+						new InteriorInstance() {
+							position = "-358.162 -518.224 88.51";
+							rotation = "0 0 1 176.471";
+							scale = "1 1 1";
+							interiorFile = "drock7.dif";
+							showTerrainInside = "0";
+								team = "1";
+								locked = "true";
+						};
+					};
+				};
+				new SimGroup(Assets) {
+						powerCount = "1";
+
+					new Turret(Team1SentryTurret1) {
+						position = "-351.883 -566.097 74.0788";
+						rotation = "-0.0536261 0.0628311 -0.996582 93.8158";
+						scale = "1 1 1";
+						nameTag = "Outpost";
+						dataBlock = "SentryTurret";
+						lockCount = "0";
+						homingCount = "0";
+						initialBarrel = "SentryTurretBarrel";
+							name = "Outpost";
+							Target = "46";
+							team = "1";
+							lastProjectile = "27036";
+							locked = "true";
+					};
+					new StaticShape(Team1StationInventory3) {
+						position = "-344.721 -578.044 55.2406";
+						rotation = "0.0363425 -0.0439023 0.998375 176.554";
+						scale = "1 1 1";
+						nameTag = "Outpost";
+						dataBlock = "StationInventory";
+						lockCount = "0";
+						homingCount = "0";
+							name = "Outpost";
+							Trigger = "12108";
+							Target = "47";
+							team = "1";
+							locked = "true";
+					};
+					new StaticShape(Team1Base1Gen) {
+						position = "-359.966 -579.264 56.2728";
+						rotation = "0 0 -1 5.33893";
+						scale = "1 1 1";
+						nameTag = "Outpost";
+						dataBlock = "GeneratorLarge";
+						lockCount = "0";
+						homingCount = "0";
+							name = "Outpost";
+							missionTypesList = "Siege CTF";
+							Target = "48";
+							team = "1";
+							locked = "true";
+							repairedBy = "4334";
+					};
+				};
+			};
+		};
+		new SimGroup(Team2) {
+				powerCount = "0";
+
+			new SimGroup(spawnspheres) {
+					powerCount = "0";
+
+				new SpawnSphere(Team1SS) {
+					position = "-266.626 -63.8799 186.046";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "SpawnSphereMarker";
+					lockCount = "0";
+					homingCount = "0";
+					radius = "100";
+					sphereWeight = "100";
+					indoorWeight = "100";
+					outdoorWeight = "100";
+						missionTypesList = "CTF TeamHunters Siege";
+						locked = "true";
+				};
+				new SpawnSphere() {
+					position = "-22.8612 -17.107 91.2397";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "SpawnSphereMarker";
+					lockCount = "0";
+					homingCount = "0";
+					radius = "100";
+					sphereWeight = "80";
+					indoorWeight = "100";
+					outdoorWeight = "100";
+						missionTypesList = "Hunters TeamHunters Rabbit CnH";
+						locked = "true";
+				};
+			};
+			new SimGroup(Base0) {
+					powerCount = "1";
+
+				new SimGroup(Assets) {
+						powerCount = "1";
+
+					new Turret(BaseTurret) {
+						position = "-241.42 -182.411 168.182";
+						rotation = "0 0 1 179.336";
+						scale = "1 1 1";
+						nameTag = "Main";
+						dataBlock = "TurretBaseLarge";
+						lockCount = "0";
+						homingCount = "0";
+						initialBarrel = "PlasmaBarrelLarge";
+							damageTimeMS = "1391218";
+							name = "Main";
+							missionTypesList = "CTF Siege";
+							Target = "49";
+							team = "2";
+							lastProjectile = "14135";
+							lastDamagedByTeam = "2";
+							locked = "true";
+							lastDamagedBy = "12116";
+							originalBarrel = "PlasmaBarrelLarge";
+					};
+					new StaticShape(Team2StationInventory3) {
+						position = "-253.437 -50.8006 202.113";
+						rotation = "0 0 1 69.3277";
+						scale = "1 1 1";
+						nameTag = "Main";
+						dataBlock = "StationInventory";
+						lockCount = "0";
+						homingCount = "0";
+							name = "Main";
+							Trigger = "12118";
+							Target = "50";
+							team = "2";
+							locked = "true";
+					};
+					new StaticShape(Team2StationInventory1) {
+						position = "-283.309 -63.8181 202.135";
+						rotation = "0 0 -1 114.201";
+						scale = "1 1 1";
+						nameTag = "Main";
+						dataBlock = "StationInventory";
+						lockCount = "0";
+						homingCount = "0";
+							name = "Main";
+							Trigger = "12120";
+							Target = "51";
+							team = "2";
+							locked = "true";
+					};
+					new StaticShape(MainSensor) {
+						position = "-216.43 -256.005 121.991";
+						rotation = "1 0 0 0";
+						scale = "1 1 1";
+						nameTag = "Main";
+						dataBlock = "SensorLargePulse";
+						lockCount = "0";
+						homingCount = "0";
+							damageTimeMS = "1494171";
+							name = "Main";
+							missionTypesList = "CTF";
+							Target = "52";
+							team = "2";
+							lastDamagedByTeam = "2";
+							locked = "true";
+							lastDamagedBy = "11913";
+					};
+				};
+				new StaticShape(MainGenerator) {
+					position = "-276.114 -43.2517 202.1";
+					rotation = "0 0 1 205.119";
+					scale = "1 1 1";
+					nameTag = "Main";
+					dataBlock = "GeneratorLarge";
+					lockCount = "0";
+					homingCount = "0";
+						name = "Main";
+						missionTypesList = "CTF";
+						Target = "53";
+						team = "2";
+						locked = "true";
+				};
+				new SimGroup(FlagGroup) {
+						powerCount = "1";
+
+					new Item(ActualFlag) {
+						position = "-268.603 -57.2096 193.05";
+						rotation = "1 0 0 0";
+						scale = "1 1 1";
+						dataBlock = "FLAG";
+						lockCount = "0";
+						homingCount = "0";
+						collideable = "0";
+						static = "0";
+						rotate = "1";
+							WayPoint = "12433";
+							missionTypesList = "CTF";
+							originalPosition = "-268.603 -57.2096 193.047 1 0 0 0";
+							Target = "54";
+							team = "2";
+							isHome = "1";
+							locked = "true";
+							className = "FlagObj";
+					};
+					new StaticShape(FlagStand) {
+						position = "-268.63 -57.2692 192.767";
+						rotation = "0 0 1 76.2034";
+						scale = "1 1 1";
+						dataBlock = "InteriorFlagStand";
+						lockCount = "0";
+						homingCount = "0";
+							missionTypesList = "CTF";
+							Target = "-1";
+							team = "2";
+							locked = "true";
+					};
+				};
+				new SimGroup(Structures) {
+						powerCount = "1";
+
+					new InteriorInstance(Team2MainBase) {
+						position = "-268.513 -57.2419 132.145";
+						rotation = "0 0 1 21.1994";
+						scale = "1 1 1";
+						interiorFile = "stowr3.dif";
+						showTerrainInside = "0";
+							team = "2";
+							locked = "true";
+					};
+					new SimGroup(BaseCollar) {
+							powerCount = "1";
+
+						new InteriorInstance() {
+							position = "-261.594 -39.5066 173.166";
+							rotation = "0 0 1 111.153";
+							scale = "1.33947 0.601782 1";
+							interiorFile = "sbrdg5.dif";
+							showTerrainInside = "0";
+								team = "2";
+								locked = "true";
+						};
+						new InteriorInstance() {
+							position = "-275.429 -75.2523 173.129";
+							rotation = "0 0 1 111.153";
+							scale = "1.33947 0.601782 1";
+							interiorFile = "sbrdg5.dif";
+							showTerrainInside = "0";
+								team = "2";
+								locked = "true";
+						};
+						new InteriorInstance() {
+							position = "-286.47 -50.3371 173.156";
+							rotation = "0 0 1 201.107";
+							scale = "1.33947 0.601782 1";
+							interiorFile = "sbrdg5.dif";
+							showTerrainInside = "0";
+								team = "2";
+								locked = "true";
+						};
+						new InteriorInstance() {
+							position = "-251.461 -63.8776 173.156";
+							rotation = "0 0 1 201.107";
+							scale = "1.33947 0.601782 1";
+							interiorFile = "sbrdg5.dif";
+							showTerrainInside = "0";
+								team = "2";
+								locked = "true";
+						};
+					};
+					new SimGroup(TurretTower) {
+							powerCount = "1";
+
+						new InteriorInstance() {
+							position = "-27.2456 -615.187 76.51";
+							rotation = "0 0 1 114.019";
+							scale = "1.1025 1.15207 2.17227";
+							interiorFile = "smisc4.dif";
+							showTerrainInside = "0";
+								team = "2";
+								locked = "true";
+						};
+						new InteriorInstance() {
+							position = "-27.5962 -615.133 140.688";
+							rotation = "0 0 1 114.019";
+							scale = "1 1 1";
+							interiorFile = "smisc3.dif";
+							showTerrainInside = "0";
+								team = "2";
+								locked = "true";
+						};
+						new InteriorInstance() {
+							position = "-27.3246 -615.15 133.108";
+							rotation = "0 0 1 114.019";
+							scale = "1.1025 1.15207 1";
+							interiorFile = "smisc4.dif";
+							showTerrainInside = "0";
+								team = "2";
+								locked = "true";
+						};
+						new InteriorInstance() {
+							position = "-27.3036 -615.144 125.211";
+							rotation = "0 0 1 114.019";
+							scale = "1.1025 1.15207 1";
+							interiorFile = "smisc4.dif";
+							showTerrainInside = "0";
+								team = "2";
+								locked = "true";
+						};
+						new InteriorInstance() {
+							position = "-27.3214 -615.139 117.35";
+							rotation = "0 0 1 114.019";
+							scale = "1.1025 1.15207 1";
+							interiorFile = "smisc4.dif";
+							showTerrainInside = "0";
+								team = "2";
+								locked = "true";
+						};
+						new InteriorInstance() {
+							position = "-27.3361 -615.128 109.509";
+							rotation = "0 0 1 114.019";
+							scale = "1.1025 1.15207 1";
+							interiorFile = "smisc4.dif";
+							showTerrainInside = "0";
+								team = "2";
+								locked = "true";
+						};
+						new InteriorInstance() {
+							position = "-27.3115 -615.143 101.617";
+							rotation = "0 0 1 114.019";
+							scale = "1.1025 1.15207 1";
+							interiorFile = "smisc4.dif";
+							showTerrainInside = "0";
+								team = "2";
+								locked = "true";
+						};
+						new InteriorInstance() {
+							position = "-27.2744 -615.135 93.7794";
+							rotation = "0 0 1 114.019";
+							scale = "1.1025 1.15207 1";
+							interiorFile = "smisc4.dif";
+							showTerrainInside = "0";
+								team = "2";
+								locked = "true";
+						};
+					};
+				};
+				new StaticShape(SiegeFlipFlop) {
+					position = "-268.574 -56.9823 192.15";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "FlipFlop";
+					lockCount = "0";
+					homingCount = "0";
+						name = "Command Base";
+						missionTypesList = "Siege";
+						Target = "55";
+						team = "2";
+						Projector = "0";
+						needsobjective = "1";
+						locked = "true";
+				};
+			};
+			new SimGroup(Waypoints) {
+					powerCount = "0";
+
+				new WayPoint(Team2Base1) {
+					position = "239.988 -111.125 80.3622";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "WayPointMarker";
+					lockCount = "0";
+					homingCount = "0";
+					name = "ForceField Base";
+					team = "2";
+						missionTypesList = "CTF TeamHunters";
+						locked = "true";
+				};
+			};
+			new SimGroup(MiddleTurrets) {
+					providesPower = "1";
+					powerCount = "1";
+
+				new Turret(MiddleTurret3) {
+					position = "-207.626 -435.271 89.8624";
+					rotation = "0 -1 0 89.9544";
+					scale = "1 1 1";
+					nameTag = "Center";
+					dataBlock = "SentryTurret";
+					lockCount = "0";
+					homingCount = "0";
+					initialBarrel = "SentryTurretBarrel";
+						missionTypesList = "CTF";
+						main = "Center";
+						Target = "56";
+						team = "2";
+						lastProjectile = "14013";
+						locked = "true";
+				};
+				new Turret(MiddleTurret4) {
+					position = "-203.398 -431.114 89.9637";
+					rotation = "-1 0 0 89.9544";
+					scale = "1 1 1";
+					nameTag = "Center";
+					dataBlock = "SentryTurret";
+					lockCount = "0";
+					homingCount = "0";
+					initialBarrel = "SentryTurretBarrel";
+						name = "Center";
+						missionTypesList = "CTF";
+						Target = "57";
+						team = "2";
+						lastProjectile = "14038";
+						locked = "true";
+				};
+			};
+			new SimGroup(SiegeTower) {
+					powerCount = "0";
+
+				new ForceFieldBare() {
+					position = "-221.517 -696.23 269.154";
+					rotation = "0 0 1 89.9544";
+					scale = "1.97726 11.9772 9.01979";
+					dataBlock = "defaultTeamSlowFieldBare";
+					lockCount = "0";
+					homingCount = "0";
+						Target = "58";
+						team = "2";
+						locked = "true";
+				};
+				new ForceFieldBare() {
+					position = "-223.451 -698.2 269.115";
+					rotation = "1 0 0 0";
+					scale = "1.97726 11.9772 9.01979";
+					dataBlock = "defaultTeamSlowFieldBare";
+					lockCount = "0";
+					homingCount = "0";
+						Target = "59";
+						team = "2";
+						locked = "true";
+				};
+				new ForceFieldBare() {
+					position = "-211.47 -696.21 269.157";
+					rotation = "1 0 0 0";
+					scale = "1.97726 11.9772 9.01979";
+					dataBlock = "defaultTeamSlowFieldBare";
+					lockCount = "0";
+					homingCount = "0";
+						Target = "60";
+						team = "2";
+						locked = "true";
+				};
+				new ForceFieldBare() {
+					position = "-223.451 -684.227 269.112";
+					rotation = "0 0 1 89.9544";
+					scale = "1.97726 11.9772 9.01979";
+					dataBlock = "defaultTeamSlowFieldBare";
+					lockCount = "0";
+					homingCount = "0";
+						Target = "61";
+						team = "2";
+						locked = "true";
+				};
+				new SimGroup(SiegeTowerFF) {
+						powerCount = "0";
+
+					new ForceFieldBare() {
+						position = "230.404 -115.074 87.576";
+						rotation = "0 1 0 93.3923";
+						scale = "5.73405 10.9223 0.686375";
+						dataBlock = "defaultTeamSlowFieldBare";
+						lockCount = "0";
+						homingCount = "0";
+							Target = "62";
+							team = "2";
+					};
+					new ForceFieldBare() {
+						position = "254.707 -114.991 91.8553";
+						rotation = "-0.024704 0.99878 -0.0427509 136.411";
+						scale = "5.68928 11.1827 0.686375";
+						dataBlock = "defaultTeamSlowFieldBare";
+						lockCount = "0";
+						homingCount = "0";
+							Target = "63";
+							team = "2";
+					};
+					new ForceFieldBare() {
+						position = "222.678 -115.393 78.4403";
+						rotation = "0 1 0 6.30252";
+						scale = "1 9.16759 7.99828";
+						dataBlock = "defaultTeamSlowFieldBare";
+						lockCount = "0";
+						homingCount = "0";
+							Target = "64";
+							team = "2";
+							locked = "true";
+					};
+					new StaticShape(FirstSiegeGen) {
+						position = "-216.407 -689.439 268.915";
+						rotation = "1 0 0 0";
+						scale = "1 1 1";
+						nameTag = "Beta";
+						dataBlock = "GeneratorLarge";
+						lockCount = "0";
+						homingCount = "0";
+							wasDisabled = "1";
+							name = "Beta";
+							missionTypesList = "Siege";
+							Target = "65";
+							team = "2";
+							locked = "true";
+					};
+				};
+				new StaticShape(NeededGen) {
+					position = "-204.488 -679.883 286.249";
+					rotation = "1 0 0 0";
+					scale = "0.289398 0.23397 0.173922";
+					dataBlock = "GeneratorLarge";
+					lockCount = "0";
+					homingCount = "0";
+						wasDisabled = "1";
+						missionTypesList = "nothing";
+						Target = "66";
+						team = "2";
+						locked = "true";
+				};
+			};
+			new SimGroup(AIObjectives) {
+					powerCount = "0";
+
+				new AIObjective(AIORepairObject) {
+					position = "240.079 -60.4126 51.5266";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "AIObjectiveMarker";
+					lockCount = "0";
+					homingCount = "0";
+					description = "Repair the StationInventory";
+					targetObject = "Team2StationInventory2";
+					targetClientId = "-1";
+					targetObjectId = "12227";
+					location = "240.079 -60.4126 51.5266";
+					weightLevel1 = "2900";
+					weightLevel2 = "1400";
+					weightLevel3 = "0";
+					weightLevel4 = "0";
+					offense = "1";
+					defense = "0";
+					desiredEquipment = "RepairPack";
+					buyEquipmentSet = "MediumRepairSet";
+					issuedByHuman = "0";
+					issuedByClientId = "-1";
+					forceClientId = "-1";
+					locked = "1";
+						missionTypesList = "CTF Siege TeamHunters";
+						team = "2";
+						isInvalid = "0";
+				};
+				new AIObjective(AIORepairObject) {
+					position = "-253.437 -50.8006 203.679";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "AIObjectiveMarker";
+					lockCount = "0";
+					homingCount = "0";
+					description = "Repair the StationInventory";
+					targetObject = "Team2StationInventory3";
+					targetClientId = "-1";
+					targetObjectId = "12117";
+					location = "-253.437 -50.8006 203.679";
+					weightLevel1 = "2900";
+					weightLevel2 = "1400";
+					weightLevel3 = "0";
+					weightLevel4 = "0";
+					offense = "1";
+					defense = "0";
+					desiredEquipment = "RepairPack";
+					buyEquipmentSet = "LightRepairSet";
+					issuedByHuman = "0";
+					issuedByClientId = "-1";
+					forceClientId = "-1";
+					locked = "1";
+						missionTypesList = "CTF Siege TeamHunters";
+						team = "2";
+						isInvalid = "0";
+				};
+				new AIObjective(AIORepairObject) {
+					position = "-283.309 -63.8181 203.701";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "AIObjectiveMarker";
+					lockCount = "0";
+					homingCount = "0";
+					description = "Repair the StationInventory";
+					targetObject = "Team2StationInventory1";
+					targetClientId = "-1";
+					targetObjectId = "12119";
+					location = "-283.309 -63.8181 203.701";
+					weightLevel1 = "2900";
+					weightLevel2 = "1400";
+					weightLevel3 = "0";
+					weightLevel4 = "0";
+					offense = "0";
+					defense = "1";
+					desiredEquipment = "RepairPack";
+					buyEquipmentSet = "LightRepairSet";
+					issuedByHuman = "0";
+					issuedByClientId = "-1";
+					forceClientId = "-1";
+					locked = "1";
+						missionTypesList = "CTF Siege TeamHunters";
+						team = "2";
+						isInvalid = "0";
+				};
+				new AIObjective(AIORepairObject) {
+					position = "246.597 -72.9283 68.4769";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "AIObjectiveMarker";
+					lockCount = "0";
+					homingCount = "0";
+					description = "Repair the SentryTurret";
+					targetObject = "Team2SentryTurret1";
+					targetClientId = "-1";
+					targetObjectId = "12230";
+					location = "246.597 -72.9283 68.4769";
+					weightLevel1 = "2900";
+					weightLevel2 = "1400";
+					weightLevel3 = "0";
+					weightLevel4 = "0";
+					offense = "1";
+					defense = "0";
+					desiredEquipment = "RepairPack";
+					buyEquipmentSet = "LightRepairSet";
+					issuedByHuman = "0";
+					issuedByClientId = "-1";
+					forceClientId = "-1";
+					locked = "1";
+						missionTypesList = "CTF";
+						team = "2";
+						isInvalid = "0";
+				};
+				new AIObjective(AIODefendLocation) {
+					position = "238.03 -88.4069 56.2966";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "AIObjectiveMarker";
+					lockCount = "0";
+					homingCount = "0";
+					description = "Defend the GeneratorLarge";
+					targetObject = "SecondSiegeGen";
+					targetClientId = "-1";
+					targetObjectId = "4676";
+					location = "238.03 -88.4069 56.2966";
+					weightLevel1 = "4100";
+					weightLevel2 = "3100";
+					weightLevel3 = "0";
+					weightLevel4 = "0";
+					offense = "1";
+					defense = "0";
+					desiredEquipment = "ShieldPack";
+					buyEquipmentSet = "MediumShieldSet";
+					issuedByHuman = "0";
+					issuedByClientId = "-1";
+					forceClientId = "-1";
+					locked = "1";
+						clientLevel2 = "4348";
+						team = "2";
+						clientLevel1 = "4336";
+						isInvalid = "0";
+						gameType = "Siege";
+				};
+				new AIObjective(AIODefendLocation) {
+					position = "-273.374 -54.3823 194.417";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "AIObjectiveMarker";
+					lockCount = "0";
+					homingCount = "0";
+					description = "Defend the FlipFlop";
+					targetObject = "SiegeFlipFlop";
+					targetClientId = "-1";
+					targetObjectId = "4631";
+					location = "-273.374 -54.3823 194.417";
+					weightLevel1 = "3900";
+					weightLevel2 = "2000";
+					weightLevel3 = "0";
+					weightLevel4 = "0";
+					offense = "0";
+					defense = "1";
+					desiredEquipment = "ShieldPack Plasma PlasmaAmmo";
+					buyEquipmentSet = "HeavyShieldSet";
+					issuedByHuman = "0";
+					issuedByClientId = "-1";
+					forceClientId = "-1";
+					locked = "1";
+						clientLevel2 = "4332";
+						team = "2";
+						clientLevel1 = "4340";
+						isInvalid = "0";
+						clientLevel3 = "4360";
+						gameType = "Siege";
+				};
+				new AIObjective(AIOTouchObject) {
+					position = "-268.574 -56.9823 194.417";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "AIObjectiveMarker";
+					lockCount = "0";
+					homingCount = "0";
+					description = "Capture the SiegeFlipFlop";
+					mode = "TouchFlipFlop";
+					targetObject = "SiegeFlipFlop";
+					targetClientId = "-1";
+					targetObjectId = "4631";
+					location = "-268.574 -56.9823 194.417";
+					weightLevel1 = "3850";
+					weightLevel2 = "0";
+					weightLevel3 = "0";
+					weightLevel4 = "0";
+					offense = "1";
+					defense = "0";
+					desiredEquipment = "Light EnergyPack";
+					buyEquipmentSet = "LightEnergyDefault";
+					issuedByHuman = "0";
+					issuedByClientId = "-1";
+					forceClientId = "-1";
+					locked = "1";
+						team = "2";
+						isInvalid = "0";
+						gameType = "Siege";
+				};
+				new AIObjective(AIODefendLocation) {
+					position = "30.2078 -613.501 125.364";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "AIObjectiveMarker";
+					lockCount = "0";
+					homingCount = "0";
+					description = "Defend the FlipFlop";
+					targetObject = "Base2FlipFlop";
+					targetClientId = "-1";
+					targetObjectId = "4696";
+					location = "30.2078 -613.501 125.364";
+					weightLevel1 = "3900";
+					weightLevel2 = "2500";
+					weightLevel3 = "0";
+					weightLevel4 = "0";
+					offense = "0";
+					defense = "1";
+					desiredEquipment = "ShieldPack Plasma PlasmaAmmo";
+					buyEquipmentSet = "HeavyShieldSet";
+					issuedByHuman = "0";
+					issuedByClientId = "-1";
+					forceClientId = "-1";
+					locked = "1";
+						team = "2";
+						isInvalid = "0";
+						gameType = "CnH";
+				};
+				new AIObjective(AIOTouchObject) {
+					position = "30.2078 -613.501 125.364";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "AIObjectiveMarker";
+					lockCount = "0";
+					homingCount = "0";
+					description = "Capture the Base2FlipFlop";
+					mode = "TouchFlipFlop";
+					targetObject = "Base2FlipFlop";
+					targetClientId = "-1";
+					targetObjectId = "4696";
+					location = "30.2078 -613.501 125.364";
+					weightLevel1 = "3850";
+					weightLevel2 = "2500";
+					weightLevel3 = "0";
+					weightLevel4 = "0";
+					offense = "1";
+					defense = "0";
+					desiredEquipment = "Light EnergyPack";
+					buyEquipmentSet = "LightEnergyDefault";
+					issuedByHuman = "0";
+					issuedByClientId = "-1";
+					forceClientId = "-1";
+					locked = "1";
+						team = "2";
+						isInvalid = "0";
+						gameType = "CnH";
+				};
+				new AIObjective(AIODefendLocation) {
+					position = "-268.499 -56.7215 179.499";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "AIObjectiveMarker";
+					lockCount = "0";
+					homingCount = "0";
+					description = "Defend the FlipFlop";
+					targetObject = "Base1FlipFlop";
+					targetClientId = "-1";
+					targetObjectId = "4700";
+					location = "-268.499 -56.7215 179.499";
+					weightLevel1 = "3900";
+					weightLevel2 = "2000";
+					weightLevel3 = "0";
+					weightLevel4 = "0";
+					offense = "0";
+					defense = "1";
+					desiredEquipment = "ShieldPack Plasma PlasmaAmmo";
+					buyEquipmentSet = "HeavyShieldSet";
+					issuedByHuman = "0";
+					issuedByClientId = "-1";
+					forceClientId = "-1";
+					locked = "1";
+						team = "2";
+						isInvalid = "0";
+						gameType = "CnH";
+				};
+				new AIObjective(AIOTouchObject) {
+					position = "-268.499 -56.7215 179.499";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "AIObjectiveMarker";
+					lockCount = "0";
+					homingCount = "0";
+					description = "Capture the Base1FlipFlop";
+					mode = "TouchFlipFlop";
+					targetObject = "Base1FlipFlop";
+					targetClientId = "-1";
+					targetObjectId = "4700";
+					location = "-268.499 -56.7215 179.499";
+					weightLevel1 = "3850";
+					weightLevel2 = "2000";
+					weightLevel3 = "0";
+					weightLevel4 = "0";
+					offense = "1";
+					defense = "0";
+					desiredEquipment = "Light EnergyPack";
+					buyEquipmentSet = "LightEnergyDefault";
+					issuedByHuman = "0";
+					issuedByClientId = "-1";
+					forceClientId = "-1";
+					locked = "1";
+						team = "2";
+						isInvalid = "0";
+						gameType = "CnH";
+				};
+				new AIObjective(AIODefendLocation) {
+					position = "-239.985 -350.472 228.57";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "AIObjectiveMarker";
+					lockCount = "0";
+					homingCount = "0";
+					description = "Defend the FlipFlop";
+					targetObject = "CenterFlipFlop";
+					targetClientId = "-1";
+					targetObjectId = "4703";
+					location = "-239.985 -350.472 228.57";
+					weightLevel1 = "3900";
+					weightLevel2 = "500";
+					weightLevel3 = "0";
+					weightLevel4 = "0";
+					offense = "0";
+					defense = "1";
+					desiredEquipment = "ShieldPack Plasma PlasmaAmmo";
+					buyEquipmentSet = "MediumShieldSet";
+					issuedByHuman = "0";
+					issuedByClientId = "-1";
+					forceClientId = "-1";
+					locked = "1";
+						team = "2";
+						isInvalid = "0";
+						gameType = "CnH";
+				};
+				new AIObjective(AIOTouchObject) {
+					position = "-239.985 -350.472 228.57";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "AIObjectiveMarker";
+					lockCount = "0";
+					homingCount = "0";
+					description = "Capture the CenterFlipFlop";
+					mode = "TouchFlipFlop";
+					targetObject = "CenterFlipFlop";
+					targetClientId = "-1";
+					targetObjectId = "4703";
+					location = "-239.985 -350.472 228.57";
+					weightLevel1 = "3850";
+					weightLevel2 = "2000";
+					weightLevel3 = "0";
+					weightLevel4 = "0";
+					offense = "1";
+					defense = "0";
+					desiredEquipment = "Light EnergyPack";
+					buyEquipmentSet = "LightEnergyDefault";
+					issuedByHuman = "0";
+					issuedByClientId = "-1";
+					forceClientId = "-1";
+					locked = "1";
+						team = "2";
+						isInvalid = "0";
+						gameType = "CnH";
+				};
+				new AIObjective(AIOTouchObject) {
+					position = "273.239 -418.92 88.1692";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "AIObjectiveMarker";
+					lockCount = "0";
+					homingCount = "0";
+					description = "Capture the LowFlipFlop";
+					mode = "TouchFlipFlop";
+					targetObject = "LowFlipFlop";
+					targetClientId = "-1";
+					targetObjectId = "4712";
+					location = "273.239 -418.92 88.1692";
+					weightLevel1 = "3850";
+					weightLevel2 = "2000";
+					weightLevel3 = "0";
+					weightLevel4 = "0";
+					offense = "1";
+					defense = "0";
+					desiredEquipment = "Light EnergyPack";
+					buyEquipmentSet = "LightEnergyDefault";
+					issuedByHuman = "0";
+					issuedByClientId = "-1";
+					forceClientId = "-1";
+					locked = "1";
+						team = "2";
+						isInvalid = "0";
+						gameType = "CnH";
+				};
+				new AIObjective(AIOTouchObject) {
+					position = "-216.877 -691.348 270.323";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "AIObjectiveMarker";
+					lockCount = "0";
+					homingCount = "0";
+					description = "Capture the HighFlipFlop";
+					mode = "TouchFlipFlop";
+					targetObject = "HighFlipFlop";
+					targetClientId = "-1";
+					targetObjectId = "4707";
+					location = "-216.877 -691.348 270.323";
+					weightLevel1 = "3850";
+					weightLevel2 = "2000";
+					weightLevel3 = "0";
+					weightLevel4 = "0";
+					offense = "1";
+					defense = "0";
+					desiredEquipment = "Light EnergyPack";
+					buyEquipmentSet = "LightEnergyDefault";
+					issuedByHuman = "0";
+					issuedByClientId = "-1";
+					forceClientId = "-1";
+					locked = "1";
+						team = "2";
+						isInvalid = "0";
+						gameType = "CnH";
+				};
+				new AIObjective(AIOMortarObject) {
+					position = "-27.4724 -615.498 143.716";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "AIObjectiveMarker";
+					lockCount = "0";
+					homingCount = "0";
+					description = "Mortar the TurretBaseLarge";
+					targetObject = "BaseTurret";
+					targetClientId = "-1";
+					targetObjectId = "12116";
+					location = "-27.4724 -615.498 143.716";
+					weightLevel1 = "3400";
+					weightLevel2 = "1000";
+					weightLevel3 = "0";
+					weightLevel4 = "0";
+					offense = "1";
+					defense = "0";
+					equipment = "Mortar MortarAmmo";
+					buyEquipmentSet = "HeavyAmmoSet";
+					issuedByHuman = "0";
+					issuedByClientId = "-1";
+					forceClientId = "-1";
+					locked = "1";
+						team = "2";
+						isInvalid = "0";
+						gameType = "CTF";
+				};
+				new AIObjective(AIOTouchObject) {
+					position = "30.1804 -613.523 139.617";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "AIObjectiveMarker";
+					lockCount = "0";
+					homingCount = "0";
+					description = "Grab the enemy flag";
+					mode = "FlagGrab";
+					targetObject = "ActualFlag";
+					targetClientId = "-1";
+					targetObjectId = "12124";
+					location = "30.1804 -613.523 139.617";
+					weightLevel1 = "6850";
+					weightLevel2 = "2000";
+					weightLevel3 = "0";
+					weightLevel4 = "0";
+					offense = "1";
+					defense = "0";
+					desiredEquipment = "Light EnergyPack";
+					buyEquipmentSet = "LightEnergyDefault";
+					issuedByHuman = "0";
+					issuedByClientId = "-1";
+					forceClientId = "-1";
+					locked = "1";
+						team = "2";
+						isInvalid = "0";
+						gameType = "CTF";
+				};
+				new AIObjective(AIOTouchObject) {
+					position = "30.1804 -613.523 139.617";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "AIObjectiveMarker";
+					lockCount = "0";
+					homingCount = "0";
+					description = "Capture the flag!";
+					mode = "FlagCapture";
+					targetObject = "ActualFlag";
+					targetClientId = "-1";
+					targetObjectId = "12124";
+					location = "30.1804 -613.523 139.617";
+					weightLevel1 = "6000";
+					weightLevel2 = "4000";
+					weightLevel3 = "0";
+					weightLevel4 = "0";
+					offense = "1";
+					defense = "1";
+					issuedByHuman = "0";
+					issuedByClientId = "-1";
+					forceClientId = "-1";
+					locked = "1";
+						team = "2";
+						isInvalid = "0";
+						gameType = "CTF";
+				};
+				new AIObjective(AIOTouchObject) {
+					position = "30.1794 -613.557 139.617";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "AIObjectiveMarker";
+					lockCount = "0";
+					homingCount = "0";
+					description = "Grab the dropped enemy flag";
+					mode = "FlagDropped";
+					targetObject = "ActualFlag";
+					targetClientId = "-1";
+					targetObjectId = "12124";
+					location = "30.1794 -613.557 139.617";
+					weightLevel1 = "6001";
+					weightLevel2 = "4100";
+					weightLevel3 = "0";
+					weightLevel4 = "0";
+					offense = "1";
+					defense = "1";
+					issuedByHuman = "0";
+					issuedByClientId = "-1";
+					forceClientId = "-1";
+					locked = "1";
+						team = "2";
+						isInvalid = "0";
+						gameType = "CTF";
+				};
+				new AIObjective(AIOTouchObject) {
+					position = "-268.603 -57.2096 194.282";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "AIObjectiveMarker";
+					lockCount = "0";
+					homingCount = "0";
+					description = "Return our flag";
+					mode = "FlagDropped";
+					targetObject = "ActualFlag";
+					targetClientId = "-1";
+					targetObjectId = "12124";
+					location = "-268.603 -57.2096 194.282";
+					weightLevel1 = "6001";
+					weightLevel2 = "4100";
+					weightLevel3 = "0";
+					weightLevel4 = "0";
+					offense = "1";
+					defense = "1";
+					issuedByHuman = "0";
+					issuedByClientId = "-1";
+					forceClientId = "-1";
+					locked = "1";
+						team = "2";
+						isInvalid = "0";
+						gameType = "CTF";
+				};
+				new AIObjective(AIOAttackPlayer) {
+					position = "-268.603 -57.2096 194.282";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "AIObjectiveMarker";
+					lockCount = "0";
+					homingCount = "0";
+					description = "Kill the enemy flag carrier";
+					mode = "FlagCarrier";
+					targetObject = "ActualFlag";
+					targetClientId = "-1";
+					targetObjectId = "12124";
+					location = "-268.603 -57.2096 194.282";
+					weightLevel1 = "4800";
+					weightLevel2 = "4800";
+					weightLevel3 = "0";
+					weightLevel4 = "0";
+					offense = "1";
+					defense = "0";
+					desiredEquipment = "Light EnergyPack";
+					buyEquipmentSet = "LightEnergySniper";
+					issuedByHuman = "0";
+					issuedByClientId = "-1";
+					forceClientId = "-1";
+					locked = "1";
+						team = "2";
+						isInvalid = "0";
+						gameType = "CTF";
+				};
+				new AIObjective(AIODefendLocation) {
+					position = "-268.603 -66.4096 194.282";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "AIObjectiveMarker";
+					lockCount = "0";
+					homingCount = "0";
+					description = "Defend our flag";
+					targetObject = "ActualFlag";
+					targetClientId = "-1";
+					targetObjectId = "12124";
+					location = "-268.603 -66.4096 194.282";
+					weightLevel1 = "1500";
+					weightLevel2 = "1000";
+					weightLevel3 = "0";
+					weightLevel4 = "0";
+					offense = "0";
+					defense = "1";
+					desiredEquipment = "ShieldPack Plasma PlasmaAmmo";
+					buyEquipmentSet = "HeavyShieldSet";
+					chat = "ChatSelfDefendFlag DefendBase";
+					issuedByHuman = "0";
+					issuedByClientId = "-1";
+					forceClientId = "-1";
+					locked = "1";
+						team = "2";
+						isInvalid = "0";
+						gameType = "CTF";
+				};
+				new AIObjective(AIORepairObject) {
+					position = "-241.188 -183.122 169.886";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "AIObjectiveMarker";
+					lockCount = "0";
+					homingCount = "0";
+					description = "Repair the TurretBaseLarge";
+					targetObject = "BaseTurret";
+					targetClientId = "-1";
+					targetObjectId = "12116";
+					location = "-241.188 -183.122 169.886";
+					weightLevel1 = "3100";
+					weightLevel2 = "1000";
+					weightLevel3 = "0";
+					weightLevel4 = "0";
+					offense = "0";
+					defense = "1";
+					equipment = "RepairPack";
+					buyEquipmentSet = "MediumRepairSet";
+					issuedByHuman = "0";
+					issuedByClientId = "-1";
+					forceClientId = "-1";
+					locked = "1";
+						team = "2";
+						isInvalid = "0";
+						gameType = "CTF";
+				};
+				new AIObjective(AIOAttackObject) {
+					position = "-344.446 -548.842 61.6162";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "AIObjectiveMarker";
+					lockCount = "0";
+					homingCount = "0";
+					description = "Attack the GeneratorLarge";
+					targetObject = "Team1FFGen";
+					targetClientId = "-1";
+					targetObjectId = "12069";
+					location = "-344.446 -548.842 61.6162";
+					weightLevel1 = "3100";
+					weightLevel2 = "1600";
+					weightLevel3 = "1000";
+					weightLevel4 = "0";
+					offense = "1";
+					defense = "1";
+					desiredEquipment = "ShieldPack";
+					buyEquipmentSet = "HeavyAmmoSet";
+					issuedByHuman = "0";
+					issuedByClientId = "-1";
+					forceClientId = "-1";
+					locked = "1";
+						team = "2";
+						isInvalid = "0";
+						gameType = "CTF";
+				};
+				new AIObjective(AIORepairObject) {
+					position = "-275.531 -41.3837 203.543";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "AIObjectiveMarker";
+					lockCount = "0";
+					homingCount = "0";
+					description = "Repair the GeneratorLarge";
+					targetObject = "MainGenerator";
+					targetClientId = "-1";
+					targetObjectId = "12122";
+					location = "-275.531 -41.3837 203.543";
+					weightLevel1 = "5200";
+					weightLevel2 = "3600";
+					weightLevel3 = "0";
+					weightLevel4 = "0";
+					offense = "0";
+					defense = "1";
+					equipment = "RepairPack";
+					buyEquipmentSet = "MediumRepairSet";
+					issuedByHuman = "0";
+					issuedByClientId = "-1";
+					forceClientId = "-1";
+					locked = "1";
+						team = "2";
+						isInvalid = "0";
+						gameType = "CTF";
+				};
+				new AIObjective(AIODefendLocation) {
+					position = "-279.331 -55.1837 203.543";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "AIObjectiveMarker";
+					lockCount = "0";
+					homingCount = "0";
+					description = "Defend the GeneratorLarge";
+					targetObject = "MainGenerator";
+					targetClientId = "-1";
+					targetObjectId = "12122";
+					location = "-279.331 -55.1837 203.543";
+					weightLevel1 = "3100";
+					weightLevel2 = "1500";
+					weightLevel3 = "0";
+					weightLevel4 = "0";
+					offense = "0";
+					defense = "1";
+					desiredEquipment = "ShieldPack Plasma PlasmaAmmo";
+					buyEquipmentSet = "HeavyShieldSet";
+					issuedByHuman = "0";
+					issuedByClientId = "-1";
+					forceClientId = "-1";
+					locked = "1";
+						team = "2";
+						isInvalid = "0";
+						gameType = "CTF";
+				};
+				new AIObjective(AIORepairObject) {
+					position = "254.378 -85.0003 56.8008";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "AIObjectiveMarker";
+					lockCount = "0";
+					homingCount = "0";
+					description = "Repair the GeneratorLarge";
+					targetObject = "Team2FFGen";
+					targetClientId = "-1";
+					targetObjectId = "12218";
+					location = "254.378 -85.0003 56.8008";
+					weightLevel1 = "5200";
+					weightLevel2 = "3600";
+					weightLevel3 = "0";
+					weightLevel4 = "0";
+					offense = "0";
+					defense = "1";
+					equipment = "RepairPack";
+					buyEquipmentSet = "MediumRepairSet";
+					issuedByHuman = "0";
+					issuedByClientId = "-1";
+					forceClientId = "-1";
+					locked = "1";
+						team = "2";
+						isInvalid = "0";
+						gameType = "CTF";
+				};
+				new AIObjective(AIODefendLocation) {
+					position = "254.378 -85.0003 56.8008";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "AIObjectiveMarker";
+					lockCount = "0";
+					homingCount = "0";
+					description = "Defend the GeneratorLarge";
+					targetObject = "Team2FFGen";
+					targetClientId = "-1";
+					targetObjectId = "12218";
+					location = "254.378 -85.0003 56.8008";
+					weightLevel1 = "3100";
+					weightLevel2 = "1500";
+					weightLevel3 = "0";
+					weightLevel4 = "0";
+					offense = "0";
+					defense = "1";
+					desiredEquipment = "ShieldPack Plasma PlasmaAmmo";
+					buyEquipmentSet = "HeavyShieldSet";
+					issuedByHuman = "0";
+					issuedByClientId = "-1";
+					forceClientId = "-1";
+					locked = "1";
+						team = "2";
+						isInvalid = "0";
+						gameType = "CTF";
+				};
+				new AIObjective(AIORepairObject) {
+					position = "255.612 -60.29 52.4464";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "AIObjectiveMarker";
+					lockCount = "0";
+					homingCount = "0";
+					description = "Repair the GeneratorLarge";
+					targetObject = "Team2Base1Gen";
+					targetClientId = "-1";
+					targetObjectId = "4628";
+					location = "255.612 -60.29 52.4464";
+					weightLevel1 = "3100";
+					weightLevel2 = "1600";
+					weightLevel3 = "0";
+					weightLevel4 = "0";
+					offense = "0";
+					defense = "1";
+					desiredEquipment = "RepairPack";
+					buyEquipmentSet = "MediumRepairSet";
+					issuedByHuman = "0";
+					issuedByClientId = "-1";
+					forceClientId = "-1";
+					locked = "1";
+						group = "4674";
+						team = "2";
+						isInvalid = "0";
+						gameType = "CTF Siege";
+				};
+				new AIObjective(AIORepairObject) {
+					position = "-351.879 -566.087 73.7466";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "AIObjectiveMarker";
+					lockCount = "0";
+					homingCount = "0";
+					description = "Repair the SentryTurret";
+					targetObject = "Team1SentryTurret1";
+					targetClientId = "-1";
+					targetObjectId = "12106";
+					location = "-351.879 -566.087 73.7466";
+					weightLevel1 = "3100";
+					weightLevel2 = "1000";
+					weightLevel3 = "0";
+					weightLevel4 = "0";
+					offense = "0";
+					defense = "1";
+					equipment = "RepairPack";
+					buyEquipmentSet = "MediumRepairSet";
+					issuedByHuman = "0";
+					issuedByClientId = "-1";
+					forceClientId = "-1";
+					locked = "1";
+						missionTypesList = "CTF Siege TeamHunters";
+						team = "2";
+						isInvalid = "0";
+				};
+				new AIObjective(AIORepairObject) {
+					position = "-344.603 -578.178 56.7963";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "AIObjectiveMarker";
+					lockCount = "0";
+					homingCount = "0";
+					description = "Repair the StationInventory";
+					targetObject = "Team1StationInventory3";
+					targetClientId = "-1";
+					targetObjectId = "12107";
+					location = "-344.603 -578.178 56.7963";
+					weightLevel1 = "2900";
+					weightLevel2 = "1400";
+					weightLevel3 = "0";
+					weightLevel4 = "0";
+					offense = "0";
+					defense = "1";
+					equipment = "RepairPack";
+					buyEquipmentSet = "MediumRepairSet";
+					issuedByHuman = "0";
+					issuedByClientId = "-1";
+					forceClientId = "-1";
+					locked = "1";
+						missionTypesList = "CTF";
+						team = "2";
+						isInvalid = "0";
+				};
+				new SimGroup(MyObjectiveSet) {
+						clientLevel2 = "4356";
+						clientLevel1 = "4338";
+						powerCount = "0";
+
+					new AIObjective(AIODefendLocation) {
+						position = "28.0244 -599.532 81.3";
+						rotation = "1 0 0 0";
+						scale = "1 1 1";
+						dataBlock = "AIObjectiveMarker";
+						lockCount = "0";
+						homingCount = "0";
+						description = "Attack as Assasian";
+						targetObject = "Team1MainBase";
+						targetClientId = "-1";
+						targetObjectId = "11991";
+						location = "28.0244 -599.532 81.3";
+						weightLevel1 = "3000";
+						weightLevel2 = "1500";
+						weightLevel3 = "0";
+						weightLevel4 = "0";
+						offense = "1";
+						defense = "0";
+						equipment = "CloakPack ShockLance";
+						desiredEquipment = "CloackPack ShockLance Chaingun ChaingunAmmo Blaster TargetingLaser RepairKit FlashGrenade Mine";
+						chat = "ChatSelfAttack";
+						issuedByHuman = "0";
+						issuedByClientId = "-1";
+						forceClientId = "-1";
+						locked = "1";
+							group = "12199";
+							missionTypesList = "CTF";
+							team = "2";
+							isInvalid = "0";
+					};
+					new AIObjective(AIODefendLocation) {
+						position = "-262.843 -71.2986 213.697";
+						rotation = "1 0 0 0";
+						scale = "1 1 1";
+						dataBlock = "AIObjectiveMarker";
+						lockCount = "0";
+						homingCount = "0";
+						description = "Defend Base with Sniper";
+						targetObject = "Team2MainBase";
+						targetClientId = "-1";
+						targetObjectId = "12128";
+						location = "-262.843 -71.2986 213.697";
+						weightLevel1 = "3000";
+						weightLevel2 = "1500";
+						weightLevel3 = "0";
+						weightLevel4 = "0";
+						offense = "0";
+						defense = "1";
+						equipment = "SniperRifle";
+						buyEquipmentSet = "LightEnergySniper";
+						chat = "ChatSelfDefend";
+						issuedByHuman = "0";
+						issuedByClientId = "-1";
+						forceClientId = "-1";
+						locked = "1";
+							group = "12199";
+							missionTypesList = "CTF";
+							team = "2";
+							isInvalid = "0";
+					};
+					new AIObjective(AIODeployEquipment) {
+						position = "-277.5 -48.8699 192.766";
+						rotation = "1 0 0 0";
+						scale = "1 1 1";
+						dataBlock = "AIObjectiveMarker";
+						lockCount = "0";
+						homingCount = "0";
+						description = "Deploy indoor Turret";
+						targetObject = "-1";
+						targetClientId = "-1";
+						targetObjectId = "-1";
+						location = "-277.5 -48.8699 192.766";
+						weightLevel1 = "4100";
+						weightLevel2 = "0";
+						weightLevel3 = "0";
+						weightLevel4 = "0";
+						offense = "0";
+						defense = "1";
+						equipment = "TurretIndoorDeployable";
+						buyEquipmentSet = "MediumIndoorTurretSet";
+						chat = "ChatSelfSetupD";
+						issuedByHuman = "0";
+						issuedByClientId = "-1";
+						forceClientId = "-1";
+						locked = "1";
+							group = "12199";
+							missionTypesList = "CTF Siege";
+							team = "2";
+							isInvalid = "0";
+					};
+					new AIObjective(AIODeployEquipment) {
+						position = "-261.608 -76.5666 146.036";
+						rotation = "1 0 0 0";
+						scale = "1 1 1";
+						dataBlock = "AIObjectiveMarker";
+						lockCount = "0";
+						homingCount = "0";
+						description = "Deploy outdoor Turret";
+						targetObject = "-1";
+						targetClientId = "-1";
+						targetObjectId = "-1";
+						location = "-261.608 -76.5666 146.036";
+						weightLevel1 = "4100";
+						weightLevel2 = "0";
+						weightLevel3 = "0";
+						weightLevel4 = "0";
+						offense = "0";
+						defense = "1";
+						equipment = "TurretOutdoorDeployable";
+						buyEquipmentSet = "MediumOutdoorTurretSet";
+						chat = "ChatSelfSetupD";
+						issuedByHuman = "0";
+						issuedByClientId = "-1";
+						forceClientId = "-1";
+						locked = "1";
+							group = "12199";
+							missionTypesList = "CTF Siege";
+							team = "2";
+							isInvalid = "0";
+					};
+					new AIObjective(AIODeployEquipment) {
+						position = "-241.671 -354.895 162.053";
+						rotation = "1 0 0 0";
+						scale = "1 1 1";
+						dataBlock = "AIObjectiveMarker";
+						lockCount = "0";
+						homingCount = "0";
+						description = "Deploy indoor Turret";
+						targetObject = "-1";
+						targetClientId = "-1";
+						targetObjectId = "-1";
+						location = "-241.671 -354.895 162.053";
+						weightLevel1 = "4100";
+						weightLevel2 = "0";
+						weightLevel3 = "0";
+						weightLevel4 = "0";
+						offense = "0";
+						defense = "1";
+						equipment = "TurretIndoorDeployable";
+						buyEquipmentSet = "MediumIndoorTurretSet";
+						chat = "ChatSelfSetupD";
+						issuedByHuman = "0";
+						issuedByClientId = "-1";
+						forceClientId = "-1";
+						locked = "1";
+							group = "12199";
+							missionTypesList = "CTF Siege";
+							team = "2";
+							isInvalid = "0";
+					};
+					new AIObjective(AIODeployEquipment) {
+						position = "-212.903 -688.217 269.453";
+						rotation = "0 0 1 236.059";
+						scale = "1 1 1";
+						dataBlock = "AIObjectiveMarker";
+						lockCount = "0";
+						homingCount = "0";
+						description = "Deploy Inventory Station";
+						targetObject = "-1";
+						targetClientId = "-1";
+						targetObjectId = "-1";
+						location = "-212.903 -688.217 269.453";
+						weightLevel1 = "4100";
+						weightLevel2 = "0";
+						weightLevel3 = "0";
+						weightLevel4 = "0";
+						offense = "0";
+						defense = "1";
+						equipment = "InventoryDeployable";
+						buyEquipmentSet = "MediumInventorySet";
+						chat = "ChatSelfSetupD";
+						issuedByHuman = "0";
+						issuedByClientId = "-1";
+						forceClientId = "-1";
+						locked = "1";
+							group = "12199";
+							missionTypesList = "CTF Siege";
+							team = "2";
+							isInvalid = "0";
+					};
+					new AIObjective(AIODeployEquipment) {
+						position = "231.955 -129.119 81.8659";
+						rotation = "0 0 -1 88.2355";
+						scale = "1 1 1";
+						dataBlock = "AIObjectiveMarker";
+						lockCount = "0";
+						homingCount = "0";
+						description = "Deploy Inventory Station";
+						targetObject = "-1";
+						targetClientId = "-1";
+						targetObjectId = "-1";
+						location = "231.955 -129.119 81.8659";
+						weightLevel1 = "4100";
+						weightLevel2 = "0";
+						weightLevel3 = "0";
+						weightLevel4 = "0";
+						offense = "0";
+						defense = "1";
+						equipment = "InventoryDeployable";
+						buyEquipmentSet = "MediumInventorySet";
+						chat = "ChatSelfSetupD";
+						issuedByHuman = "0";
+						issuedByClientId = "-1";
+						forceClientId = "-1";
+						locked = "1";
+							group = "12199";
+							missionTypesList = "CTF Siege";
+							team = "2";
+							isInvalid = "0";
+					};
+					new AIObjective(AIODeployEquipment) {
+						position = "208.435 -68.3352 78.3877";
+						rotation = "1 0 0 0";
+						scale = "1 1 1";
+						dataBlock = "AIObjectiveMarker";
+						lockCount = "0";
+						homingCount = "0";
+						description = "Deploy outdoor Turret";
+						targetObject = "-1";
+						targetClientId = "-1";
+						targetObjectId = "-1";
+						location = "208.435 -68.3352 78.3877";
+						weightLevel1 = "4100";
+						weightLevel2 = "0";
+						weightLevel3 = "0";
+						weightLevel4 = "0";
+						offense = "0";
+						defense = "1";
+						equipment = "TurretOutdoorDeployable";
+						buyEquipmentSet = "MediumOutdoorTurretSet";
+						chat = "ChatSelfSetupD";
+						issuedByHuman = "0";
+						issuedByClientId = "-1";
+						forceClientId = "-1";
+						locked = "1";
+							group = "12199";
+							missionTypesList = "CTF Siege";
+							team = "2";
+							isInvalid = "0";
+					};
+					new AIObjective(AIODeployEquipment) {
+						position = "235.754 -105.835 80.0736";
+						rotation = "1 0 0 0";
+						scale = "1 1 1";
+						dataBlock = "AIObjectiveMarker";
+						lockCount = "0";
+						homingCount = "0";
+						description = "Deploy indoor Turret";
+						targetObject = "-1";
+						targetClientId = "-1";
+						targetObjectId = "-1";
+						location = "235.754 -105.835 80.0736";
+						weightLevel1 = "4100";
+						weightLevel2 = "0";
+						weightLevel3 = "0";
+						weightLevel4 = "0";
+						offense = "0";
+						defense = "1";
+						equipment = "TurretIndoorDeployable";
+						buyEquipmentSet = "MediumIndoorTurretSet";
+						chat = "ChatSelfSetupD";
+						issuedByHuman = "0";
+						issuedByClientId = "-1";
+						forceClientId = "-1";
+						locked = "1";
+							group = "12199";
+							missionTypesList = "CTF Siege";
+							team = "2";
+							isInvalid = "0";
+					};
+				};
+			};
+			new SimGroup(Base1) {
+					powerCount = "0";
+
+				new SimGroup(Forcefields) {
+						powerCount = "0";
+
+					new SimGroup(NonSiegeForceFields) {
+							powerCount = "1";
+
+						new ForceFieldBare() {
+							position = "-253.382 -76.036 193.837";
+							rotation = "0.226073 0.155193 -0.961668 71.0415";
+							scale = "24.1282 0.1 6.34628";
+							dataBlock = "defaultTeamSlowFieldBare";
+							lockCount = "0";
+							homingCount = "0";
+								Target = "67";
+								team = "2";
+								locked = "true";
+						};
+						new ForceFieldBare() {
+							position = "-283.737 -38.4938 194.036";
+							rotation = "0.108536 -0.158377 0.981395 112.154";
+							scale = "24.1282 0.1 6.04818";
+							dataBlock = "defaultTeamSlowFieldBare";
+							lockCount = "0";
+							homingCount = "0";
+								Target = "68";
+								team = "2";
+								locked = "true";
+						};
+						new ForceFieldBare() {
+							position = "-272.454 -34.0788 193.536";
+							rotation = "-0.611143 0.114369 0.783214 26.8764";
+							scale = "24.1282 0.1 6.04818";
+							dataBlock = "defaultTeamSlowFieldBare";
+							lockCount = "0";
+							homingCount = "0";
+								Target = "69";
+								team = "2";
+								locked = "true";
+						};
+						new StaticShape(Team2FFGen) {
+							position = "254.113 -83.1054 55.3";
+							rotation = "1 0 0 1.71915";
+							scale = "1 1 1";
+							nameTag = "Outpost";
+							dataBlock = "GeneratorLarge";
+							lockCount = "0";
+							homingCount = "0";
+								wasDisabled = "0";
+								name = "ForceField";
+								missionTypesList = "CTF";
+								Target = "70";
+								team = "2";
+								locked = "true";
+								repairedBy = "4334";
+						};
+						new ForceFieldBare(MoonroofFF) {
+							position = "-275.434 -59.0419 213.96";
+							rotation = "0 0 1 21.1994";
+							scale = "7.66683 8.98676 0.210138";
+							dataBlock = "defaultTeamSlowFieldBare";
+							lockCount = "0";
+							homingCount = "0";
+								missionTypesList = "CTF TeamHunters";
+								Target = "71";
+								team = "2";
+								locked = "true";
+						};
+					};
+					new StaticShape(SecondSiegeGen) {
+						position = "237.765 -86.512 54.7958";
+						rotation = "1 0 0 1.71915";
+						scale = "1 1 1";
+						nameTag = "Gamma";
+						dataBlock = "GeneratorLarge";
+						lockCount = "0";
+						homingCount = "0";
+							wasDisabled = "1";
+							name = "Forcefield";
+							missionTypesList = "Siege";
+							notRepairable = "1";
+							Target = "72";
+							team = "2";
+							locked = "true";
+					};
+					new ForceFieldBare(SiegeFF) {
+						position = "-282.983 -64.22 191.18";
+						rotation = "0 0 1 21.1994";
+						scale = "22.134 22.9774 0.955475";
+						dataBlock = "defaultTeamSlowFieldBare";
+						lockCount = "0";
+						homingCount = "0";
+							Target = "73";
+							team = "2";
+							locked = "true";
+					};
+					new ForceFieldBare(SiegeFF2) {
+						position = "-287.45 -71.9911 194.119";
+						rotation = "0.641197 -0.122258 0.757575 28.2541";
+						scale = "24.1282 0.1 6.04818";
+						dataBlock = "defaultTeamSlowFieldBare";
+						lockCount = "0";
+						homingCount = "0";
+							Target = "74";
+							team = "2";
+							locked = "true";
+					};
+				};
+				new SimGroup(Assets) {
+						powerCount = "1";
+
+					new StaticShape(Team2StationInventory2) {
+						position = "240.188 -60.5533 49.9709";
+						rotation = "0.789525 0.613604 0.0118438 6.53193";
+						scale = "1 1 1";
+						nameTag = "Outpost";
+						dataBlock = "StationInventory";
+						lockCount = "0";
+						homingCount = "0";
+							name = "Outpost";
+							Trigger = "12228";
+							Target = "75";
+							team = "2";
+							locked = "true";
+					};
+					new StaticShape(Team2Base1Gen) {
+						position = "256.315 -62.1165 51.0031";
+						rotation = "0 0 1 166.731";
+						scale = "1 1 1";
+						nameTag = "Outpost";
+						dataBlock = "GeneratorLarge";
+						lockCount = "0";
+						homingCount = "0";
+							name = "Outpost";
+							missionTypesList = "CTF Siege";
+							Target = "76";
+							team = "2";
+							locked = "true";
+					};
+					new Turret(Team2SentryTurret1) {
+						position = "246.601 -72.9185 68.8091";
+						rotation = "0.0664943 0.0533028 0.996362 90.1178";
+						scale = "1 1 1";
+						nameTag = "Outpost";
+						dataBlock = "SentryTurret";
+						lockCount = "0";
+						homingCount = "0";
+						initialBarrel = "SentryTurretBarrel";
+							name = "Outpost";
+							Target = "77";
+							team = "2";
+							lastProjectile = "25765";
+							locked = "true";
+					};
+				};
+				new SimGroup(Structures) {
+						powerCount = "0";
+
+					new InteriorInstance(Outpost) {
+						position = "242.211 -63.038 72.5347";
+						rotation = "0.819009 0.571458 -0.0515706 6.99296";
+						scale = "1 1 1";
+						interiorFile = "sbunk9.dif";
+						showTerrainInside = "0";
+							team = "2";
+							locked = "true";
+					};
+					new SimGroup(Wreckage) {
+							powerCount = "0";
+
+						new InteriorInstance() {
+							position = "239.201 -93.5538 59.4869";
+							rotation = "0.144362 -0.280714 0.948873 41.0882";
+							scale = "0.233635 0.542386 1";
+							interiorFile = "dwall1.dif";
+							showTerrainInside = "0";
+								team = "2";
+								locked = "true";
+						};
+						new InteriorInstance() {
+							position = "240.372 -83.7628 53.9356";
+							rotation = "1 0 0 0";
+							scale = "1 1 1";
+							interiorFile = "drock6.dif";
+							showTerrainInside = "0";
+								team = "2";
+								locked = "true";
+						};
+						new InteriorInstance() {
+							position = "238.122 -94.0885 53.9751";
+							rotation = "0 1 0 2.29172";
+							scale = "1 1 1";
+							interiorFile = "drock7.dif";
+							showTerrainInside = "0";
+								team = "2";
+								locked = "true";
+						};
+						new InteriorInstance() {
+							position = "248.835 -90.1353 55.1155";
+							rotation = "-0.381463 0.101477 0.918797 32.2948";
+							scale = "1 1 1";
+							interiorFile = "drock7.dif";
+							showTerrainInside = "0";
+								team = "2";
+								locked = "true";
+						};
+						new InteriorInstance() {
+							position = "249.506 -97.1604 56.0194";
+							rotation = "1 0 0 0";
+							scale = "1 1 1";
+							interiorFile = "drock6.dif";
+							showTerrainInside = "0";
+								team = "2";
+								locked = "true";
+						};
+						new InteriorInstance() {
+							position = "245.15 -96.3407 57.0587";
+							rotation = "1 0 0 0";
+							scale = "1 1 1";
+							interiorFile = "drock7.dif";
+							showTerrainInside = "0";
+								team = "2";
+								locked = "true";
+						};
+						new InteriorInstance() {
+							position = "244.651 -82.9288 62.6254";
+							rotation = "1 0 0 0";
+							scale = "0.681088 0.403698 0.496752";
+							interiorFile = "drock7.dif";
+							showTerrainInside = "0";
+								team = "2";
+								locked = "true";
+						};
+						new InteriorInstance() {
+							position = "251.318 -102.356 64.5528";
+							rotation = "1 0 0 0";
+							scale = "0.681088 0.403698 0.496752";
+							interiorFile = "drock7.dif";
+							showTerrainInside = "0";
+								team = "2";
+								locked = "true";
+						};
+						new InteriorInstance() {
+							position = "253.602 -64.7709 51.3769";
+							rotation = "1 0 0 86.5166";
+							scale = "1 1 1";
+							interiorFile = "drock6.dif";
+							showTerrainInside = "0";
+								team = "2";
+								locked = "true";
+						};
+						new InteriorInstance() {
+							position = "244.7 -69.5869 52.0555";
+							rotation = "1 0 0 0";
+							scale = "1 1 1";
+							interiorFile = "drock7.dif";
+							showTerrainInside = "0";
+								team = "2";
+								locked = "true";
+						};
+						new InteriorInstance() {
+							position = "252.564 -117.465 76.1093";
+							rotation = "1 0 0 0";
+							scale = "1 1 1";
+							interiorFile = "drock7.dif";
+							showTerrainInside = "0";
+								team = "2";
+								locked = "true";
+						};
+						new InteriorInstance() {
+							position = "254.741 -116.401 75.3471";
+							rotation = "1 0 0 0";
+							scale = "1 1 1";
+							interiorFile = "drock6.dif";
+							showTerrainInside = "0";
+								team = "2";
+								locked = "true";
+						};
+						new InteriorInstance() {
+							position = "253.832 -118.571 77.9688";
+							rotation = "0.32874 0.944325 0.0134188 175.585";
+							scale = "1 1 1";
+							interiorFile = "drock7.dif";
+							showTerrainInside = "0";
+								team = "2";
+								locked = "true";
+						};
+						new InteriorInstance() {
+							position = "254.217 -103.696 79.8758";
+							rotation = "0.190489 -0.183163 -0.964451 94.3166";
+							scale = "1 1 1";
+							interiorFile = "drock6.dif";
+							showTerrainInside = "0";
+								team = "2";
+								locked = "true";
+						};
+						new InteriorInstance() {
+							position = "250.622 -110.74 78.195";
+							rotation = "0.48637 -0.868316 -0.0973189 56.9394";
+							scale = "1 1 1";
+							interiorFile = "drock6.dif";
+							showTerrainInside = "0";
+								team = "2";
+								locked = "true";
+						};
+						new InteriorInstance() {
+							position = "229.987 -120.592 86.3898";
+							rotation = "-0.0410913 -0.648662 0.759966 52.534";
+							scale = "0.233635 0.36212 1";
+							interiorFile = "dwall1.dif";
+							showTerrainInside = "0";
+								team = "2";
+								locked = "true";
+						};
+						new InteriorInstance() {
+							position = "233.856 -114.786 79.7382";
+							rotation = "0.261086 0.0397069 0.964499 182.919";
+							scale = "1 1 1";
+							interiorFile = "drock7.dif";
+							showTerrainInside = "0";
+								team = "2";
+								locked = "true";
+						};
+						new InteriorInstance() {
+							position = "241.123 -114.744 89.3454";
+							rotation = "0.136316 0.331624 -0.933511 47.5308";
+							scale = "1 1 1";
+							interiorFile = "drock6.dif";
+							showTerrainInside = "0";
+								team = "2";
+								locked = "true";
+						};
+						new InteriorInstance() {
+							position = "241.144 -112.861 88.7653";
+							rotation = "1 0 0 0";
+							scale = "1 1 1";
+							interiorFile = "drock6.dif";
+							showTerrainInside = "0";
+								team = "2";
+								locked = "true";
+						};
+						new InteriorInstance() {
+							position = "237.943 -104.679 87.8106";
+							rotation = "1 0 0 59.5876";
+							scale = "1 1 1";
+							interiorFile = "drock6.dif";
+							showTerrainInside = "0";
+								team = "2";
+								locked = "true";
+						};
+						new InteriorInstance() {
+							position = "252.267 -109.297 90.856";
+							rotation = "1 0 0 0";
+							scale = "1 1 1";
+							interiorFile = "drock6.dif";
+							showTerrainInside = "0";
+								team = "2";
+								locked = "true";
+						};
+						new InteriorInstance() {
+							position = "219.4 -115.495 80.9948";
+							rotation = "0.216142 0.799006 0.561134 216.357";
+							scale = "1 0.93047 1";
+							interiorFile = "drock8.dif";
+							showTerrainInside = "0";
+								team = "2";
+								locked = "true";
+						};
+						new InteriorInstance() {
+							position = "249.922 -121.086 83.2403";
+							rotation = "1 0 0 0";
+							scale = "1 1 1";
+							interiorFile = "drock7.dif";
+							showTerrainInside = "0";
+								team = "2";
+								locked = "true";
+						};
+						new InteriorInstance() {
+							position = "191.15 -103.202 86.0999";
+							rotation = "0 0 -1 25.2101";
+							scale = "1.30309 1.36672 1.16977";
+							interiorFile = "drock8.dif";
+							showTerrainInside = "0";
+								team = "2";
+								locked = "true";
+						};
+						new InteriorInstance() {
+							position = "254.83 -122.169 82.4549";
+							rotation = "1 0 0 0";
+							scale = "1 1 1";
+							interiorFile = "drock6.dif";
+							showTerrainInside = "0";
+								team = "2";
+								locked = "true";
+						};
+					};
+				};
+			};
+		};
+		new SimGroup(team0) {
+				powerCount = "0";
+
+			new SimGroup(spawnspheres) {
+					powerCount = "0";
+
+				new SpawnSphere(SiegeSpawnSphere) {
+					position = "258.831 -62.595 83.1099";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "SpawnSphereMarker";
+					lockCount = "0";
+					homingCount = "0";
+					radius = "100";
+					sphereWeight = "100";
+					indoorWeight = "0";
+					outdoorWeight = "100";
+						missionTypesList = "Siege";
+						locked = "true";
+				};
+			};
+			new SimGroup(AltGametypes) {
+					powerCount = "0";
+
+				new SimGroup(RabbitGroup) {
+						powerCount = "0";
+
+					new StaticShape() {
+						position = "-239.998 -350.519 226.855";
+						rotation = "1 0 0 0";
+						scale = "1 1 1";
+						dataBlock = "InteriorFlagStand";
+						lockCount = "0";
+						homingCount = "0";
+							missionTypesList = "Rabbit";
+							Target = "-1";
+							team = "0";
+							locked = "true";
+					};
+					new Item(RabbitFlag) {
+						position = "-239.966 -350.477 226.82";
+						rotation = "1 0 0 0";
+						scale = "1 1 1";
+						dataBlock = "FLAG";
+						lockCount = "0";
+						homingCount = "0";
+						collideable = "0";
+						static = "0";
+						rotate = "0";
+							WayPoint = "12435";
+							missionTypesList = "Rabbit";
+							originalPosition = "-239.966 -350.477 226.82 1 0 0 0";
+							Target = "78";
+							team = "0";
+							isHome = "1";
+							locked = "true";
+					};
+				};
+				new SimGroup(HuntersGroup) {
+						powerCount = "0";
+
+					new Item(HuntersNexus) {
+						position = "-240.355 -350.428 227.346";
+						rotation = "1 0 0 0";
+						scale = "1 1 0.739774";
+						dataBlock = "Nexus";
+						lockCount = "0";
+						homingCount = "0";
+						collideable = "0";
+						static = "1";
+						rotate = "0";
+							flashThreadDir = "1";
+							missionTypesList = "Hunters TeamHunters";
+							Target = "79";
+							team = "0";
+							locked = "true";
+					};
+					new StaticShape(HuntersNexus2) {
+						position = "-240.369 -350.317 224.95";
+						rotation = "1 0 0 0";
+						scale = "1 1 1";
+						dataBlock = "Nexus_Effect";
+						lockCount = "0";
+						homingCount = "0";
+							missionTypesList = "Hunters TeamHunters";
+							Target = "-1";
+							team = "0";
+							locked = "true";
+					};
+					new StaticShape(HuntersNexusCap) {
+						position = "-240.051 -350.404 232.922";
+						rotation = "1 0 0 0";
+						scale = "1 1 1";
+						dataBlock = "NexusCap";
+						lockCount = "0";
+						homingCount = "0";
+							missionTypesList = "Hunters TeamHunters";
+							Target = "-1";
+							team = "0";
+							locked = "true";
+					};
+					new StaticShape(HuntersNexusBase) {
+						position = "-240.451 -350.284 226.808";
+						rotation = "1 0 0 0";
+						scale = "1 1 1";
+						dataBlock = "NexusBase";
+						lockCount = "0";
+						homingCount = "0";
+							missionTypesList = "Hunters TeamHunters";
+							Target = "-1";
+							team = "0";
+							locked = "true";
+					};
+					new WayPoint(NexusWaypoint) {
+						position = "-240.326 -350.367 228.533";
+						rotation = "1 0 0 0";
+						scale = "1 1 1";
+						dataBlock = "WayPointMarker";
+						lockCount = "0";
+						homingCount = "0";
+						name = "Nexus";
+						team = "0";
+							missionTypesList = "Hunters TeamHunters";
+							locked = "true";
+					};
+				};
+				new SimGroup(CnH) {
+						powerCount = "0";
+
+					new SimGroup(Base2Group) {
+							powerCount = "0";
+
+						new StaticShape(Base2Projector) {
+							position = "35.2288 -610.292 158.743";
+							rotation = "1 0 0 0";
+							scale = "1 1 1";
+							dataBlock = "LogoProjector";
+							lockCount = "0";
+							homingCount = "0";
+								missionTypesList = "CnH";
+								Target = "-1";
+								holo = "0";
+								team = "0";
+								locked = "true";
+						};
+						new StaticShape(Base2FlipFlop) {
+							position = "30.2078 -613.501 123.097";
+							rotation = "1 0 0 0";
+							scale = "1 1 1";
+							dataBlock = "FlipFlop";
+							lockCount = "0";
+							homingCount = "0";
+								name = "Base 2";
+								missionTypesList = "CnH";
+								Target = "80";
+								team = "0";
+								Projector = "12275";
+								locked = "true";
+						};
+						new WayPoint() {
+							position = "30.2104 -613.557 124.805";
+							rotation = "1 0 0 0";
+							scale = "1 1 1";
+							dataBlock = "WayPointMarker";
+							lockCount = "0";
+							homingCount = "0";
+							name = "Base2";
+							team = "0";
+								missionTypesList = "CnH";
+								locked = "true";
+						};
+					};
+					new SimGroup(Base1Group) {
+							powerCount = "0";
+
+						new StaticShape(Base1Projector) {
+							position = "-262.018 -55.9125 212.958";
+							rotation = "1 0 0 0";
+							scale = "1 1 1";
+							dataBlock = "LogoProjector";
+							lockCount = "0";
+							homingCount = "0";
+								missionTypesList = "CnH";
+								Target = "-1";
+								holo = "0";
+								team = "0";
+								locked = "true";
+						};
+						new StaticShape(Base1FlipFlop) {
+							position = "-268.499 -56.7215 177.232";
+							rotation = "1 0 0 0";
+							scale = "1 1 1";
+							dataBlock = "FlipFlop";
+							lockCount = "0";
+							homingCount = "0";
+								name = "Base 1";
+								missionTypesList = "CnH";
+								Target = "81";
+								team = "0";
+								Projector = "12279";
+								locked = "true";
+						};
+						new WayPoint() {
+							position = "-268.557 -56.7214 180.216";
+							rotation = "1 0 0 0";
+							scale = "1 1 1";
+							dataBlock = "WayPointMarker";
+							lockCount = "0";
+							homingCount = "0";
+							name = "Base 1";
+							team = "0";
+								missionTypesList = "CnH";
+								locked = "true";
+						};
+					};
+					new SimGroup(CenterGroup) {
+							powerCount = "0";
+
+						new StaticShape(CenterFlipFlop) {
+							position = "-239.985 -350.472 226.303";
+							rotation = "1 0 0 0";
+							scale = "1 1 1";
+							dataBlock = "FlipFlop";
+							lockCount = "0";
+							homingCount = "0";
+								name = "The Center";
+								missionTypesList = "CnH";
+								Target = "82";
+								team = "0";
+								Projector = "12284";
+								locked = "true";
+						};
+						new StaticShape(CenterProjector) {
+							position = "-242.284 -347.263 226.409";
+							rotation = "1 0 0 0";
+							scale = "1 1 1";
+							dataBlock = "LogoProjector";
+							lockCount = "0";
+							homingCount = "0";
+								missionTypesList = "CnH";
+								Target = "-1";
+								holo = "0";
+								team = "0";
+								locked = "true";
+						};
+						new WayPoint() {
+							position = "-239.892 -350.113 228.728";
+							rotation = "1 0 0 0";
+							scale = "1 1 1";
+							dataBlock = "WayPointMarker";
+							lockCount = "0";
+							homingCount = "0";
+							name = "Center";
+							team = "0";
+								missionTypesList = "CnH";
+								locked = "true";
+						};
+					};
+					new SimGroup(HighGroup) {
+							powerCount = "0";
+
+						new StaticShape(HighFlipFlop) {
+							position = "-216.877 -691.348 268.056";
+							rotation = "1 0 0 0";
+							scale = "1 1 1";
+							dataBlock = "FlipFlop";
+							lockCount = "0";
+							homingCount = "0";
+								name = "the High Tower";
+								missionTypesList = "CnH";
+								Target = "83";
+								team = "0";
+								Projector = "12288";
+								locked = "true";
+						};
+						new StaticShape(HighProjector) {
+							position = "-216.676 -691.639 286.822";
+							rotation = "1 0 0 0";
+							scale = "1 1 1";
+							dataBlock = "LogoProjector";
+							lockCount = "0";
+							homingCount = "0";
+								missionTypesList = "CnH";
+								Target = "-1";
+								holo = "0";
+								team = "0";
+								locked = "true";
+						};
+						new WayPoint() {
+							position = "-216.863 -691.305 270.631";
+							rotation = "1 0 0 0";
+							scale = "1 1 1";
+							dataBlock = "WayPointMarker";
+							lockCount = "0";
+							homingCount = "0";
+							name = "High Tower";
+							team = "0";
+								missionTypesList = "CnH";
+								locked = "true";
+						};
+					};
+					new SimGroup(LowGroup) {
+							powerCount = "0";
+
+						new StaticShape(LowProjector) {
+							position = "135.254 -421.913 263.793";
+							rotation = "1 0 0 0";
+							scale = "1 1 1";
+							dataBlock = "LogoProjector";
+							lockCount = "0";
+							homingCount = "0";
+								missionTypesList = "CnH";
+								Target = "-1";
+								holo = "0";
+								team = "0";
+								locked = "true";
+						};
+						new StaticShape(LowFlipFlop) {
+							position = "273.239 -418.92 85.9024";
+							rotation = "1 0 0 0";
+							scale = "1 1 1";
+							dataBlock = "FlipFlop";
+							lockCount = "0";
+							homingCount = "0";
+								name = "the Low Tower";
+								missionTypesList = "CnH";
+								Target = "84";
+								team = "0";
+								Projector = "12291";
+								locked = "true";
+						};
+						new WayPoint() {
+							position = "273.036 -418.884 88.2857";
+							rotation = "1 0 0 0";
+							scale = "1 1 1";
+							dataBlock = "WayPointMarker";
+							lockCount = "0";
+							homingCount = "0";
+							name = "Low Tower";
+							team = "0";
+								missionTypesList = "CnH";
+								locked = "true";
+						};
+					};
+				};
+			};
+			new SimGroup(AIObjectives) {
+					powerCount = "0";
+
+				new AIObjective(AIOTouchObject) {
+					position = "-239.966 -350.477 228.366";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "AIObjectiveMarker";
+					lockCount = "0";
+					homingCount = "0";
+					description = "Return our flag";
+					mode = "FlagDropped";
+					targetObject = "RabbitFlag";
+					targetClientId = "-1";
+					targetObjectId = "8923";
+					location = "-239.966 -350.477 228.366";
+					weightLevel1 = "6001";
+					weightLevel2 = "4100";
+					weightLevel3 = "0";
+					weightLevel4 = "0";
+					offense = "1";
+					defense = "1";
+					issuedByHuman = "0";
+					issuedByClientId = "-1";
+					forceClientId = "-1";
+					locked = "1";
+						team = "0";
+						gameType = "Rabbit";
+				};
+				new AIObjective(AIOAttackPlayer) {
+					position = "-239.966 -350.477 228.366";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "AIObjectiveMarker";
+					lockCount = "0";
+					homingCount = "0";
+					description = "Kill the enemy flag carrier";
+					mode = "FlagCarrier";
+					targetObject = "RabbitFlag";
+					targetClientId = "-1";
+					targetObjectId = "-1";
+					location = "0 0 0";
+					weightLevel1 = "4800";
+					weightLevel2 = "4800";
+					weightLevel3 = "0";
+					weightLevel4 = "0";
+					offense = "1";
+					defense = "0";
+					desiredEquipment = "Light EnergyPack";
+					buyEquipmentSet = "LightEnergySniper";
+					issuedByHuman = "0";
+					issuedByClientId = "-1";
+					forceClientId = "-1";
+					locked = "1";
+						team = "0";
+						gameType = "Rabbit";
+				};
+			};
+			new SimGroup(Structures) {
+					powerCount = "0";
+
+				new InteriorInstance(CenterBlock) {
+					position = "-203.642 -435.138 85.7534";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					interiorFile = "smisc4.dif";
+					showTerrainInside = "0";
+						team = "0";
+						locked = "true";
+				};
+				new InteriorInstance(CenterBlock) {
+					position = "-203.734 -435.316 76.5285";
+					rotation = "1 0 0 0";
+					scale = "0.508497 0.414108 1.22956";
+					interiorFile = "smisc4.dif";
+					showTerrainInside = "0";
+						team = "0";
+						locked = "true";
+				};
+				new InteriorInstance(RabbitHuntersPlat) {
+					position = "-240.253 -350.65 224.811";
+					rotation = "0 0 -1 1.71915";
+					scale = "1 1 1";
+					interiorFile = "xplat1.dif";
+					showTerrainInside = "0";
+						missionTypesList = "Rabbit Hunters TeamHunters";
+						team = "0";
+						locked = "true";
+				};
+			};
+		};
+	};
+	new SimGroup(Bridges) {
+			providesPower = "1";
+			powerCount = "1";
+
+		new SimGroup(Bridge2) {
+				powerCount = "1";
+
+			new InteriorInstance() {
+				position = "315.149 -192.658 125.578";
+				rotation = "0 0 1 79.0682";
+				scale = "1 1 1";
+				interiorFile = "sbrdg5.dif";
+				showTerrainInside = "0";
+					locked = "true";
+			};
+			new InteriorInstance() {
+				position = "217.565 -211.507 125.545";
+				rotation = "0 0 1 79.0682";
+				scale = "1 1.3884 1";
+				interiorFile = "sbrdg5.dif";
+				showTerrainInside = "0";
+					locked = "true";
+			};
+			new InteriorInstance() {
+				position = "379.104 -180.26 125.561";
+				rotation = "0 0 1 79.0682";
+				scale = "1 0.574412 1";
+				interiorFile = "sbrdg5.dif";
+				showTerrainInside = "0";
+					locked = "true";
+			};
+		};
+		new SimGroup(Bridge4) {
+				powerCount = "1";
+
+			new InteriorInstance() {
+				position = "-11.0043 -717.773 76.2585";
+				rotation = "1 0 0 0";
+				scale = "2.0847 2.09574 5.45977";
+				interiorFile = "smisc4.dif";
+				showTerrainInside = "0";
+					locked = "true";
+			};
+			new InteriorInstance() {
+				position = "-10.9391 -717.602 135.115";
+				rotation = "0 0 1 89.9544";
+				scale = "0.971145 1.2246 1";
+				interiorFile = "sbrdg4.dif";
+				showTerrainInside = "0";
+					locked = "true";
+			};
+			new InteriorInstance() {
+				position = "82.421 -717.457 99.2131";
+				rotation = "1 0 0 0";
+				scale = "1.68799 2.09574 2.57092";
+				interiorFile = "smisc4.dif";
+				showTerrainInside = "0";
+					locked = "true";
+			};
+			new InteriorInstance() {
+				position = "82.3788 -717.528 135.116";
+				rotation = "0 0 1 89.9544";
+				scale = "0.971145 1 1";
+				interiorFile = "sbrdg4.dif";
+				showTerrainInside = "0";
+					locked = "true";
+			};
+			new InteriorInstance() {
+				position = "166.828 -717.893 133.747";
+				rotation = "0 0 1 90.5273";
+				scale = "0.972455 1 1.27415";
+				interiorFile = "sbrdg3.dif";
+				showTerrainInside = "0";
+					locked = "true";
+			};
+			new InteriorInstance() {
+				position = "29.9904 -675.072 135.09";
+				rotation = "1 0 0 0";
+				scale = "1 0.98715 1";
+				interiorFile = "sbrdg5.dif";
+				showTerrainInside = "0";
+					locked = "true";
+			};
+		};
+		new SimGroup(Bridge13) {
+				powerCount = "1";
+
+			new InteriorInstance() {
+				position = "-178.652 108.211 133.191";
+				rotation = "0 0 1 229.183";
+				scale = "1 1.10471 1";
+				interiorFile = "sbrdg5.dif";
+				showTerrainInside = "0";
+					locked = "true";
+			};
+			new InteriorInstance() {
+				position = "-112.452 165.387 133.158";
+				rotation = "0 0 1 229.183";
+				scale = "1 1 1";
+				interiorFile = "sbrdg5.dif";
+				showTerrainInside = "0";
+					locked = "true";
+			};
+			new InteriorInstance() {
+				position = "-71.2561 200.993 133.186";
+				rotation = "0 0 1 229.183";
+				scale = "1 0.311903 1";
+				interiorFile = "sbrdg5.dif";
+				showTerrainInside = "0";
+					locked = "true";
+			};
+		};
+		new SimGroup(Bridge1) {
+				powerCount = "1";
+
+			new InteriorInstance() {
+				position = "252.424 137.343 209.988";
+				rotation = "0 0 1 14.8969";
+				scale = "1 0.778667 1";
+				interiorFile = "sbrdg5.dif";
+				showTerrainInside = "0";
+					locked = "true";
+			};
+			new InteriorInstance() {
+				position = "149.791 -253.488 210.034";
+				rotation = "0 0 1 14.3239";
+				scale = "1 1 1";
+				interiorFile = "sbrdg5.dif";
+				showTerrainInside = "0";
+					locked = "true";
+			};
+			new InteriorInstance() {
+				position = "170.085 -173.968 210.039";
+				rotation = "0 0 1 14.3239";
+				scale = "1 1 1";
+				interiorFile = "sbrdg5.dif";
+				showTerrainInside = "0";
+					locked = "true";
+			};
+			new InteriorInstance() {
+				position = "191.053 -93.6264 210.011";
+				rotation = "0 0 1 14.8969";
+				scale = "1 1 1";
+				interiorFile = "sbrdg5.dif";
+				showTerrainInside = "0";
+					locked = "true";
+			};
+			new InteriorInstance() {
+				position = "212.409 -13.3432 210.044";
+				rotation = "0 0 1 14.8969";
+				scale = "1 1 1";
+				interiorFile = "sbrdg5.dif";
+				showTerrainInside = "0";
+					locked = "true";
+			};
+			new InteriorInstance() {
+				position = "233.709 66.8984 210.027";
+				rotation = "0 0 1 14.8969";
+				scale = "1 1 1";
+				interiorFile = "sbrdg5.dif";
+				showTerrainInside = "0";
+					locked = "true";
+			};
+			new InteriorInstance() {
+				position = "127.645 -340.221 210.001";
+				rotation = "0 0 1 14.3239";
+				scale = "1 1.15336 1";
+				interiorFile = "sbrdg5.dif";
+				showTerrainInside = "0";
+					locked = "true";
+			};
+		};
+		new SimGroup(Bridge5) {
+				powerCount = "1";
+
+			new InteriorInstance() {
+				position = "-33.7752 -449.65 154.736";
+				rotation = "0 0 1 30.9396";
+				scale = "1 1 1";
+				interiorFile = "sbrdg5.dif";
+				showTerrainInside = "0";
+					locked = "true";
+			};
+			new InteriorInstance() {
+				position = "-76.4208 -520.881 154.753";
+				rotation = "0 0 1 30.9396";
+				scale = "1 1 1";
+				interiorFile = "sbrdg5.dif";
+				showTerrainInside = "0";
+					locked = "true";
+			};
+			new InteriorInstance() {
+				position = "-119.742 -592.306 154.74";
+				rotation = "0 0 1 31.5126";
+				scale = "1 1 1";
+				interiorFile = "sbrdg5.dif";
+				showTerrainInside = "0";
+					locked = "true";
+			};
+			new InteriorInstance() {
+				position = "-163.168 -663.138 154.768";
+				rotation = "0 0 1 31.5126";
+				scale = "1 1 1";
+				interiorFile = "sbrdg5.dif";
+				showTerrainInside = "0";
+					locked = "true";
+			};
+		};
+		new SimGroup(Bridge3) {
+				powerCount = "1";
+
+			new InteriorInstance() {
+				position = "195.239 -487.6 95.8968";
+				rotation = "0 0 1 65.3172";
+				scale = "1.68799 3.18541 2.57092";
+				interiorFile = "smisc4.dif";
+				showTerrainInside = "0";
+					locked = "true";
+			};
+			new InteriorInstance() {
+				position = "194.9 -487.539 134.72";
+				rotation = "0 0 1 154.699";
+				scale = "0.983499 1 1.27415";
+				interiorFile = "sbrdg3.dif";
+				showTerrainInside = "0";
+					locked = "true";
+			};
+			new InteriorInstance() {
+				position = "227.036 -556.344 136.13";
+				rotation = "0 0 1 155.272";
+				scale = "1 0.762218 1";
+				interiorFile = "sbrdg5.dif";
+				showTerrainInside = "0";
+					locked = "true";
+			};
+			new InteriorInstance() {
+				position = "257.184 -621.767 136.153";
+				rotation = "0 0 1 155.272";
+				scale = "1 1 1";
+				interiorFile = "sbrdg5.dif";
+				showTerrainInside = "0";
+					locked = "true";
+			};
+		};
+		new SimGroup(Bridge12) {
+				powerCount = "1";
+
+			new InteriorInstance() {
+				position = "-382.541 71.4891 155.339";
+				rotation = "0 0 1 140.948";
+				scale = "1 1 1";
+				interiorFile = "sbrdg5.dif";
+				showTerrainInside = "0";
+					locked = "true";
+			};
+			new InteriorInstance() {
+				position = "-434.881 136.003 155.306";
+				rotation = "0 0 1 140.948";
+				scale = "1 1 1";
+				interiorFile = "sbrdg5.dif";
+				showTerrainInside = "0";
+					locked = "true";
+			};
+			new InteriorInstance() {
+				position = "-478.524 189.766 155.334";
+				rotation = "0 0 1 140.948";
+				scale = "1 0.664215 1";
+				interiorFile = "sbrdg5.dif";
+				showTerrainInside = "0";
+					locked = "true";
+			};
+		};
+		new SimGroup(Bridge7) {
+				powerCount = "1";
+
+			new InteriorInstance() {
+				position = "-247.313 -218.322 156.503";
+				rotation = "0 0 1 177.617";
+				scale = "1 0.740917 1";
+				interiorFile = "sbrdg5.dif";
+				showTerrainInside = "0";
+					locked = "true";
+			};
+			new InteriorInstance() {
+				position = "-244.282 -290.727 156.475";
+				rotation = "0 0 1 177.617";
+				scale = "1 1 1";
+				interiorFile = "sbrdg5.dif";
+				showTerrainInside = "0";
+					locked = "true";
+			};
+			new InteriorInstance() {
+				position = "-240.827 -373.731 156.508";
+				rotation = "0 0 1 177.617";
+				scale = "1 1 1";
+				interiorFile = "sbrdg5.dif";
+				showTerrainInside = "0";
+					locked = "true";
+			};
+			new InteriorInstance() {
+				position = "-237.33 -456.678 156.491";
+				rotation = "0 0 1 177.617";
+				scale = "1 1 1";
+				interiorFile = "sbrdg5.dif";
+				showTerrainInside = "0";
+					locked = "true";
+			};
+			new InteriorInstance() {
+				position = "-234.275 -529.501 156.452";
+				rotation = "0 0 1 177.617";
+				scale = "1 0.778667 1";
+				interiorFile = "sbrdg5.dif";
+				showTerrainInside = "0";
+					locked = "true";
+			};
+			new InteriorInstance() {
+				position = "-190.251 -357.391 156.343";
+				rotation = "0 0 -1 90.7102";
+				scale = "1 1.3121 1";
+				interiorFile = "sbrdg5.dif";
+				showTerrainInside = "0";
+					locked = "true";
+			};
+			new InteriorInstance() {
+				position = "-93.937 -356.622 156.41";
+				rotation = "0 0 -1 90.1372";
+				scale = "1 1 1";
+				interiorFile = "sbrdg5.dif";
+				showTerrainInside = "0";
+					locked = "true";
+			};
+			new InteriorInstance() {
+				position = "-10.716 -356.405 156.438";
+				rotation = "0 0 -1 90.1372";
+				scale = "1 0.996916 1";
+				interiorFile = "sbrdg5.dif";
+				showTerrainInside = "0";
+					locked = "true";
+			};
+		};
+		new SimGroup(Bridge6) {
+				powerCount = "1";
+
+			new InteriorInstance() {
+				position = "58.3175 -381.551 208.88";
+				rotation = "0 0 1 57.8687";
+				scale = "1 0.778667 1";
+				interiorFile = "sbrdg5.dif";
+				showTerrainInside = "0";
+					locked = "true";
+			};
+			new InteriorInstance() {
+				position = "-3.39411 -420.338 208.919";
+				rotation = "0 0 1 57.8687";
+				scale = "1 1 1";
+				interiorFile = "sbrdg5.dif";
+				showTerrainInside = "0";
+					locked = "true";
+			};
+			new InteriorInstance() {
+				position = "-73.6747 -464.531 208.936";
+				rotation = "0 0 1 57.8687";
+				scale = "1 1 1";
+				interiorFile = "sbrdg5.dif";
+				showTerrainInside = "0";
+					locked = "true";
+			};
+			new InteriorInstance() {
+				position = "-144.025 -508.716 208.903";
+				rotation = "0 0 1 57.8687";
+				scale = "1 1 1";
+				interiorFile = "sbrdg5.dif";
+				showTerrainInside = "0";
+					locked = "true";
+			};
+			new InteriorInstance() {
+				position = "-214.599 -553.063 208.931";
+				rotation = "0 0 1 57.8687";
+				scale = "1 1 1";
+				interiorFile = "sbrdg5.dif";
+				showTerrainInside = "0";
+					locked = "true";
+			};
+		};
+		new SimGroup(Bridge14) {
+				powerCount = "1";
+
+			new InteriorInstance() {
+				position = "-618.069 -600.115 233.374";
+				rotation = "0 0 1 106.57";
+				scale = "1 0.793788 1";
+				interiorFile = "sbrdg5.dif";
+				showTerrainInside = "0";
+					locked = "true";
+			};
+			new InteriorInstance() {
+				position = "-546.745 -621.336 233.407";
+				rotation = "0 0 1 106.57";
+				scale = "1 1 1";
+				interiorFile = "sbrdg5.dif";
+				showTerrainInside = "0";
+					locked = "true";
+			};
+			new InteriorInstance() {
+				position = "-468.081 -644.731 233.412";
+				rotation = "0 0 1 106.57";
+				scale = "1 1 1";
+				interiorFile = "sbrdg5.dif";
+				showTerrainInside = "0";
+					locked = "true";
+			};
+			new InteriorInstance() {
+				position = "-388.673 -668.891 233.384";
+				rotation = "0 0 1 107.143";
+				scale = "1 1 1";
+				interiorFile = "sbrdg5.dif";
+				showTerrainInside = "0";
+					locked = "true";
+			};
+			new InteriorInstance() {
+				position = "-309.288 -693.377 233.417";
+				rotation = "0 0 1 107.143";
+				scale = "1 1 1";
+				interiorFile = "sbrdg5.dif";
+				showTerrainInside = "0";
+					locked = "true";
+			};
+			new InteriorInstance() {
+				position = "-219.15 -721.135 233.4";
+				rotation = "0 0 1 107.143";
+				scale = "1 1.26894 1";
+				interiorFile = "sbrdg5.dif";
+				showTerrainInside = "0";
+					locked = "true";
+			};
+		};
+	};
+	new SimGroup(Towers) {
+			powerCount = "0";
+
+		new SimGroup(Underground) {
+				powerCount = "0";
+
+			new InteriorInstance() {
+				position = "-39.6416 -25.4541 97.6058";
+				rotation = "0.706996 0.706996 -0.0176786 4.05129";
+				scale = "1 1 1";
+				interiorFile = "stowr1.dif";
+				showTerrainInside = "0";
+					locked = "true";
+			};
+			new InteriorInstance() {
+				position = "261.6 -74.571 87.9013";
+				rotation = "1 0 0 6.30252";
+				scale = "1 1 1";
+				interiorFile = "stowr1.dif";
+				showTerrainInside = "0";
+					locked = "true";
+			};
+			new InteriorInstance() {
+				position = "272.726 -416.56 95.0372";
+				rotation = "0.739491 0.672148 -0.0370054 8.51572";
+				scale = "1 1 1";
+				interiorFile = "stowr1.dif";
+				showTerrainInside = "0";
+					locked = "true";
+			};
+			new InteriorInstance() {
+				position = "-109.635 -547.354 90.1012";
+				rotation = "1 0 0 6.30252";
+				scale = "1 1 1";
+				interiorFile = "stowr1.dif";
+				showTerrainInside = "0";
+					locked = "true";
+			};
+			new InteriorInstance() {
+				position = "-203.619 196.746 83.2631";
+				rotation = "-0.993148 0.0871335 0.0778794 7.46196";
+				scale = "1 1 1";
+				interiorFile = "stowr1.dif";
+				showTerrainInside = "0";
+					locked = "true";
+			};
+			new InteriorInstance() {
+				position = "-407.156 -242.67 90.875";
+				rotation = "1 0 0 16.0428";
+				scale = "1 1 1";
+				interiorFile = "stowr1.dif";
+				showTerrainInside = "0";
+					locked = "true";
+			};
+		};
+		new SimGroup(Aboveground) {
+				powerCount = "0";
+
+			new InteriorInstance() {
+				position = "13.7812 -315.43 187.629";
+				rotation = "1 0 0 0";
+				scale = "1 1 1";
+				interiorFile = "stowr1.dif";
+				showTerrainInside = "0";
+					locked = "true";
+			};
+			new InteriorInstance() {
+				position = "340.983 -652.327 140.089";
+				rotation = "1 0 0 0";
+				scale = "1 1 1";
+				interiorFile = "stowr6.dif";
+				showTerrainInside = "0";
+					locked = "true";
+			};
+			new InteriorInstance() {
+				position = "-498.438 219.099 137.819";
+				rotation = "0 0 1 46.4096";
+				scale = "1 1 1";
+				interiorFile = "stowr6.dif";
+				showTerrainInside = "0";
+					locked = "true";
+			};
+			new InteriorInstance() {
+				position = "69.9097 212.472 157.436";
+				rotation = "1 0 0 0";
+				scale = "1 1 1";
+				interiorFile = "stowr6.dif";
+				showTerrainInside = "0";
+					locked = "true";
+			};
+			new InteriorInstance() {
+				position = "257.765 172.916 255.302";
+				rotation = "1 0 0 0";
+				scale = "1 1 1";
+				interiorFile = "stowr1.dif";
+				showTerrainInside = "0";
+					locked = "true";
+			};
+			new InteriorInstance() {
+				position = "421.286 -154.539 166.709";
+				rotation = "1 0 0 0";
+				scale = "1 1 1";
+				interiorFile = "stowr1.dif";
+				showTerrainInside = "0";
+					locked = "true";
+			};
+			new InteriorInstance() {
+				position = "102.083 -204.767 202.566";
+				rotation = "1 0 0 0";
+				scale = "1 1 1";
+				interiorFile = "stowr1.dif";
+				showTerrainInside = "0";
+					locked = "true";
+			};
+			new InteriorInstance() {
+				position = "135.177 -422.462 255.395";
+				rotation = "1 0 0 0";
+				scale = "1 1 1";
+				interiorFile = "stowr1.dif";
+				showTerrainInside = "0";
+					locked = "true";
+			};
+			new InteriorInstance() {
+				position = "-469.715 -486.593 204.01";
+				rotation = "1 0 0 0";
+				scale = "1 1 1";
+				interiorFile = "stowr1.dif";
+				showTerrainInside = "0";
+					locked = "true";
+			};
+			new InteriorInstance() {
+				position = "-216.456 -691.265 277.935";
+				rotation = "1 0 0 0";
+				scale = "1 1 1";
+				interiorFile = "stowr1.dif";
+				showTerrainInside = "0";
+					locked = "true";
+			};
+		};
+	};
+	new SimGroup(Armaments) {
+			powerCount = "0";
+
+		new Item() {
+			position = "-207.345 197.091 77.3484";
+			rotation = "0 0 -1 26.929";
+			scale = "1 1 1";
+			dataBlock = "EnergyPack";
+			lockCount = "0";
+			homingCount = "0";
+			collideable = "0";
+			static = "1";
+			rotate = "0";
+				Target = "-1";
+				locked = "true";
+		};
+		new Item() {
+			position = "-492.555 222.878 191.458";
+			rotation = "1 0 0 0";
+			scale = "1 1 1";
+			dataBlock = "RepairPack";
+			lockCount = "0";
+			homingCount = "0";
+			collideable = "0";
+			static = "1";
+			rotate = "0";
+				Target = "-1";
+				locked = "true";
+		};
+		new Item() {
+			position = "-503.915 212.195 191.403";
+			rotation = "1 0 0 0";
+			scale = "1 1 1";
+			dataBlock = "RepairPatch";
+			lockCount = "0";
+			homingCount = "0";
+			collideable = "0";
+			static = "1";
+			rotate = "0";
+				Target = "-1";
+				locked = "true";
+		};
+		new Item() {
+			position = "-504.624 227.229 191.632";
+			rotation = "0 0 1 42.3989";
+			scale = "1 1 1";
+			dataBlock = "GrenadeLauncher";
+			lockCount = "0";
+			homingCount = "0";
+			collideable = "0";
+			static = "1";
+			rotate = "0";
+				Target = "-1";
+				locked = "true";
+		};
+		new Item() {
+			position = "-503.621 226.25 191.626";
+			rotation = "0 0 1 44.1177";
+			scale = "1 1 1";
+			dataBlock = "GrenadeLauncherAmmo";
+			lockCount = "0";
+			homingCount = "0";
+			collideable = "0";
+			static = "1";
+			rotate = "0";
+				Target = "-1";
+				locked = "true";
+		};
+		new Item() {
+			position = "-503.435 226.069 191.626";
+			rotation = "0 0 1 44.1177";
+			scale = "1 1 1";
+			dataBlock = "GrenadeLauncherAmmo";
+			lockCount = "0";
+			homingCount = "0";
+			collideable = "0";
+			static = "1";
+			rotate = "0";
+				Target = "-1";
+				locked = "true";
+		};
+		new Item() {
+			position = "-497.504 218.079 200.803";
+			rotation = "0 0 -1 37.8152";
+			scale = "1 1 1";
+			dataBlock = "InventoryDeployable";
+			lockCount = "0";
+			homingCount = "0";
+			collideable = "0";
+			static = "1";
+			rotate = "0";
+				Target = "-1";
+				locked = "true";
+		};
+		new Item() {
+			position = "72.0033 220.067 210.819";
+			rotation = "1 0 0 0";
+			scale = "1 1 1";
+			dataBlock = "RepairPatch";
+			lockCount = "0";
+			homingCount = "0";
+			collideable = "0";
+			static = "1";
+			rotate = "0";
+				Target = "-1";
+				locked = "true";
+		};
+		new Item() {
+			position = "72.0054 212.922 210.675";
+			rotation = "1 0 0 0";
+			scale = "1 1 1";
+			dataBlock = "RepairPatch";
+			lockCount = "0";
+			homingCount = "0";
+			collideable = "0";
+			static = "1";
+			rotate = "0";
+				Target = "-1";
+				locked = "true";
+		};
+		new Item() {
+			position = "71.9085 204.743 210.845";
+			rotation = "1 0 0 0";
+			scale = "1 1 1";
+			dataBlock = "RepairPatch";
+			lockCount = "0";
+			homingCount = "0";
+			collideable = "0";
+			static = "1";
+			rotate = "0";
+				Target = "-1";
+				locked = "true";
+		};
+		new Item() {
+			position = "260.566 176.16 246.499";
+			rotation = "0 0 1 230.329";
+			scale = "1 1 1";
+			dataBlock = "SniperRifle";
+			lockCount = "0";
+			homingCount = "0";
+			collideable = "0";
+			static = "1";
+			rotate = "0";
+				Target = "-1";
+				locked = "true";
+		};
+		new Item() {
+			position = "254.758 172.155 246.405";
+			rotation = "1 0 0 0";
+			scale = "1 1 1";
+			dataBlock = "EnergyPack";
+			lockCount = "0";
+			homingCount = "0";
+			collideable = "0";
+			static = "1";
+			rotate = "0";
+				Target = "-1";
+				locked = "true";
+		};
+		new Item() {
+			position = "421.11 -154.606 157.709";
+			rotation = "0 0 -1 1.14602";
+			scale = "1 1 1";
+			dataBlock = "RepairKit";
+			lockCount = "0";
+			homingCount = "0";
+			collideable = "0";
+			static = "1";
+			rotate = "0";
+				Target = "-1";
+				locked = "true";
+		};
+		new Item() {
+			position = "341.022 -652.108 193.59";
+			rotation = "1 0 0 0";
+			scale = "1 1 1";
+			dataBlock = "RepairPatch";
+			lockCount = "0";
+			homingCount = "0";
+			collideable = "0";
+			static = "1";
+			rotate = "0";
+				Target = "-1";
+				locked = "true";
+		};
+		new Item() {
+			position = "341.02 -644.963 193.734";
+			rotation = "1 0 0 0";
+			scale = "1 1 1";
+			dataBlock = "RepairPatch";
+			lockCount = "0";
+			homingCount = "0";
+			collideable = "0";
+			static = "1";
+			rotate = "0";
+				Target = "-1";
+				locked = "true";
+		};
+		new Item() {
+			position = "340.925 -660.287 193.76";
+			rotation = "1 0 0 0";
+			scale = "1 1 1";
+			dataBlock = "RepairPatch";
+			lockCount = "0";
+			homingCount = "0";
+			collideable = "0";
+			static = "1";
+			rotate = "0";
+				Target = "-1";
+				locked = "true";
+		};
+		new Item() {
+			position = "-214.294 -691.644 269.139";
+			rotation = "1 0 0 0";
+			scale = "1 1 1";
+			dataBlock = "Plasma";
+			lockCount = "0";
+			homingCount = "0";
+			collideable = "0";
+			static = "1";
+			rotate = "0";
+				Target = "-1";
+				locked = "true";
+		};
+		new Item() {
+			position = "-217.562 -689.039 268.73";
+			rotation = "1 0 0 0";
+			scale = "1 1 1";
+			dataBlock = "PlasmaAmmo";
+			lockCount = "0";
+			homingCount = "0";
+			collideable = "0";
+			static = "1";
+			rotate = "0";
+				ammoStore = "10";
+				Target = "-1";
+				locked = "true";
+		};
+		new Item() {
+			position = "-217.162 -689.039 268.73";
+			rotation = "1 0 0 0";
+			scale = "1 1 1";
+			dataBlock = "PlasmaAmmo";
+			lockCount = "0";
+			homingCount = "0";
+			collideable = "0";
+			static = "1";
+			rotate = "0";
+				ammoStore = "10";
+				Target = "-1";
+				locked = "true";
+		};
+		new Item() {
+			position = "-470.626 -483.814 195.06";
+			rotation = "1 0 0 0";
+			scale = "1 1 1";
+			dataBlock = "Mine";
+			lockCount = "0";
+			homingCount = "0";
+			collideable = "0";
+			static = "1";
+			rotate = "0";
+				Target = "-1";
+				locked = "true";
+		};
+		new Item() {
+			position = "-472.187 -484.018 194.95";
+			rotation = "1 0 0 0";
+			scale = "1 1 1";
+			dataBlock = "grenade";
+			lockCount = "0";
+			homingCount = "0";
+			collideable = "0";
+			static = "1";
+			rotate = "0";
+				Target = "-1";
+				locked = "true";
+		};
+		new Item() {
+			position = "-471.469 -483.661 195.018";
+			rotation = "1 0 0 0";
+			scale = "1 1 1";
+			dataBlock = "grenade";
+			lockCount = "0";
+			homingCount = "0";
+			collideable = "0";
+			static = "1";
+			rotate = "0";
+				Target = "-1";
+				locked = "true";
+		};
+		new Item() {
+			position = "-472.089 -483.661 194.998";
+			rotation = "1 0 0 0";
+			scale = "1 1 1";
+			dataBlock = "grenade";
+			lockCount = "0";
+			homingCount = "0";
+			collideable = "0";
+			static = "1";
+			rotate = "0";
+				Target = "-1";
+				locked = "true";
+		};
+		new Item() {
+			position = "-469.131 -483.535 195.351";
+			rotation = "0 0 1 90.5273";
+			scale = "1 1 1";
+			dataBlock = "ELFGun";
+			lockCount = "0";
+			homingCount = "0";
+			collideable = "0";
+			static = "1";
+			rotate = "0";
+				Target = "-1";
+				locked = "true";
+		};
+		new Item() {
+			position = "-36.2743 -28.4248 88.8895";
+			rotation = "1 0 0 0";
+			scale = "1 1 1";
+			dataBlock = "MissileLauncherAmmo";
+			lockCount = "0";
+			homingCount = "0";
+			collideable = "0";
+			static = "1";
+			rotate = "0";
+				Target = "-1";
+				locked = "true";
+		};
+		new Item() {
+			position = "102.407 -204.653 193.613";
+			rotation = "1 0 0 0";
+			scale = "1 1 1";
+			dataBlock = "RepairPack";
+			lockCount = "0";
+			homingCount = "0";
+			collideable = "0";
+			static = "1";
+			rotate = "0";
+				Target = "-1";
+				locked = "true";
+		};
+		new Item() {
+			position = "13.6955 -315.133 178.381";
+			rotation = "1 0 0 0";
+			scale = "1 1 1";
+			dataBlock = "InventoryDeployable";
+			lockCount = "0";
+			homingCount = "0";
+			collideable = "0";
+			static = "1";
+			rotate = "0";
+				Target = "-1";
+				locked = "true";
+		};
+		new Item() {
+			position = "-415.239 -242.049 77.1152";
+			rotation = "1 0 0 0";
+			scale = "1 1 1";
+			dataBlock = "MortarAmmo";
+			lockCount = "0";
+			homingCount = "0";
+			collideable = "0";
+			static = "1";
+			rotate = "0";
+				Target = "-1";
+				locked = "true";
+		};
+		new Item() {
+			position = "-414.388 -241.631 77.4499";
+			rotation = "0 0 1 23.4913";
+			scale = "1 1 1";
+			dataBlock = "MortarAmmo";
+			lockCount = "0";
+			homingCount = "0";
+			collideable = "0";
+			static = "1";
+			rotate = "0";
+				Target = "-1";
+				locked = "true";
+		};
+		new Item(MortarGun) {
+			position = "-414.568 -240.274 77.1168";
+			rotation = "0 0 1 233.949";
+			scale = "1 1 1";
+			dataBlock = "Mortar";
+			lockCount = "0";
+			homingCount = "0";
+			collideable = "0";
+			static = "1";
+			rotate = "0";
+				Target = "-1";
+				locked = "true";
+		};
+		new Item() {
+			position = "-39.926 -24.0671 88.4986";
+			rotation = "1 0 0 0";
+			scale = "1 1 1";
+			dataBlock = "RepairPatch";
+			lockCount = "0";
+			homingCount = "0";
+			collideable = "0";
+			static = "1";
+			rotate = "0";
+				Target = "-1";
+				locked = "true";
+		};
+		new Item() {
+			position = "-39.9872 -27.4283 88.6666";
+			rotation = "1 0 0 0";
+			scale = "1 1 1";
+			dataBlock = "MissileLauncher";
+			lockCount = "0";
+			homingCount = "0";
+			collideable = "0";
+			static = "1";
+			rotate = "0";
+				Target = "-1";
+				locked = "true";
+		};
+		new Item() {
+			position = "-36.2743 -28.4248 88.9695";
+			rotation = "1 0 0 0";
+			scale = "1 1 1";
+			dataBlock = "MissileLauncherAmmo";
+			lockCount = "0";
+			homingCount = "0";
+			collideable = "0";
+			static = "1";
+			rotate = "0";
+				Target = "-1";
+				locked = "true";
+		};
+		new Item() {
+			position = "-106.648 -546.303 81.0544";
+			rotation = "1 0 0 0";
+			scale = "1 1 1";
+			dataBlock = "TurretIndoorDeployable";
+			lockCount = "0";
+			homingCount = "0";
+			collideable = "0";
+			static = "1";
+			rotate = "0";
+				Target = "-1";
+				locked = "true";
+		};
+		new Item() {
+			position = "-113.096 -546.869 81.0199";
+			rotation = "1 0 0 0";
+			scale = "1 1 1";
+			dataBlock = "TurretOutdoorDeployable";
+			lockCount = "0";
+			homingCount = "0";
+			collideable = "0";
+			static = "1";
+			rotate = "0";
+				Target = "-1";
+				locked = "true";
+		};
+		new Item() {
+			position = "-113.002 -551.525 81.5587";
+			rotation = "0 0 1 49.2744";
+			scale = "1 1 1";
+			dataBlock = "CloakingPack";
+			lockCount = "0";
+			homingCount = "0";
+			collideable = "0";
+			static = "1";
+			rotate = "0";
+				Target = "-1";
+				locked = "true";
+		};
+		new Item() {
+			position = "-106.935 -548.525 81.2678";
+			rotation = "0 0 -1 88.4182";
+			scale = "1 1 1";
+			dataBlock = "ShockLance";
+			lockCount = "0";
+			homingCount = "0";
+			collideable = "0";
+			static = "1";
+			rotate = "0";
+				Target = "-1";
+				locked = "true";
+		};
+		new Item(MortarGun) {
+			position = "278.017 -413.207 76.8515";
+			rotation = "0 0 -1 34.3778";
+			scale = "1 1 1";
+			dataBlock = "Mortar";
+			lockCount = "0";
+			homingCount = "0";
+			collideable = "0";
+			static = "1";
+			rotate = "0";
+				Target = "-1";
+				locked = "true";
+		};
+		new Item() {
+			position = "278.25 -414.26 76.9846";
+			rotation = "0 0 1 23.4913";
+			scale = "1 1 1";
+			dataBlock = "MortarAmmo";
+			lockCount = "0";
+			homingCount = "0";
+			collideable = "0";
+			static = "1";
+			rotate = "0";
+				Target = "-1";
+				locked = "true";
+		};
+		new Item() {
+			position = "277.399 -414.677 76.6499";
+			rotation = "1 0 0 0";
+			scale = "1 1 1";
+			dataBlock = "MortarAmmo";
+			lockCount = "0";
+			homingCount = "0";
+			collideable = "0";
+			static = "1";
+			rotate = "0";
+				Target = "-1";
+				locked = "true";
+		};
+		new Item() {
+			position = "-106.913 -551.166 81.7049";
+			rotation = "0 0 -1 40.107";
+			scale = "1 1 1";
+			dataBlock = "SensorJammerPack";
+			lockCount = "0";
+			homingCount = "0";
+			collideable = "0";
+			static = "1";
+			rotate = "0";
+				Target = "-1";
+				locked = "true";
+		};
+		new Item() {
+			position = "-109.981 -545.41 80.796";
+			rotation = "1 0 0 0";
+			scale = "1 1 1";
+			dataBlock = "EnergyPack";
+			lockCount = "0";
+			homingCount = "0";
+			collideable = "0";
+			static = "1";
+			rotate = "0";
+				Target = "-1";
+				locked = "true";
+		};
+		new Item() {
+			position = "188.886 -491.15 141.533";
+			rotation = "1 0 0 0";
+			scale = "1 1 1";
+			dataBlock = "RepairPack";
+			lockCount = "0";
+			homingCount = "0";
+			collideable = "0";
+			static = "1";
+			rotate = "0";
+				Target = "-1";
+				locked = "true";
+		};
+		new Item() {
+			position = "351.126 -652.299 193.737";
+			rotation = "1 0 0 0";
+			scale = "1 1 1";
+			dataBlock = "RepairPack";
+			lockCount = "0";
+			homingCount = "0";
+			collideable = "0";
+			static = "1";
+			rotate = "0";
+				Target = "-1";
+				locked = "true";
+		};
+		new Item() {
+			position = "330.628 -651.431 193.693";
+			rotation = "0 0 1 89.3814";
+			scale = "1 1 1";
+			dataBlock = "EnergyPack";
+			lockCount = "0";
+			homingCount = "0";
+			collideable = "0";
+			static = "1";
+			rotate = "0";
+				Target = "-1";
+				locked = "true";
+		};
+		new Item() {
+			position = "58.0175 211.142 211.112";
+			rotation = "0 0 1 88.8085";
+			scale = "1 1 1";
+			dataBlock = "EnergyPack";
+			lockCount = "0";
+			homingCount = "0";
+			collideable = "0";
+			static = "1";
+			rotate = "0";
+				Target = "-1";
+				locked = "true";
+		};
+		new Item() {
+			position = "81.3297 213.035 210.804";
+			rotation = "0 0 1 91.6732";
+			scale = "1 1 1";
+			dataBlock = "RepairPack";
+			lockCount = "0";
+			homingCount = "0";
+			collideable = "0";
+			static = "1";
+			rotate = "0";
+				Target = "-1";
+				locked = "true";
+		};
+		new Item() {
+			position = "-406.074 -244.004 81.8162";
+			rotation = "0 0 -1 29.2208";
+			scale = "1 1 1";
+			dataBlock = "RepairPack";
+			lockCount = "0";
+			homingCount = "0";
+			collideable = "0";
+			static = "1";
+			rotate = "0";
+				Target = "-1";
+				locked = "true";
+		};
+	};
+};
+//--- OBJECT WRITE END ---
+
+//=+=+=+=+=+=+=+=+=+=+=+=+=+=+=<>=+=+=+=+=+=+=+=+=+=+=+=+=+=+=
+//////////////////////////////////////////////////////\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+//=+=+=+=+=+=+=+=+=+=+=+=+=+=+=<>=+=+=+=+=+=+=+=+=+=+=+=+=+=+=
+package Broken_Dreams{
+
+
+function Generator::onEnabled(%data, %obj, %prevState)
+{
+	Parent::onEnabled(%data, %obj, %prevState);
+	
+	if(%obj == nameToId("MainGenerator1") )
+	{
+	  NameToID("NeededGen").setDamageLevel(2.5);
+	  NameToID("Team1FFGen").setDamageLevel(0);
+	}
+}
+
+//From TRIDENT.MIS
+//Thanks to CleverClothe for pointing it out
+
+// ...we want to deactivate the above set spawn spheres
+// (revert them to attackers) if the gen is disabled
+// (and it won't be being repaired, either)
+    function Generator::onDisabled(%data, %obj)
+    {
+    	Parent::onDisabled(%data, %obj);
+
+    	%attackersTeam = 1;
+    	%neutralTeam = 0;
+    	if(%obj == nameToId("SecondSiegeGen") )
+    	{
+    		%spawn = nameToId("SiegeSpawnSphere");
+    		Game.claimSpawn(%spawn, %attackersTeam, %neutralTeam);
+    	}
+    }
+
+//Cleanup work
+//Wohoo!  I did *this* on my own
+   function Game::gameOver( %game )
+   {
+      $InvBanList[$CurrentMissionType, "Mortar"] = "";
+      Game.claimSpawn(NameToID("SiegeSpawnSphere"), 0, 1);
+      Parent::gameOver( %game );
+   }
+//=+=+=+=+=+=+=+=+=+=+=+=+=+=+=<>=+=+=+=+=+=+=+=+=+=+=+=+=+=+=
+//////////////////////////////////////////////////////\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\
+//=+=+=+=+=+=+=+=+=+=+=+=+=+=+=<>=+=+=+=+=+=+=+=+=+=+=+=+=+=+=
+
+//MAJOR thanks to Dev and Alingis for these pieces following..
+//Yes, I'm stupid for needing help on such a small thing, but
+//the thanks goes out, nonetheless.
+//=+=+=+=+=+=+=+=+=+=+=+=+=+=+=
+
+  function DestroyOnStart()
+  {
+
+    if ($missionRunning == false)
+    {
+      schedule(500, 0, DestroyOnStart);
+      return;
+    }
+
+    if ($CurrentMissionType !$= "CTF")
+    {
+//Mission is NOT Capture the Flag type
+       nameToID(Team1Base1Gen).setDamageLevel(2.5);
+       nameToID(Team2Base1Gen).setDamageLevel(2.5);
+
+      if ($CurrentMissionType $= "Siege")
+     {
+//Mission is Siege type
+        nameToID(Team2Base1Gen).setDamageLevel(0);
+        nameToID(Team2FFGen).setDamageLevel(2.5);
+
+        nameToID(MainGenerator1).setDamageLevel(2.5);
+        nameToID(Team1StationInventory1).setDamageLevel(2.5);
+        nameToID(Team1StationInventory2).setDamageLevel(2.5);
+        nameToID(BaseTurret1).setDamageLevel(2.5);
+        nameToID(Team1FFGen).setDamageLevel(2.5);
+        nameToID(Team1Base1Gen).setDamageLevel(2.5);
+     }else{
+//Mission is not CTF OR Siege
+      nameToID(SecondSiegeGen).setDamageLevel(2.5);
+      nameToID(FirstSiegeGen).setDamageLevel(2.5);
+      nameToID(NeededGen).setDamageLevel(2.5);
+     }
+    }else{
+//Mission is CTF
+      nameToID(SecondSiegeGen).setDamageLevel(2.5);
+      nameToID(FirstSiegeGen).setDamageLevel(2.5);
+      nameToID(NeededGen).setDamageLevel(2.5);
+    }
+  }
+//Yes, yes.. not the best way to do code.  Sorry.. but it works.  On to the next piece!
+
+//=+=+=+=+=+=+=+=+=+=+=+=+=+=+=
+//Below code came from TRIDENT.MIS
+//Halftime! Blow everything up again.
+function SiegeGame::halftimeOver( %game )
+{
+   // drop all players into mission
+   %game.dropPlayers();
+
+   //setup the AI for the second half
+   %game.aiHalfTime();
+   
+   // start the mission again (release players)
+   %game.halfTimeCountDown( $Host::warmupTime );
+
+	//redo the objective waypoints
+	%game.findObjectiveWaypoints();
+        nameToID(Team2Base1Gen).setDamageLevel(0);
+        nameToID(Team2FFGen).setDamageLevel(2.5);
+
+        nameToID(MainGenerator1).setDamageLevel(2.5);
+        nameToID(Team1StationInventory1).setDamageLevel(2.5);
+        nameToID(Team1StationInventory2).setDamageLevel(2.5);
+        nameToID(BaseTurret1).setDamageLevel(2.5);
+        nameToID(Team1FFGen).setDamageLevel(2.5);
+        nameToID(Team1Base1Gen).setDamageLevel(2.5);
+}
+};
+//=+=+=+=+=+=+=+=+=+=+=+=+=+=+=
+activatePackage(Broken_Dreams);
+DestroyOnStart();
+//=+=+=+=+=+=+=+=+=+=+=+=+=+=+=

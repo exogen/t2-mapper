@@ -1,0 +1,146 @@
+//--- OBJECT WRITE BEGIN ---
+new GuiControl(ServerInfoDlg) {
+	profile = "GuiModelessDialogProfile";
+	horizSizing = "right";
+	vertSizing = "bottom";
+	position = "0 0";
+	extent = "640 480";
+	minExtent = "8 8";
+	visible = "1";
+	helpTag = "0";
+
+	new ShellWindowCtrl(SI_Window) {
+		profile = "ShellWindowProfile";
+		horizSizing = "right";
+		vertSizing = "bottom";
+		position = "145 105";
+		extent = "350 270";
+		minExtent = "200 200";
+		visible = "1";
+		helpTag = "0";
+		text = "INFO";
+		frameBase = "gui/window";
+		borderWidth = "2";
+		resizeWidth = "1";
+		resizeHeight = "1";
+		canMove = "1";
+		canClose = "1";
+		closeCommand = "Canvas.popDialog(ServerInfoDlg);";
+
+		new GuiFrameSetCtrl(SI_Frame) {
+			profile = "GuiDefaultProfile";
+			horizSizing = "width";
+			vertSizing = "height";
+			position = "7 32";
+			extent = "336 202";
+			minExtent = "8 8";
+			visible = "1";
+			helpTag = "0";
+			columns = "0";
+			rows = "0 130";
+			borderWidth = "4";
+			borderColor = "25 68 56 206";
+			borderEnable = "dynamic";
+			borderMovable = "dynamic";
+			autoBalance = "0";
+			fudgeFactor = "4";
+
+			new ShellScrollCtrl(SI_InfoScroll) {
+				profile = "NewScrollCtrlProfile";
+				horizSizing = "width";
+				vertSizing = "bottom";
+				position = "0 0";
+				extent = "336 96";
+				minExtent = "24 52";
+				visible = "1";
+				helpTag = "0";
+				willFirstRespond = "1";
+				hScrollBar = "alwaysOff";
+				vScrollBar = "dynamic";
+				constantThumbHeight = "0";
+				defaultLineHeight = "15";
+				childMargin = "3 3";
+				fieldBase = "gui/shll_field";
+
+				new GuiScrollContentCtrl() {
+					profile = "GuiDefaultProfile";
+					horizSizing = "width";
+					vertSizing = "bottom";
+					position = "7 7";
+					extent = "306 88";
+					minExtent = "8 8";
+					visible = "1";
+					helpTag = "0";
+
+					new GuiMLTextCtrl(SI_InfoWindow) {
+						profile = "ShellAltTextProfile";
+						horizSizing = "width";
+						vertSizing = "bottom";
+						position = "0 0";
+						extent = "306 52";
+						minExtent = "24 52";
+						visible = "1";
+						helpTag = "0";
+						lineSpacing = "2";
+						allowColorChars = "0";
+					};
+				};
+			};
+			new ShellScrollCtrl(SI_ContentScroll) {
+				profile = "NewScrollCtrlProfile";
+				horizSizing = "width";
+				vertSizing = "bottom";
+				position = "0 100";
+				extent = "336 162";
+				minExtent = "24 52";
+				visible = "1";
+				helpTag = "0";
+				willFirstRespond = "1";
+				hScrollBar = "alwaysOff";
+				vScrollBar = "dynamic";
+				constantThumbHeight = "0";
+				defaultLineHeight = "15";
+				childMargin = "3 3";
+				fieldBase = "gui/shll_field";
+
+				new GuiScrollContentCtrl() {
+					profile = "GuiDefaultProfile";
+					horizSizing = "width";
+					vertSizing = "bottom";
+					position = "7 7";
+					extent = "306 174";
+					minExtent = "8 8";
+					visible = "1";
+					helpTag = "0";
+
+					new GuiMLTextCtrl(SI_ContentWindow) {
+						profile = "InfoWindowProfile";
+						horizSizing = "width";
+						vertSizing = "bottom";
+						position = "0 0";
+						extent = "306 52";
+						minExtent = "24 52";
+						visible = "1";
+						helpTag = "0";
+						lineSpacing = "2";
+						allowColorChars = "1";
+					};
+				};
+			};
+		};
+		new ShellBitmapButton(SI_RefreshBtn) {
+			profile = "ShellButtonProfile";
+			horizSizing = "center";
+			vertSizing = "top";
+			position = "105 230";
+			extent = "128 38";
+			minExtent = "32 38";
+			visible = "1";
+			command = "SI_RefreshBtn.setActive(false); GMJ_Browser.refreshSelectedServer();";
+			helpTag = "0";
+			text = "REFRESH";
+			simpleStyle = "0";
+		};
+	};
+};
+//--- OBJECT WRITE END ---

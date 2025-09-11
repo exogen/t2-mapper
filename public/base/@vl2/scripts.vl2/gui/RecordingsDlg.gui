@@ -1,0 +1,140 @@
+//--- OBJECT WRITE BEGIN ---
+new GuiControl(RecordingsDlg) {
+	profile = "DlgBackProfile";
+	horizSizing = "width";
+	vertSizing = "height";
+	position = "0 0";
+	extent = "640 480";
+	minExtent = "8 8";
+	visible = "1";
+	hideCursor = "0";
+	bypassHideCursor = "0";
+	helpTag = "0";
+
+	new ShellPaneCtrl() {
+		profile = "ShellDlgPaneProfile";
+		horizSizing = "center";
+		vertSizing = "center";
+		position = "60 61";
+		extent = "530 360";
+		minExtent = "48 92";
+		visible = "1";
+		hideCursor = "0";
+		bypassHideCursor = "0";
+		helpTag = "0";
+		text = "SELECT RECORDING";
+		longTextBuffer = "0";
+		maxLength = "255";
+		noTitleBar = "0";
+
+		new ShellFancyArrayScrollCtrl() {
+			profile = "NewScrollCtrlProfile";
+			horizSizing = "center";
+			vertSizing = "height";
+			position = "23 37";
+			extent = "484 266";
+			minExtent = "32 32";
+			visible = "1";
+			hideCursor = "0";
+			bypassHideCursor = "0";
+			helpTag = "0";
+			fixedHorizontal = "1";
+			vertSpacerBitmap = "gui/shll_vertspacer";
+			horzSpacerBitmap = "gui/shll_horzspacer";
+
+			new ShellFancyTextList(RecordingsDlgList) {
+				profile = "ShellServerBrowserProfile";
+				horizSizing = "right";
+				vertSizing = "bottom";
+				position = "0 0";
+				extent = "464 262";
+				minExtent = "8 20";
+				visible = "1";
+				hideCursor = "0";
+				bypassHideCursor = "0";
+				helpTag = "0";
+				startScrollRegion = "3 0";
+				headerBitmap = "gui/server_tabs";
+				sortArrowBitmap = "gui/shll_sortarrow";
+				fieldBase = "gui/shll_field";
+				barBase = "gui/shll_bar";
+				glowOffset = "4";
+				rowHeight = "19";
+				headerFontType = "Univers Condensed";
+				headerFontSize = "16";
+				headerFontColor = "8 19 6 255";
+				headerFontColorHL = "25 68 56 255";
+				separatorColor = "192 192 192 255";
+				drawSeparators = "0";
+				headerSort = "1";
+				allowReposition = "1";
+				noSelect = "0";
+				allowColorChars = "1";
+            altCommand = "startSelectedDemo();";
+			};
+		};
+		new ShellBitmapButton(PR_CancelBtn) {
+			profile = "ShellButtonProfile";
+			horizSizing = "right";
+			vertSizing = "top";
+			position = "386 304";
+			extent = "128 38";
+			minExtent = "32 38";
+			visible = "1";
+			hideCursor = "0";
+			bypassHideCursor = "0";
+			command = "Canvas.popDialog(RecordingsDlg);";
+			accelerator = "escape";
+			helpTag = "0";
+			text = "CANCEL";
+			simpleStyle = "0";
+		};
+		new ShellBitmapButton(PR_StartDemoBtn) {
+			profile = "ShellButtonProfile";
+			horizSizing = "right";
+			vertSizing = "top";
+			position = "16 304";
+			extent = "128 38";
+			minExtent = "32 38";
+			visible = "1";
+			hideCursor = "0";
+			bypassHideCursor = "0";
+			command = "StartSelectedDemo();";
+			helpTag = "0";
+			text = "PLAY";
+			simpleStyle = "0";
+		};
+		new ShellBitmapButton(PR_DeleteDemoBtn) {
+			profile = "ShellButtonProfile";
+			horizSizing = "right";
+			vertSizing = "top";
+			position = "134 304";
+			extent = "128 38";
+			minExtent = "32 38";
+			visible = "1";
+			hideCursor = "0";
+			bypassHideCursor = "0";
+			command = "DeleteSelectedDemo();";
+			helpTag = "0";
+			text = "DELETE";
+			simpleStyle = "0";
+		};
+		new ShellBitmapButton(PR_RenameDemoBtn) {
+			profile = "ShellButtonProfile";
+			horizSizing = "right";
+			vertSizing = "top";
+			position = "252 304";
+			extent = "128 38";
+			minExtent = "32 38";
+			visible = "1";
+			hideCursor = "0";
+			bypassHideCursor = "0";
+			command = "RenameSelectedDemo();";
+			helpTag = "0";
+			text = "RENAME";
+			simpleStyle = "0";
+		};
+	};
+};
+//--- OBJECT WRITE END ---
+

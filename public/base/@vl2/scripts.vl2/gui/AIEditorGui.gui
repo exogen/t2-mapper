@@ -1,0 +1,46 @@
+
+new WorldEditor(aiEdit)
+{
+   profile = "";
+	horizSizing = "width";
+	vertSizing = "height";
+	position = "0 0";
+	extent = "520 420";
+	minExtent = "8 8";
+	visible = "1";
+	setFirstResponder = "0";
+	modal = "1";
+};
+
+//------------------------------------------------------------------------------
+
+function AIworking(%working)
+{
+   if(%working)
+   {
+      Canvas.pushDialog(AIEWorkingDlg);
+      GraphBuildProgress.setValue(0.0);
+   }
+   else
+      Canvas.popDialog(AIEWorkingDlg);
+   
+   Canvas.repaint();
+}
+
+new ActionMap(AIEditorMap);
+//AIEditorMap.bindCmd(keyboard, "space", "aiEdit.nextMode();", "");
+
+AIEditorMap.bindCmd(keyboard, "ctrl c", "aiEdit.copySelection();", "");
+AIEditorMap.bindCmd(keyboard, "ctrl x", "aiEdit.copySelection();aiEdit.deleteSelection();", "");
+AIEditorMap.bindCmd(keyboard, "delete", "aiEdit.copySelection();aiEdit.deleteSelection();", "");
+AIEditorMap.bindCmd(keyboard, "ctrl v", "aiEdit.pasteSelection();", "");
+AIEditorMap.bindCmd(keyboard, "ctrl h", "aiEdit.hideSelection(true);", "");
+AIEditorMap.bindCmd(keyboard, "alt h", "aiEdit.hideSelection(false);", "");
+AIEditorMap.bindCmd(keyboard, "i", "Canvas.pushDialog(interiorDebugDialog);", "");
+AIEditorMap.bindCmd(keyboard, "ctrl d", "aiEdit.dropSelection();", "");
+AIEditorMap.bindCmd(keyboard, "ctrl q", "aiEdit.dropCameraToSelection();", "");
+AIEditorMap.bindCmd(keyboard, "ctrl m", "aiEdit.moveSelectionInPlace();", "");
+AIEditorMap.bindCmd(keyboard, "ctrl r", "aiEdit.resetTransforms();", "");
+AIEditorMap.bindCmd(keyboard, "space", "aiEdit.nextMode();", "");
+
+

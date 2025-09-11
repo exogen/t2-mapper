@@ -1,0 +1,107 @@
+//--- OBJECT WRITE BEGIN ---
+new GuiControl(ChannelBanDlg) {
+	profile = "DlgBackProfile";
+	horizSizing = "right";
+	vertSizing = "bottom";
+	position = "0 0";
+	extent = "640 480";
+	minExtent = "8 8";
+	visible = "1";
+	helpTag = "0";
+
+	new ShellPaneCtrl(ChannelBanPane) {
+		profile = "ShellDlgPaneProfile";
+		horizSizing = "center";
+		vertSizing = "center";
+		position = "154 65";
+		extent = "332 346";
+		minExtent = "48 92";
+		visible = "1";
+		helpTag = "0";
+		text = "EDIT BAN LIST";
+		noTitleBar = "0";
+
+		new GuiTextCtrl() {
+			profile = "ShellTextProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "27 28";
+			extent = "72 22";
+			minExtent = "8 8";
+			visible = "1";
+			helpTag = "0";
+			text = "Warrior Name:";
+		};
+		new ShellScrollCtrl() {
+			profile = "NewScrollCtrlProfile";
+			horizSizing = "right";
+			vertSizing = "height";
+			position = "22 42";
+			extent = "287 248";
+			minExtent = "24 52";
+			visible = "1";
+			helpTag = "0";
+			willFirstRespond = "1";
+			hScrollBar = "alwaysOff";
+			vScrollBar = "dynamic";
+			constantThumbHeight = "0";
+			defaultLineHeight = "15";
+			childMargin = "0 3";
+			fieldBase = "gui/shll_field";
+
+			new GuiScrollContentCtrl() {
+				profile = "GuiDefaultProfile";
+				horizSizing = "right";
+				vertSizing = "bottom";
+				position = "4 7";
+				extent = "279 234";
+				minExtent = "8 8";
+				visible = "1";
+				helpTag = "0";
+
+				new ShellChatMemberList(ChannelBanList) {
+					profile = "ShellChatMemberListProfile";
+					horizSizing = "right";
+					vertSizing = "bottom";
+					position = "0 0";
+					extent = "263 8";
+					minExtent = "8 8";
+					visible = "1";
+					helpTag = "0";
+					enumerate = "0";
+					resizeCell = "1";
+					columns = "0 169";
+					fitParentWidth = "1";
+					clipColumnText = "0";
+				};
+			};
+		};
+		new ShellBitmapButton(ChannelBanRemoveBtn) {
+			profile = "ShellButtonProfile";
+			horizSizing = "right";
+			vertSizing = "top";
+			position = "32 291";
+			extent = "128 38";
+			minExtent = "32 38";
+			visible = "1";
+			command = "ChannelRemoveBan();";
+			helpTag = "0";
+			text = "REMOVE BAN";
+			simpleStyle = "0";
+		};
+		new ShellBitmapButton() {
+			profile = "ShellButtonProfile";
+			horizSizing = "right";
+			vertSizing = "top";
+			position = "169 291";
+			extent = "128 38";
+			minExtent = "32 38";
+			visible = "1";
+			command = "Canvas.popDialog(ChannelBanDlg);";
+			helpTag = "0";
+			text = "DONE";
+			simpleStyle = "0";
+		};
+	};
+};
+//--- OBJECT WRITE END ---

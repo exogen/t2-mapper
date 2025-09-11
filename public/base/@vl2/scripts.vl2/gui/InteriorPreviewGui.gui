@@ -1,0 +1,296 @@
+//--- OBJECT WRITE BEGIN ---
+new GuiControl(interiorPreviewGui) {
+	profile = "GuiContentProfile";
+	horizSizing = "right";
+	vertSizing = "bottom";
+	position = "0 0";
+	extent = "640 480";
+	minExtent = "8 8";
+	visible = "1";
+	helpTag = "0";
+
+	new GameTSCtrl() {
+		profile = "GuiButtonProfile";
+		horizSizing = "width";
+		vertSizing = "height";
+		position = "0 0";
+		extent = "640 480";
+		minExtent = "8 8";
+		visible = "1";
+		helpTag = "0";
+		beaconBaseTextureName = "gui/beacon_base";
+		beaconTargetTextureName = "gui/crosshairs";
+		beaconTargetPeriod = "4000";
+		beaconsVisible = "1";
+		enemyBeaconLineBeginColor = "0.000000 1.000000 0.000000 0.200000";
+		enemyBeaconLineEndColor = "0.000000 1.000000 0.000000 0.800000";
+		vehicleBeaconLineBeginColor = "1.000000 0.000000 0.000000 0.200000";
+		vehicleBeaconLineEndColor = "1.000000 0.000000 0.000000 0.800000";
+		friendBeaconLineBeginColor = "1.000000 1.000000 0.000000 0.200000";
+		friendBeaconLineEndColor = "1.000000 1.000000 0.000000 0.800000";
+		beaconLineWidth = "2.5";
+		beaconTextYOffset = "14";
+		showAlternateTarget = "0";
+	};
+	new GuiButtonCtrl() {
+		profile = "GuiButtonProfile";
+		horizSizing = "right";
+		vertSizing = "top";
+		position = "22 438";
+		extent = "100 20";
+		minExtent = "8 8";
+		visible = "1";
+		command = "quit();";
+		helpTag = "0";
+		text = "Exit";
+	};
+	new ShellFieldCtrl(metricsIMain) {
+		profile = "GuiChatBackProfile";
+		horizSizing = "right";
+		vertSizing = "top";
+		position = "10 160";
+		extent = "242 275";
+		minExtent = "16 18";
+		visible = "0";
+		hideCursor = "0";
+		bypassHideCursor = "0";
+		helpTag = "0";
+
+		new GuiTextCtrl(title) {
+			profile = "CenterPrintTextProfile";
+			horizSizing = "width";
+			vertSizing = "bottom";
+			position = "63 7";
+			extent = "110 22";
+			minExtent = "8 8";
+			visible = "1";
+			hideCursor = "0";
+			bypassHideCursor = "0";
+			helpTag = "0";
+			text = "Mapper Metrics";
+			longTextBuffer = "0";
+			maxLength = "255";
+				lineSpacing = "2";
+				maxChars = "-1";
+				allowColorChars = "0";
+		};
+		new GuiTextCtrl(ThreeSpacePolysText) {
+			profile = "ScoreTextProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "12 148";
+			extent = "85 20";
+			minExtent = "8 8";
+			visible = "1";
+			hideCursor = "0";
+			bypassHideCursor = "0";
+			helpTag = "0";
+			text = "TS Polys: ";
+			longTextBuffer = "0";
+			maxLength = "255";
+		};
+		new GuiTextCtrl(InteriorPolysText) {
+			profile = "ScoreTextProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "12 118";
+			extent = "98 20";
+			minExtent = "8 8";
+			visible = "1";
+			hideCursor = "0";
+			bypassHideCursor = "0";
+			helpTag = "0";
+			text = "Interior Polys: ";
+			longTextBuffer = "0";
+			maxLength = "255";
+		};
+		new GuiTextCtrl(TerrainPolysText) {
+			profile = "ScoreTextProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "12 88";
+			extent = "99 20";
+			minExtent = "8 8";
+			visible = "1";
+			hideCursor = "0";
+			bypassHideCursor = "0";
+			helpTag = "0";
+			text = "Terrain Polys: ";
+			longTextBuffer = "0";
+			maxLength = "255";
+		};
+		new GuiTextCtrl(TotalPolysText) {
+			profile = "ScoreTextProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "12 226";
+			extent = "101 20";
+			minExtent = "8 8";
+			visible = "1";
+			hideCursor = "0";
+			bypassHideCursor = "0";
+			helpTag = "0";
+			text = "Scene Polys: ";
+			longTextBuffer = "0";
+			maxLength = "255";
+		};
+		new GuiTextCtrl(WaterPolysText) {
+			profile = "ScoreTextProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "12 178";
+			extent = "127 20";
+			minExtent = "8 8";
+			visible = "1";
+			hideCursor = "0";
+			bypassHideCursor = "0";
+			helpTag = "0";
+			text = "Water Polys: ";
+			longTextBuffer = "0";
+			maxLength = "255";
+		};
+		new GuiTextCtrl(FrameRateText) {
+			profile = "ScoreTextProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "12 40";
+			extent = "87 26";
+			minExtent = "8 8";
+			visible = "1";
+			hideCursor = "0";
+			bypassHideCursor = "0";
+			helpTag = "0";
+			text = "Frame Rate: ";
+			longTextBuffer = "0";
+			maxLength = "255";
+		};
+		new GuiConsoleVariableCtrl(frameRate) {
+			profile = "ScoreTextProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "156 40";
+			extent = "70 25";
+			minExtent = "8 8";
+			visible = "1";
+			hideCursor = "0";
+			bypassHideCursor = "0";
+			helpTag = "0";
+			expression = "$FPS::Real";
+		};
+		new GuiConsoleVariableCtrl(ThreeSpacePolys) {
+			profile = "ScoreTextProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "156 148";
+			extent = "70 25";
+			minExtent = "8 8";
+			visible = "1";
+			hideCursor = "0";
+			bypassHideCursor = "0";
+			helpTag = "0";
+			expression = "$OpenGL::triCount3";
+		};
+		new GuiConsoleVariableCtrl(InteriorPolys) {
+			profile = "ScoreTextProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "156 118";
+			extent = "70 25";
+			minExtent = "8 8";
+			visible = "1";
+			hideCursor = "0";
+			bypassHideCursor = "0";
+			helpTag = "0";
+			expression = "$OpenGL::triCount2";
+		};
+		new GuiConsoleVariableCtrl(TerrainPolys) {
+			profile = "ScoreTextProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "156 88";
+			extent = "70 25";
+			minExtent = "8 8";
+			visible = "1";
+			hideCursor = "0";
+			bypassHideCursor = "0";
+			helpTag = "0";
+			expression = "$OpenGL::triCount1";
+		};
+		new GuiConsoleVariableCtrl(TotalPolys) {
+			profile = "ScoreTextProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "156 226";
+			extent = "70 25";
+			minExtent = "8 8";
+			visible = "1";
+			hideCursor = "0";
+			bypassHideCursor = "0";
+			helpTag = "0";
+			expression = "$OpenGL::triCount";
+		};
+		new GuiConsoleVariableCtrl(WaterPolys) {
+			profile = "ScoreTextProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "156 179";
+			extent = "70 25";
+			minExtent = "8 8";
+			visible = "1";
+			hideCursor = "0";
+			bypassHideCursor = "0";
+			helpTag = "0";
+			expression = "$Water::triCount";
+		};
+	};
+};
+//--- OBJECT WRITE END ---
+
+function toggleMouse()
+{
+   if(Canvas.isCursorOn())
+      CursorOff();
+   else
+      CursorOn();
+}
+
+function interiorDebug(%val)
+{
+   if ( !%val )
+      Canvas.pushDialog( interiorDebugDialog );
+}
+
+function InteriorPreviewGui::onWake(%this)
+{
+   GlobalActionMap.bindcmd( keyboard, "tab", "", "toggleMouse();" );
+   GlobalActionMap.bindcmd( keyboard, "f9", "", "interiorDebug();" );
+   GlobalActionMap.bindcmd( keyboard, escape, "", "quit();" );
+
+   if ( isObject( previewMap ) )
+   {
+      previewMap.pop();
+      previewMap.delete();
+   }
+   new ActionMap( previewMap );
+   previewMap.bind( keyboard, w, moveforward );
+   previewMap.bind( keyboard, s, movebackward );
+   previewMap.bind( keyboard, a, moveleft );
+   previewMap.bind( keyboard, d, moveright );
+   previewMap.bind( keyboard, e, moveup );
+   previewMap.bind( keyboard, c, movedown );
+   previewMap.bindCmd( keyboard, k, "cycleDebugRenderMode();", "" );
+   previewMap.copyBind( moveMap, yaw );
+   previewMap.copyBind( moveMap, pitch );
+   previewMap.push();
+}
+
+function InteriorPreviewGui::onSleep(%this)
+{
+   previewMap.pop();
+   previewMap.delete();
+
+   GlobalActionMap.unbind(keyboard, "tab");
+   GlobalActionMap.unbind(keyboard, "f9");
+   lockMouse(false);
+}
+

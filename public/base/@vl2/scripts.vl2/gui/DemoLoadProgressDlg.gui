@@ -1,0 +1,45 @@
+//--- OBJECT WRITE BEGIN ---
+new GuiControl(DemoLoadProgressDlg) {
+	profile = "DlgBackProfile";
+	horizSizing = "width";
+	vertSizing = "height";
+	position = "0 0";
+	extent = "640 480";
+	minExtent = "8 8";
+	visible = "1";
+	hideCursor = "0";
+	bypassHideCursor = "0";
+	helpTag = "0";
+
+	new ShellPaneCtrl() {
+		profile = "ShellDlgPaneProfile";
+		horizSizing = "center";
+		vertSizing = "center";
+		position = "178 189";
+		extent = "300 107";
+		minExtent = "48 92";
+		visible = "1";
+		hideCursor = "0";
+		bypassHideCursor = "0";
+		helpTag = "0";
+		text = "Loading...";
+		longTextBuffer = "0";
+		maxLength = "255";
+		noTitleBar = "0";
+
+		new GuiProgressCtrl(DemoLoadProgressCtrl) {
+			profile = "ShellProgressBarProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "46 43";
+			extent = "209 30";
+			minExtent = "32 15";
+			visible = "1";
+			hideCursor = "0";
+			bypassHideCursor = "0";
+			helpTag = "0";
+			glowOffset = "9 9";
+		};
+	};
+};
+//--- OBJECT WRITE END ---

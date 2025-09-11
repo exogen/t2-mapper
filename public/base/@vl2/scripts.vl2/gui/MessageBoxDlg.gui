@@ -1,0 +1,183 @@
+//--- OBJECT WRITE BEGIN ---
+new GuiControl(MessageBoxOKDlg) {
+	profile = "DlgBackProfile";
+	horizSizing = "width";
+	vertSizing = "height";
+	position = "0 0";
+	extent = "640 480";
+	minExtent = "8 8";
+	visible = "1";
+	hideCursor = "0";
+	bypassHideCursor = "0";
+	helpTag = "0";
+
+	new ShellPaneCtrl(MBOKFrame) {
+		profile = "ShellDlgPaneProfile";
+		horizSizing = "center";
+		vertSizing = "center";
+		position = "170 137";
+		extent = "300 206";
+		minExtent = "48 92";
+		visible = "1";
+		helpTag = "0";
+
+		new GuiMLTextCtrl(MBOKText) {
+			profile = "ShellMediumTextProfile";
+			horizSizing = "center";
+			vertSizing = "bottom";
+			position = "32 39";
+			extent = "236 18";
+			minExtent = "8 8";
+			visible = "1";
+			helpTag = "0";
+			lineSpacing = "2";
+		};
+		new ShellBitmapButton(MBOKButton) {
+			profile = "ShellButtonProfile";
+			horizSizing = "center";
+			vertSizing = "bottom";
+			position = "90 151";
+			extent = "120 38";
+			minExtent = "32 38";
+			visible = "1";
+			command = "Canvas.popDialog(MessageBoxOKDlg);";
+         accelerator = "return";
+			helpTag = "0";
+			text = "OK";
+			simpleStyle = "0";
+		};
+	};
+};
+//--- OBJECT WRITE END ---
+
+//--- OBJECT WRITE BEGIN ---
+new GuiControl(MessageBoxYesNoDlg) {
+	profile = "DlgBackProfile";
+	horizSizing = "width";
+	vertSizing = "height";
+	position = "0 0";
+	extent = "640 480";
+	minExtent = "8 8";
+	visible = "1";
+	hideCursor = "0";
+	bypassHideCursor = "0";
+	helpTag = "0";
+
+	new ShellPaneCtrl(MBYesNoFrame) {
+		profile = "ShellDlgPaneProfile";
+		horizSizing = "center";
+		vertSizing = "center";
+		position = "170 137";
+		extent = "300 206";
+		minExtent = "48 92";
+		visible = "1";
+		helpTag = "0";
+
+		new GuiMLTextCtrl(MBYesNoText) {
+			profile = "ShellMediumTextProfile";
+			horizSizing = "center";
+			vertSizing = "bottom";
+			position = "32 39";
+			extent = "236 18";
+			minExtent = "8 8";
+			visible = "1";
+			helpTag = "0";
+			lineSpacing = "2";
+		};
+		new ShellBitmapButton(MBYesNoButtonYes) {
+			profile = "ShellButtonProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "26 151";
+			extent = "120 38";
+			minExtent = "32 38";
+			visible = "1";
+			command = "Canvas.popDialog(MessageBoxYesNoDlg);";
+         accelerator = "enter";
+			helpTag = "0";
+			text = "YES";
+			simpleStyle = "0";
+		};
+		new ShellBitmapButton(MBYesNoButtonNo) {
+			profile = "ShellButtonProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "154 151";
+			extent = "120 38";
+			minExtent = "32 38";
+			visible = "1";
+			command = "Canvas.popDialog(MessageBoxYesNoDlg);";
+         accelerator = "escape";
+			helpTag = "0";
+			text = "NO";
+			simpleStyle = "0";
+		};
+	};
+};
+//--- OBJECT WRITE END ---
+
+//--- OBJECT WRITE BEGIN ---
+new GuiControl(MessageBoxOKCancelDlg) {
+	profile = "DlgBackProfile";
+	horizSizing = "width";
+	vertSizing = "height";
+	position = "0 0";
+	extent = "640 480";
+	minExtent = "8 8";
+	visible = "1";
+	hideCursor = "0";
+	bypassHideCursor = "0";
+	helpTag = "0";
+
+	new ShellPaneCtrl(MBOKCancelFrame) {
+		profile = "ShellDlgPaneProfile";
+		horizSizing = "center";
+		vertSizing = "center";
+		position = "170 137";
+		extent = "300 206";
+		minExtent = "48 92";
+		visible = "1";
+		helpTag = "0";
+
+		new GuiMLTextCtrl(MBOKCancelText) {
+			profile = "ShellMediumTextProfile";
+			horizSizing = "center";
+			vertSizing = "bottom";
+			position = "32 39";
+			extent = "236 18";
+			minExtent = "8 8";
+			visible = "1";
+			helpTag = "0";
+			lineSpacing = "2";
+		};
+		new ShellBitmapButton(MBOKCancelButtonOK) {
+			profile = "ShellButtonProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "154 151";
+			extent = "120 38";
+			minExtent = "32 38";
+			visible = "1";
+			command = "Canvas.popDialog(MessageBoxOKCancelDlg);";
+         accelerator = "return";
+			helpTag = "0";
+			text = "OK";
+			simpleStyle = "0";
+		};
+		new ShellBitmapButton(MBOKCancelButtonCancel) {
+			profile = "ShellButtonProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "26 151";
+			extent = "120 38";
+			minExtent = "32 38";
+			visible = "1";
+			command = "Canvas.popDialog(MessageBoxOKCancelDlg);";
+         accelerator = "escape";
+			helpTag = "0";
+			text = "CANCEL";
+			simpleStyle = "0";
+		};
+	};
+};
+//--- OBJECT WRITE END ---

@@ -1,0 +1,347 @@
+new GuiControl(HelpTextGui) {
+	profile = "GuiContentProfileNoClear";
+	horizSizing = "width";
+	vertSizing = "height";
+	position = "0 0";
+	extent = "640 480";
+	minExtent = "8 8";
+	visible = "0";
+	setFirstResponder = "1";
+	modal = "1";
+	helpTag = "0";
+
+   new ShellFieldCtrl(objHudBox)
+   {
+	   profile = "GuiChatBackProfile";
+		horizSizing = "right";
+		vertSizing = "top";
+		position = "40 365";
+		extent = "140 65";
+		minExtent = "8 8";
+		visible = "1";
+
+		new GuiTextCtrl(objHudHeader) {
+			profile = "GuiHelpHeaderProfile";
+			horizSizing = "width";
+			vertSizing = "height";
+			position = "4 1";
+			extent = "130 14";
+			minExtent = "8 8";
+			visible = "1";
+			text = "OBJECTIVES";
+		};
+		new GuiMLTextCtrl(objHudText) {
+			profile = "GuiHelpTextProfile";
+			horizSizing = "width";
+			vertSizing = "height";
+			position = "4 15";
+			extent = "130 45";
+			minExtent = "8 8";
+			visible = "1";
+			lineSpacing = "1";
+		};
+	};
+	new HudHelpTag(objHudLine) {
+		profile = "GuiHelpLineProfile";
+		horizSizing = "right";
+		vertSizing = "top";
+		position = "160 425";
+		extent = "5 20";
+		flip = "0";
+		visible = "1";
+	};
+
+	new ShellFieldCtrl(chatHudBox) {
+		profile = "GuiChatBackProfile";
+		horizSizing = "right";
+		vertSizing = "bottom";
+		position = "14 85";
+		extent = "140 70";
+		minExtent = "8 8";
+		visible = "1";
+
+		new GuiTextCtrl(chatHudHeader) {
+			profile = "GuiHelpHeaderProfile";
+			horizSizing = "width";
+			vertSizing = "height";
+			position = "4 1";
+			extent = "130 14";
+			minExtent = "8 8";
+			visible = "1";
+			text = "CHAT";
+		};
+		new GuiMLTextCtrl(chatHudText) {
+			profile = "GuiHelpTextProfile";
+			horizSizing = "width";
+			vertSizing = "height";
+			position = "4 15";
+			extent = "130 55";
+			minExtent = "8 8";
+			visible = "1";
+			lineSpacing = "1";
+		};
+	};
+	new HudHelpTag(chatHudLine) {
+		profile = "GuiHelpLineProfile";
+		horizSizing = "right";
+		vertSizing = "bottom";
+		position = "145 75";
+		extent = "5 20";
+		flip = "1";
+		visible = "1";
+	};
+
+	new ShellFieldCtrl(energyHudBox) {
+		profile = "GuiChatBackProfile";
+		horizSizing = "left";
+		vertSizing = "bottom";
+		position = "320 75";
+		extent = "145 85";
+		minExtent = "8 8";
+		visible = "1";
+
+		new GuiTextCtrl(energyHudHeader) {
+			profile = "GuiHelpHeaderProfile";
+			horizSizing = "width";
+			vertSizing = "height";
+			position = "4 1";
+			extent = "135 14";
+			minExtent = "8 8";
+			visible = "1";
+			text = "ENERGY";
+		};
+		new GuiMLTextCtrl(energyHudText) {
+			profile = "GuiHelpTextProfile";
+			horizSizing = "width";
+			vertSizing = "height";
+			position = "4 15";
+			extent = "135 70";
+			minExtent = "8 8";
+			visible = "1";
+			lineSpacing = "1";
+		};
+	};
+	new HudHelpTag(energyHudLine) {
+		profile = "GuiHelpLineProfile";
+		horizSizing = "left";
+		vertSizing = "bottom";
+		position = "450 35";
+		extent = "5 45";
+		flip = "1";
+		visible = "1";
+	};
+
+	new ShellFieldCtrl(compassHudBox) {
+		profile = "GuiChatBackProfile";
+		horizSizing = "left";
+		vertSizing = "bottom";
+		position = "480 90";
+		extent = "150 100";
+		minExtent = "8 8";
+		visible = "1";
+		lineSpacing = "1";
+
+		new GuiTextCtrl(compassHudHeader) {
+			profile = "GuiHelpHeaderProfile";
+			horizSizing = "width";
+			vertSizing = "height";
+			position = "4 1";
+			extent = "140 14";
+			minExtent = "8 8";
+			visible = "1";
+			text = "COMPASS";
+		};
+		new GuiMLTextCtrl(compassHudText) {
+			profile = "GuiHelpTextProfile";
+			horizSizing = "width";
+			vertSizing = "height";
+			position = "4 15";
+			extent = "140 85";
+			minExtent = "8 8";
+			visible = "1";
+			lineSpacing = "1";
+		};
+	};
+	new HudHelpTag(compassHudLine) {
+		profile = "GuiHelpLineProfile";
+		horizSizing = "left";
+		vertSizing = "bottom";
+		position = "595 80";
+		extent = "5 25";
+		flip = "1";
+		visible = "1";
+	};
+
+	new ShellFieldCtrl(damageHudBox) {
+		profile = "GuiChatBackProfile";
+		horizSizing = "left";
+		vertSizing = "bottom";
+		position = "280 10";
+		extent = "150 50";
+		minExtent = "8 8";
+		visible = "1";
+		lineSpacing = "1";
+
+		new GuiTextCtrl(damageHudHeader) {
+			profile = "GuiHelpHeaderProfile";
+			horizSizing = "width";
+			vertSizing = "height";
+			position = "4 1";
+			extent = "140 14";
+			minExtent = "8 8";
+			visible = "1";
+			text = "DAMAGE";
+		};
+		new GuiMLTextCtrl(damageHudText) {
+			profile = "GuiHelpTextProfile";
+			horizSizing = "width";
+			vertSizing = "height";
+			position = "4 15";
+			extent = "140 35";
+			minExtent = "8 8";
+			visible = "1";
+			lineSpacing = "1";
+		};
+	};
+	new HudHelpTag(damageHudLine) {
+		profile = "GuiHelpLineProfile";
+		horizSizing = "left";
+		vertSizing = "bottom";
+		position = "425 15";
+		extent = "25 5";
+		flip = "0";
+		visible = "1";
+	};
+
+	new GuiControl(reticleTextFrame) {
+		profile = "GuiHelpTextProfile";
+		horizSizing = "center";
+		vertSizing = "center";
+		position = "120 90";
+		extent = "400 300";
+		visible = "1";
+
+		new ShellFieldCtrl(reticleHudBox) {
+			profile = "GuiChatBackProfile";
+			horizSizing = "right";
+			vertSizing = "top";
+			position = "20 140";
+			extent = "140 70";
+			minExtent = "8 8";
+			visible = "1";
+			lineSpacing = "1";
+
+			new GuiTextCtrl(reticleHudHeader) {
+				profile = "GuiHelpHeaderProfile";
+				horizSizing = "width";
+				vertSizing = "height";
+				position = "4 1";
+				extent = "130 14";
+				minExtent = "8 8";
+				visible = "1";
+				text = "RETICLE";
+			};
+			new GuiMLTextCtrl(reticleHudText) {
+				profile = "GuiHelpTextProfile";
+				horizSizing = "width";
+				vertSizing = "height";
+				position = "4 15";
+				extent = "130 55";
+				minExtent = "8 8";
+				visible = "1";
+				lineSpacing = "1";
+			};
+		};
+		new HudHelpTag(reticleHudLine) {
+			profile = "GuiHelpLineProfile";
+			horizSizing = "right";
+			vertSizing = "top";
+			position = "155 145";
+			extent = "25 5";
+			flip = "0";
+			visible = "1";
+		};
+	};
+
+	new ShellFieldCtrl(inventoryHudBox) {
+		profile = "GuiChatBackProfile";
+		horizSizing = "left";
+		vertSizing = "top";
+		position = "420 340";
+		extent = "140 85";
+		minExtent = "8 8";
+		visible = "1";
+
+		new GuiTextCtrl(inventoryHudHeader) {
+			profile = "GuiHelpHeaderProfile";
+			horizSizing = "width";
+			vertSizing = "height";
+			position = "4 1";
+			extent = "130 14";
+			minExtent = "8 8";
+			visible = "1";
+			text = "INVENTORY";
+		};
+		new GuiMLTextCtrl(inventoryHudText) {
+			profile = "GuiHelpTextProfile";
+			horizSizing = "width";
+			vertSizing = "height";
+			position = "4 15";
+			extent = "130 70";
+			minExtent = "8 8";
+			visible = "1";
+			lineSpacing = "1";
+		};
+	};
+	new HudHelpTag(inventoryHudLine) {
+		profile = "GuiHelpLineProfile";
+		horizSizing = "left";
+		vertSizing = "top";
+		position = "490 420";
+		extent = "5 20";
+		flip = "0";
+		visible = "1";
+	};
+
+	new ShellFieldCtrl(weaponsHudBox) {
+		profile = "GuiChatBackProfile";
+		horizSizing = "left";
+		vertSizing = "top";
+		position = "460 240";
+		extent = "140 70";
+		minExtent = "8 8";
+		visible = "1";
+
+		new GuiTextCtrl(weaponsHudHeader) {
+			profile = "GuiHelpHeaderProfile";
+			horizSizing = "width";
+			vertSizing = "height";
+			position = "4 1";
+			extent = "130 14";
+			minExtent = "8 8";
+			visible = "1";
+			text = "WEAPONS";
+		};
+		new GuiMLTextCtrl(weaponsHudText) {
+			profile = "GuiHelpTextProfile";
+			horizSizing = "width";
+			vertSizing = "height";
+			position = "4 15";
+			extent = "135 60";
+			minExtent = "8 8";
+			visible = "1";
+			lineSpacing = "1";
+		};
+	};
+	new HudHelpTag(weaponsHudLine) {
+		profile = "GuiHelpLineProfile";
+		horizSizing = "left";
+		vertSizing = "top";
+		position = "590 300";
+		extent = "20 5";
+		flip = "0";
+		visible = "1";
+	};
+};
+
+PlayGui.add(helpTextGui);

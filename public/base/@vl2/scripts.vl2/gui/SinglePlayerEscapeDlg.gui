@@ -1,0 +1,66 @@
+//--- OBJECT WRITE BEGIN ---
+new GuiControl(SinglePlayerEscapeDlg) {
+	profile = "DlgBackProfile";
+	horizSizing = "width";
+	vertSizing = "height";
+	position = "0 0";
+	extent = "640 480";
+	minExtent = "8 8";
+	visible = "1";
+	helpTag = "0";
+
+	new ShellPaneCtrl() {
+		profile = "ShellDlgPaneProfile";
+		horizSizing = "center";
+		vertSizing = "center";
+		position = "226 151";
+		extent = "188 178";
+		minExtent = "48 92";
+		visible = "1";
+		helpTag = "0";
+		text = "PAUSE";
+		noTitleBar = "0";
+
+		new ShellBitmapButton(SinglePlayerEscLeaveBtn) {
+			profile = "ShellButtonProfile";
+			horizSizing = "center";
+			vertSizing = "bottom";
+			position = "30 31";
+			extent = "128 38";
+			minExtent = "32 38";
+			visible = "1";
+			command = "SinglePlayerEscapeDlg.leaveGame();";
+			helpTag = "0";
+			text = "LEAVE GAME";
+			simpleStyle = "0";
+		};
+		new ShellBitmapButton(SinglePlayerEscSettingsBtn) {
+			profile = "ShellButtonProfile";
+			horizSizing = "center";
+			vertSizing = "bottom";
+			position = "30 66";
+			extent = "128 38";
+			minExtent = "32 38";
+			visible = "1";
+			command = "SinglePlayerEscapeDlg.gotoSettings();";
+			helpTag = "0";
+			text = "SETTINGS";
+			simpleStyle = "0";
+		};
+		new ShellBitmapButton(SinglePlayerEscReturnBtn) {
+			profile = "ShellButtonProfile";
+			horizSizing = "center";
+			vertSizing = "top";
+			position = "30 123";
+			extent = "128 38";
+			minExtent = "32 38";
+			visible = "1";
+			command = "SinglePlayerEscapeDlg.returnToGame();";
+			accelerator = "escape";
+			helpTag = "0";
+			text = "RESUME GAME";
+			simpleStyle = "0";
+		};
+	};
+};
+//--- OBJECT WRITE END ---

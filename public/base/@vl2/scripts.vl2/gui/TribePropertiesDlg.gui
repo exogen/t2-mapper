@@ -1,0 +1,787 @@
+//--- OBJECT WRITE BEGIN ---
+new GuiChunkedBitmapCtrl(TribePropertiesDlg) {
+	profile = "DlgBackProfile";
+	horizSizing = "center";
+	vertSizing = "center";
+	position = "0 0";
+	extent = "640 480";
+	minExtent = "8 8";
+	visible = "1";
+	helpTag = "0";
+	useVariable = "0";
+
+	new ShellDlgFrame() {
+		profile = "ShellDlgProfile";
+		horizSizing = "center";
+		vertSizing = "center";
+		position = "116 63";
+		extent = "408 354";
+		minExtent = "8 8";
+		visible = "1";
+		helpTag = "0";
+		text = "TRIBE PROPERTIES";
+		maxLength = "255";
+
+		new ShellFieldCtrl() {
+			profile = "ShellFieldProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "10 35";
+			extent = "385 25";
+			minExtent = "16 18";
+			visible = "1";
+			helpTag = "0";
+
+			new ShellBitmapButton(TP_ProfileBtn) {
+				profile = "ShellButtonProfile";
+				horizSizing = "right";
+				vertSizing = "bottom";
+				position = "-7 -6";
+				extent = "79 38";
+				minExtent = "32 38";
+				visible = "1";
+				command = "GraphicsControl.setVisible(0);SecurityControl.setVisible(0);ProfileControl.setVisible(1);";
+				helpTag = "0";
+				text = "PROFILE";
+				simpleStyle = "0";
+			};
+			new ShellBitmapButton(TP_GraphicsBtn) {
+				profile = "ShellButtonProfile";
+				horizSizing = "right";
+				vertSizing = "bottom";
+				position = "56 -6";
+				extent = "81 38";
+				minExtent = "32 38";
+				visible = "1";
+				command = "ProfileControl.setVisible(0);SecurityControl.setVisible(0);GraphicsControl.setVisible(1);TribePropertiesDlg.LoadGfxPane();";
+				helpTag = "0";
+				text = "GFX";
+				simpleStyle = "0";
+			};
+			new ShellBitmapButton(TP_SecurityBtn) {
+				profile = "ShellButtonProfile";
+				horizSizing = "right";
+				vertSizing = "bottom";
+				position = "119 -6";
+				extent = "81 38";
+				minExtent = "32 38";
+				visible = "0";
+				command = "GraphicsControl.setVisible(0);ProfileControl.setVisible(0);SecurityControl.setVisible(1);";
+				helpTag = "0";
+				text = "SECURITY";
+				simpleStyle = "0";
+			};
+		};
+		new ShellFieldCtrl(SecurityControl) {
+			profile = "ShellFieldProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "10 63";
+			extent = "385 235";
+			minExtent = "16 18";
+			visible = "0";
+			helpTag = "0";
+
+			new ShellScrollCtrl() {
+				profile = "NewScrollCtrlProfile";
+				horizSizing = "right";
+				vertSizing = "bottom";
+				position = "3 16";
+				extent = "248 216";
+				minExtent = "24 52";
+				visible = "1";
+				helpTag = "0";
+				willFirstRespond = "1";
+				hScrollBar = "alwaysOff";
+				vScrollBar = "alwaysOn";
+				constantThumbHeight = "0";
+				defaultLineHeight = "15";
+				childMargin = "0 0";
+				fieldBase = "gui/shll_field";
+
+				new GuiScrollContentCtrl() {
+					profile = "GuiDefaultProfile";
+					horizSizing = "right";
+					vertSizing = "bottom";
+					position = "4 4";
+					extent = "224 208";
+					minExtent = "8 8";
+					visible = "1";
+					helpTag = "0";
+
+					new ShellTextList(TP_ActionsList) {
+						profile = "GuiDefaultProfile";
+						horizSizing = "right";
+						vertSizing = "bottom";
+						position = "0 0";
+						extent = "224 8";
+						minExtent = "8 8";
+						visible = "1";
+						helpTag = "0";
+						enumerate = "0";
+						resizeCell = "1";
+						columns = "0";
+						fitParentWidth = "1";
+						clipColumnText = "0";
+					};
+				};
+			};
+			new GuiTextCtrl() {
+				profile = "GuiTextProfile";
+				horizSizing = "right";
+				vertSizing = "bottom";
+				position = "9 4";
+				extent = "58 20";
+				minExtent = "8 8";
+				visible = "1";
+				helpTag = "0";
+				text = "ACTIONS";
+				maxLength = "255";
+			};
+			new ShellRadioButton() {
+				profile = "ShellRadioProfile";
+				horizSizing = "right";
+				vertSizing = "bottom";
+				position = "246 27";
+				extent = "132 30";
+				minExtent = "26 27";
+				visible = "1";
+				helpTag = "0";
+				text = "Admin 3 [4]";
+				maxLength = "255";
+				groupNum = "7";
+			};
+			new GuiTextCtrl() {
+				profile = "GuiTextProfile";
+				horizSizing = "right";
+				vertSizing = "bottom";
+				position = "252 18";
+				extent = "135 20";
+				minExtent = "8 8";
+				visible = "1";
+				helpTag = "0";
+				text = "Required Access Level";
+				maxLength = "255";
+			};
+			new ShellRadioButton() {
+				profile = "ShellRadioProfile";
+				horizSizing = "right";
+				vertSizing = "bottom";
+				position = "246 44";
+				extent = "132 30";
+				minExtent = "26 27";
+				visible = "1";
+				helpTag = "0";
+				text = "Admin 2 [3]";
+				maxLength = "255";
+				groupNum = "7";
+			};
+			new ShellRadioButton() {
+				profile = "ShellRadioProfile";
+				horizSizing = "right";
+				vertSizing = "bottom";
+				position = "246 61";
+				extent = "132 30";
+				minExtent = "26 27";
+				visible = "1";
+				helpTag = "0";
+				text = "Admin 1 [2]";
+				maxLength = "255";
+				groupNum = "7";
+			};
+			new ShellRadioButton() {
+				profile = "ShellRadioProfile";
+				horizSizing = "right";
+				vertSizing = "bottom";
+				position = "246 78";
+				extent = "132 30";
+				minExtent = "26 27";
+				visible = "1";
+				helpTag = "0";
+				text = "Member [1]";
+				maxLength = "255";
+				groupNum = "7";
+			};
+			new ShellRadioButton() {
+				profile = "ShellRadioProfile";
+				horizSizing = "right";
+				vertSizing = "bottom";
+				position = "246 95";
+				extent = "132 30";
+				minExtent = "26 27";
+				visible = "1";
+				helpTag = "0";
+				text = "Public [0] ";
+				maxLength = "255";
+				groupNum = "7";
+			};
+			new ShellBitmapButton(TP_UpdateSecurityBtn) {
+				profile = "ShellButtonProfile";
+				horizSizing = "right";
+				vertSizing = "bottom";
+				position = "241 115";
+				extent = "146 38";
+				minExtent = "32 38";
+				visible = "1";
+				command = "TribePropertiesDlg.ClearDescription();";
+				helpTag = "0";
+				text = "UPDATE";
+				simpleStyle = "0";
+			};
+		};
+		new ShellBitmapButton(TP_OKBtn) {
+			profile = "ShellButtonProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "308 310";
+			extent = "91 38";
+			minExtent = "32 38";
+			visible = "1";
+			command = "TribePropertiesDlg.Close();";
+			helpTag = "0";
+			text = "CLOSE";
+			simpleStyle = "0";
+		};
+		new ShellFieldCtrl(ProfileControl) {
+			profile = "ShellFieldProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "10 63";
+			extent = "385 249";
+			minExtent = "16 18";
+			visible = "1";
+			helpTag = "0";
+
+			new ShellBitmapButton(TP_DisbandTribeBtn) {
+				profile = "ShellButtonProfile";
+				horizSizing = "right";
+				vertSizing = "bottom";
+				position = "-1 70";
+				extent = "103 38";
+				minExtent = "32 38";
+				visible = "1";
+				command = "TribePropertiesDlg.DisbandTribe();";
+				helpTag = "0";
+				text = "AUTHORIZE";
+				simpleStyle = "0";
+			};
+			new ShellFieldCtrl() {
+				profile = "ShellFieldProfile";
+				horizSizing = "right";
+				vertSizing = "bottom";
+				position = "6 120";
+				extent = "373 123";
+				minExtent = "16 18";
+				visible = "1";
+				helpTag = "0";
+
+				new GuiTextCtrl() {
+					profile = "ShellTextProfile";
+					horizSizing = "right";
+					vertSizing = "bottom";
+					position = "10 3";
+					extent = "73 22";
+					minExtent = "8 8";
+					visible = "1";
+					helpTag = "0";
+					text = "DESCRIPTION";
+					maxLength = "255";
+				};
+				new ShellBitmapButton(TP_EditDescBtn) {
+					profile = "ShellButtonProfile";
+					horizSizing = "right";
+					vertSizing = "bottom";
+					position = "-2 17";
+					extent = "94 38";
+					minExtent = "32 38";
+					visible = "1";
+					command = "TribePropertiesDlg.EditDescription();";
+					helpTag = "0";
+					text = "EDIT";
+					simpleStyle = "0";
+				};
+				new ShellBitmapButton(TP_ClearDescBtn) {
+					profile = "ShellButtonProfile";
+					horizSizing = "right";
+					vertSizing = "bottom";
+					position = "-2 41";
+					extent = "94 38";
+					minExtent = "32 38";
+					visible = "1";
+					command = "TribePropertiesDlg.ClearDescription();";
+					helpTag = "0";
+					text = "CLEAR";
+					simpleStyle = "0";
+				};
+				new ShellScrollCtrl() {
+					profile = "NewScrollCtrlProfile";
+					horizSizing = "right";
+					vertSizing = "bottom";
+					position = "87 1";
+					extent = "284 119";
+					minExtent = "24 52";
+					visible = "1";
+					helpTag = "0";
+					willFirstRespond = "1";
+					hScrollBar = "alwaysOff";
+					vScrollBar = "alwaysOn";
+					constantThumbHeight = "0";
+					defaultLineHeight = "15";
+					childMargin = "10 5";
+					fieldBase = "gui/shll_field";
+
+					new GuiScrollContentCtrl() {
+						profile = "GuiDefaultProfile";
+						horizSizing = "right";
+						vertSizing = "height";
+						position = "14 9";
+						extent = "240 101";
+						minExtent = "8 8";
+						visible = "1";
+						helpTag = "0";
+
+						new GuiMLTextCtrl(TP_TribeDescription) {
+							profile = "GuiDefaultProfile";
+							horizSizing = "left";
+							vertSizing = "relative";
+							position = "0 0";
+							extent = "249 28";
+							minExtent = "8 8";
+							visible = "1";
+							helpTag = "0";
+							lineSpacing = "2";
+							allowColorChars = "1";
+							maxChars = "-1";
+						};
+					};
+				};
+			};
+			new ShellFieldCtrl() {
+				profile = "ShellFieldProfile";
+				horizSizing = "right";
+				vertSizing = "bottom";
+				position = "97 7";
+				extent = "282 110";
+				minExtent = "16 18";
+				visible = "1";
+				helpTag = "0";
+
+				new ShellFieldCtrl() {
+					profile = "ShellFieldProfile";
+					horizSizing = "right";
+					vertSizing = "bottom";
+					position = "7 11";
+					extent = "100 67";
+					minExtent = "16 18";
+					visible = "1";
+					helpTag = "0";
+
+					new GuiTextCtrl() {
+						profile = "ShellTextProfile";
+						horizSizing = "right";
+						vertSizing = "bottom";
+						position = "23 3";
+						extent = "58 22";
+						minExtent = "8 8";
+						visible = "1";
+						helpTag = "0";
+						text = "TRIBE TAG";
+						maxLength = "255";
+					};
+					new ShellRadioButton(TP_PrePendFlagBtn) {
+						profile = "ShellRadioProfile";
+						horizSizing = "right";
+						vertSizing = "bottom";
+						position = "1 19";
+						extent = "94 30";
+						minExtent = "26 27";
+						visible = "1";
+						command = "TribePropertiesDlg.ToggleAppending();";
+						helpTag = "0";
+						text = "PREPEND TAG";
+						maxLength = "255";
+						groupNum = "8";
+					};
+					new ShellRadioButton(TP_AppendFlagBtn) {
+						profile = "ShellRadioProfile";
+						horizSizing = "right";
+						vertSizing = "bottom";
+						position = "1 39";
+						extent = "94 30";
+						minExtent = "26 27";
+						visible = "1";
+						command = "TribePropertiesDlg.ToggleAppending();";
+						helpTag = "0";
+						text = "APPEND TAG";
+						maxLength = "255";
+						groupNum = "8";
+					};
+				};
+				new ShellTextEditCtrl(TP_NewTag) {
+					profile = "NewTextEditProfile";
+					horizSizing = "right";
+					vertSizing = "bottom";
+					position = "167 24";
+					extent = "115 38";
+					minExtent = "32 38";
+					visible = "1";
+					command = "TribePropertiesDlg.RefreshTag();";
+					helpTag = "0";
+					maxLength = "9";
+					historySize = "0";
+					password = "0";
+					glowOffset = "9 9";
+				};
+				new GuiTextCtrl() {
+					profile = "ShellTextProfile";
+					horizSizing = "right";
+					vertSizing = "bottom";
+					position = "116 9";
+					extent = "56 22";
+					minExtent = "8 8";
+					visible = "1";
+					helpTag = "0";
+					text = "CURRENT:";
+					maxLength = "255";
+				};
+				new GuiTextCtrl(TP_CurrentTag) {
+					profile = "GuiDefaultProfile";
+					horizSizing = "right";
+					vertSizing = "bottom";
+					position = "179 11";
+					extent = "99 14";
+					minExtent = "8 8";
+					visible = "1";
+					helpTag = "0";
+					text = "TAG";
+					maxLength = "255";
+				};
+				new GuiTextCtrl() {
+					profile = "ShellTextProfile";
+					horizSizing = "right";
+					vertSizing = "bottom";
+					position = "119 32";
+					extent = "53 22";
+					minExtent = "8 8";
+					visible = "1";
+					helpTag = "0";
+					text = "NEW TAG:";
+					maxLength = "255";
+				};
+				new GuiTextCtrl(TP_PreviewTag) {
+					profile = "GuiDefaultProfile";
+					horizSizing = "right";
+					vertSizing = "bottom";
+					position = "179 59";
+					extent = "101 15";
+					minExtent = "8 8";
+					visible = "1";
+					helpTag = "0";
+					text = "TAG";
+					maxLength = "255";
+				};
+				new GuiTextCtrl() {
+					profile = "ShellTextProfile";
+					horizSizing = "right";
+					vertSizing = "bottom";
+					position = "122 56";
+					extent = "50 22";
+					minExtent = "8 8";
+					visible = "1";
+					helpTag = "0";
+					text = "PREVIEW:";
+					maxLength = "255";
+				};
+				new ShellBitmapButton(TP_TribeTagBtn) {
+					profile = "ShellButtonProfile";
+					horizSizing = "right";
+					vertSizing = "bottom";
+					position = "-2 75";
+					extent = "285 38";
+					minExtent = "32 38";
+					visible = "1";
+					command = "TribePropertiesDlg.ChangeTag();";
+					helpTag = "0";
+					text = "UPDATE TAG TEXT";
+					simpleStyle = "0";
+				};
+			};
+			new GuiTextCtrl() {
+				profile = "ShellTextProfile";
+				horizSizing = "right";
+				vertSizing = "bottom";
+				position = "8 58";
+				extent = "85 22";
+				minExtent = "8 8";
+				visible = "1";
+				helpTag = "0";
+				text = "DISBAND TRIBE";
+				maxLength = "255";
+			};
+			new GuiTextCtrl(TP_RecruitingLabel) {
+				profile = "ShellTextProfile";
+				horizSizing = "right";
+				vertSizing = "bottom";
+				position = "16 8";
+				extent = "67 22";
+				minExtent = "8 8";
+				visible = "1";
+				helpTag = "0";
+				text = "RECRUITING";
+				maxLength = "255";
+			};
+			new ShellRadioButton(TP_RecruitFlagBtn) {
+				profile = "ShellRadioProfile";
+				horizSizing = "right";
+				vertSizing = "bottom";
+				position = "4 24";
+				extent = "45 30";
+				minExtent = "26 27";
+				visible = "1";
+				command = "TribePropertiesDlg.ChangeRecruiting();";
+				helpTag = "0";
+				text = "YES";
+				maxLength = "255";
+				groupNum = "7";
+			};
+			new ShellRadioButton(TP_RecruitFlagNoBtn) {
+				profile = "ShellRadioProfile";
+				horizSizing = "right";
+				vertSizing = "bottom";
+				position = "49 24";
+				extent = "40 30";
+				minExtent = "26 27";
+				visible = "1";
+				command = "TribePropertiesDlg.ChangeRecruiting();";
+				helpTag = "0";
+				text = "NO";
+				maxLength = "255";
+				groupNum = "7";
+			};
+		};
+		new ShellFieldCtrl(GraphicsControl) {
+			profile = "ShellFieldProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "10 65";
+			extent = "385 246";
+			minExtent = "16 18";
+			visible = "0";
+			helpTag = "0";
+
+			new ShellBitmapButton(TP_SubmitGraphicBtn) {
+				profile = "ShellButtonProfile";
+				horizSizing = "right";
+				vertSizing = "bottom";
+				position = "229 198";
+				extent = "158 38";
+				minExtent = "32 38";
+				visible = "0";
+				helpTag = "0";
+				text = "FIND NEW GRAPHIC";
+				simpleStyle = "0";
+			};
+			new GuiTextCtrl() {
+				profile = "BrowserProgressProfile";
+				horizSizing = "right";
+				vertSizing = "bottom";
+				position = "9 8";
+				extent = "125 17";
+				minExtent = "8 8";
+				visible = "1";
+				helpTag = "0";
+				text = "Current Tribe Graphic:";
+				maxLength = "255";
+			};
+			new ShellBitmapButton(TP_SubmitGraphicBtn) {
+				profile = "ShellButtonProfile";
+				horizSizing = "right";
+				vertSizing = "bottom";
+				position = "229 173";
+				extent = "158 38";
+				minExtent = "32 38";
+				visible = "1";
+				command = "TribePropertiesDlg.SetTribeGraphic();";
+				helpTag = "0";
+				text = "USE SELECTED GRAPHIC";
+				simpleStyle = "0";
+			};
+			new GuiBitmapCtrl(TribeGraphic) {
+				profile = "GuiDefaultProfile";
+				horizSizing = "right";
+				vertSizing = "bottom";
+				position = "6 24";
+				extent = "228 150";
+				minExtent = "8 8";
+				visible = "1";
+				helpTag = "0";
+				bitmap = "texticons/twb/twb_Laserrifle.jpg";
+				wrap = "0";
+			};
+			new ShellFancyArrayScrollCtrl(ML1) {
+				profile = "ShellServerBrowserProfile";
+				horizSizing = "width";
+				vertSizing = "height";
+				position = "233 21";
+				extent = "149 156";
+				minExtent = "24 52";
+				visible = "1";
+				helpTag = "0";
+				fixedHorizontal = "1";
+				vertSpacerBitmap = "gui/shll_vertspacer";
+				horzSpacerBitmap = "gui/shll_horzspacer";
+
+				new VirtualScrollCtrl(ML2) {
+					profile = "ShellServerBrowserProfile";
+					horizSizing = "right";
+					vertSizing = "bottom";
+					position = "0 16";
+					extent = "149 140";
+					minExtent = "8 52";
+					visible = "1";
+					helpTag = "0";
+					willFirstRespond = "0";
+					hScrollBar = "alwaysOff";
+					vScrollBar = "alwaysOn";
+					constantThumbHeight = "0";
+					defaultLineHeight = "15";
+					childMargin = "0 3";
+
+					new VirtualScrollContentCtrl(ML3) {
+						profile = "GuiDefaultProfile";
+						horizSizing = "right";
+						vertSizing = "bottom";
+						position = "4 7";
+						extent = "125 126";
+						minExtent = "8 8";
+						visible = "1";
+						helpTag = "0";
+
+						new GuiControl(ML4) {
+							profile = "GuiDefaultProfile";
+							horizSizing = "right";
+							vertSizing = "bottom";
+							position = "0 0";
+							extent = "8 962";
+							minExtent = "8 8";
+							visible = "1";
+							helpTag = "0";
+						};
+					};
+				};
+				new ShellFancyTextList(TribeGraphicsList) {
+					profile = "ShellBrowserListProfile";
+					horizSizing = "width";
+					vertSizing = "height";
+					position = "0 0";
+					extent = "129 152";
+					minExtent = "8 20";
+					visible = "1";
+					command = "TribeGraphicsList.onSelect();";
+					helpTag = "0";
+					startScrollRegion = "1 0";
+					headerBitmap = "gui/server_tabs";
+					sortArrowBitmap = "gui/shll_sortarrow";
+					fieldBase = "gui/shll_field";
+					barBase = "gui/shll_bar";
+					glowOffset = "4";
+					rowHeight = "15";
+					headerFontType = "Univers Condensed";
+					headerFontSize = "16";
+					headerFontColor = "8 19 6 255";
+					headerFontColorHL = "25 68 56 255";
+					separatorColor = "192 192 192 255";
+					drawSeparators = "0";
+					headerSort = "1";
+					allowReposition = "1";
+					noSelect = "0";
+				};
+			};
+			new GuiTextCtrl() {
+				profile = "BrowserProgressProfile";
+				horizSizing = "right";
+				vertSizing = "bottom";
+				position = "4 177";
+				extent = "230 19";
+				minExtent = "8 8";
+				visible = "1";
+				helpTag = "0";
+				text = "-------------- Graphic Requirements --------------";
+				maxLength = "255";
+			};
+			new GuiTextCtrl() {
+				profile = "GuiTextProfile";
+				horizSizing = "right";
+				vertSizing = "bottom";
+				position = "21 190";
+				extent = "102 20";
+				minExtent = "8 8";
+				visible = "1";
+				helpTag = "0";
+				text = "Max Dimensions:";
+				maxLength = "255";
+			};
+			new GuiTextCtrl() {
+				profile = "GuiTextProfile";
+				horizSizing = "right";
+				vertSizing = "bottom";
+				position = "65 203";
+				extent = "58 20";
+				minExtent = "8 8";
+				visible = "1";
+				helpTag = "0";
+				text = "Max Size:";
+				maxLength = "255";
+			};
+			new GuiTextCtrl() {
+				profile = "GuiTextProfile";
+				horizSizing = "right";
+				vertSizing = "bottom";
+				position = "77 216";
+				extent = "46 20";
+				minExtent = "8 8";
+				visible = "1";
+				helpTag = "0";
+				text = "Format:";
+				maxLength = "255";
+			};
+			new GuiTextCtrl() {
+				profile = "BrowserFilterTextProfile";
+				horizSizing = "right";
+				vertSizing = "bottom";
+				position = "131 203";
+				extent = "20 22";
+				minExtent = "8 8";
+				visible = "1";
+				helpTag = "0";
+				text = "28k";
+				maxLength = "255";
+			};
+			new GuiTextCtrl() {
+				profile = "BrowserFilterTextProfile";
+				horizSizing = "right";
+				vertSizing = "bottom";
+				position = "131 216";
+				extent = "27 22";
+				minExtent = "8 8";
+				visible = "1";
+				helpTag = "0";
+				text = "JPEG";
+				maxLength = "255";
+			};
+			new GuiTextCtrl() {
+				profile = "BrowserFilterTextProfile";
+				horizSizing = "right";
+				vertSizing = "bottom";
+				position = "131 190";
+				extent = "70 22";
+				minExtent = "8 8";
+				visible = "1";
+				helpTag = "0";
+				text = "228w x 150h";
+				maxLength = "255";
+			};
+		};
+	};
+};
+//--- OBJECT WRITE END ---

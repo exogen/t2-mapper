@@ -1,0 +1,1855 @@
+//--- OBJECT WRITE BEGIN ---
+new GuiControl(TerraformerTextureGui) {
+	profile = "GuiModelessDialogProfile";
+	horizSizing = "right";
+	vertSizing = "bottom";
+	position = "0 0";
+	extent = "640 480";
+	minExtent = "8 8";
+	visible = "1";
+	setFirstResponder = "1";
+	modal = "1";
+	helpTag = "0";
+
+	new GuiFrameSetCtrl(TextureRootFrame) {
+		profile = "GuiDefaultProfile";
+		horizSizing = "width";
+		vertSizing = "height";
+		position = "0 30";
+		extent = "640 450";
+		minExtent = "8 8";
+		visible = "1";
+		setFirstResponder = "1";
+		modal = "1";
+		helpTag = "0";
+		columns = "0 279 374";
+		rows = "0";
+		borderWidth = "4";
+		borderColor = "0 52 56 255";
+		borderEnable = "alwaysOff";
+		borderMovable = "alwaysOff";
+		autoBalance = "0";
+
+		new GuiFrameSetCtrl(TextureLeftFrame) {
+			profile = "GuiDefaultProfile";
+			horizSizing = "left";
+			vertSizing = "height";
+			position = "0 0";
+			extent = "275 450";
+			minExtent = "8 8";
+			visible = "1";
+			setFirstResponder = "1";
+			modal = "1";
+			helpTag = "0";
+			columns = "0";
+			rows = "0 250 350";
+			borderWidth = "4";
+			borderColor = "0 52 56 255";
+			borderEnable = "alwaysOff";
+			borderMovable = "alwaysOff";
+			autoBalance = "0";
+
+			new GuiControl() {
+				profile = "GuiDefaultProfile";
+				horizSizing = "right";
+				vertSizing = "bottom";
+				position = "0 0";
+				extent = "275 246";
+				minExtent = "8 8";
+				visible = "1";
+				setFirstResponder = "1";
+				modal = "1";
+				helpTag = "0";
+
+				new GuiTextCtrl() {
+					profile = "GuiBigTextProfile";
+					horizSizing = "center";
+					vertSizing = "bottom";
+					position = "44 -2";
+					extent = "186 40";
+					minExtent = "8 8";
+					visible = "1";
+					setFirstResponder = "1";
+					modal = "1";
+					helpTag = "0";
+					text = "Texture Editor";
+				};
+				new GuiScrollCtrl(TextureTabParent) {
+					profile = "GuiButtonProfile";
+					horizSizing = "right";
+					vertSizing = "bottom";
+					position = "4 35";
+					extent = "266 205";
+					minExtent = "8 8";
+					visible = "1";
+					setFirstResponder = "1";
+					modal = "1";
+					helpTag = "0";
+					willFirstRespond = "1";
+					hScrollBar = "alwaysOff";
+					vScrollBar = "dynamic";
+					constantThumbHeight = "1";
+
+					new GuiScrollContentCtrl() {
+						profile = "GuiDefaultProfile";
+						horizSizing = "right";
+						vertSizing = "bottom";
+						position = "1 1";
+						extent = "264 203";
+						minExtent = "8 8";
+						visible = "1";
+						setFirstResponder = "0";
+						modal = "1";
+						helpTag = "0";
+
+						new GuiControl(tab_DistortMask) {
+							profile = "GuiDefaultProfile";
+							horizSizing = "right";
+							vertSizing = "bottom";
+							position = "0 0";
+							extent = "261 202";
+							minExtent = "8 8";
+							visible = "0";
+							setFirstResponder = "1";
+							modal = "1";
+							helpTag = "0";
+
+							new GuiTextCtrl() {
+								profile = "GuiTextProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "4 1";
+								extent = "126 18";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "1";
+								modal = "1";
+								helpTag = "0";
+								text = "Fractal Distortion Settings:";
+							};
+							new GuiButtonCtrl() {
+								profile = "GuiButtonProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "166 97";
+								extent = "77 20";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "1";
+								modal = "1";
+								command = "dmask_seed.setValue(terraFormer.generateSeed());Texture::saveOperation();Texture::previewOperation();";
+								helpTag = "0";
+								text = "New Seed";
+							};
+							new GuiTextEditCtrl(dmask_seed) {
+								profile = "GuiTextEditProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "166 71";
+								extent = "78 18";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "0";
+								modal = "1";
+								helpTag = "0";
+								text = "0";
+								historySize = "5";
+								maxLength = "255";
+							};
+							new GuiTextEditSliderCtrl(dmask_rough) {
+								profile = "GuiTextEditProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "166 47";
+								extent = "78 18";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "1";
+								modal = "1";
+								helpTag = "0";
+								historySize = "0";
+								maxLength = "255";
+								format = "%0.3f";
+								range = "0 1";
+								increment = "0.001";
+							};
+							new GuiTextEditSliderCtrl(dmask_interval) {
+								profile = "GuiTextEditProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "166 23";
+								extent = "78 18";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "1";
+								modal = "1";
+								helpTag = "0";
+								historySize = "0";
+								maxLength = "255";
+								format = "%1.0f";
+								range = "3 36";
+								increment = "1";
+							};
+							new GuiTextCtrl() {
+								profile = "GuiTextProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "90 23";
+								extent = "71 18";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "1";
+								modal = "1";
+								helpTag = "0";
+								text = "Hill Frequency:";
+							};
+							new GuiTextCtrl() {
+								profile = "GuiTextProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "103 47";
+								extent = "58 18";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "1";
+								modal = "1";
+								helpTag = "0";
+								text = "Roughness:";
+							};
+							new GuiTextCtrl() {
+								profile = "GuiTextProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "91 71";
+								extent = "70 18";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "1";
+								modal = "1";
+								helpTag = "0";
+								text = "Random Seed:";
+							};
+							new GuiFilterCtrl(dmask_filter) {
+								profile = "GuiDefaultProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "12 96";
+								extent = "143 93";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "0";
+								modal = "1";
+								command = "Texture::saveOperation();Texture::previewOperation();";
+								helpTag = "0";
+								controlPoints = "7";
+								filter = "0.000000 0.166667 0.333333 0.500000 0.666667 0.833333 1.000000";
+							};
+							new GuiTextEditSliderCtrl() {
+								profile = "GuiTextEditProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "173 165";
+								extent = "64 18";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "0";
+								modal = "1";
+								variable = "dmask_filter.controlPoints";
+								command = "dmask_filter.controlPoints = $ThisControl.getValue();Texture::saveOperation();Texture::previewOperation();";
+								helpTag = "0";
+								historySize = "0";
+								maxLength = "255";
+								format = "%3.0f";
+								range = "2 20";
+								increment = "1";
+							};
+							new GuiTextCtrl() {
+								profile = "GuiTextProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "173 147";
+								extent = "69 18";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "1";
+								modal = "1";
+								helpTag = "0";
+								text = "Control Points:";
+							};
+						};
+						new GuiControl(tab_FractalMask) {
+							profile = "GuiDefaultProfile";
+							horizSizing = "right";
+							vertSizing = "bottom";
+							position = "0 0";
+							extent = "261 202";
+							minExtent = "8 8";
+							visible = "0";
+							setFirstResponder = "1";
+							modal = "1";
+							helpTag = "0";
+
+							new GuiTextCtrl() {
+								profile = "GuiTextProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "4 1";
+								extent = "106 18";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "1";
+								modal = "1";
+								helpTag = "0";
+								text = "Fractal Mask Settings:";
+							};
+							new GuiButtonCtrl() {
+								profile = "GuiButtonProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "168 96";
+								extent = "77 20";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "1";
+								modal = "1";
+								command = "fBmmask_seed.setValue(terraFormer.generateSeed());Texture::saveOperation();Texture::previewOperation();";
+								helpTag = "0";
+								text = "New Seed";
+							};
+							new GuiTextEditCtrl(fBmmask_seed) {
+								profile = "GuiTextEditProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "168 70";
+								extent = "78 18";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "0";
+								modal = "1";
+								helpTag = "0";
+								text = "0";
+								historySize = "5";
+								maxLength = "255";
+							};
+							new GuiTextEditSliderCtrl(fbmmask_rough) {
+								profile = "GuiTextEditProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "168 46";
+								extent = "78 18";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "1";
+								modal = "1";
+								helpTag = "0";
+								historySize = "0";
+								maxLength = "255";
+								format = "%0.3f";
+								range = "0 1";
+								increment = "0.001";
+							};
+							new GuiTextEditSliderCtrl(fbmmask_interval) {
+								profile = "GuiTextEditProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "168 22";
+								extent = "78 18";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "1";
+								modal = "1";
+								helpTag = "0";
+								historySize = "0";
+								maxLength = "255";
+								format = "%1.0f";
+								range = "3 36";
+								increment = "1";
+							};
+							new GuiTextCtrl() {
+								profile = "GuiTextProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "92 22";
+								extent = "71 18";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "1";
+								modal = "1";
+								helpTag = "0";
+								text = "Hill Frequency:";
+							};
+							new GuiTextCtrl() {
+								profile = "GuiTextProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "105 46";
+								extent = "58 18";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "1";
+								modal = "1";
+								helpTag = "0";
+								text = "Roughness:";
+							};
+							new GuiTextCtrl() {
+								profile = "GuiTextProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "93 70";
+								extent = "70 18";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "1";
+								modal = "1";
+								helpTag = "0";
+								text = "Random Seed:";
+							};
+							new GuiFilterCtrl(fBmmask_filter) {
+								profile = "GuiDefaultProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "9 94";
+								extent = "147 98";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "0";
+								modal = "1";
+								command = "Texture::saveOperation();Texture::previewOperation();";
+								helpTag = "0";
+								controlPoints = "7";
+								filter = "0.000000 0.166670 0.333330 0.500000 0.666670 0.833330 1.000000";
+							};
+							new GuiCheckBoxCtrl(fBmDistort) {
+								profile = "GuiCheckBoxProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "166 122";
+								extent = "82 20";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "1";
+								modal = "1";
+								command = "Texture::saveOperation();Texture::previewOperation();";
+								helpTag = "0";
+								text = "Use Distortion";
+							};
+							new GuiTextEditSliderCtrl() {
+								profile = "GuiTextEditProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "168 174";
+								extent = "64 18";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "0";
+								modal = "1";
+								variable = "fBmmask_filter.controlPoints";
+								command = "fBmmask_filter.controlPoints = $ThisControl.getValue();Texture::saveOperation();Texture::previewOperation();";
+								helpTag = "0";
+								historySize = "0";
+								maxLength = "255";
+								format = "%3.0f";
+								range = "2 20";
+								increment = "1";
+							};
+							new GuiTextCtrl() {
+								profile = "GuiTextProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "168 155";
+								extent = "69 18";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "1";
+								modal = "1";
+								helpTag = "0";
+								text = "Control Points:";
+							};
+						};
+						new GuiControl(tab_HeightMask) {
+							profile = "GuiDefaultProfile";
+							horizSizing = "right";
+							vertSizing = "bottom";
+							position = "0 0";
+							extent = "261 200";
+							minExtent = "8 8";
+							visible = "0";
+							setFirstResponder = "1";
+							modal = "1";
+							helpTag = "0";
+
+							new GuiTextCtrl() {
+								profile = "GuiTextProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "4 1";
+								extent = "103 18";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "1";
+								modal = "1";
+								helpTag = "0";
+								text = "Height Mask Settings:";
+							};
+							new GuiTextCtrl() {
+								profile = "GuiTextProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "4 26";
+								extent = "26 18";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "0";
+								modal = "1";
+								helpTag = "0";
+								text = "Filter:";
+							};
+							new GuiFilterCtrl(TextureHeightFilter) {
+								profile = "GuiDefaultProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "46 26";
+								extent = "130 130";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "0";
+								modal = "1";
+								command = "Texture::saveOperation();Texture::previewOperation();";
+								helpTag = "0";
+								controlPoints = "6";
+								filter = "0.000000 0.200000 0.400000 0.600000 0.800000 1.000000";
+							};
+							new GuiCheckBoxCtrl(heightDistort) {
+								profile = "GuiCheckBoxProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "45 165";
+								extent = "129 20";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "1";
+								modal = "1";
+								command = "Texture::saveOperation();Texture::previewOperation();";
+								helpTag = "0";
+								text = "Use Fractal Distortion";
+							};
+							new GuiTextEditSliderCtrl() {
+								profile = "GuiTextEditProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "185 134";
+								extent = "64 18";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "0";
+								modal = "1";
+								variable = "TextureHeightFilter.controlPoints";
+								command = "TextureHeightFilter.controlPoints = $ThisControl.getValue();Texture::saveOperation();Texture::previewOperation();";
+								helpTag = "0";
+								historySize = "0";
+								maxLength = "255";
+								format = "%3.0f";
+								range = "2 20";
+								increment = "1";
+							};
+							new GuiTextCtrl() {
+								profile = "GuiTextProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "185 115";
+								extent = "69 18";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "0";
+								modal = "1";
+								helpTag = "0";
+								text = "Control Points:";
+							};
+						};
+						new GuiControl(tab_SlopeMask) {
+							profile = "GuiDefaultProfile";
+							horizSizing = "right";
+							vertSizing = "bottom";
+							position = "0 0";
+							extent = "261 200";
+							minExtent = "8 8";
+							visible = "0";
+							setFirstResponder = "1";
+							modal = "1";
+							helpTag = "0";
+
+							new GuiTextCtrl() {
+								profile = "GuiTextProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "4 1";
+								extent = "100 18";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "1";
+								modal = "1";
+								helpTag = "0";
+								text = "Slope Mask Settings:";
+							};
+							new GuiTextCtrl() {
+								profile = "GuiTextProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "4 26";
+								extent = "26 18";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "0";
+								modal = "1";
+								helpTag = "0";
+								text = "Filter:";
+							};
+							new GuiFilterCtrl(TextureSlopeFilter) {
+								profile = "GuiDefaultProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "45 27";
+								extent = "130 130";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "0";
+								modal = "1";
+								command = "Texture::saveOperation();Texture::previewOperation();";
+								helpTag = "0";
+								controlPoints = "7";
+								filter = "0.000000 0.166667 0.333333 0.500000 0.666667 0.833333 1.000000";
+							};
+							new GuiCheckBoxCtrl(slopeDistort) {
+								profile = "GuiCheckBoxProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "44 166";
+								extent = "129 20";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "1";
+								modal = "1";
+								command = "Texture::saveOperation();Texture::previewOperation();";
+								helpTag = "0";
+								text = "Use Fractal Distortion";
+							};
+							new GuiTextEditSliderCtrl() {
+								profile = "GuiTextEditProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "185 134";
+								extent = "64 18";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "0";
+								modal = "1";
+								variable = "TextureSlopeFilter.controlPoints";
+								command = "TextureSlopeFilter.controlPoints = $ThisControl.getValue();Texture::saveOperation();Texture::previewOperation();";
+								helpTag = "0";
+								historySize = "0";
+								maxLength = "255";
+								format = "%3.0f";
+								range = "2 20";
+								increment = "1";
+							};
+							new GuiTextCtrl() {
+								profile = "GuiTextProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "185 115";
+								extent = "69 18";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "0";
+								modal = "1";
+								helpTag = "0";
+								text = "Control Points:";
+							};
+						};
+						new GuiControl(tab_WaterMask) {
+							profile = "GuiDefaultProfile";
+							horizSizing = "right";
+							vertSizing = "bottom";
+							position = "0 0";
+							extent = "261 200";
+							minExtent = "8 8";
+							visible = "0";
+							setFirstResponder = "1";
+							modal = "1";
+							helpTag = "0";
+
+							new GuiTextCtrl() {
+								profile = "GuiTextProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "4 1";
+								extent = "131 18";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "1";
+								modal = "1";
+								helpTag = "0";
+								text = "Water Level Mask Settings:";
+							};
+							new GuiCheckBoxCtrl(waterDistort) {
+								profile = "GuiCheckBoxProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "63 165";
+								extent = "129 20";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "1";
+								modal = "1";
+								command = "Texture::saveOperation();Texture::previewOperation();";
+								helpTag = "0";
+								text = "Use Fractal Distortion";
+							};
+						};
+						new GuiControl(tab_ShorelineMask) {
+							profile = "GuiDefaultProfile";
+							horizSizing = "right";
+							vertSizing = "bottom";
+							position = "0 0";
+							extent = "261 200";
+							minExtent = "8 8";
+							visible = "0";
+							setFirstResponder = "1";
+							modal = "1";
+							helpTag = "0";
+
+							new GuiTextCtrl() {
+								profile = "GuiTextProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "4 1";
+								extent = "131 18";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "1";
+								modal = "1";
+								helpTag = "0";
+								text = "Shoreline Mask Settings:";
+							};
+							new GuiTextCtrl() {
+								profile = "GuiTextProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "20 46";
+								extent = "10 18";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "1";
+								modal = "1";
+								helpTag = "0";
+								text = "Tolerance (meters):";
+							};
+							new GuiTextEditSliderCtrl(shorelineTolerance) {
+								profile = "GuiTextEditProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "168 46";
+								extent = "78 18";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "1";
+								modal = "1";
+								helpTag = "0";
+								historySize = "0";
+								maxLength = "255";
+								format = "%3.1f";
+								range = "0 100";
+								increment = "1.0";
+							};
+							new GuiCheckBoxCtrl(shorelineDistort) {
+								profile = "GuiCheckBoxProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "63 165";
+								extent = "129 20";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "1";
+								modal = "1";
+								command = "Texture::saveOperation();Texture::previewOperation();";
+								helpTag = "0";
+								text = "Use Fractal Distortion";
+							};
+						};
+					};
+				};
+			};
+			new GuiControl() {
+				profile = "GuiDefaultProfile";
+				horizSizing = "right";
+				vertSizing = "bottom";
+				position = "0 250";
+				extent = "275 96";
+				minExtent = "8 8";
+				visible = "1";
+				setFirstResponder = "1";
+				modal = "1";
+				helpTag = "0";
+
+				new GuiPopUpMenuCtrl(Texture_material_menu) {
+					profile = "GuiButtonProfile";
+					horizSizing = "right";
+					vertSizing = "bottom";
+					position = "4 3";
+					extent = "199 20";
+					minExtent = "8 8";
+					visible = "1";
+					setFirstResponder = "1";
+					modal = "1";
+					helpTag = "0";
+					text = "Options";
+					maxPopupHeight = "200";
+				};
+				new GuiButtonCtrl() {
+					profile = "GuiButtonProfile";
+					horizSizing = "right";
+					vertSizing = "bottom";
+					position = "205 3";
+					extent = "53 20";
+					minExtent = "8 8";
+					visible = "1";
+					setFirstResponder = "1";
+					modal = "1";
+					command = "Texture::deleteMaterial();";
+					helpTag = "0";
+					text = "Delete";
+				};
+				new GuiScrollCtrl() {
+					profile = "GuiButtonProfile";
+					horizSizing = "width";
+					vertSizing = "bottom";
+					position = "5 27";
+					extent = "266 65";
+					minExtent = "8 8";
+					visible = "1";
+					setFirstResponder = "1";
+					modal = "1";
+					helpTag = "0";
+					willFirstRespond = "1";
+					hScrollBar = "alwaysOff";
+					vScrollBar = "dynamic";
+					constantThumbHeight = "1";
+
+					new GuiScrollContentCtrl() {
+						profile = "GuiButtonProfile";
+						horizSizing = "right";
+						vertSizing = "bottom";
+						position = "1 1";
+						extent = "264 63";
+						minExtent = "8 8";
+						visible = "1";
+						setFirstResponder = "0";
+						modal = "1";
+						helpTag = "0";
+
+						new GuiTextListCtrl(Texture_material) {
+							profile = "GuiButtonProfile";
+							horizSizing = "right";
+							vertSizing = "bottom";
+							position = "0 0";
+							extent = "9 8";
+							minExtent = "8 8";
+							visible = "1";
+							setFirstResponder = "0";
+							modal = "1";
+							helpTag = "0";
+							enumerate = "0";
+							resizeCell = "1";
+							columns = "1";
+						};
+					};
+				};
+			};
+			new GuiControl() {
+				profile = "GuiDefaultProfile";
+				horizSizing = "right";
+				vertSizing = "bottom";
+				position = "0 350";
+				extent = "275 100";
+				minExtent = "8 8";
+				visible = "1";
+				setFirstResponder = "1";
+				modal = "1";
+				helpTag = "0";
+
+				new GuiPopUpMenuCtrl(Texture_operation_menu) {
+					profile = "GuiButtonProfile";
+					horizSizing = "right";
+					vertSizing = "bottom";
+					position = "4 3";
+					extent = "199 20";
+					minExtent = "8 8";
+					visible = "1";
+					setFirstResponder = "1";
+					modal = "1";
+					helpTag = "0";
+					text = "Options";
+					maxPopupHeight = "200";
+						setText = "false";
+				};
+				new GuiButtonCtrl() {
+					profile = "GuiButtonProfile";
+					horizSizing = "right";
+					vertSizing = "bottom";
+					position = "205 3";
+					extent = "53 20";
+					minExtent = "8 8";
+					visible = "1";
+					setFirstResponder = "1";
+					modal = "1";
+					command = "Texture::deleteOperation();";
+					helpTag = "0";
+					text = "Delete";
+				};
+				new GuiScrollCtrl() {
+					profile = "GuiButtonProfile";
+					horizSizing = "width";
+					vertSizing = "height";
+					position = "5 27";
+					extent = "266 65";
+					minExtent = "8 8";
+					visible = "1";
+					setFirstResponder = "1";
+					modal = "1";
+					helpTag = "0";
+					willFirstRespond = "1";
+					hScrollBar = "alwaysOff";
+					vScrollBar = "dynamic";
+					constantThumbHeight = "1";
+
+					new GuiScrollContentCtrl() {
+						profile = "GuiButtonProfile";
+						horizSizing = "right";
+						vertSizing = "bottom";
+						position = "1 1";
+						extent = "264 63";
+						minExtent = "8 8";
+						visible = "1";
+						setFirstResponder = "0";
+						modal = "1";
+						helpTag = "0";
+
+						new GuiTextListCtrl(Texture_operation) {
+							profile = "GuiButtonProfile";
+							horizSizing = "right";
+							vertSizing = "bottom";
+							position = "0 1";
+							extent = "9 8";
+							minExtent = "8 8";
+							visible = "1";
+							setFirstResponder = "0";
+							modal = "1";
+							helpTag = "0";
+							enumerate = "0";
+							resizeCell = "1";
+							columns = "1";
+						};
+					};
+				};
+			};
+		};
+		new GuiFrameSetCtrl(TextureCenterFrame) {
+			profile = "GuiDefaultProfile";
+			horizSizing = "right";
+			vertSizing = "height";
+			position = "279 0";
+			extent = "91 450";
+			minExtent = "8 8";
+			visible = "1";
+			setFirstResponder = "1";
+			modal = "1";
+			helpTag = "0";
+			columns = "0";
+			rows = "0";
+			borderWidth = "4";
+			borderColor = "0 52 56 255";
+			borderEnable = "alwaysOff";
+			borderMovable = "alwaysOff";
+			autoBalance = "0";
+
+			new GuiControl() {
+				profile = "GuiDefaultProfile";
+				horizSizing = "right";
+				vertSizing = "bottom";
+				position = "0 0";
+				extent = "91 450";
+				minExtent = "8 8";
+				visible = "1";
+				setFirstResponder = "1";
+				modal = "1";
+				helpTag = "0";
+
+				new GuiControl() {
+					profile = "GuiCheckBoxProfile";
+					horizSizing = "center";
+					vertSizing = "bottom";
+					position = "4 2";
+					extent = "82 445";
+					minExtent = "8 8";
+					visible = "1";
+					setFirstResponder = "1";
+					modal = "1";
+					helpTag = "0";
+
+					new GuiButtonCtrl() {
+						profile = "GuiButtonProfile";
+						horizSizing = "right";
+						vertSizing = "bottom";
+						position = "0 27";
+						extent = "80 20";
+						minExtent = "8 8";
+						visible = "1";
+						setFirstResponder = "1";
+						modal = "1";
+						command = "Texture::load(Lush);";
+						helpTag = "0";
+						text = "Lush";
+					};
+					new GuiButtonCtrl() {
+						profile = "GuiButtonProfile";
+						horizSizing = "right";
+						vertSizing = "bottom";
+						position = "0 52";
+						extent = "80 20";
+						minExtent = "8 8";
+						visible = "1";
+						setFirstResponder = "1";
+						modal = "1";
+						command = "Texture::load(Swamp);";
+						helpTag = "0";
+						text = "Swamp";
+					};
+					new GuiButtonCtrl() {
+						profile = "GuiButtonProfile";
+						horizSizing = "right";
+						vertSizing = "bottom";
+						position = "0 77";
+						extent = "80 20";
+						minExtent = "8 8";
+						visible = "1";
+						setFirstResponder = "1";
+						modal = "1";
+						command = "Texture::load(BadLands);";
+						helpTag = "0";
+						text = "BadLands";
+					};
+					new GuiButtonCtrl() {
+						profile = "GuiButtonProfile";
+						horizSizing = "right";
+						vertSizing = "bottom";
+						position = "0 102";
+						extent = "80 20";
+						minExtent = "8 8";
+						visible = "1";
+						setFirstResponder = "1";
+						modal = "1";
+						command = "Texture::load(Ice);";
+						helpTag = "0";
+						text = "Ice";
+					};
+					new GuiButtonCtrl() {
+						profile = "GuiButtonProfile";
+						horizSizing = "right";
+						vertSizing = "bottom";
+						position = "0 127";
+						extent = "80 20";
+						minExtent = "8 8";
+						visible = "1";
+						setFirstResponder = "1";
+						modal = "1";
+						command = "Texture::load(Desert);";
+						helpTag = "0";
+						text = "Desert";
+					};
+					new GuiButtonCtrl() {
+						profile = "GuiButtonProfile";
+						horizSizing = "right";
+						vertSizing = "bottom";
+						position = "0 152";
+						extent = "80 20";
+						minExtent = "8 8";
+						visible = "1";
+						setFirstResponder = "1";
+						modal = "1";
+						command = "Texture::load(Lava);";
+						helpTag = "0";
+						text = "Lava";
+					};
+					new GuiButtonCtrl() {
+						profile = "GuiButtonProfile";
+						horizSizing = "right";
+						vertSizing = "bottom";
+						position = "0 400";
+						extent = "80 20";
+						minExtent = "8 8";
+						visible = "1";
+						setFirstResponder = "1";
+						modal = "1";
+						command = "TerraformerGui.setView(HeightfieldView);";
+						helpTag = "0";
+						text = "Heightfield";
+					};
+					new GuiButtonCtrl() {
+						profile = "GuiButtonProfile";
+						horizSizing = "right";
+						vertSizing = "bottom";
+						position = "0 275";
+						extent = "80 20";
+						minExtent = "8 8";
+						visible = "1";
+						setFirstResponder = "1";
+						modal = "1";
+						command = "Texture::applyMaterials();";
+						helpTag = "0";
+						text = "Apply";
+					};
+					new GuiButtonCtrl() {
+						profile = "GuiButtonProfile";
+						horizSizing = "right";
+						vertSizing = "bottom";
+						position = "0 332";
+						extent = "80 20";
+						minExtent = "8 8";
+						visible = "1";
+						setFirstResponder = "1";
+						modal = "1";
+						command = "Texture::save();";
+						helpTag = "0";
+						text = "Save";
+					};
+					new GuiButtonCtrl() {
+						profile = "GuiButtonProfile";
+						horizSizing = "right";
+						vertSizing = "bottom";
+						position = "0 309";
+						extent = "80 20";
+						minExtent = "8 8";
+						visible = "1";
+						setFirstResponder = "1";
+						modal = "1";
+						command = "Texture::load();";
+						helpTag = "0";
+						text = "Load";
+					};
+					new GuiCheckBoxCtrl(doTestBmp) {
+						profile = "GuiCheckBoxProfile";
+						horizSizing = "right";
+						vertSizing = "bottom";
+						position = "4 216";
+						extent = "74 21";
+						minExtent = "8 8";
+						visible = "1";
+						setFirstResponder = "0";
+						modal = "1";
+						helpTag = "0";
+						text = "test bmp";
+                  command = "$terrainTestBmp = $ThisControl.getValue();";
+					};
+				};
+			};
+		};
+		new GuiFrameSetCtrl(TextureRightFrame) {
+			profile = "GuiDefaultProfile";
+			horizSizing = "right";
+			vertSizing = "height";
+			position = "374 0";
+			extent = "266 450";
+			minExtent = "8 8";
+			visible = "1";
+			setFirstResponder = "1";
+			modal = "1";
+			helpTag = "0";
+			columns = "0";
+			rows = "0 266";
+			borderWidth = "2";
+			borderColor = "0 52 56 255";
+			borderEnable = "alwaysOff";
+			borderMovable = "alwaysOff";
+			autoBalance = "0";
+
+			new GuiControl() {
+				profile = "GuiContentProfile";
+				horizSizing = "width";
+				vertSizing = "height";
+				position = "0 0";
+				extent = "266 264";
+				minExtent = "8 8";
+				visible = "1";
+				setFirstResponder = "1";
+				modal = "1";
+				helpTag = "0";
+
+				new GuiTerrPreviewCtrl(TexturePreview) {
+					profile = "GuiDefaultProfile";
+					horizSizing = "right";
+					vertSizing = "bottom";
+					position = "4 4";
+					extent = "256 256";
+					minExtent = "8 8";
+					visible = "1";
+					setFirstResponder = "0";
+					modal = "1";
+					helpTag = "0";
+				};
+			};
+			new GuiControl() {
+				profile = "GuiContentProfile";
+				horizSizing = "right";
+				vertSizing = "bottom";
+				position = "0 266";
+				extent = "266 184";
+				minExtent = "8 8";
+				visible = "1";
+				setFirstResponder = "1";
+				modal = "1";
+				helpTag = "0";
+
+				new GameTSCtrl() {
+					profile = "GuiDefaultProfile";
+					horizSizing = "width";
+					vertSizing = "height";
+					position = "4 4";
+					extent = "255 204";
+					minExtent = "8 8";
+					visible = "1";
+					setFirstResponder = "1";
+					modal = "1";
+					helpTag = "0";
+				};
+			};
+		};
+	};
+};
+//--- OBJECT WRITE END ---
+
+$nextTextureId = 1;
+$nextTextureRegister = 1000;
+$selectedMaterial = -1;
+$selectedTextureOperation = -1;
+
+
+//--------------------------------------
+function TerraformerTextureGui::init(%this)
+{
+   Texture_material_menu.clear();
+   Texture_material_menu.setText("Materials");
+   %index = 0;
+   %search = "textures/terrain/*.png";
+   for(%file = findFirstFile(%search); %file !$= ""; %file = findNextFile(%search))
+   {
+      %file = fileBase(%file);
+      Texture_material_menu.add(%file, %index++);
+   }
+   Texture_material_menu.sort();
+
+   Texture_operation_menu.clear();
+   Texture_operation_menu.setText("Placement Operations");
+   Texture_operation_menu.add("Place by Fractal", 1);
+   Texture_operation_menu.add("Place by Height", 2);
+   Texture_operation_menu.add("Place by Slope", 3);
+   Texture_operation_menu.add("Place by Water Level", 4);
+   Texture_operation_menu.add("Place by Shoreline", 5);
+
+   %this.refresh();
+}
+
+function TerraformerTextureGui::refresh(%this)
+{
+   $HeightfieldSrcRegister = Heightfield_operation.rowCount()-1;
+
+   // sync up the preview windows
+   TexturePreview.setValue(HeightfieldPreview.getValue());
+
+   if (Texture_material.rowCount() == 0)
+   {
+      Texture_operation.clear();
+      $nextTextureRegister = 1000;
+   }
+   else
+   {
+      // it's difficult to tell if the heightfield was modified so 
+      // just in case flag all dependent operations as dirty.
+      %rowCount = Texture_material.rowCount();
+      for (%row = 0; %row < %rowCount; %row++)
+      {
+         %data = Texture_material.getRowText(%row);
+         %entry= getRecord(%data,0);
+         %reg  = getField(%entry,1);
+         $dirtyTexture[ %reg ] = true;
+
+         %opCount = getRecordCount(%data);
+         for (%op = 2; %op < %opCount; %op++)
+         {
+            %entry= getRecord(%data,%op);
+            %label= getField(%entry,0);
+            if (%label !$= "Place by Fractal" && %label !$= "Fractal Distortion")
+            {
+               %reg  = getField(%entry,2);
+               $dirtyTexture[ %reg ] = true;
+            }
+         }
+      }
+      Texture::previewMaterial();   
+   }
+}   
+
+
+//--------------------------------------
+function Texture_material_menu::onSelect(%this, %id, %text)
+{
+   %this.setText("Materials");
+
+   // FORMAT
+   //   material name
+   //   register
+   //     operation
+   //       name
+   //       tab name
+   //       register
+   //       distortion register
+   //       {field,value}, ...
+   //     operation
+   //       ...
+   Texture::saveMaterial();
+   Texture::hideTab();   
+   %id = Texture::addMaterial(%text @ "\t" @ $nextTextureRegister++);
+   
+   if (%id != -1)
+   {
+      Texture_material.setSelectedById(%id);
+      Texture::addOperation("Fractal Distortion\ttab_DistortMask\t" @ $nextTextureRegister++ @ "\t0\tdmask_interval\t20\tdmask_rough\t0\tdmask_seed\t" @ terraFormer.generateSeed() @ "\tdmask_filter\t0.00000 0.00000 0.13750 0.487500 0.86250 1.00000 1.00000");
+   }
+}   
+
+
+//--------------------------------------
+function Texture_material::onSelect(%this, %id, %text) 
+{
+   Texture::saveMaterial();
+   if (%id != $selectedMaterial)
+   {
+      $selectedTextureOperation = -1;
+      Texture_operation.clear();
+      
+      Texture::hideTab();
+      Texture::restoreMaterial(%id);
+   }
+
+   Texture::previewMaterial(%id);
+   $selectedMaterial = %id;
+   $selectedTextureOperation = -1;
+   Texture_operation.clearSelection();
+}   
+
+
+//--------------------------------------
+function Texture_operation_menu::onSelect(%this, %id, %text)
+{
+   %this.setText("Placement Operations");
+   %id = -1;
+
+   if ($selectedMaterial == -1)
+      return;
+
+   %dreg = getField(Texture_operation.getRowText(0),2);
+                     
+   switch$ (%text)
+   {
+      case "Place by Fractal":
+         %id = Texture::addOperation("Place by Fractal\ttab_FractalMask\t" @ $nextTextureRegister++ @ "\t" @ %dreg @ "\tfbmmask_interval\t16\tfbmmask_rough\t0.000\tfbmmask_seed\t" @ terraFormer.generateSeed() @ "\tfbmmask_filter\t0.000000 0.166667 0.333333 0.500000 0.666667 0.833333 1.000000\tfBmDistort\ttrue");
+
+      case "Place by Height":
+         %id = Texture::addOperation("Place by Height\ttab_HeightMask\t" @ $nextTextureRegister++ @ "\t" @ %dreg @ "\ttextureHeightFilter\t0 0.2 0.4 0.6 0.8 1.0\theightDistort\ttrue");
+
+      case "Place by Slope":
+         %id = Texture::addOperation("Place by Slope\ttab_SlopeMask\t" @ $nextTextureRegister++ @ "\t" @ %dreg @ "\ttextureSlopeFilter\t0 0.2 0.4 0.6 0.8 1.0\tslopeDistort\ttrue");
+
+      case "Place by Water Level":
+         %id = Texture::addOperation("Place by Water Level\ttab_WaterMask\t" @ $nextTextureRegister++ @ "\t" @ %dreg @ "\twaterDistort\ttrue");
+
+      case "Place by Shoreline":
+         %id = Texture::addOperation("Place by Shoreline\ttab_ShorelineMask\t" @ $nextTextureRegister++ @ "\t" @ %dreg @ "\tshorelineTolerance\t10\tshorelineDistort\ttrue");
+   }
+
+   // select it
+   Texture::hideTab();
+   if (%id != -1)
+      Texture_operation.setSelectedById(%id);
+}   
+
+
+//--------------------------------------
+function Texture_operation::onSelect(%this, %id, %text)
+{
+   Texture::saveOperation();   
+   if (%id !$= $selectedTextureOperation)   
+   {
+      Texture::hideTab();   
+      Texture::restoreOperation(%id);
+      Texture::showTab(%id);   
+   }
+
+   Texture::previewOperation(%id);
+   $selectedTextureOperation = %id;
+}   
+
+
+//--------------------------------------
+function Texture::deleteMaterial(%id)
+{
+   if (%id $= "")
+      %id = $selectedMaterial;
+   if (%id == -1)   
+      return;
+   
+   %row = Texture_material.getRowNumById(%id);
+   
+   Texture_material.removeRow(%row);
+
+   // find the next row to select
+   %rowCount = Texture_material.rowCount()-1;
+   if (%row > %rowCount)
+      %row = %rowCount;
+
+   if (%id == $selectedMaterial)
+      $selectedMaterial = -1;
+
+   Texture_operation.clear();
+   %id = Texture_material.getRowId(%row);
+   Texture_material.setSelectedById(%id);
+}   
+
+
+//--------------------------------------
+function Texture::deleteOperation(%id)
+{
+   if (%id $= "")
+      %id = $selectedTextureOperation;
+   if (%id == -1)   
+      return;
+   
+   %row = Texture_operation.getRowNumById(%id);
+   
+   // don't delete the first entry
+   if (%row == 0)
+      return;
+   
+   Texture_operation.removeRow(%row);
+
+   // find the next row to select
+   %rowCount = Texture_operation.rowCount()-1;
+   if (%row > %rowCount)
+      %row = %rowCount;
+
+   if (%id == $selectedTextureOperation)
+      $selectedTextureOperation = -1;
+
+   %id = Texture_operation.getRowId(%row);
+   Texture_operation.setSelectedById(%id);
+}   
+
+
+//--------------------------------------
+function Texture::applyMaterials()
+{
+   Texture::saveMaterial();
+   %count = Texture_material.rowCount();
+   if (%count > 0)   
+   {
+      %data = getRecord(Texture_material.getRowText(0),0);
+      %mat_list = getField( %data, 0);
+      %reg_list = getField( %data, 1);
+      Texture::evalMaterial(Texture_material.getRowId(0));
+      
+      for (%i=1; %i<%count; %i++)
+      {
+         Texture::evalMaterial(Texture_material.getRowId(%i));
+         %data = getRecord(Texture_material.getRowText(%i),0);
+         %mat_list = %mat_list @ " " @ getField( %data, 0);
+         %reg_list = %reg_list @ " " @ getField( %data, 1);
+      }
+      terraformer.setMaterials(%reg_list, %mat_list);
+   }
+}   
+
+
+//--------------------------------------
+function Texture::previewMaterial(%id)
+{
+   if (%id $= "")
+      %id = $selectedMaterial;
+   if (%id == -1)
+      return;
+
+   %data = Texture_material.getRowTextById(%id);
+   %row  = Texture_material.getRowNumById(%id);
+   %reg  = getField(getRecord(%data,0),1);
+
+   Texture::evalMaterial(%id);
+
+   terraformer.preview(TexturePreview, %reg);
+}   
+
+
+//--------------------------------------
+function Texture::evalMaterial(%id)
+{
+   if (%id $= "")
+      %id = $selectedMaterial;
+   if (%id == -1)   
+      return;
+
+   %data = Texture_material.getRowTextbyId(%id);
+   %reg  = getField(getRecord(%data,0), 1);
+
+   // make sure all operation on this material are up to date
+   // and accumulate register data for each
+   %opCount = getRecordCount(%data);
+   if (%opCount >= 2)    // record0=material record1=fractal
+   {
+      %entry = getRecord(%data, 1);
+      Texture::evalOperationData(%entry, 1);
+      for (%op=2; %op<%opCount; %op++)
+      {
+         %entry = getRecord(%data, %op);
+         %reg_list = %reg_list @ getField(%entry, 2) @ " ";
+         Texture::evalOperationData(%entry, %op);
+      }
+      // merge the masks in to the dst reg
+      terraformer.mergeMasks(%reg_list, %reg);
+   }
+}   
+
+
+//--------------------------------------
+function Texture::evalOperation(%id)
+{
+   if (%id $= "")
+      %id = $selectedTextureOperation;
+   if (%id == -1)   
+      return;
+   
+   %data   = Texture_operation.getRowTextById(%id);
+   %row    = Texture_operation.getRowNumById(%id);
+   
+   if (%row != 0)    
+      Texture::evalOperation( Texture_operation.getRowId(0) );
+
+   Texture::evalOperationData(%data, %row);
+}   
+
+
+//--------------------------------------
+function Texture::evalOperationData(%data, %row)
+{
+   %label  = getField(%data, 0);
+   %reg    = getField(%data, 2);
+   %dreg   = getField(%data, 3);
+   %id     = Texture_material.getRowId(%row);
+
+   if ( $dirtyTexture[%reg] == false )
+   {
+      return;
+   }
+
+   switch$ (%label)
+   {
+      case "Fractal Distortion":
+         terraformer.maskFBm( %reg, getField(%data,5), getField(%data,7), getField(%data,9), getField(%data,11), false, 0 );
+
+      case "Place by Fractal":
+         terraformer.maskFBm( %reg, getField(%data,5), getField(%data,7), getField(%data,9), getField(%data,11), getField(%data,13), %dreg );
+
+      case "Place by Height":
+         terraformer.maskHeight( $HeightfieldSrcRegister, %reg, getField(%data,5), getField(%data,7), %dreg );
+
+      case "Place by Slope":
+         terraformer.maskSlope( $HeightfieldSrcRegister, %reg, getField(%data,5), getField(%data,7), %dreg );
+
+      case "Place by Water Level":
+         terraformer.maskWater( $HeightfieldSrcRegister, %reg, getField(%data,5), %dreg );
+
+      case "Place by Shoreline":
+         terraformer.maskShoreline( $HeightfieldSrcRegister, %reg, getField(%data,5), getField(%data, 7), %dreg );
+   }
+
+
+   $dirtyTexture[%reg] = false;
+}   
+
+
+
+//--------------------------------------
+function Texture::previewOperation(%id)
+{
+   if (%id $= "")
+      %id = $selectedTextureOperation;
+   if (%id == -1)
+      return;
+
+   %row  = Texture_operation.getRowNumById(%id);
+   %data = Texture_operation.getRowText(%row);
+   %reg  = getField(%data,2);
+
+   Texture::evalOperation(%id);
+   terraformer.preview(TexturePreview, %reg);
+}   
+
+
+
+//--------------------------------------
+function Texture::restoreMaterial(%id)
+{
+   if (%id == -1)
+      return;
+
+   %data = Texture_material.getRowTextById(%id);
+   
+   Texture_operation.clear();
+   %recordCount = getRecordCount(%data);
+   for (%record=1; %record<%recordCount; %record++)
+   {
+      %entry = getRecord(%data, %record);
+      Texture_operation.addRow($nextTextureId++, %entry);
+   }
+}   
+
+
+//--------------------------------------
+function Texture::saveMaterial()
+{
+   %id = $selectedMaterial;
+   if (%id == -1)
+      return;
+
+   Texture::SaveOperation();
+   %data = Texture_Material.getRowTextById(%id);
+   %newData = getRecord(%data,0);
+
+   %rowCount = Texture_Operation.rowCount();
+   for (%row=0; %row<%rowCount; %row++)
+      %newdata = %newdata @ "\n" @ Texture_Operation.getRowText(%row);
+
+   Texture_Material.setRowById(%id, %newdata);
+}   
+
+
+//--------------------------------------
+function Texture::restoreOperation(%id)
+{
+   if (%id == -1)
+      return;
+
+   %data = Texture_operation.getRowTextById(%id);
+
+   %fieldCount = getFieldCount(%data);
+   for (%field=4; %field<%fieldCount; %field += 2)
+   {
+      %obj = getField(%data, %field);
+      %obj.setValue( getField(%data, %field+1) );
+   }
+}   
+
+
+//--------------------------------------
+function Texture::saveOperation()
+{
+   %id = $selectedTextureOperation;
+   if (%id == -1)
+      return;
+
+   %data = Texture_operation.getRowTextById(%id);
+   %newData = getField(%data,0) @ "\t" @ getField(%data,1) @ "\t" @ getField(%data,2) @ "\t" @ getField(%data,3); 
+
+   // go through each object and update its value
+   %fieldCount = getFieldCount(%data);
+   for (%field=4; %field<%fieldCount; %field += 2)
+   {
+      %obj = getField(%data, %field);
+      %newdata = %newdata @ "\t" @ %obj @ "\t" @ %obj.getValue();
+   }
+
+   %dirty = (%data !$= %newdata);
+   %reg   = getField(%data, 2);
+   $dirtyTexture[%reg] = %dirty;
+      
+   Texture_operation.setRowById(%id, %newdata);
+
+   // mark the material register as dirty too
+   if (%dirty == true)
+   {
+      %data = Texture_Material.getRowTextById($selectedMaterial);
+      %reg  = getField(getRecord(%data,0), 1);
+      $dirtyTexture[ %reg ] = true;
+   }
+
+   // if row is zero the fractal mask was modified
+   // mark everything else in the list as dirty
+    %row = Texture_material.getRowNumById(%id);
+    if (%row == 0)
+    {
+       %rowCount = Texture_operation.rowCount();
+       for (%r=1; %r<%rowCount; %r++)
+       {
+          %data = Texture_operation.getRowText(%r);
+          $dirtyTexture[ getField(%data,2) ] = true;
+       }
+    }
+}   
+
+
+//--------------------------------------
+function Texture::addMaterial(%entry)
+{
+   %id = $nextTextureId++;
+   Texture_material.addRow(%id, %entry);
+   
+   %reg = getField(%entry, 1);
+   $dirtyTexture[%reg] = true;
+
+   return %id;
+}   
+
+//--------------------------------------
+function Texture::addOperation(%entry)
+{
+   // Assumes: operation is being added to selected material
+
+   %id = $nextTextureId++;
+   Texture_operation.addRow(%id, %entry);
+
+   %reg = getField(%entry, 2);
+   $dirtyTexture[%reg] = true;
+
+   return %id;
+}   
+
+
+//--------------------------------------
+function Texture::save(%name)
+{
+   Texture::saveMaterial();
+   if(%name $= "")
+      getSaveFilename("terrains/texture/*cs", "Texture::doSaveTexture");
+   else
+      Texture::doSaveTexture(%name);
+}
+
+
+//--------------------------------------
+function Texture::doSaveTexture(%name)
+{
+   %name = fileBase(%name);
+   if (%name $= "")
+      return;
+
+   new fileObject("saveFile");
+   saveFile.openForWrite("terrains/texture/" @ %name @ ".cs");
+
+   // loop through each operation and save it to disk
+   %rowCount = Texture_material.rowCount();
+   for(%row = 0; %row < %rowCount; %row++)
+   {
+      %data = Texture_material.getRowText(%row);
+      %data = "Texture::addMaterial(\"" @ expandEscape(%data) @ "\");";
+      saveFile.writeLine(%data);
+   }
+   saveFile.close();
+   saveFile.delete();      
+}   
+
+
+//--------------------------------------
+function Texture::load(%name)
+{
+   if(%name $= "")
+      getLoadFilename("terrains/texture/*cs", "Texture::doLoadTexture");
+   else
+      Texture::doLoadTexture(%name);
+}   
+
+//--------------------------------------
+function Texture::doLoadTexture(%name)
+{
+   %name = fileBase(%name);
+   if (%name $= "")
+      return;
+
+   %name = "terrains/texture/" @ %name @ ".cs";
+   Texture_material.clear();
+   Texture_operation.clear();
+   $selectedMaterial = -1;
+   $selectedTextureOperation = -1;
+   if ( !exec(%name) )
+   {  
+      // if there was a problem executing the script restore
+      // the operations list to a known state
+      Texture_material.clear();
+      Texture_operation.clear();
+   }
+   else
+   {
+      // initialize dirty register array
+      // patch up register usage
+      // ...and deterime what the next register should be.
+      $nextTextureRegister = 1000;
+      %rowCount = Texture_material.rowCount();
+      for (%row = 0; %row < %rowCount; %row++)
+      {
+         $dirtyTexture[ $nextTextureRegister ] = true;
+         %data    = Texture_material.getRowText(%row);
+         %rec     = getRecord(%data, 0);
+         %rec     = setField(%rec, 1, $nextTextureRegister);
+         %data    = setRecord(%data, 0, %rec);
+         $nextTextureRegister++;
+         
+         %opCount = getRecordCount(%data);
+         for (%op = 1; %op < %opCount; %op++)
+         {
+            if (%op == 1)
+               %frac_reg = $nextTextureRegister;
+            $dirtyTexture[ $nextTextureRegister ] = true;
+            %rec  = getRecord(%data,%op);
+            %rec  = setField(%rec, 2, $nextTextureRegister);
+            %rec  = setField(%rec, 3, %frac_reg);
+            %data = setRecord(%data, %op, %rec);
+            $nextTextureRegister++;
+         }
+         %id = Texture_material.getRowId(%row);
+         Texture_material.setRowById(%id, %data);
+      }
+
+      $selectedMaterial = -1;
+      Texture_material.setSelectedById(Texture_material.getRowId(0));
+   }
+}   
+
+
+
+//--------------------------------------
+function Texture::hideTab()
+{
+   tab_DistortMask.setVisible(false);   
+   tab_FractalMask.setVisible(false);   
+   tab_HeightMask.setVisible(false);   
+   tab_SlopeMask.setVisible(false);   
+   tab_waterMask.setVisible(false);   
+   tab_shorelineMask.setVisible(false);
+}   
+
+
+//--------------------------------------
+function Texture::showTab(%id)
+{
+   Texture::hideTab();
+   %data = Texture_operation.getRowTextById(%id);
+   %tab  = getField(%data,1);
+   %tab.setVisible(true);
+}   
+
+

@@ -1,0 +1,338 @@
+//--- OBJECT WRITE BEGIN ---
+new GuiControl(AddressDlg) {
+	profile = "DlgBackProfile";
+	horizSizing = "width";
+	vertSizing = "height";
+	position = "0 0";
+	extent = "640 480";
+	minExtent = "8 8";
+	visible = "1";
+	helpTag = "0";
+		lbstate = "buddylist";
+		msg = "Request Processed";
+		lbline = "6";
+		DestList = "1";
+		key = "28";
+		state = "noprocess";
+		lbcount = "6";
+		blstate = "DONE";
+		useVariable = "0";
+		doRefresh = "1";
+		SrcList = "2";
+		err = "0";
+
+	new ShellPaneCtrl() {
+		profile = "ShellDlgPaneProfile";
+		horizSizing = "center";
+		vertSizing = "center";
+		position = "79 68";
+		extent = "481 344";
+		minExtent = "48 92";
+		visible = "1";
+		helpTag = "0";
+		text = "LIST CONTROL";
+		noTitleBar = "0";
+
+		new ShellBitmapButton(LC_CCListBtn) {
+			profile = "ShellButtonProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "219 178";
+			extent = "75 38";
+			minExtent = "32 38";
+			visible = "1";
+			command = "AddressDlg.AddCC();";
+			helpTag = "0";
+			text = "DEL";
+			simpleStyle = "0";
+				direction = "1";
+		};
+		new ShellScrollCtrl() {
+			profile = "NewScrollCtrlProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "30 115";
+			extent = "183 178";
+			minExtent = "24 52";
+			visible = "1";
+			helpTag = "0";
+			willFirstRespond = "1";
+			hScrollBar = "alwaysOff";
+			vScrollBar = "alwaysOn";
+			constantThumbHeight = "0";
+			defaultLineHeight = "15";
+			childMargin = "0 3";
+			fieldBase = "gui/shll_field";
+
+			new GuiScrollContentCtrl() {
+				profile = "GuiDefaultProfile";
+				horizSizing = "right";
+				vertSizing = "bottom";
+				position = "4 7";
+				extent = "159 164";
+				minExtent = "8 8";
+				visible = "1";
+				helpTag = "0";
+
+				new ShellTextList(LC_BigList) {
+					profile = "ShellTextArrayProfile";
+					horizSizing = "right";
+					vertSizing = "bottom";
+					position = "0 0";
+					extent = "159 8";
+					minExtent = "8 8";
+					visible = "1";
+					variable = "$LCBigList";
+					command = "AddressDlg.onClick(\"BIGLIST\");";
+					altCommand = "AddressDlg.onDblClick(0);";
+					helpTag = "0";
+					enumerate = "1";
+					resizeCell = "1";
+					columns = "0";
+					fitParentWidth = "1";
+					clipColumnText = "0";
+				};
+			};
+		};
+		new ShellBitmapButton(LC_ToListBtn) {
+			profile = "ShellButtonProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "219 38";
+			extent = "75 38";
+			minExtent = "32 38";
+			visible = "1";
+			command = "AddressDlg.AddTo();";
+			helpTag = "0";
+			text = "DEL";
+			simpleStyle = "0";
+				direction = "1";
+		};
+		new ShellScrollCtrl() {
+			profile = "NewScrollCtrlProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "284 40";
+			extent = "168 119";
+			minExtent = "24 52";
+			visible = "1";
+			helpTag = "0";
+			willFirstRespond = "1";
+			hScrollBar = "alwaysOff";
+			vScrollBar = "alwaysOn";
+			constantThumbHeight = "0";
+			defaultLineHeight = "15";
+			childMargin = "0 3";
+			fieldBase = "gui/shll_field";
+
+			new GuiScrollContentCtrl() {
+				profile = "GuiDefaultProfile";
+				horizSizing = "right";
+				vertSizing = "bottom";
+				position = "4 7";
+				extent = "144 105";
+				minExtent = "8 8";
+				visible = "1";
+				helpTag = "0";
+
+				new ShellTextList(LC_ToList) {
+					profile = "ShellTextArrayProfile";
+					horizSizing = "right";
+					vertSizing = "bottom";
+					position = "0 0";
+					extent = "144 8";
+					minExtent = "8 8";
+					visible = "1";
+					variable = "$LCToList";
+					command = "AddressDlg.onClick(\"TOLIST\");";
+					altCommand = "AddressDlg.onDblClick(1);";
+					helpTag = "0";
+					enumerate = "1";
+					resizeCell = "1";
+					columns = "0";
+					fitParentWidth = "1";
+					clipColumnText = "0";
+						direction = "1";
+				};
+			};
+		};
+		new ShellBitmapButton(LC_BuddyListBtn) {
+			profile = "ShellButtonProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "24 288";
+			extent = "194 38";
+			minExtent = "32 38";
+			visible = "1";
+			command = "AddressDlg.AddBuddyList();";
+			helpTag = "0";
+			text = "ADD TO BUDDYLIST";
+			simpleStyle = "0";
+				direction = "0";
+		};
+		new ShellScrollCtrl() {
+			profile = "NewScrollCtrlProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "284 175";
+			extent = "168 118";
+			minExtent = "24 52";
+			visible = "1";
+			helpTag = "0";
+			willFirstRespond = "1";
+			hScrollBar = "alwaysOff";
+			vScrollBar = "alwaysOn";
+			constantThumbHeight = "0";
+			defaultLineHeight = "15";
+			childMargin = "0 3";
+			fieldBase = "gui/shll_field";
+
+			new GuiScrollContentCtrl() {
+				profile = "GuiDefaultProfile";
+				horizSizing = "right";
+				vertSizing = "bottom";
+				position = "4 7";
+				extent = "144 104";
+				minExtent = "8 8";
+				visible = "1";
+				helpTag = "0";
+
+				new ShellTextList(LC_CCList) {
+					profile = "ShellTextArrayProfile";
+					horizSizing = "right";
+					vertSizing = "bottom";
+					position = "0 0";
+					extent = "144 8";
+					minExtent = "8 8";
+					visible = "1";
+					variable = "$LCCCList";
+					command = "AddressDlg.OnClick(\"CCLIST\");";
+					altCommand = "AddressDlg.onDblClick(2);";
+					helpTag = "0";
+					enumerate = "1";
+					resizeCell = "1";
+					columns = "0";
+					fitParentWidth = "1";
+					clipColumnText = "0";
+				};
+			};
+		};
+		new ShellBitmapButton(LC_OKBtn) {
+			profile = "ShellButtonProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "368 288";
+			extent = "89 38";
+			minExtent = "32 38";
+			visible = "1";
+			command = "AddressDlg.OK();";
+			helpTag = "0";
+			text = "OK";
+			simpleStyle = "0";
+		};
+		new GuiTextCtrl() {
+			profile = "ShellTextProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "288 29";
+			extent = "40 22";
+			minExtent = "8 8";
+			visible = "1";
+			helpTag = "0";
+			text = "TO List:";
+		};
+		new GuiTextCtrl() {
+			profile = "ShellTextProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "288 163";
+			extent = "41 22";
+			minExtent = "8 8";
+			visible = "1";
+			helpTag = "0";
+			text = "CC List:";
+		};
+		new ShellBitmapButton(LC_CancelBtn) {
+			profile = "ShellButtonProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "278 288";
+			extent = "89 38";
+			minExtent = "32 38";
+			visible = "1";
+			command = "AddressDlg.Cancel();";
+			accelerator = "escape";
+			helpTag = "0";
+			text = "CANCEL";
+			simpleStyle = "0";
+		};
+		new ShellPopupMenu(LC_ListBox) {
+			profile = "ShellPopupProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "27 76";
+			extent = "193 36";
+			minExtent = "49 36";
+			visible = "1";
+			command = "AddressDlg.onClick(\"LISTBOX\");";
+			helpTag = "0";
+			maxPopupHeight = "200";
+			buttonBitmap = "gui/shll_pulldown";
+			rolloverBarBitmap = "gui/shll_pulldownbar_rol";
+			selectedBarBitmap = "gui/shll_pulldownbar_act";
+			noButtonStyle = "0";
+		};
+		new ShellTextEditCtrl(LC_Search) {
+			profile = "NewTextEditProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "25 38";
+			extent = "158 38";
+			minExtent = "32 38";
+			visible = "1";
+			variable = "$LCSearch";
+			command = "AddressDlg.onClick(\"SEARCHBOX\");";
+			helpTag = "0";
+			historySize = "0";
+			maxLength = "255";
+			password = "0";
+			glowOffset = "9 9";
+		};
+		new GuiTextCtrl() {
+			profile = "ShellTextProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "37 29";
+			extent = "38 22";
+			minExtent = "8 8";
+			visible = "1";
+			helpTag = "0";
+			text = "Search:";
+		};
+		new GuiTextCtrl() {
+			profile = "ShellTextProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "37 68";
+			extent = "22 22";
+			minExtent = "8 8";
+			visible = "1";
+			helpTag = "0";
+			text = "List:";
+		};
+		new ShellBitmapButton(LC_GoSearchBtn) {
+			profile = "ShellButtonProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "167 38";
+			extent = "53 38";
+			minExtent = "32 38";
+			visible = "1";
+			command = "AddressDlg.GoSearch();";
+			helpTag = "0";
+			text = "GO";
+			simpleStyle = "0";
+		};
+	};
+};
+//--- OBJECT WRITE END ---

@@ -1,0 +1,12 @@
+Heightfield::add("General\tTab_general\tgeneral_min_height\t50\tgeneral_scale\t210\tgeneral_water\t0\tgeneral_centerx\t0\tgeneral_centery\t0");
+Heightfield::add("Rigid MultiFractal\ttab_RMF\trmf_interval\t3\trmf_rough\t0.000\trmf_detail\tVery High\trmf_seed\t1298135813");
+Heightfield::add("Filter\ttab_Filter\tfilter\t1.00000 1.00000 1.00000 0.95385 0.63846 0.11538 0.00000 0.00000 0.00000 ");
+Heightfield::add("Filter\ttab_Filter\tfilter\t1.00000 1.00000 0.84615 0.56154 0.25385 0.00000 0.00000 ");
+Heightfield::add("Rigid MultiFractal\ttab_RMF\trmf_interval\t5\trmf_rough\t0.000\trmf_detail\tVery High\trmf_seed\t159547841");
+Heightfield::add("Smooth Ridges/Valleys\ttab_SmoothRidge\tridgesmooth_factor\t0.600\tridgesmooth_iter\t1");
+Heightfield::add("Blend\ttab_Blend\tblend_factor\t0.5\tblend_srcB\t2\tblend_option\tMultiply");
+Heightfield::add("Blend\ttab_Blend\tblend_factor\t0.878947\tblend_srcB\t3\tblend_option\tAdd");
+Heightfield::add("Rigid MultiFractal\ttab_RMF\trmf_interval\t3\trmf_rough\t0.000\trmf_detail\tVery High\trmf_seed\t1298135813");
+Heightfield::add("Filter\ttab_Filter\tfilter\t0.00000 0.00000 0.00000 0.00000 0.00000 0.00000 0.00000 0.00000 0.00000 0.00000 0.99231 1.00000 ");
+Heightfield::add("Filter\ttab_Filter\tfilter\t1.00000 1.00000 0.00000 0.00000 0.00000 0.00000 0.00000 0.00000 ");
+Heightfield::add("Blend\ttab_Blend\tblend_factor\t0.5\tblend_srcB\t7\tblend_option\tMultiply");

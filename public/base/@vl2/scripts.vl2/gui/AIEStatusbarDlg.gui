@@ -1,0 +1,83 @@
+//--- OBJECT WRITE BEGIN ---
+new GuiControl(AIEStatusBarDlg) {
+	profile = "GuiModelessDialogProfile";
+	horizSizing = "right";
+	vertSizing = "bottom";
+	position = "0 0";
+	extent = "640 480";
+	minExtent = "8 8";
+	visible = "1";
+	setFirstResponder = "0";
+	modal = "0";
+	helpTag = "0";
+
+	new GuiControl() {
+		profile = "EditorContentProfile";
+		horizSizing = "width";
+		vertSizing = "top";
+		position = "0 450";
+		extent = "640 30";
+		minExtent = "8 8";
+		visible = "1";
+		setFirstResponder = "0";
+		modal = "1";
+		helpTag = "0";
+
+		new GuiTextCtrl() {
+			profile = "GuiTextProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "6 8";
+			extent = "39 18";
+			minExtent = "8 8";
+			visible = "1";
+			setFirstResponder = "0";
+			modal = "1";
+			helpTag = "0";
+			text = "Mission:";
+		};
+		new GuiControl() {
+			profile = "GuiContentProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "49 6";
+			extent = "188 18";
+			minExtent = "8 8";
+			visible = "1";
+			setFirstResponder = "0";
+			modal = "1";
+			helpTag = "0";
+
+		   new GuiTextCtrl(AIEMissionNameText) {
+			   profile = "GuiTextProfile";
+			   horizSizing = "right";
+			   vertSizing = "bottom";
+			   position = "3 2";
+			   extent = "8 18";
+			   minExtent = "8 8";
+			   visible = "1";
+			   setFirstResponder = "0";
+			   modal = "1";
+			   helpTag = "0";
+		   };
+		};
+	};
+};
+//--- OBJECT WRITE END ---
+
+//------------------------------------------------------------------------------
+// Functions
+//------------------------------------------------------------------------------
+
+function AIEStatusBarDlg::init(%this)
+{
+   %this.update();
+}
+
+function AIEStatusBarDlg::update(%this)
+{
+   if($MissionName $= "")
+      AIEMissionNameText.setValue("<none>");
+   else
+      AIEMissionNameText.setValue($MissionName);
+}

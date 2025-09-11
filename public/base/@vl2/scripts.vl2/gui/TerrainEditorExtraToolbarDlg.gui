@@ -1,0 +1,232 @@
+//--- OBJECT WRITE BEGIN ---
+new GuiControl(TerrainEditorExtraToolbarDlg) {
+	profile = "GuiModelessDialogProfile";
+	horizSizing = "right";
+	vertSizing = "bottom";
+	position = "0 0";
+	extent = "640 480";
+	minExtent = "8 8";
+	visible = "1";
+	setFirstResponder = "0";
+	modal = "1";
+	helpTag = "0";
+
+   new GuiControl() {
+	   profile = "EditorContentProfile";
+	   horizSizing = "width";
+	   vertSizing = "bottom";
+	   position = "90 30";
+	   extent = "550 420";
+	   minExtent = "8 8";
+	   visible = "1";
+	   setFirstResponder = "0";
+	   modal = "1";
+	   helpTag = "0";
+
+	   new GuiControl() {
+		   profile = "EditorContentProfile";
+		   horizSizing = "right";
+		   vertSizing = "bottom";
+		   position = "0 3";
+		   extent = "249 24";
+		   minExtent = "8 8";
+		   visible = "1";
+		   setFirstResponder = "0";
+		   modal = "1";
+		   helpTag = "0";
+
+		   new GuiRadioCtrl(TEPaintModeRadio) {
+			   profile = "GuiRadioProfile";
+			   horizSizing = "right";
+			   vertSizing = "bottom";
+			   position = "84 2";
+			   extent = "80 20";
+			   minExtent = "8 8";
+			   visible = "1";
+			   setFirstResponder = "0";
+			   modal = "1";
+			   helpTag = "0";
+			   text = "Paint";
+			   groupNum = "0";
+		   };
+		   new GuiRadioCtrl(TESelectModeRadio) {
+			   profile = "GuiRadioProfile";
+			   horizSizing = "right";
+			   vertSizing = "bottom";
+			   position = "3 2";
+			   extent = "80 20";
+			   minExtent = "8 8";
+			   visible = "1";
+			   setFirstResponder = "0";
+			   modal = "1";
+			   helpTag = "0";
+			   text = "Select";
+			   groupNum = "0";
+		   };
+		   new GuiRadioCtrl(TEAdjustModeRadio) {
+			   profile = "GuiRadioProfile";
+			   horizSizing = "right";
+			   vertSizing = "bottom";
+			   position = "165 2";
+			   extent = "80 20";
+			   minExtent = "8 8";
+			   visible = "1";
+			   setFirstResponder = "0";
+			   modal = "1";
+			   helpTag = "0";
+			   text = "Adjust Sel";
+			   groupNum = "0";
+		   };
+	   };
+	   new GuiPopUpMenuCtrl(TEBrushSizeMenu) {
+		   profile = "GuiButtonProfile";
+		   horizSizing = "right";
+		   vertSizing = "bottom";
+		   position = "424 6";
+		   extent = "80 20";
+		   minExtent = "80 20";
+		   visible = "1";
+		   setFirstResponder = "0";
+		   modal = "1";
+		   helpTag = "0";
+		   text = "Brush Size";
+		   maxPopupHeight = "200";
+	   };
+	   new GuiPopUpMenuCtrl(TEBrushTypeMenu) {
+		   profile = "GuiButtonProfile";
+		   horizSizing = "right";
+		   vertSizing = "bottom";
+		   position = "341 6";
+		   extent = "80 20";
+		   minExtent = "80 20";
+		   visible = "1";
+		   setFirstResponder = "0";
+		   modal = "1";
+		   helpTag = "0";
+		   text = "Brush Type";
+		   maxPopupHeight = "200";
+	   };
+	   new GuiCheckBoxCtrl() {
+		   profile = "GuiRadioProfile";
+		   horizSizing = "right";
+		   vertSizing = "bottom";
+		   position = "255 5";
+		   extent = "80 20";
+		   minExtent = "8 8";
+		   visible = "1";
+		   setFirstResponder = "0";
+		   modal = "1";
+		   helpTag = "0";
+		   text = "Soft Brush";
+         variable = "tEditor.enableSoftBrushes";
+         command = "tEditor.enableSoftBrushes = $ThisControl.getValue();";
+	   };
+   };
+};
+//--- OBJECT WRITE END ---
+
+function TerrainEditorExtraToolbarDlg::init(%this)
+{
+   %this.updateCurrentMode();
+   %this.updateCurrentAction();
+
+   %this.initMenus();
+}
+
+function TerrainEditorExtraToolbarDlg::initMenus(%this)
+{
+   //
+   TEBrushTypeMenu.clear();
+   TEBrushTypeMenu.add("Box Brush", 0);
+   TEBrushTypeMenu.add("Circle Brush", 1);
+   TEBrushTypeMenu.setText("Brush Type");
+
+   //
+   TEBrushSizeMenu.clear();
+   TEBrushSizeMenu.setText("Brush Size");
+   for(%i = 0; %i < 6; %i++)
+      TEBrushSizeMenu.add("Level " @ %i, %i);
+}
+
+//------------------------------------------------------------------------------
+
+function TEBrushSizeMenu::onSelect(%this, %id, %text)
+{
+   %this.setText("Brush Size");
+   tEditor.setBrushSize(1 << %id, 1 << %id);
+}
+
+function TEBrushTypeMenu::onSelect(%this, %id, %text)
+{
+   %this.setText("Brush Type");
+   switch(%id)
+   {
+      case 0:
+         tEditor.setBrushType(box);
+      case 1:
+         tEditor.setBrushType(ellipse);
+   }
+}
+
+//------------------------------------------------------------------------------
+
+function TESelectModeRadio::onAction(%this)
+{
+   tEditor.currentMode = "select";
+   tEditor.selectionHidden = false;
+   tEditor.setAction("select");
+}
+
+function TEAdjustModeRadio::onAction(%this)
+{
+   tEditor.currentMode = "adjust";
+   tEditor.selectionHidden = false;
+   tEditor.setAction("adjustHeight");
+}
+
+function TEPaintModeRadio::onAction(%this)
+{
+   tEditor.currentMode = "paint";
+   tEditor.selectionHidden = true;
+   tEditor.setAction(tEditor.currentAction);
+}
+
+//------------------------------------------------------------------------------
+
+function TerrainEditorExtraToolbarDlg::updateCurrentMode(%this)
+{
+   switch$(tEditor.currentMode)
+   {
+      case "select":
+         TESelectModeRadio.setValue(1);
+      case "adjust":
+         TEAdjustModeRadio.setValue(1);
+      case "paint":
+         TEPaintModeRadio.setValue(1);
+   }
+}
+
+function TerrainEditorExtraToolbarDlg::updateCurrentAction(%this)
+{
+   switch$(tEditor.currentAction)
+   {
+      case "raiseHeight":
+         TERaiseHeightActionRadio.setValue(1);
+      case "lowerHeight":
+			TELowerHeightActionRadio.setValue(1);
+      case "setHeight":
+			TESetHeightActionRadio.setValue(1);
+      case "setEmpty":
+			TESetEmptyActionRadio.setValue(1);
+      case "clearEmpty":
+			TEClearEmptyActionRadio.setValue(1);
+      case "flattenHeight":
+			TEFlattenHeightActionRadio.setValue(1);
+      case "smoothHeight":
+			TESmoothHeightActionRadio.setValue(1);
+      case "setMaterialGroup":
+			TESetMaterialActionRadio.setValue(1);
+      case "brushAdjustHeight":
+         TEAdjustHeightActionRadio.setValue(1);
+   }
+}

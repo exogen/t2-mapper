@@ -1,0 +1,868 @@
+//--- OBJECT WRITE BEGIN ---
+new GuiControl(DetailSetDlg) {
+	profile = "GuiDefaultProfile";
+	horizSizing = "right";
+	vertSizing = "bottom";
+	position = "0 0";
+	extent = "640 480";
+	minExtent = "8 8";
+	visible = "True";
+	setFirstResponder = "False";
+	modal = "True";
+	helpTag = "0";
+
+	new GuiWindowCtrl() {
+		profile = "GuiWindowProfile";
+		horizSizing = "right";
+		vertSizing = "bottom";
+		position = "4 -1";
+		extent = "129 281";
+		minExtent = "8 8";
+		visible = "True";
+		setFirstResponder = "False";
+		modal = "True";
+		helpTag = "0";
+		text = "Detail Settings";
+		resizeWidth = "True";
+		resizeHeight = "True";
+		canMove = "True";
+		canClose = "True";
+		canMinimize = "True";
+		canMaximize = "True";
+		minSize = "50 50";
+		closeCommand = "DetailSetDgl::onCleanup(true);";
+
+		new GuiPopUpMenuCtrl(DetailMenu) {
+			profile = "GuiButtonProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "5 21";
+			extent = "91 21";
+			minExtent = "8 8";
+			visible = "True";
+			setFirstResponder = "False";
+			modal = "True";
+			helpTag = "0";
+			text = "Detail Options";
+			maxPopupHeight = "200";
+		};
+		new GuiButtonCtrl() {
+			profile = "GuiButtonProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "8 197";
+			extent = "32 16";
+			minExtent = "8 8";
+			visible = "True";
+			setFirstResponder = "False";
+			modal = "True";
+			command = "DetailAdjustTabs(Low);";
+			helpTag = "0";
+			text = "Low";
+		};
+		new GuiButtonCtrl() {
+			profile = "GuiButtonProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "47 197";
+			extent = "30 16";
+			minExtent = "8 8";
+			visible = "True";
+			setFirstResponder = "False";
+			modal = "True";
+			command = "DetailAdjustTabs(Medium);";
+			helpTag = "0";
+			text = "Med";
+		};
+		new GuiButtonCtrl() {
+			profile = "GuiButtonProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "84 198";
+			extent = "35 16";
+			minExtent = "8 8";
+			visible = "True";
+			setFirstResponder = "False";
+			modal = "True";
+			command = "DetailAdjustTabs(High);";
+			helpTag = "0";
+			text = "High";
+		};
+		new GuiScrollCtrl() {
+			profile = "GuiButtonProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "7 43";
+			extent = "112 151";
+			minExtent = "8 8";
+			visible = "True";
+			setFirstResponder = "True";
+			modal = "True";
+			helpTag = "0";
+			willFirstRespond = "True";
+			hScrollBar = "alwaysOff";
+			vScrollBar = "alwaysOff";
+			constantThumbHeight = "True";
+
+			new GuiScrollContentCtrl() {
+				profile = "GuiDefaultProfile";
+				horizSizing = "right";
+				vertSizing = "bottom";
+				position = "1 1";
+				extent = "110 149";
+				minExtent = "8 8";
+				visible = "True";
+				setFirstResponder = "False";
+				modal = "True";
+				helpTag = "0";
+
+				new GuiControl(Sky_Tab) {
+					profile = "GuiDefaultProfile";
+					horizSizing = "right";
+					vertSizing = "bottom";
+					position = "0 0";
+					extent = "112 151";
+					minExtent = "8 8";
+					visible = "False";
+					setFirstResponder = "True";
+					modal = "True";
+					helpTag = "0";
+
+					new GuiTextCtrl() {
+						profile = "GuiButtonProfile";
+						horizSizing = "right";
+						vertSizing = "bottom";
+						position = "2 5";
+						extent = "84 18";
+						minExtent = "8 8";
+						visible = "True";
+						setFirstResponder = "True";
+						modal = "True";
+						helpTag = "0";
+						text = "Sky Settings:";
+					};
+					new GuiTextEditSliderCtrl(Sky_Slider) {
+						profile = "GuiTextEditProfile";
+						horizSizing = "right";
+						vertSizing = "bottom";
+						position = "31 38";
+						extent = "74 18";
+						minExtent = "8 8";
+						visible = "True";
+						setFirstResponder = "True";
+						modal = "True";
+						command = "Sky::DetailSliders(\"Sky_Slider\");";
+						helpTag = "0";
+						text = "1";
+						historySize = "0";
+						format = "%1.0f";
+						range = "1 99";
+						increment = "1";
+					};
+					new GuiTextCtrl() {
+						profile = "GuiTextProfile";
+						horizSizing = "right";
+						vertSizing = "bottom";
+						position = "24 23";
+						extent = "37 18";
+						minExtent = "8 8";
+						visible = "True";
+						setFirstResponder = "False";
+						modal = "True";
+						helpTag = "0";
+						text = "Sphere:";
+					};
+					new GuiTextEditSliderCtrl(Cloud_Slider) {
+						profile = "GuiTextEditProfile";
+						horizSizing = "right";
+						vertSizing = "bottom";
+						position = "31 75";
+						extent = "74 18";
+						minExtent = "8 8";
+						visible = "True";
+						setFirstResponder = "True";
+						modal = "True";
+						helpTag = "0";
+						text = "3";
+						historySize = "0";
+						format = "%1.0f";
+						range = "0 3";
+						increment = "1";
+						command = "Sky::DetailSliders(\"Cloud_Slider\");";
+					};
+					new GuiTextCtrl() {
+						profile = "GuiTextProfile";
+						horizSizing = "right";
+						vertSizing = "bottom";
+						position = "24 60";
+						extent = "29 18";
+						minExtent = "8 8";
+						visible = "True";
+						setFirstResponder = "False";
+						modal = "True";
+						helpTag = "0";
+						text = "Cloud Layers:";
+					};
+				};
+				new GuiControl(Texture_Tab) {
+					profile = "GuiDefaultProfile";
+					horizSizing = "right";
+					vertSizing = "bottom";
+					position = "0 0";
+					extent = "112 151";
+					minExtent = "8 8";
+					visible = "False";
+					setFirstResponder = "False";
+					modal = "True";
+					helpTag = "0";
+
+					new GuiTextCtrl() {
+						profile = "GuiButtonProfile";
+						horizSizing = "right";
+						vertSizing = "bottom";
+						position = "0 5";
+						extent = "99 18";
+						minExtent = "8 8";
+						visible = "True";
+						setFirstResponder = "True";
+						modal = "True";
+						helpTag = "0";
+						text = "Texture Settings";
+					};
+					new GuiTextCtrl() {
+						profile = "GuiTextProfile";
+						horizSizing = "right";
+						vertSizing = "bottom";
+						position = "24 23";
+						extent = "39 18";
+						minExtent = "8 8";
+						visible = "True";
+						setFirstResponder = "False";
+						modal = "True";
+						helpTag = "0";
+						text = "Texture:";
+					};
+					new GuiTextEditSliderCtrl() {
+						profile = "GuiTextEditProfile";
+						horizSizing = "right";
+						vertSizing = "bottom";
+						position = "31 38";
+						extent = "74 18";
+						minExtent = "8 8";
+						visible = "True";
+						setFirstResponder = "True";
+						modal = "True";
+						helpTag = "0";
+						text = "0";
+						historySize = "0";
+						format = "%1.0f";
+						range = "0 1";
+						increment = "1";
+					};
+					new GuiTextCtrl() {
+						profile = "GuiTextProfile";
+						horizSizing = "right";
+						vertSizing = "bottom";
+						position = "24 60";
+						extent = "75 18";
+						minExtent = "8 8";
+						visible = "True";
+						setFirstResponder = "False";
+						modal = "True";
+						helpTag = "0";
+						text = "Interior Texture:";
+					};
+					new GuiTextEditSliderCtrl() {
+						profile = "GuiTextEditProfile";
+						horizSizing = "right";
+						vertSizing = "bottom";
+						position = "31 75";
+						extent = "74 18";
+						minExtent = "8 8";
+						visible = "True";
+						setFirstResponder = "True";
+						modal = "True";
+						helpTag = "0";
+						text = "0";
+						historySize = "0";
+						format = "%1.0f";
+						range = "0 1";
+						increment = "1";
+					};
+				};
+				new GuiControl(Terrain_Tab) {
+					profile = "GuiDefaultProfile";
+					horizSizing = "right";
+					vertSizing = "bottom";
+					position = "0 0";
+					extent = "112 151";
+					minExtent = "8 8";
+					visible = "False";
+					setFirstResponder = "False";
+					modal = "True";
+					helpTag = "0";
+
+					new GuiTextCtrl() {
+						profile = "GuiButtonProfile";
+						horizSizing = "right";
+						vertSizing = "bottom";
+						position = "3 5";
+						extent = "97 18";
+						minExtent = "8 8";
+						visible = "True";
+						setFirstResponder = "True";
+						modal = "True";
+						helpTag = "0";
+						text = "Terrain Settings";
+					};
+					new GuiTextCtrl() {
+						profile = "GuiTextProfile";
+						horizSizing = "right";
+						vertSizing = "bottom";
+						position = "24 23";
+						extent = "36 18";
+						minExtent = "8 8";
+						visible = "True";
+						setFirstResponder = "False";
+						modal = "True";
+						helpTag = "0";
+						text = "Terrain:";
+					};
+					new GuiTextEditSliderCtrl() {
+						profile = "GuiTextEditProfile";
+						horizSizing = "right";
+						vertSizing = "bottom";
+						position = "31 38";
+						extent = "74 18";
+						minExtent = "8 8";
+						visible = "True";
+						setFirstResponder = "True";
+						modal = "True";
+						helpTag = "0";
+						text = "0";
+						historySize = "0";
+						format = "%1.0f";
+						range = "0 1";
+						increment = "1";
+					};
+					new GuiTextCtrl() {
+						profile = "GuiTextProfile";
+						horizSizing = "right";
+						vertSizing = "bottom";
+						position = "24 60";
+						extent = "64 18";
+						minExtent = "8 8";
+						visible = "True";
+						setFirstResponder = "False";
+						modal = "True";
+						helpTag = "0";
+						text = "Screen Error:";
+					};
+					new GuiTextEditSliderCtrl(DetailScreenError) {
+						profile = "GuiTextEditProfile";
+						horizSizing = "right";
+						vertSizing = "bottom";
+						position = "31 75";
+						extent = "74 18";
+						minExtent = "8 8";
+						visible = "True";
+						setFirstResponder = "True";
+						modal = "True";
+						command = "$screenerror = DetailScreenError.getValue();";
+						helpTag = "0";
+						text = "3";
+						historySize = "0";
+						format = "%1.0f";
+						range = "0 10";
+						increment = "1";
+					};
+				};
+				new GuiControl(Shape_Tab) {
+					profile = "GuiDefaultProfile";
+					horizSizing = "right";
+					vertSizing = "bottom";
+					position = "0 0";
+					extent = "112 151";
+					minExtent = "8 8";
+					visible = "False";
+					setFirstResponder = "False";
+					modal = "True";
+					helpTag = "0";
+
+					new GuiTextCtrl() {
+						profile = "GuiButtonProfile";
+						horizSizing = "right";
+						vertSizing = "bottom";
+						position = "2 5";
+						extent = "89 18";
+						minExtent = "8 8";
+						visible = "True";
+						setFirstResponder = "True";
+						modal = "True";
+						helpTag = "0";
+						text = "Shape Settings";
+					};
+					new GuiTextCtrl() {
+						profile = "GuiTextProfile";
+						horizSizing = "right";
+						vertSizing = "bottom";
+						position = "24 23";
+						extent = "63 18";
+						minExtent = "8 8";
+						visible = "True";
+						setFirstResponder = "False";
+						modal = "True";
+						helpTag = "0";
+						text = "Static Shape:";
+					};
+					new GuiTextEditSliderCtrl() {
+						profile = "GuiTextEditProfile";
+						horizSizing = "right";
+						vertSizing = "bottom";
+						position = "31 38";
+						extent = "74 18";
+						minExtent = "8 8";
+						visible = "True";
+						setFirstResponder = "True";
+						modal = "True";
+						helpTag = "0";
+						text = "0";
+						historySize = "0";
+						format = "%1.0f";
+						range = "0 1";
+						increment = "1";
+					};
+					new GuiTextCtrl() {
+						profile = "GuiTextProfile";
+						horizSizing = "right";
+						vertSizing = "bottom";
+						position = "24 60";
+						extent = "66 18";
+						minExtent = "8 8";
+						visible = "True";
+						setFirstResponder = "False";
+						modal = "True";
+						helpTag = "0";
+						text = "Player Shape:";
+					};
+					new GuiTextEditSliderCtrl() {
+						profile = "GuiTextEditProfile";
+						horizSizing = "right";
+						vertSizing = "bottom";
+						position = "31 75";
+						extent = "74 18";
+						minExtent = "8 8";
+						visible = "True";
+						setFirstResponder = "True";
+						modal = "True";
+						helpTag = "0";
+						text = "0";
+						historySize = "0";
+						format = "%1.0f";
+						range = "0 1";
+						increment = "1";
+					};
+				};
+				new GuiControl(Damage_Tab) {
+					profile = "GuiDefaultProfile";
+					horizSizing = "right";
+					vertSizing = "bottom";
+					position = "-1 0";
+					extent = "112 151";
+					minExtent = "8 8";
+					visible = "True";
+					setFirstResponder = "False";
+					modal = "True";
+					helpTag = "0";
+
+					new GuiTextCtrl() {
+						profile = "GuiButtonProfile";
+						horizSizing = "right";
+						vertSizing = "bottom";
+						position = "2 7";
+						extent = "103 66";
+						minExtent = "8 8";
+						visible = "True";
+						setFirstResponder = "True";
+						modal = "True";
+						helpTag = "0";
+						text = "Damage Settings";
+					};
+					new GuiTextCtrl() {
+						profile = "GuiTextProfile";
+						horizSizing = "right";
+						vertSizing = "bottom";
+						position = "23 26";
+						extent = "70 18";
+						minExtent = "8 8";
+						visible = "True";
+						setFirstResponder = "False";
+						modal = "True";
+						helpTag = "0";
+						text = "Damage Detail:";
+					};
+					new GuiTextEditSliderCtrl() {
+						profile = "GuiTextEditProfile";
+						horizSizing = "right";
+						vertSizing = "bottom";
+						position = "31 41";
+						extent = "74 18";
+						minExtent = "8 8";
+						visible = "True";
+						setFirstResponder = "True";
+						modal = "True";
+						helpTag = "0";
+						text = "0";
+						historySize = "0";
+						format = "%1.0f";
+						range = "0 1";
+						increment = "1";
+					};
+					new GuiTextCtrl() {
+						profile = "GuiTextProfile";
+						horizSizing = "right";
+						vertSizing = "bottom";
+						position = "23 63";
+						extent = "64 18";
+						minExtent = "8 8";
+						visible = "True";
+						setFirstResponder = "False";
+						modal = "True";
+						helpTag = "0";
+						text = "Damage Skin:";
+					};
+					new GuiTextEditSliderCtrl() {
+						profile = "GuiTextEditProfile";
+						horizSizing = "right";
+						vertSizing = "bottom";
+						position = "31 78";
+						extent = "74 18";
+						minExtent = "8 8";
+						visible = "True";
+						setFirstResponder = "True";
+						modal = "True";
+						helpTag = "0";
+						text = "0";
+						historySize = "0";
+						format = "%1.0f";
+						range = "0 1";
+						increment = "1";
+					};
+				};
+				new GuiControl(Decal_Tab) {
+					profile = "GuiDefaultProfile";
+					horizSizing = "right";
+					vertSizing = "bottom";
+					position = "0 0";
+					extent = "112 151";
+					minExtent = "8 8";
+					visible = "False";
+					setFirstResponder = "False";
+					modal = "True";
+					helpTag = "0";
+
+					new GuiTextCtrl() {
+						profile = "GuiButtonProfile";
+						horizSizing = "right";
+						vertSizing = "bottom";
+						position = "3 6";
+						extent = "84 18";
+						minExtent = "8 8";
+						visible = "True";
+						setFirstResponder = "True";
+						modal = "True";
+						helpTag = "0";
+						text = "Decal Settings";
+					};
+					new GuiTextCtrl() {
+						profile = "GuiTextProfile";
+						horizSizing = "right";
+						vertSizing = "bottom";
+						position = "24 23";
+						extent = "29 18";
+						minExtent = "8 8";
+						visible = "True";
+						setFirstResponder = "False";
+						modal = "True";
+						helpTag = "0";
+						text = "Decal:";
+					};
+					new GuiTextEditSliderCtrl() {
+						profile = "GuiTextEditProfile";
+						horizSizing = "right";
+						vertSizing = "bottom";
+						position = "31 38";
+						extent = "74 18";
+						minExtent = "8 8";
+						visible = "True";
+						setFirstResponder = "True";
+						modal = "True";
+						helpTag = "0";
+						text = "0";
+						historySize = "0";
+						format = "%1.0f";
+						range = "0 1";
+						increment = "1";
+					};
+					new GuiTextCtrl() {
+						profile = "GuiTextProfile";
+						horizSizing = "right";
+						vertSizing = "bottom";
+						position = "24 60";
+						extent = "57 18";
+						minExtent = "8 8";
+						visible = "True";
+						setFirstResponder = "False";
+						modal = "True";
+						helpTag = "0";
+						text = "Smoke Trail:";
+					};
+					new GuiTextEditSliderCtrl() {
+						profile = "GuiTextEditProfile";
+						horizSizing = "right";
+						vertSizing = "bottom";
+						position = "31 75";
+						extent = "74 18";
+						minExtent = "8 8";
+						visible = "True";
+						setFirstResponder = "True";
+						modal = "True";
+						helpTag = "0";
+						text = "0";
+						historySize = "0";
+						format = "%1.0f";
+						range = "0 1";
+						increment = "1";
+					};
+				};
+				new GuiControl(Lighting_Tab) {
+					profile = "GuiDefaultProfile";
+					horizSizing = "right";
+					vertSizing = "bottom";
+					position = "0 0";
+					extent = "112 151";
+					minExtent = "8 8";
+					visible = "False";
+					setFirstResponder = "False";
+					modal = "True";
+					helpTag = "0";
+
+					new GuiTextCtrl() {
+						profile = "GuiButtonProfile";
+						horizSizing = "right";
+						vertSizing = "bottom";
+						position = "2 4";
+						extent = "101 18";
+						minExtent = "8 8";
+						visible = "True";
+						setFirstResponder = "True";
+						modal = "True";
+						helpTag = "0";
+						text = "Lighting Settings";
+					};
+					new GuiTextCtrl() {
+						profile = "GuiTextProfile";
+						horizSizing = "right";
+						vertSizing = "bottom";
+						position = "24 23";
+						extent = "57 18";
+						minExtent = "8 8";
+						visible = "True";
+						setFirstResponder = "False";
+						modal = "True";
+						helpTag = "0";
+						text = "Interior light:";
+					};
+					new GuiTextEditSliderCtrl() {
+						profile = "GuiTextEditProfile";
+						horizSizing = "right";
+						vertSizing = "bottom";
+						position = "31 38";
+						extent = "74 18";
+						minExtent = "8 8";
+						visible = "True";
+						setFirstResponder = "True";
+						modal = "True";
+						helpTag = "0";
+						text = "0";
+						historySize = "0";
+						format = "%1.0f";
+						range = "0 1";
+						increment = "1";
+					};
+					new GuiTextCtrl() {
+						profile = "GuiTextProfile";
+						horizSizing = "right";
+						vertSizing = "bottom";
+						position = "24 60";
+						extent = "69 18";
+						minExtent = "8 8";
+						visible = "True";
+						setFirstResponder = "False";
+						modal = "True";
+						helpTag = "0";
+						text = "Dynamic Light:";
+					};
+					new GuiTextEditSliderCtrl() {
+						profile = "GuiTextEditProfile";
+						horizSizing = "right";
+						vertSizing = "bottom";
+						position = "31 75";
+						extent = "74 18";
+						minExtent = "8 8";
+						visible = "True";
+						setFirstResponder = "True";
+						modal = "True";
+						helpTag = "0";
+						text = "0";
+						historySize = "0";
+						format = "%1.0f";
+						range = "0 1";
+						increment = "1";
+					};
+				};
+			};
+		};
+		new GuiButtonCtrl() {
+			profile = "GuiButtonProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "5 255";
+			extent = "63 20";
+			minExtent = "8 8";
+			visible = "True";
+			setFirstResponder = "False";
+			modal = "True";
+			command = "DetailSetDgl::onCleanup(true);";
+			helpTag = "0";
+			text = "Close";
+		};
+		new GuiRadioCtrl(RadioOutline) {
+			profile = "GuiRadioProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "9 217";
+			extent = "55 19";
+			minExtent = "8 8";
+			visible = "True";
+			setFirstResponder = "False";
+			modal = "True";
+			command = "displayMode(True);";
+			helpTag = "0";
+			text = "OutLine";
+			groupNum = "1";
+		};
+		new GuiRadioCtrl(RadioTexture) {
+			profile = "GuiRadioProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "66 216";
+			extent = "55 19";
+			minExtent = "8 8";
+			visible = "True";
+			setFirstResponder = "False";
+			modal = "True";
+			command = "displayMode(False);";
+			helpTag = "0";
+			text = "Texture";
+			groupNum = "1";
+		};
+	};
+};
+//--- OBJECT WRITE END ---
+
+function DetailSetDialog()
+{
+   showTabs();
+   $currentTab = "";
+   $currentSelected = "";
+   DetailMenu.clear();
+   DetailMenu.add("Sky",0);
+   DetailMenu.add("Texture",1);
+   DetailMenu.add("Terrain",2);
+   DetailMenu.add("Lighting",3);
+   DetailMenu.add("Decal",4);
+   DetailMenu.add("Shape",5);
+   DetailMenu.add("Damage",6);
+   DetailMenu.setText("Detail Options");
+   RadioTexture.setValue(true);
+   Canvas.pushDialog(DetailSetDlg,99);   
+}
+
+function DetailMenu::onSelect(%this, %row)
+{
+   %label = %this.getValue();
+   $currentTab = %label;
+   %this.setText("Detail Options");
+   DetailSetDgl::onCleanup();
+   showTabs(%label);
+}
+
+function showTabs(%tab)
+{
+   %tab = %tab @ "_Tab";
+   GameCtrl.setvisible(false);
+   Sky_Tab.setvisible(false);
+   Texture_Tab.setvisible(false);
+   Terrain_Tab.setvisible(false);
+   Shape_Tab.setvisible(false);
+   Damage_Tab.setvisible(false);
+   Decal_Tab.setvisible(false);
+   Lighting_Tab.setvisible(false);
+   %tab.setvisible(true);
+}
+
+function displayMode(%bool)
+{
+   echo("CurrentTab: ",$currentTab);
+   echo("CurrentSelected: ",$currentSelected);
+   echo("BOOL: ",%bool);
+   if($currentTab $= "Sky")
+   {
+      if($currentSelected $= "Sky")
+      {
+         echo("went in here: ",%bool);
+         $pref::SkyOutline = %bool;
+      }
+      else
+      {
+         $pref::CloudOutline = %bool;
+      }
+   }
+   else if ($currentTab $= "Terrain")
+      DetailScreenError.setValue($screenerror);
+}
+
+function DetailSetDgl::onCleanup(%close)
+{
+   $pref::SkyOutline = false;
+   $pref::CloudOutline = false;
+   $pref::CloudsOn = true;
+   RadioTexture.setValue(true);
+   if(%close == true)
+      Canvas.popDialog(DetailSetDlg);
+}
+
+function Sky::detailSliders(%slider)
+{
+   if(%slider $= "Sky_Slider")
+   {
+      $pref::sphereDetail = %slider.getValue();
+      $pref::CloudsOn = false;
+      $currentSelected = "Sky"; 
+      if($pref::SkyOutline)
+         RadioOutline.setValue(true);
+      else
+         RadioTexture.setValue(true);
+   }
+   else if(%slider $= "Cloud_Slider")
+   {
+      $pref::NumCloudLayers = %slider.getValue();
+      $pref::CloudsOn = true;
+      $currentSelected = "Cloud"; 
+      if($pref::CloudOutline)
+         RadioOutline.setValue(true);
+      else
+         RadioTexture.setValue(true);
+   }
+}

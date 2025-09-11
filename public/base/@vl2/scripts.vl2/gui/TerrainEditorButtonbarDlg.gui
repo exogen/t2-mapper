@@ -1,0 +1,434 @@
+//--- OBJECT WRITE BEGIN ---
+new GuiControl(terraineditorbuttonbardlg) {
+	profile = "GuiModelessDialogProfile";
+	horizSizing = "right";
+	vertSizing = "bottom";
+	position = "0 0";
+	extent = "640 480";
+	minExtent = "8 8";
+	visible = "1";
+	setFirstResponder = "0";
+	modal = "0";
+	helpTag = "0";
+
+	new GuiChunkedBitmapCtrl() {
+		profile = "EditorContentProfile";
+		horizSizing = "right";
+		vertSizing = "height";
+		position = "0 30";
+		extent = "90 449";
+		minExtent = "8 8";
+		visible = "1";
+		setFirstResponder = "0";
+		modal = "1";
+		helpTag = "0";
+
+		new GuiControl() {
+			profile = "EditorContentProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "3 4";
+			extent = "84 119";
+			minExtent = "8 8";
+			visible = "1";
+			setFirstResponder = "0";
+			modal = "1";
+			helpTag = "0";
+
+			new GuiButtonCtrl() {
+				profile = "GuiButtonProfile";
+				horizSizing = "right";
+				vertSizing = "bottom";
+				position = "8 38";
+				extent = "32 32";
+				minExtent = "8 8";
+				visible = "1";
+				setFirstResponder = "0";
+				modal = "1";
+				command = "tEditor.undo();";
+				helpTag = "0";
+				text = "Undo";
+			};
+			new GuiButtonCtrl() {
+				profile = "GuiButtonProfile";
+				horizSizing = "right";
+				vertSizing = "bottom";
+				position = "8 3";
+				extent = "32 32";
+				minExtent = "8 8";
+				visible = "1";
+				setFirstResponder = "0";
+				modal = "1";
+				command = "Canvas.pushDialog(EditorSaveMissionDlg);";
+				helpTag = "0";
+				text = "Save";
+			};
+			new GuiButtonCtrl() {
+				profile = "GuiButtonProfile";
+				horizSizing = "right";
+				vertSizing = "bottom";
+				position = "43 38";
+				extent = "32 32";
+				minExtent = "8 8";
+				visible = "1";
+				setFirstResponder = "0";
+				modal = "1";
+				command = "tEditor.redo();";
+				helpTag = "0";
+				text = "Redo";
+			};
+			new GuiButtonCtrl() {
+				profile = "GuiButtonProfile";
+				horizSizing = "right";
+				vertSizing = "bottom";
+				position = "11 94";
+				extent = "60 20";
+				minExtent = "8 8";
+				visible = "1";
+				setFirstResponder = "0";
+				modal = "1";
+				command = "tEditor.resetSelWeights(true);";
+				helpTag = "0";
+				text = "Reset Sel";
+			};
+			new GuiButtonCtrl() {
+				profile = "GuiButtonProfile";
+				horizSizing = "right";
+				vertSizing = "bottom";
+				position = "11 72";
+				extent = "60 20";
+				minExtent = "8 8";
+				visible = "1";
+				setFirstResponder = "0";
+				modal = "1";
+				command = "tEditor.clearSelection();";
+				helpTag = "0";
+				text = "Clear Sel";
+			};
+			new GuiButtonCtrl(TELoadTerrainButton) {
+				profile = "GuiButtonProfile";
+				horizSizing = "right";
+				vertSizing = "bottom";
+				position = "43 3";
+				extent = "32 32";
+				minExtent = "8 8";
+				visible = "1";
+				setFirstResponder = "0";
+				modal = "1";
+				helpTag = "0";
+				text = "Load";
+			};
+		};
+		new GuiControl() {
+			profile = "EditorContentProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "3 125";
+			extent = "84 185";
+			minExtent = "8 8";
+			visible = "1";
+			setFirstResponder = "0";
+			modal = "1";
+			helpTag = "0";
+
+			new GuiRadioCtrl(TELowerHeightActionRadio) {
+				profile = "GuiRadioProfile";
+				horizSizing = "right";
+				vertSizing = "bottom";
+				position = "2 22";
+				extent = "80 20";
+				minExtent = "8 8";
+				visible = "1";
+				setFirstResponder = "0";
+				modal = "1";
+				command = "tEditor.processActionRadio(lowerHeight);";
+				helpTag = "0";
+				text = "Lower";
+				groupNum = "0";
+			};
+			new GuiRadioCtrl(TERaiseHeightActionRadio) {
+				profile = "GuiRadioProfile";
+				horizSizing = "right";
+				vertSizing = "bottom";
+				position = "2 2";
+				extent = "80 20";
+				minExtent = "8 8";
+				visible = "1";
+				setFirstResponder = "0";
+				modal = "1";
+				command = "tEditor.processActionRadio(raiseHeight);";
+				helpTag = "0";
+				text = "Raise";
+				groupNum = "0";
+			};
+			new GuiRadioCtrl(TESetHeightActionRadio) {
+				profile = "GuiRadioProfile";
+				horizSizing = "right";
+				vertSizing = "bottom";
+				position = "2 42";
+				extent = "80 20";
+				minExtent = "8 8";
+				visible = "1";
+				setFirstResponder = "0";
+				modal = "1";
+				command = "tEditor.processActionRadio(setHeight);";
+				helpTag = "0";
+				text = "Set Height";
+				groupNum = "0";
+			};
+			new GuiRadioCtrl(TESetEmptyActionRadio) {
+				profile = "GuiRadioProfile";
+				horizSizing = "right";
+				vertSizing = "bottom";
+				position = "2 62";
+				extent = "80 20";
+				minExtent = "8 8";
+				visible = "1";
+				setFirstResponder = "0";
+				modal = "1";
+				command = "tEditor.processActionRadio(setEmpty);";
+				helpTag = "0";
+				text = "Set Empty";
+				groupNum = "0";
+			};
+			new GuiRadioCtrl(TEClearEmptyActionRadio) {
+				profile = "GuiRadioProfile";
+				horizSizing = "right";
+				vertSizing = "bottom";
+				position = "2 82";
+				extent = "80 20";
+				minExtent = "8 8";
+				visible = "1";
+				setFirstResponder = "0";
+				modal = "1";
+				command = "tEditor.processActionRadio(clearEmpty);";
+				helpTag = "0";
+				text = "Clear Empty";
+				groupNum = "0";
+			};
+			new GuiRadioCtrl(TEFlattenHeightActionRadio) {
+				profile = "GuiRadioProfile";
+				horizSizing = "right";
+				vertSizing = "bottom";
+				position = "2 102";
+				extent = "80 20";
+				minExtent = "8 8";
+				visible = "1";
+				setFirstResponder = "0";
+				modal = "1";
+				command = "tEditor.processActionRadio(flattenHeight);";
+				helpTag = "0";
+				text = "Flatten";
+				groupNum = "0";
+			};
+			new GuiRadioCtrl(TESmoothHeightActionRadio) {
+				profile = "GuiRadioProfile";
+				horizSizing = "right";
+				vertSizing = "bottom";
+				position = "2 122";
+				extent = "80 20";
+				minExtent = "8 8";
+				visible = "1";
+				setFirstResponder = "0";
+				modal = "1";
+				command = "tEditor.processActionRadio(smoothHeight);";
+				helpTag = "0";
+				text = "Smooth";
+				groupNum = "0";
+			};
+			new GuiRadioCtrl(TESetMaterialActionRadio) {
+				profile = "GuiRadioProfile";
+				horizSizing = "right";
+				vertSizing = "bottom";
+				position = "2 142";
+				extent = "80 20";
+				minExtent = "8 8";
+				visible = "1";
+				setFirstResponder = "0";
+				modal = "1";
+				command = "tEditor.processActionRadio(setMaterialGroup);";
+				helpTag = "0";
+				text = "Set Material";
+				groupNum = "0";
+			};
+			new GuiRadioCtrl(TEAdjustHeightActionRadio) {
+				profile = "GuiRadioProfile";
+				horizSizing = "right";
+				vertSizing = "bottom";
+				position = "2 162";
+				extent = "80 20";
+				minExtent = "8 8";
+				visible = "1";
+				setFirstResponder = "0";
+				modal = "1";
+				command = "tEditor.processActionRadio(brushAdjustHeight);";
+				helpTag = "0";
+				text = "Adjust Height";
+				groupNum = "0";
+			};
+		};
+		new GuiButtonCtrl() {
+			profile = "GuiButtonProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "8 312";
+			extent = "75 20";
+			minExtent = "8 8";
+			visible = "1";
+			setFirstResponder = "0";
+			modal = "1";
+			command = "Canvas.pushDialog(TerrainEditorValuesSettingsGui, 99);";
+			helpTag = "0";
+			text = "Settings...";
+		};
+		new GuiButtonCtrl() {
+			profile = "GuiButtonProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "8 334";
+			extent = "75 20";
+			minExtent = "8 8";
+			visible = "1";
+			setFirstResponder = "0";
+			modal = "1";
+			command = "Canvas.pushDialog(TerrainEditorTextureSelectGui, 99);";
+			helpTag = "0";
+			text = "Material...";
+		};
+		new GuiButtonCtrl() {
+			profile = "GuiButtonProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "8 356";
+			extent = "75 20";
+			minExtent = "8 8";
+			visible = "1";
+			setFirstResponder = "0";
+			modal = "1";
+			command = "tEditor.clearModifiedFlags();";
+			helpTag = "0";
+			text = "Clear Modified";
+		};
+		new GuiTextCtrl() {
+			profile = "GuiTextProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "8 405";
+			extent = "73 18";
+			minExtent = "8 8";
+			visible = "1";
+			setFirstResponder = "0";
+			modal = "1";
+			helpTag = "0";
+			text = "Camera speed:";
+		};
+		new GuiSliderCtrl() {
+			profile = "GuiDefaultProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "5 420";
+			extent = "80 20";
+			minExtent = "80 20";
+			visible = "1";
+			setFirstResponder = "0";
+			modal = "1";
+			variable = "value";
+			command = "$Camera::movementSpeed = $ThisControl.getValue();";
+			helpTag = "0";
+			range = "5.000000 200.000000";
+			ticks = "10";
+			value = "149.857";
+		};
+		new GuiButtonCtrl() {
+			profile = "GuiButtonProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "8 378";
+			extent = "75 20";
+			minExtent = "8 8";
+			visible = "1";
+			setFirstResponder = "0";
+			modal = "1";
+			command = "tEditor.swapInLoneMaterial(\"terrain.outline\");";
+			helpTag = "0";
+			text = "Swap Outline";
+		};
+	};
+};
+//--- OBJECT WRITE END ---
+
+//------------------------------------------------------------------------------
+// Functions
+//------------------------------------------------------------------------------
+
+function TerrainEditorButtonBarDlg::init(%this)
+{
+}
+
+//------------------------------------------------------------------------------
+
+function TerrainEditor::processActionRadio(%this, %name)
+{
+   %this.currentAction = %name;
+
+   switch$(%this.currentMode)
+   {
+      case "select":
+         %this.processAction(%name);
+      case "paint":
+         %this.setAction(%name);
+         if(%this.processUsesBrush)
+            %this.processAction(%name);
+      case "adjust":
+         %this.processAction(%name);
+   }
+
+   //
+   switch$(%this.currentAction)
+   {
+      case "setEmpty":
+         %this.renderVertexSelection = false;
+      case "clearEmpty":
+         %this.renderVertexSelection = false;
+      case "setMaterialGroup":
+         %this.renderVertexSelection = false;
+      default:
+         %this.renderVertexSelection = true;
+   }
+}
+
+//------------------------------------------------------------------------------
+
+function TELoadTerrainButton::onAction(%this)
+{
+   getLoadFilename("terrains/*.ter", %this @ ".gotFileName");
+}
+
+function TELoadTerrainButton::gotFileName(%this, %name)
+{
+   //
+   %pos = "0 0 0";
+   %squareSize = "8";
+   %visibleDistance = "1200";
+
+   // delete current
+   if(isObject(terrain))
+   {
+      %pos = terrain.position;
+      %squareSize = terrain.squareSize;
+      %visibleDistance = terrain.visibleDistance;
+
+      terrain.delete();
+   }
+
+   // create new
+   new TerrainBlock(terrain)
+   {
+      position = %pos;
+      terrainFile = %name;
+      squareSize = %squareSize;
+      visibleDistance = %visibleDistance;
+   };
+
+   tEditor.attachTerrain();
+}

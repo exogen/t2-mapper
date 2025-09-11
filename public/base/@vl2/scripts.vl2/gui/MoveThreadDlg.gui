@@ -1,0 +1,93 @@
+//--- OBJECT WRITE BEGIN ---
+new GuiControl(MoveThreadDlg) {
+	profile = "DlgBackProfile";
+	horizSizing = "right";
+	vertSizing = "bottom";
+	position = "0 0";
+	extent = "640 480";
+	minExtent = "8 8";
+	visible = "1";
+	hideCursor = "0";
+	bypassHideCursor = "0";
+	helpTag = "0";
+
+	new ShellPaneCtrl(MoveThreadDlgPane) {
+		profile = "ShellPaneProfile";
+		horizSizing = "right";
+		vertSizing = "bottom";
+		position = "168 155";
+		extent = "277 125";
+		minExtent = "48 92";
+		visible = "1";
+		hideCursor = "0";
+		bypassHideCursor = "0";
+		helpTag = "0";
+		text = "MOVE THREAD";
+		maxLength = "255";
+		noTitleBar = "0";
+
+		new ShellPopupMenu(MoveToForumList) {
+			profile = "ShellPopupProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "17 43";
+			extent = "247 36";
+			minExtent = "49 36";
+			visible = "1";
+			hideCursor = "0";
+			bypassHideCursor = "0";
+			helpTag = "0";
+			maxLength = "255";
+			maxPopupHeight = "200";
+			buttonBitmap = "gui/shll_pulldown";
+			rolloverBarBitmap = "gui/shll_pulldownbar_rol";
+			selectedBarBitmap = "gui/shll_pulldownbar_act";
+			noButtonStyle = "0";
+		};
+		new GuiTextCtrl() {
+			profile = "GuiDefaultProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "27 35";
+			extent = "225 16";
+			minExtent = "8 8";
+			visible = "1";
+			hideCursor = "0";
+			bypassHideCursor = "0";
+			helpTag = "0";
+			text = "Select New Forum:";
+			maxLength = "255";
+		};
+		new ShellBitmapButton(mtdOKbtn) {
+			profile = "ShellButtonProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "201 72";
+			extent = "65 38";
+			minExtent = "32 38";
+			visible = "1";
+			hideCursor = "0";
+			bypassHideCursor = "0";
+			command = "TopicsPopupMenu.ExecuteMove();";
+			helpTag = "0";
+			text = "OK";
+			simpleStyle = "0";
+		};
+		new ShellBitmapButton(mtdCancelbtn) {
+			profile = "ShellButtonProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "142 72";
+			extent = "75 38";
+			minExtent = "32 38";
+			visible = "1";
+			hideCursor = "0";
+			bypassHideCursor = "0";
+			command = "Canvas.PopDIalog(\"MoveThreadDlg\");";
+			helpTag = "0";
+			text = "CANCEL";
+			simpleStyle = "0";
+		};
+	};
+};
+//--- OBJECT WRITE END ---

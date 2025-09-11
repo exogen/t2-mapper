@@ -1,0 +1,47 @@
+//--- OBJECT WRITE BEGIN ---
+new GuiControl(TerrainEditorToolbarDlg) {
+	profile = "GuiModelessDialogProfile";
+	horizSizing = "right";
+	vertSizing = "bottom";
+	position = "0 0";
+	extent = "640 480";
+	minExtent = "8 8";
+	visible = "1";
+	setFirstResponder = "0";
+	modal = "0";
+	helpTag = "0";
+
+	new GuiControl() {
+		profile = "EditorContentProfile";
+		horizSizing = "width";
+		vertSizing = "bottom";
+		position = "0 0";
+		extent = "640 30";
+		minExtent = "8 8";
+		visible = "1";
+		setFirstResponder = "0";
+		modal = "0";
+		helpTag = "0";
+
+		new GuiCheckBoxCtrl(TerrainEditorMissionAreaCheckBox) {
+			profile = "GuiRadioProfile";
+			horizSizing = "left";
+			vertSizing = "bottom";
+			position = "541 4";
+			extent = "93 20";
+			minExtent = "8 8";
+			visible = "1";
+			setFirstResponder = "0";
+			modal = "1";
+			command = "if($ThisControl.getValue()) TerrainEditorFrameSetDlg.addTool(EditorToolMissionAreaGui); else TerrainEditorFrameSetDlg.removeTool(EditorToolMissionAreaGui);";
+			helpTag = "0";
+			text = "Mission Area";
+		};
+	};
+};
+//--- OBJECT WRITE END ---
+
+function TerrainEditorToolbarDlg::init(%this)
+{
+   TerrainEditorMissionAreaCheckBox.setValue(TerrainEditorToolFrameSet.isMember(EditorToolMissionAreaGui));
+}

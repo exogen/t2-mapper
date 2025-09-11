@@ -1,0 +1,188 @@
+//--- OBJECT WRITE BEGIN ---
+new GuiControl(WorldEditorFrameSetDlg) {
+	profile = "GuiModelessDialogProfile";
+	horizSizing = "right";
+	vertSizing = "bottom";
+	position = "0 0";
+	extent = "640 480";
+	minExtent = "8 8";
+	visible = "1";
+	setFirstResponder = "0";
+	modal = "0";
+	helpTag = "0";
+
+	new GuiFrameSetCtrl(WorldEditorFrameSet) {
+		profile = "EditorContentProfile";
+		horizSizing = "width";
+		vertSizing = "height";
+		position = "90 30";
+		extent = "550 420";
+		minExtent = "8 8";
+		visible = "1";
+		setFirstResponder = "0";
+		modal = "1";
+		helpTag = "0";
+		rows = "0";
+      columns = "0 420";
+		borderWidth = "4";
+		borderColor = "206 206 206 206";
+		borderEnable = "dynamic";
+		borderMovable = "dynamic";
+		autoBalance = "0";
+
+		new GuiControl(WorldEditorFrame) {
+			profile = "EditTSControlProfile";
+			horizSizing = "width";
+			vertSizing = "height";
+			position = "0 0";
+			extent = "420 420";
+			minExtent = "8 8";
+			visible = "1";
+			setFirstResponder = "0";
+			modal = "1";
+			helpTag = "0";
+         borderWidth = "2";
+		};
+		new GuiFrameSetCtrl(WorldEditorToolFrameSet) {
+			profile = "EditorContentProfile";
+			horizSizing = "width";
+			vertSizing = "height";
+			position = "420 0";
+			extent = "130 420";
+			minExtent = "8 8";
+			visible = "1";
+			setFirstResponder = "0";
+			modal = "1";
+			helpTag = "0";
+			columns = "0";
+			rows = "0";
+			borderWidth = "3";
+			borderColor = "206 206 206 206";
+			borderEnable = "dynamic";
+			borderMovable = "dynamic";
+			autoBalance = "0";
+		};
+	};
+};
+//--- OBJECT WRITE END ---
+
+//------------------------------------------------------------------------------
+// Functions
+//------------------------------------------------------------------------------
+
+function WorldEditorFrameSetDlg::getPrefs(%this)
+{
+   %toolPaneOffset = getPrefSetting($Pref::WorldEditor::toolPaneOffset, 420);
+   %toolCount = getPrefSetting($Pref::WorldEditor::activeToolCount, 0);
+
+   // set the tools
+   for(%i = 0; %i < %toolCount; %i++)
+   {  
+      if($pref::WorldEditor::activeTool[%i] $= "")
+         return;
+
+      %this.addTool(getWord($pref::WorldEditor::activeTool[%i], 0));
+      %offsets[%i] = getWord($pref::WorldEditor::activeTool[%i], 1);
+   }
+
+   for(%i = 0; %i < %toolCount; %i++)
+      WorldEditorToolFrameSet.setRowOffset(%i, %offsets[%i]);
+
+   if(%toolCount)
+      WorldEditorFrameSet.setColumnOffset(1, %toolPaneOffset);
+}
+
+function WorldEditorFrameSetDlg::setPrefs(%this)
+{
+   if(WorldEditorFrameSet.getColumnCount() > 1)
+      $pref::WorldEditor::toolPaneOffset = WorldEditorFrameSet.getColumnOffset(1);
+   else
+      $pref::WorldEditor::toolPaneOffset = %this.toolPaneOffset;
+   $pref::WorldEditor::activeToolCount = %this.activeToolCount;
+
+   %tools = WorldEditorToolFrameSet;
+
+   for(%i = 0; %i < %this.activeToolCount; %i++)
+   {
+      %obj = %tools.getObject(%i);
+      %offset = %tools.getRowOffset(%i);
+      %val = %obj.getName() @ " " @ %offset;
+
+      $pref::WorldEditor::activeTool[%i] = %val;
+   }
+}
+
+function WorldEditorFrameSetDlg::init(%this)
+{
+   WorldEditorFrame.add(wEditor);
+   %this.resetFrames();
+   %this.getPrefs();
+}
+
+function WorldEditorFrameSetDlg::onWake(%this)
+{
+   WorldEditorMap.push();
+   %this.getPrefs();
+}
+
+function WorldEditorFrameSetDlg::onSleep(%this)
+{
+   WorldEditorMap.pop();
+
+   //
+   %this.setPrefs();
+}
+
+function WorldEditorFrameSetDlg::update(%this)
+{
+   // check the frame to see if it is visible
+   if(WorldEditorToolFrameSet.getCount())
+   {
+      %res = getResolution();
+
+      // 90 = width of button bar
+      %width = getWord(%res, 0) - 90;
+
+      if(WorldEditorFrameSet.getColumnOffset(1) > %width - editor.minToolFrameWidth)
+         WorldEditorFrameSet.setColumnOffset(1, %width - editor.minToolFrameWidth);
+   }
+}
+
+function WorldEditorFrameSetDlg::resetFrames(%this)
+{
+   // update the tool pane
+   %tools = WorldEditorToolFrameSet;
+   while(%tools.getRowCount() > %tools.getCount())
+      %tools.removeRow();
+   while(%tools.getRowCount() < %tools.getCount())
+      %tools.addRow();
+
+   // update the frame view
+   %frameSet = WorldEditorFrameSet;
+   if(!%tools.getCount() && (%frameSet.getColumnCount() > 1))
+   {
+      %frameSet.toolPaneOffset = %frameSet.getColumnOffset(1);
+      %frameSet.removeColumn();
+   }
+   if(%tools.getCount() && (%frameSet.getColumnCount() == 1))
+   {
+      %frameSet.addColumn();
+      %frameSet.setColumnOffset(1, %frameSet.toolPaneOffset);
+   }
+
+   if(%tools.getCount())
+      %this.toolPaneOffset = WorldEditorFrameSet.getColumnOffset(1);
+   %this.activeToolCount = %tools.getCount();
+}
+
+function WorldEditorFrameSetDlg::addTool(%this, %tool)
+{
+   WorldEditorToolFrameSet.add(%tool);
+   %this.resetFrames();
+}
+
+function WorldEditorFrameSetDlg::removeTool(%this, %tool)
+{
+   WorldEditorToolFrameSet.remove(%tool);
+   %this.resetFrames();
+}

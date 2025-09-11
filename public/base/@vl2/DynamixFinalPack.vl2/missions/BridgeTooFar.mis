@@ -1,0 +1,1170 @@
+// DisplayName = Bridge Too Far
+// MissionTypes = Siege
+
+//--- MISSION QUOTE BEGIN ---
+//These Final Dynamix Missions are a thank you to the Tribes Community.
+//These maps remain unpolished due to circumstances beyond our control.
+//Thank you for your support, Keep the dream alive.
+//Dynamix Tribes2 DEV Team
+//--- MISSION QUOTE END ---
+
+//--- MISSION STRING BEGIN ---
+//Attackers start with minimal resources
+//Attackers repair bridge generators and stations to restore assets
+//Repair bridge generators to restore energy bridges
+//--- MISSION STRING END ---
+
+//--- OBJECT WRITE BEGIN ---
+new SimGroup(MissionGroup) {
+		cdTrack = "3";
+		musicTrack = "volcanic";
+		powerCount = "0";
+
+	new MissionArea(MissionArea) {
+		area = "-1024 -1024 2048 2048";
+		flightCeiling = "300";
+		flightCeilingRange = "20";
+			locked = "true";
+	};
+	new Sun() {
+		direction = "0.409751 -0.759852 -0.504707";
+		color = "1.000000 0.830000 0.300000 1.000000";
+		ambient = "0.600000 0.500000 0.300000 1.000000";
+			position = "-1024 -1024 0";
+			texture4 = "special/LensFlare/flare03";
+			texture3 = "special/LensFlare/flare02";
+			backFlareSize = "400";
+			rotation = "1 0 0 0";
+			frontFlareSize = "10";
+			locked = "false";
+			scale = "1 1 1";
+			texture2 = "special/LensFlare/flare01";
+			texture1 = "special/sunFlare02";
+			flareColor = "1.000000 1.000000 1.000000 1.000000";
+			texture0 = "special/sunFlare";
+			lensFlareIntensity = "0.3";
+			lensFlareScale = "0.1";
+	};
+	new SimGroup(Ambients) {
+			powerCount = "0";
+	};
+	new TerrainBlock(Terrain) {
+		rotation = "1 0 0 0";
+		scale = "1 1 1";
+		detailTexture = "details/lavadet1";
+		terrainFile = "BridgeTooFar.ter";
+		squareSize = "8";
+		emptySquares = "250";
+			position = "-1024 -1024 0";
+			visibleDistance = "1200";
+			hazeDistance = "250";
+			locked = "true";
+	};
+	new NavigationGraph(NavGraph) {
+		conjoinAngleDev = "45";
+		cullDensity = "0.3";
+		customArea = "0 0 0 0";
+			position = "0 0 0 1";
+			rotation = "0 0 0 0";
+			YDimOverSize = "0";
+			locked = "true";
+			scale = "1 1 1";
+			XDimOverSize = "0";
+			GraphFile = "BridgeTooFar.nav";
+			coverage = "0";
+			conjoinBowlDev = "20";
+	};
+	new WaterBlock() {
+		position = "-1016 -1024 9";
+		rotation = "1 0 0 0";
+		scale = "2048 2048 57.0092";
+		liquidType = "CrustyLava";
+		density = "1";
+		viscosity = "15";
+		waveMagnitude = "0";
+		surfaceTexture = "LiquidTiles/lava";
+		surfaceOpacity = "1";
+		envMapTexture = "desert/skies/d_n_move1";
+		envMapIntensity = "0.5";
+		submergeTexture[0] = "special/lavadeath_1";
+		submergeTexture[1] = "special/lavadeath_2";
+		removeWetEdges = "0";
+			locked = "false";
+	};
+	new Sky(Sky) {
+		position = "0 0 0";
+		rotation = "1 0 0 0";
+		scale = "0.5 0.5 0.5";
+		cloudHeightPer[0] = "1500";
+		cloudHeightPer[1] = "0.25";
+		cloudHeightPer[2] = "0.199973";
+		cloudSpeed1 = "0.001";
+		cloudSpeed2 = "0.002";
+		cloudSpeed3 = "0.001";
+		visibleDistance = "500";
+		useSkyTextures = "1";
+		renderBottomTexture = "0";
+		SkySolidColor = "0.106000 0.125000 0.235000 0.000000";
+		fogDistance = "100";
+		fogColor = "0.800000 0.600000 0.000000 1.000000";
+		fogVolume1 = "0 0 0";
+		fogVolume2 = "0 0 0";
+		fogVolume3 = "0 0 0";
+		materialList = "lava_yellow.dml";
+		windVelocity = "1 0 0";
+		windEffectPrecipitation = "0";
+		fogVolumeColor1 = "128.000000 128.000000 128.000000 -0.000000";
+		fogVolumeColor2 = "128.000000 128.000000 128.000000 -0.000000";
+		fogVolumeColor3 = "128.000000 128.000000 128.000000 -0.000000";
+			high_fogVolume1 = "-1 0 0";
+			high_fogDistance = "-1";
+			locked = "true";
+			high_visibleDistance = "-1";
+			high_fogVolume3 = "-1 0 0";
+			cloudSpeed0 = "0.001000 0.001000";
+			high_fogVolume2 = "-1 0 0";
+	};
+	new SimGroup(ObserverDropPoints) {
+			powerCount = "0";
+
+		new Camera() {
+			position = "32.2409 -189.123 200.344";
+			rotation = "0.93642 0.0705014 -0.343726 24.7094";
+			scale = "1 1 1";
+			dataBlock = "Observer";
+			lockCount = "0";
+			homingCount = "0";
+				locked = "false";
+		};
+		new Camera() {
+			position = "80.2452 478.634 100.779";
+			rotation = "-0.00714594 -0.000728025 -0.999974 11.6347";
+			scale = "1 1 1";
+			dataBlock = "Observer";
+			lockCount = "0";
+			homingCount = "0";
+				locked = "false";
+		};
+	};
+	new SimGroup(Teams) {
+			powerCount = "0";
+
+		new SimGroup(Team1) {
+				powerCount = "0";
+
+			new SimGroup(spawnspheres) {
+					powerCount = "0";
+
+				new SpawnSphere() {
+					position = "13.5781 915.647 116.6";
+					rotation = "-0 0 -1 67.2184";
+					scale = "1 1 1";
+					dataBlock = "SpawnSphereMarker";
+					lockCount = "0";
+					homingCount = "0";
+					radius = "75";
+					sphereWeight = "100";
+					indoorWeight = "100";
+					outdoorWeight = "100";
+						locked = "false";
+				};
+				new SpawnSphere() {
+					position = "-904.861 10.0202 101.193";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "SpawnSphereMarker";
+					lockCount = "0";
+					homingCount = "0";
+					radius = "80";
+					sphereWeight = "100";
+					indoorWeight = "100";
+					outdoorWeight = "100";
+				};
+			};
+			new SimGroup(BridgeOne) {
+					powerCount = "0";
+
+				new ForceFieldBare(B1_B) {
+					position = "55.7089 233.43 84";
+					rotation = "1 0 0 0";
+					scale = "12 238 0.95";
+					dataBlock = "defaultForceFieldBare";
+					lockCount = "0";
+					homingCount = "0";
+						team = "2";
+						Target = "33";
+				};
+				new InteriorInstance() {
+					position = "61.6455 467.127 85";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					interiorFile = "btf_bridge3.dif";
+					showTerrainInside = "0";
+						team = "1";
+				};
+				new InteriorInstance() {
+					position = "10 750 85";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					interiorFile = "btf_bridge3.dif";
+					showTerrainInside = "0";
+						team = "1";
+				};
+				new InteriorInstance() {
+					position = "61.6455 237.443 85";
+					rotation = "0 0 1 180";
+					scale = "1 1 1";
+					interiorFile = "btf_bridge3.dif";
+					showTerrainInside = "0";
+						team = "1";
+				};
+				new InteriorInstance() {
+					position = "10.1958 649.194 85";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					interiorFile = "btf_bridge2.dif";
+					showTerrainInside = "0";
+						team = "1";
+				};
+				new InteriorInstance() {
+					position = "10 550 85";
+					rotation = "0 0 1 180";
+					scale = "1 1 1";
+					interiorFile = "btf_bridge3.dif";
+					showTerrainInside = "0";
+						team = "1";
+				};
+				new ForceFieldBare(B1_A) {
+					position = "4.00419 545.592 84.0823";
+					rotation = "1 0 0 0";
+					scale = "11.7958 208.43 0.733307";
+					dataBlock = "defaultForceFieldBare";
+					lockCount = "0";
+					homingCount = "0";
+						team = "2";
+						Target = "34";
+				};
+				new InteriorInstance() {
+					position = "61.7839 355.254 85";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					interiorFile = "btf_bridge2.dif";
+					showTerrainInside = "0";
+						team = "1";
+				};
+				new StaticShape(BridgeOneGen) {
+					position = "11.4709 488.216 91.1041";
+					rotation = "-0.281085 0.678599 0.678598 148.6";
+					scale = "1 1 1";
+					dataBlock = "GeneratorLarge";
+					lockCount = "0";
+					homingCount = "0";
+						canBlow = "0";
+						lastDamagedByTeam = "1";
+						repairedBy = "3816";
+						team = "2";
+						damageTimeMS = "409805";
+						Target = "35";
+						lastDamagedBy = "3816";
+				};
+				new ForceFieldBare(Bridge1BunkForce1) {
+					position = "21.2435 484.691 78.043";
+					rotation = "-0.0823002 0.198691 0.976601 135.951";
+					scale = "9.03457 0.235796 12.0908";
+					dataBlock = "defaultTeamSlowFieldBare";
+					lockCount = "0";
+					homingCount = "0";
+						team = "2";
+						Target = "36";
+				};
+				new ForceFieldBare(Bridge1GenForce) {
+					position = "9.70379 493.9 87.7826";
+					rotation = "0 0 1 135";
+					scale = "5.67098 7.79201 3.32607";
+					dataBlock = "defaultTeamSlowFieldBare";
+					lockCount = "0";
+					homingCount = "0";
+						team = "2";
+						Target = "37";
+				};
+				new ForceFieldBare(Bridge1BunkForce2) {
+					position = "5.50124 500.085 77.5821";
+					rotation = "0.0787895 -0.190215 0.978576 135.871";
+					scale = "8.755 0.1 12.2754";
+					dataBlock = "defaultTeamSlowFieldBare";
+					lockCount = "0";
+					homingCount = "0";
+						team = "2";
+						Target = "38";
+				};
+				new InteriorInstance() {
+					position = "10.5365 489.189 81.4738";
+					rotation = "0 0 1 225";
+					scale = "1 1 1";
+					interiorFile = "btf_genbunk.dif";
+					showTerrainInside = "0";
+						team = "1";
+				};
+				new StaticShape(B1Inv1) {
+					position = "21.4267 493.697 81.458";
+					rotation = "0 0 1 225";
+					scale = "1 1 1";
+					dataBlock = "StationInventory";
+					lockCount = "0";
+					homingCount = "0";
+						canBlow = "0";
+						lastDamagedByTeam = "1";
+						Trigger = "3388";
+						team = "2";
+						damageTimeMS = "5380";
+						Target = "39";
+						lastDamagedBy = "3389";
+				};
+				new StaticShape(B1Inv2) {
+					position = "14.8867 500.22 81.458";
+					rotation = "0 0 1 225";
+					scale = "1 1 1";
+					dataBlock = "StationInventory";
+					lockCount = "0";
+					homingCount = "0";
+						canBlow = "0";
+						lastDamagedByTeam = "1";
+						Trigger = "3390";
+						team = "2";
+						damageTimeMS = "5380";
+						Target = "40";
+						lastDamagedBy = "3389";
+				};
+				new StaticShape(B1Inv3) {
+					position = "10.0392 492.035 81.4548";
+					rotation = "0 0 1 135.069";
+					scale = "1 1 1";
+					dataBlock = "StationInventory";
+					lockCount = "0";
+					homingCount = "0";
+						canBlow = "0";
+						lastDamagedByTeam = "1";
+						Trigger = "3392";
+						team = "2";
+						damageTimeMS = "5380";
+						Target = "41";
+						lastDamagedBy = "3393";
+				};
+				new StaticShape(B1inv4) {
+					position = "13.8958 488.14 81.4548";
+					rotation = "-0 0 -1 45";
+					scale = "1 1 1";
+					dataBlock = "StationInventory";
+					lockCount = "0";
+					homingCount = "0";
+						canBlow = "0";
+						lastDamagedByTeam = "1";
+						Trigger = "3394";
+						team = "2";
+						damageTimeMS = "5380";
+						Target = "42";
+						lastDamagedBy = "3393";
+				};
+			};
+			new SimGroup(AbelBase) {
+					powerCount = "0";
+
+				new InteriorInstance() {
+					position = "21.0237 888.847 127.693";
+					rotation = "0 0 1 180";
+					scale = "1 1 1";
+					interiorFile = "dtowr4.dif";
+					showTerrainInside = "0";
+						team = "1";
+				};
+				new Item() {
+					position = "21.0237 888.847 129.248";
+					rotation = "0 0 1 180";
+					scale = "1 1 1";
+					dataBlock = "RepairPack";
+					lockCount = "0";
+					homingCount = "0";
+					collideable = "0";
+					static = "1";
+					rotate = "0";
+						team = "1";
+						Target = "-1";
+				};
+				new Item() {
+					position = "21.0237 874.198 129.248";
+					rotation = "0 0 1 180";
+					scale = "1 1 1";
+					dataBlock = "RepairPack";
+					lockCount = "0";
+					homingCount = "0";
+					collideable = "0";
+					static = "1";
+					rotate = "0";
+						team = "1";
+						Target = "-1";
+				};
+			};
+			new SimGroup(BakerBase) {
+					powerCount = "0";
+
+				new InteriorInstance() {
+					position = "-900.002 8.99525 149.693";
+					rotation = "0 0 1 90";
+					scale = "1 1 1";
+					interiorFile = "dtowr4.dif";
+					showTerrainInside = "0";
+						team = "1";
+				};
+				new Item() {
+					position = "-900.002 8.99525 151.248";
+					rotation = "0 0 1 90";
+					scale = "1 1 1";
+					dataBlock = "RepairPack";
+					lockCount = "0";
+					homingCount = "0";
+					collideable = "0";
+					static = "1";
+					rotate = "0";
+						team = "1";
+						Target = "-1";
+				};
+				new Item() {
+					position = "-885.353 8.99525 151.248";
+					rotation = "0 0 1 90";
+					scale = "1 1 1";
+					dataBlock = "RepairPack";
+					lockCount = "0";
+					homingCount = "0";
+					collideable = "0";
+					static = "1";
+					rotate = "0";
+						team = "1";
+						Target = "-1";
+				};
+			};
+			new SimGroup(BridgeTwo) {
+					powerCount = "0";
+
+				new ForceFieldBare(B2_B) {
+					position = "-223.313 35.3612 84";
+					rotation = "0 0 -1 105";
+					scale = "12 238 0.95";
+					dataBlock = "defaultForceFieldBare";
+					lockCount = "0";
+					homingCount = "0";
+						team = "2";
+						Target = "43";
+				};
+				new InteriorInstance() {
+					position = "-450.584 -19.3897 85";
+					rotation = "0 0 -1 105";
+					scale = "1 1 1";
+					interiorFile = "btf_bridge3.dif";
+					showTerrainInside = "0";
+						team = "1";
+				};
+				new InteriorInstance() {
+					position = "-708.356 -57.5152 85";
+					rotation = "0 0 -1 90";
+					scale = "1 1 1";
+					interiorFile = "btf_bridge3.dif";
+					showTerrainInside = "0";
+						team = "1";
+				};
+				new InteriorInstance() {
+					position = "-228.726 40.0569 85";
+					rotation = "0 0 1 75";
+					scale = "1 1 1";
+					interiorFile = "btf_bridge3.dif";
+					showTerrainInside = "0";
+						team = "1";
+				};
+				new InteriorInstance() {
+					position = "-607.551 -57.3194 85";
+					rotation = "0 0 -1 90";
+					scale = "1 1 1";
+					interiorFile = "btf_bridge2.dif";
+					showTerrainInside = "0";
+						team = "1";
+				};
+				new InteriorInstance() {
+					position = "-508.356 -57.5152 85";
+					rotation = "0 0 1 90";
+					scale = "1 1 1";
+					interiorFile = "btf_bridge3.dif";
+					showTerrainInside = "0";
+						team = "1";
+				};
+				new ForceFieldBare(B2_A) {
+					position = "-503.948 -63.511 84.0823";
+					rotation = "0 0 -1 90";
+					scale = "11.7958 208.43 0.733307";
+					dataBlock = "defaultForceFieldBare";
+					lockCount = "0";
+					homingCount = "0";
+						team = "2";
+						Target = "44";
+				};
+				new InteriorInstance() {
+					position = "-342.559 9.69887 85";
+					rotation = "0 0 -1 105";
+					scale = "1 1 1";
+					interiorFile = "btf_bridge2.dif";
+					showTerrainInside = "0";
+						team = "1";
+				};
+				new StaticShape(BridgeTwoGen) {
+					position = "-439.37 -73.2015 91.1041";
+					rotation = "-0.935114 0.250563 0.25056 93.8408";
+					scale = "1 1 1";
+					dataBlock = "GeneratorLarge";
+					lockCount = "0";
+					homingCount = "0";
+						canBlow = "0";
+						lastDamagedByTeam = "1";
+						repairedBy = "3816";
+						team = "2";
+						damageTimeMS = "409805";
+						Target = "45";
+						lastDamagedBy = "3816";
+				};
+				new ForceFieldBare(Bridge2BunkForce1) {
+					position = "-438.494 -62.8496 78.043";
+					rotation = "-0.59694 0.159951 0.786179 37.6405";
+					scale = "9.03457 0.235796 12.0908";
+					dataBlock = "defaultTeamSlowFieldBare";
+					lockCount = "0";
+					homingCount = "0";
+						team = "2";
+						Target = "46";
+				};
+				new ForceFieldBare(Bridge2GenForce) {
+					position = "-444.403 -76.3796 87.7826";
+					rotation = "0 0 1 30";
+					scale = "5.67098 7.79201 3.32607";
+					dataBlock = "defaultTeamSlowFieldBare";
+					lockCount = "0";
+					homingCount = "0";
+						team = "2";
+						Target = "47";
+				};
+				new ForceFieldBare(Bridge2BunkForce2) {
+					position = "-449.289 -82.0397 77.5821";
+					rotation = "0.580058 -0.155427 0.79961 37.0524";
+					scale = "8.755 0.1 12.2754";
+					dataBlock = "defaultTeamSlowFieldBare";
+					lockCount = "0";
+					homingCount = "0";
+						team = "2";
+						Target = "48";
+				};
+				new InteriorInstance() {
+					position = "-440.068 -74.3559 81.4738";
+					rotation = "0 0 1 120";
+					scale = "1 1 1";
+					interiorFile = "btf_genbunk.dif";
+					showTerrainInside = "0";
+						team = "1";
+				};
+				new StaticShape(B2Inv1) {
+					position = "-447.241 -65.0035 81.458";
+					rotation = "0 0 1 120";
+					scale = "1 1 1";
+					dataBlock = "StationInventory";
+					lockCount = "0";
+					homingCount = "0";
+						canBlow = "0";
+						lastDamagedByTeam = "1";
+						Trigger = "3423";
+						team = "2";
+						damageTimeMS = "5380";
+						Target = "49";
+						lastDamagedBy = "3424";
+				};
+				new StaticShape(B2Inv2) {
+					position = "-451.849 -73.009 81.458";
+					rotation = "0 0 1 120";
+					scale = "1 1 1";
+					dataBlock = "StationInventory";
+					lockCount = "0";
+					homingCount = "0";
+						canBlow = "0";
+						lastDamagedByTeam = "1";
+						Trigger = "3425";
+						team = "2";
+						damageTimeMS = "5380";
+						Target = "50";
+						lastDamagedBy = "3424";
+				};
+				new StaticShape(B2Inv3) {
+					position = "-442.688 -75.5729 81.4548";
+					rotation = "0 0 1 30.069";
+					scale = "1 1 1";
+					dataBlock = "StationInventory";
+					lockCount = "0";
+					homingCount = "0";
+						canBlow = "0";
+						lastDamagedByTeam = "1";
+						Trigger = "3427";
+						team = "2";
+						damageTimeMS = "5380";
+						Target = "51";
+						lastDamagedBy = "3428";
+				};
+				new StaticShape(B2inv4) {
+					position = "-439.924 -70.8396 81.4548";
+					rotation = "0 0 1 210";
+					scale = "1 1 1";
+					dataBlock = "StationInventory";
+					lockCount = "0";
+					homingCount = "0";
+						canBlow = "0";
+						lastDamagedByTeam = "1";
+						Trigger = "3429";
+						team = "2";
+						damageTimeMS = "5380";
+						Target = "52";
+						lastDamagedBy = "3428";
+				};
+			};
+			new SimGroup(Team1Waypoints) {
+					powerCount = "0";
+
+				new WayPoint() {
+					position = "16.2307 494.793 86.5041";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "WayPointMarker";
+					lockCount = "0";
+					homingCount = "0";
+					name = "Nijmegan";
+					team = "2";
+				};
+				new WayPoint() {
+					position = "-447.103 -70.3018 86.6248";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "WayPointMarker";
+					lockCount = "0";
+					homingCount = "0";
+					name = "Veghez";
+					team = "2";
+				};
+			};
+		};
+		new SimGroup(Team2) {
+				powerCount = "0";
+
+			new SimGroup(spawnspheres) {
+					powerCount = "0";
+
+				new SpawnSphere() {
+					position = "0 0 85";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "SpawnSphereMarker";
+					lockCount = "0";
+					homingCount = "0";
+					radius = "100";
+					sphereWeight = "100";
+					indoorWeight = "100";
+					outdoorWeight = "0";
+						locked = "false";
+				};
+			};
+			new SimGroup(ControlPoint) {
+					powerCount = "0";
+
+				new StaticShape(ControlPoint) {
+					position = "-0.052 -0.0467997 97.726";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					nameTag = "Arnhem";
+					dataBlock = "FlipFlop";
+					lockCount = "0";
+					homingCount = "0";
+						lastDamagedByTeam = "2";
+						WayPoint = "3480";
+						locked = "false";
+						team = "1";
+						damageTimeMS = "95766";
+						Target = "53";
+						lastDamagedBy = "3795";
+						needsObjectiveWaypoint = "1";
+				};
+			};
+			new SimGroup(Team2base) {
+					powerCount = "0";
+
+				new InteriorInstance() {
+					position = "0 0 109.574";
+					rotation = "0 0 1 45";
+					scale = "1 1 1";
+					interiorFile = "btf_base1.dif";
+					showTerrainInside = "0";
+						team = "2";
+				};
+				new SimGroup(INVENTORY) {
+						powerCount = "1";
+
+					new StaticShape() {
+						position = "12.8301 -3.39572 97.565";
+						rotation = "0 0 1 45";
+						scale = "1 1 1";
+						dataBlock = "StationInventory";
+						lockCount = "0";
+						homingCount = "0";
+							Trigger = "3442";
+							team = "1";
+							Target = "54";
+					};
+					new StaticShape() {
+						position = "-12.8722 3.35431 97.525";
+						rotation = "0 0 1 225";
+						scale = "1 1 1";
+						dataBlock = "StationInventory";
+						lockCount = "0";
+						homingCount = "0";
+							lastDamagedByTeam = "2";
+							Trigger = "3444";
+							team = "1";
+							damageTimeMS = "410520";
+							Target = "55";
+							lastDamagedBy = "3795";
+					};
+					new StaticShape() {
+						position = "-17.7145 -1.22582 97.553";
+						rotation = "0 0 1 0.0395647";
+						scale = "1 1 1";
+						dataBlock = "StationInventory";
+						lockCount = "0";
+						homingCount = "0";
+							Trigger = "3446";
+							team = "1";
+							Target = "56";
+					};
+					new StaticShape() {
+						position = "17.6432 1.19878 97.559";
+						rotation = "0 0 1 180";
+						scale = "1 1 1";
+						dataBlock = "StationInventory";
+						lockCount = "0";
+						homingCount = "0";
+							lastDamagedByTeam = "2";
+							Trigger = "3448";
+							team = "1";
+							damageTimeMS = "416239";
+							Target = "57";
+							lastDamagedBy = "3844";
+					};
+					new StaticShape() {
+						position = "-6.89115 -9.51536 97.542";
+						rotation = "0 0 -1 90";
+						scale = "1 1 1";
+						dataBlock = "GeneratorLarge";
+						lockCount = "0";
+						homingCount = "0";
+							lastDamagedByTeam = "2";
+							team = "1";
+							damageTimeMS = "416239";
+							Target = "58";
+							lastDamagedBy = "3795";
+					};
+					new Turret() {
+						position = "8.63554 9.13058 138.589";
+						rotation = "-6.11022e-08 7.2834e-08 1 225";
+						scale = "1 1 1";
+						dataBlock = "TurretBaseLarge";
+						lockCount = "0";
+						homingCount = "0";
+						initialBarrel = "MissileBarrelLarge";
+							originalBarrel = "MissileBarrelLarge";
+							lastProjectile = "5237";
+							team = "1";
+							Target = "59";
+					};
+					new Turret() {
+						position = "-8.88563 -9.02408 138.589";
+						rotation = "1.75837e-07 1.47514e-07 1 45";
+						scale = "1 1 1";
+						dataBlock = "TurretBaseLarge";
+						lockCount = "0";
+						homingCount = "0";
+						initialBarrel = "AABarrelLarge";
+							originalBarrel = "AABarrelLarge";
+							lastProjectile = "5237";
+							team = "1";
+							Target = "60";
+					};
+				};
+			};
+			new SimGroup(PerimeterDturrets) {
+					powerCount = "1";
+
+				new StaticShape() {
+					position = "6.70772 9.22587 97.5933";
+					rotation = "0 0 1 90";
+					scale = "1 1 1";
+					dataBlock = "GeneratorLarge";
+					lockCount = "0";
+					homingCount = "0";
+						team = "1";
+						Target = "61";
+				};
+				new Turret() {
+					position = "256 256 100";
+					rotation = "0 0 1 225";
+					scale = "1 1 1";
+					dataBlock = "TurretBaseLarge";
+					lockCount = "0";
+					homingCount = "0";
+					initialBarrel = "MissileBarrelLarge";
+						originalBarrel = "MissileBarrelLarge";
+						team = "1";
+						Target = "62";
+				};
+				new InteriorInstance() {
+					position = "256 256 66.8828";
+					rotation = "0 0 1 45";
+					scale = "1 1 3.31172";
+					interiorFile = "dmisc1.dif";
+					showTerrainInside = "0";
+						team = "2";
+				};
+				new InteriorInstance() {
+					position = "-281.064 -292.861 65.0796";
+					rotation = "0 0 1 225";
+					scale = "1 1 4.49205";
+					interiorFile = "dmisc1.dif";
+					showTerrainInside = "0";
+						team = "2";
+				};
+				new Turret() {
+					position = "-282.123 -293.748 109.905";
+					rotation = "0 0 1 45";
+					scale = "1 1 1";
+					dataBlock = "TurretBaseLarge";
+					lockCount = "0";
+					homingCount = "0";
+					initialBarrel = "MissileBarrelLarge";
+						originalBarrel = "MissileBarrelLarge";
+						team = "1";
+						Target = "68";
+				};
+				new InteriorInstance() {
+					position = "-256 256 65.0796";
+					rotation = "0 0 -1 45";
+					scale = "1 1 4.49205";
+					interiorFile = "dmisc1.dif";
+					showTerrainInside = "0";
+						team = "2";
+				};
+				new Turret() {
+					position = "-256.887 257.059 109.905";
+					rotation = "0 0 1 135";
+					scale = "1 1 1";
+					dataBlock = "TurretBaseLarge";
+					lockCount = "0";
+					homingCount = "0";
+					initialBarrel = "MissileBarrelLarge";
+						originalBarrel = "MissileBarrelLarge";
+						team = "1";
+						Target = "63";
+				};
+				new InteriorInstance() {
+					position = "111.02 -0.610577 114.003";
+					rotation = "0.357407 0.357407 -0.862856 98.4211";
+					scale = "1 1 1";
+					interiorFile = "btf_turretplatform.dif";
+					showTerrainInside = "0";
+						team = "2";
+				};
+				new Turret() {
+					position = "108.961 -0.588139 118.777";
+					rotation = "0.357407 0.357407 -0.862856 98.4211";
+					scale = "1 1 1";
+					dataBlock = "TurretBaseLarge";
+					lockCount = "0";
+					homingCount = "0";
+					initialBarrel = "ELFBarrelLarge";
+						originalBarrel = "ELFBarrelLarge";
+						zappingSound = "0";
+						team = "1";
+						Target = "64";
+						deleteLastProjectile = "1";
+				};
+				new InteriorInstance() {
+					position = "-13.5323 -119.856 109.119";
+					rotation = "1 0 0 45";
+					scale = "1 1 1";
+					interiorFile = "btf_turretplatform.dif";
+					showTerrainInside = "0";
+						team = "2";
+				};
+				new InteriorInstance() {
+					position = "-17.7137 124.201 110.741";
+					rotation = "0.0503173 -0.382198 0.92271 166.148";
+					scale = "1 1 1";
+					interiorFile = "btf_turretplatform.dif";
+					showTerrainInside = "0";
+						team = "2";
+				};
+				new Turret() {
+					position = "-17.1103 122.323 115.601";
+					rotation = "0.0522763 -0.381714 0.922801 166.699";
+					scale = "1 1 1";
+					dataBlock = "TurretBaseLarge";
+					lockCount = "0";
+					homingCount = "0";
+					initialBarrel = "ELFBarrelLarge";
+						originalBarrel = "ELFBarrelLarge";
+						zappingSound = "0";
+						team = "1";
+						Target = "65";
+						deleteLastProjectile = "1";
+				};
+				new Turret() {
+					position = "-117.239 6.71448 117.195";
+					rotation = "0.281747 -0.36718 0.886452 111.553";
+					scale = "1 1 1";
+					dataBlock = "TurretBaseLarge";
+					lockCount = "0";
+					homingCount = "0";
+					initialBarrel = "ELFBarrelLarge";
+						originalBarrel = "ELFBarrelLarge";
+						zappingSound = "0";
+						team = "1";
+						Target = "66";
+						deleteLastProjectile = "1";
+				};
+				new InteriorInstance() {
+					position = "-119.107 7.22722 112.296";
+					rotation = "0.281747 -0.36718 0.886452 111.553";
+					scale = "1 1 1";
+					interiorFile = "btf_turretplatform.dif";
+					showTerrainInside = "0";
+						team = "2";
+				};
+				new Turret() {
+					position = "-13.5431 -117.876 113.865";
+					rotation = "1 -6.0719e-07 8.28322e-06 45";
+					scale = "1 1 1";
+					dataBlock = "TurretBaseLarge";
+					lockCount = "0";
+					homingCount = "0";
+					initialBarrel = "ELFBarrelLarge";
+						originalBarrel = "ELFBarrelLarge";
+						zappingSound = "0";
+						team = "1";
+						Target = "67";
+						deleteLastProjectile = "1";
+				};
+			};
+		};
+		new SimGroup(team0) {
+				powerCount = "0";
+		};
+	};
+	new AudioEmitter() {
+		position = "206.17 3.7 104.499";
+		rotation = "1 0 0 0";
+		scale = "1 1 1";
+		fileName = "fx/environment/lavahostile.wav";
+		useProfileDescription = "0";
+		outsideAmbient = "1";
+		volume = "1";
+		isLooping = "1";
+		is3D = "1";
+		minDistance = "85";
+		maxDistance = "5440";
+		coneInsideAngle = "360";
+		coneOutsideAngle = "360";
+		coneOutsideVolume = "1";
+		coneVector = "0 0 1";
+		loopCount = "-1";
+		minLoopGap = "0";
+		maxLoopGap = "0";
+		type = "EffectAudioType";
+			locked = "true";
+	};
+};
+//--- OBJECT WRITE END ---
+
+//Set up damaged Bridge One items for team 1
+
+nameToId("BridgeOneGen").setDamageLevel(2.5);
+nameToId("B1Inv1").setDamageLevel(2.5);
+nameToId("B1Inv2").setDamageLevel(2.5);
+nameToId("B1Inv3").setDamageLevel(2.5);
+nameToId("B1Inv4").setDamageLevel(2.5);
+
+//Set up damaged Bridge Two items for team 1
+
+nameToId("BridgeTwoGen").setDamageLevel(2.5);
+nameToId("B2Inv1").setDamageLevel(2.5);
+nameToId("B2Inv2").setDamageLevel(2.5);
+nameToId("B2Inv3").setDamageLevel(2.5);
+nameToId("B2Inv4").setDamageLevel(2.5);
+
+package BTF {
+//begin BTF package ================================
+
+// do the destruction again at halftime
+function SiegeGame::halftimeOver( %game )
+{
+	nameToId("BridgeOneGen").setDamageLevel(2.5);
+	nameToId("B1Inv1").setDamageLevel(2.5);
+	nameToId("B1Inv2").setDamageLevel(2.5);
+	nameToId("B1Inv3").setDamageLevel(2.5);
+	nameToId("B1Inv4").setDamageLevel(2.5);
+
+	//Set up damaged Bridge Two items for team 1
+
+	nameToId("BridgeTwoGen").setDamageLevel(2.5);
+	nameToId("B2Inv1").setDamageLevel(2.5);
+	nameToId("B2Inv2").setDamageLevel(2.5);
+	nameToId("B2Inv3").setDamageLevel(2.5);
+	nameToId("B2Inv4").setDamageLevel(2.5);
+
+	parent::halfTimeOver(%game);
+}
+
+//end BTF package ================================
+};
+
+package BandAid {
+//begin fix package needed to inflict the damage
+
+function SiegeGame::halftime(%game, %reason)
+{
+   //stop the game and the bots
+   $MatchStarted = false;
+   AISystemEnabled(false);
+
+   if (%game.firstHalf)
+   {
+      //switch the game variables
+      %game.firstHalf = false;
+      %oldOffenseTeam = %game.offenseTeam;
+      if (%game.offenseTeam == 1)
+         %game.offenseTeam = 2;
+      else
+         %game.offenseTeam = 1;
+
+      //send the message
+      messageAll('MsgSiegeRolesSwitched', '\c2Team %1 is now on offense.', $teamName[%game.offenseTeam], %game.offenseTeam);
+
+      //reset stations and vehicles that players were using
+      %game.resetPlayers();
+      // zero out the counts for deployable items (found in defaultGame.cs)
+      %game.clearDeployableMaxes();
+
+      // clean up the MissionCleanup group - note, this includes deleting all the player objects
+      %clean = nameToID("MissionCleanup");
+      %clean.housekeeping();
+
+      // Non static objects placed in original position
+      resetNonStaticObjPositions();
+      
+      // switch the teams for objects belonging to the teams
+      %group = nameToID("MissionGroup/Teams");
+      %group.swapTeams();
+      // search for vehicle pads also
+      %mcg = nameToID("MissionCleanup");
+      %mcg.swapVehiclePads();
+
+      //restore the objects
+      %game.restoreObjects();
+
+      %count = ClientGroup.getCount();
+      for(%cl = 0; %cl < %count; %cl++)
+      {
+         %client = ClientGroup.getObject(%cl);
+         if( !%client.isAIControlled() )
+         {
+            // Put everybody in observer mode:
+            %client.camera.getDataBlock().setMode( %client.camera, "observerStaticNoNext" );
+            %client.setControlObject( %client.camera );
+            
+            // Send the halftime result info:
+            if ( %client.team == %oldOffenseTeam )
+            {
+               if ( $teamScore[%oldOffenseTeam] > 0 )
+                  messageClient( %client, 'MsgSiegeResult', "", '%1 captured the %2 base in %3!', %game.capPlayer[%oldOffenseTeam], $teamName[%game.offenseTeam], %game.formatTime( $teamScore[%oldOffenseTeam], true ) );
+               else
+                  messageClient( %client, 'MsgSiegeResult', "", 'Your team failed to capture the %1 base.', $teamName[%game.offenseTeam] );   
+            }
+            else if ( $teamScore[%oldOffenseTeam] > 0 )
+               messageClient( %client, 'MsgSiegeResult', "", '%1 captured your base in %3!', %game.capPlayer[%oldOffenseTeam], %game.formatTime( $teamScore[%oldOffenseTeam], true ) );
+            else
+               messageClient( %client, 'MsgSiegeResult', "", 'Your team successfully held off team %1!', $teamName[%oldOffenseTeam] );   
+            
+            // List out the team rosters:
+            messageClient( %client, 'MsgSiegeAddLine', "", '<spush><color:00dc00><font:univers condensed:18><clip%%:50>%1</clip><lmargin%%:50><clip%%:50>%2</clip><spop>', $TeamName[1], $TeamName[2] );
+            %max = $TeamRank[1, count] > $TeamRank[2, count] ? $TeamRank[1, count] : $TeamRank[2, count];
+            for ( %line = 0; %line < %max; %line++ )
+            {
+               %plyr1 = $TeamRank[1, %line] $= "" ? "" : $TeamRank[1, %line].name;
+               %plyr2 = $TeamRank[2, %line] $= "" ? "" : $TeamRank[2, %line].name;
+               messageClient( %client, 'MsgSiegeAddLine', "", '<lmargin:0><clip%%:50> %1</clip><lmargin%%:50><clip%%:50> %2</clip>', %plyr1, %plyr2 );
+            }
+
+            // Show observers:
+            %header = false;
+            for ( %i = 0; %i < %count; %i++ )
+            {
+               %obs = ClientGroup.getObject( %i );
+               if ( %obs.team <= 0 )
+               {
+                  if ( !%header )
+                  {
+                     messageClient( %client, 'MsgSiegeAddLine', "", '\n<lmargin:0><spush><color:00dc00><font:univers condensed:18>OBSERVERS<spop>' );
+                     %header = true;
+                  }
+
+                  messageClient( %client, 'MsgSiegeAddLine', "", ' %1', %obs.name );
+               }
+            }
+            
+            commandToClient( %client, 'SetHalftimeClock', $Host::Siege::Halftime / 60000 );
+            
+            // Get the HUDs right:
+            commandToClient( %client, 'setHudMode', 'SiegeHalftime' );
+            commandToClient( %client, 'ControlObjectReset' );
+            
+            clientResetTargets(%client, true);
+            %client.notReady = true;
+         }
+      }
+      
+      %game.schedule( $Host::Siege::Halftime, halftimeOver );
+   }
+   else
+   {
+      // let's wrap it all up
+      %game.gameOver();
+      cycleMissions();
+   }
+}
+
+function SiegeGame::halftimeOver( %game )
+{
+   // drop all players into mission
+   %game.dropPlayers();
+
+   //setup the AI for the second half
+   %game.aiHalfTime();
+   
+   // start the mission again (release players)
+   %game.halfTimeCountDown( $Host::warmupTime );
+
+	//redo the objective waypoints
+	%game.findObjectiveWaypoints();
+}
+
+//end Bandaid package. We can remove this once the next patch is officially released
+//This was taken from the SiegeGame.cs file from Beta4
+};
+
+activatePackage(BandAid);
+activatePackage(BTF);

@@ -1,0 +1,191 @@
+//--- OBJECT WRITE BEGIN ---
+new GuiControl(ChatOptionsDlg) {
+	profile = "DlgBackProfile";
+	horizSizing = "width";
+	vertSizing = "height";
+	position = "0 0";
+	extent = "640 480";
+	minExtent = "8 8";
+	visible = "1";
+	helpTag = "0";
+
+	new ShellPaneCtrl() {
+		profile = "ShellDlgPaneProfile";
+		horizSizing = "center";
+		vertSizing = "center";
+		position = "75 102";
+		extent = "490 276";
+		minExtent = "48 92";
+		visible = "1";
+		helpTag = "0";
+		text = "CHAT OPTIONS";
+		maxLength = "255";
+		noTitleBar = "0";
+
+		new ShellToggleButton(ButtonChatShowJoin) {
+			profile = "ShellRadioProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "270 57";
+			extent = "177 30";
+			minExtent = "26 27";
+			visible = "1";
+			variable = "";
+			command = "ChatHideJoinMessage();";
+			helpTag = "0";
+			text = "Hide \"Join Server\" Messages";
+			maxLength = "255";
+		};
+		new GuiTextCtrl() {
+			profile = "ShellTextRightProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "22 146";
+			extent = "88 22";
+			minExtent = "8 8";
+			visible = "1";
+			helpTag = "0";
+			text = "Away Message:";
+			maxLength = "255";
+		};
+		new ShellTextEditCtrl(EditChatAwayMessage) {
+			profile = "NewTextEditProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "104 138";
+			extent = "366 38";
+			minExtent = "32 38";
+			visible = "1";
+			helpTag = "0";
+			maxLength = "64";
+			historySize = "0";
+			password = "0";
+			glowOffset = "9 9";
+			variable = "$tempAwayMsg";
+		};
+		new ShellToggleButton(ButtonChatHighlight) {
+			profile = "ShellRadioProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+ 			position = "47 32";
+			extent = "150 30";
+			minExtent = "26 27";
+			visible = "1";
+			variable = "";
+			command = "ToggleChatHiglight();";
+			helpTag = "0";
+			text = "Highlight text with my nick";
+			maxLength = "255";
+		};
+		new ShellToggleButton(ButtonChatChannelHighlight) {
+			profile = "ShellRadioProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "47 57";
+			extent = "150 30";
+			minExtent = "26 27";
+			visible = "1";
+			variable = "";
+			command = "ToggleChatHiglightChannel();";
+			helpTag = "0";
+			text = "Highlight Channel";
+			maxLength = "255";
+		};
+		new ShellToggleButton(ButtonChatNameLinkToggle) {
+			profile = "ShellRadioProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "270 32";
+			extent = "176 30";
+			minExtent = "26 27";
+			visible = "1";
+			variable = "";
+			command = "ToggleChatLinkedNicks();";
+			helpTag = "0";
+			text = "Names are not links";
+			maxLength = "255";
+		};
+		new GuiTextCtrl() {
+			profile = "ShellTextRightProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "22 174";
+			extent = "88 22";
+			minExtent = "8 8";
+			visible = "1";
+			helpTag = "0";
+			text = "Kick Message:";
+			maxLength = "255";
+		};
+		new ShellTextEditCtrl(EditChatKickMessage) {
+			profile = "NewTextEditProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "104 166";
+			extent = "366 38";
+			minExtent = "32 38";
+			visible = "1";
+			helpTag = "0";
+			maxLength = "64";
+			historySize = "0";
+			password = "0";
+			glowOffset = "9 9";
+			variable = "$tempKickmsg";
+		};
+		new GuiTextCtrl() {
+			profile = "ShellTextRightProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "22 200";
+			extent = "88 22";
+			minExtent = "8 8";
+			visible = "1";
+			helpTag = "0";
+			text = "Ban Message:";
+			maxLength = "255";
+		};
+		new ShellTextEditCtrl(EditChatBanMessage) {
+			profile = "NewTextEditProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+ 			position = "104 194";
+			extent = "366 38";
+			minExtent = "32 38";
+			visible = "1";
+			helpTag = "0";
+			maxLength = "64";
+			historySize = "0";
+			password = "0";
+			glowOffset = "9 9";
+			variable = "$tempBanmsg";
+		};
+		new ShellBitmapButton(ButtonChatOptionsAccept) {
+			profile = "ShellButtonProfile";
+			horizSizing = "right";
+			vertSizing = "top";
+			position = "284 221";
+			extent = "128 38";
+			minExtent = "32 38";
+			visible = "1";
+			command = "AcceptChatOptions();";
+			helpTag = "0";
+			text = "ACCEPT";
+			simpleStyle = "0";
+		};
+		new ShellBitmapButton() {
+			profile = "ShellButtonProfile";
+			horizSizing = "right";
+			vertSizing = "top";
+			position = "78 221";
+			extent = "128 38";
+			minExtent = "32 38";
+			visible = "1";
+			command = "CancelChatOptions();";
+			accelerator = "escape";
+			helpTag = "0";
+			text = "CANCEL";
+			simpleStyle = "0";
+		};
+	};
+};
+//--- OBJECT WRITE END ---

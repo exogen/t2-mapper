@@ -1,0 +1,92 @@
+//--- OBJECT WRITE BEGIN ---
+new GuiControl(WorldEditorToolbarDlg) {
+	profile = "GuiModelessDialogProfile";
+	horizSizing = "right";
+	vertSizing = "bottom";
+	position = "0 0";
+	extent = "640 480";
+	minExtent = "8 8";
+	visible = "1";
+	setFirstResponder = "0";
+	modal = "0";
+	helpTag = "0";
+
+	new GuiControl() {
+		profile = "EditorContentProfile";
+		horizSizing = "width";
+		vertSizing = "bottom";
+		position = "0 0";
+		extent = "640 30";
+		minExtent = "8 8";
+		visible = "1";
+		setFirstResponder = "0";
+		modal = "0";
+		helpTag = "0";
+
+		new GuiCheckBoxCtrl(WorldEditorCreatorCheckBox) {
+			profile = "GuiRadioProfile";
+			horizSizing = "left";
+			vertSizing = "bottom";
+			position = "381 5";
+			extent = "63 20";
+			minExtent = "8 8";
+			visible = "1";
+			setFirstResponder = "0";
+			modal = "1";
+			command = "if($ThisControl.getValue()) WorldEditorFrameSetDlg.addTool(EditorToolCreatorGui); else WorldEditorFrameSetDlg.removeTool(EditorToolCreatorGui);";
+			helpTag = "0";
+			text = "Creator";
+		};
+		new GuiCheckBoxCtrl(WorldEditorTreeCheckBox) {
+			profile = "GuiRadioProfile";
+			horizSizing = "left";
+			vertSizing = "bottom";
+			position = "444 5";
+			extent = "63 20";
+			minExtent = "8 8";
+			visible = "1";
+			setFirstResponder = "0";
+			modal = "1";
+			command = "if($ThisControl.getValue()) WorldEditorFrameSetDlg.addTool(EditorToolTreeViewGui); else WorldEditorFrameSetDlg.removeTool(EditorToolTreeViewGui);";
+			helpTag = "0";
+			text = "Tree";
+		};
+		new GuiCheckBoxCtrl(WorldEditorMissionAreaCheckBox) {
+			profile = "GuiRadioProfile";
+			horizSizing = "left";
+			vertSizing = "bottom";
+			position = "507 5";
+			extent = "63 20";
+			minExtent = "8 8";
+			visible = "1";
+			setFirstResponder = "0";
+			modal = "1";
+			command = "if($ThisControl.getValue()) WorldEditorFrameSetDlg.addTool(EditorToolMissionAreaGui); else WorldEditorFrameSetDlg.removeTool(EditorToolMissionAreaGui);";
+			helpTag = "0";
+			text = "Mission";
+		};
+		new GuiCheckBoxCtrl(WorldEditorInspectorCheckBox) {
+			profile = "GuiRadioProfile";
+			horizSizing = "left";
+			vertSizing = "bottom";
+			position = "570 5";
+			extent = "63 20";
+			minExtent = "8 8";
+			visible = "1";
+			setFirstResponder = "0";
+			modal = "1";
+			command = "if($ThisControl.getValue()) WorldEditorFrameSetDlg.addTool(EditorToolInspectorGui); else WorldEditorFrameSetDlg.removeTool(EditorToolInspectorGui);";
+			helpTag = "0";
+			text = "Inspector";
+		};
+	};
+};
+//--- OBJECT WRITE END ---
+
+function WorldEditorToolbarDlg::init(%this)
+{
+   WorldEditorInspectorCheckBox.setValue(WorldEditorToolFrameSet.isMember("EditorToolInspectorGui"));
+   WorldEditorMissionAreaCheckBox.setValue(WorldEditorToolFrameSet.isMember("EditorToolMissionAreaGui"));
+   WorldEditorTreeCheckBox.setValue(WorldEditorToolFrameSet.isMember("EditorToolTreeViewGui"));
+   WorldEditorCreatorCheckBox.setValue(WorldEditorToolFrameSet.isMember("EditorToolCreatorGui"));
+}

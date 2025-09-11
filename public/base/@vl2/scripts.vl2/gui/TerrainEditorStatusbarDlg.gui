@@ -1,0 +1,68 @@
+//--- OBJECT WRITE BEGIN ---
+new GuiControl(TerrainEditorStatusbarDlg) {
+	profile = "GuiModelessDialogProfile";
+	horizSizing = "right";
+	vertSizing = "bottom";
+	position = "0 0";
+	extent = "640 480";
+	minExtent = "8 8";
+	visible = "1";
+	setFirstResponder = "0";
+	modal = "0";
+	helpTag = "0";
+
+	new GuiControl() {
+		profile = "EditorContentProfile";
+		horizSizing = "width";
+		vertSizing = "top";
+		position = "0 450";
+		extent = "640 30";
+		minExtent = "8 8";
+		visible = "1";
+		setFirstResponder = "0";
+		modal = "1";
+		helpTag = "0";
+
+		new GuiTextCtrl(TEMouseBrushInfo) {
+			profile = "GuiTextProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "3 6";
+			extent = "85 18";
+			minExtent = "8 8";
+			visible = "1";
+			setFirstResponder = "0";
+			modal = "1";
+			helpTag = "0";
+		};
+		new GuiTextCtrl(TESelectionInfo) {
+			profile = "GuiTextProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "209 7";
+			extent = "65 18";
+			minExtent = "8 8";
+			visible = "1";
+			setFirstResponder = "0";
+			modal = "1";
+			helpTag = "0";
+		};
+	};
+};
+//--- OBJECT WRITE END ---
+
+//------------------------------------------------------------------------------
+// Functions
+//------------------------------------------------------------------------------
+
+function TerrainEditorStatusbarDlg::init(%this)
+{
+   TEMouseBrushInfo.setValue("Mouse Brush Info");
+   TESelectionInfo.setValue("Selection Info");
+}
+
+function TerrainEditorStatusbarDlg::update(%this, %info)
+{
+   TEMouseBrushInfo.setValue(" (Mouse Brush) #: " @ getWord(%info, 0) @ "  avg: " @ getWord(%info, 1));
+   TESelectionInfo.setValue(" (Selection) #: " @ getWord(%info, 2) @ "  avg: " @ getWord(%info, 3));
+}

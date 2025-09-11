@@ -1,0 +1,143 @@
+//--- OBJECT WRITE BEGIN ---
+new GuiControl(saveFileDialog) {
+	profile = "GuiDialogProfile";
+	horizSizing = "right";
+	vertSizing = "bottom";
+	position = "0 0";
+	extent = "640 480";
+	minExtent = "8 8";
+	visible = "True";
+	setFirstResponder = "False";
+	modal = "True";
+	helpTag = "0";
+
+	new GuiWindowCtrl() {
+		profile = "GuiWindowProfile";
+		horizSizing = "center";
+		vertSizing = "center";
+		position = "217 140";
+		extent = "280 264";
+		minExtent = "8 8";
+		visible = "True";
+		setFirstResponder = "True";
+		modal = "True";
+		helpTag = "0";
+		text = "SAVE FILE";
+		resizeWidth = "True";
+		resizeHeight = "True";
+		canMove = "True";
+		canClose = "True";
+		canMinimize = "True";
+		canMaximize = "True";
+		minSize = "50 50";
+		closeCommand = "Canvas.popDialog(saveFileDialog);";
+
+		new GuiScrollCtrl() {
+			profile = "GuiScrollCtrlProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "4 24";
+			extent = "196 212";
+			minExtent = "8 8";
+			visible = "True";
+			setFirstResponder = "False";
+			modal = "True";
+			helpTag = "0";
+			willFirstRespond = "True";
+			hScrollBar = "dynamic";
+			vScrollBar = "alwaysOn";
+			constantThumbHeight = "False";
+
+			new GuiScrollContentCtrl() {
+				profile = "GuiScrollContentProfile";
+				horizSizing = "right";
+				vertSizing = "bottom";
+				position = "1 1";
+				extent = "176 210";
+				minExtent = "8 8";
+				visible = "True";
+				setFirstResponder = "False";
+				modal = "True";
+				helpTag = "0";
+
+				new GuiTextListCtrl(saveFileList) {
+					profile = "GuiTextArrayProfile";
+					horizSizing = "right";
+					vertSizing = "bottom";
+					position = "0 0";
+					extent = "64 64";
+					minExtent = "8 8";
+					visible = "True";
+					setFirstResponder = "False";
+					modal = "True";
+					altCommand = "eval($saveFileCommand); Canvas.popDialog(saveFileDialog);";
+					helpTag = "0";
+					enumerate = "False";
+					resizeCell = "True";
+					columns = "0";
+						noDuplicates = "false";
+				};
+			};
+		};
+		new GuiButtonCtrl() {
+			profile = "GuiButtonProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "209 181";
+			extent = "60 20";
+			minExtent = "8 8";
+			visible = "True";
+			setFirstResponder = "False";
+			modal = "True";
+			command = "eval($saveFileCommand); Canvas.popDialog(saveFileDialog);";
+			helpTag = "0";
+			text = "SAVE";
+		};
+		new GuiButtonCtrl() {
+			profile = "GuiButtonProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "209 205";
+			extent = "60 20";
+			minExtent = "8 8";
+			visible = "True";
+			setFirstResponder = "False";
+			modal = "True";
+			command = "Canvas.popDialog(saveFileDialog);";
+			helpTag = "0";
+			text = "CANCEL";
+		};
+		new GuiTextEditCtrl(saveNameEdit) {
+			profile = "GuiTextEditProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "4 240";
+			extent = "196 18";
+			minExtent = "8 8";
+			visible = "True";
+			setFirstResponder = "False";
+			modal = "True";
+			helpTag = "0";
+			historySize = "0";
+		};
+	};
+};
+//--- OBJECT WRITE END ---
+
+
+function saveFileList::onSelect(%this, %id)
+{
+   saveNameEdit.setValue(%this.getValue());
+}  
+
+//------------------------------------------------------------------------------
+// ex: getSaveFilename("stuff\*.*", saveStuff);
+//     -- calls 'saveStuff(%filename)' on dblclick or ok
+//------------------------------------------------------------------------------
+function getSaveFilename(%filespec, %callback, %currentFile)
+{  
+   saveNameEdit.setValue(%currentFile);
+   $saveFileCommand = "if(saveNameEdit.getValue() !$= \"\")" @ %callback @ "(saveNameEdit.getValue());";
+   Canvas.pushDialog(saveFileDialog, 99);
+   fillFileList(%filespec, saveFileList);
+}

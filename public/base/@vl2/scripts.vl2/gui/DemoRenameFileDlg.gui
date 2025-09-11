@@ -1,0 +1,97 @@
+//--- OBJECT WRITE BEGIN ---
+new GuiControl(DemoRenameFileDlg) {
+	profile = "DlgBackProfile";
+	horizSizing = "width";
+	vertSizing = "height";
+	position = "0 0";
+	extent = "640 480";
+	minExtent = "8 8";
+	visible = "1";
+	hideCursor = "0";
+	bypassHideCursor = "0";
+	helpTag = "0";
+
+	new ShellPaneCtrl() {
+		profile = "ShellDlgPaneProfile";
+		horizSizing = "center";
+		vertSizing = "center";
+		position = "170 186";
+		extent = "300 146";
+		minExtent = "48 92";
+		visible = "1";
+		hideCursor = "0";
+		bypassHideCursor = "0";
+		helpTag = "0";
+		text = "Rename File...";
+		longTextBuffer = "0";
+		maxLength = "255";
+		noTitleBar = "0";
+
+		new ShellTextEditCtrl(DemoRenameFile_Edit) {
+			profile = "NewTextEditProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "71 39";
+			extent = "209 39";
+			minExtent = "32 38";
+			visible = "1";
+			hideCursor = "0";
+			bypassHideCursor = "0";
+			helpTag = "0";
+			longTextBuffer = "0";
+			maxLength = "255";
+			historySize = "0";
+			password = "0";
+			IRCName = "0";
+			tabComplete = "0";
+			deniedSound = "InputDeniedSound";
+			glowOffset = "9 9";
+		};
+		new GuiTextCtrl() {
+			profile = "ShellTextProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "28 47";
+			extent = "48 22";
+			minExtent = "8 8";
+			visible = "1";
+			hideCursor = "0";
+			bypassHideCursor = "0";
+			helpTag = "0";
+			text = "Filename:";
+			longTextBuffer = "0";
+			maxLength = "255";
+		};
+		new ShellBitmapButton() {
+			profile = "ShellButtonProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "28 82";
+			extent = "124 38";
+			minExtent = "32 38";
+			visible = "1";
+			hideCursor = "0";
+			bypassHideCursor = "0";
+			helpTag = "0";
+			text = "OK";
+			simpleStyle = "0";
+         command = "Canvas.popDialog(DemoRenameFileDlg); doDemoFileRename();";
+		};
+		new ShellBitmapButton() {
+			profile = "ShellButtonProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "154 82";
+			extent = "124 38";
+			minExtent = "32 38";
+			visible = "1";
+			hideCursor = "0";
+			bypassHideCursor = "0";
+			helpTag = "0";
+			text = "CANCEL";
+			simpleStyle = "0";
+         command = "Canvas.popDialog(DemoRenameFileDlg);";
+		};
+	};
+};
+//--- OBJECT WRITE END ---

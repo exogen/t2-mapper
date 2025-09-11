@@ -1,0 +1,2815 @@
+//--- OBJECT WRITE BEGIN ---
+new GuiControl(TerraformerHeightfieldGui) {
+	profile = "GuiModelessDialogProfile";
+	horizSizing = "width";
+	vertSizing = "height";
+	position = "0 0";
+	extent = "640 480";
+	minExtent = "8 8";
+	visible = "1";
+	setFirstResponder = "1";
+	modal = "1";
+	helpTag = "0";
+
+	new GuiFrameSetCtrl(HeightfieldhRootFrame) {
+		profile = "GuiDefaultProfile";
+		horizSizing = "width";
+		vertSizing = "height";
+		position = "0 30";
+		extent = "640 450";
+		minExtent = "8 8";
+		visible = "1";
+		setFirstResponder = "1";
+		modal = "1";
+		helpTag = "0";
+		columns = "0 279 374";
+		rows = "0";
+		borderWidth = "4";
+		borderColor = "0 76 248 255";
+		borderEnable = "alwaysOff";
+		borderMovable = "alwaysOff";
+		autoBalance = "0";
+
+		new GuiFrameSetCtrl(HeightfieldLeftFrame) {
+			profile = "GuiDefaultProfile";
+			horizSizing = "left";
+			vertSizing = "height";
+			position = "0 0";
+			extent = "275 450";
+			minExtent = "8 8";
+			visible = "1";
+			setFirstResponder = "1";
+			modal = "1";
+			helpTag = "0";
+			columns = "0";
+			rows = "0 250";
+			borderWidth = "4";
+			borderColor = "0 4 248 255";
+			borderEnable = "alwaysOff";
+			borderMovable = "alwaysOff";
+			autoBalance = "0";
+
+			new GuiControl() {
+				profile = "GuiDefaultProfile";
+				horizSizing = "right";
+				vertSizing = "bottom";
+				position = "0 0";
+				extent = "275 246";
+				minExtent = "8 8";
+				visible = "1";
+				setFirstResponder = "1";
+				modal = "1";
+				helpTag = "0";
+
+				new GuiTextCtrl() {
+					profile = "GuiBigTextProfile";
+					horizSizing = "center";
+					vertSizing = "bottom";
+					position = "21 -2";
+					extent = "232 40";
+					minExtent = "8 8";
+					visible = "1";
+					setFirstResponder = "1";
+					modal = "1";
+					helpTag = "0";
+					text = "Heightfield Editor";
+				};
+				new GuiScrollCtrl(HeightfieldTabParent) {
+					profile = "GuiButtonProfile";
+					horizSizing = "right";
+					vertSizing = "bottom";
+					position = "4 35";
+					extent = "266 205";
+					minExtent = "8 8";
+					visible = "1";
+					setFirstResponder = "1";
+					modal = "1";
+					helpTag = "0";
+					willFirstRespond = "1";
+					hScrollBar = "alwaysOff";
+					vScrollBar = "alwaysOff";
+					constantThumbHeight = "1";
+
+					new GuiScrollContentCtrl() {
+						profile = "GuiDefaultProfile";
+						horizSizing = "right";
+						vertSizing = "bottom";
+						position = "1 1";
+						extent = "264 203";
+						minExtent = "8 8";
+						visible = "1";
+						setFirstResponder = "0";
+						modal = "1";
+						helpTag = "0";
+
+						new GuiControl(tab_fBm) {
+							profile = "GuiDefaultProfile";
+							horizSizing = "right";
+							vertSizing = "bottom";
+							position = "0 0";
+							extent = "261 198";
+							minExtent = "8 8";
+							visible = "0";
+							setFirstResponder = "1";
+							modal = "1";
+							helpTag = "0";
+
+							new GuiTextCtrl() {
+								profile = "GuiTextProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "6 6";
+								extent = "100 18";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "1";
+								modal = "1";
+								helpTag = "0";
+								text = "fBm Fractal Settings:";
+							};
+							new GuiTextCtrl() {
+								profile = "GuiTextProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "86 35";
+								extent = "71 18";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "1";
+								modal = "1";
+								helpTag = "0";
+								text = "Hill Frequency:";
+							};
+							new GuiTextEditSliderCtrl(fbm_interval) {
+								profile = "GuiTextEditProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "166 35";
+								extent = "78 18";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "1";
+								modal = "1";
+								helpTag = "0";
+								historySize = "0";
+								format = "%1.0f";
+								range = "1 24";
+								increment = "1";
+							};
+							new GuiTextCtrl() {
+								profile = "GuiTextProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "99 60";
+								extent = "58 18";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "1";
+								modal = "1";
+								helpTag = "0";
+								text = "Roughness:";
+							};
+							new GuiButtonCtrl() {
+								profile = "GuiButtonProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "166 136";
+								extent = "77 20";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "1";
+								modal = "1";
+								command = "fBm_seed.setValue(terraFormer.generateSeed());Heightfield::saveTab();Heightfield::preview($selectedOperation);";
+								helpTag = "0";
+								text = "New Seed";
+							};
+							new GuiTextCtrl() {
+								profile = "GuiTextProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "87 110";
+								extent = "70 18";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "1";
+								modal = "1";
+								helpTag = "0";
+								text = "Random Seed:";
+							};
+							new GuiTextEditCtrl(fBm_seed) {
+								profile = "GuiTextEditProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "166 110";
+								extent = "78 18";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "0";
+								modal = "1";
+								helpTag = "0";
+								text = "0";
+								historySize = "5";
+							};
+							new GuiTextEditSliderCtrl(fbm_rough) {
+								profile = "GuiTextEditProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "166 60";
+								extent = "78 18";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "1";
+								modal = "1";
+								helpTag = "0";
+								historySize = "0";
+								format = "%0.3f";
+								range = "0 1";
+								increment = "0.001";
+							};
+							new GuiTextCtrl() {
+								profile = "GuiTextProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "128 85";
+								extent = "29 18";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "1";
+								modal = "1";
+								helpTag = "0";
+								text = "Detail:";
+							};
+							new GuiPopUpMenuCtrl(fbm_detail) {
+								profile = "GuiButtonProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "166 85";
+								extent = "78 18";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "0";
+								modal = "1";
+								command = "Heightfield::saveTab();Heightfield::preview($selectedOperation);";
+								helpTag = "0";
+								maxPopupHeight = "200";
+							};
+						};
+						new GuiControl(tab_RMF) {
+							profile = "GuiDefaultProfile";
+							horizSizing = "right";
+							vertSizing = "bottom";
+							position = "0 0";
+							extent = "261 198";
+							minExtent = "8 8";
+							visible = "0";
+							setFirstResponder = "1";
+							modal = "1";
+							helpTag = "0";
+
+							new GuiTextCtrl() {
+								profile = "GuiTextProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "6 6";
+								extent = "125 18";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "0";
+								modal = "1";
+								helpTag = "0";
+								text = "Rigid MultiFractal Settings:";
+							};
+							new GuiTextCtrl() {
+								profile = "GuiTextProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "87 35";
+								extent = "71 18";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "1";
+								modal = "1";
+								helpTag = "0";
+								text = "Hill Frequency:";
+							};
+							new GuiButtonCtrl() {
+								profile = "GuiButtonProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "168 137";
+								extent = "73 20";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "1";
+								modal = "1";
+								command = "rmf_seed.setValue(terraFormer.generateSeed());Heightfield::saveTab();Heightfield::preview($selectedOperation);";
+								helpTag = "0";
+								text = "New Seed";
+							};
+							new GuiTextCtrl() {
+								profile = "GuiTextProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "101 60";
+								extent = "58 18";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "1";
+								modal = "1";
+								helpTag = "0";
+								text = "Roughness:";
+							};
+							new GuiTextEditSliderCtrl(rmf_interval) {
+								profile = "GuiTextEditProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "166 35";
+								extent = "78 18";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "1";
+								modal = "1";
+								helpTag = "0";
+								historySize = "0";
+								format = "%1.0f";
+								range = "1 16";
+								increment = "1";
+							};
+							new GuiTextCtrl() {
+								profile = "GuiTextProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "90 111";
+								extent = "67 18";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "0";
+								modal = "1";
+								helpTag = "0";
+								text = "Random Seed";
+							};
+							new GuiTextEditCtrl(rmf_seed) {
+								profile = "GuiTextEditProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "166 110";
+								extent = "78 18";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "0";
+								modal = "1";
+								helpTag = "0";
+								text = "0";
+								historySize = "5";
+							};
+							new GuiTextEditSliderCtrl(rmf_rough) {
+								profile = "GuiTextEditProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "166 60";
+								extent = "78 18";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "1";
+								modal = "1";
+								helpTag = "0";
+								historySize = "0";
+								format = "%0.3f";
+								range = "0 1";
+								increment = "0.001";
+							};
+							new GuiTextCtrl() {
+								profile = "GuiTextProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "128 85";
+								extent = "29 18";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "1";
+								modal = "1";
+								helpTag = "0";
+								text = "Detail:";
+							};
+							new GuiPopUpMenuCtrl(rmf_detail) {
+								profile = "GuiButtonProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "166 85";
+								extent = "78 18";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "0";
+								modal = "1";
+								command = "Heightfield::saveTab();Heightfield::preview($selectedOperation);";
+								helpTag = "0";
+								maxPopupHeight = "200";
+							};
+						};
+						new GuiControl(tab_Canyon) {
+							profile = "GuiDefaultProfile";
+							horizSizing = "right";
+							vertSizing = "bottom";
+							position = "0 0";
+							extent = "261 198";
+							minExtent = "8 8";
+							visible = "0";
+							setFirstResponder = "1";
+							modal = "1";
+							helpTag = "0";
+
+							new GuiTextCtrl() {
+								profile = "GuiTextProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "6 6";
+								extent = "118 18";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "0";
+								modal = "1";
+								helpTag = "0";
+								text = "Canyon Fractal Settings:";
+							};
+							new GuiTextCtrl() {
+								profile = "GuiTextProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "124 61";
+								extent = "34 18";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "0";
+								modal = "1";
+								helpTag = "0";
+								text = "Chaos:";
+							};
+							new GuiTextEditSliderCtrl(canyon_freq) {
+								profile = "GuiTextEditProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "166 35";
+								extent = "78 18";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "1";
+								modal = "1";
+								helpTag = "0";
+								historySize = "0";
+								format = "%1.0f";
+								range = "4 10";
+								increment = "1";
+							};
+							new GuiTextCtrl() {
+								profile = "GuiTextProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "63 35";
+								extent = "95 18";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "1";
+								modal = "1";
+								helpTag = "0";
+								text = "Canyon Frequency:";
+							};
+							new GuiButtonCtrl() {
+								profile = "GuiButtonProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "168 114";
+								extent = "73 20";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "1";
+								modal = "1";
+								command = "canyon_seed.setValue(terraFormer.generateSeed());Heightfield::saveTab();Heightfield::preview($selectedOperation);";
+								helpTag = "0";
+								text = "New Seed";
+							};
+							new GuiTextCtrl() {
+								profile = "GuiTextProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "88 89";
+								extent = "70 18";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "1";
+								modal = "1";
+								helpTag = "0";
+								text = "Random Seed:";
+							};
+							new GuiTextEditCtrl(canyon_seed) {
+								profile = "GuiTextEditProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "166 89";
+								extent = "78 18";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "0";
+								modal = "1";
+								helpTag = "0";
+								text = "0";
+								historySize = "5";
+							};
+							new GuiTextEditSliderCtrl(canyon_factor) {
+								profile = "GuiTextEditProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "166 62";
+								extent = "78 18";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "1";
+								modal = "1";
+								helpTag = "0";
+								historySize = "0";
+								format = "%0.3f";
+								range = "0 1";
+								increment = "0.001";
+							};
+						};
+						new GuiControl(tab_Smooth) {
+							profile = "GuiDefaultProfile";
+							horizSizing = "right";
+							vertSizing = "bottom";
+							position = "0 0";
+							extent = "261 198";
+							minExtent = "8 8";
+							visible = "0";
+							setFirstResponder = "1";
+							modal = "1";
+							helpTag = "0";
+
+							new GuiTextCtrl() {
+								profile = "GuiTextProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "6 6";
+								extent = "95 18";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "0";
+								modal = "1";
+								helpTag = "0";
+								text = "Smoothing Settings:";
+							};
+							new GuiTextCtrl() {
+								profile = "GuiTextProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "79 64";
+								extent = "77 18";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "1";
+								modal = "1";
+								helpTag = "0";
+								text = "Agressiveness:";
+							};
+							new GuiTextEditSliderCtrl(smooth_iter) {
+								profile = "GuiTextEditProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "166 35";
+								extent = "78 18";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "1";
+								modal = "1";
+								command = "Heightfield::saveTab($selectedOperation);Heightfield::preview($selectedOperation);";
+								helpTag = "0";
+								historySize = "0";
+								format = "%1.0f";
+								range = "0 40";
+								increment = "1";
+							};
+							new GuiTextCtrl() {
+								profile = "GuiTextProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "109 36";
+								extent = "47 18";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "1";
+								modal = "1";
+								helpTag = "0";
+								text = "Iterations:";
+							};
+							new GuiTextEditSliderCtrl(smooth_factor) {
+								profile = "GuiTextEditProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "166 63";
+								extent = "78 18";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "1";
+								modal = "1";
+								helpTag = "0";
+								historySize = "0";
+								format = "%0.3f";
+								range = "0 1";
+								increment = "0.001";
+							};
+						};
+						new GuiControl(tab_SmoothWater) {
+							profile = "GuiDefaultProfile";
+							horizSizing = "right";
+							vertSizing = "bottom";
+							position = "0 0";
+							extent = "261 198";
+							minExtent = "8 8";
+							visible = "0";
+							setFirstResponder = "1";
+							modal = "1";
+							helpTag = "0";
+
+							new GuiTextCtrl() {
+								profile = "GuiTextProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "6 6";
+								extent = "154 18";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "0";
+								modal = "1";
+								helpTag = "0";
+								text = "Water Area Smoothing Settings:";
+							};
+							new GuiTextCtrl() {
+								profile = "GuiTextProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "79 64";
+								extent = "77 18";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "1";
+								modal = "1";
+								helpTag = "0";
+								text = "Agressiveness:";
+							};
+							new GuiTextEditSliderCtrl(watersmooth_iter) {
+								profile = "GuiTextEditProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "166 35";
+								extent = "78 18";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "1";
+								modal = "1";
+								command = "Heightfield::saveTab($selectedOperation);Heightfield::preview($selectedOperation);";
+								helpTag = "0";
+								historySize = "0";
+								format = "%1.0f";
+								range = "0 40";
+								increment = "1";
+							};
+							new GuiTextCtrl() {
+								profile = "GuiTextProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "109 36";
+								extent = "47 18";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "1";
+								modal = "1";
+								helpTag = "0";
+								text = "Iterations:";
+							};
+							new GuiTextEditSliderCtrl(watersmooth_factor) {
+								profile = "GuiTextEditProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "166 63";
+								extent = "78 18";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "1";
+								modal = "1";
+								helpTag = "0";
+								historySize = "0";
+								format = "%0.3f";
+								range = "0 1";
+								increment = "0.001";
+							};
+						};
+						new GuiControl(tab_SmoothRidge) {
+							profile = "GuiDefaultProfile";
+							horizSizing = "right";
+							vertSizing = "bottom";
+							position = "0 0";
+							extent = "261 198";
+							minExtent = "8 8";
+							visible = "0";
+							setFirstResponder = "1";
+							modal = "1";
+							helpTag = "0";
+
+							new GuiTextCtrl() {
+								profile = "GuiTextProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "6 6";
+								extent = "152 18";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "0";
+								modal = "1";
+								helpTag = "0";
+								text = "Ridge Area Smoothing Settings:";
+							};
+							new GuiTextCtrl() {
+								profile = "GuiTextProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "79 64";
+								extent = "77 18";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "1";
+								modal = "1";
+								helpTag = "0";
+								text = "Agressiveness:";
+							};
+							new GuiTextEditSliderCtrl(Ridgesmooth_iter) {
+								profile = "GuiTextEditProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "166 35";
+								extent = "78 18";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "1";
+								modal = "1";
+								command = "Heightfield::saveTab($selectedOperation);Heightfield::preview($selectedOperation);";
+								helpTag = "0";
+								historySize = "0";
+								format = "%1.0f";
+								range = "0 40";
+								increment = "1";
+							};
+							new GuiTextCtrl() {
+								profile = "GuiTextProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "109 36";
+								extent = "47 18";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "1";
+								modal = "1";
+								helpTag = "0";
+								text = "Iterations:";
+							};
+							new GuiTextEditSliderCtrl(Ridgesmooth_factor) {
+								profile = "GuiTextEditProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "166 63";
+								extent = "78 18";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "1";
+								modal = "1";
+								helpTag = "0";
+								historySize = "0";
+								format = "%0.3f";
+								range = "0 1";
+								increment = "0.001";
+							};
+						};
+						new GuiControl(tab_Filter) {
+							profile = "GuiDefaultProfile";
+							horizSizing = "right";
+							vertSizing = "bottom";
+							position = "0 0";
+							extent = "261 198";
+							minExtent = "8 8";
+							visible = "0";
+							setFirstResponder = "1";
+							modal = "1";
+							helpTag = "0";
+
+							new GuiTextCtrl() {
+								profile = "GuiTextProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "6 6";
+								extent = "101 18";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "1";
+								modal = "1";
+								helpTag = "0";
+								text = "Height Filter Settings:";
+							};
+							new GuiFilterCtrl(filter) {
+								profile = "GuiDefaultProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "16 29";
+								extent = "130 130";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "0";
+								modal = "1";
+								command = "Heightfield::saveTab($selectedOperation);Heightfield::preview($selectedOperation);";
+								helpTag = "0";
+								controlPoints = "7";
+								filter = "0.000000 0.166667 0.333333 0.500000 0.666667 0.833333 1.000000";
+							};
+							new GuiTextCtrl() {
+								profile = "GuiTextProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "154 84";
+								extent = "30 18";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "1";
+								modal = "1";
+								helpTag = "0";
+								text = "Result";
+							};
+							new GuiTextCtrl() {
+								profile = "GuiTextProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "68 167";
+								extent = "23 18";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "1";
+								modal = "1";
+								helpTag = "0";
+								text = "Input";
+							};
+							new GuiTextCtrl() {
+								profile = "GuiTextProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "16 160";
+								extent = "16 18";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "1";
+								modal = "1";
+								helpTag = "0";
+								text = "min";
+							};
+							new GuiTextCtrl() {
+								profile = "GuiTextProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "127 160";
+								extent = "20 18";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "1";
+								modal = "1";
+								helpTag = "0";
+								text = "max";
+							};
+							new GuiTextCtrl() {
+								profile = "GuiTextProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "150 142";
+								extent = "16 18";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "1";
+								modal = "1";
+								helpTag = "0";
+								text = "min";
+							};
+							new GuiTextCtrl() {
+								profile = "GuiTextProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "150 28";
+								extent = "20 18";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "1";
+								modal = "1";
+								helpTag = "0";
+								text = "max";
+							};
+							new GuiTextEditSliderCtrl() {
+								profile = "GuiTextEditProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "189 139";
+								extent = "61 18";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "0";
+								modal = "1";
+								variable = "filter.controlPoints";
+								command = "filter.controlPoints = $ThisControl.getValue();Heightfield::saveTab($selectedOperation);Heightfield::preview($selectedOperation);";
+								helpTag = "0";
+								historySize = "0";
+								format = "%3.0f";
+								range = "2 20";
+								increment = "1";
+							};
+							new GuiTextCtrl() {
+								profile = "GuiTextProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "187 118";
+								extent = "66 18";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "1";
+								modal = "1";
+								helpTag = "0";
+								text = "Control Points";
+							};
+						};
+						new GuiControl(tab_Turbulence) {
+							profile = "GuiDefaultProfile";
+							horizSizing = "right";
+							vertSizing = "bottom";
+							position = "0 0";
+							extent = "261 198";
+							minExtent = "8 8";
+							visible = "0";
+							setFirstResponder = "1";
+							modal = "1";
+							helpTag = "0";
+
+							new GuiTextCtrl() {
+								profile = "GuiTextProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "6 6";
+								extent = "99 18";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "0";
+								modal = "1";
+								helpTag = "0";
+								text = "Turbulence Settings:";
+							};
+							new GuiTextCtrl() {
+								profile = "GuiTextProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "65 34";
+								extent = "91 18";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "1";
+								modal = "1";
+								helpTag = "0";
+								text = "Turbulence Factor:";
+							};
+							new GuiTextEditSliderCtrl(turbulence_factor) {
+								profile = "GuiTextEditProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "166 35";
+								extent = "78 18";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "1";
+								modal = "1";
+								helpTag = "0";
+								historySize = "0";
+								format = "%0.3f";
+								range = "0 1";
+								increment = "0.001";
+							};
+							new GuiTextCtrl() {
+								profile = "GuiTextProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "75 61";
+								extent = "81 18";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "1";
+								modal = "1";
+								helpTag = "0";
+								text = "Radius of Effect:";
+							};
+							new GuiTextEditSliderCtrl(turbulence_radius) {
+								profile = "GuiTextEditProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "166 61";
+								extent = "78 18";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "1";
+								modal = "1";
+								helpTag = "0";
+								historySize = "0";
+								format = "%1.0f";
+								range = "1 40";
+								increment = "1";
+							};
+						};
+						new GuiControl(tab_Thermal) {
+							profile = "GuiDefaultProfile";
+							horizSizing = "right";
+							vertSizing = "bottom";
+							position = "0 0";
+							extent = "261 198";
+							minExtent = "8 8";
+							visible = "0";
+							setFirstResponder = "1";
+							modal = "1";
+							helpTag = "0";
+
+							new GuiTextCtrl() {
+								profile = "GuiTextProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "6 6";
+								extent = "122 18";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "0";
+								modal = "1";
+								helpTag = "0";
+								text = "Thermal Erosion Settings:";
+							};
+							new GuiTextCtrl() {
+								profile = "GuiTextProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "112 36";
+								extent = "47 18";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "1";
+								modal = "1";
+								helpTag = "0";
+								text = "Iterations:";
+							};
+							new GuiTextCtrl() {
+								profile = "GuiTextProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "79 91";
+								extent = "80 18";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "1";
+								modal = "1";
+								helpTag = "0";
+								text = "Material Loss %:";
+							};
+							new GuiTextCtrl() {
+								profile = "GuiTextProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "20 63";
+								extent = "139 18";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "1";
+								modal = "1";
+								helpTag = "0";
+								text = "Min Erosion Slope (degrees):";
+							};
+							new GuiTextEditSliderCtrl(thermal_iter) {
+								profile = "GuiTextEditProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "166 36";
+								extent = "78 18";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "1";
+								modal = "1";
+								helpTag = "0";
+								historySize = "0";
+								format = "%1.0f";
+								range = "0 50";
+								increment = "1";
+							};
+							new GuiTextEditSliderCtrl(thermal_slope) {
+								profile = "GuiTextEditProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "166 63";
+								extent = "78 18";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "1";
+								modal = "1";
+								helpTag = "0";
+								historySize = "0";
+								format = "%2.1f";
+								range = "0 89";
+								increment = "0.1";
+							};
+							new GuiTextEditSliderCtrl(thermal_cons) {
+								profile = "GuiTextEditProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "166 90";
+								extent = "78 18";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "1";
+								modal = "1";
+								helpTag = "0";
+								historySize = "0";
+								format = "%2.1f";
+								range = "0 100";
+								increment = "0.1";
+							};
+						};
+						new GuiControl(tab_Hydraulic) {
+							profile = "GuiDefaultProfile";
+							horizSizing = "right";
+							vertSizing = "bottom";
+							position = "0 0";
+							extent = "259 198";
+							minExtent = "8 8";
+							visible = "0";
+							setFirstResponder = "1";
+							modal = "1";
+							helpTag = "0";
+
+							new GuiTextCtrl() {
+								profile = "GuiTextProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "6 6";
+								extent = "129 18";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "0";
+								modal = "1";
+								helpTag = "0";
+								text = "Hydraulic Erosion Settings:";
+							};
+							new GuiTextCtrl() {
+								profile = "GuiTextProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "112 34";
+								extent = "47 18";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "1";
+								modal = "1";
+								helpTag = "0";
+								text = "Iterations:";
+							};
+							new GuiFilterCtrl(hydraulic_filter) {
+								profile = "GuiDefaultProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "16 57";
+								extent = "130 130";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "0";
+								modal = "1";
+								command = "Heightfield::saveTab();Heightfield::preview($selectedOperation);";
+								helpTag = "0";
+								controlPoints = "7";
+								filter = "0.000000 0.166667 0.333333 0.500000 0.666667 0.833333 1.000000";
+							};
+							new GuiTextEditSliderCtrl(hydraulic_iter) {
+								profile = "GuiTextEditProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "166 35";
+								extent = "78 18";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "1";
+								modal = "1";
+								helpTag = "0";
+								historySize = "0";
+								format = "%1.0f";
+								range = "0 50";
+								increment = "1";
+							};
+							new GuiTextEditSliderCtrl() {
+								profile = "GuiTextEditProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "165 161";
+								extent = "64 18";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "0";
+								modal = "1";
+								variable = "hydraulic_filter.controlPoints";
+								command = "hydraulic_filter.controlPoints = $ThisControl.getValue();Heightfield::saveTab();Heightfield::preview($selectedOperation);";
+								helpTag = "0";
+								historySize = "0";
+								format = "%3.0f";
+								range = "2 20";
+								increment = "1";
+							};
+							new GuiTextCtrl() {
+								profile = "GuiTextProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "165 141";
+								extent = "69 18";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "1";
+								modal = "1";
+								helpTag = "0";
+								text = "Control Points:";
+							};
+						};
+						new GuiControl(tab_Sinus) {
+							profile = "GuiDefaultProfile";
+							horizSizing = "right";
+							vertSizing = "bottom";
+							position = "0 0";
+							extent = "259 199";
+							minExtent = "8 8";
+							visible = "0";
+							setFirstResponder = "1";
+							modal = "1";
+							helpTag = "0";
+
+							new GuiTextCtrl() {
+								profile = "GuiTextProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "6 6";
+								extent = "72 18";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "0";
+								modal = "1";
+								helpTag = "0";
+								text = "Sinus Settings:";
+							};
+							new GuiFilterCtrl(sinus_filter) {
+								profile = "GuiDefaultProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "36 64";
+								extent = "130 130";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "0";
+								modal = "1";
+								command = "Heightfield::saveTab();Heightfield::preview($selectedOperation);";
+								helpTag = "0";
+								controlPoints = "7";
+								filter = "0.176920 0.833330 0.876920 0.238460 0.215380 0.166660 0.000000";
+							};
+							new GuiTextCtrl() {
+								profile = "GuiTextProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "100 32";
+								extent = "70 18";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "1";
+								modal = "1";
+								helpTag = "0";
+								text = "Random Seed:";
+							};
+							new GuiTextEditCtrl(sinus_seed) {
+								profile = "GuiTextEditProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "174 32";
+								extent = "78 18";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "0";
+								modal = "1";
+								helpTag = "0";
+								text = "0";
+								historySize = "5";
+							};
+							new GuiButtonCtrl() {
+								profile = "GuiButtonProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "177 66";
+								extent = "73 20";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "1";
+								modal = "1";
+								command = "sinus_seed.setValue(terraFormer.generateSeed());Heightfield::saveTab();Heightfield::preview($selectedOperation);";
+								helpTag = "0";
+								text = "New Seed";
+							};
+							new GuiTextEditSliderCtrl() {
+								profile = "GuiTextEditProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "178 171";
+								extent = "64 18";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "0";
+								modal = "1";
+								variable = "sinus_filter.controlPoints";
+								command = "sinus_filter.controlPoints = $ThisControl.getValue();Heightfield::saveTab();Heightfield::preview($selectedOperation);";
+								helpTag = "0";
+								historySize = "0";
+								format = "%3.0f";
+								range = "2 20";
+								increment = "1";
+							};
+							new GuiTextCtrl() {
+								profile = "GuiTextProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "179 150";
+								extent = "69 18";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "1";
+								modal = "1";
+								helpTag = "0";
+								text = "Control Points:";
+							};
+						};
+						new GuiControl(tab_terrainFile) {
+							profile = "EditorContentProfile";
+							horizSizing = "right";
+							vertSizing = "bottom";
+							position = "0 0";
+							extent = "261 198";
+							minExtent = "8 8";
+							visible = "0";
+							setFirstResponder = "1";
+							modal = "1";
+							helpTag = "0";
+
+							new GuiTextCtrl() {
+								profile = "GuiTextProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "4 2";
+								extent = "53 18";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "0";
+								modal = "1";
+								helpTag = "0";
+								text = "TerrainFile:";
+							};
+							new GuiScrollCtrl() {
+								profile = "GuiScrollCtrlProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "0 20";
+								extent = "262 180";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "0";
+								modal = "1";
+								helpTag = "0";
+								willFirstRespond = "1";
+								hScrollBar = "dynamic";
+								vScrollBar = "alwaysOn";
+								constantThumbHeight = "0";
+
+								new GuiScrollContentCtrl() {
+									profile = "GuiScrollContentProfile";
+									horizSizing = "right";
+									vertSizing = "bottom";
+									position = "1 1";
+									extent = "242 178";
+									minExtent = "8 8";
+									visible = "1";
+									setFirstResponder = "0";
+									modal = "1";
+									helpTag = "0";
+
+									new GuiTextListCtrl(terrainFile_textList) {
+										profile = "GuiTextArrayProfile";
+										horizSizing = "right";
+										vertSizing = "bottom";
+										position = "0 0";
+										extent = "64 64";
+										minExtent = "8 8";
+										visible = "1";
+										setFirstResponder = "0";
+										modal = "1";
+										command = "terrainFile_terrFileText.setValue(\"terrains/\" @ terrainFile_textList.getRowTextById(terrainFile_textList.getSelectedId()));Heightfield::saveTab();Heightfield::preview($selectedOperation);";
+										helpTag = "0";
+										enumerate = "0";
+										resizeCell = "1";
+										columns = "0";
+									};
+								};
+							};
+							new GuiTextCtrl(terrainFile_terrFileText) {
+								profile = "GuiTextProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "64 2";
+								extent = "8 18";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "0";
+								modal = "1";
+								helpTag = "0";
+							};
+						};
+						new GuiControl(tab_General) {
+							profile = "GuiDefaultProfile";
+							horizSizing = "right";
+							vertSizing = "bottom";
+							position = "0 0";
+							extent = "261 198";
+							minExtent = "8 8";
+							visible = "0";
+							setFirstResponder = "1";
+							modal = "1";
+							helpTag = "0";
+
+							new GuiTextCtrl() {
+								profile = "GuiTextProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "6 6";
+								extent = "83 18";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "0";
+								modal = "1";
+								helpTag = "0";
+								text = "General Settings:";
+							};
+							new GuiTextCtrl() {
+								profile = "GuiTextProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "8 53";
+								extent = "67 18";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "1";
+								modal = "1";
+								helpTag = "0";
+								text = "Height Range:";
+							};
+							new GuiTextEditSliderCtrl(general_scale) {
+								profile = "GuiTextEditProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "108 52";
+								extent = "64 18";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "1";
+								modal = "1";
+								helpTag = "0";
+								historySize = "0";
+								format = "%1.0f";
+								range = "5 500";
+								increment = "1";
+							};
+							new GuiTextCtrl() {
+								profile = "GuiTextProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "177 53";
+								extent = "33 18";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "1";
+								modal = "1";
+								helpTag = "0";
+								text = "meters";
+							};
+							new GuiTextCtrl() {
+								profile = "GuiTextProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "29 93";
+								extent = "74 18";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "1";
+								modal = "1";
+								helpTag = "0";
+								text = "Water Level %:";
+							};
+							new GuiSliderCtrl(general_water) {
+								profile = "GuiTextProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "22 113";
+								extent = "200 30";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "0";
+								modal = "1";
+								variable = "value";
+								command = "general_water_meters.setValue(general_water.getValue()*general_scale.getValue()+general_min_height.getValue() @ \" meters\");Heightfield::saveTab();Heightfield::preview();";
+								helpTag = "0";
+								range = "0.000000 1.000000";
+								ticks = "5";
+								value = "0";
+							};
+							new GuiTextCtrl(general_water_meters) {
+								profile = "GuiTextProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "109 93";
+								extent = "42 18";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "1";
+								modal = "1";
+								helpTag = "0";
+								text = "0 meters";
+							};
+							new GuiButtonCtrl() {
+								profile = "GuiButtonProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "64 158";
+								extent = "135 20";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "0";
+								modal = "1";
+								command = "Heightfield::center();";
+								helpTag = "0";
+								text = "Center on Camera";
+							};
+							new GuiTextCtrl(general_centerx) {
+								profile = "GuiTextProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "6 6";
+								extent = "8 18";
+								minExtent = "8 8";
+								visible = "0";
+								setFirstResponder = "0";
+								modal = "1";
+								helpTag = "0";
+								text = "0";
+							};
+							new GuiTextCtrl(general_centery) {
+								profile = "GuiTextProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "6 6";
+								extent = "8 18";
+								minExtent = "8 8";
+								visible = "0";
+								setFirstResponder = "0";
+								modal = "1";
+								helpTag = "0";
+								text = "0";
+							};
+							new GuiTextCtrl() {
+								profile = "GuiTextProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "8 28";
+								extent = "89 18";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "1";
+								modal = "1";
+								helpTag = "0";
+								text = "Min Terrain Height:";
+							};
+							new GuiTextEditSliderCtrl(general_min_height) {
+								profile = "GuiTextEditProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "108 27";
+								extent = "64 18";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "1";
+								modal = "1";
+								helpTag = "0";
+								historySize = "0";
+								format = "%1.0f";
+								range = "0 500";
+								increment = "1";
+							};
+							new GuiTextCtrl() {
+								profile = "GuiTextProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "177 28";
+								extent = "33 18";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "1";
+								modal = "1";
+								helpTag = "0";
+								text = "meters";
+							};
+						};
+						new GuiControl(tab_Bitmap) {
+							profile = "GuiDefaultProfile";
+							horizSizing = "right";
+							vertSizing = "bottom";
+							position = "0 0";
+							extent = "261 198";
+							minExtent = "8 8";
+							visible = "0";
+							setFirstResponder = "1";
+							modal = "1";
+							helpTag = "0";
+
+							new GuiTextCtrl() {
+								profile = "GuiTextProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "6 6";
+								extent = "76 18";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "0";
+								modal = "1";
+								helpTag = "0";
+								text = "Bitmap settings:";
+							};
+							new GuiTextCtrl() {
+								profile = "GuiTextProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "10 43";
+								extent = "45 18";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "0";
+								modal = "1";
+								helpTag = "0";
+								text = "Filename:";
+							};
+							new GuiTextCtrl(bitmap_name) {
+								profile = "GuiTextProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "64 43";
+								extent = "8 18";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "0";
+								modal = "1";
+								helpTag = "0";
+							};
+							new GuiButtonCtrl(bitmap_choose) {
+								profile = "GuiButtonProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "10 65";
+								extent = "73 20";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "0";
+								modal = "1";
+								command = "Heightfield::setBitmap();";
+								helpTag = "0";
+								text = "Choose...";
+							};
+						};
+						new GuiControl(tab_Blend) {
+							profile = "GuiDefaultProfile";
+							horizSizing = "right";
+							vertSizing = "bottom";
+							position = "0 0";
+							extent = "261 198";
+							minExtent = "8 8";
+							visible = "0";
+							setFirstResponder = "1";
+							modal = "1";
+							helpTag = "0";
+
+							new GuiPopUpMenuCtrl(blend_option) {
+								profile = "GuiButtonProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "64 118";
+								extent = "82 20";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "1";
+								modal = "1";
+								command = "Heightfield::saveTab();Heightfield::preview($selectedOperation);";
+								helpTag = "0";
+								text = "Add";
+								maxPopupHeight = "200";
+							};
+							new GuiTextCtrl() {
+								profile = "GuiTextProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "6 6";
+								extent = "71 18";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "0";
+								modal = "1";
+								helpTag = "0";
+								text = "Blend settings:";
+							};
+							new GuiTextCtrl() {
+								profile = "GuiTextProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "4 31";
+								extent = "34 18";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "0";
+								modal = "1";
+								helpTag = "0";
+								text = "Factor:";
+							};
+							new GuiSliderCtrl(blend_factor) {
+								profile = "GuiTextProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "49 29";
+								extent = "200 30";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "0";
+								modal = "1";
+								variable = "value";
+								command = "Heightfield::saveTab();Heightfield::preview($selectedOperation);";
+								helpTag = "0";
+								range = "0.000000 1.000000";
+								ticks = "5";
+								value = "0.4";
+							};
+							new GuiTextCtrl() {
+								profile = "GuiTextProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "6 64";
+								extent = "49 18";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "0";
+								modal = "1";
+								helpTag = "0";
+								text = "Source A:";
+							};
+							new GuiTextCtrl() {
+								profile = "GuiTextProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "23 156";
+								extent = "205 18";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "1";
+								modal = "1";
+								helpTag = "0";
+								text = "result = (A*factor) operation (B*(1-factor))";
+							};
+							new GuiTextCtrl() {
+								profile = "GuiTextProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "7 91";
+								extent = "48 18";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "0";
+								modal = "1";
+								helpTag = "0";
+								text = "Source B:";
+							};
+							new GuiTextEditCtrl(blend_srcB) {
+								profile = "GuiTextEditProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "64 89";
+								extent = "33 18";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "0";
+								modal = "1";
+								helpTag = "0";
+								text = "1";
+								historySize = "5";
+							};
+							new GuiTextCtrl(blend_srcA) {
+								profile = "GuiTextProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "64 65";
+								extent = "92 18";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "1";
+								modal = "1";
+								helpTag = "0";
+								text = "Previous Operation";
+							};
+							new GuiTextCtrl() {
+								profile = "GuiTextProfile";
+								horizSizing = "right";
+								vertSizing = "bottom";
+								position = "5 118";
+								extent = "50 18";
+								minExtent = "8 8";
+								visible = "1";
+								setFirstResponder = "1";
+								modal = "1";
+								helpTag = "0";
+								text = "Operation:";
+							};
+						};
+					};
+				};
+			};
+			new GuiControl() {
+				profile = "GuiDefaultProfile";
+				horizSizing = "right";
+				vertSizing = "bottom";
+				position = "0 250";
+				extent = "275 200";
+				minExtent = "8 8";
+				visible = "1";
+				setFirstResponder = "1";
+				modal = "1";
+				helpTag = "0";
+
+				new GuiPopUpMenuCtrl(Heightfield_options) {
+					profile = "GuiButtonProfile";
+					horizSizing = "right";
+					vertSizing = "bottom";
+					position = "4 3";
+					extent = "199 20";
+					minExtent = "8 8";
+					visible = "1";
+					setFirstResponder = "1";
+					modal = "1";
+					helpTag = "0";
+					text = "Options";
+					maxPopupHeight = "200";
+						setText = "false";
+				};
+				new GuiButtonCtrl() {
+					profile = "GuiButtonProfile";
+					horizSizing = "right";
+					vertSizing = "bottom";
+					position = "205 3";
+					extent = "53 20";
+					minExtent = "8 8";
+					visible = "1";
+					setFirstResponder = "1";
+					modal = "1";
+					command = "Heightfield::onDelete();";
+					helpTag = "0";
+					text = "Delete";
+				};
+				new GuiScrollCtrl() {
+					profile = "GuiButtonProfile";
+					horizSizing = "width";
+					vertSizing = "height";
+					position = "5 27";
+					extent = "266 166";
+					minExtent = "8 8";
+					visible = "1";
+					setFirstResponder = "1";
+					modal = "1";
+					helpTag = "0";
+					willFirstRespond = "1";
+					hScrollBar = "alwaysOff";
+					vScrollBar = "dynamic";
+					constantThumbHeight = "1";
+
+					new GuiScrollContentCtrl() {
+						profile = "GuiButtonProfile";
+						horizSizing = "right";
+						vertSizing = "bottom";
+						position = "1 1";
+						extent = "264 164";
+						minExtent = "8 8";
+						visible = "1";
+						setFirstResponder = "0";
+						modal = "1";
+						helpTag = "0";
+
+						new GuiTextListCtrl(Heightfield_operation) {
+							profile = "GuiButtonProfile";
+							horizSizing = "right";
+							vertSizing = "bottom";
+							position = "0 0";
+							extent = "12 16";
+							minExtent = "8 8";
+							visible = "1";
+							setFirstResponder = "0";
+							modal = "1";
+							helpTag = "0";
+							enumerate = "0";
+							resizeCell = "1";
+							columns = "1";
+						};
+					};
+				};
+			};
+		};
+		new GuiFrameSetCtrl(HeightfieldCenterFrame) {
+			profile = "GuiDefaultProfile";
+			horizSizing = "right";
+			vertSizing = "height";
+			position = "279 0";
+			extent = "91 450";
+			minExtent = "8 8";
+			visible = "1";
+			setFirstResponder = "1";
+			modal = "1";
+			helpTag = "0";
+			columns = "0";
+			rows = "0";
+			borderWidth = "4";
+			borderColor = "0 4 248 255";
+			borderEnable = "alwaysOff";
+			borderMovable = "alwaysOff";
+			autoBalance = "0";
+
+			new GuiControl() {
+				profile = "GuiDefaultProfile";
+				horizSizing = "right";
+				vertSizing = "bottom";
+				position = "0 0";
+				extent = "91 450";
+				minExtent = "8 8";
+				visible = "1";
+				setFirstResponder = "1";
+				modal = "1";
+				helpTag = "0";
+
+				new GuiControl() {
+					profile = "GuiDefaultProfile";
+					horizSizing = "center";
+					vertSizing = "bottom";
+					position = "4 2";
+					extent = "82 445";
+					minExtent = "8 8";
+					visible = "1";
+					setFirstResponder = "1";
+					modal = "1";
+					helpTag = "0";
+
+					new GuiButtonCtrl() {
+						profile = "GuiButtonProfile";
+						horizSizing = "right";
+						vertSizing = "bottom";
+						position = "0 27";
+						extent = "80 20";
+						minExtent = "8 8";
+						visible = "1";
+						setFirstResponder = "1";
+						modal = "1";
+						command = "Heightfield::load(Lush);";
+						helpTag = "0";
+						text = "Lush";
+					};
+					new GuiButtonCtrl() {
+						profile = "GuiButtonProfile";
+						horizSizing = "right";
+						vertSizing = "bottom";
+						position = "0 52";
+						extent = "80 20";
+						minExtent = "8 8";
+						visible = "1";
+						setFirstResponder = "1";
+						modal = "1";
+						command = "Heightfield::load(Swamp);";
+						helpTag = "0";
+						text = "Swamp";
+					};
+					new GuiButtonCtrl() {
+						profile = "GuiButtonProfile";
+						horizSizing = "right";
+						vertSizing = "bottom";
+						position = "0 77";
+						extent = "80 20";
+						minExtent = "8 8";
+						visible = "1";
+						setFirstResponder = "1";
+						modal = "1";
+						command = "Heightfield::load(BadLands);";
+						helpTag = "0";
+						text = "BadLands";
+					};
+					new GuiButtonCtrl() {
+						profile = "GuiButtonProfile";
+						horizSizing = "right";
+						vertSizing = "bottom";
+						position = "0 102";
+						extent = "80 20";
+						minExtent = "8 8";
+						visible = "1";
+						setFirstResponder = "1";
+						modal = "1";
+						command = "Heightfield::load(Ice);";
+						helpTag = "0";
+						text = "Ice";
+					};
+					new GuiButtonCtrl() {
+						profile = "GuiButtonProfile";
+						horizSizing = "right";
+						vertSizing = "bottom";
+						position = "0 127";
+						extent = "80 20";
+						minExtent = "8 8";
+						visible = "1";
+						setFirstResponder = "1";
+						modal = "1";
+						command = "Heightfield::load(Desert);";
+						helpTag = "0";
+						text = "Desert";
+					};
+					new GuiButtonCtrl() {
+						profile = "GuiButtonProfile";
+						horizSizing = "right";
+						vertSizing = "bottom";
+						position = "0 152";
+						extent = "80 20";
+						minExtent = "8 8";
+						visible = "1";
+						setFirstResponder = "1";
+						modal = "1";
+						command = "Heightfield::load(Lava);";
+						helpTag = "0";
+						text = "Lava";
+					};
+					new GuiButtonCtrl() {
+						profile = "GuiButtonProfile";
+						horizSizing = "right";
+						vertSizing = "bottom";
+						position = "0 400";
+						extent = "80 20";
+						minExtent = "8 8";
+						visible = "1";
+						setFirstResponder = "1";
+						modal = "1";
+						command = "Heightfield::saveTab();TerraformerGui.setView(TextureView);";
+						helpTag = "0";
+						text = "Texture";
+					};
+					new GuiButtonCtrl() {
+						profile = "GuiButtonProfile";
+						horizSizing = "right";
+						vertSizing = "bottom";
+						position = "0 275";
+						extent = "80 20";
+						minExtent = "8 8";
+						visible = "1";
+						setFirstResponder = "1";
+						modal = "1";
+						command = "Heightfield::apply();";
+						helpTag = "0";
+						text = "Apply";
+					};
+					new GuiButtonCtrl() {
+						profile = "GuiButtonProfile";
+						horizSizing = "right";
+						vertSizing = "bottom";
+						position = "0 332";
+						extent = "80 20";
+						minExtent = "8 8";
+						visible = "1";
+						setFirstResponder = "1";
+						modal = "1";
+						command = "Heightfield::save();";
+						helpTag = "0";
+						text = "Save";
+					};
+					new GuiButtonCtrl() {
+						profile = "GuiButtonProfile";
+						horizSizing = "right";
+						vertSizing = "bottom";
+						position = "0 309";
+						extent = "80 20";
+						minExtent = "8 8";
+						visible = "1";
+						setFirstResponder = "1";
+						modal = "1";
+						command = "Heightfield::load();";
+						helpTag = "0";
+						text = "Load";
+					};
+					new GuiButtonCtrl(ExportHeightfield) {
+						profile = "GuiButtonProfile";
+						horizSizing = "right";
+						vertSizing = "bottom";
+						position = "0 355";
+						extent = "80 20";
+						minExtent = "8 8";
+						visible = "1";
+						setFirstResponder = "1";
+						modal = "1";
+						helpTag = "0";
+						text = "Export";
+					};
+				};
+			};
+		};
+		new GuiFrameSetCtrl(HeightfieldRightFrame) {
+			profile = "GuiDefaultProfile";
+			horizSizing = "right";
+			vertSizing = "height";
+			position = "374 0";
+			extent = "266 450";
+			minExtent = "8 8";
+			visible = "1";
+			setFirstResponder = "1";
+			modal = "1";
+			helpTag = "0";
+			columns = "0";
+			rows = "0 266";
+			borderWidth = "2";
+			borderColor = "0 4 248 255";
+			borderEnable = "alwaysOff";
+			borderMovable = "alwaysOff";
+			autoBalance = "0";
+
+			new GuiControl() {
+				profile = "GuiContentProfile";
+				horizSizing = "width";
+				vertSizing = "height";
+				position = "0 0";
+				extent = "266 264";
+				minExtent = "8 8";
+				visible = "1";
+				setFirstResponder = "1";
+				modal = "1";
+				helpTag = "0";
+
+				new GuiTerrPreviewCtrl(HeightfieldPreview) {
+					profile = "GuiDefaultProfile";
+					horizSizing = "right";
+					vertSizing = "bottom";
+					position = "4 4";
+					extent = "256 256";
+					minExtent = "8 8";
+					visible = "1";
+					setFirstResponder = "0";
+					modal = "1";
+					helpTag = "0";
+				};
+			};
+			new GuiControl() {
+				profile = "GuiContentProfile";
+				horizSizing = "right";
+				vertSizing = "bottom";
+				position = "0 266";
+				extent = "266 184";
+				minExtent = "8 8";
+				visible = "1";
+				setFirstResponder = "1";
+				modal = "1";
+				helpTag = "0";
+
+				new GameTSCtrl() {
+					profile = "GuiDefaultProfile";
+					horizSizing = "width";
+					vertSizing = "height";
+					position = "4 4";
+					extent = "255 174";
+					minExtent = "8 8";
+					visible = "1";
+					setFirstResponder = "1";
+					modal = "1";
+					helpTag = "0";
+				};
+			};
+		};
+	};
+};
+//--- OBJECT WRITE END ---
+
+function tab_Blend::reset(%this)
+{
+   blend_option.clear();
+   blend_option.add("Add", 0);
+   blend_option.add("Subtract", 1);
+   blend_option.add("Max", 2);
+   blend_option.add("Min", 3);
+   blend_option.add("Multiply", 4);
+}
+
+function tab_fBm::reset(%this)
+{
+   fBm_detail.clear();
+   fBm_detail.add("Very Low", 0);
+   fBm_detail.add("Low", 1);
+   fBm_detail.add("Normal", 2);
+   fBm_detail.add("High", 3);
+   fBm_detail.add("Very High", 4);
+}
+
+function tab_RMF::reset(%this)
+{
+   rmf_detail.clear();
+   rmf_detail.add("Very Low", 0);
+   rmf_detail.add("Low", 1);
+   rmf_detail.add("Normal", 2);
+   rmf_detail.add("High", 3);
+   rmf_detail.add("Very High", 4);
+}
+
+function tab_terrainFile::reset(%this)
+{
+   // update tab controls..
+   terrainFile_textList.clear();
+
+   %filespec = "terrains/*.ter";
+   for(%file = findFirstFile(%filespec); %file !$= ""; %file = findNextFile(%filespec))
+      terrainFile_textList.addRow(%i++, fileBase(%file) @ fileExt(%file));
+}
+
+//--------------------------------------
+
+function Heightfield::resetTabs()
+{
+   tab_terrainFile.reset();
+   tab_fbm.reset();
+   tab_rmf.reset();
+//   tab_canyon.reset();
+//   tab_smooth.reset();
+//   tab_smoothWater.reset();
+//   tab_smoothRidge.reset();
+//   tab_filter.reset();
+//   tab_turbulence.reset();
+//   tab_thermal.reset();
+//   tab_hydraulic.reset();
+//   tab_general.reset();
+//   tab_bitmap.reset();
+   tab_blend.reset();
+//   tab_sinus.reset();
+}
+
+//--------------------------------------
+function TerraformerHeightfieldGui::init(%this)
+{
+   Heightfield_options.clear();   
+   Heightfield_options.setText("Operation");   
+   Heightfield_options.add("fBm Fractal",0);
+   Heightfield_options.add("Rigid MultiFractal",1);
+   Heightfield_options.add("Canyon Fractal",2);
+   Heightfield_options.add("Sinus",3);
+   Heightfield_options.add("Bitmap",4);
+   Heightfield_options.add("Turbulence",5);
+   Heightfield_options.add("Smoothing",6);
+   Heightfield_options.add("Smooth Water",7);
+   Heightfield_options.add("Smooth Ridges/Valleys", 8);
+   Heightfield_options.add("Filter",9);
+   Heightfield_options.add("Thermal Erosion",10);
+   Heightfield_options.add("Hydraulic Erosion",11);
+   Heightfield_options.add("Blend",12);
+   Heightfield_options.add("Terrain File",13);
+
+   Heightfield::resetTabs();
+   %this.refresh();
+}
+
+function TerraformerHeightfieldGui::refresh(%this)
+{
+   if (Heightfield_operation.rowCount() == 0)
+   {
+      Heightfield_operation.clear();
+      %id1 = Heightfield::add("General\tTab_general\tgeneral_min_height\t50\tgeneral_scale\t300\tgeneral_water\t0.000\tgeneral_centerx\t0\tgeneral_centery\t0");
+      Heightfield_operation.setSelectedById(%id1);
+   }
+
+   Heightfield::resetTabs();
+   Heightfield::preview();
+}   
+
+//--------------------------------------
+function Heightfield_options::onSelect(%this, %_id, %text)
+{
+   Heightfield_options.setText("Operation");
+   %id = -1;
+
+   %rowCount = Heightfield_operation.rowCount();
+
+   // FORMAT
+   //  item name
+   //  tab name
+   //    control name 
+   //    control value
+   switch$(%text)
+   {
+      case "Terrain File":
+         %id = HeightField::add("Terrain File\ttab_terrainFile\tterrainFile_terrFileText\tterrains/terr1.ter\tterrainFile_textList\tterr1.ter");
+
+      case "fBm Fractal":
+         %id = Heightfield::add("fBm Fractal\ttab_fBm\tfbm_interval\t9\tfbm_rough\t0.000\tfBm_detail\tNormal\tfBm_seed\t" @ terraformer.generateSeed());
+
+      case "Rigid MultiFractal":
+         %id = Heightfield::add("Rigid MultiFractal\ttab_RMF\trmf_interval\t4\trmf_rough\t0.000\trmf_detail\tNormal\trmf_seed\t" @ terraformer.generateSeed());
+
+      case "Canyon Fractal":
+         %id = Heightfield::add("Canyon Fractal\ttab_Canyon\tcanyon_freq\t5\tcanyon_factor\t0.500\tcanyon_seed\t" @ terraformer.generateSeed());
+   
+      case "Sinus":
+         %id = Heightfield::add("Sinus\ttab_Sinus\tsinus_filter\t1 0.83333 0.6666 0.5 0.33333 0.16666 0\tsinus_seed\t" @ terraformer.generateSeed());
+   
+      case "Bitmap":
+         %id = Heightfield::add("Bitmap\ttab_Bitmap\tbitmap_name\t");
+         Heightfield::setBitmap();
+   }
+
+
+   if (Heightfield_operation.rowCount() >= 1)
+   {
+      switch$(%text)
+      {
+         case "Smoothing":
+            %id = Heightfield::add("Smoothing\ttab_Smooth\tsmooth_factor\t0.500\tsmooth_iter\t0");
+   
+         case "Smooth Water":
+            %id = Heightfield::add("Smooth Water\ttab_SmoothWater\twatersmooth_factor\t0.500\twatersmooth_iter\t0");
+
+         case "Smooth Ridges/Valleys":
+            %id = Heightfield::add("Smooth Ridges/Valleys\ttab_SmoothRidge\tridgesmooth_factor\t0.8500\tridgesmooth_iter\t1");
+   
+         case "Filter":
+            %id = Heightfield::add("Filter\ttab_Filter\tfilter\t0 0.16666667 0.3333333 0.5 0.6666667 0.8333333 1");
+   
+         case "Turbulence":
+            %id = Heightfield::add("Turbulence\ttab_Turbulence\tturbulence_factor\t0.250\tturbulence_radius\t10");
+   
+         case "Thermal Erosion":
+            %id = Heightfield::add("Thermal Erosion\ttab_Thermal\tthermal_slope\t30\tthermal_cons\t80.0\tthermal_iter\t0");
+   
+         case "Hydraulic Erosion":
+            %id = Heightfield::add("Hydraulic Erosion\ttab_Hydraulic\thydraulic_iter\t0\thydraulic_filter\t0 0.16666667 0.3333333 0.5 0.6666667 0.8333333 1");
+      }
+   }
+
+   if (Heightfield_operation.rowCount() >= 2)
+   {
+      if("Blend" $= %text)
+         %id = Heightfield::add("Blend\ttab_Blend\tblend_factor\t0.500\tblend_srcB\t" @ %rowCount-2 @"\tblend_option\tadd");
+   }
+
+   
+   // select it
+   if (%id != -1)
+      Heightfield_operation.setSelectedById(%id);
+}   
+
+
+//--------------------------------------
+function Heightfield::eval(%id)
+{
+   if (%id == -1)   
+      return;
+   
+   %data  = restWords(Heightfield_operation.getRowTextById(%id));
+   %label = getField(%data,0);
+   %row   = Heightfield_operation.getRowNumById(%id);
+    
+   echo("Heightfield::eval:" @ %row @ "  " @ %label );
+
+   switch$(%label)
+   {
+      case "General":
+         if (Terrain.squareSize>0) %size = Terrain.squareSize;
+         else %size = 8;
+         terraformer.setTerrainInfo( 256, %size, getField(%data,3), getField(%data,5), getField(%data,7) );
+         terraformer.setShift( getField(%data,9), getField(%data,11) );
+         terraformer.terrainData(%row);
+
+      case "Terrain File":
+         terraformer.terrainFile(%row, getField(%data,3));
+
+      case "fBm Fractal":
+         terraformer.fBm( %row, getField(%data,3), getField(%data,5), getField(%data,7), getField(%data,9) );
+
+      case "Sinus":
+         terraformer.sinus( %row, getField(%data,3), getField(%data,5) );
+    
+      case "Rigid MultiFractal":
+         terraformer.rigidMultiFractal( %row, getField(%data,3), getField(%data,5), getField(%data,7), getField(%data,9) );
+    
+      case "Canyon Fractal":
+         terraformer.canyon( %row, getField(%data,3), getField(%data,5), getField(%data,7) );
+   
+      case "Smoothing":
+         terraformer.smooth( %row-1, %row, getField(%data,3), getField(%data,5) );
+       
+      case "Smooth Water":
+         terraformer.smoothWater( %row-1, %row, getField(%data,3), getField(%data,5) );
+       
+      case "Smooth Ridges/Valleys":
+         terraformer.smoothRidges( %row-1, %row, getField(%data,3), getField(%data,5) );
+
+      case "Filter":
+         terraformer.filter( %row-1, %row, getField(%data,3) );
+       
+      case "Turbulence":
+         terraformer.turbulence( %row-1, %row, getField(%data,3), getField(%data,5) );
+       
+      case "Thermal Erosion":
+         terraformer.erodeThermal( %row-1, %row, getField(%data,3), getField(%data,5),getField(%data,7) );
+       
+      case "Hydraulic Erosion":
+         terraformer.erodeHydraulic( %row-1, %row, getField(%data,3), getField(%data,5) );
+       
+      case "Bitmap":
+         terraformer.loadGreyscale(%row, getField(%data,3));
+
+      case "Blend":
+         %rowCount = Heightfield_operation.rowCount();
+         if(%rowCount > 2) 
+         {
+            %a = Heightfield_operation.getRowNumById(%id)-1;
+            %b = getField(%data, 5);
+            echo("Blend: " @ %data);
+            echo("Blend: " @ getField(%data,3) @ "  " @ getField(%data,7));
+            if(%a < %rowCount || %a > 0 || %b < %rowCount || %b > 0 ) 
+               terraformer.blend(%a, %b, %row, getField(%data,3), getField(%data,7) );
+            else
+               echo("Heightfield Editor: Blend parameters out of range.");
+         }
+   }
+
+}   
+
+//--------------------------------------
+function Heightfield::add(%entry)
+{
+   Heightfield::saveTab();
+   Heightfield::hideTab();
+
+   %id = $NextOperationId++;
+   if ($selectedOperation != -1)
+   {
+      %row = Heightfield_operation.getRowNumById($selectedOperation) + 1;
+      %entry = %row @ " " @ %entry;
+      Heightfield_operation.addRow(%id, %entry, %row); // insert
+
+      // adjust row numbers
+      for(%i = %row+1; %i < Heightfield_operation.rowCount(); %i++)
+      {
+         %id = Heightfield_operation.getRowId(%i);
+         %text = Heightfield_operation.getRowTextById(%id);
+         %text = setWord(%text, 0, %i);
+         Heightfield_operation.setRowById(%id, %text);
+      }
+   }
+   else
+   {
+      %entry = Heightfield_operation.rowCount() @ " " @ %entry;
+      Heightfield_operation.addRow(%id, %entry);   // add to end
+   }
+
+   %row = Heightfield_operation.getRowNumById(%id);
+   if (%row <= $HeightfieldDirtyRow)
+      $HeightfieldDirtyRow = %row;
+   return %id;
+}   
+
+
+//--------------------------------------
+function Heightfield::onDelete(%id)
+{
+   if (%id $= "")
+      %id = $selectedOperation;
+
+   %row = Heightfield_operation.getRowNumById(%id);
+   
+   // don't delete the first entry
+   if (%row == 0)
+      return;
+
+   Heightfield_operation.removeRow(%row);
+   
+   // adjust row numbers
+   for(%i = %row; %i < Heightfield_operation.rowCount(); %i++)
+   {
+      %id2 = Heightfield_operation.getRowId(%i);
+      %text = Heightfield_operation.getRowTextById(%id2);
+      %text = setWord(%text, 0, %i);
+      Heightfield_operation.setRowById(%id2, %text);
+   }
+
+   // adjust the Dirty Row position
+   if ($HeightfieldDirtyRow >= %row)
+      $HeightfieldDirtyRow = %row;   
+   
+   // find the next row to select
+   %rowCount = Heightfield_operation.rowCount()-1;
+   if (%row > %rowCount)
+      %row = %rowCount;
+
+   if (%id == $selectedOperation)
+      $selectedOperation = -1;
+
+   %id = Heightfield_operation.getRowId(%row);
+   Heightfield_operation.setSelectedById(%id);
+}   
+
+
+//--------------------------------------
+function Heightfield_operation::onSelect(%this, %id, %text)
+{
+   Heightfield::saveTab();
+   Heightfield::hideTab();
+
+   $selectedOperation = %id; 
+   Heightfield::restoreTab($selectedOperation);
+   Heightfield::showTab($selectedOperation);
+   Heightfield::preview($selectedOperation);
+}   
+
+
+//--------------------------------------
+function Heightfield::restoreTab(%id)
+{
+   if (%id == -1)   
+      return;
+
+   Heightfield::hideTab();
+   
+   %data = restWords(Heightfield_operation.getRowTextById(%id));
+
+   %fieldCount = getFieldCount(%data);
+   for (%field=2; %field<%fieldCount; %field += 2)
+   {
+      %obj = getField(%data, %field);
+      %obj.setValue( getField(%data, %field+1) );
+   }
+}  
+
+ 
+//--------------------------------------
+function Heightfield::saveTab()
+{
+   if ($selectedOperation == -1)   
+      return;
+   
+   %data = Heightfield_operation.getRowTextById($selectedOperation);
+
+   %rowNum = getWord(%data, 0);
+   %data = restWords(%data);   
+   %newdata = getField(%data,0) @ "\t" @ getField(%data,1);
+
+   %fieldCount = getFieldCount(%data);
+   for (%field=2; %field < %fieldCount; %field += 2)
+   {
+      %obj = getField(%data, %field);
+      %newdata = %newdata @ "\t" @ %obj @ "\t" @ %obj.getValue();
+   }
+   // keep track of the top-most dirty operation
+   // so we know who to evaluate later
+   if (%data !$= %newdata)
+   {
+      %row = Heightfield_operation.getRowNumById($selectedOperation);
+      if (%row <= $HeightfieldDirtyRow && %row > 0)
+         $HeightfieldDirtyRow = %row;
+   }
+
+   Heightfield_operation.setRowById($selectedOperation, %rowNum @ " " @ %newdata);
+}  
+
+
+//--------------------------------------
+function Heightfield::preview(%id)
+{
+   %rowCount = Heightfield_operation.rowCount();
+   if (%id $= "")
+      %id = Heightfield_operation.getRowId(%rowCount-1);
+
+   %row = Heightfield_operation.getRowNumById(%id);
+
+   Heightfield::refresh(%row);
+   terraformer.previewScaled(HeightfieldPreview, %row);
+}   
+
+
+//--------------------------------------
+function Heightfield::refresh(%last)
+{
+   if (%last $= "")   
+      %last = Heightfield_operation.rowCount()-1;
+
+   // always update the general info
+   Heightfield::eval(Heightfield_operation.getRowId(0));
+
+   for( 0; $HeightfieldDirtyRow<=%last; $HeightfieldDirtyRow++)
+   {
+      %id = Heightfield_operation.getRowId($HeightfieldDirtyRow);
+      Heightfield::eval(%id);
+   }
+}   
+
+
+//--------------------------------------
+function Heightfield::apply(%id)
+{
+   %rowCount = Heightfield_operation.rowCount();
+   if (%rowCount < 1)
+      return;
+   if (%id $= "")
+      %id = Heightfield_operation.getRowId(%rowCount-1);
+
+   %row = Heightfield_operation.getRowNumById(%id);
+
+   HeightfieldPreview.setRoot();
+   Heightfield::refresh(%row);
+   terraformer.setTerrain(%row);
+
+   terraformer.setCameraPosition(0,0,0); 
+}   
+
+//--------------------------------------
+$TerraformerSaveRegister = 0;
+function Heightfield::saveBitmap(%name)
+{
+   if(%name $= "")
+      getSaveFilename("terrains/heightfield/*png", "Heightfield::doSaveBitmap");
+   else
+      Heightfield::doSaveBitmap(%name);
+}
+
+function Heightfield::doSaveBitmap(%name)
+{        
+   terraformer.saveGreyscale($TerraformerSaveRegister, %name);
+}
+
+//--------------------------------------
+function Heightfield::save(%name)
+{
+   Heightfield::saveTab();
+   if(%name $= "")
+      getSaveFilename("terrains/heightfield/*cs", "Heightfield::doSaveHeightfield");
+   else
+      Heightfield::doSaveHeightfield(%name);
+}
+
+
+//--------------------------------------
+function Heightfield::doSaveHeightfield(%name)
+{
+   %name = fileBase(%name);
+   if (%name $= "")
+      return;
+
+   new fileObject("saveFile");
+   saveFile.openForWrite("terrains/heightfield/" @ %name @ ".cs");
+
+   // loop through each operation and save it to disk
+   %rowCount = Heightfield_operation.rowCount();
+   for(%row = 0; %row < %rowCount; %row++)
+   {
+      %data = restWords(Heightfield_operation.getRowText(%row));
+      %data = "Heightfield::add(\"" @ expandEscape(%data) @ "\");";
+      saveFile.writeLine(%data);
+   }
+   saveFile.close();
+   saveFile.delete();      
+}   
+
+
+//--------------------------------------
+function Heightfield::load(%name)
+{
+   if(%name $= "")
+      getLoadFilename("terrains/heightfield/*.cs", "Heightfield::doLoadHeightfield");
+   else
+      Heightfield::doLoadHeightfield(%name);
+}   
+
+
+//--------------------------------------
+function Heightfield::doLoadHeightfield(%name)
+{
+   %name = fileBase(%name);
+   if (%name $= "")
+      return;
+
+   %name = "terrains/heightfield/" @ %name @ ".cs";
+   Heightfield_operation.clear();
+   $selectedOperation = -1;
+   $HeightfieldDirtyRow = -1;
+
+   // zero out all shifting
+   terraformer.setCameraPosition(0,0); 
+   HeightfieldPreview.reset();
+
+   exec(%name);
+   if (Heightfield_operation.rowCount() == 0)
+   {
+      // if there was a problem executing the script restore
+      // the operations list to a known state
+      Heightfield_operation.clear();
+      Heightfield::add("General\tTab_general\tgeneral_min_height\t50\tgeneral_scale\t300\tgeneral_water\t0.000\tgeneral_centerx\t0\tgeneral_centery\t0");
+   }
+   %data = restWords(Heightfield_operation.getRowText(0));
+   %x = getField(%data,7); 
+   %y = getField(%data,9); 
+   HeightfieldPreview.setOrigin(%x, %y);
+   Heightfield_operation.setSelectedById(Heightfield_operation.getRowId(0));
+   terraformer.setCameraPosition(%x,%y); 
+}   
+
+
+//--------------------------------------
+function Heightfield::setBitmap()
+{
+   getLoadFilename("terrains/heightfield/*.png", "Heightfield::doSetBitmap");
+}   
+
+//--------------------------------------
+function Heightfield::doSetBitmap(%name)
+{
+   %name = fileBase(%name);
+   if (%name !$= "")
+      %name = "terrains/heightfield/" @ %name @ ".png";
+   bitmap_name.setValue(%name);
+   Heightfield::saveTab();
+   Heightfield::preview($selectedOperation);
+}   
+
+
+//--------------------------------------
+function Heightfield::hideTab()
+{
+   tab_terrainFile.setVisible(false);
+   tab_fbm.setvisible(false);
+   tab_rmf.setvisible(false);
+   tab_canyon.setvisible(false);
+   tab_smooth.setvisible(false);
+   tab_smoothWater.setvisible(false);
+   tab_smoothRidge.setvisible(false);
+   tab_filter.setvisible(false);
+   tab_turbulence.setvisible(false);
+   tab_thermal.setvisible(false);
+   tab_hydraulic.setvisible(false);
+   tab_general.setvisible(false);
+   tab_bitmap.setvisible(false);
+   tab_blend.setvisible(false);
+   tab_sinus.setvisible(false);
+}
+
+
+//--------------------------------------
+function Heightfield::showTab(%id)
+{
+   Heightfield::hideTab();
+   %data = restWords(Heightfield_operation.getRowTextById(%id));
+   %tab  = getField(%data,1);
+   echo("Tab data: " @ %data @ " tab: " @ %tab);
+   %tab.setVisible(true);
+}
+
+
+//--------------------------------------
+function Heightfield::center()
+{
+   %camera = terraformer.getCameraPosition(); 
+   %x = getWord(%camera, 0);
+   %y = getWord(%camera, 1);
+
+   HeightfieldPreview.setOrigin(%x, %y);
+
+   %origin = HeightfieldPreview.getOrigin();
+   %x = getWord(%origin, 0);
+   %y = getWord(%origin, 1);
+
+   %root = HeightfieldPreview.getRoot();
+   %x += getWord(%root, 0);
+   %y += getWord(%root, 1);
+
+   general_centerx.setValue(%x);
+   general_centery.setValue(%y);
+   Heightfield::saveTab();
+}   
+
+function ExportHeightfield::onAction()
+{
+   error("Time to export the heightfield...");
+   if (Heightfield_operation.getSelectedId() != -1) {
+      $TerraformerSaveRegister = getWord(Heightfield_operation.getValue(), 0);
+      Heightfield::saveBitmap("");
+   }
+}

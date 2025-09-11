@@ -1,0 +1,80 @@
+//--- OBJECT WRITE BEGIN ---
+new GuiControl(NewWarriorDlg) {
+	profile = "DlgBackProfile";
+	horizSizing = "width";
+	vertSizing = "height";
+	position = "0 0";
+	extent = "640 480";
+	minExtent = "8 8";
+	visible = "1";
+	helpTag = "0";
+
+	new ShellPaneCtrl() {
+		profile = "ShellDlgPaneProfile";
+		horizSizing = "center";
+		vertSizing = "center";
+		position = "155 167";
+		extent = "330 145";
+		minExtent = "48 92";
+		visible = "1";
+		helpTag = "0";
+		text = "NEW WARRIOR";
+		noTitleBar = "0";
+
+		new GuiTextCtrl() {
+			profile = "ShellTextRightProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "20 52";
+			extent = "81 22";
+			minExtent = "8 8";
+			visible = "1";
+			helpTag = "0";
+			text = "Name:";
+		};
+		new ShellTextEditCtrl(NW_NameEdit) {
+			profile = "NewTextEditProfile";
+			horizSizing = "right";
+			vertSizing = "bottom";
+			position = "97 44";
+			extent = "180 38";
+			minExtent = "32 38";
+			visible = "1";
+			command = "NW_NameEdit.checkValidPlayerName();";
+			altCommand = "NW_NameEdit.processEnter();";
+			helpTag = "0";
+			historySize = "0";
+			maxLength = "16";
+			password = "0";
+			glowOffset = "9 9";
+		};
+		new ShellBitmapButton(NW_DoneBtn) {
+			profile = "ShellButtonProfile";
+			horizSizing = "right";
+			vertSizing = "top";
+			position = "182 90";
+			extent = "108 38";
+			minExtent = "32 38";
+			visible = "1";
+			command = "NewWarriorDlg.createPlayer();";
+			helpTag = "0";
+			text = "DONE";
+			simpleStyle = "0";
+		};
+		new ShellBitmapButton(NW_CancelBtn) {
+			profile = "ShellButtonProfile";
+			horizSizing = "right";
+			vertSizing = "top";
+			position = "40 90";
+			extent = "108 38";
+			minExtent = "32 38";
+			visible = "1";
+			command = "Canvas.popDialog(NewWarriorDlg);";
+			accelerator = "escape";
+			helpTag = "0";
+			text = "CANCEL";
+			simpleStyle = "0";
+		};
+	};
+};
+//--- OBJECT WRITE END ---
