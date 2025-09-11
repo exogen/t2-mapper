@@ -91,7 +91,10 @@ export function parseMissionScript(script) {
   const doc = parser.parse(script);
 
   let section = { name: null, definitions: [] };
-  const mission = {
+  const mission: {
+    pragma: Record<string, string>;
+    sections: Array<{ name: string | null; definitions: any[] }>;
+  } = {
     pragma: {},
     sections: [],
   };
