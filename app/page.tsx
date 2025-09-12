@@ -14,9 +14,18 @@ import { getTerrainFile, iterObjects, parseMissionScript } from "@/src/mission";
 const BASE_URL = "/t2-mapper";
 const RESOURCE_ROOT_URL = `${BASE_URL}/base/`;
 
-function getUrlForPath(resourcePath: string) {
+function getUrlForPath(resourcePath: string, fallbackUrl?: string) {
   resourcePath = getActualResourcePath(resourcePath);
-  const sourcePath = getSource(resourcePath);
+  let sourcePath: string;
+  try {
+    sourcePath = getSource(resourcePath);
+  } catch (err) {
+    if (fallbackUrl) {
+      return fallbackUrl;
+    } else {
+      throw err;
+    }
+  }
   if (!sourcePath) {
     return `${RESOURCE_ROOT_URL}${resourcePath}`;
   } else {
@@ -31,11 +40,7 @@ function interiorToUrl(name: string) {
 
 function terrainTextureToUrl(name: string) {
   name = name.replace(/^terrain\./, "");
-  try {
-    return getUrlForPath(`textures/terrain/${name}.png`);
-  } catch (err) {
-    return `${BASE_URL}/black.png`;
-  }
+  return getUrlForPath(`textures/terrain/${name}.png`, `${BASE_URL}/black.png`);
 }
 
 function interiorTextureToUrl(name: string) {
@@ -106,6 +111,7 @@ const missions = getResourceList()
 export default function HomePage() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [missionName, setMissionName] = useState("TWL2_WoodyMyrk");
+  const [fogEnabled, setFogEnabled] = useState(true);
   const threeContext = useRef<Record<string, any>>({});
 
   useEffect(() => {
@@ -467,13 +473,14 @@ uniform float tiling5;
             if (materialList) {
               const detailMapList = await loadDetailMapList(materialList);
               const skyLoader = new THREE.CubeTextureLoader();
+              const fallbackUrl = `${BASE_URL}/black.png`;
               const texture = skyLoader.load([
-                getUrlForPath(detailMapList[1]), // +x
-                getUrlForPath(detailMapList[3]), // -x
-                getUrlForPath(detailMapList[4]), // +y
-                getUrlForPath(detailMapList[5]), // -y
-                getUrlForPath(detailMapList[0]), // +z
-                getUrlForPath(detailMapList[2]), // -z
+                getUrlForPath(detailMapList[1], fallbackUrl), // +x
+                getUrlForPath(detailMapList[3], fallbackUrl), // -x
+                getUrlForPath(detailMapList[4], fallbackUrl), // +y
+                getUrlForPath(detailMapList[5], fallbackUrl), // -y
+                getUrlForPath(detailMapList[0], fallbackUrl), // +z
+                getUrlForPath(detailMapList[2], fallbackUrl), // -z
               ]);
               scene.background = texture;
             }
@@ -483,7 +490,12 @@ uniform float tiling5;
               const distance = parseFloat(fogDistance);
               const [r, g, b] = fogColor.split(" ").map((s) => parseFloat(s));
               const color = new THREE.Color().setRGB(r, g, b);
-              scene.fog = new THREE.Fog(color, 0, distance * 2);
+              const fog = new THREE.Fog(color, 0, distance * 2);
+              if (fogEnabled) {
+                scene.fog = fog;
+              } else {
+                scene._fog = fog;
+              }
             }
             break;
           }
@@ -552,18 +564,42 @@ uniform float tiling5;
     };
   }, [missionName]);
 
+  useEffect(() => {
+    const { scene } = threeContext.current;
+    if (fogEnabled) {
+      scene.fog = scene._fog ?? null;
+      scene._fog = null;
+    } else {
+      scene._fog = scene.fog;
+      scene.fog = null;
+    }
+  }, [fogEnabled]);
+
   return (
     <main>
       <canvas ref={canvasRef} id="canvas" />
-      <select
-        id="missionList"
-        value={missionName}
-        onChange={(e) => setMissionName(e.target.value)}
-      >
-        {missions.map((missionName) => (
-          <option key={missionName}>{missionName}</option>
-        ))}
-      </select>
+      <div id="controls">
+        <select
+          id="missionList"
+          value={missionName}
+          onChange={(e) => setMissionName(e.target.value)}
+        >
+          {missions.map((missionName) => (
+            <option key={missionName}>{missionName}</option>
+          ))}
+        </select>
+        <div className="CheckboxField">
+          <input
+            id="fogInput"
+            type="checkbox"
+            checked={fogEnabled}
+            onChange={(event) => {
+              setFogEnabled(event.target.checked);
+            }}
+          />
+          <label htmlFor="fogInput">Fog?</label>
+        </div>
+      </div>
     </main>
   );
 }

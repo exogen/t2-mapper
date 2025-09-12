@@ -10,8 +10,21 @@ body {
   height: 100vh;
 }
 
-#missionList {
+#controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
   position: fixed;
   top: 20px;
   left: 20px;
+  background: rgba(0, 0, 0, 0.5);
+  color: #fff;
+  padding: 4px 6px;
+  border-radius: 3px;
+}
+
+.CheckboxField {
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
