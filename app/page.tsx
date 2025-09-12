@@ -304,6 +304,7 @@ export default function HomePage() {
         displacementMap: heightMap,
         map: heightMap,
         displacementScale: 2048,
+        depthWrite: true,
         // displacementBias: -128,
       });
 
@@ -535,7 +536,7 @@ uniform float tiling5;
             const geometry = new THREE.BoxGeometry(1, 1, 1);
             const material = new THREE.MeshStandardMaterial({
               map: setupColor(textureLoader.load(textureToUrl(surfaceTexture))),
-              transparent: true,
+              // transparent: true,
               opacity: 0.8,
             });
             const water = new THREE.Mesh(geometry, material);
@@ -569,9 +570,11 @@ uniform float tiling5;
     if (fogEnabled) {
       scene.fog = scene._fog ?? null;
       scene._fog = null;
+      scene.needsUpdate = true;
     } else {
       scene._fog = scene.fog;
       scene.fog = null;
+      scene.needsUpdate = true;
     }
   }, [fogEnabled]);
 

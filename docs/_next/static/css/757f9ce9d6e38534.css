@@ -1,1 +1,0 @@
-body,html{margin:0;padding:0}#canvas{display:block;width:100vw;height:100vh}#controls{gap:10px;position:fixed;top:20px;left:20px;background:rgba(0,0,0,.5);color:#fff;padding:4px 6px;border-radius:3px}#controls,.CheckboxField{display:flex;align-items:center}.CheckboxField{gap:6px}
