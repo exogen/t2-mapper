@@ -53,7 +53,6 @@ function parseInstance(instance) {
             };
 
           default:
-            console.error(instance);
             throw new Error(
               `Unhandled value type: ${def.target.name} = ${def.value.type}`
             );
@@ -175,6 +174,7 @@ export function parseMissionScript(script) {
       ),
   };
 }
+
 type Mission = ReturnType<typeof parseMissionScript>;
 
 export function* iterObjects(objectList) {

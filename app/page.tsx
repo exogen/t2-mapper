@@ -7,8 +7,8 @@ import {
   getSource,
 } from "@/src/manifest";
 import { parseTerrainBuffer } from "@/src/terrain";
-import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
-import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
+import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader";
+import { OrbitControls } from "three/examples/jsm/controls/OrbitControls";
 import { getTerrainFile, parseMissionScript } from "@/src/mission";
 
 const BASE_URL = "/t2-mapper";
@@ -78,7 +78,8 @@ const missions = getResourceList()
 
 export default function HomePage() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const [missionName, setMissionName] = useState("TWL_Raindance");
+  const [missionName, setMissionName] = useState("TWL_Damnation");
+  const threeContext = useRef<{}>({});
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -130,14 +131,104 @@ export default function HomePage() {
       return tex;
     }
 
+    const skyColor = "rgba(209, 237, 255, 1)";
+    const groundColor = "rgba(186, 200, 181, 1)";
+    const intensity = 2;
+    const light = new THREE.HemisphereLight(skyColor, groundColor, intensity);
+    scene.add(light);
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.target.set(0, 0, 0);
+    controls.update();
+
+    const keys = { w: false, a: false, s: false, d: false };
+
+    camera.position.set(100, 15, 100);
+    camera.lookAt(0, 0, -200);
+
+    const onKeyDown = (e) => {
+      if (e.code === "KeyW") keys.w = true;
+      if (e.code === "KeyA") keys.a = true;
+      if (e.code === "KeyS") keys.s = true;
+      if (e.code === "KeyD") keys.d = true;
+    };
+
+    const onKeyUp = (e) => {
+      if (e.code === "KeyW") keys.w = false;
+      if (e.code === "KeyA") keys.a = false;
+      if (e.code === "KeyS") keys.s = false;
+      if (e.code === "KeyD") keys.d = false;
+    };
+
+    document.addEventListener("keydown", onKeyDown);
+    document.addEventListener("keyup", onKeyUp);
+
+    const moveSpeed = 1;
+
+    const animate = (t) => {
+      // Determine direction relative to camera orientation
+      const forward = new THREE.Vector3();
+      camera.getWorldDirection(forward);
+      forward.y = 0; // constrain to XZ plane
+      forward.normalize();
+
+      const right = new THREE.Vector3();
+      right.crossVectors(forward, camera.up).normalize();
+
+      let move = new THREE.Vector3();
+      if (keys.w) move.add(forward);
+      if (keys.s) move.add(forward.clone().negate());
+      if (keys.a) move.add(right.clone().negate());
+      if (keys.d) move.add(right);
+
+      if (move.lengthSq() > 0) {
+        move.normalize().multiplyScalar(moveSpeed);
+        camera.position.add(move);
+        controls.target.add(move); // shift the orbit target, too
+      }
+
+      controls.update();
+
+      if (resizeRendererToDisplaySize(renderer)) {
+        const canvas = renderer.domElement;
+        camera.aspect = canvas.clientWidth / canvas.clientHeight;
+        camera.updateProjectionMatrix();
+      }
+
+      renderer.render(scene, camera);
+    };
+    renderer.setAnimationLoop(animate);
+
+    threeContext.current = {
+      scene,
+      renderer,
+      setupColor,
+      setupMask,
+      textureLoader,
+    };
+
+    return () => {
+      document.removeEventListener("keydown", onKeyDown);
+      document.removeEventListener("keyup", onKeyUp);
+      renderer.setAnimationLoop(null);
+      renderer.dispose();
+      controls.dispose();
+    };
+  }, []);
+
+  useEffect(() => {
+    const { scene, setupColor, setupMask, textureLoader } =
+      threeContext.current;
+
+    let cancel = false;
+    let mesh: THREE.Mesh;
+
     async function loadMap() {
       const mission = await loadMission(missionName);
       const terrainFile = getTerrainFile(mission);
       const terrain = await loadTerrain(terrainFile);
 
       const layerCount = terrain.textureNames.length;
-
-      console.log({ terrain });
 
       const baseTextures = terrain.textureNames.map((name) => {
         return setupColor(textureLoader.load(terrainTextureToUrl(name)));
@@ -146,7 +237,7 @@ export default function HomePage() {
       const alphaTextures = terrain.alphaMaps.map((data) => setupMask(data));
 
       // Geometry: a simple plane (512x512 meters to match Tribes 2 scale)
-      const planeSize = 512;
+      const planeSize = 1024;
       const geom = new THREE.PlaneGeometry(planeSize, planeSize, 256, 256);
       geom.rotateX(-Math.PI / 2);
 
@@ -168,11 +259,8 @@ export default function HomePage() {
         // map: base0,
         displacementMap: heightMap,
         map: heightMap,
-        // In Tribes 2, heightmap values are 0-0xFFFF (65535),
-        // already converted to 0-1 range by uint16ToFloat32.
-        // Scale by 2048 to match Tribes 2's height units in meters
-        displacementScale: 512,
-        displacementBias: -32,
+        displacementScale: 1024,
+        displacementBias: -128,
       });
 
       // Inject our 4-layer blend before lighting
@@ -190,7 +278,10 @@ export default function HomePage() {
         // Add per-texture tiling uniforms
         baseTextures.forEach((tex, i) => {
           shader.uniforms[`tiling${i}`] = {
-            value: Math.min(32, Math.pow(2, i + 2)),
+            value: Math.min(
+              512,
+              { 0: 16, 1: 16, 2: 32, 3: 64, 4: 64, 5: 64 }[i]
+            ),
           };
         });
 
@@ -270,70 +361,23 @@ uniform float tiling5;
         );
       };
 
-      // for (let gx = -1; gx <= 1; gx++) {
-      //   for (let gz = -1; gz <= 1; gz++) {
-      //   }
-      // }
-      const mesh = new THREE.Mesh(geom, mat);
-      // mesh.position.set(gx * planeSize, 0, gz * planeSize);
+      mesh = new THREE.Mesh(geom, mat);
+
+      if (cancel) {
+        return;
+      }
+
       scene.add(mesh);
     }
 
-    // const displacementMap = textureLoader.load("/heightmap.png");
-
-    // const planeMesh = new THREE.Mesh(
-    //   new THREE.PlaneGeometry(256, 256, 256, 256),
-    //   new THREE.MeshPhongMaterial({
-    //     side: THREE.DoubleSide,
-    //     displacementMap: displacementMap,
-    //     map: displacementMap,
-    //     displacementScale: 50,
-    //   })
-    // );
-
-    // scene.add(planeMesh);
-
-    const controls = new OrbitControls(camera, renderer.domElement);
-
-    // const geometry = new THREE.BoxGeometry(1, 1, 1);
-    // const material = new THREE.MeshPhongMaterial({
-    //   color: "rgba(255, 255, 255, 1)",
-    // });
-    // const cube = new THREE.Mesh(geometry, material);
-    // scene.add(cube);
-
-    const skyColor = "rgba(209, 237, 255, 1)";
-    const groundColor = "rgba(186, 200, 181, 1)";
-    const intensity = 2;
-    const light = new THREE.HemisphereLight(skyColor, groundColor, intensity);
-    scene.add(light);
-
-    // const loader = new GLTFLoader();
-    // loader.load("/flagstand.gltf", (gltf) => {
-    //   scene.add(gltf.scene); // gltf.scene is a THREE.Group containing the model
-    //   camera.position.set(0, 0, 300);
-    //   controls.update();
-    // });
-
-    camera.position.set(100, 15, 100);
-    camera.lookAt(0, 0, -200);
-    controls.update();
-
-    const animate = () => {
-      // cube.rotation.x += 0.01;
-      // cube.rotation.y += 0.01;
-
-      if (resizeRendererToDisplaySize(renderer)) {
-        const canvas = renderer.domElement;
-        camera.aspect = canvas.clientWidth / canvas.clientHeight;
-        camera.updateProjectionMatrix();
-      }
-      controls.update();
-      renderer.render(scene, camera);
-    };
-    renderer.setAnimationLoop(animate);
-
     loadMap();
+
+    return () => {
+      cancel = true;
+      if (mesh) {
+        mesh.removeFromParent();
+      }
+    };
   }, [missionName]);
 
   return (
