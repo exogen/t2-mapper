@@ -132,9 +132,10 @@ export default function HomePage() {
       2000
     );
 
-    function setupColor(tex) {
+    function setupColor(tex, repeat = [1, 1]) {
       tex.wrapS = tex.wrapT = THREE.RepeatWrapping; // Still need this for tiling to work
       tex.colorSpace = THREE.SRGBColorSpace;
+      tex.repeat.set(...repeat);
       tex.anisotropy = renderer.capabilities.getMaxAnisotropy?.() ?? 16;
       tex.generateMipmaps = true;
       tex.minFilter = THREE.LinearMipmapLinearFilter;
@@ -535,7 +536,10 @@ uniform float tiling5;
 
             const geometry = new THREE.BoxGeometry(1, 1, 1);
             const material = new THREE.MeshStandardMaterial({
-              map: setupColor(textureLoader.load(textureToUrl(surfaceTexture))),
+              map: setupColor(
+                textureLoader.load(textureToUrl(surfaceTexture)),
+                [8, 8]
+              ),
               // transparent: true,
               opacity: 0.8,
             });
