@@ -15,9 +15,25 @@ export function getActualResourcePath(resourcePath: string) {
   }
   const resourcePaths = getResourceList();
   const lowerCased = resourcePath.toLowerCase();
-  return (
-    resourcePaths.find((s) => s.toLowerCase() === lowerCased) ?? resourcePath
+  const foundLowerCase = resourcePaths.find(
+    (s) => s.toLowerCase() === lowerCased
   );
+  if (foundLowerCase) {
+    return foundLowerCase;
+  }
+  const isTexture = resourcePath.startsWith("textures/");
+  if (isTexture) {
+    const foundNested = resourcePaths.find(
+      (s) =>
+        s
+          .replace(/^(textures\/)((lush|desert|badlands|lava|ice)\/)/, "$1")
+          .toLowerCase() === lowerCased
+    );
+    if (foundNested) {
+      return foundNested;
+    }
+  }
+  return resourcePath;
 }
 
 export function getResourceList() {

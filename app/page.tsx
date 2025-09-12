@@ -24,6 +24,11 @@ function getUrlForPath(resourcePath: string) {
   }
 }
 
+function interiorToUrl(name: string) {
+  const difUrl = getUrlForPath(`interiors/${name}`);
+  return difUrl.replace(/\.dif$/i, ".gltf");
+}
+
 function terrainTextureToUrl(name: string) {
   name = name.replace(/^terrain\./, "");
   try {
@@ -31,6 +36,11 @@ function terrainTextureToUrl(name: string) {
   } catch (err) {
     return `${BASE_URL}/black.png`;
   }
+}
+
+function interiorTextureToUrl(name: string) {
+  name = name.replace(/\.\d+$/, "");
+  return getUrlForPath(`textures/${name}.png`);
 }
 
 function textureToUrl(name: string) {
@@ -97,6 +107,7 @@ export default function HomePage() {
     });
 
     const textureLoader = new THREE.TextureLoader();
+    const gltfLoader = new GLTFLoader();
 
     const scene = new THREE.Scene();
     const camera = new THREE.PerspectiveCamera(
@@ -146,8 +157,8 @@ export default function HomePage() {
     scene.add(light);
 
     const controls = new OrbitControls(camera, renderer.domElement);
-    controls.minDistance = 10;
-    controls.maxDistance = 1000;
+    controls.minDistance = 1;
+    controls.maxDistance = 2048;
     camera.position.set(0, 0, 512);
     controls.target.set(0, -128, 0);
     controls.update();
@@ -210,9 +221,12 @@ export default function HomePage() {
     threeContext.current = {
       scene,
       renderer,
+      camera,
+      controls,
       setupColor,
       setupMask,
       textureLoader,
+      gltfLoader,
     };
 
     return () => {
@@ -225,8 +239,15 @@ export default function HomePage() {
   }, []);
 
   useEffect(() => {
-    const { scene, setupColor, setupMask, textureLoader } =
-      threeContext.current;
+    const {
+      scene,
+      camera,
+      controls,
+      setupColor,
+      setupMask,
+      textureLoader,
+      gltfLoader,
+    } = threeContext.current;
 
     let cancel = false;
     let root: THREE.Group;
@@ -244,10 +265,10 @@ export default function HomePage() {
 
       const alphaTextures = terrain.alphaMaps.map((data) => setupMask(data));
 
-      // Geometry: a simple plane (512x512 meters to match Tribes 2 scale)
-      const planeSize = 1024;
+      const planeSize = 2048;
       const geom = new THREE.PlaneGeometry(planeSize, planeSize, 256, 256);
       geom.rotateX(-Math.PI / 2);
+      geom.rotateY(-Math.PI / 2);
 
       const f32HeightMap = uint16ToFloat32(terrain.heightMap);
 
@@ -267,8 +288,8 @@ export default function HomePage() {
         // map: base0,
         displacementMap: heightMap,
         map: heightMap,
-        displacementScale: 1024,
-        displacementBias: -128,
+        displacementScale: 2048,
+        // displacementBias: -128,
       });
 
       // Inject our 4-layer blend before lighting
@@ -288,7 +309,7 @@ export default function HomePage() {
           shader.uniforms[`tiling${i}`] = {
             value: Math.min(
               512,
-              { 0: 16, 1: 16, 2: 32, 3: 64, 4: 64, 5: 64 }[i]
+              { 0: 16, 1: 16, 2: 32, 3: 32, 4: 32, 5: 32 }[i]
             ),
           };
         });
@@ -371,40 +392,102 @@ uniform float tiling5;
 
       root = new THREE.Group();
 
-      const mesh = new THREE.Mesh(geom, mat);
-      root.add(mesh);
+      const terrainMesh = new THREE.Mesh(geom, mat);
+      root.add(terrainMesh);
 
       for (const obj of iterObjects(mission.objects)) {
         const getProperty = (name) =>
           obj.properties.find((p) => p.target.name === name);
 
+        const getPosition = () => {
+          const position = getProperty("position")?.value ?? "0 0 0";
+          const [x, z, y] = position.split(" ").map((s) => parseFloat(s));
+          return [x, y, z];
+        };
+
+        const getScale = () => {
+          const scale = getProperty("scale")?.value ?? "1 1 1";
+          const [scaleX, scaleZ, scaleY] = scale
+            .split(" ")
+            .map((s) => parseFloat(s));
+          return [scaleX, scaleY, scaleZ];
+        };
+
+        const getRotation = (isInterior = false) => {
+          const rotation = getProperty("rotation")?.value ?? "1 0 0 0";
+          const [ax, az, ay, angle] = rotation
+            .split(" ")
+            .map((s) => parseFloat(s));
+
+          const q = new THREE.Quaternion();
+          if (isInterior) {
+            // For interiors, we need to:
+            // 1. Swap axes to match our coordinate system (z,y,x)
+            // 2. Handle the negative scale transformation
+            q.setFromAxisAngle(
+              new THREE.Vector3(-az, ay, -ax),
+              angle * (Math.PI / 180)
+            );
+          } else {
+            // For other objects (terrain, etc)
+            q.setFromAxisAngle(
+              new THREE.Vector3(ax, ay, -az),
+              angle * (Math.PI / 180)
+            );
+          }
+          return q;
+        };
+
         switch (obj.className) {
-          case "WaterBlock": {
+          case "TerrainBlock": {
+            const [x, y, z] = getPosition();
+            camera.position.set(x - 512, y + 256, z - 512);
+            controls.target.set(x, 0, z);
+            const [scaleX, scaleY, scaleZ] = getScale();
+            const q = getRotation();
+            terrainMesh.position.set(x, y, z);
+            terrainMesh.scale.set(scaleX, scaleY, scaleZ);
+            terrainMesh.quaternion.copy(q);
             break;
-            const position = getProperty("position").value;
-            const scale = getProperty("scale").value;
-            const rotation = getProperty("rotation").value;
+          }
+          case "InteriorInstance": {
+            const [z, y, x] = getPosition();
+            const [scaleX, scaleY, scaleZ] = getScale();
+            const q = getRotation(true);
+            const interiorFile = getProperty("interiorFile").value;
+            gltfLoader.load(interiorToUrl(interiorFile), (gltf) => {
+              console.log(interiorFile);
+              gltf.scene.traverse((o) => {
+                if (o.material?.name) {
+                  const name = o.material.name;
+                  const tex = textureLoader.load(interiorTextureToUrl(name));
+                  o.material.map = setupColor(tex);
+                  o.material.needsUpdate = true;
+                }
+              });
+              const interior = gltf.scene;
+              interior.position.set(x - 1024, y, z - 1024);
+              interior.scale.set(-scaleX, scaleY, -scaleZ);
+              interior.quaternion.copy(q);
+              root.add(interior);
+            });
+            break;
+          }
+          case "WaterBlock": {
+            const [x, y, z] = getPosition(); // Match InteriorInstance coordinate order
+            const [scaleX, scaleY, scaleZ] = getScale();
+            const q = getRotation(true); // Match InteriorInstance rotation handling
             const surfaceTexture = getProperty("surfaceTexture").value;
 
-            const [x, y, z] = position.split(" ").map((s) => parseFloat(s));
-
-            const [ax, ay, az, angle] = rotation
-              .split(" ")
-              .map((s) => parseFloat(s));
-
-            const q = new THREE.Quaternion();
-            q.setFromAxisAngle(new THREE.Vector3(ax, az, ay), angle);
-
-            const [scaleX, scaleY, scaleZ] = scale
-              .split(" ")
-              .map((s) => parseFloat(s) / 2);
-
-            const geometry = new THREE.BoxGeometry(scaleX, scaleZ, scaleY);
+            const geometry = new THREE.BoxGeometry(1, 1, 1);
             const material = new THREE.MeshStandardMaterial({
               map: setupColor(textureLoader.load(textureToUrl(surfaceTexture))),
+              transparent: true,
+              opacity: 0.8,
             });
             const water = new THREE.Mesh(geometry, material);
-            water.position.set(x, z, y);
+            water.position.set(x, y + scaleY / 2, z); // Added small Y offset to prevent Z-fighting
+            water.scale.set(-scaleX, scaleY, -scaleZ); // Match InteriorInstance scale negation
             water.quaternion.copy(q);
 
             root.add(water);

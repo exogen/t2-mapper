@@ -6,14 +6,14 @@ def die(msg, code=2):
 
 # ---- args ----
 argv = sys.argv
-if "--" not in argv: die("Usage: blender -b -P dif2gltf.py -- <in.dif> <out.glb|.gltf> [--addon io_dif] [--op import_scene.dif|wm.dif_import] [--format GLB|GLTF_EMBEDDED|GLTF_SEPARATE]")
+if "--" not in argv: die("Usage: blender -b -P dif2gltf.py -- <in.dif> <out.glb|.gltf> [--addon io_dif] [--op import_scene.dif|wm.dif_import] [--format GLB|GLTF_SEPARATE]")
 argv = argv[argv.index("--")+1:]
 if len(argv) < 2: die("Need <in.dif> and <out.glb|.gltf>")
 in_path, out_path = map(os.path.abspath, argv[:2])
 
 addon_mod = "io_dif"
 forced_op = None
-export_format = "GLB"
+export_format = "GLTF_SEPARATE"
 i = 2
 while i < len(argv):
     if argv[i] == "--addon" and i+1 < len(argv): addon_mod = argv[i+1]; i += 2
@@ -66,7 +66,7 @@ if "FINISHED" not in res: die(f"Import failed via {op_id}: {in_path}")
 # ---- export ----
 res = bpy.ops.export_scene.gltf(
     filepath=out_path,
-    export_format=export_format,   # GLB | GLTF_EMBEDDED | GLTF_SEPARATE
+    export_format=export_format,   # GLB | GLTF_SEPARATE
     use_selection=False,
     export_apply=True,
 )
