@@ -51,6 +51,15 @@ function textureToUrl(name: string) {
   }
 }
 
+async function loadDetailMapList(name: string) {
+  const url = getUrlForPath(`textures/${name}`);
+  const res = await fetch(url);
+  const text = await res.text();
+  return text
+    .split(/(?:\r\n|\n|\r)/)
+    .map((line) => `textures/${line.trim().replace(/\.png$/i, "")}.png`);
+}
+
 function uint16ToFloat32(src: Uint16Array) {
   const out = new Float32Array(src.length);
   for (let i = 0; i < src.length; i++) {
@@ -451,6 +460,31 @@ uniform float tiling5;
             terrainMesh.position.set(x, y, z);
             terrainMesh.scale.set(scaleX, scaleY, scaleZ);
             terrainMesh.quaternion.copy(q);
+            break;
+          }
+          case "Sky": {
+            const materialList = getProperty("materialList")?.value;
+            if (materialList) {
+              const detailMapList = await loadDetailMapList(materialList);
+              const skyLoader = new THREE.CubeTextureLoader();
+              const texture = skyLoader.load([
+                getUrlForPath(detailMapList[1]), // +x
+                getUrlForPath(detailMapList[3]), // -x
+                getUrlForPath(detailMapList[4]), // +y
+                getUrlForPath(detailMapList[5]), // -y
+                getUrlForPath(detailMapList[0]), // +z
+                getUrlForPath(detailMapList[2]), // -z
+              ]);
+              scene.background = texture;
+            }
+            const fogDistance = getProperty("fogDistance")?.value;
+            const fogColor = getProperty("fogColor")?.value;
+            if (fogDistance && fogColor) {
+              const distance = parseFloat(fogDistance);
+              const [r, g, b] = fogColor.split(" ").map((s) => parseFloat(s));
+              const color = new THREE.Color().setRGB(r, g, b);
+              scene.fog = new THREE.Fog(color, 0, distance * 2);
+            }
             break;
           }
           case "InteriorInstance": {
