@@ -79,7 +79,7 @@ const missions = getResourceList()
 export default function HomePage() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [missionName, setMissionName] = useState("TWL_Damnation");
-  const threeContext = useRef<{}>({});
+  const threeContext = useRef<Record<string, any>>({});
 
   useEffect(() => {
     const canvas = canvasRef.current;
