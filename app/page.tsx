@@ -9,7 +9,7 @@ import {
 import { parseTerrainBuffer } from "@/src/terrain";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls";
-import { getTerrainFile, parseMissionScript } from "@/src/mission";
+import { getTerrainFile, iterObjects, parseMissionScript } from "@/src/mission";
 
 const BASE_URL = "/t2-mapper";
 const RESOURCE_ROOT_URL = `${BASE_URL}/base/`;
@@ -28,6 +28,14 @@ function terrainTextureToUrl(name: string) {
   name = name.replace(/^terrain\./, "");
   try {
     return getUrlForPath(`textures/terrain/${name}.png`);
+  } catch (err) {
+    return `${BASE_URL}/black.png`;
+  }
+}
+
+function textureToUrl(name: string) {
+  try {
+    return getUrlForPath(`textures/${name}.png`);
   } catch (err) {
     return `${BASE_URL}/black.png`;
   }
@@ -78,7 +86,7 @@ const missions = getResourceList()
 
 export default function HomePage() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const [missionName, setMissionName] = useState("TWL_Damnation");
+  const [missionName, setMissionName] = useState("TWL2_WoodyMyrk");
   const threeContext = useRef<Record<string, any>>({});
 
   useEffect(() => {
@@ -138,13 +146,13 @@ export default function HomePage() {
     scene.add(light);
 
     const controls = new OrbitControls(camera, renderer.domElement);
-    controls.target.set(0, 0, 0);
+    controls.minDistance = 10;
+    controls.maxDistance = 1000;
+    camera.position.set(0, 0, 512);
+    controls.target.set(0, -128, 0);
     controls.update();
 
     const keys = { w: false, a: false, s: false, d: false };
-
-    camera.position.set(100, 15, 100);
-    camera.lookAt(0, 0, -200);
 
     const onKeyDown = (e) => {
       if (e.code === "KeyW") keys.w = true;
@@ -221,7 +229,7 @@ export default function HomePage() {
       threeContext.current;
 
     let cancel = false;
-    let mesh: THREE.Mesh;
+    let root: THREE.Group;
 
     async function loadMap() {
       const mission = await loadMission(missionName);
@@ -361,22 +369,62 @@ uniform float tiling5;
         );
       };
 
-      mesh = new THREE.Mesh(geom, mat);
+      root = new THREE.Group();
+
+      const mesh = new THREE.Mesh(geom, mat);
+      root.add(mesh);
+
+      for (const obj of iterObjects(mission.objects)) {
+        const getProperty = (name) =>
+          obj.properties.find((p) => p.target.name === name);
+
+        switch (obj.className) {
+          case "WaterBlock": {
+            break;
+            const position = getProperty("position").value;
+            const scale = getProperty("scale").value;
+            const rotation = getProperty("rotation").value;
+            const surfaceTexture = getProperty("surfaceTexture").value;
+
+            const [x, y, z] = position.split(" ").map((s) => parseFloat(s));
+
+            const [ax, ay, az, angle] = rotation
+              .split(" ")
+              .map((s) => parseFloat(s));
+
+            const q = new THREE.Quaternion();
+            q.setFromAxisAngle(new THREE.Vector3(ax, az, ay), angle);
+
+            const [scaleX, scaleY, scaleZ] = scale
+              .split(" ")
+              .map((s) => parseFloat(s) / 2);
+
+            const geometry = new THREE.BoxGeometry(scaleX, scaleZ, scaleY);
+            const material = new THREE.MeshStandardMaterial({
+              map: setupColor(textureLoader.load(textureToUrl(surfaceTexture))),
+            });
+            const water = new THREE.Mesh(geometry, material);
+            water.position.set(x, z, y);
+            water.quaternion.copy(q);
+
+            root.add(water);
+            break;
+          }
+        }
+      }
 
       if (cancel) {
         return;
       }
 
-      scene.add(mesh);
+      scene.add(root);
     }
 
     loadMap();
 
     return () => {
       cancel = true;
-      if (mesh) {
-        mesh.removeFromParent();
-      }
+      root.removeFromParent();
     };
   }, [missionName]);
 
