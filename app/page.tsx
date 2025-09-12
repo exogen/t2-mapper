@@ -456,12 +456,15 @@ uniform float tiling5;
             const q = getRotation(true);
             const interiorFile = getProperty("interiorFile").value;
             gltfLoader.load(interiorToUrl(interiorFile), (gltf) => {
-              console.log(interiorFile);
               gltf.scene.traverse((o) => {
                 if (o.material?.name) {
                   const name = o.material.name;
-                  const tex = textureLoader.load(interiorTextureToUrl(name));
-                  o.material.map = setupColor(tex);
+                  try {
+                    const tex = textureLoader.load(interiorTextureToUrl(name));
+                    o.material.map = setupColor(tex);
+                  } catch (err) {
+                    console.error(err);
+                  }
                   o.material.needsUpdate = true;
                 }
               });

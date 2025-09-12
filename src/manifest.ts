@@ -26,7 +26,10 @@ export function getActualResourcePath(resourcePath: string) {
     const foundNested = resourcePaths.find(
       (s) =>
         s
-          .replace(/^(textures\/)((lush|desert|badlands|lava|ice)\/)/, "$1")
+          .replace(
+            /^(textures\/)((lush|desert|badlands|lava|ice|jaggedclaw)\/)/,
+            "$1"
+          )
           .toLowerCase() === lowerCased
     );
     if (foundNested) {
