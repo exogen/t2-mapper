@@ -396,8 +396,11 @@ uniform float tiling5;
       root.add(terrainMesh);
 
       for (const obj of iterObjects(mission.objects)) {
-        const getProperty = (name) =>
-          obj.properties.find((p) => p.target.name === name);
+        const getProperty = (name) => {
+          const property = obj.properties.find((p) => p.target.name === name);
+          // console.log({ name, property });
+          return property;
+        };
 
         const getPosition = () => {
           const position = getProperty("position")?.value ?? "0 0 0";
@@ -480,7 +483,8 @@ uniform float tiling5;
             const [x, y, z] = getPosition(); // Match InteriorInstance coordinate order
             const [scaleX, scaleY, scaleZ] = getScale();
             const q = getRotation(true); // Match InteriorInstance rotation handling
-            const surfaceTexture = getProperty("surfaceTexture").value;
+            const surfaceTexture =
+              getProperty("surfaceTexture")?.value ?? "liquidTiles/BlueWater";
 
             const geometry = new THREE.BoxGeometry(1, 1, 1);
             const material = new THREE.MeshStandardMaterial({

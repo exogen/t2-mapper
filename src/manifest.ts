@@ -27,7 +27,7 @@ export function getActualResourcePath(resourcePath: string) {
       (s) =>
         s
           .replace(
-            /^(textures\/)((lush|desert|badlands|lava|ice|jaggedclaw)\/)/,
+            /^(textures\/)((lush|desert|badlands|lava|ice|jaggedclaw|terrainTiles)\/)/,
             "$1"
           )
           .toLowerCase() === lowerCased
