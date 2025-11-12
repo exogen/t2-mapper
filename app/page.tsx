@@ -110,8 +110,8 @@ const missions = getResourceList()
 
 export default function HomePage() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const [missionName, setMissionName] = useState("TWL2_WoodyMyrk");
-  const [fogEnabled, setFogEnabled] = useState(true);
+  const [missionName, setMissionName] = useState("Damnation");
+  const [fogEnabled, setFogEnabled] = useState(false);
   const threeContext = useRef<Record<string, any>>({});
 
   useEffect(() => {
@@ -439,23 +439,26 @@ uniform float tiling5;
             .split(" ")
             .map((s) => parseFloat(s));
 
-          const q = new THREE.Quaternion();
           if (isInterior) {
-            // For interiors, we need to:
-            // 1. Swap axes to match our coordinate system (z,y,x)
-            // 2. Handle the negative scale transformation
-            q.setFromAxisAngle(
-              new THREE.Vector3(-az, ay, -ax),
-              angle * (Math.PI / 180)
+            // For interiors: Apply coordinate system transformation
+            // 1. Convert rotation axis from source coords (ax, az, ay) to Three.js coords
+            // 2. Apply -90 Y rotation to align coordinate systems
+            const sourceRotation = new THREE.Quaternion().setFromAxisAngle(
+              new THREE.Vector3(az, ay, ax),
+              -angle * (Math.PI / 180)
             );
+            const coordSystemFix = new THREE.Quaternion().setFromAxisAngle(
+              new THREE.Vector3(0, 1, 0),
+              Math.PI / 2
+            );
+            return coordSystemFix.multiply(sourceRotation);
           } else {
             // For other objects (terrain, etc)
-            q.setFromAxisAngle(
+            return new THREE.Quaternion().setFromAxisAngle(
               new THREE.Vector3(ax, ay, -az),
               angle * (Math.PI / 180)
             );
           }
-          return q;
         };
 
         switch (obj.className) {
@@ -528,13 +531,14 @@ uniform float tiling5;
             break;
           }
           case "WaterBlock": {
-            const [x, y, z] = getPosition(); // Match InteriorInstance coordinate order
-            const [scaleX, scaleY, scaleZ] = getScale();
-            const q = getRotation(true); // Match InteriorInstance rotation handling
+            const [z, y, x] = getPosition();
+            const [scaleZ, scaleY, scaleX] = getScale();
+            const q = getRotation(true);
+
             const surfaceTexture =
               getProperty("surfaceTexture")?.value ?? "liquidTiles/BlueWater";
 
-            const geometry = new THREE.BoxGeometry(1, 1, 1);
+            const geometry = new THREE.BoxGeometry(scaleZ, scaleY, scaleX);
             const material = new THREE.MeshStandardMaterial({
               map: setupColor(
                 textureLoader.load(textureToUrl(surfaceTexture)),
@@ -544,8 +548,12 @@ uniform float tiling5;
               opacity: 0.8,
             });
             const water = new THREE.Mesh(geometry, material);
-            water.position.set(x, y + scaleY / 2, z); // Added small Y offset to prevent Z-fighting
-            water.scale.set(-scaleX, scaleY, -scaleZ); // Match InteriorInstance scale negation
+
+            water.position.set(
+              x - 1024 + scaleX / 2,
+              y + scaleY / 2,
+              z - 1024 + scaleZ / 2
+            );
             water.quaternion.copy(q);
 
             root.add(water);
