@@ -9,10 +9,10 @@
   "scripts": {
     "build": "next build && touch docs/.nojekyll",
     "build:parser": "peggy mission.pegjs -o generated/mission.cjs",
-    "clean": "rimraf .next docs",
+    "clean": "rimraf .next",
     "deploy": "npm run build && git add -f docs && git commit -m \"Deploy\" && git push",
-    "find": "find public -iname",
-    "prebuild": "npm run clean",
+    "prebuild": "npm run clean && git checkout -- docs && rimraf public/base && mv docs/base public/",
+    "postbuild": "git checkout -- public/base",
     "start": "next dev"
   },
   "dependencies": {

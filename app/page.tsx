@@ -110,8 +110,8 @@ const missions = getResourceList()
 
 export default function HomePage() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const [missionName, setMissionName] = useState("Damnation");
-  const [fogEnabled, setFogEnabled] = useState(false);
+  const [missionName, setMissionName] = useState("TWL2_WoodyMyrk");
+  const [fogEnabled, setFogEnabled] = useState(true);
   const threeContext = useRef<Record<string, any>>({});
 
   useEffect(() => {
