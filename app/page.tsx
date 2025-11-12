@@ -8,7 +8,6 @@ import {
 } from "@/src/manifest";
 import { parseTerrainBuffer } from "@/src/terrain";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader";
-import { OrbitControls } from "three/examples/jsm/controls/OrbitControls";
 import { getTerrainFile, iterObjects, parseMissionScript } from "@/src/mission";
 
 const BASE_URL = "/t2-mapper";
@@ -172,20 +171,21 @@ export default function HomePage() {
     const light = new THREE.HemisphereLight(skyColor, groundColor, intensity);
     scene.add(light);
 
-    const controls = new OrbitControls(camera, renderer.domElement);
-    controls.minDistance = 1;
-    controls.maxDistance = 2048;
-    camera.position.set(0, 0, 512);
-    controls.target.set(0, -128, 0);
-    controls.update();
+    // Free-look camera setup
+    camera.position.set(0, 100, 512);
 
-    const keys = { w: false, a: false, s: false, d: false };
+    const keys = {
+      w: false, a: false, s: false, d: false,
+      shift: false, space: false
+    };
 
     const onKeyDown = (e) => {
       if (e.code === "KeyW") keys.w = true;
       if (e.code === "KeyA") keys.a = true;
       if (e.code === "KeyS") keys.s = true;
       if (e.code === "KeyD") keys.d = true;
+      if (e.code === "ShiftLeft" || e.code === "ShiftRight") keys.shift = true;
+      if (e.code === "Space") keys.space = true;
     };
 
     const onKeyUp = (e) => {
@@ -193,36 +193,80 @@ export default function HomePage() {
       if (e.code === "KeyA") keys.a = false;
       if (e.code === "KeyS") keys.s = false;
       if (e.code === "KeyD") keys.d = false;
+      if (e.code === "ShiftLeft" || e.code === "ShiftRight") keys.shift = false;
+      if (e.code === "Space") keys.space = false;
     };
 
     document.addEventListener("keydown", onKeyDown);
     document.addEventListener("keyup", onKeyUp);
 
-    const moveSpeed = 1;
+    // Mouse look controls
+    let isPointerLocked = false;
+    const euler = new THREE.Euler(0, 0, 0, 'YXZ');
+    const PI_2 = Math.PI / 2;
+
+    const onMouseMove = (e) => {
+      if (!isPointerLocked) return;
+
+      const movementX = e.movementX || 0;
+      const movementY = e.movementY || 0;
+
+      euler.setFromQuaternion(camera.quaternion);
+      euler.y -= movementX * 0.002;
+      euler.x -= movementY * 0.002;
+      euler.x = Math.max(-PI_2, Math.min(PI_2, euler.x));
+      camera.quaternion.setFromEuler(euler);
+    };
+
+    const onPointerLockChange = () => {
+      isPointerLocked = document.pointerLockElement === canvas;
+    };
+
+    const onCanvasClick = () => {
+      if (!isPointerLocked) {
+        canvas.requestPointerLock();
+      }
+    };
+
+    canvas.addEventListener('click', onCanvasClick);
+    document.addEventListener('pointerlockchange', onPointerLockChange);
+    document.addEventListener('mousemove', onMouseMove);
+
+    let moveSpeed = 2;
+
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+
+      // Adjust speed based on wheel direction
+      const delta = e.deltaY > 0 ? .75 : 1.25;
+      moveSpeed = Math.max(0.025, Math.min(4, moveSpeed * delta));
+
+      // Log the new speed for user feedback
+      console.log(`Movement speed: ${moveSpeed.toFixed(3)}`);
+    };
+
+    canvas.addEventListener('wheel', onWheel, { passive: false });
 
     const animate = (t) => {
-      // Determine direction relative to camera orientation
+      // Free-look movement
       const forward = new THREE.Vector3();
       camera.getWorldDirection(forward);
-      forward.y = 0; // constrain to XZ plane
-      forward.normalize();
 
       const right = new THREE.Vector3();
       right.crossVectors(forward, camera.up).normalize();
 
       let move = new THREE.Vector3();
       if (keys.w) move.add(forward);
-      if (keys.s) move.add(forward.clone().negate());
-      if (keys.a) move.add(right.clone().negate());
+      if (keys.s) move.sub(forward);
+      if (keys.a) move.sub(right);
       if (keys.d) move.add(right);
+      if (keys.space) move.add(camera.up);
+      if (keys.shift) move.sub(camera.up);
 
       if (move.lengthSq() > 0) {
         move.normalize().multiplyScalar(moveSpeed);
         camera.position.add(move);
-        controls.target.add(move); // shift the orbit target, too
       }
-
-      controls.update();
 
       if (resizeRendererToDisplaySize(renderer)) {
         const canvas = renderer.domElement;
@@ -238,7 +282,6 @@ export default function HomePage() {
       scene,
       renderer,
       camera,
-      controls,
       setupColor,
       setupMask,
       textureLoader,
@@ -248,9 +291,12 @@ export default function HomePage() {
     return () => {
       document.removeEventListener("keydown", onKeyDown);
       document.removeEventListener("keyup", onKeyUp);
+      document.removeEventListener('pointerlockchange', onPointerLockChange);
+      document.removeEventListener('mousemove', onMouseMove);
+      canvas.removeEventListener('click', onCanvasClick);
+      canvas.removeEventListener('wheel', onWheel);
       renderer.setAnimationLoop(null);
       renderer.dispose();
-      controls.dispose();
     };
   }, []);
 
@@ -258,7 +304,6 @@ export default function HomePage() {
     const {
       scene,
       camera,
-      controls,
       setupColor,
       setupMask,
       textureLoader,
@@ -286,7 +331,61 @@ export default function HomePage() {
       geom.rotateX(-Math.PI / 2);
       geom.rotateY(-Math.PI / 2);
 
+      // Find TerrainBlock properties for empty squares
+      let emptySquares: number[] | null = null;
+      for (const obj of iterObjects(mission.objects)) {
+        if (obj.className === "TerrainBlock") {
+          const emptySquaresStr = obj.properties.find((p: any) => p.target.name === "emptySquares")?.value;
+          if (emptySquaresStr) {
+            emptySquares = emptySquaresStr.split(" ").map((s: string) => parseInt(s))
+          }
+          break;
+        }
+      }
+
       const f32HeightMap = uint16ToFloat32(terrain.heightMap);
+
+      // Create a visibility mask for empty squares
+      let visibilityMask: THREE.DataTexture | null = null;
+      if (emptySquares) {
+        const terrainSize = 256;
+
+        // Create a mask texture (1 = visible, 0 = invisible)
+        const maskData = new Uint8Array(terrainSize * terrainSize);
+        maskData.fill(255); // Start with everything visible
+
+        for (const squareId of emptySquares) {
+          // The squareId encodes position and count:
+          // Bits 0-7: X position (starting position)
+          // Bits 8-15: Y position
+          // Bits 16+: Count (number of consecutive horizontal squares)
+          const x = (squareId & 0xFF);
+          const y = (squareId >> 8) & 0xFF;
+          const count = (squareId >> 16);
+
+          for (let i = 0; i < count; i++) {
+            const px = x + i;
+            const py = y;
+            const index = py * terrainSize + px;
+            if (index >= 0 && index < maskData.length) {
+              maskData[index] = 0;
+            }
+          }
+        }
+
+        visibilityMask = new THREE.DataTexture(
+          maskData,
+          terrainSize,
+          terrainSize,
+          THREE.RedFormat,
+          THREE.UnsignedByteType
+        );
+        visibilityMask.colorSpace = THREE.NoColorSpace;
+        visibilityMask.wrapS = visibilityMask.wrapT = THREE.ClampToEdgeWrapping;
+        visibilityMask.magFilter = THREE.NearestFilter;
+        visibilityMask.minFilter = THREE.NearestFilter;
+        visibilityMask.needsUpdate = true;
+      }
 
       const heightMap = new THREE.DataTexture(
         f32HeightMap,
@@ -321,6 +420,11 @@ export default function HomePage() {
           }
         });
 
+        // Add visibility mask uniform if we have empty squares
+        if (visibilityMask) {
+          shader.uniforms.visibilityMask = { value: visibilityMask };
+        }
+
         // Add per-texture tiling uniforms
         baseTextures.forEach((tex, i) => {
           shader.uniforms[`tiling${i}`] = {
@@ -351,7 +455,22 @@ uniform float tiling2;
 uniform float tiling3;
 uniform float tiling4;
 uniform float tiling5;
+${visibilityMask ? 'uniform sampler2D visibilityMask;' : ''}
 ` + shader.fragmentShader;
+
+        if (visibilityMask) {
+          const clippingPlaceholder = '#include <clipping_planes_fragment>';
+          shader.fragmentShader = shader.fragmentShader.replace(
+            clippingPlaceholder,
+            `${clippingPlaceholder}
+  // Early discard for invisible areas (before fog/lighting)
+  float visibility = texture2D(visibilityMask, vMapUv).r;
+  if (visibility < 0.5) {
+    discard;
+  }
+  `
+          );
+        }
 
         // Replace the default map sampling block with our layered blend.
         // We rely on vMapUv provided by USE_MAP.
@@ -465,7 +584,6 @@ uniform float tiling5;
           case "TerrainBlock": {
             const [x, y, z] = getPosition();
             camera.position.set(x - 512, y + 256, z - 512);
-            controls.target.set(x, 0, z);
             const [scaleX, scaleY, scaleZ] = getScale();
             const q = getRotation();
             terrainMesh.position.set(x, y, z);
