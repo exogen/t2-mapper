@@ -7,13 +7,12 @@
   "license": "MIT",
   "type": "module",
   "scripts": {
-    "build": "next build && touch docs/.nojekyll",
     "build:parser": "peggy mission.pegjs -o generated/mission.cjs",
+    "build": "next build && touch docs/.nojekyll",
     "clean": "rimraf .next",
     "deploy": "npm run build && git add -f docs && git commit -m \"Deploy\" && git push",
-    "prebuild": "npm run clean && git checkout -- docs && rimraf public/base && mv docs/base public/",
     "postbuild": "git checkout -- public/base",
-    "manifest": "tsx scripts/manifest.ts",
+    "prebuild": "npm run clean && git checkout -- docs && rimraf public/base && mv docs/base public/",
     "start": "next dev"
   },
   "dependencies": {

@@ -1,11 +1,11 @@
 import fs from "node:fs/promises";
 import unzipper from "unzipper";
-import { normalize } from "@/src/stringUtils";
+import { normalizePath } from "@/src/stringUtils";
 import manifest from "@/public/manifest.json";
 import path from "node:path";
 
 const inputBaseDir = "rawGameData/base";
-const outputBaseDir = "public/base";
+const outputBaseDir = "docs/base";
 
 const archives = new Map<string, unzipper.CentralDirectory>();
 
@@ -23,7 +23,7 @@ async function buildExtractedGameDataFolder() {
           archives.set(source, archive);
         }
         const entry = archive.files.find(
-          (entry) => normalize(entry.path) === filePath
+          (entry) => normalizePath(entry.path) === filePath
         );
         const inFile = `${inputBaseDir}/${source}:${filePath}`;
         if (!entry) {
