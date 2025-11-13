@@ -1,7 +1,9 @@
 import fs from "node:fs/promises";
 import { execFileSync } from "node:child_process";
 
-const blender = `/Applications/Blender.app/Contents/MacOS/Blender`;
+const BLENDER_PATH =
+  process.env.BLENDER_PATH ||
+  `/Applications/Blender.app/Contents/MacOS/Blender`;
 
 /**
  * Find all .dts files in `public/base` and convert them to glTF.
@@ -10,7 +12,7 @@ async function run() {
   for await (const inFile of fs.glob("public/base/**/*.dts")) {
     const outFile = inFile.replace(/\.dts$/i, ".gltf");
     execFileSync(
-      blender,
+      BLENDER_PATH,
       [
         "--background",
         "--python",

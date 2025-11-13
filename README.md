@@ -4,6 +4,25 @@
 
 ![Screenshot of map inspector](./screenshot.png "Map inspector with Surreal loaded")
 
+## Usage
+
+👉 **[Open the app!](https://exogen.github.io/t2-mapper/)**
+
+### Camera Controls
+
+Click inside the map preview area to capture the mouse.
+
+| Key | Action |
+|-----|--------|
+| <kbd>W</kbd> | Forward |
+| <kbd>A</kbd> | Left |
+| <kbd>S</kbd> | Backward |
+| <kbd>D</kbd> | Right |
+| <kbd>Space</kbd> | Up |
+| <kbd>Shift</kbd> | Down |
+| <kbd>Esc</kbd> | Release mouse |
+
+
 ## Development
 
 Install dependencies:
