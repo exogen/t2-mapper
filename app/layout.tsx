@@ -1,8 +1,8 @@
 import "./style.css";
 
 export const metadata = {
-  title: "Tribes 2 Maps",
-  description: "Be the map genius.",
+  title: "MapGenius – Explore maps for Tribes 2",
+  description: "Tribes 2 forever.",
 };
 
 export default function RootLayout({

@@ -32,28 +32,8 @@ if not enabled:
     mods = [m.__name__ for m in addon_utils.modules()]
     die(f"Could not enable '{addon_mod}'. Installed add-ons: {mods}")
 
-# ---- resolve importer (import_scene.* or wm.*) ----
-def list_ops(ns):
-    try: return [n for n in dir(ns) if not n.startswith("_")]
-    except: return []
-
-def resolve_operator():
-    if forced_op:
-        mod, name = forced_op.split(".", 1)
-        return forced_op, getattr(getattr(bpy.ops, mod), name)
-    # auto-discover
-    for modname in ("import_scene", "wm"):
-        names = list_ops(getattr(bpy.ops, modname))
-        hits = [n for n in names if "dif" in n.lower()] or [n for n in names if "torque" in n.lower()]
-        if len(hits) == 1:
-            name = hits[0]
-            return f"{modname}.{name}", getattr(getattr(bpy.ops, modname), name)
-        if len(hits) > 1:
-            raise RuntimeError(f"Multiple candidates: {[f'{modname}.{h}' for h in hits]}. Use --op.")
-    raise RuntimeError("No DIF-like importer found.")
-
 try:
-    op_id, op_call = resolve_operator()
+    op_id, op_call = "import_scene.dif", bpy.ops.import_scene.dif
 except Exception as e:
     die(str(e))
 
@@ -66,7 +46,7 @@ if "FINISHED" not in res: die(f"Import failed via {op_id}: {in_path}")
 # ---- export ----
 res = bpy.ops.export_scene.gltf(
     filepath=out_path,
-    export_format=export_format,   # GLB | GLTF_SEPARATE
+    export_format=export_format, # GLB | GLTF_SEPARATE
     use_selection=False,
     export_apply=True,
 )
