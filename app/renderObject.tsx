@@ -4,6 +4,7 @@ import { WaterBlock } from "./WaterBlock";
 import { SimGroup } from "./SimGroup";
 import { InteriorInstance } from "./InteriorInstance";
 import { Sky } from "./Sky";
+import { Sun } from "./Sun";
 
 const componentMap = {
   SimGroup,
@@ -11,6 +12,7 @@ const componentMap = {
   WaterBlock,
   InteriorInstance,
   Sky,
+  Sun,
 };
 
 export function renderObject(object: ConsoleObject, key: string | number) {

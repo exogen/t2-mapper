@@ -13,6 +13,7 @@ export function setupColor(tex, repeat = [1, 1]) {
   tex.wrapS = tex.wrapT = RepeatWrapping;
   tex.colorSpace = SRGBColorSpace;
   tex.repeat.set(...repeat);
+  tex.flipY = false; // DDS/DIF textures are already flipped
   tex.anisotropy = 16;
   tex.generateMipmaps = true;
   tex.minFilter = LinearMipmapLinearFilter;

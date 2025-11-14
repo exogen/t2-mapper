@@ -209,6 +209,8 @@ export function TerrainBlock({ object }: { object: ConsoleObject }) {
       position={position}
       scale={scale}
       geometry={planeGeometry}
+      receiveShadow
+      castShadow
     >
       {terrain ? (
         <TerrainMaterial

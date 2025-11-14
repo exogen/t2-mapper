@@ -7,6 +7,7 @@ import { ObserverControls } from "./ObserverControls";
 import { InspectorControls } from "./InspectorControls";
 import { SettingsProvider } from "./SettingsProvider";
 import { PerspectiveCamera } from "@react-three/drei";
+import { EffectComposer, N8AO } from "@react-three/postprocessing";
 
 // three.js has its own loaders for textures and models, but we need to load other
 // stuff too, e.g. missions, terrains, and more. This client is used for those.
@@ -20,7 +21,7 @@ export default function HomePage() {
     <SettingsProvider fogEnabled={fogEnabled}>
       <QueryClientProvider client={queryClient}>
         <main>
-          <Canvas>
+          <Canvas shadows>
             <ObserverControls />
             <Mission key={missionName} name={missionName} />
             <PerspectiveCamera
@@ -28,6 +29,9 @@ export default function HomePage() {
               position={[-512, 256, -512]}
               fov={90}
             />
+            <EffectComposer>
+              <N8AO intensity={3} aoRadius={3} quality="performance" />
+            </EffectComposer>
           </Canvas>
           <InspectorControls
             missionName={missionName}

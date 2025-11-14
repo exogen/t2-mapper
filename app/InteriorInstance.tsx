@@ -7,8 +7,8 @@ import {
   getRotation,
   getScale,
 } from "@/src/mission";
-import { memo, Suspense, useEffect, useMemo } from "react";
-import { Material, Mesh, MeshBasicMaterial } from "three";
+import { memo, Suspense, useMemo } from "react";
+import { Mesh } from "three";
 import { setupColor } from "@/src/textureUtils";
 
 const FALLBACK_URL = `${BASE_URL}/black.png`;
@@ -21,23 +21,17 @@ function useInterior(interiorFile: string) {
   return useGLTF(url);
 }
 
-function InteriorTexture({ material }: { material: Material }) {
+function InteriorTexture({ materialName }: { materialName: string }) {
   let url = FALLBACK_URL;
   try {
-    url = interiorTextureToUrl(material.name);
+    url = interiorTextureToUrl(materialName);
   } catch (err) {
     console.error(err);
   }
 
   const texture = useTexture(url, (texture) => setupColor(texture));
 
-  useEffect(() => {
-    const asBasicMaterial = material as MeshBasicMaterial;
-    asBasicMaterial.map = texture;
-    asBasicMaterial.needsUpdate = true;
-  }, [material, texture]);
-
-  return <primitive object={material} attach="material" />;
+  return <meshStandardMaterial map={texture} side={2} />;
 }
 
 function InteriorMesh({ node }: { node: Mesh }) {
@@ -53,10 +47,10 @@ function InteriorMesh({ node }: { node: Mesh }) {
         >
           {Array.isArray(node.material) ? (
             node.material.map((mat, index) => (
-              <InteriorTexture key={index} material={mat} />
+              <InteriorTexture key={index} materialName={mat.name} />
             ))
           ) : (
-            <InteriorTexture material={node.material} />
+            <InteriorTexture materialName={node.material.name} />
           )}
         </Suspense>
       ) : null}

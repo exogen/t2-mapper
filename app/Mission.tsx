@@ -16,12 +16,5 @@ export function Mission({ name }: { name: string }) {
     return null;
   }
 
-  return (
-    <>
-      <hemisphereLight
-        args={["rgba(209, 237, 255, 1)", "rgba(186, 200, 181, 1)", 2]}
-      />
-      {mission.objects.map((object, i) => renderObject(object, i))}
-    </>
-  );
+  return <>{mission.objects.map((object, i) => renderObject(object, i))}</>;
 }
