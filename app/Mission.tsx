@@ -9,12 +9,6 @@ function useMission(name: string) {
   });
 }
 
-const DEFAULT_LIGHT_ARGS = [
-  "rgba(209, 237, 255, 1)",
-  "rgba(186, 200, 181, 1)",
-  2,
-] as const;
-
 export function Mission({ name }: { name: string }) {
   const { data: mission } = useMission(name);
 
@@ -24,7 +18,9 @@ export function Mission({ name }: { name: string }) {
 
   return (
     <>
-      <hemisphereLight args={DEFAULT_LIGHT_ARGS} />
+      <hemisphereLight
+        args={["rgba(209, 237, 255, 1)", "rgba(186, 200, 181, 1)", 2]}
+      />
       {mission.objects.map((object, i) => renderObject(object, i))}
     </>
   );

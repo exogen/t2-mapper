@@ -8,6 +8,9 @@ import { Color } from "three";
 
 const FALLBACK_URL = `${BASE_URL}/black.png`;
 
+/**
+ * Load a .dml file, used to list the textures for different faces of a skybox.
+ */
 function useDetailMapList(name: string) {
   return useQuery({
     queryKey: ["detailMapList", name],
@@ -54,9 +57,9 @@ export function Sky({ object }: { object: ConsoleObject }) {
   // Fog parameters.
   // TODO: There can be multiple fog volumes/layers. Render simple fog for now.
   const fogDistance = useMemo(() => {
-    const distainceString = getProperty(object, "fogDistance")?.value;
-    if (distainceString) {
-      return parseFloat(distainceString);
+    const distanceString = getProperty(object, "fogDistance")?.value;
+    if (distanceString) {
+      return parseFloat(distanceString);
     }
   }, [object]);
 
