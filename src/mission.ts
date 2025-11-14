@@ -1,4 +1,5 @@
 import parser from "@/generated/mission.cjs";
+import { Quaternion, Vector3 } from "three";
 
 const definitionComment = /^ (DisplayName|MissionTypes) = (.+)$/;
 const sectionBeginComment = /^--- ([A-Z ]+) BEGIN ---$/;
@@ -175,7 +176,8 @@ export function parseMissionScript(script) {
   };
 }
 
-type Mission = ReturnType<typeof parseMissionScript>;
+export type Mission = ReturnType<typeof parseMissionScript>;
+export type ConsoleObject = Mission["objects"][number];
 
 export function* iterObjects(objectList) {
   for (const obj of objectList) {
@@ -186,18 +188,62 @@ export function* iterObjects(objectList) {
   }
 }
 
-export function getTerrainFile(mission: Mission) {
-  let terrainBlock;
+export function getTerrainBlock(mission: Mission): ConsoleObject {
   for (const obj of iterObjects(mission.objects)) {
     if (obj.className === "TerrainBlock") {
-      terrainBlock = obj;
-      break;
+      return obj;
     }
   }
-  if (!terrainBlock) {
-    throw new Error("Error!");
-  }
+  throw new Error("No TerrainBlock found!");
+}
+
+export function getTerrainFile(mission: Mission) {
+  const terrainBlock = getTerrainBlock(mission);
   return terrainBlock.properties.find(
     (prop) => prop.target.name === "terrainFile"
   ).value;
+}
+
+export function getProperty(obj: ConsoleObject, name: string) {
+  const property = obj.properties.find((p) => p.target.name === name);
+  // console.log({ name, property });
+  return property;
+}
+
+export function getPosition(obj: ConsoleObject): [number, number, number] {
+  const position = getProperty(obj, "position")?.value ?? "0 0 0";
+  const [x, z, y] = position.split(" ").map((s) => parseFloat(s));
+  return [x, y, z];
+}
+
+export function getScale(obj: ConsoleObject): [number, number, number] {
+  const scale = getProperty(obj, "scale")?.value ?? "1 1 1";
+  const [scaleX, scaleZ, scaleY] = scale.split(" ").map((s) => parseFloat(s));
+  return [scaleX, scaleY, scaleZ];
+}
+
+export function getRotation(obj: ConsoleObject, isInterior = false) {
+  const rotation = getProperty(obj, "rotation")?.value ?? "1 0 0 0";
+  const [ax, az, ay, angle] = rotation.split(" ").map((s) => parseFloat(s));
+
+  if (isInterior) {
+    // For interiors: Apply coordinate system transformation
+    // 1. Convert rotation axis from source coords (ax, az, ay) to Three.js coords
+    // 2. Apply -90 Y rotation to align coordinate systems
+    const sourceRotation = new Quaternion().setFromAxisAngle(
+      new Vector3(az, ay, ax),
+      -angle * (Math.PI / 180)
+    );
+    const coordSystemFix = new Quaternion().setFromAxisAngle(
+      new Vector3(0, 1, 0),
+      Math.PI / 2
+    );
+    return coordSystemFix.multiply(sourceRotation);
+  } else {
+    // For other objects (terrain, etc)
+    return new Quaternion().setFromAxisAngle(
+      new Vector3(ax, ay, -az),
+      angle * (Math.PI / 180)
+    );
+  }
 }
