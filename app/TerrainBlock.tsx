@@ -26,6 +26,9 @@ import {
   updateTerrainTextureShader,
 } from "@/src/textureUtils";
 
+/**
+ * Load a .ter file, used for terrain heightmap and texture info.
+ */
 function useTerrain(terrainFile: string) {
   return useQuery({
     queryKey: ["terrain", terrainFile],

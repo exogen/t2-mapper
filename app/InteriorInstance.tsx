@@ -13,6 +13,9 @@ import { setupColor } from "@/src/textureUtils";
 
 const FALLBACK_URL = `${BASE_URL}/black.png`;
 
+/**
+ * Load a .gltf file that was converted from a .dif, used for "interior" models.
+ */
 function useInterior(interiorFile: string) {
   const url = interiorToUrl(interiorFile);
   return useGLTF(url);
@@ -32,6 +35,9 @@ function InteriorTexture({ material }: { material: Material }) {
 }
 
 function InteriorMesh({ node }: { node: Mesh }) {
+  if (Array.isArray(node.material)) {
+    throw new Error("Unexpected multi-material node");
+  }
   return (
     <mesh geometry={node.geometry} castShadow receiveShadow>
       {node.material ? (
