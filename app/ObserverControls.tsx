@@ -1,9 +1,10 @@
-import { KeyboardControls, PointerLockControls } from "@react-three/drei";
+import { KeyboardControls } from "@react-three/drei";
 
-import { useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
 import { useKeyboardControls } from "@react-three/drei";
 import * as THREE from "three";
+import { PointerLockControls } from "three-stdlib";
 
 enum Controls {
   forward = "forward",
@@ -18,12 +19,53 @@ const BASE_SPEED = 100; // units per second
 
 function CameraMovement() {
   const [subscribe, getKeys] = useKeyboardControls<Controls>();
-  const { camera } = useThree();
+  const { camera, gl } = useThree();
+  const [speedMultiplier, setSpeedMultiplier] = useState(1);
+  const controlsRef = useRef<PointerLockControls | null>(null);
 
   // Scratch vectors to avoid allocations each frame
   const forwardVec = useRef(new THREE.Vector3());
   const sideVec = useRef(new THREE.Vector3());
   const moveVec = useRef(new THREE.Vector3());
+
+  // Setup pointer lock controls
+  useEffect(() => {
+    const controls = new PointerLockControls(camera, gl.domElement);
+    controlsRef.current = controls;
+
+    const handleClick = (e: MouseEvent) => {
+      // Only lock if clicking directly on the canvas (not on UI elements)
+      if (e.target === gl.domElement) {
+        controls.lock();
+      }
+    };
+
+    gl.domElement.addEventListener("click", handleClick);
+
+    return () => {
+      gl.domElement.removeEventListener("click", handleClick);
+      controls.dispose();
+    };
+  }, [camera, gl]);
+
+  // Handle mousewheel for speed adjustment
+  useEffect(() => {
+    const handleWheel = (e: WheelEvent) => {
+      e.preventDefault();
+
+      // Adjust speed based on wheel direction
+      const delta = e.deltaY > 0 ? 0.75 : 1.25;
+
+      setSpeedMultiplier((prev) => Math.max(0.05, Math.min(5, prev * delta)));
+    };
+
+    const canvas = gl.domElement;
+    canvas.addEventListener("wheel", handleWheel, { passive: false });
+
+    return () => {
+      canvas.removeEventListener("wheel", handleWheel);
+    };
+  }, [gl]);
 
   useFrame((_, delta) => {
     const { forward, backward, left, right, up, down } = getKeys();
@@ -32,7 +74,7 @@ function CameraMovement() {
       return;
     }
 
-    const speed = BASE_SPEED;
+    const speed = BASE_SPEED * speedMultiplier;
 
     // Forward/backward: take complete camera angle into account (including Y)
     camera.getWorldDirection(forwardVec.current);
@@ -84,7 +126,6 @@ export function ObserverControls() {
   return (
     <KeyboardControls map={KEYBOARD_CONTROLS}>
       <CameraMovement />
-      <PointerLockControls makeDefault />
     </KeyboardControls>
   );
 }

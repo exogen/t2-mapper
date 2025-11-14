@@ -24,7 +24,11 @@ export function InspectorControls({
   onChangeFogEnabled: (enabled: boolean) => void;
 }) {
   return (
-    <div id="controls">
+    <div
+      id="controls"
+      onPointerDown={(e) => e.stopPropagation()}
+      onClick={(e) => e.stopPropagation()}
+    >
       <select
         id="missionList"
         value={missionName}
