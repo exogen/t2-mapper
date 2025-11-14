@@ -1,10 +1,11 @@
 import { KeyboardControls } from "@react-three/drei";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
 import { useKeyboardControls } from "@react-three/drei";
-import * as THREE from "three";
 import { PointerLockControls } from "three-stdlib";
+import { useSettings } from "./SettingsProvider";
+import { Vector3 } from "three";
 
 enum Controls {
   forward = "forward",
@@ -16,17 +17,19 @@ enum Controls {
 }
 
 const BASE_SPEED = 100; // units per second
+const MIN_SPEED_ADJUSTMENT = 0.05;
+const MAX_SPEED_ADJUSTMENT = 1;
 
 function CameraMovement() {
+  const { speedMultiplier, setSpeedMultiplier } = useSettings();
   const [subscribe, getKeys] = useKeyboardControls<Controls>();
   const { camera, gl } = useThree();
-  const [speedMultiplier, setSpeedMultiplier] = useState(1);
   const controlsRef = useRef<PointerLockControls | null>(null);
 
   // Scratch vectors to avoid allocations each frame
-  const forwardVec = useRef(new THREE.Vector3());
-  const sideVec = useRef(new THREE.Vector3());
-  const moveVec = useRef(new THREE.Vector3());
+  const forwardVec = useRef(new Vector3());
+  const sideVec = useRef(new Vector3());
+  const moveVec = useRef(new Vector3());
 
   // Setup pointer lock controls
   useEffect(() => {
@@ -53,10 +56,20 @@ function CameraMovement() {
     const handleWheel = (e: WheelEvent) => {
       e.preventDefault();
 
-      // Adjust speed based on wheel direction
-      const delta = e.deltaY > 0 ? 0.75 : 1.25;
+      const direction = e.deltaY > 0 ? 1 : -1;
 
-      setSpeedMultiplier((prev) => Math.max(0.05, Math.min(5, prev * delta)));
+      const delta =
+        // Helps normalize sensitivity; trackpad scrolling will have many small
+        // updates while mouse wheels have fewer updates but large deltas.
+        Math.max(
+          MIN_SPEED_ADJUSTMENT,
+          Math.min(MAX_SPEED_ADJUSTMENT, Math.abs(e.deltaY * 0.01))
+        ) * direction;
+
+      setSpeedMultiplier((prev) => {
+        const newSpeed = Math.round((prev + delta) * 20) / 20;
+        return Math.max(0.1, Math.min(5, newSpeed));
+      });
     };
 
     const canvas = gl.domElement;

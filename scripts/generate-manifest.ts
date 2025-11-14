@@ -6,7 +6,7 @@ import { normalizePath } from "@/src/stringUtils";
 
 const archiveFilePattern = /\.vl2$/i;
 
-const baseDir = "rawGameData/base";
+const baseDir = process.env.BASE_DIR || "GameData/base";
 
 function isArchive(name: string) {
   return archiveFilePattern.test(name);

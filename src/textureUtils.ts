@@ -52,6 +52,7 @@ export function updateTerrainTextureShader({
   baseTextures,
   alphaTextures,
   visibilityMask,
+  tiling,
 }) {
   const layerCount = baseTextures.length;
 
@@ -73,7 +74,7 @@ export function updateTerrainTextureShader({
   // Add per-texture tiling uniforms
   baseTextures.forEach((tex, i) => {
     shader.uniforms[`tiling${i}`] = {
-      value: Math.min(512, { 0: 16, 1: 16, 2: 32, 3: 32, 4: 32, 5: 32 }[i]),
+      value: tiling[i] ?? 32,
     };
   });
 

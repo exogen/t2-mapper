@@ -1,7 +1,0 @@
-// Penalties
-
-new ScriptObject(TeamkillPenalty)
-{
-};
-
-

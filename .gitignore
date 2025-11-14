@@ -131,3 +131,9 @@ dist
 
 .DS_Store
 .tshy
+
+# GameData folder with actual .vl2 files (unextracted) in it. Some scripts like
+# `extract-assets` and `generate-manifest` look at this to extract or build the
+# list of files. Once someone builds this, it's not really necessary for other
+# developers to have this folder.
+GameData

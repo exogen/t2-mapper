@@ -59,6 +59,18 @@ function BlendedTerrainTextures({
     [alphaMaps]
   );
 
+  const tiling = useMemo(
+    () => ({
+      0: 32,
+      1: 32,
+      2: 32,
+      3: 32,
+      4: 32,
+      5: 32,
+    }),
+    []
+  );
+
   const onBeforeCompile = useCallback(
     (shader) => {
       updateTerrainTextureShader({
@@ -66,13 +78,16 @@ function BlendedTerrainTextures({
         baseTextures,
         alphaTextures,
         visibilityMask,
+        tiling,
       });
     },
-    [baseTextures, alphaTextures, visibilityMask]
+    [baseTextures, alphaTextures, visibilityMask, tiling]
   );
 
   return (
     <meshStandardMaterial
+      // For testing tiling values; forces recompile.
+      key={JSON.stringify(tiling)}
       displacementMap={displacementMap}
       map={displacementMap}
       displacementScale={2048}

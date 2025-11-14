@@ -1,4 +1,5 @@
 import { getResourceList } from "@/src/manifest";
+import { useSettings } from "./SettingsProvider";
 
 const excludeMissions = new Set([
   "SkiFree",
@@ -15,14 +16,19 @@ const missions = getResourceList()
 export function InspectorControls({
   missionName,
   onChangeMission,
-  fogEnabled,
-  onChangeFogEnabled,
 }: {
   missionName: string;
   onChangeMission: (name: string) => void;
-  fogEnabled: boolean;
-  onChangeFogEnabled: (enabled: boolean) => void;
 }) {
+  const {
+    fogEnabled,
+    setFogEnabled,
+    speedMultiplier,
+    setSpeedMultiplier,
+    fov,
+    setFov,
+  } = useSettings();
+
   return (
     <div
       id="controls"
@@ -44,10 +50,37 @@ export function InspectorControls({
           type="checkbox"
           checked={fogEnabled}
           onChange={(event) => {
-            onChangeFogEnabled(event.target.checked);
+            setFogEnabled(event.target.checked);
           }}
         />
         <label htmlFor="fogInput">Fog?</label>
+      </div>
+      <div className="Field">
+        <label htmlFor="fovInput">FOV</label>
+        <input
+          id="speedInput"
+          type="range"
+          min={75}
+          max={120}
+          step={5}
+          value={fov}
+          onChange={(event) => setFov(parseInt(event.target.value))}
+        />
+        <output htmlFor="speedInput">{fov}</output>
+      </div>
+      <div className="Field">
+        <label htmlFor="speedInput">Speed</label>
+        <input
+          id="speedInput"
+          type="range"
+          min={0.1}
+          max={5}
+          step={0.05}
+          value={speedMultiplier}
+          onChange={(event) =>
+            setSpeedMultiplier(parseFloat(event.target.value))
+          }
+        />
       </div>
     </div>
   );

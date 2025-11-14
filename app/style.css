@@ -19,7 +19,7 @@ main {
 #controls {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 20px;
   position: fixed;
   top: 0;
   left: 0;
@@ -34,4 +34,14 @@ main {
   display: flex;
   align-items: center;
   gap: 6px;
+}
+
+.Field {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+#speedInput {
+  max-width: 80px;
 }
