@@ -56,7 +56,7 @@ function CameraMovement() {
     const handleWheel = (e: WheelEvent) => {
       e.preventDefault();
 
-      const direction = e.deltaY > 0 ? 1 : -1;
+      const direction = e.deltaY > 0 ? -1 : 1;
 
       const delta =
         // Helps normalize sensitivity; trackpad scrolling will have many small

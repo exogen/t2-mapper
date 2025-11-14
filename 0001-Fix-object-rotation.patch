@@ -1,0 +1,60 @@
+From b1c2a8c35479b3588e394e5409f78d24348cfdb2 Mon Sep 17 00:00:00 2001
+From: bmathews <spoonart@gmail.com>
+Date: Tue, 11 Nov 2025 17:47:41 -0800
+Subject: [PATCH] Fix object rotation
+
+---
+ app/page.tsx | 22 ++++++++++++----------
+ 1 file changed, 12 insertions(+), 10 deletions(-)
+
+diff --git a/app/page.tsx b/app/page.tsx
+index 8d316b1..10cecfa 100644
+--- a/app/page.tsx
++++ b/app/page.tsx
+@@ -439,23 +439,26 @@ uniform float tiling5;
+             .split(" ")
+             .map((s) => parseFloat(s));
+ 
+-          const q = new THREE.Quaternion();
+           if (isInterior) {
+-            // For interiors, we need to:
+-            // 1. Swap axes to match our coordinate system (z,y,x)
+-            // 2. Handle the negative scale transformation
+-            q.setFromAxisAngle(
+-              new THREE.Vector3(-az, ay, -ax),
+-              angle * (Math.PI / 180)
++            // For interiors: Apply coordinate system transformation
++            // 1. Convert rotation axis from source coords (ax, az, ay) to Three.js coords
++            // 2. Apply -90 Y rotation to align coordinate systems
++            const sourceRotation = new THREE.Quaternion().setFromAxisAngle(
++              new THREE.Vector3(az, ay, ax),
++              -angle * (Math.PI / 180)
++            );
++            const coordSystemFix = new THREE.Quaternion().setFromAxisAngle(
++              new THREE.Vector3(0, 1, 0),
++              Math.PI / 2
+             );
++            return coordSystemFix.multiply(sourceRotation);
+           } else {
+             // For other objects (terrain, etc)
+-            q.setFromAxisAngle(
++            return new THREE.Quaternion().setFromAxisAngle(
+               new THREE.Vector3(ax, ay, -az),
+               angle * (Math.PI / 180)
+             );
+           }
+-          return q;
+         };
+ 
+         switch (obj.className) {
+@@ -547,7 +550,6 @@ uniform float tiling5;
+             water.position.set(x, y + scaleY / 2, z); // Added small Y offset to prevent Z-fighting
+             water.scale.set(-scaleX, scaleY, -scaleZ); // Match InteriorInstance scale negation
+             water.quaternion.copy(q);
+-
+             root.add(water);
+             break;
+           }
+-- 
+2.40.0.windows.1
+
