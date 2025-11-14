@@ -184,8 +184,8 @@ export function Sky({ object }: { object: ConsoleObject }) {
         <fog
           attach="fog"
           color={fogColor[1]}
-          near={fogDistance / 2}
-          far={fogDistance * 2}
+          near={100}
+          far={Math.max(400, fogDistance * 2)}
         />
       ) : null}
     </>
