@@ -34,7 +34,7 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     let savedSettings: PersistedSettings = {};
     try {
-      savedSettings = JSON.parse(localStorage.getItem("settings"));
+      savedSettings = JSON.parse(localStorage.getItem("settings")) || {};
     } catch (err) {
       // Ignore.
     }
