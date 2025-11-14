@@ -7,8 +7,8 @@ import {
   getRotation,
   getScale,
 } from "@/src/mission";
-import { Suspense, useMemo } from "react";
-import { Material, Mesh } from "three";
+import { memo, Suspense, useEffect, useMemo } from "react";
+import { Material, Mesh, MeshBasicMaterial } from "three";
 import { setupColor } from "@/src/textureUtils";
 
 const FALLBACK_URL = `${BASE_URL}/black.png`;
@@ -31,7 +31,13 @@ function InteriorTexture({ material }: { material: Material }) {
 
   const texture = useTexture(url, (texture) => setupColor(texture));
 
-  return <meshStandardMaterial map={texture} />;
+  useEffect(() => {
+    const asBasicMaterial = material as MeshBasicMaterial;
+    asBasicMaterial.map = texture;
+    asBasicMaterial.needsUpdate = true;
+  }, [material, texture]);
+
+  return <primitive object={material} attach="material" />;
 }
 
 function InteriorMesh({ node }: { node: Mesh }) {
@@ -48,29 +54,37 @@ function InteriorMesh({ node }: { node: Mesh }) {
             <meshStandardMaterial color="yellow" wireframe />
           }
         >
-          <InteriorTexture material={node.material} />
+          {Array.isArray(node.material) ? (
+            node.material.map((mat, index) => (
+              <InteriorTexture key={index} material={mat} />
+            ))
+          ) : (
+            <InteriorTexture material={node.material} />
+          )}
         </Suspense>
       ) : null}
     </mesh>
   );
 }
 
-export function InteriorModel({ interiorFile }: { interiorFile: string }) {
-  const { nodes } = useInterior(interiorFile);
+export const InteriorModel = memo(
+  ({ interiorFile }: { interiorFile: string }) => {
+    const { nodes } = useInterior(interiorFile);
 
-  return (
-    <>
-      {Object.entries(nodes)
-        // .filter(
-        //   ([name, node]: [string, any]) => true
-        //   // !node.material || !node.material.name.match(/\.\d+$/)
-        // )
-        .map(([name, node]: [string, any]) => (
-          <InteriorMesh key={name} node={node} />
-        ))}
-    </>
-  );
-}
+    return (
+      <>
+        {Object.entries(nodes)
+          .filter(
+            ([name, node]: [string, any]) =>
+              !node.material || !node.material.name.match(/\.\d+$/)
+          )
+          .map(([name, node]: [string, any]) => (
+            <InteriorMesh key={name} node={node} />
+          ))}
+      </>
+    );
+  }
+);
 
 function InteriorPlaceholder() {
   return (
@@ -81,17 +95,23 @@ function InteriorPlaceholder() {
   );
 }
 
-export function InteriorInstance({ object }: { object: ConsoleObject }) {
-  const interiorFile = getProperty(object, "interiorFile").value;
-  const [z, y, x] = useMemo(() => getPosition(object), [object]);
-  const [scaleX, scaleY, scaleZ] = useMemo(() => getScale(object), [object]);
-  const q = useMemo(() => getRotation(object, true), [object]);
+export const InteriorInstance = memo(
+  ({ object }: { object: ConsoleObject }) => {
+    const interiorFile = getProperty(object, "interiorFile").value;
+    const [z, y, x] = useMemo(() => getPosition(object), [object]);
+    const [scaleX, scaleY, scaleZ] = useMemo(() => getScale(object), [object]);
+    const q = useMemo(() => getRotation(object, true), [object]);
 
-  return (
-    <group quaternion={q} position={[x, y, z]} scale={[scaleX, scaleY, scaleZ]}>
-      <Suspense fallback={<InteriorPlaceholder />}>
-        <InteriorModel interiorFile={interiorFile} />
-      </Suspense>
-    </group>
-  );
-}
+    return (
+      <group
+        quaternion={q}
+        position={[x - 1024, y, z - 1024]}
+        scale={[-scaleX, scaleY, -scaleZ]}
+      >
+        <Suspense fallback={<InteriorPlaceholder />}>
+          <InteriorModel interiorFile={interiorFile} />
+        </Suspense>
+      </group>
+    );
+  }
+);
