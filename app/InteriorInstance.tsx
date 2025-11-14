@@ -41,9 +41,6 @@ function InteriorTexture({ material }: { material: Material }) {
 }
 
 function InteriorMesh({ node }: { node: Mesh }) {
-  if (Array.isArray(node.material)) {
-    throw new Error("Unexpected multi-material node");
-  }
   return (
     <mesh geometry={node.geometry} castShadow receiveShadow>
       {node.material ? (
