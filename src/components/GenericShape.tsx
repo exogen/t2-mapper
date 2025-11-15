@@ -7,6 +7,7 @@ import {
   setupAlphaAsRoughnessTexture,
 } from "../shaderMaterials";
 import { MeshStandardMaterial } from "three";
+import { setupColor } from "../textureUtils";
 
 const FALLBACK_URL = `${BASE_URL}/black.png`;
 
@@ -20,19 +21,34 @@ export function useStaticShape(shapeName: string) {
 
 export function ShapeTexture({
   material,
+  shapeName,
 }: {
   material?: MeshStandardMaterial;
+  shapeName?: string;
 }) {
   const url = shapeTextureToUrl(material.name, FALLBACK_URL);
-  const texture = useTexture(url, (texture) =>
-    setupAlphaAsRoughnessTexture(texture)
-  );
+  const isOrganic = shapeName && /borg|xorg/i.test(shapeName);
 
-  // Create or reuse shader material that uses alpha channel as roughness
-  const shaderMaterial = createAlphaAsRoughnessMaterial();
-  shaderMaterial.map = texture;
+  const texture = useTexture(url, (texture) => {
+    if (!isOrganic) {
+      setupAlphaAsRoughnessTexture(texture);
+    }
+    return setupColor(texture);
+  });
 
-  return <primitive object={shaderMaterial} attach="material" />;
+  // Only use alpha-as-roughness material for borg shapes
+  if (!isOrganic) {
+    const shaderMaterial = createAlphaAsRoughnessMaterial();
+    shaderMaterial.map = texture;
+    return <primitive object={shaderMaterial} attach="material" />;
+  }
+
+  // For non-borg shapes, use the original GLTF material with updated texture
+  const clonedMaterial = material.clone();
+  clonedMaterial.map = texture;
+  clonedMaterial.transparent = true;
+  clonedMaterial.alphaTest = 0.9;
+  return <primitive object={clonedMaterial} attach="material" />;
 }
 
 export function ShapeModel({ shapeName }: { shapeName: string }) {
@@ -78,11 +94,13 @@ export function ShapeModel({ shapeName }: { shapeName: string }) {
                       <ShapeTexture
                         key={index}
                         material={mat as MeshStandardMaterial}
+                        shapeName={shapeName}
                       />
                     ))
                   ) : (
                     <ShapeTexture
                       material={node.material as MeshStandardMaterial}
+                      shapeName={shapeName}
                     />
                   )}
                 </Suspense>
