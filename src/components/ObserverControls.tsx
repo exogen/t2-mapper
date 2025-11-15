@@ -14,9 +14,9 @@ enum Controls {
   down = "down",
 }
 
-const BASE_SPEED = 100; // units per second
+const BASE_SPEED = 80; // units per second
 const MIN_SPEED_ADJUSTMENT = 0.05;
-const MAX_SPEED_ADJUSTMENT = 1;
+const MAX_SPEED_ADJUSTMENT = 0.5;
 
 function CameraMovement() {
   const { speedMultiplier, setSpeedMultiplier } = useSettings();
