@@ -2,6 +2,8 @@ import { Suspense } from "react";
 import { useGLTF, useTexture } from "@react-three/drei";
 import { BASE_URL, shapeTextureToUrl, shapeToUrl } from "../loaders";
 import { setupColor } from "../textureUtils";
+import { filterGeometryByVertexGroups, getHullBoneIndices } from "../meshUtils";
+import { MeshStandardMaterial } from "three";
 
 const FALLBACK_URL = `${BASE_URL}/black.png`;
 
@@ -13,45 +15,74 @@ export function useStaticShape(shapeName: string) {
   return useGLTF(url);
 }
 
-export function ShapeTexture({ materialName }: { materialName: string }) {
-  // console.log({ materialName });
-  const url = shapeTextureToUrl(materialName, FALLBACK_URL);
+export function ShapeTexture({
+  material,
+}: {
+  material?: MeshStandardMaterial;
+}) {
+  const url = shapeTextureToUrl(material.name, FALLBACK_URL);
   const texture = useTexture(url, (texture) => setupColor(texture));
-
-  return <meshStandardMaterial map={texture} side={2} />;
+  material.map = texture;
+  material.side = 2;
+  material.transparent = true;
+  return <primitive object={material} attach="material" />;
 }
 
 export function ShapeModel({ shapeName }: { shapeName: string }) {
   const { nodes } = useStaticShape(shapeName);
+
+  let hullBoneIndices = new Set<number>();
+  const skeletonsFound = Object.values(nodes).filter(
+    (node: any) => node.skeleton
+  );
+
+  if (skeletonsFound.length > 0) {
+    const skeleton = (skeletonsFound[0] as any).skeleton;
+    hullBoneIndices = getHullBoneIndices(skeleton);
+  }
 
   return (
     <>
       {Object.entries(nodes)
         .filter(
           ([name, node]: [string, any]) =>
-            !node.material || !node.material.name.match(/\.\d+$/)
+            node.material &&
+            node.material.name !== "Unassigned" &&
+            !node.name.match(/^Hulk/i)
         )
-        .map(([name, node]: [string, any]) => (
-          <mesh key={node.id} geometry={node.geometry} castShadow receiveShadow>
-            {node.material ? (
-              <Suspense
-                fallback={
-                  // Allow the mesh to render while the texture is still loading;
-                  // show a wireframe placeholder.
-                  <meshStandardMaterial color="gray" wireframe />
-                }
-              >
-                {Array.isArray(node.material) ? (
-                  node.material.map((mat, index) => (
-                    <ShapeTexture key={index} materialName={mat.name} />
-                  ))
-                ) : (
-                  <ShapeTexture materialName={node.material.name} />
-                )}
-              </Suspense>
-            ) : null}
-          </mesh>
-        ))}
+        .map(([name, node]: [string, any]) => {
+          const geometry = filterGeometryByVertexGroups(
+            node.geometry,
+            hullBoneIndices
+          );
+
+          return (
+            <mesh key={node.id} geometry={geometry} castShadow receiveShadow>
+              {node.material ? (
+                <Suspense
+                  fallback={
+                    // Allow the mesh to render while the texture is still loading;
+                    // show a wireframe placeholder.
+                    <meshStandardMaterial color="gray" wireframe />
+                  }
+                >
+                  {Array.isArray(node.material) ? (
+                    node.material.map((mat, index) => (
+                      <ShapeTexture
+                        key={index}
+                        material={mat as MeshStandardMaterial}
+                      />
+                    ))
+                  ) : (
+                    <ShapeTexture
+                      material={node.material as MeshStandardMaterial}
+                    />
+                  )}
+                </Suspense>
+              ) : null}
+            </mesh>
+          );
+        })}
     </>
   );
 }
