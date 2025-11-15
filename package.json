@@ -13,7 +13,7 @@
     "deploy": "npm run build && git add -f docs && git commit -m \"Deploy\" && git push",
     "postbuild": "git checkout -- public/base",
     "prebuild": "npm run clean && git checkout -- docs && rimraf public/base && mv docs/base public/",
-    "start": "next dev"
+    "start": "next dev --turbopack"
   },
   "dependencies": {
     "@react-three/drei": "^10.7.6",
