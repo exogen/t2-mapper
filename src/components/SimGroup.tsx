@@ -1,4 +1,4 @@
-import { ConsoleObject } from "@/src/mission";
+import { ConsoleObject } from "../mission";
 import { renderObject } from "./renderObject";
 
 export function SimGroup({ object }: { object: ConsoleObject }) {

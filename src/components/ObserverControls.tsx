@@ -1,11 +1,9 @@
-import { KeyboardControls } from "@react-three/drei";
-
 import { useEffect, useRef } from "react";
+import { Vector3 } from "three";
 import { useFrame, useThree } from "@react-three/fiber";
-import { useKeyboardControls } from "@react-three/drei";
+import { KeyboardControls, useKeyboardControls } from "@react-three/drei";
 import { PointerLockControls } from "three-stdlib";
 import { useSettings } from "./SettingsProvider";
-import { Vector3 } from "three";
 
 enum Controls {
   forward = "forward",

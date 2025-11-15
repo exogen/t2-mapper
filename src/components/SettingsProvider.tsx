@@ -1,5 +1,4 @@
 import React, { useContext, useEffect, useMemo, useState } from "react";
-import { PerspectiveCamera } from "three";
 
 const SettingsContext = React.createContext(null);
 

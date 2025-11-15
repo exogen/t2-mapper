@@ -1,10 +1,10 @@
-import { ConsoleObject, getProperty } from "@/src/mission";
-import { useSettings } from "./SettingsProvider";
 import { Suspense, useMemo, useEffect, useRef } from "react";
-import { BASE_URL, getUrlForPath, loadDetailMapList } from "@/src/loaders";
 import { useQuery } from "@tanstack/react-query";
 import { useCubeTexture } from "@react-three/drei";
 import { Color, ShaderMaterial, BackSide } from "three";
+import { ConsoleObject, getProperty } from "../mission";
+import { useSettings } from "./SettingsProvider";
+import { BASE_URL, getUrlForPath, loadDetailMapList } from "../loaders";
 
 const FALLBACK_URL = `${BASE_URL}/black.png`;
 

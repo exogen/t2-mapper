@@ -1,15 +1,5 @@
-import { uint16ToFloat32 } from "@/src/arrayUtils";
-import { loadTerrain, terrainTextureToUrl } from "@/src/loaders";
-import {
-  ConsoleObject,
-  getPosition,
-  getProperty,
-  getRotation,
-  getScale,
-} from "@/src/mission";
-import { useQuery } from "@tanstack/react-query";
 import { Suspense, useCallback, useMemo } from "react";
-import { useTexture } from "@react-three/drei";
+import { useQuery } from "@tanstack/react-query";
 import {
   DataTexture,
   RedFormat,
@@ -20,11 +10,21 @@ import {
   UnsignedByteType,
   PlaneGeometry,
 } from "three";
+import { useTexture } from "@react-three/drei";
+import { uint16ToFloat32 } from "../arrayUtils";
+import { loadTerrain, terrainTextureToUrl } from "../loaders";
+import {
+  ConsoleObject,
+  getPosition,
+  getProperty,
+  getRotation,
+  getScale,
+} from "../mission";
 import {
   setupColor,
   setupMask,
   updateTerrainTextureShader,
-} from "@/src/textureUtils";
+} from "../textureUtils";
 
 /**
  * Load a .ter file, used for terrain heightmap and texture info.

@@ -1,5 +1,5 @@
-import parser from "@/generated/mission.cjs";
 import { Quaternion, Vector3 } from "three";
+import parser from "@/generated/mission.cjs";
 
 const definitionComment = /^ (DisplayName|MissionTypes) = (.+)$/;
 const sectionBeginComment = /^--- ([A-Z ]+) BEGIN ---$/;

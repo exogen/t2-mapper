@@ -1,5 +1,5 @@
-import { loadMission } from "@/src/loaders";
 import { useQuery } from "@tanstack/react-query";
+import { loadMission } from "../loaders";
 import { renderObject } from "./renderObject";
 
 function useMission(name: string) {

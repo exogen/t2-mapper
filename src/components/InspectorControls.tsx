@@ -1,4 +1,4 @@
-import { getResourceList } from "@/src/manifest";
+import { getResourceList } from "../manifest";
 import { useSettings } from "./SettingsProvider";
 
 const excludeMissions = new Set([

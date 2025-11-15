@@ -1,6 +1,6 @@
-import { ConsoleObject, getProperty } from "@/src/mission";
 import { useMemo } from "react";
 import { Color } from "three";
+import { ConsoleObject, getProperty } from "../mission";
 
 export function Sun({ object }: { object: ConsoleObject }) {
   const direction = useMemo(() => {

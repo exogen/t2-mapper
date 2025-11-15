@@ -1,4 +1,4 @@
-import { ConsoleObject } from "@/src/mission";
+import { ConsoleObject } from "../mission";
 import { TerrainBlock } from "./TerrainBlock";
 import { WaterBlock } from "./WaterBlock";
 import { SimGroup } from "./SimGroup";

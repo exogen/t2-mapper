@@ -1,14 +1,14 @@
 "use client";
 import { useState, useEffect } from "react";
-import { Canvas } from "@react-three/fiber";
-import { Mission } from "./Mission";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { ObserverControls } from "./ObserverControls";
-import { InspectorControls } from "./InspectorControls";
-import { SettingsProvider } from "./SettingsProvider";
-import { EffectComposer, N8AO } from "@react-three/postprocessing";
 import { useSearchParams, useRouter } from "next/navigation";
-import { ObserverCamera } from "./ObserverCamera";
+import { Canvas } from "@react-three/fiber";
+import { EffectComposer, N8AO } from "@react-three/postprocessing";
+import { Mission } from "@/src/components/Mission";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { ObserverControls } from "@/src/components/ObserverControls";
+import { InspectorControls } from "@/src/components/InspectorControls";
+import { SettingsProvider } from "@/src/components/SettingsProvider";
+import { ObserverCamera } from "@/src/components/ObserverCamera";
 
 // three.js has its own loaders for textures and models, but we need to load other
 // stuff too, e.g. missions, terrains, and more. This client is used for those.

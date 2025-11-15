@@ -1,14 +1,14 @@
-import { textureToUrl } from "@/src/loaders";
+import { Suspense, useMemo } from "react";
+import { useTexture } from "@react-three/drei";
+import { textureToUrl } from "../loaders";
 import {
   ConsoleObject,
   getPosition,
   getProperty,
   getRotation,
   getScale,
-} from "@/src/mission";
-import { setupColor } from "@/src/textureUtils";
-import { useTexture } from "@react-three/drei";
-import { Suspense, useMemo } from "react";
+} from "../mission";
+import { setupColor } from "../textureUtils";
 
 export function WaterMaterial({ surfaceTexture }: { surfaceTexture: string }) {
   const url = textureToUrl(surfaceTexture);

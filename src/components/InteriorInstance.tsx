@@ -1,15 +1,15 @@
+import { memo, Suspense, useMemo } from "react";
+import { Mesh } from "three";
 import { useGLTF, useTexture } from "@react-three/drei";
-import { BASE_URL, interiorTextureToUrl, interiorToUrl } from "@/src/loaders";
+import { BASE_URL, interiorTextureToUrl, interiorToUrl } from "../loaders";
 import {
   ConsoleObject,
   getPosition,
   getProperty,
   getRotation,
   getScale,
-} from "@/src/mission";
-import { memo, Suspense, useMemo } from "react";
-import { Mesh } from "three";
-import { setupColor } from "@/src/textureUtils";
+} from "../mission";
+import { setupColor } from "../textureUtils";
 
 const FALLBACK_URL = `${BASE_URL}/black.png`;
 
