@@ -12,7 +12,22 @@ import { ShapeModel, ShapePlaceholder } from "./GenericShape";
 const dataBlockToShapeName = {
   StationInventory: "station_inv_human.dts",
   SensorLargePulse: "sensor_pulse_large.dts",
+  GeneratorLarge: "station_generator_large.dts",
+  SolarPanel: "solarpanel.dts",
 };
+
+let _caseInsensitiveLookup: Record<string, string>;
+
+function getDataBlockShape(dataBlock: string) {
+  if (!_caseInsensitiveLookup) {
+    _caseInsensitiveLookup = Object.fromEntries(
+      Object.entries(dataBlockToShapeName).map(([key, value]) => {
+        return [key.toLowerCase(), value];
+      })
+    );
+  }
+  return _caseInsensitiveLookup[dataBlock.toLowerCase()];
+}
 
 export function StaticShape({ object }: { object: ConsoleObject }) {
   const dataBlock = getProperty(object, "dataBlock").value;
@@ -21,13 +36,13 @@ export function StaticShape({ object }: { object: ConsoleObject }) {
   const [scaleX, scaleY, scaleZ] = useMemo(() => getScale(object), [object]);
   const q = useMemo(() => getRotation(object, true), [object]);
 
-  const shapeName = dataBlockToShapeName[dataBlock];
+  const shapeName = getDataBlockShape(dataBlock);
 
   return (
     <group
       quaternion={q}
       position={[x - 1024, y, z - 1024]}
-      scale={[-scaleX, scaleY, -scaleZ]}
+      scale={[-scaleX, scaleY, scaleZ]}
     >
       {shapeName ? (
         <ErrorBoundary fallback={<ShapePlaceholder color="red" />}>

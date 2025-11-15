@@ -11,7 +11,21 @@ import { ShapeModel, ShapePlaceholder } from "./GenericShape";
 
 const dataBlockToShapeName = {
   RepairPack: "pack_upgrade_repair.dts",
+  Flag: "flag.dts",
 };
+
+let _caseInsensitiveLookup: Record<string, string>;
+
+function getDataBlockShape(dataBlock: string) {
+  if (!_caseInsensitiveLookup) {
+    _caseInsensitiveLookup = Object.fromEntries(
+      Object.entries(dataBlockToShapeName).map(([key, value]) => {
+        return [key.toLowerCase(), value];
+      })
+    );
+  }
+  return _caseInsensitiveLookup[dataBlock.toLowerCase()];
+}
 
 export function Item({ object }: { object: ConsoleObject }) {
   const dataBlock = getProperty(object, "dataBlock").value;
@@ -20,7 +34,7 @@ export function Item({ object }: { object: ConsoleObject }) {
   const [scaleX, scaleY, scaleZ] = useMemo(() => getScale(object), [object]);
   const q = useMemo(() => getRotation(object, true), [object]);
 
-  const shapeName = dataBlockToShapeName[dataBlock];
+  const shapeName = getDataBlockShape(dataBlock);
 
   return (
     <group
