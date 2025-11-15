@@ -10,18 +10,8 @@ import {
 import { ShapeModel, ShapePlaceholder } from "./GenericShape";
 
 const dataBlockToShapeName = {
-  Banner_Honor: "banner_honor.dts",
-  Banner_Strength: "banner_strength.dts",
-  Banner_Unity: "banner_unity.dts",
-  ExteriorFlagStand: "ext_flagstand.dts",
-  GeneratorLarge: "station_generator_large.dts",
-  LogoProjector: "teamlogo_projector.dts",
-  SensorLargePulse: "sensor_pulse_large.dts",
-  SensorMediumPulse: "sensor_pulse_medium.dts",
-  SolarPanel: "solarpanel.dts",
-  StationInventory: "station_inv_human.dts",
-  StationVehicle: "vehicle_pad_station.dts",
-  StationVehiclePad: "vehicle_pad.dts",
+  SentryTurret: "turret_sentry.dts",
+  TurretBaseLarge: "turret_base_large.dts",
 };
 
 let _caseInsensitiveLookup: Record<string, string>;
@@ -37,7 +27,7 @@ function getDataBlockShape(dataBlock: string) {
   return _caseInsensitiveLookup[dataBlock.toLowerCase()];
 }
 
-export function StaticShape({ object }: { object: ConsoleObject }) {
+export function Turret({ object }: { object: ConsoleObject }) {
   const dataBlock = getProperty(object, "dataBlock").value;
 
   const [z, y, x] = useMemo(() => getPosition(object), [object]);
@@ -47,7 +37,7 @@ export function StaticShape({ object }: { object: ConsoleObject }) {
   const shapeName = getDataBlockShape(dataBlock);
 
   if (!shapeName) {
-    console.error(`<StaticShape> missing shape for dataBlock: ${dataBlock}`);
+    console.error(`<Turret> missing shape for dataBlock: ${dataBlock}`);
   }
 
   return (

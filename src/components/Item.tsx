@@ -10,8 +10,17 @@ import {
 import { ShapeModel, ShapePlaceholder } from "./GenericShape";
 
 const dataBlockToShapeName = {
-  RepairPack: "pack_upgrade_repair.dts",
   Flag: "flag.dts",
+  InventoryDeployable: "pack_deploy_inventory.dts",
+  RepairKit: "repair_kit.dts",
+  RepairPack: "pack_upgrade_repair.dts",
+  RepairPatch: "repair_patch.dts",
+  CloakingPack: "pack_upgrade_cloaking.dts",
+  ShieldPack: "pack_upgrade_shield.dts",
+  EnergyPack: "pack_upgrade_energy.dts",
+  SniperRifle: "weapon_sniper.dts",
+  PlasmaAmmo: "ammo_plasma.dts",
+  Plasma: "weapon_plasma.dts",
 };
 
 let _caseInsensitiveLookup: Record<string, string>;
@@ -36,6 +45,10 @@ export function Item({ object }: { object: ConsoleObject }) {
 
   const shapeName = getDataBlockShape(dataBlock);
 
+  if (!shapeName) {
+    console.error(`<Item> missing shape for dataBlock: ${dataBlock}`);
+  }
+
   return (
     <group
       quaternion={q}
@@ -44,7 +57,7 @@ export function Item({ object }: { object: ConsoleObject }) {
     >
       {shapeName ? (
         <ErrorBoundary fallback={<ShapePlaceholder color="red" />}>
-          <Suspense fallback={<ShapePlaceholder color="yellow" />}>
+          <Suspense fallback={<ShapePlaceholder color="pink" />}>
             <ShapeModel shapeName={shapeName} />
           </Suspense>
         </ErrorBoundary>

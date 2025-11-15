@@ -8,6 +8,7 @@ import { Sun } from "./Sun";
 import { TSStatic } from "./TSStatic";
 import { StaticShape } from "./StaticShape";
 import { Item } from "./Item";
+import { Turret } from "./Turret";
 
 const componentMap = {
   InteriorInstance,
@@ -18,6 +19,7 @@ const componentMap = {
   Sun,
   TerrainBlock,
   TSStatic,
+  Turret,
   WaterBlock,
 };
 

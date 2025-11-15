@@ -12,7 +12,7 @@ export function getUrlForPath(resourcePath: string, fallbackUrl?: string) {
     sourcePath = getSource(resourcePath);
   } catch (err) {
     if (fallbackUrl) {
-      console.error(err);
+      // console.error(err);
       return fallbackUrl;
     } else {
       throw err;

@@ -14,6 +14,7 @@ export function useStaticShape(shapeName: string) {
 }
 
 export function ShapeTexture({ materialName }: { materialName: string }) {
+  // console.log({ materialName });
   const url = shapeTextureToUrl(materialName, FALLBACK_URL);
   const texture = useTexture(url, (texture) => setupColor(texture));
 
