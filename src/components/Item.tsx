@@ -11,6 +11,8 @@ import { ShapeModel, ShapePlaceholder } from "./GenericShape";
 
 const dataBlockToShapeName = {
   AmmoPack: "pack_upgrade_ammo.dts",
+  Beacon: "beacon.dts",
+  Chaingun: "weapon_chaingun.dts",
   ChaingunAmmo: "ammo_chaingun.dts",
   CloakingPack: "pack_upgrade_cloaking.dts",
   DiscAmmo: "ammo_disc.dts",

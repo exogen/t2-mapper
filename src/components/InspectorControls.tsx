@@ -32,6 +32,7 @@ export function InspectorControls({
   return (
     <div
       id="controls"
+      onKeyDown={(e) => e.stopPropagation()}
       onPointerDown={(e) => e.stopPropagation()}
       onClick={(e) => e.stopPropagation()}
     >
