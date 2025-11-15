@@ -1,8 +1,11 @@
 import { Suspense } from "react";
 import { useGLTF, useTexture } from "@react-three/drei";
 import { BASE_URL, shapeTextureToUrl, shapeToUrl } from "../loaders";
-import { setupColor } from "../textureUtils";
 import { filterGeometryByVertexGroups, getHullBoneIndices } from "../meshUtils";
+import {
+  createAlphaAsRoughnessMaterial,
+  setupAlphaAsRoughnessTexture,
+} from "../shaderMaterials";
 import { MeshStandardMaterial } from "three";
 
 const FALLBACK_URL = `${BASE_URL}/black.png`;
@@ -21,11 +24,15 @@ export function ShapeTexture({
   material?: MeshStandardMaterial;
 }) {
   const url = shapeTextureToUrl(material.name, FALLBACK_URL);
-  const texture = useTexture(url, (texture) => setupColor(texture));
-  material.map = texture;
-  material.side = 2;
-  material.transparent = true;
-  return <primitive object={material} attach="material" />;
+  const texture = useTexture(url, (texture) =>
+    setupAlphaAsRoughnessTexture(texture)
+  );
+
+  // Create or reuse shader material that uses alpha channel as roughness
+  const shaderMaterial = createAlphaAsRoughnessMaterial();
+  shaderMaterial.map = texture;
+
+  return <primitive object={shaderMaterial} attach="material" />;
 }
 
 export function ShapeModel({ shapeName }: { shapeName: string }) {
