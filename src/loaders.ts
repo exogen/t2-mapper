@@ -29,6 +29,11 @@ export function interiorToUrl(name: string) {
   return difUrl.replace(/\.dif$/i, ".gltf");
 }
 
+export function shapeToUrl(name: string) {
+  const difUrl = getUrlForPath(`shapes/${name}`);
+  return difUrl.replace(/\.dts$/i, ".glb");
+}
+
 export function terrainTextureToUrl(name: string) {
   name = name.replace(/^terrain\./, "");
   return getUrlForPath(`textures/terrain/${name}.png`, `${BASE_URL}/black.png`);
