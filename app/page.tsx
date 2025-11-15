@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect } from "react";
+import { useState, useEffect, Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { Canvas } from "@react-three/fiber";
 import { EffectComposer, N8AO } from "@react-three/postprocessing";
@@ -14,7 +14,7 @@ import { ObserverCamera } from "@/src/components/ObserverCamera";
 // stuff too, e.g. missions, terrains, and more. This client is used for those.
 const queryClient = new QueryClient();
 
-export default function HomePage() {
+function MapInspector() {
   const searchParams = useSearchParams();
   const router = useRouter();
 
@@ -49,5 +49,13 @@ export default function HomePage() {
         </SettingsProvider>
       </main>
     </QueryClientProvider>
+  );
+}
+
+export default function HomePage() {
+  return (
+    <Suspense>
+      <MapInspector />
+    </Suspense>
   );
 }
