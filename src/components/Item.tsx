@@ -10,17 +10,25 @@ import {
 import { ShapeModel, ShapePlaceholder } from "./GenericShape";
 
 const dataBlockToShapeName = {
+  AmmoPack: "pack_upgrade_ammo.dts",
+  ChaingunAmmo: "ammo_chaingun.dts",
+  CloakingPack: "pack_upgrade_cloaking.dts",
+  DiscAmmo: "ammo_disc.dts",
+  ELFGun: "weapon_elf.dts",
+  EnergyPack: "pack_upgrade_energy.dts",
   Flag: "flag.dts",
+  GrenadeLauncher: "weapon_grenade_launcher.dts",
+  GrenadeLauncherAmmo: "ammo_grenade.dts",
   InventoryDeployable: "pack_deploy_inventory.dts",
+  Plasma: "weapon_plasma.dts",
+  PlasmaAmmo: "ammo_plasma.dts",
   RepairKit: "repair_kit.dts",
   RepairPack: "pack_upgrade_repair.dts",
   RepairPatch: "repair_patch.dts",
-  CloakingPack: "pack_upgrade_cloaking.dts",
+  SensorJammerPack: "pack_upgrade_sensorjammer.dts",
   ShieldPack: "pack_upgrade_shield.dts",
-  EnergyPack: "pack_upgrade_energy.dts",
+  ShockLance: "weapon_shocklance.dts",
   SniperRifle: "weapon_sniper.dts",
-  PlasmaAmmo: "ammo_plasma.dts",
-  Plasma: "weapon_plasma.dts",
 };
 
 let _caseInsensitiveLookup: Record<string, string>;
