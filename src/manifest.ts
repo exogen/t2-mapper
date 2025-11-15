@@ -15,12 +15,30 @@ export function getActualResourcePath(resourcePath: string) {
   }
   const resourcePaths = getResourceList();
   const lowerCased = resourcePath.toLowerCase();
+
+  // First, try exact case-insensitive match
   const foundLowerCase = resourcePaths.find(
     (s) => s.toLowerCase() === lowerCased
   );
   if (foundLowerCase) {
     return foundLowerCase;
   }
+
+  // For paths with numeric suffixes (e.g., "generator0.png"), strip the number and try again
+  // e.g., "generator0.png" -> "generator.png"
+  const pathWithoutNumber = resourcePath.replace(/\d+(\.(png))$/i, "$1");
+  const lowerCasedWithoutNumber = pathWithoutNumber.toLowerCase();
+
+  if (pathWithoutNumber !== resourcePath) {
+    // If we stripped a number, try to find the version without it
+    const foundWithoutNumber = resourcePaths.find(
+      (s) => s.toLowerCase() === lowerCasedWithoutNumber
+    );
+    if (foundWithoutNumber) {
+      return foundWithoutNumber;
+    }
+  }
+
   const isTexture = resourcePath.startsWith("textures/");
   if (isTexture) {
     const foundNested = resourcePaths.find(

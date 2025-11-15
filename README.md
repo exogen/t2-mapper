@@ -21,6 +21,8 @@ Click inside the map preview area to capture the mouse.
 | <kbd>Space</kbd> | Up |
 | <kbd>Shift</kbd> | Down |
 | <kbd>Esc</kbd> | Release mouse |
+| △ Scroll/mouse wheel up | Increase speed |
+| ▽ Scroll/mouse wheel down | Decrease speed |
 
 
 ## Development

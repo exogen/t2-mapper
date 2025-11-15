@@ -2,6 +2,7 @@ html,
 body {
   margin: 0;
   padding: 0;
+  background: black;
 }
 
 html {
@@ -10,8 +11,7 @@ html {
   font-size: 100%;
 }
 
-#canvas {
-  display: block;
+main {
   width: 100vw;
   height: 100vh;
 }
@@ -19,7 +19,7 @@ html {
 #controls {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 20px;
   position: fixed;
   top: 0;
   left: 0;
@@ -34,4 +34,14 @@ html {
   display: flex;
   align-items: center;
   gap: 6px;
+}
+
+.Field {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+#speedInput {
+  max-width: 80px;
 }

@@ -4,7 +4,7 @@ import { normalizePath } from "@/src/stringUtils";
 import manifest from "@/public/manifest.json";
 import path from "node:path";
 
-const inputBaseDir = "rawGameData/base";
+const inputBaseDir = process.env.BASE_DIR || "GameData/base";
 const outputBaseDir = "docs/base";
 
 const archives = new Map<string, unzipper.CentralDirectory>();

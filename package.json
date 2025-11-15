@@ -13,19 +13,23 @@
     "deploy": "npm run build && git add -f docs && git commit -m \"Deploy\" && git push",
     "postbuild": "git checkout -- public/base",
     "prebuild": "npm run clean && git checkout -- docs && rimraf public/base && mv docs/base public/",
-    "start": "next dev"
+    "start": "next dev --turbopack"
   },
   "dependencies": {
+    "@react-three/drei": "^10.7.6",
     "@react-three/fiber": "^9.3.0",
+    "@react-three/postprocessing": "^3.0.4",
+    "@tanstack/react-query": "^5.90.8",
     "next": "^15.5.2",
     "react": "^19.1.1",
     "react-dom": "^19.1.1",
+    "react-error-boundary": "^6.0.0",
     "three": "^0.180.0",
     "unzipper": "^0.12.3"
   },
   "devDependencies": {
     "@types/node": "24.3.1",
-    "@types/react": "19.1.12",
+    "@types/react": "^19.2.4",
     "@types/three": "^0.180.0",
     "@types/unzipper": "^0.10.11",
     "peggy": "^5.0.6",
