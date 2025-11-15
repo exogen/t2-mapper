@@ -221,7 +221,7 @@ export function TerrainBlock({ object }: { object: ConsoleObject }) {
   return (
     <mesh
       quaternion={q}
-      position={position}
+      position={[position[0], 0, position[2]]} // Y up is unused for terrain
       scale={scale}
       geometry={planeGeometry}
       receiveShadow
