@@ -238,7 +238,7 @@ export function getRotation(obj: ConsoleObject, isInterior = false) {
       new Vector3(0, 1, 0),
       Math.PI / 2
     );
-    return coordSystemFix.multiply(sourceRotation);
+    return sourceRotation.multiply(coordSystemFix);
   } else {
     // For other objects (terrain, etc)
     return new Quaternion().setFromAxisAngle(
