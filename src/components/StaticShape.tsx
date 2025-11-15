@@ -13,15 +13,21 @@ const dataBlockToShapeName = {
   Banner_Honor: "banner_honor.dts",
   Banner_Strength: "banner_strength.dts",
   Banner_Unity: "banner_unity.dts",
+  CreativityPad: "station_teleport.dts",
   ExteriorFlagStand: "ext_flagstand.dts",
+  FlipFlop: "switch.dts",
   GeneratorLarge: "station_generator_large.dts",
+  InteriorFlagStand: "int_flagstand.dts",
+  LightMaleHuman_Dead: "light_male_dead.dts",
   LogoProjector: "teamlogo_projector.dts",
   SensorLargePulse: "sensor_pulse_large.dts",
   SensorMediumPulse: "sensor_pulse_medium.dts",
   SolarPanel: "solarpanel.dts",
+  StaticShape: "switch.dts",
   StationInventory: "station_inv_human.dts",
   StationVehicle: "vehicle_pad_station.dts",
   StationVehiclePad: "vehicle_pad.dts",
+  Teleporter: "nexusbase.dts",
 };
 
 let _caseInsensitiveLookup: Record<string, string>;
