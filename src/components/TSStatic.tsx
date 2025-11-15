@@ -19,9 +19,22 @@ function useStaticShape(shapeName: string) {
 }
 
 function ShapeModel({ shapeName }: { shapeName: string }) {
-  const { scene } = useStaticShape(shapeName);
+  const { nodes } = useStaticShape(shapeName);
 
-  return <primitive object={scene} />;
+  return (
+    <>
+      {Object.entries(nodes)
+        .filter(
+          ([name, node]: [string, any]) =>
+            !node.material || !node.material.name.match(/\.\d+$/)
+        )
+        .map(([name, node]: [string, any]) => (
+          <mesh key={node.id} geometry={node.geometry} castShadow receiveShadow>
+            <meshStandardMaterial color="cyan" wireframe />
+          </mesh>
+        ))}
+    </>
+  );
 }
 
 function ShapePlaceholder({ color }: { color: string }) {

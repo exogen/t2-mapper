@@ -33,7 +33,7 @@ function ShapeModel({ shapeName }: { shapeName: string }) {
             !node.material || !node.material.name.match(/\.\d+$/)
         )
         .map(([name, node]: [string, any]) => (
-          <mesh geometry={node.geometry} castShadow receiveShadow>
+          <mesh key={node.id} geometry={node.geometry} castShadow receiveShadow>
             <meshStandardMaterial color="cyan" wireframe />
           </mesh>
         ))}
