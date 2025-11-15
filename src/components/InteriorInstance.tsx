@@ -22,13 +22,7 @@ function useInterior(interiorFile: string) {
 }
 
 function InteriorTexture({ materialName }: { materialName: string }) {
-  let url = FALLBACK_URL;
-  try {
-    url = interiorTextureToUrl(materialName);
-  } catch (err) {
-    console.error(err);
-  }
-
+  const url = interiorTextureToUrl(materialName, FALLBACK_URL);
   const texture = useTexture(url, (texture) => setupColor(texture));
 
   return <meshStandardMaterial map={texture} side={2} />;

@@ -7,44 +7,7 @@ import {
   getRotation,
   getScale,
 } from "../mission";
-import { shapeToUrl } from "../loaders";
-import { useGLTF } from "@react-three/drei";
-
-/**
- * Load a .glb file that was converted from a .dts, used for static shapes.
- */
-function useStaticShape(shapeName: string) {
-  const url = shapeToUrl(shapeName);
-  return useGLTF(url);
-}
-
-function ShapeModel({ shapeName }: { shapeName: string }) {
-  const { nodes } = useStaticShape(shapeName);
-
-  return (
-    <>
-      {Object.entries(nodes)
-        .filter(
-          ([name, node]: [string, any]) =>
-            !node.material || !node.material.name.match(/\.\d+$/)
-        )
-        .map(([name, node]: [string, any]) => (
-          <mesh key={node.id} geometry={node.geometry} castShadow receiveShadow>
-            <meshStandardMaterial color="cyan" wireframe />
-          </mesh>
-        ))}
-    </>
-  );
-}
-
-function ShapePlaceholder({ color }: { color: string }) {
-  return (
-    <mesh>
-      <boxGeometry args={[10, 10, 10]} />
-      <meshStandardMaterial color={color} wireframe />
-    </mesh>
-  );
-}
+import { ShapeModel, ShapePlaceholder } from "./GenericShape";
 
 export function TSStatic({ object }: { object: ConsoleObject }) {
   const shapeName = getProperty(object, "shapeName").value;

@@ -12,6 +12,7 @@ export function getUrlForPath(resourcePath: string, fallbackUrl?: string) {
     sourcePath = getSource(resourcePath);
   } catch (err) {
     if (fallbackUrl) {
+      console.error(err);
       return fallbackUrl;
     } else {
       throw err;
@@ -39,9 +40,14 @@ export function terrainTextureToUrl(name: string) {
   return getUrlForPath(`textures/terrain/${name}.png`, `${BASE_URL}/black.png`);
 }
 
-export function interiorTextureToUrl(name: string) {
+export function interiorTextureToUrl(name: string, fallbackUrl?: string) {
   name = name.replace(/\.\d+$/, "");
-  return getUrlForPath(`textures/${name}.png`);
+  return getUrlForPath(`textures/${name}.png`, fallbackUrl);
+}
+
+export function shapeTextureToUrl(name: string, fallbackUrl?: string) {
+  name = name.replace(/\.\d+$/, "");
+  return getUrlForPath(`textures/skins/${name}.png`, fallbackUrl);
 }
 
 export function textureToUrl(name: string) {
