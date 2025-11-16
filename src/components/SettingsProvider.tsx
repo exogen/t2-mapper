@@ -6,6 +6,7 @@ type PersistedSettings = {
   fogEnabled?: boolean;
   speedMultiplier?: number;
   fov?: number;
+  audioEnabled?: boolean;
 };
 
 export function useSettings() {
@@ -16,6 +17,7 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
   const [fogEnabled, setFogEnabled] = useState(true);
   const [speedMultiplier, setSpeedMultiplier] = useState(1);
   const [fov, setFov] = useState(90);
+  const [audioEnabled, setAudioEnabled] = useState(false);
 
   const value = useMemo(
     () => ({
@@ -25,8 +27,10 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
       setSpeedMultiplier,
       fov,
       setFov,
+      audioEnabled,
+      setAudioEnabled,
     }),
-    [fogEnabled, speedMultiplier, fov]
+    [fogEnabled, speedMultiplier, fov, audioEnabled]
   );
 
   // Read persisted settings from localStoarge.

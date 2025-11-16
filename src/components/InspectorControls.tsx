@@ -27,6 +27,8 @@ export function InspectorControls({
     setSpeedMultiplier,
     fov,
     setFov,
+    audioEnabled,
+    setAudioEnabled,
   } = useSettings();
 
   return (
@@ -55,6 +57,17 @@ export function InspectorControls({
           }}
         />
         <label htmlFor="fogInput">Fog?</label>
+      </div>
+      <div className="CheckboxField">
+        <input
+          id="audioInput"
+          type="checkbox"
+          checked={audioEnabled}
+          onChange={(event) => {
+            setAudioEnabled(event.target.checked);
+          }}
+        />
+        <label htmlFor="audioInput">Audio?</label>
       </div>
       <div className="Field">
         <label htmlFor="fovInput">FOV</label>
