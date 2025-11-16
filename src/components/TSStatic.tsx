@@ -20,7 +20,7 @@ export function TSStatic({ object }: { object: ConsoleObject }) {
     <group
       quaternion={q}
       position={[x - 1024, y, z - 1024]}
-      scale={[-scaleX, scaleY, -scaleZ]}
+      scale={[scaleX, scaleY, scaleZ]}
     >
       <ErrorBoundary fallback={<ShapePlaceholder color="red" />}>
         <Suspense fallback={<ShapePlaceholder color="yellow" />}>
