@@ -10,6 +10,11 @@ import {
 import { ShapeModel, ShapePlaceholder } from "./GenericShape";
 
 const dataBlockToShapeName = {
+  AABarrelLarge: "turret_aa_large.dts",
+  ELFBarrelLarge: "turret_elf_large.dts",
+  MissileBarrelLarge: "turret_missile_large.dts",
+  MortarBarrelLarge: "turret_mortar_large.dts",
+  PlasmaBarrelLarge: "turret_fusion_large.dts",
   SentryTurret: "turret_sentry.dts",
   TurretBaseLarge: "turret_base_large.dts",
 };
@@ -29,12 +34,14 @@ function getDataBlockShape(dataBlock: string) {
 
 export function Turret({ object }: { object: ConsoleObject }) {
   const dataBlock = getProperty(object, "dataBlock").value;
+  const initialBarrel = getProperty(object, "initialBarrel").value;
 
   const [z, y, x] = useMemo(() => getPosition(object), [object]);
   const [scaleX, scaleY, scaleZ] = useMemo(() => getScale(object), [object]);
   const q = useMemo(() => getRotation(object, true), [object]);
 
   const shapeName = getDataBlockShape(dataBlock);
+  const barrelShapeName = getDataBlockShape(initialBarrel);
 
   if (!shapeName) {
     console.error(`<Turret> missing shape for dataBlock: ${dataBlock}`);
@@ -55,6 +62,17 @@ export function Turret({ object }: { object: ConsoleObject }) {
       ) : (
         <ShapePlaceholder color="orange" />
       )}
+      <group position={[0, 1.5, 0]}>
+        {barrelShapeName ? (
+          <ErrorBoundary fallback={<ShapePlaceholder color="red" />}>
+            <Suspense fallback={<ShapePlaceholder color="yellow" />}>
+              <ShapeModel shapeName={barrelShapeName} />
+            </Suspense>
+          </ErrorBoundary>
+        ) : (
+          <ShapePlaceholder color="orange" />
+        )}
+      </group>
     </group>
   );
 }

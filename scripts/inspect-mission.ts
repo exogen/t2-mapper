@@ -51,7 +51,7 @@ async function run() {
   const missionScript = fs.readFileSync(missionFile, "utf8");
   console.log(
     inspect(parseMissionScript(missionScript), {
-      colors: false,
+      colors: true,
       depth: Infinity,
     })
   );
