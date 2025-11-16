@@ -59,7 +59,7 @@ export function AudioEmitter({ object }: { object: ConsoleObject }) {
       sound.setVolume(volume);
     } else {
       sound = new Audio(audioListener);
-      sound.setVolume(Math.min(volume, 0.5));
+      sound.setVolume(Math.min(volume, 0.25));
     }
 
     soundRef.current = sound;
