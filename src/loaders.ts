@@ -58,6 +58,10 @@ export function textureToUrl(name: string) {
   }
 }
 
+export function audioToUrl(fileName: string) {
+  return getUrlForPath(`audio/${fileName}`);
+}
+
 export async function loadDetailMapList(name: string) {
   const url = getUrlForPath(`textures/${name}`);
   const res = await fetch(url);

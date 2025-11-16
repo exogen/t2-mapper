@@ -9,8 +9,10 @@ import { TSStatic } from "./TSStatic";
 import { StaticShape } from "./StaticShape";
 import { Item } from "./Item";
 import { Turret } from "./Turret";
+import { AudioEmitter } from "./AudioEmitter";
 
 const componentMap = {
+  AudioEmitter,
   InteriorInstance,
   Item,
   SimGroup,
