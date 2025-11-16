@@ -1,3 +1,4 @@
+import { parseImageFrameList } from "./ifl";
 import { getActualResourcePath, getSource } from "./manifest";
 import { parseMissionScript } from "./mission";
 import { parseTerrainBuffer } from "./terrain";
@@ -45,6 +46,10 @@ export function interiorTextureToUrl(name: string, fallbackUrl?: string) {
   return getUrlForPath(`textures/${name}.png`, fallbackUrl);
 }
 
+export function textureFrameToUrl(fileName: string) {
+  return getUrlForPath(`textures/skins/${fileName}`);
+}
+
 export function shapeTextureToUrl(name: string, fallbackUrl?: string) {
   name = name.replace(/\.\d+$/, "");
   return getUrlForPath(`textures/skins/${name}.png`, fallbackUrl);
@@ -81,4 +86,11 @@ export async function loadTerrain(fileName: string) {
   const res = await fetch(getUrlForPath(`terrains/${fileName}`));
   const terrainBuffer = await res.arrayBuffer();
   return parseTerrainBuffer(terrainBuffer);
+}
+
+export async function loadImageFrameList(iflPath: string) {
+  const url = getUrlForPath(iflPath);
+  const res = await fetch(url);
+  const source = await res.text();
+  return parseImageFrameList(source);
 }
