@@ -1,10 +1,35 @@
 import { useEffect, useRef } from "react";
-import { useThree } from "@react-three/fiber";
-import { PositionalAudio, Audio } from "three";
+import { useThree, useFrame } from "@react-three/fiber";
+import { PositionalAudio, Vector3 } from "three";
 import { ConsoleObject, getPosition, getProperty } from "../mission";
 import { audioToUrl } from "../loaders";
 import { useAudio } from "./AudioContext";
 import { useSettings } from "./SettingsProvider";
+
+// Global audio buffer cache
+const audioBufferCache = new Map<string, AudioBuffer>();
+
+function getCachedAudioBuffer(
+  audioUrl: string,
+  audioLoader: any,
+  onLoad: (buffer: AudioBuffer) => void
+) {
+  if (audioBufferCache.has(audioUrl)) {
+    onLoad(audioBufferCache.get(audioUrl)!);
+  } else {
+    audioLoader.load(
+      audioUrl,
+      (buffer: AudioBuffer) => {
+        audioBufferCache.set(audioUrl, buffer);
+        onLoad(buffer);
+      },
+      undefined,
+      (err: any) => {
+        console.error("AudioEmitter: Audio load error", audioUrl, err);
+      }
+    );
+  }
+}
 
 export function AudioEmitter({ object }: { object: ConsoleObject }) {
   const fileName = getProperty(object, "fileName")?.value ?? "";
@@ -24,124 +49,156 @@ export function AudioEmitter({ object }: { object: ConsoleObject }) {
   const is3D = parseInt(getProperty(object, "is3D")?.value ?? "0");
 
   const [z, y, x] = getPosition(object);
-  const { scene } = useThree();
+  const { scene, camera } = useThree();
   const { audioLoader, audioListener } = useAudio();
   const { audioEnabled } = useSettings();
+
   const soundRef = useRef<PositionalAudio | null>(null);
   const loopTimerRef = useRef<NodeJS.Timeout | null>(null);
   const loopGapIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const isLoadedRef = useRef(false);
+  const isInRangeRef = useRef(false);
+  const emitterPosRef = useRef(new Vector3(x - 1024, y, z - 1024));
 
+  // Create sound object on mount
   useEffect(() => {
-    if (!fileName || !audioLoader || !audioListener || !audioEnabled) {
-      if (!fileName) {
-        console.warn("AudioEmitter: No fileName provided");
-      }
-      if (!audioLoader) {
-        console.warn("AudioEmitter: No audio loader available");
-      }
-      if (!audioListener) {
-        console.warn("AudioEmitter: No audio listener available");
-      }
-      return;
-    }
+    if (!audioLoader || !audioListener) return;
 
-    const audioUrl = audioToUrl(fileName);
-
-    let sound;
+    // Always use PositionalAudio for consistent interface
+    const sound = new PositionalAudio(audioListener);
+    sound.position.copy(emitterPosRef.current);
 
     // Configure distance properties
     if (is3D) {
-      sound = new PositionalAudio(audioListener);
-      sound.position.set(x - 1024, y, z - 1024);
       sound.setDistanceModel("exponential");
-      sound.setRefDistance(minDistance / 25);
-      sound.setMaxDistance(maxDistance / 50);
+      sound.setRefDistance(minDistance / 20);
+      sound.setMaxDistance(maxDistance / 25);
       sound.setVolume(volume);
     } else {
-      sound = new Audio(audioListener);
-      sound.setVolume(Math.min(volume, 0.25));
+      // No attenuation: very large max distance
+      sound.setDistanceModel("linear");
+      sound.setRefDistance(1);
+      sound.setMaxDistance(2000000);
+      sound.setVolume(volume / 15);
     }
 
     soundRef.current = sound;
-
-    // Setup looping with gap
-    const setupLooping = () => {
-      if (minLoopGap > 0 || maxLoopGap > 0) {
-        const gapMin = Math.max(0, minLoopGap);
-        const gapMax = Math.max(gapMin, maxLoopGap);
-        const gap =
-          gapMin === gapMax
-            ? gapMin
-            : Math.random() * (gapMax - gapMin) + gapMin;
-
-        sound.loop = false;
-
-        // Check periodically when audio ends. onEnded wasn't working
-        const checkLoop = () => {
-          if (sound.isPlaying === false) {
-            loopTimerRef.current = setTimeout(() => {
-              try {
-                sound.play();
-                setupLooping();
-              } catch (err) {}
-            }, gap);
-          } else {
-            loopGapIntervalRef.current = setTimeout(checkLoop, 100);
-          }
-        };
-        loopGapIntervalRef.current = setTimeout(checkLoop, 100);
-      } else {
-        sound.setLoop(true);
-      }
-    };
-
-    // Load and play audio
-    audioLoader.load(
-      audioUrl,
-      (audioBuffer: any) => {
-        sound.setBuffer(audioBuffer);
-
-        try {
-          sound.play();
-          setupLooping();
-        } catch (err) {}
-      },
-      undefined,
-      (err: any) => {}
-    );
-
-    // Add to scene
     scene.add(sound);
 
     return () => {
-      if (loopTimerRef.current) {
-        clearTimeout(loopTimerRef.current);
-      }
-      if (loopGapIntervalRef.current) {
-        clearTimeout(loopGapIntervalRef.current);
-      }
+      if (loopTimerRef.current) clearTimeout(loopTimerRef.current);
+      if (loopGapIntervalRef.current) clearTimeout(loopGapIntervalRef.current);
       try {
         sound.stop();
-      } catch (e) {
-        // May fail if already stopped
-      }
+      } catch (e) {}
       sound.disconnect();
       scene.remove(sound);
+      isLoadedRef.current = false;
+      isInRangeRef.current = false;
     };
   }, [
-    fileName,
-    volume,
-    minLoopGap,
-    maxLoopGap,
+    audioLoader,
+    audioListener,
     is3D,
     minDistance,
     maxDistance,
-    audioLoader,
-    audioListener,
-    audioEnabled,
+    volume,
     scene,
   ]);
 
-  // Render debug visualization and invisible marker
+  // Setup looping logic (only called when audio loads)
+  const setupLooping = (sound: PositionalAudio) => {
+    if (minLoopGap > 0 || maxLoopGap > 0) {
+      const gapMin = Math.max(0, minLoopGap);
+      const gapMax = Math.max(gapMin, maxLoopGap);
+      const gap =
+        gapMin === gapMax ? gapMin : Math.random() * (gapMax - gapMin) + gapMin;
+
+      sound.loop = false;
+
+      const checkLoop = () => {
+        if (sound.isPlaying === false) {
+          loopTimerRef.current = setTimeout(() => {
+            try {
+              sound.play();
+              setupLooping(sound);
+            } catch (err) {}
+          }, gap);
+        } else {
+          loopGapIntervalRef.current = setTimeout(checkLoop, 100);
+        }
+      };
+      loopGapIntervalRef.current = setTimeout(checkLoop, 100);
+    } else {
+      sound.setLoop(true);
+    }
+  };
+
+  // Check proximity and load/unload audio
+  useFrame(() => {
+    const sound = soundRef.current;
+    if (!sound || !audioEnabled || !fileName) return;
+
+    const cameraPos = camera.position;
+    const emitterPos = emitterPosRef.current;
+    const distance = cameraPos.distanceTo(emitterPos);
+    const loadRadius = maxDistance; // Scale down by 10 like visualization
+
+    const wasInRange = isInRangeRef.current;
+    const isNowInRange = distance <= loadRadius;
+
+    // Entering range: load and play
+    if (isNowInRange && !wasInRange) {
+      isInRangeRef.current = true;
+
+      if (!isLoadedRef.current) {
+        const audioUrl = audioToUrl(fileName);
+        getCachedAudioBuffer(audioUrl, audioLoader, (audioBuffer) => {
+          if (!sound.buffer) {
+            sound.setBuffer(audioBuffer);
+            isLoadedRef.current = true;
+            try {
+              sound.play();
+              setupLooping(sound);
+            } catch (err) {}
+          }
+        });
+      } else {
+        // Already loaded, just play
+        try {
+          if (!sound.isPlaying) {
+            sound.play();
+            setupLooping(sound);
+          }
+        } catch (err) {}
+      }
+    }
+    // Leaving range: stop and clean up
+    else if (!isNowInRange && wasInRange) {
+      isInRangeRef.current = false;
+
+      if (loopTimerRef.current) clearTimeout(loopTimerRef.current);
+      if (loopGapIntervalRef.current) clearTimeout(loopGapIntervalRef.current);
+
+      try {
+        sound.stop();
+      } catch (err) {}
+    }
+  });
+
+  // Stop audio if disabled
+  useEffect(() => {
+    const sound = soundRef.current;
+    if (!sound) return;
+
+    if (!audioEnabled) {
+      if (loopTimerRef.current) clearTimeout(loopTimerRef.current);
+      if (loopGapIntervalRef.current) clearTimeout(loopGapIntervalRef.current);
+      try {
+        sound.stop();
+      } catch (err) {}
+    }
+  }, [audioEnabled]);
+
   return null;
 }
