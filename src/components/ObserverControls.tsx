@@ -134,6 +134,23 @@ const KEYBOARD_CONTROLS = [
 ];
 
 export function ObserverControls() {
+  // Don't let KeyboardControls handle stuff when metaKey is held.
+  useEffect(() => {
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.metaKey) {
+        e.stopImmediatePropagation();
+      }
+    };
+
+    window.addEventListener("keydown", handleKey, { capture: true });
+    window.addEventListener("keyup", handleKey, { capture: true });
+
+    return () => {
+      window.removeEventListener("keydown", handleKey, { capture: true });
+      window.removeEventListener("keyup", handleKey, { capture: true });
+    };
+  }, []);
+
   return (
     <KeyboardControls map={KEYBOARD_CONTROLS}>
       <CameraMovement />

@@ -29,6 +29,8 @@ export function InspectorControls({
     setFov,
     audioEnabled,
     setAudioEnabled,
+    debugMode,
+    setDebugMode,
   } = useSettings();
 
   return (
@@ -68,6 +70,17 @@ export function InspectorControls({
           }}
         />
         <label htmlFor="audioInput">Audio?</label>
+      </div>
+      <div className="CheckboxField">
+        <input
+          id="debugInput"
+          type="checkbox"
+          checked={debugMode}
+          onChange={(event) => {
+            setDebugMode(event.target.checked);
+          }}
+        />
+        <label htmlFor="debugInput">Debug?</label>
       </div>
       <div className="Field">
         <label htmlFor="fovInput">FOV</label>

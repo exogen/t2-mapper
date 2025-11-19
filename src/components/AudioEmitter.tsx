@@ -32,6 +32,7 @@ function getCachedAudioBuffer(
 }
 
 export function AudioEmitter({ object }: { object: ConsoleObject }) {
+  const { debugMode } = useSettings();
   const fileName = getProperty(object, "fileName")?.value ?? "";
   const volume = parseFloat(getProperty(object, "volume")?.value ?? "1");
   const minDistance = parseFloat(
@@ -200,5 +201,15 @@ export function AudioEmitter({ object }: { object: ConsoleObject }) {
     }
   }, [audioEnabled]);
 
-  return null;
+  return debugMode ? (
+    <mesh position={emitterPosRef.current}>
+      <sphereGeometry args={[minDistance, 12, 12]} />
+      <meshStandardMaterial
+        color="#00ff00"
+        wireframe
+        toneMapped={false}
+        fog={false}
+      />
+    </mesh>
+  ) : null;
 }

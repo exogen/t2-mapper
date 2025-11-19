@@ -25,6 +25,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   const [speedMultiplier, setSpeedMultiplier] = useState(1);
   const [fov, setFov] = useState(90);
   const [audioEnabled, setAudioEnabled] = useState(false);
+  const [debugMode, setDebugMode] = useState(false);
 
   const value = useMemo(
     () => ({
@@ -36,8 +37,10 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       setFov,
       audioEnabled,
       setAudioEnabled,
+      debugMode,
+      setDebugMode,
     }),
-    [fogEnabled, speedMultiplier, fov, audioEnabled]
+    [fogEnabled, speedMultiplier, fov, audioEnabled, debugMode, setDebugMode]
   );
 
   // Read persisted settings from localStoarge.
