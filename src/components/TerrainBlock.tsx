@@ -194,6 +194,14 @@ function TerrainMaterial({
 export function TerrainBlock({ object }: { object: ConsoleObject }) {
   const terrainFile: string = getProperty(object, "terrainFile").value;
 
+  const squareSize = useMemo(() => {
+    const squareSizeString: string | undefined = getProperty(
+      object,
+      "squareSize"
+    )?.value;
+    return squareSizeString ? parseInt(squareSizeString, 10) : 8;
+  }, [object]);
+
   const emptySquares: number[] = useMemo(() => {
     const emptySquaresString: string | undefined = getProperty(
       object,
@@ -210,11 +218,12 @@ export function TerrainBlock({ object }: { object: ConsoleObject }) {
   const q = useMemo(() => getRotation(object), [object]);
 
   const planeGeometry = useMemo(() => {
-    const geometry = new PlaneGeometry(2048, 2048, 256, 256);
+    const size = squareSize * 256;
+    const geometry = new PlaneGeometry(size, size, 256, 256);
     geometry.rotateX(-Math.PI / 2);
     geometry.rotateY(-Math.PI / 2);
     return geometry;
-  }, []);
+  }, [squareSize]);
 
   const { data: terrain } = useTerrain(terrainFile);
 

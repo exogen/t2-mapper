@@ -213,7 +213,7 @@ export function getProperty(obj: ConsoleObject, name: string) {
 export function getPosition(obj: ConsoleObject): [number, number, number] {
   const position = getProperty(obj, "position")?.value ?? "0 0 0";
   const [x, z, y] = position.split(" ").map((s) => parseFloat(s));
-  return [x, y, z];
+  return [x || 0, y || 0, z || 0];
 }
 
 export function getScale(obj: ConsoleObject): [number, number, number] {
