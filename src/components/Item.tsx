@@ -33,6 +33,7 @@ const dataBlockToShapeName = {
   RepairKit: "repair_kit.dts",
   RepairPack: "pack_upgrade_repair.dts",
   RepairPatch: "repair_patch.dts",
+  SatchelCharge: "pack_upgrade_satchel.dts",
   SensorJammerPack: "pack_upgrade_sensorjammer.dts",
   ShieldPack: "pack_upgrade_shield.dts",
   ShockLance: "weapon_shocklance.dts",
