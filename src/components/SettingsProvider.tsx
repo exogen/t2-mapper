@@ -1,6 +1,13 @@
-import React, { useContext, useEffect, useMemo, useState } from "react";
+import {
+  createContext,
+  ReactNode,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 
-const SettingsContext = React.createContext(null);
+const SettingsContext = createContext(null);
 
 type PersistedSettings = {
   fogEnabled?: boolean;
@@ -13,7 +20,7 @@ export function useSettings() {
   return useContext(SettingsContext);
 }
 
-export function SettingsProvider({ children }: { children: React.ReactNode }) {
+export function SettingsProvider({ children }: { children: ReactNode }) {
   const [fogEnabled, setFogEnabled] = useState(true);
   const [speedMultiplier, setSpeedMultiplier] = useState(1);
   const [fov, setFov] = useState(90);
