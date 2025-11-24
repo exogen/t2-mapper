@@ -9,7 +9,18 @@ export function getSource(resourcePath: string) {
   }
 }
 
+const _resourcePathCache = new Map();
+
 export function getActualResourcePath(resourcePath: string) {
+  if (_resourcePathCache.has(resourcePath)) {
+    return _resourcePathCache.get(resourcePath);
+  }
+  const actualResourcePath = getActualResourcePathUncached(resourcePath);
+  _resourcePathCache.set(resourcePath, actualResourcePath);
+  return actualResourcePath;
+}
+
+export function getActualResourcePathUncached(resourcePath: string) {
   if (manifest[resourcePath]) {
     return resourcePath;
   }
@@ -57,8 +68,10 @@ export function getActualResourcePath(resourcePath: string) {
   return resourcePath;
 }
 
+const _cachedResourceList = Object.keys(manifest).sort();
+
 export function getResourceList() {
-  return Object.keys(manifest).sort();
+  return _cachedResourceList;
 }
 
 export function getFilePath(resourcePath: string) {

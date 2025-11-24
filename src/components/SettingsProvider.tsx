@@ -4,6 +4,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 
@@ -14,6 +15,7 @@ type PersistedSettings = {
   speedMultiplier?: number;
   fov?: number;
   audioEnabled?: boolean;
+  debugMode?: boolean;
 };
 
 export function useSettings() {
@@ -51,6 +53,12 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     } catch (err) {
       // Ignore.
     }
+    if (savedSettings.debugMode != null) {
+      setDebugMode(savedSettings.debugMode);
+    }
+    if (savedSettings.audioEnabled != null) {
+      setAudioEnabled(savedSettings.audioEnabled);
+    }
     if (savedSettings.fogEnabled != null) {
       setFogEnabled(savedSettings.fogEnabled);
     }
@@ -62,19 +70,37 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  // Persist settings to localStoarge.
+  // Persist settings to localStorage with debouncing to avoid excessive writes
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   useEffect(() => {
-    const settingsToSave: PersistedSettings = {
-      fogEnabled,
-      speedMultiplier,
-      fov,
-    };
-    try {
-      localStorage.setItem("settings", JSON.stringify(settingsToSave));
-    } catch (err) {
-      // Probably forbidden by browser settings.
+    // Clear any pending save
+    if (saveTimerRef.current) {
+      clearTimeout(saveTimerRef.current);
     }
-  }, [fogEnabled, speedMultiplier, fov]);
+
+    // Debounce localStorage writes (wait 300ms after last change)
+    saveTimerRef.current = setTimeout(() => {
+      const settingsToSave: PersistedSettings = {
+        fogEnabled,
+        speedMultiplier,
+        fov,
+        audioEnabled,
+        debugMode,
+      };
+      try {
+        localStorage.setItem("settings", JSON.stringify(settingsToSave));
+      } catch (err) {
+        // Probably forbidden by browser settings.
+      }
+    }, 500);
+
+    return () => {
+      if (saveTimerRef.current) {
+        clearTimeout(saveTimerRef.current);
+      }
+    };
+  }, [fogEnabled, speedMultiplier, fov, audioEnabled, debugMode]);
 
   return (
     <SettingsContext.Provider value={value}>

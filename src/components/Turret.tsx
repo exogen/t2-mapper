@@ -8,6 +8,7 @@ import {
   getScale,
 } from "../mission";
 import { ShapeModel, ShapePlaceholder } from "./GenericShape";
+import { ShapeInfoProvider } from "./ShapeInfoProvider";
 
 const dataBlockToShapeName = {
   AABarrelLarge: "turret_aa_large.dts",
@@ -17,6 +18,7 @@ const dataBlockToShapeName = {
   PlasmaBarrelLarge: "turret_fusion_large.dts",
   SentryTurret: "turret_sentry.dts",
   TurretBaseLarge: "turret_base_large.dts",
+  SentryTurretBarrel: "turret_muzzlepoint.dts",
 };
 
 let _caseInsensitiveLookup: Record<string, string>;
@@ -46,33 +48,42 @@ export function Turret({ object }: { object: ConsoleObject }) {
   if (!shapeName) {
     console.error(`<Turret> missing shape for dataBlock: ${dataBlock}`);
   }
+  if (!barrelShapeName) {
+    console.error(
+      `<Turret> missing shape for initialBarrel dataBlock: ${initialBarrel}`
+    );
+  }
 
   return (
-    <group
-      quaternion={q}
-      position={[x - 1024, y, z - 1024]}
-      scale={[-scaleX, scaleY, scaleZ]}
-    >
-      {shapeName ? (
-        <ErrorBoundary fallback={<ShapePlaceholder color="red" />}>
-          <Suspense fallback={<ShapePlaceholder color="yellow" />}>
-            <ShapeModel shapeName={shapeName} />
-          </Suspense>
-        </ErrorBoundary>
-      ) : (
-        <ShapePlaceholder color="orange" />
-      )}
-      <group position={[0, 1.5, 0]}>
-        {barrelShapeName ? (
+    <ShapeInfoProvider shapeName={shapeName} type="Turret">
+      <group
+        quaternion={q}
+        position={[x - 1024, y, z - 1024]}
+        scale={[-scaleX, scaleY, scaleZ]}
+      >
+        {shapeName ? (
           <ErrorBoundary fallback={<ShapePlaceholder color="red" />}>
             <Suspense fallback={<ShapePlaceholder color="yellow" />}>
-              <ShapeModel shapeName={barrelShapeName} />
+              <ShapeModel />
             </Suspense>
           </ErrorBoundary>
         ) : (
           <ShapePlaceholder color="orange" />
         )}
+        <ShapeInfoProvider shapeName={barrelShapeName} type="Turret">
+          <group position={[0, 1.5, 0]}>
+            {barrelShapeName ? (
+              <ErrorBoundary fallback={<ShapePlaceholder color="red" />}>
+                <Suspense fallback={<ShapePlaceholder color="yellow" />}>
+                  <ShapeModel />
+                </Suspense>
+              </ErrorBoundary>
+            ) : (
+              <ShapePlaceholder color="orange" />
+            )}
+          </group>
+        </ShapeInfoProvider>
       </group>
-    </group>
+    </ShapeInfoProvider>
   );
 }

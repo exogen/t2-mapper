@@ -8,6 +8,7 @@ import {
   getScale,
 } from "../mission";
 import { ShapeModel, ShapePlaceholder } from "./GenericShape";
+import { ShapeInfoProvider } from "./ShapeInfoProvider";
 
 const dataBlockToShapeName = {
   Banner_Honor: "banner_honor.dts",
@@ -57,20 +58,22 @@ export function StaticShape({ object }: { object: ConsoleObject }) {
   }
 
   return (
-    <group
-      quaternion={q}
-      position={[x - 1024, y, z - 1024]}
-      scale={[scaleX, scaleY, scaleZ]}
-    >
-      {shapeName ? (
-        <ErrorBoundary fallback={<ShapePlaceholder color="red" />}>
-          <Suspense fallback={<ShapePlaceholder color="yellow" />}>
-            <ShapeModel shapeName={shapeName} />
-          </Suspense>
-        </ErrorBoundary>
-      ) : (
-        <ShapePlaceholder color="orange" />
-      )}
-    </group>
+    <ShapeInfoProvider shapeName={shapeName} type="StaticShape">
+      <group
+        quaternion={q}
+        position={[x - 1024, y, z - 1024]}
+        scale={[scaleX, scaleY, scaleZ]}
+      >
+        {shapeName ? (
+          <ErrorBoundary fallback={<ShapePlaceholder color="red" />}>
+            <Suspense fallback={<ShapePlaceholder color="yellow" />}>
+              <ShapeModel />
+            </Suspense>
+          </ErrorBoundary>
+        ) : (
+          <ShapePlaceholder color="orange" />
+        )}
+      </group>
+    </ShapeInfoProvider>
   );
 }

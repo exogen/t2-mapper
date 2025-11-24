@@ -51,6 +51,7 @@ export function textureFrameToUrl(fileName: string) {
 }
 
 export function shapeTextureToUrl(name: string, fallbackUrl?: string) {
+  name = name.replace(/^skins\\/, "");
   name = name.replace(/\.\d+$/, "");
   return getUrlForPath(`textures/skins/${name}.png`, fallbackUrl);
 }

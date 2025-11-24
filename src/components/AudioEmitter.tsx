@@ -5,6 +5,7 @@ import { ConsoleObject, getPosition, getProperty } from "../mission";
 import { audioToUrl } from "../loaders";
 import { useAudio } from "./AudioContext";
 import { useSettings } from "./SettingsProvider";
+import { FloatingLabel } from "./FloatingLabel";
 
 // Global audio buffer cache
 const audioBufferCache = new Map<string, AudioBuffer>();
@@ -204,12 +205,17 @@ export function AudioEmitter({ object }: { object: ConsoleObject }) {
   return debugMode ? (
     <mesh position={emitterPosRef.current}>
       <sphereGeometry args={[minDistance, 12, 12]} />
-      <meshStandardMaterial
+      <meshBasicMaterial
         color="#00ff00"
         wireframe
+        opacity={0.2}
+        transparent
         toneMapped={false}
         fog={false}
       />
+      <FloatingLabel color="#00ff00" position={[0, minDistance + 1, 0]}>
+        {fileName}
+      </FloatingLabel>
     </mesh>
   ) : null;
 }

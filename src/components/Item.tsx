@@ -8,6 +8,7 @@ import {
   getScale,
 } from "../mission";
 import { ShapeModel, ShapePlaceholder } from "./GenericShape";
+import { ShapeInfoProvider } from "./ShapeInfoProvider";
 
 const dataBlockToShapeName = {
   AmmoPack: "pack_upgrade_ammo.dts",
@@ -67,20 +68,22 @@ export function Item({ object }: { object: ConsoleObject }) {
   }
 
   return (
-    <group
-      quaternion={q}
-      position={[x - 1024, y, z - 1024]}
-      scale={[scaleX, scaleY, scaleZ]}
-    >
-      {shapeName ? (
-        <ErrorBoundary fallback={<ShapePlaceholder color="red" />}>
-          <Suspense fallback={<ShapePlaceholder color="pink" />}>
-            <ShapeModel shapeName={shapeName} />
-          </Suspense>
-        </ErrorBoundary>
-      ) : (
-        <ShapePlaceholder color="orange" />
-      )}
-    </group>
+    <ShapeInfoProvider shapeName={shapeName} type="Item">
+      <group
+        quaternion={q}
+        position={[x - 1024, y, z - 1024]}
+        scale={[scaleX, scaleY, scaleZ]}
+      >
+        {shapeName ? (
+          <ErrorBoundary fallback={<ShapePlaceholder color="red" />}>
+            <Suspense fallback={<ShapePlaceholder color="pink" />}>
+              <ShapeModel />
+            </Suspense>
+          </ErrorBoundary>
+        ) : (
+          <ShapePlaceholder color="orange" />
+        )}
+      </group>
+    </ShapeInfoProvider>
   );
 }
