@@ -1,4 +1,4 @@
-import { Suspense, useEffect, useMemo } from "react";
+import { memo, Suspense, useEffect, useMemo } from "react";
 import { useTexture } from "@react-three/drei";
 import { BoxGeometry, DoubleSide } from "three";
 import { textureToUrl } from "../loaders";
@@ -32,7 +32,11 @@ export function WaterMaterial({
   );
 }
 
-export function WaterBlock({ object }: { object: ConsoleObject }) {
+export const WaterBlock = memo(function WaterBlock({
+  object,
+}: {
+  object: ConsoleObject;
+}) {
   const position = useMemo(() => getPosition(object), [object]);
   const q = useMemo(() => getRotation(object), [object]);
   const [scaleX, scaleY, scaleZ] = useMemo(() => getScale(object), [object]);
@@ -99,4 +103,4 @@ export function WaterBlock({ object }: { object: ConsoleObject }) {
       <meshStandardMaterial attach="material-5" transparent opacity={0} />
     </mesh>
   );
-}
+});

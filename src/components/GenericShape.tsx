@@ -1,4 +1,4 @@
-import { Suspense, useMemo } from "react";
+import { memo, Suspense, useMemo } from "react";
 import { useGLTF, useTexture } from "@react-three/drei";
 import { BASE_URL, shapeTextureToUrl, shapeToUrl } from "../loaders";
 import { filterGeometryByVertexGroups, getHullBoneIndices } from "../meshUtils";
@@ -30,7 +30,7 @@ export function ShapeTexture({
   shapeName?: string;
 }) {
   const url = shapeTextureToUrl(material.name, FALLBACK_URL);
-  const isOrganic = shapeName && /borg|xorg|porg/i.test(shapeName);
+  const isOrganic = shapeName && /borg|xorg|porg|dorg/i.test(shapeName);
 
   const texture = useTexture(url, (texture) => {
     if (!isOrganic) {
@@ -69,7 +69,7 @@ export function ShapePlaceholder({ color }: { color: string }) {
 
 export type StaticShapeType = "StaticShape" | "TSStatic" | "Item" | "Turret";
 
-export function ShapeModel() {
+export const ShapeModel = memo(function ShapeModel() {
   const { shapeName } = useShapeInfo();
   const { debugMode } = useSettings();
   const { nodes } = useStaticShape(shapeName);
@@ -136,4 +136,4 @@ export function ShapeModel() {
       {debugMode ? <FloatingLabel>{shapeName}</FloatingLabel> : null}
     </group>
   );
-}
+});

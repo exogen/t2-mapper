@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { memo, useEffect, useRef } from "react";
 import { useThree, useFrame } from "@react-three/fiber";
 import { PositionalAudio, Vector3 } from "three";
 import { ConsoleObject, getPosition, getProperty } from "../mission";
@@ -32,7 +32,11 @@ function getCachedAudioBuffer(
   }
 }
 
-export function AudioEmitter({ object }: { object: ConsoleObject }) {
+export const AudioEmitter = memo(function AudioEmitter({
+  object,
+}: {
+  object: ConsoleObject;
+}) {
   const { debugMode } = useSettings();
   const fileName = getProperty(object, "fileName")?.value ?? "";
   const volume = parseFloat(getProperty(object, "volume")?.value ?? "1");
@@ -217,4 +221,4 @@ export function AudioEmitter({ object }: { object: ConsoleObject }) {
       </FloatingLabel>
     </mesh>
   ) : null;
-}
+});

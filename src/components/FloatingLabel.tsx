@@ -1,4 +1,4 @@
-import { ReactNode, useEffect, useRef, useState } from "react";
+import { memo, ReactNode, useEffect, useRef, useState } from "react";
 import { Object3D } from "three";
 import { useDistanceFromCamera } from "./useDistanceFromCamera";
 import { useFrame } from "@react-three/fiber";
@@ -6,7 +6,7 @@ import { Html } from "@react-three/drei";
 
 const DEFAULT_POSITION = [0, 0, 0] as [x: number, y: number, z: number];
 
-export function FloatingLabel({
+export const FloatingLabel = memo(function FloatingLabel({
   children,
   color = "white",
   position = DEFAULT_POSITION,
@@ -55,4 +55,4 @@ export function FloatingLabel({
       ) : null}
     </group>
   );
-}
+});

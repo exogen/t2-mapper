@@ -1,4 +1,4 @@
-import { Suspense, useCallback, useMemo } from "react";
+import { memo, Suspense, useCallback, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   DataTexture,
@@ -201,7 +201,11 @@ function TerrainMaterial({
   );
 }
 
-export function TerrainBlock({ object }: { object: ConsoleObject }) {
+export const TerrainBlock = memo(function TerrainBlock({
+  object,
+}: {
+  object: ConsoleObject;
+}) {
   const terrainFile: string = getProperty(object, "terrainFile").value;
 
   const squareSize = useMemo(() => {
@@ -265,4 +269,4 @@ export function TerrainBlock({ object }: { object: ConsoleObject }) {
       </mesh>
     </group>
   );
-}
+});

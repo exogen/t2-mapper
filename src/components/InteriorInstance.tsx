@@ -80,19 +80,21 @@ function InteriorPlaceholder() {
   );
 }
 
-export const InteriorInstance = memo(
-  ({ object }: { object: ConsoleObject }) => {
-    const interiorFile = getProperty(object, "interiorFile").value;
-    const position = useMemo(() => getPosition(object), [object]);
-    const scale = useMemo(() => getScale(object), [object]);
-    const q = useMemo(() => getRotation(object), [object]);
+export const InteriorInstance = memo(function InteriorInstance({
+  object,
+}: {
+  object: ConsoleObject;
+}) {
+  const interiorFile = getProperty(object, "interiorFile").value;
+  const position = useMemo(() => getPosition(object), [object]);
+  const scale = useMemo(() => getScale(object), [object]);
+  const q = useMemo(() => getRotation(object), [object]);
 
-    return (
-      <group position={position} quaternion={q} scale={scale}>
-        <Suspense fallback={<InteriorPlaceholder />}>
-          <InteriorModel interiorFile={interiorFile} />
-        </Suspense>
-      </group>
-    );
-  }
-);
+  return (
+    <group position={position} quaternion={q} scale={scale}>
+      <Suspense fallback={<InteriorPlaceholder />}>
+        <InteriorModel interiorFile={interiorFile} />
+      </Suspense>
+    </group>
+  );
+});
