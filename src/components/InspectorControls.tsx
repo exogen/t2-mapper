@@ -1,5 +1,6 @@
 import { getResourceList } from "../manifest";
 import { useControls, useDebug, useSettings } from "./SettingsProvider";
+import orderBy from "lodash.orderby";
 
 const excludeMissions = new Set([
   "SkiFree",
@@ -7,11 +8,15 @@ const excludeMissions = new Set([
   "SkiFree_Randomizer",
 ]);
 
-const missions = getResourceList()
-  .map((resourcePath) => resourcePath.match(/^missions\/(.+)\.mis$/))
-  .filter(Boolean)
-  .map((match) => match[1])
-  .filter((name) => !excludeMissions.has(name));
+const missions = orderBy(
+  getResourceList()
+    .map((resourcePath) => resourcePath.match(/^missions\/(.+)\.mis$/))
+    .filter(Boolean)
+    .map((match) => match[1])
+    .filter((name) => !excludeMissions.has(name)),
+  [(name) => name.toLowerCase().replace(/_/g, " ")],
+  ["asc"]
+);
 
 export function InspectorControls({
   missionName,
