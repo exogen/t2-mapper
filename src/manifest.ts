@@ -1,7 +1,19 @@
-import manifest from "../public/manifest.json";
+import untypedManifest from "../public/manifest.json";
+
+const manifest = untypedManifest as {
+  resources: Record<string, string[]>;
+  missions: Record<
+    string,
+    {
+      resourcePath: string;
+      displayName: string | null;
+      missionTypes: string[];
+    }
+  >;
+};
 
 export function getSource(resourcePath: string) {
-  const sources = manifest[resourcePath];
+  const sources = manifest.resources[resourcePath];
   if (sources && sources.length > 0) {
     return sources[sources.length - 1];
   } else {
@@ -21,7 +33,7 @@ export function getActualResourcePath(resourcePath: string) {
 }
 
 export function getActualResourcePathUncached(resourcePath: string) {
-  if (manifest[resourcePath]) {
+  if (manifest.resources[resourcePath]) {
     return resourcePath;
   }
   const resourcePaths = getResourceList();
@@ -68,7 +80,7 @@ export function getActualResourcePathUncached(resourcePath: string) {
   return resourcePath;
 }
 
-const _cachedResourceList = Object.keys(manifest).sort();
+const _cachedResourceList = Object.keys(manifest.resources);
 
 export function getResourceList() {
   return _cachedResourceList;
@@ -81,4 +93,16 @@ export function getFilePath(resourcePath: string) {
   } else {
     return `public/base/${resourcePath}`;
   }
+}
+
+export function getMissionInfo(missionName: string) {
+  const missionInfo = manifest.missions[missionName];
+  if (!missionInfo) {
+    throw new Error(`Mission not found: ${missionName}`);
+  }
+  return missionInfo;
+}
+
+export function getMissionList() {
+  return Object.keys(manifest.missions);
 }

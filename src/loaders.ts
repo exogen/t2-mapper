@@ -1,5 +1,10 @@
 import { parseImageFrameList } from "./ifl";
-import { getActualResourcePath, getSource } from "./manifest";
+import {
+  findMissionPath,
+  getActualResourcePath,
+  getMissionInfo,
+  getSource,
+} from "./manifest";
 import { parseMissionScript } from "./mission";
 import { parseTerrainBuffer } from "./terrain";
 
@@ -78,7 +83,8 @@ export async function loadDetailMapList(name: string) {
 }
 
 export async function loadMission(name: string) {
-  const res = await fetch(getUrlForPath(`missions/${name}.mis`));
+  const missionInfo = getMissionInfo(name);
+  const res = await fetch(getUrlForPath(missionInfo.resourcePath));
   const missionScript = await res.text();
   return parseMissionScript(missionScript);
 }

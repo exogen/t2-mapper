@@ -1,10 +1,11 @@
 import { Suspense, useMemo, useEffect, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useCubeTexture } from "@react-three/drei";
-import { Color, ShaderMaterial, BackSide } from "three";
-import { ConsoleObject, getProperty } from "../mission";
+import { Color, ShaderMaterial, BackSide, Euler } from "three";
+import { ConsoleObject, getProperty, getRotation } from "../mission";
 import { useSettings } from "./SettingsProvider";
 import { BASE_URL, getUrlForPath, loadDetailMapList } from "../loaders";
+import { useThree } from "@react-three/fiber";
 
 const FALLBACK_URL = `${BASE_URL}/black.png`;
 
@@ -118,6 +119,12 @@ export function SkyBox({
       materialRef.current.uniforms.fogColor.value = fogColor!;
     }
   }, [skyBox, fogColor, hasFog, shaderMaterial]);
+
+  const { scene } = useThree();
+
+  useEffect(() => {
+    scene.backgroundRotation = new Euler(0, Math.PI / 2, 0);
+  }, []);
 
   // If fog is disabled, just use the skybox as background
   if (!hasFog) {

@@ -1,15 +1,45 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { parseArgs } from "node:util";
-import unzipper from "unzipper";
+import { Dirent } from "node:fs";
+import orderBy from "lodash.orderby";
 import { normalizePath } from "@/src/stringUtils";
+import { parseMissionScript } from "@/src/mission";
 
-const archiveFilePattern = /\.vl2$/i;
+const baseDir = process.env.BASE_DIR || "docs/base";
 
-const baseDir = process.env.BASE_DIR || "GameData/base";
+async function walkDirectory(
+  dir: string,
+  {
+    onFile,
+    onDir = () => true,
+  }: {
+    onFile: (fileInfo: {
+      dir: string;
+      entry: Dirent<string>;
+      fullPath: string;
+    }) => void | Promise<void>;
+    onDir?: (dirInfo: {
+      dir: string;
+      entry: Dirent<string>;
+      fullPath: string;
+    }) => boolean | Promise<boolean>;
+  }
+): Promise<void> {
+  const entries = await fs.readdir(dir, { withFileTypes: true });
 
-function isArchive(name: string) {
-  return archiveFilePattern.test(name);
+  for (const entry of entries) {
+    const fullPath = path.join(dir, entry.name);
+
+    if (entry.isDirectory()) {
+      const shouldRecurse = await onDir({ dir, entry, fullPath });
+      if (shouldRecurse) {
+        await walkDirectory(fullPath, { onFile, onDir });
+      }
+    } else if (entry.isFile()) {
+      await onFile({ dir, entry, fullPath });
+    }
+  }
 }
 
 /**
@@ -43,45 +73,65 @@ async function buildManifest() {
   const fileSources = new Map<string, string[]>();
 
   const looseFiles: string[] = [];
-  const archiveFiles: string[] = [];
-  for await (const entry of fs.glob(`${baseDir}/**/*`, {
-    withFileTypes: true,
-  })) {
-    if (entry.isFile()) {
-      const fullPath = normalizePath(`${entry.parentPath}/${entry.name}`);
-      if (isArchive(entry.name)) {
-        archiveFiles.push(fullPath);
-      } else {
-        looseFiles.push(fullPath);
-      }
-    }
-  }
+
+  await walkDirectory(baseDir, {
+    onFile: ({ fullPath }) => {
+      looseFiles.push(normalizePath(fullPath));
+    },
+    onDir: ({ dir, entry, fullPath }) => {
+      return entry.name !== "@vl2";
+    },
+  });
 
   for (const filePath of looseFiles) {
     const relativePath = normalizePath(path.relative(baseDir, filePath));
     fileSources.set(relativePath, [""]);
   }
 
-  archiveFiles.sort();
-  for (const archivePath of archiveFiles) {
-    const relativePath = normalizePath(path.relative(baseDir, archivePath));
-    const archive = await unzipper.Open.file(archivePath);
-    for (const archiveEntry of archive.files) {
-      if (archiveEntry.type === "File") {
-        const filePath = normalizePath(archiveEntry.path);
-        const sources = fileSources.get(filePath) ?? [];
-        sources.push(relativePath);
-        fileSources.set(filePath, sources);
+  let archiveDirs: string[] = [];
+  await walkDirectory(`${baseDir}/@vl2`, {
+    onFile: () => {},
+    onDir: ({ dir, entry, fullPath }) => {
+      if (entry.name.endsWith(".vl2")) {
+        archiveDirs.push(fullPath);
       }
-    }
+      return true;
+    },
+  });
+
+  archiveDirs = orderBy(
+    archiveDirs,
+    [(fullPath) => path.basename(fullPath).toLowerCase()],
+    ["asc"]
+  );
+
+  for (const archivePath of archiveDirs) {
+    const relativeArchivePath = normalizePath(
+      path.relative(`${baseDir}/@vl2`, archivePath)
+    );
+    await walkDirectory(archivePath, {
+      onFile: ({ dir, entry, fullPath }) => {
+        const filePath = normalizePath(path.relative(archivePath, fullPath));
+        const sources = fileSources.get(filePath) ?? [];
+        sources.push(relativeArchivePath);
+        fileSources.set(filePath, sources);
+      },
+    });
   }
 
-  const manifest: Record<string, string[]> = {};
+  const resources: Record<string, string[]> = {};
+
+  const missions: Record<
+    string,
+    { resourcePath: string; displayName: string | null; missionTypes: string[] }
+  > = {};
 
   const orderedFiles = Array.from(fileSources.keys()).sort();
   for (const filePath of orderedFiles) {
     const sources = fileSources.get(filePath);
-    manifest[filePath] = sources;
+    resources[filePath] = sources;
+    const lastSource = sources[sources.length - 1];
+
     console.log(
       `${filePath}${sources[0] ? ` 📦 ${sources[0]}` : ""}${
         sources.length > 1
@@ -92,9 +142,24 @@ async function buildManifest() {
           : ""
       }`
     );
+
+    const resolvedPath = lastSource
+      ? path.join(baseDir, "@vl2", lastSource, filePath)
+      : path.join(baseDir, filePath);
+
+    if (filePath.endsWith(".mis")) {
+      const missionScript = await fs.readFile(resolvedPath, "utf8");
+      const mission = parseMissionScript(missionScript);
+      const baseName = path.basename(filePath, ".mis");
+      missions[baseName] = {
+        resourcePath: filePath,
+        displayName: mission.displayName,
+        missionTypes: mission.missionTypes,
+      };
+    }
   }
 
-  return manifest;
+  return { resources, missions };
 }
 
 const { values } = parseArgs({

@@ -1,7 +1,7 @@
 import { Quaternion, Vector3 } from "three";
 import parser from "@/generated/mission.cjs";
 
-const definitionComment = /^ (DisplayName|MissionTypes) = (.+)$/;
+const definitionComment = /^ (DisplayName|MissionTypes) = (.+)$/i;
 const sectionBeginComment = /^--- ([A-Z ]+) BEGIN ---$/;
 const sectionEndComment = /^--- ([A-Z ]+) END ---$/;
 
@@ -92,7 +92,7 @@ export function parseMissionScript(script) {
 
   let section = { name: null, definitions: [] };
   const mission: {
-    pragma: Record<string, string>;
+    pragma: Record<string, string | null>;
     sections: Array<{ name: string | null; definitions: any[] }>;
   } = {
     pragma: {},
@@ -150,8 +150,10 @@ export function parseMissionScript(script) {
   }
 
   return {
-    displayName: mission.pragma.DisplayName ?? null,
-    missionTypes: mission.pragma.MissionTypes?.split(" ") ?? [],
+    displayName:
+      mission.pragma.DisplayName ?? mission.pragma.Displayname ?? null,
+    missionTypes:
+      mission.pragma.MissionTypes?.split(/\s+/).filter(Boolean) ?? [],
     missionQuote:
       mission.sections
         .find((section) => section.name === "MISSION QUOTE")
