@@ -10,6 +10,7 @@ import { StaticShape } from "./StaticShape";
 import { Item } from "./Item";
 import { Turret } from "./Turret";
 import { AudioEmitter } from "./AudioEmitter";
+import { WayPoint } from "./WayPoint";
 
 const componentMap = {
   AudioEmitter,
@@ -23,6 +24,7 @@ const componentMap = {
   TSStatic,
   Turret,
   WaterBlock,
+  WayPoint,
 };
 
 export function renderObject(object: ConsoleObject, key: string | number) {

@@ -9,6 +9,8 @@ import {
 } from "../mission";
 import { ShapeModel, ShapePlaceholder } from "./GenericShape";
 import { ShapeInfoProvider } from "./ShapeInfoProvider";
+import { useSimGroup } from "./SimGroup";
+import { FloatingLabel } from "./FloatingLabel";
 
 const dataBlockToShapeName = {
   AmmoPack: "pack_upgrade_ammo.dts",
@@ -54,7 +56,13 @@ function getDataBlockShape(dataBlock: string) {
   return _caseInsensitiveLookup[dataBlock.toLowerCase()];
 }
 
+const TEAM_NAMES = {
+  1: "Storm",
+  2: "Inferno",
+};
+
 export function Item({ object }: { object: ConsoleObject }) {
+  const simGroup = useSimGroup();
   const dataBlock = getProperty(object, "dataBlock").value;
 
   const position = useMemo(() => getPosition(object), [object]);
@@ -67,6 +75,11 @@ export function Item({ object }: { object: ConsoleObject }) {
     console.error(`<Item> missing shape for dataBlock: ${dataBlock}`);
   }
 
+  const isFlag = dataBlock?.toLowerCase() === "flag";
+  const team = simGroup?.team ?? null;
+  const teamName = team > 0 ? TEAM_NAMES[team] : null;
+  const label = isFlag && teamName ? `${teamName} Flag` : null;
+
   return (
     <ShapeInfoProvider shapeName={shapeName} type="Item">
       <group position={position} quaternion={q} scale={scale}>
@@ -74,6 +87,9 @@ export function Item({ object }: { object: ConsoleObject }) {
           <ErrorBoundary fallback={<ShapePlaceholder color="red" />}>
             <Suspense fallback={<ShapePlaceholder color="pink" />}>
               <ShapeModel />
+              {label ? (
+                <FloatingLabel opacity={0.6}>{label}</FloatingLabel>
+              ) : null}
             </Suspense>
           </ErrorBoundary>
         ) : (

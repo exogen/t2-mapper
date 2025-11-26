@@ -51,6 +51,8 @@ main {
   color: #fff;
   font-size: 11px;
   white-space: nowrap;
+  padding: 1px 3px;
+  border-radius: 1px;
 }
 
 .StatsPanel {

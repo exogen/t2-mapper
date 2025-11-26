@@ -10,37 +10,49 @@ export const FloatingLabel = memo(function FloatingLabel({
   children,
   color = "white",
   position = DEFAULT_POSITION,
+  opacity = "fadeWithDistance",
 }: {
   children: ReactNode;
   color?: string;
   position?: [x: number, y: number, z: number];
+  opacity?: number | "fadeWithDistance";
 }) {
+  const fadeWithDistance = opacity === "fadeWithDistance";
   const groupRef = useRef<Object3D>(null);
   const distanceRef = useDistanceFromCamera(groupRef);
-  const [isVisible, setIsVisible] = useState(false);
+  const [isVisible, setIsVisible] = useState(opacity !== 0);
   const labelRef = useRef<HTMLDivElement>(null);
 
   // Initialize opacity when label ref is attached
   useEffect(() => {
-    if (labelRef.current && distanceRef.current != null) {
-      const opacity = Math.max(0, Math.min(1, 1 - distanceRef.current / 200));
-      labelRef.current.style.opacity = opacity.toString();
+    if (fadeWithDistance) {
+      if (labelRef.current && distanceRef.current != null) {
+        const opacity = Math.max(0, Math.min(1, 1 - distanceRef.current / 200));
+        labelRef.current.style.opacity = opacity.toString();
+      }
     }
-  }, [isVisible]);
+  }, [isVisible, fadeWithDistance]);
 
   useFrame(() => {
-    const distance = distanceRef.current;
-    const shouldBeVisible = distance != null && distance < 200;
+    if (fadeWithDistance) {
+      const distance = distanceRef.current;
+      const shouldBeVisible = distance != null && distance < 200;
 
-    // Update visibility state only when crossing threshold
-    if (isVisible !== shouldBeVisible) {
-      setIsVisible(shouldBeVisible);
-    }
+      // Update visibility state only when crossing threshold
+      if (isVisible !== shouldBeVisible) {
+        setIsVisible(shouldBeVisible);
+      }
 
-    // Update opacity directly on DOM element (no re-render)
-    if (labelRef.current && shouldBeVisible) {
-      const opacity = Math.max(0, Math.min(1, 1 - distance / 200));
-      labelRef.current.style.opacity = opacity.toString();
+      // Update opacity directly on DOM element (no re-render)
+      if (labelRef.current && shouldBeVisible) {
+        const opacity = Math.max(0, Math.min(1, 1 - distance / 200));
+        labelRef.current.style.opacity = opacity.toString();
+      }
+    } else {
+      setIsVisible(opacity !== 0);
+      if (labelRef.current) {
+        labelRef.current.style.opacity = opacity.toString();
+      }
     }
   });
 
