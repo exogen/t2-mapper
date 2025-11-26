@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import { execFileSync } from "node:child_process";
+import { parseArgs } from "node:util";
 
 const BLENDER_PATH =
   process.env.BLENDER_PATH ||
@@ -9,10 +10,21 @@ const BLENDER_PATH =
  * Find all .dif files in `docs/base` and convert them to glTF.
  * All files are passed to Blender in a single invocation for speed.
  */
-async function run() {
+async function run({ onlyNew }: { onlyNew: boolean }) {
   const inputFiles: string[] = [];
   for await (const inFile of fs.glob("docs/base/**/*.dif")) {
-    inputFiles.push(inFile);
+    const glbFile = inFile.replace(/\.dif$/, ".glb");
+    if (onlyNew) {
+      try {
+        await fs.stat(glbFile);
+      } catch (err) {
+        if (err.code === "ENOENT") {
+          inputFiles.push(inFile);
+        }
+      }
+    } else {
+      inputFiles.push(inFile);
+    }
   }
 
   if (inputFiles.length === 0) {
@@ -35,4 +47,13 @@ async function run() {
   );
 }
 
-run();
+const { values } = parseArgs({
+  options: {
+    new: {
+      type: "boolean",
+      default: false,
+    },
+  },
+});
+
+run({ onlyNew: values.new });
