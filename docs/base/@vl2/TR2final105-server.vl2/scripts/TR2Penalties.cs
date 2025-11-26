@@ -1,0 +1,7 @@
+// Penalties
+
+new ScriptObject(TeamkillPenalty)
+{
+};
+
+
