@@ -9,8 +9,9 @@ const excludeMissions = new Set([
   "SkiFree_Randomizer",
 ]);
 
-const SOURCE_GROUP_NAMES = {
+const sourceGroupNames = {
   "Classic_maps_v1.vl2": "Classic",
+  "DynamixFinalPack.vl2": "Official",
   "missions.vl2": "Official",
   "S5maps.vl2": "S5",
   "S8maps.vl2": "S8",
@@ -27,7 +28,7 @@ const groupedMissions = getMissionList().reduce(
   (groupMap, missionName) => {
     const missionInfo = getMissionInfo(missionName);
     const source = getSource(missionInfo.resourcePath);
-    const groupName = SOURCE_GROUP_NAMES[source] ?? null;
+    const groupName = sourceGroupNames[source] ?? null;
     const groupMissions = groupMap.get(groupName) ?? [];
     if (!excludeMissions.has(missionName)) {
       groupMissions.push({

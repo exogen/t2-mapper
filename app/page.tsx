@@ -11,6 +11,7 @@ import { SettingsProvider } from "@/src/components/SettingsProvider";
 import { ObserverCamera } from "@/src/components/ObserverCamera";
 import { AudioProvider } from "@/src/components/AudioContext";
 import { DebugElements } from "@/src/components/DebugElements";
+import { CamerasProvider } from "@/src/components/CamerasProvider";
 
 // three.js has its own loaders for textures and models, but we need to load other
 // stuff too, e.g. missions, terrains, and more. This client is used for those.
@@ -37,12 +38,14 @@ function MapInspector() {
       <main>
         <SettingsProvider>
           <Canvas shadows frameloop="always">
-            <AudioProvider>
-              <ObserverControls />
-              <Mission key={missionName} name={missionName} />
-              <ObserverCamera />
-              <DebugElements />
-            </AudioProvider>
+            <CamerasProvider>
+              <AudioProvider>
+                <Mission key={missionName} name={missionName} />
+                <ObserverCamera />
+                <DebugElements />
+                <ObserverControls />
+              </AudioProvider>
+            </CamerasProvider>
             <EffectComposer>
               <N8AO intensity={3} aoRadius={3} quality="performance" />
             </EffectComposer>

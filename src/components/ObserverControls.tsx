@@ -4,6 +4,7 @@ import { useFrame, useThree } from "@react-three/fiber";
 import { KeyboardControls, useKeyboardControls } from "@react-three/drei";
 import { PointerLockControls } from "three-stdlib";
 import { useControls } from "./SettingsProvider";
+import { useCameras } from "./CamerasProvider";
 
 enum Controls {
   forward = "forward",
@@ -22,6 +23,7 @@ function CameraMovement() {
   const { speedMultiplier, setSpeedMultiplier } = useControls();
   const [subscribe, getKeys] = useKeyboardControls<Controls>();
   const { camera, gl } = useThree();
+  const { nextCamera } = useCameras();
   const controlsRef = useRef<PointerLockControls | null>(null);
 
   // Scratch vectors to avoid allocations each frame
@@ -35,19 +37,21 @@ function CameraMovement() {
     controlsRef.current = controls;
 
     const handleClick = (e: MouseEvent) => {
-      // Only lock if clicking directly on the canvas (not on UI elements)
-      if (e.target === gl.domElement) {
+      if (controls.isLocked) {
+        nextCamera();
+      } else if (e.target === gl.domElement) {
+        // Only lock if clicking directly on the canvas (not on UI elements)
         controls.lock();
       }
     };
 
-    gl.domElement.addEventListener("click", handleClick);
+    document.addEventListener("click", handleClick);
 
     return () => {
-      gl.domElement.removeEventListener("click", handleClick);
+      document.removeEventListener("click", handleClick);
       controls.dispose();
     };
-  }, [camera, gl]);
+  }, [camera, gl, nextCamera]);
 
   // Handle mousewheel for speed adjustment
   useEffect(() => {

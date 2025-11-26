@@ -11,9 +11,11 @@ import { Item } from "./Item";
 import { Turret } from "./Turret";
 import { AudioEmitter } from "./AudioEmitter";
 import { WayPoint } from "./WayPoint";
+import { Camera } from "./Camera";
 
 const componentMap = {
   AudioEmitter,
+  Camera,
   InteriorInstance,
   Item,
   SimGroup,
