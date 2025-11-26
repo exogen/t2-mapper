@@ -27,7 +27,7 @@ import {
   setupMask,
   updateTerrainTextureShader,
 } from "../textureUtils";
-import { useSettings } from "./SettingsProvider";
+import { useDebug } from "./SettingsProvider";
 
 const DEFAULT_SQUARE_SIZE = 8;
 
@@ -52,7 +52,7 @@ function BlendedTerrainTextures({
   textureNames: string[];
   alphaMaps: Uint8Array[];
 }) {
-  const { debugMode } = useSettings();
+  const { debugMode } = useDebug();
 
   const baseTextures = useTexture(
     textureNames.map((name) => terrainTextureToUrl(name)),

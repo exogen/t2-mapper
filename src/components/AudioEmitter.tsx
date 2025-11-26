@@ -4,7 +4,7 @@ import { PositionalAudio, Vector3 } from "three";
 import { ConsoleObject, getPosition, getProperty } from "../mission";
 import { audioToUrl } from "../loaders";
 import { useAudio } from "./AudioContext";
-import { useSettings } from "./SettingsProvider";
+import { useDebug, useSettings } from "./SettingsProvider";
 import { FloatingLabel } from "./FloatingLabel";
 
 // Global audio buffer cache
@@ -37,7 +37,7 @@ export const AudioEmitter = memo(function AudioEmitter({
 }: {
   object: ConsoleObject;
 }) {
-  const { debugMode } = useSettings();
+  const { debugMode } = useDebug();
   const fileName = getProperty(object, "fileName")?.value ?? "";
   const volume = parseFloat(getProperty(object, "volume")?.value ?? "1");
   const minDistance = parseFloat(

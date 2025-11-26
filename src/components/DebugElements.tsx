@@ -1,10 +1,10 @@
 import { Stats, Html } from "@react-three/drei";
-import { useSettings } from "./SettingsProvider";
+import { useDebug } from "./SettingsProvider";
 import { useEffect, useRef } from "react";
 import { AxesHelper } from "three";
 
 export function DebugElements() {
-  const { debugMode } = useSettings();
+  const { debugMode } = useDebug();
   const axesRef = useRef<AxesHelper>(null);
 
   useEffect(() => {

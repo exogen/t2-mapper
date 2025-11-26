@@ -9,6 +9,8 @@ import {
 } from "react";
 
 const SettingsContext = createContext(null);
+const DebugContext = createContext(null);
+const ControlsContext = createContext(null);
 
 type PersistedSettings = {
   fogEnabled?: boolean;
@@ -22,6 +24,14 @@ export function useSettings() {
   return useContext(SettingsContext);
 }
 
+export function useDebug() {
+  return useContext(DebugContext);
+}
+
+export function useControls() {
+  return useContext(ControlsContext);
+}
+
 export function SettingsProvider({ children }: { children: ReactNode }) {
   const [fogEnabled, setFogEnabled] = useState(true);
   const [speedMultiplier, setSpeedMultiplier] = useState(1);
@@ -29,20 +39,26 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   const [audioEnabled, setAudioEnabled] = useState(false);
   const [debugMode, setDebugMode] = useState(false);
 
-  const value = useMemo(
+  const settingsContext = useMemo(
     () => ({
       fogEnabled,
       setFogEnabled,
-      speedMultiplier,
-      setSpeedMultiplier,
       fov,
       setFov,
       audioEnabled,
       setAudioEnabled,
-      debugMode,
-      setDebugMode,
     }),
-    [fogEnabled, speedMultiplier, fov, audioEnabled, debugMode, setDebugMode]
+    [fogEnabled, speedMultiplier, fov, audioEnabled]
+  );
+
+  const debugContext = useMemo(
+    () => ({ debugMode, setDebugMode }),
+    [debugMode, setDebugMode]
+  );
+
+  const controlsContext = useMemo(
+    () => ({ speedMultiplier, setSpeedMultiplier }),
+    [speedMultiplier, setSpeedMultiplier]
   );
 
   // Read persisted settings from localStoarge.
@@ -103,8 +119,12 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   }, [fogEnabled, speedMultiplier, fov, audioEnabled, debugMode]);
 
   return (
-    <SettingsContext.Provider value={value}>
-      {children}
+    <SettingsContext.Provider value={settingsContext}>
+      <DebugContext.Provider value={debugContext}>
+        <ControlsContext.Provider value={controlsContext}>
+          {children}
+        </ControlsContext.Provider>
+      </DebugContext.Provider>
     </SettingsContext.Provider>
   );
 }

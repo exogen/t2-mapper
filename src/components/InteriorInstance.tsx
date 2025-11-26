@@ -10,6 +10,8 @@ import {
   getScale,
 } from "../mission";
 import { setupColor } from "../textureUtils";
+import { FloatingLabel } from "./FloatingLabel";
+import { useDebug } from "./SettingsProvider";
 
 const FALLBACK_URL = `${BASE_URL}/black.png`;
 
@@ -55,6 +57,7 @@ function InteriorMesh({ node }: { node: Mesh }) {
 export const InteriorModel = memo(
   ({ interiorFile }: { interiorFile: string }) => {
     const { nodes } = useInterior(interiorFile);
+    const { debugMode } = useDebug();
 
     return (
       <group rotation={[0, -Math.PI / 2, 0]}>
@@ -66,6 +69,7 @@ export const InteriorModel = memo(
           .map(([name, node]: [string, any]) => (
             <InteriorMesh key={name} node={node} />
           ))}
+        {debugMode ? <FloatingLabel>{interiorFile}</FloatingLabel> : null}
       </group>
     );
   }

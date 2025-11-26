@@ -3,7 +3,7 @@ import { Vector3 } from "three";
 import { useFrame, useThree } from "@react-three/fiber";
 import { KeyboardControls, useKeyboardControls } from "@react-three/drei";
 import { PointerLockControls } from "three-stdlib";
-import { useSettings } from "./SettingsProvider";
+import { useControls } from "./SettingsProvider";
 
 enum Controls {
   forward = "forward",
@@ -19,7 +19,7 @@ const MIN_SPEED_ADJUSTMENT = 0.05;
 const MAX_SPEED_ADJUSTMENT = 0.5;
 
 function CameraMovement() {
-  const { speedMultiplier, setSpeedMultiplier } = useSettings();
+  const { speedMultiplier, setSpeedMultiplier } = useControls();
   const [subscribe, getKeys] = useKeyboardControls<Controls>();
   const { camera, gl } = useThree();
   const controlsRef = useRef<PointerLockControls | null>(null);

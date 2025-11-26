@@ -8,7 +8,7 @@ import {
 } from "../shaderMaterials";
 import { MeshStandardMaterial } from "three";
 import { setupColor } from "../textureUtils";
-import { useSettings } from "./SettingsProvider";
+import { useDebug } from "./SettingsProvider";
 import { useShapeInfo } from "./ShapeInfoProvider";
 import { FloatingLabel } from "./FloatingLabel";
 
@@ -71,7 +71,7 @@ export type StaticShapeType = "StaticShape" | "TSStatic" | "Item" | "Turret";
 
 export const ShapeModel = memo(function ShapeModel() {
   const { shapeName } = useShapeInfo();
-  const { debugMode } = useSettings();
+  const { debugMode } = useDebug();
   const { nodes } = useStaticShape(shapeName);
 
   const hullBoneIndices = useMemo(() => {

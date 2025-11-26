@@ -1,5 +1,5 @@
 import { getResourceList } from "../manifest";
-import { useSettings } from "./SettingsProvider";
+import { useControls, useDebug, useSettings } from "./SettingsProvider";
 
 const excludeMissions = new Set([
   "SkiFree",
@@ -23,15 +23,13 @@ export function InspectorControls({
   const {
     fogEnabled,
     setFogEnabled,
-    speedMultiplier,
-    setSpeedMultiplier,
     fov,
     setFov,
     audioEnabled,
     setAudioEnabled,
-    debugMode,
-    setDebugMode,
   } = useSettings();
+  const { speedMultiplier, setSpeedMultiplier } = useControls();
+  const { debugMode, setDebugMode } = useDebug();
 
   return (
     <div
