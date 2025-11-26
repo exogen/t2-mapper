@@ -16,5 +16,5 @@ export function Mission({ name }: { name: string }) {
     return null;
   }
 
-  return <>{mission.objects.map((object, i) => renderObject(object, i))}</>;
+  return mission.objects.map((object, i) => renderObject(object, i));
 }

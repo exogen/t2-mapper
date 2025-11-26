@@ -1,54 +1,103 @@
 # dif2gltf.py
+import argparse
 import bpy, sys, os, addon_utils
 
-def die(msg, code=2):
-    print(f"[dif2gltf] ERROR: {msg}", file=sys.stderr); sys.exit(code)
+# ANSI color codes for terminal output
+GREEN = "\033[92m"
+RED = "\033[91m"
+RESET = "\033[0m"
 
 # ---- args ----
-argv = sys.argv
-if "--" not in argv: die("Usage: blender -b -P dif2gltf.py -- <in.dif> <out.glb|.gltf> [--addon io_dif] [--op import_scene.dif|wm.dif_import] [--format GLB|GLTF_SEPARATE]")
-argv = argv[argv.index("--")+1:]
-if len(argv) < 2: die("Need <in.dif> and <out.glb|.gltf>")
-in_path, out_path = map(os.path.abspath, argv[:2])
+# Extract arguments after "--" (Blender passes its own args before that)
+if "--" in sys.argv:
+    script_args = sys.argv[sys.argv.index("--") + 1:]
+else:
+    script_args = []
 
-addon_mod = "io_dif"
-forced_op = None
-export_format = "GLTF_SEPARATE"
-i = 2
-while i < len(argv):
-    if argv[i] == "--addon" and i+1 < len(argv): addon_mod = argv[i+1]; i += 2
-    elif argv[i] == "--op" and i+1 < len(argv): forced_op = argv[i+1]; i += 2
-    elif argv[i] == "--format" and i+1 < len(argv): export_format = argv[i+1]; i += 2
-    else: die(f"Unknown arg: {argv[i]}")
-if not os.path.isfile(in_path): die(f"Input not found: {in_path}")
+parser = argparse.ArgumentParser(
+    prog="dif2gltf.py",
+    description="Convert DIF files to glTF/GLB format",
+    usage="blender -b -P dif2gltf.py -- [options] <input.dif> [<input2.dif> ...]",
+)
+parser.add_argument(
+    "input_files",
+    nargs="+",
+    metavar="INPUT",
+    help="Input .dif file(s) to convert",
+)
+parser.add_argument(
+    "--addon",
+    default="io_dif",
+    metavar="MODULE",
+    help="Blender add-on module name (default: io_dif)",
+)
+parser.add_argument(
+    "--format",
+    choices=["GLB", "GLTF_SEPARATE"],
+    default="GLB",
+    help="Export format (default: GLB)",
+)
 
-# ---- reset FIRST (so we don't lose the add-on afterward) ----
-bpy.ops.wm.read_factory_settings(use_empty=True)
+args = parser.parse_args(script_args)
 
-# ---- enable add-on ----
-addon_utils.enable(addon_mod, default_set=True, handle_error=None)
-loaded, enabled = addon_utils.check(addon_mod)
+# Resolve and validate input files
+input_files = [os.path.abspath(f) for f in args.input_files]
+for in_path in input_files:
+    if not os.path.isfile(in_path):
+        parser.error(f"Input not found: {in_path}")
+
+# ---- enable add-on (once) ----
+addon_utils.enable(args.addon, default_set=True, handle_error=None)
+loaded, enabled = addon_utils.check(args.addon)
 if not enabled:
     mods = [m.__name__ for m in addon_utils.modules()]
-    die(f"Could not enable '{addon_mod}'. Installed add-ons: {mods}")
+    parser.error(f"Could not enable '{args.addon}'. Installed add-ons: {mods}")
 
 try:
     op_id, op_call = "import_scene.dif", bpy.ops.import_scene.dif
 except Exception as e:
-    die(str(e))
+    sys.exit(f"[dif2gltf] ERROR: {e}")
 
 print(f"[dif2gltf] Using importer: {op_id}")
+print(f"[dif2gltf] Processing {len(input_files)} file(s)...")
 
-# ---- import ----
-res = op_call(filepath=in_path)
-if "FINISHED" not in res: die(f"Import failed via {op_id}: {in_path}")
+# ---- process each file ----
+total = len(input_files)
+for i, in_path in enumerate(input_files, start=1):
+    # Derive output path: same location, same name, but .glb/.gltf extension
+    ext = ".gltf" if args.format == "GLTF_SEPARATE" else ".glb"
+    out_path = os.path.splitext(in_path)[0] + ext
 
-# ---- export ----
-res = bpy.ops.export_scene.gltf(
-    filepath=out_path,
-    export_format=export_format, # GLB | GLTF_SEPARATE
-    use_selection=False,
-    export_apply=True,
-)
-if "FINISHED" not in res: die(f"Export failed: {out_path}")
-print(f"[dif2gltf] OK: {in_path} -> {out_path}")
+    # Reset scene for each file
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+
+    # Re-enable add-on after reset
+    addon_utils.enable(args.addon, default_set=True, handle_error=None)
+
+    # Import
+    print(f"[dif2gltf] [{i}/{total}] Converting: {in_path}")
+    try:
+        res = op_call(filepath=in_path)
+        if "FINISHED" not in res:
+            raise RuntimeError(f"Import failed via {op_id}")
+    except Exception:
+        print(f"\n{RED}[dif2gltf] [{i}/{total}] FAIL:{RESET} {in_path}")
+        continue
+
+    # Export
+    res = bpy.ops.export_scene.gltf(
+        filepath=out_path,
+        export_format=args.format,  # GLB | GLTF_SEPARATE
+        use_selection=False,
+        export_apply=True,
+        # Blender and T2 are Z-up, but these assets are destined for Three.js which
+        # is Y-up. It's easiest to match the Y-up of our destination engine.
+        export_yup=True,
+    )
+    if "FINISHED" not in res:
+        print(f"\n{RED}[dif2gltf] [{i}/{total}] FAIL (export):{RESET} {out_path}")
+        continue
+
+    print(f"{GREEN}[dif2gltf] [{i}/{total}] OK:{RESET} {in_path} -> {out_path}")
+
+print(f"[dif2gltf] Done! Converted {len(input_files)} file(s).")

@@ -6,10 +6,10 @@ const BLENDER_PATH =
   `/Applications/Blender.app/Contents/MacOS/Blender`;
 
 /**
- * Find all .dts files in `public/base` and convert them to glTF.
+ * Find all .dts files in `docs/base` and convert them to glTF.
  */
 async function run() {
-  for await (const inFile of fs.glob("public/base/**/*.dts")) {
+  for await (const inFile of fs.glob("docs/base/**/*.dts")) {
     const outFile = inFile.replace(/\.dts$/i, ".gltf");
     execFileSync(
       BLENDER_PATH,

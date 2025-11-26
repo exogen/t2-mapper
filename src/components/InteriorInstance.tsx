@@ -57,7 +57,7 @@ export const InteriorModel = memo(
     const { nodes } = useInterior(interiorFile);
 
     return (
-      <>
+      <group rotation={[0, -Math.PI / 2, 0]}>
         {Object.entries(nodes)
           .filter(
             ([name, node]: [string, any]) =>
@@ -66,7 +66,7 @@ export const InteriorModel = memo(
           .map(([name, node]: [string, any]) => (
             <InteriorMesh key={name} node={node} />
           ))}
-      </>
+      </group>
     );
   }
 );
@@ -83,16 +83,12 @@ function InteriorPlaceholder() {
 export const InteriorInstance = memo(
   ({ object }: { object: ConsoleObject }) => {
     const interiorFile = getProperty(object, "interiorFile").value;
-    const [z, y, x] = useMemo(() => getPosition(object), [object]);
-    const [scaleX, scaleY, scaleZ] = useMemo(() => getScale(object), [object]);
-    const q = useMemo(() => getRotation(object, true), [object]);
+    const position = useMemo(() => getPosition(object), [object]);
+    const scale = useMemo(() => getScale(object), [object]);
+    const q = useMemo(() => getRotation(object), [object]);
 
     return (
-      <group
-        quaternion={q}
-        position={[x - 1024, y, z - 1024]}
-        scale={[-scaleX, scaleY, -scaleZ]}
-      >
+      <group position={position} quaternion={q} scale={scale}>
         <Suspense fallback={<InteriorPlaceholder />}>
           <InteriorModel interiorFile={interiorFile} />
         </Suspense>

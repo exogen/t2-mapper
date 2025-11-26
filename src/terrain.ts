@@ -1,5 +1,4 @@
 const SIZE = 256;
-const SCALE = 8;
 
 export function parseTerrainBuffer(arrayBuffer: ArrayBufferLike) {
   const dataView = new DataView(arrayBuffer);

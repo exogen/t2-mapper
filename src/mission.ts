@@ -212,38 +212,25 @@ export function getProperty(obj: ConsoleObject, name: string) {
 
 export function getPosition(obj: ConsoleObject): [number, number, number] {
   const position = getProperty(obj, "position")?.value ?? "0 0 0";
-  const [x, z, y] = position.split(" ").map((s) => parseFloat(s));
-  return [x || 0, y || 0, z || 0];
+  const [x, y, z] = position.split(" ").map((s) => parseFloat(s));
+  // Convert Torque3D coordinates to Three.js: XYZ -> YZX
+  return [y || 0, z || 0, x || 0];
 }
 
 export function getScale(obj: ConsoleObject): [number, number, number] {
   const scale = getProperty(obj, "scale")?.value ?? "1 1 1";
-  const [scaleX, scaleZ, scaleY] = scale.split(" ").map((s) => parseFloat(s));
-  return [scaleX, scaleY, scaleZ];
+  const [sx, sy, sz] = scale.split(" ").map((s) => parseFloat(s));
+  // Convert Torque3D coordinates to Three.js: XYZ -> YZX
+  return [sy || 0, sz || 0, sx || 0];
 }
 
-export function getRotation(obj: ConsoleObject, isInterior = false) {
+export function getRotation(obj: ConsoleObject): Quaternion {
   const rotation = getProperty(obj, "rotation")?.value ?? "1 0 0 0";
-  const [ax, az, ay, angle] = rotation.split(" ").map((s) => parseFloat(s));
-
-  if (isInterior) {
-    // For interiors: Apply coordinate system transformation
-    // 1. Convert rotation axis from source coords (ax, az, ay) to Three.js coords
-    // 2. Apply -90 Y rotation to align coordinate systems
-    const sourceRotation = new Quaternion().setFromAxisAngle(
-      new Vector3(az, ay, ax),
-      -angle * (Math.PI / 180)
-    );
-    const coordSystemFix = new Quaternion().setFromAxisAngle(
-      new Vector3(0, 1, 0),
-      Math.PI / 2
-    );
-    return sourceRotation.multiply(coordSystemFix);
-  } else {
-    // For other objects (terrain, etc)
-    return new Quaternion().setFromAxisAngle(
-      new Vector3(ax, ay, -az),
-      angle * (Math.PI / 180)
-    );
-  }
+  const [ax, ay, az, angleDegrees] = rotation
+    .split(" ")
+    .map((s) => parseFloat(s));
+  // Convert Torque3D coordinates to Three.js: XYZ -> YZX
+  const axis = new Vector3(ay, az, ax).normalize();
+  const angleRadians = -angleDegrees * (Math.PI / 180);
+  return new Quaternion().setFromAxisAngle(axis, angleRadians);
 }

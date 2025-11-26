@@ -53,6 +53,14 @@ export function updateTerrainTextureShader({
   alphaTextures,
   visibilityMask,
   tiling,
+  debugMode = false,
+}: {
+  shader: any;
+  baseTextures: any[];
+  alphaTextures: any[];
+  visibilityMask: any;
+  tiling: Record<number, number>;
+  debugMode?: boolean;
 }) {
   const layerCount = baseTextures.length;
 
@@ -78,6 +86,9 @@ export function updateTerrainTextureShader({
     };
   });
 
+  // Add debug mode uniform
+  shader.uniforms.debugMode = { value: debugMode ? 1.0 : 0.0 };
+
   // Declare our uniforms at the top of the fragment shader
   shader.fragmentShader =
     `
@@ -98,7 +109,17 @@ uniform float tiling2;
 uniform float tiling3;
 uniform float tiling4;
 uniform float tiling5;
+uniform float debugMode;
 ${visibilityMask ? "uniform sampler2D visibilityMask;" : ""}
+
+// Wireframe edge detection for debug mode
+float getWireframe(vec2 uv, float gridSize, float lineWidth) {
+  vec2 gridUv = uv * gridSize;
+  vec2 grid = abs(fract(gridUv - 0.5) - 0.5);
+  vec2 deriv = fwidth(gridUv);
+  vec2 edge = smoothstep(vec2(0.0), deriv * lineWidth, grid);
+  return 1.0 - min(edge.x, edge.y);
+}
 ` + shader.fragmentShader;
 
   if (visibilityMask) {
@@ -164,7 +185,27 @@ ${visibilityMask ? "uniform sampler2D visibilityMask;" : ""}
   ${layerCount > 5 ? `blended = mix(blended, c5, clamp(a5, 0.0, 1.0));` : ""}
 
   // Assign to diffuseColor before lighting
-  diffuseColor.rgb = ${layerCount > 1 ? "blended" : "c0"};
+  vec3 textureColor = ${layerCount > 1 ? "blended" : "c0"};
+
+  // Debug mode wireframe handling
+  if (debugMode > 0.5) {
+    // 256 grid cells across the terrain (matches terrain resolution)
+    float wireframe = getWireframe(baseUv, 256.0, 1.0);
+    vec3 wireColor = vec3(0.0, 0.8, 0.4); // Green wireframe
+
+    if (gl_FrontFacing) {
+      // Front face: show textures with barely visible wireframe overlay
+      diffuseColor.rgb = mix(textureColor, wireColor, wireframe * 0.05);
+    } else {
+      // Back face: show only wireframe, discard non-wireframe pixels
+      if (wireframe < 0.1) {
+        discard;
+      }
+      diffuseColor.rgb = mix(vec3(0.0), wireColor, 0.25);
+    }
+  } else {
+    diffuseColor.rgb = textureColor;
+  }
 `
   );
 }

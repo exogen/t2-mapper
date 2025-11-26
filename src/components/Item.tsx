@@ -57,9 +57,9 @@ function getDataBlockShape(dataBlock: string) {
 export function Item({ object }: { object: ConsoleObject }) {
   const dataBlock = getProperty(object, "dataBlock").value;
 
-  const [z, y, x] = useMemo(() => getPosition(object), [object]);
-  const [scaleX, scaleY, scaleZ] = useMemo(() => getScale(object), [object]);
-  const q = useMemo(() => getRotation(object, true), [object]);
+  const position = useMemo(() => getPosition(object), [object]);
+  const scale = useMemo(() => getScale(object), [object]);
+  const q = useMemo(() => getRotation(object), [object]);
 
   const shapeName = getDataBlockShape(dataBlock);
 
@@ -69,11 +69,7 @@ export function Item({ object }: { object: ConsoleObject }) {
 
   return (
     <ShapeInfoProvider shapeName={shapeName} type="Item">
-      <group
-        quaternion={q}
-        position={[x - 1024, y, z - 1024]}
-        scale={[scaleX, scaleY, scaleZ]}
-      >
+      <group position={position} quaternion={q} scale={scale}>
         {shapeName ? (
           <ErrorBoundary fallback={<ShapePlaceholder color="red" />}>
             <Suspense fallback={<ShapePlaceholder color="pink" />}>

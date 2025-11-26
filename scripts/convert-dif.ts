@@ -6,24 +6,33 @@ const BLENDER_PATH =
   `/Applications/Blender.app/Contents/MacOS/Blender`;
 
 /**
- * Find all .dif files in `public/base` and convert them to glTF.
+ * Find all .dif files in `docs/base` and convert them to glTF.
+ * All files are passed to Blender in a single invocation for speed.
  */
 async function run() {
-  for await (const inFile of fs.glob("public/base/**/*.dif")) {
-    const outFile = inFile.replace(/\.dif$/i, ".gltf");
-    execFileSync(
-      BLENDER_PATH,
-      [
-        "--background",
-        "--python",
-        "scripts/blender/dif2gltf.py",
-        "--", // args after here go to the script
-        inFile,
-        outFile,
-      ],
-      { stdio: "inherit" }
-    );
+  const inputFiles: string[] = [];
+  for await (const inFile of fs.glob("docs/base/**/*.dif")) {
+    inputFiles.push(inFile);
   }
+
+  if (inputFiles.length === 0) {
+    console.log("No .dif files found.");
+    return;
+  }
+
+  console.log(`Found ${inputFiles.length} .dif file(s) to convert.`);
+
+  execFileSync(
+    BLENDER_PATH,
+    [
+      "--background",
+      "--python",
+      "scripts/blender/dif2gltf.py",
+      "--", // args after here go to the script
+      ...inputFiles,
+    ],
+    { stdio: "inherit" }
+  );
 }
 
 run();

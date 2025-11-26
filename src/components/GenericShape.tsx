@@ -104,7 +104,7 @@ export function ShapeModel() {
   }, [nodes, hullBoneIndices]);
 
   return (
-    <>
+    <group rotation={[0, Math.PI / 2, 0]}>
       {processedNodes.map(({ node, geometry }) => (
         <mesh key={node.id} geometry={geometry} castShadow receiveShadow>
           {node.material ? (
@@ -134,6 +134,6 @@ export function ShapeModel() {
         </mesh>
       ))}
       {debugMode ? <FloatingLabel>{shapeName}</FloatingLabel> : null}
-    </>
+    </group>
   );
 }

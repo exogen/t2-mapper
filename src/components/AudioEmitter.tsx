@@ -50,7 +50,7 @@ export function AudioEmitter({ object }: { object: ConsoleObject }) {
   );
   const is3D = parseInt(getProperty(object, "is3D")?.value ?? "0");
 
-  const [z, y, x] = getPosition(object);
+  const [x, y, z] = getPosition(object);
   const { scene, camera } = useThree();
   const { audioLoader, audioListener } = useAudio();
   const { audioEnabled } = useSettings();
@@ -60,7 +60,7 @@ export function AudioEmitter({ object }: { object: ConsoleObject }) {
   const loopGapIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const isLoadedRef = useRef(false);
   const isInRangeRef = useRef(false);
-  const emitterPosRef = useRef(new Vector3(x - 1024, y, z - 1024));
+  const emitterPosRef = useRef(new Vector3(x, y, z));
 
   // Create sound object on mount
   useEffect(() => {
@@ -208,10 +208,9 @@ export function AudioEmitter({ object }: { object: ConsoleObject }) {
       <meshBasicMaterial
         color="#00ff00"
         wireframe
-        opacity={0.2}
+        opacity={0.05}
         transparent
         toneMapped={false}
-        fog={false}
       />
       <FloatingLabel color="#00ff00" position={[0, minDistance + 1, 0]}>
         {fileName}

@@ -28,7 +28,7 @@ export function getUrlForPath(resourcePath: string, fallbackUrl?: string) {
 
 export function interiorToUrl(name: string) {
   const difUrl = getUrlForPath(`interiors/${name}`);
-  return difUrl.replace(/\.dif$/i, ".gltf");
+  return difUrl.replace(/\.dif$/i, ".glb");
 }
 
 export function shapeToUrl(name: string) {

@@ -14,7 +14,7 @@ enum Controls {
   down = "down",
 }
 
-const BASE_SPEED = 80; // units per second
+const BASE_SPEED = 80;
 const MIN_SPEED_ADJUSTMENT = 0.05;
 const MAX_SPEED_ADJUSTMENT = 0.5;
 
@@ -78,7 +78,7 @@ function CameraMovement() {
     };
   }, [gl]);
 
-  useFrame((_, delta) => {
+  useFrame((state, delta) => {
     const { forward, backward, left, right, up, down } = getKeys();
 
     if (!forward && !backward && !left && !right && !up && !down) {

@@ -9,6 +9,8 @@ import {
   ClampToEdgeWrapping,
   UnsignedByteType,
   PlaneGeometry,
+  DoubleSide,
+  FrontSide,
 } from "three";
 import { useTexture } from "@react-three/drei";
 import { uint16ToFloat32 } from "../arrayUtils";
@@ -25,6 +27,9 @@ import {
   setupMask,
   updateTerrainTextureShader,
 } from "../textureUtils";
+import { useSettings } from "./SettingsProvider";
+
+const DEFAULT_SQUARE_SIZE = 8;
 
 /**
  * Load a .ter file, used for terrain heightmap and texture info.
@@ -47,6 +52,8 @@ function BlendedTerrainTextures({
   textureNames: string[];
   alphaMaps: Uint8Array[];
 }) {
+  const { debugMode } = useSettings();
+
   const baseTextures = useTexture(
     textureNames.map((name) => terrainTextureToUrl(name)),
     (textures) => {
@@ -79,19 +86,22 @@ function BlendedTerrainTextures({
         alphaTextures,
         visibilityMask,
         tiling,
+        debugMode,
       });
     },
-    [baseTextures, alphaTextures, visibilityMask, tiling]
+    [baseTextures, alphaTextures, visibilityMask, tiling, debugMode]
   );
 
   return (
     <meshStandardMaterial
       // For testing tiling values; forces recompile.
-      key={JSON.stringify(tiling)}
+      key={`${JSON.stringify(tiling)}-${debugMode}`}
       displacementMap={displacementMap}
       map={displacementMap}
       displacementScale={2048}
       depthWrite
+      // In debug mode, render both sides so we can see wireframe from below
+      side={debugMode ? DoubleSide : FrontSide}
       onBeforeCompile={onBeforeCompile}
     />
   );
@@ -199,7 +209,9 @@ export function TerrainBlock({ object }: { object: ConsoleObject }) {
       object,
       "squareSize"
     )?.value;
-    return squareSizeString ? parseInt(squareSizeString, 10) : 8;
+    return squareSizeString
+      ? parseInt(squareSizeString, 10)
+      : DEFAULT_SQUARE_SIZE;
   }, [object]);
 
   const emptySquares: number[] = useMemo(() => {
@@ -213,37 +225,44 @@ export function TerrainBlock({ object }: { object: ConsoleObject }) {
       : [];
   }, [object]);
 
-  const position = useMemo(() => getPosition(object), [object]);
-  const scale = useMemo(() => getScale(object), [object]);
+  const position = useMemo(() => {
+    // Terrain position.z is ignored in Torque - heightmap values are absolute
+    const [x, y, z] = getPosition(object);
+    return [x, 0, z] as [number, number, number];
+  }, [object]);
   const q = useMemo(() => getRotation(object), [object]);
+  const scale = useMemo(() => getScale(object), [object]);
 
   const planeGeometry = useMemo(() => {
     const size = squareSize * 256;
     const geometry = new PlaneGeometry(size, size, 256, 256);
+    // PlaneGeometry starts in XY plane. Rotate to XZ plane for Y-up world.
     geometry.rotateX(-Math.PI / 2);
+    // Also need to rotate to swap X and Z.
     geometry.rotateY(-Math.PI / 2);
+    // Shift origin from center to corner so position offset works correctly.
+    // Tribes 2 terrain origin is at the corner, Three.js PlaneGeometry is centered.
+    // But, T2 does this before the `squareSize` scales it up or down, so it's
+    // essentially a fixed offset.
+    const defaultSize = DEFAULT_SQUARE_SIZE * 256;
+    geometry.translate(defaultSize / 2, 0, defaultSize / 2);
     return geometry;
   }, [squareSize]);
 
   const { data: terrain } = useTerrain(terrainFile);
 
   return (
-    <mesh
-      quaternion={q}
-      position={[position[0], 0, position[2]]} // Y up is unused for terrain
-      scale={scale}
-      geometry={planeGeometry}
-      receiveShadow
-      castShadow
-    >
-      {terrain ? (
-        <TerrainMaterial
-          heightMap={terrain.heightMap}
-          emptySquares={emptySquares}
-          textureNames={terrain.textureNames}
-          alphaMaps={terrain.alphaMaps}
-        />
-      ) : null}
-    </mesh>
+    <group position={position} quaternion={q} scale={scale}>
+      <mesh geometry={planeGeometry} receiveShadow castShadow>
+        {terrain ? (
+          <TerrainMaterial
+            heightMap={terrain.heightMap}
+            emptySquares={emptySquares}
+            textureNames={terrain.textureNames}
+            alphaMaps={terrain.alphaMaps}
+          />
+        ) : null}
+      </mesh>
+    </group>
   );
 }
