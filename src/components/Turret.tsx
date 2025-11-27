@@ -43,9 +43,11 @@ export function Turret({ object }: { object: ConsoleObject }) {
   const scale = useMemo(() => getScale(object), [object]);
 
   const shapeName = getDataBlockShape(dataBlock);
-  const barrelShapeName = initialBarrel
-    ? getDataBlockShape(initialBarrel)
-    : undefined;
+
+  const barrelShapeName =
+    typeof initialBarrel === "string"
+      ? getDataBlockShape(initialBarrel)
+      : undefined;
 
   if (!shapeName) {
     console.error(`<Turret> missing shape for dataBlock: ${dataBlock}`);
