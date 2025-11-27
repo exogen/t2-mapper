@@ -7,7 +7,7 @@ import {
   getRotation,
   getScale,
 } from "../mission";
-import { ShapeModel, ShapePlaceholder } from "./GenericShape";
+import { DebugPlaceholder, ShapeModel, ShapePlaceholder } from "./GenericShape";
 import { ShapeInfoProvider } from "./ShapeInfoProvider";
 
 const dataBlockToShapeName = {
@@ -36,14 +36,16 @@ function getDataBlockShape(dataBlock: string) {
 
 export function Turret({ object }: { object: ConsoleObject }) {
   const dataBlock = getProperty(object, "dataBlock").value;
-  const initialBarrel = getProperty(object, "initialBarrel").value;
+  const initialBarrel = getProperty(object, "initialBarrel")?.value;
 
   const position = useMemo(() => getPosition(object), [object]);
   const q = useMemo(() => getRotation(object), [object]);
   const scale = useMemo(() => getScale(object), [object]);
 
   const shapeName = getDataBlockShape(dataBlock);
-  const barrelShapeName = getDataBlockShape(initialBarrel);
+  const barrelShapeName = initialBarrel
+    ? getDataBlockShape(initialBarrel)
+    : undefined;
 
   if (!shapeName) {
     console.error(`<Turret> missing shape for dataBlock: ${dataBlock}`);
@@ -58,24 +60,24 @@ export function Turret({ object }: { object: ConsoleObject }) {
     <ShapeInfoProvider shapeName={shapeName} type="Turret">
       <group position={position} quaternion={q} scale={scale}>
         {shapeName ? (
-          <ErrorBoundary fallback={<ShapePlaceholder color="red" />}>
+          <ErrorBoundary fallback={<DebugPlaceholder color="red" />}>
             <Suspense fallback={<ShapePlaceholder color="yellow" />}>
               <ShapeModel />
             </Suspense>
           </ErrorBoundary>
         ) : (
-          <ShapePlaceholder color="orange" />
+          <DebugPlaceholder color="orange" />
         )}
         <ShapeInfoProvider shapeName={barrelShapeName} type="Turret">
           <group position={[0, 1.5, 0]}>
             {barrelShapeName ? (
-              <ErrorBoundary fallback={<ShapePlaceholder color="red" />}>
+              <ErrorBoundary fallback={<DebugPlaceholder color="red" />}>
                 <Suspense fallback={<ShapePlaceholder color="yellow" />}>
                   <ShapeModel />
                 </Suspense>
               </ErrorBoundary>
             ) : (
-              <ShapePlaceholder color="orange" />
+              <DebugPlaceholder color="orange" />
             )}
           </group>
         </ShapeInfoProvider>

@@ -13,6 +13,15 @@ enum Controls {
   right = "right",
   up = "up",
   down = "down",
+  camera1 = "camera1",
+  camera2 = "camera2",
+  camera3 = "camera3",
+  camera4 = "camera4",
+  camera5 = "camera5",
+  camera6 = "camera6",
+  camera7 = "camera7",
+  camera8 = "camera8",
+  camera9 = "camera9",
 }
 
 const BASE_SPEED = 80;
@@ -23,7 +32,7 @@ function CameraMovement() {
   const { speedMultiplier, setSpeedMultiplier } = useControls();
   const [subscribe, getKeys] = useKeyboardControls<Controls>();
   const { camera, gl } = useThree();
-  const { nextCamera } = useCameras();
+  const { nextCamera, setCameraIndex, cameraCount } = useCameras();
   const controlsRef = useRef<PointerLockControls | null>(null);
 
   // Scratch vectors to avoid allocations each frame
@@ -52,6 +61,30 @@ function CameraMovement() {
       controls.dispose();
     };
   }, [camera, gl, nextCamera]);
+
+  // Handle number keys 1-9 for camera selection
+  useEffect(() => {
+    const cameraControls = [
+      Controls.camera1,
+      Controls.camera2,
+      Controls.camera3,
+      Controls.camera4,
+      Controls.camera5,
+      Controls.camera6,
+      Controls.camera7,
+      Controls.camera8,
+      Controls.camera9,
+    ];
+
+    return subscribe((state) => {
+      for (let i = 0; i < cameraControls.length; i++) {
+        if (state[cameraControls[i]] && i < cameraCount) {
+          setCameraIndex(i);
+          break;
+        }
+      }
+    });
+  }, [subscribe, setCameraIndex, cameraCount]);
 
   // Handle mousewheel for speed adjustment
   useEffect(() => {
@@ -135,6 +168,15 @@ const KEYBOARD_CONTROLS = [
   { name: Controls.right, keys: ["KeyD"] },
   { name: Controls.up, keys: ["Space"] },
   { name: Controls.down, keys: ["ShiftLeft", "ShiftRight"] },
+  { name: Controls.camera1, keys: ["Digit1"] },
+  { name: Controls.camera2, keys: ["Digit2"] },
+  { name: Controls.camera3, keys: ["Digit3"] },
+  { name: Controls.camera4, keys: ["Digit4"] },
+  { name: Controls.camera5, keys: ["Digit5"] },
+  { name: Controls.camera6, keys: ["Digit6"] },
+  { name: Controls.camera7, keys: ["Digit7"] },
+  { name: Controls.camera8, keys: ["Digit8"] },
+  { name: Controls.camera9, keys: ["Digit9"] },
 ];
 
 export function ObserverControls() {

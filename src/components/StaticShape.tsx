@@ -7,7 +7,7 @@ import {
   getRotation,
   getScale,
 } from "../mission";
-import { ShapeModel, ShapePlaceholder } from "./GenericShape";
+import { DebugPlaceholder, ShapeModel, ShapePlaceholder } from "./GenericShape";
 import { ShapeInfoProvider } from "./ShapeInfoProvider";
 
 const dataBlockToShapeName = {
@@ -61,13 +61,13 @@ export function StaticShape({ object }: { object: ConsoleObject }) {
     <ShapeInfoProvider shapeName={shapeName} type="StaticShape">
       <group position={position} quaternion={q} scale={scale}>
         {shapeName ? (
-          <ErrorBoundary fallback={<ShapePlaceholder color="red" />}>
+          <ErrorBoundary fallback={<DebugPlaceholder color="red" />}>
             <Suspense fallback={<ShapePlaceholder color="yellow" />}>
               <ShapeModel />
             </Suspense>
           </ErrorBoundary>
         ) : (
-          <ShapePlaceholder color="orange" />
+          <DebugPlaceholder color="orange" />
         )}
       </group>
     </ShapeInfoProvider>

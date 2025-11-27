@@ -21,6 +21,8 @@ interface CamerasContextValue {
   registerCamera: (camera: any) => void;
   unregisterCamera: (camera: any) => void;
   nextCamera: () => void;
+  setCameraIndex: (index: number) => void;
+  cameraCount: number;
 }
 
 const CamerasContext = createContext<CamerasContextValue | null>(null);
@@ -52,15 +54,25 @@ export function CamerasProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
+  const cameraCount = Object.keys(cameraMap).length;
+
   const nextCamera = useCallback(() => {
     setCameraIndex((prev) => {
-      const cameraCount = Object.keys(cameraMap).length;
       if (cameraCount === 0) {
         return 0;
       }
       return (prev + 1) % cameraCount;
     });
-  }, [cameraMap]);
+  }, [cameraCount]);
+
+  const setCamera = useCallback(
+    (index: number) => {
+      if (index >= 0 && index < cameraCount) {
+        setCameraIndex(index);
+      }
+    },
+    [cameraCount]
+  );
 
   useEffect(() => {
     const cameraCount = Object.keys(cameraMap).length;
@@ -82,8 +94,10 @@ export function CamerasProvider({ children }: { children: ReactNode }) {
       registerCamera,
       unregisterCamera,
       nextCamera,
+      setCameraIndex: setCamera,
+      cameraCount,
     }),
-    [registerCamera, unregisterCamera, nextCamera]
+    [registerCamera, unregisterCamera, nextCamera, setCamera, cameraCount]
   );
 
   return (

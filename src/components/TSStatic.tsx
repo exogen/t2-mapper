@@ -7,7 +7,7 @@ import {
   getRotation,
   getScale,
 } from "../mission";
-import { ShapeModel, ShapePlaceholder } from "./GenericShape";
+import { DebugPlaceholder, ShapeModel, ShapePlaceholder } from "./GenericShape";
 import { ShapeInfoProvider } from "./ShapeInfoProvider";
 
 export function TSStatic({ object }: { object: ConsoleObject }) {
@@ -24,7 +24,7 @@ export function TSStatic({ object }: { object: ConsoleObject }) {
   return (
     <ShapeInfoProvider shapeName={shapeName} type="TSStatic">
       <group position={position} quaternion={q} scale={scale}>
-        <ErrorBoundary fallback={<ShapePlaceholder color="red" />}>
+        <ErrorBoundary fallback={<DebugPlaceholder color="red" />}>
           <Suspense fallback={<ShapePlaceholder color="yellow" />}>
             <ShapeModel />
           </Suspense>

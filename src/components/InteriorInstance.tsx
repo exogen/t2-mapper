@@ -1,4 +1,5 @@
 import { memo, Suspense, useMemo } from "react";
+import { ErrorBoundary } from "react-error-boundary";
 import { Mesh } from "three";
 import { useGLTF, useTexture } from "@react-three/drei";
 import { BASE_URL, interiorTextureToUrl, interiorToUrl } from "../loaders";
@@ -75,13 +76,18 @@ export const InteriorModel = memo(
   }
 );
 
-function InteriorPlaceholder() {
+function InteriorPlaceholder({ color }: { color: string }) {
   return (
     <mesh>
       <boxGeometry args={[10, 10, 10]} />
-      <meshStandardMaterial color="orange" wireframe />
+      <meshStandardMaterial color={color} wireframe />
     </mesh>
   );
+}
+
+function DebugInteriorPlaceholder() {
+  const { debugMode } = useDebug();
+  return debugMode ? <InteriorPlaceholder color="red" /> : null;
 }
 
 export const InteriorInstance = memo(function InteriorInstance({
@@ -96,9 +102,11 @@ export const InteriorInstance = memo(function InteriorInstance({
 
   return (
     <group position={position} quaternion={q} scale={scale}>
-      <Suspense fallback={<InteriorPlaceholder />}>
-        <InteriorModel interiorFile={interiorFile} />
-      </Suspense>
+      <ErrorBoundary fallback={<DebugInteriorPlaceholder />}>
+        <Suspense fallback={<InteriorPlaceholder color="orange" />}>
+          <InteriorModel interiorFile={interiorFile} />
+        </Suspense>
+      </ErrorBoundary>
     </group>
   );
 });

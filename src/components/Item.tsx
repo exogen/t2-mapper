@@ -7,7 +7,7 @@ import {
   getRotation,
   getScale,
 } from "../mission";
-import { ShapeModel, ShapePlaceholder } from "./GenericShape";
+import { DebugPlaceholder, ShapeModel, ShapePlaceholder } from "./GenericShape";
 import { ShapeInfoProvider } from "./ShapeInfoProvider";
 import { useSimGroup } from "./SimGroup";
 import { FloatingLabel } from "./FloatingLabel";
@@ -84,7 +84,7 @@ export function Item({ object }: { object: ConsoleObject }) {
     <ShapeInfoProvider shapeName={shapeName} type="Item">
       <group position={position} quaternion={q} scale={scale}>
         {shapeName ? (
-          <ErrorBoundary fallback={<ShapePlaceholder color="red" />}>
+          <ErrorBoundary fallback={<DebugPlaceholder color="red" />}>
             <Suspense fallback={<ShapePlaceholder color="pink" />}>
               <ShapeModel />
               {label ? (
@@ -93,7 +93,7 @@ export function Item({ object }: { object: ConsoleObject }) {
             </Suspense>
           </ErrorBoundary>
         ) : (
-          <ShapePlaceholder color="orange" />
+          <DebugPlaceholder color="orange" />
         )}
       </group>
     </ShapeInfoProvider>
