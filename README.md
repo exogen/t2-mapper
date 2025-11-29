@@ -12,19 +12,18 @@
 
 Click inside the map preview area to capture the mouse.
 
-| Key | Action |
-|-----|--------|
-| <kbd>W</kbd> | Forward |
-| <kbd>A</kbd> | Left |
-| <kbd>S</kbd> | Backward |
-| <kbd>D</kbd> | Right |
-| <kbd>Space</kbd> | Up |
-| <kbd>Shift</kbd> | Down |
-| <kbd>Esc</kbd> | Release mouse |
-| <small>Left click</small> | Next observer camera |
-| △ <small>Scroll/mouse wheel up</small> | Increase speed |
-| ▽ <small>Scroll/mouse wheel down</small> | Decrease speed |
-
+| Key                                      | Action               |
+| ---------------------------------------- | -------------------- |
+| <kbd>W</kbd>                             | Forward              |
+| <kbd>A</kbd>                             | Left                 |
+| <kbd>S</kbd>                             | Backward             |
+| <kbd>D</kbd>                             | Right                |
+| <kbd>Space</kbd>                         | Up                   |
+| <kbd>Shift</kbd>                         | Down                 |
+| <kbd>Esc</kbd>                           | Release mouse        |
+| <small>Left click</small>                | Next observer camera |
+| △ <small>Scroll/mouse wheel up</small>   | Increase speed       |
+| ▽ <small>Scroll/mouse wheel down</small> | Decrease speed       |
 
 ## Development
 

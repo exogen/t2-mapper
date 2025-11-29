@@ -38,7 +38,7 @@ function getDataBlockShape(dataBlock: string) {
     _caseInsensitiveLookup = Object.fromEntries(
       Object.entries(dataBlockToShapeName).map(([key, value]) => {
         return [key.toLowerCase(), value];
-      })
+      }),
     );
   }
   return _caseInsensitiveLookup[dataBlock.toLowerCase()];

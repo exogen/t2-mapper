@@ -43,7 +43,7 @@ async function run({ onlyNew }: { onlyNew: boolean }) {
       "--", // args after here go to the script
       ...inputFiles,
     ],
-    { stdio: "inherit" }
+    { stdio: "inherit" },
   );
 }
 

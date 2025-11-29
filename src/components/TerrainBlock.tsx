@@ -58,12 +58,12 @@ function BlendedTerrainTextures({
     textureNames.map((name) => terrainTextureToUrl(name)),
     (textures) => {
       textures.forEach((tex) => setupColor(tex));
-    }
+    },
   );
 
   const alphaTextures = useMemo(
     () => alphaMaps.map((data) => setupMask(data)),
-    [alphaMaps]
+    [alphaMaps],
   );
 
   const tiling = useMemo(
@@ -75,7 +75,7 @@ function BlendedTerrainTextures({
       4: 32,
       5: 32,
     }),
-    []
+    [],
   );
 
   const onBeforeCompile = useCallback(
@@ -89,7 +89,7 @@ function BlendedTerrainTextures({
         debugMode,
       });
     },
-    [baseTextures, alphaTextures, visibilityMask, tiling, debugMode]
+    [baseTextures, alphaTextures, visibilityMask, tiling, debugMode],
   );
 
   return (
@@ -125,7 +125,7 @@ function TerrainMaterial({
       256,
       256,
       RedFormat,
-      FloatType
+      FloatType,
     );
     displacementMap.colorSpace = NoColorSpace;
     displacementMap.generateMipmaps = false;
@@ -168,7 +168,7 @@ function TerrainMaterial({
       terrainSize,
       terrainSize,
       RedFormat,
-      UnsignedByteType
+      UnsignedByteType,
     );
     visibilityMask.colorSpace = NoColorSpace;
     visibilityMask.wrapS = visibilityMask.wrapT = ClampToEdgeWrapping;
@@ -211,7 +211,7 @@ export const TerrainBlock = memo(function TerrainBlock({
   const squareSize = useMemo(() => {
     const squareSizeString: string | undefined = getProperty(
       object,
-      "squareSize"
+      "squareSize",
     )?.value;
     return squareSizeString
       ? parseInt(squareSizeString, 10)
@@ -221,7 +221,7 @@ export const TerrainBlock = memo(function TerrainBlock({
   const emptySquares: number[] = useMemo(() => {
     const emptySquaresString: string | undefined = getProperty(
       object,
-      "emptySquares"
+      "emptySquares",
     )?.value;
 
     return emptySquaresString

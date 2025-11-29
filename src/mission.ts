@@ -55,7 +55,7 @@ function parseInstance(instance) {
 
           default:
             throw new Error(
-              `Unhandled value type: ${def.target.name} = ${def.value.type}`
+              `Unhandled value type: ${def.target.name} = ${def.value.type}`,
             );
         }
       }),
@@ -70,7 +70,7 @@ export function parseMissionScript(script) {
   // - Remove code-like parts of the script so it's easier to parse.
   script = script.replace(
     /(\/\/--- OBJECT WRITE END ---\s+)(?:.|[\r\n])*$/,
-    "$1"
+    "$1",
   );
 
   let objectWriteBegin = /(\/\/--- OBJECT WRITE BEGIN ---\s+)/.exec(script);
@@ -173,7 +173,7 @@ export function parseMissionScript(script) {
     globals: mission.sections
       .filter((section) => !section.name)
       .flatMap((section) =>
-        section.definitions.filter((def) => def.type === "definition")
+        section.definitions.filter((def) => def.type === "definition"),
       ),
   };
 }
@@ -202,7 +202,7 @@ export function getTerrainBlock(mission: Mission): ConsoleObject {
 export function getTerrainFile(mission: Mission) {
   const terrainBlock = getTerrainBlock(mission);
   return terrainBlock.properties.find(
-    (prop) => prop.target.name === "terrainFile"
+    (prop) => prop.target.name === "terrainFile",
   ).value;
 }
 

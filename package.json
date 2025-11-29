@@ -11,9 +11,13 @@
     "build": "next build && touch docs/.nojekyll",
     "clean": "rimraf .next",
     "deploy": "npm run build && git add -f docs && git commit -m \"Deploy\" && git push",
+    "format": "prettier --write .",
     "postbuild": "git checkout -- public/base",
     "prebuild": "npm run clean && git checkout -- docs && rimraf public/base && mv docs/base public/",
-    "start": "next dev --turbopack"
+    "start": "next dev --turbopack",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@react-three/drei": "^10.7.6",
@@ -35,8 +39,10 @@
     "@types/three": "^0.180.0",
     "@types/unzipper": "^0.10.11",
     "peggy": "^5.0.6",
+    "prettier": "^3.7.1",
     "rimraf": "^6.0.1",
     "tsx": "^4.20.5",
-    "typescript": "5.9.2"
+    "typescript": "5.9.2",
+    "vitest": "^4.0.14"
   }
 }

@@ -98,7 +98,7 @@ function CameraMovement() {
         // updates while mouse wheels have fewer updates but large deltas.
         Math.max(
           MIN_SPEED_ADJUSTMENT,
-          Math.min(MAX_SPEED_ADJUSTMENT, Math.abs(e.deltaY * 0.01))
+          Math.min(MAX_SPEED_ADJUSTMENT, Math.abs(e.deltaY * 0.01)),
         ) * direction;
 
       setSpeedMultiplier((prev) => {

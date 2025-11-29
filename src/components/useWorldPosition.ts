@@ -3,7 +3,7 @@ import { useRef, RefObject } from "react";
 import { Object3D, Vector3 } from "three";
 
 export function useWorldPosition<T extends Object3D>(
-  ref: RefObject<T>
+  ref: RefObject<T>,
 ): RefObject<Vector3 | null> {
   const worldPositionRef = useRef<Vector3 | null>(null);
 

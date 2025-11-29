@@ -23,7 +23,7 @@ export function getHullBoneIndices(skeleton: any): Set<number> {
  */
 export function filterGeometryByVertexGroups(
   geometry: any,
-  hullBoneIndices: Set<number>
+  hullBoneIndices: Set<number>,
 ): any {
   // If no hull bones or no skinning data, return original geometry
   if (hullBoneIndices.size === 0 || !geometry.attributes.skinIndex) {

@@ -19,7 +19,7 @@ const alphaAsRoughnessShaderModifier = (shader: any) => {
     #ifdef USE_MAP
       roughnessFactor = texture2D(map, vMapUv).a * 1;
     #endif
-    `
+    `,
   );
 };
 

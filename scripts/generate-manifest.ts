@@ -24,7 +24,7 @@ async function walkDirectory(
       entry: Dirent<string>;
       fullPath: string;
     }) => boolean | Promise<boolean>;
-  }
+  },
 ): Promise<void> {
   const entries = await fs.readdir(dir, { withFileTypes: true });
 
@@ -102,12 +102,12 @@ async function buildManifest() {
   archiveDirs = orderBy(
     archiveDirs,
     [(fullPath) => path.basename(fullPath).toLowerCase()],
-    ["asc"]
+    ["asc"],
   );
 
   for (const archivePath of archiveDirs) {
     const relativeArchivePath = normalizePath(
-      path.relative(`${baseDir}/@vl2`, archivePath)
+      path.relative(`${baseDir}/@vl2`, archivePath),
     );
     await walkDirectory(archivePath, {
       onFile: ({ dir, entry, fullPath }) => {
@@ -140,7 +140,7 @@ async function buildManifest() {
               .map((source) => ` ❗️ ${source}`)
               .join("")
           : ""
-      }`
+      }`,
     );
 
     const resolvedPath = lastSource

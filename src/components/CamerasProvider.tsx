@@ -71,7 +71,7 @@ export function CamerasProvider({ children }: { children: ReactNode }) {
         setCameraIndex(index);
       }
     },
-    [cameraCount]
+    [cameraCount],
   );
 
   useEffect(() => {
@@ -83,7 +83,7 @@ export function CamerasProvider({ children }: { children: ReactNode }) {
       // Apply coordinate system correction for Torque3D to Three.js
       const correction = new Quaternion().setFromAxisAngle(
         new Vector3(0, 1, 0),
-        -Math.PI / 2
+        -Math.PI / 2,
       );
       camera.quaternion.copy(cameraInfo.rotation).multiply(correction);
     }
@@ -97,7 +97,7 @@ export function CamerasProvider({ children }: { children: ReactNode }) {
       setCameraIndex: setCamera,
       cameraCount,
     }),
-    [registerCamera, unregisterCamera, nextCamera, setCamera, cameraCount]
+    [registerCamera, unregisterCamera, nextCamera, setCamera, cameraCount],
   );
 
   return (

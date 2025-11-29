@@ -30,7 +30,7 @@ async function run() {
         .map((f) => f.match(/^missions\/(.+)\.mis$/))
         .filter(Boolean)
         .map((match) => match[1])
-        .join("\n")
+        .join("\n"),
     );
     return;
   } else if (
@@ -38,7 +38,7 @@ async function run() {
     (!values.name && !positionals[0])
   ) {
     console.error(
-      "Must specify exactly one of --name (-n) or a positional filename."
+      "Must specify exactly one of --name (-n) or a positional filename.",
     );
     return 1;
   }
@@ -53,7 +53,7 @@ async function run() {
     inspect(parseMissionScript(missionScript), {
       colors: true,
       depth: Infinity,
-    })
+    }),
   );
 }
 

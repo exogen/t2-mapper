@@ -47,7 +47,7 @@ const groupedMissions = getMissionList().reduce(
       missionName: string;
       displayName: string;
     }>
-  >()
+  >(),
 );
 
 groupedMissions.forEach((groupMissions, groupName) => {
@@ -59,8 +59,8 @@ groupedMissions.forEach((groupMissions, groupName) => {
         (missionInfo) =>
           (missionInfo.displayName || missionInfo.missionName).toLowerCase(),
       ],
-      ["asc"]
-    )
+      ["asc"],
+    ),
   );
 });
 
@@ -90,7 +90,7 @@ export function InspectorControls({
           groupName === "Official" ? 0 : groupName == null ? 2 : 1,
         ([groupName]) => (groupName ? groupName.toLowerCase() : ""),
       ],
-      ["asc", "asc"]
+      ["asc", "asc"],
     );
     return groups;
   }, []);
@@ -125,7 +125,7 @@ export function InspectorControls({
                 </option>
               ))}
             </Fragment>
-          )
+          ),
         )}
       </select>
       <div className="CheckboxField">

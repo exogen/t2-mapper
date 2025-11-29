@@ -6,12 +6,12 @@ const interiorFile = process.argv[2];
 const interiorBuffer = fs.readFileSync(interiorFile);
 const interiorArrayBuffer = interiorBuffer.buffer.slice(
   interiorBuffer.byteOffset,
-  interiorBuffer.byteOffset + interiorBuffer.byteLength
+  interiorBuffer.byteOffset + interiorBuffer.byteLength,
 );
 
 console.log(
   inspect(parseInteriorBuffer(interiorArrayBuffer), {
     colors: true,
     depth: Infinity,
-  })
+  }),
 );

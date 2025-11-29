@@ -32,7 +32,7 @@ export function AudioProvider({ children }: { children: ReactNode }) {
 
     // Create listener if not already present
     let listener = camera.children.find(
-      (child) => child instanceof AudioListener
+      (child) => child instanceof AudioListener,
     ) as AudioListener | undefined;
 
     if (!listener) {

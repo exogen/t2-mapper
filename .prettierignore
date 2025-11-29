@@ -1,0 +1,5 @@
+.claude/
+docs/
+generated/
+public/manifest.json
+package-lock.json

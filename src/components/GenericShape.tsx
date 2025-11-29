@@ -81,7 +81,7 @@ export const ShapeModel = memo(function ShapeModel() {
 
   const hullBoneIndices = useMemo(() => {
     const skeletonsFound = Object.values(nodes).filter(
-      (node: any) => node.skeleton
+      (node: any) => node.skeleton,
     );
 
     if (skeletonsFound.length > 0) {
@@ -97,12 +97,12 @@ export const ShapeModel = memo(function ShapeModel() {
         ([name, node]: [string, any]) =>
           node.material &&
           node.material.name !== "Unassigned" &&
-          !node.name.match(/^Hulk/i)
+          !node.name.match(/^Hulk/i),
       )
       .map(([name, node]: [string, any]) => {
         const geometry = filterGeometryByVertexGroups(
           node.geometry,
-          hullBoneIndices
+          hullBoneIndices,
         );
         return { node, geometry };
       });

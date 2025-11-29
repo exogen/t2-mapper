@@ -62,7 +62,7 @@ async function run({
               console.log(property.value);
             } else {
               console.log(
-                `${baseName} > ${consoleObject.className} > ${property.target.name} = ${property.value}`
+                `${baseName} > ${consoleObject.className} > ${property.target.name} = ${property.value}`,
               );
             }
           }

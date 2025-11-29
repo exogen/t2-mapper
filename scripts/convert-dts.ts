@@ -27,7 +27,7 @@ async function run() {
         // "--no-anims",
         // "--only-visible",
       ],
-      { stdio: "inherit" }
+      { stdio: "inherit" },
     );
   }
 }

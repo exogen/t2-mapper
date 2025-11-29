@@ -30,7 +30,7 @@ async function run() {
         .map((f) => f.match(/^terrains\/(.+)\.ter$/))
         .filter(Boolean)
         .map((match) => match[1])
-        .join("\n")
+        .join("\n"),
     );
     return;
   } else if (
@@ -38,7 +38,7 @@ async function run() {
     (!values.name && !positionals[0])
   ) {
     console.error(
-      "Must specify exactly one of --name (-n) or a positional filename."
+      "Must specify exactly one of --name (-n) or a positional filename.",
     );
     return 1;
   }
@@ -51,14 +51,14 @@ async function run() {
   const terrainBuffer = fs.readFileSync(terrainFile);
   const terrainArrayBuffer = terrainBuffer.buffer.slice(
     terrainBuffer.byteOffset,
-    terrainBuffer.byteOffset + terrainBuffer.byteLength
+    terrainBuffer.byteOffset + terrainBuffer.byteLength,
   );
 
   console.log(
     inspect(parseTerrainBuffer(terrainArrayBuffer), {
       colors: true,
       depth: Infinity,
-    })
+    }),
   );
 }
 

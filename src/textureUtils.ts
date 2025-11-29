@@ -30,7 +30,7 @@ export function setupMask(data) {
     256,
     256,
     RedFormat, // 1 channel
-    UnsignedByteType // 8-bit
+    UnsignedByteType, // 8-bit
   );
 
   // Masks should stay linear
@@ -132,7 +132,7 @@ float getWireframe(vec2 uv, float gridSize, float lineWidth) {
   if (visibility < 0.5) {
     discard;
   }
-  `
+  `,
     );
   }
 
@@ -206,6 +206,6 @@ float getWireframe(vec2 uv, float gridSize, float lineWidth) {
   } else {
     diffuseColor.rgb = textureColor;
   }
-`
+`,
   );
 }

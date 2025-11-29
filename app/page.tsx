@@ -23,7 +23,7 @@ function MapInspector() {
 
   // Initialize state from query params
   const [missionName, setMissionName] = useState(
-    searchParams.get("mission") || "TWL2_WoodyMyrk"
+    searchParams.get("mission") || "TWL2_WoodyMyrk",
   );
 
   // Update query params when state changes

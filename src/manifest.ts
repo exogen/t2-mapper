@@ -41,7 +41,7 @@ export function getActualResourcePathUncached(resourcePath: string) {
 
   // First, try exact case-insensitive match
   const foundLowerCase = resourcePaths.find(
-    (s) => s.toLowerCase() === lowerCased
+    (s) => s.toLowerCase() === lowerCased,
   );
   if (foundLowerCase) {
     return foundLowerCase;
@@ -55,7 +55,7 @@ export function getActualResourcePathUncached(resourcePath: string) {
   if (pathWithoutNumber !== resourcePath) {
     // If we stripped a number, try to find the version without it
     const foundWithoutNumber = resourcePaths.find(
-      (s) => s.toLowerCase() === lowerCasedWithoutNumber
+      (s) => s.toLowerCase() === lowerCasedWithoutNumber,
     );
     if (foundWithoutNumber) {
       return foundWithoutNumber;
@@ -69,9 +69,9 @@ export function getActualResourcePathUncached(resourcePath: string) {
         s
           .replace(
             /^(textures\/)((lush|desert|badlands|lava|ice|jaggedclaw|terrainTiles)\/)/,
-            "$1"
+            "$1",
           )
-          .toLowerCase() === lowerCased
+          .toLowerCase() === lowerCased,
     );
     if (foundNested) {
       return foundNested;

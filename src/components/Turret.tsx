@@ -28,7 +28,7 @@ function getDataBlockShape(dataBlock: string) {
     _caseInsensitiveLookup = Object.fromEntries(
       Object.entries(dataBlockToShapeName).map(([key, value]) => {
         return [key.toLowerCase(), value];
-      })
+      }),
     );
   }
   return _caseInsensitiveLookup[dataBlock.toLowerCase()];
@@ -54,7 +54,7 @@ export function Turret({ object }: { object: ConsoleObject }) {
   }
   if (!barrelShapeName) {
     console.error(
-      `<Turret> missing shape for initialBarrel dataBlock: ${initialBarrel}`
+      `<Turret> missing shape for initialBarrel dataBlock: ${initialBarrel}`,
     );
   }
 

@@ -65,7 +65,7 @@ export const InteriorModel = memo(
         {Object.entries(nodes)
           .filter(
             ([name, node]: [string, any]) =>
-              !node.material || !node.material.name.match(/\.\d+$/)
+              !node.material || !node.material.name.match(/\.\d+$/),
           )
           .map(([name, node]: [string, any]) => (
             <InteriorMesh key={name} node={node} />
@@ -73,7 +73,7 @@ export const InteriorModel = memo(
         {debugMode ? <FloatingLabel>{interiorFile}</FloatingLabel> : null}
       </group>
     );
-  }
+  },
 );
 
 function InteriorPlaceholder({ color }: { color: string }) {

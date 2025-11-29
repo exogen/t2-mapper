@@ -49,7 +49,7 @@ export function SkyBox({
             FALLBACK_URL,
             FALLBACK_URL,
           ],
-    [detailMapList]
+    [detailMapList],
   );
 
   const skyBox = useCubeTexture(skyBoxFiles, { path: "" });

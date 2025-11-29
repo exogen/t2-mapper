@@ -23,7 +23,7 @@ async function buildExtractedGameDataFolder() {
           archives.set(source, archive);
         }
         const entry = archive.files.find(
-          (entry) => normalizePath(entry.path) === filePath
+          (entry) => normalizePath(entry.path) === filePath,
         );
         const inFile = `${inputBaseDir}/${source}:${filePath}`;
         if (!entry) {

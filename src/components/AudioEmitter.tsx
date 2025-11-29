@@ -13,7 +13,7 @@ const audioBufferCache = new Map<string, AudioBuffer>();
 function getCachedAudioBuffer(
   audioUrl: string,
   audioLoader: any,
-  onLoad: (buffer: AudioBuffer) => void
+  onLoad: (buffer: AudioBuffer) => void,
 ) {
   if (audioBufferCache.has(audioUrl)) {
     onLoad(audioBufferCache.get(audioUrl)!);
@@ -27,7 +27,7 @@ function getCachedAudioBuffer(
       undefined,
       (err: any) => {
         console.error("AudioEmitter: Audio load error", audioUrl, err);
-      }
+      },
     );
   }
 }
@@ -41,16 +41,16 @@ export const AudioEmitter = memo(function AudioEmitter({
   const fileName = getProperty(object, "fileName")?.value ?? "";
   const volume = parseFloat(getProperty(object, "volume")?.value ?? "1");
   const minDistance = parseFloat(
-    getProperty(object, "minDistance")?.value ?? "1"
+    getProperty(object, "minDistance")?.value ?? "1",
   );
   const maxDistance = parseFloat(
-    getProperty(object, "maxDistance")?.value ?? "1"
+    getProperty(object, "maxDistance")?.value ?? "1",
   );
   const minLoopGap = parseFloat(
-    getProperty(object, "minLoopGap")?.value ?? "0"
+    getProperty(object, "minLoopGap")?.value ?? "0",
   );
   const maxLoopGap = parseFloat(
-    getProperty(object, "maxLoopGap")?.value ?? "0"
+    getProperty(object, "maxLoopGap")?.value ?? "0",
   );
   const is3D = parseInt(getProperty(object, "is3D")?.value ?? "0");
 
