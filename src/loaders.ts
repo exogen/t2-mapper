@@ -1,4 +1,4 @@
-import { parseImageFrameList } from "./ifl";
+import { parseImageFileList } from "./imageFileList";
 import { getActualResourcePath, getMissionInfo, getSource } from "./manifest";
 import { parseMissionScript } from "./mission";
 import { parseTerrainBuffer } from "./terrain";
@@ -94,5 +94,5 @@ export async function loadImageFrameList(iflPath: string) {
   const url = getUrlForPath(iflPath);
   const res = await fetch(url);
   const source = await res.text();
-  return parseImageFrameList(source);
+  return parseImageFileList(source);
 }

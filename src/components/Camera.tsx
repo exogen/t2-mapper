@@ -1,20 +1,14 @@
-import { useEffect, useId, useMemo, useRef } from "react";
-import { PerspectiveCamera } from "@react-three/drei";
+import { useEffect, useId, useMemo } from "react";
 import { useCameras } from "./CamerasProvider";
-import { useSettings } from "./SettingsProvider";
-import {
-  ConsoleObject,
-  getPosition,
-  getProperty,
-  getRotation,
-} from "../mission";
-import { Quaternion, Vector3 } from "three";
+import type { TorqueObject } from "../torqueScript";
+import { getPosition, getProperty, getRotation } from "../mission";
+import { Vector3 } from "three";
 
-export function Camera({ object }: { object: ConsoleObject }) {
+export function Camera({ object }: { object: TorqueObject }) {
   const { registerCamera, unregisterCamera } = useCameras();
   const id = useId();
 
-  const dataBlock = getProperty(object, "dataBlock").value;
+  const dataBlock = getProperty(object, "dataBlock");
   const position = useMemo(() => getPosition(object), [object]);
   const q = useMemo(() => getRotation(object), [object]);
 

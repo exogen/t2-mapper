@@ -1,12 +1,13 @@
 import { useMemo } from "react";
-import { ConsoleObject, getPosition, getProperty } from "../mission";
+import type { TorqueObject } from "../torqueScript";
+import { getPosition, getProperty } from "../mission";
 import { FloatingLabel } from "./FloatingLabel";
 import { useSimGroup } from "./SimGroup";
 
-export function WayPoint({ object }: { object: ConsoleObject }) {
+export function WayPoint({ object }: { object: TorqueObject }) {
   const simGroup = useSimGroup();
   const position = useMemo(() => getPosition(object), [object]);
-  const label = getProperty(object, "name")?.value;
+  const label = getProperty(object, "name");
 
   return label ? (
     <FloatingLabel position={position} opacity={0.6}>

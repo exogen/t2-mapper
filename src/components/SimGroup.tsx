@@ -1,9 +1,9 @@
 import { createContext, useContext, useMemo } from "react";
-import { ConsoleObject } from "../mission";
+import type { TorqueObject } from "../torqueScript";
 import { renderObject } from "./renderObject";
 
 export type SimGroupContextType = {
-  object: ConsoleObject;
+  object: TorqueObject;
   parent: SimGroupContextType;
   hasTeams: boolean;
   team: null | number;
@@ -15,7 +15,7 @@ export function useSimGroup() {
   return useContext(SimGroupContext);
 }
 
-export function SimGroup({ object }: { object: ConsoleObject }) {
+export function SimGroup({ object }: { object: TorqueObject }) {
   const parent = useSimGroup();
 
   const simGroup: SimGroupContextType = useMemo(() => {
@@ -26,12 +26,14 @@ export function SimGroup({ object }: { object: ConsoleObject }) {
       hasTeams = true;
       if (parent.team != null) {
         team = parent.team;
-      } else if (object.instanceName) {
-        const match = object.instanceName.match(/^team(\d+)$/i);
-        team = parseInt(match[1], 10);
+      } else if (object._name) {
+        const match = object._name.match(/^team(\d+)$/i);
+        if (match) {
+          team = parseInt(match[1], 10);
+        }
       }
-    } else if (object.instanceName) {
-      hasTeams = object.instanceName.toLowerCase() === "teams";
+    } else if (object._name) {
+      hasTeams = object._name.toLowerCase() === "teams";
     }
 
     return {
@@ -49,7 +51,7 @@ export function SimGroup({ object }: { object: ConsoleObject }) {
 
   return (
     <SimGroupContext.Provider value={simGroup}>
-      {object.children.map((child, i) => renderObject(child, i))}
+      {(object._children ?? []).map((child, i) => renderObject(child, i))}
     </SimGroupContext.Provider>
   );
 }

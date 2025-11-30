@@ -1,7 +1,8 @@
 import { memo, useEffect, useRef } from "react";
 import { useThree, useFrame } from "@react-three/fiber";
 import { PositionalAudio, Vector3 } from "three";
-import { ConsoleObject, getPosition, getProperty } from "../mission";
+import type { TorqueObject } from "../torqueScript";
+import { getPosition, getProperty } from "../mission";
 import { audioToUrl } from "../loaders";
 import { useAudio } from "./AudioContext";
 import { useDebug, useSettings } from "./SettingsProvider";
@@ -35,24 +36,16 @@ function getCachedAudioBuffer(
 export const AudioEmitter = memo(function AudioEmitter({
   object,
 }: {
-  object: ConsoleObject;
+  object: TorqueObject;
 }) {
   const { debugMode } = useDebug();
-  const fileName = getProperty(object, "fileName")?.value ?? "";
-  const volume = parseFloat(getProperty(object, "volume")?.value ?? "1");
-  const minDistance = parseFloat(
-    getProperty(object, "minDistance")?.value ?? "1",
-  );
-  const maxDistance = parseFloat(
-    getProperty(object, "maxDistance")?.value ?? "1",
-  );
-  const minLoopGap = parseFloat(
-    getProperty(object, "minLoopGap")?.value ?? "0",
-  );
-  const maxLoopGap = parseFloat(
-    getProperty(object, "maxLoopGap")?.value ?? "0",
-  );
-  const is3D = parseInt(getProperty(object, "is3D")?.value ?? "0");
+  const fileName = getProperty(object, "fileName") ?? "";
+  const volume = getProperty(object, "volume") ?? 1;
+  const minDistance = getProperty(object, "minDistance") ?? 1;
+  const maxDistance = getProperty(object, "maxDistance") ?? 1;
+  const minLoopGap = getProperty(object, "minLoopGap") ?? 0;
+  const maxLoopGap = getProperty(object, "maxLoopGap") ?? 0;
+  const is3D = getProperty(object, "is3D") ?? 0;
 
   const [x, y, z] = getPosition(object);
   const { scene, camera } = useThree();

@@ -1,8 +1,10 @@
-export function parseImageFrameList(source: string) {
+export function parseImageFileList(source: string) {
   const lines = source
     .split(/(?:\r\n|\r|\n)/g)
     .map((line) => line.trim())
-    .filter(Boolean);
+    .filter(Boolean)
+    .filter((line) => !line.startsWith(";")); // discard comments
+
   return lines.map((line) => {
     const fileWithCount = line.match(/^(.+)\s(\d+)$/);
     if (fileWithCount) {

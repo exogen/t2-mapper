@@ -1,12 +1,7 @@
 import { Suspense, useMemo } from "react";
 import { ErrorBoundary } from "react-error-boundary";
-import {
-  ConsoleObject,
-  getPosition,
-  getProperty,
-  getRotation,
-  getScale,
-} from "../mission";
+import type { TorqueObject } from "../torqueScript";
+import { getPosition, getProperty, getRotation, getScale } from "../mission";
 import { DebugPlaceholder, ShapeModel, ShapePlaceholder } from "./GenericShape";
 import { ShapeInfoProvider } from "./ShapeInfoProvider";
 
@@ -20,6 +15,8 @@ const dataBlockToShapeName = {
   GeneratorLarge: "station_generator_large.dts",
   InteriorFlagStand: "int_flagstand.dts",
   LightMaleHuman_Dead: "light_male_dead.dts",
+  MediumMaleHuman_Dead: "medium_male_dead.dts",
+  HeavyMaleHuman_Dead: "heavy_male_dead.dts",
   LogoProjector: "teamlogo_projector.dts",
   SensorLargePulse: "sensor_pulse_large.dts",
   SensorMediumPulse: "sensor_pulse_medium.dts",
@@ -44,8 +41,8 @@ function getDataBlockShape(dataBlock: string) {
   return _caseInsensitiveLookup[dataBlock.toLowerCase()];
 }
 
-export function StaticShape({ object }: { object: ConsoleObject }) {
-  const dataBlock = getProperty(object, "dataBlock").value;
+export function StaticShape({ object }: { object: TorqueObject }) {
+  const dataBlock = getProperty(object, "dataBlock") ?? "";
 
   const position = useMemo(() => getPosition(object), [object]);
   const q = useMemo(() => getRotation(object), [object]);

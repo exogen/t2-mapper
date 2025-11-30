@@ -1,17 +1,12 @@
 import { Suspense, useMemo } from "react";
 import { ErrorBoundary } from "react-error-boundary";
-import {
-  ConsoleObject,
-  getPosition,
-  getProperty,
-  getRotation,
-  getScale,
-} from "../mission";
+import type { TorqueObject } from "../torqueScript";
+import { getPosition, getProperty, getRotation, getScale } from "../mission";
 import { DebugPlaceholder, ShapeModel, ShapePlaceholder } from "./GenericShape";
 import { ShapeInfoProvider } from "./ShapeInfoProvider";
 
-export function TSStatic({ object }: { object: ConsoleObject }) {
-  const shapeName = getProperty(object, "shapeName").value;
+export function TSStatic({ object }: { object: TorqueObject }) {
+  const shapeName = getProperty(object, "shapeName");
 
   const position = useMemo(() => getPosition(object), [object]);
   const q = useMemo(() => getRotation(object), [object]);

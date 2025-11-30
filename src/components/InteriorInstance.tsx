@@ -3,13 +3,8 @@ import { ErrorBoundary } from "react-error-boundary";
 import { Mesh } from "three";
 import { useGLTF, useTexture } from "@react-three/drei";
 import { BASE_URL, interiorTextureToUrl, interiorToUrl } from "../loaders";
-import {
-  ConsoleObject,
-  getPosition,
-  getProperty,
-  getRotation,
-  getScale,
-} from "../mission";
+import type { TorqueObject } from "../torqueScript";
+import { getPosition, getProperty, getRotation, getScale } from "../mission";
 import { setupColor } from "../textureUtils";
 import { FloatingLabel } from "./FloatingLabel";
 import { useDebug } from "./SettingsProvider";
@@ -93,9 +88,9 @@ function DebugInteriorPlaceholder() {
 export const InteriorInstance = memo(function InteriorInstance({
   object,
 }: {
-  object: ConsoleObject;
+  object: TorqueObject;
 }) {
-  const interiorFile = getProperty(object, "interiorFile").value;
+  const interiorFile = getProperty(object, "interiorFile");
   const position = useMemo(() => getPosition(object), [object]);
   const scale = useMemo(() => getScale(object), [object]);
   const q = useMemo(() => getRotation(object), [object]);

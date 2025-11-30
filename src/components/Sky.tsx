@@ -2,7 +2,8 @@ import { Suspense, useMemo, useEffect, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useCubeTexture } from "@react-three/drei";
 import { Color, ShaderMaterial, BackSide, Euler } from "three";
-import { ConsoleObject, getProperty, getRotation } from "../mission";
+import type { TorqueObject } from "../torqueScript";
+import { getProperty } from "../mission";
 import { useSettings } from "./SettingsProvider";
 import { BASE_URL, getUrlForPath, loadDetailMapList } from "../loaders";
 import { useThree } from "@react-three/fiber";
@@ -139,27 +140,27 @@ export function SkyBox({
   );
 }
 
-export function Sky({ object }: { object: ConsoleObject }) {
+export function Sky({ object }: { object: TorqueObject }) {
   const { fogEnabled } = useSettings();
 
   // Skybox textures.
-  const materialList = getProperty(object, "materialList")?.value;
+  const materialList = getProperty(object, "materialList");
 
   // Fog parameters.
   // TODO: There can be multiple fog volumes/layers. Render simple fog for now.
   const fogDistance = useMemo(() => {
-    const distanceString = getProperty(object, "fogDistance")?.value;
-    if (distanceString) {
-      return parseFloat(distanceString);
-    }
+    return getProperty(object, "fogDistance");
   }, [object]);
 
   const fogColor = useMemo(() => {
-    const colorString = getProperty(object, "fogColor")?.value;
+    const colorString = getProperty(object, "fogColor");
     if (colorString) {
       // `colorString` might specify an alpha value, but three.js doesn't
       // support opacity on fog or scene backgrounds, so ignore it.
-      const [r, g, b] = colorString.split(" ").map((s) => parseFloat(s));
+      // Note: This is a space-separated string, so we split and parse each component.
+      const [r, g, b] = colorString
+        .split(" ")
+        .map((s: string) => parseFloat(s));
       return [
         new Color().setRGB(r, g, b),
         new Color().setRGB(r, g, b).convertSRGBToLinear(),

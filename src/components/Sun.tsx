@@ -1,25 +1,29 @@
 import { useMemo } from "react";
 import { Color } from "three";
-import { ConsoleObject, getProperty } from "../mission";
+import type { TorqueObject } from "../torqueScript";
+import { getProperty } from "../mission";
 
-export function Sun({ object }: { object: ConsoleObject }) {
+export function Sun({ object }: { object: TorqueObject }) {
   const direction = useMemo(() => {
-    const directionStr = getProperty(object, "direction")?.value ?? "0 0 -1";
-    const [x, y, z] = directionStr.split(" ").map((s) => parseFloat(s));
+    const directionStr = getProperty(object, "direction") ?? "0 0 -1";
+    // Note: This is a space-separated string, so we split and parse each component.
+    const [x, y, z] = directionStr.split(" ").map((s: string) => parseFloat(s));
     // Scale the direction vector to position the light far from the scene
     const scale = 5000;
     return [x * scale, y * scale, z * scale] as [number, number, number];
   }, [object]);
 
   const color = useMemo(() => {
-    const colorStr = getProperty(object, "color")?.value ?? "1 1 1 1";
-    const [r, g, b] = colorStr.split(" ").map((s) => parseFloat(s));
+    const colorStr = getProperty(object, "color") ?? "1 1 1 1";
+    // Note: This is a space-separated string, so we split and parse each component.
+    const [r, g, b] = colorStr.split(" ").map((s: string) => parseFloat(s));
     return [r, g, b] as [number, number, number];
   }, [object]);
 
   const ambient = useMemo(() => {
-    const ambientStr = getProperty(object, "ambient")?.value ?? "0.5 0.5 0.5 1";
-    const [r, g, b] = ambientStr.split(" ").map((s) => parseFloat(s));
+    const ambientStr = getProperty(object, "ambient") ?? "0.5 0.5 0.5 1";
+    // Note: This is a space-separated string, so we split and parse each component.
+    const [r, g, b] = ambientStr.split(" ").map((s: string) => parseFloat(s));
     return [r, g, b] as [number, number, number];
   }, [object]);
 

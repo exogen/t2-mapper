@@ -1,4 +1,4 @@
-import { ConsoleObject } from "../mission";
+import type { TorqueObject } from "../torqueScript";
 import { TerrainBlock } from "./TerrainBlock";
 import { WaterBlock } from "./WaterBlock";
 import { SimGroup } from "./SimGroup";
@@ -29,7 +29,7 @@ const componentMap = {
   WayPoint,
 };
 
-export function renderObject(object: ConsoleObject, key: string | number) {
-  const Component = componentMap[object.className];
+export function renderObject(object: TorqueObject, key: string | number) {
+  const Component = componentMap[object._className];
   return Component ? <Component key={key} object={object} /> : null;
 }
