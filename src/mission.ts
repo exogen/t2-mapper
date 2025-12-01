@@ -195,6 +195,22 @@ export function getProperty(obj: TorqueObject, name: string): any {
   return obj[name.toLowerCase()];
 }
 
+export function getFloat(
+  obj: TorqueObject,
+  name: string,
+): number | null | undefined {
+  const value = obj[name.toLowerCase()];
+  return value == null ? value : parseFloat(value);
+}
+
+export function getInt(
+  obj: TorqueObject,
+  name: string,
+): number | null | undefined {
+  const value = obj[name.toLowerCase()];
+  return value == null ? value : parseInt(value, 10);
+}
+
 export function getPosition(obj: TorqueObject): [number, number, number] {
   const position = obj.position ?? "0 0 0";
   const [x, y, z] = position.split(" ").map((s: string) => parseFloat(s));

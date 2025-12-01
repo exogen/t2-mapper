@@ -2,7 +2,7 @@ import { memo, useEffect, useRef } from "react";
 import { useThree, useFrame } from "@react-three/fiber";
 import { PositionalAudio, Vector3 } from "three";
 import type { TorqueObject } from "../torqueScript";
-import { getPosition, getProperty } from "../mission";
+import { getFloat, getInt, getPosition, getProperty } from "../mission";
 import { audioToUrl } from "../loaders";
 import { useAudio } from "./AudioContext";
 import { useDebug, useSettings } from "./SettingsProvider";
@@ -40,12 +40,12 @@ export const AudioEmitter = memo(function AudioEmitter({
 }) {
   const { debugMode } = useDebug();
   const fileName = getProperty(object, "fileName") ?? "";
-  const volume = getProperty(object, "volume") ?? 1;
-  const minDistance = getProperty(object, "minDistance") ?? 1;
-  const maxDistance = getProperty(object, "maxDistance") ?? 1;
-  const minLoopGap = getProperty(object, "minLoopGap") ?? 0;
-  const maxLoopGap = getProperty(object, "maxLoopGap") ?? 0;
-  const is3D = getProperty(object, "is3D") ?? 0;
+  const volume = getFloat(object, "volume") ?? 1;
+  const minDistance = getFloat(object, "minDistance") ?? 1;
+  const maxDistance = getFloat(object, "maxDistance") ?? 1;
+  const minLoopGap = getFloat(object, "minLoopGap") ?? 0;
+  const maxLoopGap = getFloat(object, "maxLoopGap") ?? 0;
+  const is3D = getInt(object, "is3D") ?? 0;
 
   const [x, y, z] = getPosition(object);
   const { scene, camera } = useThree();
@@ -209,7 +209,7 @@ export const AudioEmitter = memo(function AudioEmitter({
         transparent
         toneMapped={false}
       />
-      <FloatingLabel color="#00ff00" position={[0, minDistance, 0]}>
+      <FloatingLabel color="#00ff00" position={[0, minDistance + 1, 0]}>
         {fileName}
       </FloatingLabel>
     </mesh>

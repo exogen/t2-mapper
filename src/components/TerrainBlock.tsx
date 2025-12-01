@@ -16,7 +16,13 @@ import { useTexture } from "@react-three/drei";
 import { uint16ToFloat32 } from "../arrayUtils";
 import { loadTerrain, terrainTextureToUrl } from "../loaders";
 import type { TorqueObject } from "../torqueScript";
-import { getPosition, getProperty, getRotation, getScale } from "../mission";
+import {
+  getInt,
+  getPosition,
+  getProperty,
+  getRotation,
+  getScale,
+} from "../mission";
 import {
   setupColor,
   setupMask,
@@ -202,10 +208,7 @@ export const TerrainBlock = memo(function TerrainBlock({
   object: TorqueObject;
 }) {
   const terrainFile = getProperty(object, "terrainFile");
-
-  const squareSize = useMemo(() => {
-    return getProperty(object, "squareSize") ?? DEFAULT_SQUARE_SIZE;
-  }, [object]);
+  const squareSize = getInt(object, "squareSize") ?? DEFAULT_SQUARE_SIZE;
 
   const emptySquares: number[] = useMemo(() => {
     const emptySquaresValue = getProperty(object, "emptySquares");
