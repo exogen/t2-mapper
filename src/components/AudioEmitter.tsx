@@ -209,7 +209,7 @@ export const AudioEmitter = memo(function AudioEmitter({
         transparent
         toneMapped={false}
       />
-      <FloatingLabel color="#00ff00" position={[0, minDistance + 1, 0]}>
+      <FloatingLabel color="#00ff00" position={[0, minDistance, 0]}>
         {fileName}
       </FloatingLabel>
     </mesh>
