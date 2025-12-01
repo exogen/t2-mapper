@@ -71,18 +71,25 @@ export const InteriorModel = memo(
   },
 );
 
-function InteriorPlaceholder({ color }: { color: string }) {
+function InteriorPlaceholder({
+  color,
+  label,
+}: {
+  color: string;
+  label?: string;
+}) {
   return (
     <mesh>
       <boxGeometry args={[10, 10, 10]} />
       <meshStandardMaterial color={color} wireframe />
+      {label ? <FloatingLabel color={color}>{label}</FloatingLabel> : null}
     </mesh>
   );
 }
 
-function DebugInteriorPlaceholder() {
+function DebugInteriorPlaceholder({ label }: { label?: string }) {
   const { debugMode } = useDebug();
-  return debugMode ? <InteriorPlaceholder color="red" /> : null;
+  return debugMode ? <InteriorPlaceholder color="red" label={label} /> : null;
 }
 
 export const InteriorInstance = memo(function InteriorInstance({
@@ -97,7 +104,9 @@ export const InteriorInstance = memo(function InteriorInstance({
 
   return (
     <group position={position} quaternion={q} scale={scale}>
-      <ErrorBoundary fallback={<DebugInteriorPlaceholder />}>
+      <ErrorBoundary
+        fallback={<DebugInteriorPlaceholder label={interiorFile} />}
+      >
         <Suspense fallback={<InteriorPlaceholder color="orange" />}>
           <InteriorModel interiorFile={interiorFile} />
         </Suspense>

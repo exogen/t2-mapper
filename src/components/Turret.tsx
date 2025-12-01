@@ -57,7 +57,9 @@ export function Turret({ object }: { object: TorqueObject }) {
     <ShapeInfoProvider shapeName={shapeName} type="Turret">
       <group position={position} quaternion={q} scale={scale}>
         {shapeName ? (
-          <ErrorBoundary fallback={<DebugPlaceholder color="red" />}>
+          <ErrorBoundary
+            fallback={<DebugPlaceholder color="red" label={shapeName} />}
+          >
             <Suspense fallback={<ShapePlaceholder color="yellow" />}>
               <ShapeModel />
             </Suspense>
@@ -68,7 +70,11 @@ export function Turret({ object }: { object: TorqueObject }) {
         <ShapeInfoProvider shapeName={barrelShapeName} type="Turret">
           <group position={[0, 1.5, 0]}>
             {barrelShapeName ? (
-              <ErrorBoundary fallback={<DebugPlaceholder color="red" />}>
+              <ErrorBoundary
+                fallback={
+                  <DebugPlaceholder color="red" label={barrelShapeName} />
+                }
+              >
                 <Suspense fallback={<ShapePlaceholder color="yellow" />}>
                   <ShapeModel />
                 </Suspense>

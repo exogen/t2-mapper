@@ -59,18 +59,31 @@ export function ShapeTexture({
   return <primitive object={customMaterial} attach="material" />;
 }
 
-export function ShapePlaceholder({ color }: { color: string }) {
+export function ShapePlaceholder({
+  color,
+  label,
+}: {
+  color: string;
+  label?: string;
+}) {
   return (
     <mesh>
       <boxGeometry args={[10, 10, 10]} />
       <meshStandardMaterial color={color} wireframe />
+      {label ? <FloatingLabel color={color}>{label}</FloatingLabel> : null}
     </mesh>
   );
 }
 
-export function DebugPlaceholder({ color }: { color: string }) {
+export function DebugPlaceholder({
+  color,
+  label,
+}: {
+  color: string;
+  label?: string;
+}) {
   const { debugMode } = useDebug();
-  return debugMode ? <ShapePlaceholder color={color} /> : null;
+  return debugMode ? <ShapePlaceholder color={color} label={label} /> : null;
 }
 
 export const ShapeModel = memo(function ShapeModel() {

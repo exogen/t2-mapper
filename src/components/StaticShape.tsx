@@ -58,7 +58,9 @@ export function StaticShape({ object }: { object: TorqueObject }) {
     <ShapeInfoProvider shapeName={shapeName} type="StaticShape">
       <group position={position} quaternion={q} scale={scale}>
         {shapeName ? (
-          <ErrorBoundary fallback={<DebugPlaceholder color="red" />}>
+          <ErrorBoundary
+            fallback={<DebugPlaceholder color="red" label={shapeName} />}
+          >
             <Suspense fallback={<ShapePlaceholder color="yellow" />}>
               <ShapeModel />
             </Suspense>
