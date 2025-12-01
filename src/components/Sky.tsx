@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useCubeTexture } from "@react-three/drei";
 import { Color, ShaderMaterial, BackSide, Euler } from "three";
 import type { TorqueObject } from "../torqueScript";
-import { getProperty } from "../mission";
+import { getFloat, getProperty } from "../mission";
 import { useSettings } from "./SettingsProvider";
 import { BASE_URL, getUrlForPath, loadDetailMapList } from "../loaders";
 import { useThree } from "@react-three/fiber";
@@ -148,9 +148,7 @@ export function Sky({ object }: { object: TorqueObject }) {
 
   // Fog parameters.
   // TODO: There can be multiple fog volumes/layers. Render simple fog for now.
-  const fogDistance = useMemo(() => {
-    return getProperty(object, "fogDistance");
-  }, [object]);
+  const fogDistance = getFloat(object, "fogDistance");
 
   const fogColor = useMemo(() => {
     const colorString = getProperty(object, "fogColor");
