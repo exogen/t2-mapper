@@ -1,6 +1,10 @@
 import { memo, Suspense, useMemo } from "react";
 import { useGLTF, useTexture } from "@react-three/drei";
-import { BASE_URL, shapeTextureToUrl, shapeToUrl } from "../loaders";
+import {
+  FALLBACK_TEXTURE_URL,
+  shapeTextureToUrl,
+  shapeToUrl,
+} from "../loaders";
 import { filterGeometryByVertexGroups, getHullBoneIndices } from "../meshUtils";
 import {
   createAlphaAsRoughnessMaterial,
@@ -11,8 +15,6 @@ import { setupColor } from "../textureUtils";
 import { useDebug } from "./SettingsProvider";
 import { useShapeInfo } from "./ShapeInfoProvider";
 import { FloatingLabel } from "./FloatingLabel";
-
-const FALLBACK_URL = `${BASE_URL}/black.png`;
 
 /**
  * Load a .glb file that was converted from a .dts, used for static shapes.
@@ -29,7 +31,22 @@ export function ShapeTexture({
   material?: MeshStandardMaterial;
   shapeName?: string;
 }) {
-  const url = shapeTextureToUrl(material.name, FALLBACK_URL);
+  const url = useMemo(() => {
+    const flagNames = new Set(material.userData.flag_names ?? []);
+    const isIflMaterial = flagNames.has("IflMaterial");
+    const resourcePath = material.userData.resource_path;
+    if (!resourcePath) {
+      console.warn(
+        `Material index out of range on shape "${shapeName}" - rendering fallback.`,
+      );
+    }
+    return resourcePath && !isIflMaterial
+      ? // Use custom `resource_path` added by forked io_dts3d Blender add-on
+        shapeTextureToUrl(resourcePath)
+      : // Not supported yet
+        FALLBACK_TEXTURE_URL;
+  }, [material]);
+
   const isOrganic = shapeName && /borg|xorg|porg|dorg/i.test(shapeName);
 
   const texture = useTexture(url, (texture) => {

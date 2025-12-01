@@ -1,67 +1,70 @@
 import { parseImageFileList } from "./imageFileList";
-import { getActualResourcePath, getMissionInfo, getSource } from "./manifest";
+import {
+  getActualResourceKey,
+  getMissionInfo,
+  getSourceAndPath,
+} from "./manifest";
 import { parseMissionScript } from "./mission";
+import { normalizePath } from "./stringUtils";
 import { parseTerrainBuffer } from "./terrain";
 
 export const BASE_URL = "/t2-mapper";
 export const RESOURCE_ROOT_URL = `${BASE_URL}/base/`;
+export const FALLBACK_TEXTURE_URL = `${BASE_URL}/magenta.png`;
 
 export function getUrlForPath(resourcePath: string, fallbackUrl?: string) {
-  resourcePath = getActualResourcePath(resourcePath);
-  let sourcePath: string;
+  let resourceKey;
   try {
-    sourcePath = getSource(resourcePath);
+    resourceKey = getActualResourceKey(resourcePath);
   } catch (err) {
     if (fallbackUrl) {
-      // console.error(err);
+      console.warn(
+        `Resource "${resourcePath}" not found - rendering fallback.`,
+      );
       return fallbackUrl;
     } else {
       throw err;
     }
   }
-  if (!sourcePath) {
-    return `${RESOURCE_ROOT_URL}${resourcePath}`;
+  const [sourcePath, actualPath] = getSourceAndPath(resourceKey);
+  if (sourcePath) {
+    return `${RESOURCE_ROOT_URL}@vl2/${sourcePath}/${actualPath}`;
   } else {
-    return `${RESOURCE_ROOT_URL}@vl2/${sourcePath}/${resourcePath}`;
+    return `${RESOURCE_ROOT_URL}${actualPath}`;
   }
 }
 
 export function interiorToUrl(name: string) {
-  const difUrl = getUrlForPath(`interiors/${name}`);
-  return difUrl.replace(/\.dif$/i, ".glb");
+  const url = getUrlForPath(`interiors/${name}`);
+  return url.replace(/\.dif$/i, ".glb");
 }
 
 export function shapeToUrl(name: string) {
-  const difUrl = getUrlForPath(`shapes/${name}`);
-  return difUrl.replace(/\.dts$/i, ".glb");
+  const url = getUrlForPath(`shapes/${name}`);
+  return url.replace(/\.dts$/i, ".glb");
 }
 
 export function terrainTextureToUrl(name: string) {
   name = name.replace(/^terrain\./, "");
-  return getUrlForPath(`textures/terrain/${name}.png`, `${BASE_URL}/black.png`);
+  return getUrlForPath(`textures/terrain/${name}.png`, FALLBACK_TEXTURE_URL);
 }
 
-export function interiorTextureToUrl(name: string, fallbackUrl?: string) {
-  name = name.replace(/\.\d+$/, "");
-  return getUrlForPath(`textures/${name}.png`, fallbackUrl);
+export function interiorTextureToUrl(name: string) {
+  // name = name.replace(/\.\d+$/, "");
+  return getUrlForPath(`textures/${name}.png`, FALLBACK_TEXTURE_URL);
 }
 
 export function textureFrameToUrl(fileName: string) {
-  return getUrlForPath(`textures/skins/${fileName}`);
+  return getUrlForPath(`textures/skins/${fileName}`, FALLBACK_TEXTURE_URL);
 }
 
-export function shapeTextureToUrl(name: string, fallbackUrl?: string) {
-  name = name.replace(/^skins\\/, "");
-  name = name.replace(/\.\d+$/, "");
-  return getUrlForPath(`textures/skins/${name}.png`, fallbackUrl);
+export function shapeTextureToUrl(name: string) {
+  // name = name.replace(/\.\d+$/, "");
+  return getUrlForPath(`textures/${name}.png`, FALLBACK_TEXTURE_URL);
 }
 
 export function textureToUrl(name: string) {
-  try {
-    return getUrlForPath(`textures/${name}.png`);
-  } catch (err) {
-    return `${BASE_URL}/black.png`;
-  }
+  return getUrlForPath(`textures/${name}.png`, FALLBACK_TEXTURE_URL);
 }
 
 export function audioToUrl(fileName: string) {

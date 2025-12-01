@@ -92,7 +92,10 @@ for i, in_path in enumerate(input_files, start=1):
         filepath=out_path,
         export_format=args.format,  # GLB | GLTF_SEPARATE
         use_selection=False,
-        export_apply=True,
+        export_apply=False,
+        # Export custom properties, which is where we store the original
+        # resource path.
+        export_extras=True,
         # Blender and T2 are Z-up, but these assets are destined for Three.js which
         # is Y-up. It's easiest to match the Y-up of our destination engine.
         export_yup=True,

@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import { inspect, parseArgs } from "node:util";
 import { parseMissionScript } from "@/src/mission";
-import { getFilePath } from "@/src/manifest";
+import { getLocalFilePath, getMissionList } from "@/src/manifest";
 
 async function run() {
   const { values, positionals } = parseArgs({
@@ -23,15 +23,7 @@ async function run() {
       console.error("Cannot specify --list (-l) with other options.");
       return 1;
     }
-    const manifest = (await import("../public/manifest.json")).default;
-    const fileNames = Object.keys(manifest);
-    console.log(
-      fileNames
-        .map((f) => f.match(/^missions\/(.+)\.mis$/))
-        .filter(Boolean)
-        .map((match) => match[1])
-        .join("\n"),
-    );
+    console.log(getMissionList().join("\n"));
     return;
   } else if (
     (values.name && positionals[0]) ||
@@ -45,8 +37,8 @@ async function run() {
 
   let missionFile = positionals[0];
   if (values.name) {
-    const resourcePath = `missions/${values.name}.mis`;
-    missionFile = getFilePath(resourcePath);
+    const resourcePath = `missions/${values.name.toLowerCase()}.mis`;
+    missionFile = getLocalFilePath(resourcePath);
   }
   const missionScript = fs.readFileSync(missionFile, "utf8");
   console.log(

@@ -1,5 +1,5 @@
 import { Fragment, useMemo } from "react";
-import { getMissionInfo, getMissionList, getSource } from "../manifest";
+import { getMissionInfo, getMissionList, getSourceAndPath } from "../manifest";
 import { useControls, useDebug, useSettings } from "./SettingsProvider";
 import orderBy from "lodash.orderby";
 
@@ -27,8 +27,8 @@ const sourceGroupNames = {
 const groupedMissions = getMissionList().reduce(
   (groupMap, missionName) => {
     const missionInfo = getMissionInfo(missionName);
-    const source = getSource(missionInfo.resourcePath);
-    const groupName = sourceGroupNames[source] ?? null;
+    const [sourcePath] = getSourceAndPath(missionInfo.resourcePath);
+    const groupName = sourceGroupNames[sourcePath] ?? null;
     const groupMissions = groupMap.get(groupName) ?? [];
     if (!excludeMissions.has(missionName)) {
       groupMissions.push({

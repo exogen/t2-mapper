@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import { inspect, parseArgs } from "node:util";
 import { parseImageFileList } from "@/src/imageFileList";
-import { getFilePath } from "@/src/manifest";
+import { getLocalFilePath } from "@/src/manifest";
 
 async function run() {
   const { values, positionals } = parseArgs({
@@ -46,7 +46,7 @@ async function run() {
   let framesFile = positionals[0];
   if (values.name) {
     const resourcePath = `textures/skins/${values.name}.ifl`;
-    framesFile = getFilePath(resourcePath);
+    framesFile = getLocalFilePath(resourcePath);
   }
   const missionScript = fs.readFileSync(framesFile, "utf8");
   console.log(

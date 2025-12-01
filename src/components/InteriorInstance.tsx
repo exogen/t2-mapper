@@ -2,14 +2,12 @@ import { memo, Suspense, useMemo } from "react";
 import { ErrorBoundary } from "react-error-boundary";
 import { Mesh } from "three";
 import { useGLTF, useTexture } from "@react-three/drei";
-import { BASE_URL, interiorTextureToUrl, interiorToUrl } from "../loaders";
+import { interiorTextureToUrl, interiorToUrl } from "../loaders";
 import type { TorqueObject } from "../torqueScript";
 import { getPosition, getProperty, getRotation, getScale } from "../mission";
 import { setupColor } from "../textureUtils";
 import { FloatingLabel } from "./FloatingLabel";
 import { useDebug } from "./SettingsProvider";
-
-const FALLBACK_URL = `${BASE_URL}/black.png`;
 
 /**
  * Load a .gltf file that was converted from a .dif, used for "interior" models.
@@ -20,7 +18,7 @@ function useInterior(interiorFile: string) {
 }
 
 function InteriorTexture({ materialName }: { materialName: string }) {
-  const url = interiorTextureToUrl(materialName, FALLBACK_URL);
+  const url = interiorTextureToUrl(materialName);
   const texture = useTexture(url, (texture) => setupColor(texture));
 
   return <meshStandardMaterial map={texture} side={2} />;
@@ -39,10 +37,15 @@ function InteriorMesh({ node }: { node: Mesh }) {
         >
           {Array.isArray(node.material) ? (
             node.material.map((mat, index) => (
-              <InteriorTexture key={index} materialName={mat.name} />
+              <InteriorTexture
+                key={index}
+                materialName={mat.userData.resource_path}
+              />
             ))
           ) : (
-            <InteriorTexture materialName={node.material.name} />
+            <InteriorTexture
+              materialName={node.material.userData.resource_path}
+            />
           )}
         </Suspense>
       ) : null}

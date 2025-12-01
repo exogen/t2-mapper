@@ -1,7 +1,8 @@
 import fs from "node:fs";
 import { inspect, parseArgs } from "node:util";
 import { parseTerrainBuffer } from "@/src/terrain";
-import { getFilePath } from "@/src/manifest";
+import { getLocalFilePath, getResourceList } from "@/src/manifest";
+import path from "node:path";
 
 async function run() {
   const { values, positionals } = parseArgs({
@@ -23,13 +24,11 @@ async function run() {
       console.error("Cannot specify --list (-l) with other options.");
       return 1;
     }
-    const manifest = (await import("../public/manifest.json")).default;
-    const fileNames = Object.keys(manifest);
     console.log(
-      fileNames
+      getResourceList()
         .map((f) => f.match(/^terrains\/(.+)\.ter$/))
         .filter(Boolean)
-        .map((match) => match[1])
+        .map((match) => path.basename(getLocalFilePath(match[0]), ".ter"))
         .join("\n"),
     );
     return;
@@ -46,7 +45,7 @@ async function run() {
   let terrainFile = positionals[0];
   if (values.name) {
     const resourcePath = `terrains/${values.name}.ter`;
-    terrainFile = getFilePath(resourcePath);
+    terrainFile = getLocalFilePath(resourcePath);
   }
   const terrainBuffer = fs.readFileSync(terrainFile);
   const terrainArrayBuffer = terrainBuffer.buffer.slice(
