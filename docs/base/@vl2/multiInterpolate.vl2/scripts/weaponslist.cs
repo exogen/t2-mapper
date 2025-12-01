@@ -1,0 +1,20 @@
+$WeaponsHudData[0, itemDataName] = "Blaster";
+$WeaponsHudData[1, itemDataName] = "Plasma";
+$WeaponsHudData[2, itemDataName] = "Chaingun";
+$WeaponsHudData[3, itemDataName] = "Disc";
+$WeaponsHudData[4, itemDataName] = "GrenadeLauncher";
+$WeaponsHudData[5, itemDataName] = "SniperRifle";
+$WeaponsHudData[6, itemDataName] = "ELFGun";
+$WeaponsHudData[7, itemDataName] = "Mortar";
+$WeaponsHudData[8, itemDataName] = "MissileLauncher";
+$WeaponsHudData[9, itemDataName] = "TargetingLaser";
+$WeaponsHudData[10, itemDataName] = "ShockLance";
+$WeaponsHudData[11, itemDataName] = "TR2Disc";
+$WeaponsHudData[12, itemDataName] = "TR2GrenadeLauncher";
+$WeaponsHudData[13, itemDataName] = "TR2Chaingun";
+$WeaponsHudData[14, itemDataName] = "TR2GoldTargetingLaser";
+$WeaponsHudData[15, itemDataName] = "TR2SilverTargetingLaser";
+$WeaponsHudData[16, itemDataName] = "TR2ShockLance";
+$WeaponsHudData[17, itemDataName] = "TR2Mortar";
+
+$WeaponsHudCount = 18;

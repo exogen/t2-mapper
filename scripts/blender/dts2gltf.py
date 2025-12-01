@@ -1,53 +1,112 @@
 # dts2gltf.py
+import argparse
 import bpy, sys, os, addon_utils
 
-def die(msg, code=2):
-    print(f"[dts2gltf] ERROR: {msg}", file=sys.stderr); sys.exit(code)
+# ANSI color codes for terminal output
+GREEN = "\033[92m"
+RED = "\033[91m"
+RESET = "\033[0m"
 
 # ---- args ----
-argv = sys.argv
-if "--" not in argv: die("Usage: blender -b -P dts2gltf.py -- <in.dts> <out.glb|.gltf> [--addon io_scene_dts] [--format GLB|GLTF_SEPARATE]")
-argv = argv[argv.index("--")+1:]
-if len(argv) < 2: die("Need <in.dts> and <out.glb|.gltf>")
-in_path, out_path = map(os.path.abspath, argv[:2])
+# Extract arguments after "--" (Blender passes its own args before that)
+if "--" in sys.argv:
+    script_args = sys.argv[sys.argv.index("--") + 1:]
+else:
+    script_args = []
 
-addon_mod = "io_scene_dts"
-forced_op = None
-export_format = "GLTF_SEPARATE"
-i = 2
-while i < len(argv):
-    if argv[i] == "--addon" and i+1 < len(argv): addon_mod = argv[i+1]; i += 2
-    elif argv[i] == "--format" and i+1 < len(argv): export_format = argv[i+1]; i += 2
-    else: die(f"Unknown arg: {argv[i]}")
-if not os.path.isfile(in_path): die(f"Input not found: {in_path}")
+parser = argparse.ArgumentParser(
+    prog="dts2gltf.py",
+    description="Convert DTS files to glTF/GLB format",
+    usage="blender -b -P dts2gltf.py -- [options] <input.dts> [<input2.dts> ...]",
+)
+parser.add_argument(
+    "input_files",
+    nargs="+",
+    metavar="INPUT",
+    help="Input .dts file(s) to convert",
+)
+parser.add_argument(
+    "--addon",
+    default="io_scene_dtst3d",
+    metavar="MODULE",
+    help="Blender add-on module name (default: io_scene_dtst3d)",
+)
+parser.add_argument(
+    "--format",
+    choices=["GLB", "GLTF_SEPARATE"],
+    default="GLB",
+    help="Export format (default: GLB)",
+)
 
-# ---- reset FIRST (so we don't lose the add-on afterward) ----
-bpy.ops.wm.read_factory_settings(use_empty=True)
+args = parser.parse_args(script_args)
 
-# ---- enable add-on ----
-addon_utils.enable(addon_mod, default_set=True, handle_error=None)
-loaded, enabled = addon_utils.check(addon_mod)
+# Resolve and validate input files
+input_files = [os.path.abspath(f) for f in args.input_files]
+for in_path in input_files:
+    if not os.path.isfile(in_path):
+        parser.error(f"Input not found: {in_path}")
+
+# ---- enable add-on (once) ----
+addon_utils.enable(args.addon, default_set=True, handle_error=None)
+loaded, enabled = addon_utils.check(args.addon)
 if not enabled:
     mods = [m.__name__ for m in addon_utils.modules()]
-    die(f"Could not enable '{addon_mod}'. Installed add-ons: {mods}")
+    parser.error(f"Could not enable '{args.addon}'. Installed add-ons: {mods}")
 
 try:
-    op_id, op_call = "import_scene.dts", bpy.ops.import_scene.dts
+    op_id, op_call = "import_scene.dtst3d(", bpy.ops.import_scene.dtst3d
 except Exception as e:
-    die(str(e))
+    sys.exit(f"[dts2gltf] ERROR: {e}")
 
 print(f"[dts2gltf] Using importer: {op_id}")
+print(f"[dts2gltf] Processing {len(input_files)} file(s)...")
 
-# ---- import ----
-res = op_call(filepath=in_path)
-if "FINISHED" not in res: die(f"Import failed via {op_id}: {in_path}")
+# ---- process each file ----
+total = len(input_files)
+success_count = 0
+failure_count = 0
+for i, in_path in enumerate(input_files, start=1):
+    # Derive output path: same location, same name, but .glb/.gltf extension
+    ext = ".gltf" if args.format == "GLTF_SEPARATE" else ".glb"
+    out_path = os.path.splitext(in_path)[0] + ext
 
-# ---- export ----
-res = bpy.ops.export_scene.gltf(
-    filepath=out_path,
-    export_format=export_format, # GLB | GLTF_SEPARATE
-    use_selection=False,
-    export_apply=True,
-)
-if "FINISHED" not in res: die(f"Export failed: {out_path}")
-print(f"[dts2gltf] OK: {in_path} -> {out_path}")
+    # Reset scene for each file
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+
+    # Re-enable add-on after reset
+    addon_utils.enable(args.addon, default_set=True, handle_error=None)
+
+    # Import
+    print(f"[dts2gltf] [{i}/{total}] Converting: {in_path}")
+    try:
+        res = op_call(filepath=in_path, merge_verts=True)
+        if "FINISHED" not in res:
+            raise RuntimeError(f"Import failed via {op_id}")
+    except Exception:
+        failure_count += 1
+        print(f"\n{RED}[dts2gltf] [{i}/{total}] FAIL (import):{RESET} {in_path}")
+        continue
+
+    # Export
+    res = bpy.ops.export_scene.gltf(
+        filepath=out_path,
+        export_format=args.format,  # GLB | GLTF_SEPARATE
+        use_selection=False,
+        export_materials='EXPORT',
+        export_normals=True,
+        export_tangents=False,
+        export_texcoords=True,
+        export_apply=False,
+        # Blender and T2 are Z-up, but these assets are destined for Three.js which
+        # is Y-up. It's easiest to match the Y-up of our destination engine.
+        export_yup=True,
+    )
+    if "FINISHED" not in res:
+        failure_count += 1
+        print(f"\n{RED}[dts2gltf] [{i}/{total}] FAIL (export):{RESET} {out_path}")
+        continue
+
+    success_count += 1
+    print(f"{GREEN}[dts2gltf] [{i}/{total}] OK:{RESET} {in_path} -> {out_path}")
+
+print(f"[dts2gltf] Done! Converted {success_count} file(s), {failure_count} failed.")

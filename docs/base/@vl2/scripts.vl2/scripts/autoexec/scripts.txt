@@ -1,1 +1,0 @@
-Any scripts (.cs files) placed in this folder will be loaded (exec'd) automatically.

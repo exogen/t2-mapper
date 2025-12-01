@@ -63,6 +63,8 @@ print(f"[dif2gltf] Processing {len(input_files)} file(s)...")
 
 # ---- process each file ----
 total = len(input_files)
+success_count = 0
+failure_count = 0
 for i, in_path in enumerate(input_files, start=1):
     # Derive output path: same location, same name, but .glb/.gltf extension
     ext = ".gltf" if args.format == "GLTF_SEPARATE" else ".glb"
@@ -81,6 +83,7 @@ for i, in_path in enumerate(input_files, start=1):
         if "FINISHED" not in res:
             raise RuntimeError(f"Import failed via {op_id}")
     except Exception:
+        failure_count += 1
         print(f"\n{RED}[dif2gltf] [{i}/{total}] FAIL:{RESET} {in_path}")
         continue
 
@@ -95,9 +98,11 @@ for i, in_path in enumerate(input_files, start=1):
         export_yup=True,
     )
     if "FINISHED" not in res:
+        failure_count += 1
         print(f"\n{RED}[dif2gltf] [{i}/{total}] FAIL (export):{RESET} {out_path}")
         continue
 
+    success_count += 1
     print(f"{GREEN}[dif2gltf] [{i}/{total}] OK:{RESET} {in_path} -> {out_path}")
 
-print(f"[dif2gltf] Done! Converted {len(input_files)} file(s).")
+print(f"[dif2gltf] Done! Converted {success_count} file(s), {failure_count} failed.")

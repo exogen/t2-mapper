@@ -1,0 +1,20 @@
+$TurretsHudData[0, itemDataName] = "SentryTurretBarrel";
+$TurretsHudData[0, itemGameName] = "Sentry Turret";
+$TurretsHudData[1, itemDataName] = "AABarrelLarge";
+$TurretsHudData[1, itemGameName] = "AA Turret";
+$TurretsHudData[2, itemDataName] = "PlasmaBarrelLarge";
+$TurretsHudData[2, itemGameName] = "Plasma Turret";
+$TurretsHudData[3, itemDataName] = "ElfBarrelLarge";
+$TurretsHudData[3, itemGameName] = "Elf Turret";
+$TurretsHudData[4, itemDataName] = "MortarBarrelLarge";
+$TurretsHudData[4, itemGameName] = "Mortar Turret";
+$TurretsHudData[5, itemDataName] = "MissileBarrelLarge";
+$TurretsHudData[5, itemGameName] = "Missile Turret";
+$TurretsHudData[6, itemDataName] = "DeployableOutdoorBarrel";
+$TurretsHudData[6, itemGameName] = "Lankspike Turret";
+$TurretsHudData[7, itemDataName] = "DeployableIndoorBarrel";
+$TurretsHudData[7, itemGameName] = "Spiderclamp Turret";
+$TurretsHudData[8, itemDataName] = "DeployableCameraBarrel";
+$TurretsHudData[8, itemGameName] = "Deployable Camera";
+
+$TurretsHudCount = 9;

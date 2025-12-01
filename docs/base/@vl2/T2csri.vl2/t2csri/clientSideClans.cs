@@ -36,6 +36,7 @@ function clientCmdt2csri_requestUnknownDCECert(%dceNum)
 	{
 		commandToServer('t2csri_getDCEChunk', getSubStr(%cert, %i, 200));
 	}
+
 	commandToServer('t2csri_finishedDCE');
 }
 
@@ -50,5 +51,6 @@ function t2csri_sendCommunityCert()
 	{
 		commandToServer('t2csri_sendCommunityCertChunk', getSubStr(%cert, %i, 200));
 	}
+
 	commandToServer('t2csri_comCertSendDone');	
 }

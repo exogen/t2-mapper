@@ -1,0 +1,291 @@
+// DisplayName = Prizmatic LT
+// MissionTypes = LCTF
+
+//--- MISSION QUOTE BEGIN ---
+//Just a reflektor.
+//  -- Arcade Fire
+//--- MISSION QUOTE END ---
+
+//--- MISSION STRING BEGIN ---
+//[CTF]800 points to win
+//--- MISSION STRING END ---
+
+//--- OBJECT WRITE BEGIN ---
+new SimGroup(MissionGroup) {
+
+	powerCount = "0";
+	cdTrack = "6";
+	CTF_scoreLimit = "8";
+	musicTrack = "desert";
+
+	new MissionArea(MissionArea) {
+		area = "-568 -808 912 1168";
+		flightCeiling = "2000";
+		flightCeilingRange = "20";
+
+		locked = "true";
+	};
+	new TerrainBlock(Terrain) {
+		rotation = "1 0 0 0";
+		scale = "1 1 1";
+		detailTexture = "details/desertdet1";
+		terrainFile = "Gorgon.ter";
+		squareSize = "8";
+
+		locked = "true";
+		position = "-1024 -1024 0";
+	};
+	new NavigationGraph(NavGraph) {
+		conjoinAngleDev = "65";
+		cullDensity = "0.3";
+		customArea = "0 0 0 0";
+
+		scale = "1 1 1";
+		locked = "true";
+		coverage = "0";
+		GraphFile = "DeathBirdsFly.nav";
+		position = "0 0 0 1";
+		conjoinBowlDev = "20";
+		rotation = "0 0 0 0";
+	};
+	new Sky(Sky) {
+		position = "-312 -64 0";
+		rotation = "1 0 0 0";
+		scale = "1 1 1";
+		cloudHeightPer[0] = "0.349971";
+		cloudHeightPer[1] = "0.25";
+		cloudHeightPer[2] = "0.199973";
+		cloudSpeed1 = "0.0001";
+		cloudSpeed2 = "0.0002";
+		cloudSpeed3 = "0.0003";
+		visibleDistance = "400";
+		useSkyTextures = "0";
+		renderBottomTexture = "0";
+		SkySolidColor = "0.040000 0.040000 0.000000 1.000000";
+		fogDistance = "300";
+		fogColor = "0.040000 0.040000 0.000000 1.000000";
+		fogVolume1 = "0 0 0";
+		fogVolume2 = "0 0 0";
+		fogVolume3 = "0 0 0";
+		materialList = "nef_RedPlanet.dml";
+		windVelocity = "1 0 0";
+		windEffectPrecipitation = "0";
+		fogVolumeColor1 = "128.000000 128.000000 128.000000 -70138839232381912800000000000000.000000";
+		fogVolumeColor2 = "128.000000 128.000000 128.000000 0.003575";
+		fogVolumeColor3 = "128.000000 128.000000 128.000000 148037830649288698000000000000.000000";
+		high_visibleDistance = "600";
+		high_fogDistance = "175";
+		high_fogVolume1 = "200 0 53";
+		high_fogVolume2 = "500 53 58";
+		high_fogVolume3 = "1500 58 200";
+
+		cloudSpeed0 = "0.000503 0.000020";
+		locked = "true";
+	};
+	new Sun() {
+		position = "0 0 0";
+		rotation = "1 0 0 0";
+		scale = "1 1 1";
+		direction = "0.57735 0.57735 -0.57735";
+		color = "0.400000 0.400000 0.250000 1.000000";
+		ambient = "0.450000 0.400000 0.250000 1.000000";
+		texture[0] = "special/sunFlare";
+		texture[1] = "special/sunFlare02";
+		texture[2] = "special/LensFlare/flare01";
+		texture[3] = "special/LensFlare/flare02";
+		texture[4] = "special/LensFlare/flare03";
+		lensFlareScale = "0.7";
+		lensFlareIntensity = "0";
+		frontFlareSize = "300";
+		backFlareSize = "450";
+		flareColor = "1.000000 1.000000 1.000000 1.000000";
+
+		locked = "true";
+	};
+	new SimGroup(Teams) {
+
+		powerCount = "0";
+
+		new SimGroup(Team1) {
+
+			powerCount = "0";
+
+			new SimGroup(spawnspheres) {
+
+				powerCount = "0";
+
+				new SpawnSphere() {
+					position = "-38.1752 110.994 173.139";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "SpawnSphereMarker";
+					lockCount = "0";
+					homingCount = "0";
+					radius = "40";
+					sphereWeight = "100";
+					indoorWeight = "0";
+					outdoorWeight = "100";
+				};
+			};
+			new SimGroup(base) {
+
+				powerCount = "1";
+				providesPower = "1";
+
+				new Item() {
+					position = "-33.6205 160.155 185.202";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "flag";
+					lockCount = "0";
+					homingCount = "0";
+					collideable = "0";
+					static = "1";
+					rotate = "1";
+
+					originalPosition = "-33.6205 160.155 185.202 1 0 0 0";
+					className = "FlagObj";
+					isHome = "1";
+					team = "1";
+					WayPoint = "5015";
+					Trigger = "5016";
+					searchSchedule = "7036";
+					Target = "33";
+				};
+				new InteriorInstance() {
+					position = "-33.8281 160.371 150.994";
+					rotation = "0 0 1 192.514";
+					scale = "1 1 1";
+					interiorFile = "pbunk6.dif";
+					showTerrainInside = "0";
+
+					team = "1";
+				};
+			};
+			new SimGroup(objectives) {
+
+				powerCount = "0";
+			};
+			new SimGroup(items) {
+
+				powerCount = "0";
+			};
+		};
+		new SimGroup(Team2) {
+
+			powerCount = "0";
+
+			new SimGroup(spawnspheres) {
+
+				powerCount = "0";
+
+				new SpawnSphere() {
+					position = "-300.958 -583.235 159.575";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "SpawnSphereMarker";
+					lockCount = "0";
+					homingCount = "0";
+					radius = "40";
+					sphereWeight = "100";
+					indoorWeight = "0";
+					outdoorWeight = "100";
+				};
+			};
+			new SimGroup(base) {
+
+				powerCount = "1";
+				providesPower = "1";
+
+				new Item() {
+					position = "-334.82 -624.488 188.496";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "flag";
+					lockCount = "0";
+					homingCount = "0";
+					collideable = "0";
+					static = "1";
+					rotate = "1";
+
+					originalPosition = "-334.82 -624.488 188.496 1 0 0 0";
+					className = "FlagObj";
+					isHome = "1";
+					team = "2";
+					WayPoint = "5017";
+					Trigger = "5018";
+					searchSchedule = "7036";
+					Target = "37";
+				};
+				new InteriorInstance() {
+					position = "-334.706 -624.756 154.488";
+					rotation = "0 0 1 21.1995";
+					scale = "1 1 1";
+					interiorFile = "pbunk6.dif";
+					showTerrainInside = "0";
+
+					team = "2";
+				};
+			};
+			new SimGroup(objectives) {
+
+				powerCount = "0";
+			};
+			new SimGroup(items) {
+
+				powerCount = "0";
+			};
+		};
+		new SimGroup(Team0) {
+
+			powerCount = "1";
+			providesPower = "1";
+
+			new AudioEmitter() {
+				position = "-155.086 -247.801 78.1099";
+				rotation = "1 0 0 0";
+				scale = "1 1 1";
+				fileName = "fx/environment/moaningwind1.wav";
+				useProfileDescription = "0";
+				outsideAmbient = "1";
+				volume = "1";
+				isLooping = "1";
+				is3D = "0";
+				minDistance = "20";
+				maxDistance = "1280";
+				coneInsideAngle = "360";
+				coneOutsideAngle = "360";
+				coneOutsideVolume = "1";
+				coneVector = "0 0 1";
+				loopCount = "-1";
+				minLoopGap = "0";
+				maxLoopGap = "0";
+				type = "EffectAudioType";
+
+				team = "0";
+			};
+		};
+	};
+	new SimGroup(ObserverDropPoints) {
+
+		powerCount = "0";
+
+		new Camera() {
+			position = "-337.761 -745.684 194.623";
+			rotation = "0.228551 -0.0672056 0.97121 33.6893";
+			scale = "1 1 1";
+			dataBlock = "Observer";
+			lockCount = "0";
+			homingCount = "0";
+		};
+		new Camera() {
+			position = "17.8834 270.002 197.052";
+			rotation = "-0.0011387 -0.0265238 0.999647 184.915";
+			scale = "1 1 1";
+			dataBlock = "Observer";
+			lockCount = "0";
+			homingCount = "0";
+		};
+	};
+};
+//--- OBJECT WRITE END ---
