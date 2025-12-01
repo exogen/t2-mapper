@@ -2,13 +2,8 @@ import { memo, Suspense, useEffect, useMemo } from "react";
 import { useTexture } from "@react-three/drei";
 import { BoxGeometry, DoubleSide } from "three";
 import { textureToUrl } from "../loaders";
-import {
-  ConsoleObject,
-  getPosition,
-  getProperty,
-  getRotation,
-  getScale,
-} from "../mission";
+import type { TorqueObject } from "../torqueScript";
+import { getPosition, getProperty, getRotation, getScale } from "../mission";
 import { setupColor } from "../textureUtils";
 
 export function WaterMaterial({
@@ -35,14 +30,14 @@ export function WaterMaterial({
 export const WaterBlock = memo(function WaterBlock({
   object,
 }: {
-  object: ConsoleObject;
+  object: TorqueObject;
 }) {
   const position = useMemo(() => getPosition(object), [object]);
   const q = useMemo(() => getRotation(object), [object]);
   const [scaleX, scaleY, scaleZ] = useMemo(() => getScale(object), [object]);
 
   const surfaceTexture =
-    getProperty(object, "surfaceTexture")?.value ?? "liquidTiles/BlueWater";
+    getProperty(object, "surfaceTexture") ?? "liquidTiles/BlueWater";
 
   const geometry = useMemo(() => {
     const geom = new BoxGeometry(scaleX, scaleY, scaleZ);

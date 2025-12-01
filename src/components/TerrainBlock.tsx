@@ -15,13 +15,8 @@ import {
 import { useTexture } from "@react-three/drei";
 import { uint16ToFloat32 } from "../arrayUtils";
 import { loadTerrain, terrainTextureToUrl } from "../loaders";
-import {
-  ConsoleObject,
-  getPosition,
-  getProperty,
-  getRotation,
-  getScale,
-} from "../mission";
+import type { TorqueObject } from "../torqueScript";
+import { getPosition, getProperty, getRotation, getScale } from "../mission";
 import {
   setupColor,
   setupMask,
@@ -204,28 +199,19 @@ function TerrainMaterial({
 export const TerrainBlock = memo(function TerrainBlock({
   object,
 }: {
-  object: ConsoleObject;
+  object: TorqueObject;
 }) {
-  const terrainFile: string = getProperty(object, "terrainFile").value;
+  const terrainFile = getProperty(object, "terrainFile");
 
   const squareSize = useMemo(() => {
-    const squareSizeString: string | undefined = getProperty(
-      object,
-      "squareSize",
-    )?.value;
-    return squareSizeString
-      ? parseInt(squareSizeString, 10)
-      : DEFAULT_SQUARE_SIZE;
+    return getProperty(object, "squareSize") ?? DEFAULT_SQUARE_SIZE;
   }, [object]);
 
   const emptySquares: number[] = useMemo(() => {
-    const emptySquaresString: string | undefined = getProperty(
-      object,
-      "emptySquares",
-    )?.value;
-
-    return emptySquaresString
-      ? emptySquaresString.split(" ").map((s) => parseInt(s, 10))
+    const emptySquaresValue = getProperty(object, "emptySquares");
+    // Note: This is a space-separated string, so we split and parse each component.
+    return emptySquaresValue
+      ? emptySquaresValue.split(" ").map((s: string) => parseInt(s, 10))
       : [];
   }, [object]);
 

@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import { inspect, parseArgs } from "node:util";
-import { parseImageFrameList } from "@/src/ifl";
+import { parseImageFileList } from "@/src/imageFileList";
 import { getFilePath } from "@/src/manifest";
 
 async function run() {
@@ -50,7 +50,7 @@ async function run() {
   }
   const missionScript = fs.readFileSync(framesFile, "utf8");
   console.log(
-    inspect(parseImageFrameList(missionScript), {
+    inspect(parseImageFileList(missionScript), {
       colors: true,
       depth: Infinity,
     }),

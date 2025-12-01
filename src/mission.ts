@@ -1,25 +1,33 @@
 import { Quaternion, Vector3 } from "three";
-import parser from "@/generated/mission.cjs";
+import {
+  parse,
+  createRuntime,
+  type TorqueObject,
+  type TorqueRuntime,
+  type TorqueRuntimeOptions,
+} from "./torqueScript";
+import type * as AST from "./torqueScript/ast";
 
-const definitionComment = /^ (DisplayName|MissionTypes) = (.+)$/i;
-const sectionBeginComment = /^--- ([A-Z ]+) BEGIN ---$/;
-const sectionEndComment = /^--- ([A-Z ]+) END ---$/;
+// Patterns for extracting metadata from comments
+const definitionComment =
+  /^[ \t]*(DisplayName|MissionTypes|BriefingWAV|Bitmap|PlanetName)[ \t]*=[ \t]*(.+)$/i;
+const sectionBeginComment = /^[ \t]*-+[ \t]*([A-Z ]+)[ \t]+BEGIN[ \t]*-+$/i;
+const sectionEndComment = /^[ \t]*-+[ \t]*([A-Z ]+)[ \t]+END[ \t]*-+$/i;
 
-function parseComment(text) {
+interface CommentSection {
+  name: string | null;
+  comments: string[];
+}
+
+function parseCommentMarker(text: string) {
   let match;
   match = text.match(sectionBeginComment);
   if (match) {
-    return {
-      type: "sectionBegin",
-      name: match[1],
-    };
+    return { type: "sectionBegin" as const, name: match[1] };
   }
   match = text.match(sectionEndComment);
   if (match) {
-    return {
-      type: "sectionEnd",
-      name: match[1],
-    };
+    return { type: "sectionEnd" as const, name: match[1] };
   }
   match = text.match(definitionComment);
   if (match) {
@@ -32,206 +40,178 @@ function parseComment(text) {
   return null;
 }
 
-function parseInstance(instance) {
-  return {
-    className: instance.className,
-    instanceName: instance.instanceName,
-    properties: instance.body
-      .filter((def) => def.type === "definition")
-      .map((def) => {
-        switch (def.value.type) {
-          case "string":
-          case "number":
-          case "boolean":
-            return {
-              target: def.target,
-              value: def.value.value,
-            };
-          case "reference":
-            return {
-              target: def.target,
-              value: def.value,
-            };
+function extractCommentMetadata(ast: AST.Program): {
+  pragma: Record<string, string>;
+  sections: CommentSection[];
+} {
+  const pragma: Record<string, string> = {};
+  const sections: CommentSection[] = [];
+  let currentSection: CommentSection = { name: null, comments: [] };
 
-          default:
-            throw new Error(
-              `Unhandled value type: ${def.target.name} = ${def.value.type}`,
-            );
-        }
-      }),
-    children: instance.body
-      .filter((def) => def.type === "instance")
-      .map((def) => parseInstance(def)),
-  };
-}
-
-export function parseMissionScript(script) {
-  // Clean up the script:
-  // - Remove code-like parts of the script so it's easier to parse.
-  script = script.replace(
-    /(\/\/--- OBJECT WRITE END ---\s+)(?:.|[\r\n])*$/,
-    "$1",
-  );
-
-  let objectWriteBegin = /(\/\/--- OBJECT WRITE BEGIN ---\s+)/.exec(script);
-  const firstSimGroup = /[\r\n]new SimGroup/.exec(script);
-  script =
-    script.slice(0, objectWriteBegin.index + objectWriteBegin[1].length) +
-    script.slice(firstSimGroup.index);
-
-  objectWriteBegin = /(\/\/--- OBJECT WRITE BEGIN ---\s+)/.exec(script);
-  const missionStringEnd = /(\/\/--- MISSION STRING END ---\s+)/.exec(script);
-  if (missionStringEnd) {
-    script =
-      script.slice(0, missionStringEnd.index + missionStringEnd[1].length) +
-      script.slice(objectWriteBegin.index);
-  }
-
-  // console.log(script);
-  const doc = parser.parse(script);
-
-  let section = { name: null, definitions: [] };
-  const mission: {
-    pragma: Record<string, string | null>;
-    sections: Array<{ name: string | null; definitions: any[] }>;
-  } = {
-    pragma: {},
-    sections: [],
-  };
-
-  for (const statement of doc) {
-    switch (statement.type) {
-      case "comment": {
-        const parsed = parseComment(statement.text);
-        if (parsed) {
-          switch (parsed.type) {
-            case "definition": {
-              if (section.name) {
-                section.definitions.push(statement);
+  // Walk through all items looking for comments
+  function processItems(items: (AST.Statement | AST.Comment)[]) {
+    for (const item of items) {
+      if (item.type === "Comment") {
+        const marker = parseCommentMarker(item.value);
+        if (marker) {
+          switch (marker.type) {
+            case "definition":
+              if (currentSection.name === null) {
+                // Top-level definitions are pragma (normalize key to lowercase)
+                pragma[marker.identifier.toLowerCase()] = marker.value;
               } else {
-                mission.pragma[parsed.identifier] = parsed.value;
+                currentSection.comments.push(item.value);
               }
               break;
-            }
-            case "sectionEnd": {
-              if (parsed.name !== section.name) {
-                throw new Error("Ending unmatched section!");
+            case "sectionBegin":
+              // Save current section if it has content
+              if (
+                currentSection.name !== null ||
+                currentSection.comments.length > 0
+              ) {
+                sections.push(currentSection);
               }
-              if (section.name || section.definitions.length) {
-                mission.sections.push(section);
-              }
-              section = { name: null, definitions: [] };
+              // Normalize section name to uppercase for consistent lookups
+              currentSection = {
+                name: marker.name.toUpperCase(),
+                comments: [],
+              };
               break;
-            }
-            case "sectionBegin": {
-              if (section.name) {
-                throw new Error("Already in a section!");
+            case "sectionEnd":
+              if (currentSection.name !== null) {
+                sections.push(currentSection);
               }
-              if (section.name || section.definitions.length) {
-                mission.sections.push(section);
-              }
-              section = { name: parsed.name, definitions: [] };
+              currentSection = { name: null, comments: [] };
               break;
-            }
           }
         } else {
-          section.definitions.push(statement);
+          // Regular comment
+          currentSection.comments.push(item.value);
         }
-        break;
-      }
-      default: {
-        section.definitions.push(statement);
       }
     }
   }
 
-  if (section.name || section.definitions.length) {
-    mission.sections.push(section);
+  processItems(ast.body as (AST.Statement | AST.Comment)[]);
+
+  // Don't forget the last section
+  if (currentSection.name !== null || currentSection.comments.length > 0) {
+    sections.push(currentSection);
+  }
+
+  return { pragma, sections };
+}
+
+export function parseMissionScript(script: string): ParsedMission {
+  // Parse the script to AST
+  const ast = parse(script);
+
+  // Extract comment metadata (pragma, sections) from AST
+  const { pragma, sections } = extractCommentMetadata(ast);
+
+  // Helper to extract section content
+  function getSection(name: string): string | null {
+    return (
+      sections
+        .find((s) => s.name === name)
+        ?.comments.map((c) => c.trimStart())
+        .join("\n") ?? null
+    );
   }
 
   return {
-    displayName:
-      mission.pragma.DisplayName ?? mission.pragma.Displayname ?? null,
-    missionTypes:
-      mission.pragma.MissionTypes?.split(/\s+/).filter(Boolean) ?? [],
-    missionQuote:
-      mission.sections
-        .find((section) => section.name === "MISSION QUOTE")
-        ?.definitions.filter((def) => def.type === "comment")
-        .map((def) => def.text)
-        .join("\n") ?? null,
-    missionString:
-      mission.sections
-        .find((section) => section.name === "MISSION STRING")
-        ?.definitions.filter((def) => def.type === "comment")
-        .map((def) => def.text)
-        .join("\n") ?? null,
-    objects: mission.sections
-      .find((section) => section.name === "OBJECT WRITE")
-      ?.definitions.filter((def) => def.type === "instance")
-      .map((def) => parseInstance(def)),
-    globals: mission.sections
-      .filter((section) => !section.name)
-      .flatMap((section) =>
-        section.definitions.filter((def) => def.type === "definition"),
-      ),
+    displayName: pragma.displayname ?? null,
+    missionTypes: pragma.missiontypes?.split(/\s+/).filter(Boolean) ?? [],
+    missionBriefing: getSection("MISSION BRIEFING"),
+    briefingWav: pragma.briefingwav ?? null,
+    bitmap: pragma.bitmap ?? null,
+    planetName: pragma.planetname ?? null,
+    missionBlurb: getSection("MISSION BLURB"),
+    missionQuote: getSection("MISSION QUOTE"),
+    missionString: getSection("MISSION STRING"),
+    execScriptPaths: ast.execScriptPaths,
+    hasDynamicExec: ast.hasDynamicExec,
+    ast,
   };
 }
 
-export type Mission = ReturnType<typeof parseMissionScript>;
-export type ConsoleObject = Mission["objects"][number];
+export async function executeMission(
+  parsedMission: ParsedMission,
+  options: TorqueRuntimeOptions = {},
+): Promise<ExecutedMission> {
+  // Create a runtime and execute the code
+  const runtime = createRuntime(options);
+  const loadedScript = await runtime.loadFromAST(parsedMission.ast);
+  loadedScript.execute();
 
-export function* iterObjects(objectList) {
+  // Find root objects (objects without parents that aren't datablocks)
+  const objects: TorqueObject[] = [];
+  for (const obj of runtime.state.objectsById.values()) {
+    if (!obj._isDatablock && !obj._parent) {
+      objects.push(obj);
+    }
+  }
+
+  return {
+    mission: parsedMission,
+    objects,
+    runtime,
+  };
+}
+
+export interface ParsedMission {
+  displayName: string | null;
+  missionTypes: string[];
+  missionBriefing: string | null;
+  briefingWav: string | null;
+  bitmap: string | null;
+  planetName: string | null;
+  missionBlurb: string | null;
+  missionQuote: string | null;
+  missionString: string | null;
+  execScriptPaths: string[];
+  hasDynamicExec: boolean;
+  ast: AST.Program;
+}
+
+export interface ExecutedMission {
+  mission: ParsedMission;
+  objects: TorqueObject[];
+  runtime: TorqueRuntime;
+}
+
+export function* iterObjects(
+  objectList: TorqueObject[],
+): Generator<TorqueObject> {
   for (const obj of objectList) {
     yield obj;
-    for (const child of iterObjects(obj.children)) {
-      yield child;
+    if (obj._children) {
+      yield* iterObjects(obj._children);
     }
   }
 }
 
-export function getTerrainBlock(mission: Mission): ConsoleObject {
-  for (const obj of iterObjects(mission.objects)) {
-    if (obj.className === "TerrainBlock") {
-      return obj;
-    }
-  }
-  throw new Error("No TerrainBlock found!");
+export function getProperty(obj: TorqueObject, name: string): any {
+  return obj[name.toLowerCase()];
 }
 
-export function getTerrainFile(mission: Mission) {
-  const terrainBlock = getTerrainBlock(mission);
-  return terrainBlock.properties.find(
-    (prop) => prop.target.name === "terrainFile",
-  ).value;
-}
-
-export function getProperty(obj: ConsoleObject, name: string) {
-  const property = obj.properties.find((p) => p.target.name === name);
-  // console.log({ name, property });
-  return property;
-}
-
-export function getPosition(obj: ConsoleObject): [number, number, number] {
-  const position = getProperty(obj, "position")?.value ?? "0 0 0";
-  const [x, y, z] = position.split(" ").map((s) => parseFloat(s));
-  // Convert Torque3D coordinates to Three.js: XYZ -> YZX
+export function getPosition(obj: TorqueObject): [number, number, number] {
+  const position = obj.position ?? "0 0 0";
+  const [x, y, z] = position.split(" ").map((s: string) => parseFloat(s));
   return [y || 0, z || 0, x || 0];
 }
 
-export function getScale(obj: ConsoleObject): [number, number, number] {
-  const scale = getProperty(obj, "scale")?.value ?? "1 1 1";
-  const [sx, sy, sz] = scale.split(" ").map((s) => parseFloat(s));
-  // Convert Torque3D coordinates to Three.js: XYZ -> YZX
+export function getScale(obj: TorqueObject): [number, number, number] {
+  const scale = obj.scale ?? "1 1 1";
+  const [sx, sy, sz] = scale.split(" ").map((s: string) => parseFloat(s));
   return [sy || 0, sz || 0, sx || 0];
 }
 
-export function getRotation(obj: ConsoleObject): Quaternion {
-  const rotation = getProperty(obj, "rotation")?.value ?? "1 0 0 0";
+export function getRotation(obj: TorqueObject): Quaternion {
+  const rotation = obj.rotation ?? "1 0 0 0";
   const [ax, ay, az, angleDegrees] = rotation
     .split(" ")
-    .map((s) => parseFloat(s));
-  // Convert Torque3D coordinates to Three.js: XYZ -> YZX
+    .map((s: string) => parseFloat(s));
   const axis = new Vector3(ay, az, ax).normalize();
   const angleRadians = -angleDegrees * (Math.PI / 180);
   return new Quaternion().setFromAxisAngle(axis, angleRadians);

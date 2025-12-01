@@ -1,12 +1,7 @@
 import { Suspense, useMemo } from "react";
 import { ErrorBoundary } from "react-error-boundary";
-import {
-  ConsoleObject,
-  getPosition,
-  getProperty,
-  getRotation,
-  getScale,
-} from "../mission";
+import type { TorqueObject } from "../torqueScript";
+import { getPosition, getProperty, getRotation, getScale } from "../mission";
 import { DebugPlaceholder, ShapeModel, ShapePlaceholder } from "./GenericShape";
 import { ShapeInfoProvider } from "./ShapeInfoProvider";
 import { useSimGroup } from "./SimGroup";
@@ -61,9 +56,9 @@ const TEAM_NAMES = {
   2: "Inferno",
 };
 
-export function Item({ object }: { object: ConsoleObject }) {
+export function Item({ object }: { object: TorqueObject }) {
   const simGroup = useSimGroup();
-  const dataBlock = getProperty(object, "dataBlock").value;
+  const dataBlock = getProperty(object, "dataBlock") ?? "";
 
   const position = useMemo(() => getPosition(object), [object]);
   const scale = useMemo(() => getScale(object), [object]);

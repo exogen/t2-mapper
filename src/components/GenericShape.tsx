@@ -72,8 +72,6 @@ export function DebugPlaceholder({ color }: { color: string }) {
   return debugMode ? <ShapePlaceholder color={color} /> : null;
 }
 
-export type StaticShapeType = "StaticShape" | "TSStatic" | "Item" | "Turret";
-
 export const ShapeModel = memo(function ShapeModel() {
   const { shapeName } = useShapeInfo();
   const { debugMode } = useDebug();

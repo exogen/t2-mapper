@@ -1,12 +1,7 @@
 import { Suspense, useMemo } from "react";
 import { ErrorBoundary } from "react-error-boundary";
-import {
-  ConsoleObject,
-  getPosition,
-  getProperty,
-  getRotation,
-  getScale,
-} from "../mission";
+import type { TorqueObject } from "../torqueScript";
+import { getPosition, getProperty, getRotation, getScale } from "../mission";
 import { DebugPlaceholder, ShapeModel, ShapePlaceholder } from "./GenericShape";
 import { ShapeInfoProvider } from "./ShapeInfoProvider";
 
@@ -34,9 +29,9 @@ function getDataBlockShape(dataBlock: string) {
   return _caseInsensitiveLookup[dataBlock.toLowerCase()];
 }
 
-export function Turret({ object }: { object: ConsoleObject }) {
-  const dataBlock = getProperty(object, "dataBlock").value;
-  const initialBarrel = getProperty(object, "initialBarrel")?.value;
+export function Turret({ object }: { object: TorqueObject }) {
+  const dataBlock = getProperty(object, "dataBlock") ?? "";
+  const initialBarrel = getProperty(object, "initialBarrel");
 
   const position = useMemo(() => getPosition(object), [object]);
   const q = useMemo(() => getRotation(object), [object]);
