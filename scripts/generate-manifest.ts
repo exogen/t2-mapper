@@ -14,6 +14,7 @@ const baseDir = process.env.BASE_DIR || "docs/base";
 // the host sytem.
 const ignoreList = ignore().add(`
 .DS_Store
+*.glb
 `);
 
 type SourceTuple =

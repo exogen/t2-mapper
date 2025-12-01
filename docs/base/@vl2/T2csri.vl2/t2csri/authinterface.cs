@@ -14,9 +14,9 @@ $Authentication::Settings::Timeout = 30000;
 
 function AuthenticationInterface::onLine(%this, %line)
 {
-	//warn(%line);
 	if (isEventPending($Authentication::TransactionCompletionSchedule))
 		cancel($Authentication::TransactionCompletionSchedule);
+
 	$Authentication::TransactionCompletionSchedule = schedule(700, 0, Authentication_transactionComplete);
 
 	if ($Authentication::Status::ActiveMode != 0)
@@ -102,12 +102,8 @@ function Authentication_transactionComplete()
 		}
 		else if (getWord(%buffer, 0) $= "CERT:")
 		{
-			%cert = getSubStr(%buffer, 0, strstr(%buffer, "\n"));
-			%buffer = getSubStr(%buffer, strstr(%buffer, "\n") + 1, strlen(%buffer));
-			%exp = getSubStr(%buffer, 0, (strstr(%buffer, "\n") == -1 ? strlen(%buffer) : strstr(%buffer, "\n")));
-
-			$Authentication::Status::LastCert = %cert;
-			$Authentication::Status::LastExp = %exp;
+			$Authentication::Status::LastCert = getRecord(%buffer, 0);
+			$Authentication::Status::LastExp = getRecord(%buffer, 1);
 			echo("Authentication: Successfully downloaded certificate and encrypted key.");
 		}
 		else
@@ -167,6 +163,7 @@ function Authentication_checkAvail()
 
 	if (isObject(AuthenticationInterface))
 		AuthenticationInterface.delete();
+
 	new TCPObject(AuthenticationInterface);
 
 	AuthenticationInterface.data = "AVAIL\n";
@@ -188,6 +185,7 @@ function Authentication_checkName(%name)
 
 	if (isObject(AuthenticationInterface))
 		AuthenticationInterface.delete();
+
 	new TCPObject(AuthenticationInterface);
 
 	AuthenticationInterface.data = "NAME\t" @ %name @ "\n";
@@ -209,6 +207,7 @@ function Authentication_recoverAccount(%payload)
 
 	if (isObject(AuthenticationInterface))
 		AuthenticationInterface.delete();
+
 	new TCPObject(AuthenticationInterface);
 
 	AuthenticationInterface.data = "RECOVER\t" @ %payload @ "\n";
@@ -230,9 +229,11 @@ function Authentication_registerAccount(%payload)
 
 	if (isObject(AuthenticationInterface))
 		AuthenticationInterface.delete();
+
 	new TCPObject(AuthenticationInterface);
 
 	AuthenticationInterface.data = "SIGN\t" @ %payload @ "\n";
+
 	AuthenticationInterface.connect($AuthServer::Address);
 	$Authentication::TransactionCompletionSchedule = schedule($Authentication::Settings::Timeout, 0, Authentication_transactionComplete);
 }

@@ -24,6 +24,7 @@ prefs/
 *.gui
 *.ico
 *.ml
+*.nav
 *.txt
 `);
 
