@@ -52,6 +52,7 @@ export function ShapeTexture({
     clonedMaterial.map = texture;
     clonedMaterial.transparent = true;
     clonedMaterial.alphaTest = 0.9;
+    clonedMaterial.side = 2; // DoubleSide
     return clonedMaterial;
   }, [material, texture, isOrganic]);
 
