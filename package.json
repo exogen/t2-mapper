@@ -15,6 +15,7 @@
     "format": "prettier --write .",
     "postbuild": "git checkout -- public/base",
     "prebuild": "npm run clean && git checkout -- docs && rimraf public/base && mv docs/base public/",
+    "serve:static": "tsx scripts/serve-static.ts",
     "start": "next dev --turbopack",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -35,11 +36,13 @@
     "unzipper": "^0.12.3"
   },
   "devDependencies": {
+    "@types/express": "^5.0.5",
     "@types/lodash.orderby": "^4.6.9",
     "@types/node": "24.3.1",
     "@types/react": "^19.2.4",
     "@types/three": "^0.180.0",
     "@types/unzipper": "^0.10.11",
+    "express": "^5.2.0",
     "peggy": "^5.0.6",
     "prettier": "^3.7.1",
     "rimraf": "^6.0.1",

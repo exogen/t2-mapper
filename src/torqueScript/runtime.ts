@@ -758,8 +758,10 @@ export function createRuntime(
 
   function executeAST(ast: Program): void {
     const code = getOrGenerateCode(ast);
-    const execFn = new Function("$", "$f", "$g", code);
-    execFn($, $f, $g);
+    // Provide $l (locals) at module scope for top-level local variable access
+    const $l = createLocals();
+    const execFn = new Function("$", "$f", "$g", "$l", code);
+    execFn($, $f, $g, $l);
   }
 
   function createLoadedScript(ast: Program, path?: string): LoadedScript {

@@ -52,6 +52,7 @@ main {
   gap: 6px;
 }
 
+#fovInput,
 #speedInput {
   max-width: 80px;
 }

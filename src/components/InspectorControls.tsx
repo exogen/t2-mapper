@@ -10,31 +10,48 @@ const excludeMissions = new Set([
 ]);
 
 const sourceGroupNames = {
-  "Classic_maps_v1.vl2": "Classic",
-  "DynamixFinalPack.vl2": "Official",
   "missions.vl2": "Official",
-  "S5maps.vl2": "S5",
-  "S8maps.vl2": "S8",
-  "SkiFreeGameType.vl2": "SkiFree",
   "TR2final105-client.vl2": "Team Rabbit 2",
-  "TWL-MapPack.vl2": "TWL",
-  "TWL2-MapPack.vl2": "TWL2",
-  "z_DMP2-V0.6.vl2": "DMP2 (Discord Map Pack)",
-  "zAddOnsVL2s/TWL_T2arenaOfficialMaps.vl2": "Arena",
-  "zAddOnsVL2s/zDiscord-Map-Pack-4.7.1.vl2": "DMP (Discord Map Pack)",
+  "z_mappacks/CTF/Classic_maps_v1.vl2": "Classic",
+  "z_mappacks/CTF/DynamixFinalPack.vl2": "Official",
+  "z_mappacks/CTF/KryMapPack_b3EDIT.vl2": "KryMapPack",
+  "z_mappacks/CTF/S5maps.vl2": "S5",
+  "z_mappacks/CTF/S8maps.vl2": "S8",
+  "z_mappacks/CTF/TWL-MapPack.vl2": "TWL",
+  "z_mappacks/CTF/TWL-MapPackEDIT.vl2": "TWL",
+  "z_mappacks/CTF/TWL2-MapPack.vl2": "TWL2",
+  "z_mappacks/CTF/TWL2-MapPackEDIT.vl2": "TWL2",
+  "z_mappacks/TWL_T2arenaOfficialMaps.vl2": "Arena",
+  "z_mappacks/z_DMP2-V0.6.vl2": "DMP2 (Discord Map Pack)",
+  "z_mappacks/zDMP-4.7.3DX.vl2": "DMP (Discord Map Pack)",
+  // "SkiFreeGameType.vl2": "SkiFree",
+};
+
+const dirGroupNames = {
+  "z_mappacks/DM": "DM",
+  "z_mappacks/LCTF": "LCTF",
+  "z_mappacks/Lak": "LakRabbit",
+};
+
+const getDirName = (sourcePath: string) => {
+  const match = sourcePath.match(/^(.*)(\/[^/]+)$/);
+  return match ? match[1] : "";
 };
 
 const groupedMissions = getMissionList().reduce(
   (groupMap, missionName) => {
     const missionInfo = getMissionInfo(missionName);
     const [sourcePath] = getSourceAndPath(missionInfo.resourcePath);
-    const groupName = sourceGroupNames[sourcePath] ?? null;
+    const sourceDir = getDirName(sourcePath);
+    const groupName =
+      sourceGroupNames[sourcePath] ?? dirGroupNames[sourceDir] ?? null;
     const groupMissions = groupMap.get(groupName) ?? [];
     if (!excludeMissions.has(missionName)) {
       groupMissions.push({
         resourcePath: missionInfo.resourcePath,
         missionName,
         displayName: missionInfo.displayName,
+        sourcePath,
       });
       groupMap.set(groupName, groupMissions);
     }
@@ -46,6 +63,7 @@ const groupedMissions = getMissionList().reduce(
       resourcePath: string;
       missionName: string;
       displayName: string;
+      sourcePath: string;
     }>
   >(),
 );
@@ -78,6 +96,8 @@ export function InspectorControls({
     setFov,
     audioEnabled,
     setAudioEnabled,
+    animationEnabled,
+    setAnimationEnabled,
   } = useSettings();
   const { speedMultiplier, setSpeedMultiplier } = useControls();
   const { debugMode, setDebugMode } = useDebug();
@@ -152,6 +172,17 @@ export function InspectorControls({
       </div>
       <div className="CheckboxField">
         <input
+          id="animationInput"
+          type="checkbox"
+          checked={animationEnabled}
+          onChange={(event) => {
+            setAnimationEnabled(event.target.checked);
+          }}
+        />
+        <label htmlFor="animationInput">Animation?</label>
+      </div>
+      <div className="CheckboxField">
+        <input
           id="debugInput"
           type="checkbox"
           checked={debugMode}
@@ -164,7 +195,7 @@ export function InspectorControls({
       <div className="Field">
         <label htmlFor="fovInput">FOV</label>
         <input
-          id="speedInput"
+          id="fovInput"
           type="range"
           min={75}
           max={120}

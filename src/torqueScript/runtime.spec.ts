@@ -1,5 +1,4 @@
 import { describe, it, expect, vi } from "vitest";
-import { readFileSync } from "node:fs";
 import { createRuntime } from "./runtime";
 import type { TorqueRuntimeOptions } from "./types";
 import { parse, transpile } from "./index";
@@ -7,9 +6,11 @@ import { parse, transpile } from "./index";
 function run(script: string, options?: TorqueRuntimeOptions) {
   const { $, $f, $g, state } = createRuntime(options);
   const { code } = transpile(script);
-  const fn = new Function("$", "$f", "$g", code);
-  fn($, $f, $g);
-  return { $, $f, $g, state };
+  // Provide $l (locals) at module scope for top-level local variable access
+  const $l = $.locals();
+  const fn = new Function("$", "$f", "$g", "$l", code);
+  fn($, $f, $g, $l);
+  return { $, $f, $g, $l, state };
 }
 
 describe("TorqueScript Runtime", () => {
@@ -77,6 +78,33 @@ describe("TorqueScript Runtime", () => {
         $result = factorial(5);
       `);
       expect($g.get("result")).toBe(120);
+    });
+
+    it("handles top-level local variables", () => {
+      const { $g, $l } = run(`
+        %x = 5;
+        %y = 10;
+        $result = %x * %y;
+        %name = "test";
+      `);
+      expect($g.get("result")).toBe(50);
+      expect($l.get("x")).toBe(5);
+      expect($l.get("y")).toBe(10);
+      expect($l.get("name")).toBe("test");
+    });
+
+    it("top-level locals are separate from function locals", () => {
+      const { $g } = run(`
+        %x = 100;
+        function getX() {
+          %x = 42;
+          return %x;
+        }
+        $funcResult = getX();
+        $topResult = %x;
+      `);
+      expect($g.get("funcResult")).toBe(42);
+      expect($g.get("topResult")).toBe(100);
     });
   });
 
@@ -725,86 +753,95 @@ describe("TorqueScript Runtime", () => {
     });
   });
 
-  describe("real TorqueScript files", () => {
-    const emptyAST = parse("");
+  describe("complex scripts", () => {
+    it("sets globals and registers methods", () => {
+      const { $g, state } = run(`
+        $Game::numRoles = 3;
+        $Game::role0 = "Goalie";
+        $Game::role1 = "Defense";
+        $Game::role2 = "Offense";
 
-    async function runFile(filepath: string) {
-      const source = readFileSync(filepath, "utf8");
-      // Provide a loader that returns empty scripts for known dependencies
-      const runtime = createRuntime({
-        loadScript: async (path) => {
-          // Return empty script for known dependencies
-          if (path.toLowerCase().includes("aitdm")) return "";
-          return null;
-        },
-      });
-      const script = await runtime.loadFromSource(source);
-      script.execute();
-      return {
-        $: runtime.$,
-        $f: runtime.$f,
-        $g: runtime.$g,
-        state: runtime.state,
-      };
-    }
+        function MyGame::onStart(%game) {
+          return "started";
+        }
+      `);
 
-    it("transpiles and executes TR2Roles.cs", async () => {
-      const { $g, state } = await runFile(
-        "docs/base/@vl2/TR2final105-server.vl2/scripts/TR2Roles.cs",
-      );
-
-      // Verify globals were set
-      expect($g.get("TR2::numRoles")).toBe(3);
-      expect($g.get("TR2::role0")).toBe("Goalie");
-      expect($g.get("TR2::role1")).toBe("Defense");
-      expect($g.get("TR2::role2")).toBe("Offense");
-
-      // Verify methods were registered
-      expect(state.methods.has("TR2Game")).toBe(true);
+      expect($g.get("Game::numRoles")).toBe(3);
+      expect($g.get("Game::role0")).toBe("Goalie");
+      expect($g.get("Game::role1")).toBe("Defense");
+      expect($g.get("Game::role2")).toBe("Offense");
+      expect(state.methods.has("MyGame")).toBe(true);
     });
 
-    it("transpiles and executes a .mis mission file", async () => {
-      const { $, state } = await runFile(
-        "docs/base/@vl2/4thGradeDropout.vl2/missions/4thGradeDropout.mis",
-      );
+    it("creates nested object hierarchies like mission files", () => {
+      const { $, state } = run(`
+        new SimGroup(MissionGroup) {
+          new TerrainBlock(Terrain) {
+            size = 1024;
+          };
+          new Sky(Sky) {
+            cloudSpeed = 1.5;
+          };
+          new SimGroup(PlayerDropPoints) {
+            new SpawnSphere(Spawn1) { position = "0 0 100"; };
+            new SpawnSphere(Spawn2) { position = "100 0 100"; };
+          };
+        };
+      `);
 
-      // Verify MissionGroup was created
       const missionGroup = $.deref("MissionGroup");
       expect(missionGroup).toBeDefined();
       expect(missionGroup._className).toBe("SimGroup");
 
-      // Verify child objects were created
-      const terrain = $.deref("Terrain");
-      expect(terrain).toBeDefined();
-
-      const sky = $.deref("Sky");
-      expect(sky).toBeDefined();
-
-      // Verify object count
-      expect(state.objectsByName.size).toBeGreaterThan(10);
+      expect($.deref("Terrain")).toBeDefined();
+      expect($.deref("Sky")).toBeDefined();
+      expect($.deref("Spawn1")).toBeDefined();
+      expect($.deref("Spawn2")).toBeDefined();
+      expect(state.objectsByName.size).toBe(6);
     });
 
-    it("transpiles TDMGame.cs with methods and parent calls", async () => {
-      const source = readFileSync(
-        "docs/base/@vl2/z_DMP2-V0.6.vl2/scripts/TDMGame.cs",
-        "utf-8",
-      );
-      const runtime = createRuntime({
-        loadScript: async (path) => {
-          if (path.toLowerCase().includes("aitdm")) return "";
-          return null;
-        },
-      });
-      const script = await runtime.loadFromSource(source);
-      script.execute();
+    it("supports namespace method calls", () => {
+      const { $g } = run(`
+        function BaseGame::getValue(%game) {
+          return 10;
+        }
 
-      // Verify methods were registered on TDMGame
-      expect(runtime.state.methods.has("TDMGame")).toBe(true);
-      const tdmMethods = runtime.state.methods.get("TDMGame");
-      expect(tdmMethods).toBeDefined();
+        function BaseGame::getDoubled(%game) {
+          return BaseGame::getValue(%game) * 2;
+        }
 
-      // Verify transpiled code contains parent calls
-      const { code } = transpile(source);
+        $base = BaseGame::getValue(0);
+        $doubled = BaseGame::getDoubled(0);
+      `);
+
+      expect($g.get("base")).toBe(10);
+      expect($g.get("doubled")).toBe(20);
+    });
+
+    it("supports parent:: in package overrides", () => {
+      const { $g } = run(`
+        function doSomething() {
+          return 10;
+        }
+
+        package MyOverride {
+          function doSomething() {
+            return Parent::doSomething() + 5;
+          }
+        };
+
+        $result = doSomething();
+      `);
+
+      expect($g.get("result")).toBe(15);
+    });
+
+    it("generates parent calls in transpiled code", () => {
+      const { code } = transpile(`
+        function MyGame::onEnd(%game) {
+          Parent::onEnd(%game);
+        }
+      `);
       expect(code).toContain("$.parent(");
     });
   });

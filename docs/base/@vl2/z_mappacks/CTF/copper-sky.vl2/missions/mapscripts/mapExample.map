@@ -1,0 +1,80 @@
+////////////////////////////////////////////////////////////////////////////////
+/// -Eruption MAP FILE- ////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////
+
+datablock GrenadeProjectileData(VolcanoGrenade)
+{
+   projectileShapeName = "plasmabolt.dts";
+   emitterDelay = -1;
+   directDamage = 0.0;
+   hasDamageRadius = true;
+   indirectDamage = 0.33;
+   damageRadius = 30.0;
+   radiusDamageType = $DamageType::Lava;
+   kickBackStrength = 2000;
+   bubbleEmitTime = 1.0;
+
+   sound = GrenadeProjectileSound;
+   explosion = "FireballAtmosphereBoltExplosion";
+   underwaterExplosion = "UnderwaterGrenadeExplosion";
+   velInheritFactor = 0;
+   splash = GrenadeSplash;
+
+   baseEmitter = FireballAtmosphereEmitter;
+   bubbleEmitter = GrenadeBubbleEmitter;
+
+   grenadeElasticity = 0.35;
+   grenadeFriction = 0.2;
+   armingDelayMS = 1000;
+   muzzleVelocity = 40.00;
+   drag = 0.1;
+};
+
+package eruption
+{
+   function eruption::preLoad(%firstMission)
+   {
+      // Need to store the map name for scripts to compare to current mission name
+      $Map::MyMap = "eruption";
+   }
+     
+   function eruption::InitMap()
+   {
+      // This is the position from which the eruption starts.
+      $Map::VolcPos = "-56.8 -17.1 198";
+
+      // This is the object that is spawning the grenades
+      $Map::Volcano = NameToID("MissionGroup/Environmental/volcano");
+
+      // Lights, camera, action!
+      $Map::Volcano.erupt = schedule($Host::WarmUpTime * 2000, $Map::Volcano, "eruption", $Map::Volcano);
+   }
+     
+   function eruption::DeactivateMap()
+   {
+      // Reset any globals that we set in ::preLoad
+      cancel($Map::VolcanoErupt);
+      cancel($Map::LoopErupt);
+      $Map::VolcanoErupt = "";
+      $Map::LoopErupt = "";
+      $Map::Volcano = "";
+      $Map::MyMap = "";
+   }
+
+   function eruption(%obj)
+   {
+      for(%i = 0; %i < 10; %i++)
+      {
+         %proj = new GrenadeProjectile()
+         {
+            dataBlock = VolcanoGrenade;
+            initialDirection = (-1.0 + getRandom() * 2.0) SPC (-1.0 + getRandom() * 2.0) SPC (getRandom() + 0.25);
+            initialPosition  = $Map::VolcPos;
+		sourceSlot = 0;
+         };
+         MissionCleanup.add(%proj);
+      }
+      %ran = getRandom() * 5000;
+      $Map::LoopErupt = schedule(20000 + %ran, 0, "eruption", %obj);
+   }
+};

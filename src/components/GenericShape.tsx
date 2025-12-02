@@ -1,4 +1,4 @@
-import { memo, Suspense, useMemo } from "react";
+import { memo, Suspense, useMemo, useRef, useEffect } from "react";
 import { useGLTF, useTexture } from "@react-three/drei";
 import {
   FALLBACK_TEXTURE_URL,
@@ -15,6 +15,7 @@ import { setupColor } from "../textureUtils";
 import { useDebug } from "./SettingsProvider";
 import { useShapeInfo } from "./ShapeInfoProvider";
 import { FloatingLabel } from "./FloatingLabel";
+import { useIflTexture } from "./useIflTexture";
 
 /**
  * Load a .glb file that was converted from a .dts, used for static shapes.
@@ -24,28 +25,57 @@ export function useStaticShape(shapeName: string) {
   return useGLTF(url);
 }
 
-export function ShapeTexture({
+/**
+ * Animated IFL (Image File List) material component. Creates a sprite sheet
+ * from all frames and animates via texture offset.
+ */
+export function IflTexture({
   material,
   shapeName,
 }: {
-  material?: MeshStandardMaterial;
+  material: MeshStandardMaterial;
   shapeName?: string;
 }) {
+  const resourcePath = material.userData.resource_path;
+  // Convert resource_path (e.g., "skins/blue00") to IFL path
+  const iflPath = `textures/${resourcePath}.ifl`;
+
+  const texture = useIflTexture(iflPath);
+
+  const isOrganic = shapeName && /borg|xorg|porg|dorg/i.test(shapeName);
+
+  const customMaterial = useMemo(() => {
+    if (!isOrganic) {
+      const shaderMaterial = createAlphaAsRoughnessMaterial();
+      shaderMaterial.map = texture;
+      return shaderMaterial;
+    }
+
+    const clonedMaterial = material.clone();
+    clonedMaterial.map = texture;
+    clonedMaterial.transparent = true;
+    clonedMaterial.alphaTest = 0.9;
+    clonedMaterial.side = 2; // DoubleSide
+    return clonedMaterial;
+  }, [material, texture, isOrganic]);
+
+  return <primitive object={customMaterial} attach="material" />;
+}
+
+function StaticTexture({ material, shapeName }) {
+  const resourcePath = material.userData.resource_path;
+
   const url = useMemo(() => {
-    const flagNames = new Set(material.userData.flag_names ?? []);
-    const isIflMaterial = flagNames.has("IflMaterial");
-    const resourcePath = material.userData.resource_path;
     if (!resourcePath) {
       console.warn(
         `Material index out of range on shape "${shapeName}" - rendering fallback.`,
       );
     }
-    return resourcePath && !isIflMaterial
+    return resourcePath
       ? // Use custom `resource_path` added by forked io_dts3d Blender add-on
         shapeTextureToUrl(resourcePath)
-      : // Not supported yet
-        FALLBACK_TEXTURE_URL;
-  }, [material]);
+      : FALLBACK_TEXTURE_URL;
+  }, [material, resourcePath, shapeName]);
 
   const isOrganic = shapeName && /borg|xorg|porg|dorg/i.test(shapeName);
 
@@ -74,6 +104,25 @@ export function ShapeTexture({
   }, [material, texture, isOrganic]);
 
   return <primitive object={customMaterial} attach="material" />;
+}
+
+export function ShapeTexture({
+  material,
+  shapeName,
+}: {
+  material?: MeshStandardMaterial;
+  shapeName?: string;
+}) {
+  const flagNames = new Set(material.userData.flag_names ?? []);
+  const isIflMaterial = flagNames.has("IflMaterial");
+  const resourcePath = material.userData.resource_path;
+
+  // Use IflTexture for animated materials
+  if (isIflMaterial && resourcePath) {
+    return <IflTexture material={material} shapeName={shapeName} />;
+  } else {
+    return <StaticTexture material={material} shapeName={shapeName} />;
+  }
 }
 
 export function ShapePlaceholder({

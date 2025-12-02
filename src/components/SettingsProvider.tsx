@@ -17,6 +17,7 @@ type PersistedSettings = {
   speedMultiplier?: number;
   fov?: number;
   audioEnabled?: boolean;
+  animationEnabled?: boolean;
   debugMode?: boolean;
 };
 
@@ -37,6 +38,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   const [speedMultiplier, setSpeedMultiplier] = useState(1);
   const [fov, setFov] = useState(90);
   const [audioEnabled, setAudioEnabled] = useState(false);
+  const [animationEnabled, setAnimationEnabled] = useState(true);
   const [debugMode, setDebugMode] = useState(false);
 
   const settingsContext = useMemo(
@@ -47,8 +49,10 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       setFov,
       audioEnabled,
       setAudioEnabled,
+      animationEnabled,
+      setAnimationEnabled,
     }),
-    [fogEnabled, speedMultiplier, fov, audioEnabled],
+    [fogEnabled, speedMultiplier, fov, audioEnabled, animationEnabled],
   );
 
   const debugContext = useMemo(
@@ -74,6 +78,9 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     }
     if (savedSettings.audioEnabled != null) {
       setAudioEnabled(savedSettings.audioEnabled);
+    }
+    if (savedSettings.animationEnabled != null) {
+      setAnimationEnabled(savedSettings.animationEnabled);
     }
     if (savedSettings.fogEnabled != null) {
       setFogEnabled(savedSettings.fogEnabled);
@@ -102,6 +109,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
         speedMultiplier,
         fov,
         audioEnabled,
+        animationEnabled,
         debugMode,
       };
       try {
@@ -116,7 +124,14 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
         clearTimeout(saveTimerRef.current);
       }
     };
-  }, [fogEnabled, speedMultiplier, fov, audioEnabled, debugMode]);
+  }, [
+    fogEnabled,
+    speedMultiplier,
+    fov,
+    audioEnabled,
+    animationEnabled,
+    debugMode,
+  ]);
 
   return (
     <SettingsContext.Provider value={settingsContext}>

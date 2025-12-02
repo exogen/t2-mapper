@@ -8,6 +8,7 @@ import {
 import { createScriptLoader } from "../torqueScript/scriptLoader.browser";
 import { renderObject } from "./renderObject";
 import { memo, useEffect, useState } from "react";
+import { TickProvider } from "./TickProvider";
 
 const loadScript = createScriptLoader();
 
@@ -70,5 +71,9 @@ export const Mission = memo(function Mission({ name }: { name: string }) {
     return null;
   }
 
-  return executedMission.objects.map((object, i) => renderObject(object, i));
+  return (
+    <TickProvider>
+      {executedMission.objects.map((object, i) => renderObject(object, i))}
+    </TickProvider>
+  );
 });

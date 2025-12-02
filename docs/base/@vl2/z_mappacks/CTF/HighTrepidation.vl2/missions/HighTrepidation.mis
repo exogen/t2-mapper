@@ -1,0 +1,2459 @@
+// DisplayName = High Trepidation
+// MissionTypes = CTF
+
+//--- MISSION QUOTE BEGIN ---
+//We know what we are, but know not what we may be.
+//--William Shakespeare
+//--- MISSION QUOTE END ---
+
+//--- MISSION STRING BEGIN ---
+//[CTF]600 points to win
+//<color:008B8B>Map by \<>(*)<>/
+//<color:008B8B>Edited by ChocoTaco
+//--- MISSION STRING END ---
+
+//--- OBJECT WRITE BEGIN ---
+new SimGroup(MissionGroup) {
+
+	powerCount = "0";
+	musicTrack = "badlands";
+	CTF_scoreLimit = "6";
+	cdTrack = "2";
+
+	new MissionArea(MissionArea) {
+		area = "-944 -832 1888 1664";
+		flightCeiling = "1000";
+		flightCeilingRange = "20";
+
+		locked = "true";
+	};
+	new Sky(Sky) {
+		position = "120 32 0";
+		rotation = "1 0 0 0";
+		scale = "1 1 1";
+		cloudHeightPer[0] = "0.4009";
+		cloudHeightPer[1] = "0.25";
+		cloudHeightPer[2] = "0.199973";
+		cloudSpeed1 = "0.0061";
+		cloudSpeed2 = "0.0012";
+		cloudSpeed3 = "0.0013";
+		visibleDistance = "870";
+		useSkyTextures = "0";
+		renderBottomTexture = "0";
+		SkySolidColor = "0.800000 0.800000 0.800000 0.000000";
+		fogDistance = "830";
+		fogColor = "0.850000 0.850000 0.850000 1.000000";
+		fogVolume1 = "5 0 325";
+		fogVolume2 = "0 0 0";
+		fogVolume3 = "0 0 0";
+		materialList = "lush_dark.dml";
+		windVelocity = "1 0 0";
+		windEffectPrecipitation = "0";
+		fogVolumeColor1 = "128.000000 128.000000 128.000000 -190776.046875";
+		fogVolumeColor2 = "128.000000 128.000000 128.000000 0.000000";
+		fogVolumeColor3 = "128.000000 128.000000 128.000000 -62109.015625";
+		high_visibleDistance = "-1";
+		high_fogDistance = "-1";
+		high_fogVolume1 = "-1 0 1.07463e-38";
+		high_fogVolume2 = "-1 3.30275e-31 1.47136e-42";
+		high_fogVolume3 = "-1 0 1.07458e-38";
+
+		locked = "true";
+		cloudSpeed0 = "0.000000 0.000700";
+	};
+	new Sun() {
+		position = "120 32 0";
+		rotation = "1 0 0 0";
+		scale = "1 1 1";
+		direction = "0.57735 0.57735 -0.57735";
+		color = "0.900000 0.900000 0.900000 1.000000";
+		ambient = "1.000000 1.000000 1.000000 1.000000";
+		texture[0] = "special/sunFlare";
+		texture[1] = "special/sunFlare02";
+		texture[2] = "special/LensFlare/flare01";
+		texture[3] = "special/LensFlare/flare02";
+		texture[4] = "special/LensFlare/flare03";
+		lensFlareScale = "0.7";
+		lensFlareIntensity = "1";
+		frontFlareSize = "300";
+		backFlareSize = "450";
+		flareColor = "1.000000 1.000000 1.000000 1.000000";
+
+		locked = "true";
+	};
+	new TerrainBlock(Terrain) {
+		rotation = "1 0 0 0";
+		scale = "1 1 1";
+		detailTexture = "details/lushdet1";
+		terrainFile = "Reversion.ter";
+		squareSize = "16";
+
+		locked = "true";
+		position = "-1024 -1024 0";
+	};
+	new NavigationGraph(NavGraph) {
+		conjoinAngleDev = "65";
+		cullDensity = "0.3";
+		customArea = "0 0 0 0";
+
+		locked = "true";
+		conjoinBowlDev = "20";
+		position = "0 0 0 1";
+		rotation = "0 0 0 0";
+		GraphFile = "Ormius-X1.nav";
+		scale = "1 1 1";
+		coverage = "0";
+	};
+	new SimGroup(ObserverDropPoints) {
+
+		powerCount = "0";
+
+		new Camera(c) {
+			position = "29.2249 151.591 355.183";
+			rotation = "0 0 -1 112.414";
+			scale = "1 1 1";
+			dataBlock = "Observer";
+			lockCount = "0";
+			homingCount = "0";
+
+			locked = "true";
+			team = "0";
+		};
+		new Camera(c) {
+			position = "-272.323 15.5494 380.132";
+			rotation = "0.554448 0.128067 -0.822306 31.3795";
+			scale = "1 1 1";
+			dataBlock = "Observer";
+			lockCount = "0";
+			homingCount = "0";
+
+			locked = "true";
+			team = "0";
+		};
+		new Camera(c) {
+			position = "-605.238 194.298 347.083";
+			rotation = "-0.0314273 0.0853537 0.995855 139.727";
+			scale = "1 1 1";
+			dataBlock = "Observer";
+			lockCount = "0";
+			homingCount = "0";
+
+			locked = "true";
+			team = "0";
+		};
+	};
+	new SimGroup(Teams) {
+
+		powerCount = "0";
+
+		new SimGroup(Team0) {
+
+			powerCount = "0";
+
+			new SimGroup(spawnspheres) {
+
+				powerCount = "0";
+			};
+			new SimGroup(BB) {
+
+				powerCount = "0";
+
+				new InteriorInstance() {
+					position = "-213.433 81.0657 327.466";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					interiorFile = "dmisc_nefobj2.dif";
+					showTerrainInside = "0";
+
+					locked = "true";
+					team = "0";
+				};
+				new AudioEmitter() {
+					position = "-137.88 -1784.35 146.106";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					fileName = "fx/environment/snowstorm2.wav";
+					useProfileDescription = "0";
+					outsideAmbient = "1";
+					volume = "1";
+					isLooping = "1";
+					is3D = "0";
+					minDistance = "145";
+					maxDistance = "9280";
+					coneInsideAngle = "360";
+					coneOutsideAngle = "360";
+					coneOutsideVolume = "1";
+					coneVector = "0 0 1";
+					loopCount = "-1";
+					minLoopGap = "0";
+					maxLoopGap = "0";
+					type = "EffectAudioType";
+
+					locked = "false";
+					team = "0";
+				};
+				new InteriorInstance() {
+					position = "-317.48 97.583 341.463";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					interiorFile = "dmisc_nefobj1.dif";
+					showTerrainInside = "0";
+
+					team = "0";
+				};
+				new InteriorInstance() {
+					position = "-266.197 95.0294 327.463";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					interiorFile = "dmisc_nefobj2.dif";
+					showTerrainInside = "0";
+
+					team = "0";
+				};
+				new InteriorInstance() {
+					position = "-338.877 67.418 327.345";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					interiorFile = "dmisc_nefobj2.dif";
+					showTerrainInside = "0";
+
+					team = "0";
+				};
+				new InteriorInstance() {
+					position = "-395.552 81.3042 327.264";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					interiorFile = "dmisc_nefobj2.dif";
+					showTerrainInside = "0";
+
+					locked = "true";
+					team = "0";
+				};
+				new AudioEmitter() {
+					position = "-240.107 -1776.87 146.106";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					fileName = "fx/environment/snowstorm1.wav";
+					useProfileDescription = "0";
+					outsideAmbient = "1";
+					volume = "1";
+					isLooping = "1";
+					is3D = "0";
+					minDistance = "145";
+					maxDistance = "9280";
+					coneInsideAngle = "360";
+					coneOutsideAngle = "360";
+					coneOutsideVolume = "1";
+					coneVector = "0 0 1";
+					loopCount = "-1";
+					minLoopGap = "0";
+					maxLoopGap = "0";
+					type = "EffectAudioType";
+
+					locked = "false";
+					team = "0";
+				};
+				new InteriorInstance() {
+					position = "-516.305 46.9409 333.494";
+					rotation = "-0 0 -1 89.496";
+					scale = "1 1 1";
+					interiorFile = "dmisc_nefplat1.dif";
+					showTerrainInside = "0";
+
+					team = "0";
+				};
+				new InteriorInstance() {
+					position = "-385.831 -44.6871 328.355";
+					rotation = "0 0 -1 90.0117";
+					scale = "3.44875 1.51962 2.82537";
+					interiorFile = "dmisc_nefrdbridge1.dif";
+					showTerrainInside = "0";
+
+					locked = "true";
+					team = "0";
+				};
+				new InteriorInstance() {
+					position = "-338.858 94.7711 327.106";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					interiorFile = "dmisc_nefobj2.dif";
+					showTerrainInside = "0";
+
+					team = "0";
+				};
+				new InteriorInstance() {
+					position = "-266.124 67.8209 327.506";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					interiorFile = "dmisc_nefobj2.dif";
+					showTerrainInside = "0";
+
+					team = "0";
+				};
+				new InteriorInstance() {
+					position = "-313.137 158.755 330.242";
+					rotation = "0 1 0 180.664";
+					scale = "1 1 1";
+					interiorFile = "splat3.dif";
+					showTerrainInside = "0";
+
+					team = "0";
+				};
+				new InteriorInstance() {
+					position = "-313.114 28.6943 330.256";
+					rotation = "0 1 0 179.518";
+					scale = "1 1 1";
+					interiorFile = "splat3.dif";
+					showTerrainInside = "0";
+
+					team = "0";
+				};
+				new Item() {
+					position = "-313.389 93.5611 335.549";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "RepairKit";
+					lockCount = "0";
+					homingCount = "0";
+					collideable = "0";
+					static = "1";
+					rotate = "0";
+
+					team = "0";
+					Target = "-1";
+				};
+				new Item() {
+					position = "-313.172 155.206 330.293";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "RepairPatch";
+					lockCount = "0";
+					homingCount = "0";
+					collideable = "0";
+					static = "1";
+					rotate = "0";
+
+					team = "0";
+					Target = "-1";
+				};
+				new Item() {
+					position = "-313.177 162.418 330.293";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "RepairPatch";
+					lockCount = "0";
+					homingCount = "0";
+					collideable = "0";
+					static = "1";
+					rotate = "0";
+
+					team = "0";
+					Target = "-1";
+				};
+				new Item() {
+					position = "-313.156 24.9228 330.307";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "RepairPatch";
+					lockCount = "0";
+					homingCount = "0";
+					collideable = "0";
+					static = "1";
+					rotate = "0";
+
+					team = "0";
+					Target = "-1";
+				};
+				new Item() {
+					position = "-313.161 32.1348 330.307";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "RepairPatch";
+					lockCount = "0";
+					homingCount = "0";
+					collideable = "0";
+					static = "1";
+					rotate = "0";
+
+					team = "0";
+					Target = "-1";
+				};
+			};
+			new SimGroup(AIObjectives) {
+
+				powerCount = "0";
+			};
+		};
+		new SimGroup(Team1) {
+
+			powerCount = "0";
+
+			new SimGroup(spawnspheres) {
+
+				powerCount = "0";
+
+				new SpawnSphere() {
+					position = "-553.747 93.643 341.351";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "SpawnSphereMarker";
+					lockCount = "0";
+					homingCount = "0";
+					radius = "50";
+					sphereWeight = "100";
+					indoorWeight = "100";
+					outdoorWeight = "0";
+				};
+			};
+			new SimGroup(B1) {
+
+				powerCount = "1";
+
+				new Turret(Team1TurretBaseLarge2) {
+					position = "-515.685 37.6422 339.39";
+					rotation = "0 0 1 0.573347";
+					scale = "1 1 1";
+					dataBlock = "TurretBaseLarge";
+					lockCount = "0";
+					homingCount = "0";
+					initialBarrel = "ELFBarrelLarge";
+
+					team = "1";
+					Target = "33";
+				};
+				new InteriorInstance() {
+					position = "-466.877 127.746 326.641";
+					rotation = "1 0 0 0";
+					scale = "1.39368 4.3086 1";
+					interiorFile = "dmisc_nefbridge.dif";
+					showTerrainInside = "0";
+
+					locked = "true";
+					team = "1";
+				};
+				new InteriorInstance() {
+					position = "-515.491 93.2598 345.287";
+					rotation = "1 0 0 0";
+					scale = "1 2.37666 2.57307";
+					interiorFile = "smisc4.dif";
+					showTerrainInside = "0";
+
+					locked = "true";
+					team = "1";
+				};
+				new InteriorInstance() {
+					position = "-521.475 91.1083 380.9";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					interiorFile = "dmisc_neftower2.dif";
+					showTerrainInside = "0";
+
+					locked = "true";
+					team = "1";
+				};
+				new InteriorInstance(InteriorInstance) {
+					position = "-515.433 71.2856 327.186";
+					rotation = "1 0 0 0";
+					scale = "1 3.11873 4.35";
+					interiorFile = "smisc4.dif";
+					showTerrainInside = "0";
+
+					locked = "false";
+					team = "1";
+				};
+				new InteriorInstance(InteriorInstance) {
+					position = "-515.486 115.221 327.085";
+					rotation = "1 0 0 0";
+					scale = "1 3.11873 4.35";
+					interiorFile = "smisc4.dif";
+					showTerrainInside = "0";
+
+					locked = "false";
+					team = "1";
+				};
+				new InteriorInstance() {
+					position = "-572.911 93.3026 327.482";
+					rotation = "1 0 0 0";
+					scale = "1 1 0.407114";
+					interiorFile = "smisc_nef1.dif";
+					showTerrainInside = "0";
+
+					team = "1";
+				};
+				new InteriorInstance() {
+					position = "-556.068 127.745 326.638";
+					rotation = "1 0 0 0";
+					scale = "1.39368 4.3086 1";
+					interiorFile = "dmisc_nefbridge.dif";
+					showTerrainInside = "0";
+
+					locked = "true";
+					team = "1";
+				};
+				new InteriorInstance(InteriorInstance) {
+					position = "-463.307 87.5275 343.532";
+					rotation = "1 0 0 0";
+					scale = "1 1.6 1";
+					interiorFile = "swall1.dif";
+					showTerrainInside = "0";
+
+					locked = "false";
+					team = "1";
+				};
+				new StaticShape(TeamStationInventory13) {
+					position = "-597.62 74.6549 327.716";
+					rotation = "0 0 -1 90.5379";
+					scale = "1 1 1";
+					dataBlock = "StationInventory";
+					lockCount = "0";
+					homingCount = "0";
+
+					Trigger = "7005";
+					team = "1";
+					notReady = "1";
+					Target = "34";
+					inUse = "Down";
+				};
+				new StaticShape() {
+					position = "-572.836 93.3491 328.33";
+					rotation = "1 0 0 0";
+					scale = "1 1 1.70895";
+					dataBlock = "InteriorFlagStand";
+					lockCount = "0";
+					homingCount = "0";
+
+					team = "1";
+					Target = "-1";
+				};
+				new Item(TeamFLAG1) {
+					position = "-572.825 93.386 328.803";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "flag";
+					lockCount = "0";
+					homingCount = "0";
+					collideable = "0";
+					static = "1";
+					rotate = "1";
+
+					WayPoint = "7124";
+					Trigger = "7125";
+					team = "1";
+					originalPosition = "-572.825 93.386 328.803 1 0 0 0";
+					isHome = "1";
+					className = "FlagObj";
+					Target = "35";
+				};
+				new InteriorInstance() {
+					position = "-511.86 67.1947 363.389";
+					rotation = "1 0 0 0";
+					scale = "0.1 1 0.1";
+					interiorFile = "swall1.dif";
+					showTerrainInside = "0";
+
+					locked = "true";
+					team = "1";
+				};
+				new StaticShape(TeamStationInventory7) {
+					position = "-515.427 105.159 362.265";
+					rotation = "0 0 1 179.966";
+					scale = "1 1 1";
+					dataBlock = "StationInventory";
+					lockCount = "0";
+					homingCount = "0";
+
+					locked = "true";
+					Trigger = "7011";
+					team = "1";
+					notReady = "1";
+					Target = "36";
+					inUse = "Down";
+				};
+				new StaticShape(TeamSensorMediumPulse1) {
+					position = "-515.85 93.1688 407.084";
+					rotation = "0 0 1 89.9544";
+					scale = "1 1 1";
+					dataBlock = "SensorMediumPulse";
+					lockCount = "0";
+					homingCount = "0";
+
+					team = "1";
+					Target = "37";
+				};
+				new StaticShape(TeamGeneratorLarge1) {
+					position = "-584.452 111.954 326.991";
+					rotation = "0 0 1 89.9544";
+					scale = "2.61781 1.37264 0.1";
+					dataBlock = "GeneratorLarge";
+					lockCount = "0";
+					homingCount = "0";
+
+					locked = "true";
+					team = "1";
+					Target = "38";
+				};
+				new StaticShape(TeamStationInventory6) {
+					position = "-515.365 81.3781 362.249";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "StationInventory";
+					lockCount = "0";
+					homingCount = "0";
+
+					locked = "true";
+					Trigger = "7015";
+					team = "1";
+					Target = "39";
+				};
+				new InteriorInstance() {
+					position = "-511.958 111.117 363.377";
+					rotation = "1 0 0 0";
+					scale = "0.1 1 0.1";
+					interiorFile = "swall1.dif";
+					showTerrainInside = "0";
+
+					locked = "true";
+					team = "1";
+				};
+				new StaticShape(TeamStationInventory10) {
+					position = "-522.112 71.2167 327.704";
+					rotation = "0 0 1 90.1264";
+					scale = "1 1 1";
+					dataBlock = "StationInventory";
+					lockCount = "0";
+					homingCount = "0";
+
+					Trigger = "7018";
+					team = "1";
+					notReady = "1";
+					Target = "40";
+					inUse = "Down";
+				};
+				new InteriorInstance(InteriorInstance) {
+					position = "-524.072 65.0069 333.142";
+					rotation = "0.00100033 0.999999 0.000994146 90.0116";
+					scale = "0.1 1.55474 0.3";
+					interiorFile = "swall1.dif";
+					showTerrainInside = "0";
+
+					team = "1";
+				};
+				new InteriorInstance(InteriorInstance) {
+					position = "-524.214 108.964 332.178";
+					rotation = "0.00100033 0.999999 0.000994146 90.0116";
+					scale = "0.1 1.55474 0.3";
+					interiorFile = "swall1.dif";
+					showTerrainInside = "0";
+
+					team = "1";
+				};
+				new StaticShape(TeamStationInventory9) {
+					position = "-522.055 115.196 327.836";
+					rotation = "0 0 1 90.1264";
+					scale = "1 1 1";
+					dataBlock = "StationInventory";
+					lockCount = "0";
+					homingCount = "0";
+
+					Trigger = "7022";
+					team = "1";
+					notReady = "1";
+					inUse = "Down";
+					Target = "41";
+				};
+				new InteriorInstance(InteriorInstance) {
+					position = "-600.851 74.7774 335.254";
+					rotation = "-0.00400236 0.999984 -0.00405013 89.3823";
+					scale = "1 1 1";
+					interiorFile = "splat3.dif";
+					showTerrainInside = "0";
+
+					team = "1";
+				};
+				new InteriorInstance(InteriorInstance) {
+					position = "-600.851 93.1201 335.256";
+					rotation = "-0.0040031 0.999984 -0.00400956 89.9551";
+					scale = "1 1 1";
+					interiorFile = "splat3.dif";
+					showTerrainInside = "0";
+
+					team = "1";
+				};
+				new InteriorInstance(InteriorInstance) {
+					position = "-601.051 111.636 335.256";
+					rotation = "-0.0040031 0.999984 -0.00400956 89.9551";
+					scale = "1 1 1";
+					interiorFile = "splat3.dif";
+					showTerrainInside = "0";
+
+					team = "1";
+				};
+				new StaticShape(TeamStationInventory13) {
+					position = "-597.665 111.502 327.847";
+					rotation = "0 0 -1 90.5379";
+					scale = "1 1 1";
+					dataBlock = "StationInventory";
+					lockCount = "0";
+					homingCount = "0";
+
+					Trigger = "7027";
+					team = "1";
+					notReady = "1";
+					Target = "42";
+					inUse = "Down";
+				};
+				new Item() {
+					position = "-598.04 93.1314 327.814";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "RepairPack";
+					lockCount = "0";
+					homingCount = "0";
+					collideable = "0";
+					static = "1";
+					rotate = "1";
+
+					team = "1";
+					Target = "-1";
+				};
+			};
+			new SimGroup(AIObjectives) {
+
+				powerCount = "0";
+
+				new AIObjective(AIODefendLocation) {
+					position = "-550.425 93.386 331.033";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "AIObjectiveMarker";
+					lockCount = "0";
+					homingCount = "0";
+					description = "Defend our flag";
+					targetObject = "TeamFLAG1";
+					targetClientId = "-1";
+					targetObjectId = "7007";
+					location = "-550.425 93.386 331.033";
+					weightLevel1 = "3900";
+					weightLevel2 = "2000";
+					weightLevel3 = "0";
+					weightLevel4 = "0";
+					offense = "0";
+					defense = "1";
+					desiredEquipment = "ShieldPack Plasma PlasmaAmmo";
+					buyEquipmentSet = "HeavyShieldSet";
+					chat = "ChatSelfDefendFlag DefendBase";
+					issuedByHuman = "0";
+					issuedByClientId = "-1";
+					forceClientId = "-1";
+					locked = "0";
+
+					isInvalid = "0";
+					team = "1";
+					gameType = "all";
+				};
+				new AIObjective(AIOAttackPlayer) {
+					position = "-550.425 93.386 331.033";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "AIObjectiveMarker";
+					lockCount = "0";
+					homingCount = "0";
+					description = "Kill the enemy flag carrier";
+					mode = "FlagCarrier";
+					targetObject = "TeamFLAG1";
+					targetClientId = "-1";
+					targetObjectId = "7007";
+					location = "-550.425 93.386 331.033";
+					weightLevel1 = "4800";
+					weightLevel2 = "4800";
+					weightLevel3 = "0";
+					weightLevel4 = "0";
+					offense = "1";
+					defense = "0";
+					desiredEquipment = "Light EnergyPack";
+					buyEquipmentSet = "LightEnergySniper";
+					issuedByHuman = "0";
+					issuedByClientId = "-1";
+					forceClientId = "-1";
+					locked = "0";
+
+					isInvalid = "0";
+					team = "1";
+					gameType = "all";
+				};
+				new AIObjective(AIOTouchObject) {
+					position = "-550.425 93.386 331.033";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "AIObjectiveMarker";
+					lockCount = "0";
+					homingCount = "0";
+					description = "Return our flag";
+					mode = "FlagDropped";
+					targetObject = "TeamFLAG1";
+					targetClientId = "-1";
+					targetObjectId = "7007";
+					location = "-550.425 93.386 331.033";
+					weightLevel1 = "5001";
+					weightLevel2 = "4100";
+					weightLevel3 = "0";
+					weightLevel4 = "0";
+					offense = "1";
+					defense = "1";
+					issuedByHuman = "0";
+					issuedByClientId = "-1";
+					forceClientId = "-1";
+					locked = "0";
+
+					isInvalid = "0";
+					team = "1";
+					gameType = "all";
+				};
+				new AIObjective(AIOAttackObject) {
+					position = "-64.2388 79.9515 348.944";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "AIObjectiveMarker";
+					lockCount = "0";
+					homingCount = "0";
+					description = "Attack the StationInventory";
+					targetObject = "TeamStationInventory16";
+					targetClientId = "-1";
+					targetObjectId = "-1";
+					location = "-64.2388 79.9515 348.944";
+					weightLevel1 = "2900";
+					weightLevel2 = "1400";
+					weightLevel3 = "0";
+					weightLevel4 = "0";
+					offense = "1";
+					defense = "0";
+					desiredEquipment = "ShieldPack";
+					buyEquipmentSet = "HeavyAmmoSet";
+					issuedByHuman = "0";
+					issuedByClientId = "-1";
+					forceClientId = "-1";
+					locked = "0";
+
+					isInvalid = "0";
+					team = "1";
+				};
+				new AIObjective(AIOTouchObject) {
+					position = "-78.3757 93.1042 330.97";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "AIObjectiveMarker";
+					lockCount = "0";
+					homingCount = "0";
+					description = "Grab the dropped enemy flag";
+					mode = "FlagDropped";
+					targetObject = "TeamFLAG2";
+					targetClientId = "-1";
+					targetObjectId = "7076";
+					location = "-78.3757 93.1042 330.97";
+					weightLevel1 = "5001";
+					weightLevel2 = "4100";
+					weightLevel3 = "0";
+					weightLevel4 = "0";
+					offense = "1";
+					defense = "1";
+					issuedByHuman = "0";
+					issuedByClientId = "-1";
+					forceClientId = "-1";
+					locked = "0";
+
+					isInvalid = "0";
+					team = "1";
+					gameType = "all";
+				};
+				new AIObjective(AIORepairObject) {
+					position = "-621.897 93.2683 341.652";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "AIObjectiveMarker";
+					lockCount = "0";
+					homingCount = "0";
+					description = "Repair the SensorMediumPulse";
+					targetObject = "TeamSensorMediumPulse1";
+					targetClientId = "-1";
+					targetObjectId = "7012";
+					location = "-621.897 93.2683 341.652";
+					weightLevel1 = "3100";
+					weightLevel2 = "1000";
+					weightLevel3 = "0";
+					weightLevel4 = "0";
+					offense = "0";
+					defense = "1";
+					equipment = "RepairPack";
+					buyEquipmentSet = "MediumRepairSet";
+					issuedByHuman = "0";
+					issuedByClientId = "-1";
+					forceClientId = "-1";
+					locked = "0";
+
+					isInvalid = "0";
+					team = "1";
+				};
+				new AIObjective(AIORepairObject) {
+					position = "-521.838 61.3463 333.005";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "AIObjectiveMarker";
+					lockCount = "0";
+					homingCount = "0";
+					description = "Repair the StationInventory";
+					targetObject = "TeamStationInventory1";
+					targetClientId = "-1";
+					targetObjectId = "-1";
+					location = "-521.838 61.3463 333.005";
+					weightLevel1 = "2900";
+					weightLevel2 = "1400";
+					weightLevel3 = "0";
+					weightLevel4 = "0";
+					offense = "0";
+					defense = "1";
+					equipment = "RepairPack";
+					buyEquipmentSet = "MediumRepairSet";
+					issuedByHuman = "0";
+					issuedByClientId = "-1";
+					forceClientId = "-1";
+					locked = "0";
+
+					isInvalid = "0";
+					team = "1";
+				};
+				new AIObjective(AIORepairObject) {
+					position = "-521.884 70.6872 333.001";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "AIObjectiveMarker";
+					lockCount = "0";
+					homingCount = "0";
+					description = "Repair the StationInventory";
+					targetObject = "TeamStationInventory2";
+					targetClientId = "-1";
+					targetObjectId = "-1";
+					location = "-521.884 70.6872 333.001";
+					weightLevel1 = "2900";
+					weightLevel2 = "1400";
+					weightLevel3 = "0";
+					weightLevel4 = "0";
+					offense = "0";
+					defense = "1";
+					equipment = "RepairPack";
+					buyEquipmentSet = "MediumRepairSet";
+					issuedByHuman = "0";
+					issuedByClientId = "-1";
+					forceClientId = "-1";
+					locked = "0";
+
+					isInvalid = "0";
+					team = "1";
+				};
+				new AIObjective(AIORepairObject) {
+					position = "-521.775 61.2751 329.182";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "AIObjectiveMarker";
+					lockCount = "0";
+					homingCount = "0";
+					description = "Repair the StationInventory";
+					targetObject = "TeamStationInventory3";
+					targetClientId = "-1";
+					targetObjectId = "-1";
+					location = "-521.775 61.2751 329.182";
+					weightLevel1 = "2900";
+					weightLevel2 = "1400";
+					weightLevel3 = "0";
+					weightLevel4 = "0";
+					offense = "0";
+					defense = "1";
+					equipment = "RepairPack";
+					buyEquipmentSet = "MediumRepairSet";
+					issuedByHuman = "0";
+					issuedByClientId = "-1";
+					forceClientId = "-1";
+					locked = "0";
+
+					isInvalid = "0";
+					team = "1";
+				};
+				new AIObjective(AIORepairObject) {
+					position = "-521.856 70.873 329.183";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "AIObjectiveMarker";
+					lockCount = "0";
+					homingCount = "0";
+					description = "Repair the StationInventory";
+					targetObject = "TeamStationInventory4";
+					targetClientId = "-1";
+					targetObjectId = "-1";
+					location = "-521.856 70.873 329.183";
+					weightLevel1 = "2900";
+					weightLevel2 = "1400";
+					weightLevel3 = "0";
+					weightLevel4 = "0";
+					offense = "0";
+					defense = "1";
+					equipment = "RepairPack";
+					buyEquipmentSet = "MediumRepairSet";
+					issuedByHuman = "0";
+					issuedByClientId = "-1";
+					forceClientId = "-1";
+					locked = "0";
+
+					isInvalid = "0";
+					team = "1";
+				};
+				new AIObjective(AIORepairObject) {
+					position = "-521.885 79.4534 329.184";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "AIObjectiveMarker";
+					lockCount = "0";
+					homingCount = "0";
+					description = "Repair the StationInventory";
+					targetObject = "TeamStationInventory5";
+					targetClientId = "-1";
+					targetObjectId = "-1";
+					location = "-521.885 79.4534 329.184";
+					weightLevel1 = "2900";
+					weightLevel2 = "1400";
+					weightLevel3 = "0";
+					weightLevel4 = "0";
+					offense = "0";
+					defense = "1";
+					equipment = "RepairPack";
+					buyEquipmentSet = "MediumRepairSet";
+					issuedByHuman = "0";
+					issuedByClientId = "-1";
+					forceClientId = "-1";
+					locked = "0";
+
+					isInvalid = "0";
+					team = "1";
+				};
+				new AIObjective(AIORepairObject) {
+					position = "-515.365 81.3781 363.815";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "AIObjectiveMarker";
+					lockCount = "0";
+					homingCount = "0";
+					description = "Repair the StationInventory";
+					targetObject = "TeamStationInventory6";
+					targetClientId = "-1";
+					targetObjectId = "7014";
+					location = "-515.365 81.3781 363.815";
+					weightLevel1 = "2900";
+					weightLevel2 = "1400";
+					weightLevel3 = "0";
+					weightLevel4 = "0";
+					offense = "0";
+					defense = "1";
+					equipment = "RepairPack";
+					buyEquipmentSet = "MediumRepairSet";
+					issuedByHuman = "0";
+					issuedByClientId = "-1";
+					forceClientId = "-1";
+					locked = "0";
+
+					isInvalid = "0";
+					team = "1";
+				};
+				new AIObjective(AIORepairObject) {
+					position = "-515.427 105.159 363.831";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "AIObjectiveMarker";
+					lockCount = "0";
+					homingCount = "0";
+					description = "Repair the StationInventory";
+					targetObject = "TeamStationInventory7";
+					targetClientId = "-1";
+					targetObjectId = "7010";
+					location = "-515.427 105.159 363.831";
+					weightLevel1 = "2900";
+					weightLevel2 = "1400";
+					weightLevel3 = "0";
+					weightLevel4 = "0";
+					offense = "0";
+					defense = "1";
+					equipment = "RepairPack";
+					buyEquipmentSet = "MediumRepairSet";
+					issuedByHuman = "0";
+					issuedByClientId = "-1";
+					forceClientId = "-1";
+					locked = "0";
+
+					isInvalid = "0";
+					team = "1";
+				};
+				new AIObjective(AIORepairObject) {
+					position = "-564.745 106.782 348.99";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "AIObjectiveMarker";
+					lockCount = "0";
+					homingCount = "0";
+					description = "Repair the StationInventory";
+					targetObject = "TeamStationInventory8";
+					targetClientId = "-1";
+					targetObjectId = "-1";
+					location = "-564.745 106.782 348.99";
+					weightLevel1 = "2900";
+					weightLevel2 = "1400";
+					weightLevel3 = "0";
+					weightLevel4 = "0";
+					offense = "0";
+					defense = "1";
+					equipment = "RepairPack";
+					buyEquipmentSet = "MediumRepairSet";
+					issuedByHuman = "0";
+					issuedByClientId = "-1";
+					forceClientId = "-1";
+					locked = "0";
+
+					isInvalid = "0";
+					team = "1";
+				};
+				new AIObjective(AIOAttackObject) {
+					position = "-113.395 81.3312 363.756";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "AIObjectiveMarker";
+					lockCount = "0";
+					homingCount = "0";
+					description = "Attack the StationInventory";
+					targetObject = "TeamStationInventory14";
+					targetClientId = "-1";
+					targetObjectId = "7089";
+					location = "-113.395 81.3312 363.756";
+					weightLevel1 = "2900";
+					weightLevel2 = "1400";
+					weightLevel3 = "0";
+					weightLevel4 = "0";
+					offense = "1";
+					defense = "0";
+					desiredEquipment = "ShieldPack";
+					buyEquipmentSet = "HeavyAmmoSet";
+					issuedByHuman = "0";
+					issuedByClientId = "-1";
+					forceClientId = "-1";
+					locked = "0";
+
+					isInvalid = "0";
+					team = "1";
+				};
+				new AIObjective(AIOTouchObject) {
+					position = "-78.3757 93.1042 330.97";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "AIObjectiveMarker";
+					lockCount = "0";
+					homingCount = "0";
+					description = "Grab the enemy flag";
+					mode = "FlagGrab";
+					targetObject = "TeamFLAG2";
+					targetClientId = "-1";
+					targetObjectId = "7076";
+					location = "-78.3757 93.1042 330.97";
+					weightLevel1 = "3850";
+					weightLevel2 = "2000";
+					weightLevel3 = "0";
+					weightLevel4 = "0";
+					offense = "1";
+					defense = "0";
+					desiredEquipment = "Light EnergyPack";
+					buyEquipmentSet = "LightEnergyDefault";
+					issuedByHuman = "0";
+					issuedByClientId = "-1";
+					forceClientId = "-1";
+					locked = "0";
+
+					isInvalid = "0";
+					team = "1";
+					gameType = "all";
+				};
+				new AIObjective(AIOTouchObject) {
+					position = "-78.3757 93.1042 330.97";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "AIObjectiveMarker";
+					lockCount = "0";
+					homingCount = "0";
+					description = "Capture the flag!";
+					mode = "FlagCapture";
+					targetObject = "TeamFLAG2";
+					targetClientId = "-1";
+					targetObjectId = "7076";
+					location = "-78.3757 93.1042 330.97";
+					weightLevel1 = "5000";
+					weightLevel2 = "0";
+					weightLevel3 = "0";
+					weightLevel4 = "0";
+					offense = "1";
+					defense = "1";
+					issuedByHuman = "0";
+					issuedByClientId = "-1";
+					forceClientId = "-1";
+					locked = "0";
+
+					isInvalid = "0";
+					team = "1";
+					gameType = "all";
+				};
+				new AIObjective(AIOAttackObject) {
+					position = "-106.91 107.048 329.129";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "AIObjectiveMarker";
+					lockCount = "0";
+					homingCount = "0";
+					description = "Attack the StationInventory";
+					targetObject = "TeamStationInventory9";
+					targetClientId = "-1";
+					targetObjectId = "7066";
+					location = "-106.91 107.048 329.129";
+					weightLevel1 = "2900";
+					weightLevel2 = "1400";
+					weightLevel3 = "0";
+					weightLevel4 = "0";
+					offense = "1";
+					defense = "0";
+					desiredEquipment = "ShieldPack";
+					buyEquipmentSet = "HeavyAmmoSet";
+					issuedByHuman = "0";
+					issuedByClientId = "-1";
+					forceClientId = "-1";
+					locked = "0";
+
+					isInvalid = "0";
+					team = "1";
+				};
+				new AIObjective(AIOAttackObject) {
+					position = "-106.936 115.629 329.128";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "AIObjectiveMarker";
+					lockCount = "0";
+					homingCount = "0";
+					description = "Attack the StationInventory";
+					targetObject = "TeamStationInventory10";
+					targetClientId = "-1";
+					targetObjectId = "7064";
+					location = "-106.936 115.629 329.128";
+					weightLevel1 = "2900";
+					weightLevel2 = "1400";
+					weightLevel3 = "0";
+					weightLevel4 = "0";
+					offense = "1";
+					defense = "0";
+					desiredEquipment = "ShieldPack";
+					buyEquipmentSet = "HeavyAmmoSet";
+					issuedByHuman = "0";
+					issuedByClientId = "-1";
+					forceClientId = "-1";
+					locked = "0";
+
+					isInvalid = "0";
+					team = "1";
+				};
+				new AIObjective(AIOAttackObject) {
+					position = "-107.013 125.227 329.127";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "AIObjectiveMarker";
+					lockCount = "0";
+					homingCount = "0";
+					description = "Attack the StationInventory";
+					targetObject = "TeamStationInventory11";
+					targetClientId = "-1";
+					targetObjectId = "-1";
+					location = "-107.013 125.227 329.127";
+					weightLevel1 = "2900";
+					weightLevel2 = "1400";
+					weightLevel3 = "0";
+					weightLevel4 = "0";
+					offense = "1";
+					defense = "0";
+					desiredEquipment = "ShieldPack";
+					buyEquipmentSet = "HeavyAmmoSet";
+					issuedByHuman = "0";
+					issuedByClientId = "-1";
+					forceClientId = "-1";
+					locked = "0";
+
+					isInvalid = "0";
+					team = "1";
+				};
+				new AIObjective(AIOAttackObject) {
+					position = "-106.908 115.815 332.946";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "AIObjectiveMarker";
+					lockCount = "0";
+					homingCount = "0";
+					description = "Attack the StationInventory";
+					targetObject = "TeamStationInventory12";
+					targetClientId = "-1";
+					targetObjectId = "-1";
+					location = "-106.908 115.815 332.946";
+					weightLevel1 = "2900";
+					weightLevel2 = "1400";
+					weightLevel3 = "0";
+					weightLevel4 = "0";
+					offense = "1";
+					defense = "0";
+					desiredEquipment = "ShieldPack";
+					buyEquipmentSet = "HeavyAmmoSet";
+					issuedByHuman = "0";
+					issuedByClientId = "-1";
+					forceClientId = "-1";
+					locked = "0";
+
+					isInvalid = "0";
+					team = "1";
+				};
+				new AIObjective(AIOAttackObject) {
+					position = "-106.95 125.156 332.95";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "AIObjectiveMarker";
+					lockCount = "0";
+					homingCount = "0";
+					description = "Attack the StationInventory";
+					targetObject = "TeamStationInventory13";
+					targetClientId = "-1";
+					targetObjectId = "7091";
+					location = "-106.95 125.156 332.95";
+					weightLevel1 = "2900";
+					weightLevel2 = "1400";
+					weightLevel3 = "0";
+					weightLevel4 = "0";
+					offense = "1";
+					defense = "0";
+					desiredEquipment = "ShieldPack";
+					buyEquipmentSet = "HeavyAmmoSet";
+					issuedByHuman = "0";
+					issuedByClientId = "-1";
+					forceClientId = "-1";
+					locked = "0";
+
+					isInvalid = "0";
+					team = "1";
+				};
+				new AIObjective(AIOMortarObject) {
+					position = "-6.9036 93.1928 341.597";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "AIObjectiveMarker";
+					lockCount = "0";
+					homingCount = "0";
+					description = "Mortar the SensorMediumPulse";
+					targetObject = "TeamSensorMediumPulse2";
+					targetClientId = "-1";
+					targetObjectId = "7068";
+					location = "-6.9036 93.1928 341.597";
+					weightLevel1 = "3400";
+					weightLevel2 = "1000";
+					weightLevel3 = "0";
+					weightLevel4 = "0";
+					offense = "1";
+					defense = "0";
+					equipment = "Mortar MortarAmmo";
+					buyEquipmentSet = "HeavyAmmoSet";
+					issuedByHuman = "0";
+					issuedByClientId = "-1";
+					forceClientId = "-1";
+					locked = "0";
+
+					isInvalid = "0";
+					team = "1";
+				};
+				new AIObjective(AIOAttackObject) {
+					position = "-113.396 105.098 363.78";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "AIObjectiveMarker";
+					lockCount = "0";
+					homingCount = "0";
+					description = "Attack the StationInventory";
+					targetObject = "TeamStationInventory15";
+					targetClientId = "-1";
+					targetObjectId = "7069";
+					location = "-113.396 105.098 363.78";
+					weightLevel1 = "2900";
+					weightLevel2 = "1400";
+					weightLevel3 = "0";
+					weightLevel4 = "0";
+					offense = "1";
+					defense = "0";
+					desiredEquipment = "ShieldPack";
+					buyEquipmentSet = "HeavyAmmoSet";
+					issuedByHuman = "0";
+					issuedByClientId = "-1";
+					forceClientId = "-1";
+					locked = "0";
+
+					isInvalid = "0";
+					team = "1";
+				};
+			};
+		};
+		new SimGroup(Team2) {
+
+			powerCount = "0";
+
+			new SimGroup(spawnspheres) {
+
+				powerCount = "0";
+
+				new SpawnSphere() {
+					position = "-80.0504 98.057 349.586";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "SpawnSphereMarker";
+					lockCount = "0";
+					homingCount = "0";
+					radius = "50";
+					sphereWeight = "100";
+					indoorWeight = "100";
+					outdoorWeight = "0";
+				};
+			};
+			new SimGroup(B2) {
+
+				powerCount = "1";
+
+				new InteriorInstance() {
+					position = "-107.325 95.3938 380.845";
+					rotation = "0 0 1 180.023";
+					scale = "1 1 1";
+					interiorFile = "dmisc_neftower2.dif";
+					showTerrainInside = "0";
+
+					locked = "true";
+					team = "2";
+				};
+				new InteriorInstance() {
+					position = "-116.85 75.3889 363.322";
+					rotation = "0 0 1 180.023";
+					scale = "0.1 1 0.1";
+					interiorFile = "swall1.dif";
+					showTerrainInside = "0";
+
+					locked = "true";
+					team = "2";
+				};
+				new InteriorInstance() {
+					position = "-116.93 119.311 363.334";
+					rotation = "0 0 1 180.023";
+					scale = "0.1 1 0.1";
+					interiorFile = "swall1.dif";
+					showTerrainInside = "0";
+
+					locked = "true";
+					team = "2";
+				};
+				new InteriorInstance() {
+					position = "-28.2784 93.5299 335.076";
+					rotation = "0.706825 -0.000141841 0.707389 180.016";
+					scale = "1 1 1";
+					interiorFile = "splat3.dif";
+					showTerrainInside = "0";
+
+					team = "2";
+				};
+				new InteriorInstance() {
+					position = "-28.2084 111.873 335.074";
+					rotation = "0.703279 -0.000141129 0.710914 180.016";
+					scale = "1 1 1";
+					interiorFile = "splat3.dif";
+					showTerrainInside = "0";
+
+					team = "2";
+				};
+				new Item() {
+					position = "-31.1737 93.5431 327.634";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "RepairPack";
+					lockCount = "0";
+					homingCount = "0";
+					collideable = "0";
+					static = "1";
+					rotate = "1";
+
+					team = "2";
+					Target = "-1";
+				};
+				new StaticShape(TeamStationInventory10) {
+					position = "-106.936 115.229 327.562";
+					rotation = "-0 0 -1 89.9649";
+					scale = "1 1 1";
+					dataBlock = "StationInventory";
+					lockCount = "0";
+					homingCount = "0";
+
+					Trigger = "7065";
+					team = "2";
+					notReady = "1";
+					Target = "43";
+					inUse = "Down";
+				};
+				new StaticShape(TeamStationInventory9) {
+					position = "-106.924 71.2495 327.694";
+					rotation = "-0 0 -1 89.9649";
+					scale = "1 1 1";
+					dataBlock = "StationInventory";
+					lockCount = "0";
+					homingCount = "0";
+
+					Trigger = "7067";
+					team = "2";
+					notReady = "1";
+					Target = "44";
+					inUse = "Down";
+				};
+				new StaticShape(TeamSensorMediumPulse2) {
+					position = "-113.346 93.3804 406.925";
+					rotation = "0 0 -1 90.0223";
+					scale = "1 1 1";
+					dataBlock = "SensorMediumPulse";
+					lockCount = "0";
+					homingCount = "0";
+
+					team = "2";
+					Target = "45";
+				};
+				new StaticShape(TeamStationInventory15) {
+					position = "-113.396 105.098 362.214";
+					rotation = "0 0 1 179.966";
+					scale = "1 1 1";
+					dataBlock = "StationInventory";
+					lockCount = "0";
+					homingCount = "0";
+
+					locked = "true";
+					Trigger = "7070";
+					team = "2";
+					Target = "46";
+				};
+				new Turret(Team2TurretBaseLarge2) {
+					position = "-113.042 148.621 339.192";
+					rotation = "4.11718e-12 4.6501e-10 1 181.055";
+					scale = "1 1 1";
+					dataBlock = "TurretBaseLarge";
+					lockCount = "0";
+					homingCount = "0";
+					initialBarrel = "ELFBarrelLarge";
+
+					team = "2";
+					Target = "47";
+				};
+				new StaticShape(TeamGeneratorLarge2) {
+					position = "-44.3563 74.5223 326.936";
+					rotation = "0 0 -1 90.0223";
+					scale = "2.61781 1.37264 0.1";
+					dataBlock = "GeneratorLarge";
+					lockCount = "0";
+					homingCount = "0";
+
+					locked = "true";
+					team = "2";
+					Target = "48";
+				};
+				new InteriorInstance(InteriorInstance) {
+					position = "-28.2784 75.0127 335.076";
+					rotation = "0.706825 -0.000141841 0.707389 180.016";
+					scale = "1 1 1";
+					interiorFile = "splat3.dif";
+					showTerrainInside = "0";
+
+					team = "2";
+				};
+				new InteriorInstance(InteriorInstance) {
+					position = "-104.775 77.4846 332.036";
+					rotation = "0.707179 -0.000143905 0.707035 180.016";
+					scale = "0.1 1.55474 0.3";
+					interiorFile = "swall1.dif";
+					showTerrainInside = "0";
+
+					team = "2";
+				};
+				new InteriorInstance(InteriorInstance) {
+					position = "-104.987 121.442 333";
+					rotation = "0.707179 -0.000143905 0.707035 180.016";
+					scale = "0.1 1.55474 0.3";
+					interiorFile = "swall1.dif";
+					showTerrainInside = "0";
+
+					team = "2";
+				};
+				new Item(TeamFLAG2) {
+					position = "-55.9757 93.1042 328.74";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "flag";
+					lockCount = "0";
+					homingCount = "0";
+					collideable = "0";
+					static = "1";
+					rotate = "1";
+
+					searchSchedule = "6725";
+					WayPoint = "7126";
+					team = "2";
+					Trigger = "7127";
+					originalPosition = "-55.9757 93.1042 328.74 1 0 0 0";
+					isHome = "1";
+					className = "FlagObj";
+					Target = "49";
+				};
+				new StaticShape() {
+					position = "-55.9647 93.1411 328.275";
+					rotation = "0 0 1 180.023";
+					scale = "1 1 1.70895";
+					dataBlock = "InteriorFlagStand";
+					lockCount = "0";
+					homingCount = "0";
+
+					team = "2";
+					Target = "-1";
+				};
+				new StaticShape(TeamStationInventory13) {
+					position = "-31.703 75.1763 327.667";
+					rotation = "0 0 1 89.9438";
+					scale = "1 1 1";
+					dataBlock = "StationInventory";
+					lockCount = "0";
+					homingCount = "0";
+
+					Trigger = "7080";
+					team = "2";
+					notReady = "1";
+					Target = "50";
+					inUse = "Down";
+				};
+				new InteriorInstance(InteriorInstance) {
+					position = "-165.491 99.798 343.277";
+					rotation = "0 0 1 180.023";
+					scale = "1 1.6 1";
+					interiorFile = "swall1.dif";
+					showTerrainInside = "0";
+
+					locked = "false";
+					team = "2";
+				};
+				new InteriorInstance() {
+					position = "-113.31 93.2446 345.232";
+					rotation = "0 0 1 180.023";
+					scale = "1 2.37666 2.57307";
+					interiorFile = "smisc4.dif";
+					showTerrainInside = "0";
+
+					locked = "true";
+					team = "2";
+				};
+				new InteriorInstance(InteriorInstance) {
+					position = "-113.359 115.219 326.351";
+					rotation = "0 0 1 180.023";
+					scale = "1 3.11873 4.45";
+					interiorFile = "smisc4.dif";
+					showTerrainInside = "0";
+
+					locked = "false";
+					team = "2";
+				};
+				new InteriorInstance(InteriorInstance) {
+					position = "-113.324 71.2835 327.161";
+					rotation = "0 0 1 180.023";
+					scale = "1 3.11873 4.35";
+					interiorFile = "smisc4.dif";
+					showTerrainInside = "0";
+
+					locked = "false";
+					team = "2";
+				};
+				new InteriorInstance() {
+					position = "-55.8898 93.1876 327.427";
+					rotation = "0 0 1 180.023";
+					scale = "1 1 0.407114";
+					interiorFile = "smisc_nef1.dif";
+					showTerrainInside = "0";
+
+					team = "2";
+				};
+				new InteriorInstance() {
+					position = "-72.7467 58.743 326.583";
+					rotation = "0 0 1 180.023";
+					scale = "1.39368 4.3086 1";
+					interiorFile = "dmisc_nefbridge.dif";
+					showTerrainInside = "0";
+
+					locked = "true";
+					team = "2";
+				};
+				new InteriorInstance() {
+					position = "-112.429 139.288 333.296";
+					rotation = "-7.64092e-10 -7.49003e-10 1 91.1003";
+					scale = "1 1 1";
+					interiorFile = "dmisc_nefplat1.dif";
+					showTerrainInside = "0";
+
+					team = "2";
+				};
+				new InteriorInstance() {
+					position = "-161.938 58.7783 326.586";
+					rotation = "0 0 1 180.023";
+					scale = "1.39368 4.3086 1";
+					interiorFile = "dmisc_nefbridge.dif";
+					showTerrainInside = "0";
+
+					locked = "true";
+					team = "2";
+				};
+				new StaticShape(TeamStationInventory14) {
+					position = "-113.395 81.3312 362.19";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "StationInventory";
+					lockCount = "0";
+					homingCount = "0";
+
+					locked = "true";
+					Trigger = "7090";
+					team = "2";
+					Target = "51";
+				};
+				new StaticShape(TeamStationInventory13) {
+					position = "-31.4376 112.023 327.536";
+					rotation = "0 0 1 89.9438";
+					scale = "1 1 1";
+					dataBlock = "StationInventory";
+					lockCount = "0";
+					homingCount = "0";
+
+					Trigger = "7092";
+					team = "2";
+					notReady = "1";
+					Target = "52";
+					inUse = "Down";
+				};
+			};
+			new SimGroup(AIObjectives) {
+
+				powerCount = "0";
+
+				new AIObjective(AIOTouchObject) {
+					position = "-550.425 93.386 331.033";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "AIObjectiveMarker";
+					lockCount = "0";
+					homingCount = "0";
+					description = "Grab the enemy flag";
+					mode = "FlagGrab";
+					targetObject = "TeamFLAG1";
+					targetClientId = "-1";
+					targetObjectId = "7007";
+					location = "-550.425 93.386 331.033";
+					weightLevel1 = "3850";
+					weightLevel2 = "2000";
+					weightLevel3 = "0";
+					weightLevel4 = "0";
+					offense = "1";
+					defense = "0";
+					desiredEquipment = "Light EnergyPack";
+					buyEquipmentSet = "LightEnergyDefault";
+					issuedByHuman = "0";
+					issuedByClientId = "-1";
+					forceClientId = "-1";
+					locked = "0";
+
+					isInvalid = "0";
+					team = "2";
+					gameType = "all";
+				};
+				new AIObjective(AIOTouchObject) {
+					position = "-550.425 93.386 331.033";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "AIObjectiveMarker";
+					lockCount = "0";
+					homingCount = "0";
+					description = "Capture the flag!";
+					mode = "FlagCapture";
+					targetObject = "TeamFLAG1";
+					targetClientId = "-1";
+					targetObjectId = "7007";
+					location = "-550.425 93.386 331.033";
+					weightLevel1 = "5000";
+					weightLevel2 = "0";
+					weightLevel3 = "0";
+					weightLevel4 = "0";
+					offense = "1";
+					defense = "1";
+					issuedByHuman = "0";
+					issuedByClientId = "-1";
+					forceClientId = "-1";
+					locked = "0";
+
+					isInvalid = "0";
+					team = "2";
+					gameType = "all";
+				};
+				new AIObjective(AIOTouchObject) {
+					position = "-550.425 93.386 331.033";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "AIObjectiveMarker";
+					lockCount = "0";
+					homingCount = "0";
+					description = "Grab the dropped enemy flag";
+					mode = "FlagDropped";
+					targetObject = "TeamFLAG1";
+					targetClientId = "-1";
+					targetObjectId = "7007";
+					location = "-550.425 93.386 331.033";
+					weightLevel1 = "5001";
+					weightLevel2 = "4100";
+					weightLevel3 = "0";
+					weightLevel4 = "0";
+					offense = "1";
+					defense = "1";
+					issuedByHuman = "0";
+					issuedByClientId = "-1";
+					forceClientId = "-1";
+					locked = "0";
+
+					isInvalid = "0";
+					team = "2";
+					gameType = "all";
+				};
+				new AIObjective(AIOTouchObject) {
+					position = "-78.3757 93.1042 330.97";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "AIObjectiveMarker";
+					lockCount = "0";
+					homingCount = "0";
+					description = "Return our flag";
+					mode = "FlagDropped";
+					targetObject = "TeamFLAG2";
+					targetClientId = "-1";
+					targetObjectId = "7076";
+					location = "-78.3757 93.1042 330.97";
+					weightLevel1 = "5001";
+					weightLevel2 = "4100";
+					weightLevel3 = "0";
+					weightLevel4 = "0";
+					offense = "1";
+					defense = "1";
+					issuedByHuman = "0";
+					issuedByClientId = "-1";
+					forceClientId = "-1";
+					locked = "0";
+
+					isInvalid = "0";
+					team = "2";
+					gameType = "all";
+				};
+				new AIObjective(AIOMortarObject) {
+					position = "-621.897 93.2683 341.652";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "AIObjectiveMarker";
+					lockCount = "0";
+					homingCount = "0";
+					description = "Mortar the SensorMediumPulse";
+					targetObject = "TeamSensorMediumPulse1";
+					targetClientId = "-1";
+					targetObjectId = "7012";
+					location = "-621.897 93.2683 341.652";
+					weightLevel1 = "3400";
+					weightLevel2 = "1000";
+					weightLevel3 = "0";
+					weightLevel4 = "0";
+					offense = "1";
+					defense = "0";
+					equipment = "Mortar MortarAmmo";
+					buyEquipmentSet = "HeavyAmmoSet";
+					issuedByHuman = "0";
+					issuedByClientId = "-1";
+					forceClientId = "-1";
+					locked = "0";
+
+					isInvalid = "0";
+					team = "2";
+				};
+				new AIObjective(AIOAttackObject) {
+					position = "-521.838 61.3463 333.005";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "AIObjectiveMarker";
+					lockCount = "0";
+					homingCount = "0";
+					description = "Attack the StationInventory";
+					targetObject = "TeamStationInventory1";
+					targetClientId = "-1";
+					targetObjectId = "-1";
+					location = "-521.838 61.3463 333.005";
+					weightLevel1 = "2900";
+					weightLevel2 = "1400";
+					weightLevel3 = "0";
+					weightLevel4 = "0";
+					offense = "1";
+					defense = "0";
+					desiredEquipment = "ShieldPack";
+					buyEquipmentSet = "HeavyAmmoSet";
+					issuedByHuman = "0";
+					issuedByClientId = "-1";
+					forceClientId = "-1";
+					locked = "0";
+
+					isInvalid = "0";
+					team = "2";
+				};
+				new AIObjective(AIOAttackObject) {
+					position = "-521.884 70.6872 333.001";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "AIObjectiveMarker";
+					lockCount = "0";
+					homingCount = "0";
+					description = "Attack the StationInventory";
+					targetObject = "TeamStationInventory2";
+					targetClientId = "-1";
+					targetObjectId = "-1";
+					location = "-521.884 70.6872 333.001";
+					weightLevel1 = "2900";
+					weightLevel2 = "1400";
+					weightLevel3 = "0";
+					weightLevel4 = "0";
+					offense = "1";
+					defense = "0";
+					desiredEquipment = "ShieldPack";
+					buyEquipmentSet = "HeavyAmmoSet";
+					issuedByHuman = "0";
+					issuedByClientId = "-1";
+					forceClientId = "-1";
+					locked = "0";
+
+					isInvalid = "0";
+					team = "2";
+				};
+				new AIObjective(AIOAttackObject) {
+					position = "-521.775 61.2751 329.182";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "AIObjectiveMarker";
+					lockCount = "0";
+					homingCount = "0";
+					description = "Attack the StationInventory";
+					targetObject = "TeamStationInventory3";
+					targetClientId = "-1";
+					targetObjectId = "-1";
+					location = "-521.775 61.2751 329.182";
+					weightLevel1 = "2900";
+					weightLevel2 = "1400";
+					weightLevel3 = "0";
+					weightLevel4 = "0";
+					offense = "1";
+					defense = "0";
+					desiredEquipment = "ShieldPack";
+					buyEquipmentSet = "HeavyAmmoSet";
+					issuedByHuman = "0";
+					issuedByClientId = "-1";
+					forceClientId = "-1";
+					locked = "0";
+
+					isInvalid = "0";
+					team = "2";
+				};
+				new AIObjective(AIOAttackObject) {
+					position = "-521.856 70.873 329.183";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "AIObjectiveMarker";
+					lockCount = "0";
+					homingCount = "0";
+					description = "Attack the StationInventory";
+					targetObject = "TeamStationInventory4";
+					targetClientId = "-1";
+					targetObjectId = "-1";
+					location = "-521.856 70.873 329.183";
+					weightLevel1 = "2900";
+					weightLevel2 = "1400";
+					weightLevel3 = "0";
+					weightLevel4 = "0";
+					offense = "1";
+					defense = "0";
+					desiredEquipment = "ShieldPack";
+					buyEquipmentSet = "HeavyAmmoSet";
+					issuedByHuman = "0";
+					issuedByClientId = "-1";
+					forceClientId = "-1";
+					locked = "0";
+
+					isInvalid = "0";
+					team = "2";
+				};
+				new AIObjective(AIOAttackObject) {
+					position = "-521.885 79.4534 329.184";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "AIObjectiveMarker";
+					lockCount = "0";
+					homingCount = "0";
+					description = "Attack the StationInventory";
+					targetObject = "TeamStationInventory5";
+					targetClientId = "-1";
+					targetObjectId = "-1";
+					location = "-521.885 79.4534 329.184";
+					weightLevel1 = "2900";
+					weightLevel2 = "1400";
+					weightLevel3 = "0";
+					weightLevel4 = "0";
+					offense = "1";
+					defense = "0";
+					desiredEquipment = "ShieldPack";
+					buyEquipmentSet = "HeavyAmmoSet";
+					issuedByHuman = "0";
+					issuedByClientId = "-1";
+					forceClientId = "-1";
+					locked = "0";
+
+					isInvalid = "0";
+					team = "2";
+				};
+				new AIObjective(AIOAttackObject) {
+					position = "-515.365 81.3781 363.815";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "AIObjectiveMarker";
+					lockCount = "0";
+					homingCount = "0";
+					description = "Attack the StationInventory";
+					targetObject = "TeamStationInventory6";
+					targetClientId = "-1";
+					targetObjectId = "7014";
+					location = "-515.365 81.3781 363.815";
+					weightLevel1 = "2900";
+					weightLevel2 = "1400";
+					weightLevel3 = "0";
+					weightLevel4 = "0";
+					offense = "1";
+					defense = "0";
+					desiredEquipment = "ShieldPack";
+					buyEquipmentSet = "HeavyAmmoSet";
+					issuedByHuman = "0";
+					issuedByClientId = "-1";
+					forceClientId = "-1";
+					locked = "0";
+
+					isInvalid = "0";
+					team = "2";
+				};
+				new AIObjective(AIOAttackObject) {
+					position = "-515.427 105.159 363.831";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "AIObjectiveMarker";
+					lockCount = "0";
+					homingCount = "0";
+					description = "Attack the StationInventory";
+					targetObject = "TeamStationInventory7";
+					targetClientId = "-1";
+					targetObjectId = "7010";
+					location = "-515.427 105.159 363.831";
+					weightLevel1 = "2900";
+					weightLevel2 = "1400";
+					weightLevel3 = "0";
+					weightLevel4 = "0";
+					offense = "1";
+					defense = "0";
+					desiredEquipment = "ShieldPack";
+					buyEquipmentSet = "HeavyAmmoSet";
+					issuedByHuman = "0";
+					issuedByClientId = "-1";
+					forceClientId = "-1";
+					locked = "0";
+
+					isInvalid = "0";
+					team = "2";
+				};
+				new AIObjective(AIOAttackObject) {
+					position = "-564.745 106.782 348.99";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "AIObjectiveMarker";
+					lockCount = "0";
+					homingCount = "0";
+					description = "Attack the StationInventory";
+					targetObject = "TeamStationInventory8";
+					targetClientId = "-1";
+					targetObjectId = "-1";
+					location = "-564.745 106.782 348.99";
+					weightLevel1 = "2900";
+					weightLevel2 = "1400";
+					weightLevel3 = "0";
+					weightLevel4 = "0";
+					offense = "1";
+					defense = "0";
+					desiredEquipment = "ShieldPack";
+					buyEquipmentSet = "HeavyAmmoSet";
+					issuedByHuman = "0";
+					issuedByClientId = "-1";
+					forceClientId = "-1";
+					locked = "0";
+
+					isInvalid = "0";
+					team = "2";
+				};
+				new AIObjective(AIORepairObject) {
+					position = "-113.395 81.3312 363.756";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "AIObjectiveMarker";
+					lockCount = "0";
+					homingCount = "0";
+					description = "Repair the StationInventory";
+					targetObject = "TeamStationInventory14";
+					targetClientId = "-1";
+					targetObjectId = "7089";
+					location = "-113.395 81.3312 363.756";
+					weightLevel1 = "2900";
+					weightLevel2 = "1400";
+					weightLevel3 = "0";
+					weightLevel4 = "0";
+					offense = "0";
+					defense = "1";
+					equipment = "RepairPack";
+					buyEquipmentSet = "MediumRepairSet";
+					issuedByHuman = "0";
+					issuedByClientId = "-1";
+					forceClientId = "-1";
+					locked = "0";
+
+					isInvalid = "0";
+					team = "2";
+				};
+				new AIObjective(AIODefendLocation) {
+					position = "-78.3757 93.1042 330.97";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "AIObjectiveMarker";
+					lockCount = "0";
+					homingCount = "0";
+					description = "Defend our flag";
+					targetObject = "TeamFLAG2";
+					targetClientId = "-1";
+					targetObjectId = "7076";
+					location = "-78.3757 93.1042 330.97";
+					weightLevel1 = "3900";
+					weightLevel2 = "2000";
+					weightLevel3 = "0";
+					weightLevel4 = "0";
+					offense = "0";
+					defense = "1";
+					desiredEquipment = "ShieldPack Plasma PlasmaAmmo";
+					buyEquipmentSet = "HeavyShieldSet";
+					chat = "ChatSelfDefendFlag DefendBase";
+					issuedByHuman = "0";
+					issuedByClientId = "-1";
+					forceClientId = "-1";
+					locked = "0";
+
+					isInvalid = "0";
+					team = "2";
+					gameType = "all";
+				};
+				new AIObjective(AIOAttackPlayer) {
+					position = "-78.3757 93.1042 330.97";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "AIObjectiveMarker";
+					lockCount = "0";
+					homingCount = "0";
+					description = "Kill the enemy flag carrier";
+					mode = "FlagCarrier";
+					targetObject = "TeamFLAG2";
+					targetClientId = "-1";
+					targetObjectId = "7076";
+					location = "-78.3757 93.1042 330.97";
+					weightLevel1 = "4800";
+					weightLevel2 = "4800";
+					weightLevel3 = "0";
+					weightLevel4 = "0";
+					offense = "1";
+					defense = "0";
+					desiredEquipment = "Light EnergyPack";
+					buyEquipmentSet = "LightEnergySniper";
+					issuedByHuman = "0";
+					issuedByClientId = "-1";
+					forceClientId = "-1";
+					locked = "0";
+
+					isInvalid = "0";
+					team = "2";
+					gameType = "all";
+				};
+				new AIObjective(AIORepairObject) {
+					position = "-106.91 107.048 329.129";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "AIObjectiveMarker";
+					lockCount = "0";
+					homingCount = "0";
+					description = "Repair the StationInventory";
+					targetObject = "TeamStationInventory9";
+					targetClientId = "-1";
+					targetObjectId = "7066";
+					location = "-106.91 107.048 329.129";
+					weightLevel1 = "2900";
+					weightLevel2 = "1400";
+					weightLevel3 = "0";
+					weightLevel4 = "0";
+					offense = "0";
+					defense = "1";
+					equipment = "RepairPack";
+					buyEquipmentSet = "MediumRepairSet";
+					issuedByHuman = "0";
+					issuedByClientId = "-1";
+					forceClientId = "-1";
+					locked = "0";
+
+					isInvalid = "0";
+					team = "2";
+				};
+				new AIObjective(AIORepairObject) {
+					position = "-106.936 115.629 329.128";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "AIObjectiveMarker";
+					lockCount = "0";
+					homingCount = "0";
+					description = "Repair the StationInventory";
+					targetObject = "TeamStationInventory10";
+					targetClientId = "-1";
+					targetObjectId = "7064";
+					location = "-106.936 115.629 329.128";
+					weightLevel1 = "2900";
+					weightLevel2 = "1400";
+					weightLevel3 = "0";
+					weightLevel4 = "0";
+					offense = "0";
+					defense = "1";
+					equipment = "RepairPack";
+					buyEquipmentSet = "MediumRepairSet";
+					issuedByHuman = "0";
+					issuedByClientId = "-1";
+					forceClientId = "-1";
+					locked = "0";
+
+					isInvalid = "0";
+					team = "2";
+				};
+				new AIObjective(AIORepairObject) {
+					position = "-107.013 125.227 329.127";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "AIObjectiveMarker";
+					lockCount = "0";
+					homingCount = "0";
+					description = "Repair the StationInventory";
+					targetObject = "TeamStationInventory11";
+					targetClientId = "-1";
+					targetObjectId = "-1";
+					location = "-107.013 125.227 329.127";
+					weightLevel1 = "2900";
+					weightLevel2 = "1400";
+					weightLevel3 = "0";
+					weightLevel4 = "0";
+					offense = "0";
+					defense = "1";
+					equipment = "RepairPack";
+					buyEquipmentSet = "MediumRepairSet";
+					issuedByHuman = "0";
+					issuedByClientId = "-1";
+					forceClientId = "-1";
+					locked = "0";
+
+					isInvalid = "0";
+					team = "2";
+				};
+				new AIObjective(AIORepairObject) {
+					position = "-106.908 115.815 332.946";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "AIObjectiveMarker";
+					lockCount = "0";
+					homingCount = "0";
+					description = "Repair the StationInventory";
+					targetObject = "TeamStationInventory12";
+					targetClientId = "-1";
+					targetObjectId = "-1";
+					location = "-106.908 115.815 332.946";
+					weightLevel1 = "2900";
+					weightLevel2 = "1400";
+					weightLevel3 = "0";
+					weightLevel4 = "0";
+					offense = "0";
+					defense = "1";
+					equipment = "RepairPack";
+					buyEquipmentSet = "MediumRepairSet";
+					issuedByHuman = "0";
+					issuedByClientId = "-1";
+					forceClientId = "-1";
+					locked = "0";
+
+					isInvalid = "0";
+					team = "2";
+				};
+				new AIObjective(AIORepairObject) {
+					position = "-106.95 125.156 332.95";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "AIObjectiveMarker";
+					lockCount = "0";
+					homingCount = "0";
+					description = "Repair the StationInventory";
+					targetObject = "TeamStationInventory13";
+					targetClientId = "-1";
+					targetObjectId = "7091";
+					location = "-106.95 125.156 332.95";
+					weightLevel1 = "2900";
+					weightLevel2 = "1400";
+					weightLevel3 = "0";
+					weightLevel4 = "0";
+					offense = "0";
+					defense = "1";
+					equipment = "RepairPack";
+					buyEquipmentSet = "MediumRepairSet";
+					issuedByHuman = "0";
+					issuedByClientId = "-1";
+					forceClientId = "-1";
+					locked = "0";
+
+					isInvalid = "0";
+					team = "2";
+				};
+				new AIObjective(AIORepairObject) {
+					position = "-6.9036 93.1928 341.597";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "AIObjectiveMarker";
+					lockCount = "0";
+					homingCount = "0";
+					description = "Repair the SensorMediumPulse";
+					targetObject = "TeamSensorMediumPulse2";
+					targetClientId = "-1";
+					targetObjectId = "7068";
+					location = "-6.9036 93.1928 341.597";
+					weightLevel1 = "3100";
+					weightLevel2 = "1000";
+					weightLevel3 = "0";
+					weightLevel4 = "0";
+					offense = "0";
+					defense = "1";
+					equipment = "RepairPack";
+					buyEquipmentSet = "MediumRepairSet";
+					issuedByHuman = "0";
+					issuedByClientId = "-1";
+					forceClientId = "-1";
+					locked = "0";
+
+					isInvalid = "0";
+					team = "2";
+				};
+				new AIObjective(AIORepairObject) {
+					position = "-113.396 105.098 363.78";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "AIObjectiveMarker";
+					lockCount = "0";
+					homingCount = "0";
+					description = "Repair the StationInventory";
+					targetObject = "TeamStationInventory15";
+					targetClientId = "-1";
+					targetObjectId = "7069";
+					location = "-113.396 105.098 363.78";
+					weightLevel1 = "2900";
+					weightLevel2 = "1400";
+					weightLevel3 = "0";
+					weightLevel4 = "0";
+					offense = "0";
+					defense = "1";
+					equipment = "RepairPack";
+					buyEquipmentSet = "MediumRepairSet";
+					issuedByHuman = "0";
+					issuedByClientId = "-1";
+					forceClientId = "-1";
+					locked = "0";
+
+					isInvalid = "0";
+					team = "2";
+				};
+				new AIObjective(AIORepairObject) {
+					position = "-64.2388 79.9515 348.944";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "AIObjectiveMarker";
+					lockCount = "0";
+					homingCount = "0";
+					description = "Repair the StationInventory";
+					targetObject = "TeamStationInventory16";
+					targetClientId = "-1";
+					targetObjectId = "-1";
+					location = "-64.2388 79.9515 348.944";
+					weightLevel1 = "2900";
+					weightLevel2 = "1400";
+					weightLevel3 = "0";
+					weightLevel4 = "0";
+					offense = "0";
+					defense = "1";
+					equipment = "RepairPack";
+					buyEquipmentSet = "MediumRepairSet";
+					issuedByHuman = "0";
+					issuedByClientId = "-1";
+					forceClientId = "-1";
+					locked = "0";
+
+					isInvalid = "0";
+					team = "2";
+				};
+			};
+		};
+	};
+	new WaterBlock() {
+		position = "-424 64 46.106";
+		rotation = "1 0 0 0";
+		scale = "2048 2048 100";
+		liquidType = "CrustyLava";
+		density = "1";
+		viscosity = "15";
+		waveMagnitude = "0";
+		surfaceTexture = "LiquidTiles/Lava";
+		surfaceOpacity = "0.2";
+		envMapTexture = "desert/skies/d_n_move1";
+		envMapIntensity = "0";
+		submergeTexture[0] = "special/lavadeath_1";
+		submergeTexture[1] = "special/lavadeath_2";
+		removeWetEdges = "0";
+
+		locked = "false";
+	};
+	new SimGroup() {
+
+		powerCount = "0";
+	};
+	new SimGroup() {
+
+		powerCount = "0";
+	};
+	new SimGroup() {
+	};
+};
+//--- OBJECT WRITE END ---

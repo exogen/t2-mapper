@@ -73,18 +73,10 @@ export function createBuiltins(
     isobject(obj: any): boolean {
       return runtime().$.isObject(obj);
     },
-    typeof(obj: any): string {
-      if (obj == null) return "";
-      if (typeof obj === "object" && obj._class) return obj._className;
-      return typeof obj;
-    },
 
     // Object lookup
     nametoid(name: string): number {
       return runtime().$.nameToId(name);
-    },
-    isfunction(name: string): boolean {
-      return runtime().$.isFunction(name);
     },
 
     // String functions
@@ -309,12 +301,6 @@ export function createBuiltins(
       const min = Number(a) || 0;
       const max = Number(b) || 0;
       return Math.floor(Math.random() * (max - min + 1)) + min;
-    },
-    getrandomseed(): number {
-      throw new Error("getRandomSeed() not implemented");
-    },
-    setrandomseed(_seed: any): void {
-      throw new Error("setRandomSeed() not implemented");
     },
     mdegtorad(deg: any): number {
       return (Number(deg) || 0) * (Math.PI / 180);
