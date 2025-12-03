@@ -89,14 +89,10 @@ export function SkyBox({
 
         varying vec3 vDirection;
 
-        // Convert linear to sRGB
-        vec3 linearToSRGB(vec3 color) {
-          return pow(color, vec3(1.0 / 2.2));
-        }
-
         void main() {
           vec3 direction = normalize(vDirection);
-          direction.x = -direction.x;
+          // Swap X and Z to match scene.backgroundRotation used in non-fog path
+          direction = vec3(direction.z, direction.y, direction.x);
           vec4 skyColor = textureCube(skybox, direction);
 
           // Calculate fog factor based on vertical direction
@@ -124,9 +120,10 @@ export function SkyBox({
 
   const { scene } = useThree();
 
+  // Rotate background to match the X/Z swap applied in the fog shader path
   useEffect(() => {
     scene.backgroundRotation = new Euler(0, Math.PI / 2, 0);
-  }, []);
+  }, [scene]);
 
   // If fog is disabled, just use the skybox as background
   if (!hasFog) {
