@@ -97,6 +97,11 @@ export interface TorqueRuntimeOptions {
    */
   preloadScripts?: string[];
   /**
+   * Glob patterns for scripts to ignore during dependency resolution.
+   * Matched scripts will be skipped and logged as warnings.
+   */
+  ignoreScripts?: string[];
+  /**
    * Cache for parsed scripts and generated code. If provided, the runtime
    * will use this cache to store and retrieve parsed ASTs, avoiding redundant
    * parsing when scripts are loaded multiple times across runtime instances.

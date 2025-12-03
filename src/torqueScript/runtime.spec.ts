@@ -2538,6 +2538,182 @@ describe("TorqueScript Runtime", () => {
     });
   });
 
+  describe("ignoreScripts option", () => {
+    function createLoader(
+      files: Record<string, string>,
+    ): (path: string) => Promise<string | null> {
+      return async (path: string) =>
+        files[path.replace(/\\/g, "/").toLowerCase()] ?? null;
+    }
+
+    it("skips scripts matching glob patterns", async () => {
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+      const runtime = createRuntime({
+        loadScript: createLoader({
+          "scripts/main.cs": 'exec("scripts/ai/brain.cs"); $Main = 1;',
+          "scripts/ai/brain.cs": "$AI = 1;",
+        }),
+        ignoreScripts: ["**/ai/**"],
+      });
+
+      const script = await runtime.loadFromPath("scripts/main.cs");
+      script.execute();
+
+      expect(runtime.$g.get("Main")).toBe(1);
+      expect(runtime.$g.get("AI")).toBe(""); // Not loaded
+      expect(warnSpy).toHaveBeenCalledWith(
+        "Ignoring script: scripts/ai/brain.cs",
+      );
+      warnSpy.mockRestore();
+    });
+
+    it("is case insensitive", async () => {
+      const runtime = createRuntime({
+        loadScript: createLoader({
+          "scripts/main.cs": 'exec("Scripts/AI/Brain.cs"); $Main = 1;',
+          "scripts/ai/brain.cs": "$AI = 1;",
+        }),
+        ignoreScripts: ["**/ai/**"],
+      });
+
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const script = await runtime.loadFromPath("scripts/main.cs");
+      script.execute();
+      warnSpy.mockRestore();
+
+      expect(runtime.$g.get("Main")).toBe(1);
+      expect(runtime.$g.get("AI")).toBe(""); // Not loaded due to case-insensitive match
+    });
+
+    it("supports multiple patterns", async () => {
+      const runtime = createRuntime({
+        loadScript: createLoader({
+          "scripts/main.cs":
+            'exec("scripts/ai/brain.cs"); exec("scripts/vehicles/tank.cs"); exec("scripts/utils.cs"); $Main = 1;',
+          "scripts/ai/brain.cs": "$AI = 1;",
+          "scripts/vehicles/tank.cs": "$Vehicle = 1;",
+          "scripts/utils.cs": "$Utils = 1;",
+        }),
+        ignoreScripts: ["**/ai/**", "**/vehicles/**"],
+      });
+
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const script = await runtime.loadFromPath("scripts/main.cs");
+      script.execute();
+      warnSpy.mockRestore();
+
+      expect(runtime.$g.get("Main")).toBe(1);
+      expect(runtime.$g.get("AI")).toBe(""); // Ignored
+      expect(runtime.$g.get("Vehicle")).toBe(""); // Ignored
+      expect(runtime.$g.get("Utils")).toBe(1); // Loaded (not in ignore list)
+    });
+
+    it("marks ignored scripts as failed (not retried)", async () => {
+      let loadCount = 0;
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+      const runtime = createRuntime({
+        loadScript: async (path) => {
+          loadCount++;
+          if (path.toLowerCase() === "scripts/ignored.cs") {
+            return "$Ignored = 1;";
+          }
+          if (path.toLowerCase() === "scripts/main.cs") {
+            return 'exec("scripts/ignored.cs"); exec("scripts/ignored.cs"); $Main = 1;';
+          }
+          return null;
+        },
+        ignoreScripts: ["**/ignored.cs"],
+      });
+
+      const script = await runtime.loadFromPath("scripts/main.cs");
+      script.execute();
+
+      // Should only warn once (second exec sees it's already in failedScripts)
+      expect(
+        warnSpy.mock.calls.filter(
+          (c) => c[0] === "Ignoring script: scripts/ignored.cs",
+        ).length,
+      ).toBe(1);
+      // Loader should only be called for main.cs, not for ignored.cs
+      expect(loadCount).toBe(1);
+      warnSpy.mockRestore();
+    });
+
+    it("matches exact filenames with glob", async () => {
+      const runtime = createRuntime({
+        loadScript: createLoader({
+          "scripts/main.cs":
+            'exec("scripts/skip-me.cs"); exec("scripts/keep-me.cs"); $Main = 1;',
+          "scripts/skip-me.cs": "$Skip = 1;",
+          "scripts/keep-me.cs": "$Keep = 1;",
+        }),
+        ignoreScripts: ["**/skip-me.cs"],
+      });
+
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const script = await runtime.loadFromPath("scripts/main.cs");
+      script.execute();
+      warnSpy.mockRestore();
+
+      expect(runtime.$g.get("Main")).toBe(1);
+      expect(runtime.$g.get("Skip")).toBe(""); // Ignored
+      expect(runtime.$g.get("Keep")).toBe(1); // Loaded
+    });
+
+    it("does nothing when ignoreScripts is empty array", async () => {
+      const runtime = createRuntime({
+        loadScript: createLoader({
+          "scripts/main.cs": 'exec("scripts/dep.cs"); $Main = 1;',
+          "scripts/dep.cs": "$Dep = 1;",
+        }),
+        ignoreScripts: [],
+      });
+
+      const script = await runtime.loadFromPath("scripts/main.cs");
+      script.execute();
+
+      expect(runtime.$g.get("Main")).toBe(1);
+      expect(runtime.$g.get("Dep")).toBe(1); // Loaded normally
+    });
+
+    it("does nothing when ignoreScripts is not provided", async () => {
+      const runtime = createRuntime({
+        loadScript: createLoader({
+          "scripts/main.cs": 'exec("scripts/dep.cs"); $Main = 1;',
+          "scripts/dep.cs": "$Dep = 1;",
+        }),
+        // No ignoreScripts option
+      });
+
+      const script = await runtime.loadFromPath("scripts/main.cs");
+      script.execute();
+
+      expect(runtime.$g.get("Main")).toBe(1);
+      expect(runtime.$g.get("Dep")).toBe(1); // Loaded normally
+    });
+
+    it("exec() returns false for ignored scripts", async () => {
+      const runtime = createRuntime({
+        loadScript: createLoader({
+          "scripts/main.cs": '$Result = exec("scripts/ignored.cs"); $Main = 1;',
+          "scripts/ignored.cs": "$Ignored = 1;",
+        }),
+        ignoreScripts: ["**/ignored.cs"],
+      });
+
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const script = await runtime.loadFromPath("scripts/main.cs");
+      script.execute();
+      warnSpy.mockRestore();
+
+      expect(runtime.$g.get("Main")).toBe(1);
+      // exec() should return false when the script is ignored (same as failed)
+      expect(runtime.$g.get("Result")).toBe(false);
+    });
+  });
+
   describe("nsRef with execution context", () => {
     it("tracks execution context for Parent:: calls via nsRef", () => {
       const runtime = createRuntime();
