@@ -1,4 +1,4 @@
-import { lazy } from "react";
+import { lazy, Suspense } from "react";
 import type { TorqueObject } from "../torqueScript";
 import { TerrainBlock } from "./TerrainBlock";
 import { SimGroup } from "./SimGroup";
@@ -51,5 +51,9 @@ const componentMap = {
 
 export function renderObject(object: TorqueObject, key?: string | number) {
   const Component = componentMap[object._className];
-  return Component ? <Component key={key} object={object} /> : null;
+  return Component ? (
+    <Suspense>
+      <Component key={key} object={object} />
+    </Suspense>
+  ) : null;
 }
