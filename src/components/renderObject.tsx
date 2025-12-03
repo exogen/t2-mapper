@@ -29,7 +29,7 @@ const componentMap = {
   WayPoint,
 };
 
-export function renderObject(object: TorqueObject, key: string | number) {
+export function renderObject(object: TorqueObject, key?: string | number) {
   const Component = componentMap[object._className];
   return Component ? <Component key={key} object={object} /> : null;
 }

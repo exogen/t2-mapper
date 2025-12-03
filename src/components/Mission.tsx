@@ -1,16 +1,33 @@
 import { useQuery } from "@tanstack/react-query";
+import picomatch from "picomatch";
 import { loadMission } from "../loaders";
-import {
-  executeMission,
-  type ParsedMission,
-  type ExecutedMission,
-} from "../mission";
+import { type ParsedMission } from "../mission";
 import { createScriptLoader } from "../torqueScript/scriptLoader.browser";
 import { renderObject } from "./renderObject";
 import { memo, useEffect, useState } from "react";
 import { TickProvider } from "./TickProvider";
+import {
+  createScriptCache,
+  FileSystemHandler,
+  runServer,
+  TorqueObject,
+} from "../torqueScript";
+import { getResourceKey, getResourceList, getResourceMap } from "../manifest";
 
 const loadScript = createScriptLoader();
+// Shared cache for parsed scripts - survives runtime restarts
+const scriptCache = createScriptCache();
+const fileSystem: FileSystemHandler = {
+  findFiles: (pattern) => {
+    const isMatch = picomatch(pattern, { nocase: true });
+    return getResourceList().filter((path) => isMatch(path));
+  },
+  isFile: (resourcePath) => {
+    const resourceKeys = getResourceMap();
+    const resourceKey = getResourceKey(resourcePath);
+    return resourceKeys[resourceKey] != null;
+  },
+};
 
 function useParsedMission(name: string) {
   return useQuery({
@@ -19,61 +36,52 @@ function useParsedMission(name: string) {
   });
 }
 
-function useExecutedMission(parsedMission: ParsedMission | undefined) {
-  const [executedMission, setExecutedMission] = useState<
-    ExecutedMission | undefined
-  >();
+function useExecutedMission(
+  missionName: string,
+  parsedMission: ParsedMission | undefined,
+) {
+  const [missionGroup, setMissionGroup] = useState<TorqueObject | undefined>();
 
   useEffect(() => {
     if (!parsedMission) {
-      setExecutedMission(undefined);
       return;
     }
 
-    // Clear previous mission immediately to avoid rendering with destroyed runtime
-    setExecutedMission(undefined);
+    const controller = new AbortController();
+    // FIXME: Always just runs as the first game type for now...
+    const missionType = parsedMission.missionTypes[0];
 
-    let cancelled = false;
-    let result: ExecutedMission | undefined;
-
-    async function run() {
-      try {
-        const executed = await executeMission(parsedMission, { loadScript });
-        if (cancelled) {
-          executed.runtime.destroy();
-        } else {
-          result = executed;
-          setExecutedMission(executed);
-        }
-      } catch (error) {
-        if (!cancelled) {
-          console.error("Failed to execute mission:", error);
-        }
-      }
-    }
-
-    run();
+    const { runtime } = runServer({
+      missionName,
+      missionType,
+      runtimeOptions: {
+        loadScript,
+        fileSystem,
+        cache: scriptCache,
+        signal: controller.signal,
+      },
+      onMissionLoadDone: () => {
+        const missionGroup = runtime.getObjectByName("MissionGroup");
+        setMissionGroup(missionGroup);
+      },
+    });
 
     return () => {
-      cancelled = true;
-      result?.runtime.destroy();
+      controller.abort();
+      runtime.destroy();
     };
-  }, [parsedMission]);
+  }, [missionName, parsedMission]);
 
-  return executedMission;
+  return missionGroup;
 }
 
 export const Mission = memo(function Mission({ name }: { name: string }) {
   const { data: parsedMission } = useParsedMission(name);
-  const executedMission = useExecutedMission(parsedMission);
+  const missionGroup = useExecutedMission(name, parsedMission);
 
-  if (!executedMission) {
+  if (!missionGroup) {
     return null;
   }
 
-  return (
-    <TickProvider>
-      {executedMission.objects.map((object, i) => renderObject(object, i))}
-    </TickProvider>
-  );
+  return <TickProvider>{renderObject(missionGroup)}</TickProvider>;
 });

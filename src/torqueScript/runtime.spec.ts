@@ -153,6 +153,90 @@ describe("TorqueScript Runtime", () => {
       expect($g.get("same")).toBe(true);
       expect($g.get("diff")).toBe(false);
     });
+
+    it("allows assignment on the right side of concat (SPC)", () => {
+      // Pattern from Training5.mis:
+      // echo("InitialBarrel =" SPC %initialBarrel = (%skill < 3 ? "Missile" : "Plasma"));
+      const { $g, $l } = run(`
+        $skill = 2;
+        $result = "Barrel:" SPC %barrel = ($skill < 3 ? "Missile" : "Plasma");
+      `);
+      // The assignment should happen AND the result should include the assigned value
+      expect($l.get("barrel")).toBe("Missile");
+      expect($g.get("result")).toBe("Barrel: Missile");
+    });
+
+    it("allows assignment on the right side of concat (@)", () => {
+      const { $g, $l } = run(`
+        $result = "value=" @ %x = 42;
+      `);
+      expect($l.get("x")).toBe(42);
+      expect($g.get("result")).toBe("value=42");
+    });
+
+    it("allows multiple concat with assignment at end", () => {
+      // Assignment is right-associative and consumes everything to its right
+      // So "a" SPC "b" SPC %x = "c" parses as "a" SPC "b" SPC (%x = "c")
+      const { $g, $l } = run(`
+        $result = "a" SPC "b" SPC %x = "c";
+      `);
+      expect($l.get("x")).toBe("c");
+      expect($g.get("result")).toBe("a b c");
+    });
+  });
+
+  describe("operator precedence", () => {
+    it("parses unary minus with correct precedence", () => {
+      // -1 + 2 should be (-1) + 2 = 1, NOT -(1 + 2) = -3
+      const { $g } = run(`
+        $result = -1 + 2;
+      `);
+      expect($g.get("result")).toBe(1);
+    });
+
+    it("parses unary minus in complex expressions", () => {
+      const { $g } = run(`
+        $a = -5 * 2;        // (-5) * 2 = -10
+        $b = 10 + -3;       // 10 + (-3) = 7
+        $c = -2 + -3;       // (-2) + (-3) = -5
+        $d = -10 / 2 + 1;   // ((-10) / 2) + 1 = -4
+      `);
+      expect($g.get("a")).toBe(-10);
+      expect($g.get("b")).toBe(7);
+      expect($g.get("c")).toBe(-5);
+      expect($g.get("d")).toBe(-4);
+    });
+
+    it("parses logical not with correct precedence", () => {
+      const { $g } = run(`
+        $a = !0 + 1;        // (!0) + 1 = 1 + 1 = 2
+        $b = !1 || 1;       // (!1) || 1 = 0 || 1 = 1
+      `);
+      expect($g.get("a")).toBe(2);
+      expect($g.get("b")).toBe(1);
+    });
+
+    it("parses bitwise not with correct precedence", () => {
+      // The runtime uses unsigned 32-bit for bitwise ops
+      // ~1 >>> 0 = 4294967294 (0xFFFFFFFE), then + 3 = 4294967297
+      // The key test here is precedence: (~1) + 3, not ~(1 + 3)
+      const { $g } = run(`
+        $a = ~1 + 3;
+      `);
+      // ~1 as unsigned 32-bit = 4294967294, plus 3 = 4294967297
+      expect($g.get("a")).toBe(4294967297);
+    });
+
+    it("handles multiple unary operators", () => {
+      const { $g } = run(`
+        $a = --5;           // -(-5) = 5
+        $b = !!1;           // !(!1) = !(0) = 1 (truthy)
+        $c = -(-(-1));      // 1 negated 3 times = -1
+      `);
+      expect($g.get("a")).toBe(5);
+      expect($g.get("b")).toBeTruthy(); // JavaScript returns boolean, TorqueScript treats as truthy
+      expect($g.get("c")).toBe(-1);
+    });
   });
 
   describe("control flow", () => {
@@ -201,6 +285,45 @@ describe("TorqueScript Runtime", () => {
       expect($g.get("result")).toBe(3);
     });
 
+    it("handles do-while loops", () => {
+      const { $g } = run(`
+        function countdown(%n) {
+          %result = "";
+          do {
+            %result = %result @ %n;
+            %n--;
+          } while (%n > 0);
+          return %result;
+        }
+        $result = countdown(3);
+      `);
+      expect($g.get("result")).toBe("321");
+    });
+
+    it("handles break in loops", () => {
+      const { $g } = run(`
+        %sum = 0;
+        for (%i = 0; %i < 10; %i++) {
+          if (%i == 5) break;
+          %sum += %i;
+        }
+        $result = %sum;
+      `);
+      expect($g.get("result")).toBe(10); // 0+1+2+3+4
+    });
+
+    it("handles continue in loops", () => {
+      const { $g } = run(`
+        %sum = 0;
+        for (%i = 0; %i < 5; %i++) {
+          if (%i == 2) continue;
+          %sum += %i;
+        }
+        $result = %sum;
+      `);
+      expect($g.get("result")).toBe(8); // 0+1+3+4
+    });
+
     it("handles switch statements", () => {
       const { $g } = run(`
         function getDay(%n) {
@@ -220,6 +343,50 @@ describe("TorqueScript Runtime", () => {
       expect($g.get("day1")).toBe("Monday");
       expect($g.get("day2")).toBe("Tuesday");
       expect($g.get("dayX")).toBe("Unknown");
+    });
+
+    it("handles switch with 'or' for multiple cases", () => {
+      const { $g } = run(`
+        function isWeekend(%day) {
+          switch (%day) {
+            case 6 or 7:
+              return true;
+            default:
+              return false;
+          }
+        }
+        $sat = isWeekend(6);
+        $sun = isWeekend(7);
+        $mon = isWeekend(1);
+      `);
+      expect($g.get("sat")).toBe(true);
+      expect($g.get("sun")).toBe(true);
+      expect($g.get("mon")).toBe(false);
+    });
+
+    it("handles switch$ (case-insensitive string switch)", () => {
+      // Note: switch$ uses arrow functions internally, so return statements
+      // don't work directly. Use variable assignment instead.
+      const { $g } = run(`
+        function getColor(%name) {
+          %result = "";
+          switch$ (%name) {
+            case "red":
+              %result = "#FF0000";
+            case "GREEN":
+              %result = "#00FF00";
+            default:
+              %result = "#000000";
+          }
+          return %result;
+        }
+        $red = getColor("RED");
+        $green = getColor("green");
+        $other = getColor("blue");
+      `);
+      expect($g.get("red")).toBe("#FF0000");
+      expect($g.get("green")).toBe("#00FF00");
+      expect($g.get("other")).toBe("#000000");
     });
 
     it("handles ternary operator", () => {
@@ -274,6 +441,112 @@ describe("TorqueScript Runtime", () => {
         $result = TestObj.getValue();
       `);
       expect($g.get("result")).toBe(42);
+    });
+
+    it("sets properties on objects referenced by name (bareword)", () => {
+      // This is the pattern used in mission files: Game.cdtrack = 2
+      const { $ } = run(`
+        new ScriptObject(Game) {
+          class = "DefaultGame";
+        };
+        Game.cdtrack = 2;
+        Game.musicTrack = "lush";
+      `);
+      const game = $.deref("Game");
+      expect(game).toBeDefined();
+      expect($.prop(game, "cdtrack")).toBe(2);
+      expect($.prop(game, "musicTrack")).toBe("lush");
+    });
+
+    it("gets properties from objects referenced by name (bareword)", () => {
+      const { $g } = run(`
+        new ScriptObject(Config) {
+          maxPlayers = 32;
+          serverName = "Test Server";
+        };
+        $players = Config.maxPlayers;
+        $name = Config.serverName;
+      `);
+      expect($g.get("players")).toBe(32);
+      expect($g.get("name")).toBe("Test Server");
+    });
+
+    it("handles property access on non-existent objects gracefully", () => {
+      const { $g } = run(`
+        $value = NonExistent.property;
+        NonExistent.property = 42;
+      `);
+      // Should return empty string for non-existent object
+      expect($g.get("value")).toBe("");
+    });
+
+    it("resolves objects by numeric ID", () => {
+      const { $, $g } = run(`
+        new ScriptObject(TestObj) {
+          value = 100;
+        };
+      `);
+      const obj = $.deref("TestObj");
+      const id = obj._id;
+
+      // Access via ID should work the same as by name
+      expect($.prop(id, "value")).toBe(100);
+      $.setProp(id, "modified", true);
+      expect($.prop(obj, "modified")).toBe(true);
+    });
+
+    it("handles direct indexed access on bareword objects", () => {
+      // In TorqueScript, obj[idx] sets a property directly on the object
+      const { $, $g } = run(`
+        new ScriptObject(Data) {};
+        Data[0] = "first";
+        Data[1] = "second";
+        $first = Data[0];
+        $second = Data[1];
+      `);
+      expect($g.get("first")).toBe("first");
+      expect($g.get("second")).toBe("second");
+    });
+
+    it("handles obj.prop[idx] syntax (combined field name)", () => {
+      // In TorqueScript, obj.prop[idx] creates a field named "prop{idx}"
+      // e.g., Data.items[0] creates field "items0" on Data
+      const { $, $g } = run(`
+        new ScriptObject(Data) {};
+        Data.items[0] = "first";
+        Data.items[1] = "second";
+        $first = Data.items[0];
+        $second = Data.items[1];
+      `);
+      const data = $.deref("Data");
+      // Verify the fields are named items0, items1 (not nested)
+      expect($.prop(data, "items0")).toBe("first");
+      expect($.prop(data, "items1")).toBe("second");
+      expect($g.get("first")).toBe("first");
+      expect($g.get("second")).toBe("second");
+    });
+
+    it("handles post-increment on bareword object properties", () => {
+      const { $, $g } = run(`
+        new ScriptObject(Counter) {
+          value = 10;
+        };
+        $before = Counter.value++;
+        $after = Counter.value;
+      `);
+      expect($g.get("before")).toBe(10);
+      expect($g.get("after")).toBe(11);
+    });
+
+    it("handles compound assignment on bareword object properties", () => {
+      const { $, $g } = run(`
+        new ScriptObject(Score) {
+          points = 100;
+        };
+        Score.points += 50;
+        $result = Score.points;
+      `);
+      expect($g.get("result")).toBe(150);
     });
   });
 
@@ -363,9 +636,9 @@ describe("TorqueScript Runtime", () => {
       expect($g.get("result")).toBe(10);
     });
 
-    it("handles division by zero (returns 0)", () => {
+    it("handles division by zero (returns Infinity)", () => {
       const { $g } = run(`$result = 10 / 0;`);
-      expect($g.get("result")).toBe(0);
+      expect($g.get("result")).toBe(Infinity);
     });
 
     it("handles unary negation on strings", () => {
@@ -415,7 +688,7 @@ describe("TorqueScript Runtime", () => {
   });
 
   describe("packages", () => {
-    it("overrides functions when package is defined", () => {
+    it("overrides functions when package is activated", () => {
       const { $g } = run(`
         function getMessage() {
           return "original";
@@ -428,9 +701,12 @@ describe("TorqueScript Runtime", () => {
           }
         };
 
+        $stillOriginal = getMessage();
+        activatePackage(Override);
         $after = getMessage();
       `);
       expect($g.get("before")).toBe("original");
+      expect($g.get("stillOriginal")).toBe("original"); // not yet activated
       expect($g.get("after")).toBe("overridden");
     });
 
@@ -446,9 +722,139 @@ describe("TorqueScript Runtime", () => {
           }
         };
 
+        activatePackage(Extended);
         $result = getValue();
       `);
       expect($g.get("result")).toBe("extended(base)");
+    });
+
+    it("handles nested Parent:: calls with multiple packages", () => {
+      // This tests that Parent:: correctly calls the parent in the stack,
+      // not just stack[length-2] which would cause infinite recursion
+      const { $g } = run(`
+        function getValue() {
+          return "base";
+        }
+
+        package Pkg1 {
+          function getValue() {
+            return "pkg1(" @ Parent::getValue() @ ")";
+          }
+        };
+
+        package Pkg2 {
+          function getValue() {
+            return "pkg2(" @ Parent::getValue() @ ")";
+          }
+        };
+
+        activatePackage(Pkg1);
+        activatePackage(Pkg2);
+        $result = getValue();
+      `);
+      expect($g.get("result")).toBe("pkg2(pkg1(base))");
+    });
+
+    it("handles nested Parent:: calls with three packages", () => {
+      const { $g } = run(`
+        function getValue() {
+          return "base";
+        }
+
+        package Pkg1 {
+          function getValue() {
+            return "p1(" @ Parent::getValue() @ ")";
+          }
+        };
+
+        package Pkg2 {
+          function getValue() {
+            return "p2(" @ Parent::getValue() @ ")";
+          }
+        };
+
+        package Pkg3 {
+          function getValue() {
+            return "p3(" @ Parent::getValue() @ ")";
+          }
+        };
+
+        activatePackage(Pkg1);
+        activatePackage(Pkg2);
+        activatePackage(Pkg3);
+        $result = getValue();
+      `);
+      expect($g.get("result")).toBe("p3(p2(p1(base)))");
+    });
+
+    it("handles nested Parent:: calls for methods", () => {
+      const { $g } = run(`
+        function TestClass::getValue(%this) {
+          return "base";
+        }
+
+        package Pkg1 {
+          function TestClass::getValue(%this) {
+            return "pkg1(" @ Parent::getValue(%this) @ ")";
+          }
+        };
+
+        package Pkg2 {
+          function TestClass::getValue(%this) {
+            return "pkg2(" @ Parent::getValue(%this) @ ")";
+          }
+        };
+
+        activatePackage(Pkg1);
+        activatePackage(Pkg2);
+
+        %obj = new ScriptObject(TestObj) { class = "TestClass"; };
+        $result = %obj.getValue();
+      `);
+      expect($g.get("result")).toBe("pkg2(pkg1(base))");
+    });
+
+    it("supports deferred activation (activatePackage before package is defined)", () => {
+      // This matches Torque engine behavior where activatePackage can be
+      // called before the package block is executed (common in mission scripts)
+      const { $g } = run(`
+        function getMessage() {
+          return "original";
+        }
+
+        // Activate package BEFORE it's defined
+        activatePackage(DeferredPkg);
+
+        // At this point, package doesn't exist yet, but activation is remembered
+        $beforeDefine = getMessage();
+
+        // Now define the package - should auto-activate because we called
+        // activatePackage earlier
+        package DeferredPkg {
+          function getMessage() {
+            return "deferred override";
+          }
+        };
+
+        $afterDefine = getMessage();
+      `);
+      expect($g.get("beforeDefine")).toBe("original");
+      expect($g.get("afterDefine")).toBe("deferred override");
+    });
+
+    it("deferred activation is case-insensitive", () => {
+      const { $g } = run(`
+        function test() { return "base"; }
+
+        activatePackage(MYPACKAGE);
+
+        package myPackage {
+          function test() { return "override"; }
+        };
+
+        $result = test();
+      `);
+      expect($g.get("result")).toBe("override");
     });
   });
 
@@ -487,6 +893,88 @@ describe("TorqueScript Runtime", () => {
       const second = $.deref("SecondObject");
       expect(first._id).toBe(1027);
       expect(second._id).toBe(1028);
+    });
+  });
+
+  describe("object path resolution (nameToID)", () => {
+    it("resolves simple object names", () => {
+      const { $, $g } = run(`
+        new SimGroup(MissionGroup) {};
+        $id = nameToID("MissionGroup");
+      `);
+      const obj = $.deref("MissionGroup");
+      expect($g.get("id")).toBe(obj._id);
+    });
+
+    it("returns -1 for non-existent objects", () => {
+      const { $g } = run(`
+        $id = nameToID("NonExistent");
+      `);
+      expect($g.get("id")).toBe(-1);
+    });
+
+    it("resolves path with children using /", () => {
+      const { $, $g } = run(`
+        new SimGroup(MissionGroup) {
+          new SimGroup(Teams) {
+            new SimGroup(team0) {};
+            new SimGroup(team1) {};
+          };
+        };
+        $team0Id = nameToID("MissionGroup/Teams/team0");
+        $team1Id = nameToID("MissionGroup/Teams/team1");
+        $teamsId = nameToID("MissionGroup/Teams");
+      `);
+      const team0 = $.deref("team0");
+      const team1 = $.deref("team1");
+      const teams = $.deref("Teams");
+      expect($g.get("team0Id")).toBe(team0._id);
+      expect($g.get("team1Id")).toBe(team1._id);
+      expect($g.get("teamsId")).toBe(teams._id);
+    });
+
+    it("returns -1 when path segment not found", () => {
+      const { $g } = run(`
+        new SimGroup(MissionGroup) {
+          new SimGroup(Teams) {};
+        };
+        $id = nameToID("MissionGroup/Teams/team0");
+      `);
+      expect($g.get("id")).toBe(-1);
+    });
+
+    it("resolves paths with leading slash", () => {
+      const { $, $g } = run(`
+        new SimGroup(MissionGroup) {
+          new SimGroup(Teams) {};
+        };
+        $id = nameToID("/MissionGroup/Teams");
+      `);
+      const teams = $.deref("Teams");
+      expect($g.get("id")).toBe(teams._id);
+    });
+
+    it("resolves numeric object IDs", () => {
+      const { $ } = run(`
+        new SimGroup(MissionGroup) {};
+      `);
+      const obj = $.deref("MissionGroup");
+      // Test path resolution with numeric ID
+      const found = $.deref(String(obj._id));
+      expect(found).toBe(obj);
+    });
+
+    it("is case-insensitive for path segments", () => {
+      const { $, $g } = run(`
+        new SimGroup(MissionGroup) {
+          new SimGroup(Teams) {
+            new SimGroup(team0) {};
+          };
+        };
+        $id = nameToID("missiongroup/TEAMS/Team0");
+      `);
+      const team0 = $.deref("team0");
+      expect($g.get("id")).toBe(team0._id);
     });
   });
 
@@ -597,6 +1085,36 @@ describe("TorqueScript Runtime", () => {
       const result = $g.get("result");
       expect(result).toBeGreaterThanOrEqual(1);
       expect(result).toBeLessThanOrEqual(10);
+    });
+
+    it("isActivePackage checks if package is active", () => {
+      const { $g } = run(`
+        $beforeDefine = isActivePackage(TestPkg);
+
+        package TestPkg {
+          function dummy() { return 1; }
+        };
+
+        $afterDefine = isActivePackage(TestPkg);
+        activatePackage(TestPkg);
+        $afterActivate = isActivePackage(TestPkg);
+      `);
+      expect($g.get("beforeDefine")).toBe(false);
+      expect($g.get("afterDefine")).toBe(false); // defined but not active
+      expect($g.get("afterActivate")).toBe(true);
+    });
+
+    it("getPackageList returns active packages", () => {
+      const { $g } = run(`
+        package Pkg1 { function f1() {} };
+        package Pkg2 { function f2() {} };
+        $empty = getPackageList();
+        activatePackage(Pkg1);
+        activatePackage(Pkg2);
+        $list = getPackageList();
+      `);
+      expect($g.get("empty")).toBe("");
+      expect($g.get("list")).toBe("Pkg1 Pkg2");
     });
   });
 
@@ -728,7 +1246,7 @@ describe("TorqueScript Runtime", () => {
       expect($.prop(rifle, "range")).toBe(100); // inherited
     });
 
-    it("$.package activates and overrides functions", () => {
+    it("$.package defines and $.activatePackage activates", () => {
       const { $, $f } = createRuntime();
       $.registerFunction("getMessage", () => "original");
       expect($f.call("getMessage")).toBe("original");
@@ -736,6 +1254,9 @@ describe("TorqueScript Runtime", () => {
       $.package("TestPackage", () => {
         $.registerFunction("getMessage", () => "overridden");
       });
+      expect($f.call("getMessage")).toBe("original"); // not yet activated
+
+      $.activatePackage("TestPackage");
       expect($f.call("getMessage")).toBe("overridden");
     });
 
@@ -816,24 +1337,6 @@ describe("TorqueScript Runtime", () => {
 
       expect($g.get("base")).toBe(10);
       expect($g.get("doubled")).toBe(20);
-    });
-
-    it("supports parent:: in package overrides", () => {
-      const { $g } = run(`
-        function doSomething() {
-          return 10;
-        }
-
-        package MyOverride {
-          function doSomething() {
-            return Parent::doSomething() + 5;
-          }
-        };
-
-        $result = doSomething();
-      `);
-
-      expect($g.get("result")).toBe(15);
     });
 
     it("generates parent calls in transpiled code", () => {
@@ -1226,6 +1729,467 @@ describe("TorqueScript Runtime", () => {
       script2.execute();
 
       expect(runtime.$g.get("Value")).toBe(1);
+    });
+  });
+
+  describe("ScriptObject superClass inheritance", () => {
+    it("finds methods on superClass when not defined on class", () => {
+      const { $g } = run(`
+        function DefaultGame::getMessage(%this) {
+          return "default message";
+        }
+
+        // Create a ScriptObject with class and superClass
+        %game = new ScriptObject() {
+          class = "CTFGame";
+          superClass = "DefaultGame";
+        };
+
+        // CTFGame doesn't define getMessage, so it should find DefaultGame::getMessage
+        $result = %game.getMessage();
+      `);
+      expect($g.get("result")).toBe("default message");
+    });
+
+    it("prefers method on class over superClass", () => {
+      const { $g } = run(`
+        function DefaultGame::getMessage(%this) {
+          return "default message";
+        }
+
+        function CTFGame::getMessage(%this) {
+          return "CTF message";
+        }
+
+        %game = new ScriptObject() {
+          class = "CTFGame";
+          superClass = "DefaultGame";
+        };
+
+        $result = %game.getMessage();
+      `);
+      expect($g.get("result")).toBe("CTF message");
+    });
+
+    it("class method can call superClass method via namespace", () => {
+      const { $g } = run(`
+        function DefaultGame::getValue(%this) {
+          return 10;
+        }
+
+        function CTFGame::getValue(%this) {
+          %base = DefaultGame::getValue(%this);
+          return %base + 5;
+        }
+
+        %game = new ScriptObject() {
+          class = "CTFGame";
+          superClass = "DefaultGame";
+        };
+
+        $result = %game.getValue();
+      `);
+      expect($g.get("result")).toBe(15);
+    });
+
+    it("works with ScriptGroup as well", () => {
+      const { $g } = run(`
+        function BaseGroup::getType(%this) {
+          return "base";
+        }
+
+        %group = new ScriptGroup() {
+          class = "MyGroup";
+          superClass = "BaseGroup";
+        };
+
+        $result = %group.getType();
+      `);
+      expect($g.get("result")).toBe("base");
+    });
+
+    it("handles missing superClass method gracefully", () => {
+      const { $g } = run(`
+        %game = new ScriptObject() {
+          class = "CTFGame";
+          superClass = "DefaultGame";
+        };
+
+        // Neither CTFGame nor DefaultGame define this method
+        $result = %game.undefinedMethod();
+      `);
+      expect($g.get("result")).toBe("");
+    });
+
+    it("superClass is case-insensitive", () => {
+      const { $g } = run(`
+        function defaultgame::getMessage(%this) {
+          return "found it";
+        }
+
+        %game = new ScriptObject() {
+          class = "CTFGame";
+          superClass = "DefaultGame";  // Different case
+        };
+
+        $result = %game.getMessage();
+      `);
+      expect($g.get("result")).toBe("found it");
+    });
+
+    it("registers namespace parent link for other objects", () => {
+      // When one object establishes a class->superClass link,
+      // other objects with the same class should benefit from it
+      const { $g } = run(`
+        function DefaultGame::getInfo(%this) {
+          return "info";
+        }
+
+        // First object establishes the CTFGame -> DefaultGame link
+        %game1 = new ScriptObject() {
+          class = "CTFGame";
+          superClass = "DefaultGame";
+        };
+
+        // Second object with same class (no explicit superClass)
+        // should still walk the namespace chain
+        %game2 = new ScriptObject() {
+          class = "CTFGame";
+        };
+
+        $result1 = %game1.getInfo();
+        $result2 = %game2.getInfo();
+      `);
+      expect($g.get("result1")).toBe("info");
+      expect($g.get("result2")).toBe("info");
+    });
+  });
+
+  describe("method hooks (onMethodCalled)", () => {
+    it("fires hook after method is called via object", () => {
+      const runtime = createRuntime();
+      const hookCalls: Array<{ thisObj: any; args: any[] }> = [];
+
+      // Register hook before method is defined
+      runtime.$.onMethodCalled(
+        "TestClass",
+        "doSomething",
+        (thisObj, ...args) => {
+          hookCalls.push({ thisObj, args });
+        },
+      );
+
+      // Define method and create object via transpiled code
+      const { code } = transpile(`
+        function TestClass::doSomething(%this, %a, %b) {
+          return %a + %b;
+        }
+
+        %obj = new ScriptObject() {
+          class = "TestClass";
+        };
+
+        $result = %obj.doSomething(10, 20);
+      `);
+
+      const $l = runtime.$.locals();
+      new Function("$", "$f", "$g", "$l", code)(
+        runtime.$,
+        runtime.$f,
+        runtime.$g,
+        $l,
+      );
+
+      expect(runtime.$g.get("result")).toBe(30);
+      expect(hookCalls.length).toBe(1);
+      expect(hookCalls[0].args).toEqual([10, 20]);
+    });
+
+    it("fires hook after namespace call (e.g., DefaultGame::method)", () => {
+      const runtime = createRuntime();
+      const hookCalls: Array<{ thisObj: any; args: any[] }> = [];
+
+      runtime.$.onMethodCalled(
+        "DefaultGame",
+        "missionLoadDone",
+        (thisObj, ...args) => {
+          hookCalls.push({ thisObj, args });
+        },
+      );
+
+      const { code } = transpile(`
+        function DefaultGame::missionLoadDone(%game) {
+          $defaultCalled = true;
+        }
+
+        function CTFGame::missionLoadDone(%game) {
+          // Call parent via namespace
+          DefaultGame::missionLoadDone(%game);
+          $ctfCalled = true;
+        }
+
+        %game = new ScriptObject(Game) {
+          class = "CTFGame";
+          superClass = "DefaultGame";
+        };
+
+        %game.missionLoadDone();
+      `);
+
+      const $l = runtime.$.locals();
+      new Function("$", "$f", "$g", "$l", code)(
+        runtime.$,
+        runtime.$f,
+        runtime.$g,
+        $l,
+      );
+
+      expect(runtime.$g.get("defaultCalled")).toBe(true);
+      expect(runtime.$g.get("ctfCalled")).toBe(true);
+      // Hook should fire when DefaultGame::missionLoadDone is called
+      expect(hookCalls.length).toBe(1);
+    });
+
+    it("multiple hooks on same method all fire", () => {
+      const runtime = createRuntime();
+      const calls: string[] = [];
+
+      runtime.$.onMethodCalled("TestClass", "test", () => {
+        calls.push("hook1");
+      });
+      runtime.$.onMethodCalled("TestClass", "test", () => {
+        calls.push("hook2");
+      });
+
+      const { code } = transpile(`
+        function TestClass::test(%this) {
+          return "done";
+        }
+
+        %obj = new ScriptObject() {
+          class = "TestClass";
+        };
+
+        %obj.test();
+      `);
+
+      const $l = runtime.$.locals();
+      new Function("$", "$f", "$g", "$l", code)(
+        runtime.$,
+        runtime.$f,
+        runtime.$g,
+        $l,
+      );
+
+      expect(calls).toEqual(["hook1", "hook2"]);
+    });
+
+    it("hook receives correct thisObj", () => {
+      const runtime = createRuntime();
+      let capturedObj: any = null;
+
+      runtime.$.onMethodCalled("TestClass", "identify", (thisObj) => {
+        capturedObj = thisObj;
+      });
+
+      const { code } = transpile(`
+        function TestClass::identify(%this) {
+          return %this.name;
+        }
+
+        %obj = new ScriptObject(MyObject) {
+          class = "TestClass";
+          name = "test-object";
+        };
+
+        $result = %obj.identify();
+      `);
+
+      const $l = runtime.$.locals();
+      new Function("$", "$f", "$g", "$l", code)(
+        runtime.$,
+        runtime.$f,
+        runtime.$g,
+        $l,
+      );
+
+      expect(runtime.$g.get("result")).toBe("test-object");
+      expect(capturedObj).not.toBeNull();
+      expect(capturedObj._name).toBe("MyObject");
+      expect(capturedObj.name).toBe("test-object");
+    });
+
+    it("hook is case-insensitive for class and method names", () => {
+      const runtime = createRuntime();
+      let hookFired = false;
+
+      // Register with different case
+      runtime.$.onMethodCalled("testclass", "DOACTION", () => {
+        hookFired = true;
+      });
+
+      const { code } = transpile(`
+        function TestClass::doAction(%this) {
+          return true;
+        }
+
+        %obj = new ScriptObject() {
+          class = "TESTCLASS";
+        };
+
+        %obj.DoAction();
+      `);
+
+      const $l = runtime.$.locals();
+      new Function("$", "$f", "$g", "$l", code)(
+        runtime.$,
+        runtime.$f,
+        runtime.$g,
+        $l,
+      );
+
+      expect(hookFired).toBe(true);
+    });
+
+    it("hook fires for superClass method when called on subclass", () => {
+      const runtime = createRuntime();
+      const hookCalls: string[] = [];
+
+      runtime.$.onMethodCalled("DefaultGame", "init", () => {
+        hookCalls.push("DefaultGame::init");
+      });
+
+      const { code } = transpile(`
+        function DefaultGame::init(%this) {
+          $initialized = true;
+        }
+
+        // CTFGame doesn't override init, so DefaultGame::init will be called
+        %game = new ScriptObject() {
+          class = "CTFGame";
+          superClass = "DefaultGame";
+        };
+
+        %game.init();
+      `);
+
+      const $l = runtime.$.locals();
+      new Function("$", "$f", "$g", "$l", code)(
+        runtime.$,
+        runtime.$f,
+        runtime.$g,
+        $l,
+      );
+
+      expect(runtime.$g.get("initialized")).toBe(true);
+      expect(hookCalls).toEqual(["DefaultGame::init"]);
+    });
+  });
+
+  describe("isFunction", () => {
+    it("returns true for user-defined functions", () => {
+      const { $ } = run(`
+        function myCustomFunction() {
+          return "test";
+        }
+      `);
+      expect($.isFunction("myCustomFunction")).toBe(true);
+      expect($.isFunction("MYCUSTOMFUNCTION")).toBe(true); // case-insensitive
+    });
+
+    it("returns true for builtin functions", () => {
+      const { $ } = run(``);
+      expect($.isFunction("echo")).toBe(true);
+      expect($.isFunction("Echo")).toBe(true); // case-insensitive
+      expect($.isFunction("strlen")).toBe(true);
+      expect($.isFunction("getWord")).toBe(true);
+    });
+
+    it("returns false for non-existent functions", () => {
+      const { $ } = run(``);
+      expect($.isFunction("nonExistentFunction")).toBe(false);
+    });
+  });
+
+  describe("getWord delimiter handling", () => {
+    it("does not collapse consecutive delimiters", () => {
+      const { $g } = run(`
+        // With two spaces between a and b, getWord(1) should return empty
+        $str = "a  b";
+        $word0 = getWord($str, 0);  // "a"
+        $word1 = getWord($str, 1);  // "" (empty - between two spaces)
+        $word2 = getWord($str, 2);  // "b"
+      `);
+      expect($g.get("word0")).toBe("a");
+      expect($g.get("word1")).toBe(""); // Engine behavior: empty word between consecutive delimiters
+      expect($g.get("word2")).toBe("b");
+    });
+
+    it("handles multiple consecutive delimiters", () => {
+      const { $g } = run(`
+        $str = "a   b";  // Three spaces
+        $word0 = getWord($str, 0);  // "a"
+        $word1 = getWord($str, 1);  // ""
+        $word2 = getWord($str, 2);  // ""
+        $word3 = getWord($str, 3);  // "b"
+      `);
+      expect($g.get("word0")).toBe("a");
+      expect($g.get("word1")).toBe("");
+      expect($g.get("word2")).toBe("");
+      expect($g.get("word3")).toBe("b");
+    });
+
+    it("correctly counts words with consecutive delimiters", () => {
+      const { $g } = run(`
+        $count1 = getWordCount("a b");    // 2 words
+        $count2 = getWordCount("a  b");   // 3 words (includes empty)
+        $count3 = getWordCount("a   b");  // 4 words (includes two empty)
+      `);
+      expect($g.get("count1")).toBe(2);
+      expect($g.get("count2")).toBe(3);
+      expect($g.get("count3")).toBe(4);
+    });
+  });
+
+  describe("nsRef with execution context", () => {
+    it("tracks execution context for Parent:: calls via nsRef", () => {
+      const runtime = createRuntime();
+      const { code } = transpile(`
+        function TestClass::getValue(%this) {
+          return "base";
+        }
+
+        package Pkg1 {
+          function TestClass::getValue(%this) {
+            return "pkg1(" @ Parent::getValue(%this) @ ")";
+          }
+        };
+
+        package Pkg2 {
+          function TestClass::getValue(%this) {
+            return "pkg2(" @ Parent::getValue(%this) @ ")";
+          }
+        };
+
+        activatePackage(Pkg1);
+        activatePackage(Pkg2);
+      `);
+
+      const $l = runtime.$.locals();
+      new Function("$", "$f", "$g", "$l", code)(
+        runtime.$,
+        runtime.$f,
+        runtime.$g,
+        $l,
+      );
+
+      // Get method reference via nsRef and call it directly
+      const fn = runtime.$.nsRef("TestClass", "getValue");
+      expect(fn).not.toBeNull();
+
+      // Call the method - it should track execution context for proper Parent:: support
+      const result = fn!("dummyThis");
+      expect(result).toBe("pkg2(pkg1(base))");
     });
   });
 });

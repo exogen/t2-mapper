@@ -27,8 +27,12 @@ const manifest = untypedManifest as unknown as {
   >;
 };
 
-function getResourceKey(resourcePath: string): string {
+export function getResourceKey(resourcePath: string): string {
   return normalizePath(resourcePath).toLowerCase();
+}
+
+export function getResourceMap() {
+  return manifest.resources;
 }
 
 /**
