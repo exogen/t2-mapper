@@ -8,7 +8,7 @@ import {
   SRGBColorSpace,
   Texture,
 } from "three";
-import { loadImageFrameList, textureFrameToUrl } from "../loaders";
+import { iflTextureToUrl, loadImageFrameList } from "../loaders";
 import { useTick } from "./TickProvider";
 import { useSettings } from "./SettingsProvider";
 
@@ -119,8 +119,8 @@ export function useIflTexture(iflPath: string): Texture {
   });
 
   const textureUrls = useMemo(
-    () => frames.map((frame) => textureFrameToUrl(frame.name)),
-    [frames],
+    () => frames.map((frame) => iflTextureToUrl(frame.name, iflPath)),
+    [frames, iflPath],
   );
 
   const textures = useTexture(textureUrls);

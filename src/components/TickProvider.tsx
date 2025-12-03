@@ -9,19 +9,24 @@ import {
 } from "react";
 import { useFrame } from "@react-three/fiber";
 
+/** Ticks per second, matching the Torque engine tick rate. */
 export const TICK_RATE = 32;
 const TICK_INTERVAL = 1 / TICK_RATE;
 
-type TickCallback = (tick: number) => void;
+export type TickCallback = (tick: number) => void;
 
-type TickContextValue = {
+interface TickContextValue {
   subscribe: (callback: TickCallback) => () => void;
   getTick: () => number;
-};
+}
 
 const TickContext = createContext<TickContextValue | null>(null);
 
-export function TickProvider({ children }: { children: ReactNode }) {
+interface TickProviderProps {
+  children: ReactNode;
+}
+
+export function TickProvider({ children }: TickProviderProps) {
   const callbacksRef = useRef<Set<TickCallback> | undefined>(undefined);
   const accumulatorRef = useRef(0);
   const tickRef = useRef(0);

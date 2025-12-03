@@ -191,7 +191,8 @@ export function* iterObjects(
   }
 }
 
-export function getProperty(obj: TorqueObject, name: string): any {
+export function getProperty(obj: TorqueObject | undefined, name: string): any {
+  if (!obj) return undefined;
   return obj[name.toLowerCase()];
 }
 

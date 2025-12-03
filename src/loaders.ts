@@ -6,6 +6,7 @@ import {
   getStandardTextureResourceKey,
 } from "./manifest";
 import { parseMissionScript } from "./mission";
+import { normalizePath } from "./stringUtils";
 import { parseTerrainBuffer } from "./terrain";
 
 export const BASE_URL = "/t2-mapper";
@@ -50,10 +51,14 @@ export function terrainTextureToUrl(name: string) {
   return getUrlForPath(resourceKey, FALLBACK_TEXTURE_URL);
 }
 
-export function textureFrameToUrl(fileName: string) {
-  const resourceKey = getStandardTextureResourceKey(
-    `textures/skins/${fileName}`,
-  );
+export function iflTextureToUrl(name: string, iflPath: string) {
+  // Paths inside IFL files are relative to the IFL file, so we need to prepend
+  // the IFL's dir (if any) to the parsed paths.
+  const pathParts = normalizePath(iflPath).split("/");
+  const iflDir =
+    pathParts.length > 1 ? pathParts.slice(0, -1).join("/") + "/" : "";
+  const finalPath = `${iflDir}${name}`;
+  const resourceKey = getStandardTextureResourceKey(finalPath);
   return getUrlForPath(resourceKey, FALLBACK_TEXTURE_URL);
 }
 

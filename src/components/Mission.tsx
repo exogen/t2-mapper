@@ -5,12 +5,13 @@ import { type ParsedMission } from "../mission";
 import { createScriptLoader } from "../torqueScript/scriptLoader.browser";
 import { renderObject } from "./renderObject";
 import { memo, useEffect, useState } from "react";
-import { TickProvider } from "./TickProvider";
+import { RuntimeProvider } from "./RuntimeProvider";
 import {
   createScriptCache,
   FileSystemHandler,
   runServer,
   TorqueObject,
+  TorqueRuntime,
 } from "../torqueScript";
 import {
   getResourceKey,
@@ -46,11 +47,19 @@ function useParsedMission(name: string) {
   });
 }
 
+interface ExecutedMissionState {
+  missionGroup: TorqueObject | undefined;
+  runtime: TorqueRuntime | undefined;
+}
+
 function useExecutedMission(
   missionName: string,
   parsedMission: ParsedMission | undefined,
-) {
-  const [missionGroup, setMissionGroup] = useState<TorqueObject | undefined>();
+): ExecutedMissionState {
+  const [state, setState] = useState<ExecutedMissionState>({
+    missionGroup: undefined,
+    runtime: undefined,
+  });
 
   useEffect(() => {
     if (!parsedMission) {
@@ -72,7 +81,7 @@ function useExecutedMission(
       },
       onMissionLoadDone: () => {
         const missionGroup = runtime.getObjectByName("MissionGroup");
-        setMissionGroup(missionGroup);
+        setState({ missionGroup, runtime });
       },
     });
 
@@ -82,7 +91,7 @@ function useExecutedMission(
     };
   }, [missionName, parsedMission]);
 
-  return missionGroup;
+  return state;
 }
 
 interface MissionProps {
@@ -95,8 +104,8 @@ export const Mission = memo(function Mission({
   onLoadingChange,
 }: MissionProps) {
   const { data: parsedMission } = useParsedMission(name);
-  const missionGroup = useExecutedMission(name, parsedMission);
-  const isLoading = !missionGroup;
+  const { missionGroup, runtime } = useExecutedMission(name, parsedMission);
+  const isLoading = !missionGroup || !runtime;
 
   useEffect(() => {
     onLoadingChange?.(isLoading);
@@ -106,5 +115,9 @@ export const Mission = memo(function Mission({
     return null;
   }
 
-  return <TickProvider>{renderObject(missionGroup)}</TickProvider>;
+  return (
+    <RuntimeProvider runtime={runtime}>
+      {renderObject(missionGroup)}
+    </RuntimeProvider>
+  );
 });
