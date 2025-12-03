@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect, Suspense } from "react";
+import { useState, useEffect, useCallback, Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { Canvas } from "@react-three/fiber";
 import { EffectComposer, N8AO } from "@react-three/postprocessing";
@@ -25,6 +25,7 @@ function MapInspector() {
   const [missionName, setMissionName] = useState(
     searchParams.get("mission") || "TWL2_WoodyMyrk",
   );
+  const [isLoading, setIsLoading] = useState(true);
 
   // Update query params when state changes
   useEffect(() => {
@@ -33,15 +34,24 @@ function MapInspector() {
     router.replace(`?${params.toString()}`, { scroll: false });
   }, [missionName, router]);
 
+  const handleLoadingChange = useCallback((loading: boolean) => {
+    setIsLoading(loading);
+  }, []);
+
   return (
     <QueryClientProvider client={queryClient}>
       <main>
         <SettingsProvider>
           <div id="canvasContainer">
+            {isLoading && <div className="LoadingSpinner" />}
             <Canvas shadows frameloop="always">
               <CamerasProvider>
                 <AudioProvider>
-                  <Mission key={missionName} name={missionName} />
+                  <Mission
+                    key={missionName}
+                    name={missionName}
+                    onLoadingChange={handleLoadingChange}
+                  />
                   <ObserverCamera />
                   <DebugElements />
                   <ObserverControls />

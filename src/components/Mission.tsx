@@ -1,5 +1,4 @@
 import { useQuery } from "@tanstack/react-query";
-import { Html } from "@react-three/drei";
 import picomatch from "picomatch";
 import { loadMission } from "../loaders";
 import { type ParsedMission } from "../mission";
@@ -86,34 +85,25 @@ function useExecutedMission(
   return missionGroup;
 }
 
-function LoadingSpinner() {
-  return (
-    <Html>
-      <div
-        style={{
-          position: "fixed",
-          top: "50%",
-          left: "50%",
-          width: 48,
-          height: 48,
-          border: "4px solid rgba(255, 255, 255, 0.2)",
-          borderTopColor: "white",
-          borderRadius: "50%",
-          animation: "spin 1s linear infinite",
-          pointerEvents: "none",
-        }}
-      />
-      <style>{`@keyframes spin { to { transform: translate(-50%, -50%) rotate(360deg); } from { transform: translate(-50%, -50%) rotate(0deg); } }`}</style>
-    </Html>
-  );
+interface MissionProps {
+  name: string;
+  onLoadingChange?: (isLoading: boolean) => void;
 }
 
-export const Mission = memo(function Mission({ name }: { name: string }) {
+export const Mission = memo(function Mission({
+  name,
+  onLoadingChange,
+}: MissionProps) {
   const { data: parsedMission } = useParsedMission(name);
   const missionGroup = useExecutedMission(name, parsedMission);
+  const isLoading = !missionGroup;
 
-  if (!missionGroup) {
-    return <LoadingSpinner />;
+  useEffect(() => {
+    onLoadingChange?.(isLoading);
+  }, [isLoading, onLoadingChange]);
+
+  if (isLoading) {
+    return null;
   }
 
   return <TickProvider>{renderObject(missionGroup)}</TickProvider>;
