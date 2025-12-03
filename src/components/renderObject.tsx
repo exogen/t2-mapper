@@ -12,10 +12,12 @@ import { Turret } from "./Turret";
 import { AudioEmitter } from "./AudioEmitter";
 import { WayPoint } from "./WayPoint";
 import { Camera } from "./Camera";
+import { ForceFieldBare } from "./ForceFieldBare";
 
 const componentMap = {
   AudioEmitter,
   Camera,
+  ForceFieldBare,
   InteriorInstance,
   Item,
   SimGroup,
