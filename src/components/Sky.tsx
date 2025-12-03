@@ -5,10 +5,10 @@ import { Color, ShaderMaterial, BackSide, Euler } from "three";
 import type { TorqueObject } from "../torqueScript";
 import { getFloat, getProperty } from "../mission";
 import { useSettings } from "./SettingsProvider";
-import { BASE_URL, getUrlForPath, loadDetailMapList } from "../loaders";
+import { BASE_URL, loadDetailMapList, textureToUrl } from "../loaders";
 import { useThree } from "@react-three/fiber";
 
-const FALLBACK_URL = `${BASE_URL}/black.png`;
+const FALLBACK_TEXTURE_URL = `${BASE_URL}/black.png`;
 
 /**
  * Load a .dml file, used to list the textures for different faces of a skybox.
@@ -35,20 +35,20 @@ export function SkyBox({
     () =>
       detailMapList
         ? [
-            getUrlForPath(detailMapList[1], FALLBACK_URL), // +x
-            getUrlForPath(detailMapList[3], FALLBACK_URL), // -x
-            getUrlForPath(detailMapList[4], FALLBACK_URL), // +y
-            getUrlForPath(detailMapList[5], FALLBACK_URL), // -y
-            getUrlForPath(detailMapList[0], FALLBACK_URL), // +z
-            getUrlForPath(detailMapList[2], FALLBACK_URL), // -z
+            textureToUrl(detailMapList[1]), // +x
+            textureToUrl(detailMapList[3]), // -x
+            textureToUrl(detailMapList[4]), // +y
+            textureToUrl(detailMapList[5]), // -y
+            textureToUrl(detailMapList[0]), // +z
+            textureToUrl(detailMapList[2]), // -z
           ]
         : [
-            FALLBACK_URL,
-            FALLBACK_URL,
-            FALLBACK_URL,
-            FALLBACK_URL,
-            FALLBACK_URL,
-            FALLBACK_URL,
+            FALLBACK_TEXTURE_URL,
+            FALLBACK_TEXTURE_URL,
+            FALLBACK_TEXTURE_URL,
+            FALLBACK_TEXTURE_URL,
+            FALLBACK_TEXTURE_URL,
+            FALLBACK_TEXTURE_URL,
           ],
     [detailMapList],
   );
@@ -146,6 +146,22 @@ export function Sky({ object }: { object: TorqueObject }) {
   // Skybox textures.
   const materialList = getProperty(object, "materialList");
 
+  const skySolidColor = useMemo(() => {
+    const colorString = getProperty(object, "SkySolidColor");
+    if (colorString) {
+      // `colorString` might specify an alpha value, but three.js doesn't
+      // support opacity on fog or scene backgrounds, so ignore it.
+      // Note: This is a space-separated string, so we split and parse each component.
+      const [r, g, b] = colorString
+        .split(" ")
+        .map((s: string) => parseFloat(s));
+      return [
+        new Color().setRGB(r, g, b),
+        new Color().setRGB(r, g, b).convertSRGBToLinear(),
+      ];
+    }
+  }, [object]);
+
   // Fog parameters.
   // TODO: There can be multiple fog volumes/layers. Render simple fog for now.
   const fogDistance = getFloat(object, "fogDistance");
@@ -166,8 +182,10 @@ export function Sky({ object }: { object: TorqueObject }) {
     }
   }, [object]);
 
-  const backgroundColor = fogColor ? (
-    <color attach="background" args={[fogColor[0]]} />
+  const skyColor = skySolidColor || fogColor;
+
+  const backgroundColor = skyColor ? (
+    <color attach="background" args={[skyColor[0]]} />
   ) : null;
 
   return (

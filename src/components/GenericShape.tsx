@@ -1,10 +1,6 @@
 import { memo, Suspense, useMemo, useRef, useEffect } from "react";
 import { useGLTF, useTexture } from "@react-three/drei";
-import {
-  FALLBACK_TEXTURE_URL,
-  shapeTextureToUrl,
-  shapeToUrl,
-} from "../loaders";
+import { FALLBACK_TEXTURE_URL, textureToUrl, shapeToUrl } from "../loaders";
 import { filterGeometryByVertexGroups, getHullBoneIndices } from "../meshUtils";
 import {
   createAlphaAsRoughnessMaterial,
@@ -73,7 +69,7 @@ function StaticTexture({ material, shapeName }) {
     }
     return resourcePath
       ? // Use custom `resource_path` added by forked io_dts3d Blender add-on
-        shapeTextureToUrl(resourcePath)
+        textureToUrl(resourcePath)
       : FALLBACK_TEXTURE_URL;
   }, [material, resourcePath, shapeName]);
 

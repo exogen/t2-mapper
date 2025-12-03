@@ -88,6 +88,40 @@ export function getResourceList(): string[] {
   return Object.keys(manifest.resources);
 }
 
+/**
+ * Standard texture file extension loading order:
+ *
+ * 1. "" (no extension - exact filename match)
+ * 2. .jpg
+ * 3. .png
+ * 4. .gif
+ * 5. .bmp
+ */
+const standardTextureExt = ["", ".jpg", ".png", ".gif", ".bmp"];
+export function getStandardTextureResourceKey(resourcePath: string) {
+  const baseResourceKey = getResourceKey(resourcePath);
+  for (const ext of standardTextureExt) {
+    const resourceKey = `${baseResourceKey}${ext}`;
+    if (manifest.resources[resourceKey]) {
+      return resourceKey;
+    }
+  }
+  return baseResourceKey;
+}
+
+/**
+ * Paletted texture file extension loading order:
+ *
+ * 1. "" (no extension - exact filename match)
+ * 2. .bm8
+ * 3. .bmp
+ * 4. .jpg
+ * 5. .png
+ * 6. .gif
+ */
+// Not used for now!
+const palettedTextureExt = ["", ".bm8", ".bmp", ".jpg", ".png", ".gif"];
+
 export function getLocalFilePath(resourcePath: string): string {
   const resourceKey = getResourceKey(resourcePath);
   const [sourcePath, actualPath] = getSourceAndPath(resourceKey);

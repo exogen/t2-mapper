@@ -3,9 +3,9 @@ import {
   getActualResourceKey,
   getMissionInfo,
   getSourceAndPath,
+  getStandardTextureResourceKey,
 } from "./manifest";
 import { parseMissionScript } from "./mission";
-import { normalizePath } from "./stringUtils";
 import { parseTerrainBuffer } from "./terrain";
 
 export const BASE_URL = "/t2-mapper";
@@ -46,25 +46,20 @@ export function shapeToUrl(name: string) {
 
 export function terrainTextureToUrl(name: string) {
   name = name.replace(/^terrain\./, "");
-  return getUrlForPath(`textures/terrain/${name}.png`, FALLBACK_TEXTURE_URL);
-}
-
-export function interiorTextureToUrl(name: string) {
-  // name = name.replace(/\.\d+$/, "");
-  return getUrlForPath(`textures/${name}.png`, FALLBACK_TEXTURE_URL);
+  const resourceKey = getStandardTextureResourceKey(`textures/terrain/${name}`);
+  return getUrlForPath(resourceKey, FALLBACK_TEXTURE_URL);
 }
 
 export function textureFrameToUrl(fileName: string) {
-  return getUrlForPath(`textures/skins/${fileName}`, FALLBACK_TEXTURE_URL);
-}
-
-export function shapeTextureToUrl(name: string) {
-  // name = name.replace(/\.\d+$/, "");
-  return getUrlForPath(`textures/${name}.png`, FALLBACK_TEXTURE_URL);
+  const resourceKey = getStandardTextureResourceKey(
+    `textures/skins/${fileName}`,
+  );
+  return getUrlForPath(resourceKey, FALLBACK_TEXTURE_URL);
 }
 
 export function textureToUrl(name: string) {
-  return getUrlForPath(`textures/${name}.png`, FALLBACK_TEXTURE_URL);
+  const resourceKey = getStandardTextureResourceKey(`textures/${name}`);
+  return getUrlForPath(resourceKey, FALLBACK_TEXTURE_URL);
 }
 
 export function audioToUrl(fileName: string) {
@@ -76,8 +71,14 @@ export async function loadDetailMapList(name: string) {
   const res = await fetch(url);
   const text = await res.text();
   return text
-    .split(/(?:\r\n|\n|\r)/)
-    .map((line) => `textures/${line.trim().replace(/\.png$/i, "")}.png`);
+    .split(/(?:\r\n|\r|\n)/)
+    .map((line) => {
+      line = line.trim();
+      if (!line.startsWith(";")) {
+        return line;
+      }
+    })
+    .filter(Boolean);
 }
 
 export async function loadMission(name: string) {

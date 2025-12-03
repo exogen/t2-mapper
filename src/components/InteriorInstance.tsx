@@ -2,7 +2,7 @@ import { memo, Suspense, useMemo } from "react";
 import { ErrorBoundary } from "react-error-boundary";
 import { Mesh } from "three";
 import { useGLTF, useTexture } from "@react-three/drei";
-import { interiorTextureToUrl, interiorToUrl } from "../loaders";
+import { textureToUrl, interiorToUrl } from "../loaders";
 import type { TorqueObject } from "../torqueScript";
 import { getPosition, getProperty, getRotation, getScale } from "../mission";
 import { setupColor } from "../textureUtils";
@@ -18,7 +18,7 @@ function useInterior(interiorFile: string) {
 }
 
 function InteriorTexture({ materialName }: { materialName: string }) {
-  const url = interiorTextureToUrl(materialName);
+  const url = textureToUrl(materialName);
   const texture = useTexture(url, (texture) => setupColor(texture));
 
   return <meshStandardMaterial map={texture} side={2} />;
