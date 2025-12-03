@@ -1,3 +1,4 @@
+import picomatch from "picomatch";
 import { generate } from "./codegen";
 import { parse, type Program } from "./index";
 import { createBuiltins as defaultCreateBuiltins } from "./builtins";
@@ -94,6 +95,11 @@ export function createRuntime(
 
   const executedScripts = new Set<string>();
   const failedScripts = new Set<string>();
+  // Create matcher for ignored scripts (case insensitive)
+  const isIgnoredScript =
+    options.ignoreScripts && options.ignoreScripts.length > 0
+      ? picomatch(options.ignoreScripts, { nocase: true })
+      : null;
   // Use cache if provided, otherwise create new maps
   const cache = options.cache ?? createScriptCache();
   const scripts = cache.scripts;
@@ -1090,6 +1096,13 @@ export function createRuntime(
         state.scripts.has(normalized) ||
         state.failedScripts.has(normalized)
       ) {
+        return;
+      }
+
+      // Skip if script matches ignore patterns
+      if (isIgnoredScript && isIgnoredScript(normalized)) {
+        console.warn(`Ignoring script: ${ref}`);
+        state.failedScripts.add(normalized);
         return;
       }
 

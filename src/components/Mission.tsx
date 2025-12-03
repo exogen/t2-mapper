@@ -69,6 +69,17 @@ function useExecutedMission(
         fileSystem,
         cache: scriptCache,
         signal: controller.signal,
+        ignoreScripts: [
+          "scripts/admin.cs",
+          "scripts/ai.cs",
+          "scripts/aiCTF.cs",
+          "scripts/aiHunters.cs",
+          "scripts/deathMessages.cs",
+          "scripts/graphBuild.cs",
+          "scripts/navGraph.cs",
+          "scripts/serverTasks.cs",
+          "scripts/spdialog.cs",
+        ],
       },
       onMissionLoadDone: () => {
         const missionGroup = runtime.getObjectByName("MissionGroup");
