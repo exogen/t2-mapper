@@ -92,7 +92,6 @@ export function runServer(options: RunServerOptions): RunServerResult {
       // Load all required scripts
       const serverScript = await runtime.loadFromPath("scripts/server.cs");
       signal?.throwIfAborted();
-
       // These are dynamic exec() calls in server.cs since their paths are
       // computed based on the game type and mission. So, we need to load them
       // ahead of time so they're available to execute.
@@ -104,7 +103,13 @@ export function runServer(options: RunServerOptions): RunServerResult {
       // Execute server.cs - it will exec() the game type and mission scripts
       serverScript.execute();
 
-      // Set up mission ready hook
+      // Set up mission ready hook. It's unfortunate that we have to do it this
+      // way, but there's no event system in TorqueScript. The problem is that
+      // `CreateServer` will defer some actions using `schedule()`, so the
+      // objects are created some arbitrary amount of time afterward, and we
+      // don't actually know when they're ready. But, we can spy on the
+      // `missionLoadDone` method using the runtime's `onMethodCalled` feature,
+      // which we added specifically to solve this problem.
       if (onMissionLoadDone) {
         runtime.$.onMethodCalled(
           gameTypeName,
