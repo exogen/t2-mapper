@@ -1,8 +1,14 @@
-html,
-body {
+html {
+  box-sizing: border-box;
   margin: 0;
   padding: 0;
   background: black;
+}
+
+*,
+*:before,
+*:after {
+  box-sizing: inherit;
 }
 
 html {
@@ -21,9 +27,23 @@ html {
   font-size: 100%;
 }
 
+body {
+  margin: 0;
+  padding: 0;
+}
+
 main {
   width: 100vw;
   height: 100vh;
+}
+
+#canvasContainer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 0;
 }
 
 #controls {
@@ -35,9 +55,10 @@ main {
   left: 0;
   background: rgba(0, 0, 0, 0.5);
   color: #fff;
-  padding: 10px 12px 10px 8px;
+  padding: 8px 12px 8px 8px;
   border-radius: 0 0 4px 0;
   font-size: 13px;
+  z-index: 1;
 }
 
 .CheckboxField {
@@ -86,4 +107,153 @@ main {
 
 .AxisLabel[data-axis="z"] {
   color: rgb(0, 153, 255);
+}
+
+/* MissionSelect combobox styles */
+.MissionSelect-inputWrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.MissionSelect-shortcut {
+  position: absolute;
+  right: 7px;
+  font-family: system-ui, sans-serif;
+  font-size: 11px;
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.15);
+  color: rgba(255, 255, 255, 0.6);
+  pointer-events: none;
+}
+
+.MissionSelect-input[aria-expanded="true"] ~ .MissionSelect-shortcut {
+  display: none;
+}
+
+.MissionSelect-input {
+  width: 240px;
+  padding: 6px 36px 6px 8px;
+  font-size: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 3px;
+  background: rgba(0, 0, 0, 0.6);
+  color: #fff;
+  outline: none;
+}
+
+.MissionSelect-input[aria-expanded="true"] {
+  padding-right: 8px;
+}
+
+.MissionSelect-input:focus {
+  border-color: rgba(255, 255, 255, 0.6);
+}
+
+.MissionSelect-input::placeholder {
+  color: #fff;
+  font-weight: 600;
+}
+
+.MissionSelect-popover {
+  z-index: 100;
+  min-width: 320px;
+  max-height: var(--popover-available-height, 90vh);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  background: rgba(20, 20, 20, 0.95);
+  border: 1px solid rgba(255, 255, 255, 0.5);
+  border-radius: 3px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6);
+}
+
+.MissionSelect-list {
+  padding: 4px 0;
+}
+
+.MissionSelect-list:has(> .MissionSelect-group:first-child) {
+  padding-top: 0;
+}
+
+.MissionSelect-group {
+  padding-bottom: 4px;
+}
+
+.MissionSelect-groupLabel {
+  position: sticky;
+  top: 0;
+  padding: 6px 8px 6px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  color: rgb(198, 202, 202);
+  background: rgba(58, 69, 72, 0.95);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.3);
+  z-index: 1;
+}
+
+.MissionSelect-group:not(:last-child) {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.3);
+}
+
+.MissionSelect-item {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin: 4px 4px 0;
+  padding: 6px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  outline: none;
+  scroll-margin-top: 32px;
+}
+
+.MissionSelect-list > .MissionSelect-item:first-child {
+  margin-top: 0;
+}
+
+.MissionSelect-item[data-active-item] {
+  background: rgba(255, 255, 255, 0.15);
+}
+
+.MissionSelect-item[aria-selected="true"] {
+  background: rgba(100, 150, 255, 0.3);
+}
+
+.MissionSelect-itemHeader {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.MissionSelect-itemName {
+  font-size: 14px;
+  font-weight: 600;
+  color: #fff;
+}
+
+.MissionSelect-itemTypes {
+  display: flex;
+  gap: 3px;
+}
+
+.MissionSelect-itemType {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 5px;
+  border-radius: 3px;
+  background: rgba(255, 157, 0, 0.4);
+  color: #fff;
+}
+
+.MissionSelect-itemMissionName {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.MissionSelect-noResults {
+  padding: 12px 8px;
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.5);
+  text-align: center;
 }

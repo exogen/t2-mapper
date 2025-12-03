@@ -22,12 +22,14 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@ariakit/react": "^0.4.20",
     "@react-three/drei": "^10.7.6",
     "@react-three/fiber": "^9.3.0",
     "@react-three/postprocessing": "^3.0.4",
     "@tanstack/react-query": "^5.90.8",
     "ignore": "^7.0.5",
     "lodash.orderby": "^4.6.0",
+    "match-sorter": "^8.2.0",
     "next": "^15.5.2",
     "react": "^19.1.1",
     "react-dom": "^19.1.1",

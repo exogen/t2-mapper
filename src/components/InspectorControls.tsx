@@ -1,86 +1,5 @@
-import { Fragment, useMemo } from "react";
-import { getMissionInfo, getMissionList, getSourceAndPath } from "../manifest";
 import { useControls, useDebug, useSettings } from "./SettingsProvider";
-import orderBy from "lodash.orderby";
-
-const excludeMissions = new Set([
-  "SkiFree",
-  "SkiFree_Daily",
-  "SkiFree_Randomizer",
-]);
-
-const sourceGroupNames = {
-  "missions.vl2": "Official",
-  "TR2final105-client.vl2": "Team Rabbit 2",
-  "z_mappacks/CTF/Classic_maps_v1.vl2": "Classic",
-  "z_mappacks/CTF/DynamixFinalPack.vl2": "Official",
-  "z_mappacks/CTF/KryMapPack_b3EDIT.vl2": "KryMapPack",
-  "z_mappacks/CTF/S5maps.vl2": "S5",
-  "z_mappacks/CTF/S8maps.vl2": "S8",
-  "z_mappacks/CTF/TWL-MapPack.vl2": "TWL",
-  "z_mappacks/CTF/TWL-MapPackEDIT.vl2": "TWL",
-  "z_mappacks/CTF/TWL2-MapPack.vl2": "TWL2",
-  "z_mappacks/CTF/TWL2-MapPackEDIT.vl2": "TWL2",
-  "z_mappacks/TWL_T2arenaOfficialMaps.vl2": "Arena",
-  "z_mappacks/z_DMP2-V0.6.vl2": "DMP2 (Discord Map Pack)",
-  "z_mappacks/zDMP-4.7.3DX.vl2": "DMP (Discord Map Pack)",
-  // "SkiFreeGameType.vl2": "SkiFree",
-};
-
-const dirGroupNames = {
-  "z_mappacks/DM": "DM",
-  "z_mappacks/LCTF": "LCTF",
-  "z_mappacks/Lak": "LakRabbit",
-};
-
-const getDirName = (sourcePath: string) => {
-  const match = sourcePath.match(/^(.*)(\/[^/]+)$/);
-  return match ? match[1] : "";
-};
-
-const groupedMissions = getMissionList().reduce(
-  (groupMap, missionName) => {
-    const missionInfo = getMissionInfo(missionName);
-    const [sourcePath] = getSourceAndPath(missionInfo.resourcePath);
-    const sourceDir = getDirName(sourcePath);
-    const groupName =
-      sourceGroupNames[sourcePath] ?? dirGroupNames[sourceDir] ?? null;
-    const groupMissions = groupMap.get(groupName) ?? [];
-    if (!excludeMissions.has(missionName)) {
-      groupMissions.push({
-        resourcePath: missionInfo.resourcePath,
-        missionName,
-        displayName: missionInfo.displayName,
-        sourcePath,
-      });
-      groupMap.set(groupName, groupMissions);
-    }
-    return groupMap;
-  },
-  new Map<
-    string | null,
-    Array<{
-      resourcePath: string;
-      missionName: string;
-      displayName: string;
-      sourcePath: string;
-    }>
-  >(),
-);
-
-groupedMissions.forEach((groupMissions, groupName) => {
-  groupedMissions.set(
-    groupName,
-    orderBy(
-      groupMissions,
-      [
-        (missionInfo) =>
-          (missionInfo.displayName || missionInfo.missionName).toLowerCase(),
-      ],
-      ["asc"],
-    ),
-  );
-});
+import { MissionSelect } from "./MissionSelect";
 
 export function InspectorControls({
   missionName,
@@ -102,19 +21,6 @@ export function InspectorControls({
   const { speedMultiplier, setSpeedMultiplier } = useControls();
   const { debugMode, setDebugMode } = useDebug();
 
-  const groupedMissionOptions = useMemo(() => {
-    const groups = orderBy(
-      Array.from(groupedMissions.entries()),
-      [
-        ([groupName]) =>
-          groupName === "Official" ? 0 : groupName == null ? 2 : 1,
-        ([groupName]) => (groupName ? groupName.toLowerCase() : ""),
-      ],
-      ["asc", "asc"],
-    );
-    return groups;
-  }, []);
-
   return (
     <div
       id="controls"
@@ -122,32 +28,7 @@ export function InspectorControls({
       onPointerDown={(e) => e.stopPropagation()}
       onClick={(e) => e.stopPropagation()}
     >
-      <select
-        id="missionList"
-        value={missionName}
-        onChange={(event) => onChangeMission(event.target.value)}
-      >
-        {groupedMissionOptions.map(([groupName, groupMissions]) =>
-          groupName ? (
-            <optgroup key={groupName} label={groupName}>
-              {groupMissions.map((mission) => (
-                <option key={mission.missionName} value={mission.missionName}>
-                  {mission.displayName || mission.missionName}
-                </option>
-              ))}
-            </optgroup>
-          ) : (
-            <Fragment key="null">
-              <hr />
-              {groupMissions.map((mission) => (
-                <option key={mission.missionName} value={mission.missionName}>
-                  {mission.displayName || mission.missionName}
-                </option>
-              ))}
-            </Fragment>
-          ),
-        )}
-      </select>
+      <MissionSelect value={missionName} onChange={onChangeMission} />
       <div className="CheckboxField">
         <input
           id="fogInput"

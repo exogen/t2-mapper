@@ -183,6 +183,10 @@ export function ObserverControls() {
   // Don't let KeyboardControls handle stuff when metaKey is held.
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
+      // Let Cmd/Ctrl+K pass through for search focus.
+      if ((e.metaKey || e.ctrlKey) && e.key === "k") {
+        return;
+      }
       if (e.metaKey) {
         e.stopImmediatePropagation();
       }

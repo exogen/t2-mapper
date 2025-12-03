@@ -37,19 +37,21 @@ function MapInspector() {
     <QueryClientProvider client={queryClient}>
       <main>
         <SettingsProvider>
-          <Canvas shadows frameloop="always">
-            <CamerasProvider>
-              <AudioProvider>
-                <Mission key={missionName} name={missionName} />
-                <ObserverCamera />
-                <DebugElements />
-                <ObserverControls />
-              </AudioProvider>
-            </CamerasProvider>
-            <EffectComposer>
-              <N8AO intensity={3} aoRadius={3} quality="performance" />
-            </EffectComposer>
-          </Canvas>
+          <div id="canvasContainer">
+            <Canvas shadows frameloop="always">
+              <CamerasProvider>
+                <AudioProvider>
+                  <Mission key={missionName} name={missionName} />
+                  <ObserverCamera />
+                  <DebugElements />
+                  <ObserverControls />
+                </AudioProvider>
+              </CamerasProvider>
+              <EffectComposer>
+                <N8AO intensity={3} aoRadius={3} quality="performance" />
+              </EffectComposer>
+            </Canvas>
+          </div>
           <InspectorControls
             missionName={missionName}
             onChangeMission={setMissionName}
