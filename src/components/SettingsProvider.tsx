@@ -8,9 +8,32 @@ import {
   useState,
 } from "react";
 
-const SettingsContext = createContext(null);
-const DebugContext = createContext(null);
-const ControlsContext = createContext(null);
+type StateSetter<T> = ReturnType<typeof useState<T>>[1];
+
+type SettingsContext = {
+  fogEnabled: boolean;
+  setFogEnabled: StateSetter<boolean>;
+  fov: number;
+  setFov: StateSetter<number>;
+  audioEnabled: boolean;
+  setAudioEnabled: StateSetter<boolean>;
+  animationEnabled: boolean;
+  setAnimationEnabled: StateSetter<boolean>;
+};
+
+type DebugContext = {
+  debugMode: boolean;
+  setDebugMode: StateSetter<boolean>;
+};
+
+type ControlsContext = {
+  speedMultiplier: number;
+  setSpeedMultiplier: StateSetter<number>;
+};
+
+const SettingsContext = createContext<SettingsContext | null>(null);
+const DebugContext = createContext<DebugContext | null>(null);
+const ControlsContext = createContext<ControlsContext | null>(null);
 
 type PersistedSettings = {
   fogEnabled?: boolean;
@@ -41,7 +64,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   const [animationEnabled, setAnimationEnabled] = useState(true);
   const [debugMode, setDebugMode] = useState(false);
 
-  const settingsContext = useMemo(
+  const settingsContext: SettingsContext = useMemo(
     () => ({
       fogEnabled,
       setFogEnabled,
@@ -55,12 +78,12 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     [fogEnabled, speedMultiplier, fov, audioEnabled, animationEnabled],
   );
 
-  const debugContext = useMemo(
+  const debugContext: DebugContext = useMemo(
     () => ({ debugMode, setDebugMode }),
     [debugMode, setDebugMode],
   );
 
-  const controlsContext = useMemo(
+  const controlsContext: ControlsContext = useMemo(
     () => ({ speedMultiplier, setSpeedMultiplier }),
     [speedMultiplier, setSpeedMultiplier],
   );

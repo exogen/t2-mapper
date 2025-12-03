@@ -9,7 +9,7 @@
   "scripts": {
     "build:manifest": "tsx scripts/generate-manifest.ts -o public/manifest.json",
     "build:parser": "peggy TorqueScript.pegjs -o generated/TorqueScript.cjs",
-    "build": "next build && touch docs/.nojekyll",
+    "build": "next build --turbopack && touch docs/.nojekyll",
     "clean": "rimraf .next",
     "deploy": "npm run build && git add -f docs && git commit -m \"Deploy\" && git push",
     "format": "prettier --write .",

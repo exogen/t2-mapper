@@ -1,6 +1,6 @@
+import { lazy } from "react";
 import type { TorqueObject } from "../torqueScript";
 import { TerrainBlock } from "./TerrainBlock";
-import { WaterBlock } from "./WaterBlock";
 import { SimGroup } from "./SimGroup";
 import { InteriorInstance } from "./InteriorInstance";
 import { Sky } from "./Sky";
@@ -9,13 +9,31 @@ import { TSStatic } from "./TSStatic";
 import { StaticShape } from "./StaticShape";
 import { Item } from "./Item";
 import { Turret } from "./Turret";
-import { AudioEmitter } from "./AudioEmitter";
 import { WayPoint } from "./WayPoint";
 import { Camera } from "./Camera";
-import { ForceFieldBare } from "./ForceFieldBare";
+import { useSettings } from "./SettingsProvider";
+
+const AudioEmitter = lazy(() =>
+  import("./AudioEmitter").then((mod) => ({ default: mod.AudioEmitter })),
+);
+
+function ConditionalAudioEmitter(props) {
+  const { audioEnabled } = useSettings();
+  return audioEnabled ? <AudioEmitter {...props} /> : null;
+}
+
+// Not every map will have force fields.
+const ForceFieldBare = lazy(() =>
+  import("./ForceFieldBare").then((mod) => ({ default: mod.ForceFieldBare })),
+);
+
+// Not every map will have force fields.
+const WaterBlock = lazy(() =>
+  import("./WaterBlock").then((mod) => ({ default: mod.WaterBlock })),
+);
 
 const componentMap = {
-  AudioEmitter,
+  AudioEmitter: ConditionalAudioEmitter,
   Camera,
   ForceFieldBare,
   InteriorInstance,
