@@ -133,6 +133,12 @@ export class CaseInsensitiveSet {
   }
 }
 
+/** Normalize path separators only (backslashes to forward slashes). */
+export function normalizeSlashes(path: string): string {
+  return path.replace(/\\/g, "/");
+}
+
+/** Normalize path for use as a cache key (slashes + lowercase). */
 export function normalizePath(path: string): string {
-  return path.replace(/\\/g, "/").toLowerCase();
+  return normalizeSlashes(path).toLowerCase();
 }

@@ -11,19 +11,20 @@ export function createScriptLoader(): ScriptLoader {
     try {
       url = getUrlForPath(path);
     } catch (err) {
-      console.warn(`Script not in manifest: ${path}`, err);
+      console.warn(`Script not in manifest: ${path} (${err})`);
       return null;
     }
 
     try {
       const response = await fetch(url);
       if (!response.ok) {
-        console.warn(`Script fetch failed: ${path} (${response.status})`);
+        console.error(`Script fetch failed: ${path} (${response.status})`);
         return null;
       }
       return await response.text();
     } catch (err) {
-      console.warn(`Script fetch error: ${path}`, err);
+      console.error(`Script fetch error: ${path}`);
+      console.error(err);
       return null;
     }
   };

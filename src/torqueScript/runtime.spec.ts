@@ -1353,7 +1353,9 @@ describe("TorqueScript Runtime", () => {
     function createLoader(
       files: Record<string, string>,
     ): (path: string) => Promise<string | null> {
-      return async (path: string) => files[path.toLowerCase()] ?? null;
+      // Loader normalizes paths itself (slashes + lowercase)
+      return async (path: string) =>
+        files[path.replace(/\\/g, "/").toLowerCase()] ?? null;
     }
 
     it("executes scripts via exec()", async () => {
@@ -1419,6 +1421,202 @@ describe("TorqueScript Runtime", () => {
       expect(runtime.$g.get("Loaded")).toBe(true);
     });
 
+    describe("path normalization for state tracking", () => {
+      it("treats different cases as the same file for loaded scripts", async () => {
+        let loadCount = 0;
+        const runtime = createRuntime({
+          loadScript: async (path) => {
+            loadCount++;
+            if (path.toLowerCase() === "scripts/test.cs") {
+              return "$LoadCount = $LoadCount + 1;";
+            }
+            return null;
+          },
+        });
+
+        // Load with different cases - should only call loader once
+        await runtime.loadFromPath("scripts/test.cs");
+        await runtime.loadFromPath("Scripts/Test.cs");
+        await runtime.loadFromPath("SCRIPTS/TEST.CS");
+
+        expect(loadCount).toBe(1);
+      });
+
+      it("treats different slashes as the same file for loaded scripts", async () => {
+        let loadCount = 0;
+        const runtime = createRuntime({
+          loadScript: async (path) => {
+            loadCount++;
+            if (path.replace(/\\/g, "/").toLowerCase() === "scripts/test.cs") {
+              return "$LoadCount = $LoadCount + 1;";
+            }
+            return null;
+          },
+        });
+
+        // Load with different slash styles - should only call loader once
+        await runtime.loadFromPath("scripts/test.cs");
+        await runtime.loadFromPath("scripts\\test.cs");
+
+        expect(loadCount).toBe(1);
+      });
+
+      it("treats different cases as the same file for failed scripts", async () => {
+        let loadCount = 0;
+        const runtime = createRuntime({
+          loadScript: async () => {
+            loadCount++;
+            return null; // Script not found
+          },
+        });
+
+        const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+        // Try to load with different cases - should only call loader once
+        const script = await runtime.loadFromSource(`
+          exec("scripts/missing.cs");
+          exec("Scripts/Missing.cs");
+          exec("SCRIPTS/MISSING.CS");
+        `);
+        script.execute();
+
+        warnSpy.mockRestore();
+
+        // Loader should only be called once since subsequent attempts
+        // see it's already in failedScripts
+        expect(loadCount).toBe(1);
+      });
+
+      it("treats different slashes as the same file for failed scripts", async () => {
+        let loadCount = 0;
+        const runtime = createRuntime({
+          loadScript: async () => {
+            loadCount++;
+            return null; // Script not found
+          },
+        });
+
+        const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+        // Try to load with different slash styles
+        const script = await runtime.loadFromSource(`
+          exec("scripts/missing.cs");
+          exec("scripts\\\\missing.cs");
+        `);
+        script.execute();
+
+        warnSpy.mockRestore();
+        expect(loadCount).toBe(1);
+      });
+
+      it("treats different cases as the same file for executed scripts", async () => {
+        const runtime = createRuntime({
+          loadScript: createLoader({
+            "scripts/counter.cs": "$Counter = $Counter + 1;",
+          }),
+        });
+
+        runtime.$g.set("Counter", 0);
+
+        const script = await runtime.loadFromSource(`
+          exec("scripts/counter.cs");
+          exec("Scripts/Counter.cs");
+          exec("SCRIPTS/COUNTER.CS");
+        `);
+        script.execute();
+
+        // Script should only execute once despite different cases
+        expect(runtime.$g.get("Counter")).toBe(1);
+      });
+
+      it("treats different slashes as the same file for executed scripts", async () => {
+        const runtime = createRuntime({
+          loadScript: createLoader({
+            "scripts/counter.cs": "$Counter = $Counter + 1;",
+          }),
+        });
+
+        runtime.$g.set("Counter", 0);
+
+        const script = await runtime.loadFromSource(`
+          exec("scripts/counter.cs");
+          exec("scripts\\\\counter.cs");
+        `);
+        script.execute();
+
+        // Script should only execute once despite different slashes
+        expect(runtime.$g.get("Counter")).toBe(1);
+      });
+
+      it("caches sequential loads with different cases", async () => {
+        let loadCount = 0;
+        const runtime = createRuntime({
+          loadScript: async (path) => {
+            loadCount++;
+            if (path.toLowerCase() === "scripts/test.cs") {
+              return "$Loaded = true;";
+            }
+            return null;
+          },
+        });
+
+        // Load same file with different cases sequentially
+        await runtime.loadFromPath("scripts/test.cs");
+        await runtime.loadFromPath("Scripts/Test.cs");
+        await runtime.loadFromPath("SCRIPTS/TEST.CS");
+
+        // Should only load once since cached after first load
+        expect(loadCount).toBe(1);
+      });
+
+      it("caches sequential loads with different slashes", async () => {
+        let loadCount = 0;
+        const runtime = createRuntime({
+          loadScript: async (path) => {
+            loadCount++;
+            if (path.replace(/\\/g, "/").toLowerCase() === "scripts/test.cs") {
+              return "$Loaded = true;";
+            }
+            return null;
+          },
+        });
+
+        // Load same file with different slashes sequentially
+        await runtime.loadFromPath("scripts/test.cs");
+        await runtime.loadFromPath("scripts\\test.cs");
+
+        // Should only load once since cached after first load
+        expect(loadCount).toBe(1);
+      });
+
+      it("handles combined case and slash differences", async () => {
+        let loadCount = 0;
+        const runtime = createRuntime({
+          loadScript: async (path) => {
+            loadCount++;
+            if (path.replace(/\\/g, "/").toLowerCase() === "scripts/test.cs") {
+              return "$Counter = $Counter + 1;";
+            }
+            return null;
+          },
+        });
+
+        runtime.$g.set("Counter", 0);
+
+        const script = await runtime.loadFromSource(`
+          exec("scripts/test.cs");
+          exec("Scripts\\\\Test.cs");
+          exec("SCRIPTS/TEST.CS");
+          exec("scripts\\\\TEST.CS");
+        `);
+        script.execute();
+
+        // All variations should be treated as the same file
+        expect(loadCount).toBe(1);
+        expect(runtime.$g.get("Counter")).toBe(1);
+      });
+    });
+
     it("returns false when script is not found", async () => {
       const runtime = createRuntime({
         loadScript: async () => null,
@@ -1459,6 +1657,24 @@ describe("TorqueScript Runtime", () => {
         'exec("scripts/test.cs"): script not found',
       );
       warnSpy2.mockRestore();
+      expect(runtime.$g.get("Result")).toBe(false);
+    });
+
+    it("returns false and logs error when exec called without extension", async () => {
+      // Engine requires file extension (matches tribes2-engine/TorqueSDK-1.2 behavior)
+      const runtime = createRuntime();
+
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      const debugSpy = vi.spyOn(console, "debug").mockImplementation(() => {});
+      const script = await runtime.loadFromSource(
+        '$Result = exec("scripts/noextension");',
+      );
+      script.execute();
+      expect(errorSpy).toHaveBeenCalledWith(
+        'exec: invalid script file name "scripts/noextension".',
+      );
+      errorSpy.mockRestore();
+      debugSpy.mockRestore();
       expect(runtime.$g.get("Result")).toBe(false);
     });
 
@@ -1658,6 +1874,177 @@ describe("TorqueScript Runtime", () => {
       await runtime.loadFromPath("scripts/test.cs");
 
       expect(loadCount).toBe(1); // Only loaded once
+    });
+
+    it("handles diamond dependencies (parallel deduplication)", async () => {
+      // A depends on B and C, both B and C depend on D
+      // D should only be loaded once
+      let dLoadCount = 0;
+      const sources: Record<string, string> = {
+        "scripts/a.cs": 'exec("scripts/b.cs"); exec("scripts/c.cs"); $A = 1;',
+        "scripts/b.cs": 'exec("scripts/d.cs"); $B = 1;',
+        "scripts/c.cs": 'exec("scripts/d.cs"); $C = 1;',
+        "scripts/d.cs": "$D = 1;",
+      };
+      const runtime = createRuntime({
+        loadScript: async (path) => {
+          if (path === "scripts/d.cs") dLoadCount++;
+          return sources[path] ?? null;
+        },
+      });
+
+      const script = await runtime.loadFromPath("scripts/a.cs");
+      script.execute();
+
+      expect(dLoadCount).toBe(1); // D loaded only once despite being dep of both B and C
+      expect(runtime.$g.get("A")).toBe(1);
+      expect(runtime.$g.get("B")).toBe(1);
+      expect(runtime.$g.get("C")).toBe(1);
+      expect(runtime.$g.get("D")).toBe(1);
+    });
+
+    it("handles longer cycles not involving main script (A → B → C → B)", async () => {
+      const sources: Record<string, string> = {
+        "scripts/a.cs": 'exec("scripts/b.cs"); $A = 1;',
+        "scripts/b.cs": 'exec("scripts/c.cs"); $B = 1;',
+        "scripts/c.cs": 'exec("scripts/b.cs"); $C = 1;', // Cycle back to B
+      };
+      const runtime = createRuntime({
+        loadScript: async (path) => sources[path] ?? null,
+      });
+
+      // Should not hang
+      const script = await runtime.loadFromPath("scripts/a.cs");
+      script.execute();
+
+      expect(runtime.$g.get("A")).toBe(1);
+      expect(runtime.$g.get("B")).toBe(1);
+      expect(runtime.$g.get("C")).toBe(1);
+    });
+
+    it("handles multiple scripts depending on each other in complex patterns", async () => {
+      // A → [B, C], B → [D, E], C → [E, F], D → G, E → G, F → G
+      // G should only be loaded once
+      let gLoadCount = 0;
+      const sources: Record<string, string> = {
+        "scripts/a.cs": 'exec("scripts/b.cs"); exec("scripts/c.cs"); $A = 1;',
+        "scripts/b.cs": 'exec("scripts/d.cs"); exec("scripts/e.cs"); $B = 1;',
+        "scripts/c.cs": 'exec("scripts/e.cs"); exec("scripts/f.cs"); $C = 1;',
+        "scripts/d.cs": 'exec("scripts/g.cs"); $D = 1;',
+        "scripts/e.cs": 'exec("scripts/g.cs"); $E = 1;',
+        "scripts/f.cs": 'exec("scripts/g.cs"); $F = 1;',
+        "scripts/g.cs": "$G = 1;",
+      };
+      const runtime = createRuntime({
+        loadScript: async (path) => {
+          if (path === "scripts/g.cs") gLoadCount++;
+          return sources[path] ?? null;
+        },
+      });
+
+      const script = await runtime.loadFromPath("scripts/a.cs");
+      script.execute();
+
+      expect(gLoadCount).toBe(1); // G loaded only once
+      expect(runtime.$g.get("A")).toBe(1);
+      expect(runtime.$g.get("G")).toBe(1);
+    });
+
+    it("continues loading other scripts when one fails", async () => {
+      const sources: Record<string, string> = {
+        "scripts/main.cs":
+          'exec("scripts/good.cs"); exec("scripts/bad.cs"); exec("scripts/also-good.cs"); $Main = 1;',
+        "scripts/good.cs": "$Good = 1;",
+        // bad.cs is missing
+        "scripts/also-good.cs": "$AlsoGood = 1;",
+      };
+      const runtime = createRuntime({
+        loadScript: async (path) => sources[path] ?? null,
+      });
+
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const script = await runtime.loadFromPath("scripts/main.cs");
+      script.execute();
+      warnSpy.mockRestore();
+
+      // Good scripts should still be loaded and executed
+      expect(runtime.$g.get("Main")).toBe(1);
+      expect(runtime.$g.get("Good")).toBe(1);
+      expect(runtime.$g.get("AlsoGood")).toBe(1);
+    });
+
+    it("handles parse errors gracefully without blocking other scripts", async () => {
+      const sources: Record<string, string> = {
+        "scripts/main.cs":
+          'exec("scripts/good.cs"); exec("scripts/bad-syntax.cs"); $Main = 1;',
+        "scripts/good.cs": "$Good = 1;",
+        "scripts/bad-syntax.cs": "this is not valid { syntax",
+      };
+      const runtime = createRuntime({
+        loadScript: async (path) => sources[path] ?? null,
+      });
+
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const script = await runtime.loadFromPath("scripts/main.cs");
+      script.execute();
+      warnSpy.mockRestore();
+
+      expect(runtime.$g.get("Main")).toBe(1);
+      expect(runtime.$g.get("Good")).toBe(1);
+    });
+
+    it("respects pre-aborted signal when loading dependencies", async () => {
+      const controller = new AbortController();
+      controller.abort(); // Abort before starting
+
+      let loaderCalled = false;
+      const runtime = createRuntime({
+        loadScript: async () => {
+          loaderCalled = true;
+          return "$X = 1;";
+        },
+        signal: controller.signal,
+      });
+
+      // Load a script that has dependencies - should throw when trying to load deps
+      await expect(
+        runtime.loadFromSource('exec("scripts/dep.cs"); $Main = 1;'),
+      ).rejects.toThrow();
+      expect(loaderCalled).toBe(false); // Loader should never be called
+    });
+
+    it("loads scripts in parallel (not serially)", async () => {
+      const loadOrder: string[] = [];
+      const sources: Record<string, string> = {
+        "scripts/main.cs":
+          'exec("scripts/a.cs"); exec("scripts/b.cs"); exec("scripts/c.cs");',
+        "scripts/a.cs": "$A = 1;",
+        "scripts/b.cs": "$B = 1;",
+        "scripts/c.cs": "$C = 1;",
+      };
+
+      const runtime = createRuntime({
+        loadScript: async (path) => {
+          loadOrder.push(`start:${path}`);
+          // Small delay to allow interleaving
+          await new Promise((resolve) => setTimeout(resolve, 10));
+          loadOrder.push(`end:${path}`);
+          return sources[path] ?? null;
+        },
+      });
+
+      await runtime.loadFromPath("scripts/main.cs");
+
+      // If parallel: starts happen before all ends
+      // If serial: each end would happen before the next start
+      const aStart = loadOrder.indexOf("start:scripts/a.cs");
+      const bStart = loadOrder.indexOf("start:scripts/b.cs");
+      const cStart = loadOrder.indexOf("start:scripts/c.cs");
+      const aEnd = loadOrder.indexOf("end:scripts/a.cs");
+
+      // All starts should happen before any of them ends (parallel behavior)
+      expect(bStart).toBeLessThan(aEnd);
+      expect(cStart).toBeLessThan(aEnd);
     });
   });
 

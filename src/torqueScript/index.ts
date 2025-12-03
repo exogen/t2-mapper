@@ -74,7 +74,7 @@ export interface RunServerResult {
 export function runServer(options: RunServerOptions): RunServerResult {
   const { missionName, missionType, runtimeOptions, onMissionLoadDone } =
     options;
-  const { signal } = runtimeOptions ?? {};
+  const { signal, fileSystem } = runtimeOptions ?? {};
 
   const runtime = createRuntime({
     ...runtimeOptions,
@@ -87,16 +87,36 @@ export function runServer(options: RunServerOptions): RunServerResult {
   const gameTypeName = `${missionType}Game`;
   const gameTypeScript = `scripts/${gameTypeName}.cs`;
 
-  const ready = (async () => {
+  const ready = (async function createServer() {
     try {
       // Load all required scripts
       const serverScript = await runtime.loadFromPath("scripts/server.cs");
       signal?.throwIfAborted();
-      // These are dynamic exec() calls in server.cs since their paths are
-      // computed based on the game type and mission. So, we need to load them
-      // ahead of time so they're available to execute.
-      await runtime.loadFromPath(gameTypeScript);
+
+      // server.cs has a glob loop that does: findFirstFile("scripts/*Game.cs")
+      // and then exec()s each result dynamically. Since we can't statically
+      // analyze dynamic exec paths, we need to either preload all game scripts
+      // in the same way (so they're available when exec() is called) or just
+      // exec() the ones we know we need...
+      //
+      // To load them all, do:
+      // if (fileSystem) {
+      //   const gameScripts = fileSystem.findFiles("scripts/*Game.cs");
+      //   await Promise.all(
+      //     gameScripts.map((path) => runtime.loadFromPath(path)),
+      //   );
+      //   signal?.throwIfAborted();
+      // }
+      await runtime.loadFromPath("scripts/DefaultGame.cs");
       signal?.throwIfAborted();
+      try {
+        await runtime.loadFromPath(gameTypeScript);
+      } catch (err) {
+        // It's OK if that one fails. Not every game type needs its own script.
+      }
+      signal?.throwIfAborted();
+
+      // Also preload the mission file (another dynamic exec path)
       await runtime.loadFromPath(`missions/${missionName}.mis`);
       signal?.throwIfAborted();
 
@@ -112,7 +132,7 @@ export function runServer(options: RunServerOptions): RunServerResult {
       // which we added specifically to solve this problem.
       if (onMissionLoadDone) {
         runtime.$.onMethodCalled(
-          gameTypeName,
+          "DefaultGame",
           "missionLoadDone",
           onMissionLoadDone,
         );

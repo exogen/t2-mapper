@@ -1,7 +1,8 @@
 {{
   // Collect exec() script paths during parsing (deduplicated)
-  const execScriptPathsSet = new Set();
-  let hasDynamicExec = false;
+  // These are reset in the per-parse initializer below
+  let execScriptPathsSet;
+  let hasDynamicExec;
 
   function buildBinaryExpression(head, tail) {
     return tail.reduce((left, [op, right]) => ({
@@ -40,6 +41,12 @@
     return Array.from(execScriptPathsSet);
   }
 }}
+
+// Per-parse initializer - reset state for each parse call
+{
+  execScriptPathsSet = new Set();
+  hasDynamicExec = false;
+}
 
 // Main entry point
 Program

@@ -601,6 +601,15 @@ export function createBuiltins(
       console.debug(
         `exec(${JSON.stringify(pathString)}): preparing to execute…`,
       );
+
+      // Engine requires an extension - check for a '.' in the filename
+      if (!pathString.includes(".")) {
+        console.error(
+          `exec: invalid script file name ${JSON.stringify(pathString)}.`,
+        );
+        return false;
+      }
+
       const normalizedPath = normalizePath(pathString);
       const rt = runtime();
       const { executedScripts, scripts } = rt.state;

@@ -6,8 +6,9 @@
 
 
   // Collect exec() script paths during parsing (deduplicated)
-  const execScriptPathsSet = new Set();
-  let hasDynamicExec = false;
+  // These are reset in the per-parse initializer below
+  let execScriptPathsSet;
+  let hasDynamicExec;
 
   function buildBinaryExpression(head, tail) {
     return tail.reduce((left, [op, right]) => ({
@@ -6406,6 +6407,10 @@ function peg$parse(input, options) {
 
     return s0;
   }
+
+
+  execScriptPathsSet = new Set();
+  hasDynamicExec = false;
 
   peg$result = peg$startRuleFunction();
 

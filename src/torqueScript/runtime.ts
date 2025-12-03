@@ -1066,67 +1066,85 @@ export function createRuntime(
   }
 
   async function loadDependencies(
-    ast: Program,
-    loading: Set<string>,
-    includePreload: boolean = false,
+    scriptsToLoad: string[],
+    loadingPromises: Map<string, Promise<void>>,
+    ancestors: Set<string>,
   ): Promise<void> {
     const loader = options.loadScript;
     if (!loader) {
-      // No loader, can't resolve dependencies
-      if (ast.execScriptPaths.length > 0) {
+      if (scriptsToLoad.length > 0) {
         console.warn(
           `Script has exec() calls but no loadScript provided:`,
-          ast.execScriptPaths,
+          scriptsToLoad,
         );
       }
       return;
     }
 
-    // Combine static exec() paths with preload scripts (on first call only)
-    const scriptsToLoad = includePreload
-      ? [...ast.execScriptPaths, ...(options.preloadScripts ?? [])]
-      : ast.execScriptPaths;
-
-    for (const ref of scriptsToLoad) {
+    async function loadSingleScript(ref: string): Promise<void> {
       options.signal?.throwIfAborted();
       const normalized = normalizePath(ref);
 
-      // Skip if already loaded, failed, or currently loading (cycle detection)
+      // Skip if already loaded or failed
       if (
         state.scripts.has(normalized) ||
-        state.failedScripts.has(normalized) ||
-        loading.has(normalized)
+        state.failedScripts.has(normalized)
       ) {
-        continue;
+        return;
       }
 
-      loading.add(normalized);
-
-      const source = await loader(ref);
-      if (source == null) {
-        console.warn(`Script not found: ${ref}`);
-        state.failedScripts.add(normalized);
-        loading.delete(normalized);
-        continue;
+      // If this script is an ancestor in our load chain, it's a cycle - skip
+      // (awaiting would cause deadlock)
+      if (ancestors.has(normalized)) {
+        return;
       }
 
-      let depAst: Program;
-      try {
-        depAst = parse(source, { filename: ref });
-      } catch (err) {
-        console.warn(`Failed to parse script: ${ref}`, err);
-        state.failedScripts.add(normalized);
-        loading.delete(normalized);
-        continue;
+      // If already loading from a parallel branch, wait for it to complete
+      const existingPromise = loadingPromises.get(normalized);
+      if (existingPromise) {
+        await existingPromise;
+        return;
       }
 
-      // Recursively load this script's dependencies first
-      await loadDependencies(depAst, loading);
+      const loadPromise = (async () => {
+        // Pass original path to loader - it handles its own normalization
+        const source = await loader(ref);
+        if (source == null) {
+          console.warn(`Script not found: ${ref}`);
+          state.failedScripts.add(normalized);
+          return;
+        }
 
-      // Store the parsed AST
-      state.scripts.set(normalized, depAst);
-      loading.delete(normalized);
+        let depAst: Program;
+        try {
+          depAst = parse(source, { filename: ref });
+        } catch (err) {
+          console.warn(`Failed to parse script: ${ref}`, err);
+          state.failedScripts.add(normalized);
+          return;
+        }
+
+        // Add this script to ancestors for nested loads (cycle detection)
+        const newAncestors = new Set(ancestors);
+        newAncestors.add(normalized);
+
+        // Recursively load this script's dependencies in parallel
+        await loadDependencies(
+          depAst.execScriptPaths,
+          loadingPromises,
+          newAncestors,
+        );
+
+        // Store the parsed AST
+        state.scripts.set(normalized, depAst);
+      })();
+
+      loadingPromises.set(normalized, loadPromise);
+      await loadPromise;
     }
+
+    // Load all scripts in parallel
+    await Promise.all(scriptsToLoad.map(loadSingleScript));
   }
 
   async function loadFromPath(path: string): Promise<LoadedScript> {
@@ -1135,12 +1153,12 @@ export function createRuntime(
       throw new Error("loadFromPath requires loadScript option to be set");
     }
 
-    // Check if already loaded (avoid unnecessary fetch)
     const normalized = normalizePath(path);
     if (state.scripts.has(normalized)) {
       return createLoadedScript(state.scripts.get(normalized)!, path);
     }
 
+    // Pass original path to loader - it handles its own normalization
     const source = await loader(path);
     if (source == null) {
       throw new Error(`Script not found: ${path}`);
@@ -1172,14 +1190,21 @@ export function createRuntime(
     ast: Program,
     loadOptions?: LoadScriptOptions,
   ): Promise<LoadedScript> {
-    // Load dependencies (include preload scripts on initial load)
-    const loading = new Set<string>();
+    const loadingPromises = new Map<string, Promise<void>>();
+    const ancestors = new Set<string>();
     if (loadOptions?.path) {
       const normalized = normalizePath(loadOptions.path);
-      loading.add(normalized);
+      // Mark the main script as loaded to prevent cycles back to it
       state.scripts.set(normalized, ast);
+      ancestors.add(normalized);
     }
-    await loadDependencies(ast, loading, true);
+
+    // Load dependencies and any preload scripts
+    const scriptsToLoad = [
+      ...ast.execScriptPaths,
+      ...(options.preloadScripts ?? []),
+    ];
+    await loadDependencies(scriptsToLoad, loadingPromises, ancestors);
 
     return createLoadedScript(ast, loadOptions?.path);
   }
