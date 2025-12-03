@@ -3,10 +3,11 @@ import { useQuery } from "@tanstack/react-query";
 import { useCubeTexture } from "@react-three/drei";
 import { Color, ShaderMaterial, BackSide, Euler } from "three";
 import type { TorqueObject } from "../torqueScript";
-import { getFloat, getProperty } from "../mission";
+import { getFloat, getInt, getProperty } from "../mission";
 import { useSettings } from "./SettingsProvider";
 import { BASE_URL, loadDetailMapList, textureToUrl } from "../loaders";
 import { useThree } from "@react-three/fiber";
+import { CloudLayers } from "./CloudLayers";
 
 const FALLBACK_TEXTURE_URL = `${BASE_URL}/black.png`;
 
@@ -162,6 +163,8 @@ export function Sky({ object }: { object: TorqueObject }) {
     }
   }, [object]);
 
+  const useSkyTextures = getInt(object, "useSkyTextures") ?? 1;
+
   // Fog parameters.
   // TODO: There can be multiple fog volumes/layers. Render simple fog for now.
   const fogDistance = getFloat(object, "fogDistance");
@@ -190,20 +193,24 @@ export function Sky({ object }: { object: TorqueObject }) {
 
   return (
     <>
-      {materialList ? (
-        // If there's a skybox, its textures will need to load. Render just the
-        // fog color as the background in the meantime.
+      {materialList && useSkyTextures ? (
+        // Load the DML for skybox textures
         <Suspense fallback={backgroundColor}>
           <SkyBox
             materialList={materialList}
-            fogColor={fogEnabled ? fogColor[1] : undefined}
+            fogColor={fogEnabled ? fogColor?.[1] : undefined}
             fogDistance={fogEnabled ? fogDistance : undefined}
           />
         </Suspense>
       ) : (
-        // If there's no skybox, just render the fog color as the background.
+        // If there's no material list or skybox textures are disabled,
+        // render solid background
         backgroundColor
       )}
+      {/* Cloud layers render independently of skybox textures */}
+      <Suspense>
+        <CloudLayers object={object} />
+      </Suspense>
       {fogEnabled && fogDistance && fogColor ? (
         <fog
           attach="fog"
