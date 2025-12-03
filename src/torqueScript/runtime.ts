@@ -1,7 +1,7 @@
 import { generate } from "./codegen";
 import { parse, type Program } from "./index";
 import { createBuiltins as defaultCreateBuiltins } from "./builtins";
-import { CaseInsensitiveMap, normalizePath } from "./utils";
+import { CaseInsensitiveMap, CaseInsensitiveSet, normalizePath } from "./utils";
 import type {
   BuiltinsContext,
   FunctionStack,
@@ -14,6 +14,7 @@ import type {
   PackageState,
   RuntimeAPI,
   RuntimeState,
+  ScriptCache,
   TorqueFunction,
   TorqueMethod,
   TorqueObject,
@@ -21,6 +22,18 @@ import type {
   TorqueRuntimeOptions,
   VariableStoreAPI,
 } from "./types";
+
+/**
+ * Create a script cache that can be shared across runtime instances.
+ * This allows parsed ASTs and generated code to be reused when switching
+ * missions or restarting the runtime.
+ */
+export function createScriptCache(): ScriptCache {
+  return {
+    scripts: new Map<string, Program>(),
+    generatedCode: new WeakMap<Program, string>(),
+  };
+}
 
 function normalize(name: string): string {
   return name.toLowerCase();
@@ -49,6 +62,8 @@ export function createRuntime(
   const functions = new CaseInsensitiveMap<FunctionStack>();
   const packages = new CaseInsensitiveMap<PackageState>();
   const activePackages: string[] = [];
+  // Track package names that were activated before being defined (deferred activation)
+  const pendingActivations = new CaseInsensitiveSet();
 
   const FIRST_DATABLOCK_ID = 3;
   const FIRST_DYNAMIC_ID = 1027;
@@ -59,14 +74,89 @@ export function createRuntime(
   const objectsByName = new CaseInsensitiveMap<TorqueObject>();
   const datablocks = new CaseInsensitiveMap<TorqueObject>();
   const globals = new CaseInsensitiveMap<any>();
+  const methodHooks = new CaseInsensitiveMap<
+    CaseInsensitiveMap<Array<(thisObj: TorqueObject, ...args: any[]) => void>>
+  >();
+  // Namespace inheritance: className -> superClassName (for ScriptObject/ScriptGroup)
+  const namespaceParents = new CaseInsensitiveMap<string>();
+
+  // Populate initial globals from options
+  if (options.globals) {
+    for (const [key, value] of Object.entries(options.globals)) {
+      if (!key.startsWith("$")) {
+        throw new Error(
+          `Global variable "${key}" must start with $, e.g. "$${key}"`,
+        );
+      }
+      globals.set(key.slice(1), value);
+    }
+  }
+
   const executedScripts = new Set<string>();
-  const scripts = new Map<string, Program>();
+  const failedScripts = new Set<string>();
+  // Use cache if provided, otherwise create new maps
+  const cache = options.cache ?? createScriptCache();
+  const scripts = cache.scripts;
+  const generatedCode = cache.generatedCode;
+
+  // Execution context: tracks which stack index is currently executing for each function/method
+  // This is needed for Parent:: to correctly call the parent in the stack, not just stack[length-2]
+  // Key format: "funcname" for functions, "classname::methodname" for methods
+  const executionContext = new Map<string, number[]>();
+
+  function pushExecutionContext(key: string, stackIndex: number): void {
+    let stack = executionContext.get(key);
+    if (!stack) {
+      stack = [];
+      executionContext.set(key, stack);
+    }
+    stack.push(stackIndex);
+  }
+
+  function popExecutionContext(key: string): void {
+    const stack = executionContext.get(key);
+    if (stack) {
+      stack.pop();
+    }
+  }
+
+  function getCurrentExecutionIndex(key: string): number | undefined {
+    const stack = executionContext.get(key);
+    return stack && stack.length > 0 ? stack[stack.length - 1] : undefined;
+  }
+
+  /** Execute a function with execution context tracking for proper Parent:: support */
+  function withExecutionContext<T>(key: string, index: number, fn: () => T): T {
+    pushExecutionContext(key, index);
+    try {
+      return fn();
+    } finally {
+      popExecutionContext(key);
+    }
+  }
+
+  /** Build the execution context key for a method */
+  function methodContextKey(className: string, methodName: string): string {
+    return `${className.toLowerCase()}::${methodName.toLowerCase()}`;
+  }
+
+  /** Get the method stack for a class/method pair, or null if not found */
+  function getMethodStack(
+    className: string,
+    methodName: string,
+  ): MethodStack | null {
+    return methods.get(className)?.get(methodName) ?? null;
+  }
+
   const pendingTimeouts = new Set<ReturnType<typeof setTimeout>>();
   let currentPackage: PackageState | null = null;
   let runtimeRef: TorqueRuntime | null = null;
   const getRuntime = () => runtimeRef!;
   const createBuiltins = options.builtins ?? defaultCreateBuiltins;
-  const builtinsCtx: BuiltinsContext = { runtime: getRuntime };
+  const builtinsCtx: BuiltinsContext = {
+    runtime: getRuntime,
+    fileSystem: options.fileSystem ?? null,
+  };
   const builtins = createBuiltins(builtinsCtx);
 
   function registerMethod(
@@ -104,7 +194,14 @@ export function createRuntime(
 
   function activatePackage(name: string): void {
     const pkg = packages.get(name);
-    if (!pkg || pkg.active) return;
+    if (!pkg) {
+      // Package doesn't exist yet - defer activation until it's defined
+      // This matches Torque engine behavior where activatePackage can be
+      // called before the package block is executed
+      pendingActivations.add(name);
+      return;
+    }
+    if (pkg.active) return;
 
     pkg.active = true;
     activePackages.push(pkg.name);
@@ -180,7 +277,12 @@ export function createRuntime(
     fn();
     currentPackage = prevPackage;
 
-    activatePackage(name);
+    // Check for deferred activation - if activatePackage was called before
+    // the package was defined, activate it now
+    if (pendingActivations.has(name)) {
+      pendingActivations.delete(name);
+      activatePackage(name);
+    }
   }
 
   function createObject(
@@ -200,6 +302,15 @@ export function createRuntime(
 
     for (const [key, value] of Object.entries(props)) {
       obj[normalize(key)] = value;
+    }
+
+    // Extract superClass for namespace inheritance (used by ScriptObject/ScriptGroup)
+    if (obj.superclass) {
+      obj._superClass = normalize(String(obj.superclass));
+      // Register the class -> superClass link for method lookup chains
+      if (obj.class) {
+        namespaceParents.set(normalize(String(obj.class)), obj._superClass);
+      }
     }
 
     objectsById.set(id, obj);
@@ -318,32 +429,52 @@ export function createRuntime(
     return obj;
   }
 
+  /**
+   * Resolve an object reference to an actual TorqueObject.
+   * In TorqueScript, bareword identifiers in member expressions (e.g., `Game.cdtrack`)
+   * are looked up by name via Sim::findObject(). This function handles that resolution.
+   */
+  function resolveObject(obj: any): TorqueObject | null {
+    if (obj == null || obj === "") return null;
+    // Already an object with an ID - return as-is
+    if (typeof obj === "object" && obj._id != null) return obj;
+    // String or number - look up by name or ID
+    if (typeof obj === "string") return objectsByName.get(obj) ?? null;
+    if (typeof obj === "number") return objectsById.get(obj) ?? null;
+    return null;
+  }
+
   function prop(obj: any, name: string): any {
-    if (obj == null) return "";
-    return obj[normalize(name)] ?? "";
+    const resolved = resolveObject(obj);
+    if (resolved == null) return "";
+    return resolved[normalize(name)] ?? "";
   }
 
   function setProp(obj: any, name: string, value: any): any {
-    if (obj == null) return value;
-    obj[normalize(name)] = value;
+    const resolved = resolveObject(obj);
+    if (resolved == null) return value;
+    resolved[normalize(name)] = value;
     return value;
   }
 
   function getIndex(obj: any, index: any): any {
-    if (obj == null) return "";
-    return obj[String(index)] ?? "";
+    const resolved = resolveObject(obj);
+    if (resolved == null) return "";
+    return resolved[String(index)] ?? "";
   }
 
   function setIndex(obj: any, index: any, value: any): any {
-    if (obj == null) return value;
-    obj[String(index)] = value;
+    const resolved = resolveObject(obj);
+    if (resolved == null) return value;
+    resolved[String(index)] = value;
     return value;
   }
 
   function postIncDec(obj: any, key: string, delta: 1 | -1): number {
-    if (obj == null) return 0;
-    const oldValue = toNum(obj[key]);
-    obj[key] = oldValue + delta;
+    const resolved = resolveObject(obj);
+    if (resolved == null) return 0;
+    const oldValue = toNum(resolved[key]);
+    resolved[key] = oldValue + delta;
     return oldValue;
   }
 
@@ -372,22 +503,47 @@ export function createRuntime(
     className: string,
     methodName: string,
   ): TorqueMethod | null {
-    const classMethods = methods.get(className);
-    if (classMethods) {
-      const stack = classMethods.get(methodName);
-      if (stack && stack.length > 0) {
-        return stack[stack.length - 1];
-      }
-    }
-    return null;
+    const stack = getMethodStack(className, methodName);
+    return stack && stack.length > 0 ? stack[stack.length - 1] : null;
+  }
+
+  /** Call a method with execution context tracking for proper Parent:: support */
+  function callMethodWithContext(
+    className: string,
+    methodName: string,
+    thisObj: any,
+    args: any[],
+  ): { found: true; result: any } | { found: false } {
+    const stack = getMethodStack(className, methodName);
+    if (!stack || stack.length === 0) return { found: false };
+
+    const key = methodContextKey(className, methodName);
+    const result = withExecutionContext(key, stack.length - 1, () =>
+      stack[stack.length - 1](thisObj, ...args),
+    );
+    return { found: true, result };
   }
 
   function findFunction(name: string): TorqueFunction | null {
     const stack = functions.get(name);
-    if (stack && stack.length > 0) {
-      return stack[stack.length - 1];
+    return stack && stack.length > 0 ? stack[stack.length - 1] : null;
+  }
+
+  function fireMethodHooks(
+    className: string,
+    methodName: string,
+    thisObj: TorqueObject,
+    args: any[],
+  ): void {
+    const classHooks = methodHooks.get(className);
+    if (classHooks) {
+      const hooks = classHooks.get(methodName);
+      if (hooks) {
+        for (const hook of hooks) {
+          hook(thisObj, ...args);
+        }
+      }
     }
-    return null;
   }
 
   function call(obj: any, methodName: string, ...args: any[]): any {
@@ -399,24 +555,51 @@ export function createRuntime(
       if (obj == null) return "";
     }
 
-    const objClass = obj._className || obj._class;
+    // For ScriptObject/ScriptGroup, the "class" property overrides the C++ class name
+    const objClass = obj.class || obj._className || obj._class;
 
     if (objClass) {
-      const fn = findMethod(objClass, methodName);
-      if (fn) {
-        return fn(obj, ...args);
+      const callResult = callMethodWithContext(objClass, methodName, obj, args);
+      if (callResult.found) {
+        fireMethodHooks(objClass, methodName, obj, args);
+        return callResult.result;
       }
     }
 
+    // Walk the superClass chain (for ScriptObject/ScriptGroup inheritance)
+    // First check the object's direct _superClass, then walk namespaceParents
+    let currentClass = obj._superClass || namespaceParents.get(objClass);
+    while (currentClass) {
+      const callResult = callMethodWithContext(
+        currentClass,
+        methodName,
+        obj,
+        args,
+      );
+      if (callResult.found) {
+        fireMethodHooks(currentClass, methodName, obj, args);
+        return callResult.result;
+      }
+      // Walk up the namespace parent chain
+      currentClass = namespaceParents.get(currentClass);
+    }
+
+    // Walk datablock parent chain
     const db = obj._datablock || obj;
     if (db._parent) {
       let current = db._parent;
       while (current) {
         const parentClass = current._className || current._class;
         if (parentClass) {
-          const fn = findMethod(parentClass, methodName);
-          if (fn) {
-            return fn(obj, ...args);
+          const callResult = callMethodWithContext(
+            parentClass,
+            methodName,
+            obj,
+            args,
+          );
+          if (callResult.found) {
+            fireMethodHooks(parentClass, methodName, obj, args);
+            return callResult.result;
           }
         }
         current = current._parent;
@@ -427,22 +610,37 @@ export function createRuntime(
   }
 
   function nsCall(namespace: string, method: string, ...args: any[]): any {
-    const fn = findMethod(namespace, method);
-    if (fn) {
-      return (fn as TorqueFunction)(...args);
+    // For nsCall, args are passed directly to the method (including %this as args[0])
+    // This is different from call() where thisObj is passed separately
+    const stack = getMethodStack(namespace, method);
+    if (!stack || stack.length === 0) return "";
+
+    const key = methodContextKey(namespace, method);
+    const fn = stack[stack.length - 1] as (...args: any[]) => any;
+    const result = withExecutionContext(key, stack.length - 1, () =>
+      fn(...args),
+    );
+
+    // First arg is typically the object (e.g., %game in DefaultGame::missionLoadDone(%game))
+    const thisObj = args[0];
+    if (thisObj && typeof thisObj === "object") {
+      fireMethodHooks(namespace, method, thisObj, args.slice(1));
     }
-    return "";
+    return result;
   }
 
   function nsRef(
     namespace: string,
     method: string,
   ): ((...args: any[]) => any) | null {
-    const fn = findMethod(namespace, method);
-    if (fn) {
-      return (...args: any[]) => (fn as TorqueFunction)(...args);
-    }
-    return null;
+    const stack = getMethodStack(namespace, method);
+    if (!stack || stack.length === 0) return null;
+
+    const key = methodContextKey(namespace, method);
+    const fn = stack[stack.length - 1] as (...args: any[]) => any;
+    // Return a wrapper that tracks execution context for proper Parent:: support
+    return (...args: any[]) =>
+      withExecutionContext(key, stack.length - 1, () => fn(...args));
   }
 
   function parent(
@@ -451,21 +649,31 @@ export function createRuntime(
     thisObj: any,
     ...args: any[]
   ): any {
-    const classMethods = methods.get(currentClass);
-    if (!classMethods) return "";
+    const stack = getMethodStack(currentClass, methodName);
+    if (!stack) return "";
 
-    const stack = classMethods.get(methodName);
-    if (!stack || stack.length < 2) return "";
+    const key = methodContextKey(currentClass, methodName);
+    const currentIndex = getCurrentExecutionIndex(key);
+    if (currentIndex === undefined || currentIndex < 1) return "";
 
-    // Call parent method with the object as first argument
-    return stack[stack.length - 2](thisObj, ...args);
+    const parentIndex = currentIndex - 1;
+    return withExecutionContext(key, parentIndex, () =>
+      stack[parentIndex](thisObj, ...args),
+    );
   }
 
   function parentFunc(currentFunc: string, ...args: any[]): any {
     const stack = functions.get(currentFunc);
-    if (!stack || stack.length < 2) return "";
+    if (!stack) return "";
 
-    return stack[stack.length - 2](...args);
+    const key = currentFunc.toLowerCase();
+    const currentIndex = getCurrentExecutionIndex(key);
+    if (currentIndex === undefined || currentIndex < 1) return "";
+
+    const parentIndex = currentIndex - 1;
+    return withExecutionContext(key, parentIndex, () =>
+      stack[parentIndex](...args),
+    );
   }
 
   function toNum(value: any): number {
@@ -487,9 +695,7 @@ export function createRuntime(
   }
 
   function div(a: any, b: any): number {
-    const divisor = toNum(b);
-    if (divisor === 0) return 0; // TorqueScript returns 0 for division by zero
-    return toNum(a) / divisor;
+    return toNum(a) / toNum(b);
   }
 
   function neg(a: any): number {
@@ -577,14 +783,64 @@ export function createRuntime(
     }
   }
 
+  /**
+   * Find an object by path. Supports:
+   * - Simple names: "MissionGroup"
+   * - Path resolution: "MissionGroup/Teams/team0"
+   * - Numeric IDs: "123" or "123/child"
+   * - Absolute paths: "/MissionGroup/Teams"
+   */
+  function findObjectByPath(name: string): TorqueObject | null {
+    if (!name || name === "") return null;
+
+    // Handle leading slash (absolute path from root)
+    if (name.startsWith("/")) {
+      name = name.slice(1);
+    }
+
+    // Split into path segments
+    const segments = name.split("/");
+    let current: TorqueObject | null = null;
+
+    for (let i = 0; i < segments.length; i++) {
+      const segment = segments[i];
+      if (!segment) continue;
+
+      if (i === 0) {
+        // First segment: look up in global dictionaries
+        // Check if it's a numeric ID
+        if (/^\d+$/.test(segment)) {
+          current = objectsById.get(parseInt(segment, 10)) ?? null;
+        } else {
+          current = objectsByName.get(segment) ?? null;
+        }
+      } else {
+        // Subsequent segments: look in children of current object
+        if (!current || !current._children) {
+          return null;
+        }
+        const segmentLower = segment.toLowerCase();
+        const child = current._children.find(
+          (c) => c._name?.toLowerCase() === segmentLower,
+        );
+        current = child ?? null;
+      }
+
+      if (!current) return null;
+    }
+
+    return current;
+  }
+
   function deref(tag: any): any {
     if (tag == null || tag === "") return null;
-    return objectsByName.get(String(tag)) ?? null;
+    return findObjectByPath(String(tag));
   }
 
   function nameToId(name: string): number {
-    const obj = objectsByName.get(name);
-    return obj ? obj._id : 0;
+    const obj = findObjectByPath(name);
+    // TorqueScript returns -1 when object not found, not 0
+    return obj ? obj._id : -1;
   }
 
   function isObject(obj: any): boolean {
@@ -596,11 +852,21 @@ export function createRuntime(
   }
 
   function isFunction(name: string): boolean {
-    return functions.has(name);
+    // Check both user-defined functions and builtins
+    return functions.has(name) || name.toLowerCase() in builtins;
   }
 
   function isPackage(name: string): boolean {
     return packages.has(name);
+  }
+
+  function isActivePackage(name: string): boolean {
+    const pkg = packages.get(name);
+    return pkg?.active ?? false;
+  }
+
+  function getPackageList(): string {
+    return activePackages.join(" ");
   }
 
   function createVariableStore(
@@ -696,14 +962,36 @@ export function createRuntime(
     isObject,
     isFunction,
     isPackage,
+    isActivePackage,
+    getPackageList,
     locals: createLocals,
+    onMethodCalled(
+      className: string,
+      methodName: string,
+      callback: (thisObj: TorqueObject, ...args: any[]) => void,
+    ): void {
+      let classMethods = methodHooks.get(className);
+      if (!classMethods) {
+        classMethods = new CaseInsensitiveMap();
+        methodHooks.set(className, classMethods);
+      }
+      let hooks = classMethods.get(methodName);
+      if (!hooks) {
+        hooks = [];
+        classMethods.set(methodName, hooks);
+      }
+      hooks.push(callback);
+    },
   };
 
   const $f: FunctionsAPI = {
     call(name: string, ...args: any[]): any {
-      const fn = findFunction(name);
-      if (fn) {
-        return fn(...args);
+      const fnStack = functions.get(name);
+      if (fnStack && fnStack.length > 0) {
+        const key = name.toLowerCase();
+        return withExecutionContext(key, fnStack.length - 1, () =>
+          fnStack[fnStack.length - 1](...args),
+        );
       }
 
       // Builtins are stored with lowercase keys
@@ -712,17 +1000,17 @@ export function createRuntime(
         return builtin(...args);
       }
 
-      throw new Error(
+      // Match TorqueScript behavior: warn and return empty string
+      console.warn(
         `Unknown function: ${name}(${args
           .map((a) => JSON.stringify(a))
           .join(", ")})`,
       );
+      return "";
     },
   };
 
   const $g: GlobalsAPI = createVariableStore(globals);
-
-  const generatedCode = new WeakMap<Program, string>();
 
   const state: RuntimeState = {
     methods,
@@ -734,6 +1022,7 @@ export function createRuntime(
     datablocks,
     globals,
     executedScripts,
+    failedScripts,
     scripts,
     generatedCode,
     pendingTimeouts,
@@ -779,6 +1068,7 @@ export function createRuntime(
   async function loadDependencies(
     ast: Program,
     loading: Set<string>,
+    includePreload: boolean = false,
   ): Promise<void> {
     const loader = options.loadScript;
     if (!loader) {
@@ -792,11 +1082,21 @@ export function createRuntime(
       return;
     }
 
-    for (const ref of ast.execScriptPaths) {
+    // Combine static exec() paths with preload scripts (on first call only)
+    const scriptsToLoad = includePreload
+      ? [...ast.execScriptPaths, ...(options.preloadScripts ?? [])]
+      : ast.execScriptPaths;
+
+    for (const ref of scriptsToLoad) {
+      options.signal?.throwIfAborted();
       const normalized = normalizePath(ref);
 
-      // Skip if already loaded or currently loading (cycle detection)
-      if (state.scripts.has(normalized) || loading.has(normalized)) {
+      // Skip if already loaded, failed, or currently loading (cycle detection)
+      if (
+        state.scripts.has(normalized) ||
+        state.failedScripts.has(normalized) ||
+        loading.has(normalized)
+      ) {
         continue;
       }
 
@@ -805,6 +1105,7 @@ export function createRuntime(
       const source = await loader(ref);
       if (source == null) {
         console.warn(`Script not found: ${ref}`);
+        state.failedScripts.add(normalized);
         loading.delete(normalized);
         continue;
       }
@@ -814,6 +1115,7 @@ export function createRuntime(
         depAst = parse(source, { filename: ref });
       } catch (err) {
         console.warn(`Failed to parse script: ${ref}`, err);
+        state.failedScripts.add(normalized);
         loading.delete(normalized);
         continue;
       }
@@ -870,14 +1172,14 @@ export function createRuntime(
     ast: Program,
     loadOptions?: LoadScriptOptions,
   ): Promise<LoadedScript> {
-    // Load dependencies
+    // Load dependencies (include preload scripts on initial load)
     const loading = new Set<string>();
     if (loadOptions?.path) {
       const normalized = normalizePath(loadOptions.path);
       loading.add(normalized);
       state.scripts.set(normalized, ast);
     }
-    await loadDependencies(ast, loading);
+    await loadDependencies(ast, loading, true);
 
     return createLoadedScript(ast, loadOptions?.path);
   }
@@ -892,6 +1194,8 @@ export function createRuntime(
     loadFromPath,
     loadFromSource,
     loadFromAST,
+    call: (name: string, ...args: any[]) => $f.call(name, ...args),
+    getObjectByName: (name: string) => objectsByName.get(name),
   };
   return runtimeRef;
 }

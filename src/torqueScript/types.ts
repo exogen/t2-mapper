@@ -10,6 +10,7 @@ export interface TorqueObject {
   _id: number;
   _name?: string;
   _isDatablock?: boolean;
+  _superClass?: string; // normalized superClass name (for ScriptObjects)
   _parent?: TorqueObject;
   _children?: TorqueObject[];
   [key: string]: any;
@@ -35,6 +36,7 @@ export interface RuntimeState {
   datablocks: CaseInsensitiveMap<TorqueObject>;
   globals: CaseInsensitiveMap<any>;
   executedScripts: Set<string>;
+  failedScripts: Set<string>;
   scripts: Map<string, Program>;
   generatedCode: WeakMap<Program, string>;
   pendingTimeouts: Set<ReturnType<typeof setTimeout>>;
@@ -54,9 +56,30 @@ export interface TorqueRuntime {
     options?: LoadScriptOptions,
   ): Promise<LoadedScript>;
   loadFromAST(ast: Program, options?: LoadScriptOptions): Promise<LoadedScript>;
+  /** Call a TorqueScript function by name. Shorthand for $f.call(). */
+  call(name: string, ...args: any[]): any;
+  /** Get an object by its name. Returns undefined if not found. */
+  getObjectByName(name: string): TorqueObject | undefined;
 }
 
 export type ScriptLoader = (path: string) => Promise<string | null>;
+
+/**
+ * Handler for file system operations (findFirstFile, findNextFile, isFile).
+ * The runtime maintains an iterator state for the current file search.
+ */
+export interface FileSystemHandler {
+  /**
+   * Find files matching a glob pattern.
+   * Returns an array of matching file paths (relative to game root).
+   */
+  findFiles(pattern: string): string[];
+
+  /**
+   * Check if a file exists at the given path.
+   */
+  isFile(path: string): boolean;
+}
 
 export interface LoadedScript {
   execute(): void;
@@ -64,11 +87,38 @@ export interface LoadedScript {
 
 export interface TorqueRuntimeOptions {
   loadScript?: ScriptLoader;
+  fileSystem?: FileSystemHandler;
   builtins?: BuiltinsFactory;
+  signal?: AbortSignal;
+  globals?: Record<string, any>;
+  /**
+   * Scripts to preload during dependency resolution. Useful for scripts that
+   * are exec()'d dynamically and can't be statically analyzed.
+   */
+  preloadScripts?: string[];
+  /**
+   * Cache for parsed scripts and generated code. If provided, the runtime
+   * will use this cache to store and retrieve parsed ASTs, avoiding redundant
+   * parsing when scripts are loaded multiple times across runtime instances.
+   * Create with `createScriptCache()`.
+   */
+  cache?: ScriptCache;
 }
 
 export interface LoadScriptOptions {
   path?: string;
+}
+
+/**
+ * Cache for parsed scripts and generated code. Can be shared across
+ * multiple runtime instances to speed up script loading when switching
+ * missions or restarting the runtime.
+ */
+export interface ScriptCache {
+  /** Parsed ASTs by normalized path */
+  scripts: Map<string, Program>;
+  /** Generated JavaScript code by AST */
+  generatedCode: WeakMap<Program, string>;
 }
 
 export interface RuntimeAPI {
@@ -150,9 +200,23 @@ export interface RuntimeAPI {
   isObject(obj: any): boolean;
   isFunction(name: string): boolean;
   isPackage(name: string): boolean;
+  isActivePackage(name: string): boolean;
+  getPackageList(): string;
 
   // Local variable scope
   locals(): LocalsAPI;
+
+  // Hooks
+  /**
+   * Register a callback to be called after a method is invoked.
+   * Useful for hooking into game events like missionLoadDone without
+   * worrying about method registration order.
+   */
+  onMethodCalled(
+    className: string,
+    methodName: string,
+    callback: (thisObj: TorqueObject, ...args: any[]) => void,
+  ): void;
 }
 
 export interface FunctionsAPI {
@@ -172,6 +236,7 @@ export type LocalsAPI = VariableStoreAPI;
 
 export interface BuiltinsContext {
   runtime: () => TorqueRuntime;
+  fileSystem: FileSystemHandler | null;
 }
 
 export type BuiltinsFactory = (

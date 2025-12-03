@@ -1,8 +1,18 @@
 import type { BuiltinsContext, TorqueFunction } from "./types";
 import { normalizePath } from "./utils";
 
+/** Coerce value to string, treating null/undefined as empty string. */
+function toStr(v: any): string {
+  return String(v ?? "");
+}
+
+/** Coerce value to number, treating null/undefined/NaN as 0. */
+function toNum(v: any): number {
+  return Number(v) || 0;
+}
+
 function parseVector(v: any): [number, number, number] {
-  const parts = String(v ?? "0 0 0")
+  const parts = toStr(v || "0 0 0")
     .split(" ")
     .map(Number);
   return [parts[0] || 0, parts[1] || 0, parts[2] || 0];
@@ -12,8 +22,171 @@ function parseVector(v: any): [number, number, number] {
 // - Words: space, tab, newline (" \t\n")
 // - Fields: tab, newline ("\t\n")
 // - Records: newline ("\n")
-const FIELD_DELIM = /[\t\n]/;
+const WORD_DELIM_SET = " \t\n";
+const FIELD_DELIM_SET = "\t\n";
+const RECORD_DELIM_SET = "\n";
 const FIELD_DELIM_CHAR = "\t"; // Use tab when joining
+
+/**
+ * Get the span of characters NOT in the delimiter set (like C's strcspn).
+ * Returns the length of the initial segment that doesn't contain any delimiter.
+ */
+function strcspn(str: string, pos: number, delims: string): number {
+  let len = 0;
+  while (pos + len < str.length && !delims.includes(str[pos + len])) {
+    len++;
+  }
+  return len;
+}
+
+/**
+ * Get a unit (word/field/record) at the given index.
+ * Matches engine behavior: doesn't collapse consecutive delimiters.
+ */
+function getUnit(str: string, index: number, delims: string): string {
+  let pos = 0;
+
+  // Skip to the target index
+  while (index > 0) {
+    if (pos >= str.length) return "";
+    const sz = strcspn(str, pos, delims);
+    if (pos + sz >= str.length) return ""; // No more delimiters
+    pos += sz + 1; // Skip word + ONE delimiter
+    index--;
+  }
+
+  // Get the unit at this position
+  const sz = strcspn(str, pos, delims);
+  if (sz === 0) return ""; // Empty unit
+  return str.substring(pos, pos + sz);
+}
+
+/**
+ * Get units from startIndex to endIndex (inclusive).
+ * Matches engine behavior.
+ */
+function getUnits(
+  str: string,
+  startIndex: number,
+  endIndex: number,
+  delims: string,
+): string {
+  let pos = 0;
+  let index = startIndex;
+
+  // Skip to startIndex
+  while (index > 0) {
+    if (pos >= str.length) return "";
+    const sz = strcspn(str, pos, delims);
+    if (pos + sz >= str.length) return "";
+    pos += sz + 1;
+    index--;
+  }
+
+  const startPos = pos;
+
+  // Find end position
+  let count = endIndex - startIndex + 1;
+  while (count > 0) {
+    const sz = strcspn(str, pos, delims);
+    pos += sz;
+    if (pos >= str.length) break;
+    pos++; // Skip delimiter
+    count--;
+  }
+
+  // Trim trailing delimiter if we stopped at one
+  let endPos = pos;
+  if (endPos > startPos && delims.includes(str[endPos - 1])) {
+    endPos--;
+  }
+
+  return str.substring(startPos, endPos);
+}
+
+/**
+ * Count the number of units in the string.
+ * Engine behavior: counts delimiters + 1.
+ * So "a b" has 1 delimiter -> 2 units.
+ * And "a  b" has 2 delimiters -> 3 units (with an empty one in the middle).
+ */
+function getUnitCount(str: string, delims: string): number {
+  if (str === "") return 0;
+
+  let count = 0;
+  for (let i = 0; i < str.length; i++) {
+    if (delims.includes(str[i])) {
+      count++;
+    }
+  }
+
+  return count + 1;
+}
+
+/**
+ * Set a unit at the given index, preserving other units.
+ */
+function setUnit(
+  str: string,
+  index: number,
+  value: string,
+  delims: string,
+  joinChar: string,
+): string {
+  const parts: string[] = [];
+  let pos = 0;
+  let i = 0;
+
+  while (pos < str.length || i <= index) {
+    if (pos < str.length) {
+      const sz = strcspn(str, pos, delims);
+      if (i === index) {
+        parts.push(value);
+      } else {
+        parts.push(str.substring(pos, pos + sz));
+      }
+      pos += sz;
+      if (pos < str.length) pos++; // Skip delimiter
+    } else {
+      // Past end of string, pad with empty strings
+      if (i === index) {
+        parts.push(value);
+      } else {
+        parts.push("");
+      }
+    }
+    i++;
+    if (i > index && pos >= str.length) break;
+  }
+
+  return parts.join(joinChar);
+}
+
+/**
+ * Remove a unit at the given index.
+ */
+function removeUnit(
+  str: string,
+  index: number,
+  delims: string,
+  joinChar: string,
+): string {
+  const parts: string[] = [];
+  let pos = 0;
+  let i = 0;
+
+  while (pos < str.length) {
+    const sz = strcspn(str, pos, delims);
+    if (i !== index) {
+      parts.push(str.substring(pos, pos + sz));
+    }
+    pos += sz;
+    if (pos < str.length) pos++; // Skip delimiter
+    i++;
+  }
+
+  return parts.join(joinChar);
+}
 
 /**
  * Default TorqueScript built-in functions.
@@ -23,20 +196,26 @@ const FIELD_DELIM_CHAR = "\t"; // Use tab when joining
 export function createBuiltins(
   ctx: BuiltinsContext,
 ): Record<string, TorqueFunction> {
-  const { runtime } = ctx;
+  const { runtime, fileSystem } = ctx;
+
+  // File search iterator state
+  let fileSearchResults: string[] = [];
+  let fileSearchIndex = 0;
+  let fileSearchPattern: string = "";
+
   return {
     // Console
     echo(...args: any[]): void {
-      console.log(...args.map((a) => String(a ?? "")));
+      console.log(...args.map(toStr));
     },
     warn(...args: any[]): void {
-      console.warn(...args.map((a) => String(a ?? "")));
+      console.warn(...args.map(toStr));
     },
     error(...args: any[]): void {
-      console.error(...args.map((a) => String(a ?? "")));
+      console.error(...args.map(toStr));
     },
     call(funcName: any, ...args: any[]): any {
-      return runtime().$f.call(String(funcName ?? ""), ...args);
+      return runtime().$f.call(toStr(funcName), ...args);
     },
     eval(_code: any): any {
       throw new Error(
@@ -45,7 +224,7 @@ export function createBuiltins(
     },
     collapseescape(str: any): string {
       // Single-pass replacement to correctly handle sequences like \\n
-      return String(str ?? "").replace(/\\([ntr\\])/g, (_, char) => {
+      return toStr(str).replace(/\\([ntr\\])/g, (_, char) => {
         if (char === "n") return "\n";
         if (char === "t") return "\t";
         if (char === "r") return "\r";
@@ -53,7 +232,7 @@ export function createBuiltins(
       });
     },
     expandescape(str: any): string {
-      return String(str ?? "")
+      return toStr(str)
         .replace(/\\/g, "\\\\")
         .replace(/\n/g, "\\n")
         .replace(/\t/g, "\\t")
@@ -81,159 +260,142 @@ export function createBuiltins(
 
     // String functions
     strlen(str: any): number {
-      return String(str ?? "").length;
+      return toStr(str).length;
     },
     strchr(str: any, char: any): string {
       // Returns remainder of string starting at first occurrence of char, or ""
-      const s = String(str ?? "");
-      const c = String(char ?? "")[0] ?? "";
+      const s = toStr(str);
+      const c = toStr(char)[0] ?? "";
       const idx = s.indexOf(c);
       return idx >= 0 ? s.substring(idx) : "";
     },
     strpos(haystack: any, needle: any, offset?: any): number {
-      const s = String(haystack ?? "");
-      const n = String(needle ?? "");
-      const o = Number(offset) || 0;
-      return s.indexOf(n, o);
+      return toStr(haystack).indexOf(toStr(needle), toNum(offset));
     },
     strcmp(a: any, b: any): number {
-      const sa = String(a ?? "");
-      const sb = String(b ?? "");
+      const sa = toStr(a);
+      const sb = toStr(b);
       return sa < sb ? -1 : sa > sb ? 1 : 0;
     },
     stricmp(a: any, b: any): number {
-      const sa = String(a ?? "").toLowerCase();
-      const sb = String(b ?? "").toLowerCase();
+      const sa = toStr(a).toLowerCase();
+      const sb = toStr(b).toLowerCase();
       return sa < sb ? -1 : sa > sb ? 1 : 0;
     },
     strstr(haystack: any, needle: any): number {
-      return String(haystack ?? "").indexOf(String(needle ?? ""));
+      return toStr(haystack).indexOf(toStr(needle));
     },
     getsubstr(str: any, start: any, len?: any): string {
-      const s = String(str ?? "");
-      const st = Number(start) || 0;
+      const s = toStr(str);
+      const st = toNum(start);
       if (len === undefined) return s.substring(st);
-      return s.substring(st, st + (Number(len) || 0));
+      return s.substring(st, st + toNum(len));
     },
     getword(str: any, index: any): string {
-      const words = String(str ?? "").split(/\s+/);
-      const i = Number(index) || 0;
-      return words[i] ?? "";
+      return getUnit(toStr(str), toNum(index), WORD_DELIM_SET);
     },
     getwordcount(str: any): number {
-      const s = String(str ?? "").trim();
-      if (s === "") return 0;
-      return s.split(/\s+/).length;
+      return getUnitCount(toStr(str), WORD_DELIM_SET);
     },
     getfield(str: any, index: any): string {
-      const fields = String(str ?? "").split(FIELD_DELIM);
-      const i = Number(index) || 0;
-      return fields[i] ?? "";
+      return getUnit(toStr(str), toNum(index), FIELD_DELIM_SET);
     },
     getfieldcount(str: any): number {
-      const s = String(str ?? "");
-      if (s === "") return 0;
-      return s.split(FIELD_DELIM).length;
+      return getUnitCount(toStr(str), FIELD_DELIM_SET);
     },
     setword(str: any, index: any, value: any): string {
-      const words = String(str ?? "").split(/\s+/);
-      const i = Number(index) || 0;
-      words[i] = String(value ?? "");
-      return words.join(" ");
+      return setUnit(
+        toStr(str),
+        toNum(index),
+        toStr(value),
+        WORD_DELIM_SET,
+        " ",
+      );
     },
     setfield(str: any, index: any, value: any): string {
-      const fields = String(str ?? "").split(FIELD_DELIM);
-      const i = Number(index) || 0;
-      fields[i] = String(value ?? "");
-      return fields.join(FIELD_DELIM_CHAR);
+      return setUnit(
+        toStr(str),
+        toNum(index),
+        toStr(value),
+        FIELD_DELIM_SET,
+        FIELD_DELIM_CHAR,
+      );
     },
     firstword(str: any): string {
-      const words = String(str ?? "").split(/\s+/);
-      return words[0] ?? "";
+      return getUnit(toStr(str), 0, WORD_DELIM_SET);
     },
     restwords(str: any): string {
-      const words = String(str ?? "").split(/\s+/);
-      return words.slice(1).join(" ");
+      // Get all words starting from index 1
+      return getUnits(toStr(str), 1, 1000000, WORD_DELIM_SET);
     },
     trim(str: any): string {
-      return String(str ?? "").trim();
+      return toStr(str).trim();
     },
     ltrim(str: any): string {
-      return String(str ?? "").replace(/^\s+/, "");
+      return toStr(str).replace(/^\s+/, "");
     },
     rtrim(str: any): string {
-      return String(str ?? "").replace(/\s+$/, "");
+      return toStr(str).replace(/\s+$/, "");
     },
     strupr(str: any): string {
-      return String(str ?? "").toUpperCase();
+      return toStr(str).toUpperCase();
     },
     strlwr(str: any): string {
-      return String(str ?? "").toLowerCase();
+      return toStr(str).toLowerCase();
     },
     strreplace(str: any, from: any, to: any): string {
-      return String(str ?? "")
-        .split(String(from ?? ""))
-        .join(String(to ?? ""));
+      return toStr(str).split(toStr(from)).join(toStr(to));
     },
     filterstring(str: any, _replacementChars?: any): string {
       // Filters profanity/bad words from the string (requires bad word dictionary)
       // Since we don't have a bad word filter, just return the string unchanged
-      return String(str ?? "");
+      return toStr(str);
     },
     stripchars(str: any, chars: any): string {
       // Removes all characters in `chars` from the string
-      const s = String(str ?? "");
-      const toRemove = new Set(String(chars ?? "").split(""));
+      const s = toStr(str);
+      const toRemove = new Set(toStr(chars).split(""));
       return s
         .split("")
         .filter((c) => !toRemove.has(c))
         .join("");
     },
     getfields(str: any, start: any, end?: any): string {
-      const fields = String(str ?? "").split(FIELD_DELIM);
-      const s = Number(start) || 0;
-      const e = end !== undefined ? Number(end) + 1 : 1000000;
-      return fields.slice(s, e).join(FIELD_DELIM_CHAR);
+      const e = end !== undefined ? Number(end) : 1000000;
+      return getUnits(toStr(str), toNum(start), e, FIELD_DELIM_SET);
     },
     getwords(str: any, start: any, end?: any): string {
-      const words = String(str ?? "").split(/\s+/);
-      const s = Number(start) || 0;
-      const e = end !== undefined ? Number(end) + 1 : 1000000;
-      return words.slice(s, e).join(" ");
+      const e = end !== undefined ? Number(end) : 1000000;
+      return getUnits(toStr(str), toNum(start), e, WORD_DELIM_SET);
     },
     removeword(str: any, index: any): string {
-      const words = String(str ?? "").split(/\s+/);
-      const i = Number(index) || 0;
-      words.splice(i, 1);
-      return words.join(" ");
+      return removeUnit(toStr(str), toNum(index), WORD_DELIM_SET, " ");
     },
     removefield(str: any, index: any): string {
-      const fields = String(str ?? "").split(FIELD_DELIM);
-      const i = Number(index) || 0;
-      fields.splice(i, 1);
-      return fields.join(FIELD_DELIM_CHAR);
+      return removeUnit(
+        toStr(str),
+        toNum(index),
+        FIELD_DELIM_SET,
+        FIELD_DELIM_CHAR,
+      );
     },
     getrecord(str: any, index: any): string {
-      const records = String(str ?? "").split("\n");
-      const i = Number(index) || 0;
-      return records[i] ?? "";
+      return getUnit(toStr(str), toNum(index), RECORD_DELIM_SET);
     },
     getrecordcount(str: any): number {
-      const s = String(str ?? "");
-      if (s === "") return 0;
-      return s.split("\n").length;
+      return getUnitCount(toStr(str), RECORD_DELIM_SET);
     },
     setrecord(str: any, index: any, value: any): string {
-      const records = String(str ?? "").split("\n");
-      const i = Number(index) || 0;
-      records[i] = String(value ?? "");
-      return records.join("\n");
+      return setUnit(
+        toStr(str),
+        toNum(index),
+        toStr(value),
+        RECORD_DELIM_SET,
+        "\n",
+      );
     },
     removerecord(str: any, index: any): string {
-      const records = String(str ?? "").split("\n");
-      const i = Number(index) || 0;
-      records.splice(i, 1);
-      return records.join("\n");
+      return removeUnit(toStr(str), toNum(index), RECORD_DELIM_SET, "\n");
     },
     nexttoken(_str: any, _tokenVar: any, _delim: any): string {
       // nextToken modifies a variable to store the remainder of the string,
@@ -244,48 +406,48 @@ export function createBuiltins(
     },
     strtoplayername(str: any): string {
       // Sanitizes a string to be a valid player name
-      return String(str ?? "")
+      return toStr(str)
         .replace(/[^\w\s-]/g, "")
         .trim();
     },
 
     // Math functions
     mabs(n: any): number {
-      return Math.abs(Number(n) || 0);
+      return Math.abs(toNum(n));
     },
     mfloor(n: any): number {
-      return Math.floor(Number(n) || 0);
+      return Math.floor(toNum(n));
     },
     mceil(n: any): number {
-      return Math.ceil(Number(n) || 0);
+      return Math.ceil(toNum(n));
     },
     msqrt(n: any): number {
-      return Math.sqrt(Number(n) || 0);
+      return Math.sqrt(toNum(n));
     },
     mpow(base: any, exp: any): number {
-      return Math.pow(Number(base) || 0, Number(exp) || 0);
+      return Math.pow(toNum(base), toNum(exp));
     },
     msin(n: any): number {
-      return Math.sin(Number(n) || 0);
+      return Math.sin(toNum(n));
     },
     mcos(n: any): number {
-      return Math.cos(Number(n) || 0);
+      return Math.cos(toNum(n));
     },
     mtan(n: any): number {
-      return Math.tan(Number(n) || 0);
+      return Math.tan(toNum(n));
     },
     masin(n: any): number {
-      return Math.asin(Number(n) || 0);
+      return Math.asin(toNum(n));
     },
     macos(n: any): number {
-      return Math.acos(Number(n) || 0);
+      return Math.acos(toNum(n));
     },
     matan(rise: any, run: any): number {
       // SDK: mAtan(rise, run) - always requires 2 args, returns atan2
-      return Math.atan2(Number(rise) || 0, Number(run) || 0);
+      return Math.atan2(toNum(rise), toNum(run));
     },
     mlog(n: any): number {
-      return Math.log(Number(n) || 0);
+      return Math.log(toNum(n));
     },
     getrandom(a?: any, b?: any): number {
       // SDK behavior:
@@ -296,26 +458,24 @@ export function createBuiltins(
         return Math.random();
       }
       if (b === undefined) {
-        return Math.floor(Math.random() * (Number(a) + 1));
+        return Math.floor(Math.random() * (toNum(a) + 1));
       }
-      const min = Number(a) || 0;
-      const max = Number(b) || 0;
+      const min = toNum(a);
+      const max = toNum(b);
       return Math.floor(Math.random() * (max - min + 1)) + min;
     },
     mdegtorad(deg: any): number {
-      return (Number(deg) || 0) * (Math.PI / 180);
+      return toNum(deg) * (Math.PI / 180);
     },
     mradtodeg(rad: any): number {
-      return (Number(rad) || 0) * (180 / Math.PI);
+      return toNum(rad) * (180 / Math.PI);
     },
     mfloatlength(n: any, precision: any): string {
-      return (Number(n) || 0).toFixed(Number(precision) || 0);
+      return toNum(n).toFixed(toNum(precision));
     },
     getboxcenter(box: any): string {
       // Box format: "minX minY minZ maxX maxY maxZ"
-      const parts = String(box ?? "")
-        .split(" ")
-        .map(Number);
+      const parts = toStr(box).split(" ").map(Number);
       const minX = parts[0] || 0;
       const minY = parts[1] || 0;
       const minZ = parts[2] || 0;
@@ -338,7 +498,7 @@ export function createBuiltins(
     },
     vectorscale(v: any, s: any): string {
       const [x, y, z] = parseVector(v);
-      const scale = Number(s) || 0;
+      const scale = toNum(s);
       return `${x * scale} ${y * scale} ${z * scale}`;
     },
     vectordot(a: any, b: any): number {
@@ -417,7 +577,12 @@ export function createBuiltins(
       const rt = runtime();
       const timeoutId = setTimeout(() => {
         rt.state.pendingTimeouts.delete(timeoutId);
-        rt.$f.call(String(func), ...args);
+        try {
+          rt.$f.call(String(func), ...args);
+        } catch (err) {
+          console.error(`schedule: error calling ${func}:`, err);
+          throw err;
+        }
       }, ms);
       rt.state.pendingTimeouts.add(timeoutId);
       return timeoutId;
@@ -470,22 +635,25 @@ export function createBuiltins(
 
     // Misc
     isdemo(): boolean {
-      // FIXME: Unsure if this is referring to demo (.rec) playback, or a demo
-      // version of the game.
+      // NOTE: Refers to demo version of the game, not demo recordings (.rec file playback)
       return false;
     },
 
     // Files
-    isfile(_path: any): boolean {
-      throw new Error("isFile() not implemented: requires filesystem access");
+    isfile(path: any): boolean {
+      if (!fileSystem) {
+        console.warn("isFile(): no fileSystem handler configured");
+        return false;
+      }
+      return fileSystem.isFile(toStr(path));
     },
     fileext(path: any): string {
-      const s = String(path ?? "");
+      const s = toStr(path);
       const dot = s.lastIndexOf(".");
       return dot >= 0 ? s.substring(dot) : "";
     },
     filebase(path: any): string {
-      const s = String(path ?? "");
+      const s = toStr(path);
       const slash = Math.max(s.lastIndexOf("/"), s.lastIndexOf("\\"));
       const dot = s.lastIndexOf(".");
       const start = slash >= 0 ? slash + 1 : 0;
@@ -493,7 +661,7 @@ export function createBuiltins(
       return s.substring(start, end);
     },
     filepath(path: any): string {
-      const s = String(path ?? "");
+      const s = toStr(path);
       const slash = Math.max(s.lastIndexOf("/"), s.lastIndexOf("\\"));
       return slash >= 0 ? s.substring(0, slash) : "";
     },
@@ -502,20 +670,35 @@ export function createBuiltins(
         "expandFilename() not implemented: requires filesystem path expansion",
       );
     },
-    findfirstfile(_pattern: any): string {
-      throw new Error(
-        "findFirstFile() not implemented: requires filesystem directory listing",
-      );
+    findfirstfile(pattern: any): string {
+      if (!fileSystem) {
+        console.warn("findFirstFile(): no fileSystem handler configured");
+        return "";
+      }
+      fileSearchPattern = toStr(pattern);
+      fileSearchResults = fileSystem.findFiles(fileSearchPattern);
+      fileSearchIndex = 0;
+      return fileSearchResults[fileSearchIndex++] ?? "";
     },
-    findnextfile(_pattern: any): string {
-      throw new Error(
-        "findNextFile() not implemented: requires filesystem directory listing",
-      );
+    findnextfile(pattern: any): string {
+      const patternStr = toStr(pattern);
+      // If pattern changed, get new results but keep the cursor position.
+      // This matches engine behavior where the cursor is global and persists
+      // across pattern changes. If the cursor is past the end of the new
+      // results, we return "" (no more matches).
+      if (patternStr !== fileSearchPattern) {
+        if (!fileSystem) {
+          return "";
+        }
+        fileSearchPattern = patternStr;
+        fileSearchResults = fileSystem.findFiles(patternStr);
+        // Don't reset fileSearchIndex - maintain global cursor position
+      }
+      return fileSearchResults[fileSearchIndex++] ?? "";
     },
-    getfilecrc(_path: any): number {
-      throw new Error(
-        "getFileCRC() not implemented: requires filesystem access",
-      );
+    getfilecrc(path: any): string {
+      // Return path as a pseudo-CRC for identification purposes
+      return toStr(path);
     },
     iswriteablefilename(path: any): boolean {
       return false;
@@ -523,13 +706,19 @@ export function createBuiltins(
 
     // Package management
     activatepackage(name: any): void {
-      runtime().$.activatePackage(String(name ?? ""));
+      runtime().$.activatePackage(toStr(name));
     },
     deactivatepackage(name: any): void {
-      runtime().$.deactivatePackage(String(name ?? ""));
+      runtime().$.deactivatePackage(toStr(name));
     },
     ispackage(name: any): boolean {
-      return runtime().$.isPackage(String(name ?? ""));
+      return runtime().$.isPackage(toStr(name));
+    },
+    isactivepackage(name: any): boolean {
+      return runtime().$.isActivePackage(toStr(name));
+    },
+    getpackagelist(): string {
+      return runtime().$.getPackageList();
     },
 
     // Messaging (stubs - no networking layer)
@@ -621,7 +810,7 @@ export function createBuiltins(
       return "";
     },
     detag(_tagged: any): string {
-      return String(_tagged ?? "");
+      return toStr(_tagged);
     },
     gettag(_str: any): number {
       return 0;
@@ -638,10 +827,20 @@ export function createBuiltins(
     setnetport(_port: any): boolean {
       return true;
     },
+    allowconnections(_allow: any): void {},
     startheartbeat(): void {},
     stopheartbeat(): void {},
     gotowebpage(_url: any): void {
       // Could potentially open URL in browser
+    },
+
+    // Simulation management
+    deletedatablocks(): void {
+      // Clears all datablocks in preparation for loading a new mission.
+      // For map parsing, we don't need to actually delete anything.
+    },
+    preloaddatablock(_datablock: any): boolean {
+      return true;
     },
 
     // Scene/Physics

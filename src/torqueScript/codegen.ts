@@ -1,10 +1,7 @@
 import type * as AST from "./ast";
 import { parseMethodName } from "./ast";
 
-const INTEGER_OPERATORS = new Set(["%", "&", "|", "^", "<<", ">>"]);
-const ARITHMETIC_OPERATORS = new Set(["+", "-", "*", "/"]);
-const COMPARISON_OPERATORS = new Set(["<", "<=", ">", ">=", "==", "!="]);
-
+/** Operators that require runtime helpers for proper TorqueScript coercion semantics */
 const OPERATOR_HELPERS: Record<string, string> = {
   // Arithmetic
   "+": "$.add",
@@ -104,6 +101,25 @@ export class CodeGenerator {
             `${store}.set(${baseName}, ${indicesStr}, ${value})`,
           postIncHelper: `${store}.postInc(${baseName}, ${indicesStr})`,
           postDecHelper: `${store}.postDec(${baseName}, ${indicesStr})`,
+        };
+      }
+
+      // MemberExpression with index: obj.prop[0] becomes obj with field "prop0"
+      // In TorqueScript, obj.field[idx] constructs field name: field + idx
+      if (target.object.type === "MemberExpression") {
+        const member = target.object;
+        const obj = this.expression(member.object);
+        const baseProp =
+          member.property.type === "Identifier"
+            ? JSON.stringify(member.property.name)
+            : this.expression(member.property);
+        const prop = `${this.runtime}.key(${baseProp}, ${indices.join(", ")})`;
+        return {
+          getter: `${this.runtime}.prop(${obj}, ${prop})`,
+          setter: (value) =>
+            `${this.runtime}.setProp(${obj}, ${prop}, ${value})`,
+          postIncHelper: `${this.runtime}.propPostInc(${obj}, ${prop})`,
+          postDecHelper: `${this.runtime}.propPostDec(${obj}, ${prop})`,
         };
       }
 
@@ -542,12 +558,6 @@ export class CodeGenerator {
     const right = this.expression(node.right);
     const op = node.operator;
 
-    // Integer operations need runtime helpers
-    if (INTEGER_OPERATORS.has(op)) {
-      const helper = OPERATOR_HELPERS[op];
-      return `${helper}(${left}, ${right})`;
-    }
-
     // String concat operators
     const concat = this.concatExpression(left, op, right);
     if (concat) return concat;
@@ -560,20 +570,15 @@ export class CodeGenerator {
       return `!${this.runtime}.streq(${left}, ${right})`;
     }
 
-    // Logical operators (short-circuit, pass through)
+    // Logical operators (short-circuit, pass through to JS)
     if (op === "&&" || op === "||") {
       return `(${left} ${op} ${right})`;
     }
 
-    // Arithmetic operators use runtime helpers for proper numeric coercion
-    if (ARITHMETIC_OPERATORS.has(op)) {
-      const helper = OPERATOR_HELPERS[op];
-      return `${helper}(${left}, ${right})`;
-    }
-
-    // Comparison operators use runtime helpers for proper numeric coercion
-    if (COMPARISON_OPERATORS.has(op)) {
-      const helper = OPERATOR_HELPERS[op];
+    // Arithmetic, comparison, and bitwise operators use runtime helpers
+    // for proper TorqueScript numeric coercion
+    const helper = OPERATOR_HELPERS[op];
+    if (helper) {
       return `${helper}(${left}, ${right})`;
     }
 
@@ -694,6 +699,19 @@ export class CodeGenerator {
       return `${store}.get(${baseName}, ${indices.join(", ")})`;
     }
 
+    // MemberExpression with index: obj.prop[0] becomes obj with field "prop0"
+    // In TorqueScript, obj.field[idx] constructs field name: field + idx
+    if (node.object.type === "MemberExpression") {
+      const member = node.object;
+      const obj = this.expression(member.object);
+      const baseProp =
+        member.property.type === "Identifier"
+          ? JSON.stringify(member.property.name)
+          : this.expression(member.property);
+      const prop = `${this.runtime}.key(${baseProp}, ${indices.join(", ")})`;
+      return `${this.runtime}.prop(${obj}, ${prop})`;
+    }
+
     const obj = this.expression(node.object);
     if (indices.length === 1) {
       return `${this.runtime}.getIndex(${obj}, ${indices[0]})`;
@@ -729,19 +747,13 @@ export class CodeGenerator {
     op: string,
     value: string,
   ): string {
-    // Integer operators need runtime helpers
-    if (INTEGER_OPERATORS.has(op)) {
-      const helper = OPERATOR_HELPERS[op];
-      return `${helper}(${getter}, ${value})`;
-    }
-
     // String concat operators
     const concat = this.concatExpression(getter, op, value);
     if (concat) return concat;
 
-    // Arithmetic operators need runtime helpers for proper numeric coercion
-    if (ARITHMETIC_OPERATORS.has(op)) {
-      const helper = OPERATOR_HELPERS[op];
+    // Arithmetic and bitwise operators use runtime helpers
+    const helper = OPERATOR_HELPERS[op];
+    if (helper) {
       return `${helper}(${getter}, ${value})`;
     }
 

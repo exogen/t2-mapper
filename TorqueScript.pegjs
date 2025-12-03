@@ -411,19 +411,34 @@ MultiplicativeExpression
     }
 
 UnaryExpression
-  = operator:("-" / "!" / "~") _ argument:AssignmentExpression {
+  = operator:("-" / "!" / "~") _ argument:UnaryOperand {
       return buildUnaryExpression(operator, argument);
     }
-  / operator:("++" / "--") _ argument:UnaryExpression {
+  / operator:("++" / "--") _ argument:UnaryOperand {
       return buildUnaryExpression(operator, argument);
     }
-  / "*" _ argument:UnaryExpression {
+  / "*" _ argument:UnaryOperand {
       return {
         type: 'TagDereferenceExpression',
         argument
       };
     }
   / PostfixExpression
+
+// Allow assignment expressions as unary operands without parentheses.
+// This matches official TorqueScript behavior where `!%x = foo()` parses as `!(%x = foo())`.
+// We can't use full Expression here or it would break precedence (e.g., `!a + b` would
+// incorrectly parse as `!(a + b)` instead of `(!a) + b`).
+UnaryOperand
+  = target:LeftHandSide _ operator:AssignmentOperator _ value:AssignmentExpression {
+      return {
+        type: 'AssignmentExpression',
+        operator,
+        target,
+        value
+      };
+    }
+  / UnaryExpression
 
 PostfixExpression
   = argument:CallExpression _ operator:("++" / "--") {

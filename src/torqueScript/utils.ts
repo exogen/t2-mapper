@@ -89,6 +89,50 @@ export class CaseInsensitiveMap<V> {
   }
 }
 
+/**
+ * Set with case-insensitive membership checks.
+ */
+export class CaseInsensitiveSet {
+  private set = new Set<string>();
+
+  constructor(values?: Iterable<string> | null) {
+    if (values) {
+      for (const value of values) {
+        this.add(value);
+      }
+    }
+  }
+
+  get size(): number {
+    return this.set.size;
+  }
+
+  add(value: string): this {
+    this.set.add(value.toLowerCase());
+    return this;
+  }
+
+  has(value: string): boolean {
+    return this.set.has(value.toLowerCase());
+  }
+
+  delete(value: string): boolean {
+    return this.set.delete(value.toLowerCase());
+  }
+
+  clear(): void {
+    this.set.clear();
+  }
+
+  [Symbol.iterator](): IterableIterator<string> {
+    return this.set[Symbol.iterator]();
+  }
+
+  get [Symbol.toStringTag](): string {
+    return "CaseInsensitiveSet";
+  }
+}
+
 export function normalizePath(path: string): string {
   return path.replace(/\\/g, "/").toLowerCase();
 }
