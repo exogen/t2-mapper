@@ -7,6 +7,7 @@ import { renderObject } from "./renderObject";
 import { memo, useEffect, useState } from "react";
 import { RuntimeProvider } from "./RuntimeProvider";
 import {
+  createProgressTracker,
   createScriptCache,
   FileSystemHandler,
   runServer,
@@ -50,6 +51,7 @@ function useParsedMission(name: string) {
 interface ExecutedMissionState {
   missionGroup: TorqueObject | undefined;
   runtime: TorqueRuntime | undefined;
+  progress: number;
 }
 
 function useExecutedMission(
@@ -59,6 +61,7 @@ function useExecutedMission(
   const [state, setState] = useState<ExecutedMissionState>({
     missionGroup: undefined,
     runtime: undefined,
+    progress: 0,
   });
 
   useEffect(() => {
@@ -70,6 +73,13 @@ function useExecutedMission(
     // FIXME: Always just runs as the first game type for now...
     const missionType = parsedMission.missionTypes[0];
 
+    // Create progress tracker and update state on changes
+    const progressTracker = createProgressTracker();
+    const handleProgress = () => {
+      setState((prev) => ({ ...prev, progress: progressTracker.progress }));
+    };
+    progressTracker.on("update", handleProgress);
+
     const { runtime } = runServer({
       missionName,
       missionType,
@@ -78,10 +88,12 @@ function useExecutedMission(
         fileSystem,
         cache: scriptCache,
         signal: controller.signal,
+        progress: progressTracker,
         ignoreScripts: [
           "scripts/admin.cs",
           "scripts/ai.cs",
           "scripts/aiCTF.cs",
+          "scripts/aiTDM.cs",
           "scripts/aiHunters.cs",
           "scripts/deathMessages.cs",
           "scripts/graphBuild.cs",
@@ -92,11 +104,12 @@ function useExecutedMission(
       },
       onMissionLoadDone: () => {
         const missionGroup = runtime.getObjectByName("MissionGroup");
-        setState({ missionGroup, runtime });
+        setState({ missionGroup, runtime, progress: 1 });
       },
     });
 
     return () => {
+      progressTracker.off("update", handleProgress);
       controller.abort();
       runtime.destroy();
     };
@@ -107,7 +120,7 @@ function useExecutedMission(
 
 interface MissionProps {
   name: string;
-  onLoadingChange?: (isLoading: boolean) => void;
+  onLoadingChange?: (isLoading: boolean, progress?: number) => void;
 }
 
 export const Mission = memo(function Mission({
@@ -115,12 +128,15 @@ export const Mission = memo(function Mission({
   onLoadingChange,
 }: MissionProps) {
   const { data: parsedMission } = useParsedMission(name);
-  const { missionGroup, runtime } = useExecutedMission(name, parsedMission);
+  const { missionGroup, runtime, progress } = useExecutedMission(
+    name,
+    parsedMission,
+  );
   const isLoading = !missionGroup || !runtime;
 
   useEffect(() => {
-    onLoadingChange?.(isLoading);
-  }, [isLoading, onLoadingChange]);
+    onLoadingChange?.(isLoading, progress);
+  }, [isLoading, progress, onLoadingChange]);
 
   if (isLoading) {
     return null;

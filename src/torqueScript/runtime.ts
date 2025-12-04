@@ -1121,12 +1121,16 @@ export function createRuntime(
         return;
       }
 
+      // Track this script in progress
+      options.progress?.addItem(ref);
+
       const loadPromise = (async () => {
         // Pass original path to loader - it handles its own normalization
         const source = await loader(ref);
         if (source == null) {
           console.warn(`Script not found: ${ref}`);
           state.failedScripts.add(normalized);
+          options.progress?.completeItem();
           return;
         }
 
@@ -1136,6 +1140,7 @@ export function createRuntime(
         } catch (err) {
           console.warn(`Failed to parse script: ${ref}`, err);
           state.failedScripts.add(normalized);
+          options.progress?.completeItem();
           return;
         }
 
@@ -1152,6 +1157,7 @@ export function createRuntime(
 
         // Store the parsed AST
         state.scripts.set(normalized, depAst);
+        options.progress?.completeItem();
       })();
 
       loadingPromises.set(normalized, loadPromise);
@@ -1173,13 +1179,19 @@ export function createRuntime(
       return createLoadedScript(state.scripts.get(normalized)!, path);
     }
 
+    // Track this script in progress
+    options.progress?.addItem(path);
+
     // Pass original path to loader - it handles its own normalization
     const source = await loader(path);
     if (source == null) {
+      options.progress?.completeItem();
       throw new Error(`Script not found: ${path}`);
     }
 
-    return loadFromSource(source, { path });
+    const result = await loadFromSource(source, { path });
+    options.progress?.completeItem();
+    return result;
   }
 
   async function loadFromSource(

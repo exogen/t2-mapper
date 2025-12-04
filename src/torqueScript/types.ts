@@ -1,4 +1,5 @@
 import type { Program } from "./ast";
+import type { ProgressTrackerInternal } from "./progress";
 import type { CaseInsensitiveMap } from "./utils";
 
 export type TorqueFunction = (...args: any[]) => any;
@@ -108,6 +109,12 @@ export interface TorqueRuntimeOptions {
    * Create with `createScriptCache()`.
    */
   cache?: ScriptCache;
+  /**
+   * Progress tracker for monitoring script loading. If provided, the runtime
+   * will report loading progress as scripts are discovered and loaded.
+   * Create with `createProgressTracker()`.
+   */
+  progress?: ProgressTrackerInternal;
 }
 
 export interface LoadScriptOptions {

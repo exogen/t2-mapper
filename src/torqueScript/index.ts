@@ -7,6 +7,7 @@ import { TorqueObject, TorqueRuntime, TorqueRuntimeOptions } from "./types";
 export { generate, type GeneratorOptions } from "./codegen";
 export type { Program } from "./ast";
 export { createBuiltins } from "./builtins";
+export { createProgressTracker, type ProgressTracker } from "./progress";
 export { createRuntime, createScriptCache } from "./runtime";
 export { normalizePath } from "./utils";
 export type {

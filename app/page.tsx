@@ -26,7 +26,19 @@ function MapInspector() {
   const [missionName, setMissionName] = useState(
     searchParams.get("mission") || "TWL2_WoodyMyrk",
   );
-  const [isLoading, setIsLoading] = useState(true);
+  const [loadingProgress, setLoadingProgress] = useState(0);
+  const [showLoadingIndicator, setShowLoadingIndicator] = useState(true);
+  const isLoading = loadingProgress < 1;
+
+  // Keep the loading indicator visible briefly after reaching 100%
+  useEffect(() => {
+    if (isLoading) {
+      setShowLoadingIndicator(true);
+    } else {
+      const timer = setTimeout(() => setShowLoadingIndicator(false), 500);
+      return () => clearTimeout(timer);
+    }
+  }, [isLoading]);
 
   useEffect(() => {
     // For automation, like the t2-maps app!
@@ -48,17 +60,31 @@ function MapInspector() {
     router.replace(`?${params.toString()}`, { scroll: false });
   }, [missionName, router]);
 
-  const handleLoadingChange = useCallback((loading: boolean) => {
-    setIsLoading(loading);
-  }, []);
+  const handleLoadingChange = useCallback(
+    (_loading: boolean, progress: number = 0) => {
+      setLoadingProgress(progress);
+    },
+    [],
+  );
 
   return (
     <QueryClientProvider client={queryClient}>
       <main>
         <SettingsProvider>
           <div id="canvasContainer">
-            {isLoading && (
-              <div id="loadingIndicator" className="LoadingSpinner" />
+            {showLoadingIndicator && (
+              <div id="loadingIndicator" data-complete={!isLoading}>
+                <div className="LoadingSpinner" />
+                <div className="LoadingProgress">
+                  <div
+                    className="LoadingProgress-bar"
+                    style={{ width: `${loadingProgress * 100}%` }}
+                  />
+                </div>
+                <div className="LoadingProgress-text">
+                  {Math.round(loadingProgress * 100)}%
+                </div>
+              </div>
             )}
             <Canvas shadows frameloop="always">
               <CamerasProvider>
