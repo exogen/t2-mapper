@@ -2250,6 +2250,145 @@ describe("TorqueScript Runtime", () => {
       expect($g.get("result1")).toBe("info");
       expect($g.get("result2")).toBe("info");
     });
+
+    it("Parent:: walks namespace chain when no package override exists", () => {
+      // This tests the real TorqueScript behavior where Parent:: in a method
+      // walks up the namespace inheritance chain (set via superClass),
+      // not just the package override stack.
+      // This is how TDMGame::missionLoadDone can call Parent::missionLoadDone
+      // to invoke DefaultGame::missionLoadDone.
+      const { $g } = run(`
+        function DefaultGame::missionLoadDone(%game) {
+          %game.defaultCalled = true;
+          return "default";
+        }
+
+        function TDMGame::missionLoadDone(%game) {
+          // This Parent:: call should resolve to DefaultGame::missionLoadDone
+          // because TDMGame's superClass is DefaultGame
+          %result = Parent::missionLoadDone(%game);
+          %game.tdmCalled = true;
+          return "tdm(" @ %result @ ")";
+        }
+
+        // Create the Game object with class/superClass to establish namespace chain
+        %game = new ScriptObject(Game) {
+          class = "TDMGame";
+          superClass = "DefaultGame";
+        };
+
+        $result = %game.missionLoadDone();
+        $defaultCalled = %game.defaultCalled;
+        $tdmCalled = %game.tdmCalled;
+      `);
+      expect($g.get("result")).toBe("tdm(default)");
+      expect($g.get("defaultCalled")).toBe(true);
+      expect($g.get("tdmCalled")).toBe(true);
+    });
+
+    it("Parent:: walks multiple levels of namespace inheritance", () => {
+      const { $g } = run(`
+        function BaseGame::getValue(%this) {
+          return "base";
+        }
+
+        function DefaultGame::getValue(%this) {
+          return "default(" @ Parent::getValue(%this) @ ")";
+        }
+
+        function CTFGame::getValue(%this) {
+          return "ctf(" @ Parent::getValue(%this) @ ")";
+        }
+
+        // Establish the chain: CTFGame -> DefaultGame -> BaseGame
+        %dummy1 = new ScriptObject() {
+          class = "DefaultGame";
+          superClass = "BaseGame";
+        };
+        %game = new ScriptObject() {
+          class = "CTFGame";
+          superClass = "DefaultGame";
+        };
+
+        $result = %game.getValue();
+      `);
+      expect($g.get("result")).toBe("ctf(default(base))");
+    });
+
+    it("Parent:: through namespace chain finds package-overridden method", () => {
+      // Tests the interaction between namespace inheritance and package overrides:
+      // - BaseGame::getValue exists
+      // - Package overrides BaseGame::getValue
+      // - DefaultGame::getValue calls Parent::getValue
+      // - Should get the overridden version of BaseGame::getValue
+      const { $g } = run(`
+        function BaseGame::getValue(%this) {
+          return "base";
+        }
+
+        package Override {
+          function BaseGame::getValue(%this) {
+            return "overridden(" @ Parent::getValue(%this) @ ")";
+          }
+        };
+
+        function DefaultGame::getValue(%this) {
+          return "default(" @ Parent::getValue(%this) @ ")";
+        }
+
+        // Establish the chain: DefaultGame -> BaseGame
+        %game = new ScriptObject() {
+          class = "DefaultGame";
+          superClass = "BaseGame";
+        };
+
+        // First call without package
+        $resultWithout = %game.getValue();
+
+        // Activate package and call again
+        activatePackage(Override);
+        $resultWith = %game.getValue();
+      `);
+      // Without override, should walk chain to base
+      expect($g.get("resultWithout")).toBe("default(base)");
+      // With override active, should get overridden BaseGame::getValue
+      expect($g.get("resultWith")).toBe("default(overridden(base))");
+    });
+
+    it("Parent:: inside package override uses package stack, not namespace chain", () => {
+      // When inside a package override, Parent:: should call the previous
+      // version in the package stack, not walk the namespace chain
+      const { $g } = run(`
+        function DefaultGame::getValue(%this) {
+          return "default";
+        }
+
+        package Pkg1 {
+          function DefaultGame::getValue(%this) {
+            return "pkg1(" @ Parent::getValue(%this) @ ")";
+          }
+        };
+
+        // CTFGame inherits from DefaultGame
+        function CTFGame::getValue(%this) {
+          return "ctf(" @ Parent::getValue(%this) @ ")";
+        }
+
+        %game = new ScriptObject() {
+          class = "CTFGame";
+          superClass = "DefaultGame";
+        };
+
+        // Without package, CTFGame -> DefaultGame
+        $resultBefore = %game.getValue();
+
+        // With package active, CTFGame -> DefaultGame -> Pkg1's override
+        activatePackage(Pkg1);
+        $resultAfter = %game.getValue();
+      `);
+      expect($g.get("resultBefore")).toBe("ctf(default)");
+      expect($g.get("resultAfter")).toBe("ctf(pkg1(default))");
+    });
   });
 
   describe("method hooks (onMethodCalled)", () => {
@@ -2470,6 +2609,96 @@ describe("TorqueScript Runtime", () => {
 
       expect(runtime.$g.get("initialized")).toBe(true);
       expect(hookCalls).toEqual(["DefaultGame::init"]);
+    });
+
+    it("hook fires when parent method is called via Parent::", () => {
+      // This is the key test: when TDMGame::missionLoadDone calls
+      // Parent::missionLoadDone (which resolves to DefaultGame::missionLoadDone),
+      // the hook registered for DefaultGame::missionLoadDone should fire.
+      const runtime = createRuntime();
+      const hookCalls: string[] = [];
+
+      runtime.$.onMethodCalled("DefaultGame", "missionLoadDone", (thisObj) => {
+        hookCalls.push(
+          `DefaultGame::missionLoadDone called with ${thisObj._name}`,
+        );
+      });
+
+      const { code } = transpile(`
+        function DefaultGame::missionLoadDone(%game) {
+          %game.defaultCalled = true;
+        }
+
+        function TDMGame::missionLoadDone(%game) {
+          // Call parent via Parent:: - should trigger DefaultGame hook
+          Parent::missionLoadDone(%game);
+          %game.tdmCalled = true;
+        }
+
+        %game = new ScriptObject(Game) {
+          class = "TDMGame";
+          superClass = "DefaultGame";
+        };
+
+        %game.missionLoadDone();
+      `);
+
+      const $l = runtime.$.locals();
+      new Function("$", "$f", "$g", "$l", code)(
+        runtime.$,
+        runtime.$f,
+        runtime.$g,
+        $l,
+      );
+
+      const game = runtime.getObjectByName("Game");
+      expect(game?.defaultcalled).toBe(true);
+      expect(game?.tdmcalled).toBe(true);
+      // Hook should have fired when Parent::missionLoadDone resolved to DefaultGame::missionLoadDone
+      expect(hookCalls).toEqual([
+        "DefaultGame::missionLoadDone called with Game",
+      ]);
+    });
+
+    it("hook fires for package override parent called via Parent::", () => {
+      const runtime = createRuntime();
+      const hookCalls: string[] = [];
+
+      runtime.$.onMethodCalled("TestClass", "getValue", () => {
+        hookCalls.push("TestClass::getValue");
+      });
+
+      const { code } = transpile(`
+        function TestClass::getValue(%this) {
+          return "base";
+        }
+
+        package Override {
+          function TestClass::getValue(%this) {
+            // Call parent - should trigger hook for TestClass::getValue (base version)
+            return "override(" @ Parent::getValue(%this) @ ")";
+          }
+        };
+
+        %obj = new ScriptObject() {
+          class = "TestClass";
+        };
+
+        activatePackage(Override);
+        $result = %obj.getValue();
+      `);
+
+      const $l = runtime.$.locals();
+      new Function("$", "$f", "$g", "$l", code)(
+        runtime.$,
+        runtime.$f,
+        runtime.$g,
+        $l,
+      );
+
+      expect(runtime.$g.get("result")).toBe("override(base)");
+      // Hook should fire twice: once for override, once for base via Parent::
+      expect(hookCalls).toEqual(["TestClass::getValue", "TestClass::getValue"]);
     });
   });
 

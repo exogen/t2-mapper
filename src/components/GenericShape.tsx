@@ -64,7 +64,7 @@ function StaticTexture({ material, shapeName }) {
   const url = useMemo(() => {
     if (!resourcePath) {
       console.warn(
-        `Material index out of range on shape "${shapeName}" - rendering fallback.`,
+        `No resource_path was found on "${shapeName}" - rendering fallback.`,
       );
     }
     return resourcePath
@@ -116,8 +116,10 @@ export function ShapeTexture({
   // Use IflTexture for animated materials
   if (isIflMaterial && resourcePath) {
     return <IflTexture material={material} shapeName={shapeName} />;
-  } else {
+  } else if (material.name) {
     return <StaticTexture material={material} shapeName={shapeName} />;
+  } else {
+    return null;
   }
 }
 

@@ -52,8 +52,8 @@ const componentMap = {
 export function renderObject(object: TorqueObject, key?: string | number) {
   const Component = componentMap[object._className];
   return Component ? (
-    <Suspense>
-      <Component key={key} object={object} />
+    <Suspense key={key}>
+      <Component object={object} />
     </Suspense>
   ) : null;
 }

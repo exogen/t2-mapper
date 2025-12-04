@@ -530,11 +530,6 @@ export function createRuntime(
     return { found: true, result };
   }
 
-  function findFunction(name: string): TorqueFunction | null {
-    const stack = functions.get(name);
-    return stack && stack.length > 0 ? stack[stack.length - 1] : null;
-  }
-
   function fireMethodHooks(
     className: string,
     methodName: string,
@@ -590,28 +585,6 @@ export function createRuntime(
       currentClass = namespaceParents.get(currentClass);
     }
 
-    // Walk datablock parent chain
-    const db = obj._datablock || obj;
-    if (db._parent) {
-      let current = db._parent;
-      while (current) {
-        const parentClass = current._className || current._class;
-        if (parentClass) {
-          const callResult = callMethodWithContext(
-            parentClass,
-            methodName,
-            obj,
-            args,
-          );
-          if (callResult.found) {
-            fireMethodHooks(parentClass, methodName, obj, args);
-            return callResult.result;
-          }
-        }
-        current = current._parent;
-      }
-    }
-
     return "";
   }
 
@@ -656,16 +629,45 @@ export function createRuntime(
     ...args: any[]
   ): any {
     const stack = getMethodStack(currentClass, methodName);
-    if (!stack) return "";
-
     const key = methodContextKey(currentClass, methodName);
     const currentIndex = getCurrentExecutionIndex(key);
-    if (currentIndex === undefined || currentIndex < 1) return "";
 
-    const parentIndex = currentIndex - 1;
-    return withExecutionContext(key, parentIndex, () =>
-      stack[parentIndex](thisObj, ...args),
-    );
+    // If we have a parent in the stack (package override), call it
+    if (stack && currentIndex !== undefined && currentIndex >= 1) {
+      const parentIndex = currentIndex - 1;
+      const result = withExecutionContext(key, parentIndex, () =>
+        stack[parentIndex](thisObj, ...args),
+      );
+      // Fire hooks for the method that was called (same class, previous version)
+      if (thisObj && typeof thisObj === "object") {
+        fireMethodHooks(currentClass, methodName, thisObj, args);
+      }
+      return result;
+    }
+
+    // Otherwise, walk up the namespace parent chain (like real TorqueScript)
+    // This handles cases like TDMGame::missionLoadDone calling Parent::missionLoadDone
+    // which should resolve to DefaultGame::missionLoadDone
+    let parentClass = namespaceParents.get(currentClass);
+    while (parentClass) {
+      const parentStack = getMethodStack(parentClass, methodName);
+      if (parentStack && parentStack.length > 0) {
+        const parentKey = methodContextKey(parentClass, methodName);
+        const result = withExecutionContext(
+          parentKey,
+          parentStack.length - 1,
+          () => parentStack[parentStack.length - 1](thisObj, ...args),
+        );
+        // Fire hooks for the parent class method that was actually called
+        if (thisObj && typeof thisObj === "object") {
+          fireMethodHooks(parentClass, methodName, thisObj, args);
+        }
+        return result;
+      }
+      parentClass = namespaceParents.get(parentClass);
+    }
+
+    return "";
   }
 
   function parentFunc(currentFunc: string, ...args: any[]): any {
