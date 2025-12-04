@@ -17,7 +17,7 @@ import {
 import { loadDetailMapList, textureToUrl } from "../loaders";
 import type { TorqueObject } from "../torqueScript";
 import { getFloat, getProperty } from "../mission";
-import { useDebug } from "./SettingsProvider";
+import { useDebug, useSettings } from "./SettingsProvider";
 
 const GRID_SIZE = 5;
 const VERTEX_COUNT = GRID_SIZE * GRID_SIZE;
@@ -330,6 +330,7 @@ interface CloudLayerProps {
   windDirection: Vector2;
   layerIndex: number;
   debugMode: boolean;
+  animationEnabled: boolean;
 }
 
 /**
@@ -343,6 +344,7 @@ function CloudLayer({
   windDirection,
   layerIndex,
   debugMode,
+  animationEnabled,
 }: CloudLayerProps) {
   const materialRef = useRef<ShaderMaterial>(null!);
   const offsetRef = useRef(new Vector2(0, 0));
@@ -380,7 +382,7 @@ function CloudLayer({
   // From Tribes 2: mOffset = (currentTime - mLastTime) / 32.0 (time in ms)
   // delta is in seconds, so: delta * 1000 / 32 = delta * 31.25
   useFrame((_, delta) => {
-    if (!materialRef.current) return;
+    if (!materialRef.current || !animationEnabled) return;
 
     // Match Tribes 2 timing: deltaTime(ms) / 32
     const mOffset = (delta * 1000) / 32;
@@ -451,6 +453,7 @@ export interface CloudLayersProps {
  */
 export function CloudLayers({ object }: CloudLayersProps) {
   const { debugMode } = useDebug();
+  const { animationEnabled } = useSettings();
   const materialList = getProperty(object, "materialList");
   const { data: detailMapList } = useDetailMapList(materialList);
 
@@ -541,6 +544,7 @@ export function CloudLayers({ object }: CloudLayersProps) {
               windDirection={windDirection}
               layerIndex={i}
               debugMode={debugMode}
+              animationEnabled={animationEnabled}
             />
           </Suspense>
         );

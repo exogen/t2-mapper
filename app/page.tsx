@@ -12,6 +12,7 @@ import { ObserverCamera } from "@/src/components/ObserverCamera";
 import { AudioProvider } from "@/src/components/AudioContext";
 import { DebugElements } from "@/src/components/DebugElements";
 import { CamerasProvider } from "@/src/components/CamerasProvider";
+import { getMissionList, getMissionInfo } from "@/src/manifest";
 
 // three.js has its own loaders for textures and models, but we need to load other
 // stuff too, e.g. missions, terrains, and more. This client is used for those.
@@ -26,6 +27,19 @@ function MapInspector() {
     searchParams.get("mission") || "TWL2_WoodyMyrk",
   );
   const [isLoading, setIsLoading] = useState(true);
+
+  useEffect(() => {
+    // For automation, like the t2-maps app!
+    window.setMissionName = setMissionName;
+    window.getMissionList = getMissionList;
+    window.getMissionInfo = getMissionInfo;
+
+    return () => {
+      delete window.setMissionName;
+      delete window.getMissionList;
+      delete window.getMissionInfo;
+    };
+  }, []);
 
   // Update query params when state changes
   useEffect(() => {
@@ -43,7 +57,9 @@ function MapInspector() {
       <main>
         <SettingsProvider>
           <div id="canvasContainer">
-            {isLoading && <div className="LoadingSpinner" />}
+            {isLoading && (
+              <div id="loadingIndicator" className="LoadingSpinner" />
+            )}
             <Canvas shadows frameloop="always">
               <CamerasProvider>
                 <AudioProvider>
