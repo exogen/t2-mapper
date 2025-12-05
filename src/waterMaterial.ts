@@ -5,7 +5,8 @@ import { ShaderMaterial, Texture, DoubleSide, Color } from "three";
  *
  * Based on analysis of the Torque V12 engine fluid rendering code.
  * The original engine renders water in multiple passes:
- * - Phase 1a/1b: Two cross-faded base texture passes, each rotated 30°
+ * - Phase 1a: Base texture rotated 30°
+ * - Phase 1b: Base texture rotated 60° with drift animation
  * - Phase 3: Environment/specular map with reflection UVs
  * - Fog: Integrated with Three.js scene fog (original used custom fog overlay)
  *
@@ -23,7 +24,6 @@ const vertexShader = /* glsl */ `
   uniform float uTime;
   uniform float uWaveMagnitude;
 
-  varying vec2 vUv;
   varying vec3 vWorldPosition;
   varying vec3 vViewVector;
   varying float vDistance;
@@ -38,8 +38,6 @@ const vertexShader = /* glsl */ `
   }
 
   void main() {
-    vUv = uv;
-
     // Get world position for wave calculation
     vec4 worldPos = modelMatrix * vec4(position, 1.0);
     vWorldPosition = worldPos.xyz;
@@ -68,7 +66,6 @@ const fragmentShader = /* glsl */ `
   uniform sampler2D uBaseTexture;
   uniform sampler2D uEnvMapTexture;
 
-  varying vec2 vUv;
   varying vec3 vWorldPosition;
   varying vec3 vViewVector;
   varying float vDistance;
@@ -146,22 +143,22 @@ const fragmentShader = /* glsl */ `
     vec3 baseColor = (texColor1a.rgb * alpha1a * (1.0 - alpha1b) + texColor1b.rgb * alpha1b) / max(combinedAlpha, 0.001);
 
     // === Phase 3: Environment map / specular ===
-    vec3 viewDir = normalize(vViewVector);
-
-    // Reflection UV calculation from engine
-    // The reflection vector is eye-to-point with positive Z
-    vec3 reflectVec = viewDir;
-    reflectVec.z = abs(reflectVec.z);
-    if (reflectVec.z < 0.001) reflectVec.z = 0.001;
+    // Reflection UV calculation from engine (fluidQuadTree.cc lines 910-962)
+    // Engine uses eye-to-point vector (point - eye), unnormalized.
+    // vViewVector is camera - worldPos (point-to-eye), so we negate it.
+    // Torque Z-up maps XY to UV; Three.js Y-up maps XZ to UV.
+    vec3 reflectVec = -vViewVector;
+    reflectVec.y = abs(reflectVec.y);  // Y is vertical in Three.js (was Z in Torque)
+    if (reflectVec.y < 0.001) reflectVec.y = 0.001;
 
     vec2 envUV;
     if (vDistance < 0.001) {
       envUV = vec2(0.0);
     } else {
-      // Standard UV reflection mapping with adjustment
-      float value = (vDistance - reflectVec.z) / (vDistance * vDistance);
+      // Standard UV reflection mapping with adjustment to reduce edge emphasis
+      float value = (vDistance - reflectVec.y) / (vDistance * vDistance);
       envUV.x = reflectVec.x * value;
-      envUV.y = reflectVec.y * value;
+      envUV.y = reflectVec.z * value;  // Z maps to V in Three.js Y-up
     }
 
     // Convert from [-1,1] to [0,1]
@@ -174,8 +171,9 @@ const fragmentShader = /* glsl */ `
     vec4 envColor = texture2D(uEnvMapTexture, envUV);
 
     // Blend environment map additively (GL_SRC_ALPHA, GL_ONE in original engine)
-    // This adds specular highlights without changing base transparency
-    vec3 finalColor = baseColor + envColor.rgb * uEnvMapIntensity;
+    // Engine uses GL_MODULATE with color (1,1,1,envMapIntensity), so texture alpha
+    // is multiplied with intensity before additive blend.
+    vec3 finalColor = baseColor + envColor.rgb * envColor.a * uEnvMapIntensity;
 
     gl_FragColor = vec4(finalColor, combinedAlpha);
 
@@ -208,9 +206,9 @@ export function createWaterMaterial(options?: {
     fragmentShader,
     transparent: true,
     side: DoubleSide,
-    // Water writes depth so that objects behind it (like force fields) are
-    // properly occluded. Force fields use depthWrite: false and render after
-    // water, so they correctly appear in front of or behind water per-pixel.
+    // NOTE: Engine uses glDepthMask(GL_FALSE) for water, but we use depthWrite: true
+    // so that force fields (which render after water with depthWrite: false) are
+    // correctly occluded per-pixel when underwater.
     depthWrite: true,
     fog: true,
   });
