@@ -1,11 +1,114 @@
-import { memo, Suspense, useEffect, useMemo } from "react";
+import { memo, Suspense, useEffect, useMemo, useRef } from "react";
 import { useTexture } from "@react-three/drei";
-import { BoxGeometry, DoubleSide } from "three";
+import { useFrame } from "@react-three/fiber";
+import { DoubleSide, PlaneGeometry, RepeatWrapping } from "three";
 import { textureToUrl } from "../loaders";
 import type { TorqueObject } from "../torqueScript";
 import { getPosition, getProperty, getRotation, getScale } from "../mission";
 import { setupColor } from "../textureUtils";
+import { createWaterMaterial } from "../waterMaterial";
+import { useSettings } from "./SettingsProvider";
 
+/**
+ * Calculate tessellation to match Tribes 2 engine.
+ *
+ * The engine uses two modes based on water size:
+ * - High-res mode (size <= 1024): 32-unit blocks with 5x5 vertices = 8 units between verts
+ * - Normal mode (size > 1024): 64-unit blocks with 5x5 vertices = 16 units between verts
+ *
+ * Each block has 4 segments (5 vertices across), creating 32 triangles per block.
+ */
+function calculateWaterSegments(
+  sizeX: number,
+  sizeZ: number,
+): [number, number] {
+  // High-res mode threshold: 1024 world units (128 terrain squares × 8 units)
+  const isHighRes = sizeX <= 1024 && sizeZ <= 1024;
+
+  // Vertex spacing: 8 units for high-res, 16 units for normal
+  const vertexSpacing = isHighRes ? 8 : 16;
+
+  // Calculate segments (vertices - 1)
+  const segmentsX = Math.max(4, Math.ceil(sizeX / vertexSpacing));
+  const segmentsZ = Math.max(4, Math.ceil(sizeZ / vertexSpacing));
+
+  return [segmentsX, segmentsZ];
+}
+
+/**
+ * Animated water surface material using Tribes 2-accurate shader.
+ *
+ * The Torque V12 engine renders water in multiple passes:
+ * - Phase 1a/1b: Two cross-faded base texture passes, each rotated 30°
+ * - Phase 3: Environment/specular map with reflection UVs
+ * - Phase 4: Fog overlay
+ */
+export function WaterSurfaceMaterial({
+  surfaceTexture,
+  envMapTexture,
+  opacity = 0.75,
+  waveMagnitude = 1.0,
+  envMapIntensity = 1.0,
+  attach,
+}: {
+  surfaceTexture: string;
+  envMapTexture?: string;
+  opacity?: number;
+  waveMagnitude?: number;
+  envMapIntensity?: number;
+  attach?: string;
+}) {
+  const baseUrl = textureToUrl(surfaceTexture);
+  const envUrl = textureToUrl(envMapTexture ?? "special/lush_env");
+
+  const [baseTexture, envTexture] = useTexture(
+    [baseUrl, envUrl],
+    (textures) => {
+      const texArray = Array.isArray(textures) ? textures : [textures];
+      texArray.forEach((tex) => {
+        setupColor(tex);
+        tex.wrapS = RepeatWrapping;
+        tex.wrapT = RepeatWrapping;
+      });
+    },
+  );
+
+  const { animationEnabled } = useSettings();
+
+  const material = useMemo(() => {
+    return createWaterMaterial({
+      opacity,
+      waveMagnitude,
+      envMapIntensity,
+      baseTexture,
+      envMapTexture: envTexture,
+    });
+  }, [opacity, waveMagnitude, envMapIntensity, baseTexture, envTexture]);
+
+  const elapsedRef = useRef(0);
+
+  useFrame((_, delta) => {
+    if (!animationEnabled) {
+      elapsedRef.current = 0;
+      material.uniforms.uTime.value = 0;
+      return;
+    }
+    elapsedRef.current += delta;
+    material.uniforms.uTime.value = elapsedRef.current;
+  });
+
+  useEffect(() => {
+    return () => {
+      material.dispose();
+    };
+  }, [material]);
+
+  return <primitive object={material} attach={attach} />;
+}
+
+/**
+ * Simple fallback material for non-top faces and loading state.
+ */
 export function WaterMaterial({
   surfaceTexture,
   attach,
@@ -27,6 +130,18 @@ export function WaterMaterial({
   );
 }
 
+/**
+ * WaterBlock component that renders water with Tribes 2-accurate animation.
+ *
+ * The water surface uses a custom shader that replicates the original Torque
+ * engine's multi-pass rendering:
+ * - Dual cross-faded base textures with 30° rotation
+ * - Sinusoidal wave displacement
+ * - Environment map reflection with animated UVs
+ *
+ * Unlike a simple box, we use a subdivided PlaneGeometry for the water surface
+ * so that vertex displacement can create visible waves.
+ */
 export const WaterBlock = memo(function WaterBlock({
   object,
 }: {
@@ -38,64 +153,63 @@ export const WaterBlock = memo(function WaterBlock({
 
   const surfaceTexture =
     getProperty(object, "surfaceTexture") ?? "liquidTiles/BlueWater";
+  const envMapTexture = getProperty(object, "envMapTexture");
+  const opacity = parseFloat(getProperty(object, "surfaceOpacity") ?? "0.75");
+  const waveMagnitude = parseFloat(
+    getProperty(object, "waveMagnitude") ?? "1.0",
+  );
+  const envMapIntensity = parseFloat(
+    getProperty(object, "envMapIntensity") ?? "1.0",
+  );
 
-  const geometry = useMemo(() => {
-    const geom = new BoxGeometry(scaleX, scaleY, scaleZ);
+  // Create subdivided plane geometry for the water surface
+  // Tessellation matches Tribes 2 engine (5x5 vertices per block)
+  const surfaceGeometry = useMemo(() => {
+    const [segmentsX, segmentsZ] = calculateWaterSegments(scaleX, scaleZ);
 
-    geom.translate(scaleX / 2, scaleY / 2, scaleZ / 2);
+    // PlaneGeometry is created in XY plane, we'll rotate it to XZ
+    const geom = new PlaneGeometry(scaleX, scaleZ, segmentsX, segmentsZ);
 
-    const uvAttr = geom.getAttribute("uv");
-    const uv = uvAttr.array as Float32Array;
-    const faceRepeats: [number, number][] = [
-      // +x, -x (depth x height)
-      [scaleX / 32, scaleY / 32],
-      [scaleX / 32, scaleY / 32],
-      // +y, -y (width x depth)
-      [scaleZ / 32, scaleX / 32],
-      [scaleZ / 32, scaleX / 32],
-      // +z, -z (width x height)
-      [scaleZ / 32, scaleY / 32],
-      [scaleZ / 32, scaleY / 32],
-    ];
+    // Rotate from XY plane to XZ plane (lying flat)
+    geom.rotateX(-Math.PI / 2);
 
-    for (let face = 0; face < 6; face++) {
-      const [uRepeat, vRepeat] = faceRepeats[face];
-      const offset = face * 4 * 2; // 4 verts per face, 2 components per vert
-      for (let i = 0; i < 4; i++) {
-        uv[offset + i * 2] *= uRepeat;
-        uv[offset + i * 2 + 1] *= vRepeat;
-      }
-    }
-    uvAttr.needsUpdate = true;
+    // Translate so origin is at corner (matching Torque's water block positioning)
+    // and position at top of water volume (Y = scaleY)
+    geom.translate(scaleX / 2, scaleY, scaleZ / 2);
+
     return geom;
   }, [scaleX, scaleY, scaleZ]);
 
   useEffect(() => {
     return () => {
-      geometry.dispose();
+      surfaceGeometry.dispose();
     };
-  }, [geometry]);
+  }, [surfaceGeometry]);
 
   return (
-    <mesh position={position} quaternion={q} geometry={geometry}>
-      <meshStandardMaterial attach="material-0" transparent opacity={0} />
-      <meshStandardMaterial attach="material-1" transparent opacity={0} />
-      <Suspense
-        fallback={
-          <meshStandardMaterial
-            attach="material-2"
-            color="blue"
-            transparent
-            opacity={0.3}
-            side={DoubleSide}
+    <group position={position} quaternion={q}>
+      {/* Water surface - subdivided plane with wave shader */}
+      <mesh geometry={surfaceGeometry}>
+        <Suspense
+          fallback={
+            <meshStandardMaterial
+              color="blue"
+              transparent
+              opacity={0.3}
+              side={DoubleSide}
+            />
+          }
+        >
+          <WaterSurfaceMaterial
+            attach="material"
+            surfaceTexture={surfaceTexture}
+            envMapTexture={envMapTexture}
+            opacity={opacity}
+            waveMagnitude={waveMagnitude}
+            envMapIntensity={envMapIntensity}
           />
-        }
-      >
-        <WaterMaterial attach="material-2" surfaceTexture={surfaceTexture} />
-      </Suspense>
-      <meshStandardMaterial attach="material-3" transparent opacity={0} />
-      <meshStandardMaterial attach="material-4" transparent opacity={0} />
-      <meshStandardMaterial attach="material-5" transparent opacity={0} />
-    </mesh>
+        </Suspense>
+      </mesh>
+    </group>
   );
 });

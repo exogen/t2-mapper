@@ -6,17 +6,19 @@ import {
   BoxGeometry,
   Color,
   DoubleSide,
-  NoColorSpace,
+  LinearSRGBColorSpace,
   RepeatWrapping,
-  ShaderMaterial,
   Texture,
-  Vector2,
 } from "three";
 import type { TorqueObject } from "../torqueScript";
 import { getPosition, getProperty, getRotation, getScale } from "../mission";
 import { textureToUrl } from "../loaders";
 import { useSettings } from "./SettingsProvider";
 import { useDatablock } from "./useDatablock";
+import {
+  createForceFieldMaterial,
+  OPACITY_FACTOR,
+} from "../forceFieldMaterial";
 
 /**
  * Get texture URLs from datablock.
@@ -43,77 +45,10 @@ function parseColor(colorStr: string): [number, number, number] {
   return [parts[0] ?? 0, parts[1] ?? 0, parts[2] ?? 0];
 }
 
-// Vertex shader
-const vertexShader = `
-varying vec2 vUv;
-
-void main() {
-  vUv = uv;
-  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-}
-`;
-
-// Fragment shader - handles frame animation, UV scrolling, and color tinting
-// NOTE: Shader supports up to 5 texture frames (hardcoded samplers)
-const fragmentShader = `
-uniform sampler2D frame0;
-uniform sampler2D frame1;
-uniform sampler2D frame2;
-uniform sampler2D frame3;
-uniform sampler2D frame4;
-uniform int currentFrame;
-uniform float vScroll;
-uniform vec2 uvScale;
-uniform vec3 tintColor;
-uniform float opacity;
-
-varying vec2 vUv;
-
-// FIXME: This gamma correction may not be accurate. Tribes 2 had no gamma correction;
-// Three.js applies gamma on output, so we pre-darken to compensate. The result is
-// close but not quite right - the force field is still slightly more opaque than in T2.
-vec3 srgbToLinear(vec3 srgb) {
-  return pow(srgb, vec3(2.2));
-}
-
-void main() {
-  // Scale and scroll UVs
-  vec2 scrolledUv = vec2(vUv.x * uvScale.x, vUv.y * uvScale.y + vScroll);
-
-  // Sample the current frame
-  vec4 texColor;
-  if (currentFrame == 0) {
-    texColor = texture2D(frame0, scrolledUv);
-  } else if (currentFrame == 1) {
-    texColor = texture2D(frame1, scrolledUv);
-  } else if (currentFrame == 2) {
-    texColor = texture2D(frame2, scrolledUv);
-  } else if (currentFrame == 3) {
-    texColor = texture2D(frame3, scrolledUv);
-  } else {
-    texColor = texture2D(frame4, scrolledUv);
-  }
-
-  // Apply color tint with constant opacity (like Tribes 2's GL_MODULATE)
-  vec3 finalColor = texColor.rgb * tintColor;
-
-  // Pre-darken to counteract renderer's sRGB gamma encoding
-  // This makes additive blending behave like Tribes 2's non-gamma-corrected output
-  finalColor = srgbToLinear(finalColor);
-
-  // FIXME: Halving opacity is a rough approximation to compensate for front+back faces
-  // both contributing (BoxGeometry with DoubleSide causes additive stacking that Tribes 2's
-  // thin quads didn't have). This doesn't account for viewing angles where more faces are visible.
-  gl_FragColor = vec4(finalColor, opacity * 0.5);
-}
-`;
-
 function setupForceFieldTexture(texture: Texture) {
   texture.wrapS = texture.wrapT = RepeatWrapping;
-  // FIXME: Using NoColorSpace to treat textures as raw linear values like Tribes 2 did,
-  // but the interaction with the renderer's sRGB output and shader gamma correction
-  // may not be fully correct. The force field appears close but not identical to T2.
-  texture.colorSpace = NoColorSpace;
+  // Linear color space - gamma correction is applied in the shader
+  texture.colorSpace = LinearSRGBColorSpace;
   texture.flipY = false;
   texture.needsUpdate = true;
 }
@@ -171,31 +106,13 @@ function ForceFieldMesh({
 
   // Create shader material once (uniforms updated in useFrame)
   const material = useMemo(() => {
-    // UV scale based on the two largest dimensions (force fields are thin planes)
-    const dims = [...scale].sort((a, b) => b - a);
-    const uvScale = new Vector2(dims[0] * umapping, dims[1] * vmapping);
-
-    // Use first texture as fallback for unused slots
-    const fallbackTex = textures[0];
-    return new ShaderMaterial({
-      uniforms: {
-        frame0: { value: textures[0] ?? fallbackTex },
-        frame1: { value: textures[1] ?? fallbackTex },
-        frame2: { value: textures[2] ?? fallbackTex },
-        frame3: { value: textures[3] ?? fallbackTex },
-        frame4: { value: textures[4] ?? fallbackTex },
-        currentFrame: { value: 0 },
-        vScroll: { value: 0 },
-        uvScale: { value: uvScale },
-        tintColor: { value: new Color(...color) },
-        opacity: { value: baseTranslucency },
-      },
-      vertexShader,
-      fragmentShader,
-      transparent: true,
-      blending: AdditiveBlending,
-      side: DoubleSide,
-      depthWrite: false,
+    return createForceFieldMaterial({
+      textures,
+      scale,
+      umapping,
+      vmapping,
+      color,
+      baseTranslucency,
     });
   }, [textures, scale, umapping, vmapping, color, baseTranslucency]);
 
@@ -225,7 +142,10 @@ function ForceFieldMesh({
     material.uniforms.vScroll.value = elapsedRef.current * scrollSpeed;
   });
 
-  return <mesh geometry={geometry} material={material} />;
+  // renderOrder ensures force fields render after water (which uses default 0).
+  // Water writes depth, force fields don't - so depth testing gives correct
+  // per-pixel occlusion (underwater force fields are hidden, above-water visible).
+  return <mesh geometry={geometry} material={material} renderOrder={1} />;
 }
 
 function ForceFieldFallback({
@@ -235,15 +155,27 @@ function ForceFieldFallback({
 }: ForceFieldGeometryProps) {
   const geometry = useCornerBoxGeometry(scale);
 
+  // Apply gamma correction to match the main shader's pow(color, 2.2)
+  const gammaColor = useMemo(
+    () =>
+      new Color(
+        Math.pow(color[0], 2.2),
+        Math.pow(color[1], 2.2),
+        Math.pow(color[2], 2.2),
+      ),
+    [color],
+  );
+
   return (
-    <mesh geometry={geometry}>
+    <mesh geometry={geometry} renderOrder={1}>
       <meshBasicMaterial
-        color={new Color(...color)}
+        color={gammaColor}
         transparent
-        opacity={baseTranslucency * 0.5}
+        opacity={baseTranslucency * OPACITY_FACTOR}
         blending={AdditiveBlending}
         side={DoubleSide}
         depthWrite={false}
+        fog={false} // Standard fog doesn't work with additive blending
       />
     </mesh>
   );

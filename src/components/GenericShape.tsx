@@ -5,7 +5,7 @@ import { filterGeometryByVertexGroups, getHullBoneIndices } from "../meshUtils";
 import {
   createAlphaAsRoughnessMaterial,
   setupAlphaAsRoughnessTexture,
-} from "../shaderMaterials";
+} from "../shapeMaterial";
 import { MeshStandardMaterial } from "three";
 import { setupColor } from "../textureUtils";
 import { useDebug } from "./SettingsProvider";

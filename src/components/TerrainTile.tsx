@@ -2,7 +2,8 @@ import { memo, Suspense, useCallback, useMemo } from "react";
 import { DataTexture, DoubleSide, FrontSide, type PlaneGeometry } from "three";
 import { useTexture } from "@react-three/drei";
 import { terrainTextureToUrl } from "../loaders";
-import { setupColor, updateTerrainTextureShader } from "../textureUtils";
+import { setupColor } from "../textureUtils";
+import { updateTerrainTextureShader } from "../terrainMaterial";
 import { useDebug } from "./SettingsProvider";
 
 const DEFAULT_SQUARE_SIZE = 8;
