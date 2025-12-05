@@ -4,52 +4,29 @@ import type { TorqueObject } from "../torqueScript";
 import { getPosition, getProperty, getRotation, getScale } from "../mission";
 import { DebugPlaceholder, ShapeModel, ShapePlaceholder } from "./GenericShape";
 import { ShapeInfoProvider } from "./ShapeInfoProvider";
-
-const dataBlockToShapeName = {
-  AABarrelLarge: "turret_aa_large.dts",
-  ELFBarrelLarge: "turret_elf_large.dts",
-  MissileBarrelLarge: "turret_missile_large.dts",
-  MortarBarrelLarge: "turret_mortar_large.dts",
-  PlasmaBarrelLarge: "turret_fusion_large.dts",
-  SentryTurret: "turret_sentry.dts",
-  TurretBaseLarge: "turret_base_large.dts",
-  SentryTurretBarrel: "turret_muzzlepoint.dts",
-};
-
-let _caseInsensitiveLookup: Record<string, string>;
-
-function getDataBlockShape(dataBlock: string) {
-  if (!_caseInsensitiveLookup) {
-    _caseInsensitiveLookup = Object.fromEntries(
-      Object.entries(dataBlockToShapeName).map(([key, value]) => {
-        return [key.toLowerCase(), value];
-      }),
-    );
-  }
-  return _caseInsensitiveLookup[dataBlock.toLowerCase()];
-}
+import { useDatablock } from "./useDatablock";
 
 export function Turret({ object }: { object: TorqueObject }) {
-  const dataBlock = getProperty(object, "dataBlock") ?? "";
-  const initialBarrel = getProperty(object, "initialBarrel");
+  const datablockName = getProperty(object, "dataBlock") ?? "";
+  const barrelDatablockName = getProperty(object, "initialBarrel");
+  const datablock = useDatablock(datablockName);
+  const barrelDatablock = useDatablock(barrelDatablockName);
 
   const position = useMemo(() => getPosition(object), [object]);
   const q = useMemo(() => getRotation(object), [object]);
   const scale = useMemo(() => getScale(object), [object]);
 
-  const shapeName = getDataBlockShape(dataBlock);
-
-  const barrelShapeName =
-    typeof initialBarrel === "string"
-      ? getDataBlockShape(initialBarrel)
-      : undefined;
+  const shapeName = getProperty(datablock, "shapeFile");
+  const barrelShapeName = getProperty(barrelDatablock, "shapeFile");
 
   if (!shapeName) {
-    console.error(`<Turret> missing shape for dataBlock: ${dataBlock}`);
+    console.error(`<Turret> missing shape for datablock: ${datablockName}`);
   }
-  if (!barrelShapeName) {
+  // `initialBarrel` is optional - turrets can exist without a barrel mounted.
+  // But if we do have one, it needs a shape name.
+  if (barrelDatablockName && !barrelShapeName) {
     console.error(
-      `<Turret> missing shape for initialBarrel dataBlock: ${initialBarrel}`,
+      `<Turret> missing shape for barrel datablock: ${barrelDatablockName}`,
     );
   }
 
@@ -67,9 +44,9 @@ export function Turret({ object }: { object: TorqueObject }) {
         ) : (
           <DebugPlaceholder color="orange" />
         )}
-        <ShapeInfoProvider shapeName={barrelShapeName} type="Turret">
-          <group position={[0, 1.5, 0]}>
-            {barrelShapeName ? (
+        {barrelShapeName ? (
+          <ShapeInfoProvider shapeName={barrelShapeName} type="Turret">
+            <group position={[0, 1.5, 0]}>
               <ErrorBoundary
                 fallback={
                   <DebugPlaceholder color="red" label={barrelShapeName} />
@@ -79,11 +56,9 @@ export function Turret({ object }: { object: TorqueObject }) {
                   <ShapeModel />
                 </Suspense>
               </ErrorBoundary>
-            ) : (
-              <DebugPlaceholder color="orange" />
-            )}
-          </group>
-        </ShapeInfoProvider>
+            </group>
+          </ShapeInfoProvider>
+        ) : null}
       </group>
     </ShapeInfoProvider>
   );
