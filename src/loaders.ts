@@ -7,7 +7,9 @@ import {
 } from "./manifest";
 import { parseMissionScript } from "./mission";
 import { normalizePath } from "./stringUtils";
-import { parseTerrainBuffer } from "./terrain";
+import { parseTerrainBuffer, type TerrainFile } from "./terrain";
+
+export type { TerrainFile };
 
 export const BASE_URL = "/t2-mapper";
 export const RESOURCE_ROOT_URL = `${BASE_URL}/base/`;

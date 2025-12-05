@@ -1,6 +1,13 @@
 const SIZE = 256;
 
-export function parseTerrainBuffer(arrayBuffer: ArrayBufferLike) {
+export interface TerrainFile {
+  version: number;
+  textureNames: string[];
+  heightMap: Uint16Array;
+  alphaMaps: Uint8Array[];
+}
+
+export function parseTerrainBuffer(arrayBuffer: ArrayBufferLike): TerrainFile {
   const dataView = new DataView(arrayBuffer);
   let offset = 0;
   const version = dataView.getUint8(offset++);

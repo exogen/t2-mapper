@@ -1,36 +1,28 @@
-import { memo, Suspense, useCallback, useMemo } from "react";
+import { memo, useMemo, useRef, useState } from "react";
+import { useFrame, useThree } from "@react-three/fiber";
 import { useQuery } from "@tanstack/react-query";
 import {
   DataTexture,
-  RedFormat,
   FloatType,
-  NoColorSpace,
   NearestFilter,
+  NoColorSpace,
   ClampToEdgeWrapping,
-  UnsignedByteType,
   PlaneGeometry,
-  DoubleSide,
-  FrontSide,
+  RedFormat,
+  RepeatWrapping,
+  UnsignedByteType,
 } from "three";
-import { useTexture } from "@react-three/drei";
-import { uint16ToFloat32 } from "../arrayUtils";
-import { loadTerrain, terrainTextureToUrl } from "../loaders";
 import type { TorqueObject } from "../torqueScript";
-import {
-  getInt,
-  getPosition,
-  getProperty,
-  getRotation,
-  getScale,
-} from "../mission";
-import {
-  setupColor,
-  setupMask,
-  updateTerrainTextureShader,
-} from "../textureUtils";
-import { useDebug } from "./SettingsProvider";
+import { getFloat, getInt, getPosition, getProperty } from "../mission";
+import { loadTerrain } from "../loaders";
+import { uint16ToFloat32 } from "../arrayUtils";
+import { setupMask } from "../textureUtils";
+import { TerrainTile } from "./TerrainTile";
+import { useSceneObject } from "./useSceneObject";
 
 const DEFAULT_SQUARE_SIZE = 8;
+const DEFAULT_VISIBLE_DISTANCE = 600;
+const TERRAIN_SIZE = 256;
 
 /**
  * Load a .ter file, used for terrain heightmap and texture info.
@@ -42,164 +34,60 @@ function useTerrain(terrainFile: string) {
   });
 }
 
-function BlendedTerrainTextures({
-  displacementMap,
-  visibilityMask,
-  textureNames,
-  alphaMaps,
-}: {
-  displacementMap: DataTexture;
-  visibilityMask: DataTexture;
-  textureNames: string[];
-  alphaMaps: Uint8Array[];
-}) {
-  const { debugMode } = useDebug();
-
-  const baseTextures = useTexture(
-    textureNames.map((name) => terrainTextureToUrl(name)),
-    (textures) => {
-      textures.forEach((tex) => setupColor(tex));
-    },
-  );
-
-  const alphaTextures = useMemo(
-    () => alphaMaps.map((data) => setupMask(data)),
-    [alphaMaps],
-  );
-
-  const tiling = useMemo(
-    () => ({
-      0: 32,
-      1: 32,
-      2: 32,
-      3: 32,
-      4: 32,
-      5: 32,
-    }),
-    [],
-  );
-
-  const onBeforeCompile = useCallback(
-    (shader) => {
-      updateTerrainTextureShader({
-        shader,
-        baseTextures,
-        alphaTextures,
-        visibilityMask,
-        tiling,
-        debugMode,
-      });
-    },
-    [baseTextures, alphaTextures, visibilityMask, tiling, debugMode],
-  );
-
-  return (
-    <meshStandardMaterial
-      // For testing tiling values; forces recompile.
-      key={`${JSON.stringify(tiling)}-${debugMode}`}
-      displacementMap={displacementMap}
-      map={displacementMap}
-      displacementScale={2048}
-      depthWrite
-      // In debug mode, render both sides so we can see wireframe from below
-      side={debugMode ? DoubleSide : FrontSide}
-      onBeforeCompile={onBeforeCompile}
-    />
-  );
+/**
+ * Get visibleDistance from the Sky object, used to determine how far terrain
+ * tiles should render. This matches Tribes 2's terrain tiling behavior.
+ */
+function useVisibleDistance(): number {
+  const sky = useSceneObject("Sky");
+  if (!sky) return DEFAULT_VISIBLE_DISTANCE;
+  const highVisibleDistance = getFloat(sky, "high_visibleDistance");
+  if (highVisibleDistance != null && highVisibleDistance > 0) {
+    return highVisibleDistance;
+  }
+  return getFloat(sky, "visibleDistance") ?? DEFAULT_VISIBLE_DISTANCE;
 }
 
-function TerrainMaterial({
-  heightMap,
-  textureNames,
-  alphaMaps,
-  emptySquares,
-}: {
-  heightMap: Uint16Array;
-  emptySquares: number[];
-  textureNames: string[];
-  alphaMaps: Uint8Array[];
-}) {
-  const displacementMap = useMemo(() => {
-    const f32HeightMap = uint16ToFloat32(heightMap);
-    const displacementMap = new DataTexture(
-      f32HeightMap,
-      256,
-      256,
-      RedFormat,
-      FloatType,
-    );
-    displacementMap.colorSpace = NoColorSpace;
-    displacementMap.generateMipmaps = false;
-    displacementMap.needsUpdate = true;
-    return displacementMap;
-  }, [heightMap]);
+interface TileAssignment {
+  tileX: number;
+  tileZ: number;
+}
 
-  const visibilityMask: DataTexture | null = useMemo(() => {
-    if (!emptySquares.length) {
-      return null;
-    }
+/**
+ * Create a visibility mask texture from emptySquares data.
+ */
+function createVisibilityMask(emptySquares: number[]): DataTexture {
+  const maskData = new Uint8Array(TERRAIN_SIZE * TERRAIN_SIZE);
+  maskData.fill(255); // Start with everything visible
 
-    const terrainSize = 256;
+  for (const squareId of emptySquares) {
+    const x = squareId & 0xff;
+    const y = (squareId >> 8) & 0xff;
+    const count = squareId >> 16;
+    const rowOffset = y * TERRAIN_SIZE;
 
-    // Create a mask texture (1 = visible, 0 = invisible)
-    const maskData = new Uint8Array(terrainSize * terrainSize);
-    maskData.fill(255); // Start with everything visible
-
-    for (const squareId of emptySquares) {
-      // The squareId encodes position and count:
-      // Bits 0-7: X position (starting position)
-      // Bits 8-15: Y position
-      // Bits 16+: Count (number of consecutive horizontal squares)
-      const x = squareId & 0xff;
-      const y = (squareId >> 8) & 0xff;
-      const count = squareId >> 16;
-
-      for (let i = 0; i < count; i++) {
-        const px = x + i;
-        const py = y;
-        const index = py * terrainSize + px;
-        if (index >= 0 && index < maskData.length) {
-          maskData[index] = 0;
-        }
+    for (let i = 0; i < count; i++) {
+      const index = rowOffset + x + i;
+      if (index < maskData.length) {
+        maskData[index] = 0;
       }
     }
+  }
 
-    const visibilityMask = new DataTexture(
-      maskData,
-      terrainSize,
-      terrainSize,
-      RedFormat,
-      UnsignedByteType,
-    );
-    visibilityMask.colorSpace = NoColorSpace;
-    visibilityMask.wrapS = visibilityMask.wrapT = ClampToEdgeWrapping;
-    visibilityMask.magFilter = NearestFilter;
-    visibilityMask.minFilter = NearestFilter;
-    visibilityMask.needsUpdate = true;
-
-    return visibilityMask;
-  }, [emptySquares]);
-
-  return (
-    <Suspense
-      fallback={
-        // Render a wireframe while the terrain textures load.
-        <meshStandardMaterial
-          color="rgb(0, 109, 56)"
-          displacementMap={displacementMap}
-          displacementScale={2048}
-          wireframe
-        />
-      }
-    >
-      <BlendedTerrainTextures
-        displacementMap={displacementMap}
-        visibilityMask={visibilityMask}
-        textureNames={textureNames}
-        alphaMaps={alphaMaps}
-      />
-    </Suspense>
+  const texture = new DataTexture(
+    maskData,
+    TERRAIN_SIZE,
+    TERRAIN_SIZE,
+    RedFormat,
+    UnsignedByteType,
   );
+  texture.colorSpace = NoColorSpace;
+  texture.wrapS = texture.wrapT = ClampToEdgeWrapping;
+  texture.magFilter = NearestFilter;
+  texture.minFilter = NearestFilter;
+  texture.needsUpdate = true;
+
+  return texture;
 }
 
 export const TerrainBlock = memo(function TerrainBlock({
@@ -209,53 +97,163 @@ export const TerrainBlock = memo(function TerrainBlock({
 }) {
   const terrainFile = getProperty(object, "terrainFile");
   const squareSize = getInt(object, "squareSize") ?? DEFAULT_SQUARE_SIZE;
+  const blockSize = squareSize * 256;
+  const visibleDistance = useVisibleDistance();
+  const camera = useThree((state) => state.camera);
 
-  const emptySquares: number[] = useMemo(() => {
-    const emptySquaresValue = getProperty(object, "emptySquares");
-    // Note: This is a space-separated string, so we split and parse each component.
-    return emptySquaresValue
-      ? emptySquaresValue.split(" ").map((s: string) => parseInt(s, 10))
-      : [];
+  const basePosition = useMemo(() => {
+    const [x, , z] = getPosition(object);
+    return { x, z };
   }, [object]);
 
-  const position = useMemo(() => {
-    // Terrain position.z is ignored in Torque - heightmap values are absolute
-    const [x, y, z] = getPosition(object);
-    return [x, 0, z] as [number, number, number];
+  const emptySquares = useMemo(() => {
+    const value = getProperty(object, "emptySquares");
+    return value ? value.split(" ").map((s: string) => parseInt(s, 10)) : [];
   }, [object]);
-  const q = useMemo(() => getRotation(object), [object]);
-  const scale = useMemo(() => getScale(object), [object]);
 
-  const planeGeometry = useMemo(() => {
+  // Shared geometry for all tiles
+  const sharedGeometry = useMemo(() => {
     const size = squareSize * 256;
     const geometry = new PlaneGeometry(size, size, 256, 256);
-    // PlaneGeometry starts in XY plane. Rotate to XZ plane for Y-up world.
     geometry.rotateX(-Math.PI / 2);
-    // Also need to rotate to swap X and Z.
     geometry.rotateY(-Math.PI / 2);
-    // Shift origin from center to corner so position offset works correctly.
-    // Tribes 2 terrain origin is at the corner, Three.js PlaneGeometry is centered.
-    // But, T2 does this before the `squareSize` scales it up or down, so it's
-    // essentially a fixed offset.
-    const defaultSize = DEFAULT_SQUARE_SIZE * 256;
-    geometry.translate(defaultSize / 2, 0, defaultSize / 2);
     return geometry;
   }, [squareSize]);
 
   const { data: terrain } = useTerrain(terrainFile);
 
+  // Shared displacement map from heightmap - created once for all tiles
+  const sharedDisplacementMap = useMemo(() => {
+    if (!terrain) return null;
+    const f32HeightMap = uint16ToFloat32(terrain.heightMap);
+    const texture = new DataTexture(
+      f32HeightMap,
+      TERRAIN_SIZE,
+      TERRAIN_SIZE,
+      RedFormat,
+      FloatType,
+    );
+    texture.colorSpace = NoColorSpace;
+    texture.generateMipmaps = false;
+    texture.wrapS = RepeatWrapping;
+    texture.wrapT = RepeatWrapping;
+    texture.needsUpdate = true;
+    return texture;
+  }, [terrain]);
+
+  // Visibility mask for primary tile (0,0) - may have empty squares
+  const primaryVisibilityMask = useMemo(
+    () => createVisibilityMask(emptySquares),
+    [emptySquares],
+  );
+
+  // Visibility mask for pooled tiles - all visible (no empty squares)
+  // This is a stable reference shared by all pooled tiles
+  const pooledVisibilityMask = useMemo(() => createVisibilityMask([]), []);
+
+  // Shared alpha textures from terrain alphaMaps - created once for all tiles
+  const sharedAlphaTextures = useMemo(() => {
+    if (!terrain) return null;
+    return terrain.alphaMaps.map((data) => setupMask(data));
+  }, [terrain]);
+
+  // Calculate the maximum number of tiles that can be visible at once.
+  const poolSize = useMemo(() => {
+    const extent = Math.ceil(visibleDistance / blockSize);
+    const gridSize = 2 * extent + 1;
+    return gridSize * gridSize - 1; // -1 because primary tile is separate
+  }, [visibleDistance, blockSize]);
+
+  // Create stable pool indices for React keys
+  const poolIndices = useMemo(
+    () => Array.from({ length: poolSize }, (_, i) => i),
+    [poolSize],
+  );
+
+  // Track which tile coordinate each pool slot is assigned to
+  const [tileAssignments, setTileAssignments] = useState<
+    (TileAssignment | null)[]
+  >(() => Array(poolSize).fill(null));
+
+  // Track previous tile bounds to avoid unnecessary state updates
+  const prevBoundsRef = useRef({ xStart: 0, xEnd: 0, zStart: 0, zEnd: 0 });
+
+  useFrame(() => {
+    const relativeCamX = camera.position.x - basePosition.x;
+    const relativeCamZ = camera.position.z - basePosition.z;
+
+    const xStart = Math.floor((relativeCamX - visibleDistance) / blockSize);
+    const xEnd = Math.ceil((relativeCamX + visibleDistance) / blockSize);
+    const zStart = Math.floor((relativeCamZ - visibleDistance) / blockSize);
+    const zEnd = Math.ceil((relativeCamZ + visibleDistance) / blockSize);
+
+    // Early exit if bounds haven't changed
+    const prev = prevBoundsRef.current;
+    if (
+      xStart === prev.xStart &&
+      xEnd === prev.xEnd &&
+      zStart === prev.zStart &&
+      zEnd === prev.zEnd
+    ) {
+      return;
+    }
+    prev.xStart = xStart;
+    prev.xEnd = xEnd;
+    prev.zStart = zStart;
+    prev.zEnd = zEnd;
+
+    // Build new assignments array
+    const newAssignments: (TileAssignment | null)[] = [];
+    for (let x = xStart; x < xEnd; x++) {
+      for (let z = zStart; z < zEnd; z++) {
+        if (x === 0 && z === 0) continue;
+        newAssignments.push({ tileX: x, tileZ: z });
+      }
+    }
+    while (newAssignments.length < poolSize) {
+      newAssignments.push(null);
+    }
+
+    setTileAssignments(newAssignments);
+  });
+
+  if (!terrain || !sharedDisplacementMap || !sharedAlphaTextures) {
+    return null;
+  }
+
   return (
-    <group position={position} quaternion={q} scale={scale}>
-      <mesh geometry={planeGeometry} receiveShadow castShadow>
-        {terrain ? (
-          <TerrainMaterial
-            heightMap={terrain.heightMap}
-            emptySquares={emptySquares}
+    <>
+      {/* Primary tile at (0,0) with emptySquares applied */}
+      <TerrainTile
+        tileX={0}
+        tileZ={0}
+        blockSize={blockSize}
+        basePosition={basePosition}
+        textureNames={terrain.textureNames}
+        geometry={sharedGeometry}
+        displacementMap={sharedDisplacementMap}
+        visibilityMask={primaryVisibilityMask}
+        alphaTextures={sharedAlphaTextures}
+      />
+      {/* Pooled tiles - stable keys, always mounted */}
+      {poolIndices.map((poolIndex) => {
+        const assignment = tileAssignments[poolIndex];
+        return (
+          <TerrainTile
+            key={poolIndex}
+            tileX={assignment?.tileX ?? 0}
+            tileZ={assignment?.tileZ ?? 0}
+            blockSize={blockSize}
+            basePosition={basePosition}
             textureNames={terrain.textureNames}
-            alphaMaps={terrain.alphaMaps}
+            geometry={sharedGeometry}
+            displacementMap={sharedDisplacementMap}
+            visibilityMask={pooledVisibilityMask}
+            alphaTextures={sharedAlphaTextures}
+            visible={assignment !== null}
           />
-        ) : null}
-      </mesh>
-    </group>
+        );
+      })}
+    </>
   );
 });

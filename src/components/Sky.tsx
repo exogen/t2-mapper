@@ -1,7 +1,7 @@
 import { Suspense, useMemo, useEffect, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useCubeTexture } from "@react-three/drei";
-import { Color, ShaderMaterial, BackSide, Euler } from "three";
+import { Color, ShaderMaterial, BackSide, Euler, ShaderChunk } from "three";
 import type { TorqueObject } from "../torqueScript";
 import { getFloat, getInt, getProperty } from "../mission";
 import { useSettings } from "./SettingsProvider";
@@ -10,6 +10,41 @@ import { useThree } from "@react-three/fiber";
 import { CloudLayers } from "./CloudLayers";
 
 const FALLBACK_TEXTURE_URL = `${BASE_URL}/black.png`;
+
+/**
+ * Tribes 2 fog formula (from sceneState.cc getHaze):
+ *   fogScale = 1.0 / (visibleDistance - fogDistance)
+ *   distFactor = (dist - fogDistance) * fogScale - 1.0
+ *   haze = 1.0 - distFactor * distFactor
+ *
+ * This creates an "ease-in" quadratic curve where fog builds slowly at first,
+ * then accelerates toward visibleDistance.
+ *
+ * Set USE_QUADRATIC_FOG to true to use this formula, false to use Three.js linear fog.
+ */
+const USE_QUADRATIC_FOG = false;
+
+function installQuadraticFogShader() {
+  ShaderChunk.fog_fragment = `
+#ifdef USE_FOG
+  float fogFactor = 0.0;
+  if (vFogDepth > fogNear) {
+    if (vFogDepth >= fogFar) {
+      fogFactor = 1.0;
+    } else {
+      float fogScale = 1.0 / (fogFar - fogNear);
+      float distFactor = (vFogDepth - fogNear) * fogScale - 1.0;
+      fogFactor = 1.0 - distFactor * distFactor;
+    }
+  }
+  gl_FragColor.rgb = mix(gl_FragColor.rgb, fogColor, fogFactor);
+#endif
+`;
+}
+
+if (USE_QUADRATIC_FOG) {
+  installQuadraticFogShader();
+}
 
 /**
  * Load a .dml file, used to list the textures for different faces of a skybox.
@@ -24,11 +59,13 @@ function useDetailMapList(name: string) {
 export function SkyBox({
   materialList,
   fogColor,
-  fogDistance,
+  fogNear,
+  fogFar,
 }: {
   materialList: string;
   fogColor?: Color;
-  fogDistance?: number;
+  fogNear?: number;
+  fogFar?: number;
 }) {
   const { data: detailMapList } = useDetailMapList(materialList);
 
@@ -59,13 +96,14 @@ export function SkyBox({
   // Create a shader material for the skybox with fog
   const materialRef = useRef<ShaderMaterial>(null!);
 
-  const hasFog = !!fogColor && !!fogDistance;
+  const hasFog = !!fogColor && fogNear != null && fogFar != null;
 
   const shaderMaterial = useMemo(() => {
     if (!hasFog) {
       return null;
     }
 
+    // Skybox fog blends toward horizon
     return new ShaderMaterial({
       uniforms: {
         skybox: { value: skyBox },
@@ -75,12 +113,9 @@ export function SkyBox({
         varying vec3 vDirection;
 
         void main() {
-          // Use position directly as direction (no world transform needed)
           vDirection = position;
-
-          // Transform position but ignore translation
           vec4 pos = projectionMatrix * mat4(mat3(modelViewMatrix)) * vec4(position, 1.0);
-          gl_Position = pos.xyww; // Set depth to far plane
+          gl_Position = pos.xyww;
         }
       `,
       fragmentShader: `
@@ -95,13 +130,12 @@ export function SkyBox({
           direction = vec3(direction.z, direction.y, direction.x);
           vec4 skyColor = textureCube(skybox, direction);
 
-          // Calculate fog factor based on vertical direction
+          // Fog increases toward and below horizon
           // direction.y: -1 = straight down, 0 = horizon, 1 = straight up
-          // 100% fog from bottom to horizon, then fade from horizon (0) to 0.4
-          float fogFactor = smoothstep(0.0, 0.4, direction.y);
+          // Use smoothstep for gradual transition (matches Three.js linear fog feel)
+          float fogFactor = 1.0 - smoothstep(-0.1, 0.5, direction.y);
 
-          // Mix in sRGB space to match Three.js fog rendering
-          vec3 finalColor = mix(fogColor, skyColor.rgb, fogFactor);
+          vec3 finalColor = mix(skyColor.rgb, fogColor, fogFactor);
           gl_FragColor = vec4(finalColor, 1.0);
         }
       `,
@@ -131,7 +165,7 @@ export function SkyBox({
   }
 
   return (
-    <mesh scale={5000}>
+    <mesh scale={5000} frustumCulled={false}>
       <sphereGeometry args={[1, 60, 40]} />
       <primitive ref={materialRef} object={shaderMaterial} attach="material" />
     </mesh>
@@ -141,7 +175,7 @@ export function SkyBox({
 export function Sky({ object }: { object: TorqueObject }) {
   const { fogEnabled } = useSettings();
 
-  // Skybox textures.
+  // Skybox textures
   const materialList = getProperty(object, "materialList");
 
   const skySolidColor = useMemo(() => {
@@ -162,9 +196,22 @@ export function Sky({ object }: { object: TorqueObject }) {
 
   const useSkyTextures = getInt(object, "useSkyTextures") ?? 1;
 
-  // Fog parameters.
-  // TODO: There can be multiple fog volumes/layers. Render simple fog for now.
-  const fogDistance = getFloat(object, "fogDistance");
+  // Fog parameters - Tribes 2 uses fogDistance (near) and visibleDistance (far)
+  // high_* variants are used for high quality settings (-1 or 0 means use normal)
+  const fogDistanceBase = getFloat(object, "fogDistance");
+  const visibleDistanceBase = getFloat(object, "visibleDistance");
+  const highFogDistance = getFloat(object, "high_fogDistance");
+  const highVisibleDistance = getFloat(object, "high_visibleDistance");
+
+  // Use high quality values if available and valid (> 0)
+  const fogNear =
+    highFogDistance != null && highFogDistance > 0
+      ? highFogDistance
+      : fogDistanceBase;
+  const fogFar =
+    highVisibleDistance != null && highVisibleDistance > 0
+      ? highVisibleDistance
+      : visibleDistanceBase;
 
   const fogColor = useMemo(() => {
     const colorString = getProperty(object, "fogColor");
@@ -188,15 +235,18 @@ export function Sky({ object }: { object: TorqueObject }) {
     <color attach="background" args={[skyColor[0]]} />
   ) : null;
 
+  // Only enable fog if we have valid near/far distances
+  const hasFogParams = fogNear != null && fogFar != null && fogFar > fogNear;
+
   return (
     <>
       {materialList && useSkyTextures ? (
-        // Load the DML for skybox textures
         <Suspense fallback={backgroundColor}>
           <SkyBox
             materialList={materialList}
-            fogColor={fogEnabled ? fogColor?.[1] : undefined}
-            fogDistance={fogEnabled ? fogDistance : undefined}
+            fogColor={fogEnabled && hasFogParams ? fogColor?.[1] : undefined}
+            fogNear={fogEnabled && hasFogParams ? fogNear : undefined}
+            fogFar={fogEnabled && hasFogParams ? fogFar : undefined}
           />
         </Suspense>
       ) : (
@@ -208,13 +258,8 @@ export function Sky({ object }: { object: TorqueObject }) {
       <Suspense>
         <CloudLayers object={object} />
       </Suspense>
-      {fogEnabled && fogDistance && fogColor ? (
-        <fog
-          attach="fog"
-          color={fogColor[1]}
-          near={100}
-          far={Math.max(400, fogDistance * 2)}
-        />
+      {fogEnabled && hasFogParams && fogColor ? (
+        <fog attach="fog" color={fogColor[1]} near={fogNear!} far={fogFar!} />
       ) : null}
     </>
   );
