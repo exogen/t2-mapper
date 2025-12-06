@@ -97,6 +97,7 @@ export const TerrainBlock = memo(function TerrainBlock({
 }) {
   const terrainFile = getProperty(object, "terrainFile");
   const squareSize = getInt(object, "squareSize") ?? DEFAULT_SQUARE_SIZE;
+  const detailTexture = getProperty(object, "detailTexture");
   const blockSize = squareSize * 256;
   const visibleDistance = useVisibleDistance();
   const camera = useThree((state) => state.camera);
@@ -234,6 +235,7 @@ export const TerrainBlock = memo(function TerrainBlock({
         displacementMap={sharedDisplacementMap}
         visibilityMask={primaryVisibilityMask}
         alphaTextures={sharedAlphaTextures}
+        detailTextureName={detailTexture}
       />
       {/* Pooled tiles - stable keys, always mounted */}
       {poolIndices.map((poolIndex) => {
@@ -250,6 +252,7 @@ export const TerrainBlock = memo(function TerrainBlock({
             displacementMap={sharedDisplacementMap}
             visibilityMask={pooledVisibilityMask}
             alphaTextures={sharedAlphaTextures}
+            detailTextureName={detailTexture}
             visible={assignment !== null}
           />
         );

@@ -1,7 +1,11 @@
 import { memo, Suspense, useCallback, useMemo } from "react";
 import { DataTexture, DoubleSide, FrontSide, type PlaneGeometry } from "three";
 import { useTexture } from "@react-three/drei";
-import { terrainTextureToUrl } from "../loaders";
+import {
+  FALLBACK_TEXTURE_URL,
+  terrainTextureToUrl,
+  textureToUrl,
+} from "../loaders";
 import { setupColor } from "../textureUtils";
 import { updateTerrainTextureShader } from "../terrainMaterial";
 import { useDebug } from "./SettingsProvider";
@@ -28,6 +32,7 @@ interface TerrainTileProps {
   displacementMap: DataTexture;
   visibilityMask: DataTexture;
   alphaTextures: DataTexture[];
+  detailTextureName?: string;
   visible?: boolean;
 }
 
@@ -36,11 +41,13 @@ function BlendedTerrainTextures({
   visibilityMask,
   textureNames,
   alphaTextures,
+  detailTextureName,
 }: {
   displacementMap: DataTexture;
   visibilityMask: DataTexture;
   textureNames: string[];
   alphaTextures: DataTexture[];
+  detailTextureName?: string;
 }) {
   const { debugMode } = useDebug();
 
@@ -48,6 +55,18 @@ function BlendedTerrainTextures({
     textureNames.map((name) => terrainTextureToUrl(name)),
     (textures) => {
       textures.forEach((tex) => setupColor(tex));
+    },
+  );
+
+  // Load detail texture if specified
+  const detailTextureUrl = detailTextureName
+    ? textureToUrl(detailTextureName)
+    : null;
+
+  const detailTexture = useTexture(
+    detailTextureUrl ?? FALLBACK_TEXTURE_URL,
+    (tex) => {
+      setupColor(tex);
     },
   );
 
@@ -60,14 +79,27 @@ function BlendedTerrainTextures({
         visibilityMask,
         tiling: TILING,
         debugMode,
+        detailTexture: detailTextureUrl ? detailTexture : null,
       });
     },
-    [baseTextures, alphaTextures, visibilityMask, debugMode],
+    [
+      baseTextures,
+      alphaTextures,
+      visibilityMask,
+      debugMode,
+      detailTexture,
+      detailTextureUrl,
+    ],
   );
+
+  // Key must include factors that change shader code structure (not just uniforms)
+  // - debugMode: affects fragment shader branching
+  // - detailTextureUrl: affects vertex shader (adds varying) and fragment shader
+  const materialKey = `${debugMode ? "debug" : "normal"}-${detailTextureUrl ? "detail" : "nodetail"}`;
 
   return (
     <meshStandardMaterial
-      key={debugMode ? "debug" : "normal"}
+      key={materialKey}
       displacementMap={displacementMap}
       map={displacementMap}
       displacementScale={2048}
@@ -83,11 +115,13 @@ function TerrainMaterial({
   visibilityMask,
   textureNames,
   alphaTextures,
+  detailTextureName,
 }: {
   displacementMap: DataTexture;
   visibilityMask: DataTexture;
   textureNames: string[];
   alphaTextures: DataTexture[];
+  detailTextureName?: string;
 }) {
   return (
     <Suspense
@@ -105,6 +139,7 @@ function TerrainMaterial({
         visibilityMask={visibilityMask}
         textureNames={textureNames}
         alphaTextures={alphaTextures}
+        detailTextureName={detailTextureName}
       />
     </Suspense>
   );
@@ -120,6 +155,7 @@ export const TerrainTile = memo(function TerrainTile({
   displacementMap,
   visibilityMask,
   alphaTextures,
+  detailTextureName,
   visible = true,
 }: TerrainTileProps) {
   const position = useMemo(() => {
@@ -146,6 +182,7 @@ export const TerrainTile = memo(function TerrainTile({
         visibilityMask={visibilityMask}
         textureNames={textureNames}
         alphaTextures={alphaTextures}
+        detailTextureName={detailTextureName}
       />
     </mesh>
   );

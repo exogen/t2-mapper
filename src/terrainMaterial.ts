@@ -3,6 +3,19 @@
  * Handles multi-layer texture blending for Tribes 2 terrain rendering.
  */
 
+// Detail texture tiling factor.
+// Torque uses world-space generation: U = worldX * (62.0 / textureWidth)
+// For 256px texture across 2048 world units, this gives ~496 repeats mathematically.
+// However, this appears visually excessive. Using a moderate multiplier relative
+// to base texture tiling (32x) - detail should be finer but not overwhelming.
+const DETAIL_TILING = 64.0;
+
+// Distance at which detail texture fully fades out (in world units)
+// Torque: zeroDetailDistance = (squareSize * worldToScreenScale) / 64 - squareSize/2
+// For squareSize=8 and typical worldToScreenScale (~800), this gives ~96 units.
+// Using 150 for a slightly more gradual fade.
+const DETAIL_FADE_DISTANCE = 150.0;
+
 export function updateTerrainTextureShader({
   shader,
   baseTextures,
@@ -10,6 +23,7 @@ export function updateTerrainTextureShader({
   visibilityMask,
   tiling,
   debugMode = false,
+  detailTexture = null,
 }: {
   shader: any;
   baseTextures: any[];
@@ -17,6 +31,7 @@ export function updateTerrainTextureShader({
   visibilityMask: any;
   tiling: Record<number, number>;
   debugMode?: boolean;
+  detailTexture?: any;
 }) {
   const layerCount = baseTextures.length;
 
@@ -45,6 +60,25 @@ export function updateTerrainTextureShader({
   // Add debug mode uniform
   shader.uniforms.debugMode = { value: debugMode ? 1.0 : 0.0 };
 
+  // Add detail texture uniforms
+  if (detailTexture) {
+    shader.uniforms.detailTexture = { value: detailTexture };
+    shader.uniforms.detailTiling = { value: DETAIL_TILING };
+    shader.uniforms.detailFadeDistance = { value: DETAIL_FADE_DISTANCE };
+
+    // Add vertex shader code to pass world position to fragment shader
+    shader.vertexShader = shader.vertexShader.replace(
+      "#include <common>",
+      `#include <common>
+varying vec3 vTerrainWorldPos;`,
+    );
+    shader.vertexShader = shader.vertexShader.replace(
+      "#include <worldpos_vertex>",
+      `#include <worldpos_vertex>
+vTerrainWorldPos = (modelMatrix * vec4(transformed, 1.0)).xyz;`,
+    );
+  }
+
   // Declare our uniforms at the top of the fragment shader
   shader.fragmentShader =
     `
@@ -67,6 +101,10 @@ uniform float tiling4;
 uniform float tiling5;
 uniform float debugMode;
 ${visibilityMask ? "uniform sampler2D visibilityMask;" : ""}
+${detailTexture ? `uniform sampler2D detailTexture;
+uniform float detailTiling;
+uniform float detailFadeDistance;
+varying vec3 vTerrainWorldPos;` : ""}
 
 // Wireframe edge detection for debug mode
 float getWireframe(vec2 uv, float gridSize, float lineWidth) {
@@ -142,6 +180,24 @@ float getWireframe(vec2 uv, float gridSize, float lineWidth) {
 
   // Assign to diffuseColor before lighting
   vec3 textureColor = ${layerCount > 1 ? "blended" : "c0"};
+
+  ${
+    detailTexture
+      ? `// Detail texture blending (Torque-style multiplicative blend)
+  // Sample detail texture at high frequency tiling
+  vec3 detailColor = texture2D(detailTexture, baseUv * detailTiling).rgb;
+
+  // Calculate distance-based fade factor using world positions
+  // Torque: distFactor = (zeroDetailDistance - distance) / zeroDetailDistance
+  float distToCamera = distance(vTerrainWorldPos, cameraPosition);
+  float detailFade = clamp(1.0 - distToCamera / detailFadeDistance, 0.0, 1.0);
+
+  // Torque blending: dst * lerp(1.0, detailTexel, fadeFactor)
+  // Detail textures are authored with bright values (~0.8 mean), not 0.5 gray
+  // Direct multiplication adds subtle darkening for surface detail
+  textureColor *= mix(vec3(1.0), detailColor, detailFade);`
+      : ""
+  }
 
   // Debug mode wireframe handling
   if (debugMode > 0.5) {
