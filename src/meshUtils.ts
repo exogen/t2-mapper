@@ -1,12 +1,14 @@
+import { Skeleton, Bone, BufferGeometry } from "three";
+
 /**
  * Extract hull bone indices from a skeleton
  * @param skeleton - The Three.js skeleton to scan
  * @returns Set of bone indices for bones matching the hull pattern (starts with "Hulk")
  */
-export function getHullBoneIndices(skeleton: any): Set<number> {
+export function getHullBoneIndices(skeleton: Skeleton): Set<number> {
   const hullBoneIndices = new Set<number>();
 
-  skeleton.bones.forEach((bone: any, index: number) => {
+  skeleton.bones.forEach((bone: Bone, index: number) => {
     if (bone.name.match(/^Hulk/i)) {
       hullBoneIndices.add(index);
     }
@@ -22,9 +24,9 @@ export function getHullBoneIndices(skeleton: any): Set<number> {
  * @returns Filtered geometry with hull-influenced faces removed
  */
 export function filterGeometryByVertexGroups(
-  geometry: any,
+  geometry: BufferGeometry,
   hullBoneIndices: Set<number>,
-): any {
+): BufferGeometry {
   // If no hull bones or no skinning data, return original geometry
   if (hullBoneIndices.size === 0 || !geometry.attributes.skinIndex) {
     return geometry;

@@ -9,17 +9,45 @@ import {
   RedFormat,
   RepeatWrapping,
   SRGBColorSpace,
+  Texture,
   UnsignedByteType,
 } from "three";
 
-export function setupColor(tex, repeat = [1, 1]) {
+export interface TextureSetupOptions {
+  /** Texture repeat values [x, y]. Default: [1, 1] */
+  repeat?: [number, number];
+  /** Disable mipmaps (for alpha-tested textures to prevent artifacts). Default: false */
+  disableMipmaps?: boolean;
+}
+
+/**
+ * Setup a color texture with standard settings for the viewer.
+ *
+ * @param tex - The texture to configure
+ * @param options - Optional configuration
+ * @returns The configured texture
+ */
+export function setupTexture<T extends Texture>(
+  tex: T,
+  options: TextureSetupOptions = {},
+): T {
+  const { repeat = [1, 1], disableMipmaps = false } = options;
+
   tex.wrapS = tex.wrapT = RepeatWrapping;
   tex.colorSpace = SRGBColorSpace;
   tex.repeat.set(...repeat);
   tex.flipY = false; // DDS/DIF textures are already flipped
   tex.anisotropy = 16;
-  tex.generateMipmaps = true;
-  tex.minFilter = LinearMipmapLinearFilter;
+
+  if (disableMipmaps) {
+    // Disable mipmaps - prevents checkerboard artifacts on alpha-tested materials
+    // because alpha values get averaged at lower mip levels
+    tex.generateMipmaps = false;
+    tex.minFilter = LinearFilter;
+  } else {
+    tex.generateMipmaps = true;
+    tex.minFilter = LinearMipmapLinearFilter;
+  }
   tex.magFilter = LinearFilter;
 
   tex.needsUpdate = true;
@@ -27,7 +55,34 @@ export function setupColor(tex, repeat = [1, 1]) {
   return tex;
 }
 
-export function setupMask(data) {
+/**
+ * Setup a color texture with standard settings.
+ * @deprecated Use setupTexture() instead
+ */
+export function setupColor<T extends Texture>(
+  tex: T,
+  repeat: [number, number] = [1, 1],
+): T {
+  return setupTexture(tex, { repeat });
+}
+
+/**
+ * Setup for alpha-tested textures (vegetation, etc).
+ * Disables mipmaps to prevent checkerboard artifacts from alpha averaging.
+ * @deprecated Use setupTexture(tex, { disableMipmaps: true }) instead
+ */
+export function setupAlphaTestedTexture<T extends Texture>(
+  tex: T,
+  repeat: [number, number] = [1, 1],
+): T {
+  return setupTexture(tex, { repeat, disableMipmaps: true });
+}
+
+/**
+ * Setup a mask texture (single channel, linear color space).
+ * Used for terrain blend masks and similar data textures.
+ */
+export function setupMask(data: Uint8Array): DataTexture {
   const tex = new DataTexture(
     data,
     256,

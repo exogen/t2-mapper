@@ -1,6 +1,6 @@
 import { memo, Suspense, useMemo } from "react";
 import { ErrorBoundary } from "react-error-boundary";
-import { Mesh } from "three";
+import { Mesh, Material, MeshStandardMaterial, Texture } from "three";
 import { useGLTF, useTexture } from "@react-three/drei";
 import { textureToUrl, interiorToUrl } from "../loaders";
 import type { TorqueObject } from "../torqueScript";
@@ -8,6 +8,8 @@ import { getPosition, getProperty, getRotation, getScale } from "../mission";
 import { setupColor } from "../textureUtils";
 import { FloatingLabel } from "./FloatingLabel";
 import { useDebug } from "./SettingsProvider";
+
+const LIGHTMAP_INTENSITY = 4;
 
 /**
  * Load a .gltf file that was converted from a .dif, used for "interior" models.
@@ -17,14 +19,62 @@ function useInterior(interiorFile: string) {
   return useGLTF(url);
 }
 
-function InteriorTexture({ materialName }: { materialName: string }) {
+function InteriorTexture({
+  materialName,
+  material,
+  lightMap,
+}: {
+  materialName: string;
+  material?: Material;
+  lightMap?: Texture | null;
+}) {
   const url = textureToUrl(materialName);
   const texture = useTexture(url, (texture) => setupColor(texture));
 
-  return <meshStandardMaterial map={texture} side={2} />;
+  // Check for self-illuminating flag in material userData
+  // Note: The io_dif Blender add-on needs to be updated to export material flags
+  const flagNames = new Set<string>(material?.userData?.flag_names ?? []);
+  const isSelfIlluminating = flagNames.has("SelfIlluminating");
+
+  // Self-illuminating materials are fullbright (unlit)
+  if (isSelfIlluminating) {
+    return <meshBasicMaterial map={texture} side={2} toneMapped={false} />;
+  }
+
+  // Use lightMap if available (baked lighting from DIF files)
+  // Three.js MeshLambertMaterial automatically uses uv2 for lightMap
+  return (
+    <meshLambertMaterial
+      map={texture}
+      lightMap={lightMap ?? undefined}
+      lightMapIntensity={lightMap ? LIGHTMAP_INTENSITY : undefined}
+      side={2}
+    />
+  );
+}
+
+/**
+ * Extract lightmap texture from a glTF material.
+ * The io_dif Blender addon stores lightmaps in the emissive channel for transport.
+ */
+function getLightMap(material: Material | null): Texture | null {
+  if (!material) return null;
+  // glTF materials come through as MeshStandardMaterial
+  const stdMat = material as MeshStandardMaterial;
+  // Lightmap is stored in emissiveMap with 0 strength (just for glTF transport)
+  return stdMat.emissiveMap ?? null;
 }
 
 function InteriorMesh({ node }: { node: Mesh }) {
+  // Extract lightmaps from original materials (stored in emissiveMap for glTF transport)
+  const lightMaps = useMemo(() => {
+    if (!node.material) return [];
+    if (Array.isArray(node.material)) {
+      return node.material.map(getLightMap);
+    }
+    return [getLightMap(node.material)];
+  }, [node.material]);
+
   return (
     <mesh geometry={node.geometry} castShadow receiveShadow>
       {node.material ? (
@@ -40,11 +90,15 @@ function InteriorMesh({ node }: { node: Mesh }) {
               <InteriorTexture
                 key={index}
                 materialName={mat.userData.resource_path}
+                material={mat}
+                lightMap={lightMaps[index]}
               />
             ))
           ) : (
             <InteriorTexture
               materialName={node.material.userData.resource_path}
+              material={node.material}
+              lightMap={lightMaps[0]}
             />
           )}
         </Suspense>
@@ -61,10 +115,7 @@ export const InteriorModel = memo(
     return (
       <group rotation={[0, -Math.PI / 2, 0]}>
         {Object.entries(nodes)
-          .filter(
-            ([name, node]: [string, any]) =>
-              !node.material || !node.material.name.match(/\.\d+$/),
-          )
+          .filter(([, node]: [string, any]) => node.isMesh)
           .map(([name, node]: [string, any]) => (
             <InteriorMesh key={name} node={node} />
           ))}

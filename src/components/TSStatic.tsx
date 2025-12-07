@@ -1,8 +1,7 @@
-import { Suspense, useMemo } from "react";
-import { ErrorBoundary } from "react-error-boundary";
+import { useMemo } from "react";
 import type { TorqueObject } from "../torqueScript";
 import { getPosition, getProperty, getRotation, getScale } from "../mission";
-import { DebugPlaceholder, ShapeModel, ShapePlaceholder } from "./GenericShape";
+import { ShapeRenderer } from "./GenericShape";
 import { ShapeInfoProvider } from "./ShapeInfoProvider";
 
 export function TSStatic({ object }: { object: TorqueObject }) {
@@ -19,13 +18,7 @@ export function TSStatic({ object }: { object: TorqueObject }) {
   return (
     <ShapeInfoProvider shapeName={shapeName} type="TSStatic">
       <group position={position} quaternion={q} scale={scale}>
-        <ErrorBoundary
-          fallback={<DebugPlaceholder color="red" label={shapeName} />}
-        >
-          <Suspense fallback={<ShapePlaceholder color="yellow" />}>
-            <ShapeModel />
-          </Suspense>
-        </ErrorBoundary>
+        <ShapeRenderer shapeName={shapeName} />
       </group>
     </ShapeInfoProvider>
   );

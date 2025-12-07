@@ -99,6 +99,8 @@ for i, in_path in enumerate(input_files, start=1):
         # Blender and T2 are Z-up, but these assets are destined for Three.js which
         # is Y-up. It's easiest to match the Y-up of our destination engine.
         export_yup=True,
+        # Export lightmap textures connected to emissive (even with 0 strength)
+        export_unused_textures=True,
     )
     if "FINISHED" not in res:
         failure_count += 1

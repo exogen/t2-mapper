@@ -101,10 +101,14 @@ uniform float tiling4;
 uniform float tiling5;
 uniform float debugMode;
 ${visibilityMask ? "uniform sampler2D visibilityMask;" : ""}
-${detailTexture ? `uniform sampler2D detailTexture;
+${
+  detailTexture
+    ? `uniform sampler2D detailTexture;
 uniform float detailTiling;
 uniform float detailFadeDistance;
-varying vec3 vTerrainWorldPos;` : ""}
+varying vec3 vTerrainWorldPos;`
+    : ""
+}
 
 // Wireframe edge detection for debug mode
 float getWireframe(vec2 uv, float gridSize, float lineWidth) {

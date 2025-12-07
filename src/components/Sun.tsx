@@ -1,52 +1,75 @@
 import { useMemo } from "react";
-import { Color } from "three";
+import { Color, Vector3 } from "three";
 import type { TorqueObject } from "../torqueScript";
 import { getProperty } from "../mission";
 
 export function Sun({ object }: { object: TorqueObject }) {
+  // Parse sun direction - points FROM sun TO scene
+  // Torque uses Z-up, Three.js uses Y-up
   const direction = useMemo(() => {
-    const directionStr = getProperty(object, "direction") ?? "0 0 -1";
-    // Note: This is a space-separated string, so we split and parse each component.
-    const [x, y, z] = directionStr.split(" ").map((s: string) => parseFloat(s));
-    // Scale the direction vector to position the light far from the scene
-    const scale = 5000;
-    return [x * scale, y * scale, z * scale] as [number, number, number];
+    const directionStr =
+      getProperty(object, "direction") ?? "0.57735 0.57735 -0.57735";
+    const [tx, ty, tz] = directionStr
+      .split(" ")
+      .map((s: string) => parseFloat(s));
+    // Convert Torque (X, Y, Z) to Three.js:
+    // Swap Y/Z for coordinate system: (tx, ty, tz) -> (tx, tz, ty)
+    const x = tx;
+    const y = tz;
+    const z = ty;
+    const len = Math.sqrt(x * x + y * y + z * z);
+    return new Vector3(x / len, y / len, z / len);
   }, [object]);
 
+  // Position light far away, opposite to direction (light shines FROM position)
+  const lightPosition = useMemo(() => {
+    const distance = 5000;
+    return new Vector3(
+      -direction.x * distance,
+      -direction.y * distance,
+      -direction.z * distance,
+    );
+  }, [direction]);
+
   const color = useMemo(() => {
-    const colorStr = getProperty(object, "color") ?? "1 1 1 1";
-    // Note: This is a space-separated string, so we split and parse each component.
+    const colorStr = getProperty(object, "color") ?? "0.7 0.7 0.7 1";
     const [r, g, b] = colorStr.split(" ").map((s: string) => parseFloat(s));
-    return [r, g, b] as [number, number, number];
+    return new Color(r, g, b);
   }, [object]);
 
   const ambient = useMemo(() => {
     const ambientStr = getProperty(object, "ambient") ?? "0.5 0.5 0.5 1";
-    // Note: This is a space-separated string, so we split and parse each component.
     const [r, g, b] = ambientStr.split(" ").map((s: string) => parseFloat(s));
-    return [r, g, b] as [number, number, number];
+    return new Color(r, g, b);
   }, [object]);
+
+  // Lighting intensities - terrain and shapes need good directional + ambient balance
+  const directionalIntensity = 1.8;
+  const ambientIntensity = 1.0;
+
+  // Shadow camera covers the entire terrain (Tribes 2 terrains are typically 2048+ units)
+  const shadowCameraSize = 4096;
 
   return (
     <>
-      {/* Directional light for the sun */}
-      {/* <directionalLight
-        position={[500, 500, 500]}
-        target-position={direction}
+      {/* Directional sun light - illuminates surfaces facing the sun */}
+      <directionalLight
+        position={lightPosition}
         color={color}
-        intensity={2}
+        intensity={directionalIntensity}
         castShadow
-        shadow-mapSize={[2048, 2048]}
-        shadow-camera-left={-2000}
-        shadow-camera-right={2000}
-        shadow-camera-top={2000}
-        shadow-camera-bottom={-2000}
-        shadow-camera-near={0.5}
-        shadow-camera-far={5000}
+        shadow-mapSize-width={4096}
+        shadow-mapSize-height={4096}
+        shadow-camera-left={-shadowCameraSize}
+        shadow-camera-right={shadowCameraSize}
+        shadow-camera-top={shadowCameraSize}
+        shadow-camera-bottom={-shadowCameraSize}
+        shadow-camera-near={100}
+        shadow-camera-far={12000}
         shadow-bias={-0.001}
-      /> */}
-      {/* Ambient light component */}
-      <hemisphereLight args={[new Color(...color), new Color(...ambient), 2]} />
+      />
+      {/* Ambient fill light - prevents pure black shadows */}
+      <ambientLight color={ambient} intensity={ambientIntensity} />
     </>
   );
 }

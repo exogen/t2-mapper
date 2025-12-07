@@ -1,8 +1,7 @@
-import { Suspense, useMemo } from "react";
-import { ErrorBoundary } from "react-error-boundary";
+import { useMemo } from "react";
 import type { TorqueObject } from "../torqueScript";
 import { getPosition, getProperty, getRotation, getScale } from "../mission";
-import { DebugPlaceholder, ShapeModel, ShapePlaceholder } from "./GenericShape";
+import { ShapeRenderer } from "./GenericShape";
 import { ShapeInfoProvider } from "./ShapeInfoProvider";
 import { useDatablock } from "./useDatablock";
 
@@ -33,29 +32,11 @@ export function Turret({ object }: { object: TorqueObject }) {
   return (
     <ShapeInfoProvider shapeName={shapeName} type="Turret">
       <group position={position} quaternion={q} scale={scale}>
-        {shapeName ? (
-          <ErrorBoundary
-            fallback={<DebugPlaceholder color="red" label={shapeName} />}
-          >
-            <Suspense fallback={<ShapePlaceholder color="yellow" />}>
-              <ShapeModel />
-            </Suspense>
-          </ErrorBoundary>
-        ) : (
-          <DebugPlaceholder color="orange" />
-        )}
+        <ShapeRenderer shapeName={shapeName} />
         {barrelShapeName ? (
           <ShapeInfoProvider shapeName={barrelShapeName} type="Turret">
             <group position={[0, 1.5, 0]}>
-              <ErrorBoundary
-                fallback={
-                  <DebugPlaceholder color="red" label={barrelShapeName} />
-                }
-              >
-                <Suspense fallback={<ShapePlaceholder color="yellow" />}>
-                  <ShapeModel />
-                </Suspense>
-              </ErrorBoundary>
+              <ShapeRenderer shapeName={barrelShapeName} />
             </group>
           </ShapeInfoProvider>
         ) : null}

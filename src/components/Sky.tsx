@@ -1,4 +1,4 @@
-import { Suspense, useMemo } from "react";
+import { Suspense, useMemo, useEffect, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useCubeTexture } from "@react-three/drei";
 import { Color, ShaderMaterial, BackSide, ShaderChunk } from "three";
@@ -103,6 +103,8 @@ export function SkyBox({
 
   const skyBox = useCubeTexture(skyBoxFiles, { path: "" });
 
+  const materialRef = useRef<ShaderMaterial>(null!);
+
   const shaderMaterial = useMemo(() => {
     // Always use a shader to apply the X-axis mirror transformation.
     // Optionally blend fog toward the horizon.
@@ -151,10 +153,20 @@ export function SkyBox({
     });
   }, [skyBox, fogColor]);
 
+  // Update uniforms when props change (ensures reactivity)
+  useEffect(() => {
+    if (materialRef.current) {
+      materialRef.current.uniforms.skybox.value = skyBox;
+      materialRef.current.uniforms.fogColor.value =
+        fogColor ?? new Color(0, 0, 0);
+      materialRef.current.uniforms.enableFog.value = !!fogColor;
+    }
+  }, [skyBox, fogColor]);
+
   return (
     <mesh scale={5000} frustumCulled={false}>
       <sphereGeometry args={[1, 60, 40]} />
-      <primitive object={shaderMaterial} attach="material" />
+      <primitive ref={materialRef} object={shaderMaterial} attach="material" />
     </mesh>
   );
 }
@@ -179,15 +191,42 @@ export function Sky({ object }: { object: TorqueObject }) {
   const highFogDistance = getFloat(object, "high_fogDistance");
   const highVisibleDistance = getFloat(object, "high_visibleDistance");
 
+  // Parse fog volumes - format: "visibleDistance minHeight maxHeight"
+  // These define height-based fog bands with different densities
+  const fogVolume1 = useMemo(() => {
+    const value = getProperty(object, "fogVolume1");
+    if (value) {
+      const [visibleDistance, minHeight, maxHeight] = value
+        .split(" ")
+        .map((s: string) => parseFloat(s));
+      // Only valid if visibleDistance > 0 and has a height range
+      if (visibleDistance > 0 && maxHeight > minHeight) {
+        return { visibleDistance, minHeight, maxHeight };
+      }
+    }
+    return null;
+  }, [object]);
+
   // Use high quality values if available and valid (> 0)
-  const fogNear =
+  const baseFogNear =
     highFogDistance != null && highFogDistance > 0
       ? highFogDistance
       : fogDistanceBase;
-  const fogFar =
+  const baseFogFar =
     highVisibleDistance != null && highVisibleDistance > 0
       ? highVisibleDistance
       : visibleDistanceBase;
+
+  // If fogVolume1 is defined, use denser fog
+  // Torque's fog volumes ADD density on top of base fog - objects inside
+  // a fog volume get significantly more haze. We approximate this by
+  // using a fraction of the volume's visibleDistance.
+  const fogNear = fogVolume1
+    ? Math.min(baseFogNear ?? Infinity, fogVolume1.visibleDistance * 0.25)
+    : baseFogNear;
+  const fogFar = fogVolume1
+    ? Math.min(baseFogFar ?? Infinity, fogVolume1.visibleDistance * 0.9)
+    : baseFogFar;
 
   const fogColor = useMemo(
     () => parseColorString(getProperty(object, "fogColor")),

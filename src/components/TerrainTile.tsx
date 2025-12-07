@@ -1,5 +1,11 @@
 import { memo, Suspense, useCallback, useMemo } from "react";
-import { DataTexture, DoubleSide, FrontSide, type PlaneGeometry } from "three";
+import {
+  DataTexture,
+  DoubleSide,
+  FrontSide,
+  MeshLambertMaterial,
+  type PlaneGeometry,
+} from "three";
 import { useTexture } from "@react-three/drei";
 import {
   FALLBACK_TEXTURE_URL,
@@ -98,7 +104,7 @@ function BlendedTerrainTextures({
   const materialKey = `${debugMode ? "debug" : "normal"}-${detailTextureUrl ? "detail" : "nodetail"}`;
 
   return (
-    <meshStandardMaterial
+    <meshLambertMaterial
       key={materialKey}
       displacementMap={displacementMap}
       map={displacementMap}
@@ -126,7 +132,7 @@ function TerrainMaterial({
   return (
     <Suspense
       fallback={
-        <meshStandardMaterial
+        <meshLambertMaterial
           color="rgb(0, 109, 56)"
           displacementMap={displacementMap}
           displacementScale={2048}
