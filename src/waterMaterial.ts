@@ -1,4 +1,6 @@
 import { ShaderMaterial, Texture, DoubleSide, Color } from "three";
+import { globalFogUniforms } from "./globalFogUniforms";
+import { fogFragmentShader } from "./fogShader";
 
 /**
  * Tribes 2 WaterBlock shader material
@@ -20,6 +22,11 @@ import { ShaderMaterial, Texture, DoubleSide, Color } from "three";
 
 const vertexShader = /* glsl */ `
   #include <fog_pars_vertex>
+
+  #ifdef USE_FOG
+    #define USE_FOG_WORLD_POSITION
+    varying vec3 vFogWorldPosition;
+  #endif
 
   uniform float uTime;
   uniform float uWaveMagnitude;
@@ -46,6 +53,12 @@ const vertexShader = /* glsl */ `
     vec3 displaced = position;
     displaced.y += getWaveHeight(worldPos.xyz);
 
+    // Calculate final world position after displacement for fog
+    #ifdef USE_FOG
+      vec4 displacedWorldPos = modelMatrix * vec4(displaced, 1.0);
+      vFogWorldPosition = displacedWorldPos.xyz;
+    #endif
+
     // Calculate view vector for environment mapping
     vViewVector = cameraPosition - worldPos.xyz;
     vDistance = length(vViewVector);
@@ -53,18 +66,35 @@ const vertexShader = /* glsl */ `
     vec4 mvPosition = viewMatrix * modelMatrix * vec4(displaced, 1.0);
     gl_Position = projectionMatrix * mvPosition;
 
-    #include <fog_vertex>
+    // Set fog depth (distance from camera) - normally done by fog_vertex include
+    // but we can't use that include because it references 'transformed' which we don't have
+    #ifdef USE_FOG
+      vFogDepth = length(mvPosition.xyz);
+    #endif
   }
 `;
 
 const fragmentShader = /* glsl */ `
   #include <fog_pars_fragment>
 
+  // Enable volumetric fog (must be defined before fog uniforms)
+  #ifdef USE_FOG
+    #define USE_VOLUMETRIC_FOG
+    #define USE_FOG_WORLD_POSITION
+  #endif
+
   uniform float uTime;
   uniform float uOpacity;
   uniform float uEnvMapIntensity;
   uniform sampler2D uBaseTexture;
   uniform sampler2D uEnvMapTexture;
+
+  // Volumetric fog uniforms
+  #ifdef USE_FOG
+    uniform float fogVolumeData[12];
+    uniform float cameraHeight;
+    varying vec3 vFogWorldPosition;
+  #endif
 
   varying vec3 vWorldPosition;
   varying vec3 vViewVector;
@@ -95,8 +125,6 @@ const fragmentShader = /* glsl */ `
 
   void main() {
     // Calculate base texture UVs using world position (1/48 tiling)
-    // Note: In Three.js Y-up coordinates, the water surface is on the XZ plane
-    // Torque uses Z-up where the surface is XY, so we use xz here
     vec2 baseUV = vWorldPosition.xz * TEXTURE_SCALE;
 
     // Phase (time in radians for drift cycle)
@@ -110,21 +138,14 @@ const fragmentShader = /* glsl */ `
     vec2 uv1a = rotateUV(baseUV, radians(30.0));
 
     // === Phase 1b: Second base texture pass (rotated 60 degrees total, with drift) ===
-    // OpenGL matrix order: glRotatef(60) then glTranslatef(drift) means
-    // the transform is R60 * T, so when applied to UV: R60 * (UV + drift)
-    // Translation is applied first, then rotation.
     vec2 uv1b = rotateUV(baseUV + vec2(baseDriftX, baseDriftY), radians(60.0));
 
     // Calculate cross-fade swing value
-    // From engine: A1 = cos((X/Q1 + time/Q2) * 6.0), A2 = sin((Y/Q1 + time/Q2) * 6.28)
-    // Using xz for Three.js Y-up coordinate system
     float A1 = cos(((vWorldPosition.x / Q1) + (uTime / Q2)) * 6.0);
     float A2 = sin(((vWorldPosition.z / Q1) + (uTime / Q2)) * TWO_PI);
     float swing = (A1 + A2) * 0.15 + 0.5;
 
     // Cross-fade alpha calculation from engine
-    // alpha1a = ((1-swing) * opacity) / (1 - (swing * opacity))
-    // alpha1b = swing * opacity
     float alpha1a = ((1.0 - swing) * uOpacity) / max(1.0 - (swing * uOpacity), 0.001);
     float alpha1b = swing * uOpacity;
 
@@ -132,53 +153,38 @@ const fragmentShader = /* glsl */ `
     vec4 texColor1a = texture2D(uBaseTexture, uv1a);
     vec4 texColor1b = texture2D(uBaseTexture, uv1b);
 
-    // Simulate multi-pass alpha accumulation (screen blend formula)
-    // Pass 1a: framebuffer = tex1a * alpha1a + bg * (1 - alpha1a)
-    // Pass 1b: framebuffer = tex1b * alpha1b + prev * (1 - alpha1b)
-    // Combined alpha = 1 - (1 - alpha1a) * (1 - alpha1b)
+    // Combined alpha and color
     float combinedAlpha = 1.0 - (1.0 - alpha1a) * (1.0 - alpha1b);
-
-    // Combined color (premultiplied then divided by combined alpha)
-    // color = tex1b * alpha1b + tex1a * alpha1a * (1 - alpha1b)
     vec3 baseColor = (texColor1a.rgb * alpha1a * (1.0 - alpha1b) + texColor1b.rgb * alpha1b) / max(combinedAlpha, 0.001);
 
     // === Phase 3: Environment map / specular ===
-    // Reflection UV calculation from engine (fluidQuadTree.cc lines 910-962)
-    // Engine uses eye-to-point vector (point - eye), unnormalized.
-    // vViewVector is camera - worldPos (point-to-eye), so we negate it.
-    // Torque Z-up maps XY to UV; Three.js Y-up maps XZ to UV.
     vec3 reflectVec = -vViewVector;
-    reflectVec.y = abs(reflectVec.y);  // Y is vertical in Three.js (was Z in Torque)
+    reflectVec.y = abs(reflectVec.y);
     if (reflectVec.y < 0.001) reflectVec.y = 0.001;
 
     vec2 envUV;
     if (vDistance < 0.001) {
       envUV = vec2(0.0);
     } else {
-      // Standard UV reflection mapping with adjustment to reduce edge emphasis
       float value = (vDistance - reflectVec.y) / (vDistance * vDistance);
       envUV.x = reflectVec.x * value;
-      envUV.y = reflectVec.z * value;  // Z maps to V in Three.js Y-up
+      envUV.y = reflectVec.z * value;
     }
 
-    // Convert from [-1,1] to [0,1]
     envUV = envUV * 0.5 + 0.5;
-
-    // Add time-based wobble to environment map
     envUV.x += A1 * Q3;
     envUV.y += A2 * Q3;
 
     vec4 envColor = texture2D(uEnvMapTexture, envUV);
-
-    // Blend environment map additively (GL_SRC_ALPHA, GL_ONE in original engine)
-    // Engine uses GL_MODULATE with color (1,1,1,envMapIntensity), so texture alpha
-    // is multiplied with intensity before additive blend.
     vec3 finalColor = baseColor + envColor.rgb * envColor.a * uEnvMapIntensity;
+
+    // Note: Tribes 2 water does NOT use lighting - Phase 2 (lightmap) is disabled
+    // in the original engine. Water colors come directly from textures.
 
     gl_FragColor = vec4(finalColor, combinedAlpha);
 
-    // Apply scene fog (integrated with Three.js fog system)
-    #include <fog_fragment>
+    // Apply volumetric fog using shared Torque-style fog shader
+    ${fogFragmentShader}
   }
 `;
 
@@ -201,6 +207,9 @@ export function createWaterMaterial(options?: {
       fogColor: { value: new Color() },
       fogNear: { value: 1 },
       fogFar: { value: 2000 },
+      // Volumetric fog uniforms (shared with global fog system)
+      fogVolumeData: globalFogUniforms.fogVolumeData,
+      cameraHeight: globalFogUniforms.cameraHeight,
     },
     vertexShader,
     fragmentShader,

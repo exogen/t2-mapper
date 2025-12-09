@@ -1,7 +1,7 @@
 import { memo, Suspense, useEffect, useMemo, useRef } from "react";
 import { useTexture } from "@react-three/drei";
 import { useFrame } from "@react-three/fiber";
-import { DoubleSide, PlaneGeometry, RepeatWrapping } from "three";
+import { DoubleSide, NoColorSpace, PlaneGeometry, RepeatWrapping } from "three";
 import { textureToUrl } from "../loaders";
 import type { TorqueObject } from "../torqueScript";
 import { getPosition, getProperty, getRotation, getScale } from "../mission";
@@ -67,6 +67,10 @@ export function WaterSurfaceMaterial({
       const texArray = Array.isArray(textures) ? textures : [textures];
       texArray.forEach((tex) => {
         setupColor(tex);
+        // Use NoColorSpace for water textures - our custom ShaderMaterial
+        // outputs values that are already in the correct space for display.
+        // Using SRGBColorSpace would cause double-conversion.
+        tex.colorSpace = NoColorSpace;
         tex.wrapS = RepeatWrapping;
         tex.wrapT = RepeatWrapping;
       });

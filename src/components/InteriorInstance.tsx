@@ -1,4 +1,4 @@
-import { memo, Suspense, useMemo } from "react";
+import { memo, Suspense, useMemo, useCallback } from "react";
 import { ErrorBoundary } from "react-error-boundary";
 import { Mesh, Material, MeshStandardMaterial, Texture } from "three";
 import { useGLTF, useTexture } from "@react-three/drei";
@@ -8,8 +8,16 @@ import { getPosition, getProperty, getRotation, getScale } from "../mission";
 import { setupColor } from "../textureUtils";
 import { FloatingLabel } from "./FloatingLabel";
 import { useDebug } from "./SettingsProvider";
+import { injectCustomFog } from "../fogShader";
+import { globalFogUniforms } from "../globalFogUniforms";
+import { injectInteriorLighting } from "../interiorMaterial";
 
-const LIGHTMAP_INTENSITY = 4;
+/**
+ * Lightmap intensity multiplier.
+ * Lightmaps contain baked lighting from interior-specific lights only
+ * (not scene sun/ambient - that's applied in real-time).
+ */
+const LIGHTMAP_INTENSITY = 2.5;
 
 /**
  * Load a .gltf file that was converted from a .dif, used for "interior" models.
@@ -36,19 +44,35 @@ function InteriorTexture({
   const flagNames = new Set<string>(material?.userData?.flag_names ?? []);
   const isSelfIlluminating = flagNames.has("SelfIlluminating");
 
-  // Self-illuminating materials are fullbright (unlit)
+  // Inject volumetric fog and lighting multipliers into materials
+  const onBeforeCompile = useCallback((shader: any) => {
+    injectCustomFog(shader, globalFogUniforms);
+    injectInteriorLighting(shader);
+  }, []);
+
+  // Self-illuminating materials are fullbright (unlit), no lightmap
   if (isSelfIlluminating) {
-    return <meshBasicMaterial map={texture} side={2} toneMapped={false} />;
+    return (
+      <meshBasicMaterial
+        map={texture}
+        side={2}
+        toneMapped={false}
+        onBeforeCompile={onBeforeCompile}
+      />
+    );
   }
 
-  // Use lightMap if available (baked lighting from DIF files)
-  // Three.js MeshLambertMaterial automatically uses uv2 for lightMap
+  // Use MeshLambertMaterial for diffuse-only lighting (matches Tribes 2's GL pipeline)
+  // Interiors respond to scene sun + ambient (from Sky object) in real-time
+  // Lightmaps contain baked lighting from interior-specific lights only
+  // DIF files are reusable across missions with different sun settings
   return (
     <meshLambertMaterial
       map={texture}
       lightMap={lightMap ?? undefined}
       lightMapIntensity={lightMap ? LIGHTMAP_INTENSITY : undefined}
       side={2}
+      onBeforeCompile={onBeforeCompile}
     />
   );
 }
@@ -56,13 +80,22 @@ function InteriorTexture({
 /**
  * Extract lightmap texture from a glTF material.
  * The io_dif Blender addon stores lightmaps in the emissive channel for transport.
+ *
+ * Note: Torque used lightmaps directly as linear data (no gamma correction in
+ * the engine). The glTF loader preserves the original PNG data. We explicitly
+ * set colorSpace to linear to match Torque's behavior.
  */
 function getLightMap(material: Material | null): Texture | null {
   if (!material) return null;
   // glTF materials come through as MeshStandardMaterial
   const stdMat = material as MeshStandardMaterial;
   // Lightmap is stored in emissiveMap with 0 strength (just for glTF transport)
-  return stdMat.emissiveMap ?? null;
+  const lightMap = stdMat.emissiveMap;
+  if (lightMap) {
+    // Use linear color space to match Torque's direct multiply behavior
+    lightMap.colorSpace = "srgb-linear";
+  }
+  return lightMap ?? null;
 }
 
 function InteriorMesh({ node }: { node: Mesh }) {
@@ -70,7 +103,7 @@ function InteriorMesh({ node }: { node: Mesh }) {
   const lightMaps = useMemo(() => {
     if (!node.material) return [];
     if (Array.isArray(node.material)) {
-      return node.material.map(getLightMap);
+      return node.material.map((m) => getLightMap(m));
     }
     return [getLightMap(node.material)];
   }, [node.material]);

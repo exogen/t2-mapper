@@ -22,9 +22,10 @@ import {
   Vector2,
 } from "three";
 
-// Opacity multiplier to compensate for DoubleSide rendering both front and back faces.
-// In Tribes 2, back faces were often occluded by surrounding geometry (door frames, walls).
-export const OPACITY_FACTOR = 0.5;
+// Opacity multiplier - set to 1.0 to match Tribes 2's baseTranslucency directly.
+// Previously 0.5 to compensate for DoubleSide, but this made force fields too dim.
+// Tribes 2 used the full baseTranslucency value even though back faces could render.
+export const OPACITY_FACTOR = 1.0;
 
 // Vertex shader
 const vertexShader = `
@@ -78,12 +79,9 @@ void main() {
   }
 
   // Tribes 2 GL_MODULATE: output = texture * vertexColor
+  // No gamma correction - textures use NoColorSpace and values pass through
+  // directly to display, matching how WaterBlock handles sRGB textures.
   vec3 modulatedColor = texColor.rgb * tintColor;
-
-  // Gamma correction: T2 textures were authored for CRT displays (~2.2 gamma).
-  // Converting to linear space makes them appear as they did on those displays.
-  // This significantly darkens the colors to match the original look.
-  modulatedColor = pow(modulatedColor, vec3(2.2));
 
   float adjustedOpacity = opacity * opacityFactor;
 
@@ -92,12 +90,19 @@ void main() {
   // Custom fog for additive blending: fade out rather than blend to fog color.
   // Standard fog (mix toward fogColor) doesn't work with additive blending
   // because we'd still be adding fogColor to the framebuffer.
+  // Uses Torque's quadratic haze formula for consistency.
   #ifdef USE_FOG
-    #ifdef FOG_EXP2
-      float fogFactor = 1.0 - exp(-fogDensity * fogDensity * vFogDepth * vFogDepth);
-    #else
-      float fogFactor = smoothstep(fogNear, fogFar, vFogDepth);
-    #endif
+    float dist = vFogDepth;
+    float fogFactor = 0.0;
+    if (dist > fogNear) {
+      if (dist >= fogFar) {
+        fogFactor = 1.0;
+      } else {
+        float fogScale = 1.0 / (fogFar - fogNear);
+        float distFactor = (dist - fogNear) * fogScale - 1.0;
+        fogFactor = 1.0 - distFactor * distFactor;
+      }
+    }
     gl_FragColor.a *= 1.0 - fogFactor;
   #endif
 }

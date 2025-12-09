@@ -1,3 +1,7 @@
+/**
+ * Shape material utilities and shader modifications.
+ */
+
 import {
   MeshStandardMaterial,
   Texture,
@@ -6,6 +10,38 @@ import {
   LinearMipmapLinearFilter,
   SRGBColorSpace,
 } from "three";
+import { SHAPE_LIGHTING } from "./lightingConfig";
+
+/**
+ * Inject lighting multipliers into a MeshLambertMaterial or MeshBasicMaterial shader.
+ * Call this from onBeforeCompile after other shader modifications (e.g., fog).
+ */
+export function injectShapeLighting(shader: any): void {
+  // Add lighting multiplier uniforms
+  shader.uniforms.shapeDirectionalFactor = {
+    value: SHAPE_LIGHTING.directional,
+  };
+  shader.uniforms.shapeAmbientFactor = { value: SHAPE_LIGHTING.ambient };
+
+  // Declare uniforms in fragment shader
+  shader.fragmentShader = shader.fragmentShader.replace(
+    "#include <common>",
+    `#include <common>
+uniform float shapeDirectionalFactor;
+uniform float shapeAmbientFactor;
+`,
+  );
+
+  // Scale directional and ambient light contributions
+  shader.fragmentShader = shader.fragmentShader.replace(
+    "#include <lights_fragment_end>",
+    `#include <lights_fragment_end>
+  // Apply shape-specific lighting multipliers
+  reflectedLight.directDiffuse *= shapeDirectionalFactor;
+  reflectedLight.indirectDiffuse *= shapeAmbientFactor;
+`,
+  );
+}
 
 // Shared shader modification function to avoid duplication
 const alphaAsRoughnessShaderModifier = (shader: any) => {

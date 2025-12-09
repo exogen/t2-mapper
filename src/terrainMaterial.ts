@@ -3,6 +3,15 @@
  * Handles multi-layer texture blending for Tribes 2 terrain rendering.
  */
 
+import { TERRAIN_LIGHTING } from "./lightingConfig";
+
+// Terrain and texture dimensions (must match TerrainBlock.tsx constants)
+const TERRAIN_SIZE = 256; // Terrain grid size in squares
+const LIGHTMAP_SIZE = 512; // Lightmap texture size (2 pixels per terrain square)
+
+// Texture brightness scale to prevent clipping and preserve shadow visibility
+const TEXTURE_BRIGHTNESS_SCALE = 0.7;
+
 // Detail texture tiling factor.
 // Torque uses world-space generation: U = worldX * (62.0 / textureWidth)
 // For 256px texture across 2048 world units, this gives ~496 repeats mathematically.
@@ -24,6 +33,7 @@ export function updateTerrainTextureShader({
   tiling,
   debugMode = false,
   detailTexture = null,
+  lightmap = null,
 }: {
   shader: any;
   baseTextures: any[];
@@ -32,8 +42,15 @@ export function updateTerrainTextureShader({
   tiling: Record<number, number>;
   debugMode?: boolean;
   detailTexture?: any;
+  lightmap?: any;
 }) {
   const layerCount = baseTextures.length;
+
+  // Add terrain lighting multiplier uniforms
+  shader.uniforms.terrainDirectionalFactor = {
+    value: TERRAIN_LIGHTING.directional,
+  };
+  shader.uniforms.terrainAmbientFactor = { value: TERRAIN_LIGHTING.ambient };
 
   baseTextures.forEach((tex, i) => {
     shader.uniforms[`albedo${i}`] = { value: tex };
@@ -60,6 +77,11 @@ export function updateTerrainTextureShader({
   // Add debug mode uniform
   shader.uniforms.debugMode = { value: debugMode ? 1.0 : 0.0 };
 
+  // Add lightmap uniform for smooth per-pixel terrain lighting
+  if (lightmap) {
+    shader.uniforms.terrainLightmap = { value: lightmap };
+  }
+
   // Add detail texture uniforms
   if (detailTexture) {
     shader.uniforms.detailTexture = { value: detailTexture };
@@ -82,6 +104,8 @@ vTerrainWorldPos = (modelMatrix * vec4(transformed, 1.0)).xyz;`,
   // Declare our uniforms at the top of the fragment shader
   shader.fragmentShader =
     `
+uniform float terrainDirectionalFactor;
+uniform float terrainAmbientFactor;
 uniform sampler2D albedo0;
 uniform sampler2D albedo1;
 uniform sampler2D albedo2;
@@ -101,6 +125,7 @@ uniform float tiling4;
 uniform float tiling5;
 uniform float debugMode;
 ${visibilityMask ? "uniform sampler2D visibilityMask;" : ""}
+${lightmap ? "uniform sampler2D terrainLightmap;" : ""}
 ${
   detailTexture
     ? `uniform sampler2D detailTexture;
@@ -169,11 +194,14 @@ float getWireframe(vec2 uv, float gridSize, float lineWidth) {
   }
 
   // Sample linear masks (use R channel)
-  float a1 = texture2D(mask1, baseUv).r;
-  ${layerCount > 1 ? `float a2 = texture2D(mask2, baseUv).r;` : ""}
-  ${layerCount > 2 ? `float a3 = texture2D(mask3, baseUv).r;` : ""}
-  ${layerCount > 3 ? `float a4 = texture2D(mask4, baseUv).r;` : ""}
-  ${layerCount > 4 ? `float a5 = texture2D(mask5, baseUv).r;` : ""}
+  // Add +0.5 texel offset: Torque samples alpha at grid corners (integer indices),
+  // but GPU linear filtering samples at texel centers. This offset aligns them.
+  vec2 alphaUv = baseUv + vec2(0.5 / ${TERRAIN_SIZE}.0);
+  float a1 = texture2D(mask1, alphaUv).r;
+  ${layerCount > 1 ? `float a2 = texture2D(mask2, alphaUv).r;` : ""}
+  ${layerCount > 2 ? `float a3 = texture2D(mask3, alphaUv).r;` : ""}
+  ${layerCount > 3 ? `float a4 = texture2D(mask4, alphaUv).r;` : ""}
+  ${layerCount > 4 ? `float a5 = texture2D(mask5, alphaUv).r;` : ""}
 
   // Bottom-up compositing: each mask tells how much the higher layer replaces lower
   ${layerCount > 1 ? `vec3 blended = mix(c0, c1, clamp(a1, 0.0, 1.0));` : ""}
@@ -203,25 +231,83 @@ float getWireframe(vec2 uv, float gridSize, float lineWidth) {
       : ""
   }
 
-  // Debug mode wireframe handling
+  // Apply texture color or debug mode solid gray
   if (debugMode > 0.5) {
-    // 256 grid cells across the terrain (matches terrain resolution)
-    float wireframe = getWireframe(baseUv, 256.0, 1.0);
-    vec3 wireColor = vec3(0.0, 0.8, 0.4); // Green wireframe
-
-    if (gl_FrontFacing) {
-      // Front face: show textures with barely visible wireframe overlay
-      diffuseColor.rgb = mix(textureColor, wireColor, wireframe * 0.05);
-    } else {
-      // Back face: show only wireframe, discard non-wireframe pixels
-      if (wireframe < 0.1) {
-        discard;
-      }
-      diffuseColor.rgb = mix(vec3(0.0), wireColor, 0.25);
-    }
+    // Solid gray to visualize lighting only (without texture influence)
+    diffuseColor.rgb = vec3(0.5);
   } else {
-    diffuseColor.rgb = textureColor;
+    // Scale texture to prevent clipping, preserving shadow visibility
+    diffuseColor.rgb = textureColor * ${TEXTURE_BRIGHTNESS_SCALE};
   }
+`,
+  );
+
+  // When lightmap is available, replace vertex normal-based lighting with smooth lightmap
+  // This eliminates banding by using pre-computed per-pixel NdotL values
+  if (lightmap) {
+    // Override the RE_Direct_Lambert function to use our lightmap NdotL
+    // instead of computing dotNL from vertex normals
+    shader.fragmentShader = shader.fragmentShader.replace(
+      "#include <lights_lambert_pars_fragment>",
+      `#include <lights_lambert_pars_fragment>
+
+// Override RE_Direct to use terrain lightmap for smooth NdotL
+#undef RE_Direct
+void RE_Direct_TerrainLightmap( const in IncidentLight directLight, const in vec3 geometryPosition, const in vec3 geometryNormal, const in vec3 geometryViewDir, const in vec3 geometryClearcoatNormal, const in LambertMaterial material, inout ReflectedLight reflectedLight ) {
+
+  // Sample pre-computed terrain lightmap (smooth NdotL values)
+  // Add +0.5 texel offset to align GPU texel-center sampling with Torque's corner sampling
+  vec2 lightmapUv = vMapUv + vec2(0.5 / ${LIGHTMAP_SIZE}.0);
+  float lightmapNdotL = texture2D(terrainLightmap, lightmapUv).r;
+
+  // Use lightmap NdotL instead of dot(geometryNormal, directLight.direction)
+  // directLight.color already has shadow factor applied from getShadow()
+  // Apply terrain-specific directional intensity multiplier
+  vec3 directIrradiance = lightmapNdotL * directLight.color * terrainDirectionalFactor;
+
+  // Debug mode: visualize raw lightmap values (no textures)
+  if (debugMode > 0.5) {
+    reflectedLight.directDiffuse = directIrradiance;
+  } else {
+    reflectedLight.directDiffuse += directIrradiance * BRDF_Lambert( material.diffuseColor );
+  }
+}
+#define RE_Direct RE_Direct_TerrainLightmap
+
+`,
+    );
+
+    // Override lights_fragment_begin to fix hemisphere light irradiance calculation
+    // The default uses geometryNormal which causes banding
+    shader.fragmentShader = shader.fragmentShader.replace(
+      "#include <lights_fragment_begin>",
+      `#include <lights_fragment_begin>
+// Fix: Recalculate irradiance without using vertex normals (causes banding)
+// Use flat upward normal for hemisphere/light probe calculations
+#if defined( RE_IndirectDiffuse )
+{
+  vec3 flatNormal = vec3(0.0, 1.0, 0.0);
+  irradiance = getAmbientLightIrradiance( ambientLightColor );
+  #if defined( USE_LIGHT_PROBES )
+    irradiance += getLightProbeIrradiance( lightProbe, flatNormal );
+  #endif
+  #if ( NUM_HEMI_LIGHTS > 0 )
+    for ( int i = 0; i < NUM_HEMI_LIGHTS; i ++ ) {
+      irradiance += getHemisphereLightIrradiance( hemisphereLights[i], flatNormal );
+    }
+  #endif
+}
+#endif
+`,
+    );
+  }
+
+  // Scale ambient/indirect lighting to darken shadows on terrain
+  shader.fragmentShader = shader.fragmentShader.replace(
+    "#include <lights_fragment_end>",
+    `#include <lights_fragment_end>
+  // Scale indirect (ambient) light to increase shadow contrast on terrain
+  reflectedLight.indirectDiffuse *= terrainAmbientFactor;
 `,
   );
 }

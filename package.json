@@ -49,6 +49,7 @@
     "express": "^5.2.0",
     "peggy": "^5.0.6",
     "prettier": "^3.7.1",
+    "puppeteer": "^24.32.0",
     "rimraf": "^6.0.1",
     "tsx": "^4.20.5",
     "typescript": "5.9.2",

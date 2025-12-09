@@ -16,6 +16,9 @@ import { useDebug } from "./SettingsProvider";
 import { useShapeInfo, isOrganicShape } from "./ShapeInfoProvider";
 import { FloatingLabel } from "./FloatingLabel";
 import { useIflTexture } from "./useIflTexture";
+import { injectCustomFog } from "../fogShader";
+import { globalFogUniforms } from "../globalFogUniforms";
+import { injectShapeLighting } from "../shapeMaterial";
 
 /** Shared props for texture rendering components */
 interface TextureProps {
@@ -43,6 +46,21 @@ type MaterialResult =
   | SingleMaterial
   | [MeshLambertMaterial, MeshLambertMaterial];
 
+/**
+ * Helper to apply volumetric fog and lighting multipliers to a material
+ */
+function applyShapeShaderModifications(
+  mat: MeshBasicMaterial | MeshLambertMaterial,
+): void {
+  mat.onBeforeCompile = (shader) => {
+    injectCustomFog(shader, globalFogUniforms);
+    // Only inject lighting for Lambert materials (Basic materials are unlit)
+    if (mat instanceof MeshLambertMaterial) {
+      injectShapeLighting(shader);
+    }
+  };
+}
+
 function createMaterialFromFlags(
   baseMaterial: MeshStandardMaterial,
   texture: Texture,
@@ -64,6 +82,7 @@ function createMaterialFromFlags(
       blending: isAdditive ? AdditiveBlending : undefined,
       fog: true,
     });
+    applyShapeShaderModifications(mat);
     return mat;
   }
 
@@ -90,6 +109,8 @@ function createMaterialFromFlags(
       ...baseProps,
       side: 0, // FrontSide
     });
+    applyShapeShaderModifications(backMat);
+    applyShapeShaderModifications(frontMat);
     return [backMat, frontMat];
   }
 
@@ -100,6 +121,7 @@ function createMaterialFromFlags(
     side: 2, // DoubleSide
     reflectivity: 0,
   });
+  applyShapeShaderModifications(mat);
   return mat;
 }
 

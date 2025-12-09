@@ -2,7 +2,7 @@
 import { useState, useEffect, useCallback, Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { Canvas } from "@react-three/fiber";
-import { EffectComposer, N8AO } from "@react-three/postprocessing";
+import { NoToneMapping, SRGBColorSpace } from "three";
 import { Mission } from "@/src/components/Mission";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ObserverControls } from "@/src/components/ObserverControls";
@@ -17,6 +17,14 @@ import { getMissionList, getMissionInfo } from "@/src/manifest";
 // three.js has its own loaders for textures and models, but we need to load other
 // stuff too, e.g. missions, terrains, and more. This client is used for those.
 const queryClient = new QueryClient();
+
+// Renderer settings to match Tribes 2's simple rendering pipeline.
+// Tribes 2 (Torque engine, 2001) worked entirely in gamma/sRGB space with no HDR
+// or tone mapping. We disable tone mapping and ensure proper sRGB output.
+const glSettings = {
+  toneMapping: NoToneMapping,
+  outputColorSpace: SRGBColorSpace,
+};
 
 function MapInspector() {
   const searchParams = useSearchParams();
@@ -86,7 +94,7 @@ function MapInspector() {
                 </div>
               </div>
             )}
-            <Canvas shadows frameloop="always">
+            <Canvas shadows frameloop="always" gl={glSettings}>
               <CamerasProvider>
                 <AudioProvider>
                   <Mission
@@ -99,9 +107,6 @@ function MapInspector() {
                   <ObserverControls />
                 </AudioProvider>
               </CamerasProvider>
-              <EffectComposer>
-                <N8AO intensity={3} aoRadius={3} quality="performance" />
-              </EffectComposer>
             </Canvas>
           </div>
           <InspectorControls

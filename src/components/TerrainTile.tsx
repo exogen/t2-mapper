@@ -15,6 +15,8 @@ import {
 import { setupColor } from "../textureUtils";
 import { updateTerrainTextureShader } from "../terrainMaterial";
 import { useDebug } from "./SettingsProvider";
+import { injectCustomFog } from "../fogShader";
+import { globalFogUniforms } from "../globalFogUniforms";
 
 const DEFAULT_SQUARE_SIZE = 8;
 
@@ -39,6 +41,7 @@ interface TerrainTileProps {
   visibilityMask: DataTexture;
   alphaTextures: DataTexture[];
   detailTextureName?: string;
+  lightmap?: DataTexture;
   visible?: boolean;
 }
 
@@ -48,12 +51,14 @@ function BlendedTerrainTextures({
   textureNames,
   alphaTextures,
   detailTextureName,
+  lightmap,
 }: {
   displacementMap: DataTexture;
   visibilityMask: DataTexture;
   textureNames: string[];
   alphaTextures: DataTexture[];
   detailTextureName?: string;
+  lightmap?: DataTexture;
 }) {
   const { debugMode } = useDebug();
 
@@ -86,7 +91,11 @@ function BlendedTerrainTextures({
         tiling: TILING,
         debugMode,
         detailTexture: detailTextureUrl ? detailTexture : null,
+        lightmap,
       });
+
+      // Inject volumetric fog using global uniforms
+      injectCustomFog(shader, globalFogUniforms);
     },
     [
       baseTextures,
@@ -95,22 +104,25 @@ function BlendedTerrainTextures({
       debugMode,
       detailTexture,
       detailTextureUrl,
+      lightmap,
     ],
   );
 
   // Key must include factors that change shader code structure (not just uniforms)
   // - debugMode: affects fragment shader branching
   // - detailTextureUrl: affects vertex shader (adds varying) and fragment shader
-  const materialKey = `${debugMode ? "debug" : "normal"}-${detailTextureUrl ? "detail" : "nodetail"}`;
+  // - lightmap: affects shader structure (uses lightmap for NdotL instead of vertex normals)
+  const materialKey = `${debugMode ? "debug" : "normal"}-${detailTextureUrl ? "detail" : "nodetail"}-${lightmap ? "lightmap" : "nolightmap"}`;
 
+  // Displacement is done on CPU, so no displacementMap needed
+  // We keep 'map' to provide UV coordinates for shader (vMapUv)
+  // Use MeshLambertMaterial for compatibility with shadow maps
   return (
     <meshLambertMaterial
       key={materialKey}
-      displacementMap={displacementMap}
       map={displacementMap}
-      displacementScale={2048}
       depthWrite
-      side={debugMode ? DoubleSide : FrontSide}
+      side={DoubleSide}
       onBeforeCompile={onBeforeCompile}
     />
   );
@@ -122,12 +134,14 @@ function TerrainMaterial({
   textureNames,
   alphaTextures,
   detailTextureName,
+  lightmap,
 }: {
   displacementMap: DataTexture;
   visibilityMask: DataTexture;
   textureNames: string[];
   alphaTextures: DataTexture[];
   detailTextureName?: string;
+  lightmap?: DataTexture;
 }) {
   return (
     <Suspense
@@ -146,6 +160,7 @@ function TerrainMaterial({
         textureNames={textureNames}
         alphaTextures={alphaTextures}
         detailTextureName={detailTextureName}
+        lightmap={lightmap}
       />
     </Suspense>
   );
@@ -162,6 +177,7 @@ export const TerrainTile = memo(function TerrainTile({
   visibilityMask,
   alphaTextures,
   detailTextureName,
+  lightmap,
   visible = true,
 }: TerrainTileProps) {
   const position = useMemo(() => {
@@ -189,6 +205,7 @@ export const TerrainTile = memo(function TerrainTile({
         textureNames={textureNames}
         alphaTextures={alphaTextures}
         detailTextureName={detailTextureName}
+        lightmap={lightmap}
       />
     </mesh>
   );

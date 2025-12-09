@@ -11,7 +11,7 @@ import {
   Texture,
   RepeatWrapping,
   LinearFilter,
-  SRGBColorSpace,
+  NoColorSpace,
   Group,
 } from "three";
 import { loadDetailMapList, textureToUrl } from "../loaders";
@@ -119,8 +119,11 @@ function createCloudGeometry(
       positions[idx * 3 + 2] = z;
 
       // UV coordinates for texture (will be offset for scrolling)
-      uvs[idx * 2] = col / (GRID_SIZE - 1);
-      uvs[idx * 2 + 1] = row / (GRID_SIZE - 1);
+      // Torque uses mTextureScale default of (1, 1), which with x/y going 0-4
+      // gives UV range 0-4, tiling the texture 4 times across the dome.
+      // This creates the swirly detail effect visible in Tribes 2.
+      uvs[idx * 2] = col; // 0 to 4 (tiles 4x)
+      uvs[idx * 2 + 1] = row; // 0 to 4 (tiles 4x)
     }
   }
 
@@ -245,13 +248,17 @@ function adjustCorners(positions: Float32Array): void {
 
 /**
  * Setup cloud texture with proper wrapping and filtering.
+ * Uses NoColorSpace to pass values through directly without conversion,
+ * matching Torque's gamma-space rendering pipeline.
  */
 function setupCloudTexture(texture: Texture): Texture {
   texture.wrapS = RepeatWrapping;
   texture.wrapT = RepeatWrapping;
   texture.minFilter = LinearFilter;
   texture.magFilter = LinearFilter;
-  texture.colorSpace = SRGBColorSpace;
+  // NoColorSpace: values pass through directly without sRGB conversion.
+  // Torque didn't do color space conversion - textures went straight to display.
+  texture.colorSpace = NoColorSpace;
   texture.needsUpdate = true;
   return texture;
 }
@@ -484,12 +491,16 @@ export function CloudLayers({ object }: CloudLayersProps) {
   }, [object]);
 
   // Wind direction from windVelocity
+  // Torque uses Z-up with windVelocity (x, y, z) where Y is forward.
+  // Our cloud geometry has UV U along world X, UV V along world Z.
+  // Rotate 90 degrees clockwise to match Torque's coordinate system.
   const windDirection = useMemo(() => {
     const windVelocity = getProperty(object, "windVelocity");
     if (windVelocity) {
       const [x, y] = windVelocity.split(" ").map((s: string) => parseFloat(s));
       if (x !== 0 || y !== 0) {
-        return new Vector2(x, y).normalize();
+        // Rotate 90 degrees clockwise: (x, y) -> (y, -x)
+        return new Vector2(y, -x).normalize();
       }
     }
     return new Vector2(1, 0);

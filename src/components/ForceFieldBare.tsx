@@ -6,7 +6,7 @@ import {
   BoxGeometry,
   Color,
   DoubleSide,
-  LinearSRGBColorSpace,
+  NoColorSpace,
   RepeatWrapping,
   Texture,
 } from "three";
@@ -47,8 +47,9 @@ function parseColor(colorStr: string): [number, number, number] {
 
 function setupForceFieldTexture(texture: Texture) {
   texture.wrapS = texture.wrapT = RepeatWrapping;
-  // Linear color space - gamma correction is applied in the shader
-  texture.colorSpace = LinearSRGBColorSpace;
+  // NoColorSpace - values pass through directly to display without conversion,
+  // matching how WaterBlock handles textures in custom ShaderMaterial.
+  texture.colorSpace = NoColorSpace;
   texture.flipY = false;
   texture.needsUpdate = true;
 }
@@ -155,21 +156,16 @@ function ForceFieldFallback({
 }: ForceFieldGeometryProps) {
   const geometry = useCornerBoxGeometry(scale);
 
-  // Apply gamma correction to match the main shader's pow(color, 2.2)
-  const gammaColor = useMemo(
-    () =>
-      new Color(
-        Math.pow(color[0], 2.2),
-        Math.pow(color[1], 2.2),
-        Math.pow(color[2], 2.2),
-      ),
+  // Use color directly - no gamma correction needed to match main shader
+  const fallbackColor = useMemo(
+    () => new Color(color[0], color[1], color[2]),
     [color],
   );
 
   return (
     <mesh geometry={geometry} renderOrder={1}>
       <meshBasicMaterial
-        color={gammaColor}
+        color={fallbackColor}
         transparent
         opacity={baseTranslucency * OPACITY_FACTOR}
         blending={AdditiveBlending}

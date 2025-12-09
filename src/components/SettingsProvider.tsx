@@ -13,6 +13,8 @@ type StateSetter<T> = ReturnType<typeof useState<T>>[1];
 type SettingsContext = {
   fogEnabled: boolean;
   setFogEnabled: StateSetter<boolean>;
+  highQualityFog: boolean;
+  setHighQualityFog: StateSetter<boolean>;
   fov: number;
   setFov: StateSetter<number>;
   audioEnabled: boolean;
@@ -37,6 +39,7 @@ const ControlsContext = createContext<ControlsContext | null>(null);
 
 type PersistedSettings = {
   fogEnabled?: boolean;
+  highQualityFog?: boolean;
   speedMultiplier?: number;
   fov?: number;
   audioEnabled?: boolean;
@@ -58,6 +61,7 @@ export function useControls() {
 
 export function SettingsProvider({ children }: { children: ReactNode }) {
   const [fogEnabled, setFogEnabled] = useState(true);
+  const [highQualityFog, setHighQualityFog] = useState(false);
   const [speedMultiplier, setSpeedMultiplier] = useState(1);
   const [fov, setFov] = useState(90);
   const [audioEnabled, setAudioEnabled] = useState(false);
@@ -68,6 +72,8 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     () => ({
       fogEnabled,
       setFogEnabled,
+      highQualityFog,
+      setHighQualityFog,
       fov,
       setFov,
       audioEnabled,
@@ -75,7 +81,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       animationEnabled,
       setAnimationEnabled,
     }),
-    [fogEnabled, speedMultiplier, fov, audioEnabled, animationEnabled],
+    [fogEnabled, highQualityFog, fov, audioEnabled, animationEnabled],
   );
 
   const debugContext: DebugContext = useMemo(
@@ -108,6 +114,9 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     if (savedSettings.fogEnabled != null) {
       setFogEnabled(savedSettings.fogEnabled);
     }
+    if (savedSettings.highQualityFog != null) {
+      setHighQualityFog(savedSettings.highQualityFog);
+    }
     if (savedSettings.speedMultiplier != null) {
       setSpeedMultiplier(savedSettings.speedMultiplier);
     }
@@ -129,6 +138,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     saveTimerRef.current = setTimeout(() => {
       const settingsToSave: PersistedSettings = {
         fogEnabled,
+        highQualityFog,
         speedMultiplier,
         fov,
         audioEnabled,
@@ -149,6 +159,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     };
   }, [
     fogEnabled,
+    highQualityFog,
     speedMultiplier,
     fov,
     audioEnabled,

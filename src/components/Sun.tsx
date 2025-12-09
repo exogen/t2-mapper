@@ -43,8 +43,9 @@ export function Sun({ object }: { object: TorqueObject }) {
     return new Color(r, g, b);
   }, [object]);
 
-  // Lighting intensities - terrain and shapes need good directional + ambient balance
-  const directionalIntensity = 1.8;
+  // Base lighting intensities - neutral baseline, each object type applies its own multipliers
+  // See lightingConfig.ts for per-object-type adjustments
+  const directionalIntensity = 1.0;
   const ambientIntensity = 1.0;
 
   // Shadow camera covers the entire terrain (Tribes 2 terrains are typically 2048+ units)
@@ -58,15 +59,16 @@ export function Sun({ object }: { object: TorqueObject }) {
         color={color}
         intensity={directionalIntensity}
         castShadow
-        shadow-mapSize-width={4096}
-        shadow-mapSize-height={4096}
+        shadow-mapSize-width={8192}
+        shadow-mapSize-height={8192}
         shadow-camera-left={-shadowCameraSize}
         shadow-camera-right={shadowCameraSize}
         shadow-camera-top={shadowCameraSize}
         shadow-camera-bottom={-shadowCameraSize}
         shadow-camera-near={100}
         shadow-camera-far={12000}
-        shadow-bias={-0.001}
+        shadow-bias={-0.0003}
+        shadow-normalBias={0.5}
       />
       {/* Ambient fill light - prevents pure black shadows */}
       <ambientLight color={ambient} intensity={ambientIntensity} />
