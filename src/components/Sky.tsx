@@ -299,6 +299,157 @@ export function SkyBox({
 }
 
 /**
+ * Solid color sky component for when useSkyTextures = 0.
+ * Renders SkySolidColor (ignoring alpha) with fog at the horizon.
+ * Uses the same fog logic as SkyBoxTexture for consistency.
+ */
+function SolidColorSky({
+  skyColor,
+  fogColor,
+  fogState,
+}: {
+  skyColor: Color;
+  fogColor?: Color;
+  fogState?: FogState;
+}) {
+  const { camera } = useThree();
+
+  const enableFog = !!fogColor;
+
+  const inverseProjectionMatrix = useMemo(() => {
+    return camera.projectionMatrixInverse;
+  }, [camera]);
+
+  const fogVolumeData = useMemo(
+    () =>
+      fogState ? packFogVolumeData(fogState.fogVolumes) : new Float32Array(12),
+    [fogState],
+  );
+
+  const horizonFogHeight = useMemo(() => {
+    if (!fogState) return 0.18;
+    const mRadius = fogState.visibleDistance * 0.95;
+    const skyBoxPtX = mRadius / Math.sqrt(3);
+    return HORIZON_FOG_HEIGHT / Math.sqrt(skyBoxPtX * skyBoxPtX + HORIZON_FOG_HEIGHT * HORIZON_FOG_HEIGHT);
+  }, [fogState]);
+
+  return (
+    <mesh renderOrder={-1000} frustumCulled={false}>
+      <bufferGeometry>
+        <bufferAttribute
+          attach="attributes-position"
+          array={new Float32Array([-1, -1, 0, 3, -1, 0, -1, 3, 0])}
+          count={3}
+          itemSize={3}
+        />
+        <bufferAttribute
+          attach="attributes-uv"
+          array={new Float32Array([0, 0, 2, 0, 0, 2])}
+          count={3}
+          itemSize={2}
+        />
+      </bufferGeometry>
+      <shaderMaterial
+        uniforms={{
+          skyColor: { value: skyColor },
+          fogColor: { value: fogColor ?? new Color(0, 0, 0) },
+          enableFog: { value: enableFog },
+          inverseProjectionMatrix: { value: inverseProjectionMatrix },
+          cameraMatrixWorld: { value: camera.matrixWorld },
+          cameraHeight: globalFogUniforms.cameraHeight,
+          fogVolumeData: { value: fogVolumeData },
+          horizonFogHeight: { value: horizonFogHeight },
+        }}
+        vertexShader={`
+          varying vec2 vUv;
+
+          void main() {
+            vUv = uv;
+            gl_Position = vec4(position.xy, 0.9999, 1.0);
+          }
+        `}
+        fragmentShader={`
+          uniform vec3 skyColor;
+          uniform vec3 fogColor;
+          uniform bool enableFog;
+          uniform mat4 inverseProjectionMatrix;
+          uniform mat4 cameraMatrixWorld;
+          uniform float cameraHeight;
+          uniform float fogVolumeData[12];
+          uniform float horizonFogHeight;
+
+          varying vec2 vUv;
+
+          // Convert linear to sRGB for display
+          vec3 linearToSRGB(vec3 linear) {
+            vec3 low = linear * 12.92;
+            vec3 high = 1.055 * pow(linear, vec3(1.0 / 2.4)) - 0.055;
+            return mix(low, high, step(vec3(0.0031308), linear));
+          }
+
+          void main() {
+            vec2 ndc = vUv * 2.0 - 1.0;
+            vec4 viewPos = inverseProjectionMatrix * vec4(ndc, 1.0, 1.0);
+            viewPos.xyz /= viewPos.w;
+            vec3 direction = normalize((cameraMatrixWorld * vec4(viewPos.xyz, 0.0)).xyz);
+            direction = vec3(direction.z, direction.y, -direction.x);
+
+            vec3 finalColor;
+
+            if (enableFog) {
+              // Calculate volume fog influence (same logic as SkyBoxTexture)
+              float volumeFogInfluence = 0.0;
+
+              for (int i = 0; i < 3; i++) {
+                int offset = i * 4;
+                float volVisDist = fogVolumeData[offset + 0];
+                float volMinH = fogVolumeData[offset + 1];
+                float volMaxH = fogVolumeData[offset + 2];
+                float volPct = fogVolumeData[offset + 3];
+
+                if (volVisDist <= 0.0) continue;
+
+                if (cameraHeight >= volMinH && cameraHeight <= volMaxH) {
+                  float rayInfluence;
+                  if (direction.y >= 0.0) {
+                    rayInfluence = 1.0 - smoothstep(0.0, 0.3, direction.y);
+                  } else {
+                    rayInfluence = 1.0;
+                  }
+                  volumeFogInfluence += rayInfluence * volPct;
+                }
+              }
+
+              // Base fog factor from view direction
+              float baseFogFactor;
+              if (direction.y <= 0.0) {
+                baseFogFactor = 1.0;
+              } else if (direction.y >= horizonFogHeight) {
+                baseFogFactor = 0.0;
+              } else {
+                float t = direction.y / horizonFogHeight;
+                baseFogFactor = (1.0 - t) * (1.0 - t);
+              }
+
+              // Combine base fog with volume fog influence
+              float finalFogFactor = min(1.0, baseFogFactor + volumeFogInfluence * 0.5);
+
+              finalColor = mix(skyColor, fogColor, finalFogFactor);
+            } else {
+              finalColor = skyColor;
+            }
+
+            gl_FragColor = vec4(linearToSRGB(finalColor), 1.0);
+          }
+        `}
+        depthWrite={false}
+        depthTest={false}
+      />
+    </mesh>
+  );
+}
+
+/**
  * Get fog near/far parameters for the distance-based haze.
  *
  * IMPORTANT: In Torque, the distance-based haze ALWAYS uses the global
@@ -448,6 +599,9 @@ export function Sky({ object }: { object: TorqueObject }) {
     };
   }, [scene, gl, hasFogParams, effectiveFogColor, skyColor]);
 
+  // Get linear sky solid color for the solid color sky shader
+  const linearSkySolidColor = skySolidColor?.[1];
+
   return (
     <>
       {materialList && useSkyTextures ? (
@@ -460,6 +614,13 @@ export function Sky({ object }: { object: TorqueObject }) {
             fogState={hasFogParams ? fogState : undefined}
           />
         </Suspense>
+      ) : linearSkySolidColor ? (
+        /* When useSkyTextures = 0, render solid color sky with SkySolidColor */
+        <SolidColorSky
+          skyColor={linearSkySolidColor}
+          fogColor={hasFogParams ? effectiveFogColor : undefined}
+          fogState={hasFogParams ? fogState : undefined}
+        />
       ) : null}
       {/* Cloud layers render independently of skybox textures */}
       <Suspense>
