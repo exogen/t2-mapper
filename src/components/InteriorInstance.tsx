@@ -1,6 +1,12 @@
 import { memo, Suspense, useMemo, useCallback } from "react";
 import { ErrorBoundary } from "react-error-boundary";
-import { Mesh, Material, MeshStandardMaterial, Texture } from "three";
+import {
+  Mesh,
+  Material,
+  MeshStandardMaterial,
+  Texture,
+  SRGBColorSpace,
+} from "three";
 import { useGLTF, useTexture } from "@react-three/drei";
 import { textureToUrl, interiorToUrl } from "../loaders";
 import type { TorqueObject } from "../torqueScript";
@@ -16,8 +22,12 @@ import { injectInteriorLighting } from "../interiorMaterial";
  * Lightmap intensity multiplier.
  * Lightmaps contain baked lighting from interior-specific lights only
  * (not scene sun/ambient - that's applied in real-time).
+ *
+ * Three.js's BRDF_Lambert divides by PI for energy conservation, but Torque
+ * (2001) used simple multiplication: base_texture * lightmap in gamma space.
+ * We multiply by PI to cancel out Three.js's division.
  */
-const LIGHTMAP_INTENSITY = 2.5;
+const LIGHTMAP_INTENSITY = Math.PI;
 
 /**
  * Load a .gltf file that was converted from a .dif, used for "interior" models.
@@ -81,9 +91,10 @@ function InteriorTexture({
  * Extract lightmap texture from a glTF material.
  * The io_dif Blender addon stores lightmaps in the emissive channel for transport.
  *
- * Note: Torque used lightmaps directly as linear data (no gamma correction in
- * the engine). The glTF loader preserves the original PNG data. We explicitly
- * set colorSpace to linear to match Torque's behavior.
+ * Torque (2001) multiplied base_texture * lightmap directly in gamma/sRGB space
+ * with no gamma correction. The lightmap PNGs contain sRGB-encoded values.
+ * By setting colorSpace to SRGBColorSpace, Three.js correctly decodes the sRGB
+ * values to linear for its lighting calculations.
  */
 function getLightMap(material: Material | null): Texture | null {
   if (!material) return null;
@@ -92,8 +103,8 @@ function getLightMap(material: Material | null): Texture | null {
   // Lightmap is stored in emissiveMap with 0 strength (just for glTF transport)
   const lightMap = stdMat.emissiveMap;
   if (lightMap) {
-    // Use linear color space to match Torque's direct multiply behavior
-    lightMap.colorSpace = "srgb-linear";
+    // Lightmaps are sRGB-encoded PNGs - decode to linear for correct lighting
+    lightMap.colorSpace = SRGBColorSpace;
   }
   return lightMap ?? null;
 }
