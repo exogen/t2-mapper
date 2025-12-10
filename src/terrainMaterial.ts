@@ -1,29 +1,55 @@
 /**
- * Terrain material shader modifications.
- * Handles multi-layer texture blending for Tribes 2 terrain rendering.
+ * Terrain material shader modifications for MeshLambertMaterial.
+ *
+ * Matches Torque's terrain rendering formula (terrLighting.cc + blender.cc):
+ *   output = clamp(lighting × texture, 0, 1)
+ *
+ * Where:
+ *   - lighting = clamp(ambient + NdotL × shadowFactor × sunColor, 0, 1)
+ *   - NdotL and terrain self-shadows from pre-computed lightmap (ray-traced)
+ *   - shadowFactor from Three.js real-time shadow maps (for building/object shadows)
+ *   - All operations in sRGB/gamma space
+ *
+ * Key insights from Torque source (terrLighting.cc:471-483):
+ * 1. Lightmap bakes: ambient + max(0, N·L) × sunColor for lit areas
+ * 2. Shadowed areas get only ambient
+ * 3. Mission sun/ambient colors ARE sRGB values - Torque used them directly
+ * 4. Final output = lightmap × texture, all in gamma space
  */
-
-import { TERRAIN_LIGHTING } from "./lightingConfig";
 
 // Terrain and texture dimensions (must match TerrainBlock.tsx constants)
 const TERRAIN_SIZE = 256; // Terrain grid size in squares
 const LIGHTMAP_SIZE = 512; // Lightmap texture size (2 pixels per terrain square)
 
-// Texture brightness scale to prevent clipping and preserve shadow visibility
-const TEXTURE_BRIGHTNESS_SCALE = 0.7;
-
 // Detail texture tiling factor.
-// Torque uses world-space generation: U = worldX * (62.0 / textureWidth)
-// For 256px texture across 2048 world units, this gives ~496 repeats mathematically.
-// However, this appears visually excessive. Using a moderate multiplier relative
-// to base texture tiling (32x) - detail should be finer but not overwhelming.
 const DETAIL_TILING = 64.0;
 
 // Distance at which detail texture fully fades out (in world units)
-// Torque: zeroDetailDistance = (squareSize * worldToScreenScale) / 64 - squareSize/2
-// For squareSize=8 and typical worldToScreenScale (~800), this gives ~96 units.
-// Using 150 for a slightly more gradual fade.
 const DETAIL_FADE_DISTANCE = 150.0;
+
+// sRGB <-> Linear conversion functions (GLSL)
+const colorSpaceFunctions = /* glsl */ `
+vec3 terrainLinearToSRGB(vec3 linear) {
+  vec3 higher = pow(linear, vec3(1.0/2.4)) * 1.055 - 0.055;
+  vec3 lower = linear * 12.92;
+  return mix(lower, higher, step(vec3(0.0031308), linear));
+}
+
+vec3 terrainSRGBToLinear(vec3 srgb) {
+  vec3 higher = pow((srgb + 0.055) / 1.055, vec3(2.4));
+  vec3 lower = srgb / 12.92;
+  return mix(lower, higher, step(vec3(0.04045), srgb));
+}
+
+// Debug grid overlay using screen-space derivatives for sharp, anti-aliased lines
+// Returns 1.0 on grid lines, 0.0 elsewhere
+float terrainDebugGrid(vec2 uv, float gridSize, float lineWidth) {
+  vec2 scaledUV = uv * gridSize;
+  vec2 grid = abs(fract(scaledUV - 0.5) - 0.5) / fwidth(scaledUV);
+  float line = min(grid.x, grid.y);
+  return 1.0 - min(line / lineWidth, 1.0);
+}
+`;
 
 export function updateTerrainTextureShader({
   shader,
@@ -45,12 +71,6 @@ export function updateTerrainTextureShader({
   lightmap?: any;
 }) {
   const layerCount = baseTextures.length;
-
-  // Add terrain lighting multiplier uniforms
-  shader.uniforms.terrainDirectionalFactor = {
-    value: TERRAIN_LIGHTING.directional,
-  };
-  shader.uniforms.terrainAmbientFactor = { value: TERRAIN_LIGHTING.ambient };
 
   baseTextures.forEach((tex, i) => {
     shader.uniforms[`albedo${i}`] = { value: tex };
@@ -101,11 +121,9 @@ vTerrainWorldPos = (modelMatrix * vec4(transformed, 1.0)).xyz;`,
     );
   }
 
-  // Declare our uniforms at the top of the fragment shader
+  // Declare our uniforms and color space functions at the top of the fragment shader
   shader.fragmentShader =
     `
-uniform float terrainDirectionalFactor;
-uniform float terrainAmbientFactor;
 uniform sampler2D albedo0;
 uniform sampler2D albedo1;
 uniform sampler2D albedo2;
@@ -135,14 +153,10 @@ varying vec3 vTerrainWorldPos;`
     : ""
 }
 
-// Wireframe edge detection for debug mode
-float getWireframe(vec2 uv, float gridSize, float lineWidth) {
-  vec2 gridUv = uv * gridSize;
-  vec2 grid = abs(fract(gridUv - 0.5) - 0.5);
-  vec2 deriv = fwidth(gridUv);
-  vec2 edge = smoothstep(vec2(0.0), deriv * lineWidth, grid);
-  return 1.0 - min(edge.x, edge.y);
-}
+${colorSpaceFunctions}
+
+// Global variable to store shadow factor from RE_Direct for use in output calculation
+float terrainShadowFactor = 1.0;
 ` + shader.fragmentShader;
 
   if (visibilityMask) {
@@ -164,7 +178,7 @@ float getWireframe(vec2 uv, float gridSize, float lineWidth) {
   shader.fragmentShader = shader.fragmentShader.replace(
     "#include <map_fragment>",
     `
-  // Sample base albedo layers (sRGB textures auto-decoded to linear)
+  // Sample base albedo layers (sRGB textures auto-decoded to linear by Three.js)
   vec2 baseUv = vMapUv;
   vec3 c0 = texture2D(albedo0, baseUv * vec2(tiling0)).rgb;
   ${
@@ -231,83 +245,114 @@ float getWireframe(vec2 uv, float gridSize, float lineWidth) {
       : ""
   }
 
-  // Apply texture color or debug mode solid gray
-  if (debugMode > 0.5) {
-    // Solid gray to visualize lighting only (without texture influence)
-    diffuseColor.rgb = vec3(0.5);
-  } else {
-    // Scale texture to prevent clipping, preserving shadow visibility
-    diffuseColor.rgb = textureColor * ${TEXTURE_BRIGHTNESS_SCALE};
-  }
+  // Store blended texture in diffuseColor (still in linear space here)
+  // We'll convert to sRGB in the output calculation
+  diffuseColor.rgb = textureColor;
 `,
   );
 
-  // When lightmap is available, replace vertex normal-based lighting with smooth lightmap
-  // This eliminates banding by using pre-computed per-pixel NdotL values
+  // When lightmap is available, override RE_Direct to extract shadow factor
+  // We don't compute lighting here - just capture the shadow for use in output
   if (lightmap) {
-    // Override the RE_Direct_Lambert function to use our lightmap NdotL
-    // instead of computing dotNL from vertex normals
     shader.fragmentShader = shader.fragmentShader.replace(
       "#include <lights_lambert_pars_fragment>",
       `#include <lights_lambert_pars_fragment>
 
-// Override RE_Direct to use terrain lightmap for smooth NdotL
+// Override RE_Direct to extract shadow factor for Torque-style gamma-space lighting
 #undef RE_Direct
-void RE_Direct_TerrainLightmap( const in IncidentLight directLight, const in vec3 geometryPosition, const in vec3 geometryNormal, const in vec3 geometryViewDir, const in vec3 geometryClearcoatNormal, const in LambertMaterial material, inout ReflectedLight reflectedLight ) {
-
-  // Sample pre-computed terrain lightmap (smooth NdotL values)
-  // Add +0.5 texel offset to align GPU texel-center sampling with Torque's corner sampling
-  vec2 lightmapUv = vMapUv + vec2(0.5 / ${LIGHTMAP_SIZE}.0);
-  float lightmapNdotL = texture2D(terrainLightmap, lightmapUv).r;
-
-  // Use lightmap NdotL instead of dot(geometryNormal, directLight.direction)
-  // directLight.color already has shadow factor applied from getShadow()
-  // Apply terrain-specific directional intensity multiplier
-  vec3 directIrradiance = lightmapNdotL * directLight.color * terrainDirectionalFactor;
-
-  // Debug mode: visualize raw lightmap values (no textures)
-  if (debugMode > 0.5) {
-    reflectedLight.directDiffuse = directIrradiance;
-  } else {
-    reflectedLight.directDiffuse += directIrradiance * BRDF_Lambert( material.diffuseColor );
-  }
+void RE_Direct_TerrainShadow( const in IncidentLight directLight, const in vec3 geometryPosition, const in vec3 geometryNormal, const in vec3 geometryViewDir, const in vec3 geometryClearcoatNormal, const in LambertMaterial material, inout ReflectedLight reflectedLight ) {
+  // directLight.color = sunColor * shadowFactor (shadow already applied by Three.js)
+  // Extract shadow factor by comparing to original sun color
+  #if ( NUM_DIR_LIGHTS > 0 )
+    vec3 originalSunColor = directionalLights[0].color;
+    float sunMax = max(max(originalSunColor.r, originalSunColor.g), originalSunColor.b);
+    float shadowedMax = max(max(directLight.color.r, directLight.color.g), directLight.color.b);
+    terrainShadowFactor = clamp(shadowedMax / max(sunMax, 0.001), 0.0, 1.0);
+  #endif
+  // Don't add to reflectedLight - we'll compute lighting in gamma space at output
 }
-#define RE_Direct RE_Direct_TerrainLightmap
+#define RE_Direct RE_Direct_TerrainShadow
 
 `,
     );
 
-    // Override lights_fragment_begin to fix hemisphere light irradiance calculation
-    // The default uses geometryNormal which causes banding
+    // Override lights_fragment_begin to skip indirect diffuse calculation
+    // We'll handle ambient in gamma space
     shader.fragmentShader = shader.fragmentShader.replace(
       "#include <lights_fragment_begin>",
       `#include <lights_fragment_begin>
-// Fix: Recalculate irradiance without using vertex normals (causes banding)
-// Use flat upward normal for hemisphere/light probe calculations
+// Clear indirect diffuse - we'll compute ambient in gamma space
 #if defined( RE_IndirectDiffuse )
-{
-  vec3 flatNormal = vec3(0.0, 1.0, 0.0);
-  irradiance = getAmbientLightIrradiance( ambientLightColor );
-  #if defined( USE_LIGHT_PROBES )
-    irradiance += getLightProbeIrradiance( lightProbe, flatNormal );
-  #endif
-  #if ( NUM_HEMI_LIGHTS > 0 )
-    for ( int i = 0; i < NUM_HEMI_LIGHTS; i ++ ) {
-      irradiance += getHemisphereLightIrradiance( hemisphereLights[i], flatNormal );
-    }
-  #endif
-}
+  irradiance = vec3(0.0);
 #endif
+`,
+    );
+
+    // Clear the indirect diffuse after lights_fragment_end
+    shader.fragmentShader = shader.fragmentShader.replace(
+      "#include <lights_fragment_end>",
+      `#include <lights_fragment_end>
+  // Clear Three.js lighting - we compute everything in gamma space
+  reflectedLight.directDiffuse = vec3(0.0);
+  reflectedLight.indirectDiffuse = vec3(0.0);
 `,
     );
   }
 
-  // Scale ambient/indirect lighting to darken shadows on terrain
+  // Replace opaque_fragment with Torque-style gamma-space calculation
   shader.fragmentShader = shader.fragmentShader.replace(
-    "#include <lights_fragment_end>",
-    `#include <lights_fragment_end>
-  // Scale indirect (ambient) light to increase shadow contrast on terrain
-  reflectedLight.indirectDiffuse *= terrainAmbientFactor;
-`,
+    "#include <opaque_fragment>",
+    `// Torque-style terrain lighting: output = clamp(lighting × texture, 0, 1) in sRGB space
+{
+  // Get texture in sRGB space (undo Three.js linear decode)
+  vec3 textureSRGB = terrainLinearToSRGB(diffuseColor.rgb);
+
+  ${
+    lightmap
+      ? `
+  // Sample terrain lightmap for smooth NdotL
+  vec2 lightmapUv = vMapUv + vec2(0.5 / ${LIGHTMAP_SIZE}.0);
+  float lightmapNdotL = texture2D(terrainLightmap, lightmapUv).r;
+
+  // Get sun and ambient colors from Three.js lights (these ARE sRGB values from mission file)
+  // Three.js interprets them as linear, but the numerical values are preserved
+  #if ( NUM_DIR_LIGHTS > 0 )
+    vec3 sunColorSRGB = directionalLights[0].color;
+  #else
+    vec3 sunColorSRGB = vec3(0.7);
+  #endif
+  vec3 ambientColorSRGB = ambientLightColor;
+
+  // Torque formula (terrLighting.cc:471-483):
+  // lighting = ambient + NdotL * shadowFactor * sunColor
+  // Clamp lighting to [0,1] before multiplying by texture
+  vec3 lightingSRGB = clamp(ambientColorSRGB + lightmapNdotL * terrainShadowFactor * sunColorSRGB, 0.0, 1.0);
+  `
+      : `
+  // No lightmap - use simple ambient lighting
+  vec3 lightingSRGB = ambientLightColor;
+  `
+  }
+
+  // Torque formula: output = clamp(lighting × texture, 0, 1) in sRGB/gamma space
+  vec3 resultSRGB = clamp(lightingSRGB * textureSRGB, 0.0, 1.0);
+
+  // Convert back to linear for Three.js output pipeline
+  outgoingLight = terrainSRGBToLinear(resultSRGB) + totalEmissiveRadiance;
+}
+#include <opaque_fragment>`,
+  );
+
+  // Add debug grid overlay AFTER opaque_fragment sets gl_FragColor
+  shader.fragmentShader = shader.fragmentShader.replace(
+    "#include <tonemapping_fragment>",
+    `// Debug mode: overlay green grid matching terrain grid squares (256x256)
+if (debugMode > 0.5) {
+  float gridIntensity = terrainDebugGrid(vMapUv, 256.0, 1.5);
+  vec3 gridColor = vec3(0.0, 0.8, 0.4); // Green
+  gl_FragColor.rgb = mix(gl_FragColor.rgb, gridColor, gridIntensity * 0.05);
+}
+
+#include <tonemapping_fragment>`,
   );
 }

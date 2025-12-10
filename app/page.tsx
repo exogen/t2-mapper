@@ -1,7 +1,7 @@
 "use client";
 import { useState, useEffect, useCallback, Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
-import { Canvas } from "@react-three/fiber";
+import { Canvas, GLProps } from "@react-three/fiber";
 import { NoToneMapping, SRGBColorSpace } from "three";
 import { Mission } from "@/src/components/Mission";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -21,7 +21,7 @@ const queryClient = new QueryClient();
 // Renderer settings to match Tribes 2's simple rendering pipeline.
 // Tribes 2 (Torque engine, 2001) worked entirely in gamma/sRGB space with no HDR
 // or tone mapping. We disable tone mapping and ensure proper sRGB output.
-const glSettings = {
+const glSettings: GLProps = {
   toneMapping: NoToneMapping,
   outputColorSpace: SRGBColorSpace,
 };
@@ -94,7 +94,7 @@ function MapInspector() {
                 </div>
               </div>
             )}
-            <Canvas shadows frameloop="always" gl={glSettings}>
+            <Canvas frameloop="always" gl={glSettings} shadows="soft">
               <CamerasProvider>
                 <AudioProvider>
                   <Mission

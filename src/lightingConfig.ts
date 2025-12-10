@@ -14,15 +14,34 @@
  * - ambient: Multiplier for ambient light contribution (affects shadow darkness)
  */
 
-export const TERRAIN_LIGHTING = {
-  directional: 4,
-  ambient: 1.5,
-};
+/**
+ * Terrain lighting is handled via custom shader in terrainMaterial.ts.
+ *
+ * The shader implements Torque's gamma-space rendering formula (terrLighting.cc):
+ *   output = clamp(lighting × texture, 0, 1)
+ *
+ * Where:
+ *   - lighting = clamp(ambient + NdotL × shadowFactor × sunColor, 0, 1)
+ *   - NdotL from pre-computed terrain lightmap (smooth per-pixel normals)
+ *   - shadowFactor from Three.js real-time shadow maps
+ *
+ * No intensity multipliers are needed - the shader uses mission sun/ambient
+ * colors directly and performs gamma-space math to match Torque's output.
+ */
 
-export const INTERIOR_LIGHTING = {
-  directional: 3,
-  ambient: 1,
-};
+/**
+ * Interior lighting is handled via custom shader in interiorMaterial.ts.
+ *
+ * The shader implements Torque's gamma-space rendering formula:
+ *   output = clamp((scene_lighting + lightmap) × texture, 0, 1)
+ *
+ * Where:
+ *   - Outside surfaces (SurfaceOutsideVisible): scene lighting + lightmap
+ *   - Inside surfaces: lightmap only
+ *
+ * No intensity multipliers are needed - the shader extracts lighting values
+ * from Three.js and performs gamma-space math to match Torque's output.
+ */
 
 export const SHAPE_LIGHTING = {
   directional: 1,

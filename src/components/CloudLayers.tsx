@@ -300,32 +300,40 @@ const cloudFragmentShader = `
   varying vec2 vUv;
   varying float vAlpha;
 
+  // Debug grid using screen-space derivatives for sharp, anti-aliased lines
+  float debugGrid(vec2 uv, float gridSize, float lineWidth) {
+    vec2 scaledUV = uv * gridSize;
+    vec2 grid = abs(fract(scaledUV - 0.5) - 0.5) / fwidth(scaledUV);
+    float line = min(grid.x, grid.y);
+    return 1.0 - min(line / lineWidth, 1.0);
+  }
+
   void main() {
     vec4 texColor = texture2D(cloudTexture, vUv);
-
-    // Debug mode: show layer-colored clouds (red, green, blue for layers 0, 1, 2)
-    if (debugMode > 0.5) {
-      vec3 debugColor;
-      if (layerIndex == 0) {
-        debugColor = vec3(1.0, 0.3, 0.3); // Red
-      } else if (layerIndex == 1) {
-        debugColor = vec3(0.3, 1.0, 0.3); // Green
-      } else {
-        debugColor = vec3(0.3, 0.3, 1.0); // Blue
-      }
-      // Use same alpha calculation as normal mode
-      gl_FragColor = vec4(debugColor, texColor.a * vAlpha);
-      return;
-    }
 
     // Tribes 2 uses GL_MODULATE: final = texture × vertex color
     // Vertex color is white with varying alpha, so:
     // Final RGB = Texture RGB × 1.0 = Texture RGB
     // Final Alpha = Texture Alpha × Vertex Alpha
     float finalAlpha = texColor.a * vAlpha;
+    vec3 color = texColor.rgb;
+
+    // Debug mode: overlay R/G/B grid for layers 0/1/2
+    if (debugMode > 0.5) {
+      float gridIntensity = debugGrid(vUv, 4.0, 1.5);
+      vec3 gridColor;
+      if (layerIndex == 0) {
+        gridColor = vec3(1.0, 0.0, 0.0); // Red
+      } else if (layerIndex == 1) {
+        gridColor = vec3(0.0, 1.0, 0.0); // Green
+      } else {
+        gridColor = vec3(0.0, 0.0, 1.0); // Blue
+      }
+      color = mix(color, gridColor, gridIntensity * 0.5);
+    }
 
     // Output clouds with texture color and combined alpha
-    gl_FragColor = vec4(texColor.rgb, finalAlpha);
+    gl_FragColor = vec4(color, finalAlpha);
   }
 `;
 

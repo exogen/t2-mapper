@@ -94,7 +94,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     [speedMultiplier, setSpeedMultiplier],
   );
 
-  // Read persisted settings from localStoarge.
+  // Read persisted settings from localStorage.
   useEffect(() => {
     let savedSettings: PersistedSettings = {};
     try {

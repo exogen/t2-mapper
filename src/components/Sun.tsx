@@ -67,8 +67,8 @@ export function Sun({ object }: { object: TorqueObject }) {
         shadow-camera-bottom={-shadowCameraSize}
         shadow-camera-near={100}
         shadow-camera-far={12000}
-        shadow-bias={-0.0003}
-        shadow-normalBias={0.5}
+        shadow-bias={-0.00001}
+        shadow-normalBias={0.4}
       />
       {/* Ambient fill light - prevents pure black shadows */}
       <ambientLight color={ambient} intensity={ambientIntensity} />

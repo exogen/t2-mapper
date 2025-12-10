@@ -103,6 +103,9 @@ for i, in_path in enumerate(input_files, start=1):
         # Blender and T2 are Z-up, but these assets are destined for Three.js which
         # is Y-up. It's easiest to match the Y-up of our destination engine.
         export_yup=True,
+        # Draco compression
+        export_draco_mesh_compression_enable=True,
+        export_draco_mesh_compression_level=6,
     )
     if "FINISHED" not in res:
         failure_count += 1

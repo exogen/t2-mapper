@@ -101,6 +101,9 @@ for i, in_path in enumerate(input_files, start=1):
         export_yup=True,
         # Export lightmap textures connected to emissive (even with 0 strength)
         export_unused_textures=True,
+        # Draco compression
+        export_draco_mesh_compression_enable=True,
+        export_draco_mesh_compression_level=6,
     )
     if "FINISHED" not in res:
         failure_count += 1

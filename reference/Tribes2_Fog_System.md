@@ -805,6 +805,7 @@ The fog bands are positioned relative to the skybox geometry:
 ```
 
 For a mission with `visibleDistance = 600`:
+
 - `mRadius = 600 * 0.95 = 570`
 - `mSkyBoxPt.x = 570 / sqrt(3) ≈ 329` (skybox corner coordinate)
 
@@ -813,6 +814,7 @@ The fog band geometry spans from height 0 (`HORIZON`) to height 60 (`OFFSET_HEIG
 #### Fog Ban Alpha Values
 
 When NOT in a fog volume (`depthInFog <= 0`):
+
 ```cpp
 banHeights[0] = HORIZON;           // 0.0 - lower band at horizon
 banHeights[1] = OFFSET_HEIGHT;     // 60.0 - upper band
@@ -821,6 +823,7 @@ alphaBan[1] = 0.0;                 // Center top is fully transparent
 ```
 
 The fog bands render as triangle strips with linear vertex alpha interpolation:
+
 - Lower vertices (at horizon): full fog color (alpha = 1.0)
 - Upper vertices (at OFFSET_HEIGHT): transparent (alpha = 0.0)
 

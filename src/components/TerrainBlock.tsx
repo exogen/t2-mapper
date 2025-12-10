@@ -2,13 +2,15 @@ import { memo, useMemo, useRef, useState } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
 import { useQuery } from "@tanstack/react-query";
 import {
+  BufferAttribute,
+  BufferGeometry,
   DataTexture,
+  Float32BufferAttribute,
   FloatType,
   LinearFilter,
   NearestFilter,
   NoColorSpace,
   ClampToEdgeWrapping,
-  PlaneGeometry,
   RedFormat,
   RepeatWrapping,
   UnsignedByteType,
@@ -29,6 +31,114 @@ const LIGHTMAP_SIZE = 512; // Match Tribes 2's 512x512 lightmap
 const HEIGHT_SCALE = 2048; // Matches displacementScale for terrain
 
 /**
+ * Create terrain geometry with Torque-style alternating diagonal triangulation.
+ *
+ * Torque splits each grid square into two triangles, but alternates the diagonal
+ * direction in a checkerboard pattern: ((x ^ y) & 1) == 0 determines Split45.
+ *
+ * - Split45 (/): diagonal from (x,y) to (x+1,y+1) - bottom-left to top-right
+ * - Split135 (\): diagonal from (x+1,y) to (x,y+1) - bottom-right to top-left
+ *
+ * This creates more accurate terrain, especially on ridges and peaks where the
+ * zigzag pattern of alternating triangles better represents the heightmap data.
+ *
+ * Geometry is created in X-Y plane (like PlaneGeometry) then rotated to match
+ * terrain orientation.
+ */
+function createTerrainGeometry(size: number, segments: number): BufferGeometry {
+  const geometry = new BufferGeometry();
+  const vertexCount = (segments + 1) * (segments + 1);
+  const positions = new Float32Array(vertexCount * 3);
+  const normals = new Float32Array(vertexCount * 3);
+  const uvs = new Float32Array(vertexCount * 2);
+
+  // Pre-allocate index buffer: segments² squares × 2 triangles × 3 indices
+  // Use Uint32Array since vertex count (257² = 66049) exceeds Uint16 max (65535)
+  const indexCount = segments * segments * 6;
+  const indices = new Uint32Array(indexCount);
+  let indexOffset = 0;
+
+  const segmentSize = size / segments;
+
+  // Create vertices in X-Y plane (same as PlaneGeometry)
+  // PlaneGeometry goes from top-left to bottom-right with UVs 0→1
+  // X: -size/2 to +size/2 (left to right)
+  // Y: +size/2 to -size/2 (top to bottom in initial X-Y plane)
+  for (let row = 0; row <= segments; row++) {
+    for (let col = 0; col <= segments; col++) {
+      const idx = row * (segments + 1) + col;
+
+      // Position in X-Y plane (Z=0), centered at origin
+      positions[idx * 3] = col * segmentSize - size / 2; // X: -size/2 to +size/2
+      positions[idx * 3 + 1] = size / 2 - row * segmentSize; // Y: +size/2 to -size/2
+      positions[idx * 3 + 2] = 0; // Z: 0 (will be displaced after rotation)
+
+      // Default normal pointing +Z (out of plane, will become +Y after rotation)
+      normals[idx * 3] = 0;
+      normals[idx * 3 + 1] = 0;
+      normals[idx * 3 + 2] = 1;
+
+      // UV coordinates (0 to 1), matching PlaneGeometry
+      uvs[idx * 2] = col / segments;
+      uvs[idx * 2 + 1] = 1 - row / segments; // Flip V so row 0 is at V=1
+    }
+  }
+
+  // Create triangle indices with Torque-style alternating diagonals
+  // Using CCW winding for front face (Three.js default)
+  for (let row = 0; row < segments; row++) {
+    for (let col = 0; col < segments; col++) {
+      // In this layout (Y decreasing with row):
+      // a---b   (row)
+      // |   |
+      // c---d   (row+1)
+      const a = row * (segments + 1) + col;
+      const b = a + 1;
+      const c = (row + 1) * (segments + 1) + col;
+      const d = c + 1;
+
+      // Torque's split decision: ((x ^ y) & 1) == 0 means Split45
+      const split45 = ((col ^ row) & 1) === 0;
+
+      if (split45) {
+        // Split45: diagonal from a to d (top-left to bottom-right in screen space)
+        // Triangle 1: a, c, d (CCW from front)
+        // Triangle 2: a, d, b (CCW from front)
+        indices[indexOffset++] = a;
+        indices[indexOffset++] = c;
+        indices[indexOffset++] = d;
+        indices[indexOffset++] = a;
+        indices[indexOffset++] = d;
+        indices[indexOffset++] = b;
+      } else {
+        // Split135: diagonal from b to c (top-right to bottom-left in screen space)
+        // Triangle 1: a, c, b (CCW from front)
+        // Triangle 2: b, c, d (CCW from front)
+        indices[indexOffset++] = a;
+        indices[indexOffset++] = c;
+        indices[indexOffset++] = b;
+        indices[indexOffset++] = b;
+        indices[indexOffset++] = c;
+        indices[indexOffset++] = d;
+      }
+    }
+  }
+
+  geometry.setIndex(new BufferAttribute(indices, 1));
+  geometry.setAttribute("position", new Float32BufferAttribute(positions, 3));
+  geometry.setAttribute("normal", new Float32BufferAttribute(normals, 3));
+  geometry.setAttribute("uv", new Float32BufferAttribute(uvs, 2));
+
+  // Apply same rotations as the original PlaneGeometry approach:
+  // rotateX(-90°) puts the X-Y plane into X-Z (horizontal), with +Y becoming up
+  // rotateY(-90°) rotates around Y axis to match terrain coordinate system
+  geometry.rotateX(-Math.PI / 2);
+  geometry.rotateY(-Math.PI / 2);
+
+  return geometry;
+}
+
+/**
  * Displace terrain vertices on CPU and compute smooth normals from heightmap gradients.
  *
  * Height sampling uses NEAREST filtering to match the GPU DataTexture default:
@@ -38,7 +148,7 @@ const HEIGHT_SCALE = 2048; // Matches displacementScale for terrain
  * that would occur with face normals from computeVertexNormals().
  */
 function displaceTerrainAndComputeNormals(
-  geometry: PlaneGeometry,
+  geometry: BufferGeometry,
   heightMap: Uint16Array,
   squareSize: number,
 ): void {
@@ -143,7 +253,81 @@ function displaceTerrainAndComputeNormals(
 }
 
 /**
- * Generate a terrain lightmap texture with smooth normals.
+ * Ray-march through heightmap to determine if a point is in shadow.
+ * Uses the same coordinate system as the terrain geometry.
+ *
+ * @param startCol - Starting column in heightmap coordinates
+ * @param startRow - Starting row in heightmap coordinates
+ * @param startHeight - Starting height in world units
+ * @param lightDir - Direction TOWARD the light (normalized)
+ * @param squareSize - World units per heightmap cell
+ * @param getHeight - Function to sample terrain height at a position
+ * @returns 1.0 if lit, 0.0 if in shadow
+ */
+function rayMarchShadow(
+  startCol: number,
+  startRow: number,
+  startHeight: number,
+  lightDir: Vector3,
+  squareSize: number,
+  getHeight: (col: number, row: number) => number,
+): number {
+  // Convert light direction to heightmap coordinate steps
+  // World coordinate mapping (after geometry rotations):
+  // - col (U) → world +Z, so lightDir.z affects col
+  // - row (V) → world +X, so lightDir.x affects row
+  // - height → world +Y, so lightDir.y affects height
+  const stepCol = lightDir.z / squareSize;
+  const stepRow = lightDir.x / squareSize;
+  const stepHeight = lightDir.y;
+
+  // Normalize to step ~0.5 heightmap units per iteration for good sampling
+  const horizontalLen = Math.sqrt(stepCol * stepCol + stepRow * stepRow);
+  if (horizontalLen < 0.0001) {
+    // Light is nearly vertical - no self-shadowing possible
+    return 1.0;
+  }
+
+  const stepScale = 0.5 / horizontalLen;
+  const dCol = stepCol * stepScale;
+  const dRow = stepRow * stepScale;
+  const dHeight = stepHeight * stepScale;
+
+  let col = startCol;
+  let row = startRow;
+  let height = startHeight + 0.1; // Small offset to avoid self-intersection
+
+  // March until we exit terrain bounds or confirm we're lit
+  const maxSteps = TERRAIN_SIZE * 3; // Enough to cross terrain diagonally
+  for (let i = 0; i < maxSteps; i++) {
+    col += dCol;
+    row += dRow;
+    height += dHeight;
+
+    // Check if ray exited terrain bounds horizontally
+    if (col < 0 || col >= TERRAIN_SIZE || row < 0 || row >= TERRAIN_SIZE) {
+      return 1.0; // Exited terrain, not in shadow
+    }
+
+    // Check if ray is above max terrain height
+    if (height > HEIGHT_SCALE) {
+      return 1.0; // Above all terrain, not in shadow
+    }
+
+    // Sample terrain height at current position
+    const terrainHeight = getHeight(col, row);
+
+    // If ray is below terrain surface, we're in shadow
+    if (height < terrainHeight) {
+      return 0.0;
+    }
+  }
+
+  return 1.0; // Reached max steps, assume not in shadow
+}
+
+/**
+ * Generate a terrain lightmap texture with smooth normals and ray-traced shadows.
  *
  * The key insight: banding occurs because vertex normals are computed from
  * discrete heightmap samples, creating discontinuities at grid boundaries.
@@ -152,10 +336,14 @@ function displaceTerrainAndComputeNormals(
  * lightmap pixel. This produces smooth gradients because the interpolated
  * height surface is C0 continuous (no discontinuities).
  *
+ * Shadows are computed by ray-marching through the heightmap toward the sun,
+ * checking if the terrain blocks the light path. This avoids shadow acne
+ * because it's a geometric intersection test, not a depth buffer comparison.
+ *
  * @param heightMap - Uint16 heightmap data (256x256)
  * @param sunDirection - Normalized sun direction vector (points FROM sun TO scene)
  * @param squareSize - World units per heightmap cell
- * @returns DataTexture with lighting intensity values
+ * @returns DataTexture with lighting intensity values (NdotL * shadow)
  */
 function generateTerrainLightmap(
   heightMap: Uint16Array,
@@ -163,19 +351,19 @@ function generateTerrainLightmap(
   squareSize: number,
 ): DataTexture {
   // Helper to get bilinearly interpolated height at any fractional position
-  // Supports negative and out-of-range coordinates via wrapping
+  // Supports negative and out-of-range coordinates via clamping for shadow rays
   const getInterpolatedHeight = (col: number, row: number): number => {
-    // Wrap to valid range using modulo (handles negative values correctly)
-    const wrappedCol = ((col % TERRAIN_SIZE) + TERRAIN_SIZE) % TERRAIN_SIZE;
-    const wrappedRow = ((row % TERRAIN_SIZE) + TERRAIN_SIZE) % TERRAIN_SIZE;
+    // Clamp to valid range (don't wrap for shadow rays)
+    const clampedCol = Math.max(0, Math.min(TERRAIN_SIZE - 1, col));
+    const clampedRow = Math.max(0, Math.min(TERRAIN_SIZE - 1, row));
 
-    const col0 = Math.floor(wrappedCol);
-    const row0 = Math.floor(wrappedRow);
-    const col1 = (col0 + 1) & (TERRAIN_SIZE - 1); // Wrap at edge
-    const row1 = (row0 + 1) & (TERRAIN_SIZE - 1);
+    const col0 = Math.floor(clampedCol);
+    const row0 = Math.floor(clampedRow);
+    const col1 = Math.min(col0 + 1, TERRAIN_SIZE - 1);
+    const row1 = Math.min(row0 + 1, TERRAIN_SIZE - 1);
 
-    const fx = wrappedCol - col0;
-    const fy = wrappedRow - row0;
+    const fx = clampedCol - col0;
+    const fy = clampedRow - row0;
 
     const h00 = heightMap[row0 * TERRAIN_SIZE + col0] / 65535;
     const h10 = heightMap[row0 * TERRAIN_SIZE + col1] / 65535;
@@ -201,7 +389,7 @@ function generateTerrainLightmap(
   // Use 0.5 to sample across a reasonable distance for smooth gradients
   const eps = 0.5;
 
-  // Generate lightmap by computing normal from interpolated heights at each pixel
+  // Generate lightmap by computing normal and shadow at each pixel
   for (let lRow = 0; lRow < LIGHTMAP_SIZE; lRow++) {
     for (let lCol = 0; lCol < LIGHTMAP_SIZE; lCol++) {
       // Generate texel for terrain position matching Torque's relight():
@@ -209,6 +397,9 @@ function generateTerrainLightmap(
       // With 2 lightmap pixels per terrain square: pos = lCol/2 + 0.25
       const col = lCol / 2 + 0.25;
       const row = lRow / 2 + 0.25;
+
+      // Get height at this position for shadow ray starting point
+      const surfaceHeight = getInterpolatedHeight(col, row);
 
       // Compute gradient using central differences on interpolated heights
       const hL = getInterpolatedHeight(col - eps, row);
@@ -236,7 +427,23 @@ function generateTerrainLightmap(
           (nz / len) * lightDir.z,
       );
 
-      lightmapData[lRow * LIGHTMAP_SIZE + lCol] = Math.floor(NdotL * 255);
+      // Ray-march to determine shadow (only if surface faces the light)
+      let shadow = 1.0;
+      if (NdotL > 0) {
+        shadow = rayMarchShadow(
+          col,
+          row,
+          surfaceHeight,
+          lightDir,
+          squareSize,
+          getInterpolatedHeight,
+        );
+      }
+
+      // Store NdotL * shadow in lightmap
+      lightmapData[lRow * LIGHTMAP_SIZE + lCol] = Math.floor(
+        NdotL * shadow * 255,
+      );
     }
   }
 
@@ -349,13 +556,12 @@ export const TerrainBlock = memo(function TerrainBlock({
   const { data: terrain } = useTerrain(terrainFile);
 
   // Shared geometry for all tiles - with smooth normals computed from heightmap
+  // Uses Torque-style alternating diagonal triangulation for accurate terrain
   const sharedGeometry = useMemo(() => {
     if (!terrain) return null;
 
     const size = squareSize * 256;
-    const geometry = new PlaneGeometry(size, size, 256, 256);
-    geometry.rotateX(-Math.PI / 2);
-    geometry.rotateY(-Math.PI / 2);
+    const geometry = createTerrainGeometry(size, TERRAIN_SIZE);
 
     // Displace vertices on CPU and compute smooth normals
     displaceTerrainAndComputeNormals(geometry, terrain.heightMap, squareSize);

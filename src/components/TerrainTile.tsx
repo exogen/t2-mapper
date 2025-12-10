@@ -1,11 +1,5 @@
 import { memo, Suspense, useCallback, useMemo } from "react";
-import {
-  DataTexture,
-  DoubleSide,
-  FrontSide,
-  MeshLambertMaterial,
-  type PlaneGeometry,
-} from "three";
+import { type BufferGeometry, DataTexture, FrontSide } from "three";
 import { useTexture } from "@react-three/drei";
 import {
   FALLBACK_TEXTURE_URL,
@@ -36,7 +30,7 @@ interface TerrainTileProps {
   blockSize: number;
   basePosition: { x: number; z: number };
   textureNames: string[];
-  geometry: PlaneGeometry;
+  geometry: BufferGeometry;
   displacementMap: DataTexture;
   visibilityMask: DataTexture;
   alphaTextures: DataTexture[];
@@ -122,7 +116,7 @@ function BlendedTerrainTextures({
       key={materialKey}
       map={displacementMap}
       depthWrite
-      side={DoubleSide}
+      side={FrontSide}
       onBeforeCompile={onBeforeCompile}
     />
   );
@@ -146,12 +140,8 @@ function TerrainMaterial({
   return (
     <Suspense
       fallback={
-        <meshLambertMaterial
-          color="rgb(0, 109, 56)"
-          displacementMap={displacementMap}
-          displacementScale={2048}
-          wireframe
-        />
+        // Geometry is already CPU-displaced, so no displacementMap needed
+        <meshLambertMaterial color="rgb(0, 109, 56)" wireframe />
       }
     >
       <BlendedTerrainTextures
@@ -181,7 +171,7 @@ export const TerrainTile = memo(function TerrainTile({
   visible = true,
 }: TerrainTileProps) {
   const position = useMemo(() => {
-    // PlaneGeometry is centered at origin, but Tribes 2 terrain origin is at
+    // Terrain geometry is centered at origin, but Tribes 2 terrain origin is at
     // corner. The engine always uses the default square size (8) for positioning.
     const geometryOffset = (DEFAULT_SQUARE_SIZE * 256) / 2;
     return [
@@ -195,8 +185,8 @@ export const TerrainTile = memo(function TerrainTile({
     <mesh
       position={position}
       geometry={geometry}
-      receiveShadow
       castShadow
+      receiveShadow
       visible={visible}
     >
       <TerrainMaterial

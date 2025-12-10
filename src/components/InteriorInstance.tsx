@@ -19,17 +19,6 @@ import { globalFogUniforms } from "../globalFogUniforms";
 import { injectInteriorLighting } from "../interiorMaterial";
 
 /**
- * Lightmap intensity multiplier.
- * Lightmaps contain baked lighting from interior-specific lights only
- * (not scene sun/ambient - that's applied in real-time).
- *
- * Three.js's BRDF_Lambert divides by PI for energy conservation, but Torque
- * (2001) used simple multiplication: base_texture * lightmap in gamma space.
- * We multiply by PI to cancel out Three.js's division.
- */
-const LIGHTMAP_INTENSITY = Math.PI;
-
-/**
  * Load a .gltf file that was converted from a .dif, used for "interior" models.
  */
 function useInterior(interiorFile: string) {
@@ -46,6 +35,8 @@ function InteriorTexture({
   material?: Material;
   lightMap?: Texture | null;
 }) {
+  const debugContext = useDebug();
+  const debugMode = debugContext?.debugMode ?? false;
   const url = textureToUrl(materialName);
   const texture = useTexture(url, (texture) => setupColor(texture));
 
@@ -54,34 +45,54 @@ function InteriorTexture({
   const flagNames = new Set<string>(material?.userData?.flag_names ?? []);
   const isSelfIlluminating = flagNames.has("SelfIlluminating");
 
+  // Check for SurfaceOutsideVisible flag (surfaces that receive scene ambient light)
+  const surfaceFlagNames = new Set<string>(
+    material?.userData?.surface_flag_names ?? [],
+  );
+  const isSurfaceOutsideVisible = surfaceFlagNames.has("SurfaceOutsideVisible");
+
   // Inject volumetric fog and lighting multipliers into materials
-  const onBeforeCompile = useCallback((shader: any) => {
-    injectCustomFog(shader, globalFogUniforms);
-    injectInteriorLighting(shader);
-  }, []);
+  // NOTE: This hook must be called unconditionally (before any early returns)
+  const onBeforeCompile = useCallback(
+    (shader: any) => {
+      injectCustomFog(shader, globalFogUniforms);
+      injectInteriorLighting(shader, {
+        surfaceOutsideVisible: isSurfaceOutsideVisible,
+        debugMode,
+      });
+    },
+    [isSurfaceOutsideVisible, debugMode],
+  );
+
+  // Key includes shader-affecting props to force recompilation when they change
+  // (r3f doesn't reactively recompile shaders on prop changes)
+  const materialKey = `${isSurfaceOutsideVisible}-${debugMode}`;
 
   // Self-illuminating materials are fullbright (unlit), no lightmap
   if (isSelfIlluminating) {
     return (
       <meshBasicMaterial
+        key={materialKey}
         map={texture}
-        side={2}
         toneMapped={false}
         onBeforeCompile={onBeforeCompile}
       />
     );
   }
 
-  // Use MeshLambertMaterial for diffuse-only lighting (matches Tribes 2's GL pipeline)
-  // Interiors respond to scene sun + ambient (from Sky object) in real-time
-  // Lightmaps contain baked lighting from interior-specific lights only
-  // DIF files are reusable across missions with different sun settings
+  // MeshLambertMaterial for diffuse-only lighting (matches Tribes 2's GL pipeline)
+  // Shader modifications in onBeforeCompile:
+  // - Outside surfaces (SurfaceOutsideVisible): scene lighting + additive lightmap
+  // - Inside surfaces (ZoneInside): additive lightmap only, no scene lighting
+  // Lightmap intensity is handled in the shader, not via material prop
+  // toneMapped={false} to match Torque's direct output (no HDR tone mapping)
+  // Using FrontSide (default) - normals are fixed in io_dif Blender export
   return (
     <meshLambertMaterial
+      key={materialKey}
       map={texture}
       lightMap={lightMap ?? undefined}
-      lightMapIntensity={lightMap ? LIGHTMAP_INTENSITY : undefined}
-      side={2}
+      toneMapped={false}
       onBeforeCompile={onBeforeCompile}
     />
   );
@@ -154,7 +165,8 @@ function InteriorMesh({ node }: { node: Mesh }) {
 export const InteriorModel = memo(
   ({ interiorFile }: { interiorFile: string }) => {
     const { nodes } = useInterior(interiorFile);
-    const { debugMode } = useDebug();
+    const debugContext = useDebug();
+    const debugMode = debugContext?.debugMode ?? false;
 
     return (
       <group rotation={[0, -Math.PI / 2, 0]}>
@@ -186,7 +198,8 @@ function InteriorPlaceholder({
 }
 
 function DebugInteriorPlaceholder({ label }: { label?: string }) {
-  const { debugMode } = useDebug();
+  const debugContext = useDebug();
+  const debugMode = debugContext?.debugMode ?? false;
   return debugMode ? <InteriorPlaceholder color="red" label={label} /> : null;
 }
 

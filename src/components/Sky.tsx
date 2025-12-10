@@ -100,7 +100,10 @@ function SkyBoxTexture({
     // For direction vector (horizontal, y), y / horizontal = height / skyBoxPtX
     // At the fog boundary: y / sqrt(1-y^2) = 60 / skyBoxPtX
     // Solving for y: y = 60 / sqrt(skyBoxPtX^2 + 60^2)
-    return HORIZON_FOG_HEIGHT / Math.sqrt(skyBoxPtX * skyBoxPtX + HORIZON_FOG_HEIGHT * HORIZON_FOG_HEIGHT);
+    return (
+      HORIZON_FOG_HEIGHT /
+      Math.sqrt(skyBoxPtX * skyBoxPtX + HORIZON_FOG_HEIGHT * HORIZON_FOG_HEIGHT)
+    );
   }, [fogState]);
 
   return (
@@ -330,7 +333,10 @@ function SolidColorSky({
     if (!fogState) return 0.18;
     const mRadius = fogState.visibleDistance * 0.95;
     const skyBoxPtX = mRadius / Math.sqrt(3);
-    return HORIZON_FOG_HEIGHT / Math.sqrt(skyBoxPtX * skyBoxPtX + HORIZON_FOG_HEIGHT * HORIZON_FOG_HEIGHT);
+    return (
+      HORIZON_FOG_HEIGHT /
+      Math.sqrt(skyBoxPtX * skyBoxPtX + HORIZON_FOG_HEIGHT * HORIZON_FOG_HEIGHT)
+    );
   }, [fogState]);
 
   return (
