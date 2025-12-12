@@ -36,7 +36,8 @@
     "react-dom": "^19.1.1",
     "react-error-boundary": "^6.0.0",
     "three": "^0.180.0",
-    "unzipper": "^0.12.3"
+    "unzipper": "^0.12.3",
+    "zustand": "^5.0.9"
   },
   "devDependencies": {
     "@types/express": "^5.0.5",
@@ -49,6 +50,7 @@
     "express": "^5.2.0",
     "peggy": "^5.0.6",
     "prettier": "^3.7.1",
+    "prettier-plugin-glsl": "^0.2.2",
     "puppeteer": "^24.32.0",
     "rimraf": "^6.0.1",
     "tsx": "^4.20.5",

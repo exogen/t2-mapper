@@ -22,6 +22,7 @@ export const globalFogUniforms = {
     value: new Float32Array(MAX_FOG_VOLUMES * FLOATS_PER_VOLUME),
   },
   cameraHeight: { value: 0 },
+  fogEnabled: { value: true },
 };
 
 /**
@@ -31,9 +32,11 @@ export const globalFogUniforms = {
 export function updateGlobalFogUniforms(
   cameraHeight: number,
   fogVolumeData: Float32Array,
+  enabled: boolean = true,
 ): void {
   globalFogUniforms.cameraHeight.value = cameraHeight;
   globalFogUniforms.fogVolumeData.value.set(fogVolumeData);
+  globalFogUniforms.fogEnabled.value = enabled;
 }
 
 /**
@@ -43,6 +46,7 @@ export function updateGlobalFogUniforms(
 export function resetGlobalFogUniforms(): void {
   globalFogUniforms.cameraHeight.value = 0;
   globalFogUniforms.fogVolumeData.value.fill(0);
+  globalFogUniforms.fogEnabled.value = true;
 }
 
 /**

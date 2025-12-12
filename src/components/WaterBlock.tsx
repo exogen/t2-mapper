@@ -1,13 +1,30 @@
-import { memo, Suspense, useEffect, useMemo, useRef } from "react";
-import { useTexture } from "@react-three/drei";
-import { useFrame } from "@react-three/fiber";
+import { memo, Suspense, useEffect, useMemo, useRef, useState } from "react";
+import { Box, useTexture } from "@react-three/drei";
+import { useFrame, useThree } from "@react-three/fiber";
 import { DoubleSide, NoColorSpace, PlaneGeometry, RepeatWrapping } from "three";
 import { textureToUrl } from "../loaders";
 import type { TorqueObject } from "../torqueScript";
-import { getPosition, getProperty, getRotation, getScale } from "../mission";
+import {
+  getFloat,
+  getPosition,
+  getProperty,
+  getRotation,
+  getScale,
+} from "../mission";
 import { setupColor } from "../textureUtils";
 import { createWaterMaterial } from "../waterMaterial";
-import { useSettings } from "./SettingsProvider";
+import { useDebug, useSettings } from "./SettingsProvider";
+import { usePositionTracker } from "./usePositionTracker";
+
+const REP_SIZE = 2048;
+
+/**
+ * Terrain coordinate offset from world space.
+ * In Tribes 2, terrain coordinates are offset by +1024 from world coordinates.
+ * This allows world positions like (-672, -736) to map to valid terrain
+ * positions (352, 288) after the offset.
+ */
+const TERRAIN_OFFSET = 1024;
 
 /**
  * Calculate tessellation to match Tribes 2 engine.
@@ -33,81 +50,6 @@ function calculateWaterSegments(
   const segmentsZ = Math.max(4, Math.ceil(sizeZ / vertexSpacing));
 
   return [segmentsX, segmentsZ];
-}
-
-/**
- * Animated water surface material using Tribes 2-accurate shader.
- *
- * The Torque V12 engine renders water in multiple passes:
- * - Phase 1a/1b: Two cross-faded base texture passes, each rotated 30°
- * - Phase 3: Environment/specular map with reflection UVs
- * - Phase 4: Fog overlay
- */
-export function WaterSurfaceMaterial({
-  surfaceTexture,
-  envMapTexture,
-  opacity = 0.75,
-  waveMagnitude = 1.0,
-  envMapIntensity = 1.0,
-  attach,
-}: {
-  surfaceTexture: string;
-  envMapTexture?: string;
-  opacity?: number;
-  waveMagnitude?: number;
-  envMapIntensity?: number;
-  attach?: string;
-}) {
-  const baseUrl = textureToUrl(surfaceTexture);
-  const envUrl = textureToUrl(envMapTexture ?? "special/lush_env");
-
-  const [baseTexture, envTexture] = useTexture(
-    [baseUrl, envUrl],
-    (textures) => {
-      const texArray = Array.isArray(textures) ? textures : [textures];
-      texArray.forEach((tex) => {
-        setupColor(tex);
-        // Use NoColorSpace for water textures - our custom ShaderMaterial
-        // outputs values that are already in the correct space for display.
-        // Using SRGBColorSpace would cause double-conversion.
-        tex.colorSpace = NoColorSpace;
-        tex.wrapS = RepeatWrapping;
-        tex.wrapT = RepeatWrapping;
-      });
-    },
-  );
-
-  const { animationEnabled } = useSettings();
-
-  const material = useMemo(() => {
-    return createWaterMaterial({
-      opacity,
-      waveMagnitude,
-      envMapIntensity,
-      baseTexture,
-      envMapTexture: envTexture,
-    });
-  }, [opacity, waveMagnitude, envMapIntensity, baseTexture, envTexture]);
-
-  const elapsedRef = useRef(0);
-
-  useFrame((_, delta) => {
-    if (!animationEnabled) {
-      elapsedRef.current = 0;
-      material.uniforms.uTime.value = 0;
-      return;
-    }
-    elapsedRef.current += delta;
-    material.uniforms.uTime.value = elapsedRef.current;
-  });
-
-  useEffect(() => {
-    return () => {
-      material.dispose();
-    };
-  }, [material]);
-
-  return <primitive object={material} attach={attach} />;
 }
 
 /**
@@ -145,26 +87,117 @@ export function WaterMaterial({
  *
  * Unlike a simple box, we use a subdivided PlaneGeometry for the water surface
  * so that vertex displacement can create visible waves.
+ *
+ * Water tiling follows Torque's FluidQuadTree.cc behavior:
+ * - Determines camera's terrain "rep" via I = (s32)(m_Eye.X / 2048.0f)
+ * - Renders 9 reps (3x3 grid) centered on camera's rep
  */
 export const WaterBlock = memo(function WaterBlock({
   object,
 }: {
   object: TorqueObject;
 }) {
-  const position = useMemo(() => getPosition(object), [object]);
+  const { debugMode } = useDebug();
   const q = useMemo(() => getRotation(object), [object]);
-  const [scaleX, scaleY, scaleZ] = useMemo(() => getScale(object), [object]);
+  const position = useMemo(() => getPosition(object), [object]);
+  const scale = useMemo(() => getScale(object), [object]);
+  const [scaleX, scaleY, scaleZ] = scale;
+  const camera = useThree((state) => state.camera);
+  const hasCameraPositionChanged = usePositionTracker();
+
+  // Water surface height (top of water volume)
+  // TODO: Use this for terrain intersection masking (reject water blocks where
+  // terrain height > surfaceZ + waveMagnitude/2). Requires TerrainProvider.
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const surfaceZ = position[1] + scaleY;
+
+  // Wave magnitude affects terrain masking (Torque adds half to surface height)
+  const waveMagnitude = getFloat(object, "waveMagnitude") ?? 1.0;
+
+  // Convert world position to terrain space and snap to grid.
+  // Matches Torque's UpdateFluidRegion() and fluid::SetInfo():
+  // 1. Add TERRAIN_OFFSET (1024) to convert world -> terrain space
+  // 2. Round to nearest terrain square: (s32)((X0 / 8.0f) + 0.5f) = Math.round(x/8)
+  // 3. Clamp to valid terrain range [0, 2040] squares
+  // 4. Convert back to world units (multiply by 8)
+  const basePosition = useMemo(() => {
+    const [x, y, z] = position;
+
+    // Convert to terrain space (add 1024 offset)
+    const terrainX = x + TERRAIN_OFFSET;
+    const terrainZ = z + TERRAIN_OFFSET;
+
+    // Round to terrain squares: (s32)((X0 / 8.0f) + 0.5f) is Math.round()
+    let squareX = Math.round(terrainX / 8);
+    let squareZ = Math.round(terrainZ / 8);
+
+    // Clamp to valid range [0, 2040] as in fluidSupport.cc
+    squareX = Math.max(0, Math.min(2040, squareX));
+    squareZ = Math.max(0, Math.min(2040, squareZ));
+
+    // Convert back to world units (terrain squares * 8)
+    // This is the fluid's anchor point in terrain space
+    const baseX = squareX * 8;
+    const baseZ = squareZ * 8;
+
+    return [baseX, y, baseZ] as [number, number, number];
+  }, [position]);
+
+  // Calculate 3x3 grid of reps centered on camera position.
+  // ALL water blocks use 9-rep tiling - the masking system handles visibility.
+  // Matches fluidQuadTree.cc RunQuadTree():
+  //   I = (s32)(m_Eye.X / 2048.0f);
+  //   if( m_Eye.X < 0.0f )  I--;
+  const calculateReps = (camX: number, camZ: number): Array<[number, number]> => {
+    // Convert camera to terrain space
+    const terrainCamX = camX + TERRAIN_OFFSET;
+    const terrainCamZ = camZ + TERRAIN_OFFSET;
+
+    // Determine camera's terrain rep using terrain coordinates.
+    // Torque uses: I = (s32)(m_Eye.X / 2048.0f); if (m_Eye.X < 0) I--;
+    // This is truncation toward zero, then decrement for negative.
+    let cameraRepX = Math.trunc(terrainCamX / REP_SIZE);
+    let cameraRepZ = Math.trunc(terrainCamZ / REP_SIZE);
+    if (terrainCamX < 0) cameraRepX--;
+    if (terrainCamZ < 0) cameraRepZ--;
+
+    // Build 3x3 grid of reps around camera
+    const newReps: Array<[number, number]> = [];
+    for (let repZ = cameraRepZ - 1; repZ <= cameraRepZ + 1; repZ++) {
+      for (let repX = cameraRepX - 1; repX <= cameraRepX + 1; repX++) {
+        newReps.push([repX, repZ]);
+      }
+    }
+    return newReps;
+  };
+
+  // Track which reps to render, updated each frame based on camera position.
+  // Initialize with current camera position so water is visible immediately.
+  const [reps, setReps] = useState<Array<[number, number]>>(() =>
+    calculateReps(camera.position.x, camera.position.z),
+  );
+
+  useFrame(() => {
+    if (!hasCameraPositionChanged(camera.position)) {
+      return;
+    }
+
+    const newReps = calculateReps(camera.position.x, camera.position.z);
+
+    // Only update state if reps actually changed (avoid unnecessary re-renders)
+    setReps((prevReps) => {
+      if (JSON.stringify(prevReps) === JSON.stringify(newReps)) {
+        return prevReps;
+      }
+      return newReps;
+    });
+  });
 
   const surfaceTexture =
     getProperty(object, "surfaceTexture") ?? "liquidTiles/BlueWater";
   const envMapTexture = getProperty(object, "envMapTexture");
-  const opacity = parseFloat(getProperty(object, "surfaceOpacity") ?? "0.75");
-  const waveMagnitude = parseFloat(
-    getProperty(object, "waveMagnitude") ?? "1.0",
-  );
-  const envMapIntensity = parseFloat(
-    getProperty(object, "envMapIntensity") ?? "1.0",
-  );
+  const opacity = getFloat(object, "surfaceOpacity") ?? 0.75;
+  const envMapIntensity = getFloat(object, "envMapIntensity") ?? 1.0;
 
   // Create subdivided plane geometry for the water surface
   // Tessellation matches Tribes 2 engine (5x5 vertices per block)
@@ -177,8 +210,8 @@ export const WaterBlock = memo(function WaterBlock({
     // Rotate from XY plane to XZ plane (lying flat)
     geom.rotateX(-Math.PI / 2);
 
-    // Translate so origin is at corner (matching Torque's water block positioning)
-    // and position at top of water volume (Y = scaleY)
+    // Position at top of water volume (Y = scaleY)
+    // Offset by half scale to put corner at origin (position is corner after modulo)
     geom.translate(scaleX / 2, scaleY, scaleZ / 2);
 
     return geom;
@@ -190,30 +223,148 @@ export const WaterBlock = memo(function WaterBlock({
     };
   }, [surfaceGeometry]);
 
+  // Render each rep that overlaps with terrain bounds
   return (
-    <group position={position} quaternion={q}>
-      {/* Water surface - subdivided plane with wave shader */}
-      <mesh geometry={surfaceGeometry}>
-        <Suspense
-          fallback={
-            <meshStandardMaterial
-              color="blue"
-              transparent
-              opacity={0.3}
-              side={DoubleSide}
-            />
-          }
+    <group quaternion={q}>
+      {/* Debug wireframe showing actual water block bounds */}
+      {debugMode && (
+        <Box
+          args={scale}
+          position={[
+            position[0] + scaleX / 2,
+            position[1] + scaleY / 2,
+            position[2] + scaleZ / 2,
+          ]}
         >
-          <WaterSurfaceMaterial
-            attach="material"
-            surfaceTexture={surfaceTexture}
-            envMapTexture={envMapTexture}
-            opacity={opacity}
-            waveMagnitude={waveMagnitude}
-            envMapIntensity={envMapIntensity}
-          />
-        </Suspense>
-      </mesh>
+          <meshBasicMaterial color="#00fbff" wireframe />
+        </Box>
+      )}
+      <Suspense
+        fallback={reps.map(([repX, repZ]) => {
+          // Convert from terrain space to world space by subtracting TERRAIN_OFFSET
+          // Matches Torque's L2Wm transform: L2Wv = (-1024, -1024, 0)
+          const worldX = basePosition[0] + repX * REP_SIZE - TERRAIN_OFFSET;
+          const worldZ = basePosition[2] + repZ * REP_SIZE - TERRAIN_OFFSET;
+          return (
+            <mesh
+              key={`${repX},${repZ}`}
+              geometry={surfaceGeometry}
+              position={[worldX, basePosition[1], worldZ]}
+            >
+              <meshStandardMaterial
+                color="#00fbff"
+                transparent
+                opacity={0.4}
+                wireframe
+                side={DoubleSide}
+              />
+            </mesh>
+          );
+        })}
+      >
+        <WaterReps
+          reps={reps}
+          basePosition={basePosition}
+          surfaceGeometry={surfaceGeometry}
+          surfaceTexture={surfaceTexture}
+          envMapTexture={envMapTexture}
+          opacity={opacity}
+          waveMagnitude={waveMagnitude}
+          envMapIntensity={envMapIntensity}
+        />
+      </Suspense>
     </group>
+  );
+});
+
+/**
+ * Inner component that renders all water reps with a shared material.
+ * Separated to allow Suspense boundary around texture loading while
+ * ensuring all reps share the same material instance and animation.
+ */
+const WaterReps = memo(function WaterReps({
+  reps,
+  basePosition,
+  surfaceGeometry,
+  surfaceTexture,
+  envMapTexture,
+  opacity,
+  waveMagnitude,
+  envMapIntensity,
+}: {
+  reps: Array<[number, number]>;
+  basePosition: [number, number, number];
+  surfaceGeometry: PlaneGeometry;
+  surfaceTexture: string;
+  envMapTexture: string | undefined;
+  opacity: number;
+  waveMagnitude: number;
+  envMapIntensity: number;
+}) {
+  const baseUrl = textureToUrl(surfaceTexture);
+  const envUrl = textureToUrl(envMapTexture ?? "special/lush_env");
+
+  const [baseTexture, envTexture] = useTexture(
+    [baseUrl, envUrl],
+    (textures) => {
+      const texArray = Array.isArray(textures) ? textures : [textures];
+      texArray.forEach((tex) => {
+        setupColor(tex);
+        tex.colorSpace = NoColorSpace;
+        tex.wrapS = RepeatWrapping;
+        tex.wrapT = RepeatWrapping;
+      });
+    },
+  );
+
+  const { animationEnabled } = useSettings();
+
+  // Single shared material for all water reps
+  const material = useMemo(() => {
+    return createWaterMaterial({
+      opacity,
+      waveMagnitude,
+      envMapIntensity,
+      baseTexture,
+      envMapTexture: envTexture,
+    });
+  }, [opacity, waveMagnitude, envMapIntensity, baseTexture, envTexture]);
+
+  // Single animation loop for the shared material
+  const elapsedRef = useRef(0);
+
+  useFrame((_, delta) => {
+    if (!animationEnabled) {
+      elapsedRef.current = 0;
+      material.uniforms.uTime.value = 0;
+    } else {
+      elapsedRef.current += delta;
+      material.uniforms.uTime.value = elapsedRef.current;
+    }
+  });
+
+  useEffect(() => {
+    return () => {
+      material.dispose();
+    };
+  }, [material]);
+
+  return (
+    <>
+      {reps.map(([repX, repZ]) => {
+        // Convert from terrain space to world space by subtracting TERRAIN_OFFSET
+        // Matches Torque's L2Wm transform: L2Wv = (-1024, -1024, 0)
+        const worldX = basePosition[0] + repX * REP_SIZE - TERRAIN_OFFSET;
+        const worldZ = basePosition[2] + repZ * REP_SIZE - TERRAIN_OFFSET;
+        return (
+          <mesh
+            key={`${repX},${repZ}`}
+            geometry={surfaceGeometry}
+            material={material}
+            position={[worldX, basePosition[1], worldZ]}
+          />
+        );
+      })}
+    </>
   );
 });

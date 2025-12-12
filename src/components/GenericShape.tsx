@@ -79,8 +79,8 @@ function createMaterialFromFlags(
       side: 2, // DoubleSide
       transparent: isAdditive,
       alphaTest: isAdditive ? 0 : 0.5,
-      blending: isAdditive ? AdditiveBlending : undefined,
       fog: true,
+      ...(isAdditive && { blending: AdditiveBlending }),
     });
     applyShapeShaderModifications(mat);
     return mat;

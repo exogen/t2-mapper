@@ -1,67 +1,170 @@
-- Keep track of what your current working directory is, and consider it when
-  running shell commands. Running a command in a directory you didn't expect can
-  potentially be catastrophic. Always use the correct relative paths to files
-  based on the current directory you are in.
-- Some scripts may expect the current working directory of the process to be
-  a specific path. For example, most scripts in the `scripts` folder expect to
-  be run from the root of the repository, so file and directory paths are
-  relative to that.
-- Always write new scripts in TypeScript. Use ES6 import and export, never
-  `require()` or `createRequire()`.
-- If you think you need to use `require()` to get something working, try
-  changing how you are importing it instead (like importing the default export,
-  `import * as ...`, or other strategies).
+## Introduction
+
+This project implements Tribes 2 map rendering using Three.js. Since we have
+access to partial Tribes 2 source code and the open source Torque3D engine, as
+well as the original game assets, the game's rendering pipeline can be reproduced
+almost exactly. The primary concept demonstrated in this project is that a Torque
+mission file (which defines an object tree similar to a scene graph) can be mapped
+to a React component tree.
+
+## Technologies
+
+- Node.js
+- npm
+- TypeScript
+- React
+- Next.js
+- Three.js
+- react-three-fiber (r3f)
+- TanStack Query
+- Peggy (formerly PEG.js)
+- Vitest
+
+## Project Structure
+
+- **app/** - Next.js application.
+- **docs/** - Build output from Next.js static export. It's only called "docs"
+  because that's where GitHub Pages will look for it. NOT intended for actual
+  docs. Don't add or look for documentation here!
+- **docs/base/** - Game files from Tribes 2, including extracted .vl2 contents.
+  Missions/scripts (.mis, .cs), models/shapes (.dif, .dts, and their .glb
+  conversions), textures (.png, .bmp, .ifl), and more. This folder is actually
+  very helpful to explore, especially when debugging specific maps.
+- **src/** - Core implementation.
+- **src/components/** - React components and hooks.
+- **src/torqueScript/** - TorqueScript transpiler and runtime.
+- **scripts/** - Helper scripts. TypeScript files can be run directly with `tsx`.
+  Python scripts are intended for use with Blender's headless background script
+  mode, and should not be executed with Python directly.
+- **generated/** - Generated code, like the Peggy parser.
+- **reference/** - Reference materials like docs, plans, screenshots, and more.
+- **reference/TorqueEngineResources/** - A symlink to a "Torque Engine Resources"
+  folder, which may or may not exist for different developers. Developers can
+  use this to point to additional materials that provide context about Tribes 2,
+  Torque, and how it works (like the engine source code, books, user manuals,
+  game files, and conversion utilities). Use this to answer questions about the
+  engine.
+- **public/** - Static files for the Next.js app.
+
+### Three.js
+
+- Keep colorspace conversions in mind so that we're never passing incorrect
+  color values or mixing colors incorrectly. Tribes 2 specifies all colors in
+  sRGB, and thus all color operations assume sRGB. Three.js, on the other hand,
+  expects linear color values in most circumstances. Pay attention to which
+  colorspace different shaders expect (which may differ depending on the type,
+  like standard vs. Lambert vs. custom).
+
+### React
+
+- Scenes should render progressively rather than requiring all resources to be
+  ready up-front. For example, we can render the terrain even if other objects
+  in the scene aren't ready. TanStack Query and Suspense boundaries are used to
+  show placeholders and prevent blocking or "waterfalling" where possible.
+
+### Tribes 2: Torque Engine / Torque3D / V12
+
+- Tribes 2 uses an early version of the Torque3D engine known as V12. Thus, it
+  is common to refer to Tribes, Torque, and V12 interchangeably. When in doubt,
+  we're interested in Tribes 2's version of the engine specifically.
+
+- This is an old game. Some of its file formats are now obsolete and thus
+  difficult to find tooling for, especially 3D model formats like DIF (interiors)
+  and DTS (shapes).
+
+- The terms "map" and "mission" are used interchangeably.
+
+### TorqueScript
+
+- Do not make any assumptions about how TorqueScript works; it has some very
+  uncommon syntax and semantics (like case insensitivity, barewords strings, and
+  more). Refer to official documentation or the actual Torque3D SDK, which
+  contains the official grammar and source code. Check the `TorqueEngineResources`
+  folder for related materials.
+
+## Code Conventions
+
+### General Rules
+
+- Write new scripts in TypeScript unless instructed otherwise.
+- Keep code well-formatted. This project uses Prettier, but it may not necessarily
+  handle all languages (like shaders/GLSL or TorqueScript). Run Prettier to format
+  code for you.
 - Despite preferring TypeScript, it's OK if some code generation tools output
-  .js, .cjs, or .mjs files. For example, Peggy (formerly PEG.js) generated
-  parsers are JavaScript. Likewise with .js files that were generated by the
-  TorqueScript transpiler.
-- TypeScript can be executed using `tsx`.
+  JavaScript files. For example, Peggy generates JavaScript parsers. Likewise
+  with .js files generated by the TorqueScript transpiler. Don't attempt to
+  convert or format these unless requested.
+
+### Imports and Exports
+
+- Use ES6 import and export, never `require()` or `createRequire()`.
+- If you think you need to use `require()` to get something working, try
+  changing how you're importing it instead (like importing the default export,
+  `import * as …`, or other strategies).
+- Import Node's built-in modules using the `node:` prefix.
+- Use Promise-based APIs when available. For example, prefer using `node:fs/promises`
+  over `node:fs`.
+- For `node:fs` and `node:path`, prefer importing the whole module rather than
+  individual functions, since they contain many exports and short, generic names.
+  It looks nicer to reference them in code like `fs.readFile`, `path.join`, and
+  so on.
+- Don't add new npm dependencies without explicit confirmation.
+
+### Comments and Documentation
+
+- Don't add excessive code comments. Prefer being concise when writing JSDoc style
+  comments. Don't over-explain; assume your code and comments will be read by a
+  competent programmer.
+- Don't remove existing comments unless they're redundant, incorrect, or outdated.
+- Exclude `@param` and `@returns` from JSDoc comments, instead preferring
+  self-descriptive TypeScript types and parameter names. Let the function names,
+  class names, argument/parameter names, and types do most of the talking. Prefer
+  only writing the description and occasional `@example` blocks in JSDoc comments.
+  Only include examples if the usage is complex.
+- JSDoc comments may be beneficial for documenting the public API of a module,
+  not just for people reading the code. For example, some documentation generator
+  tools extract JSDoc comments, and IDEs often show JSDoc content in popups to
+  assist the developer.
+- Only write inline/single line comments around code if it's tricky and non-obvious,
+  to clarify the motivation for doing something.
+- When in doubt, use existing code to gauge the number of comments to write and
+  their level of detail.
+- Don't add long Markdown files documenting your plans unless requested. It's
+  better to have documentation of a system in its final state rather than every
+  detail of your planning.
+
+## Shell Commands and Scripts
+
+- TypeScript can be executed directly using `tsx`.
+- Keep track of your current working directory, and consider it when running
+  shell commands. Running a command in the wrong directory can be catastrophic.
+  Always use the correct relative paths to files based on the directory you're in.
+- Some scripts may expect the current working directory to be a specific path.
+  For example, most scripts in the `scripts` folder expect to be run from the
+  repository root, so file and directory paths are relative to that.
+- You are most likely running on a macOS system. Therefore, some command line
+  tools (like `awk`, `grep`, and others) may NOT be POSIX compliant. Before
+  running commands for the first time, determine what type of system you're on,
+  what versions it has, and what shell you're executing commands in (like bash
+  vs. zsh). This will prevent failures due to incorrect shell syntax, arguments,
+  or other assumptions.
+- Don't run the `build` script to verify whether a change actually worked.
+  Building the project has the potential to be destructive, since it cleans out
+  existing build artifacts. Additionally, it's much slower than simply running
+  `typecheck`, and it interferes with the dev server.
+- Don't run the dev server to verify changes. The dev server is probably already
+  running.
+- The TorqueScript grammar written in Peggy can be rebuilt with the `build:parser`
+  npm script.
+- Typechecking can be done with `typecheck` npm script or by running `tsc`
+  directly.
+- The `scripts/screenshot.ts` tool lets you screenshot a specific camera's
+  viewpoint on a specific mission. It's very useful for verifying visual changes,
+  iterating, and debugging rendering.
+
+## Git
+
 - Don't commit to git (or change any git history) unless requested. I will
   review your changes and decide when (and whether) to commit.
-- Import Node built-in modules using the `node:` prefix.
-- Use Promise-based APIs when available. For example, prefer using
-  `node:fs/promises` over `node:fs`.
-- For `node:fs` and `node:path`, prefer importing the whole module rather than
-  individual functions, since they contain a lot of exports with short names.
-  It often looks nicer to refer to them in code like `fs.readFile`, `path.join`,
-  and so on.
-- Format code according to my Prettier settings. If there is no Prettier config
-  defined, use Prettier's default settings. After any code additions or changes,
-  running Prettier on the code should not produce any changes. Instead of
-  memorizing how to format code correctly, you may run Prettier itself as a tool
-  to do formatting for you.
-- The TorqueScript grammar written in Peggy (formerly PEG.js) can be rebuilt
-  by running `npm run build:parser`.
-- Typechecking can be done with `npm run typecheck`.
-- Game files and .vl2 contents (like .mis, .cs, shapes like .dif and .dts,
-  textures like .png and .ifl, and more) can all be found in the `docs/base`
-  folder relative to the repository root.
-- You are most likely running on a macOS system, therefore some command line
-  tools (like `awk` and others) may NOT be POSIX compliant. Before executing any
-  commands for the first time, determine what type of system you are on and what
-  type of shell you are executing within. This will prevent failures due to
-  incorrect shell syntax, arguments, or other assumptions.
-- Do not write excessive comments, and prefer being concise when writing JSDoc
-  style comments. Assume your code will be read by a competent programmer and
-  don't over-explain. Prefer excluding `@param` and `@returns` from JSDoc
-  comments, as TypeScript type annotations and parameter names are often
-  sufficient - let the function names, class names, argument/parameter names,
-  and types do much of the talking. Prefer only writing the description and
-  occasional `@example` blocks in JSDoc comments (and only include examples if
-  the usage is somewhat complex).
-- JSDoc comments are more likely to be needed as documentation for the public
-  API of the codebase. This is useful for people reading docs (which may be
-  extracted from the JSDoc comments) or importing the code (if their IDE
-  shows the JSDoc description). You should therefore prioritize writing JSDoc
-  comments for exports (as opposed to internal helpers).
-- When in doubt, use the already existing code to gauge the number of comments
-  to write and their level of detail.
-- As for single-line and inline comments, only write them around code if it's
-  tricky and non-obvious, to clarify the motivation for doing something.
-- Don't write long Markdown (.md) files documenting your plans unless requested.
-  It is much better to have documentation of the system in its final state
-  rather than every detail of your planning.
-- Do not make any assumptions about how TorqueScript works, as it has some
-  uncommon syntax and semantics. Instead, reference documentation on the web, or
-  the code for the Torque3D SDK, which contains the official grammar and source
-  code.
+- Unless requested, only use non-destructive git commands (e.g. `diff`, `show`,
+  `log`). Commands like `checkout` and `reset` could result in data loss!

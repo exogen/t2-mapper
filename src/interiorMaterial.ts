@@ -28,7 +28,6 @@ import { Vector3 } from "three";
 
 export type InteriorLightingOptions = {
   surfaceOutsideVisible?: boolean;
-  debugMode?: boolean;
 };
 
 // sRGB <-> Linear conversion functions (GLSL)
@@ -57,18 +56,16 @@ float debugGrid(vec2 uv, float gridSize, float lineWidth) {
 
 export function injectInteriorLighting(
   shader: any,
-  options?: InteriorLightingOptions,
+  options: InteriorLightingOptions,
 ): void {
-  const isOutsideVisible = options?.surfaceOutsideVisible ?? false;
-  const isDebugMode = options?.debugMode ?? false;
+  const isOutsideVisible = options.surfaceOutsideVisible ?? false;
 
   // Outside surfaces: scene lighting + lightmap
   // Inside surfaces: lightmap only (no scene lighting)
   shader.uniforms.useSceneLighting = { value: isOutsideVisible };
 
-  // Debug mode uniforms
-  shader.uniforms.interiorDebugMode = { value: isDebugMode };
-  // Blue for outside visible, red for inside
+  // Debug color: blue for outside visible, red for inside
+  // Only used when DEBUG_MODE define is set
   shader.uniforms.interiorDebugColor = {
     value: isOutsideVisible
       ? new Vector3(0.0, 0.4, 1.0)
@@ -81,7 +78,6 @@ export function injectInteriorLighting(
     `#include <common>
 ${colorSpaceFunctions}
 uniform bool useSceneLighting;
-uniform bool interiorDebugMode;
 uniform vec3 interiorDebugColor;
 `,
   );
@@ -150,12 +146,10 @@ outgoingLight = resultLinear + totalEmissiveRadiance;
     `// Debug mode: overlay colored grid on top of normal rendering
 // Blue grid = SurfaceOutsideVisible (receives scene ambient light)
 // Red grid = inside surface (no scene ambient light)
-#ifdef USE_MAP
-if (interiorDebugMode) {
+#if DEBUG_MODE && defined(USE_MAP)
   // gridSize=4 creates 4x4 grid per UV tile, lineWidth=1.5 is ~1.5 pixels wide
   float gridIntensity = debugGrid(vMapUv, 4.0, 1.5);
   gl_FragColor.rgb = mix(gl_FragColor.rgb, interiorDebugColor, gridIntensity * 0.1);
-}
 #endif
 
 #include <tonemapping_fragment>`,

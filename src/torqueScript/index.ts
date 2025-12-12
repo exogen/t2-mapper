@@ -75,46 +75,37 @@ export interface RunServerResult {
 export function runServer(options: RunServerOptions): RunServerResult {
   const { missionName, missionType, runtimeOptions, onMissionLoadDone } =
     options;
-  const { signal, fileSystem } = runtimeOptions ?? {};
+  const {
+    signal,
+    fileSystem,
+    globals = {},
+    preloadScripts = [],
+  } = runtimeOptions ?? {};
+
+  // server.cs has a loop that calls `findFirstFile("scripts/*Game.cs")` and
+  // runs `exec()` on each resulting glob match. Since we can't statically
+  // analyze dynamic exec paths, we need to preload all game scripts in the same
+  // way (so they're available when exec() is called). We could assume that we
+  // only need some (like DefaultGame.cs and the one for our game type), but
+  // sometimes map authors bundle a custom script that they don't exec() in the
+  // .mis file, instead preferring to give it a "*Game.cs" name so it's loaded
+  // automatically.
+  const gameScripts = fileSystem.findFiles("scripts/*Game.cs");
 
   const runtime = createRuntime({
     ...runtimeOptions,
     globals: {
-      ...runtimeOptions?.globals,
+      ...globals,
       "$Host::Map": missionName,
       "$Host::MissionType": missionType,
     },
+    preloadScripts: [...preloadScripts, ...gameScripts],
   });
-  const gameTypeName = `${missionType}Game`;
-  const gameTypeScript = `scripts/${gameTypeName}.cs`;
 
   const ready = (async function createServer() {
     try {
       // Load all required scripts
       const serverScript = await runtime.loadFromPath("scripts/server.cs");
-      signal?.throwIfAborted();
-
-      // server.cs has a glob loop that does: findFirstFile("scripts/*Game.cs")
-      // and then exec()s each result dynamically. Since we can't statically
-      // analyze dynamic exec paths, we need to either preload all game scripts
-      // in the same way (so they're available when exec() is called) or just
-      // exec() the ones we know we need...
-      //
-      // To load them all, do:
-      // if (fileSystem) {
-      //   const gameScripts = fileSystem.findFiles("scripts/*Game.cs");
-      //   await Promise.all(
-      //     gameScripts.map((path) => runtime.loadFromPath(path)),
-      //   );
-      //   signal?.throwIfAborted();
-      // }
-      await runtime.loadFromPath("scripts/DefaultGame.cs");
-      signal?.throwIfAborted();
-      try {
-        await runtime.loadFromPath(gameTypeScript);
-      } catch (err) {
-        // It's OK if that one fails. Not every game type needs its own script.
-      }
       signal?.throwIfAborted();
 
       // Also preload the mission file (another dynamic exec path)

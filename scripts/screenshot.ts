@@ -1,4 +1,4 @@
-import fs from "node:fs";
+import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import puppeteer, { type KeyInput } from "puppeteer";
@@ -41,11 +41,6 @@ if (!missionName) {
 
 const cameraKey = String(cameraNumber) as KeyInput;
 const outputType = "png";
-const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "t2-screenshot-"));
-const outputPath = path.join(
-  tempDir,
-  `${missionName}.${cameraNumber}.${debugMode ? "debug." : ""}${outputType}`,
-);
 
 const browser = await puppeteer.launch({ headless: true });
 const page = await browser.newPage();
@@ -99,6 +94,16 @@ console.log(`Selecting camera: ${cameraNumber}`);
 await mapViewer.press(cameraKey);
 await page.waitForNetworkIdle({ idleTime: 250 });
 await sleep(100);
+
+const date = new Date()
+const tempDir = path.join(os.tmpdir(), "t2-mapper");
+
+await fs.mkdir(tempDir, { recursive: true });
+const filePrefix = date.toISOString().replace(/([:-]|\..*$)/g, '')
+const outputPath = path.join(
+  tempDir,
+  `${filePrefix}.${missionName}.${cameraNumber}.${outputType}`
+);
 
 // Take screenshot
 await mapViewer.screenshot({

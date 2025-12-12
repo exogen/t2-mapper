@@ -79,6 +79,19 @@ function SkyBoxTexture({
     [fogState],
   );
 
+  // Create stable uniform objects that persist across renders
+  // This ensures the shader gets updated values when props change
+  const uniformsRef = useRef({
+    skybox: { value: skyBox },
+    fogColor: { value: fogColor ?? new Color(0, 0, 0) },
+    enableFog: { value: enableFog },
+    inverseProjectionMatrix: { value: inverseProjectionMatrix },
+    cameraMatrixWorld: { value: camera.matrixWorld },
+    cameraHeight: globalFogUniforms.cameraHeight,
+    fogVolumeData: { value: fogVolumeData },
+    horizonFogHeight: { value: 0.18 },
+  });
+
   // Calculate the horizon fog cutoff based on visible distance
   // In Torque's sky.cc:
   //   mRadius = visibleDistance * 0.95
@@ -106,6 +119,15 @@ function SkyBoxTexture({
     );
   }, [fogState]);
 
+  // Update uniform values when props change
+  useEffect(() => {
+    uniformsRef.current.skybox.value = skyBox;
+    uniformsRef.current.fogColor.value = fogColor ?? new Color(0, 0, 0);
+    uniformsRef.current.enableFog.value = enableFog;
+    uniformsRef.current.fogVolumeData.value = fogVolumeData;
+    uniformsRef.current.horizonFogHeight.value = horizonFogHeight;
+  }, [skyBox, fogColor, enableFog, fogVolumeData, horizonFogHeight]);
+
   return (
     <mesh renderOrder={-1000} frustumCulled={false}>
       <bufferGeometry>
@@ -123,16 +145,7 @@ function SkyBoxTexture({
         />
       </bufferGeometry>
       <shaderMaterial
-        uniforms={{
-          skybox: { value: skyBox },
-          fogColor: { value: fogColor ?? new Color(0, 0, 0) },
-          enableFog: { value: enableFog },
-          inverseProjectionMatrix: { value: inverseProjectionMatrix },
-          cameraMatrixWorld: { value: camera.matrixWorld },
-          cameraHeight: globalFogUniforms.cameraHeight,
-          fogVolumeData: { value: fogVolumeData },
-          horizonFogHeight: { value: horizonFogHeight },
-        }}
+        uniforms={uniformsRef.current}
         vertexShader={`
           varying vec2 vUv;
 
@@ -339,6 +352,27 @@ function SolidColorSky({
     );
   }, [fogState]);
 
+  // Create stable uniform objects that persist across renders
+  const uniformsRef = useRef({
+    skyColor: { value: skyColor },
+    fogColor: { value: fogColor ?? new Color(0, 0, 0) },
+    enableFog: { value: enableFog },
+    inverseProjectionMatrix: { value: inverseProjectionMatrix },
+    cameraMatrixWorld: { value: camera.matrixWorld },
+    cameraHeight: globalFogUniforms.cameraHeight,
+    fogVolumeData: { value: fogVolumeData },
+    horizonFogHeight: { value: horizonFogHeight },
+  });
+
+  // Update uniform values when props change
+  useEffect(() => {
+    uniformsRef.current.skyColor.value = skyColor;
+    uniformsRef.current.fogColor.value = fogColor ?? new Color(0, 0, 0);
+    uniformsRef.current.enableFog.value = enableFog;
+    uniformsRef.current.fogVolumeData.value = fogVolumeData;
+    uniformsRef.current.horizonFogHeight.value = horizonFogHeight;
+  }, [skyColor, fogColor, enableFog, fogVolumeData, horizonFogHeight]);
+
   return (
     <mesh renderOrder={-1000} frustumCulled={false}>
       <bufferGeometry>
@@ -356,16 +390,7 @@ function SolidColorSky({
         />
       </bufferGeometry>
       <shaderMaterial
-        uniforms={{
-          skyColor: { value: skyColor },
-          fogColor: { value: fogColor ?? new Color(0, 0, 0) },
-          enableFog: { value: enableFog },
-          inverseProjectionMatrix: { value: inverseProjectionMatrix },
-          cameraMatrixWorld: { value: camera.matrixWorld },
-          cameraHeight: globalFogUniforms.cameraHeight,
-          fogVolumeData: { value: fogVolumeData },
-          horizonFogHeight: { value: horizonFogHeight },
-        }}
+        uniforms={uniformsRef.current}
         vertexShader={`
           varying vec2 vUv;
 
@@ -491,7 +516,13 @@ function calculateFogParameters(
  * 2. Volume fog: Height-based fog using per-volume parameters
  * Both are combined additively, matching Torque's getHazeAndFog function.
  */
-function DynamicFog({ fogState }: { fogState: FogState }) {
+function DynamicFog({
+  fogState,
+  enabled,
+}: {
+  fogState: FogState;
+  enabled: boolean;
+}) {
   const { scene, camera } = useThree();
   const fogRef = useRef<Fog | null>(null);
 
@@ -530,6 +561,24 @@ function DynamicFog({ fogState }: { fogState: FogState }) {
     };
   }, [scene, camera, fogState, fogVolumeData]);
 
+  // When fog is disabled, set near=far to effectively disable fog
+  // without removing scene.fog (which would require shader recompilation)
+  useEffect(() => {
+    const fog = fogRef.current;
+    if (!fog) return;
+
+    if (enabled) {
+      const [near, far] = calculateFogParameters(fogState, camera.position.y);
+      fog.near = near;
+      fog.far = far;
+    } else {
+      // Setting near = far = large value effectively disables fog
+      // (fog factor = 0 when distance < near)
+      fog.near = 1e10;
+      fog.far = 1e10;
+    }
+  }, [enabled, fogState, camera.position.y]);
+
   // Update fog parameters each frame based on camera height
   useFrame(() => {
     const fog = fogRef.current;
@@ -537,14 +586,17 @@ function DynamicFog({ fogState }: { fogState: FogState }) {
 
     const cameraHeight = camera.position.y;
 
-    // Update Three.js basic fog
-    const [near, far] = calculateFogParameters(fogState, cameraHeight);
-    fog.near = near;
-    fog.far = far;
-    fog.color.copy(fogState.fogColor);
+    // Always update global fog uniforms so shaders know the enabled state
+    updateGlobalFogUniforms(cameraHeight, fogVolumeData, enabled);
 
-    // Update global fog uniforms for volumetric fog shaders
-    updateGlobalFogUniforms(cameraHeight, fogVolumeData);
+    if (enabled) {
+      // Update Three.js basic fog
+      const [near, far] = calculateFogParameters(fogState, cameraHeight);
+      fog.near = near;
+      fog.far = far;
+      fog.color.copy(fogState.fogColor);
+    }
+    // When disabled, fog.near/far are already set to 1e10 by the useEffect
   });
 
   return null;
@@ -632,7 +684,12 @@ export function Sky({ object }: { object: TorqueObject }) {
       <Suspense>
         <CloudLayers object={object} />
       </Suspense>
-      {hasFogParams ? <DynamicFog fogState={fogState} /> : null}
+      {/* Always render DynamicFog when mission has fog params.
+          Pass fogEnabled to control visibility - this avoids shader recompilation
+          when toggling fog (USE_FOG stays defined, but fog.near/far disable fog). */}
+      {fogState.enabled ? (
+        <DynamicFog fogState={fogState} enabled={fogEnabled} />
+      ) : null}
     </>
   );
 }

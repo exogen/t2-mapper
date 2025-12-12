@@ -58,6 +58,13 @@ export const fogUniformsDeclaration = `
  */
 export const fogFragmentShader = `
 #ifdef USE_FOG
+  // Check fog enabled uniform - allows toggling without shader recompilation
+  #ifdef USE_VOLUMETRIC_FOG
+  if (!fogEnabled) {
+    // Skip all fog calculations when disabled
+  } else {
+  #endif
+
   float dist = vFogDepth;
 
   // Discard fragments at or beyond visible distance - matches Torque's behavior
@@ -163,6 +170,10 @@ export const fogFragmentShader = `
 
   // Apply fog using global fogColor (per-volume colors not used in Tribes 2)
   gl_FragColor.rgb = mix(gl_FragColor.rgb, fogColor, fogFactor);
+
+  #ifdef USE_VOLUMETRIC_FOG
+  } // end fogEnabled check
+  #endif
 #endif
 `;
 
@@ -245,6 +256,7 @@ export function installCustomFogShader(): void {
 export interface FogShaderUniformObjects {
   fogVolumeData: { value: Float32Array };
   cameraHeight: { value: number };
+  fogEnabled: { value: boolean };
 }
 
 /**
@@ -261,6 +273,7 @@ export function addFogUniformsToShader(
   // Pass the uniform objects directly so they stay linked to FogProvider updates
   shader.uniforms.fogVolumeData = fogUniforms.fogVolumeData;
   shader.uniforms.cameraHeight = fogUniforms.cameraHeight;
+  shader.uniforms.fogEnabled = fogUniforms.fogEnabled;
 }
 
 /**
@@ -309,6 +322,7 @@ export function injectCustomFog(
   #define USE_VOLUMETRIC_FOG
   uniform float fogVolumeData[12];
   uniform float cameraHeight;
+  uniform bool fogEnabled;
   #define USE_FOG_WORLD_POSITION
   varying vec3 vFogWorldPosition;
 #endif`,

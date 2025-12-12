@@ -1,5 +1,10 @@
-import { memo, Suspense, useCallback, useMemo } from "react";
-import { type BufferGeometry, DataTexture, FrontSide } from "three";
+import { memo, Suspense, useCallback, useEffect, useMemo, useRef } from "react";
+import {
+  type BufferGeometry,
+  DataTexture,
+  FrontSide,
+  type MeshLambertMaterial,
+} from "three";
 import { useTexture } from "@react-three/drei";
 import {
   FALLBACK_TEXTURE_URL,
@@ -83,7 +88,6 @@ function BlendedTerrainTextures({
         alphaTextures,
         visibilityMask,
         tiling: TILING,
-        debugMode,
         detailTexture: detailTextureUrl ? detailTexture : null,
         lightmap,
       });
@@ -95,28 +99,43 @@ function BlendedTerrainTextures({
       baseTextures,
       alphaTextures,
       visibilityMask,
-      debugMode,
       detailTexture,
       detailTextureUrl,
       lightmap,
     ],
   );
 
-  // Key must include factors that change shader code structure (not just uniforms)
-  // - debugMode: affects fragment shader branching
-  // - detailTextureUrl: affects vertex shader (adds varying) and fragment shader
-  // - lightmap: affects shader structure (uses lightmap for NdotL instead of vertex normals)
-  const materialKey = `${debugMode ? "debug" : "normal"}-${detailTextureUrl ? "detail" : "nodetail"}-${lightmap ? "lightmap" : "nolightmap"}`;
+  // Ref for forcing shader recompilation
+  const materialRef = useRef<MeshLambertMaterial>(null);
+
+  // Force shader recompilation when debugMode changes
+  // r3f doesn't sync defines prop changes, so we update the material directly
+  useEffect(() => {
+    const mat = materialRef.current as MeshLambertMaterial & {
+      defines?: Record<string, number>;
+    };
+    if (mat) {
+      mat.defines ??= {};
+      mat.defines.DEBUG_MODE = debugMode ? 1 : 0;
+      mat.needsUpdate = true;
+    }
+  }, [debugMode]);
+
+  // Key for shader structure changes (detail texture, lightmap)
+  const materialKey = `${detailTextureUrl ? "detail" : "nodetail"}-${lightmap ? "lightmap" : "nolightmap"}`;
 
   // Displacement is done on CPU, so no displacementMap needed
   // We keep 'map' to provide UV coordinates for shader (vMapUv)
   // Use MeshLambertMaterial for compatibility with shadow maps
   return (
     <meshLambertMaterial
+      ref={materialRef}
       key={materialKey}
       map={displacementMap}
       depthWrite
       side={FrontSide}
+      // @ts-expect-error - defines exists on Material but R3F types don't expose it
+      defines={{ DEBUG_MODE: debugMode ? 1 : 0 }}
       onBeforeCompile={onBeforeCompile}
     />
   );

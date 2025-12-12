@@ -19,6 +19,8 @@ import type { TorqueObject } from "../torqueScript";
 import { getFloat, getProperty } from "../mission";
 import { useDebug, useSettings } from "./SettingsProvider";
 
+const noop = () => {};
+
 const GRID_SIZE = 5;
 const VERTEX_COUNT = GRID_SIZE * GRID_SIZE;
 
@@ -344,8 +346,6 @@ interface CloudLayerProps {
   speed: number;
   windDirection: Vector2;
   layerIndex: number;
-  debugMode: boolean;
-  animationEnabled: boolean;
 }
 
 /**
@@ -358,11 +358,10 @@ function CloudLayer({
   speed,
   windDirection,
   layerIndex,
-  debugMode,
-  animationEnabled,
 }: CloudLayerProps) {
-  const materialRef = useRef<ShaderMaterial>(null!);
-  const offsetRef = useRef(new Vector2(0, 0));
+  const { debugMode } = useDebug();
+  const { animationEnabled } = useSettings();
+  const offsetRef = useRef<Vector2 | null>(null);
 
   // Load cloud texture
   const texture = useTexture(textureUrl, setupCloudTexture);
@@ -375,6 +374,12 @@ function CloudLayer({
     const edgeHeight = EDGE_HEIGHT;
     return createCloudGeometry(radius, centerHeight, innerHeight, edgeHeight);
   }, [radius, heightPercent]);
+
+  useEffect(() => {
+    return () => {
+      geometry.dispose();
+    };
+  }, [geometry]);
 
   // Create shader material
   const material = useMemo(() => {
@@ -393,36 +398,38 @@ function CloudLayer({
     });
   }, [texture, debugMode, layerIndex]);
 
+  useEffect(() => {
+    return () => {
+      material.dispose();
+    };
+  }, [material]);
+
   // Animate UV offset for cloud scrolling
   // From Tribes 2: mOffset = (currentTime - mLastTime) / 32.0 (time in ms)
   // delta is in seconds, so: delta * 1000 / 32 = delta * 31.25
-  useFrame((_, delta) => {
-    if (!materialRef.current || !animationEnabled) return;
+  useFrame(
+    animationEnabled
+      ? (_, delta) => {
+          // Match Tribes 2 timing: deltaTime(ms) / 32
+          const mOffset = (delta * 1000) / 32;
 
-    // Match Tribes 2 timing: deltaTime(ms) / 32
-    const mOffset = (delta * 1000) / 32;
+          offsetRef.current ??= new Vector2(0, 0);
 
-    offsetRef.current.x += windDirection.x * speed * mOffset;
-    offsetRef.current.y += windDirection.y * speed * mOffset;
+          offsetRef.current.x += windDirection.x * speed * mOffset;
+          offsetRef.current.y += windDirection.y * speed * mOffset;
 
-    // Wrap to [0,1] range
-    offsetRef.current.x = offsetRef.current.x - Math.floor(offsetRef.current.x);
-    offsetRef.current.y = offsetRef.current.y - Math.floor(offsetRef.current.y);
+          // Wrap to [0,1] range
+          offsetRef.current.x -= Math.floor(offsetRef.current.x);
+          offsetRef.current.y -= Math.floor(offsetRef.current.y);
 
-    materialRef.current.uniforms.uvOffset.value.copy(offsetRef.current);
-  });
-
-  // Cleanup
-  useEffect(() => {
-    return () => {
-      geometry.dispose();
-      material.dispose();
-    };
-  }, [geometry, material]);
+          material.uniforms.uvOffset.value.copy(offsetRef.current);
+        }
+      : noop,
+  );
 
   return (
     <mesh geometry={geometry} frustumCulled={false} renderOrder={10}>
-      <primitive ref={materialRef} object={material} attach="material" />
+      <primitive object={material} attach="material" />
     </mesh>
   );
 }
@@ -439,7 +446,7 @@ export interface CloudLayerConfig {
  * 6: Environment map
  * 7+: Cloud layer textures
  */
-const CLOUD_TEXTURE_OFFSET = 7;
+const CLOUD_TEXTURE_START_INDEX = 7;
 
 /**
  * Hook to load a DML file.
@@ -467,8 +474,6 @@ export interface CloudLayersProps {
  * - windVelocity: Wind direction for cloud movement
  */
 export function CloudLayers({ object }: CloudLayersProps) {
-  const { debugMode } = useDebug();
-  const { animationEnabled } = useSettings();
   const materialList = getProperty(object, "materialList");
   const { data: detailMapList } = useDetailMapList(materialList);
 
@@ -476,7 +481,6 @@ export function CloudLayers({ object }: CloudLayersProps) {
   const visibleDistance = getFloat(object, "visibleDistance") ?? 500;
   const radius = visibleDistance * 0.95;
 
-  // Extract cloud speeds from object (cloudSpeed1/2/3 are scalar values)
   const cloudSpeeds = useMemo(
     () => [
       getFloat(object, "cloudSpeed1") ?? 0.0001,
@@ -486,17 +490,14 @@ export function CloudLayers({ object }: CloudLayersProps) {
     [object],
   );
 
-  // Extract cloud heights from object
-  // Default heights match typical Tribes 2 values (e.g., 0.35, 0.25, 0.2)
-  const cloudHeights = useMemo(() => {
-    const defaults = [0.35, 0.25, 0.2];
-    const heights: number[] = [];
-    for (let i = 0; i < 3; i++) {
-      const height = getFloat(object, `cloudHeightPer${i}`) ?? defaults[i];
-      heights.push(height);
-    }
-    return heights;
-  }, [object]);
+  const cloudHeights = useMemo(
+    () => [
+      getFloat(object, "cloudHeightPer1") ?? 0.35,
+      getFloat(object, "cloudHeightPer2") ?? 0.25,
+      getFloat(object, "cloudHeightPer3") ?? 0.2,
+    ],
+    [object],
+  );
 
   // Wind direction from windVelocity
   // Torque uses Z-up with windVelocity (x, y, z) where Y is forward.
@@ -519,14 +520,13 @@ export function CloudLayers({ object }: CloudLayersProps) {
     if (!detailMapList) return [];
 
     const result: CloudLayerConfig[] = [];
-    for (let i = CLOUD_TEXTURE_OFFSET; i < detailMapList.length; i++) {
-      const texture = detailMapList[i];
+    for (let i = 0; i < 3; i++) {
+      const texture = detailMapList[CLOUD_TEXTURE_START_INDEX + i];
       if (texture) {
-        const layerIndex = i - CLOUD_TEXTURE_OFFSET;
         result.push({
           texture,
-          height: cloudHeights[layerIndex] ?? 0,
-          speed: cloudSpeeds[layerIndex] ?? 0.0001 * (layerIndex + 1),
+          height: cloudHeights[i],
+          speed: cloudSpeeds[i],
         });
       }
     }
@@ -562,8 +562,6 @@ export function CloudLayers({ object }: CloudLayersProps) {
               speed={layer.speed}
               windDirection={windDirection}
               layerIndex={i}
-              debugMode={debugMode}
-              animationEnabled={animationEnabled}
             />
           </Suspense>
         );

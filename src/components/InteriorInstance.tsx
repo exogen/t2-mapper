@@ -1,9 +1,11 @@
-import { memo, Suspense, useMemo, useCallback } from "react";
+import { memo, Suspense, useMemo, useCallback, useEffect, useRef } from "react";
 import { ErrorBoundary } from "react-error-boundary";
 import {
   Mesh,
   Material,
   MeshStandardMaterial,
+  MeshBasicMaterial,
+  MeshLambertMaterial,
   Texture,
   SRGBColorSpace,
 } from "three";
@@ -58,23 +60,43 @@ function InteriorTexture({
       injectCustomFog(shader, globalFogUniforms);
       injectInteriorLighting(shader, {
         surfaceOutsideVisible: isSurfaceOutsideVisible,
-        debugMode,
       });
     },
-    [isSurfaceOutsideVisible, debugMode],
+    [isSurfaceOutsideVisible],
   );
 
-  // Key includes shader-affecting props to force recompilation when they change
-  // (r3f doesn't reactively recompile shaders on prop changes)
-  const materialKey = `${isSurfaceOutsideVisible}-${debugMode}`;
+  // Refs for forcing shader recompilation
+  const basicMaterialRef = useRef<MeshBasicMaterial>(null);
+  const lambertMaterialRef = useRef<MeshLambertMaterial>(null);
+
+  // Force shader recompilation when debugMode changes
+  // r3f doesn't sync defines prop changes, so we update the material directly
+  useEffect(() => {
+    const mat = (basicMaterialRef.current ?? lambertMaterialRef.current) as
+      | (Material & { defines?: Record<string, number> })
+      | null;
+    if (mat) {
+      mat.defines ??= {};
+      mat.defines.DEBUG_MODE = debugMode ? 1 : 0;
+      mat.needsUpdate = true;
+    }
+  }, [debugMode]);
+
+  const defines = { DEBUG_MODE: debugMode ? 1 : 0 };
+
+  // Key for shader structure changes (surfaceOutsideVisible affects lighting model)
+  const materialKey = `${isSurfaceOutsideVisible}`;
 
   // Self-illuminating materials are fullbright (unlit), no lightmap
   if (isSelfIlluminating) {
     return (
       <meshBasicMaterial
+        ref={basicMaterialRef}
         key={materialKey}
         map={texture}
         toneMapped={false}
+        // @ts-expect-error - defines exists on Material but R3F types don't expose it
+        defines={defines}
         onBeforeCompile={onBeforeCompile}
       />
     );
@@ -89,10 +111,13 @@ function InteriorTexture({
   // Using FrontSide (default) - normals are fixed in io_dif Blender export
   return (
     <meshLambertMaterial
+      ref={lambertMaterialRef}
       key={materialKey}
       map={texture}
       lightMap={lightMap ?? undefined}
       toneMapped={false}
+      // @ts-expect-error - defines exists on Material but R3F types don't expose it
+      defines={defines}
       onBeforeCompile={onBeforeCompile}
     />
   );

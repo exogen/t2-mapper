@@ -3,6 +3,7 @@ import {
   ReactNode,
   useContext,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -95,7 +96,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   );
 
   // Read persisted settings from localStorage.
-  useEffect(() => {
+  useLayoutEffect(() => {
     let savedSettings: PersistedSettings = {};
     try {
       savedSettings = JSON.parse(localStorage.getItem("settings")) || {};

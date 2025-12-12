@@ -57,7 +57,6 @@ export function updateTerrainTextureShader({
   alphaTextures,
   visibilityMask,
   tiling,
-  debugMode = false,
   detailTexture = null,
   lightmap = null,
 }: {
@@ -66,7 +65,6 @@ export function updateTerrainTextureShader({
   alphaTextures: any[];
   visibilityMask: any;
   tiling: Record<number, number>;
-  debugMode?: boolean;
   detailTexture?: any;
   lightmap?: any;
 }) {
@@ -94,8 +92,6 @@ export function updateTerrainTextureShader({
     };
   });
 
-  // Add debug mode uniform
-  shader.uniforms.debugMode = { value: debugMode ? 1.0 : 0.0 };
 
   // Add lightmap uniform for smooth per-pixel terrain lighting
   if (lightmap) {
@@ -141,7 +137,6 @@ uniform float tiling2;
 uniform float tiling3;
 uniform float tiling4;
 uniform float tiling5;
-uniform float debugMode;
 ${visibilityMask ? "uniform sampler2D visibilityMask;" : ""}
 ${lightmap ? "uniform sampler2D terrainLightmap;" : ""}
 ${
@@ -344,14 +339,15 @@ void RE_Direct_TerrainShadow( const in IncidentLight directLight, const in vec3 
   );
 
   // Add debug grid overlay AFTER opaque_fragment sets gl_FragColor
+  // Uses #if so material.defines.DEBUG_MODE (0 or 1) can trigger recompilation
   shader.fragmentShader = shader.fragmentShader.replace(
     "#include <tonemapping_fragment>",
-    `// Debug mode: overlay green grid matching terrain grid squares (256x256)
-if (debugMode > 0.5) {
+    `#if DEBUG_MODE
+  // Debug mode: overlay green grid matching terrain grid squares (256x256)
   float gridIntensity = terrainDebugGrid(vMapUv, 256.0, 1.5);
   vec3 gridColor = vec3(0.0, 0.8, 0.4); // Green
   gl_FragColor.rgb = mix(gl_FragColor.rgb, gridColor, gridIntensity * 0.05);
-}
+#endif
 
 #include <tonemapping_fragment>`,
   );
