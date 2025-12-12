@@ -39,8 +39,10 @@ const sourceGroupNames: Record<string, string> = {
   "z_mappacks/CTF/TWL2-MapPack.vl2": "TWL2",
   "z_mappacks/CTF/TWL2-MapPackEDIT.vl2": "TWL2",
   "z_mappacks/TWL_T2arenaOfficialMaps.vl2": "Arena",
+  "z_mappacks/xPack2.vl2": "xPack2",
   "z_mappacks/z_DMP2-V0.6.vl2": "DMP2 (Discord Map Pack)",
   "z_mappacks/zDMP-4.7.3DX.vl2": "DMP (Discord Map Pack)",
+  "z_mappacks/zDMP-4.7.3DX-ServerOnly.vl2": "DMP (Discord Map Pack)",
 };
 
 const dirGroupNames: Record<string, string> = {

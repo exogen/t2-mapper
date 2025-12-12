@@ -2,7 +2,7 @@
 import { useState, useEffect, useCallback, Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { Canvas, GLProps } from "@react-three/fiber";
-import { NoToneMapping, SRGBColorSpace } from "three";
+import { NoToneMapping, SRGBColorSpace, PCFShadowMap } from "three";
 import { Mission } from "@/src/components/Mission";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ObserverControls } from "@/src/components/ObserverControls";
@@ -94,7 +94,7 @@ function MapInspector() {
                 </div>
               </div>
             )}
-            <Canvas frameloop="always" gl={glSettings} shadows="soft">
+            <Canvas frameloop="always" gl={glSettings} shadows={{ type: PCFShadowMap }}>
               <CamerasProvider>
                 <AudioProvider>
                   <Mission

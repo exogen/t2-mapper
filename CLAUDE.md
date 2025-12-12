@@ -124,7 +124,7 @@ to a React component tree.
 - JSDoc comments may be beneficial for documenting the public API of a module,
   not just for people reading the code. For example, some documentation generator
   tools extract JSDoc comments, and IDEs often show JSDoc content in popups to
-  assist the developer.
+  assist developers.
 - Only write inline/single line comments around code if it's tricky and non-obvious,
   to clarify the motivation for doing something.
 - When in doubt, use existing code to gauge the number of comments to write and
@@ -156,11 +156,11 @@ to a React component tree.
   running.
 - The TorqueScript grammar written in Peggy can be rebuilt with the `build:parser`
   npm script.
-- Typechecking can be done with `typecheck` npm script or by running `tsc`
+- Typechecking can be done with the `typecheck` npm script or by running `tsc`
   directly.
 - The `scripts/screenshot.ts` tool lets you screenshot a specific camera's
   viewpoint on a specific mission. It's very useful for verifying visual changes,
-  iterating, and debugging rendering.
+  iterating, and debugging rendering. Read the script to learn how to use it.
 
 ## Git
 

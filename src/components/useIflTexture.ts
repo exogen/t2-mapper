@@ -29,8 +29,9 @@ interface IflAtlas {
 const atlasCache = new Map<string, IflAtlas>();
 
 function createAtlas(textures: Texture[]): IflAtlas {
-  const frameWidth = textures[0].image.width;
-  const frameHeight = textures[0].image.height;
+  const firstImage = textures[0].image as HTMLImageElement;
+  const frameWidth = firstImage.width;
+  const frameHeight = firstImage.height;
   const frameCount = textures.length;
 
   // Arrange frames in a roughly square grid.
@@ -45,7 +46,7 @@ function createAtlas(textures: Texture[]): IflAtlas {
   textures.forEach((tex, i) => {
     const col = i % columns;
     const row = Math.floor(i / columns);
-    ctx.drawImage(tex.image, col * frameWidth, row * frameHeight);
+    ctx.drawImage(tex.image as CanvasImageSource, col * frameWidth, row * frameHeight);
   });
 
   const texture = new CanvasTexture(canvas);

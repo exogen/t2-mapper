@@ -17,7 +17,7 @@ import {
   Vector3,
 } from "three";
 import type { TorqueObject } from "../torqueScript";
-import { getFloat, getInt, getPosition, getProperty } from "../mission";
+import { getFloat, getInt, getProperty } from "../mission";
 import { loadTerrain } from "../loaders";
 import { uint16ToFloat32 } from "../arrayUtils";
 import { setupMask } from "../textureUtils";
@@ -543,10 +543,13 @@ export const TerrainBlock = memo(function TerrainBlock({
   const visibleDistance = useVisibleDistance();
   const camera = useThree((state) => state.camera);
 
+  // Torque ignores the mission's terrain position and always uses a fixed formula:
+  // setPosition(Point3F(-squareSize * (BlockSize >> 1), -squareSize * (BlockSize >> 1), 0));
+  // where BlockSize = 256. See tribes2-engine/terrain/terrData.cc:679
   const basePosition = useMemo(() => {
-    const [x, , z] = getPosition(object);
-    return { x, z };
-  }, [object]);
+    const offset = -squareSize * (TERRAIN_SIZE / 2);
+    return { x: offset, z: offset };
+  }, [squareSize]);
 
   const emptySquares = useMemo(() => {
     const value = getProperty(object, "emptySquares");

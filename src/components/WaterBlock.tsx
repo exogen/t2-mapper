@@ -11,7 +11,7 @@ import {
   getRotation,
   getScale,
 } from "../mission";
-import { setupColor } from "../textureUtils";
+import { setupTexture } from "../textureUtils";
 import { createWaterMaterial } from "../waterMaterial";
 import { useDebug, useSettings } from "./SettingsProvider";
 import { usePositionTracker } from "./usePositionTracker";
@@ -63,7 +63,7 @@ export function WaterMaterial({
   attach?: string;
 }) {
   const url = textureToUrl(surfaceTexture);
-  const texture = useTexture(url, (texture) => setupColor(texture));
+  const texture = useTexture(url, (texture) => setupTexture(texture));
 
   return (
     <meshStandardMaterial
@@ -309,7 +309,7 @@ const WaterReps = memo(function WaterReps({
     (textures) => {
       const texArray = Array.isArray(textures) ? textures : [textures];
       texArray.forEach((tex) => {
-        setupColor(tex);
+        setupTexture(tex);
         tex.colorSpace = NoColorSpace;
         tex.wrapS = RepeatWrapping;
         tex.wrapT = RepeatWrapping;

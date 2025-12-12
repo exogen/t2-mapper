@@ -17,6 +17,8 @@
  * 4. Final output = lightmap × texture, all in gamma space
  */
 
+import { globalSunUniforms } from "./globalSunUniforms";
+
 // Terrain and texture dimensions (must match TerrainBlock.tsx constants)
 const TERRAIN_SIZE = 256; // Terrain grid size in squares
 const LIGHTMAP_SIZE = 512; // Lightmap texture size (2 pixels per terrain square)
@@ -68,16 +70,17 @@ export function updateTerrainTextureShader({
   detailTexture?: any;
   lightmap?: any;
 }) {
+  // Add global sun uniform (shared reference - value updates automatically)
+  shader.uniforms.sunLightPointsDown = globalSunUniforms.sunLightPointsDown;
   const layerCount = baseTextures.length;
 
   baseTextures.forEach((tex, i) => {
     shader.uniforms[`albedo${i}`] = { value: tex };
   });
 
+  // Pass all alpha textures including mask0 for additive blending
   alphaTextures.forEach((tex, i) => {
-    if (i > 0) {
-      shader.uniforms[`mask${i}`] = { value: tex };
-    }
+    shader.uniforms[`mask${i}`] = { value: tex };
   });
 
   // Add visibility mask uniform if we have empty squares
@@ -91,7 +94,6 @@ export function updateTerrainTextureShader({
       value: tiling[i] ?? 32,
     };
   });
-
 
   // Add lightmap uniform for smooth per-pixel terrain lighting
   if (lightmap) {
@@ -126,6 +128,7 @@ uniform sampler2D albedo2;
 uniform sampler2D albedo3;
 uniform sampler2D albedo4;
 uniform sampler2D albedo5;
+uniform sampler2D mask0;
 uniform sampler2D mask1;
 uniform sampler2D mask2;
 uniform sampler2D mask3;
@@ -139,6 +142,7 @@ uniform float tiling4;
 uniform float tiling5;
 ${visibilityMask ? "uniform sampler2D visibilityMask;" : ""}
 ${lightmap ? "uniform sampler2D terrainLightmap;" : ""}
+uniform bool sunLightPointsDown;
 ${
   detailTexture
     ? `uniform sampler2D detailTexture;
@@ -202,25 +206,29 @@ float terrainShadowFactor = 1.0;
       : ""
   }
 
-  // Sample linear masks (use R channel)
+  // Sample alpha masks for all layers (use R channel)
   // Add +0.5 texel offset: Torque samples alpha at grid corners (integer indices),
   // but GPU linear filtering samples at texel centers. This offset aligns them.
   vec2 alphaUv = baseUv + vec2(0.5 / ${TERRAIN_SIZE}.0);
-  float a1 = texture2D(mask1, alphaUv).r;
-  ${layerCount > 1 ? `float a2 = texture2D(mask2, alphaUv).r;` : ""}
-  ${layerCount > 2 ? `float a3 = texture2D(mask3, alphaUv).r;` : ""}
-  ${layerCount > 3 ? `float a4 = texture2D(mask4, alphaUv).r;` : ""}
-  ${layerCount > 4 ? `float a5 = texture2D(mask5, alphaUv).r;` : ""}
+  float a0 = texture2D(mask0, alphaUv).r;
+  ${layerCount > 1 ? `float a1 = texture2D(mask1, alphaUv).r;` : ""}
+  ${layerCount > 2 ? `float a2 = texture2D(mask2, alphaUv).r;` : ""}
+  ${layerCount > 3 ? `float a3 = texture2D(mask3, alphaUv).r;` : ""}
+  ${layerCount > 4 ? `float a4 = texture2D(mask4, alphaUv).r;` : ""}
+  ${layerCount > 5 ? `float a5 = texture2D(mask5, alphaUv).r;` : ""}
 
-  // Bottom-up compositing: each mask tells how much the higher layer replaces lower
-  ${layerCount > 1 ? `vec3 blended = mix(c0, c1, clamp(a1, 0.0, 1.0));` : ""}
-  ${layerCount > 2 ? `blended = mix(blended, c2, clamp(a2, 0.0, 1.0));` : ""}
-  ${layerCount > 3 ? `blended = mix(blended, c3, clamp(a3, 0.0, 1.0));` : ""}
-  ${layerCount > 4 ? `blended = mix(blended, c4, clamp(a4, 0.0, 1.0));` : ""}
-  ${layerCount > 5 ? `blended = mix(blended, c5, clamp(a5, 0.0, 1.0));` : ""}
+  // Torque-style additive weighted blending (blender.cc):
+  // result = tex0 * alpha0 + tex1 * alpha1 + tex2 * alpha2 + ...
+  // Each layer's alpha map defines its contribution weight.
+  vec3 blended = c0 * a0;
+  ${layerCount > 1 ? `blended += c1 * a1;` : ""}
+  ${layerCount > 2 ? `blended += c2 * a2;` : ""}
+  ${layerCount > 3 ? `blended += c3 * a3;` : ""}
+  ${layerCount > 4 ? `blended += c4 * a4;` : ""}
+  ${layerCount > 5 ? `blended += c5 * a5;` : ""}
 
   // Assign to diffuseColor before lighting
-  vec3 textureColor = ${layerCount > 1 ? "blended" : "c0"};
+  vec3 textureColor = blended;
 
   ${
     detailTexture
@@ -256,6 +264,12 @@ float terrainShadowFactor = 1.0;
 // Override RE_Direct to extract shadow factor for Torque-style gamma-space lighting
 #undef RE_Direct
 void RE_Direct_TerrainShadow( const in IncidentLight directLight, const in vec3 geometryPosition, const in vec3 geometryNormal, const in vec3 geometryViewDir, const in vec3 geometryClearcoatNormal, const in LambertMaterial material, inout ReflectedLight reflectedLight ) {
+  // Torque lighting (terrLighting.cc): if light points up, terrain gets only ambient
+  // This prevents shadow acne from light hitting terrain backfaces
+  if (!sunLightPointsDown) {
+    terrainShadowFactor = 0.0;
+    return;
+  }
   // directLight.color = sunColor * shadowFactor (shadow already applied by Three.js)
   // Extract shadow factor by comparing to original sun color
   #if ( NUM_DIR_LIGHTS > 0 )

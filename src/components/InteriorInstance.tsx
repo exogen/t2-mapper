@@ -13,7 +13,7 @@ import { useGLTF, useTexture } from "@react-three/drei";
 import { textureToUrl, interiorToUrl } from "../loaders";
 import type { TorqueObject } from "../torqueScript";
 import { getPosition, getProperty, getRotation, getScale } from "../mission";
-import { setupColor } from "../textureUtils";
+import { setupTexture } from "../textureUtils";
 import { FloatingLabel } from "./FloatingLabel";
 import { useDebug } from "./SettingsProvider";
 import { injectCustomFog } from "../fogShader";
@@ -40,7 +40,7 @@ function InteriorTexture({
   const debugContext = useDebug();
   const debugMode = debugContext?.debugMode ?? false;
   const url = textureToUrl(materialName);
-  const texture = useTexture(url, (texture) => setupColor(texture));
+  const texture = useTexture(url, (texture) => setupTexture(texture));
 
   // Check for self-illuminating flag in material userData
   // Note: The io_dif Blender add-on needs to be updated to export material flags
@@ -95,7 +95,6 @@ function InteriorTexture({
         key={materialKey}
         map={texture}
         toneMapped={false}
-        // @ts-expect-error - defines exists on Material but R3F types don't expose it
         defines={defines}
         onBeforeCompile={onBeforeCompile}
       />
@@ -114,9 +113,8 @@ function InteriorTexture({
       ref={lambertMaterialRef}
       key={materialKey}
       map={texture}
-      lightMap={lightMap ?? undefined}
+      lightMap={lightMap}
       toneMapped={false}
-      // @ts-expect-error - defines exists on Material but R3F types don't expose it
       defines={defines}
       onBeforeCompile={onBeforeCompile}
     />

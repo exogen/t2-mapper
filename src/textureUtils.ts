@@ -56,29 +56,6 @@ export function setupTexture<T extends Texture>(
 }
 
 /**
- * Setup a color texture with standard settings.
- * @deprecated Use setupTexture() instead
- */
-export function setupColor<T extends Texture>(
-  tex: T,
-  repeat: [number, number] = [1, 1],
-): T {
-  return setupTexture(tex, { repeat });
-}
-
-/**
- * Setup for alpha-tested textures (vegetation, etc).
- * Disables mipmaps to prevent checkerboard artifacts from alpha averaging.
- * @deprecated Use setupTexture(tex, { disableMipmaps: true }) instead
- */
-export function setupAlphaTestedTexture<T extends Texture>(
-  tex: T,
-  repeat: [number, number] = [1, 1],
-): T {
-  return setupTexture(tex, { repeat, disableMipmaps: true });
-}
-
-/**
  * Setup a mask texture (single channel, linear color space).
  * Used for terrain blend masks and similar data textures.
  */

@@ -11,13 +11,11 @@ import {
   terrainTextureToUrl,
   textureToUrl,
 } from "../loaders";
-import { setupColor } from "../textureUtils";
+import { setupTexture } from "../textureUtils";
 import { updateTerrainTextureShader } from "../terrainMaterial";
 import { useDebug } from "./SettingsProvider";
 import { injectCustomFog } from "../fogShader";
 import { globalFogUniforms } from "../globalFogUniforms";
-
-const DEFAULT_SQUARE_SIZE = 8;
 
 // Texture tiling factors for each terrain layer
 const TILING: Record<number, number> = {
@@ -64,7 +62,7 @@ function BlendedTerrainTextures({
   const baseTextures = useTexture(
     textureNames.map((name) => terrainTextureToUrl(name)),
     (textures) => {
-      textures.forEach((tex) => setupColor(tex));
+      textures.forEach((tex) => setupTexture(tex));
     },
   );
 
@@ -76,7 +74,7 @@ function BlendedTerrainTextures({
   const detailTexture = useTexture(
     detailTextureUrl ?? FALLBACK_TEXTURE_URL,
     (tex) => {
-      setupColor(tex);
+      setupTexture(tex);
     },
   );
 
@@ -134,7 +132,6 @@ function BlendedTerrainTextures({
       map={displacementMap}
       depthWrite
       side={FrontSide}
-      // @ts-expect-error - defines exists on Material but R3F types don't expose it
       defines={{ DEBUG_MODE: debugMode ? 1 : 0 }}
       onBeforeCompile={onBeforeCompile}
     />
@@ -190,9 +187,10 @@ export const TerrainTile = memo(function TerrainTile({
   visible = true,
 }: TerrainTileProps) {
   const position = useMemo(() => {
-    // Terrain geometry is centered at origin, but Tribes 2 terrain origin is at
-    // corner. The engine always uses the default square size (8) for positioning.
-    const geometryOffset = (DEFAULT_SQUARE_SIZE * 256) / 2;
+    // Terrain geometry is centered at origin. Torque's terrain position formula
+    // is -squareSize * 128, which equals -blockSize / 2. Since our geometry is
+    // already centered, basePosition + geometryOffset cancels to 0 for single tiles.
+    const geometryOffset = blockSize / 2;
     return [
       basePosition.x + tileX * blockSize + geometryOffset,
       0,

@@ -3,6 +3,7 @@
  */
 
 import {
+  DoubleSide,
   MeshStandardMaterial,
   Texture,
   RepeatWrapping,
@@ -53,7 +54,7 @@ const alphaAsRoughnessShaderModifier = (shader: any) => {
     #include <roughness_fragment>
     // Override roughness with map alpha channel if map exists
     #ifdef USE_MAP
-      roughnessFactor = texture2D(map, vMapUv).a * 1;
+      roughnessFactor = texture2D(map, vMapUv).a;
     #endif
     `,
   );
@@ -81,7 +82,7 @@ export function setupAlphaAsRoughnessTexture(texture: Texture) {
  */
 export function createAlphaAsRoughnessMaterial() {
   const material = new MeshStandardMaterial({
-    side: 2, // DoubleSide
+    side: DoubleSide,
     metalness: 0.0,
     roughness: 1.0,
   });

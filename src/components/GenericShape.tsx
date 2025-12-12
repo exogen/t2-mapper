@@ -11,7 +11,7 @@ import {
   Texture,
   BufferGeometry,
 } from "three";
-import { setupColor, setupAlphaTestedTexture } from "../textureUtils";
+import { setupTexture } from "../textureUtils";
 import { useDebug } from "./SettingsProvider";
 import { useShapeInfo, isOrganicShape } from "./ShapeInfoProvider";
 import { FloatingLabel } from "./FloatingLabel";
@@ -217,10 +217,10 @@ const StaticTexture = memo(function StaticTexture({
   const texture = useTexture(url, (texture) => {
     // Organic/alpha-tested textures need special handling to avoid mipmap artifacts
     if (isOrganic || isTranslucent) {
-      return setupAlphaTestedTexture(texture);
+      return setupTexture(texture, { disableMipmaps: true });
     }
     // Standard color texture setup for diffuse-only materials
-    return setupColor(texture);
+    return setupTexture(texture);
   });
 
   const customMaterial = useMemo(

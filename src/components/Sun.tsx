@@ -1,7 +1,8 @@
-import { useMemo } from "react";
+import { useEffect, useMemo } from "react";
 import { Color, Vector3 } from "three";
 import type { TorqueObject } from "../torqueScript";
 import { getProperty } from "../mission";
+import { updateGlobalSunUniforms } from "../globalSunUniforms";
 
 export function Sun({ object }: { object: TorqueObject }) {
   // Parse sun direction - points FROM sun TO scene
@@ -43,6 +44,16 @@ export function Sun({ object }: { object: TorqueObject }) {
     return new Color(r, g, b);
   }, [object]);
 
+  // Torque lighting check (terrLighting.cc): if light direction points up,
+  // terrain surfaces with upward normals receive only ambient light.
+  // direction.y < 0 means light pointing down (toward ground)
+  const sunLightPointsDown = direction.y < 0;
+
+  // Update global uniform so terrain shader knows the light direction
+  useEffect(() => {
+    updateGlobalSunUniforms(sunLightPointsDown);
+  }, [sunLightPointsDown]);
+
   // Base lighting intensities - neutral baseline, each object type applies its own multipliers
   // See lightingConfig.ts for per-object-type adjustments
   const directionalIntensity = 1.0;
@@ -69,6 +80,7 @@ export function Sun({ object }: { object: TorqueObject }) {
         shadow-camera-far={12000}
         shadow-bias={-0.00001}
         shadow-normalBias={0.4}
+        shadow-radius={2}
       />
       {/* Ambient fill light - prevents pure black shadows */}
       <ambientLight color={ambient} intensity={ambientIntensity} />
