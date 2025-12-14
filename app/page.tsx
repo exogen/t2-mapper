@@ -31,7 +31,7 @@ function MapInspector() {
   const router = useRouter();
 
   const [initialMissionName, initialMissionType] = useMemo(
-    () => (searchParams.get("mission") || "RiverDance:CTF").split("~"),
+    () => (searchParams.get("mission") || "RiverDance~CTF").split("~"),
     [],
   );
   const [missionName, setMissionName] = useState(initialMissionName);
