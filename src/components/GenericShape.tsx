@@ -70,7 +70,6 @@ function createMaterialFromFlags(
   const isTranslucent = flagNames.has("Translucent");
   const isAdditive = flagNames.has("Additive");
   const isSelfIlluminating = flagNames.has("SelfIlluminating");
-  const neverEnvMap = flagNames.has("NeverEnvMap");
 
   // SelfIlluminating materials are unlit (use MeshBasicMaterial)
   if (isSelfIlluminating) {
@@ -334,21 +333,25 @@ export function DebugPlaceholder({
  * pattern used across shape-rendering components.
  */
 export function ShapeRenderer({
-  shapeName,
   loadingColor = "yellow",
   children,
 }: {
-  shapeName: string | undefined;
   loadingColor?: string;
   children?: React.ReactNode;
 }) {
+  const { object, shapeName } = useShapeInfo();
+
   if (!shapeName) {
-    return <DebugPlaceholder color="orange" />;
+    return (
+      <DebugPlaceholder color="orange" label={`${object._id}: <missing>`} />
+    );
   }
 
   return (
     <ErrorBoundary
-      fallback={<DebugPlaceholder color="red" label={shapeName} />}
+      fallback={
+        <DebugPlaceholder color="red" label={`${object._id}: ${shapeName}`} />
+      }
     >
       <Suspense fallback={<ShapePlaceholder color={loadingColor} />}>
         <ShapeModel />
@@ -359,7 +362,7 @@ export function ShapeRenderer({
 }
 
 export const ShapeModel = memo(function ShapeModel() {
-  const { shapeName, isOrganic } = useShapeInfo();
+  const { object, shapeName, isOrganic } = useShapeInfo();
   const { debugMode } = useDebug();
   const { nodes } = useStaticShape(shapeName);
 
@@ -501,7 +504,11 @@ export const ShapeModel = memo(function ShapeModel() {
           ) : null}
         </Suspense>
       ))}
-      {debugMode ? <FloatingLabel>{shapeName}</FloatingLabel> : null}
+      {debugMode ? (
+        <FloatingLabel>
+          {object._id}: {shapeName}
+        </FloatingLabel>
+      ) : null}
     </group>
   );
 });

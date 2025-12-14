@@ -186,7 +186,13 @@ function InteriorMesh({ node }: { node: Mesh }) {
 }
 
 export const InteriorModel = memo(
-  ({ interiorFile }: { interiorFile: string }) => {
+  ({
+    object,
+    interiorFile,
+  }: {
+    object: TorqueObject;
+    interiorFile: string;
+  }) => {
     const { nodes } = useInterior(interiorFile);
     const debugContext = useDebug();
     const debugMode = debugContext?.debugMode ?? false;
@@ -198,7 +204,11 @@ export const InteriorModel = memo(
           .map(([name, node]: [string, any]) => (
             <InteriorMesh key={name} node={node} />
           ))}
-        {debugMode ? <FloatingLabel>{interiorFile}</FloatingLabel> : null}
+        {debugMode ? (
+          <FloatingLabel>
+            {object._id}: {interiorFile}
+          </FloatingLabel>
+        ) : null}
       </group>
     );
   },
@@ -239,10 +249,12 @@ export const InteriorInstance = memo(function InteriorInstance({
   return (
     <group position={position} quaternion={q} scale={scale}>
       <ErrorBoundary
-        fallback={<DebugInteriorPlaceholder label={interiorFile} />}
+        fallback={
+          <DebugInteriorPlaceholder label={`${object._id}: ${interiorFile}`} />
+        }
       >
         <Suspense fallback={<InteriorPlaceholder color="orange" />}>
-          <InteriorModel interiorFile={interiorFile} />
+          <InteriorModel object={object} interiorFile={interiorFile} />
         </Suspense>
       </ErrorBoundary>
     </group>

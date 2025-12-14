@@ -19,6 +19,28 @@ interface CommentSection {
   comments: string[];
 }
 
+const normalizedMissionTypes = {
+  arena: "Arena",
+  bounty: "Bounty",
+  cnh: "CnH",
+  ctf: "CTF",
+  dm: "DM",
+  dnd: "DnD",
+  hunters: "Hunters",
+  lakrabbit: "LakRabbit",
+  lakzm: "LakZM",
+  lctf: "LCTF",
+  none: "None",
+  rabbit: "Rabbit",
+  sctf: "SCtF",
+  siege: "Siege",
+  singleplayer: "SinglePlayer",
+  tdm: "TDM",
+  teamhunters: "TeamHunters",
+  teamlak: "TeamLak",
+  tr2: "TR2",
+};
+
 function parseCommentMarker(text: string) {
   let match;
   match = text.match(sectionBeginComment);
@@ -121,7 +143,12 @@ export function parseMissionScript(script: string): ParsedMission {
 
   return {
     displayName: pragma.displayname ?? null,
-    missionTypes: pragma.missiontypes?.split(/\s+/).filter(Boolean) ?? [],
+    missionTypes:
+      pragma.missiontypes
+        ?.split(/\s+/)
+        .filter(Boolean)
+        .map((name) => normalizedMissionTypes[name.toLowerCase()] ?? name) ??
+      [],
     missionBriefing: getSection("MISSION BRIEFING"),
     briefingWav: pragma.briefingwav ?? null,
     bitmap: pragma.bitmap ?? null,

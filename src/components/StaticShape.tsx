@@ -22,9 +22,9 @@ export function StaticShape({ object }: { object: TorqueObject }) {
   }
 
   return (
-    <ShapeInfoProvider shapeName={shapeName} type="StaticShape">
+    <ShapeInfoProvider type="StaticShape" object={object} shapeName={shapeName}>
       <group position={position} quaternion={q} scale={scale}>
-        <ShapeRenderer shapeName={shapeName} />
+        <ShapeRenderer />
       </group>
     </ShapeInfoProvider>
   );

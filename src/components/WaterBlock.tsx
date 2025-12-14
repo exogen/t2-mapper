@@ -109,7 +109,7 @@ export const WaterBlock = memo(function WaterBlock({
   // TODO: Use this for terrain intersection masking (reject water blocks where
   // terrain height > surfaceZ + waveMagnitude/2). Requires TerrainProvider.
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const surfaceZ = position[1] + scaleY;
+  // const surfaceZ = position[1] + scaleY;
 
   // Wave magnitude affects terrain masking (Torque adds half to surface height)
   const waveMagnitude = getFloat(object, "waveMagnitude") ?? 1.0;
@@ -148,7 +148,10 @@ export const WaterBlock = memo(function WaterBlock({
   // Matches fluidQuadTree.cc RunQuadTree():
   //   I = (s32)(m_Eye.X / 2048.0f);
   //   if( m_Eye.X < 0.0f )  I--;
-  const calculateReps = (camX: number, camZ: number): Array<[number, number]> => {
+  const calculateReps = (
+    camX: number,
+    camZ: number,
+  ): Array<[number, number]> => {
     // Convert camera to terrain space
     const terrainCamX = camX + TERRAIN_OFFSET;
     const terrainCamZ = camZ + TERRAIN_OFFSET;

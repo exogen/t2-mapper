@@ -1,4 +1,5 @@
 import { createContext, ReactNode, useContext, useMemo } from "react";
+import { TorqueObject } from "../torqueScript";
 
 export type StaticShapeType = "TSStatic" | "StaticShape" | "Item" | "Turret";
 
@@ -17,25 +18,44 @@ export function isOrganicShape(shapeName: string): boolean {
   return ORGANIC_PATTERN.test(shapeName);
 }
 
-const ShapeInfoContext = createContext(null);
+interface ShapeInfoContextValue {
+  object: TorqueObject;
+  shapeName: string;
+  type: StaticShapeType;
+  isOrganic: boolean;
+}
 
-export function useShapeInfo() {
-  return useContext(ShapeInfoContext);
+const ShapeInfoContext = createContext<ShapeInfoContextValue | null>(null);
+
+export function useShapeInfo(): ShapeInfoContextValue {
+  const context = useContext(ShapeInfoContext);
+  if (!context) {
+    throw new Error("useShapeInfo must be used within ShapeInfoProvider");
+  }
+  return context;
 }
 
 export function ShapeInfoProvider({
   children,
+  object,
   shapeName,
   type,
 }: {
+  object: TorqueObject;
   children: ReactNode;
   shapeName: string;
   type: StaticShapeType;
 }) {
   const isOrganic = useMemo(() => isOrganicShape(shapeName), [shapeName]);
+
   const context = useMemo(
-    () => ({ shapeName, type, isOrganic }),
-    [shapeName, type, isOrganic],
+    () => ({
+      object,
+      shapeName,
+      type,
+      isOrganic,
+    }),
+    [object, shapeName, type, isOrganic],
   );
 
   return (

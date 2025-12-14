@@ -481,7 +481,7 @@ describe("TorqueScript Runtime", () => {
     });
 
     it("resolves objects by numeric ID", () => {
-      const { $, $g } = run(`
+      const { $ } = run(`
         new ScriptObject(TestObj) {
           value = 100;
         };
@@ -497,7 +497,7 @@ describe("TorqueScript Runtime", () => {
 
     it("handles direct indexed access on bareword objects", () => {
       // In TorqueScript, obj[idx] sets a property directly on the object
-      const { $, $g } = run(`
+      const { $g } = run(`
         new ScriptObject(Data) {};
         Data[0] = "first";
         Data[1] = "second";
@@ -527,7 +527,7 @@ describe("TorqueScript Runtime", () => {
     });
 
     it("handles post-increment on bareword object properties", () => {
-      const { $, $g } = run(`
+      const { $g } = run(`
         new ScriptObject(Counter) {
           value = 10;
         };
@@ -539,7 +539,7 @@ describe("TorqueScript Runtime", () => {
     });
 
     it("handles compound assignment on bareword object properties", () => {
-      const { $, $g } = run(`
+      const { $g } = run(`
         new ScriptObject(Score) {
           points = 100;
         };
@@ -2037,7 +2037,6 @@ describe("TorqueScript Runtime", () => {
 
       // If parallel: starts happen before all ends
       // If serial: each end would happen before the next start
-      const aStart = loadOrder.indexOf("start:scripts/a.cs");
       const bStart = loadOrder.indexOf("start:scripts/b.cs");
       const cStart = loadOrder.indexOf("start:scripts/c.cs");
       const aEnd = loadOrder.indexOf("end:scripts/a.cs");

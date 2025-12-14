@@ -46,7 +46,11 @@ function createAtlas(textures: Texture[]): IflAtlas {
   textures.forEach((tex, i) => {
     const col = i % columns;
     const row = Math.floor(i / columns);
-    ctx.drawImage(tex.image as CanvasImageSource, col * frameWidth, row * frameHeight);
+    ctx.drawImage(
+      tex.image as CanvasImageSource,
+      col * frameWidth,
+      row * frameHeight,
+    );
   });
 
   const texture = new CanvasTexture(canvas);

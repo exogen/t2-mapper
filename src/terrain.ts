@@ -46,7 +46,7 @@ export function parseTerrainBuffer(arrayBuffer: ArrayBufferLike): TerrainFile {
 
   const alphaMaps = [];
 
-  for (const textureName of textureNames) {
+  for (const _textureName of textureNames) {
     const alphaMap = new Uint8Array(SIZE * SIZE);
     for (let j = 0; j < SIZE * SIZE; j++) {
       var alphaMats = dataView.getUint8(offset++);

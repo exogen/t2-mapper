@@ -360,7 +360,7 @@ void RE_Direct_TerrainShadow( const in IncidentLight directLight, const in vec3 
   // Debug mode: overlay green grid matching terrain grid squares (256x256)
   float gridIntensity = terrainDebugGrid(vMapUv, 256.0, 1.5);
   vec3 gridColor = vec3(0.0, 0.8, 0.4); // Green
-  gl_FragColor.rgb = mix(gl_FragColor.rgb, gridColor, gridIntensity * 0.05);
+  gl_FragColor.rgb = mix(gl_FragColor.rgb, gridColor, gridIntensity * 0.1);
 #endif
 
 #include <tonemapping_fragment>`,

@@ -3,8 +3,8 @@ import picomatch from "picomatch";
 import { loadMission } from "../loaders";
 import { type ParsedMission } from "../mission";
 import { createScriptLoader } from "../torqueScript/scriptLoader.browser";
-import { renderObject } from "./renderObject";
-import { memo, useEffect, useState } from "react";
+import { SimObject } from "./SimObject";
+import { memo, useEffect, useMemo, useState } from "react";
 import { RuntimeProvider } from "./RuntimeProvider";
 import {
   createProgressTracker,
@@ -20,6 +20,7 @@ import {
   getResourceMap,
   getSourceAndPath,
 } from "../manifest";
+import { MissionProvider } from "./MissionContext";
 
 const loadScript = createScriptLoader();
 // Shared cache for parsed scripts - survives runtime restarts
@@ -30,7 +31,7 @@ const fileSystem: FileSystemHandler = {
     return getResourceList()
       .filter((path) => isMatch(path))
       .map((resourceKey) => {
-        const [sourcePath, actualPath] = getSourceAndPath(resourceKey);
+        const [, actualPath] = getSourceAndPath(resourceKey);
         return actualPath;
       });
   },
@@ -56,6 +57,7 @@ interface ExecutedMissionState {
 
 function useExecutedMission(
   missionName: string,
+  missionType: string,
   parsedMission: ParsedMission | undefined,
 ): ExecutedMissionState {
   const [state, setState] = useState<ExecutedMissionState>({
@@ -70,8 +72,6 @@ function useExecutedMission(
     }
 
     const controller = new AbortController();
-    // FIXME: Always just runs as the first game type for now...
-    const missionType = parsedMission.missionTypes[0];
 
     // Create progress tracker and update state on changes
     const progressTracker = createProgressTracker();
@@ -138,19 +138,33 @@ function useExecutedMission(
 
 interface MissionProps {
   name: string;
+  missionType: string;
+  setMissionType: (type: string) => void;
   onLoadingChange?: (isLoading: boolean, progress?: number) => void;
 }
 
 export const Mission = memo(function Mission({
   name,
+  missionType,
   onLoadingChange,
 }: MissionProps) {
   const { data: parsedMission } = useParsedMission(name);
+
   const { missionGroup, runtime, progress } = useExecutedMission(
     name,
+    missionType,
     parsedMission,
   );
-  const isLoading = !missionGroup || !runtime;
+  const isLoading = !parsedMission || !missionGroup || !runtime;
+
+  const missionContext = useMemo(
+    () => ({
+      metadata: parsedMission,
+      missionType,
+      missionGroup,
+    }),
+    [parsedMission, missionType, missionGroup],
+  );
 
   useEffect(() => {
     onLoadingChange?.(isLoading, progress);
@@ -161,8 +175,10 @@ export const Mission = memo(function Mission({
   }
 
   return (
-    <RuntimeProvider runtime={runtime}>
-      {renderObject(missionGroup)}
-    </RuntimeProvider>
+    <MissionProvider value={missionContext}>
+      <RuntimeProvider runtime={runtime}>
+        <SimObject object={missionGroup} />
+      </RuntimeProvider>
+    </MissionProvider>
   );
 });

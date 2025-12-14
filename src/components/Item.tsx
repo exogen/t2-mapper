@@ -33,9 +33,9 @@ export function Item({ object }: { object: TorqueObject }) {
   const label = isFlag && teamName ? `${teamName} Flag` : null;
 
   return (
-    <ShapeInfoProvider shapeName={shapeName} type="Item">
+    <ShapeInfoProvider type="Item" object={object} shapeName={shapeName}>
       <group position={position} quaternion={q} scale={scale}>
-        <ShapeRenderer shapeName={shapeName} loadingColor="pink">
+        <ShapeRenderer loadingColor="pink">
           {label ? <FloatingLabel opacity={0.6}>{label}</FloatingLabel> : null}
         </ShapeRenderer>
       </group>

@@ -1,6 +1,6 @@
 import { createContext, useContext, useMemo } from "react";
 import type { TorqueObject } from "../torqueScript";
-import { renderObject } from "./renderObject";
+import { SimObject } from "./SimObject";
 
 export type SimGroupContextType = {
   object: TorqueObject;
@@ -51,7 +51,9 @@ export function SimGroup({ object }: { object: TorqueObject }) {
 
   return (
     <SimGroupContext.Provider value={simGroup}>
-      {(object._children ?? []).map((child, i) => renderObject(child, i))}
+      {(object._children ?? []).map((child, i) => (
+        <SimObject object={child} key={child._id} />
+      ))}
     </SimGroupContext.Provider>
   );
 }

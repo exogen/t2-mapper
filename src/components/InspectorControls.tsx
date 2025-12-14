@@ -3,10 +3,18 @@ import { MissionSelect } from "./MissionSelect";
 
 export function InspectorControls({
   missionName,
+  missionType,
   onChangeMission,
 }: {
   missionName: string;
-  onChangeMission: (name: string) => void;
+  missionType: string;
+  onChangeMission: ({
+    missionName,
+    missionType,
+  }: {
+    missionName: string;
+    missionType: string;
+  }) => void;
 }) {
   const {
     fogEnabled,
@@ -28,7 +36,11 @@ export function InspectorControls({
       onPointerDown={(e) => e.stopPropagation()}
       onClick={(e) => e.stopPropagation()}
     >
-      <MissionSelect value={missionName} onChange={onChangeMission} />
+      <MissionSelect
+        value={missionName}
+        missionType={missionType}
+        onChange={onChangeMission}
+      />
       <div className="CheckboxField">
         <input
           id="fogInput"

@@ -132,7 +132,11 @@ function MissionItemContent({ mission }: { mission: MissionItem }) {
         {mission.missionTypes.length > 0 && (
           <span className="MissionSelect-itemTypes">
             {mission.missionTypes.map((type) => (
-              <span key={type} className="MissionSelect-itemType">
+              <span
+                key={type}
+                className="MissionSelect-itemType"
+                data-mission-type={type}
+              >
                 {type}
               </span>
             ))}
@@ -148,19 +152,41 @@ function MissionItemContent({ mission }: { mission: MissionItem }) {
 
 export function MissionSelect({
   value,
+  missionType,
   onChange,
 }: {
   value: string;
-  onChange: (missionName: string) => void;
+  missionType: string;
+  onChange: ({
+    missionName,
+    missionType,
+  }: {
+    missionName: string;
+    missionType: string | undefined;
+  }) => void;
 }) {
   const [searchValue, setSearchValue] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
+  const missionTypeRef = useRef<string | null>(missionType);
 
   const combobox = useComboboxStore({
     resetValueOnHide: true,
     selectedValue: value,
     setSelectedValue: (newValue) => {
-      if (newValue) onChange(newValue);
+      if (newValue) {
+        let newMissionType = missionTypeRef.current;
+        const availableMissionTypes = getMissionInfo(newValue).missionTypes;
+        if (
+          !newMissionType ||
+          !availableMissionTypes.includes(newMissionType)
+        ) {
+          newMissionType = availableMissionTypes[0];
+        }
+        onChange({
+          missionName: newValue,
+          missionType: newMissionType,
+        });
+      }
     },
     setValue: (value) => {
       startTransition(() => setSearchValue(value));
@@ -200,6 +226,40 @@ export function MissionSelect({
       ? filteredResults.missions.length === 0
       : filteredResults.groups.length === 0;
 
+  const renderItem = (mission) => {
+    return (
+      <ComboboxItem
+        key={mission.missionName}
+        value={mission.missionName}
+        className="MissionSelect-item"
+        focusOnHover
+        onClick={(event) => {
+          if (event.target && event.target instanceof HTMLElement) {
+            const missionType = event.target.dataset.missionType;
+            if (missionType) {
+              missionTypeRef.current = missionType;
+              const isOnlyMissionTypeChange = mission.missionName === value;
+              if (isOnlyMissionTypeChange) {
+                // Need to trigger change ourselves, because Combobox sees this
+                // as no change.
+                onChange({
+                  missionName: mission.missionName,
+                  missionType,
+                });
+              }
+            } else {
+              missionTypeRef.current = null;
+            }
+          } else {
+            missionTypeRef.current = null;
+          }
+        }}
+      >
+        <MissionItemContent mission={mission} />
+      </ComboboxItem>
+    );
+  };
+
   return (
     <ComboboxProvider store={combobox}>
       <div className="MissionSelect-inputWrapper">
@@ -213,21 +273,23 @@ export function MissionSelect({
             combobox.show();
           }}
         />
+        <div className="MissionSelect-selectedValue">
+          <span className="MissionSelect-selectedName">{displayValue}</span>
+          {missionType && (
+            <span
+              className="MissionSelect-itemType"
+              data-mission-type={missionType}
+            >
+              {missionType}
+            </span>
+          )}
+        </div>
         <kbd className="MissionSelect-shortcut">{isMac ? "⌘K" : "^K"}</kbd>
       </div>
       <ComboboxPopover gutter={4} fitViewport className="MissionSelect-popover">
         <ComboboxList className="MissionSelect-list">
           {filteredResults.type === "flat"
-            ? filteredResults.missions.map((mission) => (
-                <ComboboxItem
-                  key={mission.missionName}
-                  value={mission.missionName}
-                  className="MissionSelect-item"
-                  focusOnHover
-                >
-                  <MissionItemContent mission={mission} />
-                </ComboboxItem>
-              ))
+            ? filteredResults.missions.map(renderItem)
             : filteredResults.groups.map(([groupName, missions]) =>
                 groupName ? (
                   <ComboboxGroup
@@ -237,29 +299,11 @@ export function MissionSelect({
                     <ComboboxGroupLabel className="MissionSelect-groupLabel">
                       {groupName}
                     </ComboboxGroupLabel>
-                    {missions.map((mission) => (
-                      <ComboboxItem
-                        key={mission.missionName}
-                        value={mission.missionName}
-                        className="MissionSelect-item"
-                        focusOnHover
-                      >
-                        <MissionItemContent mission={mission} />
-                      </ComboboxItem>
-                    ))}
+                    {missions.map(renderItem)}
                   </ComboboxGroup>
                 ) : (
                   <Fragment key="ungrouped">
-                    {missions.map((mission) => (
-                      <ComboboxItem
-                        key={mission.missionName}
-                        value={mission.missionName}
-                        className="MissionSelect-item"
-                        focusOnHover
-                      >
-                        <MissionItemContent mission={mission} />
-                      </ComboboxItem>
-                    ))}
+                    {missions.map(renderItem)}
                   </Fragment>
                 ),
               )}

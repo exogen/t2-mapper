@@ -1,4 +1,4 @@
-import { lazy, Suspense } from "react";
+import { lazy, Suspense, useMemo } from "react";
 import type { TorqueObject } from "../torqueScript";
 import { TerrainBlock } from "./TerrainBlock";
 import { SimGroup } from "./SimGroup";
@@ -12,6 +12,8 @@ import { Turret } from "./Turret";
 import { WayPoint } from "./WayPoint";
 import { Camera } from "./Camera";
 import { useSettings } from "./SettingsProvider";
+import { useMission } from "./MissionContext";
+import { getProperty } from "../mission";
 
 const AudioEmitter = lazy(() =>
   import("./AudioEmitter").then((mod) => ({ default: mod.AudioEmitter })),
@@ -27,7 +29,7 @@ const ForceFieldBare = lazy(() =>
   import("./ForceFieldBare").then((mod) => ({ default: mod.ForceFieldBare })),
 );
 
-// Not every map will have force fields.
+// Not every map will have water.
 const WaterBlock = lazy(() =>
   import("./WaterBlock").then((mod) => ({ default: mod.WaterBlock })),
 );
@@ -49,10 +51,26 @@ const componentMap = {
   WayPoint,
 };
 
-export function renderObject(object: TorqueObject, key?: string | number) {
+export function SimObject({ object }: { object: TorqueObject }) {
+  const { missionType } = useMission();
+  // FIXME: In theory we could make sure TorqueScript is calling `hide()`
+  // based on the mission type already, which is built-in behavior, then just
+  // make sure we respect the hidden/visible state here. For now do it this way.
+  const shouldShowObject = useMemo(() => {
+    const missionTypesList = new Set(
+      (getProperty(object, "missionTypesList") ?? "")
+        .toLowerCase()
+        .split(/s+/)
+        .filter(Boolean),
+    );
+    return (
+      !missionTypesList.size || missionTypesList.has(missionType.toLowerCase())
+    );
+  }, [object, missionType]);
+
   const Component = componentMap[object._className];
-  return Component ? (
-    <Suspense key={key}>
+  return shouldShowObject && Component ? (
+    <Suspense>
       <Component object={object} />
     </Suspense>
   ) : null;

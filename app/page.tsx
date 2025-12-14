@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect, useCallback, Suspense } from "react";
+import { useState, useEffect, useCallback, Suspense, useMemo } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { Canvas, GLProps } from "@react-three/fiber";
 import { NoToneMapping, SRGBColorSpace, PCFShadowMap } from "three";
@@ -30,10 +30,19 @@ function MapInspector() {
   const searchParams = useSearchParams();
   const router = useRouter();
 
-  // Initialize state from query params
-  const [missionName, setMissionName] = useState(
-    searchParams.get("mission") || "TWL2_WoodyMyrk",
+  const [initialMissionName, initialMissionType] = useMemo(
+    () => (searchParams.get("mission") || "RiverDance:CTF").split("~"),
+    [],
   );
+  const [missionName, setMissionName] = useState(initialMissionName);
+  const availableMissionTypes = getMissionInfo(missionName).missionTypes;
+  const [missionType, setMissionType] = useState(() =>
+    initialMissionType && availableMissionTypes.includes(initialMissionType)
+      ? initialMissionType
+      : availableMissionTypes[0],
+  );
+  const isOnlyMissionType = availableMissionTypes.length === 1;
+
   const [loadingProgress, setLoadingProgress] = useState(0);
   const [showLoadingIndicator, setShowLoadingIndicator] = useState(true);
   const isLoading = loadingProgress < 1;
@@ -64,9 +73,12 @@ function MapInspector() {
   // Update query params when state changes
   useEffect(() => {
     const params = new URLSearchParams();
-    params.set("mission", missionName);
+    const value = isOnlyMissionType
+      ? missionName
+      : `${missionName}~${missionType}`;
+    params.set("mission", value);
     router.replace(`?${params.toString()}`, { scroll: false });
-  }, [missionName, router]);
+  }, [missionName, missionType, isOnlyMissionType, router]);
 
   const handleLoadingChange = useCallback(
     (_loading: boolean, progress: number = 0) => {
@@ -94,13 +106,19 @@ function MapInspector() {
                 </div>
               </div>
             )}
-            <Canvas frameloop="always" gl={glSettings} shadows={{ type: PCFShadowMap }}>
+            <Canvas
+              frameloop="always"
+              gl={glSettings}
+              shadows={{ type: PCFShadowMap }}
+            >
               <CamerasProvider>
                 <AudioProvider>
                   <Mission
-                    key={missionName}
+                    key={`${missionName}~${missionType}`}
                     name={missionName}
+                    missionType={missionType}
                     onLoadingChange={handleLoadingChange}
+                    setMissionType={setMissionType}
                   />
                   <ObserverCamera />
                   <DebugElements />
@@ -111,7 +129,11 @@ function MapInspector() {
           </div>
           <InspectorControls
             missionName={missionName}
-            onChangeMission={setMissionName}
+            missionType={missionType}
+            onChangeMission={({ missionName, missionType }) => {
+              setMissionName(missionName);
+              setMissionType(missionType);
+            }}
           />
         </SettingsProvider>
       </main>

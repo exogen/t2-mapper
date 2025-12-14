@@ -120,7 +120,7 @@ export function getStandardTextureResourceKey(resourcePath: string) {
  * 6. .gif
  */
 // Not used for now!
-const palettedTextureExt = ["", ".bm8", ".bmp", ".jpg", ".png", ".gif"];
+// const palettedTextureExt = ["", ".bm8", ".bmp", ".jpg", ".png", ".gif"];
 
 export function getLocalFilePath(resourcePath: string): string {
   const resourceKey = getResourceKey(resourcePath);

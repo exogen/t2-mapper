@@ -30,13 +30,17 @@ export function Turret({ object }: { object: TorqueObject }) {
   }
 
   return (
-    <ShapeInfoProvider shapeName={shapeName} type="Turret">
+    <ShapeInfoProvider type="Turret" object={object} shapeName={shapeName}>
       <group position={position} quaternion={q} scale={scale}>
-        <ShapeRenderer shapeName={shapeName} />
+        <ShapeRenderer />
         {barrelShapeName ? (
-          <ShapeInfoProvider shapeName={barrelShapeName} type="Turret">
+          <ShapeInfoProvider
+            type="Turret"
+            object={object}
+            shapeName={barrelShapeName}
+          >
             <group position={[0, 1.5, 0]}>
-              <ShapeRenderer shapeName={barrelShapeName} />
+              <ShapeRenderer />
             </group>
           </ShapeInfoProvider>
         ) : null}

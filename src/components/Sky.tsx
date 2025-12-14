@@ -6,9 +6,9 @@ import { Color, Fog } from "three";
 import type { TorqueObject } from "../torqueScript";
 import { getInt, getProperty } from "../mission";
 import { useSettings } from "./SettingsProvider";
-import { BASE_URL, loadDetailMapList, textureToUrl } from "../loaders";
+import { loadDetailMapList, textureToUrl } from "../loaders";
 import { CloudLayers } from "./CloudLayers";
-import { parseFogState, type FogState, type FogVolume } from "./FogProvider";
+import { parseFogState, type FogState } from "./FogProvider";
 import { installCustomFogShader } from "../fogShader";
 import {
   globalFogUniforms,
@@ -16,8 +16,6 @@ import {
   packFogVolumeData,
   resetGlobalFogUniforms,
 } from "../globalFogUniforms";
-
-const FALLBACK_TEXTURE_URL = `${BASE_URL}/black.png`;
 
 // Track if fog shader has been installed (idempotent installation)
 let fogShaderInstalled = false;
