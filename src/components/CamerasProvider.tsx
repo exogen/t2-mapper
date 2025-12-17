@@ -140,7 +140,7 @@ export function CamerasProvider({ children }: { children: ReactNode }) {
     [registerCamera, unregisterCamera, nextCamera, setCamera, cameraCount],
   );
 
-  if (cameraCount === 0) {
+  if (cameraCount === 0 && cameraIndex !== -1) {
     setCameraIndex(-1);
   }
 

@@ -3,6 +3,6 @@
 4:I[97367,["/t2-mapper/_next/static/chunks/42879de7b8087bc9.js"],"MetadataBoundary"]
 5:"$Sreact.suspense"
 7:I[27201,["/t2-mapper/_next/static/chunks/42879de7b8087bc9.js"],"IconMark"]
-0:{"buildId":"GWuePMojehQ6piRnh-YmE","rsc":["$","$1","h",{"children":[null,["$","$L2",null,{"children":"$@3"}],["$","div",null,{"hidden":true,"children":["$","$L4",null,{"children":["$","$5",null,{"name":"Next.Metadata","children":"$@6"}]}]}],null]}],"loading":null,"isPartial":false}
+0:{"buildId":"OIy4Xi5zWEQPn0_LvDxKt","rsc":["$","$1","h",{"children":[null,["$","$L2",null,{"children":"$@3"}],["$","div",null,{"hidden":true,"children":["$","$L4",null,{"children":["$","$5",null,{"name":"Next.Metadata","children":"$@6"}]}]}],null]}],"loading":null,"isPartial":false}
 3:[["$","meta","0",{"charSet":"utf-8"}],["$","meta","1",{"name":"viewport","content":"width=device-width, initial-scale=1"}]]
 6:[["$","title","0",{"children":"MapGenius – Explore maps for Tribes 2"}],["$","meta","1",{"name":"description","content":"Tribes 2 forever."}],["$","link","2",{"rel":"icon","href":"/t2-mapper/icon.png?icon.2911bba1.png","sizes":"108x128","type":"image/png"}],["$","$L7","3",{}]]
