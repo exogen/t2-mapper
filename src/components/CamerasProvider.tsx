@@ -62,9 +62,7 @@ export function CamerasProvider({ children }: { children: ReactNode }) {
 
   const setCamera = useCallback(
     (index: number) => {
-      console.log(`[CamerasProvider] setCamera(${index})`);
       if (index >= 0 && index < cameraCount) {
-        console.log(`[CamerasProvider] setCameraIndex(${index})`);
         setCameraIndex(index);
         const cameraId = Object.keys(cameraMap)[index];
         const cameraInfo = cameraMap[cameraId];
@@ -75,37 +73,44 @@ export function CamerasProvider({ children }: { children: ReactNode }) {
           -Math.PI / 2,
         );
         camera.quaternion.copy(cameraInfo.rotation).multiply(correction);
-        console.log(`[CamerasProvider] Done updating camera.`);
       }
     },
     [camera, cameraCount, cameraMap],
   );
 
   const nextCamera = useCallback(() => {
-    console.log(`[CamerasProvider] nextCamera()`, cameraCount, cameraIndex);
     setCamera(cameraCount ? (cameraIndex + 1) % cameraCount : -1);
   }, [cameraCount, cameraIndex, setCamera]);
 
   useEffect(() => {
-    const hash = window.location.hash;
-    if (hash.startsWith("#c")) {
-      const [positionString, quarternionString] = hash.slice(2).split("~");
-      const position = positionString.split(",").map((s) => parseFloat(s));
-      const quarternion = quarternionString
-        .split(",")
-        .map((s) => parseFloat(s));
-      setInitialViewState({
-        initialized: true,
-        position: new Vector3(...position),
-        quarternion: new Quaternion(...quarternion),
-      });
-    } else {
-      setInitialViewState({
-        initialized: true,
-        position: null,
-        quarternion: null,
-      });
-    }
+    const handleHashChange = () => {
+      const hash = window.location.hash;
+      if (hash.startsWith("#c")) {
+        const [positionString, quarternionString] = hash.slice(2).split("~");
+        const position = positionString.split(",").map((s) => parseFloat(s));
+        const quarternion = quarternionString
+          .split(",")
+          .map((s) => parseFloat(s));
+        setInitialViewState({
+          initialized: true,
+          position: new Vector3(...position),
+          quarternion: new Quaternion(...quarternion),
+        });
+      } else {
+        setInitialViewState({
+          initialized: true,
+          position: null,
+          quarternion: null,
+        });
+      }
+    };
+
+    window.addEventListener("hashchange", handleHashChange);
+    handleHashChange();
+
+    return () => {
+      window.removeEventListener("hashchange", handleHashChange);
+    };
   }, []);
 
   useEffect(() => {
@@ -120,7 +125,6 @@ export function CamerasProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!initialViewState.initialized || initialViewState.position) return;
     if (cameraCount > 0 && cameraIndex === -1) {
-      console.log(`[CamerasProvider] setCamera(0) in useEffect`);
       setCamera(0);
     }
   }, [cameraCount, setCamera, cameraIndex]);
@@ -135,6 +139,10 @@ export function CamerasProvider({ children }: { children: ReactNode }) {
     }),
     [registerCamera, unregisterCamera, nextCamera, setCamera, cameraCount],
   );
+
+  if (cameraCount === 0) {
+    setCameraIndex(-1);
+  }
 
   return (
     <CamerasContext.Provider value={context}>
