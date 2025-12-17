@@ -38,7 +38,7 @@ export function CopyCoordinatesButton({
       setShowCopied(true);
       timerRef.current = setTimeout(() => {
         setShowCopied(false);
-      }, 1300);
+      }, 1100);
     } catch (err) {
       console.error(err);
     }
