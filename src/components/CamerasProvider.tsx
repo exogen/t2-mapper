@@ -36,8 +36,13 @@ export function useCameras() {
 
 export function CamerasProvider({ children }: { children: ReactNode }) {
   const { camera } = useThree();
-  const [cameraIndex, setCameraIndex] = useState(0);
+  const [cameraIndex, setCameraIndex] = useState(-1);
   const [cameraMap, setCameraMap] = useState<Record<string, CameraEntry>>({});
+  const [initialViewState, setInitialViewState] = useState(() => ({
+    initialized: false,
+    position: null,
+    quarternion: null,
+  }));
 
   const registerCamera = useCallback((camera: CameraEntry) => {
     setCameraMap((prevCameraMap) => ({
@@ -55,38 +60,70 @@ export function CamerasProvider({ children }: { children: ReactNode }) {
 
   const cameraCount = Object.keys(cameraMap).length;
 
-  const nextCamera = useCallback(() => {
-    setCameraIndex((prev) => {
-      if (cameraCount === 0) {
-        return 0;
-      }
-      return (prev + 1) % cameraCount;
-    });
-  }, [cameraCount]);
-
   const setCamera = useCallback(
     (index: number) => {
+      console.log(`[CamerasProvider] setCamera(${index})`);
       if (index >= 0 && index < cameraCount) {
+        console.log(`[CamerasProvider] setCameraIndex(${index})`);
         setCameraIndex(index);
+        const cameraId = Object.keys(cameraMap)[index];
+        const cameraInfo = cameraMap[cameraId];
+        camera.position.copy(cameraInfo.position);
+        // Apply coordinate system correction for Torque3D to Three.js
+        const correction = new Quaternion().setFromAxisAngle(
+          new Vector3(0, 1, 0),
+          -Math.PI / 2,
+        );
+        camera.quaternion.copy(cameraInfo.rotation).multiply(correction);
+        console.log(`[CamerasProvider] Done updating camera.`);
       }
     },
-    [cameraCount],
+    [camera, cameraCount, cameraMap],
   );
 
+  const nextCamera = useCallback(() => {
+    console.log(`[CamerasProvider] nextCamera()`, cameraCount, cameraIndex);
+    setCamera(cameraCount ? (cameraIndex + 1) % cameraCount : -1);
+  }, [cameraCount, cameraIndex, setCamera]);
+
   useEffect(() => {
-    const cameraCount = Object.keys(cameraMap).length;
-    if (cameraIndex < cameraCount) {
-      const cameraId = Object.keys(cameraMap)[cameraIndex];
-      const cameraInfo = cameraMap[cameraId];
-      camera.position.copy(cameraInfo.position);
-      // Apply coordinate system correction for Torque3D to Three.js
-      const correction = new Quaternion().setFromAxisAngle(
-        new Vector3(0, 1, 0),
-        -Math.PI / 2,
-      );
-      camera.quaternion.copy(cameraInfo.rotation).multiply(correction);
+    const hash = window.location.hash;
+    if (hash.startsWith("#c")) {
+      const [positionString, quarternionString] = hash.slice(2).split("~");
+      const position = positionString.split(",").map((s) => parseFloat(s));
+      const quarternion = quarternionString
+        .split(",")
+        .map((s) => parseFloat(s));
+      setInitialViewState({
+        initialized: true,
+        position: new Vector3(...position),
+        quarternion: new Quaternion(...quarternion),
+      });
+    } else {
+      setInitialViewState({
+        initialized: true,
+        position: null,
+        quarternion: null,
+      });
     }
-  }, [cameraIndex, cameraMap, camera]);
+  }, []);
+
+  useEffect(() => {
+    if (initialViewState.initialized && initialViewState.position) {
+      camera.position.copy(initialViewState.position);
+      if (initialViewState.quarternion) {
+        camera.quaternion.copy(initialViewState.quarternion);
+      }
+    }
+  }, [initialViewState]);
+
+  useEffect(() => {
+    if (!initialViewState.initialized || initialViewState.position) return;
+    if (cameraCount > 0 && cameraIndex === -1) {
+      console.log(`[CamerasProvider] setCamera(0) in useEffect`);
+      setCamera(0);
+    }
+  }, [cameraCount, setCamera, cameraIndex]);
 
   const context: CamerasContextValue = useMemo(
     () => ({

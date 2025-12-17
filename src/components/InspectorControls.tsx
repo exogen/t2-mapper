@@ -1,10 +1,14 @@
 import { useControls, useDebug, useSettings } from "./SettingsProvider";
 import { MissionSelect } from "./MissionSelect";
+import { RefObject } from "react";
+import { Camera } from "three";
+import { CopyCoordinatesButton } from "./CopyCoordinatesButton";
 
 export function InspectorControls({
   missionName,
   missionType,
   onChangeMission,
+  cameraRef,
 }: {
   missionName: string;
   missionType: string;
@@ -15,6 +19,7 @@ export function InspectorControls({
     missionName: string;
     missionType: string;
   }) => void;
+  cameraRef: RefObject<Camera | null>;
 }) {
   const {
     fogEnabled,
@@ -41,6 +46,7 @@ export function InspectorControls({
         missionType={missionType}
         onChange={onChangeMission}
       />
+      <CopyCoordinatesButton cameraRef={cameraRef} />
       <div className="CheckboxField">
         <input
           id="fogInput"

@@ -45,8 +45,15 @@ function CameraMovement() {
     const controls = new PointerLockControls(camera, gl.domElement);
     controlsRef.current = controls;
 
+    return () => {
+      controls.dispose();
+    };
+  }, [camera, gl.domElement]);
+
+  useEffect(() => {
     const handleClick = (e: MouseEvent) => {
-      if (controls.isLocked) {
+      const controls = controlsRef.current;
+      if (!controls || controls.isLocked) {
         nextCamera();
       } else if (e.target === gl.domElement) {
         // Only lock if clicking directly on the canvas (not on UI elements)
@@ -58,9 +65,8 @@ function CameraMovement() {
 
     return () => {
       document.removeEventListener("click", handleClick);
-      controls.dispose();
     };
-  }, [camera, gl, nextCamera]);
+  }, [nextCamera]);
 
   // Handle number keys 1-9 for camera selection
   useEffect(() => {

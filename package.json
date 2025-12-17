@@ -29,10 +29,12 @@
     "lodash.orderby": "^4.6.0",
     "match-sorter": "^8.2.0",
     "next": "^16.0.10",
+    "nuqs": "^2.8.5",
     "picomatch": "^4.0.3",
     "react": "^19.2.3",
     "react-dom": "^19.2.3",
     "react-error-boundary": "^6.0.0",
+    "react-icons": "^5.5.0",
     "three": "^0.182.0",
     "unzipper": "^0.12.3",
     "zustand": "^5.0.9"

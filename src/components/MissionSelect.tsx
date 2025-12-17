@@ -212,7 +212,7 @@ export function MissionSelect({
     if (!searchValue)
       return { type: "grouped" as const, groups: defaultGroups };
     const matches = matchSorter(allMissions, searchValue, {
-      keys: ["displayName", "missionName"],
+      keys: ["displayName", "missionName", "missionTypes", "groupName"],
     });
     return { type: "flat" as const, missions: matches };
   }, [searchValue]);

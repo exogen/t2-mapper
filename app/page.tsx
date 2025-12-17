@@ -1,8 +1,7 @@
 "use client";
-import { useState, useEffect, useCallback, Suspense, useMemo } from "react";
-import { useSearchParams, useRouter } from "next/navigation";
+import { useState, useEffect, useCallback, Suspense, useRef } from "react";
 import { Canvas, GLProps } from "@react-three/fiber";
-import { NoToneMapping, SRGBColorSpace, PCFShadowMap } from "three";
+import { NoToneMapping, SRGBColorSpace, PCFShadowMap, Camera } from "three";
 import { Mission } from "@/src/components/Mission";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ObserverControls } from "@/src/components/ObserverControls";
@@ -13,8 +12,9 @@ import { AudioProvider } from "@/src/components/AudioContext";
 import { DebugElements } from "@/src/components/DebugElements";
 import { CamerasProvider } from "@/src/components/CamerasProvider";
 import { getMissionList, getMissionInfo } from "@/src/manifest";
+import { createParser, useQueryState } from "nuqs";
 
-// three.js has its own loaders for textures and models, but we need to load other
+// Three.js has its own loaders for textures and models, but we need to load other
 // stuff too, e.g. missions, terrains, and more. This client is used for those.
 const queryClient = new QueryClient();
 
@@ -26,23 +26,52 @@ const glSettings: GLProps = {
   outputColorSpace: SRGBColorSpace,
 };
 
+type CurrentMission = {
+  missionName: string;
+  missionType?: string;
+};
+
+const defaultMission: CurrentMission = {
+  missionName: "RiverDance",
+  missionType: "CTF",
+};
+
+const parseAsMissionWithType = createParser<CurrentMission>({
+  parse(query: string) {
+    let [missionName, missionType] = query.split("~");
+    const availableMissionTypes = getMissionInfo(missionName).missionTypes;
+    if (!missionType || !availableMissionTypes.includes(missionType)) {
+      missionType = availableMissionTypes[0];
+    }
+    return { missionName, missionType };
+  },
+  serialize({ missionName, missionType }): string {
+    const availableMissionTypes = getMissionInfo(missionName).missionTypes;
+    if (availableMissionTypes.length === 1) {
+      return missionName;
+    }
+    return `${missionName}~${missionType}`;
+  },
+  eq(a, b) {
+    return a.missionName === b.missionName && a.missionType === b.missionType;
+  },
+}).withDefault(defaultMission);
+
 function MapInspector() {
-  const searchParams = useSearchParams();
-  const router = useRouter();
-
-  const [initialMissionName, initialMissionType] = useMemo(
-    () => (searchParams.get("mission") || "RiverDance~CTF").split("~"),
-    [],
+  const [currentMission, setCurrentMission] = useQueryState(
+    "mission",
+    parseAsMissionWithType,
   );
-  const [missionName, setMissionName] = useState(initialMissionName);
-  const availableMissionTypes = getMissionInfo(missionName).missionTypes;
-  const [missionType, setMissionType] = useState(() =>
-    initialMissionType && availableMissionTypes.includes(initialMissionType)
-      ? initialMissionType
-      : availableMissionTypes[0],
-  );
-  const isOnlyMissionType = availableMissionTypes.length === 1;
 
+  const changeMission = useCallback(
+    (mission: CurrentMission) => {
+      window.location.hash = "";
+      setCurrentMission(mission);
+    },
+    [setCurrentMission],
+  );
+
+  const { missionName, missionType } = currentMission;
   const [loadingProgress, setLoadingProgress] = useState(0);
   const [showLoadingIndicator, setShowLoadingIndicator] = useState(true);
   const isLoading = loadingProgress < 1;
@@ -59,7 +88,13 @@ function MapInspector() {
 
   useEffect(() => {
     // For automation, like the t2-maps app!
-    window.setMissionName = setMissionName;
+    window.setMissionName = (missionName: string) => {
+      const availableMissionTypes = getMissionInfo(missionName).missionTypes;
+      changeMission({
+        missionName,
+        missionType: availableMissionTypes[0],
+      });
+    };
     window.getMissionList = getMissionList;
     window.getMissionInfo = getMissionInfo;
 
@@ -68,17 +103,7 @@ function MapInspector() {
       delete window.getMissionList;
       delete window.getMissionInfo;
     };
-  }, []);
-
-  // Update query params when state changes
-  useEffect(() => {
-    const params = new URLSearchParams();
-    const value = isOnlyMissionType
-      ? missionName
-      : `${missionName}~${missionType}`;
-    params.set("mission", value);
-    router.replace(`?${params.toString()}`, { scroll: false });
-  }, [missionName, missionType, isOnlyMissionType, router]);
+  }, [changeMission]);
 
   const handleLoadingChange = useCallback(
     (_loading: boolean, progress: number = 0) => {
@@ -86,6 +111,8 @@ function MapInspector() {
     },
     [],
   );
+
+  const cameraRef = useRef<Camera | null>(null);
 
   return (
     <QueryClientProvider client={queryClient}>
@@ -110,6 +137,9 @@ function MapInspector() {
               frameloop="always"
               gl={glSettings}
               shadows={{ type: PCFShadowMap }}
+              onCreated={(state) => {
+                cameraRef.current = state.camera;
+              }}
             >
               <CamerasProvider>
                 <AudioProvider>
@@ -118,7 +148,6 @@ function MapInspector() {
                     name={missionName}
                     missionType={missionType}
                     onLoadingChange={handleLoadingChange}
-                    setMissionType={setMissionType}
                   />
                   <ObserverCamera />
                   <DebugElements />
@@ -130,10 +159,8 @@ function MapInspector() {
           <InspectorControls
             missionName={missionName}
             missionType={missionType}
-            onChangeMission={({ missionName, missionType }) => {
-              setMissionName(missionName);
-              setMissionType(missionType);
-            }}
+            onChangeMission={changeMission}
+            cameraRef={cameraRef}
           />
         </SettingsProvider>
       </main>

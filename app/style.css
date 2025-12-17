@@ -77,6 +77,42 @@ input[type="range"] {
   gap: 6px;
 }
 
+.IconButton {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  margin: 0 0 0 -12px;
+  font-size: 15px;
+  padding: 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.3);
+  border-left: 1px solid rgba(255, 255, 255, 0.3);
+  border-right: 1px solid rgba(200, 200, 200, 0.3);
+  border-bottom: 1px solid rgba(200, 200, 200, 0.3);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+  border-radius: 4px;
+  background: rgba(3, 82, 147, 0.6);
+  color: #fff;
+  cursor: pointer;
+  transform: translate(0, 0);
+  transition:
+    background 0.1s,
+    border-color 0.1s;
+}
+
+.IconButton:hover {
+  background: rgba(0, 98, 179, 0.8);
+  border-color: rgba(255, 255, 255, 0.4);
+}
+
+.IconButton:active {
+  background: rgba(0, 98, 179, 0.7);
+  border-color: rgba(255, 255, 255, 0.3);
+  transform: translate(0, 1px);
+}
+
 .StaticShapeLabel {
   background: rgba(0, 0, 0, 0.5);
   color: #fff;
@@ -352,4 +388,27 @@ input[type="range"] {
   font-size: 14px;
   color: rgba(255, 255, 255, 0.7);
   font-variant-numeric: tabular-nums;
+}
+
+.CopyCoordinatesButton .ClipboardCheck {
+  display: none;
+  opacity: 1;
+}
+
+@keyframes showClipboardCheck {
+  0% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0.2;
+  }
+}
+
+.CopyCoordinatesButton[data-copied="true"] .ClipboardCheck {
+  display: block;
+  animation: showClipboardCheck 300ms linear infinite;
+}
+
+.CopyCoordinatesButton[data-copied="true"] .MapPin {
+  display: none;
 }

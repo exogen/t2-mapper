@@ -1,0 +1,60 @@
+import { RefObject, useCallback, useRef, useState } from "react";
+import { FaMapPin } from "react-icons/fa";
+import { FaClipboardCheck } from "react-icons/fa6";
+import { Camera, Quaternion, Vector3 } from "three";
+
+function encodeViewHash({
+  position,
+  quaternion,
+}: {
+  position: Vector3;
+  quaternion: Quaternion;
+}) {
+  const trunc = (num: number) => parseFloat(num.toFixed(3));
+  const encodedPosition = `${trunc(position.x)},${trunc(position.y)},${trunc(position.z)}`;
+  const encodedQuaternion = `${trunc(quaternion.x)},${trunc(quaternion.y)},${trunc(quaternion.z)},${trunc(quaternion.w)}`;
+  return `#c${encodedPosition}~${encodedQuaternion}`;
+}
+
+export function CopyCoordinatesButton({
+  cameraRef,
+}: {
+  cameraRef: RefObject<Camera | null>;
+}) {
+  const [showCopied, setShowCopied] = useState(false);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const handleCopyLink = useCallback(async () => {
+    clearTimeout(timerRef.current);
+    const camera = cameraRef.current;
+    if (!camera) return;
+    const hash = encodeViewHash(camera);
+    // Update the URL hash
+    const fullPath = `${window.location.pathname}${window.location.search}${hash}`;
+    const fullUrl = `${window.location.origin}${fullPath}`;
+    window.history.replaceState(null, "", fullPath);
+    try {
+      await navigator.clipboard.writeText(fullUrl);
+      setShowCopied(true);
+      timerRef.current = setTimeout(() => {
+        setShowCopied(false);
+      }, 1300);
+    } catch (err) {
+      console.error(err);
+    }
+  }, [cameraRef]);
+
+  return (
+    <button
+      type="button"
+      className="IconButton CopyCoordinatesButton"
+      aria-label="Copy coordinates URL"
+      title="Copy coordinates URL"
+      onClick={handleCopyLink}
+      data-copied={showCopied ? "true" : "false"}
+    >
+      <FaMapPin className="MapPin" />
+      <FaClipboardCheck className="ClipboardCheck" />
+    </button>
+  );
+}

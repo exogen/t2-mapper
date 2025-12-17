@@ -139,7 +139,6 @@ function useExecutedMission(
 interface MissionProps {
   name: string;
   missionType: string;
-  setMissionType: (type: string) => void;
   onLoadingChange?: (isLoading: boolean, progress?: number) => void;
 }
 
