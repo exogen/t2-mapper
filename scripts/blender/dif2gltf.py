@@ -79,7 +79,11 @@ for i, in_path in enumerate(input_files, start=1):
     # Import
     print(f"[dif2gltf] [{i}/{total}] Converting: {in_path}")
     try:
-        res = op_call(filepath=in_path)
+        res = op_call(
+            filepath=in_path,
+            import_highest_lod_only=True,
+            import_lightmaps=True
+        )
         if "FINISHED" not in res:
             raise RuntimeError(f"Import failed via {op_id}")
     except Exception:
