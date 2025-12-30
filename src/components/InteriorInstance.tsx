@@ -185,34 +185,32 @@ function InteriorMesh({ node }: { node: Mesh }) {
   );
 }
 
-export const InteriorModel = memo(
-  ({
-    object,
-    interiorFile,
-  }: {
-    object: TorqueObject;
-    interiorFile: string;
-  }) => {
-    const { nodes } = useInterior(interiorFile);
-    const debugContext = useDebug();
-    const debugMode = debugContext?.debugMode ?? false;
+export const InteriorModel = memo(function InteriorModel({
+  object,
+  interiorFile,
+}: {
+  object: TorqueObject;
+  interiorFile: string;
+}) {
+  const { nodes } = useInterior(interiorFile);
+  const debugContext = useDebug();
+  const debugMode = debugContext?.debugMode ?? false;
 
-    return (
-      <group rotation={[0, -Math.PI / 2, 0]}>
-        {Object.entries(nodes)
-          .filter(([, node]: [string, any]) => node.isMesh)
-          .map(([name, node]: [string, any]) => (
-            <InteriorMesh key={name} node={node} />
-          ))}
-        {debugMode ? (
-          <FloatingLabel>
-            {object._id}: {interiorFile}
-          </FloatingLabel>
-        ) : null}
-      </group>
-    );
-  },
-);
+  return (
+    <group rotation={[0, -Math.PI / 2, 0]}>
+      {Object.entries(nodes)
+        .filter(([, node]: [string, any]) => node.isMesh)
+        .map(([name, node]: [string, any]) => (
+          <InteriorMesh key={name} node={node} />
+        ))}
+      {debugMode ? (
+        <FloatingLabel>
+          {object._id}: {interiorFile}
+        </FloatingLabel>
+      ) : null}
+    </group>
+  );
+});
 
 function InteriorPlaceholder({
   color,

@@ -27,7 +27,7 @@ export function parseTerrainBuffer(arrayBuffer: ArrayBufferLike): TerrainFile {
   };
 
   for (let i = 0; i < SIZE * SIZE; i++) {
-    let height = dataView.getUint16(offset, true);
+    const height = dataView.getUint16(offset, true);
     offset += 2;
     heightMap1d[i] = height;
   }
@@ -49,7 +49,7 @@ export function parseTerrainBuffer(arrayBuffer: ArrayBufferLike): TerrainFile {
   for (const _textureName of textureNames) {
     const alphaMap = new Uint8Array(SIZE * SIZE);
     for (let j = 0; j < SIZE * SIZE; j++) {
-      var alphaMats = dataView.getUint8(offset++);
+      const alphaMats = dataView.getUint8(offset++);
       alphaMap[j] = alphaMats;
     }
     alphaMaps.push(alphaMap);

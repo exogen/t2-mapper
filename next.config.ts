@@ -1,13 +1,15 @@
-const { PHASE_DEVELOPMENT_SERVER } = require("next/constants");
+import { NextConfig } from "next";
+import { PHASE_DEVELOPMENT_SERVER } from "next/constants";
 
-module.exports = (phase, { defaultConfig }) => {
+const nextConfig = (phase, { defaultConfig }): NextConfig => {
   return {
     // Suppress static export config warnings in dev mode as they are not relevant.
     output: phase === PHASE_DEVELOPMENT_SERVER ? undefined : "export",
-    distDir: phase === PHASE_DEVELOPMENT_SERVER ? undefined : "./docs",
+    distDir: "./docs",
     basePath: "/t2-mapper",
     assetPrefix: "/t2-mapper/",
     trailingSlash: true,
+    reactCompiler: true,
     headers:
       // TorqueScript files should be served as text. This won't affect what
       // GitHub Pages does with the static export, but it'll at least improve
@@ -45,3 +47,5 @@ module.exports = (phase, { defaultConfig }) => {
         : undefined,
   };
 };
+
+export default nextConfig;

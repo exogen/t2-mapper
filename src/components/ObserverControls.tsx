@@ -66,7 +66,7 @@ function CameraMovement() {
     return () => {
       document.removeEventListener("click", handleClick);
     };
-  }, [nextCamera]);
+  }, [gl.domElement, nextCamera]);
 
   // Handle number keys 1-9 for camera selection
   useEffect(() => {
@@ -119,7 +119,7 @@ function CameraMovement() {
     return () => {
       canvas.removeEventListener("wheel", handleWheel);
     };
-  }, [gl]);
+  }, [gl.domElement, setSpeedMultiplier]);
 
   useFrame((state, delta) => {
     const { forward, backward, left, right, up, down } = getKeys();

@@ -120,14 +120,14 @@ export function CamerasProvider({ children }: { children: ReactNode }) {
         camera.quaternion.copy(initialViewState.quarternion);
       }
     }
-  }, [initialViewState]);
+  }, [camera, initialViewState]);
 
   useEffect(() => {
     if (!initialViewState.initialized || initialViewState.position) return;
     if (cameraCount > 0 && cameraIndex === -1) {
       setCamera(0);
     }
-  }, [cameraCount, setCamera, cameraIndex]);
+  }, [cameraCount, setCamera, cameraIndex, initialViewState]);
 
   const context: CamerasContextValue = useMemo(
     () => ({

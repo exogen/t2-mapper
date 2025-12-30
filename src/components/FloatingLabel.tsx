@@ -31,7 +31,7 @@ export const FloatingLabel = memo(function FloatingLabel({
         labelRef.current.style.opacity = opacity.toString();
       }
     }
-  }, [isVisible, fadeWithDistance]);
+  }, [isVisible, fadeWithDistance, distanceRef]);
 
   useFrame(() => {
     if (fadeWithDistance) {

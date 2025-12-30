@@ -131,7 +131,7 @@ function useExecutedMission(
       controller.abort();
       runtime.destroy();
     };
-  }, [missionName, parsedMission]);
+  }, [missionName, missionType, parsedMission]);
 
   return state;
 }

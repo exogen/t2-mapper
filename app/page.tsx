@@ -38,12 +38,13 @@ const defaultMission: CurrentMission = {
 
 const parseAsMissionWithType = createParser<CurrentMission>({
   parse(query: string) {
-    let [missionName, missionType] = query.split("~");
+    const [missionName, missionType] = query.split("~");
+    let selectedMissionType = missionType;
     const availableMissionTypes = getMissionInfo(missionName).missionTypes;
     if (!missionType || !availableMissionTypes.includes(missionType)) {
-      missionType = availableMissionTypes[0];
+      selectedMissionType = availableMissionTypes[0];
     }
-    return { missionName, missionType };
+    return { missionName, missionType: selectedMissionType };
   },
   serialize({ missionName, missionType }): string {
     const availableMissionTypes = getMissionInfo(missionName).missionTypes;
