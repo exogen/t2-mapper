@@ -163,19 +163,20 @@ export function TouchCameraMovement({
     const joyX = Math.cos(angle); // right component
     const joyY = Math.sin(angle); // forward component
 
-    // Get camera forward projected onto XZ ground plane
+    // Forward/backward: use full camera direction (including Y) so
+    // looking up and pushing forward moves upward, like ObserverControls.
     camera.getWorldDirection(forwardVec.current);
-    forwardVec.current.y = 0;
     forwardVec.current.normalize();
 
-    // Get camera right vector on XZ plane
-    sideVec.current.crossVectors(forwardVec.current, camera.up).normalize();
+    // Left/right: move along XZ plane
+    sideVec.current.crossVectors(camera.up, forwardVec.current).normalize();
 
-    // Combine: joyY pushes forward, joyX pushes right
+    // Combine: joyY pushes forward, joyX pushes right.
+    // sideVec points left (up × forward), so negate joyX.
     moveVec.current
       .set(0, 0, 0)
       .addScaledVector(forwardVec.current, joyY)
-      .addScaledVector(sideVec.current, joyX);
+      .addScaledVector(sideVec.current, -joyX);
 
     if (moveVec.current.lengthSq() > 0) {
       moveVec.current.normalize().multiplyScalar(speed * delta);
