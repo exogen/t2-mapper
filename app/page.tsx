@@ -5,7 +5,13 @@ import { NoToneMapping, SRGBColorSpace, PCFShadowMap, Camera } from "three";
 import { Mission } from "@/src/components/Mission";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ObserverControls } from "@/src/components/ObserverControls";
+import {
+  TouchJoystick,
+  TouchCameraMovement,
+  type JoystickState,
+} from "@/src/components/TouchControls";
 import { InspectorControls } from "@/src/components/InspectorControls";
+import { useTouchDevice } from "@/src/components/useTouchDevice";
 import { SettingsProvider } from "@/src/components/SettingsProvider";
 import { ObserverCamera } from "@/src/components/ObserverCamera";
 import { AudioProvider } from "@/src/components/AudioContext";
@@ -72,6 +78,7 @@ function MapInspector() {
     [setCurrentMission],
   );
 
+  const isTouch = useTouchDevice();
   const { missionName, missionType } = currentMission;
   const [loadingProgress, setLoadingProgress] = useState(0);
   const [showLoadingIndicator, setShowLoadingIndicator] = useState(true);
@@ -114,6 +121,8 @@ function MapInspector() {
   );
 
   const cameraRef = useRef<Camera | null>(null);
+  const joystickStateRef = useRef<JoystickState>({ angle: 0, force: 0 });
+  const joystickZoneRef = useRef<HTMLDivElement | null>(null);
 
   return (
     <QueryClientProvider client={queryClient}>
@@ -134,6 +143,12 @@ function MapInspector() {
                 </div>
               </div>
             )}
+            {isTouch && (
+              <TouchJoystick
+                joystickState={joystickStateRef}
+                joystickZone={joystickZoneRef}
+              />
+            )}
             <Canvas
               frameloop="always"
               gl={glSettings}
@@ -152,7 +167,14 @@ function MapInspector() {
                   />
                   <ObserverCamera />
                   <DebugElements />
-                  <ObserverControls />
+                  {isTouch === null ? null : isTouch ? (
+                    <TouchCameraMovement
+                      joystickState={joystickStateRef}
+                      joystickZone={joystickZoneRef}
+                    />
+                  ) : (
+                    <ObserverControls />
+                  )}
                 </AudioProvider>
               </CamerasProvider>
             </Canvas>

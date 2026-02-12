@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { Vector3 } from "three";
+import { Euler, Vector3 } from "three";
 import { useFrame, useThree } from "@react-three/fiber";
 import { KeyboardControls, useKeyboardControls } from "@react-three/drei";
 import { PointerLockControls } from "three-stdlib";
@@ -27,6 +27,9 @@ enum Controls {
 const BASE_SPEED = 80;
 const MIN_SPEED_ADJUSTMENT = 0.05;
 const MAX_SPEED_ADJUSTMENT = 0.5;
+const DRAG_SENSITIVITY = 0.003;
+const MAX_PITCH = Math.PI / 2 - 0.01; // ~89°
+const DRAG_THRESHOLD = 3; // px of movement before it counts as a drag
 
 function CameraMovement() {
   const { speedMultiplier, setSpeedMultiplier } = useControls();
@@ -50,23 +53,68 @@ function CameraMovement() {
     };
   }, [camera, gl.domElement]);
 
+  // When pointer is locked: click cycles camera.
+  // When pointer is unlocked: drag rotates camera, click locks pointer.
   useEffect(() => {
+    const canvas = gl.domElement;
+    const euler = new Euler(0, 0, 0, "YXZ");
+    let dragging = false;
+    let didDrag = false;
+    let startX = 0;
+    let startY = 0;
+
+    const handleMouseDown = (e: MouseEvent) => {
+      if (controlsRef.current?.isLocked) return;
+      if (e.target !== canvas) return;
+      dragging = true;
+      didDrag = false;
+      startX = e.clientX;
+      startY = e.clientY;
+    };
+
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!dragging) return;
+      if (
+        !didDrag &&
+        Math.abs(e.clientX - startX) < DRAG_THRESHOLD &&
+        Math.abs(e.clientY - startY) < DRAG_THRESHOLD
+      ) {
+        return;
+      }
+      didDrag = true;
+
+      euler.setFromQuaternion(camera.quaternion, "YXZ");
+      euler.y -= e.movementX * DRAG_SENSITIVITY;
+      euler.x -= e.movementY * DRAG_SENSITIVITY;
+      euler.x = Math.max(-MAX_PITCH, Math.min(MAX_PITCH, euler.x));
+      camera.quaternion.setFromEuler(euler);
+    };
+
+    const handleMouseUp = () => {
+      dragging = false;
+    };
+
     const handleClick = (e: MouseEvent) => {
       const controls = controlsRef.current;
       if (!controls || controls.isLocked) {
         nextCamera();
-      } else if (e.target === gl.domElement) {
-        // Only lock if clicking directly on the canvas (not on UI elements)
+      } else if (e.target === canvas && !didDrag) {
         controls.lock();
       }
     };
 
+    canvas.addEventListener("mousedown", handleMouseDown);
+    document.addEventListener("mousemove", handleMouseMove);
+    document.addEventListener("mouseup", handleMouseUp);
     document.addEventListener("click", handleClick);
 
     return () => {
+      canvas.removeEventListener("mousedown", handleMouseDown);
+      document.removeEventListener("mousemove", handleMouseMove);
+      document.removeEventListener("mouseup", handleMouseUp);
       document.removeEventListener("click", handleClick);
     };
-  }, [gl.domElement, nextCamera]);
+  }, [camera, gl.domElement, nextCamera]);
 
   // Handle number keys 1-9 for camera selection
   useEffect(() => {

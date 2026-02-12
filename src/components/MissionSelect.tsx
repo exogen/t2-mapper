@@ -186,6 +186,7 @@ export function MissionSelect({
           missionName: newValue,
           missionType: newMissionType,
         });
+        inputRef.current?.blur();
       }
     },
     setValue: (value) => {
@@ -272,6 +273,11 @@ export function MissionSelect({
             document.exitPointerLock();
             combobox.show();
           }}
+          onKeyDown={(e) => {
+            if (e.key === "Escape" && !combobox.getState().open) {
+              inputRef.current?.blur();
+            }
+          }}
         />
         <div className="MissionSelect-selectedValue">
           <span className="MissionSelect-selectedName">{displayValue}</span>
@@ -286,7 +292,12 @@ export function MissionSelect({
         </div>
         <kbd className="MissionSelect-shortcut">{isMac ? "⌘K" : "^K"}</kbd>
       </div>
-      <ComboboxPopover gutter={4} fitViewport className="MissionSelect-popover">
+      <ComboboxPopover
+        gutter={4}
+        fitViewport
+        autoFocusOnHide={false}
+        className="MissionSelect-popover"
+      >
         <ComboboxList className="MissionSelect-list">
           {filteredResults.type === "flat"
             ? filteredResults.missions.map(renderItem)
