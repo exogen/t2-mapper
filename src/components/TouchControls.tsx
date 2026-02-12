@@ -7,6 +7,8 @@ import { useControls } from "./SettingsProvider";
 const BASE_SPEED = 80;
 const LOOK_SENSITIVITY = 0.004;
 const STICK_LOOK_SENSITIVITY = 2.5;
+const DUAL_MOVE_DEADZONE = 0.1;
+const DUAL_LOOK_DEADZONE = 0.2;
 const SINGLE_STICK_DEADZONE = 0.15;
 const MAX_PITCH = Math.PI / 2 - 0.01; // ~89°
 
@@ -240,13 +242,15 @@ export function TouchCameraMovement({
     if (touchMode === "dualStick") {
       // Right stick → camera rotation
       const look = lookJoystickState.current;
-      if (look.force > 0) {
+      if (look.force > DUAL_LOOK_DEADZONE) {
+        const lookForce =
+          (look.force - DUAL_LOOK_DEADZONE) / (1 - DUAL_LOOK_DEADZONE);
         const lookX = Math.cos(look.angle);
         const lookY = Math.sin(look.angle);
 
         euler.current.setFromQuaternion(camera.quaternion, "YXZ");
-        euler.current.y -= lookX * look.force * STICK_LOOK_SENSITIVITY * delta;
-        euler.current.x += lookY * look.force * STICK_LOOK_SENSITIVITY * delta;
+        euler.current.y -= lookX * lookForce * STICK_LOOK_SENSITIVITY * delta;
+        euler.current.x += lookY * lookForce * STICK_LOOK_SENSITIVITY * delta;
         euler.current.x = Math.max(
           -MAX_PITCH,
           Math.min(MAX_PITCH, euler.current.x),
@@ -255,8 +259,10 @@ export function TouchCameraMovement({
       }
 
       // Left stick → movement
-      if (force > 0) {
-        const speed = BASE_SPEED * speedMultiplier * force;
+      if (force > DUAL_MOVE_DEADZONE) {
+        const moveForce =
+          (force - DUAL_MOVE_DEADZONE) / (1 - DUAL_MOVE_DEADZONE);
+        const speed = BASE_SPEED * speedMultiplier * moveForce;
         const joyX = Math.cos(angle);
         const joyY = Math.sin(angle);
 
