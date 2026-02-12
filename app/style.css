@@ -10,6 +10,8 @@ html {
 *:before,
 *:after {
   box-sizing: inherit;
+  user-select: none;
+  -webkit-touch-callout: none;
 }
 
 html {
@@ -57,7 +59,7 @@ main {
   padding: 8px 12px 8px 8px;
   border-radius: 0 0 4px 0;
   font-size: 13px;
-  z-index: 1;
+  z-index: 2;
 }
 
 input[type="range"] {
@@ -288,6 +290,7 @@ input[type="range"] {
   background: rgba(0, 0, 0, 0.6);
   color: #fff;
   outline: none;
+  user-select: text;
 }
 
 .MissionSelect-input[aria-expanded="true"] {
@@ -511,15 +514,13 @@ input[type="range"] {
 }
 
 .TouchJoystick {
-  position: absolute;
+  position: fixed;
   bottom: 20px;
   left: 50%;
   transform: translateX(-50%);
   width: 140px;
   height: 140px;
-  z-index: 10;
-  -webkit-touch-callout: none;
-  user-select: none;
+  z-index: 1;
 }
 
 .TouchJoystick--left {

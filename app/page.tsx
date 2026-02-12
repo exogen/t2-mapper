@@ -145,14 +145,6 @@ function MapInspector() {
                 </div>
               </div>
             )}
-            {isTouch && (
-              <TouchJoystick
-                joystickState={joystickStateRef}
-                joystickZone={joystickZoneRef}
-                lookJoystickState={lookJoystickStateRef}
-                lookJoystickZone={lookJoystickZoneRef}
-              />
-            )}
             <Canvas
               frameloop="always"
               gl={glSettings}
@@ -185,6 +177,14 @@ function MapInspector() {
               </CamerasProvider>
             </Canvas>
           </div>
+          {isTouch && (
+            <TouchJoystick
+              joystickState={joystickStateRef}
+              joystickZone={joystickZoneRef}
+              lookJoystickState={lookJoystickStateRef}
+              lookJoystickZone={lookJoystickZoneRef}
+            />
+          )}
           <InspectorControls
             missionName={missionName}
             missionType={missionType}
