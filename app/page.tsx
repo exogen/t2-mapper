@@ -123,6 +123,8 @@ function MapInspector() {
   const cameraRef = useRef<Camera | null>(null);
   const joystickStateRef = useRef<JoystickState>({ angle: 0, force: 0 });
   const joystickZoneRef = useRef<HTMLDivElement | null>(null);
+  const lookJoystickStateRef = useRef<JoystickState>({ angle: 0, force: 0 });
+  const lookJoystickZoneRef = useRef<HTMLDivElement | null>(null);
 
   return (
     <QueryClientProvider client={queryClient}>
@@ -147,6 +149,8 @@ function MapInspector() {
               <TouchJoystick
                 joystickState={joystickStateRef}
                 joystickZone={joystickZoneRef}
+                lookJoystickState={lookJoystickStateRef}
+                lookJoystickZone={lookJoystickZoneRef}
               />
             )}
             <Canvas
@@ -171,6 +175,8 @@ function MapInspector() {
                     <TouchCameraMovement
                       joystickState={joystickStateRef}
                       joystickZone={joystickZoneRef}
+                      lookJoystickState={lookJoystickStateRef}
+                      lookJoystickZone={lookJoystickZoneRef}
                     />
                   ) : (
                     <ObserverControls />
@@ -184,6 +190,7 @@ function MapInspector() {
             missionType={missionType}
             onChangeMission={changeMission}
             cameraRef={cameraRef}
+            isTouch={isTouch}
           />
         </SettingsProvider>
       </main>

@@ -47,14 +47,16 @@ export function CopyCoordinatesButton({
   return (
     <button
       type="button"
-      className="IconButton CopyCoordinatesButton"
+      className="IconButton LabelledButton CopyCoordinatesButton"
       aria-label="Copy coordinates URL"
       title="Copy coordinates URL"
       onClick={handleCopyLink}
       data-copied={showCopied ? "true" : "false"}
+      id="copyCoordinatesButton"
     >
       <FaMapPin className="MapPin" />
       <FaClipboardCheck className="ClipboardCheck" />
+      <span className="ButtonLabel"> Copy coordinates URL</span>
     </button>
   );
 }

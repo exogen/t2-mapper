@@ -11,6 +11,8 @@ import {
 
 type StateSetter<T> = ReturnType<typeof useState<T>>[1];
 
+export type TouchMode = "dualStick" | "moveLookStick";
+
 type SettingsContext = {
   fogEnabled: boolean;
   setFogEnabled: StateSetter<boolean>;
@@ -32,6 +34,8 @@ type DebugContext = {
 type ControlsContext = {
   speedMultiplier: number;
   setSpeedMultiplier: StateSetter<number>;
+  touchMode: TouchMode;
+  setTouchMode: StateSetter<TouchMode>;
 };
 
 const SettingsContext = createContext<SettingsContext | null>(null);
@@ -46,6 +50,7 @@ type PersistedSettings = {
   audioEnabled?: boolean;
   animationEnabled?: boolean;
   debugMode?: boolean;
+  touchMode?: TouchMode;
 };
 
 export function useSettings() {
@@ -68,6 +73,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   const [audioEnabled, setAudioEnabled] = useState(false);
   const [animationEnabled, setAnimationEnabled] = useState(true);
   const [debugMode, setDebugMode] = useState(false);
+  const [touchMode, setTouchMode] = useState<TouchMode>("moveLookStick");
 
   const settingsContext: SettingsContext = useMemo(
     () => ({
@@ -91,8 +97,8 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   );
 
   const controlsContext: ControlsContext = useMemo(
-    () => ({ speedMultiplier, setSpeedMultiplier }),
-    [speedMultiplier, setSpeedMultiplier],
+    () => ({ speedMultiplier, setSpeedMultiplier, touchMode, setTouchMode }),
+    [speedMultiplier, setSpeedMultiplier, touchMode, setTouchMode],
   );
 
   // Read persisted settings from localStorage.
@@ -124,6 +130,9 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     if (savedSettings.fov != null) {
       setFov(savedSettings.fov);
     }
+    if (savedSettings.touchMode != null) {
+      setTouchMode(savedSettings.touchMode);
+    }
   }, []);
 
   // Persist settings to localStorage with debouncing to avoid excessive writes
@@ -145,6 +154,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
         audioEnabled,
         animationEnabled,
         debugMode,
+        touchMode,
       };
       try {
         localStorage.setItem("settings", JSON.stringify(settingsToSave));
@@ -166,6 +176,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     audioEnabled,
     animationEnabled,
     debugMode,
+    touchMode,
   ]);
 
   return (

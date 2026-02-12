@@ -6,6 +6,8 @@ import { useControls } from "./SettingsProvider";
 
 const BASE_SPEED = 80;
 const LOOK_SENSITIVITY = 0.004;
+const STICK_LOOK_SENSITIVITY = 2.5;
+const SINGLE_STICK_DEADZONE = 0.25;
 const MAX_PITCH = Math.PI / 2 - 0.01; // ~89°
 
 export type JoystickState = {
@@ -16,10 +18,19 @@ export type JoystickState = {
 type SharedProps = {
   joystickState: RefObject<JoystickState>;
   joystickZone: RefObject<HTMLDivElement | null>;
+  lookJoystickState: RefObject<JoystickState>;
+  lookJoystickZone: RefObject<HTMLDivElement | null>;
 };
 
-/** Renders the joystick zone. Place inside canvasContainer, outside Canvas. */
-export function TouchJoystick({ joystickState, joystickZone }: SharedProps) {
+/** Renders the joystick zone(s). Place inside canvasContainer, outside Canvas. */
+export function TouchJoystick({
+  joystickState,
+  joystickZone,
+  lookJoystickState,
+  lookJoystickZone,
+}: SharedProps) {
+  const { touchMode } = useControls();
+  // Move joystick
   useEffect(() => {
     const zone = joystickZone.current;
     if (!zone) return;
@@ -39,7 +50,6 @@ export function TouchJoystick({ joystickState, joystickZone }: SharedProps) {
 
       manager.on("move", (_event, data) => {
         joystickState.current.angle = data.angle.radian;
-        // Clamp force to 0–1 range (nipplejs force can exceed 1)
         joystickState.current.force = Math.min(1, data.force);
       });
 
@@ -52,17 +62,77 @@ export function TouchJoystick({ joystickState, joystickZone }: SharedProps) {
       cancelled = true;
       manager?.destroy();
     };
-  }, [joystickState, joystickZone]);
+  }, [joystickState, joystickZone, touchMode]);
 
-  return <div ref={joystickZone} className="TouchJoystick" />;
+  // Look joystick (dual stick mode only)
+  useEffect(() => {
+    if (touchMode !== "dualStick") return;
+
+    const zone = lookJoystickZone.current;
+    if (!zone) return;
+
+    let manager: nipplejs.JoystickManager | null = null;
+    let cancelled = false;
+
+    import("nipplejs").then((mod) => {
+      if (cancelled) return;
+      manager = mod.default.create({
+        zone,
+        mode: "static",
+        position: { right: "70px", bottom: "70px" },
+        size: 120,
+        restOpacity: 0.9,
+      });
+
+      manager.on("move", (_event, data) => {
+        lookJoystickState.current.angle = data.angle.radian;
+        lookJoystickState.current.force = Math.min(1, data.force);
+      });
+
+      manager.on("end", () => {
+        lookJoystickState.current.force = 0;
+      });
+    });
+
+    return () => {
+      cancelled = true;
+      manager?.destroy();
+    };
+  }, [touchMode, lookJoystickState, lookJoystickZone]);
+
+  if (touchMode === "dualStick") {
+    return (
+      <>
+        <div
+          ref={joystickZone}
+          className="TouchJoystick TouchJoystick--left"
+          onContextMenu={(e) => e.preventDefault()}
+        />
+        <div
+          ref={lookJoystickZone}
+          className="TouchJoystick TouchJoystick--right"
+          onContextMenu={(e) => e.preventDefault()}
+        />
+      </>
+    );
+  }
+
+  return (
+    <div
+      ref={joystickZone}
+      className="TouchJoystick"
+      onContextMenu={(e) => e.preventDefault()}
+    />
+  );
 }
 
 /** Handles touch look and joystick-driven movement. Place inside Canvas. */
 export function TouchCameraMovement({
   joystickState,
   joystickZone,
+  lookJoystickState,
 }: SharedProps) {
-  const { speedMultiplier } = useControls();
+  const { speedMultiplier, touchMode } = useControls();
   const { camera, gl } = useThree();
 
   // Touch look state
@@ -80,8 +150,10 @@ export function TouchCameraMovement({
     euler.current.setFromQuaternion(camera.quaternion, "YXZ");
   }, [camera]);
 
-  // Touch look handling
+  // Touch-drag look handling (moveLookStick mode)
   useEffect(() => {
+    if (touchMode !== "moveLookStick") return;
+
     const canvas = gl.domElement;
 
     const isTouchOnJoystick = (touch: Touch) => {
@@ -149,38 +221,82 @@ export function TouchCameraMovement({
       canvas.removeEventListener("touchmove", handleTouchMove);
       canvas.removeEventListener("touchend", handleTouchEnd);
       canvas.removeEventListener("touchcancel", handleTouchEnd);
+      lookTouchId.current = null;
     };
-  }, [camera, gl.domElement, joystickZone]);
+  }, [camera, gl.domElement, joystickZone, touchMode]);
 
   useFrame((_state, delta) => {
     const { force, angle } = joystickState.current;
-    if (force === 0) return;
 
-    const speed = BASE_SPEED * speedMultiplier * force;
+    if (touchMode === "dualStick") {
+      // Right stick → camera rotation
+      const look = lookJoystickState.current;
+      if (look.force > 0) {
+        const lookX = Math.cos(look.angle);
+        const lookY = Math.sin(look.angle);
 
-    // Decompose joystick angle into forward/sideways components
-    // nipplejs angle: 0 = right, π/2 = up, π = left, 3π/2 = down
-    const joyX = Math.cos(angle); // right component
-    const joyY = Math.sin(angle); // forward component
+        euler.current.setFromQuaternion(camera.quaternion, "YXZ");
+        euler.current.y -= lookX * look.force * STICK_LOOK_SENSITIVITY * delta;
+        euler.current.x += lookY * look.force * STICK_LOOK_SENSITIVITY * delta;
+        euler.current.x = Math.max(
+          -MAX_PITCH,
+          Math.min(MAX_PITCH, euler.current.x),
+        );
+        camera.quaternion.setFromEuler(euler.current);
+      }
 
-    // Forward/backward: use full camera direction (including Y) so
-    // looking up and pushing forward moves upward, like ObserverControls.
-    camera.getWorldDirection(forwardVec.current);
-    forwardVec.current.normalize();
+      // Left stick → movement
+      if (force > 0) {
+        const speed = BASE_SPEED * speedMultiplier * force;
+        const joyX = Math.cos(angle);
+        const joyY = Math.sin(angle);
 
-    // Left/right: move along XZ plane
-    sideVec.current.crossVectors(camera.up, forwardVec.current).normalize();
+        camera.getWorldDirection(forwardVec.current);
+        forwardVec.current.normalize();
+        sideVec.current
+          .crossVectors(camera.up, forwardVec.current)
+          .normalize();
 
-    // Combine: joyY pushes forward, joyX pushes right.
-    // sideVec points left (up × forward), so negate joyX.
-    moveVec.current
-      .set(0, 0, 0)
-      .addScaledVector(forwardVec.current, joyY)
-      .addScaledVector(sideVec.current, -joyX);
+        moveVec.current
+          .set(0, 0, 0)
+          .addScaledVector(forwardVec.current, joyY)
+          .addScaledVector(sideVec.current, -joyX);
 
-    if (moveVec.current.lengthSq() > 0) {
-      moveVec.current.normalize().multiplyScalar(speed * delta);
-      camera.position.add(moveVec.current);
+        if (moveVec.current.lengthSq() > 0) {
+          moveVec.current.normalize().multiplyScalar(speed * delta);
+          camera.position.add(moveVec.current);
+        }
+      }
+    } else if (touchMode === "moveLookStick") {
+      if (force > 0) {
+        // Move forward at half the configured speed.
+        const speed = BASE_SPEED * speedMultiplier * 0.5;
+        camera.getWorldDirection(forwardVec.current);
+        forwardVec.current.normalize();
+        moveVec.current
+          .copy(forwardVec.current)
+          .multiplyScalar(speed * delta);
+        camera.position.add(moveVec.current);
+
+        if (force >= SINGLE_STICK_DEADZONE) {
+          // Outer zone: also control camera look (yaw + pitch).
+          const lookX = Math.cos(angle);
+          const lookY = Math.sin(angle);
+          const lookForce =
+            (force - SINGLE_STICK_DEADZONE) / (1 - SINGLE_STICK_DEADZONE);
+
+          euler.current.setFromQuaternion(camera.quaternion, "YXZ");
+          euler.current.y -=
+            lookX * lookForce * STICK_LOOK_SENSITIVITY * 0.5 * delta;
+          euler.current.x +=
+            lookY * lookForce * STICK_LOOK_SENSITIVITY * 0.5 * delta;
+          euler.current.x = Math.max(
+            -MAX_PITCH,
+            Math.min(MAX_PITCH, euler.current.x),
+          );
+          camera.quaternion.setFromEuler(euler.current);
+        }
+      }
     }
   });
 

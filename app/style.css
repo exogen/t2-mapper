@@ -49,9 +49,6 @@ main {
 }
 
 #controls {
-  display: flex;
-  align-items: center;
-  gap: 20px;
   position: fixed;
   top: 0;
   left: 0;
@@ -67,7 +64,8 @@ input[type="range"] {
   max-width: 80px;
 }
 
-.CheckboxField {
+.CheckboxField,
+.LabelledButton {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -77,6 +75,64 @@ input[type="range"] {
   display: flex;
   align-items: center;
   gap: 6px;
+}
+
+#controls,
+.Controls-dropdown,
+.Controls-group {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 20px;
+}
+
+@media (max-width: 1279px) {
+  .Controls-dropdown[data-open="false"] {
+    display: none;
+  }
+
+  .Controls-dropdown {
+    position: absolute;
+    top: calc(100% + 2px);
+    left: 2px;
+    right: 2px;
+    display: flex;
+    overflow: auto;
+    max-height: calc(100dvh - 56px);
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+    background: rgba(0, 0, 0, 0.8);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 4px;
+    padding: 12px;
+    box-shadow: 0 0 12px rgba(0, 0, 0, 0.4);
+  }
+
+  .Controls-group {
+    flex-wrap: wrap;
+    gap: 12px 20px;
+  }
+}
+
+@media (max-width: 639px) {
+  #controls {
+    right: 0;
+    border-radius: 0;
+  }
+
+  #controls > .MissionSelect-inputWrapper {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+
+  #controls > .MissionSelect-inputWrapper .MissionSelect-input {
+    width: 100%;
+  }
+
+  .Controls-toggle {
+    flex: 0 0 auto;
+  }
 }
 
 .IconButton {
@@ -104,15 +160,47 @@ input[type="range"] {
     border-color 0.2s;
 }
 
-.IconButton:hover {
-  background: rgba(0, 98, 179, 0.8);
-  border-color: rgba(255, 255, 255, 0.4);
+.ButtonLabel {
+  font-size: 12px;
 }
 
-.IconButton:active {
+.IconButton svg {
+  pointer-events: none;
+}
+
+@media (hover: hover) {
+  .IconButton:hover {
+    background: rgba(0, 98, 179, 0.8);
+    border-color: rgba(255, 255, 255, 0.4);
+  }
+}
+
+.IconButton:active,
+.IconButton[aria-expanded="true"] {
   background: rgba(0, 98, 179, 0.7);
   border-color: rgba(255, 255, 255, 0.3);
   transform: translate(0, 1px);
+}
+
+.Controls-toggle {
+  margin: 0;
+}
+
+@media (max-width: 1279px) {
+  .LabelledButton {
+    width: auto;
+    padding: 0 10px;
+  }
+}
+
+@media (min-width: 1280px) {
+  .Controls-toggle {
+    display: none;
+  }
+
+  .LabelledButton .ButtonLabel {
+    display: none;
+  }
 }
 
 .CopyCoordinatesButton[data-copied="true"] {
@@ -146,7 +234,9 @@ input[type="range"] {
 
 .StatsPanel {
   left: auto !important;
+  top: auto !important;
   right: 0;
+  bottom: 0;
 }
 
 .AxisLabel {
@@ -428,6 +518,19 @@ input[type="range"] {
   width: 140px;
   height: 140px;
   z-index: 10;
+  -webkit-touch-callout: none;
+  user-select: none;
+}
+
+.TouchJoystick--left {
+  left: 20px;
+  transform: none;
+}
+
+.TouchJoystick--right {
+  left: auto;
+  right: 20px;
+  transform: none;
 }
 
 .TouchJoystick .back {
