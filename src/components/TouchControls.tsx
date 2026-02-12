@@ -7,8 +7,8 @@ import { useControls } from "./SettingsProvider";
 const BASE_SPEED = 80;
 const LOOK_SENSITIVITY = 0.004;
 const STICK_LOOK_SENSITIVITY = 2.5;
-const DUAL_MOVE_DEADZONE = 0.1;
-const DUAL_LOOK_DEADZONE = 0.2;
+const DUAL_MOVE_DEADZONE = 0.08;
+const DUAL_LOOK_DEADZONE = 0.15;
 const SINGLE_STICK_DEADZONE = 0.15;
 const MAX_PITCH = Math.PI / 2 - 0.01; // ~89°
 
