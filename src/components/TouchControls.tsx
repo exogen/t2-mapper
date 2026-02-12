@@ -7,7 +7,7 @@ import { useControls } from "./SettingsProvider";
 const BASE_SPEED = 80;
 const LOOK_SENSITIVITY = 0.004;
 const STICK_LOOK_SENSITIVITY = 2.5;
-const SINGLE_STICK_DEADZONE = 0.25;
+const SINGLE_STICK_DEADZONE = 0.15;
 const MAX_PITCH = Math.PI / 2 - 0.01; // ~89°
 
 export type JoystickState = {
@@ -100,6 +100,12 @@ export function TouchJoystick({
     };
   }, [touchMode, lookJoystickState, lookJoystickZone]);
 
+  const blurActiveElement = () => {
+    if (document.activeElement instanceof HTMLElement) {
+      document.activeElement.blur();
+    }
+  };
+
   if (touchMode === "dualStick") {
     return (
       <>
@@ -107,11 +113,13 @@ export function TouchJoystick({
           ref={joystickZone}
           className="TouchJoystick TouchJoystick--left"
           onContextMenu={(e) => e.preventDefault()}
+          onTouchStart={blurActiveElement}
         />
         <div
           ref={lookJoystickZone}
           className="TouchJoystick TouchJoystick--right"
           onContextMenu={(e) => e.preventDefault()}
+          onTouchStart={blurActiveElement}
         />
       </>
     );
@@ -122,6 +130,7 @@ export function TouchJoystick({
       ref={joystickZone}
       className="TouchJoystick"
       onContextMenu={(e) => e.preventDefault()}
+      onTouchStart={blurActiveElement}
     />
   );
 }

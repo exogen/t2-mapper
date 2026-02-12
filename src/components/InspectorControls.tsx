@@ -45,6 +45,7 @@ export function InspectorControls({
   const [settingsOpen, setSettingsOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
+  const focusAreaRef = useRef<HTMLDivElement>(null);
 
   // Focus the panel when it opens.
   useEffect(() => {
@@ -54,12 +55,8 @@ export function InspectorControls({
   }, [settingsOpen]);
 
   const handleDropdownBlur = (e: React.FocusEvent) => {
-    const related = e.relatedTarget as Node | null;
-    if (
-      related &&
-      (dropdownRef.current?.contains(related) ||
-        buttonRef.current?.contains(related))
-    ) {
+    const relatedTarget = e.relatedTarget as Node | null;
+    if (relatedTarget && focusAreaRef.current?.contains(relatedTarget)) {
       return;
     }
     setSettingsOpen(false);
@@ -185,27 +182,30 @@ export function InspectorControls({
         missionType={missionType}
         onChange={onChangeMission}
       />
-      <button
-        ref={buttonRef}
-        className="IconButton Controls-toggle"
-        onClick={() => setSettingsOpen((isOpen) => !isOpen)}
-        onDoubleClick={(e) => e.preventDefault()}
-        aria-expanded={settingsOpen}
-        aria-controls="settingsPanel"
-        aria-label="Settings"
-      >
-        <FiSettings />
-      </button>
-      <div
-        className="Controls-dropdown"
-        ref={dropdownRef}
-        id="settingsPanel"
-        tabIndex={-1}
-        onKeyDown={handlePanelKeyDown}
-        onBlur={handleDropdownBlur}
-        data-open={settingsOpen}
-      >
-        {settingsFields}
+      <div ref={focusAreaRef}>
+        <button
+          ref={buttonRef}
+          className="IconButton Controls-toggle"
+          onClick={() => {
+            setSettingsOpen((isOpen) => !isOpen);
+          }}
+          aria-expanded={settingsOpen}
+          aria-controls="settingsPanel"
+          aria-label="Settings"
+        >
+          <FiSettings />
+        </button>
+        <div
+          className="Controls-dropdown"
+          ref={dropdownRef}
+          id="settingsPanel"
+          tabIndex={-1}
+          onKeyDown={handlePanelKeyDown}
+          onBlur={handleDropdownBlur}
+          data-open={settingsOpen}
+        >
+          {settingsFields}
+        </div>
       </div>
     </div>
   );
