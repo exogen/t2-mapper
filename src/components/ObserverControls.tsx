@@ -1,12 +1,12 @@
 import { useEffect, useRef } from "react";
 import { Euler, Vector3 } from "three";
 import { useFrame, useThree } from "@react-three/fiber";
-import { KeyboardControls, useKeyboardControls } from "@react-three/drei";
+import { useKeyboardControls } from "@react-three/drei";
 import { PointerLockControls } from "three-stdlib";
 import { useControls } from "./SettingsProvider";
 import { useCameras } from "./CamerasProvider";
 
-enum Controls {
+export enum Controls {
   forward = "forward",
   backward = "backward",
   left = "left",
@@ -215,7 +215,7 @@ function CameraMovement() {
   return null;
 }
 
-const KEYBOARD_CONTROLS = [
+export const KEYBOARD_CONTROLS = [
   { name: Controls.forward, keys: ["KeyW"] },
   { name: Controls.backward, keys: ["KeyS"] },
   { name: Controls.left, keys: ["KeyA"] },
@@ -255,9 +255,5 @@ export function ObserverControls() {
     };
   }, []);
 
-  return (
-    <KeyboardControls map={KEYBOARD_CONTROLS}>
-      <CameraMovement />
-    </KeyboardControls>
-  );
+  return <CameraMovement />;
 }

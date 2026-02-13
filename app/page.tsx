@@ -4,12 +4,17 @@ import { Canvas, GLProps } from "@react-three/fiber";
 import { NoToneMapping, SRGBColorSpace, PCFShadowMap, Camera } from "three";
 import { Mission } from "@/src/components/Mission";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { ObserverControls } from "@/src/components/ObserverControls";
+import {
+  ObserverControls,
+  KEYBOARD_CONTROLS,
+} from "@/src/components/ObserverControls";
+import { KeyboardOverlay } from "@/src/components/KeyboardOverlay";
 import {
   TouchJoystick,
   TouchCameraMovement,
   type JoystickState,
 } from "@/src/components/TouchControls";
+import { KeyboardControls } from "@react-three/drei";
 import { InspectorControls } from "@/src/components/InspectorControls";
 import { useTouchDevice } from "@/src/components/useTouchDevice";
 import { SettingsProvider } from "@/src/components/SettingsProvider";
@@ -130,68 +135,71 @@ function MapInspector() {
     <QueryClientProvider client={queryClient}>
       <main>
         <SettingsProvider>
-          <div id="canvasContainer">
-            {showLoadingIndicator && (
-              <div id="loadingIndicator" data-complete={!isLoading}>
-                <div className="LoadingSpinner" />
-                <div className="LoadingProgress">
-                  <div
-                    className="LoadingProgress-bar"
-                    style={{ width: `${loadingProgress * 100}%` }}
-                  />
-                </div>
-                <div className="LoadingProgress-text">
-                  {Math.round(loadingProgress * 100)}%
-                </div>
-              </div>
-            )}
-            <Canvas
-              frameloop="always"
-              gl={glSettings}
-              shadows={{ type: PCFShadowMap }}
-              onCreated={(state) => {
-                cameraRef.current = state.camera;
-              }}
-            >
-              <CamerasProvider>
-                <AudioProvider>
-                  <Mission
-                    key={`${missionName}~${missionType}`}
-                    name={missionName}
-                    missionType={missionType}
-                    onLoadingChange={handleLoadingChange}
-                  />
-                  <ObserverCamera />
-                  <DebugElements />
-                  {isTouch === null ? null : isTouch ? (
-                    <TouchCameraMovement
-                      joystickState={joystickStateRef}
-                      joystickZone={joystickZoneRef}
-                      lookJoystickState={lookJoystickStateRef}
-                      lookJoystickZone={lookJoystickZoneRef}
+          <KeyboardControls map={KEYBOARD_CONTROLS}>
+            <div id="canvasContainer">
+              {showLoadingIndicator && (
+                <div id="loadingIndicator" data-complete={!isLoading}>
+                  <div className="LoadingSpinner" />
+                  <div className="LoadingProgress">
+                    <div
+                      className="LoadingProgress-bar"
+                      style={{ width: `${loadingProgress * 100}%` }}
                     />
-                  ) : (
-                    <ObserverControls />
-                  )}
-                </AudioProvider>
-              </CamerasProvider>
-            </Canvas>
-          </div>
-          {isTouch && (
-            <TouchJoystick
-              joystickState={joystickStateRef}
-              joystickZone={joystickZoneRef}
-              lookJoystickState={lookJoystickStateRef}
-              lookJoystickZone={lookJoystickZoneRef}
+                  </div>
+                  <div className="LoadingProgress-text">
+                    {Math.round(loadingProgress * 100)}%
+                  </div>
+                </div>
+              )}
+              <Canvas
+                frameloop="always"
+                gl={glSettings}
+                shadows={{ type: PCFShadowMap }}
+                onCreated={(state) => {
+                  cameraRef.current = state.camera;
+                }}
+              >
+                <CamerasProvider>
+                  <AudioProvider>
+                    <Mission
+                      key={`${missionName}~${missionType}`}
+                      name={missionName}
+                      missionType={missionType}
+                      onLoadingChange={handleLoadingChange}
+                    />
+                    <ObserverCamera />
+                    <DebugElements />
+                    {isTouch === null ? null : isTouch ? (
+                      <TouchCameraMovement
+                        joystickState={joystickStateRef}
+                        joystickZone={joystickZoneRef}
+                        lookJoystickState={lookJoystickStateRef}
+                        lookJoystickZone={lookJoystickZoneRef}
+                      />
+                    ) : (
+                      <ObserverControls />
+                    )}
+                  </AudioProvider>
+                </CamerasProvider>
+              </Canvas>
+            </div>
+            {isTouch && (
+              <TouchJoystick
+                joystickState={joystickStateRef}
+                joystickZone={joystickZoneRef}
+                lookJoystickState={lookJoystickStateRef}
+                lookJoystickZone={lookJoystickZoneRef}
+              />
+            )}
+            {isTouch === false && <KeyboardOverlay />}
+            <InspectorControls
+              missionName={missionName}
+              missionType={missionType}
+              onChangeMission={changeMission}
+              cameraRef={cameraRef}
+              isTouch={isTouch}
             />
-          )}
-          <InspectorControls
-            missionName={missionName}
-            missionType={missionType}
-            onChangeMission={changeMission}
-            cameraRef={cameraRef}
-            isTouch={isTouch}
-          />
+          </KeyboardControls>
         </SettingsProvider>
       </main>
     </QueryClientProvider>
