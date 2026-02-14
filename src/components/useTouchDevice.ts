@@ -7,7 +7,7 @@ const query = "(pointer: coarse)";
 const getServerSnapshot = () => null;
 
 export function useTouchDevice() {
-  const queryRef = useRef<ReturnType<typeof window.matchMedia>>(null);
+  const queryRef = useRef<null | ReturnType<typeof window.matchMedia>>(null);
 
   const subscribe = useCallback((onStoreChange: () => void) => {
     const mql = window.matchMedia(query);
@@ -19,7 +19,7 @@ export function useTouchDevice() {
   }, []);
 
   const getSnapshot = useCallback(() => {
-    return queryRef.current.matches;
+    return queryRef.current?.matches ?? null;
   }, []);
 
   const isTouch = useSyncExternalStore<boolean | null>(
