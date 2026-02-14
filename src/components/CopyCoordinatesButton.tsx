@@ -2,6 +2,7 @@ import { RefObject, useCallback, useRef, useState } from "react";
 import { FaMapPin } from "react-icons/fa";
 import { FaClipboardCheck } from "react-icons/fa6";
 import { Camera, Quaternion, Vector3 } from "three";
+import { useSettings } from "./SettingsProvider";
 
 function encodeViewHash({
   position,
@@ -18,9 +19,14 @@ function encodeViewHash({
 
 export function CopyCoordinatesButton({
   cameraRef,
+  missionName,
+  missionType,
 }: {
   cameraRef: RefObject<Camera | null>;
+  missionName: string;
+  missionType: string;
 }) {
+  const { fogEnabled } = useSettings();
   const [showCopied, setShowCopied] = useState(false);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -29,8 +35,10 @@ export function CopyCoordinatesButton({
     const camera = cameraRef.current;
     if (!camera) return;
     const hash = encodeViewHash(camera);
-    // Update the URL hash
-    const fullPath = `${window.location.pathname}${window.location.search}${hash}`;
+    const params = new URLSearchParams();
+    params.set("mission", `${missionName}~${missionType}`);
+    params.set("fog", fogEnabled.toString());
+    const fullPath = `${window.location.pathname}?${params}${hash}`;
     const fullUrl = `${window.location.origin}${fullPath}`;
     window.history.replaceState(null, "", fullPath);
     try {
@@ -42,7 +50,7 @@ export function CopyCoordinatesButton({
     } catch (err) {
       console.error(err);
     }
-  }, [cameraRef]);
+  }, [cameraRef, missionName, missionType, fogEnabled]);
 
   return (
     <button

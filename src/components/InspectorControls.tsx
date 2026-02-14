@@ -73,7 +73,11 @@ export function InspectorControls({
   const settingsFields = (
     <>
       <div className="Controls-group">
-        <CopyCoordinatesButton cameraRef={cameraRef} />
+        <CopyCoordinatesButton
+          cameraRef={cameraRef}
+          missionName={missionName}
+          missionType={missionType}
+        />
       </div>
       <div className="Controls-group">
         <div className="CheckboxField">

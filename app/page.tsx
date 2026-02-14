@@ -23,7 +23,7 @@ import { AudioProvider } from "@/src/components/AudioContext";
 import { DebugElements } from "@/src/components/DebugElements";
 import { CamerasProvider } from "@/src/components/CamerasProvider";
 import { getMissionList, getMissionInfo } from "@/src/manifest";
-import { createParser, useQueryState } from "nuqs";
+import { createParser, parseAsBoolean, useQueryState } from "nuqs";
 
 // Three.js has its own loaders for textures and models, but we need to load other
 // stuff too, e.g. missions, terrains, and more. This client is used for those.
@@ -74,13 +74,22 @@ function MapInspector() {
     "mission",
     parseAsMissionWithType,
   );
+  const [fogEnabledOverride, setFogEnabledOverride] = useQueryState(
+    "fog",
+    parseAsBoolean,
+  );
+
+  const clearFogEnabledOverride = useCallback(() => {
+    setFogEnabledOverride(null);
+  }, [setFogEnabledOverride]);
 
   const changeMission = useCallback(
     (mission: CurrentMission) => {
       window.location.hash = "";
+      clearFogEnabledOverride();
       setCurrentMission(mission);
     },
-    [setCurrentMission],
+    [setCurrentMission, clearFogEnabledOverride],
   );
 
   const isTouch = useTouchDevice();
@@ -134,7 +143,10 @@ function MapInspector() {
   return (
     <QueryClientProvider client={queryClient}>
       <main>
-        <SettingsProvider>
+        <SettingsProvider
+          fogEnabledOverride={fogEnabledOverride}
+          onClearFogEnabledOverride={clearFogEnabledOverride}
+        >
           <KeyboardControls map={KEYBOARD_CONTROLS}>
             <div id="canvasContainer">
               {showLoadingIndicator && (

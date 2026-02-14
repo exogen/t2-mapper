@@ -1,6 +1,7 @@
 import {
   createContext,
   ReactNode,
+  useCallback,
   useContext,
   useEffect,
   useLayoutEffect,
@@ -65,7 +66,15 @@ export function useControls() {
   return useContext(ControlsContext);
 }
 
-export function SettingsProvider({ children }: { children: ReactNode }) {
+export function SettingsProvider({
+  children,
+  fogEnabledOverride,
+  onClearFogEnabledOverride,
+}: {
+  children: ReactNode;
+  fogEnabledOverride?: boolean | null;
+  onClearFogEnabledOverride: () => void;
+}) {
   const [fogEnabled, setFogEnabled] = useState(true);
   const [highQualityFog, setHighQualityFog] = useState(false);
   const [speedMultiplier, setSpeedMultiplier] = useState(1);
@@ -75,10 +84,18 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   const [debugMode, setDebugMode] = useState(false);
   const [touchMode, setTouchMode] = useState<TouchMode>("moveLookStick");
 
+  const setFogEnabledWithoutOverride: StateSetter<boolean> = useCallback(
+    (value) => {
+      setFogEnabled(value);
+      onClearFogEnabledOverride();
+    },
+    [onClearFogEnabledOverride],
+  );
+
   const settingsContext: SettingsContext = useMemo(
     () => ({
-      fogEnabled,
-      setFogEnabled,
+      fogEnabled: fogEnabledOverride ?? fogEnabled,
+      setFogEnabled: setFogEnabledWithoutOverride,
       highQualityFog,
       setHighQualityFog,
       fov,
@@ -88,7 +105,15 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       animationEnabled,
       setAnimationEnabled,
     }),
-    [fogEnabled, highQualityFog, fov, audioEnabled, animationEnabled],
+    [
+      fogEnabled,
+      fogEnabledOverride,
+      setFogEnabledWithoutOverride,
+      highQualityFog,
+      fov,
+      audioEnabled,
+      animationEnabled,
+    ],
   );
 
   const debugContext: DebugContext = useMemo(
@@ -144,7 +169,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       clearTimeout(saveTimerRef.current);
     }
 
-    // Debounce localStorage writes (wait 300ms after last change)
+    // Debounce localStorage writes
     saveTimerRef.current = setTimeout(() => {
       const settingsToSave: PersistedSettings = {
         fogEnabled,
