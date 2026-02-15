@@ -8,6 +8,10 @@ export function KeyboardOverlay() {
   const right = useKeyboardControls<Controls>((s) => s.right);
   const up = useKeyboardControls<Controls>((s) => s.up);
   const down = useKeyboardControls<Controls>((s) => s.down);
+  const lookUp = useKeyboardControls<Controls>((s) => s.lookUp);
+  const lookDown = useKeyboardControls<Controls>((s) => s.lookDown);
+  const lookLeft = useKeyboardControls<Controls>((s) => s.lookLeft);
+  const lookRight = useKeyboardControls<Controls>((s) => s.lookRight);
 
   return (
     <div className="KeyboardOverlay">
@@ -40,6 +44,26 @@ export function KeyboardOverlay() {
         <div className="KeyboardOverlay-row">
           <div className="KeyboardOverlay-key" data-pressed={down}>
             <span className="KeyboardOverlay-arrow">&darr;</span> Shift
+          </div>
+        </div>
+      </div>
+      <div className="KeyboardOverlay-column">
+        <div className="KeyboardOverlay-row">
+          <div className="KeyboardOverlay-spacer" />
+          <div className="KeyboardOverlay-key" data-pressed={lookUp}>
+            &uarr;
+          </div>
+          <div className="KeyboardOverlay-spacer" />
+        </div>
+        <div className="KeyboardOverlay-row">
+          <div className="KeyboardOverlay-key" data-pressed={lookLeft}>
+            &larr;
+          </div>
+          <div className="KeyboardOverlay-key" data-pressed={lookDown}>
+            &darr;
+          </div>
+          <div className="KeyboardOverlay-key" data-pressed={lookRight}>
+            &rarr;
           </div>
         </div>
       </div>

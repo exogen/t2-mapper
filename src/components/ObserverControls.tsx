@@ -13,6 +13,10 @@ export enum Controls {
   right = "right",
   up = "up",
   down = "down",
+  lookUp = "lookUp",
+  lookDown = "lookDown",
+  lookLeft = "lookLeft",
+  lookRight = "lookRight",
   camera1 = "camera1",
   camera2 = "camera2",
   camera3 = "camera3",
@@ -25,6 +29,7 @@ export enum Controls {
 }
 
 const BASE_SPEED = 80;
+const LOOK_SPEED = 1; // radians/sec
 const MIN_SPEED_ADJUSTMENT = 0.05;
 const MAX_SPEED_ADJUSTMENT = 0.5;
 const DRAG_SENSITIVITY = 0.003;
@@ -38,10 +43,11 @@ function CameraMovement() {
   const { nextCamera, setCameraIndex, cameraCount } = useCameras();
   const controlsRef = useRef<PointerLockControls | null>(null);
 
-  // Scratch vectors to avoid allocations each frame
+  // Scratch vectors/euler to avoid allocations each frame
   const forwardVec = useRef(new Vector3());
   const sideVec = useRef(new Vector3());
   const moveVec = useRef(new Vector3());
+  const lookEuler = useRef(new Euler(0, 0, 0, "YXZ"));
 
   // Setup pointer lock controls
   useEffect(() => {
@@ -170,7 +176,32 @@ function CameraMovement() {
   }, [gl.domElement, setSpeedMultiplier]);
 
   useFrame((state, delta) => {
-    const { forward, backward, left, right, up, down } = getKeys();
+    const {
+      forward,
+      backward,
+      left,
+      right,
+      up,
+      down,
+      lookUp,
+      lookDown,
+      lookLeft,
+      lookRight,
+    } = getKeys();
+
+    // Arrow keys: rotate camera look direction
+    if (lookUp || lookDown || lookLeft || lookRight) {
+      lookEuler.current.setFromQuaternion(camera.quaternion, "YXZ");
+      if (lookLeft) lookEuler.current.y += LOOK_SPEED * delta;
+      if (lookRight) lookEuler.current.y -= LOOK_SPEED * delta;
+      if (lookUp) lookEuler.current.x += LOOK_SPEED * delta;
+      if (lookDown) lookEuler.current.x -= LOOK_SPEED * delta;
+      lookEuler.current.x = Math.max(
+        -MAX_PITCH,
+        Math.min(MAX_PITCH, lookEuler.current.x),
+      );
+      camera.quaternion.setFromEuler(lookEuler.current);
+    }
 
     if (!forward && !backward && !left && !right && !up && !down) {
       return;
@@ -222,6 +253,10 @@ export const KEYBOARD_CONTROLS = [
   { name: Controls.right, keys: ["KeyD"] },
   { name: Controls.up, keys: ["Space"] },
   { name: Controls.down, keys: ["ShiftLeft", "ShiftRight"] },
+  { name: Controls.lookUp, keys: ["ArrowUp"] },
+  { name: Controls.lookDown, keys: ["ArrowDown"] },
+  { name: Controls.lookLeft, keys: ["ArrowLeft"] },
+  { name: Controls.lookRight, keys: ["ArrowRight"] },
   { name: Controls.camera1, keys: ["Digit1"] },
   { name: Controls.camera2, keys: ["Digit2"] },
   { name: Controls.camera3, keys: ["Digit3"] },
