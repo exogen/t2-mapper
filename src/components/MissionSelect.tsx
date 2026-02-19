@@ -270,7 +270,9 @@ export function MissionSelect({
           placeholder={displayValue}
           className="MissionSelect-input"
           onFocus={() => {
-            document.exitPointerLock();
+            try {
+              document.exitPointerLock();
+            } catch {}
             combobox.show();
           }}
           onKeyDown={(e) => {

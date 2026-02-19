@@ -176,7 +176,9 @@ export function MapInfoDialog({
   useEffect(() => {
     if (open) {
       dialogRef.current?.focus();
-      document.exitPointerLock();
+      try {
+        document.exitPointerLock();
+      } catch {}
     }
   }, [open]);
 
