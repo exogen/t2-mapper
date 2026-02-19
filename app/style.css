@@ -681,6 +681,7 @@ input[type="range"] {
 
 .MapInfoDialog-quote p {
   margin: 0 0 4px;
+  white-space: pre-line;
 }
 
 .MapInfoDialog-quote cite {

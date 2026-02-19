@@ -239,7 +239,7 @@ export function MapInfoDialog({
       if (trimmed.match(/^-+\s/)) {
         quoteAttrib = trimmed.replace(/^-+\s*/, "").trim();
       } else if (trimmed) {
-        quoteText += (quoteText ? " " : "") + trimmed;
+        quoteText += (quoteText ? "\n" : "") + trimmed;
       }
     }
   }
