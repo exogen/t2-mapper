@@ -626,6 +626,7 @@ input[type="range"] {
 }
 
 .MapInfoDialog-right {
+  display: flex;
   border-left: 1px solid rgba(0, 190, 220, 0.3);
   height: 100%;
   width: auto;
@@ -634,7 +635,6 @@ input[type="range"] {
 }
 
 .MapInfoDialog-preview {
-  display: block;
   height: 100%;
   width: auto;
   overflow: hidden;
