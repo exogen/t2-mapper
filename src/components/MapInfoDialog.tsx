@@ -3,7 +3,11 @@ import { FaVolumeUp, FaVolumeMute } from "react-icons/fa";
 import { useQuery } from "@tanstack/react-query";
 import { loadMission, getUrlForPath, RESOURCE_ROOT_URL } from "../loaders";
 import { getStandardTextureResourceKey } from "../manifest";
-import { GuiMarkup, filterMissionStringByMode } from "../torqueGuiMarkup";
+import {
+  GuiMarkup,
+  filterMissionStringByMode,
+  hasGuiMarkup,
+} from "../torqueGuiMarkup";
 import type * as AST from "../torqueScript/ast";
 
 function useParsedMission(name: string) {
@@ -223,16 +227,20 @@ export function MapInfoDialog({
     ? filterMissionStringByMode(parsedMission.missionString, missionType)
     : null;
 
-  // Split quote into body text and attribution line
-  const quoteLines = parsedMission?.missionQuote?.trim().split("\n") ?? [];
+  // Split quote into body text and attribution line.
+  // If the quote contains GUI markup tags, render through GuiMarkup instead.
+  const rawQuote = parsedMission?.missionQuote?.trim() ?? "";
+  const quoteHasMarkup = hasGuiMarkup(rawQuote);
   let quoteText = "";
   let quoteAttrib = "";
-  for (const line of quoteLines) {
-    const trimmed = line.trim();
-    if (trimmed.match(/^-+\s/)) {
-      quoteAttrib = trimmed.replace(/^-+\s*/, "").trim();
-    } else if (trimmed) {
-      quoteText += (quoteText ? " " : "") + trimmed;
+  if (!quoteHasMarkup) {
+    for (const line of rawQuote.split("\n")) {
+      const trimmed = line.trim();
+      if (trimmed.match(/^-+\s/)) {
+        quoteAttrib = trimmed.replace(/^-+\s*/, "").trim();
+      } else if (trimmed) {
+        quoteText += (quoteText ? " " : "") + trimmed;
+      }
     }
   }
 
@@ -267,17 +275,25 @@ export function MapInfoDialog({
               )}
             </div>
 
-            {quoteText && (
+            {quoteHasMarkup ? (
+              <blockquote className="MapInfoDialog-quote">
+                <GuiMarkup markup={rawQuote} />
+              </blockquote>
+            ) : quoteText ? (
               <blockquote className="MapInfoDialog-quote">
                 <p>{quoteText}</p>
                 {quoteAttrib && <cite>— {quoteAttrib}</cite>}
               </blockquote>
-            )}
+            ) : null}
 
             {parsedMission?.missionBlurb && (
-              <p className="MapInfoDialog-blurb">
-                {parsedMission.missionBlurb.trim()}
-              </p>
+              <div className="MapInfoDialog-blurb">
+                {hasGuiMarkup(parsedMission.missionBlurb) ? (
+                  <GuiMarkup markup={parsedMission.missionBlurb.trim()} />
+                ) : (
+                  <p>{parsedMission.missionBlurb.trim()}</p>
+                )}
+              </div>
             )}
 
             {missionString && missionString.trim() && (

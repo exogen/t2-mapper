@@ -225,6 +225,13 @@ function SpanEl({ span }: { span: Span }) {
 
 // Public API
 
+const guiMarkupTagPattern = /<(?:font|color|bitmap|just|lmargin):/i;
+
+/** Whether a string contains Torque GUI markup tags. */
+export function hasGuiMarkup(text: string): boolean {
+  return guiMarkupTagPattern.test(text);
+}
+
 /**
  * Filter a mission string by game mode prefix, e.g. `[CTF]`, `[DM Bounty]`.
  * Lines without a prefix are shown for all modes.
