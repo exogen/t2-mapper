@@ -91,7 +91,18 @@ export async function loadDetailMapList(name: string) {
 export async function loadMission(name: string) {
   const missionInfo = getMissionInfo(name);
   const res = await fetch(getUrlForPath(missionInfo.resourcePath));
-  const missionScript = await res.text();
+  const buffer = await res.arrayBuffer();
+  // Most mission files are Windows-1252 (common circa 2001), but some were
+  // later re-saved as UTF-8. Try strict UTF-8 first; fall back to Windows-1252.
+  let missionScript: string;
+  try {
+    missionScript = new TextDecoder("utf-8", { fatal: true }).decode(buffer);
+  } catch {
+    missionScript = new TextDecoder("windows-1252").decode(buffer);
+  }
+  // Some files were saved as UTF-8 with corrupted Windows-1252 characters
+  // (e.g. smart quotes became U+FFFD replacement characters). Fix these.
+  missionScript = missionScript.replaceAll("\uFFFD", "'");
   return parseMissionScript(missionScript);
 }
 

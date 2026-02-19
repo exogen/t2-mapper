@@ -1,5 +1,12 @@
 "use client";
-import { useState, useEffect, useCallback, Suspense, useRef } from "react";
+import {
+  useState,
+  useEffect,
+  useCallback,
+  Suspense,
+  useRef,
+  lazy,
+} from "react";
 import { Canvas, GLProps } from "@react-three/fiber";
 import { NoToneMapping, SRGBColorSpace, PCFShadowMap, Camera } from "three";
 import { Mission } from "@/src/components/Mission";
@@ -24,6 +31,12 @@ import { DebugElements } from "@/src/components/DebugElements";
 import { CamerasProvider } from "@/src/components/CamerasProvider";
 import { getMissionList, getMissionInfo } from "@/src/manifest";
 import { createParser, parseAsBoolean, useQueryState } from "nuqs";
+
+const MapInfoDialog = lazy(() =>
+  import("@/src/components/MapInfoDialog").then((mod) => ({
+    default: mod.MapInfoDialog,
+  })),
+);
 
 // Three.js has its own loaders for textures and models, but we need to load other
 // stuff too, e.g. missions, terrains, and more. This client is used for those.
@@ -94,6 +107,7 @@ function MapInspector() {
 
   const isTouch = useTouchDevice();
   const { missionName, missionType } = currentMission;
+  const [mapInfoOpen, setMapInfoOpen] = useState(false);
   const [loadingProgress, setLoadingProgress] = useState(0);
   const [showLoadingIndicator, setShowLoadingIndicator] = useState(true);
   const isLoading = loadingProgress < 1;
@@ -126,6 +140,23 @@ function MapInspector() {
       delete window.getMissionInfo;
     };
   }, [changeMission]);
+
+  useEffect(() => {
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.code !== "KeyI" || e.metaKey || e.ctrlKey || e.altKey) return;
+      const target = e.target as HTMLElement;
+      if (
+        target.tagName === "INPUT" ||
+        target.tagName === "TEXTAREA" ||
+        target.isContentEditable
+      ) {
+        return;
+      }
+      setMapInfoOpen(true);
+    };
+    window.addEventListener("keydown", handleKey);
+    return () => window.removeEventListener("keydown", handleKey);
+  }, []);
 
   const handleLoadingChange = useCallback(
     (_loading: boolean, progress: number = 0) => {
@@ -208,9 +239,20 @@ function MapInspector() {
               missionName={missionName}
               missionType={missionType}
               onChangeMission={changeMission}
+              onOpenMapInfo={() => setMapInfoOpen(true)}
               cameraRef={cameraRef}
               isTouch={isTouch}
             />
+            {mapInfoOpen && (
+              <Suspense fallback={null}>
+                <MapInfoDialog
+                  open={mapInfoOpen}
+                  onClose={() => setMapInfoOpen(false)}
+                  missionName={missionName}
+                  missionType={missionType ?? ""}
+                />
+              </Suspense>
+            )}
           </KeyboardControls>
         </SettingsProvider>
       </main>

@@ -8,12 +8,13 @@ import { MissionSelect } from "./MissionSelect";
 import { RefObject, useEffect, useState, useRef } from "react";
 import { Camera } from "three";
 import { CopyCoordinatesButton } from "./CopyCoordinatesButton";
-import { FiSettings } from "react-icons/fi";
+import { FiInfo, FiSettings } from "react-icons/fi";
 
 export function InspectorControls({
   missionName,
   missionType,
   onChangeMission,
+  onOpenMapInfo,
   cameraRef,
   isTouch,
 }: {
@@ -26,6 +27,7 @@ export function InspectorControls({
     missionName: string;
     missionType: string;
   }) => void;
+  onOpenMapInfo: () => void;
   cameraRef: RefObject<Camera | null>;
   isTouch: boolean | null;
 }) {
@@ -70,110 +72,6 @@ export function InspectorControls({
     }
   };
 
-  const settingsFields = (
-    <>
-      <div className="Controls-group">
-        <CopyCoordinatesButton
-          cameraRef={cameraRef}
-          missionName={missionName}
-          missionType={missionType}
-        />
-      </div>
-      <div className="Controls-group">
-        <div className="CheckboxField">
-          <input
-            id="fogInput"
-            type="checkbox"
-            checked={fogEnabled}
-            onChange={(event) => {
-              setFogEnabled(event.target.checked);
-            }}
-          />
-          <label htmlFor="fogInput">Fog?</label>
-        </div>
-        <div className="CheckboxField">
-          <input
-            id="audioInput"
-            type="checkbox"
-            checked={audioEnabled}
-            onChange={(event) => {
-              setAudioEnabled(event.target.checked);
-            }}
-          />
-          <label htmlFor="audioInput">Audio?</label>
-        </div>
-      </div>
-      <div className="Controls-group">
-        <div className="CheckboxField">
-          <input
-            id="animationInput"
-            type="checkbox"
-            checked={animationEnabled}
-            onChange={(event) => {
-              setAnimationEnabled(event.target.checked);
-            }}
-          />
-          <label htmlFor="animationInput">Animation?</label>
-        </div>
-        <div className="CheckboxField">
-          <input
-            id="debugInput"
-            type="checkbox"
-            checked={debugMode}
-            onChange={(event) => {
-              setDebugMode(event.target.checked);
-            }}
-          />
-          <label htmlFor="debugInput">Debug?</label>
-        </div>
-      </div>
-      <div className="Controls-group">
-        <div className="Field">
-          <label htmlFor="fovInput">FOV</label>
-          <input
-            id="fovInput"
-            type="range"
-            min={75}
-            max={120}
-            step={5}
-            value={fov}
-            onChange={(event) => setFov(parseInt(event.target.value))}
-          />
-          <output htmlFor="fovInput">{fov}</output>
-        </div>
-        <div className="Field">
-          <label htmlFor="speedInput">Speed</label>
-          <input
-            id="speedInput"
-            type="range"
-            min={0.1}
-            max={5}
-            step={0.05}
-            value={speedMultiplier}
-            onChange={(event) =>
-              setSpeedMultiplier(parseFloat(event.target.value))
-            }
-          />
-        </div>
-      </div>
-      {isTouch && (
-        <div className="Controls-group">
-          <div className="Field">
-            <label htmlFor="touchModeInput">Joystick:</label>{" "}
-            <select
-              id="touchModeInput"
-              value={touchMode}
-              onChange={(e) => setTouchMode(e.target.value as TouchMode)}
-            >
-              <option value="dualStick">Dual Stick</option>
-              <option value="moveLookStick">Single Stick</option>
-            </select>
-          </div>
-        </div>
-      )}
-    </>
-  );
-
   return (
     <div
       id="controls"
@@ -208,7 +106,114 @@ export function InspectorControls({
           onBlur={handleDropdownBlur}
           data-open={settingsOpen}
         >
-          {settingsFields}
+          <div className="Controls-group">
+            <CopyCoordinatesButton
+              cameraRef={cameraRef}
+              missionName={missionName}
+              missionType={missionType}
+            />
+            <button
+              type="button"
+              className="IconButton LabelledButton MapInfoButton"
+              aria-label="Show map info"
+              onClick={onOpenMapInfo}
+            >
+              <FiInfo />
+              <span className="ButtonLabel">Show map info</span>
+            </button>
+          </div>
+          <div className="Controls-group">
+            <div className="CheckboxField">
+              <input
+                id="fogInput"
+                type="checkbox"
+                checked={fogEnabled}
+                onChange={(event) => {
+                  setFogEnabled(event.target.checked);
+                }}
+              />
+              <label htmlFor="fogInput">Fog?</label>
+            </div>
+            <div className="CheckboxField">
+              <input
+                id="audioInput"
+                type="checkbox"
+                checked={audioEnabled}
+                onChange={(event) => {
+                  setAudioEnabled(event.target.checked);
+                }}
+              />
+              <label htmlFor="audioInput">Audio?</label>
+            </div>
+          </div>
+          <div className="Controls-group">
+            <div className="CheckboxField">
+              <input
+                id="animationInput"
+                type="checkbox"
+                checked={animationEnabled}
+                onChange={(event) => {
+                  setAnimationEnabled(event.target.checked);
+                }}
+              />
+              <label htmlFor="animationInput">Animation?</label>
+            </div>
+            <div className="CheckboxField">
+              <input
+                id="debugInput"
+                type="checkbox"
+                checked={debugMode}
+                onChange={(event) => {
+                  setDebugMode(event.target.checked);
+                }}
+              />
+              <label htmlFor="debugInput">Debug?</label>
+            </div>
+          </div>
+          <div className="Controls-group">
+            <div className="Field">
+              <label htmlFor="fovInput">FOV</label>
+              <input
+                id="fovInput"
+                type="range"
+                min={75}
+                max={120}
+                step={5}
+                value={fov}
+                onChange={(event) => setFov(parseInt(event.target.value))}
+              />
+              <output htmlFor="fovInput">{fov}</output>
+            </div>
+            <div className="Field">
+              <label htmlFor="speedInput">Speed</label>
+              <input
+                id="speedInput"
+                type="range"
+                min={0.1}
+                max={5}
+                step={0.05}
+                value={speedMultiplier}
+                onChange={(event) =>
+                  setSpeedMultiplier(parseFloat(event.target.value))
+                }
+              />
+            </div>
+          </div>
+          {isTouch && (
+            <div className="Controls-group">
+              <div className="Field">
+                <label htmlFor="touchModeInput">Joystick:</label>{" "}
+                <select
+                  id="touchModeInput"
+                  value={touchMode}
+                  onChange={(e) => setTouchMode(e.target.value as TouchMode)}
+                >
+                  <option value="dualStick">Dual Stick</option>
+                  <option value="moveLookStick">Single Stick</option>
+                </select>
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </div>
