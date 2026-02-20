@@ -29,6 +29,9 @@ import { ObserverCamera } from "@/src/components/ObserverCamera";
 import { AudioProvider } from "@/src/components/AudioContext";
 import { DebugElements } from "@/src/components/DebugElements";
 import { CamerasProvider } from "@/src/components/CamerasProvider";
+import { DemoProvider, useDemo } from "@/src/components/DemoProvider";
+import { DemoPlayback } from "@/src/components/DemoPlayback";
+import { DemoControls } from "@/src/components/DemoControls";
 import { getMissionList, getMissionInfo } from "@/src/manifest";
 import { createParser, parseAsBoolean, useQueryState } from "nuqs";
 
@@ -174,90 +177,139 @@ function MapInspector() {
   return (
     <QueryClientProvider client={queryClient}>
       <main>
-        <SettingsProvider
-          fogEnabledOverride={fogEnabledOverride}
-          onClearFogEnabledOverride={clearFogEnabledOverride}
-        >
-          <KeyboardControls map={KEYBOARD_CONTROLS}>
-            <div id="canvasContainer">
-              {showLoadingIndicator && (
-                <div id="loadingIndicator" data-complete={!isLoading}>
-                  <div className="LoadingSpinner" />
-                  <div className="LoadingProgress">
-                    <div
-                      className="LoadingProgress-bar"
-                      style={{ width: `${loadingProgress * 100}%` }}
-                    />
-                  </div>
-                  <div className="LoadingProgress-text">
-                    {Math.round(loadingProgress * 100)}%
-                  </div>
-                </div>
-              )}
-              <Canvas
-                frameloop="always"
-                gl={glSettings}
-                shadows={{ type: PCFShadowMap }}
-                onCreated={(state) => {
-                  cameraRef.current = state.camera;
-                }}
-              >
-                <CamerasProvider>
-                  <AudioProvider>
-                    <Mission
-                      key={`${missionName}~${missionType}`}
-                      name={missionName}
-                      missionType={missionType}
-                      onLoadingChange={handleLoadingChange}
-                    />
-                    <ObserverCamera />
-                    <DebugElements />
-                    {isTouch === null ? null : isTouch ? (
-                      <TouchCameraMovement
-                        joystickState={joystickStateRef}
-                        joystickZone={joystickZoneRef}
-                        lookJoystickState={lookJoystickStateRef}
-                        lookJoystickZone={lookJoystickZoneRef}
+        <DemoProvider>
+          <SettingsProvider
+            fogEnabledOverride={fogEnabledOverride}
+            onClearFogEnabledOverride={clearFogEnabledOverride}
+          >
+            <KeyboardControls map={KEYBOARD_CONTROLS}>
+              <div id="canvasContainer">
+                {showLoadingIndicator && (
+                  <div id="loadingIndicator" data-complete={!isLoading}>
+                    <div className="LoadingSpinner" />
+                    <div className="LoadingProgress">
+                      <div
+                        className="LoadingProgress-bar"
+                        style={{ width: `${loadingProgress * 100}%` }}
                       />
-                    ) : (
-                      <ObserverControls />
-                    )}
-                  </AudioProvider>
-                </CamerasProvider>
-              </Canvas>
-            </div>
-            {isTouch && (
-              <TouchJoystick
-                joystickState={joystickStateRef}
-                joystickZone={joystickZoneRef}
-                lookJoystickState={lookJoystickStateRef}
-                lookJoystickZone={lookJoystickZoneRef}
-              />
-            )}
-            {isTouch === false && <KeyboardOverlay />}
-            <InspectorControls
-              missionName={missionName}
-              missionType={missionType}
-              onChangeMission={changeMission}
-              onOpenMapInfo={() => setMapInfoOpen(true)}
-              cameraRef={cameraRef}
-              isTouch={isTouch}
-            />
-            {mapInfoOpen && (
-              <Suspense fallback={null}>
-                <MapInfoDialog
-                  open={mapInfoOpen}
-                  onClose={() => setMapInfoOpen(false)}
-                  missionName={missionName}
-                  missionType={missionType ?? ""}
+                    </div>
+                    <div className="LoadingProgress-text">
+                      {Math.round(loadingProgress * 100)}%
+                    </div>
+                  </div>
+                )}
+                <Canvas
+                  frameloop="always"
+                  gl={glSettings}
+                  shadows={{ type: PCFShadowMap }}
+                  onCreated={(state) => {
+                    cameraRef.current = state.camera;
+                  }}
+                >
+                  <CamerasProvider>
+                    <AudioProvider>
+                      <Mission
+                        key={`${missionName}~${missionType}`}
+                        name={missionName}
+                        missionType={missionType}
+                        onLoadingChange={handleLoadingChange}
+                      />
+                      <ObserverCamera />
+                      <DebugElements />
+                      <DemoPlayback />
+                      <DemoAwareControls
+                        isTouch={isTouch}
+                        joystickStateRef={joystickStateRef}
+                        joystickZoneRef={joystickZoneRef}
+                        lookJoystickStateRef={lookJoystickStateRef}
+                        lookJoystickZoneRef={lookJoystickZoneRef}
+                      />
+                    </AudioProvider>
+                  </CamerasProvider>
+                </Canvas>
+              </div>
+              {isTouch && (
+                <TouchJoystick
+                  joystickState={joystickStateRef}
+                  joystickZone={joystickZoneRef}
+                  lookJoystickState={lookJoystickStateRef}
+                  lookJoystickZone={lookJoystickZoneRef}
                 />
-              </Suspense>
-            )}
-          </KeyboardControls>
-        </SettingsProvider>
+              )}
+              {isTouch === false && <KeyboardOverlay />}
+              <InspectorControls
+                missionName={missionName}
+                missionType={missionType}
+                onChangeMission={changeMission}
+                onOpenMapInfo={() => setMapInfoOpen(true)}
+                cameraRef={cameraRef}
+                isTouch={isTouch}
+              />
+              {mapInfoOpen && (
+                <Suspense fallback={null}>
+                  <MapInfoDialog
+                    open={mapInfoOpen}
+                    onClose={() => setMapInfoOpen(false)}
+                    missionName={missionName}
+                    missionType={missionType ?? ""}
+                  />
+                </Suspense>
+              )}
+              <DemoControls />
+              <DemoWindowAPI />
+            </KeyboardControls>
+          </SettingsProvider>
+        </DemoProvider>
       </main>
     </QueryClientProvider>
   );
+}
+
+/**
+ * Disables observer/touch controls when a demo is playing so they don't
+ * fight the animated camera.
+ */
+function DemoAwareControls({
+  isTouch,
+  joystickStateRef,
+  joystickZoneRef,
+  lookJoystickStateRef,
+  lookJoystickZoneRef,
+}: {
+  isTouch: boolean | null;
+  joystickStateRef: React.RefObject<JoystickState>;
+  joystickZoneRef: React.RefObject<HTMLDivElement | null>;
+  lookJoystickStateRef: React.RefObject<JoystickState>;
+  lookJoystickZoneRef: React.RefObject<HTMLDivElement | null>;
+}) {
+  const { isPlaying } = useDemo();
+  if (isPlaying) return null;
+  if (isTouch === null) return null;
+  if (isTouch) {
+    return (
+      <TouchCameraMovement
+        joystickState={joystickStateRef}
+        joystickZone={joystickZoneRef}
+        lookJoystickState={lookJoystickStateRef}
+        lookJoystickZone={lookJoystickZoneRef}
+      />
+    );
+  }
+  return <ObserverControls />;
+}
+
+/** Exposes `window.loadDemoRecording` for automation/testing. */
+function DemoWindowAPI() {
+  const { setRecording } = useDemo();
+
+  useEffect(() => {
+    window.loadDemoRecording = setRecording;
+    return () => {
+      delete window.loadDemoRecording;
+    };
+  }, [setRecording]);
+
+  return null;
 }
 
 export default function HomePage() {

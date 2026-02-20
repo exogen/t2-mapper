@@ -8,6 +8,7 @@ import { MissionSelect } from "./MissionSelect";
 import { RefObject, useEffect, useState, useRef } from "react";
 import { Camera } from "three";
 import { CopyCoordinatesButton } from "./CopyCoordinatesButton";
+import { LoadDemoButton } from "./LoadDemoButton";
 import { FiInfo, FiSettings } from "react-icons/fi";
 
 export function InspectorControls({
@@ -112,6 +113,7 @@ export function InspectorControls({
               missionName={missionName}
               missionType={missionType}
             />
+            <LoadDemoButton />
             <button
               type="button"
               className="IconButton LabelledButton MapInfoButton"
