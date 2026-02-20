@@ -1,0 +1,15 @@
+.GuiMarkup {
+  font-size: 14px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+.GuiMarkup a {
+  color: inherit;
+  text-decoration: underline;
+}
+
+.Bullet {
+  margin-left: 0.5em;
+  margin-right: 0.5em;
+}

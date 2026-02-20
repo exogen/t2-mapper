@@ -7,8 +7,9 @@ import {
   GuiMarkup,
   filterMissionStringByMode,
   hasGuiMarkup,
-} from "../torqueGuiMarkup";
+} from "./GuiMarkup";
 import type * as AST from "../torqueScript/ast";
+import styles from "./MapInfoDialog.module.css";
 
 function useParsedMission(name: string) {
   return useQuery({
@@ -71,50 +72,46 @@ function getBitmapUrl(
 function RawPreviewImage({
   src,
   alt,
-  className = "MapInfoDialog-preview",
+  className = styles.PreviewImage,
 }: {
   src: string;
   alt: string;
   className?: string;
 }) {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const [isLoaded, setLoaded] = useState(false);
+  const [objectUrl, setObjectUrl] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
+    let url: string | undefined;
     fetch(src)
       .then((r) => r.blob())
       .then((blob) => createImageBitmap(blob, { colorSpaceConversion: "none" }))
-      .then((bitmap) => {
-        if (cancelled) {
-          bitmap.close();
-          return;
-        }
-        const canvas = canvasRef.current;
-        if (!canvas) {
-          bitmap.close();
-          return;
-        }
-        canvas.width = bitmap.width;
-        canvas.height = bitmap.height;
-        canvas.getContext("2d")?.drawImage(bitmap, 0, 0);
-        bitmap.close();
-        setLoaded(true);
+      .then(
+        (bitmap) =>
+          new Promise<Blob | null>((resolve) => {
+            const canvas = document.createElement("canvas");
+            canvas.width = bitmap.width;
+            canvas.height = bitmap.height;
+            canvas.getContext("2d")?.drawImage(bitmap, 0, 0);
+            bitmap.close();
+            canvas.toBlob(resolve);
+          }),
+      )
+      .then((blob) => {
+        if (cancelled || !blob) return;
+        url = URL.createObjectURL(blob);
+        setObjectUrl(url);
       })
       .catch(() => {});
     return () => {
       cancelled = true;
+      if (url) URL.revokeObjectURL(url);
     };
   }, [src]);
 
-  return (
-    <canvas
-      ref={canvasRef}
-      className={className}
-      aria-label={alt}
-      style={{ display: isLoaded ? "block" : "none" }}
-    />
-  );
+  if (!objectUrl) return null;
+
+  return <img src={objectUrl} alt={alt} className={className} />;
 }
 
 function MusicPlayer({ track }: { track: string }) {
@@ -140,7 +137,7 @@ function MusicPlayer({ track }: { track: string }) {
   };
 
   return (
-    <div className="MapInfoDialog-musicTrack" data-playing={playing}>
+    <div className={styles.MusicTrack} data-playing={playing}>
       <audio
         ref={audioRef}
         src={url}
@@ -149,10 +146,10 @@ function MusicPlayer({ track }: { track: string }) {
         onPause={() => setPlaying(false)}
         onError={() => setAvailable(false)}
       />
-      <span className="MusicTrackName">{track}</span>
+      <span className={styles.MusicTrackName}>{track}</span>
       {available && (
         <button
-          className="MapInfoDialog-musicBtn"
+          className={styles.MusicButton}
           onClick={toggle}
           aria-label={playing ? "Pause music" : "Play music"}
         >
@@ -236,7 +233,7 @@ export function MapInfoDialog({
   if (!quoteHasMarkup) {
     for (const line of rawQuote.split("\n")) {
       const trimmed = line.trim();
-      if (trimmed.match(/^-+\s/)) {
+      if (trimmed.match(/^--[^-]/)) {
         quoteAttrib = trimmed.replace(/^-+\s*/, "").trim();
       } else if (trimmed) {
         quoteText += (quoteText ? "\n" : "") + trimmed;
@@ -245,10 +242,10 @@ export function MapInfoDialog({
   }
 
   return (
-    <div className="MapInfoDialog-overlay" onClick={onClose}>
+    <div className={styles.Overlay} onClick={onClose}>
       <div
         ref={dialogRef}
-        className="MapInfoDialog"
+        className={styles.Dialog}
         onClick={(e) => e.stopPropagation()}
         onKeyDown={(e) => e.stopPropagation()}
         role="dialog"
@@ -256,55 +253,55 @@ export function MapInfoDialog({
         aria-label="Map Information"
         tabIndex={-1}
       >
-        <div className="MapInfoDialog-inner">
-          <div className="MapInfoDialog-left">
+        <div className={styles.Body}>
+          <div className={styles.Left}>
             {bitmapUrl && isSinglePlayer && (
               <RawPreviewImage
                 key={bitmapUrl}
-                className="MapInfoDialog-preview--floated"
+                className={styles.PreviewImageFloating}
                 src={bitmapUrl}
                 alt={`${displayName} preview`}
               />
             )}
-            <h1 className="MapInfoDialog-title">{displayName}</h1>
-            <div className="MapInfoDialog-meta">
+            <h1 className={styles.Title}>{displayName}</h1>
+            <div className={styles.MapMeta}>
               {parsedMission?.planetName && (
-                <span className="MapInfoDialog-planet">
+                <span className={styles.MapPlanet}>
                   {parsedMission.planetName}
                 </span>
               )}
             </div>
 
             {quoteHasMarkup ? (
-              <blockquote className="MapInfoDialog-quote">
+              <blockquote className={styles.MapQuote}>
                 <GuiMarkup markup={rawQuote} />
               </blockquote>
             ) : quoteText ? (
-              <blockquote className="MapInfoDialog-quote">
+              <blockquote className={styles.MapQuote}>
                 <p>{quoteText}</p>
                 {quoteAttrib && <cite>— {quoteAttrib}</cite>}
               </blockquote>
             ) : null}
 
             {parsedMission?.missionBlurb && (
-              <div className="MapInfoDialog-blurb">
+              <div className={styles.MapBlurb}>
                 {hasGuiMarkup(parsedMission.missionBlurb) ? (
                   <GuiMarkup markup={parsedMission.missionBlurb.trim()} />
                 ) : (
-                  <p>{parsedMission.missionBlurb.trim()}</p>
+                  parsedMission.missionBlurb.trim()
                 )}
               </div>
             )}
 
             {missionString && missionString.trim() && (
-              <div className="MapInfoDialog-section">
+              <div className={styles.Section}>
                 <GuiMarkup markup={missionString} />
               </div>
             )}
 
             {parsedMission?.missionBriefing && (
-              <div className="MapInfoDialog-section">
-                <h2 className="MapInfoDialog-sectionTitle">Mission Briefing</h2>
+              <div className={styles.Section}>
+                <h2 className={styles.SectionTitle}>Mission Briefing</h2>
                 <GuiMarkup markup={parsedMission.missionBriefing} />
               </div>
             )}
@@ -313,21 +310,19 @@ export function MapInfoDialog({
           </div>
 
           {bitmapUrl && !isSinglePlayer && (
-            <div className="MapInfoDialog-right">
-              <RawPreviewImage
-                key={bitmapUrl}
-                src={bitmapUrl}
-                alt={`${displayName} preview`}
-              />
-            </div>
+            <RawPreviewImage
+              key={bitmapUrl}
+              src={bitmapUrl}
+              alt={`${displayName} preview`}
+            />
           )}
         </div>
 
-        <div className="MapInfoDialog-footer">
-          <button className="MapInfoDialog-closeBtn" onClick={onClose}>
+        <div className={styles.Footer}>
+          <button className={styles.CloseButton} onClick={onClose}>
             Close
           </button>
-          <span className="MapInfoDialog-hint">I or Esc to close</span>
+          <span className={styles.Hint}>I or Esc to close</span>
         </div>
       </div>
     </div>
