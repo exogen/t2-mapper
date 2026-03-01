@@ -19,6 +19,7 @@ import {
 import { matchSorter } from "match-sorter";
 import { getMissionInfo, getMissionList, getSourceAndPath } from "../manifest";
 import orderBy from "lodash.orderby";
+import styles from "./MissionSelect.module.css";
 
 const excludeMissions = new Set([
   "SkiFree",
@@ -125,16 +126,16 @@ const isMac =
 function MissionItemContent({ mission }: { mission: MissionItem }) {
   return (
     <>
-      <span className="MissionSelect-itemHeader">
-        <span className="MissionSelect-itemName">
+      <span className={styles.ItemHeader}>
+        <span className={styles.ItemName}>
           {mission.displayName || mission.missionName}
         </span>
         {mission.missionTypes.length > 0 && (
-          <span className="MissionSelect-itemTypes">
+          <span className={styles.ItemTypes}>
             {mission.missionTypes.map((type) => (
               <span
                 key={type}
-                className="MissionSelect-itemType"
+                className={styles.ItemType}
                 data-mission-type={type}
               >
                 {type}
@@ -143,9 +144,7 @@ function MissionItemContent({ mission }: { mission: MissionItem }) {
           </span>
         )}
       </span>
-      <span className="MissionSelect-itemMissionName">
-        {mission.missionName}
-      </span>
+      <span className={styles.ItemMissionName}>{mission.missionName}</span>
     </>
   );
 }
@@ -234,7 +233,7 @@ export function MissionSelect({
       <ComboboxItem
         key={mission.missionName}
         value={mission.missionName}
-        className="MissionSelect-item"
+        className={styles.Item}
         focusOnHover
         onClick={(event) => {
           if (event.target && event.target instanceof HTMLElement) {
@@ -265,13 +264,13 @@ export function MissionSelect({
 
   return (
     <ComboboxProvider store={combobox}>
-      <div className="MissionSelect-inputWrapper">
+      <div className={styles.InputWrapper}>
         <Combobox
           ref={inputRef}
           autoSelect
           disabled={disabled}
           placeholder={displayValue}
-          className="MissionSelect-input"
+          className={styles.Input}
           onFocus={() => {
             try {
               document.exitPointerLock();
@@ -284,35 +283,29 @@ export function MissionSelect({
             }
           }}
         />
-        <div className="MissionSelect-selectedValue">
-          <span className="MissionSelect-selectedName">{displayValue}</span>
+        <div className={styles.SelectedValue}>
+          <span className={styles.SelectedName}>{displayValue}</span>
           {missionType && (
-            <span
-              className="MissionSelect-itemType"
-              data-mission-type={missionType}
-            >
+            <span className={styles.ItemType} data-mission-type={missionType}>
               {missionType}
             </span>
           )}
         </div>
-        <kbd className="MissionSelect-shortcut">{isMac ? "⌘K" : "^K"}</kbd>
+        <kbd className={styles.Shortcut}>{isMac ? "⌘K" : "^K"}</kbd>
       </div>
       <ComboboxPopover
         gutter={4}
         fitViewport
         autoFocusOnHide={false}
-        className="MissionSelect-popover"
+        className={styles.Popover}
       >
-        <ComboboxList className="MissionSelect-list">
+        <ComboboxList className={styles.List}>
           {filteredResults.type === "flat"
             ? filteredResults.missions.map(renderItem)
             : filteredResults.groups.map(([groupName, missions]) =>
                 groupName ? (
-                  <ComboboxGroup
-                    key={groupName}
-                    className="MissionSelect-group"
-                  >
-                    <ComboboxGroupLabel className="MissionSelect-groupLabel">
+                  <ComboboxGroup key={groupName} className={styles.Group}>
+                    <ComboboxGroupLabel className={styles.GroupLabel}>
                       {groupName}
                     </ComboboxGroupLabel>
                     {missions.map(renderItem)}
@@ -324,7 +317,7 @@ export function MissionSelect({
                 ),
               )}
           {noResults && (
-            <div className="MissionSelect-noResults">No missions found</div>
+            <div className={styles.NoResults}>No missions found</div>
           )}
         </ComboboxList>
       </ComboboxPopover>

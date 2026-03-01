@@ -49,6 +49,7 @@ import {
   findMissionByDemoName,
 } from "@/src/manifest";
 import { createParser, parseAsBoolean, useQueryState } from "nuqs";
+import styles from "./page.module.css";
 
 const MapInfoDialog = lazy(() =>
   import("@/src/components/MapInfoDialog").then((mod) => ({
@@ -231,17 +232,21 @@ function MapInspector() {
             onClearFogEnabledOverride={clearFogEnabledOverride}
           >
             <KeyboardControls map={KEYBOARD_CONTROLS}>
-              <div id="canvasContainer">
+              <div id="canvasContainer" className={styles.CanvasContainer}>
                 {showLoadingIndicator && (
-                  <div id="loadingIndicator" data-complete={!isLoading}>
-                    <div className="LoadingSpinner" />
-                    <div className="LoadingProgress">
+                  <div
+                    id="loadingIndicator"
+                    className={styles.LoadingIndicator}
+                    data-complete={!isLoading}
+                  >
+                    <div className={styles.Spinner} />
+                    <div className={styles.Progress}>
                       <div
-                        className="LoadingProgress-bar"
+                        className={styles.ProgressBar}
                         style={{ width: `${loadingProgress * 100}%` }}
                       />
                     </div>
-                    <div className="LoadingProgress-text">
+                    <div className={styles.ProgressText}>
                       {Math.round(loadingProgress * 100)}%
                     </div>
                   </div>
@@ -304,7 +309,10 @@ function MapInspector() {
                   />
                 </Suspense>
               )}
-              <DemoMissionSync changeMission={changeMission} currentMission={currentMission} />
+              <DemoMissionSync
+                changeMission={changeMission}
+                currentMission={currentMission}
+              />
               <DemoControls />
               <DemoWindowAPI />
             </KeyboardControls>

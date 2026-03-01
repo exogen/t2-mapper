@@ -1,0 +1,46 @@
+.Root {
+  pointer-events: none;
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  white-space: nowrap;
+}
+
+.Top {
+  composes: Root;
+  padding-bottom: 20px;
+}
+
+.Bottom {
+  composes: Root;
+  padding-top: 20px;
+}
+
+.IffArrow {
+  width: 12px;
+  height: 12px;
+  image-rendering: pixelated;
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.7));
+}
+
+.Name {
+  color: #fff;
+  font-size: 11px;
+  text-shadow:
+    0 1px 3px rgba(0, 0, 0, 0.9),
+    0 0 1px rgba(0, 0, 0, 0.7);
+}
+
+.HealthBar {
+  width: 60px;
+  height: 4px;
+  background: rgba(0, 0, 0, 0.5);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  margin: 2px auto 0;
+  overflow: hidden;
+}
+
+.HealthFill {
+  height: 100%;
+  background: #2ecc40;
+}

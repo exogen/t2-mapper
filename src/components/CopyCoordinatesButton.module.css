@@ -1,0 +1,36 @@
+.Root {
+  composes: IconButton from "./InspectorControls.module.css";
+  composes: LabelledButton from "./InspectorControls.module.css";
+}
+
+.Root[data-copied="true"] {
+  background: rgba(0, 117, 213, 0.9);
+  border-color: rgba(255, 255, 255, 0.4);
+}
+
+.ClipboardCheck {
+  display: none;
+  opacity: 1;
+}
+
+.Root[data-copied="true"] .ClipboardCheck {
+  display: block;
+  animation: showClipboardCheck 220ms linear infinite;
+}
+
+.Root[data-copied="true"] .MapPin {
+  display: none;
+}
+
+.ButtonLabel {
+  composes: ButtonLabel from "./InspectorControls.module.css";
+}
+
+@keyframes showClipboardCheck {
+  0% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0.2;
+  }
+}

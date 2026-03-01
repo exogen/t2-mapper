@@ -1,0 +1,111 @@
+.Root {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  background: rgba(0, 0, 0, 0.7);
+  color: #fff;
+  font-size: 13px;
+  z-index: 2;
+}
+
+.PlayPause {
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 4px;
+  background: rgba(3, 82, 147, 0.6);
+  color: #fff;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+@media (hover: hover) {
+  .PlayPause:hover {
+    background: rgba(0, 98, 179, 0.8);
+  }
+}
+
+.Time {
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.Seek[type="range"] {
+  flex: 1 1 0;
+  min-width: 0;
+  max-width: none;
+}
+
+.Speed {
+  flex-shrink: 0;
+  padding: 2px 4px;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 3px;
+  background: rgba(0, 0, 0, 0.6);
+  color: #fff;
+  font-size: 12px;
+}
+
+.DiagnosticsPanel {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-left: 8px;
+  padding: 4px 8px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.55);
+  min-width: 320px;
+}
+
+.DiagnosticsPanel[data-context-lost="true"] {
+  border-color: rgba(255, 90, 90, 0.8);
+  background: rgba(70, 0, 0, 0.45);
+}
+
+.DiagnosticsStatus {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.DiagnosticsMetrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  font-size: 11px;
+  opacity: 0.92;
+}
+
+.DiagnosticsFooter {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  align-items: center;
+  font-size: 11px;
+}
+
+.DiagnosticsFooter button {
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 3px;
+  background: rgba(3, 82, 147, 0.6);
+  color: #fff;
+  padding: 1px 6px;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.DiagnosticsFooter button:hover {
+  background: rgba(0, 98, 179, 0.8);
+}

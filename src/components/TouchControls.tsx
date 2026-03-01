@@ -3,6 +3,25 @@ import { Euler, Vector3 } from "three";
 import { useFrame, useThree } from "@react-three/fiber";
 import type nipplejs from "nipplejs";
 import { useControls } from "./SettingsProvider";
+import styles from "./TouchControls.module.css";
+
+/** Apply styles to nipplejs-generated `.back` and `.front` elements imperatively. */
+function applyNippleStyles(zone: HTMLElement) {
+  const back = zone.querySelector<HTMLElement>(".back");
+  if (back) {
+    back.style.background = "rgba(3, 79, 76, 0.6)";
+    back.style.border = "1px solid rgba(0, 219, 223, 0.5)";
+    back.style.boxShadow = "inset 0 0 10px rgba(0, 0, 0, 0.7)";
+  }
+  const front = zone.querySelector<HTMLElement>(".front");
+  if (front) {
+    front.style.background =
+      "radial-gradient(circle at 50% 50%, rgba(23, 247, 198, 0.9) 0%, rgba(9, 184, 170, 0.95) 100%)";
+    front.style.border = "2px solid rgba(255, 255, 255, 0.4)";
+    front.style.boxShadow =
+      "0 2px 4px rgba(0, 0, 0, 0.5), 0 1px 1px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.15), inset 0 -1px 2px rgba(0, 0, 0, 0.3)";
+  }
+}
 
 const BASE_SPEED = 80;
 const LOOK_SENSITIVITY = 0.004;
@@ -50,6 +69,8 @@ export function TouchJoystick({
         restOpacity: 0.9,
       });
 
+      applyNippleStyles(zone);
+
       manager.on("move", (_event, data) => {
         joystickState.current.angle = data.angle.radian;
         joystickState.current.force = Math.min(1, data.force);
@@ -86,6 +107,8 @@ export function TouchJoystick({
         restOpacity: 0.9,
       });
 
+      applyNippleStyles(zone);
+
       manager.on("move", (_event, data) => {
         lookJoystickState.current.angle = data.angle.radian;
         lookJoystickState.current.force = Math.min(1, data.force);
@@ -113,13 +136,13 @@ export function TouchJoystick({
       <>
         <div
           ref={joystickZone}
-          className="TouchJoystick TouchJoystick--left"
+          className={styles.Left}
           onContextMenu={(e) => e.preventDefault()}
           onTouchStart={blurActiveElement}
         />
         <div
           ref={lookJoystickZone}
-          className="TouchJoystick TouchJoystick--right"
+          className={styles.Right}
           onContextMenu={(e) => e.preventDefault()}
           onTouchStart={blurActiveElement}
         />
@@ -130,7 +153,7 @@ export function TouchJoystick({
   return (
     <div
       ref={joystickZone}
-      className="TouchJoystick"
+      className={styles.Joystick}
       onContextMenu={(e) => e.preventDefault()}
       onTouchStart={blurActiveElement}
     />
@@ -268,9 +291,7 @@ export function TouchCameraMovement({
 
         camera.getWorldDirection(forwardVec.current);
         forwardVec.current.normalize();
-        sideVec.current
-          .crossVectors(camera.up, forwardVec.current)
-          .normalize();
+        sideVec.current.crossVectors(camera.up, forwardVec.current).normalize();
 
         moveVec.current
           .set(0, 0, 0)
@@ -288,9 +309,7 @@ export function TouchCameraMovement({
         const speed = BASE_SPEED * speedMultiplier * 0.5;
         camera.getWorldDirection(forwardVec.current);
         forwardVec.current.normalize();
-        moveVec.current
-          .copy(forwardVec.current)
-          .multiplyScalar(speed * delta);
+        moveVec.current.copy(forwardVec.current).multiplyScalar(speed * delta);
         camera.position.add(moveVec.current);
 
         if (force >= SINGLE_STICK_DEADZONE) {

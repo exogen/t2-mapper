@@ -2,6 +2,7 @@ import { useCallback, useRef } from "react";
 import { MdOndemandVideo } from "react-icons/md";
 import { useDemoActions, useDemoRecording } from "./DemoProvider";
 import { createDemoStreamingRecording } from "../demo/streaming";
+import styles from "./LoadDemoButton.module.css";
 
 export function LoadDemoButton() {
   const recording = useDemoRecording();
@@ -53,14 +54,14 @@ export function LoadDemoButton() {
       />
       <button
         type="button"
-        className="IconButton LabelledButton"
+        className={styles.Root}
         aria-label={recording ? "Unload demo" : "Load demo (.rec)"}
         title={recording ? "Unload demo" : "Load demo (.rec)"}
         onClick={handleClick}
         data-active={recording ? "true" : undefined}
       >
-        <MdOndemandVideo className="DemoIcon" />
-        <span className="ButtonLabel">
+        <MdOndemandVideo className={styles.DemoIcon} />
+        <span className={styles.ButtonLabel}>
           {recording ? "Unload demo" : "Demo"}
         </span>
       </button>

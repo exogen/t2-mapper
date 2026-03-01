@@ -1,0 +1,12 @@
+.Root {
+  composes: IconButton from "./InspectorControls.module.css";
+  composes: LabelledButton from "./InspectorControls.module.css";
+}
+
+.ButtonLabel {
+  composes: ButtonLabel from "./InspectorControls.module.css";
+}
+
+.DemoIcon {
+  font-size: 19px;
+}

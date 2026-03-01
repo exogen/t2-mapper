@@ -2,6 +2,7 @@ import { Stats, Html } from "@react-three/drei";
 import { useDebug } from "./SettingsProvider";
 import { useEffect, useRef } from "react";
 import { AxesHelper } from "three";
+import styles from "./DebugElements.module.css";
 
 export function DebugElements() {
   const { debugMode } = useDebug();
@@ -17,7 +18,7 @@ export function DebugElements() {
 
   return debugMode ? (
     <>
-      <Stats className="StatsPanel" />
+      <Stats className={styles.StatsPanel} />
       <axesHelper ref={axesRef} args={[70]} renderOrder={999}>
         <lineBasicMaterial
           depthTest={false}
@@ -27,17 +28,17 @@ export function DebugElements() {
         />
       </axesHelper>
       <Html position={[80, 0, 0]} center>
-        <span className="AxisLabel" data-axis="y">
+        <span className={styles.AxisLabel} data-axis="y">
           Y
         </span>
       </Html>
       <Html position={[0, 80, 0]} center>
-        <span className="AxisLabel" data-axis="z">
+        <span className={styles.AxisLabel} data-axis="z">
           Z
         </span>
       </Html>
       <Html position={[0, 0, 80]} center>
-        <span className="AxisLabel" data-axis="x">
+        <span className={styles.AxisLabel} data-axis="x">
           X
         </span>
       </Html>

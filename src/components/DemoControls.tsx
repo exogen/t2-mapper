@@ -13,6 +13,7 @@ import {
   useEngineSelector,
   useEngineStoreApi,
 } from "../state";
+import styles from "./DemoControls.module.css";
 
 const SPEED_OPTIONS = [0.25, 0.5, 1, 2, 4];
 
@@ -89,23 +90,23 @@ export function DemoControls() {
 
   return (
     <div
-      className="DemoControls"
+      className={styles.Root}
       onKeyDown={(e) => e.stopPropagation()}
       onPointerDown={(e) => e.stopPropagation()}
       onClick={(e) => e.stopPropagation()}
     >
       <button
-        className="DemoControls-playPause"
+        className={styles.PlayPause}
         onClick={isPlaying ? pause : play}
         aria-label={isPlaying ? "Pause" : "Play"}
       >
         {isPlaying ? "\u275A\u275A" : "\u25B6"}
       </button>
-      <span className="DemoControls-time">
+      <span className={styles.Time}>
         {`${formatTime(currentTime)} / ${formatTime(duration)}`}
       </span>
       <input
-        className="DemoControls-seek"
+        className={styles.Seek}
         type="range"
         min={0}
         max={duration}
@@ -114,7 +115,7 @@ export function DemoControls() {
         onChange={handleSeek}
       />
       <select
-        className="DemoControls-speed"
+        className={styles.Speed}
         value={speed}
         onChange={handleSpeedChange}
       >
@@ -125,13 +126,13 @@ export function DemoControls() {
         ))}
       </select>
       <div
-        className="DemoDiagnosticsPanel"
+        className={styles.DiagnosticsPanel}
         data-context-lost={webglContextLost ? "true" : undefined}
       >
-        <div className="DemoDiagnosticsPanel-status">
+        <div className={styles.DiagnosticsStatus}>
           {webglContextLost ? "WebGL context: LOST" : "WebGL context: ok"}
         </div>
-        <div className="DemoDiagnosticsPanel-metrics">
+        <div className={styles.DiagnosticsMetrics}>
           {latestRendererSample ? (
             <>
               <span>
@@ -153,7 +154,7 @@ export function DemoControls() {
             <span>No renderer samples yet</span>
           )}
         </div>
-        <div className="DemoDiagnosticsPanel-footer">
+        <div className={styles.DiagnosticsFooter}>
           <span>
             samples {rendererSampleCount} events {playbackEventCount}
           </span>

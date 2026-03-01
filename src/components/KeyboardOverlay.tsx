@@ -1,6 +1,7 @@
 import { useKeyboardControls } from "@react-three/drei";
 import { Controls } from "./ObserverControls";
 import { useDemoRecording } from "./DemoProvider";
+import styles from "./KeyboardOverlay.module.css";
 
 export function KeyboardOverlay() {
   const recording = useDemoRecording();
@@ -18,55 +19,55 @@ export function KeyboardOverlay() {
   if (recording) return null;
 
   return (
-    <div className="KeyboardOverlay">
-      <div className="KeyboardOverlay-column">
-        <div className="KeyboardOverlay-row">
-          <div className="KeyboardOverlay-spacer" />
-          <div className="KeyboardOverlay-key" data-pressed={forward}>
+    <div className={styles.Root}>
+      <div className={styles.Column}>
+        <div className={styles.Row}>
+          <div className={styles.Spacer} />
+          <div className={styles.Key} data-pressed={forward}>
             W
           </div>
-          <div className="KeyboardOverlay-spacer" />
+          <div className={styles.Spacer} />
         </div>
-        <div className="KeyboardOverlay-row">
-          <div className="KeyboardOverlay-key" data-pressed={left}>
+        <div className={styles.Row}>
+          <div className={styles.Key} data-pressed={left}>
             A
           </div>
-          <div className="KeyboardOverlay-key" data-pressed={backward}>
+          <div className={styles.Key} data-pressed={backward}>
             S
           </div>
-          <div className="KeyboardOverlay-key" data-pressed={right}>
+          <div className={styles.Key} data-pressed={right}>
             D
           </div>
         </div>
       </div>
-      <div className="KeyboardOverlay-column">
-        <div className="KeyboardOverlay-row">
-          <div className="KeyboardOverlay-key" data-pressed={up}>
-            <span className="KeyboardOverlay-arrow">&uarr;</span> Space
+      <div className={styles.Column}>
+        <div className={styles.Row}>
+          <div className={styles.Key} data-pressed={up}>
+            <span className={styles.Arrow}>&uarr;</span> Space
           </div>
         </div>
-        <div className="KeyboardOverlay-row">
-          <div className="KeyboardOverlay-key" data-pressed={down}>
-            <span className="KeyboardOverlay-arrow">&darr;</span> Shift
+        <div className={styles.Row}>
+          <div className={styles.Key} data-pressed={down}>
+            <span className={styles.Arrow}>&darr;</span> Shift
           </div>
         </div>
       </div>
-      <div className="KeyboardOverlay-column">
-        <div className="KeyboardOverlay-row">
-          <div className="KeyboardOverlay-spacer" />
-          <div className="KeyboardOverlay-key" data-pressed={lookUp}>
+      <div className={styles.Column}>
+        <div className={styles.Row}>
+          <div className={styles.Spacer} />
+          <div className={styles.Key} data-pressed={lookUp}>
             &uarr;
           </div>
-          <div className="KeyboardOverlay-spacer" />
+          <div className={styles.Spacer} />
         </div>
-        <div className="KeyboardOverlay-row">
-          <div className="KeyboardOverlay-key" data-pressed={lookLeft}>
+        <div className={styles.Row}>
+          <div className={styles.Key} data-pressed={lookLeft}>
             &larr;
           </div>
-          <div className="KeyboardOverlay-key" data-pressed={lookDown}>
+          <div className={styles.Key} data-pressed={lookDown}>
             &darr;
           </div>
-          <div className="KeyboardOverlay-key" data-pressed={lookRight}>
+          <div className={styles.Key} data-pressed={lookRight}>
             &rarr;
           </div>
         </div>

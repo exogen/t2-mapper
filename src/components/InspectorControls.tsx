@@ -11,6 +11,7 @@ import { CopyCoordinatesButton } from "./CopyCoordinatesButton";
 import { LoadDemoButton } from "./LoadDemoButton";
 import { useDemoRecording } from "./DemoProvider";
 import { FiInfo, FiSettings } from "react-icons/fi";
+import styles from "./InspectorControls.module.css";
 
 export function InspectorControls({
   missionName,
@@ -79,20 +80,23 @@ export function InspectorControls({
   return (
     <div
       id="controls"
+      className={styles.Controls}
       onKeyDown={(e) => e.stopPropagation()}
       onPointerDown={(e) => e.stopPropagation()}
       onClick={(e) => e.stopPropagation()}
     >
-      <MissionSelect
-        value={missionName}
-        missionType={missionType}
-        onChange={onChangeMission}
-        disabled={isDemoLoaded}
-      />
+      <div className={styles.MissionSelectWrapper}>
+        <MissionSelect
+          value={missionName}
+          missionType={missionType}
+          onChange={onChangeMission}
+          disabled={isDemoLoaded}
+        />
+      </div>
       <div ref={focusAreaRef}>
         <button
           ref={buttonRef}
-          className="IconButton Controls-toggle"
+          className={styles.Toggle}
           onClick={() => {
             setSettingsOpen((isOpen) => !isOpen);
           }}
@@ -103,7 +107,7 @@ export function InspectorControls({
           <FiSettings />
         </button>
         <div
-          className="Controls-dropdown"
+          className={styles.Dropdown}
           ref={dropdownRef}
           id="settingsPanel"
           tabIndex={-1}
@@ -111,7 +115,7 @@ export function InspectorControls({
           onBlur={handleDropdownBlur}
           data-open={settingsOpen}
         >
-          <div className="Controls-group">
+          <div className={styles.Group}>
             <CopyCoordinatesButton
               cameraRef={cameraRef}
               missionName={missionName}
@@ -120,16 +124,16 @@ export function InspectorControls({
             <LoadDemoButton />
             <button
               type="button"
-              className="IconButton LabelledButton MapInfoButton"
+              className={styles.MapInfoButton}
               aria-label="Show map info"
               onClick={onOpenMapInfo}
             >
               <FiInfo />
-              <span className="ButtonLabel">Show map info</span>
+              <span className={styles.ButtonLabel}>Show map info</span>
             </button>
           </div>
-          <div className="Controls-group">
-            <div className="CheckboxField">
+          <div className={styles.Group}>
+            <div className={styles.CheckboxField}>
               <input
                 id="fogInput"
                 type="checkbox"
@@ -140,7 +144,7 @@ export function InspectorControls({
               />
               <label htmlFor="fogInput">Fog?</label>
             </div>
-            <div className="CheckboxField">
+            <div className={styles.CheckboxField}>
               <input
                 id="audioInput"
                 type="checkbox"
@@ -152,8 +156,8 @@ export function InspectorControls({
               <label htmlFor="audioInput">Audio?</label>
             </div>
           </div>
-          <div className="Controls-group">
-            <div className="CheckboxField">
+          <div className={styles.Group}>
+            <div className={styles.CheckboxField}>
               <input
                 id="animationInput"
                 type="checkbox"
@@ -164,7 +168,7 @@ export function InspectorControls({
               />
               <label htmlFor="animationInput">Animation?</label>
             </div>
-            <div className="CheckboxField">
+            <div className={styles.CheckboxField}>
               <input
                 id="debugInput"
                 type="checkbox"
@@ -176,8 +180,8 @@ export function InspectorControls({
               <label htmlFor="debugInput">Debug?</label>
             </div>
           </div>
-          <div className="Controls-group">
-            <div className="Field">
+          <div className={styles.Group}>
+            <div className={styles.Field}>
               <label htmlFor="fovInput">FOV</label>
               <input
                 id="fovInput"
@@ -191,7 +195,7 @@ export function InspectorControls({
               />
               <output htmlFor="fovInput">{fov}</output>
             </div>
-            <div className="Field">
+            <div className={styles.Field}>
               <label htmlFor="speedInput">Speed</label>
               <input
                 id="speedInput"
@@ -208,8 +212,8 @@ export function InspectorControls({
             </div>
           </div>
           {isTouch && (
-            <div className="Controls-group">
-              <div className="Field">
+            <div className={styles.Group}>
+              <div className={styles.Field}>
                 <label htmlFor="touchModeInput">Joystick:</label>{" "}
                 <select
                   id="touchModeInput"

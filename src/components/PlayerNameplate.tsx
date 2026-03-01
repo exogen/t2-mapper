@@ -7,6 +7,7 @@ import { getKeyframeAtTime } from "../demo/demoPlaybackUtils";
 import { textureToUrl } from "../loaders";
 import { useStaticShape } from "./GenericShape";
 import type { DemoEntity } from "../demo/types";
+import styles from "./PlayerNameplate.module.css";
 
 /** Max distance at which nameplates are visible. */
 const NAMEPLATE_FADE_DISTANCE = 150;
@@ -139,24 +140,21 @@ export function PlayerNameplate({
       {isVisible && (
         <>
           <Html position={[0, iffHeight, 0]} center>
-            <div ref={iffContainerRef} className="PlayerNameplate PlayerTop">
+            <div ref={iffContainerRef} className={styles.Top}>
               <img
                 ref={iffImgRef}
-                className="PlayerNameplate-iffArrow"
+                className={styles.IffArrow}
                 src={iffMarkerUrl}
                 alt=""
               />
             </div>
           </Html>
           <Html position={[0, NAME_HEIGHT, 0]} center>
-            <div
-              ref={nameContainerRef}
-              className="PlayerNameplate PlayerBottom"
-            >
-              <div className="PlayerNameplate-name">{displayName}</div>
+            <div ref={nameContainerRef} className={styles.Bottom}>
+              <div className={styles.Name}>{displayName}</div>
               {hasHealthData && (
-                <div className="PlayerNameplate-healthBar">
-                  <div ref={fillRef} className="PlayerNameplate-healthFill" />
+                <div className={styles.HealthBar}>
+                  <div ref={fillRef} className={styles.HealthFill} />
                 </div>
               )}
             </div>

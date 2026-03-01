@@ -1,0 +1,22 @@
+.Joystick {
+  position: fixed;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 140px;
+  height: 140px;
+  z-index: 1;
+}
+
+.Left {
+  composes: Joystick;
+  left: 20px;
+  transform: none;
+}
+
+.Right {
+  composes: Joystick;
+  left: auto;
+  right: 20px;
+  transform: none;
+}

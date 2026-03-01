@@ -1,0 +1,181 @@
+.InputWrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.Shortcut {
+  position: absolute;
+  right: 7px;
+  font-family: system-ui, sans-serif;
+  font-size: 11px;
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.15);
+  color: rgba(255, 255, 255, 0.6);
+  pointer-events: none;
+}
+
+.Input[aria-expanded="true"] ~ .Shortcut {
+  display: none;
+}
+
+.Input {
+  width: 280px;
+  padding: 6px 36px 6px 8px;
+  font-size: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 3px;
+  background: rgba(0, 0, 0, 0.6);
+  color: #fff;
+  outline: none;
+  user-select: text;
+}
+
+.Input[aria-expanded="true"] {
+  padding-right: 8px;
+}
+
+.Input:focus {
+  border-color: rgba(255, 255, 255, 0.6);
+}
+
+.Input::placeholder {
+  color: transparent;
+}
+
+.SelectedValue {
+  position: absolute;
+  left: 8px;
+  right: 36px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.Input[aria-expanded="true"] ~ .SelectedValue {
+  display: none;
+}
+
+.SelectedName {
+  color: #fff;
+  font-weight: 600;
+  font-size: 14px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex-shrink: 1;
+  min-width: 0;
+}
+
+.SelectedValue > .ItemType {
+  flex-shrink: 0;
+}
+
+.Popover {
+  z-index: 100;
+  min-width: 320px;
+  max-height: var(--popover-available-height, 90vh);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  background: rgba(20, 20, 20, 0.95);
+  border: 1px solid rgba(255, 255, 255, 0.5);
+  border-radius: 3px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6);
+}
+
+.List {
+  padding: 4px 0;
+}
+
+.List:has(> .Group:first-child) {
+  padding-top: 0;
+}
+
+.Group {
+  padding-bottom: 4px;
+}
+
+.GroupLabel {
+  position: sticky;
+  top: 0;
+  padding: 6px 8px 6px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  color: rgb(198, 202, 202);
+  background: rgba(58, 69, 72, 0.95);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.3);
+  z-index: 1;
+}
+
+.Group:not(:last-child) {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.3);
+}
+
+.Item {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin: 4px 4px 0;
+  padding: 6px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  outline: none;
+  scroll-margin-top: 32px;
+}
+
+.List > .Item:first-child {
+  margin-top: 0;
+}
+
+.Item[data-active-item] {
+  background: rgba(255, 255, 255, 0.15);
+}
+
+.Item[aria-selected="true"] {
+  background: rgba(100, 150, 255, 0.3);
+}
+
+.ItemHeader {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ItemName {
+  font-size: 14px;
+  font-weight: 600;
+  color: #fff;
+}
+
+.ItemTypes {
+  display: flex;
+  gap: 3px;
+}
+
+.ItemType {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 5px;
+  border-radius: 3px;
+  background: rgba(255, 157, 0, 0.4);
+  color: #fff;
+}
+
+.ItemType:hover {
+  background: rgba(255, 157, 0, 0.7);
+}
+
+.ItemMissionName {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.NoResults {
+  padding: 12px 8px;
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.5);
+  text-align: center;
+}

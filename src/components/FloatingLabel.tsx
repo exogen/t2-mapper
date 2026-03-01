@@ -2,6 +2,7 @@ import { memo, ReactNode, useRef, useState } from "react";
 import { Object3D, Vector3 } from "three";
 import { useFrame } from "@react-three/fiber";
 import { Html } from "@react-three/drei";
+import styles from "./FloatingLabel.module.css";
 
 const DEFAULT_POSITION = [0, 0, 0] as [x: number, y: number, z: number];
 const _worldPos = new Vector3();
@@ -15,7 +16,9 @@ function isBehindCamera(
 ): boolean {
   const e = camera.matrixWorld.elements;
   // Dot product of (objectPos - cameraPos) with camera forward (-Z column).
-  return (wx - e[12]) * -e[8] + (wy - e[13]) * -e[9] + (wz - e[14]) * -e[10] < 0;
+  return (
+    (wx - e[12]) * -e[8] + (wy - e[13]) * -e[9] + (wz - e[14]) * -e[10] < 0
+  );
 }
 
 export const FloatingLabel = memo(function FloatingLabel({
@@ -39,10 +42,17 @@ export const FloatingLabel = memo(function FloatingLabel({
     if (!group) return;
 
     group.getWorldPosition(_worldPos);
-    const behind = isBehindCamera(camera, _worldPos.x, _worldPos.y, _worldPos.z);
+    const behind = isBehindCamera(
+      camera,
+      _worldPos.x,
+      _worldPos.y,
+      _worldPos.z,
+    );
 
     if (fadeWithDistance) {
-      const distance = behind ? Infinity : camera.position.distanceTo(_worldPos);
+      const distance = behind
+        ? Infinity
+        : camera.position.distanceTo(_worldPos);
       const shouldBeVisible = distance < 200;
 
       if (isVisible !== shouldBeVisible) {
@@ -69,7 +79,7 @@ export const FloatingLabel = memo(function FloatingLabel({
     <group ref={groupRef}>
       {isVisible ? (
         <Html position={position} center>
-          <div ref={labelRef} className="StaticShapeLabel" style={{ color }}>
+          <div ref={labelRef} className={styles.Label} style={{ color }}>
             {children}
           </div>
         </Html>
