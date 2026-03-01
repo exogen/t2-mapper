@@ -14,6 +14,7 @@ import { Camera } from "./Camera";
 import { useSettings } from "./SettingsProvider";
 import { useMission } from "./MissionContext";
 import { getProperty } from "../mission";
+import { useEngineSelector, useRuntimeObjectById } from "../state";
 
 const AudioEmitter = lazy(() =>
   import("./AudioEmitter").then((mod) => ({ default: mod.AudioEmitter })),
@@ -51,27 +52,59 @@ const componentMap = {
   WayPoint,
 };
 
-export function SimObject({ object }: { object: TorqueObject }) {
+/**
+ * During demo playback, these mission-authored classes are rendered from demo
+ * ghosts instead of the mission runtime scene tree.
+ */
+const demoGhostAuthoritativeClasses = new Set([
+  "ForceFieldBare",
+  "Item",
+  "StaticShape",
+  "Turret",
+]);
+
+interface SimObjectProps {
+  object?: TorqueObject;
+  objectId?: number;
+}
+
+export function SimObject({ object, objectId }: SimObjectProps) {
+  const liveObject = useRuntimeObjectById(objectId ?? object?._id);
+  const resolvedObject = liveObject ?? object;
   const { missionType } = useMission();
+  const isDemoPlaybackActive = useEngineSelector(
+    (state) => state.playback.recording != null,
+  );
+
   // FIXME: In theory we could make sure TorqueScript is calling `hide()`
   // based on the mission type already, which is built-in behavior, then just
   // make sure we respect the hidden/visible state here. For now do it this way.
   const shouldShowObject = useMemo(() => {
+    if (!resolvedObject) {
+      return false;
+    }
     const missionTypesList = new Set(
-      (getProperty(object, "missionTypesList") ?? "")
+      (getProperty(resolvedObject, "missionTypesList") ?? "")
         .toLowerCase()
-        .split(/s+/)
+        .split(/\s+/)
         .filter(Boolean),
     );
     return (
       !missionTypesList.size || missionTypesList.has(missionType.toLowerCase())
     );
-  }, [object, missionType]);
+  }, [resolvedObject, missionType]);
 
-  const Component = componentMap[object._className];
+  if (!resolvedObject) {
+    return null;
+  }
+
+  const Component = componentMap[resolvedObject._className];
+  const isSuppressedByDemoAuthority =
+    isDemoPlaybackActive &&
+    demoGhostAuthoritativeClasses.has(resolvedObject._className);
   return shouldShowObject && Component ? (
     <Suspense>
-      <Component object={object} />
+      {!isSuppressedByDemoAuthority && <Component object={resolvedObject} />}
     </Suspense>
   ) : null;
 }

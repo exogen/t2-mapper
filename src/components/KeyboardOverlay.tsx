@@ -1,7 +1,9 @@
 import { useKeyboardControls } from "@react-three/drei";
 import { Controls } from "./ObserverControls";
+import { useDemoRecording } from "./DemoProvider";
 
 export function KeyboardOverlay() {
+  const recording = useDemoRecording();
   const forward = useKeyboardControls<Controls>((s) => s.forward);
   const backward = useKeyboardControls<Controls>((s) => s.backward);
   const left = useKeyboardControls<Controls>((s) => s.left);
@@ -12,6 +14,8 @@ export function KeyboardOverlay() {
   const lookDown = useKeyboardControls<Controls>((s) => s.lookDown);
   const lookLeft = useKeyboardControls<Controls>((s) => s.lookLeft);
   const lookRight = useKeyboardControls<Controls>((s) => s.lookRight);
+
+  if (recording) return null;
 
   return (
     <div className="KeyboardOverlay">

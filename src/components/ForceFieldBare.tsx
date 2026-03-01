@@ -211,9 +211,17 @@ export const ForceFieldBare = memo(function ForceFieldBare({
     [datablock, numFrames],
   );
 
-  // Don't render if we have no textures
+  // Render fallback mesh when textures are missing instead of disappearing.
   if (textureUrls.length === 0) {
-    return null;
+    return (
+      <group position={position} quaternion={quaternion}>
+        <ForceFieldFallback
+          scale={scale}
+          color={color}
+          baseTranslucency={baseTranslucency}
+        />
+      </group>
+    );
   }
 
   return (

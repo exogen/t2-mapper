@@ -9,6 +9,7 @@ import { RefObject, useEffect, useState, useRef } from "react";
 import { Camera } from "three";
 import { CopyCoordinatesButton } from "./CopyCoordinatesButton";
 import { LoadDemoButton } from "./LoadDemoButton";
+import { useDemoRecording } from "./DemoProvider";
 import { FiInfo, FiSettings } from "react-icons/fi";
 
 export function InspectorControls({
@@ -45,6 +46,8 @@ export function InspectorControls({
   const { speedMultiplier, setSpeedMultiplier, touchMode, setTouchMode } =
     useControls();
   const { debugMode, setDebugMode } = useDebug();
+  const demoRecording = useDemoRecording();
+  const isDemoLoaded = demoRecording != null;
   const [settingsOpen, setSettingsOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
@@ -84,6 +87,7 @@ export function InspectorControls({
         value={missionName}
         missionType={missionType}
         onChange={onChangeMission}
+        disabled={isDemoLoaded}
       />
       <div ref={focusAreaRef}>
         <button
@@ -182,6 +186,7 @@ export function InspectorControls({
                 max={120}
                 step={5}
                 value={fov}
+                disabled={isDemoLoaded}
                 onChange={(event) => setFov(parseInt(event.target.value))}
               />
               <output htmlFor="fovInput">{fov}</output>
@@ -195,6 +200,7 @@ export function InspectorControls({
                 max={5}
                 step={0.05}
                 value={speedMultiplier}
+                disabled={isDemoLoaded}
                 onChange={(event) =>
                   setSpeedMultiplier(parseFloat(event.target.value))
                 }

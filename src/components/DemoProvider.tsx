@@ -1,13 +1,6 @@
-import {
-  createContext,
-  useCallback,
-  useContext,
-  useMemo,
-  useRef,
-  useState,
-  type ReactNode,
-} from "react";
+import { useCallback, type ReactNode } from "react";
 import type { DemoRecording } from "../demo/types";
+import { useEngineSelector } from "../state";
 
 interface DemoContextValue {
   recording: DemoRecording | null;
@@ -20,123 +13,107 @@ interface DemoContextValue {
   pause: () => void;
   seek: (time: number) => void;
   setSpeed: (speed: number) => void;
-  /** Ref used by the scene component to sync playback time back to context. */
-  playbackRef: React.RefObject<PlaybackState>;
-}
-
-export interface PlaybackState {
-  isPlaying: boolean;
-  currentTime: number;
-  speed: number;
-  /** Set by the provider when seeking; cleared by the scene component. */
-  pendingSeek: number | null;
-  /** Set by the provider when play/pause changes; cleared by the scene. */
-  pendingPlayState: boolean | null;
-}
-
-const DemoContext = createContext<DemoContextValue | null>(null);
-
-export function useDemo() {
-  const context = useContext(DemoContext);
-  if (!context) {
-    throw new Error("useDemo must be used within DemoProvider");
-  }
-  return context;
-}
-
-export function useDemoOptional() {
-  return useContext(DemoContext);
 }
 
 export function DemoProvider({ children }: { children: ReactNode }) {
-  const [recording, setRecording] = useState<DemoRecording | null>(null);
-  const [isPlaying, setIsPlaying] = useState(false);
-  const [currentTime, setCurrentTime] = useState(0);
-  const [speed, setSpeed] = useState(1);
+  return <>{children}</>;
+}
 
-  const playbackRef = useRef<PlaybackState>({
-    isPlaying: false,
-    currentTime: 0,
-    speed: 1,
-    pendingSeek: null,
-    pendingPlayState: null,
-  });
+export function useDemoRecording(): DemoRecording | null {
+  return useEngineSelector((state) => state.playback.recording);
+}
 
-  const duration = recording?.duration ?? 0;
+export function useDemoIsPlaying(): boolean {
+  return useEngineSelector((state) => state.playback.status === "playing");
+}
+
+export function useDemoCurrentTime(): number {
+  return useEngineSelector((state) => state.playback.timeMs / 1000);
+}
+
+export function useDemoDuration(): number {
+  return useEngineSelector((state) => state.playback.durationMs / 1000);
+}
+
+export function useDemoSpeed(): number {
+  return useEngineSelector((state) => state.playback.rate);
+}
+
+export function useDemoActions() {
+  const recording = useDemoRecording();
+  const setDemoRecording = useEngineSelector((state) => state.setDemoRecording);
+  const setPlaybackStatus = useEngineSelector(
+    (state) => state.setPlaybackStatus,
+  );
+  const setPlaybackTime = useEngineSelector((state) => state.setPlaybackTime);
+  const setPlaybackRate = useEngineSelector((state) => state.setPlaybackRate);
+
+  const setRecording = useCallback(
+    (recording: DemoRecording | null) => {
+      setDemoRecording(recording);
+    },
+    [setDemoRecording],
+  );
 
   const play = useCallback(() => {
-    setIsPlaying(true);
-    playbackRef.current.pendingPlayState = true;
-  }, []);
+    if (
+      (recording?.isMetadataOnly || recording?.isPartial) &&
+      !recording.streamingPlayback
+    ) {
+      return;
+    }
+    setPlaybackStatus("playing");
+  }, [recording, setPlaybackStatus]);
 
   const pause = useCallback(() => {
-    setIsPlaying(false);
-    playbackRef.current.pendingPlayState = false;
-  }, []);
+    setPlaybackStatus("paused");
+  }, [setPlaybackStatus]);
 
-  const seek = useCallback((time: number) => {
-    setCurrentTime(time);
-    playbackRef.current.pendingSeek = time;
-  }, []);
-
-  const handleSetSpeed = useCallback((newSpeed: number) => {
-    setSpeed(newSpeed);
-    playbackRef.current.speed = newSpeed;
-  }, []);
-
-  const handleSetRecording = useCallback((rec: DemoRecording | null) => {
-    setRecording(rec);
-    setIsPlaying(false);
-    setCurrentTime(0);
-    setSpeed(1);
-    playbackRef.current.isPlaying = false;
-    playbackRef.current.currentTime = 0;
-    playbackRef.current.speed = 1;
-    playbackRef.current.pendingSeek = null;
-    playbackRef.current.pendingPlayState = null;
-  }, []);
-
-  /**
-   * Called by DemoPlayback on each frame to sync the current time back
-   * to React state (throttled by the scene component).
-   */
-  const updateCurrentTime = useCallback((time: number) => {
-    setCurrentTime(time);
-  }, []);
-
-  // Attach the updater to the ref so the scene component can call it
-  // without needing it as a dependency.
-  (playbackRef.current as any).updateCurrentTime = updateCurrentTime;
-
-  const context: DemoContextValue = useMemo(
-    () => ({
-      recording,
-      setRecording: handleSetRecording,
-      isPlaying,
-      currentTime,
-      duration,
-      speed,
-      play,
-      pause,
-      seek,
-      setSpeed: handleSetSpeed,
-      playbackRef,
-    }),
-    [
-      recording,
-      handleSetRecording,
-      isPlaying,
-      currentTime,
-      duration,
-      speed,
-      play,
-      pause,
-      seek,
-      handleSetSpeed,
-    ],
+  const seek = useCallback(
+    (time: number) => {
+      setPlaybackTime(time * 1000);
+    },
+    [setPlaybackTime],
   );
 
-  return (
-    <DemoContext.Provider value={context}>{children}</DemoContext.Provider>
+  const setSpeed = useCallback(
+    (speed: number) => {
+      setPlaybackRate(speed);
+    },
+    [setPlaybackRate],
   );
+
+  return {
+    setRecording,
+    play,
+    pause,
+    seek,
+    setSpeed,
+  };
+}
+
+export function useDemo(): DemoContextValue {
+  const recording = useDemoRecording();
+  const isPlaying = useDemoIsPlaying();
+  const currentTime = useDemoCurrentTime();
+  const duration = useDemoDuration();
+  const speed = useDemoSpeed();
+  const actions = useDemoActions();
+
+  return {
+    recording,
+    isPlaying,
+    currentTime,
+    duration,
+    speed,
+    setRecording: actions.setRecording,
+    play: actions.play,
+    pause: actions.pause,
+    seek: actions.seek,
+    setSpeed: actions.setSpeed,
+  };
+}
+
+export function useDemoOptional(): DemoContextValue {
+  return useDemo();
 }

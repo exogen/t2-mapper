@@ -894,6 +894,22 @@ describe("TorqueScript Runtime", () => {
       expect(first._id).toBe(1027);
       expect(second._id).toBe(1028);
     });
+
+    it("keeps object IDs unique after many datablocks", () => {
+      const { $, state } = run(``);
+
+      for (let i = 0; i < 1200; i += 1) {
+        $.datablock("ItemData", `Db${i}`, null, {});
+      }
+
+      const datablock = state.datablocks.get("Db1199");
+      expect(datablock).toBeDefined();
+
+      const object = $.create("ScriptObject", "AfterDatablocks", {});
+      expect(state.objectsById.get(datablock!._id)).toBe(datablock);
+      expect(state.objectsById.get(object._id)).toBe(object);
+      expect(object._id).toBeGreaterThan(datablock!._id);
+    });
   });
 
   describe("object path resolution (nameToID)", () => {
@@ -2698,6 +2714,126 @@ describe("TorqueScript Runtime", () => {
       expect(runtime.$g.get("result")).toBe("override(base)");
       // Hook should fire twice: once for override, once for base via Parent::
       expect(hookCalls).toEqual(["TestClass::getValue", "TestClass::getValue"]);
+    });
+  });
+
+  describe("runtime reactivity events", () => {
+    it("emits object lifecycle mutations and batched flush events", async () => {
+      const runtime = createRuntime();
+      const events: any[] = [];
+      runtime.subscribeRuntimeEvents((event) => {
+        events.push(event);
+      });
+
+      runtime.$.create("ScriptObject", "LifecycleTest", {});
+      runtime.$.deleteObject("LifecycleTest");
+      await Promise.resolve();
+
+      const mutationEvents = events.filter((event) => event.type !== "batch.flushed");
+      expect(mutationEvents.some((event) => event.type === "object.created")).toBe(
+        true,
+      );
+      expect(mutationEvents.some((event) => event.type === "object.deleted")).toBe(
+        true,
+      );
+
+      const batchEvents = events.filter((event) => event.type === "batch.flushed");
+      expect(batchEvents.length).toBeGreaterThan(0);
+      expect(
+        batchEvents.some((batch) =>
+          batch.events.some((event: any) => event.type === "object.created"),
+        ),
+      ).toBe(true);
+      expect(
+        batchEvents.some((batch) =>
+          batch.events.some((event: any) => event.type === "object.deleted"),
+        ),
+      ).toBe(true);
+    });
+
+    it("emits field.changed for reactive fields and ignores untracked fields", async () => {
+      const runtime = createRuntime();
+      const events: any[] = [];
+      runtime.subscribeRuntimeEvents((event) => {
+        events.push(event);
+      });
+
+      const obj = runtime.$.create("SceneObject", "ReactiveFieldObject", {
+        position: "0 0 0",
+        customvalue: "before",
+      });
+      events.length = 0;
+
+      runtime.$.setProp(obj, "position", "10 20 30");
+      runtime.$.setProp(obj, "customvalue", "after");
+      await Promise.resolve();
+
+      const fieldEvents = events.filter((event) => event.type === "field.changed");
+      expect(fieldEvents.length).toBe(1);
+      expect(fieldEvents[0].field).toBe("position");
+      expect(fieldEvents[0].value).toBe("10 20 30");
+    });
+
+    it("emits method.called for tracked methods only", async () => {
+      const runtime = createRuntime();
+      const events: any[] = [];
+      runtime.subscribeRuntimeEvents((event) => {
+        events.push(event);
+      });
+
+      runtime.$.registerMethod("SceneObject", "setTransform", (thisObj) => {
+        thisObj.position = "1 2 3";
+      });
+      runtime.$.registerMethod("SceneObject", "doNothing", () => {});
+
+      const obj = runtime.$.create("SceneObject", "TrackedMethodObject", {});
+      events.length = 0;
+
+      runtime.$.call(obj, "setTransform", "1 2 3");
+      runtime.$.call(obj, "doNothing");
+      await Promise.resolve();
+
+      const methodEvents = events.filter((event) => event.type === "method.called");
+      expect(methodEvents.length).toBe(1);
+      expect(methodEvents[0].className).toBe("sceneobject");
+      expect(methodEvents[0].methodName).toBe("settransform");
+      expect(methodEvents[0].objectId).toBe(obj._id);
+    });
+
+    it("emits global.changed for tracked globals only", async () => {
+      const runtime = createRuntime();
+      const events: any[] = [];
+      runtime.subscribeRuntimeEvents((event) => {
+        events.push(event);
+      });
+
+      runtime.$g.set("missionRunning", true);
+      runtime.$g.set("customState", 123);
+      await Promise.resolve();
+
+      const globalEvents = events.filter((event) => event.type === "global.changed");
+      expect(globalEvents.length).toBe(1);
+      expect(globalEvents[0].name).toBe("missionrunning");
+      expect(globalEvents[0].value).toBe(true);
+    });
+
+    it("supports overriding reactiveGlobalNames", async () => {
+      const runtime = createRuntime({
+        reactiveGlobalNames: ["customState"],
+      });
+      const events: any[] = [];
+      runtime.subscribeRuntimeEvents((event) => {
+        events.push(event);
+      });
+
+      runtime.$g.set("missionRunning", true);
+      runtime.$g.set("customState", 456);
+      await Promise.resolve();
+
+      const globalEvents = events.filter((event) => event.type === "global.changed");
+      expect(globalEvents.length).toBe(1);
+      expect(globalEvents[0].name).toBe("customstate");
+      expect(globalEvents[0].value).toBe(456);
     });
   });
 

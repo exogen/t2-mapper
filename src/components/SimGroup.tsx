@@ -1,6 +1,7 @@
 import { createContext, useContext, useMemo } from "react";
 import type { TorqueObject } from "../torqueScript";
 import { SimObject } from "./SimObject";
+import { useRuntimeChildIds, useRuntimeObjectById } from "../state";
 
 export type SimGroupContextType = {
   object: TorqueObject;
@@ -16,7 +17,9 @@ export function useSimGroup() {
 }
 
 export function SimGroup({ object }: { object: TorqueObject }) {
+  const liveObject = useRuntimeObjectById(object._id) ?? object;
   const parent = useSimGroup();
+  const childIds = useRuntimeChildIds(liveObject._id, liveObject._children ?? []);
 
   const simGroup: SimGroupContextType = useMemo(() => {
     let team: number | null = null;
@@ -26,19 +29,19 @@ export function SimGroup({ object }: { object: TorqueObject }) {
       hasTeams = true;
       if (parent.team != null) {
         team = parent.team;
-      } else if (object._name) {
-        const match = object._name.match(/^team(\d+)$/i);
+      } else if (liveObject._name) {
+        const match = liveObject._name.match(/^team(\d+)$/i);
         if (match) {
           team = parseInt(match[1], 10);
         }
       }
-    } else if (object._name) {
-      hasTeams = object._name.toLowerCase() === "teams";
+    } else if (liveObject._name) {
+      hasTeams = liveObject._name.toLowerCase() === "teams";
     }
 
     return {
       // the current SimGroup's data
-      object,
+      object: liveObject,
       // the closest ancestor of this SimGroup
       parent,
       // whether this is, or is the descendant of, the "Teams" SimGroup
@@ -47,12 +50,12 @@ export function SimGroup({ object }: { object: TorqueObject }) {
       // or a descendant of one
       team,
     };
-  }, [object, parent]);
+  }, [liveObject, parent]);
 
   return (
     <SimGroupContext.Provider value={simGroup}>
-      {(object._children ?? []).map((child, i) => (
-        <SimObject object={child} key={child._id} />
+      {childIds.map((childId) => (
+        <SimObject objectId={childId} key={childId} />
       ))}
     </SimGroupContext.Provider>
   );

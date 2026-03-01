@@ -2,6 +2,14 @@ import picomatch from "picomatch";
 import { generate } from "./codegen";
 import { parse, type Program } from "./index";
 import { createBuiltins as defaultCreateBuiltins } from "./builtins";
+import {
+  createReactiveFieldMatcher,
+  createReactiveGlobalMatcher,
+  createReactiveMethodMatcher,
+  DEFAULT_REACTIVE_FIELD_RULES,
+  DEFAULT_REACTIVE_GLOBAL_NAMES,
+  DEFAULT_REACTIVE_METHOD_RULES,
+} from "./reactivity";
 import { CaseInsensitiveMap, CaseInsensitiveSet, normalizePath } from "./utils";
 import type {
   BuiltinsContext,
@@ -14,6 +22,8 @@ import type {
   MethodStack,
   PackageState,
   RuntimeAPI,
+  RuntimeEventListener,
+  RuntimeMutationEvent,
   RuntimeState,
   ScriptCache,
   TorqueFunction,
@@ -59,6 +69,15 @@ function toName(value: any): string | null {
 export function createRuntime(
   options: TorqueRuntimeOptions = {},
 ): TorqueRuntime {
+  const reactiveFieldRules =
+    options.reactiveFieldRules ?? DEFAULT_REACTIVE_FIELD_RULES;
+  const reactiveMethodRules =
+    options.reactiveMethodRules ?? DEFAULT_REACTIVE_METHOD_RULES;
+  const reactiveGlobalNames =
+    options.reactiveGlobalNames ?? DEFAULT_REACTIVE_GLOBAL_NAMES;
+  const matchesReactiveField = createReactiveFieldMatcher(reactiveFieldRules);
+  const matchesReactiveMethod = createReactiveMethodMatcher(reactiveMethodRules);
+  const matchesReactiveGlobal = createReactiveGlobalMatcher(reactiveGlobalNames);
   const methods = new CaseInsensitiveMap<CaseInsensitiveMap<MethodStack>>();
   const functions = new CaseInsensitiveMap<FunctionStack>();
   const packages = new CaseInsensitiveMap<PackageState>();
@@ -80,6 +99,10 @@ export function createRuntime(
   >();
   // Namespace inheritance: className -> superClassName (for ScriptObject/ScriptGroup)
   const namespaceParents = new CaseInsensitiveMap<string>();
+  const runtimeEventListeners = new Set<RuntimeEventListener>();
+  const pendingRuntimeEvents: RuntimeMutationEvent[] = [];
+  let flushScheduled = false;
+  let runtimeTick = 0;
 
   // Populate initial globals from options
   if (options.globals) {
@@ -152,6 +175,145 @@ export function createRuntime(
     methodName: string,
   ): MethodStack | null {
     return methods.get(className)?.get(methodName) ?? null;
+  }
+
+  function getObjectClassChain(obj: TorqueObject | null | undefined): string[] {
+    if (!obj) return [];
+    const chain: string[] = [];
+    const seen = new Set<string>();
+    const className = obj.class || obj._className || obj._class;
+    let currentClass = className ? normalize(String(className)) : "";
+
+    while (currentClass && !seen.has(currentClass)) {
+      chain.push(currentClass);
+      seen.add(currentClass);
+      currentClass = namespaceParents.get(currentClass) ?? "";
+    }
+
+    if (obj._superClass && !seen.has(obj._superClass)) {
+      chain.push(obj._superClass);
+    }
+
+    return chain;
+  }
+
+  function flushRuntimeEvents(): void {
+    flushScheduled = false;
+    if (pendingRuntimeEvents.length === 0) {
+      return;
+    }
+    const events = pendingRuntimeEvents.splice(0, pendingRuntimeEvents.length);
+    runtimeTick += 1;
+    for (const listener of runtimeEventListeners) {
+      listener({
+        type: "batch.flushed",
+        tick: runtimeTick,
+        events,
+      });
+    }
+  }
+
+  function emitRuntimeEvent(event: RuntimeMutationEvent): void {
+    pendingRuntimeEvents.push(event);
+    for (const listener of runtimeEventListeners) {
+      listener(event);
+    }
+    if (!flushScheduled) {
+      flushScheduled = true;
+      queueMicrotask(flushRuntimeEvents);
+    }
+  }
+
+  function emitObjectCreated(obj: TorqueObject): void {
+    emitRuntimeEvent({
+      type: "object.created",
+      objectId: obj._id,
+      object: obj,
+    });
+  }
+
+  function emitObjectDeleted(obj: TorqueObject): void {
+    emitRuntimeEvent({
+      type: "object.deleted",
+      objectId: obj._id,
+      object: obj,
+    });
+  }
+
+  function maybeEmitFieldChanged(
+    obj: TorqueObject,
+    fieldName: string,
+    value: any,
+    previousValue: any,
+  ): void {
+    const normalizedField = normalize(fieldName);
+    if (Object.is(value, previousValue)) {
+      return;
+    }
+
+    if (
+      !matchesReactiveField(getObjectClassChain(obj), normalizedField)
+    ) {
+      return;
+    }
+
+    emitRuntimeEvent({
+      type: "field.changed",
+      objectId: obj._id,
+      field: normalizedField,
+      value,
+      previousValue,
+      object: obj,
+    });
+  }
+
+  function maybeEmitMethodCalled(
+    className: string,
+    methodName: string,
+    thisObj: TorqueObject,
+    args: any[],
+  ): void {
+    const classChain = getObjectClassChain(thisObj);
+    if (
+      !matchesReactiveMethod(
+        classChain.length ? classChain : [className],
+        methodName,
+      )
+    ) {
+      return;
+    }
+
+    emitRuntimeEvent({
+      type: "method.called",
+      className: normalize(className),
+      methodName: normalize(methodName),
+      objectId: thisObj._id,
+      args: [...args],
+    });
+  }
+
+  function maybeEmitGlobalChanged(
+    name: string,
+    value: any,
+    previousValue: any,
+  ): void {
+    const normalizedName = normalize(
+      name.startsWith("$") ? name.slice(1) : name,
+    );
+    if (Object.is(value, previousValue)) {
+      return;
+    }
+
+    if (!matchesReactiveGlobal(normalizedName)) {
+      return;
+    }
+
+    emitRuntimeEvent({
+      type: "global.changed",
+      name: normalizedName,
+      value,
+      previousValue,
+    });
   }
 
   const pendingTimeouts = new Set<ReturnType<typeof setTimeout>>();
@@ -291,6 +453,26 @@ export function createRuntime(
     }
   }
 
+  // Datablocks and dynamic objects share the same ID namespace.
+  // Keep IDs globally unique so maps keyed by ID cannot be overwritten.
+  function allocateObjectId(): number {
+    while (objectsById.has(nextObjectId)) {
+      nextObjectId += 1;
+    }
+    const id = nextObjectId;
+    nextObjectId += 1;
+    return id;
+  }
+
+  function allocateDatablockId(): number {
+    while (objectsById.has(nextDatablockId)) {
+      nextDatablockId += 1;
+    }
+    const id = nextDatablockId;
+    nextDatablockId += 1;
+    return id;
+  }
+
   function createObject(
     className: string,
     instanceName: string | null,
@@ -298,7 +480,7 @@ export function createRuntime(
     children?: TorqueObject[],
   ): TorqueObject {
     const normClass = normalize(className);
-    const id = nextObjectId++;
+    const id = allocateObjectId();
 
     const obj: TorqueObject = {
       _class: normClass,
@@ -338,6 +520,8 @@ export function createRuntime(
     if (onAdd) {
       onAdd(obj);
     }
+
+    emitObjectCreated(obj);
 
     return obj;
   }
@@ -387,6 +571,8 @@ export function createRuntime(
       }
     }
 
+    emitObjectDeleted(target);
+
     return true;
   }
 
@@ -397,7 +583,7 @@ export function createRuntime(
     props: Record<string, any>,
   ): TorqueObject {
     const normClass = normalize(className);
-    const id = nextDatablockId++;
+    const id = allocateDatablockId();
 
     const obj: TorqueObject = {
       _class: normClass,
@@ -432,6 +618,8 @@ export function createRuntime(
       datablocks.set(name, obj);
     }
 
+    emitObjectCreated(obj);
+
     return obj;
   }
 
@@ -459,7 +647,10 @@ export function createRuntime(
   function setProp(obj: any, name: string, value: any): any {
     const resolved = resolveObject(obj);
     if (resolved == null) return value;
-    resolved[normalize(name)] = value;
+    const normalizedName = normalize(name);
+    const previousValue = resolved[normalizedName];
+    resolved[normalizedName] = value;
+    maybeEmitFieldChanged(resolved, normalizedName, value, previousValue);
     return value;
   }
 
@@ -472,7 +663,10 @@ export function createRuntime(
   function setIndex(obj: any, index: any, value: any): any {
     const resolved = resolveObject(obj);
     if (resolved == null) return value;
-    resolved[String(index)] = value;
+    const key = String(index);
+    const previousValue = resolved[key];
+    resolved[key] = value;
+    maybeEmitFieldChanged(resolved, key, value, previousValue);
     return value;
   }
 
@@ -481,6 +675,7 @@ export function createRuntime(
     if (resolved == null) return 0;
     const oldValue = toNum(resolved[key]);
     resolved[key] = oldValue + delta;
+    maybeEmitFieldChanged(resolved, key, resolved[key], oldValue);
     return oldValue;
   }
 
@@ -536,6 +731,7 @@ export function createRuntime(
     thisObj: TorqueObject,
     args: any[],
   ): void {
+    maybeEmitMethodCalled(className, methodName, thisObj, args);
     const classHooks = methodHooks.get(className);
     if (classHooks) {
       const hooks = classHooks.get(methodName);
@@ -879,6 +1075,9 @@ export function createRuntime(
 
   function createVariableStore(
     storage: CaseInsensitiveMap<any>,
+    storeOptions?: {
+      onSet?: (name: string, value: any, previousValue: any) => void;
+    },
   ): VariableStoreAPI {
     // TorqueScript array indexing: $foo[0] -> $foo0, $foo[0,1] -> $foo0_1
     function fullName(name: string, indices: any[]): string {
@@ -894,24 +1093,33 @@ export function createRuntime(
           throw new Error("set() requires at least a value argument");
         }
         if (args.length === 1) {
+          const previousValue = storage.get(name);
           storage.set(name, args[0]);
+          storeOptions?.onSet?.(name, args[0], previousValue);
           return args[0];
         }
         const value = args[args.length - 1];
         const indices = args.slice(0, -1);
-        storage.set(fullName(name, indices), value);
+        const key = fullName(name, indices);
+        const previousValue = storage.get(key);
+        storage.set(key, value);
+        storeOptions?.onSet?.(key, value, previousValue);
         return value;
       },
       postInc(name: string, ...indices: any[]): number {
         const key = fullName(name, indices);
         const oldValue = toNum(storage.get(key));
-        storage.set(key, oldValue + 1);
+        const nextValue = oldValue + 1;
+        storage.set(key, nextValue);
+        storeOptions?.onSet?.(key, nextValue, oldValue);
         return oldValue;
       },
       postDec(name: string, ...indices: any[]): number {
         const key = fullName(name, indices);
         const oldValue = toNum(storage.get(key));
-        storage.set(key, oldValue - 1);
+        const nextValue = oldValue - 1;
+        storage.set(key, nextValue);
+        storeOptions?.onSet?.(key, nextValue, oldValue);
         return oldValue;
       },
     };
@@ -1018,7 +1226,9 @@ export function createRuntime(
     },
   };
 
-  const $g: GlobalsAPI = createVariableStore(globals);
+  const $g: GlobalsAPI = createVariableStore(globals, {
+    onSet: maybeEmitGlobalChanged,
+  });
 
   const state: RuntimeState = {
     methods,
@@ -1038,10 +1248,14 @@ export function createRuntime(
   };
 
   function destroy(): void {
+    if (pendingRuntimeEvents.length > 0) {
+      flushRuntimeEvents();
+    }
     for (const timeoutId of state.pendingTimeouts) {
       clearTimeout(timeoutId);
     }
     state.pendingTimeouts.clear();
+    runtimeEventListeners.clear();
   }
 
   function getOrGenerateCode(ast: Program): string {
@@ -1248,6 +1462,12 @@ export function createRuntime(
     loadFromAST,
     call: (name: string, ...args: any[]) => $f.call(name, ...args),
     getObjectByName: (name: string) => objectsByName.get(name),
+    subscribeRuntimeEvents(listener: RuntimeEventListener): () => void {
+      runtimeEventListeners.add(listener);
+      return () => {
+        runtimeEventListeners.delete(listener);
+      };
+    },
   };
   return runtimeRef;
 }

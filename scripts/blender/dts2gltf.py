@@ -65,6 +65,7 @@ print(f"[dts2gltf] Processing {len(input_files)} file(s)...")
 total = len(input_files)
 success_count = 0
 failure_count = 0
+failed_paths = []
 for i, in_path in enumerate(input_files, start=1):
     # Derive output path: same location, same name, but .glb/.gltf extension
     ext = ".gltf" if args.format == "GLTF_SEPARATE" else ".glb"
@@ -79,11 +80,12 @@ for i, in_path in enumerate(input_files, start=1):
     # Import
     print(f"[dts2gltf] [{i}/{total}] Converting: {in_path}")
     try:
-        res = op_call(filepath=in_path, merge_verts=True)
+        res = op_call(filepath=in_path, merge_verts=True, import_sequences=True)
         if "FINISHED" not in res:
             raise RuntimeError(f"Import failed via {op_id}")
     except Exception:
         failure_count += 1
+        failed_paths.append(in_path)
         print(f"\n{RED}[dts2gltf] [{i}/{total}] FAIL (import):{RESET} {in_path}")
         continue
 
@@ -100,6 +102,9 @@ for i, in_path in enumerate(input_files, start=1):
         # Export custom properties, which is where we store the original
         # resource path.
         export_extras=True,
+        # Include armature animations (DTS sequences)
+        export_animations=True,
+        export_animation_mode='ACTIONS',
         # Blender and T2 are Z-up, but these assets are destined for Three.js which
         # is Y-up. It's easiest to match the Y-up of our destination engine.
         export_yup=True,
@@ -109,6 +114,7 @@ for i, in_path in enumerate(input_files, start=1):
     )
     if "FINISHED" not in res:
         failure_count += 1
+        failed_paths.append(in_path)
         print(f"\n{RED}[dts2gltf] [{i}/{total}] FAIL (export):{RESET} {out_path}")
         continue
 
@@ -116,3 +122,7 @@ for i, in_path in enumerate(input_files, start=1):
     print(f"{GREEN}[dts2gltf] [{i}/{total}] OK:{RESET} {in_path} -> {out_path}")
 
 print(f"[dts2gltf] Done! Converted {success_count} file(s), {failure_count} failed.")
+if failed_paths:
+    print(f"\n{RED}[dts2gltf] Failed paths:{RESET}")
+    for p in failed_paths:
+        print(os.path.relpath(p))

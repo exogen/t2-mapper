@@ -1,15 +1,18 @@
 import { useCallback, useRef } from "react";
-import { FiFilm } from "react-icons/fi";
-import { useDemo } from "./DemoProvider";
-import { parseDemoFile } from "../demo/parse";
+import { MdOndemandVideo } from "react-icons/md";
+import { useDemoActions, useDemoRecording } from "./DemoProvider";
+import { createDemoStreamingRecording } from "../demo/streaming";
 
 export function LoadDemoButton() {
-  const { setRecording, recording } = useDemo();
+  const recording = useDemoRecording();
+  const { setRecording } = useDemoActions();
   const inputRef = useRef<HTMLInputElement>(null);
+  const parseTokenRef = useRef(0);
 
   const handleClick = useCallback(() => {
     if (recording) {
       // Unload the current recording.
+      parseTokenRef.current += 1;
       setRecording(null);
       return;
     }
@@ -24,8 +27,14 @@ export function LoadDemoButton() {
       e.target.value = "";
       try {
         const buffer = await file.arrayBuffer();
-        const demo = parseDemoFile(buffer);
-        setRecording(demo);
+        const parseToken = parseTokenRef.current + 1;
+        parseTokenRef.current = parseToken;
+        const recording = await createDemoStreamingRecording(buffer);
+        if (parseTokenRef.current !== parseToken) {
+          return;
+        }
+        // Metadata-first: mission/game-mode sync happens immediately.
+        setRecording(recording);
       } catch (err) {
         console.error("Failed to load demo:", err);
       }
@@ -50,7 +59,7 @@ export function LoadDemoButton() {
         onClick={handleClick}
         data-active={recording ? "true" : undefined}
       >
-        <FiFilm />
+        <MdOndemandVideo className="DemoIcon" />
         <span className="ButtonLabel">
           {recording ? "Unload demo" : "Demo"}
         </span>

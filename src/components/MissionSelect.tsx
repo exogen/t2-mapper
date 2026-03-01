@@ -154,6 +154,7 @@ export function MissionSelect({
   value,
   missionType,
   onChange,
+  disabled,
 }: {
   value: string;
   missionType: string;
@@ -164,6 +165,7 @@ export function MissionSelect({
     missionName: string;
     missionType: string | undefined;
   }) => void;
+  disabled?: boolean;
 }) {
   const [searchValue, setSearchValue] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
@@ -267,6 +269,7 @@ export function MissionSelect({
         <Combobox
           ref={inputRef}
           autoSelect
+          disabled={disabled}
           placeholder={displayValue}
           className="MissionSelect-input"
           onFocus={() => {

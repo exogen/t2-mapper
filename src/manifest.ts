@@ -143,3 +143,18 @@ export function getMissionInfo(missionName: string) {
 export function getMissionList() {
   return Object.keys(manifest.missions);
 }
+
+const missionsByNormalizedName = new Map(
+  Object.keys(manifest.missions).map((key) => [key.toLowerCase(), key]),
+);
+
+/**
+ * Find a manifest mission key from a demo mission name like "S5-WoodyMyrk".
+ * Returns null if no match is found.
+ */
+export function findMissionByDemoName(
+  demoMissionName: string,
+): string | null {
+  const normalized = demoMissionName.replace(/-/g, "_").toLowerCase();
+  return missionsByNormalizedName.get(normalized) ?? null;
+}

@@ -17,6 +17,68 @@ export interface TorqueObject {
   [key: string]: any;
 }
 
+export interface ReactiveFieldRule {
+  classNames: string[];
+  fields: string[];
+}
+
+export interface ReactiveMethodRule {
+  classNames: string[];
+  methods: string[];
+}
+
+export interface RuntimeObjectCreatedEvent {
+  type: "object.created";
+  objectId: number;
+  object: TorqueObject;
+}
+
+export interface RuntimeObjectDeletedEvent {
+  type: "object.deleted";
+  objectId: number;
+  object?: TorqueObject;
+}
+
+export interface RuntimeFieldChangedEvent {
+  type: "field.changed";
+  objectId: number;
+  field: string;
+  value: any;
+  previousValue: any;
+  object?: TorqueObject;
+}
+
+export interface RuntimeMethodCalledEvent {
+  type: "method.called";
+  className: string;
+  methodName: string;
+  objectId?: number;
+  args: any[];
+}
+
+export interface RuntimeGlobalChangedEvent {
+  type: "global.changed";
+  name: string;
+  value: any;
+  previousValue: any;
+}
+
+export type RuntimeMutationEvent =
+  | RuntimeObjectCreatedEvent
+  | RuntimeObjectDeletedEvent
+  | RuntimeFieldChangedEvent
+  | RuntimeMethodCalledEvent
+  | RuntimeGlobalChangedEvent;
+
+export interface RuntimeBatchFlushedEvent {
+  type: "batch.flushed";
+  tick: number;
+  events: RuntimeMutationEvent[];
+}
+
+export type RuntimeEvent = RuntimeMutationEvent | RuntimeBatchFlushedEvent;
+export type RuntimeEventListener = (event: RuntimeEvent) => void;
+
 export type MethodStack = TorqueMethod[];
 export type FunctionStack = TorqueFunction[];
 
@@ -61,6 +123,8 @@ export interface TorqueRuntime {
   call(name: string, ...args: any[]): any;
   /** Get an object by its name. Returns undefined if not found. */
   getObjectByName(name: string): TorqueObject | undefined;
+  /** Subscribe to runtime reactivity events. */
+  subscribeRuntimeEvents(listener: RuntimeEventListener): () => void;
 }
 
 export type ScriptLoader = (path: string) => Promise<string | null>;
@@ -115,6 +179,15 @@ export interface TorqueRuntimeOptions {
    * Create with `createProgressTracker()`.
    */
   progress?: ProgressTrackerInternal;
+  /** Controls which field writes emit runtime reactivity events. */
+  reactiveFieldRules?: ReactiveFieldRule[];
+  /** Controls which method calls emit runtime reactivity events. */
+  reactiveMethodRules?: ReactiveMethodRule[];
+  /**
+   * Controls which global variable writes emit runtime reactivity events.
+   * Names may be specified with or without a leading `$`.
+   */
+  reactiveGlobalNames?: string[];
 }
 
 export interface LoadScriptOptions {

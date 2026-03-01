@@ -21,6 +21,7 @@ import {
   getSourceAndPath,
 } from "../manifest";
 import { MissionProvider } from "./MissionContext";
+import { engineStore } from "../state";
 
 const loadScript = createScriptLoader();
 // Shared cache for parsed scripts - survives runtime restarts
@@ -72,6 +73,8 @@ function useExecutedMission(
     }
 
     const controller = new AbortController();
+    let isDisposed = false;
+    let unsubscribeRuntimeEvents: (() => void) | null = null;
 
     // Create progress tracker and update state on changes
     const progressTracker = createProgressTracker();
@@ -80,7 +83,7 @@ function useExecutedMission(
     };
     progressTracker.on("update", handleProgress);
 
-    const { runtime } = runServer({
+    const { runtime, ready } = runServer({
       missionName,
       missionType,
       runtimeOptions: {
@@ -120,15 +123,45 @@ function useExecutedMission(
           "scripts/spdialog.cs",
         ],
       },
-      onMissionLoadDone: () => {
-        const missionGroup = runtime.getObjectByName("MissionGroup");
-        setState({ missionGroup, runtime, progress: 1 });
-      },
     });
 
+    void ready
+      .then(() => {
+        if (isDisposed || controller.signal.aborted) {
+          return;
+        }
+        // Refresh the reactive runtime snapshot at mission-ready time.
+        engineStore.getState().setRuntime(runtime);
+        const missionGroup = runtime.getObjectByName("MissionGroup");
+        setState({ missionGroup, runtime, progress: 1 });
+      })
+      .catch((err) => {
+        if (err instanceof Error && err.name === "AbortError") {
+          return;
+        }
+        console.error("Mission runtime failed to become ready:", err);
+      });
+
+    // Subscribe as soon as the runtime exists so no mutation batches are missed
+    // between mission init and React component mount.
+    unsubscribeRuntimeEvents = runtime.subscribeRuntimeEvents((event) => {
+      if (event.type !== "batch.flushed") {
+        return;
+      }
+      engineStore.getState().applyRuntimeBatch(event.events, {
+        tick: event.tick,
+      });
+    });
+    // Seed store immediately; indexes are refreshed again when `ready` resolves
+    // after server mission load reaches its ready state.
+    engineStore.getState().setRuntime(runtime);
+
     return () => {
+      isDisposed = true;
       progressTracker.off("update", handleProgress);
       controller.abort();
+      unsubscribeRuntimeEvents?.();
+      engineStore.getState().clearRuntime();
       runtime.destroy();
     };
   }, [missionName, missionType, parsedMission]);

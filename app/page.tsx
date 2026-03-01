@@ -29,10 +29,25 @@ import { ObserverCamera } from "@/src/components/ObserverCamera";
 import { AudioProvider } from "@/src/components/AudioContext";
 import { DebugElements } from "@/src/components/DebugElements";
 import { CamerasProvider } from "@/src/components/CamerasProvider";
-import { DemoProvider, useDemo } from "@/src/components/DemoProvider";
+import {
+  DemoProvider,
+  useDemoActions,
+  useDemoIsPlaying,
+  useDemoRecording,
+} from "@/src/components/DemoProvider";
 import { DemoPlayback } from "@/src/components/DemoPlayback";
 import { DemoControls } from "@/src/components/DemoControls";
-import { getMissionList, getMissionInfo } from "@/src/manifest";
+import { PlayerHUD } from "@/src/components/PlayerHUD";
+import {
+  buildSerializableDiagnosticsJson,
+  buildSerializableDiagnosticsSnapshot,
+  useEngineStoreApi,
+} from "@/src/state";
+import {
+  getMissionList,
+  getMissionInfo,
+  findMissionByDemoName,
+} from "@/src/manifest";
 import { createParser, parseAsBoolean, useQueryState } from "nuqs";
 
 const MapInfoDialog = lazy(() =>
@@ -52,6 +67,17 @@ const glSettings: GLProps = {
   toneMapping: NoToneMapping,
   outputColorSpace: SRGBColorSpace,
 };
+
+function summarizeCallStack(skipFrames = 0): string | null {
+  const stack = new Error().stack;
+  if (!stack) return null;
+  const lines = stack
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const callsiteLines = lines.slice(1 + skipFrames, 9 + skipFrames);
+  return callsiteLines.length > 0 ? callsiteLines.join(" <= ") : null;
+}
 
 type CurrentMission = {
   missionName: string;
@@ -90,6 +116,7 @@ function MapInspector() {
     "mission",
     parseAsMissionWithType,
   );
+  const engineStore = useEngineStoreApi();
   const [fogEnabledOverride, setFogEnabledOverride] = useQueryState(
     "fog",
     parseAsBoolean,
@@ -99,13 +126,34 @@ function MapInspector() {
     setFogEnabledOverride(null);
   }, [setFogEnabledOverride]);
 
+  const currentMissionRef = useRef(currentMission);
+  currentMissionRef.current = currentMission;
+
   const changeMission = useCallback(
     (mission: CurrentMission) => {
+      const previousMission = currentMissionRef.current;
+      const stack = summarizeCallStack(1);
+      engineStore.getState().recordPlaybackDiagnosticEvent({
+        kind: "mission.change.requested",
+        message: "changeMission invoked",
+        meta: {
+          previousMissionName: previousMission.missionName,
+          previousMissionType: previousMission.missionType ?? null,
+          nextMissionName: mission.missionName,
+          nextMissionType: mission.missionType ?? null,
+          stack: stack ?? "unavailable",
+        },
+      });
+      console.info("[mission trace] changeMission", {
+        previousMission,
+        nextMission: mission,
+        stack,
+      });
       window.location.hash = "";
       clearFogEnabledOverride();
       setCurrentMission(mission);
     },
-    [setCurrentMission, clearFogEnabledOverride],
+    [engineStore, setCurrentMission, clearFogEnabledOverride],
   );
 
   const isTouch = useTouchDevice();
@@ -228,6 +276,7 @@ function MapInspector() {
                   </CamerasProvider>
                 </Canvas>
               </div>
+              <PlayerHUD />
               {isTouch && (
                 <TouchJoystick
                   joystickState={joystickStateRef}
@@ -255,6 +304,7 @@ function MapInspector() {
                   />
                 </Suspense>
               )}
+              <DemoMissionSync changeMission={changeMission} currentMission={currentMission} />
               <DemoControls />
               <DemoWindowAPI />
             </KeyboardControls>
@@ -263,6 +313,64 @@ function MapInspector() {
       </main>
     </QueryClientProvider>
   );
+}
+
+/** Map from Tribes 2 game type display names to manifest mission type codes. */
+const GAME_TYPE_TO_MISSION_TYPE: Record<string, string> = {
+  "Capture the Flag": "CTF",
+  "Capture and Hold": "CnH",
+  Deathmatch: "DM",
+  "Team Deathmatch": "TDM",
+  Siege: "Siege",
+  Bounty: "Bounty",
+  Rabbit: "Rabbit",
+};
+
+/**
+ * When a demo recording is loaded, switch to the mission it was recorded on.
+ */
+function DemoMissionSync({
+  changeMission,
+  currentMission,
+}: {
+  changeMission: (mission: CurrentMission) => void;
+  currentMission: CurrentMission;
+}) {
+  const recording = useDemoRecording();
+
+  useEffect(() => {
+    if (!recording?.missionName) return;
+
+    const missionName = findMissionByDemoName(recording.missionName);
+    if (!missionName) {
+      console.warn(
+        `Demo mission "${recording.missionName}" not found in manifest`,
+      );
+      return;
+    }
+
+    const info = getMissionInfo(missionName);
+    const missionTypeCode = recording.gameType
+      ? GAME_TYPE_TO_MISSION_TYPE[recording.gameType]
+      : undefined;
+    const missionType =
+      missionTypeCode && info.missionTypes.includes(missionTypeCode)
+        ? missionTypeCode
+        : info.missionTypes[0];
+
+    // Skip if we're already on the correct mission to avoid unnecessary
+    // remount cascades (e.g. after a Suspense boundary restores).
+    if (
+      currentMission.missionName === missionName &&
+      currentMission.missionType === missionType
+    ) {
+      return;
+    }
+
+    changeMission({ missionName, missionType });
+  }, [recording, changeMission, currentMission]);
+
+  return null;
 }
 
 /**
@@ -282,7 +390,7 @@ function DemoAwareControls({
   lookJoystickStateRef: React.RefObject<JoystickState>;
   lookJoystickZoneRef: React.RefObject<HTMLDivElement | null>;
 }) {
-  const { isPlaying } = useDemo();
+  const isPlaying = useDemoIsPlaying();
   if (isPlaying) return null;
   if (isTouch === null) return null;
   if (isTouch) {
@@ -300,14 +408,27 @@ function DemoAwareControls({
 
 /** Exposes `window.loadDemoRecording` for automation/testing. */
 function DemoWindowAPI() {
-  const { setRecording } = useDemo();
+  const { setRecording } = useDemoActions();
+  const engineStore = useEngineStoreApi();
 
   useEffect(() => {
     window.loadDemoRecording = setRecording;
+    window.getDemoDiagnostics = () => {
+      return buildSerializableDiagnosticsSnapshot(engineStore.getState());
+    };
+    window.getDemoDiagnosticsJson = () => {
+      return buildSerializableDiagnosticsJson(engineStore.getState());
+    };
+    window.clearDemoDiagnostics = () => {
+      engineStore.getState().clearPlaybackDiagnostics();
+    };
     return () => {
       delete window.loadDemoRecording;
+      delete window.getDemoDiagnostics;
+      delete window.getDemoDiagnosticsJson;
+      delete window.clearDemoDiagnostics;
     };
-  }, [setRecording]);
+  }, [engineStore, setRecording]);
 
   return null;
 }

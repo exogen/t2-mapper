@@ -1,0 +1,53 @@
+.PlayerHUD {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 1;
+  pointer-events: none;
+  padding-bottom: 48px;
+}
+
+.ChatWindow {
+  position: absolute;
+  top: 60px;
+  left: 4px;
+}
+
+.Bar {
+  width: 160px;
+  height: 14px;
+  background: rgba(0, 0, 0, 0.5);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  overflow: hidden;
+  position: absolute;
+}
+
+.HealthBar {
+  composes: Bar;
+  top: 60px;
+  right: 32px;
+}
+
+.EnergyBar {
+  composes: Bar;
+  top: 80px;
+  right: 32px;
+}
+
+.BarFill {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 100%;
+  transition: width 0.15s ease-out;
+}
+
+.HealthBar .BarFill {
+  background: #2ecc40;
+}
+
+.EnergyBar .BarFill {
+  background: #0af;
+}

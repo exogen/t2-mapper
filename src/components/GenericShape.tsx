@@ -1,6 +1,7 @@
-import { memo, Suspense, useMemo } from "react";
+import { memo, Suspense, useMemo, useRef } from "react";
 import { ErrorBoundary } from "react-error-boundary";
 import { useGLTF, useTexture } from "@react-three/drei";
+import { useFrame } from "@react-three/fiber";
 import { FALLBACK_TEXTURE_URL, textureToUrl, shapeToUrl } from "../loaders";
 import { filterGeometryByVertexGroups, getHullBoneIndices } from "../meshUtils";
 import {
@@ -10,9 +11,10 @@ import {
   AdditiveBlending,
   Texture,
   BufferGeometry,
+  Group,
 } from "three";
 import { setupTexture } from "../textureUtils";
-import { useDebug } from "./SettingsProvider";
+import { useDebug, useSettings } from "./SettingsProvider";
 import { useShapeInfo, isOrganicShape } from "./ShapeInfoProvider";
 import { FloatingLabel } from "./FloatingLabel";
 import { useIflTexture } from "./useIflTexture";
@@ -28,6 +30,10 @@ interface TextureProps {
   backGeometry?: BufferGeometry;
   castShadow?: boolean;
   receiveShadow?: boolean;
+  /** DTS object visibility (0–1). Values < 1 enable alpha blending. */
+  vis?: number;
+  /** When true, material is created transparent for vis keyframe animation. */
+  animated?: boolean;
 }
 
 /**
@@ -49,7 +55,7 @@ type MaterialResult =
 /**
  * Helper to apply volumetric fog and lighting multipliers to a material
  */
-function applyShapeShaderModifications(
+export function applyShapeShaderModifications(
   mat: MeshBasicMaterial | MeshLambertMaterial,
 ): void {
   mat.onBeforeCompile = (shader) => {
@@ -61,24 +67,33 @@ function applyShapeShaderModifications(
   };
 }
 
-function createMaterialFromFlags(
+export function createMaterialFromFlags(
   baseMaterial: MeshStandardMaterial,
   texture: Texture,
   flagNames: Set<string>,
   isOrganic: boolean,
+  vis: number = 1,
+  animated: boolean = false,
 ): MaterialResult {
   const isTranslucent = flagNames.has("Translucent");
   const isAdditive = flagNames.has("Additive");
   const isSelfIlluminating = flagNames.has("SelfIlluminating");
+  // DTS per-object visibility: when vis < 1, the engine sets fadeSet=true which
+  // forces the Translucent flag and renders with GL_SRC_ALPHA/GL_ONE_MINUS_SRC_ALPHA.
+  // Animated vis also needs transparent materials so opacity can be updated per frame.
+  const isFaded = vis < 1 || animated;
 
   // SelfIlluminating materials are unlit (use MeshBasicMaterial)
   if (isSelfIlluminating) {
+    const isBlended = isAdditive || isTranslucent || isFaded;
     const mat = new MeshBasicMaterial({
       map: texture,
       side: 2, // DoubleSide
-      transparent: isAdditive,
-      alphaTest: isAdditive ? 0 : 0.5,
+      transparent: isBlended,
+      depthWrite: !isBlended,
+      alphaTest: 0,
       fog: true,
+      ...(isFaded && { opacity: vis }),
       ...(isAdditive && { blending: AdditiveBlending }),
     });
     applyShapeShaderModifications(mat);
@@ -92,8 +107,11 @@ function createMaterialFromFlags(
   if (isOrganic || isTranslucent) {
     const baseProps = {
       map: texture,
-      transparent: false,
-      alphaTest: 0.5,
+      // When vis < 1, switch from alpha cutout to alpha blend (matching the engine's
+      // fadeSet behavior which forces GL_BLEND with no alpha test)
+      transparent: isFaded,
+      alphaTest: isFaded ? 0 : 0.5,
+      ...(isFaded && { opacity: vis, depthWrite: false }),
       reflectivity: 0,
     };
     const backMat = new MeshLambertMaterial({
@@ -119,6 +137,11 @@ function createMaterialFromFlags(
     map: texture,
     side: 2, // DoubleSide
     reflectivity: 0,
+    ...(isFaded && {
+      transparent: true,
+      opacity: vis,
+      depthWrite: false,
+    }),
   });
   applyShapeShaderModifications(mat);
   return mat;
@@ -143,6 +166,8 @@ const IflTexture = memo(function IflTexture({
   backGeometry,
   castShadow = false,
   receiveShadow = false,
+  vis = 1,
+  animated = false,
 }: TextureProps) {
   const resourcePath = material.userData.resource_path;
   const flagNames = new Set<string>(material.userData.flag_names ?? []);
@@ -152,8 +177,16 @@ const IflTexture = memo(function IflTexture({
   const isOrganic = shapeName && isOrganicShape(shapeName);
 
   const customMaterial = useMemo(
-    () => createMaterialFromFlags(material, texture, flagNames, isOrganic),
-    [material, texture, flagNames, isOrganic],
+    () =>
+      createMaterialFromFlags(
+        material,
+        texture,
+        flagNames,
+        isOrganic,
+        vis,
+        animated,
+      ),
+    [material, texture, flagNames, isOrganic, vis, animated],
   );
 
   // Two-pass rendering for organic/translucent materials
@@ -197,6 +230,8 @@ const StaticTexture = memo(function StaticTexture({
   backGeometry,
   castShadow = false,
   receiveShadow = false,
+  vis = 1,
+  animated = false,
 }: TextureProps) {
   const resourcePath = material.userData.resource_path;
   const flagNames = new Set<string>(material.userData.flag_names ?? []);
@@ -223,8 +258,16 @@ const StaticTexture = memo(function StaticTexture({
   });
 
   const customMaterial = useMemo(
-    () => createMaterialFromFlags(material, texture, flagNames, isOrganic),
-    [material, texture, flagNames, isOrganic],
+    () =>
+      createMaterialFromFlags(
+        material,
+        texture,
+        flagNames,
+        isOrganic,
+        vis,
+        animated,
+      ),
+    [material, texture, flagNames, isOrganic, vis, animated],
   );
 
   // Two-pass rendering for organic/translucent materials
@@ -268,6 +311,8 @@ export const ShapeTexture = memo(function ShapeTexture({
   backGeometry,
   castShadow = false,
   receiveShadow = false,
+  vis = 1,
+  animated = false,
 }: TextureProps) {
   const flagNames = new Set(material.userData.flag_names ?? []);
   const isIflMaterial = flagNames.has("IflMaterial");
@@ -283,6 +328,8 @@ export const ShapeTexture = memo(function ShapeTexture({
         backGeometry={backGeometry}
         castShadow={castShadow}
         receiveShadow={receiveShadow}
+        vis={vis}
+        animated={animated}
       />
     );
   } else if (material.name) {
@@ -294,6 +341,8 @@ export const ShapeTexture = memo(function ShapeTexture({
         backGeometry={backGeometry}
         castShadow={castShadow}
         receiveShadow={receiveShadow}
+        vis={vis}
+        animated={animated}
       />
     );
   } else {
@@ -328,6 +377,22 @@ export function DebugPlaceholder({
   return debugMode ? <ShapePlaceholder color={color} label={label} /> : null;
 }
 
+/** Shapes that don't have a .glb conversion and are rendered with built-in
+ * Three.js geometry instead. These are editor-only markers in Tribes 2. */
+const HARDCODED_SHAPES = new Set(["octahedron.dts"]);
+
+function HardcodedShape({ label }: { label?: string }) {
+  const { debugMode } = useDebug();
+  if (!debugMode) return null;
+  return (
+    <mesh>
+      <icosahedronGeometry args={[1, 1]} />
+      <meshBasicMaterial color="cyan" wireframe />
+      {label ? <FloatingLabel color="cyan">{label}</FloatingLabel> : null}
+    </mesh>
+  );
+}
+
 /**
  * Wrapper component that handles the common ErrorBoundary + Suspense + ShapeModel
  * pattern used across shape-rendering components.
@@ -347,6 +412,10 @@ export function ShapeRenderer({
     );
   }
 
+  if (HARDCODED_SHAPES.has(shapeName.toLowerCase())) {
+    return <HardcodedShape label={`${object._id}: ${shapeName}`} />;
+  }
+
   return (
     <ErrorBoundary
       fallback={
@@ -359,6 +428,76 @@ export function ShapeRenderer({
       </Suspense>
     </ErrorBoundary>
   );
+}
+
+/** Check if a GLB node has an auto-playing "Ambient" vis animation. */
+function hasAmbientVisAnimation(userData: any): boolean {
+  return (
+    userData != null &&
+    (userData.vis_sequence ?? "").toLowerCase() === "ambient" &&
+    Array.isArray(userData.vis_keyframes) &&
+    userData.vis_keyframes.length > 1 &&
+    (userData.vis_duration ?? 0) > 0
+  );
+}
+
+/**
+ * Wraps child meshes and animates their material opacity using DTS vis keyframes.
+ * Used for auto-playing "Ambient" sequences (glow pulses, light effects).
+ */
+function AnimatedVisGroup({
+  keyframes,
+  duration,
+  cyclic,
+  children,
+}: {
+  keyframes: number[];
+  duration: number;
+  cyclic: boolean;
+  children: React.ReactNode;
+}) {
+  const groupRef = useRef<Group>(null);
+  const { animationEnabled } = useSettings();
+
+  useFrame(() => {
+    const group = groupRef.current;
+    if (!group) return;
+
+    if (!animationEnabled) {
+      group.traverse((child) => {
+        if ((child as any).isMesh) {
+          const mat = (child as any).material;
+          if (mat && !Array.isArray(mat)) {
+            mat.opacity = keyframes[0];
+          }
+        }
+      });
+      return;
+    }
+
+    const elapsed = performance.now() / 1000;
+    const t = cyclic
+      ? (elapsed % duration) / duration
+      : Math.min(elapsed / duration, 1);
+
+    const n = keyframes.length;
+    const pos = t * n;
+    const lo = Math.floor(pos) % n;
+    const hi = (lo + 1) % n;
+    const frac = pos - Math.floor(pos);
+    const vis = keyframes[lo] + (keyframes[hi] - keyframes[lo]) * frac;
+
+    group.traverse((child) => {
+      if ((child as any).isMesh) {
+        const mat = (child as any).material;
+        if (mat && !Array.isArray(mat)) {
+          mat.opacity = vis;
+        }
+      }
+    });
+  });
+
+  return <group ref={groupRef}>{children}</group>;
 }
 
 export const ShapeModel = memo(function ShapeModel() {
@@ -384,7 +523,12 @@ export const ShapeModel = memo(function ShapeModel() {
         ([name, node]: [string, any]) =>
           node.material &&
           node.material.name !== "Unassigned" &&
-          !node.name.match(/^Hulk/i),
+          !node.name.match(/^Hulk/i) &&
+          // DTS per-object visibility: skip invisible objects (engine threshold
+          // is 0.01) unless they have an Ambient vis animation that will bring
+          // them to life (e.g. glow effects that pulse from 0 to 1).
+          ((node.userData?.vis ?? 1) > 0.01 ||
+            hasAmbientVisAnimation(node.userData)),
       )
       .map(([name, node]: [string, any]) => {
         let geometry = filterGeometryByVertexGroups(
@@ -459,7 +603,15 @@ export const ShapeModel = memo(function ShapeModel() {
           }
         }
 
-        return { node, geometry, backGeometry };
+        const vis: number = node.userData?.vis ?? 1;
+        const visAnim = hasAmbientVisAnimation(node.userData)
+          ? {
+              keyframes: node.userData.vis_keyframes as number[],
+              duration: node.userData.vis_duration as number,
+              cyclic: !!node.userData.vis_cyclic,
+            }
+          : undefined;
+        return { node, geometry, backGeometry, vis, visAnim };
       });
   }, [nodes, hullBoneIndices, isOrganic]);
 
@@ -469,41 +621,61 @@ export const ShapeModel = memo(function ShapeModel() {
 
   return (
     <group rotation={[0, Math.PI / 2, 0]}>
-      {processedNodes.map(({ node, geometry, backGeometry }) => (
-        <Suspense
-          key={node.id}
-          fallback={
-            <mesh geometry={geometry}>
-              <meshStandardMaterial color="gray" wireframe />
-            </mesh>
-          }
-        >
-          {node.material ? (
-            Array.isArray(node.material) ? (
-              node.material.map((mat, index) => (
-                <ShapeTexture
-                  key={index}
-                  material={mat as MeshStandardMaterial}
-                  shapeName={shapeName}
-                  geometry={geometry}
-                  backGeometry={backGeometry}
-                  castShadow={enableShadows}
-                  receiveShadow={enableShadows}
-                />
-              ))
-            ) : (
+      {processedNodes.map(({ node, geometry, backGeometry, vis, visAnim }) => {
+        const animated = !!visAnim;
+        const fallback = (
+          <mesh geometry={geometry}>
+            <meshStandardMaterial color="gray" wireframe />
+          </mesh>
+        );
+        const textures = node.material ? (
+          Array.isArray(node.material) ? (
+            node.material.map((mat, index) => (
               <ShapeTexture
-                material={node.material as MeshStandardMaterial}
+                key={index}
+                material={mat as MeshStandardMaterial}
                 shapeName={shapeName}
                 geometry={geometry}
                 backGeometry={backGeometry}
                 castShadow={enableShadows}
                 receiveShadow={enableShadows}
+                vis={vis}
+                animated={animated}
               />
-            )
-          ) : null}
-        </Suspense>
-      ))}
+            ))
+          ) : (
+            <ShapeTexture
+              material={node.material as MeshStandardMaterial}
+              shapeName={shapeName}
+              geometry={geometry}
+              backGeometry={backGeometry}
+              castShadow={enableShadows}
+              receiveShadow={enableShadows}
+              vis={vis}
+              animated={animated}
+            />
+          )
+        ) : null;
+
+        if (visAnim) {
+          return (
+            <AnimatedVisGroup
+              key={node.id}
+              keyframes={visAnim.keyframes}
+              duration={visAnim.duration}
+              cyclic={visAnim.cyclic}
+            >
+              <Suspense fallback={fallback}>{textures}</Suspense>
+            </AnimatedVisGroup>
+          );
+        }
+
+        return (
+          <Suspense key={node.id} fallback={fallback}>
+            {textures}
+          </Suspense>
+        );
+      })}
       {debugMode ? (
         <FloatingLabel>
           {object._id}: {shapeName}
