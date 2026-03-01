@@ -44,6 +44,12 @@ interface MutableStreamEntity {
   health?: number;
   energy?: number;
   maxEnergy?: number;
+  /** Action animation index from ghost ActionMask. */
+  actionAnim?: number;
+  /** True when the action animation has reached its final frame. */
+  actionAtEnd?: boolean;
+  /** Torque DamageState: 0 = Enabled, 1 = Disabled (dead), 2 = Destroyed. */
+  damageState?: number;
   targetId?: number;
   /** Physics type for per-tick simulation. */
   projectilePhysics?: "linear" | "ballistic" | "seeker";
@@ -709,6 +715,25 @@ class StreamingPlayback implements DemoStreamingPlayback {
       this.state.entitiesById.set(id, entity);
       this.state.entityIdByGhostIndex.set(ghost.index, id);
     }
+
+    // Derive playerSensorGroup from the control player entity if not yet set
+    // (the SetSensorGroupEvent may not have arrived in the initial block).
+    if (
+      this.state.playerSensorGroup === 0 &&
+      this.state.lastControlType === "player" &&
+      this.state.latestControl.ghostIndex >= 0
+    ) {
+      const ctrlId = this.state.entityIdByGhostIndex.get(
+        this.state.latestControl.ghostIndex,
+      );
+      const ctrlEntity = ctrlId
+        ? this.state.entitiesById.get(ctrlId)
+        : undefined;
+      if (ctrlEntity?.sensorGroup != null && ctrlEntity.sensorGroup > 0) {
+        this.state.playerSensorGroup = ctrlEntity.sensorGroup;
+      }
+    }
+
     this.updateCameraAndHud();
   }
 
@@ -1295,6 +1320,14 @@ class StreamingPlayback implements DemoStreamingPlayback {
     if (typeof data.damageLevel === "number") {
       entity.health = clamp(1 - data.damageLevel, 0, 1);
     }
+    if (typeof data.damageState === "number") {
+      entity.damageState = data.damageState;
+    }
+
+    if (typeof data.action === "number") {
+      entity.actionAnim = data.action;
+      entity.actionAtEnd = !!data.actionAtEnd;
+    }
 
     if (typeof data.energy === "number") {
       entity.energy = clamp(data.energy, 0, 1);
@@ -1523,6 +1556,9 @@ class StreamingPlayback implements DemoStreamingPlayback {
         velocity: entity.velocity,
         health: entity.health,
         energy: entity.energy,
+        actionAnim: entity.actionAnim,
+        actionAtEnd: entity.actionAtEnd,
+        damageState: entity.damageState,
         faceViewer: entity.faceViewer,
       });
     }

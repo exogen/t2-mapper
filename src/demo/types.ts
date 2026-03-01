@@ -12,6 +12,13 @@ export interface DemoKeyframe {
   health?: number;
   /** Normalized energy (0 = empty, 1 = full). Derived from ghost energyPercent. */
   energy?: number;
+  /** Torque DamageState: 0 = Enabled, 1 = Disabled (dead), 2 = Destroyed. */
+  damageState?: number;
+  /** Action animation index from ghost ActionMask (indices >= 7 are non-table
+   *  actions like death animations). */
+  actionAnim?: number;
+  /** True when the action animation has reached its final frame. */
+  actionAtEnd?: boolean;
 }
 
 export interface DemoTracerVisual {
@@ -119,6 +126,9 @@ export interface DemoStreamEntity {
   velocity?: [number, number, number];
   health?: number;
   energy?: number;
+  actionAnim?: number;
+  actionAtEnd?: boolean;
+  damageState?: number;
   faceViewer?: boolean;
 }
 

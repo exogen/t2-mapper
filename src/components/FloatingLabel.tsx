@@ -1,10 +1,22 @@
-import { memo, ReactNode, useEffect, useRef, useState } from "react";
-import { Object3D } from "three";
-import { useDistanceFromCamera } from "./useDistanceFromCamera";
+import { memo, ReactNode, useRef, useState } from "react";
+import { Object3D, Vector3 } from "three";
 import { useFrame } from "@react-three/fiber";
 import { Html } from "@react-three/drei";
 
 const DEFAULT_POSITION = [0, 0, 0] as [x: number, y: number, z: number];
+const _worldPos = new Vector3();
+
+/** Check if a world position is behind the camera using only scalar math. */
+function isBehindCamera(
+  camera: { matrixWorld: { elements: number[] } },
+  wx: number,
+  wy: number,
+  wz: number,
+): boolean {
+  const e = camera.matrixWorld.elements;
+  // Dot product of (objectPos - cameraPos) with camera forward (-Z column).
+  return (wx - e[12]) * -e[8] + (wy - e[13]) * -e[9] + (wz - e[14]) * -e[10] < 0;
+}
 
 export const FloatingLabel = memo(function FloatingLabel({
   children,
@@ -19,39 +31,36 @@ export const FloatingLabel = memo(function FloatingLabel({
 }) {
   const fadeWithDistance = opacity === "fadeWithDistance";
   const groupRef = useRef<Object3D>(null);
-  const distanceRef = useDistanceFromCamera(groupRef);
   const [isVisible, setIsVisible] = useState(opacity !== 0);
   const labelRef = useRef<HTMLDivElement>(null);
 
-  // Initialize opacity when label ref is attached
-  useEffect(() => {
-    if (fadeWithDistance) {
-      if (labelRef.current && distanceRef.current != null) {
-        const opacity = Math.max(0, Math.min(1, 1 - distanceRef.current / 200));
-        labelRef.current.style.opacity = opacity.toString();
-      }
-    }
-  }, [isVisible, fadeWithDistance, distanceRef]);
+  useFrame(({ camera }) => {
+    const group = groupRef.current;
+    if (!group) return;
 
-  useFrame(() => {
-    if (fadeWithDistance) {
-      const distance = distanceRef.current;
-      const shouldBeVisible = distance != null && distance < 200;
+    group.getWorldPosition(_worldPos);
+    const behind = isBehindCamera(camera, _worldPos.x, _worldPos.y, _worldPos.z);
 
-      // Update visibility state only when crossing threshold
+    if (fadeWithDistance) {
+      const distance = behind ? Infinity : camera.position.distanceTo(_worldPos);
+      const shouldBeVisible = distance < 200;
+
       if (isVisible !== shouldBeVisible) {
         setIsVisible(shouldBeVisible);
       }
 
-      // Update opacity directly on DOM element (no re-render)
+      // Update opacity directly on DOM element (no re-render).
       if (labelRef.current && shouldBeVisible) {
-        const opacity = Math.max(0, Math.min(1, 1 - distance / 200));
-        labelRef.current.style.opacity = opacity.toString();
+        const fadeOpacity = Math.max(0, Math.min(1, 1 - distance / 200));
+        labelRef.current.style.opacity = fadeOpacity.toString();
       }
     } else {
-      setIsVisible(opacity !== 0);
+      const shouldBeVisible = !behind && opacity !== 0;
+      if (isVisible !== shouldBeVisible) {
+        setIsVisible(shouldBeVisible);
+      }
       if (labelRef.current) {
-        labelRef.current.style.opacity = opacity.toString();
+        labelRef.current.style.opacity = (opacity as number).toString();
       }
     }
   });

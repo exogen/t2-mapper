@@ -248,14 +248,33 @@ input[type="range"] {
 
 .PlayerNameplate {
   pointer-events: none;
-  text-align: center;
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
   white-space: nowrap;
+}
+
+.PlayerTop {
+  padding-bottom: 20px;
+}
+
+.PlayerBottom {
+  padding-top: 20px;
+}
+
+.PlayerNameplate-iffArrow {
+  width: 12px;
+  height: 12px;
+  image-rendering: pixelated;
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.7));
 }
 
 .PlayerNameplate-name {
   color: #fff;
   font-size: 11px;
-  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9), 0 0 1px rgba(0, 0, 0, 0.7);
+  text-shadow:
+    0 1px 3px rgba(0, 0, 0, 0.9),
+    0 0 1px rgba(0, 0, 0, 0.7);
 }
 
 .PlayerNameplate-healthBar {
