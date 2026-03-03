@@ -1,0 +1,3 @@
+:HL["/t2-mapper/_next/static/chunks/e620039d1c837dab.css","style"]
+:HL["/t2-mapper/_next/static/chunks/97a75e62963e0840.css","style"]
+0:{"buildId":"AwXCwaoi1jnfKLMnIzgVt","tree":{"name":"","paramType":null,"paramKey":"","hasRuntimePrefetch":false,"slots":{"children":{"name":"shapes","paramType":null,"paramKey":"shapes","hasRuntimePrefetch":false,"slots":{"children":{"name":"__PAGE__","paramType":null,"paramKey":"__PAGE__","hasRuntimePrefetch":false,"slots":null,"isRootLayout":false}},"isRootLayout":false}},"isRootLayout":true},"staleTime":300}

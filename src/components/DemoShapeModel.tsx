@@ -11,14 +11,17 @@ import {
 } from "./GenericShape";
 import { ShapeInfoProvider } from "./ShapeInfoProvider";
 import type { TorqueObject } from "../torqueScript";
+import type { DemoThreadState } from "../demo/types";
 
 /** Renders a shape model for a demo entity using the existing shape pipeline. */
 export function DemoShapeModel({
   shapeName,
   entityId,
+  threads,
 }: {
   shapeName: string;
   entityId: number | string;
+  threads?: DemoThreadState[];
 }) {
   const torqueObject = useMemo<TorqueObject>(
     () => ({
@@ -35,7 +38,7 @@ export function DemoShapeModel({
       shapeName={shapeName}
       type="StaticShape"
     >
-      <ShapeRenderer loadingColor="#00ff88" />
+      <ShapeRenderer loadingColor="#00ff88" demoThreads={threads} />
     </ShapeInfoProvider>
   );
 }

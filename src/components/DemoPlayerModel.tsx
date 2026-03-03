@@ -19,9 +19,10 @@ import {
   processShapeScene,
 } from "../demo/demoPlaybackUtils";
 import { pickMoveAnimation } from "../demo/playerAnimation";
+import { getAliasedActions } from "../torqueScript/shapeConstructor";
 import { useStaticShape } from "./GenericShape";
 import { ShapeErrorBoundary } from "./DemoEntities";
-import { useEngineStoreApi } from "../state";
+import { useEngineStoreApi, useEngineSelector } from "../state";
 import type { DemoEntity } from "../demo/types";
 
 /**
@@ -41,6 +42,12 @@ export function DemoPlayerModel({
 }) {
   const engineStore = useEngineStoreApi();
   const gltf = useStaticShape(entity.dataBlock!);
+  const shapeAliases = useEngineSelector((state) => {
+    const shapeName = entity.dataBlock?.toLowerCase();
+    return shapeName
+      ? state.runtime.sequenceAliases.get(shapeName)
+      : undefined;
+  });
 
   // Clone scene preserving skeleton bindings, create mixer, find Mount0 bone.
   const { clonedScene, mixer, mount0 } = useMemo(() => {
@@ -56,25 +63,21 @@ export function DemoPlayerModel({
     return { clonedScene: scene, mixer: mix, mount0: m0 };
   }, [gltf]);
 
-  // Build case-insensitive clip lookup and start with Root animation.
+  // Build case-insensitive clip lookup with alias support.
   const animActionsRef = useRef(new Map<string, AnimationAction>());
-  const currentAnimRef = useRef({ name: "Root", timeScale: 1 });
+  const currentAnimRef = useRef({ name: "root", timeScale: 1 });
   const isDeadRef = useRef(false);
 
   useEffect(() => {
-    const actions = new Map<string, AnimationAction>();
-    for (const clip of gltf.animations) {
-      const action = mixer.clipAction(clip);
-      actions.set(clip.name.toLowerCase(), action);
-    }
+    const actions = getAliasedActions(gltf.animations, mixer, shapeAliases);
     animActionsRef.current = actions;
 
-    // Start with Root (idle) animation.
+    // Start with root (idle) animation.
     const rootAction = actions.get("root");
     if (rootAction) {
       rootAction.play();
     }
-    currentAnimRef.current = { name: "Root", timeScale: 1 };
+    currentAnimRef.current = { name: "root", timeScale: 1 };
 
     // Force initial pose evaluation.
     mixer.update(0);
@@ -83,7 +86,7 @@ export function DemoPlayerModel({
       mixer.stopAllAction();
       animActionsRef.current = new Map();
     };
-  }, [mixer, gltf.animations]);
+  }, [mixer, gltf.animations, shapeAliases]);
 
   // Per-frame animation selection and mixer update.
   useFrame((_, delta) => {
@@ -101,7 +104,7 @@ export function DemoPlayerModel({
       isDeadRef.current = true;
 
       const deathClips = [...actions.keys()].filter((k) =>
-        k.startsWith("die"),
+        k.startsWith("death"),
       );
       if (deathClips.length > 0) {
         const pick = deathClips[Math.floor(Math.random() * deathClips.length)];
@@ -129,7 +132,7 @@ export function DemoPlayerModel({
         deathAction.clampWhenFinished = false;
       }
       // Reset to root so movement selection picks up on next iteration.
-      currentAnimRef.current = { name: "Root", timeScale: 1 };
+      currentAnimRef.current = { name: "root", timeScale: 1 };
       const rootAction = actions.get("root");
       if (rootAction) rootAction.reset().play();
     }

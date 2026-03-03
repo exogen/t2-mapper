@@ -1,0 +1,30 @@
+export const ignoreScripts = [
+  "scripts/admin.cs",
+  // `ignoreScripts` supports globs, but out of an abundance of caution
+  // we don't want to do `ai*.cs` in case there's some non-AI related
+  // word like "air" in a script name.
+  "scripts/ai.cs",
+  "scripts/aiBotProfiles.cs",
+  "scripts/aiBountyGame.cs",
+  "scripts/aiChat.cs",
+  "scripts/aiCnH.cs",
+  "scripts/aiCTF.cs",
+  "scripts/aiDeathMatch.cs",
+  "scripts/aiDebug.cs",
+  "scripts/aiDefaultTasks.cs",
+  "scripts/aiDnD.cs",
+  "scripts/aiHumanTasks.cs",
+  "scripts/aiHunters.cs",
+  "scripts/aiInventory.cs",
+  "scripts/aiObjectiveBuilder.cs",
+  "scripts/aiObjectives.cs",
+  "scripts/aiRabbit.cs",
+  "scripts/aiSiege.cs",
+  "scripts/aiTDM.cs",
+  "scripts/aiTeamHunters.cs",
+  "scripts/deathMessages.cs",
+  "scripts/graphBuild.cs",
+  "scripts/navGraph.cs",
+  "scripts/serverTasks.cs",
+  "scripts/spdialog.cs",
+];

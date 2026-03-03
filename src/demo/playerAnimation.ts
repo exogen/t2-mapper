@@ -10,7 +10,7 @@ const FALLING_THRESHOLD = -10;
 const MOVE_THRESHOLD = 0.1;
 
 export interface MoveAnimationResult {
-  /** GLB animation clip name (e.g. "Forward", "Back", "Side", "Fall", "Root"). */
+  /** Engine alias name (e.g. "root", "run", "back", "side", "fall"). */
   animation: string;
   /** 1 for forward playback, -1 for reversed (right strafe). */
   timeScale: number;
@@ -38,14 +38,14 @@ export function pickMoveAnimation(
   rotation: [number, number, number, number],
 ): MoveAnimationResult {
   if (!velocity) {
-    return { animation: "Root", timeScale: 1 };
+    return { animation: "root", timeScale: 1 };
   }
 
   const [vx, vy, vz] = velocity;
 
   // Falling: Torque Z velocity below threshold.
   if (vz < FALLING_THRESHOLD) {
-    return { animation: "Fall", timeScale: 1 };
+    return { animation: "fall", timeScale: 1 };
   }
 
   // Convert world velocity to player object space using body yaw.
@@ -66,18 +66,18 @@ export function pickMoveAnimation(
   const maxDot = Math.max(forwardDot, backDot, leftDot, rightDot);
 
   if (maxDot < MOVE_THRESHOLD) {
-    return { animation: "Root", timeScale: 1 };
+    return { animation: "root", timeScale: 1 };
   }
 
   if (maxDot === forwardDot) {
-    return { animation: "Forward", timeScale: 1 };
+    return { animation: "run", timeScale: 1 };
   }
   if (maxDot === backDot) {
-    return { animation: "Back", timeScale: 1 };
+    return { animation: "back", timeScale: 1 };
   }
   if (maxDot === leftDot) {
-    return { animation: "Side", timeScale: 1 };
+    return { animation: "side", timeScale: 1 };
   }
   // Right strafe: same Side animation, reversed.
-  return { animation: "Side", timeScale: -1 };
+  return { animation: "side", timeScale: -1 };
 }

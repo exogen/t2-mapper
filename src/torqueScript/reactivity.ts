@@ -175,6 +175,10 @@ export const DEFAULT_REACTIVE_METHOD_RULES: ReactiveMethodRule[] = [
       "deleteallobjects",
       "add",
       "remove",
+      "playthread",
+      "stopthread",
+      "setthreaddir",
+      "pausethread",
     ],
   },
   {

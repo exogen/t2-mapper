@@ -7,7 +7,7 @@ import { DemoPlayerModel } from "./DemoPlayerModel";
 import { DemoShapeModel, DemoWeaponModel } from "./DemoShapeModel";
 import { DemoSpriteProjectile, DemoTracerProjectile } from "./DemoProjectiles";
 import { PlayerNameplate } from "./PlayerNameplate";
-import { useEngineStoreApi } from "../state";
+import { useEngineSelector } from "../state";
 import type { DemoEntity } from "../demo/types";
 
 /**
@@ -23,9 +23,11 @@ export function DemoEntityGroup({
   entity: DemoEntity;
   timeRef: MutableRefObject<number>;
 }) {
-  const engineStore = useEngineStoreApi();
   const debug = useDebug();
   const debugMode = debug?.debugMode ?? false;
+  const controlPlayerGhostId = useEngineSelector(
+    (state) => state.playback.streamSnapshot?.controlPlayerGhostId,
+  );
   const name = String(entity.id);
 
   if (entity.visual?.kind === "tracer") {
@@ -77,9 +79,7 @@ export function DemoEntityGroup({
 
   // Player entities use skeleton-preserving DemoPlayerModel for animation.
   if (entity.type === "Player") {
-    const isControlPlayer =
-      entity.id ===
-      engineStore.getState().playback.recording?.controlPlayerGhostId;
+    const isControlPlayer = entity.id === controlPlayerGhostId;
     return (
       <group name={name}>
         <group name="model">
@@ -103,7 +103,7 @@ export function DemoEntityGroup({
       <group name="model">
         <ShapeErrorBoundary fallback={fallback}>
           <Suspense fallback={fallback}>
-            <DemoShapeModel shapeName={entity.dataBlock} entityId={entity.id} />
+            <DemoShapeModel shapeName={entity.dataBlock} entityId={entity.id} threads={entity.threads} />
           </Suspense>
         </ShapeErrorBoundary>
       </group>

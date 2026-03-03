@@ -8,6 +8,10 @@ import type {
   TorqueObject,
   TorqueRuntime,
 } from "../torqueScript";
+import {
+  buildSequenceAliasMap,
+  type SequenceAliasMap,
+} from "../torqueScript/shapeConstructor";
 
 export type PlaybackStatus = "stopped" | "playing" | "paused";
 
@@ -77,6 +81,7 @@ export interface AppendRendererSampleInput {
 
 export interface RuntimeSliceState {
   runtime: TorqueRuntime | null;
+  sequenceAliases: SequenceAliasMap;
   objectVersionById: Record<number, number>;
   globalVersionByName: Record<string, number>;
   objectIdsByName: Record<string, number>;
@@ -182,60 +187,15 @@ function initialDiagnosticsCounts(): Record<RuntimeEvent["type"], number> {
   };
 }
 
-function projectWorldFromDemo(recording: DemoRecording | null): WorldSliceState {
-  if (!recording) {
-    return {
-      entitiesById: {},
-      players: [],
-      ghosts: [],
-      projectiles: [],
-      flags: [],
-      teams: {},
-      scores: {},
-    };
-  }
-
-  const entitiesById: Record<string, DemoEntity> = {};
-  const players: string[] = [];
-  const ghosts: string[] = [];
-  const projectiles: string[] = [];
-  const flags: string[] = [];
-
-  for (const entity of recording.entities) {
-    const entityId = keyFromEntityId(entity.id);
-    entitiesById[entityId] = entity;
-
-    const type = entity.type.toLowerCase();
-    if (type === "player") {
-      players.push(entityId);
-      if (entityId.startsWith("player_")) {
-        ghosts.push(entityId);
-      }
-      continue;
-    }
-    if (type === "projectile") {
-      projectiles.push(entityId);
-      continue;
-    }
-
-    if (
-      entity.dataBlock?.toLowerCase() === "flag" ||
-      entity.dataBlock?.toLowerCase().includes("flag")
-    ) {
-      flags.push(entityId);
-    }
-  }
-
-  return {
-    entitiesById,
-    players,
-    ghosts,
-    projectiles,
-    flags,
-    teams: {},
-    scores: {},
-  };
-}
+const emptyWorld: WorldSliceState = {
+  entitiesById: {},
+  players: [],
+  ghosts: [],
+  projectiles: [],
+  flags: [],
+  teams: {},
+  scores: {},
+};
 
 function buildRuntimeIndexes(runtime: TorqueRuntime): Pick<
   RuntimeSliceState,
@@ -289,6 +249,7 @@ const initialState: Omit<
 > = {
   runtime: {
     runtime: null,
+    sequenceAliases: new Map(),
     objectVersionById: {},
     globalVersionByName: {},
     objectIdsByName: {},
@@ -331,10 +292,12 @@ export const engineStore = createStore<EngineStoreState>()(
 
     setRuntime(runtime: TorqueRuntime) {
       const indexes = buildRuntimeIndexes(runtime);
+      const sequenceAliases = buildSequenceAliasMap(runtime);
       set((state) => ({
         ...state,
         runtime: {
           runtime,
+          sequenceAliases,
           objectVersionById: indexes.objectVersionById,
           globalVersionByName: indexes.globalVersionByName,
           objectIdsByName: indexes.objectIdsByName,
@@ -349,6 +312,7 @@ export const engineStore = createStore<EngineStoreState>()(
         ...state,
         runtime: {
           runtime: null,
+          sequenceAliases: new Map(),
           objectVersionById: {},
           globalVersionByName: {},
           objectIdsByName: {},
@@ -483,15 +447,12 @@ export const engineStore = createStore<EngineStoreState>()(
               : null,
             nextDurationSec: recording ? Number(recording.duration.toFixed(3)) : null,
             isNull: recording == null,
-            isMetadataOnly: !!recording?.isMetadataOnly,
-            isPartial: !!recording?.isPartial,
-            hasStreamingPlayback: !!recording?.streamingPlayback,
             stack: stack ?? "unavailable",
           },
         };
         return {
           ...state,
-          world: projectWorldFromDemo(recording),
+          world: emptyWorld,
           playback: {
             recording,
             status: "stopped",

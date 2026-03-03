@@ -226,12 +226,7 @@ function summarizeRecording(state: EngineStoreState): JsonLike {
     duration: recording.duration,
     missionName: recording.missionName,
     gameType: recording.gameType,
-    isMetadataOnly: !!recording.isMetadataOnly,
-    isPartial: !!recording.isPartial,
     hasStreamingPlayback: !!recording.streamingPlayback,
-    entitiesCount: recording.entities.length,
-    cameraModesCount: recording.cameraModes.length,
-    controlPlayerGhostId: recording.controlPlayerGhostId ?? null,
   };
 }
 

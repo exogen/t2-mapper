@@ -7,26 +7,38 @@ import {
   NearestFilter,
   SRGBColorSpace,
   Texture,
+  TextureLoader,
 } from "three";
 import { iflTextureToUrl, loadImageFrameList } from "../loaders";
-import { useTick } from "./TickProvider";
+import { useTick, TICK_RATE } from "./TickProvider";
 import { useSettings } from "./SettingsProvider";
 
-interface IflAtlas {
+/** One IFL tick in seconds (Torque converts at 1/30s per tick). */
+export const IFL_TICK_SECONDS = 1 / 30;
+
+export interface IflAtlas {
   texture: CanvasTexture;
   columns: number;
   rows: number;
   frameCount: number;
-  /** Tick at which each frame starts (cumulative). */
-  frameStartTicks: number[];
-  /** Total ticks for one complete animation cycle. */
-  totalTicks: number;
+  /** Cumulative end time (seconds) for each frame. */
+  frameOffsetSeconds: number[];
+  /** Total IFL cycle duration in seconds. */
+  totalDurationSeconds: number;
   /** Last rendered frame index, to avoid redundant offset updates. */
   lastFrame: number;
 }
 
 // Module-level cache for atlas textures, shared across all components.
 const atlasCache = new Map<string, IflAtlas>();
+
+const _textureLoader = new TextureLoader();
+
+function loadTextureAsync(url: string): Promise<Texture> {
+  return new Promise((resolve, reject) => {
+    _textureLoader.load(url, resolve, undefined, reject);
+  });
+}
 
 function createAtlas(textures: Texture[]): IflAtlas {
   const firstImage = textures[0].image as HTMLImageElement;
@@ -67,8 +79,8 @@ function createAtlas(textures: Texture[]): IflAtlas {
     columns,
     rows,
     frameCount,
-    frameStartTicks: [],
-    totalTicks: 0,
+    frameOffsetSeconds: [],
+    totalDurationSeconds: 0,
     lastFrame: -1,
   };
 }
@@ -77,16 +89,15 @@ function computeTiming(
   atlas: IflAtlas,
   frames: { name: string; frameCount: number }[],
 ) {
-  let totalTicks = 0;
-  atlas.frameStartTicks = frames.map((frame) => {
-    const start = totalTicks;
-    totalTicks += frame.frameCount;
-    return start;
+  let cumulativeSeconds = 0;
+  atlas.frameOffsetSeconds = frames.map((frame) => {
+    cumulativeSeconds += frame.frameCount * IFL_TICK_SECONDS;
+    return cumulativeSeconds;
   });
-  atlas.totalTicks = totalTicks;
+  atlas.totalDurationSeconds = cumulativeSeconds;
 }
 
-function updateAtlasFrame(atlas: IflAtlas, frameIndex: number) {
+export function updateAtlasFrame(atlas: IflAtlas, frameIndex: number) {
   if (frameIndex === atlas.lastFrame) return;
   atlas.lastFrame = frameIndex;
 
@@ -96,19 +107,42 @@ function updateAtlasFrame(atlas: IflAtlas, frameIndex: number) {
   atlas.texture.offset.set(col / atlas.columns, row / atlas.rows);
 }
 
-function getFrameIndexForTick(atlas: IflAtlas, tick: number): number {
-  if (atlas.totalTicks === 0) return 0;
-
-  const cycleTick = tick % atlas.totalTicks;
-  const { frameStartTicks } = atlas;
-
-  // Binary search would be faster for many frames, but linear is fine for typical IFLs.
-  for (let i = frameStartTicks.length - 1; i >= 0; i--) {
-    if (cycleTick >= frameStartTicks[i]) {
-      return i;
-    }
+/**
+ * Find the frame index for a given time in seconds. Matches Torque's
+ * `animateIfls()` lookup using cumulative `iflFrameOffTimes`.
+ */
+export function getFrameIndexForTime(
+  atlas: IflAtlas,
+  seconds: number,
+): number {
+  const dur = atlas.totalDurationSeconds;
+  if (dur <= 0) return 0;
+  let t = seconds;
+  if (t > dur) t -= dur * Math.floor(t / dur);
+  for (let i = 0; i < atlas.frameOffsetSeconds.length; i++) {
+    if (t <= atlas.frameOffsetSeconds[i]) return i;
   }
-  return 0;
+  return atlas.frameOffsetSeconds.length - 1;
+}
+
+/**
+ * Imperatively load an IFL atlas (all frames). Returns a cached atlas if the
+ * same IFL has been loaded before. The returned atlas can be animated
+ * per-frame with `updateAtlasFrame` + `getFrameIndexForTime`.
+ */
+export async function loadIflAtlas(iflPath: string): Promise<IflAtlas> {
+  const cached = atlasCache.get(iflPath);
+  if (cached) return cached;
+
+  const frames = await loadImageFrameList(iflPath);
+  const urls = frames.map((f) => iflTextureToUrl(f.name, iflPath));
+  const textures = await Promise.all(urls.map(loadTextureAsync));
+
+  const atlas = createAtlas(textures);
+  computeTiming(atlas, frames);
+  atlasCache.set(iflPath, atlas);
+
+  return atlas;
 }
 
 /**
@@ -141,7 +175,8 @@ export function useIflTexture(iflPath: string): Texture {
   }, [iflPath, textures, frames]);
 
   useTick((tick) => {
-    const frameIndex = animationEnabled ? getFrameIndexForTick(atlas, tick) : 0;
+    const time = tick / TICK_RATE;
+    const frameIndex = animationEnabled ? getFrameIndexForTime(atlas, time) : 0;
     updateAtlasFrame(atlas, frameIndex);
   });
 

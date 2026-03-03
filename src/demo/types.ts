@@ -1,3 +1,11 @@
+export interface DemoThreadState {
+  index: number;
+  sequence: number;
+  state: number;
+  forward: boolean;
+  atEnd: boolean;
+}
+
 export interface DemoKeyframe {
   time: number;
   /** Position in Torque space [x, y, z]. */
@@ -66,6 +74,8 @@ export interface DemoEntity {
   /** Time (seconds) when this entity leaves ghost scope. */
   despawnTime?: number;
   keyframes: DemoKeyframe[];
+  /** DTS animation thread states from ghost ThreadMask data. */
+  threads?: DemoThreadState[];
   /** Weapon shape file name for Player entities (e.g. "weapon_disc.dts"). */
   weaponShape?: string;
   /** Player name resolved from the target system string table. */
@@ -74,34 +84,14 @@ export interface DemoEntity {
   iffColor?: { r: number; g: number; b: number };
 }
 
-export interface CameraModeFrame {
-  time: number;
-  /** "first-person" = Player control object (camera at eye point).
-   *  "third-person" = Camera in OrbitObjectMode (orbiting a ghost).
-   *  "observer" = Camera in free/stationary/fly mode. */
-  mode: "first-person" | "third-person" | "observer";
-  /** Entity ID to hide in first-person (e.g. "player_5"). */
-  controlEntityId?: string;
-  /** Entity ID being orbited in third-person (e.g. "player_5"). */
-  orbitTargetId?: string;
-}
-
 export interface DemoRecording {
   duration: number;
   /** Mission name as it appears in the demo (e.g. "S5-WoodyMyrk"). */
   missionName: string | null;
   /** Game type display name from the demo (e.g. "Capture the Flag"). */
   gameType: string | null;
-  /** True while playback uses deferred/streaming block parsing. */
-  isMetadataOnly?: boolean;
-  /** Legacy alias for `isMetadataOnly`. */
-  isPartial?: boolean;
   /** Streaming parser session used for Move-tick-driven playback. */
-  streamingPlayback?: DemoStreamingPlayback;
-  entities: DemoEntity[];
-  cameraModes: CameraModeFrame[];
-  /** Ghost entity ID for the recording player (e.g. "player_5"). */
-  controlPlayerGhostId?: string;
+  streamingPlayback: DemoStreamingPlayback;
 }
 
 export interface DemoStreamEntity {
@@ -130,6 +120,12 @@ export interface DemoStreamEntity {
   actionAtEnd?: boolean;
   damageState?: number;
   faceViewer?: boolean;
+  /** DTS animation thread states from ghost ThreadMask data. */
+  threads?: DemoThreadState[];
+  /** Numeric ID of the ExplosionData datablock (for particle effect resolution). */
+  explosionDataBlockId?: number;
+  /** Numeric ID of the ParticleEmitterData for in-flight trail particles. */
+  maintainEmitterId?: number;
 }
 
 export interface DemoStreamCamera {
@@ -166,4 +162,6 @@ export interface DemoStreamingPlayback {
   stepToTime(targetTimeSec: number, maxMoveTicks?: number): DemoStreamSnapshot;
   /** DTS shape names for weapon effects (explosions) that should be preloaded. */
   getEffectShapes(): string[];
+  /** Resolve a datablock by its numeric ID. */
+  getDataBlockData(id: number): Record<string, unknown> | undefined;
 }

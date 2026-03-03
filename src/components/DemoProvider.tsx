@@ -56,12 +56,7 @@ export function useDemoActions() {
   );
 
   const play = useCallback(() => {
-    if (
-      (recording?.isMetadataOnly || recording?.isPartial) &&
-      !recording.streamingPlayback
-    ) {
-      return;
-    }
+    if (!recording) return;
     setPlaybackStatus("playing");
   }, [recording, setPlaybackStatus]);
 

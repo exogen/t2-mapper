@@ -2,6 +2,7 @@ import TorqueScript from "@/generated/TorqueScript.cjs";
 import { generate, type GeneratorOptions } from "./codegen";
 import type { Program } from "./ast";
 import { createRuntime } from "./runtime";
+import { registerEngineStubs } from "./engineMethods";
 import { TorqueObject, TorqueRuntime, TorqueRuntimeOptions } from "./types";
 
 export { generate, type GeneratorOptions } from "./codegen";
@@ -220,6 +221,8 @@ export function runServer(options: RunServerOptions): RunServerResult {
     },
     preloadScripts: [...preloadScripts, ...gameScripts],
   });
+
+  registerEngineStubs(runtime);
 
   const ready = (async function createServer() {
     try {

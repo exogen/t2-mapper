@@ -1185,7 +1185,7 @@ export function createRuntime(
       className: string,
       methodName: string,
       callback: (thisObj: TorqueObject, ...args: any[]) => void,
-    ): void {
+    ): () => void {
       let classMethods = methodHooks.get(className);
       if (!classMethods) {
         classMethods = new CaseInsensitiveMap();
@@ -1197,6 +1197,10 @@ export function createRuntime(
         classMethods.set(methodName, hooks);
       }
       hooks.push(callback);
+      return () => {
+        const idx = hooks!.indexOf(callback);
+        if (idx !== -1) hooks!.splice(idx, 1);
+      };
     },
   };
 

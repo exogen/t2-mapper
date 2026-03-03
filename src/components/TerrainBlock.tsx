@@ -1,4 +1,4 @@
-import { memo, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -23,6 +23,10 @@ import { uint16ToFloat32 } from "../arrayUtils";
 import { setupMask } from "../textureUtils";
 import { TerrainTile } from "./TerrainTile";
 import { useSceneObject } from "./useSceneObject";
+import {
+  createTerrainHeightSampler,
+  setTerrainHeightSampler,
+} from "../terrainHeight";
 
 const DEFAULT_SQUARE_SIZE = 8;
 const DEFAULT_VISIBLE_DISTANCE = 600;
@@ -571,6 +575,15 @@ export const TerrainBlock = memo(function TerrainBlock({
 
     return geometry;
   }, [squareSize, terrain]);
+
+  // Register terrain height sampler for item physics simulation.
+  useEffect(() => {
+    if (!terrain) return;
+    setTerrainHeightSampler(
+      createTerrainHeightSampler(terrain.heightMap, squareSize),
+    );
+    return () => setTerrainHeightSampler(null);
+  }, [terrain, squareSize]);
 
   // Get sun direction for lightmap generation
   const sun = useSceneObject("Sun");

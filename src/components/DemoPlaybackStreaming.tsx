@@ -4,34 +4,48 @@ import { useGLTF } from "@react-three/drei";
 import {
   Group,
   Quaternion,
-  Raycaster,
   Vector3,
 } from "three";
 import {
   buildStreamDemoEntity,
-  CAMERA_COLLISION_RADIUS,
   DEFAULT_EYE_HEIGHT,
-  hasAncestorNamed,
   nextLifecycleInstanceId,
-  streamSnapshotSignature,
   STREAM_TICK_SEC,
   torqueHorizontalFovToThreeVerticalFov,
 } from "../demo/demoPlaybackUtils";
 import { shapeToUrl } from "../loaders";
 import { TickProvider } from "./TickProvider";
 import { DemoEntityGroup } from "./DemoEntities";
+import { DemoParticleEffects } from "./DemoParticleEffects";
 import { PlayerEyeOffset } from "./DemoPlayerModel";
 import { useEngineStoreApi } from "../state";
-import type { DemoEntity, DemoRecording, DemoStreamSnapshot } from "../demo/types";
+import type {
+  DemoEntity,
+  DemoRecording,
+  DemoStreamEntity,
+  DemoStreamSnapshot,
+} from "../demo/types";
+
+type EntityById = Map<string, DemoStreamEntity>;
+
+/** Cache entity-by-id Maps per snapshot so they're built once, not every frame. */
+const _snapshotEntityCache = new WeakMap<DemoStreamSnapshot, EntityById>();
+function getEntityMap(snapshot: DemoStreamSnapshot): EntityById {
+  let map = _snapshotEntityCache.get(snapshot);
+  if (!map) {
+    map = new Map(snapshot.entities.map((e) => [e.id, e]));
+    _snapshotEntityCache.set(snapshot, map);
+  }
+  return map;
+}
 
 const _tmpVec = new Vector3();
 const _interpQuatA = new Quaternion();
 const _interpQuatB = new Quaternion();
+const _billboardFlip = new Quaternion(0, 1, 0, 0); // 180° around Y
 const _orbitDir = new Vector3();
 const _orbitTarget = new Vector3();
 const _orbitCandidate = new Vector3();
-const _hitNormal = new Vector3();
-const _orbitRaycaster = new Raycaster();
 
 let streamingDemoPlaybackMountCount = 0;
 let streamingDemoPlaybackUnmountCount = 0;
@@ -50,8 +64,8 @@ export function StreamingDemoPlayback({ recording }: { recording: DemoRecording 
   const eyeOffsetRef = useRef(new Vector3(0, DEFAULT_EYE_HEIGHT, 0));
   const streamRef = useRef(recording.streamingPlayback ?? null);
   const publishedSnapshotRef = useRef<DemoStreamSnapshot | null>(null);
-  const entitySignatureRef = useRef("");
   const entityMapRef = useRef<Map<string, DemoEntity>>(new Map());
+  const lastSyncedSnapshotRef = useRef<DemoStreamSnapshot | null>(null);
   const lastEntityRebuildEventMsRef = useRef(0);
   const exhaustedEventLoggedRef = useRef(false);
   const [entities, setEntities] = useState<DemoEntity[]>([]);
@@ -109,13 +123,18 @@ export function StreamingDemoPlayback({ recording }: { recording: DemoRecording 
   }, [engineStore]);
 
   const syncRenderableEntities = useCallback((snapshot: DemoStreamSnapshot) => {
-    const previousEntityCount = entityMapRef.current.size;
-    const nextSignature = streamSnapshotSignature(snapshot);
-    const shouldRebuild = entitySignatureRef.current !== nextSignature;
+    if (snapshot === lastSyncedSnapshotRef.current) return;
+    lastSyncedSnapshotRef.current = snapshot;
+
+    const prevMap = entityMapRef.current;
     const nextMap = new Map<string, DemoEntity>();
+    // Derive shouldRebuild from the entity loop itself instead of computing
+    // an O(n) string signature every frame. Entity count change catches
+    // add/remove; identity check catches per-entity changes.
+    let shouldRebuild = snapshot.entities.length !== prevMap.size;
 
     for (const entity of snapshot.entities) {
-      let renderEntity = entityMapRef.current.get(entity.id);
+      let renderEntity = prevMap.get(entity.id);
       if (
         !renderEntity ||
         renderEntity.type !== entity.type ||
@@ -139,6 +158,7 @@ export function StreamingDemoPlayback({ recording }: { recording: DemoRecording 
           entity.dataBlockId,
           entity.shapeHint,
         );
+        shouldRebuild = true;
       }
 
       renderEntity.playerName = entity.playerName;
@@ -151,6 +171,7 @@ export function StreamingDemoPlayback({ recording }: { recording: DemoRecording 
       renderEntity.ghostIndex = entity.ghostIndex;
       renderEntity.dataBlockId = entity.dataBlockId;
       renderEntity.shapeHint = entity.shapeHint;
+      renderEntity.threads = entity.threads;
 
       if (renderEntity.keyframes.length === 0) {
         renderEntity.keyframes.push({
@@ -176,7 +197,6 @@ export function StreamingDemoPlayback({ recording }: { recording: DemoRecording 
 
     entityMapRef.current = nextMap;
     if (shouldRebuild) {
-      entitySignatureRef.current = nextSignature;
       setEntities(Array.from(nextMap.values()));
       const now = Date.now();
       if (now - lastEntityRebuildEventMsRef.current >= 500) {
@@ -185,7 +205,7 @@ export function StreamingDemoPlayback({ recording }: { recording: DemoRecording 
           kind: "stream.entities.rebuild",
           message: "Renderable demo entity list was rebuilt",
           meta: {
-            previousEntityCount,
+            previousEntityCount: prevMap.size,
             nextEntityCount: nextMap.size,
             snapshotTimeSec: Number(snapshot.timeSec.toFixed(3)),
           },
@@ -208,7 +228,7 @@ export function StreamingDemoPlayback({ recording }: { recording: DemoRecording 
   useEffect(() => {
     streamRef.current = recording.streamingPlayback ?? null;
     entityMapRef.current = new Map();
-    entitySignatureRef.current = "";
+    lastSyncedSnapshotRef.current = null;
     publishedSnapshotRef.current = null;
     timeRef.current = 0;
     playbackClockRef.current = 0;
@@ -383,8 +403,8 @@ export function StreamingDemoPlayback({ recording }: { recording: DemoRecording 
       }
     }
 
-    const currentEntities = new Map(renderCurrent.entities.map((e) => [e.id, e]));
-    const previousEntities = new Map(renderPrev.entities.map((e) => [e.id, e]));
+    const currentEntities = getEntityMap(renderCurrent);
+    const previousEntities = getEntityMap(renderPrev);
     const root = rootRef.current;
     if (root) {
       for (const child of root.children) {
@@ -412,7 +432,7 @@ export function StreamingDemoPlayback({ recording }: { recording: DemoRecording 
         }
 
         if (entity.faceViewer) {
-          child.quaternion.copy(state.camera.quaternion);
+          child.quaternion.copy(state.camera.quaternion).multiply(_billboardFlip);
         } else if (entity.visual?.kind === "tracer") {
           child.quaternion.identity();
         } else if (entity.rotation) {
@@ -466,31 +486,6 @@ export function StreamingDemoPlayback({ recording }: { recording: DemoRecording 
           const orbitDistance = Math.max(0.1, currentCamera.orbitDistance ?? 4);
           _orbitCandidate.copy(_orbitTarget).addScaledVector(_orbitDir, orbitDistance);
 
-          // Mirror Camera::validateEyePoint: cast 2.5x desired distance toward
-          // the candidate and pull in if an obstacle blocks the orbit.
-          _orbitRaycaster.near = 0.001;
-          _orbitRaycaster.far = orbitDistance * 2.5;
-          _orbitRaycaster.camera = state.camera;
-          _orbitRaycaster.set(_orbitTarget, _orbitDir);
-          const hits = _orbitRaycaster.intersectObjects(state.scene.children, true);
-          for (const hit of hits) {
-            if (hit.distance <= 0.0001) continue;
-            if (hasAncestorNamed(hit.object, currentCamera.orbitTargetId)) continue;
-            if (!hit.face) break;
-
-            _hitNormal.copy(hit.face.normal).transformDirection(hit.object.matrixWorld);
-            const dot = -_orbitDir.dot(_hitNormal);
-            if (dot > 0.01) {
-              let colDist = hit.distance - CAMERA_COLLISION_RADIUS / dot;
-              if (colDist > orbitDistance) colDist = orbitDistance;
-              if (colDist < 0) colDist = 0;
-              _orbitCandidate
-                .copy(_orbitTarget)
-                .addScaledVector(_orbitDir, colDist);
-            }
-            break;
-          }
-
           state.camera.position.copy(_orbitCandidate);
           state.camera.lookAt(_orbitTarget);
         }
@@ -539,6 +534,10 @@ export function StreamingDemoPlayback({ recording }: { recording: DemoRecording 
           <DemoEntityGroup key={entity.id} entity={entity} timeRef={timeRef} />
         ))}
       </group>
+      <DemoParticleEffects
+        playback={recording.streamingPlayback}
+        snapshotRef={currentTickSnapshotRef}
+      />
       {firstPersonShape && (
         <Suspense fallback={null}>
           <PlayerEyeOffset shapeName={firstPersonShape} eyeOffsetRef={eyeOffsetRef} />

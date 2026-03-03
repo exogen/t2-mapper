@@ -74,13 +74,18 @@ for i, in_path in enumerate(input_files, start=1):
     # Reset scene for each file
     bpy.ops.wm.read_factory_settings(use_empty=True)
 
+    # Match the fps the addon uses for keyframe placement so the glTF exporter
+    # converts frame numbers to the correct times (factory default is 24fps).
+    bpy.context.scene.render.fps = 30
+    bpy.context.scene.render.fps_base = 1.0
+
     # Re-enable add-on after reset
     addon_utils.enable(args.addon, default_set=True, handle_error=None)
 
     # Import
     print(f"[dts2gltf] [{i}/{total}] Converting: {in_path}")
     try:
-        res = op_call(filepath=in_path, merge_verts=True, import_sequences=True)
+        res = op_call(filepath=in_path, merge_verts=True, import_sequences=True, dsq_name_from_filename=True)
         if "FINISHED" not in res:
             raise RuntimeError(f"Import failed via {op_id}")
     except Exception:
@@ -108,6 +113,11 @@ for i, in_path in enumerate(input_files, start=1):
         # Blender and T2 are Z-up, but these assets are destined for Three.js which
         # is Y-up. It's easiest to match the Y-up of our destination engine.
         export_yup=True,
+        # Don't force-sample all bones; only export F-curves that exist.
+        # This prevents placeholder animations (IFL/visibility-only sequences)
+        # from getting rest-pose channels for every bone, which would override
+        # other playing animations.
+        export_force_sampling=False,
         # Draco compression
         export_draco_mesh_compression_enable=True,
         export_draco_mesh_compression_level=6,

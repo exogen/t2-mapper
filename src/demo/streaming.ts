@@ -5,7 +5,9 @@ import {
   DemoParser,
 } from "t2-demo-parser";
 import { Matrix4, Quaternion } from "three";
+import { getTerrainHeightAt } from "../terrainHeight";
 import type {
+  DemoThreadState,
   DemoVisual,
   DemoRecording,
   DemoStreamCamera,
@@ -69,8 +71,24 @@ interface MutableStreamEntity {
   expiryTick?: number;
   /** Billboard toward camera (Torque's faceViewer). */
   faceViewer?: boolean;
+  /** Numeric ID of the ExplosionData datablock (for particle effect resolution). */
+  explosionDataBlockId?: number;
+  /** Numeric ID of the ParticleEmitterData for in-flight trail particles. */
+  maintainEmitterId?: number;
+  /** Whether we've already tried to resolve maintainEmitter (debug flag). */
+  maintainEmitterChecked?: boolean;
   /** Target's sensor group (team number). */
   sensorGroup?: number;
+  /** DTS animation thread states from ghost ThreadMask data. */
+  threads?: DemoThreadState[];
+  /** Item physics simulation state (dropped weapons/items). */
+  itemPhysics?: {
+    velocity: [number, number, number];
+    atRest: boolean;
+    elasticity: number;
+    friction: number;
+    gravityMod: number;
+  };
 }
 
 interface StreamState {
@@ -791,6 +809,7 @@ class StreamingPlayback implements DemoStreamingPlayback {
       if (block.type === BlockTypeMove) {
         this.state.moveTicks += 1;
         this.advanceProjectiles();
+        this.advanceItems();
         this.removeExpiredExplosions();
         this.updateCameraAndHud();
         return true;
@@ -965,6 +984,33 @@ class StreamingPlayback implements DemoStreamingPlayback {
     const ghostIndex = ghost.index;
     const prevEntityId = this.state.entityIdByGhostIndex.get(ghostIndex);
 
+    // When a projectile entity is being removed (ghost delete, ghost index
+    // reuse, or same-class index reuse), spawn an explosion at its last known
+    // position if it hasn't already exploded. The Torque engine's KillGhost
+    // mechanism silently drops pending ExplosionMask data when a ghost goes
+    // out of scope, so explosion positions almost never arrive in the demo
+    // stream. The original client compensated with client-side raycast
+    // collision detection in processTick(); we approximate by triggering the
+    // explosion when the ghost disappears.
+    if (prevEntityId) {
+      const prevEntity = this.state.entitiesById.get(prevEntityId);
+      if (
+        prevEntity &&
+        prevEntity.type === "Projectile" &&
+        !prevEntity.hasExploded &&
+        prevEntity.explosionShape &&
+        prevEntity.position &&
+        // Ghost is being deleted or its index is being reassigned to a new
+        // ghost (either a different class or a fresh create of the same class).
+        (ghost.type === "delete" || ghost.type === "create")
+      ) {
+        this.spawnExplosion(
+          prevEntity,
+          [...prevEntity.position] as [number, number, number],
+        );
+      }
+    }
+
     if (ghost.type === "delete") {
       if (prevEntityId) {
         this.state.entitiesById.delete(prevEntityId);
@@ -983,8 +1029,32 @@ class StreamingPlayback implements DemoStreamingPlayback {
       this.state.entitiesById.delete(prevEntityId);
     }
 
-    let entity = this.state.entitiesById.get(entityId);
-    if (!entity) {
+    let entity: MutableStreamEntity;
+    const existingEntity = this.state.entitiesById.get(entityId);
+    if (existingEntity && ghost.type === "create") {
+      // Same-class ghost index reuse: reset the entity for the new ghost
+      // to avoid stale fields (hasExploded, explosionShape, etc.) from the
+      // previous occupant leaking into the new one.
+      existingEntity.spawnTick = this.state.moveTicks;
+      existingEntity.rotation = [0, 0, 0, 1];
+      existingEntity.hasExploded = undefined;
+      existingEntity.explosionShape = undefined;
+      existingEntity.explosionLifetimeTicks = undefined;
+      existingEntity.faceViewer = undefined;
+      existingEntity.simulatedVelocity = undefined;
+      existingEntity.projectilePhysics = undefined;
+      existingEntity.gravityMod = undefined;
+      existingEntity.direction = undefined;
+      existingEntity.velocity = undefined;
+      existingEntity.position = undefined;
+      existingEntity.dataBlock = undefined;
+      existingEntity.dataBlockId = undefined;
+      existingEntity.shapeHint = undefined;
+      existingEntity.visual = undefined;
+      entity = existingEntity;
+    } else if (existingEntity) {
+      entity = existingEntity;
+    } else {
       entity = {
         id: entityId,
         ghostIndex,
@@ -1042,7 +1112,7 @@ class StreamingPlayback implements DemoStreamingPlayback {
     return undefined;
   }
 
-  private getDataBlockData(
+  getDataBlockData(
     dataBlockId: number,
   ): Record<string, unknown> | undefined {
     const initialBlock = this.initialBlock.dataBlocks.get(dataBlockId);
@@ -1060,20 +1130,35 @@ class StreamingPlayback implements DemoStreamingPlayback {
     shape: string;
     faceViewer: boolean;
     lifetimeTicks: number;
+    explosionDataBlockId: number;
   } | undefined {
     const projBlock = this.getDataBlockData(projDataBlockId);
-    const explosionId = projBlock?.explosion as number | undefined;
-    if (explosionId == null) return undefined;
+    // The demo parser's field names don't match the V12 engine. The parser's
+    // `maintainSound` field is actually the engine's `explosion` DataBlockRef.
+    // (Parser reads bits correctly but assigns wrong names to ProjectileData fields.)
+    const explosionId = projBlock?.maintainSound as number | undefined;
+    if (explosionId == null) {
+      console.log("[streaming] resolveExplosionInfo — no explosion field on projBlock id:", projDataBlockId);
+      return undefined;
+    }
     const expBlock = this.getDataBlockData(explosionId);
-    if (!expBlock) return undefined;
+    if (!expBlock) {
+      console.log("[streaming] resolveExplosionInfo — expBlock not found for explosionId:", explosionId);
+      return undefined;
+    }
     const shape = expBlock.dtsFileName as string | undefined;
-    if (!shape) return undefined;
+    if (!shape) {
+      console.log("[streaming] resolveExplosionInfo — no dtsFileName on expBlock, explosionId:", explosionId, "keys:", Object.keys(expBlock));
+      return undefined;
+    }
     // The parser's lifetimeMS field is actually in ticks (32ms each), not ms.
     const lifetimeTicks = (expBlock.lifetimeMS as number | undefined) ?? 31;
+    console.log("[streaming] resolveExplosionInfo OK — projDataBlockId:", projDataBlockId, "explosionId:", explosionId, "shape:", shape, "lifetimeTicks:", lifetimeTicks);
     return {
       shape,
       faceViewer: expBlock.faceViewer !== false && expBlock.faceViewer !== 0,
       lifetimeTicks,
+      explosionDataBlockId: explosionId,
     };
   }
 
@@ -1121,6 +1206,24 @@ class StreamingPlayback implements DemoStreamingPlayback {
           entity.explosionShape = info.shape;
           entity.faceViewer = info.faceViewer;
           entity.explosionLifetimeTicks = info.lifetimeTicks;
+          entity.explosionDataBlockId = info.explosionDataBlockId;
+        }
+      }
+
+      // Resolve trail particle emitter for projectiles (once per entity).
+      if (
+        entity.type === "Projectile" &&
+        entity.maintainEmitterId == null
+      ) {
+        // The demo parser's `activateEmitter` is actually the engine's
+        // `baseEmitter` — the primary trail emitter for projectiles.
+        const trailEmitterId = blockData?.activateEmitter as number | null;
+        if (typeof trailEmitterId === "number" && trailEmitterId > 0) {
+          entity.maintainEmitterId = trailEmitterId;
+          console.log("[streaming] baseEmitter resolved for", entity.className, entity.id, "— emitterId:", trailEmitterId);
+        } else if (!entity.maintainEmitterChecked) {
+          console.log("[streaming] baseEmitter NOT found on", entity.className, entity.id, "— blockData keys:", blockData ? Object.keys(blockData) : "NO blockData", "activateEmitter:", blockData?.activateEmitter);
+          entity.maintainEmitterChecked = true;
         }
       }
     }
@@ -1138,6 +1241,10 @@ class StreamingPlayback implements DemoStreamingPlayback {
               entity.weaponShape = weaponShape;
             }
           }
+        } else if (weaponImage && !weaponImage.dataBlockId) {
+          // Server explicitly unmounted the weapon (dataBlockId = 0), e.g. on
+          // player death. Clear the weapon so it stops rendering.
+          entity.weaponShape = undefined;
         }
       }
     }
@@ -1212,6 +1319,31 @@ class StreamingPlayback implements DemoStreamingPlayback {
       entity.velocity = [data.velocity.x, data.velocity.y, data.velocity.z];
       if (!entity.direction) {
         entity.direction = [data.velocity.x, data.velocity.y, data.velocity.z];
+      }
+    }
+
+    // Item physics: simulate dropped items falling under gravity and bouncing.
+    if (entity.type === "Item") {
+      const atRest = data.atRest as boolean | undefined;
+      if (atRest === true) {
+        // Server says item is at rest — stop simulating.
+        entity.itemPhysics = undefined;
+      } else if (atRest === false && isVec3Like(data.velocity)) {
+        // Item is moving — initialize or update physics simulation.
+        const blockData =
+          entity.dataBlockId != null
+            ? this.getDataBlockData(entity.dataBlockId)
+            : undefined;
+        entity.itemPhysics = {
+          velocity: [data.velocity.x, data.velocity.y, data.velocity.z],
+          atRest: false,
+          elasticity: getNumberField(blockData, ["elasticity"]) ?? 0.2,
+          friction: getNumberField(blockData, ["friction"]) ?? 0.6,
+          gravityMod: getNumberField(blockData, ["gravityMod"]) ?? 1.0,
+        };
+      } else if (position && !isVec3Like(data.velocity)) {
+        // Server snapped position without velocity — stop simulating.
+        entity.itemPhysics = undefined;
       }
     }
 
@@ -1295,26 +1427,7 @@ class StreamingPlayback implements DemoStreamingPlayback {
       explodePos &&
       entity.explosionShape
     ) {
-      entity.hasExploded = true;
-      const fxId = `fx_${this.state.nextExplosionId++}`;
-      const lifetimeTicks = entity.explosionLifetimeTicks ?? 31;
-      const fxEntity: MutableStreamEntity = {
-        id: fxId,
-        ghostIndex: -1,
-        className: "Explosion",
-        spawnTick: this.state.moveTicks,
-        type: "Explosion",
-        dataBlock: entity.explosionShape,
-        position: [explodePos.x, explodePos.y, explodePos.z],
-        rotation: [0, 0, 0, 1],
-        isExplosion: true,
-        faceViewer: entity.faceViewer !== false,
-        expiryTick: this.state.moveTicks + lifetimeTicks,
-      };
-      this.state.entitiesById.set(fxId, fxEntity);
-      // Stop the projectile — the explosion takes over visually.
-      entity.position = undefined;
-      entity.simulatedVelocity = undefined;
+      this.spawnExplosion(entity, [explodePos.x, explodePos.y, explodePos.z]);
     }
 
     if (typeof data.damageLevel === "number") {
@@ -1327,6 +1440,10 @@ class StreamingPlayback implements DemoStreamingPlayback {
     if (typeof data.action === "number") {
       entity.actionAnim = data.action;
       entity.actionAtEnd = !!data.actionAtEnd;
+    }
+
+    if (Array.isArray(data.threads)) {
+      entity.threads = data.threads as DemoThreadState[];
     }
 
     if (typeof data.energy === "number") {
@@ -1374,6 +1491,78 @@ class StreamingPlayback implements DemoStreamingPlayback {
         entity.rotation = playerYawToQuaternion(Math.atan2(v[0], v[1]));
       }
     }
+  }
+
+  private advanceItems(): void {
+    const dt = TICK_DURATION_MS / 1000; // 0.032
+    for (const entity of this.state.entitiesById.values()) {
+      const phys = entity.itemPhysics;
+      if (!phys || phys.atRest || !entity.position) continue;
+      const v = phys.velocity;
+      const p = entity.position;
+
+      // Gravity: Tribes 2 uses -20 m/s² (Torque Z-up).
+      v[2] += -20 * phys.gravityMod * dt;
+
+      // Move
+      p[0] += v[0] * dt;
+      p[1] += v[1] * dt;
+      p[2] += v[2] * dt;
+
+      // Terrain collision (flat normal approximation: [0, 0, 1])
+      const groundZ = getTerrainHeightAt(p[0], p[1]);
+      if (groundZ != null && p[2] < groundZ) {
+        p[2] = groundZ;
+        const bd = Math.abs(v[2]); // normal impact speed
+        v[2] = bd * phys.elasticity; // reflect with restitution
+        // Friction: reduce horizontal speed proportional to impact
+        const friction = bd * phys.friction;
+        const hSpeed = Math.sqrt(v[0] * v[0] + v[1] * v[1]);
+        if (hSpeed > 0) {
+          const scale = Math.max(0, 1 - friction / hSpeed);
+          v[0] *= scale;
+          v[1] *= scale;
+        }
+        // At-rest check
+        const speed = Math.sqrt(
+          v[0] * v[0] + v[1] * v[1] + v[2] * v[2],
+        );
+        if (speed < 0.15) {
+          v[0] = v[1] = v[2] = 0;
+          phys.atRest = true;
+        }
+      }
+    }
+  }
+
+  /** Create a synthetic explosion entity from a projectile. */
+  private spawnExplosion(
+    entity: MutableStreamEntity,
+    position: [number, number, number],
+  ): void {
+    entity.hasExploded = true;
+    const fxId = `fx_${this.state.nextExplosionId++}`;
+    const lifetimeTicks = entity.explosionLifetimeTicks ?? 31;
+    // DEBUG: log explosion spawn
+    console.log("[streaming] spawnExplosion — fxId:", fxId, "explosionDataBlockId:", entity.explosionDataBlockId, "explosionShape:", entity.explosionShape, "pos:", position, "lifetimeTicks:", lifetimeTicks, "moveTicks:", this.state.moveTicks);
+    const fxEntity: MutableStreamEntity = {
+      id: fxId,
+      ghostIndex: -1,
+      className: "Explosion",
+      spawnTick: this.state.moveTicks,
+      type: "Explosion",
+      dataBlock: entity.explosionShape,
+      explosionDataBlockId: entity.explosionDataBlockId,
+      position,
+      rotation: [0, 0, 0, 1],
+      isExplosion: true,
+      faceViewer: entity.faceViewer !== false,
+      expiryTick: this.state.moveTicks + lifetimeTicks,
+    };
+    this.state.entitiesById.set(fxId, fxEntity);
+    // Stop the projectile — the explosion takes over visually.
+    entity.position = undefined;
+    entity.simulatedVelocity = undefined;
   }
 
   private removeExpiredExplosions(): void {
@@ -1543,16 +1732,17 @@ class StreamingPlayback implements DemoStreamingPlayback {
           entity.type === "Player" && entity.sensorGroup != null
             ? this.resolveIffColor(entity.sensorGroup)
             : undefined,
-        // Clone mutable arrays so each snapshot is an immutable record of
-        // tick-time state.  advanceProjectiles() mutates entity.position
-        // in-place, which would otherwise corrupt previous snapshots and
-        // break inter-tick interpolation in the renderer.
-        position: entity.position
-          ? ([...entity.position] as [number, number, number])
-          : undefined,
-        rotation: entity.rotation
-          ? ([...entity.rotation] as [number, number, number, number])
-          : undefined,
+        // Only clone position for entities whose position is mutated in-place
+        // by advanceProjectiles() or advanceItems(). Other entities get new
+        // arrays from applyGhostData(), so the old reference stays valid.
+        position:
+          entity.position &&
+          (entity.simulatedVelocity ||
+            (entity.itemPhysics && !entity.itemPhysics.atRest))
+            ? ([...entity.position] as [number, number, number])
+            : entity.position,
+        // Rotation is always replaced (never mutated in-place), so no clone.
+        rotation: entity.rotation,
         velocity: entity.velocity,
         health: entity.health,
         energy: entity.energy,
@@ -1560,6 +1750,9 @@ class StreamingPlayback implements DemoStreamingPlayback {
         actionAtEnd: entity.actionAtEnd,
         damageState: entity.damageState,
         faceViewer: entity.faceViewer,
+        threads: entity.threads,
+        explosionDataBlockId: entity.explosionDataBlockId,
+        maintainEmitterId: entity.maintainEmitterId,
       });
     }
 
@@ -1657,10 +1850,6 @@ export async function createDemoStreamingRecording(
     duration: header.demoLengthMs / 1000,
     missionName: infoMissionName ?? initialBlock.missionName ?? null,
     gameType,
-    entities: [],
-    cameraModes: [],
-    isMetadataOnly: true,
-    isPartial: true,
     streamingPlayback: new StreamingPlayback(parser),
   };
 }

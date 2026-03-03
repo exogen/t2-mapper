@@ -30,9 +30,6 @@ function DemoPlaybackDiagnostics({ recording }: { recording: DemoRecording }) {
       meta: {
         missionName: recording.missionName ?? null,
         gameType: recording.gameType ?? null,
-        isMetadataOnly: !!recording.isMetadataOnly,
-        isPartial: !!recording.isPartial,
-        hasStreamingPlayback: !!recording.streamingPlayback,
         durationSec: Number(recording.duration.toFixed(3)),
       },
     });

@@ -301,7 +301,7 @@ export interface RuntimeAPI {
     className: string,
     methodName: string,
     callback: (thisObj: TorqueObject, ...args: any[]) => void,
-  ): void;
+  ): () => void;
 }
 
 export interface FunctionsAPI {
