@@ -7,8 +7,5 @@ declare global {
     getMissionList?: typeof getMissionList;
     getMissionInfo?: typeof getMissionInfo;
     loadDemoRecording?: (recording: DemoRecording) => void;
-    getDemoDiagnostics?: () => unknown;
-    getDemoDiagnosticsJson?: () => string;
-    clearDemoDiagnostics?: () => void;
   }
 }

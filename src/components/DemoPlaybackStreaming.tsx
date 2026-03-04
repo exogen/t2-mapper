@@ -9,7 +9,6 @@ import {
 import {
   buildStreamDemoEntity,
   DEFAULT_EYE_HEIGHT,
-  nextLifecycleInstanceId,
   STREAM_TICK_SEC,
   torqueHorizontalFovToThreeVerticalFov,
 } from "../demo/demoPlaybackUtils";
@@ -47,15 +46,8 @@ const _orbitDir = new Vector3();
 const _orbitTarget = new Vector3();
 const _orbitCandidate = new Vector3();
 
-let streamingDemoPlaybackMountCount = 0;
-let streamingDemoPlaybackUnmountCount = 0;
-
 export function StreamingDemoPlayback({ recording }: { recording: DemoRecording }) {
   const engineStore = useEngineStoreApi();
-  const instanceIdRef = useRef<string | null>(null);
-  if (!instanceIdRef.current) {
-    instanceIdRef.current = nextLifecycleInstanceId("StreamingDemoPlayback");
-  }
   const rootRef = useRef<Group>(null);
   const timeRef = useRef(0);
   const playbackClockRef = useRef(0);
@@ -66,61 +58,8 @@ export function StreamingDemoPlayback({ recording }: { recording: DemoRecording 
   const publishedSnapshotRef = useRef<DemoStreamSnapshot | null>(null);
   const entityMapRef = useRef<Map<string, DemoEntity>>(new Map());
   const lastSyncedSnapshotRef = useRef<DemoStreamSnapshot | null>(null);
-  const lastEntityRebuildEventMsRef = useRef(0);
-  const exhaustedEventLoggedRef = useRef(false);
   const [entities, setEntities] = useState<DemoEntity[]>([]);
   const [firstPersonShape, setFirstPersonShape] = useState<string | null>(null);
-
-  useEffect(() => {
-    streamingDemoPlaybackMountCount += 1;
-    const mountedAt = Date.now();
-    engineStore.getState().recordPlaybackDiagnosticEvent({
-      kind: "component.lifecycle",
-      message: "StreamingDemoPlayback mounted",
-      meta: {
-        component: "StreamingDemoPlayback",
-        phase: "mount",
-        instanceId: instanceIdRef.current,
-        mountCount: streamingDemoPlaybackMountCount,
-        unmountCount: streamingDemoPlaybackUnmountCount,
-        recordingMissionName: recording.missionName ?? null,
-        recordingDurationSec: Number(recording.duration.toFixed(3)),
-        ts: mountedAt,
-      },
-    });
-    console.info("[demo diagnostics] StreamingDemoPlayback mounted", {
-      instanceId: instanceIdRef.current,
-      mountCount: streamingDemoPlaybackMountCount,
-      unmountCount: streamingDemoPlaybackUnmountCount,
-      recordingMissionName: recording.missionName ?? null,
-      mountedAt,
-    });
-
-    return () => {
-      streamingDemoPlaybackUnmountCount += 1;
-      const unmountedAt = Date.now();
-      engineStore.getState().recordPlaybackDiagnosticEvent({
-        kind: "component.lifecycle",
-        message: "StreamingDemoPlayback unmounted",
-        meta: {
-          component: "StreamingDemoPlayback",
-          phase: "unmount",
-          instanceId: instanceIdRef.current,
-          mountCount: streamingDemoPlaybackMountCount,
-          unmountCount: streamingDemoPlaybackUnmountCount,
-          recordingMissionName: recording.missionName ?? null,
-          ts: unmountedAt,
-        },
-      });
-      console.info("[demo diagnostics] StreamingDemoPlayback unmounted", {
-        instanceId: instanceIdRef.current,
-        mountCount: streamingDemoPlaybackMountCount,
-        unmountCount: streamingDemoPlaybackUnmountCount,
-        recordingMissionName: recording.missionName ?? null,
-        unmountedAt,
-      });
-    };
-  }, [engineStore]);
 
   const syncRenderableEntities = useCallback((snapshot: DemoStreamSnapshot) => {
     if (snapshot === lastSyncedSnapshotRef.current) return;
@@ -172,6 +111,10 @@ export function StreamingDemoPlayback({ recording }: { recording: DemoRecording 
       renderEntity.dataBlockId = entity.dataBlockId;
       renderEntity.shapeHint = entity.shapeHint;
       renderEntity.threads = entity.threads;
+      renderEntity.weaponImageState = entity.weaponImageState;
+      renderEntity.weaponImageStates = entity.weaponImageStates;
+      renderEntity.headPitch = entity.headPitch;
+      renderEntity.headYaw = entity.headYaw;
 
       if (renderEntity.keyframes.length === 0) {
         renderEntity.keyframes.push({
@@ -198,19 +141,6 @@ export function StreamingDemoPlayback({ recording }: { recording: DemoRecording 
     entityMapRef.current = nextMap;
     if (shouldRebuild) {
       setEntities(Array.from(nextMap.values()));
-      const now = Date.now();
-      if (now - lastEntityRebuildEventMsRef.current >= 500) {
-        lastEntityRebuildEventMsRef.current = now;
-        engineStore.getState().recordPlaybackDiagnosticEvent({
-          kind: "stream.entities.rebuild",
-          message: "Renderable demo entity list was rebuilt",
-          meta: {
-            previousEntityCount: prevMap.size,
-            nextEntityCount: nextMap.size,
-            snapshotTimeSec: Number(snapshot.timeSec.toFixed(3)),
-          },
-        });
-      }
     }
 
     let nextFirstPersonShape: string | null = null;
@@ -223,7 +153,7 @@ export function StreamingDemoPlayback({ recording }: { recording: DemoRecording 
     setFirstPersonShape((prev) =>
       prev === nextFirstPersonShape ? prev : nextFirstPersonShape,
     );
-  }, [engineStore]);
+  }, []);
 
   useEffect(() => {
     streamRef.current = recording.streamingPlayback ?? null;
@@ -234,8 +164,6 @@ export function StreamingDemoPlayback({ recording }: { recording: DemoRecording 
     playbackClockRef.current = 0;
     prevTickSnapshotRef.current = null;
     currentTickSnapshotRef.current = null;
-    exhaustedEventLoggedRef.current = false;
-
     const stream = streamRef.current;
     if (!stream) {
       engineStore.getState().setPlaybackStreamSnapshot(null);
@@ -339,7 +267,9 @@ export function StreamingDemoPlayback({ recording }: { recording: DemoRecording 
       renderCurrent.camera?.controlEntityId !==
         publishedSnapshot.camera?.controlEntityId ||
       renderCurrent.camera?.orbitTargetId !==
-        publishedSnapshot.camera?.orbitTargetId;
+        publishedSnapshot.camera?.orbitTargetId ||
+      renderCurrent.chatMessages.length !== publishedSnapshot.chatMessages.length ||
+      renderCurrent.teamScores !== publishedSnapshot.teamScores;
 
     if (shouldPublish) {
       publishedSnapshotRef.current = renderCurrent;
@@ -505,20 +435,7 @@ export function StreamingDemoPlayback({ recording }: { recording: DemoRecording 
     }
 
     if (isPlaying && snapshot.exhausted) {
-      if (!exhaustedEventLoggedRef.current) {
-        exhaustedEventLoggedRef.current = true;
-        storeState.recordPlaybackDiagnosticEvent({
-          kind: "stream.exhausted",
-          message: "Streaming playback reached end-of-stream while playing",
-          meta: {
-            streamTimeSec: Number(snapshot.timeSec.toFixed(3)),
-            requestedPlaybackSec: Number(playbackClockRef.current.toFixed(3)),
-          },
-        });
-      }
       storeState.setPlaybackStatus("paused");
-    } else if (!snapshot.exhausted) {
-      exhaustedEventLoggedRef.current = false;
     }
 
     const timeMs = playbackClockRef.current * 1000;

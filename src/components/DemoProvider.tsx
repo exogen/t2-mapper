@@ -2,19 +2,6 @@ import { useCallback, type ReactNode } from "react";
 import type { DemoRecording } from "../demo/types";
 import { useEngineSelector } from "../state";
 
-interface DemoContextValue {
-  recording: DemoRecording | null;
-  setRecording: (recording: DemoRecording | null) => void;
-  isPlaying: boolean;
-  currentTime: number;
-  duration: number;
-  speed: number;
-  play: () => void;
-  pause: () => void;
-  seek: (time: number) => void;
-  setSpeed: (speed: number) => void;
-}
-
 export function DemoProvider({ children }: { children: ReactNode }) {
   return <>{children}</>;
 }
@@ -85,30 +72,4 @@ export function useDemoActions() {
     seek,
     setSpeed,
   };
-}
-
-export function useDemo(): DemoContextValue {
-  const recording = useDemoRecording();
-  const isPlaying = useDemoIsPlaying();
-  const currentTime = useDemoCurrentTime();
-  const duration = useDemoDuration();
-  const speed = useDemoSpeed();
-  const actions = useDemoActions();
-
-  return {
-    recording,
-    isPlaying,
-    currentTime,
-    duration,
-    speed,
-    setRecording: actions.setRecording,
-    play: actions.play,
-    pause: actions.pause,
-    seek: actions.seek,
-    setSpeed: actions.setSpeed,
-  };
-}
-
-export function useDemoOptional(): DemoContextValue {
-  return useDemo();
 }

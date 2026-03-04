@@ -3,6 +3,7 @@
  */
 import {
   DataTexture,
+  ImageBitmapLoader,
   LinearFilter,
   LinearMipmapLinearFilter,
   NoColorSpace,
@@ -12,6 +13,71 @@ import {
   Texture,
   UnsignedByteType,
 } from "three";
+
+const _bitmapLoader = new ImageBitmapLoader();
+const _textureCache = new Map<string, Texture>();
+
+/**
+ * Load a texture using ImageBitmapLoader, which decodes images off the main
+ * thread to avoid jank from synchronous image decodes during texSubImage2D.
+ * Returns a cached Texture if the same URL was loaded before, otherwise creates
+ * an initially-empty Texture that gets populated when the image loads.
+ */
+export function loadTexture(
+  url: string,
+  onLoad?: (texture: Texture) => void,
+): Texture {
+  const cached = _textureCache.get(url);
+  if (cached) {
+    // Already loaded (or in flight) — fire callback if image is ready.
+    if (onLoad && cached.image) onLoad(cached);
+    return cached;
+  }
+  const texture = new Texture();
+  // ImageBitmap doesn't support UNPACK_FLIP_Y_WEBGL, so flipY must be false.
+  // This matches our codebase where all textures use flipY = false.
+  texture.flipY = false;
+  _textureCache.set(url, texture);
+  _bitmapLoader.load(url, (bitmap) => {
+    texture.image = bitmap;
+    texture.needsUpdate = true;
+    onLoad?.(texture);
+  });
+  return texture;
+}
+
+/** Promise-based variant of loadTexture. */
+export function loadTextureAsync(url: string): Promise<Texture> {
+  const cached = _textureCache.get(url);
+  if (cached) {
+    return cached.image
+      ? Promise.resolve(cached)
+      : new Promise((resolve) => {
+          // In flight — poll until populated (bitmapLoader doesn't expose
+          // a way to attach multiple callbacks to the same request).
+          const check = () => {
+            if (cached.image) resolve(cached);
+            else setTimeout(check, 16);
+          };
+          check();
+        });
+  }
+  return new Promise((resolve, reject) => {
+    const texture = new Texture();
+    texture.flipY = false;
+    _textureCache.set(url, texture);
+    _bitmapLoader.load(
+      url,
+      (bitmap) => {
+        texture.image = bitmap;
+        texture.needsUpdate = true;
+        resolve(texture);
+      },
+      undefined,
+      reject,
+    );
+  });
+}
 
 export interface TextureSetupOptions {
   /** Texture repeat values [x, y]. Default: [1, 1] */

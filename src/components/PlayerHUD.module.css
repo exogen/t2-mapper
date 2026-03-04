@@ -6,48 +6,233 @@
   bottom: 0;
   z-index: 1;
   pointer-events: none;
-  padding-bottom: 48px;
 }
 
-.ChatWindow {
+/* ── Top-right cluster: compass + bars ── */
+
+.TopRight {
   position: absolute;
-  top: 60px;
-  left: 4px;
+  top: 56px;
+  right: 8px;
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
 }
 
-.Bar {
-  width: 160px;
-  height: 14px;
-  background: rgba(0, 0, 0, 0.5);
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  overflow: hidden;
-  position: absolute;
+.Compass {
+  position: relative;
+  width: 64px;
+  height: 64px;
+  flex-shrink: 0;
 }
 
-.HealthBar {
-  composes: Bar;
-  top: 60px;
-  right: 32px;
-}
-
-.EnergyBar {
-  composes: Bar;
-  top: 80px;
-  right: 32px;
-}
-
-.BarFill {
+.CompassRing {
   position: absolute;
   top: 0;
   left: 0;
+  width: 100%;
   height: 100%;
+  image-rendering: auto;
+}
+
+.CompassNSEW {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  image-rendering: pixelated;
+}
+
+.Bars {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding-top: 10px;
+}
+
+.BarTrack {
+  width: 120px;
+  height: 10px;
+  background: rgba(0, 0, 0, 0.5);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  overflow: hidden;
+}
+
+.BarFillHealth {
+  height: 100%;
+  background: #2ecc40;
   transition: width 0.15s ease-out;
 }
 
-.HealthBar .BarFill {
-  background: #2ecc40;
+.BarFillEnergy {
+  height: 100%;
+  background: #0af;
+  transition: width 0.15s ease-out;
 }
 
-.EnergyBar .BarFill {
-  background: #0af;
+/* ── Weapon HUD (right side vertical list) ── */
+
+.WeaponHUD {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.WeaponSeparator {
+  height: 6px;
+}
+
+/* ── Chat Window (top-left) ── */
+
+.ChatWindow {
+  position: absolute;
+  top: 56px;
+  left: 0;
+  max-width: 420px;
+  background: rgba(0, 50, 60, 0.65);
+  padding: 4px 8px;
+  font-size: 12px;
+  line-height: 1.3;
+}
+
+.ChatMessage {
+  padding: 1px 0;
+  transition: opacity 0.3s ease-out;
+  /* Default to \c0 (GuiChatHudProfile fontColor) for untagged messages. */
+  color: rgb(44, 172, 181);
+}
+
+/* T2 GuiChatHudProfile fontColors palette (\c0–\c9). */
+.ChatColor0 { color: rgb(44, 172, 181); }
+.ChatColor1 { color: rgb(4, 235, 105); }
+.ChatColor2 { color: rgb(219, 200, 128); }
+.ChatColor3 { color: rgb(77, 253, 95); }
+.ChatColor4 { color: rgb(40, 231, 240); }
+.ChatColor5 { color: rgb(200, 200, 50); }
+.ChatColor6 { color: rgb(200, 200, 200); }
+.ChatColor7 { color: rgb(220, 220, 20); }
+.ChatColor8 { color: rgb(150, 150, 250); }
+.ChatColor9 { color: rgb(60, 220, 150); }
+
+/* ── Team Scores (bottom-left) ── */
+
+.TeamScores {
+  position: absolute;
+  bottom: 130px;
+  left: 0;
+  font-family: monospace;
+  font-size: 12px;
+}
+
+.TeamRow {
+  display: flex;
+  gap: 6px;
+  padding: 2px 8px;
+  background: rgba(0, 50, 60, 0.65);
+}
+
+.TeamRow + .TeamRow {
+  border-top: 1px solid rgba(128, 255, 200, 0.15);
+}
+
+.TeamNameFriendly {
+  color: #2ecc40;
+  min-width: 60px;
+}
+
+.TeamNameEnemy {
+  color: #e44;
+  min-width: 60px;
+}
+
+.TeamScore {
+  color: #fff;
+  min-width: 24px;
+  text-align: right;
+  font-weight: bold;
+}
+
+.TeamCount {
+  color: #9ba;
+  min-width: 24px;
+  text-align: right;
+}
+
+/* ── Pack + Inventory HUD (bottom-right) ── */
+
+.PackInventoryHUD {
+  position: absolute;
+  bottom: 100px;
+  right: 8px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.PackInvItem {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 50, 60, 0.65);
+  border: 1px solid rgba(128, 255, 200, 0.15);
+  padding: 4px;
+  gap: 1px;
+}
+
+.PackInvItemActive {
+  border-color: rgba(128, 255, 200, 0.5);
+  box-shadow: 0 0 6px rgba(128, 255, 200, 0.3);
+}
+
+.PackInvItemDim {
+  opacity: 0.5;
+}
+
+.PackInvIcon {
+  display: block;
+  image-rendering: pixelated;
+}
+
+.PackInvCount {
+  font-family: monospace;
+  font-size: 11px;
+  color: #bfe;
+  min-width: 12px;
+  text-align: center;
+}
+
+.PackInvInfinity {
+  display: block;
+  image-rendering: pixelated;
+  opacity: 0.8;
+}
+
+/* ── Reticle (center) ── */
+
+.Reticle {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+}
+
+.ReticleImage {
+  width: 64px;
+  height: 64px;
+  opacity: 0.85;
+  image-rendering: pixelated;
+}
+
+.ReticleDot {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: rgba(46, 204, 64, 0.7);
+  box-shadow: 0 0 4px rgba(46, 204, 64, 0.5);
 }

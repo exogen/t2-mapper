@@ -15,6 +15,7 @@ const baseDir = process.env.BASE_DIR || "docs/base";
 const ignoreList = ignore().add(`
 .DS_Store
 *.glb
+*.ogg
 `);
 
 type SourceTuple =

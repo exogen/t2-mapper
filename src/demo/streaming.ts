@@ -7,6 +7,8 @@ import {
 import { Matrix4, Quaternion } from "three";
 import { getTerrainHeightAt } from "../terrainHeight";
 import type {
+  ChatSegment,
+  DemoChatMessage,
   DemoThreadState,
   DemoVisual,
   DemoRecording,
@@ -14,6 +16,11 @@ import type {
   DemoStreamEntity,
   DemoStreamSnapshot,
   DemoStreamingPlayback,
+  InventoryHudSlot,
+  TeamScore,
+  WeaponImageDataBlockState,
+  WeaponImageState,
+  WeaponsHudSlot,
 } from "./types";
 
 type Vec3 = { x: number; y: number; z: number };
@@ -75,12 +82,20 @@ interface MutableStreamEntity {
   explosionDataBlockId?: number;
   /** Numeric ID of the ParticleEmitterData for in-flight trail particles. */
   maintainEmitterId?: number;
-  /** Whether we've already tried to resolve maintainEmitter (debug flag). */
-  maintainEmitterChecked?: boolean;
   /** Target's sensor group (team number). */
   sensorGroup?: number;
   /** DTS animation thread states from ghost ThreadMask data. */
   threads?: DemoThreadState[];
+  /** Weapon image condition flags from ghost ImageMask data. */
+  weaponImageState?: WeaponImageState;
+  /** Weapon image state machine states from the ShapeBaseImageData datablock. */
+  weaponImageStates?: WeaponImageDataBlockState[];
+  /** Tracks the datablock ID for which weaponImageStates was parsed. */
+  weaponImageStatesDbId?: number;
+  /** Head pitch for blend animations, normalized [-1,1]. */
+  headPitch?: number;
+  /** Head yaw for blend animations (freelook), normalized [-1,1]. */
+  headYaw?: number;
   /** Item physics simulation state (dropped weapons/items). */
   itemPhysics?: {
     velocity: [number, number, number];
@@ -93,10 +108,10 @@ interface MutableStreamEntity {
 
 interface StreamState {
   moveTicks: number;
-  moveYawAccum: number;
-  movePitchAccum: number;
-  yawOffset: number;
-  pitchOffset: number;
+  /** Absolute yaw tracking, replicated from V12 engine with [0,2π] wrapping. */
+  absoluteYaw: number;
+  /** Absolute pitch tracking, replicated from V12 engine with clamping. */
+  absolutePitch: number;
   lastAbsYaw: number;
   lastAbsPitch: number;
   lastControlType: ControlObjectType;
@@ -115,6 +130,29 @@ interface StreamState {
   nextExplosionId: number;
   /** The recording player's own sensor group (team). */
   playerSensorGroup: number;
+  chatMessages: DemoChatMessage[];
+  pendingAudioEvents: Array<{ profileId: number; position?: { x: number; y: number; z: number }; timeSec: number }>;
+  /** Weapons HUD inventory state driven by RemoteCommandEvents. */
+  weaponsHud: {
+    /** Map from HUD slot index to ammo count (-1 = infinite). */
+    slots: Map<number, number>;
+    /** Currently active (selected) HUD slot index, or -1 if none. */
+    activeIndex: number;
+  };
+  /** Backpack/pack HUD state. */
+  backpackHud: {
+    packIndex: number;
+    active: boolean;
+    text: string;
+  };
+  /** Inventory HUD state (grenades, mines, beacons, repair kits). */
+  inventoryHud: {
+    /** Map from display slot (0-3) to item count. */
+    slots: Map<number, number>;
+    activeSlot: number;
+  };
+  /** Team scores aggregated from the PLAYERLIST demoValues section. */
+  teamScores: TeamScore[];
 }
 
 const TICK_DURATION_MS = 32;
@@ -220,6 +258,211 @@ function extractMissionInfo(demoValues: string[]): {
   return { missionName, gameType };
 }
 
+/** Reverse lookup from $BackpackHudData bitmap names to table indices. */
+const BACKPACK_BITMAP_TO_INDEX = new Map<string, number>([
+  ["gui/hud_new_packammo", 0],
+  ["gui/hud_new_packcloak", 1],
+  ["gui/hud_new_packenergy", 2],
+  ["gui/hud_new_packrepair", 3],
+  ["gui/hud_new_packsatchel", 4],
+  ["gui/hud_new_packshield", 5],
+  ["gui/hud_new_packinventory", 6],
+  ["gui/hud_new_packmotionsens", 7],
+  ["gui/hud_new_packradar", 8],
+  ["gui/hud_new_packturretout", 9],
+  ["gui/hud_new_packturretin", 10],
+  ["gui/hud_new_packsensjam", 11],
+  ["gui/hud_new_packturret", 12], // barrel packs (12-17) share icon
+  ["gui/hud_satchel_unarmed", 18],
+]);
+
+function backpackBitmapToIndex(bitmap: string): number {
+  // Try exact match first, then case-insensitive.
+  const lower = bitmap.toLowerCase();
+  for (const [key, val] of BACKPACK_BITMAP_TO_INDEX) {
+    if (key === lower) return val;
+  }
+  return -1;
+}
+
+interface ParsedDemoValues {
+  weaponsHud: { slots: Map<number, number>; activeIndex: number } | null;
+  backpackHud: { packIndex: number; active: boolean; text: string } | null;
+  inventoryHud: {
+    slots: Map<number, number>;
+    activeSlot: number;
+  } | null;
+  teamScores: TeamScore[];
+  chatMessages: string[];
+}
+
+/**
+ * Parse the $DemoValue[] array to extract initial HUD state.
+ *
+ * Sections are written sequentially by saveDemoSettings/getState in
+ * recordings.cs: MISC, PLAYERLIST, RETICLE, BACKPACK, WEAPON, INVENTORY,
+ * SCORE, CLOCK, CHAT, GRAVITY.
+ */
+function parseDemoValues(demoValues: string[]): ParsedDemoValues {
+  const result: ParsedDemoValues = {
+    weaponsHud: null,
+    backpackHud: null,
+    inventoryHud: null,
+    teamScores: [],
+    chatMessages: [],
+  };
+  if (!demoValues.length) return result;
+
+  let idx = 0;
+  const next = () => {
+    const v = demoValues[idx++];
+    return v === "<BLANK>" ? "" : (v ?? "");
+  };
+
+  // MISC: 1 value
+  next();
+
+  // PLAYERLIST: count + count entries
+  // Fields per player: name(0) guid(1) clientId(2) targetId(3) teamId(4)
+  //   score(5) ping(6) packetLoss(7) ... (16 fields total)
+  if (idx >= demoValues.length) return result;
+  const playerCount = parseInt(next(), 10) || 0;
+  const playerCountByTeam = new Map<number, number>();
+  for (let i = 0; i < playerCount; i++) {
+    const fields = next().split("\t");
+    const teamId = parseInt(fields[4], 10);
+    if (!isNaN(teamId) && teamId > 0) {
+      playerCountByTeam.set(teamId, (playerCountByTeam.get(teamId) ?? 0) + 1);
+    }
+  }
+
+  // RETICLE: 1 value
+  if (idx >= demoValues.length) return result;
+  next();
+
+  // BACKPACK: 1 value (bitmap TAB visible TAB text TAB textVisible TAB pack)
+  if (idx >= demoValues.length) return result;
+  {
+    const backpackVal = next();
+    const fields = backpackVal.split("\t");
+    const bitmap = fields[0] ?? "";
+    const visible = fields[1] === "1" || fields[1] === "true";
+    const text = fields[2] ?? "";
+    const pack = fields[4] === "1" || fields[4] === "true";
+    if (visible && bitmap) {
+      const packIndex = backpackBitmapToIndex(bitmap);
+      result.backpackHud = { packIndex, active: pack, text };
+    }
+  }
+
+  // WEAPON: header + count bitmap entries + slotCount slot entries
+  if (idx >= demoValues.length) return result;
+  const weaponHeader = next().split("\t");
+  const weaponCount = parseInt(weaponHeader[4], 10) || 0;
+  const weaponSlotCount = parseInt(weaponHeader[5], 10) || 0;
+  const weaponActive = parseInt(weaponHeader[6], 10);
+
+  for (let i = 0; i < weaponCount; i++) next();
+
+  const slots = new Map<number, number>();
+  for (let i = 0; i < weaponSlotCount; i++) {
+    const fields = next().split("\t");
+    const slotId = parseInt(fields[0], 10);
+    const ammo = parseInt(fields[1], 10);
+    if (!isNaN(slotId)) {
+      slots.set(slotId, isNaN(ammo) ? -1 : ammo);
+    }
+  }
+  result.weaponsHud = {
+    slots,
+    activeIndex: isNaN(weaponActive) ? -1 : weaponActive,
+  };
+
+  // INVENTORY: header + count bitmap entries + slotCount slot entries
+  if (idx >= demoValues.length) return result;
+  const invHeader = next().split("\t");
+  const invCount = parseInt(invHeader[4], 10) || 0;
+  const invSlotCount = parseInt(invHeader[5], 10) || 0;
+  const invActive = parseInt(invHeader[6], 10);
+  // Skip bitmap entries (we use our own icon mapping).
+  for (let i = 0; i < invCount; i++) next();
+  {
+    const invSlots = new Map<number, number>();
+    for (let i = 0; i < invSlotCount; i++) {
+      const fields = next().split("\t");
+      const slotId = parseInt(fields[0], 10);
+      const count = parseInt(fields[1], 10);
+      if (!isNaN(slotId) && !isNaN(count) && count > 0) {
+        invSlots.set(slotId, count);
+      }
+    }
+    if (invSlots.size > 0) {
+      result.inventoryHud = {
+        slots: invSlots,
+        activeSlot: isNaN(invActive) ? -1 : invActive,
+      };
+    }
+  }
+
+  // SCORE: header (visible TAB gameType TAB objCount) + objCount entries.
+  // The objects are the objectiveHud controls serialized via getValue().
+  // Their order and meaning depend on the gameType.
+  if (idx >= demoValues.length) return result;
+  const scoreHeader = next().split("\t");
+  const gameType = scoreHeader[1] ?? "";
+  const objCount = parseInt(scoreHeader[2], 10) || 0;
+  const scoreObjs: string[] = [];
+  for (let i = 0; i < objCount; i++) scoreObjs.push(next());
+
+  // Extract team names and objective scores from the SCORE section based on
+  // game type. Combine with player counts from PLAYERLIST.
+  if (gameType === "CTFGame" && objCount >= 8) {
+    // CTFGame objectiveHud layout (per setupObjHud in objectiveHud.cs):
+    //   for each team (1..2): teamName, teamScore, flagLabel, flagLocation
+    for (let t = 0; t < 2; t++) {
+      const base = t * 4;
+      const teamId = t + 1;
+      result.teamScores.push({
+        teamId,
+        name: scoreObjs[base] ?? "",
+        score: parseInt(scoreObjs[base + 1], 10) || 0,
+        playerCount: playerCountByTeam.get(teamId) ?? 0,
+      });
+    }
+  } else if (gameType === "TR2Game" && objCount >= 4) {
+    // TR2Game objectiveHud layout (per setupObjHud in objectiveHud.cs):
+    //   for each team (1..2): teamScore, teamName
+    //   then: carrierName, carrierHealth
+    for (let t = 0; t < 2; t++) {
+      const base = t * 2;
+      const teamId = t + 1;
+      result.teamScores.push({
+        teamId,
+        name: scoreObjs[base + 1] ?? "",
+        score: parseInt(scoreObjs[base], 10) || 0,
+        playerCount: playerCountByTeam.get(teamId) ?? 0,
+      });
+    }
+  }
+
+  // CLOCK: 1 value
+  if (idx >= demoValues.length) return result;
+  next();
+
+  // CHAT: always 10 entries
+  for (let i = 0; i < 10; i++) {
+    if (idx >= demoValues.length) break;
+    const line = next();
+    if (line) {
+      result.chatMessages.push(line);
+    }
+  }
+
+  // GRAVITY: 1 value — skip
+
+  return result;
+}
+
 function isValidPosition(
   pos: { x: number; y: number; z: number } | undefined | null,
 ): pos is { x: number; y: number; z: number } {
@@ -320,6 +563,121 @@ function stripTaggedStringMarkup(s: string): string {
   return stripped;
 }
 
+/**
+ * Byte-to-fontColors-index remap table from the Torque V12 renderer (dgl.cc).
+ *
+ * TorqueScript `\cN` escapes are encoded via `collapseRemap` in scan.l,
+ * producing byte values that skip \t (0x9), \n (0xa), and \r (0xd):
+ *   \c0→0x2, \c1→0x3, \c2→0x4, \c3→0x5, \c4→0x6,
+ *   \c5→0x7, \c6→0x8, \c7→0xb, \c8→0xc, \c9→0xe
+ *
+ * The renderer remaps those bytes back to fontColors[0–9]:
+ *   byte 0x2→0, 0x3→1, 0x4→2, 0x5→3, 0x6→4,
+ *   0x7→5, 0x8→6, 0xb→7, 0xc→8, 0xe→9
+ */
+const BYTE_TO_COLOR_INDEX: Record<number, number> = {
+  0x2: 0,
+  0x3: 1,
+  0x4: 2,
+  0x5: 3,
+  0x6: 4,
+  0x7: 5,
+  0x8: 6,
+  0xb: 7,
+  0xc: 8,
+  0xe: 9,
+};
+
+/** Special bytes: \cr = 0xf (reset), \cp = 0x10 (push), \co = 0x11 (pop). */
+const BYTE_COLOR_RESET = 0x0f;
+const BYTE_COLOR_PUSH = 0x10;
+const BYTE_COLOR_POP = 0x11;
+
+/**
+ * Extract the leading Torque \c color index (0–9) from a tagged string.
+ * Raw bytes are remapped from the collapseRemap encoding to fontColors indices.
+ */
+function detectColorCode(s: string): number | undefined {
+  for (let i = 0; i < s.length; i++) {
+    const code = s.charCodeAt(i);
+    const colorIndex = BYTE_TO_COLOR_INDEX[code];
+    if (colorIndex !== undefined) return colorIndex;
+    if (code >= 0x20) return undefined;
+  }
+  return undefined;
+}
+
+/**
+ * Parse a raw Torque HudMessageVector line into colored segments.
+ * Handles tagged string markup (\cp=0x10 push / \co=0x11 pop regions for
+ * player names), color code switches (remapped byte values), and \cr=0x0f
+ * color reset.
+ */
+function parseColorSegments(raw: string): ChatSegment[] {
+  const segments: ChatSegment[] = [];
+  let currentColor = 0;
+  let currentText = "";
+  let inTaggedString = false;
+
+  for (let i = 0; i < raw.length; i++) {
+    const code = raw.charCodeAt(i);
+
+    if (code === BYTE_COLOR_PUSH) {
+      // \cp — push color / start of tagged string region.
+      inTaggedString = true;
+      continue;
+    }
+    if (code === BYTE_COLOR_POP) {
+      // \co — pop color / end of tagged string region.
+      inTaggedString = false;
+      continue;
+    }
+
+    if (inTaggedString) {
+      // Inside tagged string: only keep printable chars, skip markup bytes.
+      if (code >= 0x20) {
+        currentText += raw[i];
+      }
+      continue;
+    }
+
+    // Outside tagged string.
+    const colorIndex = BYTE_TO_COLOR_INDEX[code];
+    if (colorIndex !== undefined) {
+      // Color code switch.
+      if (currentText) {
+        segments.push({ text: currentText, colorCode: currentColor });
+        currentText = "";
+      }
+      currentColor = colorIndex;
+    } else if (code === BYTE_COLOR_RESET) {
+      // \cr — reset to default color.
+      if (currentText) {
+        segments.push({ text: currentText, colorCode: currentColor });
+        currentText = "";
+      }
+      currentColor = 0;
+    } else if (code >= 0x20) {
+      currentText += raw[i];
+    }
+  }
+
+  if (currentText) {
+    segments.push({ text: currentText, colorCode: currentColor });
+  }
+  return segments;
+}
+
+/** Extract an embedded `~w<path>` sound tag from a message string. */
+function extractWavTag(text: string): { text: string; wavPath: string | null } {
+  const idx = text.indexOf("~w");
+  if (idx === -1) return { text, wavPath: null };
+  return {
+    text: text.substring(0, idx),
+    wavPath: text.substring(idx + 2),
+  };
+}
+
 function toEntityType(className: string): string {
   if (className === "Player") return "Player";
   if (vehicleClassNames.has(className)) return "Vehicle";
@@ -354,7 +712,9 @@ function isQuatLike(value: unknown): value is {
   );
 }
 
-function isVec3Like(value: unknown): value is { x: number; y: number; z: number } {
+function isVec3Like(
+  value: unknown,
+): value is { x: number; y: number; z: number } {
   return (
     !!value &&
     typeof value === "object" &&
@@ -397,6 +757,78 @@ function getNumberField(
   return undefined;
 }
 
+/**
+ * Extract the weapon image state machine states from a ShapeBaseImageData
+ * datablock. The parser emits a dense array (skipping unnamed states), but
+ * the transition indices reference original positions 0-30.
+ *
+ * CRITICAL: The parser's field names for transitions are MISALIGNED with
+ * the actual engine packing order. The V12 engine packs transitions as:
+ *   loaded[0], loaded[1], ammo[0], ammo[1], target[0], target[1],
+ *   wet[0], wet[1], trigger[0], trigger[1], timeout
+ * But the parser named the first two "transitionOnAmmo/transitionOnNoAmmo"
+ * when they're actually loaded[0]/loaded[1]. Every field is shifted by 2.
+ *
+ * Additionally, the engine writes `value+1` (to encode -1 as 0) but the
+ * parser reads the raw value without subtracting 1. So the raw sentinel
+ * for "no transition" is 0, and all state indices are off by +1.
+ */
+function parseWeaponImageStates(
+  blockData: Record<string, unknown>,
+): WeaponImageDataBlockState[] | undefined {
+  const rawStates = blockData.states as
+    | Array<Record<string, unknown>>
+    | undefined;
+  if (!Array.isArray(rawStates) || rawStates.length === 0) return undefined;
+
+  return rawStates.map((s) => {
+    // Subtract 1 to reverse the engine's +1 offset. Raw 0 → -1 (no transition).
+    const remap = (v: unknown): number => {
+      const n = v as number;
+      if (n == null) return -1;
+      return n - 1;
+    };
+
+    // Remap parser field names to actual engine field meanings.
+    // Parser reads 11 values in order, but names them wrong:
+    //   Parser field            → Actual engine field
+    //   transitionOnAmmo        → loaded[0] (notLoaded)
+    //   transitionOnNoAmmo      → loaded[1] (loaded)
+    //   transitionOnTarget      → ammo[0]   (noAmmo)
+    //   transitionOnNoTarget    → ammo[1]   (ammo)
+    //   transitionOnWet         → target[0] (noTarget)
+    //   transitionOnNotWet      → target[1] (target)
+    //   transitionOnTriggerUp   → wet[0]    (notWet)
+    //   transitionOnTriggerDown → wet[1]    (wet)
+    //   transitionOnTimeout     → trigger[0](triggerUp)
+    //   transitionGeneric0In    → trigger[1](triggerDown)
+    //   transitionGeneric0Out   → timeout
+    return {
+      name: (s.name as string) ?? "",
+      transitionOnNotLoaded: remap(s.transitionOnAmmo),
+      transitionOnLoaded: remap(s.transitionOnNoAmmo),
+      transitionOnNoAmmo: remap(s.transitionOnTarget),
+      transitionOnAmmo: remap(s.transitionOnNoTarget),
+      transitionOnNoTarget: remap(s.transitionOnWet),
+      transitionOnTarget: remap(s.transitionOnNotWet),
+      transitionOnNotWet: remap(s.transitionOnTriggerUp),
+      transitionOnWet: remap(s.transitionOnTriggerDown),
+      transitionOnTriggerUp: remap(s.transitionOnTimeout),
+      transitionOnTriggerDown: remap(s.transitionGeneric0In),
+      transitionOnTimeout: remap(s.transitionGeneric0Out),
+      timeoutValue: s.timeoutValue as number | undefined,
+      waitForTimeout: (s.waitForTimeout as boolean) ?? false,
+      fire: (s.fire as boolean) ?? false,
+      sequence: s.sequence as number | undefined,
+      spin: (s.spin as number) ?? 0,
+      direction: (s.direction as boolean) ?? true,
+      scaleAnimation: (s.scaleAnimation as boolean) ?? false,
+      loaded: (s.loaded as number) ?? 0,
+      soundDataBlockId: (s.sound as number) ?? -1,
+    };
+  });
+}
+
 function getStringField(
   data: Record<string, unknown> | undefined,
   keys: readonly string[],
@@ -435,8 +867,7 @@ function resolveTracerVisual(
     getStringField(data, ["tracerTex0", "textureName0", "texture0"]) ?? "";
   const hasTracerHints =
     className === "TracerProjectile" ||
-    (texture.length > 0 &&
-      getNumberField(data, ["tracerLength"]) != null);
+    (texture.length > 0 && getNumberField(data, ["tracerLength"]) != null);
   if (!hasTracerHints || !texture) return undefined;
 
   const crossTexture = getStringField(data, [
@@ -502,7 +933,9 @@ function resolveSpriteVisual(
     return {
       kind: "sprite",
       texture,
-      color: color ? { r: color.r, g: color.g, b: color.b } : { r: 1, g: 1, b: 1 },
+      color: color
+        ? { r: color.r, g: color.g, b: color.b }
+        : { r: 1, g: 1, b: 1 },
       size,
     };
   }
@@ -534,7 +967,10 @@ function detectControlObjectType(
 class StreamingPlayback implements DemoStreamingPlayback {
   private readonly parser: DemoParser;
   private readonly initialBlock: {
-    dataBlocks: Map<number, { className: string; data: Record<string, unknown> }>;
+    dataBlocks: Map<
+      number,
+      { className: string; data: Record<string, unknown> }
+    >;
     initialGhosts: Array<{
       index: number;
       type: "create" | "update" | "delete";
@@ -543,7 +979,11 @@ class StreamingPlayback implements DemoStreamingPlayback {
     }>;
     controlObjectGhostIndex: number;
     controlObjectData?: Record<string, unknown>;
-    targetEntries: Array<{ targetId: number; name?: string; sensorGroup: number }>;
+    targetEntries: Array<{
+      targetId: number;
+      name?: string;
+      sensorGroup: number;
+    }>;
     sensorGroupColors: Array<{
       group: number;
       targetGroup: number;
@@ -552,6 +992,11 @@ class StreamingPlayback implements DemoStreamingPlayback {
       b: number;
     }>;
     taggedStrings: Map<number, string>;
+    initialEvents: Array<{
+      classId: number;
+      parsedData?: Record<string, unknown>;
+    }>;
+    demoValues: string[];
   };
   private readonly registry;
   private readonly netStrings = new Map<number, string>();
@@ -576,14 +1021,14 @@ class StreamingPlayback implements DemoStreamingPlayback {
       targetEntries: initial.targetEntries,
       sensorGroupColors: initial.sensorGroupColors,
       taggedStrings: initial.taggedStrings,
+      initialEvents: initial.initialEvents,
+      demoValues: initial.demoValues,
     };
 
     this.state = {
       moveTicks: 0,
-      moveYawAccum: 0,
-      movePitchAccum: 0,
-      yawOffset: 0,
-      pitchOffset: 0,
+      absoluteYaw: 0,
+      absolutePitch: 0,
       lastAbsYaw: 0,
       lastAbsPitch: 0,
       lastControlType: "player",
@@ -604,6 +1049,12 @@ class StreamingPlayback implements DemoStreamingPlayback {
       lastStatus: { health: 1, energy: 1 },
       nextExplosionId: 0,
       playerSensorGroup: 0,
+      chatMessages: [],
+      pendingAudioEvents: [],
+      weaponsHud: { slots: new Map(), activeIndex: -1 },
+      backpackHud: { packIndex: -1, active: false, text: "" },
+      inventoryHud: { slots: new Map(), activeSlot: -1 },
+      teamScores: [],
     };
 
     this.reset();
@@ -624,7 +1075,10 @@ class StreamingPlayback implements DemoStreamingPlayback {
     }
     for (const entry of this.initialBlock.targetEntries) {
       if (entry.name) {
-        this.targetNames.set(entry.targetId, stripTaggedStringMarkup(entry.name));
+        this.targetNames.set(
+          entry.targetId,
+          stripTaggedStringMarkup(entry.name),
+        );
       }
       this.targetTeams.set(entry.targetId, entry.sensorGroup);
     }
@@ -639,11 +1093,15 @@ class StreamingPlayback implements DemoStreamingPlayback {
     }
 
     this.state.playerSensorGroup = 0;
+    this.state.chatMessages = [];
+    this.state.pendingAudioEvents = [];
+    this.state.weaponsHud = { slots: new Map(), activeIndex: -1 };
+    this.state.backpackHud = { packIndex: -1, active: false, text: "" };
+    this.state.inventoryHud = { slots: new Map(), activeSlot: -1 };
+    this.state.teamScores = [];
     this.state.moveTicks = 0;
-    this.state.moveYawAccum = 0;
-    this.state.movePitchAccum = 0;
-    this.state.yawOffset = 0;
-    this.state.pitchOffset = 0;
+    this.state.absoluteYaw = 0;
+    this.state.absolutePitch = 0;
     this.state.lastAbsYaw = 0;
     this.state.lastAbsPitch = 0;
     this.state.lastControlType =
@@ -691,19 +1149,23 @@ class StreamingPlayback implements DemoStreamingPlayback {
     } else {
       this.state.lastOrbitDistance = undefined;
     }
-    const initialAbsRot = this.getAbsoluteRotation(this.initialBlock.controlObjectData);
+    const initialAbsRot = this.getAbsoluteRotation(
+      this.initialBlock.controlObjectData,
+    );
     if (initialAbsRot) {
+      this.state.absoluteYaw = initialAbsRot.yaw;
+      this.state.absolutePitch = initialAbsRot.pitch;
       this.state.lastAbsYaw = initialAbsRot.yaw;
       this.state.lastAbsPitch = initialAbsRot.pitch;
-      this.state.yawOffset = initialAbsRot.yaw;
-      this.state.pitchOffset = initialAbsRot.pitch;
     }
     this.state.exhausted = false;
     this.state.latestFov = 100;
     this.state.latestControl = {
       ghostIndex: this.initialBlock.controlObjectGhostIndex,
       data: this.initialBlock.controlObjectData,
-      position: isValidPosition(this.initialBlock.controlObjectData?.position as Vec3)
+      position: isValidPosition(
+        this.initialBlock.controlObjectData?.position as Vec3,
+      )
         ? (this.initialBlock.controlObjectData?.position as Vec3)
         : undefined,
     };
@@ -719,7 +1181,8 @@ class StreamingPlayback implements DemoStreamingPlayback {
     for (const ghost of this.initialBlock.initialGhosts) {
       if (ghost.type !== "create" || ghost.classId == null) continue;
       const className =
-        this.registry.getGhostParser(ghost.classId)?.name ?? `ghost_${ghost.classId}`;
+        this.registry.getGhostParser(ghost.classId)?.name ??
+        `ghost_${ghost.classId}`;
       const id = toEntityId(className, ghost.index);
       const entity: MutableStreamEntity = {
         id,
@@ -752,6 +1215,80 @@ class StreamingPlayback implements DemoStreamingPlayback {
       }
     }
 
+    // Process initial events (guaranteed events pending in the connection's
+    // event queue at recording start).
+    for (const evt of this.initialBlock.initialEvents) {
+      const eventName = this.registry.getEventParser(evt.classId)?.name;
+      if (eventName === "SetSensorGroupEvent" && evt.parsedData) {
+        const sg = evt.parsedData.sensorGroup as number | undefined;
+        if (sg != null) this.state.playerSensorGroup = sg;
+      } else if (eventName === "RemoteCommandEvent" && evt.parsedData) {
+        const funcName = this.resolveNetString(
+          evt.parsedData.funcName as string,
+        );
+        const args = evt.parsedData.args as string[];
+        this.handleHudRemoteCommand(funcName, args);
+      }
+    }
+
+    // Seed HUD state from demoValues (the $DemoValue console variable
+    // snapshot captured at recording start by saveDemoSettings/getState).
+    const parsed = parseDemoValues(this.initialBlock.demoValues);
+    if (parsed.weaponsHud) {
+      this.state.weaponsHud.slots = parsed.weaponsHud.slots;
+      this.state.weaponsHud.activeIndex = parsed.weaponsHud.activeIndex;
+    }
+    if (parsed.backpackHud) {
+      this.state.backpackHud.packIndex = parsed.backpackHud.packIndex;
+      this.state.backpackHud.active = parsed.backpackHud.active;
+      this.state.backpackHud.text = parsed.backpackHud.text;
+    }
+    if (parsed.inventoryHud) {
+      this.state.inventoryHud.slots = parsed.inventoryHud.slots;
+      this.state.inventoryHud.activeSlot = parsed.inventoryHud.activeSlot;
+    }
+    this.state.teamScores = parsed.teamScores;
+    // Seed chat messages at time 0 so they appear at start and fade naturally.
+    // Raw lines from HudMessageVector contain Torque control chars: collapsed
+    // color bytes (0x02–0x0e via collapseRemap), tagged string markup
+    // (\x10/\x11 for player names), and color reset (\x0f).
+    for (const rawLine of parsed.chatMessages) {
+      const segments = parseColorSegments(rawLine);
+      if (!segments.length) continue;
+      const fullText = segments.map((s) => s.text).join("");
+      if (!fullText.trim()) continue;
+      // Determine overall color and kind from the first segment.
+      const primaryColor = segments[0].colorCode;
+      // Player chat lines use \c3 (team green, byte 0x05) or \c4 (global
+      // cyan, byte 0x06). Canned chat (voicebinds) may start with a c0
+      // "[VGS] " prefix before the colored name. Detect player chat by
+      // looking for a ": " separator and a chat color in any segment.
+      const hasChatColor = segments.some(
+        (s) => s.colorCode === 3 || s.colorCode === 4
+      );
+      const isPlayerChat = hasChatColor && fullText.includes(": ");
+      if (isPlayerChat) {
+        const colonIdx = fullText.indexOf(": ");
+        this.state.chatMessages.push({
+          timeSec: 0,
+          sender: fullText.slice(0, colonIdx),
+          text: fullText.slice(colonIdx + 2),
+          kind: "chat",
+          colorCode: primaryColor,
+          segments,
+        });
+      } else {
+        this.state.chatMessages.push({
+          timeSec: 0,
+          sender: "",
+          text: fullText,
+          kind: "server",
+          colorCode: primaryColor,
+          segments,
+        });
+      }
+    }
+
     this.updateCameraAndHud();
   }
 
@@ -771,7 +1308,10 @@ class StreamingPlayback implements DemoStreamingPlayback {
     return [...shapes];
   }
 
-  stepToTime(targetTimeSec: number, maxMoveTicks = Number.POSITIVE_INFINITY): DemoStreamSnapshot {
+  stepToTime(
+    targetTimeSec: number,
+    maxMoveTicks = Number.POSITIVE_INFINITY,
+  ): DemoStreamSnapshot {
     const safeTargetSec = Number.isFinite(targetTimeSec)
       ? Math.max(0, targetTimeSec)
       : 0;
@@ -817,10 +1357,7 @@ class StreamingPlayback implements DemoStreamingPlayback {
     }
   }
 
-  private handleBlock(block: {
-    type: number;
-    parsed?: unknown;
-  }): void {
+  private handleBlock(block: { type: number; parsed?: unknown }): void {
     if (block.type === BlockTypePacket && this.isPacketData(block.parsed)) {
       const packet = block.parsed;
       const controlData = packet.gameState.controlObjectData;
@@ -870,7 +1407,8 @@ class StreamingPlayback implements DemoStreamingPlayback {
             this.state.lastCameraMode = controlData.cameraMode;
             if (controlData.cameraMode === CameraMode_OrbitObject) {
               if (typeof controlData.orbitObjectGhostIndex === "number") {
-                this.state.lastOrbitGhostIndex = controlData.orbitObjectGhostIndex;
+                this.state.lastOrbitGhostIndex =
+                  controlData.orbitObjectGhostIndex;
               }
               const minOrbit = controlData.minOrbitDist as number | undefined;
               const maxOrbit = controlData.maxOrbitDist as number | undefined;
@@ -893,6 +1431,16 @@ class StreamingPlayback implements DemoStreamingPlayback {
               this.state.lastOrbitDistance = undefined;
             }
           }
+        }
+
+        // Apply ghost rotation to absolute tracking. This must happen before
+        // the next move delta so that our tracking stays calibrated to V12.
+        const absRot = this.getAbsoluteRotation(controlData);
+        if (absRot) {
+          this.state.absoluteYaw = absRot.yaw;
+          this.state.absolutePitch = absRot.pitch;
+          this.state.lastAbsYaw = absRot.yaw;
+          this.state.lastAbsPitch = absRot.pitch;
         }
       }
 
@@ -952,6 +1500,180 @@ class StreamingPlayback implements DemoStreamingPlayback {
               }
             }
           }
+        } else if (eventName === "RemoteCommandEvent" && evt.parsedData) {
+          const funcName = this.resolveNetString(
+            evt.parsedData.funcName as string,
+          );
+          const args = evt.parsedData.args as string[];
+          const timeSec = this.state.moveTicks * (TICK_DURATION_MS / 1000);
+
+          if (funcName === "ChatMessage" && args.length >= 4) {
+            // ChatMessage args: 0=clientId, 1=voice, 2=pitch,
+            // 3=template (e.g. '\c3%1: %2'), 4+=substitution args.
+            // Detect team (\c3) vs global (\c4) from the template's
+            // leading color code before it's stripped.
+            const rawTemplate = this.resolveNetString(args[3]);
+            const colorCode = detectColorCode(rawTemplate);
+            // Extract sender name from args[4] (%1) and message from
+            // the formatted text. args[0] is the client object ID, not
+            // the player name.
+            const sender = args[4]
+              ? stripTaggedStringMarkup(this.resolveNetString(args[4]))
+              : "";
+            const rawText = this.formatRemoteArgs(args[3], args.slice(4));
+            if (rawText) {
+              // The formatted text is "Name: message"; extract just the
+              // message portion since we already have the sender name.
+              const colonIdx = rawText.indexOf(": ");
+              const text = colonIdx >= 0 ? rawText.slice(colonIdx + 2) : rawText;
+              const { text: displayText, wavPath } = extractWavTag(text);
+              let soundPath: string | undefined;
+              let soundPitch: number | undefined;
+              if (wavPath) {
+                const voice = this.resolveNetString(args[1]);
+                if (voice) {
+                  soundPath = `voice/${voice}/${wavPath}.wav`;
+                } else {
+                  soundPath = wavPath;
+                }
+                const pitchStr = this.resolveNetString(args[2]);
+                if (pitchStr) {
+                  const p = parseFloat(pitchStr);
+                  if (Number.isFinite(p)) {
+                    soundPitch = Math.max(0.5, Math.min(2.0, p));
+                  }
+                }
+              }
+              const cc = colorCode ?? 0;
+              this.pushChatMessage({
+                timeSec,
+                sender,
+                text: displayText,
+                kind: "chat",
+                colorCode: cc,
+                segments: [
+                  {
+                    text: sender ? `${sender}: ${displayText}` : displayText,
+                    colorCode: cc,
+                  },
+                ],
+                soundPath,
+                soundPitch,
+              });
+            }
+          } else if (
+            funcName === "CannedChatMessage" &&
+            args.length >= 6
+          ) {
+            // CannedChatMessage args (from cannedChatMessageClient):
+            //   0: sender (client ID), 1: msgString (template with %1/%2),
+            //   2: name, 3: string (voice text, may contain ~w),
+            //   4: keys (e.g. "VGS"), 5: voiceTag, 6: voicePitch
+            // The template uses %1=name, %2=string. The ~w tag is typically
+            // embedded in args[3], so it only appears after substitution.
+            const cannedColorCode = detectColorCode(
+              this.resolveNetString(args[1]),
+            );
+            const name = stripTaggedStringMarkup(
+              this.resolveNetString(args[2]),
+            );
+            const keys = stripTaggedStringMarkup(
+              this.resolveNetString(args[4]),
+            );
+            const sender = name;
+            // Substitute %1/%2 in the template, then extract ~w.
+            const rawText = this.formatRemoteArgs(args[1], args.slice(2));
+            if (rawText) {
+              const { wavPath } = extractWavTag(rawText);
+              // Build display text from the individual resolved components
+              // rather than the template (which includes "name: " redundantly
+              // with the separate sender field).
+              const voiceLine = extractWavTag(
+                stripTaggedStringMarkup(this.resolveNetString(args[3])),
+              ).text;
+              const text = voiceLine;
+
+              let soundPath: string | undefined;
+              let soundPitch: number | undefined;
+              if (wavPath) {
+                const voice = this.resolveNetString(args[5]);
+                if (voice) {
+                  soundPath = `voice/${voice}/${wavPath}.wav`;
+                } else {
+                  soundPath = wavPath;
+                }
+                if (args[6]) {
+                  const p = parseFloat(this.resolveNetString(args[6]));
+                  if (Number.isFinite(p)) {
+                    soundPitch = Math.max(0.5, Math.min(2.0, p));
+                  }
+                }
+              }
+              const cc = cannedColorCode ?? 0;
+              const cannedSegments: ChatSegment[] = [];
+              if (keys) {
+                cannedSegments.push({
+                  text: `[${keys}] `,
+                  colorCode: 0,
+                });
+              }
+              cannedSegments.push({
+                text: sender ? `${sender}: ${text}` : text,
+                colorCode: cc,
+              });
+              this.pushChatMessage({
+                timeSec,
+                sender,
+                text,
+                kind: "chat",
+                colorCode: cc,
+                segments: cannedSegments,
+                soundPath,
+                soundPitch,
+              });
+            }
+          } else if (funcName === "ServerMessage" && args.length >= 2) {
+            const rawTemplate = this.resolveNetString(args[1]);
+            const serverColorCode = detectColorCode(rawTemplate);
+            const rawText = this.formatRemoteArgs(args[1], args.slice(2));
+            if (rawText) {
+              const { text, wavPath } = extractWavTag(rawText);
+              const scc = serverColorCode ?? 0;
+              this.pushChatMessage({
+                timeSec,
+                sender: "",
+                text,
+                kind: "server",
+                colorCode: scc,
+                segments: [{ text, colorCode: scc }],
+                soundPath: wavPath ?? undefined,
+              });
+            }
+          } else {
+            this.handleHudRemoteCommand(funcName, args);
+          }
+        } else if (
+          (eventName === "Sim3DAudioEvent" ||
+            eventName === "Sim2DAudioEvent") &&
+          evt.parsedData
+        ) {
+          const profileId = evt.parsedData.profileId as number;
+          if (typeof profileId === "number") {
+            const timeSec = this.state.moveTicks * (TICK_DURATION_MS / 1000);
+            const position =
+              eventName === "Sim3DAudioEvent"
+                ? (evt.parsedData.position as
+                    | { x: number; y: number; z: number }
+                    | undefined)
+                : undefined;
+            this.state.pendingAudioEvents.push({ profileId, position, timeSec });
+            if (this.state.pendingAudioEvents.length > 100) {
+              this.state.pendingAudioEvents.splice(
+                0,
+                this.state.pendingAudioEvents.length - 100,
+              );
+            }
+          }
         }
       }
 
@@ -970,8 +1692,18 @@ class StreamingPlayback implements DemoStreamingPlayback {
     }
 
     if (block.type === BlockTypeMove && this.isMoveData(block.parsed)) {
-      this.state.moveYawAccum += block.parsed.yaw ?? 0;
-      this.state.movePitchAccum += block.parsed.pitch ?? 0;
+      // Replicate V12 Player::updateMove(): apply delta then wrap/clamp.
+      this.state.absoluteYaw += block.parsed.yaw ?? 0;
+      // V12 wraps yaw to [0, 2π] each tick.
+      const TWO_PI = Math.PI * 2;
+      this.state.absoluteYaw =
+        ((this.state.absoluteYaw % TWO_PI) + TWO_PI) % TWO_PI;
+      // V12 clamps pitch to [minLookAngle, maxLookAngle] each tick.
+      this.state.absolutePitch = clamp(
+        this.state.absolutePitch + (block.parsed.pitch ?? 0),
+        -MAX_PITCH,
+        MAX_PITCH,
+      );
     }
   }
 
@@ -1004,10 +1736,11 @@ class StreamingPlayback implements DemoStreamingPlayback {
         // ghost (either a different class or a fresh create of the same class).
         (ghost.type === "delete" || ghost.type === "create")
       ) {
-        this.spawnExplosion(
-          prevEntity,
-          [...prevEntity.position] as [number, number, number],
-        );
+        this.spawnExplosion(prevEntity, [...prevEntity.position] as [
+          number,
+          number,
+          number,
+        ]);
       }
     }
 
@@ -1112,9 +1845,7 @@ class StreamingPlayback implements DemoStreamingPlayback {
     return undefined;
   }
 
-  getDataBlockData(
-    dataBlockId: number,
-  ): Record<string, unknown> | undefined {
+  getDataBlockData(dataBlockId: number): Record<string, unknown> | undefined {
     const initialBlock = this.initialBlock.dataBlocks.get(dataBlockId);
     if (initialBlock?.data) {
       return initialBlock.data;
@@ -1126,34 +1857,23 @@ class StreamingPlayback implements DemoStreamingPlayback {
     return packetParser.dataBlockDataMap?.get(dataBlockId);
   }
 
-  private resolveExplosionInfo(projDataBlockId: number): {
-    shape: string;
-    faceViewer: boolean;
-    lifetimeTicks: number;
-    explosionDataBlockId: number;
-  } | undefined {
+  private resolveExplosionInfo(projDataBlockId: number):
+    | {
+        shape: string;
+        faceViewer: boolean;
+        lifetimeTicks: number;
+        explosionDataBlockId: number;
+      }
+    | undefined {
     const projBlock = this.getDataBlockData(projDataBlockId);
-    // The demo parser's field names don't match the V12 engine. The parser's
-    // `maintainSound` field is actually the engine's `explosion` DataBlockRef.
-    // (Parser reads bits correctly but assigns wrong names to ProjectileData fields.)
-    const explosionId = projBlock?.maintainSound as number | undefined;
-    if (explosionId == null) {
-      console.log("[streaming] resolveExplosionInfo — no explosion field on projBlock id:", projDataBlockId);
-      return undefined;
-    }
+    const explosionId = projBlock?.explosion as number | undefined;
+    if (explosionId == null) return undefined;
     const expBlock = this.getDataBlockData(explosionId);
-    if (!expBlock) {
-      console.log("[streaming] resolveExplosionInfo — expBlock not found for explosionId:", explosionId);
-      return undefined;
-    }
+    if (!expBlock) return undefined;
     const shape = expBlock.dtsFileName as string | undefined;
-    if (!shape) {
-      console.log("[streaming] resolveExplosionInfo — no dtsFileName on expBlock, explosionId:", explosionId, "keys:", Object.keys(expBlock));
-      return undefined;
-    }
+    if (!shape) return undefined;
     // The parser's lifetimeMS field is actually in ticks (32ms each), not ms.
     const lifetimeTicks = (expBlock.lifetimeMS as number | undefined) ?? 31;
-    console.log("[streaming] resolveExplosionInfo OK — projDataBlockId:", projDataBlockId, "explosionId:", explosionId, "shape:", shape, "lifetimeTicks:", lifetimeTicks);
     return {
       shape,
       faceViewer: expBlock.faceViewer !== false && expBlock.faceViewer !== 0,
@@ -1182,7 +1902,10 @@ class StreamingPlayback implements DemoStreamingPlayback {
         entity.shapeHint = shapeName;
         entity.dataBlock = shapeName;
       }
-      if (entity.type === "Player" && typeof blockData?.maxEnergy === "number") {
+      if (
+        entity.type === "Player" &&
+        typeof blockData?.maxEnergy === "number"
+      ) {
         entity.maxEnergy = blockData.maxEnergy;
       }
 
@@ -1192,8 +1915,7 @@ class StreamingPlayback implements DemoStreamingPlayback {
           entity.projectilePhysics = "linear";
         } else if (ballisticProjectileClassNames.has(entity.className)) {
           entity.projectilePhysics = "ballistic";
-          entity.gravityMod =
-            getNumberField(blockData, ["gravityMod"]) ?? 1.0;
+          entity.gravityMod = getNumberField(blockData, ["gravityMod"]) ?? 1.0;
         } else if (seekerProjectileClassNames.has(entity.className)) {
           entity.projectilePhysics = "seeker";
         }
@@ -1211,40 +1933,72 @@ class StreamingPlayback implements DemoStreamingPlayback {
       }
 
       // Resolve trail particle emitter for projectiles (once per entity).
-      if (
-        entity.type === "Projectile" &&
-        entity.maintainEmitterId == null
-      ) {
-        // The demo parser's `activateEmitter` is actually the engine's
-        // `baseEmitter` — the primary trail emitter for projectiles.
-        const trailEmitterId = blockData?.activateEmitter as number | null;
+      if (entity.type === "Projectile" && entity.maintainEmitterId == null) {
+        const trailEmitterId = blockData?.baseEmitter as number | null;
         if (typeof trailEmitterId === "number" && trailEmitterId > 0) {
           entity.maintainEmitterId = trailEmitterId;
-          console.log("[streaming] baseEmitter resolved for", entity.className, entity.id, "— emitterId:", trailEmitterId);
-        } else if (!entity.maintainEmitterChecked) {
-          console.log("[streaming] baseEmitter NOT found on", entity.className, entity.id, "— blockData keys:", blockData ? Object.keys(blockData) : "NO blockData", "activateEmitter:", blockData?.activateEmitter);
-          entity.maintainEmitterChecked = true;
         }
       }
     }
 
     if (entity.type === "Player") {
-      const images = data.images as Array<{ dataBlockId?: number }> | undefined;
+      const images = data.images as
+        | Array<{
+            index?: number;
+            dataBlockId?: number;
+            triggerDown?: boolean;
+            ammo?: boolean;
+            loaded?: boolean;
+            target?: boolean;
+            wet?: boolean;
+            fireCount?: number;
+          }>
+        | undefined;
       if (Array.isArray(images) && images.length > 0) {
-        const weaponImage = images[0];
+        // Find slot 0 (weapon) — the array is compact and only includes dirty
+        // slots, so images[0] may be a backpack or other non-weapon slot.
+        const weaponImage = images.find((img) => img.index === 0);
         if (weaponImage?.dataBlockId && weaponImage.dataBlockId > 0) {
           const blockData = this.getDataBlockData(weaponImage.dataBlockId);
           const weaponShape = toShapeNameFromDataBlock(blockData);
           if (weaponShape) {
             const mountPoint = blockData?.mountPoint as number | undefined;
-            if ((mountPoint == null || mountPoint <= 0) && !/pack_/i.test(weaponShape)) {
+            if (
+              (mountPoint == null || mountPoint <= 0) &&
+              !/pack_/i.test(weaponShape)
+            ) {
               entity.weaponShape = weaponShape;
             }
+          }
+
+          // Extract weapon image condition flags for the weapon state machine.
+          // Ghost updates are partial — only changed fields are present. Merge
+          // with the previous state so unchanged flags aren't reset to defaults.
+          const prev = entity.weaponImageState;
+          entity.weaponImageState = {
+            dataBlockId: weaponImage.dataBlockId,
+            triggerDown: weaponImage.triggerDown ?? prev?.triggerDown ?? false,
+            ammo: weaponImage.ammo ?? prev?.ammo ?? true,
+            loaded: weaponImage.loaded ?? prev?.loaded ?? true,
+            target: weaponImage.target ?? prev?.target ?? false,
+            wet: weaponImage.wet ?? prev?.wet ?? false,
+            fireCount: weaponImage.fireCount ?? prev?.fireCount ?? 0,
+          };
+
+          // Cache the weapon datablock states array (only reparse on weapon change).
+          if (
+            blockData &&
+            entity.weaponImageStatesDbId !== weaponImage.dataBlockId
+          ) {
+            entity.weaponImageStates = parseWeaponImageStates(blockData);
+            entity.weaponImageStatesDbId = weaponImage.dataBlockId;
           }
         } else if (weaponImage && !weaponImage.dataBlockId) {
           // Server explicitly unmounted the weapon (dataBlockId = 0), e.g. on
           // player death. Clear the weapon so it stops rendering.
           entity.weaponShape = undefined;
+          entity.weaponImageState = undefined;
+          entity.weaponImageStates = undefined;
         }
       }
     }
@@ -1257,9 +2011,11 @@ class StreamingPlayback implements DemoStreamingPlayback {
           ? (data.explodePosition as Vec3)
           : isValidPosition(data.endPoint as Vec3)
             ? (data.endPoint as Vec3)
-      : isValidPosition((data.transform as { position?: Vec3 } | undefined)?.position)
-        ? ((data.transform as { position: Vec3 }).position as Vec3)
-        : undefined;
+            : isValidPosition(
+                  (data.transform as { position?: Vec3 } | undefined)?.position,
+                )
+              ? ((data.transform as { position: Vec3 }).position as Vec3)
+              : undefined;
     if (position) {
       entity.position = [position.x, position.y, position.z];
     }
@@ -1271,24 +2027,42 @@ class StreamingPlayback implements DemoStreamingPlayback {
 
     if (entity.type === "Player" && typeof data.rotationZ === "number") {
       entity.rotation = playerYawToQuaternion(data.rotationZ);
-    } else if (isQuatLike(data.angPosition)) {
+    }
+
+    // Non-control players: headX/headZ are normalized [-1,1] from ghost data.
+    if (entity.type === "Player") {
+      if (typeof data.headX === "number") {
+        entity.headPitch = data.headX;
+      }
+      if (typeof data.headZ === "number") {
+        entity.headYaw = data.headZ;
+      }
+    }
+
+    if (isQuatLike(data.angPosition)) {
       const converted = torqueQuatToThreeJS(data.angPosition);
       if (converted) {
         entity.rotation = converted;
       }
     } else if (
-      isQuatLike((data.transform as { rotation?: unknown } | undefined)?.rotation)
+      isQuatLike(
+        (data.transform as { rotation?: unknown } | undefined)?.rotation,
+      )
     ) {
       const converted = torqueQuatToThreeJS(
-        (data.transform as { rotation: { x: number; y: number; z: number; w: number } })
-          .rotation,
+        (
+          data.transform as {
+            rotation: { x: number; y: number; z: number; w: number };
+          }
+        ).rotation,
       );
       if (converted) {
         entity.rotation = converted;
       }
     } else if (
       entity.type === "Item" &&
-      typeof (data.rotation as { angle?: unknown } | undefined)?.angle === "number"
+      typeof (data.rotation as { angle?: unknown } | undefined)?.angle ===
+        "number"
     ) {
       const rot = data.rotation as { angle: number; zSign?: number };
       entity.rotation = playerYawToQuaternion((rot.zSign ?? 1) * rot.angle);
@@ -1299,15 +2073,9 @@ class StreamingPlayback implements DemoStreamingPlayback {
         (isValidPosition(data.initialPosition as Vec3) &&
         isValidPosition(data.endPos as Vec3)
           ? {
-              x:
-                (data.endPos as Vec3).x -
-                (data.initialPosition as Vec3).x,
-              y:
-                (data.endPos as Vec3).y -
-                (data.initialPosition as Vec3).y,
-              z:
-                (data.endPos as Vec3).z -
-                (data.initialPosition as Vec3).z,
+              x: (data.endPos as Vec3).x - (data.initialPosition as Vec3).x,
+              y: (data.endPos as Vec3).y - (data.initialPosition as Vec3).y,
+              z: (data.endPos as Vec3).z - (data.initialPosition as Vec3).z,
             }
           : undefined);
       if (isVec3Like(vec) && (vec.x !== 0 || vec.y !== 0)) {
@@ -1443,7 +2211,24 @@ class StreamingPlayback implements DemoStreamingPlayback {
     }
 
     if (Array.isArray(data.threads)) {
-      entity.threads = data.threads as DemoThreadState[];
+      // Ghost ThreadMask updates are differential — only changed (and active)
+      // slots are included. Merge with existing state so unchanged slots
+      // (like a clamped deploy or looping power) aren't lost.
+      const incoming = data.threads as DemoThreadState[];
+      if (entity.threads) {
+        const merged = [...entity.threads];
+        for (const t of incoming) {
+          const existingIdx = merged.findIndex((m) => m.index === t.index);
+          if (existingIdx >= 0) {
+            merged[existingIdx] = t;
+          } else {
+            merged.push(t);
+          }
+        }
+        entity.threads = merged;
+      } else {
+        entity.threads = incoming;
+      }
     }
 
     if (typeof data.energy === "number") {
@@ -1465,6 +2250,28 @@ class StreamingPlayback implements DemoStreamingPlayback {
           this.state.lastControlType === "player"
         ) {
           this.state.playerSensorGroup = team;
+        }
+      }
+    }
+
+    // SoundMask: ghost-level playAudio() calls (e.g. station activation).
+    // Convert playing sounds to pending audio events so they play through the
+    // same pipeline as Sim3DAudioEvent.
+    const sounds = data.sounds as
+      | Array<{ index: number; playing: boolean; profileId?: number }>
+      | undefined;
+    if (Array.isArray(sounds)) {
+      const timeSec = this.state.moveTicks * (TICK_DURATION_MS / 1000);
+      for (const s of sounds) {
+        if (s.playing && typeof s.profileId === "number") {
+          const pos = entity.position;
+          this.state.pendingAudioEvents.push({
+            profileId: s.profileId,
+            position: pos
+              ? { x: pos[0], y: pos[1], z: pos[2] }
+              : undefined,
+            timeSec,
+          });
         }
       }
     }
@@ -1524,9 +2331,7 @@ class StreamingPlayback implements DemoStreamingPlayback {
           v[1] *= scale;
         }
         // At-rest check
-        const speed = Math.sqrt(
-          v[0] * v[0] + v[1] * v[1] + v[2] * v[2],
-        );
+        const speed = Math.sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
         if (speed < 0.15) {
           v[0] = v[1] = v[2] = 0;
           phys.atRest = true;
@@ -1543,8 +2348,6 @@ class StreamingPlayback implements DemoStreamingPlayback {
     entity.hasExploded = true;
     const fxId = `fx_${this.state.nextExplosionId++}`;
     const lifetimeTicks = entity.explosionLifetimeTicks ?? 31;
-    // DEBUG: log explosion spawn
-    console.log("[streaming] spawnExplosion — fxId:", fxId, "explosionDataBlockId:", entity.explosionDataBlockId, "explosionShape:", entity.explosionShape, "pos:", position, "lifetimeTicks:", lifetimeTicks, "moveTicks:", this.state.moveTicks);
     const fxEntity: MutableStreamEntity = {
       id: fxId,
       ghostIndex: -1,
@@ -1584,36 +2387,24 @@ class StreamingPlayback implements DemoStreamingPlayback {
     const controlType = this.state.lastControlType;
 
     if (control.position) {
-      const absRotation = this.getAbsoluteRotation(data);
       const hasMoves = !this.state.isPiloting && controlType === "player";
-      const moveYaw = hasMoves
-        ? this.state.moveYawAccum + this.state.yawOffset
-        : this.state.lastAbsYaw;
-      const movePitch = hasMoves
-        ? this.state.movePitchAccum + this.state.pitchOffset
-        : this.state.lastAbsPitch;
-      let yaw = moveYaw;
-      let pitch = movePitch;
+      // Use absolute tracking (with V12-style clamp/wrap) when we have moves,
+      // otherwise fall back to the last ghost-provided rotation.
+      let yaw = hasMoves ? this.state.absoluteYaw : this.state.lastAbsYaw;
+      let pitch = hasMoves ? this.state.absolutePitch : this.state.lastAbsPitch;
 
-      if (absRotation) {
-        yaw = absRotation.yaw;
-        pitch = absRotation.pitch;
+      if (hasMoves) {
         this.state.lastAbsYaw = yaw;
         this.state.lastAbsPitch = pitch;
-        this.state.yawOffset = yaw - this.state.moveYawAccum;
-        this.state.pitchOffset = pitch - this.state.movePitchAccum;
-      } else if (hasMoves) {
-        this.state.lastAbsYaw = yaw;
-        this.state.lastAbsPitch = pitch;
-      } else {
-        yaw = this.state.lastAbsYaw;
-        pitch = this.state.lastAbsPitch;
       }
 
       this.state.camera = {
         time: timeSec,
         position: [control.position.x, control.position.y, control.position.z],
-        rotation: yawPitchToQuaternion(yaw, clamp(pitch, -MAX_PITCH, MAX_PITCH)),
+        rotation: yawPitchToQuaternion(
+          yaw,
+          clamp(pitch, -MAX_PITCH, MAX_PITCH),
+        ),
         fov: this.state.latestFov,
         mode: "observer",
         yaw,
@@ -1671,6 +2462,13 @@ class StreamingPlayback implements DemoStreamingPlayback {
             control.position.z,
           ];
           ghostEntity.rotation = playerYawToQuaternion(yaw);
+          // Control player: derive headPitch from absolutePitch (ghost data
+          // skips headX/headZ for the control object).
+          ghostEntity.headPitch = clamp(
+            this.state.absolutePitch / MAX_PITCH,
+            -1,
+            1,
+          );
         }
       }
     } else if (this.state.camera) {
@@ -1702,12 +2500,111 @@ class StreamingPlayback implements DemoStreamingPlayback {
       this.state.camera?.mode === "third-person" &&
       this.state.camera.orbitTargetId
     ) {
-      const orbitEntity = this.state.entitiesById.get(this.state.camera.orbitTargetId);
+      const orbitEntity = this.state.entitiesById.get(
+        this.state.camera.orbitTargetId,
+      );
       status.health = orbitEntity?.health ?? 1;
       status.energy = orbitEntity?.energy ?? 1;
     }
 
     this.state.lastStatus = status;
+  }
+
+  private pushChatMessage(msg: DemoChatMessage): void {
+    this.state.chatMessages.push(msg);
+    if (this.state.chatMessages.length > 200) {
+      this.state.chatMessages.splice(0, this.state.chatMessages.length - 200);
+    }
+  }
+
+  private handleHudRemoteCommand(funcName: string, args: string[]): void {
+    // ── Weapons HUD ──
+    if (funcName === "setWeaponsHudItem" && args.length >= 3) {
+      const slot = parseInt(args[0], 10);
+      const ammo = parseInt(args[1], 10);
+      const add = args[2] === "1" || args[2] === "true";
+      if (!isNaN(slot)) {
+        if (add) {
+          this.state.weaponsHud.slots.set(slot, isNaN(ammo) ? -1 : ammo);
+        } else {
+          this.state.weaponsHud.slots.delete(slot);
+        }
+      }
+    } else if (funcName === "setWeaponsHudAmmo" && args.length >= 2) {
+      const slot = parseInt(args[0], 10);
+      const ammo = parseInt(args[1], 10);
+      if (!isNaN(slot)) {
+        // Treat ammo updates as implicit inventory presence — the
+        // initial setWeaponsHudItem may have been sent before recording.
+        this.state.weaponsHud.slots.set(slot, isNaN(ammo) ? -1 : ammo);
+      }
+    } else if (funcName === "setWeaponsHudActive" && args.length >= 1) {
+      const slot = parseInt(args[0], 10);
+      this.state.weaponsHud.activeIndex = isNaN(slot) ? -1 : slot;
+      // Treat activation as implicit inventory presence.
+      if (!isNaN(slot) && slot >= 0) {
+        if (!this.state.weaponsHud.slots.has(slot)) {
+          this.state.weaponsHud.slots.set(slot, -1);
+        }
+      }
+    } else if (funcName === "setWeaponsHudClearAll") {
+      this.state.weaponsHud.slots.clear();
+      this.state.weaponsHud.activeIndex = -1;
+
+      // ── Backpack HUD ──
+    } else if (funcName === "setBackpackHudItem" && args.length >= 2) {
+      const num = parseInt(args[0], 10);
+      const add = args[1] === "1" || args[1] === "true";
+      if (add && !isNaN(num)) {
+        this.state.backpackHud.packIndex = num;
+        this.state.backpackHud.active = false;
+        this.state.backpackHud.text = "";
+      } else {
+        this.state.backpackHud.packIndex = -1;
+        this.state.backpackHud.active = false;
+        this.state.backpackHud.text = "";
+      }
+    } else if (funcName === "setSatchelArmed") {
+      this.state.backpackHud.active = true;
+    } else if (
+      funcName === "setCloakIconOn" ||
+      funcName === "setRepairPackIconOn" ||
+      funcName === "setShieldIconOn" ||
+      funcName === "setSenJamIconOn"
+    ) {
+      this.state.backpackHud.active = true;
+    } else if (
+      funcName === "setCloakIconOff" ||
+      funcName === "setRepairPackIconOff" ||
+      funcName === "setShieldIconOff" ||
+      funcName === "setSenJamIconOff"
+    ) {
+      this.state.backpackHud.active = false;
+    } else if (funcName === "updatePackText" && args.length >= 1) {
+      this.state.backpackHud.text = args[0] ?? "";
+
+      // ── Inventory HUD (grenades, mines, beacons, repair kits) ──
+    } else if (funcName === "setInventoryHudItem" && args.length >= 3) {
+      const slot = parseInt(args[0], 10);
+      const amount = parseInt(args[1], 10);
+      const add = args[2] === "1" || args[2] === "true";
+      if (!isNaN(slot)) {
+        if (add && !isNaN(amount)) {
+          this.state.inventoryHud.slots.set(slot, amount);
+        } else {
+          this.state.inventoryHud.slots.delete(slot);
+        }
+      }
+    } else if (funcName === "setInventoryHudAmount" && args.length >= 2) {
+      const slot = parseInt(args[0], 10);
+      const amount = parseInt(args[1], 10);
+      if (!isNaN(slot) && !isNaN(amount)) {
+        this.state.inventoryHud.slots.set(slot, amount);
+      }
+    } else if (funcName === "setInventoryHudClearAll") {
+      this.state.inventoryHud.slots.clear();
+      this.state.inventoryHud.activeSlot = -1;
+    }
   }
 
   private buildSnapshot(): DemoStreamSnapshot {
@@ -1753,16 +2650,45 @@ class StreamingPlayback implements DemoStreamingPlayback {
         threads: entity.threads,
         explosionDataBlockId: entity.explosionDataBlockId,
         maintainEmitterId: entity.maintainEmitterId,
+        weaponImageState: entity.weaponImageState,
+        weaponImageStates: entity.weaponImageStates,
+        headPitch: entity.headPitch,
+        headYaw: entity.headYaw,
       });
     }
 
+    const timeSec = this.state.moveTicks * (TICK_DURATION_MS / 1000);
     return {
-      timeSec: this.state.moveTicks * (TICK_DURATION_MS / 1000),
+      timeSec,
       exhausted: this.state.exhausted,
       camera: this.state.camera,
       entities,
       controlPlayerGhostId: this.state.controlPlayerGhostId,
+      playerSensorGroup: this.state.playerSensorGroup,
       status: this.state.lastStatus,
+      chatMessages: this.state.chatMessages.filter(
+        (m) => m.timeSec > timeSec - 15,
+      ),
+      audioEvents: this.state.pendingAudioEvents.filter(
+        (e) => e.timeSec > timeSec - 0.5 && e.timeSec <= timeSec,
+      ),
+      weaponsHud: {
+        slots: Array.from(this.state.weaponsHud.slots.entries()).map(
+          ([index, ammo]): WeaponsHudSlot => ({ index, ammo }),
+        ),
+        activeIndex: this.state.weaponsHud.activeIndex,
+      },
+      backpackHud:
+        this.state.backpackHud.packIndex >= 0
+          ? { ...this.state.backpackHud }
+          : null,
+      inventoryHud: {
+        slots: Array.from(this.state.inventoryHud.slots.entries()).map(
+          ([slot, count]): InventoryHudSlot => ({ slot, count }),
+        ),
+        activeSlot: this.state.inventoryHud.activeSlot,
+      },
+      teamScores: this.state.teamScores,
     };
   }
 
@@ -1823,7 +2749,9 @@ class StreamingPlayback implements DemoStreamingPlayback {
     );
   }
 
-  private isMoveData(parsed: unknown): parsed is { yaw?: number; pitch?: number } {
+  private isMoveData(
+    parsed: unknown,
+  ): parsed is { yaw?: number; pitch?: number } {
     return !!parsed && typeof parsed === "object" && "yaw" in parsed;
   }
 
@@ -1834,6 +2762,32 @@ class StreamingPlayback implements DemoStreamingPlayback {
       "value2" in parsed &&
       typeof (parsed as { value2?: unknown }).value2 === "number"
     );
+  }
+
+  /** Resolve a string that may contain a tagged string reference (`\x01<id>`). */
+  private resolveNetString(s: string): string {
+    if (s.length >= 2 && s.charCodeAt(0) === 1) {
+      const id = parseInt(s.slice(1), 10);
+      if (Number.isFinite(id)) {
+        return this.netStrings.get(id) ?? s;
+      }
+    }
+    return s;
+  }
+
+  /** Apply Torque `%N` format substitution and strip markup. */
+  private formatRemoteArgs(template: string, args: string[]): string {
+    let resolved = this.resolveNetString(template);
+    for (let i = 0; i < args.length; i++) {
+      const placeholder = `%${i + 1}`;
+      if (resolved.includes(placeholder)) {
+        resolved = resolved.replaceAll(
+          placeholder,
+          stripTaggedStringMarkup(this.resolveNetString(args[i])),
+        );
+      }
+    }
+    return stripTaggedStringMarkup(resolved);
   }
 }
 

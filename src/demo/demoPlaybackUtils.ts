@@ -9,11 +9,11 @@ import {
   NoColorSpace,
   Object3D,
   Quaternion,
-  TextureLoader,
   Vector3,
 } from "three";
 import type {
   BufferGeometry,
+  Material,
   MeshStandardMaterial,
   Texture,
 } from "three";
@@ -21,13 +21,17 @@ import {
   createMaterialFromFlags,
   applyShapeShaderModifications,
 } from "../components/GenericShape";
+import {
+  loadIflAtlas,
+  getFrameIndexForTime,
+  updateAtlasFrame,
+} from "../components/useIflTexture";
 import { getHullBoneIndices, filterGeometryByVertexGroups } from "../meshUtils";
-import { setupTexture } from "../textureUtils";
+import { loadTexture, setupTexture } from "../textureUtils";
 import { textureToUrl } from "../loaders";
 import type {
   DemoEntity,
   DemoKeyframe,
-  DemoStreamSnapshot,
 } from "./types";
 
 /** Fallback eye height when the player model isn't loaded or has no Cam node. */
@@ -38,7 +42,6 @@ export const ANIM_TRANSITION_TIME = 0.25;
 
 export const STREAM_TICK_MS = 32;
 export const STREAM_TICK_SEC = STREAM_TICK_MS / 1000;
-export const CAMERA_COLLISION_RADIUS = 0.05;
 
 // ── Temp vectors / quaternions (module-level to avoid per-frame alloc) ──
 
@@ -53,15 +56,6 @@ export const _r90 = new Quaternion().setFromAxisAngle(
   Math.PI / 2,
 );
 export const _r90inv = _r90.clone().invert();
-
-// ── Lifecycle tracking ──
-
-let lifecycleInstanceIdSeed = 0;
-
-export function nextLifecycleInstanceId(prefix: string): string {
-  lifecycleInstanceIdSeed += 1;
-  return `${prefix}-${lifecycleInstanceIdSeed}`;
-}
 
 // ── Pure functions ──
 
@@ -235,7 +229,11 @@ export function smoothVertexNormals(geometry: BufferGeometry): void {
   normAttr.needsUpdate = true;
 }
 
-const _textureLoader = new TextureLoader();
+export interface ShapeMaterialResult {
+  material: Material;
+  /** For IFL materials: loads atlas, configures texture, sets up animation. */
+  initialize?: (mesh: Object3D, getTime: () => number) => Promise<() => void>;
+}
 
 /**
  * Replace a PBR MeshStandardMaterial with a diffuse-only Lambert/Basic material
@@ -243,7 +241,10 @@ const _textureLoader = new TextureLoader();
  * from URLs (GLB files don't embed texture data; they store a resource_path in
  * material userData instead).
  */
-export function replaceWithShapeMaterial(mat: MeshStandardMaterial, vis: number) {
+export function replaceWithShapeMaterial(
+  mat: MeshStandardMaterial,
+  vis: number,
+): ShapeMaterialResult {
   const resourcePath: string | undefined = mat.userData?.resource_path;
   const flagNames = new Set<string>(mat.userData?.flag_names ?? []);
 
@@ -255,30 +256,75 @@ export function replaceWithShapeMaterial(mat: MeshStandardMaterial, vis: number)
       reflectivity: 0,
     });
     applyShapeShaderModifications(fallback);
-    return fallback;
+    return { material: fallback };
   }
 
-  // Load texture asynchronously via Three.js TextureLoader. The returned
+  // IFL materials need async atlas loading — create with null map to avoid
+  // "Resource not found" warnings from textureToUrl, and return an initializer
+  // that loads the atlas and sets up per-frame animation.
+  if (flagNames.has("IflMaterial")) {
+    const result = createMaterialFromFlags(mat, null, flagNames, false, vis);
+    const material = Array.isArray(result) ? result[1] : result;
+    return {
+      material,
+      initialize: (mesh, getTime) =>
+        initializeIflMaterial(material, resourcePath, mesh, getTime),
+    };
+  }
+
+  // Load texture via ImageBitmapLoader (decodes off main thread). The returned
   // Texture is empty initially and gets populated when the image arrives;
   // Three.js re-renders automatically once loaded.
   const url = textureToUrl(resourcePath);
-  const texture = _textureLoader.load(url);
+  const texture = loadTexture(url);
   setupTexture(texture);
 
   const result = createMaterialFromFlags(mat, texture, flagNames, false, vis);
   // createMaterialFromFlags may return a [back, front] pair for translucent
   // materials. Use the front material since we can't split meshes imperatively.
-  if (Array.isArray(result)) {
-    return result[1];
-  }
-  return result;
+  const material = Array.isArray(result) ? result[1] : result;
+  return { material };
+}
+
+export interface IflInitializer {
+  mesh: Object3D;
+  initialize: (mesh: Object3D, getTime: () => number) => Promise<() => void>;
+}
+
+async function initializeIflMaterial(
+  material: Material,
+  resourcePath: string,
+  mesh: Object3D,
+  getTime: () => number,
+): Promise<() => void> {
+  const iflPath = `textures/${resourcePath}.ifl`;
+  const atlas = await loadIflAtlas(iflPath);
+
+  (material as any).map = atlas.texture;
+  material.needsUpdate = true;
+
+  let disposed = false;
+  const prevOnBeforeRender = mesh.onBeforeRender;
+  mesh.onBeforeRender = function (this: any, ...args: any[]) {
+    prevOnBeforeRender?.apply(this, args);
+    if (disposed) return;
+    updateAtlasFrame(atlas, getFrameIndexForTime(atlas, getTime()));
+  };
+
+  return () => {
+    disposed = true;
+    mesh.onBeforeRender = prevOnBeforeRender ?? (() => {});
+  };
 }
 
 /**
  * Post-process a cloned shape scene: hide collision/hull geometry, smooth
  * normals, and replace PBR materials with diffuse-only Lambert materials.
+ * Returns IFL initializers for any IFL materials found.
  */
-export function processShapeScene(scene: Object3D): void {
+export function processShapeScene(scene: Object3D): IflInitializer[] {
+  const iflInitializers: IflInitializer[] = [];
+
   // Find skeleton for hull bone filtering.
   let skeleton: any = null;
   scene.traverse((n: any) => {
@@ -291,14 +337,18 @@ export function processShapeScene(scene: Object3D): void {
   scene.traverse((node: any) => {
     if (!node.isMesh) return;
 
-    // Hide unwanted nodes: hull geometry, unassigned materials, invisible objects.
-    if (
-      node.name.match(/^Hulk/i) ||
-      node.material?.name === "Unassigned" ||
-      (node.userData?.vis ?? 1) < 0.01
-    ) {
+    // Hide unwanted nodes: hull geometry, unassigned materials.
+    if (node.name.match(/^Hulk/i) || node.material?.name === "Unassigned") {
       node.visible = false;
       return;
+    }
+
+    // Hide vis-animated meshes (default vis < 0.01) but DON'T skip material
+    // replacement — they need correct textures for when they become visible
+    // (e.g. disc launcher's Disc mesh toggles visibility via state machine).
+    const hasVisSequence = !!node.userData?.vis_sequence;
+    if ((node.userData?.vis ?? 1) < 0.01) {
+      node.visible = false;
     }
 
     // Filter hull-influenced triangles and smooth normals.
@@ -313,47 +363,27 @@ export function processShapeScene(scene: Object3D): void {
     }
 
     // Replace PBR materials with diffuse-only Lambert materials.
-    const vis: number = node.userData?.vis ?? 1;
+    // For vis-animated meshes, use vis=1 so the material is fully opaque —
+    // their visibility is toggled via node.visible, not material opacity.
+    const vis: number = hasVisSequence ? 1 : (node.userData?.vis ?? 1);
     if (Array.isArray(node.material)) {
-      node.material = node.material.map((m: MeshStandardMaterial) =>
-        replaceWithShapeMaterial(m, vis),
-      );
+      node.material = node.material.map((m: MeshStandardMaterial) => {
+        const result = replaceWithShapeMaterial(m, vis);
+        if (result.initialize) {
+          iflInitializers.push({ mesh: node, initialize: result.initialize });
+        }
+        return result.material;
+      });
     } else if (node.material) {
-      node.material = replaceWithShapeMaterial(node.material, vis);
+      const result = replaceWithShapeMaterial(node.material, vis);
+      if (result.initialize) {
+        iflInitializers.push({ mesh: node, initialize: result.initialize });
+      }
+      node.material = result.material;
     }
   });
-}
 
-export function collectSceneObjectCounts(scene: Object3D): {
-  sceneObjects: number;
-  visibleSceneObjects: number;
-} {
-  let sceneObjects = 0;
-  let visibleSceneObjects = 0;
-  scene.traverse((node) => {
-    sceneObjects += 1;
-    if (node.visible) {
-      visibleSceneObjects += 1;
-    }
-  });
-  return { sceneObjects, visibleSceneObjects };
-}
-
-export function streamSnapshotSignature(snapshot: DemoStreamSnapshot): string {
-  const parts: string[] = [];
-  for (const entity of snapshot.entities) {
-    const visualPart =
-      entity.visual?.kind === "tracer"
-        ? `tracer:${entity.visual.texture}:${entity.visual.crossTexture ?? ""}:${entity.visual.tracerLength}:${entity.visual.tracerWidth}:${entity.visual.crossViewAng}:${entity.visual.crossSize}:${entity.visual.renderCross ? 1 : 0}`
-        : entity.visual?.kind === "sprite"
-          ? `sprite:${entity.visual.texture}:${entity.visual.color.r}:${entity.visual.color.g}:${entity.visual.color.b}:${entity.visual.size}`
-          : "";
-    parts.push(
-      `${entity.id}|${entity.type}|${entity.dataBlock ?? ""}|${entity.weaponShape ?? ""}|${entity.playerName ?? ""}|${entity.className ?? ""}|${entity.ghostIndex ?? ""}|${entity.dataBlockId ?? ""}|${entity.shapeHint ?? ""}|${entity.faceViewer ? "fv" : ""}|${visualPart}`,
-    );
-  }
-  parts.sort();
-  return parts.join(";");
+  return iflInitializers;
 }
 
 export function buildStreamDemoEntity(
@@ -389,15 +419,6 @@ export function buildStreamDemoEntity(
       },
     ],
   };
-}
-
-export function hasAncestorNamed(object: Object3D | null, name: string): boolean {
-  let node: Object3D | null = object;
-  while (node) {
-    if (node.name === name) return true;
-    node = node.parent;
-  }
-  return false;
 }
 
 export function entityTypeColor(type: string): string {

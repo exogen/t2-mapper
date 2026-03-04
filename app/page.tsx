@@ -32,17 +32,12 @@ import { CamerasProvider } from "@/src/components/CamerasProvider";
 import {
   DemoProvider,
   useDemoActions,
-  useDemoIsPlaying,
   useDemoRecording,
 } from "@/src/components/DemoProvider";
 import { DemoPlayback } from "@/src/components/DemoPlayback";
 import { DemoControls } from "@/src/components/DemoControls";
 import { PlayerHUD } from "@/src/components/PlayerHUD";
-import {
-  buildSerializableDiagnosticsJson,
-  buildSerializableDiagnosticsSnapshot,
-  useEngineStoreApi,
-} from "@/src/state";
+import { ChatSoundPlayer } from "@/src/components/ChatSoundPlayer";
 import {
   getMissionList,
   getMissionInfo,
@@ -68,17 +63,6 @@ const glSettings: GLProps = {
   toneMapping: NoToneMapping,
   outputColorSpace: SRGBColorSpace,
 };
-
-function summarizeCallStack(skipFrames = 0): string | null {
-  const stack = new Error().stack;
-  if (!stack) return null;
-  const lines = stack
-    .split("\n")
-    .map((line) => line.trim())
-    .filter(Boolean);
-  const callsiteLines = lines.slice(1 + skipFrames, 9 + skipFrames);
-  return callsiteLines.length > 0 ? callsiteLines.join(" <= ") : null;
-}
 
 type CurrentMission = {
   missionName: string;
@@ -117,7 +101,6 @@ function MapInspector() {
     "mission",
     parseAsMissionWithType,
   );
-  const engineStore = useEngineStoreApi();
   const [fogEnabledOverride, setFogEnabledOverride] = useQueryState(
     "fog",
     parseAsBoolean,
@@ -127,34 +110,13 @@ function MapInspector() {
     setFogEnabledOverride(null);
   }, [setFogEnabledOverride]);
 
-  const currentMissionRef = useRef(currentMission);
-  currentMissionRef.current = currentMission;
-
   const changeMission = useCallback(
     (mission: CurrentMission) => {
-      const previousMission = currentMissionRef.current;
-      const stack = summarizeCallStack(1);
-      engineStore.getState().recordPlaybackDiagnosticEvent({
-        kind: "mission.change.requested",
-        message: "changeMission invoked",
-        meta: {
-          previousMissionName: previousMission.missionName,
-          previousMissionType: previousMission.missionType ?? null,
-          nextMissionName: mission.missionName,
-          nextMissionType: mission.missionType ?? null,
-          stack: stack ?? "unavailable",
-        },
-      });
-      console.info("[mission trace] changeMission", {
-        previousMission,
-        nextMission: mission,
-        stack,
-      });
       window.location.hash = "";
       clearFogEnabledOverride();
       setCurrentMission(mission);
     },
-    [engineStore, setCurrentMission, clearFogEnabledOverride],
+    [setCurrentMission, clearFogEnabledOverride],
   );
 
   const isTouch = useTouchDevice();
@@ -270,6 +232,7 @@ function MapInspector() {
                       <ObserverCamera />
                       <DebugElements />
                       <DemoPlayback />
+                      <ChatSoundPlayer />
                       <DemoAwareControls
                         isTouch={isTouch}
                         joystickStateRef={joystickStateRef}
@@ -382,8 +345,8 @@ function DemoMissionSync({
 }
 
 /**
- * Disables observer/touch controls when a demo is playing so they don't
- * fight the animated camera.
+ * Disables observer/touch controls when a demo recording is loaded so they
+ * don't fight the animated camera.
  */
 function DemoAwareControls({
   isTouch,
@@ -398,8 +361,8 @@ function DemoAwareControls({
   lookJoystickStateRef: React.RefObject<JoystickState>;
   lookJoystickZoneRef: React.RefObject<HTMLDivElement | null>;
 }) {
-  const isPlaying = useDemoIsPlaying();
-  if (isPlaying) return null;
+  const recording = useDemoRecording();
+  if (recording) return null;
   if (isTouch === null) return null;
   if (isTouch) {
     return (
@@ -417,26 +380,13 @@ function DemoAwareControls({
 /** Exposes `window.loadDemoRecording` for automation/testing. */
 function DemoWindowAPI() {
   const { setRecording } = useDemoActions();
-  const engineStore = useEngineStoreApi();
 
   useEffect(() => {
     window.loadDemoRecording = setRecording;
-    window.getDemoDiagnostics = () => {
-      return buildSerializableDiagnosticsSnapshot(engineStore.getState());
-    };
-    window.getDemoDiagnosticsJson = () => {
-      return buildSerializableDiagnosticsJson(engineStore.getState());
-    };
-    window.clearDemoDiagnostics = () => {
-      engineStore.getState().clearPlaybackDiagnostics();
-    };
     return () => {
       delete window.loadDemoRecording;
-      delete window.getDemoDiagnostics;
-      delete window.getDemoDiagnosticsJson;
-      delete window.clearDemoDiagnostics;
     };
-  }, [engineStore, setRecording]);
+  }, [setRecording]);
 
   return null;
 }

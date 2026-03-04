@@ -7,9 +7,9 @@ import {
   NearestFilter,
   SRGBColorSpace,
   Texture,
-  TextureLoader,
 } from "three";
 import { iflTextureToUrl, loadImageFrameList } from "../loaders";
+import { loadTextureAsync } from "../textureUtils";
 import { useTick, TICK_RATE } from "./TickProvider";
 import { useSettings } from "./SettingsProvider";
 
@@ -32,16 +32,8 @@ export interface IflAtlas {
 // Module-level cache for atlas textures, shared across all components.
 const atlasCache = new Map<string, IflAtlas>();
 
-const _textureLoader = new TextureLoader();
-
-function loadTextureAsync(url: string): Promise<Texture> {
-  return new Promise((resolve, reject) => {
-    _textureLoader.load(url, resolve, undefined, reject);
-  });
-}
-
 function createAtlas(textures: Texture[]): IflAtlas {
-  const firstImage = textures[0].image as HTMLImageElement;
+  const firstImage = textures[0].image as HTMLImageElement | ImageBitmap;
   const frameWidth = firstImage.width;
   const frameHeight = firstImage.height;
   const frameCount = textures.length;

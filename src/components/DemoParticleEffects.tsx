@@ -11,15 +11,17 @@ import {
   Mesh,
   MeshBasicMaterial,
   NormalBlending,
+  PositionalAudio,
   RGBAFormat,
   ShaderMaterial,
   SphereGeometry,
   Texture,
-  TextureLoader,
   Uint16BufferAttribute,
   UnsignedByteType,
+  Vector3,
 } from "three";
-import { textureToUrl } from "../loaders";
+import { audioToUrl, textureToUrl } from "../loaders";
+import { loadTexture } from "../textureUtils";
 import { setupEffectTexture } from "../demo/demoPlaybackUtils";
 import {
   EmitterInstance,
@@ -34,7 +36,13 @@ import type {
   DemoStreamSnapshot,
   DemoStreamingPlayback,
 } from "../demo/types";
-import { useDebug } from "./SettingsProvider";
+import { useDebug, useSettings } from "./SettingsProvider";
+import { useAudio } from "./AudioContext";
+import {
+  resolveAudioProfile,
+  playOneShotSound,
+  getCachedAudioBuffer,
+} from "./AudioEmitter";
 
 // ── Constants ──
 
@@ -45,7 +53,6 @@ const QUAD_CORNERS = new Float32Array([
 
 // ── Texture cache ──
 
-const _textureLoader = new TextureLoader();
 const _textureCache = new Map<string, Texture>();
 /** Set of textures whose image data has finished loading. */
 const _texturesReady = new Set<Texture>();
@@ -66,7 +73,7 @@ function getParticleTexture(textureName: string): Texture {
   if (cached) return cached;
   try {
     const url = textureToUrl(textureName);
-    const tex = _textureLoader.load(url, (t) => {
+    const tex = loadTexture(url, (t) => {
       setupEffectTexture(t);
       _texturesReady.add(t);
     });
@@ -167,6 +174,8 @@ interface ActiveEmitter {
   origin: [number, number, number];
   isBurst: boolean;
   hasBurst: boolean;
+  /** Whether shader compilation has been verified. */
+  shaderChecked?: boolean;
   /** Entity ID this emitter follows (for projectile trails). */
   followEntityId?: string;
   /** Debug: origin marker mesh. */
@@ -207,13 +216,7 @@ function resolveExplosion(
   getDataBlockData: (id: number) => Record<string, unknown> | undefined,
 ): ResolvedExplosion | null {
   const expBlock = getDataBlockData(explosionDataBlockId);
-  if (!expBlock) {
-    console.log("[resolveExplosion] getDataBlockData returned undefined for id:", explosionDataBlockId);
-    return null;
-  }
-
-  // DEBUG: log the raw explosion datablock fields
-  console.log("[resolveExplosion] expBlock keys:", Object.keys(expBlock), "particleEmitter:", expBlock.particleEmitter, "emitters:", expBlock.emitters, "particleDensity:", expBlock.particleDensity);
+  if (!expBlock) return null;
 
   const burstEmitters: ResolvedExplosion["burstEmitters"] = [];
   const streamingEmitters: EmitterDataResolved[] = [];
@@ -222,48 +225,30 @@ function resolveExplosion(
   const particleEmitterId = expBlock.particleEmitter as number | null;
   if (typeof particleEmitterId === "number") {
     const emitterRaw = getDataBlockData(particleEmitterId);
-    console.log("[resolveExplosion] burst emitter lookup — particleEmitterId:", particleEmitterId, "found:", !!emitterRaw);
     if (emitterRaw) {
-      console.log("[resolveExplosion] burst emitter raw keys:", Object.keys(emitterRaw), "particles:", emitterRaw.particles);
       const resolved = resolveEmitterData(emitterRaw, getDataBlockData);
       if (resolved) {
         const density = (expBlock.particleDensity as number) ?? 10;
-        console.log("[resolveExplosion] burst emitter RESOLVED — density:", density, "textureName:", resolved.particles.textureName, "particleLifetimeMS:", resolved.particles.lifetimeMS, "emitterLifetimeMS:", resolved.lifetimeMS);
         burstEmitters.push({ data: resolved, density });
-      } else {
-        console.log("[resolveExplosion] resolveEmitterData returned null for burst emitter");
       }
     }
-  } else {
-    console.log("[resolveExplosion] no particleEmitter field (value:", expBlock.particleEmitter, ")");
   }
 
   // Streaming emitters: emitters[0..3].
   const emitterRefs = expBlock.emitters as (number | null)[] | undefined;
   if (Array.isArray(emitterRefs)) {
-    console.log("[resolveExplosion] emitters array:", emitterRefs);
     for (const ref of emitterRefs) {
       if (typeof ref !== "number") continue;
       const emitterRaw = getDataBlockData(ref);
-      if (!emitterRaw) {
-        console.log("[resolveExplosion] streaming emitter ref", ref, "not found");
-        continue;
-      }
-      console.log("[resolveExplosion] streaming emitter raw keys:", Object.keys(emitterRaw), "particles:", emitterRaw.particles);
+      if (!emitterRaw) continue;
       const resolved = resolveEmitterData(emitterRaw, getDataBlockData);
       if (resolved) {
-        console.log("[resolveExplosion] streaming emitter RESOLVED — textureName:", resolved.particles.textureName, "particleLifetimeMS:", resolved.particles.lifetimeMS, "emitterLifetimeMS:", resolved.lifetimeMS, "ejectionPeriodMS:", resolved.ejectionPeriodMS);
         streamingEmitters.push(resolved);
-      } else {
-        console.log("[resolveExplosion] resolveEmitterData returned null for streaming emitter ref:", ref);
       }
     }
-  } else {
-    console.log("[resolveExplosion] no emitters array on expBlock");
   }
 
   if (burstEmitters.length === 0 && streamingEmitters.length === 0) {
-    console.log("[resolveExplosion] no emitters resolved at all, returning null");
     return null;
   }
 
@@ -341,6 +326,8 @@ function syncBuffers(active: ActiveEmitter): void {
 
 // ── Main component ──
 
+const MAX_PROJECTILE_SOUNDS = 20;
+
 export function DemoParticleEffects({
   playback,
   snapshotRef,
@@ -349,6 +336,8 @@ export function DemoParticleEffects({
   snapshotRef: React.RefObject<DemoStreamSnapshot | null>;
 }) {
   const { debugMode } = useDebug();
+  const { audioEnabled } = useSettings();
+  const { audioLoader, audioListener } = useAudio();
   const gl = useThree((s) => s.gl);
   const groupRef = useRef<Group>(null);
   const activeEmittersRef = useRef<ActiveEmitter[]>([]);
@@ -356,46 +345,17 @@ export function DemoParticleEffects({
   const processedExplosionsRef = useRef<Set<string>>(new Set());
   /** Track which projectile entity IDs have trail emitters attached. */
   const trailEntitiesRef = useRef<Set<string>>(new Set());
-  /** Throttle for periodic debug logs. */
-  const lastDebugLogRef = useRef(0);
-
-  useEffect(() => {
-    console.log("[ParticleFX] MOUNTED — playback:", !!playback, "snapshotRef:", !!snapshotRef);
-  }, [playback, snapshotRef]);
-
+  /** Active looping projectile sounds keyed by entity ID. */
+  const projectileSoundsRef = useRef<Map<string, PositionalAudio>>(new Map());
+  /** Track processed audio event keys to prevent replays on seek. */
+  const processedAudioEventsRef = useRef<Set<string>>(new Set());
   useFrame((_, delta) => {
     const group = groupRef.current;
     const snapshot = snapshotRef.current;
-    if (!group || !snapshot) {
-      // DEBUG: log when snapshot or group is missing
-      console.log("[ParticleFX] early return — group:", !!group, "snapshot:", !!snapshot);
-      return;
-    }
+    if (!group || !snapshot) return;
 
     const dtMS = delta * 1000;
     const getDataBlockData = playback.getDataBlockData.bind(playback);
-
-    // DEBUG: periodically log entity type counts (every 2 seconds).
-    const now = performance.now();
-    if (now - lastDebugLogRef.current > 2000) {
-      lastDebugLogRef.current = now;
-      const typeCounts: Record<string, number> = {};
-      let withMaintainEmitter = 0;
-      let withExplosionDataBlockId = 0;
-      for (const e of snapshot.entities) {
-        typeCounts[e.type] = (typeCounts[e.type] || 0) + 1;
-        if (e.maintainEmitterId) withMaintainEmitter++;
-        if (e.explosionDataBlockId) withExplosionDataBlockId++;
-      }
-      console.log(
-        "[ParticleFX] types:", typeCounts,
-        "| active emitters:", activeEmittersRef.current.length,
-        "| processedExplosions:", processedExplosionsRef.current.size,
-        "| trailEntities:", trailEntitiesRef.current.size,
-        "| withExplosionDataBlockId:", withExplosionDataBlockId,
-        "| withMaintainEmitter:", withMaintainEmitter,
-      );
-    }
 
     // Detect new explosion entities and create emitters.
     for (const entity of snapshot.entities) {
@@ -404,29 +364,16 @@ export function DemoParticleEffects({
         !entity.explosionDataBlockId ||
         !entity.position
       ) {
-        // DEBUG: log entities that are type "Explosion" but fail the other checks
-        if (entity.type === "Explosion") {
-          console.log("[ParticleFX] Explosion entity SKIPPED — id:", entity.id, "explosionDataBlockId:", entity.explosionDataBlockId, "position:", entity.position);
-        }
         continue;
       }
       if (processedExplosionsRef.current.has(entity.id)) continue;
       processedExplosionsRef.current.add(entity.id);
 
-      // DEBUG: log new explosion entity being processed
-      console.log("[ParticleFX] NEW explosion entity:", entity.id, "dataBlockId:", entity.explosionDataBlockId, "pos:", entity.position);
-
       const resolved = resolveExplosion(
         entity.explosionDataBlockId,
         getDataBlockData,
       );
-      if (!resolved) {
-        console.log("[ParticleFX] resolveExplosion returned null for dataBlockId:", entity.explosionDataBlockId);
-        continue;
-      }
-
-      // DEBUG: log resolved explosion details
-      console.log("[ParticleFX] resolveExplosion OK — burstEmitters:", resolved.burstEmitters.length, "streamingEmitters:", resolved.streamingEmitters.length, "lifetimeMS:", resolved.lifetimeMS);
+      if (!resolved) continue;
 
       const origin: [number, number, number] = [...entity.position];
 
@@ -438,11 +385,7 @@ export function DemoParticleEffects({
         );
         emitter.emitBurst(origin, burst.density);
 
-        // DEBUG: log burst emitter creation
-        console.log("[ParticleFX] Created BURST emitter — particles after burst:", emitter.particles.length, "origin:", origin, "texture:", burst.data.particles.textureName, "particleLifetimeMS:", burst.data.particles.lifetimeMS, "keyframes:", burst.data.particles.keys.length, "key0:", burst.data.particles.keys[0]);
-
         const texture = getParticleTexture(burst.data.particles.textureName);
-        console.log("[ParticleFX] burst texture loaded:", !!texture, "textureName:", burst.data.particles.textureName);
         const geometry = createParticleGeometry(MAX_PARTICLES_PER_EMITTER);
         const material = createParticleMaterial(
           texture,
@@ -472,11 +415,7 @@ export function DemoParticleEffects({
           resolved.lifetimeMS,
         );
 
-        // DEBUG: log streaming emitter creation
-        console.log("[ParticleFX] Created STREAMING emitter — emitterLifetimeMS:", emitterData.lifetimeMS, "ejectionPeriodMS:", emitterData.ejectionPeriodMS, "origin:", origin, "texture:", emitterData.particles.textureName, "particleLifetimeMS:", emitterData.particles.lifetimeMS);
-
         const texture = getParticleTexture(emitterData.particles.textureName);
-        console.log("[ParticleFX] streaming texture loaded:", !!texture, "textureName:", emitterData.particles.textureName);
         const geometry = createParticleGeometry(MAX_PARTICLES_PER_EMITTER);
         const material = createParticleMaterial(
           texture,
@@ -521,16 +460,6 @@ export function DemoParticleEffects({
 
       const emitter = new EmitterInstance(emitterData, MAX_PARTICLES_PER_EMITTER);
 
-      console.log(
-        "[ParticleFX] Created TRAIL emitter for",
-        entity.type,
-        entity.id,
-        "— maintainEmitterId:",
-        entity.maintainEmitterId,
-        "texture:",
-        emitterData.particles.textureName,
-      );
-
       const texture = getParticleTexture(emitterData.particles.textureName);
       const geometry = createParticleGeometry(MAX_PARTICLES_PER_EMITTER);
       const material = createParticleMaterial(
@@ -573,8 +502,11 @@ export function DemoParticleEffects({
     for (let i = active.length - 1; i >= 0; i--) {
       const entry = active[i];
 
-      // One-time shader compilation check on first frame.
-      checkShaderCompilation(gl, entry.material, entry.isBurst ? "burst" : "stream");
+      // One-time shader compilation check.
+      if (!entry.shaderChecked) {
+        checkShaderCompilation(gl, entry.material, entry.isBurst ? "burst" : "stream");
+        entry.shaderChecked = true;
+      }
 
       // Update trail emitter origin to follow the projectile's position.
       if (entry.followEntityId) {
@@ -595,12 +527,6 @@ export function DemoParticleEffects({
 
       // Advance physics and interpolation.
       entry.emitter.update(dtMS);
-
-      // DEBUG: log particle state on first few frames of each emitter
-      if (entry.emitter.particles.length > 0 && Math.random() < 0.02) {
-        const p0 = entry.emitter.particles[0];
-        console.log("[ParticleFX] update — isBurst:", entry.isBurst, "particleCount:", entry.emitter.particles.length, "p0.pos:", p0.pos, "p0.size:", p0.size, "p0.a:", p0.a, "p0.age/lifetime:", p0.currentAge, "/", p0.totalLifetime, "drawRange:", entry.geometry.drawRange);
-      }
 
       // Swap in the real texture once it finishes loading.
       if (
@@ -667,7 +593,6 @@ export function DemoParticleEffects({
 
       // Remove dead emitters.
       if (entry.emitter.isDead()) {
-        console.log("[ParticleFX] removing DEAD emitter — isBurst:", entry.isBurst, "origin:", entry.origin);
         group.remove(entry.mesh);
         entry.geometry.dispose();
         entry.material.dispose();
@@ -679,6 +604,133 @@ export function DemoParticleEffects({
       }
     }
 
+    // ── Audio: explosion impact sounds ──
+    if (audioEnabled && audioLoader && audioListener && groupRef.current) {
+      for (const entity of snapshot.entities) {
+        if (
+          entity.type !== "Explosion" ||
+          !entity.explosionDataBlockId ||
+          !entity.position
+        ) {
+          continue;
+        }
+        const soundKey = `snd:${entity.id}`;
+        if (processedAudioEventsRef.current.has(soundKey)) continue;
+        processedAudioEventsRef.current.add(soundKey);
+
+        const expBlock = getDataBlockData(entity.explosionDataBlockId);
+        if (!expBlock) continue;
+        const soundProfileId = expBlock.soundProfile as number | undefined;
+        if (typeof soundProfileId !== "number") continue;
+
+        const resolved = resolveAudioProfile(soundProfileId, getDataBlockData);
+        if (!resolved) continue;
+
+        const pos = new Vector3(
+          entity.position[1],
+          entity.position[2],
+          entity.position[0],
+        );
+        playOneShotSound(
+          resolved,
+          audioListener,
+          audioLoader,
+          pos,
+          groupRef.current,
+        );
+      }
+
+      // ── Audio: projectile in-flight sounds ──
+      const projSounds = projectileSoundsRef.current;
+
+      for (const entity of snapshot.entities) {
+        if (entity.type !== "Projectile" || !entity.dataBlockId || !entity.position) {
+          continue;
+        }
+        if (projSounds.has(entity.id)) {
+          // Update position of existing sound.
+          const sound = projSounds.get(entity.id)!;
+          sound.position.set(
+            entity.position[1],
+            entity.position[2],
+            entity.position[0],
+          );
+          continue;
+        }
+        // Cap active projectile sounds.
+        if (projSounds.size >= MAX_PROJECTILE_SOUNDS) continue;
+
+        const projBlock = getDataBlockData(entity.dataBlockId);
+        if (!projBlock) continue;
+        const soundId = projBlock.sound as number | undefined;
+        if (typeof soundId !== "number") continue;
+
+        const resolved = resolveAudioProfile(soundId, getDataBlockData);
+        if (!resolved || !resolved.isLooping || !resolved.is3D) continue;
+
+        try {
+          const url = audioToUrl(resolved.filename);
+          getCachedAudioBuffer(url, audioLoader, (buffer) => {
+            // Entity may have despawned by the time the buffer loads.
+            if (!currentEntityIds.has(entity.id)) return;
+            if (projSounds.has(entity.id)) return;
+            const group = groupRef.current;
+            if (!group) return;
+
+            const sound = new PositionalAudio(audioListener);
+            sound.setBuffer(buffer);
+            sound.setDistanceModel("inverse");
+            sound.setRefDistance(resolved.refDist);
+            sound.setMaxDistance(resolved.maxDist);
+            sound.setRolloffFactor(1);
+            sound.setVolume(resolved.volume);
+            sound.setLoop(true);
+            sound.position.set(
+              entity.position![1],
+              entity.position![2],
+              entity.position![0],
+            );
+            group.add(sound);
+            sound.play();
+            projSounds.set(entity.id, sound);
+          });
+        } catch {
+          // File not in manifest.
+        }
+      }
+
+      // Despawn: stop sounds for entities no longer present.
+      for (const [entityId, sound] of projSounds) {
+        if (!currentEntityIds.has(entityId)) {
+          try { sound.stop(); } catch {}
+          sound.disconnect();
+          groupRef.current?.remove(sound);
+          projSounds.delete(entityId);
+        }
+      }
+
+      // ── Audio: event-based sounds (Sim3DAudioEvent / Sim2DAudioEvent) ──
+      for (const evt of snapshot.audioEvents) {
+        const evtKey = `${evt.timeSec}:${evt.profileId}:${evt.position?.x ?? ""}`;
+        if (processedAudioEventsRef.current.has(evtKey)) continue;
+        processedAudioEventsRef.current.add(evtKey);
+
+        const resolved = resolveAudioProfile(evt.profileId, getDataBlockData);
+        if (!resolved) continue;
+
+        const pos = evt.position
+          ? new Vector3(evt.position.y, evt.position.z, evt.position.x)
+          : undefined;
+        playOneShotSound(
+          resolved,
+          audioListener,
+          audioLoader,
+          pos,
+          groupRef.current,
+        );
+      }
+    }
+
     // Prune processed set when it gets large.
     if (processedExplosionsRef.current.size > 500) {
       const currentIds = new Set(snapshot.entities.map((e) => e.id));
@@ -686,6 +738,16 @@ export function DemoParticleEffects({
         if (!currentIds.has(id)) {
           processedExplosionsRef.current.delete(id);
         }
+      }
+    }
+    // Prune processed audio events set: keep only entries for current entities
+    // and recent event keys.
+    if (processedAudioEventsRef.current.size > 500) {
+      const currentIds = new Set(snapshot.entities.map((e) => e.id));
+      for (const key of processedAudioEventsRef.current) {
+        // Keep explosion sound keys (prefixed "snd:") if entity is still present.
+        if (key.startsWith("snd:") && currentIds.has(key.slice(4))) continue;
+        processedAudioEventsRef.current.delete(key);
       }
     }
   });
@@ -708,6 +770,14 @@ export function DemoParticleEffects({
       activeEmittersRef.current = [];
       processedExplosionsRef.current.clear();
       trailEntitiesRef.current.clear();
+      // Clean up projectile sounds.
+      for (const [, sound] of projectileSoundsRef.current) {
+        try { sound.stop(); } catch {}
+        sound.disconnect();
+        if (group) group.remove(sound);
+      }
+      projectileSoundsRef.current.clear();
+      processedAudioEventsRef.current.clear();
     };
   }, []);
 

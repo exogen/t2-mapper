@@ -1,4 +1,4 @@
-import { useCallback, type ChangeEvent } from "react";
+import { useCallback, useEffect, type ChangeEvent } from "react";
 import {
   useDemoActions,
   useDemoCurrentTime,
@@ -7,12 +7,6 @@ import {
   useDemoRecording,
   useDemoSpeed,
 } from "./DemoProvider";
-import {
-  buildSerializableDiagnosticsJson,
-  buildSerializableDiagnosticsSnapshot,
-  useEngineSelector,
-  useEngineStoreApi,
-} from "../state";
 import styles from "./DemoControls.module.css";
 
 const SPEED_OPTIONS = [0.25, 0.5, 1, 2, 4];
@@ -23,16 +17,6 @@ function formatTime(seconds: number): string {
   return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
-function formatBytes(value: number | undefined): string {
-  if (!Number.isFinite(value) || value == null) {
-    return "n/a";
-  }
-  if (value < 1024) return `${Math.round(value)} B`;
-  if (value < 1024 ** 2) return `${(value / 1024).toFixed(1)} KB`;
-  if (value < 1024 ** 3) return `${(value / 1024 ** 2).toFixed(1)} MB`;
-  return `${(value / 1024 ** 3).toFixed(2)} GB`;
-}
-
 export function DemoControls() {
   const recording = useDemoRecording();
   const isPlaying = useDemoIsPlaying();
@@ -40,24 +24,32 @@ export function DemoControls() {
   const duration = useDemoDuration();
   const speed = useDemoSpeed();
   const { play, pause, seek, setSpeed } = useDemoActions();
-  const engineStore = useEngineStoreApi();
-  const webglContextLost = useEngineSelector(
-    (state) => state.diagnostics.webglContextLost,
-  );
-  const rendererSampleCount = useEngineSelector(
-    (state) => state.diagnostics.rendererSamples.length,
-  );
-  const latestRendererSample = useEngineSelector((state) => {
-    const samples = state.diagnostics.rendererSamples;
-    return samples.length > 0 ? samples[samples.length - 1] : null;
-  });
-  const playbackEventCount = useEngineSelector(
-    (state) => state.diagnostics.playbackEvents.length,
-  );
-  const latestPlaybackEvent = useEngineSelector((state) => {
-    const events = state.diagnostics.playbackEvents;
-    return events.length > 0 ? events[events.length - 1] : null;
-  });
+
+  // Spacebar toggles play/pause during demo playback.
+  useEffect(() => {
+    if (!recording) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.code !== "Space") return;
+      const target = e.target as HTMLElement;
+      if (
+        target.tagName === "INPUT" ||
+        target.tagName === "TEXTAREA" ||
+        target.tagName === "SELECT" ||
+        target.tagName === "BUTTON" ||
+        target.isContentEditable
+      ) {
+        return;
+      }
+      e.preventDefault();
+      if (isPlaying) {
+        pause();
+      } else {
+        play();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [recording, isPlaying, play, pause]);
 
   const handleSeek = useCallback(
     (e: ChangeEvent<HTMLInputElement>) => {
@@ -72,19 +64,6 @@ export function DemoControls() {
     },
     [setSpeed],
   );
-
-  const handleDumpDiagnostics = useCallback(() => {
-    const state = engineStore.getState();
-    const snapshot = buildSerializableDiagnosticsSnapshot(state);
-    const json = buildSerializableDiagnosticsJson(state);
-    console.log("[demo diagnostics dump]", snapshot);
-    console.log("[demo diagnostics dump json]", json);
-  }, [engineStore]);
-
-  const handleClearDiagnostics = useCallback(() => {
-    engineStore.getState().clearPlaybackDiagnostics();
-    console.info("[demo diagnostics] Cleared playback diagnostics");
-  }, [engineStore]);
 
   if (!recording) return null;
 
@@ -125,54 +104,6 @@ export function DemoControls() {
           </option>
         ))}
       </select>
-      <div
-        className={styles.DiagnosticsPanel}
-        data-context-lost={webglContextLost ? "true" : undefined}
-      >
-        <div className={styles.DiagnosticsStatus}>
-          {webglContextLost ? "WebGL context: LOST" : "WebGL context: ok"}
-        </div>
-        <div className={styles.DiagnosticsMetrics}>
-          {latestRendererSample ? (
-            <>
-              <span>
-                geom {latestRendererSample.geometries} tex{" "}
-                {latestRendererSample.textures} prog{" "}
-                {latestRendererSample.programs}
-              </span>
-              <span>
-                draw {latestRendererSample.renderCalls} tri{" "}
-                {latestRendererSample.renderTriangles}
-              </span>
-              <span>
-                scene {latestRendererSample.visibleSceneObjects}/
-                {latestRendererSample.sceneObjects}
-              </span>
-              <span>heap {formatBytes(latestRendererSample.jsHeapUsed)}</span>
-            </>
-          ) : (
-            <span>No renderer samples yet</span>
-          )}
-        </div>
-        <div className={styles.DiagnosticsFooter}>
-          <span>
-            samples {rendererSampleCount} events {playbackEventCount}
-          </span>
-          {latestPlaybackEvent ? (
-            <span title={latestPlaybackEvent.message}>
-              last event: {latestPlaybackEvent.kind}
-            </span>
-          ) : (
-            <span>last event: none</span>
-          )}
-          <button type="button" onClick={handleDumpDiagnostics}>
-            Dump
-          </button>
-          <button type="button" onClick={handleClearDiagnostics}>
-            Clear
-          </button>
-        </div>
-      </div>
     </div>
   );
 }

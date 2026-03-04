@@ -70,7 +70,8 @@ export function textureToUrl(name: string) {
 }
 
 export function audioToUrl(fileName: string) {
-  return getUrlForPath(`audio/${fileName}`);
+  const url = getUrlForPath(`audio/${fileName}`);
+  return url.replace(/\.wav$/i, ".ogg");
 }
 
 export async function loadDetailMapList(name: string) {

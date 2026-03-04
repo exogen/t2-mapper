@@ -1,9 +1,8 @@
 import { createStore } from "zustand/vanilla";
 import { subscribeWithSelector } from "zustand/middleware";
 import { useStoreWithEqualityFn } from "zustand/traditional";
-import type { DemoEntity, DemoRecording, DemoStreamSnapshot } from "../demo/types";
+import type { DemoRecording, DemoStreamSnapshot } from "../demo/types";
 import type {
-  RuntimeEvent,
   RuntimeMutationEvent,
   TorqueObject,
   TorqueRuntime,
@@ -15,70 +14,6 @@ import {
 
 export type PlaybackStatus = "stopped" | "playing" | "paused";
 
-export type PlaybackDiagnosticMetaValue =
-  | string
-  | number
-  | boolean
-  | null
-  | undefined;
-
-export interface PlaybackDiagnosticEvent {
-  t: number;
-  kind: string;
-  message?: string;
-  playbackStatus: PlaybackStatus;
-  playbackTimeMs: number;
-  frameCursor: number;
-  streamEntityCount: number;
-  streamCameraMode: string | null;
-  streamExhausted: boolean;
-  meta?: Record<string, PlaybackDiagnosticMetaValue>;
-}
-
-export interface RendererDiagnosticsSample {
-  t: number;
-  playbackStatus: PlaybackStatus;
-  playbackTimeMs: number;
-  frameCursor: number;
-  streamEntityCount: number;
-  streamCameraMode: string | null;
-  streamExhausted: boolean;
-  geometries: number;
-  textures: number;
-  programs: number;
-  renderCalls: number;
-  renderTriangles: number;
-  renderPoints: number;
-  renderLines: number;
-  sceneObjects: number;
-  visibleSceneObjects: number;
-  jsHeapUsed?: number;
-  jsHeapTotal?: number;
-  jsHeapLimit?: number;
-}
-
-export interface RecordPlaybackDiagnosticEventInput {
-  kind: string;
-  message?: string;
-  meta?: Record<string, PlaybackDiagnosticMetaValue>;
-}
-
-export interface AppendRendererSampleInput {
-  t?: number;
-  geometries: number;
-  textures: number;
-  programs: number;
-  renderCalls: number;
-  renderTriangles: number;
-  renderPoints: number;
-  renderLines: number;
-  sceneObjects: number;
-  visibleSceneObjects: number;
-  jsHeapUsed?: number;
-  jsHeapTotal?: number;
-  jsHeapLimit?: number;
-}
-
 export interface RuntimeSliceState {
   runtime: TorqueRuntime | null;
   sequenceAliases: SequenceAliasMap;
@@ -89,35 +24,13 @@ export interface RuntimeSliceState {
   lastRuntimeTick: number;
 }
 
-export interface WorldSliceState {
-  entitiesById: Record<string, DemoEntity>;
-  players: string[];
-  ghosts: string[];
-  projectiles: string[];
-  flags: string[];
-  teams: Record<string, { score: number }>;
-  scores: Record<string, number>;
-}
-
 export interface PlaybackSliceState {
   recording: DemoRecording | null;
   status: PlaybackStatus;
   timeMs: number;
   rate: number;
-  frameCursor: number;
   durationMs: number;
   streamSnapshot: DemoStreamSnapshot | null;
-}
-
-export interface DiagnosticsSliceState {
-  eventCounts: Record<RuntimeEvent["type"], number>;
-  recentEvents: RuntimeEvent[];
-  maxRecentEvents: number;
-  webglContextLost: boolean;
-  playbackEvents: PlaybackDiagnosticEvent[];
-  maxPlaybackEvents: number;
-  rendererSamples: RendererDiagnosticsSample[];
-  maxRendererSamples: number;
 }
 
 export interface RuntimeTickInfo {
@@ -126,9 +39,7 @@ export interface RuntimeTickInfo {
 
 export interface EngineStoreState {
   runtime: RuntimeSliceState;
-  world: WorldSliceState;
   playback: PlaybackSliceState;
-  diagnostics: DiagnosticsSliceState;
   setRuntime(runtime: TorqueRuntime): void;
   clearRuntime(): void;
   applyRuntimeBatch(events: RuntimeMutationEvent[], tickInfo?: RuntimeTickInfo): void;
@@ -136,14 +47,7 @@ export interface EngineStoreState {
   setPlaybackTime(ms: number): void;
   setPlaybackStatus(status: PlaybackStatus): void;
   setPlaybackRate(rate: number): void;
-  setPlaybackFrameCursor(frameCursor: number): void;
   setPlaybackStreamSnapshot(snapshot: DemoStreamSnapshot | null): void;
-  setWebglContextLost(lost: boolean): void;
-  recordPlaybackDiagnosticEvent(
-    input: RecordPlaybackDiagnosticEventInput,
-  ): void;
-  appendRendererSample(input: AppendRendererSampleInput): void;
-  clearPlaybackDiagnostics(): void;
 }
 
 function normalizeName(name: string): string {
@@ -155,47 +59,11 @@ function normalizeGlobalName(name: string): string {
   return normalized.startsWith("$") ? normalized.slice(1) : normalized;
 }
 
-function keyFromEntityId(id: number | string): string {
-  return String(id);
-}
-
 function clamp(value: number, min: number, max: number): number {
   if (value < min) return min;
   if (value > max) return max;
   return value;
 }
-
-function summarizeCallStack(skipFrames = 0): string | null {
-  const stack = new Error().stack;
-  if (!stack) return null;
-  const lines = stack
-    .split("\n")
-    .map((line) => line.trim())
-    .filter(Boolean);
-  const callsiteLines = lines.slice(1 + skipFrames, 9 + skipFrames);
-  return callsiteLines.length > 0 ? callsiteLines.join(" <= ") : null;
-}
-
-function initialDiagnosticsCounts(): Record<RuntimeEvent["type"], number> {
-  return {
-    "object.created": 0,
-    "object.deleted": 0,
-    "field.changed": 0,
-    "method.called": 0,
-    "global.changed": 0,
-    "batch.flushed": 0,
-  };
-}
-
-const emptyWorld: WorldSliceState = {
-  entitiesById: {},
-  players: [],
-  ghosts: [],
-  projectiles: [],
-  flags: [],
-  teams: {},
-  scores: {},
-};
 
 function buildRuntimeIndexes(runtime: TorqueRuntime): Pick<
   RuntimeSliceState,
@@ -240,12 +108,7 @@ const initialState: Omit<
   | "setPlaybackTime"
   | "setPlaybackStatus"
   | "setPlaybackRate"
-  | "setPlaybackFrameCursor"
   | "setPlaybackStreamSnapshot"
-  | "setWebglContextLost"
-  | "recordPlaybackDiagnosticEvent"
-  | "appendRendererSample"
-  | "clearPlaybackDiagnostics"
 > = {
   runtime: {
     runtime: null,
@@ -256,33 +119,13 @@ const initialState: Omit<
     datablockIdsByName: {},
     lastRuntimeTick: 0,
   },
-  world: {
-    entitiesById: {},
-    players: [],
-    ghosts: [],
-    projectiles: [],
-    flags: [],
-    teams: {},
-    scores: {},
-  },
   playback: {
     recording: null,
     status: "stopped",
     timeMs: 0,
     rate: 1,
-    frameCursor: 0,
     durationMs: 0,
     streamSnapshot: null,
-  },
-  diagnostics: {
-    eventCounts: initialDiagnosticsCounts(),
-    recentEvents: [],
-    maxRecentEvents: 200,
-    webglContextLost: false,
-    playbackEvents: [],
-    maxPlaybackEvents: 400,
-    rendererSamples: [],
-    maxRendererSamples: 2400,
   },
 };
 
@@ -332,8 +175,6 @@ export const engineStore = createStore<EngineStoreState>()(
         const globalVersionByName = { ...state.runtime.globalVersionByName };
         const objectIdsByName = { ...state.runtime.objectIdsByName };
         const datablockIdsByName = { ...state.runtime.datablockIdsByName };
-        const eventCounts = { ...state.diagnostics.eventCounts };
-        const recentEvents = [...state.diagnostics.recentEvents];
 
         const bumpVersion = (id: number | undefined | null) => {
           if (id == null) return;
@@ -341,9 +182,6 @@ export const engineStore = createStore<EngineStoreState>()(
         };
 
         for (const event of events) {
-          eventCounts[event.type] = (eventCounts[event.type] ?? 0) + 1;
-          recentEvents.push(event);
-
           if (event.type === "object.created") {
             const object = event.object;
             bumpVersion(event.objectId);
@@ -390,19 +228,6 @@ export const engineStore = createStore<EngineStoreState>()(
           (state.runtime.lastRuntimeTick > 0
             ? state.runtime.lastRuntimeTick + 1
             : 1);
-        const batchEvent: RuntimeEvent = {
-          type: "batch.flushed",
-          tick,
-          events,
-        };
-        eventCounts["batch.flushed"] += 1;
-        recentEvents.push(batchEvent);
-
-        const maxRecentEvents = state.diagnostics.maxRecentEvents;
-        const boundedRecentEvents =
-          recentEvents.length > maxRecentEvents
-            ? recentEvents.slice(recentEvents.length - maxRecentEvents)
-            : recentEvents;
 
         return {
           ...state,
@@ -414,62 +239,23 @@ export const engineStore = createStore<EngineStoreState>()(
             datablockIdsByName,
             lastRuntimeTick: tick,
           },
-          diagnostics: {
-            ...state.diagnostics,
-            eventCounts,
-            recentEvents: boundedRecentEvents,
-          },
         };
       });
     },
 
     setDemoRecording(recording: DemoRecording | null) {
       const durationMs = Math.max(0, (recording?.duration ?? 0) * 1000);
-      const stack = summarizeCallStack(1);
-      set((state) => {
-        const snapshot = state.playback.streamSnapshot;
-        const previousRecording = state.playback.recording;
-        const event: PlaybackDiagnosticEvent = {
-          t: Date.now(),
-          kind: "recording.set",
-          message: "setDemoRecording invoked",
-          playbackStatus: state.playback.status,
-          playbackTimeMs: state.playback.timeMs,
-          frameCursor: state.playback.frameCursor,
-          streamEntityCount: snapshot?.entities.length ?? 0,
-          streamCameraMode: snapshot?.camera?.mode ?? null,
-          streamExhausted: snapshot?.exhausted ?? false,
-          meta: {
-            previousMissionName: previousRecording?.missionName ?? null,
-            nextMissionName: recording?.missionName ?? null,
-            previousDurationSec: previousRecording
-              ? Number(previousRecording.duration.toFixed(3))
-              : null,
-            nextDurationSec: recording ? Number(recording.duration.toFixed(3)) : null,
-            isNull: recording == null,
-            stack: stack ?? "unavailable",
-          },
-        };
-        return {
-          ...state,
-          world: emptyWorld,
-          playback: {
-            recording,
-            status: "stopped",
-            timeMs: 0,
-            rate: 1,
-            frameCursor: 0,
-            durationMs,
-            streamSnapshot: null,
-          },
-          diagnostics: {
-            ...state.diagnostics,
-            webglContextLost: false,
-            playbackEvents: [event],
-            rendererSamples: [],
-          },
-        };
-      });
+      set((state) => ({
+        ...state,
+        playback: {
+          recording,
+          status: "stopped",
+          timeMs: 0,
+          rate: 1,
+          durationMs,
+          streamSnapshot: null,
+        },
+      }));
     },
 
     setPlaybackTime(ms: number) {
@@ -480,7 +266,6 @@ export const engineStore = createStore<EngineStoreState>()(
           playback: {
             ...state.playback,
             timeMs: clamped,
-            frameCursor: clamped,
           },
         };
       });
@@ -507,17 +292,6 @@ export const engineStore = createStore<EngineStoreState>()(
       }));
     },
 
-    setPlaybackFrameCursor(frameCursor: number) {
-      const nextCursor = Number.isFinite(frameCursor) ? frameCursor : 0;
-      set((state) => ({
-        ...state,
-        playback: {
-          ...state.playback,
-          frameCursor: nextCursor,
-        },
-      }));
-    },
-
     setPlaybackStreamSnapshot(snapshot: DemoStreamSnapshot | null) {
       set((state) => ({
         ...state,
@@ -528,104 +302,6 @@ export const engineStore = createStore<EngineStoreState>()(
       }));
     },
 
-    setWebglContextLost(lost: boolean) {
-      set((state) => ({
-        ...state,
-        diagnostics: {
-          ...state.diagnostics,
-          webglContextLost: lost,
-        },
-      }));
-    },
-
-    recordPlaybackDiagnosticEvent(input: RecordPlaybackDiagnosticEventInput) {
-      set((state) => {
-        const snapshot = state.playback.streamSnapshot;
-        const nextEvent: PlaybackDiagnosticEvent = {
-          t: Date.now(),
-          kind: input.kind,
-          message: input.message,
-          playbackStatus: state.playback.status,
-          playbackTimeMs: state.playback.timeMs,
-          frameCursor: state.playback.frameCursor,
-          streamEntityCount: snapshot?.entities.length ?? 0,
-          streamCameraMode: snapshot?.camera?.mode ?? null,
-          streamExhausted: snapshot?.exhausted ?? false,
-          meta: input.meta,
-        };
-        const playbackEvents = [
-          ...state.diagnostics.playbackEvents,
-          nextEvent,
-        ];
-        const maxPlaybackEvents = state.diagnostics.maxPlaybackEvents;
-        const boundedPlaybackEvents =
-          playbackEvents.length > maxPlaybackEvents
-            ? playbackEvents.slice(playbackEvents.length - maxPlaybackEvents)
-            : playbackEvents;
-        return {
-          ...state,
-          diagnostics: {
-            ...state.diagnostics,
-            playbackEvents: boundedPlaybackEvents,
-          },
-        };
-      });
-    },
-
-    appendRendererSample(input: AppendRendererSampleInput) {
-      set((state) => {
-        const snapshot = state.playback.streamSnapshot;
-        const nextSample: RendererDiagnosticsSample = {
-          t: input.t ?? Date.now(),
-          playbackStatus: state.playback.status,
-          playbackTimeMs: state.playback.timeMs,
-          frameCursor: state.playback.frameCursor,
-          streamEntityCount: snapshot?.entities.length ?? 0,
-          streamCameraMode: snapshot?.camera?.mode ?? null,
-          streamExhausted: snapshot?.exhausted ?? false,
-          geometries: input.geometries,
-          textures: input.textures,
-          programs: input.programs,
-          renderCalls: input.renderCalls,
-          renderTriangles: input.renderTriangles,
-          renderPoints: input.renderPoints,
-          renderLines: input.renderLines,
-          sceneObjects: input.sceneObjects,
-          visibleSceneObjects: input.visibleSceneObjects,
-          jsHeapUsed: input.jsHeapUsed,
-          jsHeapTotal: input.jsHeapTotal,
-          jsHeapLimit: input.jsHeapLimit,
-        };
-        const rendererSamples = [
-          ...state.diagnostics.rendererSamples,
-          nextSample,
-        ];
-        const maxRendererSamples = state.diagnostics.maxRendererSamples;
-        const boundedRendererSamples =
-          rendererSamples.length > maxRendererSamples
-            ? rendererSamples.slice(rendererSamples.length - maxRendererSamples)
-            : rendererSamples;
-        return {
-          ...state,
-          diagnostics: {
-            ...state.diagnostics,
-            rendererSamples: boundedRendererSamples,
-          },
-        };
-      });
-    },
-
-    clearPlaybackDiagnostics() {
-      set((state) => ({
-        ...state,
-        diagnostics: {
-          ...state.diagnostics,
-          webglContextLost: false,
-          playbackEvents: [],
-          rendererSamples: [],
-        },
-      }));
-    },
   })),
 );
 
@@ -757,15 +433,3 @@ export function useRuntimeChildIds(
   return parent._children.map((child) => child._id);
 }
 
-export function usePlaybackTimeSeconds(): number {
-  return useEngineSelector((state) => state.playback.timeMs / 1000);
-}
-
-export function useWorldEntity(
-  entityId: number | string | undefined,
-): DemoEntity | undefined {
-  const key = entityId == null ? "" : keyFromEntityId(entityId);
-  return useEngineSelector((state) =>
-    key ? state.world.entitiesById[key] : undefined,
-  );
-}

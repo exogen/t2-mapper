@@ -86,7 +86,7 @@ export function applyShapeShaderModifications(
 
 export function createMaterialFromFlags(
   baseMaterial: MeshStandardMaterial,
-  texture: Texture,
+  texture: Texture | null,
   flagNames: Set<string>,
   isOrganic: boolean,
   vis: number = 1,
@@ -666,7 +666,7 @@ export const ShapeModel = memo(function ShapeModel({
       if (v.mesh.material?.isMeshStandardMaterial) {
         const mat = v.mesh.material as MeshStandardMaterial;
         const result = replaceWithShapeMaterial(mat, v.mesh.userData?.vis ?? 0);
-        v.mesh.material = Array.isArray(result) ? result[1] : result;
+        v.mesh.material = result.material;
       }
       if (v.mesh.material && !Array.isArray(v.mesh.material)) {
         v.mesh.material.transparent = true;
@@ -898,10 +898,12 @@ export const ShapeModel = memo(function ShapeModel({
     const currentDemoThreads = demoThreadsRef.current;
     const prevDemoThreads = prevDemoThreadsRef.current;
     if (currentDemoThreads !== prevDemoThreads) {
-      prevDemoThreadsRef.current = currentDemoThreads;
       const playThread = handlePlayThreadRef.current;
       const stopThread = handleStopThreadRef.current;
+      // Don't consume thread data until handlers are ready — leave
+      // prevDemoThreadsRef unchanged so the change is re-detected next frame.
       if (playThread && stopThread) {
+        prevDemoThreadsRef.current = currentDemoThreads;
         // Use sparse arrays instead of Maps — thread indices are 0-3.
         const currentBySlot: Array<DemoThreadState | undefined> = [];
         if (currentDemoThreads) {
@@ -921,6 +923,28 @@ export const ShapeModel = memo(function ShapeModel({
               || prev.state !== t.state
               || prev.atEnd !== t.atEnd;
             if (!changed) continue;
+
+            // When only atEnd changed (false→true) on a playing thread with
+            // the same sequence, the animation has finished on the server.
+            // Don't restart it — snap to the end pose so one-shot animations
+            // like "deploy" stay clamped instead of collapsing back.
+            const onlyAtEndChanged = prev
+              && prev.sequence === t.sequence
+              && prev.state === t.state
+              && t.state === 0
+              && !prev.atEnd && t.atEnd;
+            if (onlyAtEndChanged) {
+              const thread = threads.get(slot);
+              if (thread?.action) {
+                const clip = thread.action.getClip();
+                thread.action.time = t.forward ? clip.duration : 0;
+                thread.action.setLoop(LoopOnce, 1);
+                thread.action.clampWhenFinished = true;
+                thread.action.paused = true;
+              }
+              continue;
+            }
+
             const seqName = seqIndexToName[t.sequence];
             if (!seqName) continue;
             if (t.state === 0) {
