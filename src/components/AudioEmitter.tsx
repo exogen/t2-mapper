@@ -14,9 +14,43 @@ import { audioToUrl } from "../loaders";
 import { useAudio } from "./AudioContext";
 import { useDebug, useSettings } from "./SettingsProvider";
 import { FloatingLabel } from "./FloatingLabel";
+import { engineStore } from "../state";
 
 // Global audio buffer cache shared across all audio components.
 export const audioBufferCache = new Map<string, AudioBuffer>();
+
+// ── Demo sound rate tracking ──
+// Track active demo sounds so their playbackRate can be updated when the
+// playback rate changes (e.g. slow-motion or fast-forward).
+// Maps each sound to its intrinsic pitch (1.0 for normal sounds, or the
+// voice pitch multiplier for chat sounds).
+const _activeDemoSounds = new Map<Audio<GainNode | PannerNode>, number>();
+
+/** Register a sound for automatic playback rate tracking. */
+export function trackDemoSound(
+  sound: Audio<GainNode | PannerNode>,
+  basePitch = 1,
+): void {
+  _activeDemoSounds.set(sound, basePitch);
+}
+
+/** Unregister a tracked demo sound. */
+export function untrackDemoSound(sound: Audio<GainNode | PannerNode>): void {
+  _activeDemoSounds.delete(sound);
+}
+
+engineStore.subscribe(
+  (state) => state.playback.rate,
+  (rate) => {
+    for (const [sound, basePitch] of _activeDemoSounds) {
+      try {
+        sound.setPlaybackRate(basePitch * rate);
+      } catch {
+        // Sound may have been disposed.
+      }
+    }
+  },
+);
 
 export interface ResolvedAudioProfile {
   filename: string;
@@ -73,6 +107,7 @@ export function playOneShotSound(
     // File not in manifest — skip silently.
     return;
   }
+  const rate = engineStore.getState().playback.rate;
   getCachedAudioBuffer(url, audioLoader, (buffer) => {
     try {
       if (resolved.is3D && parent) {
@@ -85,12 +120,15 @@ export function playOneShotSound(
         sound.setMaxDistance(resolved.maxDist);
         sound.setRolloffFactor(1);
         sound.setVolume(resolved.volume);
+        sound.setPlaybackRate(rate);
         if (position) {
           sound.position.copy(position);
         }
         parent.add(sound);
+        _activeDemoSounds.set(sound, 1);
         sound.play();
         sound.source!.onended = () => {
+          _activeDemoSounds.delete(sound);
           sound.disconnect();
           parent.remove(sound);
         };
@@ -98,8 +136,11 @@ export function playOneShotSound(
         const sound = new Audio(audioListener);
         sound.setBuffer(buffer);
         sound.setVolume(resolved.volume);
+        sound.setPlaybackRate(rate);
+        _activeDemoSounds.set(sound, 1);
         sound.play();
         sound.source!.onended = () => {
+          _activeDemoSounds.delete(sound);
           sound.disconnect();
         };
       }

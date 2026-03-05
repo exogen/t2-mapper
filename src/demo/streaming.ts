@@ -7,6 +7,7 @@ import {
 import { Matrix4, Quaternion } from "three";
 import { getTerrainHeightAt } from "../terrainHeight";
 import type {
+  BackpackHudState,
   ChatSegment,
   DemoChatMessage,
   DemoThreadState,
@@ -96,6 +97,10 @@ interface MutableStreamEntity {
   headPitch?: number;
   /** Head yaw for blend animations (freelook), normalized [-1,1]. */
   headYaw?: number;
+  /** Target render flags bitmask from the Target Manager. */
+  targetRenderFlags?: number;
+  /** True when FlagImage is mounted in slot 3 (player is carrying a flag). */
+  carryingFlag?: boolean;
   /** Item physics simulation state (dropped weapons/items). */
   itemPhysics?: {
     velocity: [number, number, number];
@@ -153,6 +158,8 @@ interface StreamState {
   };
   /** Team scores aggregated from the PLAYERLIST demoValues section. */
   teamScores: TeamScore[];
+  /** Live player roster keyed by clientId, updated by ServerMessage events. */
+  playerRoster: Map<number, { name: string; teamId: number }>;
 }
 
 const TICK_DURATION_MS = 32;
@@ -293,7 +300,10 @@ interface ParsedDemoValues {
     activeSlot: number;
   } | null;
   teamScores: TeamScore[];
+  /** Initial player roster from PLAYERLIST section, keyed by clientId. */
+  playerRoster: Map<number, { name: string; teamId: number }>;
   chatMessages: string[];
+  gravity: number;
 }
 
 /**
@@ -309,7 +319,9 @@ function parseDemoValues(demoValues: string[]): ParsedDemoValues {
     backpackHud: null,
     inventoryHud: null,
     teamScores: [],
+    playerRoster: new Map(),
     chatMessages: [],
+    gravity: -20,
   };
   if (!demoValues.length) return result;
 
@@ -330,7 +342,12 @@ function parseDemoValues(demoValues: string[]): ParsedDemoValues {
   const playerCountByTeam = new Map<number, number>();
   for (let i = 0; i < playerCount; i++) {
     const fields = next().split("\t");
+    const name = fields[0] ?? "";
+    const clientId = parseInt(fields[2], 10);
     const teamId = parseInt(fields[4], 10);
+    if (!isNaN(clientId) && !isNaN(teamId)) {
+      result.playerRoster.set(clientId, { name, teamId });
+    }
     if (!isNaN(teamId) && teamId > 0) {
       playerCountByTeam.set(teamId, (playerCountByTeam.get(teamId) ?? 0) + 1);
     }
@@ -458,7 +475,13 @@ function parseDemoValues(demoValues: string[]): ParsedDemoValues {
     }
   }
 
-  // GRAVITY: 1 value — skip
+  // GRAVITY: 1 value (the server's getGravity() value).
+  if (idx < demoValues.length) {
+    const g = parseFloat(next());
+    if (Number.isFinite(g)) {
+      result.gravity = g;
+    }
+  }
 
   return result;
 }
@@ -983,6 +1006,7 @@ class StreamingPlayback implements DemoStreamingPlayback {
       targetId: number;
       name?: string;
       sensorGroup: number;
+      targetData: number;
     }>;
     sensorGroupColors: Array<{
       group: number;
@@ -1002,12 +1026,38 @@ class StreamingPlayback implements DemoStreamingPlayback {
   private readonly netStrings = new Map<number, string>();
   private readonly targetNames = new Map<number, string>();
   private readonly targetTeams = new Map<number, number>();
+  private readonly targetRenderFlags = new Map<number, number>();
   /** IFF color map: for the viewer's sensorGroup, map target sensorGroup → RGB. */
   private readonly sensorGroupColors = new Map<
     number,
     Map<number, { r: number; g: number; b: number }>
   >();
   private state: StreamState;
+
+  // Generation counters for derived-array caching in buildSnapshot().
+  private _teamScoresGen = 0;
+  private _rosterGen = 0;
+  private _weaponsHudGen = 0;
+  private _inventoryHudGen = 0;
+
+  // Cached snapshot returned when no ticks advance between stepToTime() calls.
+  private _cachedSnapshot: DemoStreamSnapshot | null = null;
+  private _cachedSnapshotTick = -1;
+
+  // Cached derived arrays from the last buildSnapshot() call.
+  private _snap: {
+    teamScoresGen: number;
+    rosterGen: number;
+    teamScores: TeamScore[];
+    weaponsHudGen: number;
+    weaponsHud: { slots: WeaponsHudSlot[]; activeIndex: number };
+    inventoryHudGen: number;
+    inventoryHud: { slots: InventoryHudSlot[]; activeSlot: number };
+    backpackPackIndex: number;
+    backpackActive: boolean;
+    backpackText: string;
+    backpackHud: BackpackHudState | null;
+  } | null = null;
 
   constructor(parser: DemoParser) {
     this.parser = parser;
@@ -1055,6 +1105,7 @@ class StreamingPlayback implements DemoStreamingPlayback {
       backpackHud: { packIndex: -1, active: false, text: "" },
       inventoryHud: { slots: new Map(), activeSlot: -1 },
       teamScores: [],
+      playerRoster: new Map(),
     };
 
     this.reset();
@@ -1062,10 +1113,14 @@ class StreamingPlayback implements DemoStreamingPlayback {
 
   reset(): void {
     this.parser.reset();
+    this._cachedSnapshot = null;
+    this._cachedSnapshotTick = -1;
+    this._snap = null;
 
     this.netStrings.clear();
     this.targetNames.clear();
     this.targetTeams.clear();
+    this.targetRenderFlags.clear();
     this.sensorGroupColors.clear();
     this.state.entitiesById.clear();
     this.state.entityIdByGhostIndex.clear();
@@ -1081,6 +1136,7 @@ class StreamingPlayback implements DemoStreamingPlayback {
         );
       }
       this.targetTeams.set(entry.targetId, entry.sensorGroup);
+      this.targetRenderFlags.set(entry.targetId, entry.targetData);
     }
     // Seed IFF color table from the initial block.
     for (const c of this.initialBlock.sensorGroupColors) {
@@ -1099,6 +1155,7 @@ class StreamingPlayback implements DemoStreamingPlayback {
     this.state.backpackHud = { packIndex: -1, active: false, text: "" };
     this.state.inventoryHud = { slots: new Map(), activeSlot: -1 };
     this.state.teamScores = [];
+    this.state.playerRoster = new Map();
     this.state.moveTicks = 0;
     this.state.absoluteYaw = 0;
     this.state.absolutePitch = 0;
@@ -1227,6 +1284,9 @@ class StreamingPlayback implements DemoStreamingPlayback {
           evt.parsedData.funcName as string,
         );
         const args = evt.parsedData.args as string[];
+        if (funcName === "ServerMessage") {
+          this.handleServerMessage(args);
+        }
         this.handleHudRemoteCommand(funcName, args);
       }
     }
@@ -1248,6 +1308,7 @@ class StreamingPlayback implements DemoStreamingPlayback {
       this.state.inventoryHud.activeSlot = parsed.inventoryHud.activeSlot;
     }
     this.state.teamScores = parsed.teamScores;
+    this.state.playerRoster = new Map(parsed.playerRoster);
     // Seed chat messages at time 0 so they appear at start and fade naturally.
     // Raw lines from HudMessageVector contain Torque control chars: collapsed
     // color bytes (0x02–0x0e via collapseRemap), tagged string markup
@@ -1293,17 +1354,37 @@ class StreamingPlayback implements DemoStreamingPlayback {
   }
 
   getSnapshot(): DemoStreamSnapshot {
-    return this.buildSnapshot();
+    if (this._cachedSnapshot && this._cachedSnapshotTick === this.state.moveTicks) {
+      return this._cachedSnapshot;
+    }
+    const snapshot = this.buildSnapshot();
+    this._cachedSnapshot = snapshot;
+    this._cachedSnapshotTick = this.state.moveTicks;
+    return snapshot;
   }
 
   getEffectShapes(): string[] {
     const shapes = new Set<string>();
+    const collectShapesFromExplosion = (expBlock: Record<string, unknown>) => {
+      const shape = expBlock.dtsFileName as string | undefined;
+      if (shape) shapes.add(shape);
+      // Sub-explosions also have DTS shapes (e.g. mortar sub-explosions).
+      const subExplosions = expBlock.subExplosions as (number | null)[] | undefined;
+      if (Array.isArray(subExplosions)) {
+        for (const subId of subExplosions) {
+          if (subId == null) continue;
+          const subBlock = this.getDataBlockData(subId);
+          if (subBlock?.dtsFileName) {
+            shapes.add(subBlock.dtsFileName as string);
+          }
+        }
+      }
+    };
     for (const [, block] of this.initialBlock.dataBlocks) {
       const explosionId = block.data?.explosion as number | undefined;
       if (explosionId == null) continue;
       const expBlock = this.getDataBlockData(explosionId);
-      const shape = expBlock?.dtsFileName as string | undefined;
-      if (shape) shapes.add(shape);
+      if (expBlock) collectShapesFromExplosion(expBlock);
     }
     return [...shapes];
   }
@@ -1317,10 +1398,13 @@ class StreamingPlayback implements DemoStreamingPlayback {
       : 0;
     const targetTicks = Math.floor((safeTargetSec * 1000) / TICK_DURATION_MS);
 
+    let didReset = false;
     if (targetTicks < this.state.moveTicks) {
       this.reset();
+      didReset = true;
     }
 
+    const wasExhausted = this.state.exhausted;
     let movesProcessed = 0;
     while (
       !this.state.exhausted &&
@@ -1333,7 +1417,20 @@ class StreamingPlayback implements DemoStreamingPlayback {
       movesProcessed += 1;
     }
 
-    return this.buildSnapshot();
+    if (
+      movesProcessed === 0 &&
+      !didReset &&
+      wasExhausted === this.state.exhausted &&
+      this._cachedSnapshot &&
+      this._cachedSnapshotTick === this.state.moveTicks
+    ) {
+      return this._cachedSnapshot;
+    }
+
+    const snapshot = this.buildSnapshot();
+    this._cachedSnapshot = snapshot;
+    this._cachedSnapshotTick = this.state.moveTicks;
+    return snapshot;
   }
 
   private stepOneMoveTick(): boolean {
@@ -1467,6 +1564,18 @@ class StreamingPlayback implements DemoStreamingPlayback {
           const sensorGroup = evt.parsedData.sensorGroup as number | undefined;
           if (targetId != null && sensorGroup != null) {
             this.targetTeams.set(targetId, sensorGroup);
+          }
+          const renderFlags = evt.parsedData.renderFlags as number | undefined;
+          if (targetId != null && renderFlags != null) {
+            this.targetRenderFlags.set(targetId, renderFlags);
+            // Propagate to any entity bound to this target so render flags
+            // take effect immediately (e.g. clearing bit 0x2 when a player
+            // drops a flag) rather than waiting for the next ghost update.
+            for (const entity of this.state.entitiesById.values()) {
+              if (entity.targetId === targetId) {
+                entity.targetRenderFlags = renderFlags;
+              }
+            }
           }
         } else if (eventName === "SetSensorGroupEvent" && evt.parsedData) {
           const sg = evt.parsedData.sensorGroup as number | undefined;
@@ -1633,6 +1742,7 @@ class StreamingPlayback implements DemoStreamingPlayback {
               });
             }
           } else if (funcName === "ServerMessage" && args.length >= 2) {
+            this.handleServerMessage(args);
             const rawTemplate = this.resolveNetString(args[1]);
             const serverColorCode = detectColorCode(rawTemplate);
             const rawText = this.formatRemoteArgs(args[1], args.slice(2));
@@ -1718,19 +1828,18 @@ class StreamingPlayback implements DemoStreamingPlayback {
 
     // When a projectile entity is being removed (ghost delete, ghost index
     // reuse, or same-class index reuse), spawn an explosion at its last known
-    // position if it hasn't already exploded. The Torque engine's KillGhost
-    // mechanism silently drops pending ExplosionMask data when a ghost goes
-    // out of scope, so explosion positions almost never arrive in the demo
-    // stream. The original client compensated with client-side raycast
-    // collision detection in processTick(); we approximate by triggering the
-    // explosion when the ghost disappears.
+    // position if it hasn't already exploded. Explosion positions usually
+    // arrive via ExplosionMask in ghost updates (the server has a 13-tick /
+    // 416ms DeleteWaitTicks window before KillGhost fires), but this fallback
+    // catches cases where the explicit data was missed — e.g. network
+    // congestion or the projectile going out of scope before the update.
     if (prevEntityId) {
       const prevEntity = this.state.entitiesById.get(prevEntityId);
       if (
         prevEntity &&
         prevEntity.type === "Projectile" &&
         !prevEntity.hasExploded &&
-        prevEntity.explosionShape &&
+        prevEntity.explosionDataBlockId != null &&
         prevEntity.position &&
         // Ghost is being deleted or its index is being reassigned to a new
         // ghost (either a different class or a fresh create of the same class).
@@ -1784,6 +1893,27 @@ class StreamingPlayback implements DemoStreamingPlayback {
       existingEntity.dataBlockId = undefined;
       existingEntity.shapeHint = undefined;
       existingEntity.visual = undefined;
+      existingEntity.targetId = undefined;
+      existingEntity.targetRenderFlags = undefined;
+      existingEntity.carryingFlag = undefined;
+      existingEntity.sensorGroup = undefined;
+      existingEntity.playerName = undefined;
+      existingEntity.weaponShape = undefined;
+      existingEntity.weaponImageState = undefined;
+      existingEntity.weaponImageStates = undefined;
+      existingEntity.weaponImageStatesDbId = undefined;
+      existingEntity.itemPhysics = undefined;
+      existingEntity.threads = undefined;
+      existingEntity.headPitch = undefined;
+      existingEntity.headYaw = undefined;
+      existingEntity.health = undefined;
+      existingEntity.energy = undefined;
+      existingEntity.maxEnergy = undefined;
+      existingEntity.damageState = undefined;
+      existingEntity.actionAnim = undefined;
+      existingEntity.actionAtEnd = undefined;
+      existingEntity.explosionDataBlockId = undefined;
+      existingEntity.maintainEmitterId = undefined;
       entity = existingEntity;
     } else if (existingEntity) {
       entity = existingEntity;
@@ -1866,12 +1996,15 @@ class StreamingPlayback implements DemoStreamingPlayback {
       }
     | undefined {
     const projBlock = this.getDataBlockData(projDataBlockId);
-    const explosionId = projBlock?.explosion as number | undefined;
+    if (!projBlock) return undefined;
+    const explosionId = projBlock.explosion as number | undefined;
     if (explosionId == null) return undefined;
     const expBlock = this.getDataBlockData(explosionId);
     if (!expBlock) return undefined;
-    const shape = expBlock.dtsFileName as string | undefined;
-    if (!shape) return undefined;
+    // dtsFileName may be empty for particle-only explosions (e.g. grenades,
+    // energy projectiles). Still return info so we can spawn the explosion
+    // entity for position tracking and particle effects.
+    const shape = (expBlock.dtsFileName as string | undefined) || undefined;
     // The parser's lifetimeMS field is actually in ticks (32ms each), not ms.
     const lifetimeTicks = (expBlock.lifetimeMS as number | undefined) ?? 31;
     return {
@@ -1915,14 +2048,15 @@ class StreamingPlayback implements DemoStreamingPlayback {
           entity.projectilePhysics = "linear";
         } else if (ballisticProjectileClassNames.has(entity.className)) {
           entity.projectilePhysics = "ballistic";
-          entity.gravityMod = getNumberField(blockData, ["gravityMod"]) ?? 1.0;
+          entity.gravityMod =
+            getNumberField(blockData, ["gravityMod"]) ?? 1.0;
         } else if (seekerProjectileClassNames.has(entity.className)) {
           entity.projectilePhysics = "seeker";
         }
       }
 
       // Resolve explosion shape info for projectiles (once per entity).
-      if (entity.type === "Projectile" && !entity.explosionShape) {
+      if (entity.type === "Projectile" && entity.explosionDataBlockId == null) {
         const info = this.resolveExplosionInfo(dataBlockId);
         if (info) {
           entity.explosionShape = info.shape;
@@ -1999,6 +2133,24 @@ class StreamingPlayback implements DemoStreamingPlayback {
           entity.weaponShape = undefined;
           entity.weaponImageState = undefined;
           entity.weaponImageStates = undefined;
+        }
+
+        // Track FlagImage in slot 3 ($FlagSlot). The server mounts FlagImage
+        // when a player picks up a flag and unmounts it on drop. buildSnapshot
+        // uses carryingFlag to gate the flag icon on Players, which prevents
+        // dead corpses (sharing the same targetId) from showing duplicate icons.
+        const flagImage = images.find((img) => img.index === 3);
+        if (flagImage) {
+          const hasFlag = !!flagImage.dataBlockId && flagImage.dataBlockId > 0;
+          entity.carryingFlag = hasFlag;
+          if (entity.targetId != null && entity.targetId >= 0) {
+            const prev = this.targetRenderFlags.get(entity.targetId) ?? 0;
+            const updated = hasFlag ? prev | 0x2 : prev & ~0x2;
+            if (updated !== prev) {
+              this.targetRenderFlags.set(entity.targetId, updated);
+              entity.targetRenderFlags = updated;
+            }
+          }
         }
       }
     }
@@ -2093,8 +2245,10 @@ class StreamingPlayback implements DemoStreamingPlayback {
     // Item physics: simulate dropped items falling under gravity and bouncing.
     if (entity.type === "Item") {
       const atRest = data.atRest as boolean | undefined;
-      if (atRest === true) {
-        // Server says item is at rest — stop simulating.
+      const warp = data.warp as boolean | undefined;
+      if (atRest === true || warp === false) {
+        // At rest, or position authoritatively set (e.g. flag returned to
+        // base via setTransform → NoWarpMask) — stop simulating.
         entity.itemPhysics = undefined;
       } else if (atRest === false && isVec3Like(data.velocity)) {
         // Item is moving — initialize or update physics simulation.
@@ -2115,7 +2269,11 @@ class StreamingPlayback implements DemoStreamingPlayback {
       }
     }
 
-    // Compute simulatedVelocity for projectile physics.
+    // Compute simulatedVelocity for projectile physics. Mirrors the engine's
+    // unpackUpdate: velocity is only set on InitialUpdateMask or BounceMask,
+    // so we only (re)initialize when this update actually transmits velocity
+    // or direction data. Between updates, advanceProjectiles() accumulates
+    // gravity on the existing simulatedVelocity.
     if (entity.projectilePhysics) {
       if (entity.projectilePhysics === "linear") {
         // Linear projectiles transmit direction + dryVelocity from datablock,
@@ -2147,14 +2305,18 @@ class StreamingPlayback implements DemoStreamingPlayback {
           vz += excessDir.z * excessVel;
         }
         entity.simulatedVelocity = [vx, vy, vz];
-      } else if (entity.velocity) {
-        // Ballistic and seeker: use the transmitted velocity directly.
+      } else if (isVec3Like(data.velocity)) {
+        // Ballistic/seeker: set velocity only when this ghost update transmits
+        // it (initial create or BounceMask). The engine's unpackUpdate only
+        // writes mCurrVelocity on these two mask bits.
         entity.simulatedVelocity = [
-          entity.velocity[0],
-          entity.velocity[1],
-          entity.velocity[2],
+          data.velocity.x,
+          data.velocity.y,
+          data.velocity.z,
         ];
       }
+    }
+    if (entity.projectilePhysics) {
 
       // Fast-forward by currTick: the initial position is the firing point
       // and currTick tells us how many ticks have already elapsed.
@@ -2172,10 +2334,12 @@ class StreamingPlayback implements DemoStreamingPlayback {
         entity.position[2] += v[2] * dt;
         // For ballistic projectiles, also apply gravity during fast-forward.
         if (entity.projectilePhysics === "ballistic") {
-          const g = 9.81 * (entity.gravityMod ?? 1);
+          // GrenadeProjectile::computeNewState uses -9.81 * gravityMod
+          // (globalGravity * 0.4905 * gravityMod, where 0.4905 = 9.81/20).
+          const g = -9.81 * (entity.gravityMod ?? 1);
           // v.z changes linearly, position.z changes quadratically.
-          entity.position[2] -= 0.5 * g * dt * dt;
-          v[2] -= g * dt;
+          entity.position[2] += 0.5 * g * dt * dt;
+          v[2] += g * dt;
         }
       }
     }
@@ -2193,7 +2357,7 @@ class StreamingPlayback implements DemoStreamingPlayback {
       entity.type === "Projectile" &&
       !entity.hasExploded &&
       explodePos &&
-      entity.explosionShape
+      entity.explosionDataBlockId != null
     ) {
       this.spawnExplosion(entity, [explodePos.x, explodePos.y, explodePos.z]);
     }
@@ -2252,6 +2416,10 @@ class StreamingPlayback implements DemoStreamingPlayback {
           this.state.playerSensorGroup = team;
         }
       }
+      const renderFlags = this.targetRenderFlags.get(data.targetId);
+      if (renderFlags != null) {
+        entity.targetRenderFlags = renderFlags;
+      }
     }
 
     // SoundMask: ghost-level playAudio() calls (e.g. station activation).
@@ -2285,8 +2453,8 @@ class StreamingPlayback implements DemoStreamingPlayback {
       const p = entity.position;
 
       if (entity.projectilePhysics === "ballistic") {
-        const g = 9.81 * (entity.gravityMod ?? 1);
-        v[2] -= g * dt;
+        // GrenadeProjectile::computeNewState: -9.81 * gravityMod per tick.
+        v[2] += -9.81 * (entity.gravityMod ?? 1) * dt;
       }
 
       p[0] += v[0] * dt;
@@ -2346,8 +2514,10 @@ class StreamingPlayback implements DemoStreamingPlayback {
     position: [number, number, number],
   ): void {
     entity.hasExploded = true;
-    const fxId = `fx_${this.state.nextExplosionId++}`;
     const lifetimeTicks = entity.explosionLifetimeTicks ?? 31;
+
+    // Spawn the main explosion entity.
+    const fxId = `fx_${this.state.nextExplosionId++}`;
     const fxEntity: MutableStreamEntity = {
       id: fxId,
       ghostIndex: -1,
@@ -2363,6 +2533,56 @@ class StreamingPlayback implements DemoStreamingPlayback {
       expiryTick: this.state.moveTicks + lifetimeTicks,
     };
     this.state.entitiesById.set(fxId, fxEntity);
+
+    // Spawn sub-explosion entities (e.g. MortarSubExplosion1/2/3 carry the
+    // actual DTS shapes while the main MortarExplosion has none).
+    if (entity.explosionDataBlockId != null) {
+      const expBlock = this.getDataBlockData(entity.explosionDataBlockId);
+      const subExplosions = expBlock?.subExplosions as
+        | (number | null)[]
+        | undefined;
+      if (Array.isArray(subExplosions)) {
+        for (const subId of subExplosions) {
+          if (subId == null) continue;
+          const subBlock = this.getDataBlockData(subId);
+          if (!subBlock) continue;
+          const subShape =
+            (subBlock.dtsFileName as string | undefined) || undefined;
+          if (!subShape) continue;
+
+          const subLifetimeTicks =
+            (subBlock.lifetimeMS as number | undefined) ?? 31;
+          const offset = (subBlock.offset as number | undefined) ?? 0;
+
+          // Randomize position offset in XY plane (Torque convention).
+          const angle = Math.random() * Math.PI * 2;
+          const subPos: [number, number, number] = [
+            position[0] + Math.cos(angle) * offset,
+            position[1] + Math.sin(angle) * offset,
+            position[2],
+          ];
+
+          const subFxId = `fx_${this.state.nextExplosionId++}`;
+          const subFxEntity: MutableStreamEntity = {
+            id: subFxId,
+            ghostIndex: -1,
+            className: "Explosion",
+            spawnTick: this.state.moveTicks,
+            type: "Explosion",
+            dataBlock: subShape,
+            explosionDataBlockId: subId,
+            position: subPos,
+            rotation: [0, 0, 0, 1],
+            isExplosion: true,
+            faceViewer:
+              subBlock.faceViewer !== false && subBlock.faceViewer !== 0,
+            expiryTick: this.state.moveTicks + subLifetimeTicks,
+          };
+          this.state.entitiesById.set(subFxId, subFxEntity);
+        }
+      }
+    }
+
     // Stop the projectile — the explosion takes over visually.
     entity.position = undefined;
     entity.simulatedVelocity = undefined;
@@ -2517,6 +2737,81 @@ class StreamingPlayback implements DemoStreamingPlayback {
     }
   }
 
+  /** Process ServerMessage events that update team scores and player roster. */
+  private handleServerMessage(args: string[]): void {
+    if (args.length < 2) return;
+    const msgType = this.resolveNetString(args[0]);
+
+    if (msgType === "MsgTeamScoreIs" && args.length >= 4) {
+      // args: [msgType, "", teamId, newScore]
+      const teamId = parseInt(this.resolveNetString(args[2]), 10);
+      const newScore = parseInt(this.resolveNetString(args[3]), 10);
+      if (!isNaN(teamId) && !isNaN(newScore)) {
+        const entry = this.state.teamScores.find((t) => t.teamId === teamId);
+        if (entry) {
+          entry.score = newScore;
+          this._teamScoresGen++;
+        }
+      }
+    } else if (msgType === "MsgCTFAddTeam" && args.length >= 6) {
+      // args: [msgType, "", teamIdx, teamName, flagStatus, score]
+      const teamIdx = parseInt(this.resolveNetString(args[2]), 10);
+      const teamName = stripTaggedStringMarkup(this.resolveNetString(args[3]));
+      const score = parseInt(this.resolveNetString(args[5]), 10);
+      if (!isNaN(teamIdx)) {
+        const teamId = teamIdx + 1;
+        const existing = this.state.teamScores.find(
+          (t) => t.teamId === teamId,
+        );
+        if (existing) {
+          existing.name = teamName;
+          existing.score = isNaN(score) ? existing.score : score;
+          this._teamScoresGen++;
+        } else {
+          this.state.teamScores.push({
+            teamId,
+            name: teamName,
+            score: isNaN(score) ? 0 : score,
+            playerCount: 0,
+          });
+          this._teamScoresGen++;
+        }
+      }
+    } else if (msgType === "MsgClientJoin" && args.length >= 4) {
+      // args: [msgType, "", clientId, name, ...]
+      const clientId = parseInt(this.resolveNetString(args[2]), 10);
+      const name = stripTaggedStringMarkup(this.resolveNetString(args[3]));
+      if (!isNaN(clientId)) {
+        const existing = this.state.playerRoster.get(clientId);
+        this.state.playerRoster.set(clientId, {
+          name,
+          teamId: existing?.teamId ?? 0,
+        });
+        this._rosterGen++;
+      }
+    } else if (msgType === "MsgClientDrop" && args.length >= 3) {
+      // args: [msgType, "", clientId, ...]
+      const clientId = parseInt(this.resolveNetString(args[2]), 10);
+      if (!isNaN(clientId)) {
+        this.state.playerRoster.delete(clientId);
+        this._rosterGen++;
+      }
+    } else if (msgType === "MsgClientJoinTeam" && args.length >= 4) {
+      // args: [msgType, "", clientId, teamId, ...]
+      const clientId = parseInt(this.resolveNetString(args[2]), 10);
+      const teamId = parseInt(this.resolveNetString(args[3]), 10);
+      if (!isNaN(clientId) && !isNaN(teamId)) {
+        const existing = this.state.playerRoster.get(clientId);
+        if (existing) {
+          existing.teamId = teamId;
+        } else {
+          this.state.playerRoster.set(clientId, { name: "", teamId });
+        }
+        this._rosterGen++;
+      }
+    }
+  }
+
   private handleHudRemoteCommand(funcName: string, args: string[]): void {
     // ── Weapons HUD ──
     if (funcName === "setWeaponsHudItem" && args.length >= 3) {
@@ -2529,6 +2824,7 @@ class StreamingPlayback implements DemoStreamingPlayback {
         } else {
           this.state.weaponsHud.slots.delete(slot);
         }
+        this._weaponsHudGen++;
       }
     } else if (funcName === "setWeaponsHudAmmo" && args.length >= 2) {
       const slot = parseInt(args[0], 10);
@@ -2537,6 +2833,7 @@ class StreamingPlayback implements DemoStreamingPlayback {
         // Treat ammo updates as implicit inventory presence — the
         // initial setWeaponsHudItem may have been sent before recording.
         this.state.weaponsHud.slots.set(slot, isNaN(ammo) ? -1 : ammo);
+        this._weaponsHudGen++;
       }
     } else if (funcName === "setWeaponsHudActive" && args.length >= 1) {
       const slot = parseInt(args[0], 10);
@@ -2547,9 +2844,11 @@ class StreamingPlayback implements DemoStreamingPlayback {
           this.state.weaponsHud.slots.set(slot, -1);
         }
       }
+      this._weaponsHudGen++;
     } else if (funcName === "setWeaponsHudClearAll") {
       this.state.weaponsHud.slots.clear();
       this.state.weaponsHud.activeIndex = -1;
+      this._weaponsHudGen++;
 
       // ── Backpack HUD ──
     } else if (funcName === "setBackpackHudItem" && args.length >= 2) {
@@ -2594,16 +2893,19 @@ class StreamingPlayback implements DemoStreamingPlayback {
         } else {
           this.state.inventoryHud.slots.delete(slot);
         }
+        this._inventoryHudGen++;
       }
     } else if (funcName === "setInventoryHudAmount" && args.length >= 2) {
       const slot = parseInt(args[0], 10);
       const amount = parseInt(args[1], 10);
       if (!isNaN(slot) && !isNaN(amount)) {
         this.state.inventoryHud.slots.set(slot, amount);
+        this._inventoryHudGen++;
       }
     } else if (funcName === "setInventoryHudClearAll") {
       this.state.inventoryHud.slots.clear();
       this.state.inventoryHud.activeSlot = -1;
+      this._inventoryHudGen++;
     }
   }
 
@@ -2612,6 +2914,20 @@ class StreamingPlayback implements DemoStreamingPlayback {
     for (const entity of this.state.entitiesById.values()) {
       if (!shouldRenderGhostEntity(entity)) {
         continue;
+      }
+      // Read the latest targetRenderFlags from the map (source of truth
+      // from TargetInfoEvents and FlagImage slot tracking) rather than the
+      // entity cache, which may be stale.
+      let renderFlags =
+        entity.targetId != null && entity.targetId >= 0
+          ? (this.targetRenderFlags.get(entity.targetId) ??
+             entity.targetRenderFlags)
+          : entity.targetRenderFlags;
+      // For Players, only show the flag icon if this specific entity has
+      // FlagImage mounted in slot 3. Dead corpses share the same targetId as
+      // the alive player but don't have FlagImage, so this prevents duplicates.
+      if (entity.type === "Player" && !entity.carryingFlag) {
+        renderFlags = renderFlags != null ? renderFlags & ~0x2 : renderFlags;
       }
       entities.push({
         id: entity.id,
@@ -2625,8 +2941,11 @@ class StreamingPlayback implements DemoStreamingPlayback {
         dataBlock: entity.dataBlock,
         weaponShape: entity.weaponShape,
         playerName: entity.playerName,
+        targetRenderFlags: renderFlags,
         iffColor:
-          entity.type === "Player" && entity.sensorGroup != null
+          (entity.type === "Player" ||
+            ((renderFlags ?? 0) & 0x2) !== 0) &&
+          entity.sensorGroup != null
             ? this.resolveIffColor(entity.sensorGroup)
             : undefined,
         // Only clone position for entities whose position is mutated in-place
@@ -2658,6 +2977,80 @@ class StreamingPlayback implements DemoStreamingPlayback {
     }
 
     const timeSec = this.state.moveTicks * (TICK_DURATION_MS / 1000);
+    const prev = this._snap;
+
+    const chatMessages = this.state.chatMessages.filter(
+      (m) => m.timeSec > timeSec - 15,
+    );
+
+    const audioEvents = this.state.pendingAudioEvents.filter(
+      (e) => e.timeSec > timeSec - 0.5 && e.timeSec <= timeSec,
+    );
+
+    const weaponsHud =
+      prev && prev.weaponsHudGen === this._weaponsHudGen
+        ? prev.weaponsHud
+        : {
+            slots: Array.from(this.state.weaponsHud.slots.entries()).map(
+              ([index, ammo]): WeaponsHudSlot => ({ index, ammo }),
+            ),
+            activeIndex: this.state.weaponsHud.activeIndex,
+          };
+
+    const inventoryHud =
+      prev && prev.inventoryHudGen === this._inventoryHudGen
+        ? prev.inventoryHud
+        : {
+            slots: Array.from(this.state.inventoryHud.slots.entries()).map(
+              ([slot, count]): InventoryHudSlot => ({ slot, count }),
+            ),
+            activeSlot: this.state.inventoryHud.activeSlot,
+          };
+
+    const backpackHud =
+      prev &&
+      prev.backpackPackIndex === this.state.backpackHud.packIndex &&
+      prev.backpackActive === this.state.backpackHud.active &&
+      prev.backpackText === this.state.backpackHud.text
+        ? prev.backpackHud
+        : this.state.backpackHud.packIndex >= 0
+          ? { ...this.state.backpackHud }
+          : null;
+
+    let teamScores: TeamScore[];
+    if (
+      prev &&
+      prev.teamScoresGen === this._teamScoresGen &&
+      prev.rosterGen === this._rosterGen
+    ) {
+      teamScores = prev.teamScores;
+    } else {
+      teamScores = this.state.teamScores.map((ts) => ({ ...ts }));
+      const teamCounts = new Map<number, number>();
+      for (const { teamId } of this.state.playerRoster.values()) {
+        if (teamId > 0) {
+          teamCounts.set(teamId, (teamCounts.get(teamId) ?? 0) + 1);
+        }
+      }
+      for (const ts of teamScores) {
+        ts.playerCount = teamCounts.get(ts.teamId) ?? 0;
+      }
+    }
+
+    this._snap = {
+      teamScoresGen: this._teamScoresGen,
+      rosterGen: this._rosterGen,
+      teamScores,
+      weaponsHudGen: this._weaponsHudGen,
+      weaponsHud,
+      inventoryHudGen: this._inventoryHudGen,
+      inventoryHud,
+      backpackPackIndex: this.state.backpackHud.packIndex,
+      backpackActive: this.state.backpackHud.active,
+      backpackText: this.state.backpackHud.text,
+      backpackHud,
+    };
+
     return {
       timeSec,
       exhausted: this.state.exhausted,
@@ -2666,29 +3059,12 @@ class StreamingPlayback implements DemoStreamingPlayback {
       controlPlayerGhostId: this.state.controlPlayerGhostId,
       playerSensorGroup: this.state.playerSensorGroup,
       status: this.state.lastStatus,
-      chatMessages: this.state.chatMessages.filter(
-        (m) => m.timeSec > timeSec - 15,
-      ),
-      audioEvents: this.state.pendingAudioEvents.filter(
-        (e) => e.timeSec > timeSec - 0.5 && e.timeSec <= timeSec,
-      ),
-      weaponsHud: {
-        slots: Array.from(this.state.weaponsHud.slots.entries()).map(
-          ([index, ammo]): WeaponsHudSlot => ({ index, ammo }),
-        ),
-        activeIndex: this.state.weaponsHud.activeIndex,
-      },
-      backpackHud:
-        this.state.backpackHud.packIndex >= 0
-          ? { ...this.state.backpackHud }
-          : null,
-      inventoryHud: {
-        slots: Array.from(this.state.inventoryHud.slots.entries()).map(
-          ([slot, count]): InventoryHudSlot => ({ slot, count }),
-        ),
-        activeSlot: this.state.inventoryHud.activeSlot,
-      },
-      teamScores: this.state.teamScores,
+      chatMessages,
+      audioEvents,
+      weaponsHud,
+      backpackHud,
+      inventoryHud,
+      teamScores,
     };
   }
 
@@ -2787,6 +3163,10 @@ class StreamingPlayback implements DemoStreamingPlayback {
         );
       }
     }
+    // Torque drops trailing empty string args from commandToClient, so the
+    // template may reference %N tokens beyond the supplied args (e.g. a
+    // plural "s" that evaluates to ""). Replace any remaining placeholders.
+    resolved = resolved.replace(/%\d+/g, "");
     return stripTaggedStringMarkup(resolved);
   }
 }

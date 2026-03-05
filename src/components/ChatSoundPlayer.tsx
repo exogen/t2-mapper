@@ -2,9 +2,9 @@ import { useEffect, useRef } from "react";
 import { Audio } from "three";
 import { audioToUrl } from "../loaders";
 import { useAudio } from "./AudioContext";
-import { getCachedAudioBuffer } from "./AudioEmitter";
+import { getCachedAudioBuffer, trackDemoSound, untrackDemoSound } from "./AudioEmitter";
 import { useSettings } from "./SettingsProvider";
-import { useEngineSelector } from "../state";
+import { engineStore, useEngineSelector } from "../state";
 import type { DemoChatMessage } from "../demo/types";
 
 /**
@@ -21,7 +21,12 @@ export function ChatSoundPlayer() {
   const timeSec = useEngineSelector(
     (state) => state.playback.streamSnapshot?.timeSec,
   );
-  const playedCountRef = useRef(0);
+  const playedSetRef = useRef(new WeakSet<DemoChatMessage>());
+  // Track active voice chat sound per sender so a new voice bind from the
+  // same player stops their previous one (matching Tribes 2 behavior).
+  const activeBySenderRef = useRef(
+    new Map<string, Audio<GainNode>>(),
+  );
 
   useEffect(() => {
     if (
@@ -33,32 +38,51 @@ export function ChatSoundPlayer() {
     ) {
       return;
     }
-    const startIdx = playedCountRef.current;
-    for (let i = startIdx; i < messages.length; i++) {
-      const msg: DemoChatMessage = messages[i];
+    const played = playedSetRef.current;
+    const activeBySender = activeBySenderRef.current;
+    for (const msg of messages) {
+      if (played.has(msg)) continue;
+      played.add(msg);
       if (!msg.soundPath) continue;
       // Skip sounds that are too old (e.g. after seeking).
       if (Math.abs(timeSec - msg.timeSec) > 2) continue;
       try {
         const url = audioToUrl(msg.soundPath);
         const pitch = msg.soundPitch ?? 1;
+        const rate = engineStore.getState().playback.rate;
+        const sender = msg.sender;
         getCachedAudioBuffer(url, audioLoader, (buffer) => {
+          // Stop the sender's previous voice chat sound.
+          if (sender) {
+            const prev = activeBySender.get(sender);
+            if (prev) {
+              try { prev.stop(); } catch {}
+              untrackDemoSound(prev);
+              prev.disconnect();
+              activeBySender.delete(sender);
+            }
+          }
           const sound = new Audio(audioListener);
           sound.setBuffer(buffer);
-          if (pitch !== 1) {
-            sound.setPlaybackRate(pitch);
+          sound.setPlaybackRate(pitch * rate);
+          trackDemoSound(sound, pitch);
+          if (sender) {
+            activeBySender.set(sender, sound);
           }
           sound.play();
           // Clean up the source node once playback finishes.
           sound.source!.onended = () => {
+            untrackDemoSound(sound);
             sound.disconnect();
+            if (sender && activeBySender.get(sender) === sound) {
+              activeBySender.delete(sender);
+            }
           };
         });
       } catch {
         // File not in manifest — skip silently.
       }
     }
-    playedCountRef.current = messages.length;
   }, [audioEnabled, audioLoader, audioListener, messages, timeSec]);
 
   return null;

@@ -295,6 +295,17 @@ export class EmitterInstance {
 
       if (this.particles.length < this.maxParticles) {
         this.addParticle(pos, axis);
+
+        // V12: when overrideAdvances is false, immediately age the newly
+        // spawned particle by the remaining time in this frame. If that
+        // exceeds its lifetime, kill it immediately (never rendered).
+        if (!this.data.overrideAdvances && timeLeft > 0) {
+          const p = this.particles[this.particles.length - 1];
+          p.currentAge += timeLeft;
+          if (p.currentAge >= p.totalLifetime) {
+            this.particles.pop();
+          }
+        }
       }
 
       // Compute next emission time.
@@ -310,10 +321,10 @@ export class EmitterInstance {
   update(dtMS: number): void {
     this.emitterAge += dtMS;
 
-    // Check emitter lifetime.
+    // Check emitter lifetime (V12 uses strictly greater).
     if (
       this.emitterLifetime > 0 &&
-      this.emitterAge >= this.emitterLifetime
+      this.emitterAge > this.emitterLifetime
     ) {
       this.emitterDead = true;
     }
@@ -339,9 +350,9 @@ export class EmitterInstance {
 
       // a = acc - vel*drag - wind*windCoeff + gravity*gravCoeff
       // We skip wind for now (no wind system yet).
-      const ax = -p.vel[0] * drag;
-      const ay = -p.vel[1] * drag;
-      const az = -p.vel[2] * drag + GRAVITY_Z * gravCoeff;
+      const ax = p.acc[0] - p.vel[0] * drag;
+      const ay = p.acc[1] - p.vel[1] * drag;
+      const az = p.acc[2] - p.vel[2] * drag + GRAVITY_Z * gravCoeff;
 
       // Symplectic Euler: update vel first, then pos with new vel.
       p.vel[0] += ax * dt;
@@ -430,14 +441,13 @@ export class EmitterInstance {
       ejZ * speed,
     ];
 
-    // V12: acc = vel * constantAcceleration (set once, never changes).
-    // We fold this into the initial velocity for simplicity since the
-    // constant acceleration just biases the starting velocity direction.
-    // Actually, in V12 acc is a separate constant vector added each frame.
-    // For faithfulness, we should track it. But since it's constant, we can
-    // just apply it in the update loop as a per-particle property.
-    // For now, bake it into the velocity since most Tribes 2 datablocks
-    // have constantAcceleration = 0.
+    // V12: acc = vel * constantAcceleration, set once at spawn, applied every frame.
+    const ca = pData.constantAcceleration;
+    const acc: [number, number, number] = [
+      vel[0] * ca,
+      vel[1] * ca,
+      vel[2] * ca,
+    ];
 
     // Particle lifetime with variance.
     let lifetime = pData.lifetimeMS;
@@ -456,6 +466,7 @@ export class EmitterInstance {
     this.particles.push({
       pos: spawnPos,
       vel,
+      acc,
       orientDir: [ejX, ejY, ejZ],
       currentAge: 0,
       totalLifetime: lifetime,

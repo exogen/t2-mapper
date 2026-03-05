@@ -7,6 +7,7 @@ import {
 } from "react";
 import { useThree } from "@react-three/fiber";
 import { AudioListener, AudioLoader } from "three";
+import { engineStore } from "../state";
 
 interface AudioContextType {
   audioLoader: AudioLoader | null;
@@ -44,6 +45,26 @@ export function AudioProvider({ children }: { children: ReactNode }) {
       audioLoader,
       audioListener: listener,
     });
+
+    // Suspend/resume the Web AudioContext when demo playback pauses/resumes.
+    // This freezes all playing sounds at their current position rather than
+    // stopping them, so they resume seamlessly.
+    const unsubscribe = engineStore.subscribe(
+      (state) => state.playback.status,
+      (status) => {
+        const ctx = listener?.context;
+        if (!ctx) return;
+        if (status === "paused") {
+          ctx.suspend();
+        } else if (status === "playing" && ctx.state === "suspended") {
+          ctx.resume();
+        }
+      },
+    );
+
+    return () => {
+      unsubscribe();
+    };
   }, [camera]);
 
   return (

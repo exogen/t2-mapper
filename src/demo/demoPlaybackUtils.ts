@@ -151,6 +151,7 @@ export function getPosedNodeTransform(
   scene: Group,
   animations: AnimationClip[],
   nodeName: string,
+  overrideClipNames?: string[],
 ): { position: Vector3; quaternion: Quaternion } | null {
   const clone = scene.clone(true);
 
@@ -158,6 +159,21 @@ export function getPosedNodeTransform(
   if (rootClip) {
     const mixer = new AnimationMixer(clone);
     mixer.clipAction(rootClip).play();
+    // Play override clips (e.g. arm pose) which replace bone transforms
+    // on the bones they animate, at clip midpoint (neutral pose).
+    if (overrideClipNames) {
+      for (const name of overrideClipNames) {
+        const clip = animations.find(
+          (a) => a.name.toLowerCase() === name.toLowerCase(),
+        );
+        if (clip) {
+          const action = mixer.clipAction(clip);
+          action.time = clip.duration / 2;
+          action.setEffectiveTimeScale(0);
+          action.play();
+        }
+      }
+    }
     mixer.setTime(0);
   }
 
@@ -398,6 +414,8 @@ export function buildStreamDemoEntity(
   ghostIndex: number | undefined,
   dataBlockId: number | undefined,
   shapeHint: string | undefined,
+  explosionDataBlockId?: number,
+  faceViewer?: boolean,
 ): DemoEntity {
   return {
     id,
@@ -411,6 +429,8 @@ export function buildStreamDemoEntity(
     ghostIndex,
     dataBlockId,
     shapeHint,
+    explosionDataBlockId,
+    faceViewer,
     keyframes: [
       {
         time: 0,

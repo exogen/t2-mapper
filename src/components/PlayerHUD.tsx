@@ -9,12 +9,9 @@ import type {
   WeaponsHudSlot,
 } from "../demo/types";
 import styles from "./PlayerHUD.module.css";
-
 // ── Compass ──
-
 const COMPASS_URL = textureToUrl("gui/hud_new_compass");
 const NSEW_URL = textureToUrl("gui/hud_new_NSEW");
-
 function Compass({ yaw }: { yaw: number | undefined }) {
   if (yaw == null) return null;
   // The ring notch is the fixed heading indicator (always "forward" at top).
@@ -34,9 +31,7 @@ function Compass({ yaw }: { yaw: number | undefined }) {
     </div>
   );
 }
-
 // ── Health / Energy bars ──
-
 function HealthBar({ value }: { value: number }) {
   const pct = Math.max(0, Math.min(100, value * 100));
   return (
@@ -45,7 +40,6 @@ function HealthBar({ value }: { value: number }) {
     </div>
   );
 }
-
 function EnergyBar({ value }: { value: number }) {
   const pct = Math.max(0, Math.min(100, value * 100));
   return (
@@ -54,20 +48,16 @@ function EnergyBar({ value }: { value: number }) {
     </div>
   );
 }
-
 // ── Reticle ──
-
 const RETICLE_TEXTURES: Record<string, string> = {
   weapon_sniper: "gui/hud_ret_sniper",
   weapon_shocklance: "gui/hud_ret_shocklance",
   weapon_targeting: "gui/hud_ret_targlaser",
 };
-
 function normalizeWeaponName(shape: string | undefined): string {
   if (!shape) return "";
   return shape.replace(/\.dts$/i, "").toLowerCase();
 }
-
 function Reticle() {
   const weaponShape = useEngineSelector((state) => {
     const snap = state.playback.streamSnapshot;
@@ -98,9 +88,7 @@ function Reticle() {
     </div>
   );
 }
-
 // ── Weapon HUD (right side weapon list) ──
-
 /** Maps $WeaponsHudData indices to simple icon textures (no baked background)
  *  and labels. Mortar uses hud_new_ because no simple variant exists. */
 const WEAPON_HUD_SLOTS: Record<number, { icon: string; label: string }> = {
@@ -124,7 +112,6 @@ const WEAPON_HUD_SLOTS: Record<number, { icon: string; label: string }> = {
   16: { icon: "gui/hud_shocklance", label: "Shocklance" },
   17: { icon: "gui/hud_new_mortar", label: "Mortar" },
 };
-
 // Precompute URLs so we don't call textureToUrl on every render.
 const WEAPON_HUD_ICON_URLS = new Map(
   Object.entries(WEAPON_HUD_SLOTS).map(([idx, w]) => [
@@ -132,12 +119,9 @@ const WEAPON_HUD_ICON_URLS = new Map(
     textureToUrl(w.icon),
   ]),
 );
-
 /** Targeting laser HUD indices (standard + TR2 variants). */
 const TARGETING_LASER_INDICES = new Set([9, 14, 15]);
-
 const INFINITY_ICON_URL = textureToUrl("gui/hud_infinity");
-
 function WeaponSlotIcon({
   slot,
   isSelected,
@@ -171,7 +155,6 @@ function WeaponSlotIcon({
     </div>
   );
 }
-
 function WeaponHUD() {
   const weaponsHud = useEngineSelector(
     (state) => state.playback.streamSnapshot?.weaponsHud,
@@ -206,9 +189,7 @@ function WeaponHUD() {
     </div>
   );
 }
-
 // ── Team Scores (bottom-left) ──
-
 /** Default team names from serverDefaults.cs. */
 const DEFAULT_TEAM_NAMES: Record<number, string> = {
   1: "Storm",
@@ -218,7 +199,6 @@ const DEFAULT_TEAM_NAMES: Record<number, string> = {
   5: "Blood Eagle",
   6: "Phoenix",
 };
-
 function TeamScores() {
   const teamScores = useEngineSelector(
     (state) => state.playback.streamSnapshot?.teamScores,
@@ -227,7 +207,6 @@ function TeamScores() {
     (state) => state.playback.streamSnapshot?.playerSensorGroup,
   );
   if (!teamScores?.length) return null;
-
   // Sort: friendly team first (if known), then by teamId.
   const sorted = [...teamScores].sort((a, b) => {
     if (playerSensorGroup) {
@@ -236,7 +215,6 @@ function TeamScores() {
     }
     return a.teamId - b.teamId;
   });
-
   return (
     <div className={styles.TeamScores}>
       {sorted.map((team: TeamScore) => {
@@ -262,9 +240,7 @@ function TeamScores() {
     </div>
   );
 }
-
 // ── Chat Window (top-left) ──
-
 /** Map a colorCode to a CSS module class name (c0–c9 GuiChatHudProfile). */
 const CHAT_COLOR_CLASSES: Record<number, string> = {
   0: styles.ChatColor0,
@@ -278,11 +254,9 @@ const CHAT_COLOR_CLASSES: Record<number, string> = {
   8: styles.ChatColor8,
   9: styles.ChatColor9,
 };
-
 function segmentColorClass(colorCode: number): string {
   return CHAT_COLOR_CLASSES[colorCode] ?? CHAT_COLOR_CLASSES[0];
 }
-
 function chatColorClass(msg: DemoChatMessage): string {
   if (msg.colorCode != null && CHAT_COLOR_CLASSES[msg.colorCode]) {
     return CHAT_COLOR_CLASSES[msg.colorCode];
@@ -292,7 +266,6 @@ function chatColorClass(msg: DemoChatMessage): string {
   // byte color code, so the correct default for server messages is c0.
   return CHAT_COLOR_CLASSES[0];
 }
-
 function ChatWindow() {
   const messages = useEngineSelector(
     (state) => state.playback.streamSnapshot?.chatMessages,
@@ -340,9 +313,7 @@ function ChatWindow() {
     </div>
   );
 }
-
 // ── Backpack + Inventory HUD (bottom-right) ──
-
 /** Maps $BackpackHudData indices to icon textures. */
 const BACKPACK_ICONS: Record<number, string> = {
   0: "gui/hud_new_packammo",
@@ -366,7 +337,6 @@ const BACKPACK_ICONS: Record<number, string> = {
   18: "gui/hud_satchel_unarmed",
   19: "gui/hud_new_packenergy",
 };
-
 /** Pack indices that have an armed/activated icon variant. */
 const BACKPACK_ARMED_ICONS: Record<number, string> = {
   1: "gui/hud_new_packcloak_armed",
@@ -375,7 +345,6 @@ const BACKPACK_ARMED_ICONS: Record<number, string> = {
   5: "gui/hud_new_packshield_armed",
   11: "gui/hud_new_packsensjam_armed",
 };
-
 // Precompute URLs.
 const BACKPACK_ICON_URLS = new Map(
   Object.entries(BACKPACK_ICONS).map(([idx, tex]) => [
@@ -389,7 +358,6 @@ const BACKPACK_ARMED_ICON_URLS = new Map(
     textureToUrl(tex),
   ]),
 );
-
 /** Simple icons per inventory display slot (no baked-in background). */
 const INVENTORY_SLOT_ICONS: Record<number, { icon: string; label: string }> = {
   0: { icon: "gui/hud_handgren", label: "Grenade" },
@@ -397,14 +365,12 @@ const INVENTORY_SLOT_ICONS: Record<number, { icon: string; label: string }> = {
   2: { icon: "gui/hud_beacon", label: "Beacon" },
   3: { icon: "gui/hud_medpack", label: "Repair Kit" },
 };
-
 const INVENTORY_ICON_URLS = new Map(
   Object.entries(INVENTORY_SLOT_ICONS).map(([slot, info]) => [
     Number(slot),
     textureToUrl(info.icon),
   ]),
 );
-
 function PackAndInventoryHUD() {
   const backpackHud = useEngineSelector(
     (state) => state.playback.streamSnapshot?.backpackHud,
@@ -412,9 +378,7 @@ function PackAndInventoryHUD() {
   const inventoryHud = useEngineSelector(
     (state) => state.playback.streamSnapshot?.inventoryHud,
   );
-
   const hasPack = backpackHud && backpackHud.packIndex >= 0;
-
   // Resolve pack icon.
   let packIconUrl: string | undefined;
   if (hasPack) {
@@ -423,7 +387,6 @@ function PackAndInventoryHUD() {
       : undefined;
     packIconUrl = armedUrl ?? BACKPACK_ICON_URLS.get(backpackHud.packIndex);
   }
-
   // Build count lookup from snapshot data.
   const countBySlot = new Map<number, number>();
   if (inventoryHud) {
@@ -431,14 +394,11 @@ function PackAndInventoryHUD() {
       countBySlot.set(s.slot, s.count);
     }
   }
-
   // Always show all inventory slot types, defaulting to 0.
   const allSlotIds = Object.keys(INVENTORY_SLOT_ICONS)
     .map(Number)
     .sort((a, b) => a - b);
-
   if (!hasPack && !countBySlot.size) return null;
-
   return (
     <div className={styles.PackInventoryHUD}>
       {packIconUrl && (
@@ -473,19 +433,15 @@ function PackAndInventoryHUD() {
     </div>
   );
 }
-
 // ── Main HUD ──
-
 export function PlayerHUD() {
   const recording = useDemoRecording();
   const streamSnapshot = useEngineSelector(
     (state) => state.playback.streamSnapshot,
   );
-
   if (!recording) return null;
   const status = streamSnapshot?.status;
   if (!status) return null;
-
   return (
     <div className={styles.PlayerHUD}>
       <ChatWindow />

@@ -17,7 +17,7 @@ import { TickProvider } from "./TickProvider";
 import { DemoEntityGroup } from "./DemoEntities";
 import { DemoParticleEffects } from "./DemoParticleEffects";
 import { PlayerEyeOffset } from "./DemoPlayerModel";
-import { useEngineStoreApi } from "../state";
+import { useEngineStoreApi, advanceEffectClock } from "../state";
 import type {
   DemoEntity,
   DemoRecording,
@@ -67,14 +67,13 @@ export function StreamingDemoPlayback({ recording }: { recording: DemoRecording 
 
     const prevMap = entityMapRef.current;
     const nextMap = new Map<string, DemoEntity>();
-    // Derive shouldRebuild from the entity loop itself instead of computing
-    // an O(n) string signature every frame. Entity count change catches
-    // add/remove; identity check catches per-entity changes.
-    let shouldRebuild = snapshot.entities.length !== prevMap.size;
+    let shouldRebuild = false;
 
     for (const entity of snapshot.entities) {
       let renderEntity = prevMap.get(entity.id);
-      if (
+
+      // Identity change → new component (unmount/remount)
+      const needsNewIdentity =
         !renderEntity ||
         renderEntity.type !== entity.type ||
         renderEntity.dataBlock !== entity.dataBlock ||
@@ -82,8 +81,9 @@ export function StreamingDemoPlayback({ recording }: { recording: DemoRecording 
         renderEntity.className !== entity.className ||
         renderEntity.ghostIndex !== entity.ghostIndex ||
         renderEntity.dataBlockId !== entity.dataBlockId ||
-        renderEntity.shapeHint !== entity.shapeHint
-      ) {
+        renderEntity.shapeHint !== entity.shapeHint;
+
+      if (needsNewIdentity) {
         renderEntity = buildStreamDemoEntity(
           entity.id,
           entity.type,
@@ -96,26 +96,57 @@ export function StreamingDemoPlayback({ recording }: { recording: DemoRecording 
           entity.ghostIndex,
           entity.dataBlockId,
           entity.shapeHint,
+          entity.explosionDataBlockId,
+          entity.faceViewer,
         );
+        renderEntity.playerName = entity.playerName;
+        renderEntity.iffColor = entity.iffColor;
+        renderEntity.targetRenderFlags = entity.targetRenderFlags;
+        renderEntity.threads = entity.threads;
+        renderEntity.weaponImageState = entity.weaponImageState;
+        renderEntity.weaponImageStates = entity.weaponImageStates;
+        renderEntity.headPitch = entity.headPitch;
+        renderEntity.headYaw = entity.headYaw;
+        renderEntity.direction = entity.direction;
+        renderEntity.visual = entity.visual;
+        renderEntity.explosionDataBlockId = entity.explosionDataBlockId;
+        renderEntity.faceViewer = entity.faceViewer;
+        renderEntity.spawnTime = snapshot.timeSec;
+        shouldRebuild = true;
+      } else if (
+        renderEntity.playerName !== entity.playerName ||
+        renderEntity.iffColor !== entity.iffColor ||
+        renderEntity.targetRenderFlags !== entity.targetRenderFlags ||
+        renderEntity.threads !== entity.threads ||
+        renderEntity.weaponImageState !== entity.weaponImageState ||
+        renderEntity.weaponImageStates !== entity.weaponImageStates ||
+        renderEntity.headPitch !== entity.headPitch ||
+        renderEntity.headYaw !== entity.headYaw ||
+        renderEntity.direction !== entity.direction ||
+        renderEntity.visual !== entity.visual
+      ) {
+        // Render-affecting field changed → new object so React.memo sees
+        // a different reference and re-renders this entity's component.
+        renderEntity = {
+          ...renderEntity,
+          playerName: entity.playerName,
+          iffColor: entity.iffColor,
+          targetRenderFlags: entity.targetRenderFlags,
+          threads: entity.threads,
+          weaponImageState: entity.weaponImageState,
+          weaponImageStates: entity.weaponImageStates,
+          headPitch: entity.headPitch,
+          headYaw: entity.headYaw,
+          direction: entity.direction,
+          visual: entity.visual,
+        };
         shouldRebuild = true;
       }
+      // else: no render-affecting changes, keep same object reference
+      // so React.memo can skip re-rendering this entity.
 
-      renderEntity.playerName = entity.playerName;
-      renderEntity.iffColor = entity.iffColor;
-      renderEntity.dataBlock = entity.dataBlock;
-      renderEntity.visual = entity.visual;
-      renderEntity.direction = entity.direction;
-      renderEntity.weaponShape = entity.weaponShape;
-      renderEntity.className = entity.className;
-      renderEntity.ghostIndex = entity.ghostIndex;
-      renderEntity.dataBlockId = entity.dataBlockId;
-      renderEntity.shapeHint = entity.shapeHint;
-      renderEntity.threads = entity.threads;
-      renderEntity.weaponImageState = entity.weaponImageState;
-      renderEntity.weaponImageStates = entity.weaponImageStates;
-      renderEntity.headPitch = entity.headPitch;
-      renderEntity.headYaw = entity.headYaw;
-
+      // Keyframe update (mutable — only used as fallback position for
+      // retained explosion entities; useFrame reads from snapshot entities).
       if (renderEntity.keyframes.length === 0) {
         renderEntity.keyframes.push({
           time: snapshot.timeSec,
@@ -123,7 +154,6 @@ export function StreamingDemoPlayback({ recording }: { recording: DemoRecording 
           rotation: entity.rotation ?? [0, 0, 0, 1],
         });
       }
-
       const kf = renderEntity.keyframes[0];
       kf.time = snapshot.timeSec;
       if (entity.position) kf.position = entity.position;
@@ -137,6 +167,28 @@ export function StreamingDemoPlayback({ recording }: { recording: DemoRecording 
 
       nextMap.set(entity.id, renderEntity);
     }
+
+    // Retain explosion entities with DTS shapes after they leave the snapshot.
+    // These entities are ephemeral (~1 tick) but the visual effect lasts seconds.
+    for (const [id, entity] of prevMap) {
+      if (nextMap.has(id)) continue;
+      if (
+        entity.type === "Explosion" &&
+        entity.dataBlock &&
+        entity.spawnTime != null
+      ) {
+        const age = snapshot.timeSec - entity.spawnTime;
+        if (age < 5) {
+          nextMap.set(id, entity);
+          continue;
+        }
+      }
+      // Entity removed (or retention expired).
+      shouldRebuild = true;
+    }
+
+    // Detect new entities added.
+    if (nextMap.size !== prevMap.size) shouldRebuild = true;
 
     entityMapRef.current = nextMap;
     if (shouldRebuild) {
@@ -209,7 +261,10 @@ export function StreamingDemoPlayback({ recording }: { recording: DemoRecording 
       playbackClockRef.current = requestedTimeSec;
     }
 
+    // Advance the shared effect clock so all effect timers (particles,
+    // explosions, shockwaves, shape animations) respect pause and rate.
     if (isPlaying) {
+      advanceEffectClock(delta, playback.rate);
       playbackClockRef.current += delta * playback.rate;
     }
 
@@ -269,7 +324,12 @@ export function StreamingDemoPlayback({ recording }: { recording: DemoRecording 
       renderCurrent.camera?.orbitTargetId !==
         publishedSnapshot.camera?.orbitTargetId ||
       renderCurrent.chatMessages.length !== publishedSnapshot.chatMessages.length ||
-      renderCurrent.teamScores !== publishedSnapshot.teamScores;
+      renderCurrent.teamScores.length !== publishedSnapshot.teamScores.length ||
+      renderCurrent.teamScores.some(
+        (ts, i) =>
+          ts.score !== publishedSnapshot.teamScores[i]?.score ||
+          ts.playerCount !== publishedSnapshot.teamScores[i]?.playerCount,
+      );
 
     if (shouldPublish) {
       publishedSnapshotRef.current = renderCurrent;
@@ -335,10 +395,23 @@ export function StreamingDemoPlayback({ recording }: { recording: DemoRecording 
 
     const currentEntities = getEntityMap(renderCurrent);
     const previousEntities = getEntityMap(renderPrev);
+    const renderEntities = entityMapRef.current;
     const root = rootRef.current;
     if (root) {
       for (const child of root.children) {
-        const entity = currentEntities.get(child.name);
+        let entity = currentEntities.get(child.name);
+        // Retained entities (e.g. explosion shapes kept alive past their
+        // snapshot lifetime) won't be in the snapshot entity map. Fall back
+        // to their last-known keyframe position from the render entity.
+        if (!entity) {
+          const renderEntity = renderEntities.get(child.name);
+          if (renderEntity?.keyframes[0]?.position) {
+            const kf = renderEntity.keyframes[0];
+            child.visible = true;
+            child.position.set(kf.position[1], kf.position[2], kf.position[0]);
+            continue;
+          }
+        }
         if (!entity?.position) {
           child.visible = false;
           continue;
@@ -448,7 +521,7 @@ export function StreamingDemoPlayback({ recording }: { recording: DemoRecording 
     <TickProvider>
       <group ref={rootRef}>
         {entities.map((entity) => (
-          <DemoEntityGroup key={entity.id} entity={entity} timeRef={timeRef} />
+          <DemoEntityGroup key={entity.id} entity={entity} timeRef={timeRef} playback={recording.streamingPlayback} />
         ))}
       </group>
       <DemoParticleEffects

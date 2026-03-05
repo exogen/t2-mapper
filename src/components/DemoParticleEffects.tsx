@@ -3,7 +3,9 @@ import { useFrame, useThree } from "@react-three/fiber";
 import {
   AdditiveBlending,
   BoxGeometry,
+  BufferAttribute,
   BufferGeometry,
+  CanvasTexture,
   DataTexture,
   DoubleSide,
   Float32BufferAttribute,
@@ -15,6 +17,8 @@ import {
   RGBAFormat,
   ShaderMaterial,
   SphereGeometry,
+  Sprite,
+  SpriteMaterial,
   Texture,
   Uint16BufferAttribute,
   UnsignedByteType,
@@ -42,7 +46,10 @@ import {
   resolveAudioProfile,
   playOneShotSound,
   getCachedAudioBuffer,
+  trackDemoSound,
+  untrackDemoSound,
 } from "./AudioEmitter";
+import { demoEffectNow, engineStore } from "../state";
 
 // ── Constants ──
 
@@ -92,10 +99,357 @@ const _debugOriginMat = new MeshBasicMaterial({ color: 0xff0000, wireframe: true
 const _debugParticleGeo = new BoxGeometry(0.3, 0.3, 0.3);
 const _debugParticleMat = new MeshBasicMaterial({ color: 0x00ff00, wireframe: true });
 
-// ── sRGB → linear conversion for shader attributes ──
+// ── Explosion wireframe sphere geometry (reusable) ──
 
-function srgbToLinear(c: number): number {
-  return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+const _explosionSphereGeo = new SphereGeometry(1, 12, 8);
+
+interface ActiveExplosionSphere {
+  entityId: string;
+  mesh: Mesh;
+  material: MeshBasicMaterial;
+  label: Sprite;
+  labelMaterial: SpriteMaterial;
+  creationTime: number;
+  lifetimeMS: number;
+  targetRadius: number;
+}
+
+/** Create a text label sprite for an explosion sphere. */
+function createExplosionLabel(text: string, color: number): { sprite: Sprite; material: SpriteMaterial } {
+  const canvas = document.createElement("canvas");
+  const ctx = canvas.getContext("2d")!;
+  const fontSize = 32;
+  ctx.font = `bold ${fontSize}px monospace`;
+  const metrics = ctx.measureText(text);
+  const padding = 8;
+  canvas.width = Math.ceil(metrics.width) + padding * 2;
+  canvas.height = fontSize + padding * 2;
+
+  // Redraw with correct canvas size.
+  ctx.font = `bold ${fontSize}px monospace`;
+  ctx.fillStyle = `#${color.toString(16).padStart(6, "0")}`;
+  ctx.textBaseline = "middle";
+  ctx.fillText(text, padding, canvas.height / 2);
+
+  const texture = new CanvasTexture(canvas);
+  const material = new SpriteMaterial({
+    map: texture,
+    transparent: true,
+    depthTest: false,
+    depthWrite: false,
+  });
+  const sprite = new Sprite(material);
+  // Scale to be readable in world space (roughly 1 unit tall).
+  const aspect = canvas.width / canvas.height;
+  sprite.scale.set(aspect * 2, 2, 1);
+  return { sprite, material };
+}
+
+// ── Shockwave ring rendering ──
+
+interface ShockwaveData {
+  width: number;
+  numSegments: number;
+  velocity: number;
+  height: number;
+  verticalCurve: number;
+  acceleration: number;
+  texWrap: number;
+  lifetimeMS: number;
+  is2D: boolean;
+  renderSquare: boolean;
+  renderBottom: boolean;
+  mapToTerrain: boolean;
+  colors: { r: number; g: number; b: number; a: number }[];
+  times: number[];
+  textureName: string;
+  mapToTexture: string;
+}
+
+interface ActiveShockwave {
+  entityId: string;
+  mesh: Mesh;
+  bottomMesh: Mesh | null;
+  geometry: BufferGeometry;
+  bottomGeometry: BufferGeometry | null;
+  material: ShaderMaterial;
+  creationTime: number;
+  lifetimeMS: number;
+  data: ShockwaveData;
+  radius: number;
+  velocity: number;
+}
+
+/** Resolve a ShockwaveData datablock from an explosion's shockwave ref. */
+function resolveShockwaveData(
+  shockwaveId: number,
+  getDataBlockData: (id: number) => Record<string, unknown> | undefined,
+): ShockwaveData | null {
+  const raw = getDataBlockData(shockwaveId);
+  if (!raw) return null;
+
+  const colors = (raw.colors as ShockwaveData["colors"]) ?? [];
+  const times = (raw.times as number[]) ?? [0, 0.5, 1, 1];
+
+  return {
+    width: (raw.width as number) ?? 1,
+    numSegments: Math.max((raw.numSegments as number) ?? 16, 4),
+    velocity: (raw.velocity as number) ?? 0,
+    height: (raw.height as number) ?? 0,
+    verticalCurve: (raw.verticalCurve as number) ?? 0,
+    acceleration: (raw.acceleration as number) ?? 0,
+    texWrap: (raw.texWrap as number) ?? 1,
+    lifetimeMS: (raw.lifetimeMS as number) ?? 500,
+    is2D: !!raw.is2D,
+    renderSquare: !!raw.renderSquare,
+    renderBottom: !!raw.renderBottom,
+    mapToTerrain: !!raw.mapToTerrain,
+    colors,
+    times,
+    textureName: (raw.textureName as string) ?? "",
+    mapToTexture: (raw.mapToTexture as string) ?? "",
+  };
+}
+
+/** Interpolate RGBA color from shockwave keyframes at normalized time t. */
+function interpolateShockwaveColor(
+  data: ShockwaveData,
+  t: number,
+): [number, number, number, number] {
+  const { colors, times } = data;
+  if (colors.length === 0) return [1, 1, 1, 1];
+
+  // Find the active keyframe segment.
+  let idx = 0;
+  for (let i = 0; i < times.length - 1; i++) {
+    if (t >= times[i]) idx = i;
+  }
+  const nextIdx = Math.min(idx + 1, colors.length - 1);
+
+  const t0 = times[idx] ?? 0;
+  const t1 = times[nextIdx] ?? 1;
+  const span = t1 - t0;
+  const frac = span > 0 ? Math.min((t - t0) / span, 1) : 0;
+
+  const c0 = colors[idx] ?? colors[0];
+  const c1 = colors[nextIdx] ?? colors[0];
+
+  return [
+    c0.r + (c1.r - c0.r) * frac,
+    c0.g + (c1.g - c0.g) * frac,
+    c0.b + (c1.b - c0.b) * frac,
+    c0.a + (c1.a - c0.a) * frac,
+  ];
+}
+
+// Shockwave ring shader — additive blending, vertex colors with alpha.
+const shockwaveVertexShader = /* glsl */ `
+  attribute vec4 vertexColor;
+  attribute vec2 texCoord;
+  varying vec4 vColor;
+  varying vec2 vUV;
+  void main() {
+    vColor = vertexColor;
+    vUV = texCoord;
+    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+  }
+`;
+
+const shockwaveFragmentShader = /* glsl */ `
+  uniform sampler2D uTexture;
+  varying vec4 vColor;
+  varying vec2 vUV;
+  void main() {
+    vec4 tex = texture2D(uTexture, vUV);
+    gl_FragColor = vec4(vColor.rgb * tex.rgb, vColor.a * tex.a);
+  }
+`;
+
+/**
+ * Create ring geometry buffers for a shockwave with the given segment count.
+ * Each segment is a quad (2 triangles) between inner and outer ring vertices.
+ * Returns the geometry with position, texCoord, vertexColor attributes and
+ * index buffer pre-allocated for numSegments quads.
+ */
+function createShockwaveGeometry(numSegments: number): BufferGeometry {
+  // 2 vertices per segment (inner + outer) + 2 to close the loop.
+  const numVerts = (numSegments + 1) * 2;
+  const positions = new Float32Array(numVerts * 3);
+  const texCoords = new Float32Array(numVerts * 2);
+  const vertexColors = new Float32Array(numVerts * 4);
+
+  // 2 triangles per segment = 6 indices.
+  const numIndices = numSegments * 6;
+  const indices = new Uint16Array(numIndices);
+
+  for (let i = 0; i < numSegments; i++) {
+    const base = i * 2;
+    const j = i * 6;
+    // Outer-inner-outer, inner-inner-outer (CCW winding).
+    indices[j] = base;
+    indices[j + 1] = base + 1;
+    indices[j + 2] = base + 2;
+    indices[j + 3] = base + 1;
+    indices[j + 4] = base + 3;
+    indices[j + 5] = base + 2;
+  }
+
+  const geo = new BufferGeometry();
+  const posAttr = new BufferAttribute(positions, 3);
+  posAttr.setUsage(35048); // DynamicDrawUsage
+  geo.setAttribute("position", posAttr);
+
+  const texAttr = new BufferAttribute(texCoords, 2);
+  texAttr.setUsage(35048);
+  geo.setAttribute("texCoord", texAttr);
+
+  const colorAttr = new BufferAttribute(vertexColors, 4);
+  colorAttr.setUsage(35048);
+  geo.setAttribute("vertexColor", colorAttr);
+
+  geo.setIndex(new BufferAttribute(indices, 1));
+
+  return geo;
+}
+
+/**
+ * Update shockwave ring vertex positions, UVs, and colors for the current
+ * frame. Implements the V12 renderWave algorithm: an expanding annular ring
+ * with optional height on the outer edge.
+ */
+function updateShockwaveGeometry(
+  geo: BufferGeometry,
+  sw: ShockwaveData,
+  radius: number,
+  color: [number, number, number, number],
+  is2D: boolean,
+): void {
+  const posArr = (geo.getAttribute("position") as BufferAttribute)
+    .array as Float32Array;
+  const texArr = (geo.getAttribute("texCoord") as BufferAttribute)
+    .array as Float32Array;
+  const colArr = (geo.getAttribute("vertexColor") as BufferAttribute)
+    .array as Float32Array;
+
+  const innerRad = Math.max(radius - sw.width * 0.5, 0);
+  const outerRad = radius + sw.width * 0.5;
+  const numSegs = sw.numSegments;
+
+  // Pass colors as-is (gamma space) — ShaderMaterial has no automatic
+  // output encoding, matching V12's direct gamma-space rendering.
+  const lr = color[0];
+  const lg = color[1];
+  const lb = color[2];
+  const la = color[3];
+
+  for (let i = 0; i <= numSegs; i++) {
+    const angle = (i / numSegs) * Math.PI * 2;
+    const cos = Math.cos(angle);
+    const sin = Math.sin(angle);
+
+    // In Three.js space: ring lies in XZ plane, Y is up.
+    const outerIdx = i * 2;
+    const innerIdx = outerIdx + 1;
+
+    // Outer vertex — raised by height along Y.
+    const opi = outerIdx * 3;
+    posArr[opi] = cos * outerRad;
+    posArr[opi + 1] = is2D ? 0 : sw.height;
+    posArr[opi + 2] = sin * outerRad;
+
+    // Inner vertex — on ground plane.
+    const ipi = innerIdx * 3;
+    posArr[ipi] = cos * innerRad;
+    posArr[ipi + 1] = 0;
+    posArr[ipi + 2] = sin * innerRad;
+
+    // UV: U wraps around ring, V spans inner→outer.
+    const u = (i / numSegs) * sw.texWrap;
+    const oti = outerIdx * 2;
+    texArr[oti] = u;
+    texArr[oti + 1] = 0.05; // outer edge
+
+    const iti = innerIdx * 2;
+    texArr[iti] = u;
+    texArr[iti + 1] = 0.95; // inner edge
+
+    // Vertex colors (uniform across ring).
+    const oci = outerIdx * 4;
+    colArr[oci] = lr;
+    colArr[oci + 1] = lg;
+    colArr[oci + 2] = lb;
+    colArr[oci + 3] = la;
+
+    const ici = innerIdx * 4;
+    colArr[ici] = lr;
+    colArr[ici + 1] = lg;
+    colArr[ici + 2] = lb;
+    colArr[ici + 3] = la;
+  }
+
+  geo.getAttribute("position").needsUpdate = true;
+  geo.getAttribute("texCoord").needsUpdate = true;
+  geo.getAttribute("vertexColor").needsUpdate = true;
+  geo.computeBoundingSphere();
+}
+
+/** Create the ShaderMaterial for a shockwave ring. */
+function createShockwaveMaterial(texture: Texture): ShaderMaterial {
+  return new ShaderMaterial({
+    vertexShader: shockwaveVertexShader,
+    fragmentShader: shockwaveFragmentShader,
+    uniforms: { uTexture: { value: texture } },
+    transparent: true,
+    depthWrite: false,
+    blending: AdditiveBlending,
+    side: DoubleSide,
+  });
+}
+
+/** Map explosion dataBlock shape name to a debug wireframe color. */
+function getExplosionColor(dataBlock: string | undefined): number {
+  if (!dataBlock) return 0xff00ff;
+  const name = dataBlock.toLowerCase();
+  if (name.includes("disc")) return 0x4488ff;
+  if (name.includes("grenade")) return 0xff8800;
+  if (name.includes("mortar")) return 0xff4400;
+  if (name.includes("plasma")) return 0x44ff44;
+  if (name.includes("laser")) return 0xff2222;
+  if (name.includes("blaster")) return 0xffff00;
+  if (name.includes("missile")) return 0xff6600;
+  if (name.includes("bomb")) return 0xff0000;
+  if (name.includes("mine")) return 0xff8844;
+  if (name.includes("concussion")) return 0xffaa00;
+  if (name.includes("shocklance")) return 0x8844ff;
+  if (name.includes("chaingun") || name.includes("bullet")) return 0xcccccc;
+  return 0xff00ff;
+}
+
+/**
+ * Extract approximate radius from an ExplosionData datablock's `sizes` array.
+ * Each entry is `{x, y, z}` with values in range 0–16000 (scale multiplier).
+ * Falls back to `particleRadius` or a default of 5.
+ */
+function getExplosionRadius(
+  expBlock: Record<string, unknown>,
+): number {
+  const sizes = expBlock.sizes as Array<{ x: number; y: number; z: number }> | undefined;
+  if (Array.isArray(sizes) && sizes.length > 0) {
+    let maxVal = 0;
+    for (const s of sizes) {
+      maxVal = Math.max(maxVal, s.x, s.y, s.z);
+    }
+    if (maxVal > 0) {
+      // Values are in 0–16000 range, treat as a scale factor.
+      // Typical explosions have values like 2000–8000; map to reasonable world radii.
+      return maxVal / 1000;
+    }
+  }
+  const particleRadius = expBlock.particleRadius as number | undefined;
+  if (typeof particleRadius === "number" && particleRadius > 0) {
+    return particleRadius;
+  }
+  return 5;
 }
 
 // ── Geometry builder ──
@@ -129,6 +483,7 @@ function createParticleGeometry(maxParticles: number): BufferGeometry {
   const colors = new Float32Array(vertCount * 4);
   const sizes = new Float32Array(vertCount);
   const spins = new Float32Array(vertCount);
+  const orientDirs = new Float32Array(vertCount * 3);
 
   geo.setIndex(new Uint16BufferAttribute(indices, 1));
   geo.setAttribute("quadCorner", new Float32BufferAttribute(corners, 2));
@@ -136,6 +491,7 @@ function createParticleGeometry(maxParticles: number): BufferGeometry {
   geo.setAttribute("particleColor", new Float32BufferAttribute(colors, 4));
   geo.setAttribute("particleSize", new Float32BufferAttribute(sizes, 1));
   geo.setAttribute("particleSpin", new Float32BufferAttribute(spins, 1));
+  geo.setAttribute("orientDir", new Float32BufferAttribute(orientDirs, 3));
 
   geo.setDrawRange(0, 0);
   return geo;
@@ -144,6 +500,7 @@ function createParticleGeometry(maxParticles: number): BufferGeometry {
 function createParticleMaterial(
   texture: Texture,
   useInvAlpha: boolean,
+  orientParticles = false,
 ): ShaderMaterial {
   // Use the placeholder until the real texture's image data is ready.
   const ready = _texturesReady.has(texture);
@@ -153,6 +510,8 @@ function createParticleMaterial(
     uniforms: {
       particleTexture: { value: ready ? texture : _placeholderTexture },
       hasTexture: { value: true },
+      debugOpacity: { value: 1.0 },
+      uOrientParticles: { value: orientParticles },
     },
     transparent: true,
     depthWrite: false,
@@ -178,6 +537,8 @@ interface ActiveEmitter {
   shaderChecked?: boolean;
   /** Entity ID this emitter follows (for projectile trails). */
   followEntityId?: string;
+  /** Emission axis in Torque space (defaults to [0,0,1] = up). */
+  emitAxis?: [number, number, number];
   /** Debug: origin marker mesh. */
   debugOriginMesh?: Mesh;
   /** Debug: particle marker meshes. */
@@ -268,13 +629,16 @@ function syncBuffers(active: ActiveEmitter): void {
   const colorAttr = geo.getAttribute("particleColor") as Float32BufferAttribute;
   const sizeAttr = geo.getAttribute("particleSize") as Float32BufferAttribute;
   const spinAttr = geo.getAttribute("particleSpin") as Float32BufferAttribute;
+  const orientAttr = geo.getAttribute("orientDir") as Float32BufferAttribute;
 
   const posArr = posAttr.array as Float32Array;
   const colArr = colorAttr.array as Float32Array;
   const sizeArr = sizeAttr.array as Float32Array;
   const spinArr = spinAttr.array as Float32Array;
+  const orientArr = orientAttr.array as Float32Array;
 
   const count = Math.min(particles.length, MAX_PARTICLES_PER_EMITTER);
+  const useVelocity = active.emitter.data.orientOnVelocity;
 
   for (let i = 0; i < count; i++) {
     const p = particles[i];
@@ -284,10 +648,19 @@ function syncBuffers(active: ActiveEmitter): void {
     const ty = p.pos[2];
     const tz = p.pos[0];
 
-    // Convert sRGB particle colors to linear for the shader.
-    const lr = srgbToLinear(p.r);
-    const lg = srgbToLinear(p.g);
-    const lb = srgbToLinear(p.b);
+    // Orient direction: use velocity or initial orientDir, swizzled.
+    const dir = useVelocity ? p.vel : p.orientDir;
+    const odx = dir[1];
+    const ody = dir[2];
+    const odz = dir[0];
+
+    // Pass particle colors as-is (sRGB / gamma space). ShaderMaterial does
+    // not get automatic linear→sRGB output encoding, so linearizing here
+    // would darken colors without compensation — matching V12's direct
+    // gamma-space rendering.
+    const lr = p.r;
+    const lg = p.g;
+    const lb = p.b;
     const la = p.a;
 
     // Write the same values to all 4 vertices of the quad.
@@ -303,6 +676,11 @@ function syncBuffers(active: ActiveEmitter): void {
       colArr[ci + 1] = lg;
       colArr[ci + 2] = lb;
       colArr[ci + 3] = la;
+
+      const oi = vi * 3;
+      orientArr[oi] = odx;
+      orientArr[oi + 1] = ody;
+      orientArr[oi + 2] = odz;
 
       sizeArr[vi] = p.size;
       spinArr[vi] = p.currentSpin;
@@ -320,6 +698,7 @@ function syncBuffers(active: ActiveEmitter): void {
   colorAttr.needsUpdate = true;
   sizeAttr.needsUpdate = true;
   spinAttr.needsUpdate = true;
+  orientAttr.needsUpdate = true;
 
   geo.setDrawRange(0, count * 6);
 }
@@ -349,12 +728,20 @@ export function DemoParticleEffects({
   const projectileSoundsRef = useRef<Map<string, PositionalAudio>>(new Map());
   /** Track processed audio event keys to prevent replays on seek. */
   const processedAudioEventsRef = useRef<Set<string>>(new Set());
-  useFrame((_, delta) => {
+  /** Active wireframe explosion spheres. */
+  const activeExplosionSpheresRef = useRef<ActiveExplosionSphere[]>([]);
+  /** Active shockwave ring effects. */
+  const activeShockwavesRef = useRef<ActiveShockwave[]>([]);
+  useFrame((state, delta) => {
     const group = groupRef.current;
     const snapshot = snapshotRef.current;
     if (!group || !snapshot) return;
 
-    const dtMS = delta * 1000;
+    const playbackState = engineStore.getState().playback;
+    const isPlaying = playbackState.status === "playing";
+    // Scale delta by playback rate; 0 when paused.
+    const effectDelta = isPlaying ? delta * playbackState.rate : 0;
+    const dtMS = effectDelta * 1000;
     const getDataBlockData = playback.getDataBlockData.bind(playback);
 
     // Detect new explosion entities and create emitters.
@@ -390,6 +777,7 @@ export function DemoParticleEffects({
         const material = createParticleMaterial(
           texture,
           burst.data.particles.useInvAlpha,
+          burst.data.orientParticles,
         );
         const mesh = new Mesh(geometry, material);
         mesh.frustumCulled = false;
@@ -420,6 +808,7 @@ export function DemoParticleEffects({
         const material = createParticleMaterial(
           texture,
           emitterData.particles.useInvAlpha,
+          emitterData.orientParticles,
         );
         const mesh = new Mesh(geometry, material);
         mesh.frustumCulled = false;
@@ -436,6 +825,91 @@ export function DemoParticleEffects({
           hasBurst: false,
         });
       }
+
+      const expBlock = getDataBlockData(entity.explosionDataBlockId);
+
+      // Debug mode: show wireframe spheres and labels.
+      if (debugMode) {
+        const radius = expBlock ? getExplosionRadius(expBlock) : 5;
+        const color = getExplosionColor(entity.dataBlock);
+        const sphereMat = new MeshBasicMaterial({
+          color,
+          wireframe: true,
+          transparent: true,
+          opacity: 1,
+          depthWrite: false,
+        });
+        const sphereMesh = new Mesh(_explosionSphereGeo, sphereMat);
+        sphereMesh.frustumCulled = false;
+        sphereMesh.scale.setScalar(radius);
+        sphereMesh.position.set(origin[1], origin[2], origin[0]);
+        group.add(sphereMesh);
+
+        const labelText = `${entity.id}: ${entity.dataBlock ?? `expId:${entity.explosionDataBlockId}`}`;
+        const { sprite: labelSprite, material: labelMat } = createExplosionLabel(labelText, color);
+        labelSprite.position.set(origin[1], origin[2] + radius + 2, origin[0]);
+        labelSprite.frustumCulled = false;
+        group.add(labelSprite);
+
+        activeExplosionSpheresRef.current.push({
+          entityId: entity.id as string,
+          mesh: sphereMesh,
+          material: sphereMat,
+          label: labelSprite,
+          labelMaterial: labelMat,
+          creationTime: demoEffectNow(),
+          lifetimeMS: Math.max(resolved.lifetimeMS, 3000),
+          targetRadius: radius,
+        });
+      }
+
+      // Spawn shockwave ring if the explosion datablock references one.
+      const shockwaveId = expBlock?.shockwave as number | null | undefined;
+      if (typeof shockwaveId === "number") {
+        const swData = resolveShockwaveData(shockwaveId, getDataBlockData);
+        if (swData) {
+          const texture = getParticleTexture(swData.textureName);
+          const geo = createShockwaveGeometry(swData.numSegments);
+          const mat = createShockwaveMaterial(texture);
+          const mesh = new Mesh(geo, mat);
+          mesh.frustumCulled = false;
+          mesh.position.set(origin[1], origin[2], origin[0]);
+          group.add(mesh);
+
+          // Optional bottom face (renders the underside of the ring).
+          let bottomMesh: Mesh | null = null;
+          let bottomGeo: BufferGeometry | null = null;
+          if (swData.renderBottom) {
+            bottomGeo = createShockwaveGeometry(swData.numSegments);
+            bottomMesh = new Mesh(bottomGeo, mat);
+            bottomMesh.frustumCulled = false;
+            bottomMesh.position.set(origin[1], origin[2], origin[0]);
+            // Flip Y to render the underside.
+            bottomMesh.scale.y = -1;
+            group.add(bottomMesh);
+          }
+
+          // Clamp denormalized velocity values (parser bug workaround).
+          const initVelocity = Math.abs(swData.velocity) > 1e-10
+            ? swData.velocity
+            : 0;
+
+          activeShockwavesRef.current.push({
+            entityId: entity.id as string,
+            mesh,
+            bottomMesh,
+            geometry: geo,
+            bottomGeometry: bottomGeo,
+            material: mat,
+            creationTime: demoEffectNow(),
+            lifetimeMS: swData.lifetimeMS,
+            data: swData,
+            radius: 0,
+            velocity: initVelocity,
+          });
+        }
+      }
+
     }
 
     // Detect projectile entities with trail emitters (maintainEmitterId).
@@ -465,6 +939,7 @@ export function DemoParticleEffects({
       const material = createParticleMaterial(
         texture,
         emitterData.particles.useInvAlpha,
+        emitterData.orientParticles,
       );
       const mesh = new Mesh(geometry, material);
       mesh.frustumCulled = false;
@@ -508,7 +983,7 @@ export function DemoParticleEffects({
         entry.shaderChecked = true;
       }
 
-      // Update trail emitter origin to follow the projectile's position.
+      // Update trail emitter origin and direction to follow the projectile.
       if (entry.followEntityId) {
         const tracked = snapshot.entities.find(
           (e) => e.id === entry.followEntityId,
@@ -518,11 +993,14 @@ export function DemoParticleEffects({
           entry.origin[1] = tracked.position[1];
           entry.origin[2] = tracked.position[2];
         }
+        if (tracked?.direction) {
+          entry.emitAxis = tracked.direction;
+        }
       }
 
       // Streaming emitters emit periodically.
       if (!entry.isBurst) {
-        entry.emitter.emitPeriodic(entry.origin, dtMS);
+        entry.emitter.emitPeriodic(entry.origin, dtMS, entry.emitAxis);
       }
 
       // Advance physics and interpolation.
@@ -535,6 +1013,9 @@ export function DemoParticleEffects({
       ) {
         entry.material.uniforms.particleTexture.value = entry.targetTexture;
       }
+
+      // Reduce particle opacity in debug mode for visibility.
+      entry.material.uniforms.debugOpacity.value = debugMode ? 0.2 : 1.0;
 
       // Sync GPU buffers.
       syncBuffers(entry);
@@ -604,8 +1085,87 @@ export function DemoParticleEffects({
       }
     }
 
+    // ── Update explosion wireframe spheres ──
+    const spheres = activeExplosionSpheresRef.current;
+    const now = demoEffectNow();
+    for (let i = spheres.length - 1; i >= 0; i--) {
+      const sphere = spheres[i];
+      const elapsed = now - sphere.creationTime;
+      const frac = Math.min(elapsed / sphere.lifetimeMS, 1);
+
+      // Quick scale-up in first 10%, then hold.
+      const scaleFrac = Math.min(frac / 0.1, 1);
+      sphere.mesh.scale.setScalar(sphere.targetRadius * scaleFrac);
+
+      // Fade opacity over lifetime.
+      sphere.material.opacity = 1 - frac;
+      sphere.labelMaterial.opacity = 1 - frac;
+
+      // Remove when lifetime expires.
+      if (frac >= 1) {
+        group.remove(sphere.mesh);
+        group.remove(sphere.label);
+        sphere.material.dispose();
+        sphere.labelMaterial.dispose();
+        spheres.splice(i, 1);
+      }
+    }
+
+    // ── Update shockwave rings ──
+    const shockwaves = activeShockwavesRef.current;
+    for (let i = shockwaves.length - 1; i >= 0; i--) {
+      const sw = shockwaves[i];
+      const elapsed = now - sw.creationTime;
+      const t = Math.min(elapsed / sw.lifetimeMS, 1);
+      const dtSec = effectDelta;
+
+      // V12 expansion physics: velocity += acceleration * dt; radius += velocity * dt
+      sw.velocity += sw.data.acceleration * dtSec;
+      sw.radius += sw.velocity * dtSec;
+
+      // Interpolate color from keyframes.
+      const color = interpolateShockwaveColor(sw.data, t);
+
+      // Update ring geometry.
+      updateShockwaveGeometry(
+        sw.geometry,
+        sw.data,
+        sw.radius,
+        color,
+        sw.data.is2D,
+      );
+
+      // Update bottom ring if present.
+      if (sw.bottomGeometry) {
+        updateShockwaveGeometry(
+          sw.bottomGeometry,
+          sw.data,
+          sw.radius,
+          color,
+          sw.data.is2D,
+        );
+      }
+
+      // For is2D mode: billboard the ring to face the camera.
+      if (sw.data.is2D) {
+        sw.mesh.lookAt(state.camera.position);
+      }
+
+      // Remove when lifetime expires.
+      if (t >= 1) {
+        group.remove(sw.mesh);
+        if (sw.bottomMesh) group.remove(sw.bottomMesh);
+        sw.geometry.dispose();
+        sw.bottomGeometry?.dispose();
+        sw.material.dispose();
+        shockwaves.splice(i, 1);
+      }
+    }
+
     // ── Audio: explosion impact sounds ──
-    if (audioEnabled && audioLoader && audioListener && groupRef.current) {
+    // Only process new audio events while playing to avoid triggering
+    // sounds during pause (existing sounds are frozen via AudioContext.suspend).
+    if (isPlaying && audioEnabled && audioLoader && audioListener && groupRef.current) {
       for (const entity of snapshot.entities) {
         if (
           entity.type !== "Explosion" ||
@@ -684,6 +1244,7 @@ export function DemoParticleEffects({
             sound.setMaxDistance(resolved.maxDist);
             sound.setRolloffFactor(1);
             sound.setVolume(resolved.volume);
+            sound.setPlaybackRate(playbackState.rate);
             sound.setLoop(true);
             sound.position.set(
               entity.position![1],
@@ -691,6 +1252,7 @@ export function DemoParticleEffects({
               entity.position![0],
             );
             group.add(sound);
+            trackDemoSound(sound);
             sound.play();
             projSounds.set(entity.id, sound);
           });
@@ -702,6 +1264,7 @@ export function DemoParticleEffects({
       // Despawn: stop sounds for entities no longer present.
       for (const [entityId, sound] of projSounds) {
         if (!currentEntityIds.has(entityId)) {
+          untrackDemoSound(sound);
           try { sound.stop(); } catch {}
           sound.disconnect();
           groupRef.current?.remove(sound);
@@ -768,10 +1331,32 @@ export function DemoParticleEffects({
         entry.material.dispose();
       }
       activeEmittersRef.current = [];
+      // Clean up explosion spheres.
+      for (const sphere of activeExplosionSpheresRef.current) {
+        if (group) {
+          group.remove(sphere.mesh);
+          group.remove(sphere.label);
+        }
+        sphere.material.dispose();
+        sphere.labelMaterial.dispose();
+      }
+      activeExplosionSpheresRef.current = [];
+      // Clean up shockwave rings.
+      for (const sw of activeShockwavesRef.current) {
+        if (group) {
+          group.remove(sw.mesh);
+          if (sw.bottomMesh) group.remove(sw.bottomMesh);
+        }
+        sw.geometry.dispose();
+        sw.bottomGeometry?.dispose();
+        sw.material.dispose();
+      }
+      activeShockwavesRef.current = [];
       processedExplosionsRef.current.clear();
       trailEntitiesRef.current.clear();
       // Clean up projectile sounds.
       for (const [, sound] of projectileSoundsRef.current) {
+        untrackDemoSound(sound);
         try { sound.stop(); } catch {}
         sound.disconnect();
         if (group) group.remove(sound);

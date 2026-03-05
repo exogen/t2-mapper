@@ -137,3 +137,5 @@ dist
 # list of files. Once someone builds this, it's not really necessary for other
 # developers to have this folder.
 GameData
+
+docs/dev

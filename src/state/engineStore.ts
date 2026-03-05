@@ -305,6 +305,49 @@ export const engineStore = createStore<EngineStoreState>()(
   })),
 );
 
+// ── Rate-scaled effect clock ──
+//
+// A monotonic clock that advances by (frameDelta × playbackRate) each frame.
+// Components use demoEffectNow() instead of performance.now() so that effect
+// timers (explosions, particles, shockwaves, animation threads) automatically
+// pause when the demo is paused and speed up / slow down with the playback
+// rate. The main DemoPlaybackStreaming component calls advanceEffectClock()
+// once per frame.
+
+let _effectClockMs = 0;
+
+/**
+ * Returns the current effect clock value in milliseconds.
+ * Analogous to performance.now() but only advances when playing,
+ * scaled by the playback rate.
+ */
+export function demoEffectNow(): number {
+  return _effectClockMs;
+}
+
+/**
+ * Advance the effect clock. Called once per frame from
+ * DemoPlaybackStreaming before other useFrame callbacks run.
+ */
+export function advanceEffectClock(deltaSec: number, rate: number): void {
+  _effectClockMs += deltaSec * rate * 1000;
+}
+
+/** Reset the effect clock (call when demo recording changes or stops). */
+export function resetEffectClock(): void {
+  _effectClockMs = 0;
+}
+
+// Reset on stop.
+engineStore.subscribe(
+  (state) => state.playback.status,
+  (status) => {
+    if (status === "stopped") {
+      resetEffectClock();
+    }
+  },
+);
+
 export function useEngineStoreApi() {
   return engineStore;
 }

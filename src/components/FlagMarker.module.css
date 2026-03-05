@@ -1,0 +1,32 @@
+.Root {
+  pointer-events: none;
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  white-space: nowrap;
+  gap: 1px;
+}
+.Distance {
+  color: #fff;
+  font-size: 10px;
+  text-shadow:
+    0 1px 3px rgba(0, 0, 0, 0.9),
+    0 0 1px rgba(0, 0, 0, 0.7);
+  opacity: 0.5;
+}
+
+.Icon {
+  width: 16px;
+  height: 16px;
+  image-rendering: pixelated;
+  opacity: 0.5;
+  filter: drop-shadow(0 1px 3px rgba(0, 0, 0, 0.8));
+  mask-image: var(--flag-icon-url);
+  mask-size: contain;
+  mask-repeat: no-repeat;
+  mask-position: center;
+  -webkit-mask-image: var(--flag-icon-url);
+  -webkit-mask-size: contain;
+  -webkit-mask-repeat: no-repeat;
+  -webkit-mask-position: center;
+}

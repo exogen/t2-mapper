@@ -8,6 +8,9 @@ export type {
 
 export {
   engineStore,
+  demoEffectNow,
+  advanceEffectClock,
+  resetEffectClock,
   useEngineSelector,
   useEngineStoreApi,
   useRuntimeObjectById,

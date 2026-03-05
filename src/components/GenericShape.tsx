@@ -21,7 +21,7 @@ import * as SkeletonUtils from "three/examples/jsm/utils/SkeletonUtils.js";
 import { setupTexture } from "../textureUtils";
 import { useDebug, useSettings } from "./SettingsProvider";
 import { useShapeInfo, isOrganicShape } from "./ShapeInfoProvider";
-import { useEngineSelector } from "../state";
+import { useEngineSelector, demoEffectNow, engineStore } from "../state";
 import { FloatingLabel } from "./FloatingLabel";
 import {
   useIflTexture,
@@ -38,6 +38,14 @@ import {
   replaceWithShapeMaterial,
 } from "../demo/demoPlaybackUtils";
 import type { DemoThreadState } from "../demo/types";
+
+/** Returns pausable time in seconds for demo mode, real time otherwise. */
+function shapeNowSec(): number {
+  const status = engineStore.getState().playback.status;
+  return status !== "stopped"
+    ? demoEffectNow() / 1000
+    : performance.now() / 1000;
+}
 
 /** Shared props for texture rendering components */
 interface TextureProps {
@@ -687,7 +695,7 @@ export const ShapeModel = memo(function ShapeModel({
       const vNodes = visNodesBySequence.get(seqLower);
       const thread: ThreadState = {
         sequence: seqLower,
-        startTime: performance.now() / 1000,
+        startTime: shapeNowSec(),
       };
 
       if (clip && mixer) {
@@ -773,7 +781,7 @@ export const ShapeModel = memo(function ShapeModel({
       for (const seqName of autoPlaySequences) {
         const vNodes = visNodesBySequence.get(seqName);
         if (vNodes) {
-          const startTime = performance.now() / 1000;
+          const startTime = shapeNowSec();
           for (const v of vNodes) prepareVisNode(v);
           const slot = seqName === "power" ? 0 : 1;
           threads.set(slot, { sequence: seqName, visNodes: vNodes, startTime });
@@ -791,7 +799,7 @@ export const ShapeModel = memo(function ShapeModel({
             threads.set(slot, {
               sequence: seqName,
               action,
-              startTime: performance.now() / 1000,
+              startTime: shapeNowSec(),
             });
           }
         }
@@ -893,6 +901,13 @@ export const ShapeModel = memo(function ShapeModel({
   useFrame((_, delta) => {
     const threads = threadsRef.current;
 
+    // In demo mode, scale animation by playback rate; freeze when paused.
+    const inDemo = demoThreadsRef.current != null;
+    const playbackState = engineStore.getState().playback;
+    const effectDelta = !inDemo ? delta
+      : playbackState.status === "playing" ? delta * playbackState.rate
+      : 0;
+
     // React to demo thread state changes. The ghost ThreadMask data tells us
     // exactly which DTS sequences are playing/stopped on each of 4 thread slots.
     const currentDemoThreads = demoThreadsRef.current;
@@ -976,7 +991,7 @@ export const ShapeModel = memo(function ShapeModel({
       }
 
       if (animationEnabled) {
-        mixer.update(delta);
+        mixer.update(effectDelta);
       }
     }
 
@@ -993,7 +1008,7 @@ export const ShapeModel = memo(function ShapeModel({
           continue;
         }
 
-        const elapsed = performance.now() / 1000 - thread.startTime;
+        const elapsed = shapeNowSec() - thread.startTime;
         const t = cyclic
           ? (elapsed % duration) / duration
           : Math.min(elapsed / duration, 1);
@@ -1016,7 +1031,7 @@ export const ShapeModel = memo(function ShapeModel({
     // with the desired frames (e.g. skipping a long "off" period).
     const iflAnimInfos = iflAnimInfosRef.current;
     if (iflAnimInfos.length > 0) {
-      iflTimeRef.current += delta;
+      iflTimeRef.current += effectDelta;
       for (const info of iflAnimInfos) {
         if (!animationEnabled) {
           updateAtlasFrame(info.atlas, 0);
@@ -1029,7 +1044,7 @@ export const ShapeModel = memo(function ShapeModel({
           let iflTime = 0;
           for (const [, thread] of threads) {
             if (thread.sequence === info.sequenceName) {
-              const elapsed = performance.now() / 1000 - thread.startTime;
+              const elapsed = shapeNowSec() - thread.startTime;
               const dur = info.sequenceDuration;
               // Reproduce th->pos: cyclic wraps [0,1), non-cyclic clamps [0,1]
               const pos = info.cyclic

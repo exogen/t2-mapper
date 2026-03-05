@@ -33,11 +33,26 @@ import {
   resolveAudioProfile,
   playOneShotSound,
   getCachedAudioBuffer,
+  trackDemoSound,
+  untrackDemoSound,
 } from "./AudioEmitter";
 import { audioToUrl } from "../loaders";
 import { useSettings } from "./SettingsProvider";
 import { useEngineStoreApi, useEngineSelector } from "../state";
 import type { DemoEntity } from "../demo/types";
+
+/**
+ * Map weapon shape to the arm blend animation (armThread).
+ * Only missile launcher and sniper rifle have custom arm poses; all others
+ * use the default `lookde`.
+ */
+function getArmThread(weaponShape: string | undefined): string {
+  if (!weaponShape) return "lookde";
+  const lower = weaponShape.toLowerCase();
+  if (lower.includes("missile")) return "lookms";
+  if (lower.includes("sniper")) return "looksn";
+  return "lookde";
+}
 
 /** Stop, disconnect, and remove a looping PositionalAudio from its parent. */
 function stopLoopingSound(
@@ -47,6 +62,7 @@ function stopLoopingSound(
 ) {
   const sound = soundRef.current;
   if (!sound) return;
+  untrackDemoSound(sound);
   try { sound.stop(); } catch {}
   sound.disconnect();
   parent?.remove(sound);
@@ -105,10 +121,12 @@ export function DemoPlayerModel({
   // Build case-insensitive clip lookup with alias support.
   const animActionsRef = useRef(new Map<string, AnimationAction>());
   const blendActionsRef = useRef<{
-    look: AnimationAction | null;
     head: AnimationAction | null;
     headside: AnimationAction | null;
-  }>({ look: null, head: null, headside: null });
+  }>({ head: null, headside: null });
+  // Arm pose blend actions keyed by animation name (lookde, lookms, looksn).
+  const armActionsRef = useRef(new Map<string, AnimationAction>());
+  const activeArmRef = useRef<string | null>(null);
   const currentAnimRef = useRef({ name: "root", timeScale: 1 });
   const isDeadRef = useRef(false);
 
@@ -126,20 +144,18 @@ export function DemoPlayerModel({
     // Set up additive blend animations for aim/head articulation.
     // These clips must be cloned before makeClipAdditive (which mutates in
     // place) since multiple player entities share the same GLTF cache.
-    const blendNames: Array<{ key: keyof typeof blendActionsRef.current; names: string[] }> = [
-      { key: "look", names: ["lookde", "look"] },
-      { key: "head", names: ["head"] },
-      { key: "headside", names: ["headside"] },
-    ];
-    const blendRefs: typeof blendActionsRef.current = { look: null, head: null, headside: null };
-    for (const { key, names } of blendNames) {
+
+    // Head blend actions.
+    const blendRefs: typeof blendActionsRef.current = { head: null, headside: null };
+    for (const { key, names } of [
+      { key: "head" as const, names: ["head"] },
+      { key: "headside" as const, names: ["headside"] },
+    ]) {
       const clip = gltf.animations.find((c) =>
         names.includes(c.name.toLowerCase()),
       );
       if (!clip) continue;
       const cloned = clip.clone();
-      // Reference frame at clip midpoint = neutral pose. The second arg is a
-      // frame index (not time), so convert via fps.
       const fps = 30;
       const neutralFrame = Math.round((clip.duration * fps) / 2);
       AnimationUtils.makeClipAdditive(cloned, neutralFrame, clip, fps);
@@ -152,13 +168,53 @@ export function DemoPlayerModel({
     }
     blendActionsRef.current = blendRefs;
 
+    // Arm pose blend actions: create one per available arm animation so we
+    // can switch between them when the equipped weapon changes.
+    // All arm clips use the lookde midpoint as the additive reference, so
+    // switching from lookde to lookms captures the shoulder repositioning.
+    const armActions = new Map<string, AnimationAction>();
+    const lookdeClip = gltf.animations.find(
+      (c) => c.name.toLowerCase() === "lookde",
+    );
+    const fps = 30;
+    const lookdeRefFrame = lookdeClip
+      ? Math.round((lookdeClip.duration * fps) / 2)
+      : 0;
+    for (const armName of ["lookde", "lookms", "looksn"]) {
+      const clip = gltf.animations.find(
+        (c) => c.name.toLowerCase() === armName,
+      );
+      if (!clip) continue;
+      const cloned = clip.clone();
+      // Use lookde's midpoint as reference for all arm clips so that
+      // lookms/looksn capture the absolute shoulder offset.
+      const refClip = lookdeClip ?? clip;
+      AnimationUtils.makeClipAdditive(cloned, lookdeRefFrame, refClip, fps);
+      const action = mixer.clipAction(cloned);
+      action.blendMode = AdditiveAnimationBlendMode;
+      action.timeScale = 0;
+      action.weight = 0;
+      action.play();
+      armActions.set(armName, action);
+    }
+    armActionsRef.current = armActions;
+
+    // Start with default arm pose.
+    const defaultArm = armActions.get("lookde");
+    if (defaultArm) {
+      defaultArm.weight = 1;
+      activeArmRef.current = "lookde";
+    }
+
     // Force initial pose evaluation.
     mixer.update(0);
 
     return () => {
       mixer.stopAllAction();
       animActionsRef.current = new Map();
-      blendActionsRef.current = { look: null, head: null, headside: null };
+      blendActionsRef.current = { head: null, headside: null };
+      armActionsRef.current = new Map();
+      activeArmRef.current = null;
     };
   }, [mixer, gltf.animations, shapeAliases]);
 
@@ -252,8 +308,26 @@ export function DemoPlayerModel({
       }
     }
 
+    // Switch arm blend animation based on equipped weapon.
+    const desiredArm = getArmThread(entity.weaponShape);
+    if (desiredArm !== activeArmRef.current) {
+      const armActions = armActionsRef.current;
+      const prev = activeArmRef.current
+        ? armActions.get(activeArmRef.current)
+        : null;
+      const next = armActions.get(desiredArm);
+      if (next) {
+        if (prev) prev.weight = 0;
+        next.weight = isDead ? 0 : 1;
+        activeArmRef.current = desiredArm;
+      }
+    }
+
     // Drive additive blend animations for aim/head articulation.
-    const { look, head, headside } = blendActionsRef.current;
+    const { head, headside } = blendActionsRef.current;
+    const armAction = activeArmRef.current
+      ? armActionsRef.current.get(activeArmRef.current)
+      : null;
     const blendWeight = isDead ? 0 : 1;
 
     const headPitch = entity.headPitch ?? 0;
@@ -261,9 +335,9 @@ export function DemoPlayerModel({
     const pitchPos = (headPitch + 1) / 2;
     const yawPos = (headYaw + 1) / 2;
 
-    if (look) {
-      look.time = pitchPos * look.getClip().duration;
-      look.weight = blendWeight;
+    if (armAction) {
+      armAction.time = pitchPos * armAction.getClip().duration;
+      armAction.weight = blendWeight;
     }
     if (head) {
       head.time = pitchPos * head.getClip().duration;
@@ -545,8 +619,10 @@ function AnimatedWeaponModel({
                     sound.setMaxDistance(resolved.maxDist);
                     sound.setRolloffFactor(1);
                     sound.setVolume(resolved.volume);
+                    sound.setPlaybackRate(playback.rate);
                     sound.setLoop(true);
                     weaponClone.add(sound);
+                    trackDemoSound(sound);
                     sound.play();
                     loopingSoundRef.current = sound;
                     loopingSoundStateRef.current = currentIdx;

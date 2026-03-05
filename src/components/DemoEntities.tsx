@@ -1,14 +1,15 @@
-import { Component, Suspense } from "react";
+import { Component, memo, Suspense } from "react";
 import type { ErrorInfo, MutableRefObject, ReactNode } from "react";
 import { entityTypeColor } from "../demo/demoPlaybackUtils";
 import { FloatingLabel } from "./FloatingLabel";
 import { useDebug } from "./SettingsProvider";
 import { DemoPlayerModel } from "./DemoPlayerModel";
-import { DemoShapeModel, DemoWeaponModel } from "./DemoShapeModel";
+import { DemoShapeModel, DemoWeaponModel, DemoExplosionShape } from "./DemoShapeModel";
 import { DemoSpriteProjectile, DemoTracerProjectile } from "./DemoProjectiles";
 import { PlayerNameplate } from "./PlayerNameplate";
+import { FlagMarker } from "./FlagMarker";
 import { useEngineSelector } from "../state";
-import type { DemoEntity } from "../demo/types";
+import type { DemoEntity, DemoStreamingPlayback } from "../demo/types";
 
 /**
  * Renders a non-camera demo entity.
@@ -16,12 +17,14 @@ import type { DemoEntity } from "../demo/types";
  * Player entities use DemoPlayerModel for skeletal animation; others use
  * DemoShapeModel.
  */
-export function DemoEntityGroup({
+export const DemoEntityGroup = memo(function DemoEntityGroup({
   entity,
   timeRef,
+  playback,
 }: {
   entity: DemoEntity;
   timeRef: MutableRefObject<number>;
+  playback?: DemoStreamingPlayback;
 }) {
   const debug = useDebug();
   const debugMode = debug?.debugMode ?? false;
@@ -57,6 +60,7 @@ export function DemoEntityGroup({
   }
 
   if (!entity.dataBlock) {
+    const isFlag = ((entity.targetRenderFlags ?? 0) & 0x2) !== 0;
     return (
       <group name={name}>
         <group name="model">
@@ -66,6 +70,11 @@ export function DemoEntityGroup({
           </mesh>
           {debugMode ? <DemoMissingShapeLabel entity={entity} /> : null}
         </group>
+        {isFlag && (
+          <Suspense fallback={null}>
+            <FlagMarker entity={entity} timeRef={timeRef} />
+          </Suspense>
+        )}
       </group>
     );
   }
@@ -80,6 +89,7 @@ export function DemoEntityGroup({
   // Player entities use skeleton-preserving DemoPlayerModel for animation.
   if (entity.type === "Player") {
     const isControlPlayer = entity.id === controlPlayerGhostId;
+    const hasFlag = ((entity.targetRenderFlags ?? 0) & 0x2) !== 0;
     return (
       <group name={name}>
         <group name="model">
@@ -93,10 +103,33 @@ export function DemoEntityGroup({
               <PlayerNameplate entity={entity} timeRef={timeRef} />
             </Suspense>
           )}
+          {hasFlag && (
+            <Suspense fallback={null}>
+              <FlagMarker entity={entity} timeRef={timeRef} />
+            </Suspense>
+          )}
         </group>
       </group>
     );
   }
+
+  // Explosion entities with DTS shapes use a specialized renderer
+  // that handles faceViewer, size keyframes, and fade-out.
+  if (entity.type === "Explosion" && entity.dataBlock && playback) {
+    return (
+      <group name={name}>
+        <group name="model">
+          <ShapeErrorBoundary fallback={null}>
+            <Suspense fallback={null}>
+              <DemoExplosionShape entity={entity as any} playback={playback} />
+            </Suspense>
+          </ShapeErrorBoundary>
+        </group>
+      </group>
+    );
+  }
+
+  const isFlag = ((entity.targetRenderFlags ?? 0) & 0x2) !== 0;
 
   return (
     <group name={name}>
@@ -119,9 +152,14 @@ export function DemoEntityGroup({
           </ShapeErrorBoundary>
         </group>
       )}
+      {isFlag && (
+        <Suspense fallback={null}>
+          <FlagMarker entity={entity} timeRef={timeRef} />
+        </Suspense>
+      )}
     </group>
   );
-}
+});
 
 export function DemoMissingShapeLabel({ entity }: { entity: DemoEntity }) {
   const id = String(entity.id);

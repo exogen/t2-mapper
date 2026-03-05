@@ -117,6 +117,8 @@ export interface DemoEntity {
   playerName?: string;
   /** IFF color resolved from the sensor group color table (sRGB 0-255). */
   iffColor?: { r: number; g: number; b: number };
+  /** Target render flags bitmask from the Target Manager. */
+  targetRenderFlags?: number;
   /** Weapon image condition flags from ghost ImageMask data. */
   weaponImageState?: WeaponImageState;
   /** Weapon image state machine states from the ShapeBaseImageData datablock. */
@@ -125,6 +127,10 @@ export interface DemoEntity {
   headPitch?: number;
   /** Head yaw for blend animations (freelook), normalized [-1,1]. -1 = max right, 1 = max left. */
   headYaw?: number;
+  /** Numeric ID of the ExplosionData datablock (for explosion shape rendering). */
+  explosionDataBlockId?: number;
+  /** Billboard toward camera (Torque's faceViewer). */
+  faceViewer?: boolean;
 }
 
 export interface DemoRecording {
@@ -147,6 +153,8 @@ export interface DemoStreamEntity {
   playerName?: string;
   /** IFF color resolved from the sensor group color table (sRGB 0-255). */
   iffColor?: { r: number; g: number; b: number };
+  /** Target render flags bitmask from the Target Manager. */
+  targetRenderFlags?: number;
   ghostIndex?: number;
   className?: string;
   dataBlockId?: number;

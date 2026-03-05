@@ -5,12 +5,12 @@ import {
   type TouchMode,
 } from "./SettingsProvider";
 import { MissionSelect } from "./MissionSelect";
-import { RefObject, useEffect, useState, useRef } from "react";
-import { Camera } from "three";
+import { useEffect, useState, useRef, RefObject } from "react";
 import { CopyCoordinatesButton } from "./CopyCoordinatesButton";
 import { LoadDemoButton } from "./LoadDemoButton";
 import { useDemoRecording } from "./DemoProvider";
 import { FiInfo, FiSettings } from "react-icons/fi";
+import { Camera } from "three";
 import styles from "./InspectorControls.module.css";
 
 export function InspectorControls({
@@ -18,8 +18,8 @@ export function InspectorControls({
   missionType,
   onChangeMission,
   onOpenMapInfo,
-  cameraRef,
   isTouch,
+  cameraRef,
 }: {
   missionName: string;
   missionType: string;
@@ -31,8 +31,8 @@ export function InspectorControls({
     missionType: string;
   }) => void;
   onOpenMapInfo: () => void;
-  cameraRef: RefObject<Camera | null>;
   isTouch: boolean | null;
+  cameraRef: RefObject<Camera>;
 }) {
   const {
     fogEnabled,
@@ -117,9 +117,9 @@ export function InspectorControls({
         >
           <div className={styles.Group}>
             <CopyCoordinatesButton
-              cameraRef={cameraRef}
               missionName={missionName}
               missionType={missionType}
+              cameraRef={cameraRef}
             />
             <LoadDemoButton />
             <button
@@ -181,35 +181,39 @@ export function InspectorControls({
             </div>
           </div>
           <div className={styles.Group}>
-            <div className={styles.Field}>
-              <label htmlFor="fovInput">FOV</label>
-              <input
-                id="fovInput"
-                type="range"
-                min={75}
-                max={120}
-                step={5}
-                value={fov}
-                disabled={isDemoLoaded}
-                onChange={(event) => setFov(parseInt(event.target.value))}
-              />
-              <output htmlFor="fovInput">{fov}</output>
-            </div>
-            <div className={styles.Field}>
-              <label htmlFor="speedInput">Speed</label>
-              <input
-                id="speedInput"
-                type="range"
-                min={0.1}
-                max={5}
-                step={0.05}
-                value={speedMultiplier}
-                disabled={isDemoLoaded}
-                onChange={(event) =>
-                  setSpeedMultiplier(parseFloat(event.target.value))
-                }
-              />
-            </div>
+            {isDemoLoaded ? null : (
+              <div className={styles.Field}>
+                <label htmlFor="fovInput">FOV</label>
+                <input
+                  id="fovInput"
+                  type="range"
+                  min={75}
+                  max={120}
+                  step={5}
+                  value={fov}
+                  disabled={isDemoLoaded}
+                  onChange={(event) => setFov(parseInt(event.target.value))}
+                />
+                <output htmlFor="fovInput">{fov}</output>
+              </div>
+            )}
+            {isDemoLoaded ? null : (
+              <div className={styles.Field}>
+                <label htmlFor="speedInput">Speed</label>
+                <input
+                  id="speedInput"
+                  type="range"
+                  min={0.1}
+                  max={5}
+                  step={0.05}
+                  value={speedMultiplier}
+                  disabled={isDemoLoaded}
+                  onChange={(event) =>
+                    setSpeedMultiplier(parseFloat(event.target.value))
+                  }
+                />
+              </div>
+            )}
           </div>
           {isTouch && (
             <div className={styles.Group}>

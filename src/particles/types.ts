@@ -48,6 +48,8 @@ export interface EmitterDataResolved {
 export interface Particle {
   pos: [number, number, number];
   vel: [number, number, number];
+  /** V12: constant acceleration = vel * constantAcceleration, set once at spawn. */
+  acc: [number, number, number];
   orientDir: [number, number, number];
   currentAge: number;
   totalLifetime: number;
