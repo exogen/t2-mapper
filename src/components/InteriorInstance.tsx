@@ -11,8 +11,12 @@ import {
 } from "three";
 import { useGLTF, useTexture } from "@react-three/drei";
 import { textureToUrl, interiorToUrl } from "../loaders";
-import type { TorqueObject } from "../torqueScript";
-import { getPosition, getProperty, getRotation, getScale } from "../mission";
+import type { SceneInteriorInstance } from "../scene/types";
+import {
+  torqueToThree,
+  torqueScaleToThree,
+  matrixFToQuaternion,
+} from "../scene/coordinates";
 import { setupTexture } from "../textureUtils";
 import { FloatingLabel } from "./FloatingLabel";
 import { useDebug } from "./SettingsProvider";
@@ -41,18 +45,15 @@ function InteriorTexture({
   const debugMode = debugContext?.debugMode ?? false;
   const url = textureToUrl(materialName);
   const texture = useTexture(url, (texture) => setupTexture(texture));
-
   // Check for self-illuminating flag in material userData
   // Note: The io_dif Blender add-on needs to be updated to export material flags
   const flagNames = new Set<string>(material?.userData?.flag_names ?? []);
   const isSelfIlluminating = flagNames.has("SelfIlluminating");
-
   // Check for SurfaceOutsideVisible flag (surfaces that receive scene ambient light)
   const surfaceFlagNames = new Set<string>(
     material?.userData?.surface_flag_names ?? [],
   );
   const isSurfaceOutsideVisible = surfaceFlagNames.has("SurfaceOutsideVisible");
-
   // Inject volumetric fog and lighting multipliers into materials
   // NOTE: This hook must be called unconditionally (before any early returns)
   const onBeforeCompile = useCallback(
@@ -64,11 +65,9 @@ function InteriorTexture({
     },
     [isSurfaceOutsideVisible],
   );
-
   // Refs for forcing shader recompilation
   const basicMaterialRef = useRef<MeshBasicMaterial>(null);
   const lambertMaterialRef = useRef<MeshLambertMaterial>(null);
-
   // Force shader recompilation when debugMode changes
   // r3f doesn't sync defines prop changes, so we update the material directly
   useEffect(() => {
@@ -81,12 +80,9 @@ function InteriorTexture({
       mat.needsUpdate = true;
     }
   }, [debugMode]);
-
   const defines = { DEBUG_MODE: debugMode ? 1 : 0 };
-
   // Key for shader structure changes (surfaceOutsideVisible affects lighting model)
   const materialKey = `${isSurfaceOutsideVisible}`;
-
   // Self-illuminating materials are fullbright (unlit), no lightmap
   if (isSelfIlluminating) {
     return (
@@ -100,7 +96,6 @@ function InteriorTexture({
       />
     );
   }
-
   // MeshLambertMaterial for diffuse-only lighting (matches Tribes 2's GL pipeline)
   // Shader modifications in onBeforeCompile:
   // - Outside surfaces (SurfaceOutsideVisible): scene lighting + additive lightmap
@@ -186,11 +181,11 @@ function InteriorMesh({ node }: { node: Mesh }) {
 }
 
 export const InteriorModel = memo(function InteriorModel({
-  object,
   interiorFile,
+  ghostIndex,
 }: {
-  object: TorqueObject;
   interiorFile: string;
+  ghostIndex?: number;
 }) {
   const { nodes } = useInterior(interiorFile);
   const debugContext = useDebug();
@@ -205,7 +200,7 @@ export const InteriorModel = memo(function InteriorModel({
         ))}
       {debugMode ? (
         <FloatingLabel>
-          {object._id}: {interiorFile}
+          {ghostIndex}: {interiorFile}
         </FloatingLabel>
       ) : null}
     </group>
@@ -235,24 +230,40 @@ function DebugInteriorPlaceholder({ label }: { label?: string }) {
 }
 
 export const InteriorInstance = memo(function InteriorInstance({
-  object,
+  scene,
 }: {
-  object: TorqueObject;
+  scene: SceneInteriorInstance;
 }) {
-  const interiorFile = getProperty(object, "interiorFile");
-  const position = useMemo(() => getPosition(object), [object]);
-  const scale = useMemo(() => getScale(object), [object]);
-  const q = useMemo(() => getRotation(object), [object]);
+  const position = useMemo(
+    () => torqueToThree(scene.transform.position),
+    [scene.transform.position],
+  );
+  const q = useMemo(
+    () => matrixFToQuaternion(scene.transform),
+    [scene.transform],
+  );
+  const scale = useMemo(() => torqueScaleToThree(scene.scale), [scene.scale]);
 
   return (
     <group position={position} quaternion={q} scale={scale}>
       <ErrorBoundary
         fallback={
-          <DebugInteriorPlaceholder label={`${object._id}: ${interiorFile}`} />
+          <DebugInteriorPlaceholder
+            label={`${scene.ghostIndex}: ${scene.interiorFile}`}
+          />
         }
+        onError={(error) => {
+          console.warn(
+            `[interior] Failed to load ${scene.interiorFile}:`,
+            error.message,
+          );
+        }}
       >
         <Suspense fallback={<InteriorPlaceholder color="orange" />}>
-          <InteriorModel object={object} interiorFile={interiorFile} />
+          <InteriorModel
+            interiorFile={scene.interiorFile}
+            ghostIndex={scene.ghostIndex}
+          />
         </Suspense>
       </ErrorBoundary>
     </group>

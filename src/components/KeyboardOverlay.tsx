@@ -1,10 +1,10 @@
 import { useKeyboardControls } from "@react-three/drei";
 import { Controls } from "./ObserverControls";
-import { useDemoRecording } from "./DemoProvider";
+import { useRecording } from "./RecordingProvider";
 import styles from "./KeyboardOverlay.module.css";
 
 export function KeyboardOverlay() {
-  const recording = useDemoRecording();
+  const recording = useRecording();
   const forward = useKeyboardControls<Controls>((s) => s.forward);
   const backward = useKeyboardControls<Controls>((s) => s.backward);
   const left = useKeyboardControls<Controls>((s) => s.left);
@@ -16,7 +16,9 @@ export function KeyboardOverlay() {
   const lookLeft = useKeyboardControls<Controls>((s) => s.lookLeft);
   const lookRight = useKeyboardControls<Controls>((s) => s.lookRight);
 
-  if (recording) return null;
+  // Show when no recording (map browsing) or during live mode.
+  // Hidden during demo playback (recording with finite duration).
+  if (recording && recording.source !== "live") return null;
 
   return (
     <div className={styles.Root}>

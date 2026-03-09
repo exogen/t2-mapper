@@ -1,5 +1,6 @@
 // Tribes 2 Unofficial Authentication System
 // http://www.tribesnext.com/
+// Written by Electricutioner/Thyth
 // Copyright 2008 by Electricutioner/Thyth and the Tribes 2 Community System Reengineering Intitiative
 
 // Version 1.0: 2009-02-13
@@ -23,6 +24,16 @@
 // DCENum	IssuedEpoch	ExpireEpoch	IssuedForGUID	HexBlob	Sig
 // HexBlob format:
 // (Follows same format as contents returned by getAuthInfo, but is hex encoded.)
+
+// verify with the delegation RSA public key... hard coded in the executable
+function t2csri_verify_deleg_signature(%sig)
+{
+	%sig = strReplace(%sig, "\x27", "\\\x27");
+	rubyEval("tsEval '$temp=\"' + t2csri_verify_deleg_signature('" @ %sig @ "').to_s(16) + '\";'");
+	while (strLen($temp) < 40)
+		$temp = "0" @ $temp;
+	return $temp;
+}
 
 // allow the client to send in an unknown DCE certificate
 function serverCmdt2csri_getDCEChunk(%client, %chunk)
@@ -77,6 +88,8 @@ function serverCmdt2csri_finishedDCE(%client)
 
 	if (%sigSha !$= %calcSha)
 	{
+		echo(%sigSha);
+		warn(%calcSha);
 		%client.setDisconnectReason("DCE is not signed by authoritative root.");
 		%client.delete();
 		return;
@@ -161,9 +174,10 @@ function serverCmdt2csri_comCertSendDone(%client)
 	}
 
 	// get the signature SHA1
-	%sigSha = rsa_mod_exp(%sig, %e, %n);
-	while (strlen(%sigSha) < 40)
-		%sigSha = "0" @ %sigSha;
+	rubyEval("tsEval '$temp = \"' + rsa_mod_exp('" @ %sig @ "'.to_i(16), '" @ %e @ "'.to_i(16), '" @ %n @ "'.to_i(16)).to_s(16) + '\";'");
+	while (strlen($temp) < 40)
+		$temp = "0" @ $temp;
+	%sigSha = $temp;
 
 	if (%sigSha !$= %calcSha)
 	{

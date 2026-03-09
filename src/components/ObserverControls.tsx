@@ -5,6 +5,7 @@ import { useKeyboardControls } from "@react-three/drei";
 import { PointerLockControls } from "three-stdlib";
 import { useControls } from "./SettingsProvider";
 import { useCameras } from "./CamerasProvider";
+import { streamPlaybackStore } from "../state/streamPlaybackStore";
 
 export enum Controls {
   forward = "forward",
@@ -29,12 +30,14 @@ export enum Controls {
 }
 
 const BASE_SPEED = 80;
-const LOOK_SPEED = 1; // radians/sec
 const MIN_SPEED_ADJUSTMENT = 0.05;
 const MAX_SPEED_ADJUSTMENT = 0.5;
-const DRAG_SENSITIVITY = 0.003;
 const MAX_PITCH = Math.PI / 2 - 0.01; // ~89°
 const DRAG_THRESHOLD = 3; // px of movement before it counts as a drag
+
+/** Shared mouse/look sensitivity used across all modes (.mis, .rec, live). */
+export const MOUSE_SENSITIVITY = 0.003;
+export const ARROW_LOOK_SPEED = 1; // radians/sec
 
 function CameraMovement() {
   const { speedMultiplier, setSpeedMultiplier } = useControls();
@@ -90,8 +93,8 @@ function CameraMovement() {
       didDrag = true;
 
       euler.setFromQuaternion(camera.quaternion, "YXZ");
-      euler.y -= e.movementX * DRAG_SENSITIVITY;
-      euler.x -= e.movementY * DRAG_SENSITIVITY;
+      euler.y -= e.movementX * MOUSE_SENSITIVITY;
+      euler.x -= e.movementY * MOUSE_SENSITIVITY;
       euler.x = Math.max(-MAX_PITCH, Math.min(MAX_PITCH, euler.x));
       camera.quaternion.setFromEuler(euler);
     };
@@ -176,6 +179,11 @@ function CameraMovement() {
   }, [gl.domElement, setSpeedMultiplier]);
 
   useFrame((state, delta) => {
+    // When streaming is active and not in free-fly mode, the stream
+    // (DemoPlaybackController) drives the camera — skip our movement.
+    const spState = streamPlaybackStore.getState();
+    if (spState.playback && !spState.freeFlyCamera) return;
+
     const {
       forward,
       backward,
@@ -192,10 +200,10 @@ function CameraMovement() {
     // Arrow keys: rotate camera look direction
     if (lookUp || lookDown || lookLeft || lookRight) {
       lookEuler.current.setFromQuaternion(camera.quaternion, "YXZ");
-      if (lookLeft) lookEuler.current.y += LOOK_SPEED * delta;
-      if (lookRight) lookEuler.current.y -= LOOK_SPEED * delta;
-      if (lookUp) lookEuler.current.x += LOOK_SPEED * delta;
-      if (lookDown) lookEuler.current.x -= LOOK_SPEED * delta;
+      if (lookLeft) lookEuler.current.y += ARROW_LOOK_SPEED * delta;
+      if (lookRight) lookEuler.current.y -= ARROW_LOOK_SPEED * delta;
+      if (lookUp) lookEuler.current.x += ARROW_LOOK_SPEED * delta;
+      if (lookDown) lookEuler.current.x -= ARROW_LOOK_SPEED * delta;
       lookEuler.current.x = Math.max(
         -MAX_PITCH,
         Math.min(MAX_PITCH, lookEuler.current.x),

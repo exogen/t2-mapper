@@ -21,7 +21,7 @@ import * as SkeletonUtils from "three/examples/jsm/utils/SkeletonUtils.js";
 import { setupTexture } from "../textureUtils";
 import { useDebug, useSettings } from "./SettingsProvider";
 import { useShapeInfo, isOrganicShape } from "./ShapeInfoProvider";
-import { useEngineSelector, demoEffectNow, engineStore } from "../state";
+import { useEngineSelector, effectNow, engineStore } from "../state";
 import { FloatingLabel } from "./FloatingLabel";
 import {
   useIflTexture,
@@ -36,15 +36,13 @@ import { injectShapeLighting } from "../shapeMaterial";
 import {
   processShapeScene,
   replaceWithShapeMaterial,
-} from "../demo/demoPlaybackUtils";
-import type { DemoThreadState } from "../demo/types";
+} from "../stream/playbackUtils";
+import type { ThreadState as StreamThreadState } from "../stream/types";
 
 /** Returns pausable time in seconds for demo mode, real time otherwise. */
 function shapeNowSec(): number {
-  const status = engineStore.getState().playback.status;
-  return status !== "stopped"
-    ? demoEffectNow() / 1000
-    : performance.now() / 1000;
+  const { recording } = engineStore.getState().playback;
+  return recording != null ? effectNow() / 1000 : performance.now() / 1000;
 }
 
 /** Shared props for texture rendering components */
@@ -250,6 +248,8 @@ const IflTexture = memo(function IflTexture({
   );
 });
 
+const EMPTY_FLAG_NAMES = new Set<string>();
+
 const StaticTexture = memo(function StaticTexture({
   material,
   shapeName,
@@ -261,7 +261,13 @@ const StaticTexture = memo(function StaticTexture({
   animated = false,
 }: TextureProps) {
   const resourcePath = material.userData.resource_path;
-  const flagNames = new Set<string>(material.userData.flag_names ?? []);
+  const flagNames = useMemo(
+    () =>
+      material.userData.flag_names
+        ? new Set<string>(material.userData.flag_names)
+        : EMPTY_FLAG_NAMES,
+    [material.userData.flag_names],
+  );
 
   const url = useMemo(() => {
     if (!resourcePath) {
@@ -424,40 +430,41 @@ function HardcodedShape({ label }: { label?: string }) {
  * Wrapper component that handles the common ErrorBoundary + Suspense + ShapeModel
  * pattern used across shape-rendering components.
  */
-export function ShapeRenderer({
+export const ShapeRenderer = memo(function ShapeRenderer({
   loadingColor = "yellow",
-  demoThreads,
+  streamEntity,
   children,
 }: {
   loadingColor?: string;
-  demoThreads?: DemoThreadState[];
+  /** Stable entity reference whose `.threads` field is mutated in-place. */
+  streamEntity?: { threads?: StreamThreadState[] };
   children?: React.ReactNode;
 }) {
   const { object, shapeName } = useShapeInfo();
 
   if (!shapeName) {
     return (
-      <DebugPlaceholder color="orange" label={`${object._id}: <missing>`} />
+      <DebugPlaceholder color="orange" label={`${object?._id}: <missing>`} />
     );
   }
 
   if (HARDCODED_SHAPES.has(shapeName.toLowerCase())) {
-    return <HardcodedShape label={`${object._id}: ${shapeName}`} />;
+    return <HardcodedShape label={`${object?._id}: ${shapeName}`} />;
   }
 
   return (
     <ErrorBoundary
       fallback={
-        <DebugPlaceholder color="red" label={`${object._id}: ${shapeName}`} />
+        <DebugPlaceholder color="red" label={`${object?._id}: ${shapeName}`} />
       }
     >
       <Suspense fallback={<ShapePlaceholder color={loadingColor} />}>
-        <ShapeModelLoader demoThreads={demoThreads} />
+        <ShapeModelLoader streamEntity={streamEntity} />
         {children}
       </Suspense>
     </ErrorBoundary>
   );
-}
+});
 
 /** Vis node info collected from the scene for vis opacity animation. */
 interface VisNode {
@@ -475,9 +482,6 @@ interface ThreadState {
   startTime: number;
 }
 
-// Thread slot constants matching power.cs globals
-const DEPLOY_THREAD = 3;
-
 /**
  * Unified shape renderer. Clones the full scene graph (preserving skeleton
  * bindings), applies Tribes 2 materials via processShapeScene, and drives
@@ -486,124 +490,123 @@ const DEPLOY_THREAD = 3;
  */
 export const ShapeModel = memo(function ShapeModel({
   gltf,
-  demoThreads,
+  streamEntity,
 }: {
   gltf: ReturnType<typeof useStaticShape>;
-  demoThreads?: DemoThreadState[];
+  /** Stable entity reference whose `.threads` field is mutated in-place. */
+  streamEntity?: { threads?: StreamThreadState[] };
 }) {
   const { object, shapeName } = useShapeInfo();
   const { debugMode } = useDebug();
   const { animationEnabled } = useSettings();
   const runtime = useEngineSelector((state) => state.runtime.runtime);
 
-  const {
-    clonedScene,
-    mixer,
-    clipsByName,
-    visNodesBySequence,
-    iflMeshes,
-  } = useMemo(() => {
-    const scene = SkeletonUtils.clone(gltf.scene) as Group;
+  const { clonedScene, mixer, clipsByName, visNodesBySequence, iflMeshes } =
+    useMemo(() => {
+      const scene = SkeletonUtils.clone(gltf.scene) as Group;
 
-    // Detect IFL materials BEFORE processShapeScene replaces them, since the
-    // replacement materials lose the original userData (flag_names, resource_path).
-    const iflInfos: Array<{
-      mesh: any;
-      iflPath: string;
-      hasVisSequence: boolean;
-      iflSequence?: string;
-      iflDuration?: number;
-      iflCyclic?: boolean;
-      iflToolBegin?: number;
-    }> = [];
-    scene.traverse((node: any) => {
-      if (!node.isMesh || !node.material) return;
-      const mat = Array.isArray(node.material)
-        ? node.material[0]
-        : node.material;
-      if (!mat?.userData) return;
-      const flags = new Set<string>(mat.userData.flag_names ?? []);
-      const rp: string | undefined = mat.userData.resource_path;
-      if (flags.has("IflMaterial") && rp) {
-        const ud = node.userData;
-        // ifl_sequence is set by the addon when ifl_matters links this IFL to
-        // a controlling sequence. vis_sequence is a separate system (opacity
-        // animation) and must NOT be used as a fallback — the two are independent.
-        const iflSeq = ud?.ifl_sequence
-          ? String(ud.ifl_sequence).toLowerCase()
-          : undefined;
-        const iflDur = ud?.ifl_duration
-          ? Number(ud.ifl_duration)
-          : undefined;
-        const iflCyclic = ud?.ifl_sequence ? !!ud.ifl_cyclic : undefined;
-        const iflToolBegin = ud?.ifl_tool_begin != null
-          ? Number(ud.ifl_tool_begin)
-          : undefined;
-        iflInfos.push({
-          mesh: node,
-          iflPath: `textures/${rp}.ifl`,
-          hasVisSequence: !!(ud?.vis_sequence),
-          iflSequence: iflSeq,
-          iflDuration: iflDur,
-          iflCyclic,
-          iflToolBegin,
-        });
-      }
-    });
-
-    processShapeScene(scene);
-
-    // Un-hide IFL meshes that don't have a vis sequence — they should always
-    // be visible. IFL meshes WITH vis sequences stay hidden until their
-    // sequence is activated by playThread.
-    for (const { mesh, hasVisSequence } of iflInfos) {
-      if (!hasVisSequence) {
-        mesh.visible = true;
-      }
-    }
-
-    // Collect ALL vis-animated nodes, grouped by sequence name.
-    const visBySeq = new Map<string, VisNode[]>();
-    scene.traverse((node: any) => {
-      if (!node.isMesh) return;
-      const ud = node.userData;
-      if (!ud) return;
-      const kf = ud.vis_keyframes;
-      const dur = ud.vis_duration;
-      const seqName = (ud.vis_sequence ?? "").toLowerCase();
-      if (!seqName || !Array.isArray(kf) || kf.length <= 1 || !dur || dur <= 0)
-        return;
-
-      let list = visBySeq.get(seqName);
-      if (!list) {
-        list = [];
-        visBySeq.set(seqName, list);
-      }
-      list.push({
-        mesh: node,
-        keyframes: kf,
-        duration: dur,
-        cyclic: !!ud.vis_cyclic,
+      // Detect IFL materials BEFORE processShapeScene replaces them, since the
+      // replacement materials lose the original userData (flag_names, resource_path).
+      const iflInfos: Array<{
+        mesh: any;
+        iflPath: string;
+        hasVisSequence: boolean;
+        iflSequence?: string;
+        iflDuration?: number;
+        iflCyclic?: boolean;
+        iflToolBegin?: number;
+      }> = [];
+      scene.traverse((node: any) => {
+        if (!node.isMesh || !node.material) return;
+        const mat = Array.isArray(node.material)
+          ? node.material[0]
+          : node.material;
+        if (!mat?.userData) return;
+        const flags = new Set<string>(mat.userData.flag_names ?? []);
+        const rp: string | undefined = mat.userData.resource_path;
+        if (flags.has("IflMaterial") && rp) {
+          const ud = node.userData;
+          // ifl_sequence is set by the addon when ifl_matters links this IFL to
+          // a controlling sequence. vis_sequence is a separate system (opacity
+          // animation) and must NOT be used as a fallback — the two are independent.
+          const iflSeq = ud?.ifl_sequence
+            ? String(ud.ifl_sequence).toLowerCase()
+            : undefined;
+          const iflDur = ud?.ifl_duration ? Number(ud.ifl_duration) : undefined;
+          const iflCyclic = ud?.ifl_sequence ? !!ud.ifl_cyclic : undefined;
+          const iflToolBegin =
+            ud?.ifl_tool_begin != null ? Number(ud.ifl_tool_begin) : undefined;
+          iflInfos.push({
+            mesh: node,
+            iflPath: `textures/${rp}.ifl`,
+            hasVisSequence: !!ud?.vis_sequence,
+            iflSequence: iflSeq,
+            iflDuration: iflDur,
+            iflCyclic,
+            iflToolBegin,
+          });
+        }
       });
-    });
 
-    // Build clips by name (case-insensitive)
-    const clips = new Map<string, AnimationClip>();
-    for (const clip of gltf.animations) {
-      clips.set(clip.name.toLowerCase(), clip);
-    }
+      processShapeScene(scene, shapeName ?? undefined);
 
-    // Only create a mixer if there are skeleton animation clips.
-    const mix = clips.size > 0 ? new AnimationMixer(scene) : null;
+      // Un-hide IFL meshes that don't have a vis sequence — they should always
+      // be visible. IFL meshes WITH vis sequences stay hidden until their
+      // sequence is activated by playThread.
+      for (const { mesh, hasVisSequence } of iflInfos) {
+        if (!hasVisSequence) {
+          mesh.visible = true;
+        }
+      }
 
-    return {
-      clonedScene: scene,
-      mixer: mix,
-      clipsByName: clips,
-      visNodesBySequence: visBySeq,
-      iflMeshes: iflInfos,
-    };
-  }, [gltf]);
+      // Collect ALL vis-animated nodes, grouped by sequence name.
+      const visBySeq = new Map<string, VisNode[]>();
+      scene.traverse((node: any) => {
+        if (!node.isMesh) return;
+        const ud = node.userData;
+        if (!ud) return;
+        const kf = ud.vis_keyframes;
+        const dur = ud.vis_duration;
+        const seqName = (ud.vis_sequence ?? "").toLowerCase();
+        if (
+          !seqName ||
+          !Array.isArray(kf) ||
+          kf.length <= 1 ||
+          !dur ||
+          dur <= 0
+        )
+          return;
+
+        let list = visBySeq.get(seqName);
+        if (!list) {
+          list = [];
+          visBySeq.set(seqName, list);
+        }
+        list.push({
+          mesh: node,
+          keyframes: kf,
+          duration: dur,
+          cyclic: !!ud.vis_cyclic,
+        });
+      });
+
+      // Build clips by name (case-insensitive)
+      const clips = new Map<string, AnimationClip>();
+      for (const clip of gltf.animations) {
+        clips.set(clip.name.toLowerCase(), clip);
+      }
+
+      // Only create a mixer if there are skeleton animation clips.
+      const mix = clips.size > 0 ? new AnimationMixer(scene) : null;
+
+      return {
+        clonedScene: scene,
+        mixer: mix,
+        clipsByName: clips,
+        visNodesBySequence: visBySeq,
+        iflMeshes: iflInfos,
+      };
+    }, [gltf]);
 
   const threadsRef = useRef(new Map<number, ThreadState>());
   const iflMeshAtlasRef = useRef(new Map<any, IflAtlas>());
@@ -622,16 +625,16 @@ export const ShapeModel = memo(function ShapeModel({
   const animationEnabledRef = useRef(animationEnabled);
   animationEnabledRef.current = animationEnabled;
 
-  // Stable ref for the deploy-end callback so useFrame can advance the
-  // lifecycle when animation is toggled off mid-deploy.
-  const onDeployEndRef = useRef<((slot: number) => void) | null>(null);
-
-  // Refs for demo thread-driven animation (exposed from the main animation effect).
-  const demoThreadsRef = useRef(demoThreads);
-  demoThreadsRef.current = demoThreads;
-  const handlePlayThreadRef = useRef<((slot: number, seq: string) => void) | null>(null);
+  // Stream entity reference for imperative thread reads in useFrame.
+  // The entity is mutated in-place, so reading streamEntity?.threads
+  // always returns the latest value without requiring React re-renders.
+  const streamEntityRef = useRef(streamEntity);
+  streamEntityRef.current = streamEntity;
+  const handlePlayThreadRef = useRef<
+    ((slot: number, seq: string) => void) | null
+  >(null);
   const handleStopThreadRef = useRef<((slot: number) => void) | null>(null);
-  const prevDemoThreadsRef = useRef<DemoThreadState[] | undefined>(undefined);
+  const prevDemoThreadsRef = useRef<StreamThreadState[] | undefined>(undefined);
 
   // Load IFL texture atlases imperatively (processShapeScene can't resolve
   // .ifl paths since they require async loading of the frame list).
@@ -648,26 +651,56 @@ export const ShapeModel = memo(function ShapeModel({
             mat.map = atlas.texture;
             mat.needsUpdate = true;
           }
-          iflAnimInfosRef.current.push({
+          const iflInfo = {
             atlas,
             sequenceName: info.iflSequence,
             sequenceDuration: info.iflDuration,
             cyclic: info.iflCyclic,
             toolBegin: info.iflToolBegin,
-          });
+          };
+          iflAnimInfosRef.current.push(iflInfo);
           iflMeshAtlasRef.current.set(info.mesh, atlas);
         })
-        .catch(() => {});
+        .catch((err) => {
+          console.warn(
+            `[ShapeModel] Failed to load IFL atlas for ${info.iflPath}:`,
+            err,
+          );
+        });
     }
   }, [iflMeshes]);
 
-  // Animation setup. Shared helpers (handlePlayThread, handleStopThread) are
-  // used by both mission rendering and demo playback. The lifecycle that
-  // decides WHEN to call them differs: mission mode auto-plays deploy and
-  // subscribes to TorqueScript; demo mode does nothing on mount and lets
-  // the useFrame handler drive everything from ghost thread data.
+  // DTS cyclic flags by sequence name. Cyclic sequences loop; non-cyclic
+  // play once and clamp. Falls back to assuming cyclic if data is absent.
+  const seqCyclicByName = useMemo(() => {
+    const map = new Map<string, boolean>();
+    const rawNames = gltf.scene.userData?.dts_sequence_names;
+    const rawCyclic = gltf.scene.userData?.dts_sequence_cyclic;
+    if (typeof rawNames === "string" && typeof rawCyclic === "string") {
+      try {
+        const names: string[] = JSON.parse(rawNames);
+        const cyclic: boolean[] = JSON.parse(rawCyclic);
+        for (let i = 0; i < names.length; i++) {
+          map.set(names[i].toLowerCase(), cyclic[i] ?? true);
+        }
+      } catch {
+        /* expected */
+      }
+    }
+    return map;
+  }, [gltf]);
+
+  // Animation setup.
+  //
+  // Mission mode (streamEntity absent): auto-play default looping sequences
+  //   (power, ambient) so static shapes look alive. TorqueScript playThread/
+  //   stopThread/pauseThread events can override if scripts are loaded.
+  //
+  // Demo/live mode (streamEntity present): no auto-play. The useFrame
+  //   handler reads ghost ThreadMask data and drives everything.
   useEffect(() => {
     const threads = threadsRef.current;
+    const isMissionMode = streamEntityRef.current == null;
 
     function prepareVisNode(v: VisNode) {
       v.mesh.visible = true;
@@ -700,25 +733,15 @@ export const ShapeModel = memo(function ShapeModel({
 
       if (clip && mixer) {
         const action = mixer.clipAction(clip);
-        if (seqLower === "deploy") {
+        const cyclic = seqCyclicByName.get(seqLower) ?? true;
+        if (cyclic) {
+          action.setLoop(LoopRepeat, Infinity);
+        } else {
           action.setLoop(LoopOnce, 1);
           action.clampWhenFinished = true;
-        } else {
-          action.setLoop(LoopRepeat, Infinity);
         }
         action.reset().play();
         thread.action = action;
-
-        // When animations are disabled, snap deploy to its end pose.
-        if (!animationEnabledRef.current && seqLower === "deploy") {
-          action.time = clip.duration;
-          mixer.update(0);
-          // In mission mode, onDeployEndRef advances the lifecycle.
-          // In demo mode it's null — the ghost data drives what's next.
-          if (onDeployEndRef.current) {
-            queueMicrotask(() => onDeployEndRef.current?.(slot));
-          }
-        }
       }
 
       if (vNodes) {
@@ -747,113 +770,44 @@ export const ShapeModel = memo(function ShapeModel({
     handlePlayThreadRef.current = handlePlayThread;
     handleStopThreadRef.current = handleStopThread;
 
-    // ── Demo playback: all animation driven by ghost thread data ──
-    // No deploy lifecycle, no auto-play, no TorqueScript. The useFrame
-    // handler reads demoThreads and calls handlePlayThread/handleStopThread.
-    if (demoThreadsRef.current != null) {
+    // ── Demo/live mode: no auto-play, useFrame drives from ghost data ──
+    if (!isMissionMode) {
       return () => {
         handlePlayThreadRef.current = null;
         handleStopThreadRef.current = null;
+        prevDemoThreadsRef.current = undefined;
         for (const slot of [...threads.keys()]) handleStopThread(slot);
       };
     }
 
-    // ── Mission rendering: deploy lifecycle + TorqueScript ──
-    const hasDeployClip = clipsByName.has("deploy");
-    const useTorqueDeploy = !!(runtime && hasDeployClip && object.datablock);
-
-    function fireOnEndSequence(slot: number) {
-      if (!runtime) return;
-      const dbName = object.datablock;
-      if (!dbName) return;
-      const datablock = runtime.getObjectByName(String(dbName));
-      if (datablock) {
-        runtime.$.call(datablock, "onEndSequence", object, slot);
-      }
-    }
-
-    onDeployEndRef.current = useTorqueDeploy
-      ? fireOnEndSequence
-      : () => startPostDeployThreads();
-
-    function startPostDeployThreads() {
-      const autoPlaySequences = ["ambient", "power"];
-      for (const seqName of autoPlaySequences) {
-        const vNodes = visNodesBySequence.get(seqName);
-        if (vNodes) {
-          const startTime = shapeNowSec();
-          for (const v of vNodes) prepareVisNode(v);
-          const slot = seqName === "power" ? 0 : 1;
-          threads.set(slot, { sequence: seqName, visNodes: vNodes, startTime });
-        }
-        const clip = clipsByName.get(seqName);
-        if (clip && mixer) {
-          const action = mixer.clipAction(clip);
-          action.setLoop(LoopRepeat, Infinity);
-          action.reset().play();
-          const slot = seqName === "power" ? 0 : 1;
-          const existing = threads.get(slot);
-          if (existing) {
-            existing.action = action;
-          } else {
-            threads.set(slot, {
-              sequence: seqName,
-              action,
-              startTime: shapeNowSec(),
-            });
-          }
-        }
-      }
-    }
-
+    // ── Mission mode ──
     const unsubs: (() => void)[] = [];
 
-    const onFinished = mixer
-      ? (e: { action: AnimationAction }) => {
-          for (const [slot, thread] of threads) {
-            if (thread.action === e.action) {
-              if (useTorqueDeploy) {
-                fireOnEndSequence(slot);
-              } else {
-                startPostDeployThreads();
-              }
-              break;
-            }
-          }
-        }
-      : null;
-
-    if (onFinished && mixer) {
-      mixer.addEventListener("finished", onFinished);
-    }
-
+    // Subscribe to TorqueScript playThread/stopThread/pauseThread so
+    // scripts can control animations at runtime.
     if (runtime) {
       unsubs.push(
         runtime.$.onMethodCalled(
           "ShapeBase",
           "playThread",
           (thisObj, slot, sequence) => {
-            if (thisObj._id !== object._id) return;
+            if (thisObj._id !== object?._id) return;
             handlePlayThread(Number(slot), String(sequence));
           },
         ),
       );
       unsubs.push(
-        runtime.$.onMethodCalled(
-          "ShapeBase",
-          "stopThread",
-          (thisObj, slot) => {
-            if (thisObj._id !== object._id) return;
-            handleStopThread(Number(slot));
-          },
-        ),
+        runtime.$.onMethodCalled("ShapeBase", "stopThread", (thisObj, slot) => {
+          if (thisObj._id !== object?._id) return;
+          handleStopThread(Number(slot));
+        }),
       );
       unsubs.push(
         runtime.$.onMethodCalled(
           "ShapeBase",
           "pauseThread",
           (thisObj, slot) => {
-            if (thisObj._id !== object._id) return;
+            if (thisObj._id !== object?._id) return;
             const thread = threads.get(Number(slot));
             if (thread?.action) {
               thread.action.paused = true;
@@ -863,25 +817,33 @@ export const ShapeModel = memo(function ShapeModel({
       );
     }
 
-    if (useTorqueDeploy) {
-      runtime.$.call(object, "deploy");
-    } else if (hasDeployClip) {
-      handlePlayThread(DEPLOY_THREAD, "deploy");
-    } else {
-      startPostDeployThreads();
+    // Start default looping sequences immediately. Thread slots match
+    // power.cs globals: $PowerThread=0, $AmbientThread=1.
+    const defaults: Array<[number, string]> = [
+      [0, "power"],
+      [1, "ambient"],
+    ];
+    for (const [slot, seqName] of defaults) {
+      if (clipsByName.has(seqName) || visNodesBySequence.has(seqName)) {
+        handlePlayThread(slot, seqName);
+      }
     }
 
     return () => {
-      if (onFinished && mixer) {
-        mixer.removeEventListener("finished", onFinished);
-      }
       unsubs.forEach((fn) => fn());
-      onDeployEndRef.current = null;
       handlePlayThreadRef.current = null;
       handleStopThreadRef.current = null;
+      prevDemoThreadsRef.current = undefined;
       for (const slot of [...threads.keys()]) handleStopThread(slot);
     };
-  }, [mixer, clipsByName, visNodesBySequence, object, runtime]);
+  }, [
+    mixer,
+    clipsByName,
+    visNodesBySequence,
+    seqCyclicByName,
+    object,
+    runtime,
+  ]);
 
   // Build DTS sequence index → animation name lookup. If the glTF has the
   // dts_sequence_names extra (set by the addon), use it for an exact mapping
@@ -893,7 +855,9 @@ export const ShapeModel = memo(function ShapeModel({
       try {
         const names: string[] = JSON.parse(raw);
         return names.map((n) => n.toLowerCase());
-      } catch {}
+      } catch {
+        /* expected */
+      }
     }
     return gltf.animations.map((a) => a.name.toLowerCase());
   }, [gltf]);
@@ -901,16 +865,20 @@ export const ShapeModel = memo(function ShapeModel({
   useFrame((_, delta) => {
     const threads = threadsRef.current;
 
-    // In demo mode, scale animation by playback rate; freeze when paused.
-    const inDemo = demoThreadsRef.current != null;
+    // In demo/live mode, scale animation by playback rate; freeze when paused.
+    // Check streamEntity existence (not .threads) so shapes without thread
+    // data (e.g. Items) also freeze correctly when paused.
+    const inDemo = streamEntityRef.current != null;
     const playbackState = engineStore.getState().playback;
-    const effectDelta = !inDemo ? delta
-      : playbackState.status === "playing" ? delta * playbackState.rate
-      : 0;
+    const effectDelta = !inDemo
+      ? delta
+      : playbackState.status === "playing"
+        ? delta * playbackState.rate
+        : 0;
 
     // React to demo thread state changes. The ghost ThreadMask data tells us
     // exactly which DTS sequences are playing/stopped on each of 4 thread slots.
-    const currentDemoThreads = demoThreadsRef.current;
+    const currentDemoThreads = streamEntityRef.current?.threads;
     const prevDemoThreads = prevDemoThreadsRef.current;
     if (currentDemoThreads !== prevDemoThreads) {
       const playThread = handlePlayThreadRef.current;
@@ -920,11 +888,11 @@ export const ShapeModel = memo(function ShapeModel({
       if (playThread && stopThread) {
         prevDemoThreadsRef.current = currentDemoThreads;
         // Use sparse arrays instead of Maps — thread indices are 0-3.
-        const currentBySlot: Array<DemoThreadState | undefined> = [];
+        const currentBySlot: Array<StreamThreadState | undefined> = [];
         if (currentDemoThreads) {
           for (const t of currentDemoThreads) currentBySlot[t.index] = t;
         }
-        const prevBySlot: Array<DemoThreadState | undefined> = [];
+        const prevBySlot: Array<StreamThreadState | undefined> = [];
         if (prevDemoThreads) {
           for (const t of prevDemoThreads) prevBySlot[t.index] = t;
         }
@@ -933,21 +901,24 @@ export const ShapeModel = memo(function ShapeModel({
           const t = currentBySlot[slot];
           const prev = prevBySlot[slot];
           if (t) {
-            const changed = !prev
-              || prev.sequence !== t.sequence
-              || prev.state !== t.state
-              || prev.atEnd !== t.atEnd;
+            const changed =
+              !prev ||
+              prev.sequence !== t.sequence ||
+              prev.state !== t.state ||
+              prev.atEnd !== t.atEnd;
             if (!changed) continue;
 
             // When only atEnd changed (false→true) on a playing thread with
             // the same sequence, the animation has finished on the server.
             // Don't restart it — snap to the end pose so one-shot animations
             // like "deploy" stay clamped instead of collapsing back.
-            const onlyAtEndChanged = prev
-              && prev.sequence === t.sequence
-              && prev.state === t.state
-              && t.state === 0
-              && !prev.atEnd && t.atEnd;
+            const onlyAtEndChanged =
+              prev &&
+              prev.sequence === t.sequence &&
+              prev.state === t.state &&
+              t.state === 0 &&
+              !prev.atEnd &&
+              t.atEnd;
             if (onlyAtEndChanged) {
               const thread = threads.get(slot);
               if (thread?.action) {
@@ -975,24 +946,8 @@ export const ShapeModel = memo(function ShapeModel({
       }
     }
 
-    if (mixer) {
-      // If animation is disabled and deploy is still mid-animation,
-      // snap to the fully-deployed pose and fire onEndSequence.
-      if (!animationEnabled) {
-        const deployThread = threads.get(DEPLOY_THREAD);
-        if (deployThread?.action) {
-          const clip = deployThread.action.getClip();
-          if (deployThread.action.time < clip.duration - 0.001) {
-            deployThread.action.time = clip.duration;
-            mixer.update(0);
-            onDeployEndRef.current?.(DEPLOY_THREAD);
-          }
-        }
-      }
-
-      if (animationEnabled) {
-        mixer.update(effectDelta);
-      }
+    if (mixer && animationEnabled) {
+      mixer.update(effectDelta);
     }
 
     // Drive vis opacity animations for active threads.
@@ -1054,7 +1009,10 @@ export const ShapeModel = memo(function ShapeModel({
               break;
             }
           }
-          updateAtlasFrame(info.atlas, getFrameIndexForTime(info.atlas, iflTime));
+          updateAtlasFrame(
+            info.atlas,
+            getFrameIndexForTime(info.atlas, iflTime),
+          );
         } else {
           // No controlling sequence: use accumulated real time.
           // (In the engine, these would stay at frame 0, but cycling is more
@@ -1073,15 +1031,19 @@ export const ShapeModel = memo(function ShapeModel({
       <primitive object={clonedScene} />
       {debugMode ? (
         <FloatingLabel>
-          {object._id}: {shapeName}
+          {object?._id}: {shapeName}
         </FloatingLabel>
       ) : null}
     </group>
   );
 });
 
-function ShapeModelLoader({ demoThreads }: { demoThreads?: DemoThreadState[] }) {
+function ShapeModelLoader({
+  streamEntity,
+}: {
+  streamEntity?: { threads?: StreamThreadState[] };
+}) {
   const { shapeName } = useShapeInfo();
   const gltf = useStaticShape(shapeName);
-  return <ShapeModel gltf={gltf} demoThreads={demoThreads} />;
+  return <ShapeModel gltf={gltf} streamEntity={streamEntity} />;
 }

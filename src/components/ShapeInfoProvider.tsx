@@ -19,7 +19,7 @@ export function isOrganicShape(shapeName: string): boolean {
 }
 
 interface ShapeInfoContextValue {
-  object: TorqueObject;
+  object?: TorqueObject;
   shapeName: string;
   type: StaticShapeType;
   isOrganic: boolean;
@@ -41,7 +41,7 @@ export function ShapeInfoProvider({
   shapeName,
   type,
 }: {
-  object: TorqueObject;
+  object?: TorqueObject;
   children: ReactNode;
   shapeName: string;
   type: StaticShapeType;

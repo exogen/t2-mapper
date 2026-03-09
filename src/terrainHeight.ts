@@ -30,8 +30,8 @@ export function getTerrainHeightAt(
  * Uses bilinear interpolation and clamps to terrain bounds.
  *
  * Coordinate mapping (derived from terrain geometry rotations):
- * - Torque X → heightmap row
- * - Torque Y → heightmap col
+ * - Torque X → heightmap col
+ * - Torque Y → heightmap row
  */
 export function createTerrainHeightSampler(
   heightMap: Uint16Array,
@@ -41,8 +41,11 @@ export function createTerrainHeightSampler(
     // Convert Torque world coords to fractional heightmap coords.
     // The terrain origin is at (-squareSize * 128, -squareSize * 128, 0),
     // so grid center (128, 128) corresponds to Torque (0, 0).
-    const col = torqueY / squareSize + HALF_SIZE;
-    const row = torqueX / squareSize + HALF_SIZE;
+    // Row/col mapping must match the terrain geometry displacement:
+    // after UV flip and geometry rotations, row corresponds to Torque Y
+    // and col corresponds to Torque X.
+    const col = torqueX / squareSize + HALF_SIZE;
+    const row = torqueY / squareSize + HALF_SIZE;
 
     // Clamp to valid range
     const clampedCol = Math.max(0, Math.min(TERRAIN_SIZE - 1, col));

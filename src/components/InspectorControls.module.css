@@ -13,40 +13,35 @@
   justify-content: center;
   gap: 20px;
 }
-
 .Dropdown {
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 20px;
 }
-
 .Group {
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 20px;
 }
-
 .CheckboxField,
 .LabelledButton {
   display: flex;
   align-items: center;
   gap: 6px;
 }
-
 .Field {
   display: flex;
   align-items: center;
   gap: 6px;
 }
-
 .IconButton {
   position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
+  min-width: 28px;
   height: 28px;
   margin: 0 0 0 -12px;
   font-size: 15px;
@@ -65,52 +60,42 @@
     background 0.2s,
     border-color 0.2s;
 }
-
 .IconButton svg {
   pointer-events: none;
 }
-
 @media (hover: hover) {
   .IconButton:hover {
     background: rgba(0, 98, 179, 0.8);
     border-color: rgba(255, 255, 255, 0.4);
   }
 }
-
 .IconButton:active,
 .IconButton[aria-expanded="true"] {
   background: rgba(0, 98, 179, 0.7);
   border-color: rgba(255, 255, 255, 0.3);
   transform: translate(0, 1px);
 }
-
 .IconButton[data-active="true"] {
   background: rgba(0, 117, 213, 0.9);
   border-color: rgba(255, 255, 255, 0.4);
 }
-
 .ButtonLabel {
   font-size: 12px;
 }
-
 .Toggle {
   composes: IconButton;
   margin: 0;
 }
-
 .MapInfoButton {
   composes: IconButton;
   composes: LabelledButton;
 }
-
 .MissionSelectWrapper {
 }
-
 @media (max-width: 1279px) {
   .Dropdown[data-open="false"] {
     display: none;
   }
-
   .Dropdown {
     position: absolute;
     top: calc(100% + 2px);
@@ -128,47 +113,38 @@
     padding: 12px;
     box-shadow: 0 0 12px rgba(0, 0, 0, 0.4);
   }
-
   .Group {
     flex-wrap: wrap;
     gap: 12px 20px;
   }
-
   .LabelledButton {
     width: auto;
     padding: 0 10px;
   }
 }
-
 @media (max-width: 639px) {
   .Controls {
     right: 0;
     border-radius: 0;
   }
-
   .MissionSelectWrapper {
     flex: 1 1 0;
     min-width: 0;
   }
-
   .MissionSelectWrapper input {
     width: 100%;
   }
-
   .Toggle {
     flex: 0 0 auto;
   }
 }
-
 @media (min-width: 1280px) {
   .Toggle {
     display: none;
   }
-
   .LabelledButton .ButtonLabel {
     display: none;
   }
-
   .MapInfoButton {
     display: none;
   }

@@ -26,7 +26,7 @@ async function run({
       try {
         await fs.stat(oggFile);
         continue; // .ogg already exists, skip
-      } catch {}
+      } catch  { /* expected */ }
     }
     inputFiles.push(wavFile);
   }

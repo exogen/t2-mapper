@@ -53,7 +53,7 @@ export function CamerasProvider({ children }: { children: ReactNode }) {
 
   const unregisterCamera = useCallback((camera: CameraEntry) => {
     setCameraMap((prevCameraMap) => {
-      const { [camera.id]: removedCamera, ...remainingCameras } = prevCameraMap;
+      const { [camera.id]: _removedCamera, ...remainingCameras } = prevCameraMap;
       return remainingCameras;
     });
   }, []);

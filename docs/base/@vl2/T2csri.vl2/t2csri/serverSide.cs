@@ -1,9 +1,40 @@
 // Tribes 2 Unofficial Authentication System
 // http://www.tribesnext.com/
+// Written by Electricutioner/Thyth
 // Copyright 2008 by Electricutioner/Thyth and the Tribes 2 Community System Reengineering Intitiative
 
-// Version 1.3: 2009-04-23
+// Version 1.2: 2009-02-16
 // Clan/Rename Certificate support is included in this version.
+
+// initialize the SHA1 digester in Ruby
+function t2csri_initDigester()
+{
+	$SHA1::Initialized = 1;
+	rubyEval("$sha1hasher = SHA1Pure.new");
+}
+
+// use Ruby to get the SHA1 hash of the string
+function sha1sum(%string)
+{
+	if (!$SHA1::Initialized)
+		t2csri_initDigester();
+	%string = strReplace(%string, "'", "\\'");
+	rubyEval("$sha1hasher.prepare");
+	rubyEval("$sha1hasher.append('" @ %string @ "')");
+	rubyEval("tsEval '$temp=\"' + $sha1hasher.hexdigest + '\";'");
+	%temp = $temp;
+	$temp = "";
+	return %temp;
+}
+
+// verify with the auth server's RSA public key... hard coded in the executable
+function t2csri_verify_auth_signature(%sig)
+{
+	rubyEval("tsEval '$temp=\"' + t2csri_verify_auth_signature('" @ %sig @ "').to_s(16) + '\";'");
+	while (strLen($temp) < 40)
+		$temp = "0" @ $temp;
+	return $temp;
+}
 
 // server sends the client a certificate in chunks, since they can be rather large
 function serverCmdt2csri_sendCertChunk(%client, %chunk)
@@ -16,7 +47,7 @@ function serverCmdt2csri_sendCertChunk(%client, %chunk)
 	if (strlen(%client.t2csri_cert) > 20000)
 	{
 		%client.setDisconnectReason("Account certificate too long. Check your account key for corruption.");
-		%client.schedule(0, delete);
+		%client.delete();
 	}
 }
 
@@ -46,43 +77,20 @@ function serverCmdt2csri_sendChallenge(%client, %clientChallenge)
 	if (%client.doneAuthenticating)
 		return;
 
-	if (%client.t2csri_retryChallenge)
-	{
-		if (isEventPending(%client.t2csri_retryChallenge))
-			cancel(%client.t2csri_retryChallenge);
-
-		%client.t2csri_retryChallenge = "";
-	}
-
-	if (!%client.t2csri_sentComCertDone && strLen(%client.t2csri_comCert) > 0)
-	{
-		%client.t2csri_retryChallenge = schedule(250, 0, serverCmdt2csri_sendChallenge, %client, %clientChallenge);
-		return;
-	}
-
-	if (strlen(%client.t2csri_cert) < 1024)
-	{
-		%client.setDisconnectReason("Invalid authentication certificate.");
-		%client.schedule(0, delete);
-
-		return;
-	}
-
-	// echo("Client requesting challenge. CC: " @ %clientChallenge);
-	// echo("Client's certificate: " @ %client.t2csri_cert);
+	//echo("Client requesting challenge. CC: " @ %clientChallenge);
+	//echo("Client's certificate: " @ %client.t2csri_cert);
 	// verify that the certificate the client sent is signed by the authentication server
 	%user = strReplace(getField(%client.t2csri_cert, 0), "\x27", "\\\x27");
 
 	%guid = getField(%client.t2csri_cert, 1);
-
 	// sanitize GUID
 	for (%i = 0; %i < strlen(%guid); %i++)
 	{
-		%char = ord(getSubStr(%guid, %i, 1));
+		%char = strcmp(getSubStr(%guid, %i, 1), "");
 		if (%char > 57 || %char < 48)
 		{
 			%client.setDisconnectReason("Invalid characters in client GUID.");
-			%client.schedule(0, delete);
+			%client.delete();
 			return;
 		}
 	}
@@ -95,10 +103,11 @@ function serverCmdt2csri_sendChallenge(%client, %clientChallenge)
 	%rsa_chunk = strlwr(%e @ %n @ %sig);
 	for (%i = 0; %i < strlen(%rsa_chunk); %i++)
 	{
-		if (!isxdigit(getSubStr(%rsa_chunk, %i, 1)))
+		%char = strcmp(getSubStr(%rsa_chunk, %i, 1), "");
+		if ((%char < 48 || %char > 102) || (%char > 57 && %char < 97))
 		{
 			%client.setDisconnectReason("Invalid characters in certificate RSA fields.");
-			%client.schedule(0, delete);
+			%client.delete();
 			return;
 		}
 	}
@@ -106,16 +115,11 @@ function serverCmdt2csri_sendChallenge(%client, %clientChallenge)
 	// get a SHA1 sum
 	%sumStr = %user @ "\t" @ %guid @ "\t" @ %e @ "\t" @ %n;
 	%certSum = sha1sum(%sumStr);
-
-	while (strLen(%sig) < 1024)
-		%sig = "0" @ %sig;
-
 	%verifSum = t2csri_verify_auth_signature(%sig);
 	while (strLen(%verifSum) < 40)
 		%verifSum = "0" @ %verifSum;
-
-	// echo("Calc'd SHA1: " @ %certSum);
-	// echo("Signed SHA1: " @ %verifSum);
+	//echo("Calc'd SHA1: " @ %certSum);
+	//echo("Signed SHA1: " @ %verifSum);
 
 	// verify signature
 	if (%verifSum !$= %certSum)
@@ -123,7 +127,7 @@ function serverCmdt2csri_sendChallenge(%client, %clientChallenge)
 		// client supplied a bogus certificate that was never signed by the auth server
 		// abort their connection
 		%client.setDisconnectReason("Invalid account certificate.");
-		%client.schedule(0, delete);
+		%client.delete();
 		return;
 	}
 
@@ -135,10 +139,11 @@ function serverCmdt2csri_sendChallenge(%client, %clientChallenge)
 	%clientChallenge = strlwr(%clientChallenge);
 	for (%i = 0; %i < strlen(%clientChallenge); %i++)
 	{
-		if (!isxdigit(getSubStr(%clientChallenge, %i, 1)))
+		%char = strcmp(getSubStr(%clientChallenge, %i, 1), "");
+		if ((%char < 48 || %char > 102) || (%char > 57 && %char < 97))
 		{
 			%client.setDisconnectReason("Invalid characters in client challenge.");
-			%client.schedule(0, delete);
+			%client.delete();
 			return;
 		}
 	}
@@ -150,25 +155,22 @@ function serverCmdt2csri_sendChallenge(%client, %clientChallenge)
 	if (!ipv4_reasonableConnection(%sourceIP, %sanityIP))
 	{
 		%client.setDisconnectReason("Potential man in the middle attack detected. Your client claims it connected to: " @ %sanityIP @ ", but the server does not consider this reasonable.");
-		%client.schedule(0, delete);
+		%client.delete();
 		return;
 	}
 
 	// calculate a random 64-bit server side challenge
-	%client.t2csri_serverChallenge = rand_challenge() @ t2csri_gameClientHexAddress(%client);
+	rubyEval("tsEval '$temp=\"' + rand(18446744073709551615).to_s(16) + '\";'");
+	%client.t2csri_serverChallenge = $temp @ t2csri_gameClientHexAddress(%client);
 
 	%fullChallenge = %client.t2csri_clientChallenge @ %client.t2csri_serverChallenge;
-	if (strlen(%fullChallenge) % 2)
-		%fullChallenge = "0" @ %fullChallenge;
-
-	%temp = rsa_mod_exp(%fullChallenge, %e, %n);
+	rubyEval("tsEval '$temp=\"' + rsa_mod_exp('" @ %fullChallenge @ "'.to_i(16), '" @ %e @ "'.to_i(16), '" @ %n @ "'.to_i(16)).to_s(16) + '\";'");
 
 	// send the challenge in 200 byte chunks
-	for (%i = 0; %i < strlen(%temp); %i += 200)
+	for (%i = 0; %i < strlen($temp); %i += 200)
 	{
-		commandToClient(%client, 't2csri_getChallengeChunk', getSubStr(%temp, %i, 200));
+		commandToClient(%client, 't2csri_getChallengeChunk', getSubStr($temp, %i, 200));
 	}
-
 	// tell the client we're done sending
 	commandToClient(%client, 't2csri_decryptChallenge');
 
@@ -189,7 +191,7 @@ function serverCmdt2csri_sendChallenge(%client, %clientChallenge)
 		{
 			// uh oh... someone's being naughty.. valid cert, but for a different player. kill them!
 			%client.setDisconnectReason("Community supplemental certificate doesn't match account certificate.");
-			%client.schedule(0, delete);
+			%client.delete();
 			return;
 		}
 	}
@@ -206,10 +208,10 @@ function serverCmdt2csri_challengeResponse(%client, %serverChallenge)
 	if (%client.t2csri_serverChallenge $= %serverChallenge)
 	{
 		// check to see if the client is GUID banned, now that we verified their certificate
-		if (BanList::isBanned(getField(%client.t2csri_authInfo, 3), "*"))
+		if (banList_checkGUID(getField(%client.t2csri_authInfo, 3)))
 		{
 			%client.setDisconnectReason("You are not allowed to play on this server.");
-			%client.schedule(0, delete);
+			%client.delete();
 			return;
 		}
 
@@ -219,7 +221,7 @@ function serverCmdt2csri_challengeResponse(%client, %serverChallenge)
 	else
 	{
 		%client.setDisconnectReason("Invalid server challenge. Check your account key for corruption.");
-		%client.schedule(0, delete);
+		%client.delete();
 	}
 }
 
@@ -228,9 +230,8 @@ function t2csri_expireClient(%client)
 {
 	if (!isObject(%client))
 		return;
-
-	%client.setDisconnectReason("This is a TribesNEXT server. You must install the TribesNEXT client to play. See www.tribesnext.com for info.");
-	%client.schedule(0, delete);
+	%client.setDisconnectReason("This is a TribesNext server. You must install the TribesNext client to play. See www.tribesnext.com for info.");
+	%client.delete();
 }
 
 package t2csri_server
@@ -238,17 +239,17 @@ package t2csri_server
 	// packaged to create the "pre-connection" authentication phase
 	function GameConnection::onConnect(%client, %name, %raceGender, %skin, %voice, %voicePitch)
 	{
-		if (%client.getAddress() !$= "local" && %client.t2csri_serverChallenge $= "")
+		if (%client.t2csri_serverChallenge $= "" && !%client.isAIControlled() && %client.getAddress() !$= "Local")
 		{
 			// check to see if the client is IP banned
-			if (BanList::isBanned(0, %client.getAddress()))
+			if (banList_checkIP(%client))
 			{
 				%client.setDisconnectReason("You are not allowed to play on this server.");
-				%client.schedule(0, delete);
+				%client.delete();
 				return;
 			}
 
-			// echo("Client connected. Initializing pre-connection authentication phase...");
+			//echo("Client connected. Initializing pre-connection authentication phase...");
 			// save these for later
 			%client.tname = %name;
 			%client.trgen = %raceGender;
@@ -259,10 +260,10 @@ package t2csri_server
 			// start the 15 second count down
 			%client.tterm = schedule(15000, 0, t2csri_expireClient, %client);
 
-			commandToClient(%client, 't2csri_pokeClient', "T2CSRI 1.5 - 08/09/2012");
+			commandToClient(%client, 't2csri_pokeClient', "T2CSRI 1.1 - 03/18/2009");
 			return;
 		}
-		// echo("Client completed pre-authentication phase.");
+		//echo("Client completed pre-authentication phase.");
 
 		// continue connection process
 		if (isEventPending(%client.tterm))
@@ -270,7 +271,6 @@ package t2csri_server
 
 		Parent::onConnect(%client, %name, %raceGender, %skin, %voice, %voicePitch);
 		%client.doneAuthenticating = 1;
-		%client.t2csri_cert = "";
 	}
 
 	// packaged to prevent game leaving messages for clients that are in the authentication phase
@@ -278,7 +278,6 @@ package t2csri_server
 	{
 		if (!isObject(%client) || !%client.doneAuthenticating)
 			return;
-
 		Parent::onDrop(%client, %reason);
 	}
 
@@ -292,33 +291,11 @@ package t2csri_server
 	// clan support will be implemented via delegation to a community server
 	function GameConnection::getAuthInfo(%client)
 	{
-		if (%client.t2csri_authInfo $= "" && %client.getAddress() $= "local")
+		if (%client.getAddress() $= "Local" && %client.t2csri_authInfo $= "")
 			%client.t2csri_authInfo = WONGetAuthInfo();
-
 		return %client.t2csri_authInfo;
-	}
-
-	// deactivating old master list server protocol handlers in script
-	// sending a game type list to a dedicated server would result in a massive number
-	// of nuiscance calls to the following functions, and spam the console with pages of errors
-	// the errors were the main source of CPU utilization, so just setting stubs is adequate protection
-	function addGameType()
-	{
-		return;
-	}
-	function clearGameTypes()
-	{
-		return;
-	}
-	function clearMissionTypes()
-	{
-		return;
-	}
-	function sortGameAndMissionTypeLists()
-	{
-		return;
 	}
 };
 
-if ($PlayingOnline && !isActivePackage(t2csri_server))
+if ($PlayingOnline)
 	activatePackage(t2csri_server);

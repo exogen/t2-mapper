@@ -1,7 +1,7 @@
 import { createStore } from "zustand/vanilla";
 import { subscribeWithSelector } from "zustand/middleware";
 import { useStoreWithEqualityFn } from "zustand/traditional";
-import type { DemoRecording, DemoStreamSnapshot } from "../demo/types";
+import type { StreamRecording, StreamSnapshot } from "../stream/types";
 import type {
   RuntimeMutationEvent,
   TorqueObject,
@@ -25,12 +25,12 @@ export interface RuntimeSliceState {
 }
 
 export interface PlaybackSliceState {
-  recording: DemoRecording | null;
+  recording: StreamRecording | null;
   status: PlaybackStatus;
   timeMs: number;
   rate: number;
   durationMs: number;
-  streamSnapshot: DemoStreamSnapshot | null;
+  streamSnapshot: StreamSnapshot | null;
 }
 
 export interface RuntimeTickInfo {
@@ -43,11 +43,11 @@ export interface EngineStoreState {
   setRuntime(runtime: TorqueRuntime): void;
   clearRuntime(): void;
   applyRuntimeBatch(events: RuntimeMutationEvent[], tickInfo?: RuntimeTickInfo): void;
-  setDemoRecording(recording: DemoRecording | null): void;
+  setRecording(recording: StreamRecording | null): void;
   setPlaybackTime(ms: number): void;
   setPlaybackStatus(status: PlaybackStatus): void;
   setPlaybackRate(rate: number): void;
-  setPlaybackStreamSnapshot(snapshot: DemoStreamSnapshot | null): void;
+  setPlaybackStreamSnapshot(snapshot: StreamSnapshot | null): void;
 }
 
 function normalizeName(name: string): string {
@@ -104,7 +104,7 @@ const initialState: Omit<
   | "setRuntime"
   | "clearRuntime"
   | "applyRuntimeBatch"
-  | "setDemoRecording"
+  | "setRecording"
   | "setPlaybackTime"
   | "setPlaybackStatus"
   | "setPlaybackRate"
@@ -243,7 +243,7 @@ export const engineStore = createStore<EngineStoreState>()(
       });
     },
 
-    setDemoRecording(recording: DemoRecording | null) {
+    setRecording(recording: StreamRecording | null) {
       const durationMs = Math.max(0, (recording?.duration ?? 0) * 1000);
       set((state) => ({
         ...state,
@@ -292,7 +292,7 @@ export const engineStore = createStore<EngineStoreState>()(
       }));
     },
 
-    setPlaybackStreamSnapshot(snapshot: DemoStreamSnapshot | null) {
+    setPlaybackStreamSnapshot(snapshot: StreamSnapshot | null) {
       set((state) => ({
         ...state,
         playback: {
@@ -308,10 +308,10 @@ export const engineStore = createStore<EngineStoreState>()(
 // ── Rate-scaled effect clock ──
 //
 // A monotonic clock that advances by (frameDelta × playbackRate) each frame.
-// Components use demoEffectNow() instead of performance.now() so that effect
+// Components use effectNow() instead of performance.now() so that effect
 // timers (explosions, particles, shockwaves, animation threads) automatically
 // pause when the demo is paused and speed up / slow down with the playback
-// rate. The main DemoPlaybackStreaming component calls advanceEffectClock()
+// rate. The DemoPlaybackController component calls advanceEffectClock()
 // once per frame.
 
 let _effectClockMs = 0;
@@ -321,13 +321,13 @@ let _effectClockMs = 0;
  * Analogous to performance.now() but only advances when playing,
  * scaled by the playback rate.
  */
-export function demoEffectNow(): number {
+export function effectNow(): number {
   return _effectClockMs;
 }
 
 /**
  * Advance the effect clock. Called once per frame from
- * DemoPlaybackStreaming before other useFrame callbacks run.
+ * DemoPlaybackController before other useFrame callbacks run.
  */
 export function advanceEffectClock(deltaSec: number, rate: number): void {
   _effectClockMs += deltaSec * rate * 1000;

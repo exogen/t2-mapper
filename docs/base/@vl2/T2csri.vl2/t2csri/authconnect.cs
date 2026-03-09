@@ -9,62 +9,79 @@ function authConnect_findAuthServer()
 {
 	if ($AuthServer::Address !$= "")
 		return;
-
 	echo("Looking up Authentication Server...");
-
 	if (isObject(AuthConnection))
 	{
 		AuthConnection.disconnect();
 		AuthConnection.delete();
 	}
+	new TCPObject(AuthConnection);
 
-	new HTTPObject(AuthConnection);
-	AuthConnection.setHeader("Accept", "text/plain");
-	AuthConnection.get("www.tribesnext.com", "auth");
+	%data = "GET /auth HTTP/1.1\r\nHost: www.tribesnext.com\r\nUser-Agent: Tribes 2\r\nConnection: close\r\n\r\n";
+	AuthConnection.data = %data;
+	AuthConnection.connect("www.tribesnext.com:80");
+	$AuthServer::Primed = 0;
 }
 
 function AuthConnection::onLine(%this, %line)
 {
-	if (getFieldCount(%line) != 2)
+	if (%line == 411)
 		return;
+	if (trim(%line) $= "")
+	{
+		$AuthServer::Primed = 1;
+		return;
+	}
 
-	%address = getField(%line, 0);
-	%signature = getField(%line, 1);
+	if ($AuthServer::Primed)
+	{
+		$AuthServer::Address = %line;
+		%this.disconnect();
+		authConnect_verifyLookup();
+	}
+}
+
+function AuthConnection::onConnected(%this)
+{
+	%this.send(%this.data);
+}
+
+function authConnect_verifyLookup()
+{
+
+	if (getFieldCount($AuthServer::Address) != 2)
+	{
+		$AuthServer::Address = "";
+		error("Authentication server lookup failed.");
+		return;
+	}
+	%address = getField($AuthServer::Address, 0);
+	%signature = getField($AuthServer::Address, 1);
 
 	%sha1sum = sha1sum(%address);
 	%verifSum = t2csri_verify_auth_signature(%signature);
 	while (strlen(%verifSum) < 40)
 		%verifSum = "0" @ %verifSum;
-
 	if (%sha1sum !$= %verifSum)
 	{
+		// signature verification failed... someone has subverted the auth server lookup
 		error("Authentication server lookup returned an address with an invalid signature.");
 		error("Unable to contact the authentication server.");
 		$AuthServer::Address = "";
+		return;
 	}
 	else
 	{
 		echo("Authentication server found at " @ %address @ ". Ready to authenticate.");
 		$AuthServer::Address = %address;
+		$AuthServer::Primed = "";
 	}
 }
 
-function AuthConnection::onDisconnect(%this)
+// perform signature verification to prove that the auth server has designated the
+// provided address
+function t2csri_verify_auth_signature(%sig)
 {
-	if ($AuthServer::Address $= "")
-	{
-		error("Authentication server lookup failed.");
-	}
-
-	%this.delete();
-}
-
-function AuthConnection::onConnectFailed(%this)
-{
-	%this.delete();
-}
-
-function AuthConnection::onDNSFailed(%this)
-{
-	%this.delete();
+	rubyEval("tsEval '$temp=\"' + t2csri_verify_auth_signature('" @ %sig @ "').to_s(16) + '\";'");
+	return $temp;
 }

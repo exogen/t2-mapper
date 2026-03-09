@@ -1,13 +1,13 @@
-import { useDemoRecording } from "./DemoProvider";
+import { useRecording } from "./RecordingProvider";
 import { useEngineSelector } from "../state";
 import { textureToUrl } from "../loaders";
 import type {
   ChatSegment,
-  DemoChatMessage,
-  DemoStreamEntity,
+  ChatMessage,
+  StreamEntity,
   TeamScore,
   WeaponsHudSlot,
-} from "../demo/types";
+} from "../stream/types";
 import styles from "./PlayerHUD.module.css";
 // ── Compass ──
 const COMPASS_URL = textureToUrl("gui/hud_new_compass");
@@ -64,7 +64,7 @@ function Reticle() {
     if (!snap || snap.camera?.mode !== "first-person") return undefined;
     const ctrl = snap.controlPlayerGhostId;
     if (!ctrl) return undefined;
-    return snap.entities.find((e: DemoStreamEntity) => e.id === ctrl)
+    return snap.entities.find((e: StreamEntity) => e.id === ctrl)
       ?.weaponShape;
   });
   if (weaponShape === undefined) return null;
@@ -257,7 +257,7 @@ const CHAT_COLOR_CLASSES: Record<number, string> = {
 function segmentColorClass(colorCode: number): string {
   return CHAT_COLOR_CLASSES[colorCode] ?? CHAT_COLOR_CLASSES[0];
 }
-function chatColorClass(msg: DemoChatMessage): string {
+function chatColorClass(msg: ChatMessage): string {
   if (msg.colorCode != null && CHAT_COLOR_CLASSES[msg.colorCode]) {
     return CHAT_COLOR_CLASSES[msg.colorCode];
   }
@@ -278,12 +278,12 @@ function ChatWindow() {
   const fadeDuration = 1.5;
   const cutoff = timeSec - (fadeStart + fadeDuration);
   const visible = messages.filter(
-    (m: DemoChatMessage) => m.timeSec > cutoff && m.text.trim() !== "",
+    (m: ChatMessage) => m.timeSec > cutoff && m.text.trim() !== "",
   );
   if (!visible.length) return null;
   return (
     <div className={styles.ChatWindow}>
-      {visible.map((msg: DemoChatMessage, i: number) => {
+      {visible.map((msg: ChatMessage, i: number) => {
         const age = timeSec - msg.timeSec;
         const opacity =
           age <= fadeStart
@@ -435,7 +435,7 @@ function PackAndInventoryHUD() {
 }
 // ── Main HUD ──
 export function PlayerHUD() {
-  const recording = useDemoRecording();
+  const recording = useRecording();
   const streamSnapshot = useEngineSelector(
     (state) => state.playback.streamSnapshot,
   );

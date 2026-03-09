@@ -81,6 +81,20 @@ to a React component tree.
   more). Refer to official documentation or the actual Torque3D SDK, which
   contains the official grammar and source code. Check the `TorqueEngineResources`
   folder for related materials.
+- Normally, most TorqueScript `.cs` files live in VL2 files (deflate encoded,
+  basically .zip) inside Tribes 2's various folders. For this project, since we
+  don't want to have to decompress those VL2 files all the time, they've been
+  pre-extracted. You can find these under the `docs/base` folder.
+
+### t2-demo-parser
+
+- This is a custom package developed locally and published via `yalc`.
+- If you need to see how it works, I don't recommend reading its `dist` files;
+  instead focus on its `src` files and README.
+- You may update it, but be careful. Verify any changes you make carefully and
+  add regression tests.
+- To make changes visible to `t2-mapper`, make sure you run `npm run build` and
+  `yalc push` in `t2-demo-parser`.
 
 ## Code Conventions
 

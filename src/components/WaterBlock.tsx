@@ -3,14 +3,8 @@ import { Box, useTexture } from "@react-three/drei";
 import { useFrame, useThree } from "@react-three/fiber";
 import { DoubleSide, NoColorSpace, PlaneGeometry, RepeatWrapping } from "three";
 import { textureToUrl } from "../loaders";
-import type { TorqueObject } from "../torqueScript";
-import {
-  getFloat,
-  getPosition,
-  getProperty,
-  getRotation,
-  getScale,
-} from "../mission";
+import type { SceneWaterBlock } from "../scene/types";
+import { torqueToThree, torqueScaleToThree, matrixFToQuaternion } from "../scene";
 import { setupTexture } from "../textureUtils";
 import { createWaterMaterial } from "../waterMaterial";
 import { useDebug, useSettings } from "./SettingsProvider";
@@ -93,26 +87,19 @@ export function WaterMaterial({
  * - Renders 9 reps (3x3 grid) centered on camera's rep
  */
 export const WaterBlock = memo(function WaterBlock({
-  object,
+  scene,
 }: {
-  object: TorqueObject;
+  scene: SceneWaterBlock;
 }) {
   const { debugMode } = useDebug();
-  const q = useMemo(() => getRotation(object), [object]);
-  const position = useMemo(() => getPosition(object), [object]);
-  const scale = useMemo(() => getScale(object), [object]);
+  const q = useMemo(() => matrixFToQuaternion(scene.transform), [scene.transform]);
+  const position = useMemo(() => torqueToThree(scene.transform.position), [scene.transform]);
+  const scale = useMemo(() => torqueScaleToThree(scene.scale), [scene.scale]);
   const [scaleX, scaleY, scaleZ] = scale;
   const camera = useThree((state) => state.camera);
   const hasCameraPositionChanged = usePositionTracker();
 
-  // Water surface height (top of water volume)
-  // TODO: Use this for terrain intersection masking (reject water blocks where
-  // terrain height > surfaceZ + waveMagnitude/2). Requires TerrainProvider.
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  // const surfaceZ = position[1] + scaleY;
-
-  // Wave magnitude affects terrain masking (Torque adds half to surface height)
-  const waveMagnitude = getFloat(object, "waveMagnitude") ?? 1.0;
+  const waveMagnitude = scene.waveMagnitude;
 
   // Convert world position to terrain space and snap to grid.
   // Matches Torque's UpdateFluidRegion() and fluid::SetInfo():
@@ -196,11 +183,10 @@ export const WaterBlock = memo(function WaterBlock({
     });
   });
 
-  const surfaceTexture =
-    getProperty(object, "surfaceTexture") ?? "liquidTiles/BlueWater";
-  const envMapTexture = getProperty(object, "envMapTexture");
-  const opacity = getFloat(object, "surfaceOpacity") ?? 0.75;
-  const envMapIntensity = getFloat(object, "envMapIntensity") ?? 1.0;
+  const surfaceTexture = scene.surfaceName || "liquidTiles/BlueWater";
+  const envMapTexture = scene.envMapName || undefined;
+  const opacity = scene.surfaceOpacity;
+  const envMapIntensity = scene.envMapIntensity;
 
   // Create subdivided plane geometry for the water surface
   // Tessellation matches Tribes 2 engine (5x5 vertices per block)

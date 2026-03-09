@@ -2,10 +2,10 @@ import { useEffect, useRef } from "react";
 import { Audio } from "three";
 import { audioToUrl } from "../loaders";
 import { useAudio } from "./AudioContext";
-import { getCachedAudioBuffer, trackDemoSound, untrackDemoSound } from "./AudioEmitter";
+import { getCachedAudioBuffer, getSoundGeneration, trackSound, untrackSound } from "./AudioEmitter";
 import { useSettings } from "./SettingsProvider";
 import { engineStore, useEngineSelector } from "../state";
-import type { DemoChatMessage } from "../demo/types";
+import type { ChatMessage } from "../stream/types";
 
 /**
  * Plays non-positional sound effects for chat messages with ~w sound tags.
@@ -21,7 +21,7 @@ export function ChatSoundPlayer() {
   const timeSec = useEngineSelector(
     (state) => state.playback.streamSnapshot?.timeSec,
   );
-  const playedSetRef = useRef(new WeakSet<DemoChatMessage>());
+  const playedSetRef = useRef(new WeakSet<ChatMessage>());
   // Track active voice chat sound per sender so a new voice bind from the
   // same player stops their previous one (matching Tribes 2 behavior).
   const activeBySenderRef = useRef(
@@ -51,29 +51,31 @@ export function ChatSoundPlayer() {
         const pitch = msg.soundPitch ?? 1;
         const rate = engineStore.getState().playback.rate;
         const sender = msg.sender;
+        const gen = getSoundGeneration();
         getCachedAudioBuffer(url, audioLoader, (buffer) => {
+          if (gen !== getSoundGeneration()) return;
           // Stop the sender's previous voice chat sound.
           if (sender) {
             const prev = activeBySender.get(sender);
             if (prev) {
-              try { prev.stop(); } catch {}
-              untrackDemoSound(prev);
-              prev.disconnect();
+              try { prev.stop(); } catch { /* already stopped */ }
+              untrackSound(prev);
+              try { prev.disconnect(); } catch { /* already disconnected */ }
               activeBySender.delete(sender);
             }
           }
           const sound = new Audio(audioListener);
           sound.setBuffer(buffer);
           sound.setPlaybackRate(pitch * rate);
-          trackDemoSound(sound, pitch);
+          trackSound(sound, pitch);
           if (sender) {
             activeBySender.set(sender, sound);
           }
           sound.play();
           // Clean up the source node once playback finishes.
           sound.source!.onended = () => {
-            untrackDemoSound(sound);
-            sound.disconnect();
+            untrackSound(sound);
+            try { sound.disconnect(); } catch { /* already disconnected */ }
             if (sender && activeBySender.get(sender) === sound) {
               activeBySender.delete(sender);
             }

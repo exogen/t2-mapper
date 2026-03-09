@@ -1,26 +1,17 @@
 import { useEffect, useMemo } from "react";
 import { Color, Vector3 } from "three";
-import type { TorqueObject } from "../torqueScript";
-import { getProperty } from "../mission";
+import type { SceneSun } from "../scene/types";
+import { torqueToThree } from "../scene/coordinates";
 import { updateGlobalSunUniforms } from "../globalSunUniforms";
 
-export function Sun({ object }: { object: TorqueObject }) {
-  // Parse sun direction - points FROM sun TO scene
-  // Torque uses Z-up, Three.js uses Y-up
+export function Sun({ scene }: { scene: SceneSun }) {
+  // Sun direction - points FROM sun TO scene
+  // Convert Torque (X-right, Y-forward, Z-up) to Three.js (X-right, Y-up, Z-backward)
   const direction = useMemo(() => {
-    const directionStr =
-      getProperty(object, "direction") ?? "0.57735 0.57735 -0.57735";
-    const [tx, ty, tz] = directionStr
-      .split(" ")
-      .map((s: string) => parseFloat(s));
-    // Convert Torque (X, Y, Z) to Three.js:
-    // Swap Y/Z for coordinate system: (tx, ty, tz) -> (tx, tz, ty)
-    const x = tx;
-    const y = tz;
-    const z = ty;
+    const [x, y, z] = torqueToThree(scene.direction);
     const len = Math.sqrt(x * x + y * y + z * z);
     return new Vector3(x / len, y / len, z / len);
-  }, [object]);
+  }, [scene.direction]);
 
   // Position light far away, opposite to direction (light shines FROM position)
   const lightPosition = useMemo(() => {
@@ -32,17 +23,15 @@ export function Sun({ object }: { object: TorqueObject }) {
     );
   }, [direction]);
 
-  const color = useMemo(() => {
-    const colorStr = getProperty(object, "color") ?? "0.7 0.7 0.7 1";
-    const [r, g, b] = colorStr.split(" ").map((s: string) => parseFloat(s));
-    return new Color(r, g, b);
-  }, [object]);
+  const color = useMemo(
+    () => new Color(scene.color.r, scene.color.g, scene.color.b),
+    [scene.color],
+  );
 
-  const ambient = useMemo(() => {
-    const ambientStr = getProperty(object, "ambient") ?? "0.5 0.5 0.5 1";
-    const [r, g, b] = ambientStr.split(" ").map((s: string) => parseFloat(s));
-    return new Color(r, g, b);
-  }, [object]);
+  const ambient = useMemo(
+    () => new Color(scene.ambient.r, scene.ambient.g, scene.ambient.b),
+    [scene.ambient],
+  );
 
   // Torque lighting check (terrLighting.cc): if light direction points up,
   // terrain surfaces with upward normals receive only ambient light.

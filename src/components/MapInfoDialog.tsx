@@ -50,7 +50,7 @@ function getBitmapUrl(
     try {
       const key = getStandardTextureResourceKey(`textures/gui/${bitmap}`);
       return getUrlForPath(key);
-    } catch {}
+    } catch  { /* expected */ }
   }
   // Fall back to Load_<MissionName>.png convention (multiplayer missions)
   try {
@@ -58,7 +58,7 @@ function getBitmapUrl(
       `textures/gui/Load_${missionName}`,
     );
     return getUrlForPath(key);
-  } catch {}
+  } catch  { /* expected */ }
   return null;
 }
 
@@ -179,7 +179,7 @@ export function MapInfoDialog({
       dialogRef.current?.focus();
       try {
         document.exitPointerLock();
-      } catch {}
+      } catch  { /* expected */ }
     }
   }, [open]);
 

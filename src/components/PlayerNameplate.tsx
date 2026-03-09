@@ -1,12 +1,12 @@
 import { useMemo, useRef, useState } from "react";
-import type { MutableRefObject } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
 import { Html } from "@react-three/drei";
 import { Box3, Object3D, Vector3 } from "three";
-import { getKeyframeAtTime } from "../demo/demoPlaybackUtils";
+import { getKeyframeAtTime } from "../stream/playbackUtils";
 import { textureToUrl } from "../loaders";
 import { useStaticShape } from "./GenericShape";
-import type { DemoEntity } from "../demo/types";
+import { streamPlaybackStore } from "../state/streamPlaybackStore";
+import type { PlayerEntity } from "../state/gameEntityTypes";
 import styles from "./PlayerNameplate.module.css";
 
 /** Max distance at which nameplates are visible. */
@@ -27,14 +27,8 @@ const _tmpVec = new Vector3();
  * Floating nameplate above a player model showing the entity name and a health
  * bar. Fades out with distance.
  */
-export function PlayerNameplate({
-  entity,
-  timeRef,
-}: {
-  entity: DemoEntity;
-  timeRef: MutableRefObject<number>;
-}) {
-  const gltf = useStaticShape(entity.dataBlock!);
+export function PlayerNameplate({ entity }: { entity: PlayerEntity }) {
+  const gltf = useStaticShape((entity.shapeName ?? entity.dataBlock)!);
   const { camera } = useThree();
   const groupRef = useRef<Object3D>(null);
   const iffContainerRef = useRef<HTMLDivElement>(null);
@@ -46,9 +40,11 @@ export function PlayerNameplate({
   const displayName = useMemo(() => {
     if (entity.playerName) return entity.playerName;
     if (typeof entity.id === "string") {
-      return entity.id.replace(/^player_/, "Player ");
+      const m = entity.id.match(/\d+/);
+      if (m) return `<Player #${m[0]}>`;
+      return entity.id;
     }
-    return `Player ${entity.id}`;
+    return "<Player>";
   }, [entity.id, entity.playerName]);
 
   // Derive IFF height from the shape's bounding box.
@@ -58,9 +54,10 @@ export function PlayerNameplate({
   }, [gltf.scene]);
 
   // Check whether this entity has any health data at all.
+  const keyframes = entity.keyframes ?? [];
   const hasHealthData = useMemo(
-    () => entity.keyframes.some((kf) => kf.health != null),
-    [entity.keyframes],
+    () => keyframes.some((kf) => kf.health != null),
+    [keyframes],
   );
 
   useFrame(() => {
@@ -87,7 +84,7 @@ export function PlayerNameplate({
     if (!shouldBeVisible) return;
 
     // Hide nameplate when player is dead.
-    const kf = getKeyframeAtTime(entity.keyframes, timeRef.current);
+    const kf = getKeyframeAtTime(keyframes, streamPlaybackStore.getState().time);
     const health = kf?.health ?? 1;
     if (kf?.damageState != null && kf.damageState >= 1) {
       if (iffContainerRef.current) iffContainerRef.current.style.opacity = "0";
@@ -116,7 +113,7 @@ export function PlayerNameplate({
         entity.iffColor.r > entity.iffColor.g
           ? IFF_ENEMY_URL
           : IFF_FRIENDLY_URL;
-      if (iffImgRef.current.src !== url) {
+      if (iffImgRef.current.getAttribute("src") !== url) {
         iffImgRef.current.src = url;
       }
     }

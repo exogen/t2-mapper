@@ -1,24 +1,25 @@
 import { useCallback, useRef } from "react";
 import { MdOndemandVideo } from "react-icons/md";
-import { useDemoActions, useDemoRecording } from "./DemoProvider";
-import { createDemoStreamingRecording } from "../demo/streaming";
+import { usePlaybackActions, useRecording } from "./RecordingProvider";
+import { createDemoStreamingRecording } from "../stream/demoStreaming";
 import styles from "./LoadDemoButton.module.css";
 
 export function LoadDemoButton() {
-  const recording = useDemoRecording();
-  const { setRecording } = useDemoActions();
+  const recording = useRecording();
+  const isDemoLoaded = recording?.source === "demo";
+  const { setRecording } = usePlaybackActions();
   const inputRef = useRef<HTMLInputElement>(null);
   const parseTokenRef = useRef(0);
 
   const handleClick = useCallback(() => {
-    if (recording) {
+    if (isDemoLoaded) {
       // Unload the current recording.
       parseTokenRef.current += 1;
       setRecording(null);
       return;
     }
     inputRef.current?.click();
-  }, [recording, setRecording]);
+  }, [isDemoLoaded, setRecording]);
 
   const handleFileChange = useCallback(
     async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -55,14 +56,15 @@ export function LoadDemoButton() {
       <button
         type="button"
         className={styles.Root}
-        aria-label={recording ? "Unload demo" : "Load demo (.rec)"}
-        title={recording ? "Unload demo" : "Load demo (.rec)"}
+        aria-label={isDemoLoaded ? "Unload demo" : "Load demo (.rec)"}
+        title={isDemoLoaded ? "Unload demo" : "Load demo (.rec)"}
         onClick={handleClick}
-        data-active={recording ? "true" : undefined}
+        data-active={isDemoLoaded ? "true" : undefined}
+        disabled={recording != null && !isDemoLoaded}
       >
         <MdOndemandVideo className={styles.DemoIcon} />
         <span className={styles.ButtonLabel}>
-          {recording ? "Unload demo" : "Demo"}
+          {isDemoLoaded ? "Unload demo" : "Demo"}
         </span>
       </button>
     </>

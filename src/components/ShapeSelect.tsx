@@ -166,7 +166,7 @@ export function ShapeSelect({
           onFocus={() => {
             try {
               document.exitPointerLock();
-            } catch {}
+            } catch  { /* expected */ }
             combobox.show();
           }}
           onKeyDown={(e) => {

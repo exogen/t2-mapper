@@ -19,6 +19,7 @@ import { useFrame } from "@react-three/fiber";
 import { Color } from "three";
 import type { TorqueObject } from "../torqueScript";
 import { getFloat, getProperty } from "../mission";
+import type { SceneSky } from "../scene/types";
 
 /** Maximum number of fog volumes supported (matches Torque) */
 export const MAX_FOG_VOLUMES = 3;
@@ -180,6 +181,34 @@ export function parseFogState(
     fogLine,
     enabled,
   };
+}
+
+/** Build FogState directly from a typed SceneSky (no string parsing). */
+export function fogStateFromScene(sky: SceneSky): FogState {
+  const fogDistance = sky.fogDistance;
+  const visibleDistance = sky.visibleDistance > 0 ? sky.visibleDistance : 1000;
+  const { r, g, b } = sky.fogColor;
+  const fogColor = new Color().setRGB(r, g, b).convertSRGBToLinear();
+
+  const fogVolumes: FogVolume[] = [];
+  for (const vol of sky.fogVolumes) {
+    if (vol.visibleDistance <= 0 || vol.maxHeight <= vol.minHeight) continue;
+    fogVolumes.push({
+      visibleDistance: vol.visibleDistance,
+      minHeight: vol.minHeight,
+      maxHeight: vol.maxHeight,
+      percentage: 1.0,
+    });
+  }
+
+  const fogLine = fogVolumes.reduce(
+    (max, vol) => Math.max(max, vol.maxHeight),
+    0,
+  );
+
+  const enabled = visibleDistance > fogDistance;
+
+  return { fogDistance, visibleDistance, fogColor, fogVolumes, fogLine, enabled };
 }
 
 /**

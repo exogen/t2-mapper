@@ -8,16 +8,18 @@ import { MissionSelect } from "./MissionSelect";
 import { useEffect, useState, useRef, RefObject } from "react";
 import { CopyCoordinatesButton } from "./CopyCoordinatesButton";
 import { LoadDemoButton } from "./LoadDemoButton";
-import { useDemoRecording } from "./DemoProvider";
+import { JoinServerButton } from "./JoinServerButton";
+import { useRecording } from "./RecordingProvider";
+import { useLiveConnectionOptional } from "./LiveConnection";
 import { FiInfo, FiSettings } from "react-icons/fi";
 import { Camera } from "three";
 import styles from "./InspectorControls.module.css";
-
 export function InspectorControls({
   missionName,
   missionType,
   onChangeMission,
   onOpenMapInfo,
+  onOpenServerBrowser,
   isTouch,
   cameraRef,
 }: {
@@ -31,6 +33,7 @@ export function InspectorControls({
     missionType: string;
   }) => void;
   onOpenMapInfo: () => void;
+  onOpenServerBrowser?: () => void;
   isTouch: boolean | null;
   cameraRef: RefObject<Camera>;
 }) {
@@ -47,20 +50,23 @@ export function InspectorControls({
   const { speedMultiplier, setSpeedMultiplier, touchMode, setTouchMode } =
     useControls();
   const { debugMode, setDebugMode } = useDebug();
-  const demoRecording = useDemoRecording();
-  const isDemoLoaded = demoRecording != null;
+  const demoRecording = useRecording();
+  const live = useLiveConnectionOptional();
+  const isLive = live?.adapter != null;
+  const isStreaming = demoRecording != null || isLive;
+  // Hide FOV/speed controls during .rec playback (faithfully replaying),
+  // but show them in .mis browsing and live observer mode.
+  const hideViewControls = isStreaming && !isLive;
   const [settingsOpen, setSettingsOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
   const focusAreaRef = useRef<HTMLDivElement>(null);
-
   // Focus the panel when it opens.
   useEffect(() => {
     if (settingsOpen) {
       dropdownRef.current?.focus();
     }
   }, [settingsOpen]);
-
   const handleDropdownBlur = (e: React.FocusEvent) => {
     const relatedTarget = e.relatedTarget as Node | null;
     if (relatedTarget && focusAreaRef.current?.contains(relatedTarget)) {
@@ -68,7 +74,6 @@ export function InspectorControls({
     }
     setSettingsOpen(false);
   };
-
   // Close on Escape and return focus to the gear button.
   const handlePanelKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Escape") {
@@ -76,7 +81,6 @@ export function InspectorControls({
       buttonRef.current?.focus();
     }
   };
-
   return (
     <div
       id="controls"
@@ -90,7 +94,7 @@ export function InspectorControls({
           value={missionName}
           missionType={missionType}
           onChange={onChangeMission}
-          disabled={isDemoLoaded}
+          disabled={isStreaming}
         />
       </div>
       <div ref={focusAreaRef}>
@@ -122,6 +126,9 @@ export function InspectorControls({
               cameraRef={cameraRef}
             />
             <LoadDemoButton />
+            {onOpenServerBrowser && (
+              <JoinServerButton onOpenServerBrowser={onOpenServerBrowser} />
+            )}
             <button
               type="button"
               className={styles.MapInfoButton}
@@ -181,7 +188,7 @@ export function InspectorControls({
             </div>
           </div>
           <div className={styles.Group}>
-            {isDemoLoaded ? null : (
+            {hideViewControls ? null : (
               <div className={styles.Field}>
                 <label htmlFor="fovInput">FOV</label>
                 <input
@@ -191,13 +198,12 @@ export function InspectorControls({
                   max={120}
                   step={5}
                   value={fov}
-                  disabled={isDemoLoaded}
                   onChange={(event) => setFov(parseInt(event.target.value))}
                 />
                 <output htmlFor="fovInput">{fov}</output>
               </div>
             )}
-            {isDemoLoaded ? null : (
+            {hideViewControls ? null : (
               <div className={styles.Field}>
                 <label htmlFor="speedInput">Speed</label>
                 <input
@@ -207,7 +213,6 @@ export function InspectorControls({
                   max={5}
                   step={0.05}
                   value={speedMultiplier}
-                  disabled={isDemoLoaded}
                   onChange={(event) =>
                     setSpeedMultiplier(parseFloat(event.target.value))
                   }

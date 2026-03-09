@@ -30,18 +30,49 @@ import { AudioProvider } from "@/src/components/AudioContext";
 import { DebugElements } from "@/src/components/DebugElements";
 import { CamerasProvider } from "@/src/components/CamerasProvider";
 import {
-  DemoProvider,
-  useDemoActions,
-  useDemoRecording,
-} from "@/src/components/DemoProvider";
-import { DemoPlayback } from "@/src/components/DemoPlayback";
-import { DemoControls } from "@/src/components/DemoControls";
+  RecordingProvider,
+  usePlaybackActions,
+  useRecording,
+} from "@/src/components/RecordingProvider";
+import { EntityScene } from "@/src/components/EntityScene";
+import { TickProvider } from "@/src/components/TickProvider";
+import { SceneLighting } from "@/src/components/SceneLighting";
 import { PlayerHUD } from "@/src/components/PlayerHUD";
-import { ChatSoundPlayer } from "@/src/components/ChatSoundPlayer";
+import {
+  LiveConnectionProvider,
+  useLiveConnection,
+} from "@/src/components/LiveConnection";
+import { ServerBrowser } from "@/src/components/ServerBrowser";
+import {
+  FeaturesProvider,
+  useFeatures,
+} from "@/src/components/FeaturesProvider";
+
+// Lazy-load demo and live streaming modules — they pull in heavy dependencies
+// (demo parser, streaming engine, particles) that aren't needed for mission-only mode.
+const DemoPlayback = lazy(() =>
+  import("@/src/components/DemoPlayback").then((mod) => ({
+    default: mod.DemoPlayback,
+  })),
+);
+const DemoPlaybackControls = lazy(() =>
+  import("@/src/components/DemoPlaybackControls").then((mod) => ({
+    default: mod.DemoPlaybackControls,
+  })),
+);
+const LiveObserver = lazy(() =>
+  import("@/src/components/LiveObserver").then((mod) => ({
+    default: mod.LiveObserver,
+  })),
+);
+const ChatSoundPlayer = lazy(() =>
+  import("@/src/components/ChatSoundPlayer").then((mod) => ({
+    default: mod.ChatSoundPlayer,
+  })),
+);
 import {
   getMissionList,
   getMissionInfo,
-  findMissionByDemoName,
 } from "@/src/manifest";
 import { createParser, parseAsBoolean, useQueryState } from "nuqs";
 import styles from "./page.module.css";
@@ -120,10 +151,36 @@ function MapInspector() {
   );
 
   const isTouch = useTouchDevice();
+  const features = useFeatures();
+  const live = useLiveConnection();
   const { missionName, missionType } = currentMission;
   const [mapInfoOpen, setMapInfoOpen] = useState(false);
-  const [loadingProgress, setLoadingProgress] = useState(0);
+  const [serverBrowserOpen, setServerBrowserOpen] = useState(false);
+  const [missionLoadingProgress, setMissionLoadingProgress] = useState(0);
   const [showLoadingIndicator, setShowLoadingIndicator] = useState(true);
+
+  // During live join, show progress based on connection status.
+  // Relay status order: connecting → challenging → authenticating → connected.
+  // Once liveReady (first ghost arrives), loading is complete.
+  const liveLoadingProgress = live.adapter != null
+    ? live.liveReady
+      ? 1
+      : live.gameStatus === "connected" ? 0.8
+      : live.gameStatus === "authenticating" ? 0.6
+      : live.gameStatus === "challenging" ? 0.3
+      : live.gameStatus === "connecting" ? 0.2
+      : 0.1
+    : null;
+
+  // Reset stale mission progress when live mode takes over, so it can't
+  // flash through if liveLoadingProgress briefly becomes null.
+  useEffect(() => {
+    if (liveLoadingProgress != null) {
+      setMissionLoadingProgress(0);
+    }
+  }, [liveLoadingProgress != null]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const loadingProgress = liveLoadingProgress ?? missionLoadingProgress;
   const isLoading = loadingProgress < 1;
 
   // Keep the loading indicator visible briefly after reaching 100%
@@ -174,7 +231,7 @@ function MapInspector() {
 
   const handleLoadingChange = useCallback(
     (_loading: boolean, progress: number = 0) => {
-      setLoadingProgress(progress);
+      setMissionLoadingProgress(progress);
     },
     [],
   );
@@ -188,7 +245,7 @@ function MapInspector() {
   return (
     <QueryClientProvider client={queryClient}>
       <main>
-        <DemoProvider>
+        <RecordingProvider>
           <SettingsProvider
             fogEnabledOverride={fogEnabledOverride}
             onClearFogEnabledOverride={clearFogEnabledOverride}
@@ -221,19 +278,19 @@ function MapInspector() {
                     cameraRef.current = state.camera;
                   }}
                 >
+                  <TickProvider>
                   <CamerasProvider>
                     <AudioProvider>
-                      <Mission
-                        key={`${missionName}~${missionType}`}
-                        name={missionName}
+                      <MissionWhenIdle
+                        missionName={missionName}
                         missionType={missionType}
                         onLoadingChange={handleLoadingChange}
                       />
+                      <SceneLighting />
+                      <EntityScene missionType={missionType} />
                       <ObserverCamera />
                       <DebugElements />
-                      <DemoPlayback />
-                      <ChatSoundPlayer />
-                      <DemoAwareControls
+                      <StreamingComponents
                         isTouch={isTouch}
                         joystickStateRef={joystickStateRef}
                         joystickZoneRef={joystickZoneRef}
@@ -242,9 +299,10 @@ function MapInspector() {
                       />
                     </AudioProvider>
                   </CamerasProvider>
+                  </TickProvider>
                 </Canvas>
               </div>
-              <PlayerHUD />
+              <StreamingHUD />
               {isTouch && (
                 <TouchJoystick
                   joystickState={joystickStateRef}
@@ -259,6 +317,7 @@ function MapInspector() {
                 missionType={missionType}
                 onChangeMission={changeMission}
                 onOpenMapInfo={() => setMapInfoOpen(true)}
+                onOpenServerBrowser={features.live ? () => setServerBrowserOpen(true) : undefined}
                 cameraRef={cameraRef}
                 isTouch={isTouch}
               />
@@ -272,83 +331,56 @@ function MapInspector() {
                   />
                 </Suspense>
               )}
-              <DemoMissionSync
-                changeMission={changeMission}
-                currentMission={currentMission}
+              <ServerBrowserDialog
+                open={serverBrowserOpen}
+                onClose={() => setServerBrowserOpen(false)}
               />
-              <DemoControls />
+              <StreamingOverlay />
               <DemoWindowAPI />
             </KeyboardControls>
           </SettingsProvider>
-        </DemoProvider>
+        </RecordingProvider>
       </main>
     </QueryClientProvider>
   );
 }
 
-/** Map from Tribes 2 game type display names to manifest mission type codes. */
-const GAME_TYPE_TO_MISSION_TYPE: Record<string, string> = {
-  "Capture the Flag": "CTF",
-  "Capture and Hold": "CnH",
-  Deathmatch: "DM",
-  "Team Deathmatch": "TDM",
-  Siege: "Siege",
-  Bounty: "Bounty",
-  Rabbit: "Rabbit",
-};
-
 /**
- * When a demo recording is loaded, switch to the mission it was recorded on.
+ * Only mount Mission (TorqueScript runtime, .mis loading) when NOT streaming.
+ * During demo/live playback, all scene data comes from ghosts — no need for
+ * the heavy TorqueScript execution pipeline.
  */
-function DemoMissionSync({
-  changeMission,
-  currentMission,
+function MissionWhenIdle({
+  missionName,
+  missionType,
+  onLoadingChange,
 }: {
-  changeMission: (mission: CurrentMission) => void;
-  currentMission: CurrentMission;
+  missionName: string;
+  missionType: string;
+  onLoadingChange: (isLoading: boolean, progress?: number) => void;
 }) {
-  const recording = useDemoRecording();
+  const recording = useRecording();
+  const { adapter: liveAdapter } = useLiveConnection();
+  const isStreaming = recording != null || liveAdapter != null;
 
-  useEffect(() => {
-    if (!recording?.missionName) return;
+  if (isStreaming) return null;
 
-    const missionName = findMissionByDemoName(recording.missionName);
-    if (!missionName) {
-      console.warn(
-        `Demo mission "${recording.missionName}" not found in manifest`,
-      );
-      return;
-    }
-
-    const info = getMissionInfo(missionName);
-    const missionTypeCode = recording.gameType
-      ? GAME_TYPE_TO_MISSION_TYPE[recording.gameType]
-      : undefined;
-    const missionType =
-      missionTypeCode && info.missionTypes.includes(missionTypeCode)
-        ? missionTypeCode
-        : info.missionTypes[0];
-
-    // Skip if we're already on the correct mission to avoid unnecessary
-    // remount cascades (e.g. after a Suspense boundary restores).
-    if (
-      currentMission.missionName === missionName &&
-      currentMission.missionType === missionType
-    ) {
-      return;
-    }
-
-    changeMission({ missionName, missionType });
-  }, [recording, changeMission, currentMission]);
-
-  return null;
+  return (
+    <Mission
+      key={`${missionName}~${missionType}`}
+      name={missionName}
+      missionType={missionType}
+      onLoadingChange={onLoadingChange}
+    />
+  );
 }
 
 /**
- * Disables observer/touch controls when a demo recording is loaded so they
- * don't fight the animated camera.
+ * In-Canvas components that depend on streaming mode. Mounts the appropriate
+ * controller (DemoPlayback or LiveObserver) and disables observer controls
+ * during streaming.
  */
-function DemoAwareControls({
+function StreamingComponents({
   isTouch,
   joystickStateRef,
   joystickZoneRef,
@@ -361,25 +393,96 @@ function DemoAwareControls({
   lookJoystickStateRef: React.RefObject<JoystickState>;
   lookJoystickZoneRef: React.RefObject<HTMLDivElement | null>;
 }) {
-  const recording = useDemoRecording();
-  if (recording) return null;
-  if (isTouch === null) return null;
-  if (isTouch) {
-    return (
-      <TouchCameraMovement
-        joystickState={joystickStateRef}
-        joystickZone={joystickZoneRef}
-        lookJoystickState={lookJoystickStateRef}
-        lookJoystickZone={lookJoystickZoneRef}
-      />
-    );
-  }
-  return <ObserverControls />;
+  const recording = useRecording();
+  const live = useLiveConnection();
+  const isLive = live.adapter != null;
+  const isStreaming = recording != null || isLive;
+
+  // Show ObserverControls for: non-streaming mode, OR live mode.
+  // During live, ObserverControls provides the same camera controls
+  // (pointer lock, drag-to-rotate, WASD fly) and LiveObserver intercepts
+  // click-while-locked to cycle observed players instead of nextCamera.
+  // During demo playback, the demo drives the camera so no controls needed.
+  const showObserverControls = !isStreaming || isLive;
+
+  return (
+    <>
+      {recording && (
+        <Suspense fallback={null}>
+          <DemoPlayback />
+        </Suspense>
+      )}
+      {isLive && (
+        <Suspense fallback={null}>
+          <LiveObserver />
+        </Suspense>
+      )}
+      {isStreaming && (
+        <Suspense fallback={null}>
+          <ChatSoundPlayer />
+        </Suspense>
+      )}
+      {showObserverControls && isTouch !== null && (
+        isTouch ? (
+          <TouchCameraMovement
+            joystickState={joystickStateRef}
+            joystickZone={joystickZoneRef}
+            lookJoystickState={lookJoystickStateRef}
+            lookJoystickZone={lookJoystickZoneRef}
+          />
+        ) : (
+          <ObserverControls />
+        )
+      )}
+    </>
+  );
+}
+
+/** HUD overlay — shown during streaming (demo or live). */
+function StreamingHUD() {
+  const recording = useRecording();
+  const live = useLiveConnection();
+  if (!recording && !live.adapter) return null;
+  return <PlayerHUD />;
+}
+
+/** Playback controls overlay — only shown during demo playback. */
+function StreamingOverlay() {
+  const recording = useRecording();
+  const live = useLiveConnection();
+  if (!recording || live.adapter != null) return null;
+  return (
+    <Suspense fallback={null}>
+      <DemoPlaybackControls />
+    </Suspense>
+  );
+}
+
+/** Server browser dialog connected to live state. */
+function ServerBrowserDialog({
+  open,
+  onClose,
+}: {
+  open: boolean;
+  onClose: () => void;
+}) {
+  const live = useLiveConnection();
+  return (
+    <ServerBrowser
+      open={open}
+      onClose={onClose}
+      servers={live.servers}
+      loading={live.serversLoading}
+      onRefresh={live.listServers}
+      onJoin={(address) => live.joinServer(address)}
+      wsPing={live.wsPing}
+    />
+  );
 }
 
 /** Exposes `window.loadDemoRecording` for automation/testing. */
 function DemoWindowAPI() {
-  const { setRecording } = useDemoActions();
+  const { setRecording } = usePlaybackActions();
 
   useEffect(() => {
     window.loadDemoRecording = setRecording;
@@ -394,7 +497,11 @@ function DemoWindowAPI() {
 export default function HomePage() {
   return (
     <Suspense>
-      <MapInspector />
+      <FeaturesProvider>
+        <LiveConnectionProvider>
+          <MapInspector />
+        </LiveConnectionProvider>
+      </FeaturesProvider>
     </Suspense>
   );
 }

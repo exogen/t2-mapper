@@ -41,10 +41,25 @@ export function AudioProvider({ children }: { children: ReactNode }) {
       camera.add(listener);
     }
 
+    listener.setMasterVolume(0.8);
+
     setAudioContext({
       audioLoader,
       audioListener: listener,
     });
+
+    // Resume the AudioContext on user interaction to satisfy browser autoplay
+    // policy. Without this, sounds won't play until the user clicks/taps.
+    const resumeOnGesture = () => {
+      const ctx = listener?.context;
+      if (!ctx || ctx.state !== "suspended") return;
+      ctx.resume().finally(() => {
+        document.removeEventListener("click", resumeOnGesture);
+        document.removeEventListener("keydown", resumeOnGesture);
+      });
+    };
+    document.addEventListener("click", resumeOnGesture);
+    document.addEventListener("keydown", resumeOnGesture);
 
     // Suspend/resume the Web AudioContext when demo playback pauses/resumes.
     // This freezes all playing sounds at their current position rather than
@@ -56,14 +71,17 @@ export function AudioProvider({ children }: { children: ReactNode }) {
         if (!ctx) return;
         if (status === "paused") {
           ctx.suspend();
-        } else if (status === "playing" && ctx.state === "suspended") {
+        } else if (ctx.state === "suspended") {
           ctx.resume();
         }
       },
     );
 
     return () => {
+      document.removeEventListener("click", resumeOnGesture);
+      document.removeEventListener("keydown", resumeOnGesture);
       unsubscribe();
+      if (listener) camera.remove(listener);
     };
   }, [camera]);
 

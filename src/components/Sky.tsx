@@ -3,12 +3,11 @@ import { useQuery } from "@tanstack/react-query";
 import { useThree, useFrame } from "@react-three/fiber";
 import { useCubeTexture } from "@react-three/drei";
 import { Color, Fog } from "three";
-import type { TorqueObject } from "../torqueScript";
-import { getInt, getProperty } from "../mission";
+import type { SceneSky } from "../scene/types";
 import { useSettings } from "./SettingsProvider";
 import { loadDetailMapList, textureToUrl } from "../loaders";
 import { CloudLayers } from "./CloudLayers";
-import { parseFogState, type FogState } from "./FogProvider";
+import { fogStateFromScene, type FogState } from "./FogProvider";
 import { installCustomFogShader } from "../fogShader";
 import {
   globalFogUniforms,
@@ -20,18 +19,13 @@ import {
 // Track if fog shader has been installed (idempotent installation)
 let fogShaderInstalled = false;
 
-/**
- * Parse a Tribes 2 color string (space-separated RGB or RGBA values 0-1).
- * Returns [sRGB Color, linear Color] or undefined if no color string.
- */
-function parseColorString(
-  colorString: string | undefined,
-): [Color, Color] | undefined {
-  if (!colorString) return undefined;
-  const [r, g, b] = colorString.split(" ").map((s) => parseFloat(s));
+import type { Color3 } from "../scene/types";
+
+/** Convert a Color3 to [sRGB Color, linear Color]. */
+function color3ToThree(c: Color3): [Color, Color] {
   return [
-    new Color().setRGB(r, g, b),
-    new Color().setRGB(r, g, b).convertSRGBToLinear(),
+    new Color().setRGB(c.r, c.g, c.b),
+    new Color().setRGB(c.r, c.g, c.b).convertSRGBToLinear(),
   ];
 }
 
@@ -600,29 +594,29 @@ function DynamicFog({
   return null;
 }
 
-export function Sky({ object }: { object: TorqueObject }) {
-  const { fogEnabled, highQualityFog } = useSettings();
+export function Sky({ scene }: { scene: SceneSky }) {
+  const { fogEnabled } = useSettings();
 
   // Skybox textures
-  const materialList = getProperty(object, "materialList");
+  const materialList = scene.materialList || undefined;
 
   const skySolidColor = useMemo(
-    () => parseColorString(getProperty(object, "SkySolidColor")),
-    [object],
+    () => color3ToThree(scene.skySolidColor),
+    [scene.skySolidColor],
   );
 
-  const useSkyTextures = getInt(object, "useSkyTextures") ?? 1;
+  const useSkyTextures = scene.useSkyTextures;
 
-  // Parse full fog state from Sky object using FogProvider's parser
+  // Parse full fog state from typed scene sky
   const fogState = useMemo(
-    () => parseFogState(object, highQualityFog),
-    [object, highQualityFog],
+    () => fogStateFromScene(scene),
+    [scene],
   );
 
   // Get sRGB fog color for background
   const fogColor = useMemo(
-    () => parseColorString(getProperty(object, "fogColor")),
-    [object],
+    () => color3ToThree(scene.fogColor),
+    [scene.fogColor],
   );
 
   const skyColor = skySolidColor || fogColor;
@@ -635,32 +629,32 @@ export function Sky({ object }: { object: TorqueObject }) {
 
   // Set scene background color directly using useThree
   // This ensures the gap between fogged terrain and skybox blends correctly
-  const { scene, gl } = useThree();
+  const { scene: threeScene, gl } = useThree();
   useEffect(() => {
     if (hasFogParams) {
       // Use effective fog color for background (matches terrain fog)
       const bgColor = effectiveFogColor.clone();
-      scene.background = bgColor;
+      threeScene.background = bgColor;
       // Also set the renderer clear color as a fallback
       gl.setClearColor(bgColor);
     } else if (skyColor) {
       const bgColor = skyColor[0].clone();
-      scene.background = bgColor;
+      threeScene.background = bgColor;
       gl.setClearColor(bgColor);
     } else {
-      scene.background = null;
+      threeScene.background = null;
     }
     return () => {
-      scene.background = null;
+      threeScene.background = null;
     };
-  }, [scene, gl, hasFogParams, effectiveFogColor, skyColor]);
+  }, [threeScene, gl, hasFogParams, effectiveFogColor, skyColor]);
 
   // Get linear sky solid color for the solid color sky shader
   const linearSkySolidColor = skySolidColor?.[1];
 
   return (
     <>
-      {materialList && useSkyTextures ? (
+      {materialList && useSkyTextures && materialList.length > 0 ? (
         <Suspense fallback={null}>
           {/* Key forces remount when mission changes to clear texture caches */}
           <SkyBox
@@ -680,7 +674,7 @@ export function Sky({ object }: { object: TorqueObject }) {
       ) : null}
       {/* Cloud layers render independently of skybox textures */}
       <Suspense>
-        <CloudLayers object={object} />
+        <CloudLayers scene={scene} />
       </Suspense>
       {/* Always render DynamicFog when mission has fog params.
           Pass fogEnabled to control visibility - this avoids shader recompilation

@@ -4,7 +4,7 @@ import nextConfig from "eslint-config-next/core-web-vitals";
 import tseslint from "typescript-eslint";
 
 export default defineConfig(
-  { ignores: ["docs/**", "generated/**"] },
+  { ignores: [".yalc/**", "docs/**", "generated/**"] },
   eslint.configs.recommended,
   tseslint.configs.recommended,
   ...nextConfig,
@@ -15,6 +15,9 @@ export default defineConfig(
         "error",
         { args: "none", caughtErrors: "none", varsIgnorePattern: "^_" },
       ],
+      "react-hooks/immutability": "warn",
+      "react-hooks/refs": "warn",
+      "react-hooks/set-state-in-effect": "warn",
     },
   },
 );

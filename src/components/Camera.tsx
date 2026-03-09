@@ -1,26 +1,37 @@
 import { useEffect, useId, useMemo } from "react";
+import { Quaternion, Vector3 } from "three";
 import { useCameras } from "./CamerasProvider";
-import type { TorqueObject } from "../torqueScript";
-import { getPosition, getProperty, getRotation } from "../mission";
-import { Vector3 } from "three";
+import type { CameraEntity } from "../state/gameEntityTypes";
 
-export function Camera({ object }: { object: TorqueObject }) {
+export function Camera({ entity }: { entity: CameraEntity }) {
   const { registerCamera, unregisterCamera } = useCameras();
   const id = useId();
 
-  const dataBlock = getProperty(object, "dataBlock");
-  const position = useMemo(() => getPosition(object), [object]);
-  const q = useMemo(() => getRotation(object), [object]);
+  const dataBlock = entity.cameraDataBlock;
+  const position = useMemo(
+    () =>
+      entity.position
+        ? new Vector3(...entity.position)
+        : new Vector3(),
+    [entity.position],
+  );
+  const rotation = useMemo(
+    () =>
+      entity.rotation
+        ? new Quaternion(...entity.rotation)
+        : new Quaternion(),
+    [entity.rotation],
+  );
 
   useEffect(() => {
     if (dataBlock === "Observer") {
-      const camera = { id, position: new Vector3(...position), rotation: q };
+      const camera = { id, position, rotation };
       registerCamera(camera);
       return () => {
         unregisterCamera(camera);
       };
     }
-  }, [id, dataBlock, registerCamera, unregisterCamera, position, q]);
+  }, [id, dataBlock, registerCamera, unregisterCamera, position, rotation]);
 
   // Maps can define preset observer camera locations. You should be able to jump
   // to an observer camera position and then fly around from that starting point

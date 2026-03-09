@@ -76,6 +76,7 @@ web_modules/
 .env
 .env.development.local
 .env.test.local
+.env.production
 .env.production.local
 .env.local
 
@@ -131,6 +132,9 @@ dist
 
 .DS_Store
 .tshy
+
+# yalc
+.yalc
 
 # GameData folder with actual .vl2 files (unextracted) in it. Some scripts like
 # `extract-assets` and `generate-manifest` look at this to extract or build the

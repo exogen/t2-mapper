@@ -1,15 +1,10 @@
-import { useMemo } from "react";
-import type { TorqueObject } from "../torqueScript";
-import { getPosition, getProperty } from "../mission";
+import type { WayPointEntity } from "../state/gameEntityTypes";
 import { FloatingLabel } from "./FloatingLabel";
 
-export function WayPoint({ object }: { object: TorqueObject }) {
-  const position = useMemo(() => getPosition(object), [object]);
-  const label = getProperty(object, "name");
-
-  return label ? (
-    <FloatingLabel position={position} opacity={0.6}>
-      {label}
+export function WayPoint({ entity }: { entity: WayPointEntity }) {
+  return entity.label ? (
+    <FloatingLabel position={entity.position} opacity={0.6}>
+      {entity.label}
     </FloatingLabel>
   ) : null;
 }

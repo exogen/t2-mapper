@@ -1,10 +1,12 @@
 import { useRef } from "react";
-import type { MutableRefObject } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
 import { Html } from "@react-three/drei";
 import { Group, Vector3 } from "three";
 import { textureToUrl } from "../loaders";
-import type { DemoEntity } from "../demo/types";
+interface FlagEntity {
+  id: string;
+  iffColor?: { r: number; g: number; b: number };
+}
 import styles from "./FlagMarker.module.css";
 
 const FLAG_ICON_HEIGHT = 1.5;
@@ -18,12 +20,7 @@ const _tmpVec = new Vector3();
  * friendly, red for enemy — matching Tribes 2's sensor group color system).
  * Always visible regardless of distance.
  */
-export function FlagMarker({
-  entity,
-}: {
-  entity: DemoEntity;
-  timeRef: MutableRefObject<number>;
-}) {
+export function FlagMarker({ entity }: { entity: FlagEntity }) {
   const markerRef = useRef<Group>(null);
   const iconRef = useRef<HTMLDivElement>(null);
   const distRef = useRef<HTMLSpanElement>(null);

@@ -102,7 +102,7 @@ function getNodeWorldPosition(
   if (nodeIdx === -1) return null;
 
   // Walk up parent chain accumulating translations (ignoring rotation for now)
-  let pos: [number, number, number] = [0, 0, 0];
+  const pos: [number, number, number] = [0, 0, 0];
   let current: number | undefined = nodeIdx;
   while (current != null) {
     const node = json.nodes[current];

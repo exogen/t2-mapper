@@ -42,7 +42,7 @@ interface TerrainTileProps {
   visible?: boolean;
 }
 
-function BlendedTerrainTextures({
+const BlendedTerrainTextures = memo(function BlendedTerrainTextures({
   displacementMap,
   visibilityMask,
   textureNames,
@@ -136,9 +136,9 @@ function BlendedTerrainTextures({
       onBeforeCompile={onBeforeCompile}
     />
   );
-}
+});
 
-function TerrainMaterial({
+const TerrainMaterial = memo(function TerrainMaterial({
   displacementMap,
   visibilityMask,
   textureNames,
@@ -170,7 +170,7 @@ function TerrainMaterial({
       />
     </Suspense>
   );
-}
+});
 
 export const TerrainTile = memo(function TerrainTile({
   tileX,

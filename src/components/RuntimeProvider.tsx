@@ -1,18 +1,18 @@
 import { createContext, ReactNode, useContext } from "react";
 import type { TorqueRuntime } from "../torqueScript";
-import { TickProvider } from "./TickProvider";
+
 
 const RuntimeContext = createContext<TorqueRuntime | null>(null);
 
-interface RuntimeProviderProps {
+export interface RuntimeProviderProps {
   runtime: TorqueRuntime;
-  children: ReactNode;
+  children?: ReactNode;
 }
 
 export function RuntimeProvider({ runtime, children }: RuntimeProviderProps) {
   return (
     <RuntimeContext.Provider value={runtime}>
-      <TickProvider>{children}</TickProvider>
+      {children}
     </RuntimeContext.Provider>
   );
 }

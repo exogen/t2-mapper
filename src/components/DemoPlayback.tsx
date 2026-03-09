@@ -1,9 +1,9 @@
-import { useDemoRecording } from "./DemoProvider";
-import { StreamingDemoPlayback } from "./DemoPlaybackStreaming";
+import { useRecording } from "./RecordingProvider";
+import { DemoPlaybackController } from "./DemoPlaybackController";
 
 export function DemoPlayback() {
-  const recording = useDemoRecording();
+  const recording = useRecording();
 
   if (!recording) return null;
-  return <StreamingDemoPlayback recording={recording} />;
+  return <DemoPlaybackController recording={recording} />;
 }

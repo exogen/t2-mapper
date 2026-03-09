@@ -7,6 +7,7 @@ import type { TorqueRuntime } from "./types";
  */
 export type SequenceAliasMap = Map<string, Map<string, string>>;
 
+
 /**
  * Build sequence alias maps from TSShapeConstructor datablocks already
  * registered in the runtime. Each datablock has `baseshape` and
@@ -63,6 +64,7 @@ export function buildSequenceAliasMap(runtime: TorqueRuntime): SequenceAliasMap 
 
   return result;
 }
+
 
 /**
  * Build a case-insensitive action map from GLB clips, augmented with

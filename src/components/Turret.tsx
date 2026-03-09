@@ -4,20 +4,16 @@ import { getPosition, getProperty, getRotation, getScale } from "../mission";
 import { ShapeRenderer } from "./GenericShape";
 import { ShapeInfoProvider } from "./ShapeInfoProvider";
 import { useDatablock } from "./useDatablock";
-
 export function Turret({ object }: { object: TorqueObject }) {
   const datablockName = getProperty(object, "dataBlock") ?? "";
   const barrelDatablockName = getProperty(object, "initialBarrel");
   const datablock = useDatablock(datablockName);
   const barrelDatablock = useDatablock(barrelDatablockName);
-
   const position = useMemo(() => getPosition(object), [object]);
   const q = useMemo(() => getRotation(object), [object]);
   const scale = useMemo(() => getScale(object), [object]);
-
   const shapeName = getProperty(datablock, "shapeFile");
   const barrelShapeName = getProperty(barrelDatablock, "shapeFile");
-
   if (!shapeName) {
     console.error(`<Turret> missing shape for datablock: ${datablockName}`);
   }
@@ -28,7 +24,6 @@ export function Turret({ object }: { object: TorqueObject }) {
       `<Turret> missing shape for barrel datablock: ${barrelDatablockName}`,
     );
   }
-
   return (
     <ShapeInfoProvider type="Turret" object={object} shapeName={shapeName}>
       <group position={position} quaternion={q} scale={scale}>

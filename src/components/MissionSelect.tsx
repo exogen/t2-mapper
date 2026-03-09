@@ -274,7 +274,7 @@ export function MissionSelect({
           onFocus={() => {
             try {
               document.exitPointerLock();
-            } catch {}
+            } catch  { /* expected */ }
             combobox.show();
           }}
           onKeyDown={(e) => {

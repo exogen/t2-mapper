@@ -15,8 +15,7 @@ import {
   Group,
 } from "three";
 import { loadDetailMapList, textureToUrl } from "../loaders";
-import type { TorqueObject } from "../torqueScript";
-import { getFloat, getProperty } from "../mission";
+import type { SceneSky } from "../scene/types";
 import { useDebug, useSettings } from "./SettingsProvider";
 
 const noop = () => {};
@@ -460,43 +459,29 @@ function useDetailMapList(name: string | undefined) {
 }
 
 export interface CloudLayersProps {
-  object: TorqueObject;
+  scene: SceneSky;
 }
 
 /**
  * CloudLayers component renders multiple cloud layers as domed meshes.
  * Matches the Tribes 2 cloud rendering system.
- *
- * Reads from TorqueObject:
- * - materialList: DML file containing cloud textures at indices 7+
- * - cloudSpeed1/2/3: Speed for each cloud layer
- * - cloudHeightPer0/1/2: Height percentage for each layer
- * - windVelocity: Wind direction for cloud movement
  */
-export function CloudLayers({ object }: CloudLayersProps) {
-  const materialList = getProperty(object, "materialList");
+export function CloudLayers({ scene }: CloudLayersProps) {
+  const materialList = scene.materialList || undefined;
   const { data: detailMapList } = useDetailMapList(materialList);
 
   // From Tribes 2 sky.cc line 1170: mRadius = visibleDistance * 0.95
-  const visibleDistance = getFloat(object, "visibleDistance") ?? 500;
+  const visibleDistance = scene.visibleDistance > 0 ? scene.visibleDistance : 500;
   const radius = visibleDistance * 0.95;
 
   const cloudSpeeds = useMemo(
-    () => [
-      getFloat(object, "cloudSpeed1") ?? 0.0001,
-      getFloat(object, "cloudSpeed2") ?? 0.0002,
-      getFloat(object, "cloudSpeed3") ?? 0.0003,
-    ],
-    [object],
+    () => scene.cloudLayers.map((l, i) => l.speed || [0.0001, 0.0002, 0.0003][i]),
+    [scene.cloudLayers],
   );
 
   const cloudHeights = useMemo(
-    () => [
-      getFloat(object, "cloudHeightPer1") ?? 0.35,
-      getFloat(object, "cloudHeightPer2") ?? 0.25,
-      getFloat(object, "cloudHeightPer3") ?? 0.2,
-    ],
-    [object],
+    () => scene.cloudLayers.map((l, i) => l.heightPercent || [0.35, 0.25, 0.2][i]),
+    [scene.cloudLayers],
   );
 
   // Wind direction from windVelocity
@@ -504,16 +489,13 @@ export function CloudLayers({ object }: CloudLayersProps) {
   // Our cloud geometry has UV U along world X, UV V along world Z.
   // Rotate 90 degrees clockwise to match Torque's coordinate system.
   const windDirection = useMemo(() => {
-    const windVelocity = getProperty(object, "windVelocity");
-    if (windVelocity) {
-      const [x, y] = windVelocity.split(" ").map((s: string) => parseFloat(s));
-      if (x !== 0 || y !== 0) {
-        // Rotate 90 degrees clockwise: (x, y) -> (y, -x)
-        return new Vector2(y, -x).normalize();
-      }
+    const { x, y } = scene.windVelocity;
+    if (x !== 0 || y !== 0) {
+      // Rotate 90 degrees clockwise: (x, y) -> (y, -x)
+      return new Vector2(y, -x).normalize();
     }
     return new Vector2(1, 0);
-  }, [object]);
+  }, [scene.windVelocity]);
 
   // Extract cloud layer configurations from DML (indices 7+)
   const layers = useMemo<CloudLayerConfig[]>(() => {

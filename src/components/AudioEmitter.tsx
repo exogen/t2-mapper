@@ -8,8 +8,6 @@ import {
   PositionalAudio,
   Vector3,
 } from "three";
-import type { TorqueObject } from "../torqueScript";
-import { getFloat, getInt, getPosition, getProperty } from "../mission";
 import { audioToUrl } from "../loaders";
 import { useAudio } from "./AudioContext";
 import { useDebug, useSettings } from "./SettingsProvider";
@@ -19,30 +17,49 @@ import { engineStore } from "../state";
 // Global audio buffer cache shared across all audio components.
 export const audioBufferCache = new Map<string, AudioBuffer>();
 
-// ── Demo sound rate tracking ──
-// Track active demo sounds so their playbackRate can be updated when the
-// playback rate changes (e.g. slow-motion or fast-forward).
-// Maps each sound to its intrinsic pitch (1.0 for normal sounds, or the
-// voice pitch multiplier for chat sounds).
-const _activeDemoSounds = new Map<Audio<GainNode | PannerNode>, number>();
+// Track active sounds so their playbackRate can be updated when the playback
+// rate changes (e.g. slow-motion or fast-forward). Maps each sound to its
+// intrinsic pitch (1.0 for normal, or the voice pitch multiplier for chat).
+const _activeSounds = new Map<Audio<GainNode | PannerNode>, number>();
 
-/** Register a sound for automatic playback rate tracking. */
-export function trackDemoSound(
+/** Register a sound for automatic playback rate tracking during streaming. */
+export function trackSound(
   sound: Audio<GainNode | PannerNode>,
   basePitch = 1,
 ): void {
-  _activeDemoSounds.set(sound, basePitch);
+  _activeSounds.set(sound, basePitch);
 }
 
-/** Unregister a tracked demo sound. */
-export function untrackDemoSound(sound: Audio<GainNode | PannerNode>): void {
-  _activeDemoSounds.delete(sound);
+/** Unregister a tracked sound. */
+export function untrackSound(sound: Audio<GainNode | PannerNode>): void {
+  _activeSounds.delete(sound);
+}
+
+/**
+ * Generation counter incremented on each stopAllTrackedSounds() call.
+ * Async sound callbacks check this to avoid playing after teardown.
+ */
+let _soundGeneration = 0;
+
+/** Current sound generation — capture before async work, check on completion. */
+export function getSoundGeneration(): number {
+  return _soundGeneration;
+}
+
+/** Stop and unregister all tracked sounds. Called on recording change. */
+export function stopAllTrackedSounds(): void {
+  _soundGeneration++;
+  for (const [sound] of _activeSounds) {
+    try { sound.stop(); } catch { /* already stopped */ }
+    try { sound.disconnect(); } catch { /* already disconnected */ }
+  }
+  _activeSounds.clear();
 }
 
 engineStore.subscribe(
   (state) => state.playback.rate,
   (rate) => {
-    for (const [sound, basePitch] of _activeDemoSounds) {
+    for (const [sound, basePitch] of _activeSounds) {
       try {
         sound.setPlaybackRate(basePitch * rate);
       } catch {
@@ -108,7 +125,9 @@ export function playOneShotSound(
     return;
   }
   const rate = engineStore.getState().playback.rate;
+  const gen = _soundGeneration;
   getCachedAudioBuffer(url, audioLoader, (buffer) => {
+    if (gen !== _soundGeneration) return;
     try {
       if (resolved.is3D && parent) {
         const sound = new PositionalAudio(audioListener);
@@ -125,11 +144,11 @@ export function playOneShotSound(
           sound.position.copy(position);
         }
         parent.add(sound);
-        _activeDemoSounds.set(sound, 1);
+        _activeSounds.set(sound, 1);
         sound.play();
         sound.source!.onended = () => {
-          _activeDemoSounds.delete(sound);
-          sound.disconnect();
+          _activeSounds.delete(sound);
+          try { sound.disconnect(); } catch { /* already disconnected */ }
           parent.remove(sound);
         };
       } else {
@@ -137,11 +156,11 @@ export function playOneShotSound(
         sound.setBuffer(buffer);
         sound.setVolume(resolved.volume);
         sound.setPlaybackRate(rate);
-        _activeDemoSounds.set(sound, 1);
+        _activeSounds.set(sound, 1);
         sound.play();
         sound.source!.onended = () => {
-          _activeDemoSounds.delete(sound);
-          sound.disconnect();
+          _activeSounds.delete(sound);
+          try { sound.disconnect(); } catch { /* already disconnected */ }
         };
       }
     } catch {
@@ -173,39 +192,61 @@ export function getCachedAudioBuffer(
 }
 
 export const AudioEmitter = memo(function AudioEmitter({
-  object,
+  entity,
 }: {
-  object: TorqueObject;
+  entity: {
+    audioFileName?: string;
+    audioVolume?: number;
+    audioMinDistance?: number;
+    audioMaxDistance?: number;
+    audioMinLoopGap?: number;
+    audioMaxLoopGap?: number;
+    audioIs3D?: boolean;
+    audioIsLooping?: boolean;
+    position?: [number, number, number];
+  };
 }) {
   const { debugMode } = useDebug();
-  const fileName = getProperty(object, "fileName") ?? "";
-  const volume = getFloat(object, "volume") ?? 1;
-  const minDistance = getFloat(object, "minDistance") ?? 1;
-  const maxDistance = getFloat(object, "maxDistance") ?? 1;
-  const minLoopGap = getFloat(object, "minLoopGap") ?? 0;
-  const maxLoopGap = getFloat(object, "maxLoopGap") ?? 0;
-  const is3D = getInt(object, "is3D") ?? 0;
+  const fileName = entity.audioFileName ?? "";
+  const volume = entity.audioVolume ?? 1;
+  const minDistance = entity.audioMinDistance ?? 1;
+  const maxDistance = entity.audioMaxDistance ?? 1;
+  const minLoopGap = entity.audioMinLoopGap ?? 0;
+  const maxLoopGap = entity.audioMaxLoopGap ?? 0;
+  const is3D = (entity.audioIs3D ?? true) ? 1 : 0;
+  const isLooping = entity.audioIsLooping ?? true;
 
-  const [x, y, z] = getPosition(object);
+  const [x, y, z] = entity.position ?? [0, 0, 0];
   const { scene, camera } = useThree();
   const { audioLoader, audioListener } = useAudio();
   const { audioEnabled } = useSettings();
 
   const soundRef = useRef<Audio<GainNode | PannerNode> | null>(null);
-  const loopTimerRef = useRef<NodeJS.Timeout | null>(null);
-  const loopGapIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const loopTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const loopGapIntervalRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isLoadedRef = useRef(false);
   const isInRangeRef = useRef(false);
   const emitterPosRef = useRef(new Vector3(x, y, z));
+  // Generation counter: incremented when the sound object is recreated so
+  // that stale setTimeout callbacks from a previous sound are discarded.
+  const generationRef = useRef(0);
 
   const clearTimers = () => {
-    if (loopTimerRef.current) clearTimeout(loopTimerRef.current);
-    if (loopGapIntervalRef.current) clearTimeout(loopGapIntervalRef.current);
+    if (loopTimerRef.current != null) {
+      clearTimeout(loopTimerRef.current);
+      loopTimerRef.current = null;
+    }
+    if (loopGapIntervalRef.current != null) {
+      clearTimeout(loopGapIntervalRef.current);
+      loopGapIntervalRef.current = null;
+    }
   };
 
   // Create sound object on mount.
   useEffect(() => {
     if (!audioLoader || !audioListener) return;
+
+    generationRef.current++;
 
     let sound: Audio<GainNode | PannerNode>;
     if (is3D) {
@@ -227,9 +268,10 @@ export const AudioEmitter = memo(function AudioEmitter({
 
     return () => {
       clearTimers();
-      try { sound.stop(); } catch {}
-      sound.disconnect();
+      try { sound.stop(); } catch { /* already stopped */ }
+      try { sound.disconnect(); } catch { /* already disconnected */ }
       if (is3D) scene.remove(sound);
+      soundRef.current = null;
       isLoadedRef.current = false;
       isInRangeRef.current = false;
     };
@@ -243,8 +285,10 @@ export const AudioEmitter = memo(function AudioEmitter({
     scene,
   ]);
 
-  // Setup looping logic (only called when audio loads).
-  const setupLooping = (sound: Audio<GainNode | PannerNode>) => {
+  // Setup looping logic (only called from effects/timers, never during render).
+  const setupLooping = (sound: Audio<GainNode | PannerNode>, gen: number) => {
+    if (!isLooping) return;
+
     if (minLoopGap > 0 || maxLoopGap > 0) {
       const gapMin = Math.max(0, minLoopGap);
       const gapMax = Math.max(gapMin, maxLoopGap);
@@ -254,12 +298,15 @@ export const AudioEmitter = memo(function AudioEmitter({
       sound.loop = false;
 
       const checkLoop = () => {
+        // Discard callbacks from a previous sound generation.
+        if (gen !== generationRef.current) return;
         if (sound.isPlaying === false) {
           loopTimerRef.current = setTimeout(() => {
+            if (gen !== generationRef.current) return;
             try {
               sound.play();
-              setupLooping(sound);
-            } catch {}
+              setupLooping(sound, gen);
+            } catch { /* expected */ }
           }, gap);
         } else {
           loopGapIntervalRef.current = setTimeout(checkLoop, 100);
@@ -273,25 +320,33 @@ export const AudioEmitter = memo(function AudioEmitter({
 
   // Load and play audio. For 3D, gated by proximity; for 2D, plays immediately.
   const loadAndPlay = (sound: Audio<GainNode | PannerNode>) => {
+    if (!audioLoader) return;
+    const gen = generationRef.current;
     if (!isLoadedRef.current) {
-      const audioUrl = audioToUrl(fileName);
+      let audioUrl: string;
+      try {
+        audioUrl = audioToUrl(fileName);
+      } catch {
+        return;
+      }
       getCachedAudioBuffer(audioUrl, audioLoader, (audioBuffer) => {
+        if (gen !== generationRef.current) return;
         if (!sound.buffer) {
           sound.setBuffer(audioBuffer);
           isLoadedRef.current = true;
           try {
             sound.play();
-            setupLooping(sound);
-          } catch {}
+            setupLooping(sound, gen);
+          } catch { /* expected */ }
         }
       });
     } else {
       try {
         if (!sound.isPlaying) {
           sound.play();
-          setupLooping(sound);
+          setupLooping(sound, gen);
         }
-      } catch {}
+      } catch { /* expected */ }
     }
   };
 
@@ -318,18 +373,19 @@ export const AudioEmitter = memo(function AudioEmitter({
     } else if (!isNowInRange && wasInRange) {
       isInRangeRef.current = false;
       clearTimers();
-      try { sound.stop(); } catch {}
+      try { sound.stop(); } catch { /* expected */ }
     }
   });
 
-  // Stop audio if disabled.
+  // Stop audio if disabled; reset range state so re-enabling triggers playback.
   useEffect(() => {
     const sound = soundRef.current;
     if (!sound) return;
 
     if (!audioEnabled) {
       clearTimers();
-      try { sound.stop(); } catch {}
+      try { sound.stop(); } catch { /* expected */ }
+      isInRangeRef.current = false;
     }
   }, [audioEnabled]);
 

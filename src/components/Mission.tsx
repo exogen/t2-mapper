@@ -3,7 +3,6 @@ import picomatch from "picomatch";
 import { loadMission } from "../loaders";
 import { type ParsedMission } from "../mission";
 import { createScriptLoader } from "../torqueScript/scriptLoader.browser";
-import { SimObject } from "./SimObject";
 import { memo, useEffect, useMemo, useState } from "react";
 import { RuntimeProvider } from "./RuntimeProvider";
 import {
@@ -11,7 +10,6 @@ import {
   createScriptCache,
   FileSystemHandler,
   runServer,
-  TorqueObject,
   TorqueRuntime,
 } from "../torqueScript";
 import {
@@ -21,8 +19,9 @@ import {
   getSourceAndPath,
 } from "../manifest";
 import { MissionProvider } from "./MissionContext";
-import { engineStore } from "../state";
+import { engineStore, gameEntityStore } from "../state";
 import { ignoreScripts } from "../torqueScript/ignoreScripts";
+import { walkMissionTree } from "../stream/missionEntityBridge";
 
 const loadScript = createScriptLoader();
 // Shared cache for parsed scripts - survives runtime restarts
@@ -52,7 +51,7 @@ function useParsedMission(name: string) {
 }
 
 interface ExecutedMissionState {
-  missionGroup: TorqueObject | undefined;
+  ready: boolean;
   runtime: TorqueRuntime | undefined;
   progress: number;
 }
@@ -63,7 +62,7 @@ function useExecutedMission(
   parsedMission: ParsedMission | undefined,
 ): ExecutedMissionState {
   const [state, setState] = useState<ExecutedMissionState>({
-    missionGroup: undefined,
+    ready: false,
     runtime: undefined,
     progress: 0,
   });
@@ -105,7 +104,11 @@ function useExecutedMission(
         // Refresh the reactive runtime snapshot at mission-ready time.
         engineStore.getState().setRuntime(runtime);
         const missionGroup = runtime.getObjectByName("MissionGroup");
-        setState({ missionGroup, runtime, progress: 1 });
+        if (missionGroup) {
+          const gameEntities = walkMissionTree(missionGroup, runtime);
+          gameEntityStore.getState().setAllEntities(gameEntities);
+        }
+        setState({ ready: true, runtime, progress: 1 });
       })
       .catch((err) => {
         if (err instanceof Error && err.name === "AbortError") {
@@ -134,6 +137,7 @@ function useExecutedMission(
       controller.abort();
       unsubscribeRuntimeEvents?.();
       engineStore.getState().clearRuntime();
+      gameEntityStore.getState().clearEntities();
       runtime.destroy();
     };
   }, [missionName, missionType, parsedMission]);
@@ -154,20 +158,19 @@ export const Mission = memo(function Mission({
 }: MissionProps) {
   const { data: parsedMission } = useParsedMission(name);
 
-  const { missionGroup, runtime, progress } = useExecutedMission(
+  const { ready, runtime, progress } = useExecutedMission(
     name,
     missionType,
     parsedMission,
   );
-  const isLoading = !parsedMission || !missionGroup || !runtime;
+  const isLoading = !parsedMission || !ready || !runtime;
 
   const missionContext = useMemo(
     () => ({
       metadata: parsedMission,
       missionType,
-      missionGroup,
     }),
-    [parsedMission, missionType, missionGroup],
+    [parsedMission, missionType],
   );
 
   useEffect(() => {
@@ -180,9 +183,7 @@ export const Mission = memo(function Mission({
 
   return (
     <MissionProvider value={missionContext}>
-      <RuntimeProvider runtime={runtime}>
-        <SimObject object={missionGroup} />
-      </RuntimeProvider>
+      <RuntimeProvider runtime={runtime} />
     </MissionProvider>
   );
 });

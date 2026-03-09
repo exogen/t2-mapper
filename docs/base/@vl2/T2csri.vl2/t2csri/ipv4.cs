@@ -1,5 +1,6 @@
 // Tribes 2 Unofficial Authentication System
 // http://www.tribesnext.com/
+// Written by Electricutioner/Thyth
 // Copyright 2008 by Electricutioner/Thyth and the Tribes 2 Community System Reengineering Intitiative
 
 // IPv4 Utils Version 1.1 (03/26/2008)
@@ -10,7 +11,7 @@
 // when the game launches, so there shouldn't be more than a
 // couple of hundred hits per day from the entire T2 community.
 
-$IPv4::AutomationURL = "/whatismyip";
+$IPv4::AutomationURL = "/whatismyip.php";
 
 function ipv4_getInetAddress()
 {
@@ -22,20 +23,20 @@ function ipv4_getInetAddress()
 		IPv4Connection.disconnect();
 		IPv4Connection.delete();
 	}
+	new TCPObject(IPv4Connection);
+	IPV4Connection.data = "GET " @ $IPv4::AutomationURL @ " HTTP/1.1\r\nHost: www.tribesnext.com\r\nUser-Agent: Tribes 2\r\nConnection: close\r\n\r\n";
+	IPv4Connection.connect("www.tribesnext.com:80");
+}
 
-	new HTTPObject(IPv4Connection)
-	{
-		enableIPv6 = false;
-	};
-
-	IPv4Connection.get("master.tribesnext.com", $IPv4::AutomationURL);
+function IPv4Connection::onConnected(%this)
+{
+	%this.send(%this.data);
 }
 
 function IPv4Connection::onLine(%this, %line)
 {
 	if (%line $= "" || %line == 0)
 		return;
-
 	$IPv4::InetAddress = %line;
 	%this.disconnect();
 }
@@ -93,12 +94,13 @@ function ipv4_reasonableConnection(%source, %destination)
 	}
 }
 
+
 // convert a (big endian) hex block into a numeric IP
 function ipv4_hexBlockToIP(%hex)
 {
 	for (%i = 0; %i < 4; %i++)
 	{
-		%ip = %ip @ "." @ ord(collapseEscape("\\x" @ getSubStr(%hex, %i * 2, 2)));
+		%ip = %ip @ "." @ strcmp(collapseEscape("\\x" @ getSubStr(%hex, %i * 2, 2)), "");
 	}
 	return getSubStr(%ip, 1, strlen(%ip) - 1);
 }
