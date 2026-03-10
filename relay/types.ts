@@ -1,7 +1,7 @@
 /** Messages from browser client to relay server. */
 export type ClientMessage =
   | { type: "listServers" }
-  | { type: "joinServer"; address: string }
+  | { type: "joinServer"; address: string; warriorName?: string }
   | { type: "disconnect" }
   | { type: "sendMove"; move: ClientMove }
   | { type: "sendCommand"; command: string; args: string[] }

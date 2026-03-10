@@ -48,6 +48,9 @@ function mutateRenderFields(
       const e = renderEntity as unknown as Record<string, unknown>;
       e.threads = stream.threads;
       e.weaponShape = stream.weaponShape;
+      e.packShape = stream.packShape;
+      e.falling = stream.falling;
+      e.jetting = stream.jetting;
       e.weaponImageState = stream.weaponImageState;
       e.weaponImageStates = stream.weaponImageStates;
       e.playerName = stream.playerName;
@@ -96,7 +99,7 @@ const _orbitDir = new Vector3();
 const _orbitTarget = new Vector3();
 const _orbitCandidate = new Vector3();
 
-export function DemoPlaybackController({ recording }: { recording: StreamRecording }) {
+export function StreamingController({ recording }: { recording: StreamRecording }) {
   const engineStore = useEngineStoreApi();
   const playbackClockRef = useRef(0);
   const prevTickSnapshotRef = useRef<StreamSnapshot | null>(null);
@@ -235,7 +238,13 @@ export function DemoPlaybackController({ recording }: { recording: StreamRecordi
       return;
     }
 
-    stream.reset();
+    // Reset the stream cursor for demo playback (replay from the beginning).
+    // For live streams, skip reset — the adapter is already receiving packets
+    // and has accumulated protocol state (net strings, target info, sensor
+    // group colors) that the server won't re-send.
+    if (recording.source !== "live") {
+      stream.reset();
+    }
     // Preload weapon effect shapes (explosions) so they're cached before
     // the first projectile detonates -- otherwise the GLB fetch latency
     // causes the short-lived explosion entity to expire before it renders.
@@ -354,7 +363,7 @@ export function DemoPlaybackController({ recording }: { recording: StreamRecordi
     // ObserverControls drives the camera instead.
     const freeFly = streamPlaybackStore.getState().freeFlyCamera;
     // In live mode, LiveObserver owns camera rotation (client-side prediction).
-    // DemoPlaybackController still handles position, FOV, and entity interpolation.
+    // StreamingController still handles position, FOV, and entity interpolation.
     const isLive = recording.source === "live";
 
     if (currentCamera && !freeFly) {
@@ -388,7 +397,6 @@ export function DemoPlaybackController({ recording }: { recording: StreamRecordi
       }
 
       if (
-        !isLive &&
         Number.isFinite(currentCamera.fov) &&
         "isPerspectiveCamera" in state.camera &&
         (state.camera as any).isPerspectiveCamera
@@ -476,6 +484,8 @@ export function DemoPlaybackController({ recording }: { recording: StreamRecordi
     }
 
     const mode = currentCamera?.mode;
+    // In live mode, LiveObserver handles orbit positioning from predicted
+    // angles so the orbit responds at frame rate. Skip here to avoid fighting.
     if (!freeFly && !isLive && mode === "third-person" && root && currentCamera?.orbitTargetId) {
       const targetGroup = root.children.find(
         (child) => child.name === currentCamera.orbitTargetId,
@@ -490,7 +500,16 @@ export function DemoPlaybackController({ recording }: { recording: StreamRecordi
         }
 
         let hasDirection = false;
-        if (
+        if (currentCamera.orbitDirection) {
+          // Use explicit pullback direction (e.g. from full vehicle quaternion
+          // including roll) when available.
+          _orbitDir.set(
+            currentCamera.orbitDirection[0],
+            currentCamera.orbitDirection[1],
+            currentCamera.orbitDirection[2],
+          );
+          hasDirection = _orbitDir.lengthSq() > 1e-8;
+        } else if (
           typeof currentCamera.yaw === "number" &&
           typeof currentCamera.pitch === "number"
         ) {
@@ -498,10 +517,10 @@ export function DemoPlaybackController({ recording }: { recording: StreamRecordi
           const cx = Math.cos(currentCamera.pitch);
           const sz = Math.sin(currentCamera.yaw);
           const cz = Math.cos(currentCamera.yaw);
-          // Camera::validateEyePoint uses Camera::setPosition's column1 in
-          // Torque space as the orbit pull-back direction. Converted to Three,
-          // that target->camera vector is (-cx, -sz*sx, -cz*sx).
-          _orbitDir.set(-cx, -sz * sx, -cz * sx);
+          // Pull back behind the model. playerYawToQuaternion uses Ry(-yaw),
+          // so model forward in Three.js is (cz, 0, sz) at pitch=0.
+          // Behind = (-cz*cx, -sx, -sz*cx).
+          _orbitDir.set(-cz * cx, -sx, -sz * cx);
           hasDirection = _orbitDir.lengthSq() > 1e-8;
         }
         if (!hasDirection) {

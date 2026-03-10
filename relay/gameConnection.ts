@@ -79,11 +79,15 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
   private smoothedPing = 0;
   private lastPingEmit = 0;
 
-  constructor(address: string) {
+  /** Warrior name to send in the ConnectRequest. */
+  private warriorName: string;
+
+  constructor(address: string, options?: { warriorName?: string }) {
     super();
     const [host, portStr] = address.split(":");
     this.host = host;
     this.port = parseInt(portStr, 10);
+    this.warriorName = options?.warriorName || "";
 
     // Wire up packet delivery notifications for event retransmission.
     this.protocol.onNotify = (packetSeq, acked) => {
@@ -316,7 +320,7 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
 
   /** Build the connection argv (name, race/gender, skin, voice, voicePitch). */
   private buildConnectArgv(): string[] {
-    const name = process.env.T2_ACCOUNT_NAME || "Observer";
+    const name = this.warriorName || process.env.T2_ACCOUNT_NAME || "Observer";
     return [
       name, // player name
       "Male Human", // race/gender

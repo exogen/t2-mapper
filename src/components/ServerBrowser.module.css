@@ -147,16 +147,49 @@
 
 .JoinButton {
   composes: DialogButton from "./DialogButton.module.css";
+  min-width: 100px;
 }
 
 .CloseButton {
   composes: Secondary from "./DialogButton.module.css";
 }
 
+.WarriorField {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.WarriorLabel {
+  font-size: 12px;
+  color: rgba(125, 255, 255, 0.6);
+  font-weight: 500;
+}
+
+.WarriorInput {
+  width: 130px;
+  padding: 4px 6px;
+  background: rgba(0, 50, 60, 0.8);
+  border: 1px solid rgba(65, 131, 139, 0.5);
+  border-radius: 2px;
+  color: #b0d5c9;
+  font-family: inherit;
+  font-size: 13px;
+  outline: none;
+}
+
+.WarriorInput:focus {
+  border-color: rgba(125, 255, 255, 0.6);
+}
+
+.WarriorInput::placeholder {
+  color: rgba(201, 220, 216, 0.3);
+}
+
 .Hint {
   font-size: 12px;
   color: rgba(201, 220, 216, 0.3);
-  margin-left: auto;
+  margin: 0 auto;
 }
 
 @media (max-width: 719px) {

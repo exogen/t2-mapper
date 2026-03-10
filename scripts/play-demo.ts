@@ -202,7 +202,7 @@ const sceneInfo = await page.evaluate(() => {
   // Check AnimationMixer state.
   let mixerInfo = "No mixer found";
   scene.traverse((obj: any) => {
-    // The root group of DemoPlayback is the direct parent of entity groups.
+    // The root group of StreamPlayback is the direct parent of entity groups.
     if (obj.children?.some((c: any) => c.name?.startsWith("player_"))) {
       // This is the root group. Check for active animations.
       const animations = (obj as any)._mixer;

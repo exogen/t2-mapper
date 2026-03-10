@@ -83,6 +83,31 @@ export function torqueQuatToThreeJS(q: {
   return [x * invLen, y * invLen, z * invLen, w * invLen];
 }
 
+/** Extract heading (yaw around Torque Z axis) from a Torque quaternion. */
+export function torqueQuatHeading(q: {
+  x: number;
+  y: number;
+  z: number;
+  w: number;
+}): number {
+  return Math.atan2(
+    2 * (q.w * q.z + q.x * q.y),
+    q.w * q.w + q.x * q.x - q.y * q.y - q.z * q.z,
+  );
+}
+
+/** Extract pitch (rotation around Torque X axis) from a Torque quaternion. */
+export function torqueQuatPitch(q: {
+  x: number;
+  y: number;
+  z: number;
+  w: number;
+}): number {
+  const sinp = 2 * (q.w * q.x - q.y * q.z);
+  // Clamp for numerical stability near poles.
+  return Math.asin(Math.max(-1, Math.min(1, sinp)));
+}
+
 // ── Position / type guards ──
 
 export function isValidPosition(

@@ -24,7 +24,10 @@ import {
 import { KeyboardControls } from "@react-three/drei";
 import { InspectorControls } from "@/src/components/InspectorControls";
 import { useTouchDevice } from "@/src/components/useTouchDevice";
-import { SettingsProvider } from "@/src/components/SettingsProvider";
+import {
+  SettingsProvider,
+  useSettings,
+} from "@/src/components/SettingsProvider";
 import { ObserverCamera } from "@/src/components/ObserverCamera";
 import { AudioProvider } from "@/src/components/AudioContext";
 import { DebugElements } from "@/src/components/DebugElements";
@@ -38,10 +41,8 @@ import { EntityScene } from "@/src/components/EntityScene";
 import { TickProvider } from "@/src/components/TickProvider";
 import { SceneLighting } from "@/src/components/SceneLighting";
 import { PlayerHUD } from "@/src/components/PlayerHUD";
-import {
-  LiveConnectionProvider,
-  useLiveConnection,
-} from "@/src/components/LiveConnection";
+import { LiveConnectionProvider } from "@/src/components/LiveConnection";
+import { useLiveSelector } from "@/src/state/liveConnectionStore";
 import { ServerBrowser } from "@/src/components/ServerBrowser";
 import {
   FeaturesProvider,
@@ -50,9 +51,9 @@ import {
 
 // Lazy-load demo and live streaming modules — they pull in heavy dependencies
 // (demo parser, streaming engine, particles) that aren't needed for mission-only mode.
-const DemoPlayback = lazy(() =>
-  import("@/src/components/DemoPlayback").then((mod) => ({
-    default: mod.DemoPlayback,
+const StreamPlayback = lazy(() =>
+  import("@/src/components/StreamPlayback").then((mod) => ({
+    default: mod.StreamPlayback,
   })),
 );
 const DemoPlaybackControls = lazy(() =>
@@ -152,7 +153,9 @@ function MapInspector() {
 
   const isTouch = useTouchDevice();
   const features = useFeatures();
-  const live = useLiveConnection();
+  const hasLiveAdapter = useLiveSelector((s) => s.adapter != null);
+  const liveReady = useLiveSelector((s) => s.liveReady);
+  const gameStatus = useLiveSelector((s) => s.gameStatus);
   const { missionName, missionType } = currentMission;
   const [mapInfoOpen, setMapInfoOpen] = useState(false);
   const [serverBrowserOpen, setServerBrowserOpen] = useState(false);
@@ -162,13 +165,13 @@ function MapInspector() {
   // During live join, show progress based on connection status.
   // Relay status order: connecting → challenging → authenticating → connected.
   // Once liveReady (first ghost arrives), loading is complete.
-  const liveLoadingProgress = live.adapter != null
-    ? live.liveReady
+  const liveLoadingProgress = hasLiveAdapter
+    ? liveReady
       ? 1
-      : live.gameStatus === "connected" ? 0.8
-      : live.gameStatus === "authenticating" ? 0.6
-      : live.gameStatus === "challenging" ? 0.3
-      : live.gameStatus === "connecting" ? 0.2
+      : gameStatus === "connected" ? 0.8
+      : gameStatus === "authenticating" ? 0.6
+      : gameStatus === "challenging" ? 0.3
+      : gameStatus === "connecting" ? 0.2
       : 0.1
     : null;
 
@@ -360,8 +363,8 @@ function MissionWhenIdle({
   onLoadingChange: (isLoading: boolean, progress?: number) => void;
 }) {
   const recording = useRecording();
-  const { adapter: liveAdapter } = useLiveConnection();
-  const isStreaming = recording != null || liveAdapter != null;
+  const hasLiveAdapter = useLiveSelector((s) => s.adapter != null);
+  const isStreaming = recording != null || hasLiveAdapter;
 
   if (isStreaming) return null;
 
@@ -377,7 +380,7 @@ function MissionWhenIdle({
 
 /**
  * In-Canvas components that depend on streaming mode. Mounts the appropriate
- * controller (DemoPlayback or LiveObserver) and disables observer controls
+ * controller (StreamPlayback or LiveObserver) and disables observer controls
  * during streaming.
  */
 function StreamingComponents({
@@ -394,8 +397,7 @@ function StreamingComponents({
   lookJoystickZoneRef: React.RefObject<HTMLDivElement | null>;
 }) {
   const recording = useRecording();
-  const live = useLiveConnection();
-  const isLive = live.adapter != null;
+  const isLive = useLiveSelector((s) => s.adapter != null);
   const isStreaming = recording != null || isLive;
 
   // Show ObserverControls for: non-streaming mode, OR live mode.
@@ -409,7 +411,7 @@ function StreamingComponents({
     <>
       {recording && (
         <Suspense fallback={null}>
-          <DemoPlayback />
+          <StreamPlayback />
         </Suspense>
       )}
       {isLive && (
@@ -441,16 +443,16 @@ function StreamingComponents({
 /** HUD overlay — shown during streaming (demo or live). */
 function StreamingHUD() {
   const recording = useRecording();
-  const live = useLiveConnection();
-  if (!recording && !live.adapter) return null;
-  return <PlayerHUD />;
+  const hasLiveAdapter = useLiveSelector((s) => s.adapter != null);
+  if (!recording && !hasLiveAdapter) return null;
+  return <PlayerHUD isLive={hasLiveAdapter} />;
 }
 
 /** Playback controls overlay — only shown during demo playback. */
 function StreamingOverlay() {
   const recording = useRecording();
-  const live = useLiveConnection();
-  if (!recording || live.adapter != null) return null;
+  const hasLiveAdapter = useLiveSelector((s) => s.adapter != null);
+  if (!recording || hasLiveAdapter) return null;
   return (
     <Suspense fallback={null}>
       <DemoPlaybackControls />
@@ -466,16 +468,29 @@ function ServerBrowserDialog({
   open: boolean;
   onClose: () => void;
 }) {
-  const live = useLiveConnection();
+  const servers = useLiveSelector((s) => s.servers);
+  const serversLoading = useLiveSelector((s) => s.serversLoading);
+  const browserToRelayPing = useLiveSelector((s) => s.browserToRelayPing);
+  const listServers = useLiveSelector((s) => s.listServers);
+  const joinServer = useLiveSelector((s) => s.joinServer);
+  const settings = useSettings();
+  const handleJoin = useCallback(
+    (address: string) => {
+      joinServer(address, settings?.warriorName);
+    },
+    [joinServer, settings?.warriorName],
+  );
   return (
     <ServerBrowser
       open={open}
       onClose={onClose}
-      servers={live.servers}
-      loading={live.serversLoading}
-      onRefresh={live.listServers}
-      onJoin={(address) => live.joinServer(address)}
-      wsPing={live.wsPing}
+      servers={servers}
+      loading={serversLoading}
+      onRefresh={listServers}
+      onJoin={handleJoin}
+      wsPing={browserToRelayPing}
+      warriorName={settings?.warriorName ?? ""}
+      onWarriorNameChange={(name) => settings?.setWarriorName(name)}
     />
   );
 }

@@ -10,7 +10,7 @@ import { CopyCoordinatesButton } from "./CopyCoordinatesButton";
 import { LoadDemoButton } from "./LoadDemoButton";
 import { JoinServerButton } from "./JoinServerButton";
 import { useRecording } from "./RecordingProvider";
-import { useLiveConnectionOptional } from "./LiveConnection";
+import { useLiveSelector } from "../state/liveConnectionStore";
 import { FiInfo, FiSettings } from "react-icons/fi";
 import { Camera } from "three";
 import styles from "./InspectorControls.module.css";
@@ -51,8 +51,7 @@ export function InspectorControls({
     useControls();
   const { debugMode, setDebugMode } = useDebug();
   const demoRecording = useRecording();
-  const live = useLiveConnectionOptional();
-  const isLive = live?.adapter != null;
+  const isLive = useLiveSelector((s) => s.adapter != null);
   const isStreaming = demoRecording != null || isLive;
   // Hide FOV/speed controls during .rec playback (faithfully replaying),
   // but show them in .mis browsing and live observer mode.

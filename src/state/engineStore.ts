@@ -311,7 +311,7 @@ export const engineStore = createStore<EngineStoreState>()(
 // Components use effectNow() instead of performance.now() so that effect
 // timers (explosions, particles, shockwaves, animation threads) automatically
 // pause when the demo is paused and speed up / slow down with the playback
-// rate. The DemoPlaybackController component calls advanceEffectClock()
+// rate. The StreamingController component calls advanceEffectClock()
 // once per frame.
 
 let _effectClockMs = 0;
@@ -327,7 +327,7 @@ export function effectNow(): number {
 
 /**
  * Advance the effect clock. Called once per frame from
- * DemoPlaybackController before other useFrame callbacks run.
+ * StreamingController before other useFrame callbacks run.
  */
 export function advanceEffectClock(deltaSec: number, rate: number): void {
   _effectClockMs += deltaSec * rate * 1000;

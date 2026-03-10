@@ -1,6 +1,8 @@
+import { useRef, useEffect, useState, useCallback } from "react";
 import { useRecording } from "./RecordingProvider";
 import { useEngineSelector } from "../state";
 import { textureToUrl } from "../loaders";
+import { liveConnectionStore } from "../state/liveConnectionStore";
 import type {
   ChatSegment,
   ChatMessage,
@@ -266,50 +268,72 @@ function chatColorClass(msg: ChatMessage): string {
   // byte color code, so the correct default for server messages is c0.
   return CHAT_COLOR_CLASSES[0];
 }
-function ChatWindow() {
+function ChatWindow({ isLive }: { isLive: boolean }) {
   const messages = useEngineSelector(
     (state) => state.playback.streamSnapshot?.chatMessages,
   );
-  const timeSec = useEngineSelector(
-    (state) => state.playback.streamSnapshot?.timeSec,
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const prevCountRef = useRef(0);
+  const [chatText, setChatText] = useState("");
+
+  // Auto-scroll to bottom when new messages arrive.
+  const msgCount = messages?.length ?? 0;
+  useEffect(() => {
+    if (msgCount > prevCountRef.current && scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    }
+    prevCountRef.current = msgCount;
+  }, [msgCount]);
+
+  const handleSubmit = useCallback(
+    (e: React.FormEvent) => {
+      e.preventDefault();
+      const text = chatText.trim();
+      if (!text) return;
+      liveConnectionStore.getState().sendCommand("messageSent", text);
+      setChatText("");
+    },
+    [chatText],
   );
-  if (!messages || !messages.length || timeSec == null) return null;
-  const fadeStart = 6;
-  const fadeDuration = 1.5;
-  const cutoff = timeSec - (fadeStart + fadeDuration);
-  const visible = messages.filter(
-    (m: ChatMessage) => m.timeSec > cutoff && m.text.trim() !== "",
-  );
-  if (!visible.length) return null;
+
+  const hasMessages = !!messages?.length;
+
   return (
-    <div className={styles.ChatWindow}>
-      {visible.map((msg: ChatMessage, i: number) => {
-        const age = timeSec - msg.timeSec;
-        const opacity =
-          age <= fadeStart
-            ? 1
-            : Math.max(0, 1 - (age - fadeStart) / fadeDuration);
-        return (
-          <div
-            key={`${msg.timeSec}-${i}`}
-            className={styles.ChatMessage}
-            style={{ opacity }}
-          >
-            {msg.segments ? (
-              msg.segments.map((seg: ChatSegment, j: number) => (
-                <span key={j} className={segmentColorClass(seg.colorCode)}>
-                  {seg.text}
+    <div className={styles.ChatContainer}>
+      {hasMessages && (
+        <div ref={scrollRef} className={styles.ChatWindow}>
+          {messages!.map((msg: ChatMessage, i: number) => (
+            <div key={msg.id} className={styles.ChatMessage}>
+              {msg.segments ? (
+                msg.segments.map((seg: ChatSegment, j: number) => (
+                  <span key={j} className={segmentColorClass(seg.colorCode)}>
+                    {seg.text}
+                  </span>
+                ))
+              ) : (
+                <span className={chatColorClass(msg)}>
+                  {msg.sender ? `${msg.sender}: ` : ""}
+                  {msg.text}
                 </span>
-              ))
-            ) : (
-              <span className={chatColorClass(msg)}>
-                {msg.sender ? `${msg.sender}: ` : ""}
-                {msg.text}
-              </span>
-            )}
-          </div>
-        );
-      })}
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+      {isLive && (
+        <form className={styles.ChatInputForm} onSubmit={handleSubmit}>
+          <input
+            className={styles.ChatInput}
+            type="text"
+            placeholder="Say something…"
+            value={chatText}
+            onChange={(e) => setChatText(e.target.value)}
+            onKeyDown={(e) => e.stopPropagation()}
+            onKeyUp={(e) => e.stopPropagation()}
+            maxLength={255}
+          />
+        </form>
+      )}
     </div>
   );
 }
@@ -434,28 +458,31 @@ function PackAndInventoryHUD() {
   );
 }
 // ── Main HUD ──
-export function PlayerHUD() {
+export function PlayerHUD({ isLive = false }: { isLive?: boolean } = {}) {
   const recording = useRecording();
   const streamSnapshot = useEngineSelector(
     (state) => state.playback.streamSnapshot,
   );
-  if (!recording) return null;
+  if (!recording && !isLive) return null;
   const status = streamSnapshot?.status;
-  if (!status) return null;
   return (
     <div className={styles.PlayerHUD}>
-      <ChatWindow />
-      <div className={styles.TopRight}>
-        <div className={styles.Bars}>
-          <HealthBar value={status.health} />
-          <EnergyBar value={status.energy} />
-        </div>
-        <Compass yaw={streamSnapshot?.camera?.yaw} />
-      </div>
-      <WeaponHUD />
-      <PackAndInventoryHUD />
-      <TeamScores />
-      <Reticle />
+      <ChatWindow isLive={isLive} />
+      {status && (
+        <>
+          <div className={styles.TopRight}>
+            <div className={styles.Bars}>
+              <HealthBar value={status.health} />
+              <EnergyBar value={status.energy} />
+            </div>
+            <Compass yaw={streamSnapshot?.camera?.yaw} />
+          </div>
+          <WeaponHUD />
+          <PackAndInventoryHUD />
+          <TeamScores />
+          <Reticle />
+        </>
+      )}
     </div>
   );
 }

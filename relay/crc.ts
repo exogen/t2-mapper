@@ -116,6 +116,8 @@ export async function computeGameCRC(
   let filesFound = 0;
   let filesMissing = 0;
 
+  const startTime = performance.now();
+
   console.log(
     `[crc] starting computation: seed=0x${(seed >>> 0).toString(16)}, ` +
     `${sorted.length} ShapeBaseData datablocks (of ${datablocks.length} total), ` +
@@ -166,9 +168,11 @@ export async function computeGameCRC(
 
   crc = (crc + totalSize) >>> 0;
 
+  const elapsed = performance.now() - startTime;
+
   console.log(
     `[crc] RESULT: ${filesFound} files CRC'd, ${filesMissing} missing, ` +
-    `crc=0x${crc.toString(16)}, totalSize=${totalSize}`,
+    `crc=0x${crc.toString(16)}, totalSize=${totalSize}, elapsed=${elapsed.toFixed(0)}ms`,
   );
 
   return { crc, totalSize };

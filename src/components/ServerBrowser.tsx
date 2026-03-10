@@ -9,6 +9,8 @@ export function ServerBrowser({
   onRefresh,
   onJoin,
   wsPing,
+  warriorName,
+  onWarriorNameChange,
 }: {
   open: boolean;
   onClose: () => void;
@@ -18,6 +20,8 @@ export function ServerBrowser({
   onJoin: (address: string) => void;
   /** Browser↔relay RTT to add to server pings for effective latency. */
   wsPing?: number | null;
+  warriorName: string;
+  onWarriorNameChange: (name: string) => void;
 }) {
   const [selectedAddress, setSelectedAddress] = useState<string | null>(null);
   const [sortKey, setSortKey] = useState<keyof ServerInfo>("ping");
@@ -176,6 +180,24 @@ export function ServerBrowser({
           </table>
         </div>
         <div className={styles.Footer}>
+          <div className={styles.WarriorField}>
+            <label className={styles.WarriorLabel} htmlFor="warriorName">
+              Warrior
+            </label>
+            <input
+              id="warriorName"
+              className={styles.WarriorInput}
+              type="text"
+              value={warriorName}
+              onChange={(e) => onWarriorNameChange(e.target.value)}
+              placeholder="Name thyself…"
+              maxLength={24}
+            />
+          </div>
+          <span className={styles.Hint}>Double-click a server to join</span>
+          <button onClick={onClose} className={styles.CloseButton}>
+            Cancel
+          </button>
           <button
             onClick={handleJoin}
             disabled={!selectedAddress}
@@ -183,10 +205,6 @@ export function ServerBrowser({
           >
             Join
           </button>
-          <button onClick={onClose} className={styles.CloseButton}>
-            Cancel
-          </button>
-          <span className={styles.Hint}>Double-click a server to join</span>
         </div>
       </div>
     </div>

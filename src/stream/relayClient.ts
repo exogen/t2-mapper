@@ -116,9 +116,9 @@ export class RelayClient {
   }
 
   /** Join a specific game server. */
-  joinServer(address: string): void {
+  joinServer(address: string, warriorName?: string): void {
     console.log("[relay] Joining server:", address);
-    this.send({ type: "joinServer", address });
+    this.send({ type: "joinServer", address, warriorName });
   }
 
   /** Disconnect from the current game server. */

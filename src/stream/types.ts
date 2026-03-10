@@ -130,6 +130,12 @@ export interface StreamEntity {
   weaponImageState?: WeaponImageState;
   /** Weapon image state machine states from the ShapeBaseImageData datablock. */
   weaponImageStates?: WeaponImageDataBlockState[];
+  /** DTS shape name for the mounted pack (slot 2, Mount1 bone). */
+  packShape?: string;
+  /** True when the player has no ground contact and is falling. */
+  falling?: boolean;
+  /** True when the player is using jetpack thrust. */
+  jetting?: boolean;
   /** Head pitch for blend animations, normalized [-1,1]. -1 = max down, 1 = max up. */
   headPitch?: number;
   /** Head yaw for blend animations (freelook), normalized [-1,1]. -1 = max right, 1 = max left. */
@@ -166,6 +172,8 @@ export interface StreamCamera {
   yaw?: number;
   /** Absolute control-object pitch in Torque radians (rotX/headX). */
   pitch?: number;
+  /** Explicit orbit pullback direction in Three.js space (overrides yaw/pitch). */
+  orbitDirection?: [number, number, number];
 }
 
 /** A colored text segment from inline \c color switching. */
@@ -176,6 +184,7 @@ export interface ChatSegment {
 }
 
 export interface ChatMessage {
+  id: number;
   timeSec: number;
   sender: string;
   text: string;

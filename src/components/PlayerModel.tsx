@@ -56,11 +56,11 @@ function getArmThread(weaponShape: string | undefined): string {
   return "lookde";
 }
 
-/** Number of table actions in the engine's ActionAnimationList. */
-const NUM_TABLE_ACTION_ANIMS = 7;
+/** Number of table actions in the engine's ActionAnimationList (Tribes2.exe build 25034). */
+const NUM_TABLE_ACTION_ANIMS = 8;
 
-/** Table action names in engine order (indices 0-6). */
-const TABLE_ACTION_NAMES = ["root", "run", "back", "side", "fall", "jump", "land"];
+/** Table action names in engine order (indices 0-7). */
+const TABLE_ACTION_NAMES = ["root", "run", "back", "side", "fall", "jet", "jump", "land"];
 
 
 interface ActionAnimEntry {
@@ -75,8 +75,8 @@ interface ActionAnimEntry {
  * TSShapeConstructor's sequence entries (e.g. `"heavy_male_root.dsq root"`).
  *
  * The engine builds its action list as:
- * 1. Table actions (0-6): found by searching for aliased names (root, run, etc.)
- * 2. Non-table actions (7+): remaining sequences in TSShapeConstructor order.
+ * 1. Table actions (0-7): found by searching for aliased names (root, run, etc.)
+ * 2. Non-table actions (8+): remaining sequences in TSShapeConstructor order.
  */
 function buildActionAnimMap(
   sequences: string[],
@@ -157,8 +157,8 @@ export function PlayerModel({ entity }: { entity: PlayerEntity }) {
       : undefined;
   });
 
-  // Clone scene preserving skeleton bindings, create mixer, find Mount0 bone.
-  const { clonedScene, mixer, mount0, iflInitializers } = useMemo(() => {
+  // Clone scene preserving skeleton bindings, create mixer, find mount bones.
+  const { clonedScene, mixer, mount0, mount1, iflInitializers } = useMemo(() => {
     const scene = SkeletonUtils.clone(gltf.scene) as Group;
     const iflInits = processShapeScene(scene);
 
@@ -174,11 +174,13 @@ export function PlayerModel({ entity }: { entity: PlayerEntity }) {
     const mix = new AnimationMixer(scene);
 
     let m0: Object3D | null = null;
+    let m1: Object3D | null = null;
     scene.traverse((n) => {
       if (!m0 && n.name === "Mount0") m0 = n;
+      if (!m1 && n.name === "Mount1") m1 = n;
     });
 
-    return { clonedScene: scene, mixer: mix, mount0: m0, iflInitializers: iflInits };
+    return { clonedScene: scene, mixer: mix, mount0: m0, mount1: m1, iflInitializers: iflInits };
   }, [gltf]);
 
   // Build case-insensitive clip lookup with alias support.
@@ -314,12 +316,18 @@ export function PlayerModel({ entity }: { entity: PlayerEntity }) {
   const [currentWeaponShape, setCurrentWeaponShape] = useState(
     entity.weaponShape,
   );
+  const packShapeRef = useRef(entity.packShape);
+  const [currentPackShape, setCurrentPackShape] = useState(entity.packShape);
 
   // Per-frame animation selection and mixer update.
   useFrame((_, delta) => {
     if (entity.weaponShape !== weaponShapeRef.current) {
       weaponShapeRef.current = entity.weaponShape;
       setCurrentWeaponShape(entity.weaponShape);
+    }
+    if (entity.packShape !== packShapeRef.current) {
+      packShapeRef.current = entity.packShape;
+      setCurrentPackShape(entity.packShape);
     }
     const playback = engineStore.getState().playback;
     const isPlaying = playback.status === "playing";
@@ -430,6 +438,8 @@ export function PlayerModel({ entity }: { entity: PlayerEntity }) {
       const anim = pickMoveAnimation(
         kf?.velocity,
         kf?.rotation ?? [0, 0, 0, 1],
+        entity.falling,
+        entity.jetting,
       );
 
       const prev = currentAnimRef.current;
@@ -514,6 +524,16 @@ export function PlayerModel({ entity }: { entity: PlayerEntity }) {
               entity={entity}
               weaponShape={currentWeaponShape}
               mount0={mount0}
+            />
+          </Suspense>
+        </ShapeErrorBoundary>
+      )}
+      {currentPackShape && mount1 && (
+        <ShapeErrorBoundary key={currentPackShape} fallback={null}>
+          <Suspense fallback={null}>
+            <MountedPackModel
+              packShape={currentPackShape}
+              mountBone={mount1}
             />
           </Suspense>
         </ShapeErrorBoundary>
@@ -894,6 +914,61 @@ function applyWeaponAnim(
 
     currentAnimRef.current = targetName;
   }
+}
+
+/**
+ * Attaches a pack shape to the player's Mount1 bone. Packs are static
+ * mounted images (no state machine or animation) — just positioned via
+ * the pack shape's Mountpoint node inverse offset, same as weapons.
+ */
+function MountedPackModel({
+  packShape,
+  mountBone,
+}: {
+  packShape: string;
+  mountBone: Object3D;
+}) {
+  const packGltf = useStaticShape(packShape);
+
+  const { packClone, packIflInitializers } = useMemo(() => {
+    const clone = SkeletonUtils.clone(packGltf.scene) as Group;
+    const iflInits = processShapeScene(clone);
+
+    // Compute Mountpoint inverse offset so the pack aligns to Mount1.
+    const mp = getPosedNodeTransform(
+      packGltf.scene,
+      packGltf.animations,
+      "Mountpoint",
+    );
+    if (mp) {
+      const invQuat = mp.quaternion.clone().invert();
+      const invPos = mp.position.clone().negate().applyQuaternion(invQuat);
+      clone.position.copy(invPos);
+      clone.quaternion.copy(invQuat);
+    }
+
+    return { packClone: clone, packIflInitializers: iflInits };
+  }, [packGltf]);
+
+  useEffect(() => {
+    mountBone.add(packClone);
+    return () => {
+      mountBone.remove(packClone);
+    };
+  }, [packClone, mountBone]);
+
+  // Initialize IFL materials (animated texture sequences).
+  useEffect(() => {
+    const cleanups: (() => void)[] = [];
+    for (const { mesh, initialize } of packIflInitializers) {
+      initialize(mesh, () => streamPlaybackStore.getState().time)
+        .then((dispose) => cleanups.push(dispose))
+        .catch(() => {});
+    }
+    return () => cleanups.forEach((fn) => fn());
+  }, [packIflInitializers]);
+
+  return null;
 }
 
 /**

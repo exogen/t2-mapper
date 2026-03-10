@@ -139,6 +139,9 @@ export interface PlayerEntity extends PositionedBase {
   shapeName?: string;
   dataBlock?: string;
   weaponShape?: string;
+  packShape?: string;
+  falling?: boolean;
+  jetting?: boolean;
   playerName?: string;
   iffColor?: { r: number; g: number; b: number };
   threads?: ThreadState[];

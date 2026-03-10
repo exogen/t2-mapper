@@ -18,6 +18,9 @@ import {
   detectControlObjectType,
   parseColorSegments,
   backpackBitmapToIndex,
+  torqueQuatHeading,
+  torqueQuatPitch,
+  torqueQuatToThreeJS,
 } from "./streamHelpers";
 import type { Vec3 } from "./streamHelpers";
 import type {
@@ -276,6 +279,7 @@ class StreamingPlayback extends StreamEngine {
       parsedData?: Record<string, unknown>;
     }>;
     demoValues: string[];
+    firstPerson: boolean;
   };
   // Demo-specific: move delta tracking for V12-style camera rotation
   private moveTicks = 0;
@@ -326,6 +330,7 @@ class StreamingPlayback extends StreamEngine {
       taggedStrings: initial.taggedStrings,
       initialEvents: initial.initialEvents,
       demoValues: initial.demoValues,
+      firstPerson: initial.firstPerson,
     };
 
     this.reset();
@@ -368,7 +373,9 @@ class StreamingPlayback extends StreamEngine {
   protected getCameraYawPitch(
     _data: Record<string, unknown> | undefined,
   ): { yaw: number; pitch: number } {
-    const hasMoves = !this.isPiloting && this.lastControlType === "player";
+    // Move-derived angles are valid when the control object is a Player
+    // (including when piloting a vehicle — moves still drive the camera).
+    const hasMoves = this.lastControlType === "player";
     const yaw = hasMoves ? this.absoluteYaw : this.lastAbsYaw;
     const pitch = hasMoves ? this.absolutePitch : this.lastAbsPitch;
 
@@ -445,6 +452,7 @@ class StreamingPlayback extends StreamEngine {
     this.absolutePitch = 0;
     this.lastAbsYaw = 0;
     this.lastAbsPitch = 0;
+    this.firstPerson = this.initialBlock.firstPerson;
     this.lastControlType =
       detectControlObjectType(this.initialBlock.controlObjectData) ?? "player";
     this.isPiloting =
@@ -454,6 +462,31 @@ class StreamingPlayback extends StreamEngine {
             this.initialBlock.controlObjectData?.controlObjectGhost != null
           )
         : false;
+    this.lastPilotGhostIndex =
+      this.isPiloting &&
+      typeof this.initialBlock.controlObjectData?.controlObjectGhost === "number"
+        ? this.initialBlock.controlObjectData.controlObjectGhost
+        : undefined;
+    if (this.isPiloting) {
+      const nested = this.initialBlock.controlObjectData?.controlObjectData as
+        | Record<string, unknown>
+        | undefined;
+      const ang = nested?.angPosition as
+        | { x: number; y: number; z: number; w: number }
+        | undefined;
+      if (ang && typeof ang.w === "number") {
+        this.lastVehicleHeading = torqueQuatHeading(ang);
+        this.lastVehiclePitch = torqueQuatPitch(ang);
+        const threeQ = torqueQuatToThreeJS(ang);
+        if (threeQ) {
+          const [qx, qy, qz, qw] = threeQ;
+          const fx = 1 - 2 * (qy * qy + qz * qz);
+          const fy = 2 * (qx * qy + qz * qw);
+          const fz = 2 * (qx * qz - qy * qw);
+          this.lastVehicleOrbitDir = [-fx, -fy, -fz];
+        }
+      }
+    }
     this.lastCameraMode =
       this.lastControlType === "camera" &&
       typeof this.initialBlock.controlObjectData?.cameraMode === "number"
@@ -609,7 +642,7 @@ class StreamingPlayback extends StreamEngine {
       const isPlayerChat = hasChatColor && fullText.includes(": ");
       if (isPlayerChat) {
         const colonIdx = fullText.indexOf(": ");
-        this.chatMessages.push({
+        this.pushChatMessage({
           timeSec: 0,
           sender: fullText.slice(0, colonIdx),
           text: fullText.slice(colonIdx + 2),
@@ -618,7 +651,7 @@ class StreamingPlayback extends StreamEngine {
           segments,
         });
       } else {
-        this.chatMessages.push({
+        this.pushChatMessage({
           timeSec: 0,
           sender: "",
           text: fullText,
@@ -749,6 +782,10 @@ class StreamingPlayback extends StreamEngine {
 
       // Apply ghost rotation to absolute tracking. This must happen before
       // the next move delta so that our tracking stays calibrated to V12.
+      // During piloting, rotationZ/headX are relative to the vehicle (reset
+      // to 0 on mount). We still accept the reset so move deltas accumulate
+      // from the correct base; the vehicle heading offset is added later in
+      // updateCameraAndHud.
       const controlData = packet.gameState.controlObjectData;
       if (controlData) {
         const absRot = this.getAbsoluteRotation(controlData);
@@ -773,6 +810,9 @@ class StreamingPlayback extends StreamEngine {
     }
 
     if (block.type === BlockTypeInfo && this.isInfoData(block.parsed)) {
+      // InfoBlock: value1 byte 0 = $firstPerson flag, value2 = FOV.
+      // Verified against Tribes2.exe GameConnection::handleRecordedBlock.
+      this.firstPerson = (block.parsed.value1 & 0xff) !== 0;
       if (Number.isFinite(block.parsed.value2)) {
         this.latestFov = block.parsed.value2;
       }
@@ -919,10 +959,14 @@ class StreamingPlayback extends StreamEngine {
     return !!parsed && typeof parsed === "object" && "yaw" in parsed;
   }
 
-  private isInfoData(parsed: unknown): parsed is { value2: number } {
+  private isInfoData(
+    parsed: unknown,
+  ): parsed is { value1: number; value2: number } {
     return (
       !!parsed &&
       typeof parsed === "object" &&
+      "value1" in parsed &&
+      typeof (parsed as { value1?: unknown }).value1 === "number" &&
       "value2" in parsed &&
       typeof (parsed as { value2?: unknown }).value2 === "number"
     );

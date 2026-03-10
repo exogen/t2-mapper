@@ -2,7 +2,7 @@ import { useRef, useEffect } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
 import { Vector3 } from "three";
 import { useKeyboardControls } from "@react-three/drei";
-import { useLiveConnection } from "./LiveConnection";
+import { useLiveSelector } from "../state/liveConnectionStore";
 import { useEngineStoreApi } from "../state/engineStore";
 import { streamPlaybackStore } from "../state/streamPlaybackStore";
 import { Controls, MOUSE_SENSITIVITY, ARROW_LOOK_SPEED } from "./ObserverControls";
@@ -44,7 +44,9 @@ interface PredictionState {
  * Tribes 2 client works (predict locally, correct from server).
  */
 export function LiveObserver() {
-  const { adapter, gameStatus, sendMove } = useLiveConnection();
+  const adapter = useLiveSelector((s) => s.adapter);
+  const gameStatus = useLiveSelector((s) => s.gameStatus);
+  const sendMove = useLiveSelector((s) => s.sendMove);
   const store = useEngineStoreApi();
   const { speedMultiplier } = useControls();
   const activeAdapterRef = useRef<LiveStreamAdapter | null>(null);
@@ -131,11 +133,13 @@ export function LiveObserver() {
     };
   }, [gl.domElement]);
 
-  // Left-click when pointer-locked: enter follow mode (from fly) or cycle
-  // to next player (in follow). Capture phase intercepts before ObserverControls.
+  // Left-click when pointer-locked in follow mode: cycle to next player.
+  // Only intercepts in follow mode — in fly mode, clicks pass through to
+  // ObserverControls for pointer lock acquisition.
   useEffect(() => {
     const handleClick = (e: MouseEvent) => {
       if (!document.pointerLockElement || !activeAdapterRef.current) return;
+      if (activeAdapterRef.current.observerMode !== "follow") return;
       e.stopImmediatePropagation();
       activeAdapterRef.current.cycleObserveNext();
     };
@@ -209,8 +213,11 @@ export function LiveObserver() {
     // Reset sub-tick accumulator for interpolation.
     tickAccRef.current = 0;
 
-    // Scale movement axes by speed multiplier. Values > 1 still clamp to
-    // [-1, 1] server-side, but < 1 lets the user move slower.
+    // Always set trigger[1] (altTrigger) to enable the server's 2× speed mode
+    // (80 u/s max). We use altTrigger instead of trigger[0] (fire) because the
+    // Observer::onTrigger script interprets fire as "join team" / "cycle player"
+    // depending on camera mode, but altTrigger is unhandled in all observer modes.
+    // The C++ Camera::processTick checks `trigger[0] || trigger[1]` for fast mode.
     const speed = Math.min(1, speedMultiplier);
     sendMove({
       x: mx * speed,
@@ -219,13 +226,13 @@ export function LiveObserver() {
       yaw,
       pitch,
       roll: 0,
-      trigger: [false, false, false, false, false, false],
+      trigger: [false, true, false, false, false, false],
       freeLook: false,
     });
   });
 
   // Override camera rotation with predicted values at frame rate.
-  // Priority 1 ensures this runs AFTER DemoPlaybackController (priority 0),
+  // Priority 1 ensures this runs AFTER StreamingController (priority 0),
   // which handles position from server snapshots.
   useFrame((state, delta) => {
     if (!activeAdapterRef.current || gameStatus !== "connected") return;
@@ -298,7 +305,11 @@ export function LiveObserver() {
         const cx = Math.cos(interpPitch);
         const sz = Math.sin(interpYaw);
         const cz = Math.cos(interpYaw);
-        _orbitDir.set(-cx, -sz * sx, -cz * sx);
+        // Camera pulls back along negative forward direction (Torque column 1
+        // of Rz*Rx, converted to Three.js coords).
+        // Torque forward = (-sz*cx, cz*cx, sx) → Three.js = (cz*cx, sx, -sz*cx)
+        // Negate for pull-back: (-cz*cx, -sx, sz*cx)
+        _orbitDir.set(-cz * cx, -sx, sz * cx);
 
         if (_orbitDir.lengthSq() > 1e-8) {
           _orbitDir.normalize();
@@ -309,10 +320,10 @@ export function LiveObserver() {
       }
     } else {
       // Observer fly or first-person: override rotation only (position comes
-      // from DemoPlaybackController's server snapshot interpolation).
+      // from StreamingController's server snapshot interpolation).
       state.camera.quaternion.set(qx, qy, qz, qw);
     }
-  });
+  }, 1);
 
   // Clean up on unmount.
   useEffect(() => {

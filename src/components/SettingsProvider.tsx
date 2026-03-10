@@ -25,6 +25,8 @@ type SettingsContext = {
   setAudioEnabled: StateSetter<boolean>;
   animationEnabled: boolean;
   setAnimationEnabled: StateSetter<boolean>;
+  warriorName: string;
+  setWarriorName: StateSetter<string>;
 };
 
 type DebugContext = {
@@ -52,6 +54,7 @@ type PersistedSettings = {
   animationEnabled?: boolean;
   debugMode?: boolean;
   touchMode?: TouchMode;
+  warriorName?: string;
 };
 
 export function useSettings() {
@@ -83,6 +86,7 @@ export function SettingsProvider({
   const [animationEnabled, setAnimationEnabled] = useState(true);
   const [debugMode, setDebugMode] = useState(false);
   const [touchMode, setTouchMode] = useState<TouchMode>("moveLookStick");
+  const [warriorName, setWarriorName] = useState("MapGenius");
 
   const setFogEnabledWithoutOverride: StateSetter<boolean> = useCallback(
     (value) => {
@@ -104,6 +108,8 @@ export function SettingsProvider({
       setAudioEnabled,
       animationEnabled,
       setAnimationEnabled,
+      warriorName,
+      setWarriorName,
     }),
     [
       fogEnabled,
@@ -113,6 +119,7 @@ export function SettingsProvider({
       fov,
       audioEnabled,
       animationEnabled,
+      warriorName,
     ],
   );
 
@@ -158,6 +165,9 @@ export function SettingsProvider({
     if (savedSettings.touchMode != null) {
       setTouchMode(savedSettings.touchMode);
     }
+    if (savedSettings.warriorName != null) {
+      setWarriorName(savedSettings.warriorName);
+    }
   }, []);
 
   // Persist settings to localStorage with debouncing to avoid excessive writes
@@ -180,6 +190,7 @@ export function SettingsProvider({
         animationEnabled,
         debugMode,
         touchMode,
+        warriorName,
       };
       try {
         localStorage.setItem("settings", JSON.stringify(settingsToSave));
@@ -202,6 +213,7 @@ export function SettingsProvider({
     animationEnabled,
     debugMode,
     touchMode,
+    warriorName,
   ]);
 
   return (

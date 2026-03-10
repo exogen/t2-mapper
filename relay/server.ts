@@ -79,6 +79,7 @@ wss.on("connection", (ws) => {
 
   let gameConnection: GameConnection | null = null;
   let lastJoinAddress: string | null = null;
+  let lastWarriorName: string | undefined;
   let retryCount = 0;
   let retryTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -86,12 +87,12 @@ wss.on("connection", (ws) => {
   const RETRY_DELAY_MS = 6000;
   const RETRYABLE_REASONS = ["Server is cycling mission"];
 
-  async function connectToServer(ws: WebSocket, address: string): Promise<void> {
+  async function connectToServer(ws: WebSocket, address: string, warriorName?: string): Promise<void> {
     if (gameConnection) {
       gameConnection.disconnect();
     }
 
-    gameConnection = new GameConnection(address);
+    gameConnection = new GameConnection(address, { warriorName });
 
     // Set mapName from the cached server list if available.
     const cachedServer = cachedServers.find(
@@ -135,7 +136,7 @@ wss.on("connection", (ws) => {
         retryTimer = setTimeout(() => {
           retryTimer = null;
           if (lastJoinAddress === address && ws.readyState === WebSocket.OPEN) {
-            connectToServer(ws, address);
+            connectToServer(ws, address, lastWarriorName);
           }
         }, RETRY_DELAY_MS);
         return;
@@ -242,7 +243,7 @@ wss.on("connection", (ws) => {
       }
 
       case "joinServer": {
-        relayLog.info({ address: message.address }, "Join server requested");
+        relayLog.info({ address: message.address, warriorName: message.warriorName }, "Join server requested");
         if (gameConnection) {
           relayLog.info("Disconnecting existing game connection");
           gameConnection.disconnect();
@@ -253,8 +254,9 @@ wss.on("connection", (ws) => {
         }
         retryCount = 0;
         lastJoinAddress = message.address;
+        lastWarriorName = message.warriorName;
 
-        await connectToServer(ws, message.address);
+        await connectToServer(ws, message.address, message.warriorName);
         break;
       }
 

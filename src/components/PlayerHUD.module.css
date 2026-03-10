@@ -89,35 +89,94 @@
 
 /* ── Chat Window (top-left) ── */
 
-.ChatWindow {
+.ChatContainer {
   position: absolute;
   top: 56px;
   left: 0;
   max-width: 420px;
+  display: flex;
+  flex-direction: column;
+  pointer-events: auto;
+  border: 1px solid rgba(44, 172, 181, 0.4);
+}
+
+.ChatWindow {
+  max-width: 450px;
+  max-height: 12.5em;
+  overflow-y: auto;
   background: rgba(0, 50, 60, 0.65);
-  padding: 4px 8px;
+  padding: 6px 8px;
+  user-select: text;
   font-size: 12px;
-  line-height: 1.3;
+  line-height: 1.333333;
+  /* Thin scrollbar that doesn't take much space. */
+  scrollbar-width: thin;
+  scrollbar-color: rgba(44, 172, 181, 0.4) transparent;
 }
 
 .ChatMessage {
   padding: 1px 0;
-  transition: opacity 0.3s ease-out;
   /* Default to \c0 (GuiChatHudProfile fontColor) for untagged messages. */
   color: rgb(44, 172, 181);
 }
 
+.ChatInputForm {
+  display: flex;
+}
+
+.ChatInput {
+  width: 100%;
+  background: rgba(0, 50, 60, 0.8);
+  border: 0;
+  border-top: 1px solid rgba(78, 179, 167, 0.2);
+  border-radius: 0;
+  color: rgb(40, 231, 240);
+  font-family: inherit;
+  font-size: 12px;
+  margin: 0;
+  padding: 6px 8px;
+  outline: none;
+}
+
+.ChatInput::placeholder {
+  color: rgba(44, 172, 181, 0.5);
+}
+
+.ChatInput:focus {
+  background: rgba(0, 50, 60, 0.9);
+}
+
 /* T2 GuiChatHudProfile fontColors palette (\c0–\c9). */
-.ChatColor0 { color: rgb(44, 172, 181); }
-.ChatColor1 { color: rgb(4, 235, 105); }
-.ChatColor2 { color: rgb(219, 200, 128); }
-.ChatColor3 { color: rgb(77, 253, 95); }
-.ChatColor4 { color: rgb(40, 231, 240); }
-.ChatColor5 { color: rgb(200, 200, 50); }
-.ChatColor6 { color: rgb(200, 200, 200); }
-.ChatColor7 { color: rgb(220, 220, 20); }
-.ChatColor8 { color: rgb(150, 150, 250); }
-.ChatColor9 { color: rgb(60, 220, 150); }
+.ChatColor0 {
+  color: rgb(44, 172, 181);
+}
+.ChatColor1 {
+  color: rgb(4, 235, 105);
+}
+.ChatColor2 {
+  color: rgb(219, 200, 128);
+}
+.ChatColor3 {
+  color: rgb(77, 253, 95);
+}
+.ChatColor4 {
+  color: rgb(40, 231, 240);
+}
+.ChatColor5 {
+  color: rgb(200, 200, 50);
+}
+.ChatColor6 {
+  color: rgb(200, 200, 200);
+}
+.ChatColor7 {
+  color: rgb(220, 220, 20);
+}
+.ChatColor8 {
+  color: rgb(150, 150, 250);
+}
+.ChatColor9 {
+  color: rgb(60, 220, 150);
+}
 
 /* ── Team Scores (bottom-left) ── */
 

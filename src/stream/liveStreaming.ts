@@ -354,16 +354,19 @@ export class LiveStreamAdapter extends StreamEngine {
           this.handleGhostingMessage(event.parsedData);
           const type = event.parsedData.type as string;
 
-          // Log events in early packets
+          // Always log RemoteCommandEvents (chat, server messages, HUD).
+          if (type === "RemoteCommandEvent") {
+            const funcName = this.resolveNetString(event.parsedData.funcName as string ?? "");
+            console.log(`[live] remote: ${funcName}`);
+          }
+          // Log other events in early packets
           if (isEarlyPacket) {
-            if (type !== "NetStringEvent") {
+            if (type !== "NetStringEvent" && type !== "RemoteCommandEvent") {
               console.log(
                 `[live] event: ${type}`,
-                type === "RemoteCommandEvent"
-                  ? { funcName: this.resolveNetString(event.parsedData.funcName as string ?? "") }
-                  : type === "SimDataBlockEvent"
-                    ? { id: event.parsedData.objectId, className: event.parsedData.dataBlockClassName }
-                    : undefined,
+                type === "SimDataBlockEvent"
+                  ? { id: event.parsedData.objectId, className: event.parsedData.dataBlockClassName }
+                  : undefined,
               );
             }
           }
@@ -491,8 +494,18 @@ export class LiveStreamAdapter extends StreamEngine {
         );
       }
 
+      const prevMode = this.camera?.mode;
       this.updateCameraAndHud();
 
+      // Log camera mode transitions (always, not just early packets).
+      if (this.camera && this.camera.mode !== prevMode) {
+        console.log(
+          `[live] camera mode: ${prevMode ?? "none"} → ${this.camera.mode}` +
+          (this.camera.mode === "third-person"
+            ? ` orbit=${this.camera.orbitTargetId ?? "?"} dist=${this.camera.orbitDistance ?? "?"}`
+            : ""),
+        );
+      }
       // Log camera position for early packets
       if (this.tickCount <= 5 && this.camera) {
         const [cx, cy, cz] = this.camera.position;

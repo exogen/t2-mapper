@@ -180,7 +180,7 @@ function CameraMovement() {
 
   useFrame((state, delta) => {
     // When streaming is active and not in free-fly mode, the stream
-    // (DemoPlaybackController) drives the camera — skip our movement.
+    // (StreamingController) drives the camera — skip our movement.
     const spState = streamPlaybackStore.getState();
     if (spState.playback && !spState.freeFlyCamera) return;
 

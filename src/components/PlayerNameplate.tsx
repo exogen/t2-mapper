@@ -36,16 +36,7 @@ export function PlayerNameplate({ entity }: { entity: PlayerEntity }) {
   const fillRef = useRef<HTMLDivElement>(null);
   const iffImgRef = useRef<HTMLImageElement>(null);
   const [isVisible, setIsVisible] = useState(true);
-
-  const displayName = useMemo(() => {
-    if (entity.playerName) return entity.playerName;
-    if (typeof entity.id === "string") {
-      const m = entity.id.match(/\d+/);
-      if (m) return `<Player #${m[0]}>`;
-      return entity.id;
-    }
-    return "<Player>";
-  }, [entity.id, entity.playerName]);
+  const nameRef = useRef<HTMLDivElement>(null);
 
   // Derive IFF height from the shape's bounding box.
   const iffHeight = useMemo(() => {
@@ -106,6 +97,15 @@ export function PlayerNameplate({ entity }: { entity: PlayerEntity }) {
       nameContainerRef.current.style.opacity = opacityStr;
     }
 
+    // Update player name imperatively — entity.playerName is mutated in-place
+    // by streaming playback without triggering re-renders.
+    if (nameRef.current) {
+      const name = entity.playerName ?? entity.id;
+      if (nameRef.current.textContent !== name) {
+        nameRef.current.textContent = name;
+      }
+    }
+
     // Update IFF arrow image imperatively — entity.iffColor is mutated in-place
     // by streaming playback without triggering re-renders.
     if (iffImgRef.current && entity.iffColor) {
@@ -148,7 +148,9 @@ export function PlayerNameplate({ entity }: { entity: PlayerEntity }) {
           </Html>
           <Html position={[0, NAME_HEIGHT, 0]} center>
             <div ref={nameContainerRef} className={styles.Bottom}>
-              <div className={styles.Name}>{displayName}</div>
+              <div ref={nameRef} className={styles.Name}>
+                {entity.playerName ?? entity.id}
+              </div>
               {hasHealthData && (
                 <div className={styles.HealthBar}>
                   <div ref={fillRef} className={styles.HealthFill} />
