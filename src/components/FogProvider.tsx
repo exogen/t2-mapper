@@ -208,7 +208,14 @@ export function fogStateFromScene(sky: SceneSky): FogState {
 
   const enabled = visibleDistance > fogDistance;
 
-  return { fogDistance, visibleDistance, fogColor, fogVolumes, fogLine, enabled };
+  return {
+    fogDistance,
+    visibleDistance,
+    fogColor,
+    fogVolumes,
+    fogLine,
+    enabled,
+  };
 }
 
 /**

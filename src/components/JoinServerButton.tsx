@@ -3,12 +3,14 @@ import { useLiveSelector, selectPing } from "../state/liveConnectionStore";
 import styles from "./JoinServerButton.module.css";
 
 function formatPing(ms: number): string {
-  return ms >= 1000 ? ms.toLocaleString() + "ms" : ms + "ms";
+  return `${ms.toLocaleString()} ms`;
 }
 
 export function JoinServerButton({
+  isActive,
   onOpenServerBrowser,
 }: {
+  isActive: boolean;
   onOpenServerBrowser: () => void;
 }) {
   const gameStatus = useLiveSelector((s) => s.gameStatus);
@@ -26,8 +28,8 @@ export function JoinServerButton({
     <button
       type="button"
       className={styles.Root}
-      aria-label={isLive ? `Disconnect from ${serverName ?? "server"}` : "Join server"}
-      title={isLive ? `Disconnect from ${serverName ?? "server"}` : "Join server"}
+      aria-label={isLive ? "Connected – click to disconnect" : "Join server"}
+      title={isLive ? "Connected – click to disconnect" : "Join server"}
       onClick={() => {
         if (isLive) {
           disconnectServer();
@@ -35,21 +37,20 @@ export function JoinServerButton({
           onOpenServerBrowser();
         }
       }}
-      data-active={isLive ? "true" : undefined}
+      data-active={isActive}
     >
       <BsFillLightningChargeFill
         className={`${styles.LiveIcon} ${isLive ? styles.Pulsing : ""}`}
       />
-      {!isLive && (
-        <span className={styles.TextLabel}>
-          {isConnecting ? "Connecting..." : "Connect"}
+      <>
+        <span className={styles.TextLabel}>Live</span>
+        <span className={styles.ButtonHint}>
+          {ping != null ? formatPing(ping) : "Join a game"}
         </span>
-      )}
-      {isLive && ping != null && (
-        <span className={styles.PingLabel}>
-          {formatPing(ping)}
-        </span>
-      )}
+      </>
+      {/* {isLive && ping != null && (
+        <span className={styles.PingLabel}>{formatPing(ping)}</span>
+      )} */}
     </button>
   );
 }

@@ -90,12 +90,7 @@ describe("misToScene ↔ ghostToScene cross-validation", () => {
     // Build the same matrix manually: 90° around Z
     const c = Math.cos(Math.PI / 2);
     const s = Math.sin(Math.PI / 2);
-    const elements = [
-      c, s, 0, 0,
-      -s, c, 0, 0,
-      0, 0, 1, 0,
-      0, 0, 0, 1,
-    ];
+    const elements = [c, s, 0, 0, -s, c, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
 
     const ghostResult = interiorFromGhost(42, {
       interiorFile: "building.dif",
@@ -132,7 +127,9 @@ describe("misToScene ↔ ghostToScene cross-validation", () => {
 
     expect(misResult.shapeName).toBe(ghostResult.shapeName);
     expect(misResult.scale).toEqual(ghostResult.scale);
-    expect(misResult.transform.position).toEqual(ghostResult.transform.position);
+    expect(misResult.transform.position).toEqual(
+      ghostResult.transform.position,
+    );
   });
 
   it("Sky: fog and cloud data match", () => {

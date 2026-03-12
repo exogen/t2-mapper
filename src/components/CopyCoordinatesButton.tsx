@@ -22,10 +22,12 @@ export function CopyCoordinatesButton({
   cameraRef,
   missionName,
   missionType,
+  disabled,
 }: {
   cameraRef: RefObject<Camera | null>;
   missionName: string;
   missionType: string;
+  disabled?: boolean;
 }) {
   const { fogEnabled } = useSettings();
   const [showCopied, setShowCopied] = useState(false);
@@ -57,15 +59,16 @@ export function CopyCoordinatesButton({
     <button
       type="button"
       className={styles.Root}
-      aria-label="Copy coordinates URL"
-      title="Copy coordinates URL"
+      aria-label="Link to coordinates"
+      title="Copy the current coordinates to URL"
       onClick={handleCopyLink}
+      disabled={disabled}
       data-copied={showCopied ? "true" : "false"}
       id="copyCoordinatesButton"
     >
       <FaMapPin className={styles.MapPin} />
       <FaClipboardCheck className={styles.ClipboardCheck} />
-      <span className={styles.ButtonLabel}> Copy coordinates URL</span>
+      <span className={styles.ButtonLabel}> Link to coordinates</span>
     </button>
   );
 }

@@ -2,6 +2,8 @@
   position: relative;
   display: flex;
   align-items: center;
+  margin: 10px 10px 10px 4px;
+  z-index: 2;
 }
 
 .Shortcut {
@@ -41,7 +43,10 @@
 }
 
 .Input::placeholder {
-  color: transparent;
+  font-size: 12px;
+  font-family: inherit;
+  color: #777;
+  /* color: transparent; */
 }
 
 .SelectedValue {
@@ -63,6 +68,7 @@
   color: #fff;
   font-weight: 600;
   font-size: 14px;
+  line-height: calc(18 / 14);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -158,6 +164,7 @@
 .ItemType {
   font-size: 10px;
   font-weight: 600;
+  line-height: calc(13 / 10);
   padding: 2px 5px;
   border-radius: 3px;
   background: rgba(255, 157, 0, 0.4);
@@ -178,4 +185,14 @@
   font-size: 13px;
   color: rgba(255, 255, 255, 0.5);
   text-align: center;
+}
+
+.Backdrop {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  z-index: 1;
 }

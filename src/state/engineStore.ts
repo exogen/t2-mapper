@@ -42,7 +42,10 @@ export interface EngineStoreState {
   playback: PlaybackSliceState;
   setRuntime(runtime: TorqueRuntime): void;
   clearRuntime(): void;
-  applyRuntimeBatch(events: RuntimeMutationEvent[], tickInfo?: RuntimeTickInfo): void;
+  applyRuntimeBatch(
+    events: RuntimeMutationEvent[],
+    tickInfo?: RuntimeTickInfo,
+  ): void;
   setRecording(recording: StreamRecording | null): void;
   setPlaybackTime(ms: number): void;
   setPlaybackStatus(status: PlaybackStatus): void;
@@ -65,7 +68,9 @@ function clamp(value: number, min: number, max: number): number {
   return value;
 }
 
-function buildRuntimeIndexes(runtime: TorqueRuntime): Pick<
+function buildRuntimeIndexes(
+  runtime: TorqueRuntime,
+): Pick<
   RuntimeSliceState,
   | "objectVersionById"
   | "globalVersionByName"
@@ -165,7 +170,10 @@ export const engineStore = createStore<EngineStoreState>()(
       }));
     },
 
-    applyRuntimeBatch(events: RuntimeMutationEvent[], tickInfo?: RuntimeTickInfo) {
+    applyRuntimeBatch(
+      events: RuntimeMutationEvent[],
+      tickInfo?: RuntimeTickInfo,
+    ) {
       if (events.length === 0) {
         return;
       }
@@ -249,11 +257,14 @@ export const engineStore = createStore<EngineStoreState>()(
         ...state,
         playback: {
           recording,
-          status: "stopped",
-          timeMs: 0,
-          rate: 1,
+          status: recording ? "stopped" : state.playback.status,
+          timeMs: recording ? 0 : state.playback.timeMs,
+          rate: recording ? 1 : state.playback.rate,
           durationMs,
-          streamSnapshot: null,
+          // Preserve the last snapshot so HUD/chat persist after unload.
+          streamSnapshot: recording
+            ? null
+            : state.playback.streamSnapshot,
         },
       }));
     },
@@ -301,7 +312,6 @@ export const engineStore = createStore<EngineStoreState>()(
         },
       }));
     },
-
   })),
 );
 
@@ -475,4 +485,3 @@ export function useRuntimeChildIds(
 
   return parent._children.map((child) => child._id);
 }
-

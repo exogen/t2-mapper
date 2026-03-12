@@ -9,8 +9,7 @@
 
 import { queryServerList } from "../relay/masterQuery.js";
 
-const MASTER_SERVER =
-  process.env.T2_MASTER_SERVER || "master.tribesnext.com";
+const MASTER_SERVER = process.env.T2_MASTER_SERVER || "master.tribesnext.com";
 
 async function main() {
   console.log(`Master server: ${MASTER_SERVER}`);
@@ -27,10 +26,7 @@ async function main() {
     console.log(`Found ${servers.length} server(s):\n`);
 
     // Print as a table
-    const nameWidth = Math.max(
-      11,
-      ...servers.map((s) => s.name.length),
-    );
+    const nameWidth = Math.max(11, ...servers.map((s) => s.name.length));
     const header = [
       "Server Name".padEnd(nameWidth),
       "Map".padEnd(20),

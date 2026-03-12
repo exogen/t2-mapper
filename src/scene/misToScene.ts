@@ -41,7 +41,10 @@ function propInt(obj: TorqueObject, name: string): number | undefined {
   return Number.isFinite(n) ? n : undefined;
 }
 
-function parseVec3(s: string | undefined, fallback: Vec3 = { x: 0, y: 0, z: 0 }): Vec3 {
+function parseVec3(
+  s: string | undefined,
+  fallback: Vec3 = { x: 0, y: 0, z: 0 },
+): Vec3 {
   if (!s) return fallback;
   const parts = s.split(" ").map(Number);
   return {
@@ -51,7 +54,10 @@ function parseVec3(s: string | undefined, fallback: Vec3 = { x: 0, y: 0, z: 0 })
   };
 }
 
-function parseColor3(s: string | undefined, fallback: Color3 = { r: 0, g: 0, b: 0 }): Color3 {
+function parseColor3(
+  s: string | undefined,
+  fallback: Color3 = { r: 0, g: 0, b: 0 },
+): Color3 {
   if (!s) return fallback;
   const parts = s.split(" ").map(Number);
   return {
@@ -93,7 +99,9 @@ function buildMatrixF(
 
   // Normalize axis
   const len = Math.sqrt(ax * ax + ay * ay + az * az);
-  let nx = 0, ny = 0, nz = 1;
+  let nx = 0,
+    ny = 0,
+    nz = 1;
   if (len > 1e-8) {
     nx = ax / len;
     ny = ay / len;
@@ -191,8 +199,12 @@ export function skyFromMis(obj: TorqueObject): SceneSky {
   const cloudLayers: SceneSkyCloudLayer[] = [];
   for (let i = 0; i < 3; i++) {
     const texture = prop(obj, `cloudText${i + 1}`) ?? "";
-    const heightPercent = propFloat(obj, `cloudHeightPer[${i}]`) ?? propFloat(obj, `cloudheightper${i}`) ?? [0.35, 0.25, 0.2][i];
-    const speed = propFloat(obj, `cloudSpeed${i + 1}`) ?? [0.0001, 0.0002, 0.0003][i];
+    const heightPercent =
+      propFloat(obj, `cloudHeightPer[${i}]`) ??
+      propFloat(obj, `cloudheightper${i}`) ??
+      [0.35, 0.25, 0.2][i];
+    const speed =
+      propFloat(obj, `cloudSpeed${i + 1}`) ?? [0.0001, 0.0002, 0.0003][i];
     cloudLayers.push({ texture, heightPercent, speed });
   }
 

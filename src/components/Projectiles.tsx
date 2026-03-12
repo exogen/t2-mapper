@@ -16,7 +16,7 @@ import {
   setQuaternionFromDir,
 } from "../stream/playbackUtils";
 import { textureToUrl } from "../loaders";
-import type { TracerVisual, SpriteVisual } from "../stream/types";
+import { SpriteEntity, TracerEntity } from "../state/gameEntityTypes";
 
 const _tracerDir = new Vector3();
 const _tracerDirFromCam = new Vector3();
@@ -26,7 +26,8 @@ const _tracerEnd = new Vector3();
 const _tracerWorldPos = new Vector3();
 const _upY = new Vector3(0, 1, 0);
 
-export function SpriteProjectile({ visual }: { visual: SpriteVisual }) {
+export function SpriteProjectile({ entity }: { entity: SpriteEntity }) {
+  const { visual } = entity;
   const url = textureToUrl(visual.texture);
   const texture = useTexture(url, (tex) => {
     const t = Array.isArray(tex) ? tex[0] : tex;
@@ -37,7 +38,12 @@ export function SpriteProjectile({ visual }: { visual: SpriteVisual }) {
   // Convert sRGB datablock color to linear for Three.js material.
   const color = useMemo(
     () =>
-      new Color().setRGB(visual.color.r, visual.color.g, visual.color.b, SRGBColorSpace),
+      new Color().setRGB(
+        visual.color.r,
+        visual.color.g,
+        visual.color.b,
+        SRGBColorSpace,
+      ),
     [visual.color.r, visual.color.g, visual.color.b],
   );
 
@@ -55,13 +61,8 @@ export function SpriteProjectile({ visual }: { visual: SpriteVisual }) {
   );
 }
 
-export function TracerProjectile({
-  entity,
-  visual,
-}: {
-  entity: { keyframes?: Array<{ position?: [number, number, number]; velocity?: [number, number, number] }>; direction?: [number, number, number] };
-  visual: TracerVisual;
-}) {
+export function TracerProjectile({ entity }: { entity: TracerEntity }) {
+  const { visual } = entity;
   const tracerRef = useRef<Mesh>(null);
   const tracerPosRef = useRef<BufferAttribute>(null);
   const crossRef = useRef<Mesh>(null);
@@ -167,14 +168,12 @@ export function TracerProjectile({
           />
           <bufferAttribute
             attach="attributes-uv"
-            args={[
-              new Float32Array([
-                0, 0, 0, 1, 1, 1, 1, 0,
-              ]),
-              2,
-            ]}
+            args={[new Float32Array([0, 0, 0, 1, 1, 1, 1, 0]), 2]}
           />
-          <bufferAttribute attach="index" args={[new Uint16Array([0, 1, 2, 0, 2, 3]), 1]} />
+          <bufferAttribute
+            attach="index"
+            args={[new Uint16Array([0, 1, 2, 0, 2, 3]), 1]}
+          />
         </bufferGeometry>
         <meshBasicMaterial
           map={tracerTexture}
@@ -192,24 +191,19 @@ export function TracerProjectile({
               attach="attributes-position"
               args={[
                 new Float32Array([
-                  -0.5, 0, -0.5,
-                  0.5, 0, -0.5,
-                  0.5, 0, 0.5,
-                  -0.5, 0, 0.5,
+                  -0.5, 0, -0.5, 0.5, 0, -0.5, 0.5, 0, 0.5, -0.5, 0, 0.5,
                 ]),
                 3,
               ]}
             />
             <bufferAttribute
               attach="attributes-uv"
-              args={[
-                new Float32Array([
-                  0, 0, 0, 1, 1, 1, 1, 0,
-                ]),
-                2,
-              ]}
+              args={[new Float32Array([0, 0, 0, 1, 1, 1, 1, 0]), 2]}
             />
-            <bufferAttribute attach="index" args={[new Uint16Array([0, 1, 2, 0, 2, 3]), 1]} />
+            <bufferAttribute
+              attach="index"
+              args={[new Uint16Array([0, 1, 2, 0, 2, 3]), 1]}
+            />
           </bufferGeometry>
           <meshBasicMaterial
             map={crossTexture}

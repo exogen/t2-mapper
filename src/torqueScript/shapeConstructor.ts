@@ -7,7 +7,6 @@ import type { TorqueRuntime } from "./types";
  */
 export type SequenceAliasMap = Map<string, Map<string, string>>;
 
-
 /**
  * Build sequence alias maps from TSShapeConstructor datablocks already
  * registered in the runtime. Each datablock has `baseshape` and
@@ -19,7 +18,9 @@ export type SequenceAliasMap = Map<string, Map<string, string>>;
  * extension from the DSQ filename, matching the Blender addon's
  * `dsq_name_from_filename` behavior.
  */
-export function buildSequenceAliasMap(runtime: TorqueRuntime): SequenceAliasMap {
+export function buildSequenceAliasMap(
+  runtime: TorqueRuntime,
+): SequenceAliasMap {
   const result: SequenceAliasMap = new Map();
 
   for (const obj of runtime.state.datablocks.values()) {
@@ -44,7 +45,10 @@ export function buildSequenceAliasMap(runtime: TorqueRuntime): SequenceAliasMap 
       if (spaceIdx === -1) continue;
 
       const dsqFile = value.slice(0, spaceIdx).toLowerCase();
-      const alias = value.slice(spaceIdx + 1).trim().toLowerCase();
+      const alias = value
+        .slice(spaceIdx + 1)
+        .trim()
+        .toLowerCase();
       if (!alias) continue;
 
       // Strip prefix and .dsq to get the GLB clip name.
@@ -64,7 +68,6 @@ export function buildSequenceAliasMap(runtime: TorqueRuntime): SequenceAliasMap 
 
   return result;
 }
-
 
 /**
  * Build a case-insensitive action map from GLB clips, augmented with

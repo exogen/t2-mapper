@@ -1,5 +1,7 @@
-import { memo, Suspense, useMemo, useCallback, useEffect, useRef } from "react";
+import { memo, useMemo, useCallback, useEffect, useRef } from "react";
+import { DebugSuspense } from "./DebugSuspense";
 import { ErrorBoundary } from "react-error-boundary";
+import { createLogger } from "../logger";
 import {
   Mesh,
   Material,
@@ -23,6 +25,8 @@ import { useDebug } from "./SettingsProvider";
 import { injectCustomFog } from "../fogShader";
 import { globalFogUniforms } from "../globalFogUniforms";
 import { injectInteriorLighting } from "../interiorMaterial";
+
+const log = createLogger("InteriorInstance");
 
 /**
  * Load a .gltf file that was converted from a .dif, used for "interior" models.
@@ -151,7 +155,8 @@ function InteriorMesh({ node }: { node: Mesh }) {
   return (
     <mesh geometry={node.geometry} castShadow receiveShadow>
       {node.material ? (
-        <Suspense
+        <DebugSuspense
+          label={`InteriorTexture:${Array.isArray(node.material) ? node.material[0]?.userData?.resource_path : node.material?.userData?.resource_path ?? "?"}`}
           fallback={
             // Allow the mesh to render while the texture is still loading;
             // show a wireframe placeholder.
@@ -174,7 +179,7 @@ function InteriorMesh({ node }: { node: Mesh }) {
               lightMap={lightMaps[0]}
             />
           )}
-        </Suspense>
+        </DebugSuspense>
       ) : null}
     </mesh>
   );
@@ -253,18 +258,18 @@ export const InteriorInstance = memo(function InteriorInstance({
           />
         }
         onError={(error) => {
-          console.warn(
-            `[interior] Failed to load ${scene.interiorFile}:`,
-            error.message,
-          );
+          log.error("Failed to load %s: %s", scene.interiorFile, error.message);
         }}
       >
-        <Suspense fallback={<InteriorPlaceholder color="orange" />}>
+        <DebugSuspense
+          label={`InteriorModel:${scene.interiorFile}`}
+          fallback={<InteriorPlaceholder color="orange" />}
+        >
           <InteriorModel
             interiorFile={scene.interiorFile}
             ghostIndex={scene.ghostIndex}
           />
-        </Suspense>
+        </DebugSuspense>
       </ErrorBoundary>
     </group>
   );

@@ -162,8 +162,8 @@ describe("skyFromMis", () => {
       cloudText1: "cloud1.png",
       cloudText2: "cloud2.png",
       cloudText3: "",
-      "cloudheightper0": "0.35",
-      "cloudheightper1": "0.25",
+      cloudheightper0: "0.35",
+      cloudheightper1: "0.25",
       cloudSpeed1: "0.001",
     });
     const result = skyFromMis(obj);

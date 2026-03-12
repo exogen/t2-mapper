@@ -3,6 +3,7 @@ import { useFrame, useThree } from "@react-three/fiber";
 import { Html } from "@react-three/drei";
 import { Group, Vector3 } from "three";
 import { textureToUrl } from "../loaders";
+
 interface FlagEntity {
   id: string;
   iffColor?: { r: number; g: number; b: number };
@@ -10,7 +11,6 @@ interface FlagEntity {
 import styles from "./FlagMarker.module.css";
 
 const FLAG_ICON_HEIGHT = 1.5;
-
 const FLAG_ICON_URL = textureToUrl("commander/MiniIcons/com_flag_grey");
 
 const _tmpVec = new Vector3();
@@ -24,7 +24,7 @@ export function FlagMarker({ entity }: { entity: FlagEntity }) {
   const markerRef = useRef<Group>(null);
   const iconRef = useRef<HTMLDivElement>(null);
   const distRef = useRef<HTMLSpanElement>(null);
-  const { camera } = useThree();
+  const camera = useThree((state) => state.camera);
 
   useFrame(() => {
     // Tint imperatively — iffColor is mutated in-place by streaming playback.
@@ -52,10 +52,12 @@ export function FlagMarker({ entity }: { entity: FlagEntity }) {
           <div
             ref={iconRef}
             className={styles.Icon}
-            style={{
-              backgroundColor: initialColor,
-              "--flag-icon-url": `url(${FLAG_ICON_URL})`,
-            } as React.CSSProperties}
+            style={
+              {
+                backgroundColor: initialColor,
+                "--flag-icon-url": `url(${FLAG_ICON_URL})`,
+              } as React.CSSProperties
+            }
           />
         </div>
       </Html>

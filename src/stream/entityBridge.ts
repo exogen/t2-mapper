@@ -28,8 +28,9 @@ function positionedBase(entity: StreamEntity, spawnTime?: number) {
     keyframes: [
       {
         time: spawnTime ?? 0,
-        position: entity.position ?? [0, 0, 0] as [number, number, number],
-        rotation: entity.rotation ?? [0, 0, 0, 1] as [number, number, number, number],
+        position: entity.position ?? ([0, 0, 0] as [number, number, number]),
+        rotation:
+          entity.rotation ?? ([0, 0, 0, 1] as [number, number, number, number]),
       },
     ],
   };
@@ -52,17 +53,33 @@ export function streamEntityToGameEntity(
     };
     switch (entity.sceneData.className) {
       case "TerrainBlock":
-        return { ...base, renderType: "TerrainBlock", terrainData: entity.sceneData };
+        return {
+          ...base,
+          renderType: "TerrainBlock",
+          terrainData: entity.sceneData,
+        };
       case "InteriorInstance":
-        return { ...base, renderType: "InteriorInstance", interiorData: entity.sceneData };
+        return {
+          ...base,
+          renderType: "InteriorInstance",
+          interiorData: entity.sceneData,
+        };
       case "Sky":
         return { ...base, renderType: "Sky", skyData: entity.sceneData };
       case "Sun":
         return { ...base, renderType: "Sun", sunData: entity.sceneData };
       case "WaterBlock":
-        return { ...base, renderType: "WaterBlock", waterData: entity.sceneData };
+        return {
+          ...base,
+          renderType: "WaterBlock",
+          waterData: entity.sceneData,
+        };
       case "MissionArea":
-        return { ...base, renderType: "MissionArea", missionAreaData: entity.sceneData };
+        return {
+          ...base,
+          renderType: "MissionArea",
+          missionAreaData: entity.sceneData,
+        };
       case "TSStatic":
         // TSStatic is rendered as a shape — extract shapeName from scene data.
         return {
@@ -102,6 +119,7 @@ export function streamEntityToGameEntity(
       dataBlock: entity.dataBlock,
       weaponShape: entity.weaponShape,
       packShape: entity.packShape,
+      flagShape: entity.flagShape,
       falling: entity.falling,
       jetting: entity.jetting,
       playerName: entity.playerName,

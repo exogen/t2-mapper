@@ -1,4 +1,5 @@
 import { parseImageFileList } from "./imageFileList";
+import { createLogger } from "./logger";
 import {
   getActualResourceKey,
   getMissionInfo,
@@ -8,6 +9,8 @@ import {
 import { parseMissionScript } from "./mission";
 import { normalizePath } from "./stringUtils";
 import { parseTerrainBuffer, type TerrainFile } from "./terrain";
+
+const log = createLogger("loaders");
 
 export type { TerrainFile };
 
@@ -21,9 +24,7 @@ export function getUrlForPath(resourcePath: string, fallbackUrl?: string) {
     resourceKey = getActualResourceKey(resourcePath);
   } catch (err) {
     if (fallbackUrl) {
-      console.warn(
-        `Resource "${resourcePath}" not found - rendering fallback.`,
-      );
+      log.warn("Resource \"%s\" not found — rendering fallback", resourcePath);
       return fallbackUrl;
     } else {
       throw err;
@@ -108,8 +109,16 @@ export async function loadMission(name: string) {
 }
 
 export async function loadTerrain(fileName: string) {
-  const res = await fetch(getUrlForPath(`terrains/${fileName}`));
+  const url = getUrlForPath(`terrains/${fileName}`);
+  log.debug("Fetching terrain: %s", url);
+  const res = await fetch(url);
+  if (!res.ok) {
+    throw new Error(
+      `[loadTerrain] Failed to fetch ${url}: ${res.status} ${res.statusText}`,
+    );
+  }
   const terrainBuffer = await res.arrayBuffer();
+  log.debug("Loaded terrain %s: %d bytes", fileName, terrainBuffer.byteLength);
   return parseTerrainBuffer(terrainBuffer);
 }
 

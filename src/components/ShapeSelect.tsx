@@ -1,10 +1,4 @@
-import {
-  startTransition,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { startTransition, useEffect, useMemo, useRef, useState } from "react";
 import {
   Combobox,
   ComboboxItem,
@@ -166,7 +160,9 @@ export function ShapeSelect({
           onFocus={() => {
             try {
               document.exitPointerLock();
-            } catch  { /* expected */ }
+            } catch {
+              /* expected */
+            }
             combobox.show();
           }}
           onKeyDown={(e) => {
@@ -197,9 +193,7 @@ export function ShapeSelect({
                   {shapes.map(renderItem)}
                 </ComboboxGroup>
               ))}
-          {noResults && (
-            <div className={styles.NoResults}>No shapes found</div>
-          )}
+          {noResults && <div className={styles.NoResults}>No shapes found</div>}
         </ComboboxList>
       </ComboboxPopover>
     </ComboboxProvider>

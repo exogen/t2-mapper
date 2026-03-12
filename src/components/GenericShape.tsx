@@ -2,6 +2,7 @@ import { memo, Suspense, useEffect, useMemo, useRef } from "react";
 import { ErrorBoundary } from "react-error-boundary";
 import { useGLTF, useTexture } from "@react-three/drei";
 import { useFrame } from "@react-three/fiber";
+import { createLogger } from "../logger";
 import { FALLBACK_TEXTURE_URL, textureToUrl, shapeToUrl } from "../loaders";
 import {
   MeshStandardMaterial,
@@ -21,7 +22,7 @@ import * as SkeletonUtils from "three/examples/jsm/utils/SkeletonUtils.js";
 import { setupTexture } from "../textureUtils";
 import { useDebug, useSettings } from "./SettingsProvider";
 import { useShapeInfo, isOrganicShape } from "./ShapeInfoProvider";
-import { useEngineSelector, effectNow, engineStore } from "../state";
+import { useEngineSelector, effectNow, engineStore } from "../state/engineStore";
 import { FloatingLabel } from "./FloatingLabel";
 import {
   useIflTexture,
@@ -38,6 +39,8 @@ import {
   replaceWithShapeMaterial,
 } from "../stream/playbackUtils";
 import type { ThreadState as StreamThreadState } from "../stream/types";
+
+const log = createLogger("GenericShape");
 
 /** Returns pausable time in seconds for demo mode, real time otherwise. */
 function shapeNowSec(): number {
@@ -271,9 +274,7 @@ const StaticTexture = memo(function StaticTexture({
 
   const url = useMemo(() => {
     if (!resourcePath) {
-      console.warn(
-        `No resource_path was found on "${shapeName}" - rendering fallback.`,
-      );
+      log.warn("No resource_path found on \"%s\" — rendering fallback", shapeName);
     }
     return resourcePath ? textureToUrl(resourcePath) : FALLBACK_TEXTURE_URL;
   }, [resourcePath, shapeName]);
@@ -662,10 +663,7 @@ export const ShapeModel = memo(function ShapeModel({
           iflMeshAtlasRef.current.set(info.mesh, atlas);
         })
         .catch((err) => {
-          console.warn(
-            `[ShapeModel] Failed to load IFL atlas for ${info.iflPath}:`,
-            err,
-          );
+          log.warn("Failed to load IFL atlas for %s: %o", info.iflPath, err);
         });
     }
   }, [iflMeshes]);

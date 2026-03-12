@@ -1,7 +1,10 @@
 import picomatch from "picomatch";
+import { createLogger } from "../logger";
 import { generate } from "./codegen";
 import { parse, type Program } from "./index";
 import { createBuiltins as defaultCreateBuiltins } from "./builtins";
+
+const log = createLogger("runtime");
 import {
   createReactiveFieldMatcher,
   createReactiveGlobalMatcher,
@@ -76,8 +79,10 @@ export function createRuntime(
   const reactiveGlobalNames =
     options.reactiveGlobalNames ?? DEFAULT_REACTIVE_GLOBAL_NAMES;
   const matchesReactiveField = createReactiveFieldMatcher(reactiveFieldRules);
-  const matchesReactiveMethod = createReactiveMethodMatcher(reactiveMethodRules);
-  const matchesReactiveGlobal = createReactiveGlobalMatcher(reactiveGlobalNames);
+  const matchesReactiveMethod =
+    createReactiveMethodMatcher(reactiveMethodRules);
+  const matchesReactiveGlobal =
+    createReactiveGlobalMatcher(reactiveGlobalNames);
   const methods = new CaseInsensitiveMap<CaseInsensitiveMap<MethodStack>>();
   const functions = new CaseInsensitiveMap<FunctionStack>();
   const packages = new CaseInsensitiveMap<PackageState>();
@@ -251,9 +256,7 @@ export function createRuntime(
       return;
     }
 
-    if (
-      !matchesReactiveField(getObjectClassChain(obj), normalizedField)
-    ) {
+    if (!matchesReactiveField(getObjectClassChain(obj), normalizedField)) {
       return;
     }
 
@@ -1221,7 +1224,7 @@ export function createRuntime(
       }
 
       // Match TorqueScript behavior: warn and return empty string
-      console.warn(
+      log.warn(
         `Unknown function: ${name}(${args
           .map((a) => JSON.stringify(a))
           .join(", ")})`,
@@ -1299,8 +1302,8 @@ export function createRuntime(
     const loader = options.loadScript;
     if (!loader) {
       if (scriptsToLoad.length > 0) {
-        console.warn(
-          `Script has exec() calls but no loadScript provided:`,
+        log.warn(
+          "Script has exec() calls but no loadScript provided: %o",
           scriptsToLoad,
         );
       }
@@ -1321,7 +1324,7 @@ export function createRuntime(
 
       // Skip if script matches ignore patterns
       if (isIgnoredScript && isIgnoredScript(normalized)) {
-        console.warn(`Ignoring script: ${ref}`);
+        log.warn("Ignoring script: %s", ref);
         state.failedScripts.add(normalized);
         return;
       }
@@ -1346,7 +1349,7 @@ export function createRuntime(
         // Pass original path to loader - it handles its own normalization
         const source = await loader(ref);
         if (source == null) {
-          console.warn(`Script not found: ${ref}`);
+          log.warn("Script not found: %s", ref);
           state.failedScripts.add(normalized);
           options.progress?.completeItem();
           return;
@@ -1356,7 +1359,7 @@ export function createRuntime(
         try {
           depAst = parse(source, { filename: ref });
         } catch (err) {
-          console.warn(`Failed to parse script: ${ref}`, err);
+          log.warn("Failed to parse script: %s %o", ref, err);
           state.failedScripts.add(normalized);
           options.progress?.completeItem();
           return;

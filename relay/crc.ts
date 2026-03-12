@@ -49,7 +49,9 @@ export interface CRCDataBlock {
 }
 
 // Manifest types (mirrored from src/manifest.ts)
-type SourceTuple = [sourcePath: string] | [sourcePath: string, actualPath: string];
+type SourceTuple =
+  | [sourcePath: string]
+  | [sourcePath: string, actualPath: string];
 type ResourceEntry = [firstSeenPath: string, ...SourceTuple[]];
 interface Manifest {
   resources: Record<string, ResourceEntry>;
@@ -120,8 +122,8 @@ export async function computeGameCRC(
 
   console.log(
     `[crc] starting computation: seed=0x${(seed >>> 0).toString(16)}, ` +
-    `${sorted.length} ShapeBaseData datablocks (of ${datablocks.length} total), ` +
-    `includeTextures=${includeTextures}`,
+      `${sorted.length} ShapeBaseData datablocks (of ${datablocks.length} total), ` +
+      `includeTextures=${includeTextures}`,
   );
 
   for (const db of sorted) {
@@ -153,7 +155,7 @@ export async function computeGameCRC(
 
     console.log(
       `[crc]   #${filesFound} id=${db.objectId} ${db.className} "${db.shapeName}" ` +
-      `size=${data.length} crc=0x${prevCrc.toString(16)}→0x${crc.toString(16)}`,
+        `size=${data.length} crc=0x${prevCrc.toString(16)}→0x${crc.toString(16)}`,
     );
 
     // TODO: If includeTextures && db.className !== "PlayerData",
@@ -172,7 +174,7 @@ export async function computeGameCRC(
 
   console.log(
     `[crc] RESULT: ${filesFound} files CRC'd, ${filesMissing} missing, ` +
-    `crc=0x${crc.toString(16)}, totalSize=${totalSize}, elapsed=${elapsed.toFixed(0)}ms`,
+      `crc=0x${crc.toString(16)}, totalSize=${totalSize}, elapsed=${elapsed.toFixed(0)}ms`,
   );
 
   return { crc, totalSize };

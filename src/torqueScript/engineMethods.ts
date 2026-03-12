@@ -1,4 +1,7 @@
+import { createLogger } from "../logger";
 import type { TorqueRuntime } from "./types";
+
+const log = createLogger("engineMethods");
 
 /**
  * Register C++ engine method stubs that TorqueScript code expects to exist.
@@ -116,9 +119,9 @@ export function registerEngineStubs(runtime: TorqueRuntime): void {
       try {
         runtime.$.call(this_, String(methodName), ...args);
       } catch (err) {
-        console.error(
-          `schedule: error calling ${methodName} on ${this_._id}:`,
-          err,
+        log.error(
+          "schedule: error calling %s on %s: %o",
+          methodName, this_._id, err,
         );
       }
     }, ms);

@@ -1,36 +1,14 @@
 .Dialog {
-  position: relative;
+  composes: Dialog from "./GameDialog.module.css";
   width: 860px;
   height: 560px;
-  max-width: calc(100dvw - 40px);
-  max-height: calc(100dvh - 40px);
   display: grid;
   grid-template-columns: 100%;
   grid-template-rows: auto 1fr auto;
-  background: rgba(20, 37, 38, 0.8);
-  border: 1px solid rgba(65, 131, 139, 0.6);
-  border-radius: 4px;
-  box-shadow:
-    0 0 50px rgba(0, 0, 0, 0.4),
-    inset 0 0 60px rgba(1, 7, 13, 0.6);
-  color: #b0d5c9;
-  font-size: 14px;
-  line-height: 1.5;
-  overflow: hidden;
-  outline: none;
-  user-select: text;
-  -webkit-touch-callout: default;
 }
 
 .Overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.7);
-  z-index: 10;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 20px;
+  composes: Overlay from "./GameDialog.module.css";
 }
 
 .Header {
@@ -50,8 +28,18 @@
   flex: 1;
 }
 
+.HiddenRadio {
+  position: absolute;
+  width: 0;
+  height: 0;
+  opacity: 0;
+  z-index: -1;
+  overflow: hidden;
+  pointer-events: none;
+}
+
 .RefreshButton {
-  composes: DialogButton from "./DialogButton.module.css";
+  composes: DialogButton from "./GameDialog.module.css";
   padding: 3px 14px;
   font-size: 12px;
 }
@@ -74,6 +62,7 @@
 
 .Table th {
   position: sticky;
+  z-index: 1;
   top: 0;
   background: rgba(10, 25, 26, 0.95);
   padding: 6px 12px;
@@ -100,6 +89,8 @@
 }
 
 .Table td {
+  position: relative;
+  z-index: 0;
   padding: 3px 12px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.04);
   white-space: nowrap;
@@ -109,15 +100,19 @@
   font-weight: 500;
 }
 
-.Table tbody tr {
+.Table td.EmptyServer {
+  opacity: 0.4;
+}
+
+.Table tbody tr:not(.Empty) {
   cursor: pointer;
 }
 
-.Table tbody tr:hover {
+.Table tbody tr:not(.Empty):hover {
   background: rgba(65, 131, 139, 0.12);
 }
 
-.Selected {
+.Table tbody tr:has(input:checked) {
   background: rgba(93, 255, 225, 0.9) !important;
   color: #1e2828;
 }
@@ -128,7 +123,7 @@
   font-size: 11px;
 }
 
-.Empty {
+.Empty td {
   text-align: center;
   color: rgba(201, 220, 216, 0.3);
   padding: 32px 12px !important;
@@ -146,12 +141,12 @@
 }
 
 .JoinButton {
-  composes: DialogButton from "./DialogButton.module.css";
+  composes: DialogButton from "./GameDialog.module.css";
   min-width: 100px;
 }
 
 .CloseButton {
-  composes: Secondary from "./DialogButton.module.css";
+  composes: Secondary from "./GameDialog.module.css";
 }
 
 .WarriorField {

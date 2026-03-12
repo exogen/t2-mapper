@@ -133,7 +133,12 @@ async function queryServers(addresses: string[]): Promise<ServerInfo[]> {
         if (info) {
           pingResults.set(addr, info);
           masterLog.debug(
-            { addr, name: info.name, build: info.buildVersion, ping: info.ping },
+            {
+              addr,
+              name: info.name,
+              build: info.buildVersion,
+              ping: info.ping,
+            },
             "Ping response",
           );
         }
@@ -246,10 +251,7 @@ async function queryServers(addresses: string[]): Promise<ServerInfo[]> {
  *   U32  buildVersion (e.g. 25034)
  *   HuffString  serverName (24 chars max)
  */
-function parsePingResponse(
-  data: Buffer,
-  sendTime?: number,
-): PingInfo | null {
+function parsePingResponse(data: Buffer, sendTime?: number): PingInfo | null {
   if (data.length < 7 || data[0] !== 16) return null;
   try {
     const bs = new BitStream(
@@ -301,7 +303,15 @@ function parseInfoResponse(data: Buffer): GameInfo | null {
     const playerCount = bs.readU8();
     const maxPlayers = bs.readU8();
     const botCount = bs.readU8();
-    return { mod, gameType, mapName, status, playerCount, maxPlayers, botCount };
+    return {
+      mod,
+      gameType,
+      mapName,
+      status,
+      playerCount,
+      maxPlayers,
+      botCount,
+    };
   } catch {
     return null;
   }

@@ -19,7 +19,7 @@ interface CommentSection {
   comments: string[];
 }
 
-const normalizedMissionTypes = {
+export const normalizedMissionTypes = {
   arena: "Arena",
   bounty: "Bounty",
   cnh: "CnH",

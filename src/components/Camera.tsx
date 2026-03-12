@@ -9,17 +9,12 @@ export function Camera({ entity }: { entity: CameraEntity }) {
 
   const dataBlock = entity.cameraDataBlock;
   const position = useMemo(
-    () =>
-      entity.position
-        ? new Vector3(...entity.position)
-        : new Vector3(),
+    () => (entity.position ? new Vector3(...entity.position) : new Vector3()),
     [entity.position],
   );
   const rotation = useMemo(
     () =>
-      entity.rotation
-        ? new Quaternion(...entity.rotation)
-        : new Quaternion(),
+      entity.rotation ? new Quaternion(...entity.rotation) : new Quaternion(),
     [entity.rotation],
   );
 

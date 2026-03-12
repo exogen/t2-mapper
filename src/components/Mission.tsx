@@ -19,9 +19,13 @@ import {
   getSourceAndPath,
 } from "../manifest";
 import { MissionProvider } from "./MissionContext";
-import { engineStore, gameEntityStore } from "../state";
+import { engineStore } from "../state/engineStore";
+import { gameEntityStore } from "../state/gameEntityStore";
 import { ignoreScripts } from "../torqueScript/ignoreScripts";
 import { walkMissionTree } from "../stream/missionEntityBridge";
+import { createLogger } from "../logger";
+
+const log = createLogger("Mission");
 
 const loadScript = createScriptLoader();
 // Shared cache for parsed scripts - survives runtime restarts
@@ -105,8 +109,16 @@ function useExecutedMission(
         engineStore.getState().setRuntime(runtime);
         const missionGroup = runtime.getObjectByName("MissionGroup");
         if (missionGroup) {
-          const gameEntities = walkMissionTree(missionGroup, runtime);
+          const gameEntities = walkMissionTree(
+            missionGroup,
+            runtime,
+            missionType,
+          );
           gameEntityStore.getState().setAllEntities(gameEntities);
+          gameEntityStore.getState().setMissionInfo({
+            missionName,
+            missionType: missionType ?? undefined,
+          });
         }
         setState({ ready: true, runtime, progress: 1 });
       })
@@ -114,7 +126,7 @@ function useExecutedMission(
         if (err instanceof Error && err.name === "AbortError") {
           return;
         }
-        console.error("Mission runtime failed to become ready:", err);
+        log.error("Mission runtime failed to become ready: %o", err);
       });
 
     // Subscribe as soon as the runtime exists so no mutation batches are missed

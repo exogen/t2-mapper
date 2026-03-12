@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useEffectEvent, useRef } from "react";
 import { Euler, Vector3 } from "three";
 import { useFrame, useThree } from "@react-three/fiber";
 import { useKeyboardControls } from "@react-three/drei";
@@ -29,6 +29,28 @@ export enum Controls {
   camera9 = "camera9",
 }
 
+export const KEYBOARD_CONTROLS = [
+  { name: Controls.forward, keys: ["KeyW"] },
+  { name: Controls.backward, keys: ["KeyS"] },
+  { name: Controls.left, keys: ["KeyA"] },
+  { name: Controls.right, keys: ["KeyD"] },
+  { name: Controls.up, keys: ["Space"] },
+  { name: Controls.down, keys: ["ShiftLeft", "ShiftRight"] },
+  { name: Controls.lookUp, keys: ["ArrowUp"] },
+  { name: Controls.lookDown, keys: ["ArrowDown"] },
+  { name: Controls.lookLeft, keys: ["ArrowLeft"] },
+  { name: Controls.lookRight, keys: ["ArrowRight"] },
+  { name: Controls.camera1, keys: ["Digit1"] },
+  { name: Controls.camera2, keys: ["Digit2"] },
+  { name: Controls.camera3, keys: ["Digit3"] },
+  { name: Controls.camera4, keys: ["Digit4"] },
+  { name: Controls.camera5, keys: ["Digit5"] },
+  { name: Controls.camera6, keys: ["Digit6"] },
+  { name: Controls.camera7, keys: ["Digit7"] },
+  { name: Controls.camera8, keys: ["Digit8"] },
+  { name: Controls.camera9, keys: ["Digit9"] },
+];
+
 const BASE_SPEED = 80;
 const MIN_SPEED_ADJUSTMENT = 0.05;
 const MAX_SPEED_ADJUSTMENT = 0.5;
@@ -39,12 +61,38 @@ const DRAG_THRESHOLD = 3; // px of movement before it counts as a drag
 export const MOUSE_SENSITIVITY = 0.003;
 export const ARROW_LOOK_SPEED = 1; // radians/sec
 
-function CameraMovement() {
-  const { speedMultiplier, setSpeedMultiplier } = useControls();
+export function KeyboardAndMouseHandler() {
+  // Don't let KeyboardControls handle stuff when metaKey is held.
+  useEffect(() => {
+    const handleKey = (e: KeyboardEvent) => {
+      // Let Cmd/Ctrl+K pass through for search focus.
+      if ((e.metaKey || e.ctrlKey) && e.key === "k") {
+        return;
+      }
+      if (e.metaKey) {
+        e.stopImmediatePropagation();
+      }
+    };
+
+    window.addEventListener("keydown", handleKey, { capture: true });
+    window.addEventListener("keyup", handleKey, { capture: true });
+
+    return () => {
+      window.removeEventListener("keydown", handleKey, { capture: true });
+      window.removeEventListener("keyup", handleKey, { capture: true });
+    };
+  }, []);
+
+  const { speedMultiplier, setSpeedMultiplier, invertScroll, invertDrag } =
+    useControls();
   const [subscribe, getKeys] = useKeyboardControls<Controls>();
-  const { camera, gl } = useThree();
+  const camera = useThree((state) => state.camera);
+  const gl = useThree((state) => state.gl);
   const { nextCamera, setCameraIndex, cameraCount } = useCameras();
   const controlsRef = useRef<PointerLockControls | null>(null);
+
+  const getInvertScroll = useEffectEvent(() => invertScroll);
+  const getInvertDrag = useEffectEvent(() => invertDrag);
 
   // Scratch vectors/euler to avoid allocations each frame
   const forwardVec = useRef(new Vector3());
@@ -92,9 +140,10 @@ function CameraMovement() {
       }
       didDrag = true;
 
+      const dragSign = getInvertDrag() ? -1 : 1;
       euler.setFromQuaternion(camera.quaternion, "YXZ");
-      euler.y -= e.movementX * MOUSE_SENSITIVITY;
-      euler.x -= e.movementY * MOUSE_SENSITIVITY;
+      euler.y += dragSign * e.movementX * MOUSE_SENSITIVITY;
+      euler.x += dragSign * e.movementY * MOUSE_SENSITIVITY;
       euler.x = Math.max(-MAX_PITCH, Math.min(MAX_PITCH, euler.x));
       camera.quaternion.setFromEuler(euler);
     };
@@ -154,7 +203,8 @@ function CameraMovement() {
     const handleWheel = (e: WheelEvent) => {
       e.preventDefault();
 
-      const direction = e.deltaY > 0 ? -1 : 1;
+      const scrollSign = getInvertScroll() ? -1 : 1;
+      const direction = (e.deltaY > 0 ? -1 : 1) * scrollSign;
 
       const delta =
         // Helps normalize sensitivity; trackpad scrolling will have many small
@@ -252,51 +302,4 @@ function CameraMovement() {
   });
 
   return null;
-}
-
-export const KEYBOARD_CONTROLS = [
-  { name: Controls.forward, keys: ["KeyW"] },
-  { name: Controls.backward, keys: ["KeyS"] },
-  { name: Controls.left, keys: ["KeyA"] },
-  { name: Controls.right, keys: ["KeyD"] },
-  { name: Controls.up, keys: ["Space"] },
-  { name: Controls.down, keys: ["ShiftLeft", "ShiftRight"] },
-  { name: Controls.lookUp, keys: ["ArrowUp"] },
-  { name: Controls.lookDown, keys: ["ArrowDown"] },
-  { name: Controls.lookLeft, keys: ["ArrowLeft"] },
-  { name: Controls.lookRight, keys: ["ArrowRight"] },
-  { name: Controls.camera1, keys: ["Digit1"] },
-  { name: Controls.camera2, keys: ["Digit2"] },
-  { name: Controls.camera3, keys: ["Digit3"] },
-  { name: Controls.camera4, keys: ["Digit4"] },
-  { name: Controls.camera5, keys: ["Digit5"] },
-  { name: Controls.camera6, keys: ["Digit6"] },
-  { name: Controls.camera7, keys: ["Digit7"] },
-  { name: Controls.camera8, keys: ["Digit8"] },
-  { name: Controls.camera9, keys: ["Digit9"] },
-];
-
-export function ObserverControls() {
-  // Don't let KeyboardControls handle stuff when metaKey is held.
-  useEffect(() => {
-    const handleKey = (e: KeyboardEvent) => {
-      // Let Cmd/Ctrl+K pass through for search focus.
-      if ((e.metaKey || e.ctrlKey) && e.key === "k") {
-        return;
-      }
-      if (e.metaKey) {
-        e.stopImmediatePropagation();
-      }
-    };
-
-    window.addEventListener("keydown", handleKey, { capture: true });
-    window.addEventListener("keyup", handleKey, { capture: true });
-
-    return () => {
-      window.removeEventListener("keydown", handleKey, { capture: true });
-      window.removeEventListener("keyup", handleKey, { capture: true });
-    };
-  }, []);
-
-  return <CameraMovement />;
 }

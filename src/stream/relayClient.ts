@@ -1,3 +1,4 @@
+import { createLogger } from "../logger";
 import type {
   ClientMessage,
   ClientMove,
@@ -6,9 +7,16 @@ import type {
   ConnectionStatus,
 } from "../../relay/types";
 
+const log = createLogger("relayClient");
+
 export type RelayEventHandler = {
   onOpen?: () => void;
-  onStatus?: (status: ConnectionStatus, message?: string, connectSequence?: number, mapName?: string) => void;
+  onStatus?: (
+    status: ConnectionStatus,
+    message?: string,
+    connectSequence?: number,
+    mapName?: string,
+  ) => void;
   onServerList?: (servers: ServerInfo[]) => void;
   onGamePacket?: (data: Uint8Array) => void;
   /** Relay↔T2 server RTT. */
@@ -45,7 +53,7 @@ export class RelayClient {
     this.ws.binaryType = "arraybuffer";
 
     this.ws.onopen = () => {
-      console.log("[relay] WebSocket connected to", this.url);
+      log.info("WebSocket connected to %s", this.url);
       this._connected = true;
       this.startWsPing();
       this.handlers.onOpen?.();
@@ -61,20 +69,20 @@ export class RelayClient {
           const message: ServerMessage = JSON.parse(event.data as string);
           this.handleMessage(message);
         } catch (e) {
-          console.error("Failed to parse relay message:", e);
+          log.error("Failed to parse relay message: %o", e);
         }
       }
     };
 
     this.ws.onclose = () => {
-      console.log("[relay] WebSocket disconnected");
+      log.info("WebSocket disconnected");
       this._connected = false;
       this.stopWsPing();
       this.handlers.onClose?.();
     };
 
     this.ws.onerror = () => {
-      console.error("[relay] WebSocket error");
+      log.error("WebSocket error");
       this.handlers.onError?.("WebSocket connection error");
     };
   }
@@ -85,7 +93,12 @@ export class RelayClient {
         this.handlers.onServerList?.(message.servers);
         break;
       case "status":
-        this.handlers.onStatus?.(message.status, message.message, message.connectSequence, message.mapName);
+        this.handlers.onStatus?.(
+          message.status,
+          message.message,
+          message.connectSequence,
+          message.mapName,
+        );
         break;
       case "ping":
         this.handlers.onPing?.(message.ms);
@@ -117,7 +130,7 @@ export class RelayClient {
 
   /** Join a specific game server. */
   joinServer(address: string, warriorName?: string): void {
-    console.log("[relay] Joining server:", address);
+    log.info("Joining server: %s", address);
     this.send({ type: "joinServer", address, warriorName });
   }
 
@@ -148,7 +161,13 @@ export class RelayClient {
     datablocks: { objectId: number; className: string; shapeName: string }[],
     includeTextures: boolean,
   ): void {
-    this.send({ type: "sendCRCCompute", seed, field2, includeTextures, datablocks });
+    this.send({
+      type: "sendCRCCompute",
+      seed,
+      field2,
+      includeTextures,
+      datablocks,
+    });
   }
 
   /** Send a GhostAlwaysDone acknowledgment through the relay. */
@@ -191,7 +210,7 @@ export class RelayClient {
     if (this.ws?.readyState === WebSocket.OPEN) {
       this.ws.send(JSON.stringify(message));
     } else {
-      console.warn("[relay] send dropped (ws not open):", message.type);
+      log.warn("send dropped (ws not open): %s", message.type);
     }
   }
 }

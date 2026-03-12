@@ -43,7 +43,10 @@ function buildFieldIndex(rules: readonly ReactiveFieldRule[]): ClassRuleIndex {
         addRuleValues(anyClassValues, rule.fields);
         continue;
       }
-      addRuleValues(getOrCreateSet(valuesByClass, normalizedClass), rule.fields);
+      addRuleValues(
+        getOrCreateSet(valuesByClass, normalizedClass),
+        rule.fields,
+      );
     }
   }
 

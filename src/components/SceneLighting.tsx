@@ -1,8 +1,11 @@
 import { useEffect, useMemo } from "react";
 import { Color, Vector3 } from "three";
+import { createLogger } from "../logger";
 import { useSceneSun } from "../state/gameEntityStore";
 import { torqueToThree } from "../scene/coordinates";
 import { updateGlobalSunUniforms } from "../globalSunUniforms";
+
+const log = createLogger("SceneLighting");
 
 /**
  * Renders scene-global lights (directional sun + ambient) derived from the
@@ -14,6 +17,25 @@ import { updateGlobalSunUniforms } from "../globalSunUniforms";
 export function SceneLighting() {
   const sunData = useSceneSun();
 
+  useEffect(() => {
+    if (sunData) {
+      log.debug(
+        "sunData: dir=(%s, %s, %s) color=(%s, %s, %s) ambient=(%s, %s, %s)",
+        sunData.direction.x.toFixed(3),
+        sunData.direction.y.toFixed(3),
+        sunData.direction.z.toFixed(3),
+        sunData.color.r.toFixed(3),
+        sunData.color.g.toFixed(3),
+        sunData.color.b.toFixed(3),
+        sunData.ambient.r.toFixed(3),
+        sunData.ambient.g.toFixed(3),
+        sunData.ambient.b.toFixed(3),
+      );
+    } else {
+      log.debug("No sunData — using fallback ambient #888");
+    }
+  }, [sunData]);
+
   if (!sunData) {
     // Fallback lighting when no Sun entity exists yet
     return <ambientLight color="#888888" intensity={1.0} />;
@@ -22,7 +44,11 @@ export function SceneLighting() {
   return <SunLighting sunData={sunData} />;
 }
 
-function SunLighting({ sunData }: { sunData: NonNullable<ReturnType<typeof useSceneSun>> }) {
+function SunLighting({
+  sunData,
+}: {
+  sunData: NonNullable<ReturnType<typeof useSceneSun>>;
+}) {
   const direction = useMemo(() => {
     const [x, y, z] = torqueToThree(sunData.direction);
     const len = Math.sqrt(x * x + y * y + z * z);

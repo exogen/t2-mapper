@@ -4,11 +4,16 @@ import { useFrame, useThree } from "@react-three/fiber";
 import { DoubleSide, NoColorSpace, PlaneGeometry, RepeatWrapping } from "three";
 import { textureToUrl } from "../loaders";
 import type { SceneWaterBlock } from "../scene/types";
-import { torqueToThree, torqueScaleToThree, matrixFToQuaternion } from "../scene";
+import {
+  torqueToThree,
+  torqueScaleToThree,
+  matrixFToQuaternion,
+} from "../scene";
 import { setupTexture } from "../textureUtils";
 import { createWaterMaterial } from "../waterMaterial";
 import { useDebug, useSettings } from "./SettingsProvider";
 import { usePositionTracker } from "./usePositionTracker";
+import { WaterBlockEntity } from "../state/gameEntityTypes";
 
 const REP_SIZE = 2048;
 
@@ -87,13 +92,20 @@ export function WaterMaterial({
  * - Renders 9 reps (3x3 grid) centered on camera's rep
  */
 export const WaterBlock = memo(function WaterBlock({
-  scene,
+  entity,
 }: {
-  scene: SceneWaterBlock;
+  entity: WaterBlockEntity;
 }) {
+  const scene = entity.waterData;
   const { debugMode } = useDebug();
-  const q = useMemo(() => matrixFToQuaternion(scene.transform), [scene.transform]);
-  const position = useMemo(() => torqueToThree(scene.transform.position), [scene.transform]);
+  const q = useMemo(
+    () => matrixFToQuaternion(scene.transform),
+    [scene.transform],
+  );
+  const position = useMemo(
+    () => torqueToThree(scene.transform.position),
+    [scene.transform],
+  );
   const scale = useMemo(() => torqueScaleToThree(scene.scale), [scene.scale]);
   const [scaleX, scaleY, scaleZ] = scale;
   const camera = useThree((state) => state.camera);

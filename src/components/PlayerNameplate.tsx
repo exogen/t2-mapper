@@ -29,7 +29,7 @@ const _tmpVec = new Vector3();
  */
 export function PlayerNameplate({ entity }: { entity: PlayerEntity }) {
   const gltf = useStaticShape((entity.shapeName ?? entity.dataBlock)!);
-  const { camera } = useThree();
+  const camera = useThree((state) => state.camera);
   const groupRef = useRef<Object3D>(null);
   const iffContainerRef = useRef<HTMLDivElement>(null);
   const nameContainerRef = useRef<HTMLDivElement>(null);
@@ -75,7 +75,10 @@ export function PlayerNameplate({ entity }: { entity: PlayerEntity }) {
     if (!shouldBeVisible) return;
 
     // Hide nameplate when player is dead.
-    const kf = getKeyframeAtTime(keyframes, streamPlaybackStore.getState().time);
+    const kf = getKeyframeAtTime(
+      keyframes,
+      streamPlaybackStore.getState().time,
+    );
     const health = kf?.health ?? 1;
     if (kf?.damageState != null && kf.damageState >= 1) {
       if (iffContainerRef.current) iffContainerRef.current.style.opacity = "0";

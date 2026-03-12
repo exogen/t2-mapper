@@ -1,4 +1,5 @@
-import { Suspense, useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
+import { DebugSuspense } from "./DebugSuspense";
 import { useTexture } from "@react-three/drei";
 import { useFrame } from "@react-three/fiber";
 import {
@@ -10,7 +11,10 @@ import {
   RepeatWrapping,
 } from "three";
 import type { Texture } from "three";
-import type { ForceFieldData } from "../state/gameEntityTypes";
+import type {
+  ForceFieldBareEntity,
+  ForceFieldData,
+} from "../state/gameEntityTypes";
 import { textureToUrl } from "../loaders";
 import { useSettings } from "./SettingsProvider";
 import {
@@ -126,13 +130,10 @@ function ForceFieldMesh({
  * Renders a ForceFieldBare from pre-resolved ForceFieldData.
  * Used by the unified EntityRenderer — does NOT read from TorqueObject/datablock.
  */
-export function ForceFieldBare({
-  data,
-  scale,
-}: {
-  data: ForceFieldData;
-  scale: [number, number, number];
-}) {
+export function ForceFieldBare({ entity }: { entity: ForceFieldBareEntity }) {
+  const data = entity.forceFieldData;
+  const scale = data.dimensions;
+
   const textureUrls = useMemo(
     () => data.textures.map((t) => textureToUrl(t)),
     [data.textures],
@@ -149,7 +150,8 @@ export function ForceFieldBare({
   }
 
   return (
-    <Suspense
+    <DebugSuspense
+      name={`ForceField`}
       fallback={
         <ForceFieldFallback
           scale={scale}
@@ -159,6 +161,6 @@ export function ForceFieldBare({
       }
     >
       <ForceFieldMesh scale={scale} data={data} />
-    </Suspense>
+    </DebugSuspense>
   );
 }

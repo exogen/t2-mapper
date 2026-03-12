@@ -33,35 +33,68 @@ import type {
 } from "./types";
 import { StreamEngine, type MutableEntity } from "./StreamEngine";
 
-function extractMissionInfo(demoValues: string[]): {
-  missionName: string | null;
-  gameType: string | null;
-} {
-  let missionName: string | null = null;
-  let gameType: string | null = null;
+interface DemoMissionInfo {
+  /** Mission display name from readplayerinfo row 2 (e.g. "S5-WoodyMyrk"). */
+  missionDisplayName: string | null;
+  /** Mission type display name from readplayerinfo row 3 (e.g. "Capture the Flag"). */
+  missionType: string | null;
+  /** Game class name from the SCORE header (e.g. "CTFGame"). */
+  gameClassName: string | null;
+  /** Server display name from readplayerinfo row 2. */
+  serverDisplayName: string | null;
+  /** Mod name from readplayerinfo row 3 (e.g. "classic"). */
+  mod: string | null;
+  /** Name of the player who recorded the demo (from readplayerinfo row 1). */
+  recorderName: string | null;
+  /** Recording date string from readplayerinfo row 2 (e.g. "May-4-2025 10:37PM"). */
+  recordingDate: string | null;
+}
+
+function extractMissionInfo(demoValues: string[]): DemoMissionInfo {
+  let missionDisplayName: string | null = null;
+  let missionType: string | null = null;
+  let gameClassName: string | null = null;
+  let serverDisplayName: string | null = null;
+  let mod: string | null = null;
+  let recorderName: string | null = null;
+  let recordingDate: string | null = null;
 
   for (let i = 0; i < demoValues.length; i++) {
+    // SCORE header: "visible\tgameClassName\tobjCount"
+    const scoreFields = demoValues[i].split("\t");
+    if (scoreFields.length >= 3 && scoreFields[1]?.endsWith("Game")) {
+      gameClassName = scoreFields[1];
+    }
+
     if (demoValues[i] !== "readplayerinfo") continue;
     const value = demoValues[i + 1];
     if (!value) continue;
 
-    if (value.startsWith("2\t")) {
+    if (value.startsWith("1\t")) {
+      // Row 1: "1\ttime\trecorderName\tteam\tplayerId"
       const fields = value.split("\t");
-      if (fields[4]) {
-        missionName = fields[4];
-      }
+      if (fields[2]) recorderName = stripTaggedStringMarkup(fields[2]).trim();
+      continue;
+    }
+
+    if (value.startsWith("2\t")) {
+      // Row 2: "2\tserverName\taddress\tdate\tmissionDisplayName"
+      const fields = value.split("\t");
+      if (fields[1]) serverDisplayName = fields[1];
+      if (fields[3]) recordingDate = fields[3];
+      if (fields[4]) missionDisplayName = fields[4];
       continue;
     }
 
     if (value.startsWith("3\t")) {
+      // Row 3: "3\tmod\tmissionTypeDisplayName\t..."
       const fields = value.split("\t");
-      if (fields[2]) {
-        gameType = fields[2];
-      }
+      if (fields[1]) mod = fields[1];
+      if (fields[2]) missionType = fields[2];
     }
   }
 
-  return { missionName, gameType };
+  return { missionDisplayName, missionType, gameClassName, serverDisplayName, mod, recorderName, recordingDate };
 }
 
 interface ParsedDemoValues {
@@ -370,9 +403,10 @@ class StreamingPlayback extends StreamEngine {
     return this.moveTicks * (TICK_DURATION_MS / 1000);
   }
 
-  protected getCameraYawPitch(
-    _data: Record<string, unknown> | undefined,
-  ): { yaw: number; pitch: number } {
+  protected getCameraYawPitch(_data: Record<string, unknown> | undefined): {
+    yaw: number;
+    pitch: number;
+  } {
     // Move-derived angles are valid when the control object is a Player
     // (including when piloting a vehicle — moves still drive the camera).
     const hasMoves = this.lastControlType === "player";
@@ -464,7 +498,8 @@ class StreamingPlayback extends StreamEngine {
         : false;
     this.lastPilotGhostIndex =
       this.isPiloting &&
-      typeof this.initialBlock.controlObjectData?.controlObjectGhost === "number"
+      typeof this.initialBlock.controlObjectData?.controlObjectGhost ===
+        "number"
         ? this.initialBlock.controlObjectData.controlObjectGhost
         : undefined;
     if (this.isPiloting) {
@@ -666,10 +701,7 @@ class StreamingPlayback extends StreamEngine {
   }
 
   getSnapshot(): StreamSnapshot {
-    if (
-      this._cachedSnapshot &&
-      this._cachedSnapshotTick === this.moveTicks
-    ) {
+    if (this._cachedSnapshot && this._cachedSnapshotTick === this.moveTicks) {
       return this._cachedSnapshot;
     }
     const snapshot = this.buildSnapshot();
@@ -823,8 +855,7 @@ class StreamingPlayback extends StreamEngine {
       // Replicate V12 Player::updateMove(): apply delta then wrap/clamp.
       this.absoluteYaw += block.parsed.yaw ?? 0;
       const TWO_PI = Math.PI * 2;
-      this.absoluteYaw =
-        ((this.absoluteYaw % TWO_PI) + TWO_PI) % TWO_PI;
+      this.absoluteYaw = ((this.absoluteYaw % TWO_PI) + TWO_PI) % TWO_PI;
       this.absolutePitch = clamp(
         this.absolutePitch + (block.parsed.pitch ?? 0),
         -MAX_PITCH,
@@ -840,8 +871,7 @@ class StreamingPlayback extends StreamEngine {
     const timeSec = this.getTimeSec();
     const prev = this._snap;
 
-    const { chatMessages, audioEvents } =
-      this.buildTimeFilteredEvents(timeSec);
+    const { chatMessages, audioEvents } = this.buildTimeFilteredEvents(timeSec);
 
     const weaponsHud =
       prev && prev.weaponsHudGen === this._weaponsHudGen
@@ -978,15 +1008,25 @@ export async function createDemoStreamingRecording(
 ): Promise<StreamRecording> {
   const parser = new DemoParser(new Uint8Array(data));
   const { header, initialBlock } = await parser.load();
-  const { missionName: infoMissionName, gameType } = extractMissionInfo(
-    initialBlock.demoValues,
-  );
+  const info = extractMissionInfo(initialBlock.demoValues);
+  const playback = new StreamingPlayback(parser);
+
+  // Seed StreamEngine's mission info fields from the initial block so they're
+  // available immediately (before any server messages arrive during playback).
+  playback.missionDisplayName = info.missionDisplayName;
+  playback.missionTypeDisplayName = info.missionType;
+  playback.gameClassName = info.gameClassName;
+  playback.serverDisplayName = info.serverDisplayName;
+  playback.connectedPlayerName = info.recorderName;
 
   return {
     source: "demo",
     duration: header.demoLengthMs / 1000,
-    missionName: infoMissionName ?? initialBlock.missionName ?? null,
-    gameType,
-    streamingPlayback: new StreamingPlayback(parser),
+    missionName: initialBlock.missionName ?? null,
+    gameType: info.missionType,
+    serverDisplayName: info.serverDisplayName,
+    recorderName: info.recorderName,
+    recordingDate: info.recordingDate,
+    streamingPlayback: playback,
   };
 }

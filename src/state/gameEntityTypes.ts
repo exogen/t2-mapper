@@ -140,6 +140,8 @@ export interface PlayerEntity extends PositionedBase {
   dataBlock?: string;
   weaponShape?: string;
   packShape?: string;
+  /** DTS shape name for the carried flag (slot 3, Mount2 bone). */
+  flagShape?: string;
   falling?: boolean;
   jetting?: boolean;
   playerName?: string;
@@ -185,13 +187,13 @@ export interface SpriteEntity extends PositionedBase {
 export interface AudioEmitterEntity extends PositionedBase {
   renderType: "AudioEmitter";
   audioFileName?: string;
-  audioVolume?: number;
   audioIs3D?: boolean;
   audioIsLooping?: boolean;
-  audioMinDistance?: number;
   audioMaxDistance?: number;
-  audioMinLoopGap?: number;
   audioMaxLoopGap?: number;
+  audioMinDistance?: number;
+  audioMinLoopGap?: number;
+  audioVolume?: number;
 }
 
 export interface CameraEntity extends PositionedBase {

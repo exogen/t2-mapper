@@ -1,5 +1,4 @@
 import { ghostToSceneObject } from "../scene";
-import { getTerrainHeightAt } from "../terrainHeight";
 import type { SceneObject } from "../scene/types";
 import {
   linearProjectileClassNames,
@@ -51,6 +50,9 @@ import type {
   WeaponImageState,
   WeaponImageDataBlockState,
 } from "./types";
+import { createLogger } from "../logger";
+
+const log = createLogger("StreamEngine");
 
 export type { Vec3 };
 
@@ -97,19 +99,20 @@ export interface MutableEntity {
   weaponImageStates?: WeaponImageDataBlockState[];
   weaponImageStatesDbId?: number;
   packShape?: string;
+  flagShape?: string;
   falling?: boolean;
   jetting?: boolean;
   headPitch?: number;
   headYaw?: number;
   targetRenderFlags?: number;
   carryingFlag?: boolean;
-  /** Item physics simulation state (dropped weapons/items). */
+  /** Item velocity interpolation state (dropped weapons/items).
+   * The real Tribes 2 client does NOT simulate physics (gravity/collision)
+   * for items — it just interpolates position using server-sent velocity
+   * until the next server update arrives. */
   itemPhysics?: {
     velocity: [number, number, number];
     atRest: boolean;
-    elasticity: number;
-    friction: number;
-    gravityMod: number;
   };
   label?: string;
   audioFileName?: string;
@@ -164,6 +167,9 @@ export abstract class StreamEngine implements StreamingPlayback {
   // ── Chat & audio ──
   protected chatMessages: ChatMessage[] = [];
   protected chatMessageIdCounter = 0;
+  private _chatGen = 0;
+  private _chatSnapshotGen = -1;
+  private _chatSnapshot: ChatMessage[] = [];
   protected audioEvents: PendingAudioEvent[] = [];
 
   // ── Net strings ──
@@ -209,6 +215,20 @@ export abstract class StreamEngine implements StreamingPlayback {
   protected inventoryHud = { slots: new Map<number, number>(), activeSlot: -1 };
   protected teamScores: TeamScore[] = [];
   protected playerRoster = new Map<number, { name: string; teamId: number }>();
+
+  // ── Mission info (from server messages) ──
+  /** Mission display name (e.g. "Riverdance"), from MsgMissionDropInfo/MsgLoadInfo. */
+  missionDisplayName: string | null = null;
+  /** Game type display name (e.g. "Capture the Flag"), from MsgMissionDropInfo/MsgLoadInfo. */
+  missionTypeDisplayName: string | null = null;
+  /** Game class name (e.g. "CTFGame"), from MsgClientReady. */
+  gameClassName: string | null = null;
+  /** Server name from MsgMissionDropInfo. */
+  serverDisplayName: string | null = null;
+  /** Server-assigned name of the connected/recording player. */
+  connectedPlayerName: string | null = null;
+  /** Called when mission info changes (mission name, game type, etc.). */
+  onMissionInfoChange?: () => void;
 
   // ── Explosions ──
   protected nextExplosionId = 0;
@@ -285,6 +305,9 @@ export abstract class StreamEngine implements StreamingPlayback {
     this.camera = null;
     this.chatMessages = [];
     this.chatMessageIdCounter = 0;
+    this._chatGen = 0;
+    this._chatSnapshotGen = -1;
+    this._chatSnapshot = [];
     this.audioEvents = [];
     this.netStrings.clear();
     this.targetNames.clear();
@@ -315,6 +338,11 @@ export abstract class StreamEngine implements StreamingPlayback {
     this.teamScores = [];
     this.playerRoster.clear();
     this.nextExplosionId = 0;
+    this.missionDisplayName = null;
+    this.missionTypeDisplayName = null;
+    this.gameClassName = null;
+    this.serverDisplayName = null;
+    this.connectedPlayerName = null;
   }
 
   // ── Net string resolution ──
@@ -385,7 +413,10 @@ export abstract class StreamEngine implements StreamingPlayback {
         this.isPiloting = !!(
           controlData.pilot || controlData.controlObjectGhost != null
         );
-        if (this.isPiloting && typeof controlData.controlObjectGhost === "number") {
+        if (
+          this.isPiloting &&
+          typeof controlData.controlObjectGhost === "number"
+        ) {
           this.lastPilotGhostIndex = controlData.controlObjectGhost;
         } else if (!this.isPiloting) {
           this.lastPilotGhostIndex = undefined;
@@ -450,6 +481,17 @@ export abstract class StreamEngine implements StreamingPlayback {
       const ghostIndex = data.ghostIndex as number | undefined;
       const classId = data.classId as number | undefined;
       const objectData = data.objectData as Record<string, unknown> | undefined;
+      const hasData = data._hasObjectData as boolean | undefined;
+      const className = typeof classId === "number"
+        ? this.registry.getGhostParser(classId)?.name ?? `classId=${classId}`
+        : "?";
+      log.debug(
+        "GhostAlwaysObjectEvent: ghost=%d class=%s hasData=%s %s",
+        ghostIndex,
+        className,
+        hasData,
+        objectData ? `keys=[${Object.keys(objectData).join(",")}]` : "(no data)",
+      );
       if (ghostIndex != null && classId != null) {
         this.processGhostUpdate({
           index: ghostIndex,
@@ -509,7 +551,9 @@ export abstract class StreamEngine implements StreamingPlayback {
         const rf = this.targetRenderFlags.get(targetId);
         for (const entity of this.entities.values()) {
           if (entity.targetId === targetId) {
-            if (name) entity.playerName = name;
+            if (name) {
+              entity.playerName = name;
+            }
             if (team != null) entity.sensorGroup = team;
             if (rf != null) entity.targetRenderFlags = rf;
           }
@@ -518,10 +562,7 @@ export abstract class StreamEngine implements StreamingPlayback {
       return;
     }
 
-    if (
-      type === "SetSensorGroupEvent" ||
-      eventName === "SetSensorGroupEvent"
-    ) {
+    if (type === "SetSensorGroupEvent" || eventName === "SetSensorGroupEvent") {
       const sg = data.sensorGroup as number | undefined;
       if (sg != null) this.playerSensorGroup = sg;
       return;
@@ -558,10 +599,7 @@ export abstract class StreamEngine implements StreamingPlayback {
       return;
     }
 
-    if (
-      type === "RemoteCommandEvent" ||
-      eventName === "RemoteCommandEvent"
-    ) {
+    if (type === "RemoteCommandEvent" || eventName === "RemoteCommandEvent") {
       const funcName = this.resolveNetString(data.funcName as string);
       const args = data.args as string[];
       const timeSec = this.getTimeSec();
@@ -607,9 +645,7 @@ export abstract class StreamEngine implements StreamingPlayback {
           });
         }
       } else if (funcName === "CannedChatMessage" && args.length >= 6) {
-        const cannedColorCode = detectColorCode(
-          this.resolveNetString(args[1]),
-        );
+        const cannedColorCode = detectColorCode(this.resolveNetString(args[1]));
         const name = stripTaggedStringMarkup(this.resolveNetString(args[2]));
         const keys = stripTaggedStringMarkup(this.resolveNetString(args[4]));
         const rawText = this.formatRemoteArgs(args[1], args.slice(2));
@@ -682,9 +718,7 @@ export abstract class StreamEngine implements StreamingPlayback {
         const timeSec = this.getTimeSec();
         const is3D =
           type === "Sim3DAudioEvent" || eventName === "Sim3DAudioEvent";
-        const position = is3D
-          ? (data.position as Vec3 | undefined)
-          : undefined;
+        const position = is3D ? (data.position as Vec3 | undefined) : undefined;
         this.audioEvents.push({ profileId, position, timeSec });
         if (this.audioEvents.length > 100) {
           this.audioEvents.splice(0, this.audioEvents.length - 100);
@@ -863,8 +897,7 @@ export abstract class StreamEngine implements StreamingPlayback {
           entity.projectilePhysics = "linear";
         } else if (ballisticProjectileClassNames.has(entity.className)) {
           entity.projectilePhysics = "ballistic";
-          entity.gravityMod =
-            getNumberField(blockData, ["gravityMod"]) ?? 1.0;
+          entity.gravityMod = getNumberField(blockData, ["gravityMod"]) ?? 1.0;
         } else if (seekerProjectileClassNames.has(entity.className)) {
           entity.projectilePhysics = "seeker";
         }
@@ -955,14 +988,29 @@ export abstract class StreamEngine implements StreamingPlayback {
           entity.packShape = undefined;
         }
 
-        // Flag tracking
+        // Flag image (slot 3 = $FlagSlot, mountPoint 2 = Mount2)
         const flagImage = images.find((img) => img.index === 3);
-        if (flagImage) {
-          const hasFlag = !!flagImage.dataBlockId && flagImage.dataBlockId > 0;
-          entity.carryingFlag = hasFlag;
+        if (flagImage?.dataBlockId && flagImage.dataBlockId > 0) {
+          entity.carryingFlag = true;
+          const blockData = this.getDataBlockData(flagImage.dataBlockId);
+          const shape = resolveShapeName("ShapeBaseImageData", blockData);
+          if (shape) {
+            entity.flagShape = shape;
+          }
           if (entity.targetId != null && entity.targetId >= 0) {
             const prev = this.targetRenderFlags.get(entity.targetId) ?? 0;
-            const updated = hasFlag ? prev | 0x2 : prev & ~0x2;
+            const updated = prev | 0x2;
+            if (updated !== prev) {
+              this.targetRenderFlags.set(entity.targetId, updated);
+              entity.targetRenderFlags = updated;
+            }
+          }
+        } else if (flagImage && !flagImage.dataBlockId) {
+          entity.carryingFlag = false;
+          entity.flagShape = undefined;
+          if (entity.targetId != null && entity.targetId >= 0) {
+            const prev = this.targetRenderFlags.get(entity.targetId) ?? 0;
+            const updated = prev & ~0x2;
             if (updated !== prev) {
               this.targetRenderFlags.set(entity.targetId, updated);
               entity.targetRenderFlags = updated;
@@ -1018,9 +1066,11 @@ export abstract class StreamEngine implements StreamingPlayback {
       )
     ) {
       const converted = torqueQuatToThreeJS(
-        (data.transform as {
-          rotation: { x: number; y: number; z: number; w: number };
-        }).rotation,
+        (
+          data.transform as {
+            rotation: { x: number; y: number; z: number; w: number };
+          }
+        ).rotation,
       );
       if (converted) entity.rotation = converted;
     } else if (
@@ -1059,21 +1109,15 @@ export abstract class StreamEngine implements StreamingPlayback {
     if (typeof data.moveFlag0 === "boolean") entity.falling = data.moveFlag0;
     if (typeof data.moveFlag1 === "boolean") entity.jetting = data.moveFlag1;
 
-    // Item physics: when the server sends a position update with
-    // atRest=false and a velocity, start client-side physics simulation.
+    // Item velocity interpolation: the Tribes 2 client does NOT simulate
+    // physics (gravity/collision) for items. It interpolates position using
+    // server-sent velocity until the next server update or atRest=true.
     if (entity.type === "Item") {
       const atRest = data.atRest as boolean | undefined;
       if (atRest === false && isVec3Like(data.velocity)) {
-        const blockData =
-          entity.dataBlockId != null
-            ? this.getDataBlockData(entity.dataBlockId)
-            : undefined;
         entity.itemPhysics = {
           velocity: [data.velocity.x, data.velocity.y, data.velocity.z],
           atRest: false,
-          elasticity: getNumberField(blockData, ["elasticity"]) ?? 0.2,
-          friction: getNumberField(blockData, ["friction"]) ?? 0.6,
-          gravityMod: getNumberField(blockData, ["gravityMod"]) ?? 1.0,
         };
       } else if (atRest === true) {
         entity.itemPhysics = undefined;
@@ -1280,8 +1324,7 @@ export abstract class StreamEngine implements StreamingPlayback {
             audioVolume: (descBlock?.volume as number) ?? 1,
             audioIs3D: (descBlock?.is3D as boolean) ?? true,
             audioIsLooping: (descBlock?.isLooping as boolean) ?? false,
-            audioMinDistance:
-              (descBlock?.referenceDistance as number) ?? 20,
+            audioMinDistance: (descBlock?.referenceDistance as number) ?? 20,
             audioMaxDistance: (descBlock?.maxDistance as number) ?? 100,
             audioMinLoopGap: (descBlock?.minLoopGap as number) ?? 0,
             audioMaxLoopGap: (descBlock?.maxLoopGap as number) ?? 0,
@@ -1433,6 +1476,8 @@ export abstract class StreamEngine implements StreamingPlayback {
   }
 
   /** Advance dropped item physics (gravity, terrain collision, friction). */
+  /** Advance item positions using server-sent velocity (no gravity/collision).
+   * The real Tribes 2 client just interpolates; physics runs server-side. */
   protected advanceItems(): void {
     const dt = TICK_DURATION_MS / 1000;
     for (const entity of this.entities.values()) {
@@ -1440,35 +1485,9 @@ export abstract class StreamEngine implements StreamingPlayback {
       if (!phys || phys.atRest || !entity.position) continue;
       const v = phys.velocity;
       const p = entity.position;
-
-      // Gravity: Tribes 2 uses -20 m/s² (Torque Z-up).
-      v[2] += -20 * phys.gravityMod * dt;
-
       p[0] += v[0] * dt;
       p[1] += v[1] * dt;
       p[2] += v[2] * dt;
-
-      // Terrain collision (flat normal approximation: [0, 0, 1])
-      const groundZ = getTerrainHeightAt(p[0], p[1]);
-      if (groundZ != null && p[2] < groundZ) {
-        p[2] = groundZ;
-        const bd = Math.abs(v[2]); // normal impact speed
-        v[2] = bd * phys.elasticity; // reflect with restitution
-        // Friction: reduce horizontal speed proportional to impact
-        const friction = bd * phys.friction;
-        const hSpeed = Math.sqrt(v[0] * v[0] + v[1] * v[1]);
-        if (hSpeed > 0) {
-          const scale = Math.max(0, 1 - friction / hSpeed);
-          v[0] *= scale;
-          v[1] *= scale;
-        }
-        // At-rest check
-        const speed = Math.sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
-        if (speed < 0.15) {
-          v[0] = v[1] = v[2] = 0;
-          phys.atRest = true;
-        }
-      }
     }
   }
 
@@ -1572,15 +1591,17 @@ export abstract class StreamEngine implements StreamingPlayback {
       } else {
         // Player control object.
         if (control.ghostIndex >= 0) {
-          this.controlPlayerGhostId =
-            this.resolveEntityIdForGhostIndex(control.ghostIndex);
+          this.controlPlayerGhostId = this.resolveEntityIdForGhostIndex(
+            control.ghostIndex,
+          );
         }
         if (!this.firstPerson) {
           // Third-person: orbit the vehicle (if piloting) or the player.
           this.camera.mode = "third-person";
           if (this.isPiloting && this.lastPilotGhostIndex != null) {
-            this.camera.orbitTargetId =
-              this.resolveEntityIdForGhostIndex(this.lastPilotGhostIndex);
+            this.camera.orbitTargetId = this.resolveEntityIdForGhostIndex(
+              this.lastPilotGhostIndex,
+            );
             this.camera.orbitDistance = 15;
             if (this.lastVehicleOrbitDir) {
               this.camera.orbitDirection = this.lastVehicleOrbitDir;
@@ -1601,8 +1622,9 @@ export abstract class StreamEngine implements StreamingPlayback {
       // Sync control object positions from controlObjectData.
       if (controlType === "player" && control.position) {
         if (this.isPiloting && this.lastPilotGhostIndex != null) {
-          const vehicleId =
-            this.resolveEntityIdForGhostIndex(this.lastPilotGhostIndex);
+          const vehicleId = this.resolveEntityIdForGhostIndex(
+            this.lastPilotGhostIndex,
+          );
           const vehicleEntity = vehicleId
             ? this.entities.get(vehicleId)
             : undefined;
@@ -1618,7 +1640,11 @@ export abstract class StreamEngine implements StreamingPlayback {
                 control.position.y,
                 control.position.z,
               ];
-              this.lastVehiclePos = vehicleEntity.position.slice() as [number, number, number];
+              this.lastVehiclePos = vehicleEntity.position.slice() as [
+                number,
+                number,
+                number,
+              ];
               this.lastVehiclePosTime = timeSec;
 
               // Extract velocity from linMomentum for interpolation between
@@ -1629,7 +1655,8 @@ export abstract class StreamEngine implements StreamingPlayback {
               if (mom && isValidPosition(mom)) {
                 // linMomentum = mass * velocity; look up mass from datablock.
                 const dbId = vehicleEntity.dataBlockId;
-                const dbData = dbId != null ? this.getDataBlockData(dbId) : undefined;
+                const dbData =
+                  dbId != null ? this.getDataBlockData(dbId) : undefined;
                 const mass = (dbData?.mass as number) ?? 200;
                 const invMass = mass > 0 ? 1 / mass : 1 / 200;
                 this.lastVehicleVelocity = [
@@ -1768,6 +1795,7 @@ export abstract class StreamEngine implements StreamingPlayback {
     if (this.chatMessages.length > 200) {
       this.chatMessages.splice(0, this.chatMessages.length - 200);
     }
+    this._chatGen++;
   }
 
   protected handleServerMessage(args: string[]): void {
@@ -1805,8 +1833,11 @@ export abstract class StreamEngine implements StreamingPlayback {
         this.onTeamScoresChanged();
       }
     } else if (msgType === "MsgClientJoin" && args.length >= 4) {
-      const clientId = parseInt(this.resolveNetString(args[2]), 10);
-      const name = stripTaggedStringMarkup(this.resolveNetString(args[3]));
+      // Wire order: args[2]=clientName, args[3]=clientId, args[4]=targetId
+      const name = stripTaggedStringMarkup(
+        this.resolveNetString(args[2]),
+      ).trim();
+      const clientId = parseInt(this.resolveNetString(args[3]), 10);
       if (!isNaN(clientId)) {
         const existing = this.playerRoster.get(clientId);
         this.playerRoster.set(clientId, {
@@ -1814,6 +1845,11 @@ export abstract class StreamEngine implements StreamingPlayback {
           teamId: existing?.teamId ?? 0,
         });
         this.onRosterChanged();
+      }
+      // The first MsgClientJoin is the connected player's own join message.
+      if (!this.connectedPlayerName && name) {
+        this.connectedPlayerName = name;
+        this.onMissionInfoChange?.();
       }
     } else if (msgType === "MsgClientDrop" && args.length >= 3) {
       const clientId = parseInt(this.resolveNetString(args[2]), 10);
@@ -1833,6 +1869,51 @@ export abstract class StreamEngine implements StreamingPlayback {
         }
         this.onRosterChanged();
       }
+    } else if (msgType === "MsgMissionDropInfo" && args.length >= 5) {
+      // messageClient(%cl, 'MsgMissionDropInfo', ..., $MissionDisplayName, $MissionTypeDisplayName, $ServerName)
+      const missionDisplayName = stripTaggedStringMarkup(
+        this.resolveNetString(args[2]),
+      );
+      const missionTypeDisplayName = stripTaggedStringMarkup(
+        this.resolveNetString(args[3]),
+      );
+      const serverDisplayName = stripTaggedStringMarkup(
+        this.resolveNetString(args[4]),
+      );
+      log.info(
+        "mission drop info: mission=%s gameType=%s server=%s",
+        missionDisplayName,
+        missionTypeDisplayName,
+        serverDisplayName,
+      );
+      this.missionDisplayName = missionDisplayName || this.missionDisplayName;
+      this.missionTypeDisplayName =
+        missionTypeDisplayName || this.missionTypeDisplayName;
+      this.serverDisplayName = serverDisplayName || this.serverDisplayName;
+      this.onMissionInfoChange?.();
+    } else if (msgType === "MsgLoadInfo" && args.length >= 5) {
+      // messageClient(%cl, 'MsgLoadInfo', "", $CurrentMission, $MissionDisplayName, $MissionTypeDisplayName)
+      const missionDisplayName = stripTaggedStringMarkup(
+        this.resolveNetString(args[3]),
+      );
+      const missionTypeDisplayName = stripTaggedStringMarkup(
+        this.resolveNetString(args[4]),
+      );
+      log.info(
+        "load info: mission=%s gameType=%s",
+        missionDisplayName,
+        missionTypeDisplayName,
+      );
+      this.missionDisplayName = missionDisplayName || this.missionDisplayName;
+      this.missionTypeDisplayName =
+        missionTypeDisplayName || this.missionTypeDisplayName;
+      this.onMissionInfoChange?.();
+    } else if (msgType === "MsgClientReady" && args.length >= 3) {
+      // messageClient(%cl, 'MsgClientReady', "", %game.class)
+      const gameClassName = this.resolveNetString(args[2]);
+      log.info("client ready: gameClass=%s", gameClassName);
+      this.gameClassName = gameClassName || this.gameClassName;
+      this.onMissionInfoChange?.();
     }
   }
 
@@ -1942,7 +2023,7 @@ export abstract class StreamEngine implements StreamingPlayback {
       let renderFlags =
         entity.targetId != null && entity.targetId >= 0
           ? (this.targetRenderFlags.get(entity.targetId) ??
-             entity.targetRenderFlags)
+            entity.targetRenderFlags)
           : entity.targetRenderFlags;
       if (entity.type === "Player" && !entity.carryingFlag) {
         renderFlags = renderFlags != null ? renderFlags & ~0x2 : renderFlags;
@@ -1960,13 +2041,13 @@ export abstract class StreamEngine implements StreamingPlayback {
         dataBlock: entity.dataBlock,
         weaponShape: entity.weaponShape,
         packShape: entity.packShape,
+        flagShape: entity.flagShape,
         falling: entity.falling,
         jetting: entity.jetting,
         playerName: entity.playerName,
         targetRenderFlags: renderFlags,
         iffColor:
-          (entity.type === "Player" ||
-            ((renderFlags ?? 0) & 0x2) !== 0) &&
+          (entity.type === "Player" || ((renderFlags ?? 0) & 0x2) !== 0) &&
           entity.sensorGroup != null
             ? this.resolveIffColor(entity.sensorGroup)
             : undefined,
@@ -2033,8 +2114,7 @@ export abstract class StreamEngine implements StreamingPlayback {
     const teamScores = this.teamScores.map((ts) => ({ ...ts }));
     const teamCounts = new Map<number, number>();
     for (const { teamId } of this.playerRoster.values()) {
-      if (teamId > 0)
-        teamCounts.set(teamId, (teamCounts.get(teamId) ?? 0) + 1);
+      if (teamId > 0) teamCounts.set(teamId, (teamCounts.get(teamId) ?? 0) + 1);
     }
     for (const ts of teamScores) {
       ts.playerCount = teamCounts.get(ts.teamId) ?? 0;
@@ -2048,7 +2128,11 @@ export abstract class StreamEngine implements StreamingPlayback {
     chatMessages: ChatMessage[];
     audioEvents: PendingAudioEvent[];
   } {
-    const chatMessages = this.chatMessages.slice();
+    if (this._chatSnapshotGen !== this._chatGen) {
+      this._chatSnapshot = this.chatMessages.slice();
+      this._chatSnapshotGen = this._chatGen;
+    }
+    const chatMessages = this._chatSnapshot;
     const audioEvents = this.audioEvents.filter(
       (e) => e.timeSec > timeSec - 0.5 && e.timeSec <= timeSec,
     );

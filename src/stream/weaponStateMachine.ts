@@ -1,7 +1,4 @@
-import type {
-  WeaponImageDataBlockState,
-  WeaponImageState,
-} from "./types";
+import type { WeaponImageDataBlockState, WeaponImageState } from "./types";
 
 /** Transition index sentinel: -1 means "no transition defined". */
 const NO_TRANSITION = -1;
@@ -10,10 +7,10 @@ const NO_TRANSITION = -1;
 const MAX_TRANSITIONS_PER_TICK = 32;
 
 /** Torque SpinState enum values from ShapeBaseImageData (shapeBase.h). */
-const SPIN_STOP = 1;    // NoSpin
-const SPIN_UP = 2;      // SpinUp
-const SPIN_DOWN = 3;    // SpinDown
-const SPIN_FULL = 4;    // FullSpin
+const SPIN_STOP = 1; // NoSpin
+const SPIN_UP = 2; // SpinUp
+const SPIN_DOWN = 3; // SpinDown
+const SPIN_FULL = 4; // FullSpin
 
 export interface WeaponAnimState {
   /** Name of the current animation sequence to play (lowercase), or null. */
@@ -53,10 +50,7 @@ export class WeaponImageStateMachine {
   private lastFireCount = -1;
   private spinTimeScale = 0;
 
-  constructor(
-    states: WeaponImageDataBlockState[],
-    seqIndexToName: string[],
-  ) {
+  constructor(states: WeaponImageDataBlockState[], seqIndexToName: string[]) {
     this.states = states;
     this.seqIndexToName = seqIndexToName;
     if (states.length > 0) {
@@ -70,9 +64,8 @@ export class WeaponImageStateMachine {
 
   reset(): void {
     this.currentStateIndex = 0;
-    this.delayTime = this.states.length > 0
-      ? (this.states[0].timeoutValue ?? 0)
-      : 0;
+    this.delayTime =
+      this.states.length > 0 ? (this.states[0].timeoutValue ?? 0) : 0;
     this.lastFireCount = -1;
   }
 
@@ -190,17 +183,15 @@ export class WeaponImageStateMachine {
         this.spinTimeScale = 0;
         break;
       case SPIN_UP:
-        this.spinTimeScale = timeout > 0
-          ? Math.max(0, 1 - this.delayTime / timeout)
-          : 1;
+        this.spinTimeScale =
+          timeout > 0 ? Math.max(0, 1 - this.delayTime / timeout) : 1;
         break;
       case SPIN_FULL:
         this.spinTimeScale = 1;
         break;
       case SPIN_DOWN:
-        this.spinTimeScale = timeout > 0
-          ? Math.max(0, this.delayTime / timeout)
-          : 0;
+        this.spinTimeScale =
+          timeout > 0 ? Math.max(0, this.delayTime / timeout) : 0;
         break;
       // SPIN_IGNORE (0): leave spinTimeScale unchanged.
     }
@@ -312,9 +303,7 @@ export class WeaponImageStateMachine {
   }
 
   /** Resolve a state's sequence index to a clip name via the GLB metadata. */
-  private resolveSequenceName(
-    state: WeaponImageDataBlockState,
-  ): string | null {
+  private resolveSequenceName(state: WeaponImageDataBlockState): string | null {
     if (state.sequence == null || state.sequence < 0) return null;
     const name = this.seqIndexToName[state.sequence];
     return name ?? null;

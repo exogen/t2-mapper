@@ -215,7 +215,9 @@ for (const rel of weaponModels) {
     });
 
     if (mpIdx === -1) {
-      console.log(`${name}: NO Mountpoint node. Nodes: [${nodeNames.join(", ")}]`);
+      console.log(
+        `${name}: NO Mountpoint node. Nodes: [${nodeNames.join(", ")}]`,
+      );
       continue;
     }
 

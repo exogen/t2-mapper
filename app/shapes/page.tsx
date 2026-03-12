@@ -13,16 +13,13 @@ import * as THREE from "three";
 import { NoToneMapping, SRGBColorSpace, PCFShadowMap } from "three";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { OrbitControls, Center, Bounds, useBounds } from "@react-three/drei";
-import {
-  SettingsProvider,
-  useDebug,
-} from "@/src/components/SettingsProvider";
+import { SettingsProvider, useDebug } from "@/src/components/SettingsProvider";
 import { ShapeRenderer, useStaticShape } from "@/src/components/GenericShape";
 import { ShapeInfoProvider } from "@/src/components/ShapeInfoProvider";
 import { DebugElements } from "@/src/components/DebugElements";
 import { TickProvider } from "@/src/components/TickProvider";
 import { ShapeSelect } from "@/src/components/ShapeSelect";
-import { engineStore, useEngineSelector } from "@/src/state";
+import { engineStore, useEngineSelector } from "@/src/state/engineStore";
 import {
   getResourceList,
   getResourceMap,
@@ -328,7 +325,7 @@ function ShapeInspector() {
               <TickProvider>
                 <SceneLighting />
                 <Bounds fit clip observe margin={1.5}>
-                  <Suspense fallback={null}>
+                  <Suspense>
                     <ShapeViewer
                       key={currentShape}
                       shapeName={currentShape}

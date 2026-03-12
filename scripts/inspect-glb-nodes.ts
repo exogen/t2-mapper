@@ -72,7 +72,7 @@ function printNodeTree(
   doc: GltfDocument,
   nodeIndex: number,
   depth: number,
-  visited: Set<number>
+  visited: Set<number>,
 ): void {
   if (visited.has(nodeIndex)) return;
   visited.add(nodeIndex);
@@ -101,12 +101,16 @@ function printNodeTree(
   // Only show scale if non-identity
   const s = node.scale;
   if (s && (s[0] !== 1 || s[1] !== 1 || s[2] !== 1)) {
-    console.log(`${indent}  S: ${formatVec3(node.scale as [number, number, number])}`);
+    console.log(
+      `${indent}  S: ${formatVec3(node.scale as [number, number, number])}`,
+    );
   }
 
   // Show matrix if present
   if (node.matrix) {
-    console.log(`${indent}  Matrix: [${node.matrix.map((n) => n.toFixed(4)).join(", ")}]`);
+    console.log(
+      `${indent}  Matrix: [${node.matrix.map((n) => n.toFixed(4)).join(", ")}]`,
+    );
   }
 
   if (node.children) {
@@ -130,18 +134,20 @@ async function inspectGlb(filePath: string): Promise<void> {
   const skinCount = doc.skins?.length ?? 0;
   const animCount = doc.animations?.length ?? 0;
 
-  console.log(`Nodes: ${nodeCount}, Meshes: ${meshCount}, Skins: ${skinCount}, Animations: ${animCount}`);
+  console.log(
+    `Nodes: ${nodeCount}, Meshes: ${meshCount}, Skins: ${skinCount}, Animations: ${animCount}`,
+  );
 
   // Show skins (skeletons)
   if (doc.skins && doc.skins.length > 0) {
     console.log(`\n--- Skins ---`);
     for (let i = 0; i < doc.skins.length; i++) {
       const skin = doc.skins[i];
-      console.log(`Skin ${i}: "${skin.name ?? "(unnamed)"}" - ${skin.joints.length} joints`);
-      console.log(`  Root skeleton node: ${skin.skeleton ?? "unset"}`);
       console.log(
-        `  Joint node indices: [${skin.joints.join(", ")}]`
+        `Skin ${i}: "${skin.name ?? "(unnamed)"}" - ${skin.joints.length} joints`,
       );
+      console.log(`  Root skeleton node: ${skin.skeleton ?? "unset"}`);
+      console.log(`  Joint node indices: [${skin.joints.join(", ")}]`);
     }
   }
 
@@ -150,7 +156,9 @@ async function inspectGlb(filePath: string): Promise<void> {
     console.log(`\n--- Animations ---`);
     for (let i = 0; i < doc.animations.length; i++) {
       const anim = doc.animations[i];
-      console.log(`  [${i}] "${anim.name ?? "(unnamed)"}" (${anim.channels?.length ?? 0} channels)`);
+      console.log(
+        `  [${i}] "${anim.name ?? "(unnamed)"}" (${anim.channels?.length ?? 0} channels)`,
+      );
     }
   }
 
@@ -178,7 +186,18 @@ async function inspectGlb(filePath: string): Promise<void> {
   }
 
   // Highlight interesting nodes
-  const keywords = ["eye", "mount", "hand", "cam", "head", "weapon", "muzzle", "node", "jet", "contrail"];
+  const keywords = [
+    "eye",
+    "mount",
+    "hand",
+    "cam",
+    "head",
+    "weapon",
+    "muzzle",
+    "node",
+    "jet",
+    "contrail",
+  ];
   const interesting: { index: number; name: string; node: GltfNode }[] = [];
   if (doc.nodes) {
     for (let i = 0; i < doc.nodes.length; i++) {
@@ -191,7 +210,9 @@ async function inspectGlb(filePath: string): Promise<void> {
   }
 
   if (interesting.length > 0) {
-    console.log(`\n--- Interesting Nodes (matching: ${keywords.join(", ")}) ---`);
+    console.log(
+      `\n--- Interesting Nodes (matching: ${keywords.join(", ")}) ---`,
+    );
     for (const { index, name, node } of interesting) {
       console.log(`  [${index}] "${name}"`);
       console.log(`    Translation: ${formatVec3(node.translation)}`);
@@ -199,13 +220,17 @@ async function inspectGlb(filePath: string): Promise<void> {
         console.log(`    Rotation:    ${formatQuat(node.rotation)}`);
       }
       if (node.scale) {
-        console.log(`    Scale:       ${formatVec3(node.scale as [number, number, number])}`);
+        console.log(
+          `    Scale:       ${formatVec3(node.scale as [number, number, number])}`,
+        );
       }
       // Find parent
       if (doc.nodes) {
         for (let j = 0; j < doc.nodes.length; j++) {
           if (doc.nodes[j].children?.includes(index)) {
-            console.log(`    Parent:      [${j}] "${doc.nodes[j].name || "(unnamed)"}"`);
+            console.log(
+              `    Parent:      [${j}] "${doc.nodes[j].name || "(unnamed)"}"`,
+            );
             break;
           }
         }
@@ -218,7 +243,9 @@ async function inspectGlb(filePath: string): Promise<void> {
   if (doc.nodes) {
     for (let i = 0; i < doc.nodes.length; i++) {
       const node = doc.nodes[i];
-      console.log(`  [${i}] "${node.name || "(unnamed)"}" T:${formatVec3(node.translation)}`);
+      console.log(
+        `  [${i}] "${node.name || "(unnamed)"}" T:${formatVec3(node.translation)}`,
+      );
     }
   }
 }

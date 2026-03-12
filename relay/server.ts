@@ -19,8 +19,7 @@ const MANIFEST_PATH =
   path.resolve(GAME_BASE_PATH, "..", "..", "public", "manifest.json");
 
 const RELAY_PORT = parseInt(process.env.RELAY_PORT || "8765", 10);
-const MASTER_SERVER =
-  process.env.T2_MASTER_SERVER || "master.tribesnext.com";
+const MASTER_SERVER = process.env.T2_MASTER_SERVER || "master.tribesnext.com";
 
 /** HTTP server for health checks; WebSocket upgrades are handled separately. */
 const httpServer = http.createServer(async (req, res) => {
@@ -58,7 +57,9 @@ const httpServer = http.createServer(async (req, res) => {
 
     const allOk = Object.values(checks).every((c) => c.ok);
     res.writeHead(allOk ? 200 : 503, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ status: allOk ? "ok" : "degraded", checks }, null, 2));
+    res.end(
+      JSON.stringify({ status: allOk ? "ok" : "degraded", checks }, null, 2),
+    );
     return;
   }
 
@@ -87,7 +88,11 @@ wss.on("connection", (ws) => {
   const RETRY_DELAY_MS = 6000;
   const RETRYABLE_REASONS = ["Server is cycling mission"];
 
-  async function connectToServer(ws: WebSocket, address: string, warriorName?: string): Promise<void> {
+  async function connectToServer(
+    ws: WebSocket,
+    address: string,
+    warriorName?: string,
+  ): Promise<void> {
     if (gameConnection) {
       gameConnection.disconnect();
     }
@@ -95,9 +100,7 @@ wss.on("connection", (ws) => {
     gameConnection = new GameConnection(address, { warriorName });
 
     // Set mapName from the cached server list if available.
-    const cachedServer = cachedServers.find(
-      (s) => s.address === address,
-    );
+    const cachedServer = cachedServers.find((s) => s.address === address);
     if (cachedServer?.mapName) {
       gameConnection.setMapName(cachedServer.mapName);
     }
@@ -123,7 +126,11 @@ wss.on("connection", (ws) => {
       ) {
         retryCount++;
         relayLog.info(
-          { attempt: retryCount, maxRetries: MAX_RETRIES, delay: RETRY_DELAY_MS },
+          {
+            attempt: retryCount,
+            maxRetries: MAX_RETRIES,
+            delay: RETRY_DELAY_MS,
+          },
           "Retryable disconnect — will reconnect",
         );
         sendToClient(ws, {
@@ -243,7 +250,10 @@ wss.on("connection", (ws) => {
       }
 
       case "joinServer": {
-        relayLog.info({ address: message.address, warriorName: message.warriorName }, "Join server requested");
+        relayLog.info(
+          { address: message.address, warriorName: message.warriorName },
+          "Join server requested",
+        );
         if (gameConnection) {
           relayLog.info("Disconnecting existing game connection");
           gameConnection.disconnect();
@@ -285,10 +295,7 @@ wss.on("connection", (ws) => {
               { event: message.command },
               "Forwarding auth event from browser",
             );
-            gameConnection.handleAuthEvent(
-              message.command,
-              message.args,
-            );
+            gameConnection.handleAuthEvent(message.command, message.args);
           } else {
             relayLog.debug(
               { command: message.command },
@@ -315,7 +322,10 @@ wss.on("connection", (ws) => {
       case "sendCRCCompute": {
         if (gameConnection) {
           relayLog.info(
-            { datablocks: message.datablocks.length, includeTextures: message.includeTextures },
+            {
+              datablocks: message.datablocks.length,
+              includeTextures: message.includeTextures,
+            },
             "Computing CRC from game files",
           );
           gameConnection.computeAndSendCRC(

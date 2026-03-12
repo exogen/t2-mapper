@@ -58,7 +58,10 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
   private nextSendEventSeq = 0;
   private pendingEvents: ClientEvent[] = [];
   /** Events sent but not yet acked, keyed by packet sequence number. */
-  private sentEventsByPacket = new Map<number, { seq: number; event: ClientEvent }[]>();
+  private sentEventsByPacket = new Map<
+    number,
+    { seq: number; event: ClientEvent }[]
+  >();
   /** Events waiting to be sent (new or retransmitted from lost packets). */
   private eventSendQueue: { seq: number; event: ClientEvent }[] = [];
   private stringTable = new ClientNetStringTable();
@@ -178,7 +181,11 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
     this.rawMessageCount++;
     if (this.rawMessageCount <= 30 || this.rawMessageCount % 50 === 0) {
       connLog.debug(
-        { bytes: msg.length, firstByte: msg[0], rawTotal: this.rawMessageCount },
+        {
+          bytes: msg.length,
+          firstByte: msg[0],
+          rawTotal: this.rawMessageCount,
+        },
         "Raw UDP message received",
       );
     }
@@ -225,11 +232,16 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
       case 36: // ConnectAccept
         this.handleConnectAccept(msg);
         break;
-      case 38: { // Disconnect — U8(type) + U32(seq1) + U32(seq2) + HuffString(reason)
+      case 38: {
+        // Disconnect — U8(type) + U32(seq1) + U32(seq2) + HuffString(reason)
         let reason = "Server disconnected";
         if (msg.length > 9) {
           try {
-            const data = new Uint8Array(msg.buffer, msg.byteOffset, msg.byteLength);
+            const data = new Uint8Array(
+              msg.buffer,
+              msg.byteOffset,
+              msg.byteLength,
+            );
             // Skip 9-byte header (1 type + 4 connectSeq + 4 connectSeq2).
             // Reason is Huffman-encoded via BitStream::writeString (no stringBuffer).
             const bs = new BitStream(data.subarray(9));
@@ -239,7 +251,10 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
             // Fall back to default reason
           }
         }
-        connLog.warn({ reason, bytes: msg.length }, "Server sent Disconnect packet");
+        connLog.warn(
+          { reason, bytes: msg.length },
+          "Server sent Disconnect packet",
+        );
         this.setStatus("disconnected", reason);
         this.disconnect();
         break;
@@ -249,16 +264,24 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
     }
   }
 
-  /** Handle ChallengeReject (type 28): U8(28) + U32(connectSeq) + ASCII reason. */
+  /** Handle ChallengeReject (type 28): U8(28) + U32(clientSeq) + HuffString(reason). */
   private handleChallengeReject(msg: Buffer): void {
+    if (msg.length < 5) return;
+    const dv = new DataView(msg.buffer, msg.byteOffset, msg.byteLength);
+    const seq = dv.getUint32(1, true);
+    if (seq !== this.clientConnectSequence) {
+      connLog.debug({ expected: this.clientConnectSequence, got: seq }, "ChallengeReject sequence mismatch, ignoring");
+      return;
+    }
     let reason = "Challenge rejected";
     if (msg.length > 5) {
-      const chars: number[] = [];
-      for (let i = 5; i < msg.length && msg[i] !== 0; i++) {
-        chars.push(msg[i]);
-      }
-      if (chars.length > 0) {
-        reason = String.fromCharCode(...chars);
+      try {
+        const data = new Uint8Array(msg.buffer, msg.byteOffset, msg.byteLength);
+        const bs = new BitStream(data.subarray(5));
+        const parsed = bs.readString();
+        if (parsed) reason = parsed;
+      } catch {
+        // Fall back to default reason
       }
     }
     connLog.warn({ reason }, "ChallengeReject received");
@@ -269,18 +292,11 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
   /** Handle ConnectChallengeResponse. */
   private handleChallengeResponse(msg: Buffer): void {
     if (msg.length < 14) {
-      connLog.error(
-        { bytes: msg.length },
-        "ChallengeResponse too short",
-      );
+      connLog.error({ bytes: msg.length }, "ChallengeResponse too short");
       return;
     }
 
-    const dv = new DataView(
-      msg.buffer,
-      msg.byteOffset,
-      msg.byteLength,
-    );
+    const dv = new DataView(msg.buffer, msg.byteOffset, msg.byteLength);
     const serverProtocolVersion = dv.getUint32(1, true);
     this.serverConnectSequence = dv.getUint32(5, true);
     const echoedClientSeq = dv.getUint32(9, true);
@@ -354,14 +370,30 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
   }
 
   /** Handle ConnectReject. */
+  /** Handle ConnectReject (type 34): U8(34) + U32(serverSeq) + U32(clientSeq) + HuffString(reason). */
   private handleConnectReject(msg: Buffer): void {
+    if (msg.length < 9) return;
+    const dv = new DataView(msg.buffer, msg.byteOffset, msg.byteLength);
+    const serverSeq = dv.getUint32(1, true);
+    const clientSeq = dv.getUint32(5, true);
+    if (serverSeq !== this.serverConnectSequence || clientSeq !== this.clientConnectSequence) {
+      connLog.debug(
+        { expectedServer: this.serverConnectSequence, gotServer: serverSeq,
+          expectedClient: this.clientConnectSequence, gotClient: clientSeq },
+        "ConnectReject sequence mismatch, ignoring",
+      );
+      return;
+    }
     let reason = "Connection rejected";
-    if (msg.length > 1) {
-      const chars: number[] = [];
-      for (let i = 1; i < msg.length && msg[i] !== 0; i++) {
-        chars.push(msg[i]);
+    if (msg.length > 9) {
+      try {
+        const data = new Uint8Array(msg.buffer, msg.byteOffset, msg.byteLength);
+        const bs = new BitStream(data.subarray(9));
+        const parsed = bs.readString();
+        if (parsed) reason = parsed;
+      } catch {
+        // Fall back to default reason
       }
-      reason = String.fromCharCode(...chars);
     }
     connLog.warn({ reason }, "ConnectReject received");
     this.setStatus("disconnected", reason);
@@ -385,7 +417,6 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
 
     // We still need to process the dnet header locally to track ack state
     this.processPacketForAcks(data);
-
   }
 
   /** Process a packet's dnet header to maintain ack state. */
@@ -415,7 +446,10 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
     // The server's processRawPacket calls sendPingResponse on receiving a
     // PingPacket. Without this response, the server may time us out.
     if (packetType === 1) {
-      connLog.debug({ seq: seqNumber }, "Received PingPacket, sending ping response");
+      connLog.debug(
+        { seq: seqNumber },
+        "Received PingPacket, sending ping response",
+      );
       const pingResponse = this.protocol.buildPingPacket();
       this.sendRaw(pingResponse);
     }
@@ -472,19 +506,15 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
   }
 
   /** Handle a parsed T2csri event from the browser. */
-  handleAuthEvent(
-    eventName: string,
-    args: string[],
-  ): void {
+  handleAuthEvent(eventName: string, args: string[]): void {
     if (!this.auth) return;
 
     switch (eventName) {
       case "t2csri_pokeClient": {
-        connLog.info("Auth: received pokeClient, sending certificate + challenge");
-        const result = this.auth.onPokeClient(
-          args[0] || "",
-          this.host,
+        connLog.info(
+          "Auth: received pokeClient, sending certificate + challenge",
         );
+        const result = this.auth.onPokeClient(args[0] || "", this.host);
         for (const cmd of result.commands) {
           this.sendCommand(cmd.name, ...cmd.args);
         }
@@ -512,10 +542,7 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
           this.authDelayTimer = setTimeout(() => {
             this.authDelayTimer = null;
             if (this._status !== "authenticating") return;
-            this.sendCommand(
-              result.command.name,
-              ...result.command.args,
-            );
+            this.sendCommand(result.command.name, ...result.command.args);
             this.enforceObserver();
             this.setStatus("connected");
           }, delay);
@@ -553,11 +580,20 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
     basePath: string,
   ): Promise<void> {
     connLog.info(
-      { seed: `0x${(seed >>> 0).toString(16)}`, datablocks: datablocks.length, includeTextures },
+      {
+        seed: `0x${(seed >>> 0).toString(16)}`,
+        datablocks: datablocks.length,
+        includeTextures,
+      },
       "Computing CRC over game files",
     );
     try {
-      const { crc, totalSize } = await computeGameCRC(seed, datablocks, basePath, includeTextures);
+      const { crc, totalSize } = await computeGameCRC(
+        seed,
+        datablocks,
+        basePath,
+        includeTextures,
+      );
       connLog.info(
         { crc: `0x${(crc >>> 0).toString(16)}`, totalSize },
         "CRC computed, sending response",
@@ -586,7 +622,10 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
 
   /** Send a commandToServer as a RemoteCommandEvent. */
   sendCommand(command: string, ...args: string[]): void {
-    connLog.debug({ command, args, eventSeq: this.nextSendEventSeq }, "Sending commandToServer");
+    connLog.debug(
+      { command, args, eventSeq: this.nextSendEventSeq },
+      "Sending commandToServer",
+    );
     const events = buildRemoteCommandEvent(this.stringTable, command, ...args);
     this.pendingEvents.push(...events);
     this.flushEvents();
@@ -608,9 +647,7 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
    * Build and send a data packet that includes events from the send queue.
    * Events stay tracked per-packet so they can be re-queued on loss.
    */
-  private sendDataPacketWithEvents(
-    move?: ClientMoveData,
-  ): void {
+  private sendDataPacketWithEvents(move?: ClientMoveData): void {
     const events = this.eventSendQueue.splice(0);
     if (events.length === 0) return;
 
@@ -631,8 +668,12 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
     this.sentEventsByPacket.set(packetSeq, events);
 
     const moveData = move ?? {
-      x: 0, y: 0, z: 0,
-      yaw: 0, pitch: 0, roll: 0,
+      x: 0,
+      y: 0,
+      z: 0,
+      yaw: 0,
+      pitch: 0,
+      roll: 0,
       freeLook: false,
       trigger: [false, false, false, false, false, false],
     };
@@ -702,7 +743,14 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
     this.sendMoveCount++;
     if (this.sendMoveCount <= 5 || this.sendMoveCount % 100 === 0) {
       connLog.debug(
-        { yaw: move.yaw, pitch: move.pitch, x: move.x, y: move.y, z: move.z, total: this.sendMoveCount },
+        {
+          yaw: move.yaw,
+          pitch: move.pitch,
+          x: move.x,
+          y: move.y,
+          z: move.z,
+          total: this.sendMoveCount,
+        },
         "Sending move",
       );
     }
@@ -779,7 +827,8 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
     let keepaliveCount = 0;
     this.keepaliveTimer = setInterval(() => {
       keepaliveCount++;
-      if (keepaliveCount % 300 === 0) { // ~10s at 32ms tick rate
+      if (keepaliveCount % 300 === 0) {
+        // ~10s at 32ms tick rate
         connLog.info(
           {
             dataPackets: this.dataPacketCount,

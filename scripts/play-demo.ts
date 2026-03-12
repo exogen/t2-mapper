@@ -38,7 +38,9 @@ if (!demoPath) {
   console.error();
   console.error("Options:");
   console.error("  --no-headless    Show the browser window");
-  console.error("  --wait, -w <s>   Seconds to wait after loading (default: 10)");
+  console.error(
+    "  --wait, -w <s>   Seconds to wait after loading (default: 10)",
+  );
   console.error("  --screenshot, -s Take a screenshot after loading");
   console.error();
   console.error("Examples:");

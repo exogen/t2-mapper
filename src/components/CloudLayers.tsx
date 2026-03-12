@@ -471,16 +471,19 @@ export function CloudLayers({ scene }: CloudLayersProps) {
   const { data: detailMapList } = useDetailMapList(materialList);
 
   // From Tribes 2 sky.cc line 1170: mRadius = visibleDistance * 0.95
-  const visibleDistance = scene.visibleDistance > 0 ? scene.visibleDistance : 500;
+  const visibleDistance =
+    scene.visibleDistance > 0 ? scene.visibleDistance : 500;
   const radius = visibleDistance * 0.95;
 
   const cloudSpeeds = useMemo(
-    () => scene.cloudLayers.map((l, i) => l.speed || [0.0001, 0.0002, 0.0003][i]),
+    () =>
+      scene.cloudLayers.map((l, i) => l.speed || [0.0001, 0.0002, 0.0003][i]),
     [scene.cloudLayers],
   );
 
   const cloudHeights = useMemo(
-    () => scene.cloudLayers.map((l, i) => l.heightPercent || [0.35, 0.25, 0.2][i]),
+    () =>
+      scene.cloudLayers.map((l, i) => l.heightPercent || [0.35, 0.25, 0.2][i]),
     [scene.cloudLayers],
   );
 
@@ -536,7 +539,7 @@ export function CloudLayers({ scene }: CloudLayersProps) {
       {layers.map((layer, i) => {
         const url = textureToUrl(layer.texture);
         return (
-          <Suspense key={i} fallback={null}>
+          <Suspense key={i}>
             <CloudLayer
               textureUrl={url}
               radius={radius}

@@ -65,7 +65,8 @@ export function torqueHorizontalFovToThreeVerticalFov(
   torqueFovDeg: number,
   aspect: number,
 ): number {
-  const safeAspect = Number.isFinite(aspect) && aspect > 0.000001 ? aspect : 4 / 3;
+  const safeAspect =
+    Number.isFinite(aspect) && aspect > 0.000001 ? aspect : 4 / 3;
   const clampedFov = Math.max(0.01, Math.min(179.99, torqueFovDeg));
   const hRad = (clampedFov * Math.PI) / 180;
   const vRad = 2 * Math.atan(Math.tan(hRad / 2) / safeAspect);
@@ -281,7 +282,11 @@ export function replaceWithShapeMaterial(
   // that loads the atlas and sets up per-frame animation.
   if (flagNames.has("IflMaterial")) {
     const result = createMaterialFromFlags(
-      mat, null, flagNames, isOrganic, vis,
+      mat,
+      null,
+      flagNames,
+      isOrganic,
+      vis,
     );
     if (Array.isArray(result)) {
       const material = result[1];
@@ -312,7 +317,11 @@ export function replaceWithShapeMaterial(
   }
 
   const result = createMaterialFromFlags(
-    mat, texture, flagNames, isOrganic, vis,
+    mat,
+    texture,
+    flagNames,
+    isOrganic,
+    vis,
   );
   if (Array.isArray(result)) {
     return { material: result[1], backMaterial: result[0] };

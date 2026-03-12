@@ -35,7 +35,7 @@ export function useCameras() {
 }
 
 export function CamerasProvider({ children }: { children: ReactNode }) {
-  const { camera } = useThree();
+  const camera = useThree((state) => state.camera);
   const [cameraIndex, setCameraIndex] = useState(-1);
   const [cameraMap, setCameraMap] = useState<Record<string, CameraEntry>>({});
   const [initialViewState, setInitialViewState] = useState(() => ({
@@ -53,7 +53,8 @@ export function CamerasProvider({ children }: { children: ReactNode }) {
 
   const unregisterCamera = useCallback((camera: CameraEntry) => {
     setCameraMap((prevCameraMap) => {
-      const { [camera.id]: _removedCamera, ...remainingCameras } = prevCameraMap;
+      const { [camera.id]: _removedCamera, ...remainingCameras } =
+        prevCameraMap;
       return remainingCameras;
     });
   }, []);

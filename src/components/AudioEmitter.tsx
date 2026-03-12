@@ -8,11 +8,15 @@ import {
   PositionalAudio,
   Vector3,
 } from "three";
+import { createLogger } from "../logger";
 import { audioToUrl } from "../loaders";
 import { useAudio } from "./AudioContext";
 import { useDebug, useSettings } from "./SettingsProvider";
 import { FloatingLabel } from "./FloatingLabel";
-import { engineStore } from "../state";
+import { engineStore } from "../state/engineStore";
+import { AudioEmitterEntity } from "../state/gameEntityTypes";
+
+const log = createLogger("AudioEmitter");
 
 // Global audio buffer cache shared across all audio components.
 export const audioBufferCache = new Map<string, AudioBuffer>();
@@ -50,8 +54,16 @@ export function getSoundGeneration(): number {
 export function stopAllTrackedSounds(): void {
   _soundGeneration++;
   for (const [sound] of _activeSounds) {
-    try { sound.stop(); } catch { /* already stopped */ }
-    try { sound.disconnect(); } catch { /* already disconnected */ }
+    try {
+      sound.stop();
+    } catch {
+      /* already stopped */
+    }
+    try {
+      sound.disconnect();
+    } catch {
+      /* already disconnected */
+    }
   }
   _activeSounds.clear();
 }
@@ -148,7 +160,11 @@ export function playOneShotSound(
         sound.play();
         sound.source!.onended = () => {
           _activeSounds.delete(sound);
-          try { sound.disconnect(); } catch { /* already disconnected */ }
+          try {
+            sound.disconnect();
+          } catch {
+            /* already disconnected */
+          }
           parent.remove(sound);
         };
       } else {
@@ -160,7 +176,11 @@ export function playOneShotSound(
         sound.play();
         sound.source!.onended = () => {
           _activeSounds.delete(sound);
-          try { sound.disconnect(); } catch { /* already disconnected */ }
+          try {
+            sound.disconnect();
+          } catch {
+            /* already disconnected */
+          }
         };
       }
     } catch {
@@ -185,7 +205,7 @@ export function getCachedAudioBuffer(
       },
       undefined,
       (err: any) => {
-        console.error("Audio load error", audioUrl, err);
+        log.error("Audio load error %s: %o", audioUrl, err);
       },
     );
   }
@@ -194,17 +214,7 @@ export function getCachedAudioBuffer(
 export const AudioEmitter = memo(function AudioEmitter({
   entity,
 }: {
-  entity: {
-    audioFileName?: string;
-    audioVolume?: number;
-    audioMinDistance?: number;
-    audioMaxDistance?: number;
-    audioMinLoopGap?: number;
-    audioMaxLoopGap?: number;
-    audioIs3D?: boolean;
-    audioIsLooping?: boolean;
-    position?: [number, number, number];
-  };
+  entity: AudioEmitterEntity;
 }) {
   const { debugMode } = useDebug();
   const fileName = entity.audioFileName ?? "";
@@ -217,7 +227,8 @@ export const AudioEmitter = memo(function AudioEmitter({
   const isLooping = entity.audioIsLooping ?? true;
 
   const [x, y, z] = entity.position ?? [0, 0, 0];
-  const { scene, camera } = useThree();
+  const scene = useThree((state) => state.scene);
+  const camera = useThree((state) => state.camera);
   const { audioLoader, audioListener } = useAudio();
   const { audioEnabled } = useSettings();
 
@@ -268,8 +279,16 @@ export const AudioEmitter = memo(function AudioEmitter({
 
     return () => {
       clearTimers();
-      try { sound.stop(); } catch { /* already stopped */ }
-      try { sound.disconnect(); } catch { /* already disconnected */ }
+      try {
+        sound.stop();
+      } catch {
+        /* already stopped */
+      }
+      try {
+        sound.disconnect();
+      } catch {
+        /* already disconnected */
+      }
       if (is3D) scene.remove(sound);
       soundRef.current = null;
       isLoadedRef.current = false;
@@ -306,7 +325,9 @@ export const AudioEmitter = memo(function AudioEmitter({
             try {
               sound.play();
               setupLooping(sound, gen);
-            } catch { /* expected */ }
+            } catch {
+              /* expected */
+            }
           }, gap);
         } else {
           loopGapIntervalRef.current = setTimeout(checkLoop, 100);
@@ -337,7 +358,9 @@ export const AudioEmitter = memo(function AudioEmitter({
           try {
             sound.play();
             setupLooping(sound, gen);
-          } catch { /* expected */ }
+          } catch {
+            /* expected */
+          }
         }
       });
     } else {
@@ -346,7 +369,9 @@ export const AudioEmitter = memo(function AudioEmitter({
           sound.play();
           setupLooping(sound, gen);
         }
-      } catch { /* expected */ }
+      } catch {
+        /* expected */
+      }
     }
   };
 
@@ -373,7 +398,11 @@ export const AudioEmitter = memo(function AudioEmitter({
     } else if (!isNowInRange && wasInRange) {
       isInRangeRef.current = false;
       clearTimers();
-      try { sound.stop(); } catch { /* expected */ }
+      try {
+        sound.stop();
+      } catch {
+        /* expected */
+      }
     }
   });
 
@@ -384,7 +413,11 @@ export const AudioEmitter = memo(function AudioEmitter({
 
     if (!audioEnabled) {
       clearTimers();
-      try { sound.stop(); } catch { /* expected */ }
+      try {
+        sound.stop();
+      } catch {
+        /* expected */
+      }
       isInRangeRef.current = false;
     }
   }, [audioEnabled]);

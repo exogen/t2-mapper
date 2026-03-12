@@ -103,10 +103,7 @@ export function updateAtlasFrame(atlas: IflAtlas, frameIndex: number) {
  * Find the frame index for a given time in seconds. Matches Torque's
  * `animateIfls()` lookup using cumulative `iflFrameOffTimes`.
  */
-export function getFrameIndexForTime(
-  atlas: IflAtlas,
-  seconds: number,
-): number {
+export function getFrameIndexForTime(atlas: IflAtlas, seconds: number): number {
   const dur = atlas.totalDurationSeconds;
   if (dur <= 0) return 0;
   let t = seconds;

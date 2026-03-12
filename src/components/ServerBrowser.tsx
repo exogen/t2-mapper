@@ -1,57 +1,47 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import type { ServerInfo } from "../../relay/types";
 import styles from "./ServerBrowser.module.css";
-export function ServerBrowser({
-  open,
-  onClose,
-  servers,
-  loading,
-  onRefresh,
-  onJoin,
-  wsPing,
-  warriorName,
-  onWarriorNameChange,
-}: {
-  open: boolean;
-  onClose: () => void;
-  servers: ServerInfo[];
-  loading: boolean;
-  onRefresh: () => void;
-  onJoin: (address: string) => void;
-  /** Browser↔relay RTT to add to server pings for effective latency. */
-  wsPing?: number | null;
-  warriorName: string;
-  onWarriorNameChange: (name: string) => void;
-}) {
+import { useLiveSelector } from "../state/liveConnectionStore";
+import { useSettings } from "./SettingsProvider";
+
+export function ServerBrowser({ onClose }: { onClose: () => void }) {
+  const servers = useLiveSelector((s) => s.servers);
+  const serversLoading = useLiveSelector((s) => s.serversLoading);
+  const browserToRelayPing = useLiveSelector((s) => s.browserToRelayPing);
+  const listServers = useLiveSelector((s) => s.listServers);
+  const joinServer = useLiveSelector((s) => s.joinServer);
+  const { warriorName, setWarriorName } = useSettings();
   const [selectedAddress, setSelectedAddress] = useState<string | null>(null);
+  const handleJoinSelected = () => {
+    if (selectedAddress) {
+      joinServer(selectedAddress, warriorName);
+      onClose();
+    }
+  };
+
+  const handleJoin = (address: string) => {
+    joinServer(address, warriorName);
+    onClose();
+  };
   const [sortKey, setSortKey] = useState<keyof ServerInfo>("ping");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
   const dialogRef = useRef<HTMLDivElement>(null);
-  const onRefreshRef = useRef(onRefresh);
-  onRefreshRef.current = onRefresh;
-  const didAutoRefreshRef = useRef(false);
+
   useEffect(() => {
-    if (open) {
-      dialogRef.current?.focus();
-      try {
-        document.exitPointerLock();
-      } catch {
-        /* expected */
-      }
-    } else {
-      didAutoRefreshRef.current = false;
+    dialogRef.current?.focus();
+    try {
+      document.exitPointerLock();
+    } catch {
+      /* expected */
     }
-  }, [open]);
-  // Refresh on open if no servers cached
+  }, []);
+
   useEffect(() => {
-    if (open && servers.length === 0 && !didAutoRefreshRef.current) {
-      didAutoRefreshRef.current = true;
-      onRefreshRef.current();
-    }
-  }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
+    listServers();
+  }, [listServers]);
+
   // Block keyboard events from reaching Three.js while open
   useEffect(() => {
-    if (!open) return;
     const handleKeyDown = (e: KeyboardEvent) => {
       e.stopPropagation();
       if (e.key === "Escape") {
@@ -60,7 +50,8 @@ export function ServerBrowser({
     };
     window.addEventListener("keydown", handleKeyDown, true);
     return () => window.removeEventListener("keydown", handleKeyDown, true);
-  }, [open, onClose]);
+  }, [onClose]);
+
   const handleSort = useCallback(
     (key: keyof ServerInfo) => {
       if (sortKey === key) {
@@ -85,15 +76,6 @@ export function ServerBrowser({
     });
   }, [servers, sortDir, sortKey]);
 
-  const handleJoin = useCallback(() => {
-    if (selectedAddress) {
-      onJoin(selectedAddress);
-      onClose();
-    }
-  }, [selectedAddress, onJoin, onClose]);
-
-  if (!open) return null;
-
   return (
     <div className={styles.Overlay} onClick={onClose}>
       <div
@@ -109,75 +91,93 @@ export function ServerBrowser({
           </span>
           <button
             className={styles.RefreshButton}
-            onClick={onRefresh}
-            disabled={loading}
+            onClick={listServers}
+            disabled={serversLoading}
           >
-            {loading ? "Refreshing..." : "Refresh"}
+            Refresh
           </button>
         </div>
         <div className={styles.TableWrapper}>
-          <table className={styles.Table}>
-            <thead>
-              <tr>
-                <th onClick={() => handleSort("name")}>Server Name</th>
-                <th onClick={() => handleSort("playerCount")}>Players</th>
-                <th onClick={() => handleSort("ping")}>Ping</th>
-                <th onClick={() => handleSort("mapName")}>Map</th>
-                <th onClick={() => handleSort("gameType")}>Type</th>
-                <th onClick={() => handleSort("mod")}>Mod</th>
-              </tr>
-            </thead>
-            <tbody>
-              {sorted.map((server) => (
-                <tr
-                  key={server.address}
-                  className={
-                    selectedAddress === server.address
-                      ? styles.Selected
-                      : undefined
-                  }
-                  onClick={() => setSelectedAddress(server.address)}
-                  onDoubleClick={() => {
-                    setSelectedAddress(server.address);
-                    onJoin(server.address);
-                    onClose();
-                  }}
-                >
-                  <td>
-                    {server.passwordRequired && (
-                      <span className={styles.PasswordIcon}>&#x1F512;</span>
-                    )}
-                    {server.name}
-                  </td>
-                  <td>
-                    {server.playerCount}/{server.maxPlayers}
-                  </td>
-                  <td>
-                    {wsPing != null
-                      ? (server.ping + wsPing).toLocaleString()
-                      : "\u2014"}
-                  </td>
-                  <td>{server.mapName}</td>
-                  <td>{server.gameType}</td>
-                  <td>{server.mod}</td>
-                </tr>
-              ))}
-              {sorted.length === 0 && !loading && (
+          <form name="serverList" onSubmit={handleJoinSelected}>
+            <table className={styles.Table}>
+              <thead>
                 <tr>
-                  <td colSpan={6} className={styles.Empty}>
-                    No servers found
-                  </td>
+                  <th onClick={() => handleSort("name")}>Server Name</th>
+                  <th onClick={() => handleSort("playerCount")}>Players</th>
+                  <th onClick={() => handleSort("ping")}>Ping</th>
+                  <th onClick={() => handleSort("mapName")}>Map</th>
+                  <th onClick={() => handleSort("gameType")}>Type</th>
+                  <th onClick={() => handleSort("mod")}>Mod</th>
                 </tr>
-              )}
-              {loading && sorted.length === 0 && (
-                <tr>
-                  <td colSpan={6} className={styles.Empty}>
-                    Querying master server...
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {sorted.map((server) => (
+                  <tr
+                    key={server.address}
+                    onClick={() => {
+                      setSelectedAddress(server.address);
+                      const form = document.forms["serverList"];
+                      const inputs: RadioNodeList =
+                        form.elements["serverAddress"];
+                      const input = Array.from(inputs).find(
+                        (input) => input.value === server.address,
+                      );
+                      input.focus();
+                    }}
+                    onDoubleClick={() => {
+                      setSelectedAddress(server.address);
+                      handleJoin(server.address);
+                      onClose();
+                    }}
+                  >
+                    <td>
+                      <input
+                        type="radio"
+                        className={styles.HiddenRadio}
+                        name="serverAddress"
+                        value={server.address}
+                        checked={selectedAddress === server.address}
+                        onChange={(event) => {
+                          setSelectedAddress(event.target.value);
+                        }}
+                      />
+                      {server.passwordRequired && (
+                        <span className={styles.PasswordIcon}>&#x1F512;</span>
+                      )}
+                      {server.name}
+                    </td>
+                    <td
+                      className={
+                        server.playerCount === 0
+                          ? styles.EmptyServer
+                          : undefined
+                      }
+                    >
+                      {server.playerCount}&thinsp;/&thinsp;{server.maxPlayers}
+                    </td>
+                    <td>
+                      {browserToRelayPing != null
+                        ? (server.ping + browserToRelayPing).toLocaleString()
+                        : "\u2014"}
+                    </td>
+                    <td>{server.mapName}</td>
+                    <td>{server.gameType}</td>
+                    <td>{server.mod}</td>
+                  </tr>
+                ))}
+                {sorted.length === 0 && !serversLoading && (
+                  <tr className={styles.Empty}>
+                    <td colSpan={6}>No servers found</td>
+                  </tr>
+                )}
+                {serversLoading && sorted.length === 0 && (
+                  <tr className={styles.Empty}>
+                    <td colSpan={6}>Querying master server…</td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </form>
         </div>
         <div className={styles.Footer}>
           <div className={styles.WarriorField}>
@@ -189,7 +189,7 @@ export function ServerBrowser({
               className={styles.WarriorInput}
               type="text"
               value={warriorName}
-              onChange={(e) => onWarriorNameChange(e.target.value)}
+              onChange={(e) => setWarriorName(e.target.value)}
               placeholder="Name thyself…"
               maxLength={24}
             />
@@ -199,7 +199,7 @@ export function ServerBrowser({
             Cancel
           </button>
           <button
-            onClick={handleJoin}
+            onClick={handleJoinSelected}
             disabled={!selectedAddress}
             className={styles.JoinButton}
           >

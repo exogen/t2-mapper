@@ -1,0 +1,90 @@
+.Header {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+}
+
+.MissionInfo {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 10px auto 10px 4px;
+  border: 1px solid rgba(255, 255, 255, 0);
+  border-radius: 3px;
+  background: rgba(0, 0, 0, 0);
+  color: #fff;
+  padding: 5px 8px;
+}
+
+.MissionName {
+  composes: SelectedName from "./MissionSelect.module.css";
+}
+
+.MissionType {
+  composes: ItemType from "./MissionSelect.module.css";
+  pointer-events: none;
+}
+
+.MissionTypeDisplayName {
+  font-size: 12px;
+  opacity: 0.5;
+}
+
+.Metadata {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 12px;
+  line-height: calc(14 / 12);
+  text-align: right;
+  padding: 8px 12px;
+  margin: 0 0 0 auto;
+}
+
+.Attribution,
+.ServerInfo {
+  color: #83938b;
+}
+
+.PlayerName,
+.RecordingDate,
+.ServerName {
+  color: #eceae7;
+}
+
+.ActionButton {
+  composes: IconButton from "./InspectorControls.module.css";
+  flex: 0 0 auto;
+  margin: 0 10px 0 0;
+  font-size: 16px;
+  min-width: 28px;
+  min-height: 28px;
+  padding: 2px;
+  /* display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-right: 12px;
+  padding: 6px;
+  font-size: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.05);
+  color: rgba(255, 255, 255, 0.6);
+  cursor: pointer; */
+}
+
+/* .ActionButton:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+} */
+
+.EjectIcon {
+  font-size: 21px;
+  margin-top: -0.5px;
+}
+
+@media (max-width: 899px) {
+  .Metadata {
+    display: none;
+  }
+}

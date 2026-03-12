@@ -12,6 +12,9 @@ import type {
   Color3,
   Color4,
 } from "./types";
+import { createLogger } from "../logger";
+
+const log = createLogger("ghostToScene");
 
 type GhostData = Record<string, unknown>;
 
@@ -43,26 +46,39 @@ function matrixF(v: unknown): MatrixF {
     return v as MatrixF;
   }
   // readAffineTransform() returns {position, rotation} — convert to MatrixF.
-  if (
-    v &&
-    typeof v === "object" &&
-    "position" in v &&
-    "rotation" in v
-  ) {
+  if (v && typeof v === "object" && "position" in v && "rotation" in v) {
     const { position: pos, rotation: q } = v as {
       position: { x: number; y: number; z: number };
       rotation: { x: number; y: number; z: number; w: number };
     };
     // Quaternion to column-major 4×4 matrix (idx = row + col*4).
-    const xx = q.x * q.x, yy = q.y * q.y, zz = q.z * q.z;
-    const xy = q.x * q.y, xz = q.x * q.z, yz = q.y * q.z;
-    const wx = q.w * q.x, wy = q.w * q.y, wz = q.w * q.z;
+    const xx = q.x * q.x,
+      yy = q.y * q.y,
+      zz = q.z * q.z;
+    const xy = q.x * q.y,
+      xz = q.x * q.z,
+      yz = q.y * q.z;
+    const wx = q.w * q.x,
+      wy = q.w * q.y,
+      wz = q.w * q.z;
     return {
       elements: [
-        1 - 2 * (yy + zz), 2 * (xy + wz),     2 * (xz - wy),     0,
-        2 * (xy - wz),      1 - 2 * (xx + zz), 2 * (yz + wx),     0,
-        2 * (xz + wy),      2 * (yz - wx),     1 - 2 * (xx + yy), 0,
-        pos.x,              pos.y,              pos.z,              1,
+        1 - 2 * (yy + zz),
+        2 * (xy + wz),
+        2 * (xz - wy),
+        0,
+        2 * (xy - wz),
+        1 - 2 * (xx + zz),
+        2 * (yz + wx),
+        0,
+        2 * (xz + wy),
+        2 * (yz - wx),
+        1 - 2 * (xx + yy),
+        0,
+        pos.x,
+        pos.y,
+        pos.z,
+        1,
       ],
       position: { x: pos.x, y: pos.y, z: pos.z },
     };
@@ -118,12 +134,14 @@ export function tsStaticFromGhost(
 
 export function skyFromGhost(ghostIndex: number, data: GhostData): SceneSky {
   const fogVolumes = Array.isArray(data.fogVolumes)
-    ? (data.fogVolumes as Array<{
-        visibleDistance?: number;
-        minHeight?: number;
-        maxHeight?: number;
-        color?: Color3;
-      }>).map((v) => ({
+    ? (
+        data.fogVolumes as Array<{
+          visibleDistance?: number;
+          minHeight?: number;
+          maxHeight?: number;
+          color?: Color3;
+        }>
+      ).map((v) => ({
         visibleDistance: v.visibleDistance ?? 0,
         minHeight: v.minHeight ?? 0,
         maxHeight: v.maxHeight ?? 0,
@@ -132,11 +150,13 @@ export function skyFromGhost(ghostIndex: number, data: GhostData): SceneSky {
     : [];
 
   const cloudLayers = Array.isArray(data.cloudLayers)
-    ? (data.cloudLayers as Array<{
-        texture?: string;
-        heightPercent?: number;
-        speed?: number;
-      }>).map((c) => ({
+    ? (
+        data.cloudLayers as Array<{
+          texture?: string;
+          heightPercent?: number;
+          speed?: number;
+        }>
+      ).map((c) => ({
         texture: c.texture ?? "",
         heightPercent: c.heightPercent ?? 0,
         speed: c.speed ?? 0,
@@ -210,17 +230,41 @@ export function ghostToSceneObject(
   ghostIndex: number,
   data: GhostData,
 ): SceneObject | null {
+  let result: SceneObject | null;
   switch (className) {
     case "TerrainBlock":
-      return terrainFromGhost(ghostIndex, data);
+      result = terrainFromGhost(ghostIndex, data);
+      log.debug("TerrainBlock #%d: terrFileName=%s", ghostIndex, (result as SceneTerrainBlock).terrFileName);
+      return result;
     case "InteriorInstance":
-      return interiorFromGhost(ghostIndex, data);
+      result = interiorFromGhost(ghostIndex, data);
+      log.debug("InteriorInstance #%d: interiorFile=%s", ghostIndex, (result as SceneInteriorInstance).interiorFile);
+      return result;
     case "TSStatic":
       return tsStaticFromGhost(ghostIndex, data);
-    case "Sky":
-      return skyFromGhost(ghostIndex, data);
-    case "Sun":
-      return sunFromGhost(ghostIndex, data);
+    case "Sky": {
+      result = skyFromGhost(ghostIndex, data);
+      const sky = result as SceneSky;
+      log.debug(
+        "Sky #%d: materialList=%s fogColor=(%s, %s, %s) visibleDist=%d fogDist=%d useSkyTextures=%s",
+        ghostIndex, sky.materialList,
+        sky.fogColor.r.toFixed(3), sky.fogColor.g.toFixed(3), sky.fogColor.b.toFixed(3),
+        sky.visibleDistance, sky.fogDistance, sky.useSkyTextures,
+      );
+      return result;
+    }
+    case "Sun": {
+      result = sunFromGhost(ghostIndex, data);
+      const sun = result as SceneSun;
+      log.debug(
+        "Sun #%d: dir=(%s, %s, %s) color=(%s, %s, %s) ambient=(%s, %s, %s)",
+        ghostIndex,
+        sun.direction.x.toFixed(3), sun.direction.y.toFixed(3), sun.direction.z.toFixed(3),
+        sun.color.r.toFixed(3), sun.color.g.toFixed(3), sun.color.b.toFixed(3),
+        sun.ambient.r.toFixed(3), sun.ambient.g.toFixed(3), sun.ambient.b.toFixed(3),
+      );
+      return result;
+    }
     case "MissionArea":
       return missionAreaFromGhost(ghostIndex, data);
     case "WaterBlock":

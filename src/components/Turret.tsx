@@ -1,9 +1,12 @@
 import { useMemo } from "react";
 import type { TorqueObject } from "../torqueScript";
+import { createLogger } from "../logger";
 import { getPosition, getProperty, getRotation, getScale } from "../mission";
 import { ShapeRenderer } from "./GenericShape";
 import { ShapeInfoProvider } from "./ShapeInfoProvider";
 import { useDatablock } from "./useDatablock";
+
+const log = createLogger("Turret");
 export function Turret({ object }: { object: TorqueObject }) {
   const datablockName = getProperty(object, "dataBlock") ?? "";
   const barrelDatablockName = getProperty(object, "initialBarrel");
@@ -15,14 +18,12 @@ export function Turret({ object }: { object: TorqueObject }) {
   const shapeName = getProperty(datablock, "shapeFile");
   const barrelShapeName = getProperty(barrelDatablock, "shapeFile");
   if (!shapeName) {
-    console.error(`<Turret> missing shape for datablock: ${datablockName}`);
+    log.error("Turret missing shape for datablock: %s", datablockName);
   }
   // `initialBarrel` is optional - turrets can exist without a barrel mounted.
   // But if we do have one, it needs a shape name.
   if (barrelDatablockName && !barrelShapeName) {
-    console.error(
-      `<Turret> missing shape for barrel datablock: ${barrelDatablockName}`,
-    );
+    log.error("Turret missing shape for barrel datablock: %s", barrelDatablockName);
   }
   return (
     <ShapeInfoProvider type="Turret" object={object} shapeName={shapeName}>

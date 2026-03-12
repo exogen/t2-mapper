@@ -1,0 +1,26 @@
+.InputForm {
+  display: flex;
+}
+
+.Input {
+  width: 100%;
+  background: rgba(0, 50, 60, 0.8);
+  border: 0;
+  border-top: 1px solid rgba(78, 179, 167, 0.2);
+  border-radius: 0;
+  color: rgb(40, 231, 240);
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 1.25;
+  margin: 0;
+  padding: 6px;
+  outline: none;
+}
+
+.Input::placeholder {
+  color: rgba(44, 172, 181, 0.5);
+}
+
+.Input:focus {
+  background: rgba(0, 50, 60, 0.9);
+}

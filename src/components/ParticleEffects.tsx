@@ -36,10 +36,10 @@ import {
   particleFragmentShader,
 } from "../particles/shaders";
 import type { EmitterDataResolved } from "../particles/types";
-import type {
-  StreamSnapshot,
-  StreamingPlayback,
-} from "../stream/types";
+import type { StreamSnapshot, StreamingPlayback } from "../stream/types";
+import { createLogger } from "../logger";
+
+const log = createLogger("ParticleEffects");
 import { useDebug, useSettings } from "./SettingsProvider";
 import { useAudio } from "./AudioContext";
 import {
@@ -50,7 +50,7 @@ import {
   trackSound,
   untrackSound,
 } from "./AudioEmitter";
-import { effectNow, engineStore } from "../state";
+import { effectNow, engineStore } from "../state/engineStore";
 
 // ── Constants ──
 
@@ -96,9 +96,15 @@ function getParticleTexture(textureName: string): Texture {
 // ── Debug geometry (reusable) ──
 
 const _debugOriginGeo = new SphereGeometry(1, 6, 6);
-const _debugOriginMat = new MeshBasicMaterial({ color: 0xff0000, wireframe: true });
+const _debugOriginMat = new MeshBasicMaterial({
+  color: 0xff0000,
+  wireframe: true,
+});
 const _debugParticleGeo = new BoxGeometry(0.3, 0.3, 0.3);
-const _debugParticleMat = new MeshBasicMaterial({ color: 0x00ff00, wireframe: true });
+const _debugParticleMat = new MeshBasicMaterial({
+  color: 0x00ff00,
+  wireframe: true,
+});
 
 // ── Explosion wireframe sphere geometry (reusable) ──
 
@@ -116,7 +122,10 @@ interface ActiveExplosionSphere {
 }
 
 /** Create a text label sprite for an explosion sphere. */
-function createExplosionLabel(text: string, color: number): { sprite: Sprite; material: SpriteMaterial } {
+function createExplosionLabel(
+  text: string,
+  color: number,
+): { sprite: Sprite; material: SpriteMaterial } {
   const canvas = document.createElement("canvas");
   const ctx = canvas.getContext("2d")!;
   const fontSize = 32;
@@ -431,10 +440,10 @@ function getExplosionColor(dataBlock: string | undefined): number {
  * Each entry is `{x, y, z}` with values in range 0–16000 (scale multiplier).
  * Falls back to `particleRadius` or a default of 5.
  */
-function getExplosionRadius(
-  expBlock: Record<string, unknown>,
-): number {
-  const sizes = expBlock.sizes as Array<{ x: number; y: number; z: number }> | undefined;
+function getExplosionRadius(expBlock: Record<string, unknown>): number {
+  const sizes = expBlock.sizes as
+    | Array<{ x: number; y: number; z: number }>
+    | undefined;
   if (Array.isArray(sizes) && sizes.length > 0) {
     let maxVal = 0;
     for (const s of sizes) {
@@ -552,14 +561,17 @@ function checkShaderCompilation(
   material: ShaderMaterial,
   label: string,
 ): void {
-  const props = renderer.properties.get(material) as { currentProgram?: { program: WebGLProgram } };
+  const props = renderer.properties.get(material) as {
+    currentProgram?: { program: WebGLProgram };
+  };
   const program = props.currentProgram;
   if (!program) return; // Not yet compiled.
   const glProgram = program!.program;
   const glContext = renderer.getContext();
   if (!glContext.getProgramParameter(glProgram, glContext.LINK_STATUS)) {
-    console.error(
-      `[ParticleFX] Shader LINK ERROR (${label}):`,
+    log.error(
+      "Shader LINK ERROR (%s): %s",
+      label,
       glContext.getProgramInfoLog(glProgram),
     );
   }
@@ -847,7 +859,8 @@ export function ParticleEffects({
         group.add(sphereMesh);
 
         const labelText = `${entity.id}: ${entity.dataBlock ?? `expId:${entity.explosionDataBlockId}`}`;
-        const { sprite: labelSprite, material: labelMat } = createExplosionLabel(labelText, color);
+        const { sprite: labelSprite, material: labelMat } =
+          createExplosionLabel(labelText, color);
         labelSprite.position.set(origin[1], origin[2] + radius + 2, origin[0]);
         labelSprite.frustumCulled = false;
         group.add(labelSprite);
@@ -891,9 +904,8 @@ export function ParticleEffects({
           }
 
           // Clamp denormalized velocity values (parser bug workaround).
-          const initVelocity = Math.abs(swData.velocity) > 1e-10
-            ? swData.velocity
-            : 0;
+          const initVelocity =
+            Math.abs(swData.velocity) > 1e-10 ? swData.velocity : 0;
 
           activeShockwavesRef.current.push({
             entityId: entity.id as string,
@@ -910,7 +922,6 @@ export function ParticleEffects({
           });
         }
       }
-
     }
 
     // Detect projectile entities with trail emitters (maintainEmitterId).
@@ -918,7 +929,10 @@ export function ParticleEffects({
     for (const entity of snapshot.entities) {
       currentEntityIds.add(entity.id);
 
-      if (!entity.maintainEmitterId || trailEntitiesRef.current.has(entity.id)) {
+      if (
+        !entity.maintainEmitterId ||
+        trailEntitiesRef.current.has(entity.id)
+      ) {
         continue;
       }
       trailEntitiesRef.current.add(entity.id);
@@ -933,7 +947,10 @@ export function ParticleEffects({
         ? [...entity.position]
         : [0, 0, 0];
 
-      const emitter = new EmitterInstance(emitterData, MAX_PARTICLES_PER_EMITTER);
+      const emitter = new EmitterInstance(
+        emitterData,
+        MAX_PARTICLES_PER_EMITTER,
+      );
 
       const texture = getParticleTexture(emitterData.particles.textureName);
       const geometry = createParticleGeometry(MAX_PARTICLES_PER_EMITTER);
@@ -980,7 +997,11 @@ export function ParticleEffects({
 
       // One-time shader compilation check.
       if (!entry.shaderChecked) {
-        checkShaderCompilation(gl, entry.material, entry.isBurst ? "burst" : "stream");
+        checkShaderCompilation(
+          gl,
+          entry.material,
+          entry.isBurst ? "burst" : "stream",
+        );
         entry.shaderChecked = true;
       }
 
@@ -1166,7 +1187,13 @@ export function ParticleEffects({
     // ── Audio: explosion impact sounds ──
     // Only process new audio events while playing to avoid triggering
     // sounds during pause (existing sounds are frozen via AudioContext.suspend).
-    if (isPlaying && audioEnabled && audioLoader && audioListener && groupRef.current) {
+    if (
+      isPlaying &&
+      audioEnabled &&
+      audioLoader &&
+      audioListener &&
+      groupRef.current
+    ) {
       for (const entity of snapshot.entities) {
         if (
           entity.type !== "Explosion" ||
@@ -1205,7 +1232,11 @@ export function ParticleEffects({
       const projSounds = projectileSoundsRef.current;
 
       for (const entity of snapshot.entities) {
-        if (entity.type !== "Projectile" || !entity.dataBlockId || !entity.position) {
+        if (
+          entity.type !== "Projectile" ||
+          !entity.dataBlockId ||
+          !entity.position
+        ) {
           continue;
         }
         if (projSounds.has(entity.id)) {
@@ -1268,8 +1299,16 @@ export function ParticleEffects({
       for (const [entityId, sound] of projSounds) {
         if (!currentEntityIds.has(entityId)) {
           untrackSound(sound);
-          try { sound.stop(); } catch { /* already stopped */ }
-          try { sound.disconnect(); } catch { /* already disconnected */ }
+          try {
+            sound.stop();
+          } catch {
+            /* already stopped */
+          }
+          try {
+            sound.disconnect();
+          } catch {
+            /* already disconnected */
+          }
           groupRef.current?.remove(sound);
           projSounds.delete(entityId);
         }
@@ -1360,8 +1399,16 @@ export function ParticleEffects({
       // Clean up projectile sounds.
       for (const [, sound] of projectileSoundsRef.current) {
         untrackSound(sound);
-        try { sound.stop(); } catch { /* already stopped */ }
-        try { sound.disconnect(); } catch { /* already disconnected */ }
+        try {
+          sound.stop();
+        } catch {
+          /* already stopped */
+        }
+        try {
+          sound.disconnect();
+        } catch {
+          /* already disconnected */
+        }
         if (group) group.remove(sound);
       }
       projectileSoundsRef.current.clear();

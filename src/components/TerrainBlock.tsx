@@ -17,7 +17,10 @@ import {
   Vector3,
 } from "three";
 import type { SceneTerrainBlock } from "../scene/types";
+import { createLogger } from "../logger";
 import { torqueToThree } from "../scene/coordinates";
+
+const log = createLogger("TerrainBlock");
 import { useSceneSky, useSceneSun } from "../state/gameEntityStore";
 import { loadTerrain } from "../loaders";
 import { uint16ToFloat32 } from "../arrayUtils";
@@ -413,10 +416,25 @@ function generateTerrainLightmap(
  * Load a .ter file, used for terrain heightmap and texture info.
  */
 function useTerrain(terrainFile: string) {
-  return useQuery({
+  const result = useQuery({
     queryKey: ["terrain", terrainFile],
-    queryFn: () => loadTerrain(terrainFile),
+    queryFn: () => {
+      log.debug("Loading terrain: %s", terrainFile);
+      return loadTerrain(terrainFile);
+    },
   });
+
+  useEffect(() => {
+    log.debug(
+      "Query status: %s%s%s file=%s",
+      result.status,
+      result.error ? ` error=${result.error.message}` : "",
+      result.data ? " (data ready)" : " (no data)",
+      terrainFile,
+    );
+  }, [result.status, result.error, result.data, terrainFile]);
+
+  return result;
 }
 /**
  * Get visibleDistance from the Sky scene object, used to determine how far
@@ -607,6 +625,13 @@ export const TerrainBlock = memo(function TerrainBlock({
     !sharedDisplacementMap ||
     !sharedAlphaTextures
   ) {
+    log.debug(
+      "Not ready: terrain=%s geometry=%s displacement=%s alpha=%s",
+      !!terrain,
+      !!sharedGeometry,
+      !!sharedDisplacementMap,
+      !!sharedAlphaTextures,
+    );
     return null;
   }
   return (

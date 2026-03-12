@@ -2,18 +2,25 @@ import { useRef, useEffect } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
 import { Vector3 } from "three";
 import { useKeyboardControls } from "@react-three/drei";
-import { useLiveSelector } from "../state/liveConnectionStore";
+import { createLogger } from "../logger";
+import {
+  liveConnectionStore,
+  useLiveSelector,
+} from "../state/liveConnectionStore";
 import { useEngineStoreApi } from "../state/engineStore";
 import { streamPlaybackStore } from "../state/streamPlaybackStore";
-import { Controls, MOUSE_SENSITIVITY, ARROW_LOOK_SPEED } from "./ObserverControls";
+import {
+  Controls,
+  MOUSE_SENSITIVITY,
+  ARROW_LOOK_SPEED,
+} from "./KeyboardAndMouseHandler";
 import { useControls } from "./SettingsProvider";
 import { useTick, TICK_RATE } from "./TickProvider";
-import {
-  yawPitchToQuaternion,
-  MAX_PITCH,
-} from "../stream/streamHelpers";
+import { yawPitchToQuaternion, MAX_PITCH } from "../stream/streamHelpers";
 import type { StreamRecording, StreamCamera } from "../stream/types";
 import type { LiveStreamAdapter } from "../stream/liveStreaming";
+
+const log = createLogger("LiveObserver");
 
 const TICK_INTERVAL = 1 / TICK_RATE;
 
@@ -50,7 +57,7 @@ export function LiveObserver() {
   const store = useEngineStoreApi();
   const { speedMultiplier } = useControls();
   const activeAdapterRef = useRef<LiveStreamAdapter | null>(null);
-  const { gl } = useThree();
+  const gl = useThree((state) => state.gl);
   const [, getKeys] = useKeyboardControls<Controls>();
 
   // Accumulated rotation deltas since last move was sent. Mouse events and
@@ -73,15 +80,22 @@ export function LiveObserver() {
 
   // Wire adapter to engine store.
   useEffect(() => {
-    if (adapter && (gameStatus === "connected" || gameStatus === "authenticating")) {
+    if (
+      adapter &&
+      (gameStatus === "connected" || gameStatus === "authenticating")
+    ) {
       if (activeAdapterRef.current === adapter) return;
 
-      console.log("[LiveObserver] wiring adapter to engine store");
+      log.info("wiring adapter to engine store");
+      const liveState = liveConnectionStore.getState();
       const liveRecording: StreamRecording = {
         source: "live",
         duration: Infinity,
-        missionName: null,
+        missionName: liveState.mapName ?? null,
         gameType: null,
+        serverDisplayName: liveState.serverName ?? null,
+        recorderName: liveState.warriorName ?? null,
+        recordingDate: null,
         streamingPlayback: adapter,
       };
 
@@ -92,7 +106,11 @@ export function LiveObserver() {
       predRef.current.initialized = false;
       predRef.current.lastSyncedCamera = null;
     } else if (!adapter && activeAdapterRef.current) {
-      store.getState().setRecording(null);
+      // Only clear the recording if it's still the live one we set.
+      const current = store.getState().playback.recording;
+      if (current?.source === "live") {
+        store.getState().setRecording(null);
+      }
       activeAdapterRef.current = null;
       predRef.current.initialized = false;
     }
@@ -165,7 +183,7 @@ export function LiveObserver() {
       if (!activeAdapterRef.current) return;
 
       activeAdapterRef.current.toggleObserverMode();
-      console.log(`[LiveObserver] observer mode: ${activeAdapterRef.current.observerMode}`);
+      log.info("observer mode: %s", activeAdapterRef.current.observerMode);
     };
     window.addEventListener("keydown", handleKey);
     return () => window.removeEventListener("keydown", handleKey);
@@ -274,12 +292,15 @@ export function LiveObserver() {
     // Interpolate between previous and current tick prediction, then add
     // pending (unconsumed) mouse/arrow deltas so rotation responds at frame
     // rate rather than waiting for the next useTick to consume them.
-    const interpYaw = pred.prevYaw + (pred.yaw - pred.prevYaw) * t + deltaYawRef.current;
+    const interpYaw =
+      pred.prevYaw + (pred.yaw - pred.prevYaw) * t + deltaYawRef.current;
     const interpPitch = Math.max(
       -MAX_PITCH,
       Math.min(
         MAX_PITCH,
-        pred.prevPitch + (pred.pitch - pred.prevPitch) * t + deltaPitchRef.current,
+        pred.prevPitch +
+          (pred.pitch - pred.prevPitch) * t +
+          deltaPitchRef.current,
       ),
     );
 
@@ -314,7 +335,9 @@ export function LiveObserver() {
         if (_orbitDir.lengthSq() > 1e-8) {
           _orbitDir.normalize();
           const orbitDistance = Math.max(0.1, serverCam.orbitDistance ?? 4);
-          state.camera.position.copy(_orbitTarget).addScaledVector(_orbitDir, orbitDistance);
+          state.camera.position
+            .copy(_orbitTarget)
+            .addScaledVector(_orbitDir, orbitDistance);
           state.camera.lookAt(_orbitTarget);
         }
       }
@@ -323,13 +346,16 @@ export function LiveObserver() {
       // from StreamingController's server snapshot interpolation).
       state.camera.quaternion.set(qx, qy, qz, qw);
     }
-  }, 1);
+  });
 
   // Clean up on unmount.
   useEffect(() => {
     return () => {
       if (activeAdapterRef.current) {
-        store.getState().setRecording(null);
+        const current = store.getState().playback.recording;
+        if (current?.source === "live") {
+          store.getState().setRecording(null);
+        }
         activeAdapterRef.current = null;
       }
     };

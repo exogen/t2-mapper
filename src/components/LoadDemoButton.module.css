@@ -7,6 +7,10 @@
   composes: ButtonLabel from "./InspectorControls.module.css";
 }
 
+.ButtonHint {
+  composes: ButtonHint from "./InspectorControls.module.css";
+}
+
 .DemoIcon {
-  font-size: 19px;
+  /* font-size: 20px; */
 }

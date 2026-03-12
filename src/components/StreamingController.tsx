@@ -1,10 +1,7 @@
 import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { useFrame } from "@react-three/fiber";
 import { useGLTF } from "@react-three/drei";
-import {
-  Quaternion,
-  Vector3,
-} from "three";
+import { Quaternion, Vector3 } from "three";
 import {
   DEFAULT_EYE_HEIGHT,
   STREAM_TICK_SEC,
@@ -14,7 +11,7 @@ import { shapeToUrl } from "../loaders";
 import { ParticleEffects } from "./ParticleEffects";
 import { PlayerEyeOffset } from "./PlayerModel";
 import { stopAllTrackedSounds } from "./AudioEmitter";
-import { useEngineStoreApi, advanceEffectClock } from "../state";
+import { useEngineStoreApi, advanceEffectClock } from "../state/engineStore";
 import { gameEntityStore } from "../state/gameEntityStore";
 import {
   streamPlaybackStore,
@@ -33,7 +30,9 @@ type EntityById = Map<string, StreamEntity>;
 
 /** Safely access a field that exists only on some GameEntity variants. */
 function getField(entity: GameEntity, field: string): string | undefined {
-  return (entity as unknown as Record<string, unknown>)[field] as string | undefined;
+  return (entity as unknown as Record<string, unknown>)[field] as
+    | string
+    | undefined;
 }
 
 /** Mutate render-affecting fields on an entity in-place from stream data.
@@ -49,6 +48,7 @@ function mutateRenderFields(
       e.threads = stream.threads;
       e.weaponShape = stream.weaponShape;
       e.packShape = stream.packShape;
+      e.flagShape = stream.flagShape;
       e.falling = stream.falling;
       e.jetting = stream.jetting;
       e.weaponImageState = stream.weaponImageState;
@@ -98,8 +98,11 @@ const _billboardFlip = new Quaternion(0, 1, 0, 0); // 180° around Y
 const _orbitDir = new Vector3();
 const _orbitTarget = new Vector3();
 const _orbitCandidate = new Vector3();
-
-export function StreamingController({ recording }: { recording: StreamRecording }) {
+export function StreamingController({
+  recording,
+}: {
+  recording: StreamRecording;
+}) {
   const engineStore = useEngineStoreApi();
   const playbackClockRef = useRef(0);
   const prevTickSnapshotRef = useRef<StreamSnapshot | null>(null);
@@ -117,30 +120,42 @@ export function StreamingController({ recording }: { recording: StreamRecording 
 
     const prevMap = entityMapRef.current;
     const nextMap = new Map<string, GameEntity>();
-    let shouldRebuild = false;
 
     for (const entity of snapshot.entities) {
       let renderEntity = prevMap.get(entity.id);
 
       // Identity change -> new component (unmount/remount).
       // Compare fields that, when changed, require a full entity rebuild.
+      // Only compare shapeName for entity types that actually use it.
+      // Scene entities (Terrain, Interior, Sky, etc.), ForceFieldBare,
+      // AudioEmitter, WayPoint, and Camera don't have shapeName on their
+      // GameEntity, so comparing against entity.dataBlock would always
+      // mismatch and trigger a needless rebuild every frame.
+      const hasShapeName =
+        renderEntity &&
+        (renderEntity.renderType === "Shape" ||
+          renderEntity.renderType === "Player" ||
+          renderEntity.renderType === "Explosion");
+
       const needsNewIdentity =
         !renderEntity ||
         renderEntity.className !== (entity.className ?? entity.type) ||
         renderEntity.ghostIndex !== entity.ghostIndex ||
         renderEntity.dataBlockId !== entity.dataBlockId ||
         renderEntity.shapeHint !== entity.shapeHint ||
-        getField(renderEntity, "shapeName") !== entity.dataBlock ||
+        (hasShapeName &&
+          entity.dataBlock != null &&
+          getField(renderEntity, "shapeName") !== entity.dataBlock) ||
         // weaponShape changes only force rebuild for non-Player shapes
         // (turrets, vehicles). Players handle weapon changes internally
         // via PlayerModel's Mount0 bone, and rebuilding on weapon change
         // would lose animation state (death animations, etc.).
         (renderEntity.renderType !== "Player" &&
+          hasShapeName &&
           getField(renderEntity, "weaponShape") !== entity.weaponShape);
 
       if (needsNewIdentity) {
         renderEntity = streamEntityToGameEntity(entity, snapshot.timeSec);
-        shouldRebuild = true;
       } else {
         // Mutate render fields in-place on the existing entity object.
         // Components read these imperatively in useFrame — no React
@@ -153,7 +168,8 @@ export function StreamingController({ recording }: { recording: StreamRecording 
       // Keyframe update (mutable -- used for fallback position for
       // retained explosion entities and per-frame reads in useFrame).
       // Scene entities and None don't have keyframes.
-      if (isSceneEntity(renderEntity) || renderEntity.renderType === "None") continue;
+      if (isSceneEntity(renderEntity) || renderEntity.renderType === "None")
+        continue;
       const keyframes = renderEntity.keyframes!;
       if (keyframes.length === 0) {
         keyframes.push({
@@ -189,12 +205,12 @@ export function StreamingController({ recording }: { recording: StreamRecording 
           continue;
         }
       }
-      // Entity removed (or retention expired).
-      shouldRebuild = true;
     }
 
-    // Detect new entities added.
-    if (nextMap.size !== prevMap.size) shouldRebuild = true;
+    // Only push to store when the entity set changed (adds/removes).
+    const shouldRebuild =
+      nextMap.size !== prevMap.size ||
+      [...nextMap.keys()].some((id) => !prevMap.has(id));
 
     entityMapRef.current = nextMap;
     if (shouldRebuild) {
@@ -202,7 +218,10 @@ export function StreamingController({ recording }: { recording: StreamRecording 
     }
 
     let nextFirstPersonShape: string | null = null;
-    if (snapshot.camera?.mode === "first-person" && snapshot.camera.controlEntityId) {
+    if (
+      snapshot.camera?.mode === "first-person" &&
+      snapshot.camera.controlEntityId
+    ) {
       const entity = nextMap.get(snapshot.camera.controlEntityId);
       const sn = entity ? getField(entity, "shapeName") : undefined;
       if (sn) {
@@ -231,12 +250,30 @@ export function StreamingController({ recording }: { recording: StreamRecording 
 
     const stream = streamRef.current;
     streamPlaybackStore.setState({ playback: stream });
-    gameEntityStore.getState().beginStreaming();
+    gameEntityStore.getState().beginStreaming(recording.source);
 
     if (!stream) {
       engineStore.getState().setPlaybackStreamSnapshot(null);
       return;
     }
+
+    // Update gameEntityStore when mission info arrives via server messages
+    // (MsgMissionDropInfo, MsgLoadInfo, MsgClientReady).
+    stream.onMissionInfoChange = () => {
+      gameEntityStore.getState().setMissionInfo({
+        missionDisplayName: stream.missionDisplayName ?? undefined,
+        missionTypeDisplayName: stream.missionTypeDisplayName ?? undefined,
+        gameClassName: stream.gameClassName ?? undefined,
+        recorderName: stream.connectedPlayerName ?? undefined,
+      });
+    };
+
+    // Save pre-populated mission info before reset clears it.
+    const savedMissionDisplayName = stream.missionDisplayName;
+    const savedMissionTypeDisplayName = stream.missionTypeDisplayName;
+    const savedGameClassName = stream.gameClassName;
+    const savedServerDisplayName = stream.serverDisplayName;
+    const savedConnectedPlayerName = stream.connectedPlayerName;
 
     // Reset the stream cursor for demo playback (replay from the beginning).
     // For live streams, skip reset — the adapter is already receiving packets
@@ -245,6 +282,26 @@ export function StreamingController({ recording }: { recording: StreamRecording 
     if (recording.source !== "live") {
       stream.reset();
     }
+
+    // Restore mission info fields that were parsed from the initial block
+    // (demoValues) — reset() clears them but they won't be re-sent.
+    stream.missionDisplayName = savedMissionDisplayName;
+    stream.missionTypeDisplayName = savedMissionTypeDisplayName;
+    stream.gameClassName = savedGameClassName;
+    stream.serverDisplayName = savedServerDisplayName;
+    stream.connectedPlayerName = savedConnectedPlayerName;
+
+    gameEntityStore.getState().setMissionInfo({
+      missionName: recording.missionName ?? undefined,
+      missionTypeDisplayName: recording.gameType ?? undefined,
+      missionDisplayName: savedMissionDisplayName ?? undefined,
+      gameClassName: savedGameClassName ?? undefined,
+      serverDisplayName:
+        savedServerDisplayName ?? recording.serverDisplayName ?? undefined,
+      recorderName:
+        savedConnectedPlayerName ?? recording.recorderName ?? undefined,
+      recordingDate: recording.recordingDate ?? undefined,
+    });
     // Preload weapon effect shapes (explosions) so they're cached before
     // the first projectile detonates -- otherwise the GLB fetch latency
     // causes the short-lived explosion entity to expire before it renders.
@@ -264,9 +321,11 @@ export function StreamingController({ recording }: { recording: StreamRecording 
 
     return () => {
       stopAllTrackedSounds();
-      gameEntityStore.getState().endStreaming();
+      // Null out streamRef so useFrame stops syncing entities.
+      streamRef.current = null;
+      // Don't call endStreaming() or clear the snapshot — leave entities,
+      // HUD, and chat in place as a frozen snapshot after disconnect.
       resetStreamPlayback();
-      engineStore.getState().setPlaybackStreamSnapshot(null);
     };
   }, [recording, engineStore, syncRenderableEntities]);
 
@@ -279,9 +338,11 @@ export function StreamingController({ recording }: { recording: StreamRecording 
     const isPlaying = playback.status === "playing";
     const requestedTimeSec = playback.timeMs / 1000;
     const externalSeekWhilePaused =
-      !isPlaying && Math.abs(requestedTimeSec - playbackClockRef.current) > 0.0005;
+      !isPlaying &&
+      Math.abs(requestedTimeSec - playbackClockRef.current) > 0.0005;
     const externalSeekWhilePlaying =
-      isPlaying && Math.abs(requestedTimeSec - streamPlaybackStore.getState().time) > 0.05;
+      isPlaying &&
+      Math.abs(requestedTimeSec - streamPlaybackStore.getState().time) > 0.05;
     const isSeeking = externalSeekWhilePaused || externalSeekWhilePlaying;
     if (isSeeking) {
       // Sync stream cursor to UI/programmatic seek.
@@ -334,7 +395,10 @@ export function StreamingController({ recording }: { recording: StreamRecording 
 
     streamPlaybackStore.setState({ time: playbackClockRef.current });
     if (snapshot.exhausted && isPlaying) {
-      playbackClockRef.current = Math.min(playbackClockRef.current, snapshot.timeSec);
+      playbackClockRef.current = Math.min(
+        playbackClockRef.current,
+        snapshot.timeSec,
+      );
     }
 
     syncRenderableEntities(renderCurrent);
@@ -404,7 +468,8 @@ export function StreamingController({ recording }: { recording: StreamRecording 
         const perspectiveCamera = state.camera as any;
         const fovValue =
           previousCamera && Number.isFinite(previousCamera.fov)
-            ? previousCamera.fov + (currentCamera.fov - previousCamera.fov) * interpT
+            ? previousCamera.fov +
+              (currentCamera.fov - previousCamera.fov) * interpT
             : currentCamera.fov;
         const verticalFov = torqueHorizontalFovToThreeVerticalFov(
           fovValue,
@@ -436,7 +501,10 @@ export function StreamingController({ recording }: { recording: StreamRecording 
         // snapshot lifetime) won't be in the snapshot entity map. Fall back
         // to their last-known keyframe position from the render entity.
         if (!entity) {
-          const kfs = renderEntity && "keyframes" in renderEntity ? renderEntity.keyframes : undefined;
+          const kfs =
+            renderEntity && "keyframes" in renderEntity
+              ? renderEntity.keyframes
+              : undefined;
           if (kfs?.[0]?.position) {
             const kf = kfs[0];
             child.visible = true;
@@ -463,11 +531,17 @@ export function StreamingController({ recording }: { recording: StreamRecording 
           const iz = pz + (cz - pz) * interpT;
           child.position.set(iy, iz, ix);
         } else {
-          child.position.set(entity.position[1], entity.position[2], entity.position[0]);
+          child.position.set(
+            entity.position[1],
+            entity.position[2],
+            entity.position[0],
+          );
         }
 
         if (entity.faceViewer) {
-          child.quaternion.copy(state.camera.quaternion).multiply(_billboardFlip);
+          child.quaternion
+            .copy(state.camera.quaternion)
+            .multiply(_billboardFlip);
         } else if (entity.visual?.kind === "tracer") {
           child.quaternion.identity();
         } else if (entity.rotation) {
@@ -486,7 +560,13 @@ export function StreamingController({ recording }: { recording: StreamRecording 
     const mode = currentCamera?.mode;
     // In live mode, LiveObserver handles orbit positioning from predicted
     // angles so the orbit responds at frame rate. Skip here to avoid fighting.
-    if (!freeFly && !isLive && mode === "third-person" && root && currentCamera?.orbitTargetId) {
+    if (
+      !freeFly &&
+      !isLive &&
+      mode === "third-person" &&
+      root &&
+      currentCamera?.orbitTargetId
+    ) {
       const targetGroup = root.children.find(
         (child) => child.name === currentCamera.orbitTargetId,
       );
@@ -530,7 +610,9 @@ export function StreamingController({ recording }: { recording: StreamRecording 
         if (hasDirection) {
           _orbitDir.normalize();
           const orbitDistance = Math.max(0.1, currentCamera.orbitDistance ?? 4);
-          _orbitCandidate.copy(_orbitTarget).addScaledVector(_orbitDir, orbitDistance);
+          _orbitCandidate
+            .copy(_orbitTarget)
+            .addScaledVector(_orbitDir, orbitDistance);
 
           state.camera.position.copy(_orbitCandidate);
           state.camera.lookAt(_orbitTarget);
@@ -538,12 +620,19 @@ export function StreamingController({ recording }: { recording: StreamRecording 
       }
     }
 
-    if (!freeFly && mode === "first-person" && root && currentCamera?.controlEntityId) {
+    if (
+      !freeFly &&
+      mode === "first-person" &&
+      root &&
+      currentCamera?.controlEntityId
+    ) {
       const playerGroup = root.children.find(
         (child) => child.name === currentCamera.controlEntityId,
       );
       if (playerGroup) {
-        _tmpVec.copy(eyeOffsetRef.current).applyQuaternion(playerGroup.quaternion);
+        _tmpVec
+          .copy(eyeOffsetRef.current)
+          .applyQuaternion(playerGroup.quaternion);
         state.camera.position.add(_tmpVec);
       } else {
         state.camera.position.y += eyeOffsetRef.current.y;
@@ -567,8 +656,11 @@ export function StreamingController({ recording }: { recording: StreamRecording 
         snapshotRef={currentTickSnapshotRef}
       />
       {firstPersonShape && (
-        <Suspense fallback={null}>
-          <PlayerEyeOffset shapeName={firstPersonShape} eyeOffsetRef={eyeOffsetRef} />
+        <Suspense>
+          <PlayerEyeOffset
+            shapeName={firstPersonShape}
+            eyeOffsetRef={eyeOffsetRef}
+          />
         </Suspense>
       )}
     </>

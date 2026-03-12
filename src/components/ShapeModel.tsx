@@ -1,13 +1,8 @@
 import { useEffect, useMemo, useRef } from "react";
 import { useFrame } from "@react-three/fiber";
-import {
-  AnimationMixer,
-  LoopOnce,
-  Quaternion,
-  Vector3,
-} from "three";
+import { AnimationMixer, LoopOnce, Quaternion, Vector3 } from "three";
 import type { Group, Material } from "three";
-import { effectNow, engineStore } from "../state";
+import { effectNow, engineStore } from "../state/engineStore";
 import * as SkeletonUtils from "three/examples/jsm/utils/SkeletonUtils.js";
 import {
   _r90,
@@ -21,14 +16,11 @@ import {
   updateAtlasFrame,
 } from "./useIflTexture";
 import type { IflAtlas } from "./useIflTexture";
-import {
-  ShapeRenderer,
-  useStaticShape,
-} from "./GenericShape";
+import { ShapeRenderer, useStaticShape } from "./GenericShape";
 import { ShapeInfoProvider } from "./ShapeInfoProvider";
 import type { TorqueObject } from "../torqueScript";
-import type { StreamEntity } from "../stream/types";
-import type { StreamingPlayback } from "../stream/types";
+import type { ExplosionEntity } from "../state/gameEntityTypes";
+import { streamPlaybackStore } from "../state/streamPlaybackStore";
 
 /**
  * Map weapon shape to the arm blend animation (armThread).
@@ -167,7 +159,13 @@ function extractSizeKeyframes(expBlock: Record<string, unknown>): {
   const rawTimes = expBlock.times as number[] | undefined;
 
   if (!Array.isArray(rawSizes) || rawSizes.length === 0) {
-    return { times: [0, 1], sizes: [[1, 1, 1], [1, 1, 1]] };
+    return {
+      times: [0, 1],
+      sizes: [
+        [1, 1, 1],
+        [1, 1, 1],
+      ],
+    };
   }
 
   // sizes are packed as value*100 integers on the wire; divide by 100.
@@ -210,14 +208,9 @@ function interpolateSize(
  * Renders an explosion DTS shape using useStaticShape (shared GLTF cache)
  * with custom rendering for faceViewer, vis/IFL animation, and size keyframes.
  */
-export function ExplosionShape({
-  entity,
-  playback,
-}: {
-  entity: StreamEntity;
-  playback: StreamingPlayback;
-}) {
-  const gltf = useStaticShape(entity.dataBlock!);
+export function ExplosionShape({ entity }: { entity: ExplosionEntity }) {
+  const playback = streamPlaybackStore.getState().playback;
+  const gltf = useStaticShape(entity.shapeName!);
   const groupRef = useRef<Group>(null);
   const startTimeRef = useRef(effectNow());
   // eslint-disable-next-line react-hooks/purity
@@ -256,7 +249,9 @@ export function ExplosionShape({
     const iflInfos: IflInfo[] = [];
     scene.traverse((node: any) => {
       if (!node.isMesh || !node.material) return;
-      const mat = Array.isArray(node.material) ? node.material[0] : node.material;
+      const mat = Array.isArray(node.material)
+        ? node.material[0]
+        : node.material;
       if (!mat?.userData) return;
       const flags = new Set<string>(mat.userData.flag_names ?? []);
       const rp: string | undefined = mat.userData.resource_path;
@@ -270,12 +265,13 @@ export function ExplosionShape({
             : undefined,
           duration: ud?.ifl_duration ? Number(ud.ifl_duration) : undefined,
           cyclic: ud?.ifl_sequence ? !!ud.ifl_cyclic : undefined,
-          toolBegin: ud?.ifl_tool_begin != null ? Number(ud.ifl_tool_begin) : undefined,
+          toolBegin:
+            ud?.ifl_tool_begin != null ? Number(ud.ifl_tool_begin) : undefined,
         });
       }
     });
 
-    processShapeScene(scene, entity.dataBlock);
+    processShapeScene(scene, entity.shapeName);
 
     // Collect vis-animated nodes keyed by sequence name.
     const visNodes: VisNode[] = [];
@@ -290,7 +286,12 @@ export function ExplosionShape({
         return;
       // Only include vis nodes tied to the "ambient" sequence.
       if (seqName === "ambient") {
-        visNodes.push({ mesh: node, keyframes: kf, duration: dur, cyclic: !!ud.vis_cyclic });
+        visNodes.push({
+          mesh: node,
+          keyframes: kf,
+          duration: dur,
+          cyclic: !!ud.vis_cyclic,
+        });
       }
     });
 
@@ -340,7 +341,9 @@ export function ExplosionShape({
     });
 
     // Disable frustum culling (explosion may scale beyond bounds).
-    scene.traverse((child) => { child.frustumCulled = false; });
+    scene.traverse((child) => {
+      child.frustumCulled = false;
+    });
 
     return { scene, mixer, visNodes, iflInfos, materials };
   }, [gltf, expBlock]);
@@ -369,8 +372,8 @@ export function ExplosionShape({
     if (!group) return;
 
     const playbackState = engineStore.getState().playback;
-    const effectDelta = playbackState.status === "playing"
-      ? delta * playbackState.rate : 0;
+    const effectDelta =
+      playbackState.status === "playing" ? delta * playbackState.rate : 0;
 
     const elapsed = effectNow() - startTimeRef.current;
     const t = Math.min(elapsed / lifetimeMS, 1);

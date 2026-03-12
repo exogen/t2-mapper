@@ -140,6 +140,10 @@ export function getMissionInfo(missionName: string) {
   return missionInfo;
 }
 
+export function hasMission(missionName: string): boolean {
+  return missionName in manifest.missions;
+}
+
 export function getMissionList() {
   return Object.keys(manifest.missions);
 }

@@ -1,20 +1,15 @@
-import { lazy, memo, Suspense, useRef } from "react";
+import { lazy, memo, useRef } from "react";
 import { useFrame } from "@react-three/fiber";
 import type { Group } from "three";
 import type {
   GameEntity,
   ShapeEntity as ShapeEntityType,
-  ForceFieldBareEntity as ForceFieldBareEntityType,
-  PlayerEntity as PlayerEntityType,
-  ExplosionEntity as ExplosionEntityType,
-  TracerEntity as TracerEntityType,
-  SpriteEntity as SpriteEntityType,
-  AudioEmitterEntity as AudioEmitterEntityType,
 } from "../state/gameEntityTypes";
-import { streamPlaybackStore } from "../state/streamPlaybackStore";
-import { ShapeRenderer } from "./GenericShape";
+import { ShapeRenderer, ShapePlaceholder } from "./GenericShape";
 import { ShapeInfoProvider } from "./ShapeInfoProvider";
 import type { StaticShapeType } from "./ShapeInfoProvider";
+import { DebugSuspense } from "./DebugSuspense";
+import { ShapeErrorBoundary } from "./ShapeErrorBoundary";
 import { FloatingLabel } from "./FloatingLabel";
 import { useSettings } from "./SettingsProvider";
 import { Camera } from "./Camera";
@@ -22,44 +17,51 @@ import { WayPoint } from "./WayPoint";
 import { TerrainBlock } from "./TerrainBlock";
 import { InteriorInstance } from "./InteriorInstance";
 import { Sky } from "./Sky";
+import { AudioEnabled } from "./AudioEnabled";
 import type { TorqueObject } from "../torqueScript";
 
-// Lazy-loaded heavy renderers
-const PlayerModel = lazy(() =>
-  import("./PlayerModel").then((mod) => ({ default: mod.PlayerModel })),
-);
+function createLazy<K extends string>(
+  name: K,
+  loader: () => Promise<Record<K, React.ComponentType<any>>>,
+): React.ComponentType<{ entity: GameEntity }> {
+  const LazyComponent = lazy(() =>
+    loader().then((mod) => {
+      const NamedComponent = mod[name];
+      return { default: NamedComponent };
+    }),
+  );
+  const LazyComponentWithSuspense = ({ entity }: { entity: GameEntity }) => {
+    return (
+      <DebugSuspense name={`${name}:${entity.id}`}>
+        <LazyComponent entity={entity} />
+      </DebugSuspense>
+    );
+  };
 
-const ExplosionShape = lazy(() =>
-  import("./ShapeModel").then((mod) => ({
-    default: mod.ExplosionShape,
-  })),
-);
+  LazyComponentWithSuspense.displayName = `createLazy(${name})`;
+  return LazyComponentWithSuspense;
+}
 
-const TracerProjectile = lazy(() =>
-  import("./Projectiles").then((mod) => ({
-    default: mod.TracerProjectile,
-  })),
+const PlayerModel = createLazy("PlayerModel", () => import("./PlayerModel"));
+const ExplosionShape = createLazy(
+  "ExplosionShape",
+  () => import("./ShapeModel"),
 );
-
-const SpriteProjectile = lazy(() =>
-  import("./Projectiles").then((mod) => ({
-    default: mod.SpriteProjectile,
-  })),
+const TracerProjectile = createLazy(
+  "TracerProjectile",
+  () => import("./Projectiles"),
 );
-
-const ForceFieldBareRenderer = lazy(() =>
-  import("./ForceFieldBare").then((mod) => ({
-    default: mod.ForceFieldBare,
-  })),
+const SpriteProjectile = createLazy(
+  "SpriteProjectile",
+  () => import("./Projectiles"),
 );
-
-const AudioEmitter = lazy(() =>
-  import("./AudioEmitter").then((mod) => ({ default: mod.AudioEmitter })),
+const ForceFieldBare = createLazy(
+  "ForceFieldBare",
+  () => import("./ForceFieldBare"),
 );
-
-const WaterBlock = lazy(() =>
-  import("./WaterBlock").then((mod) => ({ default: mod.WaterBlock })),
-);
+const AudioEmitter = createLazy("AudioEmitter", () => import("./AudioEmitter"));
+const WaterBlock = createLazy("WaterBlock", () => import("./WaterBlock"));
+const WeaponModel = createLazy("WeaponModel", () => import("./ShapeModel"));
 
 const TEAM_NAMES: Record<number, string> = {
   1: "Storm",
@@ -81,17 +83,21 @@ export const EntityRenderer = memo(function EntityRenderer({
     case "Shape":
       return <ShapeEntity entity={entity} />;
     case "ForceFieldBare":
-      return <ForceFieldBareEntity entity={entity} />;
+      return <ForceFieldBare entity={entity} />;
     case "Player":
-      return <PlayerEntity entity={entity} />;
+      return <PlayerModel entity={entity} />;
     case "Explosion":
-      return <ExplosionEntity entity={entity} />;
+      return <ExplosionShape entity={entity} />;
     case "Tracer":
-      return <TracerEntity entity={entity} />;
+      return <TracerProjectile entity={entity} />;
     case "Sprite":
-      return <SpriteEntity entity={entity} />;
+      return <SpriteProjectile entity={entity} />;
     case "AudioEmitter":
-      return <AudioEntity entity={entity} />;
+      return (
+        <AudioEnabled>
+          <AudioEmitter entity={entity} />
+        </AudioEnabled>
+      );
     case "Camera":
       return <Camera entity={entity} />;
     case "WayPoint":
@@ -101,24 +107,20 @@ export const EntityRenderer = memo(function EntityRenderer({
     case "InteriorInstance":
       return <InteriorInstance scene={entity.interiorData} />;
     case "Sky":
-      return <Sky scene={entity.skyData} />;
+      return <Sky entity={entity} />;
     case "Sun":
       // Sun lighting is handled by SceneLighting (rendered outside EntityScene)
       return null;
     case "WaterBlock":
-      return (
-        <Suspense fallback={null}>
-          <WaterBlock scene={entity.waterData} />
-        </Suspense>
-      );
+      return <WaterBlock entity={entity} />;
     case "MissionArea":
       return null;
     case "None":
       return null;
+    default:
+      return null;
   }
 });
-
-// ── Shape Entity ──
 
 function ShapeEntity({ entity }: { entity: ShapeEntityType }) {
   const { animationEnabled } = useSettings();
@@ -131,7 +133,9 @@ function ShapeEntity({ entity }: { entity: ShapeEntityType }) {
     groupRef.current.rotation.y = (t / 3.0) * Math.PI * 2;
   });
 
-  if (!entity.shapeName) return null;
+  if (!entity.shapeName) {
+    throw new Error(`Shape entity missing shapeName: ${entity.id}`);
+  }
 
   const torqueObject = entity.runtimeObject as TorqueObject | undefined;
   const shapeType = (entity.shapeType ?? "StaticShape") as StaticShapeType;
@@ -156,7 +160,10 @@ function ShapeEntity({ entity }: { entity: ShapeEntityType }) {
       type={shapeType}
     >
       <group ref={entity.rotate ? groupRef : undefined}>
-        <ShapeRenderer loadingColor={loadingColor} streamEntity={torqueObject ? undefined : entity}>
+        <ShapeRenderer
+          loadingColor={loadingColor}
+          streamEntity={torqueObject ? undefined : entity}
+        >
           {flagLabel ? (
             <FloatingLabel opacity={0.6}>{flagLabel}</FloatingLabel>
           ) : null}
@@ -172,92 +179,26 @@ function ShapeEntity({ entity }: { entity: ShapeEntityType }) {
             </group>
           </ShapeInfoProvider>
         )}
+        {entity.weaponShape && (
+          <ShapeErrorBoundary
+            fallback={
+              <ShapePlaceholder color="red" label={entity.weaponShape} />
+            }
+          >
+            <DebugSuspense
+              name={`Weapon:${entity.id}/${entity.weaponShape}`}
+              fallback={
+                <ShapePlaceholder color="cyan" label={entity.weaponShape} />
+              }
+            >
+              <WeaponModel
+                shapeName={entity.weaponShape}
+                playerShapeName={entity.shapeName}
+              />
+            </DebugSuspense>
+          </ShapeErrorBoundary>
+        )}
       </group>
     </ShapeInfoProvider>
-  );
-}
-
-// ── Force Field Entity ──
-
-function ForceFieldBareEntity({ entity }: { entity: ForceFieldBareEntityType }) {
-  if (!entity.forceFieldData) return null;
-  return (
-    <Suspense fallback={null}>
-      <ForceFieldBareRenderer
-        data={entity.forceFieldData}
-        scale={entity.forceFieldData.dimensions}
-      />
-    </Suspense>
-  );
-}
-
-// ── Player Entity ──
-
-function PlayerEntity({ entity }: { entity: PlayerEntityType }) {
-  if (!entity.shapeName) return null;
-
-  return (
-    <Suspense fallback={null}>
-      <PlayerModel entity={entity} />
-    </Suspense>
-  );
-}
-
-// ── Explosion Entity ──
-
-function ExplosionEntity({ entity }: { entity: ExplosionEntityType }) {
-  const playback = streamPlaybackStore.getState().playback;
-
-  // ExplosionShape still expects a StreamEntity-shaped object.
-  // Adapt minimally until that component is also refactored.
-  const streamEntity = {
-    id: entity.id,
-    type: "Explosion" as const,
-    dataBlock: entity.shapeName,
-    position: entity.position,
-    rotation: entity.rotation,
-    faceViewer: entity.faceViewer,
-    explosionDataBlockId: entity.explosionDataBlockId,
-  };
-
-  if (!entity.shapeName || !playback) return null;
-
-  return (
-    <Suspense fallback={null}>
-      <ExplosionShape entity={streamEntity as any} playback={playback} />
-    </Suspense>
-  );
-}
-
-// ── Tracer Entity ──
-
-function TracerEntity({ entity }: { entity: TracerEntityType }) {
-  return (
-    <Suspense fallback={null}>
-      <TracerProjectile entity={entity} visual={entity.visual} />
-    </Suspense>
-  );
-}
-
-// ── Sprite Entity ──
-
-function SpriteEntity({ entity }: { entity: SpriteEntityType }) {
-  return (
-    <Suspense fallback={null}>
-      <SpriteProjectile visual={entity.visual} />
-    </Suspense>
-  );
-}
-
-// ── Audio Entity ──
-
-function AudioEntity({ entity }: { entity: AudioEmitterEntityType }) {
-  const { audioEnabled } = useSettings();
-  if (!entity.audioFileName || !audioEnabled) return null;
-
-  return (
-    <Suspense fallback={null}>
-      <AudioEmitter entity={entity} />
-    </Suspense>
   );
 }

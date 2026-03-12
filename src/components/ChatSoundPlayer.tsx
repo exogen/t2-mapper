@@ -2,9 +2,14 @@ import { useEffect, useRef } from "react";
 import { Audio } from "three";
 import { audioToUrl } from "../loaders";
 import { useAudio } from "./AudioContext";
-import { getCachedAudioBuffer, getSoundGeneration, trackSound, untrackSound } from "./AudioEmitter";
+import {
+  getCachedAudioBuffer,
+  getSoundGeneration,
+  trackSound,
+  untrackSound,
+} from "./AudioEmitter";
 import { useSettings } from "./SettingsProvider";
-import { engineStore, useEngineSelector } from "../state";
+import { engineStore, useEngineSelector } from "../state/engineStore";
 import type { ChatMessage } from "../stream/types";
 
 /**
@@ -13,8 +18,7 @@ import type { ChatMessage } from "../stream/types";
  */
 export function ChatSoundPlayer() {
   const { audioLoader, audioListener } = useAudio();
-  const settings = useSettings();
-  const audioEnabled = settings?.audioEnabled ?? false;
+  const { audioEnabled } = useSettings();
   const messages = useEngineSelector(
     (state) => state.playback.streamSnapshot?.chatMessages,
   );
@@ -24,9 +28,7 @@ export function ChatSoundPlayer() {
   const playedSetRef = useRef(new WeakSet<ChatMessage>());
   // Track active voice chat sound per sender so a new voice bind from the
   // same player stops their previous one (matching Tribes 2 behavior).
-  const activeBySenderRef = useRef(
-    new Map<string, Audio<GainNode>>(),
-  );
+  const activeBySenderRef = useRef(new Map<string, Audio<GainNode>>());
 
   useEffect(() => {
     if (
@@ -58,9 +60,17 @@ export function ChatSoundPlayer() {
           if (sender) {
             const prev = activeBySender.get(sender);
             if (prev) {
-              try { prev.stop(); } catch { /* already stopped */ }
+              try {
+                prev.stop();
+              } catch {
+                /* already stopped */
+              }
               untrackSound(prev);
-              try { prev.disconnect(); } catch { /* already disconnected */ }
+              try {
+                prev.disconnect();
+              } catch {
+                /* already disconnected */
+              }
               activeBySender.delete(sender);
             }
           }
@@ -75,7 +85,11 @@ export function ChatSoundPlayer() {
           // Clean up the source node once playback finishes.
           sound.source!.onended = () => {
             untrackSound(sound);
-            try { sound.disconnect(); } catch { /* already disconnected */ }
+            try {
+              sound.disconnect();
+            } catch {
+              /* already disconnected */
+            }
             if (sender && activeBySender.get(sender) === sound) {
               activeBySender.delete(sender);
             }

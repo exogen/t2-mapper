@@ -36,10 +36,22 @@ export function yawPitchToQuaternion(
   const cz = Math.cos(yaw);
 
   _rotMat.set(
-    -sz, cz * sx, -cz * cx, 0,
-    0, cx, sx, 0,
-    cz, sz * sx, -sz * cx, 0,
-    0, 0, 0, 1,
+    -sz,
+    cz * sx,
+    -cz * cx,
+    0,
+    0,
+    cx,
+    sx,
+    0,
+    cz,
+    sz * sx,
+    -sz * cx,
+    0,
+    0,
+    0,
+    0,
+    1,
   );
 
   _rotQuat.setFromRotationMatrix(_rotMat);
@@ -371,8 +383,16 @@ export function stripTaggedStringMarkup(s: string): string {
  * producing byte values that skip \t (0x9), \n (0xa), and \r (0xd).
  */
 const BYTE_TO_COLOR_INDEX: Record<number, number> = {
-  0x2: 0, 0x3: 1, 0x4: 2, 0x5: 3, 0x6: 4,
-  0x7: 5, 0x8: 6, 0xb: 7, 0xc: 8, 0xe: 9,
+  0x2: 0,
+  0x3: 1,
+  0x4: 2,
+  0x5: 3,
+  0x6: 4,
+  0x7: 5,
+  0x8: 6,
+  0xb: 7,
+  0xc: 8,
+  0xe: 9,
 };
 
 const BYTE_COLOR_RESET = 0x0f;
@@ -441,9 +461,10 @@ export function parseColorSegments(raw: string): ChatSegment[] {
 }
 
 /** Extract an embedded `~w<path>` sound tag from a message string. */
-export function extractWavTag(
-  text: string,
-): { text: string; wavPath: string | null } {
+export function extractWavTag(text: string): {
+  text: string;
+  wavPath: string | null;
+} {
   const idx = text.indexOf("~w");
   if (idx === -1) return { text, wavPath: null };
   return {

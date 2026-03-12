@@ -1,7 +1,6 @@
 import { createContext, ReactNode, useContext } from "react";
 import type { TorqueRuntime } from "../torqueScript";
 
-
 const RuntimeContext = createContext<TorqueRuntime | null>(null);
 
 export interface RuntimeProviderProps {
@@ -24,4 +23,3 @@ export function useRuntime(): TorqueRuntime {
   }
   return runtime;
 }
-

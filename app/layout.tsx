@@ -18,11 +18,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="en">
       <body>
-        <NuqsAdapter
-          defaultOptions={{
-            clearOnDefault: false,
-          }}
-        >
+        <NuqsAdapter defaultOptions={{ clearOnDefault: false }}>
           {children}
         </NuqsAdapter>
       </body>

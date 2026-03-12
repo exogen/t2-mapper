@@ -39,11 +39,6 @@ body {
   overflow: hidden;
 }
 
-main {
-  width: 100dvw;
-  height: 100dvh;
-}
-
 input[type="range"] {
   max-width: 80px;
 }

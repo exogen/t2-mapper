@@ -1,4 +1,5 @@
 import {
+  Activity,
   Fragment,
   startTransition,
   useEffect,
@@ -15,6 +16,7 @@ import {
   ComboboxGroup,
   ComboboxGroupLabel,
   useComboboxStore,
+  useStoreState,
 } from "@ariakit/react";
 import { matchSorter } from "match-sorter";
 import { getMissionInfo, getMissionList, getSourceAndPath } from "../manifest";
@@ -154,6 +156,7 @@ export function MissionSelect({
   missionType,
   onChange,
   disabled,
+  autoFocus,
 }: {
   value: string;
   missionType: string;
@@ -165,6 +168,7 @@ export function MissionSelect({
     missionType: string | undefined;
   }) => void;
   disabled?: boolean;
+  autoFocus?: boolean;
 }) {
   const [searchValue, setSearchValue] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
@@ -194,6 +198,8 @@ export function MissionSelect({
       startTransition(() => setSearchValue(value));
     },
   });
+
+  const isOpen = useStoreState(combobox, "open");
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -264,17 +270,23 @@ export function MissionSelect({
 
   return (
     <ComboboxProvider store={combobox}>
+      <Activity mode={isOpen ? "visible" : "hidden"}>
+        <div className={styles.Backdrop} />
+      </Activity>
       <div className={styles.InputWrapper}>
         <Combobox
           ref={inputRef}
           autoSelect
+          autoFocus={autoFocus}
           disabled={disabled}
-          placeholder={displayValue}
+          placeholder={selectedMission ? undefined : "Choose a map…"}
           className={styles.Input}
           onFocus={() => {
             try {
               document.exitPointerLock();
-            } catch  { /* expected */ }
+            } catch {
+              /* expected */
+            }
             combobox.show();
           }}
           onKeyDown={(e) => {
@@ -283,14 +295,16 @@ export function MissionSelect({
             }
           }}
         />
-        <div className={styles.SelectedValue}>
-          <span className={styles.SelectedName}>{displayValue}</span>
-          {missionType && (
-            <span className={styles.ItemType} data-mission-type={missionType}>
-              {missionType}
-            </span>
-          )}
-        </div>
+        {selectedMission && (
+          <div className={styles.SelectedValue}>
+            <span className={styles.SelectedName}>{displayValue}</span>
+            {missionType && (
+              <span className={styles.ItemType} data-mission-type={missionType}>
+                {missionType}
+              </span>
+            )}
+          </div>
+        )}
         <kbd className={styles.Shortcut}>{isMac ? "⌘K" : "^K"}</kbd>
       </div>
       <ComboboxPopover

@@ -317,7 +317,10 @@ export class T2csriAuth {
     // Sanitize: must be hex only
     const challenge = this.encryptedChallenge.toLowerCase();
     authLog.info(
-      { challengeLen: challenge.length, clientChallengeLen: this.clientChallenge.length },
+      {
+        challengeLen: challenge.length,
+        clientChallengeLen: this.clientChallenge.length,
+      },
       "Auth: starting challenge decryption",
     );
     for (let i = 0; i < challenge.length; i++) {
@@ -339,7 +342,11 @@ export class T2csriAuth {
     const modulusHex = fields[3];
 
     authLog.debug(
-      { encryptedLen: challenge.length, modulusLen: modulusHex?.length, privateKeyLen: this.credentials.privateKey.length },
+      {
+        encryptedLen: challenge.length,
+        modulusLen: modulusHex?.length,
+        privateKeyLen: this.credentials.privateKey.length,
+      },
       "Auth: RSA parameters",
     );
 

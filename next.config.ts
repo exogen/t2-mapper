@@ -10,6 +10,7 @@ const nextConfig = (phase, { defaultConfig }): NextConfig => {
     assetPrefix: "/t2-mapper/",
     trailingSlash: true,
     reactCompiler: true,
+    experimental: { viewTransition: true },
     headers:
       // TorqueScript files should be served as text. This won't affect what
       // GitHub Pages does with the static export, but it'll at least improve

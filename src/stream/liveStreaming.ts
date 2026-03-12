@@ -1,12 +1,12 @@
-import {
-  createLiveParser,
-  type PacketParser,
-} from "t2-demo-parser";
+import { createLiveParser, type PacketParser } from "t2-demo-parser";
+import { createLogger } from "../logger";
 import { resolveShapeName, stripTaggedStringMarkup } from "./streamHelpers";
 import type { Vec3 } from "./streamHelpers";
 import type { StreamSnapshot } from "./types";
 import { StreamEngine } from "./StreamEngine";
 import type { RelayClient } from "./relayClient";
+
+const log = createLogger("liveStreaming");
 
 // ── Player list entry ──
 
@@ -34,6 +34,10 @@ export class LiveStreamAdapter extends StreamEngine {
 
   /** Called once when the first ghost entity is created. */
   onReady?: () => void;
+  /** Called when the server starts a new mission (map cycle). */
+  onMissionChange?: (missionName: string) => void;
+  /** Current mission name as reported by the server. */
+  missionName: string | null = null;
 
   constructor(relay: RelayClient) {
     super();
@@ -71,9 +75,10 @@ export class LiveStreamAdapter extends StreamEngine {
     return this.currentTimeSec;
   }
 
-  protected getCameraYawPitch(
-    data: Record<string, unknown> | undefined,
-  ): { yaw: number; pitch: number } {
+  protected getCameraYawPitch(data: Record<string, unknown> | undefined): {
+    yaw: number;
+    pitch: number;
+  } {
     const absRot = this.getAbsoluteRotation(data);
     return absRot ?? { yaw: 0, pitch: 0 };
   }
@@ -103,6 +108,7 @@ export class LiveStreamAdapter extends StreamEngine {
     this._snapshotTick = -1;
     this.dataBlockClassNames.clear();
     this.observerMode = "fly";
+    this.missionName = null;
   }
 
   getSnapshot(): StreamSnapshot {
@@ -112,10 +118,7 @@ export class LiveStreamAdapter extends StreamEngine {
     return this.buildSnapshot();
   }
 
-  stepToTime(
-    targetTimeSec: number,
-    _maxMoveTicks?: number,
-  ): StreamSnapshot {
+  stepToTime(targetTimeSec: number, _maxMoveTicks?: number): StreamSnapshot {
     this.currentTimeSec = targetTimeSec;
     return this.getSnapshot();
   }
@@ -173,7 +176,7 @@ export class LiveStreamAdapter extends StreamEngine {
       const args = rawArgs
         .map((a) => this.resolveNetString(a))
         .filter((a) => a !== "");
-      console.log(`[live] auth event: ${funcName}`, args);
+      log.info("auth event: %s %o", funcName, args);
       this.relay.sendAuthEvent(funcName, args);
       return;
     }
@@ -184,15 +187,47 @@ export class LiveStreamAdapter extends StreamEngine {
     const resolvedArgs = rawArgs.map((a) => this.resolveNetString(a));
     if (funcName === "MissionStartPhase1") {
       const seq = resolvedArgs[0] ?? "";
-      console.log(`[live] mission phase 1, seq=${seq}`);
+      const newMissionName = resolvedArgs[1] ?? null;
+      log.info(
+        "mission phase 1, seq=%s mission=%s resolvedArgs=%o",
+        seq,
+        newMissionName,
+        resolvedArgs,
+      );
+      // Phase 1 signals a new mission load — clear all ghosts (the server
+      // called resetGhosting before sending this) and update mission name.
+      if (newMissionName && newMissionName !== this.missionName) {
+        this.missionName = newMissionName;
+        this.entities.clear();
+        this.entityIdByGhostIndex.clear();
+        this._ready = false;
+        this._snapshot = null;
+        this._snapshotTick = -1;
+        // Clear stale mission info — new values arrive via MsgClientReady
+        // and MsgMissionDropInfo after the mission finishes loading.
+        this.missionDisplayName = null;
+        this.missionTypeDisplayName = null;
+        this.gameClassName = null;
+        this.serverDisplayName = null;
+        this.onMissionChange?.(newMissionName);
+      }
       this.relay.sendCommand("MissionStartPhase1Done", [seq]);
     } else if (funcName === "MissionStartPhase2") {
       const seq = resolvedArgs[0] ?? "";
-      console.log(`[live] mission phase 2 (datablocks), seq=${seq}`);
+      log.info("mission phase 2 (datablocks), seq=%s", seq);
       this.relay.sendCommand("MissionStartPhase2Done", [seq]);
     } else if (funcName === "MissionStartPhase3") {
       const seq = resolvedArgs[0] ?? "";
-      console.log(`[live] mission phase 3 (ghosting), seq=${seq}`);
+      const currentMission = resolvedArgs[1] ?? null;
+      log.info(
+        "mission phase 3 (ghosting), seq=%s mission=%s",
+        seq,
+        currentMission,
+      );
+      // Phase 3 sends $CurrentMission — update if different from phase 1.
+      if (currentMission) {
+        this.missionName = currentMission;
+      }
       // Send an empty favorites list then acknowledge phase 3.
       this.relay.sendCommand("setClientFav", [""]);
       this.relay.sendCommand("MissionStartPhase3Done", [seq]);
@@ -207,20 +242,29 @@ export class LiveStreamAdapter extends StreamEngine {
     const field2 = parsedData.field2 as number;
     // field1 bit 0 = includeTextures (from $Host::CRCTextures)
     const includeTextures = (field1 & 1) !== 0;
-    console.log(
-      `[live] CRC challenge: seed=0x${(seed >>> 0).toString(16)} ` +
-      `f1=0x${(field1 >>> 0).toString(16)} f2=0x${(field2 >>> 0).toString(16)} ` +
-      `includeTextures=${includeTextures}`,
+    log.info(
+      "CRC challenge: seed=0x%s f1=0x%s f2=0x%s includeTextures=%s",
+      (seed >>> 0).toString(16),
+      (field1 >>> 0).toString(16),
+      (field2 >>> 0).toString(16),
+      includeTextures,
     );
 
     // Collect datablocks for relay-side CRC computation over game files.
     const dbMap = this.packetParser.getDataBlockDataMap();
-    const datablocks: { objectId: number; className: string; shapeName: string }[] = [];
+    const datablocks: {
+      objectId: number;
+      className: string;
+      shapeName: string;
+    }[] = [];
     if (dbMap) {
       for (const [id, block] of dbMap) {
         const className = this.dataBlockClassNames.get(id);
         if (!className) continue;
-        const shapeName = resolveShapeName(className, block as Record<string, unknown>);
+        const shapeName = resolveShapeName(
+          className,
+          block as Record<string, unknown>,
+        );
         datablocks.push({
           objectId: id,
           className,
@@ -228,7 +272,7 @@ export class LiveStreamAdapter extends StreamEngine {
         });
       }
     }
-    console.log(`[live] CRC: sending ${datablocks.length} datablocks for computation`);
+    log.info("CRC: sending %d datablocks for computation", datablocks.length);
     this.relay.sendCRCCompute(seed, field2, datablocks, includeTextures);
   }
 
@@ -242,12 +286,15 @@ export class LiveStreamAdapter extends StreamEngine {
     const message = parsedData.message as number;
     const sequence = parsedData.sequence as number;
     const ghostCount = parsedData.ghostCount as number;
-    console.log(
-      `[live] GhostingMessageEvent: message=${message} sequence=${sequence} ghostCount=${ghostCount}`,
+    log.info(
+      "GhostingMessageEvent: message=%d sequence=%d ghostCount=%d",
+      message,
+      sequence,
+      ghostCount,
     );
     if (message === 0) {
       // GhostAlwaysDone → send type 1 acknowledgment
-      console.log(`[live] Sending ghost ack (type 1) for sequence ${sequence}`);
+      log.info("Sending ghost ack (type 1) for sequence %d", sequence);
       this.relay.sendGhostAck(sequence, ghostCount);
     }
   }
@@ -263,12 +310,12 @@ export class LiveStreamAdapter extends StreamEngine {
   cycleObserveNext(): void {
     if (this.observerMode === "fly") {
       // Jump trigger enters observerFollow from observerFly
-      console.log("[live] observer: fly → follow (jump trigger)");
+      log.info("observer: fly → follow (jump trigger)");
       this.sendTrigger(2);
       this.observerMode = "follow";
     } else {
       // Fire trigger cycles to next player in observerFollow
-      console.log("[live] observer: cycle next (fire trigger)");
+      log.info("observer: cycle next (fire trigger)");
       this.sendTrigger(0);
     }
   }
@@ -277,24 +324,34 @@ export class LiveStreamAdapter extends StreamEngine {
   toggleObserverMode(): void {
     if (this.observerMode === "fly") {
       // Jump trigger enters observerFollow from observerFly
-      console.log("[live] observer: fly → follow (jump trigger)");
+      log.info("observer: fly → follow (jump trigger)");
       this.sendTrigger(2);
       this.observerMode = "follow";
     } else {
       // Jump trigger returns to observerFly from observerFollow
-      console.log("[live] observer: follow → fly (jump trigger)");
+      log.info("observer: follow → fly (jump trigger)");
       this.sendTrigger(2);
       this.observerMode = "fly";
     }
   }
 
   private sendTrigger(index: number): void {
-    const trigger: [boolean, boolean, boolean, boolean, boolean, boolean] =
-      [false, false, false, false, false, false];
+    const trigger: [boolean, boolean, boolean, boolean, boolean, boolean] = [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+    ];
     trigger[index] = true;
     this.relay.sendMove({
-      x: 0, y: 0, z: 0,
-      yaw: 0, pitch: 0, roll: 0,
+      x: 0,
+      y: 0,
+      z: 0,
+      yaw: 0,
+      pitch: 0,
+      roll: 0,
       trigger,
       freeLook: false,
     });
@@ -318,12 +375,17 @@ export class LiveStreamAdapter extends StreamEngine {
       const noDispatchBefore = this.packetParser.protocolNoDispatch;
       const parsed = this.packetParser.parsePacket(data);
       const wasRejected = this.packetParser.protocolRejected > rejectedBefore;
-      const wasNoDispatch = this.packetParser.protocolNoDispatch > noDispatchBefore;
+      const wasNoDispatch =
+        this.packetParser.protocolNoDispatch > noDispatchBefore;
 
       if (wasRejected || wasNoDispatch) {
-        console.warn(
-          `[live] packet #${this.tickCount} ${wasRejected ? "REJECTED" : "no-dispatch"}: ${data.length} bytes` +
-          ` (total rejected=${this.packetParser.protocolRejected}, noDispatch=${this.packetParser.protocolNoDispatch})`,
+        log.warn(
+          "packet #%d %s: %d bytes (total rejected=%d, noDispatch=%d)",
+          this.tickCount,
+          wasRejected ? "REJECTED" : "no-dispatch",
+          data.length,
+          this.packetParser.protocolRejected,
+          this.packetParser.protocolNoDispatch,
         );
       }
 
@@ -332,14 +394,18 @@ export class LiveStreamAdapter extends StreamEngine {
       const shouldLog = isEarlyPacket || isMilestonePacket;
 
       if (shouldLog) {
-        console.log(
-          `[live] packet #${this.tickCount}: ${parsed.events.length} events, ${parsed.ghosts.length} ghosts, ${data.length} bytes` +
-          (parsed.gameState.controlObjectGhostIndex !== undefined
+        log.debug(
+          "packet #%d: %d events, %d ghosts, %d bytes%s%s",
+          this.tickCount,
+          parsed.events.length,
+          parsed.ghosts.length,
+          data.length,
+          parsed.gameState.controlObjectGhostIndex !== undefined
             ? `, control=${parsed.gameState.controlObjectGhostIndex}`
-            : "") +
-          (parsed.gameState.cameraFov !== undefined
+            : "",
+          parsed.gameState.cameraFov !== undefined
             ? `, fov=${parsed.gameState.cameraFov}`
-            : ""),
+            : "",
         );
       }
 
@@ -356,17 +422,20 @@ export class LiveStreamAdapter extends StreamEngine {
 
           // Always log RemoteCommandEvents (chat, server messages, HUD).
           if (type === "RemoteCommandEvent") {
-            const funcName = this.resolveNetString(event.parsedData.funcName as string ?? "");
-            console.log(`[live] remote: ${funcName}`);
+            const funcName = this.resolveNetString(
+              (event.parsedData.funcName as string) ?? "",
+            );
+            log.debug("remote: %s", funcName);
           }
           // Log other events in early packets
           if (isEarlyPacket) {
             if (type !== "NetStringEvent" && type !== "RemoteCommandEvent") {
-              console.log(
-                `[live] event: ${type}`,
+              log.debug(
+                "event: %s%s",
+                type,
                 type === "SimDataBlockEvent"
-                  ? { id: event.parsedData.objectId, className: event.parsedData.dataBlockClassName }
-                  : undefined,
+                  ? ` id=${event.parsedData.objectId} class=${event.parsedData.dataBlockClassName}`
+                  : "",
               );
             }
           }
@@ -374,16 +443,22 @@ export class LiveStreamAdapter extends StreamEngine {
           // Track SimDataBlockEvent class names for CRC computation.
           if (type === "SimDataBlockEvent") {
             const dbId = event.parsedData.objectId as number | undefined;
-            const dbClassName = event.parsedData.dataBlockClassName as string | undefined;
+            const dbClassName = event.parsedData.dataBlockClassName as
+              | string
+              | undefined;
             if (dbId != null && dbClassName) {
               this.dataBlockClassNames.set(dbId, dbClassName);
             }
             if (shouldLog) {
-              const dbData = event.parsedData.dataBlockData as Record<string, unknown> | undefined;
+              const dbData = event.parsedData.dataBlockData as
+                | Record<string, unknown>
+                | undefined;
               const shapeName = resolveShapeName(dbClassName ?? "", dbData);
-              console.log(
-                `[live] datablock: id=${dbId} class=${dbClassName ?? "?"}` +
-                (shapeName ? ` shape=${shapeName}` : ""),
+              log.debug(
+                "datablock: id=%d class=%s%s",
+                dbId,
+                dbClassName ?? "?",
+                shapeName ? ` shape=${shapeName}` : "",
               );
             }
           }
@@ -396,7 +471,11 @@ export class LiveStreamAdapter extends StreamEngine {
             const id = event.parsedData.id as number;
             const value = event.parsedData.value as string;
             if (id != null && typeof value === "string") {
-              console.log(`[live] netString #${id} = "${value.length > 60 ? value.slice(0, 60) + "…" : value}"`);
+              log.trace(
+                'netString #%d = "%s"',
+                id,
+                value.length > 60 ? value.slice(0, 60) + "…" : value,
+              );
             }
           }
 
@@ -408,7 +487,12 @@ export class LiveStreamAdapter extends StreamEngine {
               const resolved = this.netStrings.get(nameTag);
               if (resolved) {
                 const name = stripTaggedStringMarkup(resolved);
-                console.log(`[live] target #${targetId}: "${name}" team=${event.parsedData.sensorGroup ?? "?"}`);
+                log.info(
+                  'target #%d: "%s" team=%s',
+                  targetId,
+                  name,
+                  event.parsedData.sensorGroup ?? "?",
+                );
               }
             }
           }
@@ -417,17 +501,21 @@ export class LiveStreamAdapter extends StreamEngine {
           if (type === "SetSensorGroupEvent") {
             const sg = event.parsedData.sensorGroup as number | undefined;
             if (sg != null) {
-              console.log(`[live] sensor group changed: → ${sg}`);
+              log.info("sensor group changed: → %d", sg);
             }
           }
 
           // Log sensor group colors
           if (type === "SensorGroupColorEvent") {
             const sg = event.parsedData.sensorGroup as number;
-            const colors = event.parsedData.colors as Array<unknown> | undefined;
+            const colors = event.parsedData.colors as
+              | Array<unknown>
+              | undefined;
             if (colors) {
-              console.log(
-                `[live] sensor group colors: group=${sg}, ${colors.length} entries`,
+              log.debug(
+                "sensor group colors: group=%d, %d entries",
+                sg,
+                colors.length,
               );
             }
           }
@@ -438,12 +526,23 @@ export class LiveStreamAdapter extends StreamEngine {
       for (const ghost of parsed.ghosts) {
         if (ghost.type === "create") {
           const pos = ghost.parsedData?.position as Vec3 | undefined;
-          const hasPos = pos && typeof pos.x === "number" && typeof pos.y === "number" && typeof pos.z === "number";
-          const className = this.resolveGhostClassName(ghost.index, ghost.classId);
-          console.log(
-            `[live] ghost create: #${ghost.index} ${className ?? "?"}` +
-            (hasPos ? ` at (${pos.x.toFixed(1)}, ${pos.y.toFixed(1)}, ${pos.z.toFixed(1)})` : "") +
-            ` (${this.entities.size + 1} entities total)`,
+          const hasPos =
+            pos &&
+            typeof pos.x === "number" &&
+            typeof pos.y === "number" &&
+            typeof pos.z === "number";
+          const className = this.resolveGhostClassName(
+            ghost.index,
+            ghost.classId,
+          );
+          log.debug(
+            "ghost create: #%d %s%s (%d entities total)",
+            ghost.index,
+            className ?? "?",
+            hasPos
+              ? ` at (${pos.x.toFixed(1)}, ${pos.y.toFixed(1)}, ${pos.z.toFixed(1)})`
+              : "",
+            this.entities.size + 1,
           );
           if (!this._ready) {
             this._ready = true;
@@ -451,11 +550,15 @@ export class LiveStreamAdapter extends StreamEngine {
           }
         } else if (ghost.type === "delete") {
           const prevEntityId = this.entityIdByGhostIndex.get(ghost.index);
-          const prevEntity = prevEntityId ? this.entities.get(prevEntityId) : undefined;
+          const prevEntity = prevEntityId
+            ? this.entities.get(prevEntityId)
+            : undefined;
           if (this.tickCount < 50 || this.tickCount % 200 === 0) {
-            console.log(
-              `[live] ghost delete: #${ghost.index} ${prevEntity?.className ?? "?"}` +
-              ` (${this.entities.size - 1} entities remaining)`,
+            log.debug(
+              "ghost delete: #%d %s (%d entities remaining)",
+              ghost.index,
+              prevEntity?.className ?? "?",
+              this.entities.size - 1,
             );
           }
         }
@@ -469,10 +572,13 @@ export class LiveStreamAdapter extends StreamEngine {
       // Periodic status at milestones
       if (isMilestonePacket && this.tickCount > 1) {
         const dbMap = this.packetParser.getDataBlockDataMap();
-        console.log(
-          `[live] status @ tick ${this.tickCount}: ${this.entities.size} entities, ` +
-          `${dbMap?.size ?? 0} datablocks, ` +
-          `rejected=${this.packetParser.protocolRejected}, noDispatch=${this.packetParser.protocolNoDispatch}`,
+        log.info(
+          "status @ tick %d: %d entities, %d datablocks, rejected=%d, noDispatch=%d",
+          this.tickCount,
+          this.entities.size,
+          dbMap?.size ?? 0,
+          this.packetParser.protocolRejected,
+          this.packetParser.protocolNoDispatch,
         );
       }
 
@@ -489,9 +595,7 @@ export class LiveStreamAdapter extends StreamEngine {
         const summary = [...types.entries()]
           .map(([t, c]) => `${t}=${c}`)
           .join(" ");
-        console.log(
-          `[live] entity count: ${entityCount} (${summary})`,
-        );
+        log.info("entity count: %d (%s)", entityCount, summary);
       }
 
       const prevMode = this.camera?.mode;
@@ -499,18 +603,25 @@ export class LiveStreamAdapter extends StreamEngine {
 
       // Log camera mode transitions (always, not just early packets).
       if (this.camera && this.camera.mode !== prevMode) {
-        console.log(
-          `[live] camera mode: ${prevMode ?? "none"} → ${this.camera.mode}` +
-          (this.camera.mode === "third-person"
+        log.info(
+          "camera mode: %s → %s%s",
+          prevMode ?? "none",
+          this.camera.mode,
+          this.camera.mode === "third-person"
             ? ` orbit=${this.camera.orbitTargetId ?? "?"} dist=${this.camera.orbitDistance ?? "?"}`
-            : ""),
+            : "",
         );
       }
       // Log camera position for early packets
       if (this.tickCount <= 5 && this.camera) {
         const [cx, cy, cz] = this.camera.position;
-        console.log(
-          `[live] camera: mode=${this.camera.mode} pos=(${cx.toFixed(1)}, ${cy.toFixed(1)}, ${cz.toFixed(1)}) fov=${this.camera.fov}`,
+        log.debug(
+          "camera: mode=%s pos=(%s, %s, %s) fov=%s",
+          this.camera.mode,
+          cx.toFixed(1),
+          cy.toFixed(1),
+          cz.toFixed(1),
+          this.camera.fov,
         );
       }
     } catch (e) {
@@ -521,7 +632,7 @@ export class LiveStreamAdapter extends StreamEngine {
         controlGhost: this.latestControl.ghostIndex,
         connectSynced: this.connectSynced,
       };
-      console.error("Failed to process live packet:", e, errorContext);
+      log.error("Failed to process live packet: %o %o", e, errorContext);
     }
   }
 

@@ -1,42 +1,62 @@
+import { useEffect, useState, useRef, RefObject } from "react";
+import { RiLandscapeFill } from "react-icons/ri";
+import { FaRotateRight } from "react-icons/fa6";
+import { LuClipboardList } from "react-icons/lu";
+import { Camera } from "three";
 import {
   useControls,
   useDebug,
   useSettings,
   type TouchMode,
 } from "./SettingsProvider";
-import { MissionSelect } from "./MissionSelect";
-import { useEffect, useState, useRef, RefObject } from "react";
 import { CopyCoordinatesButton } from "./CopyCoordinatesButton";
 import { LoadDemoButton } from "./LoadDemoButton";
 import { JoinServerButton } from "./JoinServerButton";
-import { useRecording } from "./RecordingProvider";
-import { useLiveSelector } from "../state/liveConnectionStore";
-import { FiInfo, FiSettings } from "react-icons/fi";
-import { Camera } from "three";
+import { Accordion, AccordionGroup } from "./Accordion";
 import styles from "./InspectorControls.module.css";
+import { useTouchDevice } from "./useTouchDevice";
+import { useRecording } from "./RecordingProvider";
+import { useDataSource, useMissionName } from "../state/gameEntityStore";
+import { useLiveSelector } from "../state/liveConnectionStore";
+import { hasMission } from "../manifest";
+
+const DEFAULT_PANELS = ["controls", "preferences", "audio"];
+
 export function InspectorControls({
   missionName,
   missionType,
-  onChangeMission,
   onOpenMapInfo,
   onOpenServerBrowser,
-  isTouch,
+  onChooseMap,
+  onCancelChoosingMap,
+  choosingMap,
   cameraRef,
+  invalidateRef,
 }: {
   missionName: string;
   missionType: string;
-  onChangeMission: ({
-    missionName,
-    missionType,
-  }: {
-    missionName: string;
-    missionType: string;
-  }) => void;
   onOpenMapInfo: () => void;
   onOpenServerBrowser?: () => void;
-  isTouch: boolean | null;
+  onChooseMap?: () => void;
+  onCancelChoosingMap?: () => void;
+  choosingMap?: boolean;
   cameraRef: RefObject<Camera>;
+  invalidateRef: RefObject<() => void>;
 }) {
+  const isTouch = useTouchDevice();
+  const dataSource = useDataSource();
+  const recording = useRecording();
+  const storeMissionName = useMissionName();
+  const hasStreamData = dataSource === "demo" || dataSource === "live";
+  // When streaming, the URL query param may not reflect the actual map.
+  // Use the store's mission name (from the server) for the manifest check.
+  const effectiveMissionName = hasStreamData ? storeMissionName : missionName;
+  const missionInManifest = effectiveMissionName
+    ? hasMission(effectiveMissionName)
+    : false;
+  const isLiveConnected = useLiveSelector(
+    (s) => s.gameStatus === "connected" || s.gameStatus === "authenticating",
+  );
   const {
     fogEnabled,
     setFogEnabled,
@@ -44,18 +64,25 @@ export function InspectorControls({
     setFov,
     audioEnabled,
     setAudioEnabled,
+    audioVolume,
+    setAudioVolume,
     animationEnabled,
     setAnimationEnabled,
   } = useSettings();
-  const { speedMultiplier, setSpeedMultiplier, touchMode, setTouchMode } =
-    useControls();
-  const { debugMode, setDebugMode } = useDebug();
-  const demoRecording = useRecording();
-  const isLive = useLiveSelector((s) => s.adapter != null);
-  const isStreaming = demoRecording != null || isLive;
-  // Hide FOV/speed controls during .rec playback (faithfully replaying),
-  // but show them in .mis browsing and live observer mode.
-  const hideViewControls = isStreaming && !isLive;
+  const {
+    speedMultiplier,
+    setSpeedMultiplier,
+    touchMode,
+    setTouchMode,
+    invertScroll,
+    setInvertScroll,
+    invertDrag,
+    setInvertDrag,
+    invertJoystick,
+    setInvertJoystick,
+  } = useControls();
+  const { debugMode, setDebugMode, renderOnDemand, setRenderOnDemand } =
+    useDebug();
   const [settingsOpen, setSettingsOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
@@ -81,34 +108,8 @@ export function InspectorControls({
     }
   };
   return (
-    <div
-      id="controls"
-      className={styles.Controls}
-      onKeyDown={(e) => e.stopPropagation()}
-      onPointerDown={(e) => e.stopPropagation()}
-      onClick={(e) => e.stopPropagation()}
-    >
-      <div className={styles.MissionSelectWrapper}>
-        <MissionSelect
-          value={missionName}
-          missionType={missionType}
-          onChange={onChangeMission}
-          disabled={isStreaming}
-        />
-      </div>
+    <div className={styles.InspectorControls}>
       <div ref={focusAreaRef}>
-        <button
-          ref={buttonRef}
-          className={styles.Toggle}
-          onClick={() => {
-            setSettingsOpen((isOpen) => !isOpen);
-          }}
-          aria-expanded={settingsOpen}
-          aria-controls="settingsPanel"
-          aria-label="Settings"
-        >
-          <FiSettings />
-        </button>
         <div
           className={styles.Dropdown}
           ref={dropdownRef}
@@ -118,122 +119,268 @@ export function InspectorControls({
           onBlur={handleDropdownBlur}
           data-open={settingsOpen}
         >
-          <div className={styles.Group}>
+          <div className={styles.Tools}>
+            <div className={styles.ButtonGroup}>
+              <button
+                type="button"
+                className={styles.IconButton}
+                data-active={
+                  (dataSource === "map" && !recording) || choosingMap
+                }
+                onClick={onChooseMap}
+              >
+                <RiLandscapeFill />
+                <span className={styles.ButtonLabel}>Explore</span>
+                <span className={styles.ButtonHint}>Browse maps</span>
+              </button>
+              <LoadDemoButton
+                isActive={!choosingMap && recording?.source === "demo"}
+                choosingMap={choosingMap}
+                onCancelChoosingMap={onCancelChoosingMap}
+              />
+              {onOpenServerBrowser && (
+                <JoinServerButton
+                  isActive={!choosingMap && isLiveConnected}
+                  onOpenServerBrowser={onOpenServerBrowser}
+                />
+              )}
+            </div>
             <CopyCoordinatesButton
               missionName={missionName}
               missionType={missionType}
               cameraRef={cameraRef}
+              disabled={!missionInManifest}
             />
-            <LoadDemoButton />
-            {onOpenServerBrowser && (
-              <JoinServerButton onOpenServerBrowser={onOpenServerBrowser} />
-            )}
             <button
               type="button"
               className={styles.MapInfoButton}
               aria-label="Show map info"
               onClick={onOpenMapInfo}
+              disabled={!missionInManifest}
             >
-              <FiInfo />
+              <LuClipboardList />
               <span className={styles.ButtonLabel}>Show map info</span>
             </button>
           </div>
-          <div className={styles.Group}>
-            <div className={styles.CheckboxField}>
-              <input
-                id="fogInput"
-                type="checkbox"
-                checked={fogEnabled}
-                onChange={(event) => {
-                  setFogEnabled(event.target.checked);
-                }}
-              />
-              <label htmlFor="fogInput">Fog?</label>
-            </div>
-            <div className={styles.CheckboxField}>
-              <input
-                id="audioInput"
-                type="checkbox"
-                checked={audioEnabled}
-                onChange={(event) => {
-                  setAudioEnabled(event.target.checked);
-                }}
-              />
-              <label htmlFor="audioInput">Audio?</label>
-            </div>
+          <div className={styles.Accordions}>
+            <AccordionGroup type="multiple" defaultValue={DEFAULT_PANELS}>
+              <Accordion value="controls" label="Controls">
+                <div className={styles.Field}>
+                  <label htmlFor="speedInput">Fly speed</label>
+                  <input
+                    id="speedInput"
+                    type="range"
+                    min={0.1}
+                    max={5}
+                    step={0.05}
+                    value={speedMultiplier}
+                    onChange={(event) =>
+                      setSpeedMultiplier(parseFloat(event.target.value))
+                    }
+                  />
+                  <p className={styles.Description}>
+                    How fast you move in free-flying mode.
+                    {isTouch === false
+                      ? " Use your scroll wheel or trackpad to adjust while flying."
+                      : ""}
+                  </p>
+                </div>
+                {isTouch ? (
+                  <div className={styles.Field}>
+                    <label htmlFor="touchModeInput">Joystick</label>{" "}
+                    <select
+                      id="touchModeInput"
+                      value={touchMode}
+                      onChange={(e) =>
+                        setTouchMode(e.target.value as TouchMode)
+                      }
+                    >
+                      <option value="dualStick">Dual stick</option>
+                      <option value="moveLookStick">Single stick</option>
+                    </select>
+                    <p className={styles.Description}>
+                      Single stick has a unified move + look control. Dual stick
+                      has independent move + look.
+                    </p>
+                  </div>
+                ) : null}
+                {isTouch === false ? (
+                  <div className={styles.CheckboxField}>
+                    <input
+                      id="invertScroll"
+                      type="checkbox"
+                      checked={invertScroll}
+                      onChange={(event) => {
+                        setInvertScroll(event.target.checked);
+                      }}
+                    />
+                    <label className={styles.Label} htmlFor="invertScroll">
+                      Invert scroll direction
+                    </label>
+                    <p className={styles.Description}>
+                      Reverse which scroll direction increases and decreases fly
+                      speed.
+                    </p>
+                  </div>
+                ) : null}
+                {isTouch ? (
+                  <div className={styles.CheckboxField}>
+                    <input
+                      id="invertJoystick"
+                      type="checkbox"
+                      checked={invertJoystick}
+                      onChange={(event) => {
+                        setInvertJoystick(event.target.checked);
+                      }}
+                    />
+                    <label className={styles.Label} htmlFor="invertJoystick">
+                      Invert joystick direction
+                    </label>
+                    <p className={styles.Description}>
+                      Reverse joystick look direction.
+                    </p>
+                  </div>
+                ) : null}
+                <div className={styles.CheckboxField}>
+                  <input
+                    id="invertDrag"
+                    type="checkbox"
+                    checked={invertDrag}
+                    onChange={(event) => {
+                      setInvertDrag(event.target.checked);
+                    }}
+                  />
+                  <label className={styles.Label} htmlFor="invertDrag">
+                    Invert drag direction
+                  </label>
+                  <p className={styles.Description}>
+                    Reverse how dragging the viewport aims the camera.
+                  </p>
+                </div>
+              </Accordion>
+              <Accordion value="preferences" label="Preferences">
+                <div className={styles.Field}>
+                  <label htmlFor="fovInput">FOV</label>
+                  <div className={styles.Control}>
+                    <output htmlFor="fovInput">{fov}&deg;</output>
+                    <input
+                      id="fovInput"
+                      type="range"
+                      min={75}
+                      max={120}
+                      step={5}
+                      value={fov}
+                      onChange={(event) => setFov(parseInt(event.target.value))}
+                    />
+                  </div>
+                </div>
+              </Accordion>
+              <Accordion value="audio" label="Audio">
+                <div className={styles.CheckboxField}>
+                  <input
+                    id="audioInput"
+                    type="checkbox"
+                    checked={audioEnabled}
+                    onChange={(event) => {
+                      setAudioEnabled(event.target.checked);
+                    }}
+                  />
+                  <label className={styles.Label} htmlFor="audioInput">
+                    Enable audio
+                  </label>
+                </div>
+                <div className={styles.Field}>
+                  <label htmlFor="volumeInput">Master volume</label>
+                  <div className={styles.Control}>
+                    <output htmlFor="volumeInput">
+                      {Math.round(audioVolume * 100)}%
+                    </output>
+                    <input
+                      id="volumeInput"
+                      type="range"
+                      min={0}
+                      max={1}
+                      step={0.05}
+                      value={audioVolume}
+                      onChange={(event) =>
+                        setAudioVolume(parseFloat(event.target.value))
+                      }
+                    />
+                  </div>
+                </div>
+              </Accordion>
+              <Accordion value="graphics" label="Graphics">
+                <div className={styles.CheckboxField}>
+                  <input
+                    id="fogInput"
+                    type="checkbox"
+                    checked={fogEnabled}
+                    onChange={(event) => {
+                      setFogEnabled(event.target.checked);
+                    }}
+                  />
+                  <label className={styles.Label} htmlFor="fogInput">
+                    Enable fog
+                  </label>
+                </div>
+                <div className={styles.CheckboxField}>
+                  <input
+                    id="animationInput"
+                    type="checkbox"
+                    checked={animationEnabled}
+                    onChange={(event) => {
+                      setAnimationEnabled(event.target.checked);
+                    }}
+                  />
+                  <label className={styles.Label} htmlFor="animationInput">
+                    Enable animations
+                  </label>
+                </div>
+              </Accordion>
+              <Accordion value="debug" label="Debug">
+                <div className={styles.CheckboxField}>
+                  <input
+                    id="debugInput"
+                    type="checkbox"
+                    checked={debugMode}
+                    onChange={(event) => {
+                      setDebugMode(event.target.checked);
+                    }}
+                  />
+                  <label className={styles.Label} htmlFor="debugInput">
+                    Render debug visuals
+                  </label>
+                </div>
+                <div className={styles.CheckboxField}>
+                  <input
+                    id="onDemandInput"
+                    type="checkbox"
+                    checked={renderOnDemand}
+                    onChange={(event) => {
+                      setRenderOnDemand(event.target.checked);
+                    }}
+                  />
+                  <div className={styles.Label}>
+                    <label htmlFor="onDemandInput">Render on demand </label>
+                    <button
+                      type="button"
+                      className={styles.ForceRenderButton}
+                      title="Force render"
+                      aria-label="Force render"
+                      onClick={() => invalidateRef.current?.()}
+                    >
+                      <FaRotateRight />
+                    </button>
+                  </div>
+                  <p className={styles.Description}>
+                    Significantly decreases CPU and GPU usage by only rendering
+                    frames when requested. Helpful when developing parts of the
+                    app unrelated to rendering.
+                  </p>
+                </div>
+              </Accordion>
+            </AccordionGroup>
           </div>
-          <div className={styles.Group}>
-            <div className={styles.CheckboxField}>
-              <input
-                id="animationInput"
-                type="checkbox"
-                checked={animationEnabled}
-                onChange={(event) => {
-                  setAnimationEnabled(event.target.checked);
-                }}
-              />
-              <label htmlFor="animationInput">Animation?</label>
-            </div>
-            <div className={styles.CheckboxField}>
-              <input
-                id="debugInput"
-                type="checkbox"
-                checked={debugMode}
-                onChange={(event) => {
-                  setDebugMode(event.target.checked);
-                }}
-              />
-              <label htmlFor="debugInput">Debug?</label>
-            </div>
-          </div>
-          <div className={styles.Group}>
-            {hideViewControls ? null : (
-              <div className={styles.Field}>
-                <label htmlFor="fovInput">FOV</label>
-                <input
-                  id="fovInput"
-                  type="range"
-                  min={75}
-                  max={120}
-                  step={5}
-                  value={fov}
-                  onChange={(event) => setFov(parseInt(event.target.value))}
-                />
-                <output htmlFor="fovInput">{fov}</output>
-              </div>
-            )}
-            {hideViewControls ? null : (
-              <div className={styles.Field}>
-                <label htmlFor="speedInput">Speed</label>
-                <input
-                  id="speedInput"
-                  type="range"
-                  min={0.1}
-                  max={5}
-                  step={0.05}
-                  value={speedMultiplier}
-                  onChange={(event) =>
-                    setSpeedMultiplier(parseFloat(event.target.value))
-                  }
-                />
-              </div>
-            )}
-          </div>
-          {isTouch && (
-            <div className={styles.Group}>
-              <div className={styles.Field}>
-                <label htmlFor="touchModeInput">Joystick:</label>{" "}
-                <select
-                  id="touchModeInput"
-                  value={touchMode}
-                  onChange={(e) => setTouchMode(e.target.value as TouchMode)}
-                >
-                  <option value="dualStick">Dual Stick</option>
-                  <option value="moveLookStick">Single Stick</option>
-                </select>
-              </div>
-            </div>
-          )}
         </div>
       </div>
     </div>

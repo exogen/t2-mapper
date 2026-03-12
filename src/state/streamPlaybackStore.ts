@@ -39,6 +39,10 @@ export const streamPlaybackStore = createStore<StreamPlaybackState>()(() => ({
 
 /** Reset all streaming playback state. Called when streaming ends. */
 export function resetStreamPlayback(): void {
-  streamPlaybackStore.setState({ time: 0, playback: null, freeFlyCamera: false });
+  streamPlaybackStore.setState({
+    time: 0,
+    playback: null,
+    freeFlyCamera: false,
+  });
   // root is managed by the React ref callback in EntityScene — don't clear it
 }

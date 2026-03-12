@@ -1,10 +1,21 @@
 import { useCallback, useRef } from "react";
 import { MdOndemandVideo } from "react-icons/md";
+import { createLogger } from "../logger";
+import { liveConnectionStore } from "../state/liveConnectionStore";
 import { usePlaybackActions, useRecording } from "./RecordingProvider";
-import { createDemoStreamingRecording } from "../stream/demoStreaming";
 import styles from "./LoadDemoButton.module.css";
 
-export function LoadDemoButton() {
+const log = createLogger("LoadDemoButton");
+
+export function LoadDemoButton({
+  isActive = false,
+  choosingMap = false,
+  onCancelChoosingMap,
+}: {
+  isActive?: boolean;
+  choosingMap?: boolean;
+  onCancelChoosingMap?: () => void;
+}) {
   const recording = useRecording();
   const isDemoLoaded = recording?.source === "demo";
   const { setRecording } = usePlaybackActions();
@@ -12,14 +23,18 @@ export function LoadDemoButton() {
   const parseTokenRef = useRef(0);
 
   const handleClick = useCallback(() => {
+    if (choosingMap && isDemoLoaded) {
+      onCancelChoosingMap?.();
+      return;
+    }
     if (isDemoLoaded) {
-      // Unload the current recording.
+      // Unload the recording/parser but leave entities frozen in the store.
       parseTokenRef.current += 1;
       setRecording(null);
       return;
     }
     inputRef.current?.click();
-  }, [isDemoLoaded, setRecording]);
+  }, [isDemoLoaded, choosingMap, onCancelChoosingMap, setRecording]);
 
   const handleFileChange = useCallback(
     async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -31,14 +46,20 @@ export function LoadDemoButton() {
         const buffer = await file.arrayBuffer();
         const parseToken = parseTokenRef.current + 1;
         parseTokenRef.current = parseToken;
+        const { createDemoStreamingRecording } =
+          await import("../stream/demoStreaming");
         const recording = await createDemoStreamingRecording(buffer);
         if (parseTokenRef.current !== parseToken) {
           return;
         }
+        // Disconnect from any live server before loading the demo.
+        const liveState = liveConnectionStore.getState();
+        liveState.disconnectServer();
+        liveState.disconnectRelay();
         // Metadata-first: mission/game-mode sync happens immediately.
         setRecording(recording);
       } catch (err) {
-        console.error("Failed to load demo:", err);
+        log.error("Failed to load demo: %o", err);
       }
     },
     [setRecording],
@@ -59,12 +80,16 @@ export function LoadDemoButton() {
         aria-label={isDemoLoaded ? "Unload demo" : "Load demo (.rec)"}
         title={isDemoLoaded ? "Unload demo" : "Load demo (.rec)"}
         onClick={handleClick}
-        data-active={isDemoLoaded ? "true" : undefined}
-        disabled={recording != null && !isDemoLoaded}
+        data-active={isActive}
       >
         <MdOndemandVideo className={styles.DemoIcon} />
-        <span className={styles.ButtonLabel}>
-          {isDemoLoaded ? "Unload demo" : "Demo"}
+        <span className={styles.ButtonLabel}>Demo</span>
+        <span className={styles.ButtonHint}>
+          {choosingMap && isDemoLoaded
+            ? "Return to demo"
+            : isDemoLoaded
+              ? "Click to unload"
+              : "Load a .rec file"}
         </span>
       </button>
     </>

@@ -29,9 +29,7 @@ export class ConnectionProtocol {
 
   private _sendCount = 0;
 
-  buildSendPacketHeader(
-    packetType: number = DataPacket,
-  ): BitStreamWriter {
+  buildSendPacketHeader(packetType: number = DataPacket): BitStreamWriter {
     const bs = new BitStreamWriter(1500);
 
     // gameFlag — always true for data connection packets
@@ -42,8 +40,7 @@ export class ConnectionProtocol {
 
     // Increment send sequence
     this.lastSendSeq = (this.lastSendSeq + 1) >>> 0;
-    this.lastSeqRecvdAtSend[this.lastSendSeq & 0x1f] =
-      this.lastSeqRecvd >>> 0;
+    this.lastSeqRecvdAtSend[this.lastSendSeq & 0x1f] = this.lastSeqRecvd >>> 0;
 
     // seqNumber (9 bits)
     bs.writeInt(this.lastSendSeq & 0x1ff, 9);
@@ -71,12 +68,13 @@ export class ConnectionProtocol {
 
     this._sendCount++;
     if (this._sendCount <= 30 || this._sendCount % 50 === 0) {
-      const typeName = packetType === 0 ? "data" : packetType === 1 ? "ping" : "ack";
+      const typeName =
+        packetType === 0 ? "data" : packetType === 1 ? "ping" : "ack";
       console.log(
         `[proto] SEND #${this._sendCount} seq=${this.lastSendSeq} ` +
-        `highestAck=${this.lastSeqRecvd} type=${typeName} ` +
-        `ackBytes=${ackByteCount} mask=0x${mask.toString(16).padStart(8, "0")} ` +
-        `(${mask.toString(2).replace(/^0+/, "") || "0"})`,
+          `highestAck=${this.lastSeqRecvd} type=${typeName} ` +
+          `ackBytes=${ackByteCount} mask=0x${mask.toString(16).padStart(8, "0")} ` +
+          `(${mask.toString(2).replace(/^0+/, "") || "0"})`,
       );
     }
 
@@ -131,8 +129,7 @@ export class ConnectionProtocol {
       const isAcked =
         (header.ackMask & (1 << ((highestAck - ackSeq) & 0x1f))) !== 0;
       if (isAcked) {
-        this.lastRecvAckAck =
-          this.lastSeqRecvdAtSend[ackSeq & 0x1f] >>> 0;
+        this.lastRecvAckAck = this.lastSeqRecvdAtSend[ackSeq & 0x1f] >>> 0;
       }
       if (this.onNotify) {
         this.onNotify(ackSeq, isAcked);
@@ -144,8 +141,7 @@ export class ConnectionProtocol {
     this.highestAckedSeq = highestAck;
 
     const dispatchData =
-      this.lastSeqRecvd !== seqNumber &&
-      header.packetType === DataPacket;
+      this.lastSeqRecvd !== seqNumber && header.packetType === DataPacket;
     this.lastSeqRecvd = seqNumber;
 
     return { accepted: true, dispatchData };
@@ -168,9 +164,7 @@ export class ConnectionProtocol {
    * The caller provides a callback that writes game data to the stream
    * after the dnet header.
    */
-  buildDataPacket(
-    writePayload: (bs: BitStreamWriter) => void,
-  ): Uint8Array {
+  buildDataPacket(writePayload: (bs: BitStreamWriter) => void): Uint8Array {
     const bs = this.buildSendPacketHeader(DataPacket);
     writePayload(bs);
     return bs.getBuffer();
@@ -343,10 +337,7 @@ export class ClientNetStringTable {
 }
 
 /** Build a NetStringEvent to register a string with the server. */
-export function buildNetStringEvent(
-  id: number,
-  value: string,
-): ClientEvent {
+export function buildNetStringEvent(id: number, value: string): ClientEvent {
   return {
     classId: NetStringEventClassId,
     write(bs: BitStreamWriter) {
@@ -489,9 +480,7 @@ export function buildConnectRequest(
 }
 
 /** Build a Disconnect (type 38) OOB packet. */
-export function buildDisconnectPacket(
-  connectSequence: number,
-): Uint8Array {
+export function buildDisconnectPacket(connectSequence: number): Uint8Array {
   const bs = new BitStreamWriter(64);
   bs.writeU8(38); // Disconnect type
   bs.writeU32(connectSequence);

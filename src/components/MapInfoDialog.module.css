@@ -1,36 +1,14 @@
 .Dialog {
-  position: relative;
+  composes: Dialog from "./GameDialog.module.css";
   width: 800px;
   height: 600px;
-  max-width: calc(100dvw - 40px);
-  max-height: calc(100dvh - 40px);
   display: grid;
   grid-template-columns: 100%;
   grid-template-rows: 1fr auto;
-  background: rgba(20, 37, 38, 0.8);
-  border: 1px solid rgba(65, 131, 139, 0.6);
-  border-radius: 4px;
-  box-shadow:
-    0 0 50px rgba(0, 0, 0, 0.4),
-    inset 0 0 60px rgba(1, 7, 13, 0.6);
-  color: #bccec3;
-  font-size: 14px;
-  line-height: 1.5;
-  overflow: hidden;
-  outline: none;
-  user-select: text;
-  -webkit-touch-callout: default;
 }
 
 .Overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.7);
-  z-index: 10;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 20px;
+  composes: Overlay from "./GameDialog.module.css";
 }
 
 .Body {
@@ -99,7 +77,7 @@
 .MapQuote cite {
   font-style: normal;
   font-size: 12px;
-  color: rgba(255, 255, 255, 0.45);
+  color: rgba(215, 237, 203, 0.5);
   display: block;
 }
 
@@ -125,7 +103,7 @@
 .MusicTrack {
   margin-top: 16px;
   font-size: 14px;
-  color: rgba(202, 208, 172, 0.5);
+  color: rgba(215, 237, 203, 0.5);
   font-style: italic;
   display: flex;
   align-items: center;
@@ -174,7 +152,7 @@
 }
 
 .CloseButton {
-  composes: DialogButton from "./DialogButton.module.css";
+  composes: DialogButton from "./GameDialog.module.css";
 }
 
 .Hint {

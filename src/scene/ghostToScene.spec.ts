@@ -71,7 +71,12 @@ describe("skyFromGhost", () => {
       skySolidColor: { r: 0.1, g: 0.2, b: 0.3 },
       useSkyTextures: true,
       fogVolumes: [
-        { visibleDistance: 500, minHeight: 0, maxHeight: 300, color: { r: 0.5, g: 0.5, b: 0.5 } },
+        {
+          visibleDistance: 500,
+          minHeight: 0,
+          maxHeight: 300,
+          color: { r: 0.5, g: 0.5, b: 0.5 },
+        },
       ],
       cloudLayers: [
         { texture: "cloud1.png", heightPercent: 0.35, speed: 0.001 },

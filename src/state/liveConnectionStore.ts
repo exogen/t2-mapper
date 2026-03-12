@@ -1,18 +1,22 @@
 import { createStore } from "zustand/vanilla";
 import { useStoreWithEqualityFn } from "zustand/traditional";
+import { createLogger } from "../logger";
 import { RelayClient } from "../stream/relayClient";
 import { LiveStreamAdapter } from "../stream/liveStreaming";
+import { gameEntityStore } from "./gameEntityStore";
 import type {
   ClientMove,
   ServerInfo,
   ConnectionStatus,
 } from "../../relay/types";
 
+const log = createLogger("liveConnectionStore");
+
 export interface LiveConnectionState {
   relayConnected: boolean;
   gameStatus: ConnectionStatus | null;
   gameStatusMessage?: string;
-  /** Map name from the server being joined (from GameInfoResponse or status). */
+  /** Mission name from the server (updated on map cycle). */
   mapName?: string;
   /** Display name of the joined server. */
   serverName?: string;
@@ -25,6 +29,8 @@ export interface LiveConnectionState {
   adapter: LiveStreamAdapter | null;
   /** True once the first ghost entity arrives (game is rendering). */
   liveReady: boolean;
+  /** Warrior name used when joining the server. */
+  warriorName?: string;
 }
 
 export interface LiveConnectionStore extends LiveConnectionState {
@@ -79,8 +85,11 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
           s._pending = [];
         },
         onStatus(status, message, _connectSequence, statusMapName) {
-          console.log(
-            `[relay] game status: ${status}${message ? ` — ${message}` : ""}${statusMapName ? ` map=${statusMapName}` : ""}`,
+          log.info(
+            "game status: %s%s%s",
+            status,
+            message ? ` — ${message}` : "",
+            statusMapName ? ` map=${statusMapName}` : "",
           );
           set({
             gameStatus: status,
@@ -95,9 +104,7 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
         onGamePacket(data) {
           const a = get()._adapter;
           if (!a) {
-            console.warn(
-              "[relay] received game packet but no adapter is active",
-            );
+            log.warn("received game packet but no adapter is active");
           }
           a?.feedPacket(data);
         },
@@ -108,7 +115,7 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
           set({ browserToRelayPing: ms });
         },
         onError(message) {
-          console.error("Relay error:", message);
+          log.error("error: %s", message);
           get()._listInFlight = false;
           set({ serversLoading: false });
         },
@@ -188,14 +195,46 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
       const cachedServer = s.servers.find((sv) => sv.address === address);
       const newAdapter = new LiveStreamAdapter(s._relay);
       newAdapter.onReady = () => set({ liveReady: true });
+      newAdapter.onMissionChange = (missionName) => {
+        log.info("mission changed: %s", missionName);
+        set({ mapName: missionName, liveReady: false });
+        // Set the new mission name and clear stale fields — they'll be
+        // re-populated when MsgClientReady / MsgMissionDropInfo arrive.
+        gameEntityStore.getState().setMissionInfo({
+          missionName,
+          missionType: null,
+          missionTypeDisplayName: null,
+          missionDisplayName: null,
+          gameClassName: null,
+        });
+      };
+      newAdapter.onMissionInfoChange = () => {
+        gameEntityStore.getState().setMissionInfo({
+          missionDisplayName: newAdapter.missionDisplayName ?? undefined,
+          missionTypeDisplayName:
+            newAdapter.missionTypeDisplayName ?? undefined,
+          gameClassName: newAdapter.gameClassName ?? undefined,
+          serverDisplayName: newAdapter.serverDisplayName ?? undefined,
+          recorderName: newAdapter.connectedPlayerName ?? undefined,
+        });
+      };
       s._adapter = newAdapter;
 
       set({
         mapName: cachedServer?.mapName ?? s.mapName,
         serverName: cachedServer?.name,
+        warriorName,
         liveReady: false,
         gameStatus: null,
         adapter: newAdapter,
+      });
+
+      // Set initial mission info from the server browser's cached data.
+      gameEntityStore.getState().setMissionInfo({
+        missionName: cachedServer?.mapName ?? undefined,
+        missionTypeDisplayName: cachedServer?.gameType ?? undefined,
+        serverDisplayName: cachedServer?.name ?? undefined,
+        recorderName: warriorName ?? undefined,
       });
 
       s._relay.joinServer(address, warriorName);
@@ -204,7 +243,6 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
     disconnectServer() {
       const s = get();
       s._relay?.disconnectServer();
-      s._adapter?.reset();
       s._adapter = null;
       set({
         adapter: null,
@@ -238,7 +276,7 @@ export function useLiveSelector<T>(
 export function selectPing(s: LiveConnectionStore): number | null {
   return s.relayToGameServerPing != null && s.browserToRelayPing != null
     ? s.relayToGameServerPing + s.browserToRelayPing
-    : s.relayToGameServerPing ?? null;
+    : (s.relayToGameServerPing ?? null);
 }
 
 /** Dispose the relay connection (for cleanup on unmount). */

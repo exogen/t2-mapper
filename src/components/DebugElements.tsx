@@ -1,11 +1,9 @@
 import { Stats, Html } from "@react-three/drei";
-import { useDebug } from "./SettingsProvider";
 import { useEffect, useRef } from "react";
 import { AxesHelper } from "three";
 import styles from "./DebugElements.module.css";
 
 export function DebugElements() {
-  const { debugMode } = useDebug();
   const axesRef = useRef<AxesHelper>(null);
 
   useEffect(() => {
@@ -16,7 +14,7 @@ export function DebugElements() {
     axes.setColors("rgb(153, 255, 0)", "rgb(0, 153, 255)", "rgb(255, 153, 0)");
   });
 
-  return debugMode ? (
+  return (
     <>
       <Stats className={styles.StatsPanel} />
       <axesHelper ref={axesRef} args={[70]} renderOrder={999}>
@@ -43,5 +41,5 @@ export function DebugElements() {
         </span>
       </Html>
     </>
-  ) : null;
+  );
 }

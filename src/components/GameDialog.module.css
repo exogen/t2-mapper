@@ -1,4 +1,33 @@
-/* Shared button base for dialog actions (server browser, map info, etc.). */
+.Dialog {
+  position: relative;
+  max-width: calc(100dvw - 40px);
+  max-height: calc(100dvh - 40px);
+  background: rgba(20, 37, 38, 0.8);
+  border: 1px solid rgba(65, 131, 139, 0.6);
+  border-radius: 4px;
+  box-shadow:
+    0 0 50px rgba(0, 0, 0, 0.4),
+    inset 0 0 60px rgba(1, 7, 13, 0.6);
+  color: #b0d5c9;
+  font-size: 14px;
+  line-height: 1.5;
+  overflow: hidden;
+  outline: none;
+  user-select: text;
+  -webkit-touch-callout: default;
+}
+
+.Overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.7);
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+
 .DialogButton {
   background: linear-gradient(
     to bottom,

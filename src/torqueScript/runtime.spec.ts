@@ -2729,15 +2729,19 @@ describe("TorqueScript Runtime", () => {
       runtime.$.deleteObject("LifecycleTest");
       await Promise.resolve();
 
-      const mutationEvents = events.filter((event) => event.type !== "batch.flushed");
-      expect(mutationEvents.some((event) => event.type === "object.created")).toBe(
-        true,
+      const mutationEvents = events.filter(
+        (event) => event.type !== "batch.flushed",
       );
-      expect(mutationEvents.some((event) => event.type === "object.deleted")).toBe(
-        true,
-      );
+      expect(
+        mutationEvents.some((event) => event.type === "object.created"),
+      ).toBe(true);
+      expect(
+        mutationEvents.some((event) => event.type === "object.deleted"),
+      ).toBe(true);
 
-      const batchEvents = events.filter((event) => event.type === "batch.flushed");
+      const batchEvents = events.filter(
+        (event) => event.type === "batch.flushed",
+      );
       expect(batchEvents.length).toBeGreaterThan(0);
       expect(
         batchEvents.some((batch) =>
@@ -2768,7 +2772,9 @@ describe("TorqueScript Runtime", () => {
       runtime.$.setProp(obj, "customvalue", "after");
       await Promise.resolve();
 
-      const fieldEvents = events.filter((event) => event.type === "field.changed");
+      const fieldEvents = events.filter(
+        (event) => event.type === "field.changed",
+      );
       expect(fieldEvents.length).toBe(1);
       expect(fieldEvents[0].field).toBe("position");
       expect(fieldEvents[0].value).toBe("10 20 30");
@@ -2793,7 +2799,9 @@ describe("TorqueScript Runtime", () => {
       runtime.$.call(obj, "doNothing");
       await Promise.resolve();
 
-      const methodEvents = events.filter((event) => event.type === "method.called");
+      const methodEvents = events.filter(
+        (event) => event.type === "method.called",
+      );
       expect(methodEvents.length).toBe(1);
       expect(methodEvents[0].className).toBe("sceneobject");
       expect(methodEvents[0].methodName).toBe("settransform");
@@ -2811,7 +2819,9 @@ describe("TorqueScript Runtime", () => {
       runtime.$g.set("customState", 123);
       await Promise.resolve();
 
-      const globalEvents = events.filter((event) => event.type === "global.changed");
+      const globalEvents = events.filter(
+        (event) => event.type === "global.changed",
+      );
       expect(globalEvents.length).toBe(1);
       expect(globalEvents[0].name).toBe("missionrunning");
       expect(globalEvents[0].value).toBe(true);
@@ -2830,7 +2840,9 @@ describe("TorqueScript Runtime", () => {
       runtime.$g.set("customState", 456);
       await Promise.resolve();
 
-      const globalEvents = events.filter((event) => event.type === "global.changed");
+      const globalEvents = events.filter(
+        (event) => event.type === "global.changed",
+      );
       expect(globalEvents.length).toBe(1);
       expect(globalEvents[0].name).toBe("customstate");
       expect(globalEvents[0].value).toBe(456);

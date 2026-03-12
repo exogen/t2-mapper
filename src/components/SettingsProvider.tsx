@@ -27,11 +27,15 @@ type SettingsContext = {
   setAnimationEnabled: StateSetter<boolean>;
   warriorName: string;
   setWarriorName: StateSetter<string>;
+  audioVolume: number;
+  setAudioVolume: StateSetter<number>;
 };
 
 type DebugContext = {
   debugMode: boolean;
   setDebugMode: StateSetter<boolean>;
+  renderOnDemand: boolean;
+  setRenderOnDemand: StateSetter<boolean>;
 };
 
 type ControlsContext = {
@@ -39,6 +43,12 @@ type ControlsContext = {
   setSpeedMultiplier: StateSetter<number>;
   touchMode: TouchMode;
   setTouchMode: StateSetter<TouchMode>;
+  invertScroll: boolean;
+  setInvertScroll: StateSetter<boolean>;
+  invertDrag: boolean;
+  setInvertDrag: StateSetter<boolean>;
+  invertJoystick: boolean;
+  setInvertJoystick: StateSetter<boolean>;
 };
 
 const SettingsContext = createContext<SettingsContext | null>(null);
@@ -55,6 +65,10 @@ type PersistedSettings = {
   debugMode?: boolean;
   touchMode?: TouchMode;
   warriorName?: string;
+  audioVolume?: number;
+  invertScroll?: boolean;
+  invertDrag?: boolean;
+  invertJoystick?: boolean;
 };
 
 export function useSettings() {
@@ -83,10 +97,15 @@ export function SettingsProvider({
   const [speedMultiplier, setSpeedMultiplier] = useState(1);
   const [fov, setFov] = useState(90);
   const [audioEnabled, setAudioEnabled] = useState(false);
+  const [audioVolume, setAudioVolume] = useState(0.75);
   const [animationEnabled, setAnimationEnabled] = useState(true);
   const [debugMode, setDebugMode] = useState(false);
   const [touchMode, setTouchMode] = useState<TouchMode>("moveLookStick");
   const [warriorName, setWarriorName] = useState("MapGenius");
+  const [invertScroll, setInvertScroll] = useState(false);
+  const [invertDrag, setInvertDrag] = useState(false);
+  const [invertJoystick, setInvertJoystick] = useState(false);
+  const [renderOnDemand, setRenderOnDemand] = useState(false);
 
   const setFogEnabledWithoutOverride: StateSetter<boolean> = useCallback(
     (value) => {
@@ -110,6 +129,8 @@ export function SettingsProvider({
       setAnimationEnabled,
       warriorName,
       setWarriorName,
+      audioVolume,
+      setAudioVolume,
     }),
     [
       fogEnabled,
@@ -120,21 +141,46 @@ export function SettingsProvider({
       audioEnabled,
       animationEnabled,
       warriorName,
+      audioVolume,
     ],
   );
 
   const debugContext: DebugContext = useMemo(
-    () => ({ debugMode, setDebugMode }),
-    [debugMode, setDebugMode],
+    () => ({
+      debugMode,
+      setDebugMode,
+      renderOnDemand,
+      setRenderOnDemand,
+    }),
+    [debugMode, setDebugMode, renderOnDemand],
   );
 
   const controlsContext: ControlsContext = useMemo(
-    () => ({ speedMultiplier, setSpeedMultiplier, touchMode, setTouchMode }),
-    [speedMultiplier, setSpeedMultiplier, touchMode, setTouchMode],
+    () => ({
+      speedMultiplier,
+      setSpeedMultiplier,
+      touchMode,
+      setTouchMode,
+      invertScroll,
+      setInvertScroll,
+      invertDrag,
+      setInvertDrag,
+      invertJoystick,
+      setInvertJoystick,
+    }),
+    [
+      speedMultiplier,
+      setSpeedMultiplier,
+      touchMode,
+      setTouchMode,
+      invertScroll,
+      invertDrag,
+      invertJoystick,
+    ],
   );
 
   // Read persisted settings from localStorage.
-  useLayoutEffect(() => {
+  useEffect(() => {
     let savedSettings: PersistedSettings = {};
     try {
       savedSettings = JSON.parse(localStorage.getItem("settings")) || {};
@@ -157,7 +203,9 @@ export function SettingsProvider({
       setHighQualityFog(savedSettings.highQualityFog);
     }
     if (savedSettings.speedMultiplier != null) {
-      setSpeedMultiplier(savedSettings.speedMultiplier);
+      setSpeedMultiplier(
+        Math.max(0, Math.min(1, savedSettings.speedMultiplier)),
+      );
     }
     if (savedSettings.fov != null) {
       setFov(savedSettings.fov);
@@ -167,6 +215,18 @@ export function SettingsProvider({
     }
     if (savedSettings.warriorName != null) {
       setWarriorName(savedSettings.warriorName);
+    }
+    if (savedSettings.audioVolume != null) {
+      setAudioVolume(savedSettings.audioVolume);
+    }
+    if (savedSettings.invertScroll != null) {
+      setInvertScroll(savedSettings.invertScroll);
+    }
+    if (savedSettings.invertDrag != null) {
+      setInvertDrag(savedSettings.invertDrag);
+    }
+    if (savedSettings.invertJoystick != null) {
+      setInvertJoystick(savedSettings.invertJoystick);
     }
   }, []);
 
@@ -191,6 +251,10 @@ export function SettingsProvider({
         debugMode,
         touchMode,
         warriorName,
+        audioVolume,
+        invertScroll,
+        invertDrag,
+        invertJoystick,
       };
       try {
         localStorage.setItem("settings", JSON.stringify(settingsToSave));
@@ -214,6 +278,10 @@ export function SettingsProvider({
     debugMode,
     touchMode,
     warriorName,
+    audioVolume,
+    invertScroll,
+    invertDrag,
+    invertJoystick,
   ]);
 
   return (

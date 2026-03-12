@@ -78,6 +78,7 @@ export function DemoPlaybackControls() {
         className={styles.PlayPause}
         onClick={isPlaying ? pause : play}
         aria-label={isPlaying ? "Pause" : "Play"}
+        autoFocus
       >
         {isPlaying ? "\u275A\u275A" : "\u25B6"}
       </button>

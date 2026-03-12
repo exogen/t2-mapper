@@ -1,4 +1,4 @@
-import { Suspense, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { MutableRefObject } from "react";
 import { useFrame } from "@react-three/fiber";
 import {
@@ -26,8 +26,9 @@ import { pickMoveAnimation } from "../stream/playerAnimation";
 import { WeaponImageStateMachine } from "../stream/weaponStateMachine";
 import type { WeaponAnimState } from "../stream/weaponStateMachine";
 import { getAliasedActions } from "../torqueScript/shapeConstructor";
-import { useStaticShape } from "./GenericShape";
-import { ShapeErrorBoundary } from "./EntityScene";
+import { useStaticShape, ShapePlaceholder } from "./GenericShape";
+import { ShapeErrorBoundary } from "./ShapeErrorBoundary";
+import { DebugSuspense } from "./DebugSuspense";
 import { useAudio } from "./AudioContext";
 import {
   resolveAudioProfile,
@@ -39,7 +40,7 @@ import {
 } from "./AudioEmitter";
 import { audioToUrl } from "../loaders";
 import { useSettings } from "./SettingsProvider";
-import { useEngineStoreApi, useEngineSelector } from "../state";
+import { useEngineStoreApi, useEngineSelector } from "../state/engineStore";
 import { streamPlaybackStore } from "../state/streamPlaybackStore";
 import type { PlayerEntity } from "../state/gameEntityTypes";
 
@@ -60,8 +61,16 @@ function getArmThread(weaponShape: string | undefined): string {
 const NUM_TABLE_ACTION_ANIMS = 8;
 
 /** Table action names in engine order (indices 0-7). */
-const TABLE_ACTION_NAMES = ["root", "run", "back", "side", "fall", "jet", "jump", "land"];
-
+const TABLE_ACTION_NAMES = [
+  "root",
+  "run",
+  "back",
+  "side",
+  "fall",
+  "jet",
+  "jump",
+  "land",
+];
 
 interface ActionAnimEntry {
   /** GLB clip name (lowercase, e.g. "diehead"). */
@@ -90,7 +99,10 @@ function buildActionAnimMap(
     const spaceIdx = entry.indexOf(" ");
     if (spaceIdx === -1) continue;
     const dsqFile = entry.slice(0, spaceIdx).toLowerCase();
-    const alias = entry.slice(spaceIdx + 1).trim().toLowerCase();
+    const alias = entry
+      .slice(spaceIdx + 1)
+      .trim()
+      .toLowerCase();
     if (!alias || !dsqFile.startsWith(shapePrefix) || !dsqFile.endsWith(".dsq"))
       continue;
     const clipName = dsqFile.slice(shapePrefix.length, -4);
@@ -131,8 +143,16 @@ function stopLoopingSound(
   const sound = soundRef.current;
   if (!sound) return;
   untrackSound(sound);
-  try { sound.stop(); } catch { /* already stopped */ }
-  try { sound.disconnect(); } catch { /* already disconnected */ }
+  try {
+    sound.stop();
+  } catch {
+    /* already stopped */
+  }
+  try {
+    sound.disconnect();
+  } catch {
+    /* already disconnected */
+  }
   parent?.remove(sound);
   soundRef.current = null;
   stateRef.current = -1;
@@ -152,36 +172,44 @@ export function PlayerModel({ entity }: { entity: PlayerEntity }) {
   const gltf = useStaticShape(shapeName!);
   const shapeAliases = useEngineSelector((state) => {
     const sn = shapeName?.toLowerCase();
-    return sn
-      ? state.runtime.sequenceAliases.get(sn)
-      : undefined;
+    return sn ? state.runtime.sequenceAliases.get(sn) : undefined;
   });
 
   // Clone scene preserving skeleton bindings, create mixer, find mount bones.
-  const { clonedScene, mixer, mount0, mount1, iflInitializers } = useMemo(() => {
-    const scene = SkeletonUtils.clone(gltf.scene) as Group;
-    const iflInits = processShapeScene(scene);
+  const { clonedScene, mixer, mount0, mount1, mount2, iflInitializers } =
+    useMemo(() => {
+      const scene = SkeletonUtils.clone(gltf.scene) as Group;
+      const iflInits = processShapeScene(scene);
 
-    // Use front-face-only rendering so the camera can see out from inside the
-    // model in first-person (backface culling hides interior faces).
-    scene.traverse((n: any) => {
-      if (n.isMesh && n.material) {
-        const mats = Array.isArray(n.material) ? n.material : [n.material];
-        for (const m of mats) m.side = FrontSide;
-      }
-    });
+      // Use front-face-only rendering so the camera can see out from inside the
+      // model in first-person (backface culling hides interior faces).
+      scene.traverse((n: any) => {
+        if (n.isMesh && n.material) {
+          const mats = Array.isArray(n.material) ? n.material : [n.material];
+          for (const m of mats) m.side = FrontSide;
+        }
+      });
 
-    const mix = new AnimationMixer(scene);
+      const mix = new AnimationMixer(scene);
 
-    let m0: Object3D | null = null;
-    let m1: Object3D | null = null;
-    scene.traverse((n) => {
-      if (!m0 && n.name === "Mount0") m0 = n;
-      if (!m1 && n.name === "Mount1") m1 = n;
-    });
+      let m0: Object3D | null = null;
+      let m1: Object3D | null = null;
+      let m2: Object3D | null = null;
+      scene.traverse((n) => {
+        if (!m0 && n.name === "Mount0") m0 = n;
+        if (!m1 && n.name === "Mount1") m1 = n;
+        if (!m2 && n.name === "Mount2") m2 = n;
+      });
 
-    return { clonedScene: scene, mixer: mix, mount0: m0, mount1: m1, iflInitializers: iflInits };
-  }, [gltf]);
+      return {
+        clonedScene: scene,
+        mixer: mix,
+        mount0: m0,
+        mount1: m1,
+        mount2: m2,
+        iflInitializers: iflInits,
+      };
+    }, [gltf]);
 
   // Build case-insensitive clip lookup with alias support.
   const animActionsRef = useRef(new Map<string, AnimationAction>());
@@ -226,7 +254,10 @@ export function PlayerModel({ entity }: { entity: PlayerEntity }) {
     // place) since multiple player entities share the same GLTF cache.
 
     // Head blend actions.
-    const blendRefs: typeof blendActionsRef.current = { head: null, headside: null };
+    const blendRefs: typeof blendActionsRef.current = {
+      head: null,
+      headside: null,
+    };
     for (const { key, names } of [
       { key: "head" as const, names: ["head"] },
       { key: "headside" as const, names: ["headside"] },
@@ -318,6 +349,8 @@ export function PlayerModel({ entity }: { entity: PlayerEntity }) {
   );
   const packShapeRef = useRef(entity.packShape);
   const [currentPackShape, setCurrentPackShape] = useState(entity.packShape);
+  const flagShapeRef = useRef(entity.flagShape);
+  const [currentFlagShape, setCurrentFlagShape] = useState(entity.flagShape);
 
   // Per-frame animation selection and mixer update.
   useFrame((_, delta) => {
@@ -328,6 +361,10 @@ export function PlayerModel({ entity }: { entity: PlayerEntity }) {
     if (entity.packShape !== packShapeRef.current) {
       packShapeRef.current = entity.packShape;
       setCurrentPackShape(entity.packShape);
+    }
+    if (entity.flagShape !== flagShapeRef.current) {
+      flagShapeRef.current = entity.flagShape;
+      setCurrentFlagShape(entity.flagShape);
     }
     const playback = engineStore.getState().playback;
     const isPlaying = playback.status === "playing";
@@ -343,9 +380,8 @@ export function PlayerModel({ entity }: { entity: PlayerEntity }) {
       isDeadRef.current = true;
 
       // The server sends the death animation as an actionAnim index.
-      const deathEntry = kf.actionAnim != null
-        ? actionAnimMap.get(kf.actionAnim)
-        : undefined;
+      const deathEntry =
+        kf.actionAnim != null ? actionAnimMap.get(kf.actionAnim) : undefined;
       if (deathEntry) {
         const deathAction = actions.get(deathEntry.clipName);
         if (deathAction) {
@@ -368,7 +404,9 @@ export function PlayerModel({ entity }: { entity: PlayerEntity }) {
       isDeadRef.current = false;
       actionAnimRef.current = undefined;
 
-      const deathAction = actions.get(currentAnimRef.current.name.toLowerCase());
+      const deathAction = actions.get(
+        currentAnimRef.current.name.toLowerCase(),
+      );
       if (deathAction) {
         deathAction.stop();
         deathAction.setLoop(LoopRepeat, Infinity);
@@ -386,8 +424,10 @@ export function PlayerModel({ entity }: { entity: PlayerEntity }) {
     const prevActionAnim = actionAnimRef.current;
     if (!isDeadRef.current && actionAnim !== prevActionAnim) {
       actionAnimRef.current = actionAnim;
-      const isNonTableAction = actionAnim != null && actionAnim >= NUM_TABLE_ACTION_ANIMS;
-      const wasNonTableAction = prevActionAnim != null && prevActionAnim >= NUM_TABLE_ACTION_ANIMS;
+      const isNonTableAction =
+        actionAnim != null && actionAnim >= NUM_TABLE_ACTION_ANIMS;
+      const wasNonTableAction =
+        prevActionAnim != null && prevActionAnim >= NUM_TABLE_ACTION_ANIMS;
 
       if (isNonTableAction) {
         // Start or change action animation.
@@ -395,7 +435,9 @@ export function PlayerModel({ entity }: { entity: PlayerEntity }) {
         if (entry) {
           const actionAction = actions.get(entry.clipName);
           if (actionAction) {
-            const prevAction = actions.get(currentAnimRef.current.name.toLowerCase());
+            const prevAction = actions.get(
+              currentAnimRef.current.name.toLowerCase(),
+            );
             if (prevAction) prevAction.fadeOut(ANIM_TRANSITION_TIME);
             actionAction.setLoop(LoopOnce, 1);
             actionAction.clampWhenFinished = true;
@@ -421,7 +463,11 @@ export function PlayerModel({ entity }: { entity: PlayerEntity }) {
     }
 
     // If atEnd, clamp the action animation at its final frame.
-    if (actionAnim != null && actionAnim >= NUM_TABLE_ACTION_ANIMS && kf?.actionAtEnd) {
+    if (
+      actionAnim != null &&
+      actionAnim >= NUM_TABLE_ACTION_ANIMS &&
+      kf?.actionAtEnd
+    ) {
       const entry = actionAnimMap.get(actionAnim);
       if (entry) {
         const actionAction = actions.get(entry.clipName);
@@ -432,7 +478,8 @@ export function PlayerModel({ entity }: { entity: PlayerEntity }) {
     }
 
     // Movement animation selection (skip while dead or playing action anim).
-    const playingActionAnim = actionAnimRef.current != null &&
+    const playingActionAnim =
+      actionAnimRef.current != null &&
       actionAnimRef.current >= NUM_TABLE_ACTION_ANIMS;
     if (!isDeadRef.current && !playingActionAnim) {
       const anim = pickMoveAnimation(
@@ -518,24 +565,52 @@ export function PlayerModel({ entity }: { entity: PlayerEntity }) {
         <primitive object={clonedScene} />
       </group>
       {currentWeaponShape && mount0 && (
-        <ShapeErrorBoundary key={currentWeaponShape} fallback={null}>
-          <Suspense fallback={null}>
-            <AnimatedWeaponModel
+        <ShapeErrorBoundary
+          key={currentWeaponShape}
+          fallback={<ShapePlaceholder color="red" label={currentWeaponShape} />}
+        >
+          <DebugSuspense
+            label={`Weapon:${entity.id}/${currentWeaponShape}`}
+            fallback={
+              <ShapePlaceholder color="cyan" label={currentWeaponShape} />
+            }
+          >
+            <WeaponModel
               entity={entity}
               weaponShape={currentWeaponShape}
               mount0={mount0}
             />
-          </Suspense>
+          </DebugSuspense>
         </ShapeErrorBoundary>
       )}
       {currentPackShape && mount1 && (
-        <ShapeErrorBoundary key={currentPackShape} fallback={null}>
-          <Suspense fallback={null}>
-            <MountedPackModel
-              packShape={currentPackShape}
-              mountBone={mount1}
-            />
-          </Suspense>
+        <ShapeErrorBoundary
+          key={currentPackShape}
+          fallback={<ShapePlaceholder color="red" label={currentPackShape} />}
+        >
+          <DebugSuspense
+            label={`Pack:${entity.id}/${currentPackShape}`}
+            fallback={
+              <ShapePlaceholder color="cyan" label={currentPackShape} />
+            }
+          >
+            <PackModel packShape={currentPackShape} mountBone={mount1} />
+          </DebugSuspense>
+        </ShapeErrorBoundary>
+      )}
+      {currentFlagShape && mount2 && (
+        <ShapeErrorBoundary
+          key={currentFlagShape}
+          fallback={<ShapePlaceholder color="red" label={currentFlagShape} />}
+        >
+          <DebugSuspense
+            label={`Flag:${entity.id}/${currentFlagShape}`}
+            fallback={
+              <ShapePlaceholder color="cyan" label={currentFlagShape} />
+            }
+          >
+            <PackModel packShape={currentFlagShape} mountBone={mount2} />
+          </DebugSuspense>
         </ShapeErrorBoundary>
       )}
     </>
@@ -556,7 +631,9 @@ function buildSeqIndexToName(
     try {
       const names: string[] = JSON.parse(raw);
       return names.map((n) => n.toLowerCase());
-    } catch { /* fall through */ }
+    } catch {
+      /* fall through */
+    }
   }
   return animations.map((a) => a.name.toLowerCase());
 }
@@ -571,7 +648,7 @@ function buildSeqIndexToName(
  * from the entity inside useFrame, since these fields are mutated per-tick
  * without triggering React re-renders.
  */
-function AnimatedWeaponModel({
+function WeaponModel({
   entity,
   weaponShape,
   mount0,
@@ -584,55 +661,60 @@ function AnimatedWeaponModel({
   const weaponGltf = useStaticShape(weaponShape);
 
   // Clone weapon with skeleton bindings, create dedicated mixer.
-  const { weaponClone, weaponMixer, seqIndexToName, visNodesBySequence, weaponIflInitializers } =
-    useMemo(() => {
-      const clone = SkeletonUtils.clone(weaponGltf.scene) as Group;
-      const iflInits = processShapeScene(clone);
+  const {
+    weaponClone,
+    weaponMixer,
+    seqIndexToName,
+    visNodesBySequence,
+    weaponIflInitializers,
+  } = useMemo(() => {
+    const clone = SkeletonUtils.clone(weaponGltf.scene) as Group;
+    const iflInits = processShapeScene(clone);
 
-      // Compute Mountpoint inverse offset so the weapon's grip aligns to Mount0.
-      const mp = getPosedNodeTransform(
-        weaponGltf.scene,
-        weaponGltf.animations,
-        "Mountpoint",
-      );
-      if (mp) {
-        const invQuat = mp.quaternion.clone().invert();
-        const invPos = mp.position.clone().negate().applyQuaternion(invQuat);
-        clone.position.copy(invPos);
-        clone.quaternion.copy(invQuat);
+    // Compute Mountpoint inverse offset so the weapon's grip aligns to Mount0.
+    const mp = getPosedNodeTransform(
+      weaponGltf.scene,
+      weaponGltf.animations,
+      "Mountpoint",
+    );
+    if (mp) {
+      const invQuat = mp.quaternion.clone().invert();
+      const invPos = mp.position.clone().negate().applyQuaternion(invQuat);
+      clone.position.copy(invPos);
+      clone.quaternion.copy(invQuat);
+    }
+
+    // Collect vis-animated meshes grouped by controlling sequence name.
+    // E.g. the disc launcher's Disc mesh has vis_sequence="discSpin" and is
+    // hidden by default (vis=0). When "discSpin" plays, the mesh becomes
+    // visible; when a different sequence plays, it hides again.
+    const visBySeq = new Map<string, Object3D[]>();
+    clone.traverse((node: any) => {
+      if (!node.isMesh) return;
+      const ud = node.userData;
+      const seqName = (ud?.vis_sequence ?? "").toLowerCase();
+      if (!seqName) return;
+      let list = visBySeq.get(seqName);
+      if (!list) {
+        list = [];
+        visBySeq.set(seqName, list);
       }
+      list.push(node);
+    });
 
-      // Collect vis-animated meshes grouped by controlling sequence name.
-      // E.g. the disc launcher's Disc mesh has vis_sequence="discSpin" and is
-      // hidden by default (vis=0). When "discSpin" plays, the mesh becomes
-      // visible; when a different sequence plays, it hides again.
-      const visBySeq = new Map<string, Object3D[]>();
-      clone.traverse((node: any) => {
-        if (!node.isMesh) return;
-        const ud = node.userData;
-        const seqName = (ud?.vis_sequence ?? "").toLowerCase();
-        if (!seqName) return;
-        let list = visBySeq.get(seqName);
-        if (!list) {
-          list = [];
-          visBySeq.set(seqName, list);
-        }
-        list.push(node);
-      });
-
-      const mix = new AnimationMixer(clone);
-      const seq = buildSeqIndexToName(
-        weaponGltf.scene as Group,
-        weaponGltf.animations,
-      );
-      return {
-        weaponClone: clone,
-        weaponMixer: mix,
-        seqIndexToName: seq,
-        visNodesBySequence: visBySeq,
-        weaponIflInitializers: iflInits,
-      };
-    }, [weaponGltf]);
+    const mix = new AnimationMixer(clone);
+    const seq = buildSeqIndexToName(
+      weaponGltf.scene as Group,
+      weaponGltf.animations,
+    );
+    return {
+      weaponClone: clone,
+      weaponMixer: mix,
+      seqIndexToName: seq,
+      visNodesBySequence: visBySeq,
+      weaponIflInitializers: iflInits,
+    };
+  }, [weaponGltf]);
 
   // Build case-insensitive action map for weapon animations.
   const weaponActionsRef = useRef(new Map<string, AnimationAction>());
@@ -760,8 +842,10 @@ function AnimatedWeaponModel({
         audioListener &&
         animState.soundDataBlockIds.length > 0
       ) {
-        const getDb = playback.recording?.streamingPlayback.getDataBlockData
-          .bind(playback.recording.streamingPlayback);
+        const getDb =
+          playback.recording?.streamingPlayback.getDataBlockData.bind(
+            playback.recording.streamingPlayback,
+          );
         if (getDb) {
           for (const soundDbId of animState.soundDataBlockIds) {
             const resolved = resolveAudioProfile(soundDbId, getDb);
@@ -795,7 +879,9 @@ function AnimatedWeaponModel({
                     loopingSoundRef.current = sound;
                     loopingSoundStateRef.current = currentIdx;
                   });
-                } catch  { /* expected */ }
+                } catch {
+                  /* expected */
+                }
               }
             } else {
               playOneShotSound(
@@ -814,7 +900,6 @@ function AnimatedWeaponModel({
       if (spinActionRef.current) {
         spinActionRef.current.timeScale = animState.spinTimeScale;
       }
-
     }
 
     // Advance the weapon mixer.
@@ -898,9 +983,8 @@ function applyWeaponAnim(
     // Scale animation to fit the state timeout if requested.
     if (animState.scaleAnimation && animState.timeoutValue > 0) {
       const clipDuration = action.getClip().duration;
-      action.timeScale = clipDuration > 0
-        ? clipDuration / animState.timeoutValue
-        : 1;
+      action.timeScale =
+        clipDuration > 0 ? clipDuration / animState.timeoutValue : 1;
     } else {
       action.timeScale = animState.reverse ? -1 : 1;
     }
@@ -921,7 +1005,7 @@ function applyWeaponAnim(
  * mounted images (no state machine or animation) — just positioned via
  * the pack shape's Mountpoint node inverse offset, same as weapons.
  */
-function MountedPackModel({
+function PackModel({
   packShape,
   mountBone,
 }: {

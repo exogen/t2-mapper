@@ -1,7 +1,6 @@
 .Root {
   composes: IconButton from "./InspectorControls.module.css";
   composes: LabelledButton from "./InspectorControls.module.css";
-  padding: 0 5px;
 }
 /* Text label ("Connect", "Connecting...") follows standard breakpoint rules. */
 .TextLabel {
@@ -14,7 +13,7 @@
   margin-right: 2px;
 }
 .LiveIcon {
-  font-size: 15px;
+  /* font-size: 15px; */
 }
 .Pulsing {
   animation: blink 1.2s ease-out infinite;
@@ -26,4 +25,8 @@
   100% {
     opacity: 0.25;
   }
+}
+
+.ButtonHint {
+  composes: ButtonHint from "./InspectorControls.module.css";
 }

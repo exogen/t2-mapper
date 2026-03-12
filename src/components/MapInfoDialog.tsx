@@ -50,7 +50,9 @@ function getBitmapUrl(
     try {
       const key = getStandardTextureResourceKey(`textures/gui/${bitmap}`);
       return getUrlForPath(key);
-    } catch  { /* expected */ }
+    } catch {
+      /* expected */
+    }
   }
   // Fall back to Load_<MissionName>.png convention (multiplayer missions)
   try {
@@ -58,7 +60,9 @@ function getBitmapUrl(
       `textures/gui/Load_${missionName}`,
     );
     return getUrlForPath(key);
-  } catch  { /* expected */ }
+  } catch {
+    /* expected */
+  }
   return null;
 }
 
@@ -161,12 +165,10 @@ function MusicPlayer({ track }: { track: string }) {
 }
 
 export function MapInfoDialog({
-  open,
   onClose,
   missionName,
   missionType,
 }: {
-  open: boolean;
   onClose: () => void;
   missionName: string;
   missionType: string;
@@ -175,19 +177,18 @@ export function MapInfoDialog({
   const dialogRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (open) {
-      dialogRef.current?.focus();
-      try {
-        document.exitPointerLock();
-      } catch  { /* expected */ }
+    dialogRef.current?.focus();
+    try {
+      document.exitPointerLock();
+    } catch {
+      /* expected */
     }
-  }, [open]);
+  }, []);
 
   // While open: block keyboard events from reaching drei, and handle close keys.
   useEffect(() => {
-    if (!open) return;
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.code === "KeyI" || e.key === "Escape") {
+      if (e.key === "Escape") {
         onClose();
       } else if (e.key === "k" && (e.metaKey || e.ctrlKey)) {
         onClose();
@@ -204,9 +205,7 @@ export function MapInfoDialog({
       window.removeEventListener("keydown", handleKeyDown, { capture: true });
       window.removeEventListener("keyup", handleKeyUp, { capture: true });
     };
-  }, [open, onClose]);
-
-  if (!open) return null;
+  }, [onClose]);
 
   const missionGroupProps = parsedMission
     ? getMissionGroupProps(parsedMission.ast)
@@ -322,7 +321,7 @@ export function MapInfoDialog({
           <button className={styles.CloseButton} onClick={onClose}>
             Close
           </button>
-          <span className={styles.Hint}>I or Esc to close</span>
+          <span className={styles.Hint}>Esc to close</span>
         </div>
       </div>
     </div>

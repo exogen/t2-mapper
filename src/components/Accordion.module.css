@@ -1,0 +1,67 @@
+.AccordionGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.Trigger {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  background: rgb(255, 255, 255, 0.1);
+  padding: 6px 8px;
+  color: #fff;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: normal;
+  text-align: left;
+  border: 0;
+  text-transform: uppercase;
+  letter-spacing: 0.0417em;
+  gap: 4px;
+}
+
+.TriggerIcon {
+  font-size: 12px;
+  transition: transform 0.2s;
+  transform: rotate(0deg);
+  opacity: 0.5;
+}
+
+.Trigger[data-state="open"] .TriggerIcon {
+  transform: rotate(90deg);
+}
+
+.Content {
+  overflow: hidden;
+}
+
+.Content[data-state="open"] {
+  animation: slideDown 300ms;
+}
+
+.Content[data-state="closed"] {
+  animation: slideUp 300ms;
+}
+
+.Body {
+  padding: 10px;
+}
+
+@keyframes slideDown {
+  from {
+    height: 0;
+  }
+  to {
+    height: var(--radix-accordion-content-height);
+  }
+}
+
+@keyframes slideUp {
+  from {
+    height: var(--radix-accordion-content-height);
+  }
+  to {
+    height: 0;
+  }
+}

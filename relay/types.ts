@@ -5,15 +5,32 @@ export type ClientMessage =
   | { type: "disconnect" }
   | { type: "sendMove"; move: ClientMove }
   | { type: "sendCommand"; command: string; args: string[] }
-  | { type: "sendCRCResponse"; crcValue: number; field1: number; field2: number }
-  | { type: "sendCRCCompute"; seed: number; field2: number; includeTextures: boolean; datablocks: { objectId: number; className: string; shapeName: string }[] }
+  | {
+      type: "sendCRCResponse";
+      crcValue: number;
+      field1: number;
+      field2: number;
+    }
+  | {
+      type: "sendCRCCompute";
+      seed: number;
+      field2: number;
+      includeTextures: boolean;
+      datablocks: { objectId: number; className: string; shapeName: string }[];
+    }
   | { type: "sendGhostAck"; sequence: number; ghostCount: number }
   | { type: "wsPing"; ts: number };
 
 /** Messages from relay server to browser client. */
 export type ServerMessage =
   | { type: "serverList"; servers: ServerInfo[] }
-  | { type: "status"; status: ConnectionStatus; message?: string; connectSequence?: number; mapName?: string }
+  | {
+      type: "status";
+      status: ConnectionStatus;
+      message?: string;
+      connectSequence?: number;
+      mapName?: string;
+    }
   | { type: "gamePacket"; data: Uint8Array }
   | { type: "ping"; ms: number }
   | { type: "wsPong"; ts: number }

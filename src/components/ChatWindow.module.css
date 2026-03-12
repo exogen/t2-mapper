@@ -1,0 +1,63 @@
+.ChatContainer {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  width: 400px;
+  max-width: 50%;
+  display: flex;
+  flex-direction: column;
+  pointer-events: auto;
+  border: 1px solid rgba(44, 172, 181, 0.4);
+}
+
+.ChatWindow {
+  max-height: 12.5em;
+  min-height: 4em;
+  overflow-y: auto;
+  background: rgba(0, 50, 60, 0.65);
+  padding: 6px;
+  user-select: text;
+  font-size: 12px;
+  line-height: 1.25;
+  /* Thin scrollbar that doesn't take much space. */
+  scrollbar-width: thin;
+  scrollbar-color: rgba(44, 172, 181, 0.4) transparent;
+}
+
+.ChatMessage {
+  /* Default to \c0 (GuiChatHudProfile fontColor) for untagged messages. */
+  color: rgb(44, 172, 181);
+  padding: 2px 0;
+}
+
+/* T2 GuiChatHudProfile fontColors palette (\c0–\c9). */
+.ChatColor0 {
+  color: rgb(44, 172, 181);
+}
+.ChatColor1 {
+  color: rgb(4, 235, 105);
+}
+.ChatColor2 {
+  color: rgb(219, 200, 128);
+}
+.ChatColor3 {
+  color: rgb(77, 253, 95);
+}
+.ChatColor4 {
+  color: rgb(40, 231, 240);
+}
+.ChatColor5 {
+  color: rgb(200, 200, 50);
+}
+.ChatColor6 {
+  color: rgb(200, 200, 200);
+}
+.ChatColor7 {
+  color: rgb(220, 220, 20);
+}
+.ChatColor8 {
+  color: rgb(150, 150, 250);
+}
+.ChatColor9 {
+  color: rgb(60, 220, 150);
+}

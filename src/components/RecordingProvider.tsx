@@ -1,6 +1,6 @@
 import { useCallback, type ReactNode } from "react";
 import type { StreamRecording } from "../stream/types";
-import { useEngineSelector } from "../state";
+import { useEngineSelector } from "../state/engineStore";
 
 export function RecordingProvider({ children }: { children: ReactNode }) {
   return <>{children}</>;

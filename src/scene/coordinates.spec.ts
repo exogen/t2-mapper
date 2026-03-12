@@ -42,12 +42,7 @@ describe("matrixFToQuaternion", () => {
     const c = Math.cos(angleRad);
     const s = Math.sin(angleRad);
 
-    const elements = [
-      c, s, 0, 0,
-      -s, c, 0, 0,
-      0, 0, 1, 0,
-      0, 0, 0, 1,
-    ];
+    const elements = [c, s, 0, 0, -s, c, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
 
     const m: MatrixF = { elements, position: { x: 0, y: 0, z: 0 } };
     const q = matrixFToQuaternion(m);
@@ -69,12 +64,7 @@ describe("matrixFToQuaternion", () => {
     const c = Math.cos(angleRad);
     const s = Math.sin(angleRad);
 
-    const elements = [
-      1, 0, 0, 0,
-      0, c, s, 0,
-      0, -s, c, 0,
-      0, 0, 0, 1,
-    ];
+    const elements = [1, 0, 0, 0, 0, c, s, 0, 0, -s, c, 0, 0, 0, 0, 1];
 
     const m: MatrixF = { elements, position: { x: 0, y: 0, z: 0 } };
     const q = matrixFToQuaternion(m);
@@ -96,12 +86,7 @@ describe("matrixFToQuaternion", () => {
     const c = Math.cos(angleRad);
     const s = Math.sin(angleRad);
 
-    const elements = [
-      c, 0, -s, 0,
-      0, 1, 0, 0,
-      s, 0, c, 0,
-      0, 0, 0, 1,
-    ];
+    const elements = [c, 0, -s, 0, 0, 1, 0, 0, s, 0, c, 0, 0, 0, 0, 1];
 
     const m: MatrixF = { elements, position: { x: 0, y: 0, z: 0 } };
     const q = matrixFToQuaternion(m);
@@ -120,7 +105,9 @@ describe("matrixFToQuaternion", () => {
   it("produces unit quaternion from valid rotation matrix", () => {
     // Arbitrary rotation: 45° around Torque (1,1,0) normalized
     const len = Math.sqrt(2);
-    const nx = 1 / len, ny = 1 / len, nz = 0;
+    const nx = 1 / len,
+      ny = 1 / len,
+      nz = 0;
     const angle = Math.PI / 4;
     const c = Math.cos(angle);
     const s = Math.sin(angle);
@@ -184,17 +171,15 @@ describe("torqueAxisAngleToQuaternion", () => {
   it("agrees with matrixFToQuaternion for same rotation", () => {
     // 60° around Torque Z-axis
     // Both functions should produce the same quaternion.
-    const ax = 0, ay = 0, az = 1, angleDeg = 60;
+    const ax = 0,
+      ay = 0,
+      az = 1,
+      angleDeg = 60;
     const angleRad = angleDeg * (Math.PI / 180);
 
     const c = Math.cos(angleRad);
     const s = Math.sin(angleRad);
-    const elements = [
-      c, s, 0, 0,
-      -s, c, 0, 0,
-      0, 0, 1, 0,
-      0, 0, 0, 1,
-    ];
+    const elements = [c, s, 0, 0, -s, c, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
     const m: MatrixF = { elements, position: { x: 0, y: 0, z: 0 } };
 
     const qFromMatrix = matrixFToQuaternion(m);

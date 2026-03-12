@@ -103,7 +103,9 @@ export function torqueAxisAngleToQuaternion(
   const threeAx = ay;
   const threeAy = az;
   const threeAz = ax;
-  const len = Math.sqrt(threeAx * threeAx + threeAy * threeAy + threeAz * threeAz);
+  const len = Math.sqrt(
+    threeAx * threeAx + threeAy * threeAy + threeAz * threeAz,
+  );
   if (len < 1e-8) return new Quaternion();
   const angleRad = -angleDeg * (Math.PI / 180);
   return new Quaternion().setFromAxisAngle(

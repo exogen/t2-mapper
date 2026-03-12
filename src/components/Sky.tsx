@@ -1,9 +1,9 @@
-import { Suspense, useMemo, useEffect, useRef } from "react";
+import { memo, Suspense, useMemo, useEffect, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useThree, useFrame } from "@react-three/fiber";
 import { useCubeTexture } from "@react-three/drei";
 import { Color, Fog } from "three";
-import type { SceneSky } from "../scene/types";
+import { createLogger } from "../logger";
 import { useSettings } from "./SettingsProvider";
 import { loadDetailMapList, textureToUrl } from "../loaders";
 import { CloudLayers } from "./CloudLayers";
@@ -16,10 +16,13 @@ import {
   resetGlobalFogUniforms,
 } from "../globalFogUniforms";
 
+const log = createLogger("Sky");
+
 // Track if fog shader has been installed (idempotent installation)
 let fogShaderInstalled = false;
 
 import type { Color3 } from "../scene/types";
+import { SkyEntity } from "../state/gameEntityTypes";
 
 /** Convert a Color3 to [sRGB Color, linear Color]. */
 function color3ToThree(c: Color3): [Color, Color] {
@@ -33,10 +36,25 @@ function color3ToThree(c: Color3): [Color, Color] {
  * Load a .dml file, used to list the textures for different faces of a skybox.
  */
 function useDetailMapList(name: string) {
-  return useQuery({
+  const result = useQuery({
     queryKey: ["detailMapList", name],
-    queryFn: () => loadDetailMapList(name),
+    queryFn: () => {
+      log.debug("Loading detail map list: %s", name);
+      return loadDetailMapList(name);
+    },
   });
+
+  useEffect(() => {
+    log.debug(
+      "DML query status: %s%s%s file=%s",
+      result.status,
+      result.error ? ` error=${result.error.message}` : "",
+      result.data ? ` (${result.data.length} entries)` : " (no data)",
+      name,
+    );
+  }, [result.status, result.error, result.data, name]);
+
+  return result;
 }
 
 /**
@@ -56,7 +74,7 @@ function SkyBoxTexture({
   fogColor?: Color;
   fogState?: FogState;
 }) {
-  const { camera } = useThree();
+  const camera = useThree((state) => state.camera);
   const skyBox = useCubeTexture(skyBoxFiles, { path: "" });
 
   const enableFog = !!fogColor;
@@ -320,7 +338,7 @@ function SolidColorSky({
   fogColor?: Color;
   fogState?: FogState;
 }) {
-  const { camera } = useThree();
+  const camera = useThree((state) => state.camera);
 
   const enableFog = !!fogColor;
 
@@ -515,7 +533,8 @@ function DynamicFog({
   fogState: FogState;
   enabled: boolean;
 }) {
-  const { scene, camera } = useThree();
+  const scene = useThree((state) => state.scene);
+  const camera = useThree((state) => state.camera);
   const fogRef = useRef<Fog | null>(null);
 
   // Pack fog volume data once (it doesn't change during runtime)
@@ -594,29 +613,43 @@ function DynamicFog({
   return null;
 }
 
-export function Sky({ scene }: { scene: SceneSky }) {
+export const Sky = memo(function Sky({ entity }: { entity: SkyEntity }) {
+  const { skyData } = entity;
+  log.debug(
+    "Rendering: materialList=%s, useSkyTextures=%s",
+    skyData.materialList,
+    skyData.useSkyTextures,
+  );
   const { fogEnabled } = useSettings();
 
   // Skybox textures
-  const materialList = scene.materialList || undefined;
+  const materialList = skyData.materialList || undefined;
 
   const skySolidColor = useMemo(
-    () => color3ToThree(scene.skySolidColor),
-    [scene.skySolidColor],
+    () => color3ToThree(skyData.skySolidColor),
+    [skyData.skySolidColor],
   );
 
-  const useSkyTextures = scene.useSkyTextures;
+  const useSkyTextures = skyData.useSkyTextures;
 
   // Parse full fog state from typed scene sky
-  const fogState = useMemo(
-    () => fogStateFromScene(scene),
-    [scene],
+  const fogState = useMemo(() => fogStateFromScene(skyData), [skyData]);
+
+  log.debug(
+    "fogState: fogColor=(%s, %s, %s) visibleDistance=%d fogDistance=%d enabled=%s volumes=%d",
+    skyData.fogColor.r.toFixed(3),
+    skyData.fogColor.g.toFixed(3),
+    skyData.fogColor.b.toFixed(3),
+    skyData.visibleDistance,
+    skyData.fogDistance,
+    fogState.enabled,
+    fogState.fogVolumes.length,
   );
 
   // Get sRGB fog color for background
   const fogColor = useMemo(
-    () => color3ToThree(scene.fogColor),
-    [scene.fogColor],
+    () => color3ToThree(skyData.fogColor),
+    [skyData.fogColor],
   );
 
   const skyColor = skySolidColor || fogColor;
@@ -629,7 +662,8 @@ export function Sky({ scene }: { scene: SceneSky }) {
 
   // Set scene background color directly using useThree
   // This ensures the gap between fogged terrain and skybox blends correctly
-  const { scene: threeScene, gl } = useThree();
+  const threeScene = useThree((state) => state.scene);
+  const gl = useThree((state) => state.gl);
   useEffect(() => {
     if (hasFogParams) {
       // Use effective fog color for background (matches terrain fog)
@@ -655,7 +689,7 @@ export function Sky({ scene }: { scene: SceneSky }) {
   return (
     <>
       {materialList && useSkyTextures && materialList.length > 0 ? (
-        <Suspense fallback={null}>
+        <Suspense>
           {/* Key forces remount when mission changes to clear texture caches */}
           <SkyBox
             key={materialList}
@@ -674,7 +708,7 @@ export function Sky({ scene }: { scene: SceneSky }) {
       ) : null}
       {/* Cloud layers render independently of skybox textures */}
       <Suspense>
-        <CloudLayers scene={scene} />
+        <CloudLayers scene={skyData} />
       </Suspense>
       {/* Always render DynamicFog when mission has fog params.
           Pass fogEnabled to control visibility - this avoids shader recompilation
@@ -684,4 +718,4 @@ export function Sky({ scene }: { scene: SceneSky }) {
       ) : null}
     </>
   );
-}
+});

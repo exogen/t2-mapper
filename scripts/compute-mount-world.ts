@@ -111,10 +111,10 @@ function fmt(v: number[]): string {
 
 async function main() {
   const playerBuf = await fs.readFile(
-    "docs/base/@vl2/shapes.vl2/shapes/light_male.glb"
+    "docs/base/@vl2/shapes.vl2/shapes/light_male.glb",
   );
   const weaponBuf = await fs.readFile(
-    "docs/base/@vl2/shapes.vl2/shapes/weapon_disc.glb"
+    "docs/base/@vl2/shapes.vl2/shapes/weapon_disc.glb",
   );
 
   const playerDoc = parseGlb(playerBuf);

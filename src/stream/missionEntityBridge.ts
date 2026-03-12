@@ -92,24 +92,48 @@ export function buildGameEntityFromMission(
   switch (className) {
     // Scene infrastructure
     case "TerrainBlock":
-      return { ...base, renderType: "TerrainBlock", terrainData: terrainFromMis(object) };
+      return {
+        ...base,
+        renderType: "TerrainBlock",
+        terrainData: terrainFromMis(object),
+      };
     case "InteriorInstance":
-      return { ...base, renderType: "InteriorInstance", interiorData: interiorFromMis(object) };
+      return {
+        ...base,
+        renderType: "InteriorInstance",
+        interiorData: interiorFromMis(object),
+      };
     case "Sky":
       return { ...base, renderType: "Sky", skyData: skyFromMis(object) };
     case "Sun":
       return { ...base, renderType: "Sun", sunData: sunFromMis(object) };
     case "WaterBlock":
-      return { ...base, renderType: "WaterBlock", waterData: waterBlockFromMis(object) };
+      return {
+        ...base,
+        renderType: "WaterBlock",
+        waterData: waterBlockFromMis(object),
+      };
     case "MissionArea":
-      return { ...base, renderType: "MissionArea", missionAreaData: missionAreaFromMis(object) };
+      return {
+        ...base,
+        renderType: "MissionArea",
+        missionAreaData: missionAreaFromMis(object),
+      };
 
     // Shapes
     case "StaticShape":
     case "Item":
     case "Turret":
     case "TSStatic":
-      return buildShapeEntity(posBase, object, datablock, runtime, className, teamId, datablockName);
+      return buildShapeEntity(
+        posBase,
+        object,
+        datablock,
+        runtime,
+        className,
+        teamId,
+        datablockName,
+      );
 
     // Force field
     case "ForceFieldBare":
@@ -166,14 +190,18 @@ function buildShapeEntity(
   teamId: number | undefined,
   datablockName: string,
 ): ShapeEntity {
-  const shapeName = className === "TSStatic"
-    ? getProperty(object, "shapeName")
-    : getProperty(datablock, "shapeFile");
+  const shapeName =
+    className === "TSStatic"
+      ? getProperty(object, "shapeName")
+      : getProperty(datablock, "shapeFile");
   const shapeType =
-    className === "Turret" ? "Turret"
-    : className === "Item" ? "Item"
-    : className === "TSStatic" ? "TSStatic"
-    : "StaticShape";
+    className === "Turret"
+      ? "Turret"
+      : className === "Item"
+        ? "Item"
+        : className === "TSStatic"
+          ? "TSStatic"
+          : "StaticShape";
 
   const entity: ShapeEntity = {
     ...posBase,
@@ -256,13 +284,26 @@ function buildForceFieldEntity(
   };
 }
 
+/** Check if an entity's missionTypesList includes the given mission type. */
+function matchesMissionType(
+  missionTypesList: string | undefined,
+  missionType: string | undefined,
+): boolean {
+  if (!missionType || !missionTypesList) return true;
+  const types = missionTypesList.toLowerCase().split(/\s+/).filter(Boolean);
+  return types.length === 0 || types.includes(missionType.toLowerCase());
+}
+
 /**
  * Walk a TorqueObject tree and extract all GameEntities.
  * Respects team assignment from SimGroup hierarchy.
+ * When missionType is provided, entities whose missionTypesList doesn't
+ * include that type are excluded.
  */
 export function walkMissionTree(
   root: TorqueObject,
   runtime: TorqueRuntime,
+  missionType?: string,
   teamId?: number,
 ): GameEntity[] {
   const entities: GameEntity[] = [];
@@ -282,14 +323,16 @@ export function walkMissionTree(
 
   // Try to build entity for this object
   const entity = buildGameEntityFromMission(root, runtime, currentTeam);
-  if (entity) {
+  if (entity && matchesMissionType(entity.missionTypesList, missionType)) {
     entities.push(entity);
   }
 
   // Recurse into children
   if (root._children) {
     for (const child of root._children) {
-      entities.push(...walkMissionTree(child, runtime, currentTeam));
+      entities.push(
+        ...walkMissionTree(child, runtime, missionType, currentTeam),
+      );
     }
   }
 

@@ -67,8 +67,8 @@ export function resolveParticleData(
         b: k.b ?? 1,
         a: k.a ?? 1,
         // V12 packs size as size/MaxParticleSize; parser returns [0,1].
-        size: (k.size ?? (1 / MAX_PARTICLE_SIZE)) * MAX_PARTICLE_SIZE,
-        time: i === 0 ? 0 : k.time ?? 1,
+        size: (k.size ?? 1 / MAX_PARTICLE_SIZE) * MAX_PARTICLE_SIZE,
+        time: i === 0 ? 0 : (k.time ?? 1),
       });
     }
   }
@@ -98,7 +98,8 @@ export function resolveParticleData(
     inheritedVelFactor: getNumber(raw, "inheritedVelFactor", 0),
     constantAcceleration: getNumber(raw, "constantAcceleration", 0),
     lifetimeMS: getNumber(raw, "lifetimeMS", 31) << LIFETIME_SHIFT,
-    lifetimeVarianceMS: getNumber(raw, "lifetimeVarianceMS", 0) << LIFETIME_SHIFT,
+    lifetimeVarianceMS:
+      getNumber(raw, "lifetimeVarianceMS", 0) << LIFETIME_SHIFT,
     spinSpeed: getNumber(raw, "spinSpeed", 0),
     // V12 packs spinRandom as value+1000; parser returns raw integer.
     spinRandomMin: getNumber(raw, "spinRandomMin", 1000) + SPIN_RANDOM_OFFSET,
@@ -142,7 +143,8 @@ export function resolveEmitterData(
     orientParticles: getBool(raw, "orientParticles", false),
     orientOnVelocity: getBool(raw, "orientOnVelocity", true),
     lifetimeMS: getNumber(raw, "lifetimeMS", 0) << LIFETIME_SHIFT,
-    lifetimeVarianceMS: getNumber(raw, "lifetimeVarianceMS", 0) << LIFETIME_SHIFT,
+    lifetimeVarianceMS:
+      getNumber(raw, "lifetimeVarianceMS", 0) << LIFETIME_SHIFT,
     particles: resolveParticleData(particleRaw),
   };
 }
@@ -268,7 +270,11 @@ export class EmitterInstance {
     count: number,
     axis: [number, number, number] = [0, 0, 1],
   ): void {
-    for (let i = 0; i < count && this.particles.length < this.maxParticles; i++) {
+    for (
+      let i = 0;
+      i < count && this.particles.length < this.maxParticles;
+      i++
+    ) {
       this.addParticle(pos, axis);
     }
   }
@@ -322,10 +328,7 @@ export class EmitterInstance {
     this.emitterAge += dtMS;
 
     // Check emitter lifetime (V12 uses strictly greater).
-    if (
-      this.emitterLifetime > 0 &&
-      this.emitterAge > this.emitterLifetime
-    ) {
+    if (this.emitterLifetime > 0 && this.emitterAge > this.emitterLifetime) {
       this.emitterDead = true;
     }
 
@@ -408,13 +411,21 @@ export class EmitterInstance {
 
     // Rotate axis by theta around axisx, then by phi around original axis.
     [ejX, ejY, ejZ] = rotateAroundAxis(
-      ejX, ejY, ejZ,
-      axisx[0], axisx[1], axisx[2],
+      ejX,
+      ejY,
+      ejZ,
+      axisx[0],
+      axisx[1],
+      axisx[2],
       theta,
     );
     [ejX, ejY, ejZ] = rotateAroundAxis(
-      ejX, ejY, ejZ,
-      axis[0], axis[1], axis[2],
+      ejX,
+      ejY,
+      ejZ,
+      axis[0],
+      axis[1],
+      axis[2],
       phi,
     );
 

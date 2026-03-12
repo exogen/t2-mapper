@@ -1,20 +1,16 @@
-import { useRef, useEffect, useState, useCallback } from "react";
-import { useRecording } from "./RecordingProvider";
-import { useEngineSelector } from "../state";
+import { useEngineSelector } from "../state/engineStore";
 import { textureToUrl } from "../loaders";
-import { liveConnectionStore } from "../state/liveConnectionStore";
-import type {
-  ChatSegment,
-  ChatMessage,
-  StreamEntity,
-  TeamScore,
-  WeaponsHudSlot,
-} from "../stream/types";
+import type { StreamEntity, TeamScore, WeaponsHudSlot } from "../stream/types";
 import styles from "./PlayerHUD.module.css";
-// ── Compass ──
+import { ChatWindow } from "./ChatWindow";
+
 const COMPASS_URL = textureToUrl("gui/hud_new_compass");
 const NSEW_URL = textureToUrl("gui/hud_new_NSEW");
-function Compass({ yaw }: { yaw: number | undefined }) {
+
+function Compass() {
+  const yaw = useEngineSelector(
+    (state) => state.playback.streamSnapshot?.camera?.yaw,
+  );
   if (yaw == null) return null;
   // The ring notch is the fixed heading indicator (always "forward" at top).
   // The NSEW letters rotate to show world cardinal directions relative to
@@ -33,41 +29,51 @@ function Compass({ yaw }: { yaw: number | undefined }) {
     </div>
   );
 }
-// ── Health / Energy bars ──
-function HealthBar({ value }: { value: number }) {
-  const pct = Math.max(0, Math.min(100, value * 100));
+
+function HealthBar() {
+  const health = useEngineSelector(
+    (state) => state.playback.streamSnapshot?.status?.health,
+  );
+  if (health == null) return null;
+  const pct = Math.max(0, Math.min(100, health * 100));
   return (
     <div className={styles.BarTrack}>
       <div className={styles.BarFillHealth} style={{ width: `${pct}%` }} />
     </div>
   );
 }
-function EnergyBar({ value }: { value: number }) {
-  const pct = Math.max(0, Math.min(100, value * 100));
+
+function EnergyBar() {
+  const energy = useEngineSelector(
+    (state) => state.playback.streamSnapshot?.status?.energy,
+  );
+  if (energy == null) return null;
+  const pct = Math.max(0, Math.min(100, energy * 100));
   return (
     <div className={styles.BarTrack}>
       <div className={styles.BarFillEnergy} style={{ width: `${pct}%` }} />
     </div>
   );
 }
-// ── Reticle ──
+
 const RETICLE_TEXTURES: Record<string, string> = {
   weapon_sniper: "gui/hud_ret_sniper",
   weapon_shocklance: "gui/hud_ret_shocklance",
   weapon_targeting: "gui/hud_ret_targlaser",
 };
+
 function normalizeWeaponName(shape: string | undefined): string {
   if (!shape) return "";
   return shape.replace(/\.dts$/i, "").toLowerCase();
 }
+
 function Reticle() {
   const weaponShape = useEngineSelector((state) => {
     const snap = state.playback.streamSnapshot;
     if (!snap || snap.camera?.mode !== "first-person") return undefined;
     const ctrl = snap.controlPlayerGhostId;
     if (!ctrl) return undefined;
-    return snap.entities.find((e: StreamEntity) => e.id === ctrl)
-      ?.weaponShape;
+    return snap.entities.find((e: StreamEntity) => e.id === ctrl)?.weaponShape;
   });
   if (weaponShape === undefined) return null;
   const weapon = normalizeWeaponName(weaponShape);
@@ -75,7 +81,6 @@ function Reticle() {
   if (textureName) {
     return (
       <div className={styles.Reticle}>
-        {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
           src={textureToUrl(textureName)}
           alt=""
@@ -90,7 +95,7 @@ function Reticle() {
     </div>
   );
 }
-// ── Weapon HUD (right side weapon list) ──
+
 /** Maps $WeaponsHudData indices to simple icon textures (no baked background)
  *  and labels. Mortar uses hud_new_ because no simple variant exists. */
 const WEAPON_HUD_SLOTS: Record<number, { icon: string; label: string }> = {
@@ -114,6 +119,7 @@ const WEAPON_HUD_SLOTS: Record<number, { icon: string; label: string }> = {
   16: { icon: "gui/hud_shocklance", label: "Shocklance" },
   17: { icon: "gui/hud_new_mortar", label: "Mortar" },
 };
+
 // Precompute URLs so we don't call textureToUrl on every render.
 const WEAPON_HUD_ICON_URLS = new Map(
   Object.entries(WEAPON_HUD_SLOTS).map(([idx, w]) => [
@@ -121,9 +127,11 @@ const WEAPON_HUD_ICON_URLS = new Map(
     textureToUrl(w.icon),
   ]),
 );
+
 /** Targeting laser HUD indices (standard + TR2 variants). */
 const TARGETING_LASER_INDICES = new Set([9, 14, 15]);
 const INFINITY_ICON_URL = textureToUrl("gui/hud_infinity");
+
 function WeaponSlotIcon({
   slot,
   isSelected,
@@ -138,14 +146,12 @@ function WeaponSlotIcon({
     <div
       className={`${styles.PackInvItem} ${isSelected ? styles.PackInvItemActive : styles.PackInvItemDim}`}
     >
-      {/* eslint-disable-next-line @next/next/no-img-element */}
       <img
         src={WEAPON_HUD_ICON_URLS.get(slot.index)!}
         alt={info.label}
         className={styles.PackInvIcon}
       />
       {isInfinite ? (
-        // eslint-disable-next-line @next/next/no-img-element
         <img
           src={INFINITY_ICON_URL}
           alt="\u221E"
@@ -157,6 +163,7 @@ function WeaponSlotIcon({
     </div>
   );
 }
+
 function WeaponHUD() {
   const weaponsHud = useEngineSelector(
     (state) => state.playback.streamSnapshot?.weaponsHud,
@@ -191,7 +198,7 @@ function WeaponHUD() {
     </div>
   );
 }
-// ── Team Scores (bottom-left) ──
+
 /** Default team names from serverDefaults.cs. */
 const DEFAULT_TEAM_NAMES: Record<number, string> = {
   1: "Storm",
@@ -201,6 +208,7 @@ const DEFAULT_TEAM_NAMES: Record<number, string> = {
   5: "Blood Eagle",
   6: "Phoenix",
 };
+
 function TeamScores() {
   const teamScores = useEngineSelector(
     (state) => state.playback.streamSnapshot?.teamScores,
@@ -242,101 +250,7 @@ function TeamScores() {
     </div>
   );
 }
-// ── Chat Window (top-left) ──
-/** Map a colorCode to a CSS module class name (c0–c9 GuiChatHudProfile). */
-const CHAT_COLOR_CLASSES: Record<number, string> = {
-  0: styles.ChatColor0,
-  1: styles.ChatColor1,
-  2: styles.ChatColor2,
-  3: styles.ChatColor3,
-  4: styles.ChatColor4,
-  5: styles.ChatColor5,
-  6: styles.ChatColor6,
-  7: styles.ChatColor7,
-  8: styles.ChatColor8,
-  9: styles.ChatColor9,
-};
-function segmentColorClass(colorCode: number): string {
-  return CHAT_COLOR_CLASSES[colorCode] ?? CHAT_COLOR_CLASSES[0];
-}
-function chatColorClass(msg: ChatMessage): string {
-  if (msg.colorCode != null && CHAT_COLOR_CLASSES[msg.colorCode]) {
-    return CHAT_COLOR_CLASSES[msg.colorCode];
-  }
-  // Fallback: default to \c0 (teal). Messages with detected codes (like \c2
-  // for flag events) will match above; \c0 kill messages may lose their null
-  // byte color code, so the correct default for server messages is c0.
-  return CHAT_COLOR_CLASSES[0];
-}
-function ChatWindow({ isLive }: { isLive: boolean }) {
-  const messages = useEngineSelector(
-    (state) => state.playback.streamSnapshot?.chatMessages,
-  );
-  const scrollRef = useRef<HTMLDivElement>(null);
-  const prevCountRef = useRef(0);
-  const [chatText, setChatText] = useState("");
 
-  // Auto-scroll to bottom when new messages arrive.
-  const msgCount = messages?.length ?? 0;
-  useEffect(() => {
-    if (msgCount > prevCountRef.current && scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-    }
-    prevCountRef.current = msgCount;
-  }, [msgCount]);
-
-  const handleSubmit = useCallback(
-    (e: React.FormEvent) => {
-      e.preventDefault();
-      const text = chatText.trim();
-      if (!text) return;
-      liveConnectionStore.getState().sendCommand("messageSent", text);
-      setChatText("");
-    },
-    [chatText],
-  );
-
-  const hasMessages = !!messages?.length;
-
-  return (
-    <div className={styles.ChatContainer}>
-      {hasMessages && (
-        <div ref={scrollRef} className={styles.ChatWindow}>
-          {messages!.map((msg: ChatMessage, i: number) => (
-            <div key={msg.id} className={styles.ChatMessage}>
-              {msg.segments ? (
-                msg.segments.map((seg: ChatSegment, j: number) => (
-                  <span key={j} className={segmentColorClass(seg.colorCode)}>
-                    {seg.text}
-                  </span>
-                ))
-              ) : (
-                <span className={chatColorClass(msg)}>
-                  {msg.sender ? `${msg.sender}: ` : ""}
-                  {msg.text}
-                </span>
-              )}
-            </div>
-          ))}
-        </div>
-      )}
-      {isLive && (
-        <form className={styles.ChatInputForm} onSubmit={handleSubmit}>
-          <input
-            className={styles.ChatInput}
-            type="text"
-            placeholder="Say something…"
-            value={chatText}
-            onChange={(e) => setChatText(e.target.value)}
-            onKeyDown={(e) => e.stopPropagation()}
-            onKeyUp={(e) => e.stopPropagation()}
-            maxLength={255}
-          />
-        </form>
-      )}
-    </div>
-  );
-}
 // ── Backpack + Inventory HUD (bottom-right) ──
 /** Maps $BackpackHudData indices to icon textures. */
 const BACKPACK_ICONS: Record<number, string> = {
@@ -429,7 +343,6 @@ function PackAndInventoryHUD() {
         <div
           className={`${styles.PackInvItem} ${backpackHud!.active ? styles.PackInvItemActive : ""}`}
         >
-          {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src={packIconUrl} alt="" className={styles.PackInvIcon} />
           <span className={styles.PackInvCount}>
             {backpackHud!.text || "\u00A0"}
@@ -442,7 +355,6 @@ function PackAndInventoryHUD() {
         if (!info || !iconUrl) return null;
         return (
           <div key={slotId} className={styles.PackInvItem}>
-            {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
               src={iconUrl}
               alt={info.label}
@@ -457,32 +369,31 @@ function PackAndInventoryHUD() {
     </div>
   );
 }
-// ── Main HUD ──
-export function PlayerHUD({ isLive = false }: { isLive?: boolean } = {}) {
-  const recording = useRecording();
-  const streamSnapshot = useEngineSelector(
-    (state) => state.playback.streamSnapshot,
+
+export function PlayerHUD() {
+  const hasControlPlayer = useEngineSelector(
+    (state) => !!state.playback.streamSnapshot?.controlPlayerGhostId,
   );
-  if (!recording && !isLive) return null;
-  const status = streamSnapshot?.status;
   return (
     <div className={styles.PlayerHUD}>
-      <ChatWindow isLive={isLive} />
-      {status && (
-        <>
-          <div className={styles.TopRight}>
-            <div className={styles.Bars}>
-              <HealthBar value={status.health} />
-              <EnergyBar value={status.energy} />
-            </div>
-            <Compass yaw={streamSnapshot?.camera?.yaw} />
+      <ChatWindow />
+      <div className={styles.TopRight}>
+        {hasControlPlayer && (
+          <div className={styles.Bars}>
+            <HealthBar />
+            <EnergyBar />
           </div>
+        )}
+        <Compass />
+      </div>
+      {hasControlPlayer && (
+        <>
           <WeaponHUD />
           <PackAndInventoryHUD />
-          <TeamScores />
           <Reticle />
         </>
       )}
+      <TeamScores />
     </div>
   );
 }

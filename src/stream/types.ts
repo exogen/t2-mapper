@@ -132,6 +132,8 @@ export interface StreamEntity {
   weaponImageStates?: WeaponImageDataBlockState[];
   /** DTS shape name for the mounted pack (slot 2, Mount1 bone). */
   packShape?: string;
+  /** DTS shape name for the carried flag (slot 3, Mount2 bone). */
+  flagShape?: string;
   /** True when the player has no ground contact and is falling. */
   falling?: boolean;
   /** True when the player is using jetpack thrust. */
@@ -282,6 +284,20 @@ export interface StreamingPlayback {
    * Returns the raw sequence strings like `"heavy_male_root.dsq root"`.
    */
   getShapeConstructorSequences(shapeName: string): string[] | undefined;
+
+  // ── Mission info (populated from server messages) ──
+  /** Mission display name (e.g. "Riverdance"), from MsgMissionDropInfo. */
+  missionDisplayName: string | null;
+  /** Game type display name (e.g. "Capture the Flag"), from MsgMissionDropInfo. */
+  missionTypeDisplayName: string | null;
+  /** Game class name (e.g. "CTFGame"), from MsgClientReady. */
+  gameClassName: string | null;
+  /** Server name, from MsgMissionDropInfo. */
+  serverDisplayName: string | null;
+  /** Server-assigned name of the connected/recording player, from MsgClientJoin. */
+  connectedPlayerName: string | null;
+  /** Called when any mission info field changes. */
+  onMissionInfoChange?: () => void;
 }
 
 export interface StreamRecording {
@@ -292,6 +308,12 @@ export interface StreamRecording {
   missionName: string | null;
   /** Game type display name (e.g. "Capture the Flag"). */
   gameType: string | null;
+  /** Server display name. */
+  serverDisplayName: string | null;
+  /** Name of the player who recorded the demo. */
+  recorderName: string | null;
+  /** Recording date string (e.g. "May-4-2025 10:37PM"). */
+  recordingDate: string | null;
   /** Streaming parser session for tick-driven playback. */
   streamingPlayback: StreamingPlayback;
 }

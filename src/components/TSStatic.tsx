@@ -1,5 +1,8 @@
 import { useMemo } from "react";
+import { createLogger } from "../logger";
 import type { SceneTSStatic } from "../scene/types";
+
+const log = createLogger("TSStatic");
 import {
   torqueToThree,
   torqueScaleToThree,
@@ -18,10 +21,7 @@ export function TSStatic({ scene }: { scene: SceneTSStatic }) {
   );
   const scale = useMemo(() => torqueScaleToThree(scene.scale), [scene.scale]);
   if (!scene.shapeName) {
-    console.error(
-      "<TSStatic> missing shapeName for ghostIndex",
-      scene.ghostIndex,
-    );
+    log.error("TSStatic missing shapeName for ghostIndex %d", scene.ghostIndex);
   }
   return (
     <ShapeInfoProvider type="TSStatic" shapeName={scene.shapeName}>

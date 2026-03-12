@@ -1,6 +1,9 @@
 import { createStore } from "zustand/vanilla";
 import { useStoreWithEqualityFn } from "zustand/traditional";
 import type { GameEntity, RenderType } from "./gameEntityTypes";
+import { normalizedMissionTypes } from "../mission";
+
+export type DataSource = "map" | "demo" | "live";
 
 export interface GameEntityState {
   /**
@@ -16,6 +19,24 @@ export interface GameEntityState {
   streamEntities: Map<string, GameEntity>;
   /** True when a demo/live source is actively driving entity state. */
   isStreaming: boolean;
+  /** Which data source is currently populating entities, or null if empty. */
+  dataSource: DataSource | null;
+  /** Mission slug (e.g. "ScarabRae") — the $MissionName / $CurrentMission value. */
+  missionName: string | null;
+  /** Mission type short code (e.g. "CTF"), as used in .mis MissionTypes. */
+  missionType: string | null;
+  /** Mission type display name (e.g. "Capture the Flag"), from MsgMissionDropInfo. */
+  missionTypeDisplayName: string | null;
+  /** Mission display name (e.g. "Scarabrae"), from MsgMissionDropInfo. */
+  missionDisplayName: string | null;
+  /** Game class name (e.g. "CTFGame"), from MsgClientReady. */
+  gameClassName: string | null;
+  /** Server display name. */
+  serverDisplayName: string | null;
+  /** Name of the player who recorded the demo / connected to the server. */
+  recorderName: string | null;
+  /** Recording date string from readplayerinfo (e.g. "May-4-2025 10:37PM"). */
+  recordingDate: string | null;
   /** Monotonically increasing version counter, bumped on any mutation. */
   version: number;
 
@@ -26,9 +47,21 @@ export interface GameEntityState {
   setAllEntities(entities: GameEntity[]): void;
   clearEntities(): void;
 
+  /** Update mission info fields. Pass null to clear a field, omit to leave unchanged. */
+  setMissionInfo(info: {
+    missionName?: string | null;
+    missionType?: string | null;
+    missionTypeDisplayName?: string | null;
+    missionDisplayName?: string | null;
+    gameClassName?: string | null;
+    serverDisplayName?: string | null;
+    recorderName?: string | null;
+    recordingDate?: string | null;
+  }): void;
+
   // ── Stream entity mutations ──
   /** Begin streaming mode. Stream entities will be rendered instead of mission entities. */
-  beginStreaming(): void;
+  beginStreaming(source: "demo" | "live"): void;
   /** End streaming mode and clear stream entities. Mission entities become active again. */
   endStreaming(): void;
   setStreamEntity(entity: GameEntity): void;
@@ -42,6 +75,15 @@ export const gameEntityStore = createStore<GameEntityState>()((set) => ({
   missionEntities: new Map(),
   streamEntities: new Map(),
   isStreaming: false,
+  dataSource: null,
+  missionName: null,
+  missionType: null,
+  missionTypeDisplayName: null,
+  missionDisplayName: null,
+  gameClassName: null,
+  serverDisplayName: null,
+  recorderName: null,
+  recordingDate: null,
   version: 0,
 
   // ── Mission entity mutations ──
@@ -74,35 +116,112 @@ export const gameEntityStore = createStore<GameEntityState>()((set) => ({
   },
 
   setAllEntities(entities: GameEntity[]) {
-    set(() => {
+    set((state) => {
       const next = new Map<string, GameEntity>();
       for (const entity of entities) {
         next.set(entity.id, entity);
       }
-      return { missionEntities: next };
+      return {
+        missionEntities: next,
+        dataSource: state.isStreaming ? state.dataSource : "map",
+      };
     });
   },
 
   clearEntities() {
     set((state) => {
       if (state.missionEntities.size === 0) return state;
-      return { missionEntities: new Map(), version: state.version + 1 };
+      // When streaming is active, only clear mission entities — don't
+      // touch dataSource or metadata, those belong to the stream.
+      if (state.isStreaming) {
+        return {
+          missionEntities: new Map(),
+          version: state.version + 1,
+        };
+      }
+      return {
+        missionEntities: new Map(),
+        dataSource: null,
+        missionName: null,
+        missionType: null,
+        missionTypeDisplayName: null,
+        missionDisplayName: null,
+        gameClassName: null,
+        serverDisplayName: null,
+        recorderName: null,
+        recordingDate: null,
+        version: state.version + 1,
+      };
     });
+  },
+
+  setMissionInfo(info) {
+    const updates: Partial<GameEntityState> = {};
+    if (info.missionName !== undefined) updates.missionName = info.missionName;
+    if (info.missionType !== undefined) updates.missionType = info.missionType;
+    if (info.missionTypeDisplayName !== undefined)
+      updates.missionTypeDisplayName = info.missionTypeDisplayName;
+    if (info.missionDisplayName !== undefined)
+      updates.missionDisplayName = info.missionDisplayName;
+    if (info.gameClassName !== undefined) {
+      updates.gameClassName = info.gameClassName;
+      // Derive missionType from gameClassName (e.g. "CTFGame" → "CTF")
+      // unless missionType was explicitly provided.
+      if (info.missionType === undefined) {
+        if (info.gameClassName) {
+          const raw = info.gameClassName.replace(/Game$/i, "");
+          updates.missionType =
+            normalizedMissionTypes[raw.toLowerCase()] ?? raw;
+        } else {
+          updates.missionType = null;
+        }
+      }
+    }
+    if (info.serverDisplayName !== undefined)
+      updates.serverDisplayName = info.serverDisplayName;
+    if (info.recorderName !== undefined)
+      updates.recorderName = info.recorderName;
+    if (info.recordingDate !== undefined)
+      updates.recordingDate = info.recordingDate;
+    set((state) => ({ ...updates, version: state.version + 1 }));
   },
 
   // ── Stream entity mutations ──
 
-  beginStreaming() {
-    set((state) => {
-      if (state.isStreaming) return state;
-      return { isStreaming: true, streamEntities: new Map(), version: state.version + 1 };
-    });
+  beginStreaming(source: "demo" | "live") {
+    set((state) => ({
+      isStreaming: true,
+      dataSource: source,
+      streamEntities: new Map(),
+      missionName: null,
+      missionType: null,
+      missionTypeDisplayName: null,
+      missionDisplayName: null,
+      gameClassName: null,
+      serverDisplayName: null,
+      recorderName: null,
+      recordingDate: null,
+      version: state.version + 1,
+    }));
   },
 
   endStreaming() {
     set((state) => {
       if (!state.isStreaming) return state;
-      return { isStreaming: false, streamEntities: new Map(), version: state.version + 1 };
+      return {
+        isStreaming: false,
+        dataSource: state.missionEntities.size > 0 ? "map" : null,
+        missionName: null,
+        missionType: null,
+        missionTypeDisplayName: null,
+        missionDisplayName: null,
+        gameClassName: null,
+        serverDisplayName: null,
+        recorderName: null,
+        recordingDate: null,
+        streamEntities: new Map(),
+        version: state.version + 1,
+      };
     });
   },
 
@@ -135,17 +254,17 @@ export const gameEntityStore = createStore<GameEntityState>()((set) => ({
 
   setAllStreamEntities(entities: GameEntity[]) {
     set((state) => {
-      const prev = state.streamEntities;
       const next = new Map<string, GameEntity>();
       for (const entity of entities) {
         next.set(entity.id, entity);
       }
-      // Only update (and bump version) when the entity set changed
-      // (adds/removes). Render-field-only updates (threads, colors, etc.)
-      // are applied via mutateStreamEntities below instead. This prevents
-      // frequent Zustand set() calls from starving React Suspense.
-      if (next.size === prev.size && [...next.keys()].every((id) => prev.has(id))) {
-        return state; // same set — no store update at all
+      // Skip store update if the entity key set is unchanged.
+      const prev = state.streamEntities;
+      if (
+        next.size === prev.size &&
+        [...next.keys()].every((id) => prev.has(id))
+      ) {
+        return state;
       }
       return { streamEntities: next, version: state.version + 1 };
     });
@@ -221,7 +340,9 @@ export function useAllGameEntities(): GameEntity[] {
 }
 
 /** Hook returning entities filtered by render type. */
-export function useGameEntitiesByRenderType(renderType: RenderType): GameEntity[] {
+export function useGameEntitiesByRenderType(
+  renderType: RenderType,
+): GameEntity[] {
   const entities = useGameEntitiesInternal();
   const result: GameEntity[] = [];
   for (const entity of entities.values()) {
@@ -248,18 +369,16 @@ export function useGameEntity(id: string): GameEntity | undefined {
 
 // ── Scene infrastructure queries ──
 
-import type {
-  SceneSky,
-  SceneSun,
-  SceneMissionArea,
-} from "../scene/types";
+import type { SceneSky, SceneSun, SceneMissionArea } from "../scene/types";
 
 // Scene infrastructure selectors use Object.is equality (default) on the
 // extracted data object — these are set once and referentially stable, so
 // the hooks won't re-render when unrelated (dynamic) entities update.
 
 function selectSkyData(state: GameEntityState): SceneSky | null {
-  const entities = state.isStreaming ? state.streamEntities : state.missionEntities;
+  const entities = state.isStreaming
+    ? state.streamEntities
+    : state.missionEntities;
   for (const e of entities.values()) {
     if (e.renderType === "Sky") return e.skyData;
   }
@@ -267,15 +386,21 @@ function selectSkyData(state: GameEntityState): SceneSky | null {
 }
 
 function selectSunData(state: GameEntityState): SceneSun | null {
-  const entities = state.isStreaming ? state.streamEntities : state.missionEntities;
+  const entities = state.isStreaming
+    ? state.streamEntities
+    : state.missionEntities;
   for (const e of entities.values()) {
     if (e.renderType === "Sun") return e.sunData;
   }
   return null;
 }
 
-function selectMissionAreaData(state: GameEntityState): SceneMissionArea | null {
-  const entities = state.isStreaming ? state.streamEntities : state.missionEntities;
+function selectMissionAreaData(
+  state: GameEntityState,
+): SceneMissionArea | null {
+  const entities = state.isStreaming
+    ? state.streamEntities
+    : state.missionEntities;
   for (const e of entities.values()) {
     if (e.renderType === "MissionArea") return e.missionAreaData;
   }
@@ -295,4 +420,76 @@ export function useSceneSun(): SceneSun | null {
 /** Hook returning the MissionArea data, or null if none exists. */
 export function useSceneMissionArea(): SceneMissionArea | null {
   return useStoreWithEqualityFn(gameEntityStore, selectMissionAreaData);
+}
+
+/** Hook returning which data source is currently populating entities. */
+export function useDataSource(): DataSource | null {
+  return useStoreWithEqualityFn(
+    gameEntityStore,
+    (state) => state.dataSource,
+  );
+}
+
+/** Hook returning the current mission name. */
+export function useMissionName(): string | null {
+  return useStoreWithEqualityFn(
+    gameEntityStore,
+    (state) => state.missionName,
+  );
+}
+
+/** Hook returning the mission type short code (e.g. "CTF"). */
+export function useMissionType(): string | null {
+  return useStoreWithEqualityFn(
+    gameEntityStore,
+    (state) => state.missionType,
+  );
+}
+
+/** Hook returning the mission type display name (e.g. "Capture the Flag"). */
+export function useMissionTypeDisplayName(): string | null {
+  return useStoreWithEqualityFn(
+    gameEntityStore,
+    (state) => state.missionTypeDisplayName,
+  );
+}
+
+/** Hook returning the mission display name (e.g. "Scarabrae"). */
+export function useMissionDisplayName(): string | null {
+  return useStoreWithEqualityFn(
+    gameEntityStore,
+    (state) => state.missionDisplayName,
+  );
+}
+
+/** Hook returning the game class name (e.g. "CTFGame"). */
+export function useGameClassName(): string | null {
+  return useStoreWithEqualityFn(
+    gameEntityStore,
+    (state) => state.gameClassName,
+  );
+}
+
+/** Hook returning the server display name. */
+export function useServerDisplayName(): string | null {
+  return useStoreWithEqualityFn(
+    gameEntityStore,
+    (state) => state.serverDisplayName,
+  );
+}
+
+/** Hook returning the name of the player who recorded the demo / connected. */
+export function useRecorderName(): string | null {
+  return useStoreWithEqualityFn(
+    gameEntityStore,
+    (state) => state.recorderName,
+  );
+}
+
+/** Hook returning the demo recording date string. */
+export function useRecordingDate(): string | null {
+  return useStoreWithEqualityFn(
+    gameEntityStore,
+    (state) => state.recordingDate,
+  );
 }

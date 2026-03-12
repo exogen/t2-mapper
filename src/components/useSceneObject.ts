@@ -1,5 +1,5 @@
 import type { TorqueObject } from "../torqueScript";
-import { useRuntimeObjectByName } from "../state";
+import { useRuntimeObjectByName } from "../state/engineStore";
 
 /**
  * Look up a scene object by name from the runtime.

@@ -7,7 +7,8 @@ import {
 } from "react";
 import { useThree } from "@react-three/fiber";
 import { AudioListener, AudioLoader } from "three";
-import { engineStore } from "../state";
+import { engineStore } from "../state/engineStore";
+import { useSettings } from "./SettingsProvider";
 
 interface AudioContextType {
   audioLoader: AudioLoader | null;
@@ -21,7 +22,8 @@ const AudioContext = createContext<AudioContextType | undefined>(undefined);
  * Must be rendered inside the Canvas component.
  */
 export function AudioProvider({ children }: { children: ReactNode }) {
-  const { camera } = useThree();
+  const camera = useThree((state) => state.camera);
+  const { audioVolume } = useSettings();
   const [audioContext, setAudioContext] = useState<AudioContextType>({
     audioLoader: null,
     audioListener: null,
@@ -41,8 +43,6 @@ export function AudioProvider({ children }: { children: ReactNode }) {
       camera.add(listener);
     }
 
-    listener.setMasterVolume(0.8);
-
     setAudioContext({
       audioLoader,
       audioListener: listener,
@@ -51,7 +51,7 @@ export function AudioProvider({ children }: { children: ReactNode }) {
     // Resume the AudioContext on user interaction to satisfy browser autoplay
     // policy. Without this, sounds won't play until the user clicks/taps.
     const resumeOnGesture = () => {
-      const ctx = listener?.context;
+      const ctx = listener.context;
       if (!ctx || ctx.state !== "suspended") return;
       ctx.resume().finally(() => {
         document.removeEventListener("click", resumeOnGesture);
@@ -67,7 +67,7 @@ export function AudioProvider({ children }: { children: ReactNode }) {
     const unsubscribe = engineStore.subscribe(
       (state) => state.playback.status,
       (status) => {
-        const ctx = listener?.context;
+        const ctx = listener.context;
         if (!ctx) return;
         if (status === "paused") {
           ctx.suspend();
@@ -84,6 +84,10 @@ export function AudioProvider({ children }: { children: ReactNode }) {
       if (listener) camera.remove(listener);
     };
   }, [camera]);
+
+  useEffect(() => {
+    audioContext.audioListener?.setMasterVolume(audioVolume);
+  }, [audioVolume, audioContext.audioListener]);
 
   return (
     <AudioContext.Provider value={audioContext}>
