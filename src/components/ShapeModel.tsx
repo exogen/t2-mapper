@@ -19,7 +19,7 @@ import type { IflAtlas } from "./useIflTexture";
 import { ShapeRenderer, useStaticShape } from "./GenericShape";
 import { ShapeInfoProvider } from "./ShapeInfoProvider";
 import type { TorqueObject } from "../torqueScript";
-import type { ExplosionEntity } from "../state/gameEntityTypes";
+import type { ExplosionEntity, ShapeEntity } from "../state/gameEntityTypes";
 import { streamPlaybackStore } from "../state/streamPlaybackStore";
 
 /**
@@ -44,13 +44,9 @@ function getArmThread(weaponShape: string | undefined): string {
  * The mount transform is conjugated by ShapeRenderer's 90° Y rotation:
  * T_mount = R90 * M0 * MP^(-1) * R90^(-1).
  */
-export function WeaponModel({
-  shapeName,
-  playerShapeName,
-}: {
-  shapeName: string;
-  playerShapeName: string;
-}) {
+export function WeaponModel({ entity }: { entity: ShapeEntity }) {
+  const shapeName = entity.weaponShape;
+  const playerShapeName = entity.shapeName;
   const playerGltf = useStaticShape(playerShapeName);
   const weaponGltf = useStaticShape(shapeName);
 

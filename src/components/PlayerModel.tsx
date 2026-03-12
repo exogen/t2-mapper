@@ -570,7 +570,7 @@ export function PlayerModel({ entity }: { entity: PlayerEntity }) {
           fallback={<ShapePlaceholder color="red" label={currentWeaponShape} />}
         >
           <DebugSuspense
-            label={`Weapon:${entity.id}/${currentWeaponShape}`}
+            name={`Weapon:${entity.id}/${currentWeaponShape}`}
             fallback={
               <ShapePlaceholder color="cyan" label={currentWeaponShape} />
             }
@@ -589,7 +589,7 @@ export function PlayerModel({ entity }: { entity: PlayerEntity }) {
           fallback={<ShapePlaceholder color="red" label={currentPackShape} />}
         >
           <DebugSuspense
-            label={`Pack:${entity.id}/${currentPackShape}`}
+            name={`Pack:${entity.id}/${currentPackShape}`}
             fallback={
               <ShapePlaceholder color="cyan" label={currentPackShape} />
             }
@@ -604,7 +604,7 @@ export function PlayerModel({ entity }: { entity: PlayerEntity }) {
           fallback={<ShapePlaceholder color="red" label={currentFlagShape} />}
         >
           <DebugSuspense
-            label={`Flag:${entity.id}/${currentFlagShape}`}
+            name={`Flag:${entity.id}/${currentFlagShape}`}
             fallback={
               <ShapePlaceholder color="cyan" label={currentFlagShape} />
             }

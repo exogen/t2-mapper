@@ -20,13 +20,15 @@ import { Sky } from "./Sky";
 import { AudioEnabled } from "./AudioEnabled";
 import type { TorqueObject } from "../torqueScript";
 
-function createLazy<K extends string>(
-  name: K,
-  loader: () => Promise<Record<K, React.ComponentType<any>>>,
+function createLazy(
+  name: string,
+  loader: () => Promise<{ [key: string]: unknown }>,
 ): React.ComponentType<{ entity: GameEntity }> {
   const LazyComponent = lazy(() =>
     loader().then((mod) => {
-      const NamedComponent = mod[name];
+      const NamedComponent = mod[name] as React.ComponentType<{
+        entity: GameEntity;
+      }>;
       return { default: NamedComponent };
     }),
   );
@@ -191,10 +193,7 @@ function ShapeEntity({ entity }: { entity: ShapeEntityType }) {
                 <ShapePlaceholder color="cyan" label={entity.weaponShape} />
               }
             >
-              <WeaponModel
-                shapeName={entity.weaponShape}
-                playerShapeName={entity.shapeName}
-              />
+              <WeaponModel entity={entity} />
             </DebugSuspense>
           </ShapeErrorBoundary>
         )}

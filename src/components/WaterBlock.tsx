@@ -3,7 +3,6 @@ import { Box, useTexture } from "@react-three/drei";
 import { useFrame, useThree } from "@react-three/fiber";
 import { DoubleSide, NoColorSpace, PlaneGeometry, RepeatWrapping } from "three";
 import { textureToUrl } from "../loaders";
-import type { SceneWaterBlock } from "../scene/types";
 import {
   torqueToThree,
   torqueScaleToThree,

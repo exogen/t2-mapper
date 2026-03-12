@@ -14,7 +14,7 @@ export function JoinServerButton({
   onOpenServerBrowser: () => void;
 }) {
   const gameStatus = useLiveSelector((s) => s.gameStatus);
-  const serverName = useLiveSelector((s) => s.serverName);
+  // const serverName = useLiveSelector((s) => s.serverName);
   const ping = useLiveSelector(selectPing);
   const disconnectServer = useLiveSelector((s) => s.disconnectServer);
 
@@ -45,7 +45,11 @@ export function JoinServerButton({
       <>
         <span className={styles.TextLabel}>Live</span>
         <span className={styles.ButtonHint}>
-          {ping != null ? formatPing(ping) : "Join a game"}
+          {isConnecting
+            ? "Connecting…"
+            : ping != null
+              ? formatPing(ping)
+              : "Join a game"}
         </span>
       </>
       {/* {isLive && ping != null && (

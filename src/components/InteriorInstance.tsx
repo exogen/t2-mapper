@@ -156,7 +156,7 @@ function InteriorMesh({ node }: { node: Mesh }) {
     <mesh geometry={node.geometry} castShadow receiveShadow>
       {node.material ? (
         <DebugSuspense
-          label={`InteriorTexture:${Array.isArray(node.material) ? node.material[0]?.userData?.resource_path : node.material?.userData?.resource_path ?? "?"}`}
+          name={`InteriorTexture:${Array.isArray(node.material) ? node.material[0]?.userData?.resource_path : (node.material?.userData?.resource_path ?? "?")}`}
           fallback={
             // Allow the mesh to render while the texture is still loading;
             // show a wireframe placeholder.
@@ -262,7 +262,7 @@ export const InteriorInstance = memo(function InteriorInstance({
         }}
       >
         <DebugSuspense
-          label={`InteriorModel:${scene.interiorFile}`}
+          name={`InteriorModel:${scene.interiorFile}`}
           fallback={<InteriorPlaceholder color="orange" />}
         >
           <InteriorModel
