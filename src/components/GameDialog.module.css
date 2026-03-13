@@ -67,7 +67,6 @@
   cursor: not-allowed;
 }
 
-/* Secondary/ghost variant for less prominent actions (Close, Cancel). */
 .Secondary {
   composes: DialogButton;
   background: transparent;
@@ -80,4 +79,24 @@
 .Secondary:hover:not(:disabled) {
   color: rgba(169, 255, 229, 0.8);
   border: 1px solid rgba(63, 144, 135, 0.9);
+}
+
+.Actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+@media (max-width: 719px) {
+  .Dialog {
+    max-width: calc(100dvw - 20px);
+    max-height: calc(100dvh - 20px);
+    border-radius: 0;
+  }
+}
+
+@media (max-width: 639px) {
+  .Overlay {
+    padding: 10px;
+  }
 }

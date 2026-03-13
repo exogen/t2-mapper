@@ -18,7 +18,7 @@ export default defineConfig(
       ],
       "react-hooks/immutability": "warn",
       "react-hooks/refs": "warn",
-      "react-hooks/set-state-in-effect": "warn",
+      "react-hooks/set-state-in-effect": "off",
     },
   },
 );

@@ -20,6 +20,7 @@ import {
 import type { AnimationAction } from "three";
 import * as SkeletonUtils from "three/examples/jsm/utils/SkeletonUtils.js";
 import { setupTexture } from "../textureUtils";
+import { useAnisotropy } from "./useAnisotropy";
 import { useDebug, useSettings } from "./SettingsProvider";
 import { useShapeInfo, isOrganicShape } from "./ShapeInfoProvider";
 import { useEngineSelector, effectNow, engineStore } from "../state/engineStore";
@@ -37,6 +38,7 @@ import { injectShapeLighting } from "../shapeMaterial";
 import {
   processShapeScene,
   replaceWithShapeMaterial,
+  disposeClonedScene,
 } from "../stream/playbackUtils";
 import type { ThreadState as StreamThreadState } from "../stream/types";
 
@@ -198,7 +200,13 @@ const IflTexture = memo(function IflTexture({
   animated = false,
 }: TextureProps) {
   const resourcePath = material.userData.resource_path;
-  const flagNames = new Set<string>(material.userData.flag_names ?? []);
+  const flagNames = useMemo(
+    () =>
+      material.userData.flag_names
+        ? new Set<string>(material.userData.flag_names)
+        : EMPTY_FLAG_NAMES,
+    [material.userData.flag_names],
+  );
   const iflPath = `textures/${resourcePath}.ifl`;
 
   const texture = useIflTexture(iflPath);
@@ -216,6 +224,8 @@ const IflTexture = memo(function IflTexture({
       ),
     [material, texture, flagNames, isOrganic, vis, animated],
   );
+
+  useDisposeMaterial(customMaterial);
 
   // Two-pass rendering for organic/translucent materials
   // Render BackSide first (with flipped normals), then FrontSide
@@ -251,6 +261,18 @@ const IflTexture = memo(function IflTexture({
   );
 });
 
+function useDisposeMaterial(material: MaterialResult) {
+  useEffect(() => {
+    return () => {
+      if (Array.isArray(material)) {
+        material.forEach((m) => m.dispose());
+      } else {
+        material.dispose();
+      }
+    };
+  }, [material]);
+}
+
 const EMPTY_FLAG_NAMES = new Set<string>();
 
 const StaticTexture = memo(function StaticTexture({
@@ -281,14 +303,15 @@ const StaticTexture = memo(function StaticTexture({
 
   const isOrganic = shapeName && isOrganicShape(shapeName);
   const isTranslucent = flagNames.has("Translucent");
+  const anisotropy = useAnisotropy();
 
   const texture = useTexture(url, (texture) => {
     // Organic/alpha-tested textures need special handling to avoid mipmap artifacts
     if (isOrganic || isTranslucent) {
-      return setupTexture(texture, { disableMipmaps: true });
+      return setupTexture(texture, { disableMipmaps: true, anisotropy });
     }
     // Standard color texture setup for diffuse-only materials
-    return setupTexture(texture);
+    return setupTexture(texture, { anisotropy });
   });
 
   const customMaterial = useMemo(
@@ -303,6 +326,8 @@ const StaticTexture = memo(function StaticTexture({
       ),
     [material, texture, flagNames, isOrganic, vis, animated],
   );
+
+  useDisposeMaterial(customMaterial);
 
   // Two-pass rendering for organic/translucent materials
   // Render BackSide first (with flipped normals), then FrontSide
@@ -501,6 +526,7 @@ export const ShapeModel = memo(function ShapeModel({
   const { debugMode } = useDebug();
   const { animationEnabled } = useSettings();
   const runtime = useEngineSelector((state) => state.runtime.runtime);
+  const anisotropy = useAnisotropy();
 
   const { clonedScene, mixer, clipsByName, visNodesBySequence, iflMeshes } =
     useMemo(() => {
@@ -549,7 +575,7 @@ export const ShapeModel = memo(function ShapeModel({
         }
       });
 
-      processShapeScene(scene, shapeName ?? undefined);
+      processShapeScene(scene, shapeName ?? undefined, { anisotropy });
 
       // Un-hide IFL meshes that don't have a vis sequence — they should always
       // be visible. IFL meshes WITH vis sequences stay hidden until their
@@ -607,7 +633,16 @@ export const ShapeModel = memo(function ShapeModel({
         visNodesBySequence: visBySeq,
         iflMeshes: iflInfos,
       };
-    }, [gltf]);
+    }, [gltf, anisotropy]);
+
+  // Dispose cloned geometries and materials when the scene is replaced or
+  // the component unmounts, to prevent GPU memory from accumulating.
+  useEffect(() => {
+    return () => {
+      disposeClonedScene(clonedScene);
+      mixer?.uncacheRoot(clonedScene);
+    };
+  }, [clonedScene, mixer]);
 
   const threadsRef = useRef(new Map<number, ThreadState>());
   const iflMeshAtlasRef = useRef(new Map<any, IflAtlas>());

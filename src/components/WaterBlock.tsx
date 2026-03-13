@@ -9,6 +9,7 @@ import {
   matrixFToQuaternion,
 } from "../scene";
 import { setupTexture } from "../textureUtils";
+import { useAnisotropy } from "./useAnisotropy";
 import { createWaterMaterial } from "../waterMaterial";
 import { useDebug, useSettings } from "./SettingsProvider";
 import { usePositionTracker } from "./usePositionTracker";
@@ -61,7 +62,8 @@ export function WaterMaterial({
   attach?: string;
 }) {
   const url = textureToUrl(surfaceTexture);
-  const texture = useTexture(url, (texture) => setupTexture(texture));
+  const anisotropy = useAnisotropy();
+  const texture = useTexture(url, (texture) => setupTexture(texture, { anisotropy }));
 
   return (
     <meshStandardMaterial
@@ -303,13 +305,14 @@ const WaterReps = memo(function WaterReps({
 }) {
   const baseUrl = textureToUrl(surfaceTexture);
   const envUrl = textureToUrl(envMapTexture ?? "special/lush_env");
+  const anisotropy = useAnisotropy();
 
   const [baseTexture, envTexture] = useTexture(
     [baseUrl, envUrl],
     (textures) => {
       const texArray = Array.isArray(textures) ? textures : [textures];
       texArray.forEach((tex) => {
-        setupTexture(tex);
+        setupTexture(tex, { anisotropy });
         tex.colorSpace = NoColorSpace;
         tex.wrapS = RepeatWrapping;
         tex.wrapT = RepeatWrapping;

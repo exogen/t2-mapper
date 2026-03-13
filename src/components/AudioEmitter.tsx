@@ -1,4 +1,4 @@
-import { memo, useEffect, useRef } from "react";
+import { memo, useEffect, useEffectEvent, useRef, useState } from "react";
 import { useThree, useFrame } from "@react-three/fiber";
 import {
   Audio,
@@ -253,6 +253,8 @@ export const AudioEmitter = memo(function AudioEmitter({
     }
   };
 
+  const [randomValue] = useState(() => Math.random());
+
   // Create sound object on mount.
   useEffect(() => {
     if (!audioLoader || !audioListener) return;
@@ -312,7 +314,7 @@ export const AudioEmitter = memo(function AudioEmitter({
       const gapMin = Math.max(0, minLoopGap);
       const gapMax = Math.max(gapMin, maxLoopGap);
       const gap =
-        gapMin === gapMax ? gapMin : Math.random() * (gapMax - gapMin) + gapMin;
+        gapMin === gapMax ? gapMin : randomValue * (gapMax - gapMin) + gapMin;
 
       sound.loop = false;
 
@@ -340,7 +342,7 @@ export const AudioEmitter = memo(function AudioEmitter({
   };
 
   // Load and play audio. For 3D, gated by proximity; for 2D, plays immediately.
-  const loadAndPlay = (sound: Audio<GainNode | PannerNode>) => {
+  const loadAndPlay = useEffectEvent((sound: Audio<GainNode | PannerNode>) => {
     if (!audioLoader) return;
     const gen = generationRef.current;
     if (!isLoadedRef.current) {
@@ -373,7 +375,7 @@ export const AudioEmitter = memo(function AudioEmitter({
         /* expected */
       }
     }
-  };
+  });
 
   // 2D emitters: load and play on mount (no proximity gating).
   useEffect(() => {

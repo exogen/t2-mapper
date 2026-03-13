@@ -386,18 +386,22 @@ export function MapInspector() {
             ) : null}
           </footer>
           {mapInfoOpen ? (
-            <Suspense>
-              <MapInfoDialog
-                onClose={() => setMapInfoOpen(false)}
-                missionName={missionName}
-                missionType={missionType ?? ""}
-              />
-            </Suspense>
+            <ViewTransition>
+              <Suspense>
+                <MapInfoDialog
+                  onClose={() => setMapInfoOpen(false)}
+                  missionName={missionName}
+                  missionType={missionType ?? ""}
+                />
+              </Suspense>
+            </ViewTransition>
           ) : null}
           {serverBrowserOpen ? (
-            <Suspense>
-              <ServerBrowser onClose={() => setServerBrowserOpen(false)} />
-            </Suspense>
+            <ViewTransition>
+              <Suspense>
+                <ServerBrowser onClose={() => setServerBrowserOpen(false)} />
+              </Suspense>
+            </ViewTransition>
           ) : null}
         </SettingsProvider>
       </RecordingProvider>

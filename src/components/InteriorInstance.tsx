@@ -22,6 +22,7 @@ import {
 import { setupTexture } from "../textureUtils";
 import { FloatingLabel } from "./FloatingLabel";
 import { useDebug } from "./SettingsProvider";
+import { useAnisotropy } from "./useAnisotropy";
 import { injectCustomFog } from "../fogShader";
 import { globalFogUniforms } from "../globalFogUniforms";
 import { injectInteriorLighting } from "../interiorMaterial";
@@ -47,8 +48,9 @@ function InteriorTexture({
 }) {
   const debugContext = useDebug();
   const debugMode = debugContext?.debugMode ?? false;
+  const anisotropy = useAnisotropy();
   const url = textureToUrl(materialName);
-  const texture = useTexture(url, (texture) => setupTexture(texture));
+  const texture = useTexture(url, (texture) => setupTexture(texture, { anisotropy }));
   // Check for self-illuminating flag in material userData
   // Note: The io_dif Blender add-on needs to be updated to export material flags
   const flagNames = new Set<string>(material?.userData?.flag_names ?? []);

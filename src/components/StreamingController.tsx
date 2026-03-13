@@ -1,13 +1,11 @@
 import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { useFrame } from "@react-three/fiber";
-import { useGLTF } from "@react-three/drei";
 import { Quaternion, Vector3 } from "three";
 import {
   DEFAULT_EYE_HEIGHT,
   STREAM_TICK_SEC,
   torqueHorizontalFovToThreeVerticalFov,
 } from "../stream/playbackUtils";
-import { shapeToUrl } from "../loaders";
 import { ParticleEffects } from "./ParticleEffects";
 import { PlayerEyeOffset } from "./PlayerModel";
 import { stopAllTrackedSounds } from "./AudioEmitter";
@@ -302,12 +300,6 @@ export function StreamingController({
         savedConnectedPlayerName ?? recording.recorderName ?? undefined,
       recordingDate: recording.recordingDate ?? undefined,
     });
-    // Preload weapon effect shapes (explosions) so they're cached before
-    // the first projectile detonates -- otherwise the GLB fetch latency
-    // causes the short-lived explosion entity to expire before it renders.
-    for (const shape of stream.getEffectShapes()) {
-      useGLTF.preload(shapeToUrl(shape));
-    }
     const snapshot = stream.getSnapshot();
 
     streamPlaybackStore.setState({ time: snapshot.timeSec });

@@ -64,11 +64,14 @@ const alphaAsRoughnessShaderModifier = (shader: any) => {
  * Configures a texture for use with alpha-as-roughness materials
  * @param texture - The texture to configure
  */
-export function setupAlphaAsRoughnessTexture(texture: Texture) {
+export function setupAlphaAsRoughnessTexture(
+  texture: Texture,
+  options: { anisotropy?: number } = {},
+) {
   texture.wrapS = texture.wrapT = RepeatWrapping;
   texture.colorSpace = SRGBColorSpace;
   texture.flipY = false;
-  texture.anisotropy = 16;
+  texture.anisotropy = options.anisotropy ?? 1;
   texture.generateMipmaps = true;
   texture.minFilter = LinearMipmapLinearFilter;
   texture.magFilter = LinearFilter;

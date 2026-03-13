@@ -7,6 +7,7 @@ import * as SkeletonUtils from "three/examples/jsm/utils/SkeletonUtils.js";
 import {
   _r90,
   _r90inv,
+  disposeClonedScene,
   getPosedNodeTransform,
   processShapeScene,
 } from "../stream/playbackUtils";
@@ -17,6 +18,7 @@ import {
 } from "./useIflTexture";
 import type { IflAtlas } from "./useIflTexture";
 import { ShapeRenderer, useStaticShape } from "./GenericShape";
+import { useAnisotropy } from "./useAnisotropy";
 import { ShapeInfoProvider } from "./ShapeInfoProvider";
 import type { TorqueObject } from "../torqueScript";
 import type { ExplosionEntity, ShapeEntity } from "../state/gameEntityTypes";
@@ -50,7 +52,6 @@ export function WeaponModel({ entity }: { entity: ShapeEntity }) {
   const playerGltf = useStaticShape(playerShapeName);
   const weaponGltf = useStaticShape(shapeName);
 
-  // eslint-disable-next-line react-hooks/preserve-manual-memoization
   const mountTransform = useMemo(() => {
     // Get Mount0 from the player's posed skeleton with arm animation applied.
     const armThread = getArmThread(shapeName);
@@ -96,7 +97,13 @@ export function WeaponModel({ entity }: { entity: ShapeEntity }) {
     const mountQuat = _r90.clone().multiply(combinedQuat).multiply(_r90inv);
 
     return { position: mountPos, quaternion: mountQuat };
-  }, [playerGltf, weaponGltf]);
+  }, [
+    playerGltf.animations,
+    playerGltf.scene,
+    shapeName,
+    weaponGltf.animations,
+    weaponGltf.scene,
+  ]);
 
   const torqueObject = useMemo<TorqueObject>(
     () => ({
@@ -207,6 +214,7 @@ function interpolateSize(
 export function ExplosionShape({ entity }: { entity: ExplosionEntity }) {
   const playback = streamPlaybackStore.getState().playback;
   const gltf = useStaticShape(entity.shapeName!);
+  const anisotropy = useAnisotropy();
   const groupRef = useRef<Group>(null);
   const startTimeRef = useRef(effectNow());
   // eslint-disable-next-line react-hooks/purity
@@ -267,7 +275,7 @@ export function ExplosionShape({ entity }: { entity: ExplosionEntity }) {
       }
     });
 
-    processShapeScene(scene, entity.shapeName);
+    processShapeScene(scene, entity.shapeName, { anisotropy });
 
     // Collect vis-animated nodes keyed by sequence name.
     const visNodes: VisNode[] = [];
@@ -342,7 +350,14 @@ export function ExplosionShape({ entity }: { entity: ExplosionEntity }) {
     });
 
     return { scene, mixer, visNodes, iflInfos, materials };
-  }, [gltf, expBlock]);
+  }, [gltf, expBlock, anisotropy]);
+
+  useEffect(() => {
+    return () => {
+      disposeClonedScene(scene);
+      mixer?.uncacheRoot(scene);
+    };
+  }, [scene, mixer]);
 
   // Load IFL texture atlases.
   useEffect(() => {

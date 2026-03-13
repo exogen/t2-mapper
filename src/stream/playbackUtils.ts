@@ -27,7 +27,7 @@ import {
   getFrameIndexForTime,
   updateAtlasFrame,
 } from "../components/useIflTexture";
-import { getHullBoneIndices, filterGeometryByVertexGroups } from "../meshUtils";
+import { getHullBoneIndices } from "../meshUtils";
 import { loadTexture, setupTexture } from "../textureUtils";
 import { textureToUrl } from "../loaders";
 import type { Keyframe } from "./types";
@@ -194,6 +194,51 @@ export function getPosedNodeTransform(
 }
 
 /**
+ * Remove faces influenced by hull bones, mutating the geometry in place.
+ * Unlike filterGeometryByVertexGroups (which clones), this is safe when the
+ * geometry is already our own copy (e.g. from SkeletonUtils.clone).
+ */
+function filterHullFaces(
+  geometry: BufferGeometry,
+  hullBoneIndices: Set<number>,
+): void {
+  if (hullBoneIndices.size === 0 || !geometry.attributes.skinIndex) return;
+
+  const skinIndex = geometry.attributes.skinIndex;
+  const skinWeight = geometry.attributes.skinWeight;
+  const index = geometry.index;
+  if (!index) return;
+
+  const vertexHasHullInfluence = new Array(skinIndex.count).fill(false);
+  for (let i = 0; i < skinIndex.count; i++) {
+    for (let j = 0; j < 4; j++) {
+      const boneIndex = skinIndex.array[i * 4 + j];
+      const weight = skinWeight.array[i * 4 + j];
+      if (weight > 0.01 && hullBoneIndices.has(boneIndex)) {
+        vertexHasHullInfluence[i] = true;
+        break;
+      }
+    }
+  }
+
+  const newIndices: number[] = [];
+  const indexArray = index.array;
+  for (let i = 0; i < indexArray.length; i += 3) {
+    const i0 = indexArray[i];
+    const i1 = indexArray[i + 1];
+    const i2 = indexArray[i + 2];
+    if (
+      !vertexHasHullInfluence[i0] &&
+      !vertexHasHullInfluence[i1] &&
+      !vertexHasHullInfluence[i2]
+    ) {
+      newIndices.push(i0, i1, i2);
+    }
+  }
+  geometry.setIndex(newIndices);
+}
+
+/**
  * Smooth vertex normals across co-located split vertices (same position, different
  * UVs). Matches the technique used by ShapeModel for consistent lighting.
  */
@@ -262,6 +307,7 @@ export function replaceWithShapeMaterial(
   mat: MeshStandardMaterial,
   vis: number,
   isOrganic = false,
+  options: { anisotropy?: number } = {},
 ): ShapeMaterialResult {
   const resourcePath: string | undefined = mat.userData?.resource_path;
   const flagNames = new Set<string>(mat.userData?.flag_names ?? []);
@@ -311,9 +357,9 @@ export function replaceWithShapeMaterial(
   const texture = loadTexture(url);
   const isTranslucent = flagNames.has("Translucent");
   if (isOrganic || isTranslucent) {
-    setupTexture(texture, { disableMipmaps: true });
+    setupTexture(texture, { disableMipmaps: true, anisotropy: options.anisotropy });
   } else {
-    setupTexture(texture);
+    setupTexture(texture, { anisotropy: options.anisotropy });
   }
 
   const result = createMaterialFromFlags(
@@ -368,6 +414,7 @@ async function initializeIflMaterial(
 export function processShapeScene(
   scene: Object3D,
   shapeName?: string,
+  options: { anisotropy?: number } = {},
 ): IflInitializer[] {
   const iflInitializers: IflInitializer[] = [];
   const isOrganic = shapeName ? isOrganicShape(shapeName) : false;
@@ -402,14 +449,11 @@ export function processShapeScene(
     }
 
     // Filter hull-influenced triangles and smooth normals.
+    // SkeletonUtils.clone already deep-clones geometry, so no extra clone
+    // is needed — we can mutate in place.
     if (node.geometry) {
-      let geometry = filterGeometryByVertexGroups(
-        node.geometry,
-        hullBoneIndices,
-      );
-      geometry = geometry.clone();
-      smoothVertexNormals(geometry);
-      node.geometry = geometry;
+      filterHullFaces(node.geometry, hullBoneIndices);
+      smoothVertexNormals(node.geometry);
     }
 
     // Replace PBR materials with diffuse-only Lambert materials.
@@ -418,7 +462,7 @@ export function processShapeScene(
     const vis: number = hasVisSequence ? 1 : (node.userData?.vis ?? 1);
     if (Array.isArray(node.material)) {
       node.material = node.material.map((m: MeshStandardMaterial) => {
-        const result = replaceWithShapeMaterial(m, vis, isOrganic);
+        const result = replaceWithShapeMaterial(m, vis, isOrganic, options);
         if (result.initialize) {
           iflInitializers.push({ mesh: node, initialize: result.initialize });
         }
@@ -430,7 +474,7 @@ export function processShapeScene(
         return result.material;
       });
     } else if (node.material) {
-      const result = replaceWithShapeMaterial(node.material, vis, isOrganic);
+      const result = replaceWithShapeMaterial(node.material, vis, isOrganic, options);
       if (result.initialize) {
         iflInitializers.push({ mesh: node, initialize: result.initialize });
       }
@@ -449,6 +493,26 @@ export function processShapeScene(
   }
 
   return iflInitializers;
+}
+
+/**
+ * Dispose all geometries and materials on a cloned scene graph.
+ * Textures are intentionally left alone since they're shared via caches.
+ */
+export function disposeClonedScene(root: Object3D): void {
+  root.traverse((node: any) => {
+    if (node.geometry) {
+      node.geometry.dispose();
+    }
+    if (node.material) {
+      const mats: Material[] = Array.isArray(node.material)
+        ? node.material
+        : [node.material];
+      for (const mat of mats) {
+        mat.dispose();
+      }
+    }
+  });
 }
 
 export function entityTypeColor(type: string): string {

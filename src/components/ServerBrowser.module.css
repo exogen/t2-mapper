@@ -56,6 +56,7 @@
 
 .Table {
   width: 100%;
+  min-height: 0;
   border-collapse: collapse;
   font-size: 13px;
 }
@@ -133,6 +134,7 @@
 .Footer {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 16px;
   padding: 10px 12px;
   border-top: 1px solid rgba(0, 190, 220, 0.25);
@@ -187,15 +189,11 @@
   margin: 0 auto;
 }
 
-@media (max-width: 719px) {
-  .Dialog {
-    width: 100%;
-    height: 100%;
-    max-width: 100dvw;
-    max-height: 100dvh;
-    border-radius: 0;
-  }
+.Actions {
+  composes: Actions from "./GameDialog.module.css";
+}
 
+@media (max-width: 719px) {
   .Hint {
     display: none;
   }
@@ -206,5 +204,31 @@
 
   .CloseButton {
     margin-left: auto;
+  }
+}
+
+@media (max-width: 539px) {
+  .Footer {
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .Actions {
+    width: 100%;
+  }
+
+  .WarriorLabel {
+    font-size: 14px;
+  }
+
+  .WarriorInput {
+    font-size: 16px;
+    min-width: 12em;
+  }
+
+  .JoinButton,
+  .CloseButton {
+    flex: 1 0 auto;
+    height: 32px;
   }
 }

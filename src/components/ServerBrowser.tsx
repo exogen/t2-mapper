@@ -195,16 +195,18 @@ export function ServerBrowser({ onClose }: { onClose: () => void }) {
             />
           </div>
           <span className={styles.Hint}>Double-click a server to join</span>
-          <button onClick={onClose} className={styles.CloseButton}>
-            Cancel
-          </button>
-          <button
-            onClick={handleJoinSelected}
-            disabled={!selectedAddress}
-            className={styles.JoinButton}
-          >
-            Join
-          </button>
+          <div className={styles.Actions}>
+            <button onClick={onClose} className={styles.CloseButton}>
+              Cancel
+            </button>
+            <button
+              onClick={handleJoinSelected}
+              disabled={!selectedAddress}
+              className={styles.JoinButton}
+            >
+              Join
+            </button>
+          </div>
         </div>
       </div>
     </div>

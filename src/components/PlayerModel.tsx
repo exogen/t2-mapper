@@ -18,6 +18,7 @@ import * as SkeletonUtils from "three/examples/jsm/utils/SkeletonUtils.js";
 import {
   ANIM_TRANSITION_TIME,
   DEFAULT_EYE_HEIGHT,
+  disposeClonedScene,
   getKeyframeAtTime,
   getPosedNodeTransform,
   processShapeScene,
@@ -27,6 +28,7 @@ import { WeaponImageStateMachine } from "../stream/weaponStateMachine";
 import type { WeaponAnimState } from "../stream/weaponStateMachine";
 import { getAliasedActions } from "../torqueScript/shapeConstructor";
 import { useStaticShape, ShapePlaceholder } from "./GenericShape";
+import { useAnisotropy } from "./useAnisotropy";
 import { ShapeErrorBoundary } from "./ShapeErrorBoundary";
 import { DebugSuspense } from "./DebugSuspense";
 import { useAudio } from "./AudioContext";
@@ -174,12 +176,13 @@ export function PlayerModel({ entity }: { entity: PlayerEntity }) {
     const sn = shapeName?.toLowerCase();
     return sn ? state.runtime.sequenceAliases.get(sn) : undefined;
   });
+  const anisotropy = useAnisotropy();
 
   // Clone scene preserving skeleton bindings, create mixer, find mount bones.
   const { clonedScene, mixer, mount0, mount1, mount2, iflInitializers } =
     useMemo(() => {
       const scene = SkeletonUtils.clone(gltf.scene) as Group;
-      const iflInits = processShapeScene(scene);
+      const iflInits = processShapeScene(scene, undefined, { anisotropy });
 
       // Use front-face-only rendering so the camera can see out from inside the
       // model in first-person (backface culling hides interior faces).
@@ -209,7 +212,14 @@ export function PlayerModel({ entity }: { entity: PlayerEntity }) {
         mount2: m2,
         iflInitializers: iflInits,
       };
-    }, [gltf]);
+    }, [gltf, anisotropy]);
+
+  useEffect(() => {
+    return () => {
+      disposeClonedScene(clonedScene);
+      mixer.uncacheRoot(clonedScene);
+    };
+  }, [clonedScene, mixer]);
 
   // Build case-insensitive clip lookup with alias support.
   const animActionsRef = useRef(new Map<string, AnimationAction>());
@@ -659,6 +669,7 @@ function WeaponModel({
 }) {
   const engineStore = useEngineStoreApi();
   const weaponGltf = useStaticShape(weaponShape);
+  const anisotropy = useAnisotropy();
 
   // Clone weapon with skeleton bindings, create dedicated mixer.
   const {
@@ -669,7 +680,7 @@ function WeaponModel({
     weaponIflInitializers,
   } = useMemo(() => {
     const clone = SkeletonUtils.clone(weaponGltf.scene) as Group;
-    const iflInits = processShapeScene(clone);
+    const iflInits = processShapeScene(clone, undefined, { anisotropy });
 
     // Compute Mountpoint inverse offset so the weapon's grip aligns to Mount0.
     const mp = getPosedNodeTransform(
@@ -714,7 +725,14 @@ function WeaponModel({
       visNodesBySequence: visBySeq,
       weaponIflInitializers: iflInits,
     };
-  }, [weaponGltf]);
+  }, [weaponGltf, anisotropy]);
+
+  useEffect(() => {
+    return () => {
+      disposeClonedScene(weaponClone);
+      weaponMixer.uncacheRoot(weaponClone);
+    };
+  }, [weaponClone, weaponMixer]);
 
   // Build case-insensitive action map for weapon animations.
   const weaponActionsRef = useRef(new Map<string, AnimationAction>());
@@ -1013,10 +1031,11 @@ function PackModel({
   mountBone: Object3D;
 }) {
   const packGltf = useStaticShape(packShape);
+  const anisotropy = useAnisotropy();
 
   const { packClone, packIflInitializers } = useMemo(() => {
     const clone = SkeletonUtils.clone(packGltf.scene) as Group;
-    const iflInits = processShapeScene(clone);
+    const iflInits = processShapeScene(clone, undefined, { anisotropy });
 
     // Compute Mountpoint inverse offset so the pack aligns to Mount1.
     const mp = getPosedNodeTransform(
@@ -1032,12 +1051,13 @@ function PackModel({
     }
 
     return { packClone: clone, packIflInitializers: iflInits };
-  }, [packGltf]);
+  }, [packGltf, anisotropy]);
 
   useEffect(() => {
     mountBone.add(packClone);
     return () => {
       mountBone.remove(packClone);
+      disposeClonedScene(packClone);
     };
   }, [packClone, mountBone]);
 

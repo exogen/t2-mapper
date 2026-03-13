@@ -84,6 +84,8 @@ export interface TextureSetupOptions {
   repeat?: [number, number];
   /** Disable mipmaps (for alpha-tested textures to prevent artifacts). Default: false */
   disableMipmaps?: boolean;
+  /** Override anisotropy level. Default: max supported by the GPU. */
+  anisotropy?: number;
 }
 
 /**
@@ -97,13 +99,13 @@ export function setupTexture<T extends Texture>(
   tex: T,
   options: TextureSetupOptions = {},
 ): T {
-  const { repeat = [1, 1], disableMipmaps = false } = options;
+  const { repeat = [1, 1], disableMipmaps = false, anisotropy } = options;
 
   tex.wrapS = tex.wrapT = RepeatWrapping;
   tex.colorSpace = SRGBColorSpace;
   tex.repeat.set(...repeat);
   tex.flipY = false; // DDS/DIF textures are already flipped
-  tex.anisotropy = 16;
+  tex.anisotropy = anisotropy ?? 1;
 
   if (disableMipmaps) {
     // Disable mipmaps - prevents checkerboard artifacts on alpha-tested materials

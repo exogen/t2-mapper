@@ -14,6 +14,7 @@ import {
 import { setupTexture } from "../textureUtils";
 import { updateTerrainTextureShader } from "../terrainMaterial";
 import { useDebug } from "./SettingsProvider";
+import { useAnisotropy } from "./useAnisotropy";
 import { injectCustomFog } from "../fogShader";
 import { globalFogUniforms } from "../globalFogUniforms";
 
@@ -58,11 +59,12 @@ const BlendedTerrainTextures = memo(function BlendedTerrainTextures({
   lightmap?: DataTexture;
 }) {
   const { debugMode } = useDebug();
+  const anisotropy = useAnisotropy();
 
   const baseTextures = useTexture(
     textureNames.map((name) => terrainTextureToUrl(name)),
     (textures) => {
-      textures.forEach((tex) => setupTexture(tex));
+      textures.forEach((tex) => setupTexture(tex, { anisotropy }));
     },
   );
 
@@ -74,7 +76,7 @@ const BlendedTerrainTextures = memo(function BlendedTerrainTextures({
   const detailTexture = useTexture(
     detailTextureUrl ?? FALLBACK_TEXTURE_URL,
     (tex) => {
-      setupTexture(tex);
+      setupTexture(tex, { anisotropy });
     },
   );
 
