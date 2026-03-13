@@ -5,10 +5,10 @@ import { parseArgs } from "node:util";
 const FFMPEG_PATH = process.env.FFMPEG_PATH || "ffmpeg";
 
 /**
- * Find all .wav files in `docs/base` and convert them to Opus OGG.
- * Converted .ogg files are placed alongside the originals (analogous to
+ * Find all .wav files in `docs/base` and convert them to AAC M4A.
+ * Converted .m4a files are placed alongside the originals (analogous to
  * how convert-dts.ts places .glb files alongside .dts files). The manifest
- * ignores .ogg files; audioToUrl() swaps the extension at resolution time.
+ * ignores .m4a files; audioToUrl() swaps the extension at resolution time.
  */
 async function run({
   onlyNew,
@@ -21,11 +21,11 @@ async function run({
 }) {
   const inputFiles: string[] = [];
   for await (const wavFile of fs.glob("docs/base/**/*.{wav,WAV}")) {
-    const oggFile = wavFile.replace(/\.wav$/i, ".ogg");
+    const m4aFile = wavFile.replace(/\.wav$/i, ".m4a");
     if (onlyNew) {
       try {
-        await fs.stat(oggFile);
-        continue; // .ogg already exists, skip
+        await fs.stat(m4aFile);
+        continue; // .m4a already exists, skip
       } catch {
         /* expected */
       }
@@ -39,14 +39,14 @@ async function run({
   }
 
   console.log(
-    `Converting ${inputFiles.length} .wav file(s) to Opus OGG (${bitrate})…`,
+    `Converting ${inputFiles.length} .wav file(s) to AAC M4A (${bitrate})…`,
   );
 
   let completed = 0;
   let failed = 0;
 
   async function convert(wavFile: string) {
-    const oggFile = wavFile.replace(/\.wav$/i, ".ogg");
+    const m4aFile = wavFile.replace(/\.wav$/i, ".m4a");
     try {
       execFileSync(
         FFMPEG_PATH,
@@ -55,11 +55,13 @@ async function run({
           "-i",
           wavFile,
           "-c:a",
-          "libopus",
+          "aac",
           "-b:a",
           bitrate,
+          "-movflags",
+          "+faststart",
           "-vn",
-          oggFile,
+          m4aFile,
         ],
         { stdio: "pipe" },
       );
@@ -97,7 +99,7 @@ const { values } = parseArgs({
     },
     bitrate: {
       type: "string",
-      default: "64k",
+      default: "96k",
       short: "b",
     },
     concurrency: {

@@ -24,7 +24,7 @@ export function getUrlForPath(resourcePath: string, fallbackUrl?: string) {
     resourceKey = getActualResourceKey(resourcePath);
   } catch (err) {
     if (fallbackUrl) {
-      log.warn("Resource \"%s\" not found — rendering fallback", resourcePath);
+      log.warn('Resource "%s" not found — rendering fallback', resourcePath);
       return fallbackUrl;
     } else {
       throw err;
@@ -72,7 +72,7 @@ export function textureToUrl(name: string) {
 
 export function audioToUrl(fileName: string) {
   const url = getUrlForPath(`audio/${fileName}`);
-  return url.replace(/\.wav$/i, ".ogg");
+  return url.replace(/\.wav$/i, ".m4a");
 }
 
 export async function loadDetailMapList(name: string) {
