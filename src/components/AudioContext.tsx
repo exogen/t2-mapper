@@ -56,10 +56,12 @@ export function AudioProvider({ children }: { children: ReactNode }) {
       ctx.resume().finally(() => {
         document.removeEventListener("click", resumeOnGesture);
         document.removeEventListener("keydown", resumeOnGesture);
+        document.removeEventListener("touchend", resumeOnGesture);
       });
     };
     document.addEventListener("click", resumeOnGesture);
     document.addEventListener("keydown", resumeOnGesture);
+    document.addEventListener("touchend", resumeOnGesture);
 
     // Suspend/resume the Web AudioContext when demo playback pauses/resumes.
     // This freezes all playing sounds at their current position rather than
@@ -80,6 +82,7 @@ export function AudioProvider({ children }: { children: ReactNode }) {
     return () => {
       document.removeEventListener("click", resumeOnGesture);
       document.removeEventListener("keydown", resumeOnGesture);
+      document.removeEventListener("touchend", resumeOnGesture);
       unsubscribe();
       if (listener) camera.remove(listener);
     };
