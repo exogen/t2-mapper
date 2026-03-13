@@ -203,4 +203,8 @@
   .Table td {
     max-width: 200px;
   }
+
+  .CloseButton {
+    margin-left: auto;
+  }
 }

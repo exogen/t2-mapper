@@ -2,7 +2,7 @@
   position: relative;
   display: flex;
   align-items: center;
-  margin: 10px 10px 10px 4px;
+  margin: 10px 10px 10px 8px;
   z-index: 2;
 }
 
@@ -195,4 +195,10 @@
   bottom: 0;
   background: rgba(0, 0, 0, 0.5);
   z-index: 1;
+}
+
+@media (max-width: 899px) {
+  .InputWrapper {
+    margin-left: 4px;
+  }
 }

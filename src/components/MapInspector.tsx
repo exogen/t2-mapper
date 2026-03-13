@@ -57,6 +57,7 @@ import {
   LuPanelTopOpen,
 } from "react-icons/lu";
 import styles from "./MapInspector.module.css";
+import { useTouchDevice } from "./useTouchDevice";
 
 function createLazy(
   name: string,
@@ -112,10 +113,11 @@ export function MapInspector() {
   const { missionName, missionType } = currentMission;
   const [mapInfoOpen, setMapInfoOpen] = useState(false);
   const [serverBrowserOpen, setServerBrowserOpen] = useState(false);
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const [choosingMap, setChoosingMap] = useState(false);
   const [missionLoadingProgress, setMissionLoadingProgress] = useState(0);
   const [showLoadingIndicator, setShowLoadingIndicator] = useState(true);
+  const isTouch = useTouchDevice();
 
   const changeMission = useCallback(
     (mission: CurrentMission) => {
@@ -130,8 +132,11 @@ export function MapInspector() {
       engineStore.getState().setRecording(null);
       gameEntityStore.getState().endStreaming();
       setCurrentMission(mission);
+      if (isTouch) {
+        setSidebarOpen(false);
+      }
     },
-    [setCurrentMission, clearFogEnabledOverride],
+    [clearFogEnabledOverride, setCurrentMission, isTouch],
   );
 
   usePublicWindowAPI({ onChangeMission: changeMission });
@@ -168,6 +173,20 @@ export function MapInspector() {
       setChoosingMap(false);
     }
   }, [recording]);
+
+  // Close the sidebar when a live server connection is established.
+  const gameStatus = useLiveSelector((s) => s.gameStatus);
+  useEffect(() => {
+    if (gameStatus === "connected" && isTouch) {
+      setSidebarOpen(false);
+    }
+  }, [gameStatus, isTouch]);
+
+  useEffect(() => {
+    if (recording && isTouch) {
+      setSidebarOpen(false);
+    }
+  }, [isTouch, recording]);
 
   const loadingProgress = missionLoadingProgress;
   const isLoading = loadingProgress < 1;

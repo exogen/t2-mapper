@@ -27,6 +27,8 @@
   font-size: 22px;
   padding-top: 8px;
   padding-bottom: 8px;
+  background: rgba(27, 79, 135, 0.7);
+  box-shadow: inset 0 0 10px rgba(4, 40, 71, 0.5);
 }
 
 .ButtonGroup .IconButton svg {
@@ -34,7 +36,14 @@
 }
 
 .ButtonGroup .IconButton[data-active="true"] {
-  background: rgb(5, 114, 177);
+  background: rgba(0, 101, 203, 0.8);
+  box-shadow:
+    inset 0 2px 3px rgba(8, 189, 255, 0.5),
+    inset 0 -2px 6px rgba(0, 18, 40, 0.5);
+}
+
+.ButtonGroup .IconButton[data-active="true"] svg {
+  opacity: 1;
 }
 
 .ButtonGroup .IconButton:not(:first-child) {
@@ -159,13 +168,10 @@
   font-size: 18px;
   font-weight: 500;
   padding: 4px 8px;
-  border-top: 1px solid rgba(255, 255, 255, 0.3);
-  border-left: 1px solid rgba(255, 255, 255, 0.3);
-  border-right: 1px solid rgba(200, 200, 200, 0.3);
-  border-bottom: 1px solid rgba(200, 200, 200, 0.3);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
   border-radius: 5px;
-  background: rgba(3, 82, 147, 0.6);
+  background: rgba(0, 98, 179, 0.8);
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
   color: #fff;
   cursor: pointer;
   transform: translate(0, 0);
@@ -175,9 +181,9 @@
 }
 
 .IconButton svg {
+  opacity: 0.8;
   flex: 0 0 auto;
   pointer-events: none;
-  opacity: 0.6;
   transition: opacity 0.2s;
 }
 
@@ -187,9 +193,21 @@
 }
 
 @media (hover: hover) {
+  .IconButton {
+    border-top: 1px solid rgba(255, 255, 255, 0.3);
+    border-left: 1px solid rgba(255, 255, 255, 0.3);
+    border-right: 1px solid rgba(200, 200, 200, 0.3);
+    border-bottom: 1px solid rgba(200, 200, 200, 0.3);
+    background: rgba(3, 82, 147, 0.6);
+  }
+
   .IconButton:not(:disabled):hover {
     background: rgba(0, 98, 179, 0.8);
     border-color: rgba(255, 255, 255, 0.4);
+  }
+
+  .IconButton svg {
+    opacity: 0.6;
   }
 
   .IconButton:not(:disabled):hover svg {

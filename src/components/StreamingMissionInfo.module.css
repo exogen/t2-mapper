@@ -60,23 +60,7 @@
   min-width: 28px;
   min-height: 28px;
   padding: 2px;
-  /* display: flex;
-  align-items: center;
-  justify-content: center;
-  margin-right: 12px;
-  padding: 6px;
-  font-size: 18px;
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  border-radius: 3px;
-  background: rgba(255, 255, 255, 0.05);
-  color: rgba(255, 255, 255, 0.6);
-  cursor: pointer; */
 }
-
-/* .ActionButton:hover {
-  background: rgba(255, 255, 255, 0.1);
-  color: #fff;
-} */
 
 .EjectIcon {
   font-size: 21px;
@@ -86,5 +70,9 @@
 @media (max-width: 899px) {
   .Metadata {
     display: none;
+  }
+
+  .MissionInfo {
+    margin-left: 0;
   }
 }
