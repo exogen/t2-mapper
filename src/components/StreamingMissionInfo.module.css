@@ -67,6 +67,10 @@
   margin-top: -0.5px;
 }
 
+.Error {
+  color: rgb(255, 106, 69);
+}
+
 @media (max-width: 899px) {
   .Metadata {
     display: none;

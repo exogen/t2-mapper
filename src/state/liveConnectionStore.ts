@@ -45,7 +45,7 @@ export interface LiveConnectionStore extends LiveConnectionState {
   listServers(): void;
   joinServer(address: string, warriorName?: string): void;
   disconnectServer(): void;
-  sendMove(move: ClientMove): void;
+  sendMoves(moves: ClientMove[], moveStartIndex: number): void;
   sendCommand(command: string, ...args: string[]): void;
 }
 
@@ -254,8 +254,8 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
       });
     },
 
-    sendMove(move) {
-      get()._relay?.sendMove(move);
+    sendMoves(moves, moveStartIndex) {
+      get()._relay?.sendMoves(moves, moveStartIndex);
     },
 
     sendCommand(command, ...args) {

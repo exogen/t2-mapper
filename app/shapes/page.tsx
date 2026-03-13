@@ -305,7 +305,7 @@ function ShapeInspector() {
   return (
     <QueryClientProvider client={queryClient}>
       <main>
-        <SettingsProvider onClearFogEnabledOverride={() => {}}>
+        <SettingsProvider>
           <div className={styles.CanvasContainer}>
             {showLoading && (
               <div

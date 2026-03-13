@@ -170,12 +170,12 @@ export function InspectorControls({
                   <input
                     id="speedInput"
                     type="range"
-                    min={0.1}
-                    max={5}
-                    step={0.05}
-                    value={speedMultiplier}
+                    min={1}
+                    max={100}
+                    step={1}
+                    value={Math.round(speedMultiplier * 100)}
                     onChange={(event) =>
-                      setSpeedMultiplier(parseFloat(event.target.value))
+                      setSpeedMultiplier(parseFloat(event.target.value) / 100)
                     }
                   />
                   <p className={styles.Description}>

@@ -68,12 +68,16 @@ export function StreamingMissionInfo() {
       </div>
       <div className={styles.Metadata}>
         {isLive ? (
-          playerName ? (
-            <div className={styles.Attribution}>
-              Connected as{" "}
-              <span className={styles.PlayerName}>{playerName}</span>
-            </div>
-          ) : null
+          isLiveConnected ? (
+            playerName ? (
+              <div className={styles.Attribution}>
+                Connected as{" "}
+                <span className={styles.PlayerName}>{playerName}</span>
+              </div>
+            ) : null
+          ) : (
+            <div className={styles.Error}>Disconnected</div>
+          )
         ) : playerName && dateString ? (
           <div className={styles.Attribution}>
             Recorded by <span className={styles.PlayerName}>{playerName}</span>{" "}

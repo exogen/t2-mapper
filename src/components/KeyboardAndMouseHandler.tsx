@@ -1,11 +1,14 @@
 import { useEffect, useEffectEvent, useRef } from "react";
-import { Euler, Vector3 } from "three";
 import { useFrame, useThree } from "@react-three/fiber";
 import { useKeyboardControls } from "@react-three/drei";
 import { PointerLockControls } from "three-stdlib";
-import { useControls } from "./SettingsProvider";
+import {
+  MAX_SPEED_MULTIPLIER,
+  MIN_SPEED_MULTIPLIER,
+  useControls,
+} from "./SettingsProvider";
 import { useCameras } from "./CamerasProvider";
-import { streamPlaybackStore } from "../state/streamPlaybackStore";
+import { useInputContext } from "./InputContext";
 
 export enum Controls {
   forward = "forward",
@@ -51,15 +54,21 @@ export const KEYBOARD_CONTROLS = [
   { name: Controls.camera9, keys: ["Digit9"] },
 ];
 
-const BASE_SPEED = 80;
-const MIN_SPEED_ADJUSTMENT = 0.05;
-const MAX_SPEED_ADJUSTMENT = 0.5;
-const MAX_PITCH = Math.PI / 2 - 0.01; // ~89°
+const MIN_SPEED_ADJUSTMENT = 2;
+const MAX_SPEED_ADJUSTMENT = 10;
 const DRAG_THRESHOLD = 3; // px of movement before it counts as a drag
 
 /** Shared mouse/look sensitivity used across all modes (.mis, .rec, live). */
 export const MOUSE_SENSITIVITY = 0.003;
 export const ARROW_LOOK_SPEED = 1; // radians/sec
+
+function quantizeSpeed(speedMultiplier: number): number {
+  // Map [0.01, 1] → [1/16, 1], snapped to the 6-bit grid (multiples of 1/16).
+  const t =
+    (speedMultiplier - MIN_SPEED_MULTIPLIER) / (1 - MIN_SPEED_MULTIPLIER);
+  const steps = Math.round(t * 15); // 0..15 → 16 levels (1/16 to 16/16)
+  return (steps + 1) / 16;
+}
 
 export function KeyboardAndMouseHandler() {
   // Don't let KeyboardControls handle stuff when metaKey is held.
@@ -85,6 +94,7 @@ export function KeyboardAndMouseHandler() {
 
   const { speedMultiplier, setSpeedMultiplier, invertScroll, invertDrag } =
     useControls();
+  const { onInput, mode } = useInputContext();
   const [subscribe, getKeys] = useKeyboardControls<Controls>();
   const camera = useThree((state) => state.camera);
   const gl = useThree((state) => state.gl);
@@ -94,11 +104,13 @@ export function KeyboardAndMouseHandler() {
   const getInvertScroll = useEffectEvent(() => invertScroll);
   const getInvertDrag = useEffectEvent(() => invertDrag);
 
-  // Scratch vectors/euler to avoid allocations each frame
-  const forwardVec = useRef(new Vector3());
-  const sideVec = useRef(new Vector3());
-  const moveVec = useRef(new Vector3());
-  const lookEuler = useRef(new Euler(0, 0, 0, "YXZ"));
+  // Accumulated mouse deltas between frames.
+  const mouseDeltaYaw = useRef(0);
+  const mouseDeltaPitch = useRef(0);
+
+  // Trigger flags set by event handlers, consumed in useFrame.
+  const triggerFire = useRef(false);
+  const triggerObserve = useRef(false);
 
   // Setup pointer lock controls
   useEffect(() => {
@@ -110,11 +122,11 @@ export function KeyboardAndMouseHandler() {
     };
   }, [camera, gl.domElement]);
 
-  // When pointer is locked: click cycles camera.
-  // When pointer is unlocked: drag rotates camera, click locks pointer.
+  // Mouse handling: accumulate deltas for input frames.
+  // In local mode, drag-to-look works without pointer lock.
+  // Pointer lock and click behavior depend on mode.
   useEffect(() => {
     const canvas = gl.domElement;
-    const euler = new Euler(0, 0, 0, "YXZ");
     let dragging = false;
     let didDrag = false;
     let startX = 0;
@@ -130,6 +142,13 @@ export function KeyboardAndMouseHandler() {
     };
 
     const handleMouseMove = (e: MouseEvent) => {
+      if (controlsRef.current?.isLocked) {
+        // Pointer is locked: accumulate raw deltas.
+        mouseDeltaYaw.current += e.movementX * MOUSE_SENSITIVITY;
+        mouseDeltaPitch.current += e.movementY * MOUSE_SENSITIVITY;
+        return;
+      }
+
       if (!dragging) return;
       if (
         !didDrag &&
@@ -141,11 +160,8 @@ export function KeyboardAndMouseHandler() {
       didDrag = true;
 
       const dragSign = getInvertDrag() ? -1 : 1;
-      euler.setFromQuaternion(camera.quaternion, "YXZ");
-      euler.y += dragSign * e.movementX * MOUSE_SENSITIVITY;
-      euler.x += dragSign * e.movementY * MOUSE_SENSITIVITY;
-      euler.x = Math.max(-MAX_PITCH, Math.min(MAX_PITCH, euler.x));
-      camera.quaternion.setFromEuler(euler);
+      mouseDeltaYaw.current += dragSign * e.movementX * MOUSE_SENSITIVITY;
+      mouseDeltaPitch.current += dragSign * e.movementY * MOUSE_SENSITIVITY;
     };
 
     const handleMouseUp = () => {
@@ -154,10 +170,17 @@ export function KeyboardAndMouseHandler() {
 
     const handleClick = (e: MouseEvent) => {
       const controls = controlsRef.current;
-      if (!controls || controls.isLocked) {
-        nextCamera();
+      if (controls?.isLocked) {
+        if (mode === "follow") {
+          // In follow mode, click cycles to next player (trigger 0).
+          triggerFire.current = true;
+        } else if (mode === "local") {
+          // In local mode, click while locked cycles preset cameras.
+          nextCamera();
+        }
+        // In fly mode, clicks while locked do nothing special.
       } else if (e.target === canvas && !didDrag) {
-        controls.lock();
+        controls?.lock();
       }
     };
 
@@ -172,9 +195,9 @@ export function KeyboardAndMouseHandler() {
       document.removeEventListener("mouseup", handleMouseUp);
       document.removeEventListener("click", handleClick);
     };
-  }, [camera, gl.domElement, nextCamera]);
+  }, [camera, gl.domElement, nextCamera, mode]);
 
-  // Handle number keys 1-9 for camera selection
+  // Handle number keys 1-9 for camera selection (local-only UI action).
   useEffect(() => {
     const cameraControls = [
       Controls.camera1,
@@ -198,7 +221,7 @@ export function KeyboardAndMouseHandler() {
     });
   }, [subscribe, setCameraIndex, cameraCount]);
 
-  // Handle mousewheel for speed adjustment
+  // Handle mousewheel for speed adjustment (local setting, stays in KMH).
   useEffect(() => {
     const handleWheel = (e: WheelEvent) => {
       e.preventDefault();
@@ -207,16 +230,17 @@ export function KeyboardAndMouseHandler() {
       const direction = (e.deltaY > 0 ? -1 : 1) * scrollSign;
 
       const delta =
-        // Helps normalize sensitivity; trackpad scrolling will have many small
-        // updates while mouse wheels have fewer updates but large deltas.
         Math.max(
           MIN_SPEED_ADJUSTMENT,
           Math.min(MAX_SPEED_ADJUSTMENT, Math.abs(e.deltaY * 0.01)),
         ) * direction;
 
       setSpeedMultiplier((prev) => {
-        const newSpeed = Math.round((prev + delta) * 20) / 20;
-        return Math.max(0.1, Math.min(5, newSpeed));
+        const newSpeed = Math.round(prev * 100) + delta;
+        return Math.max(
+          MIN_SPEED_MULTIPLIER,
+          Math.min(MAX_SPEED_MULTIPLIER, newSpeed / 100),
+        );
       });
     };
 
@@ -228,12 +252,28 @@ export function KeyboardAndMouseHandler() {
     };
   }, [gl.domElement, setSpeedMultiplier]);
 
-  useFrame((state, delta) => {
-    // When streaming is active and not in free-fly mode, the stream
-    // (StreamingController) drives the camera — skip our movement.
-    const spState = streamPlaybackStore.getState();
-    if (spState.playback && !spState.freeFlyCamera) return;
+  // 'O' key: toggle observer mode (sets trigger 2).
+  useEffect(() => {
+    if (mode === "local") return;
 
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.code !== "KeyO" || e.metaKey || e.ctrlKey || e.altKey) return;
+      const target = e.target as HTMLElement;
+      if (
+        target.tagName === "INPUT" ||
+        target.tagName === "TEXTAREA" ||
+        target.isContentEditable
+      ) {
+        return;
+      }
+      triggerObserve.current = true;
+    };
+    window.addEventListener("keydown", handleKey);
+    return () => window.removeEventListener("keydown", handleKey);
+  }, [mode]);
+
+  // Build and emit InputFrame each render frame.
+  useFrame((_state, delta) => {
     const {
       forward,
       backward,
@@ -247,58 +287,60 @@ export function KeyboardAndMouseHandler() {
       lookRight,
     } = getKeys();
 
-    // Arrow keys: rotate camera look direction
-    if (lookUp || lookDown || lookLeft || lookRight) {
-      lookEuler.current.setFromQuaternion(camera.quaternion, "YXZ");
-      if (lookLeft) lookEuler.current.y += ARROW_LOOK_SPEED * delta;
-      if (lookRight) lookEuler.current.y -= ARROW_LOOK_SPEED * delta;
-      if (lookUp) lookEuler.current.x += ARROW_LOOK_SPEED * delta;
-      if (lookDown) lookEuler.current.x -= ARROW_LOOK_SPEED * delta;
-      lookEuler.current.x = Math.max(
-        -MAX_PITCH,
-        Math.min(MAX_PITCH, lookEuler.current.x),
-      );
-      camera.quaternion.setFromEuler(lookEuler.current);
+    // Arrow keys contribute to look deltas.
+    let deltaYaw = mouseDeltaYaw.current;
+    let deltaPitch = mouseDeltaPitch.current;
+    mouseDeltaYaw.current = 0;
+    mouseDeltaPitch.current = 0;
+
+    if (lookLeft) deltaYaw -= ARROW_LOOK_SPEED * delta;
+    if (lookRight) deltaYaw += ARROW_LOOK_SPEED * delta;
+    if (lookUp) deltaPitch -= ARROW_LOOK_SPEED * delta;
+    if (lookDown) deltaPitch += ARROW_LOOK_SPEED * delta;
+
+    // Movement axes, pre-scaled by speedMultiplier (clamped to [-1, 1]).
+    let x = 0;
+    let y = 0;
+    let z = 0;
+    if (left) x -= 1;
+    if (right) x += 1;
+    if (forward) y += 1;
+    if (backward) y -= 1;
+    if (up) z += 1;
+    if (down) z -= 1;
+
+    const quantizedSpeedMultiplier = quantizeSpeed(speedMultiplier);
+
+    x = Math.max(-1, Math.min(1, x * quantizedSpeedMultiplier));
+    y = Math.max(-1, Math.min(1, y * quantizedSpeedMultiplier));
+    z = Math.max(-1, Math.min(1, z * quantizedSpeedMultiplier));
+
+    // Triggers.
+    const triggers = [false, false, false, false, false, false];
+    if (triggerFire.current) {
+      triggers[0] = true;
+      triggerFire.current = false;
+    }
+    if (triggerObserve.current) {
+      triggers[2] = true;
+      triggerObserve.current = false;
     }
 
-    if (!forward && !backward && !left && !right && !up && !down) {
-      return;
-    }
+    // Only emit if there's actual input.
+    const hasLook = deltaYaw !== 0 || deltaPitch !== 0;
+    const hasMove = x !== 0 || y !== 0 || z !== 0;
+    const hasTriggers = triggers.some(Boolean);
+    if (!hasLook && !hasMove && !hasTriggers) return;
 
-    const speed = BASE_SPEED * speedMultiplier;
-
-    // Forward/backward: take complete camera angle into account (including Y)
-    camera.getWorldDirection(forwardVec.current);
-    forwardVec.current.normalize();
-
-    // Left/right: move along XZ plane
-    sideVec.current.crossVectors(camera.up, forwardVec.current).normalize();
-
-    moveVec.current.set(0, 0, 0);
-
-    if (forward) {
-      moveVec.current.add(forwardVec.current);
-    }
-    if (backward) {
-      moveVec.current.sub(forwardVec.current);
-    }
-    if (left) {
-      moveVec.current.add(sideVec.current);
-    }
-    if (right) {
-      moveVec.current.sub(sideVec.current);
-    }
-    if (up) {
-      moveVec.current.y += 1;
-    }
-    if (down) {
-      moveVec.current.y -= 1;
-    }
-
-    if (moveVec.current.lengthSq() > 0) {
-      moveVec.current.normalize().multiplyScalar(speed * delta);
-      camera.position.add(moveVec.current);
-    }
+    onInput({
+      deltaYaw,
+      deltaPitch,
+      x,
+      y,
+      z,
+      triggers,
+      delta,
+    });
   });
 
   return null;

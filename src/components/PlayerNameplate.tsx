@@ -23,6 +23,8 @@ const IFF_ENEMY_URL = textureToUrl("gui/hud_enemytriangle");
 
 const _tmpVec = new Vector3();
 
+const EMPTY_KEYFRAMES = [];
+
 /**
  * Floating nameplate above a player model showing the entity name and a health
  * bar. Fades out with distance.
@@ -45,7 +47,7 @@ export function PlayerNameplate({ entity }: { entity: PlayerEntity }) {
   }, [gltf.scene]);
 
   // Check whether this entity has any health data at all.
-  const keyframes = entity.keyframes ?? [];
+  const keyframes = entity.keyframes ?? EMPTY_KEYFRAMES;
   const hasHealthData = useMemo(
     () => keyframes.some((kf) => kf.health != null),
     [keyframes],

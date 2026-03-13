@@ -14,10 +14,11 @@ import { Camera } from "three";
 import { InspectorControls } from "@/src/components/InspectorControls";
 import { MissionSelect } from "@/src/components/MissionSelect";
 import { StreamingMissionInfo } from "@/src/components/StreamingMissionInfo";
-import { SettingsProvider } from "@/src/components/SettingsProvider";
+import { useSettings } from "@/src/components/SettingsProvider";
 import { ObserverCamera } from "@/src/components/ObserverCamera";
 import { AudioProvider } from "@/src/components/AudioContext";
 import { CamerasProvider } from "@/src/components/CamerasProvider";
+import { InputConsumer } from "./InputConsumer";
 import {
   RecordingProvider,
   useRecording,
@@ -33,11 +34,10 @@ import {
 import { usePublicWindowAPI } from "@/src/components/usePublicWindowAPI";
 import {
   CurrentMission,
-  useFogQueryState,
   useMissionQueryState,
 } from "@/src/components/useQueryParams";
 import { ThreeCanvas, InvalidateFunction } from "@/src/components/ThreeCanvas";
-import { InputHandlers, InputProvider } from "./InputHandlers";
+import { InputProducers, InputProvider } from "./InputHandlers";
 import { VisualInput } from "./VisualInput";
 import { LoadingIndicator } from "./LoadingIndicator";
 import { AudioEnabled } from "./AudioEnabled";
@@ -81,10 +81,6 @@ const DebugElements = createLazy(
   () => import("@/src/components/DebugElements"),
 );
 const Mission = createLazy("Mission", () => import("@/src/components/Mission"));
-const LiveObserver = createLazy(
-  "LiveObserver",
-  () => import("@/src/components/LiveObserver"),
-);
 const ChatSoundPlayer = createLazy(
   "ChatSoundPlayer",
   () => import("@/src/components/ChatSoundPlayer"),
@@ -104,16 +100,12 @@ const ServerBrowser = createLazy(
 
 export function MapInspector() {
   const [currentMission, setCurrentMission] = useMissionQueryState();
-  const [fogEnabledOverride, setFogEnabledOverride] = useFogQueryState();
-
-  const clearFogEnabledOverride = useCallback(() => {
-    setFogEnabledOverride(null);
-  }, [setFogEnabledOverride]);
   const features = useFeatures();
+  const { clearFogEnabledOverride, sidebarOpen, setSidebarOpen } =
+    useSettings();
   const { missionName, missionType } = currentMission;
   const [mapInfoOpen, setMapInfoOpen] = useState(false);
   const [serverBrowserOpen, setServerBrowserOpen] = useState(false);
-  const [sidebarOpen, setSidebarOpen] = useState(false);
   const [choosingMap, setChoosingMap] = useState(false);
   const [missionLoadingProgress, setMissionLoadingProgress] = useState(0);
   const [showLoadingIndicator, setShowLoadingIndicator] = useState(true);
@@ -136,7 +128,7 @@ export function MapInspector() {
         setSidebarOpen(false);
       }
     },
-    [clearFogEnabledOverride, setCurrentMission, isTouch],
+    [clearFogEnabledOverride, setCurrentMission, isTouch, setSidebarOpen],
   );
 
   usePublicWindowAPI({ onChangeMission: changeMission });
@@ -144,8 +136,6 @@ export function MapInspector() {
   const recording = useRecording();
   const dataSource = useDataSource();
   const hasStreamData = dataSource === "demo" || dataSource === "live";
-  const hasLiveAdapter = useLiveSelector((s) => s.adapter != null);
-
   // Sync the mission query param when streaming data provides a mission name.
   const streamMissionName = useMissionName();
   const streamMissionType = useMissionType();
@@ -180,13 +170,13 @@ export function MapInspector() {
     if (gameStatus === "connected" && isTouch) {
       setSidebarOpen(false);
     }
-  }, [gameStatus, isTouch]);
+  }, [gameStatus, isTouch, setSidebarOpen]);
 
   useEffect(() => {
     if (recording && isTouch) {
       setSidebarOpen(false);
     }
-  }, [isTouch, recording]);
+  }, [isTouch, recording, setSidebarOpen]);
 
   const loadingProgress = missionLoadingProgress;
   const isLoading = loadingProgress < 1;
@@ -214,196 +204,183 @@ export function MapInspector() {
   return (
     <main className={styles.Frame}>
       <RecordingProvider>
-        <SettingsProvider
-          fogEnabledOverride={fogEnabledOverride}
-          onClearFogEnabledOverride={clearFogEnabledOverride}
+        <header
+          className={styles.Toolbar}
+          onKeyDown={(e) => e.stopPropagation()}
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={(e) => e.stopPropagation()}
         >
-          <header
-            className={styles.Toolbar}
-            onKeyDown={(e) => e.stopPropagation()}
-            onPointerDown={(e) => e.stopPropagation()}
-            onClick={(e) => e.stopPropagation()}
+          <button
+            type="button"
+            className={styles.ToggleSidebarButton}
+            data-orientation="top"
+            aria-label={sidebarOpen ? "Close sidebar" : "Open sidebar"}
+            title={sidebarOpen ? "Close sidebar" : "Open sidebar"}
+            onClick={(event) => {
+              startTransition(() => setSidebarOpen((open) => !open));
+            }}
           >
-            <button
-              type="button"
-              className={styles.ToggleSidebarButton}
-              data-orientation="top"
-              aria-label={sidebarOpen ? "Close sidebar" : "Open sidebar"}
-              title={sidebarOpen ? "Close sidebar" : "Open sidebar"}
-              onClick={(event) => {
-                startTransition(() => setSidebarOpen((open) => !open));
-              }}
-            >
-              {sidebarOpen ? <LuPanelTopClose /> : <LuPanelTopOpen />}
-            </button>
-            <button
-              type="button"
-              className={styles.ToggleSidebarButton}
-              data-orientation="left"
-              aria-label={sidebarOpen ? "Close sidebar" : "Open sidebar"}
-              title={sidebarOpen ? "Close sidebar" : "Open sidebar"}
-              onClick={(event) => {
-                startTransition(() => setSidebarOpen((open) => !open));
-              }}
-            >
-              {sidebarOpen ? <LuPanelLeftClose /> : <LuPanelLeftOpen />}
-            </button>
-            <Activity
-              mode={hasStreamData && !choosingMap ? "visible" : "hidden"}
-            >
-              <StreamingMissionInfo />
-            </Activity>
-            <Activity
-              mode={!hasStreamData || choosingMap ? "visible" : "hidden"}
-            >
-              <MissionSelect
-                value={choosingMap ? "" : missionName}
-                missionType={choosingMap ? "" : missionType}
-                onChange={changeMission}
-                autoFocus={choosingMap}
-              />
-              {choosingMap && (
-                <button
-                  type="button"
-                  className={styles.CancelButton}
-                  onClick={() => {
-                    setChoosingMap(false);
-                  }}
-                >
-                  Cancel
-                </button>
-              )}
-            </Activity>
-          </header>
-          {sidebarOpen ? <div className={styles.Backdrop} /> : null}
-          <Activity mode={sidebarOpen ? "visible" : "hidden"}>
-            <ViewTransition>
-              <div
-                className={styles.Sidebar}
-                onKeyDown={(e) => e.stopPropagation()}
-                onPointerDown={(e) => e.stopPropagation()}
-                onClick={(e) => e.stopPropagation()}
-                data-open={sidebarOpen}
-              >
-                <InspectorControls
-                  missionName={missionName}
-                  missionType={missionType}
-                  onOpenMapInfo={() => setMapInfoOpen(true)}
-                  onOpenServerBrowser={
-                    features.live ? () => setServerBrowserOpen(true) : undefined
-                  }
-                  onChooseMap={
-                    hasStreamData
-                      ? () => {
-                          setChoosingMap(true);
-                        }
-                      : undefined
-                  }
-                  onCancelChoosingMap={() => {
-                    setChoosingMap(false);
-                  }}
-                  choosingMap={choosingMap}
-                  cameraRef={cameraRef}
-                  invalidateRef={invalidateRef}
-                />
-              </div>
-            </ViewTransition>
+            {sidebarOpen ? <LuPanelTopClose /> : <LuPanelTopOpen />}
+          </button>
+          <button
+            type="button"
+            className={styles.ToggleSidebarButton}
+            data-orientation="left"
+            aria-label={sidebarOpen ? "Close sidebar" : "Open sidebar"}
+            title={sidebarOpen ? "Close sidebar" : "Open sidebar"}
+            onClick={(event) => {
+              startTransition(() => setSidebarOpen((open) => !open));
+            }}
+          >
+            {sidebarOpen ? <LuPanelLeftClose /> : <LuPanelLeftOpen />}
+          </button>
+          <Activity mode={hasStreamData && !choosingMap ? "visible" : "hidden"}>
+            <StreamingMissionInfo />
           </Activity>
-          <InputProvider>
-            <div className={styles.Content}>
-              <div className={styles.ThreeView}>
-                <ThreeCanvas
-                  dpr={mapInfoOpen || serverBrowserOpen ? 0.25 : undefined}
-                  onCreated={(state) => {
-                    cameraRef.current = state.camera;
-                    invalidateRef.current = state.invalidate;
-                  }}
-                >
-                  <TickProvider>
-                    <CamerasProvider>
-                      <InputHandlers />
-                      <AudioProvider>
-                        <SceneLighting />
-                        <Suspense>
-                          <EntityScene />
-                        </Suspense>
-                        <ObserverCamera />
-                        <AudioEnabled>
-                          <ChatSoundPlayer />
-                        </AudioEnabled>
-                        <DebugEnabled>
-                          <DebugElements />
-                        </DebugEnabled>
-                        {recording ? (
-                          <Suspense>
-                            <StreamingController recording={recording} />
-                          </Suspense>
-                        ) : null}
-                        {!hasStreamData ? (
-                          <Suspense>
-                            <Mission
-                              key={`${missionName}~${missionType}`}
-                              name={missionName}
-                              missionType={missionType}
-                              onLoadingChange={handleLoadingChange}
-                            />
-                          </Suspense>
-                        ) : null}
-                        {hasLiveAdapter ? (
-                          <Suspense>
-                            <LiveObserver />
-                          </Suspense>
-                        ) : null}
-                      </AudioProvider>
-                    </CamerasProvider>
-                  </TickProvider>
-                </ThreeCanvas>
-              </div>
-              {hasStreamData ? (
-                <Suspense>
-                  <PlayerHUD />
-                </Suspense>
-              ) : null}
-              <VisualInput />
-              {showLoadingIndicator && (
-                <LoadingIndicator
-                  isLoading={isLoading}
-                  progress={loadingProgress}
-                />
-              )}
+          <Activity mode={!hasStreamData || choosingMap ? "visible" : "hidden"}>
+            <MissionSelect
+              value={choosingMap ? "" : missionName}
+              missionType={choosingMap ? "" : missionType}
+              onChange={changeMission}
+              autoFocus={choosingMap}
+            />
+            {choosingMap && (
+              <button
+                type="button"
+                className={styles.CancelButton}
+                onClick={() => {
+                  setChoosingMap(false);
+                }}
+              >
+                Cancel
+              </button>
+            )}
+          </Activity>
+        </header>
+        {sidebarOpen ? <div className={styles.Backdrop} /> : null}
+        <Activity mode={sidebarOpen ? "visible" : "hidden"}>
+          <ViewTransition>
+            <div
+              className={styles.Sidebar}
+              onKeyDown={(e) => e.stopPropagation()}
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={(e) => e.stopPropagation()}
+              data-open={sidebarOpen}
+            >
+              <InspectorControls
+                missionName={missionName}
+                missionType={missionType}
+                onOpenMapInfo={() => setMapInfoOpen(true)}
+                onOpenServerBrowser={
+                  features.live ? () => setServerBrowserOpen(true) : undefined
+                }
+                onChooseMap={
+                  hasStreamData
+                    ? () => {
+                        setChoosingMap(true);
+                      }
+                    : undefined
+                }
+                onCancelChoosingMap={() => {
+                  setChoosingMap(false);
+                }}
+                choosingMap={choosingMap}
+                cameraRef={cameraRef}
+                invalidateRef={invalidateRef}
+              />
             </div>
-          </InputProvider>
-          <footer
-            className={styles.PlayerBar}
-            onKeyDown={(e) => e.stopPropagation()}
-            onPointerDown={(e) => e.stopPropagation()}
-            onClick={(e) => e.stopPropagation()}
-          >
-            {recording?.source === "demo" ? (
+          </ViewTransition>
+        </Activity>
+        <InputProvider>
+          <div className={styles.Content}>
+            <div className={styles.ThreeView}>
+              <ThreeCanvas
+                dpr={mapInfoOpen || serverBrowserOpen ? 0.25 : undefined}
+                onCreated={(state) => {
+                  cameraRef.current = state.camera;
+                  invalidateRef.current = state.invalidate;
+                }}
+              >
+                <TickProvider>
+                  <CamerasProvider>
+                    <InputProducers />
+                    <AudioProvider>
+                      <SceneLighting />
+                      <Suspense>
+                        <EntityScene />
+                      </Suspense>
+                      <ObserverCamera />
+                      <AudioEnabled>
+                        <ChatSoundPlayer />
+                      </AudioEnabled>
+                      <DebugEnabled>
+                        <DebugElements />
+                      </DebugEnabled>
+                      {recording ? (
+                        <Suspense>
+                          <StreamingController recording={recording} />
+                        </Suspense>
+                      ) : null}
+                      {!hasStreamData ? (
+                        <Suspense>
+                          <Mission
+                            key={`${missionName}~${missionType}`}
+                            name={missionName}
+                            missionType={missionType}
+                            onLoadingChange={handleLoadingChange}
+                          />
+                        </Suspense>
+                      ) : null}
+                      <InputConsumer />
+                    </AudioProvider>
+                  </CamerasProvider>
+                </TickProvider>
+              </ThreeCanvas>
+            </div>
+            {hasStreamData ? (
               <Suspense>
-                <DemoPlaybackControls />
+                <PlayerHUD />
               </Suspense>
             ) : null}
-          </footer>
-          {mapInfoOpen ? (
-            <ViewTransition>
-              <Suspense>
-                <MapInfoDialog
-                  onClose={() => setMapInfoOpen(false)}
-                  missionName={missionName}
-                  missionType={missionType ?? ""}
-                />
-              </Suspense>
-            </ViewTransition>
+            <VisualInput />
+            {showLoadingIndicator && (
+              <LoadingIndicator
+                isLoading={isLoading}
+                progress={loadingProgress}
+              />
+            )}
+          </div>
+        </InputProvider>
+        <footer
+          className={styles.PlayerBar}
+          onKeyDown={(e) => e.stopPropagation()}
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={(e) => e.stopPropagation()}
+        >
+          {recording?.source === "demo" ? (
+            <Suspense>
+              <DemoPlaybackControls />
+            </Suspense>
           ) : null}
-          {serverBrowserOpen ? (
-            <ViewTransition>
-              <Suspense>
-                <ServerBrowser onClose={() => setServerBrowserOpen(false)} />
-              </Suspense>
-            </ViewTransition>
-          ) : null}
-        </SettingsProvider>
+        </footer>
+        {mapInfoOpen ? (
+          <ViewTransition>
+            <Suspense>
+              <MapInfoDialog
+                onClose={() => setMapInfoOpen(false)}
+                missionName={missionName}
+                missionType={missionType ?? ""}
+              />
+            </Suspense>
+          </ViewTransition>
+        ) : null}
+        {serverBrowserOpen ? (
+          <ViewTransition>
+            <Suspense>
+              <ServerBrowser onClose={() => setServerBrowserOpen(false)} />
+            </Suspense>
+          </ViewTransition>
+        ) : null}
       </RecordingProvider>
     </main>
   );

@@ -8,6 +8,8 @@ import {
   useRef,
   useState,
 } from "react";
+import { useFogQueryState } from "./useQueryParams";
+import { useTouchDevice } from "./useTouchDevice";
 
 type StateSetter<T> = ReturnType<typeof useState<T>>[1];
 
@@ -16,6 +18,7 @@ export type TouchMode = "dualStick" | "moveLookStick";
 type SettingsContext = {
   fogEnabled: boolean;
   setFogEnabled: StateSetter<boolean>;
+  clearFogEnabledOverride: () => void;
   highQualityFog: boolean;
   setHighQualityFog: StateSetter<boolean>;
   fov: number;
@@ -28,6 +31,8 @@ type SettingsContext = {
   setWarriorName: StateSetter<string>;
   audioVolume: number;
   setAudioVolume: StateSetter<number>;
+  sidebarOpen: boolean;
+  setSidebarOpen: StateSetter<boolean>;
 };
 
 type DebugContext = {
@@ -50,6 +55,9 @@ type ControlsContext = {
   setInvertJoystick: StateSetter<boolean>;
 };
 
+export const MIN_SPEED_MULTIPLIER = 0.01;
+export const MAX_SPEED_MULTIPLIER = 1;
+
 const SettingsContext = createContext<SettingsContext | null>(null);
 const DebugContext = createContext<DebugContext | null>(null);
 const ControlsContext = createContext<ControlsContext | null>(null);
@@ -68,6 +76,7 @@ type PersistedSettings = {
   invertScroll?: boolean;
   invertDrag?: boolean;
   invertJoystick?: boolean;
+  sidebarOpen?: boolean;
 };
 
 export function useSettings() {
@@ -82,18 +91,10 @@ export function useControls() {
   return useContext(ControlsContext);
 }
 
-export function SettingsProvider({
-  children,
-  fogEnabledOverride,
-  onClearFogEnabledOverride,
-}: {
-  children: ReactNode;
-  fogEnabledOverride?: boolean | null;
-  onClearFogEnabledOverride: () => void;
-}) {
+export function SettingsProvider({ children }: { children: ReactNode }) {
   const [fogEnabled, setFogEnabled] = useState(true);
   const [highQualityFog, setHighQualityFog] = useState(false);
-  const [speedMultiplier, setSpeedMultiplier] = useState(1);
+  const [speedMultiplier, setSpeedMultiplier] = useState(0.15);
   const [fov, setFov] = useState(90);
   const [audioEnabled, setAudioEnabled] = useState(false);
   const [audioVolume, setAudioVolume] = useState(0.75);
@@ -104,20 +105,27 @@ export function SettingsProvider({
   const [invertScroll, setInvertScroll] = useState(false);
   const [invertDrag, setInvertDrag] = useState(false);
   const [invertJoystick, setInvertJoystick] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const [renderOnDemand, setRenderOnDemand] = useState(false);
+
+  const [fogEnabledOverride, setFogEnabledOverride] = useFogQueryState();
+  const clearFogEnabledOverride = useCallback(() => {
+    setFogEnabledOverride(null);
+  }, [setFogEnabledOverride]);
 
   const setFogEnabledWithoutOverride: StateSetter<boolean> = useCallback(
     (value) => {
       setFogEnabled(value);
-      onClearFogEnabledOverride();
+      clearFogEnabledOverride();
     },
-    [onClearFogEnabledOverride],
+    [clearFogEnabledOverride],
   );
 
   const settingsContext: SettingsContext = useMemo(
     () => ({
       fogEnabled: fogEnabledOverride ?? fogEnabled,
       setFogEnabled: setFogEnabledWithoutOverride,
+      clearFogEnabledOverride,
       highQualityFog,
       setHighQualityFog,
       fov,
@@ -130,17 +138,21 @@ export function SettingsProvider({
       setWarriorName,
       audioVolume,
       setAudioVolume,
+      sidebarOpen,
+      setSidebarOpen,
     }),
     [
       fogEnabled,
       fogEnabledOverride,
       setFogEnabledWithoutOverride,
+      clearFogEnabledOverride,
       highQualityFog,
       fov,
       audioEnabled,
       animationEnabled,
       warriorName,
       audioVolume,
+      sidebarOpen,
     ],
   );
 
@@ -178,8 +190,13 @@ export function SettingsProvider({
     ],
   );
 
+  const isTouch = useTouchDevice();
+
   // Read persisted settings from localStorage.
   useEffect(() => {
+    // Defer until we know whether or not we're on a touch device...
+    if (isTouch == null) return;
+
     let savedSettings: PersistedSettings = {};
     try {
       savedSettings = JSON.parse(localStorage.getItem("settings")) || {};
@@ -203,7 +220,10 @@ export function SettingsProvider({
     }
     if (savedSettings.speedMultiplier != null) {
       setSpeedMultiplier(
-        Math.max(0, Math.min(1, savedSettings.speedMultiplier)),
+        Math.max(
+          MIN_SPEED_MULTIPLIER,
+          Math.min(MAX_SPEED_MULTIPLIER, savedSettings.speedMultiplier),
+        ),
       );
     }
     if (savedSettings.fov != null) {
@@ -227,7 +247,13 @@ export function SettingsProvider({
     if (savedSettings.invertJoystick != null) {
       setInvertJoystick(savedSettings.invertJoystick);
     }
-  }, []);
+    if (savedSettings.sidebarOpen != null) {
+      // Don't restore on touch devices!
+      if (!isTouch) {
+        setSidebarOpen(savedSettings.sidebarOpen);
+      }
+    }
+  }, [isTouch]);
 
   // Persist settings to localStorage with debouncing to avoid excessive writes
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -254,6 +280,7 @@ export function SettingsProvider({
         invertScroll,
         invertDrag,
         invertJoystick,
+        sidebarOpen,
       };
       try {
         localStorage.setItem("settings", JSON.stringify(settingsToSave));
@@ -281,6 +308,7 @@ export function SettingsProvider({
     invertScroll,
     invertDrag,
     invertJoystick,
+    sidebarOpen,
   ]);
 
   return (

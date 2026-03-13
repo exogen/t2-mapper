@@ -175,9 +175,9 @@ export class RelayClient {
     this.send({ type: "sendGhostAck", sequence, ghostCount });
   }
 
-  /** Send a move struct to the relay for forwarding to the game server. */
-  sendMove(move: ClientMove): void {
-    this.send({ type: "sendMove", move });
+  /** Send moves to the relay for immediate forwarding to the game server. */
+  sendMoves(moves: ClientMove[], moveStartIndex: number): void {
+    this.send({ type: "sendMoves", moves, moveStartIndex });
   }
 
   /** Close the WebSocket connection entirely. */

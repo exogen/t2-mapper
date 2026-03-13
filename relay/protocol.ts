@@ -274,10 +274,13 @@ export interface ClientEvent {
  */
 function writeMove(bs: BitStreamWriter, move: ClientMoveData): void {
   // Rotation (flag + optional 16-bit signed).
-  // Pack: int16 = (int)(radians * 65536). Server unpacks: float = (short)int16 / 65536.
-  const pyaw = Math.round(move.yaw * 65536) | 0;
-  const ppitch = Math.round(move.pitch * 65536) | 0;
-  const proll = Math.round(move.roll * 65536) | 0;
+  // Matches Torque's Move::clamp(): pyaw = (yaw / M_2PI) * 0x10000.
+  // Server's Move::unclamp() reverses: yaw = (short)pyaw * M_2PI / 0x10000.
+  // Input values are in radians; divide by 2π to get fractional turns for packing.
+  const M_2PI = 2 * Math.PI;
+  const pyaw = Math.round((move.yaw / M_2PI) * 65536) | 0;
+  const ppitch = Math.round((move.pitch / M_2PI) * 65536) | 0;
+  const proll = Math.round((move.roll / M_2PI) * 65536) | 0;
 
   if (pyaw !== 0) {
     bs.writeFlag(true);
@@ -480,10 +483,14 @@ export function buildConnectRequest(
 }
 
 /** Build a Disconnect (type 38) OOB packet. */
-export function buildDisconnectPacket(connectSequence: number): Uint8Array {
+export function buildDisconnectPacket(
+  serverConnectSequence: number,
+  clientConnectSequence: number,
+): Uint8Array {
   const bs = new BitStreamWriter(64);
   bs.writeU8(38); // Disconnect type
-  bs.writeU32(connectSequence);
+  bs.writeU32(serverConnectSequence);
+  bs.writeU32(clientConnectSequence);
   writeString(bs, ""); // reason
   return bs.getBuffer();
 }

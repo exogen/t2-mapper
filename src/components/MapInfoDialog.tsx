@@ -125,9 +125,12 @@ function MusicPlayer({ track }: { track: string }) {
   const url = `${RESOURCE_ROOT_URL}music/${track.toLowerCase()}.mp3`;
 
   useEffect(() => {
-    return () => {
-      audioRef.current?.pause();
-    };
+    const audio = audioRef.current;
+    if (audio) {
+      return () => {
+        audio.pause();
+      };
+    }
   }, []);
 
   const toggle = () => {

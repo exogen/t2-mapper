@@ -65,17 +65,10 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
   /** Events waiting to be sent (new or retransmitted from lost packets). */
   private eventSendQueue: { seq: number; event: ClientEvent }[] = [];
   private stringTable = new ClientNetStringTable();
-  /** Incrementing move index so the server doesn't deduplicate our moves. */
-  private moveIndex = 0;
   private dataPacketCount = 0;
   private rawMessageCount = 0;
-  private sendMoveCount = 0;
   private _mapName?: string;
   private observerEnforced = false;
-  /** Buffered move state — merged into the next keepalive tick. */
-  private bufferedMove: ClientMoveData | null = null;
-  /** Ticks remaining to hold the current trigger state before clearing. */
-  private triggerHoldTicks = 0;
   /** Send timestamps by sequence number for RTT measurement. */
   private sendTimestamps = new Map<number, number>();
   /** Smoothed RTT in ms (exponential moving average). */
@@ -631,60 +624,12 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
     this.flushEvents();
   }
 
-  /** Flush pending events in a data packet. */
+  /** Flush pending events in a data packet immediately. */
   private flushEvents(): void {
-    // Assign sequence numbers to new pending events and add to send queue.
-    for (const event of this.pendingEvents.splice(0)) {
-      const seq = this.nextSendEventSeq++;
-      this.eventSendQueue.push({ seq, event });
+    if (this.pendingEvents.length === 0 && this.eventSendQueue.length === 0) {
+      return;
     }
-    if (this.eventSendQueue.length === 0) return;
-
-    this.sendDataPacketWithEvents();
-  }
-
-  /**
-   * Build and send a data packet that includes events from the send queue.
-   * Events stay tracked per-packet so they can be re-queued on loss.
-   */
-  private sendDataPacketWithEvents(move?: ClientMoveData): void {
-    const events = this.eventSendQueue.splice(0);
-    if (events.length === 0) return;
-
-    const startSeq = events[0].seq;
-
-    connLog.debug(
-      {
-        eventCount: events.length,
-        seqRange: `${startSeq}-${events[events.length - 1].seq}`,
-        sendSeq: this.protocol.lastSendSeq + 1,
-      },
-      "Sending data packet with guaranteed events",
-    );
-
-    // Track which events are in this packet for ack/loss handling.
-    // lastSendSeq+1 because buildSendPacketHeader increments it.
-    const packetSeq = this.protocol.lastSendSeq + 1;
-    this.sentEventsByPacket.set(packetSeq, events);
-
-    const moveData = move ?? {
-      x: 0,
-      y: 0,
-      z: 0,
-      yaw: 0,
-      pitch: 0,
-      roll: 0,
-      freeLook: false,
-      trigger: [false, false, false, false, false, false],
-    };
-
-    const packet = buildClientGamePacket(this.protocol, {
-      moves: [moveData],
-      moveStartIndex: this.moveIndex++,
-      events: events.map((e) => e.event),
-      nextSendEventSeq: startSeq,
-    });
-    this.sendRaw(packet);
+    this.emitDataPacket([], 0);
   }
 
   /** Handle packet delivery notification from the protocol layer. */
@@ -733,62 +678,23 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
   }
 
   /**
-   * Buffer a move to be sent in the next keepalive tick.
-   * Moves are merged into the 32ms keepalive cadence rather than sent as
-   * separate packets, because the server's Camera control object processes
-   * moves from the regular tick stream (separate extra packets can be
-   * ignored or cause trigger edge detection issues).
+   * Send moves immediately to the game server.
+   * The browser owns move indices and re-sends all unacked moves each tick,
+   * just like real Tribes 2's moveWritePacket.
    */
-  sendMove(move: ClientMoveData): void {
-    this.sendMoveCount++;
-    if (this.sendMoveCount <= 5 || this.sendMoveCount % 100 === 0) {
-      connLog.debug(
-        {
-          yaw: move.yaw,
-          pitch: move.pitch,
-          x: move.x,
-          y: move.y,
-          z: move.z,
-          total: this.sendMoveCount,
-        },
-        "Sending move",
-      );
-    }
-    // During trigger hold, merge trigger flags so rapid move updates
-    // (e.g. from useFrame at 60fps) can't overwrite a pending trigger
-    // before the server sees it.
-    if (this.triggerHoldTicks > 0 && this.bufferedMove) {
-      move = {
-        ...move,
-        trigger: this.bufferedMove.trigger.map(
-          (held, i) => held || (move.trigger[i] ?? false),
-        ),
-      };
-    }
-    this.bufferedMove = move;
-    // If any trigger is set, hold it for 2 ticks to ensure the server
-    // sees the edge (true then false on the next tick).
-    if (move.trigger.some(Boolean)) {
-      this.triggerHoldTicks = 2;
-    }
+  sendMoves(moves: ClientMoveData[], moveStartIndex: number): void {
+    this.emitDataPacket(moves, moveStartIndex);
   }
 
-  /** Send the current move state as a keepalive packet at the tick rate. */
-  private sendTickMove(): void {
-    const move: ClientMoveData = this.bufferedMove ?? {
-      x: 0,
-      y: 0,
-      z: 0,
-      yaw: 0,
-      pitch: 0,
-      roll: 0,
-      freeLook: false,
-      trigger: [false, false, false, false, false, false],
-    };
-
-    // Record send time keyed by the 9-bit sequence number (0–511) that the
-    // server will echo back in highestAck. lastSendSeq is the full counter;
-    // the wire format uses only the low 9 bits.
+  /**
+   * Internal: build and send a data packet with moves and/or pending events.
+   * Used by both sendMoves (browser-initiated) and keepalive (idle).
+   */
+  private emitDataPacket(
+    moves: ClientMoveData[],
+    moveStartIndex: number,
+  ): void {
+    // Record send time for RTT measurement.
     const nextSeq9 = (this.protocol.lastSendSeq + 1) & 0x1ff;
     this.sendTimestamps.set(nextSeq9, Date.now());
 
@@ -798,37 +704,37 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
       this.eventSendQueue.push({ seq, event });
     }
 
-    // If we have events waiting to be sent (new or re-queued from lost
-    // packets), include them in this tick's data packet.
+    let events: { seq: number; event: ClientEvent }[] | undefined;
     if (this.eventSendQueue.length > 0) {
-      this.sendDataPacketWithEvents(move);
-    } else {
-      const packet = buildClientGamePacket(this.protocol, {
-        moves: [move],
-        moveStartIndex: this.moveIndex++,
-      });
-      this.sendRaw(packet);
+      events = this.eventSendQueue.splice(0);
+      const packetSeq = this.protocol.lastSendSeq + 1;
+      this.sentEventsByPacket.set(packetSeq, events);
     }
 
-    // Count down trigger hold, then clear triggers.
-    if (this.triggerHoldTicks > 0) {
-      this.triggerHoldTicks--;
-      if (this.triggerHoldTicks === 0 && this.bufferedMove) {
-        this.bufferedMove = {
-          ...this.bufferedMove,
-          trigger: [false, false, false, false, false, false],
-        };
-      }
-    }
+    const packet = buildClientGamePacket(this.protocol, {
+      moves,
+      moveStartIndex,
+      ...(events
+        ? {
+            events: events.map((e) => e.event),
+            nextSendEventSeq: events[0].seq,
+          }
+        : {}),
+    });
+    this.sendRaw(packet);
   }
 
-  /** Start keepalive timer. */
+  /** Send an idle keepalive packet (no moves, but flushes pending events). */
+  private sendKeepalive(): void {
+    this.emitDataPacket([], 0);
+  }
+
+  /** Start keepalive timer. Sends idle packets when the browser isn't sending moves. */
   private startKeepalive(): void {
     let keepaliveCount = 0;
     this.keepaliveTimer = setInterval(() => {
       keepaliveCount++;
       if (keepaliveCount % 300 === 0) {
-        // ~10s at 32ms tick rate
         connLog.info(
           {
             dataPackets: this.dataPacketCount,
@@ -840,7 +746,7 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
           "Connection status",
         );
       }
-      this.sendTickMove();
+      this.sendKeepalive();
     }, KEEPALIVE_INTERVAL_MS);
   }
 
@@ -863,7 +769,10 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
     // Send a Disconnect packet so the server knows we're leaving
     if (this.socket && this.serverConnectSequence !== 0) {
       try {
-        const packet = buildDisconnectPacket(this.connectSequence);
+        const packet = buildDisconnectPacket(
+          this.serverConnectSequence,
+          this.clientConnectSequence,
+        );
         this.socket.send(packet, this.port, this.host);
         connLog.info("Sent Disconnect packet to server");
       } catch {

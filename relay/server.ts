@@ -355,18 +355,21 @@ wss.on("connection", (ws) => {
         break;
       }
 
-      case "sendMove": {
+      case "sendMoves": {
         if (gameConnection) {
-          gameConnection.sendMove({
-            x: message.move.x,
-            y: message.move.y,
-            z: message.move.z,
-            yaw: message.move.yaw,
-            pitch: message.move.pitch,
-            roll: message.move.roll,
-            freeLook: message.move.freeLook,
-            trigger: message.move.trigger,
-          });
+          gameConnection.sendMoves(
+            message.moves.map((m) => ({
+              x: m.x,
+              y: m.y,
+              z: m.z,
+              yaw: m.yaw,
+              pitch: m.pitch,
+              roll: m.roll,
+              freeLook: m.freeLook,
+              trigger: m.trigger,
+            })),
+            message.moveStartIndex,
+          );
         }
         break;
       }

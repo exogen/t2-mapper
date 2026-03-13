@@ -1,7 +1,7 @@
 .ChatContainer {
   position: absolute;
-  top: 8px;
-  left: 8px;
+  top: 6px;
+  left: 6px;
   width: 400px;
   max-width: 50%;
   display: flex;
@@ -11,8 +11,8 @@
 }
 
 .ChatWindow {
-  max-height: 12.5em;
   min-height: 4em;
+  max-height: 12.5em;
   overflow-y: auto;
   background: rgba(0, 50, 60, 0.65);
   padding: 6px;

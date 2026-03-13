@@ -235,15 +235,20 @@ function TeamScores() {
           (DEFAULT_TEAM_NAMES[team.teamId] ?? `Team ${team.teamId}`);
         return (
           <div key={team.teamId} className={styles.TeamRow}>
-            <span
-              className={
-                isFriendly ? styles.TeamNameFriendly : styles.TeamNameEnemy
-              }
-            >
-              {name}
-            </span>
+            <div className={styles.TeamInfo}>
+              <span
+                className={
+                  isFriendly ? styles.TeamNameFriendly : styles.TeamNameEnemy
+                }
+              >
+                {name}
+              </span>{" "}
+              <span className={styles.TeamCount}>
+                {team.playerCount}{" "}
+                {team.playerCount === 1 ? "player" : "players"}
+              </span>
+            </div>
             <span className={styles.TeamScore}>{team.score}</span>
-            <span className={styles.TeamCount}>({team.playerCount})</span>
           </div>
         );
       })}

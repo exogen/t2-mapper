@@ -39,6 +39,9 @@ export class LiveStreamAdapter extends StreamEngine {
   /** Current mission name as reported by the server. */
   missionName: string | null = null;
 
+  /** Server's latest move acknowledgment (which moveIndex it has processed). */
+  lastMoveAck = 0;
+
   constructor(relay: RelayClient) {
     super();
     this.relay = relay;
@@ -306,55 +309,15 @@ export class LiveStreamAdapter extends StreamEngine {
    */
   observerMode: "fly" | "follow" = "fly";
 
-  /** Enter follow mode (from fly) or cycle to next player (in follow). */
-  cycleObserveNext(): void {
-    if (this.observerMode === "fly") {
-      // Jump trigger enters observerFollow from observerFly
-      log.info("observer: fly → follow (jump trigger)");
-      this.sendTrigger(2);
-      this.observerMode = "follow";
-    } else {
-      // Fire trigger cycles to next player in observerFollow
-      log.info("observer: cycle next (fire trigger)");
-      this.sendTrigger(0);
-    }
-  }
-
-  /** Toggle between follow and free-fly observer modes. */
+  /** Toggle between follow and free-fly observer modes (local state only). */
   toggleObserverMode(): void {
     if (this.observerMode === "fly") {
-      // Jump trigger enters observerFollow from observerFly
-      log.info("observer: fly → follow (jump trigger)");
-      this.sendTrigger(2);
+      log.info("observer: fly → follow");
       this.observerMode = "follow";
     } else {
-      // Jump trigger returns to observerFly from observerFollow
-      log.info("observer: follow → fly (jump trigger)");
-      this.sendTrigger(2);
+      log.info("observer: follow → fly");
       this.observerMode = "fly";
     }
-  }
-
-  private sendTrigger(index: number): void {
-    const trigger: [boolean, boolean, boolean, boolean, boolean, boolean] = [
-      false,
-      false,
-      false,
-      false,
-      false,
-      false,
-    ];
-    trigger[index] = true;
-    this.relay.sendMove({
-      x: 0,
-      y: 0,
-      z: 0,
-      yaw: 0,
-      pitch: 0,
-      roll: 0,
-      trigger,
-      freeLook: false,
-    });
   }
 
   /** Get the player list (for observer cycling UI). */
@@ -408,6 +371,9 @@ export class LiveStreamAdapter extends StreamEngine {
             : "",
         );
       }
+
+      // Track move acknowledgments for client-side prediction replay.
+      this.lastMoveAck = parsed.gameState.lastMoveAck;
 
       // Control object state
       this.processControlObject(parsed.gameState);

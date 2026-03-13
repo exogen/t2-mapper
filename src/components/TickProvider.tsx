@@ -18,6 +18,8 @@ export type TickCallback = (tick: number) => void;
 interface TickContextValue {
   subscribe: (callback: TickCallback) => () => void;
   getTick: () => number;
+  /** Fraction [0, 1) of the current tick elapsed since the last tick fired. */
+  getTickFraction: () => number;
 }
 
 const TickContext = createContext<TickContextValue | null>(null);
@@ -56,7 +58,15 @@ export function TickProvider({ children }: TickProviderProps) {
 
   const getTick = useCallback(() => tickRef.current, []);
 
-  const context = useMemo(() => ({ subscribe, getTick }), [subscribe, getTick]);
+  const getTickFraction = useCallback(
+    () => accumulatorRef.current / TICK_INTERVAL,
+    [],
+  );
+
+  const context = useMemo(
+    () => ({ subscribe, getTick, getTickFraction }),
+    [subscribe, getTick, getTickFraction],
+  );
 
   return (
     <TickContext.Provider value={context}>{children}</TickContext.Provider>
@@ -82,4 +92,12 @@ export function useGetTick() {
     throw new Error("useGetTick must be used within a TickProvider");
   }
   return context.getTick;
+}
+
+export function useGetTickFraction() {
+  const context = useContext(TickContext);
+  if (!context) {
+    throw new Error("useGetTickFraction must be used within a TickProvider");
+  }
+  return context.getTickFraction;
 }

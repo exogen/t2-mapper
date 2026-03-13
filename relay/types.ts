@@ -3,7 +3,7 @@ export type ClientMessage =
   | { type: "listServers" }
   | { type: "joinServer"; address: string; warriorName?: string }
   | { type: "disconnect" }
-  | { type: "sendMove"; move: ClientMove }
+  | { type: "sendMoves"; moves: ClientMove[]; moveStartIndex: number }
   | { type: "sendCommand"; command: string; args: string[] }
   | {
       type: "sendCRCResponse";

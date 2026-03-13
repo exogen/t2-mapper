@@ -418,36 +418,40 @@ export function StreamingController({
     // When freeFlyCamera is active, skip stream camera positioning so
     // ObserverControls drives the camera instead.
     const freeFly = streamPlaybackStore.getState().freeFlyCamera;
-    // In live mode, LiveObserver owns camera rotation (client-side prediction).
-    // StreamingController still handles position, FOV, and entity interpolation.
+    // In live mode, InputConsumer owns camera position and rotation
+    // (moves are applied locally, matching how the real Tribes 2 client
+    // handles its control Camera). StreamingController still handles
+    // entity interpolation, FOV, and orbit target positioning.
     const isLive = recording.source === "live";
 
     if (currentCamera && !freeFly) {
-      if (previousCamera) {
-        const px = previousCamera.position[0];
-        const py = previousCamera.position[1];
-        const pz = previousCamera.position[2];
-        const cx = currentCamera.position[0];
-        const cy = currentCamera.position[1];
-        const cz = currentCamera.position[2];
-        const ix = px + (cx - px) * interpT;
-        const iy = py + (cy - py) * interpT;
-        const iz = pz + (cz - pz) * interpT;
-        state.camera.position.set(iy, iz, ix);
+      // In live mode, InputConsumer owns both camera position and rotation
+      // (client-side prediction with server reconciliation + interpolateTick,
+      // matching Tribes 2's Camera behavior). StreamingController only
+      // handles entity interpolation, FOV, and orbit target positioning.
+      if (!isLive) {
+        if (previousCamera) {
+          const px = previousCamera.position[0];
+          const py = previousCamera.position[1];
+          const pz = previousCamera.position[2];
+          const cx = currentCamera.position[0];
+          const cy = currentCamera.position[1];
+          const cz = currentCamera.position[2];
+          const ix = px + (cx - px) * interpT;
+          const iy = py + (cy - py) * interpT;
+          const iz = pz + (cz - pz) * interpT;
+          state.camera.position.set(iy, iz, ix);
 
-        if (!isLive) {
           _interpQuatA.set(...previousCamera.rotation);
           _interpQuatB.set(...currentCamera.rotation);
           _interpQuatA.slerp(_interpQuatB, interpT);
           state.camera.quaternion.copy(_interpQuatA);
-        }
-      } else {
-        state.camera.position.set(
-          currentCamera.position[1],
-          currentCamera.position[2],
-          currentCamera.position[0],
-        );
-        if (!isLive) {
+        } else {
+          state.camera.position.set(
+            currentCamera.position[1],
+            currentCamera.position[2],
+            currentCamera.position[0],
+          );
           state.camera.quaternion.set(...currentCamera.rotation);
         }
       }
@@ -550,8 +554,8 @@ export function StreamingController({
     }
 
     const mode = currentCamera?.mode;
-    // In live mode, LiveObserver handles orbit positioning from predicted
-    // angles so the orbit responds at frame rate. Skip here to avoid fighting.
+    // In live mode, InputConsumer handles orbit positioning from local rotation
+    // so the orbit responds at frame rate. Skip here to avoid fighting.
     if (
       !freeFly &&
       !isLive &&
