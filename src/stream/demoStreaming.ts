@@ -94,7 +94,15 @@ function extractMissionInfo(demoValues: string[]): DemoMissionInfo {
     }
   }
 
-  return { missionDisplayName, missionType, gameClassName, serverDisplayName, mod, recorderName, recordingDate };
+  return {
+    missionDisplayName,
+    missionType,
+    gameClassName,
+    serverDisplayName,
+    mod,
+    recorderName,
+    recordingDate,
+  };
 }
 
 interface ParsedDemoValues {

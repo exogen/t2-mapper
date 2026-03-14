@@ -63,7 +63,9 @@ export function WaterMaterial({
 }) {
   const url = textureToUrl(surfaceTexture);
   const anisotropy = useAnisotropy();
-  const texture = useTexture(url, (texture) => setupTexture(texture, { anisotropy }));
+  const texture = useTexture(url, (texture) =>
+    setupTexture(texture, { anisotropy }),
+  );
 
   return (
     <meshStandardMaterial

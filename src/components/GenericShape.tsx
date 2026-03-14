@@ -23,7 +23,11 @@ import { setupTexture } from "../textureUtils";
 import { useAnisotropy } from "./useAnisotropy";
 import { useDebug, useSettings } from "./SettingsProvider";
 import { useShapeInfo, isOrganicShape } from "./ShapeInfoProvider";
-import { useEngineSelector, effectNow, engineStore } from "../state/engineStore";
+import {
+  useEngineSelector,
+  effectNow,
+  engineStore,
+} from "../state/engineStore";
 import { FloatingLabel } from "./FloatingLabel";
 import {
   useIflTexture,
@@ -296,7 +300,10 @@ const StaticTexture = memo(function StaticTexture({
 
   const url = useMemo(() => {
     if (!resourcePath) {
-      log.warn("No resource_path found on \"%s\" — rendering fallback", shapeName);
+      log.warn(
+        'No resource_path found on "%s" — rendering fallback',
+        shapeName,
+      );
     }
     return resourcePath ? textureToUrl(resourcePath) : FALLBACK_TEXTURE_URL;
   }, [resourcePath, shapeName]);

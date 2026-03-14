@@ -1,4 +1,4 @@
-import untypedManifest from "@/public/manifest.json";
+import untypedManifest from "./manifest.json";
 import { normalizePath } from "./stringUtils";
 
 // Source tuple: [sourcePath] or [sourcePath, actualPath] if casing differs

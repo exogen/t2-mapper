@@ -133,11 +133,7 @@ function FlagMarkerSlot({ entity }: { entity: GameEntity }) {
   return <FlagMarker entity={entity} />;
 }
 
-function PositionedEntityWrapper({
-  entity,
-}: {
-  entity: PositionedEntity;
-}) {
+function PositionedEntityWrapper({ entity }: { entity: PositionedEntity }) {
   const position = entity.position;
   const scale = entity.scale;
   const quaternion = useMemo(() => {

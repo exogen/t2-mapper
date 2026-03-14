@@ -424,26 +424,17 @@ export function useSceneMissionArea(): SceneMissionArea | null {
 
 /** Hook returning which data source is currently populating entities. */
 export function useDataSource(): DataSource | null {
-  return useStoreWithEqualityFn(
-    gameEntityStore,
-    (state) => state.dataSource,
-  );
+  return useStoreWithEqualityFn(gameEntityStore, (state) => state.dataSource);
 }
 
 /** Hook returning the current mission name. */
 export function useMissionName(): string | null {
-  return useStoreWithEqualityFn(
-    gameEntityStore,
-    (state) => state.missionName,
-  );
+  return useStoreWithEqualityFn(gameEntityStore, (state) => state.missionName);
 }
 
 /** Hook returning the mission type short code (e.g. "CTF"). */
 export function useMissionType(): string | null {
-  return useStoreWithEqualityFn(
-    gameEntityStore,
-    (state) => state.missionType,
-  );
+  return useStoreWithEqualityFn(gameEntityStore, (state) => state.missionType);
 }
 
 /** Hook returning the mission type display name (e.g. "Capture the Flag"). */
@@ -480,10 +471,7 @@ export function useServerDisplayName(): string | null {
 
 /** Hook returning the name of the player who recorded the demo / connected. */
 export function useRecorderName(): string | null {
-  return useStoreWithEqualityFn(
-    gameEntityStore,
-    (state) => state.recorderName,
-  );
+  return useStoreWithEqualityFn(gameEntityStore, (state) => state.recorderName);
 }
 
 /** Hook returning the demo recording date string. */

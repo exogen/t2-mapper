@@ -32,7 +32,7 @@ function parseLogConfig(): {
   globalLevel: string;
   modules: Map<string, string>;
 } {
-  const raw = process.env.NEXT_PUBLIC_LOG?.trim();
+  const raw = import.meta.env.NEXT_PUBLIC_LOG?.trim();
   if (!raw) return { globalLevel: "info", modules: new Map() };
 
   let globalLevel: string | null = null;

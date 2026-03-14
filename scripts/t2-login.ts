@@ -32,7 +32,6 @@ const { values: args } = parseArgs({
   strict: true,
 });
 
-
 function errorMessage(e: unknown): string {
   if (e instanceof AggregateError && e.errors.length > 0) {
     return errorMessage(e.errors[0]);
@@ -281,7 +280,9 @@ async function main() {
         if (attempt < maxRetries) {
           const delay = attempt * 2;
           const msg = errorMessage(e);
-          console.warn(`Attempt ${attempt} failed: ${msg}, retrying in ${delay}s...`);
+          console.warn(
+            `Attempt ${attempt} failed: ${msg}, retrying in ${delay}s...`,
+          );
           await new Promise((r) => setTimeout(r, delay * 1000));
         } else {
           const msg = errorMessage(e);
@@ -303,7 +304,9 @@ async function main() {
       if (e?.isNetwork && attempt < maxRetries) {
         const delay = attempt * 2;
         const msg = errorMessage(e);
-        console.warn(`Attempt ${attempt} failed: ${msg}, retrying in ${delay}s...`);
+        console.warn(
+          `Attempt ${attempt} failed: ${msg}, retrying in ${delay}s...`,
+        );
         await new Promise((r) => setTimeout(r, delay * 1000));
       } else {
         const msg = errorMessage(e);

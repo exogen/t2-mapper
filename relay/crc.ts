@@ -142,13 +142,9 @@ export async function computeGameCRC(
 
     let data = fileCache.get(localPath);
     if (data) {
-      console.log(
-        `[crc]   cache hit: "${localPath}"`,
-      );
+      console.log(`[crc]   cache hit: "${localPath}"`);
     } else {
-      console.log(
-        `[crc]   cache miss, reading: "${localPath}"`,
-      );
+      console.log(`[crc]   cache miss, reading: "${localPath}"`);
       try {
         data = new Uint8Array(await fs.readFile(localPath));
         fileCache.set(localPath, data);

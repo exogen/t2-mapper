@@ -262,9 +262,7 @@ export const engineStore = createStore<EngineStoreState>()(
           rate: recording ? 1 : state.playback.rate,
           durationMs,
           // Preserve the last snapshot so HUD/chat persist after unload.
-          streamSnapshot: recording
-            ? null
-            : state.playback.streamSnapshot,
+          streamSnapshot: recording ? null : state.playback.streamSnapshot,
         },
       }));
     },

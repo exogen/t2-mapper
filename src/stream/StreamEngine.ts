@@ -482,15 +482,19 @@ export abstract class StreamEngine implements StreamingPlayback {
       const classId = data.classId as number | undefined;
       const objectData = data.objectData as Record<string, unknown> | undefined;
       const hasData = data._hasObjectData as boolean | undefined;
-      const className = typeof classId === "number"
-        ? this.registry.getGhostParser(classId)?.name ?? `classId=${classId}`
-        : "?";
+      const className =
+        typeof classId === "number"
+          ? (this.registry.getGhostParser(classId)?.name ??
+            `classId=${classId}`)
+          : "?";
       log.debug(
         "GhostAlwaysObjectEvent: ghost=%d class=%s hasData=%s %s",
         ghostIndex,
         className,
         hasData,
-        objectData ? `keys=[${Object.keys(objectData).join(",")}]` : "(no data)",
+        objectData
+          ? `keys=[${Object.keys(objectData).join(",")}]`
+          : "(no data)",
       );
       if (ghostIndex != null && classId != null) {
         this.processGhostUpdate({

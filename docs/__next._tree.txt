@@ -1,3 +1,0 @@
-:HL["/t2-mapper/_next/static/chunks/ad52ebedad251428.css","style"]
-:HL["/t2-mapper/_next/static/chunks/aabc2b89bca559ab.css","style"]
-0:{"buildId":"6Rbtt13_hS5V8nXPFgNnq","tree":{"name":"","paramType":null,"paramKey":"","hasRuntimePrefetch":false,"slots":{"children":{"name":"__PAGE__","paramType":null,"paramKey":"__PAGE__","hasRuntimePrefetch":false,"slots":null,"isRootLayout":false}},"isRootLayout":true},"staleTime":300}
