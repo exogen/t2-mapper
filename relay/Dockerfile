@@ -10,7 +10,7 @@ COPY src/manifest.json src/manifest.json
 
 ENV RELAY_PORT=8765
 ENV GAME_BASE_PATH=/data/base
-ENV MANIFEST_PATH=/app/public/manifest.json
+ENV MANIFEST_PATH=/app/src/manifest.json
 
 EXPOSE 8765
 
