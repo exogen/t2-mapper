@@ -263,7 +263,10 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
     const dv = new DataView(msg.buffer, msg.byteOffset, msg.byteLength);
     const seq = dv.getUint32(1, true);
     if (seq !== this.clientConnectSequence) {
-      connLog.debug({ expected: this.clientConnectSequence, got: seq }, "ChallengeReject sequence mismatch, ignoring");
+      connLog.debug(
+        { expected: this.clientConnectSequence, got: seq },
+        "ChallengeReject sequence mismatch, ignoring",
+      );
       return;
     }
     let reason = "Challenge rejected";
@@ -369,10 +372,17 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
     const dv = new DataView(msg.buffer, msg.byteOffset, msg.byteLength);
     const serverSeq = dv.getUint32(1, true);
     const clientSeq = dv.getUint32(5, true);
-    if (serverSeq !== this.serverConnectSequence || clientSeq !== this.clientConnectSequence) {
+    if (
+      serverSeq !== this.serverConnectSequence ||
+      clientSeq !== this.clientConnectSequence
+    ) {
       connLog.debug(
-        { expectedServer: this.serverConnectSequence, gotServer: serverSeq,
-          expectedClient: this.clientConnectSequence, gotClient: clientSeq },
+        {
+          expectedServer: this.serverConnectSequence,
+          gotServer: serverSeq,
+          expectedClient: this.clientConnectSequence,
+          gotClient: clientSeq,
+        },
         "ConnectReject sequence mismatch, ignoring",
       );
       return;

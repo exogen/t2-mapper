@@ -8,7 +8,8 @@ import {
   useRef,
   lazy,
   Activity,
-  ViewTransition,
+  ReactNode,
+  // ViewTransition,
 } from "react";
 import { Camera } from "three";
 import { InspectorControls } from "@/src/components/InspectorControls";
@@ -58,6 +59,10 @@ import {
 } from "react-icons/lu";
 import styles from "./MapInspector.module.css";
 import { useTouchDevice } from "./useTouchDevice";
+
+function ViewTransition({ children }: { children: ReactNode }) {
+  return children;
+}
 
 function createLazy(
   name: string,

@@ -1,4 +1,4 @@
-import TorqueScript from "@/generated/TorqueScript.cjs";
+import { parse as torqueScriptParse } from "@/generated/TorqueScript.js";
 import { generate, type GeneratorOptions } from "./codegen";
 import type { Program } from "./ast";
 import { createRuntime } from "./runtime";
@@ -40,7 +40,7 @@ export type TranspileOptions = ParseOptions & GeneratorOptions;
 
 export function parse(source: string, options?: ParseOptions): Program {
   try {
-    return TorqueScript.parse(source);
+    return torqueScriptParse(source);
   } catch (error: any) {
     if (options?.filename && error.location) {
       throw new Error(

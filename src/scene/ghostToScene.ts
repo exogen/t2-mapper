@@ -234,11 +234,19 @@ export function ghostToSceneObject(
   switch (className) {
     case "TerrainBlock":
       result = terrainFromGhost(ghostIndex, data);
-      log.debug("TerrainBlock #%d: terrFileName=%s", ghostIndex, (result as SceneTerrainBlock).terrFileName);
+      log.debug(
+        "TerrainBlock #%d: terrFileName=%s",
+        ghostIndex,
+        (result as SceneTerrainBlock).terrFileName,
+      );
       return result;
     case "InteriorInstance":
       result = interiorFromGhost(ghostIndex, data);
-      log.debug("InteriorInstance #%d: interiorFile=%s", ghostIndex, (result as SceneInteriorInstance).interiorFile);
+      log.debug(
+        "InteriorInstance #%d: interiorFile=%s",
+        ghostIndex,
+        (result as SceneInteriorInstance).interiorFile,
+      );
       return result;
     case "TSStatic":
       return tsStaticFromGhost(ghostIndex, data);
@@ -247,9 +255,14 @@ export function ghostToSceneObject(
       const sky = result as SceneSky;
       log.debug(
         "Sky #%d: materialList=%s fogColor=(%s, %s, %s) visibleDist=%d fogDist=%d useSkyTextures=%s",
-        ghostIndex, sky.materialList,
-        sky.fogColor.r.toFixed(3), sky.fogColor.g.toFixed(3), sky.fogColor.b.toFixed(3),
-        sky.visibleDistance, sky.fogDistance, sky.useSkyTextures,
+        ghostIndex,
+        sky.materialList,
+        sky.fogColor.r.toFixed(3),
+        sky.fogColor.g.toFixed(3),
+        sky.fogColor.b.toFixed(3),
+        sky.visibleDistance,
+        sky.fogDistance,
+        sky.useSkyTextures,
       );
       return result;
     }
@@ -259,9 +272,15 @@ export function ghostToSceneObject(
       log.debug(
         "Sun #%d: dir=(%s, %s, %s) color=(%s, %s, %s) ambient=(%s, %s, %s)",
         ghostIndex,
-        sun.direction.x.toFixed(3), sun.direction.y.toFixed(3), sun.direction.z.toFixed(3),
-        sun.color.r.toFixed(3), sun.color.g.toFixed(3), sun.color.b.toFixed(3),
-        sun.ambient.r.toFixed(3), sun.ambient.g.toFixed(3), sun.ambient.b.toFixed(3),
+        sun.direction.x.toFixed(3),
+        sun.direction.y.toFixed(3),
+        sun.direction.z.toFixed(3),
+        sun.color.r.toFixed(3),
+        sun.color.g.toFixed(3),
+        sun.color.b.toFixed(3),
+        sun.ambient.r.toFixed(3),
+        sun.ambient.g.toFixed(3),
+        sun.ambient.b.toFixed(3),
       );
       return result;
     }

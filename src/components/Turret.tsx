@@ -23,7 +23,10 @@ export function Turret({ object }: { object: TorqueObject }) {
   // `initialBarrel` is optional - turrets can exist without a barrel mounted.
   // But if we do have one, it needs a shape name.
   if (barrelDatablockName && !barrelShapeName) {
-    log.error("Turret missing shape for barrel datablock: %s", barrelDatablockName);
+    log.error(
+      "Turret missing shape for barrel datablock: %s",
+      barrelDatablockName,
+    );
   }
   return (
     <ShapeInfoProvider type="Turret" object={object} shapeName={shapeName}>

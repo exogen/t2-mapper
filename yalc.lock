@@ -1,0 +1,9 @@
+{
+  "version": "v1",
+  "packages": {
+    "t2-demo-parser": {
+      "signature": "b7dd7ebc27f8aee9ca435f47fe9f0194",
+      "file": true
+    }
+  }
+}

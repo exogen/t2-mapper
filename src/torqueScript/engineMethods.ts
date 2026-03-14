@@ -121,7 +121,9 @@ export function registerEngineStubs(runtime: TorqueRuntime): void {
       } catch (err) {
         log.error(
           "schedule: error calling %s on %s: %o",
-          methodName, this_._id, err,
+          methodName,
+          this_._id,
+          err,
         );
       }
     }, ms);

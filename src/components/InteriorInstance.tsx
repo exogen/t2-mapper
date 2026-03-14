@@ -50,7 +50,9 @@ function InteriorTexture({
   const debugMode = debugContext?.debugMode ?? false;
   const anisotropy = useAnisotropy();
   const url = textureToUrl(materialName);
-  const texture = useTexture(url, (texture) => setupTexture(texture, { anisotropy }));
+  const texture = useTexture(url, (texture) =>
+    setupTexture(texture, { anisotropy }),
+  );
   // Check for self-illuminating flag in material userData
   // Note: The io_dif Blender add-on needs to be updated to export material flags
   const flagNames = new Set<string>(material?.userData?.flag_names ?? []);

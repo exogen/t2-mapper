@@ -357,7 +357,10 @@ export function replaceWithShapeMaterial(
   const texture = loadTexture(url);
   const isTranslucent = flagNames.has("Translucent");
   if (isOrganic || isTranslucent) {
-    setupTexture(texture, { disableMipmaps: true, anisotropy: options.anisotropy });
+    setupTexture(texture, {
+      disableMipmaps: true,
+      anisotropy: options.anisotropy,
+    });
   } else {
     setupTexture(texture, { anisotropy: options.anisotropy });
   }
@@ -474,7 +477,12 @@ export function processShapeScene(
         return result.material;
       });
     } else if (node.material) {
-      const result = replaceWithShapeMaterial(node.material, vis, isOrganic, options);
+      const result = replaceWithShapeMaterial(
+        node.material,
+        vis,
+        isOrganic,
+        options,
+      );
       if (result.initialize) {
         iflInitializers.push({ mesh: node, initialize: result.initialize });
       }
