@@ -1,11 +1,18 @@
-import { lazy, ReactNode, Suspense, useCallback, useRef, useState } from "react";
+import {
+  lazy,
+  ReactNode,
+  Suspense,
+  useCallback,
+  useRef,
+  useState,
+} from "react";
 import { KeyboardControls } from "@react-three/drei";
 import { JoystickProvider } from "./JoystickContext";
 import { useTouchDevice } from "./useTouchDevice";
 import {
-  KeyboardAndMouseHandler,
+  MouseAndKeyboardHandler,
   KEYBOARD_CONTROLS,
-} from "./KeyboardAndMouseHandler";
+} from "./MouseAndKeyboardHandler";
 import {
   InputContext,
   type InputFrame,
@@ -41,7 +48,7 @@ export function InputProducers() {
 
   return (
     <>
-      <KeyboardAndMouseHandler />
+      <MouseAndKeyboardHandler />
       {isTouch ? (
         <Suspense>
           <TouchHandler />

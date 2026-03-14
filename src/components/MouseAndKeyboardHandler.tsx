@@ -55,11 +55,11 @@ export const KEYBOARD_CONTROLS = [
 ];
 
 const MIN_SPEED_ADJUSTMENT = 2;
-const MAX_SPEED_ADJUSTMENT = 10;
+const MAX_SPEED_ADJUSTMENT = 11;
 const DRAG_THRESHOLD = 3; // px of movement before it counts as a drag
 
 /** Shared mouse/look sensitivity used across all modes (.mis, .rec, live). */
-export const MOUSE_SENSITIVITY = 0.003;
+export const MOUSE_SENSITIVITY = 0.002;
 export const ARROW_LOOK_SPEED = 1; // radians/sec
 
 function quantizeSpeed(speedMultiplier: number): number {
@@ -70,7 +70,7 @@ function quantizeSpeed(speedMultiplier: number): number {
   return (steps + 1) / 16;
 }
 
-export function KeyboardAndMouseHandler() {
+export function MouseAndKeyboardHandler() {
   // Don't let KeyboardControls handle stuff when metaKey is held.
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
@@ -103,6 +103,7 @@ export function KeyboardAndMouseHandler() {
 
   const getInvertScroll = useEffectEvent(() => invertScroll);
   const getInvertDrag = useEffectEvent(() => invertDrag);
+  const getMode = useEffectEvent(() => mode);
 
   // Accumulated mouse deltas between frames.
   const mouseDeltaYaw = useRef(0);
@@ -159,7 +160,11 @@ export function KeyboardAndMouseHandler() {
       }
       didDrag = true;
 
-      const dragSign = getInvertDrag() ? -1 : 1;
+      // In follow/orbit mode, drag direction is reversed because the camera
+      // orbits around a target — dragging right should move the camera right
+      // (decreasing yaw), opposite of fly mode.
+      const orbitFlip = getMode() === "follow" ? -1 : 1;
+      const dragSign = (getInvertDrag() ? 1 : -1) * orbitFlip;
       mouseDeltaYaw.current += dragSign * e.movementX * MOUSE_SENSITIVITY;
       mouseDeltaPitch.current += dragSign * e.movementY * MOUSE_SENSITIVITY;
     };
@@ -229,10 +234,14 @@ export function KeyboardAndMouseHandler() {
       const scrollSign = getInvertScroll() ? -1 : 1;
       const direction = (e.deltaY > 0 ? -1 : 1) * scrollSign;
 
+      // scale deltaY in a way that feels natural for both trackpads (often just
+      // a deltaY of 1 at a time!) and scroll wheels (can be 100s or more).
+      const scaledDeltaY = Math.ceil(Math.log2(Math.abs(e.deltaY) + 1));
+
       const delta =
         Math.max(
           MIN_SPEED_ADJUSTMENT,
-          Math.min(MAX_SPEED_ADJUSTMENT, Math.abs(e.deltaY * 0.01)),
+          Math.min(MAX_SPEED_ADJUSTMENT, scaledDeltaY),
         ) * direction;
 
       setSpeedMultiplier((prev) => {

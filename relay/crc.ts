@@ -59,6 +59,9 @@ interface Manifest {
 
 let cachedManifest: Manifest | null = null;
 
+/** In-memory cache of shape file bytes, keyed by resolved local path. */
+const fileCache = new Map<string, Uint8Array>();
+
 /**
  * Path to manifest.json. Defaults to `public/manifest.json` relative to the
  * project root, but can be overridden via `MANIFEST_PATH` env var for
@@ -137,15 +140,25 @@ export async function computeGameCRC(
       continue;
     }
 
-    let data: Uint8Array;
-    try {
-      data = new Uint8Array(await fs.readFile(localPath));
-    } catch {
+    let data = fileCache.get(localPath);
+    if (data) {
       console.log(
-        `[crc]   SKIP id=${db.objectId} ${db.className} "${db.shapeName}" — file read failed`,
+        `[crc]   cache hit: "${localPath}"`,
       );
-      filesMissing++;
-      continue;
+    } else {
+      console.log(
+        `[crc]   cache miss, reading: "${localPath}"`,
+      );
+      try {
+        data = new Uint8Array(await fs.readFile(localPath));
+        fileCache.set(localPath, data);
+      } catch {
+        console.log(
+          `[crc]   SKIP id=${db.objectId} ${db.className} "${db.shapeName}" — file read failed`,
+        );
+        filesMissing++;
+        continue;
+      }
     }
 
     const prevCrc = crc;
@@ -172,9 +185,14 @@ export async function computeGameCRC(
 
   const elapsed = performance.now() - startTime;
 
+  const cacheSizeBytes = [...fileCache.values()].reduce(
+    (sum, buf) => sum + buf.length,
+    0,
+  );
   console.log(
     `[crc] RESULT: ${filesFound} files CRC'd, ${filesMissing} missing, ` +
-      `crc=0x${crc.toString(16)}, totalSize=${totalSize}, elapsed=${elapsed.toFixed(0)}ms`,
+      `crc=0x${crc.toString(16)}, totalSize=${totalSize}, elapsed=${elapsed.toFixed(0)}ms, ` +
+      `cache=${fileCache.size} files (${(cacheSizeBytes / 1024).toFixed(0)} KB)`,
   );
 
   return { crc, totalSize };

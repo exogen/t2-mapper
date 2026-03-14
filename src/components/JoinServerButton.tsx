@@ -17,6 +17,7 @@ export function JoinServerButton({
   // const serverName = useLiveSelector((s) => s.serverName);
   const ping = useLiveSelector(selectPing);
   const disconnectServer = useLiveSelector((s) => s.disconnectServer);
+  const disconnectRelay = useLiveSelector((s) => s.disconnectRelay);
 
   const isLive = gameStatus === "connected";
   const isConnecting =
@@ -33,6 +34,7 @@ export function JoinServerButton({
       onClick={() => {
         if (isLive) {
           disconnectServer();
+          disconnectRelay();
         } else {
           onOpenServerBrowser();
         }

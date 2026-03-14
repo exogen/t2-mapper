@@ -1,5 +1,5 @@
 import { useKeyboardControls } from "@react-three/drei";
-import { Controls } from "./KeyboardAndMouseHandler";
+import { Controls } from "./MouseAndKeyboardHandler";
 import { useRecording } from "./RecordingProvider";
 import styles from "./KeyboardOverlay.module.css";
 

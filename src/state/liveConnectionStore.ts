@@ -215,6 +215,8 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
             newAdapter.missionTypeDisplayName ?? undefined,
           gameClassName: newAdapter.gameClassName ?? undefined,
           serverDisplayName: newAdapter.serverDisplayName ?? undefined,
+          // connectedPlayerName is derived from the control object's target
+          // info, which reflects the server-assigned name (not warriorName).
           recorderName: newAdapter.connectedPlayerName ?? undefined,
         });
       };

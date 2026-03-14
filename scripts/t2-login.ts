@@ -3,11 +3,12 @@
  * from the auth server using username and password.
  *
  * Usage:
- *   tsx scripts/t2-login.ts [--env=<path>]
+ *   tsx scripts/t2-login.ts [--env <path>] [--update]
  *
  * Reads T2_ACCOUNT_NAME and T2_ACCOUNT_PASSWORD from .env / environment (or prompts).
- * Writes/updates T2_ACCOUNT_CERTIFICATE and T2_ACCOUNT_ENCRYPTED_KEY in the
- * target env file (default: .env.local).
+ *
+ * Without --update, prints the env lines to stdout. With --update, writes them
+ * to the target env file (default: .env.local).
  *
  * This only needs to be run once — the credentials persist until you change
  * your password or the auth server rotates keys.
@@ -18,23 +19,30 @@ import net from "node:net";
 import http from "node:http";
 import fs from "node:fs/promises";
 import path from "node:path";
-import readline from "node:readline/promises";
+import { parseArgs } from "node:util";
+import { input, password } from "@inquirer/prompts";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 
-function sha1(data: string): string {
-  return crypto.createHash("sha1").update(data).digest("hex");
+const { values: args } = parseArgs({
+  options: {
+    env: { type: "string", default: ".env.local" },
+    update: { type: "boolean", default: false },
+  },
+  strict: true,
+});
+
+
+function errorMessage(e: unknown): string {
+  if (e instanceof AggregateError && e.errors.length > 0) {
+    return errorMessage(e.errors[0]);
+  }
+  if (e instanceof Error && e.message) return e.message;
+  return String(e);
 }
 
-/** Parse --env=<path> from argv, resolve relative to project root. */
-function getEnvFilePath(): string {
-  for (const arg of process.argv.slice(2)) {
-    const match = arg.match(/^--env=(.+)$/);
-    if (match) {
-      return path.resolve(ROOT, match[1]);
-    }
-  }
-  return path.resolve(ROOT, ".env.local");
+function sha1(data: string): string {
+  return crypto.createHash("sha1").update(data).digest("hex");
 }
 
 /**
@@ -44,7 +52,11 @@ function getEnvFilePath(): string {
 async function readEnvLines(filePath: string): Promise<string[]> {
   try {
     const content = await fs.readFile(filePath, "utf-8");
-    return content.split("\n");
+    const lines = content.split("\n");
+    while (lines.length > 0 && lines[lines.length - 1] === "") {
+      lines.pop();
+    }
+    return lines;
   } catch {
     return [];
   }
@@ -72,16 +84,8 @@ function updateEnvLines(
   }
 
   // Append any keys that weren't already in the file
-  if (remaining.size > 0) {
-    // Ensure there's a blank line before new entries (unless file is empty
-    // or already ends with one)
-    const last = result[result.length - 1];
-    if (result.length > 0 && last !== "" && last !== undefined) {
-      result.push("");
-    }
-    for (const key of remaining) {
-      result.push(`${key}=${updates[key]}`);
-    }
+  for (const key of remaining) {
+    result.push(`${key}=${updates[key]}`);
   }
 
   // Ensure file ends with a newline
@@ -165,10 +169,13 @@ async function downloadAccount(
 
     socket.on("timeout", () => {
       socket.destroy();
-      reject(new Error("Auth server connection timed out"));
+      const err = new Error("Auth server connection timed out");
+      (err as any).isNetwork = true;
+      reject(err);
     });
 
     socket.on("error", (err: Error) => {
+      (err as any).isNetwork = true;
       reject(err);
     });
 
@@ -234,36 +241,30 @@ async function downloadAccount(
 }
 
 async function main() {
-  const envFilePath = getEnvFilePath();
-
-  const rl = readline.createInterface({
-    input: process.stdin,
-    output: process.stdout,
-  });
+  const envFilePath = path.resolve(ROOT, args.env!);
 
   // Credentials come from process.env (loaded via --env-file-if-exists in
   // the npm script, or set manually in the shell environment).
   let username = process.env.T2_ACCOUNT_NAME || "";
-  let password = process.env.T2_ACCOUNT_PASSWORD || "";
+  let pw = process.env.T2_ACCOUNT_PASSWORD || "";
 
   if (!username) {
-    username = await rl.question("TribesNext username: ");
+    username = await input({ message: "TribesNext username:", required: true });
   } else {
     console.log(`Using username: ${username}`);
   }
 
-  if (!password) {
-    password = await rl.question("TribesNext password: ");
+  if (!pw) {
+    pw = await password({ message: "TribesNext password:", mask: "•" });
+    if (!pw) {
+      console.error("Password is required.");
+      process.exit(1);
+    }
   } else {
     console.log("Using password from environment");
   }
 
-  rl.close();
-
-  if (!username || !password) {
-    console.error("Username and password are required.");
-    process.exit(1);
-  }
+  const maxRetries = 3;
 
   // Step 1: Find auth server
   let authAddress = process.env.T2_AUTH_SERVER || "";
@@ -271,23 +272,45 @@ async function main() {
     console.log(`Using auth server from environment: ${authAddress}`);
   } else {
     console.log("Looking up auth server...");
-    try {
-      authAddress = await findAuthServer();
-      console.log(`Auth server: ${authAddress}`);
-    } catch (e) {
-      console.error("Failed to find auth server:", e);
-      process.exit(1);
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        authAddress = await findAuthServer();
+        console.log(`Auth server: ${authAddress}`);
+        break;
+      } catch (e) {
+        if (attempt < maxRetries) {
+          const delay = attempt * 2;
+          const msg = errorMessage(e);
+          console.warn(`Attempt ${attempt} failed: ${msg}, retrying in ${delay}s...`);
+          await new Promise((r) => setTimeout(r, delay * 1000));
+        } else {
+          const msg = errorMessage(e);
+          console.error(`Failed to find auth server: ${msg}`);
+          process.exit(1);
+        }
+      }
     }
   }
 
-  // Step 2: Download credentials
+  // Step 2: Download credentials (retry on network errors)
   console.log("Downloading account credentials...");
   let credentials: { certificate: string; encryptedKey: string };
-  try {
-    credentials = await downloadAccount(authAddress, username, password);
-  } catch (e) {
-    console.error("Failed to download credentials:", e);
-    process.exit(1);
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      credentials = await downloadAccount(authAddress, username, pw);
+      break;
+    } catch (e: any) {
+      if (e?.isNetwork && attempt < maxRetries) {
+        const delay = attempt * 2;
+        const msg = errorMessage(e);
+        console.warn(`Attempt ${attempt} failed: ${msg}, retrying in ${delay}s...`);
+        await new Promise((r) => setTimeout(r, delay * 1000));
+      } else {
+        const msg = errorMessage(e);
+        console.error(`Failed to download credentials: ${msg}`);
+        process.exit(1);
+      }
+    }
   }
 
   console.log("Successfully downloaded credentials!");
@@ -300,28 +323,37 @@ async function main() {
     console.log(`  Public key length: ${certFields[3].length} hex chars`);
   }
 
-  // Step 3: Update the env file
+  // Step 3: Output or update the env file
   const certB64 = Buffer.from(credentials.certificate).toString("base64");
   const keyB64 = Buffer.from(credentials.encryptedKey).toString("base64");
 
-  const existingLines = await readEnvLines(envFilePath);
-  const updatedLines = updateEnvLines(
-    existingLines.length > 0
-      ? existingLines
-      : ["# Generated by scripts/t2-login.ts"],
-    {
-      T2_ACCOUNT_NAME: username,
-      T2_ACCOUNT_PASSWORD: password,
-      T2_ACCOUNT_CERTIFICATE: certB64,
-      T2_ACCOUNT_ENCRYPTED_KEY: keyB64,
-    },
-  );
+  const envVars: Record<string, string> = {
+    T2_ACCOUNT_NAME: username,
+    T2_ACCOUNT_PASSWORD: pw,
+    T2_ACCOUNT_CERTIFICATE: certB64,
+    T2_ACCOUNT_ENCRYPTED_KEY: keyB64,
+  };
 
-  await fs.writeFile(envFilePath, updatedLines.join("\n"), "utf-8");
-  console.log(`\nCredentials written to ${envFilePath}`);
-  console.log(
-    "The relay server will read these automatically. Run: npm run relay:dev",
-  );
+  if (args.update) {
+    const existingLines = await readEnvLines(envFilePath);
+    const updatedLines = updateEnvLines(
+      existingLines.length > 0
+        ? existingLines
+        : ["# Generated by scripts/t2-login.ts"],
+      envVars,
+    );
+
+    await fs.writeFile(envFilePath, updatedLines.join("\n"), "utf-8");
+    console.log(`\nCredentials written to ${envFilePath}`);
+    console.log(
+      "The relay server will read these automatically. Run: npm run relay:dev",
+    );
+  } else {
+    console.log("");
+    for (const [key, value] of Object.entries(envVars)) {
+      console.log(`${key}=${value}`);
+    }
+  }
 }
 
 main().catch((e) => {

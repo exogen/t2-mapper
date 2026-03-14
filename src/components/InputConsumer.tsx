@@ -60,8 +60,6 @@ const _forwardVec = new Vector3();
 const _sideVec = new Vector3();
 const _moveVec = new Vector3();
 const _lookEuler = new Euler(0, 0, 0, "YXZ");
-const _orbitDir = new Vector3();
-const _orbitTarget = new Vector3();
 
 /** A buffered move sent to the server, awaiting acknowledgment. */
 interface BufferedMove {
@@ -167,6 +165,17 @@ export function InputConsumer() {
   // Whether prediction has been initialized from a server snapshot.
   const predInitialized = useRef(false);
 
+  // ── Orbit target position for follow mode (Torque coordinates) ──
+  // Maintained at tick rate from snapshot data, interpolated at frame rate
+  // using the same time base as the camera (TickProvider), matching how
+  // Tribes2.exe's Camera::interpolateTick reads getRenderWorldBox() using
+  // the same dt as all other entities' interpolateTick.
+  const prevOrbitTargetPos = useRef({ x: 0, y: 0, z: 0 });
+  const currentOrbitTargetPos = useRef({ x: 0, y: 0, z: 0 });
+  const orbitTargetInitialized = useRef(false);
+  /** Snapshot reference from last orbit target update (identity check). */
+  const lastOrbitSnapshot = useRef<unknown>(null);
+
   // ── Accumulated input for current tick (live mode) ──
   const tickDeltaYaw = useRef(0);
   const tickDeltaPitch = useRef(0);
@@ -206,6 +215,8 @@ export function InputConsumer() {
 
       // Reset prediction state for new connection.
       predInitialized.current = false;
+      orbitTargetInitialized.current = false;
+      lastOrbitSnapshot.current = null;
       moveBuffer.current.length = 0;
       nextMoveIndex.current = 0;
       lastProcessedAck.current = 0;
@@ -219,6 +230,8 @@ export function InputConsumer() {
       }
       activeAdapterRef.current = null;
       predInitialized.current = false;
+      orbitTargetInitialized.current = false;
+      lastOrbitSnapshot.current = null;
       moveBuffer.current.length = 0;
 
       setMode("local");
@@ -294,7 +307,7 @@ export function InputConsumer() {
     // Always set trigger[1] (altTrigger) — the Torque Camera doubles its
     // movement speed when this trigger is active. Our speedMultiplier is
     // a fraction of this faster base speed, already applied by the input
-    // producer (KeyboardAndMouseHandler) to the movement axes.
+    // producer (MouseAndKeyboardHandler) to the movement axes.
     triggers[1] = true;
 
     // Build the move and assign a browser-owned index.
@@ -312,7 +325,15 @@ export function InputConsumer() {
 
     // Buffer for prediction replay and re-sending.
     const buffer = moveBuffer.current;
-    buffer.push({ moveIndex, move, yaw: qYaw, pitch: qPitch, x: mx, y: my, z: mz });
+    buffer.push({
+      moveIndex,
+      move,
+      yaw: qYaw,
+      pitch: qPitch,
+      x: mx,
+      y: my,
+      z: mz,
+    });
 
     // Cap buffer size.
     if (buffer.length > MAX_MOVE_BUFFER) {
@@ -333,6 +354,35 @@ export function InputConsumer() {
         movesToSend.map((m) => m.move),
         movesToSend[0].moveIndex,
       );
+    }
+
+    // ── Orbit target position tracking (follow mode) ──
+    // Read the orbit target's position from the snapshot at tick rate,
+    // matching Camera::processTick which reads getWorldBox().getCenter().
+    // Only update when the snapshot has actually changed (new packet data),
+    // otherwise prev gets overwritten with current on every useTick, destroying
+    // the interpolation endpoints between packets.
+    const snap = activeAdapterRef.current.getSnapshot();
+    if (snap !== lastOrbitSnapshot.current) {
+      lastOrbitSnapshot.current = snap;
+      const cam = snap?.camera;
+      if (cam?.orbitTargetId) {
+        const targetEntity = snap.entities.find(
+          (e) => e.id === cam.orbitTargetId,
+        );
+        if (targetEntity?.position) {
+          prevOrbitTargetPos.current = { ...currentOrbitTargetPos.current };
+          currentOrbitTargetPos.current = {
+            x: targetEntity.position[0],
+            y: targetEntity.position[1],
+            z: targetEntity.position[2],
+          };
+          if (!orbitTargetInitialized.current) {
+            prevOrbitTargetPos.current = { ...currentOrbitTargetPos.current };
+            orbitTargetInitialized.current = true;
+          }
+        }
+      }
     }
   });
 
@@ -468,36 +518,49 @@ export function InputConsumer() {
       prevPos.current = { ...predPos.current };
 
       predInitialized.current = true;
+
+      // Initialize orbit target position on first reconciliation with
+      // orbit data, so follow mode works immediately after mode switch.
+      if (serverCam.orbitTargetId && !orbitTargetInitialized.current) {
+        const targetEntity = snapshot.entities.find(
+          (e) => e.id === serverCam.orbitTargetId,
+        );
+        if (targetEntity?.position) {
+          const pos = {
+            x: targetEntity.position[0],
+            y: targetEntity.position[1],
+            z: targetEntity.position[2],
+          };
+          currentOrbitTargetPos.current = pos;
+          prevOrbitTargetPos.current = { ...pos };
+          orbitTargetInitialized.current = true;
+        }
+      }
     }
 
     if (!predInitialized.current) return;
 
     if (mode === "fly") {
-      // ── Camera::interpolateTick equivalent for position ──
-      // Torque interpolates between prev and current tick states:
-      //   renderState = prevState + (currentState - prevState) * tickFrac
-      // tickFrac goes 0→1 between ticks (0 = just after tick, 1 = next tick).
-      const tickFrac = getTickFraction();
-      const pp = prevPos.current;
-      const cp = predPos.current;
-      const renderX = pp.x + (cp.x - pp.x) * tickFrac;
-      const renderY = pp.y + (cp.y - pp.y) * tickFrac;
-      const renderZ = pp.z + (cp.z - pp.z) * tickFrac;
-
-      // Convert Torque coords (x=east, y=north, z=up) to Three.js (x=north, y=up, z=east).
-      state.camera.position.set(renderY, renderZ, renderX);
-
-      // Rotation uses predicted values directly (already includes pending
-      // deltas from useFrame above for immediate responsiveness).
-      const [qx, qy, qz, qw] = yawPitchToQuaternion(
+      applyFlyCamera(
+        state.camera,
+        prevPos.current,
+        predPos.current,
         predYaw.current,
         predPitch.current,
+        getTickFraction(),
       );
-      state.camera.quaternion.set(qx, qy, qz, qw);
     } else if (mode === "follow") {
-      // Follow/orbit mode: use server position for orbit target,
-      // but apply our predicted rotation for responsive orbit camera.
-      applyOrbitCamera(state, serverCam, predYaw.current, predPitch.current);
+      if (!orbitTargetInitialized.current) return;
+      applyOrbitCamera(
+        state.camera,
+        prevOrbitTargetPos.current,
+        currentOrbitTargetPos.current,
+        predYaw.current,
+        predPitch.current,
+        getTickFraction(),
+        serverCam?.orbitDistance ?? 4,
+        serverCam?.orbitTargetId,
+      );
     }
   });
 
@@ -558,53 +621,87 @@ function applyLocalCamera(
   }
 }
 
+interface TorquePos {
+  x: number;
+  y: number;
+  z: number;
+}
+
 /**
- * In follow/orbit mode, recompute orbit camera position from the server's
- * orbit target using our predicted rotation.
+ * Camera::interpolateTick for fly mode.
+ * Interpolates predicted position between tick states, sets rotation from
+ * frame-rate predicted values.
  */
-function applyOrbitCamera(
-  state: { camera: Camera },
-  serverCam: StreamCamera | undefined,
+function applyFlyCamera(
+  camera: Camera,
+  prevPos: TorquePos,
+  predPos: TorquePos,
   predYaw: number,
   predPitch: number,
+  tickFrac: number,
 ) {
-  if (
-    !serverCam ||
-    serverCam.mode !== "third-person" ||
-    !serverCam.orbitTargetId
-  ) {
-    return;
-  }
+  // Torque interpolates: renderState = prev + (current - prev) * tickFrac
+  const renderX = prevPos.x + (predPos.x - prevPos.x) * tickFrac;
+  const renderY = prevPos.y + (predPos.y - prevPos.y) * tickFrac;
+  const renderZ = prevPos.z + (predPos.z - prevPos.z) * tickFrac;
 
-  const root = streamPlaybackStore.getState().root;
-  if (!root) return;
+  // Convert Torque coords (x=east, y=north, z=up) to Three.js (x=north, y=up, z=east).
+  camera.position.set(renderY, renderZ, renderX);
 
-  const targetGroup = root.children.find(
-    (child) => child.name === serverCam.orbitTargetId,
-  );
-  if (!targetGroup) return;
+  const [qx, qy, qz, qw] = yawPitchToQuaternion(predYaw, predPitch);
+  camera.quaternion.set(qx, qy, qz, qw);
+}
 
-  _orbitTarget.copy(targetGroup.position);
-  const entities = streamPlaybackStore.getState().entities;
-  const orbitEntity = entities.get(serverCam.orbitTargetId);
-  if (orbitEntity?.renderType === "Player") {
-    _orbitTarget.y += 1.0;
-  }
+/**
+ * Camera::interpolateTick for orbit mode.
+ * Interpolates the orbit target's position between tick states using the
+ * camera's own tick fraction (matching Tribes2.exe where Camera and its
+ * orbit target use the same dt from ProcessList). Computes orbit pullback
+ * from frame-rate predicted rotation for responsive mouse control.
+ */
+function applyOrbitCamera(
+  camera: Camera,
+  prevTargetPos: TorquePos,
+  currentTargetPos: TorquePos,
+  predYaw: number,
+  predPitch: number,
+  tickFrac: number,
+  orbitDistance: number,
+  orbitTargetId: string | undefined,
+) {
+  // Interpolate orbit target position between tick states (Torque coords).
+  const tx =
+    prevTargetPos.x + (currentTargetPos.x - prevTargetPos.x) * tickFrac;
+  const ty =
+    prevTargetPos.y + (currentTargetPos.y - prevTargetPos.y) * tickFrac;
+  const tz =
+    prevTargetPos.z + (currentTargetPos.z - prevTargetPos.z) * tickFrac;
 
-  const sx = Math.sin(predPitch);
-  const cx = Math.cos(predPitch);
-  const sz = Math.sin(predYaw);
-  const cz = Math.cos(predYaw);
-  // Camera pulls back along negative forward (Torque Rz*Rx column 1,
-  // converted to Three.js coords).
-  _orbitDir.set(-cz * cx, -sx, sz * cx);
+  // Height offset: approximate getWorldBox().getCenter() for players.
+  const isPlayer =
+    orbitTargetId != null &&
+    streamPlaybackStore.getState().entities.get(orbitTargetId)?.renderType ===
+      "Player";
+  const centerZ = tz + (isPlayer ? 1.0 : 0);
 
-  if (_orbitDir.lengthSq() > 1e-8) {
-    _orbitDir.normalize();
-    const orbitDistance = Math.max(0.1, serverCam.orbitDistance ?? 4);
-    state.camera.position
-      .copy(_orbitTarget)
-      .addScaledVector(_orbitDir, orbitDistance);
-    state.camera.lookAt(_orbitTarget);
-  }
+  // Compute orbit pullback using frame-rate predicted rotation.
+  const sp = Math.sin(predPitch);
+  const cp = Math.cos(predPitch);
+  const sy = Math.sin(predYaw);
+  const cy = Math.cos(predYaw);
+
+  // Torque forward (column 1 of Rz*Rx, Torque convention):
+  //   {sy*cp, cy*cp, -sp}
+  // Camera pulls back along negative forward:
+  //   {-sy*cp, -cy*cp, sp}
+  const dist = Math.max(0.1, orbitDistance);
+  const camX = tx - sy * cp * dist;
+  const camY = ty - cy * cp * dist;
+  const camZ = centerZ + sp * dist;
+
+  // Convert Torque coords to Three.js (x=north, y=up, z=east).
+  camera.position.set(camY, camZ, camX);
+
+  const [qx, qy, qz, qw] = yawPitchToQuaternion(predYaw, predPitch);
+  camera.quaternion.set(qx, qy, qz, qw);
 }

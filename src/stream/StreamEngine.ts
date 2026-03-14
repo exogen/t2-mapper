@@ -1846,10 +1846,17 @@ export abstract class StreamEngine implements StreamingPlayback {
         });
         this.onRosterChanged();
       }
-      // The first MsgClientJoin is the connected player's own join message.
+      // Detect our own join: the server sends "Welcome to Tribes2" in the
+      // format string (args[1]) only for the joining client.  This is the same
+      // technique the T2 community's player_support.cs uses.
       if (!this.connectedPlayerName && name) {
-        this.connectedPlayerName = name;
-        this.onMissionInfoChange?.();
+        const msgFormat = stripTaggedStringMarkup(
+          this.resolveNetString(args[1]),
+        );
+        if (msgFormat.includes("Welcome to Tribes")) {
+          this.connectedPlayerName = name;
+          this.onMissionInfoChange?.();
+        }
       }
     } else if (msgType === "MsgClientDrop" && args.length >= 3) {
       const clientId = parseInt(this.resolveNetString(args[2]), 10);
