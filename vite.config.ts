@@ -5,6 +5,7 @@ import babel from "@rolldown/plugin-babel";
 // https://vite.dev/config/
 export default defineConfig({
   base: "/t2-mapper/",
+  server: { port: 3000 },
   build: {
     outDir: "docs",
     emptyOutDir: false,
