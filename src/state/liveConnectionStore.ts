@@ -50,7 +50,7 @@ export interface LiveConnectionStore extends LiveConnectionState {
 }
 
 const DEFAULT_RELAY_URL =
-  import.meta.env.NEXT_PUBLIC_RELAY_URL || "ws://localhost:8765";
+  import.meta.env.VITE_RELAY_URL || "ws://localhost:8765";
 
 export const liveConnectionStore = createStore<LiveConnectionStore>(
   (set, get) => ({

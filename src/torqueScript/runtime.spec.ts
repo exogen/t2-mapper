@@ -1670,6 +1670,7 @@ describe("TorqueScript Runtime", () => {
       const warnSpy2 = vi.spyOn(console, "warn").mockImplementation(() => {});
       script.execute();
       expect(warnSpy2).toHaveBeenCalledWith(
+        "[runtime]",
         'exec("scripts/test.cs"): script not found',
       );
       warnSpy2.mockRestore();
@@ -1767,6 +1768,7 @@ describe("TorqueScript Runtime", () => {
       await runtime.loadFromSource('exec("scripts/missing.cs");');
 
       expect(warnSpy).toHaveBeenCalledWith(
+        "[runtime]",
         "Script not found: scripts/missing.cs",
       );
       warnSpy.mockRestore();
@@ -2939,6 +2941,7 @@ describe("TorqueScript Runtime", () => {
       expect(runtime.$g.get("Main")).toBe(1);
       expect(runtime.$g.get("AI")).toBe(""); // Not loaded
       expect(warnSpy).toHaveBeenCalledWith(
+        "[runtime]",
         "Ignoring script: scripts/ai/brain.cs",
       );
       warnSpy.mockRestore();
@@ -3009,7 +3012,7 @@ describe("TorqueScript Runtime", () => {
       // Should only warn once (second exec sees it's already in failedScripts)
       expect(
         warnSpy.mock.calls.filter(
-          (c) => c[0] === "Ignoring script: scripts/ignored.cs",
+          (c) => c[1] === "Ignoring script: scripts/ignored.cs",
         ).length,
       ).toBe(1);
       // Loader should only be called for main.cs, not for ignored.cs
