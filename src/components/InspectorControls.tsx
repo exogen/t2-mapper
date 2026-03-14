@@ -269,12 +269,12 @@ export function InspectorControls({
                         id="mouseSensitivityInput"
                         type="range"
                         min={1}
-                        max={64}
-                        step={1}
-                        value={Math.round(mouseSensitivity * 8000)}
+                        max={256}
+                        step={2}
+                        value={Math.round(mouseSensitivity * 16000)}
                         onChange={(event) => {
                           const value = parseInt(event.target.value);
-                          const sens = value / 8000;
+                          const sens = value / 16000;
                           setMouseSensitivity(sens);
                         }}
                       />

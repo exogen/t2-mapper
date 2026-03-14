@@ -11,6 +11,13 @@ import {
 import { useFogQueryState } from "./useQueryParams";
 import { useTouchDevice } from "./useTouchDevice";
 
+export const MIN_SPEED_MULTIPLIER = 0.01;
+export const MAX_SPEED_MULTIPLIER = 1;
+
+export const DEFAULT_MOUSE_SENSITIVITY = 32 / 16000; // 0.002
+export const MIN_MOUSE_SENSITIVITY = 1 / 16000;
+export const MAX_MOUSE_SENSITIVITY = 256 / 16000;
+
 type StateSetter<T> = ReturnType<typeof useState<T>>[1];
 
 export type TouchMode = "dualStick" | "moveLookStick";
@@ -56,13 +63,6 @@ type ControlsContext = {
   invertJoystick: boolean;
   setInvertJoystick: StateSetter<boolean>;
 };
-
-export const MIN_SPEED_MULTIPLIER = 0.01;
-export const MAX_SPEED_MULTIPLIER = 1;
-
-export const DEFAULT_MOUSE_SENSITIVITY = 16 / 8000; // 0.002
-export const MIN_MOUSE_SENSITIVITY = 1 / 8000;
-export const MAX_MOUSE_SENSITIVITY = 64 / 8000;
 
 const SettingsContext = createContext<SettingsContext | null>(null);
 const DebugContext = createContext<DebugContext | null>(null);
