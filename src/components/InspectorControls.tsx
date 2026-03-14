@@ -265,9 +265,6 @@ export function InspectorControls({
                       Mouse sensitivity
                     </label>
                     <div className={styles.Control}>
-                      <output htmlFor="mouseSensitivityInput">
-                        {Math.round(mouseSensitivity * 8000) / 64}
-                      </output>
                       <input
                         id="mouseSensitivityInput"
                         type="range"

@@ -87,15 +87,33 @@ type PersistedSettings = {
 };
 
 export function useSettings() {
-  return useContext(SettingsContext);
+  const context = useContext(SettingsContext);
+  if (!context) {
+    throw new Error(
+      "No SettingsContext found. Did you remember to add a <SettingsProvider>?",
+    );
+  }
+  return context;
 }
 
 export function useDebug() {
-  return useContext(DebugContext);
+  const context = useContext(DebugContext);
+  if (!context) {
+    throw new Error(
+      "No DebugContext found. Did you remember to add a <SettingsProvider>?",
+    );
+  }
+  return context;
 }
 
 export function useControls() {
-  return useContext(ControlsContext);
+  const context = useContext(ControlsContext);
+  if (!context) {
+    throw new Error(
+      "No ControlsContext found. Did you remember to add a <SettingsProvider>?",
+    );
+  }
+  return context;
 }
 
 export function SettingsProvider({ children }: { children: ReactNode }) {

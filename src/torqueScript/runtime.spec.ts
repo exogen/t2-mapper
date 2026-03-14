@@ -3,6 +3,22 @@ import { createRuntime } from "./runtime";
 import type { TorqueRuntimeOptions } from "./types";
 import { parse, transpile } from "./index";
 
+// Mock pino logger so log.warn() calls are capturable in Node.js (pino's
+// browser write function only applies in browsers, not in vitest/Node).
+const mockLogger = vi.hoisted(() => ({
+  warn: vi.fn(),
+  info: vi.fn(),
+  error: vi.fn(),
+  debug: vi.fn(),
+  trace: vi.fn(),
+  fatal: vi.fn(),
+  child: vi.fn(),
+}));
+
+vi.mock("../logger", () => ({
+  createLogger: () => mockLogger,
+}));
+
 function run(script: string, options?: TorqueRuntimeOptions) {
   const { $, $f, $g, state } = createRuntime(options);
   const { code } = transpile(script);
@@ -1658,19 +1674,17 @@ describe("TorqueScript Runtime", () => {
     it("returns false when exec called without loadScript", async () => {
       const runtime = createRuntime();
 
-      // Warn about missing loader during load
-      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      // Warn about missing loader during load (via pino logger)
+      mockLogger.warn.mockClear();
       const script = await runtime.loadFromSource(
         '$Result = exec("scripts/test.cs");',
       );
-      expect(warnSpy).toHaveBeenCalled();
-      warnSpy.mockRestore();
+      expect(mockLogger.warn).toHaveBeenCalled();
 
-      // Execution should warn and set $Result to false
+      // Execution should warn and set $Result to false (via console.warn in builtins)
       const warnSpy2 = vi.spyOn(console, "warn").mockImplementation(() => {});
       script.execute();
       expect(warnSpy2).toHaveBeenCalledWith(
-        "[runtime]",
         'exec("scripts/test.cs"): script not found',
       );
       warnSpy2.mockRestore();
@@ -1763,15 +1777,14 @@ describe("TorqueScript Runtime", () => {
       const runtime = createRuntime({
         loadScript: async () => null,
       });
-      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      mockLogger.warn.mockClear();
 
       await runtime.loadFromSource('exec("scripts/missing.cs");');
 
-      expect(warnSpy).toHaveBeenCalledWith(
-        "[runtime]",
-        "Script not found: scripts/missing.cs",
+      expect(mockLogger.warn).toHaveBeenCalledWith(
+        "Script not found: %s",
+        "scripts/missing.cs",
       );
-      warnSpy.mockRestore();
     });
   });
 
@@ -2925,7 +2938,7 @@ describe("TorqueScript Runtime", () => {
     }
 
     it("skips scripts matching glob patterns", async () => {
-      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      mockLogger.warn.mockClear();
 
       const runtime = createRuntime({
         loadScript: createLoader({
@@ -2940,11 +2953,10 @@ describe("TorqueScript Runtime", () => {
 
       expect(runtime.$g.get("Main")).toBe(1);
       expect(runtime.$g.get("AI")).toBe(""); // Not loaded
-      expect(warnSpy).toHaveBeenCalledWith(
-        "[runtime]",
-        "Ignoring script: scripts/ai/brain.cs",
+      expect(mockLogger.warn).toHaveBeenCalledWith(
+        "Ignoring script: %s",
+        "scripts/ai/brain.cs",
       );
-      warnSpy.mockRestore();
     });
 
     it("is case insensitive", async () => {
@@ -2990,7 +3002,7 @@ describe("TorqueScript Runtime", () => {
 
     it("marks ignored scripts as failed (not retried)", async () => {
       let loadCount = 0;
-      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      mockLogger.warn.mockClear();
 
       const runtime = createRuntime({
         loadScript: async (path) => {
@@ -3011,13 +3023,13 @@ describe("TorqueScript Runtime", () => {
 
       // Should only warn once (second exec sees it's already in failedScripts)
       expect(
-        warnSpy.mock.calls.filter(
-          (c) => c[1] === "Ignoring script: scripts/ignored.cs",
+        mockLogger.warn.mock.calls.filter(
+          (c) =>
+            c[0] === "Ignoring script: %s" && c[1] === "scripts/ignored.cs",
         ).length,
       ).toBe(1);
       // Loader should only be called for main.cs, not for ignored.cs
       expect(loadCount).toBe(1);
-      warnSpy.mockRestore();
     });
 
     it("matches exact filenames with glob", async () => {
