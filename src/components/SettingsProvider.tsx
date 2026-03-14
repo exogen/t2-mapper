@@ -45,6 +45,8 @@ type DebugContext = {
 type ControlsContext = {
   speedMultiplier: number;
   setSpeedMultiplier: StateSetter<number>;
+  mouseSensitivity: number;
+  setMouseSensitivity: StateSetter<number>;
   touchMode: TouchMode;
   setTouchMode: StateSetter<TouchMode>;
   invertScroll: boolean;
@@ -58,6 +60,10 @@ type ControlsContext = {
 export const MIN_SPEED_MULTIPLIER = 0.01;
 export const MAX_SPEED_MULTIPLIER = 1;
 
+export const DEFAULT_MOUSE_SENSITIVITY = 16 / 8000; // 0.002
+export const MIN_MOUSE_SENSITIVITY = 1 / 8000;
+export const MAX_MOUSE_SENSITIVITY = 64 / 8000;
+
 const SettingsContext = createContext<SettingsContext | null>(null);
 const DebugContext = createContext<DebugContext | null>(null);
 const ControlsContext = createContext<ControlsContext | null>(null);
@@ -66,6 +72,7 @@ type PersistedSettings = {
   fogEnabled?: boolean;
   highQualityFog?: boolean;
   speedMultiplier?: number;
+  mouseSensitivity?: number;
   fov?: number;
   audioEnabled?: boolean;
   animationEnabled?: boolean;
@@ -95,6 +102,9 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   const [fogEnabled, setFogEnabled] = useState(true);
   const [highQualityFog, setHighQualityFog] = useState(false);
   const [speedMultiplier, setSpeedMultiplier] = useState(0.15);
+  const [mouseSensitivity, setMouseSensitivity] = useState(
+    DEFAULT_MOUSE_SENSITIVITY,
+  );
   const [fov, setFov] = useState(90);
   const [audioEnabled, setAudioEnabled] = useState(false);
   const [audioVolume, setAudioVolume] = useState(0.75);
@@ -170,6 +180,8 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     () => ({
       speedMultiplier,
       setSpeedMultiplier,
+      mouseSensitivity,
+      setMouseSensitivity,
       touchMode,
       setTouchMode,
       invertScroll,
@@ -182,6 +194,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     [
       speedMultiplier,
       setSpeedMultiplier,
+      mouseSensitivity,
       touchMode,
       setTouchMode,
       invertScroll,
@@ -223,6 +236,14 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
         Math.max(
           MIN_SPEED_MULTIPLIER,
           Math.min(MAX_SPEED_MULTIPLIER, savedSettings.speedMultiplier),
+        ),
+      );
+    }
+    if (savedSettings.mouseSensitivity != null) {
+      setMouseSensitivity(
+        Math.max(
+          MIN_MOUSE_SENSITIVITY,
+          Math.min(MAX_MOUSE_SENSITIVITY, savedSettings.mouseSensitivity),
         ),
       );
     }
@@ -270,6 +291,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
         fogEnabled,
         highQualityFog,
         speedMultiplier,
+        mouseSensitivity,
         fov,
         audioEnabled,
         animationEnabled,
@@ -298,6 +320,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     fogEnabled,
     highQualityFog,
     speedMultiplier,
+    mouseSensitivity,
     fov,
     audioEnabled,
     animationEnabled,

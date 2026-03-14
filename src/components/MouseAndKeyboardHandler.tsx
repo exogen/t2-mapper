@@ -58,8 +58,8 @@ const MIN_SPEED_ADJUSTMENT = 2;
 const MAX_SPEED_ADJUSTMENT = 11;
 const DRAG_THRESHOLD = 3; // px of movement before it counts as a drag
 
-/** Shared mouse/look sensitivity used across all modes (.mis, .rec, live). */
-export const MOUSE_SENSITIVITY = 0.002;
+/** Hardcoded drag sensitivity (not affected by user setting). */
+const DRAG_SENSITIVITY = 0.002;
 export const ARROW_LOOK_SPEED = 1; // radians/sec
 
 function quantizeSpeed(speedMultiplier: number): number {
@@ -92,8 +92,13 @@ export function MouseAndKeyboardHandler() {
     };
   }, []);
 
-  const { speedMultiplier, setSpeedMultiplier, invertScroll, invertDrag } =
-    useControls();
+  const {
+    speedMultiplier,
+    setSpeedMultiplier,
+    mouseSensitivity,
+    invertScroll,
+    invertDrag,
+  } = useControls();
   const { onInput, mode } = useInputContext();
   const [subscribe, getKeys] = useKeyboardControls<Controls>();
   const camera = useThree((state) => state.camera);
@@ -104,6 +109,7 @@ export function MouseAndKeyboardHandler() {
   const getInvertScroll = useEffectEvent(() => invertScroll);
   const getInvertDrag = useEffectEvent(() => invertDrag);
   const getMode = useEffectEvent(() => mode);
+  const getMouseSensitivity = useEffectEvent(() => mouseSensitivity);
 
   // Accumulated mouse deltas between frames.
   const mouseDeltaYaw = useRef(0);
@@ -145,8 +151,9 @@ export function MouseAndKeyboardHandler() {
     const handleMouseMove = (e: MouseEvent) => {
       if (controlsRef.current?.isLocked) {
         // Pointer is locked: accumulate raw deltas.
-        mouseDeltaYaw.current += e.movementX * MOUSE_SENSITIVITY;
-        mouseDeltaPitch.current += e.movementY * MOUSE_SENSITIVITY;
+        const sens = getMouseSensitivity();
+        mouseDeltaYaw.current += e.movementX * sens;
+        mouseDeltaPitch.current += e.movementY * sens;
         return;
       }
 
@@ -165,8 +172,8 @@ export function MouseAndKeyboardHandler() {
       // (decreasing yaw), opposite of fly mode.
       const orbitFlip = getMode() === "follow" ? -1 : 1;
       const dragSign = (getInvertDrag() ? 1 : -1) * orbitFlip;
-      mouseDeltaYaw.current += dragSign * e.movementX * MOUSE_SENSITIVITY;
-      mouseDeltaPitch.current += dragSign * e.movementY * MOUSE_SENSITIVITY;
+      mouseDeltaYaw.current += dragSign * e.movementX * DRAG_SENSITIVITY;
+      mouseDeltaPitch.current += dragSign * e.movementY * DRAG_SENSITIVITY;
     };
 
     const handleMouseUp = () => {

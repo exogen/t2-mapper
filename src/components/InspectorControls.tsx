@@ -72,6 +72,8 @@ export function InspectorControls({
   const {
     speedMultiplier,
     setSpeedMultiplier,
+    mouseSensitivity,
+    setMouseSensitivity,
     touchMode,
     setTouchMode,
     invertScroll,
@@ -257,6 +259,31 @@ export function InspectorControls({
                     Reverse how dragging the viewport aims the camera.
                   </p>
                 </div>
+                {isTouch === false && (
+                  <div className={styles.Field}>
+                    <label htmlFor="mouseSensitivityInput">
+                      Mouse sensitivity
+                    </label>
+                    <div className={styles.Control}>
+                      <output htmlFor="mouseSensitivityInput">
+                        {Math.round(mouseSensitivity * 8000) / 64}
+                      </output>
+                      <input
+                        id="mouseSensitivityInput"
+                        type="range"
+                        min={1}
+                        max={64}
+                        step={1}
+                        value={Math.round(mouseSensitivity * 8000)}
+                        onChange={(event) => {
+                          const value = parseInt(event.target.value);
+                          const sens = value / 8000;
+                          setMouseSensitivity(sens);
+                        }}
+                      />
+                    </div>
+                  </div>
+                )}
               </Accordion>
               <Accordion value="preferences" label="Preferences">
                 <div className={styles.Field}>
