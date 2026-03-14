@@ -67,18 +67,36 @@ const LEVEL_TO_CONSOLE: Record<number, "debug" | "log" | "warn" | "error"> = {
   60: "error", // fatal
 };
 
-/** Custom write function so pino formats the message (resolving %s etc.)
- * before we output it. Setting `write` implies `asObject: true`. */
+/**
+ * Stash for raw log arguments so `write` can pass objects (like Errors)
+ * directly to console instead of relying on pino's JSON serialization
+ * (which turns Error objects into `{}`).
+ */
+let pendingArgs: unknown[] | null = null;
+
 function write(o: { level: number; module?: string; msg: string }) {
   const method = LEVEL_TO_CONSOLE[o.level] ?? "log";
   const prefix = o.module ? `[${o.module}]` : "[t2-mapper]";
-  console[method](prefix, o.msg);
+  if (pendingArgs) {
+    console[method](prefix, ...pendingArgs);
+    pendingArgs = null;
+  } else {
+    console[method](prefix, o.msg);
+  }
 }
 
 export const rootLogger = pino({
   name: "t2-mapper",
   level: "trace", // allow children to go as low as they want
   browser: { write },
+  hooks: {
+    logMethod(inputArgs, method) {
+      // Stash the raw args so `write` can forward objects to console directly
+      // instead of relying on pino's %o (which JSON.stringifies Errors to {}).
+      pendingArgs = inputArgs as unknown[];
+      return method.apply(this, inputArgs as Parameters<typeof method>);
+    },
+  },
 });
 
 /** Create a named child logger. */

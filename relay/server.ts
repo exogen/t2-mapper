@@ -16,7 +16,7 @@ const GAME_BASE_PATH =
 
 const MANIFEST_PATH =
   process.env.MANIFEST_PATH ||
-  path.resolve(GAME_BASE_PATH, "..", "..", "public", "manifest.json");
+  path.resolve(GAME_BASE_PATH, "..", "..", "src", "manifest.json");
 
 const RELAY_PORT = parseInt(process.env.RELAY_PORT || "8765", 10);
 const MASTER_SERVER = process.env.T2_MASTER_SERVER || "master.tribesnext.com";

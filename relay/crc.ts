@@ -71,7 +71,7 @@ async function loadManifest(basePath: string): Promise<Manifest> {
   if (cachedManifest) return cachedManifest;
   const manifestPath =
     process.env.MANIFEST_PATH ||
-    path.join(basePath, "..", "..", "public", "manifest.json");
+    path.join(basePath, "..", "..", "src", "manifest.json");
   const raw = await fs.readFile(manifestPath, "utf-8");
   cachedManifest = JSON.parse(raw) as Manifest;
   return cachedManifest;

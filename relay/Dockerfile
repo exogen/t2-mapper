@@ -6,7 +6,7 @@ COPY .yalc/ .yalc/
 RUN npm ci --omit=dev
 
 COPY relay/ relay/
-COPY public/manifest.json public/manifest.json
+COPY src/manifest.json src/manifest.json
 
 ENV RELAY_PORT=8765
 ENV GAME_BASE_PATH=/data/base
