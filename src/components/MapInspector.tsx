@@ -195,21 +195,14 @@ export function MapInspector() {
   const invalidateRef = useRef<InvalidateFunction | null>(null);
 
   const handleOpenMapInfo = useCallback(() => setMapInfoOpen(true), []);
-  const handleOpenScoreScreen = useCallback(() => {
-    if (hasStreamData) {
-      setScoreScreenOpen(true);
-    }
-  }, [hasStreamData]);
+  const handleOpenScoreScreen = useCallback(
+    () => setScoreScreenOpen(true),
+    [],
+  );
   const handleOpenServerBrowser = useCallback(() => {
-    if (features.live) {
-      setServerBrowserOpen(true);
-    }
-  }, [features.live]);
-  const handleChooseMap = useCallback(() => {
-    if (hasStreamData) {
-      setChoosingMap(true);
-    }
-  }, [hasStreamData]);
+    setServerBrowserOpen(true);
+  }, []);
+  const handleChooseMap = useCallback(() => setChoosingMap(true), []);
   const handleCancelChoosingMap = useCallback(() => {
     setChoosingMap(false);
   }, []);
@@ -291,8 +284,12 @@ export function MapInspector() {
                 cameraRef={cameraRef}
                 invalidateRef={invalidateRef}
                 onOpenMapInfo={handleOpenMapInfo}
-                onOpenScoreScreen={handleOpenScoreScreen}
-                onOpenServerBrowser={handleOpenServerBrowser}
+                onOpenScoreScreen={
+                  hasStreamData ? handleOpenScoreScreen : undefined
+                }
+                onOpenServerBrowser={
+                  features.live ? handleOpenServerBrowser : undefined
+                }
                 onChooseMap={handleChooseMap}
                 onCancelChoosingMap={handleCancelChoosingMap}
               />
