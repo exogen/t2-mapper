@@ -130,7 +130,6 @@ export function MapInspector() {
       // clear stream state before loading the new mission in map mode.
       const liveState = liveConnectionStore.getState();
       liveState.disconnectServer();
-      liveState.disconnectRelay();
       engineStore.getState().setRecording(null);
       gameEntityStore.getState().endStreaming();
       setCurrentMission(mission);

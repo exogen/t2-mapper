@@ -185,9 +185,6 @@ export function InputConsumer() {
   const tickMoveZ = useRef(0);
   const tickTriggers = useRef([false, false, false, false, false, false]);
 
-  // Previous trigger state for edge detection.
-  const prevTriggers = useRef([false, false, false, false, false, false]);
-
   const isLive =
     !!adapter &&
     (gameStatus === "connected" || gameStatus === "authenticating");
@@ -241,8 +238,9 @@ export function InputConsumer() {
 
   // Reset prediction state and mode when liveReady goes false (map cycle).
   // During map transitions, liveReady is false from MissionStartPhase1 until
-  // the first ghost arrives on the new map. The adapter resets observerMode
-  // to "fly" at phase 1, and we mirror that here.
+  // the first ghost arrives on the new map. Reset to "fly" here; the server-
+  // authoritative mode derivation in useFrame will correct it once the first
+  // camera snapshot arrives on the new map.
   useEffect(() => {
     if (!liveReady && activeAdapterRef.current) {
       log.info("mission change: resetting prediction state and mode");
@@ -259,7 +257,6 @@ export function InputConsumer() {
       tickMoveY.current = 0;
       tickMoveZ.current = 0;
       tickTriggers.current.fill(false);
-      prevTriggers.current.fill(false);
       setMode("fly");
     }
   }, [liveReady, setMode]);
@@ -284,16 +281,6 @@ export function InputConsumer() {
 
     const triggers = [...tickTriggers.current];
     tickTriggers.current.fill(false);
-
-    // Trigger edge detection.
-    if (triggers[2] && !prevTriggers.current[2]) {
-      activeAdapterRef.current.toggleObserverMode();
-      log.info("observer mode: %s", activeAdapterRef.current.observerMode);
-      setMode(
-        activeAdapterRef.current.observerMode === "follow" ? "follow" : "fly",
-      );
-    }
-    prevTriggers.current = triggers;
 
     // ── Camera::processTick equivalent ──
 
@@ -555,6 +542,26 @@ export function InputConsumer() {
       prevPos.current = { ...predPos.current };
 
       predInitialized.current = true;
+
+      // Derive observer mode from the server's camera data — the server
+      // is authoritative. "third-person" with a camera control type means
+      // the server's Camera is in OrbitObject mode (follow). "observer"
+      // means free-fly. This corrects local state if a trigger 2 move
+      // was lost or the server rejected the mode transition.
+      const serverMode = serverCam.mode === "third-person" ? "follow" : "fly";
+      if (serverMode !== mode) {
+        log.info("server corrected observer mode: %s → %s", mode, serverMode);
+        setMode(serverMode);
+        if (activeAdapterRef.current) {
+          activeAdapterRef.current.observerMode = serverMode;
+        }
+        // Reset orbit tracking when leaving follow mode so it re-initializes
+        // cleanly next time we enter follow.
+        if (serverMode === "fly") {
+          orbitTargetInitialized.current = false;
+          lastOrbitSnapshot.current = null;
+        }
+      }
 
       // Initialize orbit target position on first reconciliation with
       // orbit data, so follow mode works immediately after mode switch.

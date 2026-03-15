@@ -55,7 +55,6 @@ export function LoadDemoButton({
         // Disconnect from any live server before loading the demo.
         const liveState = liveConnectionStore.getState();
         liveState.disconnectServer();
-        liveState.disconnectRelay();
         // Metadata-first: mission/game-mode sync happens immediately.
         setRecording(recording);
       } catch (err) {

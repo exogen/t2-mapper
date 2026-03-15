@@ -54,6 +54,7 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
   private handshakeTimer: ReturnType<typeof setTimeout> | null = null;
   private challengeRetryTimer: ReturnType<typeof setTimeout> | null = null;
   private authDelayTimer: ReturnType<typeof setTimeout> | null = null;
+  private disconnectRetryTimer: ReturnType<typeof setTimeout> | null = null;
 
   private nextSendEventSeq = 0;
   private pendingEvents: ClientEvent[] = [];
@@ -249,8 +250,14 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
           { reason, bytes: msg.length },
           "Server sent Disconnect packet",
         );
-        this.setStatus("disconnected", reason);
-        this.disconnect();
+        if (this._status === "disconnected") {
+          // We initiated the disconnect — this is the server's confirmation.
+          this.onServerDisconnectConfirmed(reason);
+        } else {
+          // Server-initiated disconnect.
+          this.setStatus("disconnected", reason);
+          this.disconnect();
+        }
         break;
       }
       default:
@@ -791,26 +798,49 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
     });
   }
 
+  /** Clean up the socket and emit "close" (idempotent). */
+  private closeSocket(): void {
+    if (this.disconnectRetryTimer) {
+      clearTimeout(this.disconnectRetryTimer);
+      this.disconnectRetryTimer = null;
+    }
+    const hadSocket = this.socket != null;
+    if (this.socket) {
+      try {
+        this.socket.close();
+      } catch {
+        // Already closed
+      }
+      this.socket = null;
+    }
+    // Only emit "close" once — the first call that actually tears down.
+    if (hadSocket) {
+      this.emit("close");
+    }
+  }
+
+  /**
+   * Called when the server confirms our disconnect by sending a type 38
+   * packet back. Cancels any pending retransmissions and closes immediately.
+   */
+  private onServerDisconnectConfirmed(reason: string): void {
+    connLog.info({ reason }, "Server confirmed disconnect");
+    this.closeSocket();
+  }
+
   /** Disconnect from the server, sending a Disconnect OOB packet first. */
   disconnect(): void {
     if (this._status === "disconnected" && !this.socket) return;
 
     connLog.info("Disconnecting");
 
-    // Send a Disconnect packet so the server knows we're leaving
-    if (this.socket && this.serverConnectSequence !== 0) {
-      try {
-        const packet = buildDisconnectPacket(
-          this.serverConnectSequence,
-          this.clientConnectSequence,
-        );
-        this.socket.send(packet, this.port, this.host);
-        connLog.info("Sent Disconnect packet to server");
-      } catch {
-        // Best effort
-      }
+    // Stop all periodic work immediately, including any in-progress
+    // disconnect retransmission (guards against re-entrant calls from
+    // socket error handlers during the retry window).
+    if (this.disconnectRetryTimer) {
+      clearTimeout(this.disconnectRetryTimer);
+      this.disconnectRetryTimer = null;
     }
-
     if (this.keepaliveTimer) {
       clearInterval(this.keepaliveTimer);
       this.keepaliveTimer = null;
@@ -827,17 +857,52 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
       clearTimeout(this.handshakeTimer);
       this.handshakeTimer = null;
     }
-    if (this.socket) {
-      try {
-        this.socket.close();
-      } catch {
-        // Already closed
-      }
-      this.socket = null;
-    }
+
     if (this._status !== "disconnected") {
       this.setStatus("disconnected");
     }
-    this.emit("close");
+
+    // Send a Disconnect packet and wait for the server to confirm by
+    // sending its own type 38 back. If no confirmation arrives within
+    // 500ms, retransmit — UDP is unreliable and a single packet may be
+    // lost. After 3 attempts, close the socket regardless.
+    if (this.socket && this.serverConnectSequence !== 0) {
+      const packet = buildDisconnectPacket(
+        this.serverConnectSequence,
+        this.clientConnectSequence,
+      );
+      let attempts = 0;
+      const MAX_ATTEMPTS = 3;
+      const RETRY_MS = 500;
+
+      const trySend = () => {
+        if (!this.socket) return; // Already confirmed and closed.
+        attempts++;
+        try {
+          this.socket.send(packet, this.port, this.host);
+          connLog.info(
+            "Sent Disconnect packet (%d/%d)",
+            attempts,
+            MAX_ATTEMPTS,
+          );
+        } catch {
+          connLog.warn("Failed to send Disconnect packet, closing socket");
+          this.closeSocket();
+          return;
+        }
+        if (attempts < MAX_ATTEMPTS) {
+          this.disconnectRetryTimer = setTimeout(trySend, RETRY_MS);
+        } else {
+          // Give up waiting for confirmation.
+          this.disconnectRetryTimer = setTimeout(() => {
+            connLog.warn("No disconnect confirmation from server, closing");
+            this.closeSocket();
+          }, RETRY_MS);
+        }
+      };
+      trySend();
+    } else {
+      this.closeSocket();
+    }
   }
 }

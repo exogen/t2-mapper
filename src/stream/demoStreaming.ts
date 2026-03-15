@@ -121,7 +121,13 @@ interface ParsedDemoValues {
   teamScores: TeamScore[];
   playerRoster: Map<
     number,
-    { name: string; teamId: number; score: number; ping: number; packetLoss: number }
+    {
+      name: string;
+      teamId: number;
+      score: number;
+      ping: number;
+      packetLoss: number;
+    }
   >;
   chatMessages: string[];
   /** Value from clockHud.getTime() — minutes passed to setTime(). */
@@ -171,7 +177,13 @@ function parseDemoValues(demoValues: string[]): ParsedDemoValues {
     const ping = parseInt(fields[6], 10) || 0;
     const packetLoss = parseInt(fields[7], 10) || 0;
     if (!isNaN(clientId) && !isNaN(teamId)) {
-      result.playerRoster.set(clientId, { name, teamId, score, ping, packetLoss });
+      result.playerRoster.set(clientId, {
+        name,
+        teamId,
+        score,
+        ping,
+        packetLoss,
+      });
     }
     if (!isNaN(teamId) && teamId > 0) {
       playerCountByTeam.set(teamId, (playerCountByTeam.get(teamId) ?? 0) + 1);

@@ -2,7 +2,6 @@
 export type ClientMessage =
   | { type: "listServers" }
   | { type: "joinServer"; address: string; warriorName?: string }
-  | { type: "disconnect" }
   | { type: "sendMoves"; moves: ClientMove[]; moveStartIndex: number }
   | { type: "sendCommand"; command: string; args: string[] }
   | {
@@ -31,7 +30,6 @@ export type ServerMessage =
       connectSequence?: number;
       mapName?: string;
     }
-  | { type: "gamePacket"; data: Uint8Array }
   | { type: "ping"; ms: number }
   | { type: "wsPong"; ts: number }
   | { type: "error"; message: string };
@@ -68,14 +66,4 @@ export interface ClientMove {
   roll: number;
   trigger: boolean[];
   freeLook: boolean;
-}
-
-export interface RelayConfig {
-  port: number;
-  accountName: string;
-  accountPassword: string;
-  accountCertificate: string;
-  accountEncryptedKey: string;
-  authServerAddress: string;
-  masterServerAddress: string;
 }

@@ -134,11 +134,6 @@ export class RelayClient {
     this.send({ type: "joinServer", address, warriorName });
   }
 
-  /** Disconnect from the current game server. */
-  disconnectServer(): void {
-    this.send({ type: "disconnect" });
-  }
-
   /** Forward a T2csri auth event to the relay. */
   sendAuthEvent(command: string, args: string[]): void {
     this.send({ type: "sendCommand", command, args });

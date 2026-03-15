@@ -42,7 +42,6 @@ export function StreamingMissionInfo() {
   const handleDisconnect = useCallback(() => {
     const liveState = liveConnectionStore.getState();
     liveState.disconnectServer();
-    liveState.disconnectRelay();
     engineStore.getState().setRecording(null);
   }, []);
 

@@ -232,6 +232,9 @@ wss.on("connection", (ws) => {
 
   ws.on("close", () => {
     relayLog.info("Browser client disconnected");
+    // Clear retry state so we never auto-reconnect without a browser client.
+    lastJoinAddress = null;
+    retryCount = 0;
     if (retryTimer) {
       clearTimeout(retryTimer);
       retryTimer = null;
@@ -285,19 +288,6 @@ wss.on("connection", (ws) => {
         lastWarriorName = message.warriorName;
 
         await connectToServer(ws, message.address, message.warriorName);
-        break;
-      }
-
-      case "disconnect": {
-        relayLog.info("Disconnect requested");
-        if (retryTimer) {
-          clearTimeout(retryTimer);
-          retryTimer = null;
-        }
-        if (gameConnection) {
-          gameConnection.disconnect();
-          gameConnection = null;
-        }
         break;
       }
 

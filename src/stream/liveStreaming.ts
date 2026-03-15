@@ -305,22 +305,11 @@ export class LiveStreamAdapter extends StreamEngine {
   }
 
   /**
-   * Server-side observer camera mode. In "fly" mode, trigger 0 (fire) would
-   * make the server assign a team — so we must NEVER send fire in fly mode.
-   * Jump (trigger 2) transitions between modes.
+   * Observer camera mode, kept in sync with the server's camera state.
+   * In "fly" mode, trigger 0 (fire) would make the server assign a team —
+   * so we must NEVER send fire in fly mode.
    */
   observerMode: "fly" | "follow" = "fly";
-
-  /** Toggle between follow and free-fly observer modes (local state only). */
-  toggleObserverMode(): void {
-    if (this.observerMode === "fly") {
-      log.info("observer: fly → follow");
-      this.observerMode = "follow";
-    } else {
-      log.info("observer: follow → fly");
-      this.observerMode = "fly";
-    }
-  }
 
   /** Request updated scores from the server (triggers MsgPlayerScore messages). */
   requestScores(): void {

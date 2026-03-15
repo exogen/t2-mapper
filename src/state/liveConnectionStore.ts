@@ -243,17 +243,9 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
     },
 
     disconnectServer() {
-      const s = get();
-      s._relay?.disconnectServer();
-      s._adapter = null;
-      set({
-        adapter: null,
-        liveReady: false,
-        gameStatus: null,
-        mapName: undefined,
-        serverName: undefined,
-        relayToGameServerPing: null,
-      });
+      // Close the WebSocket — the relay's ws.on("close") handler will
+      // automatically send the disconnect packet to the game server.
+      get().disconnectRelay();
     },
 
     sendMoves(moves, moveStartIndex) {

@@ -217,7 +217,13 @@ export abstract class StreamEngine implements StreamingPlayback {
   protected teamScores: TeamScore[] = [];
   protected playerRoster = new Map<
     number,
-    { name: string; teamId: number; score: number; ping: number; packetLoss: number }
+    {
+      name: string;
+      teamId: number;
+      score: number;
+      ping: number;
+      packetLoss: number;
+    }
   >();
   /** Stream time (seconds) when the clock was last set. */
   protected clockAnchorStreamSec: number | null = null;
@@ -548,7 +554,10 @@ export abstract class StreamEngine implements StreamingPlayback {
       if (targetId != null && nameTag != null) {
         const resolved = this.netStrings.get(nameTag);
         if (resolved) {
-          this.targetNames.set(targetId, stripTaggedStringMarkup(resolved).trim());
+          this.targetNames.set(
+            targetId,
+            stripTaggedStringMarkup(resolved).trim(),
+          );
         } else {
           // NetStringEvent hasn't arrived yet — defer resolution.
           this.pendingNameTags.set(nameTag, targetId);
@@ -1921,10 +1930,7 @@ export abstract class StreamEngine implements StreamingPlayback {
         if (existing) {
           const score = parseInt(this.resolveNetString(args[3]), 10);
           const ping = parseInt(this.resolveNetString(args[4]), 10);
-          const packetLoss = parseInt(
-            this.resolveNetString(args[5] ?? ""),
-            10,
-          );
+          const packetLoss = parseInt(this.resolveNetString(args[5] ?? ""), 10);
           if (!isNaN(score)) existing.score = score;
           if (!isNaN(ping)) existing.ping = ping;
           if (!isNaN(packetLoss)) existing.packetLoss = packetLoss;
