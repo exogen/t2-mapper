@@ -69,6 +69,7 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
   private rawMessageCount = 0;
   private _mapName?: string;
   private observerEnforced = false;
+  private lastLoggedMove: string = "";
   /** Send timestamps by sequence number for RTT measurement. */
   private sendTimestamps = new Map<number, number>();
   /** Smoothed RTT in ms (exponential moving average). */
@@ -693,6 +694,26 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
    * just like real Tribes 2's moveWritePacket.
    */
   sendMoves(moves: ClientMoveData[], moveStartIndex: number): void {
+    if (moves.length > 0) {
+      const m = moves[moves.length - 1];
+      const key = `${m.yaw.toFixed(4)},${m.pitch.toFixed(4)},${m.x.toFixed(2)},${m.y.toFixed(2)},${m.z.toFixed(2)},${m.trigger.map(Number).join("")}`;
+      if (key !== this.lastLoggedMove) {
+        this.lastLoggedMove = key;
+        connLog.info(
+          {
+            idx: moveStartIndex,
+            n: moves.length,
+            yaw: +m.yaw.toFixed(4),
+            pitch: +m.pitch.toFixed(4),
+            x: +m.x.toFixed(2),
+            y: +m.y.toFixed(2),
+            z: +m.z.toFixed(2),
+            trig: m.trigger.map(Number).join(""),
+          },
+          "browser → relay move",
+        );
+      }
+    }
     this.emitDataPacket(moves, moveStartIndex);
   }
 

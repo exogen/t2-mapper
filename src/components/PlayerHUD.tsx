@@ -3,13 +3,25 @@ import { textureToUrl } from "../loaders";
 import type { StreamEntity, TeamScore, WeaponsHudSlot } from "../stream/types";
 import styles from "./PlayerHUD.module.css";
 import { ChatWindow } from "./ChatWindow";
+import { LuUsers } from "react-icons/lu";
 
 const COMPASS_URL = textureToUrl("gui/hud_new_compass");
 const NSEW_URL = textureToUrl("gui/hud_new_NSEW");
 
+function formatClockHud(clockMs: number): string {
+  const absSec = Math.abs(clockMs) / 1000;
+  const displaySec = clockMs < 0 ? Math.ceil(absSec) : Math.floor(absSec);
+  const mins = Math.floor(displaySec / 60);
+  const secs = displaySec % 60;
+  return `${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
+}
+
 function Compass() {
   const yaw = useEngineSelector(
     (state) => state.playback.streamSnapshot?.camera?.yaw,
+  );
+  const matchClockMs = useEngineSelector(
+    (state) => state.playback.streamSnapshot?.matchClockMs,
   );
   if (yaw == null) return null;
   // The ring notch is the fixed heading indicator (always "forward" at top).
@@ -26,6 +38,11 @@ function Compass() {
         className={styles.CompassNSEW}
         style={{ transform: `rotate(${-deg}deg)` }}
       />
+      {matchClockMs != null && (
+        <span className={styles.CompassClock}>
+          {formatClockHud(matchClockMs)}
+        </span>
+      )}
     </div>
   );
 }
@@ -216,6 +233,11 @@ function TeamScores() {
   const playerSensorGroup = useEngineSelector(
     (state) => state.playback.streamSnapshot?.playerSensorGroup,
   );
+  const observerCount = useEngineSelector(
+    (state) =>
+      state.playback.streamSnapshot?.playerRoster?.filter((p) => p.teamId <= 0)
+        .length ?? 0,
+  );
   if (!teamScores?.length) return null;
   // Sort: friendly team first (if known), then by teamId.
   const sorted = [...teamScores].sort((a, b) => {
@@ -226,33 +248,41 @@ function TeamScores() {
     return a.teamId - b.teamId;
   });
   return (
-    <div className={styles.TeamScores}>
-      {sorted.map((team: TeamScore) => {
-        const isFriendly =
-          playerSensorGroup > 0 && team.teamId === playerSensorGroup;
-        const name =
-          team.name ||
-          (DEFAULT_TEAM_NAMES[team.teamId] ?? `Team ${team.teamId}`);
-        return (
-          <div key={team.teamId} className={styles.TeamRow}>
-            <div className={styles.TeamInfo}>
-              <span
+    <table className={styles.TeamScores}>
+      <tbody>
+        {observerCount > 0 && (
+          <tr>
+            <td className={styles.ObserverCount} colSpan={3}>
+              {observerCount} {observerCount === 1 ? "observer" : "observers"}
+            </td>
+          </tr>
+        )}
+        {sorted.map((team: TeamScore) => {
+          const isFriendly =
+            playerSensorGroup > 0 && team.teamId === playerSensorGroup;
+          const name =
+            team.name ||
+            (DEFAULT_TEAM_NAMES[team.teamId] ?? `Team ${team.teamId}`);
+          return (
+            <tr key={team.teamId} className={styles.TeamRow}>
+              <td
                 className={
                   isFriendly ? styles.TeamNameFriendly : styles.TeamNameEnemy
                 }
               >
                 {name}
-              </span>{" "}
-              <span className={styles.TeamCount}>
-                {team.playerCount}{" "}
-                {team.playerCount === 1 ? "player" : "players"}
-              </span>
-            </div>
-            <span className={styles.TeamScore}>{team.score}</span>
-          </div>
-        );
-      })}
-    </div>
+              </td>
+              <td className={styles.TeamCount}>
+                ({team.playerCount.toLocaleString()})
+              </td>
+              <td className={styles.TeamScore}>
+                {team.score.toLocaleString()}
+              </td>
+            </tr>
+          );
+        })}
+      </tbody>
+    </table>
   );
 }
 

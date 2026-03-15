@@ -45,6 +45,7 @@ import type {
   StreamingPlayback,
   InventoryHudSlot,
   PendingAudioEvent,
+  PlayerRosterEntry,
   TeamScore,
   WeaponsHudSlot,
   WeaponImageState,
@@ -214,7 +215,14 @@ export abstract class StreamEngine implements StreamingPlayback {
   protected backpackHud = { packIndex: -1, active: false, text: "" };
   protected inventoryHud = { slots: new Map<number, number>(), activeSlot: -1 };
   protected teamScores: TeamScore[] = [];
-  protected playerRoster = new Map<number, { name: string; teamId: number }>();
+  protected playerRoster = new Map<
+    number,
+    { name: string; teamId: number; score: number; ping: number; packetLoss: number }
+  >();
+  /** Stream time (seconds) when the clock was last set. */
+  protected clockAnchorStreamSec: number | null = null;
+  /** Duration in ms passed to setTime (0 = count-up, >0 = count-down). */
+  protected clockDurationMs: number = 0;
 
   // ── Mission info (from server messages) ──
   /** Mission display name (e.g. "Riverdance"), from MsgMissionDropInfo/MsgLoadInfo. */
@@ -227,6 +235,8 @@ export abstract class StreamEngine implements StreamingPlayback {
   serverDisplayName: string | null = null;
   /** Server-assigned name of the connected/recording player. */
   connectedPlayerName: string | null = null;
+  /** Client ID of the connected player (from MsgClientJoin "Welcome" message). */
+  connectedClientId: number | null = null;
   /** Called when mission info changes (mission name, game type, etc.). */
   onMissionInfoChange?: () => void;
 
@@ -337,12 +347,16 @@ export abstract class StreamEngine implements StreamingPlayback {
     this.inventoryHud = { slots: new Map(), activeSlot: -1 };
     this.teamScores = [];
     this.playerRoster.clear();
+    this.clockAnchorStreamSec = null;
+    this.clockDurationMs = 0;
     this.nextExplosionId = 0;
     this.missionDisplayName = null;
     this.missionTypeDisplayName = null;
     this.gameClassName = null;
     this.serverDisplayName = null;
-    this.connectedPlayerName = null;
+    // Note: connectedPlayerName and connectedClientId are NOT cleared here —
+    // they are connection-level state set once from the "Welcome" MsgClientJoin,
+    // and should persist across mission changes.
   }
 
   // ── Net string resolution ──
@@ -516,7 +530,7 @@ export abstract class StreamEngine implements StreamingPlayback {
         const pendingTargetId = this.pendingNameTags.get(id);
         if (pendingTargetId != null) {
           this.pendingNameTags.delete(id);
-          const name = stripTaggedStringMarkup(value);
+          const name = stripTaggedStringMarkup(value).trim();
           this.targetNames.set(pendingTargetId, name);
           for (const entity of this.entities.values()) {
             if (entity.targetId === pendingTargetId) {
@@ -534,7 +548,7 @@ export abstract class StreamEngine implements StreamingPlayback {
       if (targetId != null && nameTag != null) {
         const resolved = this.netStrings.get(nameTag);
         if (resolved) {
-          this.targetNames.set(targetId, stripTaggedStringMarkup(resolved));
+          this.targetNames.set(targetId, stripTaggedStringMarkup(resolved).trim());
         } else {
           // NetStringEvent hasn't arrived yet — defer resolution.
           this.pendingNameTags.set(nameTag, targetId);
@@ -1806,7 +1820,10 @@ export abstract class StreamEngine implements StreamingPlayback {
     if (args.length < 2) return;
     const msgType = this.resolveNetString(args[0]);
 
-    if (msgType === "MsgTeamScoreIs" && args.length >= 4) {
+    if (
+      (msgType === "MsgTeamScoreIs" || msgType === "MsgTeamScore") &&
+      args.length >= 4
+    ) {
       const teamId = parseInt(this.resolveNetString(args[2]), 10);
       const newScore = parseInt(this.resolveNetString(args[3]), 10);
       if (!isNaN(teamId) && !isNaN(newScore)) {
@@ -1817,11 +1834,12 @@ export abstract class StreamEngine implements StreamingPlayback {
         }
       }
     } else if (msgType === "MsgCTFAddTeam" && args.length >= 6) {
-      const teamIdx = parseInt(this.resolveNetString(args[2]), 10);
+      // Wire order: args[2]=teamId (1-based), args[3]=teamName,
+      // args[4]=flagStatus, args[5]=teamScore
+      const teamId = parseInt(this.resolveNetString(args[2]), 10);
       const teamName = stripTaggedStringMarkup(this.resolveNetString(args[3]));
       const score = parseInt(this.resolveNetString(args[5]), 10);
-      if (!isNaN(teamIdx)) {
-        const teamId = teamIdx + 1;
+      if (!isNaN(teamId) && teamId > 0) {
         const existing = this.teamScores.find((t) => t.teamId === teamId);
         if (existing) {
           existing.name = teamName;
@@ -1843,10 +1861,14 @@ export abstract class StreamEngine implements StreamingPlayback {
       ).trim();
       const clientId = parseInt(this.resolveNetString(args[3]), 10);
       if (!isNaN(clientId)) {
-        const existing = this.playerRoster.get(clientId);
+        // The real client (message.cs handleClientJoin) creates a fresh
+        // ScriptObject with score=0, overwriting any previous entry.
         this.playerRoster.set(clientId, {
           name,
-          teamId: existing?.teamId ?? 0,
+          teamId: 0,
+          score: 0,
+          ping: 0,
+          packetLoss: 0,
         });
         this.onRosterChanged();
       }
@@ -1859,27 +1881,66 @@ export abstract class StreamEngine implements StreamingPlayback {
         );
         if (msgFormat.includes("Welcome to Tribes")) {
           this.connectedPlayerName = name;
+          this.connectedClientId = clientId;
           this.onMissionInfoChange?.();
         }
       }
-    } else if (msgType === "MsgClientDrop" && args.length >= 3) {
-      const clientId = parseInt(this.resolveNetString(args[2]), 10);
+    } else if (msgType === "MsgClientDrop" && args.length >= 4) {
+      // Wire order: args[2]=clientName, args[3]=clientId
+      const clientId = parseInt(this.resolveNetString(args[3]), 10);
       if (!isNaN(clientId)) {
         this.playerRoster.delete(clientId);
         this.onRosterChanged();
       }
-    } else if (msgType === "MsgClientJoinTeam" && args.length >= 4) {
-      const clientId = parseInt(this.resolveNetString(args[2]), 10);
-      const teamId = parseInt(this.resolveNetString(args[3]), 10);
+    } else if (msgType === "MsgClientJoinTeam" && args.length >= 6) {
+      // Wire order: args[2]=clientName, args[3]=teamName, args[4]=clientId, args[5]=teamId
+      const clientId = parseInt(this.resolveNetString(args[4]), 10);
+      const teamId = parseInt(this.resolveNetString(args[5]), 10);
       if (!isNaN(clientId) && !isNaN(teamId)) {
         const existing = this.playerRoster.get(clientId);
         if (existing) {
           existing.teamId = teamId;
         } else {
-          this.playerRoster.set(clientId, { name: "", teamId });
+          this.playerRoster.set(clientId, {
+            name: "",
+            teamId,
+            score: 0,
+            ping: 0,
+            packetLoss: 0,
+          });
         }
         this.onRosterChanged();
       }
+    } else if (msgType === "MsgPlayerScore" && args.length >= 5) {
+      // Wire order: args[2]=clientId, args[3]=score, args[4]=ping, args[5]=packetLoss
+      // Only update existing roster entries — the real client (scoreList.cs
+      // handlePlayerScore) warns and ignores scores for unknown clients.
+      const clientId = parseInt(this.resolveNetString(args[2]), 10);
+      if (!isNaN(clientId)) {
+        const existing = this.playerRoster.get(clientId);
+        if (existing) {
+          const score = parseInt(this.resolveNetString(args[3]), 10);
+          const ping = parseInt(this.resolveNetString(args[4]), 10);
+          const packetLoss = parseInt(
+            this.resolveNetString(args[5] ?? ""),
+            10,
+          );
+          if (!isNaN(score)) existing.score = score;
+          if (!isNaN(ping)) existing.ping = ping;
+          if (!isNaN(packetLoss)) existing.packetLoss = packetLoss;
+          this.onRosterChanged();
+        }
+      }
+    } else if (msgType === "MsgSystemClock" && args.length >= 4) {
+      // Wire order: args[2]=timeLimitMinutes, args[3]=timeRemainingMS
+      // The real client calls clockHud.setTime(timeRemainingMS / 60000).
+      // setTime(0) → count-up clock (pre-match elapsed).
+      // setTime(N) → count-down clock (N minutes remaining).
+      const timeRemainingMS = parseFloat(this.resolveNetString(args[3]));
+      this.clockAnchorStreamSec = this.getTimeSec();
+      this.clockDurationMs = Number.isFinite(timeRemainingMS)
+        ? timeRemainingMS
+        : 0;
     } else if (msgType === "MsgMissionDropInfo" && args.length >= 5) {
       // messageClient(%cl, 'MsgMissionDropInfo', ..., $MissionDisplayName, $MissionTypeDisplayName, $ServerName)
       const missionDisplayName = stripTaggedStringMarkup(
@@ -2098,12 +2159,26 @@ export abstract class StreamEngine implements StreamingPlayback {
     return entities;
   }
 
+  /**
+   * Compute the match clock value in ms, mirroring HudClockCtrl's actualTimeMS.
+   * Negative = counting down (remaining), positive = counting up (elapsed).
+   * Returns null if no clock has been set.
+   */
+  protected computeMatchClockMs(timeSec: number): number | null {
+    if (this.clockAnchorStreamSec == null) return null;
+    const elapsedMs = (timeSec - this.clockAnchorStreamSec) * 1000;
+    // actualTimeMS = -clockDurationMs + elapsed
+    // duration=0 → positive (count-up), duration>0 → starts negative (count-down)
+    return -this.clockDurationMs + elapsedMs;
+  }
+
   /** Build HUD arrays for snapshot. */
   protected buildHudState(): {
     weaponsHud: { slots: WeaponsHudSlot[]; activeIndex: number };
     inventoryHud: { slots: InventoryHudSlot[]; activeSlot: number };
     backpackHud: BackpackHudState | null;
     teamScores: TeamScore[];
+    playerRoster: PlayerRosterEntry[];
   } {
     const weaponsHud = {
       slots: Array.from(this.weaponsHud.slots.entries()).map(
@@ -2131,7 +2206,12 @@ export abstract class StreamEngine implements StreamingPlayback {
       ts.playerCount = teamCounts.get(ts.teamId) ?? 0;
     }
 
-    return { weaponsHud, inventoryHud, backpackHud, teamScores };
+    const playerRoster: PlayerRosterEntry[] = [];
+    for (const [clientId, entry] of this.playerRoster) {
+      playerRoster.push({ clientId, ...entry });
+    }
+
+    return { weaponsHud, inventoryHud, backpackHud, teamScores, playerRoster };
   }
 
   /** Build filtered chat and audio event arrays for the current time. */

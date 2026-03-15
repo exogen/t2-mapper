@@ -219,6 +219,15 @@ export interface TeamScore {
   playerCount: number;
 }
 
+export interface PlayerRosterEntry {
+  clientId: number;
+  name: string;
+  teamId: number;
+  score: number;
+  ping: number;
+  packetLoss: number;
+}
+
 export interface BackpackHudState {
   /** Index into the $BackpackHudData table, or -1 if no pack. */
   packIndex: number;
@@ -269,6 +278,14 @@ export interface StreamSnapshot {
   };
   /** Team scores aggregated from the PLAYERLIST demoValues section. */
   teamScores: TeamScore[];
+  /** Player roster from MsgClientJoin / MsgPlayerScore messages. */
+  playerRoster: PlayerRosterEntry[];
+  /** Client ID of the connected/recording player, for highlighting in roster. */
+  connectedClientId: number | null;
+  /** Match clock value in milliseconds, mirroring HudClockCtrl's actualTimeMS.
+   *  Negative = counting down (remaining time), positive = counting up (elapsed).
+   *  Null if no clock has been set. Pauses/seeks with playback. */
+  matchClockMs: number | null;
 }
 
 export interface StreamingPlayback {

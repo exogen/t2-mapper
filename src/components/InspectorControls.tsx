@@ -1,7 +1,7 @@
 import { useEffect, useState, useRef, RefObject } from "react";
 import { RiLandscapeFill } from "react-icons/ri";
 import { FaRotateRight } from "react-icons/fa6";
-import { LuClipboardList } from "react-icons/lu";
+import { LuClipboardList, LuUsers } from "react-icons/lu";
 import { Camera } from "three";
 import {
   useControls,
@@ -26,6 +26,7 @@ export function InspectorControls({
   missionName,
   missionType,
   onOpenMapInfo,
+  onOpenScoreScreen,
   onOpenServerBrowser,
   onChooseMap,
   onCancelChoosingMap,
@@ -36,6 +37,7 @@ export function InspectorControls({
   missionName: string;
   missionType: string;
   onOpenMapInfo: () => void;
+  onOpenScoreScreen?: () => void;
   onOpenServerBrowser?: () => void;
   onChooseMap?: () => void;
   onCancelChoosingMap?: () => void;
@@ -163,6 +165,17 @@ export function InspectorControls({
               <LuClipboardList />
               <span className={styles.ButtonLabel}>Show map info</span>
             </button>
+            {onOpenScoreScreen && (
+              <button
+                type="button"
+                className={styles.MapInfoButton}
+                aria-label="Show scores"
+                onClick={onOpenScoreScreen}
+              >
+                <LuUsers />
+                <span className={styles.ButtonLabel}>Show scores</span>
+              </button>
+            )}
           </div>
           <div className={styles.Accordions}>
             <AccordionGroup type="multiple" defaultValue={DEFAULT_PANELS}>

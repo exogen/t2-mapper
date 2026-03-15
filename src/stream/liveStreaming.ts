@@ -320,6 +320,11 @@ export class LiveStreamAdapter extends StreamEngine {
     }
   }
 
+  /** Request updated scores from the server (triggers MsgPlayerScore messages). */
+  requestScores(): void {
+    this.relay.sendCommand("getScores", []);
+  }
+
   /** Get the player list (for observer cycling UI). */
   getPlayerList(): PlayerListEntry[] {
     const entries: PlayerListEntry[] = [];
@@ -608,7 +613,7 @@ export class LiveStreamAdapter extends StreamEngine {
     const entities = this.buildEntityList();
     const timeSec = this.currentTimeSec;
     const { chatMessages, audioEvents } = this.buildTimeFilteredEvents(timeSec);
-    const { weaponsHud, inventoryHud, backpackHud, teamScores } =
+    const { weaponsHud, inventoryHud, backpackHud, teamScores, playerRoster } =
       this.buildHudState();
 
     // Default observer camera if none exists
@@ -636,6 +641,9 @@ export class LiveStreamAdapter extends StreamEngine {
       backpackHud,
       inventoryHud,
       teamScores,
+      playerRoster,
+      connectedClientId: this.connectedClientId,
+      matchClockMs: this.computeMatchClockMs(timeSec),
     };
 
     this._snapshot = snapshot;

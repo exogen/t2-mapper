@@ -6,6 +6,7 @@ import {
   STREAM_TICK_SEC,
   torqueHorizontalFovToThreeVerticalFov,
 } from "../stream/playbackUtils";
+import { useSettings } from "./SettingsProvider";
 import { ParticleEffects } from "./ParticleEffects";
 import { PlayerEyeOffset } from "./PlayerModel";
 import { stopAllTrackedSounds } from "./AudioEmitter";
@@ -102,6 +103,7 @@ export function StreamingController({
   recording: StreamRecording;
 }) {
   const engineStore = useEngineStoreApi();
+  const { fov: userFov } = useSettings();
   const playbackClockRef = useRef(0);
   const prevTickSnapshotRef = useRef<StreamSnapshot | null>(null);
   const currentTickSnapshotRef = useRef<StreamSnapshot | null>(null);
@@ -457,16 +459,14 @@ export function StreamingController({
       }
 
       if (
-        Number.isFinite(currentCamera.fov) &&
         "isPerspectiveCamera" in state.camera &&
         (state.camera as any).isPerspectiveCamera
       ) {
         const perspectiveCamera = state.camera as any;
-        const fovValue =
-          previousCamera && Number.isFinite(previousCamera.fov)
-            ? previousCamera.fov +
-              (currentCamera.fov - previousCamera.fov) * interpT
-            : currentCamera.fov;
+        // Use the user's FOV preference, matching how the real client applies
+        // $pref::Player::defaultFov locally. The stream's camera FOV is the
+        // recorder's setting (demos) or server default (live).
+        const fovValue = userFov;
         const verticalFov = torqueHorizontalFovToThreeVerticalFov(
           fovValue,
           perspectiveCamera.aspect,

@@ -59,6 +59,7 @@
   min-height: 0;
   border-collapse: collapse;
   font-size: 13px;
+  user-select: none;
 }
 
 .Table th {

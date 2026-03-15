@@ -27,6 +27,7 @@ import type {
   StreamRecording,
   StreamSnapshot,
   TeamScore,
+  PlayerRosterEntry,
   WeaponsHudSlot,
   InventoryHudSlot,
   BackpackHudState,
@@ -57,6 +58,7 @@ function extractMissionInfo(demoValues: string[]): DemoMissionInfo {
   let serverDisplayName: string | null = null;
   let mod: string | null = null;
   let recorderName: string | null = null;
+  let recorderClientId: number = NaN;
   let recordingDate: string | null = null;
 
   for (let i = 0; i < demoValues.length; i++) {
@@ -71,8 +73,9 @@ function extractMissionInfo(demoValues: string[]): DemoMissionInfo {
     if (!value) continue;
 
     if (value.startsWith("1\t")) {
-      // Row 1: "1\ttime\trecorderName\tteam\tplayerId"
+      // Row 1: "1\tclientId\trecorderName\tteamName\tguid"
       const fields = value.split("\t");
+      if (fields[1]) recorderClientId = parseInt(fields[1], 10);
       if (fields[2]) recorderName = stripTaggedStringMarkup(fields[2]).trim();
       continue;
     }
@@ -101,6 +104,9 @@ function extractMissionInfo(demoValues: string[]): DemoMissionInfo {
     serverDisplayName,
     mod,
     recorderName,
+    recorderClientId: Number.isFinite(recorderClientId)
+      ? recorderClientId
+      : null,
     recordingDate,
   };
 }
@@ -113,8 +119,13 @@ interface ParsedDemoValues {
     activeSlot: number;
   } | null;
   teamScores: TeamScore[];
-  playerRoster: Map<number, { name: string; teamId: number }>;
+  playerRoster: Map<
+    number,
+    { name: string; teamId: number; score: number; ping: number; packetLoss: number }
+  >;
   chatMessages: string[];
+  /** Value from clockHud.getTime() — minutes passed to setTime(). */
+  clockTimeMin: number | null;
   gravity: number;
 }
 
@@ -133,6 +144,7 @@ function parseDemoValues(demoValues: string[]): ParsedDemoValues {
     teamScores: [],
     playerRoster: new Map(),
     chatMessages: [],
+    clockTimeMin: null,
     gravity: -20,
   };
   if (!demoValues.length) return result;
@@ -152,11 +164,14 @@ function parseDemoValues(demoValues: string[]): ParsedDemoValues {
   const playerCountByTeam = new Map<number, number>();
   for (let i = 0; i < playerCount; i++) {
     const fields = next().split("\t");
-    const name = fields[0] ?? "";
+    const name = stripTaggedStringMarkup(fields[0] ?? "").trim();
     const clientId = parseInt(fields[2], 10);
     const teamId = parseInt(fields[4], 10);
+    const score = parseInt(fields[5], 10) || 0;
+    const ping = parseInt(fields[6], 10) || 0;
+    const packetLoss = parseInt(fields[7], 10) || 0;
     if (!isNaN(clientId) && !isNaN(teamId)) {
-      result.playerRoster.set(clientId, { name, teamId });
+      result.playerRoster.set(clientId, { name, teamId, score, ping, packetLoss });
     }
     if (!isNaN(teamId) && teamId > 0) {
       playerCountByTeam.set(teamId, (playerCountByTeam.get(teamId) ?? 0) + 1);
@@ -262,9 +277,15 @@ function parseDemoValues(demoValues: string[]): ParsedDemoValues {
     }
   }
 
-  // CLOCK: 1 value
+  // CLOCK: 1 value — "isVisible\tremainingMinutes"
   if (idx >= demoValues.length) return result;
-  next();
+  {
+    const clockFields = next().split("\t");
+    const timeMin = parseFloat(clockFields[1] ?? "");
+    if (Number.isFinite(timeMin)) {
+      result.clockTimeMin = timeMin;
+    }
+  }
 
   // CHAT: always 10 entries
   for (let i = 0; i < 10; i++) {
@@ -345,6 +366,7 @@ class StreamingPlayback extends StreamEngine {
     teamScoresGen: number;
     rosterGen: number;
     teamScores: TeamScore[];
+    playerRoster: PlayerRosterEntry[];
     weaponsHudGen: number;
     weaponsHud: { slots: WeaponsHudSlot[]; activeIndex: number };
     inventoryHudGen: number;
@@ -472,7 +494,7 @@ class StreamingPlayback extends StreamEngine {
       if (entry.name) {
         this.targetNames.set(
           entry.targetId,
-          stripTaggedStringMarkup(entry.name),
+          stripTaggedStringMarkup(entry.name).trim(),
         );
       }
       this.targetTeams.set(entry.targetId, entry.sensorGroup);
@@ -672,6 +694,11 @@ class StreamingPlayback extends StreamEngine {
     }
     this.teamScores = parsed.teamScores;
     this.playerRoster = new Map(parsed.playerRoster);
+    if (parsed.clockTimeMin != null) {
+      // Reproduce clockHud.setTime(getTime()) at demo start (timeSec=0).
+      this.clockAnchorStreamSec = 0;
+      this.clockDurationMs = parsed.clockTimeMin * 60 * 1000;
+    }
     // Seed chat messages from demoValues
     for (const rawLine of parsed.chatMessages) {
       const segments = parseColorSegments(rawLine);
@@ -912,12 +939,14 @@ class StreamingPlayback extends StreamEngine {
           : null;
 
     let teamScores: TeamScore[];
+    let playerRoster: PlayerRosterEntry[];
     if (
       prev &&
       prev.teamScoresGen === this._teamScoresGen &&
       prev.rosterGen === this._rosterGen
     ) {
       teamScores = prev.teamScores;
+      playerRoster = prev.playerRoster;
     } else {
       teamScores = this.teamScores.map((ts) => ({ ...ts }));
       const teamCounts = new Map<number, number>();
@@ -929,12 +958,17 @@ class StreamingPlayback extends StreamEngine {
       for (const ts of teamScores) {
         ts.playerCount = teamCounts.get(ts.teamId) ?? 0;
       }
+      playerRoster = [];
+      for (const [clientId, entry] of this.playerRoster) {
+        playerRoster.push({ clientId, ...entry });
+      }
     }
 
     this._snap = {
       teamScoresGen: this._teamScoresGen,
       rosterGen: this._rosterGen,
       teamScores,
+      playerRoster,
       weaponsHudGen: this._weaponsHudGen,
       weaponsHud,
       inventoryHudGen: this._inventoryHudGen,
@@ -959,6 +993,9 @@ class StreamingPlayback extends StreamEngine {
       backpackHud,
       inventoryHud,
       teamScores,
+      playerRoster,
+      connectedClientId: this.connectedClientId,
+      matchClockMs: this.computeMatchClockMs(timeSec),
     };
   }
 
@@ -1026,6 +1063,7 @@ export async function createDemoStreamingRecording(
   playback.gameClassName = info.gameClassName;
   playback.serverDisplayName = info.serverDisplayName;
   playback.connectedPlayerName = info.recorderName;
+  playback.connectedClientId = info.recorderClientId;
 
   return {
     source: "demo",

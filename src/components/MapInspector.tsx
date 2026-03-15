@@ -102,6 +102,10 @@ const ServerBrowser = createLazy(
   "ServerBrowser",
   () => import("@/src/components/ServerBrowser"),
 );
+const ScoreScreen = createLazy(
+  "ScoreScreen",
+  () => import("@/src/components/ScoreScreen"),
+);
 
 export function MapInspector() {
   const [currentMission, setCurrentMission] = useMissionQueryState();
@@ -111,6 +115,7 @@ export function MapInspector() {
   const { missionName, missionType } = currentMission;
   const [mapInfoOpen, setMapInfoOpen] = useState(false);
   const [serverBrowserOpen, setServerBrowserOpen] = useState(false);
+  const [scoreScreenOpen, setScoreScreenOpen] = useState(false);
   const [choosingMap, setChoosingMap] = useState(false);
   const [missionLoadingProgress, setMissionLoadingProgress] = useState(0);
   const [showLoadingIndicator, setShowLoadingIndicator] = useState(true);
@@ -276,6 +281,9 @@ export function MapInspector() {
                 missionName={missionName}
                 missionType={missionType}
                 onOpenMapInfo={() => setMapInfoOpen(true)}
+                onOpenScoreScreen={
+                  hasStreamData ? () => setScoreScreenOpen(true) : undefined
+                }
                 onOpenServerBrowser={
                   features.live ? () => setServerBrowserOpen(true) : undefined
                 }
@@ -300,7 +308,11 @@ export function MapInspector() {
           <div className={styles.Content}>
             <div className={styles.ThreeView}>
               <ThreeCanvas
-                dpr={mapInfoOpen || serverBrowserOpen ? 0.25 : undefined}
+                dpr={
+                  mapInfoOpen || serverBrowserOpen || scoreScreenOpen
+                    ? 0.25
+                    : undefined
+                }
                 onCreated={(state) => {
                   cameraRef.current = state.camera;
                   invalidateRef.current = state.invalidate;
@@ -342,7 +354,7 @@ export function MapInspector() {
                 </TickProvider>
               </ThreeCanvas>
             </div>
-            {hasStreamData ? (
+            {hasStreamData && !scoreScreenOpen ? (
               <Suspense>
                 <PlayerHUD />
               </Suspense>
@@ -383,6 +395,13 @@ export function MapInspector() {
           <ViewTransition>
             <Suspense>
               <ServerBrowser onClose={() => setServerBrowserOpen(false)} />
+            </Suspense>
+          </ViewTransition>
+        ) : null}
+        {scoreScreenOpen ? (
+          <ViewTransition>
+            <Suspense>
+              <ScoreScreen onClose={() => setScoreScreenOpen(false)} />
             </Suspense>
           </ViewTransition>
         ) : null}

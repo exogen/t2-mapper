@@ -1,0 +1,236 @@
+.Dialog {
+  composes: Dialog from "./GameDialog.module.css";
+  width: 600px;
+  min-height: 360px;
+  display: grid;
+  grid-template-columns: 100%;
+  grid-template-rows: auto 1fr auto;
+}
+
+.Overlay {
+  composes: Overlay from "./GameDialog.module.css";
+}
+
+.TitleBar {
+  display: flex;
+  align-items: center;
+  padding: 7px 15px 6px 16px;
+  border-bottom: 1px solid rgba(0, 190, 220, 0.25);
+  background: rgba(32, 83, 85, 0.8);
+  color: rgba(133, 255, 222, 0.9);
+  box-shadow:
+    inset 0 2px 4px rgba(114, 255, 246, 0.2),
+    inset 0 -2px 5px rgba(20, 30, 31, 0.5);
+}
+
+.PlayerTotal {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  font-weight: 500;
+  color: rgba(141, 219, 214, 0.8);
+  margin: 0 0 0 auto;
+}
+
+.Title {
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.5;
+  margin: 0;
+  text-transform: uppercase;
+  text-shadow: 0 -1px 0 rgba(10, 25, 26, 0.6);
+}
+
+.MatchClock {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  margin: 0 0 0 16px;
+}
+
+.Time {
+  color: rgba(133, 255, 222, 0.9);
+}
+
+.PlayersIcon {
+  font-size: 16px;
+}
+
+.ClockIcon {
+  font-size: 16px;
+}
+
+/* Table layout */
+.TableWrapper {
+  overflow-y: auto;
+  overflow-x: hidden;
+  min-height: 0;
+}
+
+.Table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 13px;
+  padding-bottom: 8px;
+}
+
+/* Sticky thead — works because TableWrapper is the scroll container */
+.Table thead {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+/* Team name + score row */
+.TeamHeaderRow th {
+  padding: 8px 16px;
+  font-weight: 500;
+  background: rgba(20, 37, 38, 0.95);
+  box-shadow: inset 0 -1px 0 rgba(0, 190, 220, 0.2);
+}
+
+.TeamName {
+  width: 50%;
+  font-size: 18px;
+  font-weight: 500;
+  color: #7dffff;
+  text-align: left;
+}
+
+.TeamScore {
+  font-size: 22px;
+  font-weight: 500;
+  color: #7dffff;
+  text-align: right;
+}
+
+/* Column sub-headers (Players / Score) */
+.ColumnHeaderRow th {
+  padding: 6px 15px 7px 15px;
+  background: rgba(10, 25, 26, 0.95);
+  box-shadow: inset 0 -1px 0 rgba(0, 190, 220, 0.15);
+  font-size: 12px;
+  font-weight: 500;
+  color: rgba(125, 255, 255, 0.7);
+  text-transform: uppercase;
+  text-align: left;
+}
+
+.ColumnHeader {
+}
+
+.ColumnHeaderScore {
+  text-align: right !important;
+}
+
+.ColumnPing {
+  font-size: 10px;
+  font-weight: 500;
+  color: rgba(125, 255, 255, 0.4);
+  margin: 0 0 0 8px;
+  text-transform: none;
+}
+
+/* Player rows */
+.PlayerBody td {
+  line-height: calc(16 / 13);
+  padding: 3px 16px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+}
+
+.PlayerBody tr:last-child td {
+  border-bottom: none;
+}
+
+.PlayerBody tr:hover {
+  background: rgba(65, 131, 139, 0.08);
+}
+
+.PlayerName {
+  width: 50%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+}
+
+.PlayerNameLocal {
+  composes: PlayerName;
+  color: #5dff8a;
+}
+
+.PlayerScore {
+  text-align: right;
+  white-space: nowrap;
+  font-weight: 500;
+  color: rgba(176, 213, 201, 0.8);
+}
+
+.PlayerScoreLocal {
+  composes: PlayerScore;
+  color: #5dff8a;
+}
+
+/* Divider between team columns */
+.TeamHeaderRow th:nth-child(2),
+.ColumnHeaderRow th:nth-child(2),
+.PlayerBody td:nth-child(2),
+.ObserverBody td:nth-child(2) {
+  border-right: 1px solid rgba(0, 190, 220, 0.15);
+}
+
+/* Observers */
+.ObserverBody tr:first-child th {
+  box-shadow:
+    inset 0 1px 0 rgba(0, 190, 220, 0.15),
+    inset 0 -1px 0 rgba(0, 190, 220, 0.15);
+}
+
+.ObserverBody td {
+  padding: 2px 16px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+}
+
+.ObserverBody tr:hover {
+  background: rgba(65, 131, 139, 0.08);
+}
+
+/* Footer */
+.Footer {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 10px 12px;
+  border-top: 1px solid rgba(0, 190, 220, 0.25);
+  background: rgba(2, 20, 21, 0.7);
+  flex-shrink: 0;
+}
+
+.CloseButton {
+  composes: DialogButton from "./GameDialog.module.css";
+}
+
+.Hint {
+  font-size: 12px;
+  color: rgba(201, 220, 216, 0.3);
+  margin-left: auto;
+}
+
+.Empty {
+  padding: 32px 16px;
+  text-align: center;
+  color: rgba(201, 220, 216, 0.3);
+  font-style: italic;
+}
+
+@media (max-width: 719px) {
+  .Hint,
+  .ColumnPing {
+    display: none;
+  }
+}
