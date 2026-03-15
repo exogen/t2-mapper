@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef, RefObject } from "react";
+import { useEffect, useState, useRef, RefObject, memo } from "react";
 import { RiLandscapeFill } from "react-icons/ri";
 import { FaRotateRight } from "react-icons/fa6";
 import { LuClipboardList, LuUsers } from "react-icons/lu";
@@ -22,7 +22,7 @@ import { hasMission } from "../manifest";
 
 const DEFAULT_PANELS = ["controls", "preferences", "audio"];
 
-export function InspectorControls({
+export const InspectorControls = memo(function InspectorControls({
   missionName,
   missionType,
   onOpenMapInfo,
@@ -422,4 +422,4 @@ export function InspectorControls({
       </div>
     </div>
   );
-}
+});

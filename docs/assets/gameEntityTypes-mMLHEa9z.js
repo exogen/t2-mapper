@@ -1,0 +1,1 @@
+function e(e){switch(e.renderType){case`TerrainBlock`:case`InteriorInstance`:case`Sky`:case`Sun`:case`WaterBlock`:case`MissionArea`:return!0;default:return!1}}export{e as t};

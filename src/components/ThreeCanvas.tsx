@@ -1,4 +1,4 @@
-import { ReactNode } from "react";
+import { ReactNode, Suspense } from "react";
 import { Canvas, GLProps, RootState } from "@react-three/fiber";
 import { NoToneMapping, PCFShadowMap, SRGBColorSpace } from "three";
 import { useDebug } from "./SettingsProvider";
@@ -35,7 +35,7 @@ export function ThreeCanvas({
       shadows={{ type: PCFShadowMap }}
       onCreated={onCreated}
     >
-      {children}
+      <Suspense>{children}</Suspense>
     </Canvas>
   );
 }

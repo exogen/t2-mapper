@@ -11,22 +11,17 @@ import {
   ReactNode,
   // ViewTransition,
 } from "react";
-import { Camera } from "three";
+import { type Camera } from "three";
+import { type RootState } from "@react-three/fiber";
+import { type InvalidateFunction } from "@/src/components/ThreeCanvas";
 import { InspectorControls } from "@/src/components/InspectorControls";
 import { MissionSelect } from "@/src/components/MissionSelect";
 import { StreamingMissionInfo } from "@/src/components/StreamingMissionInfo";
 import { useSettings } from "@/src/components/SettingsProvider";
-import { ObserverCamera } from "@/src/components/ObserverCamera";
-import { AudioProvider } from "@/src/components/AudioContext";
-import { CamerasProvider } from "@/src/components/CamerasProvider";
-import { InputConsumer } from "./InputConsumer";
 import {
   RecordingProvider,
   useRecording,
 } from "@/src/components/RecordingProvider";
-import { EntityScene } from "@/src/components/EntityScene";
-import { TickProvider } from "@/src/components/TickProvider";
-import { SceneLighting } from "@/src/components/SceneLighting";
 import { useFeatures } from "@/src/components/FeaturesProvider";
 import {
   liveConnectionStore,
@@ -37,12 +32,9 @@ import {
   CurrentMission,
   useMissionQueryState,
 } from "@/src/components/useQueryParams";
-import { ThreeCanvas, InvalidateFunction } from "@/src/components/ThreeCanvas";
-import { InputProducers, InputProvider } from "./InputHandlers";
+import { InputProvider } from "./InputHandlers";
 import { VisualInput } from "./VisualInput";
 import { LoadingIndicator } from "./LoadingIndicator";
-import { AudioEnabled } from "./AudioEnabled";
-import { DebugEnabled } from "./DebugEnabled";
 import { engineStore } from "../state/engineStore";
 import {
   gameEntityStore,
@@ -57,8 +49,8 @@ import {
   LuPanelTopClose,
   LuPanelTopOpen,
 } from "react-icons/lu";
-import styles from "./MapInspector.module.css";
 import { useTouchDevice } from "./useTouchDevice";
+import styles from "./MapInspector.module.css";
 
 function ViewTransition({ children }: { children: ReactNode }) {
   return children;
@@ -73,22 +65,13 @@ function createLazy(
   return lazy(() => loader().then((mod) => ({ default: mod[name] })));
 }
 
-const StreamingController = createLazy(
-  "StreamingController",
-  () => import("@/src/components/StreamingController"),
+const GameView = createLazy(
+  "GameView",
+  () => import("@/src/components/GameView"),
 );
 const DemoPlaybackControls = createLazy(
   "DemoPlaybackControls",
   () => import("@/src/components/DemoPlaybackControls"),
-);
-const DebugElements = createLazy(
-  "DebugElements",
-  () => import("@/src/components/DebugElements"),
-);
-const Mission = createLazy("Mission", () => import("@/src/components/Mission"));
-const ChatSoundPlayer = createLazy(
-  "ChatSoundPlayer",
-  () => import("@/src/components/ChatSoundPlayer"),
 );
 const PlayerHUD = createLazy(
   "PlayerHUD",
@@ -148,6 +131,7 @@ export function MapInspector() {
   // Sync the mission query param when streaming data provides a mission name.
   const streamMissionName = useMissionName();
   const streamMissionType = useMissionType();
+
   useEffect(() => {
     if (!hasStreamData || !streamMissionName) return;
     try {
@@ -209,6 +193,30 @@ export function MapInspector() {
 
   const cameraRef = useRef<Camera | null>(null);
   const invalidateRef = useRef<InvalidateFunction | null>(null);
+
+  const handleOpenMapInfo = useCallback(() => setMapInfoOpen(true), []);
+  const handleOpenScoreScreen = useCallback(() => {
+    if (hasStreamData) {
+      setScoreScreenOpen(true);
+    }
+  }, [hasStreamData]);
+  const handleOpenServerBrowser = useCallback(() => {
+    if (features.live) {
+      setServerBrowserOpen(true);
+    }
+  }, [features.live]);
+  const handleChooseMap = useCallback(() => {
+    if (hasStreamData) {
+      setChoosingMap(true);
+    }
+  }, [hasStreamData]);
+  const handleCancelChoosingMap = useCallback(() => {
+    setChoosingMap(false);
+  }, []);
+  const handleCanvasCreated = useCallback((state: RootState) => {
+    cameraRef.current = state.camera;
+    invalidateRef.current = state.invalidate;
+  }, []);
 
   return (
     <main className={styles.Frame}>
@@ -279,26 +287,14 @@ export function MapInspector() {
               <InspectorControls
                 missionName={missionName}
                 missionType={missionType}
-                onOpenMapInfo={() => setMapInfoOpen(true)}
-                onOpenScoreScreen={
-                  hasStreamData ? () => setScoreScreenOpen(true) : undefined
-                }
-                onOpenServerBrowser={
-                  features.live ? () => setServerBrowserOpen(true) : undefined
-                }
-                onChooseMap={
-                  hasStreamData
-                    ? () => {
-                        setChoosingMap(true);
-                      }
-                    : undefined
-                }
-                onCancelChoosingMap={() => {
-                  setChoosingMap(false);
-                }}
                 choosingMap={choosingMap}
                 cameraRef={cameraRef}
                 invalidateRef={invalidateRef}
+                onOpenMapInfo={handleOpenMapInfo}
+                onOpenScoreScreen={handleOpenScoreScreen}
+                onOpenServerBrowser={handleOpenServerBrowser}
+                onChooseMap={handleChooseMap}
+                onCancelChoosingMap={handleCancelChoosingMap}
               />
             </div>
           </ViewTransition>
@@ -306,52 +302,19 @@ export function MapInspector() {
         <InputProvider>
           <div className={styles.Content}>
             <div className={styles.ThreeView}>
-              <ThreeCanvas
-                dpr={
-                  mapInfoOpen || serverBrowserOpen || scoreScreenOpen
-                    ? 0.25
-                    : undefined
-                }
-                onCreated={(state) => {
-                  cameraRef.current = state.camera;
-                  invalidateRef.current = state.invalidate;
-                }}
-              >
-                <TickProvider>
-                  <CamerasProvider>
-                    <InputProducers />
-                    <AudioProvider>
-                      <SceneLighting />
-                      <Suspense>
-                        <EntityScene />
-                      </Suspense>
-                      <ObserverCamera />
-                      <AudioEnabled>
-                        <ChatSoundPlayer />
-                      </AudioEnabled>
-                      <DebugEnabled>
-                        <DebugElements />
-                      </DebugEnabled>
-                      {recording ? (
-                        <Suspense>
-                          <StreamingController recording={recording} />
-                        </Suspense>
-                      ) : null}
-                      {!hasStreamData ? (
-                        <Suspense>
-                          <Mission
-                            key={`${missionName}~${missionType}`}
-                            name={missionName}
-                            missionType={missionType}
-                            onLoadingChange={handleLoadingChange}
-                          />
-                        </Suspense>
-                      ) : null}
-                      <InputConsumer />
-                    </AudioProvider>
-                  </CamerasProvider>
-                </TickProvider>
-              </ThreeCanvas>
+              <Suspense>
+                <GameView
+                  missionName={missionName}
+                  missionType={missionType}
+                  dpr={
+                    mapInfoOpen || serverBrowserOpen || scoreScreenOpen
+                      ? 0.25
+                      : undefined
+                  }
+                  onCreated={handleCanvasCreated}
+                  onLoadingChange={handleLoadingChange}
+                />
+              </Suspense>
             </div>
             {hasStreamData && !scoreScreenOpen ? (
               <Suspense>
