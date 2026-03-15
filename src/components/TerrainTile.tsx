@@ -140,7 +140,7 @@ const BlendedTerrainTextures = memo(function BlendedTerrainTextures({
   );
 });
 
-const TerrainMaterial = memo(function TerrainMaterial({
+export const TerrainMaterial = memo(function TerrainMaterial({
   displacementMap,
   visibilityMask,
   textureNames,

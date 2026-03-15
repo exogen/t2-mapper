@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -7,7 +7,9 @@ import {
   DataTexture,
   Float32BufferAttribute,
   FloatType,
+  InstancedMesh as ThreeInstancedMesh,
   LinearFilter,
+  Matrix4,
   NearestFilter,
   NoColorSpace,
   ClampToEdgeWrapping,
@@ -25,7 +27,7 @@ import { useSceneSky, useSceneSun } from "../state/gameEntityStore";
 import { loadTerrain } from "../loaders";
 import { uint16ToFloat32 } from "../arrayUtils";
 import { setupMask } from "../textureUtils";
-import { TerrainTile } from "./TerrainTile";
+import { TerrainTile, TerrainMaterial } from "./TerrainTile";
 import {
   createTerrainHeightSampler,
   setTerrainHeightSampler,
@@ -447,10 +449,6 @@ function useVisibleDistance(): number {
     ? sky.visibleDistance
     : DEFAULT_VISIBLE_DISTANCE;
 }
-interface TileAssignment {
-  tileX: number;
-  tileZ: number;
-}
 /**
  * Create a visibility mask texture from emptySquares data.
  */
@@ -574,27 +572,33 @@ export const TerrainBlock = memo(function TerrainBlock({
     const gridSize = 2 * extent + 1;
     return gridSize * gridSize - 1; // -1 because primary tile is separate
   }, [visibleDistance, blockSize]);
-  // Create stable pool indices for React keys
-  const poolIndices = useMemo(
-    () => Array.from({ length: poolSize }, (_, i) => i),
-    [poolSize],
-  );
-  // Track which tile coordinate each pool slot is assigned to
-  const [tileAssignments, setTileAssignments] = useState<
-    (TileAssignment | null)[]
-  >(() => Array(poolSize).fill(null));
-  // Track previous tile bounds to avoid unnecessary state updates
-  const prevBoundsRef = useRef({ xStart: 0, xEnd: 0, zStart: 0, zEnd: 0 });
+  // InstancedMesh ref and reusable matrix for pooled terrain tiles.
+  const pooledMeshRef = useRef<ThreeInstancedMesh>(null);
+  const _tileMatrix = useMemo(() => new Matrix4(), []);
+  // Track previous tile bounds to avoid unnecessary instance matrix updates.
+  const prevBoundsRef = useRef({
+    xStart: Infinity,
+    xEnd: -Infinity,
+    zStart: Infinity,
+    zEnd: -Infinity,
+  });
+  // Track which mesh instance we last updated — when r3f recreates the
+  // InstancedMesh (e.g. poolSize changes), we must force a full update
+  // even if the camera bounds haven't changed.
+  const lastMeshRef = useRef<ThreeInstancedMesh | null>(null);
   useFrame(() => {
+    const mesh = pooledMeshRef.current;
+    if (!mesh) return;
     const relativeCamX = camera.position.x - basePosition.x;
     const relativeCamZ = camera.position.z - basePosition.z;
     const xStart = Math.floor((relativeCamX - visibleDistance) / blockSize);
     const xEnd = Math.ceil((relativeCamX + visibleDistance) / blockSize);
     const zStart = Math.floor((relativeCamZ - visibleDistance) / blockSize);
     const zEnd = Math.ceil((relativeCamZ + visibleDistance) / blockSize);
-    // Early exit if bounds haven't changed
+    // Early exit if bounds haven't changed AND we're still on the same mesh.
     const prev = prevBoundsRef.current;
     if (
+      mesh === lastMeshRef.current &&
       xStart === prev.xStart &&
       xEnd === prev.xEnd &&
       zStart === prev.zStart &&
@@ -602,22 +606,27 @@ export const TerrainBlock = memo(function TerrainBlock({
     ) {
       return;
     }
+    lastMeshRef.current = mesh;
     prev.xStart = xStart;
     prev.xEnd = xEnd;
     prev.zStart = zStart;
     prev.zEnd = zEnd;
-    // Build new assignments array
-    const newAssignments: (TileAssignment | null)[] = [];
+    const geometryOffset = blockSize / 2;
+    let count = 0;
     for (let x = xStart; x < xEnd; x++) {
       for (let z = zStart; z < zEnd; z++) {
         if (x === 0 && z === 0) continue;
-        newAssignments.push({ tileX: x, tileZ: z });
+        _tileMatrix.makeTranslation(
+          basePosition.x + x * blockSize + geometryOffset,
+          0,
+          basePosition.z + z * blockSize + geometryOffset,
+        );
+        mesh.setMatrixAt(count, _tileMatrix);
+        count++;
       }
     }
-    while (newAssignments.length < poolSize) {
-      newAssignments.push(null);
-    }
-    setTileAssignments(newAssignments);
+    mesh.count = count;
+    mesh.instanceMatrix.needsUpdate = true;
   });
   if (
     !terrain ||
@@ -650,27 +659,25 @@ export const TerrainBlock = memo(function TerrainBlock({
         detailTextureName={detailTexture}
         lightmap={terrainLightmap}
       />
-      {/* Pooled tiles - stable keys, always mounted */}
-      {poolIndices.map((poolIndex) => {
-        const assignment = tileAssignments[poolIndex];
-        return (
-          <TerrainTile
-            key={poolIndex}
-            tileX={assignment?.tileX ?? 0}
-            tileZ={assignment?.tileZ ?? 0}
-            blockSize={blockSize}
-            basePosition={basePosition}
-            textureNames={terrain.textureNames}
-            geometry={sharedGeometry}
-            displacementMap={sharedDisplacementMap}
-            visibilityMask={pooledVisibilityMask}
-            alphaTextures={sharedAlphaTextures}
-            detailTextureName={detailTexture}
-            lightmap={terrainLightmap}
-            visible={assignment !== null}
-          />
-        );
-      })}
+      {/* Pooled tiles — single InstancedMesh, matrices updated in useFrame.
+          All pooled tiles share the same geometry, material, and visibility mask.
+          Only position differs (set via instance matrices). */}
+      <instancedMesh
+        ref={pooledMeshRef}
+        args={[sharedGeometry, undefined, poolSize]}
+        castShadow
+        receiveShadow
+        frustumCulled={false}
+      >
+        <TerrainMaterial
+          displacementMap={sharedDisplacementMap}
+          visibilityMask={pooledVisibilityMask}
+          textureNames={terrain.textureNames}
+          alphaTextures={sharedAlphaTextures}
+          detailTextureName={detailTexture}
+          lightmap={terrainLightmap}
+        />
+      </instancedMesh>
     </>
   );
 });

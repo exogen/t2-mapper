@@ -115,7 +115,11 @@ varying vec3 vTerrainWorldPos;`,
     shader.vertexShader = shader.vertexShader.replace(
       "#include <worldpos_vertex>",
       `#include <worldpos_vertex>
-vTerrainWorldPos = (modelMatrix * vec4(transformed, 1.0)).xyz;`,
+vec4 _terrainPos = vec4(transformed, 1.0);
+#ifdef USE_INSTANCING
+  _terrainPos = instanceMatrix * _terrainPos;
+#endif
+vTerrainWorldPos = (modelMatrix * _terrainPos).xyz;`,
     );
   }
 

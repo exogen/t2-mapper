@@ -45,8 +45,15 @@ const vertexShader = /* glsl */ `
   }
 
   void main() {
+    // Apply instance transform when using InstancedMesh.
+    #ifdef USE_INSTANCING
+      mat4 localModel = modelMatrix * instanceMatrix;
+    #else
+      mat4 localModel = modelMatrix;
+    #endif
+
     // Get world position for wave calculation
-    vec4 worldPos = modelMatrix * vec4(position, 1.0);
+    vec4 worldPos = localModel * vec4(position, 1.0);
     vWorldPosition = worldPos.xyz;
 
     // Apply wave displacement to Y (vertical axis in Three.js)
@@ -55,7 +62,7 @@ const vertexShader = /* glsl */ `
 
     // Calculate final world position after displacement for fog
     #ifdef USE_FOG
-      vec4 displacedWorldPos = modelMatrix * vec4(displaced, 1.0);
+      vec4 displacedWorldPos = localModel * vec4(displaced, 1.0);
       vFogWorldPosition = displacedWorldPos.xyz;
     #endif
 
@@ -63,7 +70,7 @@ const vertexShader = /* glsl */ `
     vViewVector = cameraPosition - worldPos.xyz;
     vDistance = length(vViewVector);
 
-    vec4 mvPosition = viewMatrix * modelMatrix * vec4(displaced, 1.0);
+    vec4 mvPosition = viewMatrix * localModel * vec4(displaced, 1.0);
     gl_Position = projectionMatrix * mvPosition;
 
     // Set fog depth (distance from camera) - normally done by fog_vertex include

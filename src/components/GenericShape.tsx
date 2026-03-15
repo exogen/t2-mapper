@@ -17,7 +17,7 @@ import {
   BufferGeometry,
   Group,
 } from "three";
-import type { AnimationAction } from "three";
+import type { AnimationAction, Material } from "three";
 import * as SkeletonUtils from "three/examples/jsm/utils/SkeletonUtils.js";
 import { setupTexture } from "../textureUtils";
 import { useAnisotropy } from "./useAnisotropy";
@@ -84,19 +84,27 @@ type MaterialResult =
   | SingleMaterial
   | [MeshLambertMaterial, MeshLambertMaterial];
 
+// Stable onBeforeCompile callbacks — using shared function references lets
+// Three.js's program cache match by identity rather than toString().
+const lambertBeforeCompile: Material["onBeforeCompile"] = (shader) => {
+  injectCustomFog(shader, globalFogUniforms);
+  injectShapeLighting(shader);
+};
+
+const basicBeforeCompile: Material["onBeforeCompile"] = (shader) => {
+  injectCustomFog(shader, globalFogUniforms);
+};
+
 /**
- * Helper to apply volumetric fog and lighting multipliers to a material
+ * Helper to apply volumetric fog and lighting multipliers to a material.
  */
 export function applyShapeShaderModifications(
   mat: MeshBasicMaterial | MeshLambertMaterial,
 ): void {
-  mat.onBeforeCompile = (shader) => {
-    injectCustomFog(shader, globalFogUniforms);
-    // Only inject lighting for Lambert materials (Basic materials are unlit)
-    if (mat instanceof MeshLambertMaterial) {
-      injectShapeLighting(shader);
-    }
-  };
+  mat.onBeforeCompile =
+    mat instanceof MeshLambertMaterial
+      ? lambertBeforeCompile
+      : basicBeforeCompile;
 }
 
 export function createMaterialFromFlags(

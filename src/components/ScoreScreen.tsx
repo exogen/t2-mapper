@@ -57,22 +57,23 @@ export function ScoreScreen({ onClose }: { onClose: () => void }) {
   const dialogRef = useRef<HTMLDivElement>(null);
   const dataSource = useDataSource();
   const isLive = dataSource === "live";
-  const connectedClientId = useEngineSelector(
-    (state) => state.playback.streamSnapshot?.connectedClientId,
-  );
-
-  const teamScores = useEngineSelector(
-    (state) => state.playback.streamSnapshot?.teamScores,
-  );
-  const playerRoster = useEngineSelector(
-    (state) => state.playback.streamSnapshot?.playerRoster,
-  );
-  const playerSensorGroup = useEngineSelector(
-    (state) => state.playback.streamSnapshot?.playerSensorGroup,
-  );
-  const matchClockMs = useEngineSelector(
-    (state) => state.playback.streamSnapshot?.matchClockMs,
-  );
+  const { connectedClientId, teamScores, playerRoster, matchClockMs } =
+    useEngineSelector(
+      (state) => {
+        const snap = state.playback.streamSnapshot;
+        return {
+          connectedClientId: snap?.connectedClientId,
+          teamScores: snap?.teamScores,
+          playerRoster: snap?.playerRoster,
+          matchClockMs: snap?.matchClockMs,
+        };
+      },
+      (a, b) =>
+        a.connectedClientId === b.connectedClientId &&
+        a.teamScores === b.teamScores &&
+        a.playerRoster === b.playerRoster &&
+        a.matchClockMs === b.matchClockMs,
+    );
 
   // Focus and exit pointer lock on open
   useEffect(() => {

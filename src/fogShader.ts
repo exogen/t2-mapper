@@ -189,7 +189,11 @@ export const fogVertexShader = `
 
 export const fogVertexShaderWorldPos = `
 #ifdef USE_FOG
-  vFogWorldPosition = (modelMatrix * vec4(position, 1.0)).xyz;
+  vec4 _fogPos = vec4(position, 1.0);
+  #ifdef USE_INSTANCING
+    _fogPos = instanceMatrix * _fogPos;
+  #endif
+  vFogWorldPosition = (modelMatrix * _fogPos).xyz;
 #endif
 `;
 
@@ -243,7 +247,11 @@ export function installCustomFogShader(): void {
   // This ensures fog doesn't change when rotating the camera
   vFogDepth = length(mvPosition.xyz);
   #ifdef USE_FOG_WORLD_POSITION
-    vFogWorldPosition = (modelMatrix * vec4(transformed, 1.0)).xyz;
+    vec4 _fogPos2 = vec4(transformed, 1.0);
+    #ifdef USE_INSTANCING
+      _fogPos2 = instanceMatrix * _fogPos2;
+    #endif
+    vFogWorldPosition = (modelMatrix * _fogPos2).xyz;
   #endif
 #endif
 `;
@@ -310,7 +318,11 @@ export function injectCustomFog(
     "#include <fog_vertex>",
     `#include <fog_vertex>
 #ifdef USE_FOG
-  vFogWorldPosition = (modelMatrix * vec4(transformed, 1.0)).xyz;
+  vec4 _fogPos3 = vec4(transformed, 1.0);
+  #ifdef USE_INSTANCING
+    _fogPos3 = instanceMatrix * _fogPos3;
+  #endif
+  vFogWorldPosition = (modelMatrix * _fogPos3).xyz;
 #endif`,
   );
 

@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import { createStore } from "zustand/vanilla";
 import { subscribeWithSelector } from "zustand/middleware";
 import { useStoreWithEqualityFn } from "zustand/traditional";
@@ -375,11 +376,11 @@ export function useRuntimeObjectById(
     id == null ? -1 : (state.runtime.objectVersionById[id] ?? -1),
   );
 
-  if (id == null || !runtime || version === -1) {
-    return undefined;
-  }
-  const object = runtime.state.objectsById.get(id);
-  return object ? { ...object } : undefined;
+  return useMemo(() => {
+    if (id == null || !runtime || version === -1) return undefined;
+    const object = runtime.state.objectsById.get(id);
+    return object ? { ...object } : undefined;
+  }, [id, runtime, version]);
 }
 
 export function useRuntimeObjectField<T = any>(
@@ -431,11 +432,13 @@ export function useRuntimeObjectByName(
     objectId == null ? -1 : (state.runtime.objectVersionById[objectId] ?? -1),
   );
 
-  if (!runtime || !normalizedName || objectId == null || version === -1) {
-    return undefined;
-  }
-  const object = runtime.state.objectsById.get(objectId);
-  return object ? { ...object } : undefined;
+  return useMemo(() => {
+    if (!runtime || !normalizedName || objectId == null || version === -1) {
+      return undefined;
+    }
+    const object = runtime.state.objectsById.get(objectId);
+    return object ? { ...object } : undefined;
+  }, [runtime, normalizedName, objectId, version]);
 }
 
 export function useDatablockByName(
@@ -452,11 +455,13 @@ export function useDatablockByName(
     objectId == null ? -1 : (state.runtime.objectVersionById[objectId] ?? -1),
   );
 
-  if (!runtime || !normalizedName || objectId == null || version === -1) {
-    return undefined;
-  }
-  const object = runtime.state.objectsById.get(objectId);
-  return object ? { ...object } : undefined;
+  return useMemo(() => {
+    if (!runtime || !normalizedName || objectId == null || version === -1) {
+      return undefined;
+    }
+    const object = runtime.state.objectsById.get(objectId);
+    return object ? { ...object } : undefined;
+  }, [runtime, normalizedName, objectId, version]);
 }
 
 export function useRuntimeChildIds(

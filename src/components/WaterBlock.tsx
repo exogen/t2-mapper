@@ -1,7 +1,14 @@
 import { memo, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { Box, useTexture } from "@react-three/drei";
 import { useFrame, useThree } from "@react-three/fiber";
-import { DoubleSide, NoColorSpace, PlaneGeometry, RepeatWrapping } from "three";
+import {
+  DoubleSide,
+  InstancedMesh as ThreeInstancedMesh,
+  Matrix4,
+  NoColorSpace,
+  PlaneGeometry,
+  RepeatWrapping,
+} from "three";
 import { textureToUrl } from "../loaders";
 import {
   torqueToThree,
@@ -191,7 +198,10 @@ export const WaterBlock = memo(function WaterBlock({
 
     // Only update state if reps actually changed (avoid unnecessary re-renders)
     setReps((prevReps) => {
-      if (JSON.stringify(prevReps) === JSON.stringify(newReps)) {
+      if (
+        prevReps.length === newReps.length &&
+        prevReps.every((r, i) => r[0] === newReps[i][0] && r[1] === newReps[i][1])
+      ) {
         return prevReps;
       }
       return newReps;
@@ -335,8 +345,14 @@ const WaterReps = memo(function WaterReps({
     });
   }, [opacity, waveMagnitude, envMapIntensity, baseTexture, envTexture]);
 
-  // Single animation loop for the shared material
+  // Single animation loop for the shared material + instance matrix updates.
   const elapsedRef = useRef(0);
+  const meshRef = useRef<ThreeInstancedMesh>(null);
+  const matrixRef = useRef(new Matrix4());
+  // Track which mesh + reps we last populated — forces a full update when
+  // r3f recreates the InstancedMesh or when reps change (camera moves).
+  const lastMeshRef = useRef<ThreeInstancedMesh | null>(null);
+  const lastRepsRef = useRef<Array<[number, number]> | null>(null);
 
   useFrame((_, delta) => {
     if (!animationEnabled) {
@@ -346,6 +362,23 @@ const WaterReps = memo(function WaterReps({
       elapsedRef.current += delta;
       material.uniforms.uTime.value = elapsedRef.current;
     }
+
+    // Update instance matrices when reps change or mesh is recreated.
+    const mesh = meshRef.current;
+    if (!mesh) return;
+    if (mesh === lastMeshRef.current && reps === lastRepsRef.current) return;
+    lastMeshRef.current = mesh;
+    lastRepsRef.current = reps;
+    const mat = matrixRef.current;
+    for (let i = 0; i < reps.length; i++) {
+      const [repX, repZ] = reps[i];
+      const worldX = basePosition[0] + repX * REP_SIZE - TERRAIN_OFFSET;
+      const worldZ = basePosition[2] + repZ * REP_SIZE - TERRAIN_OFFSET;
+      mat.makeTranslation(worldX, basePosition[1], worldZ);
+      mesh.setMatrixAt(i, mat);
+    }
+    mesh.count = reps.length;
+    mesh.instanceMatrix.needsUpdate = true;
   });
 
   useEffect(() => {
@@ -355,21 +388,10 @@ const WaterReps = memo(function WaterReps({
   }, [material]);
 
   return (
-    <>
-      {reps.map(([repX, repZ]) => {
-        // Convert from terrain space to world space by subtracting TERRAIN_OFFSET
-        // Matches Torque's L2Wm transform: L2Wv = (-1024, -1024, 0)
-        const worldX = basePosition[0] + repX * REP_SIZE - TERRAIN_OFFSET;
-        const worldZ = basePosition[2] + repZ * REP_SIZE - TERRAIN_OFFSET;
-        return (
-          <mesh
-            key={`${repX},${repZ}`}
-            geometry={surfaceGeometry}
-            material={material}
-            position={[worldX, basePosition[1], worldZ]}
-          />
-        );
-      })}
-    </>
+    <instancedMesh
+      ref={meshRef}
+      args={[surfaceGeometry, material, 9]}
+      frustumCulled={false}
+    />
   );
 });
