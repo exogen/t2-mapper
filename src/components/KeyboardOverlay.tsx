@@ -1,10 +1,12 @@
 import { useKeyboardControls } from "@react-three/drei";
 import { Controls } from "./MouseAndKeyboardHandler";
 import { useRecording } from "./RecordingProvider";
+import { useLiveSelector } from "../state/liveConnectionStore";
 import styles from "./KeyboardOverlay.module.css";
 
 export function KeyboardOverlay() {
   const recording = useRecording();
+  const liveReady = useLiveSelector((s) => s.liveReady);
   const forward = useKeyboardControls<Controls>((s) => s.forward);
   const backward = useKeyboardControls<Controls>((s) => s.backward);
   const left = useKeyboardControls<Controls>((s) => s.left);
@@ -16,9 +18,10 @@ export function KeyboardOverlay() {
   const lookLeft = useKeyboardControls<Controls>((s) => s.lookLeft);
   const lookRight = useKeyboardControls<Controls>((s) => s.lookRight);
 
-  // Show when no recording (map browsing) or during live mode.
-  // Hidden during demo playback (recording with finite duration).
+  // Show when no recording (map browsing) or during live mode once ready.
+  // Hidden during demo playback and during live map transitions.
   if (recording && recording.source !== "live") return null;
+  if (recording?.source === "live" && !liveReady) return null;
 
   return (
     <div className={styles.Root}>

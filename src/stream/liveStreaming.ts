@@ -206,6 +206,8 @@ export class LiveStreamAdapter extends StreamEngine {
         this._ready = false;
         this._snapshot = null;
         this._snapshotTick = -1;
+        this.observerMode = "fly";
+        this.lastMoveAck = 0;
         // Clear stale mission info — new values arrive via MsgClientReady
         // and MsgMissionDropInfo after the mission finishes loading.
         this.missionDisplayName = null;

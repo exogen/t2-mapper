@@ -135,6 +135,7 @@ export function InputConsumer() {
   const { moveQueue, mode, setMode } = useInputContext();
   const adapter = useLiveSelector((s) => s.adapter);
   const gameStatus = useLiveSelector((s) => s.gameStatus);
+  const liveReady = useLiveSelector((s) => s.liveReady);
   const sendMoves = useLiveSelector((s) => s.sendMoves);
   const store = useEngineStoreApi();
   const camera = useThree((state) => state.camera);
@@ -238,9 +239,35 @@ export function InputConsumer() {
     }
   }, [isLive, adapter, store, setMode]);
 
+  // Reset prediction state and mode when liveReady goes false (map cycle).
+  // During map transitions, liveReady is false from MissionStartPhase1 until
+  // the first ghost arrives on the new map. The adapter resets observerMode
+  // to "fly" at phase 1, and we mirror that here.
+  useEffect(() => {
+    if (!liveReady && activeAdapterRef.current) {
+      log.info("mission change: resetting prediction state and mode");
+      predInitialized.current = false;
+      orbitTargetInitialized.current = false;
+      lastOrbitSnapshot.current = null;
+      moveBuffer.current.length = 0;
+      nextMoveIndex.current = 0;
+      lastProcessedAck.current = 0;
+      lastReconciledCamera.current = null;
+      tickDeltaYaw.current = 0;
+      tickDeltaPitch.current = 0;
+      tickMoveX.current = 0;
+      tickMoveY.current = 0;
+      tickMoveZ.current = 0;
+      tickTriggers.current.fill(false);
+      prevTriggers.current.fill(false);
+      setMode("fly");
+    }
+  }, [liveReady, setMode]);
+
   // ── processTick: send moves at the Torque tick rate (32Hz). ──
   useTick(() => {
-    if (!activeAdapterRef.current || gameStatus !== "connected") return;
+    if (!activeAdapterRef.current || gameStatus !== "connected" || !liveReady)
+      return;
 
     // Consume accumulated deltas.
     const yaw = tickDeltaYaw.current;
@@ -412,7 +439,12 @@ export function InputConsumer() {
       }
       moveQueue.current.length = 0;
 
-      if (isLive && activeAdapterRef.current && gameStatus === "connected") {
+      if (
+        isLive &&
+        activeAdapterRef.current &&
+        gameStatus === "connected" &&
+        liveReady
+      ) {
         // Live mode: accumulate for useTick to consume and send.
         tickDeltaYaw.current += dYaw;
         tickDeltaPitch.current += dPitch;
@@ -443,7 +475,12 @@ export function InputConsumer() {
 
     // ── Live mode: server reconciliation + interpolateTick ──
 
-    if (!isLive || !activeAdapterRef.current || gameStatus !== "connected") {
+    if (
+      !isLive ||
+      !activeAdapterRef.current ||
+      gameStatus !== "connected" ||
+      !liveReady
+    ) {
       return;
     }
 

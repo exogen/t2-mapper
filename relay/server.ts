@@ -75,6 +75,20 @@ httpServer.listen(RELAY_PORT, "0.0.0.0", () => {
 /** Cached server list from the most recent master query. */
 let cachedServers: ServerInfo[] = [];
 
+/** All active game connections (for status logging). */
+const activeGameConnections = new Set<GameConnection>();
+
+setInterval(() => {
+  const wsClients = wss.clients.size;
+  const gameConns = activeGameConnections.size;
+  relayLog.info(
+    { wsClients, gameConnections: gameConns },
+    "Relay status: %d WebSocket client(s), %d game connection(s)",
+    wsClients,
+    gameConns,
+  );
+}, 10_000);
+
 wss.on("connection", (ws) => {
   relayLog.info("Browser client connected");
 
@@ -98,6 +112,7 @@ wss.on("connection", (ws) => {
     }
 
     gameConnection = new GameConnection(address, { warriorName });
+    activeGameConnections.add(gameConnection);
 
     // Set mapName from the cached server list if available.
     const cachedServer = cachedServers.find((s) => s.address === address);
@@ -191,6 +206,9 @@ wss.on("connection", (ws) => {
 
     gameConnection.on("close", () => {
       relayLog.info("Game connection closed");
+      if (gameConnection) {
+        activeGameConnections.delete(gameConnection);
+      }
       gameConnection = null;
     });
 
