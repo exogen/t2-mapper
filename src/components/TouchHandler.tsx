@@ -57,7 +57,7 @@ export function TouchHandler() {
           const dy = touch.clientY - lastTouchPos.current.y;
           lastTouchPos.current = { x: touch.clientX, y: touch.clientY };
 
-          const dragSign = getInvertDrag() ? -1 : 1;
+          const dragSign = getInvertDrag() ? 1 : -1;
           touchDeltaYaw.current += dragSign * dx * LOOK_SENSITIVITY;
           touchDeltaPitch.current += dragSign * dy * LOOK_SENSITIVITY;
           break;
@@ -109,7 +109,7 @@ export function TouchHandler() {
         const lookX = Math.cos(lookAngle);
         const lookY = Math.sin(lookAngle);
 
-        const joySign = invertJoystick ? -1 : 1;
+        const joySign = invertJoystick ? 1 : -1;
         deltaYaw -=
           joySign *
           lookX *
@@ -134,7 +134,7 @@ export function TouchHandler() {
         // Map joystick to movement axes, pre-scaled by speedMultiplier.
         x = Math.max(
           -1,
-          Math.min(1, -joyX * normalizedMoveForce * speedMultiplier),
+          Math.min(1, joyX * normalizedMoveForce * speedMultiplier),
         );
         y = Math.max(
           -1,
@@ -153,7 +153,7 @@ export function TouchHandler() {
           const normalizedLookForce =
             (moveForce - SINGLE_STICK_DEADZONE) / (1 - SINGLE_STICK_DEADZONE);
 
-          const singleJoySign = invertJoystick ? -1 : 1;
+          const singleJoySign = invertJoystick ? 1 : -1;
           deltaYaw -=
             singleJoySign *
             lookX *

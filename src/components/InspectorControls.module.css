@@ -201,6 +201,8 @@
 
 .IconButton:disabled {
   opacity: 0.6;
+  box-shadow: inset 0 0 12px 1px rgba(54, 54, 54, 0.5);
+  color: rgba(255, 255, 255, 0.8);
   cursor: default;
 }
 

@@ -43,6 +43,7 @@ export function TouchJoystick() {
         position: { left: "70px", bottom: "70px" },
         size: 120,
         restOpacity: 0.9,
+        dynamicPage: true,
       });
 
       applyNippleStyles(moveZone);
@@ -80,6 +81,7 @@ export function TouchJoystick() {
         position: { right: "70px", bottom: "70px" },
         size: 120,
         restOpacity: 0.9,
+        dynamicPage: true,
       });
 
       applyNippleStyles(lookZone);

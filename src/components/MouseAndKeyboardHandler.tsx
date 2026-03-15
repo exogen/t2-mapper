@@ -9,6 +9,7 @@ import {
 } from "./SettingsProvider";
 import { useCameras } from "./CamerasProvider";
 import { useInputContext } from "./InputContext";
+import { useTouchDevice } from "./useTouchDevice";
 
 export enum Controls {
   forward = "forward",
@@ -71,6 +72,8 @@ function quantizeSpeed(speedMultiplier: number): number {
 }
 
 export function MouseAndKeyboardHandler() {
+  const isTouch = useTouchDevice();
+
   // Don't let KeyboardControls handle stuff when metaKey is held.
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
@@ -110,6 +113,7 @@ export function MouseAndKeyboardHandler() {
   const getInvertDrag = useEffectEvent(() => invertDrag);
   const getMode = useEffectEvent(() => mode);
   const getMouseSensitivity = useEffectEvent(() => mouseSensitivity);
+  const getIsTouch = useEffectEvent(() => isTouch);
 
   // Accumulated mouse deltas between frames.
   const mouseDeltaYaw = useRef(0);
@@ -128,6 +132,13 @@ export function MouseAndKeyboardHandler() {
       controls.dispose();
     };
   }, [camera, gl.domElement]);
+
+  // Exit pointer lock when switching to touch mode.
+  useEffect(() => {
+    if (isTouch && controlsRef.current?.isLocked) {
+      controlsRef.current.unlock();
+    }
+  }, [isTouch]);
 
   // Mouse handling: accumulate deltas for input frames.
   // In local mode, drag-to-look works without pointer lock.
@@ -191,7 +202,7 @@ export function MouseAndKeyboardHandler() {
           nextCamera();
         }
         // In fly mode, clicks while locked do nothing special.
-      } else if (e.target === canvas && !didDrag) {
+      } else if (e.target === canvas && !didDrag && !getIsTouch()) {
         controls?.lock();
       }
     };
