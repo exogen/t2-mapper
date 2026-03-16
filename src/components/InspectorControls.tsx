@@ -182,17 +182,19 @@ export const InspectorControls = memo(function InspectorControls({
               <Accordion value="controls" label="Controls">
                 <div className={styles.Field}>
                   <label htmlFor="speedInput">Fly speed</label>
-                  <input
-                    id="speedInput"
-                    type="range"
-                    min={1}
-                    max={100}
-                    step={1}
-                    value={Math.round(speedMultiplier * 100)}
-                    onChange={(event) =>
-                      setSpeedMultiplier(parseFloat(event.target.value) / 100)
-                    }
-                  />
+                  <div className={styles.Control}>
+                    <input
+                      id="speedInput"
+                      type="range"
+                      min={1}
+                      max={100}
+                      step={1}
+                      value={Math.round(speedMultiplier * 100)}
+                      onChange={(event) =>
+                        setSpeedMultiplier(parseFloat(event.target.value) / 100)
+                      }
+                    />
+                  </div>
                   <p className={styles.Description}>
                     How fast you move in free-flying mode.
                     {isTouch === false
@@ -203,16 +205,18 @@ export const InspectorControls = memo(function InspectorControls({
                 {isTouch ? (
                   <div className={styles.Field}>
                     <label htmlFor="touchModeInput">Joystick</label>{" "}
-                    <select
-                      id="touchModeInput"
-                      value={touchMode}
-                      onChange={(e) =>
-                        setTouchMode(e.target.value as TouchMode)
-                      }
-                    >
-                      <option value="dualStick">Dual stick</option>
-                      <option value="moveLookStick">Single stick</option>
-                    </select>
+                    <div className={styles.Control}>
+                      <select
+                        id="touchModeInput"
+                        value={touchMode}
+                        onChange={(e) =>
+                          setTouchMode(e.target.value as TouchMode)
+                        }
+                      >
+                        <option value="dualStick">Dual stick</option>
+                        <option value="moveLookStick">Single stick</option>
+                      </select>
+                    </div>
                     <p className={styles.Description}>
                       Single stick has a unified move + look control. Dual stick
                       has independent move + look.

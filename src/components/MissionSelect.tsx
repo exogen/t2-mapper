@@ -20,6 +20,7 @@ import {
 } from "@ariakit/react";
 import { matchSorter } from "match-sorter";
 import { getMissionInfo, getMissionList, getSourceAndPath } from "../manifest";
+import { IoMdCloseCircle } from "react-icons/io";
 import orderBy from "lodash.orderby";
 import styles from "./MissionSelect.module.css";
 
@@ -335,6 +336,16 @@ export function MissionSelect({
           )}
         </ComboboxList>
       </ComboboxPopover>
+      <button
+        type="button"
+        className={styles.CloseButton}
+        data-open={isOpen}
+        onClick={() => {
+          combobox.setOpen(false);
+        }}
+      >
+        <IoMdCloseCircle />
+      </button>
     </ComboboxProvider>
   );
 }

@@ -38,7 +38,3 @@ body {
   padding: 0;
   overflow: hidden;
 }
-
-input[type="range"] {
-  max-width: 80px;
-}

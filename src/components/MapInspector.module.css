@@ -145,7 +145,7 @@
   }
 
   .Toolbar {
-    justify-content: center;
+    justify-content: space-between;
   }
 
   .ToggleSidebarButton[data-orientation="left"] {

@@ -65,3 +65,10 @@
     height: 0;
   }
 }
+
+@media (pointer: coarse) {
+  .Trigger {
+    padding-top: 12px;
+    padding-bottom: 12px;
+  }
+}

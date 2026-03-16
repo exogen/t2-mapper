@@ -197,8 +197,36 @@
   z-index: 1;
 }
 
+.CloseButton {
+  position: relative;
+  z-index: 101;
+  display: grid;
+  place-content: center;
+  background: transparent;
+  padding: 4px 16px 4px 4px;
+  border: 0;
+  font-size: 24px;
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.CloseButton[data-open="false"] {
+  visibility: hidden;
+}
+
 @media (max-width: 899px) {
   .InputWrapper {
     margin-left: 4px;
+    flex: 1 1 0;
+    max-width: 460px;
+  }
+
+  .Input {
+    width: 100%;
+  }
+}
+
+@media (min-width: 900px) {
+  .CloseButton {
+    display: none;
   }
 }

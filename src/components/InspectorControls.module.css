@@ -118,23 +118,8 @@
 .Control {
   display: flex;
   align-items: center;
+  justify-content: flex-end;
   gap: 8px;
-}
-
-.Field select {
-  margin-bottom: 6px;
-}
-
-.Field output {
-  opacity: 0.7;
-}
-
-.Tools {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-  padding: 10px;
 }
 
 .Field {
@@ -147,6 +132,26 @@
 
 .Field:has(.Description) {
   margin: 0 0 10px 0;
+}
+
+.Field select {
+  margin-bottom: 6px;
+}
+
+.Field input[type="range"] {
+  max-width: 100px;
+}
+
+.Field output {
+  opacity: 0.7;
+}
+
+.Tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 10px;
 }
 
 .Field label {
@@ -270,4 +275,46 @@
   background: transparent;
   color: #4cb5ff;
   cursor: pointer;
+}
+
+@media (pointer: coarse) {
+  .Tools {
+    padding-top: 12px;
+    padding-bottom: 13px;
+  }
+
+  .Field {
+    grid-template-columns: auto minmax(0, 70%);
+    gap: 0 20px;
+    margin-bottom: 20px;
+  }
+
+  .Field:has(.Description) {
+    margin-bottom: 20px;
+  }
+
+  .Field label,
+  .CheckboxField .Label {
+    font-size: 14px;
+  }
+
+  .CheckboxField input[type="checkbox"] {
+    width: 18px;
+    height: 18px;
+    padding-right: 6px;
+  }
+
+  .Field select {
+    width: 100%;
+    max-width: none;
+    font-size: 15px;
+    padding: 4px 6px;
+  }
+
+  .Field input[type="range"] {
+    width: 100%;
+    max-width: none;
+    padding-top: 10px;
+    padding-bottom: 10px;
+  }
 }
