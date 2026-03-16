@@ -80,14 +80,6 @@
   margin: 0 0 8px 0;
 }
 
-.CheckboxField:has(.Description) {
-  margin: 0 0 6px 0;
-}
-
-/* .Field:not(:has(.Description)) + .CheckboxField {
-  margin-top: 10px;
-} */
-
 .CheckboxField input[type="checkbox"] {
   margin-left: 0;
   grid-column: 1;
@@ -104,7 +96,7 @@
 
 .Description {
   font-size: 12px;
-  line-height: 1.3333;
+  line-height: 1.5;
   opacity: 0.6;
   margin: 2px 0 0 0;
   padding: 0;
@@ -289,18 +281,23 @@
     margin-bottom: 20px;
   }
 
-  .Field:has(.Description) {
-    margin-bottom: 20px;
+  .CheckboxField {
+    margin-bottom: 16px;
+  }
+
+  .Description {
+    font-size: 13px;
+    line-height: calc(20 / 13);
   }
 
   .Field label,
   .CheckboxField .Label {
-    font-size: 14px;
+    font-size: 15px;
   }
 
   .CheckboxField input[type="checkbox"] {
-    width: 18px;
-    height: 18px;
+    min-width: 19px;
+    min-height: 19px;
     padding-right: 6px;
   }
 

@@ -166,4 +166,14 @@
     background: rgba(0, 0, 0, 0.7);
     z-index: 2;
   }
+
+  .CancelButton {
+    display: none;
+  }
+}
+
+@media (pointer: coarse) {
+  .ToggleSidebarButton {
+    font-size: 28px;
+  }
 }

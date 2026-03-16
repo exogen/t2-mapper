@@ -158,6 +158,7 @@ export function MissionSelect({
   onChange,
   disabled,
   autoFocus,
+  onCancel,
 }: {
   value: string;
   missionType: string;
@@ -170,6 +171,7 @@ export function MissionSelect({
   }) => void;
   disabled?: boolean;
   autoFocus?: boolean;
+  onCancel: () => void;
 }) {
   const [searchValue, setSearchValue] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
@@ -201,6 +203,13 @@ export function MissionSelect({
   });
 
   const isOpen = useStoreState(combobox, "open");
+
+  useEffect(() => {
+    if (autoFocus) {
+      inputRef.current?.focus();
+      combobox.show();
+    }
+  }, [autoFocus, combobox]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -341,7 +350,8 @@ export function MissionSelect({
         className={styles.CloseButton}
         data-open={isOpen}
         onClick={() => {
-          combobox.setOpen(false);
+          combobox.hide();
+          onCancel?.();
         }}
       >
         <IoMdCloseCircle />

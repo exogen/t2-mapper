@@ -195,10 +195,7 @@ export function MapInspector() {
   const invalidateRef = useRef<InvalidateFunction | null>(null);
 
   const handleOpenMapInfo = useCallback(() => setMapInfoOpen(true), []);
-  const handleOpenScoreScreen = useCallback(
-    () => setScoreScreenOpen(true),
-    [],
-  );
+  const handleOpenScoreScreen = useCallback(() => setScoreScreenOpen(true), []);
   const handleOpenServerBrowser = useCallback(() => {
     setServerBrowserOpen(true);
   }, []);
@@ -253,6 +250,7 @@ export function MapInspector() {
               missionType={choosingMap ? "" : missionType}
               onChange={changeMission}
               autoFocus={choosingMap}
+              onCancel={handleCancelChoosingMap}
             />
             {choosingMap && (
               <button
