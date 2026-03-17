@@ -11,10 +11,12 @@ export function Accordion({
   value,
   label,
   children,
+  noPadding = false,
 }: {
   value: string;
   label: ReactNode;
   children: ReactNode;
+  noPadding?: boolean;
 }) {
   return (
     <RadixAccordion.Item value={value}>
@@ -22,7 +24,9 @@ export function Accordion({
         <IoCaretForward className={styles.TriggerIcon} /> {label}
       </RadixAccordion.Trigger>
       <RadixAccordion.Content className={styles.Content}>
-        <div className={styles.Body}>{children}</div>
+        <div className={noPadding ? styles.BodyNoPadding : styles.Body}>
+          {children}
+        </div>
       </RadixAccordion.Content>
     </RadixAccordion.Item>
   );

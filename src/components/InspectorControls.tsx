@@ -15,12 +15,13 @@ import { JoinServerButton } from "./JoinServerButton";
 import { Accordion, AccordionGroup } from "./Accordion";
 import styles from "./InspectorControls.module.css";
 import { useTouchDevice } from "./useTouchDevice";
+import { DemoTimeline } from "./DemoTimeline";
 import { useRecording } from "./RecordingProvider";
 import { useDataSource, useMissionName } from "../state/gameEntityStore";
 import { useLiveSelector } from "../state/liveConnectionStore";
 import { hasMission } from "../manifest";
 
-const DEFAULT_PANELS = ["controls", "preferences", "audio"];
+const DEFAULT_PANELS = ["controls", "preferences", "audio", "timeline"];
 
 export const InspectorControls = memo(function InspectorControls({
   missionName,
@@ -181,6 +182,11 @@ export const InspectorControls = memo(function InspectorControls({
           </div>
           <div className={styles.Accordions}>
             <AccordionGroup type="multiple" defaultValue={DEFAULT_PANELS}>
+              {recording?.source === "demo" && (
+                <Accordion value="timeline" label="Timeline" noPadding>
+                  <DemoTimeline />
+                </Accordion>
+              )}
               <Accordion value="controls" label="Controls">
                 <div className={styles.Field}>
                   <label htmlFor="speedInput">Fly speed</label>

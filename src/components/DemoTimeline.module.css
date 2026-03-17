@@ -1,0 +1,179 @@
+.Root {
+  display: flex;
+  flex-direction: column;
+}
+
+.ProgressWrap {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 10px;
+}
+
+.ProgressLabel {
+  font-size: 11px;
+  opacity: 0.7;
+  text-align: center;
+}
+
+.ProgressBar {
+  width: 100%;
+  height: 4px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.ProgressFill {
+  height: 100%;
+  background: rgba(100, 180, 255, 0.7);
+  transition: width 0.15s;
+}
+
+.Filters {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  padding: 10px;
+}
+
+.FilterButton {
+  padding: 2px 8px;
+  font-family: inherit;
+  font-size: 11px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.05);
+  color: rgba(255, 255, 255, 0.7);
+  cursor: pointer;
+}
+
+.FilterButton[data-active="true"] {
+  background: rgba(0, 98, 179, 0.6);
+  border-color: rgba(100, 180, 255, 0.5);
+  color: #fff;
+}
+
+.EventList {
+  display: flex;
+  flex-direction: column;
+  padding: 2px 0 12px 0;
+}
+
+.EventRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 10px 3px 8px;
+  border: 0;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.8);
+  font-family: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+@media (hover: hover) {
+  .EventRow:hover {
+    background: rgba(255, 255, 255, 0.1);
+  }
+
+  .FilterButton:hover {
+    background: rgba(255, 255, 255, 0.1);
+    border-color: rgba(255, 255, 255, 0.3);
+  }
+
+  .FilterButton[data-active="true"]:hover {
+    background: rgba(0, 98, 179, 0.8);
+    border-color: rgba(100, 180, 255, 0.7);
+  }
+}
+
+@media (pointer: coarse) {
+  .Filters {
+  }
+
+  .FilterButton {
+    flex: 1 0 auto;
+    font-size: 13px;
+    padding: 4px 8px;
+  }
+
+  .EventList {
+    gap: 2px;
+  }
+
+  .EventRow {
+    padding-top: 5px;
+    padding-bottom: 5px;
+    font-size: 14px;
+  }
+}
+
+.EventTime {
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.6;
+  min-width: 3.5em;
+  font-size: 11px;
+  text-align: right;
+}
+
+.EventIcon {
+  flex-shrink: 0;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  margin: 0 1px;
+}
+
+.EventIcon[data-type="kill"] {
+  color: #8a8380;
+}
+
+.EventIcon[data-type="flag-cap"] {
+  color: #69db7c;
+  font-size: 15px;
+  margin: 0;
+}
+
+.EventIcon[data-type="flag-cap"][data-affinity="enemy"] {
+  color: #ff6b6b;
+}
+
+.EventIcon[data-type="flag-cap"][data-affinity="neutral"] {
+  color: #adb5bd;
+}
+
+.EventIcon[data-type="match-start"] {
+  color: #74c0fc;
+  font-size: 15px;
+  margin: 0;
+}
+
+.EventIcon[data-type="match-end"] {
+  color: #74c0fc;
+}
+
+.EventDescription {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.Killer {
+}
+
+.Victim {
+}
+
+.DamageType {
+}
+
+.Empty {
+  font-size: 12px;
+  opacity: 0.5;
+  padding: 4px 10px 12px 10px;
+  text-align: center;
+}

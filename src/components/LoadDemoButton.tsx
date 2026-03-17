@@ -1,6 +1,7 @@
 import { useCallback, useRef } from "react";
 import { MdOndemandVideo } from "react-icons/md";
 import { createLogger } from "../logger";
+import { demoTimelineStore } from "../state/demoTimelineStore";
 import { liveConnectionStore } from "../state/liveConnectionStore";
 import { usePlaybackActions, useRecording } from "./RecordingProvider";
 import styles from "./LoadDemoButton.module.css";
@@ -21,6 +22,7 @@ export function LoadDemoButton({
   const { setRecording } = usePlaybackActions();
   const inputRef = useRef<HTMLInputElement>(null);
   const parseTokenRef = useRef(0);
+  const scanAbortRef = useRef<AbortController | null>(null);
 
   const handleClick = useCallback(() => {
     if (choosingMap && isDemoLoaded) {
@@ -30,7 +32,10 @@ export function LoadDemoButton({
     if (isDemoLoaded) {
       // Unload the recording/parser but leave entities frozen in the store.
       parseTokenRef.current += 1;
+      scanAbortRef.current?.abort();
+      scanAbortRef.current = null;
       setRecording(null);
+      demoTimelineStore.getState().reset();
       return;
     }
     inputRef.current?.click();
@@ -57,6 +62,37 @@ export function LoadDemoButton({
         liveState.disconnectServer();
         // Metadata-first: mission/game-mode sync happens immediately.
         setRecording(recording);
+        // Kick off background timeline scan.
+        scanAbortRef.current?.abort();
+        const abortController = new AbortController();
+        scanAbortRef.current = abortController;
+        const store = demoTimelineStore.getState();
+        store.reset();
+        store.setScanProgress(0);
+        import("../stream/demoTimelineScanner")
+          .then(({ scanDemoTimeline }) =>
+            scanDemoTimeline(
+              buffer,
+              recording.recorderName,
+              (p) => {
+                if (parseTokenRef.current !== parseToken) return;
+                demoTimelineStore.getState().setScanProgress(p);
+              },
+              abortController.signal,
+            ),
+          )
+          .then((events) => {
+            if (parseTokenRef.current !== parseToken) return;
+            const s = demoTimelineStore.getState();
+            s.setEvents(events);
+            s.setScanProgress(null);
+          })
+          .catch((err: unknown) => {
+            if (parseTokenRef.current !== parseToken) return;
+            if (err instanceof Error && err.name === "AbortError") return;
+            log.error("Timeline scan failed: %o", err);
+            demoTimelineStore.getState().setScanProgress(null);
+          });
       } catch (err) {
         log.error("Failed to load demo: %o", err);
       }
