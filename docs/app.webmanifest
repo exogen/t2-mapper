@@ -1,0 +1,20 @@
+{
+  "name": "MapGenius – Explore maps for Tribes 2",
+  "short_name": "MapGenius",
+  "start_url": ".",
+  "display": "standalone",
+  "background_color": "#000000",
+  "theme_color": "#067272",
+  "icons": [
+    {
+      "src": "icon.png",
+      "sizes": "108x128",
+      "type": "image/png"
+    },
+    {
+      "src": "icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}
