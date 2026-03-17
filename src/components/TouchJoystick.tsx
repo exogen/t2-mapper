@@ -24,8 +24,8 @@ function applyNippleStyles(zone: HTMLElement) {
 
 export function TouchJoystick() {
   const { touchMode } = useControls();
-  const [moveZone, setMoveZone] = useState<HTMLDivElement>(null);
-  const [lookZone, setLookZone] = useState<HTMLDivElement>(null);
+  const [moveZone, setMoveZone] = useState<HTMLDivElement | null>(null);
+  const [lookZone, setLookZone] = useState<HTMLDivElement | null>(null);
   const { moveState, lookState, setMoveState, setLookState } = useJoystick();
 
   // Move joystick

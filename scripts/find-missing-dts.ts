@@ -5,7 +5,7 @@ async function run() {
     const glbFile = inFile.replace(/\.dts$/, ".glb");
     try {
       await fs.stat(glbFile);
-    } catch (err) {
+    } catch (err: any) {
       if (err.code === "ENOENT") {
         console.log(inFile);
       } else {

@@ -87,7 +87,11 @@ setInterval(() => {
     wsClients,
     gameConns,
   );
-}, 10_000);
+  if (gameConns > 0) {
+    const addrs = [...activeGameConnections].map((c) => c.address);
+    relayLog.debug({ connections: addrs }, "Active game connections: %s", addrs.join(", "));
+  }
+}, 60_000);
 
 wss.on("connection", (ws) => {
   relayLog.info("Browser client connected");
@@ -120,13 +124,14 @@ wss.on("connection", (ws) => {
       gameConnection.setMapName(cachedServer.mapName);
     }
 
+    const conn = gameConnection;
     gameConnection.on("status", (status, statusMessage) => {
       relayLog.info(
         {
           status,
           statusMessage,
-          connectSequence: gameConnection?.connectSequence,
-          mapName: gameConnection?.mapName,
+          connectSequence: conn.connectSequence,
+          mapName: conn.mapName,
         },
         "Game connection status changed",
       );
@@ -152,13 +157,19 @@ wss.on("connection", (ws) => {
           type: "status",
           status: "connecting",
           message: `${statusMessage} — retrying (${retryCount}/${MAX_RETRIES})...`,
-          connectSequence: gameConnection?.connectSequence,
-          mapName: gameConnection?.mapName,
+          connectSequence: conn.connectSequence,
+          mapName: conn.mapName,
         });
         retryTimer = setTimeout(() => {
           retryTimer = null;
           if (lastJoinAddress === address && ws.readyState === WebSocket.OPEN) {
-            connectToServer(ws, address, lastWarriorName);
+            connectToServer(ws, address, lastWarriorName).catch((err) => {
+              relayLog.error({ err }, "Retry connection failed");
+              sendToClient(ws, {
+                type: "error",
+                message: `Reconnect failed: ${err instanceof Error ? err.message : err}`,
+              });
+            });
           }
         }, RETRY_DELAY_MS);
         return;
@@ -168,8 +179,8 @@ wss.on("connection", (ws) => {
         type: "status",
         status,
         message: statusMessage,
-        connectSequence: gameConnection?.connectSequence,
-        mapName: gameConnection?.mapName,
+        connectSequence: conn.connectSequence,
+        mapName: conn.mapName,
       });
     });
 
@@ -206,10 +217,10 @@ wss.on("connection", (ws) => {
 
     gameConnection.on("close", () => {
       relayLog.info("Game connection closed");
-      if (gameConnection) {
-        activeGameConnections.delete(gameConnection);
+      activeGameConnections.delete(conn);
+      if (gameConnection === conn) {
+        gameConnection = null;
       }
-      gameConnection = null;
     });
 
     await gameConnection.connect();
@@ -241,7 +252,6 @@ wss.on("connection", (ws) => {
     }
     if (gameConnection) {
       gameConnection.disconnect();
-      gameConnection = null;
     }
   });
 
@@ -336,6 +346,7 @@ wss.on("connection", (ws) => {
             },
             "Computing CRC from game files",
           );
+          // Fire-and-forget: computeAndSendCRC has its own try/catch.
           gameConnection.computeAndSendCRC(
             message.seed,
             message.field2,

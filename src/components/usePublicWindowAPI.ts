@@ -1,8 +1,22 @@
 import { useEffect, useEffectEvent } from "react";
 import { getMissionInfo, getMissionList } from "../manifest";
 import { usePlaybackActions } from "./RecordingProvider";
+import type { CurrentMission } from "./useQueryParams";
 
-export function usePublicWindowAPI({ onChangeMission }) {
+declare global {
+  interface Window {
+    setMissionName?: (missionName: string) => void;
+    getMissionList?: typeof getMissionList;
+    getMissionInfo?: typeof getMissionInfo;
+    loadDemoRecording?: ReturnType<typeof usePlaybackActions>["setRecording"];
+  }
+}
+
+export function usePublicWindowAPI({
+  onChangeMission,
+}: {
+  onChangeMission: (mission: CurrentMission) => void;
+}) {
   const { setRecording } = usePlaybackActions();
   const handleChangeMission = useEffectEvent(onChangeMission);
 

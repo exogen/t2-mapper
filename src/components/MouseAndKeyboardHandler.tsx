@@ -11,27 +11,29 @@ import { useCameras } from "./CamerasProvider";
 import { useInputContext } from "./InputContext";
 import { useTouchDevice } from "./useTouchDevice";
 
-export enum Controls {
-  forward = "forward",
-  backward = "backward",
-  left = "left",
-  right = "right",
-  up = "up",
-  down = "down",
-  lookUp = "lookUp",
-  lookDown = "lookDown",
-  lookLeft = "lookLeft",
-  lookRight = "lookRight",
-  camera1 = "camera1",
-  camera2 = "camera2",
-  camera3 = "camera3",
-  camera4 = "camera4",
-  camera5 = "camera5",
-  camera6 = "camera6",
-  camera7 = "camera7",
-  camera8 = "camera8",
-  camera9 = "camera9",
-}
+export const Controls = {
+  forward: "forward",
+  backward: "backward",
+  left: "left",
+  right: "right",
+  up: "up",
+  down: "down",
+  lookUp: "lookUp",
+  lookDown: "lookDown",
+  lookLeft: "lookLeft",
+  lookRight: "lookRight",
+  camera1: "camera1",
+  camera2: "camera2",
+  camera3: "camera3",
+  camera4: "camera4",
+  camera5: "camera5",
+  camera6: "camera6",
+  camera7: "camera7",
+  camera8: "camera8",
+  camera9: "camera9",
+} as const;
+
+export type ControlName = (typeof Controls)[keyof typeof Controls];
 
 export const KEYBOARD_CONTROLS = [
   { name: Controls.forward, keys: ["KeyW"] },
@@ -103,7 +105,7 @@ export function MouseAndKeyboardHandler() {
     invertDrag,
   } = useControls();
   const { onInput, mode } = useInputContext();
-  const [subscribe, getKeys] = useKeyboardControls<Controls>();
+  const [subscribe, getKeys] = useKeyboardControls<ControlName>();
   const camera = useThree((state) => state.camera);
   const gl = useThree((state) => state.gl);
   const { nextCamera, setCameraIndex, cameraCount } = useCameras();

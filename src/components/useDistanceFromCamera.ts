@@ -5,7 +5,7 @@ import { useWorldPosition } from "./useWorldPosition";
 
 export function useDistanceFromCamera<T extends Object3D>(
   ref: RefObject<T>,
-): RefObject<number> {
+): RefObject<number | null> {
   const camera = useThree((state) => state.camera);
   const distanceRef = useRef<number>(null);
   const worldPosRef = useWorldPosition(ref);

@@ -191,8 +191,8 @@ for (const rel of playerModels) {
         `${name}: rhand node="${rhNode.name}" translation=(${translation.map((v: number) => v.toFixed(3)).join(", ")}) (no mesh centroid)`,
       );
     }
-  } catch (e: any) {
-    console.log(`${name}: error - ${e.message}`);
+  } catch (e) {
+    console.log(`${path.basename(rel, ".glb")}: error - ${(e as Error).message}`);
   }
 }
 

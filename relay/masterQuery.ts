@@ -152,7 +152,8 @@ async function queryServers(addresses: string[]): Promise<ServerInfo[]> {
       }
     });
 
-    socket.on("error", () => {
+    socket.on("error", (err) => {
+      masterLog.warn({ err }, "Socket error during Phase 1");
       clearTimeout(timeout);
       resolve();
     });
@@ -176,7 +177,8 @@ async function queryServers(addresses: string[]): Promise<ServerInfo[]> {
     .map(([addr]) => addr);
 
   if (compatibleAddrs.length > 0) {
-    socket.removeAllListeners("message");
+    // Clear all Phase 1 listeners (including stale error handler).
+    socket.removeAllListeners();
 
     masterLog.debug(
       { count: compatibleAddrs.length },
@@ -185,6 +187,12 @@ async function queryServers(addresses: string[]): Promise<ServerInfo[]> {
 
     await new Promise<void>((resolve) => {
       const timeout = setTimeout(() => resolve(), PHASE_TIMEOUT_MS);
+
+      socket.on("error", (err) => {
+        masterLog.warn({ err }, "Socket error during Phase 2");
+        clearTimeout(timeout);
+        resolve();
+      });
 
       socket.on("message", (msg, rinfo) => {
         const addr = resolveAddr(rinfo);

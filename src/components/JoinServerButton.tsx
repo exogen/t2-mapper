@@ -1,10 +1,6 @@
 import { BsFillLightningChargeFill } from "react-icons/bs";
-import { useLiveSelector, selectPing } from "../state/liveConnectionStore";
+import { useLiveSelector } from "../state/liveConnectionStore";
 import styles from "./JoinServerButton.module.css";
-
-function formatPing(ms: number): string {
-  return `${ms.toLocaleString()} ms`;
-}
 
 export function JoinServerButton({
   isActive,
@@ -14,8 +10,6 @@ export function JoinServerButton({
   onOpenServerBrowser: () => void;
 }) {
   const gameStatus = useLiveSelector((s) => s.gameStatus);
-  // const serverName = useLiveSelector((s) => s.serverName);
-  const ping = useLiveSelector(selectPing);
   const disconnectServer = useLiveSelector((s) => s.disconnectServer);
 
   const isLive = gameStatus === "connected";
@@ -45,16 +39,9 @@ export function JoinServerButton({
       <>
         <span className={styles.TextLabel}>Live</span>
         <span className={styles.ButtonHint}>
-          {isConnecting
-            ? "Connecting…"
-            : ping != null
-              ? formatPing(ping)
-              : "Join a game"}
+          {isConnecting ? "Connecting…" : isLive ? "Connected" : "Join a game"}
         </span>
       </>
-      {/* {isLive && ping != null && (
-        <span className={styles.PingLabel}>{formatPing(ping)}</span>
-      )} */}
     </button>
   );
 }

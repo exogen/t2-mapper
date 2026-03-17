@@ -102,12 +102,30 @@ export function ServerBrowser({ onClose }: { onClose: () => void }) {
             <table className={styles.Table}>
               <thead>
                 <tr>
-                  <th onClick={() => handleSort("name")}>Server Name</th>
-                  <th onClick={() => handleSort("playerCount")}>Players</th>
-                  <th onClick={() => handleSort("ping")}>Ping</th>
-                  <th onClick={() => handleSort("mapName")}>Map</th>
-                  <th onClick={() => handleSort("gameType")}>Type</th>
-                  <th onClick={() => handleSort("mod")}>Mod</th>
+                  <th data-column="server" onClick={() => handleSort("name")}>
+                    Server Name
+                  </th>
+                  <th
+                    data-column="players"
+                    onClick={() => handleSort("playerCount")}
+                  >
+                    Players
+                  </th>
+                  <th data-column="ping" onClick={() => handleSort("ping")}>
+                    Ping
+                  </th>
+                  <th data-column="map" onClick={() => handleSort("mapName")}>
+                    Map
+                  </th>
+                  <th
+                    data-column="gameType"
+                    onClick={() => handleSort("gameType")}
+                  >
+                    Type
+                  </th>
+                  <th data-column="mod" onClick={() => handleSort("mod")}>
+                    Mod
+                  </th>
                 </tr>
               </thead>
               <tbody>
@@ -116,13 +134,12 @@ export function ServerBrowser({ onClose }: { onClose: () => void }) {
                     key={server.address}
                     onClick={() => {
                       setSelectedAddress(server.address);
-                      const form = document.forms["serverList"];
-                      const inputs: RadioNodeList =
-                        form.elements["serverAddress"];
+                      const form = document.forms.namedItem("serverList")!;
+                      const inputs = form.elements.namedItem("serverAddress") as RadioNodeList;
                       const input = Array.from(inputs).find(
                         (input) => input.value === server.address,
                       );
-                      input.focus();
+                      input!.focus();
                     }}
                     onDoubleClick={() => {
                       setSelectedAddress(server.address);
@@ -130,7 +147,7 @@ export function ServerBrowser({ onClose }: { onClose: () => void }) {
                       onClose();
                     }}
                   >
-                    <td>
+                    <td data-column="server">
                       <input
                         type="radio"
                         className={styles.HiddenRadio}
@@ -152,17 +169,21 @@ export function ServerBrowser({ onClose }: { onClose: () => void }) {
                           ? styles.EmptyServer
                           : undefined
                       }
+                      data-column="players"
                     >
-                      {server.playerCount}&thinsp;/&thinsp;{server.maxPlayers}
+                      {server.playerCount}
+                      <span className={styles.CompactHidden}>
+                        &thinsp;/&thinsp;{server.maxPlayers}
+                      </span>
                     </td>
-                    <td>
+                    <td data-column="ping">
                       {browserToRelayPing != null
                         ? (server.ping + browserToRelayPing).toLocaleString()
                         : "\u2014"}
                     </td>
-                    <td>{server.mapName}</td>
-                    <td>{server.gameType}</td>
-                    <td>{server.mod}</td>
+                    <td data-column="map">{server.mapName}</td>
+                    <td data-column="gameType">{server.gameType}</td>
+                    <td data-column="mod">{server.mod}</td>
                   </tr>
                 ))}
                 {sorted.length === 0 && !serversLoading && (

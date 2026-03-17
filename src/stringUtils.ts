@@ -6,3 +6,7 @@
 export function normalizePath(pathString: string) {
   return pathString.replace(/\\/g, "/").replace(/\/+/g, "/");
 }
+
+export function formatPing(ms: number): string {
+  return `${ms.toLocaleString()} ms`;
+}

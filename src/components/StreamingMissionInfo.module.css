@@ -2,6 +2,8 @@
   flex: 1 1 auto;
   display: flex;
   align-items: center;
+  justify-content: flex-start;
+  gap: 12px;
 }
 
 .MissionInfo {
@@ -37,8 +39,8 @@
   font-size: 12px;
   line-height: calc(14 / 12);
   text-align: right;
-  padding: 8px 12px;
-  margin: 0 0 0 auto;
+  padding: 8px 0;
+  margin-left: 4px;
 }
 
 .Attribution,
@@ -85,5 +87,49 @@
 
   .MissionInfo {
     margin-left: 0;
+  }
+}
+
+.Pulsing {
+  animation: blink 1.2s ease-out infinite;
+}
+
+.ConnectionPing {
+  display: inline-flex;
+  align-items: center;
+  font-size: 12px;
+  gap: 6px;
+  background: rgba(255, 255, 255, 0.1);
+  padding: 5px 8px;
+  border-radius: 12px;
+}
+
+.PingDot {
+  composes: Pulsing;
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 3px;
+  background: currentColor;
+}
+
+.ConnectionPing[data-quality="good"] .PingDot {
+  color: rgb(116, 255, 69);
+}
+
+.ConnectionPing[data-quality="fine"] .PingDot {
+  color: rgb(255, 158, 47);
+}
+
+.ConnectionPing[data-quality="poor"] .PingDot {
+  color: rgb(232, 63, 37);
+}
+
+@keyframes blink {
+  0% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0.25;
   }
 }

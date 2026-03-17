@@ -38,9 +38,11 @@
   z-index: 1;
 }
 
-.CancelButton:hover {
-  background: rgba(255, 255, 255, 0.1);
-  color: #fff;
+@media (hover: hover) {
+  .CancelButton:hover {
+    background: rgba(255, 255, 255, 0.1);
+    color: #fff;
+  }
 }
 
 .Sidebar {
@@ -102,6 +104,10 @@
   opacity: 0.6;
 }
 
+.ToggleSidebarButton:active {
+  opacity: 1;
+}
+
 .ToggleSidebarButton[data-orientation="top"] {
   display: none;
   min-height: 48px;
@@ -109,8 +115,10 @@
   margin: 0;
 }
 
-.ToggleSidebarButton:not(:disabled):hover {
-  opacity: 1;
+@media (hover: hover) {
+  .ToggleSidebarButton:not(:disabled):hover {
+    opacity: 1;
+  }
 }
 
 .ToggleSidebarButton svg {

@@ -28,7 +28,7 @@ async function run() {
       getResourceList()
         .map((f) => f.match(/^terrains\/(.+)\.ter$/))
         .filter(Boolean)
-        .map((match) => path.basename(getLocalFilePath(match[0]), ".ter"))
+        .map((match) => path.basename(getLocalFilePath(match![0]), ".ter"))
         .join("\n"),
     );
     return;

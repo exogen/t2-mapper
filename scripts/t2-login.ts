@@ -295,7 +295,7 @@ async function main() {
 
   // Step 2: Download credentials (retry on network errors)
   console.log("Downloading account credentials...");
-  let credentials: { certificate: string; encryptedKey: string };
+  let credentials!: { certificate: string; encryptedKey: string };
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
       credentials = await downloadAccount(authAddress, username, pw);

@@ -1,0 +1,1 @@
+import{r as e,t}from"./useBaseQuery-DK4WLBLs.js";function n(n,r){return t(n,e,r)}export{n as t};

@@ -1,6 +1,8 @@
 import {
   createContext,
+  type Dispatch,
   ReactNode,
+  type SetStateAction,
   useCallback,
   useContext,
   useEffect,
@@ -18,7 +20,7 @@ export const DEFAULT_MOUSE_SENSITIVITY = 32 / 16000; // 0.002
 export const MIN_MOUSE_SENSITIVITY = 1 / 16000;
 export const MAX_MOUSE_SENSITIVITY = 256 / 16000;
 
-type StateSetter<T> = ReturnType<typeof useState<T>>[1];
+type StateSetter<T> = Dispatch<SetStateAction<T>>;
 
 export type TouchMode = "dualStick" | "moveLookStick";
 
@@ -230,7 +232,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
 
     let savedSettings: PersistedSettings = {};
     try {
-      savedSettings = JSON.parse(localStorage.getItem("settings")) || {};
+      savedSettings = JSON.parse(localStorage.getItem("settings") ?? "{}") || {};
     } catch (err) {
       // Ignore.
     }

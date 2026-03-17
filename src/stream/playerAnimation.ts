@@ -32,13 +32,14 @@ function quaternionToBodyYaw(q: [number, number, number, number]): number {
  * orientation, and movement state flags.
  *
  * Matches the Tribes2.exe binary (build 25034) pickActionAnimation at
- * 0x005d6210. The binary checks in order:
- *   1. mFalling → FallAnim (4)
- *   2. contactTimer < 30 → velocity-based selection (run/back/side/root)
- *   3. jetting → JetAnim (5)
- *   4. else → RootAnim (0)
+ * 0x005d6210. The engine checks in order:
+ *   1. mFalling → FallAnim
+ *   2. contactTimer >= 30 (airborne) → jetting ? JetAnim : RootAnim
+ *   3. contactTimer < 30 (on ground) → velocity-based (run/back/side/root)
  *
- * Since we don't have contactTimer, falling=false + no velocity uses root.
+ * We don't have contactTimer, so we approximate airborne detection: jetting
+ * implies airborne, and significant vertical velocity without the falling flag
+ * suggests the player left the ground (jumped, launched, etc.).
  */
 export function pickMoveAnimation(
   velocity: [number, number, number] | undefined,
@@ -46,20 +47,32 @@ export function pickMoveAnimation(
   falling?: boolean,
   jetting?: boolean,
 ): MoveAnimationResult {
-  // Falling overrides everything.
+  // 1. Falling overrides everything.
   if (falling) {
     return { animation: "fall", timeScale: 1 };
   }
 
+  // 2. Jetting always shows the jet animation (engine: contactTimer >= 30
+  //    && mJetting → JetAnim). Jetting implies airborne.
+  if (jetting) {
+    return { animation: "jet", timeScale: 1 };
+  }
+
   if (!velocity) {
-    // No velocity data at all — use jetting or idle.
-    if (jetting) return { animation: "jet", timeScale: 1 };
     return { animation: "root", timeScale: 1 };
   }
 
-  const [vx, vy, _vz] = velocity;
+  const [vx, vy, vz] = velocity;
 
-  // Convert world velocity to player object space using body yaw.
+  // Approximate the engine's contactTimer check: if the player has
+  // significant vertical velocity, they're likely airborne (jumped, launched).
+  // The engine would show root in this case (contactTimer >= 30, not jetting).
+  // Use a threshold above the falling threshold (-10) to catch the gap.
+  if (Math.abs(vz) > 2) {
+    return { animation: "root", timeScale: 1 };
+  }
+
+  // 3. On ground: convert world velocity to player object space using body yaw.
   // mWorldToObj.mulV(mVelocity) with a pure Z-axis rotation:
   //   localX = vx*cos(rotZ) + vy*sin(rotZ)
   //   localY = -vx*sin(rotZ) + vy*cos(rotZ)
@@ -80,8 +93,6 @@ export function pickMoveAnimation(
 
   const maxDot = Math.max(forwardDot, backDot, leftDot, rightDot);
   if (maxDot < MOVE_THRESHOLD) {
-    // Below movement threshold — jetting or idle.
-    if (jetting) return { animation: "jet", timeScale: 1 };
     return { animation: "root", timeScale: 1 };
   }
 

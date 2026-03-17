@@ -1,5 +1,5 @@
 import { useKeyboardControls } from "@react-three/drei";
-import { Controls } from "./MouseAndKeyboardHandler";
+import { type ControlName } from "./MouseAndKeyboardHandler";
 import { useRecording } from "./RecordingProvider";
 import { useLiveSelector } from "../state/liveConnectionStore";
 import styles from "./KeyboardOverlay.module.css";
@@ -7,16 +7,16 @@ import styles from "./KeyboardOverlay.module.css";
 export function KeyboardOverlay() {
   const recording = useRecording();
   const liveReady = useLiveSelector((s) => s.liveReady);
-  const forward = useKeyboardControls<Controls>((s) => s.forward);
-  const backward = useKeyboardControls<Controls>((s) => s.backward);
-  const left = useKeyboardControls<Controls>((s) => s.left);
-  const right = useKeyboardControls<Controls>((s) => s.right);
-  const up = useKeyboardControls<Controls>((s) => s.up);
-  const down = useKeyboardControls<Controls>((s) => s.down);
-  const lookUp = useKeyboardControls<Controls>((s) => s.lookUp);
-  const lookDown = useKeyboardControls<Controls>((s) => s.lookDown);
-  const lookLeft = useKeyboardControls<Controls>((s) => s.lookLeft);
-  const lookRight = useKeyboardControls<Controls>((s) => s.lookRight);
+  const forward = useKeyboardControls<ControlName>((s) => s.forward);
+  const backward = useKeyboardControls<ControlName>((s) => s.backward);
+  const left = useKeyboardControls<ControlName>((s) => s.left);
+  const right = useKeyboardControls<ControlName>((s) => s.right);
+  const up = useKeyboardControls<ControlName>((s) => s.up);
+  const down = useKeyboardControls<ControlName>((s) => s.down);
+  const lookUp = useKeyboardControls<ControlName>((s) => s.lookUp);
+  const lookDown = useKeyboardControls<ControlName>((s) => s.lookDown);
+  const lookLeft = useKeyboardControls<ControlName>((s) => s.lookLeft);
+  const lookRight = useKeyboardControls<ControlName>((s) => s.lookRight);
 
   // Show when no recording (map browsing) or during live mode once ready.
   // Hidden during demo playback and during live map transitions.

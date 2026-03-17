@@ -222,7 +222,7 @@ const IflTexture = memo(function IflTexture({
   const iflPath = `textures/${resourcePath}.ifl`;
 
   const texture = useIflTexture(iflPath);
-  const isOrganic = shapeName && isOrganicShape(shapeName);
+  const isOrganic = !!(shapeName && isOrganicShape(shapeName));
 
   const customMaterial = useMemo(
     () =>
@@ -316,7 +316,7 @@ const StaticTexture = memo(function StaticTexture({
     return resourcePath ? textureToUrl(resourcePath) : FALLBACK_TEXTURE_URL;
   }, [resourcePath, shapeName]);
 
-  const isOrganic = shapeName && isOrganicShape(shapeName);
+  const isOrganic = !!(shapeName && isOrganicShape(shapeName));
   const isTranslucent = flagNames.has("Translucent");
   const anisotropy = useAnisotropy();
 

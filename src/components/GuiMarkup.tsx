@@ -85,7 +85,7 @@ export function parseMarkup(input: string) {
   for (const token of tokens) {
     switch (token.type) {
       case "text":
-        topEl.children.push(token.value);
+        topEl.children!.push(token.value);
         break;
       case "tag":
         switch (token.name) {
@@ -96,16 +96,16 @@ export function parseMarkup(input: string) {
               style: {},
               children: [],
             };
-            topEl.children.push(span);
+            topEl.children!.push(span);
             topEl = span;
             stack.push(topEl);
             break;
           }
           case "spop": {
             if (topEl.source !== "root") {
-              let lastPop = stack.pop();
+              let lastPop = stack.pop()!;
               while (lastPop.source !== "spush") {
-                lastPop = stack.pop();
+                lastPop = stack.pop()!;
               }
               topEl = stack[stack.length - 1];
             }
@@ -131,7 +131,7 @@ export function parseMarkup(input: string) {
           case "font": {
             const fontSize = parseFontArgs(token.args).fontSize;
             if (!isUsed(topEl)) {
-              topEl.style.fontSize = fontSize;
+              topEl.style!.fontSize = fontSize;
             } else {
               const fontNode: Node = {
                 type: "span",
@@ -139,7 +139,7 @@ export function parseMarkup(input: string) {
                 style: { fontSize },
                 children: [],
               };
-              topEl.children.push(fontNode);
+              topEl.children!.push(fontNode);
               topEl = fontNode;
               stack.push(topEl);
             }
@@ -147,7 +147,7 @@ export function parseMarkup(input: string) {
           }
           case "color":
             if (!isUsed(topEl)) {
-              topEl.style.color = `#${token.args[0].trim()}`;
+              topEl.style!.color = `#${token.args[0].trim()}`;
             } else {
               const colorNode: Node = {
                 type: "span",
@@ -155,7 +155,7 @@ export function parseMarkup(input: string) {
                 style: { color: `#${token.args[0].trim()}` },
                 children: [],
               };
-              topEl.children.push(colorNode);
+              topEl.children!.push(colorNode);
               topEl = colorNode;
               stack.push(topEl);
             }
@@ -165,7 +165,7 @@ export function parseMarkup(input: string) {
               type: "bitmap",
               value: token.args[0],
             };
-            topEl.children.push(bitmap);
+            topEl.children!.push(bitmap);
             break;
           }
           case "a": {
@@ -179,15 +179,15 @@ export function parseMarkup(input: string) {
               style: {},
               children: [],
             };
-            topEl.children.push(link);
+            topEl.children!.push(link);
             topEl = link;
             stack.push(topEl);
             break;
           }
           case "/a": {
-            let lastPop = stack.pop();
+            let lastPop = stack.pop()!;
             while (lastPop.source !== "a") {
-              lastPop = stack.pop();
+              lastPop = stack.pop()!;
             }
             topEl = stack[stack.length - 1];
             break;
@@ -204,9 +204,9 @@ function nodeToJsx(node: Node): React.ReactNode {
       return React.createElement(
         "span",
         {
-          style: Object.keys(node.style).length === 0 ? undefined : node.style,
+          style: Object.keys(node.style!).length === 0 ? undefined : node.style,
         },
-        ...node.children.map((child) =>
+        ...node.children!.map((child) =>
           typeof child === "string" ? child : nodeToJsx(child),
         ),
       );
@@ -215,11 +215,11 @@ function nodeToJsx(node: Node): React.ReactNode {
         "a",
         {
           href: node.value,
-          style: Object.keys(node.style).length === 0 ? undefined : node.style,
+          style: Object.keys(node.style!).length === 0 ? undefined : node.style,
           rel: "noopener noreferrer",
           target: "_blank",
         },
-        ...node.children.map((child) =>
+        ...node.children!.map((child) =>
           typeof child === "string" ? child : nodeToJsx(child),
         ),
       );

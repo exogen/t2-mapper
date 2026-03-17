@@ -657,7 +657,7 @@ export const TerrainBlock = memo(function TerrainBlock({
         visibilityMask={primaryVisibilityMask}
         alphaTextures={sharedAlphaTextures}
         detailTextureName={detailTexture}
-        lightmap={terrainLightmap}
+        lightmap={terrainLightmap ?? undefined}
       />
       {/* Pooled tiles — single InstancedMesh, matrices updated in useFrame.
           All pooled tiles share the same geometry, material, and visibility mask.
@@ -675,7 +675,7 @@ export const TerrainBlock = memo(function TerrainBlock({
           textureNames={terrain.textureNames}
           alphaTextures={sharedAlphaTextures}
           detailTextureName={detailTexture}
-          lightmap={terrainLightmap}
+          lightmap={terrainLightmap ?? undefined}
         />
       </instancedMesh>
     </>

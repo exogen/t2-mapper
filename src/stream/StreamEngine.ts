@@ -1329,7 +1329,7 @@ export abstract class StreamEngine implements StreamingPlayback {
           ? rawFilename
           : `${rawFilename}.wav`;
 
-        const descId = profileBlock.description as number | undefined;
+        const descId = profileBlock!.description as number | undefined;
         const descBlock =
           descId != null ? this.getDataBlockData(descId) : undefined;
 
@@ -1442,7 +1442,6 @@ export abstract class StreamEngine implements StreamingPlayback {
           if (!subBlock) continue;
           const subShape =
             (subBlock.dtsFileName as string | undefined) || undefined;
-          if (!subShape) continue;
           const subLifetimeTicks =
             (subBlock.lifetimeMS as number | undefined) ?? 31;
           const offset = (subBlock.offset as number | undefined) ?? 0;

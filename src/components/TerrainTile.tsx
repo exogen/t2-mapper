@@ -81,7 +81,7 @@ const BlendedTerrainTextures = memo(function BlendedTerrainTextures({
   );
 
   const onBeforeCompile = useCallback(
-    (shader) => {
+    (shader: any) => {
       updateTerrainTextureShader({
         shader,
         baseTextures,
@@ -105,6 +105,19 @@ const BlendedTerrainTextures = memo(function BlendedTerrainTextures({
     ],
   );
 
+  // Build a unique program cache key so Three.js recompiles the shader when
+  // textures change between maps. Without this, onBeforeCompile may not be
+  // called because the program cache hash (from toString()) is identical.
+  const programCacheKey = useMemo(() => {
+    const parts = [
+      textureNames.join(","),
+      detailTextureUrl ?? "none",
+      lightmap ? lightmap.id : "nolm",
+      baseTextures.map((t: any) => t.id).join(","),
+    ];
+    return parts.join("|");
+  }, [textureNames, detailTextureUrl, lightmap, baseTextures]);
+
   // Ref for forcing shader recompilation
   const materialRef = useRef<MeshLambertMaterial>(null);
 
@@ -120,6 +133,16 @@ const BlendedTerrainTextures = memo(function BlendedTerrainTextures({
       mat.needsUpdate = true;
     }
   }, [debugMode]);
+
+  // Set customProgramCacheKey so Three.js distinguishes terrain shaders
+  // across different maps even when the shader structure is identical.
+  useEffect(() => {
+    const mat = materialRef.current;
+    if (mat) {
+      mat.customProgramCacheKey = () => programCacheKey;
+      mat.needsUpdate = true;
+    }
+  }, [programCacheKey]);
 
   // Key for shader structure changes (detail texture, lightmap)
   const materialKey = `${detailTextureUrl ? "detail" : "nodetail"}-${lightmap ? "lightmap" : "nolightmap"}`;

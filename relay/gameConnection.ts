@@ -80,6 +80,11 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
   /** Warrior name to send in the ConnectRequest. */
   private warriorName: string;
 
+  /** The server address as "host:port". */
+  get address(): string {
+    return `${this.host}:${this.port}`;
+  }
+
   constructor(address: string, options?: { warriorName?: string }) {
     super();
     const [host, portStr] = address.split(":");
@@ -373,7 +378,6 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
     }
   }
 
-  /** Handle ConnectReject. */
   /** Handle ConnectReject (type 34): U8(34) + U32(serverSeq) + U32(clientSeq) + HuffString(reason). */
   private handleConnectReject(msg: Buffer): void {
     if (msg.length < 9) return;
@@ -413,6 +417,16 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
 
   /** Handle a data protocol packet (established connection). */
   private handleDataPacket(msg: Buffer): void {
+    // Ignore data packets before the connection is fully established.
+    // They arrive in the window between socket creation and ConnectAccept
+    // and would confuse both the browser parser and our ack tracking.
+    if (
+      this._status !== "connected" &&
+      this._status !== "authenticating"
+    ) {
+      return;
+    }
+
     const data = new Uint8Array(msg.buffer, msg.byteOffset, msg.byteLength);
 
     this.dataPacketCount++;
@@ -482,11 +496,11 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
       );
     }
 
-    // Measure RTT from the acked sequence's send timestamp.
-    const sendTime = this.sendTimestamps.get(highestAck);
+    // Measure RTT from the acked sequence's send timestamp (full 32-bit key).
+    const sendTime = this.sendTimestamps.get(result.highestAck);
     if (sendTime) {
       const rtt = Date.now() - sendTime;
-      this.sendTimestamps.delete(highestAck);
+      this.sendTimestamps.delete(result.highestAck);
       // Exponential moving average (alpha=0.5 for responsive updates).
       this.smoothedPing =
         this.smoothedPing === 0 ? rtt : this.smoothedPing * 0.5 + rtt * 0.5;
@@ -732,9 +746,10 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
     moves: ClientMoveData[],
     moveStartIndex: number,
   ): void {
-    // Record send time for RTT measurement.
-    const nextSeq9 = (this.protocol.lastSendSeq + 1) & 0x1ff;
-    this.sendTimestamps.set(nextSeq9, Date.now());
+    // Record send time for RTT measurement using the full 32-bit sequence
+    // (not the 9-bit wire value) to avoid stale timestamps after wrap.
+    const nextSeqFull = (this.protocol.lastSendSeq + 1) >>> 0;
+    this.sendTimestamps.set(nextSeqFull, Date.now());
 
     // Absorb any new pending events into the send queue.
     for (const event of this.pendingEvents.splice(0)) {

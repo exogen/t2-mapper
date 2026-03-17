@@ -21,6 +21,7 @@ import type {
   StreamRecording,
   StreamEntity,
   StreamSnapshot,
+  StreamingPlayback,
 } from "../stream/types";
 import type { GameEntity } from "../state/gameEntityTypes";
 import { isSceneEntity } from "../state/gameEntityTypes";
@@ -108,7 +109,7 @@ export function StreamingController({
   const prevTickSnapshotRef = useRef<StreamSnapshot | null>(null);
   const currentTickSnapshotRef = useRef<StreamSnapshot | null>(null);
   const eyeOffsetRef = useRef(new Vector3(0, DEFAULT_EYE_HEIGHT, 0));
-  const streamRef = useRef(recording.streamingPlayback ?? null);
+  const streamRef = useRef<StreamingPlayback | null>(recording.streamingPlayback ?? null);
   const publishedSnapshotRef = useRef<StreamSnapshot | null>(null);
   const entityMapRef = useRef<Map<string, GameEntity>>(new Map());
   const lastSyncedSnapshotRef = useRef<StreamSnapshot | null>(null);
@@ -160,17 +161,17 @@ export function StreamingController({
         // Mutate render fields in-place on the existing entity object.
         // Components read these imperatively in useFrame — no React
         // re-render needed. This avoids store churn that starves Suspense.
-        mutateRenderFields(renderEntity, entity);
+        mutateRenderFields(renderEntity!, entity);
       }
 
-      nextMap.set(entity.id, renderEntity);
+      nextMap.set(entity.id, renderEntity!);
 
       // Keyframe update (mutable -- used for fallback position for
       // retained explosion entities and per-frame reads in useFrame).
       // Scene entities and None don't have keyframes.
-      if (isSceneEntity(renderEntity) || renderEntity.renderType === "None")
+      if (isSceneEntity(renderEntity!) || renderEntity!.renderType === "None")
         continue;
-      const keyframes = renderEntity.keyframes!;
+      const keyframes = renderEntity!.keyframes!;
       if (keyframes.length === 0) {
         keyframes.push({
           time: snapshot.timeSec,

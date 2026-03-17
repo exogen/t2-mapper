@@ -78,8 +78,8 @@ page.on("console", async (msg) => {
   console.log(`[browser ${prefix}] ${parts.join(" ")}`);
 });
 
-page.on("pageerror", (err: Error) => {
-  console.error(`[browser EXCEPTION] ${err.message}`);
+page.on("pageerror", (err: unknown) => {
+  console.error(`[browser EXCEPTION] ${(err as Error).message}`);
 });
 
 // Set up settings before navigating.
@@ -106,8 +106,8 @@ await page.keyboard.press("Escape");
 await sleep(100);
 
 // Hide controls from screenshots.
-await page.$eval("#controls", (el: HTMLElement) => {
-  el.style.visibility = "hidden";
+await page.$eval("#controls", (el) => {
+  (el as HTMLElement).style.visibility = "hidden";
 });
 
 // Upload the demo file via the hidden file input.

@@ -95,7 +95,7 @@ function extractCommentMetadata(ast: AST.Program): {
               }
               // Normalize section name to uppercase for consistent lookups
               currentSection = {
-                name: marker.name.toUpperCase(),
+                name: marker.name!.toUpperCase(),
                 comments: [],
               };
               break;
@@ -147,7 +147,7 @@ export function parseMissionScript(script: string): ParsedMission {
       pragma.missiontypes
         ?.split(/\s+/)
         .filter(Boolean)
-        .map((name) => normalizedMissionTypes[name.toLowerCase()] ?? name) ??
+        .map((name) => (normalizedMissionTypes as Record<string, string>)[name.toLowerCase()] ?? name) ??
       [],
     missionBriefing: getSection("MISSION BRIEFING"),
     briefingWav: pragma.briefingwav ?? null,

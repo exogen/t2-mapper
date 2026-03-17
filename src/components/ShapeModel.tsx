@@ -49,8 +49,8 @@ function getArmThread(weaponShape: string | undefined): string {
 export function WeaponModel({ entity }: { entity: ShapeEntity }) {
   const shapeName = entity.weaponShape;
   const playerShapeName = entity.shapeName;
-  const playerGltf = useStaticShape(playerShapeName);
-  const weaponGltf = useStaticShape(shapeName);
+  const playerGltf = useStaticShape(playerShapeName!);
+  const weaponGltf = useStaticShape(shapeName!);
 
   const mountTransform = useMemo(() => {
     // Get Mount0 from the player's posed skeleton with arm animation applied.
@@ -115,7 +115,7 @@ export function WeaponModel({ entity }: { entity: ShapeEntity }) {
   );
 
   return (
-    <ShapeInfoProvider object={torqueObject} shapeName={shapeName} type="Item">
+    <ShapeInfoProvider object={torqueObject} shapeName={shapeName!} type="Item">
       <group
         position={mountTransform.position}
         quaternion={mountTransform.quaternion}
@@ -212,7 +212,7 @@ function interpolateSize(
  * with custom rendering for faceViewer, vis/IFL animation, and size keyframes.
  */
 export function ExplosionShape({ entity }: { entity: ExplosionEntity }) {
-  const playback = streamPlaybackStore.getState().playback;
+  const playback = streamPlaybackStore.getState().playback!;
   const gltf = useStaticShape(entity.shapeName!);
   const anisotropy = useAnisotropy();
   const groupRef = useRef<Group>(null);

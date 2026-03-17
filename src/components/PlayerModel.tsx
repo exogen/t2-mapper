@@ -87,11 +87,16 @@ interface ActionAnimEntry {
  *
  * The engine builds its action list as:
  * 1. Table actions (0-7): found by searching for aliased names (root, run, etc.)
- * 2. Non-table actions (8+): remaining sequences in TSShapeConstructor order.
+ * 2. Non-table actions (8+): ALL remaining shape sequences in order.
+ *
+ * The shape's sequence array contains DTS-embedded sequences (e.g. JetFlare,
+ * Damage) BEFORE the TSShapeConstructor-loaded ones. These occupy non-table
+ * action slots and shift all TSShapeConstructor non-table indices up.
  */
 function buildActionAnimMap(
   sequences: string[],
   shapePrefix: string,
+  embeddedNonTableCount: number = 0,
 ): Map<number, ActionAnimEntry> {
   const result = new Map<number, ActionAnimEntry>();
 
@@ -124,8 +129,9 @@ function buildActionAnimMap(
     }
   }
 
-  // Non-table actions: remaining entries in TSShapeConstructor order.
-  let actionIdx = NUM_TABLE_ACTION_ANIMS;
+  // Non-table actions: remaining entries in TSShapeConstructor order, offset
+  // by embedded non-table sequences that precede them in the shape.
+  let actionIdx = NUM_TABLE_ACTION_ANIMS + embeddedNonTableCount;
   for (let pi = 0; pi < parsed.length; pi++) {
     if (!tableEntryIndices.has(pi)) {
       result.set(actionIdx, parsed[pi]);
@@ -134,6 +140,52 @@ function buildActionAnimMap(
   }
 
   return result;
+}
+
+const TABLE_ACTION_NAME_SET = new Set(TABLE_ACTION_NAMES);
+
+/**
+ * Count DTS-embedded sequences that occupy non-table action slots. The engine's
+ * shape sequence array starts with embedded sequences (e.g. JetFlare, Damage)
+ * before TSShapeConstructor sequences. We detect them by comparing the GLB's
+ * `dts_sequence_names` metadata with TSShapeConstructor-derived clip names.
+ */
+function countEmbeddedNonTableSequences(
+  scene: Group,
+  tscSequences: string[],
+  shapePrefix: string,
+): number {
+  const raw = scene.userData?.dts_sequence_names;
+  if (typeof raw !== "string") return 0;
+  let dtsNames: string[];
+  try {
+    dtsNames = JSON.parse(raw);
+  } catch {
+    return 0;
+  }
+  if (!Array.isArray(dtsNames) || dtsNames.length === 0) return 0;
+
+  // Build set of clip names derived from TSShapeConstructor DSQ entries.
+  const tscClipNames = new Set<string>();
+  for (const entry of tscSequences) {
+    const spaceIdx = entry.indexOf(" ");
+    if (spaceIdx === -1) continue;
+    const dsqFile = entry.slice(0, spaceIdx).toLowerCase();
+    if (!dsqFile.startsWith(shapePrefix) || !dsqFile.endsWith(".dsq")) continue;
+    const clipName = dsqFile.slice(shapePrefix.length, -4);
+    if (clipName) tscClipNames.add(clipName);
+  }
+
+  // Embedded sequences come first in the DTS. Count leading entries that don't
+  // match any TSShapeConstructor clip name, excluding any that are table actions.
+  let count = 0;
+  for (const name of dtsNames) {
+    if (tscClipNames.has(name.toLowerCase())) break;
+    if (!TABLE_ACTION_NAME_SET.has(name.toLowerCase())) {
+      count++;
+    }
+  }
+  return count;
 }
 
 /** Stop, disconnect, and remove a looping PositionalAudio from its parent. */
@@ -245,8 +297,47 @@ export function PlayerModel({ entity }: { entity: PlayerEntity }) {
     if (!sequences) return new Map<number, ActionAnimEntry>();
     // Derive prefix: "heavy_male.dts" -> "heavy_male_"
     const stem = sn.replace(/\.dts$/i, "");
-    return buildActionAnimMap(sequences, stem + "_");
-  }, [engineStore, shapeName]);
+    const prefix = stem + "_";
+    const embeddedNonTable = countEmbeddedNonTableSequences(
+      gltf.scene,
+      sequences,
+      prefix,
+    );
+    return buildActionAnimMap(sequences, prefix, embeddedNonTable);
+  }, [engineStore, shapeName, gltf.scene]);
+
+  // Build a map of animation alias → cyclic flag from DTS metadata.
+  // Non-cyclic sequences (fall, jet, jump, land) play once and clamp.
+  const seqCyclicByAlias = useMemo(() => {
+    const map = new Map<string, boolean>();
+    const rawNames = gltf.scene.userData?.dts_sequence_names;
+    const rawCyclic = gltf.scene.userData?.dts_sequence_cyclic;
+    if (typeof rawNames === "string" && typeof rawCyclic === "string") {
+      try {
+        const names: string[] = JSON.parse(rawNames);
+        const cyclic: boolean[] = JSON.parse(rawCyclic);
+        // Map clip names → cyclic.
+        const clipCyclic = new Map<string, boolean>();
+        for (let i = 0; i < names.length; i++) {
+          clipCyclic.set(names[i].toLowerCase(), cyclic[i] ?? true);
+        }
+        // Map aliases → cyclic via the alias→clip mapping.
+        if (shapeAliases) {
+          for (const [alias, clipName] of shapeAliases) {
+            const c = clipCyclic.get(clipName);
+            if (c != null) map.set(alias, c);
+          }
+        }
+        // Also include raw clip names so lookups by either name work.
+        for (const [name, c] of clipCyclic) {
+          if (!map.has(name)) map.set(name, c);
+        }
+      } catch {
+        /* ignore */
+      }
+    }
+    return map;
+  }, [gltf.scene, shapeAliases]);
 
   useEffect(() => {
     const actions = getAliasedActions(gltf.animations, mixer, shapeAliases);
@@ -505,6 +596,17 @@ export function PlayerModel({ entity }: { entity: PlayerEntity }) {
         const nextAction = actions.get(anim.animation.toLowerCase());
 
         if (nextAction) {
+          // Set loop mode from the DTS cyclic flag. Non-cyclic sequences
+          // (fall, jet, jump, land) play once and hold their end pose.
+          const isCyclic = seqCyclicByAlias.get(anim.animation) ?? true;
+          if (isCyclic) {
+            nextAction.setLoop(LoopRepeat, Infinity);
+            nextAction.clampWhenFinished = false;
+          } else {
+            nextAction.setLoop(LoopOnce, 1);
+            nextAction.clampWhenFinished = true;
+          }
+
           if (isPlaying && prevAction && prevAction !== nextAction) {
             prevAction.fadeOut(ANIM_TRANSITION_TIME);
             nextAction.reset().fadeIn(ANIM_TRANSITION_TIME).play();

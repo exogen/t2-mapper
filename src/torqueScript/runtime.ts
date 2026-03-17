@@ -1027,7 +1027,7 @@ export function createRuntime(
           return null;
         }
         const segmentLower = segment.toLowerCase();
-        const child = current._children.find(
+        const child: TorqueObject | undefined = current._children.find(
           (c) => c._name?.toLowerCase() === segmentLower,
         );
         current = child ?? null;
@@ -1347,7 +1347,7 @@ export function createRuntime(
 
       const loadPromise = (async () => {
         // Pass original path to loader - it handles its own normalization
-        const source = await loader(ref);
+        const source = await loader!(ref);
         if (source == null) {
           log.warn("Script not found: %s", ref);
           state.failedScripts.add(normalized);

@@ -11,11 +11,13 @@ import {
 import { engineStore } from "../state/engineStore";
 import {
   liveConnectionStore,
+  selectPing,
   useLiveSelector,
 } from "../state/liveConnectionStore";
 import { useRecording } from "./RecordingProvider";
 import { LuCircleArrowOutUpLeft } from "react-icons/lu";
 import { BiSolidEject } from "react-icons/bi";
+import { formatPing } from "../stringUtils";
 import styles from "./StreamingMissionInfo.module.css";
 
 export function StreamingMissionInfo() {
@@ -34,6 +36,7 @@ export function StreamingMissionInfo() {
   const isLiveConnected = useLiveSelector(
     (s) => s.gameStatus === "connected" || s.gameStatus === "authenticating",
   );
+  const ping = useLiveSelector(selectPing);
 
   const handleEject = useCallback(() => {
     engineStore.getState().setRecording(null);
@@ -65,6 +68,14 @@ export function StreamingMissionInfo() {
           </>
         ) : null}
       </div>
+      {isLiveConnected && ping != null ? (
+        <span
+          className={styles.ConnectionPing}
+          data-quality={ping < 150 ? "good" : ping < 300 ? "fine" : "poor"}
+        >
+          <span className={styles.PingDot} /> {formatPing(ping)}
+        </span>
+      ) : null}
       <div className={styles.Metadata}>
         {isLive ? (
           isLiveConnected ? (
@@ -82,7 +93,7 @@ export function StreamingMissionInfo() {
             Recorded by <span className={styles.PlayerName}>{playerName}</span>{" "}
             on{" "}
             <span className={styles.RecordingDate}>
-              {datePart.replace(/-/g, " ")}
+              {datePart!.replace(/-/g, " ")}
             </span>{" "}
             at <span className={styles.RecordingDate}>{timePart}</span>
           </div>

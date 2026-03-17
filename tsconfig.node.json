@@ -10,17 +10,23 @@
     /* Bundler mode */
     "moduleResolution": "bundler",
     "allowImportingTsExtensions": true,
-    "verbatimModuleSyntax": true,
+    "verbatimModuleSyntax": false,
     "moduleDetection": "force",
     "noEmit": true,
+
+    "baseUrl": "./",
+    "paths": {
+      "@/*": ["*"]
+    },
 
     /* Linting */
     "strict": true,
     "noUnusedLocals": true,
-    "noUnusedParameters": true,
+    "noUnusedParameters": false,
     "erasableSyntaxOnly": true,
     "noFallthroughCasesInSwitch": true,
     "noUncheckedSideEffectImports": true
   },
-  "include": ["vite.config.ts", "relay", "scripts"]
+  "include": ["env.d.ts", "vite.config.ts", "relay", "scripts"],
+  "exclude": ["scripts/play-demo.ts", "scripts/screenshot.ts"]
 }

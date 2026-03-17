@@ -10,6 +10,7 @@ import type {
   AudioEmitterEntity,
   CameraEntity,
   WayPointEntity,
+  NoneEntity,
 } from "../state/gameEntityTypes";
 import type { SceneTSStatic } from "../scene/types";
 
@@ -133,16 +134,23 @@ export function streamEntityToGameEntity(
     } satisfies PlayerEntity;
   }
 
-  // Explosion
+  // Explosion — only render a shape if the datablock specifies one; particle-only
+  // explosions (e.g. BlasterExplosion) still exist as entities for ParticleEffects.
   if (entity.type === "Explosion") {
+    if (entity.dataBlock) {
+      return {
+        ...positionedBase(entity, spawnTime),
+        renderType: "Explosion",
+        shapeName: entity.dataBlock,
+        dataBlock: entity.dataBlock,
+        explosionDataBlockId: entity.explosionDataBlockId,
+        faceViewer: entity.faceViewer,
+      } satisfies ExplosionEntity;
+    }
     return {
       ...positionedBase(entity, spawnTime),
-      renderType: "Explosion",
-      shapeName: entity.dataBlock,
-      dataBlock: entity.dataBlock,
-      explosionDataBlockId: entity.explosionDataBlockId,
-      faceViewer: entity.faceViewer,
-    } satisfies ExplosionEntity;
+      renderType: "None",
+    } satisfies NoneEntity;
   }
 
   // Force field

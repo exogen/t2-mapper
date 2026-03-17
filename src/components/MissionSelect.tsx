@@ -58,7 +58,7 @@ const dirGroupNames: Record<string, string> = {
 interface MissionItem {
   resourcePath: string;
   missionName: string;
-  displayName: string;
+  displayName: string | null;
   sourcePath: string;
   groupName: string | null;
   missionTypes: string[];
@@ -244,7 +244,7 @@ export function MissionSelect({
       ? filteredResults.missions.length === 0
       : filteredResults.groups.length === 0;
 
-  const renderItem = (mission) => {
+  const renderItem = (mission: MissionItem) => {
     return (
       <ComboboxItem
         key={mission.missionName}

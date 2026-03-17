@@ -3,7 +3,6 @@ import { textureToUrl } from "../loaders";
 import type { StreamEntity, TeamScore, WeaponsHudSlot } from "../stream/types";
 import styles from "./PlayerHUD.module.css";
 import { ChatWindow } from "./ChatWindow";
-import { LuUsers } from "react-icons/lu";
 
 const COMPASS_URL = textureToUrl("gui/hud_new_compass");
 const NSEW_URL = textureToUrl("gui/hud_new_NSEW");
@@ -160,9 +159,7 @@ function WeaponSlotIcon({
   if (!info) return null;
   const isInfinite = slot.ammo < 0;
   return (
-    <div
-      className={`${styles.PackInvItem} ${isSelected ? styles.PackInvItemActive : styles.PackInvItemDim}`}
-    >
+    <div className={styles.PackInvItem} data-active={isSelected}>
       <img
         src={WEAPON_HUD_ICON_URLS.get(slot.index)!}
         alt={info.label}
@@ -259,7 +256,9 @@ function TeamScores() {
         )}
         {sorted.map((team: TeamScore) => {
           const isFriendly =
-            playerSensorGroup > 0 && team.teamId === playerSensorGroup;
+            playerSensorGroup != null &&
+            playerSensorGroup > 0 &&
+            team.teamId === playerSensorGroup;
           const name =
             team.name ||
             (DEFAULT_TEAM_NAMES[team.teamId] ?? `Team ${team.teamId}`);
@@ -376,7 +375,8 @@ function PackAndInventoryHUD() {
     <div className={styles.PackInventoryHUD}>
       {packIconUrl && (
         <div
-          className={`${styles.PackInvItem} ${backpackHud!.active ? styles.PackInvItemActive : ""}`}
+          className={styles.PackInvItem}
+          data-active={backpackHud!.active ?? false}
         >
           <img src={packIconUrl} alt="" className={styles.PackInvIcon} />
           <span className={styles.PackInvCount}>
@@ -409,18 +409,17 @@ export function PlayerHUD() {
   const hasControlPlayer = useEngineSelector(
     (state) => !!state.playback.streamSnapshot?.controlPlayerGhostId,
   );
+
   return (
     <div className={styles.PlayerHUD}>
       <ChatWindow />
-      <div className={styles.TopRight}>
-        {hasControlPlayer && (
-          <div className={styles.Bars}>
-            <HealthBar />
-            <EnergyBar />
-          </div>
-        )}
-        <Compass />
-      </div>
+      {hasControlPlayer && (
+        <div className={styles.Bars}>
+          <HealthBar />
+          <EnergyBar />
+        </div>
+      )}
+      <Compass />
       {hasControlPlayer && (
         <>
           <WeaponHUD />

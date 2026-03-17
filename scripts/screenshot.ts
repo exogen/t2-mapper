@@ -81,8 +81,8 @@ await page.keyboard.press("Escape");
 await sleep(50);
 
 // Hide controls from screenshots while keeping them selectable
-await page.$eval("#controls", (el: HTMLElement) => {
-  el.style.visibility = "hidden";
+await page.$eval("#controls", (el) => {
+  (el as HTMLElement).style.visibility = "hidden";
 });
 
 // Wait for mission to load

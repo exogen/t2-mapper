@@ -25,6 +25,12 @@
   scrollbar-color: rgba(44, 172, 181, 0.4) transparent;
 }
 
+@media (max-width: 699px) {
+  .ChatWindow {
+    font-size: 11px;
+  }
+}
+
 .ChatMessage {
   /* Default to \c0 (GuiChatHudProfile fontColor) for untagged messages. */
   color: rgb(44, 172, 181);

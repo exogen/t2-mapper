@@ -38,7 +38,11 @@ export function CamerasProvider({ children }: { children: ReactNode }) {
   const camera = useThree((state) => state.camera);
   const [cameraIndex, setCameraIndex] = useState(-1);
   const [cameraMap, setCameraMap] = useState<Record<string, CameraEntry>>({});
-  const [initialViewState, setInitialViewState] = useState(() => ({
+  const [initialViewState, setInitialViewState] = useState<{
+    initialized: boolean;
+    position: Vector3 | null;
+    quarternion: Quaternion | null;
+  }>(() => ({
     initialized: false,
     position: null,
     quarternion: null,

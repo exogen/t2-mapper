@@ -88,7 +88,7 @@ function write(o: { level: number; module?: string; msg: string }) {
 export const rootLogger = pino({
   name: "t2-mapper",
   level: "trace", // allow children to go as low as they want
-  browser: { write },
+  browser: { write: write as any },
   hooks: {
     logMethod(inputArgs, method) {
       // Stash the raw args so `write` can forward objects to console directly
@@ -99,8 +99,16 @@ export const rootLogger = pino({
   },
 });
 
+/**
+ * Logger with printf-style calls enabled. Our logMethod hook supports
+ * `log.info("msg %s %o", arg1, arg2)` but pino's types don't allow it.
+ */
+export type Logger = pino.Logger & {
+  [K in pino.Level]: (msg: string, ...args: unknown[]) => void;
+};
+
 /** Create a named child logger. */
-export function createLogger(name: string): pino.Logger {
+export function createLogger(name: string): Logger {
   const level = moduleLevels.get(name) ?? globalLevel;
-  return rootLogger.child({ module: name }, { level });
+  return rootLogger.child({ module: name }, { level }) as Logger;
 }

@@ -179,7 +179,7 @@ export const Mission = memo(function Mission({
 
   const missionContext = useMemo(
     () => ({
-      metadata: parsedMission,
+      metadata: parsedMission!,
       missionType,
     }),
     [parsedMission, missionType],

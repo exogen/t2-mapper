@@ -3,7 +3,7 @@ import { ReactNode } from "react";
 import { IoCaretForward } from "react-icons/io5";
 import styles from "./Accordion.module.css";
 
-export function AccordionGroup(props) {
+export function AccordionGroup(props: RadixAccordion.AccordionMultipleProps) {
   return <RadixAccordion.Root className={styles.AccordionGroup} {...props} />;
 }
 

@@ -4,6 +4,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useEffectEvent,
   useMemo,
   useRef,
 } from "react";
@@ -78,11 +79,10 @@ export function useTick(callback: TickCallback) {
   if (!context) {
     throw new Error("useTick must be used within a TickProvider");
   }
-  const callbackRef = useRef(callback);
-  callbackRef.current = callback;
+  const handleTick = useEffectEvent(callback);
 
   useEffect(() => {
-    return context.subscribe((tick) => callbackRef.current(tick));
+    return context.subscribe(handleTick);
   }, [context]);
 }
 

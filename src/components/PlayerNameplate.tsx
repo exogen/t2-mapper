@@ -23,7 +23,7 @@ const IFF_ENEMY_URL = textureToUrl("gui/hud_enemytriangle");
 
 const _tmpVec = new Vector3();
 
-const EMPTY_KEYFRAMES = [];
+const EMPTY_KEYFRAMES: never[] = [];
 
 /**
  * Floating nameplate above a player model showing the entity name and a health

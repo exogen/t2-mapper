@@ -3,7 +3,6 @@ import {
   useState,
   useEffect,
   useCallback,
-  startTransition,
   Suspense,
   useRef,
   lazy,
@@ -224,7 +223,7 @@ export function MapInspector() {
             aria-label={sidebarOpen ? "Close sidebar" : "Open sidebar"}
             title={sidebarOpen ? "Close sidebar" : "Open sidebar"}
             onClick={(event) => {
-              startTransition(() => setSidebarOpen((open) => !open));
+              setSidebarOpen((open) => !open);
             }}
           >
             {sidebarOpen ? <LuPanelTopClose /> : <LuPanelTopOpen />}
@@ -236,7 +235,7 @@ export function MapInspector() {
             aria-label={sidebarOpen ? "Close sidebar" : "Open sidebar"}
             title={sidebarOpen ? "Close sidebar" : "Open sidebar"}
             onClick={(event) => {
-              startTransition(() => setSidebarOpen((open) => !open));
+              setSidebarOpen((open) => !open);
             }}
           >
             {sidebarOpen ? <LuPanelLeftClose /> : <LuPanelLeftOpen />}
@@ -247,7 +246,7 @@ export function MapInspector() {
           <Activity mode={!hasStreamData || choosingMap ? "visible" : "hidden"}>
             <MissionSelect
               value={choosingMap ? "" : missionName}
-              missionType={choosingMap ? "" : missionType}
+              missionType={choosingMap ? "" : missionType ?? ""}
               onChange={changeMission}
               autoFocus={choosingMap}
               onCancel={handleCancelChoosingMap}
@@ -267,32 +266,30 @@ export function MapInspector() {
         </header>
         {sidebarOpen ? <div className={styles.Backdrop} /> : null}
         <Activity mode={sidebarOpen ? "visible" : "hidden"}>
-          <ViewTransition>
-            <div
-              className={styles.Sidebar}
-              onKeyDown={(e) => e.stopPropagation()}
-              onPointerDown={(e) => e.stopPropagation()}
-              onClick={(e) => e.stopPropagation()}
-              data-open={sidebarOpen}
-            >
-              <InspectorControls
-                missionName={missionName}
-                missionType={missionType}
-                choosingMap={choosingMap}
-                cameraRef={cameraRef}
-                invalidateRef={invalidateRef}
-                onOpenMapInfo={handleOpenMapInfo}
-                onOpenScoreScreen={
-                  hasStreamData ? handleOpenScoreScreen : undefined
-                }
-                onOpenServerBrowser={
-                  features.live ? handleOpenServerBrowser : undefined
-                }
-                onChooseMap={handleChooseMap}
-                onCancelChoosingMap={handleCancelChoosingMap}
-              />
-            </div>
-          </ViewTransition>
+          <div
+            className={styles.Sidebar}
+            onKeyDown={(e) => e.stopPropagation()}
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={(e) => e.stopPropagation()}
+            data-open={sidebarOpen}
+          >
+            <InspectorControls
+              missionName={missionName}
+              missionType={missionType}
+              choosingMap={choosingMap}
+              cameraRef={cameraRef}
+              invalidateRef={invalidateRef}
+              onOpenMapInfo={handleOpenMapInfo}
+              onOpenScoreScreen={
+                hasStreamData ? handleOpenScoreScreen : undefined
+              }
+              onOpenServerBrowser={
+                features.live ? handleOpenServerBrowser : undefined
+              }
+              onChooseMap={handleChooseMap}
+              onCancelChoosingMap={handleCancelChoosingMap}
+            />
+          </div>
         </Activity>
         <InputProvider>
           <div className={styles.Content}>

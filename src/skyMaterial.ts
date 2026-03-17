@@ -116,7 +116,7 @@ const fragmentShader = /*glsl*/ `
   }
 `;
 
-export function createSkyBoxMaterial({ uniforms }) {
+export function createSkyBoxMaterial({ uniforms }: { uniforms: any }) {
   return new ShaderMaterial({
     uniforms,
     vertexShader,

@@ -1,4 +1,4 @@
-import { createContext, ReactNode, useContext, useMemo, useState } from "react";
+import { createContext, type Dispatch, ReactNode, type SetStateAction, useContext, useMemo, useState } from "react";
 
 /**
  * Handle for querying terrain data.
@@ -34,7 +34,7 @@ export interface TerrainHandle {
   };
 }
 
-type StateSetter<T> = ReturnType<typeof useState<T>>[1];
+type StateSetter<T> = Dispatch<SetStateAction<T>>;
 
 interface TerrainContextValue {
   terrain: TerrainHandle | null;

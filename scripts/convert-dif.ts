@@ -17,7 +17,7 @@ async function run({ onlyNew }: { onlyNew: boolean }) {
     if (onlyNew) {
       try {
         await fs.stat(glbFile);
-      } catch (err) {
+      } catch (err: any) {
         if (err.code === "ENOENT") {
           inputFiles.push(inFile);
         }

@@ -397,7 +397,7 @@ async function initializeIflMaterial(
 
   let disposed = false;
   const prevOnBeforeRender = mesh.onBeforeRender;
-  mesh.onBeforeRender = function (this: any, ...args: any[]) {
+  mesh.onBeforeRender = function (this: any, ...args: Parameters<typeof mesh.onBeforeRender>) {
     prevOnBeforeRender?.apply(this, args);
     if (disposed) return;
     updateAtlasFrame(atlas, getFrameIndexForTime(atlas, getTime()));

@@ -51,6 +51,7 @@
 
 .TableWrapper {
   overflow-y: auto;
+  overflow-x: hidden;
   min-height: 0;
 }
 
@@ -58,6 +59,7 @@
   width: 100%;
   min-height: 0;
   border-collapse: collapse;
+  table-layout: fixed;
   font-size: 13px;
   user-select: none;
 }
@@ -77,16 +79,65 @@
   letter-spacing: 0.04em;
   text-transform: uppercase;
   color: rgba(125, 255, 255, 0.6);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .Table th:hover {
   color: #7dffff;
 }
 
-.Table th:nth-child(2),
-.Table td:nth-child(2),
-.Table th:nth-child(3),
-.Table td:nth-child(3) {
+.Table th[data-column="server"] {
+  width: 26%;
+}
+.Table th[data-column="players"] {
+  width: 11%;
+}
+.Table th[data-column="ping"] {
+  width: 8%;
+}
+.Table th[data-column="map"] {
+  width: 22%;
+}
+.Table th[data-column="gameType"] {
+  width: 19%;
+}
+.Table th[data-column="mod"] {
+  width: 14%;
+}
+
+@media (max-width: 799px) {
+  .Table th[data-column="ping"],
+  .Table td[data-column="ping"] {
+    display: none;
+  }
+}
+
+@media (max-width: 699px) {
+  .CompactHidden {
+    display: none;
+  }
+}
+
+@media (max-width: 599px) {
+  .Table th[data-column="mod"],
+  .Table td[data-column="mod"] {
+    display: none;
+  }
+}
+
+@media (max-width: 499px) {
+  .Table th[data-column="gameType"],
+  .Table td[data-column="gameType"] {
+    display: none;
+  }
+}
+
+.Table th[data-column="players"],
+.Table td[data-column="players"],
+.Table th[data-column="ping"],
+.Table td[data-column="ping"] {
   text-align: right;
 }
 
@@ -98,7 +149,6 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 340px;
   font-weight: 500;
 }
 
@@ -197,10 +247,6 @@
 @media (max-width: 719px) {
   .Hint {
     display: none;
-  }
-
-  .Table td {
-    max-width: 200px;
   }
 
   .CloseButton {

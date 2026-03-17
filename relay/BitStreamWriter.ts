@@ -35,7 +35,11 @@ export class BitStreamWriter {
   }
 
   writeFlag(value: boolean): void {
-    if (this.bitNum >= this.maxBitNum) return;
+    if (this.bitNum >= this.maxBitNum) {
+      throw new RangeError(
+        `BitStreamWriter overflow: writeFlag at position ${this.bitNum}, max ${this.maxBitNum}`,
+      );
+    }
     if (value) {
       this.data[this.bitNum >> 3] |= 1 << (this.bitNum & 0x7);
     } else {
@@ -47,6 +51,11 @@ export class BitStreamWriter {
   /** Write N bits from an unsigned integer, LSB-first. */
   writeInt(value: number, bitCount: number): void {
     if (bitCount === 0) return;
+    if (this.bitNum + bitCount > this.maxBitNum) {
+      throw new RangeError(
+        `BitStreamWriter overflow: need ${bitCount} bits at position ${this.bitNum}, max ${this.maxBitNum}`,
+      );
+    }
     value = value >>> 0;
     for (let i = 0; i < bitCount; i++) {
       if (value & (1 << i)) {
@@ -117,6 +126,11 @@ export class BitStreamWriter {
 
   /** Write raw bits from a Uint8Array. */
   writeBitsBuffer(data: Uint8Array, bitCount: number): void {
+    if (this.bitNum + bitCount > this.maxBitNum) {
+      throw new RangeError(
+        `BitStreamWriter overflow: need ${bitCount} bits at position ${this.bitNum}, max ${this.maxBitNum}`,
+      );
+    }
     for (let i = 0; i < bitCount; i++) {
       const byteIndex = i >> 3;
       const bitIndex = i & 0x7;

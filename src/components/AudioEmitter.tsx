@@ -106,7 +106,7 @@ export function resolveAudioProfile(
     ? rawFilename
     : `${rawFilename}.wav`;
 
-  const descId = profileBlock.description as number | null;
+  const descId = profileBlock!.description as number | null;
   const descBlock = descId != null ? getDb(descId) : undefined;
   const is3D = (descBlock?.is3D as boolean) ?? true;
   const isLooping = (descBlock?.isLooping as boolean) ?? false;

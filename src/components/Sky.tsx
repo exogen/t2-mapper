@@ -143,13 +143,13 @@ function SkyBoxTexture({
       <bufferGeometry>
         <bufferAttribute
           attach="attributes-position"
-          array={new Float32Array([-1, -1, 0, 3, -1, 0, -1, 3, 0])}
+          args={[new Float32Array([-1, -1, 0, 3, -1, 0, -1, 3, 0]), 3]}
           count={3}
           itemSize={3}
         />
         <bufferAttribute
           attach="attributes-uv"
-          array={new Float32Array([0, 0, 2, 0, 0, 2])}
+          args={[new Float32Array([0, 0, 2, 0, 0, 2]), 2]}
           count={3}
           itemSize={2}
         />
@@ -299,12 +299,12 @@ export function SkyBox({
     () =>
       detailMapList
         ? [
-            textureToUrl(detailMapList[1]), // +x
-            textureToUrl(detailMapList[3]), // -x
-            textureToUrl(detailMapList[4]), // +y
-            textureToUrl(detailMapList[5]), // -y
-            textureToUrl(detailMapList[0]), // +z
-            textureToUrl(detailMapList[2]), // -z
+            textureToUrl(detailMapList[1]!), // +x
+            textureToUrl(detailMapList[3]!), // -x
+            textureToUrl(detailMapList[4]!), // +y
+            textureToUrl(detailMapList[5]!), // -y
+            textureToUrl(detailMapList[0]!), // +z
+            textureToUrl(detailMapList[2]!), // -z
           ]
         : null,
     [detailMapList],
@@ -388,13 +388,13 @@ function SolidColorSky({
       <bufferGeometry>
         <bufferAttribute
           attach="attributes-position"
-          array={new Float32Array([-1, -1, 0, 3, -1, 0, -1, 3, 0])}
+          args={[new Float32Array([-1, -1, 0, 3, -1, 0, -1, 3, 0]), 3]}
           count={3}
           itemSize={3}
         />
         <bufferAttribute
           attach="attributes-uv"
-          array={new Float32Array([0, 0, 2, 0, 0, 2])}
+          args={[new Float32Array([0, 0, 2, 0, 0, 2]), 2]}
           count={3}
           itemSize={2}
         />

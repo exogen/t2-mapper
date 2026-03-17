@@ -26,7 +26,7 @@ export function CopyCoordinatesButton({
 }: {
   cameraRef: RefObject<Camera | null>;
   missionName: string;
-  missionType: string;
+  missionType?: string;
   disabled?: boolean;
 }) {
   const { fogEnabled } = useSettings();
@@ -34,7 +34,7 @@ export function CopyCoordinatesButton({
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const handleCopyLink = useCallback(async () => {
-    clearTimeout(timerRef.current);
+    if (timerRef.current) clearTimeout(timerRef.current);
     const camera = cameraRef.current;
     if (!camera) return;
     const hash = encodeViewHash(camera);

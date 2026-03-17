@@ -35,15 +35,15 @@ export const InspectorControls = memo(function InspectorControls({
   invalidateRef,
 }: {
   missionName: string;
-  missionType: string;
+  missionType?: string;
   onOpenMapInfo: () => void;
   onOpenScoreScreen?: () => void;
   onOpenServerBrowser?: () => void;
   onChooseMap?: () => void;
   onCancelChoosingMap?: () => void;
   choosingMap?: boolean;
-  cameraRef: RefObject<Camera>;
-  invalidateRef: RefObject<() => void>;
+  cameraRef: RefObject<Camera | null>;
+  invalidateRef: RefObject<(() => void) | null>;
 }) {
   const isTouch = useTouchDevice();
   const dataSource = useDataSource();

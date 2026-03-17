@@ -1,5 +1,6 @@
 import { BitStreamWriter } from "./BitStreamWriter.js";
 import { packNetString, writeString } from "./HuffmanWriter.js";
+import { connLog } from "./logger.js";
 
 const DataPacket = 0;
 const PingPacket = 1;
@@ -68,13 +69,17 @@ export class ConnectionProtocol {
 
     this._sendCount++;
     if (this._sendCount <= 30 || this._sendCount % 50 === 0) {
-      const typeName =
-        packetType === 0 ? "data" : packetType === 1 ? "ping" : "ack";
-      console.log(
-        `[proto] SEND #${this._sendCount} seq=${this.lastSendSeq} ` +
-          `highestAck=${this.lastSeqRecvd} type=${typeName} ` +
-          `ackBytes=${ackByteCount} mask=0x${mask.toString(16).padStart(8, "0")} ` +
-          `(${mask.toString(2).replace(/^0+/, "") || "0"})`,
+      connLog.debug(
+        {
+          n: this._sendCount,
+          seq: this.lastSendSeq,
+          ack: this.lastSeqRecvd,
+          type: packetType === 0 ? "data" : packetType === 1 ? "ping" : "ack",
+          ackBytes: ackByteCount,
+          mask: `0x${mask.toString(16).padStart(8, "0")}`,
+        },
+        "Sent packet #%d",
+        this._sendCount,
       );
     }
 
@@ -89,12 +94,12 @@ export class ConnectionProtocol {
     connectSeqBit: number;
     ackByteCount: number;
     ackMask: number;
-  }): { accepted: boolean; dispatchData: boolean } {
+  }): { accepted: boolean; dispatchData: boolean; highestAck: number } {
     if (header.connectSeqBit !== (this.connectSequence & 1)) {
-      return { accepted: false, dispatchData: false };
+      return { accepted: false, dispatchData: false, highestAck: 0 };
     }
     if (header.ackByteCount > 4 || header.packetType > 2) {
-      return { accepted: false, dispatchData: false };
+      return { accepted: false, dispatchData: false, highestAck: 0 };
     }
 
     let seqNumber =
@@ -103,7 +108,7 @@ export class ConnectionProtocol {
       seqNumber = (seqNumber + 0x200) >>> 0;
     }
     if (this.lastSeqRecvd + 0x1f < seqNumber) {
-      return { accepted: false, dispatchData: false };
+      return { accepted: false, dispatchData: false, highestAck: 0 };
     }
 
     let highestAck =
@@ -112,7 +117,7 @@ export class ConnectionProtocol {
       highestAck = (highestAck + 0x200) >>> 0;
     }
     if (this.lastSendSeq < highestAck) {
-      return { accepted: false, dispatchData: false };
+      return { accepted: false, dispatchData: false, highestAck: 0 };
     }
 
     const seqShift = (seqNumber - this.lastSeqRecvd) & 0x1f;
@@ -144,7 +149,7 @@ export class ConnectionProtocol {
       this.lastSeqRecvd !== seqNumber && header.packetType === DataPacket;
     this.lastSeqRecvd = seqNumber;
 
-    return { accepted: true, dispatchData };
+    return { accepted: true, dispatchData, highestAck };
   }
 
   /** Build a ping response packet. */

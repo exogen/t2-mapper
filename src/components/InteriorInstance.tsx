@@ -262,7 +262,7 @@ export const InteriorInstance = memo(function InteriorInstance({
           />
         }
         onError={(error) => {
-          log.error("Failed to load %s: %s", scene.interiorFile, error.message);
+          log.error("Failed to load %s: %s", scene.interiorFile, (error as Error).message);
         }}
       >
         <DebugSuspense

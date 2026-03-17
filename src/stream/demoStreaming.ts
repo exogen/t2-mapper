@@ -49,6 +49,8 @@ interface DemoMissionInfo {
   recorderName: string | null;
   /** Recording date string from readplayerinfo row 2 (e.g. "May-4-2025 10:37PM"). */
   recordingDate: string | null;
+  /** Client ID of the recorder. */
+  recorderClientId: number | null;
 }
 
 function extractMissionInfo(demoValues: string[]): DemoMissionInfo {

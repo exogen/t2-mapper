@@ -131,7 +131,7 @@ function ForceFieldMesh({
  * Used by the unified EntityRenderer — does NOT read from TorqueObject/datablock.
  */
 export function ForceFieldBare({ entity }: { entity: ForceFieldBareEntity }) {
-  const data = entity.forceFieldData;
+  const data = entity.forceFieldData!;
   const scale = data.dimensions;
 
   const textureUrls = useMemo(

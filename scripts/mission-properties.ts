@@ -190,4 +190,4 @@ async function run({
   }
 }
 
-run({ typeList, propertyList, valuesOnly: values.values });
+run({ typeList, propertyList, valuesOnly: values.values ?? false });

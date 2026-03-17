@@ -171,7 +171,7 @@ export const gameEntityStore = createStore<GameEntityState>()((set) => ({
         if (info.gameClassName) {
           const raw = info.gameClassName.replace(/Game$/i, "");
           updates.missionType =
-            normalizedMissionTypes[raw.toLowerCase()] ?? raw;
+            (normalizedMissionTypes as Record<string, string>)[raw.toLowerCase()] ?? raw;
         } else {
           updates.missionType = null;
         }
