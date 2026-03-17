@@ -70,6 +70,8 @@ export const InspectorControls = memo(function InspectorControls({
     setAudioVolume,
     animationEnabled,
     setAnimationEnabled,
+    fpsLimit,
+    setFpsLimit,
   } = useSettings();
   const {
     speedMultiplier,
@@ -376,6 +378,28 @@ export const InspectorControls = memo(function InspectorControls({
                   <label className={styles.Label} htmlFor="animationInput">
                     Enable animations
                   </label>
+                </div>
+                <div className={styles.Field}>
+                  <label htmlFor="fpsLimitInput">FPS limit</label>
+                  <div className={styles.Control}>
+                    <select
+                      id="fpsLimitInput"
+                      value={fpsLimit ?? ""}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setFpsLimit(val === "" ? null : parseInt(val));
+                      }}
+                    >
+                      <option value="30">30</option>
+                      <option value="60">60</option>
+                      <option value="120">120</option>
+                      <option value="144">144</option>
+                      <option value="">No limit</option>
+                    </select>
+                  </div>
+                  <p className={styles.Description}>
+                    Give your device a break by capping the framerate.
+                  </p>
                 </div>
               </Accordion>
               <Accordion value="debug" label="Debug">

@@ -1,7 +1,8 @@
 import { ReactNode, Suspense } from "react";
 import { Canvas, GLProps, RootState } from "@react-three/fiber";
 import { NoToneMapping, PCFShadowMap, SRGBColorSpace } from "three";
-import { useDebug } from "./SettingsProvider";
+import { useDebug, useSettings } from "./SettingsProvider";
+import { LimitFPS } from "./LimitFPS";
 
 export type InvalidateFunction = RootState["invalidate"];
 
@@ -26,16 +27,19 @@ export function ThreeCanvas({
 }) {
   const { renderOnDemand: renderOnDemandFromSettings } = useDebug();
   const renderOnDemand = renderOnDemandFromProps || renderOnDemandFromSettings;
+  const { fpsLimit } = useSettings();
+  const fpsLimitActive = fpsLimit != null;
 
   return (
     <Canvas
-      frameloop={renderOnDemand ? "demand" : "always"}
+      frameloop={renderOnDemand || fpsLimitActive ? "demand" : "always"}
       dpr={dprFromProps}
       gl={glSettings}
       shadows={{ type: PCFShadowMap }}
       onCreated={onCreated}
     >
       <Suspense>{children}</Suspense>
+      {fpsLimitActive ? <LimitFPS /> : null}
     </Canvas>
   );
 }

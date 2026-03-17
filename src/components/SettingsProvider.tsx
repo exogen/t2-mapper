@@ -42,6 +42,8 @@ type SettingsContext = {
   setAudioVolume: StateSetter<number>;
   sidebarOpen: boolean;
   setSidebarOpen: StateSetter<boolean>;
+  fpsLimit: number | null;
+  setFpsLimit: StateSetter<number | null>;
 };
 
 type DebugContext = {
@@ -86,6 +88,7 @@ type PersistedSettings = {
   invertDrag?: boolean;
   invertJoystick?: boolean;
   sidebarOpen?: boolean;
+  fpsLimit?: number | null;
 };
 
 export function useSettings() {
@@ -136,6 +139,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   const [invertDrag, setInvertDrag] = useState(false);
   const [invertJoystick, setInvertJoystick] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [fpsLimit, setFpsLimit] = useState<number | null>(null);
   const [renderOnDemand, setRenderOnDemand] = useState(false);
 
   const [fogEnabledOverride, setFogEnabledOverride] = useFogQueryState();
@@ -170,6 +174,8 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       setAudioVolume,
       sidebarOpen,
       setSidebarOpen,
+      fpsLimit,
+      setFpsLimit,
     }),
     [
       fogEnabled,
@@ -183,6 +189,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       warriorName,
       audioVolume,
       sidebarOpen,
+      fpsLimit,
     ],
   );
 
@@ -288,6 +295,9 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     if (savedSettings.invertJoystick != null) {
       setInvertJoystick(savedSettings.invertJoystick);
     }
+    if (savedSettings.fpsLimit === null || Number.isInteger(savedSettings.fpsLimit)) {
+      setFpsLimit(savedSettings.fpsLimit!);
+    }
     if (savedSettings.sidebarOpen != null) {
       // Don't restore on touch devices!
       if (!isTouch) {
@@ -323,6 +333,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
         invertDrag,
         invertJoystick,
         sidebarOpen,
+        fpsLimit,
       };
       try {
         localStorage.setItem("settings", JSON.stringify(settingsToSave));
@@ -352,6 +363,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     invertDrag,
     invertJoystick,
     sidebarOpen,
+    fpsLimit,
   ]);
 
   return (
