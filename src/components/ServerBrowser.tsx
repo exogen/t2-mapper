@@ -3,6 +3,7 @@ import type { ServerInfo } from "../../relay/types";
 import styles from "./ServerBrowser.module.css";
 import { useLiveSelector } from "../state/liveConnectionStore";
 import { useSettings } from "./SettingsProvider";
+import { LuUsers } from "react-icons/lu";
 
 export function ServerBrowser({ onClose }: { onClose: () => void }) {
   const servers = useLiveSelector((s) => s.servers);
@@ -109,7 +110,11 @@ export function ServerBrowser({ onClose }: { onClose: () => void }) {
                     data-column="players"
                     onClick={() => handleSort("playerCount")}
                   >
-                    Players
+                    <LuUsers
+                      className={styles.PlayersIcon}
+                      title="Players"
+                      aria-label="Players"
+                    />
                   </th>
                   <th data-column="ping" onClick={() => handleSort("ping")}>
                     Ping
@@ -135,7 +140,9 @@ export function ServerBrowser({ onClose }: { onClose: () => void }) {
                     onClick={() => {
                       setSelectedAddress(server.address);
                       const form = document.forms.namedItem("serverList")!;
-                      const inputs = form.elements.namedItem("serverAddress") as RadioNodeList;
+                      const inputs = form.elements.namedItem(
+                        "serverAddress",
+                      ) as RadioNodeList;
                       const input = Array.from(inputs).find(
                         (input) => input.value === server.address,
                       );
@@ -186,7 +193,7 @@ export function ServerBrowser({ onClose }: { onClose: () => void }) {
                     <td data-column="mod">{server.mod}</td>
                   </tr>
                 ))}
-                {sorted.length === 0 && !serversLoading && (
+                {/* {sorted.length === 0 && !serversLoading && (
                   <tr className={styles.Empty}>
                     <td colSpan={6}>No servers found</td>
                   </tr>
@@ -195,7 +202,7 @@ export function ServerBrowser({ onClose }: { onClose: () => void }) {
                   <tr className={styles.Empty}>
                     <td colSpan={6}>Querying master server…</td>
                   </tr>
-                )}
+                )} */}
               </tbody>
             </table>
           </form>

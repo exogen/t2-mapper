@@ -1,6 +1,7 @@
 .Dialog {
   composes: Dialog from "./GameDialog.module.css";
   width: 600px;
+  max-width: 100%;
   min-height: 360px;
   display: grid;
   grid-template-columns: 100%;
@@ -73,6 +74,7 @@
 
 .Table {
   width: 100%;
+  table-layout: fixed;
   border-collapse: separate;
   border-spacing: 0;
   font-size: 13px;
@@ -95,11 +97,13 @@
 }
 
 .TeamName {
-  width: 50%;
   font-size: 18px;
   font-weight: 500;
   color: #7dffff;
   text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .TeamScore {
@@ -119,13 +123,23 @@
   color: rgba(125, 255, 255, 0.7);
   text-transform: uppercase;
   text-align: left;
+  white-space: nowrap;
 }
 
 .ColumnHeader {
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-.ColumnHeaderScore {
-  text-align: right !important;
+.ColumnHeaderRow .ColumnHeaderScore {
+  text-align: right;
+  padding-left: 0;
+}
+
+.TeamScore,
+.ColumnHeaderRow .ColumnHeaderScore,
+.PlayerScore {
+  width: 22%;
 }
 
 .ColumnPing {
@@ -152,11 +166,14 @@
 }
 
 .PlayerName {
-  width: 50%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   font-weight: 500;
+}
+
+.PlayerBody .PlayerName {
+  padding-right: 0;
 }
 
 .PlayerNameLocal {
@@ -167,6 +184,8 @@
 .PlayerScore {
   text-align: right;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
   font-weight: 500;
   color: rgba(176, 213, 201, 0.8);
 }
@@ -232,5 +251,11 @@
   .Hint,
   .ColumnPing {
     display: none;
+  }
+
+  .CloseButton {
+    width: 220px;
+    height: 36px;
+    margin: 0 auto;
   }
 }

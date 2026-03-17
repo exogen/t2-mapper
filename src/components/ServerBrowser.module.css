@@ -134,6 +134,13 @@
   }
 }
 
+@media (max-width: 399px) {
+  .Table th[data-column="map"],
+  .Table td[data-column="map"] {
+    display: none;
+  }
+}
+
 .Table th[data-column="players"],
 .Table td[data-column="players"],
 .Table th[data-column="ping"],
@@ -150,6 +157,13 @@
   overflow: hidden;
   text-overflow: ellipsis;
   font-weight: 500;
+}
+
+@media (pointer: coarse) {
+  .Table td {
+    padding-top: 6px;
+    padding-bottom: 6px;
+  }
 }
 
 .Table td.EmptyServer {
@@ -173,6 +187,16 @@
   color: rgba(255, 200, 60, 0.6);
   margin-right: 4px;
   font-size: 11px;
+}
+
+.Table th[data-column="players"] {
+  padding-top: 2px;
+  padding-bottom: 2px;
+  vertical-align: bottom;
+}
+
+.PlayersIcon {
+  font-size: 16px;
 }
 
 .Empty td {
@@ -277,5 +301,11 @@
   .CloseButton {
     flex: 1 0 auto;
     height: 32px;
+  }
+}
+
+@media (max-width: 399px) {
+  .ServerCount {
+    display: none;
   }
 }

@@ -17,12 +17,17 @@
   overflow-y: auto;
   background: rgba(0, 50, 60, 0.65);
   padding: 6px;
-  user-select: text;
   font-size: 12px;
   line-height: 1.25;
   /* Thin scrollbar that doesn't take much space. */
   scrollbar-width: thin;
   scrollbar-color: rgba(44, 172, 181, 0.4) transparent;
+}
+
+@media (pointer: fine) {
+  .ChatWindow {
+    user-select: text;
+  }
 }
 
 @media (max-width: 699px) {

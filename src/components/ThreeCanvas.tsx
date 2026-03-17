@@ -28,7 +28,7 @@ export function ThreeCanvas({
   const { renderOnDemand: renderOnDemandFromSettings } = useDebug();
   const renderOnDemand = renderOnDemandFromProps || renderOnDemandFromSettings;
   const { fpsLimit } = useSettings();
-  const fpsLimitActive = fpsLimit != null;
+  const fpsLimitActive = fpsLimit != null && !renderOnDemand;
 
   return (
     <Canvas
