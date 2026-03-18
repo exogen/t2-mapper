@@ -1,4 +1,5 @@
 import { useEngineSelector } from "../state/engineStore";
+import { DEFAULT_TEAM_NAMES } from "../stringUtils";
 import { textureToUrl } from "../loaders";
 import type { StreamEntity, TeamScore, WeaponsHudSlot } from "../stream/types";
 import styles from "./PlayerHUD.module.css";
@@ -213,15 +214,6 @@ function WeaponHUD() {
   );
 }
 
-/** Default team names from serverDefaults.cs. */
-const DEFAULT_TEAM_NAMES: Record<number, string> = {
-  1: "Storm",
-  2: "Inferno",
-  3: "Starwolf",
-  4: "Diamond Sword",
-  5: "Blood Eagle",
-  6: "Phoenix",
-};
 
 function TeamScores() {
   const teamScores = useEngineSelector(

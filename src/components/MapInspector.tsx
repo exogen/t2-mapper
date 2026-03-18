@@ -48,7 +48,9 @@ import {
   LuPanelTopClose,
   LuPanelTopOpen,
 } from "react-icons/lu";
+import { cameraTourStore, useCameraTour } from "../state/cameraTourStore";
 import { useTouchDevice } from "./useTouchDevice";
+import { HiMiniArrowLeftEndOnRectangle } from "react-icons/hi2";
 import styles from "./MapInspector.module.css";
 
 function ViewTransition({ children }: { children: ReactNode }) {
@@ -102,6 +104,7 @@ export function MapInspector() {
   const [missionLoadingProgress, setMissionLoadingProgress] = useState(0);
   const [showLoadingIndicator, setShowLoadingIndicator] = useState(true);
   const isTouch = useTouchDevice();
+  const isTourActive = useCameraTour((s) => s.animation !== null);
 
   const changeMission = useCallback(
     (mission: CurrentMission) => {
@@ -169,6 +172,12 @@ export function MapInspector() {
       setSidebarOpen(false);
     }
   }, [isTouch, recording, setSidebarOpen]);
+
+  useEffect(() => {
+    if (isTourActive && isTouch) {
+      setSidebarOpen(false);
+    }
+  }, [isTouch, isTourActive, setSidebarOpen]);
 
   const loadingProgress = missionLoadingProgress;
   const isLoading = loadingProgress < 1;
@@ -246,7 +255,7 @@ export function MapInspector() {
           <Activity mode={!hasStreamData || choosingMap ? "visible" : "hidden"}>
             <MissionSelect
               value={choosingMap ? "" : missionName}
-              missionType={choosingMap ? "" : missionType ?? ""}
+              missionType={choosingMap ? "" : (missionType ?? "")}
               onChange={changeMission}
               autoFocus={choosingMap}
               onCancel={handleCancelChoosingMap}
@@ -263,6 +272,16 @@ export function MapInspector() {
               </button>
             )}
           </Activity>
+          {isTourActive && (
+            <button
+              type="button"
+              className={styles.ExitTourButton}
+              onClick={() => cameraTourStore.getState().cancel()}
+            >
+              <HiMiniArrowLeftEndOnRectangle />
+              <span className={styles.ButtonLabel}>Exit tour</span>
+            </button>
+          )}
         </header>
         {sidebarOpen ? <div className={styles.Backdrop} /> : null}
         <Activity mode={sidebarOpen ? "visible" : "hidden"}>

@@ -185,3 +185,27 @@
     font-size: 28px;
   }
 }
+
+.ExitTourButton {
+  composes: ActionButton from "./StreamingMissionInfo.module.css";
+  gap: 6px;
+  padding: 4px 10px 4px 6px;
+  margin: 0 10px 0 auto;
+  font-size: 20px;
+}
+
+.ExitTourButton .ButtonLabel {
+  font-size: 13px;
+  font-weight: 500;
+}
+
+@media (max-width: 799px) {
+  .ExitTourButton {
+    padding-right: 6px;
+    margin: 0 10px 0 0;
+  }
+
+  .ExitTourButton .ButtonLabel {
+    display: none;
+  }
+}

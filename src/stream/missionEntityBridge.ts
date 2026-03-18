@@ -124,16 +124,22 @@ export function buildGameEntityFromMission(
     case "StaticShape":
     case "Item":
     case "Turret":
-    case "TSStatic":
+    case "TSStatic": {
+      // Prefer the runtime `team` field (set by SimGroup::setTeam during
+      // game init) over the hierarchy-inferred teamId.
+      const objTeam = getProperty(object, "team");
+      const resolvedTeam =
+        objTeam != null && objTeam !== "" ? parseInt(objTeam, 10) : teamId;
       return buildShapeEntity(
         posBase,
         object,
         datablock,
         runtime,
         className,
-        teamId,
+        resolvedTeam,
         datablockName,
       );
+    }
 
     // Force field
     case "ForceFieldBare":

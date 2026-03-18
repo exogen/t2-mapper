@@ -392,6 +392,7 @@ const WaterReps = memo(function WaterReps({
       ref={meshRef}
       args={[surfaceGeometry, material, 9]}
       frustumCulled={false}
+      renderOrder={-1}
     />
   );
 });

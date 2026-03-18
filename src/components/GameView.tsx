@@ -13,6 +13,7 @@ import { ObserverCamera } from "./ObserverCamera";
 import { AudioEnabled } from "./AudioEnabled";
 import { DebugEnabled } from "./DebugEnabled";
 import { InputConsumer } from "./InputConsumer";
+import { CameraTourConsumer } from "./CameraTourConsumer";
 
 function createLazy(
   name: string,
@@ -86,6 +87,7 @@ export const GameView = memo(function GameView({
                 />
               </Suspense>
             ) : null}
+            <CameraTourConsumer />
             <InputConsumer />
           </AudioProvider>
         </CamerasProvider>

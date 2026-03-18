@@ -1,0 +1,163 @@
+.Root {
+  display: flex;
+  flex-direction: column;
+}
+
+.Empty {
+  font-size: 12px;
+  opacity: 0.5;
+  padding: 4px 10px 12px 10px;
+  text-align: center;
+}
+
+.CategoryHeader {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 4px 4px 4px 14px;
+  font-size: 12px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.6);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  user-select: none;
+}
+
+.CategoryHeader:not(:first-child) {
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  padding-top: 8px;
+}
+
+.CategoryCount {
+  font-weight: 400;
+  opacity: 0.7;
+}
+
+.TourButton {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin: 0 0 0 auto;
+  padding: 6px 8px;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.8);
+  cursor: pointer;
+  text-transform: none;
+}
+
+.TourButton[data-active="true"] {
+}
+
+.PlayIcon {
+  color: #74c0fc;
+}
+
+.ExitIcon {
+  color: rgb(255, 131, 99);
+}
+
+@media (hover: hover) {
+  .TourButton:hover {
+    color: rgba(255, 255, 255, 1);
+  }
+
+  .TourButton[data-active="true"]:hover {
+  }
+}
+
+.ItemList {
+  display: flex;
+  flex-direction: column;
+  padding: 0 0 8px 0;
+}
+
+.ItemRow {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px 4px 12px;
+  border: 0;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.8);
+  font-family: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.ItemRow .PlayIcon {
+  font-size: 12px;
+}
+
+@media (hover: hover) {
+  .ItemRow:not(:hover) .PlayIcon {
+    visibility: hidden;
+  }
+}
+
+.ItemRow[data-active="true"] {
+  background: rgba(0, 85, 177, 0.5);
+  color: #fff;
+}
+
+@media (hover: hover) {
+  .ItemRow:hover {
+    background: rgba(255, 255, 255, 0.1);
+  }
+
+  .ItemRow[data-active="true"]:hover {
+    background: rgba(0, 85, 177, 0.6);
+  }
+}
+
+.ItemRow:active {
+  background: rgba(0, 85, 177, 0.8);
+  color: #fff;
+}
+
+.ItemLabel {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.TeamBadge {
+  flex-shrink: 0;
+  font-size: 11px;
+  margin: 0 0 0 6px;
+  padding: 0 4px;
+  border-radius: 2px;
+  line-height: 1.5;
+  color: rgba(255, 255, 255, 1);
+}
+
+.TeamBadge[data-team="1"] {
+  background: rgba(8, 108, 138, 0.8);
+}
+
+.TeamBadge[data-team="2"] {
+  background: rgba(143, 94, 20, 0.8);
+}
+
+@media (pointer: coarse) {
+  .CategoryHeader {
+    font-size: 13px;
+    padding: 6px 8px 6px 16px;
+  }
+
+  .TourButton {
+    font-size: 13px;
+  }
+
+  .ItemRow {
+    padding-top: 6px;
+    padding-bottom: 6px;
+    padding-left: 14px;
+    font-size: 14px;
+  }
+}

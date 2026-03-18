@@ -10,6 +10,7 @@ import {
 import { useCameras } from "./CamerasProvider";
 import { useInputContext } from "./InputContext";
 import { useTouchDevice } from "./useTouchDevice";
+import { cameraTourStore } from "../state/cameraTourStore";
 
 export const Controls = {
   forward: "forward",
@@ -56,6 +57,12 @@ export const KEYBOARD_CONTROLS = [
   { name: Controls.camera8, keys: ["Digit8"] },
   { name: Controls.camera9, keys: ["Digit9"] },
 ];
+
+const TOUR_CANCEL_KEYS = new Set([
+  "KeyW", "KeyA", "KeyS", "KeyD",
+  "Space", "ShiftLeft", "ShiftRight",
+  "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight",
+]);
 
 const MIN_SPEED_ADJUSTMENT = 2;
 const MAX_SPEED_ADJUSTMENT = 11;
@@ -135,12 +142,20 @@ export function MouseAndKeyboardHandler() {
     };
   }, [camera, gl.domElement]);
 
-  // Exit pointer lock when switching to touch mode.
+  // Exit pointer lock when switching to touch mode or when a tour starts.
   useEffect(() => {
     if (isTouch && controlsRef.current?.isLocked) {
       controlsRef.current.unlock();
     }
   }, [isTouch]);
+
+  useEffect(() => {
+    return cameraTourStore.subscribe((state) => {
+      if (state.animation && controlsRef.current?.isLocked) {
+        controlsRef.current.unlock();
+      }
+    });
+  }, []);
 
   // Mouse handling: accumulate deltas for input frames.
   // In local mode, drag-to-look works without pointer lock.
@@ -204,7 +219,7 @@ export function MouseAndKeyboardHandler() {
           nextCamera();
         }
         // In fly mode, clicks while locked do nothing special.
-      } else if (e.target === canvas && !didDrag && !getIsTouch()) {
+      } else if (e.target === canvas && !didDrag && !getIsTouch() && !cameraTourStore.getState().animation) {
         controls?.lock();
       }
     };
@@ -281,6 +296,18 @@ export function MouseAndKeyboardHandler() {
     };
   }, [gl.domElement, setSpeedMultiplier]);
 
+  // Escape or movement keys: cancel active camera tour.
+  useEffect(() => {
+    const handleKey = (e: KeyboardEvent) => {
+      if (!cameraTourStore.getState().animation) return;
+      if (e.code === "Escape" || TOUR_CANCEL_KEYS.has(e.code)) {
+        cameraTourStore.getState().cancel();
+      }
+    };
+    window.addEventListener("keydown", handleKey);
+    return () => window.removeEventListener("keydown", handleKey);
+  }, []);
+
   // 'O' key: toggle observer mode (sets trigger 2).
   useEffect(() => {
     if (mode === "local") return;
@@ -303,6 +330,9 @@ export function MouseAndKeyboardHandler() {
 
   // Build and emit InputFrame each render frame.
   useFrame((_state, delta) => {
+    // Suppress all input while a camera tour is active.
+    if (cameraTourStore.getState().animation) return;
+
     const {
       forward,
       backward,

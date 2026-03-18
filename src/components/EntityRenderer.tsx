@@ -12,6 +12,7 @@ import { DebugSuspense } from "./DebugSuspense";
 import { ShapeErrorBoundary } from "./ShapeErrorBoundary";
 import { FloatingLabel } from "./FloatingLabel";
 import { useSettings } from "./SettingsProvider";
+import { DEFAULT_TEAM_NAMES } from "../stringUtils";
 import { Camera } from "./Camera";
 import { WayPoint } from "./WayPoint";
 import { TerrainBlock } from "./TerrainBlock";
@@ -65,10 +66,6 @@ const AudioEmitter = createLazy("AudioEmitter", () => import("./AudioEmitter"));
 const WaterBlock = createLazy("WaterBlock", () => import("./WaterBlock"));
 const WeaponModel = createLazy("WeaponModel", () => import("./ShapeModel"));
 
-const TEAM_NAMES: Record<number, string> = {
-  1: "Storm",
-  2: "Inferno",
-};
 
 /**
  * Renders a GameEntity by dispatching to the appropriate renderer based
@@ -145,7 +142,7 @@ function ShapeEntity({ entity }: { entity: ShapeEntityType }) {
   // Flag label for flag Items
   const isFlag = entity.dataBlock?.toLowerCase() === "flag";
   const teamName =
-    entity.teamId && entity.teamId > 0 ? TEAM_NAMES[entity.teamId] : null;
+    entity.teamId && entity.teamId > 0 ? DEFAULT_TEAM_NAMES[entity.teamId] : null;
   const flagLabel = isFlag && teamName ? `${teamName} Flag` : null;
 
   const loadingColor =

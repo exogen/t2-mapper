@@ -16,6 +16,7 @@ import { Accordion, AccordionGroup } from "./Accordion";
 import styles from "./InspectorControls.module.css";
 import { useTouchDevice } from "./useTouchDevice";
 import { DemoTimeline } from "./DemoTimeline";
+import { MapTourPanel } from "./MapTourPanel";
 import { useRecording } from "./RecordingProvider";
 import { useDataSource, useMissionName } from "../state/gameEntityStore";
 import { useLiveSelector } from "../state/liveConnectionStore";
@@ -185,6 +186,11 @@ export const InspectorControls = memo(function InspectorControls({
               {recording?.source === "demo" && (
                 <Accordion value="timeline" label="Timeline" noPadding>
                   <DemoTimeline />
+                </Accordion>
+              )}
+              {dataSource === "map" && !recording && (
+                <Accordion value="mapFeatures" label="Map Features" noPadding>
+                  <MapTourPanel />
                 </Accordion>
               )}
               <Accordion value="controls" label="Controls">

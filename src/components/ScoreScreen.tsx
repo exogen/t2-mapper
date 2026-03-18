@@ -5,16 +5,8 @@ import { useEngineSelector } from "../state/engineStore";
 import { liveConnectionStore } from "../state/liveConnectionStore";
 import { useDataSource } from "../state/gameEntityStore";
 import type { PlayerRosterEntry, TeamScore } from "../stream/types";
+import { DEFAULT_TEAM_NAMES } from "../stringUtils";
 import styles from "./ScoreScreen.module.css";
-
-const DEFAULT_TEAM_NAMES: Record<number, string> = {
-  1: "Storm",
-  2: "Inferno",
-  3: "Starwolf",
-  4: "Diamond Sword",
-  5: "Blood Eagle",
-  6: "Phoenix",
-};
 
 function computePingStats(players: PlayerRosterEntry[]): {
   avg: number;
