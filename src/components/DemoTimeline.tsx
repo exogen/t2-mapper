@@ -32,7 +32,9 @@ function renderEventDescription(event: TimelineEvent): React.ReactNode {
   if (event.type === "kill" && event.killer && event.victim) {
     return (
       <>
-        <span className={styles.Killer}>{event.killer}</span>{" "}
+        <span className={styles.Killer} title={event.killer}>
+          You
+        </span>{" "}
         <span className={styles.DamageType}>
           {event.weapon
             ? (WEAPONS_PAST_TENSE[event.weapon] ??

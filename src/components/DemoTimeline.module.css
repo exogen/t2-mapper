@@ -91,6 +91,11 @@
   }
 }
 
+.EventRow:active {
+  background: rgba(0, 85, 177, 0.8);
+  color: #fff;
+}
+
 @media (pointer: coarse) {
   .Filters {
   }
