@@ -1,4 +1,5 @@
 import { BsFillLightningChargeFill } from "react-icons/bs";
+import { cameraTourStore } from "../state/cameraTourStore";
 import { useLiveSelector } from "../state/liveConnectionStore";
 import styles from "./JoinServerButton.module.css";
 
@@ -25,6 +26,7 @@ export function JoinServerButton({
       aria-label={isLive ? "Connected – click to disconnect" : "Join server"}
       title={isLive ? "Connected – click to disconnect" : "Join server"}
       onClick={() => {
+        cameraTourStore.getState().cancel();
         if (isLive) {
           disconnectServer();
         } else {

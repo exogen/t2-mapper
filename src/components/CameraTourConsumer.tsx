@@ -125,11 +125,23 @@ function buildCurve(
   const focus = orbitFocus(animation);
   const entry = orbitPoint(animation, entryAngle, _v.clone());
 
-  // Midpoint: halfway between start and entry, elevated.
+  const distance = startPos.distanceTo(entry);
+
+  // For short distances, skip the midpoint arc entirely – a direct Catmull-Rom
+  // between start and end gives a smooth enough transition without flying up.
+  if (distance < 20) {
+    return new CatmullRomCurve3(
+      [startPos.clone(), entry],
+      false,
+      "centripetal",
+    );
+  }
+
+  // Midpoint: halfway between start and entry, elevated proportionally.
   const mid = new Vector3().addVectors(startPos, entry).multiplyScalar(0.5);
   // Pull midpoint toward the target and elevate.
   mid.lerp(focus, 0.3);
-  mid.y += Math.max(20, startPos.distanceTo(entry) * 0.15);
+  mid.y += distance * 0.15;
 
   return new CatmullRomCurve3(
     [startPos.clone(), mid, entry],

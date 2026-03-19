@@ -111,6 +111,7 @@ export function MapInspector() {
       window.location.hash = "";
       clearFogEnabledOverride();
       setChoosingMap(false);
+      cameraTourStore.getState().cancel();
       // Disconnect from any live server, unload any active recording, and
       // clear stream state before loading the new mission in map mode.
       const liveState = liveConnectionStore.getState();

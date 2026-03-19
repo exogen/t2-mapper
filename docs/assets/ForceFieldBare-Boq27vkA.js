@@ -1,4 +1,4 @@
-import{r as e}from"./chunk-DECur_0Z.js";import{n as t,r as n,t as r}from"./jsx-runtime-BpGWiA-R.js";import{i}from"./react-three-fiber.esm-dhSWjERg.js";import{a}from"./SettingsProvider-2cUUftaX.js";import"./logger-zy3b0zcG.js";import"./traditional-BTL5qX2E.js";import{At as o,Dt as s,Ht as c,b as l,p as u}from"./three.module-CwgFV8Kd.js";import"./mission-CFLOK_Oy.js";import{t as d}from"./Texture-CI_Y9elU.js";import{p as f}from"./loaders-C_1cX1lR.js";import{t as p}from"./DebugSuspense-DTOoTVsz.js";var m=t(),h=e(n(),1),g=`
+import{r as e}from"./chunk-DECur_0Z.js";import{n as t,r as n,t as r}from"./jsx-runtime-BpGWiA-R.js";import{i}from"./react-three-fiber.esm-dhSWjERg.js";import{a}from"./SettingsProvider-2cUUftaX.js";import"./logger-zy3b0zcG.js";import"./traditional-BTL5qX2E.js";import{At as o,Dt as s,Ht as c,b as l,p as u}from"./three.module-CwgFV8Kd.js";import"./mission-CFLOK_Oy.js";import{t as d}from"./Texture-CUOilM1U.js";import{p as f}from"./loaders-BRV0t4WA.js";import{t as p}from"./DebugSuspense-qtqhYC4y.js";var m=t(),h=e(n(),1),g=`
 #include <fog_pars_vertex>
 
 varying vec2 vUv;

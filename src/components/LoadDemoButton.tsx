@@ -1,6 +1,7 @@
 import { useCallback, useRef } from "react";
 import { MdOndemandVideo } from "react-icons/md";
 import { createLogger } from "../logger";
+import { cameraTourStore } from "../state/cameraTourStore";
 import { demoTimelineStore } from "../state/demoTimelineStore";
 import { liveConnectionStore } from "../state/liveConnectionStore";
 import { usePlaybackActions, useRecording } from "./RecordingProvider";
@@ -25,6 +26,7 @@ export function LoadDemoButton({
   const scanAbortRef = useRef<AbortController | null>(null);
 
   const handleClick = useCallback(() => {
+    cameraTourStore.getState().cancel();
     if (choosingMap && isDemoLoaded) {
       onCancelChoosingMap?.();
       return;
