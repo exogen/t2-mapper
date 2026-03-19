@@ -451,22 +451,6 @@ export function DebugPlaceholder({
   return debugMode ? <ShapePlaceholder color={color} label={label} /> : null;
 }
 
-/** Shapes that don't have a .glb conversion and are rendered with built-in
- * Three.js geometry instead. These are editor-only markers in Tribes 2. */
-const HARDCODED_SHAPES = new Set(["octahedron.dts"]);
-
-function HardcodedShape({ label }: { label?: string }) {
-  const { debugMode } = useDebug();
-  if (!debugMode) return null;
-  return (
-    <mesh>
-      <icosahedronGeometry args={[1, 1]} />
-      <meshBasicMaterial color="cyan" wireframe />
-      {label ? <FloatingLabel color="cyan">{label}</FloatingLabel> : null}
-    </mesh>
-  );
-}
-
 /**
  * Wrapper component that handles the common ErrorBoundary + Suspense + ShapeModel
  * pattern used across shape-rendering components.
@@ -487,10 +471,6 @@ export const ShapeRenderer = memo(function ShapeRenderer({
     return (
       <DebugPlaceholder color="orange" label={`${object?._id}: <missing>`} />
     );
-  }
-
-  if (HARDCODED_SHAPES.has(shapeName.toLowerCase())) {
-    return <HardcodedShape label={`${object?._id}: ${shapeName}`} />;
   }
 
   return (

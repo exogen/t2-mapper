@@ -66,7 +66,6 @@ const AudioEmitter = createLazy("AudioEmitter", () => import("./AudioEmitter"));
 const WaterBlock = createLazy("WaterBlock", () => import("./WaterBlock"));
 const WeaponModel = createLazy("WeaponModel", () => import("./ShapeModel"));
 
-
 /**
  * Renders a GameEntity by dispatching to the appropriate renderer based
  * on renderType. Does NOT handle positioning — the caller is responsible
@@ -142,7 +141,9 @@ function ShapeEntity({ entity }: { entity: ShapeEntityType }) {
   // Flag label for flag Items
   const isFlag = entity.dataBlock?.toLowerCase() === "flag";
   const teamName =
-    entity.teamId && entity.teamId > 0 ? DEFAULT_TEAM_NAMES[entity.teamId] : null;
+    entity.teamId && entity.teamId > 0
+      ? DEFAULT_TEAM_NAMES[entity.teamId]
+      : null;
   const flagLabel = isFlag && teamName ? `${teamName} Flag` : null;
 
   const loadingColor =

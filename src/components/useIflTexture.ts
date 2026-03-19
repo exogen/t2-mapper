@@ -20,34 +20,73 @@ export interface IflAtlas {
   texture: CanvasTexture;
   columns: number;
   rows: number;
-  frameCount: number;
-  /** Cumulative end time (seconds) for each frame. */
+  /** Number of unique image slots in the atlas grid. */
+  slotCount: number;
+  /**
+   * Maps each IFL entry index to its atlas slot. Many entries may point to
+   * the same slot since IFL files repeat images with different durations.
+   */
+  frameToSlot: number[];
+  /** Cumulative end time (seconds) for each IFL entry. */
   frameOffsetSeconds: number[];
   /** Total IFL cycle duration in seconds. */
   totalDurationSeconds: number;
-  /** Last rendered frame index, to avoid redundant offset updates. */
-  lastFrame: number;
+  /** Last rendered atlas slot, to avoid redundant offset updates. */
+  lastSlot: number;
 }
 
 // Module-level cache for atlas textures, shared across all components.
 const atlasCache = new Map<string, IflAtlas>();
 
-function createAtlas(textures: Texture[]): IflAtlas {
-  const firstImage = textures[0].image as HTMLImageElement | ImageBitmap;
+/**
+ * Deduplicate IFL frame entries by image name. Returns the list of unique
+ * names and a mapping from each IFL entry index to its unique slot.
+ */
+function deduplicateFrames(frames: { name: string }[]): {
+  uniqueNames: string[];
+  frameToSlot: number[];
+} {
+  const nameToSlot = new Map<string, number>();
+  const uniqueNames: string[] = [];
+  const frameToSlot: number[] = [];
+  for (const f of frames) {
+    let slot = nameToSlot.get(f.name);
+    if (slot === undefined) {
+      slot = uniqueNames.length;
+      nameToSlot.set(f.name, slot);
+      uniqueNames.push(f.name);
+    }
+    frameToSlot.push(slot);
+  }
+  return { uniqueNames, frameToSlot };
+}
+
+/**
+ * Build an atlas texture containing only the unique images. Each IFL entry
+ * index maps to an atlas slot via `frameToSlot`.
+ */
+function createAtlas(
+  uniqueTextures: Texture[],
+  frameToSlot: number[],
+): IflAtlas {
+  if (uniqueTextures.length === 0) {
+    throw new Error("Cannot create IFL atlas with no textures");
+  }
+  const firstImage = uniqueTextures[0].image as HTMLImageElement | ImageBitmap;
   const frameWidth = firstImage.width;
   const frameHeight = firstImage.height;
-  const frameCount = textures.length;
+  const slotCount = uniqueTextures.length;
 
-  // Arrange frames in a roughly square grid.
-  const columns = Math.ceil(Math.sqrt(frameCount));
-  const rows = Math.ceil(frameCount / columns);
+  // Arrange unique frames in a roughly square grid.
+  const columns = Math.ceil(Math.sqrt(slotCount));
+  const rows = Math.ceil(slotCount / columns);
 
   const canvas = document.createElement("canvas");
   canvas.width = frameWidth * columns;
   canvas.height = frameHeight * rows;
 
   const ctx = canvas.getContext("2d")!;
-  textures.forEach((tex, i) => {
+  uniqueTextures.forEach((tex, i) => {
     const col = i % columns;
     const row = Math.floor(i / columns);
     ctx.drawImage(
@@ -70,10 +109,11 @@ function createAtlas(textures: Texture[]): IflAtlas {
     texture,
     columns,
     rows,
-    frameCount,
+    slotCount,
+    frameToSlot,
     frameOffsetSeconds: [],
     totalDurationSeconds: 0,
-    lastFrame: -1,
+    lastSlot: -1,
   };
 }
 
@@ -89,18 +129,23 @@ function computeTiming(
   atlas.totalDurationSeconds = cumulativeSeconds;
 }
 
+/**
+ * Set the atlas texture offset to show the image for the given IFL entry.
+ * Uses `frameToSlot` to map the entry index to the atlas grid position.
+ */
 export function updateAtlasFrame(atlas: IflAtlas, frameIndex: number) {
-  if (frameIndex === atlas.lastFrame) return;
-  atlas.lastFrame = frameIndex;
+  const slot = atlas.frameToSlot[frameIndex] ?? 0;
+  if (slot === atlas.lastSlot) return;
+  atlas.lastSlot = slot;
 
-  const col = frameIndex % atlas.columns;
+  const col = slot % atlas.columns;
   // Flip row: canvas Y=0 is top, but texture V=0 is bottom.
-  const row = atlas.rows - 1 - Math.floor(frameIndex / atlas.columns);
+  const row = atlas.rows - 1 - Math.floor(slot / atlas.columns);
   atlas.texture.offset.set(col / atlas.columns, row / atlas.rows);
 }
 
 /**
- * Find the frame index for a given time in seconds. Matches Torque's
+ * Find the IFL entry index for a given time in seconds. Matches Torque's
  * `animateIfls()` lookup using cumulative `iflFrameOffTimes`.
  */
 export function getFrameIndexForTime(atlas: IflAtlas, seconds: number): number {
@@ -115,8 +160,8 @@ export function getFrameIndexForTime(atlas: IflAtlas, seconds: number): number {
 }
 
 /**
- * Imperatively load an IFL atlas (all frames). Returns a cached atlas if the
- * same IFL has been loaded before. The returned atlas can be animated
+ * Imperatively load an IFL atlas (all unique frames). Returns a cached atlas
+ * if the same IFL has been loaded before. The returned atlas can be animated
  * per-frame with `updateAtlasFrame` + `getFrameIndexForTime`.
  */
 export async function loadIflAtlas(iflPath: string): Promise<IflAtlas> {
@@ -124,10 +169,11 @@ export async function loadIflAtlas(iflPath: string): Promise<IflAtlas> {
   if (cached) return cached;
 
   const frames = await loadImageFrameList(iflPath);
-  const urls = frames.map((f) => iflTextureToUrl(f.name, iflPath));
+  const { uniqueNames, frameToSlot } = deduplicateFrames(frames);
+  const urls = uniqueNames.map((name) => iflTextureToUrl(name, iflPath));
   const textures = await Promise.all(urls.map(loadTextureAsync));
 
-  const atlas = createAtlas(textures);
+  const atlas = createAtlas(textures, frameToSlot);
   computeTiming(atlas, frames);
   atlasCache.set(iflPath, atlas);
 
@@ -146,9 +192,14 @@ export function useIflTexture(iflPath: string): Texture {
     queryFn: () => loadImageFrameList(iflPath),
   });
 
+  const { uniqueNames, frameToSlot } = useMemo(
+    () => deduplicateFrames(frames),
+    [frames],
+  );
+
   const textureUrls = useMemo(
-    () => frames.map((frame) => iflTextureToUrl(frame.name, iflPath)),
-    [frames, iflPath],
+    () => uniqueNames.map((name) => iflTextureToUrl(name, iflPath)),
+    [uniqueNames, iflPath],
   );
 
   const textures = useTexture(textureUrls);
@@ -156,12 +207,12 @@ export function useIflTexture(iflPath: string): Texture {
   const atlas = useMemo(() => {
     let cached = atlasCache.get(iflPath);
     if (!cached) {
-      cached = createAtlas(textures);
+      cached = createAtlas(textures, frameToSlot);
       atlasCache.set(iflPath, cached);
     }
     computeTiming(cached, frames);
     return cached;
-  }, [iflPath, textures, frames]);
+  }, [iflPath, textures, frames, frameToSlot]);
 
   useTick((tick) => {
     const time = tick / TICK_RATE;

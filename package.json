@@ -23,7 +23,7 @@
     "serve:static": "tsx scripts/serve-static.ts",
     "server-list": "node --env-file-if-exists=.env.development.local --import=tsx/esm scripts/t2-server-list.ts",
     "start:both": "concurrently npm:start npm:relay:dev",
-    "start": "vite",
+    "start": "vite --host",
     "test-connect": "node --env-file-if-exists=.env.development.local --import=tsx/esm scripts/test-connect.ts",
     "test:watch": "vitest",
     "test": "vitest run",
