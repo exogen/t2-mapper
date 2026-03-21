@@ -27,12 +27,12 @@ const PINO_LEVELS = new Set([
   "silent",
 ]);
 
-/** Parse VITE_PUBLIC_LOG into a global default and per-module overrides. */
+/** Parse VITE_LOG into a global default and per-module overrides. */
 function parseLogConfig(): {
   globalLevel: string;
   modules: Map<string, string>;
 } {
-  const raw = import.meta.env.VITE_PUBLIC_LOG?.trim();
+  const raw = import.meta.env.VITE_LOG?.trim();
   if (!raw) return { globalLevel: "info", modules: new Map() };
 
   let globalLevel: string | null = null;

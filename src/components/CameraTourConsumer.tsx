@@ -13,15 +13,21 @@ import {
 import { cameraTourStore } from "../state/cameraTourStore";
 import type { TourAnimation } from "../state/cameraTourStore";
 import type { TourTarget } from "./mapTourCategories";
+import { createLogger } from "../logger";
+
+const log = createLogger("CameraTourConsumer");
 
 function easeInOutCubic(t: number): number {
   return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
 }
 
-const DEFAULT_ORBIT_RADIUS = 4;
+const FALLBACK_ORBIT_RADIUS = 3;
 const DEFAULT_ORBIT_HEIGHT = 2;
-const MIN_ORBIT_RADIUS = 2.75;
-const ORBIT_RADIUS_SCALE = 1.5; // multiplier on bounding sphere radius
+const MIN_ORBIT_RADIUS = 1.5;
+/** Extra orbit radius added beyond half the object's height. */
+const ORBIT_PAD_VERTICAL = 1.6;
+/** Extra orbit radius added beyond half the object's spread (width/length). */
+const ORBIT_PAD_HORIZONTAL = 1.2;
 const ORBIT_ANGULAR_SPEED = 0.6; // rad/s
 const ORBIT_SWEEP = (3 / 4) * (2 * Math.PI); // 270 degrees
 const ORBIT_CONSTANT_DURATION = ORBIT_SWEEP / ORBIT_ANGULAR_SPEED;
@@ -34,6 +40,9 @@ const LOOK_LEAD = 1.4;
 
 // Reusable temp objects to avoid GC pressure.
 const _box = new Box3();
+const _localBox = new Box3();
+const _childBox = new Box3();
+const _childMat = new Matrix4();
 const _center = new Vector3();
 const _size = new Vector3();
 const _v = new Vector3();
@@ -54,16 +63,20 @@ function orbitFocus(animation: TourAnimation): Vector3 {
     );
   }
   const target = animation.targets[animation.currentIndex];
-  return _vFocus.set(target.position[0], target.position[1], target.position[2]);
+  return _vFocus.set(
+    target.position[0],
+    target.position[1],
+    target.position[2],
+  );
 }
 
 function getOrbitRadius(animation: TourAnimation): number {
-  return animation.orbitRadius ?? DEFAULT_ORBIT_RADIUS;
+  return animation.orbitRadius ?? FALLBACK_ORBIT_RADIUS;
 }
 
 function getOrbitHeight(animation: TourAnimation): number {
   const r = getOrbitRadius(animation);
-  return r * (DEFAULT_ORBIT_HEIGHT / DEFAULT_ORBIT_RADIUS);
+  return r * (DEFAULT_ORBIT_HEIGHT / FALLBACK_ORBIT_RADIUS);
 }
 
 function orbitPoint(
@@ -89,18 +102,54 @@ function resolveTargetBounds(
 ): void {
   const obj = scene.getObjectByName(target.entityId);
   if (obj) {
+    // World-space AABB center for the orbit focus (where the camera looks).
     _box.setFromObject(obj);
     _box.getCenter(_center);
-    _box.getSize(_size);
     animation.orbitCenter = [_center.x, _center.y, _center.z];
-    const sphereRadius = _size.length() / 2;
-    animation.orbitRadius = Math.max(
-      MIN_ORBIT_RADIUS,
-      sphereRadius * ORBIT_RADIUS_SCALE,
+
+    // Local-space AABB for sizing. World-space boxes inflate with rotation,
+    // giving different sizes for identical models at different orientations.
+    // Instead, transform each child geometry's box into the root object's
+    // local frame so the size is rotation-independent.
+    const invWorld = _mat.copy(obj.matrixWorld).invert();
+    _localBox.makeEmpty();
+    obj.traverse((child: any) => {
+      if (!child.geometry) return;
+      if (!child.geometry.boundingBox) child.geometry.computeBoundingBox();
+      _childBox.copy(child.geometry.boundingBox);
+      _childMat.multiplyMatrices(invWorld, child.matrixWorld);
+      _childBox.applyMatrix4(_childMat);
+      _localBox.union(_childBox);
+    });
+    _localBox.getSize(_size);
+    // Pad each dimension's half-extent, then take the larger result.
+    // This gives a consistent standoff distance regardless of object size.
+    const height = _size.y; // Three.js Y-up
+    const spread = Math.max(_size.x, _size.z);
+    const fromHeight = height / 2 + ORBIT_PAD_VERTICAL;
+    const fromSpread = spread / 2 + ORBIT_PAD_HORIZONTAL;
+    const computed = Math.max(fromHeight, fromSpread);
+    animation.orbitRadius = Math.max(MIN_ORBIT_RADIUS, computed);
+    const driver = fromHeight >= fromSpread ? "height" : "spread";
+    const clamp = computed < MIN_ORBIT_RADIUS ? " (clamped)" : "";
+    log.debug(
+      "%s: size=%s height→%s spread→%s driven by %s → radius=%d%s",
+      target.label,
+      `${_size.x.toFixed(1)}×${_size.y.toFixed(1)}×${_size.z.toFixed(1)}`,
+      fromHeight.toFixed(1),
+      fromSpread.toFixed(1),
+      driver,
+      animation.orbitRadius,
+      clamp,
     );
   } else {
     animation.orbitCenter = null;
     animation.orbitRadius = null;
+    log.debug(
+      "%s: no scene object, fallback radius=%d",
+      target.label,
+      FALLBACK_ORBIT_RADIUS,
+    );
   }
 }
 

@@ -57,9 +57,9 @@ export function getGameName(
       // Avoid duplication when nameTag matches typeTag (e.g. nameTag="Flag"
       // with targetTypeTag="Flag" would otherwise produce "Flag Flag").
       if (name !== "" && name.toLowerCase() !== typeTag.toLowerCase()) {
-        return `${name} ${typeTag}`;
+        return formatTaggedStrings(`${name} ${typeTag}`);
       }
-      return typeTag;
+      return formatTaggedStrings(typeTag);
     }
   }
 
@@ -72,7 +72,16 @@ export function getGameName(
     }
   }
 
-  return name;
+  return formatTaggedStrings(name);
+}
+
+/**
+ * Replace unresolved tagged string references (`\x01` + numeric ID) with a
+ * readable placeholder. These appear in missions saved from a running server
+ * where the original text was replaced by its string table ID.
+ */
+function formatTaggedStrings(s: string): string {
+  return s.replace(/\x01(\d+)/g, "<#$1>");
 }
 
 /** Strip leading article ("a ", "an ", "some ") and title-case the rest. */

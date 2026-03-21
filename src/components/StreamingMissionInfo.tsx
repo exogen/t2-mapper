@@ -95,7 +95,10 @@ export function StreamingMissionInfo() {
             <span className={styles.RecordingDate}>
               {datePart!.replace(/-/g, " ")}
             </span>{" "}
-            at <span className={styles.RecordingDate}>{timePart}</span>
+            at{" "}
+            <span className={styles.RecordingDate}>
+              {(timePart ?? "").replace(/(AM|PM)$/, " $1")}
+            </span>
           </div>
         ) : null}
         {serverName ? (

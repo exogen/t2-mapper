@@ -235,9 +235,7 @@
 }
 
 .ReticleImage {
-  width: 64px;
-  height: 64px;
-  opacity: 0.85;
+  opacity: 0.6;
   image-rendering: pixelated;
 }
 

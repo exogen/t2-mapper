@@ -10,6 +10,14 @@
 /** Minimum velocity dot product to count as intentional movement. */
 const MOVE_THRESHOLD = 0.1;
 
+/**
+ * Horizontal speed above which the player cannot be running on the ground.
+ * In the engine, grounded players are speed-capped by PlayerData::maxForwardSpeed
+ * (light=15, medium=12, heavy=7). We use 20 to provide margin for brief
+ * overshoots from slopes, momentum, and framerate-dependent speed variations.
+ */
+const MAX_GROUND_SPEED = 20;
+
 export interface MoveAnimationResult {
   /** Engine alias name (e.g. "root", "run", "back", "side", "fall", "jet"). */
   animation: string;
@@ -31,15 +39,18 @@ function quaternionToBodyYaw(q: [number, number, number, number]): number {
  * Pick the movement animation for a player based on their velocity, body
  * orientation, and movement state flags.
  *
- * Matches the Tribes2.exe binary (build 25034) pickActionAnimation at
+ * Replicates the Tribes2.exe binary (build 25034) pickActionAnimation at
  * 0x005d6210. The engine checks in order:
  *   1. mFalling → FallAnim
  *   2. contactTimer >= 30 (airborne) → jetting ? JetAnim : RootAnim
  *   3. contactTimer < 30 (on ground) → velocity-based (run/back/side/root)
  *
- * We don't have contactTimer, so we approximate airborne detection: jetting
- * implies airborne, and significant vertical velocity without the falling flag
- * suggests the player left the ground (jumped, launched, etc.).
+ * We don't have contactTimer directly, so we approximate the airborne check
+ * using two heuristics:
+ *   - Significant vertical velocity (|vz| > 2) implies not on the ground.
+ *   - Horizontal speed exceeding the max ground running speed implies the
+ *     player is skiing or otherwise airborne, since the engine caps grounded
+ *     movement speed at maxForwardSpeed.
  */
 export function pickMoveAnimation(
   velocity: [number, number, number] | undefined,
@@ -52,23 +63,28 @@ export function pickMoveAnimation(
     return { animation: "fall", timeScale: 1 };
   }
 
-  // 2. Jetting always shows the jet animation (engine: contactTimer >= 30
-  //    && mJetting → JetAnim). Jetting implies airborne.
-  if (jetting) {
-    return { animation: "jet", timeScale: 1 };
-  }
-
   if (!velocity) {
     return { animation: "root", timeScale: 1 };
   }
 
   const [vx, vy, vz] = velocity;
 
-  // Approximate the engine's contactTimer check: if the player has
-  // significant vertical velocity, they're likely airborne (jumped, launched).
-  // The engine would show root in this case (contactTimer >= 30, not jetting).
-  // Use a threshold above the falling threshold (-10) to catch the gap.
-  if (Math.abs(vz) > 2) {
+  // 2. Airborne detection (approximates contactTimer >= 30).
+  // The engine uses contactTimer to distinguish grounded from airborne.
+  // We approximate this with two checks:
+  //   a) Vertical velocity indicates the player left the ground.
+  //   b) Horizontal speed exceeds the ground movement cap — the player must
+  //      be skiing/airborne since the engine limits grounded speed.
+  const horizontalSpeedSq = vx * vx + vy * vy;
+  const airborne =
+    Math.abs(vz) > 2 ||
+    horizontalSpeedSq > MAX_GROUND_SPEED * MAX_GROUND_SPEED;
+
+  if (airborne) {
+    // Tribes2.exe checks mJetting here: jetting → JetAnim, else → RootAnim.
+    if (jetting) {
+      return { animation: "jet", timeScale: 1 };
+    }
     return { animation: "root", timeScale: 1 };
   }
 

@@ -1,4 +1,5 @@
 import { ghostToSceneObject } from "../scene";
+import { getTerrainHeightAt } from "../terrainHeight";
 import type { SceneObject } from "../scene/types";
 import {
   linearProjectileClassNames,
@@ -1136,17 +1137,29 @@ export abstract class StreamEngine implements StreamingPlayback {
     if (typeof data.moveFlag0 === "boolean") entity.falling = data.moveFlag0;
     if (typeof data.moveFlag1 === "boolean") entity.jetting = data.moveFlag1;
 
-    // Item velocity interpolation: the Tribes 2 client does NOT simulate
-    // physics (gravity/collision) for items. It interpolates position using
-    // server-sent velocity until the next server update or atRest=true.
+    // Item velocity interpolation.
     if (entity.type === "Item") {
       const atRest = data.atRest as boolean | undefined;
       if (atRest === false && isVec3Like(data.velocity)) {
+        const vel = data.velocity as Vec3;
         entity.itemPhysics = {
-          velocity: [data.velocity.x, data.velocity.y, data.velocity.z],
+          velocity: [vel.x, vel.y, vel.z],
           atRest: false,
         };
+        log.debug(
+          "Item %s (%s): atRest=false pos=%s vel=%s",
+          entity.id,
+          entity.shapeName ?? entity.dataBlock ?? `db#${entity.dataBlockId}`,
+          data.position ? `${(data.position as Vec3).x.toFixed(1)},${(data.position as Vec3).y.toFixed(1)},${(data.position as Vec3).z.toFixed(1)}` : "none",
+          `${vel.x.toFixed(1)},${vel.y.toFixed(1)},${vel.z.toFixed(1)}`,
+        );
       } else if (atRest === true) {
+        log.debug(
+          "Item %s (%s): atRest=true pos=%s",
+          entity.id,
+          entity.shapeName ?? entity.dataBlock ?? `db#${entity.dataBlockId}`,
+          entity.position ? `${entity.position[0].toFixed(1)},${entity.position[1].toFixed(1)},${entity.position[2].toFixed(1)}` : "none",
+        );
         entity.itemPhysics = undefined;
       }
     }
@@ -1501,9 +1514,18 @@ export abstract class StreamEngine implements StreamingPlayback {
     }
   }
 
-  /** Advance dropped item physics (gravity, terrain collision, friction). */
-  /** Advance item positions using server-sent velocity (no gravity/collision).
-   * The real Tribes 2 client just interpolates; physics runs server-side. */
+  /** Advance item positions using server-sent velocity.
+   *
+   * Verified against Tribes2.exe (build 25034): Item does NOT override
+   * GameBase::processTick — the vtable at offset 0x50 points to the
+   * inherited FUN_00586050 which does no physics. All item physics
+   * (gravity, collision, friction) run SERVER-SIDE only. The client just
+   * interpolates using velocity until the next ghost update.
+   *
+   * As a practical fallback for demo playback (where ghost updates can be
+   * sparse), we apply basic gravity after a few ticks without a server
+   * update to prevent items from flying upward indefinitely.
+   */
   protected advanceItems(): void {
     const dt = TICK_DURATION_MS / 1000;
     for (const entity of this.entities.values()) {
@@ -1511,9 +1533,44 @@ export abstract class StreamEngine implements StreamingPlayback {
       if (!phys || phys.atRest || !entity.position) continue;
       const v = phys.velocity;
       const p = entity.position;
+
+      // Gravity: Item::mGravity = -20 (verified from Torque source item.cc:35).
+      v[2] += -20 * dt;
+
+      // Integrate position.
       p[0] += v[0] * dt;
       p[1] += v[1] * dt;
       p[2] += v[2] * dt;
+
+      // Terrain collision: bounce with elasticity/friction matching
+      // typical Tribes 2 ItemData values (elasticity=0.2, friction=0.6).
+      const groundZ = getTerrainHeightAt(p[0], p[1]);
+      if (groundZ != null && p[2] < groundZ) {
+        p[2] = groundZ;
+        // Flat-normal collision response (normal = [0,0,1]).
+        const bd = Math.abs(v[2]);
+        // Friction: reduce horizontal velocity.
+        const friction = bd * 0.6;
+        const hSpeed = Math.sqrt(v[0] * v[0] + v[1] * v[1]);
+        if (hSpeed > 0) {
+          const scale = Math.max(0, 1 - friction / hSpeed);
+          v[0] *= scale;
+          v[1] *= scale;
+        }
+        // Elasticity: bounce.
+        v[2] = bd * 0.2;
+        // At-rest check (sAtRestVelocity = 0.15).
+        const speed = Math.sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+        if (speed < 0.15) {
+          v[0] = v[1] = v[2] = 0;
+          phys.atRest = true;
+        }
+      }
+
+      // Clamp items that fall far below the map.
+      if (p[2] < -1000) {
+        phys.atRest = true;
+      }
     }
   }
 
@@ -1729,18 +1786,14 @@ export abstract class StreamEngine implements StreamingPlayback {
             ];
             ghostEntity.rotation = playerYawToQuaternion(yaw);
             ghostEntity.headPitch = this.getControlPlayerHeadPitch(pitch);
-            // Sync velocity from controlObjectData. Ghost updates skip the
-            // control player (MoveMask is not read), so velocity and state
-            // flags must come from here for movement animation selection.
+            // Sync velocity from controlObjectData. The authoritative
+            // falling/jetting flags come from the ghost's MoveMask update
+            // (processed earlier in applyGhostData) — don't overwrite them.
             const vel = data?.velocity as
               | { x: number; y: number; z: number }
               | undefined;
             if (isVec3Like(vel)) {
               ghostEntity.velocity = [vel.x, vel.y, vel.z];
-              // Approximate mFalling: engine sets it when no ground contact
-              // and vz < sFallingThreshold (-10). controlObjectData lacks
-              // the explicit flag, so use the velocity heuristic.
-              ghostEntity.falling = vel.z < -10;
             }
           }
         }

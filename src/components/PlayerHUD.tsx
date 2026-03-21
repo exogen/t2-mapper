@@ -73,10 +73,19 @@ function EnergyBar() {
   );
 }
 
+/** Maps normalized weapon shape names to reticle textures from $WeaponsHudData. */
 const RETICLE_TEXTURES: Record<string, string> = {
+  weapon_energy: "gui/ret_blaster",
+  weapon_plasma: "gui/ret_plasma",
+  weapon_chaingun: "gui/ret_chaingun",
+  weapon_disc: "gui/ret_disc",
+  weapon_grenade_launcher: "gui/ret_grenade",
   weapon_sniper: "gui/hud_ret_sniper",
-  weapon_shocklance: "gui/hud_ret_shocklance",
+  weapon_elf: "gui/ret_elf",
+  weapon_mortar: "gui/ret_mortor",
+  weapon_missile: "gui/ret_missile",
   weapon_targeting: "gui/hud_ret_targlaser",
+  weapon_shocklance: "gui/hud_ret_shocklance",
 };
 
 function normalizeWeaponName(shape: string | undefined): string {

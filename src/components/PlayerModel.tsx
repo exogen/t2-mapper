@@ -10,6 +10,7 @@ import {
   LoopOnce,
   LoopRepeat,
   Object3D,
+  Audio as ThreeAudio,
   PositionalAudio,
   Vector3,
 } from "three";
@@ -40,8 +41,12 @@ import {
   trackSound,
   untrackSound,
 } from "./AudioEmitter";
+import type { ResolvedAudioProfile } from "./AudioEmitter";
 import { audioToUrl } from "../loaders";
+import { createLogger } from "../logger";
 import { useSettings } from "./SettingsProvider";
+
+const log = createLogger("PlayerModel");
 import { useEngineStoreApi, useEngineSelector } from "../state/engineStore";
 import { streamPlaybackStore } from "../state/streamPlaybackStore";
 import type { PlayerEntity } from "../state/gameEntityTypes";
@@ -453,6 +458,67 @@ export function PlayerModel({ entity }: { entity: PlayerEntity }) {
   const flagShapeRef = useRef(entity.flagShape);
   const [currentFlagShape, setCurrentFlagShape] = useState(entity.flagShape);
 
+  // Jet thrust looping sound. Managed imperatively in useFrame based on
+  // entity.jetting — plays while jetting, stops when jetting ends.
+  // Sound parameters come from the player's datablock chain:
+  //   PlayerData.sounds[30] (jetSound) → AudioProfile → AudioDescription
+  const { audioLoader, audioListener } = useAudio();
+  const audioSettings = useSettings();
+  const audioEnabled = audioSettings?.audioEnabled ?? false;
+  const jetSoundRef = useRef<PositionalAudio | null>(null);
+  const jetBufferRef = useRef<AudioBuffer | null>(null);
+  const jetProfileRef = useRef<ResolvedAudioProfile | null>(null);
+
+  /** PlayerData.Sounds enum index for jetSound. Tribes 2 reordered the
+   *  open-source Torque Sounds enum to put jet sounds first (0-1). */
+  const JET_SOUND_INDEX = 0;
+
+  // Resolve and preload the jet sound from the player's datablock.
+  useEffect(() => {
+    if (!audioLoader) return;
+    const playback = engineStore.getState().playback;
+    const sp = playback.recording?.streamingPlayback;
+    if (!sp || !entity.dataBlockId) return;
+    const getDb = sp.getDataBlockData.bind(sp);
+    const playerDb = getDb(entity.dataBlockId);
+    const sounds = playerDb?.sounds as (number | null)[] | undefined;
+    const jetSoundId = sounds?.[JET_SOUND_INDEX];
+    if (jetSoundId == null) return;
+    const resolved = resolveAudioProfile(jetSoundId, getDb);
+    if (!resolved) return;
+    jetProfileRef.current = resolved;
+    try {
+      const url = audioToUrl(resolved.filename);
+      getCachedAudioBuffer(url, audioLoader, (buffer) => {
+        jetBufferRef.current = buffer;
+      });
+    } catch {
+      // File not in manifest.
+    }
+  }, [audioLoader, entity.dataBlockId]);
+
+  // Cleanup jet sound on unmount.
+  useEffect(() => {
+    return () => {
+      const sound = jetSoundRef.current;
+      if (sound) {
+        untrackSound(sound);
+        try {
+          sound.stop();
+        } catch {
+          /* already stopped */
+        }
+        try {
+          sound.disconnect();
+        } catch {
+          /* already disconnected */
+        }
+        sound.parent?.remove(sound);
+        jetSoundRef.current = null;
+      }
+    };
+  }, []);
+
   // Per-frame animation selection and mixer update.
   useFrame((_, delta) => {
     if (entity.weaponShape !== weaponShapeRef.current) {
@@ -661,6 +727,55 @@ export function PlayerModel({ entity }: { entity: PlayerEntity }) {
     if (headside) {
       headside.time = yawPos * headside.getClip().duration;
       headside.weight = blendWeight;
+    }
+
+    // Jet thrust sound: start/stop a looping positional audio based on
+    // entity.jetting. The engine plays ArmorJetSound (CloseLooping3d) while
+    // mJetting is true and stops it when false.
+    const isJetting = !!entity.jetting && !isDead;
+    const jetProfile = jetProfileRef.current;
+    // Check both our ref AND isPlaying — the sound can be externally stopped
+    // by stopAllTrackedSounds() (on seek/recording change) without our ref
+    // knowing about it.
+    const jetSound = jetSoundRef.current;
+    const soundActuallyPlaying = jetSound?.isPlaying ?? false;
+    if (isJetting && !soundActuallyPlaying) {
+      if (
+        audioEnabled &&
+        audioListener &&
+        jetBufferRef.current &&
+        jetProfile
+      ) {
+        let sound = jetSound;
+        if (!sound) {
+          sound = new PositionalAudio(audioListener);
+          sound.setDistanceModel("inverse");
+          sound.setRefDistance(jetProfile.refDist);
+          sound.setMaxDistance(jetProfile.maxDist);
+          sound.setRolloffFactor(1);
+          sound.setVolume(jetProfile.volume);
+          clonedScene.add(sound);
+          jetSoundRef.current = sound;
+        }
+        try {
+          sound.setBuffer(jetBufferRef.current);
+          sound.setLoop(true);
+          sound.setPlaybackRate(playback.rate);
+          sound.play();
+          trackSound(sound, 1);
+        } catch {
+          /* AudioContext suspended */
+        }
+      }
+    } else if (!isJetting && soundActuallyPlaying) {
+      if (jetSound) {
+        untrackSound(jetSound);
+        try {
+          jetSound.stop();
+        } catch {
+          /* already stopped */
+        }
+      }
     }
 
     // Advance or evaluate the body animation mixer.
