@@ -131,6 +131,23 @@
   display: none;
 }
 
+.CloseSidebarButton {
+  composes: IconButton from "./InspectorControls.module.css";
+  composes: LabelledButton from "./InspectorControls.module.css";
+  width: calc(100% - 24px);
+  margin: 12px;
+  padding-top: 8px;
+  padding-bottom: 8px;
+}
+
+.ButtonLabel {
+  composes: ButtonLabel from "./InspectorControls.module.css";
+}
+
+.CloseSidebarButton .ButtonLabel {
+  font-size: 15px;
+}
+
 @media (max-width: 899px) {
   .Frame {
     display: grid;
@@ -178,6 +195,12 @@
   }
 
   .CancelButton {
+    display: none;
+  }
+}
+
+@media (min-width: 900px) {
+  .CloseSidebarButton {
     display: none;
   }
 }

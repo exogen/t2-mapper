@@ -13,7 +13,6 @@ import { CopyCoordinatesButton } from "./CopyCoordinatesButton";
 import { LoadDemoButton } from "./LoadDemoButton";
 import { JoinServerButton } from "./JoinServerButton";
 import { Accordion, AccordionGroup } from "./Accordion";
-import styles from "./InspectorControls.module.css";
 import { useTouchDevice } from "./useTouchDevice";
 import { DemoTimeline } from "./DemoTimeline";
 import { MapTourPanel } from "./MapTourPanel";
@@ -21,6 +20,7 @@ import { useRecording } from "./RecordingProvider";
 import { useDataSource, useMissionName } from "../state/gameEntityStore";
 import { useLiveSelector } from "../state/liveConnectionStore";
 import { hasMission } from "../manifest";
+import styles from "./InspectorControls.module.css";
 
 const DEFAULT_PANELS = ["controls", "preferences", "audio", "timeline"];
 

@@ -26,7 +26,7 @@
 
 .ProgressFill {
   height: 100%;
-  background: rgba(100, 180, 255, 0.7);
+  background: rgba(10, 132, 255, 0.8);
   transition: width 0.15s;
 }
 
@@ -134,12 +134,19 @@
   margin: 0 1px;
 }
 
-.EventIcon[data-type="kill"] {
+.EventIcon[data-type="kill"],
+.EventIcon[data-type="death"] {
   color: #8a8380;
 }
 
 .EventIcon[data-type="flag-cap"] {
   color: #69db7c;
+  font-size: 15px;
+  margin: 0;
+}
+
+.EventIcon[data-type="flag-grab"],
+.EventIcon[data-type="flag-return"] {
   font-size: 15px;
   margin: 0;
 }

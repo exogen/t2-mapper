@@ -1,7 +1,14 @@
 import { createStore } from "zustand/vanilla";
 import { useStoreWithEqualityFn } from "zustand/traditional";
 
-export type TimelineEventType = "match-start" | "match-end" | "kill" | "flag-cap";
+export type TimelineEventType =
+  | "match-start"
+  | "match-end"
+  | "kill"
+  | "death"
+  | "flag-grab"
+  | "flag-return"
+  | "flag-cap";
 
 /** Relationship of the event to the recorder's team. */
 export type TeamAffinity = "friendly" | "enemy" | "neutral";
@@ -10,17 +17,17 @@ export interface TimelineEvent {
   timeSec: number;
   type: TimelineEventType;
   description: string;
-  /** For flag-cap: whether the recorder's team or enemy team scored. */
+  /** For flag events: whether the recorder's team or enemy team was involved. */
   teamAffinity?: TeamAffinity;
-  /** For kill events: name of the killer. */
+  /** For kill/death events: name of the killer. */
   killer?: string;
-  /** For kill events: name of the victim. */
+  /** For kill/death events: name of the victim. */
   victim?: string;
-  /** For kill events: weapon or method of death (e.g. "disc", "mortar"). */
+  /** For kill/death events: weapon or damage type (e.g. "disc", "ground"). */
   weapon?: string;
   /** For flag-cap events: name of the player who captured. */
   capturer?: string;
-  /** For flag-cap events: name of the team whose flag was captured. */
+  /** For flag-cap/flag-grab events: name of the flag's team. */
   flagTeamName?: string;
 }
 

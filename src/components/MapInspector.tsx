@@ -310,6 +310,14 @@ export function MapInspector() {
               onChooseMap={handleChooseMap}
               onCancelChoosingMap={handleCancelChoosingMap}
             />
+            <button
+              className={styles.CloseSidebarButton}
+              onClick={(event) => {
+                setSidebarOpen(false);
+              }}
+            >
+              <span className={styles.ButtonLabel}>Close</span>
+            </button>
           </div>
         </Activity>
         <InputProvider>

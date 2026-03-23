@@ -9,6 +9,7 @@ import type {
 import { usePlaybackActions } from "./RecordingProvider";
 import { BsPlayFill } from "react-icons/bs";
 import { AiFillStop } from "react-icons/ai";
+import { LuCrosshair } from "react-icons/lu";
 import styles from "./DemoTimeline.module.css";
 
 function formatTime(seconds: number): string {
@@ -18,7 +19,10 @@ function formatTime(seconds: number): string {
 }
 
 const EVENT_ICON: Record<TimelineEventType, React.ReactNode> = {
-  kill: <IoSkullSharp />,
+  kill: <LuCrosshair />,
+  death: <IoSkullSharp />,
+  "flag-grab": <PiFlagBannerFill />,
+  "flag-return": <PiFlagBannerFill />,
   "flag-cap": <PiFlagBannerFill />,
   "match-start": <BsPlayFill />,
   "match-end": <AiFillStop />,
@@ -26,6 +30,7 @@ const EVENT_ICON: Record<TimelineEventType, React.ReactNode> = {
 
 const WEAPONS_PAST_TENSE: Record<string, string> = {
   chaingun: "chaingunned",
+  plasma: "plasma rifled",
 };
 
 function renderEventDescription(event: TimelineEvent): React.ReactNode {
@@ -44,6 +49,34 @@ function renderEventDescription(event: TimelineEvent): React.ReactNode {
         <span className={styles.Victim}>{event.victim}</span>
       </>
     );
+  }
+  if (event.type === "death") {
+    if (event.killer) {
+      return (
+        <>
+          <span className={styles.Killer}>{event.killer}</span>{" "}
+          <span className={styles.DamageType}>
+            {event.weapon
+              ? (WEAPONS_PAST_TENSE[event.weapon] ??
+                `${event.weapon}${event.weapon.endsWith("e") ? "d" : "ed"}`)
+              : "killed"}
+          </span>{" "}
+          <span className={styles.Victim} title={event.victim}>
+            you
+          </span>
+        </>
+      );
+    }
+    return <>{event.description}</>;
+  }
+  if (event.type === "flag-grab") {
+    const flagLabel = event.flagTeamName
+      ? `the ${event.flagTeamName} flag`
+      : "the enemy flag";
+    return <>You grabbed {flagLabel}</>;
+  }
+  if (event.type === "flag-return") {
+    return <>You returned your flag</>;
   }
   if (event.type === "flag-cap" && event.capturer) {
     const flagLabel =
@@ -69,7 +102,13 @@ function renderEventDescription(event: TimelineEvent): React.ReactNode {
   return event.description;
 }
 
-type Filter = "all" | "kill" | "flag-cap";
+type Filter =
+  | "all"
+  | "kill"
+  | "death"
+  | "flag-grab"
+  | "flag-return"
+  | "flag-cap";
 
 export function DemoTimeline() {
   const events = useDemoTimeline((s) => s.events);
@@ -83,6 +122,11 @@ export function DemoTimeline() {
   const handleClick = useCallback(
     (timeSec: number) => {
       seek(Math.max(0, timeSec - 3));
+      // Blur so focus returns to body — allows spacebar to toggle
+      // play/pause instead of re-activating the timeline button.
+      if (document.activeElement instanceof HTMLElement) {
+        document.activeElement.blur();
+      }
     },
     [seek],
   );
@@ -109,7 +153,10 @@ export function DemoTimeline() {
   if (!events) return null;
 
   const killCount = events.filter((e) => e.type === "kill").length;
-  const flagCount = events.filter((e) => e.type === "flag-cap").length;
+  const deathCount = events.filter((e) => e.type === "death").length;
+  const grabCount = events.filter((e) => e.type === "flag-grab").length;
+  const returnCount = events.filter((e) => e.type === "flag-return").length;
+  const capCount = events.filter((e) => e.type === "flag-cap").length;
 
   return (
     <div className={styles.Root}>
@@ -133,10 +180,34 @@ export function DemoTimeline() {
         <button
           type="button"
           className={styles.FilterButton}
+          data-active={filter === "death"}
+          onClick={() => setFilter("death")}
+        >
+          Deaths ({deathCount})
+        </button>
+        <button
+          type="button"
+          className={styles.FilterButton}
+          data-active={filter === "flag-grab"}
+          onClick={() => setFilter("flag-grab")}
+        >
+          Grabs ({grabCount})
+        </button>
+        <button
+          type="button"
+          className={styles.FilterButton}
+          data-active={filter === "flag-return"}
+          onClick={() => setFilter("flag-return")}
+        >
+          Returns ({returnCount})
+        </button>
+        <button
+          type="button"
+          className={styles.FilterButton}
           data-active={filter === "flag-cap"}
           onClick={() => setFilter("flag-cap")}
         >
-          Flags ({flagCount})
+          Caps ({capCount})
         </button>
       </div>
       {filtered.length === 0 ? (
