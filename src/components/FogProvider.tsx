@@ -301,7 +301,7 @@ export function FogProvider({
 
   // Initial update
   useMemo(() => {
-    updateFogUniforms(uniformsRef.current, fogState, 0);
+    updateFogUniforms(uniformsRef.current, fogState, 0); // eslint-disable-line react-hooks/refs
   }, [fogState]);
 
   return (

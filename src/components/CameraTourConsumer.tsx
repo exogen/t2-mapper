@@ -1,5 +1,6 @@
 import { useRef } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
+import { useInputAction } from "./InputControls";
 import {
   Box3,
   Camera,
@@ -23,9 +24,9 @@ function easeInOutCubic(t: number): number {
 
 const FALLBACK_ORBIT_RADIUS = 3;
 const DEFAULT_ORBIT_HEIGHT = 2;
-const MIN_ORBIT_RADIUS = 1.5;
+const MIN_ORBIT_RADIUS = 1.8;
 /** Extra orbit radius added beyond half the object's height. */
-const ORBIT_PAD_VERTICAL = 1.6;
+const ORBIT_PAD_VERTICAL = 1.8;
 /** Extra orbit radius added beyond half the object's spread (width/length). */
 const ORBIT_PAD_HORIZONTAL = 1.2;
 const ORBIT_ANGULAR_SPEED = 0.6; // rad/s
@@ -336,6 +337,24 @@ export function CameraTourConsumer() {
   const camera = useThree((s) => s.camera);
   const scene = useThree((s) => s.scene);
   const prevAnimationRef = useRef<TourAnimation | null>(null);
+
+  // Click to advance to next stop, or exit if on the last target.
+  useInputAction("nextStop", () => {
+    const animation = cameraTourStore.getState().animation;
+    if (!animation) return;
+    const isLastTarget =
+      animation.currentIndex >= animation.targets.length - 1;
+    if (isLastTarget) {
+      cameraTourStore.getState().cancel();
+    } else {
+      cameraTourStore.getState().advanceTarget();
+    }
+  });
+
+  // Escape to exit tour.
+  useInputAction("exitTour", () => {
+    cameraTourStore.getState().cancel();
+  });
 
   useFrame((_state, delta) => {
     const animation = cameraTourStore.getState().animation;

@@ -425,6 +425,7 @@ export const AudioEmitter = memo(function AudioEmitter({
   }, [audioEnabled]);
 
   return debugMode ? (
+    // eslint-disable-next-line react-hooks/refs
     <mesh position={emitterPosRef.current}>
       <sphereGeometry args={[minDistance, 12, 12]} />
       <meshBasicMaterial

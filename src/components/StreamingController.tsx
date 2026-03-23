@@ -418,21 +418,24 @@ export function StreamingController({
         ? renderPrev.camera
         : null;
 
-    // When freeFlyCamera is active, skip stream camera positioning so
-    // ObserverControls drives the camera instead.
-    const freeFly = streamPlaybackStore.getState().freeFlyCamera;
+    // Camera mode override for demo playback. "freeFly" lets
+    // ObserverControls drive the camera; "orbitOverride" uses
+    // user-controlled yaw/pitch for orbit instead of stream data.
+    const cameraMode = streamPlaybackStore.getState().cameraMode;
     // In live mode, InputConsumer owns camera position and rotation
     // (moves are applied locally, matching how the real Tribes 2 client
     // handles its control Camera). StreamingController still handles
     // entity interpolation, FOV, and orbit target positioning.
     const isLive = recording.source === "live";
 
-    if (currentCamera && !freeFly) {
+    if (currentCamera && cameraMode !== "freeFly") {
       // In live mode, InputConsumer owns both camera position and rotation
       // (client-side prediction with server reconciliation + interpolateTick,
       // matching Tribes 2's Camera behavior). StreamingController only
       // handles entity interpolation, FOV, and orbit target positioning.
-      if (!isLive) {
+      // In orbitOverride mode, skip stream position/rotation — the orbit
+      // block below will position the camera using user-controlled yaw/pitch.
+      if (!isLive && cameraMode !== "orbitOverride") {
         if (previousCamera) {
           const px = previousCamera.position[0];
           const py = previousCamera.position[1];
@@ -557,10 +560,16 @@ export function StreamingController({
     const mode = currentCamera?.mode;
     // In live mode, InputConsumer handles orbit positioning from local rotation
     // so the orbit responds at frame rate. Skip here to avoid fighting.
-    if (
-      !freeFly &&
+    // In orbitOverride mode with a valid orbit target, use user-controlled
+    // yaw/pitch instead of stream data.
+    const orbitOverride =
+      cameraMode === "orbitOverride" &&
       !isLive &&
-      mode === "third-person" &&
+      currentCamera?.orbitTargetId != null;
+    if (
+      cameraMode !== "freeFly" &&
+      !isLive &&
+      (mode === "third-person" || orbitOverride) &&
       root &&
       currentCamera?.orbitTargetId
     ) {
@@ -577,7 +586,16 @@ export function StreamingController({
         }
 
         let hasDirection = false;
-        if (currentCamera.orbitDirection) {
+        if (orbitOverride) {
+          // User-controlled orbit: use yaw/pitch from store.
+          const spState = streamPlaybackStore.getState();
+          const sx = Math.sin(spState.orbitOverridePitch);
+          const cx = Math.cos(spState.orbitOverridePitch);
+          const sz = Math.sin(spState.orbitOverrideYaw);
+          const cz = Math.cos(spState.orbitOverrideYaw);
+          _orbitDir.set(-cz * cx, -sx, -sz * cx);
+          hasDirection = _orbitDir.lengthSq() > 1e-8;
+        } else if (currentCamera.orbitDirection) {
           // Use explicit pullback direction (e.g. from full vehicle quaternion
           // including roll) when available.
           _orbitDir.set(
@@ -618,7 +636,7 @@ export function StreamingController({
     }
 
     if (
-      !freeFly &&
+      cameraMode === "original" &&
       mode === "first-person" &&
       root &&
       currentCamera?.controlEntityId

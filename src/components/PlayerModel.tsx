@@ -10,7 +10,6 @@ import {
   LoopOnce,
   LoopRepeat,
   Object3D,
-  Audio as ThreeAudio,
   PositionalAudio,
   Vector3,
 } from "three";
@@ -43,10 +42,7 @@ import {
 } from "./AudioEmitter";
 import type { ResolvedAudioProfile } from "./AudioEmitter";
 import { audioToUrl } from "../loaders";
-import { createLogger } from "../logger";
 import { useSettings } from "./SettingsProvider";
-
-const log = createLogger("PlayerModel");
 import { useEngineStoreApi, useEngineSelector } from "../state/engineStore";
 import { streamPlaybackStore } from "../state/streamPlaybackStore";
 import type { PlayerEntity } from "../state/gameEntityTypes";
@@ -495,7 +491,7 @@ export function PlayerModel({ entity }: { entity: PlayerEntity }) {
     } catch {
       // File not in manifest.
     }
-  }, [audioLoader, entity.dataBlockId]);
+  }, [audioLoader, engineStore, entity.dataBlockId]);
 
   // Cleanup jet sound on unmount.
   useEffect(() => {
@@ -740,12 +736,7 @@ export function PlayerModel({ entity }: { entity: PlayerEntity }) {
     const jetSound = jetSoundRef.current;
     const soundActuallyPlaying = jetSound?.isPlaying ?? false;
     if (isJetting && !soundActuallyPlaying) {
-      if (
-        audioEnabled &&
-        audioListener &&
-        jetBufferRef.current &&
-        jetProfile
-      ) {
+      if (audioEnabled && audioListener && jetBufferRef.current && jetProfile) {
         let sound = jetSound;
         if (!sound) {
           sound = new PositionalAudio(audioListener);

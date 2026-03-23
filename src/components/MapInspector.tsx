@@ -31,7 +31,7 @@ import {
   CurrentMission,
   useMissionQueryState,
 } from "@/src/components/useQueryParams";
-import { InputProvider } from "./InputHandlers";
+import { InputProvider } from "./InputProducer";
 import { VisualInput } from "./VisualInput";
 import { LoadingIndicator } from "./LoadingIndicator";
 import { engineStore } from "../state/engineStore";
@@ -180,6 +180,18 @@ export function MapInspector() {
     }
   }, [isTouch, isTourActive, setSidebarOpen]);
 
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.code === "Backslash" && (e.metaKey || e.ctrlKey)) {
+        e.stopPropagation();
+        e.preventDefault();
+        setSidebarOpen((open) => !open);
+      }
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [setSidebarOpen]);
+
   const loadingProgress = missionLoadingProgress;
   const isLoading = loadingProgress < 1;
 
@@ -220,12 +232,7 @@ export function MapInspector() {
   return (
     <main className={styles.Frame}>
       <RecordingProvider>
-        <header
-          className={styles.Toolbar}
-          onKeyDown={(e) => e.stopPropagation()}
-          onPointerDown={(e) => e.stopPropagation()}
-          onClick={(e) => e.stopPropagation()}
-        >
+        <header className={styles.Toolbar}>
           <button
             type="button"
             className={styles.ToggleSidebarButton}
@@ -286,13 +293,7 @@ export function MapInspector() {
         </header>
         {sidebarOpen ? <div className={styles.Backdrop} /> : null}
         <Activity mode={sidebarOpen ? "visible" : "hidden"}>
-          <div
-            className={styles.Sidebar}
-            onKeyDown={(e) => e.stopPropagation()}
-            onPointerDown={(e) => e.stopPropagation()}
-            onClick={(e) => e.stopPropagation()}
-            data-open={sidebarOpen}
-          >
+          <div className={styles.Sidebar} data-open={sidebarOpen}>
             <InspectorControls
               missionName={missionName}
               missionType={missionType}
@@ -342,12 +343,7 @@ export function MapInspector() {
             )}
           </div>
         </InputProvider>
-        <footer
-          className={styles.PlayerBar}
-          onKeyDown={(e) => e.stopPropagation()}
-          onPointerDown={(e) => e.stopPropagation()}
-          onClick={(e) => e.stopPropagation()}
-        >
+        <footer className={styles.PlayerBar}>
           {recording?.source === "demo" ? (
             <Suspense>
               <DemoPlaybackControls />

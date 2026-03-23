@@ -19,7 +19,7 @@
   border-radius: 4px;
   background: rgba(3, 82, 147, 0.6);
   color: #fff;
-  font-size: 14px;
+  font-size: 11px;
   cursor: pointer;
 }
 
@@ -41,12 +41,26 @@
   max-width: none;
 }
 
-.Speed {
+.Speed,
+.CameraMode {
   flex-shrink: 0;
-  padding: 2px 4px;
+  padding: 3px 4px;
   border: 1px solid rgba(255, 255, 255, 0.3);
   border-radius: 3px;
   background: rgba(0, 0, 0, 0.6);
   color: #fff;
-  font-size: 12px;
+  font-size: 13px;
+}
+
+.Field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.Field label {
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.6);
+  font-weight: 500;
+  font-size: 11px;
 }

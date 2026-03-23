@@ -17,7 +17,7 @@ import type { ClientMove } from "../../relay/types";
 
 const log = createLogger("InputConsumer");
 
-const MAX_SPEED = 300;
+const MAX_SPEED = 270;
 const LOCAL_MAX_PITCH = Math.PI / 2 - 0.01; // ~89°
 
 /**
@@ -261,6 +261,15 @@ export function InputConsumer() {
     }
   }, [liveReady, setMode]);
 
+  // Set input mode to "follow" during orbit override so
+  // MouseAndKeyboardHandler flips drag direction correctly.
+  useEffect(() => {
+    if (isLive) return;
+    return streamPlaybackStore.subscribe((state) => {
+      setMode(state.cameraMode === "orbitOverride" ? "follow" : "local");
+    });
+  }, [isLive, setMode]);
+
   // ── processTick: send moves at the Torque tick rate (32Hz). ──
   useTick(() => {
     if (!activeAdapterRef.current || gameStatus !== "connected" || !liveReady)
@@ -453,7 +462,19 @@ export function InputConsumer() {
       } else {
         // Local mode: apply input directly to camera.
         const spState = streamPlaybackStore.getState();
-        if (spState.playback && !spState.freeFlyCamera) return;
+        if (spState.playback) {
+          if (spState.cameraMode === "freeFly") {
+            applyLocalCamera(camera, dYaw, dPitch, x, y, z, frameDelta);
+          } else if (spState.cameraMode === "orbitOverride") {
+            // Accumulate orbit yaw/pitch for StreamingController to read.
+            spState.orbitOverrideYaw += dYaw;
+            spState.orbitOverridePitch = Math.max(
+              -MAX_PITCH,
+              Math.min(MAX_PITCH, spState.orbitOverridePitch + dPitch),
+            );
+          }
+          return;
+        }
 
         applyLocalCamera(camera, dYaw, dPitch, x, y, z, frameDelta);
         return;

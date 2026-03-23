@@ -2,6 +2,8 @@ import { useCallback, type ReactNode } from "react";
 import type { StreamRecording } from "../stream/types";
 import { useEngineSelector } from "../state/engineStore";
 
+export const SPEED_OPTIONS = [0.25, 0.5, 1, 2, 4];
+
 export function RecordingProvider({ children }: { children: ReactNode }) {
   return <>{children}</>;
 }

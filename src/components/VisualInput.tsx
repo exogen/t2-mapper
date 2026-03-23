@@ -1,6 +1,7 @@
 import { lazy, Suspense } from "react";
 import { useTouchDevice } from "./useTouchDevice";
 import { useCameraTour } from "../state/cameraTourStore";
+import { useSettings } from "./SettingsProvider";
 
 const TouchJoystick = lazy(() =>
   import("@/src/components/TouchJoystick").then((mod) => ({
@@ -17,13 +18,12 @@ const KeyboardOverlay = lazy(() =>
 export function VisualInput() {
   const isTouch = useTouchDevice();
   const isTourActive = useCameraTour((s) => s.animation !== null);
-
-  if (isTourActive) return null;
+  const { showInputOverlay } = useSettings();
 
   return (
     <Suspense>
-      {isTouch ? <TouchJoystick /> : null}
-      {isTouch === false ? (
+      {isTouch && !isTourActive ? <TouchJoystick /> : null}
+      {isTouch === false && showInputOverlay ? (
         // isTouch can be `null` before we know for sure; make sure this doesn't
         // render until it's definitively false
         <KeyboardOverlay />

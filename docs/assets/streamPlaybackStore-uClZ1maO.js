@@ -1,1 +1,0 @@
-import{i as e}from"./traditional-BTL5qX2E.js";var t=e()(()=>({time:0,playback:null,root:null,freeFlyCamera:!1,entities:new Map}));function n(){t.setState({time:0,playback:null,freeFlyCamera:!1})}export{t as n,n as t};

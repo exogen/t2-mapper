@@ -1,4 +1,6 @@
+import { useStore } from "zustand";
 import { useEngineSelector } from "../state/engineStore";
+import { streamPlaybackStore } from "../state/streamPlaybackStore";
 import { DEFAULT_TEAM_NAMES } from "../stringUtils";
 import { textureToUrl } from "../loaders";
 import type { StreamEntity, TeamScore, WeaponsHudSlot } from "../stream/types";
@@ -410,18 +412,24 @@ export function PlayerHUD() {
   const hasControlPlayer = useEngineSelector(
     (state) => !!state.playback.streamSnapshot?.controlPlayerGhostId,
   );
+  const cameraMode = useStore(streamPlaybackStore, (s) => s.cameraMode);
+
+  // In free-fly mode the camera is disconnected from the player, so
+  // player-specific HUD elements (health, energy, weapons, etc.) are hidden.
+  const showPlayerElements =
+    hasControlPlayer && cameraMode !== "freeFly";
 
   return (
     <div className={styles.PlayerHUD}>
       <ChatWindow />
-      {hasControlPlayer && (
+      {showPlayerElements && (
         <div className={styles.Bars}>
           <HealthBar />
           <EnergyBar />
         </div>
       )}
       <Compass />
-      {hasControlPlayer && (
+      {showPlayerElements && (
         <>
           <WeaponHUD />
           <PackAndInventoryHUD />

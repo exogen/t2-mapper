@@ -213,7 +213,8 @@ export function MissionSelect({
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "k" && (e.metaKey || e.ctrlKey)) {
+      if (e.code === "KeyK" && (e.metaKey || e.ctrlKey)) {
+        e.stopPropagation();
         e.preventDefault();
         inputRef.current?.focus();
         combobox.show();
@@ -283,7 +284,14 @@ export function MissionSelect({
       <Activity mode={isOpen ? "visible" : "hidden"}>
         <div className={styles.Backdrop} />
       </Activity>
-      <div className={styles.InputWrapper}>
+      <div
+        className={styles.InputWrapper}
+        onKeyDown={(event) => {
+          if (!event.metaKey) {
+            event.stopPropagation();
+          }
+        }}
+      >
         <Combobox
           ref={inputRef}
           autoSelect
@@ -322,6 +330,11 @@ export function MissionSelect({
         fitViewport
         autoFocusOnHide={false}
         className={styles.Popover}
+        onKeyDown={(event) => {
+          if (!event.metaKey) {
+            event.stopPropagation();
+          }
+        }}
       >
         <ComboboxList className={styles.List}>
           {filteredResults.type === "flat"

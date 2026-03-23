@@ -4,7 +4,7 @@ import { useDataSource } from "../state/gameEntityStore";
 import { useRecording } from "./RecordingProvider";
 import { AudioProvider } from "./AudioContext";
 import { CamerasProvider } from "./CamerasProvider";
-import { InputProducers } from "./InputHandlers";
+import { InputProducer } from "./InputProducer";
 import { SceneLighting } from "./SceneLighting";
 import { ThreeCanvas } from "./ThreeCanvas";
 import { TickProvider } from "./TickProvider";
@@ -14,6 +14,7 @@ import { AudioEnabled } from "./AudioEnabled";
 import { DebugEnabled } from "./DebugEnabled";
 import { InputConsumer } from "./InputConsumer";
 import { CameraTourConsumer } from "./CameraTourConsumer";
+import { ActiveInputBindings } from "./ActiveInputBindings";
 
 function createLazy(
   name: string,
@@ -59,7 +60,8 @@ export const GameView = memo(function GameView({
     <ThreeCanvas dpr={dpr} onCreated={onCreated}>
       <TickProvider>
         <CamerasProvider>
-          <InputProducers />
+          <ActiveInputBindings />
+          <InputProducer />
           <AudioProvider>
             <SceneLighting />
             <Suspense>

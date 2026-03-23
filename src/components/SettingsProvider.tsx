@@ -24,7 +24,7 @@ type StateSetter<T> = Dispatch<SetStateAction<T>>;
 
 export type TouchMode = "dualStick" | "moveLookStick";
 
-type SettingsContext = {
+type SettingsContextType = {
   fogEnabled: boolean;
   setFogEnabled: StateSetter<boolean>;
   clearFogEnabledOverride: () => void;
@@ -44,16 +44,18 @@ type SettingsContext = {
   setSidebarOpen: StateSetter<boolean>;
   fpsLimit: number | null;
   setFpsLimit: StateSetter<number | null>;
+  showInputOverlay: boolean;
+  setShowInputOverlay: StateSetter<boolean>;
 };
 
-type DebugContext = {
+type DebugContextType = {
   debugMode: boolean;
   setDebugMode: StateSetter<boolean>;
   renderOnDemand: boolean;
   setRenderOnDemand: StateSetter<boolean>;
 };
 
-type ControlsContext = {
+type ControlsContextType = {
   speedMultiplier: number;
   setSpeedMultiplier: StateSetter<number>;
   mouseSensitivity: number;
@@ -68,9 +70,9 @@ type ControlsContext = {
   setInvertJoystick: StateSetter<boolean>;
 };
 
-const SettingsContext = createContext<SettingsContext | null>(null);
-const DebugContext = createContext<DebugContext | null>(null);
-const ControlsContext = createContext<ControlsContext | null>(null);
+const SettingsContext = createContext<SettingsContextType | null>(null);
+const DebugContext = createContext<DebugContextType | null>(null);
+const ControlsContext = createContext<ControlsContextType | null>(null);
 
 type PersistedSettings = {
   fogEnabled?: boolean;
@@ -89,6 +91,7 @@ type PersistedSettings = {
   invertJoystick?: boolean;
   sidebarOpen?: boolean;
   fpsLimit?: number | null;
+  showInputOverlay?: boolean;
 };
 
 export function useSettings() {
@@ -140,6 +143,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   const [invertJoystick, setInvertJoystick] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [fpsLimit, setFpsLimit] = useState<number | null>(null);
+  const [showInputOverlay, setShowInputOverlay] = useState(true);
   const [renderOnDemand, setRenderOnDemand] = useState(false);
 
   const [fogEnabledOverride, setFogEnabledOverride] = useFogQueryState();
@@ -155,7 +159,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     [clearFogEnabledOverride],
   );
 
-  const settingsContext: SettingsContext = useMemo(
+  const settingsContext: SettingsContextType = useMemo(
     () => ({
       fogEnabled: fogEnabledOverride ?? fogEnabled,
       setFogEnabled: setFogEnabledWithoutOverride,
@@ -176,6 +180,8 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       setSidebarOpen,
       fpsLimit,
       setFpsLimit,
+      showInputOverlay,
+      setShowInputOverlay,
     }),
     [
       fogEnabled,
@@ -190,10 +196,11 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       audioVolume,
       sidebarOpen,
       fpsLimit,
+      showInputOverlay,
     ],
   );
 
-  const debugContext: DebugContext = useMemo(
+  const debugContext: DebugContextType = useMemo(
     () => ({
       debugMode,
       setDebugMode,
@@ -203,7 +210,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     [debugMode, setDebugMode, renderOnDemand],
   );
 
-  const controlsContext: ControlsContext = useMemo(
+  const controlsContext: ControlsContextType = useMemo(
     () => ({
       speedMultiplier,
       setSpeedMultiplier,
@@ -239,7 +246,8 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
 
     let savedSettings: PersistedSettings = {};
     try {
-      savedSettings = JSON.parse(localStorage.getItem("settings") ?? "{}") || {};
+      savedSettings =
+        JSON.parse(localStorage.getItem("settings") ?? "{}") || {};
     } catch (err) {
       // Ignore.
     }
@@ -295,8 +303,14 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     if (savedSettings.invertJoystick != null) {
       setInvertJoystick(savedSettings.invertJoystick);
     }
-    if (savedSettings.fpsLimit === null || Number.isInteger(savedSettings.fpsLimit)) {
+    if (
+      savedSettings.fpsLimit === null ||
+      Number.isInteger(savedSettings.fpsLimit)
+    ) {
       setFpsLimit(savedSettings.fpsLimit!);
+    }
+    if (savedSettings.showInputOverlay != null) {
+      setShowInputOverlay(savedSettings.showInputOverlay);
     }
     if (savedSettings.sidebarOpen != null) {
       // Don't restore on touch devices!
@@ -334,6 +348,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
         invertJoystick,
         sidebarOpen,
         fpsLimit,
+        showInputOverlay,
       };
       try {
         localStorage.setItem("settings", JSON.stringify(settingsToSave));
@@ -364,6 +379,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     invertJoystick,
     sidebarOpen,
     fpsLimit,
+    showInputOverlay,
   ]);
 
   return (

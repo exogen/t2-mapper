@@ -3,6 +3,8 @@ import type { Group } from "three";
 import type { StreamingPlayback } from "../stream/types";
 import type { GameEntity } from "./gameEntityTypes";
 
+export type DemoCameraMode = "original" | "freeFly" | "orbitOverride";
+
 /**
  * Store for mutable streaming playback state that needs to be shared between
  * the playback controller (writer) and entity rendering components (readers).
@@ -18,11 +20,12 @@ export interface StreamPlaybackState {
   playback: StreamingPlayback | null;
   /** The Three.js group node containing all entity children. */
   root: Group | null;
-  /**
-   * When true, ObserverControls drives the camera instead of the stream.
-   * Toggled by 'O' key during live observation.
-   */
-  freeFlyCamera: boolean;
+  /** Camera mode override for demo playback. */
+  cameraMode: DemoCameraMode;
+  /** User-controlled orbit yaw (radians), used when cameraMode is "orbitOverride". */
+  orbitOverrideYaw: number;
+  /** User-controlled orbit pitch (radians), used when cameraMode is "orbitOverride". */
+  orbitOverridePitch: number;
   /** Live entity map, updated every frame. Components read from this in
    * useFrame to get the latest render fields (threads, weapons, etc.)
    * without triggering React re-renders. */
@@ -33,7 +36,9 @@ export const streamPlaybackStore = createStore<StreamPlaybackState>()(() => ({
   time: 0,
   playback: null,
   root: null,
-  freeFlyCamera: false,
+  cameraMode: "original",
+  orbitOverrideYaw: 0,
+  orbitOverridePitch: 0,
   entities: new Map(),
 }));
 
@@ -42,7 +47,9 @@ export function resetStreamPlayback(): void {
   streamPlaybackStore.setState({
     time: 0,
     playback: null,
-    freeFlyCamera: false,
+    cameraMode: "original",
+    orbitOverrideYaw: 0,
+    orbitOverridePitch: 0,
   });
   // root is managed by the React ref callback in EntityScene — don't clear it
 }

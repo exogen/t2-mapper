@@ -10,6 +10,33 @@
   text-align: center;
 }
 
+.TourAllButton {
+  align-self: flex-start;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 6px;
+  padding: 10px 14px;
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  border: 0;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.8);
+  cursor: pointer;
+}
+
+@media (hover: hover) {
+  .TourAllButton:hover {
+    /* background: rgba(2, 93, 153, 0.4); */
+    color: #fff;
+  }
+}
+
+.TourAllButton:active {
+  /* background: rgba(0, 85, 177, 0.5); */
+}
+
 .CategoryHeader {
   display: flex;
   align-items: baseline;

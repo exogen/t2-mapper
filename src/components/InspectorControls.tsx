@@ -74,6 +74,8 @@ export const InspectorControls = memo(function InspectorControls({
     setAnimationEnabled,
     fpsLimit,
     setFpsLimit,
+    showInputOverlay,
+    setShowInputOverlay,
   } = useSettings();
   const {
     speedMultiplier,
@@ -328,6 +330,22 @@ export const InspectorControls = memo(function InspectorControls({
                       onChange={(event) => setFov(parseInt(event.target.value))}
                     />
                   </div>
+                </div>
+                <div className={styles.CheckboxField}>
+                  <input
+                    id="showInputOverlayInput"
+                    type="checkbox"
+                    checked={showInputOverlay}
+                    onChange={(event) => {
+                      setShowInputOverlay(event.target.checked);
+                    }}
+                  />
+                  <label
+                    className={styles.Label}
+                    htmlFor="showInputOverlayInput"
+                  >
+                    Show input overlay
+                  </label>
                 </div>
               </Accordion>
               <Accordion value="audio" label="Audio">

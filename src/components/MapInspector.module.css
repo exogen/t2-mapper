@@ -104,8 +104,10 @@
   opacity: 0.6;
 }
 
-.ToggleSidebarButton:active {
+.ToggleSidebarButton:active,
+.ToggleSidebarButton[data-active="true"] {
   opacity: 1;
+  transform: translateY(1px);
 }
 
 .ToggleSidebarButton[data-orientation="top"] {

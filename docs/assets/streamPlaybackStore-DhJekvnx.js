@@ -1,0 +1,1 @@
+import{i as e}from"./traditional-BTL5qX2E.js";var t=e()(()=>({time:0,playback:null,root:null,cameraMode:`original`,orbitOverrideYaw:0,orbitOverridePitch:0,entities:new Map}));function n(){t.setState({time:0,playback:null,cameraMode:`original`,orbitOverrideYaw:0,orbitOverridePitch:0})}export{t as n,n as t};

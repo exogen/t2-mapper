@@ -1149,7 +1149,7 @@ export abstract class StreamEngine implements StreamingPlayback {
         log.debug(
           "Item %s (%s): atRest=false pos=%s vel=%s",
           entity.id,
-          entity.shapeName ?? entity.dataBlock ?? `db#${entity.dataBlockId}`,
+          entity.shapeHint ?? entity.dataBlock ?? `db#${entity.dataBlockId}`,
           data.position ? `${(data.position as Vec3).x.toFixed(1)},${(data.position as Vec3).y.toFixed(1)},${(data.position as Vec3).z.toFixed(1)}` : "none",
           `${vel.x.toFixed(1)},${vel.y.toFixed(1)},${vel.z.toFixed(1)}`,
         );
@@ -1157,7 +1157,7 @@ export abstract class StreamEngine implements StreamingPlayback {
         log.debug(
           "Item %s (%s): atRest=true pos=%s",
           entity.id,
-          entity.shapeName ?? entity.dataBlock ?? `db#${entity.dataBlockId}`,
+          entity.shapeHint ?? entity.dataBlock ?? `db#${entity.dataBlockId}`,
           entity.position ? `${entity.position[0].toFixed(1)},${entity.position[1].toFixed(1)},${entity.position[2].toFixed(1)}` : "none",
         );
         entity.itemPhysics = undefined;

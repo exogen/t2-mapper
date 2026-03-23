@@ -12,6 +12,8 @@ import styles from "./MapTourPanel.module.css";
 import { BsPlayFill } from "react-icons/bs";
 import { HiMiniArrowLeftEndOnRectangle } from "react-icons/hi2";
 
+const ALL_FEATURES_TOUR = "__all__";
+
 function selectTourState(state: {
   animation: {
     targets: TourTarget[];
@@ -51,6 +53,28 @@ export function MapTourPanel() {
   );
   const tourState = useCameraTour(selectTourState, tourStateEqual);
 
+  const allTargets = useMemo(() => {
+    // Build a lookup from target → category index for sorting by type.
+    const categoryIndex = new Map<TourTarget, number>();
+    for (let i = 0; i < categories.length; i++) {
+      for (const target of categories[i].targets) {
+        categoryIndex.set(target, i);
+      }
+    }
+    // Sort by [team, type, name] with "no team" (undefined/0) last.
+    return categories
+      .flatMap((c) => c.targets)
+      .sort((a, b) => {
+        const aTeam = a.teamId != null && a.teamId > 0 ? a.teamId : Infinity;
+        const bTeam = b.teamId != null && b.teamId > 0 ? b.teamId : Infinity;
+        if (aTeam !== bTeam) return aTeam - bTeam;
+        const aCat = categoryIndex.get(a) ?? 0;
+        const bCat = categoryIndex.get(b) ?? 0;
+        if (aCat !== bCat) return aCat - bCat;
+        return a.label.localeCompare(b.label);
+      });
+  }, [categories]);
+
   if (categories.length === 0) {
     return (
       <div className={styles.Root}>
@@ -59,8 +83,37 @@ export function MapTourPanel() {
     );
   }
 
+  const isTouringAll =
+    tourState !== null && tourState.categoryName === ALL_FEATURES_TOUR;
+
+  const handleTourAllClick = () => {
+    if (isTouringAll) {
+      cameraTourStore.getState().cancel();
+    } else {
+      cameraTourStore.getState().startTour(allTargets, ALL_FEATURES_TOUR);
+    }
+  };
+
   return (
     <div className={styles.Root}>
+      <button
+        type="button"
+        className={styles.TourAllButton}
+        data-active={isTouringAll}
+        onClick={handleTourAllClick}
+      >
+        {isTouringAll ? (
+          <>
+            <HiMiniArrowLeftEndOnRectangle className={styles.ExitIcon} /> Exit
+            tour
+          </>
+        ) : (
+          <>
+            <BsPlayFill className={styles.PlayIcon} />{" "}
+            <span className={styles.ButtonLabel}>Tour all features</span>
+          </>
+        )}
+      </button>
       {categories.map((category) => (
         <CategoryGroup
           key={category.name}
@@ -120,8 +173,8 @@ function CategoryGroup({
           const isActive =
             (isTouringCategory && tourState!.currentIndex === index) ||
             (tourState !== null &&
-              tourState.targets.length === 1 &&
-              tourState.targets[0].entityId === target.entityId);
+              tourState.targets[tourState.currentIndex]?.entityId ===
+                target.entityId);
           return (
             <button
               key={target.entityId}

@@ -51,20 +51,24 @@ const EntityLayer = memo(function EntityLayer() {
   const currentIds = new Set<string>();
   for (const entity of entities) {
     currentIds.add(entity.id);
-    cache.set(entity.id, entity);
+    cache.set(entity.id, entity); // eslint-disable-line react-hooks/refs
   }
   // Remove entities no longer in the set
+  // eslint-disable-next-line react-hooks/refs
   for (const id of cache.keys()) {
     if (!currentIds.has(id)) {
-      cache.delete(id);
+      cache.delete(id); // eslint-disable-line react-hooks/refs
     }
   }
 
   return (
     <>
-      {[...cache.values()].map((entity) => (
-        <EntityWrapper key={entity.id} entity={entity} />
-      ))}
+      {
+        // eslint-disable-next-line react-hooks/refs
+        [...cache.values()].map((entity) => (
+          <EntityWrapper key={entity.id} entity={entity} />
+        ))
+      }
     </>
   );
 });
@@ -115,7 +119,7 @@ function FlagMarkerSlot({ entity }: { entity: GameEntity }) {
         : undefined;
     return ((flags ?? 0) & 0x2) !== 0;
   });
-  flagRef.current = isFlag;
+  flagRef.current = isFlag; // eslint-disable-line react-hooks/refs
 
   useFrame(() => {
     const flags =

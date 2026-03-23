@@ -155,7 +155,7 @@ function SkyBoxTexture({
         />
       </bufferGeometry>
       <shaderMaterial
-        uniforms={uniformsRef.current}
+        uniforms={uniformsRef.current} // eslint-disable-line react-hooks/refs
         vertexShader={`
           varying vec2 vUv;
 
@@ -400,7 +400,7 @@ function SolidColorSky({
         />
       </bufferGeometry>
       <shaderMaterial
-        uniforms={uniformsRef.current}
+        uniforms={uniformsRef.current} // eslint-disable-line react-hooks/refs
         vertexShader={`
           varying vec2 vUv;
 

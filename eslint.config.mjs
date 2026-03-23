@@ -28,6 +28,7 @@ export default defineConfig([
       "react-hooks/set-state-in-effect": "off",
       "react-refresh/only-export-components": "warn",
       "react-hooks/immutability": "warn",
+      "no-control-regex": "off",
     },
   },
 ]);
