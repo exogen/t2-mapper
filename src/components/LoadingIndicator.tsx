@@ -2,21 +2,24 @@ import styles from "./LoadingIndicator.module.css";
 
 export function LoadingIndicator({
   isLoading,
-  progress,
+  progress = null,
 }: {
   isLoading: boolean;
-  progress: number;
+  progress?: number | null;
 }) {
+  const percent = (progress ?? 0) * 100;
+
   return (
-    <div className={styles.LoadingIndicator} data-complete={!isLoading}>
+    <div
+      className={styles.LoadingIndicator}
+      data-complete={!isLoading}
+      data-indeterminate={progress == null}
+    >
       <div className={styles.Spinner} />
       <div className={styles.Progress}>
-        <div
-          className={styles.ProgressBar}
-          style={{ width: `${progress * 100}%` }}
-        />
+        <div className={styles.ProgressBar} style={{ width: `${percent}%` }} />
       </div>
-      <div className={styles.ProgressText}>{Math.round(progress * 100)}%</div>
+      <div className={styles.ProgressText}>{Math.round(percent)}%</div>
     </div>
   );
 }

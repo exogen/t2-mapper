@@ -42,15 +42,11 @@ import {
   useMissionType,
 } from "../state/gameEntityStore";
 import { getMissionInfo } from "../manifest";
-import {
-  LuPanelLeftClose,
-  LuPanelLeftOpen,
-  LuPanelTopClose,
-  LuPanelTopOpen,
-} from "react-icons/lu";
 import { cameraTourStore, useCameraTour } from "../state/cameraTourStore";
 import { useTouchDevice } from "./useTouchDevice";
-import { HiMiniArrowLeftEndOnRectangle } from "react-icons/hi2";
+import { GameDialogSpinner } from "./GameDialogSpinner";
+import { ToggleSidebarButton } from "./ToggleSidebarButton";
+import { ExitTourButton } from "./ExitTourButton";
 import styles from "./MapInspector.module.css";
 
 function ViewTransition({ children }: { children: ReactNode }) {
@@ -233,30 +229,20 @@ export function MapInspector() {
     <main className={styles.Frame}>
       <RecordingProvider>
         <header className={styles.Toolbar}>
-          <button
-            type="button"
-            className={styles.ToggleSidebarButton}
-            data-orientation="top"
-            aria-label={sidebarOpen ? "Close sidebar" : "Open sidebar"}
-            title={sidebarOpen ? "Close sidebar" : "Open sidebar"}
-            onClick={(event) => {
+          <ToggleSidebarButton
+            orientation="top"
+            isOpen={sidebarOpen}
+            onClick={() => {
               setSidebarOpen((open) => !open);
             }}
-          >
-            {sidebarOpen ? <LuPanelTopClose /> : <LuPanelTopOpen />}
-          </button>
-          <button
-            type="button"
-            className={styles.ToggleSidebarButton}
-            data-orientation="left"
-            aria-label={sidebarOpen ? "Close sidebar" : "Open sidebar"}
-            title={sidebarOpen ? "Close sidebar" : "Open sidebar"}
-            onClick={(event) => {
+          />
+          <ToggleSidebarButton
+            orientation="left"
+            isOpen={sidebarOpen}
+            onClick={() => {
               setSidebarOpen((open) => !open);
             }}
-          >
-            {sidebarOpen ? <LuPanelLeftClose /> : <LuPanelLeftOpen />}
-          </button>
+          />
           <Activity mode={hasStreamData && !choosingMap ? "visible" : "hidden"}>
             <StreamingMissionInfo />
           </Activity>
@@ -268,28 +254,8 @@ export function MapInspector() {
               autoFocus={choosingMap}
               onCancel={handleCancelChoosingMap}
             />
-            {choosingMap && (
-              <button
-                type="button"
-                className={styles.CancelButton}
-                onClick={() => {
-                  setChoosingMap(false);
-                }}
-              >
-                Cancel
-              </button>
-            )}
           </Activity>
-          {isTourActive && (
-            <button
-              type="button"
-              className={styles.ExitTourButton}
-              onClick={() => cameraTourStore.getState().cancel()}
-            >
-              <HiMiniArrowLeftEndOnRectangle />
-              <span className={styles.ButtonLabel}>Exit tour</span>
-            </button>
-          )}
+          {isTourActive && <ExitTourButton />}
         </header>
         {sidebarOpen ? <div className={styles.Backdrop} /> : null}
         <Activity mode={sidebarOpen ? "visible" : "hidden"}>
@@ -309,15 +275,10 @@ export function MapInspector() {
               }
               onChooseMap={handleChooseMap}
               onCancelChoosingMap={handleCancelChoosingMap}
-            />
-            <button
-              className={styles.CloseSidebarButton}
-              onClick={(event) => {
+              onClose={() => {
                 setSidebarOpen(false);
               }}
-            >
-              <span className={styles.ButtonLabel}>Close</span>
-            </button>
+            />
           </div>
         </Activity>
         <InputProvider>
@@ -360,7 +321,11 @@ export function MapInspector() {
         </footer>
         {mapInfoOpen ? (
           <ViewTransition>
-            <Suspense>
+            <Suspense
+              fallback={
+                <GameDialogSpinner onClose={() => setMapInfoOpen(false)} />
+              }
+            >
               <MapInfoDialog
                 onClose={() => setMapInfoOpen(false)}
                 missionName={missionName}
@@ -371,14 +336,24 @@ export function MapInspector() {
         ) : null}
         {serverBrowserOpen ? (
           <ViewTransition>
-            <Suspense>
+            <Suspense
+              fallback={
+                <GameDialogSpinner
+                  onClose={() => setServerBrowserOpen(false)}
+                />
+              }
+            >
               <ServerBrowser onClose={() => setServerBrowserOpen(false)} />
             </Suspense>
           </ViewTransition>
         ) : null}
         {scoreScreenOpen ? (
           <ViewTransition>
-            <Suspense>
+            <Suspense
+              fallback={
+                <GameDialogSpinner onClose={() => setScoreScreenOpen(false)} />
+              }
+            >
               <ScoreScreen onClose={() => setScoreScreenOpen(false)} />
             </Suspense>
           </ViewTransition>

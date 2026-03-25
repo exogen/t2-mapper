@@ -1,0 +1,24 @@
+.Button {
+  composes: DestructiveActionButton from "./Button.module.css";
+  gap: 6px;
+  padding: 4px 10px 4px 6px;
+  margin: 0 10px 0 auto;
+  font-size: 20px;
+}
+
+.ButtonLabel {
+  composes: ButtonLabel from "./Button.module.css";
+  font-size: 13px;
+  font-weight: 500;
+}
+
+@media (max-width: 799px) {
+  .Button {
+    padding-right: 6px;
+    margin: 0 10px 0 0;
+  }
+
+  .Button .ButtonLabel {
+    display: none;
+  }
+}

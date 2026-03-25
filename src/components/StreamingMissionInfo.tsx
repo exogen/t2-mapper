@@ -110,7 +110,7 @@ export function StreamingMissionInfo() {
       {dataSource === "demo" ? (
         <button
           type="button"
-          className={styles.ActionButton}
+          className={styles.EjectButton}
           title="Unload demo"
           aria-label="Unload demo"
           onClick={handleEject}
@@ -121,7 +121,7 @@ export function StreamingMissionInfo() {
       ) : isLive ? (
         <button
           type="button"
-          className={styles.ActionButton}
+          className={styles.DisconnectButton}
           title="Disconnect"
           aria-label="Disconnect"
           onClick={handleDisconnect}

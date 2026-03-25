@@ -126,6 +126,17 @@ export interface MutableEntity {
   audioMinLoopGap?: number;
   audioMaxLoopGap?: number;
   sceneData?: SceneObject;
+  /** Force field visual data extracted from ForceFieldBareData datablock. */
+  forceFieldData?: {
+    textures: string[];
+    color: [number, number, number];
+    baseTranslucency: number;
+    dimensions: [number, number, number];
+    framesPerSec: number;
+    scrollSpeed: number;
+    umapping: number;
+    vmapping: number;
+  };
 }
 
 export type RuntimeControlObject = {
@@ -948,6 +959,37 @@ export abstract class StreamEngine implements StreamingPlayback {
         if (typeof trailEmitterId === "number" && trailEmitterId > 0) {
           entity.maintainEmitterId = trailEmitterId;
         }
+      }
+
+      // Force field visual data from ForceFieldBareData datablock.
+      if (entity.className === "ForceFieldBare" && blockData) {
+        const color1 = blockData.color1 as
+          | { r: number; g: number; b: number }
+          | undefined;
+        const textures: string[] = [];
+        for (let i = 0; i < 5; i++) {
+          const tex = blockData[`texture${i}`] as string | undefined;
+          if (tex) textures.push(tex);
+        }
+        // Use scale from ghost data as box dimensions (same as mission bridge).
+        const scale = data.scale as
+          | { x: number; y: number; z: number }
+          | undefined;
+        entity.forceFieldData = {
+          textures,
+          color: color1
+            ? [color1.r, color1.g, color1.b]
+            : [1, 1, 1],
+          baseTranslucency:
+            (blockData.baseTranslucency as number) ?? 1,
+          dimensions: scale
+            ? [scale.y, scale.z, scale.x]
+            : [1, 1, 1],
+          framesPerSec: (blockData.framesPerSec as number) ?? 1,
+          scrollSpeed: (blockData.scrollSpeed as number) ?? 0,
+          umapping: (blockData.umapping as number) ?? 1,
+          vmapping: (blockData.vmapping as number) ?? 1,
+        };
       }
     }
 
@@ -2212,6 +2254,7 @@ export abstract class StreamEngine implements StreamingPlayback {
         audioMinLoopGap: entity.audioMinLoopGap,
         audioMaxLoopGap: entity.audioMaxLoopGap,
         sceneData: entity.sceneData,
+        forceFieldData: entity.forceFieldData,
       });
     }
     return entities;

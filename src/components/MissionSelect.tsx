@@ -180,6 +180,11 @@ export function MissionSelect({
   const combobox = useComboboxStore({
     resetValueOnHide: true,
     selectedValue: value,
+    setOpen: (open) => {
+      if (!open) {
+        onCancel?.();
+      }
+    },
     setSelectedValue: (newValue) => {
       if (newValue) {
         let newMissionType = missionTypeRef.current;
@@ -325,11 +330,27 @@ export function MissionSelect({
         )}
         <kbd className={styles.Shortcut}>{isMac ? "⌘K" : "^K"}</kbd>
       </div>
+      <button
+        type="button"
+        className={styles.CloseButton}
+        data-open={isOpen}
+        onClick={() => {
+          combobox.hide();
+          onCancel?.();
+        }}
+      >
+        <IoMdCloseCircle />
+      </button>
       <ComboboxPopover
         gutter={4}
         fitViewport
+        sameWidth
+        fixed
         autoFocusOnHide={false}
         className={styles.Popover}
+        wrapperProps={{
+          className: styles.PopoverWrapper,
+        }}
         onKeyDown={(event) => {
           if (!event.metaKey) {
             event.stopPropagation();
@@ -358,17 +379,6 @@ export function MissionSelect({
           )}
         </ComboboxList>
       </ComboboxPopover>
-      <button
-        type="button"
-        className={styles.CloseButton}
-        data-open={isOpen}
-        onClick={() => {
-          combobox.hide();
-          onCancel?.();
-        }}
-      >
-        <IoMdCloseCircle />
-      </button>
     </ComboboxProvider>
   );
 }

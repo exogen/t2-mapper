@@ -155,6 +155,17 @@ export interface StreamEntity {
   audioMaxLoopGap?: number;
   /** Scene infrastructure data (terrain, interior, sky, etc.). */
   sceneData?: SceneObject;
+  /** Force field visual data from ForceFieldBareData datablock. */
+  forceFieldData?: {
+    textures: string[];
+    color: [number, number, number];
+    baseTranslucency: number;
+    dimensions: [number, number, number];
+    framesPerSec: number;
+    scrollSpeed: number;
+    umapping: number;
+    vmapping: number;
+  };
 }
 
 export interface StreamCamera {

@@ -2,30 +2,39 @@
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 8px 12px;
+  padding: 8px 10px;
   font-size: 13px;
   z-index: 2;
 }
 
+@media (pointer: coarse) {
+  .Root {
+    padding: 6px 8px;
+  }
+}
+
 .PlayPause {
-  width: 32px;
-  height: 32px;
-  flex-shrink: 0;
+  composes: Button from "./Button.module.css";
+  width: 36px;
+  height: 36px;
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
   justify-content: center;
   padding: 0;
-  border: 1px solid rgba(255, 255, 255, 0.3);
+  font-size: 12px;
+  /* border: 1px solid rgba(255, 255, 255, 0.3);
   border-radius: 4px;
   background: rgba(3, 82, 147, 0.6);
   color: #fff;
-  font-size: 11px;
-  cursor: pointer;
+  cursor: pointer; */
 }
 
-@media (hover: hover) {
-  .PlayPause:hover {
-    background: rgba(0, 98, 179, 0.8);
+@media (pointer: coarse) {
+  .PlayPause {
+    width: 40px;
+    height: 40px;
+    font-size: 14px;
   }
 }
 
@@ -33,6 +42,18 @@
   flex-shrink: 0;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
+}
+
+@media (max-width: 599px) {
+  .Time {
+    font-size: 12px;
+  }
+}
+
+@media (max-width: 399px) {
+  .Time {
+    font-size: 11px;
+  }
 }
 
 .Seek[type="range"] {
@@ -51,6 +72,14 @@
   background: rgba(0, 0, 0, 0.6);
   color: #fff;
   font-size: 13px;
+}
+
+@media (pointer: coarse) {
+  .Speed,
+  .CameraMode {
+    font-size: 14px;
+    padding: 8px;
+  }
 }
 
 .Field {

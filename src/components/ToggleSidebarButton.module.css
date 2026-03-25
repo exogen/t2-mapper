@@ -1,0 +1,55 @@
+.Button {
+  flex: 0 0 auto;
+  display: grid;
+  place-content: center;
+  min-width: 30px;
+  min-height: 30px;
+  padding: 2px;
+  margin: 0 0 0 8px;
+  font-size: 24px;
+  border-radius: 4px;
+  background: transparent;
+  color: #fff;
+  border: 0;
+  cursor: pointer;
+  opacity: 0.6;
+}
+
+.Button:active,
+.Button[data-active="true"] {
+  opacity: 1;
+  transform: translateY(1px);
+}
+
+.Button[data-orientation="top"] {
+  display: none;
+  min-height: 48px;
+  min-width: 48px;
+  margin: 0;
+}
+
+@media (hover: hover) {
+  .Button:not(:disabled):hover {
+    opacity: 1;
+  }
+}
+
+.Button svg {
+  pointer-events: none;
+}
+
+@media (max-width: 899px) {
+  .Button[data-orientation="left"] {
+    display: none;
+  }
+
+  .Button[data-orientation="top"] {
+    display: grid;
+  }
+}
+
+@media (pointer: coarse) {
+  .Button {
+    font-size: 28px;
+  }
+}

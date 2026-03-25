@@ -1,0 +1,160 @@
+@layer button {
+  .Button {
+    flex: 1 1 auto;
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: auto;
+    height: auto;
+    min-width: 28px;
+    min-height: 32px;
+    gap: 8px;
+    margin: 0;
+    font-family: inherit;
+    font-size: 18px;
+    font-weight: 500;
+    padding: 4px 8px;
+    border-radius: 5px;
+    background: rgba(0, 98, 179, 0.8);
+    border: 1px solid rgba(255, 255, 255, 0.4);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+    color: #fff;
+    cursor: pointer;
+    transform: translate(0, 0);
+    transition:
+      background 0.2s,
+      border-color 0.2s;
+  }
+
+  .Button svg {
+    opacity: 0.8;
+    flex: 0 0 auto;
+    pointer-events: none;
+    transition: opacity 0.2s;
+  }
+
+  .Button:disabled {
+    opacity: 0.6;
+    box-shadow: inset 0 0 12px 1px rgba(54, 54, 54, 0.5);
+    color: rgba(255, 255, 255, 0.8);
+    cursor: default;
+  }
+
+  @media (hover: hover) {
+    .Button {
+      border-top: 1px solid rgba(255, 255, 255, 0.3);
+      border-left: 1px solid rgba(255, 255, 255, 0.3);
+      border-right: 1px solid rgba(200, 200, 200, 0.3);
+      border-bottom: 1px solid rgba(200, 200, 200, 0.3);
+      background: rgba(3, 82, 147, 0.6);
+    }
+
+    .Button:not(:disabled):hover {
+      background: rgba(0, 98, 179, 0.8);
+      border-color: rgba(255, 255, 255, 0.4);
+    }
+
+    .Button svg {
+      opacity: 0.6;
+    }
+
+    .Button:not(:disabled):hover svg {
+      opacity: 1;
+    }
+  }
+
+  .Button:not(:disabled):active,
+  .Button[aria-expanded="true"] {
+    background: rgba(0, 98, 179, 0.7);
+    border-color: rgba(255, 255, 255, 0.3);
+    transform: translate(0, 1px);
+  }
+
+  .Button[data-active="true"] {
+    background: rgba(0, 117, 213, 0.9);
+    border-color: rgba(255, 255, 255, 0.4);
+  }
+
+  .Icon {
+  }
+
+  .ButtonLabel {
+    font-size: 14px;
+  }
+
+  .ButtonHint {
+    font-size: 10px;
+    opacity: 0.7;
+  }
+
+  .ButtonGroup {
+    width: 100%;
+    flex: 1 0 auto;
+    display: flex;
+    align-items: stretch;
+  }
+
+  .ButtonGroup .Button {
+    flex: 1 0 0;
+    flex-direction: column;
+    gap: 1px;
+    font-size: 22px;
+    padding-top: 8px;
+    padding-bottom: 8px;
+    background: rgba(27, 79, 135, 0.7);
+    box-shadow: inset 0 0 10px rgba(4, 40, 71, 0.5);
+  }
+
+  .ButtonGroup .Button svg {
+    margin-bottom: 3px;
+  }
+
+  .ButtonGroup .Button[data-active="true"] {
+    background: rgba(0, 101, 203, 0.8);
+    box-shadow:
+      inset 0 2px 3px rgba(8, 189, 255, 0.5),
+      inset 0 -2px 6px rgba(0, 18, 40, 0.5);
+  }
+
+  .ButtonGroup .Button[data-active="true"] svg {
+    opacity: 1;
+  }
+
+  .ButtonGroup .Button:not(:first-child) {
+    border-left: 0;
+    border-top-left-radius: 0;
+    border-bottom-left-radius: 0;
+  }
+
+  .ButtonGroup .Button:not(:last-child) {
+    border-top-right-radius: 0;
+    border-bottom-right-radius: 0;
+  }
+
+  .DestructiveActionButton {
+    composes: Button;
+    flex: 0 0 auto;
+    margin: 0 10px 0 0;
+    font-size: 16px;
+    min-width: 28px;
+    min-height: 28px;
+    padding: 2px;
+    background: rgba(213, 66, 58, 0.7);
+  }
+
+  @media (hover: hover) {
+    .DestructiveActionButton:not(:disabled):hover {
+      background: rgba(229, 70, 59, 0.9);
+    }
+  }
+
+  @media (pointer: coarse) {
+    .DestructiveActionButton {
+      min-width: 36px;
+      min-height: 36px;
+      margin-right: 6px;
+      font-size: 20px;
+    }
+  }
+}

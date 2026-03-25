@@ -2,6 +2,8 @@
   position: relative;
   max-width: calc(100dvw - 40px);
   max-height: calc(100dvh - 40px);
+  min-width: 120px;
+  min-height: 120px;
   background: rgba(20, 37, 38, 0.8);
   border: 1px solid rgba(65, 131, 139, 0.6);
   border-radius: 4px;

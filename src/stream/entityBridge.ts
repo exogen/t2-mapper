@@ -158,6 +158,19 @@ export function streamEntityToGameEntity(
     return {
       ...positionedBase(entity, spawnTime),
       renderType: "ForceFieldBare",
+      forceFieldData: entity.forceFieldData
+        ? {
+            textures: entity.forceFieldData.textures,
+            color: entity.forceFieldData.color,
+            baseTranslucency: entity.forceFieldData.baseTranslucency,
+            numFrames: entity.forceFieldData.textures.length,
+            framesPerSec: entity.forceFieldData.framesPerSec,
+            scrollSpeed: entity.forceFieldData.scrollSpeed,
+            umapping: entity.forceFieldData.umapping,
+            vmapping: entity.forceFieldData.vmapping,
+            dimensions: entity.forceFieldData.dimensions,
+          }
+        : undefined,
     } satisfies ForceFieldBareEntity;
   }
 

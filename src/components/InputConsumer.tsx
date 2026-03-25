@@ -425,9 +425,12 @@ export function InputConsumer() {
       for (const frame of frames) {
         dYaw += frame.deltaYaw;
         dPitch += frame.deltaPitch;
-        x = frame.x; // latest wins
-        y = frame.y;
-        z = frame.z;
+        // Use the value with the largest magnitude across all producers.
+        // This prevents a keyboard-only frame (x=0) from overwriting
+        // joystick movement from another producer in the same frame.
+        if (Math.abs(frame.x) > Math.abs(x)) x = frame.x;
+        if (Math.abs(frame.y) > Math.abs(y)) y = frame.y;
+        if (Math.abs(frame.z) > Math.abs(z)) z = frame.z;
         frameDelta += frame.delta;
         for (let i = 0; i < frame.triggers.length; i++) {
           if (frame.triggers[i]) frameTriggers[i] = true;

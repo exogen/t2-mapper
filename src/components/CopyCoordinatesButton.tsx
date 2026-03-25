@@ -3,6 +3,7 @@ import { FaMapPin } from "react-icons/fa";
 import { FaClipboardCheck } from "react-icons/fa6";
 import { Camera, Quaternion, Vector3 } from "three";
 import { useSettings } from "./SettingsProvider";
+import buttonStyles from "./Button.module.css";
 import styles from "./CopyCoordinatesButton.module.css";
 
 function encodeViewHash({
@@ -58,7 +59,7 @@ export function CopyCoordinatesButton({
   return (
     <button
       type="button"
-      className={styles.Root}
+      className={styles.Button}
       aria-label="Link to coordinates"
       title="Copy the current coordinates to URL"
       onClick={handleCopyLink}
@@ -66,9 +67,9 @@ export function CopyCoordinatesButton({
       data-copied={showCopied ? "true" : "false"}
       id="copyCoordinatesButton"
     >
-      <FaMapPin className={styles.MapPin} />
-      <FaClipboardCheck className={styles.ClipboardCheck} />
-      <span className={styles.ButtonLabel}> Link to coordinates</span>
+      <FaMapPin className={styles.PinIcon} />
+      <FaClipboardCheck className={styles.ClipboardIcon} />
+      <span className={buttonStyles.ButtonLabel}> Link to coordinates</span>
     </button>
   );
 }

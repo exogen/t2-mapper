@@ -46,6 +46,11 @@
   font-variant-numeric: tabular-nums;
 }
 
+.LoadingIndicator[data-indeterminate="true"] .Progress,
+.LoadingIndicator[data-indeterminate="true"] .ProgressText {
+  display: none;
+}
+
 @keyframes spin {
   to {
     transform: rotate(360deg);

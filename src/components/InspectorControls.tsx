@@ -1,7 +1,5 @@
 import { useEffect, useState, useRef, RefObject, memo } from "react";
-import { RiLandscapeFill } from "react-icons/ri";
 import { FaRotateRight } from "react-icons/fa6";
-import { LuClipboardList, LuUsers } from "react-icons/lu";
 import { Camera } from "three";
 import {
   useControls,
@@ -20,6 +18,10 @@ import { useRecording } from "./RecordingProvider";
 import { useDataSource, useMissionName } from "../state/gameEntityStore";
 import { useLiveSelector } from "../state/liveConnectionStore";
 import { hasMission } from "../manifest";
+import { ChooseMapButton } from "./ChooseMapButton";
+import { MapInfoButton } from "./MapInfoButton";
+import { ShowScoresButton } from "./ShowScoresButton";
+import buttonStyles from "./Button.module.css";
 import styles from "./InspectorControls.module.css";
 
 const DEFAULT_PANELS = ["controls", "preferences", "audio", "timeline"];
@@ -35,6 +37,7 @@ export const InspectorControls = memo(function InspectorControls({
   choosingMap,
   cameraRef,
   invalidateRef,
+  onClose,
 }: {
   missionName: string;
   missionType?: string;
@@ -46,6 +49,7 @@ export const InspectorControls = memo(function InspectorControls({
   choosingMap?: boolean;
   cameraRef: RefObject<Camera | null>;
   invalidateRef: RefObject<(() => void) | null>;
+  onClose: () => void;
 }) {
   const isTouch = useTouchDevice();
   const dataSource = useDataSource();
@@ -130,19 +134,13 @@ export const InspectorControls = memo(function InspectorControls({
           data-open={settingsOpen}
         >
           <div className={styles.Tools}>
-            <div className={styles.ButtonGroup}>
-              <button
-                type="button"
-                className={styles.IconButton}
-                data-active={
-                  (dataSource === "map" && !recording) || choosingMap
+            <div className={buttonStyles.ButtonGroup}>
+              <ChooseMapButton
+                isActive={
+                  (dataSource === "map" && !recording) || (choosingMap ?? false)
                 }
                 onClick={onChooseMap}
-              >
-                <RiLandscapeFill />
-                <span className={styles.ButtonLabel}>Explore</span>
-                <span className={styles.ButtonHint}>Browse maps</span>
-              </button>
+              />
               <LoadDemoButton
                 isActive={!choosingMap && recording?.source === "demo"}
                 choosingMap={choosingMap}
@@ -161,26 +159,9 @@ export const InspectorControls = memo(function InspectorControls({
               cameraRef={cameraRef}
               disabled={!missionInManifest}
             />
-            <button
-              type="button"
-              className={styles.MapInfoButton}
-              aria-label="Show map info"
-              onClick={onOpenMapInfo}
-              disabled={!missionInManifest}
-            >
-              <LuClipboardList />
-              <span className={styles.ButtonLabel}>Show map info</span>
-            </button>
+            <MapInfoButton missionName={missionName} onClick={onOpenMapInfo} />
             {onOpenScoreScreen && (
-              <button
-                type="button"
-                className={styles.MapInfoButton}
-                aria-label="Show scores"
-                onClick={onOpenScoreScreen}
-              >
-                <LuUsers />
-                <span className={styles.ButtonLabel}>Show scores</span>
-              </button>
+              <ShowScoresButton onClick={onOpenScoreScreen} />
             )}
           </div>
           <div className={styles.Accordions}>
@@ -476,6 +457,9 @@ export const InspectorControls = memo(function InspectorControls({
               </Accordion>
             </AccordionGroup>
           </div>
+          <button className={styles.CloseSidebarButton} onClick={onClose}>
+            <span className={buttonStyles.ButtonLabel}>Close</span>
+          </button>
         </div>
       </div>
     </div>

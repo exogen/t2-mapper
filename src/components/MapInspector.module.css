@@ -26,25 +26,6 @@
   view-transition-class: layout;
 }
 
-.CancelButton {
-  padding: 4px 6px;
-  font-size: 12px;
-  border: 1px solid rgba(255, 255, 255, 0.3);
-  border-radius: 3px;
-  background: rgba(255, 255, 255, 0.05);
-  color: rgba(255, 255, 255, 0.7);
-  cursor: pointer;
-  white-space: nowrap;
-  z-index: 1;
-}
-
-@media (hover: hover) {
-  .CancelButton:hover {
-    background: rgba(255, 255, 255, 0.1);
-    color: #fff;
-  }
-}
-
 .Sidebar {
   position: relative;
   grid-area: sidebar;
@@ -87,65 +68,8 @@
   z-index: 1;
 }
 
-.ToggleSidebarButton {
-  flex: 0 0 auto;
-  display: grid;
-  place-content: center;
-  min-width: 30px;
-  min-height: 30px;
-  padding: 2px;
-  margin: 0 0 0 8px;
-  font-size: 24px;
-  border-radius: 4px;
-  background: transparent;
-  color: #fff;
-  border: 0;
-  cursor: pointer;
-  opacity: 0.6;
-}
-
-.ToggleSidebarButton:active,
-.ToggleSidebarButton[data-active="true"] {
-  opacity: 1;
-  transform: translateY(1px);
-}
-
-.ToggleSidebarButton[data-orientation="top"] {
-  display: none;
-  min-height: 48px;
-  min-width: 48px;
-  margin: 0;
-}
-
-@media (hover: hover) {
-  .ToggleSidebarButton:not(:disabled):hover {
-    opacity: 1;
-  }
-}
-
-.ToggleSidebarButton svg {
-  pointer-events: none;
-}
-
 .Backdrop {
   display: none;
-}
-
-.CloseSidebarButton {
-  composes: IconButton from "./InspectorControls.module.css";
-  composes: LabelledButton from "./InspectorControls.module.css";
-  width: calc(100% - 24px);
-  margin: 12px;
-  padding-top: 8px;
-  padding-bottom: 8px;
-}
-
-.ButtonLabel {
-  composes: ButtonLabel from "./InspectorControls.module.css";
-}
-
-.CloseSidebarButton .ButtonLabel {
-  font-size: 15px;
 }
 
 @media (max-width: 899px) {
@@ -175,14 +99,6 @@
     justify-content: space-between;
   }
 
-  .ToggleSidebarButton[data-orientation="left"] {
-    display: none;
-  }
-
-  .ToggleSidebarButton[data-orientation="top"] {
-    display: grid;
-  }
-
   .Backdrop {
     display: block;
     position: fixed;
@@ -192,45 +108,5 @@
     bottom: 0;
     background: rgba(0, 0, 0, 0.7);
     z-index: 2;
-  }
-
-  .CancelButton {
-    display: none;
-  }
-}
-
-@media (min-width: 900px) {
-  .CloseSidebarButton {
-    display: none;
-  }
-}
-
-@media (pointer: coarse) {
-  .ToggleSidebarButton {
-    font-size: 28px;
-  }
-}
-
-.ExitTourButton {
-  composes: ActionButton from "./StreamingMissionInfo.module.css";
-  gap: 6px;
-  padding: 4px 10px 4px 6px;
-  margin: 0 10px 0 auto;
-  font-size: 20px;
-}
-
-.ExitTourButton .ButtonLabel {
-  font-size: 13px;
-  font-weight: 500;
-}
-
-@media (max-width: 799px) {
-  .ExitTourButton {
-    padding-right: 6px;
-    margin: 0 10px 0 0;
-  }
-
-  .ExitTourButton .ButtonLabel {
-    display: none;
   }
 }

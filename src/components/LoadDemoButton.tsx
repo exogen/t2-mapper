@@ -5,7 +5,7 @@ import { cameraTourStore } from "../state/cameraTourStore";
 import { demoTimelineStore } from "../state/demoTimelineStore";
 import { liveConnectionStore } from "../state/liveConnectionStore";
 import { usePlaybackActions, useRecording } from "./RecordingProvider";
-import styles from "./LoadDemoButton.module.css";
+import styles from "./Button.module.css";
 
 const log = createLogger("LoadDemoButton");
 
@@ -113,7 +113,7 @@ export function LoadDemoButton({
       />
       <button
         type="button"
-        className={styles.Root}
+        className={styles.Button}
         aria-label={isDemoLoaded ? "Unload demo" : "Load demo (.rec)"}
         title={isDemoLoaded ? "Unload demo" : "Load demo (.rec)"}
         onClick={handleClick}

@@ -1,6 +1,7 @@
 import { BsFillLightningChargeFill } from "react-icons/bs";
 import { cameraTourStore } from "../state/cameraTourStore";
 import { useLiveSelector } from "../state/liveConnectionStore";
+import buttonStyles from "./Button.module.css";
 import styles from "./JoinServerButton.module.css";
 
 export function JoinServerButton({
@@ -22,9 +23,10 @@ export function JoinServerButton({
   return (
     <button
       type="button"
-      className={styles.Root}
+      className={styles.JoinServerButton}
       aria-label={isLive ? "Connected – click to disconnect" : "Join server"}
       title={isLive ? "Connected – click to disconnect" : "Join server"}
+      data-connected={isLive}
       onClick={() => {
         cameraTourStore.getState().cancel();
         if (isLive) {
@@ -35,12 +37,10 @@ export function JoinServerButton({
       }}
       data-active={isActive}
     >
-      <BsFillLightningChargeFill
-        className={`${styles.LiveIcon} ${isLive ? styles.Pulsing : ""}`}
-      />
+      <BsFillLightningChargeFill className={styles.Icon} />
       <>
-        <span className={styles.TextLabel}>Live</span>
-        <span className={styles.ButtonHint}>
+        <span className={buttonStyles.ButtonLabel}>Live</span>
+        <span className={buttonStyles.ButtonHint}>
           {isConnecting ? "Connecting…" : isLive ? "Connected" : "Join a game"}
         </span>
       </>

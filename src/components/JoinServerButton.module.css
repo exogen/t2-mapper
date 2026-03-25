@@ -1,23 +1,15 @@
-.Root {
-  composes: IconButton from "./InspectorControls.module.css";
-  composes: LabelledButton from "./InspectorControls.module.css";
+.JoinServerButton {
+  composes: Button from "./Button.module.css";
 }
-/* Text label ("Connect", "Connecting...") follows standard breakpoint rules. */
-.TextLabel {
-  composes: ButtonLabel from "./InspectorControls.module.css";
+
+.Icon {
+  composes: Icon from "./Button.module.css";
 }
-/* Ping label is always visible regardless of breakpoint. */
-.PingLabel {
-  composes: ButtonLabel from "./InspectorControls.module.css";
-  display: flex !important;
-  margin-right: 2px;
-}
-.LiveIcon {
-  /* font-size: 15px; */
-}
-.Pulsing {
+
+.JoinServerButton[data-connected="true"] .Icon {
   animation: blink 1.2s ease-out infinite;
 }
+
 @keyframes blink {
   0% {
     opacity: 1;
@@ -25,8 +17,4 @@
   100% {
     opacity: 0.25;
   }
-}
-
-.ButtonHint {
-  composes: ButtonHint from "./InspectorControls.module.css";
 }

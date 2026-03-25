@@ -54,21 +54,9 @@
   color: #eceae7;
 }
 
-.ActionButton {
-  composes: IconButton from "./InspectorControls.module.css";
-  flex: 0 0 auto;
-  margin: 0 10px 0 0;
-  font-size: 16px;
-  min-width: 28px;
-  min-height: 28px;
-  padding: 2px;
-  background: rgba(213, 66, 58, 0.7);
-}
-
-@media (hover: hover) {
-  .ActionButton:not(:disabled):hover {
-    background: rgba(229, 70, 59, 0.9);
-  }
+.EjectButton,
+.DisconnectButton {
+  composes: DestructiveActionButton from "./Button.module.css";
 }
 
 .EjectIcon {
