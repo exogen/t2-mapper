@@ -40,7 +40,10 @@ export function CopyCoordinatesButton({
     if (!camera) return;
     const hash = encodeViewHash(camera);
     const params = new URLSearchParams();
-    params.set("mission", `${missionName}~${missionType}`);
+    const missionString = missionType
+      ? `${missionName}~${missionType}`
+      : missionName;
+    params.set("mission", missionString);
     params.set("fog", fogEnabled.toString());
     const fullPath = `${window.location.pathname}?${params}${hash}`;
     const fullUrl = `${window.location.origin}${fullPath}`;

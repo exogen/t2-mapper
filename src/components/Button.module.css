@@ -34,6 +34,10 @@
     transition: opacity 0.2s;
   }
 
+  .Button:not(:has(.ButtonLabel)) svg {
+    opacity: 1;
+  }
+
   .Button:disabled {
     opacity: 0.6;
     box-shadow: inset 0 0 12px 1px rgba(54, 54, 54, 0.5);
@@ -48,11 +52,13 @@
       border-right: 1px solid rgba(200, 200, 200, 0.3);
       border-bottom: 1px solid rgba(200, 200, 200, 0.3);
       background: rgba(3, 82, 147, 0.6);
+      color: rgba(255, 255, 255, 0.9);
     }
 
     .Button:not(:disabled):hover {
       background: rgba(0, 98, 179, 0.8);
       border-color: rgba(255, 255, 255, 0.4);
+      color: #fff;
     }
 
     .Button svg {

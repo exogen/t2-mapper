@@ -126,6 +126,14 @@ export interface MutableEntity {
   audioMinLoopGap?: number;
   audioMaxLoopGap?: number;
   sceneData?: SceneObject;
+  /** WheeledVehicle per-wheel state from ghost data. */
+  wheels?: Array<{ speed: number; lateralSlip: number; longitudinalSlip: number }>;
+  /** Vehicle steering angle (radians), from ghost data. */
+  steeringYaw?: number;
+  /** Vehicle frozen state (deployed MPB, etc.). */
+  frozen?: boolean;
+  /** Vehicle max steering angle (radians), from VehicleData datablock. */
+  maxSteeringAngle?: number;
   /** Force field visual data extracted from ForceFieldBareData datablock. */
   forceFieldData?: {
     textures: string[];
@@ -961,6 +969,14 @@ export abstract class StreamEngine implements StreamingPlayback {
         }
       }
 
+      // Vehicle maxSteeringAngle from VehicleData datablock.
+      if (
+        entity.className === "WheeledVehicle" &&
+        typeof blockData?.maxSteeringAngle === "number"
+      ) {
+        entity.maxSteeringAngle = blockData.maxSteeringAngle;
+      }
+
       // Force field visual data from ForceFieldBareData datablock.
       if (entity.className === "ForceFieldBare" && blockData) {
         const color1 = blockData.color1 as
@@ -991,6 +1007,35 @@ export abstract class StreamEngine implements StreamingPlayback {
           vmapping: (blockData.vmapping as number) ?? 1,
         };
       }
+    }
+
+    // WheeledVehicle per-wheel state. Mutate in-place to avoid allocation
+    // on every ghost update (~32Hz).
+    if (Array.isArray(data.wheels)) {
+      const incoming = data.wheels as Array<{
+        avel: number;
+        Dy: number;
+        Dx: number;
+      }>;
+      if (!entity.wheels || entity.wheels.length !== incoming.length) {
+        entity.wheels = incoming.map((w) => ({
+          speed: w.avel,
+          lateralSlip: w.Dx,
+          longitudinalSlip: w.Dy,
+        }));
+      } else {
+        for (let i = 0; i < incoming.length; i++) {
+          entity.wheels[i].speed = incoming[i].avel;
+          entity.wheels[i].lateralSlip = incoming[i].Dx;
+          entity.wheels[i].longitudinalSlip = incoming[i].Dy;
+        }
+      }
+    }
+    if (typeof data.steeringYaw === "number") {
+      entity.steeringYaw = data.steeringYaw;
+    }
+    if (typeof data.frozen === "boolean") {
+      entity.frozen = data.frozen;
     }
 
     // Weapon images (Player)
@@ -2253,6 +2298,10 @@ export abstract class StreamEngine implements StreamingPlayback {
         audioMaxDistance: entity.audioMaxDistance,
         audioMinLoopGap: entity.audioMinLoopGap,
         audioMaxLoopGap: entity.audioMaxLoopGap,
+        wheels: entity.wheels,
+        steeringYaw: entity.steeringYaw,
+        frozen: entity.frozen,
+        maxSteeringAngle: entity.maxSteeringAngle,
         sceneData: entity.sceneData,
         forceFieldData: entity.forceFieldData,
       });

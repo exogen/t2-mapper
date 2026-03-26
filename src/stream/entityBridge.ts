@@ -223,5 +223,9 @@ export function streamEntityToGameEntity(
     threads: entity.threads,
     targetRenderFlags: entity.targetRenderFlags,
     iffColor: entity.iffColor,
+    wheels: entity.wheels,
+    steeringYaw: entity.steeringYaw,
+    frozen: entity.frozen,
+    maxSteeringAngle: entity.maxSteeringAngle,
   } satisfies ShapeEntity;
 }

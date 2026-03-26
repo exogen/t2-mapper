@@ -153,6 +153,14 @@ export interface StreamEntity {
   audioMaxDistance?: number;
   audioMinLoopGap?: number;
   audioMaxLoopGap?: number;
+  /** WheeledVehicle per-wheel state. */
+  wheels?: Array<{ speed: number; lateralSlip: number; longitudinalSlip: number }>;
+  /** Vehicle steering angle (radians). */
+  steeringYaw?: number;
+  /** Vehicle frozen state (deployed). */
+  frozen?: boolean;
+  /** Vehicle max steering angle (radians). */
+  maxSteeringAngle?: number;
   /** Scene infrastructure data (terrain, interior, sky, etc.). */
   sceneData?: SceneObject;
   /** Force field visual data from ForceFieldBareData datablock. */

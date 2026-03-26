@@ -1,13 +1,14 @@
 .Button {
   flex: 0 0 auto;
+  align-self: stretch;
   display: grid;
   place-content: center;
   min-width: 30px;
   min-height: 30px;
-  padding: 2px;
-  margin: 0 0 0 8px;
+  padding: 2px 4px 2px 8px;
+  margin: 0 0 0 2px;
   font-size: 24px;
-  border-radius: 4px;
+  border-radius: 0;
   background: transparent;
   color: #fff;
   border: 0;

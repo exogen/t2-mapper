@@ -9,6 +9,7 @@ import {
   MeshBasicMaterial,
   MeshLambertMaterial,
   AdditiveBlending,
+  AdditiveAnimationBlendMode,
   AnimationMixer,
   AnimationClip,
   LoopOnce,
@@ -46,7 +47,24 @@ import {
 } from "../stream/playbackUtils";
 import type { ThreadState as StreamThreadState } from "../stream/types";
 
+/** Shape entity data readable in useFrame for streaming mode. */
+interface StreamShapeEntity {
+  threads?: StreamThreadState[];
+  wheels?: Array<{ speed: number; lateralSlip: number; longitudinalSlip: number }>;
+  steeringYaw?: number;
+  frozen?: boolean;
+  maxSteeringAngle?: number;
+}
+
 const log = createLogger("GenericShape");
+
+/** WheeledVehicle per-wheel animation state (position-controlled, not threaded). */
+interface WheelAnimState {
+  wheelAction?: AnimationAction;
+  springAction?: AnimationAction;
+  turnAction?: AnimationAction;
+  rotation: number;
+}
 
 /** Returns pausable time in seconds for demo mode, real time otherwise. */
 function shapeNowSec(): number {
@@ -461,8 +479,8 @@ export const ShapeRenderer = memo(function ShapeRenderer({
   children,
 }: {
   loadingColor?: string;
-  /** Stable entity reference whose `.threads` field is mutated in-place. */
-  streamEntity?: { threads?: StreamThreadState[] };
+  /** Stable entity reference whose fields are mutated in-place. */
+  streamEntity?: StreamShapeEntity;
   children?: React.ReactNode;
 }) {
   const { object, shapeName } = useShapeInfo();
@@ -514,8 +532,8 @@ export const ShapeModel = memo(function ShapeModel({
   streamEntity,
 }: {
   gltf: ReturnType<typeof useStaticShape>;
-  /** Stable entity reference whose `.threads` field is mutated in-place. */
-  streamEntity?: { threads?: StreamThreadState[] };
+  /** Stable entity reference whose fields are mutated in-place. */
+  streamEntity?: StreamShapeEntity;
 }) {
   const { object, shapeName } = useShapeInfo();
   const { debugMode } = useDebug();
@@ -656,6 +674,8 @@ export const ShapeModel = memo(function ShapeModel({
   const animationEnabledRef = useRef(animationEnabled);
   animationEnabledRef.current = animationEnabled;
 
+  const wheelAnimsRef = useRef<WheelAnimState[] | null>(null);
+
   // Stream entity reference for imperative thread reads in useFrame.
   // The entity is mutated in-place, so reading streamEntity?.threads
   // always returns the latest value without requiring React re-renders.
@@ -698,24 +718,28 @@ export const ShapeModel = memo(function ShapeModel({
     }
   }, [iflMeshes]);
 
-  // DTS cyclic flags by sequence name. Cyclic sequences loop; non-cyclic
-  // play once and clamp. Falls back to assuming cyclic if data is absent.
-  const seqCyclicByName = useMemo(() => {
-    const map = new Map<string, boolean>();
+  // DTS sequence flags by name, parsed from glTF extras.
+  const { seqCyclicByName, seqBlendByName } = useMemo(() => {
+    const cycMap = new Map<string, boolean>();
+    const blendMap = new Map<string, boolean>();
     const rawNames = gltf.scene.userData?.dts_sequence_names;
     const rawCyclic = gltf.scene.userData?.dts_sequence_cyclic;
-    if (typeof rawNames === "string" && typeof rawCyclic === "string") {
+    const rawBlend = gltf.scene.userData?.dts_sequence_blend;
+    if (typeof rawNames === "string") {
       try {
         const names: string[] = JSON.parse(rawNames);
-        const cyclic: boolean[] = JSON.parse(rawCyclic);
+        const cyclic: boolean[] = typeof rawCyclic === "string" ? JSON.parse(rawCyclic) : [];
+        const blend: boolean[] = typeof rawBlend === "string" ? JSON.parse(rawBlend) : [];
         for (let i = 0; i < names.length; i++) {
-          map.set(names[i].toLowerCase(), cyclic[i] ?? true);
+          const lower = names[i].toLowerCase();
+          cycMap.set(lower, cyclic[i] ?? true);
+          if (blend[i]) blendMap.set(lower, true);
         }
       } catch {
         /* expected */
       }
     }
-    return map;
+    return { seqCyclicByName: cycMap, seqBlendByName: blendMap };
   }, [gltf]);
 
   // Animation setup.
@@ -767,6 +791,12 @@ export const ShapeModel = memo(function ShapeModel({
         } else {
           action.setLoop(LoopOnce, 1);
           action.clampWhenFinished = true;
+        }
+        // Blend sequences (DTS flag 0x8) are delta transforms multiplied
+        // onto the existing pose. Use Three.js additive blending so they
+        // composite on top of non-blend threads (e.g. Deploy on Ambient).
+        if (seqBlendByName.has(seqLower)) {
+          action.blendMode = AdditiveAnimationBlendMode;
         }
         action.reset().play();
         thread.action = action;
@@ -857,11 +887,57 @@ export const ShapeModel = memo(function ShapeModel({
       }
     }
 
+    // Set up WheeledVehicle wheel/spring/turn animations.
+    // These are position-controlled (setPos) not thread-controlled.
+    // Detect by checking if wheel0/spring0 clips exist.
+    if (mixer && clipsByName.has("wheel0")) {
+      const wheelAnims: WheelAnimState[] = [];
+      for (let i = 0; i < 6; i++) {
+        const state: WheelAnimState = { rotation: 0 };
+        const wheelClip = clipsByName.get(`wheel${i}`);
+        if (wheelClip) {
+          const action = mixer.clipAction(wheelClip);
+          action.setLoop(LoopOnce, 1);
+          action.clampWhenFinished = true;
+          action.paused = true;
+          action.play();
+          state.wheelAction = action;
+        }
+        const springClip = clipsByName.get(`spring${i}`);
+        if (springClip) {
+          const action = mixer.clipAction(springClip);
+          action.setLoop(LoopOnce, 1);
+          action.clampWhenFinished = true;
+          action.paused = true;
+          action.play();
+          // Rest position: springs at full extension (pos=0 in Torque).
+          action.time = 0;
+          state.springAction = action;
+        }
+        const turnClip = clipsByName.get(`turn${i}`);
+        if (turnClip) {
+          const action = mixer.clipAction(turnClip);
+          action.setLoop(LoopOnce, 1);
+          action.clampWhenFinished = true;
+          action.paused = true;
+          action.play();
+          // Center (straight ahead).
+          action.time = turnClip.duration * 0.5;
+          state.turnAction = action;
+        }
+        wheelAnims.push(state);
+      }
+      wheelAnimsRef.current = wheelAnims;
+    } else {
+      wheelAnimsRef.current = null;
+    }
+
     return () => {
       unsubs.forEach((fn) => fn());
       handlePlayThreadRef.current = null;
       handleStopThreadRef.current = null;
       prevDemoThreadsRef.current = undefined;
+      wheelAnimsRef.current = null;
       for (const slot of [...threads.keys()]) handleStopThread(slot);
     };
   }, [
@@ -869,6 +945,7 @@ export const ShapeModel = memo(function ShapeModel({
     clipsByName,
     visNodesBySequence,
     seqCyclicByName,
+    seqBlendByName,
     object,
     runtime,
   ]);
@@ -963,6 +1040,19 @@ export const ShapeModel = memo(function ShapeModel({
             if (!seqName) continue;
             if (t.state === 0) {
               playThread(slot, seqName);
+              // If the animation is already finished (atEnd=true on first
+              // appearance — e.g. a deployed MPB entering scope), snap to
+              // the end pose immediately instead of replaying it.
+              if (t.atEnd) {
+                const thread = threads.get(slot);
+                if (thread?.action) {
+                  const clip = thread.action.getClip();
+                  thread.action.time = t.forward ? clip.duration : 0;
+                  thread.action.setLoop(LoopOnce, 1);
+                  thread.action.clampWhenFinished = true;
+                  thread.action.paused = true;
+                }
+              }
             } else {
               stopThread(slot);
             }
@@ -1002,6 +1092,46 @@ export const ShapeModel = memo(function ShapeModel({
         const hi = (lo + 1) % n;
         const frac = pos - Math.floor(pos);
         mat.opacity = keyframes[lo] + (keyframes[hi] - keyframes[lo]) * frac;
+      }
+    }
+
+    // Drive WheeledVehicle wheel/spring/turn animations from ghost state.
+    const wheelAnims = wheelAnimsRef.current;
+    if (wheelAnims && animationEnabled) {
+      const entity = streamEntityRef.current;
+      const wheels = entity?.wheels;
+      const steeringYaw = entity?.steeringYaw ?? 0;
+      // From VehicleData datablock (e.g. MPB = 0.3 rad).
+      const maxSteeringAngle = entity?.maxSteeringAngle ?? 0.3;
+
+      for (let i = 0; i < wheelAnims.length; i++) {
+        const wa = wheelAnims[i];
+        const wheel = wheels?.[i];
+
+        // Wheel rotation: accumulate from speed, matching Torque's
+        // advanceTime: rotation += wheelSpeed * dt * TWO_PI, then
+        // wrap to [0,1) and flip negative to 1-rotation.
+        if (wa.wheelAction && wheel) {
+          wa.rotation += wheel.speed * effectDelta * Math.PI * 2;
+          wa.rotation -= Math.floor(wa.rotation); // wrap to [0,1)
+          wa.wheelAction.time =
+            wa.rotation * wa.wheelAction.getClip().duration;
+        }
+
+        // Spring: ghost vehicles stay at rest (fully extended = pos 0).
+        // The server already accounts for spring height in the ghost position.
+        // (Spring animation would only change with client-side raycasts.)
+
+        // Turn: steering angle → animation position.
+        // Torque: pos = 0.5 - t * 0.5 where t = steerAngle² / maxSteeringAngle
+        if (wa.turnAction) {
+          const t =
+            (steeringYaw * Math.abs(steeringYaw)) / maxSteeringAngle;
+          const pos = 0.5 - t * 0.5;
+          wa.turnAction.time =
+            Math.max(0, Math.min(1, pos)) *
+            wa.turnAction.getClip().duration;
+        }
       }
     }
 

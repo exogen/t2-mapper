@@ -132,6 +132,14 @@ export interface ShapeEntity extends PositionedBase {
   targetRenderFlags?: number;
   iffColor?: { r: number; g: number; b: number };
   weaponShape?: string;
+  /** WheeledVehicle per-wheel state (speed, slip). */
+  wheels?: Array<{ speed: number; lateralSlip: number; longitudinalSlip: number }>;
+  /** Vehicle steering angle (radians). */
+  steeringYaw?: number;
+  /** Vehicle frozen state (deployed). */
+  frozen?: boolean;
+  /** Vehicle max steering angle (radians), from datablock. */
+  maxSteeringAngle?: number;
 }
 
 export interface PlayerEntity extends PositionedBase {
