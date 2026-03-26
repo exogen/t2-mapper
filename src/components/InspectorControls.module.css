@@ -130,9 +130,10 @@
 
 .CloseSidebarButton {
   composes: Button from "./Button.module.css";
-  margin: 12px;
-  padding-top: 8px;
-  padding-bottom: 8px;
+  font-size: 15px;
+  margin: 20px 12px;
+  padding-top: 10px;
+  padding-bottom: 10px;
 }
 
 @media (min-width: 900px) {

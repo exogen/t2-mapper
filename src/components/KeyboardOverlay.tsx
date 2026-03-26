@@ -367,16 +367,23 @@ function DemoOverlay() {
 }
 
 function TourOverlay() {
+  const isLastStop = useCameraTour(
+    (s) =>
+      s.animation != null &&
+      s.animation.currentIndex >= s.animation.targets.length - 1,
+  );
   return (
     <>
       <div className={styles.Column}>
         <div className={styles.Row}>
-          <Key
-            action="nextStop"
-            label="Skip to next stop"
-            input={<PiMouseLeftClickFill className={styles.MouseIcon} />}
-            labelPosition="right"
-          />
+          {!isLastStop && (
+            <Key
+              action="nextStop"
+              label="Skip to next stop"
+              input={<PiMouseLeftClickFill className={styles.MouseIcon} />}
+              labelPosition="right"
+            />
+          )}
           <Key
             action="exitTour"
             label="Exit tour"
