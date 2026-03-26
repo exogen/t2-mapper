@@ -4,6 +4,7 @@
   flex-direction: column;
   align-items: center;
   white-space: nowrap;
+  opacity: 0; /* updated in useFrame */
 }
 
 .Top {

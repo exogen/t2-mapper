@@ -159,8 +159,8 @@
   }
 
   .Description {
-    font-size: 13px;
-    line-height: calc(20 / 13);
+    font-size: 14px;
+    line-height: calc(20 / 14);
   }
 
   .Field label,

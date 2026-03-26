@@ -21,21 +21,22 @@ function isBehindCamera(
   );
 }
 
-export const FloatingLabel = memo(function FloatingLabel({
-  children,
-  color = "white",
-  position = DEFAULT_POSITION,
-  opacity = "fadeWithDistance",
-}: {
-  children: ReactNode;
-  color?: string;
-  position?: [x: number, y: number, z: number];
-  opacity?: number | "fadeWithDistance";
-}) {
-  const fadeWithDistance = opacity === "fadeWithDistance";
+/** Default fade distance for fadeWithDistance labels. */
+const DEFAULT_FADE_DISTANCE = 200;
+
+/**
+ * Hook that manages visibility and opacity fading for a floating label group.
+ * Attach `groupRef` to a `<group>` so world-position lookups work. Apply
+ * `opacityRef.current` to DOM elements each frame for smooth fading.
+ */
+export function useFloatingLabelFade({
+  opacity: opacityProp = "fadeWithDistance" as number | "fadeWithDistance",
+  fadeDistance = DEFAULT_FADE_DISTANCE,
+} = {}) {
+  const fadeWithDistance = opacityProp === "fadeWithDistance";
   const groupRef = useRef<Object3D>(null);
-  const [isVisible, setIsVisible] = useState(opacity !== 0);
-  const labelRef = useRef<HTMLDivElement>(null);
+  const [isVisible, setIsVisible] = useState(opacityProp !== 0);
+  const opacityRef = useRef("0");
 
   useFrame(({ camera }) => {
     const group = groupRef.current;
@@ -53,25 +54,49 @@ export const FloatingLabel = memo(function FloatingLabel({
       const distance = behind
         ? Infinity
         : camera.position.distanceTo(_worldPos);
-      const shouldBeVisible = distance < 200;
+      const shouldBeVisible = distance < fadeDistance;
 
       if (isVisible !== shouldBeVisible) {
         setIsVisible(shouldBeVisible);
       }
 
-      // Update opacity directly on DOM element (no re-render).
-      if (labelRef.current && shouldBeVisible) {
-        const fadeOpacity = Math.max(0, Math.min(1, 1 - distance / 200));
-        labelRef.current.style.opacity = fadeOpacity.toString();
-      }
+      opacityRef.current = shouldBeVisible
+        ? Math.max(0, Math.min(1, 1 - distance / fadeDistance)).toString()
+        : "0";
     } else {
-      const shouldBeVisible = !behind && opacity !== 0;
+      const shouldBeVisible = !behind && opacityProp !== 0;
       if (isVisible !== shouldBeVisible) {
         setIsVisible(shouldBeVisible);
       }
-      if (labelRef.current) {
-        labelRef.current.style.opacity = (opacity as number).toString();
-      }
+      opacityRef.current = (opacityProp as number).toString();
+    }
+  });
+
+  return { groupRef, isVisible, opacityRef };
+}
+
+export const FloatingLabel = memo(function FloatingLabel({
+  children,
+  color = "white",
+  position = DEFAULT_POSITION,
+  opacity = "fadeWithDistance",
+  fadeDistance,
+}: {
+  children: ReactNode;
+  color?: string;
+  position?: [x: number, y: number, z: number];
+  opacity?: number | "fadeWithDistance";
+  fadeDistance?: number;
+}) {
+  const { groupRef, isVisible, opacityRef } = useFloatingLabelFade({
+    opacity,
+    fadeDistance,
+  });
+  const labelRef = useRef<HTMLDivElement>(null);
+
+  useFrame(() => {
+    if (labelRef.current) {
+      labelRef.current.style.opacity = opacityRef.current;
     }
   });
 
@@ -79,11 +104,7 @@ export const FloatingLabel = memo(function FloatingLabel({
     <group ref={groupRef}>
       {isVisible ? (
         <Html position={position} center>
-          <div
-            ref={labelRef}
-            className={styles.Label}
-            style={{ color, opacity: fadeWithDistance ? 0 : undefined }}
-          >
+          <div ref={labelRef} className={styles.Label} style={{ color }}>
             {children}
           </div>
         </Html>

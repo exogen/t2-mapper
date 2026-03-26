@@ -1,10 +1,11 @@
-import { useMemo, useRef, useState } from "react";
-import { useFrame, useThree } from "@react-three/fiber";
+import { useMemo, useRef } from "react";
+import { useFrame } from "@react-three/fiber";
 import { Html } from "@react-three/drei";
-import { Box3, Object3D, Vector3 } from "three";
+import { Box3 } from "three";
 import { getKeyframeAtTime } from "../stream/playbackUtils";
 import { textureToUrl } from "../loaders";
 import { useStaticShape } from "./GenericShape";
+import { useFloatingLabelFade } from "./FloatingLabel";
 import { streamPlaybackStore } from "../state/streamPlaybackStore";
 import type { PlayerEntity } from "../state/gameEntityTypes";
 import styles from "./PlayerNameplate.module.css";
@@ -21,8 +22,6 @@ const NAME_HEIGHT = -0.2;
 const IFF_FRIENDLY_URL = textureToUrl("gui/hud_alliedtriangle");
 const IFF_ENEMY_URL = textureToUrl("gui/hud_enemytriangle");
 
-const _tmpVec = new Vector3();
-
 const EMPTY_KEYFRAMES: never[] = [];
 
 /**
@@ -31,13 +30,13 @@ const EMPTY_KEYFRAMES: never[] = [];
  */
 export function PlayerNameplate({ entity }: { entity: PlayerEntity }) {
   const gltf = useStaticShape((entity.shapeName ?? entity.dataBlock)!);
-  const camera = useThree((state) => state.camera);
-  const groupRef = useRef<Object3D>(null);
+  const { groupRef, isVisible, opacityRef } = useFloatingLabelFade({
+    fadeDistance: NAMEPLATE_FADE_DISTANCE,
+  });
   const iffContainerRef = useRef<HTMLDivElement>(null);
   const nameContainerRef = useRef<HTMLDivElement>(null);
   const fillRef = useRef<HTMLDivElement>(null);
   const iffImgRef = useRef<HTMLImageElement>(null);
-  const [isVisible, setIsVisible] = useState(true);
   const nameRef = useRef<HTMLDivElement>(null);
 
   // Derive IFF height from the shape's bounding box.
@@ -54,27 +53,7 @@ export function PlayerNameplate({ entity }: { entity: PlayerEntity }) {
   );
 
   useFrame(() => {
-    const group = groupRef.current;
-    if (!group) return;
-
-    // Compute world-space distance to camera.
-    group.getWorldPosition(_tmpVec);
-    const distance = camera.position.distanceTo(_tmpVec);
-
-    // Check if behind camera using dot product with camera forward (-Z column).
-    const e = camera.matrixWorld.elements;
-    const behind =
-      (_tmpVec.x - e[12]) * -e[8] +
-        (_tmpVec.y - e[13]) * -e[9] +
-        (_tmpVec.z - e[14]) * -e[10] <
-      0;
-    const shouldBeVisible = !behind && distance < NAMEPLATE_FADE_DISTANCE;
-
-    if (isVisible !== shouldBeVisible) {
-      setIsVisible(shouldBeVisible);
-    }
-
-    if (!shouldBeVisible) return;
+    if (!isVisible) return;
 
     // Hide nameplate when player is dead.
     const kf = getKeyframeAtTime(
@@ -89,17 +68,13 @@ export function PlayerNameplate({ entity }: { entity: PlayerEntity }) {
       return;
     }
 
-    // Update opacity on both label containers.
-    const opacity = Math.max(
-      0,
-      Math.min(1, 1 - distance / NAMEPLATE_FADE_DISTANCE),
-    );
-    const opacityStr = opacity.toString();
+    // Apply shared fade opacity to both containers.
+    const opacity = opacityRef.current;
     if (iffContainerRef.current) {
-      iffContainerRef.current.style.opacity = opacityStr;
+      iffContainerRef.current.style.opacity = opacity;
     }
     if (nameContainerRef.current) {
-      nameContainerRef.current.style.opacity = opacityStr;
+      nameContainerRef.current.style.opacity = opacity;
     }
 
     // Update player name imperatively — entity.playerName is mutated in-place

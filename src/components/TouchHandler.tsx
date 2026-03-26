@@ -78,17 +78,23 @@ export function TouchHandler() {
         // Map joystick to movement axes, pre-scaled by speedMultiplier.
         x = Math.max(
           -1,
-          Math.min(1, joyX * normalizedMoveForce * speedMultiplier),
+          Math.min(
+            1,
+            joyX * normalizedMoveForce * (0.8 * speedMultiplier + 0.05),
+          ),
         );
         y = Math.max(
           -1,
-          Math.min(1, joyY * normalizedMoveForce * speedMultiplier),
+          Math.min(
+            1,
+            joyY * normalizedMoveForce * (0.8 * speedMultiplier + 0.05),
+          ),
         );
       }
     } else if (touchMode === "moveLookStick") {
       if (moveForce > 0) {
         // Move forward at half speed.
-        y = Math.max(-1, Math.min(1, 0.5 * speedMultiplier));
+        y = Math.min(1, 0.5 * speedMultiplier + 0.05);
 
         if (moveForce >= SINGLE_STICK_DEADZONE) {
           // Outer zone: also control camera look (yaw + pitch).

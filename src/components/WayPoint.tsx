@@ -3,7 +3,7 @@ import { FloatingLabel } from "./FloatingLabel";
 
 export function WayPoint({ entity }: { entity: WayPointEntity }) {
   return entity.label ? (
-    <FloatingLabel position={entity.position} opacity={0.6}>
+    <FloatingLabel opacity={0.6}>
       {entity.label}
     </FloatingLabel>
   ) : null;
