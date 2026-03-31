@@ -670,10 +670,36 @@ export const ShapeModel = memo(function ShapeModel({
         });
       });
 
-      // Build clips by name (case-insensitive)
+      // Build clips by name (case-insensitive).
+      // Blend sequences (DTS flag 0x8) store absolute transforms but must be
+      // played in additive mode. Clone and convert them here so the original
+      // cached clips from useGLTF are never mutated.
+      const blendNames = new Set<string>();
+      const rawNames = scene.userData?.dts_sequence_names;
+      const rawBlend = scene.userData?.dts_sequence_blend;
+      if (typeof rawNames === "string") {
+        try {
+          const names: string[] = JSON.parse(rawNames);
+          const blend: boolean[] =
+            typeof rawBlend === "string" ? JSON.parse(rawBlend) : [];
+          for (let i = 0; i < names.length; i++) {
+            if (blend[i]) blendNames.add(names[i].toLowerCase());
+          }
+        } catch {
+          /* expected */
+        }
+      }
       const clips = new Map<string, AnimationClip>();
       for (const clip of gltf.animations) {
-        clips.set(clip.name.toLowerCase(), clip);
+        const lower = clip.name.toLowerCase();
+        if (blendNames.has(lower)) {
+          const cloned = clip.clone();
+          const restClip = buildRestPoseClip(scene, cloned);
+          AnimationUtils.makeClipAdditive(cloned, 0, restClip, 30);
+          clips.set(lower, cloned);
+        } else {
+          clips.set(lower, clip);
+        }
       }
 
       // Only create a mixer if there are skeleton animation clips.
@@ -698,7 +724,6 @@ export const ShapeModel = memo(function ShapeModel({
   }, [clonedScene, mixer]);
 
   const threadsRef = useRef(new Map<number, ThreadState>());
-  const additiveClipsRef = useRef(new Set<string>());
   const iflMeshAtlasRef = useRef(new Map<any, IflAtlas>());
 
   interface IflAnimInfo {
@@ -795,7 +820,6 @@ export const ShapeModel = memo(function ShapeModel({
   //   handler reads ghost ThreadMask data and drives everything.
   useEffect(() => {
     const threads = threadsRef.current;
-    const additiveClips = additiveClipsRef.current;
     const isMissionMode = streamEntityRef.current == null;
 
     function prepareVisNode(v: VisNode) {
@@ -836,16 +860,10 @@ export const ShapeModel = memo(function ShapeModel({
           action.setLoop(LoopOnce, 1);
           action.clampWhenFinished = true;
         }
-        // Blend sequences (DTS flag 0x8) are delta transforms post-multiplied
-        // onto the existing pose. The GLB stores rest*delta (Blender's glTF
-        // exporter bakes in the rest pose). Subtracting the rest pose via
-        // buildRestPoseClip recovers pure deltas for Three.js additive mode.
+        // Blend sequences (DTS flag 0x8) are delta transforms multiplied
+        // onto the existing pose. Use Three.js additive blending so they
+        // composite on top of non-blend threads (e.g. Deploy on Ambient).
         if (seqBlendByName.has(seqLower)) {
-          if (!additiveClips.has(seqLower)) {
-            const restClip = buildRestPoseClip(gltf.scene, clip);
-            AnimationUtils.makeClipAdditive(clip, 0, restClip, 30);
-            additiveClips.add(seqLower);
-          }
           action.blendMode = AdditiveAnimationBlendMode;
         }
         action.reset().play();
@@ -878,13 +896,58 @@ export const ShapeModel = memo(function ShapeModel({
     handlePlayThreadRef.current = handlePlayThread;
     handleStopThreadRef.current = handleStopThread;
 
+    // Set up WheeledVehicle wheel/spring/turn animations.
+    // These are position-controlled (setPos) not thread-controlled.
+    // Runs in both mission and demo/live modes.
+    if (mixer && clipsByName.has("wheel0")) {
+      const wheelAnims: WheelAnimState[] = [];
+      for (let i = 0; i < 6; i++) {
+        const state: WheelAnimState = { rotation: 0 };
+        const wheelClip = clipsByName.get(`wheel${i}`);
+        if (wheelClip) {
+          const action = mixer.clipAction(wheelClip);
+          action.setLoop(LoopOnce, 1);
+          action.clampWhenFinished = true;
+          action.paused = true;
+          action.play();
+          state.wheelAction = action;
+        }
+        const springClip = clipsByName.get(`spring${i}`);
+        if (springClip) {
+          const action = mixer.clipAction(springClip);
+          action.setLoop(LoopOnce, 1);
+          action.clampWhenFinished = true;
+          action.paused = true;
+          action.play();
+          // Rest position: springs at full extension (pos=0 in Torque).
+          action.time = 0;
+          state.springAction = action;
+        }
+        const turnClip = clipsByName.get(`turn${i}`);
+        if (turnClip) {
+          const action = mixer.clipAction(turnClip);
+          action.setLoop(LoopOnce, 1);
+          action.clampWhenFinished = true;
+          action.paused = true;
+          action.play();
+          // Center (straight ahead).
+          action.time = turnClip.duration * 0.5;
+          state.turnAction = action;
+        }
+        wheelAnims.push(state);
+      }
+      wheelAnimsRef.current = wheelAnims;
+    } else {
+      wheelAnimsRef.current = null;
+    }
+
     // ── Demo/live mode: no auto-play, useFrame drives from ghost data ──
     if (!isMissionMode) {
       return () => {
         handlePlayThreadRef.current = null;
         handleStopThreadRef.current = null;
         prevDemoThreadsRef.current = undefined;
-        additiveClips.clear();
+        wheelAnimsRef.current = null;
         for (const slot of [...threads.keys()]) handleStopThread(slot);
       };
     }
@@ -936,51 +999,6 @@ export const ShapeModel = memo(function ShapeModel({
       if (clipsByName.has(seqName) || visNodesBySequence.has(seqName)) {
         handlePlayThread(slot, seqName);
       }
-    }
-
-    // Set up WheeledVehicle wheel/spring/turn animations.
-    // These are position-controlled (setPos) not thread-controlled.
-    // Detect by checking if wheel0/spring0 clips exist.
-    if (mixer && clipsByName.has("wheel0")) {
-      const wheelAnims: WheelAnimState[] = [];
-      for (let i = 0; i < 6; i++) {
-        const state: WheelAnimState = { rotation: 0 };
-        const wheelClip = clipsByName.get(`wheel${i}`);
-        if (wheelClip) {
-          const action = mixer.clipAction(wheelClip);
-          action.setLoop(LoopOnce, 1);
-          action.clampWhenFinished = true;
-          action.paused = true;
-          action.play();
-          state.wheelAction = action;
-        }
-        const springClip = clipsByName.get(`spring${i}`);
-        if (springClip) {
-          const action = mixer.clipAction(springClip);
-          action.setLoop(LoopOnce, 1);
-          action.clampWhenFinished = true;
-          action.paused = true;
-          action.play();
-          // Rest position: springs at full extension (pos=0 in Torque).
-          action.time = 0;
-          state.springAction = action;
-        }
-        const turnClip = clipsByName.get(`turn${i}`);
-        if (turnClip) {
-          const action = mixer.clipAction(turnClip);
-          action.setLoop(LoopOnce, 1);
-          action.clampWhenFinished = true;
-          action.paused = true;
-          action.play();
-          // Center (straight ahead).
-          action.time = turnClip.duration * 0.5;
-          state.turnAction = action;
-        }
-        wheelAnims.push(state);
-      }
-      wheelAnimsRef.current = wheelAnims;
-    } else {
-      wheelAnimsRef.current = null;
     }
 
     return () => {
