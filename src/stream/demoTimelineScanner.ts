@@ -204,7 +204,11 @@ export async function scanDemoTimeline(
     } catch (err) {
       // Parser cursor state is unknown after a throw — stop scanning and
       // return whatever events we've found rather than risking an infinite loop.
-      log.warn("Stopping scan at block %d due to read error: %o", blockCount, err);
+      log.warn(
+        "Stopping scan at block %d due to read error: %o",
+        blockCount,
+        err,
+      );
       break;
     }
     if (!block) break;
@@ -268,15 +272,9 @@ export async function scanDemoTimeline(
           recorderClientId != null &&
           args.length >= 6
         ) {
-          const clientId = parseInt(
-            resolveNetString(args[4], netStrings),
-            10,
-          );
+          const clientId = parseInt(resolveNetString(args[4], netStrings), 10);
           if (clientId === recorderClientId) {
-            const teamId = parseInt(
-              resolveNetString(args[5], netStrings),
-              10,
-            );
+            const teamId = parseInt(resolveNetString(args[5], netStrings), 10);
             if (!isNaN(teamId)) recorderTeamId = teamId;
           }
         }

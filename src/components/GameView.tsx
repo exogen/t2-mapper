@@ -1,7 +1,7 @@
 import { lazy, memo, Suspense } from "react";
 import { type RootState } from "@react-three/fiber";
 import { useDataSource } from "../state/gameEntityStore";
-import { useRecording } from "./RecordingProvider";
+import { useRecording } from "./usePlayback";
 import { AudioProvider } from "./AudioContext";
 import { CamerasProvider } from "./CamerasProvider";
 import { InputProducer } from "./InputProducer";

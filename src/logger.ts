@@ -3,7 +3,7 @@ import pino from "pino";
 /**
  * Module-scoped browser logging via pino.
  *
- * Control via VITE_LOG (comma-separated):
+ * Control via LOG_LEVEL (comma-separated):
  *   "debug"                                    → all modules at debug
  *   "liveStreaming:debug,DebugSuspense:trace"  → those modules only, rest silent
  *   "debug,liveStreaming:trace"                → all at debug, liveStreaming at trace
@@ -27,12 +27,12 @@ const PINO_LEVELS = new Set([
   "silent",
 ]);
 
-/** Parse VITE_LOG into a global default and per-module overrides. */
+/** Parse LOG_LEVEL into a global default and per-module overrides. */
 function parseLogConfig(): {
   globalLevel: string;
   modules: Map<string, string>;
 } {
-  const raw = import.meta.env.VITE_LOG?.trim();
+  const raw = (process.env.LOG_LEVEL ?? "").trim();
   if (!raw) return { globalLevel: "info", modules: new Map() };
 
   let globalLevel: string | null = null;

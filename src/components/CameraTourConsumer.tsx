@@ -342,8 +342,7 @@ export function CameraTourConsumer() {
   useInputAction("nextStop", () => {
     const animation = cameraTourStore.getState().animation;
     if (!animation) return;
-    const isLastTarget =
-      animation.currentIndex >= animation.targets.length - 1;
+    const isLastTarget = animation.currentIndex >= animation.targets.length - 1;
     if (isLastTarget) {
       cameraTourStore.getState().cancel();
     } else {

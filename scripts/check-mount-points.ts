@@ -192,7 +192,9 @@ for (const rel of playerModels) {
       );
     }
   } catch (e) {
-    console.log(`${path.basename(rel, ".glb")}: error - ${(e as Error).message}`);
+    console.log(
+      `${path.basename(rel, ".glb")}: error - ${(e as Error).message}`,
+    );
   }
 }
 

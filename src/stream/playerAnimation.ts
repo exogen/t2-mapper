@@ -77,8 +77,7 @@ export function pickMoveAnimation(
   //      be skiing/airborne since the engine limits grounded speed.
   const horizontalSpeedSq = vx * vx + vy * vy;
   const airborne =
-    Math.abs(vz) > 2 ||
-    horizontalSpeedSq > MAX_GROUND_SPEED * MAX_GROUND_SPEED;
+    Math.abs(vz) > 2 || horizontalSpeedSq > MAX_GROUND_SPEED * MAX_GROUND_SPEED;
 
   if (airborne) {
     // Tribes2.exe checks mJetting here: jetting → JetAnim, else → RootAnim.

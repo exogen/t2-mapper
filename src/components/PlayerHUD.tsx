@@ -225,7 +225,6 @@ function WeaponHUD() {
   );
 }
 
-
 function TeamScores() {
   const teamScores = useEngineSelector(
     (state) => state.playback.streamSnapshot?.teamScores,
@@ -416,8 +415,7 @@ export function PlayerHUD() {
 
   // In free-fly mode the camera is disconnected from the player, so
   // player-specific HUD elements (health, energy, weapons, etc.) are hidden.
-  const showPlayerElements =
-    hasControlPlayer && cameraMode !== "freeFly";
+  const showPlayerElements = hasControlPlayer && cameraMode !== "freeFly";
 
   return (
     <div className={styles.PlayerHUD}>

@@ -13,11 +13,13 @@ import {
   PositionalAudio,
   Vector3,
 } from "three";
-import type { AnimationAction, AnimationClip } from "three";
+import type { AnimationAction } from "three";
+import { AnimationClip } from "three";
 import * as SkeletonUtils from "three/examples/jsm/utils/SkeletonUtils.js";
 import {
   ANIM_TRANSITION_TIME,
   DEFAULT_EYE_HEIGHT,
+  buildRestPoseClip,
   disposeClonedScene,
   getKeyframeAtTime,
   getPosedNodeTransform,
@@ -40,25 +42,14 @@ import {
   trackSound,
   untrackSound,
 } from "./AudioEmitter";
+import { getEffectiveSoundRate } from "./AudioEmitter";
 import type { ResolvedAudioProfile } from "./AudioEmitter";
 import { audioToUrl } from "../loaders";
 import { useSettings } from "./SettingsProvider";
 import { useEngineStoreApi, useEngineSelector } from "../state/engineStore";
+import { PlayerNameplate } from "./PlayerNameplate";
 import { streamPlaybackStore } from "../state/streamPlaybackStore";
 import type { PlayerEntity } from "../state/gameEntityTypes";
-
-/**
- * Map weapon shape to the arm blend animation (armThread).
- * Only missile launcher and sniper rifle have custom arm poses; all others
- * use the default `lookde`.
- */
-function getArmThread(weaponShape: string | undefined): string {
-  if (!weaponShape) return "lookde";
-  const lower = weaponShape.toLowerCase();
-  if (lower.includes("missile")) return "lookms";
-  if (lower.includes("sniper")) return "looksn";
-  return "lookde";
-}
 
 /** Number of table actions in the engine's ActionAnimationList (Tribes2.exe build 25034). */
 const NUM_TABLE_ACTION_ANIMS = 8;
@@ -223,19 +214,25 @@ function stopLoopingSound(
  */
 export function PlayerModel({ entity }: { entity: PlayerEntity }) {
   const engineStore = useEngineStoreApi();
-  const shapeName = entity.shapeName ?? entity.dataBlock;
-  const gltf = useStaticShape(shapeName!);
+  const shapeName = entity.shapeName!;
+  const gltf = useStaticShape(shapeName);
   const shapeAliases = useEngineSelector((state) => {
     const sn = shapeName?.toLowerCase();
     return sn ? state.runtime.sequenceAliases.get(sn) : undefined;
   });
   const anisotropy = useAnisotropy();
+  const controlPlayerGhostId = useEngineSelector(
+    (state) => state.playback.streamSnapshot?.controlPlayerGhostId,
+  );
 
   // Clone scene preserving skeleton bindings, create mixer, find mount bones.
   const { clonedScene, mixer, mount0, mount1, mount2, iflInitializers } =
     useMemo(() => {
       const scene = SkeletonUtils.clone(gltf.scene) as Group;
-      const iflInits = processShapeScene(scene, undefined, { anisotropy });
+      const iflInits = processShapeScene(scene, undefined, {
+        anisotropy,
+        emap: entity.emap,
+      });
 
       // Use front-face-only rendering so the camera can see out from inside the
       // model in first-person (backface culling hides interior faces).
@@ -265,7 +262,7 @@ export function PlayerModel({ entity }: { entity: PlayerEntity }) {
         mount2: m2,
         iflInitializers: iflInits,
       };
-    }, [gltf, anisotropy]);
+    }, [gltf.scene, anisotropy, entity.emap]);
 
   useEffect(() => {
     return () => {
@@ -381,34 +378,79 @@ export function PlayerModel({ entity }: { entity: PlayerEntity }) {
     }
     blendActionsRef.current = blendRefs;
 
-    // Arm pose blend actions: create one per available arm animation so we
-    // can switch between them when the equipped weapon changes.
-    // All arm clips use the lookde midpoint as the additive reference, so
-    // switching from lookde to lookms captures the shoulder repositioning.
-    const armActions = new Map<string, AnimationAction>();
-    const lookdeClip = gltf.animations.find(
-      (c) => c.name.toLowerCase() === "lookde",
+    // In Torque, the "root" animation provides arm bone values (R Clavicle,
+    // R UpperArm, etc.) that persist even when movement anims play — because
+    // movement anims don't animate arm bones. In Three.js, when root fades
+    // out, arm bones fall to the rest pose. Fix: extract root's arm-only
+    // tracks into a permanent action that always plays at weight=1.
+    const rootClip = gltf.animations.find(
+      (c) => c.name.toLowerCase() === "root",
     );
-    const fps = 30;
-    const lookdeRefFrame = lookdeClip
-      ? Math.round((lookdeClip.duration * fps) / 2)
-      : 0;
-    for (const armName of ["lookde", "lookms", "looksn"]) {
-      const clip = gltf.animations.find(
-        (c) => c.name.toLowerCase() === armName,
-      );
-      if (!clip) continue;
-      const cloned = clip.clone();
-      // Use lookde's midpoint as reference for all arm clips so that
-      // lookms/looksn capture the absolute shoulder offset.
-      const refClip = lookdeClip ?? clip;
-      AnimationUtils.makeClipAdditive(cloned, lookdeRefFrame, refClip, fps);
-      const action = mixer.clipAction(cloned);
-      action.blendMode = AdditiveAnimationBlendMode;
-      action.timeScale = 0;
-      action.weight = 0;
-      action.play();
-      armActions.set(armName, action);
+    if (rootClip) {
+      // Find bones that movement anims DON'T animate — these need root's values.
+      const movementBones = new Set<string>();
+      for (const clip of gltf.animations) {
+        const lower = clip.name.toLowerCase();
+        if (["forward", "back", "side", "fall"].includes(lower)) {
+          for (const t of clip.tracks) {
+            movementBones.add(t.name.slice(0, t.name.lastIndexOf(".")));
+          }
+        }
+      }
+      const rootArmTracks = rootClip.tracks.filter((t) => {
+        const bone = t.name.slice(0, t.name.lastIndexOf("."));
+        return !movementBones.has(bone);
+      });
+      if (rootArmTracks.length > 0) {
+        const rootArmsClip = new AnimationClip(
+          "root_arms",
+          rootClip.duration,
+          rootArmTracks,
+        );
+        const rootArmsAction = mixer.clipAction(rootArmsClip);
+        rootArmsAction.play(); // weight=1, always on
+      }
+    }
+
+    // Arm pose blend actions (DTS blend sequences). These are applied
+    // additively on top of root's arm base. Subtracting the rest pose via
+    // buildRestPoseClip recovers pure deltas from the GLB's rest*delta
+    // keyframes. Applied onto root's arm values, this matches Torque's
+    // post-multiply behavior.
+    //
+    // Instead of hardcoding arm pose names, iterate ALL blend sequences
+    // from the GLB's dts_sequence_blend metadata (skipping head/headside
+    // which are handled separately with their own pitch/yaw scrubbing).
+    const armActions = new Map<string, AnimationAction>();
+    const rawSeqNames = gltf.scene.userData?.dts_sequence_names;
+    const rawSeqBlend = gltf.scene.userData?.dts_sequence_blend;
+    if (typeof rawSeqNames === "string" && typeof rawSeqBlend === "string") {
+      try {
+        const seqNames: string[] = JSON.parse(rawSeqNames);
+        const seqBlend: boolean[] = JSON.parse(rawSeqBlend);
+        for (let i = 0; i < seqNames.length; i++) {
+          if (!seqBlend[i]) continue;
+          const name = seqNames[i].toLowerCase();
+          // head/headside are blend sequences but driven by headPitch/headYaw,
+          // not the arm action index — handled separately above.
+          if (name === "head" || name === "headside") continue;
+          const clip = gltf.animations.find(
+            (c) => c.name.toLowerCase() === name,
+          );
+          if (!clip) continue;
+          const cloned = clip.clone();
+          const restClip = buildRestPoseClip(gltf.scene, cloned);
+          AnimationUtils.makeClipAdditive(cloned, 0, restClip, 30);
+          const action = mixer.clipAction(cloned);
+          action.blendMode = AdditiveAnimationBlendMode;
+          action.timeScale = 0;
+          action.weight = 0;
+          action.play();
+          armActions.set(name, action);
+        }
+      } catch {
+        /* malformed metadata */
+      }
     }
     armActionsRef.current = armActions;
 
@@ -685,8 +727,14 @@ export function PlayerModel({ entity }: { entity: PlayerEntity }) {
       }
     }
 
-    // Switch arm blend animation based on equipped weapon.
-    const desiredArm = getArmThread(entity.weaponShape);
+    // Switch arm blend animation based on the networked arm action index.
+    // The server resolves the weapon datablock's armThread field to an action
+    // index and sends it via Player::packUpdate (ActionMask).
+    const armEntry =
+      entity.armAction != null
+        ? actionAnimMap.get(entity.armAction)
+        : undefined;
+    const desiredArm = armEntry?.clipName ?? "lookde";
     if (desiredArm !== activeArmRef.current) {
       const armActions = armActionsRef.current;
       const prev = activeArmRef.current
@@ -751,7 +799,7 @@ export function PlayerModel({ entity }: { entity: PlayerEntity }) {
         try {
           sound.setBuffer(jetBufferRef.current);
           sound.setLoop(true);
-          sound.setPlaybackRate(playback.rate);
+          sound.setPlaybackRate(getEffectiveSoundRate());
           sound.play();
           trackSound(sound, 1);
         } catch {
@@ -779,6 +827,9 @@ export function PlayerModel({ entity }: { entity: PlayerEntity }) {
 
   return (
     <>
+      {entity.id !== controlPlayerGhostId && (
+        <PlayerNameplate entity={entity} />
+      )}
       <group rotation={[0, Math.PI / 2, 0]}>
         <primitive object={clonedScene} />
       </group>
@@ -812,7 +863,11 @@ export function PlayerModel({ entity }: { entity: PlayerEntity }) {
               <ShapePlaceholder color="cyan" label={currentPackShape} />
             }
           >
-            <PackModel packShape={currentPackShape} mountBone={mount1} />
+            <PackModel
+              packShape={currentPackShape}
+              mountBone={mount1}
+              emap={entity.emap}
+            />
           </DebugSuspense>
         </ShapeErrorBoundary>
       )}
@@ -827,7 +882,11 @@ export function PlayerModel({ entity }: { entity: PlayerEntity }) {
               <ShapePlaceholder color="cyan" label={currentFlagShape} />
             }
           >
-            <PackModel packShape={currentFlagShape} mountBone={mount2} />
+            <PackModel
+              packShape={currentFlagShape}
+              mountBone={mount2}
+              emap={entity.emap}
+            />
           </DebugSuspense>
         </ShapeErrorBoundary>
       )}
@@ -888,7 +947,10 @@ function WeaponModel({
     weaponIflInitializers,
   } = useMemo(() => {
     const clone = SkeletonUtils.clone(weaponGltf.scene) as Group;
-    const iflInits = processShapeScene(clone, undefined, { anisotropy });
+    const iflInits = processShapeScene(clone, undefined, {
+      anisotropy,
+      emap: entity.emap,
+    });
 
     // Compute Mountpoint inverse offset so the weapon's grip aligns to Mount0.
     const mp = getPosedNodeTransform(
@@ -1097,7 +1159,7 @@ function WeaponModel({
                     sound.setMaxDistance(resolved.maxDist);
                     sound.setRolloffFactor(1);
                     sound.setVolume(resolved.volume);
-                    sound.setPlaybackRate(playback.rate);
+                    sound.setPlaybackRate(getEffectiveSoundRate());
                     sound.setLoop(true);
                     weaponClone.add(sound);
                     trackSound(sound);
@@ -1234,16 +1296,21 @@ function applyWeaponAnim(
 function PackModel({
   packShape,
   mountBone,
+  emap,
 }: {
   packShape: string;
   mountBone: Object3D;
+  emap?: boolean;
 }) {
   const packGltf = useStaticShape(packShape);
   const anisotropy = useAnisotropy();
 
   const { packClone, packIflInitializers } = useMemo(() => {
     const clone = SkeletonUtils.clone(packGltf.scene) as Group;
-    const iflInits = processShapeScene(clone, undefined, { anisotropy });
+    const iflInits = processShapeScene(clone, undefined, {
+      anisotropy,
+      emap,
+    });
 
     // Compute Mountpoint inverse offset so the pack aligns to Mount1.
     const mp = getPosedNodeTransform(

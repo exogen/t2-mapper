@@ -29,7 +29,7 @@ const EMPTY_KEYFRAMES: never[] = [];
  * bar. Fades out with distance.
  */
 export function PlayerNameplate({ entity }: { entity: PlayerEntity }) {
-  const gltf = useStaticShape((entity.shapeName ?? entity.dataBlock)!);
+  const gltf = useStaticShape(entity.shapeName!);
   const { groupRef, isVisible, opacityRef } = useFloatingLabelFade({
     fadeDistance: NAMEPLATE_FADE_DISTANCE,
   });

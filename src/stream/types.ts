@@ -108,6 +108,8 @@ export interface StreamEntity {
   className?: string;
   dataBlockId?: number;
   shapeHint?: string;
+  /** Whether the datablock enables environment map reflections. */
+  emap?: boolean;
   /** Position in Torque space [x, y, z]. */
   position?: [number, number, number];
   /** Quaternion in Three.js space [x, y, z, w]. */
@@ -154,7 +156,11 @@ export interface StreamEntity {
   audioMinLoopGap?: number;
   audioMaxLoopGap?: number;
   /** WheeledVehicle per-wheel state. */
-  wheels?: Array<{ speed: number; lateralSlip: number; longitudinalSlip: number }>;
+  wheels?: Array<{
+    speed: number;
+    lateralSlip: number;
+    longitudinalSlip: number;
+  }>;
   /** Vehicle steering angle (radians). */
   steeringYaw?: number;
   /** Vehicle frozen state (deployed). */

@@ -9,7 +9,9 @@ import {
   NoColorSpace,
   Object3D,
   Quaternion,
+  QuaternionKeyframeTrack,
   Vector3,
+  VectorKeyframeTrack,
 } from "three";
 import type {
   BufferGeometry,
@@ -27,7 +29,6 @@ import {
   getFrameIndexForTime,
   updateAtlasFrame,
 } from "../components/useIflTexture";
-import { getHullBoneIndices } from "../meshUtils";
 import { loadTexture, setupTexture } from "../textureUtils";
 import { textureToUrl } from "../loaders";
 import type { Keyframe } from "./types";
@@ -142,6 +143,51 @@ export function getKeyframeAtTime(
 }
 
 /**
+ * Build a 1-frame AnimationClip that captures the skeleton's rest/bind pose
+ * for every bone track in `targetClip`. Used as a reference for
+ * `makeClipAdditive` on DTS blend sequences — the Blender glTF exporter
+ * bakes `rest * delta` into blend keyframes, so subtracting the rest pose
+ * recovers the pure deltas needed for Three.js additive blending.
+ */
+export function buildRestPoseClip(
+  scene: Object3D,
+  targetClip: AnimationClip,
+): AnimationClip {
+  // Build a name → node lookup from the scene graph.
+  const nodesByName = new Map<string, Object3D>();
+  scene.traverse((n) => {
+    if (n.name) nodesByName.set(n.name, n);
+  });
+
+  const tracks: (QuaternionKeyframeTrack | VectorKeyframeTrack)[] = [];
+
+  for (const track of targetClip.tracks) {
+    // Track names are like "BoneName.quaternion" or "BoneName.position".
+    const dotIdx = track.name.lastIndexOf(".");
+    if (dotIdx === -1) continue;
+    const nodeName = track.name.slice(0, dotIdx);
+    const prop = track.name.slice(dotIdx + 1);
+    const node = nodesByName.get(nodeName);
+    if (!node) continue;
+
+    if (prop === "quaternion") {
+      const q = node.quaternion;
+      tracks.push(
+        new QuaternionKeyframeTrack(track.name, [0], [q.x, q.y, q.z, q.w]),
+      );
+    } else if (prop === "position") {
+      const p = node.position;
+      tracks.push(new VectorKeyframeTrack(track.name, [0], [p.x, p.y, p.z]));
+    } else if (prop === "scale") {
+      const s = node.scale;
+      tracks.push(new VectorKeyframeTrack(track.name, [0], [s.x, s.y, s.z]));
+    }
+  }
+
+  return new AnimationClip("_restPose", 0, tracks);
+}
+
+/**
  * Clone a shape scene, apply the "Root" idle animation at t=0, and return the
  * world-space transform of the named node. This evaluates the skeleton at its
  * idle pose rather than using the collapsed bind pose.
@@ -191,51 +237,6 @@ export function getPosedNodeTransform(
 
   if (!position || !quaternion) return null;
   return { position, quaternion };
-}
-
-/**
- * Remove faces influenced by hull bones, mutating the geometry in place.
- * Unlike filterGeometryByVertexGroups (which clones), this is safe when the
- * geometry is already our own copy (e.g. from SkeletonUtils.clone).
- */
-function filterHullFaces(
-  geometry: BufferGeometry,
-  hullBoneIndices: Set<number>,
-): void {
-  if (hullBoneIndices.size === 0 || !geometry.attributes.skinIndex) return;
-
-  const skinIndex = geometry.attributes.skinIndex;
-  const skinWeight = geometry.attributes.skinWeight;
-  const index = geometry.index;
-  if (!index) return;
-
-  const vertexHasHullInfluence = new Array(skinIndex.count).fill(false);
-  for (let i = 0; i < skinIndex.count; i++) {
-    for (let j = 0; j < 4; j++) {
-      const boneIndex = skinIndex.array[i * 4 + j];
-      const weight = skinWeight.array[i * 4 + j];
-      if (weight > 0.01 && hullBoneIndices.has(boneIndex)) {
-        vertexHasHullInfluence[i] = true;
-        break;
-      }
-    }
-  }
-
-  const newIndices: number[] = [];
-  const indexArray = index.array;
-  for (let i = 0; i < indexArray.length; i += 3) {
-    const i0 = indexArray[i];
-    const i1 = indexArray[i + 1];
-    const i2 = indexArray[i + 2];
-    if (
-      !vertexHasHullInfluence[i0] &&
-      !vertexHasHullInfluence[i1] &&
-      !vertexHasHullInfluence[i2]
-    ) {
-      newIndices.push(i0, i1, i2);
-    }
-  }
-  geometry.setIndex(newIndices);
 }
 
 /**
@@ -307,10 +308,11 @@ export function replaceWithShapeMaterial(
   mat: MeshStandardMaterial,
   vis: number,
   isOrganic = false,
-  options: { anisotropy?: number } = {},
+  options: { anisotropy?: number; emap?: boolean } = {},
 ): ShapeMaterialResult {
   const resourcePath: string | undefined = mat.userData?.resource_path;
   const flagNames = new Set<string>(mat.userData?.flag_names ?? []);
+  const reflectionAmount: number = mat.userData?.reflection_amount ?? 1.0;
 
   if (!resourcePath) {
     // No texture path — plain Lambert fallback with fog/lighting shaders.
@@ -326,6 +328,9 @@ export function replaceWithShapeMaterial(
   // IFL materials need async atlas loading — create with null map to avoid
   // "Resource not found" warnings from textureToUrl, and return an initializer
   // that loads the atlas and sets up per-frame animation.
+  const emapEnabled = !!options.emap;
+  const effectiveReflectionAmount = emapEnabled ? reflectionAmount : 0;
+
   if (flagNames.has("IflMaterial")) {
     const result = createMaterialFromFlags(
       mat,
@@ -333,6 +338,8 @@ export function replaceWithShapeMaterial(
       flagNames,
       isOrganic,
       vis,
+      false,
+      effectiveReflectionAmount,
     );
     if (Array.isArray(result)) {
       const material = result[1];
@@ -371,6 +378,8 @@ export function replaceWithShapeMaterial(
     flagNames,
     isOrganic,
     vis,
+    false,
+    effectiveReflectionAmount,
   );
   if (Array.isArray(result)) {
     return { material: result[1], backMaterial: result[0] };
@@ -397,7 +406,10 @@ async function initializeIflMaterial(
 
   let disposed = false;
   const prevOnBeforeRender = mesh.onBeforeRender;
-  mesh.onBeforeRender = function (this: any, ...args: Parameters<typeof mesh.onBeforeRender>) {
+  mesh.onBeforeRender = function (
+    this: any,
+    ...args: Parameters<typeof mesh.onBeforeRender>
+  ) {
     prevOnBeforeRender?.apply(this, args);
     if (disposed) return;
     updateAtlasFrame(atlas, getFrameIndexForTime(atlas, getTime()));
@@ -417,19 +429,10 @@ async function initializeIflMaterial(
 export function processShapeScene(
   scene: Object3D,
   shapeName?: string,
-  options: { anisotropy?: number } = {},
+  options: { anisotropy?: number; emap?: boolean } = {},
 ): IflInitializer[] {
   const iflInitializers: IflInitializer[] = [];
   const isOrganic = shapeName ? isOrganicShape(shapeName) : false;
-
-  // Find skeleton for hull bone filtering.
-  let skeleton: any = null;
-  scene.traverse((n: any) => {
-    if (!skeleton && n.skeleton) skeleton = n.skeleton;
-  });
-  const hullBoneIndices = skeleton
-    ? getHullBoneIndices(skeleton)
-    : new Set<number>();
 
   // Collect back-face meshes to add after traversal (can't modify during traverse).
   const backFaceMeshes: Array<{ parent: Object3D; mesh: any }> = [];
@@ -437,8 +440,16 @@ export function processShapeScene(
   scene.traverse((node: any) => {
     if (!node.isMesh) return;
 
-    // Hide unwanted nodes: hull geometry, unassigned materials.
-    if (node.name.match(/^Hulk/i) || node.material?.name === "Unassigned") {
+    // Hide collision-only meshes. In Torque, these live in detail levels with
+    // size < 0 (utility details). The Blender addon exports dts_detail_size.
+    if (node.material?.name === "Unassigned") {
+      node.visible = false;
+      return;
+    }
+    if (
+      typeof node.userData?.dts_detail_size === "number" &&
+      node.userData.dts_detail_size < 0
+    ) {
       node.visible = false;
       return;
     }
@@ -446,23 +457,20 @@ export function processShapeScene(
     // Hide vis-animated meshes (default vis < 0.01) but DON'T skip material
     // replacement — they need correct textures for when they become visible
     // (e.g. disc launcher's Disc mesh toggles visibility via state machine).
-    const hasVisSequence = !!node.userData?.vis_sequence;
     if ((node.userData?.vis ?? 1) < 0.01) {
       node.visible = false;
     }
 
-    // Filter hull-influenced triangles and smooth normals.
-    // SkeletonUtils.clone already deep-clones geometry, so no extra clone
-    // is needed — we can mutate in place.
     if (node.geometry) {
-      filterHullFaces(node.geometry, hullBoneIndices);
       smoothVertexNormals(node.geometry);
     }
 
     // Replace PBR materials with diffuse-only Lambert materials.
     // For vis-animated meshes, use vis=1 so the material is fully opaque —
     // their visibility is toggled via node.visible, not material opacity.
-    const vis: number = hasVisSequence ? 1 : (node.userData?.vis ?? 1);
+    const vis: number = node.userData?.vis_sequence
+      ? 1
+      : (node.userData?.vis ?? 1);
     if (Array.isArray(node.material)) {
       node.material = node.material.map((m: MeshStandardMaterial) => {
         const result = replaceWithShapeMaterial(m, vis, isOrganic, options);

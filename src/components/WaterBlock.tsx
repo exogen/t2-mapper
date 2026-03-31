@@ -200,7 +200,9 @@ export const WaterBlock = memo(function WaterBlock({
     setReps((prevReps) => {
       if (
         prevReps.length === newReps.length &&
-        prevReps.every((r, i) => r[0] === newReps[i][0] && r[1] === newReps[i][1])
+        prevReps.every(
+          (r, i) => r[0] === newReps[i][0] && r[1] === newReps[i][1],
+        )
       ) {
         return prevReps;
       }

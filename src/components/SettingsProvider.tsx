@@ -12,6 +12,7 @@ import {
 } from "react";
 import { useFogQueryState } from "./useQueryParams";
 import { useTouchDevice } from "./useTouchDevice";
+import { setAdjustAudioSpeedFlag } from "./AudioEmitter";
 
 export const MIN_SPEED_MULTIPLIER = 0.01;
 export const MAX_SPEED_MULTIPLIER = 1;
@@ -40,6 +41,8 @@ type SettingsContextType = {
   setWarriorName: StateSetter<string>;
   audioVolume: number;
   setAudioVolume: StateSetter<number>;
+  adjustAudioSpeed: boolean;
+  setAdjustAudioSpeed: StateSetter<boolean>;
   sidebarOpen: boolean;
   setSidebarOpen: StateSetter<boolean>;
   fpsLimit: number | null;
@@ -81,6 +84,7 @@ type PersistedSettings = {
   mouseSensitivity?: number;
   fov?: number;
   audioEnabled?: boolean;
+  adjustAudioSpeed?: boolean;
   animationEnabled?: boolean;
   debugMode?: boolean;
   touchMode?: TouchMode;
@@ -134,6 +138,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   const [fov, setFov] = useState(90);
   const [audioEnabled, setAudioEnabled] = useState(false);
   const [audioVolume, setAudioVolume] = useState(0.75);
+  const [adjustAudioSpeed, setAdjustAudioSpeed] = useState(true);
   const [animationEnabled, setAnimationEnabled] = useState(true);
   const [debugMode, setDebugMode] = useState(false);
   const [touchMode, setTouchMode] = useState<TouchMode>("moveLookStick");
@@ -176,6 +181,8 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       setWarriorName,
       audioVolume,
       setAudioVolume,
+      adjustAudioSpeed,
+      setAdjustAudioSpeed,
       sidebarOpen,
       setSidebarOpen,
       fpsLimit,
@@ -194,6 +201,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       animationEnabled,
       warriorName,
       audioVolume,
+      adjustAudioSpeed,
       sidebarOpen,
       fpsLimit,
       showInputOverlay,
@@ -294,6 +302,9 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     if (savedSettings.audioVolume != null) {
       setAudioVolume(savedSettings.audioVolume);
     }
+    if (savedSettings.adjustAudioSpeed != null) {
+      setAdjustAudioSpeed(savedSettings.adjustAudioSpeed);
+    }
     if (savedSettings.invertScroll != null) {
       setInvertScroll(savedSettings.invertScroll);
     }
@@ -320,6 +331,11 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     }
   }, [isTouch]);
 
+  // Sync adjustAudioSpeed to the AudioEmitter module-level flag.
+  useEffect(() => {
+    setAdjustAudioSpeedFlag(adjustAudioSpeed);
+  }, [adjustAudioSpeed]);
+
   // Persist settings to localStorage with debouncing to avoid excessive writes
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -343,6 +359,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
         touchMode,
         warriorName,
         audioVolume,
+        adjustAudioSpeed,
         invertScroll,
         invertDrag,
         invertJoystick,
@@ -374,6 +391,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     touchMode,
     warriorName,
     audioVolume,
+    adjustAudioSpeed,
     invertScroll,
     invertDrag,
     invertJoystick,

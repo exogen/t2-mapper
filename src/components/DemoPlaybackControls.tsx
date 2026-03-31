@@ -9,7 +9,7 @@ import {
   useRecording,
   useSpeed,
   SPEED_OPTIONS,
-} from "./RecordingProvider";
+} from "./usePlayback";
 // import {
 // streamPlaybackStore,
 // type DemoCameraMode,
@@ -143,7 +143,7 @@ export function DemoPlaybackControls() {
         >
           {SPEED_OPTIONS.map((s) => (
             <option key={s} value={s}>
-              {s}x
+              {s}&times;
             </option>
           ))}
         </select>

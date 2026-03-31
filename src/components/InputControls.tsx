@@ -120,9 +120,7 @@ export function eventModifiersMatch(
   const wantShift = required?.includes("Shift") ?? false;
   const wantAlt = required?.includes("Alt") ?? false;
   return (
-    e.ctrlKey === wantCtrl &&
-    e.shiftKey === wantShift &&
-    e.altKey === wantAlt
+    e.ctrlKey === wantCtrl && e.shiftKey === wantShift && e.altKey === wantAlt
   );
 }
 

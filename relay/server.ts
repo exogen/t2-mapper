@@ -89,7 +89,11 @@ setInterval(() => {
   );
   if (gameConns > 0) {
     const addrs = [...activeGameConnections].map((c) => c.address);
-    relayLog.debug({ connections: addrs }, "Active game connections: %s", addrs.join(", "));
+    relayLog.debug(
+      { connections: addrs },
+      "Active game connections: %s",
+      addrs.join(", "),
+    );
   }
 }, 60_000);
 

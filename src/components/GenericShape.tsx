@@ -1,5 +1,6 @@
 import { memo, Suspense, useEffect, useMemo, useRef } from "react";
 import { ErrorBoundary } from "react-error-boundary";
+import type { AnimationAction, Material } from "three";
 import { useGLTF, useTexture } from "@react-three/drei";
 import { useFrame } from "@react-three/fiber";
 import { createLogger } from "../logger";
@@ -12,13 +13,13 @@ import {
   AdditiveAnimationBlendMode,
   AnimationMixer,
   AnimationClip,
+  AnimationUtils,
   LoopOnce,
   LoopRepeat,
   Texture,
   BufferGeometry,
   Group,
 } from "three";
-import type { AnimationAction, Material } from "three";
 import * as SkeletonUtils from "three/examples/jsm/utils/SkeletonUtils.js";
 import { setupTexture } from "../textureUtils";
 import { useAnisotropy } from "./useAnisotropy";
@@ -39,18 +40,25 @@ import {
 import type { IflAtlas } from "./useIflTexture";
 import { injectCustomFog } from "../fogShader";
 import { globalFogUniforms } from "../globalFogUniforms";
-import { injectShapeLighting } from "../shapeMaterial";
+import { injectShapeLighting, injectShapeEnvMap } from "../shapeMaterial";
 import {
   processShapeScene,
   replaceWithShapeMaterial,
   disposeClonedScene,
+  buildRestPoseClip,
 } from "../stream/playbackUtils";
 import type { ThreadState as StreamThreadState } from "../stream/types";
 
 /** Shape entity data readable in useFrame for streaming mode. */
 interface StreamShapeEntity {
   threads?: StreamThreadState[];
-  wheels?: Array<{ speed: number; lateralSlip: number; longitudinalSlip: number }>;
+  damageState?: number;
+  emap?: boolean;
+  wheels?: Array<{
+    speed: number;
+    lateralSlip: number;
+    longitudinalSlip: number;
+  }>;
   steeringYaw?: number;
   frozen?: boolean;
   maxSteeringAngle?: number;
@@ -115,14 +123,27 @@ const basicBeforeCompile: Material["onBeforeCompile"] = (shader) => {
 
 /**
  * Helper to apply volumetric fog and lighting multipliers to a material.
+ * When envMapOptions is provided, also injects Tribes 2 env map reflectivity.
  */
 export function applyShapeShaderModifications(
   mat: MeshBasicMaterial | MeshLambertMaterial,
+  envMapOptions?: { reflectionAmount: number },
 ): void {
-  mat.onBeforeCompile =
-    mat instanceof MeshLambertMaterial
-      ? lambertBeforeCompile
-      : basicBeforeCompile;
+  if (!envMapOptions) {
+    mat.onBeforeCompile =
+      mat instanceof MeshLambertMaterial
+        ? lambertBeforeCompile
+        : basicBeforeCompile;
+    return;
+  }
+  const matType = mat instanceof MeshLambertMaterial ? "lambert" : "basic";
+  mat.customProgramCacheKey = () => `shape-envmap-${matType}`;
+  const { reflectionAmount } = envMapOptions;
+  mat.onBeforeCompile = (shader) => {
+    injectCustomFog(shader, globalFogUniforms);
+    injectShapeLighting(shader);
+    injectShapeEnvMap(shader, reflectionAmount);
+  };
 }
 
 export function createMaterialFromFlags(
@@ -132,6 +153,7 @@ export function createMaterialFromFlags(
   isOrganic: boolean,
   vis: number = 1,
   animated: boolean = false,
+  reflectionAmount: number = 0,
 ): MaterialResult {
   const isTranslucent = flagNames.has("Translucent");
   const isAdditive = flagNames.has("Additive");
@@ -140,6 +162,13 @@ export function createMaterialFromFlags(
   // forces the Translucent flag and renders with GL_SRC_ALPHA/GL_ONE_MINUS_SRC_ALPHA.
   // Animated vis also needs transparent materials so opacity can be updated per frame.
   const isFaded = vis < 1 || animated;
+
+  // Env map reflectivity: gated only by NeverEnvMap flag and reflectionAmount
+  // (which is 0 when the datablock doesn't have emap=true). Independent of
+  // SelfIlluminating/Additive — those affect lighting, not env mapping.
+  const enableEnvMap =
+    !flagNames.has("NeverEnvMap") && reflectionAmount > 0 && !isFaded;
+  const envMapOptions = enableEnvMap ? { reflectionAmount } : undefined;
 
   // SelfIlluminating or Additive materials are unlit (use MeshBasicMaterial).
   // Additive materials without SelfIlluminating (e.g. explosion shells) must
@@ -156,7 +185,7 @@ export function createMaterialFromFlags(
       ...(isFaded && { opacity: vis }),
       ...(isAdditive && { blending: AdditiveBlending }),
     });
-    applyShapeShaderModifications(mat);
+    applyShapeShaderModifications(mat, envMapOptions);
     return mat;
   }
 
@@ -186,13 +215,12 @@ export function createMaterialFromFlags(
       ...baseProps,
       side: 0, // FrontSide
     });
-    applyShapeShaderModifications(backMat);
-    applyShapeShaderModifications(frontMat);
+    applyShapeShaderModifications(backMat, envMapOptions);
+    applyShapeShaderModifications(frontMat, envMapOptions);
     return [backMat, frontMat];
   }
 
   // Default: use Lambert for diffuse-only lighting (matches Tribes 2)
-  // Tribes 2 used fixed-function GL with specular disabled
   const mat = new MeshLambertMaterial({
     map: texture,
     side: 2, // DoubleSide
@@ -203,7 +231,7 @@ export function createMaterialFromFlags(
       depthWrite: false,
     }),
   });
-  applyShapeShaderModifications(mat);
+  applyShapeShaderModifications(mat, envMapOptions);
   return mat;
 }
 
@@ -476,11 +504,14 @@ export function DebugPlaceholder({
 export const ShapeRenderer = memo(function ShapeRenderer({
   loadingColor = "yellow",
   streamEntity,
+  emap,
   children,
 }: {
   loadingColor?: string;
   /** Stable entity reference whose fields are mutated in-place. */
   streamEntity?: StreamShapeEntity;
+  /** Datablock enables environment map reflections. */
+  emap?: boolean;
   children?: React.ReactNode;
 }) {
   const { object, shapeName } = useShapeInfo();
@@ -496,9 +527,12 @@ export const ShapeRenderer = memo(function ShapeRenderer({
       fallback={
         <DebugPlaceholder color="red" label={`${object?._id}: ${shapeName}`} />
       }
+      onError={(error) => {
+        log.error("Shape error: %s: %o", shapeName, error);
+      }}
     >
       <Suspense fallback={<ShapePlaceholder color={loadingColor} />}>
-        <ShapeModelLoader streamEntity={streamEntity} />
+        <ShapeModelLoader streamEntity={streamEntity} emap={emap} />
         {children}
       </Suspense>
     </ErrorBoundary>
@@ -530,10 +564,13 @@ interface ThreadState {
 export const ShapeModel = memo(function ShapeModel({
   gltf,
   streamEntity,
+  emap,
 }: {
   gltf: ReturnType<typeof useStaticShape>;
   /** Stable entity reference whose fields are mutated in-place. */
   streamEntity?: StreamShapeEntity;
+  /** Datablock enables environment map reflections. */
+  emap?: boolean;
 }) {
   const { object, shapeName } = useShapeInfo();
   const { debugMode } = useDebug();
@@ -588,7 +625,10 @@ export const ShapeModel = memo(function ShapeModel({
         }
       });
 
-      processShapeScene(scene, shapeName ?? undefined, { anisotropy });
+      processShapeScene(scene, shapeName ?? undefined, {
+        anisotropy,
+        emap: emap ?? streamEntity?.emap,
+      });
 
       // Un-hide IFL meshes that don't have a vis sequence — they should always
       // be visible. IFL meshes WITH vis sequences stay hidden until their
@@ -646,7 +686,7 @@ export const ShapeModel = memo(function ShapeModel({
         visNodesBySequence: visBySeq,
         iflMeshes: iflInfos,
       };
-    }, [gltf, anisotropy]);
+    }, [gltf, anisotropy, emap]);
 
   // Dispose cloned geometries and materials when the scene is replaced or
   // the component unmounts, to prevent GPU memory from accumulating.
@@ -658,6 +698,7 @@ export const ShapeModel = memo(function ShapeModel({
   }, [clonedScene, mixer]);
 
   const threadsRef = useRef(new Map<number, ThreadState>());
+  const additiveClipsRef = useRef(new Set<string>());
   const iflMeshAtlasRef = useRef(new Map<any, IflAtlas>());
 
   interface IflAnimInfo {
@@ -728,8 +769,10 @@ export const ShapeModel = memo(function ShapeModel({
     if (typeof rawNames === "string") {
       try {
         const names: string[] = JSON.parse(rawNames);
-        const cyclic: boolean[] = typeof rawCyclic === "string" ? JSON.parse(rawCyclic) : [];
-        const blend: boolean[] = typeof rawBlend === "string" ? JSON.parse(rawBlend) : [];
+        const cyclic: boolean[] =
+          typeof rawCyclic === "string" ? JSON.parse(rawCyclic) : [];
+        const blend: boolean[] =
+          typeof rawBlend === "string" ? JSON.parse(rawBlend) : [];
         for (let i = 0; i < names.length; i++) {
           const lower = names[i].toLowerCase();
           cycMap.set(lower, cyclic[i] ?? true);
@@ -752,6 +795,7 @@ export const ShapeModel = memo(function ShapeModel({
   //   handler reads ghost ThreadMask data and drives everything.
   useEffect(() => {
     const threads = threadsRef.current;
+    const additiveClips = additiveClipsRef.current;
     const isMissionMode = streamEntityRef.current == null;
 
     function prepareVisNode(v: VisNode) {
@@ -792,10 +836,16 @@ export const ShapeModel = memo(function ShapeModel({
           action.setLoop(LoopOnce, 1);
           action.clampWhenFinished = true;
         }
-        // Blend sequences (DTS flag 0x8) are delta transforms multiplied
-        // onto the existing pose. Use Three.js additive blending so they
-        // composite on top of non-blend threads (e.g. Deploy on Ambient).
+        // Blend sequences (DTS flag 0x8) are delta transforms post-multiplied
+        // onto the existing pose. The GLB stores rest*delta (Blender's glTF
+        // exporter bakes in the rest pose). Subtracting the rest pose via
+        // buildRestPoseClip recovers pure deltas for Three.js additive mode.
         if (seqBlendByName.has(seqLower)) {
+          if (!additiveClips.has(seqLower)) {
+            const restClip = buildRestPoseClip(gltf.scene, clip);
+            AnimationUtils.makeClipAdditive(clip, 0, restClip, 30);
+            additiveClips.add(seqLower);
+          }
           action.blendMode = AdditiveAnimationBlendMode;
         }
         action.reset().play();
@@ -834,6 +884,7 @@ export const ShapeModel = memo(function ShapeModel({
         handlePlayThreadRef.current = null;
         handleStopThreadRef.current = null;
         prevDemoThreadsRef.current = undefined;
+        additiveClips.clear();
         for (const slot of [...threads.keys()]) handleStopThread(slot);
       };
     }
@@ -1095,6 +1146,26 @@ export const ShapeModel = memo(function ShapeModel({
       }
     }
 
+    // Drive damage state Visibility — swap normal/HULK meshes.
+    // In Torque, mHulkThread plays the "Visibility" sequence at pos 0.0
+    // (Enabled) or 1.0 (Destroyed). The vis_keyframes on each mesh encode:
+    // normal meshes [1,0] (visible→hidden), HULK meshes [0,1] (hidden→visible).
+    const entity = streamEntityRef.current;
+    const damageState = entity?.damageState ?? 0;
+    const visibilityNodes = visNodesBySequence.get("visibility");
+    if (visibilityNodes) {
+      // Position 0.0 = Enabled (normal visible), 1.0 = Destroyed (HULK visible)
+      const pos = damageState >= 2 ? 1.0 : 0.0;
+      for (const { mesh, keyframes } of visibilityNodes) {
+        const mat = mesh.material;
+        if (!mat || Array.isArray(mat)) continue;
+        const n = keyframes.length;
+        const idx = Math.min(Math.floor(pos * n), n - 1);
+        mat.opacity = keyframes[idx];
+        mesh.visible = mat.opacity > 0.01;
+      }
+    }
+
     // Drive WheeledVehicle wheel/spring/turn animations from ghost state.
     const wheelAnims = wheelAnimsRef.current;
     if (wheelAnims && animationEnabled) {
@@ -1114,8 +1185,7 @@ export const ShapeModel = memo(function ShapeModel({
         if (wa.wheelAction && wheel) {
           wa.rotation += wheel.speed * effectDelta * Math.PI * 2;
           wa.rotation -= Math.floor(wa.rotation); // wrap to [0,1)
-          wa.wheelAction.time =
-            wa.rotation * wa.wheelAction.getClip().duration;
+          wa.wheelAction.time = wa.rotation * wa.wheelAction.getClip().duration;
         }
 
         // Spring: ghost vehicles stay at rest (fully extended = pos 0).
@@ -1125,12 +1195,10 @@ export const ShapeModel = memo(function ShapeModel({
         // Turn: steering angle → animation position.
         // Torque: pos = 0.5 - t * 0.5 where t = steerAngle² / maxSteeringAngle
         if (wa.turnAction) {
-          const t =
-            (steeringYaw * Math.abs(steeringYaw)) / maxSteeringAngle;
+          const t = (steeringYaw * Math.abs(steeringYaw)) / maxSteeringAngle;
           const pos = 0.5 - t * 0.5;
           wa.turnAction.time =
-            Math.max(0, Math.min(1, pos)) *
-            wa.turnAction.getClip().duration;
+            Math.max(0, Math.min(1, pos)) * wa.turnAction.getClip().duration;
         }
       }
     }
@@ -1198,10 +1266,12 @@ export const ShapeModel = memo(function ShapeModel({
 
 function ShapeModelLoader({
   streamEntity,
+  emap,
 }: {
-  streamEntity?: { threads?: StreamThreadState[] };
+  streamEntity?: StreamShapeEntity;
+  emap?: boolean;
 }) {
   const { shapeName } = useShapeInfo();
   const gltf = useStaticShape(shapeName);
-  return <ShapeModel gltf={gltf} streamEntity={streamEntity} />;
+  return <ShapeModel gltf={gltf} streamEntity={streamEntity} emap={emap} />;
 }

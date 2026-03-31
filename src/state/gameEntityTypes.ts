@@ -125,7 +125,11 @@ export interface ShapeEntity extends PositionedBase {
   shapeName?: string;
   shapeType?: string;
   dataBlock?: string;
+  /** Datablock enables environment map reflections. */
+  emap?: boolean;
   threads?: ThreadState[];
+  /** Torque DamageState: 0=Enabled, 1=Disabled, 2=Destroyed. */
+  damageState?: number;
   rotate?: boolean;
   teamId?: number;
   barrelShapeName?: string;
@@ -133,7 +137,11 @@ export interface ShapeEntity extends PositionedBase {
   iffColor?: { r: number; g: number; b: number };
   weaponShape?: string;
   /** WheeledVehicle per-wheel state (speed, slip). */
-  wheels?: Array<{ speed: number; lateralSlip: number; longitudinalSlip: number }>;
+  wheels?: Array<{
+    speed: number;
+    lateralSlip: number;
+    longitudinalSlip: number;
+  }>;
   /** Vehicle steering angle (radians). */
   steeringYaw?: number;
   /** Vehicle frozen state (deployed). */
@@ -146,7 +154,11 @@ export interface PlayerEntity extends PositionedBase {
   renderType: "Player";
   shapeName?: string;
   dataBlock?: string;
+  /** Datablock enables environment map reflections. */
+  emap?: boolean;
   weaponShape?: string;
+  /** Arm blend animation action index from Player ghost (networked). */
+  armAction?: number;
   packShape?: string;
   /** DTS shape name for the carried flag (slot 3, Mount2 bone). */
   flagShape?: string;

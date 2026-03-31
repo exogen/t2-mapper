@@ -147,8 +147,12 @@ export function parseMissionScript(script: string): ParsedMission {
       pragma.missiontypes
         ?.split(/\s+/)
         .filter(Boolean)
-        .map((name) => (normalizedMissionTypes as Record<string, string>)[name.toLowerCase()] ?? name) ??
-      [],
+        .map(
+          (name) =>
+            (normalizedMissionTypes as Record<string, string>)[
+              name.toLowerCase()
+            ] ?? name,
+        ) ?? [],
     missionBriefing: getSection("MISSION BRIEFING"),
     briefingWav: pragma.briefingwav ?? null,
     bitmap: pragma.bitmap ?? null,

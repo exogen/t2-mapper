@@ -4,7 +4,7 @@ import { createLogger } from "../logger";
 import { cameraTourStore } from "../state/cameraTourStore";
 import { demoTimelineStore } from "../state/demoTimelineStore";
 import { liveConnectionStore } from "../state/liveConnectionStore";
-import { usePlaybackActions, useRecording } from "./RecordingProvider";
+import { usePlaybackActions, useRecording } from "./usePlayback";
 import styles from "./Button.module.css";
 
 const log = createLogger("LoadDemoButton");

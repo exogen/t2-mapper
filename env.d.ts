@@ -1,8 +1,7 @@
-/** Vite-style import.meta.env, shared across app and node tsconfigs. */
-interface ImportMetaEnv {
-  readonly VITE_LOG?: string;
-}
-
-interface ImportMeta {
-  readonly env: ImportMetaEnv;
+/** Environment variables available in both Vite and Node.js. */
+declare namespace NodeJS {
+  interface ProcessEnv {
+    readonly LOG_LEVEL?: string;
+    readonly RELAY_URL?: string;
+  }
 }

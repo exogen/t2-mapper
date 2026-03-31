@@ -51,6 +51,7 @@ import {
   untrackSound,
 } from "./AudioEmitter";
 import { effectNow, engineStore } from "../state/engineStore";
+import { getEffectiveSoundRate } from "./AudioEmitter";
 
 // ── Constants ──
 
@@ -1278,7 +1279,7 @@ export function ParticleEffects({
             sound.setMaxDistance(resolved.maxDist);
             sound.setRolloffFactor(1);
             sound.setVolume(resolved.volume);
-            sound.setPlaybackRate(playbackState.rate);
+            sound.setPlaybackRate(getEffectiveSoundRate());
             sound.setLoop(true);
             sound.position.set(
               entity.position![1],

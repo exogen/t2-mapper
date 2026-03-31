@@ -1,1 +1,0 @@
-var e=e=>(t,n,r)=>{let i=r.subscribe;return r.subscribe=((e,t,n)=>{let a=e;if(t){let i=n?.equalityFn||Object.is,o=e(r.getState());a=n=>{let r=e(n);if(!i(o,r)){let e=o;t(o=r,e)}},n?.fireImmediately&&t(o,o)}return i(a)}),e(t,n,r)};export{e as t};

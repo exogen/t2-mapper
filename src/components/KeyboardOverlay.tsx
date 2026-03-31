@@ -10,7 +10,7 @@ import {
   useIsPlaying,
   useRecording,
   useSpeed,
-} from "./RecordingProvider";
+} from "./usePlayback";
 import { useInputMode } from "./InputContext";
 import { useCameraTour } from "../state/cameraTourStore";
 import {

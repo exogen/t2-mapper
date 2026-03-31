@@ -47,6 +47,7 @@ function mutateRenderFields(
       const e = renderEntity as unknown as Record<string, unknown>;
       e.threads = stream.threads;
       e.weaponShape = stream.weaponShape;
+      e.armAction = stream.armAction;
       e.packShape = stream.packShape;
       e.flagShape = stream.flagShape;
       e.falling = stream.falling;
@@ -63,6 +64,7 @@ function mutateRenderFields(
     case "Shape": {
       const e = renderEntity as unknown as Record<string, unknown>;
       e.threads = stream.threads;
+      e.damageState = stream.damageState;
       e.targetRenderFlags = stream.targetRenderFlags;
       e.iffColor = stream.iffColor;
       break;
@@ -109,7 +111,9 @@ export function StreamingController({
   const prevTickSnapshotRef = useRef<StreamSnapshot | null>(null);
   const currentTickSnapshotRef = useRef<StreamSnapshot | null>(null);
   const eyeOffsetRef = useRef(new Vector3(0, DEFAULT_EYE_HEIGHT, 0));
-  const streamRef = useRef<StreamingPlayback | null>(recording.streamingPlayback ?? null);
+  const streamRef = useRef<StreamingPlayback | null>(
+    recording.streamingPlayback ?? null,
+  );
   const publishedSnapshotRef = useRef<StreamSnapshot | null>(null);
   const entityMapRef = useRef<Map<string, GameEntity>>(new Map());
   const lastSyncedSnapshotRef = useRef<StreamSnapshot | null>(null);

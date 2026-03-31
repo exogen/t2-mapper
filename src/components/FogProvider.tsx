@@ -17,6 +17,7 @@ import {
 } from "react";
 import { useFrame } from "@react-three/fiber";
 import { Color } from "three";
+import { parseColorLinear } from "../colorUtils";
 import type { TorqueObject } from "../torqueScript";
 import { getFloat, getProperty } from "../mission";
 import type { SceneSky } from "../scene/types";
@@ -84,15 +85,7 @@ const FogUniformsContext =
  *
  * Torque (2001) worked in gamma space - colors were specified as they should
  * appear on screen. Three.js expects linear colors (it converts to sRGB on output).
- * We convert sRGB->linear so the final output matches the intended appearance.
  */
-function parseColor(colorString: string | undefined): Color {
-  if (!colorString) return new Color(0.5, 0.5, 0.5);
-  const parts = colorString.split(" ").map((s) => parseFloat(s));
-  const [r, g, b] = parts;
-  // Convert from sRGB (how Torque specified colors) to linear (what Three.js expects)
-  return new Color().setRGB(r, g, b).convertSRGBToLinear();
-}
 
 /**
  * Parse a fog volume property string.
@@ -148,7 +141,9 @@ export function parseFogState(
       ? highVisibleDistance
       : visibleDistanceBase;
 
-  const fogColor = parseColor(getProperty(object, "fogColor"));
+  const fogColor =
+    parseColorLinear(getProperty(object, "fogColor")) ??
+    new Color(0.5, 0.5, 0.5);
 
   // Parse fog volumes (up to 3)
   // Note: fogVolumeColor is intentionally not parsed - see parseFogVolume comment

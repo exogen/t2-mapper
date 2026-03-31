@@ -6,7 +6,7 @@ import type {
   TimelineEvent,
   TimelineEventType,
 } from "../state/demoTimelineStore";
-import { usePlaybackActions } from "./RecordingProvider";
+import { usePlaybackActions } from "./usePlayback";
 import { BsPlayFill } from "react-icons/bs";
 import { AiFillStop } from "react-icons/ai";
 import { LuCrosshair } from "react-icons/lu";

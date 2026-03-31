@@ -14,7 +14,7 @@ import {
   selectPing,
   useLiveSelector,
 } from "../state/liveConnectionStore";
-import { useRecording } from "./RecordingProvider";
+import { useRecording } from "./usePlayback";
 import { LuCircleArrowOutUpLeft } from "react-icons/lu";
 import { BiSolidEject } from "react-icons/bi";
 import { formatPing } from "../stringUtils";

@@ -163,6 +163,7 @@ function ShapeEntity({ entity }: { entity: ShapeEntityType }) {
         <ShapeRenderer
           loadingColor={loadingColor}
           streamEntity={torqueObject ? undefined : entity}
+          emap={entity.emap}
         >
           {flagLabel ? (
             <FloatingLabel opacity={0.6}>{flagLabel}</FloatingLabel>

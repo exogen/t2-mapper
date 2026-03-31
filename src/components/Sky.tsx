@@ -4,8 +4,18 @@ import { useThree, useFrame } from "@react-three/fiber";
 import { useCubeTexture } from "@react-three/drei";
 import { Color, Fog } from "three";
 import { createLogger } from "../logger";
-import { useSettings } from "./SettingsProvider";
-import { loadDetailMapList, textureToUrl } from "../loaders";
+import { useDebug, useSettings } from "./SettingsProvider";
+import {
+  FALLBACK_TEXTURE_URL,
+  loadDetailMapList,
+  textureToUrl,
+} from "../loaders";
+import {
+  setShapeEnvMap,
+  resetShapeEnvMap,
+  shapeEnvMapUniforms,
+} from "../shapeMaterial";
+import { loadTexture, setupTexture } from "../textureUtils";
 import { CloudLayers } from "./CloudLayers";
 import { fogStateFromScene, type FogState } from "./FogProvider";
 import { installCustomFogShader } from "../fogShader";
@@ -309,6 +319,38 @@ export function SkyBox({
         : null,
     [detailMapList],
   );
+
+  // Load the sphere-map environment texture (index 6 in the .dml) for shape
+  // reflections. This is a dedicated 2D texture, NOT the skybox cubemap.
+  // Some maps have broken emap paths (e.g. Katabatic references desert/skies/
+  // but file is at ice/skies/) — skip if the texture doesn't resolve.
+  useEffect(() => {
+    const emapName = detailMapList?.[6];
+    if (!emapName) return;
+    const url = textureToUrl(emapName);
+    // textureToUrl returns the fallback URL for missing textures (e.g.
+    // Katabatic's DML has a broken emap path). Don't set a fallback as envmap.
+    if (url === FALLBACK_TEXTURE_URL) return;
+    // Load WITHOUT sRGB conversion (noColorSpace). The env map values stay as
+    // raw sRGB bytes, which is what Torque's fixed-function pipeline operates
+    // on. The 2x modulate: 2 * lit_base_linear * env_sRGB produces display
+    // values that closely match Torque's 2 * lit_base_sRGB * env_sRGB.
+    const tex = loadTexture(url, (loaded) => {
+      setupTexture(loaded, { noColorSpace: true });
+      setShapeEnvMap(loaded);
+    });
+    if (tex.image) {
+      setupTexture(tex, { noColorSpace: true });
+      setShapeEnvMap(tex);
+    }
+    return () => resetShapeEnvMap();
+  }, [detailMapList]);
+
+  // In debug mode, show sphere map UVs as colors instead of the texture.
+  const { debugMode } = useDebug();
+  useEffect(() => {
+    shapeEnvMapUniforms.shapeEnvMapDebugUV.value = debugMode;
+  }, [debugMode]);
 
   // Don't render until we have real texture URLs
   if (!skyBoxFiles) {

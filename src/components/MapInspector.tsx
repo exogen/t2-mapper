@@ -17,10 +17,7 @@ import { InspectorControls } from "@/src/components/InspectorControls";
 import { MissionSelect } from "@/src/components/MissionSelect";
 import { StreamingMissionInfo } from "@/src/components/StreamingMissionInfo";
 import { useSettings } from "@/src/components/SettingsProvider";
-import {
-  RecordingProvider,
-  useRecording,
-} from "@/src/components/RecordingProvider";
+import { useRecording } from "@/src/components/usePlayback";
 import { useFeatures } from "@/src/components/FeaturesProvider";
 import {
   liveConnectionStore,
@@ -227,7 +224,7 @@ export function MapInspector() {
 
   return (
     <main className={styles.Frame}>
-      <RecordingProvider>
+      <>
         <header className={styles.Toolbar}>
           <ToggleSidebarButton
             orientation="top"
@@ -358,7 +355,7 @@ export function MapInspector() {
             </Suspense>
           </ViewTransition>
         ) : null}
-      </RecordingProvider>
+      </>
     </main>
   );
 }

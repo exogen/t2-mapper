@@ -26,6 +26,22 @@ export const audioBufferCache = new Map<string, AudioBuffer>();
 // intrinsic pitch (1.0 for normal, or the voice pitch multiplier for chat).
 const _activeSounds = new Map<Audio<GainNode | PannerNode>, number>();
 
+/** Whether to adjust audio pitch to match playback speed. When false, sounds
+ * play at their original pitch regardless of fast-forward/slow-motion. */
+let _adjustAudioSpeed = true;
+export function setAdjustAudioSpeedFlag(value: boolean): void {
+  _adjustAudioSpeed = value;
+  // Re-apply rate to all active sounds immediately.
+  const rate = engineStore.getState().playback.rate;
+  for (const [sound, basePitch] of _activeSounds) {
+    try {
+      sound.setPlaybackRate(basePitch * (_adjustAudioSpeed ? rate : 1));
+    } catch {
+      /* disposed */
+    }
+  }
+}
+
 /** Register a sound for automatic playback rate tracking during streaming. */
 export function trackSound(
   sound: Audio<GainNode | PannerNode>,
@@ -48,6 +64,12 @@ let _soundGeneration = 0;
 /** Current sound generation — capture before async work, check on completion. */
 export function getSoundGeneration(): number {
   return _soundGeneration;
+}
+
+/** Get the effective playback rate for a sound, respecting the adjustAudioSpeed setting. */
+export function getEffectiveSoundRate(basePitch = 1): number {
+  const rate = engineStore.getState().playback.rate;
+  return basePitch * (_adjustAudioSpeed ? rate : 1);
 }
 
 /** Stop and unregister all tracked sounds. Called on recording change. */
@@ -73,7 +95,7 @@ engineStore.subscribe(
   (rate) => {
     for (const [sound, basePitch] of _activeSounds) {
       try {
-        sound.setPlaybackRate(basePitch * rate);
+        sound.setPlaybackRate(basePitch * (_adjustAudioSpeed ? rate : 1));
       } catch {
         // Sound may have been disposed.
       }
@@ -151,7 +173,7 @@ export function playOneShotSound(
         sound.setMaxDistance(resolved.maxDist);
         sound.setRolloffFactor(1);
         sound.setVolume(resolved.volume);
-        sound.setPlaybackRate(rate);
+        sound.setPlaybackRate(_adjustAudioSpeed ? rate : 1);
         if (position) {
           sound.position.copy(position);
         }
@@ -171,7 +193,7 @@ export function playOneShotSound(
         const sound = new Audio(audioListener);
         sound.setBuffer(buffer);
         sound.setVolume(resolved.volume);
-        sound.setPlaybackRate(rate);
+        sound.setPlaybackRate(_adjustAudioSpeed ? rate : 1);
         _activeSounds.set(sound, 1);
         sound.play();
         sound.source!.onended = () => {

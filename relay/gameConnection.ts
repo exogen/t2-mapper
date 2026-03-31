@@ -420,10 +420,7 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
     // Ignore data packets before the connection is fully established.
     // They arrive in the window between socket creation and ConnectAccept
     // and would confuse both the browser parser and our ack tracking.
-    if (
-      this._status !== "connected" &&
-      this._status !== "authenticating"
-    ) {
+    if (this._status !== "connected" && this._status !== "authenticating") {
       return;
     }
 

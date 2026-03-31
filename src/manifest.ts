@@ -98,6 +98,7 @@ export function getResourceList(): string[] {
  * 5. .bmp
  */
 const standardTextureExt = ["", ".jpg", ".png", ".gif", ".bmp"];
+
 export function getStandardTextureResourceKey(resourcePath: string) {
   const baseResourceKey = getResourceKey(resourcePath);
   for (const ext of standardTextureExt) {

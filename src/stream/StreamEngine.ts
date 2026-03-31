@@ -70,6 +70,8 @@ export interface MutableEntity {
   dataBlockId?: number;
   shapeHint?: string;
   dataBlock?: string;
+  /** Datablock enables environment map reflections. */
+  emap?: boolean;
   visual?: StreamVisual;
   direction?: [number, number, number];
   weaponShape?: string;
@@ -82,6 +84,7 @@ export interface MutableEntity {
   maxEnergy?: number;
   actionAnim?: number;
   actionAtEnd?: boolean;
+  armAction?: number;
   damageState?: number;
   targetId?: number;
   projectilePhysics?: "linear" | "ballistic" | "seeker";
@@ -127,7 +130,11 @@ export interface MutableEntity {
   audioMaxLoopGap?: number;
   sceneData?: SceneObject;
   /** WheeledVehicle per-wheel state from ghost data. */
-  wheels?: Array<{ speed: number; lateralSlip: number; longitudinalSlip: number }>;
+  wheels?: Array<{
+    speed: number;
+    lateralSlip: number;
+    longitudinalSlip: number;
+  }>;
   /** Vehicle steering angle (radians), from ghost data. */
   steeringYaw?: number;
   /** Vehicle frozen state (deployed MPB, etc.). */
@@ -906,6 +913,7 @@ export abstract class StreamEngine implements StreamingPlayback {
     entity.damageState = undefined;
     entity.actionAnim = undefined;
     entity.actionAtEnd = undefined;
+    entity.armAction = undefined;
     entity.explosionDataBlockId = undefined;
     entity.maintainEmitterId = undefined;
   }
@@ -930,6 +938,9 @@ export abstract class StreamEngine implements StreamingPlayback {
       if (typeof shapeName === "string") {
         entity.shapeHint = shapeName;
         entity.dataBlock = shapeName;
+      }
+      if (blockData && "emap" in blockData) {
+        entity.emap = !!blockData.emap;
       }
       if (
         entity.type === "Player" &&
@@ -993,14 +1004,9 @@ export abstract class StreamEngine implements StreamingPlayback {
           | undefined;
         entity.forceFieldData = {
           textures,
-          color: color1
-            ? [color1.r, color1.g, color1.b]
-            : [1, 1, 1],
-          baseTranslucency:
-            (blockData.baseTranslucency as number) ?? 1,
-          dimensions: scale
-            ? [scale.y, scale.z, scale.x]
-            : [1, 1, 1],
+          color: color1 ? [color1.r, color1.g, color1.b] : [1, 1, 1],
+          baseTranslucency: (blockData.baseTranslucency as number) ?? 1,
+          dimensions: scale ? [scale.y, scale.z, scale.x] : [1, 1, 1],
           framesPerSec: (blockData.framesPerSec as number) ?? 1,
           scrollSpeed: (blockData.scrollSpeed as number) ?? 0,
           umapping: (blockData.umapping as number) ?? 1,
@@ -1237,7 +1243,9 @@ export abstract class StreamEngine implements StreamingPlayback {
           "Item %s (%s): atRest=false pos=%s vel=%s",
           entity.id,
           entity.shapeHint ?? entity.dataBlock ?? `db#${entity.dataBlockId}`,
-          data.position ? `${(data.position as Vec3).x.toFixed(1)},${(data.position as Vec3).y.toFixed(1)},${(data.position as Vec3).z.toFixed(1)}` : "none",
+          data.position
+            ? `${(data.position as Vec3).x.toFixed(1)},${(data.position as Vec3).y.toFixed(1)},${(data.position as Vec3).z.toFixed(1)}`
+            : "none",
           `${vel.x.toFixed(1)},${vel.y.toFixed(1)},${vel.z.toFixed(1)}`,
         );
       } else if (atRest === true) {
@@ -1245,7 +1253,9 @@ export abstract class StreamEngine implements StreamingPlayback {
           "Item %s (%s): atRest=true pos=%s",
           entity.id,
           entity.shapeHint ?? entity.dataBlock ?? `db#${entity.dataBlockId}`,
-          entity.position ? `${entity.position[0].toFixed(1)},${entity.position[1].toFixed(1)},${entity.position[2].toFixed(1)}` : "none",
+          entity.position
+            ? `${entity.position[0].toFixed(1)},${entity.position[1].toFixed(1)},${entity.position[2].toFixed(1)}`
+            : "none",
         );
         entity.itemPhysics = undefined;
       }
@@ -1334,6 +1344,9 @@ export abstract class StreamEngine implements StreamingPlayback {
     if (typeof data.action === "number") {
       entity.actionAnim = data.action;
       entity.actionAtEnd = !!data.actionAtEnd;
+    }
+    if (typeof data.armAction === "number") {
+      entity.armAction = data.armAction;
     }
 
     // Threads
@@ -2280,6 +2293,7 @@ export abstract class StreamEngine implements StreamingPlayback {
         energy: entity.energy,
         actionAnim: entity.actionAnim,
         actionAtEnd: entity.actionAtEnd,
+        armAction: entity.armAction,
         damageState: entity.damageState,
         faceViewer: entity.faceViewer,
         threads: entity.threads,

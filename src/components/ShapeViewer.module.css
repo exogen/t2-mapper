@@ -1,0 +1,163 @@
+.Root {
+  display: flex;
+  width: 100vw;
+  height: 100vh;
+  background: #1a1a1a;
+  color: #ddd;
+  font-family: system-ui, sans-serif;
+  font-size: 13px;
+}
+
+.Sidebar {
+  width: 260px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid #333;
+  background: #222;
+}
+
+.Title {
+  margin: 0;
+  padding: 12px 14px;
+  font-size: 15px;
+  font-weight: 600;
+  border-bottom: 1px solid #333;
+}
+
+.Search {
+  margin: 8px;
+  padding: 6px 10px;
+  border: 1px solid #444;
+  border-radius: 4px;
+  background: #1a1a1a;
+  color: #ddd;
+  font-size: 13px;
+  outline: none;
+}
+
+.Search:focus {
+  border-color: #5599cc;
+}
+
+.ShapeList {
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px 0;
+}
+
+.ShapeItem {
+  display: block;
+  width: 100%;
+  padding: 4px 14px;
+  border: 0;
+  background: transparent;
+  color: #ccc;
+  font-family: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ShapeItem:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.ShapeItem[data-active="true"] {
+  background: rgba(0, 100, 200, 0.4);
+  color: #fff;
+}
+
+.Main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.CanvasWrap {
+  flex: 1;
+  position: relative;
+}
+
+.AnimPanel {
+  height: 200px;
+  flex-shrink: 0;
+  border-top: 1px solid #333;
+  background: #222;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.AnimTitle {
+  margin: 0;
+  padding: 8px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.AnimNote {
+  margin: 0;
+  padding: 0 14px 6px;
+  font-size: 11px;
+  opacity: 0.5;
+  flex-shrink: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.SpeedControl {
+  padding: 0 14px 8px;
+  flex-shrink: 0;
+  font-size: 12px;
+}
+
+.SpeedControl input[type="range"] {
+  width: 120px;
+  margin-left: 8px;
+  vertical-align: middle;
+}
+
+.AnimList {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0 0 8px;
+}
+
+.AnimItem {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 4px 14px;
+  border: 0;
+  background: transparent;
+  color: #ccc;
+  font-family: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.AnimItem:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.AnimItem[data-active="true"] {
+  background: rgba(0, 100, 200, 0.4);
+  color: #fff;
+}
+
+.AnimName {
+  flex: 1;
+}
+
+.AnimIndex {
+  font-size: 11px;
+  opacity: 0.5;
+}

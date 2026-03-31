@@ -16,7 +16,7 @@ export type { TerrainFile };
 
 export const BASE_URL = "/t2-mapper";
 export const RESOURCE_ROOT_URL = `${BASE_URL}/base/`;
-export const FALLBACK_TEXTURE_URL = `${BASE_URL}/magenta.png`;
+export const FALLBACK_TEXTURE_URL = `${BASE_URL}/white.png`;
 
 export function getUrlForPath(resourcePath: string, fallbackUrl?: string) {
   let resourceKey;

@@ -15,6 +15,10 @@ import {
 } from "three";
 
 const _bitmapLoader = new ImageBitmapLoader();
+// Prevent the browser from premultiplying alpha, which destroys RGB data in
+// transparent pixels. Tribes 2 uses the alpha channel for purposes other than
+// transparency (e.g. environment map masking) on many non-Translucent textures.
+_bitmapLoader.setOptions({ premultiplyAlpha: "none" });
 const _textureCache = new Map<string, Texture>();
 
 /**
@@ -86,6 +90,8 @@ export interface TextureSetupOptions {
   disableMipmaps?: boolean;
   /** Override anisotropy level. Default: max supported by the GPU. */
   anisotropy?: number;
+  /** Skip sRGB colorspace assignment (for textures sampled in sRGB space). */
+  noColorSpace?: boolean;
 }
 
 /**
@@ -99,10 +105,17 @@ export function setupTexture<T extends Texture>(
   tex: T,
   options: TextureSetupOptions = {},
 ): T {
-  const { repeat = [1, 1], disableMipmaps = false, anisotropy } = options;
+  const {
+    repeat = [1, 1],
+    disableMipmaps = false,
+    anisotropy,
+    noColorSpace = false,
+  } = options;
 
   tex.wrapS = tex.wrapT = RepeatWrapping;
-  tex.colorSpace = SRGBColorSpace;
+  if (!noColorSpace) {
+    tex.colorSpace = SRGBColorSpace;
+  }
   tex.repeat.set(...repeat);
   tex.flipY = false; // DDS/DIF textures are already flipped
   tex.anisotropy = anisotropy ?? 1;

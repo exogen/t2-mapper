@@ -17,7 +17,7 @@ import type { ClientMove } from "../../relay/types";
 
 const log = createLogger("InputConsumer");
 
-const MAX_SPEED = 270;
+const MAX_SPEED = 200;
 const LOCAL_MAX_PITCH = Math.PI / 2 - 0.01; // ~89°
 
 /**

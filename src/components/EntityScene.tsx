@@ -1,21 +1,15 @@
-import { memo, useCallback, useRef, useState, useMemo } from "react";
+import { memo, useCallback, useRef, useState, useMemo, Suspense } from "react";
 import { Quaternion } from "three";
 import type { Group } from "three";
 import { useFrame } from "@react-three/fiber";
 import { useAllGameEntities } from "../state/gameEntityStore";
-import type {
-  GameEntity,
-  PositionedEntity,
-  PlayerEntity,
-} from "../state/gameEntityTypes";
+import type { GameEntity, PositionedEntity } from "../state/gameEntityTypes";
 import { isSceneEntity } from "../state/gameEntityTypes";
 import { streamPlaybackStore } from "../state/streamPlaybackStore";
 import { EntityRenderer } from "./EntityRenderer";
 import { ShapeErrorBoundary } from "./ShapeErrorBoundary";
-import { PlayerNameplate } from "./PlayerNameplate";
 import { FlagMarker } from "./FlagMarker";
 import { entityTypeColor } from "../stream/playbackUtils";
-import { useEngineSelector } from "../state/engineStore";
 
 /**
  * The ONE rendering component tree for all game entities.
@@ -94,18 +88,6 @@ const EntityWrapper = memo(function EntityWrapper({
   return <PositionedEntityWrapper entity={entity} />;
 });
 
-/** Renders the player nameplate, subscribing to controlPlayerGhostId
- * internally so that PositionedEntityWrapper doesn't need to. Keeps
- * engine store mutations from triggering synchronous selector evaluations
- * on every positioned entity. */
-function PlayerNameplateIfVisible({ entity }: { entity: PlayerEntity }) {
-  const controlPlayerGhostId = useEngineSelector(
-    (state) => state.playback.streamSnapshot?.controlPlayerGhostId,
-  );
-  if (entity.id === controlPlayerGhostId) return null;
-  return <PlayerNameplate entity={entity} />;
-}
-
 /** Imperatively tracks targetRenderFlags bit 0x2 on a game entity and
  * mounts/unmounts FlagMarker when the flag state changes. Entity field
  * mutations don't trigger React re-renders (ID-only equality), so this
@@ -144,8 +126,6 @@ function PositionedEntityWrapper({ entity }: { entity: PositionedEntity }) {
     if (!entity.rotation) return undefined;
     return new Quaternion(...entity.rotation);
   }, [entity.rotation]);
-
-  const isPlayer = entity.renderType === "Player";
 
   // Entities without a resolved shape get a wireframe placeholder.
   if (entity.renderType === "Shape" && !entity.shapeName) {
@@ -190,9 +170,6 @@ function PositionedEntityWrapper({ entity }: { entity: PositionedEntity }) {
         <ShapeErrorBoundary fallback={fallback}>
           <EntityRenderer entity={entity} />
         </ShapeErrorBoundary>
-        {isPlayer && (
-          <PlayerNameplateIfVisible entity={entity as PlayerEntity} />
-        )}
         <FlagMarkerSlot entity={entity} />
       </group>
     </group>

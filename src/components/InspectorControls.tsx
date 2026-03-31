@@ -14,7 +14,7 @@ import { Accordion, AccordionGroup } from "./Accordion";
 import { useTouchDevice } from "./useTouchDevice";
 import { DemoTimeline } from "./DemoTimeline";
 import { MapTourPanel } from "./MapTourPanel";
-import { useRecording } from "./RecordingProvider";
+import { useRecording } from "./usePlayback";
 import { useDataSource, useMissionName } from "../state/gameEntityStore";
 import { useLiveSelector } from "../state/liveConnectionStore";
 import { hasMission } from "../manifest";
@@ -74,6 +74,8 @@ export const InspectorControls = memo(function InspectorControls({
     setAudioEnabled,
     audioVolume,
     setAudioVolume,
+    adjustAudioSpeed,
+    setAdjustAudioSpeed,
     animationEnabled,
     setAnimationEnabled,
     fpsLimit,
@@ -361,6 +363,22 @@ export const InspectorControls = memo(function InspectorControls({
                       }
                     />
                   </div>
+                </div>
+                <div className={styles.CheckboxField}>
+                  <input
+                    id="adjustAudioSpeedInput"
+                    type="checkbox"
+                    checked={adjustAudioSpeed}
+                    onChange={(event) => {
+                      setAdjustAudioSpeed(event.target.checked);
+                    }}
+                  />
+                  <label
+                    className={styles.Label}
+                    htmlFor="adjustAudioSpeedInput"
+                  >
+                    Adjust audio speed to match demo playback
+                  </label>
                 </div>
               </Accordion>
               <Accordion value="graphics" label="Graphics">

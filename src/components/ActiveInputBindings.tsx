@@ -1,4 +1,4 @@
-import { useRecording } from "./RecordingProvider";
+import { useRecording } from "./usePlayback";
 import { useInputMode } from "./InputContext";
 import { useCameraTour } from "../state/cameraTourStore";
 import { InputBindings } from "./InputBindings";

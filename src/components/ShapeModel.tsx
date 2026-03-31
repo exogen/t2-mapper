@@ -25,19 +25,6 @@ import type { ExplosionEntity, ShapeEntity } from "../state/gameEntityTypes";
 import { streamPlaybackStore } from "../state/streamPlaybackStore";
 
 /**
- * Map weapon shape to the arm blend animation (armThread).
- * Only missile launcher and sniper rifle have custom arm poses; all others
- * use the default `lookde`.
- */
-function getArmThread(weaponShape: string | undefined): string {
-  if (!weaponShape) return "lookde";
-  const lower = weaponShape.toLowerCase();
-  if (lower.includes("missile")) return "lookms";
-  if (lower.includes("sniper")) return "looksn";
-  return "lookde";
-}
-
-/**
  * Renders a mounted weapon using the Torque engine's mount system.
  *
  * The weapon's `Mountpoint` node is aligned to the player's `Mount0` node
@@ -54,7 +41,9 @@ export function WeaponModel({ entity }: { entity: ShapeEntity }) {
 
   const mountTransform = useMemo(() => {
     // Get Mount0 from the player's posed skeleton with arm animation applied.
-    const armThread = getArmThread(shapeName);
+    // TODO: resolve arm animation from armAction index once actionAnimMap
+    // is available here. For now use default arm pose.
+    const armThread = "lookde";
     const m0 = getPosedNodeTransform(
       playerGltf.scene,
       playerGltf.animations,
@@ -275,7 +264,10 @@ export function ExplosionShape({ entity }: { entity: ExplosionEntity }) {
       }
     });
 
-    processShapeScene(scene, entity.shapeName, { anisotropy });
+    processShapeScene(scene, entity.shapeName, {
+      anisotropy,
+      emap: "emap" in entity ? (entity as any).emap : undefined,
+    });
 
     // Collect vis-animated nodes keyed by sequence name.
     const visNodes: VisNode[] = [];

@@ -4,6 +4,7 @@ import { audioToUrl } from "../loaders";
 import { useAudio } from "./AudioContext";
 import {
   getCachedAudioBuffer,
+  getEffectiveSoundRate,
   getSoundGeneration,
   trackSound,
   untrackSound,
@@ -76,7 +77,7 @@ export function ChatSoundPlayer() {
           }
           const sound = new Audio(audioListener);
           sound.setBuffer(buffer);
-          sound.setPlaybackRate(pitch * rate);
+          sound.setPlaybackRate(getEffectiveSoundRate(pitch));
           trackSound(sound, pitch);
           if (sender) {
             activeBySender.set(sender, sound);

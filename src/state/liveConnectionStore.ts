@@ -49,8 +49,7 @@ export interface LiveConnectionStore extends LiveConnectionState {
   sendCommand(command: string, ...args: string[]): void;
 }
 
-const DEFAULT_RELAY_URL =
-  import.meta.env.VITE_RELAY_URL || "ws://localhost:8765";
+const DEFAULT_RELAY_URL = process.env.RELAY_URL || "ws://localhost:8765";
 
 export const liveConnectionStore = createStore<LiveConnectionStore>(
   (set, get) => ({

@@ -4,6 +4,7 @@
  */
 
 import type { TorqueObject } from "../torqueScript";
+import { parseColor3, parseColor4 } from "../colorUtils";
 import type {
   SceneTerrainBlock,
   SceneInteriorInstance,
@@ -15,8 +16,6 @@ import type {
   SceneObject,
   MatrixF,
   Vec3,
-  Color3,
-  Color4,
   SceneSkyFogVolume,
   SceneSkyCloudLayer,
 } from "./types";
@@ -51,33 +50,6 @@ function parseVec3(
     x: parts[0] ?? fallback.x,
     y: parts[1] ?? fallback.y,
     z: parts[2] ?? fallback.z,
-  };
-}
-
-function parseColor3(
-  s: string | undefined,
-  fallback: Color3 = { r: 0, g: 0, b: 0 },
-): Color3 {
-  if (!s) return fallback;
-  const parts = s.split(" ").map(Number);
-  return {
-    r: parts[0] ?? fallback.r,
-    g: parts[1] ?? fallback.g,
-    b: parts[2] ?? fallback.b,
-  };
-}
-
-function parseColor4(
-  s: string | undefined,
-  fallback: Color4 = { r: 0.5, g: 0.5, b: 0.5, a: 1 },
-): Color4 {
-  if (!s) return fallback;
-  const parts = s.split(" ").map(Number);
-  return {
-    r: parts[0] ?? fallback.r,
-    g: parts[1] ?? fallback.g,
-    b: parts[2] ?? fallback.b,
-    a: parts[3] ?? fallback.a,
   };
 }
 

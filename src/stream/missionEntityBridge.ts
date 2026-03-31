@@ -8,6 +8,7 @@ import type {
   WayPointEntity,
 } from "../state/gameEntityTypes";
 import { getPosition, getProperty, getScale } from "../mission";
+import { parseColorTuple } from "../colorUtils";
 import {
   terrainFromMis,
   interiorFromMis,
@@ -33,11 +34,6 @@ function isTruthy(value: unknown): boolean {
     return lower !== "0" && lower !== "false" && lower !== "";
   }
   return !!value;
-}
-
-function parseColor3(colorStr: string): [number, number, number] {
-  const parts = colorStr.split(" ").map((s) => parseFloat(s));
-  return [parts[0] ?? 0, parts[1] ?? 0, parts[2] ?? 0];
 }
 
 function parseRotationToQuat(
@@ -215,6 +211,10 @@ function buildShapeEntity(
     shapeName,
     shapeType,
     dataBlock: datablockName || undefined,
+    emap:
+      getProperty(datablock, "emap") != null
+        ? isTruthy(getProperty(datablock, "emap"))
+        : undefined,
     teamId,
   };
 
@@ -251,7 +251,7 @@ function buildForceFieldEntity(
 ): ForceFieldBareEntity {
   const colorStr = getProperty(datablock, "color");
   const color = colorStr
-    ? parseColor3(colorStr)
+    ? parseColorTuple(colorStr)
     : ([1, 1, 1] as [number, number, number]);
   const baseTranslucency =
     parseFloat(getProperty(datablock, "baseTranslucency")) || 1;

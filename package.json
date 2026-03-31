@@ -8,7 +8,7 @@
   "type": "module",
   "packageManager": "npm@11.7.0",
   "scripts": {
-    "build:manifest": "tsx scripts/generate-manifest.ts -o src/manifest.json",
+    "build:manifest": "tsx --tsconfig tsconfig.node.json scripts/generate-manifest.ts -o src/manifest.json",
     "build:parser": "peggy TorqueScript.pegjs -o generated/TorqueScript.js --format es",
     "build": "vite build",
     "copy-public": "cpy --dot 'public/*' '!(public/docs)' docs",
@@ -86,7 +86,7 @@
     "rimraf": "^6.1.3",
     "typescript": "~5.9.3",
     "typescript-eslint": "^8.57.2",
-    "vite": "^8.0.2",
-    "vitest": "^4.1.1"
+    "vite": "^8.0.3",
+    "vitest": "^4.1.2"
   }
 }
