@@ -12,7 +12,7 @@ import {
 } from "react";
 import { useFogQueryState } from "./useQueryParams";
 import { useTouchDevice } from "./useTouchDevice";
-import { setAdjustAudioSpeedFlag } from "./AudioEmitter";
+import { setAdjustAudioSpeedFlag } from "./audioPlaybackRate";
 
 export const MIN_SPEED_MULTIPLIER = 0.01;
 export const MAX_SPEED_MULTIPLIER = 1;

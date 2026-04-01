@@ -144,6 +144,10 @@ export interface StreamEntity {
   headPitch?: number;
   /** Head yaw for blend animations (freelook), normalized [-1,1]. -1 = max right, 1 = max left. */
   headYaw?: number;
+  /** Arm blend animation action index from Player ghost (networked). */
+  armAction?: number;
+  /** ShapeBase sound slots (from ghost SoundMask). */
+  soundSlots?: Array<{ index: number; playing: boolean; profileId?: number }>;
   /** WayPoint display label. */
   label?: string;
   // AudioEmitter ghost fields

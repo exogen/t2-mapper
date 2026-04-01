@@ -7,7 +7,7 @@ import {
 import { ghostToSceneObject } from "../scene";
 import {
   toEntityType,
-  toEntityId,
+  allocateEntityId,
   TICK_DURATION_MS,
 } from "./entityClassification";
 import {
@@ -374,6 +374,7 @@ class StreamingPlayback extends StreamEngine {
   // Cached snapshot
   private _cachedSnapshot: StreamSnapshot | null = null;
   private _cachedSnapshotTick = -1;
+  private _cachedSnapshotGen = -1;
 
   // Cached derived arrays
   private _snap: {
@@ -496,6 +497,7 @@ class StreamingPlayback extends StreamEngine {
     this.ghostTracker = this.parser.getGhostTracker();
     this._cachedSnapshot = null;
     this._cachedSnapshotTick = -1;
+    this._cachedSnapshotGen = -1;
     this._snap = null;
 
     this.resetSharedState();
@@ -622,12 +624,6 @@ class StreamingPlayback extends StreamEngine {
         ? (this.initialBlock.controlObjectData?.position as Vec3)
         : undefined,
     };
-    this.controlPlayerGhostId =
-      this.lastControlType === "player" &&
-      this.initialBlock.controlObjectGhostIndex >= 0
-        ? toEntityId("Player", this.initialBlock.controlObjectGhostIndex)
-        : undefined;
-
     for (const ghost of this.initialBlock.initialGhosts) {
       if (ghost.type !== "create" || ghost.classId == null) continue;
       const className = this.registry.getGhostParser(ghost.classId)?.name;
@@ -636,7 +632,8 @@ class StreamingPlayback extends StreamEngine {
           `No ghost parser for classId ${ghost.classId} (ghost index ${ghost.index})`,
         );
       }
-      const id = toEntityId(className, ghost.index);
+      const id = allocateEntityId();
+      this.entityIdByGhostIndex.set(ghost.index, id);
       const entity: MutableEntity = {
         id,
         ghostIndex: ghost.index,
@@ -657,6 +654,15 @@ class StreamingPlayback extends StreamEngine {
       this.entities.set(id, entity);
       this.entityIdByGhostIndex.set(ghost.index, id);
     }
+
+    // Resolve control player entity ID from the ghost index map.
+    this.controlPlayerGhostId =
+      this.lastControlType === "player" &&
+      this.initialBlock.controlObjectGhostIndex >= 0
+        ? this.entityIdByGhostIndex.get(
+            this.initialBlock.controlObjectGhostIndex,
+          )
+        : undefined;
 
     // Derive playerSensorGroup from the control player entity
     if (
@@ -750,12 +756,17 @@ class StreamingPlayback extends StreamEngine {
   }
 
   getSnapshot(): StreamSnapshot {
-    if (this._cachedSnapshot && this._cachedSnapshotTick === this.moveTicks) {
+    if (
+      this._cachedSnapshot &&
+      this._cachedSnapshotTick === this.moveTicks &&
+      this._cachedSnapshotGen === this.entityGeneration
+    ) {
       return this._cachedSnapshot;
     }
     const snapshot = this.buildSnapshot();
     this._cachedSnapshot = snapshot;
     this._cachedSnapshotTick = this.moveTicks;
+    this._cachedSnapshotGen = this.entityGeneration;
     return snapshot;
   }
 
@@ -819,7 +830,8 @@ class StreamingPlayback extends StreamEngine {
       !didReset &&
       wasExhausted === this.exhausted &&
       this._cachedSnapshot &&
-      this._cachedSnapshotTick === this.moveTicks
+      this._cachedSnapshotTick === this.moveTicks &&
+      this._cachedSnapshotGen === this.entityGeneration
     ) {
       return this._cachedSnapshot;
     }
@@ -910,6 +922,18 @@ class StreamingPlayback extends StreamEngine {
         -MAX_PITCH,
         MAX_PITCH,
       );
+
+      // The control player's ghost skips MoveMask (the server knows the client
+      // predicts its own state). Derive jetting from the move's trigger[3],
+      // matching Tribes2.exe Player::updateMove: mJetting = trigger[3] &&
+      // energy >= minJetEnergy && state == MoveState && !disableMove.
+      const triggers = (block.parsed as { trigger?: boolean[] }).trigger;
+      if (triggers && this.controlPlayerGhostId) {
+        const entity = this.entities.get(this.controlPlayerGhostId);
+        if (entity) {
+          entity.jetting = !!triggers[3];
+        }
+      }
     }
   }
 

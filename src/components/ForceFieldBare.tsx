@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useRef } from "react";
+import { useIsDebugTourTarget } from "../state/cameraTourStore";
+import { DebugBounds } from "./DebugBounds";
 import { DebugSuspense } from "./DebugSuspense";
 import { useTexture } from "@react-three/drei";
 import { useFrame } from "@react-three/fiber";
@@ -133,6 +135,7 @@ function ForceFieldMesh({
 export function ForceFieldBare({ entity }: { entity: ForceFieldBareEntity }) {
   const data = entity.forceFieldData!;
   const scale = data.dimensions;
+  const isTarget = useIsDebugTourTarget(entity.id);
 
   const textureUrls = useMemo(
     () => data.textures.map((t) => textureToUrl(t)),
@@ -150,17 +153,20 @@ export function ForceFieldBare({ entity }: { entity: ForceFieldBareEntity }) {
   }
 
   return (
-    <DebugSuspense
-      name={`ForceField`}
-      fallback={
-        <ForceFieldFallback
-          scale={scale}
-          color={data.color}
-          baseTranslucency={data.baseTranslucency}
-        />
-      }
-    >
-      <ForceFieldMesh scale={scale} data={data} />
-    </DebugSuspense>
+    <>
+      <DebugSuspense
+        name={`ForceField`}
+        fallback={
+          <ForceFieldFallback
+            scale={scale}
+            color={data.color}
+            baseTranslucency={data.baseTranslucency}
+          />
+        }
+      >
+        <ForceFieldMesh scale={scale} data={data} />
+      </DebugSuspense>
+      {isTarget && scale && <DebugBounds size={scale} />}
+    </>
   );
 }

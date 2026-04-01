@@ -1,4 +1,6 @@
 import { memo, Suspense, useEffect, useMemo, useRef, useState } from "react";
+import { useIsDebugTourTarget } from "../state/cameraTourStore";
+import { DebugBounds } from "./DebugBounds";
 import { Box, useTexture } from "@react-three/drei";
 import { useFrame, useThree } from "@react-three/fiber";
 import {
@@ -107,6 +109,7 @@ export const WaterBlock = memo(function WaterBlock({
   entity: WaterBlockEntity;
 }) {
   const scene = entity.waterData;
+  const isTarget = useIsDebugTourTarget(entity.id);
   const { debugMode } = useDebug();
   const q = useMemo(
     () => matrixFToQuaternion(scene.transform),
@@ -254,6 +257,17 @@ export const WaterBlock = memo(function WaterBlock({
         >
           <meshBasicMaterial color="#00fbff" wireframe />
         </Box>
+      )}
+      {isTarget && (
+        <group
+          position={[
+            position[0] + scaleX / 2,
+            position[1] + scaleY / 2,
+            position[2] + scaleZ / 2,
+          ]}
+        >
+          <DebugBounds size={[scaleX, scaleY, scaleZ]} />
+        </group>
       )}
       <Suspense
         fallback={reps.map(([repX, repZ]) => {

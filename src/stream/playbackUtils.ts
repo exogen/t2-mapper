@@ -22,7 +22,7 @@ import type {
 import {
   createMaterialFromFlags,
   applyShapeShaderModifications,
-} from "../components/GenericShape";
+} from "../shapeMaterial";
 import { isOrganicShape } from "../components/ShapeInfoProvider";
 import {
   loadIflAtlas,

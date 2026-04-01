@@ -101,9 +101,9 @@ export const EntityRenderer = memo(function EntityRenderer({
     case "WayPoint":
       return <WayPoint entity={entity} />;
     case "TerrainBlock":
-      return <TerrainBlock scene={entity.terrainData} />;
+      return <TerrainBlock entity={entity} />;
     case "InteriorInstance":
-      return <InteriorInstance scene={entity.interiorData} />;
+      return <InteriorInstance entity={entity} />;
     case "Sky":
       return <Sky entity={entity} />;
     case "Sun":
@@ -164,6 +164,7 @@ function ShapeEntity({ entity }: { entity: ShapeEntityType }) {
           loadingColor={loadingColor}
           streamEntity={torqueObject ? undefined : entity}
           emap={entity.emap}
+          entityId={entity.id}
         >
           {flagLabel ? (
             <FloatingLabel opacity={0.6}>{flagLabel}</FloatingLabel>

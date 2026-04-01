@@ -1,7 +1,8 @@
 import picomatch from "picomatch";
 import { createLogger } from "../logger";
 import { generate } from "./codegen";
-import { parse, type Program } from "./index";
+import { parse } from "./parser";
+import type { Program } from "./ast";
 import { createBuiltins as defaultCreateBuiltins } from "./builtins";
 
 const log = createLogger("runtime");

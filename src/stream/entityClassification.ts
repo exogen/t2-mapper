@@ -1,3 +1,18 @@
+/**
+ * GhostingMessageEvent message types (from NetConnection::GhostMSG enum).
+ * Sent by the server to control ghost scope lifecycle.
+ */
+export const GhostMessage = {
+  /** Server finished sending GhostAlways objects. Client must ack. */
+  GhostAlwaysDone: 0,
+  /** Client acknowledgment of GhostAlwaysDone. */
+  GhostAlwaysAck: 1,
+  /** EndGhosting — server called resetGhosting, clear all ghosts. */
+  EndGhosting: 2,
+  /** Server activated ghosting (begins sending scoped ghosts). */
+  GhostingActive: 3,
+} as const;
+
 /** Class names for vehicle ghosts. */
 export const vehicleClassNames = new Set([
   "FlyingVehicle",
@@ -56,9 +71,20 @@ export function toEntityType(className: string): string {
   return "Ghost";
 }
 
-/** Generate a stable entity ID from ghost class name and index. */
-export function toEntityId(className: string, ghostIndex: number): string {
-  return `${className}_${ghostIndex}`;
+/** First dynamic object ID, matching Torque's SimObjectId allocation.
+ *  IDs 3-1026 are reserved for datablocks (DataBlockObjectIdFirst=3, 1024 slots). */
+const FIRST_DYNAMIC_ID = 1027;
+
+let _nextEntityId = FIRST_DYNAMIC_ID;
+
+/** Reset the entity ID counter (e.g. on mission/recording change). */
+export function resetEntityIdCounter(): void {
+  _nextEntityId = FIRST_DYNAMIC_ID;
+}
+
+/** Allocate the next sequential entity ID, mimicking Torque's registerObject. */
+export function allocateEntityId(): string {
+  return String(_nextEntityId++);
 }
 
 /** Tribes 2 default IFF colors (sRGB 0-255). */

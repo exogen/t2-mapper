@@ -1,4 +1,4 @@
-import { memo, useCallback, useRef, useState, useMemo, Suspense } from "react";
+import { memo, useCallback, useRef, useState, useMemo } from "react";
 import { Quaternion } from "three";
 import type { Group } from "three";
 import { useFrame } from "@react-three/fiber";
@@ -72,6 +72,8 @@ const EntityWrapper = memo(function EntityWrapper({
 }: {
   entity: GameEntity;
 }) {
+  if (entity.debugHidden) return null;
+
   // Scene infrastructure handles its own positioning and Suspense — render
   // directly. The named group allows the interpolation loop to skip them.
   if (isSceneEntity(entity)) {

@@ -645,8 +645,11 @@ function DynamicFog({
     if (enabled) {
       // Update Three.js basic fog
       const [near, far] = calculateFogParameters(fogState, cameraHeight);
-      fog.near = near;
-      fog.far = far;
+      // When fogDistanceScale > 1 (camera tour), stretch haze range so fog
+      // starts nearby but doesn't reach full until past the orbit distance.
+      const scale = globalFogUniforms.fogDistanceScale.value;
+      fog.near = scale > 1 ? Math.min(near, 100) : near;
+      fog.far = far * scale;
       fog.color.copy(fogState.fogColor);
     }
     // When disabled, fog.near/far are already set to 1e10 by the useEffect

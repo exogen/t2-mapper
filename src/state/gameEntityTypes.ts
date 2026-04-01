@@ -51,6 +51,8 @@ interface EntityBase {
   spawnTime?: number;
   runtimeObject?: unknown;
   missionTypesList?: string;
+  /** Hidden via the debug entity list. */
+  debugHidden?: boolean;
 }
 
 // ── Scene infrastructure entities ──
@@ -136,6 +138,8 @@ export interface ShapeEntity extends PositionedBase {
   targetRenderFlags?: number;
   iffColor?: { r: number; g: number; b: number };
   weaponShape?: string;
+  /** Arm blend animation action index from Player ghost (networked). */
+  armAction?: number;
   /** WheeledVehicle per-wheel state (speed, slip). */
   wheels?: Array<{
     speed: number;
@@ -148,6 +152,8 @@ export interface ShapeEntity extends PositionedBase {
   frozen?: boolean;
   /** Vehicle max steering angle (radians), from datablock. */
   maxSteeringAngle?: number;
+  /** ShapeBase sound slots (from ghost SoundMask). */
+  soundSlots?: Array<{ index: number; playing: boolean; profileId?: number }>;
 }
 
 export interface PlayerEntity extends PositionedBase {
@@ -177,6 +183,8 @@ export interface PlayerEntity extends PositionedBase {
   actionAtEnd?: boolean;
   damageState?: number;
   targetRenderFlags?: number;
+  /** ShapeBase sound slots (from ghost SoundMask). */
+  soundSlots?: Array<{ index: number; playing: boolean; profileId?: number }>;
 }
 
 export interface ForceFieldBareEntity extends PositionedBase {

@@ -23,6 +23,9 @@ export const globalFogUniforms = {
   },
   cameraHeight: { value: 0 },
   fogEnabled: { value: true },
+  /** Scales all fog distances (haze + volumes). 1.0 = normal, >1 = less fog.
+   *  Used by camera tour to reduce fog when orbiting far from targets. */
+  fogDistanceScale: { value: 1 },
 };
 
 /**
@@ -47,6 +50,7 @@ export function resetGlobalFogUniforms(): void {
   globalFogUniforms.cameraHeight.value = 0;
   globalFogUniforms.fogVolumeData.value.fill(0);
   globalFogUniforms.fogEnabled.value = true;
+  globalFogUniforms.fogDistanceScale.value = 1;
 }
 
 /**

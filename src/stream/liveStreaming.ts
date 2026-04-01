@@ -4,6 +4,7 @@ import { resolveShapeName, stripTaggedStringMarkup } from "./streamHelpers";
 import type { Vec3 } from "./streamHelpers";
 import type { StreamSnapshot } from "./types";
 import { StreamEngine } from "./StreamEngine";
+import { GhostMessage } from "./entityClassification";
 import type { RelayClient } from "./relayClient";
 
 const log = createLogger("liveStreaming");
@@ -337,9 +338,8 @@ export class LiveStreamAdapter extends StreamEngine {
       sequence,
       ghostCount,
     );
-    if (message === 0) {
-      // GhostAlwaysDone → send type 1 acknowledgment
-      log.info("Sending ghost ack (type 1) for sequence %d", sequence);
+    if (message === GhostMessage.GhostAlwaysDone) {
+      log.info("Sending ghost ack for sequence %d", sequence);
       this.relay.sendGhostAck(sequence, ghostCount);
     }
   }

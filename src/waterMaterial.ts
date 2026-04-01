@@ -82,6 +82,7 @@ const vertexShader = /* glsl */ `
 `;
 
 const fragmentShader = /* glsl */ `
+  #define HAS_FOG_DISTANCE_SCALE
   #include <fog_pars_fragment>
 
   // Enable volumetric fog (must be defined before fog uniforms)
@@ -219,6 +220,7 @@ export function createWaterMaterial(options?: {
       fogVolumeData: globalFogUniforms.fogVolumeData,
       cameraHeight: globalFogUniforms.cameraHeight,
       fogEnabled: globalFogUniforms.fogEnabled,
+      fogDistanceScale: globalFogUniforms.fogDistanceScale,
     },
     vertexShader,
     fragmentShader,

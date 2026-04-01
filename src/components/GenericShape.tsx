@@ -1,24 +1,22 @@
 import { memo, Suspense, useEffect, useMemo, useRef } from "react";
 import { ErrorBoundary } from "react-error-boundary";
-import type { AnimationAction, Material } from "three";
+import type { AnimationAction } from "three";
 import { useGLTF, useTexture } from "@react-three/drei";
 import { useFrame } from "@react-three/fiber";
 import { createLogger } from "../logger";
 import { FALLBACK_TEXTURE_URL, textureToUrl, shapeToUrl } from "../loaders";
 import {
   MeshStandardMaterial,
-  MeshBasicMaterial,
-  MeshLambertMaterial,
-  AdditiveBlending,
   AdditiveAnimationBlendMode,
   AnimationMixer,
   AnimationClip,
   AnimationUtils,
   LoopOnce,
   LoopRepeat,
-  Texture,
   BufferGeometry,
   Group,
+  Box3,
+  Vector3,
 } from "three";
 import * as SkeletonUtils from "three/examples/jsm/utils/SkeletonUtils.js";
 import { setupTexture } from "../textureUtils";
@@ -38,9 +36,11 @@ import {
   updateAtlasFrame,
 } from "./useIflTexture";
 import type { IflAtlas } from "./useIflTexture";
-import { injectCustomFog } from "../fogShader";
-import { globalFogUniforms } from "../globalFogUniforms";
-import { injectShapeLighting, injectShapeEnvMap } from "../shapeMaterial";
+import { createMaterialFromFlags } from "../shapeMaterial";
+import type { MaterialResult } from "../shapeMaterial";
+import { useIsDebugTourTarget } from "../state/cameraTourStore";
+import { DebugBounds } from "./DebugBounds";
+import { useEntitySoundSlots } from "./useEntitySoundSlots";
 import {
   processShapeScene,
   replaceWithShapeMaterial,
@@ -51,6 +51,7 @@ import type { ThreadState as StreamThreadState } from "../stream/types";
 
 /** Shape entity data readable in useFrame for streaming mode. */
 interface StreamShapeEntity {
+  id: string;
   threads?: StreamThreadState[];
   damageState?: number;
   emap?: boolean;
@@ -62,6 +63,8 @@ interface StreamShapeEntity {
   steeringYaw?: number;
   frozen?: boolean;
   maxSteeringAngle?: number;
+  soundSlots?: Array<{ index: number; playing: boolean; profileId?: number }>;
+  dataBlockId?: number;
 }
 
 const log = createLogger("GenericShape");
@@ -92,147 +95,6 @@ interface TextureProps {
   vis?: number;
   /** When true, material is created transparent for vis keyframe animation. */
   animated?: boolean;
-}
-
-/**
- * DTS Material Flags (from tsShape.h):
- * - Translucent: Material has alpha transparency (smooth blending)
- * - Additive: Additive blending mode
- * - Subtractive: Subtractive blending mode
- * - SelfIlluminating: Fullbright, no lighting applied
- * - NeverEnvMap: Don't apply environment mapping
- */
-type SingleMaterial =
-  | MeshStandardMaterial
-  | MeshBasicMaterial
-  | MeshLambertMaterial;
-type MaterialResult =
-  | SingleMaterial
-  | [MeshLambertMaterial, MeshLambertMaterial];
-
-// Stable onBeforeCompile callbacks — using shared function references lets
-// Three.js's program cache match by identity rather than toString().
-const lambertBeforeCompile: Material["onBeforeCompile"] = (shader) => {
-  injectCustomFog(shader, globalFogUniforms);
-  injectShapeLighting(shader);
-};
-
-const basicBeforeCompile: Material["onBeforeCompile"] = (shader) => {
-  injectCustomFog(shader, globalFogUniforms);
-};
-
-/**
- * Helper to apply volumetric fog and lighting multipliers to a material.
- * When envMapOptions is provided, also injects Tribes 2 env map reflectivity.
- */
-export function applyShapeShaderModifications(
-  mat: MeshBasicMaterial | MeshLambertMaterial,
-  envMapOptions?: { reflectionAmount: number },
-): void {
-  if (!envMapOptions) {
-    mat.onBeforeCompile =
-      mat instanceof MeshLambertMaterial
-        ? lambertBeforeCompile
-        : basicBeforeCompile;
-    return;
-  }
-  const matType = mat instanceof MeshLambertMaterial ? "lambert" : "basic";
-  mat.customProgramCacheKey = () => `shape-envmap-${matType}`;
-  const { reflectionAmount } = envMapOptions;
-  mat.onBeforeCompile = (shader) => {
-    injectCustomFog(shader, globalFogUniforms);
-    injectShapeLighting(shader);
-    injectShapeEnvMap(shader, reflectionAmount);
-  };
-}
-
-export function createMaterialFromFlags(
-  baseMaterial: MeshStandardMaterial,
-  texture: Texture | null,
-  flagNames: Set<string>,
-  isOrganic: boolean,
-  vis: number = 1,
-  animated: boolean = false,
-  reflectionAmount: number = 0,
-): MaterialResult {
-  const isTranslucent = flagNames.has("Translucent");
-  const isAdditive = flagNames.has("Additive");
-  const isSelfIlluminating = flagNames.has("SelfIlluminating");
-  // DTS per-object visibility: when vis < 1, the engine sets fadeSet=true which
-  // forces the Translucent flag and renders with GL_SRC_ALPHA/GL_ONE_MINUS_SRC_ALPHA.
-  // Animated vis also needs transparent materials so opacity can be updated per frame.
-  const isFaded = vis < 1 || animated;
-
-  // Env map reflectivity: gated only by NeverEnvMap flag and reflectionAmount
-  // (which is 0 when the datablock doesn't have emap=true). Independent of
-  // SelfIlluminating/Additive — those affect lighting, not env mapping.
-  const enableEnvMap =
-    !flagNames.has("NeverEnvMap") && reflectionAmount > 0 && !isFaded;
-  const envMapOptions = enableEnvMap ? { reflectionAmount } : undefined;
-
-  // SelfIlluminating or Additive materials are unlit (use MeshBasicMaterial).
-  // Additive materials without SelfIlluminating (e.g. explosion shells) must
-  // also be unlit, otherwise they render black with no scene lighting.
-  if (isSelfIlluminating || isAdditive) {
-    const isBlended = isAdditive || isTranslucent || isFaded;
-    const mat = new MeshBasicMaterial({
-      map: texture,
-      side: 2, // DoubleSide
-      transparent: isBlended,
-      depthWrite: !isBlended,
-      alphaTest: 0,
-      fog: true,
-      ...(isFaded && { opacity: vis }),
-      ...(isAdditive && { blending: AdditiveBlending }),
-    });
-    applyShapeShaderModifications(mat, envMapOptions);
-    return mat;
-  }
-
-  // For organic shapes or Translucent flag, use alpha cutout with Lambert shading
-  // Tribes 2 used fixed-function GL with specular disabled - purely diffuse lighting
-  // MeshLambertMaterial gives us the diffuse-only look that matches the original
-  // Return [BackSide, FrontSide] materials to render in two passes - avoids z-fighting
-  if (isOrganic || isTranslucent) {
-    const baseProps = {
-      map: texture,
-      // When vis < 1, switch from alpha cutout to alpha blend (matching the engine's
-      // fadeSet behavior which forces GL_BLEND with no alpha test)
-      transparent: isFaded,
-      alphaTest: isFaded ? 0 : 0.5,
-      ...(isFaded && { opacity: vis, depthWrite: false }),
-      reflectivity: 0,
-    };
-    const backMat = new MeshLambertMaterial({
-      ...baseProps,
-      side: 1, // BackSide
-      // Push back faces slightly behind in depth to avoid z-fighting with front
-      polygonOffset: true,
-      polygonOffsetFactor: 1,
-      polygonOffsetUnits: 1,
-    });
-    const frontMat = new MeshLambertMaterial({
-      ...baseProps,
-      side: 0, // FrontSide
-    });
-    applyShapeShaderModifications(backMat, envMapOptions);
-    applyShapeShaderModifications(frontMat, envMapOptions);
-    return [backMat, frontMat];
-  }
-
-  // Default: use Lambert for diffuse-only lighting (matches Tribes 2)
-  const mat = new MeshLambertMaterial({
-    map: texture,
-    side: 2, // DoubleSide
-    reflectivity: 0,
-    ...(isFaded && {
-      transparent: true,
-      opacity: vis,
-      depthWrite: false,
-    }),
-  });
-  applyShapeShaderModifications(mat, envMapOptions);
-  return mat;
 }
 
 /**
@@ -505,6 +367,7 @@ export const ShapeRenderer = memo(function ShapeRenderer({
   loadingColor = "yellow",
   streamEntity,
   emap,
+  entityId,
   children,
 }: {
   loadingColor?: string;
@@ -512,6 +375,7 @@ export const ShapeRenderer = memo(function ShapeRenderer({
   streamEntity?: StreamShapeEntity;
   /** Datablock enables environment map reflections. */
   emap?: boolean;
+  entityId?: string;
   children?: React.ReactNode;
 }) {
   const { object, shapeName } = useShapeInfo();
@@ -532,7 +396,11 @@ export const ShapeRenderer = memo(function ShapeRenderer({
       }}
     >
       <Suspense fallback={<ShapePlaceholder color={loadingColor} />}>
-        <ShapeModelLoader streamEntity={streamEntity} emap={emap} />
+        <ShapeModelLoader
+          streamEntity={streamEntity}
+          emap={emap}
+          entityId={entityId}
+        />
         {children}
       </Suspense>
     </ErrorBoundary>
@@ -565,12 +433,14 @@ export const ShapeModel = memo(function ShapeModel({
   gltf,
   streamEntity,
   emap,
+  entityId,
 }: {
   gltf: ReturnType<typeof useStaticShape>;
   /** Stable entity reference whose fields are mutated in-place. */
   streamEntity?: StreamShapeEntity;
   /** Datablock enables environment map reflections. */
   emap?: boolean;
+  entityId?: string;
 }) {
   const { object, shapeName } = useShapeInfo();
   const { debugMode } = useDebug();
@@ -1270,6 +1140,23 @@ export const ShapeModel = memo(function ShapeModel({
     }
   });
 
+  // ShapeBase sound slots — managed as PositionalAudio, not entities.
+  useEntitySoundSlots(streamEntityRef, clonedScene);
+
+  const isTarget = useIsDebugTourTarget(entityId ?? "");
+  const shapeBounds = useMemo(() => {
+    if (!isTarget) return null;
+    const box = new Box3().setFromObject(gltf.scene);
+    const center = new Vector3();
+    const size = new Vector3();
+    box.getCenter(center);
+    box.getSize(size);
+    return {
+      center: [center.x, center.y, center.z] as [number, number, number],
+      size: [size.x, size.y, size.z] as [number, number, number],
+    };
+  }, [isTarget, gltf.scene]);
+
   return (
     <group rotation={[0, Math.PI / 2, 0]}>
       <primitive object={clonedScene} />
@@ -1278,6 +1165,11 @@ export const ShapeModel = memo(function ShapeModel({
           {object?._id}: {shapeName}
         </FloatingLabel>
       ) : null}
+      {shapeBounds && (
+        <group position={shapeBounds.center}>
+          <DebugBounds size={shapeBounds.size} />
+        </group>
+      )}
     </group>
   );
 });
@@ -1285,11 +1177,20 @@ export const ShapeModel = memo(function ShapeModel({
 function ShapeModelLoader({
   streamEntity,
   emap,
+  entityId,
 }: {
   streamEntity?: StreamShapeEntity;
   emap?: boolean;
+  entityId?: string;
 }) {
   const { shapeName } = useShapeInfo();
   const gltf = useStaticShape(shapeName);
-  return <ShapeModel gltf={gltf} streamEntity={streamEntity} emap={emap} />;
+  return (
+    <ShapeModel
+      gltf={gltf}
+      streamEntity={streamEntity}
+      emap={emap}
+      entityId={entityId}
+    />
+  );
 }

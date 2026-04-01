@@ -1,8 +1,6 @@
 import { createStore } from "zustand/vanilla";
 import type { Group } from "three";
 import type { StreamingPlayback } from "../stream/types";
-import type { GameEntity } from "./gameEntityTypes";
-
 export type DemoCameraMode = "original" | "freeFly" | "orbitOverride";
 
 /**
@@ -26,10 +24,6 @@ export interface StreamPlaybackState {
   orbitOverrideYaw: number;
   /** User-controlled orbit pitch (radians), used when cameraMode is "orbitOverride". */
   orbitOverridePitch: number;
-  /** Live entity map, updated every frame. Components read from this in
-   * useFrame to get the latest render fields (threads, weapons, etc.)
-   * without triggering React re-renders. */
-  entities: Map<string, GameEntity>;
 }
 
 export const streamPlaybackStore = createStore<StreamPlaybackState>()(() => ({
@@ -39,7 +33,6 @@ export const streamPlaybackStore = createStore<StreamPlaybackState>()(() => ({
   cameraMode: "original",
   orbitOverrideYaw: 0,
   orbitOverridePitch: 0,
-  entities: new Map(),
 }));
 
 /** Reset all streaming playback state. Called when streaming ends. */

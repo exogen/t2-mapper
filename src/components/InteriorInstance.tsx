@@ -10,10 +10,14 @@ import {
   MeshLambertMaterial,
   Texture,
   SRGBColorSpace,
+  Box3,
+  Vector3,
 } from "three";
 import { useGLTF, useTexture } from "@react-three/drei";
 import { textureToUrl, interiorToUrl } from "../loaders";
-import type { SceneInteriorInstance } from "../scene/types";
+import type { InteriorInstanceEntity } from "../state/gameEntityTypes";
+import { useIsDebugTourTarget } from "../state/cameraTourStore";
+import { DebugBounds } from "./DebugBounds";
 import {
   torqueToThree,
   torqueScaleToThree,
@@ -192,13 +196,29 @@ function InteriorMesh({ node }: { node: Mesh }) {
 export const InteriorModel = memo(function InteriorModel({
   interiorFile,
   ghostIndex,
+  isTarget,
 }: {
   interiorFile: string;
   ghostIndex?: number;
+  isTarget?: boolean;
 }) {
-  const { nodes } = useInterior(interiorFile);
+  const gltf = useInterior(interiorFile);
+  const { nodes } = gltf;
   const debugContext = useDebug();
   const debugMode = debugContext?.debugMode ?? false;
+
+  const debugBounds = useMemo(() => {
+    if (!isTarget) return null;
+    const box = new Box3().setFromObject(gltf.scene);
+    const center = new Vector3();
+    const size = new Vector3();
+    box.getCenter(center);
+    box.getSize(size);
+    return {
+      center: [center.x, center.y, center.z] as [number, number, number],
+      size: [size.x, size.y, size.z] as [number, number, number],
+    };
+  }, [isTarget, gltf.scene]);
 
   return (
     <group rotation={[0, -Math.PI / 2, 0]}>
@@ -212,6 +232,11 @@ export const InteriorModel = memo(function InteriorModel({
           {ghostIndex}: {interiorFile}
         </FloatingLabel>
       ) : null}
+      {debugBounds && (
+        <group position={debugBounds.center}>
+          <DebugBounds size={debugBounds.size} />
+        </group>
+      )}
     </group>
   );
 });
@@ -239,10 +264,12 @@ function DebugInteriorPlaceholder({ label }: { label?: string }) {
 }
 
 export const InteriorInstance = memo(function InteriorInstance({
-  scene,
+  entity,
 }: {
-  scene: SceneInteriorInstance;
+  entity: InteriorInstanceEntity;
 }) {
+  const scene = entity.interiorData;
+  const isTarget = useIsDebugTourTarget(entity.id);
   const position = useMemo(
     () => torqueToThree(scene.transform.position),
     [scene.transform.position],
@@ -276,6 +303,7 @@ export const InteriorInstance = memo(function InteriorInstance({
           <InteriorModel
             interiorFile={scene.interiorFile}
             ghostIndex={scene.ghostIndex}
+            isTarget={isTarget}
           />
         </DebugSuspense>
       </ErrorBoundary>

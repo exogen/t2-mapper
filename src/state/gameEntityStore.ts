@@ -69,9 +69,15 @@ export interface GameEntityState {
   setStreamEntities(entities: GameEntity[]): void;
   setAllStreamEntities(entities: GameEntity[]): void;
   clearStreamEntities(): void;
+  /** Returns the store's streamEntities Map for direct mutation.
+   *  Call bumpStreamVersion() after structural changes (adds/removes). */
+  getStreamEntitiesMap(): Map<string, GameEntity>;
+  /** Bump version to notify React subscribers. Call after adds/removes/
+   *  identity rebuilds, NOT for in-place field mutations. */
+  bumpStreamVersion(): void;
 }
 
-export const gameEntityStore = createStore<GameEntityState>()((set) => ({
+export const gameEntityStore = createStore<GameEntityState>()((set, get) => ({
   missionEntities: new Map(),
   streamEntities: new Map(),
   isStreaming: false,
@@ -278,6 +284,14 @@ export const gameEntityStore = createStore<GameEntityState>()((set) => ({
       return { streamEntities: new Map(), version: state.version + 1 };
     });
   },
+
+  getStreamEntitiesMap() {
+    return get().streamEntities;
+  },
+
+  bumpStreamVersion() {
+    set((state) => ({ version: state.version + 1 }));
+  },
 }));
 
 // ── Selectors ──
@@ -445,6 +459,16 @@ export function useMissionTypeDisplayName(): string | null {
     gameEntityStore,
     (state) => state.missionTypeDisplayName,
   );
+}
+
+/** Hook returning the debugHidden state for a specific entity. */
+export function useDebugHidden(entityId: string): boolean {
+  return useStoreWithEqualityFn(gameEntityStore, (state) => {
+    const entities = state.isStreaming
+      ? state.streamEntities
+      : state.missionEntities;
+    return entities.get(entityId)?.debugHidden ?? false;
+  });
 }
 
 /** Hook returning the mission display name (e.g. "Scarabrae"). */

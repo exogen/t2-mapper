@@ -12,6 +12,7 @@ import {
   Object3D,
   PositionalAudio,
   Vector3,
+  Box3,
 } from "three";
 import type { AnimationAction } from "three";
 import { AnimationClip } from "three";
@@ -33,6 +34,9 @@ import { useStaticShape, ShapePlaceholder } from "./GenericShape";
 import { useAnisotropy } from "./useAnisotropy";
 import { ShapeErrorBoundary } from "./ShapeErrorBoundary";
 import { DebugSuspense } from "./DebugSuspense";
+import { useIsDebugTourTarget } from "../state/cameraTourStore";
+import { DebugBounds } from "./DebugBounds";
+import { useEntitySoundSlots } from "./useEntitySoundSlots";
 import { useAudio } from "./AudioContext";
 import {
   resolveAudioProfile,
@@ -496,20 +500,19 @@ export function PlayerModel({ entity }: { entity: PlayerEntity }) {
   const flagShapeRef = useRef(entity.flagShape);
   const [currentFlagShape, setCurrentFlagShape] = useState(entity.flagShape);
 
-  // Jet thrust looping sound. Managed imperatively in useFrame based on
-  // entity.jetting — plays while jetting, stops when jetting ends.
-  // Sound parameters come from the player's datablock chain:
-  //   PlayerData.sounds[30] (jetSound) → AudioProfile → AudioDescription
+  // ShapeBase sound slots (weapon switch sounds, etc.) — managed by shared hook.
+  const entityRef = useRef(entity);
+  entityRef.current = entity;
+  useEntitySoundSlots(entityRef, clonedScene);
+
+  // Jet thrust sound. Played client-side by Player::updateJetEffects via
+  // direct alxPlay3d — NOT networked through SoundMask. We derive it from
+  // entity.jetting (which comes from move trigger[3] or ghost MoveMask).
   const { audioLoader, audioListener } = useAudio();
-  const audioSettings = useSettings();
-  const audioEnabled = audioSettings?.audioEnabled ?? false;
+  const { audioEnabled } = useSettings();
   const jetSoundRef = useRef<PositionalAudio | null>(null);
   const jetBufferRef = useRef<AudioBuffer | null>(null);
   const jetProfileRef = useRef<ResolvedAudioProfile | null>(null);
-
-  /** PlayerData.Sounds enum index for jetSound. Tribes 2 reordered the
-   *  open-source Torque Sounds enum to put jet sounds first (0-1). */
-  const JET_SOUND_INDEX = 0;
 
   // Resolve and preload the jet sound from the player's datablock.
   useEffect(() => {
@@ -519,8 +522,10 @@ export function PlayerModel({ entity }: { entity: PlayerEntity }) {
     if (!sp || !entity.dataBlockId) return;
     const getDb = sp.getDataBlockData.bind(sp);
     const playerDb = getDb(entity.dataBlockId);
+    // PlayerData.Sounds enum: Tribes 2 reordered the open-source Torque
+    // enum to put jet sounds first (index 0 = jetSound, 1 = wetJetSound).
     const sounds = playerDb?.sounds as (number | null)[] | undefined;
-    const jetSoundId = sounds?.[JET_SOUND_INDEX];
+    const jetSoundId = sounds?.[0];
     if (jetSoundId == null) return;
     const resolved = resolveAudioProfile(jetSoundId, getDb);
     if (!resolved) return;
@@ -773,17 +778,13 @@ export function PlayerModel({ entity }: { entity: PlayerEntity }) {
       headside.weight = blendWeight;
     }
 
-    // Jet thrust sound: start/stop a looping positional audio based on
-    // entity.jetting. The engine plays ArmorJetSound (CloseLooping3d) while
-    // mJetting is true and stops it when false.
+    // Jet thrust sound: start/stop based on entity.jetting.
+    // Client-side only — Player::updateJetEffects uses alxPlay3d directly.
     const isJetting = !!entity.jetting && !isDead;
     const jetProfile = jetProfileRef.current;
-    // Check both our ref AND isPlaying — the sound can be externally stopped
-    // by stopAllTrackedSounds() (on seek/recording change) without our ref
-    // knowing about it.
     const jetSound = jetSoundRef.current;
-    const soundActuallyPlaying = jetSound?.isPlaying ?? false;
-    if (isJetting && !soundActuallyPlaying) {
+    const jetPlaying = jetSound?.isPlaying ?? false;
+    if (isJetting && !jetPlaying) {
       if (audioEnabled && audioListener && jetBufferRef.current && jetProfile) {
         let sound = jetSound;
         if (!sound) {
@@ -806,7 +807,7 @@ export function PlayerModel({ entity }: { entity: PlayerEntity }) {
           /* AudioContext suspended */
         }
       }
-    } else if (!isJetting && soundActuallyPlaying) {
+    } else if (!isJetting && jetPlaying) {
       if (jetSound) {
         untrackSound(jetSound);
         try {
@@ -832,6 +833,7 @@ export function PlayerModel({ entity }: { entity: PlayerEntity }) {
       )}
       <group rotation={[0, Math.PI / 2, 0]}>
         <primitive object={clonedScene} />
+        <PlayerDebugBounds entityId={entity.id} scene={gltf.scene} />
       </group>
       {currentWeaponShape && mount0 && (
         <ShapeErrorBoundary
@@ -891,6 +893,34 @@ export function PlayerModel({ entity }: { entity: PlayerEntity }) {
         </ShapeErrorBoundary>
       )}
     </>
+  );
+}
+
+function PlayerDebugBounds({
+  entityId,
+  scene,
+}: {
+  entityId: string;
+  scene: Group;
+}) {
+  const isTarget = useIsDebugTourTarget(entityId);
+  const bounds = useMemo(() => {
+    if (!isTarget) return null;
+    const box = new Box3().setFromObject(scene);
+    const center = new Vector3();
+    const size = new Vector3();
+    box.getCenter(center);
+    box.getSize(size);
+    return {
+      center: [center.x, center.y, center.z] as [number, number, number],
+      size: [size.x, size.y, size.z] as [number, number, number],
+    };
+  }, [isTarget, scene]);
+  if (!bounds) return null;
+  return (
+    <group position={bounds.center}>
+      <DebugBounds size={bounds.size} />
+    </group>
   );
 }
 

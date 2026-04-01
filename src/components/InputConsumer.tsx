@@ -8,6 +8,7 @@ import {
 } from "../state/liveConnectionStore";
 import { useEngineStoreApi } from "../state/engineStore";
 import { streamPlaybackStore } from "../state/streamPlaybackStore";
+import { gameEntityStore } from "../state/gameEntityStore";
 import { useInputContext } from "./InputContext";
 import { useTick, useGetTickFraction } from "./TickProvider";
 import { yawPitchToQuaternion, MAX_PITCH } from "../stream/streamHelpers";
@@ -748,7 +749,7 @@ function applyOrbitCamera(
   // Height offset: approximate getWorldBox().getCenter() for players.
   const isPlayer =
     orbitTargetId != null &&
-    streamPlaybackStore.getState().entities.get(orbitTargetId)?.renderType ===
+    gameEntityStore.getState().streamEntities.get(orbitTargetId)?.renderType ===
       "Player";
   const centerZ = tz + (isPlayer ? 1.0 : 0);
 

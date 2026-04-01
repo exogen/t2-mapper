@@ -10,7 +10,7 @@ import {
   untrackSound,
 } from "./AudioEmitter";
 import { useSettings } from "./SettingsProvider";
-import { engineStore, useEngineSelector } from "../state/engineStore";
+import { useEngineSelector } from "../state/engineStore";
 import type { ChatMessage } from "../stream/types";
 
 /**
@@ -52,7 +52,6 @@ export function ChatSoundPlayer() {
       try {
         const url = audioToUrl(msg.soundPath);
         const pitch = msg.soundPitch ?? 1;
-        const rate = engineStore.getState().playback.rate;
         const sender = msg.sender;
         const gen = getSoundGeneration();
         getCachedAudioBuffer(url, audioLoader, (buffer) => {
@@ -84,7 +83,7 @@ export function ChatSoundPlayer() {
           }
           sound.play();
           // Clean up the source node once playback finishes.
-          sound.source!.onended = () => {
+          (sound.source as AudioBufferSourceNode).onended = () => {
             untrackSound(sound);
             try {
               sound.disconnect();

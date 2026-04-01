@@ -59,6 +59,7 @@ function mutateRenderFields(
       e.headPitch = stream.headPitch;
       e.headYaw = stream.headYaw;
       e.targetRenderFlags = stream.targetRenderFlags;
+      e.soundSlots = stream.soundSlots;
       break;
     }
     case "Shape": {
@@ -67,6 +68,7 @@ function mutateRenderFields(
       e.damageState = stream.damageState;
       e.targetRenderFlags = stream.targetRenderFlags;
       e.iffColor = stream.iffColor;
+      e.soundSlots = stream.soundSlots;
       break;
     }
   }
@@ -81,16 +83,6 @@ function getEntityMap(snapshot: StreamSnapshot): EntityById {
     _snapshotEntityCache.set(snapshot, map);
   }
   return map;
-}
-
-/** Push the current entity map to the game entity store.
- * Only triggers a version bump (and subscriber notifications) when the
- * entity set changed (adds/removes). Render-field updates are mutated
- * in-place on existing entity objects and read imperatively in useFrame. */
-function pushEntitiesToStore(entityMap: Map<string, GameEntity>): void {
-  gameEntityStore
-    .getState()
-    .setAllStreamEntities(Array.from(entityMap.values()));
 }
 
 const _tmpVec = new Vector3();
@@ -115,7 +107,6 @@ export function StreamingController({
     recording.streamingPlayback ?? null,
   );
   const publishedSnapshotRef = useRef<StreamSnapshot | null>(null);
-  const entityMapRef = useRef<Map<string, GameEntity>>(new Map());
   const lastSyncedSnapshotRef = useRef<StreamSnapshot | null>(null);
   const [firstPersonShape, setFirstPersonShape] = useState<string | null>(null);
 
@@ -123,19 +114,18 @@ export function StreamingController({
     if (snapshot === lastSyncedSnapshotRef.current) return;
     lastSyncedSnapshotRef.current = snapshot;
 
-    const prevMap = entityMapRef.current;
-    const nextMap = new Map<string, GameEntity>();
+    // Operate directly on the store's Map — one canonical source of truth.
+    const map = gameEntityStore.getState().streamEntities;
+    let structuralChange = false;
+
+    // Track which IDs are in the current snapshot for the removal pass.
+    const currentIds = new Set<string>();
 
     for (const entity of snapshot.entities) {
-      let renderEntity = prevMap.get(entity.id);
+      currentIds.add(entity.id);
+      let renderEntity = map.get(entity.id);
 
       // Identity change -> new component (unmount/remount).
-      // Compare fields that, when changed, require a full entity rebuild.
-      // Only compare shapeName for entity types that actually use it.
-      // Scene entities (Terrain, Interior, Sky, etc.), ForceFieldBare,
-      // AudioEmitter, WayPoint, and Camera don't have shapeName on their
-      // GameEntity, so comparing against entity.dataBlock would always
-      // mismatch and trigger a needless rebuild every frame.
       const hasShapeName =
         renderEntity &&
         (renderEntity.renderType === "Shape" ||
@@ -151,28 +141,21 @@ export function StreamingController({
         (hasShapeName &&
           entity.dataBlock != null &&
           getField(renderEntity, "shapeName") !== entity.dataBlock) ||
-        // weaponShape changes only force rebuild for non-Player shapes
-        // (turrets, vehicles). Players handle weapon changes internally
-        // via PlayerModel's Mount0 bone, and rebuilding on weapon change
-        // would lose animation state (death animations, etc.).
         (renderEntity.renderType !== "Player" &&
           hasShapeName &&
           getField(renderEntity, "weaponShape") !== entity.weaponShape);
 
       if (needsNewIdentity) {
+        const prevHidden = renderEntity?.debugHidden;
         renderEntity = streamEntityToGameEntity(entity, snapshot.timeSec);
+        if (prevHidden) renderEntity.debugHidden = true;
+        map.set(entity.id, renderEntity);
+        structuralChange = true;
       } else {
-        // Mutate render fields in-place on the existing entity object.
-        // Components read these imperatively in useFrame — no React
-        // re-render needed. This avoids store churn that starves Suspense.
         mutateRenderFields(renderEntity!, entity);
       }
 
-      nextMap.set(entity.id, renderEntity!);
-
-      // Keyframe update (mutable -- used for fallback position for
-      // retained explosion entities and per-frame reads in useFrame).
-      // Scene entities and None don't have keyframes.
+      // Keyframe update (mutable — position, rotation, velocity, etc.).
       if (isSceneEntity(renderEntity!) || renderEntity!.renderType === "None")
         continue;
       const keyframes = renderEntity!.keyframes!;
@@ -195,31 +178,24 @@ export function StreamingController({
       kf.damageState = entity.damageState;
     }
 
-    // Retain explosion entities with DTS shapes after they leave the snapshot.
-    // These entities are ephemeral (~1 tick) but the visual effect lasts seconds.
-    for (const [id, entity] of prevMap) {
-      if (nextMap.has(id)) continue;
+    // Removal pass: delete entities no longer in the snapshot.
+    // Retain explosion entities with DTS shapes for up to 5 seconds.
+    for (const [id, entity] of map) {
+      if (currentIds.has(id)) continue;
       if (
         entity.renderType === "Explosion" &&
         entity.shapeName &&
         entity.spawnTime != null
       ) {
         const age = snapshot.timeSec - entity.spawnTime;
-        if (age < 5) {
-          nextMap.set(id, entity);
-          continue;
-        }
+        if (age < 5) continue;
       }
+      map.delete(id);
+      structuralChange = true;
     }
 
-    // Only push to store when the entity set changed (adds/removes).
-    const shouldRebuild =
-      nextMap.size !== prevMap.size ||
-      [...nextMap.keys()].some((id) => !prevMap.has(id));
-
-    entityMapRef.current = nextMap;
-    if (shouldRebuild) {
-      pushEntitiesToStore(nextMap);
+    if (structuralChange) {
+      gameEntityStore.getState().bumpStreamVersion();
     }
 
     let nextFirstPersonShape: string | null = null;
@@ -227,7 +203,7 @@ export function StreamingController({
       snapshot.camera?.mode === "first-person" &&
       snapshot.camera.controlEntityId
     ) {
-      const entity = nextMap.get(snapshot.camera.controlEntityId);
+      const entity = map.get(snapshot.camera.controlEntityId);
       const sn = entity ? getField(entity, "shapeName") : undefined;
       if (sn) {
         nextFirstPersonShape = sn;
@@ -245,7 +221,6 @@ export function StreamingController({
     stopAllTrackedSounds();
 
     streamRef.current = recording.streamingPlayback ?? null;
-    entityMapRef.current = new Map();
     lastSyncedSnapshotRef.current = null;
     publishedSnapshotRef.current = null;
     resetStreamPlayback();
@@ -402,10 +377,6 @@ export function StreamingController({
 
     syncRenderableEntities(renderCurrent);
 
-    // Publish the entity map for imperative reads by components in useFrame.
-    // This is a plain object assignment — no React re-renders triggered.
-    streamPlaybackStore.getState().entities = entityMapRef.current;
-
     // Publish snapshot when it changed.
     if (renderCurrent !== publishedSnapshotRef.current) {
       publishedSnapshotRef.current = renderCurrent;
@@ -489,7 +460,7 @@ export function StreamingController({
     // Imperative position interpolation via the shared entity root.
     const currentEntities = getEntityMap(renderCurrent);
     const previousEntities = getEntityMap(renderPrev);
-    const renderEntities = entityMapRef.current;
+    const renderEntities = gameEntityStore.getState().streamEntities;
     const root = streamPlaybackStore.getState().root;
     if (root) {
       for (const child of root.children) {

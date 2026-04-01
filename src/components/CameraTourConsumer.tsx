@@ -14,6 +14,7 @@ import {
 import { cameraTourStore } from "../state/cameraTourStore";
 import type { TourAnimation } from "../state/cameraTourStore";
 import type { TourTarget } from "./mapTourCategories";
+import { globalFogUniforms } from "../globalFogUniforms";
 import { createLogger } from "../logger";
 
 const log = createLogger("CameraTourConsumer");
@@ -23,8 +24,17 @@ function easeInOutCubic(t: number): number {
 }
 
 const FALLBACK_ORBIT_RADIUS = 3;
+/** Orbit radius for entities without geometry (WayPoints, markers, etc.). */
+const POINT_ORBIT_RADIUS = 10;
 const DEFAULT_ORBIT_HEIGHT = 2;
 const MIN_ORBIT_RADIUS = 1.8;
+/** Orbit radius above which fog starts reducing during tours. */
+const FOG_REDUCE_THRESHOLD = 50;
+/** Divisor for fog scale: fogDistanceScale = orbitRadius / FOG_REDUCE_DIVISOR.
+ *  Smaller values = more aggressive fog reduction. */
+const FOG_REDUCE_DIVISOR = 200;
+/** Speed at which fogDistanceScale animates (per second). */
+const FOG_SCALE_SPEED = 2;
 /** Extra orbit radius added beyond half the object's height. */
 const ORBIT_PAD_VERTICAL = 1.8;
 /** Extra orbit radius added beyond half the object's spread (width/length). */
@@ -102,7 +112,21 @@ function resolveTargetBounds(
   animation: TourAnimation,
 ): void {
   const obj = scene.getObjectByName(target.entityId);
+  // Check if the scene object has any geometry to compute bounds from.
+  let hasGeometry = false;
   if (obj) {
+    obj.traverse((child: any) => {
+      if (child.geometry) hasGeometry = true;
+    });
+  }
+  if (obj && !hasGeometry) {
+    // Entity exists but has no geometry (WayPoints, markers, etc.).
+    // Use target position directly with a wider orbit.
+    animation.orbitCenter = [...target.position];
+    animation.orbitRadius = POINT_ORBIT_RADIUS;
+    return;
+  }
+  if (obj && hasGeometry) {
     // World-space AABB center for the orbit focus (where the camera looks).
     _box.setFromObject(obj);
     _box.getCenter(_center);
@@ -130,7 +154,28 @@ function resolveTargetBounds(
     const fromHeight = height / 2 + ORBIT_PAD_VERTICAL;
     const fromSpread = spread / 2 + ORBIT_PAD_HORIZONTAL;
     const computed = Math.max(fromHeight, fromSpread);
-    animation.orbitRadius = Math.max(MIN_ORBIT_RADIUS, computed);
+    // For very large objects (terrain, water), use target position as orbit
+    // center and compute a stable radius from the single-tile geometry bounds
+    // (setFromObject includes dynamic instanced tiles that vary with camera).
+    const isLarge = computed > 200;
+    if (isLarge) {
+      animation.orbitCenter = [...target.position];
+      // Use only the first geometry child's bounds for stable sizing.
+      let stableSpread = 0;
+      obj.traverse((child: any) => {
+        if (stableSpread > 0 || !child.geometry) return;
+        if (!child.geometry.boundingBox) child.geometry.computeBoundingBox();
+        const bb = child.geometry.boundingBox;
+        const sx = bb.max.x - bb.min.x;
+        const sy = bb.max.y - bb.min.y;
+        const sz = bb.max.z - bb.min.z;
+        stableSpread = Math.max(sx, sy, sz);
+      });
+      const stableRadius = (stableSpread / 2 + ORBIT_PAD_HORIZONTAL) * 0.75;
+      animation.orbitRadius = Math.max(MIN_ORBIT_RADIUS, stableRadius);
+    } else {
+      animation.orbitRadius = Math.max(MIN_ORBIT_RADIUS, computed);
+    }
     const driver = fromHeight >= fromSpread ? "height" : "spread";
     const clamp = computed < MIN_ORBIT_RADIUS ? " (clamped)" : "";
     log.debug(
@@ -189,8 +234,14 @@ function buildCurve(
 
   // Midpoint: halfway between start and entry, elevated proportionally.
   const mid = new Vector3().addVectors(startPos, entry).multiplyScalar(0.5);
-  // Pull midpoint toward the target and elevate.
-  mid.lerp(focus, 0.3);
+  // Pull midpoint toward the focus — but only if it won't create a dip
+  // closer than the orbit entry. For large orbits where the camera is
+  // already far out, pulling toward focus causes an unnecessary zoom-in.
+  const midDistToFocus = mid.distanceTo(focus);
+  const entryDistToFocus = entry.distanceTo(focus);
+  if (midDistToFocus > entryDistToFocus) {
+    mid.lerp(focus, 0.3);
+  }
   mid.y += distance * 0.15;
 
   return new CatmullRomCurve3(
@@ -333,7 +384,6 @@ function advanceOrbit(
 }
 
 export function CameraTourConsumer() {
-  const invalidate = useThree((s) => s.invalidate);
   const camera = useThree((s) => s.camera);
   const scene = useThree((s) => s.scene);
   const prevAnimationRef = useRef<TourAnimation | null>(null);
@@ -357,6 +407,31 @@ export function CameraTourConsumer() {
 
   useFrame((_state, delta) => {
     const animation = cameraTourStore.getState().animation;
+
+    // Reduce fog when orbiting far targets. fogDistanceScale divides all
+    // distance-based fog calculations (both haze and volumetric volumes),
+    // making geometry appear closer to the camera for fog purposes.
+    const orbitR = animation ? getOrbitRadius(animation) : 0;
+    const targetScale =
+      animation && orbitR >= FOG_REDUCE_THRESHOLD
+        ? orbitR / FOG_REDUCE_DIVISOR
+        : 1;
+    const currentScale = globalFogUniforms.fogDistanceScale.value;
+    if (currentScale !== targetScale) {
+      const step = FOG_SCALE_SPEED * delta;
+      if (targetScale > currentScale) {
+        globalFogUniforms.fogDistanceScale.value = Math.min(
+          currentScale + step,
+          targetScale,
+        );
+      } else {
+        globalFogUniforms.fogDistanceScale.value = Math.max(
+          currentScale - step,
+          targetScale,
+        );
+      }
+    }
+
     if (!animation) {
       if (prevAnimationRef.current) {
         stripRoll(camera.quaternion);
@@ -365,7 +440,6 @@ export function CameraTourConsumer() {
       return;
     }
 
-    invalidate();
     prevAnimationRef.current = animation;
 
     if (animation.phase === "traveling") {

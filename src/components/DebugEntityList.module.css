@@ -1,0 +1,135 @@
+.Container {
+}
+
+.Title {
+  font-size: 13px;
+  font-weight: bold;
+  margin: 16px 10px 8px 10px;
+}
+
+.Header {
+  font-size: 12px;
+  opacity: 0.6;
+  padding: 2px 0;
+}
+
+.Group {
+  margin: 0;
+}
+
+.GroupHeader {
+  font-size: 12px;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.7);
+  padding: 6px 8px;
+  cursor: pointer;
+  user-select: none;
+  list-style: none;
+}
+
+.GroupHeader::-webkit-details-marker {
+  display: none;
+}
+
+.GroupHeader::before {
+  content: "[+] ";
+  font-family: monospace;
+  color: rgba(255, 255, 255, 0.4);
+}
+
+.Group[open] > .GroupHeader::before {
+  content: "[-] ";
+}
+
+.GroupCount {
+  font-weight: normal;
+  opacity: 0.5;
+}
+
+.List {
+  margin: 4px 0 8px 0;
+  padding: 0;
+  list-style: none;
+  background: rgba(0, 0, 0, 0.2);
+  overflow: hidden;
+  border-radius: 3px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+.ListItem {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+}
+
+.EntityRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+}
+
+.EntityRow input[type="checkbox"] {
+  margin-top: 2px;
+  flex-shrink: 0;
+}
+
+.EntityInfo {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.LocateButton {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  margin: 0;
+  padding: 8px 9px 8px 7px;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.5);
+  cursor: pointer;
+  border-radius: 3px;
+}
+
+.LocateButton:hover:not(:disabled) {
+  color: rgba(255, 255, 255, 0.9);
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.LocateButton:disabled {
+  opacity: 0.25;
+  cursor: default;
+}
+
+.EntityRow[data-disabled] {
+  opacity: 0.4;
+}
+
+.ListItem:not(:last-child) {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.Type {
+  font-weight: bold;
+  font-size: 12px;
+  color: #fff;
+}
+
+.ID {
+  background: rgba(159, 166, 169, 0.2);
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 11px;
+  margin: 0 0 0 4px;
+  padding: 3px 5px;
+  border-radius: 3px;
+}
+
+.Detail {
+  display: block;
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.7);
+  margin: 4px 0 0 0;
+}

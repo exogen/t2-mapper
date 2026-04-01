@@ -71,7 +71,10 @@ export function textureToUrl(name: string) {
 }
 
 export function audioToUrl(fileName: string) {
-  const url = getUrlForPath(`audio/${fileName}`);
+  // AudioProfile filenames from datablocks may omit the .wav extension
+  // (e.g. "fx/armor/thrust"). Torque tries extensions automatically.
+  const withExt = /\.\w+$/.test(fileName) ? fileName : `${fileName}.wav`;
+  const url = getUrlForPath(`audio/${withExt}`);
   return url.replace(/\.wav$/i, ".m4a");
 }
 

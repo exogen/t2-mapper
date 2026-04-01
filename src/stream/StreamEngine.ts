@@ -6,7 +6,9 @@ import {
   ballisticProjectileClassNames,
   seekerProjectileClassNames,
   toEntityType,
-  toEntityId,
+  allocateEntityId,
+  resetEntityIdCounter,
+  GhostMessage,
   IFF_GREEN,
   IFF_RED,
   TICK_DURATION_MS,
@@ -111,6 +113,9 @@ export interface MutableEntity {
   headYaw?: number;
   targetRenderFlags?: number;
   carryingFlag?: boolean;
+  /** ShapeBase sound slots (4 max). Raw ghost SoundMask data — components
+   *  manage PositionalAudio objects directly, matching Tribes 2's approach. */
+  soundSlots?: Array<{ index: number; playing: boolean; profileId?: number }>;
   /** Item velocity interpolation state (dropped weapons/items).
    * The real Tribes 2 client does NOT simulate physics (gravity/collision)
    * for items — it just interpolates position using server-sent velocity
@@ -185,6 +190,8 @@ export abstract class StreamEngine implements StreamingPlayback {
   // ── Entities ──
   protected entities = new Map<string, MutableEntity>();
   protected entityIdByGhostIndex = new Map<number, string>();
+  /** Incremented on structural entity changes (add/remove/create). */
+  protected entityGeneration = 0;
 
   // ── Tick / time ──
   protected tickCount = 0;
@@ -325,8 +332,13 @@ export abstract class StreamEngine implements StreamingPlayback {
   ): string | undefined {
     const byMap = this.entityIdByGhostIndex.get(ghostIndex);
     if (byMap) return byMap;
+    // Ghost exists but has no ID yet — allocate one.
     const trackerGhost = this.ghostTracker.getGhost(ghostIndex);
-    if (trackerGhost) return toEntityId(trackerGhost.className, ghostIndex);
+    if (trackerGhost) {
+      const id = allocateEntityId();
+      this.entityIdByGhostIndex.set(ghostIndex, id);
+      return id;
+    }
     return undefined;
   }
 
@@ -341,9 +353,17 @@ export abstract class StreamEngine implements StreamingPlayback {
 
   // ── Shared reset logic ──
 
-  protected resetSharedState(): void {
+  /** Clear all entity state (entities, ghost→ID map, ID counter, generation).
+   *  Called on full reset and on GhostingMessageEvent (mission change). */
+  protected clearAllEntities(): void {
     this.entities.clear();
     this.entityIdByGhostIndex.clear();
+    this.entityGeneration++;
+    resetEntityIdCounter();
+  }
+
+  protected resetSharedState(): void {
+    this.clearAllEntities();
     this.tickCount = 0;
     this.camera = null;
     this.chatMessages = [];
@@ -653,6 +673,15 @@ export abstract class StreamEngine implements StreamingPlayback {
       return;
     }
 
+    // EndGhosting (message=2): the server called resetGhosting — all ghosts
+    // are invalidated. The parser clears the ghost tracker; we clear entities.
+    if (type === "GhostingMessageEvent") {
+      if ((data.message as number) === GhostMessage.EndGhosting) {
+        this.clearAllEntities();
+      }
+      return;
+    }
+
     if (type === "RemoteCommandEvent" || eventName === "RemoteCommandEvent") {
       const funcName = this.resolveNetString(data.funcName as string);
       const args = data.args as string[];
@@ -813,9 +842,9 @@ export abstract class StreamEngine implements StreamingPlayback {
 
     if (ghost.type === "delete") {
       if (prevEntityId) {
-        this.removeSoundSlotEntities(prevEntityId);
         this.entities.delete(prevEntityId);
         this.entityIdByGhostIndex.delete(ghostIndex);
+        this.entityGeneration++;
       }
       return;
     }
@@ -830,16 +859,14 @@ export abstract class StreamEngine implements StreamingPlayback {
       return;
     }
 
-    const entityId = toEntityId(className, ghostIndex);
+    const entityId = prevEntityId ?? allocateEntityId();
     if (prevEntityId && prevEntityId !== entityId) {
-      this.removeSoundSlotEntities(prevEntityId);
       this.entities.delete(prevEntityId);
     }
 
     let entity: MutableEntity;
     const existingEntity = this.entities.get(entityId);
     if (existingEntity && ghost.type === "create") {
-      this.removeSoundSlotEntities(entityId);
       existingEntity.spawnTick = this.tickCount;
       this.resetEntity(existingEntity);
       entity = existingEntity;
@@ -855,6 +882,7 @@ export abstract class StreamEngine implements StreamingPlayback {
         rotation: [0, 0, 0, 1],
       };
       this.entities.set(entityId, entity);
+      this.entityGeneration++;
     }
 
     entity.ghostIndex = ghostIndex;
@@ -916,6 +944,7 @@ export abstract class StreamEngine implements StreamingPlayback {
     entity.armAction = undefined;
     entity.explosionDataBlockId = undefined;
     entity.maintainEmitterId = undefined;
+    entity.soundSlots = undefined;
   }
 
   // ── Apply ghost data ──
@@ -1157,8 +1186,6 @@ export abstract class StreamEngine implements StreamingPlayback {
               : undefined;
     if (position) {
       entity.position = [position.x, position.y, position.z];
-      // Sync any sound-slot child entities with the new position.
-      this.updateSoundSlotPositions(entity);
     }
 
     // Direction
@@ -1388,12 +1415,12 @@ export abstract class StreamEngine implements StreamingPlayback {
       if (renderFlags != null) entity.targetRenderFlags = renderFlags;
     }
 
-    // Ghost-level audio — spawn/remove synthetic AudioEmitter children
+    // ShapeBase sound slots — store on entity for component-level playback.
     const sounds = data.sounds as
       | Array<{ index: number; playing: boolean; profileId?: number }>
       | undefined;
     if (Array.isArray(sounds)) {
-      this.syncSoundSlotEntities(entity, sounds);
+      entity.soundSlots = sounds;
     }
 
     // WayPoint ghost fields
@@ -1421,76 +1448,6 @@ export abstract class StreamEngine implements StreamingPlayback {
   }
 
   // ── Sound slot entities ──
-
-  /**
-   * Sync synthetic AudioEmitter entities for a parent ghost's sound slots.
-   * Each active sound slot spawns a child entity; inactive slots remove theirs.
-   */
-  protected syncSoundSlotEntities(
-    parent: MutableEntity,
-    sounds: Array<{ index: number; playing: boolean; profileId?: number }>,
-  ): void {
-    for (const s of sounds) {
-      const childId = `${parent.id}:sound:${s.index}`;
-
-      if (s.playing && typeof s.profileId === "number") {
-        // Resolve AudioProfile → AudioDescription
-        const profileBlock = this.getDataBlockData(s.profileId);
-        const rawFilename = profileBlock?.filename as string | undefined;
-        if (!rawFilename) continue;
-        const filename = rawFilename.endsWith(".wav")
-          ? rawFilename
-          : `${rawFilename}.wav`;
-
-        const descId = profileBlock!.description as number | undefined;
-        const descBlock =
-          descId != null ? this.getDataBlockData(descId) : undefined;
-
-        const existing = this.entities.get(childId);
-        if (existing) {
-          // Update position to track parent
-          existing.position = parent.position;
-        } else {
-          // Create synthetic AudioEmitter entity
-          this.entities.set(childId, {
-            id: childId,
-            ghostIndex: parent.ghostIndex,
-            className: "AudioEmitter",
-            type: "AudioEmitter",
-            spawnTick: this.tickCount,
-            position: parent.position,
-            rotation: [0, 0, 0, 1],
-            audioFileName: filename,
-            audioVolume: (descBlock?.volume as number) ?? 1,
-            audioIs3D: (descBlock?.is3D as boolean) ?? true,
-            audioIsLooping: (descBlock?.isLooping as boolean) ?? false,
-            audioMinDistance: (descBlock?.referenceDistance as number) ?? 20,
-            audioMaxDistance: (descBlock?.maxDistance as number) ?? 100,
-            audioMinLoopGap: (descBlock?.minLoopGap as number) ?? 0,
-            audioMaxLoopGap: (descBlock?.maxLoopGap as number) ?? 0,
-          });
-        }
-      } else {
-        // Sound stopped — remove synthetic entity
-        this.entities.delete(childId);
-      }
-    }
-  }
-
-  /** Update positions of sound-slot children to track their parent. */
-  protected updateSoundSlotPositions(parent: MutableEntity): void {
-    for (let i = 0; i < 4; i++) {
-      const child = this.entities.get(`${parent.id}:sound:${i}`);
-      if (child) child.position = parent.position;
-    }
-  }
-
-  /** Remove any synthetic sound-slot entities belonging to a parent entity. */
-  protected removeSoundSlotEntities(parentId: string): void {
-    for (let i = 0; i < 4; i++) {
-      this.entities.delete(`${parentId}:sound:${i}`);
-    }
-  }
 
   // ── Explosion spawning ──
 
@@ -2316,6 +2273,7 @@ export abstract class StreamEngine implements StreamingPlayback {
         steeringYaw: entity.steeringYaw,
         frozen: entity.frozen,
         maxSteeringAngle: entity.maxSteeringAngle,
+        soundSlots: entity.soundSlots,
         sceneData: entity.sceneData,
         forceFieldData: entity.forceFieldData,
       });

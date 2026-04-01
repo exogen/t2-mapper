@@ -65,7 +65,9 @@ export const fogFragmentShader = `
   } else {
   #endif
 
-  float dist = vFogDepth;
+  // Scale distance for fog calculations — makes everything appear closer/further
+  // for fog purposes without changing actual geometry positions.
+  float dist = vFogDepth / fogDistanceScale;
 
   // Discard fragments at or beyond visible distance - matches Torque's behavior
   // where objects beyond visibleDistance are not rendered at all.
@@ -226,6 +228,15 @@ export function installCustomFogShader(): void {
   #ifdef USE_FOG_WORLD_POSITION
     varying vec3 vFogWorldPosition;
   #endif
+
+  // Fog distance scale — multiplies all distance-based fog calculations.
+  // 1.0 = normal, >1 = less fog. Set by camera tour for distant orbits.
+  #ifdef HAS_FOG_DISTANCE_SCALE
+    uniform float fogDistanceScale;
+  #else
+    #define fogDistanceScale 1.0
+  #endif
+
 #endif
 `;
 
@@ -265,6 +276,7 @@ export interface FogShaderUniformObjects {
   fogVolumeData: { value: Float32Array };
   cameraHeight: { value: number };
   fogEnabled: { value: boolean };
+  fogDistanceScale: { value: number };
 }
 
 /**
@@ -282,6 +294,7 @@ export function addFogUniformsToShader(
   shader.uniforms.fogVolumeData = fogUniforms.fogVolumeData;
   shader.uniforms.cameraHeight = fogUniforms.cameraHeight;
   shader.uniforms.fogEnabled = fogUniforms.fogEnabled;
+  shader.uniforms.fogDistanceScale = fogUniforms.fogDistanceScale;
 }
 
 /**
@@ -329,7 +342,8 @@ export function injectCustomFog(
   // Add volumetric fog uniforms to fragment shader
   shader.fragmentShader = shader.fragmentShader.replace(
     "#include <fog_pars_fragment>",
-    `#include <fog_pars_fragment>
+    `#define HAS_FOG_DISTANCE_SCALE
+#include <fog_pars_fragment>
 #ifdef USE_FOG
   #define USE_VOLUMETRIC_FOG
   uniform float fogVolumeData[12];

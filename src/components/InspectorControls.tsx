@@ -21,6 +21,7 @@ import { hasMission } from "../manifest";
 import { ChooseMapButton } from "./ChooseMapButton";
 import { MapInfoButton } from "./MapInfoButton";
 import { ShowScoresButton } from "./ShowScoresButton";
+import { DebugEntityList } from "./DebugEntityList";
 import buttonStyles from "./Button.module.css";
 import styles from "./InspectorControls.module.css";
 
@@ -419,6 +420,9 @@ export const InspectorControls = memo(function InspectorControls({
                         setFpsLimit(val === "" ? null : parseInt(val));
                       }}
                     >
+                      {import.meta.env.DEV ? (
+                        <option value="1">1</option>
+                      ) : null}
                       <option value="30">30</option>
                       <option value="60">60</option>
                       <option value="120">120</option>
@@ -472,6 +476,7 @@ export const InspectorControls = memo(function InspectorControls({
                     app unrelated to rendering.
                   </p>
                 </div>
+                <DebugEntityList />
               </Accordion>
             </AccordionGroup>
           </div>

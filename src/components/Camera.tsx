@@ -2,6 +2,8 @@ import { useEffect, useId, useMemo } from "react";
 import { Quaternion, Vector3 } from "three";
 import { useCameras } from "./CamerasProvider";
 import type { CameraEntity } from "../state/gameEntityTypes";
+import { useIsDebugTourTarget } from "../state/cameraTourStore";
+import { DebugMarker } from "./DebugBounds";
 
 export function Camera({ entity }: { entity: CameraEntity }) {
   const { registerCamera, unregisterCamera } = useCameras();
@@ -37,5 +39,6 @@ export function Camera({ entity }: { entity: CameraEntity }) {
   // but clone a new "flying" camera when the user moves. The other is to not
   // have multiple cameras at all, but rather update the default camera with
   // new position information when cycling. This uses the latter approach.
-  return null;
+  const isTarget = useIsDebugTourTarget(entity.id);
+  return isTarget ? <DebugMarker radius={1.5} /> : null;
 }

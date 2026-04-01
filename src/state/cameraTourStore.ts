@@ -7,6 +7,7 @@ export interface TourAnimation {
   targets: TourTarget[];
   /** Category name when this is a multi-target tour, for UI matching. */
   categoryName: string | null;
+  tourType: TourType;
   currentIndex: number;
   phase: "traveling" | "orbiting";
   elapsed: number;
@@ -24,10 +25,16 @@ export interface TourAnimation {
   orbitStartAngle: number;
 }
 
+export type TourType = "feature" | "debug";
+
 export interface CameraTourState {
   animation: TourAnimation | null;
-  flyTo(target: TourTarget): void;
-  startTour(targets: TourTarget[], categoryName: string): void;
+  flyTo(target: TourTarget, tourType?: TourType): void;
+  startTour(
+    targets: TourTarget[],
+    categoryName: string,
+    tourType?: TourType,
+  ): void;
   /** Advance to the next target in a tour (notifies subscribers). */
   advanceTarget(): void;
   cancel(): void;
@@ -36,10 +43,12 @@ export interface CameraTourState {
 function makeAnimation(
   targets: TourTarget[],
   categoryName: string | null = null,
+  tourType: TourType = "feature",
 ): TourAnimation {
   return {
     targets,
     categoryName,
+    tourType,
     currentIndex: 0,
     phase: "traveling",
     elapsed: 0,
@@ -55,12 +64,12 @@ function makeAnimation(
 
 export const cameraTourStore = createStore<CameraTourState>((set) => ({
   animation: null,
-  flyTo(target) {
-    set({ animation: makeAnimation([target]) });
+  flyTo(target, tourType = "feature") {
+    set({ animation: makeAnimation([target], null, tourType) });
   },
-  startTour(targets, categoryName) {
+  startTour(targets, categoryName, tourType = "feature") {
     if (targets.length === 0) return;
-    set({ animation: makeAnimation(targets, categoryName) });
+    set({ animation: makeAnimation(targets, categoryName, tourType) });
   },
   advanceTarget() {
     set((state) => {
@@ -91,4 +100,14 @@ export function useCameraTour<T>(
   equality?: (a: T, b: T) => boolean,
 ): T {
   return useStoreWithEqualityFn(cameraTourStore, selector, equality);
+}
+
+/** Returns true if this entity is the active debug tour target. */
+export function useIsDebugTourTarget(entityId: string): boolean {
+  return useCameraTour((s) => {
+    const anim = s.animation;
+    if (!anim || anim.tourType !== "debug") return false;
+    const target = anim.targets[anim.currentIndex];
+    return target?.entityId === entityId;
+  });
 }

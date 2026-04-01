@@ -68,7 +68,7 @@ export function buildGameEntityFromMission(
   teamId?: number,
 ): GameEntity | null {
   const className = object._className;
-  const id = `mission_${object._id}`;
+  const id = String(object._id);
   const position = getPosition(object);
   const scale = getScale(object);
   const rotStr = object.rotation ?? "1 0 0 0";

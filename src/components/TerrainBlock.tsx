@@ -18,7 +18,9 @@ import {
   UnsignedByteType,
   Vector3,
 } from "three";
-import type { SceneTerrainBlock } from "../scene/types";
+import type { TerrainBlockEntity } from "../state/gameEntityTypes";
+import { useIsDebugTourTarget } from "../state/cameraTourStore";
+import { DebugBounds } from "./DebugBounds";
 import { createLogger } from "../logger";
 import { torqueToThree } from "../scene/coordinates";
 
@@ -482,10 +484,12 @@ function createVisibilityMask(emptySquares: number[]): DataTexture {
   return texture;
 }
 export const TerrainBlock = memo(function TerrainBlock({
-  scene,
+  entity,
 }: {
-  scene: SceneTerrainBlock;
+  entity: TerrainBlockEntity;
 }) {
+  const scene = entity.terrainData;
+  const isTarget = useIsDebugTourTarget(entity.id);
   const terrainFile = scene.terrFileName;
   const squareSize = scene.squareSize || DEFAULT_SQUARE_SIZE;
   const detailTexture = scene.detailTextureName || undefined;
@@ -678,6 +682,45 @@ export const TerrainBlock = memo(function TerrainBlock({
           lightmap={terrainLightmap ?? undefined}
         />
       </instancedMesh>
+      {isTarget && terrain && (
+        <TerrainDebugBounds
+          heightMap={terrain.heightMap}
+          blockSize={blockSize}
+          basePosition={basePosition}
+        />
+      )}
     </>
   );
 });
+
+function TerrainDebugBounds({
+  heightMap,
+  blockSize,
+  basePosition,
+}: {
+  heightMap: Uint16Array;
+  blockSize: number;
+  basePosition: { x: number; z: number };
+}) {
+  const bounds = useMemo(() => {
+    let maxH = 0;
+    for (let i = 0; i < heightMap.length; i++) {
+      const h = (heightMap[i] / 65535) * HEIGHT_SCALE;
+      if (h > maxH) maxH = h;
+    }
+    return {
+      center: [
+        basePosition.x + blockSize / 2,
+        maxH / 2,
+        basePosition.z + blockSize / 2,
+      ] as [number, number, number],
+      size: [blockSize, maxH, blockSize] as [number, number, number],
+    };
+  }, [heightMap, blockSize, basePosition]);
+
+  return (
+    <group position={bounds.center}>
+      <DebugBounds size={bounds.size} />
+    </group>
+  );
+}

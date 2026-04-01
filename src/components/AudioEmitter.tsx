@@ -10,11 +10,17 @@ import {
 } from "three";
 import { createLogger } from "../logger";
 import { audioToUrl } from "../loaders";
+import { useIsDebugTourTarget } from "../state/cameraTourStore";
+import { DebugMarker } from "./DebugBounds";
 import { useAudio } from "./AudioContext";
 import { useDebug, useSettings } from "./SettingsProvider";
 import { FloatingLabel } from "./FloatingLabel";
 import { engineStore } from "../state/engineStore";
 import { AudioEmitterEntity } from "../state/gameEntityTypes";
+import {
+  getAdjustAudioSpeed,
+  onAdjustAudioSpeedChange,
+} from "./audioPlaybackRate";
 
 const log = createLogger("AudioEmitter");
 
@@ -26,21 +32,17 @@ export const audioBufferCache = new Map<string, AudioBuffer>();
 // intrinsic pitch (1.0 for normal, or the voice pitch multiplier for chat).
 const _activeSounds = new Map<Audio<GainNode | PannerNode>, number>();
 
-/** Whether to adjust audio pitch to match playback speed. When false, sounds
- * play at their original pitch regardless of fast-forward/slow-motion. */
-let _adjustAudioSpeed = true;
-export function setAdjustAudioSpeedFlag(value: boolean): void {
-  _adjustAudioSpeed = value;
-  // Re-apply rate to all active sounds immediately.
+// Re-apply playback rate to all active sounds when the flag changes.
+onAdjustAudioSpeedChange((value) => {
   const rate = engineStore.getState().playback.rate;
   for (const [sound, basePitch] of _activeSounds) {
     try {
-      sound.setPlaybackRate(basePitch * (_adjustAudioSpeed ? rate : 1));
+      sound.setPlaybackRate(basePitch * (value ? rate : 1));
     } catch {
       /* disposed */
     }
   }
-}
+});
 
 /** Register a sound for automatic playback rate tracking during streaming. */
 export function trackSound(
@@ -66,11 +68,8 @@ export function getSoundGeneration(): number {
   return _soundGeneration;
 }
 
-/** Get the effective playback rate for a sound, respecting the adjustAudioSpeed setting. */
-export function getEffectiveSoundRate(basePitch = 1): number {
-  const rate = engineStore.getState().playback.rate;
-  return basePitch * (_adjustAudioSpeed ? rate : 1);
-}
+// Re-export for convenience (canonical definition in audioPlaybackRate.ts).
+export { getEffectiveSoundRate } from "./audioPlaybackRate";
 
 /** Stop and unregister all tracked sounds. Called on recording change. */
 export function stopAllTrackedSounds(): void {
@@ -95,7 +94,7 @@ engineStore.subscribe(
   (rate) => {
     for (const [sound, basePitch] of _activeSounds) {
       try {
-        sound.setPlaybackRate(basePitch * (_adjustAudioSpeed ? rate : 1));
+        sound.setPlaybackRate(basePitch * (getAdjustAudioSpeed() ? rate : 1));
       } catch {
         // Sound may have been disposed.
       }
@@ -173,14 +172,14 @@ export function playOneShotSound(
         sound.setMaxDistance(resolved.maxDist);
         sound.setRolloffFactor(1);
         sound.setVolume(resolved.volume);
-        sound.setPlaybackRate(_adjustAudioSpeed ? rate : 1);
+        sound.setPlaybackRate(getAdjustAudioSpeed() ? rate : 1);
         if (position) {
           sound.position.copy(position);
         }
         parent.add(sound);
         _activeSounds.set(sound, 1);
         sound.play();
-        sound.source!.onended = () => {
+        (sound.source as AudioBufferSourceNode).onended = () => {
           _activeSounds.delete(sound);
           try {
             sound.disconnect();
@@ -193,10 +192,10 @@ export function playOneShotSound(
         const sound = new Audio(audioListener);
         sound.setBuffer(buffer);
         sound.setVolume(resolved.volume);
-        sound.setPlaybackRate(_adjustAudioSpeed ? rate : 1);
+        sound.setPlaybackRate(getAdjustAudioSpeed() ? rate : 1);
         _activeSounds.set(sound, 1);
         sound.play();
-        sound.source!.onended = () => {
+        (sound.source as AudioBufferSourceNode).onended = () => {
           _activeSounds.delete(sound);
           try {
             sound.disconnect();
@@ -338,7 +337,7 @@ export const AudioEmitter = memo(function AudioEmitter({
       const gap =
         gapMin === gapMax ? gapMin : randomValue * (gapMax - gapMin) + gapMin;
 
-      sound.loop = false;
+      (sound as any).loop = false;
 
       const checkLoop = () => {
         // Discard callbacks from a previous sound generation.
@@ -446,20 +445,27 @@ export const AudioEmitter = memo(function AudioEmitter({
     }
   }, [audioEnabled]);
 
-  return debugMode ? (
-    // eslint-disable-next-line react-hooks/refs
-    <mesh position={emitterPosRef.current}>
-      <sphereGeometry args={[minDistance, 12, 12]} />
-      <meshBasicMaterial
-        color="#00ff00"
-        wireframe
-        opacity={0.05}
-        transparent
-        toneMapped={false}
-      />
-      <FloatingLabel color="#00ff00" position={[0, minDistance + 1, 0]}>
-        {fileName}
-      </FloatingLabel>
-    </mesh>
-  ) : null;
+  const isTarget = useIsDebugTourTarget(entity.id);
+
+  return (
+    <>
+      {debugMode && (
+        // eslint-disable-next-line react-hooks/refs
+        <mesh position={emitterPosRef.current}>
+          <sphereGeometry args={[minDistance, 12, 12]} />
+          <meshBasicMaterial
+            color="#00ff00"
+            wireframe
+            opacity={0.05}
+            transparent
+            toneMapped={false}
+          />
+          <FloatingLabel color="#00ff00" position={[0, minDistance + 1, 0]}>
+            {fileName}
+          </FloatingLabel>
+        </mesh>
+      )}
+      {isTarget && <DebugMarker radius={1.5} />}
+    </>
+  );
 });

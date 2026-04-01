@@ -133,6 +133,7 @@ export function streamEntityToGameEntity(
       headPitch: entity.headPitch,
       headYaw: entity.headYaw,
       targetRenderFlags: entity.targetRenderFlags,
+      soundSlots: entity.soundSlots,
     } satisfies PlayerEntity;
   }
 
@@ -201,6 +202,26 @@ export function streamEntityToGameEntity(
     } satisfies WayPointEntity;
   }
 
+  // Non-rendered objects: editor-only markers, AI objectives, vehicle blockers.
+  // MissionMarker::onAdd only calls addToScene when gEditingMission is true.
+  // AIObjective and VehicleBlocker are server-side logic objects with no visuals.
+  if (
+    entity.className === "MissionMarker" ||
+    entity.className === "SpawnSphere" ||
+    entity.className === "AIObjective" ||
+    entity.className === "VehicleBlocker"
+  ) {
+    return {
+      id: entity.id,
+      className: entity.className ?? entity.type,
+      ghostIndex: entity.ghostIndex,
+      dataBlockId: entity.dataBlockId,
+      shapeHint: entity.shapeHint,
+      spawnTime,
+      renderType: "None",
+    } satisfies NoneEntity;
+  }
+
   // Camera
   if (entity.className === "Camera") {
     return {
@@ -232,5 +253,6 @@ export function streamEntityToGameEntity(
     steeringYaw: entity.steeringYaw,
     frozen: entity.frozen,
     maxSteeringAngle: entity.maxSteeringAngle,
+    soundSlots: entity.soundSlots,
   } satisfies ShapeEntity;
 }
