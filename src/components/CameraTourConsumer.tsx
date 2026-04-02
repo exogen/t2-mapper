@@ -414,7 +414,7 @@ export function CameraTourConsumer() {
     const orbitR = animation ? getOrbitRadius(animation) : 0;
     const targetScale =
       animation && orbitR >= FOG_REDUCE_THRESHOLD
-        ? orbitR / FOG_REDUCE_DIVISOR
+        ? Math.max(1, orbitR / FOG_REDUCE_DIVISOR)
         : 1;
     const currentScale = globalFogUniforms.fogDistanceScale.value;
     if (currentScale !== targetScale) {
