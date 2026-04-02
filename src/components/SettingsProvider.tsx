@@ -49,6 +49,10 @@ type SettingsContextType = {
   setFpsLimit: StateSetter<number | null>;
   showInputOverlay: boolean;
   setShowInputOverlay: StateSetter<boolean>;
+  showChat: boolean;
+  setShowChat: StateSetter<boolean>;
+  showReticle: boolean;
+  setShowReticle: StateSetter<boolean>;
 };
 
 type DebugContextType = {
@@ -96,6 +100,8 @@ type PersistedSettings = {
   sidebarOpen?: boolean;
   fpsLimit?: number | null;
   showInputOverlay?: boolean;
+  showChat?: boolean;
+  showReticle?: boolean;
 };
 
 export function useSettings() {
@@ -149,6 +155,8 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [fpsLimit, setFpsLimit] = useState<number | null>(null);
   const [showInputOverlay, setShowInputOverlay] = useState(true);
+  const [showChat, setShowChat] = useState(true);
+  const [showReticle, setShowReticle] = useState(true);
   const [renderOnDemand, setRenderOnDemand] = useState(false);
 
   const [fogEnabledOverride, setFogEnabledOverride] = useFogQueryState();
@@ -189,6 +197,10 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       setFpsLimit,
       showInputOverlay,
       setShowInputOverlay,
+      showChat,
+      setShowChat,
+      showReticle,
+      setShowReticle,
     }),
     [
       fogEnabled,
@@ -205,6 +217,8 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       sidebarOpen,
       fpsLimit,
       showInputOverlay,
+      showChat,
+      showReticle,
     ],
   );
 
@@ -323,6 +337,12 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     if (savedSettings.showInputOverlay != null) {
       setShowInputOverlay(savedSettings.showInputOverlay);
     }
+    if (savedSettings.showChat != null) {
+      setShowChat(savedSettings.showChat);
+    }
+    if (savedSettings.showReticle != null) {
+      setShowReticle(savedSettings.showReticle);
+    }
     if (savedSettings.sidebarOpen != null) {
       // Don't restore on touch devices!
       if (!isTouch) {
@@ -366,6 +386,8 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
         sidebarOpen,
         fpsLimit,
         showInputOverlay,
+        showChat,
+        showReticle,
       };
       try {
         localStorage.setItem("settings", JSON.stringify(settingsToSave));
@@ -398,6 +420,8 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     sidebarOpen,
     fpsLimit,
     showInputOverlay,
+    showChat,
+    showReticle,
   ]);
 
   return (

@@ -77,11 +77,6 @@ const FIRST_DYNAMIC_ID = 1027;
 
 let _nextEntityId = FIRST_DYNAMIC_ID;
 
-/** Reset the entity ID counter (e.g. on mission/recording change). */
-export function resetEntityIdCounter(): void {
-  _nextEntityId = FIRST_DYNAMIC_ID;
-}
-
 /** Allocate the next sequential entity ID, mimicking Torque's registerObject. */
 export function allocateEntityId(): string {
   return String(_nextEntityId++);

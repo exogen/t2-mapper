@@ -6,6 +6,7 @@ import { textureToUrl } from "../loaders";
 import type { StreamEntity, TeamScore, WeaponsHudSlot } from "../stream/types";
 import styles from "./PlayerHUD.module.css";
 import { ChatWindow } from "./ChatWindow";
+import { useSettings } from "./SettingsProvider";
 
 const COMPASS_URL = textureToUrl("gui/hud_new_compass");
 const NSEW_URL = textureToUrl("gui/hud_new_NSEW");
@@ -416,10 +417,11 @@ export function PlayerHUD() {
   // In free-fly mode the camera is disconnected from the player, so
   // player-specific HUD elements (health, energy, weapons, etc.) are hidden.
   const showPlayerElements = hasControlPlayer && cameraMode !== "freeFly";
+  const { showChat, showReticle } = useSettings();
 
   return (
     <div className={styles.PlayerHUD}>
-      <ChatWindow />
+      {showChat && <ChatWindow />}
       {showPlayerElements && (
         <div className={styles.Bars}>
           <HealthBar />
@@ -431,7 +433,7 @@ export function PlayerHUD() {
         <>
           <WeaponHUD />
           <PackAndInventoryHUD />
-          <Reticle />
+          {showReticle && <Reticle />}
         </>
       )}
       <TeamScores />

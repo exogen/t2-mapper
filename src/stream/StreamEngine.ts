@@ -1,13 +1,12 @@
 import { ghostToSceneObject } from "../scene";
-import { getTerrainHeightAt } from "../terrainHeight";
 import type { SceneObject } from "../scene/types";
+import { getTerrainHeightAt } from "../terrainHeight";
 import {
   linearProjectileClassNames,
   ballisticProjectileClassNames,
   seekerProjectileClassNames,
   toEntityType,
   allocateEntityId,
-  resetEntityIdCounter,
   GhostMessage,
   IFF_GREEN,
   IFF_RED,
@@ -116,10 +115,11 @@ export interface MutableEntity {
   /** ShapeBase sound slots (4 max). Raw ghost SoundMask data — components
    *  manage PositionalAudio objects directly, matching Tribes 2's approach. */
   soundSlots?: Array<{ index: number; playing: boolean; profileId?: number }>;
-  /** Item velocity interpolation state (dropped weapons/items).
-   * The real Tribes 2 client does NOT simulate physics (gravity/collision)
-   * for items — it just interpolates position using server-sent velocity
-   * until the next server update arrives. */
+  /** Item mStatic flag (from InitialUpdateMask). Static items (flags at
+   *  flagstand) skip all physics in Item::processTick. */
+  isStaticItem?: boolean;
+  /** Item velocity interpolation state. The client simulates full physics
+   *  (gravity, collision, bounce) for non-static, non-at-rest items. */
   itemPhysics?: {
     velocity: [number, number, number];
     atRest: boolean;
@@ -353,13 +353,14 @@ export abstract class StreamEngine implements StreamingPlayback {
 
   // ── Shared reset logic ──
 
-  /** Clear all entity state (entities, ghost→ID map, ID counter, generation).
-   *  Called on full reset and on GhostingMessageEvent (mission change). */
+  /** Clear all entity state (entities, ghost→ID map, generation).
+   *  Called on full reset and on GhostingMessageEvent (mission change).
+   *  Does NOT reset the ID counter — IDs must never be reused to avoid
+   *  stale entity collisions in the render store after seeks. */
   protected clearAllEntities(): void {
     this.entities.clear();
     this.entityIdByGhostIndex.clear();
     this.entityGeneration++;
-    resetEntityIdCounter();
   }
 
   protected resetSharedState(): void {
@@ -945,6 +946,7 @@ export abstract class StreamEngine implements StreamingPlayback {
     entity.explosionDataBlockId = undefined;
     entity.maintainEmitterId = undefined;
     entity.soundSlots = undefined;
+    entity.isStaticItem = undefined;
   }
 
   // ── Apply ghost data ──
@@ -1257,10 +1259,19 @@ export abstract class StreamEngine implements StreamingPlayback {
     if (typeof data.moveFlag0 === "boolean") entity.falling = data.moveFlag0;
     if (typeof data.moveFlag1 === "boolean") entity.jetting = data.moveFlag1;
 
-    // Item velocity interpolation.
+    // Item physics state.
     if (entity.type === "Item") {
+      // mStatic: sent via InitialUpdateMask. Static items (flags at home)
+      // skip all physics in Item::processTick.
+      if (typeof data.isStatic === "boolean") {
+        entity.isStaticItem = data.isStatic;
+        // When server sets mStatic=true, force atRest (matching Item::onAdd).
+        if (data.isStatic) {
+          entity.itemPhysics = undefined;
+        }
+      }
       const atRest = data.atRest as boolean | undefined;
-      if (atRest === false && isVec3Like(data.velocity)) {
+      if (atRest === false && !entity.isStaticItem && isVec3Like(data.velocity)) {
         const vel = data.velocity as Vec3;
         entity.itemPhysics = {
           velocity: [vel.x, vel.y, vel.z],
@@ -1587,7 +1598,10 @@ export abstract class StreamEngine implements StreamingPlayback {
     const dt = TICK_DURATION_MS / 1000;
     for (const entity of this.entities.values()) {
       const phys = entity.itemPhysics;
-      if (!phys || phys.atRest || !entity.position) continue;
+      // Binary-verified: Item::processTick skips physics when
+      // mStatic || mAtRest || isHidden. We check static and atRest.
+      if (!phys || phys.atRest || entity.isStaticItem || !entity.position)
+        continue;
       const v = phys.velocity;
       const p = entity.position;
 
@@ -1604,7 +1618,6 @@ export abstract class StreamEngine implements StreamingPlayback {
       const groundZ = getTerrainHeightAt(p[0], p[1]);
       if (groundZ != null && p[2] < groundZ) {
         p[2] = groundZ;
-        // Flat-normal collision response (normal = [0,0,1]).
         const bd = Math.abs(v[2]);
         // Friction: reduce horizontal velocity.
         const friction = bd * 0.6;

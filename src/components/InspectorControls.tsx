@@ -83,6 +83,10 @@ export const InspectorControls = memo(function InspectorControls({
     setFpsLimit,
     showInputOverlay,
     setShowInputOverlay,
+    showChat,
+    setShowChat,
+    showReticle,
+    setShowReticle,
   } = useSettings();
   const {
     speedMultiplier,
@@ -331,6 +335,39 @@ export const InspectorControls = memo(function InspectorControls({
                     Show input overlay
                   </label>
                 </div>
+                {hasStreamData && (
+                  <>
+                    <div className={styles.CheckboxField}>
+                      <input
+                        id="showChatInput"
+                        type="checkbox"
+                        checked={showChat}
+                        onChange={(event) => {
+                          setShowChat(event.target.checked);
+                        }}
+                      />
+                      <label className={styles.Label} htmlFor="showChatInput">
+                        Show chat HUD
+                      </label>
+                    </div>
+                    <div className={styles.CheckboxField}>
+                      <input
+                        id="showReticleInput"
+                        type="checkbox"
+                        checked={showReticle}
+                        onChange={(event) => {
+                          setShowReticle(event.target.checked);
+                        }}
+                      />
+                      <label
+                        className={styles.Label}
+                        htmlFor="showReticleInput"
+                      >
+                        Show reticles
+                      </label>
+                    </div>
+                  </>
+                )}
               </Accordion>
               <Accordion value="audio" label="Audio">
                 <div className={styles.CheckboxField}>
