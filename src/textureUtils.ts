@@ -30,6 +30,7 @@ const _textureCache = new Map<string, Texture>();
 export function loadTexture(
   url: string,
   onLoad?: (texture: Texture) => void,
+  onError?: (url: string) => void,
 ): Texture {
   const cached = _textureCache.get(url);
   if (cached) {
@@ -42,11 +43,20 @@ export function loadTexture(
   // This matches our codebase where all textures use flipY = false.
   texture.flipY = false;
   _textureCache.set(url, texture);
-  _bitmapLoader.load(url, (bitmap) => {
-    texture.image = bitmap;
-    texture.needsUpdate = true;
-    onLoad?.(texture);
-  });
+  _bitmapLoader.load(
+    url,
+    (bitmap) => {
+      texture.image = bitmap;
+      texture.needsUpdate = true;
+      onLoad?.(texture);
+    },
+    undefined,
+    () => {
+      // Remove failed URL from cache so fallback can be tried.
+      _textureCache.delete(url);
+      onError?.(url);
+    },
+  );
   return texture;
 }
 

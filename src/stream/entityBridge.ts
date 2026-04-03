@@ -94,165 +94,159 @@ export function streamEntityToGameEntity(
   }
 
   // Projectile visuals
-  if (entity.visual?.kind === "tracer") {
-    return {
-      ...positionedBase(entity, spawnTime),
-      renderType: "Tracer",
-      visual: entity.visual,
-      dataBlock: entity.dataBlock,
-      direction: entity.direction,
-    } satisfies TracerEntity;
-  }
-  if (entity.visual?.kind === "sprite") {
-    return {
-      ...positionedBase(entity, spawnTime),
-      renderType: "Sprite",
-      visual: entity.visual,
-    } satisfies SpriteEntity;
-  }
-
-  // Player
-  if (entity.type === "Player") {
-    return {
-      ...positionedBase(entity, spawnTime),
-      renderType: "Player",
-      shapeName: entity.dataBlock,
-      dataBlock: entity.dataBlock,
-      emap: entity.emap,
-      weaponShape: entity.weaponShape,
-      armAction: entity.armAction,
-      packShape: entity.packShape,
-      flagShape: entity.flagShape,
-      falling: entity.falling,
-      jetting: entity.jetting,
-      playerName: entity.playerName,
-      iffColor: entity.iffColor,
-      threads: entity.threads,
-      weaponImageState: entity.weaponImageState,
-      weaponImageStates: entity.weaponImageStates,
-      headPitch: entity.headPitch,
-      headYaw: entity.headYaw,
-      targetRenderFlags: entity.targetRenderFlags,
-      soundSlots: entity.soundSlots,
-    } satisfies PlayerEntity;
-  }
-
-  // Explosion — only render a shape if the datablock specifies one; particle-only
-  // explosions (e.g. BlasterExplosion) still exist as entities for ParticleEffects.
-  if (entity.type === "Explosion") {
-    if (entity.dataBlock) {
+  switch (entity.visual?.kind) {
+    case "tracer":
       return {
         ...positionedBase(entity, spawnTime),
-        renderType: "Explosion",
+        renderType: "Tracer",
+        visual: entity.visual,
+        dataBlock: entity.dataBlock,
+        direction: entity.direction,
+      } satisfies TracerEntity;
+    case "sprite":
+      return {
+        ...positionedBase(entity, spawnTime),
+        renderType: "Sprite",
+        visual: entity.visual,
+      } satisfies SpriteEntity;
+  }
+
+  switch (entity.className) {
+    case "Player":
+      return {
+        ...positionedBase(entity, spawnTime),
+        renderType: "Player",
         shapeName: entity.dataBlock,
         dataBlock: entity.dataBlock,
-        explosionDataBlockId: entity.explosionDataBlockId,
-        faceViewer: entity.faceViewer,
-      } satisfies ExplosionEntity;
-    }
-    return {
-      ...positionedBase(entity, spawnTime),
-      renderType: "None",
-    } satisfies NoneEntity;
-  }
+        imageDataBlockIds: entity.imageDataBlockIds,
+        imageSkinNames: entity.imageSkinNames,
+        weaponShape: entity.weaponShape,
+        armAction: entity.armAction,
+        packShape: entity.packShape,
+        flagShape: entity.flagShape,
+        falling: entity.falling,
+        jetting: entity.jetting,
+        playerName: entity.playerName,
+        skinName: entity.skinName,
+        skinPrefName: entity.skinPrefName,
+        iffColor: entity.iffColor,
+        threads: entity.threads,
+        weaponImageState: entity.weaponImageState,
+        weaponImageStates: entity.weaponImageStates,
+        headPitch: entity.headPitch,
+        headYaw: entity.headYaw,
+        targetRenderFlags: entity.targetRenderFlags,
+        soundSlots: entity.soundSlots,
+      } satisfies PlayerEntity;
 
-  // Force field
-  if (entity.className === "ForceFieldBare") {
-    return {
-      ...positionedBase(entity, spawnTime),
-      renderType: "ForceFieldBare",
-      forceFieldData: entity.forceFieldData
-        ? {
-            textures: entity.forceFieldData.textures,
-            color: entity.forceFieldData.color,
-            baseTranslucency: entity.forceFieldData.baseTranslucency,
-            numFrames: entity.forceFieldData.textures.length,
-            framesPerSec: entity.forceFieldData.framesPerSec,
-            scrollSpeed: entity.forceFieldData.scrollSpeed,
-            umapping: entity.forceFieldData.umapping,
-            vmapping: entity.forceFieldData.vmapping,
-            dimensions: entity.forceFieldData.dimensions,
-          }
-        : undefined,
-    } satisfies ForceFieldBareEntity;
-  }
+    case "Explosion":
+      // Only render a shape if the datablock specifies one; particle-only explosions
+      // (e.g. BlasterExplosion) still exist as entities for ParticleEffects.
+      if (entity.dataBlock) {
+        return {
+          ...positionedBase(entity, spawnTime),
+          renderType: "Explosion",
+          shapeName: entity.dataBlock,
+          dataBlock: entity.dataBlock,
+          explosionDataBlockId: entity.explosionDataBlockId,
+          faceViewer: entity.faceViewer,
+        } satisfies ExplosionEntity;
+      }
+      return {
+        ...positionedBase(entity, spawnTime),
+        renderType: "None",
+      } satisfies NoneEntity;
 
-  // Audio emitter
-  if (entity.className === "AudioEmitter") {
-    return {
-      ...positionedBase(entity, spawnTime),
-      renderType: "AudioEmitter",
-      audioFileName: entity.audioFileName,
-      audioVolume: entity.audioVolume,
-      audioIs3D: entity.audioIs3D,
-      audioIsLooping: entity.audioIsLooping ?? true,
-      audioMinDistance: entity.audioMinDistance,
-      audioMaxDistance: entity.audioMaxDistance,
-      audioMinLoopGap: entity.audioMinLoopGap,
-      audioMaxLoopGap: entity.audioMaxLoopGap,
-    } satisfies AudioEmitterEntity;
-  }
+    case "ForceFieldBare":
+      return {
+        ...positionedBase(entity, spawnTime),
+        renderType: "ForceFieldBare",
+        forceFieldData: entity.forceFieldData
+          ? {
+              textures: entity.forceFieldData.textures,
+              color: entity.forceFieldData.color,
+              baseTranslucency: entity.forceFieldData.baseTranslucency,
+              numFrames: entity.forceFieldData.textures.length,
+              framesPerSec: entity.forceFieldData.framesPerSec,
+              scrollSpeed: entity.forceFieldData.scrollSpeed,
+              umapping: entity.forceFieldData.umapping,
+              vmapping: entity.forceFieldData.vmapping,
+              dimensions: entity.forceFieldData.dimensions,
+            }
+          : undefined,
+      } satisfies ForceFieldBareEntity;
 
-  // WayPoint
-  if (entity.className === "WayPoint") {
-    return {
-      ...positionedBase(entity, spawnTime),
-      renderType: "WayPoint",
-      label: entity.label,
-    } satisfies WayPointEntity;
-  }
+    case "AudioEmitter":
+      return {
+        ...positionedBase(entity, spawnTime),
+        renderType: "AudioEmitter",
+        audioFileName: entity.audioFileName,
+        audioVolume: entity.audioVolume,
+        audioIs3D: entity.audioIs3D,
+        audioIsLooping: entity.audioIsLooping ?? true,
+        audioMinDistance: entity.audioMinDistance,
+        audioMaxDistance: entity.audioMaxDistance,
+        audioMinLoopGap: entity.audioMinLoopGap,
+        audioMaxLoopGap: entity.audioMaxLoopGap,
+      } satisfies AudioEmitterEntity;
 
-  // Non-rendered objects: editor-only markers, AI objectives, vehicle blockers.
-  // MissionMarker::onAdd only calls addToScene when gEditingMission is true.
-  // AIObjective and VehicleBlocker are server-side logic objects with no visuals.
-  if (
-    entity.className === "MissionMarker" ||
-    entity.className === "SpawnSphere" ||
-    entity.className === "AIObjective" ||
-    entity.className === "VehicleBlocker"
-  ) {
-    return {
-      id: entity.id,
-      className: entity.className ?? entity.type,
-      ghostIndex: entity.ghostIndex,
-      dataBlockId: entity.dataBlockId,
-      shapeHint: entity.shapeHint,
-      spawnTime,
-      renderType: "None",
-    } satisfies NoneEntity;
-  }
+    case "WayPoint":
+      return {
+        ...positionedBase(entity, spawnTime),
+        renderType: "WayPoint",
+        label: entity.label,
+      } satisfies WayPointEntity;
 
-  // Camera
-  if (entity.className === "Camera") {
-    return {
-      ...positionedBase(entity, spawnTime),
-      renderType: "Camera",
-    } satisfies CameraEntity;
-  }
+    // Non-rendered objects: editor-only markers, AI objectives, vehicle blockers.
+    // MissionMarker::onAdd only calls addToScene when gEditingMission is true.
+    // AIObjective and VehicleBlocker are server-side logic objects with no visuals.
+    case "AIObjective":
+    case "MissionMarker":
+    case "PhysicalZone":
+    case "SpawnSphere":
+    case "VehicleBlocker":
+      return {
+        id: entity.id,
+        className: entity.className ?? entity.type,
+        ghostIndex: entity.ghostIndex,
+        dataBlockId: entity.dataBlockId,
+        shapeHint: entity.shapeHint,
+        spawnTime,
+        renderType: "None",
+      } satisfies NoneEntity;
 
-  // Default: generic DTS shape
-  return {
-    ...positionedBase(entity, spawnTime),
-    renderType: "Shape",
-    shapeName: entity.dataBlock,
-    shapeType:
-      entity.className === "Turret"
-        ? "Turret"
-        : entity.className === "Item"
-          ? "Item"
-          : "StaticShape",
-    dataBlock: entity.dataBlock,
-    emap: entity.emap,
-    damageState: entity.damageState,
-    weaponShape: entity.weaponShape,
-    armAction: entity.armAction,
-    threads: entity.threads,
-    targetRenderFlags: entity.targetRenderFlags,
-    iffColor: entity.iffColor,
-    wheels: entity.wheels,
-    steeringYaw: entity.steeringYaw,
-    frozen: entity.frozen,
-    maxSteeringAngle: entity.maxSteeringAngle,
-    soundSlots: entity.soundSlots,
-  } satisfies ShapeEntity;
+    case "Camera":
+      return {
+        ...positionedBase(entity, spawnTime),
+        renderType: "Camera",
+      } satisfies CameraEntity;
+
+    default:
+      // Default: generic DTS shape
+      return {
+        ...positionedBase(entity, spawnTime),
+        renderType: "Shape",
+        shapeName: entity.dataBlock,
+        shapeType:
+          entity.className === "Turret"
+            ? "Turret"
+            : entity.className === "Item"
+              ? "Item"
+              : "StaticShape",
+        dataBlock: entity.dataBlock,
+        imageDataBlockIds: entity.imageDataBlockIds,
+        skinName: entity.skinName,
+        damageState: entity.damageState,
+        weaponShape: entity.weaponShape,
+        armAction: entity.armAction,
+        threads: entity.threads,
+        targetRenderFlags: entity.targetRenderFlags,
+        iffColor: entity.iffColor,
+        wheels: entity.wheels,
+        steeringYaw: entity.steeringYaw,
+        frozen: entity.frozen,
+        maxSteeringAngle: entity.maxSteeringAngle,
+        soundSlots: entity.soundSlots,
+      } satisfies ShapeEntity;
+  }
 }

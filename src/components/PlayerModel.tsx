@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import type { MutableRefObject } from "react";
-import { useFrame } from "@react-three/fiber";
+import { createPortal, useFrame } from "@react-three/fiber";
 import {
   AdditiveAnimationBlendMode,
   AnimationMixer,
@@ -19,7 +19,6 @@ import { AnimationClip } from "three";
 import * as SkeletonUtils from "three/examples/jsm/utils/SkeletonUtils.js";
 import {
   ANIM_TRANSITION_TIME,
-  DEFAULT_EYE_HEIGHT,
   buildRestPoseClip,
   disposeClonedScene,
   getKeyframeAtTime,
@@ -30,13 +29,23 @@ import { pickMoveAnimation } from "../stream/playerAnimation";
 import { WeaponImageStateMachine } from "../stream/weaponStateMachine";
 import type { WeaponAnimState } from "../stream/weaponStateMachine";
 import { getAliasedActions } from "../torqueScript/shapeConstructor";
-import { useStaticShape, ShapePlaceholder } from "./GenericShape";
+import { useQuery } from "@tanstack/react-query";
+import {
+  useStaticShape,
+  ShapePlaceholder,
+  MountedShapeContent,
+} from "./GenericShape";
+import { textureToUrl } from "../loaders";
 import { useAnisotropy } from "./useAnisotropy";
 import { ShapeErrorBoundary } from "./ShapeErrorBoundary";
 import { DebugSuspense } from "./DebugSuspense";
 import { useIsDebugTourTarget } from "../state/cameraTourStore";
 import { DebugBounds } from "./DebugBounds";
 import { useEntitySoundSlots } from "./useEntitySoundSlots";
+import {
+  resolveEmapFromDatablock,
+  resolveEmapFromImageSlot,
+} from "./resolveEmap";
 import { useAudio } from "./AudioContext";
 import {
   resolveAudioProfile,
@@ -54,6 +63,53 @@ import { useEngineStoreApi, useEngineSelector } from "../state/engineStore";
 import { PlayerNameplate } from "./PlayerNameplate";
 import { streamPlaybackStore } from "../state/streamPlaybackStore";
 import type { PlayerEntity } from "../state/gameEntityTypes";
+
+/**
+ * Per-entity animated eye bone position in model space (GLB coordinates).
+ * Written by PlayerModel after mixer.update(), read by StreamingController
+ * for first-person camera positioning.
+ */
+export const playerEyePositions = new Map<string, Vector3>();
+
+const SKIN_BASE_URL = "https://exogen.github.io/t2-skins/skins/";
+const SKIN_MANIFEST_URL = "https://exogen.github.io/t2-skins/skins.json";
+
+/** Map shape DTS name to skin texture suffix. */
+const SKIN_SUFFIXES: Record<string, string> = {
+  "light_male.dts": "lmale",
+  "light_female.dts": "lfemale",
+  "medium_male.dts": "mmale",
+  "medium_female.dts": "mfemale",
+  "heavy_male.dts": "hmale",
+  "bioderm_light.dts": "lbioderm",
+  "bioderm_medium.dts": "mbioderm",
+  "bioderm_heavy.dts": "hbioderm",
+};
+
+/** Processed custom skin manifest: suffix → Set of available skin names. */
+type SkinLookup = Record<string, Set<string>>;
+
+/** Fetch the remote custom skins manifest (once, cached forever).
+ *  Returns a lookup of suffix → Set<skinName> for O(1) has() checks. */
+function useCustomSkinManifest() {
+  return useQuery<SkinLookup>({
+    queryKey: ["customSkinManifest"],
+    queryFn: async () => {
+      const res = await fetch(SKIN_MANIFEST_URL);
+      if (!res.ok) throw new Error(`${res.status}`);
+      const raw: { customSkins?: Record<string, string[]> } = await res.json();
+      const lookup: SkinLookup = {};
+      if (raw.customSkins) {
+        for (const [suffix, names] of Object.entries(raw.customSkins)) {
+          lookup[suffix] = new Set(names);
+        }
+      }
+      return lookup;
+    },
+    staleTime: Infinity,
+    retry: 1,
+  });
+}
 
 /** Number of table actions in the engine's ActionAnimationList (Tribes2.exe build 25034). */
 const NUM_TABLE_ACTION_ANIMS = 8;
@@ -229,47 +285,90 @@ export function PlayerModel({ entity }: { entity: PlayerEntity }) {
     (state) => state.playback.streamSnapshot?.controlPlayerGhostId,
   );
 
+  // Resolve skin texture URL: local manifest first, then remote manifest.
+  const { data: skinManifest } = useCustomSkinManifest();
+
+  const skinUrl = useMemo(() => {
+    const skin = entity.skinPrefName ?? entity.skinName;
+    if (!skin || skin === "base") return undefined;
+    const suffix = SKIN_SUFFIXES[shapeName.toLowerCase()];
+    if (!suffix) return undefined;
+
+    // 1. Check local manifest (built-in skins like beagle, swolf, baseb).
+    try {
+      return textureToUrl(`skins/${skin}.${suffix}`, null);
+    } catch {
+      // Not in local manifest.
+    }
+
+    // 2. Check remote manifest (custom skins).
+    if (skinManifest?.[suffix]?.has(skin)) {
+      return `${SKIN_BASE_URL}${skin}.${suffix}.png`;
+    }
+
+    // 3. Not found — no skin override.
+    return undefined;
+  }, [entity.skinPrefName, entity.skinName, shapeName, skinManifest]);
+
+  // Resolve emap per-datablock (emap is a datablock property, not entity).
+  const emap = useMemo(
+    () => resolveEmapFromDatablock(entity.dataBlockId, entity.dataBlock),
+    [entity.dataBlockId, entity.dataBlock],
+  );
+
   // Clone scene preserving skeleton bindings, create mixer, find mount bones.
-  const { clonedScene, mixer, mount0, mount1, mount2, iflInitializers } =
-    useMemo(() => {
-      const scene = SkeletonUtils.clone(gltf.scene) as Group;
-      const iflInits = processShapeScene(scene, undefined, {
-        anisotropy,
-        emap: entity.emap,
-      });
+  const {
+    clonedScene,
+    mixer,
+    mount0,
+    mount1,
+    mount2,
+    eyeBone,
+    iflInitializers,
+  } = useMemo(() => {
+    const scene = SkeletonUtils.clone(gltf.scene) as Group;
+    const iflInits = processShapeScene(scene, undefined, {
+      anisotropy,
+      emap: emap,
+      skinUrl,
+    });
 
-      // Use front-face-only rendering so the camera can see out from inside the
-      // model in first-person (backface culling hides interior faces).
-      scene.traverse((n: any) => {
-        if (n.isMesh && n.material) {
-          const mats = Array.isArray(n.material) ? n.material : [n.material];
-          for (const m of mats) m.side = FrontSide;
-        }
-      });
+    // Use front-face-only rendering so the camera can see out from inside the
+    // model in first-person (backface culling hides interior faces).
+    scene.traverse((n: any) => {
+      if (n.isMesh && n.material) {
+        const mats = Array.isArray(n.material) ? n.material : [n.material];
+        for (const m of mats) m.side = FrontSide;
+      }
+    });
 
-      const mix = new AnimationMixer(scene);
+    const mix = new AnimationMixer(scene);
 
-      let m0: Object3D | null = null;
-      let m1: Object3D | null = null;
-      let m2: Object3D | null = null;
-      scene.traverse((n) => {
-        if (!m0 && n.name === "Mount0") m0 = n;
-        if (!m1 && n.name === "Mount1") m1 = n;
-        if (!m2 && n.name === "Mount2") m2 = n;
-      });
+    let m0: Object3D | null = null;
+    let m1: Object3D | null = null;
+    let m2: Object3D | null = null;
+    let eye: Object3D | null = null;
+    scene.traverse((n) => {
+      if (!m0 && n.name === "Mount0") m0 = n;
+      if (!m1 && n.name === "Mount1") m1 = n;
+      if (!m2 && n.name === "Mount2") m2 = n;
+      if (!eye && n.name === "Eye") eye = n;
+    });
 
-      return {
-        clonedScene: scene,
-        mixer: mix,
-        mount0: m0,
-        mount1: m1,
-        mount2: m2,
-        iflInitializers: iflInits,
-      };
-    }, [gltf.scene, anisotropy, entity.emap]);
+    return {
+      clonedScene: scene,
+      mixer: mix,
+      mount0: m0,
+      mount1: m1,
+      mount2: m2,
+      eyeBone: eye as Object3D | null,
+      iflInitializers: iflInits,
+    };
+  }, [gltf.scene, anisotropy, emap, skinUrl]);
 
   useEffect(() => {
     return () => {
+      playerEyePositions.delete(entity.id);
       disposeClonedScene(clonedScene);
       mixer.uncacheRoot(clonedScene);
     };
@@ -502,7 +601,7 @@ export function PlayerModel({ entity }: { entity: PlayerEntity }) {
 
   // ShapeBase sound slots (weapon switch sounds, etc.) — managed by shared hook.
   const entityRef = useRef(entity);
-  entityRef.current = entity;
+  entityRef.current = entity; // eslint-disable-line react-hooks/refs
   useEntitySoundSlots(entityRef, clonedScene);
 
   // Jet thrust sound. Played client-side by Player::updateJetEffects via
@@ -824,6 +923,28 @@ export function PlayerModel({ entity }: { entity: PlayerEntity }) {
     } else {
       mixer.update(0);
     }
+
+    // Write animated Eye bone position for first-person camera.
+    // Torque's Player::getEyeTransform reads the eye node's POSITION
+    // from the animated skeleton (rotation is discarded — head rotation
+    // is constructed from mHead pitch/yaw instead).
+    if (eyeBone) {
+      clonedScene.updateWorldMatrix(false, true);
+      let eyePos = playerEyePositions.get(entity.id);
+      if (!eyePos) {
+        eyePos = new Vector3();
+        playerEyePositions.set(entity.id, eyePos);
+      }
+      // Get Eye bone position in GLB model-local space.
+      eyeBone.getWorldPosition(eyePos);
+      clonedScene.worldToLocal(eyePos);
+      // Convert GLB (x,y,z) → entity-local Three.js space via R90:
+      // same swizzle as PlayerEyeOffset's static extraction.
+      const gx = eyePos.x;
+      const gy = eyePos.y;
+      const gz = eyePos.z;
+      eyePos.set(gz, gy, -gx);
+    }
   });
 
   return (
@@ -854,44 +975,31 @@ export function PlayerModel({ entity }: { entity: PlayerEntity }) {
           </DebugSuspense>
         </ShapeErrorBoundary>
       )}
-      {currentPackShape && mount1 && (
-        <ShapeErrorBoundary
-          key={currentPackShape}
-          fallback={<ShapePlaceholder color="red" label={currentPackShape} />}
-        >
-          <DebugSuspense
-            name={`Pack:${entity.id}/${currentPackShape}`}
-            fallback={
-              <ShapePlaceholder color="cyan" label={currentPackShape} />
-            }
-          >
-            <PackModel
-              packShape={currentPackShape}
-              mountBone={mount1}
-              emap={entity.emap}
+      {currentPackShape &&
+        mount1 &&
+        createPortal(
+          <Suspense>
+            <MountedShapeContent
+              shapeName={currentPackShape}
+              imageDataBlockId={entity.imageDataBlockIds?.[2]}
+              entityId={entity.id}
             />
-          </DebugSuspense>
-        </ShapeErrorBoundary>
-      )}
-      {currentFlagShape && mount2 && (
-        <ShapeErrorBoundary
-          key={currentFlagShape}
-          fallback={<ShapePlaceholder color="red" label={currentFlagShape} />}
-        >
-          <DebugSuspense
-            name={`Flag:${entity.id}/${currentFlagShape}`}
-            fallback={
-              <ShapePlaceholder color="cyan" label={currentFlagShape} />
-            }
-          >
-            <PackModel
-              packShape={currentFlagShape}
-              mountBone={mount2}
-              emap={entity.emap}
+          </Suspense>,
+          mount1,
+        )}
+      {currentFlagShape &&
+        mount2 &&
+        createPortal(
+          <Suspense>
+            <MountedShapeContent
+              shapeName={currentFlagShape}
+              imageDataBlockId={entity.imageDataBlockIds?.[3]}
+              entityId={entity.id}
+              skinName={entity.imageSkinNames?.[3]}
             />
-          </DebugSuspense>
-        </ShapeErrorBoundary>
-      )}
+          </Suspense>,
+          mount2,
+        )}
     </>
   );
 }
@@ -966,6 +1074,10 @@ function WeaponModel({
 }) {
   const engineStore = useEngineStoreApi();
   const weaponGltf = useStaticShape(weaponShape);
+  const emap = useMemo(
+    () => resolveEmapFromImageSlot(entity.imageDataBlockIds?.[0]),
+    [entity.imageDataBlockIds],
+  );
   const anisotropy = useAnisotropy();
 
   // Clone weapon with skeleton bindings, create dedicated mixer.
@@ -979,7 +1091,7 @@ function WeaponModel({
     const clone = SkeletonUtils.clone(weaponGltf.scene) as Group;
     const iflInits = processShapeScene(clone, undefined, {
       anisotropy,
-      emap: entity.emap,
+      emap,
     });
 
     // Compute Mountpoint inverse offset so the weapon's grip aligns to Mount0.
@@ -1025,7 +1137,7 @@ function WeaponModel({
       visNodesBySequence: visBySeq,
       weaponIflInitializers: iflInits,
     };
-  }, [weaponGltf, anisotropy]);
+  }, [weaponGltf, anisotropy, emap]);
 
   useEffect(() => {
     return () => {
@@ -1316,97 +1428,4 @@ function applyWeaponAnim(
 
     currentAnimRef.current = targetName;
   }
-}
-
-/**
- * Attaches a pack shape to the player's Mount1 bone. Packs are static
- * mounted images (no state machine or animation) — just positioned via
- * the pack shape's Mountpoint node inverse offset, same as weapons.
- */
-function PackModel({
-  packShape,
-  mountBone,
-  emap,
-}: {
-  packShape: string;
-  mountBone: Object3D;
-  emap?: boolean;
-}) {
-  const packGltf = useStaticShape(packShape);
-  const anisotropy = useAnisotropy();
-
-  const { packClone, packIflInitializers } = useMemo(() => {
-    const clone = SkeletonUtils.clone(packGltf.scene) as Group;
-    const iflInits = processShapeScene(clone, undefined, {
-      anisotropy,
-      emap,
-    });
-
-    // Compute Mountpoint inverse offset so the pack aligns to Mount1.
-    const mp = getPosedNodeTransform(
-      packGltf.scene,
-      packGltf.animations,
-      "Mountpoint",
-    );
-    if (mp) {
-      const invQuat = mp.quaternion.clone().invert();
-      const invPos = mp.position.clone().negate().applyQuaternion(invQuat);
-      clone.position.copy(invPos);
-      clone.quaternion.copy(invQuat);
-    }
-
-    return { packClone: clone, packIflInitializers: iflInits };
-  }, [packGltf, anisotropy]);
-
-  useEffect(() => {
-    mountBone.add(packClone);
-    return () => {
-      mountBone.remove(packClone);
-      disposeClonedScene(packClone);
-    };
-  }, [packClone, mountBone]);
-
-  // Initialize IFL materials (animated texture sequences).
-  useEffect(() => {
-    const cleanups: (() => void)[] = [];
-    for (const { mesh, initialize } of packIflInitializers) {
-      initialize(mesh, () => streamPlaybackStore.getState().time)
-        .then((dispose) => cleanups.push(dispose))
-        .catch(() => {});
-    }
-    return () => cleanups.forEach((fn) => fn());
-  }, [packIflInitializers]);
-
-  return null;
-}
-
-/**
- * Extracts the eye offset from a player model's Eye bone in the idle ("Root"
- * animation) pose. The Eye node is a child of "Bip01 Head" in the skeleton
- * hierarchy. Its world Y in GLB Y-up space gives the height above the player's
- * feet, which we use as the first-person camera offset.
- */
-export function PlayerEyeOffset({
-  shapeName,
-  eyeOffsetRef,
-}: {
-  shapeName: string;
-  eyeOffsetRef: MutableRefObject<Vector3>;
-}) {
-  const gltf = useStaticShape(shapeName);
-
-  useEffect(() => {
-    // Get Eye node position from the posed (Root animation) skeleton.
-    const eye = getPosedNodeTransform(gltf.scene, gltf.animations, "Eye");
-    if (eye) {
-      // Convert from GLB space to entity space via ShapeRenderer's R90:
-      // R90 maps GLB (x,y,z) -> entity (z, y, -x).
-      // This gives ~(0.169, 2.122, 0.0) -- 17cm forward and 2.12m up.
-      eyeOffsetRef.current.set(eye.position.z, eye.position.y, -eye.position.x);
-    } else {
-      eyeOffsetRef.current.set(0, DEFAULT_EYE_HEIGHT, 0);
-    }
-  }, [gltf, eyeOffsetRef]);
-
-  return null;
 }

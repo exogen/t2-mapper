@@ -19,6 +19,7 @@ import {
   yawPitchToQuaternion,
   playerYawToQuaternion,
   torqueQuatToThreeJS,
+  matrixFToThreeJSQuat,
   torqueQuatHeading,
   torqueQuatPitch,
   isValidPosition,
@@ -71,12 +72,16 @@ export interface MutableEntity {
   dataBlockId?: number;
   shapeHint?: string;
   dataBlock?: string;
-  /** Datablock enables environment map reflections. */
-  emap?: boolean;
   visual?: StreamVisual;
   direction?: [number, number, number];
   weaponShape?: string;
+  /** Datablock IDs for each mounted image slot (0-3). */
+  imageDataBlockIds?: (number | undefined)[];
   playerName?: string;
+  /** Player skin (team skin like "base", "baseb"). */
+  skinName?: string;
+  /** Player preferred skin override (chosen skin like "RandySavage"). */
+  skinPrefName?: string;
   position?: [number, number, number];
   rotation: [number, number, number, number];
   velocity?: [number, number, number];
@@ -106,18 +111,24 @@ export interface MutableEntity {
   weaponImageStatesDbId?: number;
   packShape?: string;
   flagShape?: string;
+  /** Skin names for each mounted image slot (from ghost ImageMask skinTag). */
+  imageSkinNames?: (string | undefined)[];
   falling?: boolean;
   jetting?: boolean;
   headPitch?: number;
   headYaw?: number;
   targetRenderFlags?: number;
-  carryingFlag?: boolean;
   /** ShapeBase sound slots (4 max). Raw ghost SoundMask data — components
    *  manage PositionalAudio objects directly, matching Tribes 2's approach. */
   soundSlots?: Array<{ index: number; playing: boolean; profileId?: number }>;
+  /** ShapeBase hidden state (binaryCloak from CloakMask). True = invisible.
+   *  Flags are hidden when carried by a player; the flag Item ghost stays
+   *  in scope but shouldn't render. */
+  hidden?: boolean;
   /** Item mStatic flag (from InitialUpdateMask). Static items (flags at
    *  flagstand) skip all physics in Item::processTick. */
   isStaticItem?: boolean;
+
   /** Item velocity interpolation state. The client simulates full physics
    *  (gravity, collision, bounce) for non-static, non-at-rest items. */
   itemPhysics?: {
@@ -212,6 +223,8 @@ export abstract class StreamEngine implements StreamingPlayback {
 
   // ── Target system ──
   protected targetNames = new Map<number, string>();
+  protected targetSkins = new Map<number, string>();
+  protected targetSkinPrefs = new Map<number, string>();
   protected targetTeams = new Map<number, number>();
   protected targetRenderFlags = new Map<number, number>();
   /** Deferred nameTag→targetId for TargetInfoEvents that arrived before their NetStringEvent. */
@@ -375,6 +388,8 @@ export abstract class StreamEngine implements StreamingPlayback {
     this.audioEvents = [];
     this.netStrings.clear();
     this.targetNames.clear();
+    this.targetSkins.clear();
+    this.targetSkinPrefs.clear();
     this.targetTeams.clear();
     this.targetRenderFlags.clear();
     this.sensorGroupColors.clear();
@@ -619,18 +634,31 @@ export abstract class StreamEngine implements StreamingPlayback {
       if (targetId != null && renderFlags != null) {
         this.targetRenderFlags.set(targetId, renderFlags);
       }
+      // Skin tags — resolve via net string table.
+      const skinTag = data.skinTag as number | undefined;
+      if (targetId != null && skinTag != null && skinTag !== 0x400) {
+        const resolved = this.netStrings.get(skinTag);
+        if (resolved) this.targetSkins.set(targetId, resolved);
+      }
+      const skinPrefTag = data.skinPrefTag as number | undefined;
+      if (targetId != null && skinPrefTag != null && skinPrefTag !== 0x400) {
+        const resolved = this.netStrings.get(skinPrefTag);
+        if (resolved) this.targetSkinPrefs.set(targetId, resolved);
+      }
       // Apply all known target info to existing entities.
       if (targetId != null) {
         const name = this.targetNames.get(targetId);
         const team = this.targetTeams.get(targetId);
         const rf = this.targetRenderFlags.get(targetId);
+        const skin = this.targetSkins.get(targetId);
+        const skinPref = this.targetSkinPrefs.get(targetId);
         for (const entity of this.entities.values()) {
           if (entity.targetId === targetId) {
-            if (name) {
-              entity.playerName = name;
-            }
+            if (name) entity.playerName = name;
             if (team != null) entity.sensorGroup = team;
             if (rf != null) entity.targetRenderFlags = rf;
+            if (skin) entity.skinName = skin;
+            if (skinPref) entity.skinPrefName = skinPref;
           }
         }
       }
@@ -922,11 +950,15 @@ export abstract class StreamEngine implements StreamingPlayback {
     entity.visual = undefined;
     entity.targetId = undefined;
     entity.targetRenderFlags = undefined;
-    entity.carryingFlag = undefined;
     entity.sensorGroup = undefined;
     entity.playerName = undefined;
     entity.weaponShape = undefined;
+    entity.imageDataBlockIds = undefined;
     entity.packShape = undefined;
+    entity.flagShape = undefined;
+    entity.imageSkinNames = undefined;
+    entity.skinName = undefined;
+    entity.skinPrefName = undefined;
     entity.falling = undefined;
     entity.jetting = undefined;
     entity.weaponImageState = undefined;
@@ -940,6 +972,7 @@ export abstract class StreamEngine implements StreamingPlayback {
     entity.energy = undefined;
     entity.maxEnergy = undefined;
     entity.damageState = undefined;
+    entity.hidden = undefined;
     entity.actionAnim = undefined;
     entity.actionAtEnd = undefined;
     entity.armAction = undefined;
@@ -969,9 +1002,6 @@ export abstract class StreamEngine implements StreamingPlayback {
       if (typeof shapeName === "string") {
         entity.shapeHint = shapeName;
         entity.dataBlock = shapeName;
-      }
-      if (blockData && "emap" in blockData) {
-        entity.emap = !!blockData.emap;
       }
       if (
         entity.type === "Player" &&
@@ -1075,12 +1105,15 @@ export abstract class StreamEngine implements StreamingPlayback {
       entity.frozen = data.frozen;
     }
 
-    // Weapon images (Player)
-    if (entity.type === "Player") {
+    // Mounted images (ShapeBase slot 0-3). All ShapeBase subclasses have
+    // image slots: Player weapons, Turret barrels, Vehicle turrets, etc.
+    {
       const images = data.images as
         | Array<{
             index?: number;
             dataBlockId?: number;
+            skinTagIndex?: number;
+            skinName?: string;
             triggerDown?: boolean;
             ammo?: boolean;
             loaded?: boolean;
@@ -1089,20 +1122,16 @@ export abstract class StreamEngine implements StreamingPlayback {
             fireCount?: number;
           }>
         | undefined;
-      if (Array.isArray(images) && images.length > 0) {
+      if (images && images.length > 0) {
         const weaponImage = images.find((img) => img.index === 0);
         if (weaponImage?.dataBlockId && weaponImage.dataBlockId > 0) {
           const blockData = this.getDataBlockData(weaponImage.dataBlockId);
           const weaponShape = resolveShapeName("ShapeBaseImageData", blockData);
           if (weaponShape) {
-            const mountPoint = blockData?.mountPoint as number | undefined;
-            if (
-              (mountPoint == null || mountPoint <= 0) &&
-              !/pack_/i.test(weaponShape)
-            ) {
-              entity.weaponShape = weaponShape;
-            }
+            entity.weaponShape = weaponShape;
           }
+          if (!entity.imageDataBlockIds) entity.imageDataBlockIds = [];
+          entity.imageDataBlockIds[0] = weaponImage.dataBlockId;
 
           const prev = entity.weaponImageState;
           entity.weaponImageState = {
@@ -1126,47 +1155,74 @@ export abstract class StreamEngine implements StreamingPlayback {
           entity.weaponShape = undefined;
           entity.weaponImageState = undefined;
           entity.weaponImageStates = undefined;
+          if (entity.imageDataBlockIds) entity.imageDataBlockIds[0] = undefined;
         }
 
-        // Pack image (slot 2 = $BackpackSlot, mountPoint 1 = Mount1)
-        const packImage = images.find((img) => img.index === 2);
-        if (packImage?.dataBlockId && packImage.dataBlockId > 0) {
-          const blockData = this.getDataBlockData(packImage.dataBlockId);
-          const shape = resolveShapeName("ShapeBaseImageData", blockData);
-          if (shape) {
-            entity.packShape = shape;
+        // Pack and flag image slots are Player-only. Other ShapeBase types
+        // (vehicles, turrets) can have weapons in slots 2-3 but those are NOT
+        // packs/flags — only slot 0 is universal.
+        if (entity.type === "Player") {
+          // Pack image (slot 2 = $BackpackSlot, mountPoint 1 = Mount1)
+          const packImage = images.find((img) => img.index === 2);
+          if (packImage?.dataBlockId && packImage.dataBlockId > 0) {
+            const blockData = this.getDataBlockData(packImage.dataBlockId);
+            const shape = resolveShapeName("ShapeBaseImageData", blockData);
+            if (shape) {
+              entity.packShape = shape;
+            }
+            if (!entity.imageDataBlockIds) entity.imageDataBlockIds = [];
+            entity.imageDataBlockIds[2] = packImage.dataBlockId;
+          } else if (packImage && !packImage.dataBlockId) {
+            entity.packShape = undefined;
+            if (entity.imageDataBlockIds)
+              entity.imageDataBlockIds[2] = undefined;
           }
-        } else if (packImage && !packImage.dataBlockId) {
-          entity.packShape = undefined;
+
+          // Flag image (slot 3 = $FlagSlot, mountPoint 2 = Mount2)
+          const flagImage = images.find((img) => img.index === 3);
+          if (flagImage?.dataBlockId && flagImage.dataBlockId > 0) {
+            if (!entity.imageDataBlockIds) entity.imageDataBlockIds = [];
+            entity.imageDataBlockIds[3] = flagImage.dataBlockId;
+            const blockData = this.getDataBlockData(flagImage.dataBlockId);
+            const shape = resolveShapeName("ShapeBaseImageData", blockData);
+            if (shape) {
+              entity.flagShape = shape;
+            }
+            if (entity.targetId != null && entity.targetId >= 0) {
+              const prev = this.targetRenderFlags.get(entity.targetId) ?? 0;
+              const updated = prev | 0x2;
+              if (updated !== prev) {
+                this.targetRenderFlags.set(entity.targetId, updated);
+                entity.targetRenderFlags = updated;
+              }
+            }
+          } else if (flagImage && !flagImage.dataBlockId) {
+            entity.flagShape = undefined;
+            if (entity.imageDataBlockIds)
+              entity.imageDataBlockIds[3] = undefined;
+            if (entity.targetId != null && entity.targetId >= 0) {
+              const prev = this.targetRenderFlags.get(entity.targetId) ?? 0;
+              const updated = prev & ~0x2;
+              if (updated !== prev) {
+                this.targetRenderFlags.set(entity.targetId, updated);
+                entity.targetRenderFlags = updated;
+              }
+            }
+          }
         }
 
-        // Flag image (slot 3 = $FlagSlot, mountPoint 2 = Mount2)
-        const flagImage = images.find((img) => img.index === 3);
-        if (flagImage?.dataBlockId && flagImage.dataBlockId > 0) {
-          entity.carryingFlag = true;
-          const blockData = this.getDataBlockData(flagImage.dataBlockId);
-          const shape = resolveShapeName("ShapeBaseImageData", blockData);
-          if (shape) {
-            entity.flagShape = shape;
+        // Per-slot image skin tags (e.g. flag team skin on slot 3).
+        for (const img of images) {
+          if (img.index == null) continue;
+          let skinName: string | undefined;
+          if (img.skinTagIndex != null) {
+            skinName = this.netStrings.get(img.skinTagIndex);
+          } else if (img.skinName) {
+            skinName = img.skinName;
           }
-          if (entity.targetId != null && entity.targetId >= 0) {
-            const prev = this.targetRenderFlags.get(entity.targetId) ?? 0;
-            const updated = prev | 0x2;
-            if (updated !== prev) {
-              this.targetRenderFlags.set(entity.targetId, updated);
-              entity.targetRenderFlags = updated;
-            }
-          }
-        } else if (flagImage && !flagImage.dataBlockId) {
-          entity.carryingFlag = false;
-          entity.flagShape = undefined;
-          if (entity.targetId != null && entity.targetId >= 0) {
-            const prev = this.targetRenderFlags.get(entity.targetId) ?? 0;
-            const updated = prev & ~0x2;
-            if (updated !== prev) {
-              this.targetRenderFlags.set(entity.targetId, updated);
-              entity.targetRenderFlags = updated;
-            }
+          if (skinName) {
+            if (!entity.imageSkinNames) entity.imageSkinNames = [];
+            entity.imageSkinNames[img.index] = skinName;
           }
         }
       }
@@ -1224,6 +1280,16 @@ export abstract class StreamEngine implements StreamingPlayback {
       );
       if (converted) entity.rotation = converted;
     } else if (
+      Array.isArray(
+        (data.transform as { elements?: unknown } | undefined)?.elements,
+      )
+    ) {
+      // MatrixF (16 floats) — decompose rotation from the 3x3 submatrix.
+      const converted = matrixFToThreeJSQuat(
+        (data.transform as { elements: number[] }).elements,
+      );
+      if (converted) entity.rotation = converted;
+    } else if (
       entity.type === "Item" &&
       typeof (data.rotation as { angle?: unknown } | undefined)?.angle ===
         "number"
@@ -1271,7 +1337,11 @@ export abstract class StreamEngine implements StreamingPlayback {
         }
       }
       const atRest = data.atRest as boolean | undefined;
-      if (atRest === false && !entity.isStaticItem && isVec3Like(data.velocity)) {
+      if (
+        atRest === false &&
+        !entity.isStaticItem &&
+        isVec3Like(data.velocity)
+      ) {
         const vel = data.velocity as Vec3;
         entity.itemPhysics = {
           velocity: [vel.x, vel.y, vel.z],
@@ -1379,12 +1449,29 @@ export abstract class StreamEngine implements StreamingPlayback {
     if (typeof data.damageState === "number") {
       entity.damageState = data.damageState;
     }
+    // CloakMask: binaryCloak is mFadeVal == 1.0 (binary-verified at
+    // FUN_005eead0). true = fully visible, false = invisible (faded out).
+    if (typeof data.binaryCloak === "boolean") {
+      entity.hidden = !data.binaryCloak;
+    }
     if (typeof data.action === "number") {
       entity.actionAnim = data.action;
       entity.actionAtEnd = !!data.actionAtEnd;
     }
     if (typeof data.armAction === "number") {
       entity.armAction = data.armAction;
+    }
+
+    // MountedMask: when a player unmounts from a vehicle, the server resets
+    // to RootAnim (table action 0) via Player::onUnmount→setActionThread.
+    // Table actions (0-6) are never sent over the wire, so actionAnim would
+    // remain at the stale Sitting index. Clear it on unmount.
+    if (typeof data.mountObject === "number") {
+      if (data.mountObject === -1) {
+        // Unmounting — reset action to table anim (not sent by server).
+        entity.actionAnim = undefined;
+        entity.actionAtEnd = undefined;
+      }
     }
 
     // Threads
@@ -1424,6 +1511,10 @@ export abstract class StreamEngine implements StreamingPlayback {
       }
       const renderFlags = this.targetRenderFlags.get(data.targetId);
       if (renderFlags != null) entity.targetRenderFlags = renderFlags;
+      const skin = this.targetSkins.get(data.targetId);
+      if (skin) entity.skinName = skin;
+      const skinPref = this.targetSkinPrefs.get(data.targetId);
+      if (skinPref) entity.skinPrefName = skinPref;
     }
 
     // ShapeBase sound slots — store on entity for component-level playback.
@@ -1599,8 +1690,14 @@ export abstract class StreamEngine implements StreamingPlayback {
     for (const entity of this.entities.values()) {
       const phys = entity.itemPhysics;
       // Binary-verified: Item::processTick skips physics when
-      // mStatic || mAtRest || isHidden. We check static and atRest.
-      if (!phys || phys.atRest || entity.isStaticItem || !entity.position)
+      // mStatic || mAtRest || isHidden.
+      if (
+        !phys ||
+        phys.atRest ||
+        entity.isStaticItem ||
+        entity.hidden ||
+        !entity.position
+      )
         continue;
       const v = phys.velocity;
       const p = entity.position;
@@ -2225,7 +2322,7 @@ export abstract class StreamEngine implements StreamingPlayback {
           ? (this.targetRenderFlags.get(entity.targetId) ??
             entity.targetRenderFlags)
           : entity.targetRenderFlags;
-      if (entity.type === "Player" && !entity.carryingFlag) {
+      if (entity.type === "Player" && !entity.flagShape) {
         renderFlags = renderFlags != null ? renderFlags & ~0x2 : renderFlags;
       }
 
@@ -2240,11 +2337,15 @@ export abstract class StreamEngine implements StreamingPlayback {
         shapeHint: entity.shapeHint,
         dataBlock: entity.dataBlock,
         weaponShape: entity.weaponShape,
+        imageDataBlockIds: entity.imageDataBlockIds,
+        imageSkinNames: entity.imageSkinNames,
         packShape: entity.packShape,
         flagShape: entity.flagShape,
         falling: entity.falling,
         jetting: entity.jetting,
         playerName: entity.playerName,
+        skinName: entity.skinName,
+        skinPrefName: entity.skinPrefName,
         targetRenderFlags: renderFlags,
         iffColor:
           (entity.type === "Player" || ((renderFlags ?? 0) & 0x2) !== 0) &&
@@ -2265,6 +2366,7 @@ export abstract class StreamEngine implements StreamingPlayback {
         actionAtEnd: entity.actionAtEnd,
         armAction: entity.armAction,
         damageState: entity.damageState,
+        hidden: entity.hidden,
         faceViewer: entity.faceViewer,
         threads: entity.threads,
         explosionDataBlockId: entity.explosionDataBlockId,

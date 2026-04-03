@@ -99,6 +99,10 @@ export interface StreamEntity {
   visual?: StreamVisual;
   direction?: [number, number, number];
   weaponShape?: string;
+  /** Datablock IDs for each mounted image slot (0-3). */
+  imageDataBlockIds?: (number | undefined)[];
+  /** Skin names for each mounted image slot (0-3), from ghost ImageMask skinTag. */
+  imageSkinNames?: (string | undefined)[];
   playerName?: string;
   /** IFF color resolved from the sensor group color table (sRGB 0-255). */
   iffColor?: { r: number; g: number; b: number };
@@ -108,8 +112,6 @@ export interface StreamEntity {
   className?: string;
   dataBlockId?: number;
   shapeHint?: string;
-  /** Whether the datablock enables environment map reflections. */
-  emap?: boolean;
   /** Position in Torque space [x, y, z]. */
   position?: [number, number, number];
   /** Quaternion in Three.js space [x, y, z, w]. */
@@ -121,6 +123,8 @@ export interface StreamEntity {
   actionAnim?: number;
   actionAtEnd?: boolean;
   damageState?: number;
+  /** ShapeBase hidden state (binaryCloak). True = invisible. */
+  hidden?: boolean;
   faceViewer?: boolean;
   /** DTS animation thread states from ghost ThreadMask data. */
   threads?: ThreadState[];
@@ -136,6 +140,10 @@ export interface StreamEntity {
   packShape?: string;
   /** DTS shape name for the carried flag (slot 3, Mount2 bone). */
   flagShape?: string;
+  /** Player skin (team skin like "base", "baseb"). */
+  skinName?: string;
+  /** Player preferred skin (chosen skin like "RandySavage"). */
+  skinPrefName?: string;
   /** True when the player has no ground contact and is falling. */
   falling?: boolean;
   /** True when the player is using jetpack thrust. */

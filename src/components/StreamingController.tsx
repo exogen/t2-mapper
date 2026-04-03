@@ -1,4 +1,4 @@
-import { Suspense, useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import { useFrame } from "@react-three/fiber";
 import { Quaternion, Vector3 } from "three";
 import {
@@ -8,7 +8,7 @@ import {
 } from "../stream/playbackUtils";
 import { useSettings } from "./SettingsProvider";
 import { ParticleEffects } from "./ParticleEffects";
-import { PlayerEyeOffset } from "./PlayerModel";
+import { playerEyePositions } from "./PlayerModel";
 import { stopAllTrackedSounds } from "./AudioEmitter";
 import { useEngineStoreApi, advanceEffectClock } from "../state/engineStore";
 import { gameEntityStore } from "../state/gameEntityStore";
@@ -66,6 +66,7 @@ function mutateRenderFields(
       const e = renderEntity as unknown as Record<string, unknown>;
       e.threads = stream.threads;
       e.damageState = stream.damageState;
+      e.weaponShape = stream.weaponShape;
       e.targetRenderFlags = stream.targetRenderFlags;
       e.iffColor = stream.iffColor;
       e.soundSlots = stream.soundSlots;
@@ -88,10 +89,55 @@ function getEntityMap(snapshot: StreamSnapshot): EntityById {
 const _tmpVec = new Vector3();
 const _interpQuatA = new Quaternion();
 const _interpQuatB = new Quaternion();
+const _headQuat = new Quaternion();
+const _bodyQuat = new Quaternion();
 const _billboardFlip = new Quaternion(0, 1, 0, 0); // 180° around Y
 const _orbitDir = new Vector3();
 const _orbitTarget = new Vector3();
 const _orbitCandidate = new Vector3();
+
+/** PlayerData::maxLookAngle — all Tribes 2 armor datablocks use 1.5 rad (~85.9°). */
+const DEFAULT_MAX_LOOK_ANGLE = 1.5;
+
+// Axes for head rotation quaternion construction (Three.js Y-up space).
+const _axisX = new Vector3(1, 0, 0);
+const _axisY = new Vector3(0, 1, 0);
+
+/**
+ * Compute first-person camera transform from entity state, matching
+ * Torque's Player::getEyeTransform (binary-verified at FUN_005eead0).
+ *
+ * Position = worldTransform * animatedEyeNodePosition
+ * Rotation = bodyQuat * headQuat(yaw, pitch)
+ *
+ * The eye node's animated ROTATION is discarded — only its position is used.
+ * Head rotation is constructed from mHead.x (pitch) and mHead.z (yaw).
+ */
+function computeFirstPersonCamera(
+  camera: { position: Vector3; quaternion: Quaternion },
+  playerGroup: { position: Vector3; quaternion: Quaternion },
+  eyePos: Vector3,
+  headPitch: number,
+  headYaw: number,
+  maxLookAngle = DEFAULT_MAX_LOOK_ANGLE,
+): void {
+  // Position: body position + body rotation * eye offset.
+  _tmpVec.copy(eyePos).applyQuaternion(playerGroup.quaternion);
+  camera.position.copy(playerGroup.position).add(_tmpVec);
+
+  // Rotation: body * head, where head = yaw(Y) * pitch(X).
+  // In Torque (Z-up): zmat(mHead.z) * xmat(mHead.x).
+  // In Three.js body-local frame: Y rotation for yaw, X for pitch.
+  // Pitch is negated: Torque positive pitch = look up, but positive
+  // Three.js X rotation = look down.
+  const pitchRad = -headPitch * maxLookAngle;
+  const yawRad = headYaw * maxLookAngle;
+  _headQuat.setFromAxisAngle(_axisY, yawRad);
+  _bodyQuat.setFromAxisAngle(_axisX, pitchRad);
+  _headQuat.multiply(_bodyQuat); // yaw * pitch
+  camera.quaternion.copy(playerGroup.quaternion).multiply(_headQuat);
+}
+
 export function StreamingController({
   recording,
 }: {
@@ -102,13 +148,11 @@ export function StreamingController({
   const playbackClockRef = useRef(0);
   const prevTickSnapshotRef = useRef<StreamSnapshot | null>(null);
   const currentTickSnapshotRef = useRef<StreamSnapshot | null>(null);
-  const eyeOffsetRef = useRef(new Vector3(0, DEFAULT_EYE_HEIGHT, 0));
   const streamRef = useRef<StreamingPlayback | null>(
     recording.streamingPlayback ?? null,
   );
   const publishedSnapshotRef = useRef<StreamSnapshot | null>(null);
   const lastSyncedSnapshotRef = useRef<StreamSnapshot | null>(null);
-  const [firstPersonShape, setFirstPersonShape] = useState<string | null>(null);
 
   const syncRenderableEntities = useCallback((snapshot: StreamSnapshot) => {
     if (snapshot === lastSyncedSnapshotRef.current) return;
@@ -179,39 +223,30 @@ export function StreamingController({
     }
 
     // Removal pass: delete entities no longer in the snapshot.
-    // Retain explosion entities with DTS shapes for up to 5 seconds.
-    for (const [id, entity] of map) {
-      if (currentIds.has(id)) continue;
-      if (
-        entity.renderType === "Explosion" &&
-        entity.shapeName &&
-        entity.spawnTime != null
-      ) {
-        const age = snapshot.timeSec - entity.spawnTime;
-        if (age < 5) continue;
+    // Skip removal when the snapshot is empty — this happens during mission
+    // transitions (EndGhosting clears the engine's entities, but no new ones
+    // have arrived yet). Keeping the old render entities visible avoids a
+    // blank screen flash; they'll be replaced when the new mission loads.
+    if (currentIds.size > 0) {
+      for (const [id, entity] of map) {
+        if (currentIds.has(id)) continue;
+        // Retain explosion entities with DTS shapes for up to 5 seconds.
+        if (
+          entity.renderType === "Explosion" &&
+          entity.shapeName &&
+          entity.spawnTime != null
+        ) {
+          const age = snapshot.timeSec - entity.spawnTime;
+          if (age < 5) continue;
+        }
+        map.delete(id);
+        structuralChange = true;
       }
-      map.delete(id);
-      structuralChange = true;
     }
 
     if (structuralChange) {
       gameEntityStore.getState().bumpStreamVersion();
     }
-
-    let nextFirstPersonShape: string | null = null;
-    if (
-      snapshot.camera?.mode === "first-person" &&
-      snapshot.camera.controlEntityId
-    ) {
-      const entity = map.get(snapshot.camera.controlEntityId);
-      const sn = entity ? getField(entity, "shapeName") : undefined;
-      if (sn) {
-        nextFirstPersonShape = sn;
-      }
-    }
-    setFirstPersonShape((prev) =>
-      prev === nextFirstPersonShape ? prev : nextFirstPersonShape,
-    );
   }, []);
 
   useEffect(() => {
@@ -487,7 +522,7 @@ export function StreamingController({
             continue;
           }
         }
-        if (!entity?.position) {
+        if (!entity?.position || entity.hidden) {
           child.visible = false;
           continue;
         }
@@ -610,22 +645,38 @@ export function StreamingController({
       }
     }
 
-    if (
-      cameraMode === "original" &&
-      mode === "first-person" &&
-      root &&
-      currentCamera?.controlEntityId
-    ) {
+    // First-person camera: either add the eye offset on top of the
+    // stream camera position (original mode), or fully compute the
+    // camera transform from entity state (non-authoritative, e.g.
+    // observing a different player than the demo recorder).
+    if (mode === "first-person" && root && currentCamera?.controlEntityId) {
+      const eyePos = playerEyePositions.get(currentCamera.controlEntityId);
       const playerGroup = root.children.find(
         (child) => child.name === currentCamera.controlEntityId,
       );
-      if (playerGroup) {
-        _tmpVec
-          .copy(eyeOffsetRef.current)
-          .applyQuaternion(playerGroup.quaternion);
-        state.camera.position.add(_tmpVec);
-      } else {
-        state.camera.position.y += eyeOffsetRef.current.y;
+
+      if (cameraMode === "original") {
+        // Stream camera position = entity base position. Add animated
+        // eye bone offset (rotated by body orientation).
+        if (eyePos && playerGroup) {
+          _tmpVec.copy(eyePos).applyQuaternion(playerGroup.quaternion);
+          state.camera.position.add(_tmpVec);
+        } else {
+          state.camera.position.y += DEFAULT_EYE_HEIGHT;
+        }
+      } else if (playerGroup) {
+        // Non-authoritative: compute full camera transform from entity
+        // state, matching Torque's Player::getEyeTransform.
+        const controlEntity = currentEntities.get(
+          currentCamera.controlEntityId,
+        );
+        computeFirstPersonCamera(
+          state.camera,
+          playerGroup,
+          eyePos ?? _tmpVec.set(0, DEFAULT_EYE_HEIGHT, 0),
+          controlEntity?.headPitch ?? 0,
+          controlEntity?.headYaw ?? 0,
+        );
       }
     }
 
@@ -645,14 +696,6 @@ export function StreamingController({
         playback={recording.streamingPlayback}
         snapshotRef={currentTickSnapshotRef}
       />
-      {firstPersonShape && (
-        <Suspense>
-          <PlayerEyeOffset
-            shapeName={firstPersonShape}
-            eyeOffsetRef={eyeOffsetRef}
-          />
-        </Suspense>
-      )}
     </>
   );
 }

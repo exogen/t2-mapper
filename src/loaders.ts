@@ -65,9 +65,12 @@ export function iflTextureToUrl(name: string, iflPath: string) {
   return getUrlForPath(resourceKey, FALLBACK_TEXTURE_URL);
 }
 
-export function textureToUrl(name: string) {
+export function textureToUrl(
+  name: string,
+  fallbackUrl: string | null = FALLBACK_TEXTURE_URL,
+): string {
   const resourceKey = getStandardTextureResourceKey(`textures/${name}`);
-  return getUrlForPath(resourceKey, FALLBACK_TEXTURE_URL);
+  return getUrlForPath(resourceKey, fallbackUrl ?? undefined);
 }
 
 export function audioToUrl(fileName: string) {

@@ -28,7 +28,7 @@ import {
   loadIflAtlas,
   getFrameIndexForTime,
   updateAtlasFrame,
-} from "../components/useIflTexture";
+} from "../components/iflAtlas";
 import { loadTexture, setupTexture } from "../textureUtils";
 import { textureToUrl } from "../loaders";
 import type { Keyframe } from "./types";
@@ -50,11 +50,6 @@ const _tracerOrientMat = new Matrix4();
 const _upY = new Vector3(0, 1, 0);
 
 /** ShapeRenderer's 90° Y rotation and its inverse, used for mount transforms. */
-export const _r90 = new Quaternion().setFromAxisAngle(
-  new Vector3(0, 1, 0),
-  Math.PI / 2,
-);
-export const _r90inv = _r90.clone().invert();
 
 // ── Pure functions ──
 
@@ -308,7 +303,12 @@ export function replaceWithShapeMaterial(
   mat: MeshStandardMaterial,
   vis: number,
   isOrganic = false,
-  options: { anisotropy?: number; emap?: boolean } = {},
+  options: {
+    anisotropy?: number;
+    emap?: boolean;
+    skinUrl?: string;
+    skinName?: string;
+  } = {},
 ): ShapeMaterialResult {
   const resourcePath: string | undefined = mat.userData?.resource_path;
   const flagNames = new Set<string>(mat.userData?.flag_names ?? []);
@@ -332,6 +332,7 @@ export function replaceWithShapeMaterial(
   const effectiveReflectionAmount = emapEnabled ? reflectionAmount : 0;
 
   if (flagNames.has("IflMaterial")) {
+    const repeat = flagNames.has("SWrap") || flagNames.has("TWrap");
     const result = createMaterialFromFlags(
       mat,
       null,
@@ -347,21 +348,51 @@ export function replaceWithShapeMaterial(
         material,
         backMaterial: result[0],
         initialize: (mesh, getTime) =>
-          initializeIflMaterial(material, resourcePath, mesh, getTime),
+          initializeIflMaterial(material, resourcePath, mesh, getTime, repeat),
       };
     }
     return {
       material: result,
       initialize: (mesh, getTime) =>
-        initializeIflMaterial(result, resourcePath, mesh, getTime),
+        initializeIflMaterial(result, resourcePath, mesh, getTime, repeat),
     };
   }
 
-  // Load texture via ImageBitmapLoader (decodes off main thread). The returned
-  // Texture is empty initially and gets populated when the image arrives;
-  // Three.js re-renders automatically once loaded.
-  const url = textureToUrl(resourcePath);
-  const texture = loadTexture(url);
+  // Torque reSkin: replace "base." prefix with "{skinName}." in the resource
+  // path, then resolve to a URL. skinUrl takes precedence (pre-computed URL
+  // for player custom skins from external sources). skinName does the
+  // replacement locally (for flag team skins and other built-in skins).
+  const isBaseTexture = /[/\\]base\./i.test(resourcePath);
+  let skinTextureUrl: string | undefined;
+  if (isBaseTexture && options.skinUrl) {
+    skinTextureUrl = options.skinUrl;
+  } else if (isBaseTexture && options.skinName && options.skinName !== "base") {
+    const skinnedPath = resourcePath.replace(
+      /\bbase\./i,
+      `${options.skinName}.`,
+    );
+    try {
+      skinTextureUrl = textureToUrl(skinnedPath, null);
+    } catch {
+      // Skin texture not found — fall through to default.
+    }
+  }
+  const usingSkin = !!skinTextureUrl;
+  const url = skinTextureUrl ?? textureToUrl(resourcePath);
+  const texture = loadTexture(
+    url,
+    undefined,
+    usingSkin
+      ? () => {
+          // Skin failed (404) — load the default texture into the same object.
+          const fallbackUrl = textureToUrl(resourcePath);
+          loadTexture(fallbackUrl, (loaded) => {
+            texture.image = loaded.image;
+            texture.needsUpdate = true;
+          });
+        }
+      : undefined,
+  );
   const isTranslucent = flagNames.has("Translucent");
   if (isOrganic || isTranslucent) {
     setupTexture(texture, {
@@ -397,9 +428,10 @@ async function initializeIflMaterial(
   resourcePath: string,
   mesh: Object3D,
   getTime: () => number,
+  repeat = false,
 ): Promise<() => void> {
   const iflPath = `textures/${resourcePath}.ifl`;
-  const atlas = await loadIflAtlas(iflPath);
+  const atlas = await loadIflAtlas(iflPath, { repeat });
 
   (material as any).map = atlas.texture;
   material.needsUpdate = true;
@@ -413,6 +445,12 @@ async function initializeIflMaterial(
     prevOnBeforeRender?.apply(this, args);
     if (disposed) return;
     updateAtlasFrame(atlas, getFrameIndexForTime(atlas, getTime()));
+    // In swap mode, always sync material.map — multiple meshes may share
+    // the same atlas but have different material instances.
+    if (atlas.swapMode && (material as any).map !== atlas.texture) {
+      (material as any).map = atlas.texture;
+      material.needsUpdate = true;
+    }
   };
 
   return () => {
@@ -429,7 +467,12 @@ async function initializeIflMaterial(
 export function processShapeScene(
   scene: Object3D,
   shapeName?: string,
-  options: { anisotropy?: number; emap?: boolean } = {},
+  options: {
+    anisotropy?: number;
+    emap?: boolean;
+    skinUrl?: string;
+    skinName?: string;
+  } = {},
 ): IflInitializer[] {
   const iflInitializers: IflInitializer[] = [];
   const isOrganic = shapeName ? isOrganicShape(shapeName) : false;

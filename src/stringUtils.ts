@@ -25,6 +25,19 @@ export const DEFAULT_TEAM_NAMES: Record<number, string> = {
 };
 
 /**
+ * Default flag skin names per team from serverDefaults.cs ($Host::teamSkin).
+ * Used by CTFGame::getTeamSkin() as fallback when custom skins are disabled.
+ */
+export const DEFAULT_FLAG_SKINS: Record<number, string> = {
+  1: "base",
+  2: "baseb",
+  3: "swolf",
+  4: "dsword",
+  5: "beagle",
+  6: "cotp",
+};
+
+/**
  * Replicates `GameBase::getGameName()` from gameBase.cs.
  * Combines targetNameTag and targetTypeTag from the datablock into a
  * display name like "Inventory Station", "Large Sensor", "Generator", etc.

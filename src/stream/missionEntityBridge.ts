@@ -8,6 +8,7 @@ import type {
   WayPointEntity,
 } from "../state/gameEntityTypes";
 import { getPosition, getProperty, getScale } from "../mission";
+import { DEFAULT_FLAG_SKINS } from "../stringUtils";
 import { parseColorTuple } from "../colorUtils";
 import {
   terrainFromMis,
@@ -211,10 +212,6 @@ function buildShapeEntity(
     shapeName,
     shapeType,
     dataBlock: datablockName || undefined,
-    emap:
-      getProperty(datablock, "emap") != null
-        ? isTruthy(getProperty(datablock, "emap"))
-        : undefined,
     teamId,
   };
 
@@ -222,13 +219,17 @@ function buildShapeEntity(
     entity.rotate = isTruthy(
       getProperty(object, "rotate") ?? getProperty(datablock, "rotate"),
     );
+    // Flag Items get a team skin (e.g. "beagle" for Blood Eagle).
+    if (datablockName.toLowerCase() === "flag" && teamId != null) {
+      entity.skinName = DEFAULT_FLAG_SKINS[teamId];
+    }
   }
 
   if (className === "Turret") {
     const barrelName = getProperty(object, "initialBarrel");
     if (barrelName) {
       const barrelDb = resolveDatablock(runtime, barrelName);
-      entity.barrelShapeName = getProperty(barrelDb, "shapeFile");
+      entity.weaponShape = getProperty(barrelDb, "shapeFile");
     }
   }
 

@@ -1,10 +1,11 @@
-import { memo, Suspense, useEffect, useMemo, useRef } from "react";
+import { Fragment, memo, Suspense, useEffect, useMemo, useRef } from "react";
+import type { ReactNode } from "react";
 import { ErrorBoundary } from "react-error-boundary";
 import type { AnimationAction } from "three";
-import { useGLTF, useTexture } from "@react-three/drei";
-import { useFrame } from "@react-three/fiber";
+import { useGLTF } from "@react-three/drei";
+import { createPortal, useFrame } from "@react-three/fiber";
 import { createLogger } from "../logger";
-import { FALLBACK_TEXTURE_URL, textureToUrl, shapeToUrl } from "../loaders";
+import { shapeToUrl } from "../loaders";
 import {
   MeshStandardMaterial,
   AdditiveAnimationBlendMode,
@@ -13,16 +14,15 @@ import {
   AnimationUtils,
   LoopOnce,
   LoopRepeat,
-  BufferGeometry,
   Group,
   Box3,
   Vector3,
 } from "three";
 import * as SkeletonUtils from "three/examples/jsm/utils/SkeletonUtils.js";
-import { setupTexture } from "../textureUtils";
 import { useAnisotropy } from "./useAnisotropy";
 import { useDebug, useSettings } from "./SettingsProvider";
-import { useShapeInfo, isOrganicShape } from "./ShapeInfoProvider";
+import { useShapeInfo, ShapeInfoProvider } from "./ShapeInfoProvider";
+import type { StaticShapeType } from "./ShapeInfoProvider";
 import {
   useEngineSelector,
   effectNow,
@@ -30,14 +30,11 @@ import {
 } from "../state/engineStore";
 import { FloatingLabel } from "./FloatingLabel";
 import {
-  useIflTexture,
   loadIflAtlas,
   getFrameIndexForTime,
   updateAtlasFrame,
-} from "./useIflTexture";
-import type { IflAtlas } from "./useIflTexture";
-import { createMaterialFromFlags } from "../shapeMaterial";
-import type { MaterialResult } from "../shapeMaterial";
+} from "./iflAtlas";
+import type { IflAtlas } from "./iflAtlas";
 import { useIsDebugTourTarget } from "../state/cameraTourStore";
 import { DebugBounds } from "./DebugBounds";
 import { useEntitySoundSlots } from "./useEntitySoundSlots";
@@ -46,15 +43,22 @@ import {
   replaceWithShapeMaterial,
   disposeClonedScene,
   buildRestPoseClip,
+  getPosedNodeTransform,
 } from "../stream/playbackUtils";
+import { resolveEmapFromImageSlot } from "./resolveEmap";
 import type { ThreadState as StreamThreadState } from "../stream/types";
+
+const STANDARD_90_ROTATION: [x: number, y: number, z: number] = [
+  0,
+  Math.PI / 2,
+  0,
+];
 
 /** Shape entity data readable in useFrame for streaming mode. */
 interface StreamShapeEntity {
   id: string;
   threads?: StreamThreadState[];
   damageState?: number;
-  emap?: boolean;
   wheels?: Array<{
     speed: number;
     lateralSlip: number;
@@ -68,6 +72,57 @@ interface StreamShapeEntity {
 }
 
 const log = createLogger("GenericShape");
+
+/**
+ * Content for a mounted shape. Computes the Mountpoint inverse offset from the
+ * child shape's GLB so the child's grip point aligns to the parent's mount bone.
+ * Rendered via createPortal into the parent's mount bone.
+ */
+export function MountedShapeContent({
+  shapeName,
+  imageDataBlockId,
+  entityId,
+  shapeType = "StaticShape",
+  skinName,
+}: {
+  shapeName: string;
+  imageDataBlockId?: number;
+  entityId?: string;
+  shapeType?: StaticShapeType;
+  skinName?: string;
+}) {
+  const childGltf = useStaticShape(shapeName);
+  const emap = useMemo(
+    () => resolveEmapFromImageSlot(imageDataBlockId),
+    [imageDataBlockId],
+  );
+
+  // Compute Mountpoint inverse so the child's grip aligns to the bone origin.
+  const offset = useMemo(() => {
+    const mp = getPosedNodeTransform(
+      childGltf.scene as Group,
+      childGltf.animations,
+      "Mountpoint",
+    );
+    if (!mp) return null;
+    const invQuat = mp.quaternion.clone().invert();
+    const invPos = mp.position.clone().negate().applyQuaternion(invQuat);
+    return { position: invPos, quaternion: invQuat };
+  }, [childGltf.scene, childGltf.animations]);
+
+  return (
+    <ShapeInfoProvider shapeName={shapeName} type={shapeType}>
+      <group position={offset?.position} quaternion={offset?.quaternion}>
+        <ShapeRenderer
+          emap={emap}
+          entityId={entityId}
+          skinName={skinName}
+          noRotation
+        />
+      </group>
+    </ShapeInfoProvider>
+  );
+}
 
 /** WheeledVehicle per-wheel animation state (position-controlled, not threaded). */
 interface WheelAnimState {
@@ -83,20 +138,6 @@ function shapeNowSec(): number {
   return recording != null ? effectNow() / 1000 : performance.now() / 1000;
 }
 
-/** Shared props for texture rendering components */
-interface TextureProps {
-  material: MeshStandardMaterial;
-  shapeName?: string;
-  geometry?: BufferGeometry;
-  backGeometry?: BufferGeometry;
-  castShadow?: boolean;
-  receiveShadow?: boolean;
-  /** DTS object visibility (0–1). Values < 1 enable alpha blending. */
-  vis?: number;
-  /** When true, material is created transparent for vis keyframe animation. */
-  animated?: boolean;
-}
-
 /**
  * Load a .glb file that was converted from a .dts, used for static shapes.
  */
@@ -105,232 +146,9 @@ export function useStaticShape(shapeName: string) {
   return useGLTF(url);
 }
 
-/**
- * Animated IFL (Image File List) material component. Creates a sprite sheet
- * from all frames and animates via texture offset.
- */
-const IflTexture = memo(function IflTexture({
-  material,
-  shapeName,
-  geometry,
-  backGeometry,
-  castShadow = false,
-  receiveShadow = false,
-  vis = 1,
-  animated = false,
-}: TextureProps) {
-  const resourcePath = material.userData.resource_path;
-  const flagNames = useMemo(
-    () =>
-      material.userData.flag_names
-        ? new Set<string>(material.userData.flag_names)
-        : EMPTY_FLAG_NAMES,
-    [material.userData.flag_names],
-  );
-  const iflPath = `textures/${resourcePath}.ifl`;
-
-  const texture = useIflTexture(iflPath);
-  const isOrganic = !!(shapeName && isOrganicShape(shapeName));
-
-  const customMaterial = useMemo(
-    () =>
-      createMaterialFromFlags(
-        material,
-        texture,
-        flagNames,
-        isOrganic,
-        vis,
-        animated,
-      ),
-    [material, texture, flagNames, isOrganic, vis, animated],
-  );
-
-  useDisposeMaterial(customMaterial);
-
-  // Two-pass rendering for organic/translucent materials
-  // Render BackSide first (with flipped normals), then FrontSide
-  if (Array.isArray(customMaterial)) {
-    return (
-      <>
-        <mesh
-          geometry={backGeometry || geometry}
-          castShadow={castShadow}
-          receiveShadow={receiveShadow}
-        >
-          <primitive object={customMaterial[0]} attach="material" />
-        </mesh>
-        <mesh
-          geometry={geometry}
-          castShadow={castShadow}
-          receiveShadow={receiveShadow}
-        >
-          <primitive object={customMaterial[1]} attach="material" />
-        </mesh>
-      </>
-    );
-  }
-
-  return (
-    <mesh
-      geometry={geometry}
-      castShadow={castShadow}
-      receiveShadow={receiveShadow}
-    >
-      <primitive object={customMaterial} attach="material" />
-    </mesh>
-  );
-});
-
-function useDisposeMaterial(material: MaterialResult) {
-  useEffect(() => {
-    return () => {
-      if (Array.isArray(material)) {
-        material.forEach((m) => m.dispose());
-      } else {
-        material.dispose();
-      }
-    };
-  }, [material]);
-}
-
-const EMPTY_FLAG_NAMES = new Set<string>();
-
-const StaticTexture = memo(function StaticTexture({
-  material,
-  shapeName,
-  geometry,
-  backGeometry,
-  castShadow = false,
-  receiveShadow = false,
-  vis = 1,
-  animated = false,
-}: TextureProps) {
-  const resourcePath = material.userData.resource_path;
-  const flagNames = useMemo(
-    () =>
-      material.userData.flag_names
-        ? new Set<string>(material.userData.flag_names)
-        : EMPTY_FLAG_NAMES,
-    [material.userData.flag_names],
-  );
-
-  const url = useMemo(() => {
-    if (!resourcePath) {
-      log.warn(
-        'No resource_path found on "%s" — rendering fallback',
-        shapeName,
-      );
-    }
-    return resourcePath ? textureToUrl(resourcePath) : FALLBACK_TEXTURE_URL;
-  }, [resourcePath, shapeName]);
-
-  const isOrganic = !!(shapeName && isOrganicShape(shapeName));
-  const isTranslucent = flagNames.has("Translucent");
-  const anisotropy = useAnisotropy();
-
-  const texture = useTexture(url, (texture) => {
-    // Organic/alpha-tested textures need special handling to avoid mipmap artifacts
-    if (isOrganic || isTranslucent) {
-      return setupTexture(texture, { disableMipmaps: true, anisotropy });
-    }
-    // Standard color texture setup for diffuse-only materials
-    return setupTexture(texture, { anisotropy });
-  });
-
-  const customMaterial = useMemo(
-    () =>
-      createMaterialFromFlags(
-        material,
-        texture,
-        flagNames,
-        isOrganic,
-        vis,
-        animated,
-      ),
-    [material, texture, flagNames, isOrganic, vis, animated],
-  );
-
-  useDisposeMaterial(customMaterial);
-
-  // Two-pass rendering for organic/translucent materials
-  // Render BackSide first (with flipped normals), then FrontSide
-  if (Array.isArray(customMaterial)) {
-    return (
-      <>
-        <mesh
-          geometry={backGeometry || geometry}
-          castShadow={castShadow}
-          receiveShadow={receiveShadow}
-        >
-          <primitive object={customMaterial[0]} attach="material" />
-        </mesh>
-        <mesh
-          geometry={geometry}
-          castShadow={castShadow}
-          receiveShadow={receiveShadow}
-        >
-          <primitive object={customMaterial[1]} attach="material" />
-        </mesh>
-      </>
-    );
-  }
-
-  return (
-    <mesh
-      geometry={geometry}
-      castShadow={castShadow}
-      receiveShadow={receiveShadow}
-    >
-      <primitive object={customMaterial} attach="material" />
-    </mesh>
-  );
-});
-
-export const ShapeTexture = memo(function ShapeTexture({
-  material,
-  shapeName,
-  geometry,
-  backGeometry,
-  castShadow = false,
-  receiveShadow = false,
-  vis = 1,
-  animated = false,
-}: TextureProps) {
-  const flagNames = new Set(material.userData.flag_names ?? []);
-  const isIflMaterial = flagNames.has("IflMaterial");
-  const resourcePath = material.userData.resource_path;
-
-  // Use IflTexture for animated materials
-  if (isIflMaterial && resourcePath) {
-    return (
-      <IflTexture
-        material={material}
-        shapeName={shapeName}
-        geometry={geometry}
-        backGeometry={backGeometry}
-        castShadow={castShadow}
-        receiveShadow={receiveShadow}
-        vis={vis}
-        animated={animated}
-      />
-    );
-  } else if (material.name) {
-    return (
-      <StaticTexture
-        material={material}
-        shapeName={shapeName}
-        geometry={geometry}
-        backGeometry={backGeometry}
-        castShadow={castShadow}
-        receiveShadow={receiveShadow}
-        vis={vis}
-        animated={animated}
-      />
-    );
-  } else {
-    return null;
-  }
-});
+// Dead code removed: IflTexture, StaticTexture, ShapeTexture, useDisposeMaterial
+// were part of an unused React-based IFL rendering path. All IFL materials
+// are now handled imperatively via loadIflAtlas + processShapeScene.
 
 export function ShapePlaceholder({
   color,
@@ -369,6 +187,9 @@ export const ShapeRenderer = memo(function ShapeRenderer({
   emap,
   entityId,
   children,
+  mounted,
+  noRotation,
+  skinName,
 }: {
   loadingColor?: string;
   /** Stable entity reference whose fields are mutated in-place. */
@@ -377,19 +198,23 @@ export const ShapeRenderer = memo(function ShapeRenderer({
   emap?: boolean;
   entityId?: string;
   children?: React.ReactNode;
+  /** Content to render at each mount point bone (Mount0, Mount1, etc.). */
+  mounted?: Record<number, ReactNode>;
+  /** Skip the 90° Y rotation (for shapes mounted inside a parent that already rotates). */
+  noRotation?: boolean;
+  /** Skin texture URL (Torque reSkin: replaces "base." textures with this URL). */
+  skinName?: string;
 }) {
-  const { object, shapeName } = useShapeInfo();
+  const { shapeName } = useShapeInfo();
 
   if (!shapeName) {
-    return (
-      <DebugPlaceholder color="orange" label={`${object?._id}: <missing>`} />
-    );
+    return <DebugPlaceholder color="orange" label={`${entityId}: <missing>`} />;
   }
 
   return (
     <ErrorBoundary
       fallback={
-        <DebugPlaceholder color="red" label={`${object?._id}: ${shapeName}`} />
+        <DebugPlaceholder color="red" label={`${entityId}: ${shapeName}`} />
       }
       onError={(error) => {
         log.error("Shape error: %s: %o", shapeName, error);
@@ -400,8 +225,12 @@ export const ShapeRenderer = memo(function ShapeRenderer({
           streamEntity={streamEntity}
           emap={emap}
           entityId={entityId}
-        />
-        {children}
+          mounted={mounted}
+          noRotation={noRotation}
+          skinName={skinName}
+        >
+          {children}
+        </ShapeModelLoader>
       </Suspense>
     </ErrorBoundary>
   );
@@ -434,6 +263,10 @@ export const ShapeModel = memo(function ShapeModel({
   streamEntity,
   emap,
   entityId,
+  children,
+  mounted,
+  noRotation,
+  skinName,
 }: {
   gltf: ReturnType<typeof useStaticShape>;
   /** Stable entity reference whose fields are mutated in-place. */
@@ -441,6 +274,13 @@ export const ShapeModel = memo(function ShapeModel({
   /** Datablock enables environment map reflections. */
   emap?: boolean;
   entityId?: string;
+  children?: ReactNode;
+  /** Content to render at each mount point bone (Mount0, Mount1, etc.). */
+  mounted?: Record<number, ReactNode>;
+  /** Skip the 90° Y rotation (for mounted shapes). */
+  noRotation?: boolean;
+  /** Skin texture URL (Torque reSkin: replaces "base." textures). */
+  skinName?: string;
 }) {
   const { object, shapeName } = useShapeInfo();
   const { debugMode } = useDebug();
@@ -458,6 +298,7 @@ export const ShapeModel = memo(function ShapeModel({
         mesh: any;
         iflPath: string;
         hasVisSequence: boolean;
+        repeat: boolean;
         iflSequence?: string;
         iflDuration?: number;
         iflCyclic?: boolean;
@@ -487,6 +328,7 @@ export const ShapeModel = memo(function ShapeModel({
             mesh: node,
             iflPath: `textures/${rp}.ifl`,
             hasVisSequence: !!ud?.vis_sequence,
+            repeat: flags.has("SWrap") || flags.has("TWrap"),
             iflSequence: iflSeq,
             iflDuration: iflDur,
             iflCyclic,
@@ -497,7 +339,8 @@ export const ShapeModel = memo(function ShapeModel({
 
       processShapeScene(scene, shapeName ?? undefined, {
         anisotropy,
-        emap: emap ?? streamEntity?.emap,
+        emap,
+        skinName,
       });
 
       // Un-hide IFL meshes that don't have a vis sequence — they should always
@@ -582,7 +425,7 @@ export const ShapeModel = memo(function ShapeModel({
         visNodesBySequence: visBySeq,
         iflMeshes: iflInfos,
       };
-    }, [gltf, anisotropy, emap]);
+    }, [gltf.scene, gltf.animations, shapeName, anisotropy, emap, skinName]);
 
   // Dispose cloned geometries and materials when the scene is replaced or
   // the component unmounts, to prevent GPU memory from accumulating.
@@ -598,6 +441,8 @@ export const ShapeModel = memo(function ShapeModel({
 
   interface IflAnimInfo {
     atlas: IflAtlas;
+    /** Material reference for swap-mode texture updates. */
+    mat: any;
     sequenceName?: string;
     /** Controlling sequence duration in seconds. */
     sequenceDuration?: number;
@@ -629,7 +474,7 @@ export const ShapeModel = memo(function ShapeModel({
     iflAnimInfosRef.current = [];
     iflMeshAtlasRef.current.clear();
     for (const info of iflMeshes) {
-      loadIflAtlas(info.iflPath)
+      loadIflAtlas(info.iflPath, { repeat: info.repeat })
         .then((atlas) => {
           const mat = Array.isArray(info.mesh.material)
             ? info.mesh.material[0]
@@ -640,6 +485,7 @@ export const ShapeModel = memo(function ShapeModel({
           }
           const iflInfo = {
             atlas,
+            mat,
             sequenceName: info.iflSequence,
             sequenceDuration: info.iflDuration,
             cyclic: info.iflCyclic,
@@ -1102,40 +948,43 @@ export const ShapeModel = memo(function ShapeModel({
     if (iflAnimInfos.length > 0) {
       iflTimeRef.current += effectDelta;
       for (const info of iflAnimInfos) {
-        if (!animationEnabled) {
-          updateAtlasFrame(info.atlas, 0);
-          continue;
-        }
-
-        if (info.sequenceName && info.sequenceDuration) {
-          // Sequence-driven IFL: find the thread playing this sequence and
-          // compute time = pos * duration + toolBegin (matching the engine).
-          let iflTime = 0;
-          for (const [, thread] of threads) {
-            if (thread.sequence === info.sequenceName) {
-              const elapsed = shapeNowSec() - thread.startTime;
-              const dur = info.sequenceDuration;
-              // Reproduce th->pos: cyclic wraps [0,1), non-cyclic clamps [0,1]
-              const pos = info.cyclic
-                ? (elapsed / dur) % 1
-                : Math.min(elapsed / dur, 1);
-              iflTime = pos * dur + (info.toolBegin ?? 0);
-              break;
-            }
+        const updateAtlasAndMaterial = (
+          info: IflAnimInfo,
+          frameIndex: number,
+        ) => {
+          updateAtlasFrame(info.atlas, frameIndex);
+          if (info.atlas.swapMode && info.mat.map !== info.atlas.texture) {
+            info.mat.map = info.atlas.texture;
+            info.mat.needsUpdate = true;
           }
-          updateAtlasFrame(
-            info.atlas,
-            getFrameIndexForTime(info.atlas, iflTime),
-          );
-        } else {
-          // No controlling sequence: use accumulated real time.
-          // (In the engine, these would stay at frame 0, but cycling is more
-          // useful for display purposes.)
-          updateAtlasFrame(
-            info.atlas,
-            getFrameIndexForTime(info.atlas, iflTimeRef.current),
-          );
+        };
+        let frameIndex = 0;
+        if (animationEnabled) {
+          let iflTime = 0;
+          if (info.sequenceName && info.sequenceDuration) {
+            // Sequence-driven IFL: find the thread playing this sequence and
+            // compute time = pos * duration + toolBegin (matching the engine).
+            for (const [, thread] of threads) {
+              if (thread.sequence === info.sequenceName) {
+                const elapsed = shapeNowSec() - thread.startTime;
+                const dur = info.sequenceDuration;
+                // Reproduce th->pos: cyclic wraps [0,1), non-cyclic clamps [0,1]
+                const pos = info.cyclic
+                  ? (elapsed / dur) % 1
+                  : Math.min(elapsed / dur, 1);
+                iflTime = pos * dur + (info.toolBegin ?? 0);
+                break;
+              }
+            }
+          } else {
+            // No controlling sequence: use accumulated real time.
+            // (In the engine, these would stay at frame 0, but cycling is more
+            // useful for display purposes.)
+            iflTime = iflTimeRef.current;
+          }
+          frameIndex = getFrameIndexForTime(info.atlas, iflTime);
         }
+        updateAtlasAndMaterial(info, frameIndex);
       }
     }
   });
@@ -1157,12 +1006,26 @@ export const ShapeModel = memo(function ShapeModel({
     };
   }, [isTarget, gltf.scene]);
 
+  // Find mount point bones in the cloned scene for portal rendering.
+  const mountBones = useMemo(() => {
+    if (!mounted) return null;
+    const bones: Record<number, Group> = {};
+    for (const slot of Object.keys(mounted)) {
+      const index = Number(slot);
+      const nodeName = `Mount${index}`;
+      clonedScene.traverse((node: any) => {
+        if (node.name === nodeName) bones[index] = node;
+      });
+    }
+    return Object.keys(bones).length > 0 ? bones : null;
+  }, [clonedScene, mounted]);
+
   return (
-    <group rotation={[0, Math.PI / 2, 0]}>
+    <group rotation={noRotation ? undefined : STANDARD_90_ROTATION}>
       <primitive object={clonedScene} />
       {debugMode ? (
         <FloatingLabel>
-          {object?._id}: {shapeName}
+          {entityId}: {shapeName}
         </FloatingLabel>
       ) : null}
       {shapeBounds && (
@@ -1170,6 +1033,17 @@ export const ShapeModel = memo(function ShapeModel({
           <DebugBounds size={shapeBounds.size} />
         </group>
       )}
+      {children}
+      {mountBones &&
+        mounted &&
+        Object.entries(mounted).map(([slot, content]) => {
+          const bone = mountBones[Number(slot)];
+          return bone ? (
+            <Fragment key={slot}>
+              {createPortal(<group>{content}</group>, bone)}
+            </Fragment>
+          ) : null;
+        })}
     </group>
   );
 });
@@ -1178,10 +1052,18 @@ function ShapeModelLoader({
   streamEntity,
   emap,
   entityId,
+  children,
+  mounted,
+  noRotation,
+  skinName,
 }: {
   streamEntity?: StreamShapeEntity;
   emap?: boolean;
   entityId?: string;
+  children?: ReactNode;
+  mounted?: Record<number, ReactNode>;
+  noRotation?: boolean;
+  skinName?: string;
 }) {
   const { shapeName } = useShapeInfo();
   const gltf = useStaticShape(shapeName);
@@ -1191,6 +1073,11 @@ function ShapeModelLoader({
       streamEntity={streamEntity}
       emap={emap}
       entityId={entityId}
-    />
+      mounted={mounted}
+      noRotation={noRotation}
+      skinName={skinName}
+    >
+      {children}
+    </ShapeModel>
   );
 }

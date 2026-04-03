@@ -128,8 +128,28 @@
 }
 
 .Detail {
-  display: block;
-  font-size: 13px;
-  color: rgba(255, 255, 255, 0.7);
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.5);
   margin: 4px 0 0 0;
+  padding: 0;
+}
+
+.Detail > div {
+  display: flex;
+  gap: 4px;
+}
+
+.Detail dt {
+  color: rgba(255, 255, 255, 0.35);
+}
+
+.Detail dt::after {
+  content: ":";
+}
+
+.Detail dd {
+  margin: 0;
 }

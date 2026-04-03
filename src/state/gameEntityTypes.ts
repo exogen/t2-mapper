@@ -127,14 +127,15 @@ export interface ShapeEntity extends PositionedBase {
   shapeName?: string;
   shapeType?: string;
   dataBlock?: string;
-  /** Datablock enables environment map reflections. */
-  emap?: boolean;
+  /** Datablock IDs for each mounted image slot (0-3). */
+  imageDataBlockIds?: (number | undefined)[];
+  /** Skin name from TargetManager (e.g. "beagle" for flags, team skins). */
+  skinName?: string;
   threads?: ThreadState[];
   /** Torque DamageState: 0=Enabled, 1=Disabled, 2=Destroyed. */
   damageState?: number;
   rotate?: boolean;
   teamId?: number;
-  barrelShapeName?: string;
   targetRenderFlags?: number;
   iffColor?: { r: number; g: number; b: number };
   weaponShape?: string;
@@ -160,8 +161,10 @@ export interface PlayerEntity extends PositionedBase {
   renderType: "Player";
   shapeName?: string;
   dataBlock?: string;
-  /** Datablock enables environment map reflections. */
-  emap?: boolean;
+  /** Datablock IDs for each mounted image slot (0-3). */
+  imageDataBlockIds?: (number | undefined)[];
+  /** Skin names for each mounted image slot (e.g. flag team skin on slot 3). */
+  imageSkinNames?: (string | undefined)[];
   weaponShape?: string;
   /** Arm blend animation action index from Player ghost (networked). */
   armAction?: number;
@@ -171,6 +174,10 @@ export interface PlayerEntity extends PositionedBase {
   falling?: boolean;
   jetting?: boolean;
   playerName?: string;
+  /** Player skin (team skin like "base", "baseb"). */
+  skinName?: string;
+  /** Player preferred skin (chosen skin like "RandySavage"). */
+  skinPrefName?: string;
   iffColor?: { r: number; g: number; b: number };
   threads?: ThreadState[];
   weaponImageState?: WeaponImageState;

@@ -95,6 +95,7 @@ to a React component tree.
   add regression tests.
 - To make changes visible to `t2-mapper`, make sure you run `npm run build` and
   `yalc push` in `t2-demo-parser`.
+- Example demos are in `t2-demo-parser/data`.
 
 ## Code Conventions
 

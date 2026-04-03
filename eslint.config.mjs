@@ -26,6 +26,7 @@ export default defineConfig([
         { args: "none", caughtErrors: "none", varsIgnorePattern: "^_" },
       ],
       "react-hooks/set-state-in-effect": "off",
+      "react-hooks/preserve-manual-memoization": "warn",
       "react-refresh/only-export-components": "warn",
       "react-hooks/immutability": "warn",
       "no-control-regex": "off",

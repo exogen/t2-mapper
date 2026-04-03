@@ -95,6 +95,61 @@ export function torqueQuatToThreeJS(q: {
   return [x * invLen, y * invLen, z * invLen, w * invLen];
 }
 
+/**
+ * Extract a quaternion from a Torque row-major MatrixF (16 floats) and
+ * convert to Three.js coordinate system. The 3x3 upper-left submatrix
+ * contains the rotation. MatrixF is row-major: m[row*4+col].
+ */
+export function matrixFToThreeJSQuat(
+  elements: number[],
+): [number, number, number, number] | null {
+  if (elements.length < 12) return null;
+
+  // Extract 3x3 rotation from row-major MatrixF.
+  // Row i, col j = elements[i*4 + j]
+  const m00 = elements[0],
+    m01 = elements[1],
+    m02 = elements[2];
+  const m10 = elements[4],
+    m11 = elements[5],
+    m12 = elements[6];
+  const m20 = elements[8],
+    m21 = elements[9],
+    m22 = elements[10];
+
+  // Shepperd's method for matrix → quaternion.
+  const trace = m00 + m11 + m22;
+  let qx: number, qy: number, qz: number, qw: number;
+  if (trace > 0) {
+    const s = 0.5 / Math.sqrt(trace + 1);
+    qw = 0.25 / s;
+    qx = (m21 - m12) * s;
+    qy = (m02 - m20) * s;
+    qz = (m10 - m01) * s;
+  } else if (m00 > m11 && m00 > m22) {
+    const s = 2 * Math.sqrt(1 + m00 - m11 - m22);
+    qw = (m21 - m12) / s;
+    qx = 0.25 * s;
+    qy = (m01 + m10) / s;
+    qz = (m02 + m20) / s;
+  } else if (m11 > m22) {
+    const s = 2 * Math.sqrt(1 + m11 - m00 - m22);
+    qw = (m02 - m20) / s;
+    qx = (m01 + m10) / s;
+    qy = 0.25 * s;
+    qz = (m20 + m12) / s;
+  } else {
+    const s = 2 * Math.sqrt(1 + m22 - m00 - m11);
+    qw = (m10 - m01) / s;
+    qx = (m02 + m20) / s;
+    qy = (m12 + m21) / s;
+    qz = 0.25 * s;
+  }
+
+  // Convert Torque quat to Three.js.
+  return torqueQuatToThreeJS({ x: qx, y: qy, z: qz, w: qw });
+}
+
 /** Extract heading (yaw around Torque Z axis) from a Torque quaternion. */
 export function torqueQuatHeading(q: {
   x: number;

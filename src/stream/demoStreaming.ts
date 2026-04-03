@@ -339,6 +339,8 @@ class StreamingPlayback extends StreamEngine {
     targetEntries: Array<{
       targetId: number;
       name?: string;
+      skin?: string;
+      skinPref?: string;
       sensorGroup: number;
       targetData: number;
     }>;
@@ -513,6 +515,9 @@ class StreamingPlayback extends StreamEngine {
           stripTaggedStringMarkup(entry.name).trim(),
         );
       }
+      if (entry.skin) this.targetSkins.set(entry.targetId, entry.skin);
+      if (entry.skinPref)
+        this.targetSkinPrefs.set(entry.targetId, entry.skinPref);
       this.targetTeams.set(entry.targetId, entry.sensorGroup);
       this.targetRenderFlags.set(entry.targetId, entry.targetData);
     }

@@ -1,18 +1,17 @@
-import { lazy, memo, useRef } from "react";
-import { useFrame } from "@react-three/fiber";
+import { lazy, memo, useMemo, useRef } from "react";
 import type { Group } from "three";
 import type {
   GameEntity,
   ShapeEntity as ShapeEntityType,
 } from "../state/gameEntityTypes";
-import { ShapeRenderer, ShapePlaceholder } from "./GenericShape";
+import { ShapeRenderer, MountedShapeContent } from "./GenericShape";
 import { ShapeInfoProvider } from "./ShapeInfoProvider";
 import type { StaticShapeType } from "./ShapeInfoProvider";
 import { DebugSuspense } from "./DebugSuspense";
-import { ShapeErrorBoundary } from "./ShapeErrorBoundary";
 import { FloatingLabel } from "./FloatingLabel";
-import { useSettings } from "./SettingsProvider";
 import { DEFAULT_TEAM_NAMES } from "../stringUtils";
+import { useDataSource } from "../state/gameEntityStore";
+import { resolveEmapFromDatablock } from "./resolveEmap";
 import { Camera } from "./Camera";
 import { WayPoint } from "./WayPoint";
 import { TerrainBlock } from "./TerrainBlock";
@@ -20,6 +19,7 @@ import { InteriorInstance } from "./InteriorInstance";
 import { Sky } from "./Sky";
 import { AudioEnabled } from "./AudioEnabled";
 import type { TorqueObject } from "../torqueScript";
+import { useRotation } from "./useRotation";
 
 function createLazy(
   name: string,
@@ -48,7 +48,7 @@ function createLazy(
 const PlayerModel = createLazy("PlayerModel", () => import("./PlayerModel"));
 const ExplosionShape = createLazy(
   "ExplosionShape",
-  () => import("./ShapeModel"),
+  () => import("./ExplosionShape"),
 );
 const TracerProjectile = createLazy(
   "TracerProjectile",
@@ -64,7 +64,6 @@ const ForceFieldBare = createLazy(
 );
 const AudioEmitter = createLazy("AudioEmitter", () => import("./AudioEmitter"));
 const WaterBlock = createLazy("WaterBlock", () => import("./WaterBlock"));
-const WeaponModel = createLazy("WeaponModel", () => import("./ShapeModel"));
 
 /**
  * Renders a GameEntity by dispatching to the appropriate renderer based
@@ -121,22 +120,23 @@ export const EntityRenderer = memo(function EntityRenderer({
 });
 
 function ShapeEntity({ entity }: { entity: ShapeEntityType }) {
-  const { animationEnabled } = useSettings();
+  const dataSource = useDataSource();
+  const isStreaming = dataSource === "demo" || dataSource === "live";
   const groupRef = useRef<Group>(null);
 
   // Y-axis spinning for Items with rotate=true
-  useFrame(() => {
-    if (!groupRef.current || !entity.rotate || !animationEnabled) return;
-    const t = performance.now() / 1000;
-    groupRef.current.rotation.y = (t / 3.0) * Math.PI * 2;
-  });
+  useRotation(entity, groupRef);
 
   if (!entity.shapeName) {
     throw new Error(`Shape entity missing shapeName: ${entity.id}`);
   }
 
-  const torqueObject = entity.runtimeObject as TorqueObject | undefined;
   const shapeType = (entity.shapeType ?? "StaticShape") as StaticShapeType;
+
+  const emap = useMemo(
+    () => resolveEmapFromDatablock(entity.dataBlockId, entity.dataBlock),
+    [entity.dataBlockId, entity.dataBlock],
+  );
 
   // Flag label for flag Items
   const isFlag = entity.dataBlock?.toLowerCase() === "flag";
@@ -155,48 +155,35 @@ function ShapeEntity({ entity }: { entity: ShapeEntityType }) {
 
   return (
     <ShapeInfoProvider
-      object={torqueObject}
+      object={entity.runtimeObject as TorqueObject | undefined}
       shapeName={entity.shapeName}
       type={shapeType}
     >
       <group ref={entity.rotate ? groupRef : undefined}>
         <ShapeRenderer
           loadingColor={loadingColor}
-          streamEntity={torqueObject ? undefined : entity}
-          emap={entity.emap}
+          streamEntity={isStreaming ? entity : undefined}
+          emap={emap}
           entityId={entity.id}
+          skinName={entity.skinName}
+          mounted={
+            entity.weaponShape
+              ? {
+                  0: (
+                    <MountedShapeContent
+                      shapeName={entity.weaponShape}
+                      imageDataBlockId={entity.imageDataBlockIds?.[0]}
+                      entityId={entity.id}
+                    />
+                  ),
+                }
+              : undefined
+          }
         >
           {flagLabel ? (
             <FloatingLabel opacity={0.6}>{flagLabel}</FloatingLabel>
           ) : null}
         </ShapeRenderer>
-        {entity.barrelShapeName && (
-          <ShapeInfoProvider
-            object={torqueObject}
-            shapeName={entity.barrelShapeName}
-            type="Turret"
-          >
-            <group position={[0, 1.5, 0]}>
-              <ShapeRenderer />
-            </group>
-          </ShapeInfoProvider>
-        )}
-        {entity.weaponShape && (
-          <ShapeErrorBoundary
-            fallback={
-              <ShapePlaceholder color="red" label={entity.weaponShape} />
-            }
-          >
-            <DebugSuspense
-              name={`Weapon:${entity.id}/${entity.weaponShape}`}
-              fallback={
-                <ShapePlaceholder color="cyan" label={entity.weaponShape} />
-              }
-            >
-              <WeaponModel entity={entity} />
-            </DebugSuspense>
-          </ShapeErrorBoundary>
-        )}
       </group>
     </ShapeInfoProvider>
   );

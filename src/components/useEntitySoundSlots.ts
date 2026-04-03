@@ -89,9 +89,16 @@ export function useEntitySoundSlots(
     const playback = engineStore.getState().playback;
     const isPlaying = playback.status === "playing";
 
+    // Build index for O(1) slot lookup (avoids find() per slot per frame).
+    const slotByIndex: Array<
+      { index: number; playing: boolean; profileId?: number } | undefined
+    > = [];
+    if (soundSlots) {
+      for (const s of soundSlots) slotByIndex[s.index] = s;
+    }
+
     for (let i = 0; i < MAX_SOUND_SLOTS; i++) {
-      // Find this slot's data from the ghost update.
-      const slotData = soundSlots?.find((s) => s.index === i);
+      const slotData = slotByIndex[i];
       const shouldPlay = !!slotData?.playing && slotData.profileId != null;
       const profileId = slotData?.profileId ?? -1;
       const current = slots[i];

@@ -14,7 +14,7 @@ const debugMaterial = (
 /** Red wireframe bounding box for debug tour visualization. */
 export function DebugBounds({ size }: { size: [number, number, number] }) {
   const edges = useMemo(
-    () => new EdgesGeometry(new BoxGeometry(...size)),
+    () => new EdgesGeometry(new BoxGeometry(size[0], size[1], size[2])),
     [size[0], size[1], size[2]], // eslint-disable-line react-hooks/exhaustive-deps
   );
   return (

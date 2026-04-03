@@ -7,7 +7,13 @@ import { MapInspector } from "@/src/components/MapInspector";
 import { SettingsProvider } from "@/src/components/SettingsProvider";
 // Three.js has its own loaders for textures and models, but we need to load other
 // stuff too, e.g. missions, terrains, and more. This client is used for those.
-const queryClient = new QueryClient();
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      refetchOnWindowFocus: false,
+    },
+  },
+});
 
 export default function HomePage() {
   return (

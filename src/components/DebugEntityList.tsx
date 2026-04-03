@@ -18,19 +18,35 @@ function getEntityLabel(entity: GameEntity): string {
   return entity.className;
 }
 
-function getEntityDetail(entity: GameEntity): string | undefined {
-  if ("shapeName" in entity && entity.shapeName) return entity.shapeName;
-  if (entity.renderType === "InteriorInstance" && "interiorData" in entity) {
-    return entity.interiorData.interiorFile;
+function getEntityDetail(
+  entity: GameEntity,
+): Record<string, string> | undefined {
+  const fields: Record<string, string> = {};
+
+  if ("shapeName" in entity && entity.shapeName) {
+    fields.shape = entity.shapeName;
   }
-  if ("dataBlock" in entity && entity.dataBlock) return entity.dataBlock;
-  if (entity.renderType === "TerrainBlock" && "terrainData" in entity)
-    return entity.terrainData.terrFileName;
-  if (entity.renderType === "WaterBlock" && "waterData" in entity)
-    return entity.waterData.surfaceName;
-  if ("audioFileName" in entity && entity.audioFileName)
-    return entity.audioFileName;
-  return undefined;
+  if (entity.renderType === "Player" && "skinPrefName" in entity) {
+    if (entity.skinPrefName) fields.skin = entity.skinPrefName;
+    else if (entity.skinName) fields.skin = entity.skinName;
+  }
+  if (entity.renderType === "InteriorInstance" && "interiorData" in entity) {
+    fields.interior = entity.interiorData.interiorFile;
+  }
+  if (!fields.shape && "dataBlock" in entity && entity.dataBlock) {
+    fields.dataBlock = entity.dataBlock;
+  }
+  if (entity.renderType === "TerrainBlock" && "terrainData" in entity) {
+    fields.terrain = entity.terrainData.terrFileName;
+  }
+  if (entity.renderType === "WaterBlock" && "waterData" in entity) {
+    fields.surface = entity.waterData.surfaceName;
+  }
+  if ("audioFileName" in entity && entity.audioFileName) {
+    fields.audio = entity.audioFileName;
+  }
+
+  return Object.keys(fields).length > 0 ? fields : undefined;
 }
 
 function getEntityPosition(
@@ -96,7 +112,16 @@ function EntityRow({ entity }: { entity: GameEntity }) {
           <span className={styles.Type}>{label}</span>{" "}
           <span className={styles.ID}>{entity.id}</span>
         </div>
-        {detail && <span className={styles.Detail}>{detail}</span>}
+        {detail && (
+          <dl className={styles.Detail}>
+            {Object.entries(detail).map(([key, value]) => (
+              <div key={key}>
+                <dt>{key}</dt>
+                <dd>{value}</dd>
+              </div>
+            ))}
+          </dl>
+        )}
       </div>
       {pos && (
         <button
