@@ -1,7 +1,7 @@
 import {
   Activity,
   Fragment,
-  startTransition,
+  useDeferredValue,
   useEffect,
   useMemo,
   useRef,
@@ -173,7 +173,8 @@ export function MissionSelect({
   autoFocus?: boolean;
   onCancel: () => void;
 }) {
-  const [searchValue, setSearchValue] = useState("");
+  const [latestSearchValue, setSearchValue] = useState("");
+  const searchValue = useDeferredValue(latestSearchValue);
   const inputRef = useRef<HTMLInputElement>(null);
   const missionTypeRef = useRef<string | null>(missionType);
 
@@ -203,7 +204,7 @@ export function MissionSelect({
       }
     },
     setValue: (value) => {
-      startTransition(() => setSearchValue(value));
+      setSearchValue(value);
     },
   });
 

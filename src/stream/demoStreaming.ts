@@ -4,6 +4,7 @@ import {
   BlockTypePacket,
   DemoParser,
 } from "t2-demo-parser";
+import type { ParsedData } from "t2-demo-parser";
 import { ghostToSceneObject } from "../scene";
 import {
   toEntityType,
@@ -324,18 +325,15 @@ function parseDemoValues(demoValues: string[]): ParsedDemoValues {
 class StreamingPlayback extends StreamEngine {
   private readonly parser: DemoParser;
   private readonly initialBlock: {
-    dataBlocks: Map<
-      number,
-      { className: string; data: Record<string, unknown> }
-    >;
+    dataBlocks: Map<number, { className: string; data: ParsedData }>;
     initialGhosts: Array<{
       index: number;
       type: "create" | "update" | "delete";
       classId?: number;
-      parsedData?: Record<string, unknown>;
+      parsedData?: ParsedData;
     }>;
     controlObjectGhostIndex: number;
-    controlObjectData?: Record<string, unknown>;
+    controlObjectData?: ParsedData;
     targetEntries: Array<{
       targetId: number;
       name?: string;
@@ -354,7 +352,7 @@ class StreamingPlayback extends StreamEngine {
     taggedStrings: Map<number, string>;
     initialEvents: Array<{
       classId: number;
-      parsedData?: Record<string, unknown>;
+      parsedData?: ParsedData;
     }>;
     demoValues: string[];
     firstPerson: boolean;
@@ -418,13 +416,13 @@ class StreamingPlayback extends StreamEngine {
 
   // ── StreamEngine abstract implementations ──
 
-  getDataBlockData(dataBlockId: number): Record<string, unknown> | undefined {
+  getDataBlockData(dataBlockId: number): ParsedData | undefined {
     const initialBlock = this.initialBlock.dataBlocks.get(dataBlockId);
     if (initialBlock?.data) {
       return initialBlock.data;
     }
     const packetParser = this.parser.getPacketParser() as unknown as {
-      dataBlockDataMap?: Map<number, Record<string, unknown>>;
+      dataBlockDataMap?: Map<number, ParsedData>;
     };
     return packetParser.dataBlockDataMap?.get(dataBlockId);
   }
@@ -450,7 +448,7 @@ class StreamingPlayback extends StreamEngine {
     return this.moveTicks * (TICK_DURATION_MS / 1000);
   }
 
-  protected getCameraYawPitch(_data: Record<string, unknown> | undefined): {
+  protected getCameraYawPitch(_data: ParsedData | undefined): {
     yaw: number;
     pitch: number;
   } {
@@ -555,7 +553,7 @@ class StreamingPlayback extends StreamEngine {
         : undefined;
     if (this.isPiloting) {
       const nested = this.initialBlock.controlObjectData?.controlObjectData as
-        | Record<string, unknown>
+        | ParsedData
         | undefined;
       const ang = nested?.angPosition as
         | { x: number; y: number; z: number; w: number }
@@ -652,7 +650,7 @@ class StreamingPlayback extends StreamEngine {
         const sceneObj = ghostToSceneObject(
           className,
           ghost.index,
-          ghost.parsedData as Record<string, unknown>,
+          ghost.parsedData as ParsedData,
         );
         if (sceneObj) entity.sceneData = sceneObj;
       }
@@ -777,7 +775,7 @@ class StreamingPlayback extends StreamEngine {
 
   getEffectShapes(): string[] {
     const shapes = new Set<string>();
-    const collectShapesFromExplosion = (expBlock: Record<string, unknown>) => {
+    const collectShapesFromExplosion = (expBlock: ParsedData) => {
       const shape = expBlock.dtsFileName as string | undefined;
       if (shape) shapes.add(shape);
       const subExplosions = expBlock.subExplosions as
@@ -864,6 +862,8 @@ class StreamingPlayback extends StreamEngine {
         this.tickCount = this.moveTicks;
         this.advanceProjectiles();
         this.advanceItems();
+        this.advanceControlVehicle();
+        this.advanceFades();
         this.removeExpiredExplosions();
         this.updateCameraAndHud();
         return true;
@@ -1047,19 +1047,19 @@ class StreamingPlayback extends StreamEngine {
   private isPacketData(parsed: unknown): parsed is {
     gameState: {
       controlObjectGhostIndex?: number;
-      controlObjectData?: Record<string, unknown>;
+      controlObjectData?: ParsedData;
       compressionPoint?: Vec3;
       cameraFov?: number;
     };
     events: Array<{
       classId: number;
-      parsedData?: Record<string, unknown>;
+      parsedData?: ParsedData;
     }>;
     ghosts: Array<{
       index: number;
       type: "create" | "update" | "delete";
       classId?: number;
-      parsedData?: Record<string, unknown>;
+      parsedData?: ParsedData;
     }>;
   } {
     return (

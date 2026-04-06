@@ -1,4 +1,16 @@
 import type {
+  TerrainBlockGhostData,
+  InteriorInstanceGhostData,
+  TSStaticGhostData,
+  SkyGhostData,
+  SunGhostData,
+  MissionAreaGhostData,
+  WaterBlockGhostData,
+  ParsedData,
+  AffineTransform,
+  MatrixF as ParserMatrixF,
+} from "t2-demo-parser";
+import type {
   SceneTerrainBlock,
   SceneInteriorInstance,
   SceneTSStatic,
@@ -16,147 +28,121 @@ import { createLogger } from "../logger";
 
 const log = createLogger("ghostToScene");
 
-type GhostData = Record<string, unknown>;
+const DEFAULT_VEC3: Vec3 = { x: 0, y: 0, z: 0 };
+const UNIT_SCALE: Vec3 = { x: 1, y: 1, z: 1 };
 
-function vec3(v: unknown, fallback: Vec3 = { x: 0, y: 0, z: 0 }): Vec3 {
-  if (v && typeof v === "object" && "x" in v) return v as Vec3;
-  return fallback;
+function color3Or(v: Color3 | undefined, fallback: Color3): Color3 {
+  return v ?? fallback;
 }
 
-function color3(v: unknown, fallback: Color3 = { r: 0, g: 0, b: 0 }): Color3 {
-  if (v && typeof v === "object" && "r" in v) return v as Color3;
-  return fallback;
+function color4Or(v: Color4 | undefined, fallback: Color4): Color4 {
+  return v ?? fallback;
 }
 
-function color4(
-  v: unknown,
-  fallback: Color4 = { r: 0.5, g: 0.5, b: 0.5, a: 1 },
-): Color4 {
-  if (v && typeof v === "object" && "r" in v) return v as Color4;
-  return fallback;
-}
-
-function matrixF(v: unknown): MatrixF {
-  if (
-    v &&
-    typeof v === "object" &&
-    "elements" in v &&
-    Array.isArray((v as any).elements)
-  ) {
-    return v as MatrixF;
-  }
-  // readAffineTransform() returns {position, rotation} — convert to MatrixF.
-  if (v && typeof v === "object" && "position" in v && "rotation" in v) {
-    const { position: pos, rotation: q } = v as {
-      position: { x: number; y: number; z: number };
-      rotation: { x: number; y: number; z: number; w: number };
-    };
-    // Quaternion to column-major 4×4 matrix (idx = row + col*4).
-    const xx = q.x * q.x,
-      yy = q.y * q.y,
-      zz = q.z * q.z;
-    const xy = q.x * q.y,
-      xz = q.x * q.z,
-      yz = q.y * q.z;
-    const wx = q.w * q.x,
-      wy = q.w * q.y,
-      wz = q.w * q.z;
+/**
+ * Convert a parser transform (MatrixF or AffineTransform) to the scene's
+ * MatrixF format. The parser may emit either depending on the ghost class.
+ */
+function toMatrixF(v: ParserMatrixF | AffineTransform | undefined): MatrixF {
+  if (!v) {
     return {
-      elements: [
-        1 - 2 * (yy + zz),
-        2 * (xy + wz),
-        2 * (xz - wy),
-        0,
-        2 * (xy - wz),
-        1 - 2 * (xx + zz),
-        2 * (yz + wx),
-        0,
-        2 * (xz + wy),
-        2 * (yz - wx),
-        1 - 2 * (xx + yy),
-        0,
-        pos.x,
-        pos.y,
-        pos.z,
-        1,
-      ],
-      position: { x: pos.x, y: pos.y, z: pos.z },
+      elements: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
+      position: DEFAULT_VEC3,
     };
   }
+  // MatrixF: has elements array
+  if ("elements" in v) {
+    return v;
+  }
+  // AffineTransform: has position + rotation quaternion
+  const { position: pos, rotation: q } = v;
+  const xx = q.x * q.x,
+    yy = q.y * q.y,
+    zz = q.z * q.z;
+  const xy = q.x * q.y,
+    xz = q.x * q.z,
+    yz = q.y * q.z;
+  const wx = q.w * q.x,
+    wy = q.w * q.y,
+    wz = q.w * q.z;
   return {
-    elements: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
-    position: { x: 0, y: 0, z: 0 },
+    elements: [
+      1 - 2 * (yy + zz),
+      2 * (xy + wz),
+      2 * (xz - wy),
+      0,
+      2 * (xy - wz),
+      1 - 2 * (xx + zz),
+      2 * (yz + wx),
+      0,
+      2 * (xz + wy),
+      2 * (yz - wx),
+      1 - 2 * (xx + yy),
+      0,
+      pos.x,
+      pos.y,
+      pos.z,
+      1,
+    ],
+    position: { x: pos.x, y: pos.y, z: pos.z },
   };
 }
 
 export function terrainFromGhost(
   ghostIndex: number,
-  data: GhostData,
+  data: TerrainBlockGhostData,
 ): SceneTerrainBlock {
   return {
     className: "TerrainBlock",
     ghostIndex,
-    terrFileName: (data.terrFileName as string) ?? "",
-    detailTextureName: (data.detailTextureName as string) ?? "",
-    squareSize: (data.squareSize as number) ?? 8,
-    emptySquareRuns: data.emptySquareRuns as number[] | undefined,
+    terrFileName: data.terrFileName ?? "",
+    detailTextureName: data.detailTextureName ?? "",
+    squareSize: data.squareSize ?? 8,
+    emptySquareRuns: data.emptySquareRuns,
   };
 }
 
 export function interiorFromGhost(
   ghostIndex: number,
-  data: GhostData,
+  data: InteriorInstanceGhostData,
 ): SceneInteriorInstance {
   return {
     className: "InteriorInstance",
     ghostIndex,
-    interiorFile: (data.interiorFile as string) ?? "",
-    transform: matrixF(data.transform),
-    scale: vec3(data.scale, { x: 1, y: 1, z: 1 }),
-    showTerrainInside: (data.showTerrainInside as boolean) ?? false,
-    skinBase: (data.skinBase as string) ?? "",
-    alarmState: (data.alarmState as boolean) ?? false,
+    interiorFile: data.interiorFile ?? "",
+    transform: toMatrixF(data.transform),
+    scale: data.scale ?? UNIT_SCALE,
+    showTerrainInside: data.showTerrainInside ?? false,
+    skinBase: data.skinBase ?? "",
+    alarmState: data.alarmState ?? false,
   };
 }
 
 export function tsStaticFromGhost(
   ghostIndex: number,
-  data: GhostData,
+  data: TSStaticGhostData,
 ): SceneTSStatic {
   return {
     className: "TSStatic",
     ghostIndex,
-    shapeName: (data.shapeName as string) ?? "",
-    transform: matrixF(data.transform),
-    scale: vec3(data.scale, { x: 1, y: 1, z: 1 }),
+    shapeName: data.shapeName ?? "",
+    transform: toMatrixF(data.transform),
+    scale: data.scale ?? UNIT_SCALE,
   };
 }
 
-export function skyFromGhost(ghostIndex: number, data: GhostData): SceneSky {
-  const fogVolumes = Array.isArray(data.fogVolumes)
-    ? (
-        data.fogVolumes as Array<{
-          visibleDistance?: number;
-          minHeight?: number;
-          maxHeight?: number;
-          color?: Color3;
-        }>
-      ).map((v) => ({
+export function skyFromGhost(ghostIndex: number, data: SkyGhostData): SceneSky {
+  const fogVolumes = data.fogVolumes
+    ? data.fogVolumes.map((v) => ({
         visibleDistance: v.visibleDistance ?? 0,
         minHeight: v.minHeight ?? 0,
         maxHeight: v.maxHeight ?? 0,
-        color: color3(v.color),
+        color: color3Or(v.color, { r: 0, g: 0, b: 0 }),
       }))
     : [];
 
-  const cloudLayers = Array.isArray(data.cloudLayers)
-    ? (
-        data.cloudLayers as Array<{
-          texture?: string;
-          heightPercent?: number;
-          speed?: number;
-        }>
-      ).map((c) => ({
+  const cloudLayers = data.cloudLayers
+    ? data.cloudLayers.map((c) => ({
         texture: c.texture ?? "",
         heightPercent: c.heightPercent ?? 0,
         speed: c.speed ?? 0,
@@ -166,61 +152,56 @@ export function skyFromGhost(ghostIndex: number, data: GhostData): SceneSky {
   return {
     className: "Sky",
     ghostIndex,
-    materialList: (data.materialList as string) ?? "",
-    fogColor: color3(data.fogColor),
-    visibleDistance: (data.visibleDistance as number) ?? 1000,
-    fogDistance: (data.fogDistance as number) ?? 0,
-    skySolidColor: color3(data.skySolidColor),
-    useSkyTextures: (data.useSkyTextures as boolean) ?? true,
+    materialList: data.materialList ?? "",
+    fogColor: color3Or(data.fogColor, { r: 0, g: 0, b: 0 }),
+    visibleDistance: data.visibleDistance ?? 1000,
+    fogDistance: data.fogDistance ?? 0,
+    skySolidColor: color3Or(data.skySolidColor, { r: 0, g: 0, b: 0 }),
+    useSkyTextures: data.useSkyTextures ?? true,
     fogVolumes,
     cloudLayers,
-    windVelocity: vec3(data.windVelocity),
+    windVelocity: data.windVelocity ?? DEFAULT_VEC3,
   };
 }
 
-export function sunFromGhost(ghostIndex: number, data: GhostData): SceneSun {
+export function sunFromGhost(ghostIndex: number, data: SunGhostData): SceneSun {
   return {
     className: "Sun",
     ghostIndex,
-    direction: vec3(data.direction, { x: 0.57735, y: 0.57735, z: -0.57735 }),
-    color: color4(data.color, { r: 0.7, g: 0.7, b: 0.7, a: 1 }),
-    ambient: color4(data.ambient, { r: 0.5, g: 0.5, b: 0.5, a: 1 }),
-    textures: Array.isArray(data.textures)
-      ? (data.textures as string[])
-      : undefined,
+    direction: data.direction ?? { x: 0.57735, y: 0.57735, z: -0.57735 },
+    color: color4Or(data.color, { r: 0.7, g: 0.7, b: 0.7, a: 1 }),
+    ambient: color4Or(data.ambient, { r: 0.5, g: 0.5, b: 0.5, a: 1 }),
+    textures: data.textures,
   };
 }
 
 export function missionAreaFromGhost(
   ghostIndex: number,
-  data: GhostData,
+  data: MissionAreaGhostData,
 ): SceneMissionArea {
-  const area = data.area as
-    | { x: number; y: number; w: number; h: number }
-    | undefined;
   return {
     className: "MissionArea",
     ghostIndex,
-    area: area ?? { x: -512, y: -512, w: 1024, h: 1024 },
-    flightCeiling: (data.flightCeiling as number) ?? 2000,
-    flightCeilingRange: (data.flightCeilingRange as number) ?? 50,
+    area: data.area ?? { x: -512, y: -512, w: 1024, h: 1024 },
+    flightCeiling: data.flightCeiling ?? 2000,
+    flightCeilingRange: data.flightCeilingRange ?? 50,
   };
 }
 
 export function waterBlockFromGhost(
   ghostIndex: number,
-  data: GhostData,
+  data: WaterBlockGhostData,
 ): SceneWaterBlock {
   return {
     className: "WaterBlock",
     ghostIndex,
-    transform: matrixF(data.transform),
-    scale: vec3(data.scale, { x: 1, y: 1, z: 1 }),
-    surfaceName: (data.surfaceName as string) ?? "",
-    envMapName: (data.envMapName as string) ?? "",
-    surfaceOpacity: (data.surfaceOpacity as number) ?? 0.75,
-    waveMagnitude: (data.waveMagnitude as number) ?? 1.0,
-    envMapIntensity: (data.envMapIntensity as number) ?? 1.0,
+    transform: toMatrixF(data.transform),
+    scale: data.scale ?? UNIT_SCALE,
+    surfaceName: data.surfaceName ?? "",
+    envMapName: data.envMapName ?? "",
+    surfaceOpacity: data.surfaceOpacity ?? 0.75,
+    waveMagnitude: data.waveMagnitude ?? 1.0,
+    envMapIntensity: data.envMapIntensity ?? 1.0,
   };
 }
 
@@ -228,66 +209,71 @@ export function waterBlockFromGhost(
 export function ghostToSceneObject(
   className: string,
   ghostIndex: number,
-  data: GhostData,
+  data: ParsedData,
 ): SceneObject | null {
-  let result: SceneObject | null;
   switch (className) {
-    case "TerrainBlock":
-      result = terrainFromGhost(ghostIndex, data);
+    case "TerrainBlock": {
+      const result = terrainFromGhost(
+        ghostIndex,
+        data as TerrainBlockGhostData,
+      );
       log.debug(
         "TerrainBlock #%d: terrFileName=%s",
         ghostIndex,
-        (result as SceneTerrainBlock).terrFileName,
+        result.terrFileName,
       );
       return result;
-    case "InteriorInstance":
-      result = interiorFromGhost(ghostIndex, data);
+    }
+    case "InteriorInstance": {
+      const result = interiorFromGhost(
+        ghostIndex,
+        data as InteriorInstanceGhostData,
+      );
       log.debug(
         "InteriorInstance #%d: interiorFile=%s",
         ghostIndex,
-        (result as SceneInteriorInstance).interiorFile,
+        result.interiorFile,
       );
       return result;
+    }
     case "TSStatic":
-      return tsStaticFromGhost(ghostIndex, data);
+      return tsStaticFromGhost(ghostIndex, data as TSStaticGhostData);
     case "Sky": {
-      result = skyFromGhost(ghostIndex, data);
-      const sky = result as SceneSky;
+      const result = skyFromGhost(ghostIndex, data as SkyGhostData);
       log.debug(
         "Sky #%d: materialList=%s fogColor=(%s, %s, %s) visibleDist=%d fogDist=%d useSkyTextures=%s",
         ghostIndex,
-        sky.materialList,
-        sky.fogColor.r.toFixed(3),
-        sky.fogColor.g.toFixed(3),
-        sky.fogColor.b.toFixed(3),
-        sky.visibleDistance,
-        sky.fogDistance,
-        sky.useSkyTextures,
+        result.materialList,
+        result.fogColor.r.toFixed(3),
+        result.fogColor.g.toFixed(3),
+        result.fogColor.b.toFixed(3),
+        result.visibleDistance,
+        result.fogDistance,
+        result.useSkyTextures,
       );
       return result;
     }
     case "Sun": {
-      result = sunFromGhost(ghostIndex, data);
-      const sun = result as SceneSun;
+      const result = sunFromGhost(ghostIndex, data as SunGhostData);
       log.debug(
         "Sun #%d: dir=(%s, %s, %s) color=(%s, %s, %s) ambient=(%s, %s, %s)",
         ghostIndex,
-        sun.direction.x.toFixed(3),
-        sun.direction.y.toFixed(3),
-        sun.direction.z.toFixed(3),
-        sun.color.r.toFixed(3),
-        sun.color.g.toFixed(3),
-        sun.color.b.toFixed(3),
-        sun.ambient.r.toFixed(3),
-        sun.ambient.g.toFixed(3),
-        sun.ambient.b.toFixed(3),
+        result.direction.x.toFixed(3),
+        result.direction.y.toFixed(3),
+        result.direction.z.toFixed(3),
+        result.color.r.toFixed(3),
+        result.color.g.toFixed(3),
+        result.color.b.toFixed(3),
+        result.ambient.r.toFixed(3),
+        result.ambient.g.toFixed(3),
+        result.ambient.b.toFixed(3),
       );
       return result;
     }
     case "MissionArea":
-      return missionAreaFromGhost(ghostIndex, data);
+      return missionAreaFromGhost(ghostIndex, data as MissionAreaGhostData);
     case "WaterBlock":
-      return waterBlockFromGhost(ghostIndex, data);
+      return waterBlockFromGhost(ghostIndex, data as WaterBlockGhostData);
     default:
       return null;
   }

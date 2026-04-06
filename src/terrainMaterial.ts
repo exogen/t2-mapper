@@ -78,9 +78,10 @@ export function updateTerrainTextureShader({
     shader.uniforms[`albedo${i}`] = { value: tex };
   });
 
-  // Pass all alpha textures including mask0 for additive blending
+  // Alpha masks are packed into RGB textures (3 masks per texture).
+  const packedMaskCount = alphaTextures.length;
   alphaTextures.forEach((tex, i) => {
-    shader.uniforms[`mask${i}`] = { value: tex };
+    shader.uniforms[`maskPacked${i}`] = { value: tex };
   });
 
   // Add visibility mask uniform if we have empty squares
@@ -123,27 +124,27 @@ vTerrainWorldPos = (modelMatrix * _terrainPos).xyz;`,
     );
   }
 
+  // Provide terrain UVs without setting MeshLambertMaterial.map (which would
+  // allocate a texture unit for an unused `map` sampler). The geometry's UV
+  // attribute maps [0,1] across each terrain tile.
+  shader.vertexShader = shader.vertexShader.replace(
+    "#include <common>",
+    `#include <common>
+varying vec2 vTerrainUv;`,
+  );
+  shader.vertexShader = shader.vertexShader.replace(
+    "#include <uv_vertex>",
+    `#include <uv_vertex>
+vTerrainUv = uv;`,
+  );
+
   // Declare our uniforms and color space functions at the top of the fragment shader
   shader.fragmentShader =
     `
-uniform sampler2D albedo0;
-uniform sampler2D albedo1;
-uniform sampler2D albedo2;
-uniform sampler2D albedo3;
-uniform sampler2D albedo4;
-uniform sampler2D albedo5;
-uniform sampler2D mask0;
-uniform sampler2D mask1;
-uniform sampler2D mask2;
-uniform sampler2D mask3;
-uniform sampler2D mask4;
-uniform sampler2D mask5;
-uniform float tiling0;
-uniform float tiling1;
-uniform float tiling2;
-uniform float tiling3;
-uniform float tiling4;
-uniform float tiling5;
+varying vec2 vTerrainUv;
+${Array.from({ length: layerCount }, (_, i) => `uniform sampler2D albedo${i};`).join("\n")}
+${Array.from({ length: packedMaskCount }, (_, i) => `uniform sampler2D maskPacked${i};`).join("\n")}
+${Array.from({ length: layerCount }, (_, i) => `uniform float tiling${i};`).join("\n")}
 ${visibilityMask ? "uniform sampler2D visibilityMask;" : ""}
 ${lightmap ? "uniform sampler2D terrainLightmap;" : ""}
 uniform bool sunLightPointsDown;
@@ -168,7 +169,7 @@ float terrainShadowFactor = 1.0;
       clippingPlaceholder,
       `${clippingPlaceholder}
   // Early discard for invisible areas (before fog/lighting)
-  float visibility = texture2D(visibilityMask, vMapUv).r;
+  float visibility = texture2D(visibilityMask, vTerrainUv).r;
   if (visibility < 0.5) {
     discard;
   }
@@ -177,12 +178,12 @@ float terrainShadowFactor = 1.0;
   }
 
   // Replace the default map sampling block with our layered blend.
-  // We rely on vMapUv provided by USE_MAP.
+  // vTerrainUv is computed from the geometry's UV attribute in the vertex shader.
   shader.fragmentShader = shader.fragmentShader.replace(
     "#include <map_fragment>",
     `
   // Sample base albedo layers (sRGB textures auto-decoded to linear by Three.js)
-  vec2 baseUv = vMapUv;
+  vec2 baseUv = vTerrainUv;
   vec3 c0 = texture2D(albedo0, baseUv * vec2(tiling0)).rgb;
   ${
     layerCount > 1
@@ -210,16 +211,22 @@ float terrainShadowFactor = 1.0;
       : ""
   }
 
-  // Sample alpha masks for all layers (use R channel)
+  // Sample alpha masks from packed RGB textures (3 masks per texture).
   // Add +0.5 texel offset: Torque samples alpha at grid corners (integer indices),
   // but GPU linear filtering samples at texel centers. This offset aligns them.
   vec2 alphaUv = baseUv + vec2(0.5 / ${TERRAIN_SIZE}.0);
-  float a0 = texture2D(mask0, alphaUv).r;
-  ${layerCount > 1 ? `float a1 = texture2D(mask1, alphaUv).r;` : ""}
-  ${layerCount > 2 ? `float a2 = texture2D(mask2, alphaUv).r;` : ""}
-  ${layerCount > 3 ? `float a3 = texture2D(mask3, alphaUv).r;` : ""}
-  ${layerCount > 4 ? `float a4 = texture2D(mask4, alphaUv).r;` : ""}
-  ${layerCount > 5 ? `float a5 = texture2D(mask5, alphaUv).r;` : ""}
+  vec3 maskRGB0 = texture2D(maskPacked0, alphaUv).rgb;
+  float a0 = maskRGB0.r;
+  ${layerCount > 1 ? `float a1 = maskRGB0.g;` : ""}
+  ${layerCount > 2 ? `float a2 = maskRGB0.b;` : ""}
+  ${
+    layerCount > 3
+      ? `vec3 maskRGB1 = texture2D(maskPacked1, alphaUv).rgb;
+  float a3 = maskRGB1.r;`
+      : ""
+  }
+  ${layerCount > 4 ? `float a4 = maskRGB1.g;` : ""}
+  ${layerCount > 5 ? `float a5 = maskRGB1.b;` : ""}
 
   // Torque-style additive weighted blending (blender.cc):
   // result = tex0 * alpha0 + tex1 * alpha1 + tex2 * alpha2 + ...
@@ -324,7 +331,7 @@ void RE_Direct_TerrainShadow( const in IncidentLight directLight, const in vec3 
     lightmap
       ? `
   // Sample terrain lightmap for smooth NdotL
-  vec2 lightmapUv = vMapUv + vec2(0.5 / ${LIGHTMAP_SIZE}.0);
+  vec2 lightmapUv = vTerrainUv + vec2(0.5 / ${LIGHTMAP_SIZE}.0);
   float lightmapNdotL = texture2D(terrainLightmap, lightmapUv).r;
 
   // Get sun and ambient colors from Three.js lights (these ARE sRGB values from mission file)
@@ -362,7 +369,7 @@ void RE_Direct_TerrainShadow( const in IncidentLight directLight, const in vec3 
     "#include <tonemapping_fragment>",
     `#if DEBUG_MODE
   // Debug mode: overlay green grid matching terrain grid squares (256x256)
-  float gridIntensity = terrainDebugGrid(vMapUv, 256.0, 1.5);
+  float gridIntensity = terrainDebugGrid(vTerrainUv, 256.0, 1.5);
   vec3 gridColor = vec3(0.0, 0.8, 0.4); // Green
   gl_FragColor.rgb = mix(gl_FragColor.rgb, gridColor, gridIntensity * 0.1);
 #endif

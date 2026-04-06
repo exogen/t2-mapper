@@ -93,11 +93,8 @@ function renderEventDescription(event: TimelineEvent): React.ReactNode {
       </>
     );
   }
-  if (event.type === "match-start") {
-    return "Match started";
-  }
-  if (event.type === "match-end") {
-    return "Match ended";
+  if (event.type === "match-start" || event.type === "match-end") {
+    return event.description;
   }
   return event.description;
 }

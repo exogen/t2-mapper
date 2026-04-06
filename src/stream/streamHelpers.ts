@@ -1,4 +1,5 @@
 import { Matrix4, Quaternion } from "three";
+import type { ParsedData } from "t2-demo-parser";
 import type {
   StreamVisual,
   WeaponImageDataBlockState,
@@ -226,7 +227,7 @@ export function isQuatLike(value: unknown): value is {
  */
 export function resolveShapeName(
   className: string,
-  data: Record<string, unknown> | undefined,
+  data: ParsedData | undefined,
 ): string | undefined {
   if (!data) return undefined;
 
@@ -245,7 +246,7 @@ export function resolveShapeName(
 }
 
 export function getNumberField(
-  data: Record<string, unknown> | undefined,
+  data: ParsedData | undefined,
   keys: readonly string[],
 ): number | undefined {
   if (!data) return undefined;
@@ -257,7 +258,7 @@ export function getNumberField(
 }
 
 export function getStringField(
-  data: Record<string, unknown> | undefined,
+  data: ParsedData | undefined,
   keys: readonly string[],
 ): string | undefined {
   if (!data) return undefined;
@@ -269,7 +270,7 @@ export function getStringField(
 }
 
 export function getBooleanField(
-  data: Record<string, unknown> | undefined,
+  data: ParsedData | undefined,
   keys: readonly string[],
 ): boolean | undefined {
   if (!data) return undefined;
@@ -284,7 +285,7 @@ export function getBooleanField(
 
 export function resolveTracerVisual(
   className: string,
-  data: Record<string, unknown> | undefined,
+  data: ParsedData | undefined,
 ): StreamVisual | undefined {
   if (!data) return undefined;
 
@@ -334,7 +335,7 @@ export function resolveTracerVisual(
 
 export function resolveSpriteVisual(
   className: string,
-  data: Record<string, unknown> | undefined,
+  data: ParsedData | undefined,
 ): StreamVisual | undefined {
   if (!data) return undefined;
 
@@ -380,11 +381,9 @@ export function resolveSpriteVisual(
  * remap table.
  */
 export function parseWeaponImageStates(
-  blockData: Record<string, unknown>,
+  blockData: ParsedData,
 ): WeaponImageDataBlockState[] | undefined {
-  const rawStates = blockData.states as
-    | Array<Record<string, unknown>>
-    | undefined;
+  const rawStates = blockData.states as Array<ParsedData> | undefined;
   if (!Array.isArray(rawStates) || rawStates.length === 0) return undefined;
 
   return rawStates.map((s) => {
@@ -533,7 +532,7 @@ export function extractWavTag(text: string): {
 export type ControlObjectType = "camera" | "player";
 
 export function detectControlObjectType(
-  data: Record<string, unknown> | undefined,
+  data: ParsedData | undefined,
 ): ControlObjectType | null {
   if (!data) return null;
   if (typeof data.cameraMode === "number") return "camera";

@@ -26,6 +26,9 @@ function positionedBase(entity: StreamEntity, spawnTime?: number) {
     position: entity.position,
     rotation: entity.rotation,
     velocity: entity.velocity,
+    mountObjectId: entity.mountObjectId,
+    mountNode: entity.mountNode,
+    imageSlots: entity.imageSlots,
     keyframes: [
       {
         time: spawnTime ?? 0,
@@ -118,12 +121,7 @@ export function streamEntityToGameEntity(
         renderType: "Player",
         shapeName: entity.dataBlock,
         dataBlock: entity.dataBlock,
-        imageDataBlockIds: entity.imageDataBlockIds,
-        imageSkinNames: entity.imageSkinNames,
-        weaponShape: entity.weaponShape,
         armAction: entity.armAction,
-        packShape: entity.packShape,
-        flagShape: entity.flagShape,
         falling: entity.falling,
         jetting: entity.jetting,
         playerName: entity.playerName,
@@ -234,10 +232,8 @@ export function streamEntityToGameEntity(
               ? "Item"
               : "StaticShape",
         dataBlock: entity.dataBlock,
-        imageDataBlockIds: entity.imageDataBlockIds,
         skinName: entity.skinName,
         damageState: entity.damageState,
-        weaponShape: entity.weaponShape,
         armAction: entity.armAction,
         threads: entity.threads,
         targetRenderFlags: entity.targetRenderFlags,
@@ -247,6 +243,8 @@ export function streamEntityToGameEntity(
         frozen: entity.frozen,
         maxSteeringAngle: entity.maxSteeringAngle,
         soundSlots: entity.soundSlots,
+        fadeVal: entity.fadeVal,
+        cloakLevel: entity.cloakLevel,
       } satisfies ShapeEntity;
   }
 }

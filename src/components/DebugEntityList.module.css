@@ -1,16 +1,20 @@
-.Container {
+.Container[data-filtered] {
+  min-height: 100dvh;
 }
 
 .Title {
   font-size: 13px;
   font-weight: bold;
-  margin: 16px 10px 8px 10px;
+  margin: 0;
+  padding: 0;
 }
 
 .Header {
   font-size: 12px;
-  opacity: 0.6;
-  padding: 2px 0;
+  padding: 18px 4px 4px 2px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
 }
 
 .Group {
@@ -18,10 +22,13 @@
 }
 
 .GroupHeader {
+  display: flex;
+  align-items: center;
+  gap: 7px;
   font-size: 12px;
   font-weight: 500;
   color: rgba(255, 255, 255, 0.7);
-  padding: 6px 8px;
+  padding: 6px 8px 6px 0;
   cursor: pointer;
   user-select: none;
   list-style: none;
@@ -31,14 +38,24 @@
   display: none;
 }
 
-.GroupHeader::before {
-  content: "[+] ";
-  font-family: monospace;
-  color: rgba(255, 255, 255, 0.4);
+.OpenedIcon {
+  display: none;
+  font-size: 15px;
+  opacity: 0.6;
 }
 
-.Group[open] > .GroupHeader::before {
-  content: "[-] ";
+.ClosedIcon {
+  display: inline-block;
+  font-size: 15px;
+  opacity: 0.6;
+}
+
+.Group[open] .OpenedIcon {
+  display: inline-block;
+}
+
+.Group[open] .ClosedIcon {
+  display: none;
 }
 
 .GroupCount {
@@ -146,10 +163,20 @@
   color: rgba(255, 255, 255, 0.35);
 }
 
-.Detail dt::after {
-  content: ":";
-}
-
 .Detail dd {
   margin: 0;
+}
+
+.FilterInput {
+  font-family: inherit;
+  background: rgba(0, 0, 0, 0.2);
+  color: #fff;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 0;
+  margin: 0;
+  padding: 4px 6px;
+}
+
+.FilterInput:focus {
+  background: rgba(0, 0, 0, 0.5);
 }

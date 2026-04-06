@@ -1,4 +1,5 @@
 import type {
+  ImageSlot,
   Keyframe,
   ThreadState,
   TracerVisual,
@@ -53,6 +54,10 @@ interface EntityBase {
   missionTypesList?: string;
   /** Hidden via the debug entity list. */
   debugHidden?: boolean;
+  /** Entity ID of the object this entity is mounted on (vehicle, etc.). */
+  mountObjectId?: string;
+  /** Mount point node index on the mount target (0 = pilot). */
+  mountNode?: number;
 }
 
 // ── Scene infrastructure entities ──
@@ -117,6 +122,8 @@ interface PositionedBase extends EntityBase {
   scale?: [number, number, number];
   velocity?: [number, number, number];
   keyframes?: Keyframe[];
+  /** Mounted image slots (0-7). Mount bone from dataBlock->mountPoint. */
+  imageSlots?: (ImageSlot | undefined)[];
 }
 
 // ── Gameplay entities ──
@@ -127,8 +134,6 @@ export interface ShapeEntity extends PositionedBase {
   shapeName?: string;
   shapeType?: string;
   dataBlock?: string;
-  /** Datablock IDs for each mounted image slot (0-3). */
-  imageDataBlockIds?: (number | undefined)[];
   /** Skin name from TargetManager (e.g. "beagle" for flags, team skins). */
   skinName?: string;
   threads?: ThreadState[];
@@ -138,7 +143,6 @@ export interface ShapeEntity extends PositionedBase {
   teamId?: number;
   targetRenderFlags?: number;
   iffColor?: { r: number; g: number; b: number };
-  weaponShape?: string;
   /** Arm blend animation action index from Player ghost (networked). */
   armAction?: number;
   /** WheeledVehicle per-wheel state (speed, slip). */
@@ -155,22 +159,18 @@ export interface ShapeEntity extends PositionedBase {
   maxSteeringAngle?: number;
   /** ShapeBase sound slots (from ghost SoundMask). */
   soundSlots?: Array<{ index: number; playing: boolean; profileId?: number }>;
+  /** ShapeBase fade value (0=invisible, 1=fully visible). Matches mFadeVal. */
+  fadeVal?: number;
+  /** Cloak level (0=visible, 1=fully cloaked). Used for cloak texture effect. */
+  cloakLevel?: number;
 }
 
 export interface PlayerEntity extends PositionedBase {
   renderType: "Player";
   shapeName?: string;
   dataBlock?: string;
-  /** Datablock IDs for each mounted image slot (0-3). */
-  imageDataBlockIds?: (number | undefined)[];
-  /** Skin names for each mounted image slot (e.g. flag team skin on slot 3). */
-  imageSkinNames?: (string | undefined)[];
-  weaponShape?: string;
   /** Arm blend animation action index from Player ghost (networked). */
   armAction?: number;
-  packShape?: string;
-  /** DTS shape name for the carried flag (slot 3, Mount2 bone). */
-  flagShape?: string;
   falling?: boolean;
   jetting?: boolean;
   playerName?: string;

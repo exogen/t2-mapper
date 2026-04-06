@@ -1,4 +1,10 @@
 import { createLiveParser, type PacketParser } from "t2-demo-parser";
+import type {
+  ParsedData,
+  RemoteCommandEventData,
+  CRCChallengeEventData,
+  GhostingMessageEventData,
+} from "t2-demo-parser";
 import { createLogger } from "../logger";
 import { resolveShapeName, stripTaggedStringMarkup } from "./streamHelpers";
 import type { Vec3 } from "./streamHelpers";
@@ -74,7 +80,7 @@ export class LiveStreamAdapter extends StreamEngine {
 
   // ── StreamEngine abstract implementations ──
 
-  getDataBlockData(id: number): Record<string, unknown> | undefined {
+  getDataBlockData(id: number): ParsedData | undefined {
     return this.packetParser.getDataBlockDataMap()?.get(id);
   }
 
@@ -99,7 +105,7 @@ export class LiveStreamAdapter extends StreamEngine {
     return this.currentTimeSec;
   }
 
-  protected getCameraYawPitch(data: Record<string, unknown> | undefined): {
+  protected getCameraYawPitch(data: ParsedData | undefined): {
     yaw: number;
     pitch: number;
   } {
@@ -202,9 +208,8 @@ export class LiveStreamAdapter extends StreamEngine {
    * Handle RemoteCommandEvents that require relay-side responses:
    * auth events, mission phase acknowledgments, etc.
    */
-  private handleRelayCommands(parsedData: Record<string, unknown>): void {
-    if (parsedData.type !== "RemoteCommandEvent") return;
-    const rawFuncName = parsedData.funcName as string;
+  private handleRelayCommands(parsedData: RemoteCommandEventData): void {
+    const rawFuncName = parsedData.funcName;
     if (!rawFuncName) return;
     const funcName = this.resolveNetString(rawFuncName);
 
@@ -215,7 +220,7 @@ export class LiveStreamAdapter extends StreamEngine {
       "t2csri_decryptChallenge",
     ];
     if (authCommands.includes(funcName)) {
-      const rawArgs = (parsedData.args as string[]) ?? [];
+      const rawArgs = parsedData.args ?? [];
       const args = rawArgs
         .map((a) => this.resolveNetString(a))
         .filter((a) => a !== "");
@@ -226,7 +231,7 @@ export class LiveStreamAdapter extends StreamEngine {
 
     // Mission download phase acknowledgments — the server won't proceed
     // to ghosting until the client responds to each phase.
-    const rawArgs = (parsedData.args as string[]) ?? [];
+    const rawArgs = parsedData.args ?? [];
     const resolvedArgs = rawArgs.map((a) => this.resolveNetString(a));
     if (funcName === "MissionStartPhase1") {
       const seq = resolvedArgs[0] ?? "";
@@ -281,11 +286,10 @@ export class LiveStreamAdapter extends StreamEngine {
   }
 
   /** Respond to CRCChallengeEvent — required for Phase 2 to begin. */
-  private handleCRCChallenge(parsedData: Record<string, unknown>): void {
-    if (parsedData.type !== "CRCChallengeEvent") return;
-    const seed = parsedData.crcValue as number;
-    const field1 = parsedData.field1 as number;
-    const field2 = parsedData.field2 as number;
+  private handleCRCChallenge(parsedData: CRCChallengeEventData): void {
+    const seed = parsedData.crcValue;
+    const field1 = parsedData.field1;
+    const field2 = parsedData.field2;
     // field1 bit 0 = includeTextures (from $Host::CRCTextures)
     const includeTextures = (field1 & 1) !== 0;
     log.info(
@@ -307,10 +311,7 @@ export class LiveStreamAdapter extends StreamEngine {
       for (const [id, block] of dbMap) {
         const className = this.dataBlockClassNames.get(id);
         if (!className) continue;
-        const shapeName = resolveShapeName(
-          className,
-          block as Record<string, unknown>,
-        );
+        const shapeName = resolveShapeName(className, block as ParsedData);
         datablocks.push({
           objectId: id,
           className,
@@ -327,11 +328,10 @@ export class LiveStreamAdapter extends StreamEngine {
    * The server sends this after activateGhosting(); the client must respond
    * with type 1 so the server sets mGhosting=true and begins sending ghosts.
    */
-  private handleGhostingMessage(parsedData: Record<string, unknown>): void {
-    if (parsedData.type !== "GhostingMessageEvent") return;
-    const message = parsedData.message as number;
-    const sequence = parsedData.sequence as number;
-    const ghostCount = parsedData.ghostCount as number;
+  private handleGhostingMessage(parsedData: GhostingMessageEventData): void {
+    const message = parsedData.message;
+    const sequence = parsedData.sequence;
+    const ghostCount = parsedData.ghostCount;
     log.info(
       "GhostingMessageEvent: message=%d sequence=%d ghostCount=%d",
       message,
@@ -417,10 +417,18 @@ export class LiveStreamAdapter extends StreamEngine {
       // Events
       for (const event of parsed.events) {
         if (event.parsedData) {
-          this.handleRelayCommands(event.parsedData);
-          this.handleCRCChallenge(event.parsedData);
-          this.handleGhostingMessage(event.parsedData);
           const type = event.parsedData.type as string;
+          if (type === "RemoteCommandEvent") {
+            this.handleRelayCommands(
+              event.parsedData as RemoteCommandEventData,
+            );
+          } else if (type === "CRCChallengeEvent") {
+            this.handleCRCChallenge(event.parsedData as CRCChallengeEventData);
+          } else if (type === "GhostingMessageEvent") {
+            this.handleGhostingMessage(
+              event.parsedData as GhostingMessageEventData,
+            );
+          }
 
           // Always log RemoteCommandEvents (chat, server messages, HUD).
           if (type === "RemoteCommandEvent") {
@@ -453,7 +461,7 @@ export class LiveStreamAdapter extends StreamEngine {
             }
             if (shouldLog) {
               const dbData = event.parsedData.dataBlockData as
-                | Record<string, unknown>
+                | ParsedData
                 | undefined;
               const shapeName = resolveShapeName(dbClassName ?? "", dbData);
               log.debug(
@@ -570,6 +578,8 @@ export class LiveStreamAdapter extends StreamEngine {
       this.tickCount++;
       this.advanceProjectiles();
       this.advanceItems();
+      this.advanceControlVehicle();
+      this.advanceFades();
 
       // Periodic status at milestones
       if (isMilestonePacket && this.tickCount > 1) {

@@ -1,5 +1,6 @@
-import { memo, useMemo, useCallback } from "react";
+import { memo, useMemo, useCallback, useState, useDeferredValue } from "react";
 import { FaLocationArrow } from "react-icons/fa6";
+import { matchSorter } from "match-sorter";
 import { useGameEntities } from "../state/gameEntityStore";
 import { cameraTourStore } from "../state/cameraTourStore";
 import type { GameEntity } from "../state/gameEntityTypes";
@@ -7,6 +8,7 @@ import { torqueToThree } from "../scene/coordinates";
 import { gameEntityStore, useDebugHidden } from "../state/gameEntityStore";
 import { useSettings } from "./SettingsProvider";
 import styles from "./DebugEntityList.module.css";
+import { FaRegMinusSquare, FaRegPlusSquare } from "react-icons/fa";
 
 function getEntityLabel(entity: GameEntity): string {
   if (entity.renderType === "Player" && "playerName" in entity) {
@@ -116,7 +118,7 @@ function EntityRow({ entity }: { entity: GameEntity }) {
           <dl className={styles.Detail}>
             {Object.entries(detail).map(([key, value]) => (
               <div key={key}>
-                <dt>{key}</dt>
+                <dt>{key}:</dt>
                 <dd>{value}</dd>
               </div>
             ))}
@@ -138,15 +140,45 @@ function EntityRow({ entity }: { entity: GameEntity }) {
   );
 }
 
+const ENTITY_MATCH_KEYS = [
+  "id",
+  "className",
+  "label",
+  "playerName",
+  "skinPrefName",
+  "shapeName",
+  "dataBlock",
+  "audioFileName",
+  "interiorData.interiorFile",
+  "terrainData.terrFileName",
+  "waterData.surfaceName",
+];
+
 export const DebugEntityList = memo(function DebugEntityList() {
+  const [filterText, setFilterText] = useState("");
+  const activeFilterText = useDeferredValue(filterText.trim());
+
   const entities = useGameEntities();
   // useGameEntities re-renders on version bump, but the Map reference is
   // stable (mutated in place). Use version as a useMemo dep to recompute.
   const version = gameEntityStore.getState().version;
 
+  const filteredEntities = useMemo(() => {
+    const allEntities = Array.from(entities.values());
+
+    return activeFilterText
+      ? matchSorter(allEntities, activeFilterText, {
+          keys: ENTITY_MATCH_KEYS,
+        })
+      : allEntities;
+
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeFilterText, entities, version]);
+
   const grouped = useMemo(() => {
     const groups = new Map<string, GameEntity[]>();
-    for (const entity of entities.values()) {
+
+    for (const entity of filteredEntities) {
       if (
         entity.renderType === "Sky" ||
         entity.renderType === "Sun" ||
@@ -168,16 +200,33 @@ export const DebugEntityList = memo(function DebugEntityList() {
       list.sort((a, b) => a.id.localeCompare(b.id));
     }
     return sorted;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [entities, version]);
+  }, [filteredEntities]);
 
   return (
-    <div className={styles.Container}>
-      <h4 className={styles.Title}>Entity list</h4>
+    <section
+      className={styles.Container}
+      data-filtered={activeFilterText ? true : undefined}
+    >
+      <header className={styles.Header}>
+        <h4 className={styles.Title}>Entity list</h4>
+        <input
+          type="search"
+          value={filterText}
+          onChange={(e) => setFilterText(e.target.value)}
+          size={16}
+          placeholder="Filter"
+          className={styles.FilterInput}
+        />
+      </header>
       {grouped.map(([className, list]) => (
-        <details key={className} className={styles.Group}>
+        <details
+          key={className}
+          className={styles.Group}
+          open={activeFilterText ? true : undefined}
+        >
           <summary className={styles.GroupHeader}>
-            {className}{" "}
+            <FaRegPlusSquare className={styles.ClosedIcon} />
+            <FaRegMinusSquare className={styles.OpenedIcon} /> {className}{" "}
             <span className={styles.GroupCount}>({list.length})</span>
           </summary>
           <ul className={styles.List}>
@@ -189,6 +238,6 @@ export const DebugEntityList = memo(function DebugEntityList() {
           </ul>
         </details>
       ))}
-    </div>
+    </section>
   );
 });

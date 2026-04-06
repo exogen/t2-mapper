@@ -1,11 +1,11 @@
 import { Fragment, memo, Suspense, useEffect, useMemo, useRef } from "react";
 import type { ReactNode } from "react";
 import { ErrorBoundary } from "react-error-boundary";
-import type { AnimationAction } from "three";
+import type { AnimationAction, Object3D } from "three";
 import { useGLTF } from "@react-three/drei";
 import { createPortal, useFrame } from "@react-three/fiber";
 import { createLogger } from "../logger";
-import { shapeToUrl } from "../loaders";
+import { shapeToUrl, textureToUrl } from "../loaders";
 import {
   MeshStandardMaterial,
   AdditiveAnimationBlendMode,
@@ -14,9 +14,12 @@ import {
   AnimationUtils,
   LoopOnce,
   LoopRepeat,
+  NormalBlending,
   Group,
   Box3,
   Vector3,
+  RepeatWrapping,
+  NoColorSpace,
 } from "three";
 import * as SkeletonUtils from "three/examples/jsm/utils/SkeletonUtils.js";
 import { useAnisotropy } from "./useAnisotropy";
@@ -46,7 +49,49 @@ import {
   getPosedNodeTransform,
 } from "../stream/playbackUtils";
 import { resolveEmapFromImageSlot } from "./resolveEmap";
+import { playerEyePositions } from "./PlayerModel";
 import type { ThreadState as StreamThreadState } from "../stream/types";
+import { loadTexture } from "../textureUtils";
+
+// ── Cloak texture (binary-verified: special/cloakTexture with UV scrolling) ──
+// Lazy-loaded on first use since cloaking is rare.
+
+import type { Texture } from "three";
+
+let _cloakTexture: Texture | null = null;
+function getCloakTexture(): Texture {
+  if (!_cloakTexture) {
+    _cloakTexture = loadTexture(textureToUrl("special/cloakTexture"));
+    _cloakTexture.wrapS = RepeatWrapping;
+    _cloakTexture.wrapT = RepeatWrapping;
+    _cloakTexture.colorSpace = NoColorSpace;
+  }
+  return _cloakTexture;
+}
+
+// Global UV offset matching engine's static shiftX/shiftY with different moduli
+// to create a non-repeating shimmer pattern.
+let _cloakShiftX = 0;
+let _cloakShiftY = 0;
+let _cloakLastFrame = -1;
+function advanceCloakUV(frameId: number): void {
+  if (frameId === _cloakLastFrame) return;
+  _cloakLastFrame = frameId;
+  _cloakShiftX = (_cloakShiftX + 1) % 128;
+  _cloakShiftY = (_cloakShiftY + 1) % 127;
+  getCloakTexture().offset.set(_cloakShiftX / 127, _cloakShiftY / 126);
+}
+
+// Counter-rotate for object-mounted content (players in vehicles).
+// The mount bone is inside the vehicle's R90 Y group (DTS Z-up → Three.js
+// Y-up). The mounted PlayerModel applies its own R90 Y. We need to undo the
+// player's R90 and rotate from GLB Y-up back to DTS Z-up so the player
+// stands upright relative to the vehicle's DTS bone coordinate system.
+const MOUNT_COUNTER_ROTATION: [x: number, y: number, z: number] = [
+  Math.PI / 2,
+  -Math.PI / 2,
+  0,
+];
 
 const STANDARD_90_ROTATION: [x: number, y: number, z: number] = [
   0,
@@ -68,6 +113,8 @@ interface StreamShapeEntity {
   frozen?: boolean;
   maxSteeringAngle?: number;
   soundSlots?: Array<{ index: number; playing: boolean; profileId?: number }>;
+  fadeVal?: number;
+  cloakLevel?: number;
   dataBlockId?: number;
 }
 
@@ -250,6 +297,7 @@ interface ThreadState {
   action?: AnimationAction;
   visNodes?: VisNode[];
   startTime: number;
+  forward: boolean;
 }
 
 /**
@@ -556,7 +604,13 @@ export const ShapeModel = memo(function ShapeModel({
       }
     }
 
-    function handlePlayThread(slot: number, sequenceName: string) {
+    // Match binary's updateThread (FUN_005ebf00): direction is implemented
+    // via timeScale (+1 forward, -1 backward). State 0=Play, 1=Stop, 2=Pause.
+    function handlePlayThread(
+      slot: number,
+      sequenceName: string,
+      forward = true,
+    ) {
       const seqLower = sequenceName.toLowerCase();
       handleStopThread(slot);
 
@@ -565,6 +619,7 @@ export const ShapeModel = memo(function ShapeModel({
       const thread: ThreadState = {
         sequence: seqLower,
         startTime: shapeNowSec(),
+        forward,
       };
 
       if (clip && mixer) {
@@ -582,7 +637,13 @@ export const ShapeModel = memo(function ShapeModel({
         if (seqBlendByName.has(seqLower)) {
           action.blendMode = AdditiveAnimationBlendMode;
         }
-        action.reset().play();
+        action.timeScale = forward ? 1 : -1;
+        action.reset();
+        // For backward playback, start at the end of the clip.
+        if (!forward) {
+          action.time = clip.duration;
+        }
+        action.play();
         thread.action = action;
       }
 
@@ -598,11 +659,12 @@ export const ShapeModel = memo(function ShapeModel({
       const thread = threads.get(slot);
       if (!thread) return;
       if (thread.action) thread.action.stop();
+      // Binary Stop: reset position to 0.0, freeze. Vis nodes go to frame 0.
       if (thread.visNodes) {
         for (const v of thread.visNodes) {
-          v.mesh.visible = false;
           if (v.mesh.material && !Array.isArray(v.mesh.material)) {
             v.mesh.material.opacity = v.keyframes[0];
+            v.mesh.visible = v.keyframes[0] > 0.01;
           }
         }
       }
@@ -795,51 +857,70 @@ export const ShapeModel = memo(function ShapeModel({
               !prev ||
               prev.sequence !== t.sequence ||
               prev.state !== t.state ||
+              prev.forward !== t.forward ||
               prev.atEnd !== t.atEnd;
             if (!changed) continue;
 
-            // When only atEnd changed (false→true) on a playing thread with
-            // the same sequence, the animation has finished on the server.
-            // Don't restart it — snap to the end pose so one-shot animations
-            // like "deploy" stay clamped instead of collapsing back.
-            const onlyAtEndChanged =
-              prev &&
-              prev.sequence === t.sequence &&
-              prev.state === t.state &&
-              t.state === 0 &&
-              !prev.atEnd &&
-              t.atEnd;
-            if (onlyAtEndChanged) {
-              const thread = threads.get(slot);
-              if (thread?.action) {
-                const clip = thread.action.getClip();
-                thread.action.time = t.forward ? clip.duration : 0;
-                thread.action.setLoop(LoopOnce, 1);
-                thread.action.clampWhenFinished = true;
-                thread.action.paused = true;
-              }
-              continue;
-            }
-
             const seqName = seqIndexToName[t.sequence];
             if (!seqName) continue;
-            if (t.state === 0) {
-              playThread(slot, seqName);
-              // If the animation is already finished (atEnd=true on first
-              // appearance — e.g. a deployed MPB entering scope), snap to
-              // the end pose immediately instead of replaying it.
+
+            // Match binary updateThread (FUN_005ebf00):
+            // State 0=Play, 1=Stop, 2=Pause
+            if (t.state === 1) {
+              // Stop: reset to start, freeze.
+              stopThread(slot);
+            } else if (t.state === 2) {
+              // Pause: freeze at current position.
+              const thread = threads.get(slot);
+              if (thread?.action) {
+                thread.action.paused = true;
+              }
+            } else {
+              // Play (state === 0)
               if (t.atEnd) {
-                const thread = threads.get(slot);
+                // Already finished: snap to end pose, freeze.
+                // Check if we need to start the thread first.
+                let thread = threads.get(slot);
+                if (!thread || thread.sequence !== seqName) {
+                  playThread(slot, seqName, t.forward);
+                  thread = threads.get(slot);
+                }
                 if (thread?.action) {
                   const clip = thread.action.getClip();
                   thread.action.time = t.forward ? clip.duration : 0;
+                  thread.action.timeScale = 1;
                   thread.action.setLoop(LoopOnce, 1);
                   thread.action.clampWhenFinished = true;
                   thread.action.paused = true;
                 }
+                // Snap vis nodes to end pose.
+                if (thread?.visNodes) {
+                  for (const v of thread.visNodes) {
+                    const mat = v.mesh.material;
+                    if (!mat || Array.isArray(mat)) continue;
+                    const endIdx = t.forward
+                      ? v.keyframes.length - 1
+                      : 0;
+                    mat.opacity = v.keyframes[endIdx];
+                    v.mesh.visible = mat.opacity > 0.01;
+                  }
+                }
+              } else {
+                // Actively playing: (re)start with correct direction.
+                // Only restart if sequence or direction changed.
+                const thread = threads.get(slot);
+                const needRestart =
+                  !thread ||
+                  thread.sequence !== seqName ||
+                  thread.forward !== t.forward;
+                if (needRestart) {
+                  playThread(slot, seqName, t.forward);
+                } else if (thread?.action?.paused) {
+                  // Resume from pause with correct direction.
+                  thread.action.paused = false;
+                  thread.action.timeScale = t.forward ? 1 : -1;
+                }
               }
-            } else {
-              stopThread(slot);
             }
           } else if (prev) {
             // Thread disappeared — stop it.
@@ -854,7 +935,8 @@ export const ShapeModel = memo(function ShapeModel({
     }
 
     // Drive vis opacity animations for active threads.
-    for (const [, thread] of threads) {
+    // Direction is handled by computing position forward or backward.
+    for (const [slot, thread] of threads) {
       if (!thread.visNodes) continue;
 
       for (const { mesh, keyframes, duration, cyclic } of thread.visNodes) {
@@ -863,20 +945,29 @@ export const ShapeModel = memo(function ShapeModel({
 
         if (!animationEnabled) {
           mat.opacity = keyframes[0];
+          mesh.visible = mat.opacity > 0.01;
           continue;
         }
 
         const elapsed = shapeNowSec() - thread.startTime;
-        const t = cyclic
-          ? (elapsed % duration) / duration
-          : Math.min(elapsed / duration, 1);
+        let t: number;
+        if (cyclic) {
+          // Cyclic: wrap position, ignoring direction (cyclic always advances).
+          t = ((elapsed % duration) + duration) % duration / duration;
+        } else if (thread.forward) {
+          t = Math.min(elapsed / duration, 1);
+        } else {
+          // Backward: start at 1.0 and move toward 0.0.
+          t = Math.max(1 - elapsed / duration, 0);
+        }
 
         const n = keyframes.length;
-        const pos = t * n;
-        const lo = Math.floor(pos) % n;
-        const hi = (lo + 1) % n;
-        const frac = pos - Math.floor(pos);
+        const pos = t * (n - 1);
+        const lo = Math.min(Math.floor(pos), n - 1);
+        const hi = Math.min(lo + 1, n - 1);
+        const frac = pos - lo;
         mat.opacity = keyframes[lo] + (keyframes[hi] - keyframes[lo]) * frac;
+        mesh.visible = mat.opacity > 0.01;
       }
     }
 
@@ -989,6 +1080,82 @@ export const ShapeModel = memo(function ShapeModel({
     }
   });
 
+  // ShapeBase fade opacity and cloak texture effect.
+  // Fade (mFadeVal): opacity-only, used by startFade().
+  // Cloak (mCloakLevel): replaces textures with cloakTexture + UV scrolling,
+  // alpha = 0.125 + (1 - cloakLevel) * 0.875. Binary-verified rendering path.
+  const lastFadeValRef = useRef(1);
+  const lastCloakLevelRef = useRef(0);
+  useFrame((state) => {
+    const entity = streamEntityRef.current;
+    const fadeVal = entity?.fadeVal ?? 1;
+    const cloakLevel = entity?.cloakLevel ?? 0;
+    const isCloak = cloakLevel > 0;
+
+    // Advance global cloak UV offset once per frame (all cloaked shapes share it).
+    if (isCloak)
+      advanceCloakUV(
+        state.frameloop === "never" ? 0 : (state.clock.elapsedTime * 60) | 0,
+      );
+
+    if (
+      fadeVal === lastFadeValRef.current &&
+      cloakLevel === lastCloakLevelRef.current
+    )
+      return;
+    lastFadeValRef.current = fadeVal;
+    lastCloakLevelRef.current = cloakLevel;
+
+    // Cloak alpha OVERRIDES fade (binary-verified: TSMesh uses else-if —
+    // alwaysAlpha takes precedence over overrideFade when both are set).
+    const combinedAlpha = isCloak ? 0.125 + (1 - cloakLevel) * 0.875 : fadeVal;
+    const cloakTex = isCloak ? getCloakTexture() : _cloakTexture;
+
+    clonedScene.traverse((node: any) => {
+      if (!node.isMesh || !node.material || Array.isArray(node.material))
+        return;
+      const mat = node.material;
+      const ud = (mat.userData ??= {});
+
+      // Save originals on first encounter.
+      if (ud._baseFadeOpacity == null) {
+        ud._baseFadeOpacity = mat.opacity ?? 1;
+        ud._baseFadeTransparent = mat.transparent ?? false;
+        ud._originalMap = mat.map;
+        // Originally-translucent materials keep their own texture during cloak.
+        // Detect via alphaTest (organic/Translucent cutout) or non-normal blending
+        // (Additive). These match how createMaterialFromFlags sets up materials.
+        ud._isOriginallyTranslucent =
+          (ud._baseFadeTransparent as boolean) ||
+          mat.alphaTest > 0 ||
+          mat.blending !== NormalBlending;
+      }
+
+      const baseOpacity = ud._baseFadeOpacity as number;
+
+      // Cloak texture replacement (non-translucent materials only).
+      if (isCloak && !ud._isOriginallyTranslucent) {
+        if (mat.map !== cloakTex) {
+          mat.map = cloakTex;
+          mat.needsUpdate = true;
+        }
+      } else if (
+        !isCloak &&
+        ud._originalMap !== undefined &&
+        mat.map === cloakTex
+      ) {
+        mat.map = ud._originalMap;
+        mat.needsUpdate = true;
+      }
+
+      mat.opacity = combinedAlpha * baseOpacity;
+      mat.transparent =
+        combinedAlpha < 1 || (ud._baseFadeTransparent as boolean);
+      mat.depthWrite =
+        combinedAlpha >= 1 && !(ud._baseFadeTransparent as boolean);
+    });
+  });
+
   // ShapeBase sound slots — managed as PositionalAudio, not entities.
   useEntitySoundSlots(streamEntityRef, clonedScene);
 
@@ -1006,19 +1173,53 @@ export const ShapeModel = memo(function ShapeModel({
     };
   }, [isTarget, gltf.scene]);
 
-  // Find mount point bones in the cloned scene for portal rendering.
+  // Find mount point bones in the cloned scene for portal rendering
+  // and for vehicle mount position tracking.
   const mountBones = useMemo(() => {
-    if (!mounted) return null;
     const bones: Record<number, Group> = {};
-    for (const slot of Object.keys(mounted)) {
-      const index = Number(slot);
-      const nodeName = `Mount${index}`;
-      clonedScene.traverse((node: any) => {
-        if (node.name === nodeName) bones[index] = node;
-      });
-    }
+    // Always look for Mount0 (pilot seat for vehicles).
+    clonedScene.traverse((node: any) => {
+      const match = node.name.match(/^Mount(\d+)$/);
+      if (match) bones[Number(match[1])] = node;
+    });
     return Object.keys(bones).length > 0 ? bones : null;
-  }, [clonedScene, mounted]);
+  }, [clonedScene]);
+
+  // Find Eye node for vehicle camera positioning. Vehicles have an Eye node
+  // in their DTS shape that defines the cockpit viewpoint.
+  const eyeBone = useMemo((): Object3D | null => {
+    let found: Object3D | null = null;
+    clonedScene.traverse((node: any) => {
+      if (node.name === "Eye") found = node;
+    });
+    return found;
+  }, [clonedScene]);
+
+  // Write animated Eye node position to the shared eye position map so the
+  // camera system can use it (same map as PlayerModel's eye bone).
+  useEffect(() => {
+    if (!eyeBone || !entityId) return;
+    return () => {
+      playerEyePositions.delete(entityId);
+    };
+  }, [eyeBone, entityId]);
+
+  useFrame(() => {
+    if (!eyeBone || !entityId) return;
+    let eyePos = playerEyePositions.get(entityId);
+    if (!eyePos) {
+      eyePos = new Vector3();
+      playerEyePositions.set(entityId, eyePos);
+    }
+    eyeBone.getWorldPosition(eyePos);
+    clonedScene.worldToLocal(eyePos);
+    // Convert GLB (x,y,z) → entity-local Three.js space via R90
+    // (same swizzle as PlayerModel's eye extraction).
+    const gx = eyePos.x;
+    const gy = eyePos.y;
+    const gz = eyePos.z;
+    eyePos.set(gz, gy, -gx);
+  });
 
   return (
     <group rotation={noRotation ? undefined : STANDARD_90_ROTATION}>
@@ -1040,7 +1241,10 @@ export const ShapeModel = memo(function ShapeModel({
           const bone = mountBones[Number(slot)];
           return bone ? (
             <Fragment key={slot}>
-              {createPortal(<group>{content}</group>, bone)}
+              {createPortal(
+                <group rotation={MOUNT_COUNTER_ROTATION}>{content}</group>,
+                bone,
+              )}
             </Fragment>
           ) : null;
         })}

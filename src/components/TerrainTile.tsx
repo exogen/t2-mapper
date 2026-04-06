@@ -147,14 +147,13 @@ const BlendedTerrainTextures = memo(function BlendedTerrainTextures({
   // Key for shader structure changes (detail texture, lightmap)
   const materialKey = `${detailTextureUrl ? "detail" : "nodetail"}-${lightmap ? "lightmap" : "nolightmap"}`;
 
-  // Displacement is done on CPU, so no displacementMap needed
-  // We keep 'map' to provide UV coordinates for shader (vMapUv)
-  // Use MeshLambertMaterial for compatibility with shadow maps
+  // Displacement is done on CPU — no displacementMap or map needed.
+  // UVs are provided by vTerrainUv (injected in the vertex shader),
+  // avoiding an unused `map` sampler that would waste a texture unit.
   return (
     <meshLambertMaterial
       ref={materialRef}
       key={materialKey}
-      map={displacementMap}
       depthWrite
       side={FrontSide}
       defines={{ DEBUG_MODE: debugMode ? 1 : 0 }}

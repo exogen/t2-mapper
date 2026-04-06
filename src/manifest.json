@@ -29164,10 +29164,6 @@
       "missions/TrueGrit.mis",
       ["z_mappacks/TWL_T2arenaOfficialMaps.vl2"]
     ],
-    "missions/tst_spheremap.mis": [
-      "missions/TST_SphereMap.mis",
-      ["z_mappacks/zDMP-4.7.3DX.vl2"]
-    ],
     "missions/tusklt.mis": [
       "missions/TuskLT.mis",
       ["z_mappacks/z_DMP2-V0.6.vl2"]
@@ -30843,7 +30839,6 @@
       ["z_mappacks/z_DMP2-V0.6.vl2"]
     ],
     "shapes/chaingun_shot.dts": ["shapes/chaingun_shot.dts", ["shapes.vl2"]],
-    "shapes/chrometest.dts": ["shapes/chromeTest.dts", ["shapes.vl2"]],
     "shapes/debris_generic.dts": ["shapes/debris_generic.dts", ["shapes.vl2"]],
     "shapes/debris_generic_small.dts": [
       "shapes/debris_generic_small.dts",
@@ -61281,11 +61276,6 @@
       "resourcePath": "missions/truegrit.mis",
       "displayName": "True Grit",
       "missionTypes": ["Arena"]
-    },
-    "TST_SphereMap": {
-      "resourcePath": "missions/tst_spheremap.mis",
-      "displayName": "TST-SphereMap",
-      "missionTypes": ["CTF"]
     },
     "TuskLT": {
       "resourcePath": "missions/tusklt.mis",

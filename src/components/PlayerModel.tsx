@@ -27,9 +27,9 @@ import {
 } from "../stream/playbackUtils";
 import { pickMoveAnimation } from "../stream/playerAnimation";
 import { WeaponImageStateMachine } from "../stream/weaponStateMachine";
+import { useQuery } from "@tanstack/react-query";
 import type { WeaponAnimState } from "../stream/weaponStateMachine";
 import { getAliasedActions } from "../torqueScript/shapeConstructor";
-import { useQuery } from "@tanstack/react-query";
 import {
   useStaticShape,
   ShapePlaceholder,
@@ -89,23 +89,25 @@ const SKIN_SUFFIXES: Record<string, string> = {
 /** Processed custom skin manifest: suffix → Set of available skin names. */
 type SkinLookup = Record<string, Set<string>>;
 
-/** Fetch the remote custom skins manifest (once, cached forever).
- *  Returns a lookup of suffix → Set<skinName> for O(1) has() checks. */
+/** Skin manifest query key and fetcher, shared with App.tsx prefetch. */
+export const skinManifestQueryKey = ["customSkinManifest"] as const;
+export async function fetchSkinManifest(): Promise<SkinLookup> {
+  const res = await fetch(SKIN_MANIFEST_URL);
+  if (!res.ok) throw new Error(`${res.status}`);
+  const raw: { customSkins?: Record<string, string[]> } = await res.json();
+  const lookup: SkinLookup = {};
+  if (raw.customSkins) {
+    for (const [suffix, names] of Object.entries(raw.customSkins)) {
+      lookup[suffix] = new Set(names);
+    }
+  }
+  return lookup;
+}
+
 function useCustomSkinManifest() {
   return useQuery<SkinLookup>({
-    queryKey: ["customSkinManifest"],
-    queryFn: async () => {
-      const res = await fetch(SKIN_MANIFEST_URL);
-      if (!res.ok) throw new Error(`${res.status}`);
-      const raw: { customSkins?: Record<string, string[]> } = await res.json();
-      const lookup: SkinLookup = {};
-      if (raw.customSkins) {
-        for (const [suffix, names] of Object.entries(raw.customSkins)) {
-          lookup[suffix] = new Set(names);
-        }
-      }
-      return lookup;
-    },
+    queryKey: skinManifestQueryKey,
+    queryFn: fetchSkinManifest,
     staleTime: Infinity,
     retry: 1,
   });
@@ -286,6 +288,9 @@ export function PlayerModel({ entity }: { entity: PlayerEntity }) {
   );
 
   // Resolve skin texture URL: local manifest first, then remote manifest.
+  // The manifest is prefetched at app startup (see App.tsx) so it's
+  // available synchronously here — no async wait that could be starved
+  // by store mutations during streaming playback.
   const { data: skinManifest } = useCustomSkinManifest();
 
   const skinUrl = useMemo(() => {
@@ -335,10 +340,16 @@ export function PlayerModel({ entity }: { entity: PlayerEntity }) {
 
     // Use front-face-only rendering so the camera can see out from inside the
     // model in first-person (backface culling hides interior faces).
+    // Disable frustum culling — when portaled into a vehicle mount bone, the
+    // bounding sphere is in local space but the world transform comes from the
+    // bone chain, causing incorrect culling.
     scene.traverse((n: any) => {
-      if (n.isMesh && n.material) {
-        const mats = Array.isArray(n.material) ? n.material : [n.material];
-        for (const m of mats) m.side = FrontSide;
+      if (n.isMesh) {
+        n.frustumCulled = false;
+        if (n.material) {
+          const mats = Array.isArray(n.material) ? n.material : [n.material];
+          for (const m of mats) m.side = FrontSide;
+        }
       }
     });
 
@@ -590,14 +601,14 @@ export function PlayerModel({ entity }: { entity: PlayerEntity }) {
 
   // Track weaponShape changes. The entity is mutated in-place by the
   // streaming layer (no React re-render), so we sync it in useFrame.
-  const weaponShapeRef = useRef(entity.weaponShape);
-  const [currentWeaponShape, setCurrentWeaponShape] = useState(
-    entity.weaponShape,
-  );
-  const packShapeRef = useRef(entity.packShape);
-  const [currentPackShape, setCurrentPackShape] = useState(entity.packShape);
-  const flagShapeRef = useRef(entity.flagShape);
-  const [currentFlagShape, setCurrentFlagShape] = useState(entity.flagShape);
+  // Derive weapon/pack/flag from imageSlots.
+  const getSlotShape = (slot: number) => entity.imageSlots?.[slot]?.shapeName;
+  const weaponShapeRef = useRef(getSlotShape(0));
+  const [currentWeaponShape, setCurrentWeaponShape] = useState(getSlotShape(0));
+  const packShapeRef = useRef(getSlotShape(2));
+  const [currentPackShape, setCurrentPackShape] = useState(getSlotShape(2));
+  const flagShapeRef = useRef(getSlotShape(3));
+  const [currentFlagShape, setCurrentFlagShape] = useState(getSlotShape(3));
 
   // ShapeBase sound slots (weapon switch sounds, etc.) — managed by shared hook.
   const entityRef = useRef(entity);
@@ -663,17 +674,20 @@ export function PlayerModel({ entity }: { entity: PlayerEntity }) {
 
   // Per-frame animation selection and mixer update.
   useFrame((_, delta) => {
-    if (entity.weaponShape !== weaponShapeRef.current) {
-      weaponShapeRef.current = entity.weaponShape;
-      setCurrentWeaponShape(entity.weaponShape);
+    const curWeapon = getSlotShape(0);
+    if (curWeapon !== weaponShapeRef.current) {
+      weaponShapeRef.current = curWeapon;
+      setCurrentWeaponShape(curWeapon);
     }
-    if (entity.packShape !== packShapeRef.current) {
-      packShapeRef.current = entity.packShape;
-      setCurrentPackShape(entity.packShape);
+    const curPack = getSlotShape(2);
+    if (curPack !== packShapeRef.current) {
+      packShapeRef.current = curPack;
+      setCurrentPackShape(curPack);
     }
-    if (entity.flagShape !== flagShapeRef.current) {
-      flagShapeRef.current = entity.flagShape;
-      setCurrentFlagShape(entity.flagShape);
+    const curFlag = getSlotShape(3);
+    if (curFlag !== flagShapeRef.current) {
+      flagShapeRef.current = curFlag;
+      setCurrentFlagShape(curFlag);
     }
     const playback = engineStore.getState().playback;
     const isPlaying = playback.status === "playing";
@@ -929,7 +943,6 @@ export function PlayerModel({ entity }: { entity: PlayerEntity }) {
     // from the animated skeleton (rotation is discarded — head rotation
     // is constructed from mHead pitch/yaw instead).
     if (eyeBone) {
-      clonedScene.updateWorldMatrix(false, true);
       let eyePos = playerEyePositions.get(entity.id);
       if (!eyePos) {
         eyePos = new Vector3();
@@ -981,7 +994,7 @@ export function PlayerModel({ entity }: { entity: PlayerEntity }) {
           <Suspense>
             <MountedShapeContent
               shapeName={currentPackShape}
-              imageDataBlockId={entity.imageDataBlockIds?.[2]}
+              imageDataBlockId={entity.imageSlots?.[2]?.dataBlockId}
               entityId={entity.id}
             />
           </Suspense>,
@@ -993,9 +1006,9 @@ export function PlayerModel({ entity }: { entity: PlayerEntity }) {
           <Suspense>
             <MountedShapeContent
               shapeName={currentFlagShape}
-              imageDataBlockId={entity.imageDataBlockIds?.[3]}
+              imageDataBlockId={entity.imageSlots?.[3]?.dataBlockId}
               entityId={entity.id}
-              skinName={entity.imageSkinNames?.[3]}
+              skinName={entity.imageSlots?.[3]?.skinName}
             />
           </Suspense>,
           mount2,
@@ -1075,8 +1088,8 @@ function WeaponModel({
   const engineStore = useEngineStoreApi();
   const weaponGltf = useStaticShape(weaponShape);
   const emap = useMemo(
-    () => resolveEmapFromImageSlot(entity.imageDataBlockIds?.[0]),
-    [entity.imageDataBlockIds],
+    () => resolveEmapFromImageSlot(entity.imageSlots?.[0]?.dataBlockId),
+    [entity.imageSlots],
   );
   const anisotropy = useAnisotropy();
 

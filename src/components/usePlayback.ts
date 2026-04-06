@@ -12,8 +12,15 @@ export function useIsPlaying(): boolean {
   return useEngineSelector((state) => state.playback.status === "playing");
 }
 
+/** Playback time for UI display, floored to whole seconds. The selector
+ *  evaluates on every store mutation but only triggers a re-render when
+ *  the displayed second changes (~1/s). */
 export function useCurrentTime(): number {
-  return useEngineSelector((state) => state.playback.timeMs / 1000);
+  return useEngineSelector((state) =>
+    Math.floor(
+      state.playback.streamSnapshot?.timeSec ?? state.playback.seekTime,
+    ),
+  );
 }
 
 export function useDuration(): number {
@@ -30,7 +37,7 @@ export function usePlaybackActions() {
   const setPlaybackStatus = useEngineSelector(
     (state) => state.setPlaybackStatus,
   );
-  const setPlaybackTime = useEngineSelector((state) => state.setPlaybackTime);
+  const seekPlayback = useEngineSelector((state) => state.seekPlayback);
   const setPlaybackRate = useEngineSelector((state) => state.setPlaybackRate);
 
   const setRec = useCallback(
@@ -50,10 +57,10 @@ export function usePlaybackActions() {
   }, [setPlaybackStatus]);
 
   const seek = useCallback(
-    (time: number) => {
-      setPlaybackTime(time * 1000);
+    (timeSec: number) => {
+      seekPlayback(timeSec);
     },
-    [setPlaybackTime],
+    [seekPlayback],
   );
 
   const setSpeed = useCallback(

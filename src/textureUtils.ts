@@ -7,7 +7,7 @@ import {
   LinearFilter,
   LinearMipmapLinearFilter,
   NoColorSpace,
-  RedFormat,
+  RGBAFormat,
   RepeatWrapping,
   SRGBColorSpace,
   Texture,
@@ -141,34 +141,42 @@ export function setupTexture<T extends Texture>(
   }
   tex.magFilter = LinearFilter;
 
-  tex.needsUpdate = true;
+  // Only mark for upload if the texture actually has image data. Textures
+  // from loadTexture() get needsUpdate set in the load callback instead.
+  if (tex.image) {
+    tex.needsUpdate = true;
+  }
 
   return tex;
 }
 
 /**
- * Setup a mask texture (single channel, linear color space).
- * Used for terrain blend masks and similar data textures.
+ * Pack single-channel alpha masks into RGB textures (3 masks per texture).
+ * Reduces sampler count from N to ceil(N/3). Each mask goes into the R, G,
+ * or B channel. All masks must be 256×256.
  */
-export function setupMask(data: Uint8Array): DataTexture {
-  const tex = new DataTexture(
-    data,
-    256,
-    256,
-    RedFormat, // 1 channel
-    UnsignedByteType, // 8-bit
-  );
-
-  // Masks should stay linear
-  tex.colorSpace = NoColorSpace;
-
-  // Set tiling / sampling. For NPOT sizes, disable mips or use power-of-two.
-  tex.wrapS = tex.wrapT = RepeatWrapping;
-  tex.generateMipmaps = false; // if width/height are not powers of two
-  tex.minFilter = LinearFilter; // avoid mips if generateMipmaps=false
-  tex.magFilter = LinearFilter;
-
-  tex.needsUpdate = true;
-
-  return tex;
+export function packMasksRGB(masks: Uint8Array[], size = 256): DataTexture[] {
+  const packed: DataTexture[] = [];
+  for (let i = 0; i < masks.length; i += 3) {
+    const r = masks[i];
+    const g = masks[i + 1];
+    const b = masks[i + 2];
+    const pixels = size * size;
+    const rgba = new Uint8Array(pixels * 4);
+    for (let j = 0; j < pixels; j++) {
+      rgba[j * 4] = r[j];
+      rgba[j * 4 + 1] = g ? g[j] : 0;
+      rgba[j * 4 + 2] = b ? b[j] : 0;
+      rgba[j * 4 + 3] = 255;
+    }
+    const tex = new DataTexture(rgba, size, size, RGBAFormat, UnsignedByteType);
+    tex.colorSpace = NoColorSpace;
+    tex.wrapS = tex.wrapT = RepeatWrapping;
+    tex.generateMipmaps = false;
+    tex.minFilter = LinearFilter;
+    tex.magFilter = LinearFilter;
+    tex.needsUpdate = true;
+    packed.push(tex);
+  }
+  return packed;
 }

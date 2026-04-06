@@ -28,7 +28,9 @@ export interface RuntimeSliceState {
 export interface PlaybackSliceState {
   recording: StreamRecording | null;
   status: PlaybackStatus;
-  timeMs: number;
+  /** Seek target in seconds. Written by UI seek actions, read by
+   *  StreamingController to detect and execute seeks. */
+  seekTime: number;
   rate: number;
   durationMs: number;
   streamSnapshot: StreamSnapshot | null;
@@ -48,7 +50,7 @@ export interface EngineStoreState {
     tickInfo?: RuntimeTickInfo,
   ): void;
   setRecording(recording: StreamRecording | null): void;
-  setPlaybackTime(ms: number): void;
+  seekPlayback(timeSec: number): void;
   setPlaybackStatus(status: PlaybackStatus): void;
   setPlaybackRate(rate: number): void;
   setPlaybackStreamSnapshot(snapshot: StreamSnapshot | null): void;
@@ -111,7 +113,7 @@ const initialState: Omit<
   | "clearRuntime"
   | "applyRuntimeBatch"
   | "setRecording"
-  | "setPlaybackTime"
+  | "seekPlayback"
   | "setPlaybackStatus"
   | "setPlaybackRate"
   | "setPlaybackStreamSnapshot"
@@ -128,7 +130,7 @@ const initialState: Omit<
   playback: {
     recording: null,
     status: "stopped",
-    timeMs: 0,
+    seekTime: 0,
     rate: 1,
     durationMs: 0,
     streamSnapshot: null,
@@ -259,7 +261,7 @@ export const engineStore = createStore<EngineStoreState>()(
         playback: {
           recording,
           status: recording ? "stopped" : state.playback.status,
-          timeMs: recording ? 0 : state.playback.timeMs,
+          seekTime: recording ? 0 : state.playback.seekTime,
           rate: recording ? 1 : state.playback.rate,
           durationMs,
           // Preserve the last snapshot so HUD/chat persist after unload.
@@ -268,14 +270,14 @@ export const engineStore = createStore<EngineStoreState>()(
       }));
     },
 
-    setPlaybackTime(ms: number) {
+    seekPlayback(timeSec: number) {
       set((state) => {
-        const clamped = clamp(ms, 0, state.playback.durationMs);
+        const clamped = clamp(timeSec, 0, state.playback.durationMs / 1000);
         return {
           ...state,
           playback: {
             ...state.playback,
-            timeMs: clamped,
+            seekTime: clamped,
           },
         };
       });

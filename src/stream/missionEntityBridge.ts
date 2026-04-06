@@ -229,7 +229,13 @@ function buildShapeEntity(
     const barrelName = getProperty(object, "initialBarrel");
     if (barrelName) {
       const barrelDb = resolveDatablock(runtime, barrelName);
-      entity.weaponShape = getProperty(barrelDb, "shapeFile");
+      const turretShapeName = getProperty(barrelDb, "shapeFile");
+      if (turretShapeName) {
+        const mountPoint = Number(getProperty(barrelDb, "mountPoint")) || 0;
+        entity.imageSlots = [
+          { shapeName: turretShapeName, mountPoint, dataBlockId: 0 },
+        ];
+      }
     }
   }
 

@@ -1,4 +1,14 @@
+import type { ParsedData } from "t2-demo-parser";
 import type { SceneObject } from "../scene/types";
+
+/** A mounted image in one of 8 ShapeBase image slots. The mount bone
+ *  comes from the image datablock's mountPoint field, not the slot index. */
+export interface ImageSlot {
+  shapeName: string;
+  mountPoint: number;
+  dataBlockId: number;
+  skinName?: string;
+}
 
 /** DTS animation thread state from ghost ThreadMask data. */
 export interface ThreadState {
@@ -98,11 +108,8 @@ export interface StreamEntity {
   dataBlock?: string;
   visual?: StreamVisual;
   direction?: [number, number, number];
-  weaponShape?: string;
-  /** Datablock IDs for each mounted image slot (0-3). */
-  imageDataBlockIds?: (number | undefined)[];
-  /** Skin names for each mounted image slot (0-3), from ghost ImageMask skinTag. */
-  imageSkinNames?: (string | undefined)[];
+  /** Mounted image slots (0-7). Mount bone from dataBlock->mountPoint. */
+  imageSlots?: (ImageSlot | undefined)[];
   playerName?: string;
   /** IFF color resolved from the sensor group color table (sRGB 0-255). */
   iffColor?: { r: number; g: number; b: number };
@@ -123,8 +130,11 @@ export interface StreamEntity {
   actionAnim?: number;
   actionAtEnd?: boolean;
   damageState?: number;
-  /** ShapeBase hidden state (binaryCloak). True = invisible. */
-  hidden?: boolean;
+  /** ShapeBase fade value (0=invisible, 1=fully visible). Matches mFadeVal. */
+  fadeVal?: number;
+  /** Cloak level (0=visible, 1=fully cloaked). Separate from fadeVal so the
+   *  renderer can apply the cloak texture effect. */
+  cloakLevel?: number;
   faceViewer?: boolean;
   /** DTS animation thread states from ghost ThreadMask data. */
   threads?: ThreadState[];
@@ -136,10 +146,10 @@ export interface StreamEntity {
   weaponImageState?: WeaponImageState;
   /** Weapon image state machine states from the ShapeBaseImageData datablock. */
   weaponImageStates?: WeaponImageDataBlockState[];
-  /** DTS shape name for the mounted pack (slot 2, Mount1 bone). */
-  packShape?: string;
-  /** DTS shape name for the carried flag (slot 3, Mount2 bone). */
-  flagShape?: string;
+  /** Entity ID of the object this entity is mounted on (vehicle, etc.). */
+  mountObjectId?: string;
+  /** Mount point node index on the mount target (0 = pilot). */
+  mountNode?: number;
   /** Player skin (team skin like "base", "baseb"). */
   skinName?: string;
   /** Player preferred skin (chosen skin like "RandySavage"). */
@@ -207,6 +217,8 @@ export interface StreamCamera {
   orbitTargetId?: string;
   /** Orbit distance used for third-person camera positioning. */
   orbitDistance?: number;
+  /** Vertical offset for orbit target (from VehicleData.cameraOffset). */
+  orbitOffset?: number;
   /** Absolute control-object yaw in Torque radians (rotZ/rotationZ). */
   yaw?: number;
   /** Absolute control-object pitch in Torque radians (rotX/headX). */
@@ -332,7 +344,7 @@ export interface StreamingPlayback {
   /** DTS shape names for weapon effects (explosions) that should be preloaded. */
   getEffectShapes(): string[];
   /** Resolve a datablock by its numeric ID. */
-  getDataBlockData(id: number): Record<string, unknown> | undefined;
+  getDataBlockData(id: number): ParsedData | undefined;
   /**
    * Get TSShapeConstructor sequence entries for a shape (e.g. "heavy_male.dts").
    * Returns the raw sequence strings like `"heavy_male_root.dsq root"`.

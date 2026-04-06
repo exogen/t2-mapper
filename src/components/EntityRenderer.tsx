@@ -73,12 +73,15 @@ const WaterBlock = createLazy("WaterBlock", () => import("./WaterBlock"));
  */
 export const EntityRenderer = memo(function EntityRenderer({
   entity,
+  objectMounts,
 }: {
   entity: GameEntity;
+  /** Object-mounted entities (players in vehicles, turrets on vehicles). */
+  objectMounts?: Record<number, React.ReactNode>;
 }) {
   switch (entity.renderType) {
     case "Shape":
-      return <ShapeEntity entity={entity} />;
+      return <ShapeEntity entity={entity} objectMounts={objectMounts} />;
     case "ForceFieldBare":
       return <ForceFieldBare entity={entity} />;
     case "Player":
@@ -119,7 +122,13 @@ export const EntityRenderer = memo(function EntityRenderer({
   }
 });
 
-function ShapeEntity({ entity }: { entity: ShapeEntityType }) {
+function ShapeEntity({
+  entity,
+  objectMounts,
+}: {
+  entity: ShapeEntityType;
+  objectMounts?: Record<number, React.ReactNode>;
+}) {
   const dataSource = useDataSource();
   const isStreaming = dataSource === "demo" || dataSource === "live";
   const groupRef = useRef<Group>(null);
@@ -153,6 +162,30 @@ function ShapeEntity({ entity }: { entity: ShapeEntityType }) {
         ? "#00ff88"
         : "yellow";
 
+  // Merge image mounts (all 8 slots) with object mounts (players in vehicles).
+  // Both use the same Mount bones. Each image slot's mount bone comes from
+  // dataBlock->mountPoint (binary-verified), not from the slot index.
+  // Object mounts take priority over image mounts at the same bone.
+  const allMounts = useMemo(() => {
+    const m: Record<number, React.ReactNode> = { ...objectMounts };
+    const slots = entity.imageSlots;
+    if (slots) {
+      for (let i = 0; i < slots.length; i++) {
+        const slot = slots[i];
+        if (!slot?.shapeName || slot.mountPoint in m) continue;
+        m[slot.mountPoint] = (
+          <MountedShapeContent
+            shapeName={slot.shapeName}
+            imageDataBlockId={slot.dataBlockId}
+            entityId={entity.id}
+            skinName={slot.skinName}
+          />
+        );
+      }
+    }
+    return Object.keys(m).length > 0 ? m : undefined;
+  }, [objectMounts, entity.imageSlots, entity.id]);
+
   return (
     <ShapeInfoProvider
       object={entity.runtimeObject as TorqueObject | undefined}
@@ -166,19 +199,7 @@ function ShapeEntity({ entity }: { entity: ShapeEntityType }) {
           emap={emap}
           entityId={entity.id}
           skinName={entity.skinName}
-          mounted={
-            entity.weaponShape
-              ? {
-                  0: (
-                    <MountedShapeContent
-                      shapeName={entity.weaponShape}
-                      imageDataBlockId={entity.imageDataBlockIds?.[0]}
-                      entityId={entity.id}
-                    />
-                  ),
-                }
-              : undefined
-          }
+          mounted={allMounts}
         >
           {flagLabel ? (
             <FloatingLabel opacity={0.6}>{flagLabel}</FloatingLabel>

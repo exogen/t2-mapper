@@ -76,7 +76,9 @@ export function setupEffectTexture(tex: Texture): void {
   tex.magFilter = LinearFilter;
   tex.colorSpace = NoColorSpace;
   tex.flipY = false;
-  tex.needsUpdate = true;
+  if (tex.image) {
+    tex.needsUpdate = true;
+  }
 }
 
 export function torqueVecToThree(

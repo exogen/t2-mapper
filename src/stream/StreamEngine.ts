@@ -40,6 +40,7 @@ import type {
   BackpackHudState,
   ChatSegment,
   ChatMessage,
+  ImageSlot,
   ThreadState,
   StreamVisual,
   StreamCamera,
@@ -54,6 +55,18 @@ import type {
   WeaponImageState,
   WeaponImageDataBlockState,
 } from "./types";
+import type {
+  ParsedData,
+  GhostAlwaysObjectEventData,
+  NetStringEventData,
+  TargetInfoEventData,
+  SetSensorGroupEventData,
+  SensorGroupColorEventData,
+  RemoteCommandEventData,
+  Sim3DAudioEventData,
+  Sim2DAudioEventData,
+  GhostingMessageEventData,
+} from "t2-demo-parser";
 import { createLogger } from "../logger";
 
 const log = createLogger("StreamEngine");
@@ -74,9 +87,8 @@ export interface MutableEntity {
   dataBlock?: string;
   visual?: StreamVisual;
   direction?: [number, number, number];
-  weaponShape?: string;
-  /** Datablock IDs for each mounted image slot (0-3). */
-  imageDataBlockIds?: (number | undefined)[];
+  /** Mounted image slots (0-7). Each has shape, mount bone from datablock. */
+  imageSlots?: (ImageSlot | undefined)[];
   playerName?: string;
   /** Player skin (team skin like "base", "baseb"). */
   skinName?: string;
@@ -109,22 +121,29 @@ export interface MutableEntity {
   weaponImageState?: WeaponImageState;
   weaponImageStates?: WeaponImageDataBlockState[];
   weaponImageStatesDbId?: number;
-  packShape?: string;
-  flagShape?: string;
-  /** Skin names for each mounted image slot (from ghost ImageMask skinTag). */
-  imageSkinNames?: (string | undefined)[];
   falling?: boolean;
   jetting?: boolean;
   headPitch?: number;
   headYaw?: number;
   targetRenderFlags?: number;
+  /** Ghost index of the object this entity is mounted on (vehicle, etc.).
+   *  When set, the entity's rendered position is derived from the mount
+   *  target's transform, not from its own ghost position. */
+  mountObjectGhostIndex?: number;
+  /** Mount point node on the mount target (0 = pilot, 1+ = passenger/turret). */
+  mountNode?: number;
   /** ShapeBase sound slots (4 max). Raw ghost SoundMask data — components
    *  manage PositionalAudio objects directly, matching Tribes 2's approach. */
   soundSlots?: Array<{ index: number; playing: boolean; profileId?: number }>;
-  /** ShapeBase hidden state (binaryCloak from CloakMask). True = invisible.
-   *  Flags are hidden when carried by a player; the flag Item ghost stays
-   *  in scope but shouldn't render. */
-  hidden?: boolean;
+  /** ShapeBase fade value (0=invisible, 1=fully visible). Matches mFadeVal. */
+  fadeVal?: number;
+  /** Active fade animation state. Set when CloakMask fading=true. */
+  fadeState?: { fadeOut: boolean; fadeTime: number; elapsed: number };
+  /** Whether the cloak is active (mCloaked). */
+  cloaked?: boolean;
+  /** Cloak level (0=visible, 1=fully cloaked). Interpolated client-side
+   *  at rate dt*2 per tick (0.5s transition). Binary-verified. */
+  cloakLevel?: number;
   /** Item mStatic flag (from InitialUpdateMask). Static items (flags at
    *  flagstand) skip all physics in Item::processTick. */
   isStaticItem?: boolean;
@@ -172,7 +191,7 @@ export interface MutableEntity {
 
 export type RuntimeControlObject = {
   ghostIndex: number;
-  data?: Record<string, unknown>;
+  data?: ParsedData;
   position?: Vec3;
 };
 
@@ -299,7 +318,7 @@ export abstract class StreamEngine implements StreamingPlayback {
   // ── Abstract methods ──
 
   /** Resolve datablock data by numeric ID. */
-  abstract getDataBlockData(id: number): Record<string, unknown> | undefined;
+  abstract getDataBlockData(id: number): ParsedData | undefined;
 
   /** Get TSShapeConstructor sequence entries for a shape name. */
   abstract getShapeConstructorSequences(
@@ -313,9 +332,10 @@ export abstract class StreamEngine implements StreamingPlayback {
    * Get camera yaw/pitch for this tick. Demo accumulates from move deltas;
    * live reads from server-provided rotation.
    */
-  protected abstract getCameraYawPitch(
-    data: Record<string, unknown> | undefined,
-  ): { yaw: number; pitch: number };
+  protected abstract getCameraYawPitch(data: ParsedData | undefined): {
+    yaw: number;
+    pitch: number;
+  };
 
   /** DTS shape names for weapon effects that should be preloaded. */
   abstract getEffectShapes(): string[];
@@ -457,7 +477,7 @@ export abstract class StreamEngine implements StreamingPlayback {
 
   protected processControlObject(gameState: {
     controlObjectGhostIndex?: number;
-    controlObjectData?: Record<string, unknown>;
+    controlObjectData?: ParsedData;
     compressionPoint?: Vec3;
     cameraFov?: number;
   }): void {
@@ -468,11 +488,16 @@ export abstract class StreamEngine implements StreamingPlayback {
         ? gameState.controlObjectGhostIndex
         : prevControl.ghostIndex;
     const compressionPoint = gameState.compressionPoint;
-    const controlPosition = isValidPosition(controlData?.position as Vec3)
-      ? (controlData?.position as Vec3)
-      : isValidPosition(compressionPoint)
-        ? compressionPoint
-        : prevControl.position;
+    // When piloting a vehicle, the player's writePacketData skips position
+    // (binary-verified: mounted check at Player::writePacketData). The
+    // controlData.position may be (0,0,0) or absent. Use compressionPoint
+    // which is the vehicle position, updated every packet.
+    const controlPosition =
+      !this.isPiloting && isValidPosition(controlData?.position as Vec3)
+        ? (controlData?.position as Vec3)
+        : isValidPosition(compressionPoint)
+          ? compressionPoint
+          : prevControl.position;
 
     this.latestControl = {
       ghostIndex: nextGhostIndex,
@@ -550,7 +575,7 @@ export abstract class StreamEngine implements StreamingPlayback {
   // ── Event processing ──
 
   protected processEvent(
-    event: { classId: number; parsedData?: Record<string, unknown> },
+    event: { classId: number; parsedData?: ParsedData },
     eventName: string | undefined,
   ): void {
     const data = event.parsedData;
@@ -561,10 +586,11 @@ export abstract class StreamEngine implements StreamingPlayback {
     // These arrive as events, not ghost updates, but contain full ghost data.
     // Create entities from them so scene infrastructure renders.
     if (type === "GhostAlwaysObjectEvent") {
-      const ghostIndex = data.ghostIndex as number | undefined;
-      const classId = data.classId as number | undefined;
-      const objectData = data.objectData as Record<string, unknown> | undefined;
-      const hasData = data._hasObjectData as boolean | undefined;
+      const evt = data as GhostAlwaysObjectEventData;
+      const ghostIndex = evt.ghostIndex;
+      const classId = evt.classId;
+      const objectData = evt.objectData;
+      const hasData = evt._hasObjectData;
       const className =
         typeof classId === "number"
           ? (this.registry.getGhostParser(classId)?.name ??
@@ -591,8 +617,9 @@ export abstract class StreamEngine implements StreamingPlayback {
     }
 
     if (type === "NetStringEvent" || eventName === "NetStringEvent") {
-      const id = data.id as number;
-      const value = data.value as string;
+      const evt = data as NetStringEventData;
+      const id = evt.id;
+      const value = evt.value;
       if (id != null && typeof value === "string") {
         this.netStrings.set(id, value);
         // Resolve any TargetInfoEvents that were waiting for this string.
@@ -612,8 +639,9 @@ export abstract class StreamEngine implements StreamingPlayback {
     }
 
     if (type === "TargetInfoEvent" || eventName === "TargetInfoEvent") {
-      const targetId = data.targetId as number | undefined;
-      const nameTag = data.nameTag as number | undefined;
+      const evt = data as TargetInfoEventData;
+      const targetId = evt.targetId;
+      const nameTag = evt.nameTag;
       if (targetId != null && nameTag != null) {
         const resolved = this.netStrings.get(nameTag);
         if (resolved) {
@@ -626,21 +654,21 @@ export abstract class StreamEngine implements StreamingPlayback {
           this.pendingNameTags.set(nameTag, targetId);
         }
       }
-      const sensorGroup = data.sensorGroup as number | undefined;
+      const sensorGroup = evt.sensorGroup;
       if (targetId != null && sensorGroup != null) {
         this.targetTeams.set(targetId, sensorGroup);
       }
-      const renderFlags = data.renderFlags as number | undefined;
+      const renderFlags = evt.renderFlags;
       if (targetId != null && renderFlags != null) {
         this.targetRenderFlags.set(targetId, renderFlags);
       }
       // Skin tags — resolve via net string table.
-      const skinTag = data.skinTag as number | undefined;
+      const skinTag = evt.skinTag;
       if (targetId != null && skinTag != null && skinTag !== 0x400) {
         const resolved = this.netStrings.get(skinTag);
         if (resolved) this.targetSkins.set(targetId, resolved);
       }
-      const skinPrefTag = data.skinPrefTag as number | undefined;
+      const skinPrefTag = evt.skinPrefTag;
       if (targetId != null && skinPrefTag != null && skinPrefTag !== 0x400) {
         const resolved = this.netStrings.get(skinPrefTag);
         if (resolved) this.targetSkinPrefs.set(targetId, resolved);
@@ -666,7 +694,8 @@ export abstract class StreamEngine implements StreamingPlayback {
     }
 
     if (type === "SetSensorGroupEvent" || eventName === "SetSensorGroupEvent") {
-      const sg = data.sensorGroup as number | undefined;
+      const evt = data as SetSensorGroupEventData;
+      const sg = evt.sensorGroup;
       if (sg != null) this.playerSensorGroup = sg;
       return;
     }
@@ -675,16 +704,9 @@ export abstract class StreamEngine implements StreamingPlayback {
       type === "SensorGroupColorEvent" ||
       eventName === "SensorGroupColorEvent"
     ) {
-      const sg = data.sensorGroup as number;
-      const colors = data.colors as
-        | Array<{
-            index: number;
-            r?: number;
-            g?: number;
-            b?: number;
-            default?: boolean;
-          }>
-        | undefined;
+      const evt = data as SensorGroupColorEventData;
+      const sg = evt.sensorGroup;
+      const colors = evt.colors;
       if (colors) {
         let map = this.sensorGroupColors.get(sg);
         if (!map) {
@@ -705,15 +727,17 @@ export abstract class StreamEngine implements StreamingPlayback {
     // EndGhosting (message=2): the server called resetGhosting — all ghosts
     // are invalidated. The parser clears the ghost tracker; we clear entities.
     if (type === "GhostingMessageEvent") {
-      if ((data.message as number) === GhostMessage.EndGhosting) {
+      const evt = data as GhostingMessageEventData;
+      if (evt.message === GhostMessage.EndGhosting) {
         this.clearAllEntities();
       }
       return;
     }
 
     if (type === "RemoteCommandEvent" || eventName === "RemoteCommandEvent") {
-      const funcName = this.resolveNetString(data.funcName as string);
-      const args = data.args as string[];
+      const evt = data as RemoteCommandEventData;
+      const funcName = this.resolveNetString(evt.funcName);
+      const args = evt.args;
       const timeSec = this.getTimeSec();
 
       if (funcName === "ChatMessage" && args.length >= 4) {
@@ -825,12 +849,17 @@ export abstract class StreamEngine implements StreamingPlayback {
       eventName === "Sim3DAudioEvent" ||
       eventName === "Sim2DAudioEvent"
     ) {
-      const profileId = data.profileId as number;
+      const is3D =
+        type === "Sim3DAudioEvent" || eventName === "Sim3DAudioEvent";
+      const evt = is3D
+        ? (data as Sim3DAudioEventData)
+        : (data as Sim2DAudioEventData);
+      const profileId = evt.profileId;
       if (typeof profileId === "number") {
         const timeSec = this.getTimeSec();
-        const is3D =
-          type === "Sim3DAudioEvent" || eventName === "Sim3DAudioEvent";
-        const position = is3D ? (data.position as Vec3 | undefined) : undefined;
+        const position = is3D
+          ? (data as Sim3DAudioEventData).position
+          : undefined;
         this.audioEvents.push({ profileId, position, timeSec });
         if (this.audioEvents.length > 100) {
           this.audioEvents.splice(0, this.audioEvents.length - 100);
@@ -845,7 +874,7 @@ export abstract class StreamEngine implements StreamingPlayback {
     index: number;
     type: "create" | "update" | "delete";
     classId?: number;
-    parsedData?: Record<string, unknown>;
+    parsedData?: ParsedData;
   }): void {
     const ghostIndex = ghost.index;
     const prevEntityId = this.entityIdByGhostIndex.get(ghostIndex);
@@ -926,7 +955,7 @@ export abstract class StreamEngine implements StreamingPlayback {
       const sceneObj = ghostToSceneObject(
         className,
         ghostIndex,
-        ghost.parsedData as Record<string, unknown>,
+        ghost.parsedData as ParsedData,
       );
       if (sceneObj) entity.sceneData = sceneObj;
     }
@@ -952,11 +981,9 @@ export abstract class StreamEngine implements StreamingPlayback {
     entity.targetRenderFlags = undefined;
     entity.sensorGroup = undefined;
     entity.playerName = undefined;
-    entity.weaponShape = undefined;
-    entity.imageDataBlockIds = undefined;
-    entity.packShape = undefined;
-    entity.flagShape = undefined;
-    entity.imageSkinNames = undefined;
+    entity.imageSlots = undefined;
+    entity.mountObjectGhostIndex = undefined;
+    entity.mountNode = undefined;
     entity.skinName = undefined;
     entity.skinPrefName = undefined;
     entity.falling = undefined;
@@ -972,7 +999,10 @@ export abstract class StreamEngine implements StreamingPlayback {
     entity.energy = undefined;
     entity.maxEnergy = undefined;
     entity.damageState = undefined;
-    entity.hidden = undefined;
+    entity.fadeVal = undefined;
+    entity.fadeState = undefined;
+    entity.cloaked = undefined;
+    entity.cloakLevel = undefined;
     entity.actionAnim = undefined;
     entity.actionAtEnd = undefined;
     entity.armAction = undefined;
@@ -986,7 +1016,7 @@ export abstract class StreamEngine implements StreamingPlayback {
 
   protected applyGhostData(
     entity: MutableEntity,
-    rawData: Record<string, unknown> | undefined,
+    rawData: ParsedData | undefined,
   ): void {
     if (!rawData) return;
     const data = rawData;
@@ -1123,106 +1153,93 @@ export abstract class StreamEngine implements StreamingPlayback {
           }>
         | undefined;
       if (images && images.length > 0) {
-        const weaponImage = images.find((img) => img.index === 0);
-        if (weaponImage?.dataBlockId && weaponImage.dataBlockId > 0) {
-          const blockData = this.getDataBlockData(weaponImage.dataBlockId);
-          const weaponShape = resolveShapeName("ShapeBaseImageData", blockData);
-          if (weaponShape) {
-            entity.weaponShape = weaponShape;
-          }
-          if (!entity.imageDataBlockIds) entity.imageDataBlockIds = [];
-          entity.imageDataBlockIds[0] = weaponImage.dataBlockId;
-
-          const prev = entity.weaponImageState;
-          entity.weaponImageState = {
-            dataBlockId: weaponImage.dataBlockId,
-            triggerDown: weaponImage.triggerDown ?? prev?.triggerDown ?? false,
-            ammo: weaponImage.ammo ?? prev?.ammo ?? true,
-            loaded: weaponImage.loaded ?? prev?.loaded ?? true,
-            target: weaponImage.target ?? prev?.target ?? false,
-            wet: weaponImage.wet ?? prev?.wet ?? false,
-            fireCount: weaponImage.fireCount ?? prev?.fireCount ?? 0,
-          };
-
-          if (
-            blockData &&
-            entity.weaponImageStatesDbId !== weaponImage.dataBlockId
-          ) {
-            entity.weaponImageStates = parseWeaponImageStates(blockData);
-            entity.weaponImageStatesDbId = weaponImage.dataBlockId;
-          }
-        } else if (weaponImage && !weaponImage.dataBlockId) {
-          entity.weaponShape = undefined;
-          entity.weaponImageState = undefined;
-          entity.weaponImageStates = undefined;
-          if (entity.imageDataBlockIds) entity.imageDataBlockIds[0] = undefined;
-        }
-
-        // Pack and flag image slots are Player-only. Other ShapeBase types
-        // (vehicles, turrets) can have weapons in slots 2-3 but those are NOT
-        // packs/flags — only slot 0 is universal.
-        if (entity.type === "Player") {
-          // Pack image (slot 2 = $BackpackSlot, mountPoint 1 = Mount1)
-          const packImage = images.find((img) => img.index === 2);
-          if (packImage?.dataBlockId && packImage.dataBlockId > 0) {
-            const blockData = this.getDataBlockData(packImage.dataBlockId);
-            const shape = resolveShapeName("ShapeBaseImageData", blockData);
-            if (shape) {
-              entity.packShape = shape;
-            }
-            if (!entity.imageDataBlockIds) entity.imageDataBlockIds = [];
-            entity.imageDataBlockIds[2] = packImage.dataBlockId;
-          } else if (packImage && !packImage.dataBlockId) {
-            entity.packShape = undefined;
-            if (entity.imageDataBlockIds)
-              entity.imageDataBlockIds[2] = undefined;
-          }
-
-          // Flag image (slot 3 = $FlagSlot, mountPoint 2 = Mount2)
-          const flagImage = images.find((img) => img.index === 3);
-          if (flagImage?.dataBlockId && flagImage.dataBlockId > 0) {
-            if (!entity.imageDataBlockIds) entity.imageDataBlockIds = [];
-            entity.imageDataBlockIds[3] = flagImage.dataBlockId;
-            const blockData = this.getDataBlockData(flagImage.dataBlockId);
-            const shape = resolveShapeName("ShapeBaseImageData", blockData);
-            if (shape) {
-              entity.flagShape = shape;
-            }
-            if (entity.targetId != null && entity.targetId >= 0) {
-              const prev = this.targetRenderFlags.get(entity.targetId) ?? 0;
-              const updated = prev | 0x2;
-              if (updated !== prev) {
-                this.targetRenderFlags.set(entity.targetId, updated);
-                entity.targetRenderFlags = updated;
-              }
-            }
-          } else if (flagImage && !flagImage.dataBlockId) {
-            entity.flagShape = undefined;
-            if (entity.imageDataBlockIds)
-              entity.imageDataBlockIds[3] = undefined;
-            if (entity.targetId != null && entity.targetId >= 0) {
-              const prev = this.targetRenderFlags.get(entity.targetId) ?? 0;
-              const updated = prev & ~0x2;
-              if (updated !== prev) {
-                this.targetRenderFlags.set(entity.targetId, updated);
-                entity.targetRenderFlags = updated;
-              }
-            }
-          }
-        }
-
-        // Per-slot image skin tags (e.g. flag team skin on slot 3).
+        // Process all 8 image slots uniformly. The mount bone for each
+        // image comes from dataBlock->mountPoint (binary-verified), NOT
+        // from the slot index.
         for (const img of images) {
-          if (img.index == null) continue;
-          let skinName: string | undefined;
-          if (img.skinTagIndex != null) {
-            skinName = this.netStrings.get(img.skinTagIndex);
-          } else if (img.skinName) {
-            skinName = img.skinName;
-          }
-          if (skinName) {
-            if (!entity.imageSkinNames) entity.imageSkinNames = [];
-            entity.imageSkinNames[img.index] = skinName;
+          if (img.index == null || img.index < 0 || img.index >= 8) continue;
+
+          if (img.dataBlockId && img.dataBlockId > 0) {
+            const blockData = this.getDataBlockData(img.dataBlockId);
+            const shapeName = resolveShapeName("ShapeBaseImageData", blockData);
+            const mountPoint =
+              typeof blockData?.mountPoint === "number"
+                ? blockData.mountPoint
+                : 0;
+
+            // Resolve skin from net string tag or inline name.
+            let skinName: string | undefined;
+            if (img.skinTagIndex != null) {
+              skinName = this.netStrings.get(img.skinTagIndex);
+            } else if (img.skinName) {
+              skinName = img.skinName;
+            }
+
+            if (shapeName) {
+              if (!entity.imageSlots) entity.imageSlots = [];
+              entity.imageSlots[img.index] = {
+                shapeName,
+                mountPoint,
+                dataBlockId: img.dataBlockId,
+                skinName,
+              };
+            }
+
+            // Slot 0: weapon state machine (triggerDown, ammo, etc.)
+            if (img.index === 0) {
+              const prev = entity.weaponImageState;
+              entity.weaponImageState = {
+                dataBlockId: img.dataBlockId,
+                triggerDown: img.triggerDown ?? prev?.triggerDown ?? false,
+                ammo: img.ammo ?? prev?.ammo ?? true,
+                loaded: img.loaded ?? prev?.loaded ?? true,
+                target: img.target ?? prev?.target ?? false,
+                wet: img.wet ?? prev?.wet ?? false,
+                fireCount: img.fireCount ?? prev?.fireCount ?? 0,
+              };
+              if (
+                blockData &&
+                entity.weaponImageStatesDbId !== img.dataBlockId
+              ) {
+                entity.weaponImageStates = parseWeaponImageStates(blockData);
+                entity.weaponImageStatesDbId = img.dataBlockId;
+              }
+            }
+
+            // Slot 3 on Players: flag — update targetRenderFlags bit 0x2.
+            if (img.index === 3 && entity.type === "Player") {
+              if (entity.targetId != null && entity.targetId >= 0) {
+                const prev = this.targetRenderFlags.get(entity.targetId) ?? 0;
+                const updated = prev | 0x2;
+                if (updated !== prev) {
+                  this.targetRenderFlags.set(entity.targetId, updated);
+                  entity.targetRenderFlags = updated;
+                }
+              }
+            }
+          } else if (!img.dataBlockId) {
+            // Clear slot.
+            if (entity.imageSlots) {
+              entity.imageSlots[img.index] = undefined;
+            }
+
+            // Slot 0: clear weapon state.
+            if (img.index === 0) {
+              entity.weaponImageState = undefined;
+              entity.weaponImageStates = undefined;
+            }
+
+            // Slot 3 on Players: clear flag render flag.
+            if (img.index === 3 && entity.type === "Player") {
+              if (entity.targetId != null && entity.targetId >= 0) {
+                const prev = this.targetRenderFlags.get(entity.targetId) ?? 0;
+                const updated = prev & ~0x2;
+                if (updated !== prev) {
+                  this.targetRenderFlags.set(entity.targetId, updated);
+                  entity.targetRenderFlags = updated;
+                }
+              }
+            }
           }
         }
       }
@@ -1449,10 +1466,43 @@ export abstract class StreamEngine implements StreamingPlayback {
     if (typeof data.damageState === "number") {
       entity.damageState = data.damageState;
     }
-    // CloakMask: binaryCloak is mFadeVal == 1.0 (binary-verified at
-    // FUN_005eead0). true = fully visible, false = invisible (faded out).
-    if (typeof data.binaryCloak === "boolean") {
-      entity.hidden = !data.binaryCloak;
+    // CloakMask (binary-verified, shapeBase.cc:3457-3485):
+    //   cloaked: mCloaked — drives client-side cloakLevel interpolation
+    //   fading: start a fade animation (fadeOut=direction, fadeTime=duration)
+    //   fadeVal: direct mFadeVal == 1.0 when not fading
+    // CloakMask visibility (binary-verified, shapeBase.cc:3457-3485).
+    // fadeVal (mFadeVal == 1.0): true = visible, false = invisible.
+    // fading: fade animation (fadeOut=direction, fadeTime=duration).
+    // cloaked: mCloaked (stealth/station pad effect — client-side render).
+    // setCloakedState (FUN_005f0200): on client, does NOT snap mCloakLevel —
+    // only sets mCloaked. advanceTime interpolates at rate dt*2 (0.5s).
+    if (typeof data.cloaked === "boolean" && data.cloaked !== entity.cloaked) {
+      const wasSet = entity.cloaked != null;
+      entity.cloaked = data.cloaked;
+      if (!wasSet && data.cloaked) {
+        // First create with cloaked=true: start fully cloaked. The engine
+        // technically starts at 0 and animates, but the ghost isn't rendered
+        // during initial setup so players only ever see the cloaked state.
+        entity.cloakLevel = 1;
+      }
+      // No snap for state changes — client interpolates via advanceFades().
+    }
+    if (data.fading === true && typeof data.fadeTime === "number") {
+      const fadeOut = !!data.fadeOut;
+      if (data.fadeTime <= 0) {
+        entity.fadeVal = fadeOut ? 0 : 1;
+        entity.fadeState = undefined;
+      } else {
+        entity.fadeVal = fadeOut ? 1 : 0;
+        entity.fadeState = {
+          fadeOut,
+          fadeTime: data.fadeTime,
+          elapsed: 0,
+        };
+      }
+    } else if (typeof data.fadeVal === "boolean") {
+      entity.fadeVal = data.fadeVal ? 1 : 0;
+      entity.fadeState = undefined;
     }
     if (typeof data.action === "number") {
       entity.actionAnim = data.action;
@@ -1462,13 +1512,20 @@ export abstract class StreamEngine implements StreamingPlayback {
       entity.armAction = data.armAction;
     }
 
-    // MountedMask: when a player unmounts from a vehicle, the server resets
-    // to RootAnim (table action 0) via Player::onUnmount→setActionThread.
-    // Table actions (0-6) are never sent over the wire, so actionAnim would
-    // remain at the stale Sitting index. Clear it on unmount.
+    // MountedMask: track mount state for position derivation and animation.
     if (typeof data.mountObject === "number") {
-      if (data.mountObject === -1) {
-        // Unmounting — reset action to table anim (not sent by server).
+      if (data.mountObject >= 0) {
+        // Mounting on a vehicle/object.
+        entity.mountObjectGhostIndex = data.mountObject;
+        entity.mountNode =
+          typeof data.mountNode === "number" ? data.mountNode : 0;
+      } else {
+        // Unmounting — clear mount state and reset action animation.
+        // Server resets to RootAnim (table action 0) via onUnmount→
+        // setActionThread, but table actions (0-6) are never sent
+        // over the wire, so actionAnim would remain stale.
+        entity.mountObjectGhostIndex = undefined;
+        entity.mountNode = undefined;
         entity.actionAnim = undefined;
         entity.actionAtEnd = undefined;
       }
@@ -1685,6 +1742,67 @@ export abstract class StreamEngine implements StreamingPlayback {
    * sparse), we apply basic gravity after a few ticks without a server
    * update to prevent items from flying upward indefinitely.
    */
+  /** Advance fade and cloak animations per tick, matching advanceTime. */
+  protected advanceFades(): void {
+    const dt = TICK_DURATION_MS / 1000;
+    for (const entity of this.entities.values()) {
+      // mFadeVal animation.
+      const fs = entity.fadeState;
+      if (fs) {
+        fs.elapsed += dt;
+        if (fs.elapsed >= fs.fadeTime) {
+          entity.fadeVal = fs.fadeOut ? 0 : 1;
+          entity.fadeState = undefined;
+        } else {
+          const t = fs.elapsed / fs.fadeTime;
+          entity.fadeVal = fs.fadeOut ? 1 - t : t;
+        }
+      }
+      // mCloakLevel interpolation (binary-verified: rate = dt * 2, 0.5s).
+      if (entity.cloakLevel != null && entity.cloaked != null) {
+        if (entity.cloaked) {
+          entity.cloakLevel = Math.min(entity.cloakLevel + dt * 2, 1);
+        } else {
+          entity.cloakLevel = Math.max(entity.cloakLevel - dt * 2, 0);
+        }
+      }
+    }
+  }
+
+  /** Extrapolate the control vehicle's position each tick using velocity.
+   *  controlObjectData arrives sparsely (~10 of ~62 packets/sec). Between
+   *  updates, we integrate position from the last known velocity. */
+  protected advanceControlVehicle(): void {
+    if (!this.isPiloting || this.lastPilotGhostIndex == null) return;
+    if (!this.lastVehiclePos || !this.lastVehicleVelocity) {
+      if (this.tickCount % 100 === 0) {
+        console.warn(
+          "[advanceControlVehicle] piloting but missing data:",
+          "pos:",
+          !!this.lastVehiclePos,
+          "vel:",
+          !!this.lastVehicleVelocity,
+          "ghost:",
+          this.lastPilotGhostIndex,
+        );
+      }
+      return;
+    }
+
+    const vehicleId = this.resolveEntityIdForGhostIndex(
+      this.lastPilotGhostIndex,
+    );
+    const entity = vehicleId ? this.entities.get(vehicleId) : undefined;
+    if (!entity) return;
+
+    const dt = TICK_DURATION_MS / 1000;
+    const [vx, vy, vz] = this.lastVehicleVelocity;
+    this.lastVehiclePos[0] += vx * dt;
+    this.lastVehiclePos[1] += vy * dt;
+    this.lastVehiclePos[2] += vz * dt;
+    entity.position = [...this.lastVehiclePos] as [number, number, number];
+  }
+
   protected advanceItems(): void {
     const dt = TICK_DURATION_MS / 1000;
     for (const entity of this.entities.values()) {
@@ -1695,7 +1813,7 @@ export abstract class StreamEngine implements StreamingPlayback {
         !phys ||
         phys.atRest ||
         entity.isStaticItem ||
-        entity.hidden ||
+        entity.fadeVal === 0 ||
         !entity.position
       )
         continue;
@@ -1773,9 +1891,7 @@ export abstract class StreamEngine implements StreamingPlayback {
       // Verified against tribes2-engine Player::updateMove and Tribes2.exe.
       if (this.isPiloting) {
         if (data) {
-          const nested = data.controlObjectData as
-            | Record<string, unknown>
-            | undefined;
+          const nested = data.controlObjectData as ParsedData | undefined;
           const ang = nested?.angPosition as
             | { x: number; y: number; z: number; w: number }
             | undefined;
@@ -1804,9 +1920,18 @@ export abstract class StreamEngine implements StreamingPlayback {
         pitch = this.lastVehiclePitch;
       }
 
+      // control.position falls back to compressionPoint, which is the vehicle's
+      // position when piloting. This updates every packet (~20/s), not just
+      // when controlObjectData is present (~1/s).
+      const cameraPos: [number, number, number] = [
+        control.position.x,
+        control.position.y,
+        control.position.z,
+      ];
+
       this.camera = {
         time: timeSec,
-        position: [control.position.x, control.position.y, control.position.z],
+        position: cameraPos,
         rotation: yawPitchToQuaternion(
           yaw,
           clamp(pitch, -MAX_PITCH, MAX_PITCH),
@@ -1849,10 +1974,27 @@ export abstract class StreamEngine implements StreamingPlayback {
           // Third-person: orbit the vehicle (if piloting) or the player.
           this.camera.mode = "third-person";
           if (this.isPiloting && this.lastPilotGhostIndex != null) {
-            this.camera.orbitTargetId = this.resolveEntityIdForGhostIndex(
+            const vehicleId = this.resolveEntityIdForGhostIndex(
               this.lastPilotGhostIndex,
             );
-            this.camera.orbitDistance = 15;
+            this.camera.orbitTargetId = vehicleId;
+            // Use vehicle datablock's cameraMaxDist for orbit distance.
+            const vEntity = vehicleId
+              ? this.entities.get(vehicleId)
+              : undefined;
+            const vDbData =
+              vEntity?.dataBlockId != null
+                ? this.getDataBlockData(vEntity.dataBlockId)
+                : undefined;
+            this.camera.orbitDistance =
+              typeof vDbData?.cameraMaxDist === "number"
+                ? vDbData.cameraMaxDist
+                : 15;
+            // Vertical offset from datablock (Torque Z = Three.js Y).
+            this.camera.orbitOffset =
+              typeof vDbData?.cameraOffset === "number"
+                ? vDbData.cameraOffset
+                : 0;
             if (this.lastVehicleOrbitDir) {
               this.camera.orbitDirection = this.lastVehicleOrbitDir;
             }
@@ -1864,12 +2006,21 @@ export abstract class StreamEngine implements StreamingPlayback {
         } else {
           this.camera.mode = "first-person";
         }
-        if (this.controlPlayerGhostId) {
+        // When piloting, use the vehicle for camera positioning (its Eye
+        // node provides the cockpit viewpoint). Otherwise use the player.
+        if (this.isPiloting && this.lastPilotGhostIndex != null) {
+          this.camera.controlEntityId = this.resolveEntityIdForGhostIndex(
+            this.lastPilotGhostIndex,
+          );
+        } else if (this.controlPlayerGhostId) {
           this.camera.controlEntityId = this.controlPlayerGhostId;
         }
       }
 
-      // Sync control object positions from controlObjectData.
+      // Sync control object positions. When piloting, control.position is
+      // the compressionPoint (= vehicle position), updated every packet.
+      // controlObjectData (with linMomentum, angPosition) arrives more
+      // sparsely (~1/s); we use it for velocity and rotation.
       if (controlType === "player" && control.position) {
         if (this.isPiloting && this.lastPilotGhostIndex != null) {
           const vehicleId = this.resolveEntityIdForGhostIndex(
@@ -1879,31 +2030,25 @@ export abstract class StreamEngine implements StreamingPlayback {
             ? this.entities.get(vehicleId)
             : undefined;
           if (vehicleEntity) {
-            const nested = data?.controlObjectData as
-              | Record<string, unknown>
-              | undefined;
-            if (nested) {
-              // Fresh position from controlObjectData (linPosition →
-              // compressionPoint → control.position).
-              vehicleEntity.position = [
-                control.position.x,
-                control.position.y,
-                control.position.z,
-              ];
-              this.lastVehiclePos = vehicleEntity.position.slice() as [
-                number,
-                number,
-                number,
-              ];
-              this.lastVehiclePosTime = timeSec;
+            // compressionPoint provides position on every packet.
+            vehicleEntity.position = [
+              control.position.x,
+              control.position.y,
+              control.position.z,
+            ];
+            this.lastVehiclePos = vehicleEntity.position.slice() as [
+              number,
+              number,
+              number,
+            ];
 
-              // Extract velocity from linMomentum for interpolation between
-              // the sparse position updates (~10 of ~62 packets contain data).
+            // Sparse controlObjectData provides velocity and rotation.
+            const nested = data?.controlObjectData as ParsedData | undefined;
+            if (nested) {
               const mom = nested.linMomentum as
                 | { x: number; y: number; z: number }
                 | undefined;
               if (mom && isValidPosition(mom)) {
-                // linMomentum = mass * velocity; look up mass from datablock.
                 const dbId = vehicleEntity.dataBlockId;
                 const dbData =
                   dbId != null ? this.getDataBlockData(dbId) : undefined;
@@ -1916,30 +2061,12 @@ export abstract class StreamEngine implements StreamingPlayback {
                 ];
                 vehicleEntity.velocity = this.lastVehicleVelocity;
               }
-
-              // Sync vehicle rotation from nested angPosition quaternion.
               const ang = nested.angPosition as
                 | { x: number; y: number; z: number; w: number }
                 | undefined;
               if (ang && typeof ang.w === "number") {
                 const converted = torqueQuatToThreeJS(ang);
                 if (converted) vehicleEntity.rotation = converted;
-              }
-            } else if (
-              this.lastVehiclePos &&
-              this.lastVehicleVelocity &&
-              this.lastVehiclePosTime > 0
-            ) {
-              // No nested data this packet — extrapolate from last known
-              // position + velocity to avoid stutter.
-              const dt = timeSec - this.lastVehiclePosTime;
-              if (dt > 0 && dt < 1) {
-                const [vx, vy, vz] = this.lastVehicleVelocity;
-                vehicleEntity.position = [
-                  this.lastVehiclePos[0] + vx * dt,
-                  this.lastVehiclePos[1] + vy * dt,
-                  this.lastVehiclePos[2] + vz * dt,
-                ];
               }
             }
           }
@@ -2006,7 +2133,7 @@ export abstract class StreamEngine implements StreamingPlayback {
   }
 
   protected getAbsoluteRotation(
-    data: Record<string, unknown> | undefined,
+    data: ParsedData | undefined,
   ): { yaw: number; pitch: number } | null {
     if (!data) return null;
     if (typeof data.rotationZ === "number" && typeof data.headX === "number") {
@@ -2322,7 +2449,7 @@ export abstract class StreamEngine implements StreamingPlayback {
           ? (this.targetRenderFlags.get(entity.targetId) ??
             entity.targetRenderFlags)
           : entity.targetRenderFlags;
-      if (entity.type === "Player" && !entity.flagShape) {
+      if (entity.type === "Player" && !entity.imageSlots?.[3]) {
         renderFlags = renderFlags != null ? renderFlags & ~0x2 : renderFlags;
       }
 
@@ -2336,11 +2463,12 @@ export abstract class StreamEngine implements StreamingPlayback {
         dataBlockId: entity.dataBlockId,
         shapeHint: entity.shapeHint,
         dataBlock: entity.dataBlock,
-        weaponShape: entity.weaponShape,
-        imageDataBlockIds: entity.imageDataBlockIds,
-        imageSkinNames: entity.imageSkinNames,
-        packShape: entity.packShape,
-        flagShape: entity.flagShape,
+        imageSlots: entity.imageSlots,
+        mountObjectId:
+          entity.mountObjectGhostIndex != null
+            ? this.entityIdByGhostIndex.get(entity.mountObjectGhostIndex)
+            : undefined,
+        mountNode: entity.mountNode,
         falling: entity.falling,
         jetting: entity.jetting,
         playerName: entity.playerName,
@@ -2366,7 +2494,11 @@ export abstract class StreamEngine implements StreamingPlayback {
         actionAtEnd: entity.actionAtEnd,
         armAction: entity.armAction,
         damageState: entity.damageState,
-        hidden: entity.hidden,
+        // Fade and cloak are independent systems, passed separately so the
+        // renderer can apply the correct visual treatment (texture replacement
+        // for cloak, opacity-only for fade).
+        fadeVal: entity.fadeVal ?? 1,
+        cloakLevel: entity.cloakLevel ?? 0,
         faceViewer: entity.faceViewer,
         threads: entity.threads,
         explosionDataBlockId: entity.explosionDataBlockId,

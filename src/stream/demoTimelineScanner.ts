@@ -1,4 +1,9 @@
 import { BlockTypeMove, BlockTypePacket, DemoParser } from "t2-demo-parser";
+import type {
+  ParsedData,
+  NetStringEventData,
+  RemoteCommandEventData,
+} from "t2-demo-parser";
 import { TICK_DURATION_MS } from "./entityClassification";
 import { stripTaggedStringMarkup } from "./streamHelpers";
 import type { TimelineEvent } from "../state/demoTimelineStore";
@@ -192,6 +197,7 @@ export async function scanDemoTimeline(
   const events: TimelineEvent[] = [];
   let moveTicks = 0;
   let seenMatchStart = false;
+  let currentMissionName: string | null = null;
   let blockCount = 0;
   const totalBlocks = parser.blockCount;
 
@@ -224,7 +230,7 @@ export async function scanDemoTimeline(
     const packet = block.parsed as {
       events?: Array<{
         classId: number;
-        parsedData?: Record<string, unknown>;
+        parsedData?: ParsedData;
       }>;
     };
     if (!packet.events) continue;
@@ -237,8 +243,9 @@ export async function scanDemoTimeline(
         const type = evt.parsedData.type as string | undefined;
 
         if (type === "NetStringEvent") {
-          const id = evt.parsedData.id as number;
-          const value = evt.parsedData.value as string | undefined;
+          const nsData = evt.parsedData as NetStringEventData;
+          const id = nsData.id;
+          const value = nsData.value;
           if (value != null) {
             netStrings.set(id, value);
           }
@@ -254,13 +261,11 @@ export async function scanDemoTimeline(
           continue;
         }
 
-        const funcName = resolveNetString(
-          evt.parsedData.funcName as string,
-          netStrings,
-        );
+        const rcData = evt.parsedData as RemoteCommandEventData;
+        const funcName = resolveNetString(rcData.funcName, netStrings);
         if (funcName !== "ServerMessage") continue;
 
-        const args = evt.parsedData.args as string[];
+        const args = rcData.args;
         if (!args || args.length < 2) continue;
 
         const msgType = resolveNetString(args[0], netStrings);
@@ -279,25 +284,45 @@ export async function scanDemoTimeline(
           }
         }
 
+        // Track current mission name from server info messages.
+        if (msgTypeLower === "msgmissiondropinfo" && args.length >= 3) {
+          // Wire: args[2]=$MissionDisplayName
+          const name = stripTaggedStringMarkup(
+            resolveNetString(args[2], netStrings),
+          ).trim();
+          if (name) currentMissionName = name;
+        }
+        if (msgTypeLower === "msgloadinfo" && args.length >= 4) {
+          // Wire: args[2]=$CurrentMission, args[3]=$MissionDisplayName
+          const name = stripTaggedStringMarkup(
+            resolveNetString(args[3], netStrings),
+          ).trim();
+          if (name) currentMissionName = name;
+        }
+
         // Match start: MsgMissionStart is sent when the match actually begins
         // (after the countdown). MsgSystemClock is just the countdown timer.
         if (msgTypeLower === "msgmissionstart" && !seenMatchStart) {
           seenMatchStart = true;
+          const suffix = currentMissionName ? ` (${currentMissionName})` : "";
           events.push({
             timeSec,
             type: "match-start",
-            description: "Match started",
+            description: `Match started${suffix}`,
           });
           continue;
         }
 
         // Match ended.
         if (msgTypeLower === "msggameover") {
+          const suffix = currentMissionName ? ` (${currentMissionName})` : "";
           events.push({
             timeSec,
             type: "match-end",
-            description: "Match ended",
+            description: `Match ended${suffix}`,
           });
+          // Reset for the next match in the same demo.
+          seenMatchStart = false;
           continue;
         }
 

@@ -28,7 +28,7 @@ const log = createLogger("TerrainBlock");
 import { useSceneSky, useSceneSun } from "../state/gameEntityStore";
 import { loadTerrain } from "../loaders";
 import { uint16ToFloat32 } from "../arrayUtils";
-import { setupMask } from "../textureUtils";
+import { packMasksRGB } from "../textureUtils";
 import { TerrainTile, TerrainMaterial } from "./TerrainTile";
 import {
   createTerrainHeightSampler,
@@ -565,10 +565,11 @@ export const TerrainBlock = memo(function TerrainBlock({
   // Visibility mask for pooled tiles - all visible (no empty squares)
   // This is a stable reference shared by all pooled tiles
   const pooledVisibilityMask = useMemo(() => createVisibilityMask([]), []);
-  // Shared alpha textures from terrain alphaMaps - created once for all tiles
-  const sharedAlphaTextures = useMemo(() => {
+  // Pack alpha masks into RGB textures (3 masks per texture) to reduce
+  // sampler count. 6 layers → 2 RGB textures instead of 6 R textures.
+  const packedAlphaTextures = useMemo(() => {
     if (!terrain) return null;
-    return terrain.alphaMaps.map((data) => setupMask(data));
+    return packMasksRGB(terrain.alphaMaps);
   }, [terrain]);
   // Calculate the maximum number of tiles that can be visible at once.
   const poolSize = useMemo(() => {
@@ -636,14 +637,14 @@ export const TerrainBlock = memo(function TerrainBlock({
     !terrain ||
     !sharedGeometry ||
     !sharedDisplacementMap ||
-    !sharedAlphaTextures
+    !packedAlphaTextures
   ) {
     log.debug(
       "Not ready: terrain=%s geometry=%s displacement=%s alpha=%s",
       !!terrain,
       !!sharedGeometry,
       !!sharedDisplacementMap,
-      !!sharedAlphaTextures,
+      !!packedAlphaTextures,
     );
     return null;
   }
@@ -659,7 +660,7 @@ export const TerrainBlock = memo(function TerrainBlock({
         geometry={sharedGeometry}
         displacementMap={sharedDisplacementMap}
         visibilityMask={primaryVisibilityMask}
-        alphaTextures={sharedAlphaTextures}
+        alphaTextures={packedAlphaTextures}
         detailTextureName={detailTexture}
         lightmap={terrainLightmap ?? undefined}
       />
@@ -677,7 +678,7 @@ export const TerrainBlock = memo(function TerrainBlock({
           displacementMap={sharedDisplacementMap}
           visibilityMask={pooledVisibilityMask}
           textureNames={terrain.textureNames}
-          alphaTextures={sharedAlphaTextures}
+          alphaTextures={packedAlphaTextures}
           detailTextureName={detailTexture}
           lightmap={terrainLightmap ?? undefined}
         />

@@ -134,7 +134,9 @@ function createSwapAtlas(
     tex.wrapS = tex.wrapT = RepeatWrapping;
     tex.colorSpace = SRGBColorSpace;
     tex.flipY = false;
-    tex.needsUpdate = true;
+    if (tex.image) {
+      tex.needsUpdate = true;
+    }
   }
   return {
     texture: uniqueTextures[0],

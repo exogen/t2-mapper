@@ -2,6 +2,10 @@
 import { Suspense } from "react";
 import { NuqsAdapter } from "nuqs/adapters/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import {
+  skinManifestQueryKey,
+  fetchSkinManifest,
+} from "@/src/components/PlayerModel";
 import { FeaturesProvider } from "@/src/components/FeaturesProvider";
 import { MapInspector } from "@/src/components/MapInspector";
 import { SettingsProvider } from "@/src/components/SettingsProvider";
@@ -13,6 +17,16 @@ const queryClient = new QueryClient({
       refetchOnWindowFocus: false,
     },
   },
+});
+
+// Prefetch the custom skins manifest at startup so it's in the cache before
+// any PlayerModel renders. This avoids a race where useQuery inside PlayerModel
+// can't trigger a re-render during streaming (store mutations starve React's
+// concurrent rendering).
+queryClient.prefetchQuery({
+  queryKey: skinManifestQueryKey,
+  queryFn: fetchSkinManifest,
+  staleTime: Infinity,
 });
 
 export default function HomePage() {

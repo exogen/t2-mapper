@@ -1,4 +1,11 @@
-import { memo, useCallback, useRef, useState, useMemo } from "react";
+import React, {
+  memo,
+  Suspense,
+  useCallback,
+  useRef,
+  useState,
+  useMemo,
+} from "react";
 import { Quaternion } from "three";
 import type { Group } from "three";
 import { useFrame } from "@react-three/fiber";
@@ -55,13 +62,37 @@ const EntityLayer = memo(function EntityLayer() {
     }
   }
 
+  // Build object mount relationships: which entities are mounted on which.
+  // Mounted entities render inside their target's mount bone (via createPortal
+  // in ShapeRenderer), NOT as top-level positioned entities.
+  const mountedIds = new Set<string>();
+  const mountChildren = new Map<string, Map<number, GameEntity>>();
+  for (const entity of cache.values()) {
+    const mountId = entity.mountObjectId;
+    if (mountId && cache.has(mountId)) {
+      mountedIds.add(entity.id);
+      let children = mountChildren.get(mountId);
+      if (!children) {
+        children = new Map();
+        mountChildren.set(mountId, children);
+      }
+      children.set(entity.mountNode ?? 0, entity);
+    }
+  }
+
   return (
     <>
       {
         // eslint-disable-next-line react-hooks/refs
-        [...cache.values()].map((entity) => (
-          <EntityWrapper key={entity.id} entity={entity} />
-        ))
+        [...cache.values()]
+          .filter((entity) => !mountedIds.has(entity.id))
+          .map((entity) => (
+            <EntityWrapper
+              key={entity.id}
+              entity={entity}
+              mountChildren={mountChildren.get(entity.id)}
+            />
+          ))
       }
     </>
   );
@@ -69,8 +100,10 @@ const EntityLayer = memo(function EntityLayer() {
 
 const EntityWrapper = memo(function EntityWrapper({
   entity,
+  mountChildren,
 }: {
   entity: GameEntity;
+  mountChildren?: Map<number, GameEntity>;
 }) {
   if (entity.debugHidden) return null;
 
@@ -87,7 +120,9 @@ const EntityWrapper = memo(function EntityWrapper({
   if (entity.renderType === "None") return null;
 
   // From here, entity is a PositionedEntity
-  return <PositionedEntityWrapper entity={entity} />;
+  return (
+    <PositionedEntityWrapper entity={entity} mountChildren={mountChildren} />
+  );
 });
 
 /** Imperatively tracks targetRenderFlags bit 0x2 on a game entity and
@@ -121,7 +156,13 @@ function FlagMarkerSlot({ entity }: { entity: GameEntity }) {
   return <FlagMarker entity={entity} />;
 }
 
-function PositionedEntityWrapper({ entity }: { entity: PositionedEntity }) {
+function PositionedEntityWrapper({
+  entity,
+  mountChildren,
+}: {
+  entity: PositionedEntity;
+  mountChildren?: Map<number, GameEntity>;
+}) {
   const position = entity.position;
   const scale = entity.scale;
   const quaternion = useMemo(() => {
@@ -161,6 +202,22 @@ function PositionedEntityWrapper({ entity }: { entity: PositionedEntity }) {
       </mesh>
     );
 
+  // Build object mount content for entities mounted on this one (e.g. players
+  // sitting in a vehicle). Each mounted entity renders via EntityRenderer
+  // inside the target's mount bone (portaled by ShapeRenderer).
+  const objectMounts = useMemo(() => {
+    if (!mountChildren || mountChildren.size === 0) return undefined;
+    const mounts: Record<number, React.ReactNode> = {};
+    for (const [node, child] of mountChildren) {
+      mounts[node] = (
+        <Suspense key={child.id}>
+          <EntityRenderer entity={child} />
+        </Suspense>
+      );
+    }
+    return mounts;
+  }, [mountChildren]);
+
   return (
     <group
       name={entity.id}
@@ -170,7 +227,7 @@ function PositionedEntityWrapper({ entity }: { entity: PositionedEntity }) {
     >
       <group name="model">
         <ShapeErrorBoundary fallback={fallback}>
-          <EntityRenderer entity={entity} />
+          <EntityRenderer entity={entity} objectMounts={objectMounts} />
         </ShapeErrorBoundary>
         <FlagMarkerSlot entity={entity} />
       </group>

@@ -42,14 +42,16 @@ function mutateRenderFields(
   renderEntity: GameEntity,
   stream: StreamEntity,
 ): void {
+  // Fields common to all positioned entities.
+  const e = renderEntity as unknown as Record<string, unknown>;
+  e.mountObjectId = stream.mountObjectId;
+  e.mountNode = stream.mountNode;
+  e.imageSlots = stream.imageSlots;
+
   switch (renderEntity.renderType) {
     case "Player": {
-      const e = renderEntity as unknown as Record<string, unknown>;
       e.threads = stream.threads;
-      e.weaponShape = stream.weaponShape;
       e.armAction = stream.armAction;
-      e.packShape = stream.packShape;
-      e.flagShape = stream.flagShape;
       e.falling = stream.falling;
       e.jetting = stream.jetting;
       e.weaponImageState = stream.weaponImageState;
@@ -63,10 +65,11 @@ function mutateRenderFields(
       break;
     }
     case "Shape": {
-      const e = renderEntity as unknown as Record<string, unknown>;
       e.threads = stream.threads;
       e.damageState = stream.damageState;
-      e.weaponShape = stream.weaponShape;
+      e.fadeVal = stream.fadeVal;
+      e.cloakLevel = stream.cloakLevel;
+      e.armAction = stream.armAction;
       e.targetRenderFlags = stream.targetRenderFlags;
       e.iffColor = stream.iffColor;
       e.soundSlots = stream.soundSlots;
@@ -146,6 +149,7 @@ export function StreamingController({
   const engineStore = useEngineStoreApi();
   const { fov: userFov } = useSettings();
   const playbackClockRef = useRef(0);
+  const lastSeekTimeRef = useRef(0);
   const prevTickSnapshotRef = useRef<StreamSnapshot | null>(null);
   const currentTickSnapshotRef = useRef<StreamSnapshot | null>(null);
   const streamRef = useRef<StreamingPlayback | null>(
@@ -187,7 +191,7 @@ export function StreamingController({
           getField(renderEntity, "shapeName") !== entity.dataBlock) ||
         (renderEntity.renderType !== "Player" &&
           hasShapeName &&
-          getField(renderEntity, "weaponShape") !== entity.weaponShape);
+          getField(renderEntity, "imageSlots") !== entity.imageSlots);
 
       if (needsNewIdentity) {
         const prevHidden = renderEntity?.debugHidden;
@@ -196,7 +200,13 @@ export function StreamingController({
         map.set(entity.id, renderEntity);
         structuralChange = true;
       } else {
+        // Detect mount state changes — EntityScene needs a store re-render
+        // to re-evaluate mount relationships (portal rendering).
+        const prevMount = renderEntity!.mountObjectId;
         mutateRenderFields(renderEntity!, entity);
+        if (renderEntity!.mountObjectId !== prevMount) {
+          structuralChange = true;
+        }
       }
 
       // Keyframe update (mutable — position, rotation, velocity, etc.).
@@ -260,6 +270,7 @@ export function StreamingController({
     publishedSnapshotRef.current = null;
     resetStreamPlayback();
     playbackClockRef.current = 0;
+    lastSeekTimeRef.current = 0;
     prevTickSnapshotRef.current = null;
     currentTickSnapshotRef.current = null;
 
@@ -345,17 +356,10 @@ export function StreamingController({
     const storeState = engineStore.getState();
     const playback = storeState.playback;
     const isPlaying = playback.status === "playing";
-    const requestedTimeSec = playback.timeMs / 1000;
-    const externalSeekWhilePaused =
-      !isPlaying &&
-      Math.abs(requestedTimeSec - playbackClockRef.current) > 0.0005;
-    const externalSeekWhilePlaying =
-      isPlaying &&
-      Math.abs(requestedTimeSec - streamPlaybackStore.getState().time) > 0.05;
-    const isSeeking = externalSeekWhilePaused || externalSeekWhilePlaying;
+    const isSeeking = playback.seekTime !== lastSeekTimeRef.current;
     if (isSeeking) {
-      // Sync stream cursor to UI/programmatic seek.
-      playbackClockRef.current = requestedTimeSec;
+      lastSeekTimeRef.current = playback.seekTime;
+      playbackClockRef.current = playback.seekTime;
     }
 
     // Advance the shared effect clock so all effect timers (particles,
@@ -522,7 +526,7 @@ export function StreamingController({
             continue;
           }
         }
-        if (!entity?.position || entity.hidden) {
+        if (!entity?.position || (entity.fadeVal === 0 && !entity.cloakLevel)) {
           child.visible = false;
           continue;
         }
@@ -591,7 +595,11 @@ export function StreamingController({
         _orbitTarget.copy(targetGroup.position);
         // Torque orbits the target's render world-box center; player positions
         // in our stream are feet-level, so lift to an approximate center.
-        if (orbitEntity?.type === "Player") {
+        // For vehicles, use the datablock's cameraOffset (vertical Z offset
+        // in Torque space = Y in Three.js).
+        if (currentCamera.orbitOffset) {
+          _orbitTarget.y += currentCamera.orbitOffset;
+        } else if (orbitEntity?.type === "Player") {
           _orbitTarget.y += 1.0;
         }
 
@@ -682,11 +690,6 @@ export function StreamingController({
 
     if (isPlaying && snapshot.exhausted) {
       storeState.setPlaybackStatus("paused");
-    }
-
-    const timeMs = playbackClockRef.current * 1000;
-    if (Math.abs(timeMs - playback.timeMs) > 0.5) {
-      storeState.setPlaybackTime(timeMs);
     }
   });
 

@@ -102,7 +102,8 @@ function Reticle() {
     if (!snap || snap.camera?.mode !== "first-person") return undefined;
     const ctrl = snap.controlPlayerGhostId;
     if (!ctrl) return undefined;
-    return snap.entities.find((e: StreamEntity) => e.id === ctrl)?.weaponShape;
+    return snap.entities.find((e: StreamEntity) => e.id === ctrl)
+      ?.imageSlots?.[0]?.shapeName;
   });
   if (weaponShape === undefined) return null;
   const weapon = normalizeWeaponName(weaponShape);
