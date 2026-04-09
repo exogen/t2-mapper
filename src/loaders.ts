@@ -14,7 +14,7 @@ const log = createLogger("loaders");
 
 export type { TerrainFile };
 
-export const RESOURCE_ROOT_URL = `${process.env.BASE_PATH}base/`;
+export const RESOURCE_ROOT_URL = process.env.GAME_ASSETS_BASE_URL;
 export const FALLBACK_TEXTURE_URL = `${process.env.BASE_PATH}white.png`;
 
 export function getUrlForPath(resourcePath: string, fallbackUrl?: string) {

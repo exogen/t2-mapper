@@ -22,8 +22,20 @@ jobs:
 
       - run: npm run build
         env:
+          BASE_PATH: /
+          GAME_ASSETS_BASE_URL: https://assets.tribes2.online/game/base/
           RELAY_URL: ${{ secrets.RELAY_URL }}
           LOG_LEVEL: ${{ secrets.LOG_LEVEL }}
+
+      - name: Sync game assets to R2
+        run: aws s3 sync docs/base/ s3://t2-assets/game/base/ --follow-symlinks --delete
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_ENDPOINT_URL: https://${{ secrets.CF_ACCOUNT_ID }}.r2.cloudflarestorage.com
+
+      - name: Remove game assets from Pages deploy
+        run: rm -rf docs/base
 
       - uses: cloudflare/wrangler-action@v3
         with:
