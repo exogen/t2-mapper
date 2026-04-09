@@ -71,8 +71,8 @@ import type { PlayerEntity } from "../state/gameEntityTypes";
  */
 export const playerEyePositions = new Map<string, Vector3>();
 
-const SKIN_BASE_URL = "https://exogen.github.io/t2-skins/skins/";
-const SKIN_MANIFEST_URL = "https://exogen.github.io/t2-skins/skins.json";
+const SKIN_BASE_URL = "https://assets.tribes2.online/skins/files/";
+const SKIN_MANIFEST_URL = "https://assets.tribes2.online/skins/manifest.json";
 
 /** Map shape DTS name to skin texture suffix. */
 const SKIN_SUFFIXES: Record<string, string> = {

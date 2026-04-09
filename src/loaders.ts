@@ -14,9 +14,8 @@ const log = createLogger("loaders");
 
 export type { TerrainFile };
 
-export const BASE_URL = "/t2-mapper";
-export const RESOURCE_ROOT_URL = `${BASE_URL}/base/`;
-export const FALLBACK_TEXTURE_URL = `${BASE_URL}/white.png`;
+export const RESOURCE_ROOT_URL = `${process.env.BASE_PATH}base/`;
+export const FALLBACK_TEXTURE_URL = `${process.env.BASE_PATH}white.png`;
 
 export function getUrlForPath(resourcePath: string, fallbackUrl?: string) {
   let resourceKey;

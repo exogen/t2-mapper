@@ -7,13 +7,15 @@ export default defineConfig(({ mode }) => {
   // Only expose specific env vars to the client bundle — loadEnv requires a
   // prefix, so we load with each var's own prefix and pick the value out.
   const allEnv = loadEnv(mode, process.cwd(), "");
+  const basePath = allEnv.BASE_PATH || "/";
   const publicEnvKeys = ["LOG_LEVEL", "RELAY_URL"];
   const define: Record<string, string> = {};
   for (const key of publicEnvKeys) {
     define[`process.env.${key}`] = JSON.stringify(allEnv[key] ?? "");
   }
+  define["process.env.BASE_PATH"] = JSON.stringify(basePath);
   return {
-    base: "/t2-mapper/",
+    base: basePath,
     server: { port: 3000 },
     define,
     build: {
