@@ -18,6 +18,7 @@
  */
 
 import { globalSunUniforms } from "./globalSunUniforms";
+import { glslColorSpace, glslDebugGrid } from "./shaderUtils";
 
 // Terrain and texture dimensions (must match TerrainBlock.tsx constants)
 const TERRAIN_SIZE = 256; // Terrain grid size in squares
@@ -28,30 +29,6 @@ const DETAIL_TILING = 64.0;
 
 // Distance at which detail texture fully fades out (in world units)
 const DETAIL_FADE_DISTANCE = 150.0;
-
-// sRGB <-> Linear conversion functions (GLSL)
-const colorSpaceFunctions = /* glsl */ `
-vec3 terrainLinearToSRGB(vec3 linear) {
-  vec3 higher = pow(linear, vec3(1.0/2.4)) * 1.055 - 0.055;
-  vec3 lower = linear * 12.92;
-  return mix(lower, higher, step(vec3(0.0031308), linear));
-}
-
-vec3 terrainSRGBToLinear(vec3 srgb) {
-  vec3 higher = pow((srgb + 0.055) / 1.055, vec3(2.4));
-  vec3 lower = srgb / 12.92;
-  return mix(lower, higher, step(vec3(0.04045), srgb));
-}
-
-// Debug grid overlay using screen-space derivatives for sharp, anti-aliased lines
-// Returns 1.0 on grid lines, 0.0 elsewhere
-float terrainDebugGrid(vec2 uv, float gridSize, float lineWidth) {
-  vec2 scaledUV = uv * gridSize;
-  vec2 grid = abs(fract(scaledUV - 0.5) - 0.5) / fwidth(scaledUV);
-  float line = min(grid.x, grid.y);
-  return 1.0 - min(line / lineWidth, 1.0);
-}
-`;
 
 export function updateTerrainTextureShader({
   shader,
@@ -157,7 +134,8 @@ varying vec3 vTerrainWorldPos;`
     : ""
 }
 
-${colorSpaceFunctions}
+${glslColorSpace}
+${glslDebugGrid}
 
 // Global variable to store shadow factor from RE_Direct for use in output calculation
 float terrainShadowFactor = 1.0;
@@ -296,11 +274,12 @@ void RE_Direct_TerrainShadow( const in IncidentLight directLight, const in vec3 
 `,
     );
 
-    // Override lights_fragment_begin to skip indirect diffuse calculation
-    // We'll handle ambient in gamma space
+    // Override lights_fragment_begin: save directDiffuse before lights run,
+    // then after lights_fragment_end we can extract the point/spot contribution.
     shader.fragmentShader = shader.fragmentShader.replace(
       "#include <lights_fragment_begin>",
-      `#include <lights_fragment_begin>
+      `vec3 terrainPreLightDirect = reflectedLight.directDiffuse;
+#include <lights_fragment_begin>
 // Clear indirect diffuse - we'll compute ambient in gamma space
 #if defined( RE_IndirectDiffuse )
   irradiance = vec3(0.0);
@@ -308,11 +287,15 @@ void RE_Direct_TerrainShadow( const in IncidentLight directLight, const in vec3 
 `,
     );
 
-    // Clear the indirect diffuse after lights_fragment_end
     shader.fragmentShader = shader.fragmentShader.replace(
       "#include <lights_fragment_end>",
       `#include <lights_fragment_end>
-  // Clear Three.js lighting - we compute everything in gamma space
+  // Extract dynamic point/spot light contribution by subtracting what was
+  // there before lights ran. directDiffuse now has sun + point lights;
+  // terrainPreLightDirect was 0, so the difference is all lights.
+  // We'll subtract the sun part below and keep just the point/spot part.
+  vec3 terrainAllLightsLinear = reflectedLight.directDiffuse - terrainPreLightDirect;
+  // Clear Three.js lighting - we compute sun/ambient in gamma space
   reflectedLight.directDiffuse = vec3(0.0);
   reflectedLight.indirectDiffuse = vec3(0.0);
 `,
@@ -325,7 +308,7 @@ void RE_Direct_TerrainShadow( const in IncidentLight directLight, const in vec3 
     `// Torque-style terrain lighting: output = clamp(lighting × texture, 0, 1) in sRGB space
 {
   // Get texture in sRGB space (undo Three.js linear decode)
-  vec3 textureSRGB = terrainLinearToSRGB(diffuseColor.rgb);
+  vec3 textureSRGB = torqueLinearToSRGB(diffuseColor.rgb);
 
   ${
     lightmap
@@ -358,7 +341,16 @@ void RE_Direct_TerrainShadow( const in IncidentLight directLight, const in vec3 
   vec3 resultSRGB = clamp(lightingSRGB * textureSRGB, 0.0, 1.0);
 
   // Convert back to linear for Three.js output pipeline
-  outgoingLight = terrainSRGBToLinear(resultSRGB) + totalEmissiveRadiance;
+  outgoingLight = torqueSRGBToLinear(resultSRGB) + totalEmissiveRadiance;
+  // Add dynamic point/spot light contributions when present.
+  // terrainAllLightsLinear includes both directional + point from Three.js.
+  // We only add it when point/spot lights exist to avoid double-counting
+  // the sun (already computed in gamma space above). The slight sun
+  // double-count when points are active is acceptable — point light
+  // intensity dominates near the source.
+  #if ( NUM_POINT_LIGHTS > 0 || NUM_SPOT_LIGHTS > 0 )
+    outgoingLight += terrainAllLightsLinear;
+  #endif
 }
 #include <opaque_fragment>`,
   );
@@ -369,7 +361,7 @@ void RE_Direct_TerrainShadow( const in IncidentLight directLight, const in vec3 
     "#include <tonemapping_fragment>",
     `#if DEBUG_MODE
   // Debug mode: overlay green grid matching terrain grid squares (256x256)
-  float gridIntensity = terrainDebugGrid(vTerrainUv, 256.0, 1.5);
+  float gridIntensity = torqueDebugGrid(vTerrainUv, 256.0, 1.5);
   vec3 gridColor = vec3(0.0, 0.8, 0.4); // Green
   gl_FragColor.rgb = mix(gl_FragColor.rgb, gridColor, gridIntensity * 0.1);
 #endif

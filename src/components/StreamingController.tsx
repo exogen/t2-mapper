@@ -42,39 +42,33 @@ function mutateRenderFields(
   renderEntity: GameEntity,
   stream: StreamEntity,
 ): void {
-  // Fields common to all positioned entities.
+  // Shared fields (on PositionedBase, used by both Player and Shape).
   const e = renderEntity as unknown as Record<string, unknown>;
   e.mountObjectId = stream.mountObjectId;
   e.mountNode = stream.mountNode;
   e.imageSlots = stream.imageSlots;
+  e.threads = stream.threads;
+  e.armAction = stream.armAction;
+  e.targetRenderFlags = stream.targetRenderFlags;
+  e.iffColor = stream.iffColor;
+  e.soundSlots = stream.soundSlots;
 
+  // Type-specific fields.
   switch (renderEntity.renderType) {
-    case "Player": {
-      e.threads = stream.threads;
-      e.armAction = stream.armAction;
+    case "Player":
       e.falling = stream.falling;
       e.jetting = stream.jetting;
       e.weaponImageState = stream.weaponImageState;
       e.weaponImageStates = stream.weaponImageStates;
       e.playerName = stream.playerName;
-      e.iffColor = stream.iffColor;
       e.headPitch = stream.headPitch;
       e.headYaw = stream.headYaw;
-      e.targetRenderFlags = stream.targetRenderFlags;
-      e.soundSlots = stream.soundSlots;
       break;
-    }
-    case "Shape": {
-      e.threads = stream.threads;
+    case "Shape":
       e.damageState = stream.damageState;
       e.fadeVal = stream.fadeVal;
       e.cloakLevel = stream.cloakLevel;
-      e.armAction = stream.armAction;
-      e.targetRenderFlags = stream.targetRenderFlags;
-      e.iffColor = stream.iffColor;
-      e.soundSlots = stream.soundSlots;
       break;
-    }
   }
 }
 

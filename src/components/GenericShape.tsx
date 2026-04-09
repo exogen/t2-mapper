@@ -15,12 +15,14 @@ import {
   LoopOnce,
   LoopRepeat,
   NormalBlending,
+  Color,
   Group,
   Box3,
   Vector3,
   RepeatWrapping,
   NoColorSpace,
 } from "three";
+import type { PointLight } from "three";
 import * as SkeletonUtils from "three/examples/jsm/utils/SkeletonUtils.js";
 import { useAnisotropy } from "./useAnisotropy";
 import { useDebug, useSettings } from "./SettingsProvider";
@@ -82,16 +84,15 @@ function advanceCloakUV(frameId: number): void {
   getCloakTexture().offset.set(_cloakShiftX / 127, _cloakShiftY / 126);
 }
 
-// Counter-rotate for object-mounted content (players in vehicles).
-// The mount bone is inside the vehicle's R90 Y group (DTS Z-up → Three.js
-// Y-up). The mounted PlayerModel applies its own R90 Y. We need to undo the
-// player's R90 and rotate from GLB Y-up back to DTS Z-up so the player
-// stands upright relative to the vehicle's DTS bone coordinate system.
-const MOUNT_COUNTER_ROTATION: [x: number, y: number, z: number] = [
-  Math.PI / 2,
-  -Math.PI / 2,
-  0,
-];
+/** Item/ShapeBase built-in light config from datablock. */
+export interface ShapeLightConfig {
+  type: number;
+  color: [number, number, number, number];
+  time: number;
+  radius: number;
+  onlyStatic: boolean;
+  isStatic: boolean;
+}
 
 const STANDARD_90_ROTATION: [x: number, y: number, z: number] = [
   0,
@@ -116,6 +117,12 @@ interface StreamShapeEntity {
   fadeVal?: number;
   cloakLevel?: number;
   dataBlockId?: number;
+  lightType?: number;
+  lightColor?: [number, number, number, number];
+  lightTime?: number;
+  lightRadius?: number;
+  lightOnlyStatic?: boolean;
+  isStaticItem?: boolean;
 }
 
 const log = createLogger("GenericShape");
@@ -237,6 +244,7 @@ export const ShapeRenderer = memo(function ShapeRenderer({
   mounted,
   noRotation,
   skinName,
+  lightConfig,
 }: {
   loadingColor?: string;
   /** Stable entity reference whose fields are mutated in-place. */
@@ -251,6 +259,8 @@ export const ShapeRenderer = memo(function ShapeRenderer({
   noRotation?: boolean;
   /** Skin texture URL (Torque reSkin: replaces "base." textures with this URL). */
   skinName?: string;
+  /** Item/ShapeBase built-in light config (from datablock). */
+  lightConfig?: ShapeLightConfig;
 }) {
   const { shapeName } = useShapeInfo();
 
@@ -275,6 +285,7 @@ export const ShapeRenderer = memo(function ShapeRenderer({
           mounted={mounted}
           noRotation={noRotation}
           skinName={skinName}
+          lightConfig={lightConfig}
         >
           {children}
         </ShapeModelLoader>
@@ -295,6 +306,8 @@ interface VisNode {
 interface ThreadState {
   sequence: string;
   action?: AnimationAction;
+  /** Morph target frame animation actions played alongside the main clip. */
+  morphActions?: AnimationAction[];
   visNodes?: VisNode[];
   startTime: number;
   forward: boolean;
@@ -315,6 +328,7 @@ export const ShapeModel = memo(function ShapeModel({
   mounted,
   noRotation,
   skinName,
+  lightConfig: lightConfigProp,
 }: {
   gltf: ReturnType<typeof useStaticShape>;
   /** Stable entity reference whose fields are mutated in-place. */
@@ -329,6 +343,8 @@ export const ShapeModel = memo(function ShapeModel({
   noRotation?: boolean;
   /** Skin texture URL (Torque reSkin: replaces "base." textures). */
   skinName?: string;
+  /** Item/ShapeBase built-in light config (from datablock). */
+  lightConfig?: ShapeLightConfig;
 }) {
   const { object, shapeName } = useShapeInfo();
   const { debugMode } = useDebug();
@@ -336,79 +352,94 @@ export const ShapeModel = memo(function ShapeModel({
   const runtime = useEngineSelector((state) => state.runtime.runtime);
   const anisotropy = useAnisotropy();
 
-  const { clonedScene, mixer, clipsByName, visNodesBySequence, iflMeshes } =
-    useMemo(() => {
-      const scene = SkeletonUtils.clone(gltf.scene) as Group;
+  const {
+    clonedScene,
+    mixer,
+    clipsByName,
+    morphClipsBySeq,
+    visNodesBySequence,
+    iflMeshes,
+  } = useMemo(() => {
+    const scene = SkeletonUtils.clone(gltf.scene) as Group;
 
-      // Detect IFL materials BEFORE processShapeScene replaces them, since the
-      // replacement materials lose the original userData (flag_names, resource_path).
-      const iflInfos: Array<{
-        mesh: any;
-        iflPath: string;
-        hasVisSequence: boolean;
-        repeat: boolean;
-        iflSequence?: string;
-        iflDuration?: number;
-        iflCyclic?: boolean;
-        iflToolBegin?: number;
-      }> = [];
-      scene.traverse((node: any) => {
-        if (!node.isMesh || !node.material) return;
-        const mat = Array.isArray(node.material)
-          ? node.material[0]
-          : node.material;
-        if (!mat?.userData) return;
-        const flags = new Set<string>(mat.userData.flag_names ?? []);
-        const rp: string | undefined = mat.userData.resource_path;
-        if (flags.has("IflMaterial") && rp) {
-          const ud = node.userData;
-          // ifl_sequence is set by the addon when ifl_matters links this IFL to
-          // a controlling sequence. vis_sequence is a separate system (opacity
-          // animation) and must NOT be used as a fallback — the two are independent.
-          const iflSeq = ud?.ifl_sequence
-            ? String(ud.ifl_sequence).toLowerCase()
-            : undefined;
-          const iflDur = ud?.ifl_duration ? Number(ud.ifl_duration) : undefined;
-          const iflCyclic = ud?.ifl_sequence ? !!ud.ifl_cyclic : undefined;
-          const iflToolBegin =
-            ud?.ifl_tool_begin != null ? Number(ud.ifl_tool_begin) : undefined;
-          iflInfos.push({
-            mesh: node,
-            iflPath: `textures/${rp}.ifl`,
-            hasVisSequence: !!ud?.vis_sequence,
-            repeat: flags.has("SWrap") || flags.has("TWrap"),
-            iflSequence: iflSeq,
-            iflDuration: iflDur,
-            iflCyclic,
-            iflToolBegin,
-          });
-        }
-      });
-
-      processShapeScene(scene, shapeName ?? undefined, {
-        anisotropy,
-        emap,
-        skinName,
-      });
-
-      // Un-hide IFL meshes that don't have a vis sequence — they should always
-      // be visible. IFL meshes WITH vis sequences stay hidden until their
-      // sequence is activated by playThread.
-      for (const { mesh, hasVisSequence } of iflInfos) {
-        if (!hasVisSequence) {
-          mesh.visible = true;
-        }
-      }
-
-      // Collect ALL vis-animated nodes, grouped by sequence name.
-      const visBySeq = new Map<string, VisNode[]>();
-      scene.traverse((node: any) => {
-        if (!node.isMesh) return;
+    // Detect IFL materials BEFORE processShapeScene replaces them, since the
+    // replacement materials lose the original userData (flag_names, resource_path).
+    const iflInfos: Array<{
+      mesh: any;
+      iflPath: string;
+      hasVisSequence: boolean;
+      repeat: boolean;
+      iflSequence?: string;
+      iflDuration?: number;
+      iflCyclic?: boolean;
+      iflToolBegin?: number;
+    }> = [];
+    scene.traverse((node: any) => {
+      if (!node.isMesh || !node.material) return;
+      const mat = Array.isArray(node.material)
+        ? node.material[0]
+        : node.material;
+      if (!mat?.userData) return;
+      const flags = new Set<string>(mat.userData.flag_names ?? []);
+      const rp: string | undefined = mat.userData.resource_path;
+      if (flags.has("IflMaterial") && rp) {
         const ud = node.userData;
-        if (!ud) return;
-        const kf = ud.vis_keyframes;
-        const dur = ud.vis_duration;
-        const seqName = (ud.vis_sequence ?? "").toLowerCase();
+        // ifl_sequence is set by the addon when ifl_matters links this IFL to
+        // a controlling sequence. vis_sequence is a separate system (opacity
+        // animation) and must NOT be used as a fallback — the two are independent.
+        const iflSeq = ud?.ifl_sequence
+          ? String(ud.ifl_sequence).toLowerCase()
+          : undefined;
+        const iflDur = ud?.ifl_duration ? Number(ud.ifl_duration) : undefined;
+        const iflCyclic = ud?.ifl_sequence ? !!ud.ifl_cyclic : undefined;
+        const iflToolBegin =
+          ud?.ifl_tool_begin != null ? Number(ud.ifl_tool_begin) : undefined;
+        iflInfos.push({
+          mesh: node,
+          iflPath: `textures/${rp}.ifl`,
+          hasVisSequence: !!ud?.vis_sequence,
+          repeat: flags.has("SWrap") || flags.has("TWrap"),
+          iflSequence: iflSeq,
+          iflDuration: iflDur,
+          iflCyclic,
+          iflToolBegin,
+        });
+      }
+    });
+
+    processShapeScene(scene, shapeName ?? undefined, {
+      anisotropy,
+      emap,
+      skinName,
+    });
+
+    // Un-hide IFL meshes that don't have a vis sequence — they should always
+    // be visible. IFL meshes WITH vis sequences stay hidden until their
+    // sequence is activated by playThread.
+    for (const { mesh, hasVisSequence } of iflInfos) {
+      if (!hasVisSequence) {
+        mesh.visible = true;
+      }
+    }
+
+    // Collect ALL vis-animated nodes, grouped by sequence name.
+    // Multiple sequences can animate the same mesh (e.g. station_inv_human
+    // has Activate1 + Activate with vis data). The addon exports both the
+    // primary vis_keyframes/vis_sequence AND per-sequence suffixed versions
+    // like vis_keyframes_activate, vis_duration_activate.
+    const visBySeq = new Map<string, VisNode[]>();
+    scene.traverse((node: any) => {
+      if (!node.isMesh) return;
+      const ud = node.userData;
+      if (!ud) return;
+
+      // Helper: register one vis entry
+      const addVis = (
+        seqName: string,
+        kf: number[],
+        dur: number,
+        cyclic: boolean,
+      ) => {
         if (
           !seqName ||
           !Array.isArray(kf) ||
@@ -417,63 +448,121 @@ export const ShapeModel = memo(function ShapeModel({
           dur <= 0
         )
           return;
-
         let list = visBySeq.get(seqName);
         if (!list) {
           list = [];
           visBySeq.set(seqName, list);
         }
-        list.push({
-          mesh: node,
-          keyframes: kf,
-          duration: dur,
-          cyclic: !!ud.vis_cyclic,
-        });
-      });
-
-      // Build clips by name (case-insensitive).
-      // Blend sequences (DTS flag 0x8) store absolute transforms but must be
-      // played in additive mode. Clone and convert them here so the original
-      // cached clips from useGLTF are never mutated.
-      const blendNames = new Set<string>();
-      const rawNames = scene.userData?.dts_sequence_names;
-      const rawBlend = scene.userData?.dts_sequence_blend;
-      if (typeof rawNames === "string") {
-        try {
-          const names: string[] = JSON.parse(rawNames);
-          const blend: boolean[] =
-            typeof rawBlend === "string" ? JSON.parse(rawBlend) : [];
-          for (let i = 0; i < names.length; i++) {
-            if (blend[i]) blendNames.add(names[i].toLowerCase());
-          }
-        } catch {
-          /* expected */
-        }
-      }
-      const clips = new Map<string, AnimationClip>();
-      for (const clip of gltf.animations) {
-        const lower = clip.name.toLowerCase();
-        if (blendNames.has(lower)) {
-          const cloned = clip.clone();
-          const restClip = buildRestPoseClip(scene, cloned);
-          AnimationUtils.makeClipAdditive(cloned, 0, restClip, 30);
-          clips.set(lower, cloned);
-        } else {
-          clips.set(lower, clip);
-        }
-      }
-
-      // Only create a mixer if there are skeleton animation clips.
-      const mix = clips.size > 0 ? new AnimationMixer(scene) : null;
-
-      return {
-        clonedScene: scene,
-        mixer: mix,
-        clipsByName: clips,
-        visNodesBySequence: visBySeq,
-        iflMeshes: iflInfos,
+        // Avoid duplicate mesh entries for the same sequence
+        if (list.some((v) => v.mesh === node)) return;
+        list.push({ mesh: node, keyframes: kf, duration: dur, cyclic });
       };
-    }, [gltf.scene, gltf.animations, shapeName, anisotropy, emap, skinName]);
+
+      // Primary vis entry (backwards compatible)
+      addVis(
+        (ud.vis_sequence ?? "").toLowerCase(),
+        ud.vis_keyframes,
+        ud.vis_duration,
+        !!ud.vis_cyclic,
+      );
+
+      // Per-sequence suffixed entries (vis_keyframes_activate, etc.)
+      for (const key of Object.keys(ud)) {
+        const match = key.match(/^vis_keyframes_(.+)$/);
+        if (match) {
+          const suffix = match[1];
+          addVis(
+            suffix,
+            ud[`vis_keyframes_${suffix}`],
+            ud[`vis_duration_${suffix}`],
+            !!ud[`vis_cyclic_${suffix}`],
+          );
+        }
+      }
+    });
+
+    // Build clips by name (case-insensitive).
+    // Blend sequences (DTS flag 0x8) store absolute transforms but must be
+    // played in additive mode. Clone and convert them here so the original
+    // cached clips from useGLTF are never mutated.
+    const blendNames = new Set<string>();
+    const rawNames = scene.userData?.dts_sequence_names;
+    const rawBlend = scene.userData?.dts_sequence_blend;
+    if (typeof rawNames === "string") {
+      try {
+        const names: string[] = JSON.parse(rawNames);
+        const blend: boolean[] =
+          typeof rawBlend === "string" ? JSON.parse(rawBlend) : [];
+        for (let i = 0; i < names.length; i++) {
+          if (blend[i]) blendNames.add(names[i].toLowerCase());
+        }
+      } catch {
+        /* expected */
+      }
+    }
+    // Build a set of known sequence names (lowercase) from the DTS metadata
+    // so we can reliably identify morph target frame clips below.
+    const knownSeqNames = new Set<string>();
+    if (typeof rawNames === "string") {
+      try {
+        for (const n of JSON.parse(rawNames) as string[]) {
+          knownSeqNames.add(n.toLowerCase());
+        }
+      } catch {
+        /* expected */
+      }
+    }
+
+    const clips = new Map<string, AnimationClip>();
+    // Morph target frame animations are exported as separate clips named
+    // "{SeqName}_{MeshName}_frame". Collect them so they can be played
+    // alongside the main sequence clip.
+    const morphClipsBySeq = new Map<string, AnimationClip[]>();
+    for (const clip of gltf.animations) {
+      const lower = clip.name.toLowerCase();
+      // Check if this is a morph target frame clip by testing if it ends
+      // with "_frame" and starts with a known sequence name prefix.
+      if (lower.endsWith("_frame")) {
+        let matched = false;
+        for (const seqName of knownSeqNames) {
+          if (
+            lower.startsWith(seqName + "_") &&
+            lower.length > seqName.length + 1 + 5
+          ) {
+            let list = morphClipsBySeq.get(seqName);
+            if (!list) {
+              list = [];
+              morphClipsBySeq.set(seqName, list);
+            }
+            list.push(clip);
+            matched = true;
+            break;
+          }
+        }
+        if (matched) continue;
+      }
+      if (blendNames.has(lower)) {
+        const cloned = clip.clone();
+        const restClip = buildRestPoseClip(scene, cloned);
+        AnimationUtils.makeClipAdditive(cloned, 0, restClip, 30);
+        clips.set(lower, cloned);
+      } else {
+        clips.set(lower, clip);
+      }
+    }
+
+    // Only create a mixer if there are skeleton animation clips.
+    const mix = clips.size > 0 ? new AnimationMixer(scene) : null;
+
+    return {
+      clonedScene: scene,
+      mixer: mix,
+      clipsByName: clips,
+      morphClipsBySeq,
+      visNodesBySequence: visBySeq,
+      iflMeshes: iflInfos,
+    };
+  }, [gltf.scene, gltf.animations, shapeName, anisotropy, emap, skinName]);
 
   // Dispose cloned geometries and materials when the scene is replaced or
   // the component unmounts, to prevent GPU memory from accumulating.
@@ -511,7 +600,7 @@ export const ShapeModel = memo(function ShapeModel({
   const streamEntityRef = useRef(streamEntity);
   streamEntityRef.current = streamEntity;
   const handlePlayThreadRef = useRef<
-    ((slot: number, seq: string) => void) | null
+    ((slot: number, seq: string, forward?: boolean) => void) | null
   >(null);
   const handleStopThreadRef = useRef<((slot: number) => void) | null>(null);
   const prevDemoThreadsRef = useRef<StreamThreadState[] | undefined>(undefined);
@@ -594,8 +683,14 @@ export const ShapeModel = memo(function ShapeModel({
         v.mesh.material = result.material;
       }
       if (v.mesh.material && !Array.isArray(v.mesh.material)) {
-        v.mesh.material.transparent = true;
-        v.mesh.material.depthWrite = false;
+        // Save original transparent/depthWrite so they can be restored
+        // when the vis animation finishes or is stopped.
+        const ud = (v.mesh.material.userData ??= {});
+        if (ud._visOrigTransparent == null) {
+          ud._visOrigTransparent = v.mesh.material.transparent;
+          ud._visOrigDepthWrite = v.mesh.material.depthWrite;
+          ud._visOrigAlphaTest = v.mesh.material.alphaTest;
+        }
       }
       const atlas = iflMeshAtlasRef.current.get(v.mesh);
       if (atlas && v.mesh.material && !Array.isArray(v.mesh.material)) {
@@ -645,6 +740,22 @@ export const ShapeModel = memo(function ShapeModel({
         }
         action.play();
         thread.action = action;
+
+        // Play associated morph target frame clips alongside the main clip.
+        const morphClips = morphClipsBySeq.get(seqLower);
+        if (morphClips) {
+          thread.morphActions = [];
+          for (const mc of morphClips) {
+            const ma = mixer.clipAction(mc);
+            ma.setLoop(cyclic ? LoopRepeat : LoopOnce, cyclic ? Infinity : 1);
+            if (!cyclic) ma.clampWhenFinished = true;
+            ma.timeScale = forward ? 1 : -1;
+            ma.reset();
+            if (!forward) ma.time = mc.duration;
+            ma.play();
+            thread.morphActions.push(ma);
+          }
+        }
       }
 
       if (vNodes) {
@@ -659,12 +770,23 @@ export const ShapeModel = memo(function ShapeModel({
       const thread = threads.get(slot);
       if (!thread) return;
       if (thread.action) thread.action.stop();
+      if (thread.morphActions) {
+        for (const ma of thread.morphActions) ma.stop();
+      }
       // Binary Stop: reset position to 0.0, freeze. Vis nodes go to frame 0.
+      // Restore original material properties saved by prepareVisNode.
       if (thread.visNodes) {
         for (const v of thread.visNodes) {
           if (v.mesh.material && !Array.isArray(v.mesh.material)) {
-            v.mesh.material.opacity = v.keyframes[0];
+            const mat = v.mesh.material;
+            mat.opacity = v.keyframes[0];
             v.mesh.visible = v.keyframes[0] > 0.01;
+            const ud = mat.userData;
+            if (ud?._visOrigTransparent != null) {
+              mat.transparent = ud._visOrigTransparent;
+              mat.depthWrite = ud._visOrigDepthWrite;
+              mat.alphaTest = ud._visOrigAlphaTest;
+            }
           }
         }
       }
@@ -719,7 +841,7 @@ export const ShapeModel = memo(function ShapeModel({
       wheelAnimsRef.current = null;
     }
 
-    // ── Demo/live mode: no auto-play, useFrame drives from ghost data ──
+    // ── Demo/live mode: ghost thread handler in useFrame drives everything ──
     if (!isMissionMode) {
       return () => {
         handlePlayThreadRef.current = null;
@@ -761,6 +883,9 @@ export const ShapeModel = memo(function ShapeModel({
             const thread = threads.get(Number(slot));
             if (thread?.action) {
               thread.action.paused = true;
+              if (thread.morphActions) {
+                for (const ma of thread.morphActions) ma.paused = true;
+              }
             }
           },
         ),
@@ -769,12 +894,20 @@ export const ShapeModel = memo(function ShapeModel({
 
     // Start default looping sequences immediately. Thread slots match
     // power.cs globals: $PowerThread=0, $AmbientThread=1.
+    // In Torque, these are ghosted script threads started by server scripts,
+    // but the non-script ambient thread (ShapeBaseImageData.ambientSequence)
+    // is client-only and not ghosted. Auto-play both here as they're
+    // typically active on spawned shapes.
     const defaults: Array<[number, string]> = [
       [0, "power"],
       [1, "ambient"],
     ];
     for (const [slot, seqName] of defaults) {
-      if (clipsByName.has(seqName) || visNodesBySequence.has(seqName)) {
+      if (
+        clipsByName.has(seqName) ||
+        visNodesBySequence.has(seqName) ||
+        morphClipsBySeq.has(seqName)
+      ) {
         handlePlayThread(slot, seqName);
       }
     }
@@ -874,6 +1007,9 @@ export const ShapeModel = memo(function ShapeModel({
               const thread = threads.get(slot);
               if (thread?.action) {
                 thread.action.paused = true;
+                if (thread.morphActions) {
+                  for (const ma of thread.morphActions) ma.paused = true;
+                }
               }
             } else {
               // Play (state === 0)
@@ -892,15 +1028,23 @@ export const ShapeModel = memo(function ShapeModel({
                   thread.action.setLoop(LoopOnce, 1);
                   thread.action.clampWhenFinished = true;
                   thread.action.paused = true;
+                  if (thread.morphActions) {
+                    for (const ma of thread.morphActions) {
+                      const mc = ma.getClip();
+                      ma.time = t.forward ? mc.duration : 0;
+                      ma.timeScale = 1;
+                      ma.setLoop(LoopOnce, 1);
+                      ma.clampWhenFinished = true;
+                      ma.paused = true;
+                    }
+                  }
                 }
                 // Snap vis nodes to end pose.
                 if (thread?.visNodes) {
                   for (const v of thread.visNodes) {
                     const mat = v.mesh.material;
                     if (!mat || Array.isArray(mat)) continue;
-                    const endIdx = t.forward
-                      ? v.keyframes.length - 1
-                      : 0;
+                    const endIdx = t.forward ? v.keyframes.length - 1 : 0;
                     mat.opacity = v.keyframes[endIdx];
                     v.mesh.visible = mat.opacity > 0.01;
                   }
@@ -919,6 +1063,12 @@ export const ShapeModel = memo(function ShapeModel({
                   // Resume from pause with correct direction.
                   thread.action.paused = false;
                   thread.action.timeScale = t.forward ? 1 : -1;
+                  if (thread.morphActions) {
+                    for (const ma of thread.morphActions) {
+                      ma.paused = false;
+                      ma.timeScale = t.forward ? 1 : -1;
+                    }
+                  }
                 }
               }
             }
@@ -936,7 +1086,7 @@ export const ShapeModel = memo(function ShapeModel({
 
     // Drive vis opacity animations for active threads.
     // Direction is handled by computing position forward or backward.
-    for (const [slot, thread] of threads) {
+    for (const [, thread] of threads) {
       if (!thread.visNodes) continue;
 
       for (const { mesh, keyframes, duration, cyclic } of thread.visNodes) {
@@ -953,7 +1103,7 @@ export const ShapeModel = memo(function ShapeModel({
         let t: number;
         if (cyclic) {
           // Cyclic: wrap position, ignoring direction (cyclic always advances).
-          t = ((elapsed % duration) + duration) % duration / duration;
+          t = (((elapsed % duration) + duration) % duration) / duration;
         } else if (thread.forward) {
           t = Math.min(elapsed / duration, 1);
         } else {
@@ -968,6 +1118,27 @@ export const ShapeModel = memo(function ShapeModel({
         const frac = pos - lo;
         mat.opacity = keyframes[lo] + (keyframes[hi] - keyframes[lo]) * frac;
         mesh.visible = mat.opacity > 0.01;
+        // Dynamically toggle transparent/depthWrite: only enable blending
+        // when partially transparent, restore originals at full opacity.
+        const ud = mat.userData;
+        // Toggle transparent/depthWrite based on current opacity.
+        // needsUpdate is required when changing transparent — Three.js
+        // uses different render lists for opaque vs transparent objects.
+        if (mat.opacity >= 0.99) {
+          if (ud?._visOrigTransparent != null) {
+            if (mat.transparent !== ud._visOrigTransparent) {
+              mat.transparent = ud._visOrigTransparent;
+              mat.needsUpdate = true;
+            }
+            mat.depthWrite = ud._visOrigDepthWrite;
+            mat.alphaTest = ud._visOrigAlphaTest;
+          }
+        } else if (!mat.transparent) {
+          mat.transparent = true;
+          mat.depthWrite = false;
+          mat.alphaTest = 0;
+          mat.needsUpdate = true;
+        }
       }
     }
 
@@ -1221,9 +1392,69 @@ export const ShapeModel = memo(function ShapeModel({
     eyePos.set(gz, gy, -gx);
   });
 
+  // Item/ShapeBase built-in dynamic light (binary-verified pulsing formula).
+  // Torque places a GL point light at getBoxCenter() with:
+  //   constant_attenuation = 0, linear_attenuation = 1/radius, quadratic = 0
+  // This gives attenuation = radius/distance — surfaces at zero distance get
+  // infinite brightness, producing the characteristic "opaque glow" where the
+  // item's own mesh is massively overlit and goes pure white at peak pulse.
+  const lightRef = useRef<PointLight>(null);
+  const lightConfig = useMemo(() => {
+    const cfg = lightConfigProp;
+    if (!cfg) return null;
+    const box = new Box3().setFromObject(gltf.scene);
+    const center = new Vector3();
+    box.getCenter(center);
+    return {
+      type: cfg.type,
+      color: new Color(cfg.color[0], cfg.color[1], cfg.color[2]),
+      time: cfg.time,
+      radius: cfg.radius,
+      onlyStatic: cfg.onlyStatic,
+      isStatic: cfg.isStatic,
+      center: [center.x, center.y, center.z] as [number, number, number],
+    };
+  }, [gltf.scene, lightConfigProp]);
+
+  useFrame(() => {
+    if (!lightRef.current || !lightConfig) return;
+    if (lightConfig.onlyStatic && !lightConfig.isStatic) {
+      lightRef.current.intensity = 0;
+      return;
+    }
+    const fadeVal = streamEntityRef.current?.fadeVal ?? 1;
+    const elapsed = shapeNowSec() * 1000; // ms
+    let intensity: number;
+    if (lightConfig.type === 2) {
+      // PulsingLight (binary-verified): sin(PI * t / lightTime), period = 2 * lightTime
+      const sinVal = Math.sin((Math.PI * elapsed) / lightConfig.time);
+      const raw = 0.5 + 0.5 * sinVal;
+      intensity = (0.15 + raw * 0.85) * fadeVal;
+    } else {
+      // ConstantLight
+      intensity = fadeVal;
+    }
+    // Torque uses GL attenuation = radius/d (linear, constant=0). With decay=1
+    // in Three.js, the falloff is ~1/d within the distance window. Scale by
+    // radius² to approximate Torque's overbright behavior — surfaces near the
+    // light center get extremely bright (flag mesh goes pure white at peak pulse).
+    lightRef.current.intensity =
+      intensity * lightConfig.radius * lightConfig.radius;
+  });
+
   return (
     <group rotation={noRotation ? undefined : STANDARD_90_ROTATION}>
       <primitive object={clonedScene} />
+      {lightConfig && (
+        <pointLight
+          ref={lightRef}
+          color={lightConfig.color}
+          position={lightConfig.center}
+          intensity={0}
+          distance={lightConfig.radius * 2}
+          decay={1}
+        />
+      )}
       {debugMode ? (
         <FloatingLabel>
           {entityId}: {shapeName}
@@ -1241,10 +1472,7 @@ export const ShapeModel = memo(function ShapeModel({
           const bone = mountBones[Number(slot)];
           return bone ? (
             <Fragment key={slot}>
-              {createPortal(
-                <group rotation={MOUNT_COUNTER_ROTATION}>{content}</group>,
-                bone,
-              )}
+              {createPortal(<group>{content}</group>, bone)}
             </Fragment>
           ) : null;
         })}
@@ -1260,6 +1488,7 @@ function ShapeModelLoader({
   mounted,
   noRotation,
   skinName,
+  lightConfig,
 }: {
   streamEntity?: StreamShapeEntity;
   emap?: boolean;
@@ -1268,6 +1497,7 @@ function ShapeModelLoader({
   mounted?: Record<number, ReactNode>;
   noRotation?: boolean;
   skinName?: string;
+  lightConfig?: ShapeLightConfig;
 }) {
   const { shapeName } = useShapeInfo();
   const gltf = useStaticShape(shapeName);
@@ -1280,6 +1510,7 @@ function ShapeModelLoader({
       mounted={mounted}
       noRotation={noRotation}
       skinName={skinName}
+      lightConfig={lightConfig}
     >
       {children}
     </ShapeModel>

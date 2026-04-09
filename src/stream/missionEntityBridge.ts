@@ -225,6 +225,38 @@ function buildShapeEntity(
     }
   }
 
+  // Item/ShapeBase built-in dynamic light from datablock.
+  const lightTypeStr = getProperty(datablock, "lightType");
+  if (lightTypeStr) {
+    const ltMap: Record<string, number> = {
+      constantlight: 1,
+      pulsinglight: 2,
+    };
+    const lt = ltMap[lightTypeStr.toLowerCase()];
+    if (lt) {
+      entity.lightType = lt;
+      const lcStr = getProperty(datablock, "lightColor");
+      if (lcStr) {
+        const parts = lcStr.split(/\s+/).map(Number);
+        entity.lightColor = [
+          parts[0] ?? 1,
+          parts[1] ?? 1,
+          parts[2] ?? 1,
+          parts[3] ?? 1,
+        ];
+      } else {
+        entity.lightColor = [1, 1, 1, 1];
+      }
+      entity.lightTime = Number(getProperty(datablock, "lightTime")) || 1000;
+      entity.lightRadius = Number(getProperty(datablock, "lightRadius")) || 10;
+      entity.lightOnlyStatic = isTruthy(
+        getProperty(datablock, "lightOnlyStatic"),
+      );
+      // In mission mode, statically placed items are always "static".
+      entity.isStaticItem = className === "Item";
+    }
+  }
+
   if (className === "Turret") {
     const barrelName = getProperty(object, "initialBarrel");
     if (barrelName) {

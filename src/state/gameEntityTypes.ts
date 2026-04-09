@@ -122,8 +122,25 @@ interface PositionedBase extends EntityBase {
   scale?: [number, number, number];
   velocity?: [number, number, number];
   keyframes?: Keyframe[];
+
+  // ── Shared gameplay fields (used by both Shape and Player) ──
+  dataBlock?: string;
+  skinName?: string;
   /** Mounted image slots (0-7). Mount bone from dataBlock->mountPoint. */
   imageSlots?: (ImageSlot | undefined)[];
+  threads?: ThreadState[];
+  /** Arm blend animation action index from Player ghost (networked). */
+  armAction?: number;
+  /** Torque DamageState: 0=Enabled, 1=Disabled, 2=Destroyed. */
+  damageState?: number;
+  targetRenderFlags?: number;
+  iffColor?: { r: number; g: number; b: number };
+  /** ShapeBase sound slots (from ghost SoundMask). */
+  soundSlots?: Array<{ index: number; playing: boolean; profileId?: number }>;
+  health?: number;
+  energy?: number;
+  actionAnim?: number;
+  actionAtEnd?: boolean;
 }
 
 // ── Gameplay entities ──
@@ -133,18 +150,8 @@ export interface ShapeEntity extends PositionedBase {
   renderType: "Shape";
   shapeName?: string;
   shapeType?: string;
-  dataBlock?: string;
-  /** Skin name from TargetManager (e.g. "beagle" for flags, team skins). */
-  skinName?: string;
-  threads?: ThreadState[];
-  /** Torque DamageState: 0=Enabled, 1=Disabled, 2=Destroyed. */
-  damageState?: number;
   rotate?: boolean;
   teamId?: number;
-  targetRenderFlags?: number;
-  iffColor?: { r: number; g: number; b: number };
-  /** Arm blend animation action index from Player ghost (networked). */
-  armAction?: number;
   /** WheeledVehicle per-wheel state (speed, slip). */
   wheels?: Array<{
     speed: number;
@@ -157,41 +164,31 @@ export interface ShapeEntity extends PositionedBase {
   frozen?: boolean;
   /** Vehicle max steering angle (radians), from datablock. */
   maxSteeringAngle?: number;
-  /** ShapeBase sound slots (from ghost SoundMask). */
-  soundSlots?: Array<{ index: number; playing: boolean; profileId?: number }>;
   /** ShapeBase fade value (0=invisible, 1=fully visible). Matches mFadeVal. */
   fadeVal?: number;
   /** Cloak level (0=visible, 1=fully cloaked). Used for cloak texture effect. */
   cloakLevel?: number;
+  /** Item/ShapeBase built-in dynamic light from datablock. */
+  lightType?: number;
+  lightColor?: [number, number, number, number];
+  lightTime?: number;
+  lightRadius?: number;
+  lightOnlyStatic?: boolean;
+  isStaticItem?: boolean;
 }
 
 export interface PlayerEntity extends PositionedBase {
   renderType: "Player";
   shapeName?: string;
-  dataBlock?: string;
-  /** Arm blend animation action index from Player ghost (networked). */
-  armAction?: number;
+  /** Player preferred skin (chosen skin like "RandySavage"). */
+  skinPrefName?: string;
   falling?: boolean;
   jetting?: boolean;
   playerName?: string;
-  /** Player skin (team skin like "base", "baseb"). */
-  skinName?: string;
-  /** Player preferred skin (chosen skin like "RandySavage"). */
-  skinPrefName?: string;
-  iffColor?: { r: number; g: number; b: number };
-  threads?: ThreadState[];
   weaponImageState?: WeaponImageState;
   weaponImageStates?: WeaponImageDataBlockState[];
   headPitch?: number;
   headYaw?: number;
-  health?: number;
-  energy?: number;
-  actionAnim?: number;
-  actionAtEnd?: boolean;
-  damageState?: number;
-  targetRenderFlags?: number;
-  /** ShapeBase sound slots (from ghost SoundMask). */
-  soundSlots?: Array<{ index: number; playing: boolean; profileId?: number }>;
 }
 
 export interface ForceFieldBareEntity extends PositionedBase {

@@ -5,6 +5,7 @@ import type {
   ShapeEntity as ShapeEntityType,
 } from "../state/gameEntityTypes";
 import { ShapeRenderer, MountedShapeContent } from "./GenericShape";
+import type { ShapeLightConfig } from "./GenericShape";
 import { ShapeInfoProvider } from "./ShapeInfoProvider";
 import type { StaticShapeType } from "./ShapeInfoProvider";
 import { DebugSuspense } from "./DebugSuspense";
@@ -186,6 +187,23 @@ function ShapeEntity({
     return Object.keys(m).length > 0 ? m : undefined;
   }, [objectMounts, entity.imageSlots, entity.id]);
 
+  const shapeLightConfig = useMemo((): ShapeLightConfig | undefined => {
+    if (!entity.lightType) return undefined;
+    return {
+      type: entity.lightType,
+      color: (entity.lightColor ?? [1, 1, 1, 1]) as [
+        number,
+        number,
+        number,
+        number,
+      ],
+      time: entity.lightTime ?? 1000,
+      radius: entity.lightRadius ?? 10,
+      onlyStatic: !!entity.lightOnlyStatic,
+      isStatic: !!entity.isStaticItem,
+    };
+  }, [entity.lightType]);
+
   return (
     <ShapeInfoProvider
       object={entity.runtimeObject as TorqueObject | undefined}
@@ -200,6 +218,7 @@ function ShapeEntity({
           entityId={entity.id}
           skinName={entity.skinName}
           mounted={allMounts}
+          lightConfig={shapeLightConfig}
         >
           {flagLabel ? (
             <FloatingLabel opacity={0.6}>{flagLabel}</FloatingLabel>

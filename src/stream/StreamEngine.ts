@@ -147,6 +147,12 @@ export interface MutableEntity {
   /** Item mStatic flag (from InitialUpdateMask). Static items (flags at
    *  flagstand) skip all physics in Item::processTick. */
   isStaticItem?: boolean;
+  /** Item/ShapeBase built-in dynamic light from datablock. */
+  lightType?: number;
+  lightColor?: [number, number, number, number];
+  lightTime?: number;
+  lightRadius?: number;
+  lightOnlyStatic?: boolean;
 
   /** Item velocity interpolation state. The client simulates full physics
    *  (gravity, collision, bounce) for non-static, non-at-rest items. */
@@ -1038,6 +1044,20 @@ export abstract class StreamEngine implements StreamingPlayback {
         typeof blockData?.maxEnergy === "number"
       ) {
         entity.maxEnergy = blockData.maxEnergy;
+      }
+
+      // Item/ShapeBase built-in dynamic light (binary-verified).
+      const lt = blockData?.lightType as number | undefined;
+      if (lt && lt > 0 && blockData) {
+        entity.lightType = lt;
+        const lc = blockData.lightColor as
+          | { r: number; g: number; b: number; a?: number }
+          | undefined;
+        entity.lightColor = lc ? [lc.r, lc.g, lc.b, lc.a ?? 1] : [1, 1, 1, 1];
+        entity.lightTime = (blockData.lightTime as number | undefined) ?? 1000;
+        entity.lightRadius =
+          (blockData.lightRadius as number | undefined) ?? 10;
+        entity.lightOnlyStatic = !!(blockData.lightOnlyStatic as boolean);
       }
 
       // Classify projectile physics
@@ -2464,6 +2484,12 @@ export abstract class StreamEngine implements StreamingPlayback {
         shapeHint: entity.shapeHint,
         dataBlock: entity.dataBlock,
         imageSlots: entity.imageSlots,
+        lightType: entity.lightType,
+        lightColor: entity.lightColor,
+        lightTime: entity.lightTime,
+        lightRadius: entity.lightRadius,
+        lightOnlyStatic: entity.lightOnlyStatic,
+        isStaticItem: entity.isStaticItem,
         mountObjectId:
           entity.mountObjectGhostIndex != null
             ? this.entityIdByGhostIndex.get(entity.mountObjectGhostIndex)

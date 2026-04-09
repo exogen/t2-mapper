@@ -170,6 +170,29 @@ function PositionedEntityWrapper({
     return new Quaternion(...entity.rotation);
   }, [entity.rotation]);
 
+  // Build object mount content for entities mounted on this one (e.g. players
+  // sitting in a vehicle). Each mounted entity renders via EntityRenderer
+  // inside the target's mount bone (portaled by ShapeRenderer).
+  // This must be above early returns to satisfy React's hooks rules.
+  const objectMounts = useMemo(() => {
+    if (!mountChildren || mountChildren.size === 0) return undefined;
+    const mounts: Record<number, React.ReactNode> = {};
+    for (const [node, child] of mountChildren) {
+      // Object mounts (players in vehicles) need a counter-rotation because
+      // the mounted PlayerModel applies its own R90 Y which conflicts with
+      // the vehicle's bone chain. Image mounts (MountedShapeContent) handle
+      // their own orientation via the Mountpoint inverse, so no extra rotation.
+      mounts[node] = (
+        <Suspense key={child.id}>
+          <group rotation={[Math.PI / 2, -Math.PI / 2, 0]}>
+            <EntityRenderer entity={child} />
+          </group>
+        </Suspense>
+      );
+    }
+    return mounts;
+  }, [mountChildren]);
+
   // Entities without a resolved shape get a wireframe placeholder.
   if (entity.renderType === "Shape" && !entity.shapeName) {
     return (
@@ -201,22 +224,6 @@ function PositionedEntityWrapper({
         />
       </mesh>
     );
-
-  // Build object mount content for entities mounted on this one (e.g. players
-  // sitting in a vehicle). Each mounted entity renders via EntityRenderer
-  // inside the target's mount bone (portaled by ShapeRenderer).
-  const objectMounts = useMemo(() => {
-    if (!mountChildren || mountChildren.size === 0) return undefined;
-    const mounts: Record<number, React.ReactNode> = {};
-    for (const [node, child] of mountChildren) {
-      mounts[node] = (
-        <Suspense key={child.id}>
-          <EntityRenderer entity={child} />
-        </Suspense>
-      );
-    }
-    return mounts;
-  }, [mountChildren]);
 
   return (
     <group

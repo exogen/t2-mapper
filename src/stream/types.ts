@@ -110,6 +110,13 @@ export interface StreamEntity {
   direction?: [number, number, number];
   /** Mounted image slots (0-7). Mount bone from dataBlock->mountPoint. */
   imageSlots?: (ImageSlot | undefined)[];
+  /** Item/ShapeBase built-in dynamic light from datablock. */
+  lightType?: number;
+  lightColor?: [number, number, number, number];
+  lightTime?: number;
+  lightRadius?: number;
+  lightOnlyStatic?: boolean;
+  isStaticItem?: boolean;
   playerName?: string;
   /** IFF color resolved from the sensor group color table (sRGB 0-255). */
   iffColor?: { r: number; g: number; b: number };

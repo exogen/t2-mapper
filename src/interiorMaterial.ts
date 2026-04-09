@@ -1,4 +1,5 @@
 import { Vector3 } from "three";
+import { glslColorSpace, glslDebugGrid } from "./shaderUtils";
 
 /**
  * Interior material shader modifications for MeshLambertMaterial.
@@ -30,30 +31,6 @@ export type InteriorLightingOptions = {
   surfaceOutsideVisible?: boolean;
 };
 
-// sRGB <-> Linear conversion functions (GLSL)
-const colorSpaceFunctions = /* glsl */ `
-vec3 interiorLinearToSRGB(vec3 linear) {
-  vec3 higher = pow(linear, vec3(1.0/2.4)) * 1.055 - 0.055;
-  vec3 lower = linear * 12.92;
-  return mix(lower, higher, step(vec3(0.0031308), linear));
-}
-
-vec3 interiorSRGBToLinear(vec3 srgb) {
-  vec3 higher = pow((srgb + 0.055) / 1.055, vec3(2.4));
-  vec3 lower = srgb / 12.92;
-  return mix(lower, higher, step(vec3(0.04045), srgb));
-}
-
-// Debug grid overlay function using screen-space derivatives for sharp, anti-aliased lines
-// Returns 1.0 on grid lines, 0.0 elsewhere
-float debugGrid(vec2 uv, float gridSize, float lineWidth) {
-  vec2 scaledUV = uv * gridSize;
-  vec2 grid = abs(fract(scaledUV - 0.5) - 0.5) / fwidth(scaledUV);
-  float line = min(grid.x, grid.y);
-  return 1.0 - min(line / lineWidth, 1.0);
-}
-`;
-
 export function injectInteriorLighting(
   shader: any,
   options: InteriorLightingOptions,
@@ -76,7 +53,8 @@ export function injectInteriorLighting(
   shader.fragmentShader = shader.fragmentShader.replace(
     "#include <common>",
     `#include <common>
-${colorSpaceFunctions}
+${glslColorSpace}
+${glslDebugGrid}
 uniform bool useSceneLighting;
 uniform vec3 interiorDebugColor;
 `,
@@ -98,7 +76,11 @@ uniform vec3 interiorDebugColor;
     "#include <opaque_fragment>",
     `// Torque-style lighting: output = clamp(lighting × texture, 0, 1) in sRGB space
 // Get texture in sRGB space (undo Three.js linear decode)
-vec3 textureSRGB = interiorLinearToSRGB(diffuseColor.rgb);
+vec3 textureSRGB = torqueLinearToSRGB(diffuseColor.rgb);
+
+// Save Three.js computed direct lighting (includes sun + point/spot lights).
+// We'll add it back for point/spot light contribution after our gamma-space calc.
+vec3 interiorAllLightsLinear = reflectedLight.directDiffuse;
 
 // Compute lighting in sRGB space
 vec3 lightingSRGB = vec3(0.0);
@@ -122,7 +104,7 @@ if (useSceneLighting) {
 // (stored in .ml files). Inside surfaces only have base lightmap. Both need lightmap here.
 #ifdef USE_LIGHTMAP
   // Lightmap is stored as linear in Three.js (decoded from sRGB texture), convert back
-  lightingSRGB += interiorLinearToSRGB(lightMapTexel.rgb);
+  lightingSRGB += torqueLinearToSRGB(lightMapTexel.rgb);
 #endif
 // Torque clamps the sum to [0,1] per channel (sceneLighting.cc lines 1817-1827)
 lightingSRGB = clamp(lightingSRGB, 0.0, 1.0);
@@ -131,10 +113,14 @@ lightingSRGB = clamp(lightingSRGB, 0.0, 1.0);
 vec3 resultSRGB = clamp(lightingSRGB * textureSRGB, 0.0, 1.0);
 
 // Convert back to linear for Three.js output pipeline
-vec3 resultLinear = interiorSRGBToLinear(resultSRGB);
+vec3 resultLinear = torqueSRGBToLinear(resultSRGB);
 
 // Reassign outgoingLight before opaque_fragment consumes it
+// Add dynamic point/spot lights when present (avoid sun double-count otherwise)
 outgoingLight = resultLinear + totalEmissiveRadiance;
+#if ( NUM_POINT_LIGHTS > 0 || NUM_SPOT_LIGHTS > 0 )
+  outgoingLight += interiorAllLightsLinear;
+#endif
 
 #include <opaque_fragment>`,
   );
@@ -148,7 +134,7 @@ outgoingLight = resultLinear + totalEmissiveRadiance;
 // Red grid = inside surface (no scene ambient light)
 #if DEBUG_MODE && defined(USE_MAP)
   // gridSize=4 creates 4x4 grid per UV tile, lineWidth=1.5 is ~1.5 pixels wide
-  float gridIntensity = debugGrid(vMapUv, 4.0, 1.5);
+  float gridIntensity = torqueDebugGrid(vMapUv, 4.0, 1.5);
   gl_FragColor.rgb = mix(gl_FragColor.rgb, interiorDebugColor, gridIntensity * 0.1);
 #endif
 
