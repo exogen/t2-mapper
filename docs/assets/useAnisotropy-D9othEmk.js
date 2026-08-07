@@ -1,1 +1,0 @@
-import{s as e}from"./react-three-fiber.esm-El6vNTZj.js";function t(){return e(n)}function n(e){return e.gl.capabilities.getMaxAnisotropy()}export{t};
