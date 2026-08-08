@@ -123,9 +123,12 @@ export function InputBindings<T extends string = string>({
 
     /**
      * Derive key action state from the raw pressed-key set.
-     * Called whenever the global key set changes.
+     * Called whenever the global key set changes. With `notify` false, the
+     * pressed state still updates but one-shot subscribers aren't fired —
+     * used at mount so a key held across a binding-set change (e.g. Escape
+     * exiting a tour remounts other bindings) doesn't count as a new press.
      */
-    function deriveKeyActions(keys: Set<string>) {
+    function deriveKeyActions(keys: Set<string>, notify = true) {
       const { actions } = store.getState();
       const updates: Record<string, ActionState> = {};
 
@@ -138,7 +141,7 @@ export function InputBindings<T extends string = string>({
           const wasPressed = prev?.pressed ?? false;
           if (shouldBePressed && !wasPressed) {
             updates[action.name] = { pressed: true };
-            notifySubscribers(action.name);
+            if (notify) notifySubscribers(action.name);
           } else if (!shouldBePressed && wasPressed) {
             updates[action.name] = { pressed: false };
           }
@@ -457,8 +460,9 @@ export function InputBindings<T extends string = string>({
     // Subscribe to global key set changes to derive key actions.
     let unsubKeys: (() => void) | undefined;
     if (bindings.hasKeyBindings) {
-      // Derive immediately from current key state.
-      bindings.deriveKeyActions(store.getState().keys);
+      // Derive immediately from current key state, without treating
+      // already-held keys as fresh presses.
+      bindings.deriveKeyActions(store.getState().keys, false);
 
       unsubKeys = store.subscribe(
         (state) => state.keys,

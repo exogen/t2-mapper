@@ -3,7 +3,10 @@ import { useFrame, useThree } from "@react-three/fiber";
 import { OrthographicCamera } from "@react-three/drei";
 import {
   Euler,
+  Mesh,
+  MeshBasicMaterial,
   Quaternion,
+  type Object3D,
   type OrthographicCamera as ThreeOrthographicCamera,
 } from "three";
 import {
@@ -11,6 +14,7 @@ import {
   useCommandCircuit,
 } from "../state/commandCircuitStore";
 import { cameraTourStore } from "../state/cameraTourStore";
+import type { TourAnimation } from "../state/cameraTourStore";
 import { cameraRegistry } from "../state/cameraRegistry";
 import { gameEntityStore, useSceneMissionArea } from "../state/gameEntityStore";
 import { computeCommandCircuitFrame } from "./commandCircuitFrame";
@@ -54,6 +58,47 @@ const MIN_ZOOM_FACTOR = 0.25;
 const MAX_ZOOM_FACTOR = 40;
 
 /**
+ * Tour pan pacing, mirroring CameraTourConsumer's travel rules: duration
+ * scales with distance between these bounds.
+ */
+const TOUR_PAN_SPEED = 180;
+const TOUR_MIN_PAN_DURATION = 1.5;
+const TOUR_MAX_PAN_DURATION = 6.0;
+
+/**
+ * How long to linger centered over a target before auto-advancing — the
+ * top-down stand-in for the orbit phase.
+ */
+const TOUR_DWELL_DURATION = 2.0;
+
+/**
+ * Uniform zoom while touring, as a multiple of the fitted zoom.
+ */
+const TOUR_ZOOM_FACTOR = 9;
+
+/**
+ * Tour target highlight: smooth flashes over the active target, rendered
+ * as a filled silhouette above everything. Flashing runs for the whole pan
+ * plus half the dwell; the rig owns the clock and publishes the opacity
+ * here for the highlight component to apply.
+ */
+const FLASH_COLOR = "#39ff14";
+const FLASH_DURATION = 0.5;
+const FLASH_RENDER_ORDER = 999;
+const tourFlash = { opacity: 0 };
+
+/**
+ * Tunable S-curve easing (rational sigmoid). Higher `inPower` back-loads
+ * the motion (slower start, later velocity peak); higher `outPower`
+ * lengthens the deceleration tail for a softer landing.
+ */
+function easeInOut(t: number, inPower: number, outPower: number): number {
+  const a = Math.pow(t, inPower);
+  const b = Math.pow(1 - t, outPower);
+  return a / (a + b);
+}
+
+/**
  * Looking straight down Three -Y with screen-up = world -Z.
  */
 const TOP_DOWN_QUATERNION = new Quaternion().setFromEuler(
@@ -80,24 +125,13 @@ export function CommandCircuitCamera() {
     commandCircuitStore.getState().deactivate();
   });
 
-  // Entering command circuit exits any active tour and pointer lock.
+  // Entering command circuit exits pointer lock. Tours are unaffected —
+  // they continue as top-down pans while the mode is active.
   useEffect(() => {
-    if (active) {
-      cameraTourStore.getState().cancel();
-      if (document.pointerLockElement) {
-        document.exitPointerLock();
-      }
+    if (active && document.pointerLockElement) {
+      document.exitPointerLock();
     }
   }, [active]);
-
-  // Starting a tour (e.g. from the map tour panel) takes over the camera.
-  useEffect(() => {
-    return cameraTourStore.subscribe((state) => {
-      if (state.animation) {
-        commandCircuitStore.getState().deactivate();
-      }
-    });
-  }, []);
 
   // The mode only applies to static map viewing.
   useEffect(() => {
@@ -108,7 +142,117 @@ export function CommandCircuitCamera() {
     });
   }, []);
 
-  return active ? <CommandCircuitOrthoRig /> : null;
+  return active ? (
+    <>
+      <CommandCircuitOrthoRig />
+      <CommandCircuitTourHighlight />
+    </>
+  ) : null;
+}
+
+/**
+ * Flashes a neon silhouette over the active tour target so it's findable
+ * from above even when occluded (e.g. an item inside a base). The overlay
+ * meshes share the target's geometry, are parented inside its meshes so
+ * they track transforms, and render without depth testing above everything.
+ */
+function CommandCircuitTourHighlight() {
+  const scene = useThree((state) => state.scene);
+
+  const material = useMemo(
+    () =>
+      new MeshBasicMaterial({
+        color: FLASH_COLOR,
+        transparent: true,
+        opacity: 0,
+        depthTest: false,
+        depthWrite: false,
+        fog: false,
+      }),
+    [],
+  );
+  useEffect(() => () => material.dispose(), [material]);
+
+  const overlayRef = useRef<{
+    animation: TourAnimation;
+    index: number;
+    meshes: Mesh[];
+  } | null>(null);
+
+  const teardown = () => {
+    const overlay = overlayRef.current;
+    if (overlay) {
+      for (const mesh of overlay.meshes) {
+        mesh.removeFromParent();
+      }
+      overlay.meshes.length = 0;
+    }
+    overlayRef.current = null;
+  };
+  useEffect(() => teardown, []);
+
+  useFrame(() => {
+    const animation = cameraTourStore.getState().animation;
+    if (!animation) {
+      teardown();
+      return;
+    }
+
+    let overlay = overlayRef.current;
+    if (
+      !overlay ||
+      overlay.animation !== animation ||
+      overlay.index !== animation.currentIndex
+    ) {
+      teardown();
+      overlay = {
+        animation,
+        index: animation.currentIndex,
+        meshes: [],
+      };
+      overlayRef.current = overlay;
+    }
+
+    // If the meshes we attached to were replaced (e.g. a placeholder swapped
+    // for the streamed-in model), our clones went with them — rebuild.
+    if (overlay.meshes.length > 0) {
+      let root: Object3D = overlay.meshes[0];
+      while (root.parent) root = root.parent;
+      if (root !== scene) {
+        for (const mesh of overlay.meshes) {
+          mesh.removeFromParent();
+        }
+        overlay.meshes.length = 0;
+      }
+    }
+
+    // Build lazily (and retry) since the target's model may still be
+    // streaming in when it becomes the active target.
+    if (overlay.meshes.length === 0) {
+      const target = animation.targets[animation.currentIndex];
+      const object: Object3D | undefined = scene.getObjectByName(
+        target.entityId,
+      );
+      if (object) {
+        const sources: Mesh[] = [];
+        object.traverse((child) => {
+          if ((child as Mesh).isMesh) sources.push(child as Mesh);
+        });
+        for (const source of sources) {
+          const clone = new Mesh(source.geometry, material);
+          clone.renderOrder = FLASH_RENDER_ORDER;
+          clone.frustumCulled = false;
+          source.add(clone);
+          overlay.meshes.push(clone);
+        }
+      }
+    }
+
+    // The rig owns the flash clock; just apply its opacity.
+    material.opacity = tourFlash.opacity;
+  });
+
+  return null;
 }
 
 function CommandCircuitOrthoRig() {
@@ -154,6 +298,18 @@ function CommandCircuitOrthoRig() {
   // Track the latest fit for the zoom handler's clamp range.
   const fitZoomRef = useRef(fitZoom);
 
+  // Per-target pan animation state while a tour is active.
+  const tourPanRef = useRef<{
+    animation: TourAnimation;
+    index: number;
+    fromX: number;
+    fromZ: number;
+    fromZoom: number;
+    elapsed: number;
+    duration: number;
+    dwellElapsed: number;
+  } | null>(null);
+
   // Refit on viewport/mission changes until the user takes over.
   useEffect(() => {
     fitZoomRef.current = fitZoom;
@@ -180,46 +336,125 @@ function CommandCircuitOrthoRig() {
   useFrame((_state, delta) => {
     const camera = cameraRef.current;
     if (!camera) return;
-    const inputState = getInputState();
 
-    // WASD pan at constant screen speed regardless of zoom.
-    const panDistance = (PAN_SPEED / zoom.current) * delta;
     let dx = 0;
     let dz = 0;
-    if (isPressed(inputState, "commandPanUp")) dz -= panDistance;
-    if (isPressed(inputState, "commandPanDown")) dz += panDistance;
-    if (isPressed(inputState, "commandPanLeft")) dx -= panDistance;
-    if (isPressed(inputState, "commandPanRight")) dx += panDistance;
+    const animation = cameraTourStore.getState().animation;
+    if (animation) {
+      // An active tour drives the view: glide to a point centered above
+      // the current target, dwell, then advance — mirroring the
+      // travel/orbit phases of the regular tour.
+      const target = animation.targets[animation.currentIndex];
+      let tour = tourPanRef.current;
+      if (
+        !tour ||
+        tour.animation !== animation ||
+        tour.index !== animation.currentIndex
+      ) {
+        const distance = Math.hypot(
+          target.position[0] - pan.current.x,
+          target.position[2] - pan.current.z,
+        );
+        tour = {
+          animation,
+          index: animation.currentIndex,
+          fromX: pan.current.x,
+          fromZ: pan.current.z,
+          fromZoom: zoom.current,
+          elapsed: 0,
+          duration: Math.max(
+            TOUR_MIN_PAN_DURATION,
+            Math.min(TOUR_MAX_PAN_DURATION, distance / TOUR_PAN_SPEED),
+          ),
+          dwellElapsed: 0,
+        };
+        tourPanRef.current = tour;
+      }
+      tour.elapsed += delta;
+      const t = Math.min(1, tour.elapsed / tour.duration);
+      // Pan: early velocity peak, then a long gentle deceleration.
+      const eased = easeInOut(t, 2, 3);
+      pan.current.x = tour.fromX + (target.position[0] - tour.fromX) * eased;
+      pan.current.z = tour.fromZ + (target.position[2] - tour.fromZ) * eased;
 
-    // Drag/touch pan: map content follows the cursor or finger.
-    const drag = inputState.commandPanDrag as DragState | undefined;
-    if (drag?.dragging && (drag.deltaX !== 0 || drag.deltaY !== 0)) {
-      dx -= drag.deltaX / zoom.current;
-      dz -= drag.deltaY / zoom.current;
-    }
-    const touch = inputState.commandPanTouch as TouchState | undefined;
-    if (touch?.dragging && (touch.deltaX !== 0 || touch.deltaY !== 0)) {
-      dx -= touch.deltaX / zoom.current;
-      dz -= touch.deltaY / zoom.current;
-    }
+      // Zoom rides the pan's timeline, back-loaded (barely moving while
+      // the pan covers distance, fastest near arrival) but easing out into
+      // a soft landing. Interpolated in log space so it feels linear.
+      const targetZoom = fitZoomRef.current * TOUR_ZOOM_FACTOR;
+      zoom.current =
+        tour.fromZoom *
+        Math.pow(targetZoom / tour.fromZoom, easeInOut(t, 3, 2));
 
-    // Pinch zoom (touch devices).
-    const pinch = inputState.commandPinchZoom as PinchState | undefined;
-    if (pinch?.pinching && pinch.deltaDistance !== 0) {
-      const fit = fitZoomRef.current;
-      zoom.current = Math.min(
-        fit * MAX_ZOOM_FACTOR,
-        Math.max(
-          fit * MIN_ZOOM_FACTOR,
-          zoom.current * Math.exp(pinch.deltaDistance * PINCH_SENSITIVITY),
-        ),
-      );
+      // Flash the target for the whole pan plus half the dwell, with a
+      // short taper so the final pulse doesn't cut off abruptly.
+      const flashWindow = tour.duration + TOUR_DWELL_DURATION / 2;
+      if (tour.elapsed < flashWindow) {
+        const pulse = Math.sin(Math.PI * ((tour.elapsed / FLASH_DURATION) % 1));
+        const taper = Math.min(
+          1,
+          (flashWindow - tour.elapsed) / (FLASH_DURATION / 2),
+        );
+        tourFlash.opacity = pulse * taper;
+      } else {
+        tourFlash.opacity = 0;
+      }
+
+      // The tour repositioned the view; don't refit over it on resize.
       userAdjusted.current = true;
-    }
-    clearInputDeltas();
+      if (t >= 1) {
+        tour.dwellElapsed += delta;
+        if (tour.dwellElapsed >= TOUR_DWELL_DURATION) {
+          const isLastTarget =
+            animation.currentIndex >= animation.targets.length - 1;
+          if (isLastTarget) {
+            cameraTourStore.getState().cancel();
+          } else {
+            cameraTourStore.getState().advanceTarget();
+          }
+        }
+      }
+    } else {
+      tourPanRef.current = null;
+      tourFlash.opacity = 0;
+      const inputState = getInputState();
 
-    if (dx !== 0 || dz !== 0) {
-      userAdjusted.current = true;
+      // WASD pan at constant screen speed regardless of zoom.
+      const panDistance = (PAN_SPEED / zoom.current) * delta;
+      if (isPressed(inputState, "commandPanUp")) dz -= panDistance;
+      if (isPressed(inputState, "commandPanDown")) dz += panDistance;
+      if (isPressed(inputState, "commandPanLeft")) dx -= panDistance;
+      if (isPressed(inputState, "commandPanRight")) dx += panDistance;
+
+      // Drag/touch pan: map content follows the cursor or finger.
+      const drag = inputState.commandPanDrag as DragState | undefined;
+      if (drag?.dragging && (drag.deltaX !== 0 || drag.deltaY !== 0)) {
+        dx -= drag.deltaX / zoom.current;
+        dz -= drag.deltaY / zoom.current;
+      }
+      const touch = inputState.commandPanTouch as TouchState | undefined;
+      if (touch?.dragging && (touch.deltaX !== 0 || touch.deltaY !== 0)) {
+        dx -= touch.deltaX / zoom.current;
+        dz -= touch.deltaY / zoom.current;
+      }
+
+      // Pinch zoom (touch devices).
+      const pinch = inputState.commandPinchZoom as PinchState | undefined;
+      if (pinch?.pinching && pinch.deltaDistance !== 0) {
+        const fit = fitZoomRef.current;
+        zoom.current = Math.min(
+          fit * MAX_ZOOM_FACTOR,
+          Math.max(
+            fit * MIN_ZOOM_FACTOR,
+            zoom.current * Math.exp(pinch.deltaDistance * PINCH_SENSITIVITY),
+          ),
+        );
+        userAdjusted.current = true;
+      }
+      clearInputDeltas();
+
+      if (dx !== 0 || dz !== 0) {
+        userAdjusted.current = true;
+      }
     }
 
     // Clamp pan to twice the frame extent so the map can't be lost.

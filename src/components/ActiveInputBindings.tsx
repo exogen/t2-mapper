@@ -52,7 +52,9 @@ export function ActiveInputBindings() {
       {isMap && !isTourActive && (
         <InputBindings map={COMMAND_CIRCUIT_TOGGLE_INPUT} />
       )}
-      {isCommandCircuit && <InputBindings map={COMMAND_CIRCUIT_INPUT} />}
+      {isCommandCircuit && !isTourActive && (
+        <InputBindings map={COMMAND_CIRCUIT_INPUT} />
+      )}
       {isDemo && <InputBindings map={DEMO_MODE_INPUT} />}
       {isLive && <InputBindings map={LIVE_OBSERVER_INPUT} />}
       {isLive && inputMode === "follow" && (

@@ -13,6 +13,7 @@ import {
 } from "three";
 import { cameraTourStore } from "../state/cameraTourStore";
 import type { TourAnimation } from "../state/cameraTourStore";
+import { commandCircuitStore } from "../state/commandCircuitStore";
 import type { TourTarget } from "./mapTourCategories";
 import { globalFogUniforms } from "../globalFogUniforms";
 import { createLogger } from "../logger";
@@ -406,6 +407,11 @@ export function CameraTourConsumer() {
   });
 
   useFrame((_state, delta) => {
+    // In command circuit mode the ortho rig drives the camera (top-down
+    // pans) and tour phase progression; only the click/Escape handlers
+    // above stay in play.
+    if (commandCircuitStore.getState().active) return;
+
     const animation = cameraTourStore.getState().animation;
 
     // Reduce fog when orbiting far targets. fogDistanceScale divides all

@@ -517,7 +517,7 @@ export function KeyboardOverlay() {
   return (
     <div className={styles.Root}>
       {showFreeFly && <FreeFlyOverlay />}
-      {isCommandCircuit && <CommandCircuitOverlay />}
+      {isCommandCircuit && !isTourActive && <CommandCircuitOverlay />}
       {isLiveObserver && <ObserverOverlay />}
       {isDemo && <DemoOverlay />}
       {isTourActive && <TourOverlay />}
