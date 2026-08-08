@@ -1,5 +1,5 @@
 import { Quaternion, Vector3 } from "three";
-import { useThree } from "@react-three/fiber";
+import { cameraRegistry } from "../state/cameraRegistry";
 import {
   createContext,
   useCallback,
@@ -35,7 +35,6 @@ export function useCameras() {
 }
 
 export function CamerasProvider({ children }: { children: ReactNode }) {
-  const camera = useThree((state) => state.camera);
   const [cameraIndex, setCameraIndex] = useState(-1);
   const [cameraMap, setCameraMap] = useState<Record<string, CameraEntry>>({});
   const [initialViewState, setInitialViewState] = useState<{
@@ -65,9 +64,13 @@ export function CamerasProvider({ children }: { children: ReactNode }) {
 
   const cameraCount = Object.keys(cameraMap).length;
 
+  // Mission camera snaps always target the regular perspective camera; it
+  // stays put even if the command circuit's ortho camera is currently
+  // rendering.
   const setCamera = useCallback(
     (index: number) => {
-      if (index >= 0 && index < cameraCount) {
+      const camera = cameraRegistry.perspective;
+      if (camera && index >= 0 && index < cameraCount) {
         setCameraIndex(index);
         const cameraId = Object.keys(cameraMap)[index];
         const cameraInfo = cameraMap[cameraId];
@@ -80,7 +83,7 @@ export function CamerasProvider({ children }: { children: ReactNode }) {
         camera.quaternion.copy(cameraInfo.rotation).multiply(correction);
       }
     },
-    [camera, cameraCount, cameraMap],
+    [cameraCount, cameraMap],
   );
 
   const nextCamera = useCallback(() => {
@@ -90,7 +93,12 @@ export function CamerasProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const handleHashChange = () => {
       const hash = window.location.hash;
-      if (hash.startsWith("#c")) {
+      // A command-circuit link's hash describes the ortho camera and is
+      // restored by the command circuit rig itself — never apply it to the
+      // regular camera.
+      const isCommandCircuitLink =
+        new URLSearchParams(window.location.search).get("mode") === "command";
+      if (!isCommandCircuitLink && hash.startsWith("#c")) {
         const [positionString, quarternionString] = hash.slice(2).split("~");
         const position = positionString.split(",").map((s) => parseFloat(s));
         const quarternion = quarternionString
@@ -118,15 +126,20 @@ export function CamerasProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
+  // Apply the view hash to the perspective camera, once per hash value
+  // (i.e. on page load, or if the hash is edited).
   useEffect(() => {
-    if (initialViewState.initialized && initialViewState.position) {
-      camera.position.copy(initialViewState.position);
-      if (initialViewState.quarternion) {
-        camera.quaternion.copy(initialViewState.quarternion);
-      }
+    const camera = cameraRegistry.perspective;
+    if (!camera || !initialViewState.initialized || !initialViewState.position)
+      return;
+    camera.position.copy(initialViewState.position);
+    if (initialViewState.quarternion) {
+      camera.quaternion.copy(initialViewState.quarternion);
     }
-  }, [camera, initialViewState]);
+  }, [initialViewState]);
 
+  // Snap to the mission's first camera on load (unless a view hash already
+  // positioned the camera).
   useEffect(() => {
     if (!initialViewState.initialized || initialViewState.position) return;
     if (cameraCount > 0 && cameraIndex === -1) {

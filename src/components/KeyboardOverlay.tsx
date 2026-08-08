@@ -13,6 +13,7 @@ import {
 } from "./usePlayback";
 import { useInputMode } from "./InputContext";
 import { useCameraTour } from "../state/cameraTourStore";
+import { useCommandCircuit } from "../state/commandCircuitStore";
 import {
   useDataSource,
   useGameEntitiesByRenderType,
@@ -315,6 +316,59 @@ function FreeFlyOverlay() {
   );
 }
 
+function CommandCircuitOverlay() {
+  return (
+    <>
+      <div className={styles.Column}>
+        <div className={styles.Row}>
+          <div className={styles.Spacer} />
+          <Key action="commandPanUp" input="W" label="Pan up" />
+          <div className={styles.Spacer} />
+        </div>
+        <div className={styles.Row}>
+          <Key action="commandPanLeft" input="A" label="Pan left" />
+          <Key action="commandPanDown" input="S" label="Pan down" />
+          <Key action="commandPanRight" input="D" label="Pan right" />
+        </div>
+      </div>
+      <div className={styles.Column} data-height="compact">
+        <div className={styles.Row}>
+          <Key
+            action={(s) =>
+              (s.commandPanDrag as DragState | undefined)?.dragging ?? false
+            }
+            input={<MdSwipe className={styles.MouseIcon} />}
+            label="Pan"
+            labelPosition="right"
+            inputSize="auto"
+          />
+        </div>
+        <div className={styles.Row}>
+          <Key
+            action={(s) => ((s.commandZoom as ScrollState)?.deltaY ?? 0) !== 0}
+            debounce={50}
+            input={<PiMouseScroll className={styles.MouseIcon} />}
+            label="Zoom"
+            labelPosition="right"
+            inputSize="auto"
+          />
+        </div>
+      </div>
+      <div className={styles.Column} data-height="compact">
+        <div className={styles.Row}>
+          <Key
+            action="toggleCommandCircuit"
+            label="Exit"
+            input="C / Esc"
+            labelPosition="right"
+            inputSize="auto"
+          />
+        </div>
+      </div>
+    </>
+  );
+}
+
 function DemoOverlay() {
   const isPlaying = useIsPlaying();
   const speed = useSpeed();
@@ -449,6 +503,7 @@ export function KeyboardOverlay() {
   const inputMode = useInputMode();
 
   const isTourActive = useCameraTour((s) => s.animation !== null);
+  const isCommandCircuit = useCommandCircuit((s) => s.active);
 
   const isDemo = recording?.source === "demo";
   const isLive = recording?.source === "live";
@@ -457,11 +512,12 @@ export function KeyboardOverlay() {
   const isLiveObserver =
     isLive && (inputMode === "fly" || inputMode === "follow");
 
-  const showFreeFly = isMap && !isTourActive;
+  const showFreeFly = isMap && !isTourActive && !isCommandCircuit;
 
   return (
     <div className={styles.Root}>
       {showFreeFly && <FreeFlyOverlay />}
+      {isCommandCircuit && <CommandCircuitOverlay />}
       {isLiveObserver && <ObserverOverlay />}
       {isDemo && <DemoOverlay />}
       {isTourActive && <TourOverlay />}

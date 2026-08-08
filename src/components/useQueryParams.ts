@@ -1,4 +1,9 @@
-import { createParser, parseAsBoolean, useQueryState } from "nuqs";
+import {
+  createParser,
+  parseAsBoolean,
+  parseAsStringLiteral,
+  useQueryState,
+} from "nuqs";
 import { getMissionInfo } from "../manifest";
 
 export type CurrentMission = {
@@ -47,4 +52,18 @@ export function useFogQueryState() {
     parseAsBoolean,
   );
   return [fogEnabledOverride, setFogEnabledOverride] as const;
+}
+
+const VIEW_MODES = ["command"] as const;
+
+/**
+ * View mode requested via the URL (e.g. `?mode=command` opens the map in command
+ * circuit view).
+ */
+export function useModeQueryState() {
+  const [mode, setMode] = useQueryState(
+    "mode",
+    parseAsStringLiteral(VIEW_MODES),
+  );
+  return [mode, setMode] as const;
 }

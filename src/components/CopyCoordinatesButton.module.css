@@ -7,9 +7,14 @@
   border-color: rgba(255, 255, 255, 0.4);
 }
 
+.PinIcon {
+  font-size: 17px;
+}
+
 .ClipboardIcon {
   display: none;
   opacity: 1;
+  font-size: 17px;
 }
 
 .Button[data-copied="true"] .ClipboardIcon {

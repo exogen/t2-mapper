@@ -10,7 +10,6 @@ import {
   ReactNode,
   // ViewTransition,
 } from "react";
-import { type Camera } from "three";
 import { type RootState } from "@react-three/fiber";
 import { type InvalidateFunction } from "@/src/components/ThreeCanvas";
 import { InspectorControls } from "@/src/components/InspectorControls";
@@ -27,7 +26,9 @@ import { usePublicWindowAPI } from "@/src/components/usePublicWindowAPI";
 import {
   CurrentMission,
   useMissionQueryState,
+  useModeQueryState,
 } from "@/src/components/useQueryParams";
+import { commandCircuitStore } from "../state/commandCircuitStore";
 import { InputProvider } from "./InputProducer";
 import { VisualInput } from "./VisualInput";
 import { LoadingIndicator } from "./LoadingIndicator";
@@ -100,10 +101,16 @@ export function MapInspector() {
   const isTouch = useTouchDevice();
   const isTourActive = useCameraTour((s) => s.animation !== null);
 
+  const [viewMode, setViewMode] = useModeQueryState();
+
   const changeMission = useCallback(
     (mission: CurrentMission) => {
       window.location.hash = "";
       clearFogEnabledOverride();
+      // Exit command circuit — switching missions always starts at the
+      // default camera view.
+      setViewMode(null);
+      commandCircuitStore.getState().deactivate();
       setChoosingMap(false);
       cameraTourStore.getState().cancel();
       // Disconnect from any live server, unload any active recording, and
@@ -117,13 +124,28 @@ export function MapInspector() {
         setSidebarOpen(false);
       }
     },
-    [clearFogEnabledOverride, setCurrentMission, isTouch, setSidebarOpen],
+    [
+      clearFogEnabledOverride,
+      setViewMode,
+      setCurrentMission,
+      isTouch,
+      setSidebarOpen,
+    ],
   );
 
   usePublicWindowAPI({ onChangeMission: changeMission });
 
   const recording = useRecording();
   const dataSource = useDataSource();
+
+  // Enter command circuit view when opened via a ?mode=command link. The
+  // URL is left alone when exiting the mode — it only changes when the user
+  // explicitly copies a new link or switches missions.
+  useEffect(() => {
+    if (viewMode === "command" && dataSource === "map") {
+      commandCircuitStore.getState().activate();
+    }
+  }, [viewMode, dataSource]);
   const hasStreamData = dataSource === "demo" || dataSource === "live";
   // Start background preloading of shape GLBs so they're cached before needed.
   useEffect(() => {
@@ -211,7 +233,6 @@ export function MapInspector() {
     [],
   );
 
-  const cameraRef = useRef<Camera | null>(null);
   const invalidateRef = useRef<InvalidateFunction | null>(null);
 
   const handleOpenMapInfo = useCallback(() => setMapInfoOpen(true), []);
@@ -224,7 +245,6 @@ export function MapInspector() {
     setChoosingMap(false);
   }, []);
   const handleCanvasCreated = useCallback((state: RootState) => {
-    cameraRef.current = state.camera;
     invalidateRef.current = state.invalidate;
   }, []);
 
@@ -267,7 +287,6 @@ export function MapInspector() {
               missionName={missionName}
               missionType={missionType}
               choosingMap={choosingMap}
-              cameraRef={cameraRef}
               invalidateRef={invalidateRef}
               onOpenMapInfo={handleOpenMapInfo}
               onOpenScoreScreen={
@@ -309,6 +328,7 @@ export function MapInspector() {
             <VisualInput />
             {showLoadingIndicator && (
               <LoadingIndicator
+                id="loadingIndicator"
                 isLoading={isLoading}
                 progress={loadingProgress}
               />

@@ -9,6 +9,7 @@ import { useCameras } from "./CamerasProvider";
 import { useInputContext } from "./InputContext";
 import { useTouchDevice } from "./useTouchDevice";
 import { cameraTourStore } from "../state/cameraTourStore";
+import { commandCircuitStore } from "../state/commandCircuitStore";
 import {
   useInputAction,
   useInputState,
@@ -130,8 +131,9 @@ export function MouseAndKeyboardHandler() {
 
   // Build and emit InputFrame each render frame.
   useFrame((_state, delta) => {
-    // Suppress all input while a camera tour is active.
+    // Suppress all input while a camera tour or command circuit is active.
     if (cameraTourStore.getState().animation) return;
+    if (commandCircuitStore.getState().active) return;
 
     const inputState = getInputState();
 

@@ -1,6 +1,5 @@
 import { useEffect, useState, useRef, RefObject, memo } from "react";
 import { FaRotateRight } from "react-icons/fa6";
-import { Camera } from "three";
 import {
   useControls,
   useDebug,
@@ -14,6 +13,7 @@ import { Accordion, AccordionGroup } from "./Accordion";
 import { useTouchDevice } from "./useTouchDevice";
 import { DemoTimeline } from "./DemoTimeline";
 import { MapTourPanel } from "./MapTourPanel";
+import { CommandCircuitButton } from "./CommandCircuitButton";
 import { useRecording } from "./usePlayback";
 import { useDataSource, useMissionName } from "../state/gameEntityStore";
 import { useLiveSelector } from "../state/liveConnectionStore";
@@ -36,7 +36,6 @@ export const InspectorControls = memo(function InspectorControls({
   onChooseMap,
   onCancelChoosingMap,
   choosingMap,
-  cameraRef,
   invalidateRef,
   onClose,
 }: {
@@ -48,7 +47,6 @@ export const InspectorControls = memo(function InspectorControls({
   onChooseMap?: () => void;
   onCancelChoosingMap?: () => void;
   choosingMap?: boolean;
-  cameraRef: RefObject<Camera | null>;
   invalidateRef: RefObject<(() => void) | null>;
   onClose: () => void;
 }) {
@@ -129,7 +127,7 @@ export const InspectorControls = memo(function InspectorControls({
     }
   };
   return (
-    <div className={styles.InspectorControls}>
+    <div id="controls" className={styles.InspectorControls}>
       <div ref={focusAreaRef}>
         <div
           className={styles.Dropdown}
@@ -163,10 +161,10 @@ export const InspectorControls = memo(function InspectorControls({
             <CopyCoordinatesButton
               missionName={missionName}
               missionType={missionType}
-              cameraRef={cameraRef}
               disabled={!missionInManifest}
             />
             <MapInfoButton missionName={missionName} onClick={onOpenMapInfo} />
+            <CommandCircuitButton />
             {onOpenScoreScreen && (
               <ShowScoresButton onClick={onOpenScoreScreen} />
             )}

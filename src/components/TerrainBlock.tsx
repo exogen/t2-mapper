@@ -20,6 +20,7 @@ import {
 } from "three";
 import type { TerrainBlockEntity } from "../state/gameEntityTypes";
 import { useIsDebugTourTarget } from "../state/cameraTourStore";
+import { useCommandCircuit } from "../state/commandCircuitStore";
 import { DebugBounds } from "./DebugBounds";
 import { createLogger } from "../logger";
 import { torqueToThree } from "../scene/coordinates";
@@ -494,7 +495,13 @@ export const TerrainBlock = memo(function TerrainBlock({
   const squareSize = scene.squareSize || DEFAULT_SQUARE_SIZE;
   const detailTexture = scene.detailTextureName || undefined;
   const blockSize = squareSize * 256;
-  const visibleDistance = useVisibleDistance();
+  const skyVisibleDistance = useVisibleDistance();
+  // The command circuit overview needs tiles covering the whole map, far
+  // beyond the sky's visibleDistance.
+  const isCommandCircuit = useCommandCircuit((s) => s.active);
+  const visibleDistance = isCommandCircuit
+    ? Math.max(skyVisibleDistance, 3072)
+    : skyVisibleDistance;
   const camera = useThree((state) => state.camera);
   // Torque ignores the mission's terrain position and always uses a fixed formula:
   // setPosition(Point3F(-squareSize * (BlockSize >> 1), -squareSize * (BlockSize >> 1), 0));

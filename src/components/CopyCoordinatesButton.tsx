@@ -1,50 +1,67 @@
-import { RefObject, useCallback, useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { FaMapPin } from "react-icons/fa";
 import { FaClipboardCheck } from "react-icons/fa6";
-import { Camera, Quaternion, Vector3 } from "three";
+import { Quaternion, Vector3 } from "three";
 import { useSettings } from "./SettingsProvider";
+import { useCommandCircuit } from "../state/commandCircuitStore";
+import { cameraRegistry } from "../state/cameraRegistry";
 import buttonStyles from "./Button.module.css";
 import styles from "./CopyCoordinatesButton.module.css";
 
 function encodeViewHash({
   position,
   quaternion,
+  zoom,
 }: {
   position: Vector3;
   quaternion: Quaternion;
+  zoom?: number;
 }) {
   const trunc = (num: number) => parseFloat(num.toFixed(3));
   const encodedPosition = `${trunc(position.x)},${trunc(position.y)},${trunc(position.z)}`;
   const encodedQuaternion = `${trunc(quaternion.x)},${trunc(quaternion.y)},${trunc(quaternion.z)},${trunc(quaternion.w)}`;
-  return `#c${encodedPosition}~${encodedQuaternion}`;
+  const base = `#c${encodedPosition}~${encodedQuaternion}`;
+  return zoom != null ? `${base}~${trunc(zoom)}` : base;
 }
 
 export function CopyCoordinatesButton({
-  cameraRef,
   missionName,
   missionType,
   disabled,
 }: {
-  cameraRef: RefObject<Camera | null>;
   missionName: string;
   missionType?: string;
   disabled?: boolean;
 }) {
   const { fogEnabled } = useSettings();
+  const isCommandCircuit = useCommandCircuit((s) => s.active);
   const [showCopied, setShowCopied] = useState(false);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const handleCopyLink = useCallback(async () => {
     if (timerRef.current) clearTimeout(timerRef.current);
-    const camera = cameraRef.current;
+    // Command circuit links describe the ortho camera (including zoom);
+    // everything else describes the regular perspective camera.
+    const camera = isCommandCircuit
+      ? cameraRegistry.ortho
+      : cameraRegistry.perspective;
     if (!camera) return;
-    const hash = encodeViewHash(camera);
+    const hash = encodeViewHash({
+      position: camera.position,
+      quaternion: camera.quaternion,
+      zoom: isCommandCircuit ? camera.zoom : undefined,
+    });
     const params = new URLSearchParams();
     const missionString = missionType
       ? `${missionName}~${missionType}`
       : missionName;
     params.set("mission", missionString);
-    params.set("fog", fogEnabled.toString());
+    if (isCommandCircuit) {
+      // Fog is always disabled in command circuit view, so no fog param.
+      params.set("mode", "command");
+    } else {
+      params.set("fog", fogEnabled.toString());
+    }
     const fullPath = `${window.location.pathname}?${params}${hash}`;
     const fullUrl = `${window.location.origin}${fullPath}`;
     window.history.replaceState(null, "", fullPath);
@@ -57,7 +74,7 @@ export function CopyCoordinatesButton({
     } catch (err) {
       console.error(err);
     }
-  }, [cameraRef, missionName, missionType, fogEnabled]);
+  }, [missionName, missionType, fogEnabled, isCommandCircuit]);
 
   return (
     <button

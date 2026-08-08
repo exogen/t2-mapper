@@ -5,6 +5,7 @@ import { useCubeTexture } from "@react-three/drei";
 import { Color, Fog } from "three";
 import { createLogger } from "../logger";
 import { useDebug, useSettings } from "./SettingsProvider";
+import { useCommandCircuit } from "../state/commandCircuitStore";
 import {
   FALLBACK_TEXTURE_URL,
   loadDetailMapList,
@@ -665,7 +666,10 @@ export const Sky = memo(function Sky({ entity }: { entity: SkyEntity }) {
     skyData.materialList,
     skyData.useSkyTextures,
   );
-  const { fogEnabled } = useSettings();
+  const { fogEnabled: fogSetting } = useSettings();
+  // Command circuit's top-down overview disables fog and the sky domes.
+  const isCommandCircuit = useCommandCircuit((s) => s.active);
+  const fogEnabled = fogSetting && !isCommandCircuit;
 
   // Skybox textures
   const materialList = skyData.materialList || undefined;
@@ -733,7 +737,13 @@ export const Sky = memo(function Sky({ entity }: { entity: SkyEntity }) {
 
   return (
     <>
-      {materialList && useSkyTextures && materialList.length > 0 ? (
+      {/* The camera-centered sky domes and clouds render as garbage from the
+          command circuit's top-down orthographic view; the scene background
+          (sky color) fills the frame instead. */}
+      {!isCommandCircuit &&
+      materialList &&
+      useSkyTextures &&
+      materialList.length > 0 ? (
         <Suspense>
           {/* Key forces remount when mission changes to clear texture caches */}
           <SkyBox
@@ -743,7 +753,7 @@ export const Sky = memo(function Sky({ entity }: { entity: SkyEntity }) {
             fogState={hasFogParams ? fogState : undefined}
           />
         </Suspense>
-      ) : linearSkySolidColor ? (
+      ) : !isCommandCircuit && linearSkySolidColor ? (
         /* When useSkyTextures = 0, render solid color sky with SkySolidColor */
         <SolidColorSky
           skyColor={linearSkySolidColor}
@@ -752,9 +762,11 @@ export const Sky = memo(function Sky({ entity }: { entity: SkyEntity }) {
         />
       ) : null}
       {/* Cloud layers render independently of skybox textures */}
-      <Suspense>
-        <CloudLayers scene={skyData} />
-      </Suspense>
+      {!isCommandCircuit && (
+        <Suspense>
+          <CloudLayers scene={skyData} />
+        </Suspense>
+      )}
       {/* Always render DynamicFog when mission has fog params.
           Pass fogEnabled to control visibility - this avoids shader recompilation
           when toggling fog (USE_FOG stays defined, but fog.near/far disable fog). */}

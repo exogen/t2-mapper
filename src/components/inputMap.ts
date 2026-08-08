@@ -64,6 +64,27 @@ export const TOUR_MODE_INPUT = [
   { name: "exitTour", keys: ["Escape"] },
 ] as const satisfies readonly InputMapEntry[];
 
+/**
+ * Active whenever command circuit mode is available or active, so the same
+ * key toggles in both directions.
+ */
+export const COMMAND_CIRCUIT_TOGGLE_INPUT = [
+  { name: "toggleCommandCircuit", keys: ["KeyC"] },
+] as const satisfies readonly InputMapEntry[];
+
+/**
+ * Pan/zoom controls while command circuit mode is active.
+ */
+export const COMMAND_CIRCUIT_INPUT = [
+  { name: "commandPanUp", keys: ["KeyW"] },
+  { name: "commandPanDown", keys: ["KeyS"] },
+  { name: "commandPanLeft", keys: ["KeyA"] },
+  { name: "commandPanRight", keys: ["KeyD"] },
+  { name: "commandPanDrag", keys: [{ type: "drag", button: 0 }] },
+  { name: "commandZoom", keys: [{ type: "scroll" }] },
+  { name: "exitCommandCircuit", keys: ["Escape"] },
+] as const satisfies readonly InputMapEntry[];
+
 /** Union of all action names across all input maps. */
 export type ActionName =
   | (typeof FREE_FLY_INPUT)[number]["name"]
@@ -73,4 +94,6 @@ export type ActionName =
   | (typeof DEMO_MODE_INPUT)[number]["name"]
   | (typeof LIVE_OBSERVER_INPUT)[number]["name"]
   | (typeof LIVE_FOLLOW_INPUT)[number]["name"]
-  | (typeof TOUR_MODE_INPUT)[number]["name"];
+  | (typeof TOUR_MODE_INPUT)[number]["name"]
+  | (typeof COMMAND_CIRCUIT_TOGGLE_INPUT)[number]["name"]
+  | (typeof COMMAND_CIRCUIT_INPUT)[number]["name"];

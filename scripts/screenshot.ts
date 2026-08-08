@@ -22,6 +22,12 @@ const { values, positionals } = parseArgs({
       type: "boolean",
       default: false,
     },
+    /**
+     * Comma-separated keys (KeyInput codes) pressed after camera selection.
+     */
+    keys: {
+      type: "string",
+    },
   },
   allowPositionals: true,
 });
@@ -94,6 +100,17 @@ console.log(`Selecting camera: ${cameraNumber}`);
 await mapViewer.press(cameraKey);
 await page.waitForNetworkIdle({ idleTime: 250 });
 await sleep(100);
+
+// Press any additional keys (e.g. KeyC for command circuit mode)
+if (values.keys) {
+  for (const key of values.keys.split(",")) {
+    console.log(`Pressing key: ${key}`);
+    await mapViewer.press(key.trim() as KeyInput);
+    await sleep(250);
+  }
+  await page.waitForNetworkIdle({ idleTime: 250 });
+  await sleep(500);
+}
 
 const date = new Date();
 const tempDir = path.join(os.tmpdir(), "t2-mapper");
