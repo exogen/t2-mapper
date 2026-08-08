@@ -1,6 +1,31 @@
-import { defineConfig, loadEnv } from "vite";
+import { defineConfig, loadEnv, type Plugin } from "vite";
 import react, { reactCompilerPreset } from "@vitejs/plugin-react";
 import babel from "@rolldown/plugin-babel";
+
+/**
+ * Injects a preconnect for the game asset host into the HTML when assets
+ * are served from another origin, so the connection is ready before the
+ * first asset request.
+ */
+function preconnectGameAssets(gameAssetsBaseUrl: string): Plugin {
+  return {
+    name: "preconnect-game-assets",
+    transformIndexHtml() {
+      if (!/^https?:/.test(gameAssetsBaseUrl)) return;
+      return [
+        {
+          tag: "link",
+          attrs: {
+            rel: "preconnect",
+            href: new URL(gameAssetsBaseUrl).origin,
+            crossorigin: true,
+          },
+          injectTo: "head",
+        },
+      ];
+    },
+  };
+}
 
 // https://vite.dev/config/
 export default defineConfig(({ mode }) => {
@@ -33,6 +58,10 @@ export default defineConfig(({ mode }) => {
     resolve: {
       tsconfigPaths: true,
     },
-    plugins: [react(), babel({ presets: [reactCompilerPreset()] })],
+    plugins: [
+      react(),
+      babel({ presets: [reactCompilerPreset()] }),
+      preconnectGameAssets(publicEnv.GAME_ASSETS_BASE_URL),
+    ],
   };
 });

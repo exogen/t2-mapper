@@ -17,3 +17,9 @@ createRoot(document.getElementById("root")!).render(
     <App />
   </StrictMode>,
 );
+
+// Warm the mission-load critical path (asset-host connection, .mis, root
+// script, terrain, sky) in parallel with the initial React render.
+import("./prefetchMission")
+  .then((mod) => mod.prefetchFromLocation())
+  .catch(() => {});
