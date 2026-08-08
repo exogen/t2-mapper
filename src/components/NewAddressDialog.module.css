@@ -1,0 +1,60 @@
+.Overlay {
+  composes: Overlay from "./GameDialog.module.css";
+}
+
+.Dialog {
+  composes: Dialog from "./GameDialog.module.css";
+  width: 480px;
+  padding: 24px 28px;
+}
+
+.Title {
+  font-size: 22px;
+  font-weight: 500;
+  color: #7dffff;
+  margin: 0 0 12px;
+  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.4);
+}
+
+.Dialog a {
+  color: rgb(153, 255, 241);
+}
+
+.Buttons {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  margin-top: 20px;
+}
+
+.PrimaryButton {
+  composes: DialogButton from "./GameDialog.module.css";
+  min-width: 100px;
+}
+
+.SecondaryButton {
+  composes: DialogButton from "./GameDialog.module.css";
+}
+
+/* The extra .Buttons specificity keeps these overrides winning over the
+   composed DialogButton rules regardless of stylesheet injection order
+   (GameDialog.module.css is re-imported by lazy-loaded dialogs). */
+.Buttons .SecondaryButton {
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+  color: rgba(176, 213, 201, 0.55);
+  text-shadow: none;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  font-size: 13px;
+  padding: 4px 2px;
+}
+
+.Buttons .SecondaryButton:hover:not(:disabled) {
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+  color: rgba(176, 213, 201, 0.85);
+}

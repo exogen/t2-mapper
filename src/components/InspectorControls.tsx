@@ -14,6 +14,7 @@ import { useTouchDevice } from "./useTouchDevice";
 import { DemoTimeline } from "./DemoTimeline";
 import { MapTourPanel } from "./MapTourPanel";
 import { CommandCircuitButton } from "./CommandCircuitButton";
+import { showNewAddressDialog } from "./NewAddressDialog";
 import { useRecording } from "./usePlayback";
 import { useDataSource, useMissionName } from "../state/gameEntityStore";
 import { useLiveSelector } from "../state/liveConnectionStore";
@@ -510,6 +511,17 @@ export const InspectorControls = memo(function InspectorControls({
                     frames when requested. Helpful when developing parts of the
                     app unrelated to rendering.
                   </p>
+                </div>
+                <div className={styles.Field}>
+                  <button
+                    type="button"
+                    className={buttonStyles.SmallButton}
+                    onClick={showNewAddressDialog}
+                  >
+                    <span className={buttonStyles.ButtonLabel}>
+                      Show &ldquo;Incoming transmission&rdquo; dialog
+                    </span>
+                  </button>
                 </div>
                 <DebugEntityList />
               </Accordion>

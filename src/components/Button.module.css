@@ -89,6 +89,22 @@
     font-size: 14px;
   }
 
+  /* Compact variant for utility actions that shouldn't read as headline
+     features (e.g. debug tools). */
+  .SmallButton {
+    composes: Button;
+    flex: 0 0 auto;
+    align-self: flex-start;
+    min-height: 26px;
+    padding: 2px 10px;
+    gap: 6px;
+    font-size: 14px;
+  }
+
+  .SmallButton .ButtonLabel {
+    font-size: 12px;
+  }
+
   .ButtonHint {
     font-size: 10px;
     opacity: 0.7;

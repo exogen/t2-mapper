@@ -9,6 +9,7 @@ import {
 import { FeaturesProvider } from "@/src/components/FeaturesProvider";
 import { MapInspector } from "@/src/components/MapInspector";
 import { SettingsProvider } from "@/src/components/SettingsProvider";
+import { NewAddressDialog } from "@/src/components/NewAddressDialog";
 // Three.js has its own loaders for textures and models, but we need to load other
 // stuff too, e.g. missions, terrains, and more. This client is used for those.
 const queryClient = new QueryClient({
@@ -37,6 +38,7 @@ export default function HomePage() {
           <QueryClientProvider client={queryClient}>
             <SettingsProvider>
               <MapInspector />
+              <NewAddressDialog />
             </SettingsProvider>
           </QueryClientProvider>
         </FeaturesProvider>
