@@ -15,6 +15,11 @@ import { DemoTimeline } from "./DemoTimeline";
 import { MapTourPanel } from "./MapTourPanel";
 import { CommandCircuitButton } from "./CommandCircuitButton";
 import { showNewAddressDialog } from "./NewAddressDialog";
+import { LoadStatsButton } from "./LoadStatsButton";
+import { useFeatures } from "./FeaturesProvider";
+import { StatsPanel } from "./StatsPanel";
+import { useStats } from "../state/statsStore";
+import type { CurrentMission } from "./useQueryParams";
 import { useRecording } from "./usePlayback";
 import { useDataSource, useMissionName } from "../state/gameEntityStore";
 import { useLiveSelector } from "../state/liveConnectionStore";
@@ -26,7 +31,13 @@ import { DebugEntityList } from "./DebugEntityList";
 import buttonStyles from "./Button.module.css";
 import styles from "./InspectorControls.module.css";
 
-const DEFAULT_PANELS = ["controls", "preferences", "audio", "timeline"];
+const DEFAULT_PANELS = [
+  "controls",
+  "preferences",
+  "audio",
+  "timeline",
+  "stats",
+];
 
 export const InspectorControls = memo(function InspectorControls({
   missionName,
@@ -36,6 +47,7 @@ export const InspectorControls = memo(function InspectorControls({
   onOpenServerBrowser,
   onChooseMap,
   onCancelChoosingMap,
+  onChangeMission,
   choosingMap,
   invalidateRef,
   onClose,
@@ -47,6 +59,7 @@ export const InspectorControls = memo(function InspectorControls({
   onOpenServerBrowser?: () => void;
   onChooseMap?: () => void;
   onCancelChoosingMap?: () => void;
+  onChangeMission: (mission: CurrentMission) => void;
   choosingMap?: boolean;
   invalidateRef: RefObject<(() => void) | null>;
   onClose: () => void;
@@ -54,6 +67,9 @@ export const InspectorControls = memo(function InspectorControls({
   const isTouch = useTouchDevice();
   const dataSource = useDataSource();
   const recording = useRecording();
+  const statsLoaded = useStats((s) => s.data !== null);
+  const statsError = useStats((s) => s.error !== null);
+  const features = useFeatures();
   const storeMissionName = useMissionName();
   const hasStreamData = dataSource === "demo" || dataSource === "live";
   // When streaming, the URL query param may not reflect the actual map.
@@ -152,6 +168,12 @@ export const InspectorControls = memo(function InspectorControls({
                 choosingMap={choosingMap}
                 onCancelChoosingMap={onCancelChoosingMap}
               />
+              {features.stats && (
+                <LoadStatsButton
+                  missionName={missionName}
+                  onChangeMission={onChangeMission}
+                />
+              )}
               {onOpenServerBrowser && (
                 <JoinServerButton
                   isActive={!choosingMap && isLiveConnected}
@@ -182,6 +204,16 @@ export const InspectorControls = memo(function InspectorControls({
                   <MapTourPanel />
                 </Accordion>
               )}
+              {features.stats &&
+                // Show load errors even before any data has loaded — a
+                // silently rejected file would otherwise give no feedback.
+                (statsLoaded
+                  ? dataSource === "map" && !recording
+                  : statsError) && (
+                  <Accordion value="stats" label="Stats">
+                    <StatsPanel />
+                  </Accordion>
+                )}
               <Accordion value="controls" label="Controls">
                 <div className={styles.Field}>
                   <label htmlFor="speedInput">Fly speed</label>

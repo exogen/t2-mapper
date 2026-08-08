@@ -5,10 +5,12 @@ import { useQueryState, parseAsString } from "nuqs";
 
 type Features = {
   live: boolean;
+  stats: boolean;
 };
 
 const defaultFeatures: Features = {
   live: false,
+  stats: false,
 };
 
 const FeaturesContext = createContext<Features>(defaultFeatures);
@@ -17,7 +19,7 @@ export function useFeatures(): Features {
   return useContext(FeaturesContext);
 }
 
-/** Reads `?features=live,demo,...` once on mount and provides feature flags. */
+/** Reads `?features=live,stats,...` once on mount and provides feature flags. */
 export function FeaturesProvider({ children }: { children: ReactNode }) {
   const [featuresParam] = useQueryState("features", parseAsString);
   const [features] = useState<Features>(() => {
@@ -29,6 +31,7 @@ export function FeaturesProvider({ children }: { children: ReactNode }) {
     );
     return {
       live: tokens.has("live"),
+      stats: tokens.has("stats"),
     };
   });
 

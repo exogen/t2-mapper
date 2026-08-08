@@ -32,6 +32,7 @@ import {
   commandCircuitStore,
   useCommandCircuit,
 } from "../state/commandCircuitStore";
+import { statsStore, useStats } from "../state/statsStore";
 import { InputProvider } from "./InputProducer";
 import { VisualInput } from "./VisualInput";
 import { LoadingIndicator } from "./LoadingIndicator";
@@ -151,6 +152,28 @@ export function MapInspector() {
       commandCircuitStore.getState().activate();
     }
   }, [viewMode, dataSource]);
+
+  // Enter command circuit once a freshly loaded stats file's mission is ready.
+  // Gate on the entity store's mission name (set only after the mission
+  // actually loads) rather than the URL param, which updates before loading
+  // — activating too early loses to the dataSource kill-switch during the
+  // mission transition. Only consume the flag once activation sticks.
+  const statsPending = useStats((s) => s.pendingCommandCircuit);
+  const loadedMissionName = useMissionName();
+  useEffect(() => {
+    if (!statsPending || dataSource !== "map") return;
+    const data = statsStore.getState().data;
+    if (
+      data &&
+      loadedMissionName &&
+      data.missionName.toLowerCase() === loadedMissionName.toLowerCase()
+    ) {
+      commandCircuitStore.getState().activate();
+      if (commandCircuitStore.getState().active) {
+        statsStore.getState().clearPendingCommandCircuit();
+      }
+    }
+  }, [statsPending, dataSource, loadedMissionName]);
   const hasStreamData = dataSource === "demo" || dataSource === "live";
   // Start background preloading of shape GLBs so they're cached before needed.
   useEffect(() => {
@@ -293,6 +316,7 @@ export function MapInspector() {
               missionName={missionName}
               missionType={missionType}
               choosingMap={choosingMap}
+              onChangeMission={changeMission}
               invalidateRef={invalidateRef}
               onOpenMapInfo={handleOpenMapInfo}
               onOpenScoreScreen={

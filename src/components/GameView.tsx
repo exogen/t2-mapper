@@ -11,6 +11,7 @@ import { TickProvider } from "./TickProvider";
 import { EntityScene } from "./EntityScene";
 import { ObserverCamera } from "./ObserverCamera";
 import { CommandCircuitCamera } from "./CommandCircuitCamera";
+import { HeatmapOverlay } from "./HeatmapOverlay";
 import { AudioEnabled } from "./AudioEnabled";
 import { DebugEnabled } from "./DebugEnabled";
 import { InputConsumer } from "./InputConsumer";
@@ -70,6 +71,7 @@ export const GameView = memo(function GameView({
             </Suspense>
             <ObserverCamera />
             <CommandCircuitCamera />
+            <HeatmapOverlay />
             <AudioEnabled>
               <ChatSoundPlayer />
             </AudioEnabled>
