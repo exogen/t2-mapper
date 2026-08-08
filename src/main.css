@@ -25,6 +25,20 @@ body {
   -webkit-touch-callout: none;
 }
 
+/* Block browser pinch-zoom and double-tap zoom. iOS Safari has ignored
+   user-scalable=no since iOS 10; restricting touch-action to panning is the
+   supported mechanism there (iOS 13+) and in Chromium. Panning stays
+   allowed so scroll containers (like the sidebar) keep working. */
+* {
+  touch-action: pan-x pan-y;
+}
+
+/* The map view implements its own touch gestures (look, pan, pinch zoom);
+   the browser should not handle any touches that start on it. */
+canvas {
+  touch-action: none;
+}
+
 html {
   font-family:
     system-ui,

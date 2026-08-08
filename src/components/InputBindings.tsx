@@ -359,6 +359,9 @@ export function InputBindings<T extends string = string>({
 
     function handleTouchMove(e: TouchEvent) {
       if (touchId === null) return;
+      // The gesture started on the canvas and is ours: stop the browser
+      // from also scrolling/zooming/rubber-banding the page with it.
+      e.preventDefault();
       const prevDistance = pinchTouchId !== null ? touchDistance() : 0;
       let pinchMoved = false;
       for (let i = 0; i < e.changedTouches.length; i++) {
@@ -479,8 +482,10 @@ export function InputBindings<T extends string = string>({
       canvas.addEventListener("touchstart", bindings.handleTouchStart, {
         passive: true,
       });
+      // Not passive: the handler calls preventDefault while it is tracking
+      // a gesture that started on the canvas.
       document.addEventListener("touchmove", bindings.handleTouchMove, {
-        passive: true,
+        passive: false,
       });
       document.addEventListener("touchend", bindings.handleTouchEnd, {
         passive: true,
