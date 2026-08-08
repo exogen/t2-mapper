@@ -81,7 +81,9 @@ export const COMMAND_CIRCUIT_INPUT = [
   { name: "commandPanLeft", keys: ["KeyA"] },
   { name: "commandPanRight", keys: ["KeyD"] },
   { name: "commandPanDrag", keys: [{ type: "drag", button: 0 }] },
+  { name: "commandPanTouch", keys: [{ type: "touch" }] },
   { name: "commandZoom", keys: [{ type: "scroll" }] },
+  { name: "commandPinchZoom", keys: [{ type: "pinch" }] },
   { name: "exitCommandCircuit", keys: ["Escape"] },
 ] as const satisfies readonly InputMapEntry[];
 

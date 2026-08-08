@@ -2,6 +2,7 @@ import { useFrame } from "@react-three/fiber";
 import { useControls } from "./SettingsProvider";
 import { useJoystick } from "./JoystickContext";
 import { useOnInput } from "./InputContext";
+import { commandCircuitStore } from "../state/commandCircuitStore";
 import { useInputState, type TouchState } from "./InputControls";
 
 const LOOK_SENSITIVITY = 0.004;
@@ -24,6 +25,10 @@ export function TouchHandler() {
   const [, getInputState] = useInputState();
 
   useFrame((_state, delta) => {
+    // Suppress joystick/touch-look input while command circuit is active —
+    // its rig consumes touch gestures directly.
+    if (commandCircuitStore.getState().active) return;
+
     const { force: moveForce, angle: moveAngle } = moveState.current;
     const { force: lookForce, angle: lookAngle } = lookState.current;
 

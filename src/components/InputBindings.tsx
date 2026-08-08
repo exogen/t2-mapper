@@ -9,10 +9,12 @@ import {
   defaultStateForBinding,
   defaultDragState,
   defaultTouchState,
+  defaultPinchState,
   type InputMapEntry,
   type ActionState,
   type DragState,
   type KeyState,
+  type PinchState,
   type ScrollState,
   type TouchState,
   type ParsedAction,
@@ -75,6 +77,7 @@ export function InputBindings<T extends string = string>({
     const pointerLockMoveBindings: { action: ParsedAction }[] = [];
     const scrollBindings: { action: ParsedAction }[] = [];
     const touchBindings: { action: ParsedAction }[] = [];
+    const pinchBindings: { action: ParsedAction }[] = [];
 
     for (const action of actions) {
       for (const binding of action.bindings) {
@@ -102,6 +105,9 @@ export function InputBindings<T extends string = string>({
             break;
           case "touch":
             touchBindings.push({ action });
+            break;
+          case "pinch":
+            pinchBindings.push({ action });
             break;
         }
       }
@@ -307,56 +313,109 @@ export function InputBindings<T extends string = string>({
     let touchId: number | null = null;
     let lastTouchX = 0;
     let lastTouchY = 0;
+    // A second concurrent touch drives pinch bindings (distance changes
+    // between the two points). Pan deltas keep following the primary touch.
+    let pinchTouchId: number | null = null;
+    let pinchTouchX = 0;
+    let pinchTouchY = 0;
+
+    function touchDistance(): number {
+      return Math.hypot(pinchTouchX - lastTouchX, pinchTouchY - lastTouchY);
+    }
 
     function handleTouchStart(e: TouchEvent) {
-      if (touchId !== null) return;
-      if (touchBindings.length === 0) return;
-      const touch = e.changedTouches[0];
-      if (!touch) return;
-      touchId = touch.identifier;
-      lastTouchX = touch.clientX;
-      lastTouchY = touch.clientY;
-      for (const { action } of touchBindings) {
-        setAction(action.name, {
-          touching: true,
-          dragging: false,
-          deltaX: 0,
-          deltaY: 0,
-        } satisfies TouchState);
+      if (touchBindings.length === 0 && pinchBindings.length === 0) return;
+      for (let i = 0; i < e.changedTouches.length; i++) {
+        const touch = e.changedTouches[i];
+        if (touchId === null) {
+          touchId = touch.identifier;
+          lastTouchX = touch.clientX;
+          lastTouchY = touch.clientY;
+          for (const { action } of touchBindings) {
+            setAction(action.name, {
+              touching: true,
+              dragging: false,
+              deltaX: 0,
+              deltaY: 0,
+            } satisfies TouchState);
+          }
+        } else if (
+          pinchTouchId === null &&
+          pinchBindings.length > 0 &&
+          touch.identifier !== touchId
+        ) {
+          pinchTouchId = touch.identifier;
+          pinchTouchX = touch.clientX;
+          pinchTouchY = touch.clientY;
+          for (const { action } of pinchBindings) {
+            setAction(action.name, {
+              pinching: true,
+              deltaDistance: 0,
+            } satisfies PinchState);
+          }
+        }
       }
     }
 
     function handleTouchMove(e: TouchEvent) {
       if (touchId === null) return;
+      const prevDistance = pinchTouchId !== null ? touchDistance() : 0;
+      let pinchMoved = false;
       for (let i = 0; i < e.changedTouches.length; i++) {
         const touch = e.changedTouches[i];
-        if (touch.identifier !== touchId) continue;
-        const dx = touch.clientX - lastTouchX;
-        const dy = touch.clientY - lastTouchY;
-        lastTouchX = touch.clientX;
-        lastTouchY = touch.clientY;
-        for (const { action } of touchBindings) {
-          const prev = store.getState().actions[action.name] as TouchState;
-          setAction(action.name, {
-            touching: true,
-            dragging: true,
-            deltaX: prev.deltaX + dx,
-            deltaY: prev.deltaY + dy,
-          } satisfies TouchState);
+        if (touch.identifier === touchId) {
+          const dx = touch.clientX - lastTouchX;
+          const dy = touch.clientY - lastTouchY;
+          lastTouchX = touch.clientX;
+          lastTouchY = touch.clientY;
+          pinchMoved = true;
+          for (const { action } of touchBindings) {
+            const prev = store.getState().actions[action.name] as TouchState;
+            setAction(action.name, {
+              touching: true,
+              dragging: true,
+              deltaX: prev.deltaX + dx,
+              deltaY: prev.deltaY + dy,
+            } satisfies TouchState);
+          }
+        } else if (touch.identifier === pinchTouchId) {
+          pinchTouchX = touch.clientX;
+          pinchTouchY = touch.clientY;
+          pinchMoved = true;
         }
-        break;
+      }
+      if (pinchTouchId !== null && pinchMoved) {
+        const delta = touchDistance() - prevDistance;
+        if (delta !== 0) {
+          for (const { action } of pinchBindings) {
+            const prev = store.getState().actions[action.name] as PinchState;
+            setAction(action.name, {
+              pinching: true,
+              deltaDistance: prev.deltaDistance + delta,
+            } satisfies PinchState);
+          }
+        }
       }
     }
 
     function handleTouchEnd(e: TouchEvent) {
-      if (touchId === null) return;
       for (let i = 0; i < e.changedTouches.length; i++) {
-        if (e.changedTouches[i].identifier !== touchId) continue;
-        touchId = null;
-        for (const { action } of touchBindings) {
-          setAction(action.name, defaultTouchState());
+        const id = e.changedTouches[i].identifier;
+        if (id === pinchTouchId) {
+          pinchTouchId = null;
+          for (const { action } of pinchBindings) {
+            setAction(action.name, defaultPinchState());
+          }
+        } else if (id === touchId) {
+          touchId = null;
+          pinchTouchId = null;
+          for (const { action } of touchBindings) {
+            setAction(action.name, defaultTouchState());
+          }
+          for (const { action } of pinchBindings) {
+            setAction(action.name, defaultPinchState());
+          }
         }
-        break;
       }
     }
 
@@ -380,7 +439,7 @@ export function InputBindings<T extends string = string>({
         dragBindings.length > 0 ||
         pointerLockMoveBindings.length > 0,
       hasScrollBindings: scrollBindings.length > 0,
-      hasTouchBindings: touchBindings.length > 0,
+      hasTouchBindings: touchBindings.length > 0 || pinchBindings.length > 0,
     };
   }, [map, store]);
 

@@ -22,7 +22,9 @@ import {
   type ActionState,
   type DragState,
   type KeyState,
+  type PinchState,
   type ScrollState,
+  type TouchState,
 } from "./InputControls";
 
 /**
@@ -42,6 +44,11 @@ const PAN_SPEED = 500;
  * Wheel zoom sensitivity (exponent per scroll delta unit).
  */
 const ZOOM_SENSITIVITY = 0.002;
+
+/**
+ * Pinch zoom sensitivity (exponent per pixel of finger-distance change).
+ */
+const PINCH_SENSITIVITY = 0.005;
 
 const MIN_ZOOM_FACTOR = 0.25;
 const MAX_ZOOM_FACTOR = 40;
@@ -184,11 +191,30 @@ function CommandCircuitOrthoRig() {
     if (isPressed(inputState, "commandPanLeft")) dx -= panDistance;
     if (isPressed(inputState, "commandPanRight")) dx += panDistance;
 
-    // Drag pan: map content follows the cursor.
+    // Drag/touch pan: map content follows the cursor or finger.
     const drag = inputState.commandPanDrag as DragState | undefined;
     if (drag?.dragging && (drag.deltaX !== 0 || drag.deltaY !== 0)) {
       dx -= drag.deltaX / zoom.current;
       dz -= drag.deltaY / zoom.current;
+    }
+    const touch = inputState.commandPanTouch as TouchState | undefined;
+    if (touch?.dragging && (touch.deltaX !== 0 || touch.deltaY !== 0)) {
+      dx -= touch.deltaX / zoom.current;
+      dz -= touch.deltaY / zoom.current;
+    }
+
+    // Pinch zoom (touch devices).
+    const pinch = inputState.commandPinchZoom as PinchState | undefined;
+    if (pinch?.pinching && pinch.deltaDistance !== 0) {
+      const fit = fitZoomRef.current;
+      zoom.current = Math.min(
+        fit * MAX_ZOOM_FACTOR,
+        Math.max(
+          fit * MIN_ZOOM_FACTOR,
+          zoom.current * Math.exp(pinch.deltaDistance * PINCH_SENSITIVITY),
+        ),
+      );
+      userAdjusted.current = true;
     }
     clearInputDeltas();
 

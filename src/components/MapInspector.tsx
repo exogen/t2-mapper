@@ -28,7 +28,10 @@ import {
   useMissionQueryState,
   useModeQueryState,
 } from "@/src/components/useQueryParams";
-import { commandCircuitStore } from "../state/commandCircuitStore";
+import {
+  commandCircuitStore,
+  useCommandCircuit,
+} from "../state/commandCircuitStore";
 import { InputProvider } from "./InputProducer";
 import { VisualInput } from "./VisualInput";
 import { LoadingIndicator } from "./LoadingIndicator";
@@ -45,6 +48,7 @@ import { useTouchDevice } from "./useTouchDevice";
 import { GameDialogSpinner } from "./GameDialogSpinner";
 import { ToggleSidebarButton } from "./ToggleSidebarButton";
 import { ExitTourButton } from "./ExitTourButton";
+import { ExitCommandCircuitButton } from "./ExitCommandCircuitButton";
 import { startShapePreload } from "../shapePreloader";
 import styles from "./MapInspector.module.css";
 
@@ -100,6 +104,7 @@ export function MapInspector() {
   const [showLoadingIndicator, setShowLoadingIndicator] = useState(true);
   const isTouch = useTouchDevice();
   const isTourActive = useCameraTour((s) => s.animation !== null);
+  const isCommandCircuit = useCommandCircuit((s) => s.active);
 
   const [viewMode, setViewMode] = useModeQueryState();
 
@@ -279,6 +284,7 @@ export function MapInspector() {
             />
           </Activity>
           {isTourActive && <ExitTourButton />}
+          {isCommandCircuit && isTouch && <ExitCommandCircuitButton />}
         </header>
         {sidebarOpen ? <div className={styles.Backdrop} /> : null}
         <Activity mode={sidebarOpen ? "visible" : "hidden"}>

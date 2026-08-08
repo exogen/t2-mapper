@@ -18,7 +18,8 @@ export type InputBinding =
   | { type: "drag"; button?: number; whenPointerLocked?: boolean }
   | { type: "pointerLockMove" }
   | { type: "scroll" }
-  | { type: "touch" };
+  | { type: "touch" }
+  | { type: "pinch" };
 
 /** String shorthand: `"KeyW"`, `"Shift-KeyA"`, or an InputBinding object. */
 export type BindingShorthand = string | InputBinding;
@@ -52,7 +53,17 @@ export interface TouchState {
   deltaY: number;
 }
 
-export type ActionState = KeyState | DragState | ScrollState | TouchState;
+export interface PinchState {
+  pinching: boolean;
+  /**
+   * Accumulated change in distance between the two touch points, in pixels,
+   * since the deltas were last cleared. Positive = fingers moving apart.
+   */
+  deltaDistance: number;
+}
+
+export type ActionState =
+  KeyState | DragState | ScrollState | TouchState | PinchState;
 
 /** The full store state: raw keys + derived action state. */
 export interface InputStoreState {
@@ -142,6 +153,10 @@ export function defaultTouchState(): TouchState {
   return { touching: false, dragging: false, deltaX: 0, deltaY: 0 };
 }
 
+export function defaultPinchState(): PinchState {
+  return { pinching: false, deltaDistance: 0 };
+}
+
 export function defaultStateForBinding(binding: InputBinding): ActionState {
   switch (binding.type) {
     case "key":
@@ -154,6 +169,8 @@ export function defaultStateForBinding(binding: InputBinding): ActionState {
       return defaultScrollState();
     case "touch":
       return defaultTouchState();
+    case "pinch":
+      return defaultPinchState();
   }
 }
 
@@ -343,6 +360,8 @@ export function clearInputDeltas() {
   for (const [name, s] of Object.entries(actions)) {
     if ("deltaX" in s && (s.deltaX !== 0 || s.deltaY !== 0)) {
       updates[name] = { ...s, deltaX: 0, deltaY: 0 };
+    } else if ("deltaDistance" in s && s.deltaDistance !== 0) {
+      updates[name] = { ...s, deltaDistance: 0 };
     }
   }
   if (Object.keys(updates).length > 0) {
