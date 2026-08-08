@@ -4,6 +4,13 @@ on:
   push:
     branches: [main]
 
+# Serialize deploys (and the asset-metadata backfill, which shares this
+# group): a running deploy always finishes cleanly, and only the newest
+# queued push deploys after it.
+concurrency:
+  group: cloudflare-deploy
+  cancel-in-progress: false
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
@@ -12,6 +19,16 @@ jobs:
       deployments: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Full history, required by git-restore-mtime below.
+          fetch-depth: 0
+
+      # aws s3 sync decides what to upload by size + mtime, and a fresh
+      # checkout stamps every file with clone time — which would re-upload
+      # (and purge) all ~19k game assets on every deploy. Restoring each
+      # file's mtime to its last commit time makes the sync incremental and
+      # the purge list accurate.
+      - uses: chetan/git-restore-mtime-action@v2
 
       - uses: actions/setup-node@v4
         with:
@@ -28,11 +45,29 @@ jobs:
           LOG_LEVEL: ${{ secrets.LOG_LEVEL }}
 
       - name: Sync game assets to R2
-        run: aws s3 sync docs/base/ s3://t2-assets/game/base/ --follow-symlinks --delete
+        # max-age is what browsers see (revalidate hourly via ETag);
+        # s-maxage is the Cloudflare edge TTL, safe to make long because the
+        # purge step below evicts changed files on every deploy. The
+        # cache-control only applies to objects this sync uploads; already
+        # up-to-date objects keep their existing metadata.
+        run: |
+          set -o pipefail
+          aws s3 sync docs/base/ s3://t2-assets/game/base/ \
+            --follow-symlinks --delete --no-progress \
+            --cache-control "public, max-age=3600, s-maxage=31536000" \
+            | tee r2-sync-output.txt
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
           AWS_ENDPOINT_URL: https://${{ secrets.CF_ACCOUNT_ID }}.r2.cloudflarestorage.com
+
+      - name: Purge changed assets from Cloudflare cache
+        # Skips (visibly) until the purge secrets are configured.
+        if: ${{ secrets.CLOUDFLARE_PURGE_TOKEN != '' && secrets.CLOUDFLARE_ZONE_ID != '' }}
+        run: npx tsx scripts/purge-changed-assets.ts r2-sync-output.txt
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_PURGE_TOKEN }}
+          CLOUDFLARE_ZONE_ID: ${{ secrets.CLOUDFLARE_ZONE_ID }}
 
       - name: Remove game assets from Pages deploy
         run: rm -rf docs/base
