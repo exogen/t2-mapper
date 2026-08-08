@@ -1,0 +1,1 @@
+import{n as e,r as t}from"./traditional-BqzB-TXK.js";import{t as n}from"./gameEntityStore-AGl9qJWl.js";var r=t((e,t)=>({active:!1,activate(){n.getState().dataSource===`map`&&e({active:!0})},deactivate(){e({active:!1})},toggle(){t().active?t().deactivate():t().activate()}}));function i(t,n){return e(r,t,n)}export{i as n,r as t};

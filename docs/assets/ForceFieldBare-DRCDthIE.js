@@ -1,4 +1,4 @@
-import{r as e}from"./rolldown-runtime-hePW80VL.js";import{n as t,r as n,t as r}from"./jsx-runtime-D-_CyhZk.js";import{f as i}from"./events-156d8d12.esm-u8ZdQWGw.js";import{a}from"./SettingsProvider-D2hLowYN.js";import{D as o,H as s,Ja as c,Ji as l,Ri as u}from"./three.core-D2MYdXnG.js";import{p as d}from"./loaders-Df6o7-AK.js";import{t as f}from"./Texture-dMmR1muP.js";import{r as p}from"./cameraTourStore-D45m1hbf.js";import{t as m}from"./DebugBounds-rkBbCQYv.js";import{t as h}from"./DebugSuspense-9LpIrRmQ.js";var g=e(n(),1),_=t(),v=`
+import{r as e}from"./rolldown-runtime-hePW80VL.js";import{n as t,r as n,t as r}from"./jsx-runtime-D-_CyhZk.js";import{f as i}from"./events-156d8d12.esm-u8ZdQWGw.js";import{a}from"./SettingsProvider-STR3uEYi.js";import{D as o,H as s,Ja as c,Ji as l,Ri as u}from"./three.core-D2MYdXnG.js";import{p as d}from"./loaders-Df6o7-AK.js";import{t as f}from"./Texture-dMmR1muP.js";import{r as p}from"./cameraTourStore-D45m1hbf.js";import{t as m}from"./DebugBounds-rkBbCQYv.js";import{t as h}from"./DebugSuspense-9LpIrRmQ.js";var g=e(n(),1),_=t(),v=`
 #include <fog_pars_vertex>
 
 varying vec2 vUv;
