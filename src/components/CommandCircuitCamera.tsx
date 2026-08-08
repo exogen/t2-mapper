@@ -14,6 +14,7 @@ import { cameraTourStore } from "../state/cameraTourStore";
 import { cameraRegistry } from "../state/cameraRegistry";
 import { gameEntityStore, useSceneMissionArea } from "../state/gameEntityStore";
 import { computeCommandCircuitFrame } from "./commandCircuitFrame";
+import { parseViewHash } from "./viewHash";
 import {
   useInputAction,
   useInputState,
@@ -103,21 +104,6 @@ export function CommandCircuitCamera() {
   return active ? <CommandCircuitOrthoRig /> : null;
 }
 
-/**
- * Parse a `#c<pos>~<quat>[~<zoom>]` view hash into a top-down pan position
- * and optional ortho zoom.
- */
-function parseViewHash(
-  hash: string,
-): { x: number; z: number; zoom: number | null } | null {
-  if (!hash.startsWith("#c")) return null;
-  const [positionString, , zoomString] = hash.slice(2).split("~");
-  const [x, , z] = positionString.split(",").map((s) => parseFloat(s));
-  if (!Number.isFinite(x) || !Number.isFinite(z)) return null;
-  const zoom = zoomString ? parseFloat(zoomString) : NaN;
-  return { x, z, zoom: Number.isFinite(zoom) && zoom > 0 ? zoom : null };
-}
-
 function CommandCircuitOrthoRig() {
   const cameraRef = useRef<ThreeOrthographicCamera>(null);
   const missionArea = useSceneMissionArea();
@@ -143,7 +129,11 @@ function CommandCircuitOrthoRig() {
   // Restore the pan/zoom from a shared `#c` view hash (e.g. a link copied
   // while in command circuit mode); otherwise center and fit to the frame.
   const [initialView] = useState(() => parseViewHash(window.location.hash));
-  const pan = useRef(initialView ?? { x: frame.centerX, z: frame.centerZ });
+  const pan = useRef(
+    initialView
+      ? { x: initialView.position.x, z: initialView.position.z }
+      : { x: frame.centerX, z: frame.centerZ },
+  );
   const zoom = useRef(
     initialView?.zoom != null
       ? Math.min(

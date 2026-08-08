@@ -1,5 +1,6 @@
 import { Quaternion, Vector3 } from "three";
 import { cameraRegistry } from "../state/cameraRegistry";
+import { parseViewHash } from "./viewHash";
 import {
   createContext,
   useCallback,
@@ -92,30 +93,19 @@ export function CamerasProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     const handleHashChange = () => {
-      const hash = window.location.hash;
       // A command-circuit link's hash describes the ortho camera and is
       // restored by the command circuit rig itself — never apply it to the
       // regular camera.
       const isCommandCircuitLink =
         new URLSearchParams(window.location.search).get("mode") === "command";
-      if (!isCommandCircuitLink && hash.startsWith("#c")) {
-        const [positionString, quarternionString] = hash.slice(2).split("~");
-        const position = positionString.split(",").map((s) => parseFloat(s));
-        const quarternion = quarternionString
-          .split(",")
-          .map((s) => parseFloat(s));
-        setInitialViewState({
-          initialized: true,
-          position: new Vector3(...position),
-          quarternion: new Quaternion(...quarternion),
-        });
-      } else {
-        setInitialViewState({
-          initialized: true,
-          position: null,
-          quarternion: null,
-        });
-      }
+      const parsed = isCommandCircuitLink
+        ? null
+        : parseViewHash(window.location.hash);
+      setInitialViewState({
+        initialized: true,
+        position: parsed?.position ?? null,
+        quarternion: parsed?.quaternion ?? null,
+      });
     };
 
     window.addEventListener("hashchange", handleHashChange);

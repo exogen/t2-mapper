@@ -1,28 +1,12 @@
 import { useCallback, useRef, useState } from "react";
 import { FaMapPin } from "react-icons/fa";
 import { FaClipboardCheck } from "react-icons/fa6";
-import { Quaternion, Vector3 } from "three";
 import { useSettings } from "./SettingsProvider";
 import { useCommandCircuit } from "../state/commandCircuitStore";
 import { cameraRegistry } from "../state/cameraRegistry";
+import { encodeViewHash } from "./viewHash";
 import buttonStyles from "./Button.module.css";
 import styles from "./CopyCoordinatesButton.module.css";
-
-function encodeViewHash({
-  position,
-  quaternion,
-  zoom,
-}: {
-  position: Vector3;
-  quaternion: Quaternion;
-  zoom?: number;
-}) {
-  const trunc = (num: number) => parseFloat(num.toFixed(3));
-  const encodedPosition = `${trunc(position.x)},${trunc(position.y)},${trunc(position.z)}`;
-  const encodedQuaternion = `${trunc(quaternion.x)},${trunc(quaternion.y)},${trunc(quaternion.z)},${trunc(quaternion.w)}`;
-  const base = `#c${encodedPosition}~${encodedQuaternion}`;
-  return zoom != null ? `${base}~${trunc(zoom)}` : base;
-}
 
 export function CopyCoordinatesButton({
   missionName,

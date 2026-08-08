@@ -18,6 +18,12 @@ const PADDING = 0.1;
 const FALLBACK_EXTENT = 1024;
 
 /**
+ * Minimum span per axis, so a degenerate MissionArea (zero width/height)
+ * can't produce an infinite fit zoom.
+ */
+const MIN_SPAN = 64;
+
+/**
  * Computes the top-down viewable area (in Three.js world space) for command
  * circuit mode from the mission's MissionArea bounds. The MissionArea rect is
  * in Torque coordinates, where Torque Y maps to Three X and Torque X maps to
@@ -37,8 +43,8 @@ export function computeCommandCircuitFrame(
     minZ = x;
     maxZ = x + w;
   }
-  const spanX = maxX - minX;
-  const spanZ = maxZ - minZ;
+  const spanX = Math.max(maxX - minX, MIN_SPAN);
+  const spanZ = Math.max(maxZ - minZ, MIN_SPAN);
   return {
     centerX: (minX + maxX) / 2,
     centerZ: (minZ + maxZ) / 2,

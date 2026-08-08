@@ -34,6 +34,16 @@ describe("computeCommandCircuitFrame", () => {
     expect(frame.depth).toBeCloseTo(1024 * 1.2);
   });
 
+  it("enforces a minimum span for degenerate areas", () => {
+    const frame = computeCommandCircuitFrame(
+      makeMissionArea({ x: 100, y: 200, w: 0, h: 0 }),
+    );
+    expect(frame.width).toBeGreaterThan(0);
+    expect(frame.depth).toBeGreaterThan(0);
+    expect(frame.centerX).toBe(200);
+    expect(frame.centerZ).toBe(100);
+  });
+
   it("falls back to the default terrain extent without a MissionArea", () => {
     const frame = computeCommandCircuitFrame(null);
     expect(frame.centerX).toBe(0);
