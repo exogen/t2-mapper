@@ -22,7 +22,7 @@ jobs:
       # the check here. Boolean only — no secret material in job env.
       HAS_PURGE_SECRETS: ${{ secrets.CLOUDFLARE_PURGE_TOKEN != '' && secrets.CLOUDFLARE_ZONE_ID != '' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           # Full history, required by git-restore-mtime below.
           fetch-depth: 0
@@ -34,7 +34,7 @@ jobs:
       # the purge list accurate.
       - uses: chetan/git-restore-mtime-action@v2
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: npm
@@ -76,14 +76,9 @@ jobs:
       - name: Remove game assets from Pages deploy
         run: rm -rf docs/base
 
-      - uses: cloudflare/wrangler-action@v3
-        with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: pages project create t2-mapper --production-branch=main
-        continue-on-error: true
-
-      - uses: cloudflare/wrangler-action@v3
+      # The t2-mapper Pages project must already exist; bootstrap a new one
+      # manually with: wrangler pages project create t2-mapper --production-branch=main
+      - uses: cloudflare/wrangler-action@v4
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
