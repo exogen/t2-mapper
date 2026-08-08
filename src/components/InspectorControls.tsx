@@ -512,18 +512,18 @@ export const InspectorControls = memo(function InspectorControls({
                     app unrelated to rendering.
                   </p>
                 </div>
-                <div className={styles.Field}>
+                <DebugEntityList />
+                <div className={styles.DebugActionField}>
                   <button
                     type="button"
                     className={buttonStyles.SmallButton}
                     onClick={showNewAddressDialog}
                   >
                     <span className={buttonStyles.ButtonLabel}>
-                      Show &ldquo;Incoming transmission&rdquo; dialog
+                      Show &ldquo;site moved&rdquo; dialog
                     </span>
                   </button>
                 </div>
-                <DebugEntityList />
               </Accordion>
             </AccordionGroup>
           </div>

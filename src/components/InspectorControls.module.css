@@ -76,6 +76,11 @@
   margin: 0 0 10px 0;
 }
 
+.DebugActionField {
+  composes: Field;
+  margin-top: 16px;
+}
+
 .Field select {
   margin-bottom: 6px;
 }
