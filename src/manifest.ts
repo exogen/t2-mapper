@@ -3,8 +3,7 @@ import { normalizePath } from "./stringUtils";
 
 // Source tuple: [sourcePath] or [sourcePath, actualPath] if casing differs
 type SourceTuple =
-  | [sourcePath: string]
-  | [sourcePath: string, actualPath: string];
+  [sourcePath: string] | [sourcePath: string, actualPath: string];
 // Resource entry: [firstSeenPath, ...sourceTuples]
 type ResourceEntry = [firstSeenPath: string, ...SourceTuple[]];
 

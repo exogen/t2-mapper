@@ -50,8 +50,7 @@ export interface CRCDataBlock {
 
 // Manifest types (mirrored from src/manifest.ts)
 type SourceTuple =
-  | [sourcePath: string]
-  | [sourcePath: string, actualPath: string];
+  [sourcePath: string] | [sourcePath: string, actualPath: string];
 type ResourceEntry = [firstSeenPath: string, ...SourceTuple[]];
 interface Manifest {
   resources: Record<string, ResourceEntry>;

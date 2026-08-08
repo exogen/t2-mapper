@@ -443,8 +443,7 @@ function getExplosionColor(dataBlock: string | undefined): number {
  */
 function getExplosionRadius(expBlock: Record<string, unknown>): number {
   const sizes = expBlock.sizes as
-    | Array<{ x: number; y: number; z: number }>
-    | undefined;
+    Array<{ x: number; y: number; z: number }> | undefined;
   if (Array.isArray(sizes) && sizes.length > 0) {
     let maxVal = 0;
     for (const s of sizes) {

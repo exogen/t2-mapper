@@ -116,7 +116,11 @@ export function PlayerNameplate({ entity }: { entity: PlayerEntity }) {
     <group ref={groupRef}>
       {isVisible && (
         <>
-          <Html position={[0, iffHeight, 0]} center>
+          <Html
+            position={[0, iffHeight, 0]}
+            center
+            style={{ pointerEvents: "none" }}
+          >
             <div ref={iffContainerRef} className={styles.Top}>
               <img
                 ref={iffImgRef}
@@ -126,7 +130,11 @@ export function PlayerNameplate({ entity }: { entity: PlayerEntity }) {
               />
             </div>
           </Html>
-          <Html position={[0, NAME_HEIGHT, 0]} center>
+          <Html
+            position={[0, NAME_HEIGHT, 0]}
+            center
+            style={{ pointerEvents: "none" }}
+          >
             <div ref={nameContainerRef} className={styles.Bottom}>
               <div ref={nameRef} className={styles.Name}>
                 {entity.playerName ?? entity.id}

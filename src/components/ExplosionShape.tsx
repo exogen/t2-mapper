@@ -47,8 +47,7 @@ function extractSizeKeyframes(expBlock: Record<string, unknown>): {
   sizes: [number, number, number][];
 } {
   const rawSizes = expBlock.sizes as
-    | Array<{ x: number; y: number; z: number }>
-    | undefined;
+    Array<{ x: number; y: number; z: number }> | undefined;
   const rawTimes = expBlock.times as number[] | undefined;
 
   if (!Array.isArray(rawSizes) || rawSizes.length === 0) {
@@ -123,8 +122,7 @@ export function ExplosionShape({ entity }: { entity: ExplosionEntity }) {
 
   const baseScale = useMemo<[number, number, number]>(() => {
     const explosionScale = expBlock?.explosionScale as
-      | { x: number; y: number; z: number }
-      | undefined;
+      { x: number; y: number; z: number } | undefined;
     return explosionScale
       ? [explosionScale.x / 100, explosionScale.y / 100, explosionScale.z / 100]
       : [1, 1, 1];

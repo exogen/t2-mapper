@@ -454,15 +454,13 @@ export class LiveStreamAdapter extends StreamEngine {
           if (type === "SimDataBlockEvent") {
             const dbId = event.parsedData.objectId as number | undefined;
             const dbClassName = event.parsedData.dataBlockClassName as
-              | string
-              | undefined;
+              string | undefined;
             if (dbId != null && dbClassName) {
               this.dataBlockClassNames.set(dbId, dbClassName);
             }
             if (shouldLog) {
               const dbData = event.parsedData.dataBlockData as
-                | ParsedData
-                | undefined;
+                ParsedData | undefined;
               const shapeName = resolveShapeName(dbClassName ?? "", dbData);
               log.debug(
                 "datablock: id=%d class=%s%s",
@@ -519,8 +517,7 @@ export class LiveStreamAdapter extends StreamEngine {
           if (type === "SensorGroupColorEvent") {
             const sg = event.parsedData.sensorGroup as number;
             const colors = event.parsedData.colors as
-              | Array<unknown>
-              | undefined;
+              Array<unknown> | undefined;
             if (colors) {
               log.debug(
                 "sensor group colors: group=%d, %d entries",

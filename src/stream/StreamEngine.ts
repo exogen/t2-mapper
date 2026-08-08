@@ -1051,8 +1051,7 @@ export abstract class StreamEngine implements StreamingPlayback {
       if (lt && lt > 0 && blockData) {
         entity.lightType = lt;
         const lc = blockData.lightColor as
-          | { r: number; g: number; b: number; a?: number }
-          | undefined;
+          { r: number; g: number; b: number; a?: number } | undefined;
         entity.lightColor = lc ? [lc.r, lc.g, lc.b, lc.a ?? 1] : [1, 1, 1, 1];
         entity.lightTime = (blockData.lightTime as number | undefined) ?? 1000;
         entity.lightRadius =
@@ -1102,8 +1101,7 @@ export abstract class StreamEngine implements StreamingPlayback {
       // Force field visual data from ForceFieldBareData datablock.
       if (entity.className === "ForceFieldBare" && blockData) {
         const color1 = blockData.color1 as
-          | { r: number; g: number; b: number }
-          | undefined;
+          { r: number; g: number; b: number } | undefined;
         const textures: string[] = [];
         for (let i = 0; i < 5; i++) {
           const tex = blockData[`texture${i}`] as string | undefined;
@@ -1111,8 +1109,7 @@ export abstract class StreamEngine implements StreamingPlayback {
         }
         // Use scale from ghost data as box dimensions (same as mission bridge).
         const scale = data.scale as
-          | { x: number; y: number; z: number }
-          | undefined;
+          { x: number; y: number; z: number } | undefined;
         entity.forceFieldData = {
           textures,
           color: color1 ? [color1.r, color1.g, color1.b] : [1, 1, 1],
@@ -1682,8 +1679,7 @@ export abstract class StreamEngine implements StreamingPlayback {
     if (projectile.explosionDataBlockId != null) {
       const expBlock = this.getDataBlockData(projectile.explosionDataBlockId);
       const subExplosions = expBlock?.subExplosions as
-        | (number | null)[]
-        | undefined;
+        (number | null)[] | undefined;
       if (Array.isArray(subExplosions)) {
         for (const subId of subExplosions) {
           if (subId == null) continue;
@@ -1913,8 +1909,7 @@ export abstract class StreamEngine implements StreamingPlayback {
         if (data) {
           const nested = data.controlObjectData as ParsedData | undefined;
           const ang = nested?.angPosition as
-            | { x: number; y: number; z: number; w: number }
-            | undefined;
+            { x: number; y: number; z: number; w: number } | undefined;
           if (ang && typeof ang.w === "number") {
             this.lastVehicleHeading = torqueQuatHeading(ang);
             this.lastVehiclePitch = torqueQuatPitch(ang);
@@ -2066,8 +2061,7 @@ export abstract class StreamEngine implements StreamingPlayback {
             const nested = data?.controlObjectData as ParsedData | undefined;
             if (nested) {
               const mom = nested.linMomentum as
-                | { x: number; y: number; z: number }
-                | undefined;
+                { x: number; y: number; z: number } | undefined;
               if (mom && isValidPosition(mom)) {
                 const dbId = vehicleEntity.dataBlockId;
                 const dbData =
@@ -2082,8 +2076,7 @@ export abstract class StreamEngine implements StreamingPlayback {
                 vehicleEntity.velocity = this.lastVehicleVelocity;
               }
               const ang = nested.angPosition as
-                | { x: number; y: number; z: number; w: number }
-                | undefined;
+                { x: number; y: number; z: number; w: number } | undefined;
               if (ang && typeof ang.w === "number") {
                 const converted = torqueQuatToThreeJS(ang);
                 if (converted) vehicleEntity.rotation = converted;
@@ -2104,8 +2097,7 @@ export abstract class StreamEngine implements StreamingPlayback {
             // falling/jetting flags come from the ghost's MoveMask update
             // (processed earlier in applyGhostData) — don't overwrite them.
             const vel = data?.velocity as
-              | { x: number; y: number; z: number }
-              | undefined;
+              { x: number; y: number; z: number } | undefined;
             if (isVec3Like(vel)) {
               ghostEntity.velocity = [vel.x, vel.y, vel.z];
             }

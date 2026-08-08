@@ -343,8 +343,7 @@ export function resolveSpriteVisual(
     const texture = getStringField(data, ["smokeTexture", "flareTexture"]);
     if (!texture) return undefined;
     const color = data.flareColor as
-      | { r: number; g: number; b: number }
-      | undefined;
+      { r: number; g: number; b: number } | undefined;
     const size = getNumberField(data, ["size"]) ?? 0.5;
     return {
       kind: "sprite",

@@ -177,12 +177,9 @@ if (shapeEnvMapActive && shapeReflectionAmount > 0.0) {
 // ── Shape material creation ──
 
 export type SingleMaterial =
-  | MeshStandardMaterial
-  | MeshBasicMaterial
-  | MeshLambertMaterial;
+  MeshStandardMaterial | MeshBasicMaterial | MeshLambertMaterial;
 export type MaterialResult =
-  | SingleMaterial
-  | [MeshLambertMaterial, MeshLambertMaterial];
+  SingleMaterial | [MeshLambertMaterial, MeshLambertMaterial];
 
 // Stable onBeforeCompile callbacks — using shared function references lets
 // Three.js's program cache match by identity rather than toString().

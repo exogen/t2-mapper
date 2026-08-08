@@ -25,17 +25,17 @@ export function DebugElements() {
           vertexColors
         />
       </axesHelper>
-      <Html position={[80, 0, 0]} center>
+      <Html position={[80, 0, 0]} center style={{ pointerEvents: "none" }}>
         <span className={styles.AxisLabel} data-axis="y">
           Y
         </span>
       </Html>
-      <Html position={[0, 80, 0]} center>
+      <Html position={[0, 80, 0]} center style={{ pointerEvents: "none" }}>
         <span className={styles.AxisLabel} data-axis="z">
           Z
         </span>
       </Html>
-      <Html position={[0, 0, 80]} center>
+      <Html position={[0, 0, 80]} center style={{ pointerEvents: "none" }}>
         <span className={styles.AxisLabel} data-axis="x">
           X
         </span>

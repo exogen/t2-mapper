@@ -84,8 +84,7 @@ function InteriorTexture({
   // r3f doesn't sync defines prop changes, so we update the material directly
   useEffect(() => {
     const mat = (basicMaterialRef.current ?? lambertMaterialRef.current) as
-      | (Material & { defines?: Record<string, number> })
-      | null;
+      (Material & { defines?: Record<string, number> }) | null;
     if (mat) {
       mat.defines ??= {};
       mat.defines.DEBUG_MODE = debugMode ? 1 : 0;

@@ -31,8 +31,7 @@ type EntityById = Map<string, StreamEntity>;
 /** Safely access a field that exists only on some GameEntity variants. */
 function getField(entity: GameEntity, field: string): string | undefined {
   return (entity as unknown as Record<string, unknown>)[field] as
-    | string
-    | undefined;
+    string | undefined;
 }
 
 /** Mutate render-affecting fields on an entity in-place from stream data.

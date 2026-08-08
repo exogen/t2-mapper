@@ -553,11 +553,9 @@ class StreamingPlayback extends StreamEngine {
         : undefined;
     if (this.isPiloting) {
       const nested = this.initialBlock.controlObjectData?.controlObjectData as
-        | ParsedData
-        | undefined;
+        ParsedData | undefined;
       const ang = nested?.angPosition as
-        | { x: number; y: number; z: number; w: number }
-        | undefined;
+        { x: number; y: number; z: number; w: number } | undefined;
       if (ang && typeof ang.w === "number") {
         this.lastVehicleHeading = torqueQuatHeading(ang);
         this.lastVehiclePitch = torqueQuatPitch(ang);
@@ -584,14 +582,11 @@ class StreamingPlayback extends StreamEngine {
         : undefined;
     if (this.lastControlType === "camera") {
       const minOrbit = this.initialBlock.controlObjectData?.minOrbitDist as
-        | number
-        | undefined;
+        number | undefined;
       const maxOrbit = this.initialBlock.controlObjectData?.maxOrbitDist as
-        | number
-        | undefined;
+        number | undefined;
       const curOrbit = this.initialBlock.controlObjectData?.curOrbitDist as
-        | number
-        | undefined;
+        number | undefined;
       if (
         typeof minOrbit === "number" &&
         typeof maxOrbit === "number" &&
@@ -779,8 +774,7 @@ class StreamingPlayback extends StreamEngine {
       const shape = expBlock.dtsFileName as string | undefined;
       if (shape) shapes.add(shape);
       const subExplosions = expBlock.subExplosions as
-        | (number | null)[]
-        | undefined;
+        (number | null)[] | undefined;
       if (Array.isArray(subExplosions)) {
         for (const subId of subExplosions) {
           if (subId == null) continue;

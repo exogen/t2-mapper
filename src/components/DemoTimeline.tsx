@@ -100,12 +100,7 @@ function renderEventDescription(event: TimelineEvent): React.ReactNode {
 }
 
 type Filter =
-  | "all"
-  | "kill"
-  | "death"
-  | "flag-grab"
-  | "flag-return"
-  | "flag-cap";
+  "all" | "kill" | "death" | "flag-grab" | "flag-return" | "flag-cap";
 
 export function DemoTimeline() {
   const events = useDemoTimeline((s) => s.events);

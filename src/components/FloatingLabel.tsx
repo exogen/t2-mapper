@@ -103,7 +103,7 @@ export const FloatingLabel = memo(function FloatingLabel({
   return (
     <group ref={groupRef}>
       {isVisible ? (
-        <Html position={position} center>
+        <Html position={position} center style={{ pointerEvents: "none" }}>
           <div ref={labelRef} className={styles.Label} style={{ color }}>
             {children}
           </div>

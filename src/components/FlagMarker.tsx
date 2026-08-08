@@ -46,7 +46,11 @@ export function FlagMarker({ entity }: { entity: FlagEntity }) {
 
   return (
     <group ref={markerRef}>
-      <Html position={[0, FLAG_ICON_HEIGHT, 0]} center>
+      <Html
+        position={[0, FLAG_ICON_HEIGHT, 0]}
+        center
+        style={{ pointerEvents: "none" }}
+      >
         <div className={styles.Root}>
           <span ref={distRef} className={styles.Distance} />
           <div
