@@ -1,1 +1,0 @@
-import{r as e}from"./rolldown-runtime-hePW80VL.js";import{r as t}from"./jsx-runtime-D-_CyhZk.js";var n=e(t(),1),r=(0,n.createContext)(null);function i(){let e=(0,n.useContext)(r);if(!e)throw Error(`useInputContext must be used within an InputProvider`);return e}function a(){return i().onInput}function o(){return i().mode}export{a as i,i as n,o as r,r as t};
