@@ -6,10 +6,8 @@ import { textureToUrl } from "../loaders";
 import type { StreamEntity, TeamScore, WeaponsHudSlot } from "../stream/types";
 import styles from "./PlayerHUD.module.css";
 import { ChatWindow } from "./ChatWindow";
+import { CompassDial } from "./CompassDial";
 import { useSettings } from "./SettingsProvider";
-
-const COMPASS_URL = textureToUrl("gui/hud_new_compass");
-const NSEW_URL = textureToUrl("gui/hud_new_NSEW");
 
 function formatClockHud(clockMs: number): string {
   const absSec = Math.abs(clockMs) / 1000;
@@ -27,25 +25,20 @@ function Compass() {
     (state) => state.playback.streamSnapshot?.matchClockMs,
   );
   if (yaw == null) return null;
-  // The ring notch is the fixed heading indicator (always "forward" at top).
+  // The notch is the fixed heading indicator (always "forward" at top).
   // The NSEW letters rotate to show world cardinal directions relative to
   // the player's heading. Positive Torque yaw = turning right (clockwise
   // from above), so N moves counter-clockwise on the display.
   const deg = (yaw * 180) / Math.PI;
   return (
     <div className={styles.Compass}>
-      <img src={COMPASS_URL} alt="" className={styles.CompassRing} />
-      <img
-        src={NSEW_URL}
-        alt=""
-        className={styles.CompassNSEW}
-        style={{ transform: `rotate(${-deg}deg)` }}
-      />
-      {matchClockMs != null && (
-        <span className={styles.CompassClock}>
-          {formatClockHud(matchClockMs)}
-        </span>
-      )}
+      <CompassDial deg={deg}>
+        {matchClockMs != null && (
+          <span className={styles.CompassClock}>
+            {formatClockHud(matchClockMs)}
+          </span>
+        )}
+      </CompassDial>
     </div>
   );
 }
