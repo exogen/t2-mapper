@@ -306,6 +306,8 @@ export function InputBindings<T extends string = string>({
         setAction(action.name, {
           deltaX: e.deltaX,
           deltaY: e.deltaY,
+          x: e.offsetX,
+          y: e.offsetY,
         } satisfies ScrollState);
         notifySubscribers(action.name);
       }
@@ -350,9 +352,14 @@ export function InputBindings<T extends string = string>({
           pinchTouchId = touch.identifier;
           pinchTouchX = touch.clientX;
           pinchTouchY = touch.clientY;
+          const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
           for (const { action } of pinchBindings) {
             setAction(action.name, {
               pinching: true,
+              deltaX: 0,
+              deltaY: 0,
+              x: (lastTouchX + pinchTouchX) / 2 - rect.left,
+              y: (lastTouchY + pinchTouchY) / 2 - rect.top,
               deltaDistance: 0,
             } satisfies PinchState);
           }
@@ -366,6 +373,8 @@ export function InputBindings<T extends string = string>({
       // from also scrolling/zooming/rubber-banding the page with it.
       e.preventDefault();
       const prevDistance = pinchTouchId !== null ? touchDistance() : 0;
+      const prevMidX = (lastTouchX + pinchTouchX) / 2;
+      const prevMidY = (lastTouchY + pinchTouchY) / 2;
       let pinchMoved = false;
       for (let i = 0; i < e.changedTouches.length; i++) {
         const touch = e.changedTouches[i];
@@ -392,14 +401,19 @@ export function InputBindings<T extends string = string>({
       }
       if (pinchTouchId !== null && pinchMoved) {
         const delta = touchDistance() - prevDistance;
-        if (delta !== 0) {
-          for (const { action } of pinchBindings) {
-            const prev = store.getState().actions[action.name] as PinchState;
-            setAction(action.name, {
-              pinching: true,
-              deltaDistance: prev.deltaDistance + delta,
-            } satisfies PinchState);
-          }
+        const midX = (lastTouchX + pinchTouchX) / 2;
+        const midY = (lastTouchY + pinchTouchY) / 2;
+        const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+        for (const { action } of pinchBindings) {
+          const prev = store.getState().actions[action.name] as PinchState;
+          setAction(action.name, {
+            pinching: true,
+            deltaX: prev.deltaX + (midX - prevMidX),
+            deltaY: prev.deltaY + (midY - prevMidY),
+            x: midX - rect.left,
+            y: midY - rect.top,
+            deltaDistance: prev.deltaDistance + delta,
+          } satisfies PinchState);
         }
       }
     }

@@ -58,6 +58,16 @@ const MIN_ZOOM_FACTOR = 0.25;
 const MAX_ZOOM_FACTOR = 40;
 
 /**
+ * Clamps a zoom value to the allowed range around the fit-to-frame zoom.
+ */
+function clampZoom(value: number, fitZoom: number): number {
+  return Math.min(
+    fitZoom * MAX_ZOOM_FACTOR,
+    Math.max(fitZoom * MIN_ZOOM_FACTOR, value),
+  );
+}
+
+/**
  * Tour pan pacing, mirroring CameraTourConsumer's travel rules: duration
  * scales with distance between these bounds.
  */
@@ -289,12 +299,7 @@ function CommandCircuitOrthoRig() {
       : { x: frame.centerX, z: frame.centerZ },
   );
   const zoom = useRef(
-    initialView?.zoom != null
-      ? Math.min(
-          fitZoom * MAX_ZOOM_FACTOR,
-          Math.max(fitZoom * MIN_ZOOM_FACTOR, initialView.zoom),
-        )
-      : fitZoom,
+    initialView?.zoom != null ? clampZoom(initialView.zoom, fitZoom) : fitZoom,
   );
   const userAdjusted = useRef(initialView !== null);
 
@@ -322,16 +327,32 @@ function CommandCircuitOrthoRig() {
     }
   }, [frame, fitZoom]);
 
+  /**
+   * Applies a zoom change anchored at a canvas point: the pan shifts so the
+   * world position under (px, py) keeps its screen position. No-op when the
+   * clamp leaves the zoom unchanged, so anchoring can't drift at the limits.
+   */
+  const zoomAnchoredAt = (targetZoom: number, px: number, py: number) => {
+    const oldZoom = zoom.current;
+    const newZoom = clampZoom(targetZoom, fitZoomRef.current);
+    if (newZoom === oldZoom) return;
+    zoom.current = newZoom;
+    // Point offsets from the viewport center map to world axes via
+    // screen-right = +Z and screen-down = -X (see TOP_DOWN_QUATERNION).
+    const sx = px - size.width / 2;
+    const sy = py - size.height / 2;
+    const shift = 1 / oldZoom - 1 / newZoom;
+    pan.current.z += sx * shift;
+    pan.current.x -= sy * shift;
+  };
+
   useInputAction("commandZoom", () => {
     const scroll = getInputState().commandZoom as ScrollState | undefined;
     if (!scroll || scroll.deltaY === 0) return;
-    const fit = fitZoomRef.current;
-    zoom.current = Math.min(
-      fit * MAX_ZOOM_FACTOR,
-      Math.max(
-        fit * MIN_ZOOM_FACTOR,
-        zoom.current * Math.exp(-scroll.deltaY * ZOOM_SENSITIVITY),
-      ),
+    zoomAnchoredAt(
+      zoom.current * Math.exp(-scroll.deltaY * ZOOM_SENSITIVITY),
+      scroll.x,
+      scroll.y,
     );
     userAdjusted.current = true;
   });
@@ -435,41 +456,52 @@ function CommandCircuitOrthoRig() {
         dz -= drag.deltaX / zoom.current;
         dx += drag.deltaY / zoom.current;
       }
+      const pinch = inputState.commandPinchZoom as PinchState | undefined;
+      const pinching = pinch?.pinching ?? false;
+      // While two fingers are down, the gesture midpoint drives the view
+      // (map-app style) and the single-finger pan is ignored.
       const touch = inputState.commandPanTouch as TouchState | undefined;
-      if (touch?.dragging && (touch.deltaX !== 0 || touch.deltaY !== 0)) {
+      if (
+        !pinching &&
+        touch?.dragging &&
+        (touch.deltaX !== 0 || touch.deltaY !== 0)
+      ) {
         dz -= touch.deltaX / zoom.current;
         dx += touch.deltaY / zoom.current;
       }
 
-      // Pinch zoom (touch devices).
-      const pinch = inputState.commandPinchZoom as PinchState | undefined;
-      if (pinch?.pinching && pinch.deltaDistance !== 0) {
-        const fit = fitZoomRef.current;
-        zoom.current = Math.min(
-          fit * MAX_ZOOM_FACTOR,
-          Math.max(
-            fit * MIN_ZOOM_FACTOR,
+      // Pinch (touch devices): pan with the midpoint's movement, zoom
+      // anchored on the midpoint so the world point between the fingers
+      // stays put — matching Google Maps-style focal point gestures.
+      if (pinch && pinching) {
+        if (pinch.deltaX !== 0 || pinch.deltaY !== 0) {
+          dz -= pinch.deltaX / zoom.current;
+          dx += pinch.deltaY / zoom.current;
+        }
+        if (pinch.deltaDistance !== 0) {
+          zoomAnchoredAt(
             zoom.current * Math.exp(pinch.deltaDistance * PINCH_SENSITIVITY),
-          ),
-        );
-        userAdjusted.current = true;
+            pinch.x,
+            pinch.y,
+          );
+          userAdjusted.current = true;
+        }
       }
-      clearInputDeltas();
 
       if (dx !== 0 || dz !== 0) {
         userAdjusted.current = true;
       }
     }
 
-    // Clamp pan to twice the frame extent so the map can't be lost.
-    pan.current.x = Math.min(
-      frame.centerX + frame.width,
-      Math.max(frame.centerX - frame.width, pan.current.x + dx),
-    );
-    pan.current.z = Math.min(
-      frame.centerZ + frame.depth,
-      Math.max(frame.centerZ - frame.depth, pan.current.z + dz),
-    );
+    // Clear deltas in both branches: while a tour drives the view, user
+    // pan/pinch input is ignored, and letting it accumulate would apply
+    // the whole backlog as a jump when the tour ends.
+    clearInputDeltas();
+
+    // No pan bounds: Torque terrain repeats infinitely in every direction,
+    // so there's always map to see.
+    pan.current.x += dx;
+    pan.current.z += dz;
 
     // Re-assert the full transform every frame; other camera writers are
     // gated while this mode is active, but effects (like the URL-hash

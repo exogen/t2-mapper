@@ -44,6 +44,11 @@ export interface DragState {
 export interface ScrollState {
   deltaX: number;
   deltaY: number;
+  /**
+   * Pointer position of the latest wheel event, relative to the canvas.
+   */
+  x: number;
+  y: number;
 }
 
 export interface TouchState {
@@ -55,6 +60,17 @@ export interface TouchState {
 
 export interface PinchState {
   pinching: boolean;
+  /**
+   * Accumulated movement of the midpoint between the two touch points, in
+   * pixels, since the deltas were last cleared.
+   */
+  deltaX: number;
+  deltaY: number;
+  /**
+   * Current midpoint between the two touch points, relative to the canvas.
+   */
+  x: number;
+  y: number;
   /**
    * Accumulated change in distance between the two touch points, in pixels,
    * since the deltas were last cleared. Positive = fingers moving apart.
@@ -146,7 +162,7 @@ export function defaultDragState(): DragState {
 }
 
 export function defaultScrollState(): ScrollState {
-  return { deltaX: 0, deltaY: 0 };
+  return { deltaX: 0, deltaY: 0, x: 0, y: 0 };
 }
 
 export function defaultTouchState(): TouchState {
@@ -154,7 +170,14 @@ export function defaultTouchState(): TouchState {
 }
 
 export function defaultPinchState(): PinchState {
-  return { pinching: false, deltaDistance: 0 };
+  return {
+    pinching: false,
+    deltaX: 0,
+    deltaY: 0,
+    x: 0,
+    y: 0,
+    deltaDistance: 0,
+  };
 }
 
 export function defaultStateForBinding(binding: InputBinding): ActionState {
@@ -358,10 +381,14 @@ export function clearInputDeltas() {
   const { actions } = inputControlsStore.getState();
   const updates: Record<string, ActionState> = {};
   for (const [name, s] of Object.entries(actions)) {
-    if ("deltaX" in s && (s.deltaX !== 0 || s.deltaY !== 0)) {
-      updates[name] = { ...s, deltaX: 0, deltaY: 0 };
-    } else if ("deltaDistance" in s && s.deltaDistance !== 0) {
-      updates[name] = { ...s, deltaDistance: 0 };
+    const hasMoveDeltas = "deltaX" in s && (s.deltaX !== 0 || s.deltaY !== 0);
+    const hasDistanceDelta = "deltaDistance" in s && s.deltaDistance !== 0;
+    if (hasMoveDeltas || hasDistanceDelta) {
+      updates[name] = {
+        ...s,
+        ...(hasMoveDeltas ? { deltaX: 0, deltaY: 0 } : null),
+        ...(hasDistanceDelta ? { deltaDistance: 0 } : null),
+      };
     }
   }
   if (Object.keys(updates).length > 0) {
