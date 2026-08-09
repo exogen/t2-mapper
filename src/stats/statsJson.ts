@@ -19,12 +19,24 @@ export function parseStatsJson(text: string, sourceLabel: string): StatsData {
   }
   const data = root as Record<string, unknown>;
 
-  if (typeof data.schema_version !== "number") {
+  // Newer exports nest schema_version/match under a `meta` wrapper;
+  // anchors and samples stay top-level in both shapes.
+  const meta =
+    typeof data.meta === "object" && data.meta !== null
+      ? (data.meta as Record<string, unknown>)
+      : data;
+
+  if (typeof meta.schema_version !== "number") {
     throw new Error("Not a match stats file (missing schema_version).");
   }
 
-  const match = data.match as Record<string, unknown> | undefined;
-  const missionName = typeof match?.map === "string" ? match.map : "";
+  const match = meta.match as Record<string, unknown> | undefined;
+  const missionName =
+    typeof match?.map === "string"
+      ? match.map
+      : typeof meta.map === "string"
+        ? meta.map
+        : "";
   if (!missionName) {
     throw new Error("Match stats file has no map name (match.map).");
   }
