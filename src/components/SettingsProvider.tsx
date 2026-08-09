@@ -53,6 +53,8 @@ type SettingsContextType = {
   setShowChat: StateSetter<boolean>;
   showReticle: boolean;
   setShowReticle: StateSetter<boolean>;
+  showCompass: boolean;
+  setShowCompass: StateSetter<boolean>;
 };
 
 type DebugContextType = {
@@ -102,6 +104,7 @@ type PersistedSettings = {
   showInputOverlay?: boolean;
   showChat?: boolean;
   showReticle?: boolean;
+  showCompass?: boolean;
 };
 
 export function useSettings() {
@@ -157,6 +160,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   const [showInputOverlay, setShowInputOverlay] = useState(true);
   const [showChat, setShowChat] = useState(true);
   const [showReticle, setShowReticle] = useState(true);
+  const [showCompass, setShowCompass] = useState(true);
   const [renderOnDemand, setRenderOnDemand] = useState(false);
 
   const [fogEnabledOverride, setFogEnabledOverride] = useFogQueryState();
@@ -201,6 +205,8 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       setShowChat,
       showReticle,
       setShowReticle,
+      showCompass,
+      setShowCompass,
     }),
     [
       fogEnabled,
@@ -219,6 +225,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       showInputOverlay,
       showChat,
       showReticle,
+      showCompass,
     ],
   );
 
@@ -343,6 +350,9 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     if (savedSettings.showReticle != null) {
       setShowReticle(savedSettings.showReticle);
     }
+    if (savedSettings.showCompass != null) {
+      setShowCompass(savedSettings.showCompass);
+    }
     if (savedSettings.sidebarOpen != null) {
       // Don't restore on touch devices!
       if (!isTouch) {
@@ -388,6 +398,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
         showInputOverlay,
         showChat,
         showReticle,
+        showCompass,
       };
       try {
         localStorage.setItem("settings", JSON.stringify(settingsToSave));
@@ -422,6 +433,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     showInputOverlay,
     showChat,
     showReticle,
+    showCompass,
   ]);
 
   return (

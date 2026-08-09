@@ -35,6 +35,7 @@ import {
 import { statsStore, useStats } from "../state/statsStore";
 import { InputProvider } from "./InputProducer";
 import { VisualInput } from "./VisualInput";
+import { MapCompass } from "./MapCompass";
 import { LoadingIndicator } from "./LoadingIndicator";
 import { engineStore } from "../state/engineStore";
 import {
@@ -355,6 +356,7 @@ export function MapInspector() {
                 <PlayerHUD />
               </Suspense>
             ) : null}
+            {!hasStreamData ? <MapCompass /> : null}
             <VisualInput />
             {showLoadingIndicator && (
               <LoadingIndicator

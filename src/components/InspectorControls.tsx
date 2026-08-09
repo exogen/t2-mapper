@@ -102,6 +102,8 @@ export const InspectorControls = memo(function InspectorControls({
     setShowChat,
     showReticle,
     setShowReticle,
+    showCompass,
+    setShowCompass,
   } = useSettings();
   const {
     speedMultiplier,
@@ -350,6 +352,49 @@ export const InspectorControls = memo(function InspectorControls({
                     />
                   </div>
                 </div>
+                {hasStreamData && (
+                  <div className={styles.CheckboxField}>
+                    <input
+                      id="showChatInput"
+                      type="checkbox"
+                      checked={showChat}
+                      onChange={(event) => {
+                        setShowChat(event.target.checked);
+                      }}
+                    />
+                    <label className={styles.Label} htmlFor="showChatInput">
+                      Show chat HUD
+                    </label>
+                  </div>
+                )}
+                <div className={styles.CheckboxField}>
+                  <input
+                    id="showCompassInput"
+                    type="checkbox"
+                    checked={showCompass}
+                    onChange={(event) => {
+                      setShowCompass(event.target.checked);
+                    }}
+                  />
+                  <label className={styles.Label} htmlFor="showCompassInput">
+                    Show compass
+                  </label>
+                </div>
+                {hasStreamData && (
+                  <div className={styles.CheckboxField}>
+                    <input
+                      id="showReticleInput"
+                      type="checkbox"
+                      checked={showReticle}
+                      onChange={(event) => {
+                        setShowReticle(event.target.checked);
+                      }}
+                    />
+                    <label className={styles.Label} htmlFor="showReticleInput">
+                      Show reticles
+                    </label>
+                  </div>
+                )}
                 <div className={styles.CheckboxField}>
                   <input
                     id="showInputOverlayInput"
@@ -366,39 +411,6 @@ export const InspectorControls = memo(function InspectorControls({
                     Show input overlay
                   </label>
                 </div>
-                {hasStreamData && (
-                  <>
-                    <div className={styles.CheckboxField}>
-                      <input
-                        id="showChatInput"
-                        type="checkbox"
-                        checked={showChat}
-                        onChange={(event) => {
-                          setShowChat(event.target.checked);
-                        }}
-                      />
-                      <label className={styles.Label} htmlFor="showChatInput">
-                        Show chat HUD
-                      </label>
-                    </div>
-                    <div className={styles.CheckboxField}>
-                      <input
-                        id="showReticleInput"
-                        type="checkbox"
-                        checked={showReticle}
-                        onChange={(event) => {
-                          setShowReticle(event.target.checked);
-                        }}
-                      />
-                      <label
-                        className={styles.Label}
-                        htmlFor="showReticleInput"
-                      >
-                        Show reticles
-                      </label>
-                    </div>
-                  </>
-                )}
               </Accordion>
               <Accordion value="audio" label="Audio">
                 <div className={styles.CheckboxField}>

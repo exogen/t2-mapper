@@ -418,7 +418,7 @@ export function PlayerHUD() {
   // In free-fly mode the camera is disconnected from the player, so
   // player-specific HUD elements (health, energy, weapons, etc.) are hidden.
   const showPlayerElements = hasControlPlayer && cameraMode !== "freeFly";
-  const { showChat, showReticle } = useSettings();
+  const { showChat, showReticle, showCompass } = useSettings();
 
   return (
     <div className={styles.PlayerHUD}>
@@ -429,7 +429,7 @@ export function PlayerHUD() {
           <EnergyBar />
         </div>
       )}
-      <Compass />
+      {showCompass && <Compass />}
       {showPlayerElements && (
         <>
           <WeaponHUD />

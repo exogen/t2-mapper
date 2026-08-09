@@ -103,7 +103,6 @@ export function LoadStatsButton({
         aria-label={isLoaded ? "Unload stats" : "Load match stats (.json)"}
         title={isLoaded ? "Unload stats" : "Load match stats (.json)"}
         onClick={handleClick}
-        data-active={isLoaded}
       >
         <RiFileChartLine />
         <span className={styles.ButtonLabel}>Stats</span>

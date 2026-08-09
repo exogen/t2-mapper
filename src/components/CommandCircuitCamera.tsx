@@ -99,10 +99,12 @@ function easeInOut(t: number, inPower: number, outPower: number): number {
 }
 
 /**
- * Looking straight down Three -Y with screen-up = world -Z.
+ * Looking straight down Three -Y, oriented like Tribes 2's command map:
+ * screen-up = world +X (Torque north), screen-right = world +Z (Torque
+ * east).
  */
 const TOP_DOWN_QUATERNION = new Quaternion().setFromEuler(
-  new Euler(-Math.PI / 2, 0, 0),
+  new Euler(-Math.PI / 2, 0, -Math.PI / 2),
 );
 
 function isPressed(state: Record<string, ActionState>, name: string): boolean {
@@ -274,8 +276,9 @@ function CommandCircuitOrthoRig() {
   );
 
   // drei's ortho frustum is pixel-sized, so zoom is pixels per world unit;
-  // fitting both spans is a simple min over the two axes.
-  const fitZoom = Math.min(size.width / frame.width, size.height / frame.depth);
+  // fitting both spans is a simple min over the two axes. With north (+X)
+  // up, the frame's Z span (depth) lies along the screen's horizontal axis.
+  const fitZoom = Math.min(size.width / frame.depth, size.height / frame.width);
 
   // Restore the pan/zoom from a shared `#c` view hash (e.g. a link copied
   // while in command circuit mode); otherwise center and fit to the frame.
@@ -418,23 +421,24 @@ function CommandCircuitOrthoRig() {
       tourFlash.opacity = 0;
       const inputState = getInputState();
 
-      // WASD pan at constant screen speed regardless of zoom.
+      // WASD pan at constant screen speed regardless of zoom. Screen-up is
+      // world +X and screen-right is world +Z (see TOP_DOWN_QUATERNION).
       const panDistance = (PAN_SPEED / zoom.current) * delta;
-      if (isPressed(inputState, "commandPanUp")) dz -= panDistance;
-      if (isPressed(inputState, "commandPanDown")) dz += panDistance;
-      if (isPressed(inputState, "commandPanLeft")) dx -= panDistance;
-      if (isPressed(inputState, "commandPanRight")) dx += panDistance;
+      if (isPressed(inputState, "commandPanUp")) dx += panDistance;
+      if (isPressed(inputState, "commandPanDown")) dx -= panDistance;
+      if (isPressed(inputState, "commandPanLeft")) dz -= panDistance;
+      if (isPressed(inputState, "commandPanRight")) dz += panDistance;
 
       // Drag/touch pan: map content follows the cursor or finger.
       const drag = inputState.commandPanDrag as DragState | undefined;
       if (drag?.dragging && (drag.deltaX !== 0 || drag.deltaY !== 0)) {
-        dx -= drag.deltaX / zoom.current;
-        dz -= drag.deltaY / zoom.current;
+        dz -= drag.deltaX / zoom.current;
+        dx += drag.deltaY / zoom.current;
       }
       const touch = inputState.commandPanTouch as TouchState | undefined;
       if (touch?.dragging && (touch.deltaX !== 0 || touch.deltaY !== 0)) {
-        dx -= touch.deltaX / zoom.current;
-        dz -= touch.deltaY / zoom.current;
+        dz -= touch.deltaX / zoom.current;
+        dx += touch.deltaY / zoom.current;
       }
 
       // Pinch zoom (touch devices).
