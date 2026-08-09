@@ -58,6 +58,66 @@ export function colorize(levels: Uint8Array, lut: Uint8Array): Uint8Array {
 }
 
 /**
+ * Selectable color schemes: "team" uses HEATMAP_PALETTES (switched by the
+ * team filter); the rest are standard colormaps applied regardless of team.
+ */
+export type HeatmapScheme = "team" | "viridis" | "turbo";
+
+/**
+ * Opacity ramp shared by the standard colormaps, shaped to match the team
+ * palettes: quick rise so low densities read, capped at 220 so terrain
+ * stays visible under hotspots.
+ */
+function alphaAt(t: number): number {
+  return t === 0 ? 0 : Math.round(220 * (0.2 + 0.8 * Math.pow(t, 0.7)));
+}
+
+/**
+ * Spreads hex anchor colors evenly across t ∈ [0, 1] with the shared
+ * opacity ramp applied.
+ */
+function schemeStops(hexes: string[], ts?: number[]): LutStop[] {
+  return hexes.map((hex, i): LutStop => {
+    const t = ts ? ts[i] : i / (hexes.length - 1);
+    const value = parseInt(hex.slice(1), 16);
+    return {
+      t,
+      rgba: [
+        (value >> 16) & 0xff,
+        (value >> 8) & 0xff,
+        value & 0xff,
+        alphaAt(t),
+      ],
+    };
+  });
+}
+
+/**
+ * Standard colormaps, anchored at published control points. Viridis is
+ * matplotlib's perceptually uniform, colorblind-safe ramp; Turbo is
+ * Google's improved rainbow.
+ */
+export const HEATMAP_SCHEMES: Record<
+  Exclude<HeatmapScheme, "team">,
+  LutStop[]
+> = {
+  // prettier-ignore
+  viridis: schemeStops([
+    "#440154", "#482878", "#3e4989", "#31688e", "#26828e",
+    "#1f9e89", "#35b779", "#6ece58", "#b5de2b", "#fde725",
+  ]),
+  // prettier-ignore
+  turbo: schemeStops(
+    [
+      "#30123b", "#4145ab", "#4675ed", "#39a2fc", "#1bcfd4",
+      "#24eca6", "#61fc6c", "#a4fc3b", "#d1e834", "#f3c63a",
+      "#fe9b2d", "#f36315", "#d93806", "#b11901", "#7a0402",
+    ],
+    [0, 0.071, 0.143, 0.214, 0.286, 0.357, 0.429, 0.5, 0.571, 0.643, 0.714, 0.786, 0.857, 0.929, 1],
+  ),
+};
+
+/**
  * Palettes per team filter, authored in sRGB. "All" is a thermal ramp;
  * team palettes echo Storm blue and Inferno red.
  */

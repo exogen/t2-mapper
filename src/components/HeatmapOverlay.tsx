@@ -21,7 +21,12 @@ import {
   normalizeDensity,
   rasterizeDensity,
 } from "../stats/rasterize";
-import { buildLut, colorize, HEATMAP_PALETTES } from "../stats/colormap";
+import {
+  buildLut,
+  colorize,
+  HEATMAP_PALETTES,
+  HEATMAP_SCHEMES,
+} from "../stats/colormap";
 import { checkAnchors, type FlagPosition } from "../stats/anchorCheck";
 import { createLogger } from "../logger";
 
@@ -62,6 +67,7 @@ export function HeatmapOverlay() {
   const data = useStats((s) => s.data);
   const heatmapVisible = useStats((s) => s.heatmapVisible);
   const heatmapTeamFilter = useStats((s) => s.heatmapTeamFilter);
+  const heatmapScheme = useStats((s) => s.heatmapScheme);
   const missionArea = useSceneMissionArea();
   // The entity store's mission name is set only once the mission has
   // actually loaded — gating on it (rather than the URL param, which
@@ -95,7 +101,11 @@ export function HeatmapOverlay() {
       teamFilter: heatmapTeamFilter,
     });
     const levels = normalizeDensity(density);
-    const lut = buildLut(HEATMAP_PALETTES[heatmapTeamFilter]);
+    const lut = buildLut(
+      heatmapScheme === "team"
+        ? HEATMAP_PALETTES[heatmapTeamFilter]
+        : HEATMAP_SCHEMES[heatmapScheme],
+    );
     const rgba = colorize(levels, lut);
     const tex = new DataTexture(
       rgba,
@@ -112,7 +122,7 @@ export function HeatmapOverlay() {
     tex.generateMipmaps = false;
     tex.needsUpdate = true;
     return tex;
-  }, [data, missionMatches, frame, heatmapTeamFilter]);
+  }, [data, missionMatches, frame, heatmapTeamFilter, heatmapScheme]);
 
   useEffect(() => () => texture?.dispose(), [texture]);
 

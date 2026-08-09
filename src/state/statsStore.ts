@@ -1,11 +1,13 @@
 import { createStore } from "zustand/vanilla";
 import { useStoreWithEqualityFn } from "zustand/traditional";
 import type { StatsData, StatsTeamFilter } from "../stats/types";
+import type { HeatmapScheme } from "../stats/colormap";
 
 export interface StatsState {
   data: StatsData | null;
   heatmapVisible: boolean;
   heatmapTeamFilter: StatsTeamFilter;
+  heatmapScheme: HeatmapScheme;
   /**
    * User-facing load error, shown in the stats panel.
    */
@@ -22,6 +24,7 @@ export interface StatsState {
   setData(data: StatsData | null): void;
   setHeatmapVisible(heatmapVisible: boolean): void;
   setHeatmapTeamFilter(filter: StatsTeamFilter): void;
+  setHeatmapScheme(scheme: HeatmapScheme): void;
   setError(error: string | null): void;
   setAnchorWarning(warning: string | null): void;
   clearPendingCommandCircuit(): void;
@@ -32,6 +35,7 @@ export const statsStore = createStore<StatsState>((set) => ({
   data: null,
   heatmapVisible: true,
   heatmapTeamFilter: "all",
+  heatmapScheme: "team",
   error: null,
   anchorWarning: null,
   pendingCommandCircuit: false,
@@ -50,6 +54,9 @@ export const statsStore = createStore<StatsState>((set) => ({
   },
   setHeatmapTeamFilter(heatmapTeamFilter) {
     set({ heatmapTeamFilter });
+  },
+  setHeatmapScheme(heatmapScheme) {
+    set({ heatmapScheme });
   },
   setError(error) {
     set({ error });

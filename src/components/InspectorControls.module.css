@@ -116,6 +116,21 @@
   grid-row: 2;
 }
 
+.RadioLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.RadioLabel input {
+  margin: 0;
+}
+
+/* Add to the containing .Control's 8px gap. */
+.RadioLabel + .RadioLabel {
+  margin-left: 4px;
+}
+
 .ErrorMessage {
   display: flex;
   align-items: flex-start;

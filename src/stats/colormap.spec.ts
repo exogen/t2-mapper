@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildLut, colorize } from "./colormap";
+import { buildLut, colorize, HEATMAP_SCHEMES } from "./colormap";
 import type { LutStop } from "./colormap";
 
 const STOPS: LutStop[] = [
@@ -30,6 +30,27 @@ describe("buildLut", () => {
       { t: 1, rgba: [255, 255, 255, 255] },
     ]);
     expect(lut[3]).toBe(0);
+  });
+});
+
+describe("HEATMAP_SCHEMES", () => {
+  it("every scheme spans t 0 to 1 with a transparent start", () => {
+    for (const stops of Object.values(HEATMAP_SCHEMES)) {
+      expect(stops[0].t).toBe(0);
+      expect(stops[0].rgba[3]).toBe(0);
+      expect(stops[stops.length - 1].t).toBe(1);
+      expect(stops[stops.length - 1].rgba[3]).toBeGreaterThan(0);
+      for (let i = 1; i < stops.length; i++) {
+        expect(stops[i].t).toBeGreaterThan(stops[i - 1].t);
+      }
+    }
+  });
+
+  it("decodes hex anchors correctly (viridis endpoints)", () => {
+    const stops = HEATMAP_SCHEMES.viridis;
+    // #440154 → rgb(68, 1, 84); #fde725 → rgb(253, 231, 37)
+    expect(stops[0].rgba.slice(0, 3)).toEqual([68, 1, 84]);
+    expect(stops[stops.length - 1].rgba.slice(0, 3)).toEqual([253, 231, 37]);
   });
 });
 
