@@ -323,6 +323,10 @@ export function InputBindings<T extends string = string>({
     let pinchTouchId: number | null = null;
     let pinchTouchX = 0;
     let pinchTouchY = 0;
+    // The canvas the gesture started on, for canvas-relative midpoints.
+    // Captured on touchstart (canvas-scoped); touchmove is document-scoped
+    // so its currentTarget can't be used for this.
+    let touchSurface: HTMLElement | null = null;
 
     function touchDistance(): number {
       return Math.hypot(pinchTouchX - lastTouchX, pinchTouchY - lastTouchY);
@@ -330,6 +334,7 @@ export function InputBindings<T extends string = string>({
 
     function handleTouchStart(e: TouchEvent) {
       if (touchBindings.length === 0 && pinchBindings.length === 0) return;
+      touchSurface = e.currentTarget as HTMLElement;
       for (let i = 0; i < e.changedTouches.length; i++) {
         const touch = e.changedTouches[i];
         if (touchId === null) {
@@ -352,7 +357,7 @@ export function InputBindings<T extends string = string>({
           pinchTouchId = touch.identifier;
           pinchTouchX = touch.clientX;
           pinchTouchY = touch.clientY;
-          const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+          const rect = touchSurface.getBoundingClientRect();
           for (const { action } of pinchBindings) {
             setAction(action.name, {
               pinching: true,
@@ -399,11 +404,11 @@ export function InputBindings<T extends string = string>({
           pinchMoved = true;
         }
       }
-      if (pinchTouchId !== null && pinchMoved) {
+      if (pinchTouchId !== null && pinchMoved && touchSurface) {
         const delta = touchDistance() - prevDistance;
         const midX = (lastTouchX + pinchTouchX) / 2;
         const midY = (lastTouchY + pinchTouchY) / 2;
-        const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+        const rect = touchSurface.getBoundingClientRect();
         for (const { action } of pinchBindings) {
           const prev = store.getState().actions[action.name] as PinchState;
           setAction(action.name, {
