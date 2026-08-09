@@ -116,6 +116,25 @@
   grid-row: 2;
 }
 
+.ErrorMessage {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: rgb(255, 106, 69);
+  /* The accordion body has 16px top and 10px bottom padding; 6px evens
+     out the visual gap below the message. */
+  margin: 0 0 6px 0;
+  padding: 0;
+}
+
+.ErrorMessage svg {
+  flex-shrink: 0;
+  font-size: 16px;
+  margin-top: 1px;
+}
+
 .MapInfoButton,
 .ShowScoresButton {
   composes: Button from "./Button.module.css";

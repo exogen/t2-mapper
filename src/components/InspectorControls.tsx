@@ -196,16 +196,6 @@ export const InspectorControls = memo(function InspectorControls({
           </div>
           <div className={styles.Accordions}>
             <AccordionGroup type="multiple" defaultValue={DEFAULT_PANELS}>
-              {recording?.source === "demo" && (
-                <Accordion value="timeline" label="Timeline" noPadding>
-                  <DemoTimeline />
-                </Accordion>
-              )}
-              {dataSource === "map" && !recording && (
-                <Accordion value="mapFeatures" label="Map Features" noPadding>
-                  <MapTourPanel />
-                </Accordion>
-              )}
               {features.stats &&
                 // Show load errors even before any data has loaded — a
                 // silently rejected file would otherwise give no feedback.
@@ -216,6 +206,16 @@ export const InspectorControls = memo(function InspectorControls({
                     <StatsPanel />
                   </Accordion>
                 )}
+              {recording?.source === "demo" && (
+                <Accordion value="timeline" label="Timeline" noPadding>
+                  <DemoTimeline />
+                </Accordion>
+              )}
+              {dataSource === "map" && !recording && (
+                <Accordion value="mapFeatures" label="Map Features" noPadding>
+                  <MapTourPanel />
+                </Accordion>
+              )}
               <Accordion value="controls" label="Controls">
                 <div className={styles.Field}>
                   <label htmlFor="speedInput">Fly speed</label>

@@ -1,3 +1,4 @@
+import { ImSad2 } from "react-icons/im";
 import { statsStore, useStats } from "../state/statsStore";
 import type { StatsTeamFilter } from "../stats/types";
 import { DEFAULT_TEAM_NAMES } from "../stringUtils";
@@ -8,6 +9,15 @@ const FILTERS: Array<{ value: StatsTeamFilter; label: string }> = [
   { value: 1, label: DEFAULT_TEAM_NAMES[1] },
   { value: 2, label: DEFAULT_TEAM_NAMES[2] },
 ];
+
+function StatsError({ children }: { children: string }) {
+  return (
+    <p className={styles.ErrorMessage}>
+      <ImSad2 />
+      <span>{children}</span>
+    </p>
+  );
+}
 
 /**
  * Sidebar controls for a loaded stats file. The heatmap (position density)
@@ -21,7 +31,7 @@ export function StatsPanel() {
   const error = useStats((s) => s.error);
   const anchorWarning = useStats((s) => s.anchorWarning);
   if (!data) {
-    return error ? <p className={styles.Description}>⚠ {error}</p> : null;
+    return error ? <StatsError>{error}</StatsError> : null;
   }
 
   return (
@@ -60,10 +70,8 @@ export function StatsPanel() {
           ))}
         </div>
       </div>
-      {error ? <p className={styles.Description}>⚠ {error}</p> : null}
-      {anchorWarning ? (
-        <p className={styles.Description}>⚠ {anchorWarning}</p>
-      ) : null}
+      {error ? <StatsError>{error}</StatsError> : null}
+      {anchorWarning ? <StatsError>{anchorWarning}</StatsError> : null}
     </>
   );
 }
