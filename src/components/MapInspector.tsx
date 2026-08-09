@@ -308,7 +308,9 @@ export function MapInspector() {
             />
           </Activity>
           {isTourActive && <ExitTourButton />}
-          {isCommandCircuit && isTouch && <ExitCommandCircuitButton />}
+          {isCommandCircuit && isTouch && !isTourActive && (
+            <ExitCommandCircuitButton />
+          )}
         </header>
         {sidebarOpen ? <div className={styles.Backdrop} /> : null}
         <Activity mode={sidebarOpen ? "visible" : "hidden"}>
