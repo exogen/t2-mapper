@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
 import { OrthographicCamera } from "@react-three/drei";
 import {
+  Box3,
   Euler,
   Mesh,
   MeshBasicMaterial,
@@ -15,8 +16,14 @@ import {
 } from "../state/commandCircuitStore";
 import { cameraTourStore } from "../state/cameraTourStore";
 import type { TourAnimation } from "../state/cameraTourStore";
+import { CommandCircuitTourCallout } from "./CommandCircuitTourCallout";
+import { tourFlash } from "./commandCircuitTourFlash";
 import { cameraRegistry } from "../state/cameraRegistry";
-import { gameEntityStore, useSceneMissionArea } from "../state/gameEntityStore";
+import {
+  gameEntityStore,
+  isFlagEntity,
+  useSceneMissionArea,
+} from "../state/gameEntityStore";
 import { computeCommandCircuitFrame } from "./commandCircuitFrame";
 import { parseViewHash } from "./viewHash";
 import {
@@ -55,7 +62,7 @@ const ZOOM_SENSITIVITY = 0.002;
 const PINCH_SENSITIVITY = 0.005;
 
 const MIN_ZOOM_FACTOR = 0.25;
-const MAX_ZOOM_FACTOR = 40;
+const MAX_ZOOM_FACTOR = 50;
 
 /**
  * Clamps a zoom value to the allowed range around the fit-to-frame zoom.
@@ -82,20 +89,112 @@ const TOUR_MAX_PAN_DURATION = 6.0;
 const TOUR_DWELL_DURATION = 2.0;
 
 /**
- * Uniform zoom while touring, as a multiple of the fitted zoom.
+ * Baseline tour zoom, as a multiple of the fitted zoom. Small targets zoom
+ * in further (dynamically, per target) until their bounding box reaches
+ * TOUR_TARGET_MIN_PX on screen in at least one dimension.
  */
 const TOUR_ZOOM_FACTOR = 9;
+const TOUR_TARGET_MIN_PX = 20;
+/**
+ * Flags are the tour's hero objects; they always zoom to their own (finer)
+ * pixel target, with no leeway.
+ */
+const TOUR_FLAG_TARGET_MIN_PX = 15;
+/**
+ * Leeway for non-flag targets: if the next target would already measure
+ * between TOUR_TARGET_MIN_PX and this at the current zoom, keep the zoom
+ * as-is — fewer pointless micro-adjustments between similar-size stops.
+ */
+const TOUR_TARGET_LEEWAY_MAX_PX = 40;
+
+/**
+ * Long pans arc upward (zoom out mid-flight) so the journey reads as a
+ * hop instead of terrain streaking past. The apex zoom is chosen so the
+ * whole pan spans about this many screen pixels at the apex — short pans
+ * don't dip at all (their apex would be above the flight path already),
+ * and the dip never goes below the full-map fit. The strength factor eases
+ * the dip partway toward that apex rather than all the way, keeping the
+ * effect gentle.
+ */
+const TOUR_ARC_SCREEN_SPAN = 650;
+const TOUR_ARC_STRENGTH = 0.6;
+
+/**
+ * After a tour completes, glide back out to the baseline tour zoom (if
+ * deeper) over this long, keeping the final target centered.
+ */
+const TOUR_END_ZOOM_DURATION = 1.0;
 
 /**
  * Tour target highlight: smooth flashes over the active target, rendered
  * as a filled silhouette above everything. Flashing runs for the whole pan
  * plus half the dwell; the rig owns the clock and publishes the opacity
- * here for the highlight component to apply.
+ * (and post-flash idle time) via the shared tourFlash channel.
  */
 const FLASH_COLOR = "#39ff14";
 const FLASH_DURATION = 0.5;
 const FLASH_RENDER_ORDER = 999;
-const tourFlash = { opacity: 0 };
+
+const _tourBounds = new Box3();
+const _meshBounds = new Box3();
+
+/**
+ * World-space bounds of the object's *visible* meshes only — shapes keep
+ * hidden meshes around (damage states, vis sequences) that must not skew
+ * the measured size.
+ */
+function visibleWorldBounds(object: Object3D): Box3 {
+  _tourBounds.makeEmpty();
+  object.updateWorldMatrix(true, true);
+  object.traverseVisible((child) => {
+    const mesh = child as Mesh;
+    if (!mesh.isMesh || !mesh.geometry) return;
+    if (!mesh.geometry.boundingBox) mesh.geometry.computeBoundingBox();
+    _meshBounds.copy(mesh.geometry.boundingBox!).applyMatrix4(mesh.matrixWorld);
+    _tourBounds.union(_meshBounds);
+  });
+  return _tourBounds;
+}
+
+/**
+ * Per-target tour zoom: enough that the target's bounding box spans its
+ * pixel target (finer for flags) in one screen dimension, floored at the
+ * baseline factor and capped at the max zoom. Non-flag targets that would
+ * already measure inside the leeway band at the current zoom keep it
+ * unchanged. Null while the target's model has no resolvable bounds (it
+ * may still be streaming in).
+ */
+function computeTourZoomTarget(
+  scene: Object3D,
+  entityId: string,
+  fromZoom: number,
+  fit: number,
+): number | null {
+  const object = scene.getObjectByName(entityId);
+  if (!object) return null;
+  const bounds = visibleWorldBounds(object);
+  if (bounds.isEmpty()) return null;
+  const span = Math.max(
+    bounds.max.x - bounds.min.x,
+    bounds.max.z - bounds.min.z,
+  );
+  const flag = isFlagEntity(entityId);
+  const currentPx = span * fromZoom;
+  if (
+    !flag &&
+    fromZoom >= fit * TOUR_ZOOM_FACTOR &&
+    currentPx >= TOUR_TARGET_MIN_PX &&
+    currentPx <= TOUR_TARGET_LEEWAY_MAX_PX
+  ) {
+    // Close enough at the current zoom — skip the adjustment.
+    return fromZoom;
+  }
+  const minPx = flag ? TOUR_FLAG_TARGET_MIN_PX : TOUR_TARGET_MIN_PX;
+  return Math.min(
+    fit * MAX_ZOOM_FACTOR,
+    Math.max(fit * TOUR_ZOOM_FACTOR, span > 0 ? minPx / span : 0),
+  );
+}
 
 /**
  * Tunable S-curve easing (rational sigmoid). Higher `inPower` back-loads
@@ -158,6 +257,7 @@ export function CommandCircuitCamera() {
     <>
       <CommandCircuitOrthoRig />
       <CommandCircuitTourHighlight />
+      <CommandCircuitTourCallout />
     </>
   ) : null;
 }
@@ -315,8 +415,20 @@ function CommandCircuitOrthoRig() {
     fromZoom: number;
     elapsed: number;
     duration: number;
-    dwellElapsed: number;
+    /**
+     * World-space pan distance to the target, for the arc's apex zoom.
+     */
+    distance: number;
+    /**
+     * Per-target zoom, sized from the target's initial world bounds; null
+     * until the target's model has resolvable bounds (it may still be
+     * streaming in when the target activates).
+     */
+    zoomTarget: number | null;
   } | null>(null);
+
+  // Post-tour settle animation: zoom back out to the baseline tour zoom.
+  const endZoomRef = useRef<{ from: number; elapsed: number } | null>(null);
 
   // Refit on viewport/mission changes until the user takes over.
   useEffect(() => {
@@ -328,11 +440,14 @@ function CommandCircuitOrthoRig() {
   }, [frame, fitZoom]);
 
   /**
-   * Applies a zoom change anchored at a canvas point: the pan shifts so the
-   * world position under (px, py) keeps its screen position. No-op when the
-   * clamp leaves the zoom unchanged, so anchoring can't drift at the limits.
+   * Applies a user zoom change anchored at a canvas point: the pan shifts
+   * so the world position under (px, py) keeps its screen position. The
+   * zoom itself no-ops when the clamp leaves it unchanged, so anchoring
+   * can't drift at the limits.
    */
   const zoomAnchoredAt = (targetZoom: number, px: number, py: number) => {
+    userAdjusted.current = true;
+    endZoomRef.current = null;
     const oldZoom = zoom.current;
     const newZoom = clampZoom(targetZoom, fitZoomRef.current);
     if (newZoom === oldZoom) return;
@@ -354,10 +469,9 @@ function CommandCircuitOrthoRig() {
       scroll.x,
       scroll.y,
     );
-    userAdjusted.current = true;
   });
 
-  useFrame((_state, delta) => {
+  useFrame((state, delta) => {
     const camera = cameraRef.current;
     if (!camera) return;
 
@@ -390,10 +504,22 @@ function CommandCircuitOrthoRig() {
             TOUR_MIN_PAN_DURATION,
             Math.min(TOUR_MAX_PAN_DURATION, distance / TOUR_PAN_SPEED),
           ),
-          dwellElapsed: 0,
+          distance,
+          zoomTarget: null,
         };
         tourPanRef.current = tour;
       }
+
+      // Dynamic zoom, computed once per target (screen axes map to world
+      // X/Z under the top-down camera); retried while null since the
+      // target's model may still be streaming in.
+      tour.zoomTarget ??= computeTourZoomTarget(
+        state.scene,
+        target.entityId,
+        tour.fromZoom,
+        fitZoomRef.current,
+      );
+
       tour.elapsed += delta;
       const t = Math.min(1, tour.elapsed / tour.duration);
       // Pan: early velocity peak, then a long gentle deceleration.
@@ -404,10 +530,30 @@ function CommandCircuitOrthoRig() {
       // Zoom rides the pan's timeline, back-loaded (barely moving while
       // the pan covers distance, fastest near arrival) but easing out into
       // a soft landing. Interpolated in log space so it feels linear.
-      const targetZoom = fitZoomRef.current * TOUR_ZOOM_FACTOR;
-      zoom.current =
-        tour.fromZoom *
-        Math.pow(targetZoom / tour.fromZoom, easeInOut(t, 3, 2));
+      const targetZoom =
+        tour.zoomTarget ?? fitZoomRef.current * TOUR_ZOOM_FACTOR;
+      const logFrom = Math.log(tour.fromZoom);
+      const logTarget = Math.log(targetZoom);
+      const zoomEase = easeInOut(t, 3, 2);
+      let logZoom = logFrom + (logTarget - logFrom) * zoomEase;
+      // Arc: on long pans, dip toward a zoomed-out apex mid-flight so the
+      // journey reads as a hop rather than terrain streaking past. The
+      // apex shows the whole pan within ~TOUR_ARC_SCREEN_SPAN pixels
+      // (floored at the full-map fit); short pans have an apex above the
+      // flight path, so their dip vanishes and the zoom stays flat. The
+      // sin² bump has zero velocity at both ends for an elastic feel.
+      if (tour.distance > 0) {
+        const apex = Math.max(
+          fitZoomRef.current,
+          TOUR_ARC_SCREEN_SPAN / tour.distance,
+        );
+        const logFlightMid =
+          logFrom + (logTarget - logFrom) * easeInOut(0.5, 3, 2);
+        const dip = Math.max(0, logFlightMid - Math.log(apex));
+        const bump = Math.sin(Math.PI * t) ** 2;
+        logZoom -= dip * TOUR_ARC_STRENGTH * bump;
+      }
+      zoom.current = Math.exp(logZoom);
 
       // Flash the target for the whole pan plus half the dwell, with a
       // short taper so the final pulse doesn't cut off abruptly.
@@ -419,28 +565,46 @@ function CommandCircuitOrthoRig() {
           (flashWindow - tour.elapsed) / (FLASH_DURATION / 2),
         );
         tourFlash.opacity = pulse * taper;
+        tourFlash.idleTime = 0;
       } else {
         tourFlash.opacity = 0;
+        tourFlash.idleTime = tour.elapsed - flashWindow;
       }
 
       // The tour repositioned the view; don't refit over it on resize.
       userAdjusted.current = true;
-      if (t >= 1) {
-        tour.dwellElapsed += delta;
-        if (tour.dwellElapsed >= TOUR_DWELL_DURATION) {
-          const isLastTarget =
-            animation.currentIndex >= animation.targets.length - 1;
-          if (isLastTarget) {
-            cameraTourStore.getState().cancel();
-          } else {
-            cameraTourStore.getState().advanceTarget();
+      endZoomRef.current = null;
+      // Dwell after arriving, then move on.
+      if (tour.elapsed - tour.duration >= TOUR_DWELL_DURATION) {
+        const isLastTarget =
+          animation.currentIndex >= animation.targets.length - 1;
+        if (isLastTarget) {
+          cameraTourStore.getState().cancel();
+          // Settle: keep the final target centered but glide back out
+          // to the baseline zoom if the target zoomed in deeper.
+          if (zoom.current > fitZoomRef.current * TOUR_ZOOM_FACTOR) {
+            endZoomRef.current = { from: zoom.current, elapsed: 0 };
           }
+        } else {
+          cameraTourStore.getState().advanceTarget();
         }
       }
     } else {
       tourPanRef.current = null;
       tourFlash.opacity = 0;
+      tourFlash.idleTime = 0;
       const inputState = getInputState();
+
+      // Post-tour zoom-out glide; any user input below interrupts it.
+      const endZoom = endZoomRef.current;
+      if (endZoom) {
+        endZoom.elapsed += delta;
+        const t = Math.min(1, endZoom.elapsed / TOUR_END_ZOOM_DURATION);
+        const to = fitZoomRef.current * TOUR_ZOOM_FACTOR;
+        zoom.current =
+          endZoom.from * Math.pow(to / endZoom.from, easeInOut(t, 2, 3));
+        if (t >= 1) endZoomRef.current = null;
+      }
 
       // WASD pan at constant screen speed regardless of zoom. Screen-up is
       // world +X and screen-right is world +Z (see TOP_DOWN_QUATERNION).
@@ -484,12 +648,12 @@ function CommandCircuitOrthoRig() {
             pinch.x,
             pinch.y,
           );
-          userAdjusted.current = true;
         }
       }
 
       if (dx !== 0 || dz !== 0) {
         userAdjusted.current = true;
+        endZoomRef.current = null;
       }
     }
 

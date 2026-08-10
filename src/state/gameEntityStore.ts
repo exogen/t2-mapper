@@ -507,3 +507,13 @@ export function useRecordingDate(): string | null {
     (state) => state.recordingDate,
   );
 }
+
+/**
+ * Whether a mission entity is a CTF flag (Shape with the Flag dataBlock).
+ */
+export function isFlagEntity(entityId: string): boolean {
+  const entity = gameEntityStore.getState().missionEntities.get(entityId);
+  return (
+    entity?.renderType === "Shape" && entity.dataBlock?.toLowerCase() === "flag"
+  );
+}

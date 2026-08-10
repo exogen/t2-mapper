@@ -1,0 +1,63 @@
+.Callout {
+  position: absolute;
+  top: 0;
+  left: 0;
+  pointer-events: none;
+}
+
+.FadeIn {
+  animation: fadeIn 0.35s ease-out both;
+}
+
+.Fade {
+  animation: fadeOut 0.7s ease-out both;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes fadeOut {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+.Lines {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: block;
+  overflow: visible;
+}
+
+/* Stroke matches the compass dial's outer ring (its 1px stroke in a
+   72-unit viewBox renders at 84px, ≈1.2px on screen). */
+.Circle,
+.Leader {
+  fill: none;
+  stroke: rgba(130, 225, 232, 0.65);
+  stroke-width: 1.2;
+}
+
+.Label {
+  position: absolute;
+  top: 0;
+  left: 0;
+  color: #eafcff;
+  font-size: 12px;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  background: rgba(0, 0, 0, 0.3);
+  padding: 2px 6px;
+  border-radius: 1px;
+  will-change: transform;
+}

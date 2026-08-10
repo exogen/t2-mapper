@@ -2,6 +2,8 @@ import { memo, ReactNode, useRef, useState } from "react";
 import { Object3D, Vector3 } from "three";
 import { useFrame } from "@react-three/fiber";
 import { Html } from "@react-three/drei";
+import { useCommandCircuit } from "../state/commandCircuitStore";
+import { useCameraTour } from "../state/cameraTourStore";
 import styles from "./FloatingLabel.module.css";
 
 const DEFAULT_POSITION = [0, 0, 0] as [x: number, y: number, z: number];
@@ -38,7 +40,19 @@ export function useFloatingLabelFade({
   const [isVisible, setIsVisible] = useState(opacityProp !== 0);
   const opacityRef = useRef("0");
 
+  // During a command circuit tour, world-anchored labels get out of the
+  // way — the active target gets a screen-space label instead (see
+  // CommandCircuitTourLabel).
+  const commandCircuitActive = useCommandCircuit((s) => s.active);
+  const tourActive = useCameraTour((s) => s.animation !== null);
+  const suppressed = commandCircuitActive && tourActive;
+
   useFrame(({ camera }) => {
+    if (suppressed) {
+      if (isVisible) setIsVisible(false);
+      opacityRef.current = "0";
+      return;
+    }
     const group = groupRef.current;
     if (!group) return;
 
