@@ -105,7 +105,7 @@ const EntityWrapper = memo(function EntityWrapper({
   entity: GameEntity;
   mountChildren?: Map<number, GameEntity>;
 }) {
-  if (entity.debugHidden) return null;
+  if (entity.debugHidden || entity.hidden) return null;
 
   // Scene infrastructure handles its own positioning and Suspense — render
   // directly. The named group allows the interpolation loop to skip them.

@@ -54,6 +54,11 @@ interface EntityBase {
   missionTypesList?: string;
   /** Hidden via the debug entity list. */
   debugHidden?: boolean;
+  /**
+   * Hidden by game scripts (ShapeBase::hide, e.g. mission-type filtering
+   * via cleanNonType). The entity exists but must not render.
+   */
+  hidden?: boolean;
   /** Entity ID of the object this entity is mounted on (vehicle, etc.). */
   mountObjectId?: string;
   /** Mount point node index on the mount target (0 = pilot). */
@@ -194,6 +199,8 @@ export interface PlayerEntity extends PositionedBase {
 export interface ForceFieldBareEntity extends PositionedBase {
   renderType: "ForceFieldBare";
   forceFieldData?: ForceFieldData;
+  /** Opened (retracted) by scripts, e.g. when its power source is down. */
+  fieldOpen?: boolean;
 }
 
 export interface ExplosionEntity extends PositionedBase {

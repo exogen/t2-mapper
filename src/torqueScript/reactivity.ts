@@ -141,6 +141,8 @@ export const DEFAULT_REACTIVE_FIELD_RULES: ReactiveFieldRule[] = [
       "vis",
       "velocity",
       "name",
+      "_fieldopen",
+      "_mountedimagesversion",
     ],
   },
   {
@@ -182,6 +184,10 @@ export const DEFAULT_REACTIVE_METHOD_RULES: ReactiveMethodRule[] = [
       "stopthread",
       "setthreaddir",
       "pausethread",
+      "hide",
+      "open",
+      "close",
+      "startfade",
     ],
   },
   {

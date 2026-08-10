@@ -1,5 +1,17 @@
 import type { BuiltinsContext, TorqueFunction } from "./types";
 import { normalizePath } from "./utils";
+import { parse } from "./parser";
+import {
+  composeThreeTransforms,
+  misPositionToThree,
+  misRotationToThreeQuat,
+  multiplyQuat,
+  rotateVec3,
+  threeToMisPosition,
+  threeToTransformString,
+  transformStringToThree,
+  type Vec3,
+} from "./vecMath";
 
 /** Coerce value to string, treating null/undefined as empty string. */
 function toStr(v: any): string {
@@ -217,10 +229,12 @@ export function createBuiltins(
     call(funcName: any, ...args: any[]): any {
       return runtime().$f.call(toStr(funcName), ...args);
     },
-    eval(_code: any): any {
-      throw new Error(
-        "eval() not implemented: requires runtime parsing and execution",
-      );
+    eval(code: any): any {
+      const source = toStr(code);
+      if (!source.trim()) return "";
+      const ast = parse(source, { filename: "eval" });
+      runtime().executeAST(ast);
+      return "";
     },
     collapseescape(str: any): string {
       // Single-pass replacement to correctly handle sequences like \\n
@@ -531,31 +545,51 @@ export function createBuiltins(
     },
 
     // Matrix math - these require full 3D matrix operations with axis-angle/quaternion
-    // conversions that we haven't implemented
-    matrixcreate(_pos: any, _rot: any): string {
-      throw new Error(
-        "MatrixCreate() not implemented: requires axis-angle rotation math",
-      );
+    // Transform-string math ("px py pz ax ay az angleRad"), composed in
+    // the same field conventions the mission bridge uses (see vecMath.ts).
+    matrixcreate(pos: any, rot: any): string {
+      // rot is "ax ay az angleDeg" in script usage (e.g. staticShape.cs
+      // organic placement uses getRandom(360)).
+      const { position } = transformStringToThree(`${toStr(pos)} 1 0 0 0`);
+      const quaternion = misRotationToThreeQuat(toStr(rot));
+      return threeToTransformString({ position, quaternion });
     },
-    matrixcreatefromeuler(_euler: any): string {
-      throw new Error(
-        "MatrixCreateFromEuler() not implemented: requires Euler→Quaternion→AxisAngle conversion",
-      );
+    matrixcreatefromeuler(euler: any): string {
+      // "rx ry rz" radians. Torque euler order: rotate X, then Y, then Z.
+      const [rx = 0, ry = 0, rz = 0] = toStr(euler)
+        .trim()
+        .split(/\s+/)
+        .map(Number);
+      const toDeg = (rad: number) => (rad * 180) / Math.PI;
+      const qx = misRotationToThreeQuat(`1 0 0 ${toDeg(rx)}`);
+      const qy = misRotationToThreeQuat(`0 1 0 ${toDeg(ry)}`);
+      const qz = misRotationToThreeQuat(`0 0 1 ${toDeg(rz)}`);
+      const quaternion = multiplyQuat(multiplyQuat(qz, qy), qx);
+      return threeToTransformString({ position: [0, 0, 0], quaternion });
     },
-    matrixmultiply(_a: any, _b: any): string {
-      throw new Error(
-        "MatrixMultiply() not implemented: requires full 4x4 matrix multiplication",
-      );
+    matrixmultiply(a: any, b: any): string {
+      const left = transformStringToThree(toStr(a));
+      const right = transformStringToThree(toStr(b));
+      return threeToTransformString(composeThreeTransforms(left, right));
     },
-    matrixmulpoint(_mat: any, _point: any): string {
-      throw new Error(
-        "MatrixMulPoint() not implemented: requires full transform application",
-      );
+    matrixmulpoint(mat: any, point: any): string {
+      const transform = transformStringToThree(toStr(mat));
+      const p = misPositionToThree(toStr(point));
+      const rotated = rotateVec3(p, transform.quaternion);
+      const world: Vec3 = [
+        transform.position[0] + rotated[0],
+        transform.position[1] + rotated[1],
+        transform.position[2] + rotated[2],
+      ];
+      const [x, y, z] = threeToMisPosition(world);
+      return `${x} ${y} ${z}`;
     },
-    matrixmulvector(_mat: any, _vec: any): string {
-      throw new Error(
-        "MatrixMulVector() not implemented: requires rotation matrix application",
-      );
+    matrixmulvector(mat: any, vec: any): string {
+      const transform = transformStringToThree(toStr(mat));
+      const v = misPositionToThree(toStr(vec));
+      const rotated = rotateVec3(v, transform.quaternion);
+      const [x, y, z] = threeToMisPosition(rotated);
+      return `${x} ${y} ${z}`;
     },
 
     // Simulation
@@ -575,8 +609,7 @@ export function createBuiltins(
     ): ReturnType<typeof setTimeout> {
       const ms = Number(delay) || 0;
       const rt = runtime();
-      const timeoutId = setTimeout(() => {
-        rt.state.pendingTimeouts.delete(timeoutId);
+      return rt.scheduleTimeout(() => {
         try {
           rt.$f.call(String(func), ...args);
         } catch (err) {
@@ -584,8 +617,6 @@ export function createBuiltins(
           throw err;
         }
       }, ms);
-      rt.state.pendingTimeouts.add(timeoutId);
-      return timeoutId;
     },
     cancel(id: any): void {
       clearTimeout(id);
@@ -812,8 +843,14 @@ export function createBuiltins(
     snaptoggle(): void {},
 
     // Networking
-    addtaggedstring(_str: any): number {
-      return 0;
+    // The real engine interns tagged strings in the NetStringTable and
+    // returns a numeric tag; scripts only ever round-trip the value back
+    // through getTaggedString/detag or compare it as a string, so identity
+    // semantics are observably equivalent — and they keep fields the
+    // scripts re-tag (e.g. `%obj.nameTag = addTaggedString(%obj.nameTag)`
+    // in GameBaseData::onAdd) human-readable for the renderer.
+    addtaggedstring(str: any): string {
+      return toStr(str);
     },
     buildtaggedstring(_format: any, ..._args: any[]): string {
       return "";
@@ -824,8 +861,8 @@ export function createBuiltins(
     gettag(_str: any): number {
       return 0;
     },
-    gettaggedstring(_tag: any): string {
-      return "";
+    gettaggedstring(tag: any): string {
+      return toStr(tag);
     },
     removetaggedstring(_tag: any): void {},
     commandtoclient(_client: any, _func: any, ..._args: any[]): void {},

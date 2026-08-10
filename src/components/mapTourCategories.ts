@@ -134,6 +134,7 @@ export function categorizeEntities(
   const groups = new Map<string, TourTarget[]>();
 
   for (const entity of entities.values()) {
+    if (entity.hidden || entity.debugHidden) continue;
     if (!isShapeWithDataBlock(entity)) continue;
     const category = DATABLOCK_TO_CATEGORY.get(entity.dataBlock.toLowerCase());
     if (!category) continue;

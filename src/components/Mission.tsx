@@ -23,6 +23,7 @@ import { engineStore } from "../state/engineStore";
 import { gameEntityStore } from "../state/gameEntityStore";
 import { ignoreScripts } from "../torqueScript/ignoreScripts";
 import { walkMissionTree } from "../stream/missionEntityBridge";
+import { createMissionEntityObserver } from "../stream/missionEntityObserver";
 import { createLogger } from "../logger";
 
 const log = createLogger("Mission");
@@ -79,6 +80,7 @@ function useExecutedMission(
     const controller = new AbortController();
     let isDisposed = false;
     let unsubscribeRuntimeEvents: (() => void) | null = null;
+    let unsubscribeEntityObserver: (() => void) | null = null;
 
     // Create progress tracker and update state on changes
     const progressTracker = createProgressTracker();
@@ -109,17 +111,30 @@ function useExecutedMission(
         engineStore.getState().setRuntime(runtime);
         const missionGroup = runtime.getObjectByName("MissionGroup");
         if (missionGroup) {
-          const gameEntities = walkMissionTree(
-            missionGroup,
-            runtime,
-            missionType,
-          );
+          // Walk MissionCleanup too — $instantGroup points there during
+          // load, so script-spawned objects that are never reparented
+          // live under it (all invisible classes on retail maps, but the
+          // observer accepts both roots and the harvest must agree).
+          const missionCleanup = runtime.getObjectByName("MissionCleanup");
+          const gameEntities = [
+            ...walkMissionTree(missionGroup, runtime, missionType),
+            ...(missionCleanup
+              ? walkMissionTree(missionCleanup, runtime, missionType)
+              : []),
+          ];
           gameEntityStore.getState().setAllEntities(gameEntities);
           gameEntityStore.getState().setMissionInfo({
             missionName,
             missionType: missionType ?? undefined,
           });
         }
+        // Attach synchronously after the initial harvest so later script
+        // mutations (timers, power events) keep entities in sync without
+        // replaying the huge exec-time batches.
+        unsubscribeEntityObserver = createMissionEntityObserver(
+          runtime,
+          missionType,
+        );
         setState({ ready: true, runtime, progress: 1 });
       })
       .catch((err) => {
@@ -148,6 +163,7 @@ function useExecutedMission(
       progressTracker.off("update", handleProgress);
       controller.abort();
       unsubscribeRuntimeEvents?.();
+      unsubscribeEntityObserver?.();
       engineStore.getState().clearRuntime();
       gameEntityStore.getState().clearEntities();
       runtime.destroy();

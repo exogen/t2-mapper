@@ -7,7 +7,9 @@ import type {
   CameraEntity,
   WayPointEntity,
 } from "../state/gameEntityTypes";
+import type { ImageSlot } from "./types";
 import { getPosition, getProperty, getScale } from "../mission";
+import { misRotationToThreeQuat } from "../torqueScript/vecMath";
 import { DEFAULT_FLAG_SKINS } from "../stringUtils";
 import { parseColorTuple } from "../colorUtils";
 import {
@@ -37,27 +39,19 @@ function isTruthy(value: unknown): boolean {
   return !!value;
 }
 
-function parseRotationToQuat(
-  rotationStr: string,
-): [number, number, number, number] {
-  const [ax, ay, az, angleDeg] = rotationStr.split(" ").map(parseFloat);
-  // Convert Torque axis-angle to Three.js quaternion (with coordinate swap
-  // and angle negation matching getRotation() in mission.ts).
-  const halfRad = (-(angleDeg || 0) * Math.PI) / 360;
-  const s = Math.sin(halfRad);
-  const c = Math.cos(halfRad);
-  const len = Math.sqrt(
-    (ay || 0) * (ay || 0) + (az || 0) * (az || 0) + (ax || 0) * (ax || 0),
-  );
-  if (len < 1e-8) return [0, 0, 0, 1];
-  // Three.js quaternion [x, y, z, w] with Torque→Three axis swap (x→y, y→z, z→x)
-  return [
-    ((ay || 0) / len) * s,
-    ((az || 0) / len) * s,
-    ((ax || 0) / len) * s,
-    c,
-  ];
-}
+/**
+ * ShapeBase-derived classes the bridge builds: only these are hidden by
+ * the engine's mission-type filtering (ShapeBase::cleanNonType calls
+ * hide(true); SimObject::cleanNonType is a no-op, so interiors, TSStatics
+ * and other scene objects always render regardless of missionTypesList).
+ */
+const SHAPE_BASE_CLASSES = new Set([
+  "staticshape",
+  "item",
+  "turret",
+  "camera",
+  "waypoint",
+]);
 
 /**
  * Build a GameEntity from a mission TorqueObject. Returns null if the
@@ -67,22 +61,35 @@ export function buildGameEntityFromMission(
   object: TorqueObject,
   runtime: TorqueRuntime,
   teamId?: number,
+  missionType?: string,
 ): GameEntity | null {
   const className = object._className;
   const id = String(object._id);
   const position = getPosition(object);
   const scale = getScale(object);
   const rotStr = object.rotation ?? "1 0 0 0";
-  const rotation = parseRotationToQuat(rotStr);
+  const rotation = misRotationToThreeQuat(String(rotStr));
   const datablockName = getProperty(object, "dataBlock") ?? "";
   const datablock = resolveDatablock(runtime, datablockName);
   const missionTypesList = getProperty(object, "missionTypesList");
+
+  // Script truth (ShapeBase::hide via setProp "hidden") wins; when the
+  // field is absent (dispatch failed or scripts didn't run), fall back to
+  // computing what cleanNonType would have done — identical outcome, only
+  // for the classes the engine actually hides. isTruthy handles direct
+  // script/mis field writes ("1", 1) alongside hide()'s boolean.
+  const hidden =
+    object.hidden !== undefined
+      ? isTruthy(object.hidden)
+      : SHAPE_BASE_CLASSES.has(className.toLowerCase()) &&
+        !matchesMissionType(missionTypesList, missionType);
 
   const base = {
     id,
     className,
     runtimeObject: object,
     missionTypesList,
+    ...(hidden ? { hidden } : null),
   };
   const posBase = { ...base, position, rotation, scale };
 
@@ -219,7 +226,9 @@ function buildShapeEntity(
     entity.rotate = isTruthy(
       getProperty(object, "rotate") ?? getProperty(datablock, "rotate"),
     );
-    // Flag Items get a team skin (e.g. "beagle" for Blood Eagle).
+    // Flag Items get a team skin (e.g. "beagle" for Blood Eagle). The
+    // faithful skin from setTargetSkin is recorded as object._targetSkin
+    // (musicTrack-derived); we intentionally prefer the classic defaults.
     if (datablockName.toLowerCase() === "flag" && teamId != null) {
       entity.skinName = DEFAULT_FLAG_SKINS[teamId];
     }
@@ -257,7 +266,26 @@ function buildShapeEntity(
     }
   }
 
-  if (className === "Turret") {
+  // Script-mounted images (ShapeBase::mountImage, e.g. turret barrels
+  // mounted by TurretData::onAdd). Falls back to the static initialBarrel
+  // field when scripts didn't record any mounts.
+  const mounted = object._mountedImages as
+    Record<number, { image: string; skin?: string }> | undefined;
+  if (mounted && Object.keys(mounted).length > 0) {
+    const slots: (ImageSlot | undefined)[] = [];
+    for (const [slotStr, entry] of Object.entries(mounted)) {
+      const imageDb = resolveDatablock(runtime, entry.image);
+      const imageShapeName = getProperty(imageDb, "shapeFile");
+      if (!imageShapeName) continue;
+      slots[Number(slotStr)] = {
+        shapeName: imageShapeName,
+        mountPoint: Number(getProperty(imageDb, "mountPoint")) || 0,
+        dataBlockId: 0,
+        skinName: entry.skin,
+      };
+    }
+    if (slots.some(Boolean)) entity.imageSlots = slots;
+  } else if (className === "Turret") {
     const barrelName = getProperty(object, "initialBarrel");
     if (barrelName) {
       const barrelDb = resolveDatablock(runtime, barrelName);
@@ -315,6 +343,7 @@ function buildForceFieldEntity(
     ...posBase,
     scale: undefined, // Don't apply scale as a group transform
     renderType: "ForceFieldBare",
+    fieldOpen: object._fieldopen === true || undefined,
     forceFieldData: {
       textures,
       color,
@@ -340,10 +369,24 @@ function matchesMissionType(
 }
 
 /**
+ * Resolve an object's team from its SimGroup ancestry (nearest ancestor
+ * group named "teamN"). The object's own `team` field, when present, is
+ * preferred by buildGameEntityFromMission and wins over this.
+ */
+export function resolveTeamForObject(object: TorqueObject): number | undefined {
+  for (let group = object._parent; group; group = group._parent) {
+    const match = group._name?.match(/^team(\d+)$/i);
+    if (match) return parseInt(match[1], 10);
+  }
+  return undefined;
+}
+
+/**
  * Walk a TorqueObject tree and extract all GameEntities.
  * Respects team assignment from SimGroup hierarchy.
- * When missionType is provided, entities whose missionTypesList doesn't
- * include that type are excluded.
+ * Mission-type mismatches no longer exclude entities: the engine only
+ * hides ShapeBase objects (via cleanNonType → hide), which the bridge
+ * reflects in the `hidden` flag; everything else always renders.
  */
 export function walkMissionTree(
   root: TorqueObject,
@@ -367,8 +410,13 @@ export function walkMissionTree(
   }
 
   // Try to build entity for this object
-  const entity = buildGameEntityFromMission(root, runtime, currentTeam);
-  if (entity && matchesMissionType(entity.missionTypesList, missionType)) {
+  const entity = buildGameEntityFromMission(
+    root,
+    runtime,
+    currentTeam,
+    missionType,
+  );
+  if (entity) {
     entities.push(entity);
   }
 

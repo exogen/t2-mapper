@@ -262,7 +262,10 @@ export class CodeGenerator {
     );
   }
 
-  private objectDeclaration(node: AST.ObjectDeclaration): string {
+  private objectDeclaration(
+    node: AST.ObjectDeclaration,
+    nested = false,
+  ): string {
     // Runtime handles case normalization
     const className =
       node.className.type === "Identifier"
@@ -290,11 +293,17 @@ export class CodeGenerator {
 
     const propsStr = this.objectBody(props);
 
+    // Nested declarations (children of another object literal) skip
+    // $instantGroup placement, matching the engine.
+    const nestedArg = nested ? ", true" : "";
     if (children.length > 0) {
       const childrenStr = children
-        .map((c) => this.objectDeclaration(c))
+        .map((c) => this.objectDeclaration(c, true))
         .join(",\n");
-      return `${this.runtime}.create(${className}, ${instanceName}, ${propsStr}, [\n${childrenStr}\n])`;
+      return `${this.runtime}.create(${className}, ${instanceName}, ${propsStr}, [\n${childrenStr}\n]${nestedArg})`;
+    }
+    if (nested) {
+      return `${this.runtime}.create(${className}, ${instanceName}, ${propsStr}, undefined, true)`;
     }
     return `${this.runtime}.create(${className}, ${instanceName}, ${propsStr})`;
   }
@@ -652,7 +661,11 @@ export class CodeGenerator {
 
       if (info && info.namespace.toLowerCase() === "parent") {
         if (this.currentClass) {
-          return `${this.runtime}.parent(${JSON.stringify(this.currentClass)}, ${JSON.stringify(info.method)}, arguments[0]${args ? ", " + args : ""})`;
+          // Torque passes exactly the explicit arguments to the parent
+          // (%this is arg0 by convention, e.g. Parent::onAdd(%this, %obj)).
+          // Prepending the enclosing function's arguments[0] would shift
+          // every parameter by one in the parent method.
+          return `${this.runtime}.parent(${JSON.stringify(this.currentClass)}, ${JSON.stringify(info.method)}${args ? ", " + args : ""})`;
         } else if (this.currentFunction) {
           return `${this.runtime}.parentFunc(${JSON.stringify(this.currentFunction)}${args ? ", " + args : ""})`;
         } else {

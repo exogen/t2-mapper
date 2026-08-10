@@ -9,6 +9,7 @@
   "packageManager": "npm@11.7.0",
   "scripts": {
     "build:manifest": "tsx --tsconfig tsconfig.node.json scripts/generate-manifest.ts -o src/manifest.json",
+    "build:mount-transforms": "tsx --tsconfig tsconfig.node.json scripts/generate-mount-transforms.ts",
     "build:parser": "peggy TorqueScript.pegjs -o generated/TorqueScript.js --format es",
     "build": "vite build",
     "copy-public": "cpy --dot 'public/*' '!(public/docs)' docs",

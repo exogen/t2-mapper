@@ -14,6 +14,10 @@ export interface TorqueObject {
   _superClass?: string; // normalized superClass name (for ScriptObjects)
   _parent?: TorqueObject;
   _children?: TorqueObject[];
+  /** Cached namespace dispatch chain (see runtime getNamespaceChain). */
+  _nsChain?: string[];
+  _nsChainKey?: string;
+  _nsEpoch?: number;
   [key: string]: any;
 }
 
@@ -102,7 +106,8 @@ export interface RuntimeState {
   failedScripts: Set<string>;
   scripts: Map<string, Program>;
   generatedCode: WeakMap<Program, string>;
-  pendingTimeouts: Set<ReturnType<typeof setTimeout>>;
+  /** Pending timeout ids mapped to their requested delay (ms). */
+  pendingTimeouts: Map<ReturnType<typeof setTimeout>, number>;
   startTime: number;
 }
 
@@ -125,6 +130,27 @@ export interface TorqueRuntime {
   getObjectByName(name: string): TorqueObject | undefined;
   /** Subscribe to runtime reactivity events. */
   subscribeRuntimeEvents(listener: RuntimeEventListener): () => void;
+  /**
+   * Add an object to a container. Owning adds (SimGroup semantics, the
+   * default) reparent; non-owning adds (SimSet) only record membership.
+   */
+  addToGroup(
+    group: TorqueObject,
+    obj: TorqueObject,
+    options?: { owning?: boolean },
+  ): void;
+  removeFromGroup(group: TorqueObject, obj: TorqueObject): void;
+  /**
+   * Schedule a callback, tracked (with its delay) in pendingTimeouts so
+   * destroy() and settle() can account for it. Used by both the schedule()
+   * builtin and SimObject::schedule.
+   */
+  scheduleTimeout(fn: () => void, ms: number): ReturnType<typeof setTimeout>;
+  /**
+   * Resolve once no pending timeouts with delay <= maxDelayMs remain
+   * (draining chains of zero-delay schedules). Bounded; destroy() unblocks.
+   */
+  settle(maxDelayMs?: number): Promise<void>;
 }
 
 export type ScriptLoader = (path: string) => Promise<string | null>;
@@ -220,6 +246,7 @@ export interface RuntimeAPI {
     instanceName: string | null,
     props: Record<string, any>,
     children?: TorqueObject[],
+    nested?: boolean,
   ): TorqueObject;
   datablock(
     className: string,

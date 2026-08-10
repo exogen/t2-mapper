@@ -1,0 +1,2685 @@
+{
+ "bioderm_heavy": {
+  "mount0": {
+   "position": [
+    0.58639,
+    1.69381,
+    0.56719
+   ],
+   "rotation": [
+    -0.00001,
+    0.00003,
+    -0.00003,
+    1
+   ]
+  },
+  "mount1": {
+   "position": [
+    -0.26663,
+    1.97636,
+    0.00324
+   ],
+   "rotation": [
+    0.00116,
+    0.00007,
+    0.02614,
+    0.99966
+   ]
+  },
+  "mount2": {
+   "position": [
+    -0.26663,
+    1.97636,
+    0.00324
+   ],
+   "rotation": [
+    0.00116,
+    0.00007,
+    0.02614,
+    0.99966
+   ]
+  }
+ },
+ "bioderm_light": {
+  "mount0": {
+   "position": [
+    0.60514,
+    1.5203,
+    0.3765
+   ],
+   "rotation": [
+    0.00205,
+    -0.00295,
+    0.00458,
+    0.99998
+   ]
+  },
+  "mount1": {
+   "position": [
+    -0.23337,
+    1.71521,
+    0.00282
+   ],
+   "rotation": [
+    0.00233,
+    0.00341,
+    -0.00001,
+    0.99999
+   ]
+  },
+  "mount2": {
+   "position": [
+    -0.23337,
+    1.71521,
+    0.00282
+   ],
+   "rotation": [
+    0.00233,
+    0.00341,
+    -0.00001,
+    0.99999
+   ]
+  }
+ },
+ "bioderm_medium": {
+  "mount0": {
+   "position": [
+    0.51321,
+    1.54812,
+    0.4527
+   ],
+   "rotation": [
+    0.0018,
+    0.00157,
+    -0.00348,
+    0.99999
+   ]
+  },
+  "mount1": {
+   "position": [
+    -0.17438,
+    1.84584,
+    0.00147
+   ],
+   "rotation": [
+    0.00009,
+    0.00292,
+    -0.08277,
+    0.99656
+   ]
+  },
+  "mount2": {
+   "position": [
+    -0.17438,
+    1.84584,
+    0.00147
+   ],
+   "rotation": [
+    0.00009,
+    0.00292,
+    -0.08277,
+    0.99656
+   ]
+  }
+ },
+ "bombers_eye": {
+  "mountpoint": {
+   "position": [
+    0,
+    0,
+    0
+   ],
+   "rotation": [
+    0,
+    0,
+    0,
+    1
+   ]
+  },
+  "mount10": {
+   "position": [
+    0,
+    0,
+    0
+   ],
+   "rotation": [
+    0,
+    0,
+    0,
+    1
+   ]
+  }
+ },
+ "c_baselopro": {
+  "mount1": {
+   "position": [
+    2.26762,
+    1.7188,
+    -1.74399
+   ],
+   "rotation": [
+    0,
+    0,
+    0,
+    1
+   ]
+  },
+  "mount0": {
+   "position": [
+    -1.80758,
+    3.68195,
+    -0.05545
+   ],
+   "rotation": [
+    0,
+    0,
+    0,
+    1
+   ]
+  },
+  "mount2": {
+   "position": [
+    2.26762,
+    1.7188,
+    1.75606
+   ],
+   "rotation": [
+    0,
+    0,
+    0,
+    1
+   ]
+  }
+ },
+ "deploy_inventory": {
+  "mountpoint": {
+   "position": [
+    0.32843,
+    0.59528,
+    -0.00257
+   ],
+   "rotation": [
+    0,
+    0,
+    0,
+    1
+   ]
+  }
+ },
+ "deploy_sensor_motion": {
+  "mountpoint": {
+   "position": [
+    0,
+    -0.00072,
+    0.00038
+   ],
+   "rotation": [
+    0,
+    0,
+    -0.70708,
+    0.70713
+   ]
+  }
+ },
+ "deploy_sensor_pulse": {
+  "mountpoint": {
+   "position": [
+    0.10711,
+    0,
+    0
+   ],
+   "rotation": [
+    0.70711,
+    -0.70711,
+    0,
+    0
+   ]
+  }
+ },
+ "flag": {
+  "mountpoint": {
+   "position": [
+    0.02818,
+    0.74593,
+    0.00093
+   ],
+   "rotation": [
+    0,
+    0,
+    0,
+    1
+   ]
+  }
+ },
+ "heavy_male": {
+  "mount0": {
+   "position": [
+    0.34163,
+    1.60663,
+    0.49269
+   ],
+   "rotation": [
+    -0.00003,
+    0.0001,
+    -0.00001,
+    1
+   ]
+  },
+  "mount2": {
+   "position": [
+    -0.37718,
+    2.01723,
+    0.00666
+   ],
+   "rotation": [
+    0.04705,
+    -0.0047,
+    0.0013,
+    0.99888
+   ]
+  },
+  "mount1": {
+   "position": [
+    -0.37718,
+    2.01723,
+    0.00666
+   ],
+   "rotation": [
+    0.04705,
+    -0.0047,
+    0.0013,
+    0.99888
+   ]
+  }
+ },
+ "heavy_male_dead": {
+  "mount0": {
+   "position": [
+    0.12362,
+    0.40826,
+    0.11743
+   ],
+   "rotation": [
+    0.13651,
+    0.67681,
+    0.71927,
+    -0.07713
+   ]
+  },
+  "mount2": {
+   "position": [
+    0.40866,
+    -0.06645,
+    0.50442
+   ],
+   "rotation": [
+    -0.56165,
+    -0.6763,
+    -0.33607,
+    -0.33796
+   ]
+  },
+  "mount1": {
+   "position": [
+    0.39633,
+    0.06375,
+    0.48695
+   ],
+   "rotation": [
+    -0.56165,
+    -0.6763,
+    -0.33607,
+    -0.33796
+   ]
+  }
+ },
+ "hellfiregun": {
+  "mountpoint": {
+   "position": [
+    -0.13966,
+    3.53175,
+    0.00007
+   ],
+   "rotation": [
+    0,
+    0,
+    0,
+    1
+   ]
+  }
+ },
+ "hellfireturret": {
+  "mount0": {
+   "position": [
+    -1.1826,
+    2.8796,
+    0
+   ],
+   "rotation": [
+    0,
+    0,
+    0.44209,
+    0.89697
+   ]
+  }
+ },
+ "huntersflag": {
+  "mountpoint": {
+   "position": [
+    0.02818,
+    0.74593,
+    0.00093
+   ],
+   "rotation": [
+    0,
+    0,
+    0,
+    1
+   ]
+  }
+ },
+ "light_female": {
+  "mount0": {
+   "position": [
+    0.15415,
+    1.53008,
+    0.1678
+   ],
+   "rotation": [
+    -0.00002,
+    -0.00005,
+    -0.00002,
+    -1
+   ]
+  },
+  "mount2": {
+   "position": [
+    -0.17342,
+    1.80321,
+    -0.0382
+   ],
+   "rotation": [
+    0.05391,
+    -0.15903,
+    0.00015,
+    0.9858
+   ]
+  },
+  "mount1": {
+   "position": [
+    -0.17342,
+    1.80321,
+    -0.0382
+   ],
+   "rotation": [
+    0.05391,
+    -0.15903,
+    0.00015,
+    0.9858
+   ]
+  }
+ },
+ "light_male": {
+  "mount0": {
+   "position": [
+    0.24497,
+    1.48281,
+    0.19051
+   ],
+   "rotation": [
+    0.00006,
+    0.00002,
+    0,
+    1
+   ]
+  },
+  "mount1": {
+   "position": [
+    -0.19295,
+    1.72796,
+    -0.03189
+   ],
+   "rotation": [
+    0.04082,
+    -0.04809,
+    0.00846,
+    0.99797
+   ]
+  },
+  "mount2": {
+   "position": [
+    -0.19295,
+    1.72796,
+    -0.03189
+   ],
+   "rotation": [
+    0.04082,
+    -0.04809,
+    0.00846,
+    0.99797
+   ]
+  }
+ },
+ "medium_female": {
+  "mount0": {
+   "position": [
+    0.19107,
+    1.54983,
+    0.16908
+   ],
+   "rotation": [
+    0.00003,
+    0.0001,
+    -0.00002,
+    1
+   ]
+  },
+  "mount2": {
+   "position": [
+    -0.18144,
+    1.84731,
+    -0.0288
+   ],
+   "rotation": [
+    0.02395,
+    -0.02954,
+    0.01142,
+    0.99921
+   ]
+  },
+  "mount1": {
+   "position": [
+    -0.18144,
+    1.84731,
+    -0.0288
+   ],
+   "rotation": [
+    0.02395,
+    -0.02954,
+    0.01142,
+    0.99921
+   ]
+  }
+ },
+ "medium_male": {
+  "mount0": {
+   "position": [
+    0.21419,
+    1.4589,
+    0.23568
+   ],
+   "rotation": [
+    -0.00001,
+    0.00008,
+    0,
+    1
+   ]
+  },
+  "mount2": {
+   "position": [
+    -0.30064,
+    1.81534,
+    -0.10097
+   ],
+   "rotation": [
+    0.0626,
+    -0.1972,
+    0.02623,
+    0.97801
+   ]
+  },
+  "mount1": {
+   "position": [
+    -0.30064,
+    1.81534,
+    -0.10097
+   ],
+   "rotation": [
+    0.0626,
+    -0.1972,
+    0.02623,
+    0.97801
+   ]
+  }
+ },
+ "medium_male_dead": {
+  "mount0": {
+   "position": [
+    0.37399,
+    0.20557,
+    1.17918
+   ],
+   "rotation": [
+    0.41749,
+    0.33575,
+    0.11247,
+    -0.83686
+   ]
+  },
+  "mount2": {
+   "position": [
+    -0.53399,
+    -0.16943,
+    0.24147
+   ],
+   "rotation": [
+    0.23022,
+    0.17243,
+    0.60703,
+    0.7408
+   ]
+  },
+  "mount1": {
+   "position": [
+    -0.50033,
+    -0.04219,
+    0.25077
+   ],
+   "rotation": [
+    0.23022,
+    0.17243,
+    0.60703,
+    0.7408
+   ]
+  }
+ },
+ "pack_barrel_aa": {
+  "mountpoint": {
+   "position": [
+    0.24082,
+    0.27787,
+    0.26307
+   ],
+   "rotation": [
+    -0.49998,
+    -0.49998,
+    -0.49998,
+    0.50007
+   ]
+  }
+ },
+ "pack_barrel_elf": {
+  "mountpoint": {
+   "position": [
+    0.24082,
+    0.27787,
+    0.26307
+   ],
+   "rotation": [
+    -0.49998,
+    -0.49998,
+    -0.49998,
+    0.50007
+   ]
+  }
+ },
+ "pack_barrel_fusion": {
+  "mountpoint": {
+   "position": [
+    0.24082,
+    0.27787,
+    0.26307
+   ],
+   "rotation": [
+    -0.49998,
+    -0.49998,
+    -0.49998,
+    0.50007
+   ]
+  }
+ },
+ "pack_barrel_missile": {
+  "mountpoint": {
+   "position": [
+    0.24082,
+    0.27787,
+    0.26307
+   ],
+   "rotation": [
+    -0.49998,
+    -0.49998,
+    -0.49998,
+    0.50007
+   ]
+  }
+ },
+ "pack_barrel_mortar": {
+  "mountpoint": {
+   "position": [
+    0.24082,
+    0.27787,
+    0.26307
+   ],
+   "rotation": [
+    -0.49998,
+    -0.49998,
+    -0.49998,
+    0.50007
+   ]
+  }
+ },
+ "pack_deploy_inventory": {
+  "mountpoint": {
+   "position": [
+    0.36907,
+    0.39288,
+    -0.00257
+   ],
+   "rotation": [
+    0,
+    0,
+    0,
+    1
+   ]
+  }
+ },
+ "pack_deploy_sensor_motion": {
+  "mountpoint": {
+   "position": [
+    0,
+    -0.00072,
+    0.00038
+   ],
+   "rotation": [
+    0,
+    0,
+    -0.70708,
+    0.70713
+   ]
+  }
+ },
+ "pack_deploy_sensor_pulse": {
+  "mountpoint": {
+   "position": [
+    0.10711,
+    0,
+    0
+   ],
+   "rotation": [
+    0.70711,
+    -0.70711,
+    0,
+    0
+   ]
+  }
+ },
+ "pack_deploy_turreti": {
+  "mountpoint": {
+   "position": [
+    0.1555,
+    0.24815,
+    0
+   ],
+   "rotation": [
+    0,
+    0,
+    0,
+    1
+   ]
+  }
+ },
+ "pack_deploy_turreto": {
+  "mountpoint": {
+   "position": [
+    0.1555,
+    0.24815,
+    0
+   ],
+   "rotation": [
+    0,
+    0,
+    0,
+    1
+   ]
+  }
+ },
+ "pack_upgrade_ammo": {
+  "mountpoint": {
+   "position": [
+    0.12064,
+    0.29606,
+    0
+   ],
+   "rotation": [
+    0,
+    0,
+    0,
+    1
+   ]
+  }
+ },
+ "pack_upgrade_cloaking": {
+  "mountpoint": {
+   "position": [
+    0.09608,
+    0.25232,
+    -0.00092
+   ],
+   "rotation": [
+    0,
+    0,
+    0,
+    1
+   ]
+  }
+ },
+ "pack_upgrade_energy": {
+  "mountpoint": {
+   "position": [
+    0.10977,
+    0.23176,
+    0
+   ],
+   "rotation": [
+    0,
+    0,
+    0,
+    1
+   ]
+  }
+ },
+ "pack_upgrade_repair": {
+  "mountpoint": {
+   "position": [
+    0.14125,
+    0.22252,
+    0
+   ],
+   "rotation": [
+    0,
+    0,
+    0,
+    1
+   ]
+  }
+ },
+ "pack_upgrade_satchel": {
+  "mountpoint": {
+   "position": [
+    0,
+    0.05024,
+    0
+   ],
+   "rotation": [
+    0,
+    0,
+    -0.70713,
+    0.70708
+   ]
+  }
+ },
+ "pack_upgrade_sensorjammer": {
+  "mountpoint": {
+   "position": [
+    0.14437,
+    0.22046,
+    0
+   ],
+   "rotation": [
+    0,
+    0,
+    0,
+    1
+   ]
+  }
+ },
+ "pack_upgrade_shield": {
+  "mountpoint": {
+   "position": [
+    0.09833,
+    0.19172,
+    0
+   ],
+   "rotation": [
+    0,
+    0,
+    0,
+    1
+   ]
+  }
+ },
+ "paperflag": {
+  "mountpoint": {
+   "position": [
+    0,
+    0.73611,
+    0
+   ],
+   "rotation": [
+    0,
+    0,
+    0,
+    1
+   ]
+  }
+ },
+ "redeemer": {
+  "mountpoint": {
+   "position": [
+    -0.67477,
+    0.16198,
+    0
+   ],
+   "rotation": [
+    0,
+    0,
+    0,
+    1
+   ]
+  }
+ },
+ "station_inv_mpb": {
+  "mount2": {
+   "position": [
+    -1.77663,
+    0,
+    -1.4189
+   ],
+   "rotation": [
+    0,
+    0,
+    0,
+    1
+   ]
+  },
+  "mount1": {
+   "position": [
+    1.27519,
+    0,
+    -1.85091
+   ],
+   "rotation": [
+    0,
+    0,
+    0,
+    1
+   ]
+  },
+  "mount4": {
+   "position": [
+    -1.77663,
+    0,
+    0
+   ],
+   "rotation": [
+    0,
+    0,
+    0,
+    1
+   ]
+  },
+  "mount3": {
+   "position": [
+    1.27519,
+    0,
+    0
+   ],
+   "rotation": [
+    0,
+    0,
+    0,
+    1
+   ]
+  },
+  "mount6": {
+   "position": [
+    -1.77663,
+    0,
+    1.42246
+   ],
+   "rotation": [
+    0,
+    0,
+    0,
+    1
+   ]
+  },
+  "mount5": {
+   "position": [
+    1.27519,
+    0,
+    1.86112
+   ],
+   "rotation": [
+    0,
+    0,
+    0,
+    1
+   ]
+  },
+  "mount0": {
+   "position": [
+    0,
+    0.01176,
+    0
+   ],
+   "rotation": [
+    0,
+    0,
+    0,
+    1
+   ]
+  }
+ },
+ "t1blaster": {
+  "mountpoint": {
+   "position": [
+    -0.48419,
+    -0.14056,
+    0
+   ],
+   "rotation": [
+    0,
+    0,
+    0,
+    1
+   ]
+  }
+ },
+ "t1chaingun": {
+  "mountpoint": {
+   "position": [
+    -0.25937,
+    -0.06524,
+    0
+   ],
+   "rotation": [
+    0,
+    0,
+    0,
+    1
+   ]
+  }
+ },
+ "t1disc": {
+  "mountpoint": {
+   "position": [
+    -0.5205,
+    -0.16251,
+    0
+   ],
+   "rotation": [
+    0,
+    0,
+    0,
+    1
+   ]
+  }
+ },
+ "t1elf": {
+  "mountpoint": {
+   "position": [
+    -0.48617,
+    -0.04885,
+    0
+   ],
+   "rotation": [
+    0,
+    0,
+    0,
+    1
+   ]
+  }
+ },
+ "t1elfturret": {
+  "mount0": {
+   "position": [
+    1.40436,
+    1.56739,
+    0.17562
+   ],
+   "rotation": [
+    0,
+    0,
+    0,
+    1
+   ]
+  }
+ },
+ "t1flyer": {
+  "mount0": {
+   "position": [
+    -0.35726,
+    0.76924,
+    0
+   ],
+   "rotation": [
+    0,
+    0,
+    0,
+    1
+   ]
+  }
+ },
+ "t1flyer2": {
+  "mount0": {
+   "position": [
+    -0.35726,
+    0.76924,
+    0
+   ],
+   "rotation": [
+    0,
+    0,
+    0,
+    1
+   ]
+  }
+ },
+ "t1grenadelauncher": {
+  "mountpoint": {
+   "position": [
+    -0.37461,
+    -0.15033,
+    0
+   ],
+   "rotation": [
+    0,
+    0,
+    0,
+    1
+   ]
+  }
+ },
+ "t1hpc": {
+  "mount0": {
+   "position": [
+    -3.9949,
+    1.5493,
+    -0.04749
+   ],
+   "rotation": [
+    0,
+    0,
+    0,
+    1
+   ]
+  },
+  "mount1": {
+   "position": [
+    -1.08364,
+    0.79374,
+    2.66405
+   ],
+   "rotation": [
+    0,
+    0,
+    0,
+    1
+   ]
+  },
+  "mount2": {
+   "position": [
+    -1.21825,
+    0.79374,
+    -2.58595
+   ],
+   "rotation": [
+    0,
+    0,
+    0,
+    1
+   ]
+  },
+  "mount3": {
+   "position": [
+    1.33944,
+    0.79374,
+    2.66405
+   ],
+   "rotation": [
+    0,
+    0,
+    0,
+    1
+   ]
+  },
+  "mount4": {
+   "position": [
+    1.20482,
+    0.79374,
+    -2.68211
+   ],
+   "rotation": [
+    0,
+    0,
+    0,
+    1
+   ]
+  }
+ },
+ "t1lpc": {
+  "mount0": {
+   "position": [
+    -2.06752,
+    0.87097,
+    -0.00043
+   ],
+   "rotation": [
+    0,
+    0,
+    0,
+    1
+   ]
+  },
+  "mount1": {
+   "position": [
+    0.7017,
+    0.59949,
+    2.52512
+   ],
+   "rotation": [
+    0,
+    0,
+    0,
+    1
+   ]
+  },
+  "mount2": {
+   "position": [
+    0.7017,
+    0.59949,
+    -2.36167
+   ],
+   "rotation": [
+    0,
+    0,
+    0,
+    1
+   ]
+  }
+ },
+ "t1misturret": {
+  "mount0": {
+   "position": [
+    1.32599,
+    3.00563,
+    -0.00066
+   ],
+   "rotation": [
+    0,
+    0,
+    0.21644,
+    0.9763
+   ]
+  }
+ },
+ "t1mortar": {
+  "mountpoint": {
+   "position": [
+    -0.34869,
+    -0.22817,
+    0
+   ],
+   "rotation": [
+    0,
+    0,
+    0,
+    1
+   ]
+  }
+ },
+ "t1plasma": {
+  "mountpoint": {
+   "position": [
+    -0.5087,
+    -0.15,
+    0
+   ],
+   "rotation": [
+    0,
+    0,
+    0,
+    1
+   ]
+  }
+ },
+ "t1remoteturret": {
+  "mount0": {
+   "position": [
+    0.84808,
+    1.03265,
+    -0.00106
+   ],
+   "rotation": [
+    0,
+    0,
+    0,
+    1
+   ]
+  }
+ },
+ "t1remoteturret_pack": {
+  "mount0": {
+   "position": [
+    -0.24891,
+    0.32861,
+    -0.00187
+   ],
+   "rotation": [
+    -0.14135,
+    0.67717,
+    -0.70676,
+    0.14815
+   ]
+  }
+ },
+ "t1repairpackgun": {
+  "mountpoint": {
+   "position": [
+    -0.17992,
+    -0.00538,
+    0
+   ],
+   "rotation": [
+    0,
+    0,
+    0,
+    1
+   ]
+  }
+ },
+ "t1sentry": {
+  "mount0": {
+   "position": [
+    0.57838,
+    0.08706,
+    -0.00013
+   ],
+   "rotation": [
+    0,
+    0,
+    0,
+    1
+   ]
+  }
+ },
+ "t1sniper": {
+  "mountpoint": {
+   "position": [
+    -0.54637,
+    -0.13052,
+    0
+   ],
+   "rotation": [
+    0,
+    0,
+    0,
+    1
+   ]
+  }
+ },
+ "t1targetlaser": {
+  "mountpoint": {
+   "position": [
+    -0.34013,
+    -0.22194,
+    0
+   ],
+   "rotation": [
+    0,
+    0,
+    0,
+    1
+   ]
+  }
+ },
+ "tr2heavy_male": {
+  "mount0": {
+   "position": [
+    0.75001,
+    5.17408,
+    1.79195
+   ],
+   "rotation": [
+    -0.00003,
+    0.0001,
+    -0.00001,
+    1
+   ]
+  },
+  "mount2": {
+   "position": [
+    -1.2866,
+    6.5233,
+    0.00426
+   ],
+   "rotation": [
+    0.04705,
+    -0.0047,
+    0.0013,
+    0.99888
+   ]
+  },
+  "mount1": {
+   "position": [
+    -1.2866,
+    6.5233,
+    0.00426
+   ],
+   "rotation": [
+    0.04705,
+    -0.0047,
+    0.0013,
+    0.99888
+   ]
+  }
+ },
+ "tr2light_female": {
+  "mount0": {
+   "position": [
+    0.32641,
+    3.07299,
+    0.4119
+   ],
+   "rotation": [
+    -0.00001,
+    -0.00005,
+    -0.00002,
+    -1
+   ]
+  },
+  "mount2": {
+   "position": [
+    -0.42343,
+    3.61825,
+    -0.08608
+   ],
+   "rotation": [
+    0.05391,
+    -0.15903,
+    0.00015,
+    0.9858
+   ]
+  },
+  "mount1": {
+   "position": [
+    -0.42343,
+    3.61825,
+    -0.08608
+   ],
+   "rotation": [
+    0.05391,
+    -0.15903,
+    0.00015,
+    0.9858
+   ]
+  }
+ },
+ "tr2light_male": {
+  "mount0": {
+   "position": [
+    0.40227,
+    2.92197,
+    0.50919
+   ],
+   "rotation": [
+    0.00006,
+    0.00002,
+    0,
+    1
+   ]
+  },
+  "mount1": {
+   "position": [
+    -0.21898,
+    3.34807,
+    -0.04687
+   ],
+   "rotation": [
+    0.04082,
+    -0.04809,
+    0.00846,
+    0.99797
+   ]
+  },
+  "mount2": {
+   "position": [
+    -0.21898,
+    3.34807,
+    -0.04687
+   ],
+   "rotation": [
+    0.04082,
+    -0.04809,
+    0.00846,
+    0.99797
+   ]
+  }
+ },
+ "tr2medium_female": {
+  "mount0": {
+   "position": [
+    0.28715,
+    3.11411,
+    0.40746
+   ],
+   "rotation": [
+    0.00003,
+    0.0001,
+    -0.00002,
+    1
+   ]
+  },
+  "mount2": {
+   "position": [
+    -0.40884,
+    3.65764,
+    -0.05506
+   ],
+   "rotation": [
+    -0.02052,
+    0.00036,
+    0.08592,
+    0.99609
+   ]
+  },
+  "mount1": {
+   "position": [
+    -0.40884,
+    3.65764,
+    -0.05506
+   ],
+   "rotation": [
+    -0.02052,
+    0.00036,
+    0.08592,
+    0.99609
+   ]
+  }
+ },
+ "tr2medium_male": {
+  "mount0": {
+   "position": [
+    0.24808,
+    2.91046,
+    0.5535
+   ],
+   "rotation": [
+    -0.00001,
+    0.00008,
+    0,
+    1
+   ]
+  },
+  "mount2": {
+   "position": [
+    -0.64513,
+    3.5379,
+    -0.1428
+   ],
+   "rotation": [
+    -0.00583,
+    -0.11608,
+    0.09215,
+    0.98894
+   ]
+  },
+  "mount1": {
+   "position": [
+    -0.64513,
+    3.5379,
+    -0.1428
+   ],
+   "rotation": [
+    -0.00583,
+    -0.11608,
+    0.09215,
+    0.98894
+   ]
+  }
+ },
+ "tr2weapon_chaingun": {
+  "mountpoint": {
+   "position": [
+    -0.48018,
+    -0.12777,
+    -0.1526
+   ],
+   "rotation": [
+    0,
+    0,
+    0,
+    1
+   ]
+  },
+  "mount0": {
+   "position": [
+    0.20834,
+    0,
+    0.22416
+   ],
+   "rotation": [
+    0,
+    0,
+    0,
+    1
+   ]
+  }
+ },
+ "tr2weapon_disc": {
+  "mountpoint": {
+   "position": [
+    -0.83404,
+    -0.21278,
+    0
+   ],
+   "rotation": [
+    0,
+    0,
+    0,
+    1
+   ]
+  }
+ },
+ "tr2weapon_grenade_launcher": {
+  "mountpoint": {
+   "position": [
+    -0.58828,
+    -0.20233,
+    -0.00229
+   ],
+   "rotation": [
+    0,
+    0,
+    0,
+    1
+   ]
+  }
+ },
+ "tr2weapon_mortar": {
+  "mountpoint": {
+   "position": [
+    -0.2834,
+    -0.0573,
+    -0.12071
+   ],
+   "rotation": [
+    0,
+    0,
+    0,
+    1
+   ]
+  }
+ },
+ "tr2weapon_shocklance": {
+  "mountpoint": {
+   "position": [
+    -0.75273,
+    0.10066,
+    0
+   ],
+   "rotation": [
+    0,
+    0,
+    0,
+    1
+   ]
+  }
+ },
+ "turret_aa_large": {
+  "mountpoint": {
+   "position": [
+    0,
+    0.34993,
+    0
+   ],
+   "rotation": [
+    0,
+    0,
+    0,
+    1
+   ]
+  }
+ },
+ "turret_assaulttank_mortar": {
+  "mount0": {
+   "position": [
+    2.87905,
+    0.44482,
+    -0.61745
+   ],
+   "rotation": [
+    0,
+    0,
+    0,
+    1
+   ]
+  },
+  "mount1": {
+   "position": [
+    4.12989,
+    0.48941,
+    0.48192
+   ],
+   "rotation": [
+    0,
+    0,
+    0,
+    1
+   ]
+  }
+ },
+ "turret_assaulttank_plasma": {
+  "mount0": {
+   "position": [
+    1.18819,
+    0.60222,
+    0
+   ],
+   "rotation": [
+    0,
+    0,
+    0,
+    1
+   ]
+  }
+ },
+ "turret_base_large": {
+  "mount0": {
+   "position": [
+    -0.40014,
+    1.82652,
+    0
+   ],
+   "rotation": [
+    0,
+    0,
+    0,
+    1
+   ]
+  }
+ },
+ "turret_base_mpb": {
+  "mount0": {
+   "position": [
+    -1.23021,
+    0.32542,
+    0
+   ],
+   "rotation": [
+    0,
+    0,
+    0,
+    1
+   ]
+  }
+ },
+ "turret_belly_barrell": {
+  "mountpoint": {
+   "position": [
+    0,
+    0,
+    0
+   ],
+   "rotation": [
+    0,
+    0,
+    -1,
+    0
+   ]
+  }
+ },
+ "turret_belly_barrelr": {
+  "mountpoint": {
+   "position": [
+    0,
+    0,
+    0
+   ],
+   "rotation": [
+    0,
+    0,
+    -1,
+    0
+   ]
+  }
+ },
+ "turret_belly_base": {
+  "mount2": {
+   "position": [
+    -0.14117,
+    0.0584,
+    0
+   ],
+   "rotation": [
+    0,
+    0,
+    -1,
+    0
+   ]
+  },
+  "mount1": {
+   "position": [
+    -0.14094,
+    0,
+    -0.10422
+   ],
+   "rotation": [
+    0,
+    0,
+    -1,
+    0
+   ]
+  },
+  "mount0": {
+   "position": [
+    -0.14094,
+    0,
+    0.10422
+   ],
+   "rotation": [
+    0,
+    0,
+    -1,
+    0
+   ]
+  },
+  "mount10": {
+   "position": [
+    0,
+    -0.02,
+    0
+   ],
+   "rotation": [
+    0,
+    0,
+    0,
+    1
+   ]
+  },
+  "mount3": {
+   "position": [
+    0,
+    0,
+    0
+   ],
+   "rotation": [
+    0,
+    0,
+    0,
+    1
+   ]
+  }
+ },
+ "turret_elf_large": {
+  "mountpoint": {
+   "position": [
+    0,
+    0.34993,
+    0
+   ],
+   "rotation": [
+    0,
+    0,
+    0,
+    1
+   ]
+  }
+ },
+ "turret_fusion_large": {
+  "mountpoint": {
+   "position": [
+    0,
+    0.34993,
+    0
+   ],
+   "rotation": [
+    0,
+    0,
+    0,
+    1
+   ]
+  }
+ },
+ "turret_indoor_deployc": {
+  "mount0": {
+   "position": [
+    0.00002,
+    0.05808,
+    0.00002
+   ],
+   "rotation": [
+    0.5,
+    -0.49997,
+    -0.5,
+    0.50003
+   ]
+  }
+ },
+ "turret_indoor_deployf": {
+  "mount0": {
+   "position": [
+    0.00002,
+    0.05819,
+    -0.00002
+   ],
+   "rotation": [
+    -0.49998,
+    0.50002,
+    -0.49998,
+    0.50002
+   ]
+  }
+ },
+ "turret_indoor_deployw": {
+  "mount0": {
+   "position": [
+    -0.00002,
+    0.05819,
+    0.00002
+   ],
+   "rotation": [
+    0.49998,
+    -0.50002,
+    -0.49998,
+    0.50002
+   ]
+  }
+ },
+ "turret_missile_large": {
+  "mountpoint": {
+   "position": [
+    0,
+    0.34993,
+    0
+   ],
+   "rotation": [
+    0,
+    0,
+    0,
+    1
+   ]
+  }
+ },
+ "turret_mortar_large": {
+  "mountpoint": {
+   "position": [
+    0,
+    0.34993,
+    0
+   ],
+   "rotation": [
+    0,
+    0,
+    0,
+    1
+   ]
+  }
+ },
+ "turret_muzzlepoint": {
+  "mountpoint": {
+   "position": [
+    0,
+    0,
+    0
+   ],
+   "rotation": [
+    0,
+    0,
+    0,
+    1
+   ]
+  }
+ },
+ "turret_outdoor_deploy": {
+  "mount0": {
+   "position": [
+    0.00002,
+    0.31704,
+    -0.00002
+   ],
+   "rotation": [
+    -0.00005,
+    0,
+    0.70709,
+    -0.70712
+   ]
+  }
+ },
+ "turret_sentry": {
+  "mount0": {
+   "position": [
+    -0.0082,
+    -0.12763,
+    -0.31974
+   ],
+   "rotation": [
+    0.70712,
+    -0.00024,
+    -0.70709,
+    0.00023
+   ]
+  }
+ },
+ "turret_tank_barrelchain": {
+  "mountpoint": {
+   "position": [
+    0,
+    0,
+    0
+   ],
+   "rotation": [
+    0,
+    0,
+    0,
+    1
+   ]
+  }
+ },
+ "turret_tank_barrelmortar": {
+  "mountpoint": {
+   "position": [
+    0,
+    0,
+    0
+   ],
+   "rotation": [
+    0,
+    0,
+    0,
+    1
+   ]
+  }
+ },
+ "turret_tank_base": {
+  "mount1": {
+   "position": [
+    0.82513,
+    0.44482,
+    -0.61745
+   ],
+   "rotation": [
+    0,
+    0,
+    0,
+    1
+   ]
+  },
+  "mount0": {
+   "position": [
+    0.68784,
+    0.44488,
+    0.48192
+   ],
+   "rotation": [
+    0,
+    0,
+    0,
+    1
+   ]
+  }
+ },
+ "vehicle_air_bomber": {
+  "mount0": {
+   "position": [
+    4.63794,
+    0.58325,
+    0
+   ],
+   "rotation": [
+    0,
+    0,
+    0,
+    1
+   ]
+  },
+  "mount1": {
+   "position": [
+    2.57129,
+    0.53928,
+    0
+   ],
+   "rotation": [
+    0,
+    0,
+    0,
+    1
+   ]
+  },
+  "mount2": {
+   "position": [
+    -3.46452,
+    2.24568,
+    0
+   ],
+   "rotation": [
+    0,
+    0,
+    0,
+    1
+   ]
+  },
+  "mount10": {
+   "position": [
+    1.63378,
+    -0.64708,
+    -0.00956
+   ],
+   "rotation": [
+    0,
+    0,
+    0,
+    1
+   ]
+  },
+  "mount9": {
+   "position": [
+    -2.84818,
+    -0.64708,
+    -0.00956
+   ],
+   "rotation": [
+    0,
+    0,
+    0,
+    1
+   ]
+  }
+ },
+ "vehicle_air_hapc": {
+  "mount0": {
+   "position": [
+    0.90472,
+    1.72572,
+    0
+   ],
+   "rotation": [
+    0,
+    0,
+    0,
+    1
+   ]
+  },
+  "mount1": {
+   "position": [
+    -2.56455,
+    1.99136,
+    0
+   ],
+   "rotation": [
+    0,
+    0,
+    0,
+    1
+   ]
+  },
+  "mount2": {
+   "position": [
+    7.02342,
+    -2.05808,
+    -3.42439
+   ],
+   "rotation": [
+    0,
+    0,
+    0,
+    1
+   ]
+  },
+  "mount3": {
+   "position": [
+    3.62697,
+    -2.05808,
+    -3.42439
+   ],
+   "rotation": [
+    0,
+    0,
+    0,
+    1
+   ]
+  },
+  "mount4": {
+   "position": [
+    3.62697,
+    -2.05808,
+    3.40581
+   ],
+   "rotation": [
+    0,
+    0,
+    0,
+    1
+   ]
+  },
+  "mount5": {
+   "position": [
+    7.02342,
+    -2.05808,
+    3.40581
+   ],
+   "rotation": [
+    0,
+    0,
+    0,
+    1
+   ]
+  }
+ },
+ "vehicle_air_scout": {
+  "mount0": {
+   "position": [
+    0.9053,
+    0.75305,
+    0
+   ],
+   "rotation": [
+    0,
+    0,
+    0,
+    1
+   ]
+  },
+  "mount10": {
+   "position": [
+    2.12263,
+    -0.80808,
+    0
+   ],
+   "rotation": [
+    0,
+    0,
+    0,
+    1
+   ]
+  }
+ },
+ "vehicle_air_scout_wreck": {
+  "mount0": {
+   "position": [
+    0.9053,
+    3.57671,
+    0
+   ],
+   "rotation": [
+    0,
+    0,
+    0,
+    1
+   ]
+  },
+  "mount10": {
+   "position": [
+    4.322,
+    2.831,
+    0
+   ],
+   "rotation": [
+    0,
+    0,
+    0,
+    1
+   ]
+  }
+ },
+ "vehicle_grav_scout": {
+  "mount0": {
+   "position": [
+    -0.48343,
+    0.45667,
+    0
+   ],
+   "rotation": [
+    0,
+    0,
+    0,
+    1
+   ]
+  },
+  "mount1": {
+   "position": [
+    1.5552,
+    0.08648,
+    0
+   ],
+   "rotation": [
+    0,
+    0,
+    0,
+    1
+   ]
+  }
+ },
+ "vehicle_grav_tank": {
+  "mount0": {
+   "position": [
+    3.67026,
+    1.56762,
+    0.70019
+   ],
+   "rotation": [
+    0,
+    0,
+    0,
+    1
+   ]
+  },
+  "mount1": {
+   "position": [
+    0.46761,
+    1.81533,
+    -0.66082
+   ],
+   "rotation": [
+    0,
+    0,
+    0,
+    1
+   ]
+  },
+  "mount10": {
+   "position": [
+    -1.50016,
+    3.03507,
+    0
+   ],
+   "rotation": [
+    0,
+    0,
+    0,
+    1
+   ]
+  }
+ },
+ "vehicle_grav_tank_wreck": {
+  "mount0": {
+   "position": [
+    3.67026,
+    1.56762,
+    0.70019
+   ],
+   "rotation": [
+    0,
+    0,
+    0,
+    1
+   ]
+  },
+  "mount1": {
+   "position": [
+    0.46761,
+    1.81533,
+    -0.66082
+   ],
+   "rotation": [
+    0,
+    0,
+    0,
+    1
+   ]
+  },
+  "mount10": {
+   "position": [
+    -1.50016,
+    3.03507,
+    0
+   ],
+   "rotation": [
+    0,
+    0,
+    0,
+    1
+   ]
+  }
+ },
+ "vehicle_land_assault": {
+  "mount0": {
+   "position": [
+    3.67026,
+    1.56762,
+    0.70019
+   ],
+   "rotation": [
+    0,
+    0,
+    0,
+    1
+   ]
+  },
+  "mount1": {
+   "position": [
+    0.46761,
+    1.81533,
+    -0.66082
+   ],
+   "rotation": [
+    0,
+    0,
+    0,
+    1
+   ]
+  },
+  "mount10": {
+   "position": [
+    -1.50016,
+    3.03507,
+    0
+   ],
+   "rotation": [
+    0,
+    0,
+    0,
+    1
+   ]
+  }
+ },
+ "vehicle_land_assault_wreck": {
+  "mount0": {
+   "position": [
+    3.67026,
+    1.56762,
+    0.70019
+   ],
+   "rotation": [
+    0,
+    0,
+    0,
+    1
+   ]
+  },
+  "mount1": {
+   "position": [
+    0.46761,
+    1.81533,
+    -0.66082
+   ],
+   "rotation": [
+    0,
+    0,
+    0,
+    1
+   ]
+  },
+  "mount10": {
+   "position": [
+    -1.50016,
+    3.03507,
+    0
+   ],
+   "rotation": [
+    0,
+    0,
+    0,
+    1
+   ]
+  }
+ },
+ "vehicle_land_mpbase": {
+  "mount0": {
+   "position": [
+    6.0169,
+    0.94919,
+    0
+   ],
+   "rotation": [
+    0,
+    0,
+    0,
+    1
+   ]
+  },
+  "mount1": {
+   "position": [
+    1.58304,
+    1.89693,
+    0
+   ],
+   "rotation": [
+    0,
+    0,
+    0,
+    1
+   ]
+  },
+  "mount2": {
+   "position": [
+    -8.66222,
+    -1.87472,
+    0
+   ],
+   "rotation": [
+    0,
+    0,
+    0,
+    1
+   ]
+  },
+  "mount3": {
+   "position": [
+    4.94019,
+    1.17046,
+    -0.61059
+   ],
+   "rotation": [
+    0,
+    0,
+    -0.16504,
+    0.98629
+   ]
+  }
+ },
+ "vehicle_pad": {
+  "mount0": {
+   "position": [
+    13.06814,
+    3.21005,
+    -0.07934
+   ],
+   "rotation": [
+    0,
+    0,
+    0,
+    1
+   ]
+  }
+ },
+ "weapon_chaingun": {
+  "mountpoint": {
+   "position": [
+    -0.32012,
+    -0.08518,
+    -0.10173
+   ],
+   "rotation": [
+    0,
+    0,
+    0,
+    1
+   ]
+  },
+  "mount0": {
+   "position": [
+    0.1389,
+    0,
+    0.14944
+   ],
+   "rotation": [
+    0,
+    0,
+    0,
+    1
+   ]
+  }
+ },
+ "weapon_disc": {
+  "mountpoint": {
+   "position": [
+    -0.41702,
+    -0.10639,
+    0
+   ],
+   "rotation": [
+    0,
+    0,
+    0,
+    1
+   ]
+  }
+ },
+ "weapon_elf": {
+  "mountpoint": {
+   "position": [
+    -0.49546,
+    -0.23509,
+    -0.0243
+   ],
+   "rotation": [
+    0,
+    0,
+    0,
+    1
+   ]
+  }
+ },
+ "weapon_energy": {
+  "mountpoint": {
+   "position": [
+    -0.39041,
+    -0.11284,
+    -0.0002
+   ],
+   "rotation": [
+    0,
+    0,
+    0,
+    1
+   ]
+  }
+ },
+ "weapon_energy_vehicle": {
+  "mountpoint": {
+   "position": [
+    0.01814,
+    0.22249,
+    0
+   ],
+   "rotation": [
+    0,
+    0,
+    0,
+    1
+   ]
+  }
+ },
+ "weapon_grenade_launcher": {
+  "mountpoint": {
+   "position": [
+    -0.39219,
+    -0.09192,
+    -0.00152
+   ],
+   "rotation": [
+    0,
+    0,
+    0,
+    1
+   ]
+  }
+ },
+ "weapon_missile": {
+  "mountpoint": {
+   "position": [
+    0,
+    0,
+    0.10687
+   ],
+   "rotation": [
+    0,
+    0,
+    0,
+    1
+   ]
+  }
+ },
+ "weapon_mortar": {
+  "mountpoint": {
+   "position": [
+    -0.18893,
+    -0.0382,
+    -0.08048
+   ],
+   "rotation": [
+    0,
+    0,
+    0,
+    1
+   ]
+  }
+ },
+ "weapon_plasma": {
+  "mountpoint": {
+   "position": [
+    -0.23684,
+    -0.1068,
+    0.0016
+   ],
+   "rotation": [
+    0,
+    0,
+    0,
+    1
+   ]
+  }
+ },
+ "weapon_repair": {
+  "mountpoint": {
+   "position": [
+    -0.49538,
+    -0.07749,
+    -0.0243
+   ],
+   "rotation": [
+    0,
+    0,
+    0,
+    1
+   ]
+  }
+ },
+ "weapon_shocklance": {
+  "mountpoint": {
+   "position": [
+    -0.50182,
+    0.06711,
+    0
+   ],
+   "rotation": [
+    0,
+    0,
+    0,
+    1
+   ]
+  }
+ },
+ "weapon_sniper": {
+  "mountpoint": {
+   "position": [
+    -0.30529,
+    -0.06289,
+    0.00204
+   ],
+   "rotation": [
+    0,
+    0,
+    0,
+    1
+   ]
+  }
+ },
+ "weapon_targeting": {
+  "mountpoint": {
+   "position": [
+    -0.41824,
+    -0.12728,
+    0.00026
+   ],
+   "rotation": [
+    0,
+    0,
+    0,
+    1
+   ]
+  }
+ }
+}

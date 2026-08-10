@@ -142,6 +142,11 @@ export function ForceFieldBare({ entity }: { entity: ForceFieldBareEntity }) {
     [data.textures],
   );
 
+  // Opened (retracted) by scripts, e.g. powered-down force fields.
+  if (entity.fieldOpen) {
+    return null;
+  }
+
   if (textureUrls.length === 0) {
     return (
       <ForceFieldFallback

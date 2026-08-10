@@ -42,6 +42,7 @@ const HEATMAP_HEIGHT = 1000;
 function collectFlags(): FlagPosition[] {
   const flags: FlagPosition[] = [];
   for (const entity of gameEntityStore.getState().missionEntities.values()) {
+    if (entity.hidden || entity.debugHidden) continue;
     if (
       entity.renderType === "Shape" &&
       entity.dataBlock?.toLowerCase() === "flag" &&

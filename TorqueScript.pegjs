@@ -276,7 +276,7 @@ CaseTestExpression
   = AdditiveExpression
 
 ReturnStatement
-  = "return" value:(__ Expression)? _ ";" {
+  = "return" !IdentifierChar value:(_ Expression)? _ ";" {
       return {
         type: 'ReturnStatement',
         value: value ? value[1] : null

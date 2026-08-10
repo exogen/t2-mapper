@@ -271,6 +271,24 @@ describe("TorqueScript Runtime", () => {
       expect($g.get("b")).toBe("small");
     });
 
+    it("handles return with parenthesized value and no whitespace", () => {
+      // Retail scripts commonly write `return(%x);` (e.g. targetManager.cs
+      // createTarget). This must parse as a return statement, not a call
+      // to a function named "return".
+      const { $g } = run(`
+        function passThrough(%x) {
+          return(%x);
+        }
+        function returned() {
+          return "shadow";
+        }
+        $a = passThrough(32);
+        $b = returned();
+      `);
+      expect($g.get("a")).toBe(32);
+      expect($g.get("b")).toBe("shadow");
+    });
+
     it("handles for loops", () => {
       const { $g } = run(`
         function sumRange(%n) {

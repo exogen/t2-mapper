@@ -235,6 +235,11 @@ export function runServer(options: RunServerOptions): RunServerResult {
       signal?.throwIfAborted();
       createServerScript.execute();
       await missionReady;
+      signal?.throwIfAborted();
+      // $missionRunning resolves on a microtask, but zero-delay schedules
+      // queued during load (e.g. StationVehiclePad::createStationVehicle)
+      // are macrotasks — drain them so the harvest sees their objects.
+      await runtime.settle();
     } catch (err) {
       // AbortError is expected when the caller cancels - don't propagate
       if (err instanceof Error && err.name === "AbortError") {

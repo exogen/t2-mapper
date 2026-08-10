@@ -665,9 +665,10 @@ export const ShapeModel = memo(function ShapeModel({
 
   // Animation setup.
   //
-  // Mission mode (streamEntity absent): auto-play default looping sequences
-  //   (power, ambient) so static shapes look alive. TorqueScript playThread/
-  //   stopThread/pauseThread events can override if scripts are loaded.
+  // Mission mode (streamEntity absent): seed threads from script state
+  //   (object._threads), then fall back to default looping sequences
+  //   (ambient always; power only when scripts didn't manage the object).
+  //   Live TorqueScript playThread/stopThread/pauseThread calls override.
   //
   // Demo/live mode (streamEntity present): no auto-play. The useFrame
   //   handler reads ghost ThreadMask data and drives everything.
@@ -892,17 +893,37 @@ export const ShapeModel = memo(function ShapeModel({
       );
     }
 
-    // Start default looping sequences immediately. Thread slots match
-    // power.cs globals: $PowerThread=0, $AmbientThread=1.
-    // In Torque, these are ghosted script threads started by server scripts,
-    // but the non-script ambient thread (ShapeBaseImageData.ambientSequence)
-    // is client-only and not ghosted. Auto-play both here as they're
-    // typically active on spawned shapes.
-    const defaults: Array<[number, string]> = [
-      [0, "power"],
-      [1, "ambient"],
-    ];
+    // Seed threads that scripts started before this component mounted
+    // (power.cs playThread during mission init, etc.).
+    const scriptThreads = object?._threads as
+      | Record<
+          number,
+          { sequence: string; playing: boolean; direction: boolean }
+        >
+      | undefined;
+    const seededSlots = new Set<number>();
+    if (scriptThreads) {
+      for (const [slotStr, thread] of Object.entries(scriptThreads)) {
+        if (!thread.playing) continue;
+        const slot = Number(slotStr);
+        seededSlots.add(slot);
+        handlePlayThread(slot, thread.sequence, thread.direction);
+      }
+    }
+
+    // Fallback default sequences. Thread slots match power.cs globals:
+    // $PowerThread=0, $AmbientThread=1. The ambient thread is client-side
+    // in the real engine (never script-driven), so it always autoplays;
+    // the power thread is script truth when any script threads were
+    // recorded, and only autoplays when scripts didn't manage this object.
+    const defaults: Array<[number, string]> = scriptThreads
+      ? [[1, "ambient"]]
+      : [
+          [0, "power"],
+          [1, "ambient"],
+        ];
     for (const [slot, seqName] of defaults) {
+      if (seededSlots.has(slot)) continue;
       if (
         clipsByName.has(seqName) ||
         visNodesBySequence.has(seqName) ||

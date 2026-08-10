@@ -15,6 +15,7 @@ import {
   DEFAULT_REACTIVE_METHOD_RULES,
 } from "./reactivity";
 import { CaseInsensitiveMap, CaseInsensitiveSet, normalizePath } from "./utils";
+import { getEngineParent, getOnAddStyle, isGroupClass } from "./classHierarchy";
 import type {
   BuiltinsContext,
   FunctionStack,
@@ -103,8 +104,15 @@ export function createRuntime(
   const methodHooks = new CaseInsensitiveMap<
     CaseInsensitiveMap<Array<(thisObj: TorqueObject, ...args: any[]) => void>>
   >();
-  // Namespace inheritance: className -> superClassName (for ScriptObject/ScriptGroup)
+  // Namespace inheritance: className -> superClassName. Populated by
+  // ScriptObject class/superClass declarations and by datablock name →
+  // className → data-class links; falls back to the built-in engine
+  // hierarchy (classHierarchy.ts) when no script link exists.
   const namespaceParents = new CaseInsensitiveMap<string>();
+  // Bumped whenever anything that affects namespace chains changes
+  // (method registration, package activation, namespace links); cached
+  // per-object chains and method resolutions revalidate against it.
+  let namespaceEpoch = 0;
   const runtimeEventListeners = new Set<RuntimeEventListener>();
   const pendingRuntimeEvents: RuntimeMutationEvent[] = [];
   let flushScheduled = false;
@@ -183,24 +191,130 @@ export function createRuntime(
     return methods.get(className)?.get(methodName) ?? null;
   }
 
-  function getObjectClassChain(obj: TorqueObject | null | undefined): string[] {
+  /** Script-declared namespace parent, falling back to the engine class graph. */
+  function getNamespaceParentName(name: string): string | null {
+    if (!name) return null;
+    return namespaceParents.get(name) ?? getEngineParent(name);
+  }
+
+  /**
+   * The full namespace chain the engine would dispatch through for an
+   * object: object name (when a method namespace exists for it) → script
+   * class/superClass chain → datablock name and its links (data-class
+   * chain) → the object's built-in C++ class chain. Cached per object and
+   * invalidated by the namespace epoch or writes to the linking fields.
+   */
+  function getNamespaceChain(obj: TorqueObject | null | undefined): string[] {
     if (!obj) return [];
+    if (obj._nsChain && obj._nsEpoch === namespaceEpoch) {
+      return obj._nsChain;
+    }
     const chain: string[] = [];
     const seen = new Set<string>();
-    const className = obj.class || obj._className || obj._class;
-    let currentClass = className ? normalize(String(className)) : "";
+    const push = (name: unknown): void => {
+      if (name == null || name === "") return;
+      const n = normalize(String(name));
+      if (!seen.has(n)) {
+        seen.add(n);
+        chain.push(n);
+      }
+    };
+    const walkParents = (from: unknown): void => {
+      if (from == null || from === "") return;
+      let current = getNamespaceParentName(normalize(String(from)));
+      while (current) {
+        const n = normalize(current);
+        if (seen.has(n)) break;
+        seen.add(n);
+        chain.push(n);
+        current = getNamespaceParentName(n);
+      }
+    };
 
-    while (currentClass && !seen.has(currentClass)) {
-      chain.push(currentClass);
-      seen.add(currentClass);
-      currentClass = namespaceParents.get(currentClass) ?? "";
+    if (obj._isDatablock) {
+      // Datablocks are dispatch targets themselves (e.g. %data.schedule):
+      // name → className field → data-class chain.
+      push(obj._name);
+      if (obj._name) walkParents(obj._name);
+      push(obj.classname);
+      if (obj.classname) walkParents(obj.classname);
+      push(obj._className);
+      walkParents(obj._className);
+    } else {
+      // Object-name namespace only participates when methods exist on it.
+      if (obj._name && methods.has(obj._name)) push(obj._name);
+      if (obj.class) {
+        push(obj.class);
+        walkParents(obj.class);
+      }
+      if (obj._superClass) {
+        push(obj._superClass);
+        walkParents(obj._superClass);
+      }
+      // Note: the datablock's namespace is deliberately NOT part of an
+      // object's chain — the engine routes datablock callbacks explicitly
+      // through the datablock object (%obj.getDataBlock().method(%obj)).
+      push(obj._className);
+      walkParents(obj._className);
     }
 
-    if (obj._superClass && !seen.has(obj._superClass)) {
-      chain.push(obj._superClass);
-    }
-
+    obj._nsChain = chain;
+    obj._nsChainKey = chain.join("\x00");
+    obj._nsEpoch = namespaceEpoch;
     return chain;
+  }
+
+  /**
+   * Resolved method lookup memo. Keyed by chain key + method; entries
+   * revalidate lazily against the namespace epoch.
+   */
+  const methodResolutionCache = new Map<
+    string,
+    | { epoch: number; ns: string; stack: MethodStack }
+    | { epoch: number; miss: true }
+  >();
+
+  function resolveMethod(
+    obj: TorqueObject,
+    methodName: string,
+  ): { ns: string; stack: MethodStack } | null {
+    const chain = getNamespaceChain(obj);
+    const cacheKey = obj._nsChainKey + "\x00\x00" + normalize(methodName);
+    const cached = methodResolutionCache.get(cacheKey);
+    if (cached && cached.epoch === namespaceEpoch) {
+      if ("miss" in cached) return null;
+      return cached;
+    }
+    for (const ns of chain) {
+      const stack = getMethodStack(ns, methodName);
+      if (stack && stack.length > 0) {
+        const entry = { epoch: namespaceEpoch, ns, stack };
+        methodResolutionCache.set(cacheKey, entry);
+        return entry;
+      }
+    }
+    methodResolutionCache.set(cacheKey, { epoch: namespaceEpoch, miss: true });
+    return null;
+  }
+
+  /**
+   * Dispatch a method through an object's namespace chain with an explicit
+   * argument list (callArgs[0] is %this). Returns found=false on miss.
+   */
+  function dispatchMethod(
+    target: TorqueObject,
+    methodName: string,
+    callArgs: any[],
+  ): { found: boolean; result?: any; ns?: string } {
+    const resolved = resolveMethod(target, methodName);
+    if (!resolved) return { found: false };
+    const key = methodContextKey(resolved.ns, methodName);
+    const result = withExecutionContext(key, resolved.stack.length - 1, () =>
+      resolved.stack[resolved.stack.length - 1](
+        ...(callArgs as [TorqueObject, ...any[]]),
+      ),
+    );
+    return { found: true, result, ns: resolved.ns };
   }
 
   function flushRuntimeEvents(): void {
@@ -257,7 +371,7 @@ export function createRuntime(
       return;
     }
 
-    if (!matchesReactiveField(getObjectClassChain(obj), normalizedField)) {
+    if (!matchesReactiveField(getNamespaceChain(obj), normalizedField)) {
       return;
     }
 
@@ -277,7 +391,7 @@ export function createRuntime(
     thisObj: TorqueObject,
     args: any[],
   ): void {
-    const classChain = getObjectClassChain(thisObj);
+    const classChain = getNamespaceChain(thisObj);
     if (
       !matchesReactiveMethod(
         classChain.length ? classChain : [className],
@@ -320,7 +434,8 @@ export function createRuntime(
     });
   }
 
-  const pendingTimeouts = new Set<ReturnType<typeof setTimeout>>();
+  const pendingTimeouts = new Map<ReturnType<typeof setTimeout>, number>();
+  let destroyed = false;
   let currentPackage: PackageState | null = null;
   let runtimeRef: TorqueRuntime | null = null;
   const getRuntime = () => runtimeRef!;
@@ -336,6 +451,7 @@ export function createRuntime(
     methodName: string,
     fn: TorqueMethod,
   ): void {
+    namespaceEpoch += 1;
     if (currentPackage) {
       if (!currentPackage.methods.has(className)) {
         currentPackage.methods.set(className, new CaseInsensitiveMap());
@@ -375,6 +491,7 @@ export function createRuntime(
     }
     if (pkg.active) return;
 
+    namespaceEpoch += 1;
     pkg.active = true;
     activePackages.push(pkg.name);
 
@@ -403,6 +520,7 @@ export function createRuntime(
     const pkg = packages.get(name);
     if (!pkg || !pkg.active) return;
 
+    namespaceEpoch += 1;
     pkg.active = false;
     // Find and remove from activePackages (case-insensitive search)
     const idx = activePackages.findIndex(
@@ -477,11 +595,77 @@ export function createRuntime(
     return id;
   }
 
+  /**
+   * Add an object to a container. Owning adds (SimGroup semantics) remove
+   * the object from its previous owner and set `_parent`; non-owning adds
+   * (SimSet semantics) only record membership in the container's children.
+   */
+  function addToGroup(
+    group: TorqueObject,
+    obj: TorqueObject,
+    options?: { owning?: boolean },
+  ): void {
+    const owning = options?.owning ?? true;
+    if (!group._children) group._children = [];
+    // Reparent even when membership already exists, so a SimSet-style
+    // (non-owning) add followed by a SimGroup add still transfers
+    // ownership instead of silently dropping it.
+    if (owning && obj._parent !== group) {
+      removeFromGroup(obj._parent, obj);
+      obj._parent = group;
+    }
+    if (!group._children.includes(obj)) {
+      group._children.push(obj);
+    }
+  }
+
+  function removeFromGroup(
+    group: TorqueObject | undefined,
+    obj: TorqueObject,
+  ): void {
+    if (!group?._children) return;
+    const idx = group._children.indexOf(obj);
+    if (idx !== -1) group._children.splice(idx, 1);
+    if (obj._parent === group) obj._parent = undefined;
+  }
+
+  /**
+   * Fire the script onAdd callback for a newly registered object, per the
+   * engine's per-class convention: GameBase-like classes dispatch
+   * `onAdd(%data, %obj)` through the *datablock's* namespace chain;
+   * ScriptObject-like classes dispatch `onAdd(%obj)` through the object's
+   * own chain; most scene classes fire nothing.
+   */
+  function fireScriptOnAdd(obj: TorqueObject): void {
+    const dbName = obj.datablock != null ? String(obj.datablock) : "";
+    const style = getOnAddStyle(obj._className, dbName !== "");
+    if (style === "none") return;
+    if (style === "datablock") {
+      const db = datablocks.get(dbName);
+      if (db) dispatchMethod(db, "onAdd", [db, obj]);
+      return;
+    }
+    dispatchMethod(obj, "onAdd", [obj]);
+  }
+
+  function fireScriptOnRemove(obj: TorqueObject): void {
+    const dbName = obj.datablock != null ? String(obj.datablock) : "";
+    const style = getOnAddStyle(obj._className, dbName !== "");
+    if (style === "none") return;
+    if (style === "datablock") {
+      const db = datablocks.get(dbName);
+      if (db) dispatchMethod(db, "onRemove", [db, obj]);
+      return;
+    }
+    dispatchMethod(obj, "onRemove", [obj]);
+  }
+
   function createObject(
     className: string,
     instanceName: string | null,
     props: Record<string, any>,
     children?: TorqueObject[],
+    nested?: boolean,
   ): TorqueObject {
     const normClass = normalize(className);
     const id = allocateObjectId();
@@ -502,6 +686,7 @@ export function createRuntime(
       // Register the class -> superClass link for method lookup chains
       if (obj.class) {
         namespaceParents.set(normalize(String(obj.class)), obj._superClass);
+        namespaceEpoch += 1;
       }
     }
 
@@ -520,9 +705,19 @@ export function createRuntime(
       obj._children = children;
     }
 
-    const onAdd = findMethod(className, "onAdd");
-    if (onAdd) {
-      onAdd(obj);
+    fireScriptOnAdd(obj);
+
+    // The engine places every root-level `new` into $instantGroup
+    // (ServerGroup during boot, MissionCleanup during gameplay). Nested
+    // object literals already belong to their enclosing object.
+    if (!nested && !obj._parent) {
+      const instantGroupName = globals.get("instantGroup");
+      if (instantGroupName) {
+        const group = resolveObject(instantGroupName);
+        if (group && isGroupClass(group._className)) {
+          addToGroup(group, obj, { owning: true });
+        }
+      }
     }
 
     emitObjectCreated(obj);
@@ -545,11 +740,7 @@ export function createRuntime(
 
     if (!target) return false;
 
-    // Call onRemove if it exists
-    const onRemove = findMethod(target._className, "onRemove");
-    if (onRemove) {
-      onRemove(target);
-    }
+    fireScriptOnRemove(target);
 
     // Remove from tracking maps
     objectsById.delete(target._id);
@@ -568,11 +759,16 @@ export function createRuntime(
       }
     }
 
-    // Recursively delete children
+    // Recursively delete only owned children — SimSet members whose owner
+    // is elsewhere are spared (their set membership dangles like the
+    // engine's stale ids, which callers already tolerate).
     if (target._children) {
       for (const child of [...target._children]) {
-        deleteObject(child);
+        if (child._parent === target) {
+          deleteObject(child);
+        }
       }
+      target._children = undefined;
     }
 
     emitObjectDeleted(target);
@@ -620,6 +816,32 @@ export function createRuntime(
       obj._name = name;
       objectsByName.set(name, obj);
       datablocks.set(name, obj);
+
+      // Link the datablock's namespaces the way the engine does (set-if-
+      // absent): name → (className field ?? C++ data class), and the
+      // className field → C++ data class. This is what lets dispatch and
+      // Parent:: flow e.g. ExteriorFlagStand → FlagIntStand →
+      // StaticShapeData → ShapeBaseData.
+      const classField =
+        obj.classname != null && obj.classname !== ""
+          ? String(obj.classname)
+          : null;
+      const nameParent = classField ?? className;
+      if (
+        normalize(nameParent) !== normalize(name) &&
+        !namespaceParents.has(name)
+      ) {
+        namespaceParents.set(name, normalize(nameParent));
+        namespaceEpoch += 1;
+      }
+      if (
+        classField &&
+        normalize(classField) !== normalize(className) &&
+        !namespaceParents.has(classField)
+      ) {
+        namespaceParents.set(classField, normalize(className));
+        namespaceEpoch += 1;
+      }
     }
 
     emitObjectCreated(obj);
@@ -654,6 +876,16 @@ export function createRuntime(
     const normalizedName = normalize(name);
     const previousValue = resolved[normalizedName];
     resolved[normalizedName] = value;
+    // Writes to namespace-linking fields invalidate the cached chain.
+    if (
+      normalizedName === "class" ||
+      normalizedName === "superclass" ||
+      normalizedName === "classname" ||
+      normalizedName === "datablock" ||
+      normalizedName === "name"
+    ) {
+      resolved._nsChain = undefined;
+    }
     maybeEmitFieldChanged(resolved, normalizedName, value, previousValue);
     return value;
   }
@@ -704,31 +936,6 @@ export function createRuntime(
     return base + indices.join("_");
   }
 
-  function findMethod(
-    className: string,
-    methodName: string,
-  ): TorqueMethod | null {
-    const stack = getMethodStack(className, methodName);
-    return stack && stack.length > 0 ? stack[stack.length - 1] : null;
-  }
-
-  /** Call a method with execution context tracking for proper Parent:: support */
-  function callMethodWithContext(
-    className: string,
-    methodName: string,
-    thisObj: any,
-    args: any[],
-  ): { found: true; result: any } | { found: false } {
-    const stack = getMethodStack(className, methodName);
-    if (!stack || stack.length === 0) return { found: false };
-
-    const key = methodContextKey(className, methodName);
-    const result = withExecutionContext(key, stack.length - 1, () =>
-      stack[stack.length - 1](thisObj, ...args),
-    );
-    return { found: true, result };
-  }
-
   function fireMethodHooks(
     className: string,
     methodName: string,
@@ -756,54 +963,49 @@ export function createRuntime(
       if (obj == null) return "";
     }
 
-    // For ScriptObject/ScriptGroup, the "class" property overrides the C++ class name
-    const objClass = obj.class || obj._className || obj._class;
+    const dispatch = dispatchMethod(obj, methodName, [obj, ...args]);
+    if (!dispatch.found) return "";
+    fireMethodHooks(dispatch.ns!, methodName, obj, args);
+    return dispatch.result;
+  }
 
-    if (objClass) {
-      const callResult = callMethodWithContext(objClass, methodName, obj, args);
-      if (callResult.found) {
-        fireMethodHooks(objClass, methodName, obj, args);
-        return callResult.result;
-      }
+  /**
+   * Resolve a namespace + method to a stack, walking the parent chain when
+   * the namespace itself has no such method (for Class::method call syntax).
+   */
+  function resolveNamespaceMethod(
+    namespace: string,
+    method: string,
+  ): { ns: string; stack: MethodStack } | null {
+    let current: string | null = namespace;
+    const seen = new Set<string>();
+    while (current && !seen.has(normalize(current))) {
+      seen.add(normalize(current));
+      const stack = getMethodStack(current, method);
+      if (stack && stack.length > 0) return { ns: current, stack };
+      current = getNamespaceParentName(normalize(current));
     }
-
-    // Walk the superClass chain (for ScriptObject/ScriptGroup inheritance)
-    // First check the object's direct _superClass, then walk namespaceParents
-    let currentClass = obj._superClass || namespaceParents.get(objClass);
-    while (currentClass) {
-      const callResult = callMethodWithContext(
-        currentClass,
-        methodName,
-        obj,
-        args,
-      );
-      if (callResult.found) {
-        fireMethodHooks(currentClass, methodName, obj, args);
-        return callResult.result;
-      }
-      // Walk up the namespace parent chain
-      currentClass = namespaceParents.get(currentClass);
-    }
-
-    return "";
+    return null;
   }
 
   function nsCall(namespace: string, method: string, ...args: any[]): any {
     // For nsCall, args are passed directly to the method (including %this as args[0])
     // This is different from call() where thisObj is passed separately
-    const stack = getMethodStack(namespace, method);
-    if (!stack || stack.length === 0) return "";
+    const resolved = resolveNamespaceMethod(namespace, method);
+    if (!resolved) return "";
 
-    const key = methodContextKey(namespace, method);
-    const fn = stack[stack.length - 1] as (...args: any[]) => any;
-    const result = withExecutionContext(key, stack.length - 1, () =>
+    const key = methodContextKey(resolved.ns, method);
+    const fn = resolved.stack[resolved.stack.length - 1] as (
+      ...args: any[]
+    ) => any;
+    const result = withExecutionContext(key, resolved.stack.length - 1, () =>
       fn(...args),
     );
 
     // First arg is typically the object (e.g., %game in DefaultGame::missionLoadDone(%game))
     const thisObj = args[0];
     if (thisObj && typeof thisObj === "object") {
-      fireMethodHooks(namespace, method, thisObj, args.slice(1));
+      fireMethodHooks(resolved.ns, method, thisObj, args.slice(1));
     }
     return result;
   }
@@ -812,14 +1014,16 @@ export function createRuntime(
     namespace: string,
     method: string,
   ): ((...args: any[]) => any) | null {
-    const stack = getMethodStack(namespace, method);
-    if (!stack || stack.length === 0) return null;
+    const resolved = resolveNamespaceMethod(namespace, method);
+    if (!resolved) return null;
 
-    const key = methodContextKey(namespace, method);
-    const fn = stack[stack.length - 1] as (...args: any[]) => any;
+    const key = methodContextKey(resolved.ns, method);
+    const fn = resolved.stack[resolved.stack.length - 1] as (
+      ...args: any[]
+    ) => any;
     // Return a wrapper that tracks execution context for proper Parent:: support
     return (...args: any[]) =>
-      withExecutionContext(key, stack.length - 1, () => fn(...args));
+      withExecutionContext(key, resolved.stack.length - 1, () => fn(...args));
   }
 
   function parent(
@@ -845,11 +1049,15 @@ export function createRuntime(
       return result;
     }
 
-    // Otherwise, walk up the namespace parent chain (like real TorqueScript)
-    // This handles cases like TDMGame::missionLoadDone calling Parent::missionLoadDone
-    // which should resolve to DefaultGame::missionLoadDone
-    let parentClass = namespaceParents.get(currentClass);
-    while (parentClass) {
+    // Otherwise, walk up the namespace parent chain (like real TorqueScript).
+    // This handles script chains (TDMGame::missionLoadDone →
+    // DefaultGame::missionLoadDone) and engine chains (ShapeBaseData::onAdd
+    // → GameBaseData::onAdd, StationVehiclePad → StaticShapeData via the
+    // datablock links).
+    const seen = new Set<string>([normalize(currentClass)]);
+    let parentClass = getNamespaceParentName(normalize(currentClass));
+    while (parentClass && !seen.has(normalize(parentClass))) {
+      seen.add(normalize(parentClass));
       const parentStack = getMethodStack(parentClass, methodName);
       if (parentStack && parentStack.length > 0) {
         const parentKey = methodContextKey(parentClass, methodName);
@@ -864,7 +1072,7 @@ export function createRuntime(
         }
         return result;
       }
-      parentClass = namespaceParents.get(parentClass);
+      parentClass = getNamespaceParentName(normalize(parentClass));
     }
 
     return "";
@@ -1256,14 +1464,46 @@ export function createRuntime(
   };
 
   function destroy(): void {
+    destroyed = true;
     if (pendingRuntimeEvents.length > 0) {
       flushRuntimeEvents();
     }
-    for (const timeoutId of state.pendingTimeouts) {
+    for (const timeoutId of state.pendingTimeouts.keys()) {
       clearTimeout(timeoutId);
     }
     state.pendingTimeouts.clear();
     runtimeEventListeners.clear();
+  }
+
+  function scheduleTimeout(
+    fn: () => void,
+    ms: number,
+  ): ReturnType<typeof setTimeout> {
+    const timeoutId = setTimeout(() => {
+      pendingTimeouts.delete(timeoutId);
+      fn();
+    }, ms);
+    pendingTimeouts.set(timeoutId, ms);
+    return timeoutId;
+  }
+
+  async function settle(maxDelayMs = 0): Promise<void> {
+    const MAX_ITERATIONS = 1000;
+    for (let i = 0; i < MAX_ITERATIONS; i++) {
+      if (destroyed) return;
+      let hasPending = false;
+      for (const delay of pendingTimeouts.values()) {
+        if (delay <= maxDelayMs) {
+          hasPending = true;
+          break;
+        }
+      }
+      if (!hasPending) return;
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    log.warn(
+      "settle: iteration cap reached with zero-delay schedules still pending",
+    );
   }
 
   function getOrGenerateCode(ast: Program): string {
@@ -1476,6 +1716,11 @@ export function createRuntime(
         runtimeEventListeners.delete(listener);
       };
     },
+    addToGroup,
+    removeFromGroup: (group: TorqueObject, obj: TorqueObject) =>
+      removeFromGroup(group, obj),
+    scheduleTimeout,
+    settle,
   };
   return runtimeRef;
 }
