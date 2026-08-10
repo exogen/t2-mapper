@@ -3,6 +3,7 @@ import {
   ReactNode,
   Suspense,
   useCallback,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -30,8 +31,15 @@ export function InputProvider({ children }: { children: ReactNode }) {
     moveQueue.current.push(frame);
   }, []);
 
+  // Stable identity except on real mode changes — consumers include every
+  // input handler, so a fresh object here invalidates all of them.
+  const value = useMemo(
+    () => ({ moveQueue, onInput, mode, setMode }),
+    [onInput, mode],
+  );
+
   return (
-    <InputContext.Provider value={{ moveQueue, onInput, mode, setMode }}>
+    <InputContext.Provider value={value}>
       <JoystickProvider>{children}</JoystickProvider>
     </InputContext.Provider>
   );

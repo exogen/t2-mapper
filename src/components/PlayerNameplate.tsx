@@ -6,7 +6,7 @@ import { getKeyframeAtTime } from "../stream/playbackUtils";
 import { textureToUrl } from "../loaders";
 import { useStaticShape } from "./GenericShape";
 import { useFloatingLabelFade } from "./FloatingLabel";
-import { streamPlaybackStore } from "../state/streamPlaybackStore";
+import { streamClock } from "../state/streamPlaybackStore";
 import type { PlayerEntity } from "../state/gameEntityTypes";
 import styles from "./PlayerNameplate.module.css";
 
@@ -56,10 +56,7 @@ export function PlayerNameplate({ entity }: { entity: PlayerEntity }) {
     if (!isVisible) return;
 
     // Hide nameplate when player is dead.
-    const kf = getKeyframeAtTime(
-      keyframes,
-      streamPlaybackStore.getState().time,
-    );
+    const kf = getKeyframeAtTime(keyframes, streamClock.time);
     const health = kf?.health ?? 1;
     if (kf?.damageState != null && kf.damageState >= 1) {
       if (iffContainerRef.current) iffContainerRef.current.style.opacity = "0";

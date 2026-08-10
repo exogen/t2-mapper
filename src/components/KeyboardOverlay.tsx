@@ -16,7 +16,7 @@ import { useCameraTour } from "../state/cameraTourStore";
 import { useCommandCircuit } from "../state/commandCircuitStore";
 import {
   useDataSource,
-  useGameEntitiesByRenderType,
+  useGameEntityCountByRenderType,
 } from "../state/gameEntityStore";
 import { FaAngleDoubleDown, FaAngleDoubleUp } from "react-icons/fa";
 import { PiMouseLeftClickFill, PiMouseScroll } from "react-icons/pi";
@@ -262,8 +262,8 @@ function RotateCameraKey() {
 function SelectCameraKey() {
   const dataSource = useDataSource();
   const isMapMode = dataSource === "map";
-  const cameraEntities = useGameEntitiesByRenderType("Camera");
-  const cameraCount = isMapMode ? cameraEntities.length : 0;
+  const totalCameras = useGameEntityCountByRenderType("Camera");
+  const cameraCount = isMapMode ? totalCameras : 0;
 
   return (
     <Key
@@ -285,8 +285,8 @@ function FreeFlyOverlay() {
   const isPointerLocked = usePointerLocked();
   const dataSource = useDataSource();
   const isMapMode = dataSource === "map";
-  const cameraEntities = useGameEntitiesByRenderType("Camera");
-  const cameraCount = isMapMode ? cameraEntities.length : 0;
+  const totalCameras = useGameEntityCountByRenderType("Camera");
+  const cameraCount = isMapMode ? totalCameras : 0;
 
   return (
     <>

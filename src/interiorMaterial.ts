@@ -60,8 +60,10 @@ uniform vec3 interiorDebugColor;
 `,
   );
 
-  // Disable default lightmap handling - we'll handle it in the output
-  // (MeshLambertMaterial doesn't use envmap/IBL, so we only need the lightmap texel)
+  // Disable default lightmap handling - we'll handle it in the output.
+  // Since three r183, MeshLambertMaterial DOES apply IBL when
+  // scene.environment is set — we never set it, so only the lightmap
+  // texel matters here. Don't set scene.environment without revisiting.
   shader.fragmentShader = shader.fragmentShader.replace(
     "#include <lights_fragment_maps>",
     `// Lightmap handled in custom output calculation

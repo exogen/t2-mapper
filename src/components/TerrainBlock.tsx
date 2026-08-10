@@ -35,6 +35,7 @@ import {
   createTerrainHeightSampler,
   setTerrainHeightSampler,
 } from "../terrainHeight";
+import { invalidateShadows } from "./shadowControl";
 const DEFAULT_SQUARE_SIZE = 8;
 const DEFAULT_VISIBLE_DISTANCE = 600;
 const TERRAIN_SIZE = 256;
@@ -639,6 +640,9 @@ export const TerrainBlock = memo(function TerrainBlock({
     }
     mesh.count = count;
     mesh.instanceMatrix.needsUpdate = true;
+    // Pooled tiles are shadow casters; their repositioning invalidates the
+    // frozen shadow map (rare — only when the camera crosses a block).
+    invalidateShadows();
   });
   if (
     !terrain ||

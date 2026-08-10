@@ -1,7 +1,7 @@
 import { useEffect, useRef, useMemo } from "react";
 import { LuUsers } from "react-icons/lu";
 import { IoMdStopwatch } from "react-icons/io";
-import { useEngineSelector } from "../state/engineStore";
+import { useStreamSnapshot } from "../state/streamSnapshotStore";
 import { liveConnectionStore } from "../state/liveConnectionStore";
 import { useDataSource } from "../state/gameEntityStore";
 import type { PlayerRosterEntry, TeamScore } from "../stream/types";
@@ -50,9 +50,8 @@ export function ScoreScreen({ onClose }: { onClose: () => void }) {
   const dataSource = useDataSource();
   const isLive = dataSource === "live";
   const { connectedClientId, teamScores, playerRoster, matchClockMs } =
-    useEngineSelector(
-      (state) => {
-        const snap = state.playback.streamSnapshot;
+    useStreamSnapshot(
+      (snap) => {
         return {
           connectedClientId: snap?.connectedClientId,
           teamScores: snap?.teamScores,

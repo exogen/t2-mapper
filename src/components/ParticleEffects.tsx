@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
 import {
   AdditiveBlending,
@@ -95,6 +95,11 @@ function getParticleTexture(textureName: string): Texture {
 }
 
 // ── Debug geometry (reusable) ──
+
+// Per-frame scratch collections, cleared and refilled each frame to avoid
+// Set/Map allocation churn in the useFrame hot loop.
+const _currentEntityIds = new Set<string>();
+const _entitiesById = new Map<string, StreamSnapshot["entities"][number]>();
 
 const _debugOriginGeo = new SphereGeometry(1, 6, 6);
 const _debugOriginMat = new MeshBasicMaterial({
@@ -545,6 +550,8 @@ interface ActiveEmitter {
   hasBurst: boolean;
   /** Whether shader compilation has been verified. */
   shaderChecked?: boolean;
+  /** Particle count uploaded last frame (bounds partial buffer uploads). */
+  prevCount?: number;
   /** Entity ID this emitter follows (for projectile trails). */
   followEntityId?: string;
   /** Emission axis in Torque space (defaults to [0,0,1] = up). */
@@ -700,20 +707,43 @@ function syncBuffers(active: ActiveEmitter): void {
     }
   }
 
-  // Zero out unused vertices so they collapse to zero-area quads.
-  for (let i = count; i < MAX_PARTICLES_PER_EMITTER; i++) {
+  // Zero out sizes for quads that were live last frame but aren't now, so
+  // they collapse to zero-area. Only the previously-written range needs it.
+  const prevCount = active.prevCount ?? MAX_PARTICLES_PER_EMITTER;
+  for (let i = count; i < prevCount; i++) {
     for (let v = 0; v < 4; v++) {
       sizeArr[i * 4 + v] = 0;
     }
   }
+  active.prevCount = count;
 
-  posAttr.needsUpdate = true;
-  colorAttr.needsUpdate = true;
-  sizeAttr.needsUpdate = true;
-  spinAttr.needsUpdate = true;
-  orientAttr.needsUpdate = true;
+  // Upload only the touched prefix of each buffer instead of all
+  // MAX_PARTICLES_PER_EMITTER quads (sizes extend to prevCount for the
+  // zero-fill above).
+  const quads = Math.max(count, 0);
+  const sizeQuads = Math.max(
+    count,
+    Math.min(prevCount, MAX_PARTICLES_PER_EMITTER),
+  );
+  setPrefixUpdateRange(posAttr, quads * 4 * 3);
+  setPrefixUpdateRange(colorAttr, quads * 4 * 4);
+  setPrefixUpdateRange(sizeAttr, sizeQuads * 4);
+  setPrefixUpdateRange(spinAttr, quads * 4);
+  setPrefixUpdateRange(orientAttr, quads * 4 * 3);
 
   geo.setDrawRange(0, count * 6);
+}
+
+/** Mark only the first `floatCount` floats of the attribute for upload. */
+function setPrefixUpdateRange(
+  attr: Float32BufferAttribute,
+  floatCount: number,
+): void {
+  attr.clearUpdateRanges();
+  if (floatCount > 0) {
+    attr.addUpdateRange(0, floatCount);
+    attr.needsUpdate = true;
+  }
 }
 
 // ── Main component ──
@@ -745,6 +775,10 @@ export function ParticleEffects({
   const activeExplosionSpheresRef = useRef<ActiveExplosionSphere[]>([]);
   /** Active shockwave ring effects. */
   const activeShockwavesRef = useRef<ActiveShockwave[]>([]);
+  const getDataBlockData = useMemo(
+    () => playback.getDataBlockData.bind(playback),
+    [playback],
+  );
   useFrame((state, delta) => {
     const group = groupRef.current;
     const snapshot = snapshotRef.current;
@@ -755,7 +789,6 @@ export function ParticleEffects({
     // Scale delta by playback rate; 0 when paused.
     const effectDelta = isPlaying ? delta * playbackState.rate : 0;
     const dtMS = effectDelta * 1000;
-    const getDataBlockData = playback.getDataBlockData.bind(playback);
 
     // Detect new explosion entities and create emitters.
     for (const entity of snapshot.entities) {
@@ -925,9 +958,12 @@ export function ParticleEffects({
     }
 
     // Detect projectile entities with trail emitters (maintainEmitterId).
-    const currentEntityIds = new Set<string>();
+    const currentEntityIds = _currentEntityIds;
+    currentEntityIds.clear();
+    _entitiesById.clear();
     for (const entity of snapshot.entities) {
       currentEntityIds.add(entity.id);
+      _entitiesById.set(entity.id, entity);
 
       if (
         !entity.maintainEmitterId ||
@@ -1007,9 +1043,7 @@ export function ParticleEffects({
 
       // Update trail emitter origin and direction to follow the projectile.
       if (entry.followEntityId) {
-        const tracked = snapshot.entities.find(
-          (e) => e.id === entry.followEntityId,
-        );
+        const tracked = _entitiesById.get(entry.followEntityId);
         if (tracked?.position) {
           entry.origin[0] = tracked.position[0];
           entry.origin[1] = tracked.position[1];

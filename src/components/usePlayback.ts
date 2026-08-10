@@ -1,6 +1,7 @@
 import { useCallback } from "react";
 import type { StreamRecording } from "../stream/types";
 import { useEngineSelector } from "../state/engineStore";
+import { useStreamSnapshot } from "../state/streamSnapshotStore";
 
 export const SPEED_OPTIONS = [0.25, 0.5, 1, 1.5, 2, 3, 4];
 
@@ -12,15 +13,17 @@ export function useIsPlaying(): boolean {
   return useEngineSelector((state) => state.playback.status === "playing");
 }
 
-/** Playback time for UI display, floored to whole seconds. The selector
- *  evaluates on every store mutation but only triggers a re-render when
+/** Playback time for UI display, floored to whole seconds. The selectors
+ *  evaluate on every store mutation but only trigger a re-render when
  *  the displayed second changes (~1/s). */
 export function useCurrentTime(): number {
-  return useEngineSelector((state) =>
-    Math.floor(
-      state.playback.streamSnapshot?.timeSec ?? state.playback.seekTime,
-    ),
+  const snapshotSec = useStreamSnapshot((snap) =>
+    snap ? Math.floor(snap.timeSec) : null,
   );
+  const seekSec = useEngineSelector((state) =>
+    Math.floor(state.playback.seekTime),
+  );
+  return snapshotSec ?? seekSec;
 }
 
 export function useDuration(): number {

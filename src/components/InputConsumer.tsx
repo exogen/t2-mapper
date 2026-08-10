@@ -266,7 +266,10 @@ export function InputConsumer() {
   // MouseAndKeyboardHandler flips drag direction correctly.
   useEffect(() => {
     if (isLive) return;
+    let prevCameraMode = streamPlaybackStore.getState().cameraMode;
     return streamPlaybackStore.subscribe((state) => {
+      if (state.cameraMode === prevCameraMode) return;
+      prevCameraMode = state.cameraMode;
       setMode(state.cameraMode === "orbitOverride" ? "follow" : "local");
     });
   }, [isLive, setMode]);

@@ -4,6 +4,7 @@ import { createLogger } from "../logger";
 import { useSceneSun } from "../state/gameEntityStore";
 import { torqueToThree } from "../scene/coordinates";
 import { updateGlobalSunUniforms } from "../globalSunUniforms";
+import { invalidateShadows } from "./shadowControl";
 
 const log = createLogger("SceneLighting");
 
@@ -80,6 +81,12 @@ function SunLighting({
     updateGlobalSunUniforms(sunLightPointsDown);
   }, [sunLightPointsDown]);
 
+  // The shadow map is frozen (see shadowControl.ts); re-render it when the
+  // light itself changes.
+  useEffect(() => {
+    invalidateShadows();
+  }, [lightPosition]);
+
   const shadowCameraSize = 4096;
 
   return (
@@ -89,8 +96,8 @@ function SunLighting({
         color={color}
         intensity={1.0}
         castShadow
-        shadow-mapSize-width={8192}
-        shadow-mapSize-height={8192}
+        shadow-mapSize-width={4096}
+        shadow-mapSize-height={4096}
         shadow-camera-left={-shadowCameraSize}
         shadow-camera-right={shadowCameraSize}
         shadow-camera-top={shadowCameraSize}

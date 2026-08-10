@@ -11,9 +11,15 @@ export type DemoCameraMode = "original" | "freeFly" | "orbitOverride";
  * callbacks — they intentionally bypass React's render cycle. Use
  * `streamPlaybackStore.getState()` to read current values.
  */
+/**
+ * Current playback time in seconds, written every frame by the streaming
+ * controller and read imperatively in useFrame callbacks. A module-scope
+ * mutable (not store state) so per-frame clock updates never notify
+ * store subscribers.
+ */
+export const streamClock = { time: 0 };
+
 export interface StreamPlaybackState {
-  /** Current playback time in seconds, updated every frame. */
-  time: number;
   /** The active streaming playback source (demo or live). */
   playback: StreamingPlayback | null;
   /** The Three.js group node containing all entity children. */
@@ -27,7 +33,6 @@ export interface StreamPlaybackState {
 }
 
 export const streamPlaybackStore = createStore<StreamPlaybackState>()(() => ({
-  time: 0,
   playback: null,
   root: null,
   cameraMode: "original",
@@ -37,8 +42,8 @@ export const streamPlaybackStore = createStore<StreamPlaybackState>()(() => ({
 
 /** Reset all streaming playback state. Called when streaming ends. */
 export function resetStreamPlayback(): void {
+  streamClock.time = 0;
   streamPlaybackStore.setState({
-    time: 0,
     playback: null,
     cameraMode: "original",
     orbitOverrideYaw: 0,

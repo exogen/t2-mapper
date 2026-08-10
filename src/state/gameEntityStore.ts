@@ -355,6 +355,22 @@ export function useAllGameEntities(): GameEntity[] {
   );
 }
 
+/**
+ * Hook returning the count of entities of a render type. Unlike
+ * useGameEntitiesByRenderType, the selected value is a primitive, so
+ * consumers only re-render when the count actually changes — not on
+ * every entity mutation in the store.
+ */
+export function useGameEntityCountByRenderType(renderType: RenderType): number {
+  return useStoreWithEqualityFn(gameEntityStore, (state) => {
+    let count = 0;
+    for (const entity of selectActiveEntities(state).values()) {
+      if (entity.renderType === renderType) count++;
+    }
+    return count;
+  });
+}
+
 /** Hook returning entities filtered by render type. */
 export function useGameEntitiesByRenderType(
   renderType: RenderType,

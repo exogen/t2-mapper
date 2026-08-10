@@ -60,8 +60,9 @@ import type { ResolvedAudioProfile } from "./AudioEmitter";
 import { audioToUrl } from "../loaders";
 import { useSettings } from "./SettingsProvider";
 import { useEngineStoreApi, useEngineSelector } from "../state/engineStore";
+import { useStreamSnapshot } from "../state/streamSnapshotStore";
 import { PlayerNameplate } from "./PlayerNameplate";
-import { streamPlaybackStore } from "../state/streamPlaybackStore";
+import { streamClock } from "../state/streamPlaybackStore";
 import type { PlayerEntity } from "../state/gameEntityTypes";
 
 /**
@@ -283,8 +284,8 @@ export function PlayerModel({ entity }: { entity: PlayerEntity }) {
     return sn ? state.runtime.sequenceAliases.get(sn) : undefined;
   });
   const anisotropy = useAnisotropy();
-  const controlPlayerGhostId = useEngineSelector(
-    (state) => state.playback.streamSnapshot?.controlPlayerGhostId,
+  const controlPlayerGhostId = useStreamSnapshot(
+    (snap) => snap?.controlPlayerGhostId,
   );
 
   // Resolve skin texture URL: local manifest first, then remote manifest.
@@ -592,7 +593,7 @@ export function PlayerModel({ entity }: { entity: PlayerEntity }) {
   useEffect(() => {
     const cleanups: (() => void)[] = [];
     for (const { mesh, initialize } of iflInitializers) {
-      initialize(mesh, () => streamPlaybackStore.getState().time)
+      initialize(mesh, () => streamClock.time)
         .then((dispose) => cleanups.push(dispose))
         .catch(() => {});
     }
@@ -691,7 +692,7 @@ export function PlayerModel({ entity }: { entity: PlayerEntity }) {
     }
     const playback = engineStore.getState().playback;
     const isPlaying = playback.status === "playing";
-    const time = streamPlaybackStore.getState().time;
+    const time = streamClock.time;
 
     // Resolve velocity at current playback time.
     const kf = getKeyframeAtTime(entity.keyframes ?? [], time);
@@ -1192,7 +1193,7 @@ function WeaponModel({
   useEffect(() => {
     const cleanups: (() => void)[] = [];
     for (const { mesh, initialize } of weaponIflInitializers) {
-      initialize(mesh, () => streamPlaybackStore.getState().time)
+      initialize(mesh, () => streamClock.time)
         .then((dispose) => cleanups.push(dispose))
         .catch(() => {});
     }

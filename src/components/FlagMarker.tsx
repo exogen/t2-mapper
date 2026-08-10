@@ -26,17 +26,29 @@ export function FlagMarker({ entity }: { entity: FlagEntity }) {
   const distRef = useRef<HTMLSpanElement>(null);
   const camera = useThree((state) => state.camera);
 
+  const lastColorRef = useRef("");
+  const lastDistRef = useRef("");
+
   useFrame(() => {
-    // Tint imperatively — iffColor is mutated in-place by streaming playback.
+    // Tint imperatively — iffColor is mutated in-place by streaming
+    // playback. Both DOM writes are change-gated to avoid per-frame
+    // string allocation and style/layout invalidation.
     if (iconRef.current && entity.iffColor) {
       const { r, g, b } = entity.iffColor;
-      iconRef.current.style.backgroundColor = `rgb(${r},${g},${b})`;
+      const color = `rgb(${r},${g},${b})`;
+      if (color !== lastColorRef.current) {
+        lastColorRef.current = color;
+        iconRef.current.style.backgroundColor = color;
+      }
     }
     // Update distance label.
     if (distRef.current && markerRef.current) {
       markerRef.current.getWorldPosition(_tmpVec);
-      const distance = camera.position.distanceTo(_tmpVec);
-      distRef.current.textContent = distance.toFixed(1);
+      const distance = camera.position.distanceTo(_tmpVec).toFixed(1);
+      if (distance !== lastDistRef.current) {
+        lastDistRef.current = distance;
+        distRef.current.textContent = distance;
+      }
     }
   });
 

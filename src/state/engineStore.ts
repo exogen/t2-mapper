@@ -2,7 +2,8 @@ import { useMemo } from "react";
 import { createStore } from "zustand/vanilla";
 import { subscribeWithSelector } from "zustand/middleware";
 import { useStoreWithEqualityFn } from "zustand/traditional";
-import type { StreamRecording, StreamSnapshot } from "../stream/types";
+import type { StreamRecording } from "../stream/types";
+import { setStreamSnapshot } from "./streamSnapshotStore";
 import type {
   RuntimeMutationEvent,
   TorqueObject,
@@ -33,7 +34,6 @@ export interface PlaybackSliceState {
   seekTime: number;
   rate: number;
   durationMs: number;
-  streamSnapshot: StreamSnapshot | null;
 }
 
 export interface RuntimeTickInfo {
@@ -53,7 +53,6 @@ export interface EngineStoreState {
   seekPlayback(timeSec: number): void;
   setPlaybackStatus(status: PlaybackStatus): void;
   setPlaybackRate(rate: number): void;
-  setPlaybackStreamSnapshot(snapshot: StreamSnapshot | null): void;
 }
 
 function normalizeName(name: string): string {
@@ -116,7 +115,6 @@ const initialState: Omit<
   | "seekPlayback"
   | "setPlaybackStatus"
   | "setPlaybackRate"
-  | "setPlaybackStreamSnapshot"
 > = {
   runtime: {
     runtime: null,
@@ -133,7 +131,6 @@ const initialState: Omit<
     seekTime: 0,
     rate: 1,
     durationMs: 0,
-    streamSnapshot: null,
   },
 };
 
@@ -178,6 +175,14 @@ export const engineStore = createStore<EngineStoreState>()(
       tickInfo?: RuntimeTickInfo,
     ) {
       if (events.length === 0) {
+        return;
+      }
+
+      // method.called events don't touch any index this store maintains
+      // (method hooks fire in the runtime itself). Batches containing only
+      // them — e.g. a script's recurring schedule() timer — would copy the
+      // full object indexes and notify every subscriber for nothing.
+      if (events.every((event) => event.type === "method.called")) {
         return;
       }
 
@@ -256,6 +261,11 @@ export const engineStore = createStore<EngineStoreState>()(
 
     setRecording(recording: StreamRecording | null) {
       const durationMs = Math.max(0, (recording?.duration ?? 0) * 1000);
+      // Reset the snapshot on new recordings; preserve it on unload so
+      // HUD/chat persist. (The snapshot lives in streamSnapshotStore.)
+      if (recording) {
+        setStreamSnapshot(null);
+      }
       set((state) => ({
         ...state,
         playback: {
@@ -264,8 +274,6 @@ export const engineStore = createStore<EngineStoreState>()(
           seekTime: recording ? 0 : state.playback.seekTime,
           rate: recording ? 1 : state.playback.rate,
           durationMs,
-          // Preserve the last snapshot so HUD/chat persist after unload.
-          streamSnapshot: recording ? null : state.playback.streamSnapshot,
         },
       }));
     },
@@ -300,16 +308,6 @@ export const engineStore = createStore<EngineStoreState>()(
         playback: {
           ...state.playback,
           rate: nextRate,
-        },
-      }));
-    },
-
-    setPlaybackStreamSnapshot(snapshot: StreamSnapshot | null) {
-      set((state) => ({
-        ...state,
-        playback: {
-          ...state.playback,
-          streamSnapshot: snapshot,
         },
       }));
     },

@@ -10,7 +10,7 @@ import {
   untrackSound,
 } from "./AudioEmitter";
 import { useSettings } from "./SettingsProvider";
-import { useEngineSelector } from "../state/engineStore";
+import { useStreamSnapshot } from "../state/streamSnapshotStore";
 import type { ChatMessage } from "../stream/types";
 
 /**
@@ -20,12 +20,8 @@ import type { ChatMessage } from "../stream/types";
 export function ChatSoundPlayer() {
   const { audioLoader, audioListener } = useAudio();
   const { audioEnabled } = useSettings();
-  const messages = useEngineSelector(
-    (state) => state.playback.streamSnapshot?.chatMessages,
-  );
-  const timeSec = useEngineSelector(
-    (state) => state.playback.streamSnapshot?.timeSec,
-  );
+  const messages = useStreamSnapshot((snap) => snap?.chatMessages);
+  const timeSec = useStreamSnapshot((snap) => snap?.timeSec);
   const playedSetRef = useRef(new WeakSet<ChatMessage>());
   // Track active voice chat sound per sender so a new voice bind from the
   // same player stops their previous one (matching Tribes 2 behavior).

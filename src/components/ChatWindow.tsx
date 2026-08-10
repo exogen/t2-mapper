@@ -1,5 +1,6 @@
 import { lazy, memo, Suspense, useEffect, useRef } from "react";
 import { useEngineSelector } from "../state/engineStore";
+import { useStreamSnapshot } from "../state/streamSnapshotStore";
 import { ChatMessage, ChatSegment } from "../stream/types";
 import styles from "./ChatWindow.module.css";
 
@@ -41,8 +42,8 @@ export const ChatWindow = memo(function ChatWindow() {
   const isLive = useEngineSelector(
     (state) => state.playback.recording?.source === "live",
   );
-  const messages = useEngineSelector(
-    (state) => state.playback.streamSnapshot?.chatMessages ?? EMPTY_MESSAGES,
+  const messages = useStreamSnapshot(
+    (snap) => snap?.chatMessages ?? EMPTY_MESSAGES,
   );
   const scrollRef = useRef<HTMLDivElement>(null);
 

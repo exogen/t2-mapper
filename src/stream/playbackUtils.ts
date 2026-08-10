@@ -241,6 +241,11 @@ export function getPosedNodeTransform(
  * UVs). Matches the technique used by ShapeModel for consistent lighting.
  */
 export function smoothVertexNormals(geometry: BufferGeometry): void {
+  // Cloned scenes share geometry with the useGLTF cache, so this runs once
+  // per geometry, not per clone — the result is identical every time.
+  if (geometry.userData.normalsSmoothed) return;
+  geometry.userData.normalsSmoothed = true;
+
   geometry.computeVertexNormals();
 
   const posAttr = geometry.attributes.position;
@@ -562,9 +567,12 @@ export function processShapeScene(
  */
 export function disposeClonedScene(root: Object3D): void {
   root.traverse((node: any) => {
-    if (node.geometry) {
-      node.geometry.dispose();
-    }
+    // Do NOT dispose node.geometry: SkeletonUtils.clone shares
+    // BufferGeometry with the useGLTF cache and every other live instance
+    // of the shape — disposing here frees the master's GPU buffers and
+    // forces a re-upload for all survivors and future spawns. Materials
+    // are created per-clone by processShapeScene, so they are ours to
+    // dispose.
     if (node.material) {
       const mats: Material[] = Array.isArray(node.material)
         ? node.material

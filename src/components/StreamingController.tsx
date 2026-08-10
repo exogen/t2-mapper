@@ -11,8 +11,10 @@ import { ParticleEffects } from "./ParticleEffects";
 import { playerEyePositions } from "./PlayerModel";
 import { stopAllTrackedSounds } from "./AudioEmitter";
 import { useEngineStoreApi, advanceEffectClock } from "../state/engineStore";
+import { setStreamSnapshot } from "../state/streamSnapshotStore";
 import { gameEntityStore } from "../state/gameEntityStore";
 import {
+  streamClock,
   streamPlaybackStore,
   resetStreamPlayback,
 } from "../state/streamPlaybackStore";
@@ -272,7 +274,7 @@ export function StreamingController({
     gameEntityStore.getState().beginStreaming(recording.source);
 
     if (!stream) {
-      engineStore.getState().setPlaybackStreamSnapshot(null);
+      setStreamSnapshot(null);
       return;
     }
 
@@ -323,13 +325,13 @@ export function StreamingController({
     });
     const snapshot = stream.getSnapshot();
 
-    streamPlaybackStore.setState({ time: snapshot.timeSec });
+    streamClock.time = snapshot.timeSec;
     playbackClockRef.current = snapshot.timeSec;
     prevTickSnapshotRef.current = snapshot;
     currentTickSnapshotRef.current = snapshot;
     syncRenderableEntities(snapshot);
 
-    engineStore.getState().setPlaybackStreamSnapshot(snapshot);
+    setStreamSnapshot(snapshot);
     publishedSnapshotRef.current = snapshot;
 
     return () => {
@@ -399,7 +401,7 @@ export function StreamingController({
       Math.min(1, (playbackClockRef.current - tickStartTime) / STREAM_TICK_SEC),
     );
 
-    streamPlaybackStore.setState({ time: playbackClockRef.current });
+    streamClock.time = playbackClockRef.current;
     if (snapshot.exhausted && isPlaying) {
       playbackClockRef.current = Math.min(
         playbackClockRef.current,
@@ -412,7 +414,7 @@ export function StreamingController({
     // Publish snapshot when it changed.
     if (renderCurrent !== publishedSnapshotRef.current) {
       publishedSnapshotRef.current = renderCurrent;
-      storeState.setPlaybackStreamSnapshot(renderCurrent);
+      setStreamSnapshot(renderCurrent);
     }
 
     const currentCamera = renderCurrent.camera;

@@ -23,6 +23,11 @@ import { useSettings } from "./SettingsProvider";
 
 const MAX_SOUND_SLOTS = 4;
 
+/** Per-frame scratch for slot lookup, shared across all entities. */
+const _slotByIndexScratch: Array<
+  { index: number; playing: boolean; profileId?: number } | undefined
+> = new Array(MAX_SOUND_SLOTS).fill(undefined);
+
 interface SlotState {
   profileId: number;
   sound: PositionalAudio;
@@ -90,9 +95,10 @@ export function useEntitySoundSlots(
     const isPlaying = playback.status === "playing";
 
     // Build index for O(1) slot lookup (avoids find() per slot per frame).
-    const slotByIndex: Array<
-      { index: number; playing: boolean; profileId?: number } | undefined
-    > = [];
+    // Module-scope scratch, cleared each use — this hook runs per entity
+    // per frame, so a fresh array here would be constant GC churn.
+    const slotByIndex = _slotByIndexScratch;
+    slotByIndex.fill(undefined);
     if (soundSlots) {
       for (const s of soundSlots) slotByIndex[s.index] = s;
     }

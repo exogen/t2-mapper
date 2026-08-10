@@ -3,6 +3,7 @@ import { Color, Vector3 } from "three";
 import type { SceneSun } from "../scene/types";
 import { torqueToThree } from "../scene/coordinates";
 import { updateGlobalSunUniforms } from "../globalSunUniforms";
+import { invalidateShadows } from "./shadowControl";
 
 export function Sun({ scene }: { scene: SceneSun }) {
   // Sun direction - points FROM sun TO scene
@@ -43,6 +44,12 @@ export function Sun({ scene }: { scene: SceneSun }) {
     updateGlobalSunUniforms(sunLightPointsDown);
   }, [sunLightPointsDown]);
 
+  // The shadow map is frozen (see shadowControl.ts); re-render it when the
+  // light itself changes.
+  useEffect(() => {
+    invalidateShadows();
+  }, [lightPosition]);
+
   // Base lighting intensities - neutral baseline, each object type applies its own multipliers
   // See lightingConfig.ts for per-object-type adjustments
   const directionalIntensity = 1.0;
@@ -59,8 +66,8 @@ export function Sun({ scene }: { scene: SceneSun }) {
         color={color}
         intensity={directionalIntensity}
         castShadow
-        shadow-mapSize-width={8192}
-        shadow-mapSize-height={8192}
+        shadow-mapSize-width={4096}
+        shadow-mapSize-height={4096}
         shadow-camera-left={-shadowCameraSize}
         shadow-camera-right={shadowCameraSize}
         shadow-camera-top={shadowCameraSize}

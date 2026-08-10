@@ -17,6 +17,7 @@ import { useDebug } from "./SettingsProvider";
 import { useAnisotropy } from "./useAnisotropy";
 import { injectCustomFog } from "../fogShader";
 import { globalFogUniforms } from "../globalFogUniforms";
+import { invalidateShadows } from "./shadowControl";
 
 // Texture tiling factors for each terrain layer
 const TILING: Record<number, number> = {
@@ -221,6 +222,13 @@ export const TerrainTile = memo(function TerrainTile({
       basePosition.z + tileZ * blockSize + geometryOffset,
     ] as [number, number, number];
   }, [tileX, tileZ, blockSize, basePosition]);
+
+  // Shadow map is frozen (shadowControl.ts); re-render it when this
+  // caster's depth-relevant state changes, including unmount.
+  useEffect(() => {
+    invalidateShadows();
+    return invalidateShadows;
+  }, [geometry, position, visible]);
 
   return (
     <mesh

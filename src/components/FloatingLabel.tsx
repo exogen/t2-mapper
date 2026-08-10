@@ -27,6 +27,14 @@ function isBehindCamera(
 const DEFAULT_FADE_DISTANCE = 200;
 
 /**
+ * Frames a label must stay out of view before it unmounts. Showing is
+ * immediate; hiding is delayed so a camera hovering at the fade boundary
+ * (or rotating an object in/out of view) doesn't thrash DOM mount state
+ * every few frames. The label is already at opacity 0 while it waits.
+ */
+const HIDE_DELAY_FRAMES = 15;
+
+/**
  * Hook that manages visibility and opacity fading for a floating label group.
  * Attach `groupRef` to a `<group>` so world-position lookups work. Apply
  * `opacityRef.current` to DOM elements each frame for smooth fading.
@@ -39,6 +47,16 @@ export function useFloatingLabelFade({
   const groupRef = useRef<Object3D>(null);
   const [isVisible, setIsVisible] = useState(opacityProp !== 0);
   const opacityRef = useRef("0");
+  const hideCountdownRef = useRef(HIDE_DELAY_FRAMES);
+
+  function applyVisibility(shouldBeVisible: boolean) {
+    if (shouldBeVisible) {
+      hideCountdownRef.current = HIDE_DELAY_FRAMES;
+      if (!isVisible) setIsVisible(true);
+    } else if (isVisible && --hideCountdownRef.current <= 0) {
+      setIsVisible(false);
+    }
+  }
 
   // During a command circuit tour, world-anchored labels get out of the
   // way — the active target gets a screen-space label instead (see
@@ -69,20 +87,14 @@ export function useFloatingLabelFade({
         ? Infinity
         : camera.position.distanceTo(_worldPos);
       const shouldBeVisible = distance < fadeDistance;
-
-      if (isVisible !== shouldBeVisible) {
-        setIsVisible(shouldBeVisible);
-      }
-
+      applyVisibility(shouldBeVisible);
       opacityRef.current = shouldBeVisible
         ? Math.max(0, Math.min(1, 1 - distance / fadeDistance)).toString()
         : "0";
     } else {
-      const shouldBeVisible = !behind && opacityProp !== 0;
-      if (isVisible !== shouldBeVisible) {
-        setIsVisible(shouldBeVisible);
-      }
-      opacityRef.current = (opacityProp as number).toString();
+      applyVisibility(!behind && opacityProp !== 0);
+      // Opacity drops immediately; only the unmount is delayed.
+      opacityRef.current = behind ? "0" : (opacityProp as number).toString();
     }
   });
 

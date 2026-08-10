@@ -1,5 +1,5 @@
 import { useStore } from "zustand";
-import { useEngineSelector } from "../state/engineStore";
+import { useStreamSnapshot } from "../state/streamSnapshotStore";
 import { streamPlaybackStore } from "../state/streamPlaybackStore";
 import { DEFAULT_TEAM_NAMES } from "../stringUtils";
 import { textureToUrl } from "../loaders";
@@ -18,12 +18,8 @@ function formatClockHud(clockMs: number): string {
 }
 
 function Compass() {
-  const yaw = useEngineSelector(
-    (state) => state.playback.streamSnapshot?.camera?.yaw,
-  );
-  const matchClockMs = useEngineSelector(
-    (state) => state.playback.streamSnapshot?.matchClockMs,
-  );
+  const yaw = useStreamSnapshot((snap) => snap?.camera?.yaw);
+  const matchClockMs = useStreamSnapshot((snap) => snap?.matchClockMs);
   if (yaw == null) return null;
   // The notch is the fixed heading indicator (always "forward" at top).
   // The NSEW letters rotate to show world cardinal directions relative to
@@ -44,9 +40,7 @@ function Compass() {
 }
 
 function HealthBar() {
-  const health = useEngineSelector(
-    (state) => state.playback.streamSnapshot?.status?.health,
-  );
+  const health = useStreamSnapshot((snap) => snap?.status?.health);
   if (health == null) return null;
   const pct = Math.max(0, Math.min(100, health * 100));
   return (
@@ -57,9 +51,7 @@ function HealthBar() {
 }
 
 function EnergyBar() {
-  const energy = useEngineSelector(
-    (state) => state.playback.streamSnapshot?.status?.energy,
-  );
+  const energy = useStreamSnapshot((snap) => snap?.status?.energy);
   if (energy == null) return null;
   const pct = Math.max(0, Math.min(100, energy * 100));
   return (
@@ -90,8 +82,7 @@ function normalizeWeaponName(shape: string | undefined): string {
 }
 
 function Reticle() {
-  const weaponShape = useEngineSelector((state) => {
-    const snap = state.playback.streamSnapshot;
+  const weaponShape = useStreamSnapshot((snap) => {
     if (!snap || snap.camera?.mode !== "first-person") return undefined;
     const ctrl = snap.controlPlayerGhostId;
     if (!ctrl) return undefined;
@@ -186,9 +177,7 @@ function WeaponSlotIcon({
 }
 
 function WeaponHUD() {
-  const weaponsHud = useEngineSelector(
-    (state) => state.playback.streamSnapshot?.weaponsHud,
-  );
+  const weaponsHud = useStreamSnapshot((snap) => snap?.weaponsHud);
   if (!weaponsHud || !weaponsHud.slots.length) return null;
   const weapons: WeaponsHudSlot[] = [];
   const targeting: WeaponsHudSlot[] = [];
@@ -221,16 +210,12 @@ function WeaponHUD() {
 }
 
 function TeamScores() {
-  const teamScores = useEngineSelector(
-    (state) => state.playback.streamSnapshot?.teamScores,
+  const teamScores = useStreamSnapshot((snap) => snap?.teamScores);
+  const playerSensorGroup = useStreamSnapshot(
+    (snap) => snap?.playerSensorGroup,
   );
-  const playerSensorGroup = useEngineSelector(
-    (state) => state.playback.streamSnapshot?.playerSensorGroup,
-  );
-  const observerCount = useEngineSelector(
-    (state) =>
-      state.playback.streamSnapshot?.playerRoster?.filter((p) => p.teamId <= 0)
-        .length ?? 0,
+  const observerCount = useStreamSnapshot(
+    (snap) => snap?.playerRoster?.filter((p) => p.teamId <= 0).length ?? 0,
   );
   if (!teamScores?.length) return null;
   // Sort: friendly team first (if known), then by teamId.
@@ -341,12 +326,8 @@ const INVENTORY_ICON_URLS = new Map(
   ]),
 );
 function PackAndInventoryHUD() {
-  const backpackHud = useEngineSelector(
-    (state) => state.playback.streamSnapshot?.backpackHud,
-  );
-  const inventoryHud = useEngineSelector(
-    (state) => state.playback.streamSnapshot?.inventoryHud,
-  );
+  const backpackHud = useStreamSnapshot((snap) => snap?.backpackHud);
+  const inventoryHud = useStreamSnapshot((snap) => snap?.inventoryHud);
   const hasPack = backpackHud && backpackHud.packIndex >= 0;
   // Resolve pack icon.
   let packIconUrl: string | undefined;
@@ -403,8 +384,8 @@ function PackAndInventoryHUD() {
 }
 
 export function PlayerHUD() {
-  const hasControlPlayer = useEngineSelector(
-    (state) => !!state.playback.streamSnapshot?.controlPlayerGhostId,
+  const hasControlPlayer = useStreamSnapshot(
+    (snap) => !!snap?.controlPlayerGhostId,
   );
   const cameraMode = useStore(streamPlaybackStore, (s) => s.cameraMode);
 

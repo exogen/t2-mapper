@@ -24,6 +24,7 @@ import {
   matrixFToQuaternion,
 } from "../scene/coordinates";
 import { setupTexture } from "../textureUtils";
+import { invalidateShadows } from "./shadowControl";
 import { FloatingLabel } from "./FloatingLabel";
 import { useDebug } from "./SettingsProvider";
 import { useAnisotropy } from "./useAnisotropy";
@@ -158,6 +159,13 @@ function InteriorMesh({ node }: { node: Mesh }) {
     }
     return [getLightMap(node.material)];
   }, [node.material]);
+
+  // Shadow map is frozen (shadowControl.ts); newly loaded interior
+  // geometry must trigger a one-time re-render, as must unmount.
+  useEffect(() => {
+    invalidateShadows();
+    return invalidateShadows;
+  }, [node.geometry]);
 
   return (
     <mesh geometry={node.geometry} castShadow receiveShadow>
