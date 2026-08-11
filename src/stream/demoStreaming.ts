@@ -858,6 +858,7 @@ class StreamingPlayback extends StreamEngine {
         this.advanceItems();
         this.advanceControlVehicle();
         this.advanceFades();
+        this.advanceControlEnergy();
         this.removeExpiredExplosions();
         this.updateCameraAndHud();
         return true;

@@ -6,11 +6,15 @@ import { useTexture } from "@react-three/drei";
 import { useFrame } from "@react-three/fiber";
 import {
   AdditiveBlending,
+  Box3,
   BoxGeometry,
   Color,
   DoubleSide,
+  Matrix4,
   NoColorSpace,
+  Quaternion,
   RepeatWrapping,
+  Vector3,
 } from "three";
 import type { Texture } from "three";
 import type {
@@ -19,6 +23,10 @@ import type {
 } from "../state/gameEntityTypes";
 import { textureToUrl } from "../loaders";
 import { useSettings } from "./SettingsProvider";
+import {
+  registerForceFieldCollider,
+  unregisterForceFieldCollider,
+} from "../collision/worldCollision";
 import {
   createForceFieldMaterial,
   OPACITY_FACTOR,
@@ -136,6 +144,23 @@ export function ForceFieldBare({ entity }: { entity: ForceFieldBareEntity }) {
   const data = entity.forceFieldData!;
   const scale = data.dimensions;
   const isTarget = useIsDebugTourTarget(entity.id);
+
+  // Register the field's box for projectile collision. Torque only
+  // collides with closed fields; open/close rebuilds the entity, so the
+  // effect re-registers with the new state.
+  useEffect(() => {
+    const dims = entity.forceFieldData?.dimensions;
+    if (!dims) return;
+    const matrix = new Matrix4().compose(
+      new Vector3(...(entity.position ?? [0, 0, 0])),
+      new Quaternion(...(entity.rotation ?? [0, 0, 0, 1])),
+      new Vector3(1, 1, 1),
+    );
+    // Corner-origin box matching useCornerBoxGeometry.
+    const box = new Box3(new Vector3(0, 0, 0), new Vector3(...dims));
+    registerForceFieldCollider(entity.id, matrix, box, !entity.fieldOpen);
+    return () => unregisterForceFieldCollider(entity.id);
+  }, [entity]);
 
   const textureUrls = useMemo(
     () => data.textures.map((t) => textureToUrl(t)),

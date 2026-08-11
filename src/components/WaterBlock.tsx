@@ -12,6 +12,7 @@ import {
   RepeatWrapping,
 } from "three";
 import { textureToUrl } from "../loaders";
+import { setWaterLevel } from "../collision/waterLevel";
 import {
   torqueToThree,
   torqueScaleToThree,
@@ -132,6 +133,12 @@ export const WaterBlock = memo(function WaterBlock({
   // 2. Round to nearest terrain square: (s32)((X0 / 8.0f) + 0.5f) = Math.round(x/8)
   // 3. Clamp to valid terrain range [0, 2040] squares
   // 4. Convert back to world units (multiply by 8)
+  // Expose the surface height (Torque Z) for projectile water collision.
+  useEffect(() => {
+    setWaterLevel(scene.transform.position.z);
+    return () => setWaterLevel(null);
+  }, [scene.transform.position.z]);
+
   const basePosition = useMemo(() => {
     const [x, y, z] = position;
 

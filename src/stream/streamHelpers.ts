@@ -257,6 +257,15 @@ export function getNumberField(
   return undefined;
 }
 
+/** Datablock booleans arrive as true/false, 1/0, or "1"/"true". */
+export function isTruthyField(value: unknown): boolean {
+  if (typeof value === "string") {
+    const lower = value.toLowerCase();
+    return lower !== "" && lower !== "0" && lower !== "false";
+  }
+  return !!value;
+}
+
 export function getStringField(
   data: ParsedData | undefined,
   keys: readonly string[],
@@ -289,47 +298,23 @@ export function resolveTracerVisual(
 ): StreamVisual | undefined {
   if (!data) return undefined;
 
-  const texture =
-    getStringField(data, ["tracerTex0", "textureName0", "texture0"]) ?? "";
+  // Field names are binary-verified in t2-demo-parser's
+  // TracerProjectileData decode — no alias fallbacks needed.
+  const texture = getStringField(data, ["tracerTex0"]) ?? "";
   const hasTracerHints =
     className === "TracerProjectile" ||
     (texture.length > 0 && getNumberField(data, ["tracerLength"]) != null);
   if (!hasTracerHints || !texture) return undefined;
 
-  const crossTexture = getStringField(data, [
-    "tracerTex1",
-    "textureName1",
-    "texture1",
-  ]);
-
-  const tracerLength = getNumberField(data, ["tracerLength"]) ?? 10;
-  const canonicalTracerWidth = getNumberField(data, ["tracerWidth"]);
-  const aliasTracerWidth = getNumberField(data, ["tracerAlpha"]);
-  const tracerWidth =
-    canonicalTracerWidth != null &&
-    (getNumberField(data, ["crossViewAng"]) != null ||
-      canonicalTracerWidth <= 0.7)
-      ? canonicalTracerWidth
-      : (aliasTracerWidth ?? canonicalTracerWidth ?? 0.5);
-  const crossViewAng =
-    getNumberField(data, ["crossViewAng", "crossViewFraction"]) ??
-    (typeof data.tracerWidth === "number" && data.tracerWidth > 0.7
-      ? data.tracerWidth
-      : 0.98);
-  const crossSize =
-    getNumberField(data, ["crossSize", "muzzleVelocity"]) ?? 0.45;
-  const renderCross =
-    getBooleanField(data, ["renderCross", "proximityRadius"]) ?? true;
-
   return {
     kind: "tracer",
     texture,
-    crossTexture,
-    tracerLength,
-    tracerWidth,
-    crossViewAng,
-    crossSize,
-    renderCross,
+    crossTexture: getStringField(data, ["tracerTex1"]),
+    tracerLength: getNumberField(data, ["tracerLength"]) ?? 10,
+    tracerWidth: getNumberField(data, ["tracerWidth"]) ?? 0.5,
+    crossViewAng: getNumberField(data, ["crossViewAng"]) ?? 0.98,
+    crossSize: getNumberField(data, ["crossSize"]) ?? 0.45,
+    renderCross: getBooleanField(data, ["renderCross"]) ?? true,
   };
 }
 

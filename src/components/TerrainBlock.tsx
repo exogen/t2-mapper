@@ -36,6 +36,7 @@ import {
   setTerrainHeightSampler,
 } from "../terrainHeight";
 import { invalidateShadows } from "./shadowControl";
+import { setTerrainCollisionData } from "../collision/terrainCollision";
 const DEFAULT_SQUARE_SIZE = 8;
 const DEFAULT_VISIBLE_DISTANCE = 600;
 const TERRAIN_SIZE = 256;
@@ -526,14 +527,23 @@ export const TerrainBlock = memo(function TerrainBlock({
     displaceTerrainAndComputeNormals(geometry, terrain.heightMap, squareSize);
     return geometry;
   }, [squareSize, terrain]);
-  // Register terrain height sampler for item physics simulation.
+  // Register terrain height sampler for item physics simulation, and the
+  // raw heightfield for projectile ray collision.
   useEffect(() => {
     if (!terrain) return;
     setTerrainHeightSampler(
       createTerrainHeightSampler(terrain.heightMap, squareSize),
     );
-    return () => setTerrainHeightSampler(null);
-  }, [terrain, squareSize]);
+    setTerrainCollisionData({
+      heightMap: terrain.heightMap,
+      squareSize,
+      emptySquareRuns: emptySquares,
+    });
+    return () => {
+      setTerrainHeightSampler(null);
+      setTerrainCollisionData(null);
+    };
+  }, [terrain, squareSize, emptySquares]);
   // Get sun direction for lightmap generation
   const sun = useSceneSun();
   const sunDirection = useMemo(() => {

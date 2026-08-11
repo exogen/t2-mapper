@@ -1,4 +1,4 @@
-import { memo, useMemo, useCallback, useEffect, useRef } from "react";
+import { memo, useMemo, useCallback, useEffect, useId, useRef } from "react";
 import { DebugSuspense } from "./DebugSuspense";
 import { ErrorBoundary } from "react-error-boundary";
 import { createLogger } from "../logger";
@@ -12,6 +12,7 @@ import {
   SRGBColorSpace,
   Box3,
   Vector3,
+  type Group,
 } from "three";
 import { useGLTF, useTexture } from "@react-three/drei";
 import { textureToUrl, interiorToUrl } from "../loaders";
@@ -25,6 +26,10 @@ import {
 } from "../scene/coordinates";
 import { setupTexture } from "../textureUtils";
 import { invalidateShadows } from "./shadowControl";
+import {
+  registerInteriorCollider,
+  unregisterInteriorCollider,
+} from "../collision/worldCollision";
 import { FloatingLabel } from "./FloatingLabel";
 import { useDebug } from "./SettingsProvider";
 import { useAnisotropy } from "./useAnisotropy";
@@ -214,6 +219,23 @@ export const InteriorModel = memo(function InteriorModel({
   const debugContext = useDebug();
   const debugMode = debugContext?.debugMode ?? false;
 
+  // Register this interior's meshes for projectile collision. Interiors
+  // are static, so world matrices are snapshotted once after mount. Only
+  // direct children are collected (the InteriorMesh meshes) — debug
+  // helpers live in nested groups.
+  const collisionId = useId();
+  const meshGroupRef = useRef<Group>(null);
+  useEffect(() => {
+    const group = meshGroupRef.current;
+    if (!group) return;
+    group.updateWorldMatrix(true, true);
+    const meshes = group.children.filter(
+      (child): child is Mesh => (child as Mesh).isMesh,
+    );
+    registerInteriorCollider(collisionId, meshes);
+    return () => unregisterInteriorCollider(collisionId);
+  }, [collisionId, nodes]);
+
   const debugBounds = useMemo(() => {
     if (!isTarget) return null;
     const box = new Box3().setFromObject(gltf.scene);
@@ -228,7 +250,7 @@ export const InteriorModel = memo(function InteriorModel({
   }, [isTarget, gltf.scene]);
 
   return (
-    <group rotation={[0, -Math.PI / 2, 0]}>
+    <group ref={meshGroupRef} rotation={[0, -Math.PI / 2, 0]}>
       {Object.entries(nodes)
         .filter(([, node]: [string, any]) => node.isMesh)
         .map(([name, node]: [string, any]) => (

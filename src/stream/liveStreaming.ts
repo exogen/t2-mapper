@@ -577,6 +577,7 @@ export class LiveStreamAdapter extends StreamEngine {
       this.advanceItems();
       this.advanceControlVehicle();
       this.advanceFades();
+      this.advanceControlEnergy();
 
       // Periodic status at milestones
       if (isMilestonePacket && this.tickCount > 1) {

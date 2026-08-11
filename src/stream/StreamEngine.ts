@@ -2,6 +2,12 @@ import { ghostToSceneObject } from "../scene";
 import type { SceneObject } from "../scene/types";
 import { getTerrainHeightAt } from "../terrainHeight";
 import {
+  buildLinearSegment,
+  linearSegmentPosition,
+  stepBallistic,
+  type LinearSegment,
+} from "../collision/projectilePhysics";
+import {
   linearProjectileClassNames,
   ballisticProjectileClassNames,
   seekerProjectileClassNames,
@@ -27,6 +33,7 @@ import {
   isQuatLike,
   resolveShapeName,
   getNumberField,
+  isTruthyField,
   resolveTracerVisual,
   resolveSpriteVisual,
   parseWeaponImageStates,
@@ -108,6 +115,16 @@ export interface MutableEntity {
   projectilePhysics?: "linear" | "ballistic" | "seeker";
   simulatedVelocity?: [number, number, number];
   gravityMod?: number;
+  /** Ticks since the projectile left the muzzle (seeded from currTick). */
+  projAgeTicks?: number;
+  /** Precomputed flight segment for linear projectiles (Torque model:
+   *  one static-world raycast at spawn, closed-form position per tick). */
+  linearSegment?: LinearSegment;
+  /** Grenade-family bounce parameters resolved from the datablock. */
+  projElasticity?: number;
+  projFriction?: number;
+  /** Tick after which contact explodes instead of bouncing. */
+  projArmedTick?: number;
   explosionShape?: string;
   explosionLifetimeTicks?: number;
   hasExploded?: boolean;
@@ -262,6 +279,14 @@ export abstract class StreamEngine implements StreamingPlayback {
 
   // ── Control object ──
   protected lastStatus = { health: 1, energy: 1 };
+  /** Client-predicted energy for the control player (absolute units).
+   *  Simulated per tick like the real client (jet drain in updateMove,
+   *  recharge in processTick) and snapped by control-sync corrections. */
+  protected predictedEnergy: number | null = null;
+  /** mRechargeRate from the latest control sync (per-object, script-set). */
+  protected controlRechargeRate = 0;
+  /** Identity of the last control data whose correction we applied. */
+  private lastEnergyCorrectionData: unknown = null;
   protected latestControl: RuntimeControlObject = { ghostIndex: -1 };
   protected controlPlayerGhostId?: string;
   protected lastControlType: "camera" | "player" = "camera";
@@ -421,6 +446,9 @@ export abstract class StreamEngine implements StreamingPlayback {
     this.sensorGroupColors.clear();
     this.playerSensorGroup = 0;
     this.lastStatus = { health: 1, energy: 1 };
+    this.predictedEnergy = null;
+    this.controlRechargeRate = 0;
+    this.lastEnergyCorrectionData = null;
     this.latestControl = { ghostIndex: -1 };
     this.controlPlayerGhostId = undefined;
     this.lastControlType = "camera";
@@ -976,6 +1004,11 @@ export abstract class StreamEngine implements StreamingPlayback {
     entity.simulatedVelocity = undefined;
     entity.projectilePhysics = undefined;
     entity.gravityMod = undefined;
+    entity.projAgeTicks = undefined;
+    entity.linearSegment = undefined;
+    entity.projElasticity = undefined;
+    entity.projFriction = undefined;
+    entity.projArmedTick = undefined;
     entity.direction = undefined;
     entity.velocity = undefined;
     entity.position = undefined;
@@ -1066,6 +1099,18 @@ export abstract class StreamEngine implements StreamingPlayback {
         } else if (ballisticProjectileClassNames.has(entity.className)) {
           entity.projectilePhysics = "ballistic";
           entity.gravityMod = getNumberField(blockData, ["gravityMod"]) ?? 1.0;
+          // Bounce parameters (GrenadeProjectileData defaults). Arming
+          // delay is floored at 250ms and rounded up to a tick multiple
+          // by the engine's onAdd.
+          entity.projElasticity =
+            getNumberField(blockData, ["grenadeElasticity"]) ?? 0.999;
+          entity.projFriction =
+            getNumberField(blockData, ["grenadeFriction"]) ?? 0.3;
+          const armingDelayMS = Math.max(
+            250,
+            getNumberField(blockData, ["armingDelayMS", "armingDelay"]) ?? 3000,
+          );
+          entity.projArmedTick = Math.ceil(armingDelayMS / TICK_DURATION_MS);
         } else if (seekerProjectileClassNames.has(entity.className)) {
           entity.projectilePhysics = "seeker";
         }
@@ -1432,6 +1477,25 @@ export abstract class StreamEngine implements StreamingPlayback {
           vz += excessDir.z * excessVel;
         }
         entity.simulatedVelocity = [vx, vy, vz];
+
+        // Precompute the flight segment against the static world, exactly
+        // like LinearProjectile::createSegments — one raycast covering the
+        // whole lifetime, cut short at the first hit. The demo carries only
+        // initial pos/dir; the impact must be predicted client-side.
+        if (entity.position && entity.linearSegment == null) {
+          // lifetimeMS/explodeOnDeath are binary-verified field names in
+          // t2-demo-parser's LinearProjectileData decode (milliseconds,
+          // tick-rounded by the engine's onAdd — disc 5024, chaingun 3008).
+          entity.linearSegment = buildLinearSegment({
+            start: [...entity.position] as [number, number, number],
+            vel: [vx, vy, vz],
+            lifetimeMS: getNumberField(blockData, ["lifetimeMS"]) ?? 1000,
+            explodeOnDeath: isTruthyField(blockData?.explodeOnDeath),
+            explodeOnWaterImpact: isTruthyField(
+              blockData?.explodeOnWaterImpact,
+            ),
+          });
+        }
       } else if (isVec3Like(data.velocity)) {
         entity.simulatedVelocity = [
           data.velocity.x,
@@ -1440,9 +1504,21 @@ export abstract class StreamEngine implements StreamingPlayback {
         ];
       }
 
-      // Fast-forward by currTick
+      // Fast-forward by currTick. Linear projectiles evaluate their
+      // precomputed segment; others integrate collision-free (the server
+      // already validated that span).
       const currTick = data.currTick as number | undefined;
-      if (
+      if (typeof currTick === "number" && currTick > 0) {
+        entity.projAgeTicks = currTick;
+      }
+      if (entity.projAgeTicks == null) entity.projAgeTicks = 0;
+      if (entity.linearSegment && entity.position) {
+        linearSegmentPosition(
+          entity.linearSegment,
+          entity.projAgeTicks * TICK_DURATION_MS,
+          entity.position,
+        );
+      } else if (
         typeof currTick === "number" &&
         currTick > 0 &&
         entity.simulatedVelocity &&
@@ -1724,21 +1800,79 @@ export abstract class StreamEngine implements StreamingPlayback {
 
   // ── Per-tick physics simulation ──
 
-  /** Advance projectile positions by one tick using their simulated velocity. */
+  /**
+   * Advance projectile positions by one tick, mirroring the original
+   * client's prediction: linear projectiles follow their precomputed
+   * segment and explode at its (already collision-cut) end; the grenade
+   * family integrates with a swept ray, bouncing while unarmed; seekers
+   * explode on the first static contact.
+   */
   protected advanceProjectiles(): void {
     const dt = TICK_DURATION_MS / 1000;
     for (const entity of this.entities.values()) {
       if (!entity.simulatedVelocity || !entity.position) continue;
       const v = entity.simulatedVelocity;
       const p = entity.position;
+      entity.projAgeTicks = (entity.projAgeTicks ?? 0) + 1;
 
-      if (entity.projectilePhysics === "ballistic") {
-        v[2] += -9.81 * (entity.gravityMod ?? 1) * dt;
+      if (entity.linearSegment) {
+        const seg = entity.linearSegment;
+        const ms = entity.projAgeTicks * TICK_DURATION_MS;
+        if (ms >= seg.msEnd) {
+          if (
+            seg.explodeAtEnd &&
+            !entity.hasExploded &&
+            entity.explosionDataBlockId != null
+          ) {
+            this.spawnExplosion(entity, [...seg.endPoint] as [
+              number,
+              number,
+              number,
+            ]);
+          } else {
+            // Lifetime expired without an explosion (fizzle) — hide.
+            entity.position = undefined;
+            entity.simulatedVelocity = undefined;
+          }
+          continue;
+        }
+        linearSegmentPosition(seg, ms, p);
+      } else if (
+        entity.projectilePhysics === "ballistic" ||
+        entity.projectilePhysics === "seeker"
+      ) {
+        const result = stepBallistic(p, v, {
+          // Seekers coast on their transmitted velocity, no gravity.
+          gravityMod:
+            entity.projectilePhysics === "ballistic"
+              ? (entity.gravityMod ?? 1)
+              : 0,
+          elasticity: entity.projElasticity ?? 0.999,
+          friction: entity.projFriction ?? 0.3,
+          armed:
+            entity.projArmedTick != null
+              ? entity.projAgeTicks > entity.projArmedTick
+              : true,
+          bounces: entity.projectilePhysics === "ballistic",
+        });
+        if (result.explodeAt && !entity.hasExploded) {
+          if (entity.explosionDataBlockId != null) {
+            this.spawnExplosion(entity, [...result.explodeAt.point] as [
+              number,
+              number,
+              number,
+            ]);
+          } else {
+            entity.position = undefined;
+            entity.simulatedVelocity = undefined;
+          }
+          continue;
+        }
+      } else {
+        p[0] += v[0] * dt;
+        p[1] += v[1] * dt;
+        p[2] += v[2] * dt;
       }
-
-      p[0] += v[0] * dt;
-      p[1] += v[1] * dt;
-      p[2] += v[2] * dt;
 
       if (v[0] !== 0 || v[1] !== 0) {
         entity.rotation = playerYawToQuaternion(Math.atan2(v[0], v[1]));
@@ -1888,6 +2022,56 @@ export abstract class StreamEngine implements StreamingPlayback {
   }
 
   // ── Camera and HUD ──
+
+  /**
+   * Advance the control player's predicted energy by one tick, mirroring
+   * the real client (binary-verified): Player::updateMove drains
+   * jetEnergyDrain while jetting (gated on minJetEnergy), then
+   * ShapeBase::processTick adds mRechargeRate and clamps to
+   * dataBlock->maxEnergy. Server control-sync corrections (energyLevel +
+   * rechargeRate in writePacketData) snap the prediction when they arrive.
+   */
+  protected advanceControlEnergy(): void {
+    const controlGhostId = this.controlPlayerGhostId;
+    const entity = controlGhostId
+      ? this.entities.get(controlGhostId)
+      : undefined;
+    if (!entity) {
+      this.predictedEnergy = null;
+      return;
+    }
+    const maxEnergy = entity.maxEnergy ?? 60;
+
+    // Apply a server correction exactly once per control update.
+    const data = this.latestControl.data;
+    if (data && data !== this.lastEnergyCorrectionData) {
+      this.lastEnergyCorrectionData = data;
+      if (typeof data.energyLevel === "number") {
+        this.predictedEnergy = clamp(data.energyLevel, 0, maxEnergy);
+      }
+      if (typeof data.rechargeRate === "number") {
+        this.controlRechargeRate = data.rechargeRate;
+      }
+    }
+
+    if (this.predictedEnergy == null) {
+      this.predictedEnergy = maxEnergy;
+    }
+
+    const blockData =
+      entity.dataBlockId != null
+        ? this.getDataBlockData(entity.dataBlockId)
+        : undefined;
+    const jetEnergyDrain = getNumberField(blockData, ["jetEnergyDrain"]) ?? 0.8;
+    const minJetEnergy = getNumberField(blockData, ["minJetEnergy"]) ?? 1;
+
+    let energy = this.predictedEnergy;
+    if (entity.jetting && energy >= minJetEnergy) {
+      energy -= jetEnergyDrain;
+    }
+    energy += this.controlRechargeRate;
+    this.predictedEnergy = clamp(energy, 0, maxEnergy);
+  }
 
   protected updateCameraAndHud(): void {
     const control = this.latestControl;
@@ -2120,11 +2304,13 @@ export abstract class StreamEngine implements StreamingPlayback {
         ? this.entities.get(controlGhostId)
         : undefined;
       status.health = ghostEntity?.health ?? 1;
-      const coEnergyLevel = data?.energyLevel;
-      if (typeof coEnergyLevel === "number") {
-        const maxEnergy = ghostEntity?.maxEnergy ?? 60;
-        if (maxEnergy > 0)
-          status.energy = clamp(coEnergyLevel / maxEnergy, 0, 1);
+      const maxEnergy = ghostEntity?.maxEnergy ?? 60;
+      if (this.predictedEnergy != null && maxEnergy > 0) {
+        // Client-predicted energy (see advanceControlEnergy) — smooth
+        // between the occasional server corrections, like the real HUD.
+        status.energy = clamp(this.predictedEnergy / maxEnergy, 0, 1);
+      } else if (typeof data?.energyLevel === "number" && maxEnergy > 0) {
+        status.energy = clamp(data.energyLevel / maxEnergy, 0, 1);
       } else {
         status.energy = ghostEntity?.energy ?? 1;
       }
@@ -2134,7 +2320,17 @@ export abstract class StreamEngine implements StreamingPlayback {
     ) {
       const orbitEntity = this.entities.get(this.camera.orbitTargetId);
       status.health = orbitEntity?.health ?? 1;
-      status.energy = orbitEntity?.energy ?? 1;
+      const maxEnergy = orbitEntity?.maxEnergy ?? 60;
+      if (
+        this.camera.orbitTargetId === this.controlPlayerGhostId &&
+        this.predictedEnergy != null &&
+        maxEnergy > 0
+      ) {
+        // Orbiting our own player — the prediction still applies.
+        status.energy = clamp(this.predictedEnergy / maxEnergy, 0, 1);
+      } else {
+        status.energy = orbitEntity?.energy ?? 1;
+      }
     }
     this.lastStatus = status;
   }
