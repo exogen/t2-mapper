@@ -14,6 +14,7 @@ import { CommandCircuitCamera } from "./CommandCircuitCamera";
 import { HeatmapOverlay } from "./HeatmapOverlay";
 import { AudioEnabled } from "./AudioEnabled";
 import { DebugEnabled } from "./DebugEnabled";
+import { FpsMeter } from "./FpsMeter";
 import { InputConsumer } from "./InputConsumer";
 import { CameraTourConsumer } from "./CameraTourConsumer";
 import { ActiveInputBindings } from "./ActiveInputBindings";
@@ -78,6 +79,7 @@ export const GameView = memo(function GameView({
             <DebugEnabled>
               <DebugElements />
             </DebugEnabled>
+            <FpsMeter />
             {recording ? (
               <Suspense>
                 <StreamingController recording={recording} />

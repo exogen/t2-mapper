@@ -61,6 +61,25 @@ function EnergyBar() {
   );
 }
 
+/** Heat a target must have for missiles to lock (missileLauncher.cs
+ *  minSeekHeat). Above this, the bar flashes as a warning. */
+const MISSILE_LOCK_HEAT = 0.7;
+
+function HeatBar() {
+  const heat = useStreamSnapshot((snap) => snap?.status?.heat);
+  if (heat == null) return null;
+  const pct = Math.max(0, Math.min(100, heat * 100));
+  const targetable = heat >= MISSILE_LOCK_HEAT;
+  return (
+    <div className={styles.BarTrackHeat}>
+      <div
+        className={targetable ? styles.BarFillHeatFlash : styles.BarFillHeat}
+        style={{ width: `${pct}%` }}
+      />
+    </div>
+  );
+}
+
 /** Maps normalized weapon shape names to reticle textures from $WeaponsHudData. */
 const RETICLE_TEXTURES: Record<string, string> = {
   weapon_energy: "gui/ret_blaster",
@@ -401,6 +420,7 @@ export function PlayerHUD() {
         <div className={styles.Bars}>
           <HealthBar />
           <EnergyBar />
+          <HeatBar />
         </div>
       )}
       {showCompass && <Compass />}

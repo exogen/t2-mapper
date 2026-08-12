@@ -1,4 +1,4 @@
-import { Stats, Html } from "@react-three/drei";
+import { Html } from "@react-three/drei";
 import { useEffect, useRef } from "react";
 import { AxesHelper } from "three";
 import styles from "./DebugElements.module.css";
@@ -16,7 +16,6 @@ export function DebugElements() {
 
   return (
     <>
-      <Stats className={styles.StatsPanel} />
       <axesHelper ref={axesRef} args={[70]} renderOrder={999}>
         <lineBasicMaterial
           depthTest={false}

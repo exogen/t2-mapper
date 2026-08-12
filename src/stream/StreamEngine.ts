@@ -278,11 +278,17 @@ export abstract class StreamEngine implements StreamingPlayback {
   protected playerSensorGroup = 0;
 
   // ── Control object ──
-  protected lastStatus = { health: 1, energy: 1 };
+  protected lastStatus = { health: 1, energy: 1, heat: 0 };
   /** Client-predicted energy for the control player (absolute units).
    *  Simulated per tick like the real client (jet drain in updateMove,
    *  recharge in processTick) and snapped by control-sync corrections. */
   protected predictedEnergy: number | null = null;
+  /** Client-predicted heat signature (0..1). Binary-verified model from
+   *  Tribes2.exe Player code: while jetting, updateMove raises heat by
+   *  heatIncreasePerSec per second (full in 3s); when not jetting,
+   *  processTick decays it by heatDecayPerSec per second (clear in 4s).
+   *  Purely client-side — never corrected by the server. */
+  protected predictedHeat = 0;
   /** mRechargeRate from the latest control sync (per-object, script-set). */
   protected controlRechargeRate = 0;
   /** Identity of the last control data whose correction we applied. */
@@ -445,8 +451,9 @@ export abstract class StreamEngine implements StreamingPlayback {
     this.targetRenderFlags.clear();
     this.sensorGroupColors.clear();
     this.playerSensorGroup = 0;
-    this.lastStatus = { health: 1, energy: 1 };
+    this.lastStatus = { health: 1, energy: 1, heat: 0 };
     this.predictedEnergy = null;
+    this.predictedHeat = 0;
     this.controlRechargeRate = 0;
     this.lastEnergyCorrectionData = null;
     this.latestControl = { ghostIndex: -1 };
@@ -2038,6 +2045,7 @@ export abstract class StreamEngine implements StreamingPlayback {
       : undefined;
     if (!entity) {
       this.predictedEnergy = null;
+      this.predictedHeat = 0;
       return;
     }
     const maxEnergy = entity.maxEnergy ?? 60;
@@ -2071,6 +2079,23 @@ export abstract class StreamEngine implements StreamingPlayback {
     }
     energy += this.controlRechargeRate;
     this.predictedEnergy = clamp(energy, 0, maxEnergy);
+
+    // Heat signature: rises only while jetting, decays only while not
+    // (Player::processTick gates decay on the mJetting flag). Rates are
+    // per second; retail defaults are 1/3 (3s to full) and 1/4 (4s to
+    // clear) from player.cs.
+    const tickSec = TICK_DURATION_MS / 1000;
+    const heatIncreasePerSec =
+      getNumberField(blockData, ["heatIncreasePerSec"]) ?? 1 / 3;
+    const heatDecayPerSec =
+      getNumberField(blockData, ["heatDecayPerSec"]) ?? 0.25;
+    this.predictedHeat = clamp(
+      entity.jetting
+        ? this.predictedHeat + heatIncreasePerSec * tickSec
+        : this.predictedHeat - heatDecayPerSec * tickSec,
+      0,
+      1,
+    );
   }
 
   protected updateCameraAndHud(): void {
@@ -2296,8 +2321,8 @@ export abstract class StreamEngine implements StreamingPlayback {
       };
     }
 
-    // Health/energy status
-    const status = { health: 1, energy: 1 };
+    // Health/energy/heat status
+    const status = { health: 1, energy: 1, heat: 0 };
     if (this.camera?.mode === "first-person") {
       const controlGhostId = this.controlPlayerGhostId;
       const ghostEntity = controlGhostId
@@ -2314,6 +2339,7 @@ export abstract class StreamEngine implements StreamingPlayback {
       } else {
         status.energy = ghostEntity?.energy ?? 1;
       }
+      status.heat = this.predictedHeat;
     } else if (
       this.camera?.mode === "third-person" &&
       this.camera.orbitTargetId
@@ -2326,8 +2352,9 @@ export abstract class StreamEngine implements StreamingPlayback {
         this.predictedEnergy != null &&
         maxEnergy > 0
       ) {
-        // Orbiting our own player — the prediction still applies.
+        // Orbiting our own player — the predictions still apply.
         status.energy = clamp(this.predictedEnergy / maxEnergy, 0, 1);
+        status.heat = this.predictedHeat;
       } else {
         status.energy = orbitEntity?.energy ?? 1;
       }

@@ -119,8 +119,14 @@ export const InspectorControls = memo(function InspectorControls({
     invertJoystick,
     setInvertJoystick,
   } = useControls();
-  const { debugMode, setDebugMode, renderOnDemand, setRenderOnDemand } =
-    useDebug();
+  const {
+    debugMode,
+    setDebugMode,
+    renderOnDemand,
+    setRenderOnDemand,
+    showFpsMeter,
+    setShowFpsMeter,
+  } = useDebug();
   const [settingsOpen, setSettingsOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
@@ -516,6 +522,19 @@ export const InspectorControls = memo(function InspectorControls({
                 </div>
               </Accordion>
               <Accordion value="debug" label="Debug">
+                <div className={styles.CheckboxField}>
+                  <input
+                    id="fpsMeterInput"
+                    type="checkbox"
+                    checked={showFpsMeter}
+                    onChange={(event) => {
+                      setShowFpsMeter(event.target.checked);
+                    }}
+                  />
+                  <label className={styles.Label} htmlFor="fpsMeterInput">
+                    Show FPS meter
+                  </label>
+                </div>
                 <div className={styles.CheckboxField}>
                   <input
                     id="debugInput"

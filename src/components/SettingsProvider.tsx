@@ -62,6 +62,8 @@ type DebugContextType = {
   setDebugMode: StateSetter<boolean>;
   renderOnDemand: boolean;
   setRenderOnDemand: StateSetter<boolean>;
+  showFpsMeter: boolean;
+  setShowFpsMeter: StateSetter<boolean>;
 };
 
 type ControlsContextType = {
@@ -105,6 +107,7 @@ type PersistedSettings = {
   showChat?: boolean;
   showReticle?: boolean;
   showCompass?: boolean;
+  showFpsMeter?: boolean;
 };
 
 export function useSettings() {
@@ -162,6 +165,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   const [showReticle, setShowReticle] = useState(true);
   const [showCompass, setShowCompass] = useState(true);
   const [renderOnDemand, setRenderOnDemand] = useState(false);
+  const [showFpsMeter, setShowFpsMeter] = useState(false);
 
   const [fogEnabledOverride, setFogEnabledOverride] = useFogQueryState();
   const clearFogEnabledOverride = useCallback(() => {
@@ -235,8 +239,10 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       setDebugMode,
       renderOnDemand,
       setRenderOnDemand,
+      showFpsMeter,
+      setShowFpsMeter,
     }),
-    [debugMode, setDebugMode, renderOnDemand],
+    [debugMode, setDebugMode, renderOnDemand, showFpsMeter],
   );
 
   const controlsContext: ControlsContextType = useMemo(
@@ -282,6 +288,9 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     }
     if (savedSettings.debugMode != null) {
       setDebugMode(savedSettings.debugMode);
+    }
+    if (savedSettings.showFpsMeter != null) {
+      setShowFpsMeter(savedSettings.showFpsMeter);
     }
     if (savedSettings.audioEnabled != null) {
       setAudioEnabled(savedSettings.audioEnabled);
@@ -399,6 +408,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
         showChat,
         showReticle,
         showCompass,
+        showFpsMeter,
       };
       try {
         localStorage.setItem("settings", JSON.stringify(settingsToSave));
@@ -434,6 +444,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     showChat,
     showReticle,
     showCompass,
+    showFpsMeter,
   ]);
 
   return (

@@ -237,9 +237,9 @@ export function resolveShapeName(
     className.endsWith("ProjectileData")
   ) {
     value = data.projectileShapeName;
-  } else if (className === "DebrisData") {
-    value = data.shapeFileName;
   } else {
+    // DebrisData's shape also lives in `shapeName` (binary-verified; a
+    // previous parser field mislabel required a special case here).
     value = data.shapeName;
   }
   return typeof value === "string" && value.length > 0 ? value : undefined;

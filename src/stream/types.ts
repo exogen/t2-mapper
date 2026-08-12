@@ -314,7 +314,7 @@ export interface StreamSnapshot {
   controlPlayerGhostId?: string;
   /** Recording player's sensor group (team number). */
   playerSensorGroup: number;
-  status: { health: number; energy: number };
+  status: { health: number; energy: number; heat: number };
   chatMessages: ChatMessage[];
   /** One-shot audio events from Sim3DAudioEvent / Sim2DAudioEvent. */
   audioEvents: PendingAudioEvent[];
