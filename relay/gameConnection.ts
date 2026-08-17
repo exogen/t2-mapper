@@ -14,6 +14,7 @@ import {
   type ClientMoveData,
 } from "./protocol.js";
 import { BitStream } from "t2-demo-parser";
+import { BitStreamWriter } from "./BitStreamWriter.js";
 import { T2csriAuth, loadCredentials } from "./auth.js";
 import { connLog } from "./logger.js";
 import type { ConnectionStatus } from "./types.js";
@@ -23,10 +24,35 @@ import { computeGameCRC, type CRCDataBlock } from "./crc.js";
 // These must match what the server expects.
 const PROTOCOL_VERSION = 0x33; // 51 — from Tribes2.exe binary
 
-// Real T2 client sends at ~32ms tick rate. Using 32ms ensures the server
-// receives steady acks for guaranteed event delivery (datablock phase).
-const KEEPALIVE_INTERVAL_MS = 32;
+// Faithful reproduction of the real client's sender, binary-verified:
+//
+// NetConnection::checkPacketSend (Tribes2.exe FUN_005877e0) gates every
+// outgoing data packet on `now >= mLastUpdateTime + 0x400/PacketRateToServer`
+// — 32ms at the stock rate of 32pps (clamped [8, 32] by checkMaxRate,
+// FUN_00586650). All queued events and the tick's moves ride in that one
+// packet; the engine literally cannot send two data packets back-to-back.
+const PACKET_UPDATE_DELAY_MS = 32;
+// Stock $pref::Net::PacketSize. checkMaxRate clamps it to [200, 450] and
+// checkPacketSend allocates the packet stream at exactly this size, so
+// events that don't fit wait for the next send slot.
+const PACKET_SIZE = 450;
+// ConnectionProtocol::windowFull (FUN_0043d720): no sends while
+// lastSendSeq - highestAckedSeq > 0x1d, i.e. 30 packets unacked.
+const SEND_WINDOW = 30;
+// The engine calls checkPacketSend every frame; a fast timer approximates
+// that, with the 32ms gate above providing the actual pacing.
+const SEND_LOOP_INTERVAL_MS = 8;
+// While move batches have arrived this recently, the browser's tick drives
+// the send clock and the loop's empty keepalives stand down.
+const MOVE_STREAM_TIMEOUT_MS = 100;
 const CONNECT_TIMEOUT_MS = 30000;
+
+/** An event queued for (re)transmission, with its serialized size cached. */
+interface QueuedEvent {
+  seq: number;
+  event: ClientEvent;
+  size?: number;
+}
 
 interface GameConnectionEvents {
   status: [status: ConnectionStatus, message?: string];
@@ -59,13 +85,25 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
   private nextSendEventSeq = 0;
   private pendingEvents: ClientEvent[] = [];
   /** Events sent but not yet acked, keyed by packet sequence number. */
-  private sentEventsByPacket = new Map<
-    number,
-    { seq: number; event: ClientEvent }[]
-  >();
+  private sentEventsByPacket = new Map<number, QueuedEvent[]>();
   /** Events waiting to be sent (new or retransmitted from lost packets). */
-  private eventSendQueue: { seq: number; event: ClientEvent }[] = [];
+  private eventSendQueue: QueuedEvent[] = [];
   private stringTable = new ClientNetStringTable();
+  /**
+   * Mirror of mMaxRate.changed: a real client advertises its receive rate
+   * (T1/LAN: 32ms delay, 450 bytes) in its first data packet, re-flagged
+   * if that packet is lost (checkMaxRate sets it at construction).
+   */
+  private maxRateChanged = true;
+  /** Packet seqs that carried the maxRate advert, for loss recovery. */
+  private sentMaxRateByPacket = new Set<number>();
+  /** Mirror of NetConnection::mLastUpdateTime — the send-rate gate. */
+  private lastPacketSendTime = 0;
+  /** Moves staged for the next send slot (latest browser tick wins). */
+  private pendingMoves: ClientMoveData[] = [];
+  private pendingMoveStartIndex = 0;
+  /** When the last move batch arrived from the browser. */
+  private lastMoveArrivalTime = 0;
   private dataPacketCount = 0;
   private rawMessageCount = 0;
   private _mapName?: string;
@@ -537,6 +575,9 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
           "Auth: received pokeClient, sending certificate + challenge",
         );
         const result = this.auth.onPokeClient(args[0] || "", this.host);
+        // Queue everything — the send loop bundles as many events as fit
+        // per 450-byte packet at the 32ms rate, exactly like the engine.
+        // (QoL-patch servers' native auth silently rejects packet bursts.)
         for (const cmd of result.commands) {
           this.sendCommand(cmd.name, ...cmd.args);
         }
@@ -586,7 +627,7 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
     );
     const event = buildCRCChallengeResponseEvent(crcValue, field1, field2);
     this.pendingEvents.push(event);
-    this.flushEvents();
+    this.checkPacketSend();
   }
 
   /**
@@ -622,7 +663,7 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
       );
       const event = buildCRCChallengeResponseEvent(crc, totalSize, field2);
       this.pendingEvents.push(event);
-      this.flushEvents();
+      this.checkPacketSend();
     } catch (e) {
       connLog.error({ err: e }, "CRC computation failed");
     }
@@ -639,7 +680,7 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
     );
     const event = buildGhostingMessageEvent(sequence, 1, ghostCount);
     this.pendingEvents.push(event);
-    this.flushEvents();
+    this.checkPacketSend();
   }
 
   /** Send a commandToServer as a RemoteCommandEvent. */
@@ -650,19 +691,54 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
     );
     const events = buildRemoteCommandEvent(this.stringTable, command, ...args);
     this.pendingEvents.push(...events);
-    this.flushEvents();
+    this.checkPacketSend();
   }
 
-  /** Flush pending events in a data packet immediately. */
-  private flushEvents(): void {
-    if (this.pendingEvents.length === 0 && this.eventSendQueue.length === 0) {
+  /**
+   * Mirror of NetConnection::checkPacketSend (Tribes2.exe FUN_005877e0):
+   * called opportunistically whenever there's new work and continuously
+   * by the send loop. Gates on the send rate and the ack window, then
+   * emits ONE packet bundling staged moves plus queued events.
+   *
+   * While the browser's move stream is active, its 32ms tick is the only
+   * clock: empty keepalives are suppressed so every move batch finds the
+   * gate open and ships the moment it arrives — reproducing the engine's
+   * coupling of move generation to its send loop, without the relay's
+   * timer phase adding staging delay. Idle (menus, hidden tab), the send
+   * loop's keepalives keep the ack stream flowing.
+   */
+  private checkPacketSend(): void {
+    const now = Date.now();
+    if (now < this.lastPacketSendTime + PACKET_UPDATE_DELAY_MS) return;
+    const hasContent =
+      this.pendingMoves.length > 0 ||
+      this.pendingEvents.length > 0 ||
+      this.eventSendQueue.length > 0 ||
+      this.maxRateChanged;
+    if (
+      !hasContent &&
+      now - this.lastMoveArrivalTime < MOVE_STREAM_TIMEOUT_MS
+    ) {
       return;
     }
-    this.emitDataPacket([], 0);
+    const unacked =
+      (this.protocol.lastSendSeq - this.protocol.highestAckedSeq) >>> 0;
+    if (unacked >= SEND_WINDOW) return;
+    this.lastPacketSendTime = now;
+    const moves = this.pendingMoves;
+    const moveStartIndex = this.pendingMoveStartIndex;
+    this.pendingMoves = [];
+    this.emitDataPacket(moves, moveStartIndex);
   }
 
   /** Handle packet delivery notification from the protocol layer. */
   private handlePacketNotify(packetSeq: number, acked: boolean): void {
+    // Re-advertise the receive rate if the packet carrying it was lost
+    // (mirrors PacketNotify::maxRateChanged restoration).
+    if (this.sentMaxRateByPacket.delete(packetSeq) && !acked) {
+      this.maxRateChanged = true;
+    }
+
     const events = this.sentEventsByPacket.get(packetSeq);
     if (!events || events.length === 0) {
       this.sentEventsByPacket.delete(packetSeq);
@@ -707,9 +783,11 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
   }
 
   /**
-   * Send moves immediately to the game server.
-   * The browser owns move indices and re-sends all unacked moves each tick,
-   * just like real Tribes 2's moveWritePacket.
+   * Stage moves for the next send slot. The browser owns move indices and
+   * re-sends all unacked moves each tick (like moveWritePacket), so the
+   * latest call supersedes any still-staged batch. The opportunistic
+   * checkPacketSend sends immediately when the rate gate allows — the
+   * engine likewise sends the tick's moves in that tick's packet.
    */
   sendMoves(moves: ClientMoveData[], moveStartIndex: number): void {
     if (moves.length > 0) {
@@ -732,12 +810,28 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
         );
       }
     }
-    this.emitDataPacket(moves, moveStartIndex);
+    this.pendingMoves = moves;
+    this.pendingMoveStartIndex = moveStartIndex;
+    this.lastMoveArrivalTime = Date.now();
+    this.checkPacketSend();
+  }
+
+  /** Serialized size of an event in bytes, plus per-event header bits.
+   *  Cached on the queue entry — event contents never change once built,
+   *  and entries can sit through many send attempts. */
+  private measureEvent(entry: QueuedEvent): number {
+    if (entry.size == null) {
+      const bs = new BitStreamWriter(1500);
+      entry.event.write(bs);
+      entry.size = bs.getByteCount() + 2;
+    }
+    return entry.size;
   }
 
   /**
-   * Internal: build and send a data packet with moves and/or pending events.
-   * Used by both sendMoves (browser-initiated) and keepalive (idle).
+   * Internal: build and send ONE data packet with the staged moves and as
+   * many queued events as fit in the packet size budget. Only called via
+   * checkPacketSend, which owns the rate gate.
    */
   private emitDataPacket(
     moves: ClientMoveData[],
@@ -754,16 +848,41 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
       this.eventSendQueue.push({ seq, event });
     }
 
-    let events: { seq: number; event: ClientEvent }[] | undefined;
+    // Take events while they fit inside the packet size, like the engine's
+    // eventWritePacket against the fixed-size packet stream. Leftovers go
+    // in the next send slot. Header + moves are budgeted conservatively.
+    let events: QueuedEvent[] | undefined;
     if (this.eventSendQueue.length > 0) {
-      events = this.eventSendQueue.splice(0);
-      const packetSeq = this.protocol.lastSendSeq + 1;
-      this.sentEventsByPacket.set(packetSeq, events);
+      let budget = PACKET_SIZE - 24 - moves.length * 10;
+      const taken: QueuedEvent[] = [];
+      while (this.eventSendQueue.length > 0) {
+        const size = this.measureEvent(this.eventSendQueue[0]);
+        if (taken.length > 0 && size > budget) break;
+        budget -= size;
+        taken.push(this.eventSendQueue.shift()!);
+      }
+      events = taken;
+      this.sentEventsByPacket.set(nextSeqFull, events);
+    }
+
+    // Advertise our receive rate (T1/LAN max) until it's been delivered.
+    const advertiseMaxRate = this.maxRateChanged;
+    if (advertiseMaxRate) {
+      this.maxRateChanged = false;
+      this.sentMaxRateByPacket.add(nextSeqFull);
     }
 
     const packet = buildClientGamePacket(this.protocol, {
       moves,
       moveStartIndex,
+      ...(advertiseMaxRate
+        ? {
+            maxRate: {
+              updateDelay: PACKET_UPDATE_DELAY_MS,
+              packetSize: PACKET_SIZE,
+            },
+          }
+        : {}),
       ...(events
         ? {
             events: events.map((e) => e.event),
@@ -774,17 +893,17 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
     this.sendRaw(packet);
   }
 
-  /** Send an idle keepalive packet (no moves, but flushes pending events). */
-  private sendKeepalive(): void {
-    this.emitDataPacket([], 0);
-  }
-
-  /** Start keepalive timer. Sends idle packets when the browser isn't sending moves. */
+  /**
+   * Start the send loop — the analogue of the engine calling
+   * checkPacketSend every frame. The 32ms gate inside checkPacketSend
+   * provides the actual pacing; this just polls it, keeping the steady
+   * ack/keepalive stream flowing when the browser isn't sending moves.
+   */
   private startKeepalive(): void {
-    let keepaliveCount = 0;
+    let loopCount = 0;
     this.keepaliveTimer = setInterval(() => {
-      keepaliveCount++;
-      if (keepaliveCount % 300 === 0) {
+      loopCount++;
+      if (loopCount % 1200 === 0) {
         connLog.info(
           {
             dataPackets: this.dataPacketCount,
@@ -792,12 +911,13 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
             ourSeq: this.protocol.lastSendSeq,
             ourAck: this.protocol.lastSeqRecvd,
             theirAck: this.protocol.highestAckedSeq,
+            queuedEvents: this.eventSendQueue.length,
           },
           "Connection status",
         );
       }
-      this.sendKeepalive();
-    }, KEEPALIVE_INTERVAL_MS);
+      this.checkPacketSend();
+    }, SEND_LOOP_INTERVAL_MS);
   }
 
   /** Send raw bytes to the server. */

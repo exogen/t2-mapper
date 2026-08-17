@@ -44,6 +44,7 @@ import {
 } from "./streamHelpers";
 import type { Vec3 } from "./streamHelpers";
 import type {
+  ServerLoadInfo,
   BackpackHudState,
   ChatSegment,
   ChatMessage,
@@ -322,6 +323,7 @@ export abstract class StreamEngine implements StreamingPlayback {
     number,
     {
       name: string;
+      targetId?: number;
       teamId: number;
       score: number;
       ping: number;
@@ -334,6 +336,11 @@ export abstract class StreamEngine implements StreamingPlayback {
   protected clockDurationMs: number = 0;
 
   // ── Mission info (from server messages) ──
+  /** Completed server loading-screen info (set on MsgLoadInfoDone). */
+  serverLoadInfo: ServerLoadInfo | null = null;
+  /** Lines accumulating between MsgLoadInfo and MsgLoadInfoDone. */
+  private pendingLoadInfo: ServerLoadInfo | null = null;
+
   /** Mission display name (e.g. "Riverdance"), from MsgMissionDropInfo/MsgLoadInfo. */
   missionDisplayName: string | null = null;
   /** Game type display name (e.g. "Capture the Flag"), from MsgMissionDropInfo/MsgLoadInfo. */
@@ -434,6 +441,8 @@ export abstract class StreamEngine implements StreamingPlayback {
   }
 
   protected resetSharedState(): void {
+    this.serverLoadInfo = null;
+    this.pendingLoadInfo = null;
     this.clearAllEntities();
     this.tickCount = 0;
     this.camera = null;
@@ -860,23 +869,27 @@ export abstract class StreamEngine implements StreamingPlayback {
             soundPitch,
           });
         }
-      } else if (funcName === "ServerMessage" && args.length >= 2) {
+      } else if (funcName === "ServerMessage" && args.length >= 1) {
+        // Some messages carry only a type and no format string (e.g.
+        // MsgLoadInfoDone) — dispatch them, but skip the chat path.
         this.handleServerMessage(args);
-        const rawTemplate = this.resolveNetString(args[1]);
-        const serverColorCode = detectColorCode(rawTemplate);
-        const rawText = this.formatRemoteArgs(args[1], args.slice(2));
-        if (rawText) {
-          const { text, wavPath } = extractWavTag(rawText);
-          const scc = serverColorCode ?? 0;
-          this.pushChatMessage({
-            timeSec,
-            sender: "",
-            text,
-            kind: "server",
-            colorCode: scc,
-            segments: [{ text, colorCode: scc }],
-            soundPath: wavPath ?? undefined,
-          });
+        if (args.length >= 2) {
+          const rawTemplate = this.resolveNetString(args[1]);
+          const serverColorCode = detectColorCode(rawTemplate);
+          const rawText = this.formatRemoteArgs(args[1], args.slice(2));
+          if (rawText) {
+            const { text, wavPath } = extractWavTag(rawText);
+            const scc = serverColorCode ?? 0;
+            this.pushChatMessage({
+              timeSec,
+              sender: "",
+              text,
+              kind: "server",
+              colorCode: scc,
+              segments: [{ text, colorCode: scc }],
+              soundPath: wavPath ?? undefined,
+            });
+          }
         }
       } else {
         this.handleHudRemoteCommand(funcName, args);
@@ -2407,7 +2420,7 @@ export abstract class StreamEngine implements StreamingPlayback {
   }
 
   protected handleServerMessage(args: string[]): void {
-    if (args.length < 2) return;
+    if (args.length < 1) return;
     const msgType = this.resolveNetString(args[0]);
 
     if (
@@ -2428,20 +2441,64 @@ export abstract class StreamEngine implements StreamingPlayback {
       // args[4]=flagStatus, args[5]=teamScore
       const teamId = parseInt(this.resolveNetString(args[2]), 10);
       const teamName = stripTaggedStringMarkup(this.resolveNetString(args[3]));
+      // $flagStatus[team]: "<At Base>", "<In the Field>", or carrier name.
+      const statusText = stripTaggedStringMarkup(
+        this.resolveNetString(args[4]),
+      );
+      const flagStatus = statusText.startsWith("<At Base")
+        ? ("home" as const)
+        : statusText.startsWith("<In the Field")
+          ? ("field" as const)
+          : statusText
+            ? ("held" as const)
+            : ("home" as const);
       const score = parseInt(this.resolveNetString(args[5]), 10);
+      const flagCarrier =
+        flagStatus === "held" ? statusText.trim() || undefined : undefined;
       if (!isNaN(teamId) && teamId > 0) {
         const existing = this.teamScores.find((t) => t.teamId === teamId);
         if (existing) {
           existing.name = teamName;
           existing.score = isNaN(score) ? existing.score : score;
+          existing.flagStatus = flagStatus;
+          existing.flagCarrier = flagCarrier;
         } else {
           this.teamScores.push({
             teamId,
             name: teamName,
             score: isNaN(score) ? 0 : score,
             playerCount: 0,
+            flagStatus,
+            flagCarrier,
           });
         }
+        this.onTeamScoresChanged();
+      }
+    } else if (
+      (msgType === "MsgCTFFlagTaken" ||
+        msgType === "MsgCTFFlagDropped" ||
+        msgType === "MsgCTFFlagReturned" ||
+        msgType === "MsgCTFFlagCapped") &&
+      args.length >= 5
+    ) {
+      // CTFGame.cs sends %flag.team as %3 for all four flag events.
+      const teamId = parseInt(this.resolveNetString(args[4]), 10);
+      const entry = this.teamScores.find((t) => t.teamId === teamId);
+      if (entry) {
+        entry.flagStatus =
+          msgType === "MsgCTFFlagTaken"
+            ? "held"
+            : msgType === "MsgCTFFlagDropped"
+              ? "field"
+              : "home";
+        // %1 is the acting client's name in every MsgCTFFlagTaken variant
+        // (only drop/cap self-directed variants pass 0, and those clear
+        // the carrier anyway).
+        const actor = stripTaggedStringMarkup(
+          this.resolveNetString(args[2]),
+        ).trim();
+        entry.flagCarrier =
+          entry.flagStatus === "held" && actor ? actor : undefined;
         this.onTeamScoresChanged();
       }
     } else if (msgType === "MsgClientJoin" && args.length >= 4) {
@@ -2450,11 +2507,13 @@ export abstract class StreamEngine implements StreamingPlayback {
         this.resolveNetString(args[2]),
       ).trim();
       const clientId = parseInt(this.resolveNetString(args[3]), 10);
+      const joinTargetId = parseInt(this.resolveNetString(args[4] ?? ""), 10);
       if (!isNaN(clientId)) {
         // The real client (message.cs handleClientJoin) creates a fresh
         // ScriptObject with score=0, overwriting any previous entry.
         this.playerRoster.set(clientId, {
           name,
+          targetId: isNaN(joinTargetId) ? undefined : joinTargetId,
           teamId: 0,
           score: 0,
           ping: 0,
@@ -2566,7 +2625,30 @@ export abstract class StreamEngine implements StreamingPlayback {
       this.missionDisplayName = missionDisplayName || this.missionDisplayName;
       this.missionTypeDisplayName =
         missionTypeDisplayName || this.missionTypeDisplayName;
+      // Loading-screen text for this mission follows (quote, objectives,
+      // rules), terminated by MsgLoadInfoDone.
+      this.pendingLoadInfo = {
+        quoteLines: [],
+        objectiveLines: [],
+        rulesLines: [],
+      };
       this.onMissionInfoChange?.();
+    } else if (msgType === "MsgLoadQuoteLine" && args.length >= 3) {
+      this.pendingLoadInfo?.quoteLines.push(this.resolveNetString(args[2]));
+    } else if (msgType === "MsgLoadObjectiveLine" && args.length >= 3) {
+      this.pendingLoadInfo?.objectiveLines.push(this.resolveNetString(args[2]));
+    } else if (msgType === "MsgLoadRulesLine" && args.length >= 3) {
+      this.pendingLoadInfo?.rulesLines.push(this.resolveNetString(args[2]));
+    } else if (msgType === "MsgLoadInfoDone") {
+      if (this.pendingLoadInfo) {
+        const { quoteLines, objectiveLines, rulesLines } = this.pendingLoadInfo;
+        this.serverLoadInfo =
+          quoteLines.length || objectiveLines.length || rulesLines.length
+            ? this.pendingLoadInfo
+            : null;
+        this.pendingLoadInfo = null;
+        this.onMissionInfoChange?.();
+      }
     } else if (msgType === "MsgClientReady" && args.length >= 3) {
       // messageClient(%cl, 'MsgClientReady', "", %game.class)
       const gameClassName = this.resolveNetString(args[2]);
@@ -2716,6 +2798,8 @@ export abstract class StreamEngine implements StreamingPlayback {
         skinName: entity.skinName,
         skinPrefName: entity.skinPrefName,
         targetRenderFlags: renderFlags,
+        targetId: entity.targetId,
+        teamId: entity.sensorGroup,
         iffColor:
           (entity.type === "Player" || ((renderFlags ?? 0) & 0x2) !== 0) &&
           entity.sensorGroup != null
@@ -2782,6 +2866,39 @@ export abstract class StreamEngine implements StreamingPlayback {
     return -this.clockDurationMs + elapsedMs;
   }
 
+  /**
+   * Attach each team's flag skin from the target table. A flag target is
+   * exactly a target with the flag render bit (0x2, set only by CTF flag
+   * code) that is NOT a client's target — carriers get the bit on their
+   * own target while holding. Client targets are excluded via the roster
+   * (MsgClientJoin carries each client's targetId; covers unscoped
+   * players in live) unioned with scoped Player entities (covers demos,
+   * whose initial roster comes from the PLAYERLIST HUD state without
+   * targetIds). The flag target's sensor group IS the flag's team
+   * (CTFGame.cs setTargetSensorGroup) and its skin the team skin, and it
+   * outlives the flag item ghost while carried — no name matching.
+   */
+  protected attachTeamFlagSkins(teamScores: TeamScore[]): void {
+    const clientTargetIds = new Set<number>();
+    for (const entry of this.playerRoster.values()) {
+      if (entry.targetId != null) clientTargetIds.add(entry.targetId);
+    }
+    for (const entity of this.entities.values()) {
+      if (entity.type === "Player" && entity.targetId != null) {
+        clientTargetIds.add(entity.targetId);
+      }
+    }
+    for (const [targetId, renderFlags] of this.targetRenderFlags) {
+      if ((renderFlags & 0x2) === 0) continue;
+      if (clientTargetIds.has(targetId)) continue;
+      const teamId = this.targetTeams.get(targetId);
+      const skin = this.targetSkins.get(targetId);
+      if (teamId == null || !skin) continue;
+      const ts = teamScores.find((t) => t.teamId === teamId);
+      if (ts) ts.skinName = skin.toLowerCase();
+    }
+  }
+
   /** Build HUD arrays for snapshot. */
   protected buildHudState(): {
     weaponsHud: { slots: WeaponsHudSlot[]; activeIndex: number };
@@ -2808,6 +2925,7 @@ export abstract class StreamEngine implements StreamingPlayback {
       this.backpackHud.packIndex >= 0 ? { ...this.backpackHud } : null;
 
     const teamScores = this.teamScores.map((ts) => ({ ...ts }));
+    this.attachTeamFlagSkins(teamScores);
     const teamCounts = new Map<number, number>();
     for (const { teamId } of this.playerRoster.values()) {
       if (teamId > 0) teamCounts.set(teamId, (teamCounts.get(teamId) ?? 0) + 1);

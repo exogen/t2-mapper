@@ -49,7 +49,7 @@ export const DEMO_MODE_INPUT = [
 ] as const satisfies readonly InputMapEntry[];
 
 export const LIVE_OBSERVER_INPUT = [
-  { name: "toggleObserverMode", keys: ["Space"] },
+  { name: "toggleObserverMode", keys: ["KeyF"] },
 ] as const satisfies readonly InputMapEntry[];
 
 export const LIVE_FOLLOW_INPUT = [
@@ -70,6 +70,24 @@ export const TOUR_MODE_INPUT = [
  */
 export const COMMAND_CIRCUIT_TOGGLE_INPUT = [
   { name: "toggleCommandCircuit", keys: ["KeyC"] },
+] as const satisfies readonly InputMapEntry[];
+
+/**
+ * Follow ↔ free-fly toggle while command circuit mode is active during
+ * streaming (demo playback or live). Space is taken by play/pause in
+ * demos, so F it is — and in live mode the observer's own F toggle is
+ * unmounted while the command circuit is open.
+ */
+export const COMMAND_CIRCUIT_STREAM_INPUT = [
+  { name: "toggleCommandFollow", keys: ["KeyF"] },
+] as const satisfies readonly InputMapEntry[];
+
+/**
+ * Next observed player inside the live command circuit view — the real
+ * client's follow-mode fire trigger, like the non-CC observer click.
+ */
+export const COMMAND_CIRCUIT_LIVE_INPUT = [
+  { name: "observeNextPlayer", keys: ["ArrowRight"] },
 ] as const satisfies readonly InputMapEntry[];
 
 /**
@@ -98,4 +116,6 @@ export type ActionName =
   | (typeof LIVE_FOLLOW_INPUT)[number]["name"]
   | (typeof TOUR_MODE_INPUT)[number]["name"]
   | (typeof COMMAND_CIRCUIT_TOGGLE_INPUT)[number]["name"]
+  | (typeof COMMAND_CIRCUIT_STREAM_INPUT)[number]["name"]
+  | (typeof COMMAND_CIRCUIT_LIVE_INPUT)[number]["name"]
   | (typeof COMMAND_CIRCUIT_INPUT)[number]["name"];

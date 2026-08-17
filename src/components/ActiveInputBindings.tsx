@@ -13,6 +13,8 @@ import {
   LIVE_FOLLOW_INPUT,
   TOUR_MODE_INPUT,
   COMMAND_CIRCUIT_TOGGLE_INPUT,
+  COMMAND_CIRCUIT_STREAM_INPUT,
+  COMMAND_CIRCUIT_LIVE_INPUT,
   COMMAND_CIRCUIT_INPUT,
 } from "./inputMap";
 
@@ -49,14 +51,22 @@ export function ActiveInputBindings() {
       {isMap && !isTourActive && !isCommandCircuit && (
         <InputBindings map={MAP_MODE_INPUT} />
       )}
-      {isMap && !isTourActive && (
-        <InputBindings map={COMMAND_CIRCUIT_TOGGLE_INPUT} />
-      )}
+      {!isTourActive && <InputBindings map={COMMAND_CIRCUIT_TOGGLE_INPUT} />}
       {isCommandCircuit && !isTourActive && (
         <InputBindings map={COMMAND_CIRCUIT_INPUT} />
       )}
+      {isCommandCircuit && !isTourActive && (isDemo || isLive) && (
+        <InputBindings map={COMMAND_CIRCUIT_STREAM_INPUT} />
+      )}
+      {isCommandCircuit && !isTourActive && isLive && (
+        <InputBindings map={COMMAND_CIRCUIT_LIVE_INPUT} />
+      )}
       {isDemo && <InputBindings map={DEMO_MODE_INPUT} />}
-      {isLive && <InputBindings map={LIVE_OBSERVER_INPUT} />}
+      {/* Observer fly/follow toggle shares F with the CC follow toggle —
+          only one is mounted at a time. */}
+      {isLive && !isCommandCircuit && (
+        <InputBindings map={LIVE_OBSERVER_INPUT} />
+      )}
       {isLive && inputMode === "follow" && (
         <InputBindings map={LIVE_FOLLOW_INPUT} />
       )}

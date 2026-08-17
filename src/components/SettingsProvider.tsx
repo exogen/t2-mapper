@@ -12,6 +12,19 @@ import {
 } from "react";
 import { useFogQueryState } from "./useQueryParams";
 import { useTouchDevice } from "./useTouchDevice";
+import {
+  DEFAULT_TEAM_COLOR_SCHEME,
+  TEAM_COLOR_SCHEMES,
+  type TeamColorScheme,
+} from "./iffTheme";
+
+/** When to show player names under command circuit dot markers. */
+export type CcPlayerNames = "always" | "hover" | "never";
+const CC_PLAYER_NAMES_VALUES: readonly CcPlayerNames[] = [
+  "always",
+  "hover",
+  "never",
+];
 import { setAdjustAudioSpeedFlag } from "./audioPlaybackRate";
 
 export const MIN_SPEED_MULTIPLIER = 0.01;
@@ -55,6 +68,12 @@ type SettingsContextType = {
   setShowReticle: StateSetter<boolean>;
   showCompass: boolean;
   setShowCompass: StateSetter<boolean>;
+  /** Team color scheme used when spectating from the observer "team". */
+  observerTeamColors: TeamColorScheme;
+  setObserverTeamColors: StateSetter<TeamColorScheme>;
+  /** Player names under command circuit dot markers. */
+  ccPlayerNames: CcPlayerNames;
+  setCcPlayerNames: StateSetter<CcPlayerNames>;
 };
 
 type DebugContextType = {
@@ -108,6 +127,8 @@ type PersistedSettings = {
   showReticle?: boolean;
   showCompass?: boolean;
   showFpsMeter?: boolean;
+  observerTeamColors?: TeamColorScheme;
+  ccPlayerNames?: CcPlayerNames;
 };
 
 export function useSettings() {
@@ -164,6 +185,10 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   const [showChat, setShowChat] = useState(true);
   const [showReticle, setShowReticle] = useState(true);
   const [showCompass, setShowCompass] = useState(true);
+  const [observerTeamColors, setObserverTeamColors] = useState<TeamColorScheme>(
+    DEFAULT_TEAM_COLOR_SCHEME,
+  );
+  const [ccPlayerNames, setCcPlayerNames] = useState<CcPlayerNames>("always");
   const [renderOnDemand, setRenderOnDemand] = useState(false);
   const [showFpsMeter, setShowFpsMeter] = useState(false);
 
@@ -211,6 +236,10 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       setShowReticle,
       showCompass,
       setShowCompass,
+      observerTeamColors,
+      setObserverTeamColors,
+      ccPlayerNames,
+      setCcPlayerNames,
     }),
     [
       fogEnabled,
@@ -230,6 +259,8 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       showChat,
       showReticle,
       showCompass,
+      observerTeamColors,
+      ccPlayerNames,
     ],
   );
 
@@ -362,6 +393,18 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     if (savedSettings.showCompass != null) {
       setShowCompass(savedSettings.showCompass);
     }
+    if (
+      savedSettings.observerTeamColors != null &&
+      savedSettings.observerTeamColors in TEAM_COLOR_SCHEMES
+    ) {
+      setObserverTeamColors(savedSettings.observerTeamColors);
+    }
+    if (
+      savedSettings.ccPlayerNames != null &&
+      CC_PLAYER_NAMES_VALUES.includes(savedSettings.ccPlayerNames)
+    ) {
+      setCcPlayerNames(savedSettings.ccPlayerNames);
+    }
     if (savedSettings.sidebarOpen != null) {
       // Don't restore on touch devices!
       if (!isTouch) {
@@ -409,6 +452,8 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
         showReticle,
         showCompass,
         showFpsMeter,
+        observerTeamColors,
+        ccPlayerNames,
       };
       try {
         localStorage.setItem("settings", JSON.stringify(settingsToSave));
@@ -445,6 +490,8 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     showReticle,
     showCompass,
     showFpsMeter,
+    observerTeamColors,
+    ccPlayerNames,
   ]);
 
   return (

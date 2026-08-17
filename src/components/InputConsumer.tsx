@@ -9,6 +9,7 @@ import {
 import { useEngineStoreApi } from "../state/engineStore";
 import { streamPlaybackStore } from "../state/streamPlaybackStore";
 import { gameEntityStore } from "../state/gameEntityStore";
+import { cameraRegistry } from "../state/cameraRegistry";
 import { useInputContext } from "./InputContext";
 import { useTick, useGetTickFraction } from "./TickProvider";
 import { yawPitchToQuaternion, MAX_PITCH } from "../stream/streamHelpers";
@@ -612,9 +613,16 @@ export function InputConsumer() {
 
     if (!predInitialized.current) return;
 
+    // The observer pose belongs on the PERSPECTIVE camera. While command
+    // circuit mode is active the default camera is the CC ortho — writing
+    // the pose there stomps the camera the CC markers project through
+    // (the rig re-fixes it before render, masking the corruption from
+    // everything except the screen-space indicators).
+    const liveCamera = cameraRegistry.perspective ?? state.camera;
+
     if (mode === "fly") {
       applyFlyCamera(
-        state.camera,
+        liveCamera,
         prevPos.current,
         predPos.current,
         predYaw.current,
@@ -624,7 +632,7 @@ export function InputConsumer() {
     } else if (mode === "follow") {
       if (!orbitTargetInitialized.current) return;
       applyOrbitCamera(
-        state.camera,
+        liveCamera,
         prevOrbitTargetPos.current,
         currentOrbitTargetPos.current,
         predYaw.current,

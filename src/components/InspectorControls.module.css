@@ -81,10 +81,6 @@
   margin-top: 16px;
 }
 
-.Field select {
-  margin-bottom: 6px;
-}
-
 .Field input[type="range"] {
   max-width: 100px;
 }
@@ -114,6 +110,7 @@
 .Field .Description {
   grid-column: 1 / -1;
   grid-row: 2;
+  margin-top: 4px;
 }
 
 .RadioLabel {

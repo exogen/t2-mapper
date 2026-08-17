@@ -4,6 +4,7 @@ import { useFrame, useThree } from "@react-three/fiber";
 import type { Object3D } from "three";
 import { anchorPlacement, type ScreenAnchor } from "./screenAnchor";
 import { ScreenRectTracker } from "./screenRectTracker";
+import { resolveRootState } from "./r3fRootState";
 
 /**
  * A DOM label positioned against the target object's projected screen-space
@@ -52,6 +53,9 @@ export function ScreenSpaceLabel({
     el.style.pointerEvents = "none";
     el.style.willChange = "transform";
     el.style.display = "none";
+    // Above sibling overlays with auto stacking (e.g. the flag callout's
+    // circle/leader) so marker dots and names are never obscured.
+    el.style.zIndex = "1";
     gl.domElement.parentElement?.appendChild(el);
     const root = createRoot(el);
     elRef.current = el;
@@ -73,9 +77,14 @@ export function ScreenSpaceLabel({
   const trackerRef = useRef<ScreenRectTracker | null>(null);
   const lastTransform = useRef("");
 
-  useFrame(({ camera, scene, size }) => {
+  useFrame((state) => {
     const el = elRef.current;
     if (!el) return;
+    // Inside an r3f portal (e.g. a marker whose player is portaled into a
+    // vehicle's mount bone), the injected state carries the portal
+    // container as `scene` and a camera snapshot that misses later
+    // makeDefault switches (like the command circuit's ortho camera).
+    const { camera, scene, size } = resolveRootState(state);
     const tracker = (trackerRef.current ??= new ScreenRectTracker());
     const root = tracker.resolveTarget(object, objectName, scene);
     if (!root) {

@@ -4,6 +4,7 @@ import { useFrame } from "@react-three/fiber";
 import { Html } from "@react-three/drei";
 import { useCommandCircuit } from "../state/commandCircuitStore";
 import { useCameraTour } from "../state/cameraTourStore";
+import { resolveRootState } from "./r3fRootState";
 import styles from "./FloatingLabel.module.css";
 
 const DEFAULT_POSITION = [0, 0, 0] as [x: number, y: number, z: number];
@@ -65,7 +66,12 @@ export function useFloatingLabelFade({
   const tourActive = useCameraTour((s) => s.animation !== null);
   const suppressed = commandCircuitActive && tourActive;
 
-  useFrame(({ camera }) => {
+  useFrame((state) => {
+    // Resolve the root store's camera: inside an r3f portal (e.g. a
+    // nameplate on a player mounted in a vehicle) the portal state's
+    // camera snapshot misses later makeDefault switches, which would keep
+    // labels fading against the wrong camera.
+    const { camera } = resolveRootState(state);
     if (suppressed) {
       if (isVisible) setIsVisible(false);
       opacityRef.current = "0";

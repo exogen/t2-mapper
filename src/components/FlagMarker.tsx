@@ -3,11 +3,15 @@ import { useFrame, useThree } from "@react-three/fiber";
 import { Html } from "@react-three/drei";
 import { Group, Vector3 } from "three";
 import { textureToUrl } from "../loaders";
-
-interface FlagEntity {
-  id: string;
-  iffColor?: { r: number; g: number; b: number };
-}
+import { resolveFlagTeam } from "./flagTeam";
+import {
+  IFF_NEUTRAL,
+  isObserverView,
+  resolveIffDisplay,
+  rgbString,
+} from "./iffTheme";
+import { useSettings } from "./SettingsProvider";
+import type { GameEntity } from "../state/gameEntityTypes";
 import styles from "./FlagMarker.module.css";
 
 const FLAG_ICON_HEIGHT = 1.5;
@@ -20,7 +24,8 @@ const _tmpVec = new Vector3();
  * friendly, red for enemy — matching Tribes 2's sensor group color system).
  * Always visible regardless of distance.
  */
-export function FlagMarker({ entity }: { entity: FlagEntity }) {
+export function FlagMarker({ entity }: { entity: GameEntity }) {
+  const { observerTeamColors } = useSettings();
   const markerRef = useRef<Group>(null);
   const iconRef = useRef<HTMLDivElement>(null);
   const distRef = useRef<HTMLSpanElement>(null);
@@ -30,13 +35,33 @@ export function FlagMarker({ entity }: { entity: FlagEntity }) {
   const lastDistRef = useRef("");
 
   useFrame(() => {
-    // Tint imperatively — iffColor is mutated in-place by streaming
-    // playback. Both DOM writes are change-gated to avoid per-frame
-    // string allocation and style/layout invalidation.
-    if (iconRef.current && entity.iffColor) {
-      const { r, g, b } = entity.iffColor;
-      const color = `rgb(${r},${g},${b})`;
-      if (color !== lastColorRef.current) {
+    // Tint imperatively — affiliation fields are mutated in-place by
+    // streaming playback. Teamed viewers get the friend/foe theme
+    // constants (iffColor only classifies the side); observers tint by
+    // the (carried) flag's team via the theme. Both DOM writes are
+    // change-gated to avoid per-frame string allocation and style/layout
+    // invalidation.
+    if (iconRef.current) {
+      let color: string | null = null;
+      if (isObserverView()) {
+        const { teamId } = resolveFlagTeam(entity);
+        color = rgbString(
+          resolveIffDisplay(
+            { teamId: teamId ?? undefined },
+            true,
+            observerTeamColors,
+          ).color,
+        );
+      } else if ("iffColor" in entity && entity.iffColor) {
+        color = rgbString(
+          resolveIffDisplay(
+            { iffColor: entity.iffColor },
+            false,
+            observerTeamColors,
+          ).color,
+        );
+      }
+      if (color != null && color !== lastColorRef.current) {
         lastColorRef.current = color;
         iconRef.current.style.backgroundColor = color;
       }
@@ -52,9 +77,13 @@ export function FlagMarker({ entity }: { entity: FlagEntity }) {
     }
   });
 
-  const initialColor = entity.iffColor
-    ? `rgb(${entity.iffColor.r},${entity.iffColor.g},${entity.iffColor.b})`
-    : "rgb(200,200,200)";
+  const initialIff = "iffColor" in entity ? entity.iffColor : undefined;
+  const initialColor = rgbString(
+    initialIff
+      ? resolveIffDisplay({ iffColor: initialIff }, false, observerTeamColors)
+          .color
+      : IFF_NEUTRAL.color,
+  );
 
   return (
     <group ref={markerRef}>

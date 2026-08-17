@@ -2,7 +2,13 @@ import { useEffect, useRef, useState } from "react";
 import { FaVolumeUp, FaVolumeMute } from "react-icons/fa";
 import { useQuery } from "@tanstack/react-query";
 import { loadMission, getUrlForPath, RESOURCE_ROOT_URL } from "../loaders";
-import { getStandardTextureResourceKey } from "../manifest";
+import { getStandardTextureResourceKey, hasMission } from "../manifest";
+import {
+  useDataSource,
+  useMissionDisplayName,
+  useMissionName,
+} from "../state/gameEntityStore";
+import { useStreamSnapshot } from "../state/streamSnapshotStore";
 import {
   GuiMarkup,
   filterMissionStringByMode,
@@ -11,10 +17,11 @@ import {
 import type * as AST from "../torqueScript/ast";
 import styles from "./MapInfoDialog.module.css";
 
-function useParsedMission(name: string) {
+function useParsedMission(name: string, enabled: boolean) {
   return useQuery({
     queryKey: ["parsedMission", name],
     queryFn: () => loadMission(name),
+    enabled,
   });
 }
 
@@ -176,7 +183,22 @@ export function MapInfoDialog({
   missionName: string;
   missionType: string;
 }) {
-  const { data: parsedMission } = useParsedMission(missionName);
+  // While streaming, the missionName prop (synced from the URL) only
+  // matches the actual map when it exists in our manifest — use the
+  // server-reported name instead. For maps missing from the library,
+  // fall back to the loading-screen info the server sent at join.
+  const dataSource = useDataSource();
+  const storeMissionName = useMissionName();
+  const storeDisplayName = useMissionDisplayName();
+  const serverLoadInfo = useStreamSnapshot((s) => s?.loadInfo ?? null);
+  const hasStreamData = dataSource === "demo" || dataSource === "live";
+  const effectiveMissionName =
+    (hasStreamData ? storeMissionName : missionName) ?? missionName;
+  const missionInManifest = hasMission(effectiveMissionName);
+  const { data: parsedMission } = useParsedMission(
+    effectiveMissionName,
+    missionInManifest,
+  );
   const dialogRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -214,9 +236,17 @@ export function MapInfoDialog({
     ? getMissionGroupProps(parsedMission.ast)
     : {};
   const bitmapUrl = parsedMission
-    ? getBitmapUrl(parsedMission.bitmap, missionName)
+    ? getBitmapUrl(parsedMission.bitmap, effectiveMissionName)
     : null;
-  const displayName = parsedMission?.displayName ?? missionName;
+  const displayName =
+    parsedMission?.displayName ?? storeDisplayName ?? effectiveMissionName;
+  // Server-sent loading-screen text stands in when the map isn't in our
+  // library (the local .mis parse is richer when we have it).
+  // Server-sent loading-screen text is authoritative when present (it
+  // reflects the server's copy of the map); the local .mis parse fills
+  // the gaps (preview image, planet, music) and stands in entirely when
+  // no server info exists (explore mode, demos recorded mid-mission).
+  const serverInfo = serverLoadInfo;
   const typeKey = missionType.toLowerCase();
   const isSinglePlayer = typeKey === "singleplayer";
 
@@ -274,7 +304,11 @@ export function MapInfoDialog({
               )}
             </div>
 
-            {quoteHasMarkup ? (
+            {serverInfo && serverInfo.quoteLines.length > 0 ? (
+              <blockquote className={styles.MapQuote}>
+                <GuiMarkup markup={serverInfo.quoteLines.join("\n")} />
+              </blockquote>
+            ) : quoteHasMarkup ? (
               <blockquote className={styles.MapQuote}>
                 <GuiMarkup markup={rawQuote} />
               </blockquote>
@@ -285,19 +319,32 @@ export function MapInfoDialog({
               </blockquote>
             ) : null}
 
-            {parsedMission?.missionBlurb && (
-              <div className={styles.MapBlurb}>
-                {hasGuiMarkup(parsedMission.missionBlurb) ? (
-                  <GuiMarkup markup={parsedMission.missionBlurb.trim()} />
-                ) : (
-                  parsedMission.missionBlurb.trim()
-                )}
+            {serverInfo && serverInfo.objectiveLines.length > 0 ? (
+              <div className={styles.Section}>
+                <GuiMarkup markup={serverInfo.objectiveLines.join("\n")} />
               </div>
+            ) : (
+              <>
+                {parsedMission?.missionBlurb && (
+                  <div className={styles.MapBlurb}>
+                    {hasGuiMarkup(parsedMission.missionBlurb) ? (
+                      <GuiMarkup markup={parsedMission.missionBlurb.trim()} />
+                    ) : (
+                      parsedMission.missionBlurb.trim()
+                    )}
+                  </div>
+                )}
+                {missionString && missionString.trim() && (
+                  <div className={styles.Section}>
+                    <GuiMarkup markup={missionString} />
+                  </div>
+                )}
+              </>
             )}
 
-            {missionString && missionString.trim() && (
+            {serverInfo && serverInfo.rulesLines.length > 0 && (
               <div className={styles.Section}>
-                <GuiMarkup markup={missionString} />
+                <GuiMarkup markup={serverInfo.rulesLines.join("\n")} />
               </div>
             )}
 

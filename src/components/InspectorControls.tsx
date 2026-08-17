@@ -4,6 +4,7 @@ import {
   useControls,
   useDebug,
   useSettings,
+  type CcPlayerNames,
   type TouchMode,
 } from "./SettingsProvider";
 import { CopyCoordinatesButton } from "./CopyCoordinatesButton";
@@ -28,6 +29,8 @@ import { ChooseMapButton } from "./ChooseMapButton";
 import { MapInfoButton } from "./MapInfoButton";
 import { ShowScoresButton } from "./ShowScoresButton";
 import { DebugEntityList } from "./DebugEntityList";
+import { DebugNetworkInfo } from "./DebugNetworkInfo";
+import { TEAM_COLOR_SCHEMES, type TeamColorScheme } from "./iffTheme";
 import buttonStyles from "./Button.module.css";
 import styles from "./InspectorControls.module.css";
 
@@ -104,6 +107,10 @@ export const InspectorControls = memo(function InspectorControls({
     setShowReticle,
     showCompass,
     setShowCompass,
+    observerTeamColors,
+    setObserverTeamColors,
+    ccPlayerNames,
+    setCcPlayerNames,
   } = useSettings();
   const {
     speedMultiplier,
@@ -417,6 +424,52 @@ export const InspectorControls = memo(function InspectorControls({
                     Show input overlay
                   </label>
                 </div>
+                <div className={styles.Field}>
+                  <label htmlFor="ccPlayerNamesInput">
+                    Show names in command circuit
+                  </label>
+                  <div className={styles.Control}>
+                    <select
+                      id="ccPlayerNamesInput"
+                      value={ccPlayerNames}
+                      onChange={(event) => {
+                        setCcPlayerNames(event.target.value as CcPlayerNames);
+                      }}
+                    >
+                      <option value="always">Always</option>
+                      <option value="hover">On hover</option>
+                      <option value="never">Never</option>
+                    </select>
+                  </div>
+                </div>
+                <div className={styles.Field}>
+                  <label htmlFor="observerTeamColorsInput">
+                    Observer team colors
+                  </label>
+                  <div className={styles.Control}>
+                    <select
+                      id="observerTeamColorsInput"
+                      value={observerTeamColors}
+                      onChange={(event) => {
+                        setObserverTeamColors(
+                          event.target.value as TeamColorScheme,
+                        );
+                      }}
+                    >
+                      {Object.entries(TEAM_COLOR_SCHEMES).map(
+                        ([value, scheme]) => (
+                          <option key={value} value={value}>
+                            {scheme.label}
+                          </option>
+                        ),
+                      )}
+                    </select>
+                  </div>
+                  <p className={styles.Description}>
+                    Colors that will be used to distinguish teams
+                    (Storm&thinsp;/&thinsp;Inferno) when spectating.
+                  </p>
+                </div>
               </Accordion>
               <Accordion value="audio" label="Audio">
                 <div className={styles.CheckboxField}>
@@ -575,6 +628,7 @@ export const InspectorControls = memo(function InspectorControls({
                     app unrelated to rendering.
                   </p>
                 </div>
+                <DebugNetworkInfo />
                 <DebugEntityList />
                 <div className={styles.DebugActionField}>
                   <button

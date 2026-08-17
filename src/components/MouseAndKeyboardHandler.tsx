@@ -9,7 +9,11 @@ import { useCameras } from "./CamerasProvider";
 import { useInputContext } from "./InputContext";
 import { useTouchDevice } from "./useTouchDevice";
 import { cameraTourStore } from "../state/cameraTourStore";
-import { commandCircuitStore } from "../state/commandCircuitStore";
+import {
+  commandCircuitStore,
+  isCommandFollowActive,
+} from "../state/commandCircuitStore";
+import { liveConnectionStore } from "../state/liveConnectionStore";
 import {
   useInputAction,
   useInputState,
@@ -87,6 +91,18 @@ export function MouseAndKeyboardHandler() {
     triggerFire.current = true;
   });
 
+  // Next observed player from the live command circuit. In follow mode
+  // this is the real client's fire trigger (camera.cs observerFollow
+  // onTrigger cycles to the next player); from fly mode, ObserveClient -1
+  // enters follow mode at the server's next observable player.
+  useInputAction("observeNextPlayer", () => {
+    if (isCommandFollowActive()) {
+      triggerFire.current = true;
+    } else {
+      liveConnectionStore.getState().sendCommand("ObserveClient", "-1");
+    }
+  });
+
   // Handle mousewheel for speed adjustment.
   useInputAction("adjustSpeed", () => {
     const scroll = getInputState().adjustSpeed as ScrollState | undefined;
@@ -133,7 +149,32 @@ export function MouseAndKeyboardHandler() {
   useFrame((_state, delta) => {
     // Suppress all input while a camera tour or command circuit is active.
     if (cameraTourStore.getState().animation) return;
-    if (commandCircuitStore.getState().active) return;
+    if (commandCircuitStore.getState().active) {
+      // Camera look/move stays suppressed, but observer triggers (player
+      // cycling from the CC view) must still reach the server via moves.
+      // Deltas are NOT cleared here — the CC rig consumes drag/scroll/
+      // pinch for panning and clears them at the end of its own frame.
+      const triggers = [false, false, false, false, false, false];
+      if (triggerFire.current) {
+        triggers[0] = true;
+        triggerFire.current = false;
+      }
+      if (commandCircuitStore.getState().consumeObserverToggle()) {
+        triggers[2] = true;
+      }
+      if (triggers.some(Boolean)) {
+        onInput({
+          deltaYaw: 0,
+          deltaPitch: 0,
+          x: 0,
+          y: 0,
+          z: 0,
+          triggers,
+          delta,
+        });
+      }
+      return;
+    }
 
     const inputState = getInputState();
 

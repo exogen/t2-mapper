@@ -7,6 +7,13 @@ import { textureToUrl } from "../loaders";
 import { useStaticShape } from "./GenericShape";
 import { useFloatingLabelFade } from "./FloatingLabel";
 import { streamClock } from "../state/streamPlaybackStore";
+import {
+  isObserverView,
+  resolveIffDisplay,
+  rgbString,
+  IFF_ENEMY,
+} from "./iffTheme";
+import { useSettings } from "./SettingsProvider";
 import type { PlayerEntity } from "../state/gameEntityTypes";
 import styles from "./PlayerNameplate.module.css";
 
@@ -30,13 +37,14 @@ const EMPTY_KEYFRAMES: never[] = [];
  */
 export function PlayerNameplate({ entity }: { entity: PlayerEntity }) {
   const gltf = useStaticShape(entity.shapeName!);
+  const { observerTeamColors } = useSettings();
   const { groupRef, isVisible, opacityRef } = useFloatingLabelFade({
     fadeDistance: NAMEPLATE_FADE_DISTANCE,
   });
   const iffContainerRef = useRef<HTMLDivElement>(null);
   const nameContainerRef = useRef<HTMLDivElement>(null);
   const fillRef = useRef<HTMLDivElement>(null);
-  const iffImgRef = useRef<HTMLImageElement>(null);
+  const iffArrowRef = useRef<HTMLDivElement>(null);
   const nameRef = useRef<HTMLDivElement>(null);
 
   // Derive IFF height from the shape's bounding box.
@@ -83,31 +91,34 @@ export function PlayerNameplate({ entity }: { entity: PlayerEntity }) {
       }
     }
 
-    // Update IFF arrow image imperatively — entity.iffColor is mutated in-place
-    // by streaming playback without triggering re-renders.
-    if (iffImgRef.current && entity.iffColor) {
-      const url =
-        entity.iffColor.r > entity.iffColor.g
-          ? IFF_ENEMY_URL
-          : IFF_FRIENDLY_URL;
-      if (iffImgRef.current.getAttribute("src") !== url) {
-        iffImgRef.current.src = url;
+    // Update IFF arrow imperatively — affiliation fields are mutated
+    // in-place by streaming playback without triggering re-renders. The
+    // arrow is the triangle texture as an alpha mask over a theme color:
+    // teamed viewers keep the texture-authentic friend/foe look (enemy
+    // shape + red vs allied shape + green); observers get team colors on
+    // the allied shape.
+    const observer = isObserverView();
+    const display = resolveIffDisplay(entity, observer, observerTeamColors);
+    if (iffArrowRef.current) {
+      const maskUrl =
+        !observer && display === IFF_ENEMY
+          ? `url(${IFF_ENEMY_URL})`
+          : `url(${IFF_FRIENDLY_URL})`;
+      const arrowStyle = iffArrowRef.current.style;
+      if (arrowStyle.maskImage !== maskUrl) {
+        arrowStyle.maskImage = maskUrl;
+        arrowStyle.webkitMaskImage = maskUrl;
       }
+      arrowStyle.backgroundColor = rgbString(display.color);
     }
 
-    // Update health bar fill.
+    // Update health bar fill with the resolved theme color (friend/foe
+    // constants for teamed viewers, team color for observers).
     if (fillRef.current && hasHealthData) {
       fillRef.current.style.width = `${Math.max(0, Math.min(100, health * 100))}%`;
-      fillRef.current.style.background = entity.iffColor
-        ? `rgb(${entity.iffColor.r}, ${entity.iffColor.g}, ${entity.iffColor.b})`
-        : "";
+      fillRef.current.style.background = rgbString(display.color);
     }
   });
-
-  const iffMarkerUrl =
-    entity.iffColor && entity.iffColor.r > entity.iffColor.g
-      ? IFF_ENEMY_URL
-      : IFF_FRIENDLY_URL;
 
   return (
     <group ref={groupRef}>
@@ -119,12 +130,7 @@ export function PlayerNameplate({ entity }: { entity: PlayerEntity }) {
             style={{ pointerEvents: "none" }}
           >
             <div ref={iffContainerRef} className={styles.Top}>
-              <img
-                ref={iffImgRef}
-                className={styles.IffArrow}
-                src={iffMarkerUrl}
-                alt=""
-              />
+              <div ref={iffArrowRef} className={styles.IffArrow} />
             </div>
           </Html>
           <Html

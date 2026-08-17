@@ -36,7 +36,7 @@ export function CommandCircuitButton() {
         active ? "Exit the command circuit (C)" : "Open the command circuit (C)"
       }
       onClick={handleClick}
-      disabled={dataSource !== "map"}
+      disabled={dataSource == null}
     >
       {active ? (
         <>

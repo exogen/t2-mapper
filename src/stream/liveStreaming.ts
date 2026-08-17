@@ -15,14 +15,6 @@ import type { RelayClient } from "./relayClient";
 
 const log = createLogger("liveStreaming");
 
-// ── Player list entry ──
-
-export interface PlayerListEntry {
-  targetId: number;
-  name: string;
-  sensorGroup: number;
-}
-
 /**
  * Adapts live game packets from a relay connection into the
  * StreamingPlayback interface used by the existing rendering pipeline.
@@ -354,16 +346,6 @@ export class LiveStreamAdapter extends StreamEngine {
   /** Request updated scores from the server (triggers MsgPlayerScore messages). */
   requestScores(): void {
     this.relay.sendCommand("getScores", []);
-  }
-
-  /** Get the player list (for observer cycling UI). */
-  getPlayerList(): PlayerListEntry[] {
-    const entries: PlayerListEntry[] = [];
-    for (const [targetId, name] of this.targetNames) {
-      const sg = this.targetTeams.get(targetId) ?? 0;
-      entries.push({ targetId, name, sensorGroup: sg });
-    }
-    return entries;
   }
 
   // ── Packet processing ──
@@ -721,6 +703,7 @@ export class LiveStreamAdapter extends StreamEngine {
       playerRoster,
       connectedClientId: this.connectedClientId,
       matchClockMs: this.computeMatchClockMs(timeSec),
+      loadInfo: this.serverLoadInfo,
     };
 
     this._snapshot = snapshot;

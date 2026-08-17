@@ -118,6 +118,10 @@ export interface StreamEntity {
   lightOnlyStatic?: boolean;
   isStaticItem?: boolean;
   playerName?: string;
+  /** Target manager id backing this entity's target info, if any. */
+  targetId?: number;
+  /** Sensor group of the entity's target — the team number in stock T2. */
+  teamId?: number;
   /** IFF color resolved from the sensor group color table (sRGB 0-255). */
   iffColor?: { r: number; g: number; b: number };
   /** Target render flags bitmask from the Target Manager. */
@@ -273,6 +277,18 @@ export interface TeamScore {
   name: string;
   score: number;
   playerCount: number;
+  /** CTF flag state for this team's flag, from MsgCTFFlag* messages. */
+  flagStatus?: "home" | "held" | "field";
+  /**
+   * The team's flag skin (lowercase), from the flag target's skin tag —
+   * the target is named exactly the team name and outlives the flag item
+   * ghost while carried. Stock CTF uses base/baseb; servers like Classic
+   * use custom skins (beagle/dsword).
+   */
+  skinName?: string;
+  /** Name of the player holding this team's flag, while flagStatus is
+   *  "held" (from MsgCTFFlagTaken / MsgCTFAddTeam). */
+  flagCarrier?: string;
 }
 
 export interface PlayerRosterEntry {
@@ -282,6 +298,9 @@ export interface PlayerRosterEntry {
   score: number;
   ping: number;
   packetLoss: number;
+  /** The client's target id (MsgClientJoin arg %3) — exact join key to
+   *  the entity that represents this client's player. */
+  targetId?: number;
 }
 
 export interface BackpackHudState {
@@ -304,6 +323,18 @@ export interface PendingAudioEvent {
   profileId: number;
   position?: { x: number; y: number; z: number };
   timeSec: number;
+}
+
+/**
+ * Loading-screen content the server sends to every joining client
+ * (loadingGui.cs sendLoadInfoToClient) — the same MissionInfo text our
+ * local map library parses from the .mis, but authoritative for the
+ * server's copy of the map. Lines are Torque GUI markup.
+ */
+export interface ServerLoadInfo {
+  quoteLines: string[];
+  objectiveLines: string[];
+  rulesLines: string[];
 }
 
 export interface StreamSnapshot {
@@ -338,6 +369,9 @@ export interface StreamSnapshot {
   playerRoster: PlayerRosterEntry[];
   /** Client ID of the connected/recording player, for highlighting in roster. */
   connectedClientId: number | null;
+  /** Server-sent loading-screen text, complete once MsgLoadInfoDone
+   *  arrives. Null when never received (e.g. demos recorded mid-mission). */
+  loadInfo: ServerLoadInfo | null;
   /** Match clock value in milliseconds, mirroring HudClockCtrl's actualTimeMS.
    *  Negative = counting down (remaining time), positive = counting up (elapsed).
    *  Null if no clock has been set. Pauses/seeks with playback. */

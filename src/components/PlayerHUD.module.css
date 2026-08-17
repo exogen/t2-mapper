@@ -185,6 +185,22 @@
   padding: 0 6px;
 }
 
+.TeamFlag {
+  color: rgb(159, 190, 185);
+  font-size: 11px;
+  padding: 0 8px;
+  border-left: 1px solid rgba(128, 255, 200, 0.15);
+  white-space: nowrap;
+  max-width: 11em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.TeamFlag svg {
+  margin-right: 7px;
+  vertical-align: -1px;
+}
+
 /* ── Pack + Inventory HUD (bottom-right) ── */
 
 .PackInventoryHUD {

@@ -197,14 +197,26 @@ export function buildClientGamePacket(
     moveStartIndex?: number;
     events?: ClientEvent[];
     nextSendEventSeq?: number;
+    /**
+     * Advertise our max receive rate (NetConnection::mMaxRate). The server
+     * clamps this against its own limits and adopts it as its send rate to
+     * us (handlePacket, Tribes2.exe FUN_00587640) — without it, servers
+     * ghost at their 102ms/200-byte per-client default.
+     */
+    maxRate?: { updateDelay: number; packetSize: number };
   } = {},
 ): Uint8Array {
   return protocol.buildDataPacket((bs) => {
     // NetConnection::checkPacketSend writes rate info BEFORE writePacket.
     // handlePacket on the server reads these before calling readPacket.
-    // Both sides send rate flags — we send false (no changes).
-    bs.writeFlag(false); // mCurRate.changed
-    bs.writeFlag(false); // mMaxRate.changed
+    bs.writeFlag(false); // mCurRate.changed — our send rate never changes
+    if (options.maxRate) {
+      bs.writeFlag(true); // mMaxRate.changed
+      bs.writeInt(options.maxRate.updateDelay, 10);
+      bs.writeInt(options.maxRate.packetSize, 10);
+    } else {
+      bs.writeFlag(false); // mMaxRate.changed
+    }
 
     // GameConnection::writePacket (client→server path)
     // 1. First person flag (cameraPos == 0 → firstPerson)

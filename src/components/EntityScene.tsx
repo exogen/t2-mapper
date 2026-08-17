@@ -16,6 +16,8 @@ import { streamPlaybackStore } from "../state/streamPlaybackStore";
 import { EntityRenderer } from "./EntityRenderer";
 import { ShapeErrorBoundary } from "./ShapeErrorBoundary";
 import { FlagMarker } from "./FlagMarker";
+import { CommandCircuitFlagCallout } from "./CommandCircuitFlagCallout";
+import { useCommandCircuit } from "../state/commandCircuitStore";
 import { entityTypeColor } from "../stream/playbackUtils";
 
 /**
@@ -130,6 +132,7 @@ const EntityWrapper = memo(function EntityWrapper({
  * mutations don't trigger React re-renders (ID-only equality), so this
  * uses useFrame to poll the mutable field. */
 function FlagMarkerSlot({ entity }: { entity: GameEntity }) {
+  const commandCircuitActive = useCommandCircuit((s) => s.active);
   const flagRef = useRef(false);
   const [isFlag, setIsFlag] = useState(() => {
     const flags =
@@ -153,7 +156,13 @@ function FlagMarkerSlot({ entity }: { entity: GameEntity }) {
   });
 
   if (!isFlag) return null;
-  return <FlagMarker entity={entity} />;
+  // The command circuit map swaps the floating flag icon for a callout
+  // (circle + leader + label) that stays readable from the top-down view.
+  return commandCircuitActive ? (
+    <CommandCircuitFlagCallout entity={entity} />
+  ) : (
+    <FlagMarker entity={entity} />
+  );
 }
 
 function PositionedEntityWrapper({

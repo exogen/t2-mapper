@@ -61,6 +61,8 @@ import { audioToUrl } from "../loaders";
 import { useSettings } from "./SettingsProvider";
 import { useEngineStoreApi, useEngineSelector } from "../state/engineStore";
 import { useStreamSnapshot } from "../state/streamSnapshotStore";
+import { useCommandCircuit } from "../state/commandCircuitStore";
+import { CommandCircuitPlayerMarker } from "./CommandCircuitPlayerMarker";
 import { PlayerNameplate } from "./PlayerNameplate";
 import { streamClock } from "../state/streamPlaybackStore";
 import type { PlayerEntity } from "../state/gameEntityTypes";
@@ -287,6 +289,9 @@ export function PlayerModel({ entity }: { entity: PlayerEntity }) {
   const controlPlayerGhostId = useStreamSnapshot(
     (snap) => snap?.controlPlayerGhostId,
   );
+  // On the command circuit map every player (including the control player)
+  // gets a radar-style marker instead of the world-space nameplate.
+  const commandCircuitActive = useCommandCircuit((s) => s.active);
 
   // Resolve skin texture URL: local manifest first, then remote manifest.
   // The manifest is prefetched at app startup (see App.tsx) so it's
@@ -966,6 +971,7 @@ export function PlayerModel({ entity }: { entity: PlayerEntity }) {
       {entity.id !== controlPlayerGhostId && (
         <PlayerNameplate entity={entity} />
       )}
+      {commandCircuitActive && <CommandCircuitPlayerMarker entity={entity} />}
       <group rotation={[0, Math.PI / 2, 0]}>
         <primitive object={clonedScene} />
         <PlayerDebugBounds entityId={entity.id} scene={gltf.scene} />

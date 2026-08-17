@@ -1,0 +1,27 @@
+.Root {
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 4px;
+  margin: 8px 0 0 0;
+  padding: 8px 12px;
+}
+
+.Root dl {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 1px 8px;
+  font-size: 11px;
+  line-height: 1.5;
+  margin: 0;
+  padding: 0;
+}
+
+.Root dt {
+  opacity: 0.6;
+  white-space: nowrap;
+}
+
+.Root dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}

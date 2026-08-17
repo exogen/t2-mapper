@@ -1,6 +1,7 @@
 import { LuClipboardList } from "react-icons/lu";
 import { hasMission } from "../manifest";
 import { useDataSource, useMissionName } from "../state/gameEntityStore";
+import { useStreamSnapshot } from "../state/streamSnapshotStore";
 import styles from "./Button.module.css";
 
 export function MapInfoButton({
@@ -19,6 +20,10 @@ export function MapInfoButton({
   const missionInManifest = effectiveMissionName
     ? hasMission(effectiveMissionName)
     : false;
+  // Even for maps missing from our library, the server sends the
+  // loading-screen info (quote/objectives/rules) at join — enough to
+  // populate the dialog.
+  const hasServerLoadInfo = useStreamSnapshot((s) => s?.loadInfo != null);
 
   return (
     <button
@@ -26,7 +31,7 @@ export function MapInfoButton({
       className={styles.Button}
       aria-label="Show map info"
       onClick={onClick}
-      disabled={!missionInManifest}
+      disabled={!missionInManifest && !hasServerLoadInfo}
     >
       <LuClipboardList />
       <span className={styles.ButtonLabel}>Show map info</span>

@@ -139,7 +139,15 @@ interface PositionedBase extends EntityBase {
   /** Torque DamageState: 0=Enabled, 1=Disabled, 2=Destroyed. */
   damageState?: number;
   targetRenderFlags?: number;
+  /** Target manager id backing this entity's target info, if any. */
+  targetId?: number;
   iffColor?: { r: number; g: number; b: number };
+  /** Target name from the target system — a player's name on Players,
+   *  the owning team's name on flag Items. */
+  playerName?: string;
+  /** Team number: sensor group of the target (streaming), or the owning
+   *  team resolved from the mission tree (map mode). */
+  teamId?: number;
   /** ShapeBase sound slots (from ghost SoundMask). */
   soundSlots?: Array<{ index: number; playing: boolean; profileId?: number }>;
   health?: number;
@@ -156,7 +164,6 @@ export interface ShapeEntity extends PositionedBase {
   shapeName?: string;
   shapeType?: string;
   rotate?: boolean;
-  teamId?: number;
   /** WheeledVehicle per-wheel state (speed, slip). */
   wheels?: Array<{
     speed: number;
@@ -189,7 +196,6 @@ export interface PlayerEntity extends PositionedBase {
   skinPrefName?: string;
   falling?: boolean;
   jetting?: boolean;
-  playerName?: string;
   weaponImageState?: WeaponImageState;
   weaponImageStates?: WeaponImageDataBlockState[];
   headPitch?: number;

@@ -12,6 +12,7 @@ import {
 } from "three";
 import {
   commandCircuitStore,
+  isCommandFollowActive,
   useCommandCircuit,
 } from "../state/commandCircuitStore";
 import { cameraTourStore } from "../state/cameraTourStore";
@@ -24,6 +25,12 @@ import {
   isFlagEntity,
   useSceneMissionArea,
 } from "../state/gameEntityStore";
+import { streamSnapshotStore } from "../state/streamSnapshotStore";
+import { streamPlaybackStore } from "../state/streamPlaybackStore";
+import {
+  liveConnectionStore,
+  useLiveSelector,
+} from "../state/liveConnectionStore";
 import { computeCommandCircuitFrame } from "./commandCircuitFrame";
 import { parseViewHash } from "./viewHash";
 import {
@@ -228,12 +235,25 @@ function isPressed(state: Record<string, ActionState>, name: string): boolean {
  */
 export function CommandCircuitCamera() {
   const active = useCommandCircuit((s) => s.active);
+  const gameStatus = useLiveSelector((s) => s.gameStatus);
 
   useInputAction("toggleCommandCircuit", () => {
     commandCircuitStore.getState().toggle();
   });
   useInputAction("exitCommandCircuit", () => {
     commandCircuitStore.getState().deactivate();
+  });
+  // Streaming (demo/live) only — the binding is mounted just for those.
+  // Live mode never touches the local flag: the fly/follow state is
+  // server-owned and shared with the 3D observer view, so request the
+  // server-side toggle (trigger 2) and let the confirmed camera state
+  // flow back down.
+  useInputAction("toggleCommandFollow", () => {
+    if (gameEntityStore.getState().dataSource === "live") {
+      commandCircuitStore.getState().requestObserverToggle();
+    } else {
+      commandCircuitStore.getState().toggleFollow();
+    }
   });
 
   // Entering command circuit exits pointer lock. Tours are unaffected —
@@ -244,10 +264,34 @@ export function CommandCircuitCamera() {
     }
   }, [active]);
 
-  // The mode only applies to static map viewing.
+  // In live mode, tell the server the command map is open — the real
+  // client's `commandToServer('ScopeCommanderMap', %bool)`. The server
+  // then scopes EVERYTHING to this connection (GameConnection::
+  // doneScopingScene, binary FUN_005fd530), instead of the usual 1000m
+  // sphere + sensor-visible targets, so the map shows all players.
+  // Observers are unaffected by the server's resetControlObject call
+  // (no %client.player → control stays on the observer camera).
   useEffect(() => {
+    if (!active || gameStatus !== "connected") return;
+    liveConnectionStore.getState().sendCommand("ScopeCommanderMap", "1");
+    return () => {
+      // Re-check at cleanup time: on disconnect there's no one to tell.
+      const live = liveConnectionStore.getState();
+      if (live.gameStatus === "connected") {
+        live.sendCommand("ScopeCommanderMap", "0");
+      }
+    };
+    // gameStatus in deps re-sends the signal if the CC is open while the
+    // connection completes or comes back after a reconnect.
+  }, [active, gameStatus]);
+
+  // Exit the mode when the data source changes (map ↔ demo ↔ live ↔
+  // nothing) — each transition starts at its default camera view.
+  useEffect(() => {
+    let prevSource = gameEntityStore.getState().dataSource;
     return gameEntityStore.subscribe((state) => {
-      if (state.dataSource !== "map") {
+      if (state.dataSource !== prevSource) {
+        prevSource = state.dataSource;
         commandCircuitStore.getState().deactivate();
       }
     });
@@ -474,6 +518,66 @@ function CommandCircuitOrthoRig() {
   useFrame((state, delta) => {
     const camera = cameraRef.current;
     if (!camera) return;
+
+    const isStreaming = gameEntityStore.getState().isStreaming;
+
+    // Pressing a pan key (or drag-panning) while following switches to
+    // pan mode. In demos the switch is local and takes effect this same
+    // frame; in live mode it requests the server-side fly toggle (the
+    // shared observer state) and panning engages once confirmed.
+    if (isStreaming && isCommandFollowActive()) {
+      const inputState = getInputState();
+      const followDrag = inputState.commandPanDrag as DragState | undefined;
+      const followTouch = inputState.commandPanTouch as TouchState | undefined;
+      if (
+        isPressed(inputState, "commandPanUp") ||
+        isPressed(inputState, "commandPanDown") ||
+        isPressed(inputState, "commandPanLeft") ||
+        isPressed(inputState, "commandPanRight") ||
+        (followDrag?.dragging &&
+          (followDrag.deltaX !== 0 || followDrag.deltaY !== 0)) ||
+        (followTouch?.dragging &&
+          (followTouch.deltaX !== 0 || followTouch.deltaY !== 0))
+      ) {
+        if (gameEntityStore.getState().dataSource === "live") {
+          commandCircuitStore.getState().requestObserverToggle();
+        } else {
+          commandCircuitStore.getState().setFollow(false);
+        }
+      }
+    }
+
+    // During demo/live playback the view follows the action by default:
+    // the observed player's rendered position when the stream follows one,
+    // otherwise the spectator camera. Zoom stays user-controlled (same
+    // limits as map mode); panning and tours don't apply. F toggles out
+    // of follow mode, falling through to the free pan handling.
+    if (isStreaming && isCommandFollowActive()) {
+      const cam = streamSnapshotStore.getState().snapshot?.camera;
+      const followId =
+        cam?.mode === "third-person"
+          ? (cam.orbitTargetId ?? cam.controlEntityId)
+          : cam?.mode === "first-person"
+            ? cam.controlEntityId
+            : undefined;
+      const root = streamPlaybackStore.getState().root;
+      const followObj = followId ? root?.getObjectByName(followId) : null;
+      if (followObj) {
+        pan.current.x = followObj.position.x;
+        pan.current.z = followObj.position.z;
+      } else if (cameraRegistry.perspective) {
+        // Free-flying observer (or no follow target yet): center on the
+        // spectator camera, which StreamingController keeps updated.
+        pan.current.x = cameraRegistry.perspective.position.x;
+        pan.current.z = cameraRegistry.perspective.position.z;
+      }
+      clearInputDeltas();
+      camera.position.set(pan.current.x, CAMERA_HEIGHT, pan.current.z);
+      camera.quaternion.copy(TOP_DOWN_QUATERNION);
+      camera.zoom = zoom.current;
+      camera.updateProjectionMatrix();
+      return;
+    }
 
     let dx = 0;
     let dz = 0;

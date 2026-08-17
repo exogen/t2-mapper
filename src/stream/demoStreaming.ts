@@ -987,6 +987,9 @@ class StreamingPlayback extends StreamEngine {
       playerRoster = prev.playerRoster;
     } else {
       teamScores = this.teamScores.map((ts) => ({ ...ts }));
+      // Team-score generation bumps on every flag event, so the skin map
+      // refreshes whenever it could matter.
+      this.attachTeamFlagSkins(teamScores);
       const teamCounts = new Map<number, number>();
       for (const { teamId } of this.playerRoster.values()) {
         if (teamId > 0) {
@@ -1034,6 +1037,7 @@ class StreamingPlayback extends StreamEngine {
       playerRoster,
       connectedClientId: this.connectedClientId,
       matchClockMs: this.computeMatchClockMs(timeSec),
+      loadInfo: this.serverLoadInfo,
     };
   }
 

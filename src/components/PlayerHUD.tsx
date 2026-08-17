@@ -1,4 +1,6 @@
 import { useStore } from "zustand";
+import { FaHand } from "react-icons/fa6";
+import { ImArrowDownRight, ImHome } from "react-icons/im";
 import { useStreamSnapshot } from "../state/streamSnapshotStore";
 import { streamPlaybackStore } from "../state/streamPlaybackStore";
 import { DEFAULT_TEAM_NAMES } from "../stringUtils";
@@ -8,6 +10,7 @@ import styles from "./PlayerHUD.module.css";
 import { ChatWindow } from "./ChatWindow";
 import { CompassDial } from "./CompassDial";
 import { useSettings } from "./SettingsProvider";
+import { useCommandCircuit } from "../state/commandCircuitStore";
 
 function formatClockHud(clockMs: number): string {
   const absSec = Math.abs(clockMs) / 1000;
@@ -17,15 +20,17 @@ function formatClockHud(clockMs: number): string {
   return `${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
 }
 
-function Compass() {
+function Compass({ commandCircuitActive }: { commandCircuitActive: boolean }) {
   const yaw = useStreamSnapshot((snap) => snap?.camera?.yaw);
   const matchClockMs = useStreamSnapshot((snap) => snap?.matchClockMs);
   if (yaw == null) return null;
   // The notch is the fixed heading indicator (always "forward" at top).
   // The NSEW letters rotate to show world cardinal directions relative to
   // the player's heading. Positive Torque yaw = turning right (clockwise
-  // from above), so N moves counter-clockwise on the display.
-  const deg = (yaw * 180) / Math.PI;
+  // from above), so N moves counter-clockwise on the display. The command
+  // circuit map can't rotate (screen-up is always north), so its compass
+  // is pinned north-up like explore mode's.
+  const deg = commandCircuitActive ? 0 : (yaw * 180) / Math.PI;
   return (
     <div className={styles.Compass}>
       <CompassDial deg={deg}>
@@ -245,12 +250,14 @@ function TeamScores() {
     }
     return a.teamId - b.teamId;
   });
+  // Flag state column only applies to flag game modes (CTF).
+  const hasFlags = sorted.some((team) => team.flagStatus != null);
   return (
     <table className={styles.TeamScores}>
       <tbody>
         {observerCount > 0 && (
           <tr>
-            <td className={styles.ObserverCount} colSpan={3}>
+            <td className={styles.ObserverCount} colSpan={hasFlags ? 4 : 3}>
               {observerCount} {observerCount === 1 ? "observer" : "observers"}
             </td>
           </tr>
@@ -278,6 +285,26 @@ function TeamScores() {
               <td className={styles.TeamScore}>
                 {team.score.toLocaleString()}
               </td>
+              {hasFlags && (
+                <td className={styles.TeamFlag}>
+                  {team.flagStatus === "held" ? (
+                    <>
+                      <FaHand size={10} />
+                      {team.flagCarrier ?? "Held"}
+                    </>
+                  ) : team.flagStatus === "field" ? (
+                    <>
+                      <ImArrowDownRight size={9} />
+                      Dropped
+                    </>
+                  ) : (
+                    <>
+                      <ImHome size={10} />
+                      Home
+                    </>
+                  )}
+                </td>
+              )}
             </tr>
           );
         })}
@@ -412,6 +439,7 @@ export function PlayerHUD() {
   // player-specific HUD elements (health, energy, weapons, etc.) are hidden.
   const showPlayerElements = hasControlPlayer && cameraMode !== "freeFly";
   const { showChat, showReticle, showCompass } = useSettings();
+  const commandCircuitActive = useCommandCircuit((s) => s.active);
 
   return (
     <div className={styles.PlayerHUD}>
@@ -423,12 +451,12 @@ export function PlayerHUD() {
           <HeatBar />
         </div>
       )}
-      {showCompass && <Compass />}
+      {showCompass && <Compass commandCircuitActive={commandCircuitActive} />}
       {showPlayerElements && (
         <>
           <WeaponHUD />
           <PackAndInventoryHUD />
-          {showReticle && <Reticle />}
+          {showReticle && !commandCircuitActive && <Reticle />}
         </>
       )}
       <TeamScores />

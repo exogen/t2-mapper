@@ -12,6 +12,7 @@ import { playerEyePositions } from "./PlayerModel";
 import { stopAllTrackedSounds } from "./AudioEmitter";
 import { useEngineStoreApi, advanceEffectClock } from "../state/engineStore";
 import { setStreamSnapshot } from "../state/streamSnapshotStore";
+import { cameraRegistry } from "../state/cameraRegistry";
 import { gameEntityStore } from "../state/gameEntityStore";
 import {
   streamClock,
@@ -51,7 +52,10 @@ function mutateRenderFields(
   e.threads = stream.threads;
   e.armAction = stream.armAction;
   e.targetRenderFlags = stream.targetRenderFlags;
+  e.targetId = stream.targetId;
   e.iffColor = stream.iffColor;
+  e.playerName = stream.playerName;
+  e.teamId = stream.teamId;
   e.soundSlots = stream.soundSlots;
 
   // Type-specific fields.
@@ -61,7 +65,6 @@ function mutateRenderFields(
       e.jetting = stream.jetting;
       e.weaponImageState = stream.weaponImageState;
       e.weaponImageStates = stream.weaponImageStates;
-      e.playerName = stream.playerName;
       e.headPitch = stream.headPitch;
       e.headYaw = stream.headYaw;
       break;
@@ -195,11 +198,21 @@ export function StreamingController({
         map.set(entity.id, renderEntity);
         structuralChange = true;
       } else {
-        // Detect mount state changes — EntityScene needs a store re-render
-        // to re-evaluate mount relationships (portal rendering).
+        // Detect mount state changes — EntityScene re-evaluates mount
+        // relationships (portal rendering) only when entity references
+        // change (useAllGameEntities compares references, not versions),
+        // so clone the entity to make the transition visible. The clone
+        // shares keyframes/threads arrays, so imperative playback state
+        // carries over.
         const prevMount = renderEntity!.mountObjectId;
+        const prevNode = renderEntity!.mountNode;
         mutateRenderFields(renderEntity!, entity);
-        if (renderEntity!.mountObjectId !== prevMount) {
+        if (
+          renderEntity!.mountObjectId !== prevMount ||
+          renderEntity!.mountNode !== prevNode
+        ) {
+          renderEntity = { ...renderEntity! };
+          map.set(entity.id, renderEntity);
           structuralChange = true;
         }
       }
@@ -437,6 +450,13 @@ export function StreamingController({
     // entity interpolation, FOV, and orbit target positioning.
     const isLive = recording.source === "live";
 
+    // Demo/live camera state always lands on the perspective camera.
+    // Normally that IS the default render camera; in command circuit mode
+    // the ortho rig takes over rendering and reads this camera's position
+    // to follow the view (so these writes must not hit state.camera, which
+    // would stomp the ortho rig).
+    const streamCamera = cameraRegistry.perspective ?? state.camera;
+
     if (currentCamera && cameraMode !== "freeFly") {
       // In live mode, InputConsumer owns both camera position and rotation
       // (client-side prediction with server reconciliation + interpolateTick,
@@ -455,27 +475,27 @@ export function StreamingController({
           const ix = px + (cx - px) * interpT;
           const iy = py + (cy - py) * interpT;
           const iz = pz + (cz - pz) * interpT;
-          state.camera.position.set(iy, iz, ix);
+          streamCamera.position.set(iy, iz, ix);
 
           _interpQuatA.set(...previousCamera.rotation);
           _interpQuatB.set(...currentCamera.rotation);
           _interpQuatA.slerp(_interpQuatB, interpT);
-          state.camera.quaternion.copy(_interpQuatA);
+          streamCamera.quaternion.copy(_interpQuatA);
         } else {
-          state.camera.position.set(
+          streamCamera.position.set(
             currentCamera.position[1],
             currentCamera.position[2],
             currentCamera.position[0],
           );
-          state.camera.quaternion.set(...currentCamera.rotation);
+          streamCamera.quaternion.set(...currentCamera.rotation);
         }
       }
 
       if (
-        "isPerspectiveCamera" in state.camera &&
-        (state.camera as any).isPerspectiveCamera
+        "isPerspectiveCamera" in streamCamera &&
+        (streamCamera as any).isPerspectiveCamera
       ) {
-        const perspectiveCamera = state.camera as any;
+        const perspectiveCamera = streamCamera as any;
         // Use the user's FOV preference, matching how the real client applies
         // $pref::Player::defaultFov locally. The stream's camera FOV is the
         // recorder's setting (demos) or server default (live).
@@ -632,7 +652,7 @@ export function StreamingController({
           hasDirection = _orbitDir.lengthSq() > 1e-8;
         }
         if (!hasDirection) {
-          _orbitDir.copy(state.camera.position).sub(_orbitTarget);
+          _orbitDir.copy(streamCamera.position).sub(_orbitTarget);
           hasDirection = _orbitDir.lengthSq() > 1e-8;
         }
         if (hasDirection) {
@@ -642,8 +662,8 @@ export function StreamingController({
             .copy(_orbitTarget)
             .addScaledVector(_orbitDir, orbitDistance);
 
-          state.camera.position.copy(_orbitCandidate);
-          state.camera.lookAt(_orbitTarget);
+          streamCamera.position.copy(_orbitCandidate);
+          streamCamera.lookAt(_orbitTarget);
         }
       }
     }
@@ -663,9 +683,9 @@ export function StreamingController({
         // eye bone offset (rotated by body orientation).
         if (eyePos && playerGroup) {
           _tmpVec.copy(eyePos).applyQuaternion(playerGroup.quaternion);
-          state.camera.position.add(_tmpVec);
+          streamCamera.position.add(_tmpVec);
         } else {
-          state.camera.position.y += DEFAULT_EYE_HEIGHT;
+          streamCamera.position.y += DEFAULT_EYE_HEIGHT;
         }
       } else if (playerGroup) {
         // Non-authoritative: compute full camera transform from entity
@@ -674,7 +694,7 @@ export function StreamingController({
           currentCamera.controlEntityId,
         );
         computeFirstPersonCamera(
-          state.camera,
+          streamCamera,
           playerGroup,
           eyePos ?? _tmpVec.set(0, DEFAULT_EYE_HEIGHT, 0),
           controlEntity?.headPitch ?? 0,

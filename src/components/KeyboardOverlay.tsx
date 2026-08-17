@@ -21,12 +21,6 @@ import {
 import { FaAngleDoubleDown, FaAngleDoubleUp } from "react-icons/fa";
 import { PiMouseLeftClickFill, PiMouseScroll } from "react-icons/pi";
 import { ReactNode, useEffect, useRef, useState } from "react";
-import {
-  FaArrowDown,
-  FaArrowLeft,
-  FaArrowRight,
-  FaArrowUp,
-} from "react-icons/fa6";
 import { GrPauseFill, GrPlayFill } from "react-icons/gr";
 import { usePointerLocked } from "./usePointerLocked";
 import styles from "./KeyboardOverlay.module.css";
@@ -200,23 +194,6 @@ function MoveKeys() {
   );
 }
 
-function LookKeys() {
-  return (
-    <div className={styles.Column}>
-      <div className={styles.Row}>
-        <div className={styles.Spacer} />
-        <Key action="lookUp" input={<FaArrowUp />} label="Look up" />
-        <div className={styles.Spacer} />
-      </div>
-      <div className={styles.Row}>
-        <Key action="lookLeft" input={<FaArrowLeft />} label="Look left" />
-        <Key action="lookDown" input={<FaArrowDown />} label="Look down" />
-        <Key action="lookRight" input={<FaArrowRight />} label="Look right" />
-      </div>
-    </div>
-  );
-}
-
 function FlySpeedKey() {
   const { speedMultiplier } = useControls();
   const [speedMultiplierChanged, setSpeedMultiplierChanged] = useState<
@@ -291,7 +268,6 @@ function FreeFlyOverlay() {
   return (
     <>
       <MoveKeys />
-      <LookKeys />
       <div className={styles.Column} data-height="compact">
         <div className={styles.Row}>
           <FlySpeedKey />
@@ -316,7 +292,15 @@ function FreeFlyOverlay() {
   );
 }
 
-function CommandCircuitOverlay() {
+function CommandCircuitOverlay({
+  followToggle,
+  showObserverCycle,
+}: {
+  /** Current stream mode when the follow toggle applies (demo/live). */
+  followToggle?: "follow" | "free";
+  /** Live mode: show the observed-player cycling hint. */
+  showObserverCycle?: boolean;
+}) {
   return (
     <>
       <div className={styles.Column}>
@@ -354,6 +338,30 @@ function CommandCircuitOverlay() {
           />
         </div>
       </div>
+      {followToggle && (
+        <div className={styles.Column} data-height="compact">
+          {showObserverCycle && (
+            <div className={styles.Row}>
+              <Key
+                action="observeNextPlayer"
+                label="Next player"
+                input="→"
+                labelPosition="right"
+                inputSize="auto"
+              />
+            </div>
+          )}
+          <div className={styles.Row}>
+            <Key
+              action="toggleCommandFollow"
+              label={followToggle === "follow" ? "Pan mode" : "Follow mode"}
+              input="F"
+              labelPosition="right"
+              inputSize="auto"
+            />
+          </div>
+        </div>
+      )}
       <div className={styles.Column} data-height="compact">
         <div className={styles.Row}>
           <Key
@@ -456,7 +464,6 @@ function ObserverOverlay() {
   return (
     <>
       {inputMode === "fly" ? <MoveKeys /> : null}
-      <LookKeys />
       <div className={styles.Column} data-height="compact">
         {inputMode === "fly" ? (
           <div className={styles.Row}>
@@ -488,7 +495,7 @@ function ObserverOverlay() {
           <Key
             action="toggleObserverMode"
             label={inputMode === "follow" ? "Fly mode" : "Follow mode"}
-            input="Space"
+            input="F"
             labelPosition="right"
             inputSize="auto"
           />
@@ -504,10 +511,16 @@ export function KeyboardOverlay() {
 
   const isTourActive = useCameraTour((s) => s.animation !== null);
   const isCommandCircuit = useCommandCircuit((s) => s.active);
+  const demoFollow = useCommandCircuit((s) => s.follow);
 
   const isDemo = recording?.source === "demo";
   const isLive = recording?.source === "live";
   const isMap = !recording;
+
+  // Live and demo follow state come from different owners: live mirrors
+  // the server-owned observer mode (shared with the 3D view), demos use
+  // the local command circuit flag.
+  const ccFollow = isLive ? inputMode === "follow" : demoFollow;
 
   const isLiveObserver =
     isLive && (inputMode === "fly" || inputMode === "follow");
@@ -517,9 +530,16 @@ export function KeyboardOverlay() {
   return (
     <div className={styles.Root}>
       {showFreeFly && <FreeFlyOverlay />}
-      {isCommandCircuit && !isTourActive && <CommandCircuitOverlay />}
-      {isLiveObserver && <ObserverOverlay />}
-      {isDemo && <DemoOverlay />}
+      {isCommandCircuit && !isTourActive && (
+        <CommandCircuitOverlay
+          followToggle={
+            isDemo || isLive ? (ccFollow ? "follow" : "free") : undefined
+          }
+          showObserverCycle={isLive && ccFollow}
+        />
+      )}
+      {isLiveObserver && !isCommandCircuit && <ObserverOverlay />}
+      {isDemo && !isCommandCircuit && <DemoOverlay />}
       {isTourActive && <TourOverlay />}
     </div>
   );

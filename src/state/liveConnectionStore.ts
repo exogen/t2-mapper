@@ -24,6 +24,10 @@ export interface LiveConnectionState {
   relayToGameServerPing: number | null;
   /** Browser↔relay WebSocket RTT in ms. */
   browserToRelayPing: number | null;
+  /** URL of the connected relay (distinguishes local dev vs deployed). */
+  relayUrl: string | null;
+  /** Address (ip:port) of the joined game server. */
+  serverAddress: string | null;
   servers: ServerInfo[];
   serversLoading: boolean;
   adapter: LiveStreamAdapter | null;
@@ -60,6 +64,8 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
     serverName: undefined,
     relayToGameServerPing: null,
     browserToRelayPing: null,
+    relayUrl: null,
+    serverAddress: null,
     servers: [],
     serversLoading: false,
     adapter: null,
@@ -133,6 +139,8 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
               serverName: undefined,
               relayToGameServerPing: null,
               browserToRelayPing: null,
+              relayUrl: null,
+              serverAddress: null,
               adapter: null,
               liveReady: false,
             });
@@ -142,6 +150,7 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
 
       relay.connect();
       get()._relay = relay;
+      set({ relayUrl: url });
     },
 
     disconnectRelay() {
@@ -159,6 +168,8 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
         serverName: undefined,
         relayToGameServerPing: null,
         browserToRelayPing: null,
+        relayUrl: null,
+        serverAddress: null,
         adapter: null,
         liveReady: false,
       });
@@ -224,6 +235,7 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
       set({
         mapName: cachedServer?.mapName ?? s.mapName,
         serverName: cachedServer?.name,
+        serverAddress: address,
         warriorName,
         liveReady: false,
         gameStatus: null,
