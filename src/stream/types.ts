@@ -381,12 +381,28 @@ export interface StreamSnapshot {
   matchEnded: boolean;
 }
 
+/** One prefetchable asset; `name` is the game-file name (resolution to a
+ *  URL and loader happens in the shape preloader). */
+export interface PreloadAsset {
+  kind: "shape" | "interior" | "terrain" | "texture";
+  name: string;
+}
+
 export interface StreamingPlayback {
   reset(): void;
   getSnapshot(): StreamSnapshot;
   stepToTime(targetTimeSec: number, maxMoveTicks?: number): StreamSnapshot;
   /** DTS shape names for weapon effects (explosions) that should be preloaded. */
   getEffectShapes(): string[];
+  /**
+   * Prioritized prefetch list for this session, scene geometry first:
+   * the terrain file, interior GLBs, and TSStatic shapes detected from
+   * scene entities, followed by DTS shapes from datablock categories
+   * certain to render (player armors, held weapon/pack images, items,
+   * static shapes). Order is priority — the prefetcher drains from the
+   * front; everything else loads on demand at first sight.
+   */
+  getPreloadAssets(): PreloadAsset[];
   /** Resolve a datablock by its numeric ID. */
   getDataBlockData(id: number): ParsedData | undefined;
   /**

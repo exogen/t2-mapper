@@ -164,6 +164,8 @@ export class WatchSession {
   private retryTimer: ReturnType<typeof setTimeout> | null = null;
   private scoresTimer: ReturnType<typeof setInterval> | null = null;
   private retryCount = 0;
+  /** Re-syncs without a healthy stretch (~5000 packets) in between. */
+  private resyncCount = 0;
   private destroyed = false;
   private lastStatus: ConnectionStatus = "connecting";
   private lastPingMs: number | null = null;
@@ -424,11 +426,19 @@ export class WatchSession {
         { err: e, address: this.key, packet: this.packetCount },
         "Watch session packet parse failed",
       );
-      parsed = null;
+      // Our state skipped this packet; forwarding it would put every
+      // watcher permanently ahead of the state we seed late joiners with.
+      this.resyncSession("packet parse failed");
+      return;
     }
 
     if (parsed) {
       this.packetCount++;
+      // A long healthy stretch forgives past re-syncs, so rare faults
+      // over a session's lifetime never exhaust the re-sync budget.
+      if (this.resyncCount > 0 && this.packetCount > 5000) {
+        this.resyncCount = 0;
+      }
       // NetStrings apply before responders so funcName refs resolve.
       this.watchState.applyPacket(parsed);
       this.ghostState.applyPacket(parsed);
@@ -439,8 +449,12 @@ export class WatchSession {
       // Invariant: the accumulator must mirror the parser's ghost tracker
       // exactly — any mismatch would seed late joiners with a tracker
       // that diverges from ours, corrupting everything they parse next.
-      if (this.packetCount % 500 === 0) {
-        this.checkAccumulatorInvariant("periodic");
+      if (
+        this.packetCount % 500 === 0 &&
+        !this.checkAccumulatorInvariant("periodic")
+      ) {
+        this.resyncSession("ghost accumulator diverged");
+        return;
       }
     }
 
@@ -449,6 +463,43 @@ export class WatchSession {
         ws.send(data, { binary: true });
       }
     }
+  }
+
+  /**
+   * Hard re-sync: the parser or accumulators no longer mirror the stream
+   * (parse failure or ghost divergence), so watcher state and any future
+   * catch-up would be corrupt. Reconnect from scratch — the server
+   * re-sends datablocks and the ghost-always stream on a fresh
+   * connection, and every watcher re-hydrates from a new epoch.
+   */
+  private resyncSession(reason: string): void {
+    if (this.destroyed) return;
+    if (this.resyncCount >= MAX_RETRIES) {
+      this.endSession(`Stream state diverged: ${reason}`);
+      return;
+    }
+    this.resyncCount++;
+    relayLog.warn(
+      { address: this.key, reason, attempt: this.resyncCount },
+      "Watch session re-syncing from a fresh connection",
+    );
+    this.lastStatus = "connecting";
+    for (const ws of this.watchers) this.pending.add(ws);
+    this.watchers.clear();
+    this.fanOut({
+      type: "sessionStatus",
+      status: "connecting",
+      message: "Re-syncing with server...",
+      address: this.key,
+      mapName: this.sessionMapName(),
+      watcherCount: this.watcherCount,
+    });
+    const conn = this.connection;
+    this.connection = null;
+    if (conn && conn.status !== "disconnected") {
+      conn.disconnect();
+    }
+    this.start();
   }
 
   /**
@@ -535,8 +586,9 @@ export class WatchSession {
    * The accumulator's ghost membership must exactly mirror the parser's
    * tracker: the tracker decides create-vs-update on the wire, so a late
    * joiner seeded with different membership misparses the stream.
+   * Returns false on divergence (callers re-sync).
    */
-  private checkAccumulatorInvariant(context: string): void {
+  private checkAccumulatorInvariant(context: string): boolean {
     const tracker = this.parserKit.ghostTracker.getAllGhosts();
     const seeds = new Map(
       this.ghostState.getGhostSeeds().map((s) => [s.index, s.classId]),
@@ -571,7 +623,9 @@ export class WatchSession {
         },
         "Ghost accumulator diverged from parser tracker",
       );
+      return false;
     }
+    return true;
   }
 
   // ── Catch-up ──
@@ -583,7 +637,15 @@ export class WatchSession {
    * the snapshot.
    */
   private deliverCatchup(ws: WebSocket): void {
-    if (!this.pending.has(ws)) return;
+    if (this.destroyed || !this.pending.has(ws)) return;
+    // A re-sync may have started mid-delivery-loop; these watchers get a
+    // fresh catch-up once the new connection is live.
+    if (this.lastStatus !== "connected") return;
+    // Never seed a joiner from diverged state — re-sync instead.
+    if (!this.checkAccumulatorInvariant("catchup-build")) {
+      this.resyncSession("ghost accumulator diverged");
+      return;
+    }
     sendJson(ws, {
       type: "sessionStatus",
       status: "syncing",
@@ -653,7 +715,6 @@ export class WatchSession {
       return cached.gzipped;
     }
 
-    this.checkAccumulatorInvariant("catchup-build");
     const payload = buildCatchupPayload({
       packetParser: this.parserKit.packetParser,
       ghostState: this.ghostState,

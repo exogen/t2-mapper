@@ -18,14 +18,21 @@ import { ExitCommandCircuitButton } from "@/src/components/ExitCommandCircuitBut
 import { GameDialogSpinner } from "@/src/components/GameDialogSpinner";
 import { useSettings } from "@/src/components/SettingsProvider";
 import { useTouchDevice } from "@/src/components/useTouchDevice";
-import { useCommandCircuit } from "@/src/state/commandCircuitStore";
+import {
+  commandCircuitStore,
+  useCommandCircuit,
+} from "@/src/state/commandCircuitStore";
+import { useModeQueryState } from "@/src/components/useQueryParams";
 import { useLiveSelector } from "@/src/state/liveConnectionStore";
-import { useMissionName, useMissionType } from "@/src/state/gameEntityStore";
+import {
+  useDataSource,
+  useMissionName,
+  useMissionType,
+} from "@/src/state/gameEntityStore";
 import { InputProvider } from "@/src/components/InputProducer";
 import { VisualInput } from "@/src/components/VisualInput";
 import { LoadingIndicator } from "@/src/components/LoadingIndicator";
 import { useAutoScoreScreen } from "@/src/components/useAutoScoreScreen";
-import { startShapePreload } from "@/src/shapePreloader";
 import frameStyles from "@/src/components/MapInspector.module.css";
 import styles from "./WatchPage.module.css";
 import { WatchErrorDialog } from "./WatchErrorDialog";
@@ -83,15 +90,12 @@ export function WatchPage() {
   useAutoScoreScreen(setScoreScreenOpen);
   const isTouch = useTouchDevice();
   const isCommandCircuit = useCommandCircuit((s) => s.active);
+  const [viewMode, setViewMode] = useModeQueryState();
   const invalidateRef = useRef<InvalidateFunction | null>(null);
   const missionName = useMissionName();
   const missionType = useMissionType();
 
-  // Warm the shape cache during connect/catch-up dead time.
   const sessionActive = watchStatus !== null && watchStatus !== "ended";
-  useEffect(() => {
-    if (sessionActive) startShapePreload();
-  }, [sessionActive]);
 
   // Close any open dialogs when the session ends (leave/kick) so they
   // don't reappear on the next join.
@@ -101,6 +105,27 @@ export function WatchPage() {
       setMapInfoOpen(false);
     }
   }, [sessionActive]);
+
+  // ── Command circuit view in the URL ──
+  // A shared ?mode=command link opens the command map once the stream is
+  // live. Activation must wait for the streaming data source (set by the
+  // lazily-loaded StreamingController) — activate() is a no-op before
+  // then. After that, the param mirrors whether the command map is open,
+  // so copying the URL always brings the current view along.
+  const dataSource = useDataSource();
+  const ccRestorePendingRef = useRef(viewMode === "command");
+  useEffect(() => {
+    if (!ccRestorePendingRef.current || !liveReady || dataSource !== "live") {
+      return;
+    }
+    ccRestorePendingRef.current = false;
+    commandCircuitStore.getState().activate();
+  }, [liveReady, dataSource]);
+  useEffect(() => {
+    // Leave the param alone until the pending restore has consumed it.
+    if (ccRestorePendingRef.current) return;
+    setViewMode(isCommandCircuit ? "command" : null);
+  }, [isCommandCircuit, setViewMode]);
 
   // ── Auto-spectate from a share link ──
   // One attempt per page load: after a manual leave (or a failed match)

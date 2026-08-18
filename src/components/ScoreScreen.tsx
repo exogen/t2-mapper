@@ -2,6 +2,7 @@ import { useEffect, useRef, useMemo } from "react";
 import { LuUsers } from "react-icons/lu";
 import { IoMdStopwatch } from "react-icons/io";
 import { useStreamSnapshot } from "../state/streamSnapshotStore";
+import { useMatchClockMs } from "./useMatchClock";
 import { liveConnectionStore } from "../state/liveConnectionStore";
 import { useDataSource } from "../state/gameEntityStore";
 import type { PlayerRosterEntry, TeamScore } from "../stream/types";
@@ -49,22 +50,20 @@ export function ScoreScreen({ onClose }: { onClose: () => void }) {
   const dialogRef = useRef<HTMLDivElement>(null);
   const dataSource = useDataSource();
   const isLive = dataSource === "live";
-  const { connectedClientId, teamScores, playerRoster, matchClockMs } =
-    useStreamSnapshot(
-      (snap) => {
-        return {
-          connectedClientId: snap?.connectedClientId,
-          teamScores: snap?.teamScores,
-          playerRoster: snap?.playerRoster,
-          matchClockMs: snap?.matchClockMs,
-        };
-      },
-      (a, b) =>
-        a.connectedClientId === b.connectedClientId &&
-        a.teamScores === b.teamScores &&
-        a.playerRoster === b.playerRoster &&
-        a.matchClockMs === b.matchClockMs,
-    );
+  const { connectedClientId, teamScores, playerRoster } = useStreamSnapshot(
+    (snap) => {
+      return {
+        connectedClientId: snap?.connectedClientId,
+        teamScores: snap?.teamScores,
+        playerRoster: snap?.playerRoster,
+      };
+    },
+    (a, b) =>
+      a.connectedClientId === b.connectedClientId &&
+      a.teamScores === b.teamScores &&
+      a.playerRoster === b.playerRoster,
+  );
+  const matchClockMs = useMatchClockMs();
 
   // Focus and exit pointer lock on open
   useEffect(() => {

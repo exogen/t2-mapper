@@ -10,6 +10,8 @@ import {
 import { useSettings } from "./SettingsProvider";
 import { ParticleEffects } from "./ParticleEffects";
 import { playerEyePositions } from "./PlayerModel";
+import { useProgress } from "@react-three/drei";
+import { startAssetPrefetch, stopAssetPrefetch } from "../assetPrefetch";
 import { stopAllTrackedSounds } from "./AudioEmitter";
 import { useEngineStoreApi, advanceEffectClock } from "../state/engineStore";
 import { setStreamSnapshot } from "../state/streamSnapshotStore";
@@ -187,6 +189,7 @@ export function StreamingController({
     recording.streamingPlayback ?? null,
   );
   const publishedSnapshotRef = useRef<StreamSnapshot | null>(null);
+  const lastPublishTimeRef = useRef(0);
   const lastSyncedSnapshotRef = useRef<StreamSnapshot | null>(null);
 
   const syncRenderableEntities = useCallback((snapshot: StreamSnapshot) => {
@@ -309,6 +312,7 @@ export function StreamingController({
     streamRef.current = recording.streamingPlayback ?? null;
     lastSyncedSnapshotRef.current = null;
     publishedSnapshotRef.current = null;
+    lastPublishTimeRef.current = 0;
     resetStreamPlayback();
     playbackClockRef.current = 0;
     lastSeekTimeRef.current = 0;
@@ -323,6 +327,11 @@ export function StreamingController({
       setStreamSnapshot(null);
       return;
     }
+
+    // Prefetch what this session is certain to render — scene geometry
+    // (terrain, interiors) first, then category shapes — re-polled as
+    // more state arrives. On-demand loads cover the rest at first sight.
+    startAssetPrefetch(() => stream.getPreloadAssets());
 
     // Update gameEntityStore when mission info arrives via server messages
     // (MsgMissionDropInfo, MsgLoadInfo, MsgClientReady).
@@ -382,6 +391,7 @@ export function StreamingController({
 
     return () => {
       stopAllTrackedSounds();
+      stopAssetPrefetch();
       // Null out streamRef so useFrame stops syncing entities.
       streamRef.current = null;
       // Don't call endStreaming() or clear the snapshot — leave entities,
@@ -457,10 +467,25 @@ export function StreamingController({
 
     syncRenderableEntities(renderCurrent);
 
-    // Publish snapshot when it changed.
+    // Publish snapshot when it changed. useSyncExternalStore
+    // notifications are handled SYNCHRONOUSLY by React and preempt (and
+    // restart) in-progress Suspense retry renders, so per-tick publishes
+    // starve asset pop-in while shapes are loading: loaded GLBs sit in
+    // cache while their retry render never gets to finish (pausing a
+    // demo made everything appear instantly). While three's
+    // DefaultLoadingManager reports active loads (via drei's useProgress
+    // store), throttle publishes hard so retries get long uninterrupted
+    // windows; otherwise publish every tick. Imperative per-frame
+    // consumers (nameplates, entity fields, streamClock) bypass React
+    // and are unaffected either way.
     if (renderCurrent !== publishedSnapshotRef.current) {
-      publishedSnapshotRef.current = renderCurrent;
-      setStreamSnapshot(renderCurrent);
+      const now = performance.now();
+      const publishInterval = useProgress.getState().active ? 500 : 0;
+      if (now - lastPublishTimeRef.current >= publishInterval) {
+        lastPublishTimeRef.current = now;
+        publishedSnapshotRef.current = renderCurrent;
+        setStreamSnapshot(renderCurrent);
+      }
     }
 
     const currentCamera = renderCurrent.camera;

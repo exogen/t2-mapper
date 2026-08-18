@@ -10,7 +10,11 @@ import type {
   GhostingMessageEventData,
 } from "t2-demo-parser";
 import { createLogger } from "../logger";
-import { resolveShapeName, stripTaggedStringMarkup } from "./streamHelpers";
+import {
+  resolveShapeName,
+  stripTaggedStringMarkup,
+  collectPreloadShapeNames,
+} from "./streamHelpers";
 import type { Vec3 } from "./streamHelpers";
 import type { StreamSnapshot } from "./types";
 import { StreamEngine } from "./StreamEngine";
@@ -148,6 +152,15 @@ export class LiveStreamAdapter extends StreamEngine {
   } {
     const absRot = this.getAbsoluteRotation(data);
     return absRot ?? { yaw: 0, pitch: 0 };
+  }
+
+  protected getPreloadShapeNames(): string[] {
+    return collectPreloadShapeNames(
+      [...this.dataBlockClassNames].map(([id, className]) => ({
+        className,
+        data: this.getDataBlockData(id),
+      })),
+    );
   }
 
   getEffectShapes(): string[] {

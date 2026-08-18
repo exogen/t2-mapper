@@ -188,8 +188,13 @@ export function buildClientGamePacket(
   options: {
     moves?: ClientMoveData[];
     moveStartIndex?: number;
-    events?: ClientEvent[];
-    nextSendEventSeq?: number;
+    /**
+     * Guaranteed events, each with its OWN sequence number. The queue is
+     * not always contiguous — after packet loss, retransmitted events
+     * (older seqs) share a packet with newer ones — so seqs must never
+     * be derived by incrementing from the first event.
+     */
+    events?: Array<{ seq: number; event: ClientEvent }>;
     /**
      * Advertise our max receive rate (NetConnection::mMaxRate). The server
      * clamps this against its own limits and adopts it as its send rate to
@@ -234,14 +239,13 @@ export function buildClientGamePacket(
     // eventWritePacket:
     //   Unguaranteed events: none from observer
     bs.writeFlag(false); // end unguaranteed
-    //   Guaranteed events
-    if (options.events && options.events.length > 0) {
-      let seq = options.nextSendEventSeq ?? 0;
-      for (const event of options.events) {
+    //   Guaranteed events (explicit per-event seq; the sequential
+    //   shortcut flag is an optional 6-bit optimization we skip)
+    if (options.events) {
+      for (const { seq, event } of options.events) {
         bs.writeFlag(true); // more guaranteed events
         bs.writeFlag(false); // not sequential shortcut
         bs.writeInt(seq & 0x7f, 7);
-        seq++;
         bs.writeInt(event.classId - NetEventClassFirst, 6);
         event.write(bs);
       }

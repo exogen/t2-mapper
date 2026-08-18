@@ -82,6 +82,33 @@ httpServer.listen(RELAY_PORT, "0.0.0.0", () => {
 
 /** Cached server list from the most recent master query. */
 let cachedServers: ServerInfo[] = [];
+let serverListAt = 0;
+let serverListInFlight: Promise<ServerInfo[]> | null = null;
+
+/** How long a master query result satisfies further listServers requests. */
+const SERVER_LIST_TTL_MS = 2_000;
+
+/**
+ * Master query with coalescing: concurrent listServers requests share one
+ * in-flight query, and results within the TTL are served from cache —
+ * each refresh otherwise triggers a full UDP sweep of every listed server.
+ */
+function getServerList(): Promise<ServerInfo[]> {
+  if (serverListInFlight) return serverListInFlight;
+  if (Date.now() - serverListAt < SERVER_LIST_TTL_MS) {
+    return Promise.resolve(cachedServers);
+  }
+  serverListInFlight = queryServerList(MASTER_SERVER)
+    .then((servers) => {
+      cachedServers = servers;
+      serverListAt = Date.now();
+      return servers;
+    })
+    .finally(() => {
+      serverListInFlight = null;
+    });
+  return serverListInFlight;
+}
 
 /** All active game connections (for status logging). */
 const activeGameConnections = new Set<GameConnection>();
@@ -127,6 +154,11 @@ const watchSessions = new WatchSessionManager({
 });
 
 setInterval(() => {
+  // Evict expired probe results (they're otherwise only deleted when the
+  // same address is re-queried, so distinct dead addresses accumulate).
+  for (const [key, entry] of probeCache) {
+    if (Date.now() - entry.at > PROBE_TTL_MS) probeCache.delete(key);
+  }
   const wsClients = wss.clients.size;
   const gameConns = activeGameConnections.size;
   const sessions = watchSessions.getStatusSummary();
@@ -424,7 +456,18 @@ wss.on("connection", (ws) => {
             });
             return;
           }
-          if (probeInFlight) return;
+          if (probeInFlight) {
+            // The earlier request's probe will answer this socket; tell
+            // the client something instead of silently dropping.
+            sendToClient(ws, {
+              type: "sessionStatus",
+              status: "connecting",
+              address,
+              message: "Checking server...",
+              watcherCount: 0,
+            });
+            return;
+          }
           probeInFlight = true;
           relayLog.info({ address }, "Probing unlisted server");
           let info: ServerInfo | null = null;
@@ -467,8 +510,7 @@ wss.on("connection", (ws) => {
       case "listServers": {
         relayLog.info("Querying master server for server list");
         try {
-          const servers = await queryServerList(MASTER_SERVER);
-          cachedServers = servers;
+          const servers = await getServerList();
           relayLog.info(
             { count: servers.length },
             "Returning server list to browser",

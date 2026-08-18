@@ -55,6 +55,7 @@ import type {
   StreamEntity,
   StreamSnapshot,
   StreamingPlayback,
+  PreloadAsset,
   InventoryHudSlot,
   PendingAudioEvent,
   PlayerRosterEntry,
@@ -386,6 +387,36 @@ export abstract class StreamEngine implements StreamingPlayback {
 
   /** DTS shape names for weapon effects that should be preloaded. */
   abstract getEffectShapes(): string[];
+  /** Category-scoped shape names for getPreloadAssets (per data source). */
+  protected abstract getPreloadShapeNames(): string[];
+
+  /**
+   * Prioritized prefetch list: the terrain file, interior GLBs, and
+   * TSStatic shapes from scene entities come first (the world's biggest
+   * visual chunks), then the category shapes. The prefetcher drains
+   * from the front.
+   */
+  getPreloadAssets(): PreloadAsset[] {
+    const assets: PreloadAsset[] = [];
+    for (const entity of this.entities.values()) {
+      const scene = entity.sceneData;
+      if (!scene) continue;
+      if (scene.className === "TerrainBlock" && scene.terrFileName) {
+        assets.push({ kind: "terrain", name: scene.terrFileName });
+        if (scene.detailTextureName) {
+          assets.push({ kind: "texture", name: scene.detailTextureName });
+        }
+      } else if (scene.className === "InteriorInstance" && scene.interiorFile) {
+        assets.push({ kind: "interior", name: scene.interiorFile });
+      } else if (scene.className === "TSStatic" && scene.shapeName) {
+        assets.push({ kind: "shape", name: scene.shapeName });
+      }
+    }
+    for (const name of this.getPreloadShapeNames()) {
+      assets.push({ kind: "shape", name });
+    }
+    return assets;
+  }
 
   // ── Ghost/entity resolution (shared, uses registry + ghostTracker) ──
 

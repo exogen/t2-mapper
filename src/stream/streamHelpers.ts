@@ -1,5 +1,6 @@
 import { Matrix4, Quaternion } from "three";
 import type { ParsedData } from "t2-demo-parser";
+import { resolveShapeName } from "../../relay/shared";
 import type {
   StreamVisual,
   WeaponImageDataBlockState,
@@ -218,7 +219,31 @@ export function isQuatLike(value: unknown): value is {
 
 // ── DataBlock field accessors ──
 
-export { resolveShapeName } from "../../relay/shared";
+export { resolveShapeName };
+
+/** Datablock classes whose shapes are certain to render in any session
+ *  (players, everything they carry, and static scenery) — the
+ *  shape-prefetch scope. Vehicles/turrets/deployables load on demand at
+ *  first sight. */
+export const PRELOAD_DATA_BLOCK_CLASSES: ReadonlySet<string> = new Set([
+  "PlayerData",
+  "ShapeBaseImageData",
+  "ItemData",
+  "StaticShapeData",
+]);
+
+/** Unique shape names from datablocks in the prefetch categories. */
+export function collectPreloadShapeNames(
+  dataBlocks: Iterable<{ className: string; data: ParsedData | undefined }>,
+): string[] {
+  const names = new Set<string>();
+  for (const { className, data } of dataBlocks) {
+    if (!PRELOAD_DATA_BLOCK_CLASSES.has(className)) continue;
+    const name = resolveShapeName(className, data);
+    if (name) names.add(name);
+  }
+  return [...names];
+}
 
 export function getNumberField(
   data: ParsedData | undefined,

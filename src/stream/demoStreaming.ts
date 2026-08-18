@@ -22,6 +22,7 @@ import {
   torqueQuatHeading,
   torqueQuatPitch,
   torqueQuatToThreeJS,
+  collectPreloadShapeNames,
 } from "./streamHelpers";
 import type { Vec3 } from "./streamHelpers";
 import type {
@@ -766,6 +767,10 @@ class StreamingPlayback extends StreamEngine {
     this._cachedSnapshotTick = this.moveTicks;
     this._cachedSnapshotGen = this.entityGeneration;
     return snapshot;
+  }
+
+  protected getPreloadShapeNames(): string[] {
+    return collectPreloadShapeNames(this.initialBlock.dataBlocks.values());
   }
 
   getEffectShapes(): string[] {

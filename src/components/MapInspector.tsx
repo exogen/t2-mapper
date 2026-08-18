@@ -52,7 +52,6 @@ import { GameDialogSpinner } from "./GameDialogSpinner";
 import { ToggleSidebarButton } from "./ToggleSidebarButton";
 import { ExitTourButton } from "./ExitTourButton";
 import { ExitCommandCircuitButton } from "./ExitCommandCircuitButton";
-import { startShapePreload } from "../shapePreloader";
 import styles from "./MapInspector.module.css";
 
 function ViewTransition({ children }: { children: ReactNode }) {
@@ -178,10 +177,6 @@ export function MapInspector() {
     }
   }, [statsPending, dataSource, loadedMissionName]);
   const hasStreamData = dataSource === "demo" || dataSource === "live";
-  // Start background preloading of shape GLBs so they're cached before needed.
-  useEffect(() => {
-    if (hasStreamData) startShapePreload();
-  }, [hasStreamData]);
 
   // Sync the mission query param when streaming data provides a mission name.
   const streamMissionName = useMissionName();

@@ -12,6 +12,7 @@ import styles from "./PlayerHUD.module.css";
 import { ChatWindow } from "./ChatWindow";
 import { CompassDial } from "./CompassDial";
 import { useCameraHeadingRotor } from "./MapCompass";
+import { useMatchClockMs } from "./useMatchClock";
 import { useSettings } from "./SettingsProvider";
 import { useCommandCircuit } from "../state/commandCircuitStore";
 
@@ -26,7 +27,7 @@ function formatClockHud(clockMs: number): string {
 function Compass({ commandCircuitActive }: { commandCircuitActive: boolean }) {
   const isWatcher = useLiveSelector((s) => s.role === "watcher");
   const yaw = useStreamSnapshot((snap) => snap?.camera?.yaw);
-  const matchClockMs = useStreamSnapshot((snap) => snap?.matchClockMs);
+  const matchClockMs = useMatchClockMs();
   // Watch mode: the view camera is client-controlled (free-fly/orbit), so
   // the stream camera's yaw is meaningless — track the render camera.
   if (isWatcher) {

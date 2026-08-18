@@ -84,8 +84,18 @@ export function decryptAccountKey(
   return privateKeyHex;
 }
 
+/** Memoized result — the env never changes, and decryptAccountKey's
+ *  RC4 + SHA1 verification is too heavy to redo per health check. */
+let cachedCredentials: AccountCredentials | null | undefined;
+
 /** Load credentials from environment variables. */
 export function loadCredentials(): AccountCredentials | null {
+  if (cachedCredentials !== undefined) return cachedCredentials;
+  cachedCredentials = loadCredentialsUncached();
+  return cachedCredentials;
+}
+
+function loadCredentialsUncached(): AccountCredentials | null {
   const certificate = process.env.T2_ACCOUNT_CERTIFICATE;
   const encryptedKey = process.env.T2_ACCOUNT_ENCRYPTED_KEY;
   const username = process.env.T2_ACCOUNT_NAME;

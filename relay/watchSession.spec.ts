@@ -249,6 +249,63 @@ describe("WatchSessionManager", () => {
     expect(chats()[2].args[0]).toHaveLength(255);
   });
 
+  it("re-syncs from a fresh connection when packet parsing fails", () => {
+    const { manager, connections } = createManager();
+    const ws = new FakeWebSocket();
+    manager.watch(ws as unknown as WebSocket, "1.2.3.4:28000");
+     
+    const session = (manager as any).sessions.get("1.2.3.4:28000");
+    const conn1 = connections[0];
+    conn1.setStatus("connected");
+
+    session.parserKit.packetParser.parsePacket = () => {
+      throw new Error("bad packet");
+    };
+    const binBefore = ws.binaryFrames().length;
+    conn1.emit("packet", new Uint8Array([1, 2, 3]));
+
+    // The bad packet is not forwarded, the watcher is re-pended, and a
+    // fresh connection replaces the diverged one.
+    expect(ws.binaryFrames()).toHaveLength(binBefore);
+    expect(conn1.disconnectCalls).toBe(1);
+    expect(connections).toHaveLength(2);
+    const statuses = ws
+      .jsonMessages()
+      .filter((m) => m.type === "sessionStatus");
+    expect(statuses.at(-1)).toMatchObject({ status: "connecting" });
+
+    // The new connection delivers a fresh catch-up on a new epoch.
+    connections[1].setStatus("connected");
+    const begins = ws
+      .jsonMessages()
+      .filter((m) => m.type === "catchupBegin") as Array<{ epoch: number }>;
+    expect(begins).toHaveLength(2);
+    expect(begins[1].epoch).toBe(begins[0].epoch + 1);
+  });
+
+  it("ends the session when re-syncs repeat without a healthy stretch", () => {
+    const { manager, connections } = createManager();
+    const ws = new FakeWebSocket();
+    manager.watch(ws as unknown as WebSocket, "1.2.3.4:28000");
+     
+    const session = (manager as any).sessions.get("1.2.3.4:28000");
+    connections[0].setStatus("connected");
+
+    // Each re-sync builds a fresh parser, so re-break it every round.
+    for (let i = 0; i < 4; i++) {
+      session.parserKit.packetParser.parsePacket = () => {
+        throw new Error("bad packet");
+      };
+      connections.at(-1)!.emit("packet", new Uint8Array([1]));
+    }
+
+    const statuses = ws
+      .jsonMessages()
+      .filter((m) => m.type === "sessionStatus");
+    expect(statuses.at(-1)).toMatchObject({ status: "ended" });
+    expect(manager.getStatusSummary()).toEqual([]);
+  });
+
   it("ends the session on non-retryable disconnect", () => {
     const { manager, connections } = createManager();
     const ws = new FakeWebSocket();

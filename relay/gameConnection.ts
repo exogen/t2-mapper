@@ -10,6 +10,7 @@ import {
   buildCRCChallengeResponseEvent,
   buildGhostingMessageEvent,
   buildDisconnectPacket,
+  buildGamePingRequest,
   type ClientEvent,
   type ClientMoveData,
 } from "./protocol.js";
@@ -42,6 +43,11 @@ const SEND_WINDOW = 30;
 // The engine calls checkPacketSend every frame; a fast timer approximates
 // that, with the 32ms gate above providing the actual pacing.
 const SEND_LOOP_INTERVAL_MS = 8;
+
+/** Out-of-band GamePingRequest cadence for the reported server RTT. */
+const OOB_PING_INTERVAL_MS = 4000;
+/** Consecutive unanswered probes before falling back to ack-derived RTT. */
+const OOB_PING_FALLBACK_MISSES = 3;
 // While move batches have arrived this recently, the browser's tick drives
 // the send clock and the loop's empty keepalives stand down.
 const MOVE_STREAM_TIMEOUT_MS = 100;
@@ -114,6 +120,17 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
   /** Smoothed RTT in ms (exponential moving average). */
   private smoothedPing = 0;
   private lastPingEmit = 0;
+  /** Out-of-band GamePingRequest probe: dedicated socket + schedule.
+   *  The dnet ack-derived RTT drifts to absurd values on long-lived
+   *  passive connections (multi-second readings while true RTT is
+   *  ~20-60ms), so the reported ping comes from this query-port probe;
+   *  the ack RTT remains a debug diagnostic and a fallback for servers
+   *  that ignore query pings. */
+  private oobPingSocket: dgram.Socket | null = null;
+  private oobPingTimer: ReturnType<typeof setInterval> | null = null;
+  private oobPingSentAt = 0;
+  private oobPingOutstanding = false;
+  private oobPingMisses = 0;
 
   /** Warrior name to send in the ConnectRequest. */
   private warriorName: string;
@@ -200,16 +217,19 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
       { bytes: packet.length, clientSeq: this.clientConnectSequence },
       "Sending ConnectChallengeRequest",
     );
-    this.sendRaw(packet);
-
-    // Retry challenge if no response
-    this.challengeRetryTimer = setTimeout(() => {
-      this.challengeRetryTimer = null;
-      if (this._status === "challenging") {
-        connLog.info("No challenge response, retrying");
-        this.sendRaw(packet);
-      }
-    }, 2000);
+    // Retry every 2s until the handshake advances (like the real client);
+    // the overall connect timeout bounds the attempts.
+    const send = () => {
+      this.sendRaw(packet);
+      this.challengeRetryTimer = setTimeout(() => {
+        this.challengeRetryTimer = null;
+        if (this._status === "challenging") {
+          connLog.info("No challenge response, retrying");
+          send();
+        }
+      }, 2000);
+    };
+    send();
   }
 
   /** Handle an incoming UDP message. */
@@ -228,29 +248,17 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
       );
     }
 
-    const firstByte = msg[0];
-
-    if (this.isOOBPacket(firstByte)) {
-      connLog.debug(
-        { type: firstByte, bytes: msg.length },
-        "Received OOB packet",
-      );
+    // dnet discriminator: every data-protocol packet begins with the
+    // gameFlag in the LSB of the first byte, while OOB packet types are
+    // all even — so the low bit alone routes the packet. This also keeps
+    // stray OOB packets (query responses, spoofed datagrams) from being
+    // forwarded to watchers as game data.
+    if ((msg[0] & 1) === 0) {
+      connLog.debug({ type: msg[0], bytes: msg.length }, "Received OOB packet");
       this.handleOOBPacket(msg);
     } else {
       this.handleDataPacket(msg);
     }
-  }
-
-  /** Check if a packet is OOB (out-of-band) vs data protocol. */
-  private isOOBPacket(firstByte: number): boolean {
-    // Disconnect (38) can arrive at any time
-    if (firstByte === 38) return true;
-    const oobTypes = [26, 28, 30, 32, 34, 36, 38, 40];
-    return (
-      this._status !== "connected" &&
-      this._status !== "authenticating" &&
-      oobTypes.includes(firstByte)
-    );
   }
 
   /** Handle out-of-band handshake packets. */
@@ -310,6 +318,8 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
 
   /** Handle ChallengeReject (type 28): U8(28) + U32(clientSeq) + HuffString(reason). */
   private handleChallengeReject(msg: Buffer): void {
+    // A delayed duplicate must not tear down an established connection.
+    if (this._status !== "challenging") return;
     if (msg.length < 5) return;
     const dv = new DataView(msg.buffer, msg.byteOffset, msg.byteLength);
     const seq = dv.getUint32(1, true);
@@ -338,6 +348,9 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
 
   /** Handle ConnectChallengeResponse. */
   private handleChallengeResponse(msg: Buffer): void {
+    // A duplicate response after the handshake advanced would re-send
+    // the ConnectRequest mid-connection.
+    if (this._status !== "challenging") return;
     if (msg.length < 14) {
       connLog.error({ bytes: msg.length }, "ChallengeResponse too short");
       return;
@@ -395,6 +408,12 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
 
   /** Handle ConnectAccept. */
   private handleConnectAccept(_msg: Buffer): void {
+    // A duplicate accept would restart keepalive/ping timers.
+    if (this._status !== "challenging") return;
+    if (this.handshakeTimer) {
+      clearTimeout(this.handshakeTimer);
+      this.handshakeTimer = null;
+    }
     connLog.info(
       {
         clientSeq: this.clientConnectSequence,
@@ -406,6 +425,7 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
     );
     this.protocol.connectSequence = this.connectSequence;
     this.startKeepalive();
+    this.startOobPing();
 
     if (this.auth) {
       connLog.info("Starting T2csri authentication");
@@ -418,6 +438,8 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
 
   /** Handle ConnectReject (type 34): U8(34) + U32(serverSeq) + U32(clientSeq) + HuffString(reason). */
   private handleConnectReject(msg: Buffer): void {
+    // A delayed duplicate must not tear down an established connection.
+    if (this._status !== "challenging") return;
     if (msg.length < 9) return;
     const dv = new DataView(msg.buffer, msg.byteOffset, msg.byteLength);
     const serverSeq = dv.getUint32(1, true);
@@ -512,6 +534,9 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
       );
       const pingResponse = this.protocol.buildPingPacket();
       this.sendRaw(pingResponse);
+      // Ledger: pong packets consume a wire seq with no RTT timestamp —
+      // log it so seq accounting stays auditable alongside "TX data".
+      connLog.debug({ wireSeq: this.protocol.lastSendSeq }, "TX pong");
     }
 
     if (this.dataPacketCount <= 20 || this.dataPacketCount % 50 === 0) {
@@ -531,18 +556,33 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
       );
     }
 
-    // Measure RTT from the acked sequence's send timestamp (full 32-bit key).
+    // Ack-derived RTT: a debug diagnostic (it drifts on long-lived
+    // passive connections), and the ping fallback while the out-of-band
+    // probe goes unanswered.
     const sendTime = this.sendTimestamps.get(result.highestAck);
     if (sendTime) {
       const rtt = Date.now() - sendTime;
-      // Exponential moving average (alpha=0.5 for responsive updates).
-      this.smoothedPing =
-        this.smoothedPing === 0 ? rtt : this.smoothedPing * 0.5 + rtt * 0.5;
-      // Emit ping updates at most every 2 seconds.
-      const now = Date.now();
-      if (now - this.lastPingEmit >= 2000) {
-        this.lastPingEmit = now;
-        this.emit("ping", Math.round(this.smoothedPing));
+      connLog.debug(
+        {
+          ackedSeq: result.highestAck,
+          rtt,
+          ourSeq: this.protocol.lastSendSeq,
+          unacked:
+            (this.protocol.lastSendSeq - this.protocol.highestAckedSeq) >>> 0,
+          pendingTimestamps: this.sendTimestamps.size,
+        },
+        "RTT sample",
+      );
+      if (this.oobPingMisses >= OOB_PING_FALLBACK_MISSES) {
+        // Exponential moving average (alpha=0.5 for responsive updates).
+        this.smoothedPing =
+          this.smoothedPing === 0 ? rtt : this.smoothedPing * 0.5 + rtt * 0.5;
+        // Emit ping updates at most every 2 seconds.
+        const now = Date.now();
+        if (now - this.lastPingEmit >= 2000) {
+          this.lastPingEmit = now;
+          this.emit("ping", Math.round(this.smoothedPing));
+        }
       }
     }
     // Prune every timestamp at or below the ack — acks can skip sequence
@@ -877,14 +917,23 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
             },
           }
         : {}),
-      ...(events
-        ? {
-            events: events.map((e) => e.event),
-            nextSendEventSeq: events[0].seq,
-          }
-        : {}),
+      ...(events ? { events } : {}),
     });
     this.sendRaw(packet);
+    // Send-side ledger for RTT forensics: stampedSeq is the timestamp
+    // key recorded above; wireSeq is what the protocol actually stamped
+    // into the header. They must always match — a divergence corrupts
+    // every later RTT sample (ack maps to a stale timestamp).
+    connLog.debug(
+      {
+        stampedSeq: nextSeqFull,
+        wireSeq: this.protocol.lastSendSeq,
+        bytes: packet.length,
+        events: events?.length ?? 0,
+        moves: moves.length,
+      },
+      "TX data",
+    );
   }
 
   /**
@@ -914,6 +963,59 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
     }, SEND_LOOP_INTERVAL_MS);
   }
 
+  /** Start the out-of-band ping probe (see field docs). */
+  private startOobPing(): void {
+    if (this.oobPingSocket) return;
+    const socket = dgram.createSocket("udp4");
+    this.oobPingSocket = socket;
+    socket.on("error", () => {
+      /* probe only — never fatal */
+    });
+    socket.on("message", (msg) => {
+      // GamePingResponse (type 16) from our server = pong.
+      if (msg[0] !== 16 || !this.oobPingOutstanding) return;
+      this.oobPingOutstanding = false;
+      this.oobPingMisses = 0;
+      const rtt = Date.now() - this.oobPingSentAt;
+      this.smoothedPing =
+        this.smoothedPing === 0 ? rtt : this.smoothedPing * 0.5 + rtt * 0.5;
+      this.lastPingEmit = Date.now();
+      this.emit("ping", Math.round(this.smoothedPing));
+    });
+    // Connecting scopes the socket to the server — the OS drops datagrams
+    // from any other source, so pongs can't be spoofed — and resolves any
+    // DNS name once.
+    socket.connect(this.port, this.host, () => {
+      if (this.oobPingSocket !== socket) return; // stopped meanwhile
+      this.oobPingTimer = setInterval(() => {
+        if (this.oobPingOutstanding) {
+          this.oobPingOutstanding = false;
+          this.oobPingMisses++;
+        }
+        this.oobPingSentAt = Date.now();
+        this.oobPingOutstanding = true;
+        socket.send(buildGamePingRequest(), () => {
+          /* errors handled by the error listener */
+        });
+      }, OOB_PING_INTERVAL_MS);
+    });
+  }
+
+  private stopOobPing(): void {
+    if (this.oobPingTimer) {
+      clearInterval(this.oobPingTimer);
+      this.oobPingTimer = null;
+    }
+    if (this.oobPingSocket) {
+      try {
+        this.oobPingSocket.close();
+      } catch {
+        // Already closed
+      }
+      this.oobPingSocket = null;
+    }
+  }
+
   /** Send raw bytes to the server. */
   private sendRaw(data: Uint8Array): void {
     if (!this.socket) return;
@@ -930,6 +1032,13 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
       clearTimeout(this.disconnectRetryTimer);
       this.disconnectRetryTimer = null;
     }
+    // Stop periodic work even on teardown paths that skip disconnect()
+    // — a leaked interval would retain this connection forever.
+    if (this.keepaliveTimer) {
+      clearInterval(this.keepaliveTimer);
+      this.keepaliveTimer = null;
+    }
+    this.stopOobPing();
     const hadSocket = this.socket != null;
     if (this.socket) {
       try {
@@ -957,6 +1066,9 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
   /** Disconnect from the server, sending a Disconnect OOB packet first. */
   disconnect(): void {
     if (this._status === "disconnected" && !this.socket) return;
+    // A disconnect retransmit cycle is already in progress — a second
+    // call must not restart it.
+    if (this._status === "disconnected" && this.disconnectRetryTimer) return;
 
     connLog.info("Disconnecting");
 
@@ -971,6 +1083,7 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
       clearInterval(this.keepaliveTimer);
       this.keepaliveTimer = null;
     }
+    this.stopOobPing();
     if (this.challengeRetryTimer) {
       clearTimeout(this.challengeRetryTimer);
       this.challengeRetryTimer = null;

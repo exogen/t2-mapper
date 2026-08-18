@@ -114,15 +114,17 @@ async function queryServers(addresses: string[]): Promise<ServerInfo[]> {
   const infoResults = new Map<string, GameInfo>();
   const pingTimes = new Map<string, number>();
 
-  /** Resolve an rinfo address back to a queried address. */
+  /** Resolve an rinfo address back to a queried address. The fallback
+   *  exists for DNS-named queries (rinfo reports the resolved IP), so it
+   *  only considers non-IP-literal entries — matching by port alone
+   *  could attribute a response to a different queried IP. */
   function resolveAddr(rinfo: dgram.RemoteInfo): string {
-    let addr = `${rinfo.address}:${rinfo.port}`;
+    const addr = `${rinfo.address}:${rinfo.port}`;
     if (!pingTimes.has(addr)) {
       for (const [key] of pingTimes) {
-        const { port } = parseAddress(key);
-        if (port === rinfo.port) {
-          addr = key;
-          break;
+        const { host, port } = parseAddress(key);
+        if (port === rinfo.port && !/^\d+\.\d+\.\d+\.\d+$/.test(host)) {
+          return key;
         }
       }
     }
