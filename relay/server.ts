@@ -419,7 +419,7 @@ wss.on("connection", (ws) => {
               type: "sessionStatus",
               status: "ended",
               address,
-              message: `No compatible Tribes 2 server responded at ${address}`,
+              message: `No compatible Tribes 2 server responded at ${address}.`,
               watcherCount: 0,
             });
             return;
@@ -440,7 +440,7 @@ wss.on("connection", (ws) => {
               type: "sessionStatus",
               status: "ended",
               address,
-              message: `No compatible Tribes 2 server responded at ${address}`,
+              message: `No compatible Tribes 2 server responded at ${address}.`,
               watcherCount: 0,
             });
             return;

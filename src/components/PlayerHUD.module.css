@@ -191,7 +191,7 @@
   padding: 0 8px;
   border-left: 1px solid rgba(128, 255, 200, 0.15);
   white-space: nowrap;
-  max-width: 11em;
+  max-width: 13em;
   overflow: hidden;
   text-overflow: ellipsis;
 }

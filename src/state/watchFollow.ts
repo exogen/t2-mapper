@@ -1,4 +1,5 @@
 import { gameEntityStore } from "./gameEntityStore";
+import type { GameEntity } from "./gameEntityTypes";
 import { liveConnectionStore } from "./liveConnectionStore";
 import { streamPlaybackStore } from "./streamPlaybackStore";
 
@@ -19,11 +20,23 @@ export function watchFollowTargetId(): string | null {
   return streamPlaybackStore.getState().followEntityId;
 }
 
+/**
+ * Dead bodies are not followable: Torque DamageState 0 = Enabled (alive),
+ * 1 = Disabled (dead player awaiting respawn), 2 = Destroyed.
+ */
+function isDeadEntity(entity: GameEntity): boolean {
+  return (
+    "damageState" in entity &&
+    entity.damageState != null &&
+    entity.damageState !== 0
+  );
+}
+
 /** Living player entity ids in stable (ghost index) order for cycling. */
 function playerEntityIds(): string[] {
   const players: { id: string; ghostIndex?: number }[] = [];
   for (const entity of gameEntityStore.getState().streamEntities.values()) {
-    if (entity.renderType === "Player") {
+    if (entity.renderType === "Player" && !isDeadEntity(entity)) {
       players.push({ id: entity.id, ghostIndex: entity.ghostIndex });
     }
   }
@@ -62,9 +75,17 @@ export function enterWatchFollow(targetId?: string): void {
   const target =
     targetId ?? (current && players.includes(current) ? current : players[0]);
   if (!target) return;
+  const entity = gameEntityStore.getState().streamEntities.get(target);
   seedOrbitBehindTarget(target);
+  // targetId -1 means "no target" on the wire — never match on it.
+  const entityTargetId =
+    entity && "targetId" in entity && entity.targetId != null
+      ? entity.targetId
+      : null;
   streamPlaybackStore.setState({
     followEntityId: target,
+    followTargetId:
+      entityTargetId != null && entityTargetId >= 0 ? entityTargetId : null,
     cameraMode: "orbitOverride",
   });
 }
@@ -74,8 +95,66 @@ export function exitWatchFollow(): void {
   if (streamPlaybackStore.getState().followEntityId === null) return;
   streamPlaybackStore.setState({
     followEntityId: null,
+    followTargetId: null,
     cameraMode: "freeFly",
   });
+}
+
+/**
+ * Keep follow locked onto the same PLAYER across respawns. Each respawn
+ * is a brand-new Player ghost (the old one lingers as the corpse), so an
+ * entity id alone can't track a player. The real observer follows a
+ * client (`%client.observeClient` in camera.cs, re-reading its current
+ * `.player` every update); the client-side analogue of that identity is
+ * the player's target — per-client, allocated at join, carried in every
+ * Player ghost create, and it outlives all of the client's bodies.
+ *
+ * Returns the entity id to orbit this frame, or null while the player
+ * has no body at all (corpse faded, respawn pending) — follow stays
+ * armed and re-locks when they spawn. Call once per frame while
+ * followEntityId is set.
+ */
+export function resolveWatchFollowTarget(): string | null {
+  const state = streamPlaybackStore.getState();
+  const { followEntityId, followTargetId } = state;
+  if (!followEntityId) return null;
+  const entities = gameEntityStore.getState().streamEntities;
+  const current = entities.get(followEntityId);
+  const currentAlive = current && !isDeadEntity(current);
+  if (currentAlive) return followEntityId;
+
+  // Current body is dead or gone — look for the client's replacement
+  // body by target id. Without one (never sent), there is nothing to
+  // re-lock onto; hold while the body exists, drop follow once gone.
+  if (followTargetId == null) {
+    if (current) return followEntityId;
+    exitWatchFollow();
+    return null;
+  }
+  let replacement: { id: string; ghostIndex?: number } | undefined;
+  for (const entity of entities.values()) {
+    if (
+      entity.renderType === "Player" &&
+      entity.id !== followEntityId &&
+      entity.targetId === followTargetId &&
+      !isDeadEntity(entity)
+    ) {
+      // Prefer the newest ghost if several match (stale corpse entries).
+      if (
+        !replacement ||
+        (entity.ghostIndex ?? 0) > (replacement.ghostIndex ?? 0)
+      ) {
+        replacement = { id: entity.id, ghostIndex: entity.ghostIndex };
+      }
+    }
+  }
+  if (replacement) {
+    seedOrbitBehindTarget(replacement.id);
+    streamPlaybackStore.setState({ followEntityId: replacement.id });
+    return replacement.id;
+  }
+  // No living body yet: stay on the corpse while it lasts, then wait.
+  return current ? followEntityId : null;
 }
 
 export function toggleWatchFollow(): void {

@@ -68,6 +68,10 @@ function mutateRenderFields(
       e.weaponImageStates = stream.weaponImageStates;
       e.headPitch = stream.headPitch;
       e.headYaw = stream.headYaw;
+      // Death arrives as a DamageMask update on the existing ghost
+      // (0 = alive, 1 = Disabled/dead, 2 = Destroyed) — spectate follow
+      // and player cycling depend on seeing it.
+      e.damageState = stream.damageState;
       break;
     case "Shape":
       e.damageState = stream.damageState;

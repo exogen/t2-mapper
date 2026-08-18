@@ -6,17 +6,3 @@
   background: #000;
   overflow: hidden;
 }
-
-.EndedMessage {
-  position: fixed;
-  bottom: 24px;
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 11;
-  padding: 8px 16px;
-  border-radius: 4px;
-  background: rgba(60, 10, 10, 0.85);
-  border: 1px solid rgba(255, 90, 90, 0.4);
-  color: #ffb3b3;
-  font-size: 13px;
-}

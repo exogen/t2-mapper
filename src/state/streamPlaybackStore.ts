@@ -37,6 +37,14 @@ export interface StreamPlaybackState {
    * circuit's follow tracking.
    */
   followEntityId: string | null;
+  /**
+   * The followed player's target id — the per-client identity that
+   * survives respawns (each respawn is a brand-new Player ghost/entity,
+   * but the client's target outlives them all and is carried in every
+   * Player create). Used to re-lock follow onto the replacement entity,
+   * like the real observer following a client rather than an object.
+   */
+  followTargetId: number | null;
 }
 
 export const streamPlaybackStore = createStore<StreamPlaybackState>()(() => ({
@@ -46,6 +54,7 @@ export const streamPlaybackStore = createStore<StreamPlaybackState>()(() => ({
   orbitOverrideYaw: 0,
   orbitOverridePitch: 0,
   followEntityId: null,
+  followTargetId: null,
 }));
 
 /** Reset all streaming playback state. Called when streaming ends. */
@@ -57,6 +66,7 @@ export function resetStreamPlayback(): void {
     orbitOverrideYaw: 0,
     orbitOverridePitch: 0,
     followEntityId: null,
+    followTargetId: null,
   });
   // root is managed by the React ref callback in EntityScene — don't clear it
 }

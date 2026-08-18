@@ -134,11 +134,28 @@ export function ScoreScreen({ onClose }: { onClose: () => void }) {
     return { teamPlayers, observers };
   }, [playerRoster]);
 
-  // Sort teams by natural order (team1, team2, etc.)
+  // Sort teams by natural order (team1, team2, etc.). Until the server's
+  // MsgCTFAddTeam burst arrives (it lands a few seconds into a fresh
+  // session, after the roster), synthesize placeholder team rows from the
+  // roster's team ids so the table renders immediately — real entries
+  // replace them in place.
   const sortedTeams = useMemo(() => {
-    if (!teamScores?.length) return [];
-    return [...teamScores].sort((a, b) => a.teamId - b.teamId);
-  }, [teamScores]);
+    if (teamScores?.length) {
+      return [...teamScores].sort((a, b) => a.teamId - b.teamId);
+    }
+    const teamIds = new Set<number>();
+    for (const player of playerRoster ?? []) {
+      if (player.teamId > 0) teamIds.add(player.teamId);
+    }
+    return [...teamIds]
+      .sort((a, b) => a - b)
+      .map((teamId): TeamScore => ({
+        teamId,
+        name: DEFAULT_TEAM_NAMES[teamId] ?? `Team ${teamId}`,
+        score: 0,
+        playerCount: 0,
+      }));
+  }, [teamScores, playerRoster]);
 
   const hasTeams = sortedTeams.length >= 2;
   const team1 = sortedTeams[0];

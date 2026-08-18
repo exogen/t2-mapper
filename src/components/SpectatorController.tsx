@@ -7,11 +7,11 @@ import {
 } from "../state/liveConnectionStore";
 import { useEngineStoreApi } from "../state/engineStore";
 import { streamPlaybackStore } from "../state/streamPlaybackStore";
-import { gameEntityStore } from "../state/gameEntityStore";
 import {
   cycleWatchFollow,
   enterWatchFollow,
   exitWatchFollow,
+  resolveWatchFollowTarget,
   toggleWatchFollow,
 } from "../state/watchFollow";
 import { cameraRegistry } from "../state/cameraRegistry";
@@ -106,16 +106,19 @@ export function SpectatorController() {
     // StreamingController's mount effect calls resetStreamPlayback()
     // (cameraMode → "original") after we set freeFly, and does so again
     // on every recording change — keep enforcing the spectator camera:
-    // orbitOverride while following, freeFly otherwise. A vanished follow
-    // target (left the server, out of scope) drops back to free-fly.
+    // orbitOverride while following, freeFly otherwise. Follow survives
+    // respawns (resolveWatchFollowTarget re-locks onto the player's new
+    // body); while they have no body at all the camera free-flies in
+    // place with follow still armed.
     const spState = streamPlaybackStore.getState();
     if (spState.followEntityId) {
-      if (
-        !gameEntityStore.getState().streamEntities.has(spState.followEntityId)
-      ) {
-        exitWatchFollow();
-      } else if (spState.cameraMode !== "orbitOverride") {
-        streamPlaybackStore.setState({ cameraMode: "orbitOverride" });
+      const target = resolveWatchFollowTarget();
+      if (target) {
+        if (streamPlaybackStore.getState().cameraMode !== "orbitOverride") {
+          streamPlaybackStore.setState({ cameraMode: "orbitOverride" });
+        }
+      } else if (streamPlaybackStore.getState().cameraMode !== "freeFly") {
+        streamPlaybackStore.setState({ cameraMode: "freeFly" });
       }
     } else if (spState.cameraMode !== "freeFly") {
       streamPlaybackStore.setState({ cameraMode: "freeFly" });

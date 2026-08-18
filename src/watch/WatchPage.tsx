@@ -27,6 +27,7 @@ import { LoadingIndicator } from "@/src/components/LoadingIndicator";
 import { startShapePreload } from "@/src/shapePreloader";
 import frameStyles from "@/src/components/MapInspector.module.css";
 import styles from "./WatchPage.module.css";
+import { WatchErrorDialog } from "./WatchErrorDialog";
 
 const GameView = lazy(() =>
   import("@/src/components/GameView").then((mod) => ({
@@ -105,6 +106,12 @@ export function WatchPage() {
   const [autoJoin, setAutoJoin] = useState<
     "pending" | "joined" | "notFound" | "off"
   >(autoAddress || autoName ? "pending" : "off");
+  // Join-failure dialog dismissal; re-arms on the next session so a
+  // later "session ended" failure gets its own transmission.
+  const [errorAcknowledged, setErrorAcknowledged] = useState(false);
+  useEffect(() => {
+    if (sessionActive) setErrorAcknowledged(false);
+  }, [sessionActive]);
   const requestedListRef = useRef(false);
   useEffect(() => {
     if (autoJoin !== "pending" || sessionActive) return;
@@ -225,6 +232,24 @@ export function WatchPage() {
         </div>
       );
     }
+    // Join failures show as a transmission dialog first; the server
+    // browser appears only via its call to action.
+    const errorMessage =
+      autoJoin === "notFound" ? (
+        <>No server named &ldquo;{autoName}&rdquo; is currently listed.</>
+      ) : watchStatus === "ended" && watchStatusMessage ? (
+        watchStatusMessage
+      ) : null;
+    if (errorMessage != null && !errorAcknowledged) {
+      return (
+        <div className={styles.Page}>
+          <WatchErrorDialog
+            message={errorMessage}
+            onBrowse={() => setErrorAcknowledged(true)}
+          />
+        </div>
+      );
+    }
     return (
       <div className={styles.Page}>
         <Suspense fallback={<GameDialogSpinner />}>
@@ -238,13 +263,6 @@ export function WatchPage() {
             onClose={() => {}}
           />
         </Suspense>
-        {autoJoin === "notFound" ? (
-          <div className={styles.EndedMessage}>
-            No server named &ldquo;{autoName}&rdquo; is currently listed
-          </div>
-        ) : watchStatus === "ended" && watchStatusMessage ? (
-          <div className={styles.EndedMessage}>{watchStatusMessage}</div>
-        ) : null}
       </div>
     );
   }

@@ -1,12 +1,12 @@
 import { ghostToSceneObject } from "../scene";
 import type { SceneObject } from "../scene/types";
-import { getTerrainHeightAt } from "../terrainHeight";
 import {
   buildLinearSegment,
   linearSegmentPosition,
   stepBallistic,
   type LinearSegment,
 } from "../collision/projectilePhysics";
+import { castWorldRay } from "../collision/worldCollision";
 import {
   linearProjectileClassNames,
   ballisticProjectileClassNames,
@@ -1442,19 +1442,34 @@ export abstract class StreamEngine implements StreamingPlayback {
         isVec3Like(data.velocity)
       ) {
         const vel = data.velocity as Vec3;
-        entity.itemPhysics = {
-          velocity: [vel.x, vel.y, vel.z],
-          atRest: false,
-        };
-        log.debug(
-          "Item %s (%s): atRest=false pos=%s vel=%s",
-          entity.id,
-          entity.shapeHint ?? entity.dataBlock ?? `db#${entity.dataBlockId}`,
-          data.position
-            ? `${(data.position as Vec3).x.toFixed(1)},${(data.position as Vec3).y.toFixed(1)},${(data.position as Vec3).z.toFixed(1)}`
-            : "none",
-          `${vel.x.toFixed(1)},${vel.y.toFixed(1)},${vel.z.toFixed(1)}`,
-        );
+        // Item::setVelocity sets mAtRest=false unconditionally (item.cc:309),
+        // so scripted teleports like a CTF flag return — setVelocity("0 0 0")
+        // + setTransform(home) — arrive as atRest=false with exactly zero
+        // velocity (physics-driven updates always carry nonzero velocity).
+        // The real client simulates anyway: it falls ~2cm for one tick and
+        // rests on the flag stand via its collision mask, which includes
+        // StaticShapes (item.cc:37). Our collision world has no shape
+        // colliders, so the faithful fall would sink through the stand —
+        // pin the scripted-teleport case at the server position instead.
+        // DIVERGENCE from the binary, compensating for missing StaticShape
+        // collision.
+        if (vel.x === 0 && vel.y === 0 && vel.z === 0) {
+          entity.itemPhysics = undefined;
+        } else {
+          entity.itemPhysics = {
+            velocity: [vel.x, vel.y, vel.z],
+            atRest: false,
+          };
+          log.debug(
+            "Item %s (%s): atRest=false pos=%s vel=%s",
+            entity.id,
+            entity.shapeHint ?? entity.dataBlock ?? `db#${entity.dataBlockId}`,
+            data.position
+              ? `${(data.position as Vec3).x.toFixed(1)},${(data.position as Vec3).y.toFixed(1)},${(data.position as Vec3).z.toFixed(1)}`
+              : "none",
+            `${vel.x.toFixed(1)},${vel.y.toFixed(1)},${vel.z.toFixed(1)}`,
+          );
+        }
       } else if (atRest === true) {
         log.debug(
           "Item %s (%s): atRest=true pos=%s",
@@ -1993,28 +2008,58 @@ export abstract class StreamEngine implements StreamingPlayback {
       // Gravity: Item::mGravity = -20 (verified from Torque source item.cc:35).
       v[2] += -20 * dt;
 
-      // Integrate position.
-      p[0] += v[0] * dt;
-      p[1] += v[1] * dt;
-      p[2] += v[2] * dt;
-
-      // Terrain collision: bounce with elasticity/friction matching
-      // typical Tribes 2 ItemData values (elasticity=0.2, friction=0.6).
-      const groundZ = getTerrainHeightAt(p[0], p[1]);
-      if (groundZ != null && p[2] < groundZ) {
-        p[2] = groundZ;
-        const bd = Math.abs(v[2]);
-        // Friction: reduce horizontal velocity.
-        const friction = bd * 0.6;
-        const hSpeed = Math.sqrt(v[0] * v[0] + v[1] * v[1]);
-        if (hSpeed > 0) {
-          const scale = Math.max(0, 1 - friction / hSpeed);
-          v[0] *= scale;
-          v[1] *= scale;
+      // Swept collision against the static world — terrain, interiors,
+      // and force fields — mirroring Item::updatePos's container cast.
+      // Items get only sparse server updates (throw + final rest), so
+      // this simulates the whole arc, including landings on interiors.
+      const hit = castWorldRay(p, [
+        p[0] + v[0] * dt,
+        p[1] + v[1] * dt,
+        p[2] + v[2] * dt,
+      ]);
+      if (!hit) {
+        p[0] += v[0] * dt;
+        p[1] += v[1] * dt;
+        p[2] += v[2] * dt;
+      } else {
+        // Item::updatePos collision response (item.cc:539-566): friction
+        // scales with approach speed and caps at the tangential speed;
+        // the reflected component gains elasticity plus a tiny backoff.
+        const n = hit.normal;
+        const bd = -(v[0] * n[0] + v[1] * n[1] + v[2] * n[2]);
+        if (bd >= 0) {
+          const blockData =
+            entity.dataBlockId != null
+              ? this.getDataBlockData(entity.dataBlockId)
+              : undefined;
+          const elasticity = getNumberField(blockData, ["elasticity"]) ?? 0.2;
+          const friction = getNumberField(blockData, ["friction"]) ?? 0.6;
+          const fv: [number, number, number] = [
+            v[0] + n[0] * bd,
+            v[1] + n[1] * bd,
+            v[2] + n[2] * bd,
+          ];
+          const fvl = Math.sqrt(fv[0] * fv[0] + fv[1] * fv[1] + fv[2] * fv[2]);
+          if (fvl > 0) {
+            const ff = bd * friction;
+            if (ff < fvl) {
+              const scale = ff / fvl;
+              fv[0] *= scale;
+              fv[1] *= scale;
+              fv[2] *= scale;
+            }
+          }
+          const bde = bd * (1 + elasticity) + 0.002;
+          v[0] += n[0] * bde - fv[0];
+          v[1] += n[1] * bde - fv[1];
+          v[2] += n[2] * bde - fv[2];
         }
-        // Elasticity: bounce.
-        v[2] = bd * 0.2;
-        // At-rest check (sAtRestVelocity = 0.15).
+        // Rest at the contact point, nudged off the surface.
+        p[0] = hit.point[0] + n[0] * 0.01;
+        p[1] = hit.point[1] + n[1] * 0.01;
+        p[2] = hit.point[2] + n[2] * 0.01;
+        // Rest condition is contact-gated (item.cc:738):
+        // sAtRestVelocity = 0.15.
         const speed = Math.sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
         if (speed < 0.15) {
           v[0] = v[1] = v[2] = 0;
