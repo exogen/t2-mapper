@@ -7,7 +7,10 @@ import {
   useLiveSelector,
 } from "../state/liveConnectionStore";
 import { useEngineStoreApi } from "../state/engineStore";
-import { streamPlaybackStore } from "../state/streamPlaybackStore";
+import {
+  streamPlaybackStore,
+  type DemoCameraMode,
+} from "../state/streamPlaybackStore";
 import { gameEntityStore } from "../state/gameEntityStore";
 import { cameraRegistry } from "../state/cameraRegistry";
 import { useInputContext } from "./InputContext";
@@ -263,15 +266,21 @@ export function InputConsumer() {
     }
   }, [liveReady, setMode]);
 
-  // Set input mode to "follow" during orbit override so
-  // MouseAndKeyboardHandler flips drag direction correctly.
+  // Set input mode to "follow" during orbit/first-person override so
+  // MouseAndKeyboardHandler flips drag direction correctly. Applied once
+  // at mount too — a remount mid-follow must not stay in "local".
   useEffect(() => {
     if (isLive) return;
+    const modeFor = (cameraMode: DemoCameraMode) =>
+      cameraMode === "orbitOverride" || cameraMode === "firstPersonOverride"
+        ? ("follow" as const)
+        : ("local" as const);
     let prevCameraMode = streamPlaybackStore.getState().cameraMode;
+    setMode(modeFor(prevCameraMode));
     return streamPlaybackStore.subscribe((state) => {
       if (state.cameraMode === prevCameraMode) return;
       prevCameraMode = state.cameraMode;
-      setMode(state.cameraMode === "orbitOverride" ? "follow" : "local");
+      setMode(modeFor(state.cameraMode));
     });
   }, [isLive, setMode]);
 

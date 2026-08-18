@@ -323,6 +323,15 @@ export class WatchSession {
       // so every watcher's free camera sees all ghosts regardless of
       // position (commander-map scoping, binary-verified server behavior).
       conn.sendCommand("ScopeCommanderMap", "1");
+      // TacoServer-based servers auto-kick observers on a fixed timer
+      // ($Host::KickObserverTimeout, "Observer Timeout") regardless of
+      // activity; serverCmdWatchOnly flags the client isWatchOnly, which
+      // exempts it. "ImaWatcher" is the stock $Host::ObserverOnlyPass
+      // default. Unknown serverCmds are no-ops elsewhere.
+      conn.sendCommand(
+        "WatchOnly",
+        process.env.WATCH_ONLY_PASS || "ImaWatcher",
+      );
       this.startScoresPoll();
       // Deliver catch-up to everyone who was waiting on the handshake.
       for (const ws of [...this.pending]) {

@@ -86,7 +86,8 @@ export function enterWatchFollow(targetId?: string): void {
     followEntityId: target,
     followTargetId:
       entityTargetId != null && entityTargetId >= 0 ? entityTargetId : null,
-    cameraMode: "orbitOverride",
+    // Cycling players keeps the current orbit/first-person choice.
+    cameraMode: streamPlaybackStore.getState().followCameraMode,
   });
 }
 
@@ -96,6 +97,7 @@ export function exitWatchFollow(): void {
   streamPlaybackStore.setState({
     followEntityId: null,
     followTargetId: null,
+    followCameraMode: "orbitOverride",
     cameraMode: "freeFly",
   });
 }
@@ -157,11 +159,33 @@ export function resolveWatchFollowTarget(): string | null {
   return current ? followEntityId : null;
 }
 
+/** Command-circuit toggle: plain follow on/off (no first person there). */
 export function toggleWatchFollow(): void {
   if (streamPlaybackStore.getState().followEntityId) {
     exitWatchFollow();
   } else {
+    streamPlaybackStore.setState({ followCameraMode: "orbitOverride" });
     enterWatchFollow();
+  }
+}
+
+/**
+ * The observer-mode key cycles fly → follow (orbit) → first person → fly,
+ * extending the real observer's fly↔follow toggle with an eye-mounted
+ * view of the followed player.
+ */
+export function cycleWatchObserverMode(): void {
+  const state = streamPlaybackStore.getState();
+  if (!state.followEntityId) {
+    streamPlaybackStore.setState({ followCameraMode: "orbitOverride" });
+    enterWatchFollow();
+  } else if (state.followCameraMode === "orbitOverride") {
+    streamPlaybackStore.setState({
+      followCameraMode: "firstPersonOverride",
+      cameraMode: "firstPersonOverride",
+    });
+  } else {
+    exitWatchFollow();
   }
 }
 

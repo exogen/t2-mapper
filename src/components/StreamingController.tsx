@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef } from "react";
 import { useFrame } from "@react-three/fiber";
 import { Quaternion, Vector3 } from "three";
+import type { Group, Object3D } from "three";
 import {
   DEFAULT_EYE_HEIGHT,
   STREAM_TICK_SEC,
@@ -21,6 +22,7 @@ import {
   resetStreamPlayback,
 } from "../state/streamPlaybackStore";
 import { streamEntityToGameEntity } from "../stream/entityBridge";
+import { yawPitchToQuaternion, MAX_PITCH } from "../stream/streamHelpers";
 import type {
   StreamRecording,
   StreamEntity,
@@ -95,8 +97,6 @@ function getEntityMap(snapshot: StreamSnapshot): EntityById {
 const _tmpVec = new Vector3();
 const _interpQuatA = new Quaternion();
 const _interpQuatB = new Quaternion();
-const _headQuat = new Quaternion();
-const _bodyQuat = new Quaternion();
 const _billboardFlip = new Quaternion(0, 1, 0, 0); // 180° around Y
 const _orbitDir = new Vector3();
 const _orbitTarget = new Vector3();
@@ -105,19 +105,18 @@ const _orbitCandidate = new Vector3();
 /** PlayerData::maxLookAngle — all Tribes 2 armor datablocks use 1.5 rad (~85.9°). */
 const DEFAULT_MAX_LOOK_ANGLE = 1.5;
 
-// Axes for head rotation quaternion construction (Three.js Y-up space).
-const _axisX = new Vector3(1, 0, 0);
-const _axisY = new Vector3(0, 1, 0);
-
 /**
  * Compute first-person camera transform from entity state, matching
  * Torque's Player::getEyeTransform (binary-verified at FUN_005eead0).
  *
  * Position = worldTransform * animatedEyeNodePosition
- * Rotation = bodyQuat * headQuat(yaw, pitch)
+ * Rotation = total view angles (body rotationZ + head yaw, head pitch)
+ * through yawPitchToQuaternion — the same conversion the authoritative
+ * first-person stream camera uses (getAbsoluteRotation → rotationZ/headX),
+ * so all sign/axis conventions match rendering that's verified in demos.
  *
- * The eye node's animated ROTATION is discarded — only its position is used.
- * Head rotation is constructed from mHead.x (pitch) and mHead.z (yaw).
+ * The eye node's animated ROTATION is discarded — only its position is
+ * used. headPitch/headYaw are the entity's normalized mHead values.
  */
 function computeFirstPersonCamera(
   camera: { position: Vector3; quaternion: Quaternion },
@@ -131,17 +130,46 @@ function computeFirstPersonCamera(
   _tmpVec.copy(eyePos).applyQuaternion(playerGroup.quaternion);
   camera.position.copy(playerGroup.position).add(_tmpVec);
 
-  // Rotation: body * head, where head = yaw(Y) * pitch(X).
-  // In Torque (Z-up): zmat(mHead.z) * xmat(mHead.x).
-  // In Three.js body-local frame: Y rotation for yaw, X for pitch.
-  // Pitch is negated: Torque positive pitch = look up, but positive
-  // Three.js X rotation = look down.
-  const pitchRad = -headPitch * maxLookAngle;
-  const yawRad = headYaw * maxLookAngle;
-  _headQuat.setFromAxisAngle(_axisY, yawRad);
-  _bodyQuat.setFromAxisAngle(_axisX, pitchRad);
-  _headQuat.multiply(_bodyQuat); // yaw * pitch
-  camera.quaternion.copy(playerGroup.quaternion).multiply(_headQuat);
+  // Body quat is Ry(-rotationZ) (playerYawToQuaternion), so model forward
+  // is (cos rotZ, 0, sin rotZ) — recover the Torque body yaw from it.
+  const q = playerGroup.quaternion;
+  const fx = 1 - 2 * (q.y * q.y + q.z * q.z);
+  const fz = 2 * (q.x * q.z - q.w * q.y);
+  const bodyYaw = Math.atan2(fz, fx);
+  const pitch = Math.max(
+    -MAX_PITCH,
+    Math.min(MAX_PITCH, headPitch * maxLookAngle),
+  );
+  const [rx, ry, rz, rw] = yawPitchToQuaternion(
+    bodyYaw + headYaw * maxLookAngle,
+    pitch,
+  );
+  camera.quaternion.set(rx, ry, rz, rw);
+}
+
+/**
+ * Resolve where a follow target actually renders. Mounted entities
+ * (players in vehicles) portal into their mount's bone and have no
+ * top-level group in the entity root — the camera follows the mount
+ * (the vehicle) instead, walking nested mounts to the outermost carrier.
+ */
+function resolveCameraTarget(
+  root: Group,
+  entities: EntityById,
+  id: string,
+): { group: Object3D; entity: StreamEntity | undefined } | null {
+  let targetId = id;
+  let entity = entities.get(id);
+  for (
+    let hops = 0;
+    hops < 4 && entity?.mountObjectId && entities.has(entity.mountObjectId);
+    hops++
+  ) {
+    targetId = entity.mountObjectId;
+    entity = entities.get(targetId);
+  }
+  const group = root.children.find((child) => child.name === targetId);
+  return group ? { group, entity } : null;
 }
 
 export function StreamingController({
@@ -617,11 +645,14 @@ export function StreamingController({
       root &&
       orbitTargetId
     ) {
-      const targetGroup = root.children.find(
-        (child) => child.name === orbitTargetId,
+      const resolvedTarget = resolveCameraTarget(
+        root,
+        currentEntities,
+        orbitTargetId,
       );
-      if (targetGroup) {
-        const orbitEntity = currentEntities.get(orbitTargetId);
+      if (resolvedTarget) {
+        const targetGroup = resolvedTarget.group;
+        const orbitEntity = resolvedTarget.entity;
         _orbitTarget.copy(targetGroup.position);
         // Torque orbits the target's render world-box center; player positions
         // in our stream are feet-level, so lift to an approximate center.
@@ -692,11 +723,55 @@ export function StreamingController({
       }
     }
 
+    // Spectate first person: mount the camera to the followed player's
+    // animated eye node with the game's own eye transform (Player::
+    // getEyeTransform) — position from the eye bone, orientation from
+    // body yaw plus the player's replicated head pitch/yaw. The base
+    // stream-camera write above is fully overwritten here.
+    if (
+      cameraMode === "firstPersonOverride" &&
+      (!isLive || isWatcher) &&
+      root &&
+      orbitTargetId
+    ) {
+      const resolvedTarget = resolveCameraTarget(
+        root,
+        currentEntities,
+        orbitTargetId,
+      );
+      if (resolvedTarget) {
+        // Head angles always come from the followed PLAYER; the body
+        // basis is whatever they render on (the vehicle when mounted —
+        // mirroring the authoritative piloted view, which is
+        // vehicle-based). Yaw extraction ignores vehicle pitch/roll,
+        // keeping the horizon stable like the real vehicle look.
+        const followedEntity = currentEntities.get(orbitTargetId);
+        const mounted = resolvedTarget.entity?.id !== orbitTargetId;
+        computeFirstPersonCamera(
+          streamCamera,
+          resolvedTarget.group,
+          mounted
+            ? _tmpVec.set(0, DEFAULT_EYE_HEIGHT, 0)
+            : (playerEyePositions.get(orbitTargetId) ??
+                _tmpVec.set(0, DEFAULT_EYE_HEIGHT, 0)),
+          followedEntity?.headPitch ?? 0,
+          followedEntity?.headYaw ?? 0,
+        );
+      }
+    }
+
     // First-person camera: either add the eye offset on top of the
     // stream camera position (original mode), or fully compute the
     // camera transform from entity state (non-authoritative, e.g.
-    // observing a different player than the demo recorder).
-    if (mode === "first-person" && root && currentCamera?.controlEntityId) {
+    // observing a different player than the demo recorder). The
+    // spectate override above takes precedence — never overwrite the
+    // watcher's chosen view with the stream's own first-person eyes.
+    if (
+      mode === "first-person" &&
+      cameraMode !== "firstPersonOverride" &&
+      root &&
+      currentCamera?.controlEntityId
+    ) {
       const eyePos = playerEyePositions.get(currentCamera.controlEntityId);
       const playerGroup = root.children.find(
         (child) => child.name === currentCamera.controlEntityId,

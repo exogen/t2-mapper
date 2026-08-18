@@ -1,7 +1,8 @@
 import { createStore } from "zustand/vanilla";
 import type { Group } from "three";
 import type { StreamingPlayback } from "../stream/types";
-export type DemoCameraMode = "original" | "freeFly" | "orbitOverride";
+export type DemoCameraMode =
+  "original" | "freeFly" | "orbitOverride" | "firstPersonOverride";
 
 /**
  * Store for mutable streaming playback state that needs to be shared between
@@ -45,6 +46,12 @@ export interface StreamPlaybackState {
    * like the real observer following a client rather than an object.
    */
   followTargetId: number | null;
+  /**
+   * Which camera the spectate follow uses: the observer orbit or a
+   * first-person view from the followed player's eyes. Enforced as
+   * cameraMode each frame while the follow target resolves.
+   */
+  followCameraMode: "orbitOverride" | "firstPersonOverride";
 }
 
 export const streamPlaybackStore = createStore<StreamPlaybackState>()(() => ({
@@ -55,6 +62,7 @@ export const streamPlaybackStore = createStore<StreamPlaybackState>()(() => ({
   orbitOverridePitch: 0,
   followEntityId: null,
   followTargetId: null,
+  followCameraMode: "orbitOverride",
 }));
 
 /** Reset all streaming playback state. Called when streaming ends. */
@@ -67,6 +75,7 @@ export function resetStreamPlayback(): void {
     orbitOverridePitch: 0,
     followEntityId: null,
     followTargetId: null,
+    followCameraMode: "orbitOverride",
   });
   // root is managed by the React ref callback in EntityScene — don't clear it
 }

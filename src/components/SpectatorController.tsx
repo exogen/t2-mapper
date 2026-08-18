@@ -9,10 +9,10 @@ import { useEngineStoreApi } from "../state/engineStore";
 import { streamPlaybackStore } from "../state/streamPlaybackStore";
 import {
   cycleWatchFollow,
+  cycleWatchObserverMode,
   enterWatchFollow,
   exitWatchFollow,
   resolveWatchFollowTarget,
-  toggleWatchFollow,
 } from "../state/watchFollow";
 import { cameraRegistry } from "../state/cameraRegistry";
 import { useInputAction } from "./InputControls";
@@ -85,7 +85,7 @@ export function SpectatorController() {
   // F toggles modes, fire/click cycles players while following, and
   // ArrowRight (command circuit) observes the next player.
   useInputAction("toggleObserverMode", () => {
-    if (isWatching) toggleWatchFollow();
+    if (isWatching) cycleWatchObserverMode();
   });
   useInputAction("nextPlayer", () => {
     if (isWatching && streamPlaybackStore.getState().followEntityId) {
@@ -114,8 +114,9 @@ export function SpectatorController() {
     if (spState.followEntityId) {
       const target = resolveWatchFollowTarget();
       if (target) {
-        if (streamPlaybackStore.getState().cameraMode !== "orbitOverride") {
-          streamPlaybackStore.setState({ cameraMode: "orbitOverride" });
+        const wanted = streamPlaybackStore.getState().followCameraMode;
+        if (streamPlaybackStore.getState().cameraMode !== wanted) {
+          streamPlaybackStore.setState({ cameraMode: wanted });
         }
       } else if (streamPlaybackStore.getState().cameraMode !== "freeFly") {
         streamPlaybackStore.setState({ cameraMode: "freeFly" });

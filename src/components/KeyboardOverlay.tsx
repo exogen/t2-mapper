@@ -11,7 +11,9 @@ import {
   useRecording,
   useSpeed,
 } from "./usePlayback";
+import { useStore } from "zustand";
 import { useInputMode } from "./InputContext";
+import { streamPlaybackStore } from "../state/streamPlaybackStore";
 import { useCameraTour } from "../state/cameraTourStore";
 import { useCommandCircuit } from "../state/commandCircuitStore";
 import { useLiveSelector } from "../state/liveConnectionStore";
@@ -459,12 +461,27 @@ function TourOverlay() {
   );
 }
 
-function ObserverOverlay({ mode }: { mode?: "fly" | "follow" }) {
+function ObserverOverlay({
+  mode,
+}: {
+  mode?: "fly" | "follow" | "firstPerson";
+}) {
   const contextMode = useInputMode();
   // Watch mode's fly state reports inputMode "local" (client-side camera),
   // so the caller passes the effective observer mode explicitly.
   const inputMode = mode ?? contextMode;
+  const following = inputMode === "follow" || inputMode === "firstPerson";
   const isPointerLocked = usePointerLocked();
+  // The observer key cycles fly → follow → first person (watch mode);
+  // the label names the NEXT mode. Live observers only toggle fly↔follow.
+  const nextModeLabel =
+    inputMode === "fly"
+      ? "Follow mode"
+      : inputMode === "firstPerson"
+        ? "Fly mode"
+        : mode != null
+          ? "First-person mode"
+          : "Fly mode";
   return (
     <>
       {inputMode === "fly" ? <MoveKeys /> : null}
@@ -484,7 +501,7 @@ function ObserverOverlay({ mode }: { mode?: "fly" | "follow" }) {
             <RotateCameraKey />
           </div>
         ) : null}
-        {inputMode === "follow" && isPointerLocked ? (
+        {following && isPointerLocked ? (
           <div className={styles.Row}>
             <Key
               action="nextPlayer"
@@ -498,7 +515,7 @@ function ObserverOverlay({ mode }: { mode?: "fly" | "follow" }) {
         <div className={styles.Row}>
           <Key
             action="toggleObserverMode"
-            label={inputMode === "follow" ? "Fly mode" : "Follow mode"}
+            label={nextModeLabel}
             input="F"
             labelPosition="right"
             inputSize="auto"
@@ -528,13 +545,16 @@ export function KeyboardOverlay() {
   // the local command circuit flag.
   const ccFollow = isLive ? inputMode === "follow" : demoFollow;
 
-  // Watch mode always uses the observer overlay (fly or follow) — its
-  // client-side camera modes mirror the real observer's, but fly state
+  // Watch mode always uses the observer overlay — its client-side camera
+  // modes mirror the real observer's (plus first person), but fly state
   // reports inputMode "local", so pass the effective mode explicitly.
+  const watchCameraMode = useStore(streamPlaybackStore, (s) => s.cameraMode);
   const watcherObserverMode = isWatcher
-    ? inputMode === "follow"
-      ? ("follow" as const)
-      : ("fly" as const)
+    ? watchCameraMode === "firstPersonOverride"
+      ? ("firstPerson" as const)
+      : inputMode === "follow"
+        ? ("follow" as const)
+        : ("fly" as const)
     : undefined;
   const isLiveObserver =
     isLive && (isWatcher || inputMode === "fly" || inputMode === "follow");

@@ -347,6 +347,9 @@ export abstract class StreamEngine implements StreamingPlayback {
   missionTypeDisplayName: string | null = null;
   /** Game class name (e.g. "CTFGame"), from MsgClientReady. */
   gameClassName: string | null = null;
+  /** Match-over interval: set by the gameOver debrief burst, cleared when
+   *  the next mission's MsgClientReady drops the player in. */
+  matchEnded = false;
   /** Server name from MsgMissionDropInfo. */
   serverDisplayName: string | null = null;
   /** Server-assigned name of the connected/recording player. */
@@ -488,6 +491,7 @@ export abstract class StreamEngine implements StreamingPlayback {
     this.playerRoster.clear();
     this.clockAnchorStreamSec = null;
     this.clockDurationMs = 0;
+    this.matchEnded = false;
     this.nextExplosionId = 0;
     this.missionDisplayName = null;
     this.missionTypeDisplayName = null;
@@ -2699,7 +2703,18 @@ export abstract class StreamEngine implements StreamingPlayback {
       const gameClassName = this.resolveNetString(args[2]);
       log.info("client ready: gameClass=%s", gameClassName);
       this.gameClassName = gameClassName || this.gameClassName;
+      // Dropping into a (new) mission ends any match-over interval.
+      this.matchEnded = false;
       this.onMissionInfoChange?.();
+    } else if (
+      msgType === "MsgClearDebrief" ||
+      msgType === "MsgDebriefResult"
+    ) {
+      // The debrief burst is sent once per client from DefaultGame::gameOver
+      // (and the Hunters/Siege variants) — the match-over signal. It stays
+      // set through mission load until the next MsgClientReady.
+      if (!this.matchEnded) log.info("match ended (debrief received)");
+      this.matchEnded = true;
     }
   }
 

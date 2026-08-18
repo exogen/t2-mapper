@@ -347,6 +347,7 @@ export class LiveStreamAdapter extends StreamEngine {
     this.missionTypeDisplayName = hud.missionTypeDisplayName ?? null;
     this.gameClassName = hud.gameClassName ?? null;
     this.serverDisplayName = hud.serverDisplayName ?? null;
+    this.matchEnded = hud.matchEnded ?? false;
     this.onMissionInfoChange?.();
 
     this.hydratedEpoch = payload.epoch;
@@ -876,6 +877,7 @@ export class LiveStreamAdapter extends StreamEngine {
       playerRoster,
       connectedClientId: this.connectedClientId,
       matchClockMs: this.computeMatchClockMs(timeSec),
+      matchEnded: this.matchEnded,
       loadInfo: this.serverLoadInfo,
     };
 

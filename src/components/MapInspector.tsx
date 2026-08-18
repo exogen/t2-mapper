@@ -16,6 +16,7 @@ import { InspectorControls } from "@/src/components/InspectorControls";
 import { MissionSelect } from "@/src/components/MissionSelect";
 import { StreamingMissionInfo } from "@/src/components/StreamingMissionInfo";
 import { useSettings } from "@/src/components/SettingsProvider";
+import { useAutoScoreScreen } from "@/src/components/useAutoScoreScreen";
 import { useRecording } from "@/src/components/usePlayback";
 import { useFeatures } from "@/src/components/FeaturesProvider";
 import {
@@ -101,6 +102,7 @@ export function MapInspector() {
   const [mapInfoOpen, setMapInfoOpen] = useState(false);
   const [serverBrowserOpen, setServerBrowserOpen] = useState(false);
   const [scoreScreenOpen, setScoreScreenOpen] = useState(false);
+  useAutoScoreScreen(setScoreScreenOpen);
   const [choosingMap, setChoosingMap] = useState(false);
   const [missionLoadingProgress, setMissionLoadingProgress] = useState(0);
   const [showLoadingIndicator, setShowLoadingIndicator] = useState(true);

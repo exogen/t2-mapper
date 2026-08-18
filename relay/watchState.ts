@@ -62,6 +62,7 @@ export class WatchStateAccumulator {
   private missionDisplayName: string | undefined;
   private missionTypeDisplayName: string | undefined;
   private gameClassName: string | undefined;
+  private matchEnded = false;
   private serverDisplayName: string | undefined;
 
   missionName: string | null = null;
@@ -375,6 +376,14 @@ export class WatchStateAccumulator {
         missionTypeDisplayName || this.missionTypeDisplayName;
     } else if (msgType === "MsgClientReady" && args.length >= 3) {
       this.gameClassName = this.resolveNetString(args[2]) || this.gameClassName;
+      this.matchEnded = false;
+    } else if (
+      msgType === "MsgClearDebrief" ||
+      msgType === "MsgDebriefResult"
+    ) {
+      // gameOver debrief burst — the match-over interval (until the next
+      // MsgClientReady), so late joiners auto-open the score screen too.
+      this.matchEnded = true;
     }
   }
 
@@ -430,6 +439,7 @@ export class WatchStateAccumulator {
       missionTypeDisplayName: this.missionTypeDisplayName,
       gameClassName: this.gameClassName,
       serverDisplayName: this.serverDisplayName,
+      matchEnded: this.matchEnded,
     };
   }
 }

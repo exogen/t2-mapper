@@ -24,6 +24,7 @@ import { useMissionName, useMissionType } from "@/src/state/gameEntityStore";
 import { InputProvider } from "@/src/components/InputProducer";
 import { VisualInput } from "@/src/components/VisualInput";
 import { LoadingIndicator } from "@/src/components/LoadingIndicator";
+import { useAutoScoreScreen } from "@/src/components/useAutoScoreScreen";
 import { startShapePreload } from "@/src/shapePreloader";
 import frameStyles from "@/src/components/MapInspector.module.css";
 import styles from "./WatchPage.module.css";
@@ -79,6 +80,7 @@ export function WatchPage() {
   const { sidebarOpen, setSidebarOpen } = useSettings();
   const [mapInfoOpen, setMapInfoOpen] = useState(false);
   const [scoreScreenOpen, setScoreScreenOpen] = useState(false);
+  useAutoScoreScreen(setScoreScreenOpen);
   const isTouch = useTouchDevice();
   const isCommandCircuit = useCommandCircuit((s) => s.active);
   const invalidateRef = useRef<InvalidateFunction | null>(null);
