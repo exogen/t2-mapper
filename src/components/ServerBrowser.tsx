@@ -5,7 +5,26 @@ import { useLiveSelector } from "../state/liveConnectionStore";
 import { useSettings } from "./SettingsProvider";
 import { LuUsers } from "react-icons/lu";
 
-export function ServerBrowser({ onClose }: { onClose: () => void }) {
+export function ServerBrowser({
+  onClose,
+  onJoin,
+  title = "Server Browser",
+  joinLabel = "Join",
+  fullScreen = false,
+  showWarriorField = true,
+  dismissable = true,
+}: {
+  onClose: () => void;
+  /** Override the join action (default: joinServer with warrior name). */
+  onJoin?: (address: string) => void;
+  title?: string;
+  joinLabel?: string;
+  /** Fill the viewport instead of rendering as a dialog. */
+  fullScreen?: boolean;
+  showWarriorField?: boolean;
+  /** When false, hide Cancel and ignore Escape/backdrop dismissal. */
+  dismissable?: boolean;
+}) {
   const servers = useLiveSelector((s) => s.servers);
   const serversLoading = useLiveSelector((s) => s.serversLoading);
   const browserToRelayPing = useLiveSelector((s) => s.browserToRelayPing);
@@ -13,16 +32,19 @@ export function ServerBrowser({ onClose }: { onClose: () => void }) {
   const joinServer = useLiveSelector((s) => s.joinServer);
   const { warriorName, setWarriorName } = useSettings();
   const [selectedAddress, setSelectedAddress] = useState<string | null>(null);
-  const handleJoinSelected = () => {
-    if (selectedAddress) {
-      joinServer(selectedAddress, warriorName);
-      onClose();
+  const handleJoin = (address: string) => {
+    if (onJoin) {
+      onJoin(address);
+    } else {
+      joinServer(address, warriorName);
     }
+    onClose();
   };
 
-  const handleJoin = (address: string) => {
-    joinServer(address, warriorName);
-    onClose();
+  const handleJoinSelected = () => {
+    if (selectedAddress) {
+      handleJoin(selectedAddress);
+    }
   };
   const [sortKey, setSortKey] = useState<keyof ServerInfo>("ping");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
@@ -45,13 +67,13 @@ export function ServerBrowser({ onClose }: { onClose: () => void }) {
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       e.stopPropagation();
-      if (e.key === "Escape") {
+      if (e.key === "Escape" && dismissable) {
         onClose();
       }
     };
     window.addEventListener("keydown", handleKeyDown, true);
     return () => window.removeEventListener("keydown", handleKeyDown, true);
-  }, [onClose]);
+  }, [onClose, dismissable]);
 
   const handleSort = useCallback(
     (key: keyof ServerInfo) => {
@@ -78,15 +100,15 @@ export function ServerBrowser({ onClose }: { onClose: () => void }) {
   }, [servers, sortDir, sortKey]);
 
   return (
-    <div className={styles.Overlay} onClick={onClose}>
+    <div className={styles.Overlay} onClick={dismissable ? onClose : undefined}>
       <div
-        className={styles.Dialog}
+        className={fullScreen ? styles.FullScreenDialog : styles.Dialog}
         ref={dialogRef}
         tabIndex={-1}
         onClick={(e) => e.stopPropagation()}
       >
         <div className={styles.Header}>
-          <h2 className={styles.Title}>Server Browser</h2>
+          <h2 className={styles.Title}>{title}</h2>
           <span className={styles.ServerCount}>
             {servers.length} server{servers.length !== 1 ? "s" : ""}
           </span>
@@ -208,31 +230,39 @@ export function ServerBrowser({ onClose }: { onClose: () => void }) {
           </form>
         </div>
         <div className={styles.Footer}>
-          <div className={styles.WarriorField}>
-            <label className={styles.WarriorLabel} htmlFor="warriorName">
-              Warrior
-            </label>
-            <input
-              id="warriorName"
-              className={styles.WarriorInput}
-              type="text"
-              value={warriorName}
-              onChange={(e) => setWarriorName(e.target.value)}
-              placeholder="Name thyself…"
-              maxLength={24}
-            />
-          </div>
-          <span className={styles.Hint}>Double-click a server to join</span>
+          {showWarriorField ? (
+            <div className={styles.WarriorField}>
+              <label className={styles.WarriorLabel} htmlFor="warriorName">
+                Warrior
+              </label>
+              <input
+                id="warriorName"
+                className={styles.WarriorInput}
+                type="text"
+                value={warriorName}
+                onChange={(e) => setWarriorName(e.target.value)}
+                placeholder="Name thyself…"
+                maxLength={24}
+              />
+            </div>
+          ) : (
+            <div className={styles.WarriorField} />
+          )}
+          <span className={styles.Hint}>
+            Double-click a server to {joinLabel.toLowerCase()}
+          </span>
           <div className={styles.Actions}>
-            <button onClick={onClose} className={styles.CloseButton}>
-              Cancel
-            </button>
+            {dismissable ? (
+              <button onClick={onClose} className={styles.CloseButton}>
+                Cancel
+              </button>
+            ) : null}
             <button
               onClick={handleJoinSelected}
               disabled={!selectedAddress}
               className={styles.JoinButton}
             >
-              Join
+              {joinLabel}
             </button>
           </div>
         </div>

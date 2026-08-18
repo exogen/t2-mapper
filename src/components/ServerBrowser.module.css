@@ -11,6 +11,15 @@
   composes: Overlay from "./GameDialog.module.css";
 }
 
+.FullScreenDialog {
+  composes: Dialog from "./GameDialog.module.css";
+  width: min(960px, calc(100vw - 32px));
+  height: calc(100dvh - 48px);
+  display: grid;
+  grid-template-columns: 100%;
+  grid-template-rows: auto 1fr auto;
+}
+
 .Header {
   display: flex;
   align-items: center;

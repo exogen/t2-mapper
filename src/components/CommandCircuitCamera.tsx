@@ -15,6 +15,11 @@ import {
   isCommandFollowActive,
   useCommandCircuit,
 } from "../state/commandCircuitStore";
+import {
+  exitWatchFollow,
+  isWatchSpectator,
+  toggleWatchFollow,
+} from "../state/watchFollow";
 import { cameraTourStore } from "../state/cameraTourStore";
 import type { TourAnimation } from "../state/cameraTourStore";
 import { CommandCircuitTourCallout } from "./CommandCircuitTourCallout";
@@ -247,10 +252,15 @@ export function CommandCircuitCamera() {
   // Live mode never touches the local flag: the fly/follow state is
   // server-owned and shared with the 3D observer view, so request the
   // server-side toggle (trigger 2) and let the confirmed camera state
-  // flow back down.
+  // flow back down. Spectate mode's follow is client-side but likewise
+  // shared with the 3D view.
   useInputAction("toggleCommandFollow", () => {
     if (gameEntityStore.getState().dataSource === "live") {
-      commandCircuitStore.getState().requestObserverToggle();
+      if (isWatchSpectator()) {
+        toggleWatchFollow();
+      } else {
+        commandCircuitStore.getState().requestObserverToggle();
+      }
     } else {
       commandCircuitStore.getState().toggleFollow();
     }
@@ -540,7 +550,11 @@ function CommandCircuitOrthoRig() {
           (followTouch.deltaX !== 0 || followTouch.deltaY !== 0))
       ) {
         if (gameEntityStore.getState().dataSource === "live") {
-          commandCircuitStore.getState().requestObserverToggle();
+          if (isWatchSpectator()) {
+            exitWatchFollow();
+          } else {
+            commandCircuitStore.getState().requestObserverToggle();
+          }
         } else {
           commandCircuitStore.getState().setFollow(false);
         }
@@ -555,11 +569,15 @@ function CommandCircuitOrthoRig() {
     if (isStreaming && isCommandFollowActive()) {
       const cam = streamSnapshotStore.getState().snapshot?.camera;
       const followId =
-        cam?.mode === "third-person"
+        (cam?.mode === "third-person"
           ? (cam.orbitTargetId ?? cam.controlEntityId)
           : cam?.mode === "first-person"
             ? cam.controlEntityId
-            : undefined;
+            : undefined) ??
+        // Spectate mode: the client-side follow target (the stream camera
+        // is the relay's stationary observer, never in orbit mode).
+        streamPlaybackStore.getState().followEntityId ??
+        undefined;
       const root = streamPlaybackStore.getState().root;
       const followObj = followId ? root?.getObjectByName(followId) : null;
       if (followObj) {

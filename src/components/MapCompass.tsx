@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, type RefObject } from "react";
 import { Vector3 } from "three";
 import { cameraRegistry } from "../state/cameraRegistry";
 import { commandCircuitStore } from "../state/commandCircuitStore";
@@ -20,10 +20,16 @@ export function MapCompass() {
   return showCompass ? <MapCompassDial /> : null;
 }
 
-function MapCompassDial() {
-  const rotorRef = useRef<SVGGElement>(null);
-  const degreesRef = useRef<HTMLSpanElement>(null);
-
+/**
+ * Drive a compass rotor from the active render camera's heading on an
+ * animation-frame loop. Shared by map mode and watch mode (where the
+ * camera is client-controlled, so stream snapshots don't know the view
+ * direction). No-op on frames where the rotor ref is unattached.
+ */
+export function useCameraHeadingRotor(
+  rotorRef: RefObject<SVGGElement | null>,
+  degreesRef?: RefObject<HTMLSpanElement | null>,
+) {
   useEffect(() => {
     const direction = new Vector3();
     let lastDeg: number | null = null;
@@ -47,12 +53,18 @@ function MapCompassDial() {
         lastDeg = deg;
         rotor.setAttribute("transform", rotorTransform(deg));
         const heading = Math.round(((deg % 360) + 360) % 360) % 360;
-        const degrees = degreesRef.current;
+        const degrees = degreesRef?.current;
         if (degrees) degrees.textContent = `${heading}°`;
       }
     });
     return () => cancelAnimationFrame(raf);
-  }, []);
+  }, [rotorRef, degreesRef]);
+}
+
+function MapCompassDial() {
+  const rotorRef = useRef<SVGGElement>(null);
+  const degreesRef = useRef<HTMLSpanElement>(null);
+  useCameraHeadingRotor(rotorRef, degreesRef);
 
   return (
     <div className={styles.PlayerHUD}>

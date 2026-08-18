@@ -14,6 +14,7 @@ import { useEngineStoreApi, advanceEffectClock } from "../state/engineStore";
 import { setStreamSnapshot } from "../state/streamSnapshotStore";
 import { cameraRegistry } from "../state/cameraRegistry";
 import { gameEntityStore } from "../state/gameEntityStore";
+import { liveConnectionStore } from "../state/liveConnectionStore";
 import {
   streamClock,
   streamPlaybackStore,
@@ -588,25 +589,35 @@ export function StreamingController({
 
     const mode = currentCamera?.mode;
     // In live mode, InputConsumer handles orbit positioning from local rotation
-    // so the orbit responds at frame rate. Skip here to avoid fighting.
+    // so the orbit responds at frame rate. Skip here to avoid fighting —
+    // EXCEPT spectate mode, where InputConsumer's live path is off and the
+    // follow target is chosen client-side (streamPlaybackStore.followEntityId;
+    // the relay's server camera never enters orbit mode).
     // In orbitOverride mode with a valid orbit target, use user-controlled
     // yaw/pitch instead of stream data.
+    const isWatcher =
+      isLive && liveConnectionStore.getState().role === "watcher";
+    const orbitTargetId =
+      currentCamera?.orbitTargetId ??
+      (isWatcher ? streamPlaybackStore.getState().followEntityId : null) ??
+      undefined;
     const orbitOverride =
       cameraMode === "orbitOverride" &&
-      !isLive &&
-      currentCamera?.orbitTargetId != null;
+      (!isLive || isWatcher) &&
+      orbitTargetId != null;
     if (
+      currentCamera &&
       cameraMode !== "freeFly" &&
-      !isLive &&
+      (!isLive || isWatcher) &&
       (mode === "third-person" || orbitOverride) &&
       root &&
-      currentCamera?.orbitTargetId
+      orbitTargetId
     ) {
       const targetGroup = root.children.find(
-        (child) => child.name === currentCamera.orbitTargetId,
+        (child) => child.name === orbitTargetId,
       );
       if (targetGroup) {
-        const orbitEntity = currentEntities.get(currentCamera.orbitTargetId);
+        const orbitEntity = currentEntities.get(orbitTargetId);
         _orbitTarget.copy(targetGroup.position);
         // Torque orbits the target's render world-box center; player positions
         // in our stream are feet-level, so lift to an approximate center.
@@ -626,7 +637,10 @@ export function StreamingController({
           const cx = Math.cos(spState.orbitOverridePitch);
           const sz = Math.sin(spState.orbitOverrideYaw);
           const cz = Math.cos(spState.orbitOverrideYaw);
-          _orbitDir.set(-cz * cx, -sx, -sz * cx);
+          // Watch follow matches the real observer orbit (applyOrbitCamera
+          // / Tribes2.exe): positive pitch raises the camera to look down.
+          // Demo orbitOverride keeps its historical inverted vertical.
+          _orbitDir.set(-cz * cx, isWatcher ? sx : -sx, -sz * cx);
           hasDirection = _orbitDir.lengthSq() > 1e-8;
         } else if (currentCamera.orbitDirection) {
           // Use explicit pullback direction (e.g. from full vehicle quaternion
@@ -657,7 +671,13 @@ export function StreamingController({
         }
         if (hasDirection) {
           _orbitDir.normalize();
-          const orbitDistance = Math.max(0.1, currentCamera.orbitDistance ?? 4);
+          // The real observer follow orbits at 4 (camera.cs setOrbitMode
+          // 0.5/4.5/4.5 rendered at max − min); spectate mode pulls back
+          // further for a better view of the action.
+          const orbitDistance = Math.max(
+            0.1,
+            currentCamera.orbitDistance ?? (isWatcher ? 8 : 4),
+          );
           _orbitCandidate
             .copy(_orbitTarget)
             .addScaledVector(_orbitDir, orbitDistance);

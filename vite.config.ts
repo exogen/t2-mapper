@@ -1,6 +1,37 @@
+import { fileURLToPath } from "node:url";
 import { defineConfig, loadEnv, type Plugin } from "vite";
 import react, { reactCompilerPreset } from "@vitejs/plugin-react";
 import babel from "@rolldown/plugin-babel";
+
+/**
+ * Dev-server convenience: serve the /watch entry at /watch and /watch/
+ * (production hosts resolve docs/watch/index.html for those URLs
+ * natively, so this is dev-only parity).
+ */
+function watchEntryDevRewrite(): Plugin {
+  return {
+    name: "watch-entry-dev-rewrite",
+    configureServer(server) {
+      server.middlewares.use((req, res, next) => {
+        // Match on the pathname — req.url includes any query string
+        // (e.g. /watch?name=…), which must survive in both branches.
+        const url = new URL(req.url ?? "", "http://localhost");
+        if (url.pathname === "/watch") {
+          // Real redirect to the canonical trailing-slash URL, mirroring
+          // Cloudflare/GitHub Pages resolving docs/watch/index.html.
+          res.statusCode = 308;
+          res.setHeader("Location", `/watch/${url.search}`);
+          res.end();
+          return;
+        }
+        if (url.pathname === "/watch/") {
+          req.url = `/watch/index.html${url.search}`;
+        }
+        next();
+      });
+    },
+  };
+}
 
 /**
  * Injects a preconnect for the game asset host into the HTML when assets
@@ -54,6 +85,12 @@ export default defineConfig(({ mode }) => {
       outDir: "docs",
       emptyOutDir: false,
       copyPublicDir: false,
+      rollupOptions: {
+        input: {
+          main: fileURLToPath(new URL("index.html", import.meta.url)),
+          watch: fileURLToPath(new URL("watch/index.html", import.meta.url)),
+        },
+      },
     },
     resolve: {
       tsconfigPaths: true,
@@ -62,6 +99,7 @@ export default defineConfig(({ mode }) => {
       react(),
       babel({ presets: [reactCompilerPreset()] }),
       preconnectGameAssets(publicEnv.GAME_ASSETS_BASE_URL),
+      watchEntryDevRewrite(),
     ],
   };
 });

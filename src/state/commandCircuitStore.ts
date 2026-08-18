@@ -2,6 +2,7 @@ import { createStore } from "zustand/vanilla";
 import { useStoreWithEqualityFn } from "zustand/traditional";
 import { gameEntityStore } from "./gameEntityStore";
 import { liveConnectionStore } from "./liveConnectionStore";
+import { streamPlaybackStore } from "./streamPlaybackStore";
 
 export interface CommandCircuitState {
   active: boolean;
@@ -106,6 +107,11 @@ export const commandCircuitStore = createStore<CommandCircuitState>(
  */
 export function isCommandFollowActive(): boolean {
   if (gameEntityStore.getState().dataSource === "live") {
+    // Spectate mode: follow is purely client-side (the relay's server
+    // camera never enters follow) and shared with the 3D orbit view.
+    if (liveConnectionStore.getState().role === "watcher") {
+      return streamPlaybackStore.getState().followEntityId != null;
+    }
     return liveConnectionStore.getState().adapter?.observerMode === "follow";
   }
   return commandCircuitStore.getState().follow;

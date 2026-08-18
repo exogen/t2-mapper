@@ -54,6 +54,20 @@
   color: #eceae7;
 }
 
+.Spectating {
+  composes: Attribution;
+  display: flex;
+  align-items: center;
+  /* Match the Metadata column's text-align: right. */
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.Spectating svg {
+  width: calc(1em + 3px);
+  height: calc(1em + 3px);
+}
+
 .EjectButton,
 .DisconnectButton {
   composes: DestructiveActionButton from "./Button.module.css";

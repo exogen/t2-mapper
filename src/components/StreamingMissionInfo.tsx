@@ -15,7 +15,7 @@ import {
   useLiveSelector,
 } from "../state/liveConnectionStore";
 import { useRecording } from "./usePlayback";
-import { LuCircleArrowOutUpLeft } from "react-icons/lu";
+import { LuCircleArrowOutUpLeft, LuEye } from "react-icons/lu";
 import { BiSolidEject } from "react-icons/bi";
 import { formatPing } from "../stringUtils";
 import styles from "./StreamingMissionInfo.module.css";
@@ -33,8 +33,15 @@ export function StreamingMissionInfo() {
     : [null, null];
   const isLive = dataSource === "live";
   const recording = useRecording();
+  const isWatcher = useLiveSelector((s) => s.role === "watcher");
+  const watcherCount = useLiveSelector((s) => s.watcherCount);
   const isLiveConnected = useLiveSelector(
-    (s) => s.gameStatus === "connected" || s.gameStatus === "authenticating",
+    (s) =>
+      s.gameStatus === "connected" ||
+      s.gameStatus === "authenticating" ||
+      (s.role === "watcher" &&
+        s.watchStatus !== null &&
+        s.watchStatus !== "ended"),
   );
   const ping = useLiveSelector(selectPing);
 
@@ -44,7 +51,13 @@ export function StreamingMissionInfo() {
 
   const handleDisconnect = useCallback(() => {
     const liveState = liveConnectionStore.getState();
-    liveState.disconnectServer();
+    if (liveState.role === "watcher") {
+      // Watchers detach from the shared session; the relay socket stays
+      // open so the server list is warm for the next join.
+      liveState.leaveServer();
+    } else {
+      liveState.disconnectServer();
+    }
     engineStore.getState().setRecording(null);
   }, []);
 
@@ -79,7 +92,16 @@ export function StreamingMissionInfo() {
       <div className={styles.Metadata}>
         {isLive ? (
           isLiveConnected ? (
-            playerName ? (
+            isWatcher ? (
+              <div
+                className={styles.Spectating}
+                title={`${watcherCount} spectating`}
+              >
+                <span>Spectating</span>
+                <LuEye aria-label="Spectators" />
+                <span>{watcherCount}</span>
+              </div>
+            ) : playerName ? (
               <div className={styles.Attribution}>
                 Connected as{" "}
                 <span className={styles.PlayerName}>{playerName}</span>
@@ -118,14 +140,17 @@ export function StreamingMissionInfo() {
         >
           <BiSolidEject className={styles.EjectIcon} />
         </button>
-      ) : isLive ? (
+      ) : isLive || isWatcher ? (
+        // Watchers get the button from the moment a session exists (before
+        // dataSource flips to "live") and it's never disabled — leaving is
+        // safe in every connection/loading state.
         <button
           type="button"
           className={styles.DisconnectButton}
           title="Disconnect"
           aria-label="Disconnect"
           onClick={handleDisconnect}
-          disabled={!isLiveConnected}
+          disabled={isWatcher ? false : !isLiveConnected}
         >
           <LuCircleArrowOutUpLeft />
         </button>

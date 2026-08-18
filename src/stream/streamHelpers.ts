@@ -5,7 +5,6 @@ import type {
   WeaponImageDataBlockState,
   ChatSegment,
 } from "./types";
-import { projectileClassNames } from "./entityClassification";
 
 export type Vec3 = { x: number; y: number; z: number };
 
@@ -219,31 +218,7 @@ export function isQuatLike(value: unknown): value is {
 
 // ── DataBlock field accessors ──
 
-/**
- * Resolve the DTS shape path from a datablock's parsed data.
- * Accepts either a ghost className (e.g. "LinearProjectile") or a datablock
- * className (e.g. "LinearProjectileData") to determine which field holds the
- * shape path.
- */
-export function resolveShapeName(
-  className: string,
-  data: ParsedData | undefined,
-): string | undefined {
-  if (!data) return undefined;
-
-  let value: unknown;
-  if (
-    projectileClassNames.has(className) ||
-    className.endsWith("ProjectileData")
-  ) {
-    value = data.projectileShapeName;
-  } else {
-    // DebrisData's shape also lives in `shapeName` (binary-verified; a
-    // previous parser field mislabel required a special case here).
-    value = data.shapeName;
-  }
-  return typeof value === "string" && value.length > 0 ? value : undefined;
-}
+export { resolveShapeName } from "../../relay/shared";
 
 export function getNumberField(
   data: ParsedData | undefined,

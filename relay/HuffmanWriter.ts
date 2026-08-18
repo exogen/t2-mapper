@@ -129,7 +129,7 @@ function buildTables(): void {
 }
 
 /** Write a Huffman-encoded string to a BitStreamWriter. */
-export function writeHuffBuffer(bs: BitStreamWriter, str: string): void {
+function writeHuffBuffer(bs: BitStreamWriter, str: string): void {
   buildTables();
 
   // Always use Huffman compression (flag=true)

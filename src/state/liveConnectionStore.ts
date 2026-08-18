@@ -8,6 +8,7 @@ import type {
   ClientMove,
   ServerInfo,
   ConnectionStatus,
+  WatchStatus,
 } from "../../relay/types";
 
 const log = createLogger("liveConnectionStore");
@@ -35,6 +36,15 @@ export interface LiveConnectionState {
   liveReady: boolean;
   /** Warrior name used when joining the server. */
   warriorName?: string;
+  /** How this socket is using the relay (first join/watch claims it). */
+  role: "player" | "watcher" | null;
+  /** Watch-session status (watcher role only). */
+  watchStatus: WatchStatus | null;
+  watchStatusMessage?: string;
+  /** Number of watchers on the shared session (including us). */
+  watcherCount: number;
+  /** Catch-up download progress in [0, 1], or null when not syncing. */
+  catchupProgress: number | null;
 }
 
 export interface LiveConnectionStore extends LiveConnectionState {
@@ -48,6 +58,8 @@ export interface LiveConnectionStore extends LiveConnectionState {
   disconnectRelay(): void;
   listServers(): void;
   joinServer(address: string, warriorName?: string): void;
+  watchServer(address: string): void;
+  leaveServer(): void;
   disconnectServer(): void;
   sendMoves(moves: ClientMove[], moveStartIndex: number): void;
   sendCommand(command: string, ...args: string[]): void;
@@ -70,6 +82,11 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
     serversLoading: false,
     adapter: null,
     liveReady: false,
+    role: null,
+    watchStatus: null,
+    watchStatusMessage: undefined,
+    watcherCount: 0,
+    catchupProgress: null,
 
     _relay: null,
     _adapter: null,
@@ -89,7 +106,7 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
           for (const fn of s._pending) fn();
           s._pending = [];
         },
-        onStatus(status, message, _connectSequence, statusMapName) {
+        onStatus(status, message, statusMapName) {
           log.info(
             "game status: %s%s%s",
             status,
@@ -119,6 +136,40 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
         onWsPing(ms) {
           set({ browserToRelayPing: ms });
         },
+        onSessionStatus(status, message, info, watcherCount) {
+          log.info(
+            "session status: %s%s map=%s watchers=%d",
+            status,
+            message ? ` — ${message}` : "",
+            info.mapName ?? "?",
+            watcherCount,
+          );
+          set({
+            watchStatus: status,
+            watchStatusMessage: message,
+            watcherCount,
+            ...(info.mapName ? { mapName: info.mapName } : {}),
+            ...(info.serverName ? { serverName: info.serverName } : {}),
+            ...(status !== "syncing" ? { catchupProgress: null } : {}),
+          });
+        },
+        onWatcherCount(count) {
+          set({ watcherCount: count });
+        },
+        onCatchupProgress(receivedBytes, totalBytes) {
+          set({
+            catchupProgress: totalBytes > 0 ? receivedBytes / totalBytes : 0,
+          });
+        },
+        onCatchup(payload) {
+          const a = get()._adapter;
+          if (!a) {
+            log.warn("received catch-up payload but no adapter is active");
+            return;
+          }
+          set({ liveReady: false });
+          a.hydrate(payload);
+        },
         onError(message) {
           log.error("error: %s", message);
           get()._listInFlight = false;
@@ -143,6 +194,11 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
               serverAddress: null,
               adapter: null,
               liveReady: false,
+              role: null,
+              watchStatus: null,
+              watchStatusMessage: undefined,
+              watcherCount: 0,
+              catchupProgress: null,
             });
           }
         },
@@ -172,6 +228,11 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
         serverAddress: null,
         adapter: null,
         liveReady: false,
+        role: null,
+        watchStatus: null,
+        watchStatusMessage: undefined,
+        watcherCount: 0,
+        catchupProgress: null,
       });
     },
 
@@ -240,6 +301,7 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
         liveReady: false,
         gameStatus: null,
         adapter: newAdapter,
+        role: "player",
       });
 
       // Set initial mission info from the server browser's cached data.
@@ -253,6 +315,76 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
       s._relay.joinServer(address, warriorName);
     },
 
+    watchServer(address) {
+      const s = get();
+      if (!s._relay) return;
+
+      const cachedServer = s.servers.find((sv) => sv.address === address);
+      const newAdapter = new LiveStreamAdapter(s._relay, { mode: "watch" });
+      newAdapter.onReady = () => set({ liveReady: true });
+      newAdapter.onMissionChange = (missionName) => {
+        log.info("mission changed: %s", missionName);
+        set({ mapName: missionName, liveReady: false });
+        gameEntityStore.getState().setMissionInfo({
+          missionName,
+          missionType: null,
+          missionTypeDisplayName: null,
+          missionDisplayName: null,
+          gameClassName: null,
+        });
+      };
+      newAdapter.onMissionInfoChange = () => {
+        gameEntityStore.getState().setMissionInfo({
+          missionDisplayName: newAdapter.missionDisplayName ?? undefined,
+          missionTypeDisplayName:
+            newAdapter.missionTypeDisplayName ?? undefined,
+          gameClassName: newAdapter.gameClassName ?? undefined,
+          serverDisplayName: newAdapter.serverDisplayName ?? undefined,
+        });
+      };
+      s._adapter = newAdapter;
+
+      set({
+        mapName: cachedServer?.mapName ?? s.mapName,
+        serverName: cachedServer?.name,
+        serverAddress: address,
+        liveReady: false,
+        gameStatus: null,
+        adapter: newAdapter,
+        role: "watcher",
+        watchStatus: "connecting",
+        watchStatusMessage: undefined,
+        watcherCount: 0,
+        catchupProgress: null,
+      });
+
+      gameEntityStore.getState().setMissionInfo({
+        missionName: cachedServer?.mapName ?? undefined,
+        missionTypeDisplayName: cachedServer?.gameType ?? undefined,
+        serverDisplayName: cachedServer?.name ?? undefined,
+      });
+
+      s._relay.watchServer(address);
+    },
+
+    leaveServer() {
+      const s = get();
+      s._relay?.leaveServer();
+      s._adapter = null;
+      set({
+        adapter: null,
+        liveReady: false,
+        serverAddress: null,
+        serverName: undefined,
+        mapName: undefined,
+        watchStatus: null,
+        watchStatusMessage: undefined,
+        watcherCount: 0,
+        catchupProgress: null,
+        role: null,
+      });
+    },
+
     disconnectServer() {
       // Close the WebSocket — the relay's ws.on("close") handler will
       // automatically send the disconnect packet to the game server.
@@ -260,10 +392,16 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
     },
 
     sendMoves(moves, moveStartIndex) {
+      // Watchers never send moves — the shared session has no driver.
+      if (get().role === "watcher") return;
       get()._relay?.sendMoves(moves, moveStartIndex);
     },
 
     sendCommand(command, ...args) {
+      // Watchers are read-only spectators except for chat (sent through
+      // the relay's shared identity); the relay drops anything else
+      // anyway, but don't even send it.
+      if (get().role === "watcher" && command !== "messageSent") return;
       get()._relay?.sendCommand(command, args);
     },
   }),

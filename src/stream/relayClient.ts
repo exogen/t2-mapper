@@ -1,10 +1,13 @@
 import { createLogger } from "../logger";
+import { deserializeCatchupPayload } from "../../relay/watchSerialize";
 import type {
   ClientMessage,
   ClientMove,
   ServerMessage,
   ServerInfo,
   ConnectionStatus,
+  WatchCatchupPayload,
+  WatchStatus,
 } from "../../relay/types";
 
 const log = createLogger("relayClient");
@@ -14,7 +17,6 @@ export type RelayEventHandler = {
   onStatus?: (
     status: ConnectionStatus,
     message?: string,
-    connectSequence?: number,
     mapName?: string,
   ) => void;
   onServerList?: (servers: ServerInfo[]) => void;
@@ -25,7 +27,28 @@ export type RelayEventHandler = {
   onWsPing?: (ms: number) => void;
   onError?: (message: string) => void;
   onClose?: () => void;
+  // ── Watch mode ──
+  onSessionStatus?: (
+    status: WatchStatus,
+    message: string | undefined,
+    info: { address: string; serverName?: string; mapName?: string },
+    watcherCount: number,
+  ) => void;
+  onWatcherCount?: (count: number) => void;
+  onCatchupProgress?: (receivedBytes: number, totalBytes: number) => void;
+  /** Fires after the full catch-up payload is decompressed and parsed.
+   *  Binary frames received while finalizing are flushed to onGamePacket
+   *  right after this returns, preserving stream order. */
+  onCatchup?: (payload: WatchCatchupPayload) => void;
 };
+
+async function gunzipToString(chunks: Uint8Array[]): Promise<string> {
+  const stream = new Blob(chunks as BlobPart[])
+    .stream()
+    .pipeThrough(new DecompressionStream("gzip"));
+  const buffer = await new Response(stream).arrayBuffer();
+  return new TextDecoder().decode(buffer);
+}
 
 /**
  * WebSocket client that connects to the relay server.
@@ -38,6 +61,17 @@ export class RelayClient {
   private _connected = false;
   private wsPingInterval: ReturnType<typeof setInterval> | null = null;
   private smoothedWsPing = 0;
+
+  /**
+   * Catch-up framing: between catchupBegin and catchupEnd every binary
+   * frame is a gzip chunk; while the (async) decompress finalizes,
+   * binary frames are live packets buffered for ordered flushing.
+   */
+  private catchupMode: "live" | "collecting" | "finalizing" = "live";
+  private catchupChunks: Uint8Array[] = [];
+  private catchupReceivedBytes = 0;
+  private catchupTotalBytes = 0;
+  private bufferedLivePackets: Uint8Array[] = [];
 
   constructor(url: string, handlers: RelayEventHandler) {
     this.url = url;
@@ -61,8 +95,20 @@ export class RelayClient {
 
     this.ws.onmessage = (event) => {
       if (event.data instanceof ArrayBuffer) {
-        // Binary message — game packet from server
-        this.handlers.onGamePacket?.(new Uint8Array(event.data));
+        const data = new Uint8Array(event.data);
+        if (this.catchupMode === "collecting") {
+          this.catchupChunks.push(data);
+          this.catchupReceivedBytes += data.length;
+          this.handlers.onCatchupProgress?.(
+            this.catchupReceivedBytes,
+            this.catchupTotalBytes,
+          );
+        } else if (this.catchupMode === "finalizing") {
+          this.bufferedLivePackets.push(data);
+        } else {
+          // Binary message — game packet from server
+          this.handlers.onGamePacket?.(data);
+        }
       } else {
         // JSON control message
         try {
@@ -96,7 +142,6 @@ export class RelayClient {
         this.handlers.onStatus?.(
           message.status,
           message.message,
-          message.connectSequence,
           message.mapName,
         );
         break;
@@ -112,10 +157,64 @@ export class RelayClient {
         this.handlers.onWsPing?.(Math.round(this.smoothedWsPing));
         break;
       }
+      case "sessionStatus":
+        this.handlers.onSessionStatus?.(
+          message.status,
+          message.message,
+          {
+            address: message.address,
+            serverName: message.serverName,
+            mapName: message.mapName,
+          },
+          message.watcherCount,
+        );
+        break;
+      case "watcherCount":
+        this.handlers.onWatcherCount?.(message.count);
+        break;
+      case "catchupBegin":
+        this.catchupMode = "collecting";
+        this.catchupChunks = [];
+        this.catchupReceivedBytes = 0;
+        this.catchupTotalBytes = message.totalBytes;
+        this.handlers.onCatchupProgress?.(0, message.totalBytes);
+        break;
+      case "catchupEnd":
+        this.finalizeCatchup();
+        break;
       case "error":
         this.handlers.onError?.(message.message);
         break;
     }
+  }
+
+  private finalizeCatchup(): void {
+    const chunks = this.catchupChunks;
+    this.catchupChunks = [];
+    this.catchupMode = "finalizing";
+    gunzipToString(chunks)
+      .then((json) => {
+        const payload = deserializeCatchupPayload(json);
+        log.info(
+          "catch-up payload: %d ghosts, %d datablocks, epoch %d",
+          payload.initialGhosts.length,
+          payload.dataBlocks.length,
+          payload.epoch,
+        );
+        this.handlers.onCatchup?.(payload);
+      })
+      .catch((e) => {
+        log.error("Failed to decode catch-up payload: %o", e);
+        this.handlers.onError?.("Failed to decode catch-up payload");
+      })
+      .finally(() => {
+        this.catchupMode = "live";
+        const buffered = this.bufferedLivePackets;
+        this.bufferedLivePackets = [];
+        for (const packet of buffered) {
+          this.handlers.onGamePacket?.(packet);
+        }
+      });
   }
 
   /** Request the server list from the master server. */
@@ -134,6 +233,20 @@ export class RelayClient {
     this.send({ type: "joinServer", address, warriorName });
   }
 
+  /** Attach to a shared watch session for a game server (spectator). */
+  watchServer(address: string): void {
+    log.info("Watching server: %s", address);
+    this.send({ type: "watchServer", address });
+  }
+
+  /** Detach from the current watch session; the socket stays open. */
+  leaveServer(): void {
+    this.send({ type: "leaveServer" });
+    this.catchupMode = "live";
+    this.catchupChunks = [];
+    this.bufferedLivePackets = [];
+  }
+
   /** Forward a T2csri auth event to the relay. */
   sendAuthEvent(command: string, args: string[]): void {
     this.send({ type: "sendCommand", command, args });
@@ -142,11 +255,6 @@ export class RelayClient {
   /** Send a commandToServer through the relay. */
   sendCommand(command: string, args: string[]): void {
     this.send({ type: "sendCommand", command, args });
-  }
-
-  /** Send a CRC challenge response through the relay (legacy echo). */
-  sendCRCResponse(crcValue: number, field1: number, field2: number): void {
-    this.send({ type: "sendCRCResponse", crcValue, field1, field2 });
   }
 
   /** Send datablock info for relay-side CRC computation over game files. */

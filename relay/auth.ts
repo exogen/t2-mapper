@@ -262,14 +262,9 @@ export class T2csriAuth {
   private credentials: AccountCredentials;
   private clientChallenge = "";
   private encryptedChallenge = "";
-  private _authenticated = false;
 
   constructor(credentials: AccountCredentials) {
     this.credentials = credentials;
-  }
-
-  get authenticated(): boolean {
-    return this._authenticated;
   }
 
   /**
@@ -380,7 +375,6 @@ export class T2csriAuth {
     }
 
     void result.serverChallenge; // verified
-    this._authenticated = true;
 
     return {
       command: {

@@ -16,6 +16,7 @@ import { AudioEnabled } from "./AudioEnabled";
 import { DebugEnabled } from "./DebugEnabled";
 import { FpsMeter } from "./FpsMeter";
 import { InputConsumer } from "./InputConsumer";
+import { SpectatorController } from "./SpectatorController";
 import { CameraTourConsumer } from "./CameraTourConsumer";
 import { ActiveInputBindings } from "./ActiveInputBindings";
 
@@ -48,12 +49,16 @@ export const GameView = memo(function GameView({
   missionName,
   missionType,
   onLoadingChange,
+  spectator = false,
 }: {
   dpr?: number;
   onCreated?: (state: RootState) => void;
   missionName: string;
   missionType?: string;
   onLoadingChange?: (isLoading: boolean, progress?: number) => void;
+  /** Watch mode: everything comes from the live stream — never mount the
+   *  TorqueScript Mission bootstrap, and manage the watch recording. */
+  spectator?: boolean;
 }) {
   const recording = useRecording();
   const dataSource = useDataSource();
@@ -85,7 +90,7 @@ export const GameView = memo(function GameView({
                 <StreamingController recording={recording} />
               </Suspense>
             ) : null}
-            {!hasStreamData ? (
+            {!hasStreamData && !spectator ? (
               <Suspense>
                 <Mission
                   key={`${missionName}~${missionType}`}
@@ -95,6 +100,7 @@ export const GameView = memo(function GameView({
                 />
               </Suspense>
             ) : null}
+            {spectator ? <SpectatorController /> : null}
             <CameraTourConsumer />
             <InputConsumer />
           </AudioProvider>

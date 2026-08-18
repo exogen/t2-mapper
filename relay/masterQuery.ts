@@ -75,11 +75,24 @@ async function queryMasterHTTP(masterAddress: string): Promise<string[]> {
   return [];
 }
 
+/**
+ * Probe a single (possibly unlisted) host with the same two-phase UDP
+ * query used for the master list. Resolves with the server's info when
+ * it answers as a compatible Tribes 2 server, null otherwise — the
+ * cheap "is this really a T2 server?" check before the relay opens a
+ * game connection to an arbitrary address.
+ */
+export async function queryServerInfo(
+  address: string,
+): Promise<ServerInfo | null> {
+  const servers = await queryServers([address]);
+  return servers[0] ?? null;
+}
+
 /** Ping info from GamePingResponse (type 16). */
 interface PingInfo {
   name: string;
   buildVersion: number;
-  protocolVersion: number;
   ping: number;
 }
 
@@ -146,9 +159,6 @@ async function queryServers(addresses: string[]): Promise<ServerInfo[]> {
           clearTimeout(timeout);
           resolve();
         }
-      } else if (type === 20) {
-        const info = parseInfoResponse(msg);
-        if (info) infoResults.set(addr, info);
       }
     });
 
@@ -266,14 +276,13 @@ function parsePingResponse(data: Buffer, sendTime?: number): PingInfo | null {
       new Uint8Array(data.buffer, data.byteOffset + 6, data.length - 6),
     );
     bs.readString(); // versionString
-    const protocolVersion = bs.readU32();
+    bs.readU32(); // protocolVersion
     bs.readU32(); // minProtocolVersion
     const buildVersion = bs.readU32();
     const name = bs.readString();
     return {
       name,
       buildVersion,
-      protocolVersion,
       ping: sendTime ? Date.now() - sendTime : 0,
     };
   } catch {

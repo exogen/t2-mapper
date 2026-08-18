@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { crcLog } from "./logger.js";
 
 // CRC-32 lookup table (reflected polynomial 0xEDB88320)
 const crcTable = new Uint32Array(256);
@@ -16,7 +17,7 @@ for (let i = 0; i < 256; i++) {
  * Tribes 2 uses raw CRC (no XOR-in/XOR-out) — verified against
  * decompiled FUN_004411b0 in Tribes2.exe.
  */
-export function crc32(data: Uint8Array, initial = 0): number {
+function crc32(data: Uint8Array, initial = 0): number {
   let crc = initial;
   for (let i = 0; i < data.length; i++) {
     crc = (crc >>> 8) ^ crcTable[(crc ^ data[i]) & 0xff];
@@ -62,7 +63,7 @@ let cachedManifest: Manifest | null = null;
 const fileCache = new Map<string, Uint8Array>();
 
 /**
- * Path to manifest.json. Defaults to `public/manifest.json` relative to the
+ * Path to manifest.json. Defaults to `src/manifest.json` relative to the
  * project root, but can be overridden via `MANIFEST_PATH` env var for
  * deployment outside the monorepo layout.
  */
@@ -122,18 +123,23 @@ export async function computeGameCRC(
 
   const startTime = performance.now();
 
-  console.log(
-    `[crc] starting computation: seed=0x${(seed >>> 0).toString(16)}, ` +
-      `${sorted.length} ShapeBaseData datablocks (of ${datablocks.length} total), ` +
-      `includeTextures=${includeTextures}`,
+  crcLog.info(
+    {
+      seed: `0x${(seed >>> 0).toString(16)}`,
+      shapeDataBlocks: sorted.length,
+      totalDataBlocks: datablocks.length,
+      includeTextures,
+    },
+    "Starting CRC computation",
   );
 
   for (const db of sorted) {
     const shapePath = `shapes/${db.shapeName}`;
     const localPath = await resolveGameFile(shapePath, basePath);
     if (!localPath) {
-      console.log(
-        `[crc]   SKIP id=${db.objectId} ${db.className} "${db.shapeName}" — not found in manifest`,
+      crcLog.warn(
+        { objectId: db.objectId, className: db.className, shape: db.shapeName },
+        "Skipping datablock — shape not found in manifest",
       );
       filesMissing++;
       continue;
@@ -141,15 +147,20 @@ export async function computeGameCRC(
 
     let data = fileCache.get(localPath);
     if (data) {
-      console.log(`[crc]   cache hit: "${localPath}"`);
+      crcLog.trace({ localPath }, "Cache hit");
     } else {
-      console.log(`[crc]   cache miss, reading: "${localPath}"`);
+      crcLog.trace({ localPath }, "Cache miss, reading file");
       try {
         data = new Uint8Array(await fs.readFile(localPath));
         fileCache.set(localPath, data);
       } catch {
-        console.log(
-          `[crc]   SKIP id=${db.objectId} ${db.className} "${db.shapeName}" — file read failed`,
+        crcLog.warn(
+          {
+            objectId: db.objectId,
+            className: db.className,
+            shape: db.shapeName,
+          },
+          "Skipping datablock — file read failed",
         );
         filesMissing++;
         continue;
@@ -161,9 +172,16 @@ export async function computeGameCRC(
     totalSize += data.length;
     filesFound++;
 
-    console.log(
-      `[crc]   #${filesFound} id=${db.objectId} ${db.className} "${db.shapeName}" ` +
-        `size=${data.length} crc=0x${prevCrc.toString(16)}→0x${crc.toString(16)}`,
+    crcLog.trace(
+      {
+        n: filesFound,
+        objectId: db.objectId,
+        className: db.className,
+        shape: db.shapeName,
+        size: data.length,
+        crc: `0x${prevCrc.toString(16)}→0x${crc.toString(16)}`,
+      },
+      "CRC'd shape file",
     );
 
     // TODO: If includeTextures && db.className !== "PlayerData",
@@ -184,10 +202,17 @@ export async function computeGameCRC(
     (sum, buf) => sum + buf.length,
     0,
   );
-  console.log(
-    `[crc] RESULT: ${filesFound} files CRC'd, ${filesMissing} missing, ` +
-      `crc=0x${crc.toString(16)}, totalSize=${totalSize}, elapsed=${elapsed.toFixed(0)}ms, ` +
-      `cache=${fileCache.size} files (${(cacheSizeBytes / 1024).toFixed(0)} KB)`,
+  crcLog.info(
+    {
+      filesFound,
+      filesMissing,
+      crc: `0x${crc.toString(16)}`,
+      totalSize,
+      elapsedMs: Math.round(elapsed),
+      cacheFiles: fileCache.size,
+      cacheKB: Math.round(cacheSizeBytes / 1024),
+    },
+    "CRC computation complete",
   );
 
   return { crc, totalSize };

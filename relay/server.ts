@@ -1,11 +1,19 @@
 import http from "node:http";
 import fs from "node:fs/promises";
+import fsSync from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { WebSocketServer, WebSocket } from "ws";
-import { queryServerList } from "./masterQuery.js";
+import { queryServerList, queryServerInfo } from "./masterQuery.js";
 import { GameConnection } from "./gameConnection.js";
 import { loadCredentials } from "./auth.js";
+import { WatchSessionManager, normalizeAddress } from "./watchSession.js";
+import {
+  AUTH_COMMANDS,
+  MAX_RETRIES,
+  RETRY_DELAY_MS,
+  isRetryableDisconnect,
+} from "./shared.js";
 import { relayLog } from "./logger.js";
 import type { ClientMessage, ServerMessage, ServerInfo } from "./types.js";
 
@@ -78,14 +86,56 @@ let cachedServers: ServerInfo[] = [];
 /** All active game connections (for status logging). */
 const activeGameConnections = new Set<GameConnection>();
 
+/** How long direct-probe results (success AND failure) stay valid. */
+const PROBE_TTL_MS = 2 * 60_000;
+
+/** Unlisted-server probe results: info for real T2 servers, null for
+ *  hosts that didn't answer. Failures are cached too, so repeated
+ *  watch requests can't be used to spray ping traffic at a non-T2 host
+ *  through the relay — they reject instantly within the TTL. */
+const probeCache = new Map<string, { info: ServerInfo | null; at: number }>();
+
+function getFreshProbe(
+  address: string,
+): { info: ServerInfo | null; at: number } | undefined {
+  const entry = probeCache.get(address);
+  if (!entry) return undefined;
+  if (Date.now() - entry.at > PROBE_TTL_MS) {
+    probeCache.delete(address);
+    return undefined;
+  }
+  return entry;
+}
+
+/** Look up a server by address in the master list or the probe cache. */
+function findKnownServer(address: string): ServerInfo | undefined {
+  const [host, port] = normalizeAddress(address).split(":");
+  return (
+    cachedServers.find((s) => {
+      const [sHost, sPort] = s.address.toLowerCase().split(":");
+      return sHost === host && (sPort ?? "28000") === (port ?? "28000");
+    }) ??
+    getFreshProbe(`${host}:${port}`)?.info ??
+    undefined
+  );
+}
+
+/** Shared watch sessions (one game connection per server, N watchers). */
+const watchSessions = new WatchSessionManager({
+  gameBasePath: GAME_BASE_PATH,
+  getCachedServer: findKnownServer,
+});
+
 setInterval(() => {
   const wsClients = wss.clients.size;
   const gameConns = activeGameConnections.size;
+  const sessions = watchSessions.getStatusSummary();
   relayLog.info(
-    { wsClients, gameConnections: gameConns },
-    "Relay status: %d WebSocket client(s), %d game connection(s)",
+    { wsClients, gameConnections: gameConns, watchSessions: sessions },
+    "Relay status: %d WebSocket client(s), %d game connection(s), %d watch session(s)",
     wsClients,
     gameConns,
+    sessions.length,
   );
   if (gameConns > 0) {
     const addrs = [...activeGameConnections].map((c) => c.address);
@@ -97,18 +147,75 @@ setInterval(() => {
   }
 }, 60_000);
 
+// Liveness sweep: half-open sockets would otherwise pin watch sessions
+// (and their game connections) forever. Browsers answer protocol pings
+// automatically, so healthy clients are unaffected.
+const liveSockets = new WeakSet<WebSocket>();
+setInterval(() => {
+  for (const ws of wss.clients) {
+    if (!liveSockets.has(ws)) {
+      relayLog.warn("Terminating unresponsive WebSocket client");
+      ws.terminate();
+      continue;
+    }
+    liveSockets.delete(ws);
+    ws.ping();
+  }
+}, 30_000);
+
+// ── Exit diagnostics ──
+// The relay should only ever exit because something told it to; log the
+// exact reason so an unexpected shutdown is attributable. writeSync
+// because pino/stdout writes are async on pipes (e.g. under
+// concurrently) and can be lost during exit.
+function logExit(message: string): void {
+  try {
+    fsSync.writeSync(process.stderr.fd, `[relay] ${message}\n`);
+  } catch {
+    // stderr gone — nothing else to do
+  }
+}
+
+for (const signal of ["SIGTERM", "SIGINT", "SIGHUP"] as const) {
+  process.on(signal, () => {
+    logExit(`received ${signal} — shutting down watch sessions and exiting`);
+    watchSessions.shutdown();
+    process.exit(0);
+  });
+}
+
+process.on("exit", (code) => {
+  logExit(`process exiting with code ${code}`);
+});
+
+process.on("uncaughtException", (err) => {
+  logExit(`uncaught exception: ${err?.stack ?? err}`);
+  process.exit(1);
+});
+
+process.on("unhandledRejection", (reason) => {
+  const detail =
+    reason instanceof Error ? (reason.stack ?? reason.message) : String(reason);
+  logExit(`unhandled rejection: ${detail}`);
+  process.exit(1);
+});
+
 wss.on("connection", (ws) => {
   relayLog.info("Browser client connected");
+  liveSockets.add(ws);
+  ws.on("pong", () => liveSockets.add(ws));
+
+  /** First joinServer/watchServer claims the socket for that mode. */
+  let role: "idle" | "player" | "watcher" = "idle";
+  let warnedWatcherCommand = false;
+  /** One unlisted-server probe at a time per socket. */
+  let probeInFlight = false;
 
   let gameConnection: GameConnection | null = null;
   let lastJoinAddress: string | null = null;
   let lastWarriorName: string | undefined;
   let retryCount = 0;
   let retryTimer: ReturnType<typeof setTimeout> | null = null;
-
-  const MAX_RETRIES = 3;
-  const RETRY_DELAY_MS = 6000;
-  const RETRYABLE_REASONS = ["Server is cycling mission"];
 
   async function connectToServer(
     ws: WebSocket,
@@ -134,7 +241,6 @@ wss.on("connection", (ws) => {
         {
           status,
           statusMessage,
-          connectSequence: conn.connectSequence,
           mapName: conn.mapName,
         },
         "Game connection status changed",
@@ -143,8 +249,7 @@ wss.on("connection", (ws) => {
       // Auto-retry on retryable disconnect reasons.
       if (
         status === "disconnected" &&
-        statusMessage &&
-        RETRYABLE_REASONS.some((r) => statusMessage.includes(r)) &&
+        isRetryableDisconnect(statusMessage) &&
         retryCount < MAX_RETRIES &&
         lastJoinAddress === address
       ) {
@@ -161,7 +266,6 @@ wss.on("connection", (ws) => {
           type: "status",
           status: "connecting",
           message: `${statusMessage} — retrying (${retryCount}/${MAX_RETRIES})...`,
-          connectSequence: conn.connectSequence,
           mapName: conn.mapName,
         });
         retryTimer = setTimeout(() => {
@@ -183,7 +287,6 @@ wss.on("connection", (ws) => {
         type: "status",
         status,
         message: statusMessage,
-        connectSequence: conn.connectSequence,
         mapName: conn.mapName,
       });
     });
@@ -257,13 +360,110 @@ wss.on("connection", (ws) => {
     if (gameConnection) {
       gameConnection.disconnect();
     }
+    watchSessions.detachSocket(ws);
   });
 
   async function handleClientMessage(
     ws: WebSocket,
     message: ClientMessage,
   ): Promise<void> {
+    // Watcher sockets are read-only spectators, with one exception: chat,
+    // sent through the session's shared identity. Every other
+    // game-mutating message is dropped (the session owns the protocol).
+    if (role === "watcher") {
+      if (message.type === "sendCommand" && message.command === "messageSent") {
+        watchSessions.sendChat(ws, message.args[0] ?? "");
+        return;
+      }
+      const allowed = ["listServers", "watchServer", "leaveServer", "wsPing"];
+      if (!allowed.includes(message.type)) {
+        relayLog.debug(
+          { type: message.type },
+          "Dropping game message from watcher socket",
+        );
+        if (!warnedWatcherCommand) {
+          warnedWatcherCommand = true;
+          sendToClient(ws, {
+            type: "error",
+            message: `Watchers are read-only; "${message.type}" ignored`,
+          });
+        }
+        return;
+      }
+    }
+
     switch (message.type) {
+      case "watchServer": {
+        if (role === "player") {
+          sendToClient(ws, {
+            type: "error",
+            message: "Socket already joined as a player; reconnect to watch",
+          });
+          return;
+        }
+        role = "watcher";
+        const address = normalizeAddress(message.address);
+        relayLog.info({ address }, "Watch server requested");
+
+        // Unlisted addresses are probed first (GamePing/GameInfo request,
+        // the same two-packet handshake the server browser uses), so the
+        // relay only ever opens game connections to real, compatible
+        // Tribes 2 servers — while still supporting private servers that
+        // aren't published on the master list. An already-active session
+        // is proof enough; otherwise both probe outcomes are cached for
+        // PROBE_TTL_MS, and a cached failure rejects with no traffic at
+        // all toward the target.
+        if (!watchSessions.has(address) && !findKnownServer(address)) {
+          if (getFreshProbe(address)?.info === null) {
+            sendToClient(ws, {
+              type: "sessionStatus",
+              status: "ended",
+              address,
+              message: `No compatible Tribes 2 server responded at ${address}`,
+              watcherCount: 0,
+            });
+            return;
+          }
+          if (probeInFlight) return;
+          probeInFlight = true;
+          relayLog.info({ address }, "Probing unlisted server");
+          let info: ServerInfo | null = null;
+          try {
+            info = await queryServerInfo(address);
+          } finally {
+            probeInFlight = false;
+          }
+          probeCache.set(address, { info, at: Date.now() });
+          if (!info) {
+            relayLog.info({ address }, "Probe failed — not a T2 server");
+            sendToClient(ws, {
+              type: "sessionStatus",
+              status: "ended",
+              address,
+              message: `No compatible Tribes 2 server responded at ${address}`,
+              watcherCount: 0,
+            });
+            return;
+          }
+          relayLog.info(
+            { address, name: info.name, mapName: info.mapName },
+            "Probe succeeded — unlisted T2 server",
+          );
+        }
+
+        // The socket may have closed during the probe; a dead watcher in
+        // a session would pin it until the liveness sweep.
+        if (ws.readyState === WebSocket.OPEN) {
+          watchSessions.watch(ws, address);
+        }
+        break;
+      }
+
+      case "leaveServer": {
+        watchSessions.detachSocket(ws);
+        break;
+      }
+
       case "listServers": {
         relayLog.info("Querying master server for server list");
         try {
@@ -285,6 +485,14 @@ wss.on("connection", (ws) => {
       }
 
       case "joinServer": {
+        if (role === "watcher") {
+          sendToClient(ws, {
+            type: "error",
+            message: "Socket is watching; reconnect to join as a player",
+          });
+          return;
+        }
+        role = "player";
         relayLog.info(
           { address: message.address, warriorName: message.warriorName },
           "Join server requested",
@@ -307,12 +515,7 @@ wss.on("connection", (ws) => {
 
       case "sendCommand": {
         if (gameConnection) {
-          const authEvents = [
-            "t2csri_pokeClient",
-            "t2csri_getChallengeChunk",
-            "t2csri_decryptChallenge",
-          ];
-          if (authEvents.includes(message.command)) {
+          if (AUTH_COMMANDS.includes(message.command)) {
             relayLog.debug(
               { event: message.command },
               "Forwarding auth event from browser",
@@ -325,18 +528,6 @@ wss.on("connection", (ws) => {
             );
             gameConnection.sendCommand(message.command, ...message.args);
           }
-        }
-        break;
-      }
-
-      case "sendCRCResponse": {
-        if (gameConnection) {
-          relayLog.debug("Forwarding CRC response from browser (legacy echo)");
-          gameConnection.handleCRCChallenge(
-            message.crcValue,
-            message.field1,
-            message.field2,
-          );
         }
         break;
       }

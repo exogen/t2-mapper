@@ -30,6 +30,13 @@ export interface StreamPlaybackState {
   orbitOverrideYaw: number;
   /** User-controlled orbit pitch (radians), used when cameraMode is "orbitOverride". */
   orbitOverridePitch: number;
+  /**
+   * Spectate mode: the entity being followed by the client-side orbit
+   * camera (the stream has no orbit target — the relay's server camera
+   * never enters follow mode). Drives both the 3D orbit and the command
+   * circuit's follow tracking.
+   */
+  followEntityId: string | null;
 }
 
 export const streamPlaybackStore = createStore<StreamPlaybackState>()(() => ({
@@ -38,6 +45,7 @@ export const streamPlaybackStore = createStore<StreamPlaybackState>()(() => ({
   cameraMode: "original",
   orbitOverrideYaw: 0,
   orbitOverridePitch: 0,
+  followEntityId: null,
 }));
 
 /** Reset all streaming playback state. Called when streaming ends. */
@@ -48,6 +56,7 @@ export function resetStreamPlayback(): void {
     cameraMode: "original",
     orbitOverrideYaw: 0,
     orbitOverridePitch: 0,
+    followEntityId: null,
   });
   // root is managed by the React ref callback in EntityScene — don't clear it
 }

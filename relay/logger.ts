@@ -23,3 +23,6 @@ export const masterLog = logger.child({ module: "master" });
 
 /** T2csri authentication. */
 export const authLog = logger.child({ module: "auth" });
+
+/** Game-file CRC computation (CRCChallengeEvent responses). */
+export const crcLog = logger.child({ module: "crc" });

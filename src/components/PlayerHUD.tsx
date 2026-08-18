@@ -1,14 +1,17 @@
+import { useRef } from "react";
 import { useStore } from "zustand";
 import { FaHand } from "react-icons/fa6";
 import { ImArrowDownRight, ImHome } from "react-icons/im";
 import { useStreamSnapshot } from "../state/streamSnapshotStore";
 import { streamPlaybackStore } from "../state/streamPlaybackStore";
+import { useLiveSelector } from "../state/liveConnectionStore";
 import { DEFAULT_TEAM_NAMES } from "../stringUtils";
 import { textureToUrl } from "../loaders";
 import type { StreamEntity, TeamScore, WeaponsHudSlot } from "../stream/types";
 import styles from "./PlayerHUD.module.css";
 import { ChatWindow } from "./ChatWindow";
 import { CompassDial } from "./CompassDial";
+import { useCameraHeadingRotor } from "./MapCompass";
 import { useSettings } from "./SettingsProvider";
 import { useCommandCircuit } from "../state/commandCircuitStore";
 
@@ -21,8 +24,19 @@ function formatClockHud(clockMs: number): string {
 }
 
 function Compass({ commandCircuitActive }: { commandCircuitActive: boolean }) {
+  const isWatcher = useLiveSelector((s) => s.role === "watcher");
   const yaw = useStreamSnapshot((snap) => snap?.camera?.yaw);
   const matchClockMs = useStreamSnapshot((snap) => snap?.matchClockMs);
+  // Watch mode: the view camera is client-controlled (free-fly/orbit), so
+  // the stream camera's yaw is meaningless — track the render camera.
+  if (isWatcher) {
+    return (
+      <LocalCameraCompass
+        commandCircuitActive={commandCircuitActive}
+        matchClockMs={matchClockMs}
+      />
+    );
+  }
   if (yaw == null) return null;
   // The notch is the fixed heading indicator (always "forward" at top).
   // The NSEW letters rotate to show world cardinal directions relative to
@@ -40,6 +54,33 @@ function Compass({ commandCircuitActive }: { commandCircuitActive: boolean }) {
           </span>
         )}
       </CompassDial>
+    </div>
+  );
+}
+
+function LocalCameraCompass({
+  commandCircuitActive,
+  matchClockMs,
+}: {
+  commandCircuitActive: boolean;
+  matchClockMs: number | null | undefined;
+}) {
+  const rotorRef = useRef<SVGGElement>(null);
+  useCameraHeadingRotor(rotorRef);
+  const clock =
+    matchClockMs != null ? (
+      <span className={styles.CompassClock}>
+        {formatClockHud(matchClockMs)}
+      </span>
+    ) : null;
+  return (
+    <div className={styles.Compass}>
+      {commandCircuitActive ? (
+        // The command circuit map can't rotate — pin north-up.
+        <CompassDial deg={0}>{clock}</CompassDial>
+      ) : (
+        <CompassDial rotorRef={rotorRef}>{clock}</CompassDial>
+      )}
     </div>
   );
 }

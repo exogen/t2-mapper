@@ -4,7 +4,6 @@ import { connLog } from "./logger.js";
 
 const DataPacket = 0;
 const PingPacket = 1;
-const AckPacket = 2;
 
 const NetEventClassFirst = 255;
 const CRCChallengeResponseEventClassId = NetEventClassFirst + 1; // index 1
@@ -155,12 +154,6 @@ export class ConnectionProtocol {
   /** Build a ping response packet. */
   buildPingPacket(): Uint8Array {
     const bs = this.buildSendPacketHeader(PingPacket);
-    return bs.getBuffer();
-  }
-
-  /** Build an ack-only packet (no game data). */
-  buildAckPacket(): Uint8Array {
-    const bs = this.buildSendPacketHeader(AckPacket);
     return bs.getBuffer();
   }
 
@@ -357,7 +350,7 @@ export class ClientNetStringTable {
 }
 
 /** Build a NetStringEvent to register a string with the server. */
-export function buildNetStringEvent(id: number, value: string): ClientEvent {
+function buildNetStringEvent(id: number, value: string): ClientEvent {
   return {
     classId: NetStringEventClassId,
     write(bs: BitStreamWriter) {
@@ -513,26 +506,6 @@ export function buildDisconnectPacket(
 }
 
 // ── Master server query packets ──
-
-/** Build a MasterServerListRequest (type 6). */
-export function buildMasterServerListRequest(
-  queryFlags: number = 0,
-  key: number = 0,
-): Uint8Array {
-  const bs = new BitStreamWriter(256);
-  bs.writeU8(6); // MasterServerListRequest
-  bs.writeU8(queryFlags);
-  bs.writeU32(key);
-  // Game type / mission type filters (empty = all)
-  bs.writeU8(0xff); // maxPlayers filter (0xff = any)
-  bs.writeU32(0); // regionMask (0 = any)
-  bs.writeU32(0); // version (0 = any)
-  bs.writeU8(0); // filter flags
-  bs.writeU8(0); // maxBots
-  bs.writeU16(0); // minCPU
-  bs.writeU8(0); // buddyCount
-  return bs.getBuffer();
-}
 
 /** Build a GamePingRequest (type 14). */
 export function buildGamePingRequest(

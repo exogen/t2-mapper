@@ -14,6 +14,7 @@ import {
 import { useSettings } from "./SettingsProvider";
 import { useDataSource } from "../state/gameEntityStore";
 import { streamSnapshotStore } from "../state/streamSnapshotStore";
+import { enterWatchFollow, isWatchSpectator } from "../state/watchFollow";
 import { liveConnectionStore } from "../state/liveConnectionStore";
 import type { PlayerEntity } from "../state/gameEntityTypes";
 
@@ -98,6 +99,12 @@ export function CommandCircuitPlayerMarker({
     if (!isLive) return;
     const kf = getKeyframeAtTime(entity.keyframes ?? [], streamClock.time);
     if (kf?.damageState != null && kf.damageState >= 1) return;
+    // Spectate mode: follow is purely client-side — orbit this player's
+    // ghost directly, no server round-trip.
+    if (isWatchSpectator()) {
+      enterWatchFollow(entity.id);
+      return;
+    }
     // The targetId from MsgClientJoin is the exact join key to the player
     // entity; the name comparison is a fallback for servers/replays where
     // the join message predates our targetId tracking.

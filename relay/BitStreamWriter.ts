@@ -13,14 +13,6 @@ export class BitStreamWriter {
     this.maxBitNum = maxBytes << 3;
   }
 
-  getCurPos(): number {
-    return this.bitNum;
-  }
-
-  setCurPos(pos: number): void {
-    this.bitNum = pos;
-  }
-
   getBytePosition(): number {
     return (this.bitNum + 7) >> 3;
   }
@@ -67,61 +59,12 @@ export class BitStreamWriter {
     }
   }
 
-  /** Write a signed integer: 1-bit sign flag + (bitCount-1) magnitude bits. */
-  writeSignedInt(value: number, bitCount: number): void {
-    if (value < 0) {
-      this.writeFlag(true);
-      this.writeInt(-value, bitCount - 1);
-    } else {
-      this.writeFlag(false);
-      this.writeInt(value, bitCount - 1);
-    }
-  }
-
   writeU8(value: number): void {
     this.writeInt(value & 0xff, 8);
   }
 
-  writeU16(value: number): void {
-    this.writeInt(value & 0xffff, 16);
-  }
-
   writeU32(value: number): void {
     this.writeInt(value >>> 0, 32);
-  }
-
-  writeS32(value: number): void {
-    this.writeU32(value | 0);
-  }
-
-  /** Shared buffer for F32 writes. */
-  private static readonly f32Buf = new ArrayBuffer(4);
-  private static readonly f32View = new DataView(BitStreamWriter.f32Buf);
-  private static readonly f32U8 = new Uint8Array(BitStreamWriter.f32Buf);
-
-  writeF32(value: number): void {
-    BitStreamWriter.f32View.setFloat32(0, value, true);
-    for (let i = 0; i < 4; i++) {
-      this.writeU8(BitStreamWriter.f32U8[i]);
-    }
-  }
-
-  /** Write a float normalized to [0, 1]. */
-  writeFloat(value: number, bitCount: number): void {
-    const maxVal = (1 << bitCount) - 1;
-    this.writeInt(Math.round(value * maxVal), bitCount);
-  }
-
-  /** Write a float normalized to [-1, 1]. */
-  writeSignedFloat(value: number, bitCount: number): void {
-    const maxVal = (1 << bitCount) - 1;
-    this.writeInt(Math.round((value + 1.0) * 0.5 * maxVal), bitCount);
-  }
-
-  writeRangedU32(value: number, rangeStart: number, rangeEnd: number): void {
-    const rangeSize = rangeEnd - rangeStart + 1;
-    const rangeBits = Math.ceil(Math.log2(rangeSize)) || 1;
-    this.writeInt(value - rangeStart, rangeBits);
   }
 
   /** Write raw bits from a Uint8Array. */
@@ -142,9 +85,5 @@ export class BitStreamWriter {
       }
       this.bitNum++;
     }
-  }
-
-  writeBytes(bytes: Uint8Array): void {
-    this.writeBitsBuffer(bytes, bytes.length * 8);
   }
 }

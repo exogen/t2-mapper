@@ -535,7 +535,6 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
     const sendTime = this.sendTimestamps.get(result.highestAck);
     if (sendTime) {
       const rtt = Date.now() - sendTime;
-      this.sendTimestamps.delete(result.highestAck);
       // Exponential moving average (alpha=0.5 for responsive updates).
       this.smoothedPing =
         this.smoothedPing === 0 ? rtt : this.smoothedPing * 0.5 + rtt * 0.5;
@@ -545,6 +544,12 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
         this.lastPingEmit = now;
         this.emit("ping", Math.round(this.smoothedPing));
       }
+    }
+    // Prune every timestamp at or below the ack — acks can skip sequence
+    // numbers (bundled acks, loss), and skipped entries would otherwise
+    // accumulate for the lifetime of the connection.
+    for (const seq of this.sendTimestamps.keys()) {
+      if (seq <= result.highestAck) this.sendTimestamps.delete(seq);
     }
 
     if (!result.accepted) {
@@ -617,17 +622,6 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
         break;
       }
     }
-  }
-
-  /** Respond to a CRCChallengeEvent by echoing values (legacy fallback). */
-  handleCRCChallenge(crcValue: number, field1: number, field2: number): void {
-    connLog.info(
-      { crcValue, field1, field2 },
-      "CRC challenge received, sending echo response (legacy)",
-    );
-    const event = buildCRCChallengeResponseEvent(crcValue, field1, field2);
-    this.pendingEvents.push(event);
-    this.checkPacketSend();
   }
 
   /**

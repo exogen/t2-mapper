@@ -14,6 +14,7 @@ import {
 import { useInputMode } from "./InputContext";
 import { useCameraTour } from "../state/cameraTourStore";
 import { useCommandCircuit } from "../state/commandCircuitStore";
+import { useLiveSelector } from "../state/liveConnectionStore";
 import {
   useDataSource,
   useGameEntityCountByRenderType,
@@ -458,8 +459,11 @@ function TourOverlay() {
   );
 }
 
-function ObserverOverlay() {
-  const inputMode = useInputMode();
+function ObserverOverlay({ mode }: { mode?: "fly" | "follow" }) {
+  const contextMode = useInputMode();
+  // Watch mode's fly state reports inputMode "local" (client-side camera),
+  // so the caller passes the effective observer mode explicitly.
+  const inputMode = mode ?? contextMode;
   const isPointerLocked = usePointerLocked();
   return (
     <>
@@ -512,6 +516,8 @@ export function KeyboardOverlay() {
   const isTourActive = useCameraTour((s) => s.animation !== null);
   const isCommandCircuit = useCommandCircuit((s) => s.active);
   const demoFollow = useCommandCircuit((s) => s.follow);
+  // Watch mode: client-only free-fly, no server-observer controls.
+  const isWatcher = useLiveSelector((s) => s.role === "watcher");
 
   const isDemo = recording?.source === "demo";
   const isLive = recording?.source === "live";
@@ -522,8 +528,16 @@ export function KeyboardOverlay() {
   // the local command circuit flag.
   const ccFollow = isLive ? inputMode === "follow" : demoFollow;
 
+  // Watch mode always uses the observer overlay (fly or follow) — its
+  // client-side camera modes mirror the real observer's, but fly state
+  // reports inputMode "local", so pass the effective mode explicitly.
+  const watcherObserverMode = isWatcher
+    ? inputMode === "follow"
+      ? ("follow" as const)
+      : ("fly" as const)
+    : undefined;
   const isLiveObserver =
-    isLive && (inputMode === "fly" || inputMode === "follow");
+    isLive && (isWatcher || inputMode === "fly" || inputMode === "follow");
 
   const showFreeFly = isMap && !isTourActive && !isCommandCircuit;
 
@@ -538,7 +552,9 @@ export function KeyboardOverlay() {
           showObserverCycle={isLive && ccFollow}
         />
       )}
-      {isLiveObserver && !isCommandCircuit && <ObserverOverlay />}
+      {isLiveObserver && !isCommandCircuit && (
+        <ObserverOverlay mode={watcherObserverMode} />
+      )}
       {isDemo && !isCommandCircuit && <DemoOverlay />}
       {isTourActive && <TourOverlay />}
     </div>

@@ -1,3 +1,5 @@
+import { projectileClassNames } from "../../relay/shared";
+
 /**
  * GhostingMessageEvent message types (from NetConnection::GhostMSG enum).
  * Sent by the server to control ghost scope lifecycle.
@@ -20,18 +22,7 @@ export const vehicleClassNames = new Set([
   "WheeledVehicle",
 ]);
 
-/** All projectile class names. */
-export const projectileClassNames = new Set([
-  "BombProjectile",
-  "EnergyProjectile",
-  "FlareProjectile",
-  "GrenadeProjectile",
-  "LinearFlareProjectile",
-  "LinearProjectile",
-  "Projectile",
-  "SeekerProjectile",
-  "TracerProjectile",
-]);
+export { projectileClassNames };
 
 /** Projectile classes with linear (constant-velocity) physics. */
 export const linearProjectileClassNames = new Set([

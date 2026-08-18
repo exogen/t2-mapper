@@ -1,4 +1,8 @@
-import { createLiveParser, type PacketParser } from "t2-demo-parser";
+import {
+  createLiveParser,
+  passiveObserverProtocolState,
+  type PacketParser,
+} from "t2-demo-parser";
 import type {
   ParsedData,
   RemoteCommandEventData,
@@ -12,6 +16,8 @@ import type { StreamSnapshot } from "./types";
 import { StreamEngine } from "./StreamEngine";
 import { GhostMessage } from "./entityClassification";
 import type { RelayClient } from "./relayClient";
+import type { WatchCatchupPayload } from "../../relay/types";
+import { AUTH_COMMANDS, buildCRCDataBlockList } from "../../relay/shared";
 
 const log = createLogger("liveStreaming");
 
@@ -61,14 +67,53 @@ export class LiveStreamAdapter extends StreamEngine {
   /** Server's latest move acknowledgment (which moveIndex it has processed). */
   lastMoveAck = 0;
 
-  constructor(relay: RelayClient) {
+  /**
+   * "play" (default): this client drives the connection protocol
+   * (auth, mission phases, CRC, ghost acks) through the relay.
+   * "watch": passive spectator on a shared relay session — the relay
+   * owns all protocol responses, and parser state arrives via
+   * `hydrate()` instead of being built from the stream start.
+   */
+  readonly mode: "play" | "watch";
+  private hydratedEpoch: number | null = null;
+
+  constructor(relay: RelayClient, options?: { mode?: "play" | "watch" }) {
     super();
     this.relay = relay;
+    this.mode = options?.mode ?? "play";
     const { registry, ghostTracker, packetParser } = createLiveParser();
     this.packetParser = packetParser;
     this.ghostTracker = ghostTracker;
     this.registry = registry;
   }
+
+  // ── Relay send gate ──
+  // Every adapter→relay send goes through here so watch mode can never
+  // fight the relay session over protocol responses. Add new sends via
+  // this object, not by calling this.relay directly.
+  private sendToRelay = {
+    command: (command: string, args: string[]): void => {
+      if (this.mode === "watch") return;
+      this.relay.sendCommand(command, args);
+    },
+    authEvent: (command: string, args: string[]): void => {
+      if (this.mode === "watch") return;
+      this.relay.sendAuthEvent(command, args);
+    },
+    crcCompute: (
+      seed: number,
+      field2: number,
+      datablocks: { objectId: number; className: string; shapeName: string }[],
+      includeTextures: boolean,
+    ): void => {
+      if (this.mode === "watch") return;
+      this.relay.sendCRCCompute(seed, field2, datablocks, includeTextures);
+    },
+    ghostAck: (sequence: number, ghostCount: number): void => {
+      if (this.mode === "watch") return;
+      this.relay.sendGhostAck(sequence, ghostCount);
+    },
+  };
 
   // ── StreamEngine abstract implementations ──
 
@@ -169,29 +214,156 @@ export class LiveStreamAdapter extends StreamEngine {
   private syncConnectSequence(data: Uint8Array): void {
     if (this.connectSynced || data.length < 1) return;
     this.connectSynced = true;
-    const connectSeqBit = (data[0] >> 1) & 1;
     // The browser parser is a passive observer — it never sends packets
-    // (the relay handles all outgoing UDP traffic). Set lastSendSeq very
-    // high so the parser's ack validation (lastSendSeq < highestAck →
-    // reject) never fires. Without this, the parser rejects any packet
-    // where the server acks relay-sent sequences (e.g. auth events).
-    this.packetParser.setConnectionProtocolState({
-      lastSeqRecvdAtSend: new Array(32).fill(0),
-      lastSeqRecvd: 0,
-      highestAckedSeq: 0,
-      lastSendSeq: 0x1fffffff,
-      ackMask: 0,
-      connectSequence: connectSeqBit,
-      lastRecvAckAck: 0,
-      connectionEstablished: true,
-    });
+    // (the relay handles all outgoing UDP traffic).
+    this.packetParser.setConnectionProtocolState(
+      passiveObserverProtocolState(data[0]),
+    );
   }
 
   // ── Live-specific: feed raw packet ──
 
   feedPacket(data: Uint8Array): void {
-    this.syncConnectSequence(data);
+    if (this.mode === "watch") {
+      // Watch mode has no valid parser state until the relay's catch-up
+      // payload arrives; the seeded connectionState replaces the
+      // syncConnectSequence bootstrap entirely.
+      if (this.hydratedEpoch === null) return;
+    } else {
+      this.syncConnectSequence(data);
+    }
     this.processPacket(data);
+  }
+
+  // ── Watch-specific: hydrate from a relay catch-up payload ──
+
+  /**
+   * Rebuild parser + engine state from a WatchCatchupPayload, mirroring
+   * how demo playback seeds from a mid-match recording's
+   * InitialBlockData (StreamingPlayback.reset in demoStreaming.ts).
+   * Safe to call again on a new epoch (session reconnect): everything
+   * is replaced.
+   */
+  hydrate(payload: WatchCatchupPayload): void {
+    // Fresh engine state (clears entities, HUD, net strings, targets).
+    this.reset();
+
+    // Seeded parser stack — continues the raw stream in lockstep with
+    // the relay's parser from the packet boundary the payload captured.
+    const { registry, ghostTracker, packetParser } = createLiveParser({
+      dataBlocks: payload.dataBlocks.map(([id, block]) => [id, block.data]),
+      ghosts: payload.initialGhosts
+        .filter((g) => g.classId != null)
+        .map((g) => ({ index: g.index, classId: g.classId! })),
+      connectionProtocolState: payload.connectionState,
+      nextRecvEventSeq: payload.nextRecvEventSeq,
+      compressionPoint: payload.compressionPoint,
+      pendingGuaranteedEvents: payload.pendingGuaranteedEvents,
+    });
+    this.packetParser = packetParser;
+    this.ghostTracker = ghostTracker;
+    this.registry = registry;
+    this.connectSynced = true;
+
+    // Shared state, seeded exactly as demo reset does (demoStreaming.ts).
+    for (const [id, value] of payload.taggedStrings) {
+      this.netStrings.set(id, value);
+    }
+    for (const entry of payload.targetEntries) {
+      if (entry.name) {
+        this.targetNames.set(
+          entry.targetId,
+          stripTaggedStringMarkup(entry.name).trim(),
+        );
+      }
+      if (entry.skin) this.targetSkins.set(entry.targetId, entry.skin);
+      if (entry.skinPref) {
+        this.targetSkinPrefs.set(entry.targetId, entry.skinPref);
+      }
+      if (entry.sensorGroup != null) {
+        this.targetTeams.set(entry.targetId, entry.sensorGroup);
+      }
+      if (entry.targetData != null) {
+        this.targetRenderFlags.set(entry.targetId, entry.targetData);
+      }
+    }
+    for (const c of payload.sensorGroupColors) {
+      let map = this.sensorGroupColors.get(c.group);
+      if (!map) {
+        map = new Map();
+        this.sensorGroupColors.set(c.group, map);
+      }
+      map.set(c.targetGroup, { r: c.r, g: c.g, b: c.b });
+    }
+    this.playerSensorGroup = payload.playerSensorGroup;
+    for (const [id, block] of payload.dataBlocks) {
+      if (block.className) this.dataBlockClassNames.set(id, block.className);
+    }
+    this.missionName = payload.missionName;
+
+    // Ghosts flow through the normal create path: applyGhostData with
+    // full merged parsedData, sceneData captured via ghostToSceneObject.
+    for (const ghost of payload.initialGhosts) {
+      this.processGhostUpdate(ghost);
+    }
+
+    // Control object: the relay's server-side observer camera. The relay
+    // never sends moves, so this is exactly where the server placed its
+    // observer (per-map drop point) — the initial view a real client gets.
+    // Build the camera immediately so the first snapshot carries it
+    // (otherwise it only materializes on the first live packet).
+    this.processControlObject({
+      controlObjectGhostIndex: payload.controlObjectGhostIndex,
+      controlObjectData: payload.controlObjectData,
+      compressionPoint: payload.compressionPoint,
+    });
+    this.updateCameraAndHud();
+
+    // Roster/scores/clock (a late joiner can't recover these live).
+    const hud = payload.hudState;
+    for (const entry of hud.playerRoster) {
+      this.playerRoster.set(entry.clientId, {
+        name: entry.name,
+        targetId: entry.targetId,
+        teamId: entry.teamId,
+        score: entry.score,
+        ping: entry.ping,
+        packetLoss: entry.packetLoss,
+      });
+    }
+    this.onRosterChanged();
+    // playerCount is recomputed from the roster on every buildHudState.
+    this.teamScores = hud.teamScores.map((entry) => ({
+      ...entry,
+      playerCount: 0,
+    }));
+    this.onTeamScoresChanged();
+    if (hud.clock) {
+      this.clockAnchorStreamSec =
+        this.getTimeSec() - hud.clock.elapsedMs / 1000;
+      this.clockDurationMs = hud.clock.durationMs;
+    }
+    this.missionDisplayName = hud.missionDisplayName ?? null;
+    this.missionTypeDisplayName = hud.missionTypeDisplayName ?? null;
+    this.gameClassName = hud.gameClassName ?? null;
+    this.serverDisplayName = hud.serverDisplayName ?? null;
+    this.onMissionInfoChange?.();
+
+    this.hydratedEpoch = payload.epoch;
+    if (payload.missionName) {
+      this.onMissionChange?.(payload.missionName);
+    }
+    log.info(
+      "hydrated epoch %d: %d entities, %d datablocks, %d net strings",
+      payload.epoch,
+      this.entities.size,
+      payload.dataBlocks.length,
+      payload.taggedStrings.length,
+    );
+    if (this.entities.size > 0 && !this._ready) {
+      this._ready = true;
+      this.onReady?.();
+    }
   }
 
   // ── Live-specific: auth event detection ──
@@ -206,18 +378,13 @@ export class LiveStreamAdapter extends StreamEngine {
     const funcName = this.resolveNetString(rawFuncName);
 
     // T2csri auth events → forward to relay for crypto processing.
-    const authCommands = [
-      "t2csri_pokeClient",
-      "t2csri_getChallengeChunk",
-      "t2csri_decryptChallenge",
-    ];
-    if (authCommands.includes(funcName)) {
+    if (AUTH_COMMANDS.includes(funcName)) {
       const rawArgs = parsedData.args ?? [];
       const args = rawArgs
         .map((a) => this.resolveNetString(a))
         .filter((a) => a !== "");
       log.info("auth event: %s %o", funcName, args);
-      this.relay.sendAuthEvent(funcName, args);
+      this.sendToRelay.authEvent(funcName, args);
       return;
     }
 
@@ -246,6 +413,18 @@ export class LiveStreamAdapter extends StreamEngine {
         this._cachedHud = null;
         this.observerMode = "fly";
         this.lastMoveAck = 0;
+        // Drop the old mission's camera AND control-object state so
+        // consumers (e.g. spectator initial placement) wait for the new
+        // mission's control data instead of a stale position —
+        // updateCameraAndHud rebuilds the camera from latestControl on
+        // every packet, so clearing the camera alone isn't enough. The
+        // server re-scopes its observer camera during the new mission's
+        // phases and fresh control data follows.
+        this.camera = null;
+        this.latestControl = { ghostIndex: -1 };
+        this.controlPlayerGhostId = undefined;
+        this.lastControlType = "camera";
+        this.isPiloting = false;
         // Clear stale mission info — new values arrive via MsgClientReady
         // and MsgMissionDropInfo after the mission finishes loading.
         this.missionDisplayName = null;
@@ -254,11 +433,11 @@ export class LiveStreamAdapter extends StreamEngine {
         this.serverDisplayName = null;
         this.onMissionChange?.(newMissionName);
       }
-      this.relay.sendCommand("MissionStartPhase1Done", [seq]);
+      this.sendToRelay.command("MissionStartPhase1Done", [seq]);
     } else if (funcName === "MissionStartPhase2") {
       const seq = resolvedArgs[0] ?? "";
       log.info("mission phase 2 (datablocks), seq=%s", seq);
-      this.relay.sendCommand("MissionStartPhase2Done", [seq]);
+      this.sendToRelay.command("MissionStartPhase2Done", [seq]);
     } else if (funcName === "MissionStartPhase3") {
       const seq = resolvedArgs[0] ?? "";
       const currentMission = resolvedArgs[1] ?? null;
@@ -272,8 +451,8 @@ export class LiveStreamAdapter extends StreamEngine {
         this.missionName = currentMission;
       }
       // Send an empty favorites list then acknowledge phase 3.
-      this.relay.sendCommand("setClientFav", [""]);
-      this.relay.sendCommand("MissionStartPhase3Done", [seq]);
+      this.sendToRelay.command("setClientFav", [""]);
+      this.sendToRelay.command("MissionStartPhase3Done", [seq]);
     }
   }
 
@@ -293,26 +472,12 @@ export class LiveStreamAdapter extends StreamEngine {
     );
 
     // Collect datablocks for relay-side CRC computation over game files.
-    const dbMap = this.packetParser.getDataBlockDataMap();
-    const datablocks: {
-      objectId: number;
-      className: string;
-      shapeName: string;
-    }[] = [];
-    if (dbMap) {
-      for (const [id, block] of dbMap) {
-        const className = this.dataBlockClassNames.get(id);
-        if (!className) continue;
-        const shapeName = resolveShapeName(className, block as ParsedData);
-        datablocks.push({
-          objectId: id,
-          className,
-          shapeName: shapeName ?? "",
-        });
-      }
-    }
+    const datablocks = buildCRCDataBlockList(
+      this.packetParser.getDataBlockDataMap(),
+      this.dataBlockClassNames,
+    );
     log.info("CRC: sending %d datablocks for computation", datablocks.length);
-    this.relay.sendCRCCompute(seed, field2, datablocks, includeTextures);
+    this.sendToRelay.crcCompute(seed, field2, datablocks, includeTextures);
   }
 
   /**
@@ -332,7 +497,7 @@ export class LiveStreamAdapter extends StreamEngine {
     );
     if (message === GhostMessage.GhostAlwaysDone) {
       log.info("Sending ghost ack for sequence %d", sequence);
-      this.relay.sendGhostAck(sequence, ghostCount);
+      this.sendToRelay.ghostAck(sequence, ghostCount);
     }
   }
 
@@ -343,9 +508,17 @@ export class LiveStreamAdapter extends StreamEngine {
    */
   observerMode: "fly" | "follow" = "fly";
 
-  /** Request updated scores from the server (triggers MsgPlayerScore messages). */
-  requestScores(): void {
-    this.relay.sendCommand("getScores", []);
+  /**
+   * True once real control-object state has arrived (index + data) —
+   * as opposed to a camera synthesized from the compressionPoint
+   * fallback, whose position can be stale across a mission change and
+   * whose yaw/pitch default to 0. Spectator initial placement waits
+   * for this so it snaps to the server's actual observer position.
+   */
+  hasControlObject(): boolean {
+    return (
+      this.latestControl.ghostIndex >= 0 && this.latestControl.data != null
+    );
   }
 
   // ── Packet processing ──
