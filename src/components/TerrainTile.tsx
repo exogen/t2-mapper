@@ -36,7 +36,6 @@ interface TerrainTileProps {
   basePosition: { x: number; z: number };
   textureNames: string[];
   geometry: BufferGeometry;
-  displacementMap: DataTexture;
   visibilityMask: DataTexture;
   alphaTextures: DataTexture[];
   detailTextureName?: string;
@@ -45,14 +44,12 @@ interface TerrainTileProps {
 }
 
 const BlendedTerrainTextures = memo(function BlendedTerrainTextures({
-  displacementMap,
   visibilityMask,
   textureNames,
   alphaTextures,
   detailTextureName,
   lightmap,
 }: {
-  displacementMap: DataTexture;
   visibilityMask: DataTexture;
   textureNames: string[];
   alphaTextures: DataTexture[];
@@ -164,14 +161,12 @@ const BlendedTerrainTextures = memo(function BlendedTerrainTextures({
 });
 
 export const TerrainMaterial = memo(function TerrainMaterial({
-  displacementMap,
   visibilityMask,
   textureNames,
   alphaTextures,
   detailTextureName,
   lightmap,
 }: {
-  displacementMap: DataTexture;
   visibilityMask: DataTexture;
   textureNames: string[];
   alphaTextures: DataTexture[];
@@ -186,7 +181,6 @@ export const TerrainMaterial = memo(function TerrainMaterial({
       }
     >
       <BlendedTerrainTextures
-        displacementMap={displacementMap}
         visibilityMask={visibilityMask}
         textureNames={textureNames}
         alphaTextures={alphaTextures}
@@ -204,7 +198,6 @@ export const TerrainTile = memo(function TerrainTile({
   basePosition,
   textureNames,
   geometry,
-  displacementMap,
   visibilityMask,
   alphaTextures,
   detailTextureName,
@@ -239,7 +232,6 @@ export const TerrainTile = memo(function TerrainTile({
       visible={visible}
     >
       <TerrainMaterial
-        displacementMap={displacementMap}
         visibilityMask={visibilityMask}
         textureNames={textureNames}
         alphaTextures={alphaTextures}

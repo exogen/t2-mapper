@@ -12,6 +12,7 @@ import { EntityScene } from "./EntityScene";
 import { ObserverCamera } from "./ObserverCamera";
 import { CommandCircuitCamera } from "./CommandCircuitCamera";
 import { HeatmapOverlay } from "./HeatmapOverlay";
+import { UnderwaterFilter } from "./UnderwaterFilter";
 import { AudioEnabled } from "./AudioEnabled";
 import { DebugEnabled } from "./DebugEnabled";
 import { FpsMeter } from "./FpsMeter";
@@ -78,6 +79,7 @@ export const GameView = memo(function GameView({
             <ObserverCamera />
             <CommandCircuitCamera />
             <HeatmapOverlay />
+            <UnderwaterFilter />
             <AudioEnabled>
               <ChatSoundPlayer />
             </AudioEnabled>

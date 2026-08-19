@@ -7,7 +7,7 @@ export default defineConfig({
   },
   resolve: {
     alias: {
-      "@": resolve(__dirname, "."),
+      "@": resolve(import.meta.dirname, "."),
     },
   },
 });

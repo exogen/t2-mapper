@@ -1432,10 +1432,16 @@ export function createRuntime(
         return builtin(...args);
       }
 
-      // Match TorqueScript behavior: warn and return empty string
+      // Match TorqueScript behavior: warn and return empty string.
+      // Runtime objects are cyclic (_children/_parent), so format them as
+      // their ID like TorqueScript would instead of JSON.stringify.
       log.warn(
         `Unknown function: ${name}(${args
-          .map((a) => JSON.stringify(a))
+          .map((a) =>
+            typeof a === "object" && a !== null
+              ? String(a._id ?? "[object]")
+              : JSON.stringify(a),
+          )
           .join(", ")})`,
       );
       return "";

@@ -311,7 +311,7 @@ export function WatchPage() {
             setSidebarOpen((open) => !open);
           }}
         />
-        <StreamingMissionInfo />
+        <StreamingMissionInfo hideActionButton={isCommandCircuit && isTouch} />
         {isCommandCircuit && isTouch && <ExitCommandCircuitButton />}
       </header>
       {sidebarOpen ? <div className={frameStyles.Backdrop} /> : null}

@@ -12,7 +12,7 @@ import {
   RepeatWrapping,
 } from "three";
 import { textureToUrl } from "../loaders";
-import { setWaterLevel } from "../collision/waterLevel";
+import { setWaterInfo, setWaterTime } from "../collision/waterLevel";
 import {
   torqueToThree,
   torqueScaleToThree,
@@ -22,7 +22,6 @@ import { setupTexture } from "../textureUtils";
 import { useAnisotropy } from "./useAnisotropy";
 import { createWaterMaterial } from "../waterMaterial";
 import { useDebug, useSettings } from "./SettingsProvider";
-import { usePositionTracker } from "./usePositionTracker";
 import { WaterBlockEntity } from "../state/gameEntityTypes";
 
 const REP_SIZE = 2048;
@@ -59,6 +58,37 @@ function calculateWaterSegments(
   const segmentsZ = Math.max(4, Math.ceil(sizeZ / vertexSpacing));
 
   return [segmentsX, segmentsZ];
+}
+
+/**
+ * Terrain rep index for a camera coordinate (terrain space / 2048).
+ * Matches fluidQuadTree.cc RunQuadTree():
+ *   I = (s32)(m_Eye.X / 2048.0f);
+ *   if( m_Eye.X < 0.0f )  I--;
+ * (truncation toward zero, then decrement for negative).
+ */
+function cameraRepIndex(coord: number): number {
+  const terrain = coord + TERRAIN_OFFSET;
+  let i = Math.trunc(terrain / REP_SIZE);
+  if (terrain < 0) i--;
+  return i;
+}
+
+/**
+ * Build the 3x3 grid of reps around the camera's rep. ALL water blocks
+ * use 9-rep tiling - the masking system handles visibility.
+ */
+function buildRepGrid(
+  cameraRepX: number,
+  cameraRepZ: number,
+): Array<[number, number]> {
+  const reps: Array<[number, number]> = [];
+  for (let repZ = cameraRepZ - 1; repZ <= cameraRepZ + 1; repZ++) {
+    for (let repX = cameraRepX - 1; repX <= cameraRepX + 1; repX++) {
+      reps.push([repX, repZ]);
+    }
+  }
+  return reps;
 }
 
 /**
@@ -123,7 +153,6 @@ export const WaterBlock = memo(function WaterBlock({
   const scale = useMemo(() => torqueScaleToThree(scene.scale), [scene.scale]);
   const [scaleX, scaleY, scaleZ] = scale;
   const camera = useThree((state) => state.camera);
-  const hasCameraPositionChanged = usePositionTracker();
 
   const waveMagnitude = scene.waveMagnitude;
 
@@ -133,11 +162,23 @@ export const WaterBlock = memo(function WaterBlock({
   // 2. Round to nearest terrain square: (s32)((X0 / 8.0f) + 0.5f) = Math.round(x/8)
   // 3. Clamp to valid terrain range [0, 2040] squares
   // 4. Convert back to world units (multiply by 8)
-  // Expose the surface height (Torque Z) for projectile water collision.
+  // Register the water body for projectile collision and the underwater
+  // screen filter. Surface = position.z + scale.z (WaterBlock's mSurfaceZ).
   useEffect(() => {
-    setWaterLevel(scene.transform.position.z);
-    return () => setWaterLevel(null);
-  }, [scene.transform.position.z]);
+    const pos = scene.transform.position;
+    const snap = (v: number) =>
+      Math.max(0, Math.min(2040, Math.round((v + TERRAIN_OFFSET) / 8))) * 8;
+    setWaterInfo({
+      surfaceZ: pos.z + scene.scale.z,
+      waveMagnitude: scene.waveMagnitude,
+      liquidType: scene.liquidType,
+      minX: snap(pos.x),
+      minY: snap(pos.y),
+      sizeX: scene.scale.x,
+      sizeY: scene.scale.y,
+    });
+    return () => setWaterInfo(null);
+  }, [scene]);
 
   const basePosition = useMemo(() => {
     const [x, y, z] = position;
@@ -162,62 +203,29 @@ export const WaterBlock = memo(function WaterBlock({
     return [baseX, y, baseZ] as [number, number, number];
   }, [position]);
 
-  // Calculate 3x3 grid of reps centered on camera position.
-  // ALL water blocks use 9-rep tiling - the masking system handles visibility.
-  // Matches fluidQuadTree.cc RunQuadTree():
-  //   I = (s32)(m_Eye.X / 2048.0f);
-  //   if( m_Eye.X < 0.0f )  I--;
-  const calculateReps = (
-    camX: number,
-    camZ: number,
-  ): Array<[number, number]> => {
-    // Convert camera to terrain space
-    const terrainCamX = camX + TERRAIN_OFFSET;
-    const terrainCamZ = camZ + TERRAIN_OFFSET;
-
-    // Determine camera's terrain rep using terrain coordinates.
-    // Torque uses: I = (s32)(m_Eye.X / 2048.0f); if (m_Eye.X < 0) I--;
-    // This is truncation toward zero, then decrement for negative.
-    let cameraRepX = Math.trunc(terrainCamX / REP_SIZE);
-    let cameraRepZ = Math.trunc(terrainCamZ / REP_SIZE);
-    if (terrainCamX < 0) cameraRepX--;
-    if (terrainCamZ < 0) cameraRepZ--;
-
-    // Build 3x3 grid of reps around camera
-    const newReps: Array<[number, number]> = [];
-    for (let repZ = cameraRepZ - 1; repZ <= cameraRepZ + 1; repZ++) {
-      for (let repX = cameraRepX - 1; repX <= cameraRepX + 1; repX++) {
-        newReps.push([repX, repZ]);
-      }
-    }
-    return newReps;
-  };
-
-  // Track which reps to render, updated each frame based on camera position.
+  // Track which reps to render. The grid only changes when the camera
+  // crosses a 2048-unit rep boundary, so gate on the integer rep index.
   // Initialize with current camera position so water is visible immediately.
   const [reps, setReps] = useState<Array<[number, number]>>(() =>
-    calculateReps(camera.position.x, camera.position.z),
+    buildRepGrid(
+      cameraRepIndex(camera.position.x),
+      cameraRepIndex(camera.position.z),
+    ),
   );
+  // Rep the grid was last built for; useFrame keeps both in sync.
+  const cameraRepRef = useRef({
+    x: cameraRepIndex(camera.position.x),
+    z: cameraRepIndex(camera.position.z),
+  });
 
   useFrame(() => {
-    if (!hasCameraPositionChanged(camera.position)) {
-      return;
-    }
-
-    const newReps = calculateReps(camera.position.x, camera.position.z);
-
-    // Only update state if reps actually changed (avoid unnecessary re-renders)
-    setReps((prevReps) => {
-      if (
-        prevReps.length === newReps.length &&
-        prevReps.every(
-          (r, i) => r[0] === newReps[i][0] && r[1] === newReps[i][1],
-        )
-      ) {
-        return prevReps;
-      }
-      return newReps;
-    });
+    const repX = cameraRepIndex(camera.position.x);
+    const repZ = cameraRepIndex(camera.position.z);
+    const prev = cameraRepRef.current;
+    if (prev.x === repX && prev.z === repZ) return;
+    prev.x = repX;
+    prev.z = repZ;
+    setReps(buildRepGrid(repX, repZ));
   });
 
   const surfaceTexture = scene.surfaceName || "liquidTiles/BlueWater";
@@ -385,6 +393,8 @@ const WaterReps = memo(function WaterReps({
       elapsedRef.current += delta;
       material.uniforms.uTime.value = elapsedRef.current;
     }
+    // Keep the submersion test's wave phase in sync with the rendering.
+    setWaterTime(elapsedRef.current);
 
     // Update instance matrices when reps change or mesh is recreated.
     const mesh = meshRef.current;

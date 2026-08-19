@@ -31,6 +31,7 @@
 .Title {
   font-size: 18px;
   font-weight: 500;
+  line-height: 1.2;
   color: #7dffff;
   margin: 0;
   text-shadow: 0 1px 6px rgba(0, 0, 0, 0.4);
@@ -51,6 +52,12 @@
   composes: DialogButton from "./GameDialog.module.css";
   padding: 3px 14px;
   font-size: 12px;
+}
+
+/* Narrow screens swap the Refresh text for an icon (same button style). */
+.RefreshIcon {
+  display: none;
+  font-size: 20px;
 }
 
 .ServerCount {
@@ -275,11 +282,17 @@
 
 .Actions {
   composes: Actions from "./GameDialog.module.css";
+  justify-content: flex-end;
 }
 
 @media (max-width: 719px) {
   .Hint {
     display: none;
+  }
+
+  .Actions {
+    width: 100%;
+    flex: 1 0 auto;
   }
 
   .CloseButton {
@@ -288,13 +301,13 @@
 }
 
 @media (max-width: 539px) {
+  .Header {
+    padding: 8px 12px;
+  }
+
   .Footer {
     flex-direction: column;
     gap: 8px;
-  }
-
-  .Actions {
-    width: 100%;
   }
 
   .WarriorLabel {
@@ -311,9 +324,22 @@
     flex: 1 0 auto;
     height: 32px;
   }
+
+  .RefreshButton {
+    padding: 6px 10px;
+    font-size: 11px;
+  }
+
+  .RefreshLabel {
+    display: none;
+  }
+
+  .RefreshIcon {
+    display: block;
+  }
 }
 
-@media (max-width: 399px) {
+@media (max-width: 479px) {
   .ServerCount {
     display: none;
   }

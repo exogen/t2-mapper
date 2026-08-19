@@ -80,6 +80,9 @@ import { createLogger } from "../logger";
 
 const log = createLogger("StreamEngine");
 
+/** Scratch segment end for advanceItems' swept casts (not retained). */
+const _itemCastEnd: [number, number, number] = [0, 0, 0];
+
 export type { Vec3 };
 
 // ── Internal mutable entity type ──
@@ -2047,11 +2050,10 @@ export abstract class StreamEngine implements StreamingPlayback {
       // and force fields — mirroring Item::updatePos's container cast.
       // Items get only sparse server updates (throw + final rest), so
       // this simulates the whole arc, including landings on interiors.
-      const hit = castWorldRay(p, [
-        p[0] + v[0] * dt,
-        p[1] + v[1] * dt,
-        p[2] + v[2] * dt,
-      ]);
+      _itemCastEnd[0] = p[0] + v[0] * dt;
+      _itemCastEnd[1] = p[1] + v[1] * dt;
+      _itemCastEnd[2] = p[2] + v[2] * dt;
+      const hit = castWorldRay(p, _itemCastEnd);
       if (!hit) {
         p[0] += v[0] * dt;
         p[1] += v[1] * dt;

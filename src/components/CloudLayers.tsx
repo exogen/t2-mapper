@@ -7,6 +7,8 @@ import {
   Float32BufferAttribute,
   ShaderMaterial,
   Vector2,
+  Vector3,
+  Vector4,
   DoubleSide,
   Texture,
   RepeatWrapping,
@@ -15,7 +17,9 @@ import {
   Group,
 } from "three";
 import { loadDetailMapList, textureToUrl } from "../loaders";
+import { computeSkyFogBands, skyFogAlphaGlsl } from "../skyFogBands";
 import type { SceneSky } from "../scene/types";
+import type { FogState } from "./FogProvider";
 import { useDebug, useSettings } from "./SettingsProvider";
 
 const noop = () => {};
@@ -276,11 +280,15 @@ const cloudVertexShader = `
 
   varying vec2 vUv;
   varying float vAlpha;
+  varying vec3 vEyeRay;
 
   void main() {
     // Apply UV offset for scrolling
     vUv = uv + uvOffset;
     vAlpha = alpha;
+    // The cloud group is camera-centered, so the local position is the
+    // eye ray — used to evaluate the sky fog bands per fragment.
+    vEyeRay = position;
 
     vec4 pos = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
     // Set depth to far plane so clouds are always visible and behind other geometry
@@ -297,9 +305,13 @@ const cloudFragmentShader = `
   uniform sampler2D cloudTexture;
   uniform float debugMode;
   uniform int layerIndex;
+  uniform vec3 cloudFogColor;
 
   varying vec2 vUv;
   varying float vAlpha;
+  varying vec3 vEyeRay;
+
+  ${skyFogAlphaGlsl}
 
   // Debug grid using screen-space derivatives for sharp, anti-aliased lines
   float debugGrid(vec2 uv, float gridSize, float lineWidth) {
@@ -333,10 +345,31 @@ const cloudFragmentShader = `
       color = mix(color, gridColor, gridIntensity * 0.5);
     }
 
+    // Tribes2.exe renders the fog bands OVER the clouds
+    // (Sky::renderSkyBox: walls -> clouds -> band strip/fan), and clips
+    // cloud quads below the fog line. Blending each fragment toward the
+    // fog color by the band alpha reproduces both: at the fog line the
+    // cloud matches the fog backdrop exactly and vanishes.
+    float band = skyFogAlpha(normalize(vEyeRay).y);
+    color = mix(color, cloudFogColor, band);
+    finalAlpha *= 1.0 - band;
+
     // Output clouds with texture color and combined alpha
     gl_FragColor = vec4(color, finalAlpha);
   }
 `;
+
+/**
+ * Sky fog band uniforms shared by all cloud layers, updated once per
+ * frame by CloudLayers. Safe to share by reference: cloud materials are
+ * constructed directly (not via JSX props), so r3f never clones their
+ * uniform entries.
+ */
+interface CloudBandUniforms {
+  fogBands: { value: Vector4 };
+  skyRadius: { value: number };
+  cloudFogColor: { value: Vector3 };
+}
 
 interface CloudLayerProps {
   textureUrl: string;
@@ -345,6 +378,7 @@ interface CloudLayerProps {
   speed: number;
   windDirection: Vector2;
   layerIndex: number;
+  bandUniforms: CloudBandUniforms;
 }
 
 /**
@@ -357,6 +391,7 @@ function CloudLayer({
   speed,
   windDirection,
   layerIndex,
+  bandUniforms,
 }: CloudLayerProps) {
   const { debugMode } = useDebug();
   const { animationEnabled } = useSettings();
@@ -388,6 +423,10 @@ function CloudLayer({
         uvOffset: { value: new Vector2(0, 0) },
         debugMode: { value: debugMode ? 1 : 0 },
         layerIndex: { value: layerIndex },
+        // Shared objects — live-updated by CloudLayers each frame.
+        fogBands: bandUniforms.fogBands,
+        skyRadius: bandUniforms.skyRadius,
+        cloudFogColor: bandUniforms.cloudFogColor,
       },
       vertexShader: cloudVertexShader,
       fragmentShader: cloudFragmentShader,
@@ -395,7 +434,7 @@ function CloudLayer({
       depthWrite: false,
       side: DoubleSide,
     });
-  }, [texture, debugMode, layerIndex]);
+  }, [texture, debugMode, layerIndex, bandUniforms]);
 
   useEffect(() => {
     return () => {
@@ -427,7 +466,16 @@ function CloudLayer({
   );
 
   return (
-    <mesh geometry={geometry} frustumCulled={false} renderOrder={10}>
+    // The engine draws layers in fixed index order, each blended over
+    // the last (Sky::renderSkyBox loop). Distinct renderOrder per layer
+    // pins that order — with a shared renderOrder, three.js's transparent
+    // depth sort is degenerate for camera-centered meshes and the blend
+    // order can flip with view angle (visible cloud "popping").
+    <mesh
+      geometry={geometry}
+      frustumCulled={false}
+      renderOrder={10 + layerIndex}
+    >
       <primitive object={material} attach="material" />
     </mesh>
   );
@@ -460,13 +508,15 @@ function useDetailMapList(name: string | undefined) {
 
 export interface CloudLayersProps {
   scene: SceneSky;
+  /** Fog state when fog is enabled — drives the fog band overlay. */
+  fogState?: FogState;
 }
 
 /**
  * CloudLayers component renders multiple cloud layers as domed meshes.
  * Matches the Tribes 2 cloud rendering system.
  */
-export function CloudLayers({ scene }: CloudLayersProps) {
+export function CloudLayers({ scene, fogState }: CloudLayersProps) {
   const materialList = scene.materialList || undefined;
   const { data: detailMapList } = useDetailMapList(materialList);
 
@@ -521,12 +571,48 @@ export function CloudLayers({ scene }: CloudLayersProps) {
   // Reference for the group to follow camera
   const groupRef = useRef<Group>(null!);
 
+  // Fog band uniforms shared by all layers; the bands are overwritten
+  // each frame below, the fog color on scene change, so the initial
+  // values are placeholders.
+  const bandUniforms = useMemo<CloudBandUniforms>(
+    () => ({
+      fogBands: { value: new Vector4(0, 60, 0, 0) },
+      skyRadius: { value: 300 },
+      cloudFogColor: { value: new Vector3(0.5, 0.5, 0.5) },
+    }),
+    [],
+  );
+
+  // Clouds render in gamma space (NoColorSpace textures), so blend with
+  // the mission's raw sRGB fog color like the engine does.
+  const { r: fogR, g: fogG, b: fogB } = scene.fogColor;
+  useEffect(() => {
+    bandUniforms.cloudFogColor.value.set(fogR, fogG, fogB);
+  }, [bandUniforms, fogR, fogG, fogB]);
+
   // Make clouds follow camera position (they should appear infinitely far away)
   // From Tribes 2 sky.cc line 633-634: glTranslatef(camPos.x, camPos.y, camPos.z)
   // Clouds are translated to camera position in all 3 dimensions
   useFrame(({ camera }) => {
     if (groupRef.current) {
       groupRef.current.position.copy(camera.position);
+    }
+    if (fogState) {
+      const bands = computeSkyFogBands(
+        fogState.visibleDistance,
+        fogState.fogVolumes,
+        camera.position.y,
+      );
+      bandUniforms.fogBands.value.set(
+        bands.h0,
+        bands.h1,
+        bands.alpha0,
+        bands.alpha1,
+      );
+      bandUniforms.skyRadius.value = bands.radius;
+    } else {
+      // Fog disabled: park the bands far below any view ray.
+      bandUniforms.fogBands.value.set(-1e9, -1e9 + 1, 0, 0);
     }
   });
 
@@ -547,6 +633,7 @@ export function CloudLayers({ scene }: CloudLayersProps) {
               speed={layer.speed}
               windDirection={windDirection}
               layerIndex={i}
+              bandUniforms={bandUniforms}
             />
           </Suspense>
         );

@@ -5,6 +5,7 @@
 
 import type { TorqueObject } from "../torqueScript";
 import { parseColor3, parseColor4 } from "../colorUtils";
+import { LIQUID_TYPES } from "../collision/waterLevel";
 import type {
   SceneTerrainBlock,
   SceneInteriorInstance,
@@ -246,6 +247,8 @@ export function waterBlockFromMis(obj: TorqueObject): SceneWaterBlock {
     surfaceOpacity: propFloat(obj, "surfaceOpacity") ?? 0.75,
     waveMagnitude: propFloat(obj, "waveMagnitude") ?? 1.0,
     envMapIntensity: propFloat(obj, "envMapIntensity") ?? 1.0,
+    liquidType:
+      LIQUID_TYPES[(prop(obj, "liquidType") ?? "").toLowerCase()] ?? 0,
   };
 }
 

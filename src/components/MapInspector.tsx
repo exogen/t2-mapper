@@ -108,6 +108,9 @@ export function MapInspector() {
   const isTouch = useTouchDevice();
   const isTourActive = useCameraTour((s) => s.animation !== null);
   const isCommandCircuit = useCommandCircuit((s) => s.active);
+  // Exit CC takes priority over the streaming eject/disconnect button —
+  // they occupy the same toolbar slot and shouldn't appear together.
+  const showExitCommandCircuit = isCommandCircuit && isTouch && !isTourActive;
 
   const [viewMode, setViewMode] = useModeQueryState();
 
@@ -293,7 +296,7 @@ export function MapInspector() {
             }}
           />
           <Activity mode={hasStreamData && !choosingMap ? "visible" : "hidden"}>
-            <StreamingMissionInfo />
+            <StreamingMissionInfo hideActionButton={showExitCommandCircuit} />
           </Activity>
           <Activity mode={!hasStreamData || choosingMap ? "visible" : "hidden"}>
             <MissionSelect
@@ -305,9 +308,7 @@ export function MapInspector() {
             />
           </Activity>
           {isTourActive && <ExitTourButton />}
-          {isCommandCircuit && isTouch && !isTourActive && (
-            <ExitCommandCircuitButton />
-          )}
+          {showExitCommandCircuit && <ExitCommandCircuitButton />}
         </header>
         {sidebarOpen ? <div className={styles.Backdrop} /> : null}
         <Activity mode={sidebarOpen ? "visible" : "hidden"}>

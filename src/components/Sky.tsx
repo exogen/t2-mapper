@@ -2,7 +2,8 @@ import { memo, Suspense, useMemo, useEffect, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useThree, useFrame } from "@react-three/fiber";
 import { useCubeTexture } from "@react-three/drei";
-import { Color, Fog } from "three";
+import { Color, Fog, Vector4, type Camera, type ShaderMaterial } from "three";
+import { computeSkyFogBands, skyFogAlphaGlsl } from "../skyFogBands";
 import { createLogger } from "../logger";
 import { useDebug, useSettings } from "./SettingsProvider";
 import { useCommandCircuit } from "../state/commandCircuitStore";
@@ -72,9 +73,37 @@ function useDetailMapList(name: string) {
  * Inner component that renders the skybox once texture URLs are known.
  * Separated so useCubeTexture only runs with valid URLs.
  */
-// Torque sky constants (from sky.cc)
-// OFFSET_HEIGHT = 60.0 - height of the horizon fog band in world units
-const HORIZON_FOG_HEIGHT = 60.0;
+/**
+ * Per-frame sky material updates, shared by both sky shaders. The camera
+ * matrices must come from the CURRENT render camera — a mount-time
+ * useThree capture can be the command circuit's ortho camera when the sky
+ * remounts during the commit that closes CC (the perspective camera is
+ * only restored afterwards), which breaks the ray unprojection
+ * permanently. The fog bands depend on the camera height, so they update
+ * here too.
+ */
+function updateSkyFrameUniforms(
+  u: Record<string, { value: unknown }>,
+  renderCamera: Camera,
+  fogState: FogState | undefined,
+): void {
+  u.inverseProjectionMatrix.value = renderCamera.projectionMatrixInverse;
+  u.cameraMatrixWorld.value = renderCamera.matrixWorld;
+  if (fogState) {
+    const bands = computeSkyFogBands(
+      fogState.visibleDistance,
+      fogState.fogVolumes,
+      renderCamera.position.y,
+    );
+    (u.fogBands.value as Vector4).set(
+      bands.h0,
+      bands.h1,
+      bands.alpha0,
+      bands.alpha1,
+    );
+    u.skyRadius.value = bands.radius;
+  }
+}
 
 function SkyBoxTexture({
   skyBoxFiles,
@@ -94,60 +123,36 @@ function SkyBoxTexture({
     return camera.projectionMatrixInverse;
   }, [camera]);
 
-  const fogVolumeData = useMemo(
-    () =>
-      fogState ? packFogVolumeData(fogState.fogVolumes) : new Float32Array(12),
-    [fogState],
-  );
-
-  // Create stable uniform objects that persist across renders
-  // This ensures the shader gets updated values when props change
+  // Initial uniform values for material construction only.
   const uniformsRef = useRef({
     skybox: { value: skyBox },
     fogColor: { value: fogColor ?? new Color(0, 0, 0) },
     enableFog: { value: enableFog },
     inverseProjectionMatrix: { value: inverseProjectionMatrix },
     cameraMatrixWorld: { value: camera.matrixWorld },
-    cameraHeight: globalFogUniforms.cameraHeight,
-    fogVolumeData: { value: fogVolumeData },
-    horizonFogHeight: { value: 0.18 },
+    fogBands: { value: new Vector4(0, 60, 0, 0) },
+    skyRadius: { value: 300 },
   });
 
-  // Calculate the horizon fog cutoff based on visible distance
-  // In Torque's sky.cc:
-  //   mRadius = visibleDistance * 0.95
-  //   tpt = (1,1,1).normalize(mRadius) -> each component = mRadius / sqrt(3)
-  //   mSkyBoxPt.x = mSkyBoxPt.z = mRadius / sqrt(3) (corner of cube)
-  //
-  // The fog band is rendered as geometry from height 0 to OFFSET_HEIGHT (60)
-  // on a skybox where the horizontal distance to the edge is mSkyBoxPt.x
-  //
-  // For a ray direction, direction.y corresponds to the vertical component
-  // The fog should cover directions where:
-  //   height / horizontal_dist = direction.y / sqrt(1 - direction.y^2) < 60 / skyBoxPt.x
-  //
-  // Simplifying: direction.y < OFFSET_HEIGHT / sqrt(skyBoxPt.x^2 + OFFSET_HEIGHT^2)
-  const horizonFogHeight = useMemo(() => {
-    if (!fogState) return 0.18; // Default fallback
-    const mRadius = fogState.visibleDistance * 0.95;
-    const skyBoxPtX = mRadius / Math.sqrt(3); // Corner coordinate
-    // For direction vector (horizontal, y), y / horizontal = height / skyBoxPtX
-    // At the fog boundary: y / sqrt(1-y^2) = 60 / skyBoxPtX
-    // Solving for y: y = 60 / sqrt(skyBoxPtX^2 + 60^2)
-    return (
-      HORIZON_FOG_HEIGHT /
-      Math.sqrt(skyBoxPtX * skyBoxPtX + HORIZON_FOG_HEIGHT * HORIZON_FOG_HEIGHT)
-    );
-  }, [fogState]);
+  // IMPORTANT: post-construction updates must go through the MATERIAL's
+  // uniforms, not uniformsRef — r3f copies each uniform entry into its
+  // own stable objects when applying the `uniforms` prop, so mutating
+  // uniformsRef after mount never reaches the shader.
+  const materialRef = useRef<ShaderMaterial>(null);
 
   // Update uniform values when props change
   useEffect(() => {
-    uniformsRef.current.skybox.value = skyBox;
-    uniformsRef.current.fogColor.value = fogColor ?? new Color(0, 0, 0);
-    uniformsRef.current.enableFog.value = enableFog;
-    uniformsRef.current.fogVolumeData.value = fogVolumeData;
-    uniformsRef.current.horizonFogHeight.value = horizonFogHeight;
-  }, [skyBox, fogColor, enableFog, fogVolumeData, horizonFogHeight]);
+    const u = materialRef.current?.uniforms;
+    if (!u) return;
+    u.skybox.value = skyBox;
+    u.fogColor.value = fogColor ?? new Color(0, 0, 0);
+    u.enableFog.value = enableFog;
+  }, [skyBox, fogColor, enableFog]);
+
+  useFrame(({ camera: renderCamera }) => {
+    const u = materialRef.current?.uniforms;
+    if (u) updateSkyFrameUniforms(u, renderCamera, fogState);
+  });
 
   return (
     <mesh renderOrder={-1000} frustumCulled={false}>
@@ -166,6 +171,7 @@ function SkyBoxTexture({
         />
       </bufferGeometry>
       <shaderMaterial
+        ref={materialRef}
         uniforms={uniformsRef.current} // eslint-disable-line react-hooks/refs
         vertexShader={`
           varying vec2 vUv;
@@ -181,11 +187,10 @@ function SkyBoxTexture({
           uniform bool enableFog;
           uniform mat4 inverseProjectionMatrix;
           uniform mat4 cameraMatrixWorld;
-          uniform float cameraHeight;
-          uniform float fogVolumeData[12];
-          uniform float horizonFogHeight;
 
           varying vec2 vUv;
+
+          ${skyFogAlphaGlsl}
 
           // Convert linear to sRGB for display
           // shaderMaterial does NOT get automatic linear->sRGB output conversion
@@ -207,80 +212,13 @@ function SkyBoxTexture({
             vec3 finalColor;
 
             if (enableFog) {
-              vec3 effectiveFogColor = fogColor;
-
-              // Calculate how much fog volume the ray passes through
-              // For skybox at "infinite" distance, the relevant height is how much
-              // of the volume is above/below camera depending on view direction
-              float volumeFogInfluence = 0.0;
-
-              for (int i = 0; i < 3; i++) {
-                int offset = i * 4;
-                float volVisDist = fogVolumeData[offset + 0];
-                float volMinH = fogVolumeData[offset + 1];
-                float volMaxH = fogVolumeData[offset + 2];
-                float volPct = fogVolumeData[offset + 3];
-
-                if (volVisDist <= 0.0) continue;
-
-                // Check if camera is inside this volume
-                if (cameraHeight >= volMinH && cameraHeight <= volMaxH) {
-                  // Camera is inside the fog volume
-                  // Looking horizontally or up at shallow angles means ray travels
-                  // through more fog before exiting the volume
-                  float heightAboveCamera = volMaxH - cameraHeight;
-                  float heightBelowCamera = cameraHeight - volMinH;
-                  float volumeHeight = volMaxH - volMinH;
-
-                  // For horizontal rays (direction.y ≈ 0), maximum fog influence
-                  // For rays going up steeply, less fog (exits volume quickly)
-                  // For rays going down, more fog (travels through volume below)
-                  float rayInfluence;
-                  if (direction.y >= 0.0) {
-                    // Looking up: influence based on how steep we're looking
-                    // Shallow angles = long path through fog = high influence
-                    rayInfluence = 1.0 - smoothstep(0.0, 0.3, direction.y);
-                  } else {
-                    // Looking down: always high fog (into the volume)
-                    rayInfluence = 1.0;
-                  }
-
-                  // Scale by percentage and volume depth factor
-                  volumeFogInfluence += rayInfluence * volPct;
-                }
-              }
-
-              // Base fog factor from view direction (for haze at horizon)
-              // In Torque, the fog "bans" (bands) are rendered as geometry from
-              // height 0 (HORIZON) to height 60 (OFFSET_HEIGHT) on the skybox.
-              // The skybox corner is at mSkyBoxPt.x = mRadius / sqrt(3).
-              //
-              // horizonFogHeight is the direction.y value where the fog band ends:
-              //   horizonFogHeight = 60 / sqrt(skyBoxPt.x^2 + 60^2)
-              //
-              // For Firestorm (visDist=600): mRadius=570, skyBoxPt.x=329, horizonFogHeight≈0.18
-              //
-              // Torque renders the fog bands as geometry with linear vertex alpha
-              // interpolation. We use a squared curve (t^2) to create a gentler
-              // falloff at the top of the gradient, matching Tribes 2's appearance.
-              float baseFogFactor;
-              if (direction.y <= 0.0) {
-                // Looking at or below horizon: full fog
-                baseFogFactor = 1.0;
-              } else if (direction.y >= horizonFogHeight) {
-                // Above fog band: no fog
-                baseFogFactor = 0.0;
-              } else {
-                // Within fog band: squared curve for gentler falloff at top
-                float t = direction.y / horizonFogHeight;
-                baseFogFactor = (1.0 - t) * (1.0 - t);
-              }
-
-              // Combine base fog with volume fog influence
-              // When inside a volume, increase fog intensity
-              float finalFogFactor = min(1.0, baseFogFactor + volumeFogInfluence * 0.5);
-
-              finalColor = mix(skyColor.rgb, effectiveFogColor, finalFogFactor);
+              // Tribes2.exe fog/sky boundary (Sky::renderSkyBox, 0x5acb20):
+              // the sky is painted fog color, skybox walls are clipped to
+              // above the saturation ring, and two alpha-graded pieces of
+              // band geometry blend the transition. skyFogAlpha evaluates
+              // the same bands analytically per ray.
+              float finalFogFactor = skyFogAlpha(direction.y);
+              finalColor = mix(skyColor.rgb, fogColor, finalFogFactor);
             } else {
               finalColor = skyColor.rgb;
             }
@@ -389,42 +327,34 @@ function SolidColorSky({
     return camera.projectionMatrixInverse;
   }, [camera]);
 
-  const fogVolumeData = useMemo(
-    () =>
-      fogState ? packFogVolumeData(fogState.fogVolumes) : new Float32Array(12),
-    [fogState],
-  );
-
-  const horizonFogHeight = useMemo(() => {
-    if (!fogState) return 0.18;
-    const mRadius = fogState.visibleDistance * 0.95;
-    const skyBoxPtX = mRadius / Math.sqrt(3);
-    return (
-      HORIZON_FOG_HEIGHT /
-      Math.sqrt(skyBoxPtX * skyBoxPtX + HORIZON_FOG_HEIGHT * HORIZON_FOG_HEIGHT)
-    );
-  }, [fogState]);
-
-  // Create stable uniform objects that persist across renders
+  // Initial uniform values for material construction only.
   const uniformsRef = useRef({
     skyColor: { value: skyColor },
     fogColor: { value: fogColor ?? new Color(0, 0, 0) },
     enableFog: { value: enableFog },
     inverseProjectionMatrix: { value: inverseProjectionMatrix },
     cameraMatrixWorld: { value: camera.matrixWorld },
-    cameraHeight: globalFogUniforms.cameraHeight,
-    fogVolumeData: { value: fogVolumeData },
-    horizonFogHeight: { value: horizonFogHeight },
+    fogBands: { value: new Vector4(0, 60, 0, 0) },
+    skyRadius: { value: 300 },
   });
+
+  // Post-construction updates must go through the MATERIAL's uniforms —
+  // see SkyBoxTexture.
+  const materialRef = useRef<ShaderMaterial>(null);
 
   // Update uniform values when props change
   useEffect(() => {
-    uniformsRef.current.skyColor.value = skyColor;
-    uniformsRef.current.fogColor.value = fogColor ?? new Color(0, 0, 0);
-    uniformsRef.current.enableFog.value = enableFog;
-    uniformsRef.current.fogVolumeData.value = fogVolumeData;
-    uniformsRef.current.horizonFogHeight.value = horizonFogHeight;
-  }, [skyColor, fogColor, enableFog, fogVolumeData, horizonFogHeight]);
+    const u = materialRef.current?.uniforms;
+    if (!u) return;
+    u.skyColor.value = skyColor;
+    u.fogColor.value = fogColor ?? new Color(0, 0, 0);
+    u.enableFog.value = enableFog;
+  }, [skyColor, fogColor, enableFog]);
+
+  useFrame(({ camera: renderCamera }) => {
+    const u = materialRef.current?.uniforms;
+    if (u) updateSkyFrameUniforms(u, renderCamera, fogState);
+  });
 
   return (
     <mesh renderOrder={-1000} frustumCulled={false}>
@@ -443,6 +373,7 @@ function SolidColorSky({
         />
       </bufferGeometry>
       <shaderMaterial
+        ref={materialRef}
         uniforms={uniformsRef.current} // eslint-disable-line react-hooks/refs
         vertexShader={`
           varying vec2 vUv;
@@ -458,11 +389,10 @@ function SolidColorSky({
           uniform bool enableFog;
           uniform mat4 inverseProjectionMatrix;
           uniform mat4 cameraMatrixWorld;
-          uniform float cameraHeight;
-          uniform float fogVolumeData[12];
-          uniform float horizonFogHeight;
 
           varying vec2 vUv;
+
+          ${skyFogAlphaGlsl}
 
           // Convert linear to sRGB for display
           vec3 linearToSRGB(vec3 linear) {
@@ -481,43 +411,8 @@ function SolidColorSky({
             vec3 finalColor;
 
             if (enableFog) {
-              // Calculate volume fog influence (same logic as SkyBoxTexture)
-              float volumeFogInfluence = 0.0;
-
-              for (int i = 0; i < 3; i++) {
-                int offset = i * 4;
-                float volVisDist = fogVolumeData[offset + 0];
-                float volMinH = fogVolumeData[offset + 1];
-                float volMaxH = fogVolumeData[offset + 2];
-                float volPct = fogVolumeData[offset + 3];
-
-                if (volVisDist <= 0.0) continue;
-
-                if (cameraHeight >= volMinH && cameraHeight <= volMaxH) {
-                  float rayInfluence;
-                  if (direction.y >= 0.0) {
-                    rayInfluence = 1.0 - smoothstep(0.0, 0.3, direction.y);
-                  } else {
-                    rayInfluence = 1.0;
-                  }
-                  volumeFogInfluence += rayInfluence * volPct;
-                }
-              }
-
-              // Base fog factor from view direction
-              float baseFogFactor;
-              if (direction.y <= 0.0) {
-                baseFogFactor = 1.0;
-              } else if (direction.y >= horizonFogHeight) {
-                baseFogFactor = 0.0;
-              } else {
-                float t = direction.y / horizonFogHeight;
-                baseFogFactor = (1.0 - t) * (1.0 - t);
-              }
-
-              // Combine base fog with volume fog influence
-              float finalFogFactor = min(1.0, baseFogFactor + volumeFogInfluence * 0.5);
-
+              // Tribes2.exe fog band model — see SkyBoxTexture.
+              float finalFogFactor = skyFogAlpha(direction.y);
               finalColor = mix(skyColor, fogColor, finalFogFactor);
             } else {
               finalColor = skyColor;
@@ -633,15 +528,16 @@ function DynamicFog({
     }
   }, [enabled, fogState, camera.position.y]);
 
-  // Update fog parameters each frame based on camera height
+  // Update fog parameters each frame based on camera height. The packed
+  // volume data is copied on mount / fogState change above; per frame only
+  // the scalars change.
   useFrame(() => {
     const fog = fogRef.current;
     if (!fog) return;
 
     const cameraHeight = camera.position.y;
-
-    // Always update global fog uniforms so shaders know the enabled state
-    updateGlobalFogUniforms(cameraHeight, fogVolumeData, enabled);
+    globalFogUniforms.cameraHeight.value = cameraHeight;
+    globalFogUniforms.fogEnabled.value = enabled;
 
     if (enabled) {
       // Update Three.js basic fog
@@ -764,7 +660,10 @@ export const Sky = memo(function Sky({ entity }: { entity: SkyEntity }) {
       {/* Cloud layers render independently of skybox textures */}
       {!isCommandCircuit && (
         <Suspense>
-          <CloudLayers scene={skyData} />
+          <CloudLayers
+            scene={skyData}
+            fogState={hasFogParams ? fogState : undefined}
+          />
         </Suspense>
       )}
       {/* Always render DynamicFog when mission has fog params.

@@ -6,7 +6,6 @@ import {
   BufferGeometry,
   DataTexture,
   Float32BufferAttribute,
-  FloatType,
   InstancedMesh as ThreeInstancedMesh,
   LinearFilter,
   Matrix4,
@@ -14,7 +13,6 @@ import {
   NoColorSpace,
   ClampToEdgeWrapping,
   RedFormat,
-  RepeatWrapping,
   UnsignedByteType,
   Vector3,
 } from "three";
@@ -28,7 +26,7 @@ import { torqueToThree } from "../scene/coordinates";
 const log = createLogger("TerrainBlock");
 import { useSceneSky, useSceneSun } from "../state/gameEntityStore";
 import { loadTerrain } from "../loaders";
-import { uint16ToFloat32 } from "../arrayUtils";
+import { terrainHeightToWorld } from "../terrain";
 import { packMasksRGB } from "../textureUtils";
 import { TerrainTile, TerrainMaterial } from "./TerrainTile";
 import {
@@ -37,11 +35,13 @@ import {
 } from "../terrainHeight";
 import { invalidateShadows } from "./shadowControl";
 import { setTerrainCollisionData } from "../collision/terrainCollision";
+import { setFogTerrainRows, clearFogTerrainRows } from "../globalFogUniforms";
 const DEFAULT_SQUARE_SIZE = 8;
 const DEFAULT_VISIBLE_DISTANCE = 600;
 const TERRAIN_SIZE = 256;
 const LIGHTMAP_SIZE = 512; // Match Tribes 2's 512x512 lightmap
-const HEIGHT_SCALE = 2048; // Matches displacementScale for terrain
+// Ceiling of the 11.5 fixed-point height format (65535/32, rounded up).
+const MAX_TERRAIN_HEIGHT = 2048;
 /**
  * Create terrain geometry with Torque-style alternating diagonal triangulation.
  *
@@ -162,7 +162,7 @@ function displaceTerrainAndComputeNormals(
   const getHeightInt = (col: number, row: number): number => {
     col = Math.max(0, Math.min(TERRAIN_SIZE - 1, col));
     row = Math.max(0, Math.min(TERRAIN_SIZE - 1, row));
-    return (heightMap[row * TERRAIN_SIZE + col] / 65535) * HEIGHT_SCALE;
+    return terrainHeightToWorld(heightMap[row * TERRAIN_SIZE + col]);
   };
   // Helper to get bilinearly interpolated height (matches GPU texture sampling)
   const getHeight = (col: number, row: number): number => {
@@ -174,10 +174,10 @@ function displaceTerrainAndComputeNormals(
     const row1 = Math.min(row0 + 1, TERRAIN_SIZE - 1);
     const fx = col - col0;
     const fy = row - row0;
-    const h00 = (heightMap[row0 * TERRAIN_SIZE + col0] / 65535) * HEIGHT_SCALE;
-    const h10 = (heightMap[row0 * TERRAIN_SIZE + col1] / 65535) * HEIGHT_SCALE;
-    const h01 = (heightMap[row1 * TERRAIN_SIZE + col0] / 65535) * HEIGHT_SCALE;
-    const h11 = (heightMap[row1 * TERRAIN_SIZE + col1] / 65535) * HEIGHT_SCALE;
+    const h00 = terrainHeightToWorld(heightMap[row0 * TERRAIN_SIZE + col0]);
+    const h10 = terrainHeightToWorld(heightMap[row0 * TERRAIN_SIZE + col1]);
+    const h01 = terrainHeightToWorld(heightMap[row1 * TERRAIN_SIZE + col0]);
+    const h11 = terrainHeightToWorld(heightMap[row1 * TERRAIN_SIZE + col1]);
     // Bilinear interpolation
     const h0 = h00 * (1 - fx) + h10 * fx;
     const h1 = h01 * (1 - fx) + h11 * fx;
@@ -287,7 +287,7 @@ function rayMarchShadow(
       return 1.0; // Exited terrain, not in shadow
     }
     // Check if ray is above max terrain height
-    if (height > HEIGHT_SCALE) {
+    if (height > MAX_TERRAIN_HEIGHT) {
       return 1.0; // Above all terrain, not in shadow
     }
     // Sample terrain height at current position
@@ -335,14 +335,14 @@ function generateTerrainLightmap(
     const row1 = Math.min(row0 + 1, TERRAIN_SIZE - 1);
     const fx = clampedCol - col0;
     const fy = clampedRow - row0;
-    const h00 = heightMap[row0 * TERRAIN_SIZE + col0] / 65535;
-    const h10 = heightMap[row0 * TERRAIN_SIZE + col1] / 65535;
-    const h01 = heightMap[row1 * TERRAIN_SIZE + col0] / 65535;
-    const h11 = heightMap[row1 * TERRAIN_SIZE + col1] / 65535;
+    const h00 = heightMap[row0 * TERRAIN_SIZE + col0];
+    const h10 = heightMap[row0 * TERRAIN_SIZE + col1];
+    const h01 = heightMap[row1 * TERRAIN_SIZE + col0];
+    const h11 = heightMap[row1 * TERRAIN_SIZE + col1];
     // Bilinear interpolation
     const h0 = h00 * (1 - fx) + h10 * fx;
     const h1 = h01 * (1 - fx) + h11 * fx;
-    return (h0 * (1 - fy) + h1 * fy) * HEIGHT_SCALE;
+    return terrainHeightToWorld(h0 * (1 - fy) + h1 * fy);
   };
   // Light direction (negate sun direction since it points FROM sun)
   const lightDir = new Vector3(
@@ -539,9 +539,17 @@ export const TerrainBlock = memo(function TerrainBlock({
       squareSize,
       emptySquareRuns: emptySquares,
     });
+    // Volume-fog height rows span the heightfield's min..max, mirroring
+    // the engine's 64-row fog texture (it reads the same range from the
+    // terrain's stored height extremes).
+    setFogTerrainRows(
+      terrainHeightToWorld(terrain.minHeight),
+      terrainHeightToWorld(terrain.maxHeight),
+    );
     return () => {
       setTerrainHeightSampler(null);
       setTerrainCollisionData(null);
+      clearFogTerrainRows();
     };
   }, [terrain, squareSize, emptySquares]);
   // Get sun direction for lightmap generation
@@ -557,24 +565,6 @@ export const TerrainBlock = memo(function TerrainBlock({
     if (!terrain) return null;
     return generateTerrainLightmap(terrain.heightMap, sunDirection, squareSize);
   }, [terrain, sunDirection, squareSize]);
-  // Shared displacement map from heightmap - created once for all tiles
-  const sharedDisplacementMap = useMemo(() => {
-    if (!terrain) return null;
-    const f32HeightMap = uint16ToFloat32(terrain.heightMap);
-    const texture = new DataTexture(
-      f32HeightMap,
-      TERRAIN_SIZE,
-      TERRAIN_SIZE,
-      RedFormat,
-      FloatType,
-    );
-    texture.colorSpace = NoColorSpace;
-    texture.generateMipmaps = false;
-    texture.wrapS = RepeatWrapping;
-    texture.wrapT = RepeatWrapping;
-    texture.needsUpdate = true;
-    return texture;
-  }, [terrain]);
   // Visibility mask for primary tile (0,0) - may have empty squares
   const primaryVisibilityMask = useMemo(
     () => createVisibilityMask(emptySquares),
@@ -654,17 +644,11 @@ export const TerrainBlock = memo(function TerrainBlock({
     // frozen shadow map (rare — only when the camera crosses a block).
     invalidateShadows();
   });
-  if (
-    !terrain ||
-    !sharedGeometry ||
-    !sharedDisplacementMap ||
-    !packedAlphaTextures
-  ) {
+  if (!terrain || !sharedGeometry || !packedAlphaTextures) {
     log.debug(
-      "Not ready: terrain=%s geometry=%s displacement=%s alpha=%s",
+      "Not ready: terrain=%s geometry=%s alpha=%s",
       !!terrain,
       !!sharedGeometry,
-      !!sharedDisplacementMap,
       !!packedAlphaTextures,
     );
     return null;
@@ -679,7 +663,6 @@ export const TerrainBlock = memo(function TerrainBlock({
         basePosition={basePosition}
         textureNames={terrain.textureNames}
         geometry={sharedGeometry}
-        displacementMap={sharedDisplacementMap}
         visibilityMask={primaryVisibilityMask}
         alphaTextures={packedAlphaTextures}
         detailTextureName={detailTexture}
@@ -696,7 +679,6 @@ export const TerrainBlock = memo(function TerrainBlock({
         frustumCulled={false}
       >
         <TerrainMaterial
-          displacementMap={sharedDisplacementMap}
           visibilityMask={pooledVisibilityMask}
           textureNames={terrain.textureNames}
           alphaTextures={packedAlphaTextures}
@@ -727,7 +709,7 @@ function TerrainDebugBounds({
   const bounds = useMemo(() => {
     let maxH = 0;
     for (let i = 0; i < heightMap.length; i++) {
-      const h = (heightMap[i] / 65535) * HEIGHT_SCALE;
+      const h = terrainHeightToWorld(heightMap[i]);
       if (h > maxH) maxH = h;
     }
     return {

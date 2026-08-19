@@ -8,10 +8,11 @@
  * and world collision (non-React side) — the same bridge pattern as
  * terrainHeight.ts.
  */
+import { terrainHeightToWorld } from "../terrain";
 
 const TERRAIN_SIZE = 256;
 const HALF_SIZE = TERRAIN_SIZE / 2;
-const HEIGHT_SCALE = 2048;
+const SQUARE_COUNT = TERRAIN_SIZE * TERRAIN_SIZE;
 const MAX_DDA_STEPS = 4096;
 
 export type Vec3 = [number, number, number];
@@ -27,8 +28,11 @@ export interface TerrainRayHit {
 interface TerrainCollisionData {
   heightMap: Uint16Array;
   squareSize: number;
-  /** Square indices (row * 256 + col) with no terrain (holes). */
-  emptySquares: Set<number>;
+  /** Per-square hole bitmap (row * 256 + col), or null when no holes. */
+  holes: Uint8Array | null;
+  /** Per-square corner height range (world units) for broadphase. */
+  minHeights: Float32Array;
+  maxHeights: Float32Array;
 }
 
 let terrainData: TerrainCollisionData | null = null;
@@ -55,19 +59,60 @@ export function setTerrainCollisionData(
     emptySquareRuns?: number[];
   } | null,
 ): void {
-  terrainData = data
-    ? {
-        heightMap: data.heightMap,
-        squareSize: data.squareSize,
-        emptySquares: decodeEmptySquares(data.emptySquareRuns ?? []),
-      }
-    : null;
+  if (!data) {
+    terrainData = null;
+    return;
+  }
+
+  const { heightMap } = data;
+
+  // Per-square height range over the 4 corners: lets the ray walk skip
+  // triangle tests for squares whose height interval the segment never
+  // crosses (Torque's GridFile keeps quadtree min/max for the same
+  // reason). Min/max on raw u16 heights, converted once.
+  const minHeights = new Float32Array(SQUARE_COUNT);
+  const maxHeights = new Float32Array(SQUARE_COUNT);
+  for (let row = 0; row < TERRAIN_SIZE; row++) {
+    const rowIndex = row * TERRAIN_SIZE;
+    const nextRowIndex = ((row + 1) & 0xff) * TERRAIN_SIZE;
+    for (let col = 0; col < TERRAIN_SIZE; col++) {
+      const nextCol = (col + 1) & 0xff;
+      const a = heightMap[rowIndex + col];
+      const b = heightMap[rowIndex + nextCol];
+      const c = heightMap[nextRowIndex + col];
+      const d = heightMap[nextRowIndex + nextCol];
+      let min = a < b ? a : b;
+      let max = a > b ? a : b;
+      if (c < min) min = c;
+      else if (c > max) max = c;
+      if (d < min) min = d;
+      else if (d > max) max = d;
+      minHeights[rowIndex + col] = terrainHeightToWorld(min);
+      maxHeights[rowIndex + col] = terrainHeightToWorld(max);
+    }
+  }
+
+  let holes: Uint8Array | null = null;
+  if (data.emptySquareRuns && data.emptySquareRuns.length > 0) {
+    holes = new Uint8Array(SQUARE_COUNT);
+    for (const index of decodeEmptySquares(data.emptySquareRuns)) {
+      holes[index] = 1;
+    }
+  }
+
+  terrainData = {
+    heightMap,
+    squareSize: data.squareSize,
+    holes,
+    minHeights,
+    maxHeights,
+  };
 }
 
 /** Corner height at integer grid coords, wrapped for infinite tiling. */
 function cornerHeight(data: TerrainCollisionData, col: number, row: number) {
   const index = (row & 0xff) * TERRAIN_SIZE + (col & 0xff);
-  return (data.heightMap[index] / 65535) * HEIGHT_SCALE;
+  return terrainHeightToWorld(data.heightMap[index]);
 }
 
 const EPS = 1e-9;
@@ -131,13 +176,14 @@ function testSquare(
   data: TerrainCollisionData,
   col: number,
   row: number,
-  s: Vec3,
-  d: Vec3,
+  sx: number,
+  sy: number,
+  sz: number,
+  dx: number,
+  dy: number,
+  dz: number,
   out: TerrainRayHit,
 ): boolean {
-  if (data.emptySquares.has((row & 0xff) * TERRAIN_SIZE + (col & 0xff))) {
-    return false;
-  }
   const sq = data.squareSize;
   const x0 = (col - HALF_SIZE) * sq;
   const y0 = (row - HALF_SIZE) * sq;
@@ -156,8 +202,12 @@ function testSquare(
     const t = split45
       ? i === 0
         ? segmentTriangle(
-            ...s,
-            ...d,
+            sx,
+            sy,
+            sz,
+            dx,
+            dy,
+            dz,
             x0,
             y0,
             hA,
@@ -170,8 +220,12 @@ function testSquare(
             _triNormal,
           )
         : segmentTriangle(
-            ...s,
-            ...d,
+            sx,
+            sy,
+            sz,
+            dx,
+            dy,
+            dz,
             x0,
             y0,
             hA,
@@ -185,8 +239,12 @@ function testSquare(
           )
       : i === 0
         ? segmentTriangle(
-            ...s,
-            ...d,
+            sx,
+            sy,
+            sz,
+            dx,
+            dy,
+            dz,
             x0,
             y0,
             hA,
@@ -199,8 +257,12 @@ function testSquare(
             _triNormal,
           )
         : segmentTriangle(
-            ...s,
-            ...d,
+            sx,
+            sy,
+            sz,
+            dx,
+            dy,
+            dz,
             x1,
             y0,
             hB,
@@ -216,7 +278,7 @@ function testSquare(
       bestT = t;
       // Orient the normal against the ray and normalize.
       let [nx, ny, nz] = _triNormal;
-      if (nx * d[0] + ny * d[1] + nz * d[2] > 0) {
+      if (nx * dx + ny * dy + nz * dz > 0) {
         nx = -nx;
         ny = -ny;
         nz = -nz;
@@ -229,27 +291,34 @@ function testSquare(
   }
   if (bestT == null) return false;
   out.t = bestT;
-  out.point[0] = s[0] + d[0] * bestT;
-  out.point[1] = s[1] + d[1] * bestT;
-  out.point[2] = s[2] + d[2] * bestT;
+  out.point[0] = sx + dx * bestT;
+  out.point[1] = sy + dy * bestT;
+  out.point[2] = sz + dz * bestT;
   return true;
 }
 
 /**
  * Cast a segment (Torque space) against the terrain. Walks the grid
  * squares crossed by the XY projection in order (2D DDA), testing the two
- * triangles of each, so the first hit found is the nearest.
+ * triangles of each, so the first hit found is the nearest. Squares whose
+ * corner-height range doesn't overlap the segment's z interval over the
+ * square are skipped without triangle tests.
  */
 export function castTerrainRay(start: Vec3, end: Vec3): TerrainRayHit | null {
   const data = terrainData;
   if (!data) return null;
   const sq = data.squareSize;
-  const d: Vec3 = [end[0] - start[0], end[1] - start[1], end[2] - start[2]];
+  const sx = start[0];
+  const sy = start[1];
+  const sz = start[2];
+  const dx = end[0] - sx;
+  const dy = end[1] - sy;
+  const dz = end[2] - sz;
   const hit: TerrainRayHit = { t: 0, point: [0, 0, 0], normal: [0, 0, 0] };
 
   // Continuous grid coordinates.
-  const gx0 = start[0] / sq + HALF_SIZE;
-  const gy0 = start[1] / sq + HALF_SIZE;
+  const gx0 = sx / sq + HALF_SIZE;
+  const gy0 = sy / sq + HALF_SIZE;
   const gx1 = end[0] / sq + HALF_SIZE;
   const gy1 = end[1] / sq + HALF_SIZE;
 
@@ -274,17 +343,34 @@ export function castTerrainRay(start: Vec3, end: Vec3): TerrainRayHit | null {
       ? (dgy > 0 ? Math.floor(gy0) + 1 - gy0 : gy0 - Math.floor(gy0)) * tDeltaY
       : Infinity;
 
+  const holes = data.holes;
+  let tEnter = 0;
   for (let i = 0; i < MAX_DDA_STEPS; i++) {
-    if (testSquare(data, col, row, start, d, hit)) {
-      return hit;
+    const squareIndex = (row & 0xff) * TERRAIN_SIZE + (col & 0xff);
+    if (holes === null || holes[squareIndex] === 0) {
+      // Broadphase: the segment's z interval while over this square.
+      const tExit = Math.min(tMaxX, tMaxY, 1);
+      const zEnter = sz + dz * tEnter;
+      const zExit = sz + dz * tExit;
+      const zLo = zEnter < zExit ? zEnter : zExit;
+      const zHi = zEnter < zExit ? zExit : zEnter;
+      if (
+        zHi >= data.minHeights[squareIndex] &&
+        zLo <= data.maxHeights[squareIndex] &&
+        testSquare(data, col, row, sx, sy, sz, dx, dy, dz, hit)
+      ) {
+        return hit;
+      }
     }
     if (col === colEnd && row === rowEnd) return null;
     if (tMaxX < tMaxY) {
       if (tMaxX > 1) return null;
+      tEnter = tMaxX;
       col += stepX;
       tMaxX += tDeltaX;
     } else {
       if (tMaxY > 1) return null;
+      tEnter = tMaxY;
       row += stepY;
       tMaxY += tDeltaY;
     }

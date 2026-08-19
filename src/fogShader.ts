@@ -15,25 +15,6 @@
 import { ShaderChunk } from "three";
 
 /**
- * Fog uniform declarations for fragment shaders.
- * Add this to the top of fragment shaders that need fog.
- */
-export const fogUniformsDeclaration = `
-#ifdef USE_FOG
-  uniform vec3 fogColor;
-  uniform float fogNear;
-  uniform float fogFar;
-
-  // Volumetric fog: 3 volumes, 4 floats each
-  // [visDist, minHeight, maxHeight, percentage]
-  // Note: Per-volume colors not used ($specialFog = false), all fog uses fogColor
-  uniform float fogVolumeData[12];
-  uniform float cameraHeight;
-  uniform bool hasVolumetricFog;
-#endif
-`;
-
-/**
  * Custom fog fragment shader that implements Torque's fog system.
  * Replaces Three.js default fog_fragment chunk.
  *
@@ -99,64 +80,75 @@ export const fogFragmentShader = `
       float fragmentHeight = cameraHeight;
     #endif
 
-    float deltaY = fragmentHeight - cameraHeight;
-    float absDeltaY = abs(deltaY);
-
-    // Determine if we're going up (positive) or down (negative)
-    if (absDeltaY > 0.01) {
-      // Non-horizontal ray: ray-march through fog volumes
-      for (int i = 0; i < 3; i++) {
-        int offset = i * 4;
-        float volVisDist = fogVolumeData[offset + 0];
-        float volMinH = fogVolumeData[offset + 1];
-        float volMaxH = fogVolumeData[offset + 2];
-        float volPct = fogVolumeData[offset + 3];
-
-        // Skip inactive volumes (visibleDistance = 0)
-        if (volVisDist <= 0.0) continue;
-
-        // Calculate fog factor for this volume
-        // From Torque: factor = (1 / (volumeVisDist * visFactor)) * percentage
-        // where visFactor is smVisibleDistanceMod (a user quality pref, default 1.0)
-        // Since we don't have quality settings, we use visFactor = 1.0
-        float factor = (1.0 / volVisDist) * volPct;
-
-        // Find ray intersection with this volume's height range
-        float rayMinY = min(cameraHeight, fragmentHeight);
-        float rayMaxY = max(cameraHeight, fragmentHeight);
-
-        // Check if ray intersects volume height range
-        if (rayMinY < volMaxH && rayMaxY > volMinH) {
-          float intersectMin = max(rayMinY, volMinH);
-          float intersectMax = min(rayMaxY, volMaxH);
-          float intersectHeight = intersectMax - intersectMin;
-
-          // Calculate distance traveled through this volume using similar triangles:
-          // subDist / dist = intersectHeight / absDeltaY
-          float subDist = dist * (intersectHeight / absDeltaY);
-
-          // Accumulate fog: fog += subDist * factor
-          volumeFog += subDist * factor;
-        }
-      }
-    } else {
-      // Near-horizontal ray: if camera is inside a volume, apply full fog for that volume
-      for (int i = 0; i < 3; i++) {
-        int offset = i * 4;
-        float volVisDist = fogVolumeData[offset + 0];
-        float volMinH = fogVolumeData[offset + 1];
-        float volMaxH = fogVolumeData[offset + 2];
-        float volPct = fogVolumeData[offset + 3];
-
-        if (volVisDist <= 0.0) continue;
-
-        // If camera is inside this volume, apply fog for full distance
-        if (cameraHeight >= volMinH && cameraHeight <= volMaxH) {
-          float factor = (1.0 / volVisDist) * volPct;
-          volumeFog += dist * factor;
-        }
-      }
+    // Tribes2.exe never evaluates volume fog at the exact fragment
+    // height: terrain fog is sampled from a 64-row fog texture whose
+    // rows are fixed world heights spanning the terrain's height range,
+    // bilinearly interpolated (SceneGraph::buildFogTexture, 0x569fc0).
+    // Evaluate the fog at the two nearest row heights and blend — exact
+    // per-pixel evaluation produces razor-sharp volume boundaries (and
+    // a pop when the camera crosses one) that the real engine never
+    // shows. Row step 0 (no terrain) falls back to exact evaluation,
+    // matching the engine (no fog texture without a terrain).
+    float rowT = 0.0;
+    float sampleH0 = fragmentHeight;
+    float sampleH1 = fragmentHeight;
+    if (fogRowStep > 0.0) {
+      float rowF = (fragmentHeight - fogRowBase) / fogRowStep;
+      float row0 = floor(rowF);
+      rowT = rowF - row0;
+      sampleH0 = fogRowBase + row0 * fogRowStep;
+      sampleH1 = sampleH0 + fogRowStep;
     }
+
+    float fogSamples[2];
+    for (int s = 0; s < 2; s++) {
+      float sampleHeight = (s == 0) ? sampleH0 : sampleH1;
+      float sampleFog = 0.0;
+      float deltaY = sampleHeight - cameraHeight;
+      float absDeltaY = abs(deltaY);
+
+      if (absDeltaY > 0.01) {
+        // Non-horizontal ray: ray-march through fog volumes
+        for (int i = 0; i < 3; i++) {
+          // [factor, minH, maxH, 0]; factor is Torque's
+          // percentage / (visDist * smVisibleDistanceMod), precomputed
+          // CPU-side in packFogVolumeData. 0 = inactive volume.
+          vec4 vol = fogVolumeData[i];
+          if (vol.x <= 0.0) continue;
+
+          // Find ray intersection with this volume's height range
+          float rayMinY = min(cameraHeight, sampleHeight);
+          float rayMaxY = max(cameraHeight, sampleHeight);
+
+          if (rayMinY < vol.z && rayMaxY > vol.y) {
+            float intersectMin = max(rayMinY, vol.y);
+            float intersectMax = min(rayMaxY, vol.z);
+            float intersectHeight = intersectMax - intersectMin;
+
+            // Distance traveled through this volume (similar triangles):
+            // subDist / dist = intersectHeight / absDeltaY
+            float subDist = dist * (intersectHeight / absDeltaY);
+            sampleFog += subDist * vol.x;
+          }
+        }
+      } else {
+        // Near-horizontal ray: if camera is inside a volume, apply full
+        // fog for that volume (the engine's partial-band case)
+        for (int i = 0; i < 3; i++) {
+          vec4 vol = fogVolumeData[i];
+          if (vol.x <= 0.0) continue;
+
+          if (cameraHeight >= vol.y && cameraHeight <= vol.z) {
+            sampleFog += dist * vol.x;
+          }
+        }
+      }
+      // The engine clamps each texel's alpha BEFORE bilinear filtering;
+      // mixing raw oversaturated samples would skew blends toward opaque
+      // near dense volumes, sharpening boundaries the engine keeps soft.
+      fogSamples[s] = min(sampleFog, 1.0);
+    }
+    volumeFog = mix(fogSamples[0], fogSamples[1], rowT);
   }
   #endif
 
@@ -219,10 +211,12 @@ export function installCustomFogShader(): void {
   #endif
 
   // Custom volumetric fog uniforms (only defined when USE_VOLUMETRIC_FOG is set)
-  // Format: [visDist, minH, maxH, percentage] x 3 volumes = 12 floats
+  // Per volume: [factor, minH, maxH, 0] (see packFogVolumeData)
   #ifdef USE_VOLUMETRIC_FOG
-    uniform float fogVolumeData[12];
+    uniform vec4 fogVolumeData[3];
     uniform float cameraHeight;
+    uniform float fogRowBase;
+    uniform float fogRowStep;
   #endif
 
   #ifdef USE_FOG_WORLD_POSITION
@@ -277,6 +271,8 @@ export interface FogShaderUniformObjects {
   cameraHeight: { value: number };
   fogEnabled: { value: boolean };
   fogDistanceScale: { value: number };
+  fogRowBase: { value: number };
+  fogRowStep: { value: number };
 }
 
 /**
@@ -295,6 +291,8 @@ export function addFogUniformsToShader(
   shader.uniforms.cameraHeight = fogUniforms.cameraHeight;
   shader.uniforms.fogEnabled = fogUniforms.fogEnabled;
   shader.uniforms.fogDistanceScale = fogUniforms.fogDistanceScale;
+  shader.uniforms.fogRowBase = fogUniforms.fogRowBase;
+  shader.uniforms.fogRowStep = fogUniforms.fogRowStep;
 }
 
 /**
@@ -346,8 +344,10 @@ export function injectCustomFog(
 #include <fog_pars_fragment>
 #ifdef USE_FOG
   #define USE_VOLUMETRIC_FOG
-  uniform float fogVolumeData[12];
+  uniform vec4 fogVolumeData[3];
   uniform float cameraHeight;
+  uniform float fogRowBase;
+  uniform float fogRowStep;
   uniform bool fogEnabled;
   #define USE_FOG_WORLD_POSITION
   varying vec3 vFogWorldPosition;

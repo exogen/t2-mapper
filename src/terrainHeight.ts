@@ -4,9 +4,10 @@
  * heightmap is loaded; item physics queries it during simulation.
  */
 
+import { terrainHeightToWorld } from "./terrain";
+
 const TERRAIN_SIZE = 256;
 const HALF_SIZE = TERRAIN_SIZE / 2; // 128
-const HEIGHT_SCALE = 2048;
 
 export type HeightFn = (torqueX: number, torqueY: number) => number;
 
@@ -67,6 +68,6 @@ export function createTerrainHeightSampler(
 
     const h0 = h00 * (1 - fx) + h10 * fx;
     const h1 = h01 * (1 - fx) + h11 * fx;
-    return ((h0 * (1 - fy) + h1 * fy) / 65535) * HEIGHT_SCALE;
+    return terrainHeightToWorld(h0 * (1 - fy) + h1 * fy);
   };
 }

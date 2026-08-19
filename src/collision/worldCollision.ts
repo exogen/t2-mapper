@@ -172,7 +172,9 @@ export function castWorldRay(start: Vec3, end: Vec3): WorldRayHit | null {
   _dir.divideScalar(segLength);
   _ray.origin.copy(_start);
   _ray.direction.copy(_dir);
-  _segBox.setFromPoints([_start, _end]);
+  _segBox.makeEmpty();
+  _segBox.expandByPoint(_start);
+  _segBox.expandByPoint(_end);
 
   for (const entry of interiors.values()) {
     for (const collider of entry.colliders) {
@@ -230,20 +232,30 @@ export function castWorldRay(start: Vec3, end: Vec3): WorldRayHit | null {
 
 /** Face normal of an axis-aligned box at a surface point (local space). */
 function boxFaceNormal(box: Box3, p: Vector3, out: Vector3): void {
-  let bestDist = Infinity;
-  out.set(0, 0, 1);
-  const faces: Array<[number, number, number, number]> = [
-    [Math.abs(p.x - box.min.x), -1, 0, 0],
-    [Math.abs(p.x - box.max.x), 1, 0, 0],
-    [Math.abs(p.y - box.min.y), 0, -1, 0],
-    [Math.abs(p.y - box.max.y), 0, 1, 0],
-    [Math.abs(p.z - box.min.z), 0, 0, -1],
-    [Math.abs(p.z - box.max.z), 0, 0, 1],
-  ];
-  for (const [dist, x, y, z] of faces) {
-    if (dist < bestDist) {
-      bestDist = dist;
-      out.set(x, y, z);
-    }
+  let bestDist = Math.abs(p.x - box.min.x);
+  out.set(-1, 0, 0);
+  let dist = Math.abs(p.x - box.max.x);
+  if (dist < bestDist) {
+    bestDist = dist;
+    out.set(1, 0, 0);
+  }
+  dist = Math.abs(p.y - box.min.y);
+  if (dist < bestDist) {
+    bestDist = dist;
+    out.set(0, -1, 0);
+  }
+  dist = Math.abs(p.y - box.max.y);
+  if (dist < bestDist) {
+    bestDist = dist;
+    out.set(0, 1, 0);
+  }
+  dist = Math.abs(p.z - box.min.z);
+  if (dist < bestDist) {
+    bestDist = dist;
+    out.set(0, 0, -1);
+  }
+  dist = Math.abs(p.z - box.max.z);
+  if (dist < bestDist) {
+    out.set(0, 0, 1);
   }
 }

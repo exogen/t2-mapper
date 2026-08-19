@@ -417,14 +417,60 @@ function selectSkyData(state: GameEntityState): SceneSky | null {
   return null;
 }
 
+/** Memo for combined multi-sun data (selector must return stable refs). */
+let lastSunInputs: SceneSun[] = [];
+let lastSunResult: SceneSun | null = null;
+
 function selectSunData(state: GameEntityState): SceneSun | null {
   const entities = state.isStreaming
     ? state.streamEntities
     : state.missionEntities;
+  const suns: SceneSun[] = [];
   for (const e of entities.values()) {
-    if (e.renderType === "Sun") return e.sunData;
+    if (e.renderType === "Sun" && e.sunData) suns.push(e.sunData);
   }
-  return null;
+  if (suns.length === 0) return null;
+  if (suns.length === 1) return suns[0];
+  if (
+    suns.length === lastSunInputs.length &&
+    suns.every((s, i) => s === lastSunInputs[i])
+  ) {
+    return lastSunResult;
+  }
+
+  // Multiple Sun objects: each Sun registers itself with the engine's
+  // light manager (Sun::onAdd, Tribes2.exe 0x5b11e0), and fixed-function
+  // lighting sums registered lights — contributions ADD. Mappers exploit
+  // this with an all-black Sun plus a real one (e.g. SuperiorWaterworks);
+  // picking just the first would light the map with black. Sum colors and
+  // ambients, and take the direction from the sun with the strongest
+  // direct color — our pipeline has a single directional light.
+  const sumChannel = (pick: (s: SceneSun) => number) =>
+    Math.min(
+      1,
+      suns.reduce((total, s) => total + pick(s), 0),
+    );
+  const luminance = (s: SceneSun) => s.color.r + s.color.g + s.color.b;
+  const strongest = suns.reduce((best, s) =>
+    luminance(s) > luminance(best) ? s : best,
+  );
+  lastSunInputs = suns;
+  lastSunResult = {
+    ...strongest,
+    color: {
+      r: sumChannel((s) => s.color.r),
+      g: sumChannel((s) => s.color.g),
+      b: sumChannel((s) => s.color.b),
+      a: 1,
+    },
+    ambient: {
+      r: sumChannel((s) => s.ambient.r),
+      g: sumChannel((s) => s.ambient.g),
+      b: sumChannel((s) => s.ambient.b),
+      a: 1,
+    },
+  };
+  return lastSunResult;
 }
 
 function selectMissionAreaData(

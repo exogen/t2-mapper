@@ -99,8 +99,10 @@ const fragmentShader = /* glsl */ `
 
   // Volumetric fog uniforms
   #ifdef USE_FOG
-    uniform float fogVolumeData[12];
+    uniform vec4 fogVolumeData[3];
     uniform float cameraHeight;
+    uniform float fogRowBase;
+    uniform float fogRowStep;
     uniform bool fogEnabled;
     varying vec3 vFogWorldPosition;
   #endif
@@ -221,6 +223,8 @@ export function createWaterMaterial(options?: {
       cameraHeight: globalFogUniforms.cameraHeight,
       fogEnabled: globalFogUniforms.fogEnabled,
       fogDistanceScale: globalFogUniforms.fogDistanceScale,
+      fogRowBase: globalFogUniforms.fogRowBase,
+      fogRowStep: globalFogUniforms.fogRowStep,
     },
     vertexShader,
     fragmentShader,

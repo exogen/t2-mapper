@@ -18,6 +18,10 @@
   align-items: center;
   position: relative;
   grid-area: toolbar;
+  /* Grid items default to min-width auto, which lets a long nowrap
+     mission name inflate the 1fr track past the viewport instead of
+     letting the name ellipsize. */
+  min-width: 0;
   background: rgb(25, 31, 31);
   color: #fff;
   border-bottom: 1px solid rgb(70, 85, 85);

@@ -1,10 +1,23 @@
 const SIZE = 256;
 
+/**
+ * Convert a raw heightfield sample to world units. Heights are stored as
+ * 11.5 fixed-point: world = raw / 32 (Tribes2.exe multiplies the stored
+ * shorts by exactly 0.03125 — NOT raw/65535 normalization).
+ */
+export function terrainHeightToWorld(raw: number): number {
+  return raw / 32;
+}
+
 export interface TerrainFile {
   version: number;
   textureNames: string[];
   heightMap: Uint16Array;
   alphaMaps: Uint8Array[];
+  /** Smallest raw heightfield sample (convert via terrainHeightToWorld). */
+  minHeight: number;
+  /** Largest raw heightfield sample (convert via terrainHeightToWorld). */
+  maxHeight: number;
 }
 
 export function parseTerrainBuffer(arrayBuffer: ArrayBufferLike): TerrainFile {
@@ -26,10 +39,14 @@ export function parseTerrainBuffer(arrayBuffer: ArrayBufferLike): TerrainFile {
     return result;
   };
 
+  let minHeight = 0xffff;
+  let maxHeight = 0;
   for (let i = 0; i < SIZE * SIZE; i++) {
     const height = dataView.getUint16(offset, true);
     offset += 2;
     heightMap1d[i] = height;
+    if (height < minHeight) minHeight = height;
+    if (height > maxHeight) maxHeight = height;
   }
 
   offset += 256 * 256;
@@ -60,5 +77,7 @@ export function parseTerrainBuffer(arrayBuffer: ArrayBufferLike): TerrainFile {
     textureNames,
     heightMap,
     alphaMaps,
+    minHeight,
+    maxHeight,
   };
 }

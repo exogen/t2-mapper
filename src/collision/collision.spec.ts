@@ -18,7 +18,7 @@ import {
   linearSegmentPosition,
   stepBallistic,
 } from "./projectilePhysics";
-import { setWaterLevel } from "./waterLevel";
+import { setWaterInfo } from "./waterLevel";
 
 const TERRAIN_SIZE = 256;
 
@@ -30,7 +30,7 @@ function flatHeightMap(worldHeight: number): Uint16Array {
 
 afterEach(() => {
   setTerrainCollisionData(null);
-  setWaterLevel(null);
+  setWaterInfo(null);
   clearWorldColliders();
 });
 
@@ -56,6 +56,25 @@ describe("castTerrainRay", () => {
   it("misses when flying above the terrain", () => {
     setTerrainCollisionData({ heightMap: flatHeightMap(50), squareSize: 8 });
     expect(castTerrainRay([-500, 0, 80], [500, 0, 70])).toBeNull();
+  });
+
+  it("skims low squares but still hits a wall (height broadphase)", () => {
+    // Flat floor at 0 with a ridge: all corners at col >= 130 raised to
+    // world height 100. Square col 129 holds the sloped wall face.
+    const heightMap = flatHeightMap(0);
+    const raw = Math.round((100 / 2048) * 65535);
+    for (let row = 0; row < TERRAIN_SIZE; row++) {
+      for (let col = 130; col < TERRAIN_SIZE; col++) {
+        heightMap[row * TERRAIN_SIZE + col] = raw;
+      }
+    }
+    setTerrainCollisionData({ heightMap, squareSize: 8 });
+    // Horizontal ray at z = 50 over the flat floor (skipped squares)
+    // into the wall: face rises 0 → 100 across x 8..16, so z = 50 → x = 12.
+    const hit = castTerrainRay([-400, 2, 50], [400, 2, 50]);
+    expect(hit).not.toBeNull();
+    expect(hit!.point[0]).toBeCloseTo(12, 2);
+    expect(hit!.point[2]).toBeCloseTo(50, 2);
   });
 
   it("wraps outside the primary block (infinite tiling)", () => {
@@ -196,7 +215,15 @@ describe("buildLinearSegment", () => {
   });
 
   it("explodes on water when explodeOnWaterImpact is set", () => {
-    setWaterLevel(20);
+    setWaterInfo({
+      surfaceZ: 20,
+      waveMagnitude: 0,
+      liquidType: 0,
+      minX: 0,
+      minY: 0,
+      sizeX: 2048,
+      sizeY: 2048,
+    });
     const seg = buildLinearSegment({
       start: [0, 0, 100],
       vel: [0, 0, -80],

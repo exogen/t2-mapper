@@ -202,6 +202,7 @@ export function waterBlockFromGhost(
     surfaceOpacity: data.surfaceOpacity ?? 0.75,
     waveMagnitude: data.waveMagnitude ?? 1.0,
     envMapIntensity: data.envMapIntensity ?? 1.0,
+    liquidType: data.liquidType ?? 0,
   };
 }
 

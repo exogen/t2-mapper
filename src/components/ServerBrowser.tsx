@@ -4,6 +4,7 @@ import styles from "./ServerBrowser.module.css";
 import { useLiveSelector } from "../state/liveConnectionStore";
 import { useSettings } from "./SettingsProvider";
 import { LuUsers } from "react-icons/lu";
+import { IoMdRefresh } from "react-icons/io";
 
 export function ServerBrowser({
   onClose,
@@ -116,8 +117,10 @@ export function ServerBrowser({
             className={styles.RefreshButton}
             onClick={listServers}
             disabled={serversLoading}
+            aria-label="Refresh"
           >
-            Refresh
+            <span className={styles.RefreshLabel}>Refresh</span>
+            <IoMdRefresh className={styles.RefreshIcon} aria-hidden />
           </button>
         </div>
         <div className={styles.TableWrapper}>
@@ -245,9 +248,7 @@ export function ServerBrowser({
                 maxLength={24}
               />
             </div>
-          ) : (
-            <div className={styles.WarriorField} />
-          )}
+          ) : null}
           <span className={styles.Hint}>
             Double-click a server to {joinLabel.toLowerCase()}
           </span>

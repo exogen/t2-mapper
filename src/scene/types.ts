@@ -119,6 +119,8 @@ export interface SceneWaterBlock {
   surfaceOpacity: number;
   waveMagnitude: number;
   envMapIntensity: number;
+  /** WaterBlock::EWaterType — 0-3 water, 4-6 lava, 7 quicksand. */
+  liquidType: number;
 }
 
 export type SceneObject =

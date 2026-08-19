@@ -20,7 +20,13 @@ import { BiSolidEject } from "react-icons/bi";
 import { formatPing } from "../stringUtils";
 import styles from "./StreamingMissionInfo.module.css";
 
-export function StreamingMissionInfo() {
+export function StreamingMissionInfo({
+  hideActionButton = false,
+}: {
+  /** Suppress the trailing eject/disconnect button — used when the
+   *  toolbar shows an Exit Command Circuit button in the same spot. */
+  hideActionButton?: boolean;
+} = {}) {
   const dataSource = useDataSource();
   const missionDisplayName = useMissionDisplayName();
   const missionType = useMissionType();
@@ -62,7 +68,13 @@ export function StreamingMissionInfo() {
   }, []);
 
   return (
-    <div className={styles.Header}>
+    <div
+      className={
+        hideActionButton
+          ? `${styles.Header} ${styles.HeaderBeforeAction}`
+          : styles.Header
+      }
+    >
       <div className={styles.MissionInfo}>
         {missionDisplayName && missionType ? (
           <>
@@ -129,7 +141,7 @@ export function StreamingMissionInfo() {
           </div>
         ) : null}
       </div>
-      {dataSource === "demo" ? (
+      {hideActionButton ? null : dataSource === "demo" ? (
         <button
           type="button"
           className={styles.EjectButton}

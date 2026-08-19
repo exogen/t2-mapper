@@ -546,11 +546,17 @@ export class LiveStreamAdapter extends StreamEngine {
       const wasNoDispatch =
         this.packetParser.protocolNoDispatch > noDispatchBefore;
 
-      if (wasRejected || wasNoDispatch) {
+      // Ping/ack keepalives (packetType 1/2) carry no game payload and
+      // take the no-dispatch path by design — only warn when a DATA
+      // packet (packetType 0) is rejected or suppressed (duplicate seq).
+      if (
+        wasRejected ||
+        (wasNoDispatch && parsed.dnetHeader.packetType === 0)
+      ) {
         log.warn(
           "packet #%d %s: %d bytes (total rejected=%d, noDispatch=%d)",
           this.tickCount,
-          wasRejected ? "REJECTED" : "no-dispatch",
+          wasRejected ? "REJECTED" : "duplicate-seq",
           data.length,
           this.packetParser.protocolRejected,
           this.packetParser.protocolNoDispatch,
