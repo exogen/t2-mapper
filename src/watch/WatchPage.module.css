@@ -1,8 +1,0 @@
-.Page {
-  position: fixed;
-  inset: 0;
-  display: flex;
-  flex-direction: column;
-  background: #000;
-  overflow: hidden;
-}

@@ -1,0 +1,45 @@
+/* Fills the frame's content area (rendered inside it) — the sidebar
+   and toolbar stay interactive. Not composing the GameDialog overlay:
+   that one is viewport-fixed. */
+.Overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(0, 0, 0, 0.7);
+}
+
+.Dialog {
+  composes: Dialog from "./GameDialog.module.css";
+  min-width: 0;
+  max-width: 480px;
+  padding: 24px 28px;
+}
+
+.Title {
+  font-size: 22px;
+  font-weight: 500;
+  color: #7dffff;
+  margin: 0 0 12px;
+  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.4);
+}
+
+.Message {
+  margin: 12px 0 0;
+}
+
+.Buttons {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  margin-top: 20px;
+}
+
+.PrimaryButton {
+  composes: DialogButton from "./GameDialog.module.css";
+  min-width: 100px;
+}

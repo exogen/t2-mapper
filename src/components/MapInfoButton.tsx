@@ -31,7 +31,11 @@ export function MapInfoButton({
       className={styles.Button}
       aria-label="Show map info"
       onClick={onClick}
-      disabled={!missionInManifest && !hasServerLoadInfo}
+      // Requires an actually loaded map (explore, demo, or live) — the
+      // mission URL param alone has a default value.
+      disabled={
+        dataSource == null || (!missionInManifest && !hasServerLoadInfo)
+      }
     >
       <LuClipboardList />
       <span className={styles.ButtonLabel}>Show map info</span>

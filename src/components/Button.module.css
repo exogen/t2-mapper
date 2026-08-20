@@ -132,6 +132,11 @@
     margin-bottom: 3px;
   }
 
+  /* The cassette glyph reads smaller than its neighbors at equal size. */
+  .DemoIcon {
+    font-size: 24px;
+  }
+
   .ButtonGroup .Button[data-active="true"] {
     background: rgba(0, 101, 203, 0.8);
     box-shadow:

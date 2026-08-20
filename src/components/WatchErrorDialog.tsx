@@ -1,18 +1,27 @@
 import { useEffect, useRef, type ReactNode } from "react";
-import { GiSkullCrossedBones } from "react-icons/gi";
 import styles from "./WatchErrorDialog.module.css";
 
 /**
- * Spectate-mode join failures (share-link server not found, session
- * ended) presented in the "Incoming transmission" dialog style rather
- * than dumping the visitor straight into the server browser.
+ * Spectate-mode failures (share-link server not found, session ended,
+ * kicked mid-session) presented in the "Incoming transmission" dialog
+ * style rather than dumping the visitor straight into the server
+ * browser. When the lost server is known, a Rejoin action is offered
+ * alongside browsing.
  */
 export function WatchErrorDialog({
+  title = "Uplink failure",
   message,
   onBrowse,
+  onRejoin,
+  onDismiss,
 }: {
+  title?: string;
   message: ReactNode;
   onBrowse: () => void;
+  /** Rejoin the server the session was lost from, when known. */
+  onRejoin?: () => void;
+  /** Escape handler; defaults to onBrowse. */
+  onDismiss?: () => void;
 }) {
   const dialogRef = useRef<HTMLDivElement>(null);
 
@@ -27,17 +36,25 @@ export function WatchErrorDialog({
         className={styles.Dialog}
         role="dialog"
         aria-modal="true"
-        aria-label="Uplink failure"
+        aria-label={title}
         tabIndex={-1}
         onKeyDown={(e) => {
           e.stopPropagation();
-          if (e.key === "Escape") onBrowse();
+          if (e.key === "Escape") (onDismiss ?? onBrowse)();
         }}
       >
-        <h1 className={styles.Title}>Uplink failure</h1>
+        <h1 className={styles.Title}>{title}</h1>
         <p className={styles.Message}>{message}</p>
-        <GiSkullCrossedBones className={styles.Icon} aria-hidden />
         <div className={styles.Buttons}>
+          {onRejoin ? (
+            <button
+              type="button"
+              className={styles.PrimaryButton}
+              onClick={onRejoin}
+            >
+              Rejoin
+            </button>
+          ) : null}
           <button
             type="button"
             className={styles.PrimaryButton}

@@ -1,41 +1,44 @@
-.Dialog {
-  composes: Dialog from "./GameDialog.module.css";
-  width: 860px;
-  height: 560px;
+/* Fills the frame's content area — deliberately NOT composing the
+   GameDialog chrome (border, radius, sizing); it's not a modal. */
+.Panel {
+  position: absolute;
+  inset: 0;
   display: grid;
   grid-template-columns: 100%;
-  grid-template-rows: auto 1fr auto;
+  grid-template-rows: 1fr auto;
+  background: rgb(20, 37, 38);
+  color: #b0d5c9;
+  font-size: 14px;
+  line-height: 1.5;
+  outline: none;
 }
 
-.Overlay {
-  composes: Overlay from "./GameDialog.module.css";
-}
-
-.FullScreenDialog {
-  composes: Dialog from "./GameDialog.module.css";
-  width: min(960px, calc(100vw - 32px));
-  height: calc(100dvh - 48px);
-  display: grid;
-  grid-template-columns: 100%;
-  grid-template-rows: auto 1fr auto;
-}
-
-.Header {
+/* Title / count / refresh, rendered in the app toolbar: title on the
+   left, count + refresh pushed to the right edge. */
+.ToolbarHeader {
+  flex: 1 1 auto;
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 12px 16px 10px;
-  border-bottom: 1px solid rgba(0, 190, 220, 0.25);
+  min-width: 0;
+  margin: 0 10px 0 8px;
+}
+
+.ToolbarHeader .ServerCount {
+  margin-left: auto;
+  white-space: nowrap;
 }
 
 .Title {
   font-size: 18px;
   font-weight: 500;
   line-height: 1.2;
-  color: #7dffff;
-  margin: 0;
+  color: #fff;
+  margin: 4px 0;
   text-shadow: 0 1px 6px rgba(0, 0, 0, 0.4);
-  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .HiddenRadio {
@@ -49,8 +52,11 @@
 }
 
 .RefreshButton {
-  composes: DialogButton from "./GameDialog.module.css";
+  composes: Button from "./Button.module.css";
+  flex: 0 0 auto;
+  min-height: 26px;
   padding: 3px 14px;
+  margin: 10px 0;
   font-size: 12px;
 }
 
@@ -222,24 +228,23 @@
   font-style: italic;
 }
 
+/* Match the app toolbar's colors. */
 .Footer {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
   padding: 10px 12px;
-  border-top: 1px solid rgba(0, 190, 220, 0.25);
-  background: rgba(2, 20, 21, 0.7);
+  border-top: 1px solid rgb(70, 85, 85);
+  background: rgb(25, 31, 31);
   flex-shrink: 0;
 }
 
 .JoinButton {
-  composes: DialogButton from "./GameDialog.module.css";
+  composes: Button from "./Button.module.css";
+  flex: 0 0 auto;
   min-width: 100px;
-}
-
-.CloseButton {
-  composes: Secondary from "./GameDialog.module.css";
+  font-size: 14px;
 }
 
 .WarriorField {
@@ -274,37 +279,13 @@
   color: rgba(201, 220, 216, 0.3);
 }
 
-.Hint {
-  font-size: 12px;
-  color: rgba(201, 220, 216, 0.3);
-  margin: 0 auto;
-}
-
 .Actions {
   composes: Actions from "./GameDialog.module.css";
   justify-content: flex-end;
-}
-
-@media (max-width: 719px) {
-  .Hint {
-    display: none;
-  }
-
-  .Actions {
-    width: 100%;
-    flex: 1 0 auto;
-  }
-
-  .CloseButton {
-    margin-left: auto;
-  }
+  margin-left: auto;
 }
 
 @media (max-width: 539px) {
-  .Header {
-    padding: 8px 12px;
-  }
-
   .Footer {
     flex-direction: column;
     gap: 8px;
@@ -319,8 +300,7 @@
     min-width: 12em;
   }
 
-  .JoinButton,
-  .CloseButton {
+  .JoinButton {
     flex: 1 0 auto;
     height: 32px;
   }
@@ -328,6 +308,8 @@
   .RefreshButton {
     padding: 6px 10px;
     font-size: 11px;
+    margin-top: 6px;
+    margin-bottom: 6px;
   }
 
   .RefreshLabel {

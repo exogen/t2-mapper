@@ -41,6 +41,8 @@ export interface LiveConnectionState {
   /** Watch-session status (watcher role only). */
   watchStatus: WatchStatus | null;
   watchStatusMessage?: string;
+  /** Why the last session ended — drives the disconnect messaging. */
+  disconnectReason: "voluntary" | "ended" | null;
   /** Number of watchers on the shared session (including us). */
   watcherCount: number;
   /** Catch-up download progress in [0, 1], or null when not syncing. */
@@ -85,6 +87,7 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
     role: null,
     watchStatus: null,
     watchStatusMessage: undefined,
+    disconnectReason: null,
     watcherCount: 0,
     catchupProgress: null,
 
@@ -148,6 +151,9 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
             watchStatus: status,
             watchStatusMessage: message,
             watcherCount,
+            ...(status === "ended"
+              ? { disconnectReason: "ended" as const }
+              : {}),
             ...(info.mapName ? { mapName: info.mapName } : {}),
             ...(info.serverName ? { serverName: info.serverName } : {}),
             ...(status !== "syncing" ? { catchupProgress: null } : {}),
@@ -182,7 +188,14 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
             s._adapter = null;
             s._pending = [];
             s._listInFlight = false;
+            // A socket loss during an active session is involuntary;
+            // voluntary paths set their reason before closing.
+            const sessionWasLive =
+              (s.watchStatus !== null && s.watchStatus !== "ended") ||
+              s.gameStatus === "connected";
             set({
+              disconnectReason:
+                s.disconnectReason ?? (sessionWasLive ? "ended" : null),
               relayConnected: false,
               gameStatus: null,
               gameStatusMessage: undefined,
@@ -302,6 +315,7 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
         gameStatus: null,
         adapter: newAdapter,
         role: "player",
+        disconnectReason: null,
       });
 
       // Set initial mission info from the server browser's cached data.
@@ -354,6 +368,7 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
         role: "watcher",
         watchStatus: "connecting",
         watchStatusMessage: undefined,
+        disconnectReason: null,
         watcherCount: 0,
         catchupProgress: null,
       });
@@ -369,6 +384,9 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
 
     leaveServer() {
       const s = get();
+      // Only an actual departure records a reason — leaveServer is also
+      // called as a no-op safety net when no session exists.
+      const hadSession = s.watchStatus !== null || s.role !== null;
       s._relay?.leaveServer();
       s._adapter = null;
       set({
@@ -379,6 +397,7 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
         mapName: undefined,
         watchStatus: null,
         watchStatusMessage: undefined,
+        ...(hadSession ? { disconnectReason: "voluntary" as const } : {}),
         watcherCount: 0,
         catchupProgress: null,
         role: null,
@@ -386,6 +405,9 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
     },
 
     disconnectServer() {
+      if (get().gameStatus === "connected") {
+        set({ disconnectReason: "voluntary" });
+      }
       // Close the WebSocket — the relay's ws.on("close") handler will
       // automatically send the disconnect packet to the game server.
       get().disconnectRelay();

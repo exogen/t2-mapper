@@ -20,7 +20,7 @@ import { LoadStatsButton } from "./LoadStatsButton";
 import { useFeatures } from "./FeaturesProvider";
 import { StatsPanel } from "./StatsPanel";
 import { useStats } from "../state/statsStore";
-import type { CurrentMission } from "./useQueryParams";
+import { useModeQueryState, type CurrentMission } from "./useQueryParams";
 import { useRecording } from "./usePlayback";
 import { useDataSource, useMissionName } from "../state/gameEntityStore";
 import { useLiveSelector } from "../state/liveConnectionStore";
@@ -48,6 +48,7 @@ export const InspectorControls = memo(function InspectorControls({
   onOpenMapInfo,
   onOpenScoreScreen,
   onOpenServerBrowser,
+  onEnterDemoMode,
   onChooseMap,
   onCancelChoosingMap,
   onChangeMission,
@@ -61,6 +62,7 @@ export const InspectorControls = memo(function InspectorControls({
   onOpenMapInfo: () => void;
   onOpenScoreScreen?: () => void;
   onOpenServerBrowser?: () => void;
+  onEnterDemoMode?: () => void;
   onChooseMap?: () => void;
   onCancelChoosingMap?: () => void;
   onChangeMission?: (mission: CurrentMission) => void;
@@ -85,8 +87,17 @@ export const InspectorControls = memo(function InspectorControls({
     ? hasMission(effectiveMissionName)
     : false;
   const isLiveConnected = useLiveSelector(
-    (s) => s.gameStatus === "connected" || s.gameStatus === "authenticating",
+    (s) =>
+      s.gameStatus === "connected" ||
+      s.gameStatus === "authenticating" ||
+      (s.role === "watcher" &&
+        s.watchStatus !== null &&
+        s.watchStatus !== "ended"),
   );
+  // Live mode without a session shows the server browser in the content
+  // area — the Live button reflects that too.
+  const [mode] = useModeQueryState();
+  const isLiveMode = isLiveConnected || mode === "live";
   const {
     fogEnabled,
     setFogEnabled,
@@ -184,9 +195,13 @@ export const InspectorControls = memo(function InspectorControls({
                   onClick={onChooseMap}
                 />
                 <LoadDemoButton
-                  isActive={!choosingMap && recording?.source === "demo"}
+                  isActive={
+                    !choosingMap &&
+                    (recording?.source === "demo" || mode === "demo")
+                  }
                   choosingMap={choosingMap}
                   onCancelChoosingMap={onCancelChoosingMap}
+                  onEnterDemoMode={onEnterDemoMode}
                 />
                 {features.stats && onChangeMission && (
                   <LoadStatsButton
@@ -196,7 +211,7 @@ export const InspectorControls = memo(function InspectorControls({
                 )}
                 {onOpenServerBrowser && (
                   <JoinServerButton
-                    isActive={!choosingMap && isLiveConnected}
+                    isActive={!choosingMap && isLiveMode}
                     onOpenServerBrowser={onOpenServerBrowser}
                   />
                 )}
@@ -206,7 +221,9 @@ export const InspectorControls = memo(function InspectorControls({
               <CopyCoordinatesButton
                 missionName={missionName}
                 missionType={missionType}
-                disabled={!missionInManifest}
+                // Requires an actually loaded map (explore, demo, or live)
+                // — the mission URL param alone has a default value.
+                disabled={!missionInManifest || dataSource == null}
               />
             )}
             <MapInfoButton missionName={missionName} onClick={onOpenMapInfo} />

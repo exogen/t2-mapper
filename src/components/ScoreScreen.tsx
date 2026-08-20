@@ -46,6 +46,127 @@ function getTeamName(team: TeamScore): string {
   return team.name || DEFAULT_TEAM_NAMES[team.teamId] || `Team ${team.teamId}`;
 }
 
+function byScoreThenName(a: PlayerRosterEntry, b: PlayerRosterEntry): number {
+  return b.score - a.score || (a.name ?? "").localeCompare(b.name ?? "");
+}
+
+/** Paired left/right player rows for the 4-column table layout. */
+function PairedPlayerRows({
+  left,
+  right,
+  connectedClientId,
+}: {
+  left: PlayerRosterEntry[];
+  right: PlayerRosterEntry[];
+  connectedClientId: number | null | undefined;
+}) {
+  const maxRows = Math.max(left.length, right.length);
+  return (
+    <>
+      {Array.from({ length: maxRows }, (_, i) => {
+        const p1 = left[i];
+        const p2 = right[i];
+        const p1IsLocal =
+          connectedClientId != null && p1?.clientId === connectedClientId;
+        const p2IsLocal =
+          connectedClientId != null && p2?.clientId === connectedClientId;
+        return (
+          <tr key={`${p1?.clientId ?? ""}-${p2?.clientId ?? ""}`}>
+            <td
+              className={p1IsLocal ? styles.PlayerNameLocal : styles.PlayerName}
+            >
+              {p1?.name || (p1 ? "..." : "")}
+            </td>
+            <td
+              className={
+                p1IsLocal ? styles.PlayerScoreLocal : styles.PlayerScore
+              }
+            >
+              {p1 != null ? p1.score : ""}
+            </td>
+            <td
+              className={p2IsLocal ? styles.PlayerNameLocal : styles.PlayerName}
+            >
+              {p2?.name || (p2 ? "..." : "")}
+            </td>
+            <td
+              className={
+                p2IsLocal ? styles.PlayerScoreLocal : styles.PlayerScore
+              }
+            >
+              {p2 != null ? p2.score : ""}
+            </td>
+          </tr>
+        );
+      })}
+    </>
+  );
+}
+
+function PlayersColumnHeader({ players }: { players: PlayerRosterEntry[] }) {
+  const ping = computePingStats(players);
+  return (
+    <th className={styles.ColumnHeader}>
+      <span>Players ({players.length})</span>
+      {players.length > 0 && (
+        <span className={styles.ColumnPing}>
+          {" "}
+          PING: {ping.avg}&thinsp;&#177;&thinsp;{ping.dev}&thinsp;ms
+        </span>
+      )}
+    </th>
+  );
+}
+
+/**
+ * One or two teams side by side; games with more teams stack additional
+ * sections (a lone odd team renders with a blank right half).
+ */
+function TeamPairSection({
+  teamA,
+  teamB,
+  playersA,
+  playersB,
+  connectedClientId,
+}: {
+  teamA: TeamScore;
+  teamB: TeamScore | undefined;
+  playersA: PlayerRosterEntry[];
+  playersB: PlayerRosterEntry[];
+  connectedClientId: number | null | undefined;
+}) {
+  return (
+    <tbody className={styles.PlayerBody}>
+      <tr className={styles.TeamHeaderRow}>
+        <th className={styles.TeamName}>{getTeamName(teamA)}</th>
+        <th className={styles.TeamScore}>{teamA.score}</th>
+        <th className={styles.TeamName}>{teamB ? getTeamName(teamB) : " "}</th>
+        <th className={styles.TeamScore}>{teamB ? teamB.score : " "}</th>
+      </tr>
+      <tr className={styles.ColumnHeaderRow}>
+        <PlayersColumnHeader players={playersA} />
+        <th className={styles.ColumnHeaderScore}>Score</th>
+        {teamB ? (
+          <>
+            <PlayersColumnHeader players={playersB} />
+            <th className={styles.ColumnHeaderScore}>Score</th>
+          </>
+        ) : (
+          <>
+            <th className={styles.ColumnHeader}>&nbsp;</th>
+            <th className={styles.ColumnHeaderScore}>&nbsp;</th>
+          </>
+        )}
+      </tr>
+      <PairedPlayerRows
+        left={playersA}
+        right={playersB}
+        connectedClientId={connectedClientId}
+      />
+    </tbody>
+  );
+}
+
 export function ScoreScreen({ onClose }: { onClose: () => void }) {
   const dialogRef = useRef<HTMLDivElement>(null);
   const dataSource = useDataSource();
@@ -124,52 +245,42 @@ export function ScoreScreen({ onClose }: { onClose: () => void }) {
       }
     }
     for (const list of teamPlayers.values()) {
-      list.sort(
-        (a, b) =>
-          b.score - a.score || (a.name ?? "").localeCompare(b.name ?? ""),
-      );
+      list.sort(byScoreThenName);
     }
     observers.sort((a, b) => (a.name ?? "").localeCompare(b.name ?? ""));
     return { teamPlayers, observers };
   }, [playerRoster]);
 
-  // Sort teams by natural order (team1, team2, etc.). Until the server's
-  // MsgCTFAddTeam burst arrives (it lands a few seconds into a fresh
-  // session, after the roster), synthesize placeholder team rows from the
-  // roster's team ids so the table renders immediately — real entries
-  // replace them in place.
-  const sortedTeams = useMemo(() => {
-    if (teamScores?.length) {
-      return [...teamScores].sort((a, b) => a.teamId - b.teamId);
-    }
-    const teamIds = new Set<number>();
-    for (const player of playerRoster ?? []) {
-      if (player.teamId > 0) teamIds.add(player.teamId);
-    }
-    return [...teamIds]
-      .sort((a, b) => a - b)
-      .map((teamId): TeamScore => ({
-        teamId,
-        name: DEFAULT_TEAM_NAMES[teamId] ?? `Team ${teamId}`,
-        score: 0,
-        playerCount: 0,
-      }));
-  }, [teamScores, playerRoster]);
+  // Teams exist only when the server declares them (the per-game
+  // MsgXxxAddTeam burst at mission drop). Roster team ids alone don't
+  // imply teams: teamless games still assign them (Rabbit uses 1 and 2,
+  // DM and Hunters give every player a unique sensor-group team).
+  const sortedTeams = useMemo(
+    () =>
+      teamScores?.length
+        ? [...teamScores].sort((a, b) => a.teamId - b.teamId)
+        : [],
+    [teamScores],
+  );
 
-  const hasTeams = sortedTeams.length >= 2;
-  const team1 = sortedTeams[0];
-  const team2 = sortedTeams[1];
-  const team1Players = team1 ? (teamPlayers.get(team1.teamId) ?? []) : [];
-  const team2Players = team2 ? (teamPlayers.get(team2.teamId) ?? []) : [];
-  const team1Ping = useMemo(
-    () => computePingStats(team1Players),
-    [team1Players],
-  );
-  const team2Ping = useMemo(
-    () => computePingStats(team2Players),
-    [team2Players],
-  );
-  const maxRows = Math.max(team1Players.length, team2Players.length);
+  // Teamless games (Rabbit, DM, ...): everyone with a team id competes
+  // individually — one score-sorted list. Team id 0 is still observers.
+  const ffaPlayers = useMemo(() => {
+    if (sortedTeams.length > 0 || !playerRoster?.length) return null;
+    return playerRoster.filter((p) => p.teamId > 0).sort(byScoreThenName);
+  }, [sortedTeams, playerRoster]);
+
+  // Two team columns per section; extra teams stack below.
+  const teamPairs = useMemo(() => {
+    const pairs: [TeamScore, TeamScore | undefined][] = [];
+    for (let i = 0; i < sortedTeams.length; i += 2) {
+      pairs.push([sortedTeams[i], sortedTeams[i + 1]]);
+    }
+    return pairs;
+  }, [sortedTeams]);
+
+  // FFA fills top-to-bottom then left-to-right across the two halves.
+  const ffaHalf = ffaPlayers ? Math.ceil(ffaPlayers.length / 2) : 0;
 
   return (
     <div className={styles.Overlay} onClick={onClose}>
@@ -186,172 +297,61 @@ export function ScoreScreen({ onClose }: { onClose: () => void }) {
           <h2 className={styles.Title}>Score</h2>{" "}
           <span className={styles.PlayerTotal}>
             <LuUsers className={styles.PlayersIcon} />{" "}
-            {playerRoster?.length ?? 0} players
+            {playerRoster?.length ?? 0} player
+            {(playerRoster?.length ?? 0) === 1 ? "" : "s"}
           </span>{" "}
           {matchClockMs != null && <MatchClock clockMs={matchClockMs} />}
         </header>
 
-        {hasTeams ? (
+        {teamPairs.length > 0 || ffaPlayers ? (
           <div className={styles.TableWrapper}>
             <table className={styles.Table}>
-              <thead>
-                <tr className={styles.TeamHeaderRow}>
-                  <th className={styles.TeamName}>{getTeamName(team1)}</th>
-                  <th className={styles.TeamScore}>{team1.score}</th>
-                  <th className={styles.TeamName}>{getTeamName(team2)}</th>
-                  <th className={styles.TeamScore}>{team2.score}</th>
-                </tr>
-                <tr className={styles.ColumnHeaderRow}>
-                  <th className={styles.ColumnHeader}>
-                    <span>Players ({team1Players.length})</span>
-                    {team1Players.length > 0 && (
-                      <span className={styles.ColumnPing}>
-                        {" "}
-                        PING: {team1Ping.avg}&thinsp;&#177;&thinsp;
-                        {team1Ping.dev}&thinsp;ms
-                      </span>
-                    )}
-                  </th>
-                  <th className={styles.ColumnHeaderScore}>Score</th>
-                  <th className={styles.ColumnHeader}>
-                    <span>Players ({team2Players.length})</span>
-                    {team2Players.length > 0 && (
-                      <span className={styles.ColumnPing}>
-                        {" "}
-                        PING: {team2Ping.avg}&thinsp;&#177;&thinsp;
-                        {team2Ping.dev}&thinsp;ms
-                      </span>
-                    )}
-                  </th>
-                  <th className={styles.ColumnHeaderScore}>Score</th>
-                </tr>
-              </thead>
-              <tbody className={styles.PlayerBody}>
-                {Array.from({ length: maxRows }, (_, i) => {
-                  const p1 = team1Players[i];
-                  const p2 = team2Players[i];
-                  const p1IsLocal =
-                    connectedClientId != null &&
-                    p1?.clientId === connectedClientId;
-                  const p2IsLocal =
-                    connectedClientId != null &&
-                    p2?.clientId === connectedClientId;
-                  return (
-                    <tr key={`${p1?.clientId ?? ""}-${p2?.clientId ?? ""}`}>
-                      <td
-                        className={
-                          p1IsLocal ? styles.PlayerNameLocal : styles.PlayerName
-                        }
-                      >
-                        {p1?.name || (p1 ? "..." : "")}
-                      </td>
-                      <td
-                        className={
-                          p1IsLocal
-                            ? styles.PlayerScoreLocal
-                            : styles.PlayerScore
-                        }
-                      >
-                        {p1 != null ? p1.score : ""}
-                      </td>
-                      <td
-                        className={
-                          p2IsLocal ? styles.PlayerNameLocal : styles.PlayerName
-                        }
-                      >
-                        {p2?.name || (p2 ? "..." : "")}
-                      </td>
-                      <td
-                        className={
-                          p2IsLocal
-                            ? styles.PlayerScoreLocal
-                            : styles.PlayerScore
-                        }
-                      >
-                        {p2 != null ? p2.score : ""}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-              {observers.length > 0 &&
-                (() => {
-                  // Split into two columns, filling top-to-bottom then left-to-right.
-                  const half = Math.ceil(observers.length / 2);
-                  const obsRows = Math.ceil(observers.length / 2);
-                  return (
-                    <tbody className={styles.ObserverBody}>
-                      <tr className={styles.ColumnHeaderRow}>
-                        <th colSpan={2} className={styles.ColumnHeader}>
-                          Observers ({observers.length})
-                        </th>
-                        <th colSpan={2} className={styles.ColumnHeader}>
-                          &nbsp;
-                        </th>
-                      </tr>
-                      {Array.from({ length: obsRows }, (_, i) => {
-                        const o1 = observers[i];
-                        const o2 = observers[i + half];
-                        const o1IsLocal =
-                          connectedClientId != null &&
-                          o1?.clientId === connectedClientId;
-                        const o2IsLocal =
-                          connectedClientId != null &&
-                          o2?.clientId === connectedClientId;
-                        return (
-                          <tr
-                            key={`${o1?.clientId ?? ""}-${o2?.clientId ?? ""}`}
-                          >
-                            <td
-                              className={
-                                o1IsLocal
-                                  ? styles.PlayerNameLocal
-                                  : styles.PlayerName
-                              }
-                            >
-                              {o1?.name || (o1 ? "..." : "")}
-                            </td>
-                            <td
-                              className={
-                                o1IsLocal
-                                  ? styles.PlayerScoreLocal
-                                  : styles.PlayerScore
-                              }
-                            >
-                              {o1 != null ? o1.score : ""}
-                            </td>
-                            <td
-                              className={
-                                o2IsLocal
-                                  ? styles.PlayerNameLocal
-                                  : styles.PlayerName
-                              }
-                            >
-                              {o2?.name || ""}
-                            </td>
-                            <td
-                              className={
-                                o2IsLocal
-                                  ? styles.PlayerScoreLocal
-                                  : styles.PlayerScore
-                              }
-                            >
-                              {o2 != null ? o2.score : ""}
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  );
-                })()}
+              {teamPairs.map(([teamA, teamB]) => (
+                <TeamPairSection
+                  key={teamA.teamId}
+                  teamA={teamA}
+                  teamB={teamB}
+                  playersA={teamPlayers.get(teamA.teamId) ?? []}
+                  playersB={teamB ? (teamPlayers.get(teamB.teamId) ?? []) : []}
+                  connectedClientId={connectedClientId}
+                />
+              ))}
+              {ffaPlayers ? (
+                <tbody className={styles.PlayerBody}>
+                  <tr className={styles.ColumnHeaderRow}>
+                    <PlayersColumnHeader players={ffaPlayers} />
+                    <th className={styles.ColumnHeaderScore}>Score</th>
+                    <th className={styles.ColumnHeader}>&nbsp;</th>
+                    <th className={styles.ColumnHeaderScore}>Score</th>
+                  </tr>
+                  <PairedPlayerRows
+                    left={ffaPlayers.slice(0, ffaHalf)}
+                    right={ffaPlayers.slice(ffaHalf)}
+                    connectedClientId={connectedClientId}
+                  />
+                </tbody>
+              ) : null}
+              {observers.length > 0 ? (
+                <tbody className={styles.ObserverBody}>
+                  <tr className={styles.ColumnHeaderRow}>
+                    <th colSpan={2} className={styles.ColumnHeader}>
+                      Observers ({observers.length})
+                    </th>
+                    <th colSpan={2} className={styles.ColumnHeader}>
+                      &nbsp;
+                    </th>
+                  </tr>
+                  <PairedPlayerRows
+                    left={observers.slice(0, Math.ceil(observers.length / 2))}
+                    right={observers.slice(Math.ceil(observers.length / 2))}
+                    connectedClientId={connectedClientId}
+                  />
+                </tbody>
+              ) : null}
             </table>
           </div>
         ) : (
-          <div className={styles.Empty}>
-            {playerRoster?.length
-              ? "No team data available"
-              : "Waiting for player data\u2026"}
-          </div>
+          <div className={styles.Empty}>Waiting for player data&hellip;</div>
         )}
 
         <div className={styles.Footer}>

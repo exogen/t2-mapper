@@ -328,7 +328,7 @@ function TeamScores() {
                 {team.score.toLocaleString()}
               </td>
               {hasFlags && (
-                <td className={styles.TeamFlag}>
+                <td className={styles.TeamFlag} data-status={team.flagStatus}>
                   {team.flagStatus === "held" ? (
                     <>
                       <FaHand size={10} />

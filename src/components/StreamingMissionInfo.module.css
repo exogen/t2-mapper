@@ -7,25 +7,104 @@
   overflow: auto;
 }
 
-/* When the toolbar's Exit button replaces our own action button, keep
-   the same 12px gap between our content and it — the Exit button's
-   auto left margin collapses to 0 under space pressure. */
-.HeaderBeforeAction {
-  margin-right: 12px;
-}
-
 .MissionInfo {
   display: flex;
+  flex-direction: column;
   flex: 0 1 auto;
-  align-items: center;
-  gap: 6px;
-  margin: 10px auto 10px 4px;
+  align-items: flex-start;
+  gap: 3px;
+  margin: 6px auto 6px 4px;
   border: 1px solid rgba(255, 255, 255, 0);
   border-radius: 3px;
   background: rgba(0, 0, 0, 0);
   color: #fff;
-  padding: 5px 8px;
+  padding: 3px 8px;
   overflow: hidden;
+}
+
+.MissionLine {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.MissionInfo .ServerInfo {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  line-height: calc(14 / 11);
+  white-space: nowrap;
+  overflow: hidden;
+  max-width: 100%;
+}
+
+/* Long values on the line shrink and ellipsize. */
+.MissionInfo .ServerInfo .ServerName,
+.MissionInfo .ServerInfo .RecordingDate {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+@media (max-width: 599px) {
+  .CalendarIcon,
+  .RecordingDate {
+    display: none;
+  }
+}
+
+@media (max-width: 479px) {
+  .ServerIcon,
+  .ServerName {
+    display: none;
+  }
+}
+
+/* Shared sizing for the info-line icons. */
+.MetaIcon {
+  flex: 0 0 auto;
+  font-size: 16px;
+}
+
+/* Extra spacing before a new group of info on the line. */
+.MetaGap {
+  margin-left: 4px;
+}
+
+.ServerIcon {
+  composes: MetaIcon;
+}
+
+/* The wifi icon takes the ping-quality color, matching the ping dot. */
+.ServerIcon[data-quality="good"] {
+  color: rgb(116, 255, 69);
+}
+
+.ServerIcon[data-quality="fine"] {
+  color: rgb(255, 158, 47);
+}
+
+.ServerIcon[data-quality="poor"] {
+  color: rgb(232, 63, 37);
+}
+
+.SpectatorIcon {
+  composes: MetaIcon;
+}
+
+.PlayersIcon {
+  composes: MetaIcon;
+}
+
+.CalendarIcon {
+  composes: MetaIcon;
+}
+
+.RecorderIcon {
+  composes: MetaIcon;
+  margin-left: -2px;
 }
 
 .MissionName {
@@ -58,24 +137,51 @@
   color: #83938b;
 }
 
-.PlayerName,
-.RecordingDate,
-.ServerName {
+/* Emphasized values (names, dates, counts) against the gray label text. */
+.MetaValue {
   color: #eceae7;
 }
 
-.Spectating {
-  composes: Attribution;
-  display: flex;
-  align-items: center;
-  /* Match the Metadata column's text-align: right. */
-  justify-content: flex-end;
-  gap: 6px;
+.PlayerName {
+  composes: MetaValue;
 }
 
-.Spectating svg {
-  width: calc(1em + 3px);
-  height: calc(1em + 3px);
+.RecordingDate {
+  composes: MetaValue;
+}
+
+.ServerName {
+  composes: MetaValue;
+}
+
+.SpectatorCount {
+  composes: MetaValue;
+}
+
+.PlayerCount {
+  composes: MetaValue;
+}
+
+/* Reads like the rest of the line, but clickable. */
+.PlayersButton {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin: 0 0 0 4px;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+.PlayersButton:hover {
+  color: #fff;
+}
+
+.PlayersButton:hover .PlayerCount {
+  color: #fff;
 }
 
 .EjectButton,

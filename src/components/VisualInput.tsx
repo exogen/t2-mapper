@@ -1,8 +1,12 @@
 import { lazy, Suspense } from "react";
+import { useStore } from "zustand";
 import { useTouchDevice } from "./useTouchDevice";
 import { useCameraTour } from "../state/cameraTourStore";
 import { useCommandCircuit } from "../state/commandCircuitStore";
+import { useLiveSelector } from "../state/liveConnectionStore";
+import { streamPlaybackStore } from "../state/streamPlaybackStore";
 import { useSettings } from "./SettingsProvider";
+import { useRecording } from "./usePlayback";
 
 const TouchJoystick = lazy(() =>
   import("@/src/components/TouchJoystick").then((mod) => ({
@@ -23,10 +27,27 @@ export function VisualInput() {
   // joysticks don't apply.
   const isCommandCircuit = useCommandCircuit((s) => s.active);
   const { showInputOverlay } = useSettings();
+  const recording = useRecording();
+  const isWatcher = useLiveSelector((s) => s.role === "watcher");
+  const cameraMode = useStore(streamPlaybackStore, (s) => s.cameraMode);
+
+  // Demo playback and watch-mode spectating drive the camera from the
+  // stream unless the user breaks it free: the recorded view ("original")
+  // and first-person follow accept no movement or look input, so the
+  // joysticks would be dead weight. Free-fly has full controls and
+  // orbit-follow consumes look input. Everything else (map explore, live
+  // observer fly and follow) always has camera controls.
+  const isStreamCamera =
+    recording?.source === "demo" || (recording?.source === "live" && isWatcher);
+  const hasCameraControls = isStreamCamera
+    ? cameraMode === "freeFly" || cameraMode === "orbitOverride"
+    : true;
 
   return (
     <Suspense>
-      {isTouch && !isTourActive && !isCommandCircuit ? <TouchJoystick /> : null}
+      {isTouch && !isTourActive && !isCommandCircuit && hasCameraControls ? (
+        <TouchJoystick />
+      ) : null}
       {isTouch === false && showInputOverlay ? (
         // isTouch can be `null` before we know for sure; make sure this doesn't
         // render until it's definitively false

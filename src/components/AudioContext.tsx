@@ -8,6 +8,8 @@ import {
 import { useThree } from "@react-three/fiber";
 import { AudioListener, AudioLoader } from "three";
 import { engineStore } from "../state/engineStore";
+import { useDataSource } from "../state/gameEntityStore";
+import { useLiveSelector } from "../state/liveConnectionStore";
 import { useSettings } from "./SettingsProvider";
 
 interface AudioContextType {
@@ -88,9 +90,23 @@ export function AudioProvider({ children }: { children: ReactNode }) {
     };
   }, [camera]);
 
+  // A dead live session keeps rendering its last frame, but looping
+  // entity sounds shouldn't keep playing after the disconnect.
+  const dataSource = useDataSource();
+  const liveSessionDead = useLiveSelector(
+    (s) =>
+      s.gameStatus !== "connected" &&
+      !(
+        s.role === "watcher" &&
+        s.watchStatus !== null &&
+        s.watchStatus !== "ended"
+      ),
+  );
+  const muted = dataSource === "live" && liveSessionDead;
+
   useEffect(() => {
-    audioContext.audioListener?.setMasterVolume(audioVolume);
-  }, [audioVolume, audioContext.audioListener]);
+    audioContext.audioListener?.setMasterVolume(muted ? 0 : audioVolume);
+  }, [audioVolume, muted, audioContext.audioListener]);
 
   return (
     <AudioContext.Provider value={audioContext}>

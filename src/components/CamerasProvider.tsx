@@ -97,7 +97,7 @@ export function CamerasProvider({ children }: { children: ReactNode }) {
       // restored by the command circuit rig itself — never apply it to the
       // regular camera.
       const isCommandCircuitLink =
-        new URLSearchParams(window.location.search).get("mode") === "command";
+        new URLSearchParams(window.location.search).get("view") === "cc";
       const parsed = isCommandCircuitLink
         ? null
         : parseViewHash(window.location.hash);

@@ -92,7 +92,7 @@ export const GameView = memo(function GameView({
                 <StreamingController recording={recording} />
               </Suspense>
             ) : null}
-            {!hasStreamData && !spectator ? (
+            {!hasStreamData && !spectator && missionName ? (
               <Suspense>
                 <Mission
                   key={`${missionName}~${missionType}`}

@@ -2,6 +2,7 @@ import { createStore } from "zustand/vanilla";
 import { useStoreWithEqualityFn } from "zustand/traditional";
 import type { GameEntity, RenderType } from "./gameEntityTypes";
 import { normalizedMissionTypes } from "../mission";
+import { findMissionInfo } from "../manifest";
 
 export type DataSource = "map" | "demo" | "live";
 
@@ -533,12 +534,18 @@ export function useDebugHidden(entityId: string): boolean {
   });
 }
 
-/** Hook returning the mission display name (e.g. "Scarabrae"). */
+/**
+ * Hook returning the mission display name (e.g. "Scarabrae"), falling
+ * back to the manifest's display name for the raw mission name — a live
+ * catch-up or demo can know the mission file (often lowercased) before
+ * or without the server's MsgMissionDropInfo display strings.
+ */
 export function useMissionDisplayName(): string | null {
-  return useStoreWithEqualityFn(
-    gameEntityStore,
-    (state) => state.missionDisplayName,
-  );
+  return useStoreWithEqualityFn(gameEntityStore, (state) => {
+    if (state.missionDisplayName) return state.missionDisplayName;
+    if (!state.missionName) return null;
+    return findMissionInfo(state.missionName)?.displayName ?? state.missionName;
+  });
 }
 
 /** Hook returning the game class name (e.g. "CTFGame"). */

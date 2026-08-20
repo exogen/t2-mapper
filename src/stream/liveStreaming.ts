@@ -356,17 +356,30 @@ export class LiveStreamAdapter extends StreamEngine {
         this.getTimeSec() - hud.clock.elapsedMs / 1000;
       this.clockDurationMs = hud.clock.durationMs;
     }
+    // Mission change first: its handler resets per-mission info in the
+    // stores, so the hud values pushed below must come after or they'd
+    // be wiped (a mid-mission catch-up never re-sends them).
+    this.hydratedEpoch = payload.epoch;
+    if (payload.missionName) {
+      this.onMissionChange?.(payload.missionName);
+    }
+
     this.missionDisplayName = hud.missionDisplayName ?? null;
     this.missionTypeDisplayName = hud.missionTypeDisplayName ?? null;
     this.gameClassName = hud.gameClassName ?? null;
     this.serverDisplayName = hud.serverDisplayName ?? null;
     this.matchEnded = hud.matchEnded ?? false;
-    this.onMissionInfoChange?.();
-
-    this.hydratedEpoch = payload.epoch;
-    if (payload.missionName) {
-      this.onMissionChange?.(payload.missionName);
+    if (!hud.missionDisplayName) {
+      // Should repopulate via MsgMissionDropInfo shortly (e.g. attach
+      // landed mid mission-change); logged to trace occurrences where
+      // it never arrives and the header falls back to the raw name.
+      log.warn(
+        "catch-up hud has no mission display name (mission=%s, epoch=%d)",
+        payload.missionName ?? "?",
+        payload.epoch,
+      );
     }
+    this.onMissionInfoChange?.();
     log.info(
       "hydrated epoch %d: %d entities, %d datablocks, %d net strings",
       payload.epoch,

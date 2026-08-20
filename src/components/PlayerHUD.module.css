@@ -196,6 +196,14 @@
   text-overflow: ellipsis;
 }
 
+.TeamFlag[data-status="held"] {
+  color: rgb(174, 255, 242);
+}
+
+.TeamFlag[data-status="field"] {
+  color: rgb(203, 205, 173);
+}
+
 .TeamFlag svg {
   margin-right: 7px;
   vertical-align: -1px;

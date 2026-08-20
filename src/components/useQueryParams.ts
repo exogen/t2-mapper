@@ -54,16 +54,30 @@ export function useFogQueryState() {
   return [fogEnabledOverride, setFogEnabledOverride] as const;
 }
 
-const VIEW_MODES = ["command"] as const;
+const APP_MODES = ["map", "demo", "live"] as const;
+
+export type AppMode = (typeof APP_MODES)[number];
 
 /**
- * View mode requested via the URL (e.g. `?mode=command` opens the map in command
- * circuit view).
+ * App mode selected via the URL: `map` explores a mission (default),
+ * `demo` starts with a blank canvas awaiting a .rec file, and `live`
+ * shows the server selector / an active spectate session.
  */
 export function useModeQueryState() {
   const [mode, setMode] = useQueryState(
     "mode",
-    parseAsStringLiteral(VIEW_MODES),
+    parseAsStringLiteral(APP_MODES).withDefault("map"),
   );
   return [mode, setMode] as const;
+}
+
+const VIEWS = ["cc"] as const;
+
+/**
+ * View requested via the URL: `?view=cc` opens the command circuit once
+ * the current mode's data is ready.
+ */
+export function useViewQueryState() {
+  const [view, setView] = useQueryState("view", parseAsStringLiteral(VIEWS));
+  return [view, setView] as const;
 }

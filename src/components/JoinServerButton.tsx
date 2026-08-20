@@ -13,24 +13,35 @@ export function JoinServerButton({
 }) {
   const gameStatus = useLiveSelector((s) => s.gameStatus);
   const disconnectServer = useLiveSelector((s) => s.disconnectServer);
+  const leaveServer = useLiveSelector((s) => s.leaveServer);
+  const isWatcher = useLiveSelector((s) => s.role === "watcher");
+  const watchStatus = useLiveSelector((s) => s.watchStatus);
 
-  const isLive = gameStatus === "connected";
+  const watchActive = watchStatus !== null && watchStatus !== "ended";
+  const isLive = gameStatus === "connected" || (isWatcher && watchActive);
   const isConnecting =
     gameStatus === "connecting" ||
     gameStatus === "challenging" ||
-    gameStatus === "authenticating";
+    gameStatus === "authenticating" ||
+    (watchActive && watchStatus !== "live");
 
   return (
     <button
       type="button"
       className={styles.JoinServerButton}
-      aria-label={isLive ? "Connected – click to disconnect" : "Join server"}
-      title={isLive ? "Connected – click to disconnect" : "Join server"}
+      aria-label={isLive ? "Connected – click to disconnect" : "Join a game"}
+      title={isLive ? "Connected – click to disconnect" : "Join a game"}
       data-connected={isLive}
       onClick={() => {
         cameraTourStore.getState().cancel();
         if (isLive) {
-          disconnectServer();
+          // Watchers detach from the shared session; player connections
+          // (not yet exposed in the UI) disconnect outright.
+          if (isWatcher) {
+            leaveServer();
+          } else {
+            disconnectServer();
+          }
         } else {
           onOpenServerBrowser();
         }

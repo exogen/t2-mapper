@@ -144,6 +144,22 @@ export function hasMission(missionName: string): boolean {
   return missionName in manifest.missions;
 }
 
+const missionsByLowerName = new Map(
+  Object.keys(manifest.missions).map((key) => [key.toLowerCase(), key]),
+);
+
+/**
+ * Case-insensitive mission lookup — mission names from the network and
+ * demo files are often lowercased (Torque file names are
+ * case-insensitive), while manifest keys preserve the original casing.
+ */
+export function findMissionInfo(
+  missionName: string,
+): (typeof manifest.missions)[string] | undefined {
+  const key = missionsByLowerName.get(missionName.toLowerCase());
+  return key ? manifest.missions[key] : undefined;
+}
+
 export function getMissionList() {
   return Object.keys(manifest.missions);
 }

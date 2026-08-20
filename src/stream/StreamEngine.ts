@@ -2557,6 +2557,38 @@ export abstract class StreamEngine implements StreamingPlayback {
         this.onTeamScoresChanged();
       }
     } else if (
+      (msgType === "MsgCnHAddTeam" ||
+        msgType === "MsgHuntAddTeam" ||
+        msgType === "MsgSiegeAddTeam") &&
+      args.length >= 4
+    ) {
+      // Non-CTF team games declare teams with the same leading wire
+      // order: args[2]=teamId (1-based), args[3]=teamName. CnH and
+      // TeamHunters also send args[4]=teamScore; Siege sends
+      // args[4]=isOffense (its scoring is time-based) so its score is
+      // left alone.
+      const teamId = parseInt(this.resolveNetString(args[2]), 10);
+      const teamName = stripTaggedStringMarkup(this.resolveNetString(args[3]));
+      const score =
+        msgType === "MsgSiegeAddTeam"
+          ? NaN
+          : parseInt(this.resolveNetString(args[4] ?? ""), 10);
+      if (!isNaN(teamId) && teamId > 0) {
+        const existing = this.teamScores.find((t) => t.teamId === teamId);
+        if (existing) {
+          existing.name = teamName;
+          existing.score = isNaN(score) ? existing.score : score;
+        } else {
+          this.teamScores.push({
+            teamId,
+            name: teamName,
+            score: isNaN(score) ? 0 : score,
+            playerCount: 0,
+          });
+        }
+        this.onTeamScoresChanged();
+      }
+    } else if (
       (msgType === "MsgCTFFlagTaken" ||
         msgType === "MsgCTFFlagDropped" ||
         msgType === "MsgCTFFlagReturned" ||

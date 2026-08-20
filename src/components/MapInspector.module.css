@@ -30,6 +30,21 @@
   view-transition-class: layout;
 }
 
+/* The 3D/CC toggle is always the toolbar's rightmost element. The auto
+   margin pushes it right when the preceding content doesn't stretch
+   (explore mode); the streaming header stretches on its own. */
+.ViewModeToggle {
+  margin-left: auto;
+  margin-right: 10px;
+}
+
+/* During a tour the ExitTourButton before it already carries the auto
+   margin — a second one would split the free space between them. */
+.ViewModeToggleAfterButton {
+  margin-left: 2px;
+  margin-right: 10px;
+}
+
 .Sidebar {
   position: relative;
   grid-area: sidebar;

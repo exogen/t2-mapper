@@ -340,6 +340,9 @@ export function StreamingController({
         missionDisplayName: stream.missionDisplayName ?? undefined,
         missionTypeDisplayName: stream.missionTypeDisplayName ?? undefined,
         gameClassName: stream.gameClassName ?? undefined,
+        // Prefer the stream's server name (MsgMissionDropInfo) — demo
+        // header metadata stores it lowercased.
+        serverDisplayName: stream.serverDisplayName ?? undefined,
         recorderName: stream.connectedPlayerName ?? undefined,
       });
     };

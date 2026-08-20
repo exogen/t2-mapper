@@ -9,7 +9,9 @@ type Features = {
 };
 
 const defaultFeatures: Features = {
-  live: false,
+  // Live spectating is on by default; the browser-controlled player flow
+  // (warrior name, real joins) stays unexposed until a future feature.
+  live: true,
   stats: false,
 };
 
@@ -30,7 +32,7 @@ export function FeaturesProvider({ children }: { children: ReactNode }) {
         .filter(Boolean),
     );
     return {
-      live: tokens.has("live"),
+      live: defaultFeatures.live || tokens.has("live"),
       stats: tokens.has("stats"),
     };
   });

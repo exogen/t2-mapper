@@ -407,9 +407,10 @@ export function CameraTourConsumer() {
   });
 
   useFrame((_state, delta) => {
-    // In command circuit mode the ortho rig drives the camera (top-down
-    // pans) and tour phase progression; only the click/Escape handlers
-    // above stay in play.
+    // In command circuit mode the ortho rig drives the camera and the
+    // tour pauses (resuming on CC exit); the tour's click/Escape
+    // bindings stay in play — Escape always exits the tour, and only
+    // the C toggle switches the command circuit.
     if (commandCircuitStore.getState().active) return;
 
     const animation = cameraTourStore.getState().animation;

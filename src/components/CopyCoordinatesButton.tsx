@@ -42,7 +42,7 @@ export function CopyCoordinatesButton({
     params.set("mission", missionString);
     if (isCommandCircuit) {
       // Fog is always disabled in command circuit view, so no fog param.
-      params.set("mode", "command");
+      params.set("view", "cc");
     } else {
       params.set("fog", fogEnabled.toString());
     }

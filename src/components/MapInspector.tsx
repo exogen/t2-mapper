@@ -15,6 +15,8 @@ import { type InvalidateFunction } from "@/src/components/ThreeCanvas";
 import { InspectorControls } from "@/src/components/InspectorControls";
 import { MissionSelect } from "@/src/components/MissionSelect";
 import { StreamingMissionInfo } from "@/src/components/StreamingMissionInfo";
+import { ServerBrowserHeader } from "@/src/components/ServerBrowserHeader";
+import { ViewModeToggle } from "@/src/components/ViewModeToggle";
 import { useSettings } from "@/src/components/SettingsProvider";
 import { useAutoScoreScreen } from "@/src/components/useAutoScoreScreen";
 import { useRecording } from "@/src/components/usePlayback";
@@ -28,11 +30,15 @@ import {
   CurrentMission,
   useMissionQueryState,
   useModeQueryState,
+  useViewQueryState,
 } from "@/src/components/useQueryParams";
+import { useQueryState } from "nuqs";
 import {
   commandCircuitStore,
   useCommandCircuit,
 } from "../state/commandCircuitStore";
+import { WatchErrorDialog } from "./WatchErrorDialog";
+import { DemoDropScreen } from "./DemoDropScreen";
 import { statsStore, useStats } from "../state/statsStore";
 import { InputProvider } from "./InputProducer";
 import { VisualInput } from "./VisualInput";
@@ -45,13 +51,11 @@ import {
   useMissionName,
   useMissionType,
 } from "../state/gameEntityStore";
-import { getMissionInfo } from "../manifest";
 import { cameraTourStore, useCameraTour } from "../state/cameraTourStore";
 import { useTouchDevice } from "./useTouchDevice";
 import { GameDialogSpinner } from "./GameDialogSpinner";
 import { ToggleSidebarButton } from "./ToggleSidebarButton";
 import { ExitTourButton } from "./ExitTourButton";
-import { ExitCommandCircuitButton } from "./ExitCommandCircuitButton";
 import styles from "./MapInspector.module.css";
 
 function ViewTransition({ children }: { children: ReactNode }) {
@@ -99,7 +103,6 @@ export function MapInspector() {
     useSettings();
   const { missionName, missionType } = currentMission;
   const [mapInfoOpen, setMapInfoOpen] = useState(false);
-  const [serverBrowserOpen, setServerBrowserOpen] = useState(false);
   const [scoreScreenOpen, setScoreScreenOpen] = useState(false);
   useAutoScoreScreen(setScoreScreenOpen);
   const [choosingMap, setChoosingMap] = useState(false);
@@ -107,12 +110,9 @@ export function MapInspector() {
   const [showLoadingIndicator, setShowLoadingIndicator] = useState(true);
   const isTouch = useTouchDevice();
   const isTourActive = useCameraTour((s) => s.animation !== null);
-  const isCommandCircuit = useCommandCircuit((s) => s.active);
-  // Exit CC takes priority over the streaming eject/disconnect button —
-  // they occupy the same toolbar slot and shouldn't appear together.
-  const showExitCommandCircuit = isCommandCircuit && isTouch && !isTourActive;
 
-  const [viewMode, setViewMode] = useModeQueryState();
+  const [mode, setMode] = useModeQueryState();
+  const [view, setView] = useViewQueryState();
 
   const changeMission = useCallback(
     (mission: CurrentMission) => {
@@ -120,14 +120,17 @@ export function MapInspector() {
       clearFogEnabledOverride();
       // Exit command circuit — switching missions always starts at the
       // default camera view.
-      setViewMode(null);
+      setView(null);
+      setMode("map");
       commandCircuitStore.getState().deactivate();
       setChoosingMap(false);
       cameraTourStore.getState().cancel();
-      // Disconnect from any live server, unload any active recording, and
-      // clear stream state before loading the new mission in map mode.
+      // Leave any live session and close the relay socket — map mode
+      // has no use for it. (leaveServer first so the detach message
+      // goes out before the close.)
       const liveState = liveConnectionStore.getState();
-      liveState.disconnectServer();
+      liveState.leaveServer();
+      liveState.disconnectRelay();
       engineStore.getState().setRecording(null);
       gameEntityStore.getState().endStreaming();
       setCurrentMission(mission);
@@ -137,7 +140,8 @@ export function MapInspector() {
     },
     [
       clearFogEnabledOverride,
-      setViewMode,
+      setView,
+      setMode,
       setCurrentMission,
       isTouch,
       setSidebarOpen,
@@ -149,14 +153,29 @@ export function MapInspector() {
   const recording = useRecording();
   const dataSource = useDataSource();
 
-  // Enter command circuit view when opened via a ?mode=command link. The
-  // URL is left alone when exiting the mode — it only changes when the user
-  // explicitly copies a new link or switches missions.
+  // ── Command circuit view in the URL ──
+  // A shared ?view=cc link opens the command map once the current mode's
+  // data is ready — activate() is a no-op before then. After the pending
+  // restore is consumed, the param mirrors whether the command map is
+  // open, so copying the URL always brings the current view along.
+  const isCommandCircuit = useCommandCircuit((s) => s.active);
+  const liveReady = useLiveSelector((s) => s.liveReady);
+  const ccRestorePendingRef = useRef(view === "cc");
   useEffect(() => {
-    if (viewMode === "command" && dataSource === "map") {
-      commandCircuitStore.getState().activate();
-    }
-  }, [viewMode, dataSource]);
+    if (!ccRestorePendingRef.current) return;
+    const ready =
+      dataSource === "map" ||
+      dataSource === "demo" ||
+      (dataSource === "live" && liveReady);
+    if (!ready) return;
+    ccRestorePendingRef.current = false;
+    commandCircuitStore.getState().activate();
+  }, [dataSource, liveReady]);
+  useEffect(() => {
+    // Leave the param alone until the pending restore has consumed it.
+    if (ccRestorePendingRef.current) return;
+    setView(isCommandCircuit ? "cc" : null);
+  }, [isCommandCircuit, setView]);
 
   // Enter command circuit once a freshly loaded stats file's mission is ready.
   // Gate on the entity store's mission name (set only after the mission
@@ -181,27 +200,15 @@ export function MapInspector() {
   }, [statsPending, dataSource, loadedMissionName]);
   const hasStreamData = dataSource === "demo" || dataSource === "live";
 
-  // Sync the mission query param when streaming data provides a mission name.
-  const streamMissionName = useMissionName();
-  const streamMissionType = useMissionType();
-
-  useEffect(() => {
-    if (!hasStreamData || !streamMissionName) return;
-    try {
-      const info = getMissionInfo(streamMissionName);
-      const matchedType =
-        streamMissionType && info.missionTypes.includes(streamMissionType)
-          ? streamMissionType
-          : undefined;
-      setCurrentMission({
-        missionName: streamMissionName,
-        missionType: matchedType,
-      });
-    } catch {
-      // Mission not in manifest — remove the query param.
-      setCurrentMission(null);
-    }
-  }, [hasStreamData, streamMissionName, streamMissionType, setCurrentMission]);
+  // Streams no longer sync the ?mission param, so anything that names
+  // the current mission must prefer the store's (stream-fed) values.
+  const loadedMissionType = useMissionType();
+  const effectiveMissionName = hasStreamData
+    ? (loadedMissionName ?? "")
+    : missionName;
+  const effectiveMissionType = hasStreamData
+    ? (loadedMissionType ?? undefined)
+    : missionType;
 
   // Cancel "choosing map" when a new recording loads.
   useEffect(() => {
@@ -209,6 +216,178 @@ export function MapInspector() {
       setChoosingMap(false);
     }
   }, [recording]);
+
+  // Keep ?mode= in sync when a demo loads (drag/drop or the sidebar
+  // button work from any mode).
+  useEffect(() => {
+    if (recording?.source === "demo") {
+      setMode("demo");
+    }
+  }, [recording, setMode]);
+
+  // ── Live spectating (shared relay watch sessions) ──
+  const watchStatus = useLiveSelector((s) => s.watchStatus);
+  const watchStatusMessage = useLiveSelector((s) => s.watchStatusMessage);
+  const catchupProgress = useLiveSelector((s) => s.catchupProgress);
+  const watchServer = useLiveSelector((s) => s.watchServer);
+  const relayConnected = useLiveSelector((s) => s.relayConnected);
+  const servers = useLiveSelector((s) => s.servers);
+  const serversLoading = useLiveSelector((s) => s.serversLoading);
+  const listServers = useLiveSelector((s) => s.listServers);
+  const isWatcher = useLiveSelector((s) => s.role === "watcher");
+  const serverAddress = useLiveSelector((s) => s.serverAddress);
+  const disconnectReason = useLiveSelector((s) => s.disconnectReason);
+
+  // Last joined address, surviving leaveServer's reset so the
+  // disconnect dialog can offer Rejoin after a voluntary leave too.
+  const [lastServerAddress, setLastServerAddress] = useState<string | null>(
+    null,
+  );
+  useEffect(() => {
+    if (serverAddress) setLastServerAddress(serverAddress);
+  }, [serverAddress]);
+  // Share links: ?address=ip:port joins that host directly; ?name=Server
+  // joins the first exact name match from the server list.
+  const [autoAddress, setAddressParam] = useQueryState("address");
+  const [autoName, setNameParam] = useQueryState("name");
+
+  // The share-link params only make sense in live mode.
+  useEffect(() => {
+    if (mode !== "live") {
+      if (autoAddress != null) setAddressParam(null);
+      if (autoName != null) setNameParam(null);
+    }
+  }, [mode, autoAddress, autoName, setAddressParam, setNameParam]);
+
+  // The mission param belongs to map mode only. (The parsed value can't
+  // signal absence — it has a default — so check the URL directly.)
+  useEffect(() => {
+    if (mode === "map") return;
+    if (new URLSearchParams(window.location.search).has("mission")) {
+      setCurrentMission(null);
+    }
+  }, [mode, setCurrentMission]);
+
+  const sessionActive = watchStatus !== null && watchStatus !== "ended";
+
+  // Close any open dialogs when the session ends (leave/kick) so they
+  // don't reappear on the next join.
+  useEffect(() => {
+    if (mode === "live" && !sessionActive) {
+      setScoreScreenOpen(false);
+      setMapInfoOpen(false);
+    }
+  }, [mode, sessionActive]);
+
+  // When a session ends (leave/kick), the share-link params no longer
+  // describe the page — drop them. Only on the active→inactive edge so
+  // share links still auto-join on a fresh load.
+  const prevSessionActiveRef = useRef(false);
+  useEffect(() => {
+    if (prevSessionActiveRef.current && !sessionActive) {
+      setNameParam(null);
+      setAddressParam(null);
+    }
+    prevSessionActiveRef.current = sessionActive;
+  }, [sessionActive, setNameParam, setAddressParam]);
+
+  // ── Auto-spectate from a share link ──
+  // One attempt per page load: after a manual leave (or a failed match)
+  // the normal server browser takes over.
+  const [autoJoin, setAutoJoin] = useState<
+    "pending" | "joined" | "notFound" | "off"
+  >(mode === "live" && (autoAddress || autoName) ? "pending" : "off");
+  // Join-failure dialog dismissal; re-arms on the next session so a
+  // later "session ended" failure gets its own transmission.
+  const [errorAcknowledged, setErrorAcknowledged] = useState(false);
+  useEffect(() => {
+    if (sessionActive) setErrorAcknowledged(false);
+  }, [sessionActive]);
+  const requestedListRef = useRef(false);
+  useEffect(() => {
+    if (autoJoin !== "pending" || sessionActive) return;
+    // listServers() lazily connects the relay and is in-flight-guarded;
+    // it also warms the cached list the relay uses to label sessions.
+    if (!relayConnected) {
+      requestedListRef.current = true;
+      listServers();
+      return;
+    }
+    if (autoAddress) {
+      setAutoJoin("joined");
+      watchServer(autoAddress);
+      return;
+    }
+    // Name mode needs the list; wait for a completed query (one request
+    // per attempt — an empty result means there's nothing to match).
+    if (serversLoading) return;
+    if (servers.length === 0) {
+      if (!requestedListRef.current) {
+        requestedListRef.current = true;
+        listServers();
+        return;
+      }
+      setAutoJoin("notFound");
+      return;
+    }
+    const match = servers.find((sv) => sv.name === autoName);
+    if (match) {
+      setAutoJoin("joined");
+      watchServer(match.address);
+    } else {
+      setAutoJoin("notFound");
+    }
+  }, [
+    autoJoin,
+    sessionActive,
+    autoAddress,
+    autoName,
+    relayConnected,
+    servers,
+    serversLoading,
+    listServers,
+    watchServer,
+  ]);
+
+  const handleWatch = useCallback(
+    (address: string) => {
+      watchServer(address);
+      setMode("live");
+      // Joining from the server browser always starts with the sidebar
+      // closed (auto-join links keep the persisted preference).
+      setSidebarOpen(false);
+      // Reflect the joined server in the URL so the link is shareable
+      // (nuqs updates via history.replaceState — no reload). Prefer the
+      // friendly ?name= form; fall back to ?address= when the name is
+      // ambiguous (or unknown) in the current list.
+      const server = servers.find((sv) => sv.address === address);
+      const nameIsUnique =
+        server != null &&
+        servers.filter((sv) => sv.name === server.name).length === 1;
+      if (server && nameIsUnique) {
+        setNameParam(server.name);
+        setAddressParam(null);
+      } else {
+        setAddressParam(address);
+        setNameParam(null);
+      }
+    },
+    [
+      servers,
+      watchServer,
+      setMode,
+      setSidebarOpen,
+      setAddressParam,
+      setNameParam,
+    ],
+  );
+
+  // Reveal the view when the stream goes live on touch devices.
+  useEffect(() => {
+    if (watchStatus === "live" && isTouch) {
+      setSidebarOpen(false);
+    }
+  }, [watchStatus, isTouch, setSidebarOpen]);
 
   // Close the sidebar when a live server connection is established.
   const gameStatus = useLiveSelector((s) => s.gameStatus);
@@ -242,8 +421,20 @@ export function MapInspector() {
     return () => document.removeEventListener("keydown", handleKeyDown);
   }, [setSidebarOpen]);
 
-  const loadingProgress = missionLoadingProgress;
-  const isLoading = loadingProgress < 1;
+  // Watch sessions load until the catch-up stream is live; map mode
+  // tracks mission loading; demo mode starts blank (nothing to load).
+  const watchConnecting =
+    sessionActive && !(watchStatus === "live" && liveReady);
+  const loadingProgress = sessionActive
+    ? watchStatus === "syncing"
+      ? catchupProgress
+      : null
+    : missionLoadingProgress;
+  const isLoading = sessionActive
+    ? watchConnecting
+    : mode === "map"
+      ? missionLoadingProgress < 1
+      : false;
 
   // Keep the loading indicator visible briefly after reaching 100%
   useEffect(() => {
@@ -266,9 +457,34 @@ export function MapInspector() {
 
   const handleOpenMapInfo = useCallback(() => setMapInfoOpen(true), []);
   const handleOpenScoreScreen = useCallback(() => setScoreScreenOpen(true), []);
+  // The Live sidebar button enters live mode: the content area swaps to
+  // the server selector (no modal). Any active recording or dead live
+  // view is cleared so the app isn't playing a demo (or holding a stale
+  // frame) behind the join screen — leaveServer also resets an ended
+  // session's status so its message doesn't resurface as a join error.
   const handleOpenServerBrowser = useCallback(() => {
-    setServerBrowserOpen(true);
-  }, []);
+    liveConnectionStore.getState().leaveServer();
+    engineStore.getState().setRecording(null);
+    gameEntityStore.getState().endStreaming();
+    commandCircuitStore.getState().deactivate();
+    setChoosingMap(false);
+    setMode("live");
+  }, [setMode]);
+
+  // The Demo sidebar button enters demo mode: the content area swaps to
+  // the drag & drop screen, clearing any live session or loaded stream.
+  const handleEnterDemoMode = useCallback(() => {
+    // Leave any live session and close the relay socket — demo mode has
+    // no use for it.
+    const liveState = liveConnectionStore.getState();
+    liveState.leaveServer();
+    liveState.disconnectRelay();
+    engineStore.getState().setRecording(null);
+    gameEntityStore.getState().endStreaming();
+    commandCircuitStore.getState().deactivate();
+    setChoosingMap(false);
+    setMode("demo");
+  }, [setMode]);
   const handleChooseMap = useCallback(() => setChoosingMap(true), []);
   const handleCancelChoosingMap = useCallback(() => {
     setChoosingMap(false);
@@ -276,6 +492,34 @@ export function MapInspector() {
   const handleCanvasCreated = useCallback((state: RootState) => {
     invalidateRef.current = state.invalidate;
   }, []);
+
+  // Live mode without an active session — and without leftover stream
+  // data: the content area shows the server selector (or the share-link
+  // auto-join / failure states leading to it) instead of the 3D view.
+  // A session that ENDS (kick, server gone) keeps rendering its last
+  // frame with "Disconnected" in the toolbar; clicking Live again clears
+  // the stream and lands here.
+  const showJoinScreen = mode === "live" && !sessionActive && !hasStreamData;
+
+  // Demo mode without a recording: the content area shows the drag &
+  // drop landing instead of an empty 3D view.
+  const showDemoScreen = mode === "demo" && !recording && !hasStreamData;
+
+  // A session that ended — kicked, server gone, or a voluntary
+  // disconnect — keeps the last frame rendered and offers rejoin/browse
+  // in the failure dialog (Escape dismisses to the frozen view). Player
+  // connections aren't watch sessions, so they must be excluded here.
+  const showDisconnectDialog =
+    mode === "live" &&
+    !sessionActive &&
+    gameStatus !== "connected" &&
+    hasStreamData &&
+    !errorAcknowledged;
+  const joinErrorMessage = !showJoinScreen ? null : autoJoin === "notFound" ? (
+    <>No server named &ldquo;{autoName}&rdquo; is currently listed.</>
+  ) : watchStatus === "ended" && watchStatusMessage ? (
+    watchStatusMessage
+  ) : null;
 
   return (
     <main className={styles.Frame}>
@@ -295,27 +539,54 @@ export function MapInspector() {
               setSidebarOpen((open) => !open);
             }}
           />
-          <Activity mode={hasStreamData && !choosingMap ? "visible" : "hidden"}>
-            <StreamingMissionInfo hideActionButton={showExitCommandCircuit} />
+          {/* Live sessions show the streaming header from the moment the
+              join starts (status + disconnect), not just once stream data
+              arrives — matching the dedicated watch page's behavior. */}
+          <Activity
+            mode={
+              (hasStreamData || sessionActive) && !choosingMap
+                ? "visible"
+                : "hidden"
+            }
+          >
+            <StreamingMissionInfo onOpenScoreScreen={handleOpenScoreScreen} />
           </Activity>
-          <Activity mode={!hasStreamData || choosingMap ? "visible" : "hidden"}>
+          <Activity
+            mode={
+              (!(hasStreamData || sessionActive) && !showJoinScreen) ||
+              choosingMap
+                ? "visible"
+                : "hidden"
+            }
+          >
             <MissionSelect
-              value={choosingMap ? "" : missionName}
-              missionType={choosingMap ? "" : (missionType ?? "")}
+              value={choosingMap || mode !== "map" ? "" : missionName}
+              missionType={
+                choosingMap || mode !== "map" ? "" : (missionType ?? "")
+              }
               onChange={changeMission}
               autoFocus={choosingMap}
               onCancel={handleCancelChoosingMap}
             />
           </Activity>
+          {showJoinScreen && !choosingMap && <ServerBrowserHeader />}
           {isTourActive && <ExitTourButton />}
-          {showExitCommandCircuit && <ExitCommandCircuitButton />}
+          {dataSource != null && (
+            <ViewModeToggle
+              className={
+                isTourActive
+                  ? styles.ViewModeToggleAfterButton
+                  : styles.ViewModeToggle
+              }
+            />
+          )}
         </header>
         {sidebarOpen ? <div className={styles.Backdrop} /> : null}
         <Activity mode={sidebarOpen ? "visible" : "hidden"}>
           <div className={styles.Sidebar} data-open={sidebarOpen}>
             <InspectorControls
-              missionName={missionName}
-              missionType={missionType}
+              missionName={effectiveMissionName}
+              missionType={effectiveMissionType}
               choosingMap={choosingMap}
               onChangeMission={changeMission}
               invalidateRef={invalidateRef}
@@ -326,6 +597,7 @@ export function MapInspector() {
               onOpenServerBrowser={
                 features.live ? handleOpenServerBrowser : undefined
               }
+              onEnterDemoMode={handleEnterDemoMode}
               onChooseMap={handleChooseMap}
               onCancelChoosingMap={handleCancelChoosingMap}
               onClose={() => {
@@ -336,34 +608,87 @@ export function MapInspector() {
         </Activity>
         <InputProvider>
           <div className={styles.Content}>
-            <div className={styles.ThreeView}>
-              <Suspense>
-                <GameView
-                  missionName={missionName}
-                  missionType={missionType}
-                  dpr={
-                    mapInfoOpen || serverBrowserOpen || scoreScreenOpen
-                      ? 0.25
-                      : undefined
-                  }
-                  onCreated={handleCanvasCreated}
-                  onLoadingChange={handleLoadingChange}
+            {showJoinScreen ? (
+              autoJoin === "pending" ? (
+                <LoadingIndicator isLoading progress={null} />
+              ) : joinErrorMessage != null && !errorAcknowledged ? (
+                <WatchErrorDialog
+                  message={joinErrorMessage}
+                  // Rejoin only applies when the lost server is known
+                  // (session ended) — not for a failed ?name lookup.
+                  onRejoin={(() => {
+                    if (autoJoin === "notFound") return undefined;
+                    const address = serverAddress ?? lastServerAddress;
+                    return address ? () => handleWatch(address) : undefined;
+                  })()}
+                  onBrowse={() => setErrorAcknowledged(true)}
                 />
-              </Suspense>
-            </div>
-            {hasStreamData && !scoreScreenOpen ? (
-              <Suspense>
-                <PlayerHUD />
-              </Suspense>
-            ) : null}
-            {!hasStreamData ? <MapCompass /> : null}
-            <VisualInput />
-            {showLoadingIndicator && (
-              <LoadingIndicator
-                id="loadingIndicator"
-                isLoading={isLoading}
-                progress={loadingProgress}
-              />
+              ) : (
+                <Suspense fallback={<GameDialogSpinner />}>
+                  <ServerBrowser
+                    joinLabel="Join Game"
+                    showWarriorField={false}
+                    onJoin={handleWatch}
+                  />
+                </Suspense>
+              )
+            ) : showDemoScreen ? (
+              <DemoDropScreen />
+            ) : (
+              <>
+                <div className={styles.ThreeView}>
+                  <Suspense>
+                    <GameView
+                      missionName={mode === "map" ? missionName : ""}
+                      missionType={missionType}
+                      spectator={isWatcher}
+                      dpr={
+                        mapInfoOpen || scoreScreenOpen || showDisconnectDialog
+                          ? 0.25
+                          : undefined
+                      }
+                      onCreated={handleCanvasCreated}
+                      onLoadingChange={handleLoadingChange}
+                    />
+                  </Suspense>
+                </div>
+                {hasStreamData && !scoreScreenOpen ? (
+                  <Suspense>
+                    <PlayerHUD />
+                  </Suspense>
+                ) : null}
+                {dataSource === "map" ? <MapCompass /> : null}
+                <VisualInput />
+                {showLoadingIndicator && (
+                  <LoadingIndicator
+                    id="loadingIndicator"
+                    isLoading={isLoading}
+                    progress={loadingProgress}
+                  />
+                )}
+                {showDisconnectDialog ? (
+                  <WatchErrorDialog
+                    // A voluntary leave isn't an error — say so plainly.
+                    title={
+                      disconnectReason === "voluntary"
+                        ? "Transmission ended"
+                        : "Uplink failure"
+                    }
+                    message={
+                      disconnectReason === "voluntary"
+                        ? "Uplink to the server closed. The wilderzone awaits your return."
+                        : (watchStatusMessage ??
+                          "Connection to the server was lost.")
+                    }
+                    onRejoin={(() => {
+                      const address = serverAddress ?? lastServerAddress;
+                      return address ? () => handleWatch(address) : undefined;
+                    })()}
+                    onBrowse={handleOpenServerBrowser}
+                    onDismiss={() => setErrorAcknowledged(true)}
+                  />
+                ) : null}
+              </>
             )}
           </div>
         </InputProvider>
@@ -383,22 +708,9 @@ export function MapInspector() {
             >
               <MapInfoDialog
                 onClose={() => setMapInfoOpen(false)}
-                missionName={missionName}
-                missionType={missionType ?? ""}
+                missionName={effectiveMissionName}
+                missionType={effectiveMissionType ?? ""}
               />
-            </Suspense>
-          </ViewTransition>
-        ) : null}
-        {serverBrowserOpen ? (
-          <ViewTransition>
-            <Suspense
-              fallback={
-                <GameDialogSpinner
-                  onClose={() => setServerBrowserOpen(false)}
-                />
-              }
-            >
-              <ServerBrowser onClose={() => setServerBrowserOpen(false)} />
             </Suspense>
           </ViewTransition>
         ) : null}
