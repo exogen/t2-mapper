@@ -161,7 +161,9 @@ const httpServer = http.createServer(async (req, res) => {
     }
 
     const allOk = Object.values(checks).every((c) => c.ok);
-    res.writeHead(allOk ? 200 : 503, { "Content-Type": "application/json" });
+    res.writeHead(allOk ? 200 : 503, {
+      "Content-Type": "application/json; charset=utf-8",
+    });
     res.end(
       JSON.stringify(
         {
