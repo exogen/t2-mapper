@@ -53,8 +53,9 @@ export class WatchStateAccumulator {
   private teamScores: TeamScoreEntry[] = [];
   private clock: { durationMs: number; receivedAt: number } | null = null;
   /** The match is underway (or seconds away): set by MsgMissionStart
-   *  (start/countdown — idle warmup sends neither) or a running match
-   *  clock. Never true while a server sits in pre-match warmup. */
+   *  (start/countdown — idle warmup sends neither), a running match
+   *  clock, or a team with points on the board (untimed servers send no
+   *  running clock). Never true while a server sits in pre-match warmup. */
   matchStarted = false;
   private missionDisplayName: string | undefined;
   private missionTypeDisplayName: string | undefined;
@@ -245,6 +246,8 @@ export class WatchStateAccumulator {
       if (!isNaN(teamId) && !isNaN(newScore)) {
         const entry = this.teamScores.find((t) => t.teamId === teamId);
         if (entry) entry.score = newScore;
+        // Team objectives only score once the match is running.
+        if (newScore > 0) this.matchStarted = true;
       }
     } else if (msgType === "MsgCTFAddTeam" && args.length >= 6) {
       const teamId = parseInt(this.resolveNetString(args[2]), 10);
@@ -260,6 +263,7 @@ export class WatchStateAccumulator {
             ? ("held" as const)
             : ("home" as const);
       const score = parseInt(this.resolveNetString(args[5]), 10);
+      if (score > 0) this.matchStarted = true;
       const flagCarrier =
         flagStatus === "held" ? statusText.trim() || undefined : undefined;
       if (!isNaN(teamId) && teamId > 0) {
@@ -422,6 +426,9 @@ export class WatchStateAccumulator {
     } else if (msgType === "MsgClientReady" && args.length >= 3) {
       this.gameClassName = this.resolveNetString(args[2]) || this.gameClassName;
       this.matchEnded = false;
+      // Mission-scoped (mirrors the browser): a same-map restart skips
+      // beginMissionChange, so clear here too.
+      this.matchStarted = false;
     } else if (
       msgType === "MsgClearDebrief" ||
       msgType === "MsgDebriefResult"
@@ -507,6 +514,7 @@ export class WatchStateAccumulator {
       gameClassName: this.gameClassName,
       serverDisplayName: this.serverDisplayName,
       matchEnded: this.matchEnded,
+      matchStarted: this.matchStarted,
     };
   }
 }

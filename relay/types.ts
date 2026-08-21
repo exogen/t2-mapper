@@ -94,6 +94,7 @@ export interface WatchHudStatePayload {
   serverDisplayName?: string;
   /** Match-over interval: gameOver debrief seen, next MsgClientReady not. */
   matchEnded?: boolean;
+  matchStarted?: boolean;
 }
 
 /** Target-system entry mirroring InitialBlockData's TargetEntry, with

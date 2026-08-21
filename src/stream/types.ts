@@ -379,6 +379,9 @@ export interface StreamSnapshot {
   /** Match-over interval: the gameOver debrief has arrived and the next
    *  mission's MsgClientReady hasn't. Drives the auto score screen. */
   matchEnded: boolean;
+  /** The match has been seen running (MsgMissionStart or a running clock
+   *  > 60 s); cleared when the next mission drops us in. */
+  matchStarted: boolean;
 }
 
 /** One prefetchable asset; `name` is the game-file name (resolution to a

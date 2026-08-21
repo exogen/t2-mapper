@@ -354,6 +354,20 @@ export abstract class StreamEngine implements StreamingPlayback {
   /** Match-over interval: set by the gameOver debrief burst, cleared when
    *  the next mission's MsgClientReady drops the player in. */
   matchEnded = false;
+  /**
+   * The match has been seen running: MsgMissionStart (countdown/start),
+   * a running clock > 60 s, or a team with points on the board (late
+   * joins — untimed servers never send a running clock). Cleared when
+   * the next mission drops us in. Gates the auto score screen: some
+   * servers send a debrief burst on join, which must not read as a
+   * witnessed match end.
+   */
+  matchStarted = false;
+
+  /** Team objectives only score once the match is running. */
+  protected noteTeamScore(score: number): void {
+    if (score > 0) this.matchStarted = true;
+  }
   /** Server name from MsgMissionDropInfo. */
   serverDisplayName: string | null = null;
   /** Server-assigned name of the connected/recording player. */
@@ -526,6 +540,7 @@ export abstract class StreamEngine implements StreamingPlayback {
     this.clockAnchorStreamSec = null;
     this.clockDurationMs = 0;
     this.matchEnded = false;
+    this.matchStarted = false;
     this.nextExplosionId = 0;
     this.missionDisplayName = null;
     this.missionTypeDisplayName = null;
@@ -2517,6 +2532,7 @@ export abstract class StreamEngine implements StreamingPlayback {
           entry.score = newScore;
           this.onTeamScoresChanged();
         }
+        this.noteTeamScore(newScore);
       }
     } else if (msgType === "MsgCTFAddTeam" && args.length >= 6) {
       // Wire order: args[2]=teamId (1-based), args[3]=teamName,
@@ -2535,6 +2551,7 @@ export abstract class StreamEngine implements StreamingPlayback {
             ? ("held" as const)
             : ("home" as const);
       const score = parseInt(this.resolveNetString(args[5]), 10);
+      if (!isNaN(score)) this.noteTeamScore(score);
       const flagCarrier =
         flagStatus === "held" ? statusText.trim() || undefined : undefined;
       if (!isNaN(teamId) && teamId > 0) {
@@ -2704,6 +2721,15 @@ export abstract class StreamEngine implements StreamingPlayback {
       this.clockDurationMs = Number.isFinite(timeRemainingMS)
         ? timeRemainingMS
         : 0;
+      // A running match clock (late-join case): warmup joiners get 0,0
+      // and pre-start countdown ticks stay under ~30s.
+      if (Number.isFinite(timeRemainingMS) && timeRemainingMS > 60_000) {
+        this.matchStarted = true;
+      }
+    } else if (msgType === "MsgMissionStart") {
+      // Sent for the pre-start countdown ticks and "Match started!" —
+      // idle warmup sends neither.
+      this.matchStarted = true;
     } else if (msgType === "MsgMissionDropInfo" && args.length >= 5) {
       // messageClient(%cl, 'MsgMissionDropInfo', ..., $MissionDisplayName, $MissionTypeDisplayName, $ServerName)
       const missionDisplayName = stripTaggedStringMarkup(
@@ -2773,6 +2799,7 @@ export abstract class StreamEngine implements StreamingPlayback {
       this.gameClassName = gameClassName || this.gameClassName;
       // Dropping into a (new) mission ends any match-over interval.
       this.matchEnded = false;
+      this.matchStarted = false;
       this.onMissionInfoChange?.();
     } else if (
       msgType === "MsgClearDebrief" ||

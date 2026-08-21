@@ -1059,6 +1059,7 @@ class StreamingPlayback extends StreamEngine {
       connectedClientId: this.connectedClientId,
       matchClockMs: this.computeMatchClockMs(timeSec),
       matchEnded: this.matchEnded,
+      matchStarted: this.matchStarted,
       loadInfo: this.serverLoadInfo,
     };
   }

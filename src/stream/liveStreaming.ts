@@ -369,6 +369,10 @@ export class LiveStreamAdapter extends StreamEngine {
     this.gameClassName = hud.gameClassName ?? null;
     this.serverDisplayName = hud.serverDisplayName ?? null;
     this.matchEnded = hud.matchEnded ?? false;
+    // Older relays don't send matchStarted; a running clock in the
+    // payload proves the match is underway just as well.
+    this.matchStarted =
+      hud.matchStarted ?? (hud.clock != null && hud.clock.durationMs > 60_000);
     if (!hud.missionDisplayName) {
       // Should repopulate via MsgMissionDropInfo shortly (e.g. attach
       // landed mid mission-change); logged to trace occurrences where
@@ -432,6 +436,8 @@ export class LiveStreamAdapter extends StreamEngine {
       // called resetGhosting before sending this) and update mission name.
       if (newMissionName && newMissionName !== this.missionName) {
         this.missionName = newMissionName;
+        // Mission-scoped, like the relay's beginMissionChange.
+        this.matchStarted = false;
         this.entities.clear();
         this.entityIdByGhostIndex.clear();
         this._ready = false;
@@ -910,6 +916,7 @@ export class LiveStreamAdapter extends StreamEngine {
       connectedClientId: this.connectedClientId,
       matchClockMs: this.computeMatchClockMs(timeSec),
       matchEnded: this.matchEnded,
+      matchStarted: this.matchStarted,
       loadInfo: this.serverLoadInfo,
     };
 
