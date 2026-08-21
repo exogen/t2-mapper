@@ -36,6 +36,9 @@ export interface DemoRecorderOptions {
   getServerInfo: () => ServerInfo | undefined;
   /** Current non-observer player count (sampled; the peak decides keep). */
   getActivePlayerCount: () => number;
+  /** Whether the match is underway (sampled; sticky — a demo that never
+   *  saw the match start is dropped as pre-match warmup). */
+  getMatchStarted: () => boolean;
   recorderName: string;
   /** Compressed size cap; recorder self-aborts beyond it. */
   maxBytes: number;
@@ -94,6 +97,7 @@ export class DemoRecorder {
   private t0: number | null = null;
   private moveCount = 0;
   private peakPlayers = 0;
+  private matchStarted = false;
   private _failure: string | null = null;
 
   constructor(opts: DemoRecorderOptions) {
@@ -120,6 +124,9 @@ export class DemoRecorder {
     if (this._state !== "buffering" && this._state !== "recording") return;
     const players = this.opts.getActivePlayerCount();
     if (players > this.peakPlayers) this.peakPlayers = players;
+    if (!this.matchStarted && this.opts.getMatchStarted()) {
+      this.matchStarted = true;
+    }
     const now = this.opts.now?.() ?? Date.now();
     // Always copy: the input is a view over the dgram pool buffer, and
     // both the queue and the deflate stream hold bytes past this call.
@@ -277,6 +284,13 @@ export class DemoRecorder {
     if (this._state !== "buffering" && this._state !== "recording") {
       return null;
     }
+    // Final samples — the keep gates below run on up-to-date state even
+    // if no packet arrived since the last change.
+    const players = this.opts.getActivePlayerCount();
+    if (players > this.peakPlayers) this.peakPlayers = players;
+    if (!this.matchStarted && this.opts.getMatchStarted()) {
+      this.matchStarted = true;
+    }
     const writer = this.writer;
     if (this._state === "buffering" || !writer) {
       log.debug(
@@ -306,6 +320,15 @@ export class DemoRecorder {
           reason,
         },
         "Dropping demo with too few players",
+      );
+      await writer.abort();
+      this.setState("aborted");
+      return null;
+    }
+    if (!this.matchStarted) {
+      log.info(
+        { address: this.opts.address, durationMs, reason },
+        "Dropping pre-match demo (match never started)",
       );
       await writer.abort();
       this.setState("aborted");

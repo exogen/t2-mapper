@@ -43,6 +43,11 @@ const CATCHUP_CHUNK_BYTES = 256 * 1024;
 /** Min gap between recording-driven mission-cycle reconnects — a second
  *  cycle sooner than this rides in place instead (no reconnect loops). */
 const CYCLE_RECONNECT_MIN_MS = 60_000;
+/** How long watchers keep the frozen end-of-match state (scoreboard,
+ *  game-over sound, end chat) before a mission-cycle rotation reconnects. */
+function cycleLingerMs(): number {
+  return parseInt(process.env.WATCH_CYCLE_LINGER_MS || "5000", 10);
+}
 
 function toWatchStatus(status: ConnectionStatus): WatchStatus {
   switch (status) {
@@ -206,6 +211,9 @@ export class WatchSession {
   /** One recorder per connection epoch (one connection = one demo). */
   private recorder: DemoRecorder | null = null;
   private lastCycleReconnectAt = 0;
+  /** Mission-cycle rotation pending: stream frozen until reconnect. */
+  private rotating = false;
+  private rotateTimer: ReturnType<typeof setTimeout> | null = null;
   private destroyed = false;
   private lastStatus: ConnectionStatus = "connecting";
   private lastPingMs: number | null = null;
@@ -255,6 +263,11 @@ export class WatchSession {
 
   start(): void {
     this.stopRecording("restart");
+    if (this.rotateTimer) {
+      clearTimeout(this.rotateTimer);
+      this.rotateTimer = null;
+    }
+    this.rotating = false;
     this.epoch++;
     this.connectSynced = false;
     this.packetCount = 0;
@@ -275,6 +288,7 @@ export class WatchSession {
         getConnectSequence: () => conn.connectSequence,
         getServerInfo: () => this.options.getCachedServer(this.key),
         getActivePlayerCount: () => this.watchState.countActivePlayers(),
+        getMatchStarted: () => this.watchState.matchStarted,
         onStateChange: () => this.fanOutSessionStatus(),
       }) ?? null;
 
@@ -464,6 +478,7 @@ export class WatchSession {
     this.destroyed = true;
     this.cancelIdleTimer();
     if (this.retryTimer) clearTimeout(this.retryTimer);
+    if (this.rotateTimer) clearTimeout(this.rotateTimer);
     this.stopScoresPoll();
     this.stopRecording(reason ?? "session ended");
     if (reason) {
@@ -488,6 +503,10 @@ export class WatchSession {
   // ── Packet pipeline ──
 
   private handlePacket(data: Uint8Array): void {
+    // Frozen for a pending mission-cycle rotation: the epoch's parser
+    // state is dead and watchers are deliberately left on their
+    // end-of-match view until the reconnect re-hydrates them.
+    if (this.rotating) return;
     this.syncConnectSequence(data);
     let parsed;
     try {
@@ -521,6 +540,10 @@ export class WatchSession {
       for (const event of parsed.events) {
         if (event.parsedData) this.handleResponderEvent(event.parsedData);
       }
+
+      // The packet that triggered a rotation (EndGhosting) is recorded
+      // but NOT forwarded — watchers keep the final world frozen.
+      if (this.rotating) return;
 
       // Invariant: the accumulator must mirror the parser's ghost tracker
       // exactly — any mismatch would seed late joiners with a tracker
@@ -627,16 +650,23 @@ export class WatchSession {
       return;
     }
     this.lastCycleReconnectAt = now;
+    const lingerMs = cycleLingerMs();
     relayLog.info(
-      { address: this.key, trigger },
+      { address: this.key, trigger, lingerMs },
       "Mission cycle — rotating demo recording via reconnect",
     );
     this.stopRecording(`mission-cycle (${trigger})`);
-    // Defer past the current packet's accumulate/forward pass.
-    setImmediate(() => {
-      if (this.destroyed || !this.connection) return;
+    // Freeze the stream (no more parsing or forwarding) so watchers
+    // keep the end-of-match state — scoreboard, game-over sound, end
+    // chat — for a few seconds before the new epoch re-hydrates them.
+    // The fresh connection re-downloads everything regardless, so the
+    // delay costs the next mission's demo nothing.
+    this.rotating = true;
+    this.rotateTimer = setTimeout(() => {
+      this.rotateTimer = null;
+      if (this.destroyed || !this.rotating) return;
       this.reconnect("Mission changing...");
-    });
+    }, lingerMs);
   }
 
   /**
@@ -784,8 +814,9 @@ export class WatchSession {
   private deliverCatchup(ws: WebSocket): void {
     if (this.destroyed || !this.pending.has(ws)) return;
     // A re-sync may have started mid-delivery-loop; these watchers get a
-    // fresh catch-up once the new connection is live.
-    if (this.lastStatus !== "connected") return;
+    // fresh catch-up once the new connection is live. Same for a pending
+    // rotation — its post-EndGhosting state would seed an empty world.
+    if (this.lastStatus !== "connected" || this.rotating) return;
     // Never seed a joiner from diverged state — re-sync instead.
     if (!this.checkAccumulatorInvariant("catchup-build")) {
       this.resyncSession("ghost accumulator diverged");

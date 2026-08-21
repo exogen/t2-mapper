@@ -382,8 +382,14 @@ describe("WatchSessionManager", () => {
 });
 
 describe("WatchSession demo recording", () => {
-  // Real timers: recorder finalize does real fs work; EndGhosting
-  // reconnects defer through setImmediate.
+  // Real timers: recorder finalize does real fs work. The mission-cycle
+  // linger is zeroed so rotations happen on the next timer tick.
+  beforeEach(() => {
+    process.env.WATCH_CYCLE_LINGER_MS = "0";
+  });
+  afterEach(() => {
+    delete process.env.WATCH_CYCLE_LINGER_MS;
+  });
   const flushImmediate = () => new Promise((r) => setImmediate(r));
 
   async function createRecordingManager(
@@ -466,14 +472,13 @@ describe("WatchSession demo recording", () => {
     const session = getSession(manager);
     connections[0].setStatus("connected");
     firePhase1(session, "Katabatic");
+    // Satisfy the keep gates (players gate is 0 in these tests).
+    session.watchState.matchStarted = true;
     const firstRecorder = session.recorder;
 
     fireEndGhosting(session);
     expect(session.recorder).toBeNull();
-    await flushImmediate();
-    await flushImmediate();
-
-    expect(connections).toHaveLength(2);
+    await vi.waitFor(() => expect(connections).toHaveLength(2));
     expect(connections[0].disconnectCalls).toBe(1);
     expect(session.resyncCount).toBe(0);
     connections[1].setStatus("connected");
@@ -532,15 +537,13 @@ describe("WatchSession demo recording", () => {
     firePhase1(session, "Katabatic");
 
     fireEndGhosting(session);
-    await flushImmediate();
-    await flushImmediate();
-    expect(connections).toHaveLength(2);
+    await vi.waitFor(() => expect(connections).toHaveLength(2));
     connections[1].setStatus("connected");
     firePhase1(session, "Damnation");
 
     fireEndGhosting(session);
     await flushImmediate();
-    await flushImmediate();
+    await new Promise((r) => setTimeout(r, 25));
     // No third connection — but the recording still stopped.
     expect(connections).toHaveLength(2);
     expect(session.recorder).toBeNull();

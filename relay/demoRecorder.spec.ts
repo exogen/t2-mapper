@@ -65,6 +65,7 @@ describe("DemoRecorder", () => {
       minLengthMs?: number;
       minPlayers?: number;
       playerCount?: () => number;
+      matchStarted?: () => boolean;
     } = {},
   ) {
     return new DemoRecorder({
@@ -73,6 +74,7 @@ describe("DemoRecorder", () => {
       getConnectSequence: () => CONNECT_SEQUENCE,
       getServerInfo: () => serverInfo,
       getActivePlayerCount: overrides.playerCount ?? (() => 2),
+      getMatchStarted: overrides.matchStarted ?? (() => true),
       recorderName: "Observer",
       maxBytes: 512 * 1024 * 1024,
       minLengthMs: overrides.minLengthMs ?? 0,
@@ -186,6 +188,31 @@ describe("DemoRecorder", () => {
     recorder.onPacket(buildPingPacket(1));
     recorder.setMissionName("Katabatic");
     players = 0;
+    time += 1000;
+    recorder.onPacket(buildPingPacket(2));
+    const result = await recorder.finalize("test");
+    expect(result).not.toBeNull();
+  });
+
+  it("drops demos where the match never started (pre-match warmup)", async () => {
+    const recorder = createRecorder({ matchStarted: () => false });
+    recorder.onPacket(buildPingPacket(1));
+    recorder.setMissionName("Katabatic");
+    time += 1000;
+    recorder.onPacket(buildPingPacket(2));
+    const result = await recorder.finalize("test");
+    expect(result).toBeNull();
+    expect(recorder.state).toBe("aborted");
+    expect(recorder.failure).toBeNull();
+    expect(await fsp.readdir(dir)).toEqual([]);
+  });
+
+  it("keeps demos once the match started, even mid-recording", async () => {
+    let started = false;
+    const recorder = createRecorder({ matchStarted: () => started });
+    recorder.onPacket(buildPingPacket(1));
+    recorder.setMissionName("Katabatic");
+    started = true;
     time += 1000;
     recorder.onPacket(buildPingPacket(2));
     const result = await recorder.finalize("test");

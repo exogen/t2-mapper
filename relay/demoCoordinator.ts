@@ -26,6 +26,7 @@ export type SessionRecorderOptions = Pick<
   | "getConnectSequence"
   | "getServerInfo"
   | "getActivePlayerCount"
+  | "getMatchStarted"
   | "onStateChange"
 >;
 

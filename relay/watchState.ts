@@ -59,6 +59,10 @@ export class WatchStateAccumulator {
   private playerRoster = new Map<number, RosterEntry>();
   private teamScores: TeamScoreEntry[] = [];
   private clock: { durationMs: number; receivedAt: number } | null = null;
+  /** The match is underway (or seconds away): set by MsgMissionStart
+   *  (start/countdown — idle warmup sends neither) or a running match
+   *  clock. Never true while a server sits in pre-match warmup. */
+  matchStarted = false;
   private missionDisplayName: string | undefined;
   private missionTypeDisplayName: string | undefined;
   private gameClassName: string | undefined;
@@ -86,6 +90,7 @@ export class WatchStateAccumulator {
     this.missionTypeDisplayName = undefined;
     this.gameClassName = undefined;
     this.serverDisplayName = undefined;
+    this.matchStarted = false;
   }
 
   resolveNetString(s: string): string {
@@ -379,6 +384,16 @@ export class WatchStateAccumulator {
         durationMs: Number.isFinite(timeRemainingMS) ? timeRemainingMS : 0,
         receivedAt: Date.now(),
       };
+      // A running match clock (late-join case): warmup joiners get 0,0
+      // and pre-start countdown ticks stay under ~30s.
+      if (Number.isFinite(timeRemainingMS) && timeRemainingMS > 60_000) {
+        this.matchStarted = true;
+      }
+    } else if (msgType === "MsgMissionStart") {
+      // Sent by DefaultGame::startMatch ("Match started!") and by the
+      // pre-start countdown ticks — never during idle warmup. Either
+      // way the match is underway or seconds from it.
+      this.matchStarted = true;
     } else if (msgType === "MsgMissionDropInfo" && args.length >= 5) {
       const missionDisplayName = stripTaggedStringMarkup(
         this.resolveNetString(args[2]),

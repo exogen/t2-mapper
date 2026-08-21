@@ -2692,10 +2692,13 @@ export abstract class StreamEngine implements StreamingPlayback {
         }
       }
     } else if (msgType === "MsgSystemClock" && args.length >= 4) {
-      // Wire order: args[2]=timeLimitMinutes, args[3]=timeRemainingMS
-      // The real client calls clockHud.setTime(timeRemainingMS / 60000).
-      // setTime(0) → count-up clock (pre-match elapsed).
-      // setTime(N) → count-down clock (N minutes remaining).
+      // Wire order: args[2]=timeLimitMinutes, args[3]=timeRemainingMS.
+      // Binary-verified (HudClock 0x004fe7e0/0x004fe8a0): the client
+      // calls clockHud.setTime(timeRemainingMS / 60000), which stores a
+      // single deadline; each frame renders abs(now - deadline) — so
+      // 0 counts up from 00:00 (untimed/joiner sync), N counts down and
+      // passes through zero into count-up overtime. args[2] is dead
+      // data on the client ($Hud::TimeLimit, never read).
       const timeRemainingMS = parseFloat(this.resolveNetString(args[3]));
       this.clockAnchorStreamSec = this.getTimeSec();
       this.clockDurationMs = Number.isFinite(timeRemainingMS)
