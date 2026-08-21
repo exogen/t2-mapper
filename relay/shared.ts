@@ -17,6 +17,16 @@ export const AUTH_COMMANDS: readonly string[] = [
 /** Auto-reconnect policy for retryable game-server disconnects. */
 export const MAX_RETRIES = 3;
 export const RETRY_DELAY_MS = 6000;
+
+/** Remove T2 tagged-string display markup (control bytes like
+ *  \x10\x0e…\x11 wrapping player names). */
+export function stripTaggedStringMarkup(s: string): string {
+  let stripped = "";
+  for (let i = 0; i < s.length; i++) {
+    if (s.charCodeAt(i) >= 0x20) stripped += s[i];
+  }
+  return stripped;
+}
 const RETRYABLE_REASONS = ["Server is cycling mission"];
 
 export function isRetryableDisconnect(message: string | undefined): boolean {

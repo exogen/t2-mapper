@@ -108,6 +108,20 @@ export class WatchSessionManager {
     session.ensureIdleGrace();
   }
 
+  /** Patrol: create (if needed) and pin a session — exempt from idle
+   *  teardown until unpinned. */
+  pin(address: string): void {
+    this.getOrCreateSession(address).pin();
+  }
+
+  unpin(address: string): void {
+    this.sessions.get(normalizeAddress(address))?.unpin();
+  }
+
+  getSession(address: string): WatchSession | undefined {
+    return this.sessions.get(normalizeAddress(address));
+  }
+
   private getOrCreateSession(address: string): WatchSession {
     const key = normalizeAddress(address);
     let session = this.sessions.get(key);
@@ -154,12 +168,14 @@ export class WatchSessionManager {
     status: WatchStatus;
     watchers: number;
     recording: boolean;
+    pinned: boolean;
   }> {
     return [...this.sessions.values()].map((s) => ({
       address: s.key,
       status: s.watchStatus,
       watchers: s.watcherCount,
       recording: s.recording,
+      pinned: s.isPinned,
     }));
   }
 
@@ -214,6 +230,8 @@ export class WatchSession {
   /** Mission-cycle rotation pending: stream frozen until reconnect. */
   private rotating = false;
   private rotateTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Patrol pin: exempt from idle teardown while set. */
+  private pinned = false;
   private destroyed = false;
   private lastStatus: ConnectionStatus = "connecting";
   private lastPingMs: number | null = null;
@@ -332,9 +350,37 @@ export class WatchSession {
   /** Start the idle grace clock when no watchers are attached — used
    *  for warm-started sessions, which would otherwise never expire. */
   ensureIdleGrace(): void {
-    if (!this.destroyed && this.watcherCount === 0 && !this.idleTimer) {
+    if (
+      !this.destroyed &&
+      !this.pinned &&
+      this.watcherCount === 0 &&
+      !this.idleTimer
+    ) {
       this.startIdleTimer();
     }
+  }
+
+  // ── Patrol pinning ──
+
+  get isPinned(): boolean {
+    return this.pinned;
+  }
+
+  /** Accurate non-observer player count (post-join roster). */
+  get activePlayerCount(): number {
+    return this.watchState.countActivePlayers();
+  }
+
+  /** Exempt this session from idle teardown (patrol recording). */
+  pin(): void {
+    if (this.destroyed) return;
+    this.pinned = true;
+    this.cancelIdleTimer();
+  }
+
+  unpin(): void {
+    this.pinned = false;
+    this.ensureIdleGrace();
   }
 
   /** Deploy/restart imminent: watchers should reattach, not give up. */
@@ -357,7 +403,7 @@ export class WatchSession {
     const removed = this.watchers.delete(ws) || this.pending.delete(ws);
     if (!removed) return;
     this.broadcastWatcherCount();
-    if (this.watcherCount === 0) {
+    if (this.watcherCount === 0 && !this.pinned) {
       this.startIdleTimer();
     }
   }
@@ -429,7 +475,14 @@ export class WatchSession {
       // change ("Server is cycling mission") and terminal disconnects.
       this.stopRecording(`disconnected: ${message ?? "unknown"}`);
       const retryable = isRetryableDisconnect(message);
-      if (retryable && this.retryCount < MAX_RETRIES && this.watcherCount > 0) {
+      // Pinned (patrol) sessions retry like watched ones — without this
+      // a disconnect-style mission cycle would destroy the session and
+      // cost the next mission's recording.
+      if (
+        retryable &&
+        this.retryCount < MAX_RETRIES &&
+        (this.watcherCount > 0 || this.pinned)
+      ) {
         this.retryCount++;
         relayLog.info(
           { address: this.key, attempt: this.retryCount },
@@ -449,7 +502,7 @@ export class WatchSession {
         });
         this.retryTimer = setTimeout(() => {
           this.retryTimer = null;
-          if (!this.destroyed && this.watcherCount > 0) {
+          if (!this.destroyed && (this.watcherCount > 0 || this.pinned)) {
             this.start();
           }
         }, RETRY_DELAY_MS);

@@ -122,6 +122,7 @@ describe("WatchSessionManager", () => {
         status: "connecting",
         watchers: 2,
         recording: false,
+        pinned: false,
       },
     ]);
   });
@@ -332,6 +333,20 @@ describe("WatchSessionManager", () => {
       .filter((m) => m.type === "sessionStatus");
     expect(statuses.at(-1)).toMatchObject({ status: "ended" });
     expect(manager.getStatusSummary()).toEqual([]);
+  });
+
+  it("retries retryable disconnects for pinned sessions with no watchers", () => {
+    const { manager, connections } = createManager();
+    manager.pin("1.2.3.4:28000");
+    expect(connections).toHaveLength(1);
+    connections[0].setStatus("connected");
+
+    // A disconnect-style mission cycle must not destroy a patrol
+    // session — the next mission's recording depends on the retry.
+    connections[0].setStatus("disconnected", "Server is cycling mission");
+    expect(manager.getStatusSummary()).toHaveLength(1);
+    vi.advanceTimersByTime(6000);
+    expect(connections).toHaveLength(2);
   });
 
   it("announces relayRestarting to watchers before shutdown teardown", () => {

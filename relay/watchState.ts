@@ -1,4 +1,5 @@
 import type { PacketData, ParsedData, SensorGroupColor } from "t2-demo-parser";
+import { stripTaggedStringMarkup } from "./shared.js";
 import type { WatchHudStatePayload, WatchTargetEntry } from "./types.js";
 
 /**
@@ -28,14 +29,6 @@ interface TeamScoreEntry {
   score: number;
   flagStatus?: "home" | "field" | "held";
   flagCarrier?: string;
-}
-
-function stripTaggedStringMarkup(s: string): string {
-  let stripped = "";
-  for (let i = 0; i < s.length; i++) {
-    if (s.charCodeAt(i) >= 0x20) stripped += s[i];
-  }
-  return stripped;
 }
 
 export class WatchStateAccumulator {

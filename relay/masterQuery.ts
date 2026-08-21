@@ -2,6 +2,7 @@ import dgram from "node:dgram";
 import { BitStream } from "t2-demo-parser";
 import type { ServerInfo } from "./types.js";
 import { buildGamePingRequest, buildGameInfoRequest } from "./protocol.js";
+import { stripTaggedStringMarkup } from "./shared.js";
 import { masterLog } from "./logger.js";
 
 const QUERY_TIMEOUT_MS = 5000;
@@ -105,6 +106,66 @@ interface GameInfo {
   playerCount: number;
   maxPlayers: number;
   botCount: number;
+  teams?: ServerTeam[];
+  players?: ServerPlayer[];
+}
+
+export interface ServerTeam {
+  name: string;
+  score: number;
+}
+
+export interface ServerPlayer {
+  name: string;
+  /** Team display name; observers carry $teamName[0] ("Unassigned"),
+   *  which is never among the header teams (1..numTeams). */
+  team: string;
+  score: number;
+}
+
+/**
+ * Parse DefaultGame::getServerStatusString (defaultGame.cs:3347), the
+ * roster blob at the tail of the retail GameInfoResponse:
+ *
+ *   numTeams
+ *   teamName\tscore          × numTeams
+ *   clientCount              (includes observers and bots)
+ *   name\tteamName\tscore    × clientCount
+ */
+export function parseServerStatusString(
+  status: string,
+): { teams: ServerTeam[]; players: ServerPlayer[] } | null {
+  const lines = status.split("\n");
+  let index = 0;
+  const numTeams = parseInt(lines[index++] ?? "", 10);
+  if (!Number.isFinite(numTeams) || numTeams < 0 || numTeams > 32) return null;
+  const teams: ServerTeam[] = [];
+  for (let i = 0; i < numTeams; i++) {
+    const fields = (lines[index++] ?? "").split("\t");
+    if (!fields[0]) return null;
+    teams.push({
+      name: stripTaggedStringMarkup(fields[0]).trim(),
+      score: parseInt(fields[1] ?? "0", 10) || 0,
+    });
+  }
+  const clientCount = parseInt(lines[index++] ?? "", 10);
+  if (!Number.isFinite(clientCount) || clientCount < 0 || clientCount > 255) {
+    return null;
+  }
+  const players: ServerPlayer[] = [];
+  for (let i = 0; i < clientCount && index < lines.length; i++) {
+    const fields = (lines[index++] ?? "").split("\t");
+    // Names arrive wrapped in tagged-string display markup (\x10..\x11
+    // control bytes, live-verified) — strip it, like the app does.
+    const name = stripTaggedStringMarkup(fields[0] ?? "").trim();
+    if (!name) continue;
+    players.push({
+      name,
+      team: stripTaggedStringMarkup(fields[1] ?? "").trim(),
+      score: parseInt(fields[2] ?? "0", 10) || 0,
+    });
+  }
+  return { teams, players };
 }
 
 /** Two-phase UDP query: ping first, then info request. */
@@ -252,6 +313,8 @@ async function queryServers(addresses: string[]): Promise<ServerInfo[]> {
       ping: ping.ping,
       buildVersion: ping.buildVersion,
       passwordRequired: info ? (info.status & 0x02) !== 0 : false,
+      ...(info?.teams ? { teams: info.teams } : {}),
+      ...(info?.players ? { players: info.players } : {}),
     });
   }
 
@@ -308,6 +371,8 @@ function parsePingResponse(data: Buffer, sendTime?: number): PingInfo | null {
  *   U8   botCount
  *   U16  cpuMhz
  *   HuffString  serverInfo ($Host::Info — description, NOT the name)
+ *   U16  statusLen                          (writeLongCString 0x005c8800)
+ *   U8[statusLen]  statusString             (getServerStatusString roster)
  */
 function parseInfoResponse(data: Buffer): GameInfo | null {
   if (data.length < 7 || data[0] !== 20) return null;
@@ -322,7 +387,7 @@ function parseInfoResponse(data: Buffer): GameInfo | null {
     const playerCount = bs.readU8();
     const maxPlayers = bs.readU8();
     const botCount = bs.readU8();
-    return {
+    const info: GameInfo = {
       mod,
       gameType,
       mapName,
@@ -331,6 +396,26 @@ function parseInfoResponse(data: Buffer): GameInfo | null {
       maxPlayers,
       botCount,
     };
+    // The roster tail is best-effort: full servers can truncate the
+    // packet (2048-byte client buffer), and a mod may replace the
+    // format — a bad tail never invalidates the fields above.
+    try {
+      bs.readU16(); // cpuMhz
+      bs.readString(); // serverInfo ($Host::Info)
+      const statusLen = bs.readU16();
+      let statusString = "";
+      for (let i = 0; i < statusLen; i++) {
+        statusString += String.fromCharCode(bs.readU8());
+      }
+      const roster = parseServerStatusString(statusString);
+      if (roster) {
+        info.teams = roster.teams;
+        info.players = roster.players;
+      }
+    } catch {
+      // Tail truncated or unparseable — counts-only info.
+    }
+    return info;
   } catch {
     return null;
   }

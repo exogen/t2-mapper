@@ -155,6 +155,10 @@ export interface ServerInfo {
   ping: number;
   buildVersion: number;
   passwordRequired: boolean;
+  /** Roster from the info-response status tail (getServerStatusString);
+   *  absent when the tail was missing, truncated, or mod-mangled. */
+  teams?: Array<{ name: string; score: number }>;
+  players?: Array<{ name: string; team: string; score: number }>;
 }
 
 export type ConnectionStatus =

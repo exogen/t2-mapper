@@ -10,6 +10,7 @@ import { loadCredentials } from "./auth.js";
 import { WatchSessionManager, normalizeAddress } from "./watchSession.js";
 import { DemoCoordinator } from "./demoCoordinator.js";
 import { DemoUploader, loadUploadConfig } from "./demoUpload.js";
+import { Patroller } from "./patrol.js";
 import {
   AUTH_COMMANDS,
   MAX_RETRIES,
@@ -55,6 +56,50 @@ const DEMO_MIN_PLAYERS = parseInt(process.env.DEMO_MIN_PLAYERS || "2", 10);
  *  (warm-boot continuity for deploys). Unwritable path = feature off. */
 const WATCH_STATE_PATH =
   process.env.WATCH_STATE_PATH || "/data/watch-state.json";
+
+// ── Server patrol (auto-record without watchers; needs recording on) ──
+const DEMO_PATROL_ENABLED =
+  process.env.DEMO_PATROL_ENABLED === "1" ||
+  process.env.DEMO_PATROL_ENABLED === "true";
+/** JSON array (precise) or comma-separated globs matched against
+ *  server names — `*` wildcard, no `*` = exact, case-insensitive. */
+function parsePatrolServers(raw: string | undefined): string[] {
+  if (!raw) return [];
+  const trimmed = raw.trim();
+  if (trimmed.startsWith("[")) {
+    try {
+      const parsed: unknown = JSON.parse(trimmed);
+      if (Array.isArray(parsed)) {
+        return parsed.filter((p): p is string => typeof p === "string");
+      }
+    } catch {
+      relayLog.error("DEMO_PATROL_SERVERS looks like JSON but failed to parse");
+      return [];
+    }
+  }
+  return trimmed
+    .split(",")
+    .map((p) => p.trim())
+    .filter(Boolean);
+}
+const DEMO_PATROL_SERVERS = parsePatrolServers(process.env.DEMO_PATROL_SERVERS);
+/** Mission-type display names to patrol (same glob rules as the server
+ *  list); empty = all types. */
+const DEMO_PATROL_MISSION_TYPES = parsePatrolServers(
+  process.env.DEMO_PATROL_MISSION_TYPES,
+);
+const DEMO_PATROL_MIN_PLAYERS = parseInt(
+  process.env.DEMO_PATROL_MIN_PLAYERS || `${DEMO_MIN_PLAYERS}`,
+  10,
+);
+const DEMO_PATROL_MAX_SESSIONS = parseInt(
+  process.env.DEMO_PATROL_MAX_SESSIONS || "4",
+  10,
+);
+const DEMO_PATROL_INTERVAL_MS = parseInt(
+  process.env.DEMO_PATROL_INTERVAL_MS || "60000",
+  10,
+);
 const DEMO_UPLOAD_RETRY_MS = parseInt(
   process.env.DEMO_UPLOAD_RETRY_MS || `${5 * 60_000}`,
   10,
@@ -154,6 +199,13 @@ const httpServer = http.createServer(async (req, res) => {
           ...demoCoordinator.getStats(),
           upload: demoUploader.getStats(),
           disk: { freeBytes, recFiles, partialFiles },
+          patrol: patroller
+            ? {
+                enabled: true,
+                patterns: DEMO_PATROL_SERVERS.length,
+                pinned: patroller.pinnedCount,
+              }
+            : { enabled: false },
         },
       };
     } else {
@@ -310,6 +362,25 @@ const watchSessions = new WatchSessionManager({
   onSessionsChanged: persistWatchState,
 });
 
+const patroller =
+  DEMO_RECORD_ENABLED && DEMO_PATROL_ENABLED && DEMO_PATROL_SERVERS.length > 0
+    ? new Patroller({
+        patterns: DEMO_PATROL_SERVERS,
+        missionTypes: DEMO_PATROL_MISSION_TYPES,
+        minPlayers: DEMO_PATROL_MIN_PLAYERS,
+        maxSessions: DEMO_PATROL_MAX_SESSIONS,
+        intervalMs: DEMO_PATROL_INTERVAL_MS,
+        getServerList,
+        sessions: watchSessions,
+      })
+    : null;
+patroller?.start();
+if (DEMO_PATROL_ENABLED && !patroller) {
+  relayLog.warn(
+    "DEMO_PATROL_ENABLED is set but patrol is inactive (recording disabled or empty DEMO_PATROL_SERVERS)",
+  );
+}
+
 // Warm boot: reconnect to servers that were being watched before the
 // restart so returning watchers get near-instant catch-up. Idle grace
 // tears these down if nobody comes back.
@@ -391,6 +462,8 @@ for (const signal of ["SIGTERM", "SIGINT", "SIGHUP"] as const) {
     if (shuttingDown) return;
     shuttingDown = true;
     logExit(`received ${signal} — shutting down watch sessions and exiting`);
+    // Stop the patrol first so a late tick can't re-create sessions.
+    patroller?.stop();
     // Session teardown detaches every recorder into the coordinator;
     // drain those finalizes (fast local file work, never uploads — the
     // next boot's sweep uploads from the persistent volume) then exit.
