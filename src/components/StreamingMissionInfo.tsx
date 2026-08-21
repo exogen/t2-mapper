@@ -16,7 +16,13 @@ import {
 } from "../state/liveConnectionStore";
 import { useRecording } from "./usePlayback";
 import { unloadDemo } from "../stream/demoFileLoader";
-import { LuCircleArrowOutUpLeft, LuEye, LuUser, LuUsers } from "react-icons/lu";
+import {
+  LuCircleArrowOutUpLeft,
+  LuClock,
+  LuEye,
+  LuUser,
+  LuUsers,
+} from "react-icons/lu";
 import { PiCassetteTapeFill } from "react-icons/pi";
 import { useDemoLoad } from "../state/demoLoadStore";
 import { useStreamSnapshot } from "../state/streamSnapshotStore";
@@ -27,6 +33,12 @@ import { FaArrowDown } from "react-icons/fa";
 import { formatPing } from "../stringUtils";
 import { lookupMissionType } from "../mission";
 import styles from "./StreamingMissionInfo.module.css";
+
+/** Compact delay label, e.g. "60s" or "2m". */
+function formatDelay(ms: number): string {
+  const sec = Math.round(ms / 1000);
+  return sec >= 60 && sec % 60 === 0 ? `${sec / 60}m` : `${sec}s`;
+}
 
 export function StreamingMissionInfo({
   onOpenScoreScreen,
@@ -59,6 +71,7 @@ export function StreamingMissionInfo({
   const isWatcher = useLiveSelector((s) => s.role === "watcher");
   const watcherCount = useLiveSelector((s) => s.watcherCount);
   const relayRecording = useLiveSelector((s) => s.recording);
+  const streamDelayMs = useLiveSelector((s) => s.streamDelayMs);
   const isLiveConnected = useLiveSelector(
     (s) =>
       s.gameStatus === "connected" ||
@@ -197,6 +210,15 @@ export function StreamingMissionInfo({
                 title="The relay is recording this session as a demo"
               >
                 <span className={styles.RecDot} aria-hidden /> REC
+              </span>
+            ) : null}
+            {isLive && isLiveConnected && streamDelayMs > 0 ? (
+              <span
+                className={`${styles.DelayBadge} ${styles.MetaGap}`}
+                title={`Tournament mode: this stream is delayed by ${formatDelay(streamDelayMs)} to prevent screen-peeking`}
+              >
+                <LuClock className={styles.DelayIcon} aria-hidden />{" "}
+                {formatDelay(streamDelayMs)} DELAY
               </span>
             ) : null}
             {hasRecordingInfo ? (

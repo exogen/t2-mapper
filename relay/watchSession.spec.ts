@@ -123,6 +123,7 @@ describe("WatchSessionManager", () => {
         watchers: 2,
         recording: false,
         pinned: false,
+        delayMs: 0,
       },
     ]);
   });
@@ -161,6 +162,51 @@ describe("WatchSessionManager", () => {
     const packetsBefore = ws.binaryFrames().length;
     conn.emit("packet", new Uint8Array([1, 2, 3]));
     expect(ws.binaryFrames()).toHaveLength(packetsBefore + 1);
+  });
+
+  it("holds the stream delayed until a server is confirmed non-tournament", () => {
+    const { manager, connections } = createManager({ tourneyDelayMs: 1000 });
+    const ws = new FakeWebSocket();
+    manager.watch(ws as unknown as WebSocket, "1.2.3.4:28000");
+    const conn = connections[0];
+    conn.setStatus("connected");
+    // Fail-safe: the epoch starts delayed, so nothing is delivered or
+    // forwarded yet — the tournament probe went out with connect.
+    expect(conn.commands.map((c) => c.command)).toContain("GetVoteMenu");
+    expect(ws.frameTypes()).not.toContain("catchupEnd");
+    const beforeDelay = ws.binaryFrames().length;
+    conn.emit("packet", new Uint8Array([1, 2, 3]));
+    expect(ws.binaryFrames()).toHaveLength(beforeDelay);
+    expect(manager.getStatusSummary()[0].delayMs).toBe(1000);
+
+    // The delay elapses: the watcher hydrates from the (past) replica and
+    // then receives the buffered packet — one shared connection, no
+    // reconnect, so the live pipeline never waited.
+    vi.advanceTimersByTime(1000);
+    expect(ws.frameTypes()).toContain("catchupEnd");
+    expect(ws.binaryFrames().at(-1)).toEqual(new Uint8Array([1, 2, 3]));
+    expect(connections).toHaveLength(1);
+  });
+
+  it("lifts the delay to live once a server is confirmed non-tournament", () => {
+    const { manager, connections } = createManager({ tourneyDelayMs: 1000 });
+    const ws = new FakeWebSocket();
+    manager.watch(ws as unknown as WebSocket, "1.2.3.4:28000");
+    const conn = connections[0];
+    conn.setStatus("connected");
+    // Pending during the cold-start window (delayed, nothing delivered).
+    expect(ws.frameTypes()).not.toContain("catchupEnd");
+
+    // Not a tournament server: lift the provisional delay, no reconnect.
+    const session = manager.getSession("1.2.3.4:28000")!;
+    session.setTournamentMode(false);
+    expect(manager.getStatusSummary()[0].delayMs).toBe(0);
+    expect(connections).toHaveLength(1);
+    // The watcher now gets a live catch-up and live-forwarded packets.
+    expect(ws.frameTypes()).toContain("catchupEnd");
+    const beforeLive = ws.binaryFrames().length;
+    conn.emit("packet", new Uint8Array([7, 7, 7]));
+    expect(ws.binaryFrames()).toHaveLength(beforeLive + 1);
   });
 
   it("does not forward pre-attach packets to a late watcher", () => {

@@ -395,6 +395,12 @@ export interface StreamingPlayback {
   reset(): void;
   getSnapshot(): StreamSnapshot;
   stepToTime(targetTimeSec: number, maxMoveTicks?: number): StreamSnapshot;
+  /**
+   * First playback time (seconds) with a scene to render — world geometry
+   * plus a camera. ~0 for retail demos; a few seconds for from-connect
+   * relay demos whose scene streams in. Steps the cursor forward.
+   */
+  findSceneReadyTime(maxSec?: number): number;
   /** DTS shape names for weapon effects (explosions) that should be preloaded. */
   getEffectShapes(): string[];
   /**

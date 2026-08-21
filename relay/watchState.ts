@@ -66,6 +66,16 @@ export class WatchStateAccumulator {
   missionName: string | null = null;
   controlObjectGhostIndex = -1;
   controlObjectData: ParsedData | undefined;
+  /**
+   * Tournament mode, as told by the server; null until determined. The
+   * authoritative answer is the vote-menu query the session sends on
+   * connect (GetVoteMenu "TourneyQuery" — the same probe the community
+   * "TournyMode Query Support" script uses): sendGameVoteMenu offers
+   * VoteFFAMode while in tournament mode and VoteTournamentMode
+   * otherwise. The stock join banner ("Server is Running in Tournament
+   * Mode" BottomPrint) corroborates the positive case.
+   */
+  tournamentMode: boolean | null = null;
 
   /** Stream-authoritative server name (MsgMissionDropInfo), when known. */
   get serverName(): string | undefined {
@@ -153,6 +163,14 @@ export class WatchStateAccumulator {
           const args = (data.args as string[]) ?? [];
           if (funcName === "ServerMessage" && args.length >= 1) {
             this.handleServerMessage(args);
+          } else if (funcName === "BottomPrint" && args.length >= 1) {
+            if (
+              /Server is Running in Tournament Mode/i.test(
+                this.resolveNetString(args[0]),
+              )
+            ) {
+              this.tournamentMode = true;
+            }
           }
           break;
         }
@@ -382,6 +400,13 @@ export class WatchStateAccumulator {
           if (!isNaN(ping)) existing.ping = ping;
           if (!isNaN(packetLoss)) existing.packetLoss = packetLoss;
         }
+      }
+    } else if (msgType === "MsgVoteItem" && args.length >= 4) {
+      // Wire: args[2]=key (echo of our GetVoteMenu key), args[3]=voteName.
+      if (this.resolveNetString(args[2]) === "TourneyQuery") {
+        const voteName = this.resolveNetString(args[3]);
+        if (voteName === "VoteFFAMode") this.tournamentMode = true;
+        else if (voteName === "VoteTournamentMode") this.tournamentMode = false;
       }
     } else if (msgType === "MsgSystemClock" && args.length >= 4) {
       const timeRemainingMS = parseFloat(this.resolveNetString(args[3]));

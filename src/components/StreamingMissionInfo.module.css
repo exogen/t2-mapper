@@ -298,3 +298,18 @@
     opacity: 0.25;
   }
 }
+
+/* Tournament stream-delay badge (anti screen-peek). */
+.DelayBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: rgb(120, 200, 255);
+  font-weight: 600;
+  letter-spacing: 0.5px;
+}
+
+.DelayIcon {
+  composes: MetaIcon;
+  font-size: 13px;
+}

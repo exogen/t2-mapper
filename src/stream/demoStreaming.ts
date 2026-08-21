@@ -860,6 +860,37 @@ class StreamingPlayback extends StreamEngine {
     return snapshot;
   }
 
+  /**
+   * The first playback time at which there is a scene to render — visible
+   * world geometry (terrain or an interior) AND a camera. Retail demos
+   * carry this in their initial block, so it's ~0; a from-connect relay
+   * demo streams the scene in over its first seconds, so a paused start
+   * would otherwise show black. Steps the cursor forward from its current
+   * position; returns 0 (no skip) if nothing renders within `maxSec`.
+   */
+  findSceneReadyTime(maxSec = 20): number {
+    const limitTicks =
+      this.moveTicks + Math.floor((maxSec * 1000) / TICK_DURATION_MS);
+    while (this.moveTicks < limitTicks && !this.exhausted) {
+      if (this.camera != null && this.hasRenderableWorld()) {
+        return this.getTimeSec();
+      }
+      if (!this.stepOneMoveTick()) break;
+    }
+    return 0;
+  }
+
+  /** Whether any static world geometry (terrain / interior) is present. */
+  private hasRenderableWorld(): boolean {
+    for (const entity of this.entities.values()) {
+      const className = entity.sceneData?.className;
+      if (className === "TerrainBlock" || className === "InteriorInstance") {
+        return true;
+      }
+    }
+    return false;
+  }
+
   // ── Demo block processing ──
 
   private stepOneMoveTick(): boolean {

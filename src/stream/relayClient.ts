@@ -37,6 +37,8 @@ export type RelayEventHandler = {
       mapName?: string;
       /** The relay is recording this session to a demo file. */
       recording?: boolean;
+      /** Watcher-facing stream delay in ms (0 = live). */
+      streamDelayMs?: number;
     },
     watcherCount: number,
   ) => void;
@@ -175,6 +177,7 @@ export class RelayClient {
             serverName: message.serverName,
             mapName: message.mapName,
             recording: message.recording,
+            streamDelayMs: message.streamDelayMs,
           },
           message.watcherCount,
         );

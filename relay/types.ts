@@ -43,6 +43,9 @@ export type ServerMessage =
       watcherCount: number;
       /** The relay is recording this session to a demo file. */
       recording?: boolean;
+      /** Watcher-facing stream delay in ms (tournament anti-screen-peek);
+       *  0/absent = live. */
+      streamDelayMs?: number;
     }
   | { type: "watcherCount"; count: number }
   /** The relay is shutting down for a restart/deploy — clients should

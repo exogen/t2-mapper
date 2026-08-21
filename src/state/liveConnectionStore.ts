@@ -47,6 +47,9 @@ export interface LiveConnectionState {
   watcherCount: number;
   /** The relay is recording this session to a demo file. */
   recording: boolean;
+  /** Watcher-facing stream delay in ms (tournament anti-screen-peek);
+   *  0 = live. */
+  streamDelayMs: number;
   /** Catch-up download progress in [0, 1], or null when not syncing. */
   catchupProgress: number | null;
   /** Auto-reattaching to the relay after a restart/connection loss. */
@@ -118,6 +121,7 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
     disconnectReason: null,
     watcherCount: 0,
     recording: false,
+    streamDelayMs: 0,
     catchupProgress: null,
     reconnecting: false,
 
@@ -208,6 +212,7 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
             watchStatusMessage: message,
             watcherCount,
             recording: info.recording ?? false,
+            streamDelayMs: info.streamDelayMs ?? 0,
             ...(status === "ended"
               ? { disconnectReason: "ended" as const }
               : {}),
@@ -287,6 +292,7 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
               watchStatusMessage: "Reconnecting to relay...",
               watcherCount: 0,
               recording: false,
+              streamDelayMs: 0,
               catchupProgress: null,
               reconnecting: true,
             });
@@ -323,6 +329,7 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
             watchStatusMessage: undefined,
             watcherCount: 0,
             recording: false,
+            streamDelayMs: 0,
             catchupProgress: null,
             reconnecting: false,
           });
@@ -360,6 +367,7 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
         watchStatusMessage: undefined,
         watcherCount: 0,
         recording: false,
+        streamDelayMs: 0,
         catchupProgress: null,
       });
     },
@@ -541,6 +549,7 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
         ...(hadSession ? { disconnectReason: "voluntary" as const } : {}),
         watcherCount: 0,
         recording: false,
+        streamDelayMs: 0,
         catchupProgress: null,
         role: null,
       });

@@ -381,7 +381,14 @@ export function StreamingController({
         savedConnectedPlayerName ?? recording.recorderName ?? undefined,
       recordingDate: recording.recordingDate ?? undefined,
     });
-    const snapshot = stream.getSnapshot();
+    // From-connect demos (relay auto-captures) stream the scene in over
+    // their first seconds, so a paused start would show black — begin at
+    // the first frame that has something to render. Retail demos carry
+    // the scene in their initial block, so this is ~0 (no skip).
+    const snapshot =
+      recording.source === "demo"
+        ? stream.stepToTime(stream.findSceneReadyTime())
+        : stream.getSnapshot();
 
     streamClock.time = snapshot.timeSec;
     playbackClockRef.current = snapshot.timeSec;

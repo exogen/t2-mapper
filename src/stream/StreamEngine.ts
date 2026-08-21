@@ -479,6 +479,12 @@ export abstract class StreamEngine implements StreamingPlayback {
     maxMoveTicks?: number,
   ): StreamSnapshot;
 
+  /** Live streams are always at the present; demo playback overrides this
+   *  to skip a from-connect recording's black lead-in. */
+  findSceneReadyTime(_maxSec?: number): number {
+    return 0;
+  }
+
   // ── Shared reset logic ──
 
   /** Clear all entity state (entities, ghost→ID map, generation).

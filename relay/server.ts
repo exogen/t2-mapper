@@ -108,6 +108,13 @@ const DEMO_SHUTDOWN_DRAIN_MS = parseInt(
   process.env.DEMO_SHUTDOWN_DRAIN_MS || "8000",
   10,
 );
+/** Watcher stream delay on servers in tournament mode (anti screen-peek):
+ *  demos still record live; watchers see everything this much later.
+ *  0 disables. */
+const WATCH_TOURNEY_DELAY_MS = parseInt(
+  process.env.WATCH_TOURNEY_DELAY_MS || "60000",
+  10,
+);
 
 /** HTTP server for health checks; WebSocket upgrades are handled separately. */
 const httpServer = http.createServer(async (req, res) => {
@@ -164,6 +171,9 @@ const httpServer = http.createServer(async (req, res) => {
           watchSessions: sessions.length,
         },
         watchers: watcherTotal,
+        /** Configured tournament-mode watcher delay (per-session `delayMs`
+         *  shows where it is currently in effect). */
+        tourneyDelayMs: WATCH_TOURNEY_DELAY_MS,
         sessions,
       },
     };
@@ -356,6 +366,7 @@ const watchSessions = new WatchSessionManager({
   getCachedServer: findKnownServer,
   demoCoordinator,
   onSessionsChanged: persistWatchState,
+  tourneyDelayMs: WATCH_TOURNEY_DELAY_MS,
 });
 
 const patroller =
