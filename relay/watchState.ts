@@ -430,6 +430,16 @@ export class WatchStateAccumulator {
     return [...this.netStrings.entries()];
   }
 
+  /** All roster names, observers included (JoinTeam-before-Join stubs
+   *  have an empty name until MsgClientJoin backfills — skipped). */
+  getRosterNames(): string[] {
+    const names: string[] = [];
+    for (const entry of this.playerRoster.values()) {
+      if (entry.name) names.push(entry.name);
+    }
+    return names;
+  }
+
   /** Roster entries on a real team — observers (including the relay's
    *  own connection) stay at teamId 0 and don't count. */
   countActivePlayers(): number {

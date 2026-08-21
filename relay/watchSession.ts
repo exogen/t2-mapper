@@ -306,6 +306,7 @@ export class WatchSession {
         getConnectSequence: () => conn.connectSequence,
         getServerInfo: () => this.options.getCachedServer(this.key),
         getActivePlayerCount: () => this.watchState.countActivePlayers(),
+        getPlayerNames: () => this.watchState.getRosterNames(),
         getMatchStarted: () => this.watchState.matchStarted,
         onStateChange: () => this.fanOutSessionStatus(),
       }) ?? null;

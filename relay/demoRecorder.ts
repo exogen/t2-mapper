@@ -6,6 +6,7 @@
  * playback clock — driven purely by packet/send event timestamps.
  */
 import crypto from "node:crypto";
+import fsp from "node:fs/promises";
 import path from "node:path";
 import { demoLog as log } from "./logger.js";
 import {
@@ -36,6 +37,9 @@ export interface DemoRecorderOptions {
   getServerInfo: () => ServerInfo | undefined;
   /** Current non-observer player count (sampled; the peak decides keep). */
   getActivePlayerCount: () => number;
+  /** Current roster names, observers included (sampled; the union across
+   *  the whole recording lands in the sidecar metadata). */
+  getPlayerNames: () => string[];
   /** Whether the match is underway (sampled; sticky — a demo that never
    *  saw the match start is dropped as pre-match warmup). */
   getMatchStarted: () => boolean;
@@ -55,6 +59,36 @@ interface QueuedEntry {
   kind: "packet" | "sent";
   data?: Uint8Array;
   time: number;
+}
+
+/**
+ * Sidecar record written next to each kept `.rec` — also the exact
+ * per-demo record shape in the R2 `index.json` aggregation.
+ */
+export interface DemoMetadata {
+  filename: string;
+  bytes: number;
+  recordedAt: string;
+  server: string;
+  address: string;
+  mission: string;
+  gameType: string;
+  mod: string;
+  recorder: string;
+  durationMs: number;
+  /** Unique names observed at any point, observers included. */
+  players: string[];
+}
+
+/** Drop C0/C1 control chars and DEL — tagged-string prefixes and color
+ *  codes that would garble JSON consumers. Latin-1 and above survive. */
+function sanitizePlayerName(raw: string): string {
+  let out = "";
+  for (let i = 0; i < raw.length; i++) {
+    const code = raw.charCodeAt(i);
+    if (code >= 0x20 && (code < 0x7f || code > 0x9f)) out += raw[i];
+  }
+  return out.trim();
 }
 
 /** Lowercase slug: special chars stripped, word runs joined with dashes. */
@@ -98,6 +132,12 @@ export class DemoRecorder {
   private moveCount = 0;
   private peakPlayers = 0;
   private matchStarted = false;
+  private playerNames = new Set<string>();
+  /** Fields fixed at flush time; completed into DemoMetadata at finalize. */
+  private meta: Omit<
+    DemoMetadata,
+    "filename" | "bytes" | "durationMs" | "players"
+  > | null = null;
   private _failure: string | null = null;
 
   constructor(opts: DemoRecorderOptions) {
@@ -122,11 +162,7 @@ export class DemoRecorder {
 
   onPacket(data: Uint8Array): void {
     if (this._state !== "buffering" && this._state !== "recording") return;
-    const players = this.opts.getActivePlayerCount();
-    if (players > this.peakPlayers) this.peakPlayers = players;
-    if (!this.matchStarted && this.opts.getMatchStarted()) {
-      this.matchStarted = true;
-    }
+    this.sample();
     const now = this.opts.now?.() ?? Date.now();
     // Always copy: the input is a view over the dgram pool buffer, and
     // both the queue and the deflate stream hold bytes past this call.
@@ -148,6 +184,19 @@ export class DemoRecorder {
       }
     } else if (this._state === "recording") {
       this.writeEntry({ kind: "packet", data: copy, time: now });
+    }
+  }
+
+  /** Fold the current roster into peak count, match flag, and names. */
+  private sample(): void {
+    const players = this.opts.getActivePlayerCount();
+    if (players > this.peakPlayers) this.peakPlayers = players;
+    if (!this.matchStarted && this.opts.getMatchStarted()) {
+      this.matchStarted = true;
+    }
+    for (const raw of this.opts.getPlayerNames()) {
+      const name = sanitizePlayerName(raw);
+      if (name && name !== this.opts.recorderName) this.playerNames.add(name);
     }
   }
 
@@ -185,6 +234,15 @@ export class DemoRecorder {
       missionName,
       demoValues,
     });
+    this.meta = {
+      recordedAt: date.toISOString(),
+      server: serverName,
+      address: this.opts.address,
+      mission: missionName,
+      gameType: info?.gameType ?? "",
+      mod: info?.mod ?? "",
+      recorder: this.opts.recorderName,
+    };
     const filename = buildDemoFilename(date, serverName, missionName);
     this.writer = new DemoFileWriter(path.join(this.opts.dir, filename));
     this.writer.begin(initialBlock);
@@ -284,13 +342,9 @@ export class DemoRecorder {
     if (this._state !== "buffering" && this._state !== "recording") {
       return null;
     }
-    // Final samples — the keep gates below run on up-to-date state even
+    // Final sample — the keep gates below run on up-to-date state even
     // if no packet arrived since the last change.
-    const players = this.opts.getActivePlayerCount();
-    if (players > this.peakPlayers) this.peakPlayers = players;
-    if (!this.matchStarted && this.opts.getMatchStarted()) {
-      this.matchStarted = true;
-    }
+    this.sample();
     const writer = this.writer;
     if (this._state === "buffering" || !writer) {
       log.debug(
@@ -343,6 +397,7 @@ export class DemoRecorder {
       this.setState("aborted");
       return null;
     }
+    await this.writeSidecar(writer.finalPath, durationMs);
     this.setState("done");
     log.info(
       {
@@ -351,11 +406,40 @@ export class DemoRecorder {
         durationMs,
         bytes: writer.bytesWritten,
         peakPlayers: this.peakPlayers,
+        players: this.playerNames.size,
         reason,
       },
       "Demo recording finalized",
     );
     return { path: writer.finalPath, durationMs };
+  }
+
+  /** Best-effort: a failed sidecar never fails the demo itself — the
+   *  upload proceeds and only the index entry is lost (rebuildable). */
+  private async writeSidecar(
+    finalPath: string,
+    durationMs: number,
+  ): Promise<void> {
+    const meta = this.meta;
+    if (!meta) return;
+    try {
+      const { size } = await fsp.stat(finalPath);
+      const record: DemoMetadata = {
+        filename: path.basename(finalPath),
+        bytes: size,
+        ...meta,
+        durationMs,
+        players: [...this.playerNames].sort((a, b) =>
+          a.localeCompare(b, "en", { sensitivity: "base" }),
+        ),
+      };
+      await fsp.writeFile(`${finalPath}.json`, JSON.stringify(record, null, 2));
+    } catch (err) {
+      log.warn(
+        { err, address: this.opts.address, file: finalPath },
+        "Demo sidecar write failed",
+      );
+    }
   }
 
   async abort(): Promise<void> {

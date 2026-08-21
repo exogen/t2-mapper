@@ -21,6 +21,49 @@ vi.mock("@aws-sdk/lib-storage", () => ({
   },
 }));
 
+interface FakeCommand {
+  type: "GetObject" | "PutObject";
+  input: { Key: string; Body?: string; CacheControl?: string };
+}
+const s3Commands: FakeCommand[] = [];
+/** Simulated stored index.json object (null = NoSuchKey). */
+let storedIndex: string | null = null;
+
+vi.mock("@aws-sdk/client-s3", () => ({
+  S3Client: class {
+    async send(cmd: FakeCommand) {
+      s3Commands.push(cmd);
+      if (cmd.type === "GetObject") {
+        if (storedIndex === null) {
+          const err = new Error("The specified key does not exist.");
+          err.name = "NoSuchKey";
+          throw err;
+        }
+        const body = storedIndex;
+        return { Body: { transformToString: async () => body } };
+      }
+      if (cmd.input.Key.endsWith("index.json")) {
+        storedIndex = cmd.input.Body ?? null;
+      }
+      return {};
+    }
+  },
+  GetObjectCommand: class {
+    readonly type = "GetObject";
+    input: FakeCommand["input"];
+    constructor(input: FakeCommand["input"]) {
+      this.input = input;
+    }
+  },
+  PutObjectCommand: class {
+    readonly type = "PutObject";
+    input: FakeCommand["input"];
+    constructor(input: FakeCommand["input"]) {
+      this.input = input;
+    }
+  },
+}));
+
 const { DemoUploader, loadUploadConfig } = await import("./demoUpload.js");
 
 const config = {
@@ -60,8 +103,26 @@ describe("DemoUploader", () => {
   beforeEach(async () => {
     dir = await fsp.mkdtemp(path.join(os.tmpdir(), "demo-upload-"));
     uploadCalls.length = 0;
+    s3Commands.length = 0;
+    storedIndex = null;
     failUploads = false;
   });
+
+  function makeRecord(filename: string) {
+    return {
+      filename,
+      bytes: 3,
+      recordedAt: "2026-08-20T02:31:07.000Z",
+      server: "| the cut |",
+      address: "45.76.24.91:28000",
+      mission: "Katabatic",
+      gameType: "Capture the Flag",
+      mod: "classic",
+      recorder: "Observer",
+      durationMs: 60_000,
+      players: ["Alice", "Bob"],
+    };
+  }
 
   it("uploads with the prefixed key and unlinks on success", async () => {
     const filePath = path.join(dir, "auto-capture_test.rec");
@@ -84,6 +145,79 @@ describe("DemoUploader", () => {
       lastUploaded: { key: "demos/auto-capture_test.rec" },
       lastError: null,
     });
+  });
+
+  it("uploads the sidecar and appends its record to the index", async () => {
+    const record = makeRecord("a.rec");
+    await fsp.writeFile(path.join(dir, "a.rec"), new Uint8Array([1, 2, 3]));
+    await fsp.writeFile(path.join(dir, "a.rec.json"), JSON.stringify(record));
+    const uploader = new DemoUploader(config, dir);
+    uploader.enqueue(path.join(dir, "a.rec"));
+
+    await vi.waitFor(async () => {
+      expect(await fsp.readdir(dir)).toEqual([]);
+    });
+    expect(uploadCalls).toEqual([{ Bucket: "t2-demos", Key: "demos/a.rec" }]);
+    const puts = s3Commands.filter((c) => c.type === "PutObject");
+    expect(puts.map((c) => c.input.Key)).toEqual([
+      "demos/a.rec.json",
+      "demos/index.json",
+    ]);
+    expect(puts[0].input.CacheControl).toContain("immutable");
+    // The index mutates — it must never be cached as immutable.
+    expect(puts[1].input.CacheControl).toBe("no-cache");
+    expect(JSON.parse(storedIndex!)).toEqual([record]);
+  });
+
+  it("appends to an existing index and dedupes retries by filename", async () => {
+    const existing = makeRecord("old.rec");
+    storedIndex = JSON.stringify([existing]);
+    const record = makeRecord("b.rec");
+    const uploader = new DemoUploader(config, dir);
+
+    await fsp.writeFile(path.join(dir, "b.rec"), new Uint8Array([1]));
+    await fsp.writeFile(path.join(dir, "b.rec.json"), JSON.stringify(record));
+    uploader.enqueue(path.join(dir, "b.rec"));
+    await vi.waitFor(async () => {
+      expect(await fsp.readdir(dir)).toEqual([]);
+    });
+    expect(JSON.parse(storedIndex!)).toEqual([existing, record]);
+
+    // Retry after a crash between index update and unlink: the record
+    // is already present, so the re-upload must not duplicate it.
+    await fsp.writeFile(path.join(dir, "b.rec"), new Uint8Array([1]));
+    await fsp.writeFile(path.join(dir, "b.rec.json"), JSON.stringify(record));
+    await uploader.sweep();
+    await vi.waitFor(async () => {
+      expect(await fsp.readdir(dir)).toEqual([]);
+    });
+    expect(JSON.parse(storedIndex!)).toEqual([existing, record]);
+  });
+
+  it("uploads legacy demos without a sidecar and skips the index", async () => {
+    await fsp.writeFile(path.join(dir, "legacy.rec"), new Uint8Array([1]));
+    const uploader = new DemoUploader(config, dir);
+    uploader.enqueue(path.join(dir, "legacy.rec"));
+    await vi.waitFor(async () => {
+      expect(await fsp.readdir(dir)).toEqual([]);
+    });
+    expect(uploadCalls).toHaveLength(1);
+    expect(s3Commands).toEqual([]);
+    expect(storedIndex).toBeNull();
+  });
+
+  it("sweep removes stale orphan sidecars, keeps fresh ones", async () => {
+    const staleOrphan = path.join(dir, "gone.rec.json");
+    const freshOrphan = path.join(dir, "racing.rec.json");
+    await fsp.writeFile(staleOrphan, "{}");
+    await fsp.writeFile(freshOrphan, "{}");
+    const past = new Date(Date.now() - 10 * 60_000);
+    await fsp.utimes(staleOrphan, past, past);
+    const uploader = new DemoUploader(config, dir);
+    await uploader.sweep();
+    await settle();
+    expect(await fsp.readdir(dir)).toEqual(["racing.rec.json"]);
+    expect(uploadCalls).toEqual([]);
   });
 
   it("keeps the file on failure; sweep re-enqueues and retries", async () => {

@@ -65,6 +65,7 @@ describe("DemoRecorder", () => {
       minLengthMs?: number;
       minPlayers?: number;
       playerCount?: () => number;
+      playerNames?: () => string[];
       matchStarted?: () => boolean;
     } = {},
   ) {
@@ -74,6 +75,7 @@ describe("DemoRecorder", () => {
       getConnectSequence: () => CONNECT_SEQUENCE,
       getServerInfo: () => serverInfo,
       getActivePlayerCount: overrides.playerCount ?? (() => 2),
+      getPlayerNames: overrides.playerNames ?? (() => []),
       getMatchStarted: overrides.matchStarted ?? (() => true),
       recorderName: "Observer",
       maxBytes: 512 * 1024 * 1024,
@@ -217,6 +219,45 @@ describe("DemoRecorder", () => {
     recorder.onPacket(buildPingPacket(2));
     const result = await recorder.finalize("test");
     expect(result).not.toBeNull();
+  });
+
+  it("writes a metadata sidecar with unique sanitized player names", async () => {
+    let names = ["Observer", "\x02\x01Alice", "  ", "Bob"];
+    const recorder = createRecorder({ playerNames: () => names });
+    recorder.onPacket(buildPingPacket(1));
+    time += 100;
+    recorder.setMissionName("Katabatic");
+    for (let i = 2; i <= 5; i++) {
+      recorder.onPacket(buildPingPacket(i));
+      time += 100;
+    }
+    // Bob leaves (stays in the union); Chloé joins wrapped in C1/DEL junk.
+    names = ["Observer", "Alice", "\x9fChloé\x7f"];
+    for (let i = 6; i <= 10; i++) {
+      recorder.onPacket(buildPingPacket(i));
+      time += 100;
+    }
+
+    const result = await recorder.finalize("test");
+    expect(result).not.toBeNull();
+    const sidecar: unknown = JSON.parse(
+      await fsp.readFile(`${result!.path}.json`, "utf-8"),
+    );
+    expect(sidecar).toEqual({
+      filename: path.basename(result!.path),
+      bytes: (await fsp.stat(result!.path)).size,
+      recordedAt: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T[\d:.]+Z$/),
+      server: "| the cut |",
+      address: "45.76.24.91:28000",
+      mission: "Katabatic",
+      gameType: "Capture the Flag",
+      mod: "classic",
+      recorder: "Observer",
+      durationMs: result!.durationMs,
+      // Sorted, deduped, control chars stripped, blank and the
+      // recorder's own connection excluded.
+      players: ["Alice", "Bob", "Chloé"],
+    });
   });
 
   it("skips oversized packets and keeps recording", async () => {
