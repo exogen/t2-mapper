@@ -55,13 +55,6 @@
   }
 }
 
-@media (max-width: 479px) {
-  .ServerIcon,
-  .ServerName {
-    display: none;
-  }
-}
-
 /* Shared sizing for the info-line icons. */
 .MetaIcon {
   flex: 0 0 auto;
@@ -77,7 +70,9 @@
   composes: MetaIcon;
 }
 
-/* The wifi icon takes the ping-quality color, matching the ping dot. */
+/* The wifi icon takes the ping-quality color, matching the ping dot,
+   and lights its bars like signal strength: poor = dot + 1 bar,
+   fine = 2 bars, good = all 3. Unlit bars stay gray and faded. */
 .ServerIcon[data-quality="good"] {
   color: rgb(116, 255, 69);
 }
@@ -87,7 +82,14 @@
 }
 
 .ServerIcon[data-quality="poor"] {
-  color: rgb(232, 63, 37);
+  color: rgb(246, 85, 60);
+}
+
+.ServerIcon[data-quality="poor"] [data-bar="2"],
+.ServerIcon[data-quality="poor"] [data-bar="3"],
+.ServerIcon[data-quality="fine"] [data-bar="3"] {
+  color: #83938b;
+  opacity: 0.8;
 }
 
 .SpectatorIcon {
@@ -212,6 +214,25 @@
   animation: blink 1.2s ease-out infinite;
 }
 
+/* Relay-side demo recording indicator on the info line. */
+.RecBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: rgb(232, 63, 37);
+  font-weight: 600;
+  letter-spacing: 0.5px;
+}
+
+.RecDot {
+  composes: Pulsing;
+  flex: 0 0 auto;
+  width: 6px;
+  height: 6px;
+  border-radius: 3px;
+  background: currentColor;
+}
+
 .ConnectionPing {
   display: inline-flex;
   align-items: center;
@@ -221,6 +242,12 @@
   background: rgba(255, 255, 255, 0.1);
   padding: 5px 8px;
   border-radius: 12px;
+}
+
+@media (max-width: 539px) {
+  .ConnectionPing {
+    display: none;
+  }
 }
 
 .PingDot {

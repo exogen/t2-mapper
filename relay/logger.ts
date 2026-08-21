@@ -3,7 +3,9 @@ import pino from "pino";
 const isDev = process.env.NODE_ENV !== "production";
 
 export const logger = pino({
-  level: process.env.LOG_LEVEL || (isDev ? "debug" : "info"),
+  // Level is controlled solely by LOG_LEVEL; NODE_ENV only picks the
+  // output format (pretty for dev, JSON for deploys).
+  level: process.env.LOG_LEVEL || "info",
   ...(isDev && {
     transport: {
       target: "pino-pretty",
@@ -26,3 +28,6 @@ export const authLog = logger.child({ module: "auth" });
 
 /** Game-file CRC computation (CRCChallengeEvent responses). */
 export const crcLog = logger.child({ module: "crc" });
+
+/** Demo (.rec) recording and upload. */
+export const demoLog = logger.child({ module: "demo" });

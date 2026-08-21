@@ -45,8 +45,12 @@ export interface LiveConnectionState {
   disconnectReason: "voluntary" | "ended" | null;
   /** Number of watchers on the shared session (including us). */
   watcherCount: number;
+  /** The relay is recording this session to a demo file. */
+  recording: boolean;
   /** Catch-up download progress in [0, 1], or null when not syncing. */
   catchupProgress: number | null;
+  /** Auto-reattaching to the relay after a restart/connection loss. */
+  reconnecting: boolean;
 }
 
 export interface LiveConnectionStore extends LiveConnectionState {
@@ -69,6 +73,30 @@ export interface LiveConnectionStore extends LiveConnectionState {
 
 const DEFAULT_RELAY_URL = process.env.RELAY_URL || "ws://localhost:8765";
 
+// ── Auto-reattach across relay restarts (deploys) ──
+// Watcher state is disposable by design (any watcher re-hydrates from
+// catch-up), so a lost relay socket mid-watch is retried with backoff
+// instead of surfacing the ended dialog.
+const RECONNECT_DELAYS_MS = [
+  2_000, 4_000, 6_000, 8_000, 10_000, 10_000, 10_000, 30_000, 30_000,
+];
+let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+let reconnectAttempts = 0;
+/** Set when the relay announces a restart, so the session-teardown
+ *  messages that follow are ignored rather than treated as an ending. */
+let restartPending = false;
+let resumeAddress: string | null = null;
+
+function cancelReconnect(): void {
+  if (reconnectTimer) {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+  }
+  reconnectAttempts = 0;
+  restartPending = false;
+  resumeAddress = null;
+}
+
 export const liveConnectionStore = createStore<LiveConnectionStore>(
   (set, get) => ({
     relayConnected: false,
@@ -89,7 +117,9 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
     watchStatusMessage: undefined,
     disconnectReason: null,
     watcherCount: 0,
+    recording: false,
     catchupProgress: null,
+    reconnecting: false,
 
     _relay: null,
     _adapter: null,
@@ -108,6 +138,16 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
           const s = get();
           for (const fn of s._pending) fn();
           s._pending = [];
+          if (s.reconnecting) {
+            const address = resumeAddress ?? s.serverAddress;
+            if (address && s.role === "watcher") {
+              log.info("re-attaching watch to %s after relay restart", address);
+              get().watchServer(address);
+            } else {
+              cancelReconnect();
+              set({ reconnecting: false });
+            }
+          }
         },
         onStatus(status, message, statusMapName) {
           log.info(
@@ -139,7 +179,23 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
         onWsPing(ms) {
           set({ browserToRelayPing: ms });
         },
+        onRelayRestarting() {
+          const s = get();
+          if (s.role === "watcher" && s.serverAddress) {
+            restartPending = true;
+            resumeAddress = s.serverAddress;
+            log.info("relay restarting — will auto-reattach");
+          }
+        },
         onSessionStatus(status, message, info, watcherCount) {
+          // A restarting relay tears its sessions down noisily; that
+          // "ended" is not this session's ending.
+          if (status === "ended" && restartPending) return;
+          if (status === "live") {
+            reconnectAttempts = 0;
+            restartPending = false;
+            resumeAddress = null;
+          }
           log.info(
             "session status: %s%s map=%s watchers=%d",
             status,
@@ -151,12 +207,14 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
             watchStatus: status,
             watchStatusMessage: message,
             watcherCount,
+            recording: info.recording ?? false,
             ...(status === "ended"
               ? { disconnectReason: "ended" as const }
               : {}),
             ...(info.mapName ? { mapName: info.mapName } : {}),
             ...(info.serverName ? { serverName: info.serverName } : {}),
             ...(status !== "syncing" ? { catchupProgress: null } : {}),
+            ...(status === "live" ? { reconnecting: false } : {}),
           });
         },
         onWatcherCount(count) {
@@ -183,37 +241,91 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
         },
         onClose() {
           const s = get();
-          if (s._relay === relay) {
-            s._relay = null;
-            s._adapter = null;
-            s._pending = [];
-            s._listInFlight = false;
-            // A socket loss during an active session is involuntary;
-            // voluntary paths set their reason before closing.
-            const sessionWasLive =
-              (s.watchStatus !== null && s.watchStatus !== "ended") ||
-              s.gameStatus === "connected";
+          if (s._relay !== relay) return;
+          s._relay = null;
+          s._adapter = null;
+          s._pending = [];
+          s._listInFlight = false;
+          // A socket loss during an active session is involuntary;
+          // voluntary paths set their reason before closing.
+          const sessionWasLive =
+            (s.watchStatus !== null && s.watchStatus !== "ended") ||
+            s.gameStatus === "connected";
+          // Watchers auto-reattach across relay restarts and socket
+          // loss — their state is disposable (fresh catch-up on rejoin).
+          const resume =
+            restartPending ||
+            (s.role === "watcher" && sessionWasLive && !s.disconnectReason);
+          if (resume) resumeAddress ??= s.serverAddress;
+          restartPending = false;
+
+          if (
+            resume &&
+            resumeAddress &&
+            reconnectAttempts < RECONNECT_DELAYS_MS.length
+          ) {
+            const delayMs = RECONNECT_DELAYS_MS[reconnectAttempts];
+            reconnectAttempts++;
+            const url = s.relayUrl ?? undefined;
+            log.info(
+              "relay connection lost — reattach attempt %d in %dms",
+              reconnectAttempts,
+              delayMs,
+            );
+            // Keep mapName/serverName/serverAddress/role: the scene and
+            // toolbar stay intact while we get back in.
             set({
-              disconnectReason:
-                s.disconnectReason ?? (sessionWasLive ? "ended" : null),
               relayConnected: false,
               gameStatus: null,
               gameStatusMessage: undefined,
-              mapName: undefined,
-              serverName: undefined,
               relayToGameServerPing: null,
               browserToRelayPing: null,
               relayUrl: null,
-              serverAddress: null,
               adapter: null,
               liveReady: false,
-              role: null,
-              watchStatus: null,
-              watchStatusMessage: undefined,
+              watchStatus: "connecting",
+              watchStatusMessage: "Reconnecting to relay...",
               watcherCount: 0,
+              recording: false,
               catchupProgress: null,
+              reconnecting: true,
             });
+            reconnectTimer = setTimeout(() => {
+              reconnectTimer = null;
+              get().connectRelay(url);
+            }, delayMs);
+            return;
           }
+
+          if (resume) {
+            log.warn(
+              "giving up on relay reattach after %d attempts",
+              reconnectAttempts,
+            );
+          }
+          cancelReconnect();
+          set({
+            disconnectReason:
+              s.disconnectReason ?? (sessionWasLive || resume ? "ended" : null),
+            relayConnected: false,
+            gameStatus: null,
+            gameStatusMessage: undefined,
+            mapName: undefined,
+            serverName: undefined,
+            relayToGameServerPing: null,
+            browserToRelayPing: null,
+            relayUrl: null,
+            serverAddress: null,
+            adapter: null,
+            liveReady: false,
+            role: null,
+            watchStatus: null,
+            watchStatusMessage: undefined,
+            watcherCount: 0,
+            recording: false,
+            catchupProgress: null,
+            reconnecting: false,
+          });
         },
       });
 
@@ -224,12 +336,14 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
 
     disconnectRelay() {
       const s = get();
+      cancelReconnect();
       s._relay?.close();
       s._relay = null;
       s._adapter = null;
       s._pending = [];
       s._listInFlight = false;
       set({
+        reconnecting: false,
         relayConnected: false,
         gameStatus: null,
         gameStatusMessage: undefined,
@@ -245,6 +359,7 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
         watchStatus: null,
         watchStatusMessage: undefined,
         watcherCount: 0,
+        recording: false,
         catchupProgress: null,
       });
     },
@@ -275,6 +390,7 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
     joinServer(address, warriorName) {
       const s = get();
       if (!s._relay) return;
+      cancelReconnect();
 
       const cachedServer = s.servers.find((sv) => sv.address === address);
       const newAdapter = new LiveStreamAdapter(s._relay);
@@ -331,7 +447,29 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
 
     watchServer(address) {
       const s = get();
-      if (!s._relay) return;
+      // A fresh (or resumed) watch supersedes any pending reattach loop.
+      cancelReconnect();
+
+      if (!s._relay?.connected) {
+        // The relay socket is gone (e.g. the relay restarted) — open a
+        // fresh one and re-issue the watch when it connects. Show the
+        // connecting state immediately so Rejoin visibly does something.
+        set({
+          role: "watcher",
+          serverAddress: address,
+          liveReady: false,
+          gameStatus: null,
+          watchStatus: "connecting",
+          watchStatusMessage: undefined,
+          disconnectReason: null,
+          watcherCount: 0,
+          catchupProgress: null,
+          reconnecting: false,
+        });
+        s._pending.push(() => get().watchServer(address));
+        if (!s._relay) get().connectRelay();
+        return;
+      }
 
       const cachedServer = s.servers.find((sv) => sv.address === address);
       const newAdapter = new LiveStreamAdapter(s._relay, { mode: "watch" });
@@ -371,6 +509,7 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
         disconnectReason: null,
         watcherCount: 0,
         catchupProgress: null,
+        reconnecting: false,
       });
 
       gameEntityStore.getState().setMissionInfo({
@@ -384,12 +523,14 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
 
     leaveServer() {
       const s = get();
+      cancelReconnect();
       // Only an actual departure records a reason — leaveServer is also
       // called as a no-op safety net when no session exists.
       const hadSession = s.watchStatus !== null || s.role !== null;
       s._relay?.leaveServer();
       s._adapter = null;
       set({
+        reconnecting: false,
         adapter: null,
         liveReady: false,
         serverAddress: null,
@@ -399,6 +540,7 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
         watchStatusMessage: undefined,
         ...(hadSession ? { disconnectReason: "voluntary" as const } : {}),
         watcherCount: 0,
+        recording: false,
         catchupProgress: null,
         role: null,
       });

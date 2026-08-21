@@ -52,6 +52,7 @@ import {
   useMissionType,
 } from "../state/gameEntityStore";
 import { cameraTourStore, useCameraTour } from "../state/cameraTourStore";
+import { useMediaQuery } from "./useMediaQuery";
 import { useTouchDevice } from "./useTouchDevice";
 import { GameDialogSpinner } from "./GameDialogSpinner";
 import { ToggleSidebarButton } from "./ToggleSidebarButton";
@@ -109,6 +110,9 @@ export function MapInspector() {
   const [missionLoadingProgress, setMissionLoadingProgress] = useState(0);
   const [showLoadingIndicator, setShowLoadingIndicator] = useState(true);
   const isTouch = useTouchDevice();
+  // Below this width the sidebar overlays the content area instead of
+  // sitting beside it — keep in sync with MapInspector.module.css.
+  const sidebarOverlayMode = useMediaQuery("(max-width: 899px)") ?? false;
   const isTourActive = useCameraTour((s) => s.animation !== null);
 
   const [mode, setMode] = useModeQueryState();
@@ -305,7 +309,14 @@ export function MapInspector() {
   }, [sessionActive]);
   const requestedListRef = useRef(false);
   useEffect(() => {
-    if (autoJoin !== "pending" || sessionActive) return;
+    // Only attempt in live mode — leaving suspends a pending attempt.
+    if (autoJoin !== "pending" || sessionActive || mode !== "live") return;
+    // The params are cleared outside live mode and when a session ends;
+    // a pending attempt with nothing to join simply disarms.
+    if (!autoAddress && !autoName) {
+      setAutoJoin("off");
+      return;
+    }
     // listServers() lazily connects the relay and is in-flight-guarded;
     // it also warms the cached list the relay uses to label sessions.
     if (!relayConnected) {
@@ -340,6 +351,7 @@ export function MapInspector() {
   }, [
     autoJoin,
     sessionActive,
+    mode,
     autoAddress,
     autoName,
     relayConnected,
@@ -469,7 +481,10 @@ export function MapInspector() {
     commandCircuitStore.getState().deactivate();
     setChoosingMap(false);
     setMode("live");
-  }, [setMode]);
+    // When the sidebar overlays the content it would hide the server
+    // browser it just opened; in side-by-side mode leave it be.
+    if (sidebarOverlayMode) setSidebarOpen(false);
+  }, [setMode, sidebarOverlayMode, setSidebarOpen]);
 
   // The Demo sidebar button enters demo mode: the content area swaps to
   // the drag & drop screen, clearing any live session or loaded stream.
@@ -484,7 +499,10 @@ export function MapInspector() {
     commandCircuitStore.getState().deactivate();
     setChoosingMap(false);
     setMode("demo");
-  }, [setMode]);
+    // Same as the server browser: don't leave the drop screen hidden
+    // behind the overlay sidebar.
+    if (sidebarOverlayMode) setSidebarOpen(false);
+  }, [setMode, sidebarOverlayMode, setSidebarOpen]);
   const handleChooseMap = useCallback(() => setChoosingMap(true), []);
   const handleCancelChoosingMap = useCallback(() => {
     setChoosingMap(false);

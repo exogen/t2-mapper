@@ -41,8 +41,13 @@ export type ServerMessage =
       serverName?: string;
       mapName?: string;
       watcherCount: number;
+      /** The relay is recording this session to a demo file. */
+      recording?: boolean;
     }
   | { type: "watcherCount"; count: number }
+  /** The relay is shutting down for a restart/deploy — clients should
+   *  auto-reattach with backoff rather than treat the session as ended. */
+  | { type: "relayRestarting" }
   | {
       type: "catchupBegin";
       epoch: number;

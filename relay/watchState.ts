@@ -422,6 +422,16 @@ export class WatchStateAccumulator {
     return [...this.netStrings.entries()];
   }
 
+  /** Roster entries on a real team — observers (including the relay's
+   *  own connection) stay at teamId 0 and don't count. */
+  countActivePlayers(): number {
+    let count = 0;
+    for (const entry of this.playerRoster.values()) {
+      if (entry.teamId > 0) count++;
+    }
+    return count;
+  }
+
   getTargetEntries(): WatchTargetEntry[] {
     const targetIds = new Set<number>([
       ...this.targetNames.keys(),

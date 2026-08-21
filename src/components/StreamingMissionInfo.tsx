@@ -18,7 +18,7 @@ import { useRecording } from "./usePlayback";
 import { unloadDemo } from "../stream/demoFileLoader";
 import { LuCircleArrowOutUpLeft, LuEye, LuUser, LuUsers } from "react-icons/lu";
 import { useStreamSnapshot } from "../state/streamSnapshotStore";
-import { IoIosWifi } from "react-icons/io";
+import { WifiSignalIcon } from "./WifiSignalIcon";
 import { IoCalendarNumberOutline } from "react-icons/io5";
 import { BiSolidEject } from "react-icons/bi";
 import { formatPing } from "../stringUtils";
@@ -43,6 +43,7 @@ export function StreamingMissionInfo({
   const recording = useRecording();
   const isWatcher = useLiveSelector((s) => s.role === "watcher");
   const watcherCount = useLiveSelector((s) => s.watcherCount);
+  const relayRecording = useLiveSelector((s) => s.recording);
   const isLiveConnected = useLiveSelector(
     (s) =>
       s.gameStatus === "connected" ||
@@ -134,7 +135,7 @@ export function StreamingMissionInfo({
             ) : null}
             {serverName ? (
               <>
-                <IoIosWifi
+                <WifiSignalIcon
                   className={
                     hasRecordingInfo
                       ? `${styles.ServerIcon} ${styles.MetaGap}`
@@ -174,6 +175,14 @@ export function StreamingMissionInfo({
                 />
                 <span className={styles.SpectatorCount}>{watcherCount}</span>
               </>
+            ) : null}
+            {isLive && isLiveConnected && relayRecording ? (
+              <span
+                className={`${styles.RecBadge} ${styles.MetaGap}`}
+                title="The relay is recording this session as a demo"
+              >
+                <span className={styles.RecDot} aria-hidden /> REC
+              </span>
             ) : null}
             {hasRecordingInfo ? (
               <>

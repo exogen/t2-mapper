@@ -1,7 +1,14 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { EventEmitter } from "node:events";
+import fsp from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import type { WebSocket } from "ws";
-import { WatchSessionManager } from "./watchSession";
+import {
+  WatchSessionManager,
+  type WatchSessionManagerOptions,
+} from "./watchSession";
+import { DemoCoordinator } from "./demoCoordinator";
 import type { GameConnection } from "./gameConnection";
 import type { ServerMessage } from "./types";
 
@@ -9,6 +16,7 @@ class FakeGameConnection extends EventEmitter {
   address: string;
   status = "connecting";
   mapName: string | undefined;
+  connectSequence = 0x0badf00d;
   connectCalls = 0;
   disconnectCalls = 0;
   commands: Array<{ command: string; args: string[] }> = [];
@@ -75,7 +83,7 @@ class FakeWebSocket {
   }
 }
 
-function createManager() {
+function createManager(extra: Partial<WatchSessionManagerOptions> = {}) {
   const connections: FakeGameConnection[] = [];
   const manager = new WatchSessionManager({
     gameBasePath: "/nonexistent",
@@ -85,6 +93,7 @@ function createManager() {
       connections.push(conn);
       return conn as unknown as GameConnection;
     },
+    ...extra,
   });
   return { manager, connections };
 }
@@ -108,7 +117,12 @@ describe("WatchSessionManager", () => {
     expect(connections).toHaveLength(1);
     expect(connections[0].connectCalls).toBe(1);
     expect(manager.getStatusSummary()).toEqual([
-      { address: "1.2.3.4:28000", status: "connecting", watchers: 2 },
+      {
+        address: "1.2.3.4:28000",
+        status: "connecting",
+        watchers: 2,
+        recording: false,
+      },
     ]);
   });
 
@@ -253,7 +267,7 @@ describe("WatchSessionManager", () => {
     const { manager, connections } = createManager();
     const ws = new FakeWebSocket();
     manager.watch(ws as unknown as WebSocket, "1.2.3.4:28000");
-     
+
     const session = (manager as any).sessions.get("1.2.3.4:28000");
     const conn1 = connections[0];
     conn1.setStatus("connected");
@@ -287,7 +301,7 @@ describe("WatchSessionManager", () => {
     const { manager, connections } = createManager();
     const ws = new FakeWebSocket();
     manager.watch(ws as unknown as WebSocket, "1.2.3.4:28000");
-     
+
     const session = (manager as any).sessions.get("1.2.3.4:28000");
     connections[0].setStatus("connected");
 
@@ -318,5 +332,282 @@ describe("WatchSessionManager", () => {
       .filter((m) => m.type === "sessionStatus");
     expect(statuses.at(-1)).toMatchObject({ status: "ended" });
     expect(manager.getStatusSummary()).toEqual([]);
+  });
+
+  it("announces relayRestarting to watchers before shutdown teardown", () => {
+    const { manager, connections } = createManager();
+    const ws = new FakeWebSocket();
+    manager.watch(ws as unknown as WebSocket, "1.2.3.4:28000");
+    connections[0].setStatus("connected");
+
+    manager.shutdown();
+    const types = ws.frameTypes();
+    const restartIndex = types.indexOf("relayRestarting");
+    expect(restartIndex).toBeGreaterThan(-1);
+    // The restart notice precedes the session's "ended" teardown status.
+    const messages = ws.jsonMessages();
+    const endedIndex = messages.findIndex(
+      (m) => m.type === "sessionStatus" && m.status === "ended",
+    );
+    expect(endedIndex).toBeGreaterThan(-1);
+    expect(types.indexOf("sessionStatus", restartIndex)).toBeGreaterThan(
+      restartIndex,
+    );
+  });
+
+  it("warm-starts sessions that expire via idle grace if nobody returns", () => {
+    const changes: string[][] = [];
+    const { manager, connections } = createManager({
+      onSessionsChanged: (addresses) => changes.push(addresses),
+    });
+
+    manager.warmStart("1.2.3.4");
+    expect(connections).toHaveLength(1);
+    expect(connections[0].connectCalls).toBe(1);
+    expect(changes.at(-1)).toEqual(["1.2.3.4:28000"]);
+
+    // A returning watcher cancels the grace timer and attaches normally.
+    const ws = new FakeWebSocket();
+    manager.watch(ws as unknown as WebSocket, "1.2.3.4:28000");
+    expect(connections).toHaveLength(1);
+    vi.advanceTimersByTime(10 * 60_000);
+    expect(connections[0].disconnectCalls).toBe(0);
+
+    // With no watchers, a warm-started session expires on its own.
+    manager.detachSocket(ws as unknown as WebSocket);
+    vi.advanceTimersByTime(5 * 60_000);
+    expect(connections[0].disconnectCalls).toBe(1);
+    expect(changes.at(-1)).toEqual([]);
+  });
+});
+
+describe("WatchSession demo recording", () => {
+  // Real timers: recorder finalize does real fs work; EndGhosting
+  // reconnects defer through setImmediate.
+  const flushImmediate = () => new Promise((r) => setImmediate(r));
+
+  async function createRecordingManager(
+    overrides: { minPlayers?: number } = {},
+  ) {
+    const dir = await fsp.mkdtemp(path.join(os.tmpdir(), "watch-demo-"));
+    const finalized: string[] = [];
+    const coordinator = new DemoCoordinator({
+      enabled: true,
+      dir,
+      minFreeBytes: 0,
+      maxBytes: 512 * 1024 * 1024,
+      minLengthMs: 0,
+      minPlayers: overrides.minPlayers ?? 0,
+      recorderName: "Observer",
+      onFinalized: (filePath) => finalized.push(filePath),
+    });
+    const connections: FakeGameConnection[] = [];
+    const manager = new WatchSessionManager({
+      gameBasePath: "/nonexistent",
+      getCachedServer: () => undefined,
+      demoCoordinator: coordinator,
+      createConnection: (address) => {
+        const conn = new FakeGameConnection(address);
+        connections.push(conn);
+        return conn as unknown as GameConnection;
+      },
+    });
+    return { manager, connections, coordinator, finalized, dir };
+  }
+
+  function getSession(manager: WatchSessionManager) {
+    return (manager as any).sessions.get("1.2.3.4:28000");
+  }
+
+  function firePhase1(session: any, missionName: string): void {
+    session.handleResponderEvent({
+      type: "RemoteCommandEvent",
+      funcName: "MissionStartPhase1",
+      args: ["1", missionName],
+    });
+  }
+
+  function fireEndGhosting(session: any): void {
+    session.handleResponderEvent({
+      type: "GhostingMessageEvent",
+      message: 2,
+      sequence: 0,
+      ghostCount: 0,
+    });
+  }
+
+  it("starts recording at Phase1 and broadcasts the recording flag", async () => {
+    const { manager, connections } = await createRecordingManager();
+    const ws = new FakeWebSocket();
+    manager.watch(ws as unknown as WebSocket, "1.2.3.4:28000");
+    const session = getSession(manager);
+    connections[0].setStatus("connected");
+
+    expect(session.recorder).not.toBeNull();
+    expect(session.recorder.state).toBe("buffering");
+    expect(manager.getStatusSummary()[0].recording).toBe(false);
+
+    firePhase1(session, "Katabatic");
+    expect(session.recorder.state).toBe("recording");
+    expect(manager.getStatusSummary()[0].recording).toBe(true);
+    const statuses = ws
+      .jsonMessages()
+      .filter((m) => m.type === "sessionStatus");
+    expect(statuses.at(-1)).toMatchObject({ recording: true });
+
+    manager.shutdown();
+  });
+
+  it("rotates the recording on EndGhosting via a reconnect that skips the resync budget", async () => {
+    const { manager, connections, finalized, coordinator } =
+      await createRecordingManager();
+    const ws = new FakeWebSocket();
+    manager.watch(ws as unknown as WebSocket, "1.2.3.4:28000");
+    const session = getSession(manager);
+    connections[0].setStatus("connected");
+    firePhase1(session, "Katabatic");
+    const firstRecorder = session.recorder;
+
+    fireEndGhosting(session);
+    expect(session.recorder).toBeNull();
+    await flushImmediate();
+    await flushImmediate();
+
+    expect(connections).toHaveLength(2);
+    expect(connections[0].disconnectCalls).toBe(1);
+    expect(session.resyncCount).toBe(0);
+    connections[1].setStatus("connected");
+    expect(session.recorder).not.toBeNull();
+    expect(session.recorder).not.toBe(firstRecorder);
+
+    // The mission-N demo was finalized and handed to the upload queue.
+    // No cached server info in this fake, so the slug is the address.
+    await vi.waitFor(() => expect(finalized).toHaveLength(1));
+    expect(finalized[0]).toMatch(
+      /1-2-3-4-28000_\d{8}T\d{4}_katabatic_[0-9a-f]{6}\.rec$/,
+    );
+    expect(coordinator.getStats()).toMatchObject({
+      enabled: true,
+      buffering: 1, // the new epoch's recorder, pre-Phase1
+      recording: 0,
+      started: 2,
+      kept: 1,
+      dropped: 0,
+      failed: 0,
+    });
+
+    manager.shutdown();
+  });
+
+  it("keeps buffering through a cycle that arrives before Phase1", async () => {
+    const { manager, connections } = await createRecordingManager();
+    const ws = new FakeWebSocket();
+    manager.watch(ws as unknown as WebSocket, "1.2.3.4:28000");
+    const session = getSession(manager);
+    connections[0].setStatus("connected");
+    const recorder = session.recorder;
+    expect(recorder.state).toBe("buffering");
+
+    // Joined mid-cycle: EndGhosting before any Phase1. The from-connect
+    // stream stays valid — no rotation, no reconnect.
+    fireEndGhosting(session);
+    await flushImmediate();
+    await flushImmediate();
+    expect(connections).toHaveLength(1);
+    expect(session.recorder).toBe(recorder);
+
+    // The new mission's Phase1 flushes the buffer under its name.
+    firePhase1(session, "Damnation");
+    expect(recorder.state).toBe("recording");
+
+    manager.shutdown();
+  });
+
+  it("rides a second mission cycle in place within the reconnect guard window", async () => {
+    const { manager, connections } = await createRecordingManager();
+    const ws = new FakeWebSocket();
+    manager.watch(ws as unknown as WebSocket, "1.2.3.4:28000");
+    const session = getSession(manager);
+    connections[0].setStatus("connected");
+    firePhase1(session, "Katabatic");
+
+    fireEndGhosting(session);
+    await flushImmediate();
+    await flushImmediate();
+    expect(connections).toHaveLength(2);
+    connections[1].setStatus("connected");
+    firePhase1(session, "Damnation");
+
+    fireEndGhosting(session);
+    await flushImmediate();
+    await flushImmediate();
+    // No third connection — but the recording still stopped.
+    expect(connections).toHaveLength(2);
+    expect(session.recorder).toBeNull();
+
+    manager.shutdown();
+  });
+
+  it("finalizes the recording on disconnect-style mission cycles and session end", async () => {
+    const { manager, connections, coordinator } =
+      await createRecordingManager();
+    const finalizeSpy = vi.spyOn(coordinator, "finalize");
+    const ws = new FakeWebSocket();
+    manager.watch(ws as unknown as WebSocket, "1.2.3.4:28000");
+    const session = getSession(manager);
+    connections[0].setStatus("connected");
+    firePhase1(session, "Katabatic");
+
+    connections[0].setStatus("disconnected", "Server is cycling mission");
+    expect(finalizeSpy).toHaveBeenCalledTimes(1);
+    expect(session.recorder).toBeNull();
+
+    manager.shutdown();
+  });
+
+  it("drops recordings from sessions that never had enough players", async () => {
+    const { manager, connections, coordinator, finalized } =
+      await createRecordingManager({ minPlayers: 2 });
+    const ws = new FakeWebSocket();
+    manager.watch(ws as unknown as WebSocket, "1.2.3.4:28000");
+    const session = getSession(manager);
+    connections[0].setStatus("connected");
+    firePhase1(session, "Katabatic");
+    expect(session.recorder.state).toBe("recording");
+
+    // Empty roster the whole session → peak 0 < 2 → dropped at the end.
+    connections[0].setStatus("disconnected", "You have been kicked");
+    await vi.waitFor(() =>
+      expect(coordinator.getStats()).toMatchObject({ dropped: 1, kept: 0 }),
+    );
+    expect(finalized).toEqual([]);
+
+    manager.shutdown();
+  });
+
+  it("creates no recorder and keeps in-place mission cycles when disabled", async () => {
+    const connections: FakeGameConnection[] = [];
+    const manager = new WatchSessionManager({
+      gameBasePath: "/nonexistent",
+      getCachedServer: () => undefined,
+      createConnection: (address) => {
+        const conn = new FakeGameConnection(address);
+        connections.push(conn);
+        return conn as unknown as GameConnection;
+      },
+    });
+    const ws = new FakeWebSocket();
+    manager.watch(ws as unknown as WebSocket, "1.2.3.4:28000");
+    const session = getSession(manager);
+    connections[0].setStatus("connected");
+
+    expect(session.recorder).toBeNull();
+    fireEndGhosting(session);
+    await flushImmediate();
+    await flushImmediate();
+    expect(connections).toHaveLength(1);
+    expect(connections[0].disconnectCalls).toBe(0);
+
+    manager.shutdown();
   });
 });

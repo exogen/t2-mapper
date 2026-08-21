@@ -8,6 +8,8 @@ import { queryServerList, queryServerInfo } from "./masterQuery.js";
 import { GameConnection } from "./gameConnection.js";
 import { loadCredentials } from "./auth.js";
 import { WatchSessionManager, normalizeAddress } from "./watchSession.js";
+import { DemoCoordinator } from "./demoCoordinator.js";
+import { DemoUploader, loadUploadConfig } from "./demoUpload.js";
 import {
   AUTH_COMMANDS,
   MAX_RETRIES,
@@ -29,10 +31,46 @@ const MANIFEST_PATH =
 const RELAY_PORT = parseInt(process.env.RELAY_PORT || "8765", 10);
 const MASTER_SERVER = process.env.T2_MASTER_SERVER || "master.tribesnext.com";
 
+// ── Demo recording (env-gated) ──
+const DEMO_RECORD_ENABLED =
+  process.env.DEMO_RECORD_ENABLED === "1" ||
+  process.env.DEMO_RECORD_ENABLED === "true";
+const DEMO_DIR = process.env.DEMO_DIR || "/data/demos";
+const DEMO_MIN_FREE_BYTES = parseInt(
+  process.env.DEMO_MIN_FREE_BYTES || `${1024 ** 3}`,
+  10,
+);
+const DEMO_MAX_BYTES = parseInt(
+  process.env.DEMO_MAX_BYTES || `${256 * 1024 * 1024}`,
+  10,
+);
+const DEMO_MIN_LENGTH_MS = parseInt(
+  process.env.DEMO_MIN_LENGTH_MS || "30000",
+  10,
+);
+/** Peak non-observer players a recording must have seen to be kept. */
+const DEMO_MIN_PLAYERS = parseInt(process.env.DEMO_MIN_PLAYERS || "2", 10);
+
+/** Where the actively-watched server list persists across restarts
+ *  (warm-boot continuity for deploys). Unwritable path = feature off. */
+const WATCH_STATE_PATH =
+  process.env.WATCH_STATE_PATH || "/data/watch-state.json";
+const DEMO_UPLOAD_RETRY_MS = parseInt(
+  process.env.DEMO_UPLOAD_RETRY_MS || `${5 * 60_000}`,
+  10,
+);
+const DEMO_SHUTDOWN_DRAIN_MS = parseInt(
+  process.env.DEMO_SHUTDOWN_DRAIN_MS || "8000",
+  10,
+);
+
 /** HTTP server for health checks; WebSocket upgrades are handled separately. */
 const httpServer = http.createServer(async (req, res) => {
   if (req.url === "/health") {
-    const checks: Record<string, { ok: boolean; detail?: string }> = {};
+    const checks: Record<
+      string,
+      { ok: boolean; detail?: string; stats?: unknown }
+    > = {};
 
     // Check game assets directory.
     try {
@@ -63,10 +101,78 @@ const httpServer = http.createServer(async (req, res) => {
       detail: creds ? "loaded" : "missing or incomplete",
     };
 
+    // Live connection counts: browser sockets on one side, game-server
+    // UDP connections on the other (personal player connections plus
+    // one shared connection per watch session).
+    const sessions = watchSessions.getStatusSummary();
+    const watcherTotal = sessions.reduce((n, s) => n + s.watchers, 0);
+    checks.connections = {
+      ok: true,
+      detail:
+        `${wss.clients.size} client socket(s), ` +
+        `${activeGameConnections.size + sessions.length} game connection(s)`,
+      stats: {
+        wsClients: wss.clients.size,
+        gameServers: {
+          total: activeGameConnections.size + sessions.length,
+          players: activeGameConnections.size,
+          watchSessions: sessions.length,
+        },
+        watchers: watcherTotal,
+        sessions,
+      },
+    };
+
+    // Demo recording is optional — report stats, never fail health on it.
+    if (DEMO_RECORD_ENABLED || demoUploader.enabled) {
+      // Disk is the ground truth for pending work: .rec files survive
+      // restarts (the sweep re-uploads them), .partial files are either
+      // in-progress spools or crash debris awaiting the next sweep.
+      let recFiles = 0;
+      let partialFiles = 0;
+      try {
+        for (const name of await fs.readdir(DEMO_DIR)) {
+          if (name.endsWith(".partial")) partialFiles++;
+          else if (name.endsWith(".rec")) recFiles++;
+        }
+      } catch {
+        // Dir not created yet — nothing recorded.
+      }
+      let freeBytes: number | null = null;
+      try {
+        const stat = await fs.statfs(DEMO_DIR);
+        freeBytes = stat.bavail * stat.bsize;
+      } catch {
+        // Reported as null.
+      }
+      checks.demoRecording = {
+        ok: true,
+        detail: DEMO_RECORD_ENABLED
+          ? `enabled → ${DEMO_DIR} (uploads ${demoUploader.enabled ? "on" : "off"})`
+          : `uploads only → ${DEMO_DIR}`,
+        stats: {
+          ...demoCoordinator.getStats(),
+          upload: demoUploader.getStats(),
+          disk: { freeBytes, recFiles, partialFiles },
+        },
+      };
+    } else {
+      checks.demoRecording = { ok: true, detail: "disabled" };
+    }
+
     const allOk = Object.values(checks).every((c) => c.ok);
     res.writeHead(allOk ? 200 : 503, { "Content-Type": "application/json" });
     res.end(
-      JSON.stringify({ status: allOk ? "ok" : "degraded", checks }, null, 2),
+      JSON.stringify(
+        {
+          status: allOk ? "ok" : "degraded",
+          uptimeSec: Math.round(process.uptime()),
+          rssBytes: process.memoryUsage.rss(),
+          checks,
+        },
+        null,
+        2,
+      ),
     );
     return;
   }
@@ -147,11 +253,80 @@ function findKnownServer(address: string): ServerInfo | undefined {
   );
 }
 
+const demoUploader = new DemoUploader(loadUploadConfig(), DEMO_DIR);
+const demoCoordinator = new DemoCoordinator({
+  enabled: DEMO_RECORD_ENABLED,
+  dir: DEMO_DIR,
+  minFreeBytes: DEMO_MIN_FREE_BYTES,
+  maxBytes: DEMO_MAX_BYTES,
+  minLengthMs: DEMO_MIN_LENGTH_MS,
+  minPlayers: DEMO_MIN_PLAYERS,
+  recorderName: process.env.T2_ACCOUNT_NAME || "Observer",
+  onFinalized: (filePath) => demoUploader.enqueue(filePath),
+});
+if (DEMO_RECORD_ENABLED || demoUploader.enabled) {
+  relayLog.info(
+    {
+      recording: DEMO_RECORD_ENABLED,
+      dir: DEMO_DIR,
+      uploads: demoUploader.enabled,
+    },
+    "Demo recording configured",
+  );
+}
+// Sweeps only exist to feed the upload queue (and tidy stale partials
+// along the way) — without R2 config the demo dir is left untouched.
+if (demoUploader.enabled) {
+  void demoUploader.sweep();
+  setInterval(() => void demoUploader.sweep(), DEMO_UPLOAD_RETRY_MS);
+}
+
+/** Persist the watched-address list so a restarted relay can pre-warm
+ *  its game connections before watchers reconnect. Writes are skipped
+ *  during shutdown so the file reflects the pre-restart state. */
+let watchStateWriteChain = Promise.resolve();
+function persistWatchState(addresses: string[]): void {
+  if (shuttingDown) return;
+  const payload = JSON.stringify({ addresses });
+  // Serialize writes: concurrent writeFile calls to the same path have
+  // no ordering guarantee, so an older snapshot could land last.
+  watchStateWriteChain = watchStateWriteChain.then(() =>
+    fs.writeFile(WATCH_STATE_PATH, payload).catch((err: unknown) => {
+      relayLog.debug(
+        { err, path: WATCH_STATE_PATH },
+        "Watch state not persisted",
+      );
+    }),
+  );
+}
+
 /** Shared watch sessions (one game connection per server, N watchers). */
 const watchSessions = new WatchSessionManager({
   gameBasePath: GAME_BASE_PATH,
   getCachedServer: findKnownServer,
+  demoCoordinator,
+  onSessionsChanged: persistWatchState,
 });
+
+// Warm boot: reconnect to servers that were being watched before the
+// restart so returning watchers get near-instant catch-up. Idle grace
+// tears these down if nobody comes back.
+void fs
+  .readFile(WATCH_STATE_PATH, "utf-8")
+  .then((raw) => {
+    const addresses: unknown = JSON.parse(raw)?.addresses;
+    if (!Array.isArray(addresses) || addresses.length === 0) return;
+    relayLog.info(
+      { addresses },
+      "Warm-booting watch sessions from previous run",
+    );
+    for (const address of addresses) {
+      if (typeof address === "string") watchSessions.warmStart(address);
+    }
+  })
+  .catch(() => {
+    // No state file — fresh start.
+  });
 
 setInterval(() => {
   // Evict expired probe results (they're otherwise only deleted when the
@@ -208,11 +383,22 @@ function logExit(message: string): void {
   }
 }
 
+let shuttingDown = false;
 for (const signal of ["SIGTERM", "SIGINT", "SIGHUP"] as const) {
   process.on(signal, () => {
+    if (shuttingDown) return;
+    shuttingDown = true;
     logExit(`received ${signal} — shutting down watch sessions and exiting`);
+    // Session teardown detaches every recorder into the coordinator;
+    // drain those finalizes (fast local file work, never uploads — the
+    // next boot's sweep uploads from the persistent volume) then exit.
     watchSessions.shutdown();
-    process.exit(0);
+    void demoCoordinator.shutdown(DEMO_SHUTDOWN_DRAIN_MS).finally(() => {
+      logExit("demo finalize drain complete — exiting");
+      // Give the relayRestarting notices queued on watcher sockets a
+      // moment to flush before the process dies.
+      setTimeout(() => process.exit(0), 300);
+    });
   });
 }
 

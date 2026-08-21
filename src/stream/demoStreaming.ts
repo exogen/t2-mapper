@@ -55,7 +55,7 @@ interface DemoMissionInfo {
   recorderClientId: number | null;
 }
 
-function extractMissionInfo(demoValues: string[]): DemoMissionInfo {
+export function extractMissionInfo(demoValues: string[]): DemoMissionInfo {
   let missionDisplayName: string | null = null;
   let missionType: string | null = null;
   let gameClassName: string | null = null;

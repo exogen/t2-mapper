@@ -21,6 +21,8 @@ import {
 import { WatchStateAccumulator } from "./watchState.js";
 import { serializeCatchupPayload } from "./watchSerialize.js";
 import { buildCatchupPayload } from "./watchCatchup.js";
+import type { DemoCoordinator } from "./demoCoordinator.js";
+import type { DemoRecorder } from "./demoRecorder.js";
 import { relayLog } from "./logger.js";
 import type {
   ConnectionStatus,
@@ -38,6 +40,9 @@ const SCORES_POLL_MS = 4_000;
 /** Matches the real client's chat input limit ($Host::MaxMessageLen). */
 const CHAT_MAX_LENGTH = 255;
 const CATCHUP_CHUNK_BYTES = 256 * 1024;
+/** Min gap between recording-driven mission-cycle reconnects — a second
+ *  cycle sooner than this rides in place instead (no reconnect loops). */
+const CYCLE_RECONNECT_MIN_MS = 60_000;
 
 function toWatchStatus(status: ConnectionStatus): WatchStatus {
   switch (status) {
@@ -62,6 +67,11 @@ function sendJson(ws: WebSocket, message: ServerMessage): void {
 export interface WatchSessionManagerOptions {
   gameBasePath: string;
   getCachedServer: (address: string) => ServerInfo | undefined;
+  /** When present and enabled, sessions auto-record each mission to a .rec. */
+  demoCoordinator?: DemoCoordinator;
+  /** Fired whenever the set of session addresses changes (persistence
+   *  hook for warm-booting after a restart). */
+  onSessionsChanged?: (addresses: string[]) => void;
   /** Test seam: construct the game connection (default: real UDP). */
   createConnection?: (address: string) => GameConnection;
 }
@@ -76,18 +86,40 @@ export class WatchSessionManager {
 
   /** Attach a watcher socket to the session for `address`, creating it. */
   watch(ws: WebSocket, address: string): void {
-    const key = normalizeAddress(address);
     // A socket watches at most one server.
     this.detachSocket(ws);
+    const session = this.getOrCreateSession(address);
+    session.attach(ws);
+  }
+
+  /**
+   * Boot-time session pre-warm (restart continuity): reconnect to a
+   * server that was being watched before the restart, so returning
+   * watchers get instant catch-up. With no watchers attached, the idle
+   * grace timer bounds the session's life if nobody comes back.
+   */
+  warmStart(address: string): void {
+    const session = this.getOrCreateSession(address);
+    session.ensureIdleGrace();
+  }
+
+  private getOrCreateSession(address: string): WatchSession {
+    const key = normalizeAddress(address);
     let session = this.sessions.get(key);
     if (!session) {
       session = new WatchSession(key, this.options, () => {
         this.sessions.delete(key);
+        this.notifySessionsChanged();
       });
       this.sessions.set(key, session);
       session.start();
+      this.notifySessionsChanged();
     }
-    session.attach(ws);
+    return session;
+  }
+
+  private notifySessionsChanged(): void {
+    this.options.onSessionsChanged?.([...this.sessions.keys()]);
   }
 
   /** Whether an active session exists for this address. */
@@ -116,16 +148,21 @@ export class WatchSessionManager {
     address: string;
     status: WatchStatus;
     watchers: number;
+    recording: boolean;
   }> {
     return [...this.sessions.values()].map((s) => ({
       address: s.key,
       status: s.watchStatus,
       watchers: s.watcherCount,
+      recording: s.recording,
     }));
   }
 
   shutdown(): void {
     for (const session of this.sessions.values()) {
+      // Tell watchers this is a restart (auto-reattach) before the
+      // session's teardown messages reach them.
+      session.notifyRestarting();
       session.destroy("Relay shutting down");
     }
     this.sessions.clear();
@@ -166,6 +203,9 @@ export class WatchSession {
   private retryCount = 0;
   /** Re-syncs without a healthy stretch (~5000 packets) in between. */
   private resyncCount = 0;
+  /** One recorder per connection epoch (one connection = one demo). */
+  private recorder: DemoRecorder | null = null;
+  private lastCycleReconnectAt = 0;
   private destroyed = false;
   private lastStatus: ConnectionStatus = "connecting";
   private lastPingMs: number | null = null;
@@ -214,6 +254,7 @@ export class WatchSession {
   }
 
   start(): void {
+    this.stopRecording("restart");
     this.epoch++;
     this.connectSynced = false;
     this.packetCount = 0;
@@ -228,6 +269,15 @@ export class WatchSession {
     const cached = this.options.getCachedServer(this.key);
     if (cached?.mapName) conn.setMapName(cached.mapName);
 
+    this.recorder =
+      this.options.demoCoordinator?.createRecorder({
+        address: this.key,
+        getConnectSequence: () => conn.connectSequence,
+        getServerInfo: () => this.options.getCachedServer(this.key),
+        getActivePlayerCount: () => this.watchState.countActivePlayers(),
+        onStateChange: () => this.fanOutSessionStatus(),
+      }) ?? null;
+
     conn.on("status", (status: ConnectionStatus, message?: string) => {
       if (this.connection !== conn) return;
       this.handleStatus(conn, status, message);
@@ -235,6 +285,10 @@ export class WatchSession {
     conn.on("packet", (data: Uint8Array) => {
       if (this.connection !== conn) return;
       this.handlePacket(data);
+    });
+    conn.on("sent", () => {
+      if (this.connection !== conn) return;
+      this.recorder?.onSent();
     });
     conn.on("ping", (ms: number) => {
       if (this.connection !== conn) return;
@@ -260,6 +314,19 @@ export class WatchSession {
   }
 
   // ── Watcher lifecycle ──
+
+  /** Start the idle grace clock when no watchers are attached — used
+   *  for warm-started sessions, which would otherwise never expire. */
+  ensureIdleGrace(): void {
+    if (!this.destroyed && this.watcherCount === 0 && !this.idleTimer) {
+      this.startIdleTimer();
+    }
+  }
+
+  /** Deploy/restart imminent: watchers should reattach, not give up. */
+  notifyRestarting(): void {
+    this.fanOut({ type: "relayRestarting" });
+  }
 
   attach(ws: WebSocket): void {
     if (this.destroyed) return;
@@ -344,6 +411,9 @@ export class WatchSession {
 
     if (status === "disconnected") {
       this.stopScoresPoll();
+      // Covers both cycle styles: servers that hard-disconnect at mission
+      // change ("Server is cycling mission") and terminal disconnects.
+      this.stopRecording(`disconnected: ${message ?? "unknown"}`);
       const retryable = isRetryableDisconnect(message);
       if (retryable && this.retryCount < MAX_RETRIES && this.watcherCount > 0) {
         this.retryCount++;
@@ -395,6 +465,7 @@ export class WatchSession {
     this.cancelIdleTimer();
     if (this.retryTimer) clearTimeout(this.retryTimer);
     this.stopScoresPoll();
+    this.stopRecording(reason ?? "session ended");
     if (reason) {
       this.fanOut({
         type: "sessionStatus",
@@ -431,6 +502,11 @@ export class WatchSession {
       this.resyncSession("packet parse failed");
       return;
     }
+
+    // Record only packets the parser handled — an unparseable packet in
+    // the demo would break playback at the same spot (the resync above
+    // finalizes the recording, so the file stays valid to its last byte).
+    this.recorder?.onPacket(data);
 
     if (parsed) {
       this.packetCount++;
@@ -483,13 +559,23 @@ export class WatchSession {
       { address: this.key, reason, attempt: this.resyncCount },
       "Watch session re-syncing from a fresh connection",
     );
+    this.stopRecording(`resync: ${reason}`);
+    this.reconnect("Re-syncing with server...");
+  }
+
+  /**
+   * Tear down the current connection and start a fresh epoch: every
+   * watcher goes back to pending and re-hydrates from a new catch-up
+   * (new sequence state and ghost IDs).
+   */
+  private reconnect(statusMessage: string): void {
     this.lastStatus = "connecting";
     for (const ws of this.watchers) this.pending.add(ws);
     this.watchers.clear();
     this.fanOut({
       type: "sessionStatus",
       status: "connecting",
-      message: "Re-syncing with server...",
+      message: statusMessage,
       address: this.key,
       mapName: this.sessionMapName(),
       watcherCount: this.watcherCount,
@@ -500,6 +586,57 @@ export class WatchSession {
       conn.disconnect();
     }
     this.start();
+  }
+
+  // ── Demo recording ──
+
+  get recording(): boolean {
+    return this.recorder?.state === "recording";
+  }
+
+  /** Detach the recorder and hand it to the coordinator to finalize —
+   *  detaching first so no later packet can write to a finalizing file. */
+  private stopRecording(reason: string): void {
+    const recorder = this.recorder;
+    if (!recorder) return;
+    this.recorder = null;
+    this.options.demoCoordinator?.finalize(recorder, reason);
+  }
+
+  /**
+   * Mission cycle observed in-stream (EndGhosting, or a Phase1 mission
+   * change that arrived without one). When recording, rotate the demo by
+   * reconnecting: the old file keeps the match end and world teardown,
+   * and the fresh connection captures the new mission's full datablock +
+   * ghost-always preamble from packet 1. Watchers ride the normal
+   * re-hydrate flow during the intermission.
+   */
+  private handleMissionCycle(trigger: string): void {
+    if (!this.recorder || this.destroyed) return;
+    // A cycle before Phase1 ever arrived (we joined mid-cycle): keep
+    // buffering — the from-connect stream stays valid across an in-place
+    // cycle, and the new mission's Phase1 flushes it under its name.
+    if (this.recorder.state === "buffering") return;
+    const now = Date.now();
+    if (now - this.lastCycleReconnectAt < CYCLE_RECONNECT_MIN_MS) {
+      relayLog.warn(
+        { address: this.key, trigger },
+        "Mission cycle too soon after last recording reconnect — riding in place",
+      );
+      this.stopRecording(`mission-cycle (${trigger}, riding in place)`);
+      return;
+    }
+    this.lastCycleReconnectAt = now;
+    relayLog.info(
+      { address: this.key, trigger },
+      "Mission cycle — rotating demo recording via reconnect",
+    );
+    this.stopRecording(`mission-cycle (${trigger})`);
+    // Defer past the current packet's accumulate/forward pass.
+    setImmediate(() => {
+      if (this.destroyed || !this.connection) return;
+      this.reconnect("Mission changing...");
+    });
   }
 
   /**
@@ -542,7 +679,11 @@ export class WatchSession {
         if (newMissionName && newMissionName !== this.watchState.missionName) {
           this.watchState.missionName = newMissionName;
           this.watchState.beginMissionChange();
+          // A mission change reaching an already-open file means the
+          // EndGhosting cycle trigger was missed — rotate late.
+          this.handleMissionCycle("Phase1");
         }
+        if (newMissionName) this.recorder?.setMissionName(newMissionName);
         conn.sendCommand("MissionStartPhase1Done", seq);
       } else if (funcName === "MissionStartPhase2") {
         conn.sendCommand("MissionStartPhase2Done", resolvedArgs[0] ?? "");
@@ -578,6 +719,10 @@ export class WatchSession {
       // GhostAlwaysDone (0) → ack with type 1 so the server begins ghosting.
       if (ghosting.message === 0) {
         conn.handleGhostAlwaysDone(ghosting.sequence, ghosting.ghostCount);
+      } else if (ghosting.message === 2) {
+        // EndGhosting: in-place mission cycle beginning. The old demo has
+        // already captured the match end (and this teardown packet).
+        this.handleMissionCycle("EndGhosting");
       }
     }
   }
@@ -653,6 +798,7 @@ export class WatchSession {
       serverName: this.sessionServerName(),
       mapName: this.sessionMapName(),
       watcherCount: this.watcherCount,
+      recording: this.recording,
     });
 
     let gzipped: Uint8Array;
@@ -693,6 +839,7 @@ export class WatchSession {
       serverName: this.sessionServerName(),
       mapName: this.sessionMapName(),
       watcherCount: this.watcherCount,
+      recording: this.recording,
     });
     relayLog.info(
       {
@@ -762,6 +909,7 @@ export class WatchSession {
       serverName: this.sessionServerName(),
       mapName: this.sessionMapName(),
       watcherCount: this.watcherCount,
+      recording: this.recording,
     });
   }
 
@@ -773,6 +921,7 @@ export class WatchSession {
       serverName: this.sessionServerName(),
       mapName: this.sessionMapName(),
       watcherCount: this.watcherCount,
+      recording: this.recording,
     });
     if (this.lastPingMs != null) {
       sendJson(ws, { type: "ping", ms: this.lastPingMs });

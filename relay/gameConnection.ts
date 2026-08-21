@@ -63,6 +63,8 @@ interface QueuedEvent {
 interface GameConnectionEvents {
   status: [status: ConnectionStatus, message?: string];
   packet: [data: Uint8Array];
+  /** A data-protocol packet was sent (never fired for OOB packets). */
+  sent: [];
   ping: [ms: number];
   error: [error: Error];
   close: [];
@@ -534,6 +536,7 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
       );
       const pingResponse = this.protocol.buildPingPacket();
       this.sendRaw(pingResponse);
+      this.emit("sent");
       // Ledger: pong packets consume a wire seq with no RTT timestamp —
       // log it so seq accounting stays auditable alongside "TX data".
       connLog.debug({ wireSeq: this.protocol.lastSendSeq }, "TX pong");
@@ -920,6 +923,7 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
       ...(events ? { events } : {}),
     });
     this.sendRaw(packet);
+    this.emit("sent");
     // Send-side ledger for RTT forensics: stampedSeq is the timestamp
     // key recorded above; wireSeq is what the protocol actually stamped
     // into the header. They must always match — a divergence corrupts
@@ -947,7 +951,7 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
     this.keepaliveTimer = setInterval(() => {
       loopCount++;
       if (loopCount % 1200 === 0) {
-        connLog.info(
+        connLog.debug(
           {
             dataPackets: this.dataPacketCount,
             rawMessages: this.rawMessageCount,

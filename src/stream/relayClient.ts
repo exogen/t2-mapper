@@ -31,10 +31,19 @@ export type RelayEventHandler = {
   onSessionStatus?: (
     status: WatchStatus,
     message: string | undefined,
-    info: { address: string; serverName?: string; mapName?: string },
+    info: {
+      address: string;
+      serverName?: string;
+      mapName?: string;
+      /** The relay is recording this session to a demo file. */
+      recording?: boolean;
+    },
     watcherCount: number,
   ) => void;
   onWatcherCount?: (count: number) => void;
+  /** The relay announced a restart/deploy — expect the socket to close;
+   *  watchers should auto-reattach rather than treat the session as ended. */
+  onRelayRestarting?: () => void;
   onCatchupProgress?: (receivedBytes: number, totalBytes: number) => void;
   /** Fires after the full catch-up payload is decompressed and parsed.
    *  Binary frames received while finalizing are flushed to onGamePacket
@@ -165,12 +174,16 @@ export class RelayClient {
             address: message.address,
             serverName: message.serverName,
             mapName: message.mapName,
+            recording: message.recording,
           },
           message.watcherCount,
         );
         break;
       case "watcherCount":
         this.handlers.onWatcherCount?.(message.count);
+        break;
+      case "relayRestarting":
+        this.handlers.onRelayRestarting?.();
         break;
       case "catchupBegin":
         this.catchupMode = "collecting";

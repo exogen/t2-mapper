@@ -5,6 +5,8 @@
 
 app = 't2-relay'
 primary_region = 'ord'
+# Allow the shutdown drain to finalize in-progress demo recordings.
+kill_timeout = 15
 
 [build]
   dockerfile = 'relay/Dockerfile'
