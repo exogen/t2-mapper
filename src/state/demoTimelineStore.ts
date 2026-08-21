@@ -27,14 +27,23 @@ export interface TimelineEvent {
   weapon?: string;
   /** For flag-cap events: name of the player who captured. */
   capturer?: string;
-  /** For flag-cap/flag-grab events: name of the flag's team. */
+  /**
+   * For flag-grab/flag-return events: the player responsible (unset for
+   * auto-returns and recorder-perspective events).
+   */
+  actor?: string;
+  /** For flag events: name of the flag's team. */
   flagTeamName?: string;
 }
 
 export interface DemoTimelineState {
   events: TimelineEvent[] | null;
   scanProgress: number | null;
-  setEvents(events: TimelineEvent[]): void;
+  /**
+   * The recorder never played — kill/death events are never emitted.
+   */
+  observerPerspective: boolean;
+  setEvents(events: TimelineEvent[], observerPerspective: boolean): void;
   setScanProgress(progress: number | null): void;
   reset(): void;
 }
@@ -42,14 +51,15 @@ export interface DemoTimelineState {
 export const demoTimelineStore = createStore<DemoTimelineState>((set) => ({
   events: null,
   scanProgress: null,
-  setEvents(events) {
-    set({ events });
+  observerPerspective: false,
+  setEvents(events, observerPerspective) {
+    set({ events, observerPerspective });
   },
   setScanProgress(progress) {
     set({ scanProgress: progress });
   },
   reset() {
-    set({ events: null, scanProgress: null });
+    set({ events: null, scanProgress: null, observerPerspective: false });
   },
 }));
 

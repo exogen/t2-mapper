@@ -138,7 +138,7 @@ function MissionItemContent({ mission }: { mission: MissionItem }) {
             {mission.missionTypes.map((type) => (
               <span
                 key={type}
-                className={styles.ItemType}
+                className={styles.ItemTypeInteractive}
                 data-mission-type={type}
               >
                 {type}

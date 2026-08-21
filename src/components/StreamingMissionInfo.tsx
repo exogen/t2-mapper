@@ -17,11 +17,15 @@ import {
 import { useRecording } from "./usePlayback";
 import { unloadDemo } from "../stream/demoFileLoader";
 import { LuCircleArrowOutUpLeft, LuEye, LuUser, LuUsers } from "react-icons/lu";
+import { PiCassetteTapeFill } from "react-icons/pi";
+import { useDemoLoad } from "../state/demoLoadStore";
 import { useStreamSnapshot } from "../state/streamSnapshotStore";
 import { WifiSignalIcon } from "./WifiSignalIcon";
 import { IoCalendarNumberOutline } from "react-icons/io5";
 import { BiSolidEject } from "react-icons/bi";
+import { FaArrowDown } from "react-icons/fa";
 import { formatPing } from "../stringUtils";
+import { lookupMissionType } from "../mission";
 import styles from "./StreamingMissionInfo.module.css";
 
 export function StreamingMissionInfo({
@@ -33,6 +37,16 @@ export function StreamingMissionInfo({
   const missionDisplayName = useMissionDisplayName();
   const missionType = useMissionType();
   const missionTypeDisplayName = useMissionTypeDisplayName();
+  // The display name (server-sent or demo $DemoValues) is known before
+  // the gameClassName-derived short code and distinguishes mod types
+  // (LCTF vs CTF). Prefer its known short code, then the derived code,
+  // then the raw display name for mods neither source recognizes.
+  const missionTypeLabel =
+    (missionTypeDisplayName
+      ? lookupMissionType(missionTypeDisplayName)
+      : null) ??
+    missionType ??
+    missionTypeDisplayName;
   const serverName = useServerDisplayName();
   const playerName = useRecorderName();
   const dateString = useRecordingDate();
@@ -40,6 +54,7 @@ export function StreamingMissionInfo({
     ? dateString.split(" ")
     : [null, null];
   const isLive = dataSource === "live";
+  const demoSourceUrl = useDemoLoad((s) => s.sourceUrl);
   const recording = useRecording();
   const isWatcher = useLiveSelector((s) => s.role === "watcher");
   const watcherCount = useLiveSelector((s) => s.watcherCount);
@@ -107,14 +122,14 @@ export function StreamingMissionInfo({
           {missionDisplayName ? (
             <>
               <span className={styles.MissionName}>{missionDisplayName}</span>
-              {missionType && (
+              {missionTypeLabel && (
                 <>
                   {" "}
                   <span
                     className={styles.MissionType}
-                    data-mission-type={missionType}
+                    data-mission-type={missionTypeLabel}
                   >
-                    {missionTypeDisplayName === "LCTF" ? "LCTF" : missionType}
+                    {missionTypeLabel}
                   </span>
                 </>
               )}
@@ -206,6 +221,21 @@ export function StreamingMissionInfo({
         </span>
       ) : null}
       {metadata ? <div className={styles.Metadata}>{metadata}</div> : null}
+      {dataSource === "demo" && demoSourceUrl ? (
+        <a
+          className={styles.DemoDownloadButton}
+          href={demoSourceUrl}
+          download
+          title="Download this demo (.rec)"
+          aria-label="Download this demo (.rec)"
+        >
+          <PiCassetteTapeFill
+            className={styles.DemoDownloadTapeIcon}
+            aria-hidden
+          />
+          <FaArrowDown className={styles.DemoDownloadArrowIcon} aria-hidden />
+        </a>
+      ) : null}
       {dataSource === "demo" ? (
         <button
           type="button"

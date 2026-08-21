@@ -29,16 +29,39 @@ const MOVE_BURST_CAP = 300;
 /** Deflate/fs backlog beyond this means the disk stalled — abort. */
 const MAX_STREAM_BACKLOG = 16 * 1024 * 1024;
 
+/**
+ * Who we're connected to, as told by the server itself: name and
+ * mission type from MsgMissionDropInfo/MsgLoadInfo, sticky across
+ * mission-cycle reconnects. The server-list query only ever seeds
+ * fields the stream hasn't spoken for yet (`mod` has no stream source).
+ */
+export interface ServerIdentity {
+  name?: string;
+  gameType?: string;
+  mod?: string;
+}
+
 export interface DemoRecorderOptions {
   dir: string;
   /** Session key, e.g. "45.76.24.91:28000". */
   address: string;
   getConnectSequence: () => number;
+  /**
+   * Used only for the buffering-cap fallback mission name — never for
+   * demo metadata (that comes from getServerIdentity).
+   */
   getServerInfo: () => ServerInfo | undefined;
+  /**
+   * Sampled at flush for the in-file $DemoValues and again at finalize
+   * for the sidecar (by then the stream has named the server).
+   */
+  getServerIdentity: () => ServerIdentity;
   /** Current non-observer player count (sampled; the peak decides keep). */
   getActivePlayerCount: () => number;
-  /** Current roster names, observers included (sampled; the union across
-   *  the whole recording lands in the sidecar metadata). */
+  /**
+   * Current roster names, observers included (sampled; the union across
+   * the whole recording lands in the sidecar metadata).
+   */
   getPlayerNames: () => string[];
   /** Whether the match is underway (sampled; sticky — a demo that never
    *  saw the match start is dropped as pre-match warmup). */
@@ -62,6 +85,20 @@ interface QueuedEntry {
 }
 
 /**
+ * One match within a demo. Only missions whose match actually started
+ * are listed — warmup-only tails (e.g. a recording ending moments into
+ * the next rotation) are excluded.
+ */
+export interface DemoGame {
+  mission: string;
+  gameType: string;
+  /**
+   * Offset into the demo on the move-tick clock.
+   */
+  startMs: number;
+}
+
+/**
  * Sidecar record written next to each kept `.rec` — also the exact
  * per-demo record shape in the R2 `index.json` aggregation.
  */
@@ -71,18 +108,26 @@ export interface DemoMetadata {
   recordedAt: string;
   server: string;
   address: string;
-  mission: string;
-  gameType: string;
+  /**
+   * In demo order. A demo is one connection, so `server`/`address` are
+   * constant, but multi-mission demos (imports; future in-place cycle
+   * recording) list each started match here.
+   */
+  games: DemoGame[];
   mod: string;
   recorder: string;
   durationMs: number;
-  /** Unique names observed at any point, observers included. */
+  /**
+   * Unique names observed at any point, observers included.
+   */
   players: string[];
 }
 
-/** Drop C0/C1 control chars and DEL — tagged-string prefixes and color
- *  codes that would garble JSON consumers. Latin-1 and above survive. */
-function sanitizePlayerName(raw: string): string {
+/**
+ * Drop C0/C1 control chars and DEL — tagged-string prefixes and color
+ * codes that would garble JSON consumers. Latin-1 and above survive.
+ */
+export function sanitizePlayerName(raw: string): string {
   let out = "";
   for (let i = 0; i < raw.length; i++) {
     const code = raw.charCodeAt(i);
@@ -133,11 +178,17 @@ export class DemoRecorder {
   private peakPlayers = 0;
   private matchStarted = false;
   private playerNames = new Set<string>();
-  /** Fields fixed at flush time; completed into DemoMetadata at finalize. */
-  private meta: Omit<
-    DemoMetadata,
-    "filename" | "bytes" | "durationMs" | "players"
-  > | null = null;
+  /**
+   * Fields fixed at flush time; completed into DemoMetadata at finalize.
+   */
+  private meta: {
+    recordedAt: string;
+    server: string;
+    address: string;
+    mission: string;
+    mod: string;
+    recorder: string;
+  } | null = null;
   private _failure: string | null = null;
 
   constructor(opts: DemoRecorderOptions) {
@@ -187,7 +238,9 @@ export class DemoRecorder {
     }
   }
 
-  /** Fold the current roster into peak count, match flag, and names. */
+  /**
+   * Fold the current roster into peak count, match flag, and names.
+   */
   private sample(): void {
     const players = this.opts.getActivePlayerCount();
     if (players > this.peakPlayers) this.peakPlayers = players;
@@ -213,21 +266,30 @@ export class DemoRecorder {
   /** Phase1 arrived: open the file and drain the buffered stream. */
   setMissionName(missionName: string): void {
     if (this._state !== "buffering") return;
+    // Samples taken while buffering belong to the previous mission
+    // (e.g. connecting into an intermission debrief) — the keep gates
+    // and sidecar must describe the mission this file actually records.
+    // Current players re-latch immediately from the live roster. (The
+    // buffering-cap fallback keeps them: with no Phase1, the buffered
+    // packets are the same mission the file records.)
+    this.matchStarted = false;
+    this.peakPlayers = 0;
+    this.playerNames.clear();
     this.flush(missionName);
   }
 
   private flush(missionName: string): void {
-    const info = this.opts.getServerInfo();
+    const identity = this.opts.getServerIdentity();
     const date = new Date();
-    const serverName = info?.name ?? this.opts.address;
+    const serverName = identity.name ?? this.opts.address;
     const demoValues = buildDemoValues({
       recorderName: this.opts.recorderName,
       serverName,
       serverAddress: this.opts.address,
       date,
       missionDisplayName: missionName,
-      mod: info?.mod ?? "",
-      gameType: info?.gameType ?? "",
+      mod: identity.mod ?? "",
+      gameType: identity.gameType ?? "",
     });
     const initialBlock = buildInitialBlock({
       connectSequence: this.opts.getConnectSequence(),
@@ -239,8 +301,7 @@ export class DemoRecorder {
       server: serverName,
       address: this.opts.address,
       mission: missionName,
-      gameType: info?.gameType ?? "",
-      mod: info?.mod ?? "",
+      mod: identity.mod ?? "",
       recorder: this.opts.recorderName,
     };
     const filename = buildDemoFilename(date, serverName, missionName);
@@ -342,6 +403,10 @@ export class DemoRecorder {
     if (this._state !== "buffering" && this._state !== "recording") {
       return null;
     }
+    // Snapshot the identity now, synchronously: the session may start
+    // its next epoch (clearing the mission-scoped gameType) or receive
+    // the next mission's LoadInfo while the awaits below are in flight.
+    const identity = this.opts.getServerIdentity();
     // Final sample — the keep gates below run on up-to-date state even
     // if no packet arrived since the last change.
     this.sample();
@@ -397,7 +462,7 @@ export class DemoRecorder {
       this.setState("aborted");
       return null;
     }
-    await this.writeSidecar(writer.finalPath, durationMs);
+    await this.writeSidecar(writer.finalPath, durationMs, identity);
     this.setState("done");
     log.info(
       {
@@ -414,11 +479,17 @@ export class DemoRecorder {
     return { path: writer.finalPath, durationMs };
   }
 
-  /** Best-effort: a failed sidecar never fails the demo itself — the
-   *  upload proceeds and only the index entry is lost (rebuildable). */
+  /**
+   * Best-effort: a failed sidecar never fails the demo itself — the
+   * upload proceeds and only the index entry is lost (rebuildable).
+   */
   private async writeSidecar(
     finalPath: string,
     durationMs: number,
+    // Sampled at finalize entry: MsgMissionDropInfo arrives after
+    // recording starts, so finalize-time identity is stream-authoritative
+    // where flush-time values may still be seeds or fallbacks.
+    identity: ServerIdentity,
   ): Promise<void> {
     const meta = this.meta;
     if (!meta) return;
@@ -427,7 +498,20 @@ export class DemoRecorder {
       const record: DemoMetadata = {
         filename: path.basename(finalPath),
         bytes: size,
-        ...meta,
+        recordedAt: meta.recordedAt,
+        server: identity.name ?? meta.server,
+        address: meta.address,
+        // One mission per recording today (the session reconnects each
+        // cycle), and the keep gates guarantee its match started.
+        games: [
+          {
+            mission: meta.mission,
+            gameType: identity.gameType ?? "",
+            startMs: 0,
+          },
+        ],
+        mod: meta.mod,
+        recorder: meta.recorder,
         durationMs,
         players: [...this.playerNames].sort((a, b) =>
           a.localeCompare(b, "en", { sensitivity: "base" }),

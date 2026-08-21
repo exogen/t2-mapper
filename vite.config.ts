@@ -67,6 +67,10 @@ export default defineConfig(({ mode }) => {
   const publicEnv: Record<string, string> = {
     LOG_LEVEL: allEnv.LOG_LEVEL || "info",
     RELAY_URL: allEnv.RELAY_URL || "wss://t2-relay.fly.dev",
+    // Public base URL serving the demo bucket (index.json + .rec files).
+    // Empty disables the indexed-demo browser in demo mode.
+    DEMOS_BASE_URL:
+      allEnv.DEMOS_BASE_URL || "https://demos.tribes2.online/demos",
     BASE_PATH: allEnv.BASE_PATH || "/",
     GAME_ASSETS_BASE_URL:
       allEnv.GAME_ASSETS_BASE_URL || `${allEnv.BASE_PATH || "/"}base/`,

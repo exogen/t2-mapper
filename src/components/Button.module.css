@@ -159,7 +159,9 @@
     border-bottom-right-radius: 0;
   }
 
-  .DestructiveActionButton {
+  /* Compact toolbar action in the standard blue (the non-destructive
+     sibling of DestructiveActionButton). */
+  .ActionButton {
     composes: Button;
     flex: 0 0 auto;
     margin: 0 10px 0 0;
@@ -167,6 +169,11 @@
     min-width: 28px;
     min-height: 28px;
     padding: 2px;
+    text-decoration: none;
+  }
+
+  .DestructiveActionButton {
+    composes: ActionButton;
     background: rgba(213, 66, 58, 0.7);
   }
 
@@ -177,7 +184,7 @@
   }
 
   @media (pointer: coarse) {
-    .DestructiveActionButton {
+    .ActionButton {
       min-width: 36px;
       min-height: 36px;
       margin-right: 6px;

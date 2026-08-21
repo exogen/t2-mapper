@@ -25,6 +25,7 @@ export type SessionRecorderOptions = Pick<
   | "address"
   | "getConnectSequence"
   | "getServerInfo"
+  | "getServerIdentity"
   | "getActivePlayerCount"
   | "getPlayerNames"
   | "getMatchStarted"

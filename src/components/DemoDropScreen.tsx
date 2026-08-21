@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { PiCassetteTapeLight } from "react-icons/pi";
+import { useDemoLoad } from "../state/demoLoadStore";
 import { loadDemoFile } from "../stream/demoFileLoader";
+import { LoadingIndicator } from "./LoadingIndicator";
 import styles from "./DemoDropScreen.module.css";
 
 /**
@@ -10,6 +12,10 @@ import styles from "./DemoDropScreen.module.css";
 export function DemoDropScreen() {
   const inputRef = useRef<HTMLInputElement>(null);
   const [dragOver, setDragOver] = useState(false);
+  const phase = useDemoLoad((s) => s.phase);
+  const progress = useDemoLoad((s) => s.progress);
+  const loadError = useDemoLoad((s) => s.error);
+  const isLoading = phase === "downloading" || phase === "parsing";
 
   // A file dropped outside the zone (toolbar, sidebar) would otherwise
   // navigate the page to it.
@@ -66,19 +72,34 @@ export function DemoDropScreen() {
         style={{ display: "none" }}
         onChange={handleFileChange}
       />
-      <button
-        type="button"
-        className={styles.BrowseButton}
-        aria-label="Load demo (.rec)"
-        title="Load demo (.rec)"
-        onClick={() => inputRef.current?.click()}
-      >
-        <PiCassetteTapeLight aria-hidden />
-      </button>
-      <p className={styles.Hint}>
-        Drag &amp; drop a Tribes 2 demo (.rec file) here
-      </p>
-      <p className={styles.SubHint}>or click the cassette to browse</p>
+      {isLoading ? (
+        <>
+          <LoadingIndicator
+            isLoading
+            progress={phase === "downloading" ? progress : null}
+          />
+          <p className={styles.LoadingHint}>
+            {phase === "downloading" ? "Downloading demo…" : "Loading demo…"}
+          </p>
+        </>
+      ) : (
+        <>
+          <button
+            type="button"
+            className={styles.BrowseButton}
+            aria-label="Load demo (.rec)"
+            title="Load demo (.rec)"
+            onClick={() => inputRef.current?.click()}
+          >
+            <PiCassetteTapeLight aria-hidden />
+          </button>
+          {loadError != null && <p className={styles.LoadError}>{loadError}</p>}
+          <p className={styles.Hint}>
+            Drag &amp; drop a Tribes 2 demo (.rec file) here
+          </p>
+          <p className={styles.SubHint}>or click the cassette to browse</p>
+        </>
+      )}
     </div>
   );
 }

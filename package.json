@@ -11,6 +11,8 @@
     "build:manifest": "tsx --tsconfig tsconfig.node.json scripts/generate-manifest.ts -o src/manifest.json",
     "build:mount-transforms": "tsx --tsconfig tsconfig.node.json scripts/generate-mount-transforms.ts",
     "build:parser": "peggy TorqueScript.pegjs -o generated/TorqueScript.js --format es",
+    "backfill-demos": "node --env-file-if-exists=.env.development.local --import=tsx/esm scripts/backfill-demo-index.ts",
+    "fix-legacy-demos": "node --env-file-if-exists=.env.development.local --import=tsx/esm scripts/fix-legacy-demo-values.ts",
     "build": "vite build",
     "copy-public": "cpy --dot 'public/*' '!(public/docs)' docs",
     "format": "prettier --write .",

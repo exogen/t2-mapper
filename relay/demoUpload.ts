@@ -161,9 +161,11 @@ export class DemoUploader {
     }
   }
 
-  /** Upload the demo, then its sidecar, then fold the record into the
-   *  index — in that order, so every failure keeps the local files and
-   *  the whole (idempotent) chain retries on the next sweep. */
+  /**
+   * Upload the demo, then its sidecar, then fold the record into the
+   * index — in that order, so every failure keeps the local files and
+   * the whole (idempotent) chain retries on the next sweep.
+   */
   private async uploadOne(filePath: string): Promise<string> {
     const config = this.config!;
     const key = `${config.prefix}${path.basename(filePath)}`;
@@ -184,8 +186,10 @@ export class DemoUploader {
     return key;
   }
 
-  /** Null for pre-sidecar legacy files (demo still uploads, unindexed)
-   *  or an unreadable record (logged; rebuildable later if ever fixed). */
+  /**
+   * Null for pre-sidecar legacy files (demo still uploads, unindexed)
+   * or an unreadable record (logged; rebuildable later if ever fixed).
+   */
   private async readSidecar(sidecarPath: string): Promise<DemoMetadata | null> {
     let raw: string;
     try {

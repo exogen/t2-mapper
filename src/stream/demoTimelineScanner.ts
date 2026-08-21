@@ -5,7 +5,7 @@ import type {
   RemoteCommandEventData,
 } from "t2-demo-parser";
 import { TICK_DURATION_MS } from "./entityClassification";
-import { stripTaggedStringMarkup } from "./streamHelpers";
+import { extractWavTag, stripTaggedStringMarkup } from "./streamHelpers";
 import type { TimelineEvent } from "../state/demoTimelineStore";
 import { createLogger } from "../logger";
 
@@ -138,7 +138,17 @@ function formatRemoteArgs(
     }
   }
   resolved = resolved.replace(/%\d+/g, "");
-  return stripTaggedStringMarkup(resolved);
+  // Drop the embedded `~w<path>` sound cue many templates end with.
+  return extractWavTag(stripTaggedStringMarkup(resolved)).text.trim();
+}
+
+export interface TimelineScanResult {
+  events: TimelineEvent[];
+  /**
+   * True when the recorder never played (relay auto-capture, spectator
+   * recording) — kill and death events are never emitted for these.
+   */
+  observerPerspective: boolean;
 }
 
 /**
@@ -150,7 +160,7 @@ export async function scanDemoTimeline(
   recorderName: string | null,
   onProgress?: (progress: number) => void,
   signal?: AbortSignal,
-): Promise<TimelineEvent[]> {
+): Promise<TimelineScanResult> {
   const parser = new DemoParser(new Uint8Array(buffer));
   const { initialBlock } = await parser.load();
 
@@ -193,6 +203,11 @@ export async function scanDemoTimeline(
       }
     }
   }
+
+  // "Observer" means the recorder was NEVER on a team — a full-match
+  // first-person demo often ENDS at teamId 0 (mission-cycle rejoin), so
+  // the current team at any single moment is not the signal.
+  let recorderEverOnTeam = recorderTeamId != null && recorderTeamId > 0;
 
   const events: TimelineEvent[] = [];
   let moveTicks = 0;
@@ -280,7 +295,25 @@ export async function scanDemoTimeline(
           const clientId = parseInt(resolveNetString(args[4], netStrings), 10);
           if (clientId === recorderClientId) {
             const teamId = parseInt(resolveNetString(args[5], netStrings), 10);
-            if (!isNaN(teamId)) recorderTeamId = teamId;
+            if (!isNaN(teamId)) {
+              recorderTeamId = teamId;
+              if (teamId > 0 && !recorderEverOnTeam) {
+                recorderEverOnTeam = true;
+                // The recorder turned out to be a player: drop the
+                // everyone's-events collected under observer rules so the
+                // whole timeline follows first-person rules (on team 0
+                // until now, the recorder had no own events to lose).
+                for (let i = events.length - 1; i >= 0; i--) {
+                  const e = events[i];
+                  if (
+                    (e.type === "flag-grab" || e.type === "flag-return") &&
+                    e.teamAffinity === "neutral"
+                  ) {
+                    events.splice(i, 1);
+                  }
+                }
+              }
+            }
           }
         }
 
@@ -326,23 +359,38 @@ export async function scanDemoTimeline(
           continue;
         }
 
+        // An observer recording (relay auto-capture, or a spectator's
+        // demo): the recorder never plays, so recorder-relative
+        // filtering would drop every kill, grab, and return — include
+        // everyone's events from a neutral perspective instead.
+        const isObserverPerspective = !recorderEverOnTeam;
+
         // Flag grab (taken from base).
         // Wire: args[2]=playerName, args[3]=teamName, args[4]=flag.team, args[5]=playerNameBase
         if (msgTypeLower === "msgctfflagtaken" && args.length >= 3) {
           const playerName = stripTaggedStringMarkup(
             resolveNetString(args[2], netStrings),
           ).trim();
-          // Only include grabs by the control player (recorder).
-          if (
+          const flagTeamName =
+            args.length >= 4
+              ? stripTaggedStringMarkup(
+                  resolveNetString(args[3], netStrings),
+                ).trim()
+              : undefined;
+          if (isObserverPerspective) {
+            events.push({
+              timeSec,
+              type: "flag-grab",
+              description: `${playerName} grabbed the ${flagTeamName ?? "enemy"} flag`,
+              teamAffinity: "neutral",
+              actor: playerName || undefined,
+              flagTeamName: flagTeamName || undefined,
+            });
+          } else if (
             normalizedRecorder &&
             playerName.toLowerCase() === normalizedRecorder
           ) {
-            const flagTeamName =
-              args.length >= 4
-                ? stripTaggedStringMarkup(
-                    resolveNetString(args[3], netStrings),
-                  ).trim()
-                : undefined;
+            // Only include grabs by the control player (recorder).
             events.push({
               timeSec,
               type: "flag-grab",
@@ -360,11 +408,34 @@ export async function scanDemoTimeline(
           const playerName = stripTaggedStringMarkup(
             resolveNetString(args[2], netStrings),
           ).trim();
-          // Only include returns by the control player (recorder).
-          if (
+          if (isObserverPerspective) {
+            const flagTeamName =
+              args.length >= 4
+                ? stripTaggedStringMarkup(
+                    resolveNetString(args[3], netStrings),
+                  ).trim()
+                : undefined;
+            const flagLabel = flagTeamName
+              ? `the ${flagTeamName} flag`
+              : "the flag";
+            // "0" is TorqueScript's empty: the flag timed out to base.
+            const actor =
+              playerName && playerName !== "0" ? playerName : undefined;
+            events.push({
+              timeSec,
+              type: "flag-return",
+              description: actor
+                ? `${actor} returned ${flagLabel}`
+                : `${flagLabel.replace(/^the/, "The")} was returned`,
+              teamAffinity: "neutral",
+              actor,
+              flagTeamName: flagTeamName || undefined,
+            });
+          } else if (
             normalizedRecorder &&
             playerName.toLowerCase() === normalizedRecorder
           ) {
+            // Only include returns by the control player (recorder).
             events.push({
               timeSec,
               type: "flag-return",
@@ -438,7 +509,10 @@ export async function scanDemoTimeline(
                 ).trim()
               : undefined;
 
-          if (normalizedRecorder) {
+          // Observer recordings keep only flag and match events —
+          // other players' kills and deaths are noise at timeline
+          // scale (Ctrl+K suicides are already excluded globally).
+          if (!isObserverPerspective && normalizedRecorder) {
             const normalizedKiller = killerName.toLowerCase();
             const normalizedVictim = victimName.toLowerCase();
             const isSelfInflicted = SELF_INFLICTED_MSG_TYPES.has(msgTypeLower);
@@ -527,5 +601,8 @@ export async function scanDemoTimeline(
   }
 
   log.info("Scanned %d blocks, found %d events", blockCount, events.length);
-  return events;
+  return {
+    events,
+    observerPerspective: !recorderEverOnTeam,
+  };
 }

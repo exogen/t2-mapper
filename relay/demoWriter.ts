@@ -86,12 +86,50 @@ export function formatDemoDate(date: Date): string {
 }
 
 /**
- * The exact `$DemoValue` row interleaving the app's demo metadata
- * extraction expects (each data row preceded by a "readplayerinfo"
- * marker), matching retail auto-capture demos.
+ * The standard saveDemoSettings sections (recordings.cs — MISC,
+ * PLAYERLIST, RETICLE, BACKPACK, WEAPON, INVENTORY, SCORE, CLOCK,
+ * CHAT×10, GRAVITY) for a fresh observer connection: empty roster,
+ * hidden HUDs, no chat backlog. Empty values are written as "<BLANK>" —
+ * PJ's reader treats a truly empty value as end-of-array.
+ */
+export function buildStandardDemoSections(): string[] {
+  return [
+    // MISC: hudMode/type/node, voting, passengerKeys, musicTrack.
+    "Standard\t\t\t0\t0\t",
+    // PLAYERLIST: empty — playback rebuilds the roster from the
+    // recorded join-message backlog.
+    "0",
+    // RETICLE: bitmap + visibility flags, all hidden.
+    "\t0\t0\t0\t\t0\t0",
+    // BACKPACK: bitmap, frame/text visibility, pack.
+    "\t0\t\t0\t0",
+    // WEAPON: visible/bitmaps(3)/count/slotCount/active — no items.
+    "0\t\t\t\t0\t0\t-1",
+    // INVENTORY: same header shape, no items.
+    "0\t\t\t\t0\t0\t-1",
+    // SCORE: visible/gameType/objCount — no objectives yet.
+    "0\t\t0",
+    // CLOCK: hidden, zero.
+    "0\t0",
+    // CHAT: the last 10 HUD lines — none at recording start.
+    ...Array<string>(10).fill("<BLANK>"),
+    // GRAVITY: T2 default.
+    "-20",
+  ];
+}
+
+/**
+ * The full `$DemoValue` array: the standard sections followed by the
+ * PJEnhancedRecording tail ("NewDemoData" + "readplayerinfo" rows) the
+ * app's metadata extraction reads. The standard sections must be
+ * present and well-formed — loadDemoSettings (real client) and the
+ * app's parseDemoValues both walk them positionally, and without them
+ * the PJ tail is misread as section data (its last row lands in the
+ * CHAT slots and shows up as a bogus chat line).
  */
 export function buildDemoValues(info: DemoValuesInfo): string[] {
   return [
+    ...buildStandardDemoSections(),
     "NewDemoData",
     "1",
     "readplayerinfo",

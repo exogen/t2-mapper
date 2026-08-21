@@ -14,6 +14,7 @@ import { type RootState } from "@react-three/fiber";
 import { type InvalidateFunction } from "@/src/components/ThreeCanvas";
 import { InspectorControls } from "@/src/components/InspectorControls";
 import { MissionSelect } from "@/src/components/MissionSelect";
+import { DemoSelect } from "@/src/components/DemoSelect";
 import { StreamingMissionInfo } from "@/src/components/StreamingMissionInfo";
 import { ServerBrowserHeader } from "@/src/components/ServerBrowserHeader";
 import { ViewModeToggle } from "@/src/components/ViewModeToggle";
@@ -577,15 +578,19 @@ export function MapInspector() {
                 : "hidden"
             }
           >
-            <MissionSelect
-              value={choosingMap || mode !== "map" ? "" : missionName}
-              missionType={
-                choosingMap || mode !== "map" ? "" : (missionType ?? "")
-              }
-              onChange={changeMission}
-              autoFocus={choosingMap}
-              onCancel={handleCancelChoosingMap}
-            />
+            {mode === "demo" && !choosingMap ? (
+              <DemoSelect />
+            ) : (
+              <MissionSelect
+                value={choosingMap || mode !== "map" ? "" : missionName}
+                missionType={
+                  choosingMap || mode !== "map" ? "" : (missionType ?? "")
+                }
+                onChange={changeMission}
+                autoFocus={choosingMap}
+                onCancel={handleCancelChoosingMap}
+              />
+            )}
           </Activity>
           {showJoinScreen && !choosingMap && <ServerBrowserHeader />}
           {isTourActive && <ExitTourButton />}

@@ -2,7 +2,7 @@ import { useEffect, useRef, useMemo } from "react";
 import { LuUsers } from "react-icons/lu";
 import { IoMdStopwatch } from "react-icons/io";
 import { useStreamSnapshot } from "../state/streamSnapshotStore";
-import { useMatchClockMs } from "./useMatchClock";
+import { formatHudClock, useMatchClockMs } from "./useMatchClock";
 import { liveConnectionStore } from "../state/liveConnectionStore";
 import { useDataSource } from "../state/gameEntityStore";
 import type { PlayerRosterEntry, TeamScore } from "../stream/types";
@@ -21,23 +21,12 @@ function computePingStats(players: PlayerRosterEntry[]): {
   return { avg: Math.round(avg), dev: Math.round(Math.sqrt(variance)) };
 }
 
-function formatClock(totalSec: number): string {
-  const sign = totalSec < 0 ? "-" : "";
-  const abs = Math.abs(totalSec);
-  const mins = Math.floor(abs / 60);
-  const secs = Math.floor(abs % 60);
-  return `${sign}${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
-}
-
 /** Renders the match clock. Negative clockMs = counting down, positive = counting up. */
 function MatchClock({ clockMs }: { clockMs: number }) {
-  // Match the C++ HudClockCtrl: display absolute value, sign determines direction.
-  const absSec = Math.abs(clockMs) / 1000;
-  const displaySec = clockMs < 0 ? Math.ceil(absSec) : Math.floor(absSec);
   return (
     <span className={styles.MatchClock}>
       <IoMdStopwatch className={styles.ClockIcon} />{" "}
-      <span className={styles.Time}>{formatClock(displaySec)}</span>
+      <span className={styles.Time}>{formatHudClock(clockMs)}</span>
     </span>
   );
 }

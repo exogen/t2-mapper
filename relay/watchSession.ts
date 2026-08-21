@@ -22,7 +22,7 @@ import { WatchStateAccumulator } from "./watchState.js";
 import { serializeCatchupPayload } from "./watchSerialize.js";
 import { buildCatchupPayload } from "./watchCatchup.js";
 import type { DemoCoordinator } from "./demoCoordinator.js";
-import type { DemoRecorder } from "./demoRecorder.js";
+import type { DemoRecorder, ServerIdentity } from "./demoRecorder.js";
 import { relayLog } from "./logger.js";
 import type {
   ConnectionStatus,
@@ -232,6 +232,15 @@ export class WatchSession {
   private rotateTimer: ReturnType<typeof setTimeout> | null = null;
   /** Patrol pin: exempt from idle teardown while set. */
   private pinned = false;
+  /**
+   * Stream-told server identity for demo metadata. The name is
+   * server-scoped and sticky across cycle reconnects; gameType is
+   * mission-scoped and cleared on each new connection epoch (the next
+   * mission's type may differ). Gaps are filled from the server-list
+   * cache at sample time, never stored — so stream values always win
+   * once known.
+   */
+  private serverIdentity: ServerIdentity = {};
   private destroyed = false;
   private lastStatus: ConnectionStatus = "connecting";
   private lastPingMs: number | null = null;
@@ -299,12 +308,26 @@ export class WatchSession {
     this.connection = conn;
     const cached = this.options.getCachedServer(this.key);
     if (cached?.mapName) conn.setMapName(cached.mapName);
+    // Mission-scoped: a cycle reconnect may bring a different type,
+    // and its MsgLoadInfo/MsgMissionDropInfo arrives after flush.
+    this.serverIdentity.gameType = undefined;
 
     this.recorder =
       this.options.demoCoordinator?.createRecorder({
         address: this.key,
         getConnectSequence: () => conn.connectSequence,
         getServerInfo: () => this.options.getCachedServer(this.key),
+        getServerIdentity: () => {
+          // Stream-known values win; the server-list cache fills gaps
+          // live at sample time (an entry may only appear on a later
+          // poll, and `mod` has no stream source at all).
+          const info = this.options.getCachedServer(this.key);
+          return {
+            name: this.serverIdentity.name ?? info?.name,
+            gameType: this.serverIdentity.gameType ?? info?.gameType,
+            mod: this.serverIdentity.mod ?? info?.mod,
+          };
+        },
         getActivePlayerCount: () => this.watchState.countActivePlayers(),
         getPlayerNames: () => this.watchState.getRosterNames(),
         getMatchStarted: () => this.watchState.matchStarted,
@@ -591,6 +614,14 @@ export class WatchSession {
       // NetStrings apply before responders so funcName refs resolve.
       this.watchState.applyPacket(parsed);
       this.ghostState.applyPacket(parsed);
+      // The server naming itself (MsgMissionDropInfo/MsgLoadInfo)
+      // permanently overrides any server-list seed.
+      if (this.watchState.serverName) {
+        this.serverIdentity.name = this.watchState.serverName;
+      }
+      if (this.watchState.missionType) {
+        this.serverIdentity.gameType = this.watchState.missionType;
+      }
       for (const event of parsed.events) {
         if (event.parsedData) this.handleResponderEvent(event.parsedData);
       }

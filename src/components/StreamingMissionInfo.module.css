@@ -109,6 +109,24 @@
   margin-left: -2px;
 }
 
+/* Download button for the source .rec of a URL-loaded demo — sits
+   directly beside the eject button it belongs with. */
+.DemoDownloadButton {
+  composes: ActionButton from "./Button.module.css";
+  gap: 5px;
+  /* Nudge inside the Header's 12px flex gap: 10px before eject. */
+  margin-right: -2px;
+  padding: 2px 9px;
+}
+
+.DemoDownloadTapeIcon {
+  font-size: 18px;
+}
+
+.DemoDownloadArrowIcon {
+  font-size: 14px;
+}
+
 .MissionName {
   composes: SelectedName from "./MissionSelect.module.css";
 }

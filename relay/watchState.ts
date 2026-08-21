@@ -72,6 +72,14 @@ export class WatchStateAccumulator {
   }
 
   /**
+   * Stream-authoritative mission type display name (MsgMissionDropInfo
+   * or MsgLoadInfo), when known.
+   */
+  get missionType(): string | undefined {
+    return this.missionTypeDisplayName;
+  }
+
+  /**
    * Clear mission-scoped display state on an in-place mission cycle,
    * mirroring the browser's MissionStartPhase1 handling
    * (liveStreaming.ts) so late joiners see the same state as watchers
@@ -430,8 +438,10 @@ export class WatchStateAccumulator {
     return [...this.netStrings.entries()];
   }
 
-  /** All roster names, observers included (JoinTeam-before-Join stubs
-   *  have an empty name until MsgClientJoin backfills — skipped). */
+  /**
+   * All roster names, observers included (JoinTeam-before-Join stubs
+   * have an empty name until MsgClientJoin backfills — skipped).
+   */
   getRosterNames(): string[] {
     const names: string[] = [];
     for (const entry of this.playerRoster.values()) {

@@ -9,9 +9,16 @@ import {
   DemoParser,
   type DemoBlock,
 } from "t2-demo-parser";
-import { extractMissionInfo } from "../src/stream/demoStreaming";
+import {
+  extractMissionInfo,
+  parseDemoValues,
+} from "../src/stream/demoStreaming";
 import { BitStreamWriter } from "./BitStreamWriter.js";
-import { DemoRecorder, buildDemoFilename } from "./demoRecorder.js";
+import {
+  DemoRecorder,
+  buildDemoFilename,
+  type ServerIdentity,
+} from "./demoRecorder.js";
 import type { ServerInfo } from "./types.js";
 
 const CONNECT_SEQUENCE = 0x0badf00d;
@@ -66,6 +73,7 @@ describe("DemoRecorder", () => {
       minPlayers?: number;
       playerCount?: () => number;
       playerNames?: () => string[];
+      serverIdentity?: () => ServerIdentity;
       matchStarted?: () => boolean;
     } = {},
   ) {
@@ -74,6 +82,13 @@ describe("DemoRecorder", () => {
       address: serverInfo.address,
       getConnectSequence: () => CONNECT_SEQUENCE,
       getServerInfo: () => serverInfo,
+      getServerIdentity:
+        overrides.serverIdentity ??
+        (() => ({
+          name: serverInfo.name,
+          gameType: serverInfo.gameType,
+          mod: serverInfo.mod,
+        })),
       getActivePlayerCount: overrides.playerCount ?? (() => 2),
       getPlayerNames: overrides.playerNames ?? (() => []),
       getMatchStarted: overrides.matchStarted ?? (() => true),
@@ -132,6 +147,37 @@ describe("DemoRecorder", () => {
     expect(info.missionDisplayName).toBe("Katabatic");
     expect(info.missionType).toBe("Capture the Flag");
     expect(info.mod).toBe("classic");
+
+    // The standard saveDemoSettings sections must parse cleanly:
+    // without them, positional readers (real client + app playback)
+    // misread the PJ metadata tail and its last row leaks into the
+    // chat HUD as a bogus "3ClassicLCTF0<BLANK>"-style line.
+    const hudState = parseDemoValues(initialBlock.demoValues);
+    expect(hudState.chatMessages).toEqual([]);
+    expect(hudState.playerRoster.size).toBe(0);
+    expect(hudState.gravity).toBe(-20);
+    // Tribes2.exe applies the CLOCK time regardless of visibility: a
+    // relay demo counts up from 00:00 until the joiner-sync MsgSystemClock
+    // re-anchors it, exactly as the real client shows.
+    expect(hudState.clockTimeMin).toBe(0);
+  });
+
+  it("parseDemoValues skips section parsing for legacy tail-only demoValues", () => {
+    const legacy = [
+      "NewDemoData",
+      "1",
+      "readplayerinfo",
+      "1\t0\tObserver\t\t0",
+      "1",
+      "readplayerinfo",
+      "2\tserver\t1.2.3.4:28000\tMay-16-2025 5:04AM\tKatabatic",
+      "1",
+      "readplayerinfo",
+      "3\tclassic\tLCTF\t0\t<BLANK>",
+    ];
+    const hudState = parseDemoValues(legacy);
+    expect(hudState.chatMessages).toEqual([]);
+    expect(hudState.playerRoster.size).toBe(0);
   });
 
   it("flushes with the server-info mission name when buffering caps expire", async () => {
@@ -189,9 +235,12 @@ describe("DemoRecorder", () => {
     });
     recorder.onPacket(buildPingPacket(1));
     recorder.setMissionName("Katabatic");
+    // Peak during the recording (pre-flush samples are discarded as the
+    // previous mission's), then dip before finalize.
+    recorder.onPacket(buildPingPacket(2));
     players = 0;
     time += 1000;
-    recorder.onPacket(buildPingPacket(2));
+    recorder.onPacket(buildPingPacket(3));
     const result = await recorder.finalize("test");
     expect(result).not.toBeNull();
   });
@@ -249,8 +298,9 @@ describe("DemoRecorder", () => {
       recordedAt: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T[\d:.]+Z$/),
       server: "| the cut |",
       address: "45.76.24.91:28000",
-      mission: "Katabatic",
-      gameType: "Capture the Flag",
+      games: [
+        { mission: "Katabatic", gameType: "Capture the Flag", startMs: 0 },
+      ],
       mod: "classic",
       recorder: "Observer",
       durationMs: result!.durationMs,
@@ -258,6 +308,74 @@ describe("DemoRecorder", () => {
       // recorder's own connection excluded.
       players: ["Alice", "Bob", "Chloé"],
     });
+  });
+
+  it("sidecar uses finalize-time stream identity; the file keeps flush-time values", async () => {
+    // Nothing known at flush (fresh session, MsgMissionDropInfo not yet
+    // received) — the stream names the server mid-recording.
+    let identity: ServerIdentity = {};
+    const recorder = createRecorder({ serverIdentity: () => identity });
+    recorder.onPacket(buildPingPacket(1));
+    time += 100;
+    recorder.setMissionName("Katabatic");
+    identity = { name: "| the cut |", gameType: "LCTF" };
+    for (let i = 2; i <= 5; i++) {
+      recorder.onPacket(buildPingPacket(i));
+      time += 100;
+    }
+
+    const result = await recorder.finalize("test");
+    const { initialBlock } = await parseDemoFile(result!.path);
+    const info = extractMissionInfo(initialBlock.demoValues);
+    // In-file $DemoValues are baked at flush: address fallback, no type.
+    expect(info.serverDisplayName).toBe(serverInfo.address);
+    expect(info.missionType).toBeNull();
+
+    const sidecar = JSON.parse(
+      await fsp.readFile(`${result!.path}.json`, "utf-8"),
+    ) as Record<string, unknown>;
+    expect(sidecar.server).toBe("| the cut |");
+    expect(sidecar.games).toEqual([
+      { mission: "Katabatic", gameType: "LCTF", startMs: 0 },
+    ]);
+    expect(sidecar.mod).toBe("");
+  });
+
+  it("ignores pre-flush start signals (they belong to the prior mission)", async () => {
+    // Connecting into the previous mission's intermission debrief must
+    // not mark the newly recorded mission's match as started.
+    let started = true;
+    const recorder = createRecorder({ matchStarted: () => started });
+    recorder.onPacket(buildPingPacket(1));
+    time += 100;
+    started = false;
+    recorder.setMissionName("Katabatic");
+    for (let i = 2; i <= 6; i++) {
+      recorder.onPacket(buildPingPacket(i));
+      time += 100;
+    }
+    expect(await recorder.finalize("test")).toBeNull();
+    expect(recorder.state).toBe("aborted");
+  });
+
+  it("ignores pre-flush player samples (previous mission's debrief)", async () => {
+    // Connecting into a crowded intermission must not let its peak
+    // player count pass the keep gate for a near-empty next mission.
+    let count = 24;
+    const recorder = createRecorder({
+      minPlayers: 2,
+      playerCount: () => count,
+    });
+    recorder.onPacket(buildPingPacket(1));
+    time += 100;
+    count = 0;
+    recorder.setMissionName("Katabatic");
+    for (let i = 2; i <= 6; i++) {
+      recorder.onPacket(buildPingPacket(i));
+      time += 100;
+    }
+    expect(await recorder.finalize("test")).toBeNull();
+    expect(recorder.state).toBe("aborted");
   });
 
   it("skips oversized packets and keeps recording", async () => {

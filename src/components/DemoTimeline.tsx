@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { PiFlagBannerFill } from "react-icons/pi";
 import { IoSkullSharp } from "react-icons/io5";
 import { useDemoTimeline } from "../state/demoTimelineStore";
@@ -6,6 +6,7 @@ import type {
   TimelineEvent,
   TimelineEventType,
 } from "../state/demoTimelineStore";
+import { useRecorderName } from "../state/gameEntityStore";
 import { usePlaybackActions } from "./usePlayback";
 import { BsPlayFill } from "react-icons/bs";
 import { AiFillStop } from "react-icons/ai";
@@ -33,12 +34,21 @@ const WEAPONS_PAST_TENSE: Record<string, string> = {
   plasma: "plasma rifled",
 };
 
-function renderEventDescription(event: TimelineEvent): React.ReactNode {
+function renderEventDescription(
+  event: TimelineEvent,
+  recorderName: string | null,
+): React.ReactNode {
+  // First-person recordings phrase the recorder's own events as "You";
+  // observer recordings (relay auto-capture) name the actual players.
+  const isRecorder = (name: string | undefined) =>
+    !!name &&
+    !!recorderName &&
+    name.toLowerCase() === recorderName.toLowerCase();
   if (event.type === "kill" && event.killer && event.victim) {
     return (
       <>
         <span className={styles.Killer} title={event.killer}>
-          You
+          {isRecorder(event.killer) ? "You" : event.killer}
         </span>{" "}
         <span className={styles.DamageType}>
           {event.weapon
@@ -62,7 +72,7 @@ function renderEventDescription(event: TimelineEvent): React.ReactNode {
               : "killed"}
           </span>{" "}
           <span className={styles.Victim} title={event.victim}>
-            you
+            {isRecorder(event.victim) ? "you" : event.victim}
           </span>
         </>
       );
@@ -73,10 +83,36 @@ function renderEventDescription(event: TimelineEvent): React.ReactNode {
     const flagLabel = event.flagTeamName
       ? `the ${event.flagTeamName} flag`
       : "the enemy flag";
-    return <>You grabbed {flagLabel}</>;
+    if (event.teamAffinity === "friendly") {
+      return <>You grabbed {flagLabel}</>;
+    }
+    if (event.actor) {
+      return (
+        <>
+          {isRecorder(event.actor) ? "You" : event.actor} grabbed {flagLabel}
+        </>
+      );
+    }
+    return <>{event.description}</>;
   }
   if (event.type === "flag-return") {
-    return <>You returned your flag</>;
+    if (event.teamAffinity === "friendly") {
+      return <>You returned your flag</>;
+    }
+    const flagLabel = event.flagTeamName
+      ? `the ${event.flagTeamName} flag`
+      : "the flag";
+    if (event.actor) {
+      return (
+        <>
+          {isRecorder(event.actor) ? "You" : event.actor} returned {flagLabel}
+        </>
+      );
+    }
+    if (event.flagTeamName) {
+      return <>The {event.flagTeamName} flag was returned</>;
+    }
+    return <>{event.description}</>;
   }
   if (event.type === "flag-cap" && event.capturer) {
     const flagLabel =
@@ -105,11 +141,27 @@ type Filter =
 export function DemoTimeline() {
   const events = useDemoTimeline((s) => s.events);
   const scanProgress = useDemoTimeline((s) => s.scanProgress);
+  const observerPerspective = useDemoTimeline((s) => s.observerPerspective);
+  const recorderName = useRecorderName();
   const { seek } = usePlaybackActions();
   const [filter, setFilter] = useState<Filter>("all");
 
+  // Filters never persist across demos — each load starts on "All".
+  useEffect(() => {
+    setFilter("all");
+  }, [events]);
+
+  // Observer recordings never emit kills/deaths — their chips are
+  // hidden, and a selection guards against the pre-reset render.
+  const effectiveFilter =
+    observerPerspective && (filter === "kill" || filter === "death")
+      ? "all"
+      : filter;
+
   const filtered =
-    events?.filter((e) => filter === "all" || e.type === filter) ?? [];
+    events?.filter(
+      (e) => effectiveFilter === "all" || e.type === effectiveFilter,
+    ) ?? [];
 
   const handleClick = useCallback(
     (timeSec: number) => {
@@ -156,31 +208,35 @@ export function DemoTimeline() {
         <button
           type="button"
           className={styles.FilterButton}
-          data-active={filter === "all"}
+          data-active={effectiveFilter === "all"}
           onClick={() => setFilter("all")}
         >
           All ({events.length})
         </button>
+        {!observerPerspective && (
+          <>
+            <button
+              type="button"
+              className={styles.FilterButton}
+              data-active={effectiveFilter === "kill"}
+              onClick={() => setFilter("kill")}
+            >
+              Kills ({killCount})
+            </button>
+            <button
+              type="button"
+              className={styles.FilterButton}
+              data-active={effectiveFilter === "death"}
+              onClick={() => setFilter("death")}
+            >
+              Deaths ({deathCount})
+            </button>
+          </>
+        )}
         <button
           type="button"
           className={styles.FilterButton}
-          data-active={filter === "kill"}
-          onClick={() => setFilter("kill")}
-        >
-          Kills ({killCount})
-        </button>
-        <button
-          type="button"
-          className={styles.FilterButton}
-          data-active={filter === "death"}
-          onClick={() => setFilter("death")}
-        >
-          Deaths ({deathCount})
-        </button>
-        <button
-          type="button"
-          className={styles.FilterButton}
-          data-active={filter === "flag-grab"}
+          data-active={effectiveFilter === "flag-grab"}
           onClick={() => setFilter("flag-grab")}
         >
           Grabs ({grabCount})
@@ -188,7 +244,7 @@ export function DemoTimeline() {
         <button
           type="button"
           className={styles.FilterButton}
-          data-active={filter === "flag-return"}
+          data-active={effectiveFilter === "flag-return"}
           onClick={() => setFilter("flag-return")}
         >
           Returns ({returnCount})
@@ -196,7 +252,7 @@ export function DemoTimeline() {
         <button
           type="button"
           className={styles.FilterButton}
-          data-active={filter === "flag-cap"}
+          data-active={effectiveFilter === "flag-cap"}
           onClick={() => setFilter("flag-cap")}
         >
           Caps ({capCount})
@@ -224,7 +280,7 @@ export function DemoTimeline() {
                 {EVENT_ICON[event.type]}
               </span>
               <span className={styles.EventDescription}>
-                {renderEventDescription(event)}
+                {renderEventDescription(event, recorderName)}
               </span>
             </button>
           ))}

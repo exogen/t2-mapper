@@ -186,13 +186,25 @@
   color: #fff;
 }
 
-.ItemType:hover {
+/* Chips that actually do something on click (switching the game type a
+   map loads as) — display-only chips use the base class. */
+.ItemTypeInteractive {
+  composes: ItemType;
+}
+
+.ItemTypeInteractive:hover {
   background: rgba(255, 157, 0, 0.7);
 }
 
 .ItemMissionName {
   font-size: 12px;
   color: rgba(255, 255, 255, 0.5);
+}
+
+/* Inline player-count icon on the demo item's metadata line. */
+.ItemPlayersIcon {
+  vertical-align: -2px;
+  font-size: 13px;
 }
 
 .NoResults {

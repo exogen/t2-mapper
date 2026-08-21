@@ -45,6 +45,8 @@ interface DemoMissionInfo {
   gameClassName: string | null;
   /** Server display name from readplayerinfo row 2. */
   serverDisplayName: string | null;
+  /** Server address ("host:port") from readplayerinfo row 2. */
+  serverAddress: string | null;
   /** Mod name from readplayerinfo row 3 (e.g. "classic"). */
   mod: string | null;
   /** Name of the player who recorded the demo (from readplayerinfo row 1). */
@@ -60,6 +62,7 @@ export function extractMissionInfo(demoValues: string[]): DemoMissionInfo {
   let missionType: string | null = null;
   let gameClassName: string | null = null;
   let serverDisplayName: string | null = null;
+  let serverAddress: string | null = null;
   let mod: string | null = null;
   let recorderName: string | null = null;
   let recorderClientId: number = NaN;
@@ -88,6 +91,7 @@ export function extractMissionInfo(demoValues: string[]): DemoMissionInfo {
       // Row 2: "2\tserverName\taddress\tdate\tmissionDisplayName"
       const fields = value.split("\t");
       if (fields[1]) serverDisplayName = fields[1];
+      if (fields[2]) serverAddress = fields[2];
       if (fields[3]) recordingDate = fields[3];
       if (fields[4]) missionDisplayName = fields[4];
       continue;
@@ -106,6 +110,7 @@ export function extractMissionInfo(demoValues: string[]): DemoMissionInfo {
     missionType,
     gameClassName,
     serverDisplayName,
+    serverAddress,
     mod,
     recorderName,
     recorderClientId: Number.isFinite(recorderClientId)
@@ -146,7 +151,7 @@ interface ParsedDemoValues {
  * recordings.cs: MISC, PLAYERLIST, RETICLE, BACKPACK, WEAPON, INVENTORY,
  * SCORE, CLOCK, CHAT, GRAVITY.
  */
-function parseDemoValues(demoValues: string[]): ParsedDemoValues {
+export function parseDemoValues(demoValues: string[]): ParsedDemoValues {
   const result: ParsedDemoValues = {
     weaponsHud: null,
     backpackHud: null,
@@ -158,6 +163,12 @@ function parseDemoValues(demoValues: string[]): ParsedDemoValues {
     gravity: -20,
   };
   if (!demoValues.length) return result;
+
+  // Early relay recordings wrote only the PJEnhancedRecording metadata
+  // tail ("NewDemoData" + rows) with no standard sections in front —
+  // walking those rows positionally misreads them (the last row lands
+  // in the CHAT slots and shows as a bogus chat line).
+  if (demoValues[0] === "NewDemoData") return result;
 
   let idx = 0;
   const next = () => {
@@ -293,7 +304,12 @@ function parseDemoValues(demoValues: string[]): ParsedDemoValues {
     }
   }
 
-  // CLOCK: 1 value — "isVisible\tremainingMinutes"
+  // CLOCK: 1 value — "isVisible\tminutes" (clockHud.getTime(), which is
+  // |deadline − now| — always non-negative). Exactly like the real client
+  // (recordings.cs loadDemoSettings calls clockHud.setTime regardless of
+  // the visibility flag), seed whenever a time is present: "0" counts up
+  // from 00:00, which is what Tribes2.exe shows for relay demos until the
+  // joiner sync / checkTimeLimit MsgSystemClock re-anchors it.
   if (idx >= demoValues.length) return result;
   {
     const clockFields = next().split("\t");

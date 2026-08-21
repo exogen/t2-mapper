@@ -52,3 +52,20 @@
   margin: 0;
   font-size: 13px;
 }
+
+/* Below the absolutely-centered LoadingIndicator (spinner + bar). */
+.LoadingHint {
+  position: absolute;
+  top: calc(50% + 80px);
+  left: 50%;
+  transform: translateX(-50%);
+  margin: 0;
+  font-size: 15px;
+  color: #b0d5c9;
+}
+
+.LoadError {
+  margin: 0 0 8px;
+  font-size: 14px;
+  color: #ff9d9d;
+}

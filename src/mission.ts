@@ -41,6 +41,45 @@ export const normalizedMissionTypes = {
   tr2: "TR2",
 };
 
+/**
+ * Long-form display names servers send as $MissionTypeDisplayName
+ * (MsgMissionDropInfo, GameInfo queries), keyed lowercased, mapped onto
+ * the same short codes as normalizedMissionTypes.
+ */
+const missionTypeDisplayNames: Record<string, string> = {
+  "capture the flag": "CTF",
+  "capture the flag (practice)": "CTF (Practice)",
+  "capture and hold": "CnH",
+  deathmatch: "DM",
+  "team deathmatch": "TDM",
+  "defend and destroy": "DnD",
+  "team rabbit 2": "TR2",
+  "team hunters": "TeamHunters",
+  "single player": "SinglePlayer",
+  "ma duel mod": "Duel",
+};
+
+/**
+ * The manifest's short mission type code for a server-sent game type
+ * string (short token or long display name, any case), or null when the
+ * string is unknown (mod-specific types).
+ */
+export function lookupMissionType(gameType: string): string | null {
+  const key = gameType.trim().toLowerCase();
+  return (
+    missionTypeDisplayNames[key] ??
+    (normalizedMissionTypes as Record<string, string>)[key] ??
+    null
+  );
+}
+
+/**
+ * Like lookupMissionType, but unknown strings pass through unchanged.
+ */
+export function normalizeMissionType(gameType: string): string {
+  return lookupMissionType(gameType) ?? gameType;
+}
+
 function parseCommentMarker(text: string) {
   let match;
   match = text.match(sectionBeginComment);

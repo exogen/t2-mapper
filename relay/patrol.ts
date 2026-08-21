@@ -71,11 +71,15 @@ export function estimateEligiblePlayers(server: ServerInfo): number {
 
 interface PinState {
   strikes: number;
-  /** Total polls since the pin. */
+  /**
+   * Total polls since the pin.
+   */
   ticks: number;
   serverName: string;
   pinnedAt: number;
-  /** Eligible-player estimate from the most recent poll. */
+  /**
+   * Eligible-player estimate from the most recent poll.
+   */
   lastEligible: number;
 }
 
@@ -85,13 +89,17 @@ export interface PatrolStatus {
   minPlayers: number;
   maxSessions: number;
   intervalMs: number;
-  /** Seconds since the last successful evaluation (null before the
-   *  first) — grows past intervalMs when server-list polls fail. */
+  /**
+   * Seconds since the last successful evaluation (null before the
+   * first) — grows past intervalMs when server-list polls fail.
+   */
   lastTickAgoSec: number | null;
   pinned: Array<{
     address: string;
     serverName: string;
-    /** "missing" = session died; released on the next tick. */
+    /**
+     * "missing" = session died; released on the next tick.
+     */
     status: WatchStatus | "missing";
     eligiblePlayers: number;
     watchers: number;
@@ -128,7 +136,9 @@ export class Patroller {
     return this.pinned.size;
   }
 
-  /** Snapshot for the /health endpoint. */
+  /**
+   * Snapshot for the /health endpoint.
+   */
   getStatus(): PatrolStatus {
     const now = Date.now();
     return {

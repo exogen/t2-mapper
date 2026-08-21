@@ -12,17 +12,9 @@ import styles from "./PlayerHUD.module.css";
 import { ChatWindow } from "./ChatWindow";
 import { CompassDial } from "./CompassDial";
 import { useCameraHeadingRotor } from "./MapCompass";
-import { useMatchClockMs } from "./useMatchClock";
+import { formatHudClock, useMatchClockMs } from "./useMatchClock";
 import { useSettings } from "./SettingsProvider";
 import { useCommandCircuit } from "../state/commandCircuitStore";
-
-function formatClockHud(clockMs: number): string {
-  const absSec = Math.abs(clockMs) / 1000;
-  const displaySec = clockMs < 0 ? Math.ceil(absSec) : Math.floor(absSec);
-  const mins = Math.floor(displaySec / 60);
-  const secs = displaySec % 60;
-  return `${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
-}
 
 function Compass({ commandCircuitActive }: { commandCircuitActive: boolean }) {
   const isWatcher = useLiveSelector((s) => s.role === "watcher");
@@ -51,7 +43,7 @@ function Compass({ commandCircuitActive }: { commandCircuitActive: boolean }) {
       <CompassDial deg={deg}>
         {matchClockMs != null && (
           <span className={styles.CompassClock}>
-            {formatClockHud(matchClockMs)}
+            {formatHudClock(matchClockMs)}
           </span>
         )}
       </CompassDial>
@@ -71,7 +63,7 @@ function LocalCameraCompass({
   const clock =
     matchClockMs != null ? (
       <span className={styles.CompassClock}>
-        {formatClockHud(matchClockMs)}
+        {formatHudClock(matchClockMs)}
       </span>
     ) : null;
   return (

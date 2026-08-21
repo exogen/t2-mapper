@@ -6,6 +6,7 @@
  */
 import { createLogger } from "../logger";
 import { commandCircuitStore } from "../state/commandCircuitStore";
+import { demoLoadStore } from "../state/demoLoadStore";
 import { demoTimelineStore } from "../state/demoTimelineStore";
 import { engineStore } from "../state/engineStore";
 import { gameEntityStore } from "../state/gameEntityStore";
@@ -24,6 +25,8 @@ export function unloadDemo(): void {
   parseToken += 1;
   scanAbort?.abort();
   scanAbort = null;
+  demoLoadStore.getState().reset();
+  demoLoadStore.getState().setSourceUrl(null);
   engineStore.getState().setRecording(null);
   demoTimelineStore.getState().reset();
   gameEntityStore.getState().endStreaming();
@@ -31,12 +34,107 @@ export function unloadDemo(): void {
 }
 
 export async function loadDemoFile(file: File): Promise<void> {
+  // Take our turn number before the (possibly slow) read, so if another
+  // load starts while we're reading, that newer one wins — not whichever
+  // happens to finish last.
+  const token = ++parseToken;
+  demoLoadStore.getState().setSourceUrl(null);
   try {
     const buffer = await file.arrayBuffer();
-    const token = ++parseToken;
+    if (parseToken !== token) return;
+    await loadDemoBuffer(buffer);
+  } catch (err) {
+    log.error("Failed to load demo: %o", err);
+    if (parseToken === token) {
+      demoLoadStore.getState().fail("Couldn't read the demo file");
+    }
+  }
+}
+
+/**
+ * Download an indexed demo and load it exactly like an uploaded file.
+ * A newer load or an unload started mid-download wins over this one.
+ */
+export async function loadDemoUrl(url: string): Promise<void> {
+  const token = ++parseToken;
+  demoLoadStore.getState().setSourceUrl(null);
+  demoLoadStore.getState().begin("downloading");
+  try {
+    const response = await fetch(url);
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+    const buffer = await readWithProgress(response, token);
+    if (parseToken !== token) return;
+    // Only a demo that actually loaded gets a source URL (the toolbar's
+    // download link).
+    if (await loadDemoBuffer(buffer)) {
+      demoLoadStore.getState().setSourceUrl(url);
+    }
+  } catch (err) {
+    log.error("Failed to load demo from %s: %o", url, err);
+    if (parseToken === token) {
+      demoLoadStore.getState().fail("Couldn't download the demo");
+    }
+  }
+}
+
+/**
+ * Buffer the response body, reporting download progress when the
+ * content length is known. If a newer load started meanwhile, stop
+ * reading and return an empty buffer (the caller's check discards it).
+ */
+async function readWithProgress(
+  response: Response,
+  token: number,
+): Promise<ArrayBuffer> {
+  const total = Number(response.headers.get("content-length")) || 0;
+  const body = response.body;
+  if (!body) return response.arrayBuffer();
+  const reader = body.getReader();
+  const chunks: Uint8Array[] = [];
+  let received = 0;
+  let reportedPercent = -1;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (parseToken !== token) {
+      void reader.cancel();
+      return new ArrayBuffer(0);
+    }
+    chunks.push(value);
+    received += value.length;
+    // Chunks can be ~16KB; only publish whole-percent steps so a large
+    // demo doesn't drive thousands of store updates and re-renders.
+    if (total > 0) {
+      const percent = Math.min(100, Math.floor((received / total) * 100));
+      if (percent !== reportedPercent) {
+        reportedPercent = percent;
+        demoLoadStore.getState().setProgress(percent / 100);
+      }
+    }
+  }
+  const buffer = new Uint8Array(received);
+  let offset = 0;
+  for (const chunk of chunks) {
+    buffer.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return buffer.buffer;
+}
+
+/**
+ * Resolves true once the recording is live; false if it failed or a
+ * newer load replaced it first.
+ */
+async function loadDemoBuffer(buffer: ArrayBuffer): Promise<boolean> {
+  const token = ++parseToken;
+  try {
+    demoLoadStore.getState().begin("parsing");
     const { createDemoStreamingRecording } = await import("./demoStreaming");
     const recording = await createDemoStreamingRecording(buffer);
-    if (parseToken !== token) return;
+    if (parseToken !== token) return false;
+    demoLoadStore.getState().reset();
 
     // Leave any live session and close the relay socket before loading
     // the demo — demo playback has no use for it.
@@ -65,10 +163,10 @@ export async function loadDemoFile(file: File): Promise<void> {
           abortController.signal,
         ),
       )
-      .then((events) => {
+      .then((result) => {
         if (parseToken !== token) return;
         const s = demoTimelineStore.getState();
-        s.setEvents(events);
+        s.setEvents(result.events, result.observerPerspective);
         s.setScanProgress(null);
       })
       .catch((err: unknown) => {
@@ -77,7 +175,12 @@ export async function loadDemoFile(file: File): Promise<void> {
         log.error("Timeline scan failed: %o", err);
         demoTimelineStore.getState().setScanProgress(null);
       });
+    return true;
   } catch (err) {
     log.error("Failed to load demo: %o", err);
+    if (parseToken === token) {
+      demoLoadStore.getState().fail("Couldn't parse the demo");
+    }
+    return false;
   }
 }

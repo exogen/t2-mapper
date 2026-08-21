@@ -115,8 +115,9 @@ describe("DemoUploader", () => {
       recordedAt: "2026-08-20T02:31:07.000Z",
       server: "| the cut |",
       address: "45.76.24.91:28000",
-      mission: "Katabatic",
-      gameType: "Capture the Flag",
+      games: [
+        { mission: "Katabatic", gameType: "Capture the Flag", startMs: 0 },
+      ],
       mod: "classic",
       recorder: "Observer",
       durationMs: 60_000,
