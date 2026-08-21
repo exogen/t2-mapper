@@ -200,11 +200,7 @@ const httpServer = http.createServer(async (req, res) => {
           upload: demoUploader.getStats(),
           disk: { freeBytes, recFiles, partialFiles },
           patrol: patroller
-            ? {
-                enabled: true,
-                patterns: DEMO_PATROL_SERVERS.length,
-                pinned: patroller.pinnedCount,
-              }
+            ? { enabled: true, ...patroller.getStatus() }
             : { enabled: false },
         },
       };

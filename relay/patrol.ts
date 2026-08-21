@@ -13,7 +13,7 @@
  */
 import { demoLog as log } from "./logger.js";
 import { normalizeAddress, type WatchSessionManager } from "./watchSession.js";
-import type { ServerInfo } from "./types.js";
+import type { ServerInfo, WatchStatus } from "./types.js";
 
 /** Consecutive failing polls before a pinned server is released. */
 const PATROL_STRIKES = 3;
@@ -69,15 +69,49 @@ export function estimateEligiblePlayers(server: ServerInfo): number {
   return Math.max(0, count - server.botCount);
 }
 
+interface PinState {
+  strikes: number;
+  /** Total polls since the pin. */
+  ticks: number;
+  serverName: string;
+  pinnedAt: number;
+  /** Eligible-player estimate from the most recent poll. */
+  lastEligible: number;
+}
+
+export interface PatrolStatus {
+  patterns: string[];
+  missionTypes: string[];
+  minPlayers: number;
+  maxSessions: number;
+  intervalMs: number;
+  /** Seconds since the last successful evaluation (null before the
+   *  first) — grows past intervalMs when server-list polls fail. */
+  lastTickAgoSec: number | null;
+  pinned: Array<{
+    address: string;
+    serverName: string;
+    /** "missing" = session died; released on the next tick. */
+    status: WatchStatus | "missing";
+    eligiblePlayers: number;
+    watchers: number;
+    recording: boolean;
+    strikes: number;
+    pinnedForSec: number;
+  }>;
+  cooldowns: Array<{ address: string; remainingSec: number }>;
+}
+
 export class Patroller {
   private opts: PatrolOptions;
   private regexps: RegExp[];
   private missionTypes: Set<string>;
   /** Normalized addresses this patroller pinned, with failing-poll
    *  counts and total polls since the pin. */
-  private pinned = new Map<string, { strikes: number; ticks: number }>();
+  private pinned = new Map<string, PinState>();
   /** Addresses in re-pin cooldown (until epoch ms). */
   private cooldown = new Map<string, number>();
+  private lastTickAt: number | null = null;
   private timer: ReturnType<typeof setInterval> | null = null;
   private ticking = false;
   private stopped = false;
@@ -92,6 +126,43 @@ export class Patroller {
 
   get pinnedCount(): number {
     return this.pinned.size;
+  }
+
+  /** Snapshot for the /health endpoint. */
+  getStatus(): PatrolStatus {
+    const now = Date.now();
+    return {
+      patterns: [...this.opts.patterns],
+      missionTypes: [...this.opts.missionTypes],
+      minPlayers: this.opts.minPlayers,
+      maxSessions: this.opts.maxSessions,
+      intervalMs: this.opts.intervalMs,
+      lastTickAgoSec:
+        this.lastTickAt === null
+          ? null
+          : Math.round((now - this.lastTickAt) / 1000),
+      pinned: [...this.pinned].map(([address, state]) => {
+        const session = this.opts.sessions.getSession(address);
+        return {
+          address,
+          serverName: state.serverName,
+          status: session?.watchStatus ?? "missing",
+          eligiblePlayers: state.lastEligible,
+          watchers: session?.watcherCount ?? 0,
+          recording: session?.recording ?? false,
+          strikes: state.strikes,
+          pinnedForSec: Math.round((now - state.pinnedAt) / 1000),
+        };
+      }),
+      // Expired entries are pruned by evaluate(); skip any caught
+      // between ticks — they no longer block a re-pin.
+      cooldowns: [...this.cooldown]
+        .filter(([, until]) => until > now)
+        .map(([address, until]) => ({
+          address,
+          remainingSec: Math.round((until - now) / 1000),
+        })),
+    };
   }
 
   start(): void {
@@ -144,6 +215,7 @@ export class Patroller {
     // never create sessions past that point.
     if (this.stopped) return;
     const now = Date.now();
+    this.lastTickAt = now;
     for (const [address, until] of this.cooldown) {
       if (until <= now) this.cooldown.delete(address);
     }
@@ -178,9 +250,15 @@ export class Patroller {
         this.pinned.delete(address);
         continue;
       }
+      if (listed) state.serverName = listed.name;
       const eligible = listed?.players
         ? estimateEligiblePlayers(listed)
         : session.activePlayerCount;
+      // Pre-live with no roster, the session count is an empty stub —
+      // keep the pin-time estimate for status reporting instead.
+      if (session.watchStatus === "live" || listed?.players) {
+        state.lastEligible = eligible;
+      }
       // Pre-live states get a bounded grace — a server that stalls the
       // handshake without disconnecting must not hold a pin forever.
       const qualifies =
@@ -224,7 +302,13 @@ export class Patroller {
         "Patrol joining server",
       );
       this.opts.sessions.pin(address);
-      this.pinned.set(address, { strikes: 0, ticks: 0 });
+      this.pinned.set(address, {
+        strikes: 0,
+        ticks: 0,
+        serverName: server.name,
+        pinnedAt: now,
+        lastEligible: eligible,
+      });
     }
   }
 }

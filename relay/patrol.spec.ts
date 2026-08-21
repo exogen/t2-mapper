@@ -326,6 +326,73 @@ describe("Patroller", () => {
     expect(patroller.pinnedCount).toBe(1);
   });
 
+  it("reports pin and cooldown detail via getStatus", async () => {
+    const { connections, servers, patroller } = setup(["Slope *"]);
+    expect(patroller.getStatus()).toMatchObject({
+      patterns: ["Slope *"],
+      minPlayers: 2,
+      maxSessions: 3,
+      lastTickAgoSec: null,
+      pinned: [],
+      cooldowns: [],
+    });
+
+    servers.push(makeServer("Slope 1", "1.1.1.1:28000", 4));
+    await patroller.tick();
+    // Pre-live poll without a roster: the session's player count is an
+    // empty stub, so the pin-time estimate is kept.
+    await patroller.tick();
+    expect(patroller.getStatus().pinned[0]).toMatchObject({
+      status: "connecting",
+      eligiblePlayers: 4,
+    });
+    connections[0].setStatus("connected");
+    vi.advanceTimersByTime(90_000);
+    // Renamed + roster on the next poll: name and eligible refresh.
+    servers[0] = {
+      ...makeServer("Slope 1 [night]", "1.1.1.1:28000", 4),
+      teams: [
+        { name: "Storm", score: 0 },
+        { name: "Inferno", score: 0 },
+      ],
+      players: [
+        { name: "Alice", team: "Storm", score: 0 },
+        { name: "Bob", team: "Inferno", score: 0 },
+        { name: "Cara", team: "Inferno", score: 0 },
+        { name: "Watcher", team: "Unassigned", score: 0 },
+      ],
+    };
+    await patroller.tick();
+    expect(patroller.getStatus()).toMatchObject({
+      lastTickAgoSec: 0,
+      pinned: [
+        {
+          address: "1.1.1.1:28000",
+          serverName: "Slope 1 [night]",
+          status: "live",
+          eligiblePlayers: 3,
+          watchers: 0,
+          strikes: 0,
+          pinnedForSec: 90,
+        },
+      ],
+    });
+
+    // Quiet release: pin becomes a cooldown entry.
+    servers[0] = makeServer("Slope 1 [night]", "1.1.1.1:28000", 0);
+    for (let i = 0; i < 3; i++) await patroller.tick();
+    const released = patroller.getStatus();
+    expect(released.pinned).toEqual([]);
+    expect(released.cooldowns).toEqual([
+      { address: "1.1.1.1:28000", remainingSec: 300 },
+    ]);
+
+    // An expired cooldown no longer blocks a re-pin — not reported,
+    // even before the next tick prunes it.
+    vi.advanceTimersByTime(5 * 60_000 + 1);
+    expect(patroller.getStatus().cooldowns).toEqual([]);
+  });
+
   it("does nothing after stop(), even with a list query in flight", async () => {
     const { connections, servers, patroller } = setup(["Slope *"]);
     servers.push(makeServer("Slope 1", "1.1.1.1:28000", 4));
