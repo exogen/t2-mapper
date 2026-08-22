@@ -273,6 +273,25 @@ describe("DemoUploader", () => {
     expect(uploadCalls).toEqual([]);
   });
 
+  it("sweep never removes a live recorder's spool, however stale its mtime", async () => {
+    // Deflate only emits once its symbol buffer fills: a quiet live spool
+    // can sit unwritten past the staleness window. Ownership, not mtime,
+    // is what protects it.
+    const live = path.join(dir, "live.rec.partial");
+    const debris = path.join(dir, "crashed.rec.partial");
+    const past = new Date(Date.now() - 60 * 60_000);
+    for (const file of [live, debris]) {
+      await fsp.writeFile(file, new Uint8Array([1]));
+      await fsp.utimes(file, past, past);
+    }
+    const uploader = new DemoUploader(config, dir, {
+      isLive: (filePath) => filePath === live,
+    });
+    await uploader.sweep();
+    await settle();
+    expect(await fsp.readdir(dir)).toEqual(["live.rec.partial"]);
+  });
+
   it("does nothing without config (demos stay local)", async () => {
     const filePath = path.join(dir, "local.rec");
     await fsp.writeFile(filePath, new Uint8Array([1]));

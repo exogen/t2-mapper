@@ -44,15 +44,17 @@ export function StreamDelayNotice() {
     <div className={styles.Notice} role="status">
       <LuClock className={styles.Icon} aria-hidden />
       <div className={styles.Text}>
-        <div className={styles.Title}>Tournament stream delayed</div>
+        <div className={styles.Title}>
+          Tournament stream delayed{" "}
+          {formatDelay(Math.round(streamDelayMs / 1000))}
+        </div>
         <div className={styles.Subtitle}>
           {remainingSec > 0
             ? `Live coverage begins in ${formatClock(remainingSec)}`
             : "Starting…"}
         </div>
         <div className={styles.Note}>
-          Tournament mode games are delayed to prevent players from benefiting
-          from the broadcast.
+          Tournament mode games are delayed to avoid benefiting active players.
         </div>
       </div>
     </div>

@@ -43,7 +43,7 @@ const CATCHUP_CHUNK_BYTES = 256 * 1024;
 /** The vote-menu answer and the join banner both land seconds after
  *  connect; nothing by then (e.g. a vote was in progress, so the menu
  *  wasn't sent) means "not tournament mode" until the next epoch asks. */
-const TOURNEY_DECISION_GRACE_MS = 10_000;
+const TOURNEY_DECISION_GRACE_MS = 6_000;
 /** Min gap between recording-driven mission-cycle reconnects — a second
  *  cycle sooner than this rides in place instead (no reconnect loops). */
 const CYCLE_RECONNECT_MIN_MS = 60_000;
@@ -87,6 +87,11 @@ export interface WatchSessionManagerOptions {
    * stay live; 0/unset never delays.
    */
   tourneyDelayMs?: number;
+  /**
+   * Mission-type display names (case-insensitive) that never run in
+   * tournament mode (e.g. LakRabbit) — skip the check and never delay.
+   */
+  tourneySkipTypes?: string[];
   /** Test seam: construct the game connection (default: real UDP). */
   createConnection?: (address: string) => GameConnection;
 }
@@ -714,8 +719,15 @@ export class WatchSession {
       if (this.watchState.missionType) {
         this.serverIdentity.gameType = this.watchState.missionType;
       }
-      const tourney = this.watchState.tournamentMode;
-      if (tourney !== null) this.setTournamentMode(tourney);
+      // A skipped type — known only from the stream (MsgLoadInfo /
+      // MsgMissionDropInfo), never the server-list cache — lifts the
+      // provisional delay immediately, ahead of the vote-menu answer.
+      if (this.isTourneySkippedType(this.watchState.missionType)) {
+        this.setTournamentMode(false);
+      } else {
+        const tourney = this.watchState.tournamentMode;
+        if (tourney !== null) this.setTournamentMode(tourney);
+      }
       for (const event of parsed.events) {
         if (event.parsedData) this.handleResponderEvent(event.parsedData);
       }
@@ -764,6 +776,16 @@ export class WatchSession {
     return this.delayMs;
   }
 
+  /** Whether a mission-type display name is exempt from the tournament
+   *  delay (case-insensitive; e.g. LakRabbit can't be tournament). */
+  private isTourneySkippedType(gameType: string | undefined): boolean {
+    if (!gameType) return false;
+    const key = gameType.trim().toLowerCase();
+    return (this.options.tourneySkipTypes ?? []).some(
+      (t) => t.trim().toLowerCase() === key,
+    );
+  }
+
   /** Delayed, connected, but the first `delayMs` of buffer hasn't
    *  elapsed — no delayed frames to serve a watcher yet. */
   private isDelayBuffering(): boolean {
@@ -774,9 +796,24 @@ export class WatchSession {
     );
   }
 
-  /** Rough ms until the delayed stream begins, while buffering. */
+  /**
+   * Rough ms until the delayed stream begins, while buffering — but only
+   * once tournament mode is CONFIRMED. Before that the delay is
+   * provisional (fail-safe) and usually lifts within ~1s, so the notice
+   * would flash on every ordinary join; undefined suppresses it.
+   */
+  /**
+   * Watcher-facing delay in ms: 0 until tournament mode is CONFIRMED, so
+   * the provisional (fail-safe) delay during the ~1s decision window
+   * never surfaces as a "delayed" badge/notice on the client. The real
+   * (possibly provisional) delay stays visible to ops via getStatusSummary.
+   */
+  private confirmedDelayMs(): number {
+    return this.tourneyResolved ? this.delayMs : 0;
+  }
+
   private delayReadyInMs(): number | undefined {
-    if (!this.isDelayBuffering()) return undefined;
+    if (!this.tourneyResolved || !this.isDelayBuffering()) return undefined;
     return Math.max(0, this.delayReadyAt - Date.now());
   }
 
@@ -794,7 +831,13 @@ export class WatchSession {
       { address: this.key, tournamentMode: on, delayMs: this.delayMs },
       "Tournament mode resolved",
     );
-    if (!on) this.liftDelay();
+    if (!on) {
+      this.liftDelay();
+    } else {
+      // Confirmed tournament while still buffering: push the now-known
+      // delay countdown to watchers waiting in the cold-start window.
+      for (const ws of this.pending) this.sendSessionStatus(ws);
+    }
   }
 
   /**
@@ -1247,7 +1290,7 @@ export class WatchSession {
       mapName: this.sessionMapName(),
       watcherCount: this.watcherCount,
       recording: this.recording,
-      streamDelayMs: this.delayMs,
+      streamDelayMs: this.confirmedDelayMs(),
     });
 
     let gzipped: Uint8Array;
@@ -1289,7 +1332,7 @@ export class WatchSession {
       mapName: this.sessionMapName(),
       watcherCount: this.watcherCount,
       recording: this.recording,
-      streamDelayMs: this.delayMs,
+      streamDelayMs: this.confirmedDelayMs(),
     });
     relayLog.info(
       {
@@ -1363,7 +1406,7 @@ export class WatchSession {
       mapName: this.sessionMapName(),
       watcherCount: this.watcherCount,
       recording: this.recording,
-      streamDelayMs: this.delayMs,
+      streamDelayMs: this.confirmedDelayMs(),
       streamDelayReadyInMs: this.delayReadyInMs(),
     });
   }
@@ -1377,7 +1420,7 @@ export class WatchSession {
       mapName: this.sessionMapName(),
       watcherCount: this.watcherCount,
       recording: this.recording,
-      streamDelayMs: this.delayMs,
+      streamDelayMs: this.confirmedDelayMs(),
       streamDelayReadyInMs: this.delayReadyInMs(),
     });
     if (this.lastPingMs != null) {

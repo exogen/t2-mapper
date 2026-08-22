@@ -18,9 +18,16 @@ import { Upload } from "@aws-sdk/lib-storage";
 import { demoLog as log } from "./logger.js";
 import type { DemoMetadata } from "./demoRecorder.js";
 
-/** A .partial with no writes for this long is crash debris, not a live
- *  spool (active recordings are written many times per second). */
-const STALE_PARTIAL_MS = 60_000;
+/** A .partial nobody owns and with no writes for this long is crash
+ *  debris. Live spools are excluded by `isLive` first; this mtime guard
+ *  only covers spools of another process (a predecessor draining during
+ *  a dev --watch restart), which DemoFileWriter sync-flushes every 30 s. */
+const STALE_PARTIAL_MS = 5 * 60_000;
+
+export interface DemoUploaderOptions {
+  /** Whether a `.partial` belongs to a recorder still in progress. */
+  isLive?: (filePath: string) => boolean;
+}
 
 export interface DemoUploadConfig {
   endpoint: string;
@@ -75,10 +82,16 @@ export class DemoUploader {
   private lastUploaded: { key: string; at: string } | null = null;
   private lastError: { file: string; message: string; at: string } | null =
     null;
+  private isLive: (filePath: string) => boolean;
 
-  constructor(config: DemoUploadConfig | null, dir: string) {
+  constructor(
+    config: DemoUploadConfig | null,
+    dir: string,
+    options: DemoUploaderOptions = {},
+  ) {
     this.config = config;
     this.dir = dir;
+    this.isLive = options.isLive ?? (() => false);
     this.client = config
       ? new S3Client({
           region: "auto",
@@ -293,10 +306,11 @@ export class DemoUploader {
     for (const name of entries) {
       const filePath = path.join(this.dir, name);
       if (name.endsWith(".partial")) {
-        // Live spools are .partial too and are written continuously —
-        // only a cold mtime marks crash debris. Never delete a fresh
-        // one (an active recording, or a predecessor process draining
-        // its finalize during a dev --watch restart).
+        // Live spools are .partial too: never touch one a recorder in
+        // this process owns (unlinking an open file doesn't error its
+        // stream — the recording would run on and only fail at
+        // finalize). For the rest, only a cold mtime marks crash debris.
+        if (this.isLive(filePath)) continue;
         try {
           const stat = await fsp.stat(filePath);
           if (Date.now() - stat.mtimeMs < STALE_PARTIAL_MS) continue;

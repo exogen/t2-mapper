@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import fsp from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -185,6 +185,53 @@ describe("DemoFileWriter", () => {
     expect(blocks[2].data).toEqual(packet1);
     expect(blocks[3].data).toEqual(buildInfoBlock());
     expect(blocks[5].data).toEqual(packet2);
+  });
+
+  it("sync-flushes quiet spools to disk and still finalizes a valid stream", async () => {
+    const finalPath = await makeTempPath();
+    const initialBlock = buildInitialBlock({
+      connectSequence: CONNECT_SEQUENCE,
+      missionName: "Katabatic",
+      demoValues,
+    });
+    const writer = new DemoFileWriter(finalPath, { flushIntervalMs: 10 });
+    writer.begin(initialBlock);
+    const headerBytes =
+      buildHeader(initialBlock.length).length + initialBlock.length;
+    // A handful of blocks is nowhere near deflate's emit threshold — only
+    // the periodic flush can move compressed bytes into the file.
+    const packet = buildPingPacket(1);
+    writer.writeMove();
+    writer.writePacket(packet);
+    writer.writeInfo();
+    await vi.waitFor(() => {
+      expect(writer.bytesWritten).toBeGreaterThan(headerBytes);
+    });
+    const flushedOnce = writer.bytesWritten;
+    writer.writeMove();
+    writer.writePacket(packet);
+    await vi.waitFor(() => {
+      expect(writer.bytesWritten).toBeGreaterThan(flushedOnce);
+    });
+    await writer.finalize(128);
+
+    const parser = new DemoParser(
+      new Uint8Array(await fsp.readFile(finalPath)),
+    );
+    const { header } = await parser.load();
+    expect(header.demoLengthMs).toBe(128);
+    const blocks: DemoBlock[] = [];
+    for (let block = parser.nextBlock(); block; block = parser.nextBlock()) {
+      blocks.push(block);
+    }
+    expect(blocks.map((b) => b.type)).toEqual([
+      BlockTypeMove,
+      BlockTypePacket,
+      BlockTypeInfo,
+      BlockTypeMove,
+      BlockTypePacket,
+    ]);
+    expect(blocks[4].data).toEqual(packet);
   });
 
   it("rejects oversized blocks", async () => {

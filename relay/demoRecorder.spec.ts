@@ -398,6 +398,16 @@ describe("DemoRecorder", () => {
     ]);
   });
 
+  it("exposes its spool path only while a file is open", async () => {
+    const recorder = createRecorder();
+    expect(recorder.partialPath).toBeNull();
+    recorder.onPacket(buildPingPacket(1));
+    recorder.setMissionName("Katabatic");
+    expect(recorder.partialPath).toMatch(/\.rec\.partial$/);
+    expect(path.dirname(recorder.partialPath!)).toBe(dir);
+    await recorder.abort();
+  });
+
   it("abort is idempotent and clears the partial file", async () => {
     const recorder = createRecorder();
     recorder.onPacket(buildPingPacket(1));

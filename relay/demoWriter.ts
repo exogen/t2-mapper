@@ -262,12 +262,20 @@ export function buildInfoBlock(firstPerson = true, fov = 90): Uint8Array {
 }
 
 const INFO_BLOCK = buildInfoBlock();
+/** Sync-flush cadence for live spools (see DemoFileWriter). */
+const DEFAULT_FLUSH_INTERVAL_MS = 30_000;
 
 /**
  * Streams a .rec to `<finalPath>.partial`: header + initial block
  * uncompressed, then blocks through a raw-deflate stream. finalize()
  * finishes the deflate stream, backpatches demoLengthMs, and atomically
  * renames — a `.rec` on disk is always complete.
+ *
+ * Deflate only emits output once its symbol buffer fills (~16K symbols),
+ * so a quiet stretch (debrief, intermission, sparse ghost traffic) can
+ * leave the spool untouched for minutes; a periodic Z_SYNC_FLUSH keeps
+ * bytes (and the file's mtime) moving. Each flush costs a few bytes and
+ * an early block boundary — still one valid raw-deflate stream.
  */
 export class DemoFileWriter {
   readonly finalPath: string;
@@ -276,10 +284,13 @@ export class DemoFileWriter {
   private deflate: zlib.DeflateRaw | null = null;
   private error: Error | null = null;
   private done = false;
+  private flushIntervalMs: number;
+  private flushTimer: ReturnType<typeof setInterval> | null = null;
 
-  constructor(finalPath: string) {
+  constructor(finalPath: string, options: { flushIntervalMs?: number } = {}) {
     this.finalPath = finalPath;
     this.partialPath = `${finalPath}.partial`;
+    this.flushIntervalMs = options.flushIntervalMs ?? DEFAULT_FLUSH_INTERVAL_MS;
   }
 
   begin(initialBlock: Uint8Array): void {
@@ -295,6 +306,23 @@ export class DemoFileWriter {
       this.error ??= err;
     });
     this.deflate.pipe(this.fileStream);
+    if (this.flushIntervalMs > 0) {
+      this.flushTimer = setInterval(() => this.flush(), this.flushIntervalMs);
+      this.flushTimer.unref();
+    }
+  }
+
+  /** Push pending deflate output through to the file (Z_SYNC_FLUSH). */
+  flush(): void {
+    if (!this.deflate || this.done) return;
+    this.deflate.flush(zlib.constants.Z_SYNC_FLUSH);
+  }
+
+  private stopFlushTimer(): void {
+    if (this.flushTimer) {
+      clearInterval(this.flushTimer);
+      this.flushTimer = null;
+    }
   }
 
   /** Compressed bytes flushed to the filesystem so far. */
@@ -351,6 +379,7 @@ export class DemoFileWriter {
       throw new Error("DemoFileWriter not writable");
     }
     this.done = true;
+    this.stopFlushTimer();
     this.deflate.end();
     await finished(this.fileStream);
     if (this.error) throw this.error;
@@ -370,6 +399,7 @@ export class DemoFileWriter {
   /** Tear down and remove the partial file. Safe to call in any state. */
   async abort(): Promise<void> {
     this.done = true;
+    this.stopFlushTimer();
     this.deflate?.destroy();
     const fileStream = this.fileStream;
     if (fileStream) {

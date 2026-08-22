@@ -205,6 +205,11 @@ export class DemoRecorder {
     return this._failure;
   }
 
+  /** On-disk spool while recording (null before Phase1 / after close). */
+  get partialPath(): string | null {
+    return this.writer?.partialPath ?? null;
+  }
+
   private setState(state: RecorderState): void {
     if (this._state === state) return;
     this._state = state;

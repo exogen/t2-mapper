@@ -115,6 +115,12 @@ const WATCH_TOURNEY_DELAY_MS = parseInt(
   process.env.WATCH_TOURNEY_DELAY_MS || "60000",
   10,
 );
+/** Mission-type display names that never run in tournament mode — skip
+ *  the tournament check and never delay these (e.g. LakRabbit). */
+const WATCH_TOURNEY_SKIP_TYPES =
+  process.env.WATCH_TOURNEY_SKIP_TYPES != null
+    ? parsePatrolServers(process.env.WATCH_TOURNEY_SKIP_TYPES)
+    : ["LakRabbit"];
 
 /** HTTP server for health checks; WebSocket upgrades are handled separately. */
 const httpServer = http.createServer(async (req, res) => {
@@ -172,8 +178,10 @@ const httpServer = http.createServer(async (req, res) => {
         },
         watchers: watcherTotal,
         /** Configured tournament-mode watcher delay (per-session `delayMs`
-         *  shows where it is currently in effect). */
+         *  shows where it is currently in effect) and the mission types
+         *  exempt from the delay entirely. */
         tourneyDelayMs: WATCH_TOURNEY_DELAY_MS,
+        tourneySkipTypes: WATCH_TOURNEY_SKIP_TYPES,
         sessions,
       },
     };
@@ -313,7 +321,10 @@ function findKnownServer(address: string): ServerInfo | undefined {
   );
 }
 
-const demoUploader = new DemoUploader(loadUploadConfig(), DEMO_DIR);
+const demoUploader = new DemoUploader(loadUploadConfig(), DEMO_DIR, {
+  // Sweeps only run after both are constructed.
+  isLive: (filePath) => demoCoordinator.isLivePath(filePath),
+});
 const demoCoordinator = new DemoCoordinator({
   enabled: DEMO_RECORD_ENABLED,
   dir: DEMO_DIR,
@@ -367,6 +378,7 @@ const watchSessions = new WatchSessionManager({
   demoCoordinator,
   onSessionsChanged: persistWatchState,
   tourneyDelayMs: WATCH_TOURNEY_DELAY_MS,
+  tourneySkipTypes: WATCH_TOURNEY_SKIP_TYPES,
 });
 
 const patroller =

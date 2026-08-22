@@ -4,6 +4,7 @@
  * in-flight finalizes before the process exits).
  */
 import fs from "node:fs";
+import path from "node:path";
 import { demoLog as log } from "./logger.js";
 import { DemoRecorder, type DemoRecorderOptions } from "./demoRecorder.js";
 
@@ -65,6 +66,17 @@ export class DemoCoordinator {
 
   get enabled(): boolean {
     return this.opts.enabled;
+  }
+
+  /** Whether `filePath` is the spool of a recorder still in progress —
+   *  the sweep must never mistake one for crash debris. */
+  isLivePath(filePath: string): boolean {
+    const resolved = path.resolve(filePath);
+    for (const recorder of this.recorders) {
+      const partial = recorder.partialPath;
+      if (partial && path.resolve(partial) === resolved) return true;
+    }
+    return false;
   }
 
   getStats(): DemoRecordingStats {
