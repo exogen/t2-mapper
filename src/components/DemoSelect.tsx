@@ -28,6 +28,7 @@ import {
   type DemoIndexEntry,
 } from "../stream/demoIndex";
 import { loadDemoUrl } from "../stream/demoFileLoader";
+import { useRecording } from "./usePlayback";
 import { normalizeMissionType } from "../mission";
 import styles from "./MissionSelect.module.css";
 
@@ -140,6 +141,18 @@ export function DemoSelect() {
   const searchValue = useDeferredValue(latestSearchValue);
   const [selectedFilename, setSelectedFilename] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
+
+  // Clear the selection when a loaded demo is ejected so the input
+  // returns to its "Choose a demo…" placeholder — but only on the
+  // demo→none transition, not during a selection's own async download
+  // (where the recording is briefly absent).
+  const recording = useRecording();
+  const hadDemoRef = useRef(false);
+  useEffect(() => {
+    const hasDemo = recording?.source === "demo";
+    if (hadDemoRef.current && !hasDemo) setSelectedFilename("");
+    hadDemoRef.current = hasDemo;
+  }, [recording]);
 
   const enabled = DEMOS_BASE_URL !== "";
   const {
