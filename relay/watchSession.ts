@@ -301,6 +301,9 @@ export class WatchSession {
   private tourneyResolved = false;
   private tourneyDecisionTimer: ReturnType<typeof setTimeout> | null = null;
   private delayQueue: DelayedItem[] = [];
+  /** Epoch ms when the delayed stream first has frames to serve (the
+   *  live connect time + delayMs); meaningful only while buffering. */
+  private delayReadyAt = 0;
   private delayTimer: ReturnType<typeof setTimeout> | null = null;
   private replica: DelayedReplica | null = null;
 
@@ -555,6 +558,7 @@ export class WatchSession {
       );
       this.startScoresPoll();
       if (this.delayMs > 0) {
+        this.delayReadyAt = Date.now() + this.delayMs;
         this.enqueueDelayed({ kind: "connected", at: Date.now() });
         // Tournament-mode probe: sendGameVoteMenu answers with
         // VoteFFAMode (tournament) or VoteTournamentMode (normal) under
@@ -562,9 +566,14 @@ export class WatchSession {
         conn.sendCommand("GetVoteMenu", "TourneyQuery");
         this.startTourneyDecision();
       }
-      // Deliver catch-up to everyone who was waiting on the handshake.
+      // Serve everyone who was waiting on the handshake. A live/warm
+      // session hands them a catch-up; a delayed session still in its
+      // cold-start buffer sends the "delayed, live in ~Xs" status.
       for (const ws of [...this.pending]) {
         this.deliverCatchup(ws);
+      }
+      if (this.isDelayBuffering()) {
+        for (const ws of this.pending) this.sendSessionStatus(ws);
       }
       return;
     }
@@ -753,6 +762,22 @@ export class WatchSession {
   /** Watcher-facing delay currently applied (ms); 0 when live. */
   get streamDelayMs(): number {
     return this.delayMs;
+  }
+
+  /** Delayed, connected, but the first `delayMs` of buffer hasn't
+   *  elapsed — no delayed frames to serve a watcher yet. */
+  private isDelayBuffering(): boolean {
+    return (
+      this.delayMs > 0 &&
+      this.lastStatus === "connected" &&
+      !this.replica?.connected
+    );
+  }
+
+  /** Rough ms until the delayed stream begins, while buffering. */
+  private delayReadyInMs(): number | undefined {
+    if (!this.isDelayBuffering()) return undefined;
+    return Math.max(0, this.delayReadyAt - Date.now());
   }
 
   /**
@@ -1331,7 +1356,7 @@ export class WatchSession {
   private fanOutSessionStatus(message?: string): void {
     this.fanOut({
       type: "sessionStatus",
-      status: this.watchStatus,
+      status: this.isDelayBuffering() ? "syncing" : this.watchStatus,
       message,
       address: this.key,
       serverName: this.sessionServerName(),
@@ -1339,6 +1364,7 @@ export class WatchSession {
       watcherCount: this.watcherCount,
       recording: this.recording,
       streamDelayMs: this.delayMs,
+      streamDelayReadyInMs: this.delayReadyInMs(),
     });
   }
 
@@ -1352,6 +1378,7 @@ export class WatchSession {
       watcherCount: this.watcherCount,
       recording: this.recording,
       streamDelayMs: this.delayMs,
+      streamDelayReadyInMs: this.delayReadyInMs(),
     });
     if (this.lastPingMs != null) {
       sendJson(ws, { type: "ping", ms: this.lastPingMs });

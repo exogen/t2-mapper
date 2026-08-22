@@ -39,6 +39,8 @@ export type RelayEventHandler = {
       recording?: boolean;
       /** Watcher-facing stream delay in ms (0 = live). */
       streamDelayMs?: number;
+      /** Rough ms until a still-buffering delayed stream begins. */
+      streamDelayReadyInMs?: number;
     },
     watcherCount: number,
   ) => void;
@@ -178,6 +180,7 @@ export class RelayClient {
             mapName: message.mapName,
             recording: message.recording,
             streamDelayMs: message.streamDelayMs,
+            streamDelayReadyInMs: message.streamDelayReadyInMs,
           },
           message.watcherCount,
         );

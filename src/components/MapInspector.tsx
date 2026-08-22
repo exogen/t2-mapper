@@ -45,6 +45,7 @@ import { InputProvider } from "./InputProducer";
 import { VisualInput } from "./VisualInput";
 import { MapCompass } from "./MapCompass";
 import { LoadingIndicator } from "./LoadingIndicator";
+import { StreamDelayNotice } from "./StreamDelayNotice";
 import { engineStore } from "../state/engineStore";
 import {
   gameEntityStore,
@@ -234,6 +235,11 @@ export function MapInspector() {
   const watchStatus = useLiveSelector((s) => s.watchStatus);
   const watchStatusMessage = useLiveSelector((s) => s.watchStatusMessage);
   const catchupProgress = useLiveSelector((s) => s.catchupProgress);
+  // The stream-delay notice owns the screen during tournament buffering;
+  // its own spinner-free banner replaces the loading indicator (they clash).
+  const streamDelayNoticeUp = useLiveSelector(
+    (s) => s.streamDelayMs > 0 && s.streamDelayReadyAt != null,
+  );
   const watchServer = useLiveSelector((s) => s.watchServer);
   const relayConnected = useLiveSelector((s) => s.relayConnected);
   const servers = useLiveSelector((s) => s.servers);
@@ -682,13 +688,14 @@ export function MapInspector() {
                 ) : null}
                 {dataSource === "map" ? <MapCompass /> : null}
                 <VisualInput />
-                {showLoadingIndicator && (
+                {showLoadingIndicator && !streamDelayNoticeUp && (
                   <LoadingIndicator
                     id="loadingIndicator"
                     isLoading={isLoading}
                     progress={loadingProgress}
                   />
                 )}
+                <StreamDelayNotice />
                 {showDisconnectDialog ? (
                   <WatchErrorDialog
                     // A voluntary leave isn't an error — say so plainly.

@@ -1,0 +1,49 @@
+.Notice {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  max-width: min(90%, 420px);
+  padding: 16px 22px;
+  border-radius: 10px;
+  background: rgba(30, 23, 10, 0.85);
+  border: 1px solid rgba(255, 190, 90, 0.4);
+  box-shadow: 0 8px 40px rgba(0, 0, 0, 0.5);
+  color: #fbf1df;
+  /* No scene renders behind this, so let the user select the text. */
+  pointer-events: auto;
+  user-select: text;
+}
+
+.Icon {
+  flex: 0 0 auto;
+  font-size: 34px;
+  color: rgb(255, 190, 90);
+}
+
+.Text {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.Title {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.Subtitle {
+  font-size: 14px;
+  color: rgb(255, 190, 90);
+  font-variant-numeric: tabular-nums;
+}
+
+.Note {
+  margin-top: 3px;
+  font-size: 12px;
+  color: rgba(251, 241, 223, 0.6);
+}

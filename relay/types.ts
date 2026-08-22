@@ -46,6 +46,10 @@ export type ServerMessage =
       /** Watcher-facing stream delay in ms (tournament anti-screen-peek);
        *  0/absent = live. */
       streamDelayMs?: number;
+      /** While a delayed session is still buffering its first `delayMs`
+       *  (no delayed frames available yet), the rough ms until the
+       *  delayed stream begins — for a client-side "live in ~Xs". */
+      streamDelayReadyInMs?: number;
     }
   | { type: "watcherCount"; count: number }
   /** The relay is shutting down for a restart/deploy — clients should

@@ -50,6 +50,9 @@ export interface LiveConnectionState {
   /** Watcher-facing stream delay in ms (tournament anti-screen-peek);
    *  0 = live. */
   streamDelayMs: number;
+  /** Epoch ms at which a still-buffering delayed stream is expected to
+   *  begin, for a "live in ~Xs" countdown; null when not buffering. */
+  streamDelayReadyAt: number | null;
   /** Catch-up download progress in [0, 1], or null when not syncing. */
   catchupProgress: number | null;
   /** Auto-reattaching to the relay after a restart/connection loss. */
@@ -122,6 +125,7 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
     watcherCount: 0,
     recording: false,
     streamDelayMs: 0,
+    streamDelayReadyAt: null,
     catchupProgress: null,
     reconnecting: false,
 
@@ -213,6 +217,10 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
             watcherCount,
             recording: info.recording ?? false,
             streamDelayMs: info.streamDelayMs ?? 0,
+            streamDelayReadyAt:
+              info.streamDelayReadyInMs != null
+                ? Date.now() + info.streamDelayReadyInMs
+                : null,
             ...(status === "ended"
               ? { disconnectReason: "ended" as const }
               : {}),
@@ -293,6 +301,7 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
               watcherCount: 0,
               recording: false,
               streamDelayMs: 0,
+              streamDelayReadyAt: null,
               catchupProgress: null,
               reconnecting: true,
             });
@@ -330,6 +339,7 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
             watcherCount: 0,
             recording: false,
             streamDelayMs: 0,
+            streamDelayReadyAt: null,
             catchupProgress: null,
             reconnecting: false,
           });
@@ -368,6 +378,7 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
         watcherCount: 0,
         recording: false,
         streamDelayMs: 0,
+        streamDelayReadyAt: null,
         catchupProgress: null,
       });
     },
@@ -550,6 +561,7 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
         watcherCount: 0,
         recording: false,
         streamDelayMs: 0,
+        streamDelayReadyAt: null,
         catchupProgress: null,
         role: null,
       });
