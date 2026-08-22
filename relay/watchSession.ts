@@ -37,13 +37,34 @@ const WATCH_IDLE_GRACE_MS = parseInt(
 );
 /** Matches the real client's lobby refresh (LobbyGui.cs updateLobbyPlayerList). */
 const SCORES_POLL_MS = 4_000;
+/**
+ * Live in-game score-HUD poll cadence (ms), 0 = off. Opens the score
+ * screen (ShowHud) for one snapshot then closes it (HideHud) so the
+ * server sends the SetLineHud scoreboard once per poll instead of the
+ * continuous every-3s flood that deadlocks the observer's receive
+ * window on busy servers. The only live per-player score source on
+ * servers (TacoServer) whose MsgPlayerScore reports 0.
+ */
+const SCORE_HUD_POLL_MS = parseInt(
+  process.env.WATCH_SCORE_HUD_POLL_MS || "0",
+  10,
+);
+/** Delay before HideHud cancels the server's 3s reschedule (< 3s). */
+const SCORE_HUD_CLOSE_MS = 2_000;
+/** Grace before reverting an observer that got placed on a team, and how
+ *  many times to re-send the revert if it doesn't take. */
+const REOBSERVE_DELAY_MS = 2_000;
+const REOBSERVE_MAX_ATTEMPTS = 3;
+/** serverCmdWatchOnly pass that flags us isWatchOnly (exempt from the
+ *  observer auto-kick); "ImaWatcher" is the stock $Host::ObserverOnlyPass. */
+const WATCH_ONLY_PASS = process.env.WATCH_ONLY_PASS || "ImaWatcher";
 /** Matches the real client's chat input limit ($Host::MaxMessageLen). */
 const CHAT_MAX_LENGTH = 255;
 const CATCHUP_CHUNK_BYTES = 256 * 1024;
 /** The vote-menu answer and the join banner both land seconds after
  *  connect; nothing by then (e.g. a vote was in progress, so the menu
  *  wasn't sent) means "not tournament mode" until the next epoch asks. */
-const TOURNEY_DECISION_GRACE_MS = 6_000;
+const TOURNEY_DECISION_GRACE_MS = 8_000;
 /** Min gap between recording-driven mission-cycle reconnects — a second
  *  cycle sooner than this rides in place instead (no reconnect loops). */
 const CYCLE_RECONNECT_MIN_MS = 60_000;
@@ -271,6 +292,13 @@ export class WatchSession {
   private idleTimer: ReturnType<typeof setTimeout> | null = null;
   private retryTimer: ReturnType<typeof setTimeout> | null = null;
   private scoresTimer: ReturnType<typeof setInterval> | null = null;
+  private scoreHudTimer: ReturnType<typeof setInterval> | null = null;
+  private scoreHudCloseTimer: ReturnType<typeof setTimeout> | null = null;
+  private reObserveTimer: ReturnType<typeof setTimeout> | null = null;
+  private reObserveAttempts = 0;
+  /** A team-revert sequence is in progress or exhausted; cleared only when
+   *  we're confirmed back on the observer team. */
+  private reObserveActive = false;
   private retryCount = 0;
   /** Re-syncs without a healthy stretch (~5000 packets) in between. */
   private resyncCount = 0;
@@ -382,6 +410,9 @@ export class WatchSession {
     const conn =
       this.options.createConnection?.(this.key) ?? new GameConnection(this.key);
     this.connection = conn;
+    // Authenticated: our account GUID identifies our own client for the
+    // observer-team guard (falls back to the welcome join without it).
+    this.watchState.expectedSelfGuid = conn.selfGuid;
     const cached = this.options.getCachedServer(this.key);
     if (cached?.mapName) conn.setMapName(cached.mapName);
     // Mission-scoped: a cycle reconnect may bring a different type,
@@ -407,6 +438,10 @@ export class WatchSession {
         getActivePlayerCount: () => this.watchState.countActivePlayers(),
         getPlayerNames: () => this.watchState.getRosterNames(),
         getMatchStarted: () => this.watchState.matchStarted,
+        getRecordContext: () => ({
+          pinned: this.pinned,
+          watchers: this.watcherCount,
+        }),
         onStateChange: () => this.fanOutSessionStatus(),
       }) ?? null;
 
@@ -554,14 +589,11 @@ export class WatchSession {
       conn.sendCommand("ScopeCommanderMap", "1");
       // TacoServer-based servers auto-kick observers on a fixed timer
       // ($Host::KickObserverTimeout, "Observer Timeout") regardless of
-      // activity; serverCmdWatchOnly flags the client isWatchOnly, which
-      // exempts it. "ImaWatcher" is the stock $Host::ObserverOnlyPass
-      // default. Unknown serverCmds are no-ops elsewhere.
-      conn.sendCommand(
-        "WatchOnly",
-        process.env.WATCH_ONLY_PASS || "ImaWatcher",
-      );
+      // activity; WATCH_ONLY_PASS exempts us. Unknown serverCmds are
+      // no-ops elsewhere.
+      conn.sendCommand("WatchOnly", WATCH_ONLY_PASS);
       this.startScoresPoll();
+      this.startScoreHudPoll();
       if (this.delayMs > 0) {
         this.delayReadyAt = Date.now() + this.delayMs;
         this.enqueueDelayed({ kind: "connected", at: Date.now() });
@@ -585,6 +617,8 @@ export class WatchSession {
 
     if (status === "disconnected") {
       this.stopScoresPoll();
+      this.stopScoreHudPoll();
+      this.cancelReObserve();
       // Covers both cycle styles: servers that hard-disconnect at mission
       // change ("Server is cycling mission") and terminal disconnects.
       this.stopRecording(`disconnected: ${message ?? "unknown"}`);
@@ -650,6 +684,8 @@ export class WatchSession {
     this.replica = null;
     this.cancelTourneyDecision();
     this.stopScoresPoll();
+    this.stopScoreHudPoll();
+    this.cancelReObserve();
     this.stopRecording(reason ?? "session ended");
     if (reason) {
       this.fanOut({
@@ -711,6 +747,7 @@ export class WatchSession {
       // NetStrings apply before responders so funcName refs resolve.
       this.watchState.applyPacket(parsed);
       this.ghostState.applyPacket(parsed);
+      this.maybeReObserve();
       // The server naming itself (MsgMissionDropInfo/MsgLoadInfo)
       // permanently overrides any server-list seed.
       if (this.watchState.serverName) {
@@ -1449,5 +1486,112 @@ export class WatchSession {
       clearInterval(this.scoresTimer);
       this.scoresTimer = null;
     }
+  }
+
+  /**
+   * Poll the live score HUD in gentle open→snapshot→close cycles (see
+   * SCORE_HUD_POLL_MS). ShowHud makes the server send one scoreboard and
+   * schedule a +3s repeat; HideHud a couple seconds later cancels that
+   * repeat, so the server never sustains the continuous flood that
+   * overflows the observer's receive window. Off unless configured.
+   */
+  private startScoreHudPoll(): void {
+    this.stopScoreHudPoll();
+    if (SCORE_HUD_POLL_MS <= 0) return;
+    const poll = () => {
+      if (this.lastStatus !== "connected") return;
+      this.connection?.sendCommand("ShowHud", "scoreScreen");
+      this.scoreHudCloseTimer = setTimeout(() => {
+        this.scoreHudCloseTimer = null;
+        if (this.lastStatus === "connected") {
+          this.connection?.sendCommand("HideHud", "scoreScreen");
+        }
+      }, SCORE_HUD_CLOSE_MS);
+    };
+    this.scoreHudTimer = setInterval(poll, SCORE_HUD_POLL_MS);
+    poll();
+  }
+
+  private stopScoreHudPoll(): void {
+    if (this.scoreHudTimer) {
+      clearInterval(this.scoreHudTimer);
+      this.scoreHudTimer = null;
+    }
+    if (this.scoreHudCloseTimer) {
+      clearTimeout(this.scoreHudCloseTimer);
+      this.scoreHudCloseTimer = null;
+    }
+  }
+
+  /**
+   * The relay watches as an observer (team 0); if an admin or the server
+   * places it on a real team it would spawn and play, corrupting the
+   * demo. Watch mode only — this whole class is the watch path, so a
+   * client-is-the-player connection (its own GameConnection) never runs
+   * this. On detecting a team, revert to observer after a grace period,
+   * retrying a few times if the switch doesn't take, and stand down once
+   * back on team 0.
+   */
+  private maybeReObserve(): void {
+    const team = this.watchState.getSelfTeamId();
+    if (team != null && team > 0) {
+      if (!this.reObserveActive) {
+        this.reObserveActive = true;
+        this.reObserveAttempts = 0;
+        relayLog.warn(
+          { address: this.key, team },
+          "Observer was placed on a team — will revert to observer",
+        );
+        this.scheduleReObserve();
+      }
+    } else if (this.reObserveActive) {
+      // Confirmed back on the observer team (or self identity lost) — done.
+      this.cancelReObserve();
+    }
+  }
+
+  private scheduleReObserve(): void {
+    if (this.reObserveTimer) return;
+    this.reObserveTimer = setTimeout(() => {
+      this.reObserveTimer = null;
+      if (this.destroyed || this.lastStatus !== "connected") {
+        this.cancelReObserve();
+        return;
+      }
+      const team = this.watchState.getSelfTeamId();
+      if (team == null || team <= 0) {
+        // Resolved between scheduling and firing.
+        this.cancelReObserve();
+        return;
+      }
+      this.reObserveAttempts++;
+      const conn = this.connection;
+      relayLog.warn(
+        { address: this.key, team, attempt: this.reObserveAttempts },
+        "Reverting observer to team 0",
+      );
+      conn?.sendCommand("WatchOnly", WATCH_ONLY_PASS);
+      conn?.sendCommand("setPlayerTeam", "0");
+      if (this.reObserveAttempts < REOBSERVE_MAX_ATTEMPTS) {
+        this.scheduleReObserve();
+      } else {
+        // Give up sending until we're teamed again (avoid an endless
+        // stream of ignored commands); reObserveActive stays set so
+        // maybeReObserve won't restart while still stuck on the team.
+        relayLog.error(
+          { address: this.key, attempts: this.reObserveAttempts },
+          "Could not revert observer to team 0",
+        );
+      }
+    }, REOBSERVE_DELAY_MS);
+  }
+
+  private cancelReObserve(): void {
+    if (this.reObserveTimer) {
+      clearTimeout(this.reObserveTimer);
+      this.reObserveTimer = null;
+    }
+    this.reObserveActive = false;
+    this.reObserveAttempts = 0;
   }
 }

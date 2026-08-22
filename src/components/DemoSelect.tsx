@@ -30,6 +30,7 @@ import {
 import { loadDemoUrl } from "../stream/demoFileLoader";
 import { useRecording } from "./usePlayback";
 import { normalizeMissionType } from "../mission";
+import { findMissionInfo } from "../manifest";
 import styles from "./MissionSelect.module.css";
 
 const isMac =
@@ -69,8 +70,20 @@ function recordedDayLabel(iso: string): string {
   });
 }
 
+/**
+ * The sidecar stores the mission's internal name (e.g. "DX_Ice"); resolve
+ * it to the display name ("Dangerous Crossing (Ice)") via the manifest,
+ * falling back to the raw name for missions we don't ship.
+ */
+function missionDisplayName(mission: string): string {
+  return findMissionInfo(mission)?.displayName || mission;
+}
+
 function demoTitle(demo: DemoIndexEntry): string {
-  return demo.games.map((game) => game.mission).join(" → ") || "Warmup only";
+  return (
+    demo.games.map((game) => missionDisplayName(game.mission)).join(" → ") ||
+    "Warmup only"
+  );
 }
 
 function DemoItemContent({ demo }: { demo: DemoIndexEntry }) {
@@ -211,7 +224,10 @@ export function DemoSelect() {
     }
     const matches = matchSorter(all, searchValue, {
       keys: [
+        // Both the internal name and the display name, so "DX_Ice" and
+        // "Dangerous Crossing" each match.
         (demo) => demo.games.map((game) => game.mission),
+        (demo) => demo.games.map((game) => missionDisplayName(game.mission)),
         // Both forms so "CTF" and "capture the flag" each match.
         (demo) => demo.games.map((game) => game.gameType),
         (demo) => demo.games.map((game) => normalizeMissionType(game.gameType)),

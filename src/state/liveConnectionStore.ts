@@ -43,6 +43,10 @@ export interface LiveConnectionState {
   watchStatusMessage?: string;
   /** Why the last session ended — drives the disconnect messaging. */
   disconnectReason: "voluntary" | "ended" | null;
+  /** Whether the current/last watch attempt ever reached the server
+   *  (syncing or live). Distinguishes a lost-after-connecting session
+   *  from one that never connected — only the former offers Rejoin. */
+  sessionEstablished: boolean;
   /** Number of watchers on the shared session (including us). */
   watcherCount: number;
   /** The relay is recording this session to a demo file. */
@@ -122,6 +126,7 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
     watchStatus: null,
     watchStatusMessage: undefined,
     disconnectReason: null,
+    sessionEstablished: false,
     watcherCount: 0,
     recording: false,
     streamDelayMs: 0,
@@ -223,6 +228,12 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
                 : null,
             ...(status === "ended"
               ? { disconnectReason: "ended" as const }
+              : {}),
+            // Reaching the server (catch-up or live) marks the attempt as
+            // established, so a later drop offers Rejoin; a probe that
+            // never got past "connecting" leaves this false.
+            ...(status === "syncing" || status === "live"
+              ? { sessionEstablished: true }
               : {}),
             ...(info.mapName ? { mapName: info.mapName } : {}),
             ...(info.serverName ? { serverName: info.serverName } : {}),
@@ -481,6 +492,7 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
           watchStatus: "connecting",
           watchStatusMessage: undefined,
           disconnectReason: null,
+          sessionEstablished: false,
           watcherCount: 0,
           catchupProgress: null,
           reconnecting: false,
@@ -526,6 +538,7 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
         watchStatus: "connecting",
         watchStatusMessage: undefined,
         disconnectReason: null,
+        sessionEstablished: false,
         watcherCount: 0,
         catchupProgress: null,
         reconnecting: false,

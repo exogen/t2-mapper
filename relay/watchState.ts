@@ -1,5 +1,5 @@
 import type { PacketData, ParsedData, SensorGroupColor } from "t2-demo-parser";
-import { stripTaggedStringMarkup } from "./shared.js";
+import { parseScoreHudLine, stripTaggedStringMarkup } from "./shared.js";
 import type { WatchHudStatePayload, WatchTargetEntry } from "./types.js";
 
 /**
@@ -21,6 +21,7 @@ interface RosterEntry {
   score: number;
   ping: number;
   packetLoss: number;
+  kills?: number;
 }
 
 interface TeamScoreEntry {
@@ -66,6 +67,21 @@ export class WatchStateAccumulator {
   missionName: string | null = null;
   controlObjectGhostIndex = -1;
   controlObjectData: ParsedData | undefined;
+  /**
+   * Our own account GUID (from the T2csri certificate), set by the owner
+   * when authenticated. The server reports it as each client's `sendGuid`.
+   * It narrows self-identification to our account but does NOT pin a
+   * single connection — the same account can have several clients
+   * connected at once — so it's a filter, not the whole answer (see
+   * identifySelf). null when connecting without credentials.
+   */
+  expectedSelfGuid: string | null = null;
+  /**
+   * Our own client id, learned from the welcome MsgClientJoin the server
+   * sends only to us about us (see identifySelf). There is no dedicated
+   * self-id message. null until identified.
+   */
+  selfClientId: number | null = null;
   /**
    * Tournament mode, as told by the server; null until determined. The
    * authoritative answer is the vote-menu query the session sends on
@@ -359,6 +375,9 @@ export class WatchStateAccumulator {
       const clientId = parseInt(this.resolveNetString(args[3]), 10);
       const joinTargetId = parseInt(this.resolveNetString(args[4] ?? ""), 10);
       if (!isNaN(clientId)) {
+        this.identifySelf(clientId, args);
+      }
+      if (!isNaN(clientId)) {
         this.playerRoster.set(clientId, {
           name,
           targetId: isNaN(joinTargetId) ? undefined : joinTargetId,
@@ -396,7 +415,12 @@ export class WatchStateAccumulator {
           const score = parseInt(this.resolveNetString(args[3]), 10);
           const ping = parseInt(this.resolveNetString(args[4]), 10);
           const packetLoss = parseInt(this.resolveNetString(args[5] ?? ""), 10);
-          if (!isNaN(score)) existing.score = score;
+          // The live score HUD (SetLineHud) is authoritative on servers
+          // (TacoServer) whose MsgPlayerScore reports 0; don't let a 0
+          // here clobber a real score already applied from that HUD.
+          if (!isNaN(score) && (score !== 0 || existing.score === 0)) {
+            existing.score = score;
+          }
           if (!isNaN(ping)) existing.ping = ping;
           if (!isNaN(packetLoss)) existing.packetLoss = packetLoss;
         }
@@ -454,6 +478,10 @@ export class WatchStateAccumulator {
       // Mission-scoped (mirrors the browser): a same-map restart skips
       // beginMissionChange, so clear here too.
       this.matchStarted = false;
+    } else if (msgType === "SetLineHud" && args.length >= 7) {
+      this.applyScoreHudLine(args);
+    } else if (msgType === "MsgDebriefAddLine" && args.length >= 5) {
+      this.applyDebriefScoreLine(args);
     } else if (
       msgType === "MsgClearDebrief" ||
       msgType === "MsgDebriefResult"
@@ -471,6 +499,60 @@ export class WatchStateAccumulator {
   }
 
   /**
+   * Apply a live in-game score-HUD line (SetLineHud, sent while the relay
+   * has the score screen open) to the roster, matched by name — the
+   * server-authoritative live score, the only non-zero source on servers
+   * (TacoServer) whose MsgPlayerScore is 0. Only real-team players are
+   * updated, so team-header / observer / total lines are ignored.
+   * Mirrors StreamEngine.applyScoreHudLine.
+   */
+  private applyScoreHudLine(args: string[]): void {
+    const dataArgs = args.slice(5).map((a) => this.resolveNetString(a));
+    for (const { name, score, kills } of parseScoreHudLine(dataArgs)) {
+      for (const entry of this.playerRoster.values()) {
+        if (entry.teamId > 0 && entry.name === name) {
+          entry.score = score;
+          if (kills != null) entry.kills = kills;
+          break;
+        }
+      }
+    }
+  }
+
+  /**
+   * Apply an end-of-match debrief player row (MsgDebriefAddLine) to the
+   * roster, matched by name — the debrief carries the real final score
+   * and kills even where the live MsgPlayerScore channel reports 0
+   * (TacoServer). Mirrors StreamEngine.applyDebriefScoreLine. Stock
+   * formats: multi-team [_, "", fmt, name, team, score, kills];
+   * single-team [_, "", fmt, name, score, kills]. Header/team/MOTD rows
+   * match no roster name and are ignored.
+   */
+  private applyDebriefScoreLine(args: string[]): void {
+    const name = stripTaggedStringMarkup(
+      this.resolveNetString(args[3] ?? ""),
+    ).trim();
+    if (!name) return;
+    const singleTeam = /^-?\d+$/.test(this.resolveNetString(args[4] ?? ""));
+    const score = parseInt(
+      this.resolveNetString(args[singleTeam ? 4 : 5] ?? ""),
+      10,
+    );
+    const kills = parseInt(
+      this.resolveNetString(args[singleTeam ? 5 : 6] ?? ""),
+      10,
+    );
+    if (isNaN(score)) return;
+    for (const entry of this.playerRoster.values()) {
+      if (entry.name === name) {
+        entry.score = score;
+        if (!isNaN(kills)) entry.kills = kills;
+        return;
+      }
+    }
+  }
+
+  /**
    * All roster names, observers included (JoinTeam-before-Join stubs
    * have an empty name until MsgClientJoin backfills — skipped).
    */
@@ -480,6 +562,42 @@ export class WatchStateAccumulator {
       if (entry.name) names.push(entry.name);
     }
     return names;
+  }
+
+  /**
+   * Identify our own client from a MsgClientJoin. Our connection uniquely
+   * receives one non-empty "welcome" join about us (arg 1, the greeting);
+   * every other client — including ones on our SAME account (a GUID is an
+   * account, not a connection: multiple MapGenius observers can share it)
+   * — reaches us either as a silent roster-sync join (empty message) or,
+   * if they connect later, after we're already identified. So we take the
+   * first non-empty-message join, once.
+   *
+   * When authenticated we additionally require the join's `sendGuid` (arg
+   * 9) to be ours, which rejects other accounts outright. The only
+   * residual ambiguity is a same-account client joining within our own
+   * connect burst — itself a MapGenius observer, so tracking it instead is
+   * harmless (it should be an observer too).
+   */
+  private identifySelf(clientId: number, args: string[]): void {
+    if (this.selfClientId != null) return;
+    if (this.resolveNetString(args[1] ?? "") === "") return;
+    if (this.expectedSelfGuid) {
+      const guid = this.resolveNetString(args[9] ?? "").trim();
+      if (guid !== this.expectedSelfGuid) return;
+    }
+    this.selfClientId = clientId;
+  }
+
+  /**
+   * Our own team, or null if unknown (self not yet identified, or no
+   * roster entry for it). 0 means observer; > 0 means we've been placed
+   * on a real team — which, as a watch observer, we never want to be.
+   */
+  getSelfTeamId(): number | null {
+    if (this.selfClientId == null) return null;
+    const self = this.playerRoster.get(this.selfClientId);
+    return self ? self.teamId : null;
   }
 
   /** Roster entries on a real team — observers (including the relay's

@@ -27,7 +27,12 @@ export function stripTaggedStringMarkup(s: string): string {
   }
   return stripped;
 }
-const RETRYABLE_REASONS = ["Server is cycling mission"];
+/** Emitted when the receive window deadlocks (see gameConnection). */
+export const STALLED_DISCONNECT_REASON = "Connection stalled";
+const RETRYABLE_REASONS = [
+  "Server is cycling mission",
+  STALLED_DISCONNECT_REASON,
+];
 
 export function isRetryableDisconnect(message: string | undefined): boolean {
   return (
@@ -99,4 +104,44 @@ export function buildCRCDataBlockList(
     }
   }
   return datablocks;
+}
+
+/**
+ * A player entry parsed from a live in-game score-HUD line (`SetLineHud`).
+ * The relay/browser match `name` to the roster to apply `score`/`kills`.
+ */
+export interface ScoreHudEntry {
+  name: string;
+  score: number;
+  kills?: number;
+}
+
+/**
+ * Parse the data args of a `SetLineHud` score-screen line into player
+ * entries. `SetLineHud` wire args are `[msgType, "", tag, index, format,
+ * d1, d2, d3, d4, …]`; pass the resolved data args (`d1…`) starting at
+ * index 5. Two known layouts, distinguished by whether the 3rd value is
+ * numeric — both handled so a stock server and a TacoServer/dtStats one
+ * parse the same way:
+ *   TacoServer CTFHud (1 player/line): d1=name, d2=score, d3=kills, …
+ *   stock updateScoreHud (2 players/line): d1=name1, d2=score1, d3=name2, d4=score2
+ * Non-player lines (team headers, totals, blanks) yield names that match
+ * no roster entry and are dropped by the caller.
+ */
+export function parseScoreHudLine(dataArgs: string[]): ScoreHudEntry[] {
+  const out: ScoreHudEntry[] = [];
+  const name1 = stripTaggedStringMarkup(dataArgs[0] ?? "").trim();
+  const score1 = parseInt(dataArgs[1] ?? "", 10);
+  if (!name1 || isNaN(score1)) return out;
+  const third = dataArgs[2] ?? "";
+  if (/^-?\d+$/.test(third.trim())) {
+    // TacoServer layout: third value is this player's kills.
+    out.push({ name: name1, score: score1, kills: parseInt(third, 10) });
+  } else {
+    out.push({ name: name1, score: score1 });
+    const name2 = stripTaggedStringMarkup(third).trim();
+    const score2 = parseInt(dataArgs[3] ?? "", 10);
+    if (name2 && !isNaN(score2)) out.push({ name: name2, score: score2 });
+  }
+  return out;
 }

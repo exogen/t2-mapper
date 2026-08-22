@@ -32,7 +32,6 @@ export function useCameraHeadingRotor(
 ) {
   useEffect(() => {
     const direction = new Vector3();
-    let lastDeg: number | null = null;
     let raf = requestAnimationFrame(function update() {
       raf = requestAnimationFrame(update);
       const camera = commandCircuitStore.getState().active
@@ -49,13 +48,18 @@ export function useCameraHeadingRotor(
         direction.set(0, sign, 0).applyQuaternion(camera.quaternion);
       }
       const deg = (Math.atan2(direction.z, direction.x) * 180) / Math.PI;
-      if (deg !== lastDeg) {
-        lastDeg = deg;
-        rotor.setAttribute("transform", rotorTransform(deg));
-        const heading = Math.round(((deg % 360) + 360) % 360) % 360;
-        const degrees = degreesRef?.current;
-        if (degrees) degrees.textContent = `${heading}°`;
-      }
+      // Write every frame rather than gating on a change: the rotor <g>
+      // renders with no transform (identity = North-up), and React can
+      // recreate that node — e.g. when command circuit toggles and this
+      // subtree re-renders — independently of this loop. A change-gate
+      // would leave the freshly-recreated node stuck at North-up until
+      // the heading next changed (the camera moved); an unconditional
+      // write keeps the DOM authoritative across those re-mounts.
+      rotor.setAttribute("transform", rotorTransform(deg));
+      const heading = Math.round(((deg % 360) + 360) % 360) % 360;
+      const degrees = degreesRef?.current;
+      const text = `${heading}°`;
+      if (degrees && degrees.textContent !== text) degrees.textContent = text;
     });
     return () => cancelAnimationFrame(raf);
   }, [rotorRef, degreesRef]);

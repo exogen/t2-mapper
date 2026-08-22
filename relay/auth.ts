@@ -278,6 +278,15 @@ export class T2csriAuth {
   }
 
   /**
+   * Our account GUID, parsed from the certificate (username\tguid\t…).
+   * The server reports this same value as each client's `sendGuid`, so
+   * it uniquely identifies our own client in the roster.
+   */
+  get guid(): string | null {
+    return this.credentials.certificate.split("\t")[1]?.trim() || null;
+  }
+
+  /**
    * Handle t2csri_pokeClient from server.
    * Returns commands to send back (cert chunks + challenge).
    */

@@ -43,6 +43,7 @@ import {
   detectControlObjectType,
 } from "./streamHelpers";
 import type { Vec3 } from "./streamHelpers";
+import { parseScoreHudLine } from "../../relay/shared";
 import type {
   ServerLoadInfo,
   BackpackHudState,
@@ -332,6 +333,7 @@ export abstract class StreamEngine implements StreamingPlayback {
       score: number;
       ping: number;
       packetLoss: number;
+      kills?: number;
     }
   >();
   /** Stream time (seconds) when the clock was last set. */
@@ -367,6 +369,66 @@ export abstract class StreamEngine implements StreamingPlayback {
   /** Team objectives only score once the match is running. */
   protected noteTeamScore(score: number): void {
     if (score > 0) this.matchStarted = true;
+  }
+
+  /**
+   * Apply a live in-game score-HUD line (SetLineHud) to the roster,
+   * matched by name — the server-authoritative live score, and the only
+   * non-zero source on servers (TacoServer) whose MsgPlayerScore is 0.
+   * Only real-team players are updated, so team-header / observer / total
+   * lines are ignored. Mirrors watchState.applyScoreHudLine.
+   */
+  private applyScoreHudLine(args: string[]): void {
+    const dataArgs = args.slice(5).map((a) => this.resolveNetString(a));
+    let changed = false;
+    for (const { name, score, kills } of parseScoreHudLine(dataArgs)) {
+      for (const entry of this.playerRoster.values()) {
+        if (entry.teamId > 0 && entry.name === name) {
+          entry.score = score;
+          if (kills != null) entry.kills = kills;
+          changed = true;
+          break;
+        }
+      }
+    }
+    if (changed) this.onRosterChanged();
+  }
+
+  /**
+   * Apply a player row from the end-of-match debrief (MsgDebriefAddLine)
+   * to the roster. TacoServer (and others) report per-player scores as 0
+   * in the live/lobby MsgPlayerScore channel, but the gameOver debrief
+   * carries the real final score and kills — matched to the roster by
+   * name (the debrief has no clientId). Stock formats:
+   *   multi-team CTF: [msgType, "", format, name, team, score, kills]
+   *   single-team:    [msgType, "", format, name, score, kills]
+   * Header/team/MOTD lines don't match a roster name and are ignored.
+   */
+  private applyDebriefScoreLine(args: string[]): void {
+    const name = stripTaggedStringMarkup(
+      this.resolveNetString(args[3] ?? ""),
+    ).trim();
+    if (!name) return;
+    // Single-team rows put a numeric score at args[4]; multi-team rows
+    // put the team name there.
+    const singleTeam = /^-?\d+$/.test(this.resolveNetString(args[4] ?? ""));
+    const score = parseInt(
+      this.resolveNetString(args[singleTeam ? 4 : 5] ?? ""),
+      10,
+    );
+    const kills = parseInt(
+      this.resolveNetString(args[singleTeam ? 5 : 6] ?? ""),
+      10,
+    );
+    if (isNaN(score)) return;
+    for (const entry of this.playerRoster.values()) {
+      if (entry.name === name) {
+        entry.score = score;
+        if (!isNaN(kills)) entry.kills = kills;
+        this.onRosterChanged();
+        return;
+      }
+    }
   }
   /** Server name from MsgMissionDropInfo. */
   serverDisplayName: string | null = null;
@@ -2708,7 +2770,12 @@ export abstract class StreamEngine implements StreamingPlayback {
           const score = parseInt(this.resolveNetString(args[3]), 10);
           const ping = parseInt(this.resolveNetString(args[4]), 10);
           const packetLoss = parseInt(this.resolveNetString(args[5] ?? ""), 10);
-          if (!isNaN(score)) existing.score = score;
+          // The live score HUD (SetLineHud) is authoritative on servers
+          // (TacoServer) whose MsgPlayerScore reports 0; don't let a 0
+          // here clobber a real score already applied from that HUD.
+          if (!isNaN(score) && (score !== 0 || existing.score === 0)) {
+            existing.score = score;
+          }
           if (!isNaN(ping)) existing.ping = ping;
           if (!isNaN(packetLoss)) existing.packetLoss = packetLoss;
           this.onRosterChanged();
@@ -2807,6 +2874,10 @@ export abstract class StreamEngine implements StreamingPlayback {
       this.matchEnded = false;
       this.matchStarted = false;
       this.onMissionInfoChange?.();
+    } else if (msgType === "SetLineHud" && args.length >= 7) {
+      this.applyScoreHudLine(args);
+    } else if (msgType === "MsgDebriefAddLine" && args.length >= 5) {
+      this.applyDebriefScoreLine(args);
     } else if (
       msgType === "MsgClearDebrief" ||
       msgType === "MsgDebriefResult"

@@ -66,6 +66,12 @@ export interface DemoRecorderOptions {
   /** Whether the match is underway (sampled; sticky — a demo that never
    *  saw the match start is dropped as pre-match warmup). */
   getMatchStarted: () => boolean;
+  /**
+   * Why the session is recording, for the sidecar's `reason`. Sampled
+   * during the recording so it reflects the trigger even if watchers
+   * leave before finalize.
+   */
+  getRecordContext?: () => { pinned: boolean; watchers: number };
   recorderName: string;
   /** Compressed size cap; recorder self-aborts beyond it. */
   maxBytes: number;
@@ -121,6 +127,12 @@ export interface DemoMetadata {
    * Unique names observed at any point, observers included.
    */
   players: string[];
+  /**
+   * Why this recording was kept — the trigger (patrol pin / watchers)
+   * plus the keep-gate facts (peak players, match started). For debugging
+   * why a demo exists at all.
+   */
+  reason?: string;
 }
 
 /**
@@ -176,6 +188,9 @@ export class DemoRecorder {
   private t0: number | null = null;
   private moveCount = 0;
   private peakPlayers = 0;
+  /** Trigger context, accumulated across the recording. */
+  private wasPinned = false;
+  private peakWatchers = 0;
   private matchStarted = false;
   private playerNames = new Set<string>();
   /**
@@ -256,6 +271,28 @@ export class DemoRecorder {
       const name = sanitizePlayerName(raw);
       if (name && name !== this.opts.recorderName) this.playerNames.add(name);
     }
+    const ctx = this.opts.getRecordContext?.();
+    if (ctx) {
+      if (ctx.pinned) this.wasPinned = true;
+      if (ctx.watchers > this.peakWatchers) this.peakWatchers = ctx.watchers;
+    }
+  }
+
+  /** Human-readable "why this was kept" for the sidecar. */
+  private describeKeepReason(): string {
+    const parts: string[] = [];
+    if (this.wasPinned) parts.push("patrol pin");
+    if (this.peakWatchers > 0) {
+      parts.push(
+        `${this.peakWatchers} watcher${this.peakWatchers === 1 ? "" : "s"}`,
+      );
+    }
+    if (parts.length === 0) parts.push("session recording");
+    parts.push(
+      `peak ${this.peakPlayers} player${this.peakPlayers === 1 ? "" : "s"}`,
+    );
+    if (this.matchStarted) parts.push("match started");
+    return parts.join(", ");
   }
 
   onSent(): void {
@@ -518,6 +555,7 @@ export class DemoRecorder {
         mod: meta.mod,
         recorder: meta.recorder,
         durationMs,
+        reason: this.describeKeepReason(),
         players: [...this.playerNames].sort((a, b) =>
           a.localeCompare(b, "en", { sensitivity: "base" }),
         ),

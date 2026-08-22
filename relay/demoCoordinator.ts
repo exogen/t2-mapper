@@ -30,6 +30,7 @@ export type SessionRecorderOptions = Pick<
   | "getActivePlayerCount"
   | "getPlayerNames"
   | "getMatchStarted"
+  | "getRecordContext"
   | "onStateChange"
 >;
 

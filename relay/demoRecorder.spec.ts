@@ -75,6 +75,7 @@ describe("DemoRecorder", () => {
       playerNames?: () => string[];
       serverIdentity?: () => ServerIdentity;
       matchStarted?: () => boolean;
+      recordContext?: () => { pinned: boolean; watchers: number };
     } = {},
   ) {
     return new DemoRecorder({
@@ -92,6 +93,7 @@ describe("DemoRecorder", () => {
       getActivePlayerCount: overrides.playerCount ?? (() => 2),
       getPlayerNames: overrides.playerNames ?? (() => []),
       getMatchStarted: overrides.matchStarted ?? (() => true),
+      getRecordContext: overrides.recordContext,
       recorderName: "Observer",
       maxBytes: 512 * 1024 * 1024,
       minLengthMs: overrides.minLengthMs ?? 0,
@@ -304,6 +306,8 @@ describe("DemoRecorder", () => {
       mod: "classic",
       recorder: "Observer",
       durationMs: result!.durationMs,
+      // No record context in this test → generic trigger.
+      reason: "session recording, peak 2 players, match started",
       // Sorted, deduped, control chars stripped, blank and the
       // recorder's own connection excluded.
       players: ["Alice", "Bob", "Chloé"],
@@ -376,6 +380,24 @@ describe("DemoRecorder", () => {
     }
     expect(await recorder.finalize("test")).toBeNull();
     expect(recorder.state).toBe("aborted");
+  });
+
+  it("records a keep reason describing the trigger and gates", async () => {
+    const recorder = createRecorder({
+      playerCount: () => 3,
+      recordContext: () => ({ pinned: true, watchers: 2 }),
+    });
+    recorder.onPacket(buildPingPacket(1));
+    time += 100;
+    recorder.setMissionName("Katabatic");
+    recorder.onPacket(buildPingPacket(2));
+    const result = await recorder.finalize("test");
+    const sidecar = JSON.parse(
+      await fsp.readFile(`${result!.path}.json`, "utf-8"),
+    ) as Record<string, unknown>;
+    expect(sidecar.reason).toBe(
+      "patrol pin, 2 watchers, peak 3 players, match started",
+    );
   });
 
   it("skips oversized packets and keeps recording", async () => {

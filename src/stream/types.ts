@@ -298,6 +298,8 @@ export interface PlayerRosterEntry {
   score: number;
   ping: number;
   packetLoss: number;
+  /** Kills, from the end-of-match debrief (MsgDebriefAddLine); 0 until then. */
+  kills?: number;
   /** The client's target id (MsgClientJoin arg %3) — exact join key to
    *  the entity that represents this client's player. */
   targetId?: number;

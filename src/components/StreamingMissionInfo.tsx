@@ -215,7 +215,7 @@ export function StreamingMissionInfo({
             {isLive && isLiveConnected && streamDelayMs > 0 ? (
               <span
                 className={`${styles.DelayBadge} ${styles.MetaGap}`}
-                title={`Tournament mode: this stream is delayed by ${formatDelay(streamDelayMs)} to prevent screen-peeking`}
+                title="Tournament mode – this stream is delayed"
               >
                 <LuClock className={styles.DelayIcon} aria-hidden />{" "}
                 {formatDelay(streamDelayMs)} DELAY

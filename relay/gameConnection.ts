@@ -18,6 +18,7 @@ import { BitStream } from "t2-demo-parser";
 import { BitStreamWriter } from "./BitStreamWriter.js";
 import { T2csriAuth, loadCredentials } from "./auth.js";
 import { connLog } from "./logger.js";
+import { STALLED_DISCONNECT_REASON } from "./shared.js";
 import type { ConnectionStatus } from "./types.js";
 import { computeGameCRC, type CRCDataBlock } from "./crc.js";
 
@@ -40,6 +41,13 @@ const PACKET_SIZE = 450;
 // ConnectionProtocol::windowFull (FUN_0043d720): no sends while
 // lastSendSeq - highestAckedSeq > 0x1d, i.e. 30 packets unacked.
 const SEND_WINDOW = 30;
+/**
+ * Consecutive protocol-rejected packets that mean the receive window has
+ * deadlocked (we fell >31 ahead-of-behind and can't advance lastSeqRecvd,
+ * so acks stop and both windows stick). Unrecoverable in place —
+ * reconnect from a fresh epoch. ~3s at the 32ms send cadence.
+ */
+const STUCK_REJECT_LIMIT = 90;
 // The engine calls checkPacketSend every frame; a fast timer approximates
 // that, with the 32ms gate above providing the actual pacing.
 const SEND_LOOP_INTERVAL_MS = 8;
@@ -113,6 +121,8 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
   /** When the last move batch arrived from the browser. */
   private lastMoveArrivalTime = 0;
   private dataPacketCount = 0;
+  /** Consecutive protocol-rejected packets (reset on any accepted one). */
+  private consecutiveRejects = 0;
   private rawMessageCount = 0;
   private _mapName?: string;
   private observerEnforced = false;
@@ -165,6 +175,12 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
 
   get mapName(): string | undefined {
     return this._mapName;
+  }
+
+  /** Our own account GUID when authenticated, else null. The server
+   *  echoes this as our client's `sendGuid`, uniquely identifying us. */
+  get selfGuid(): string | null {
+    return this.auth?.guid ?? null;
   }
 
   private setStatus(status: ConnectionStatus, message?: string): void {
@@ -595,7 +611,10 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
       if (seq <= result.highestAck) this.sendTimestamps.delete(seq);
     }
 
-    if (!result.accepted) {
+    if (result.accepted) {
+      this.consecutiveRejects = 0;
+    } else {
+      this.consecutiveRejects++;
       connLog.warn(
         {
           seq: seqNumber,
@@ -606,10 +625,20 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
           lastSeqRecvd: this.protocol.lastSeqRecvd,
           lastSendSeq: this.protocol.lastSendSeq,
           highestAckedSeq: this.protocol.highestAckedSeq,
+          consecutiveRejects: this.consecutiveRejects,
           total: this.dataPacketCount,
         },
         "Data packet REJECTED by protocol",
       );
+      if (this.consecutiveRejects >= STUCK_REJECT_LIMIT) {
+        connLog.error(
+          { address: this.address, rejects: this.consecutiveRejects },
+          "Receive window deadlocked — reconnecting",
+        );
+        // Retryable so the session reconnects from a fresh epoch.
+        this.setStatus("disconnected", STALLED_DISCONNECT_REASON);
+        this.disconnect();
+      }
     }
   }
 

@@ -84,6 +84,7 @@ export interface WatchHudStatePayload {
     score: number;
     ping: number;
     packetLoss: number;
+    kills?: number;
   }>;
   teamScores: Array<{
     teamId: number;

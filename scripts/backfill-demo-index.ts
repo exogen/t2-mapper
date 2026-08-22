@@ -287,6 +287,9 @@ async function analyzeDemo(
     mod: info.mod,
     recorder: info.recorder,
     durationMs: header.demoLengthMs,
+    // The recorder's original keep-trigger (patrol/watchers) isn't in the
+    // .rec; describe what the replay reconstructed instead.
+    reason: `backfilled: ${players.size} players, ${games.length} game${games.length === 1 ? "" : "s"}`,
     players: [...players].sort((a, b) =>
       a.localeCompare(b, "en", { sensitivity: "base" }),
     ),

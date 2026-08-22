@@ -248,6 +248,7 @@ export function MapInspector() {
   const isWatcher = useLiveSelector((s) => s.role === "watcher");
   const serverAddress = useLiveSelector((s) => s.serverAddress);
   const disconnectReason = useLiveSelector((s) => s.disconnectReason);
+  const sessionEstablished = useLiveSelector((s) => s.sessionEstablished);
 
   // Last joined address, surviving leaveServer's reset so the
   // disconnect dialog can offer Rejoin after a voluntary leave too.
@@ -540,6 +541,10 @@ export function MapInspector() {
     gameStatus !== "connected" &&
     hasStreamData &&
     !errorAcknowledged;
+  // Rejoin only makes sense when there's a session worth resuming: a
+  // voluntary leave, or a drop after we actually reached the server.
+  // A failed probe / name lookup never connected, so it offers no Rejoin.
+  const canRejoin = disconnectReason === "voluntary" || sessionEstablished;
   const joinErrorMessage = !showJoinScreen ? null : autoJoin === "notFound" ? (
     <>No server named &ldquo;{autoName}&rdquo; is currently listed.</>
   ) : watchStatus === "ended" && watchStatusMessage ? (
@@ -643,10 +648,12 @@ export function MapInspector() {
               ) : joinErrorMessage != null && !errorAcknowledged ? (
                 <WatchErrorDialog
                   message={joinErrorMessage}
-                  // Rejoin only applies when the lost server is known
-                  // (session ended) — not for a failed ?name lookup.
+                  // This dialog only appears with no stream data, i.e. a
+                  // connection that never established (probe fail, failed
+                  // ?name lookup) — so Rejoin is offered only in the rare
+                  // case we did reach the server before landing here.
                   onRejoin={(() => {
-                    if (autoJoin === "notFound") return undefined;
+                    if (!canRejoin || autoJoin === "notFound") return undefined;
                     const address = serverAddress ?? lastServerAddress;
                     return address ? () => handleWatch(address) : undefined;
                   })()}
@@ -711,6 +718,7 @@ export function MapInspector() {
                           "Connection to the server was lost.")
                     }
                     onRejoin={(() => {
+                      if (!canRejoin) return undefined;
                       const address = serverAddress ?? lastServerAddress;
                       return address ? () => handleWatch(address) : undefined;
                     })()}

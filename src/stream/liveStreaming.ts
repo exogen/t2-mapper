@@ -342,6 +342,7 @@ export class LiveStreamAdapter extends StreamEngine {
         score: entry.score,
         ping: entry.ping,
         packetLoss: entry.packetLoss,
+        kills: entry.kills,
       });
     }
     this.onRosterChanged();
