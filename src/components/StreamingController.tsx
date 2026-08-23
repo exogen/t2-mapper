@@ -24,7 +24,12 @@ import {
   resetStreamPlayback,
 } from "../state/streamPlaybackStore";
 import { streamEntityToGameEntity } from "../stream/entityBridge";
-import { yawPitchToQuaternion, MAX_PITCH } from "../stream/streamHelpers";
+import {
+  yawPitchToQuaternion,
+  MAX_PITCH,
+  threeForwardHeading,
+  orbitPullbackDir,
+} from "../stream/streamHelpers";
 import type {
   StreamRecording,
   StreamEntity,
@@ -134,10 +139,7 @@ function computeFirstPersonCamera(
 
   // Body quat is Ry(-rotationZ) (playerYawToQuaternion), so model forward
   // is (cos rotZ, 0, sin rotZ) — recover the Torque body yaw from it.
-  const q = playerGroup.quaternion;
-  const fx = 1 - 2 * (q.y * q.y + q.z * q.z);
-  const fz = 2 * (q.x * q.z - q.w * q.y);
-  const bodyYaw = Math.atan2(fz, fx);
+  const bodyYaw = threeForwardHeading(playerGroup.quaternion);
   const pitch = Math.max(
     -MAX_PITCH,
     Math.min(MAX_PITCH, headPitch * maxLookAngle),
@@ -701,18 +703,15 @@ export function StreamingController({
 
         let hasDirection = false;
         if (orbitOverride) {
-          // User-controlled orbit: use yaw/pitch from store.
-          const spState = streamPlaybackStore.getState();
-          const sx = Math.sin(spState.orbitOverridePitch);
-          const cx = Math.cos(spState.orbitOverridePitch);
-          const sz = Math.sin(spState.orbitOverrideYaw);
-          const cz = Math.cos(spState.orbitOverrideYaw);
-          // Positive pitch raises the camera to look down, matching the
-          // real orbit (applyOrbitCamera / Tribes2.exe: camZ = centerZ +
-          // sin(pitch)·dist). orbitOverridePitch is accumulated with the
-          // same sign as the live control camera's predPitch, so demo and
+          // User-controlled orbit: yaw/pitch from the store. Positive pitch
+          // raises the camera to look down (see orbitPullbackDir); demo and
           // watch share this — demo's vertical was historically inverted.
-          _orbitDir.set(-cz * cx, sx, -sz * cx);
+          const spState = streamPlaybackStore.getState();
+          orbitPullbackDir(
+            spState.orbitOverrideYaw,
+            spState.orbitOverridePitch,
+            _orbitDir,
+          );
           hasDirection = _orbitDir.lengthSq() > 1e-8;
         } else if (currentCamera.orbitDirection) {
           // Use explicit pullback direction (e.g. from full vehicle quaternion
@@ -727,14 +726,11 @@ export function StreamingController({
           typeof currentCamera.yaw === "number" &&
           typeof currentCamera.pitch === "number"
         ) {
-          const sx = Math.sin(currentCamera.pitch);
-          const cx = Math.cos(currentCamera.pitch);
-          const sz = Math.sin(currentCamera.yaw);
-          const cz = Math.cos(currentCamera.yaw);
-          // Pull back behind the model. playerYawToQuaternion uses Ry(-yaw),
-          // so model forward in Three.js is (cz, 0, sz) at pitch=0.
-          // Behind = (-cz*cx, -sx, -sz*cx).
-          _orbitDir.set(-cz * cx, -sx, -sz * cx);
+          // Pull back behind the model from the stream camera's yaw/pitch.
+          // The stream camera's pitch is the negative of the orbit-override
+          // convention, so negate it to reuse orbitPullbackDir — preserving
+          // the original {-cz·cx, -sx, -sz·cx} behind-the-model direction.
+          orbitPullbackDir(currentCamera.yaw, -currentCamera.pitch, _orbitDir);
           hasDirection = _orbitDir.lengthSq() > 1e-8;
         }
         if (!hasDirection) {

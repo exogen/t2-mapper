@@ -1,4 +1,4 @@
-import { Matrix4, Quaternion } from "three";
+import { Matrix4, Quaternion, Vector3 } from "three";
 import type { ParsedData } from "t2-demo-parser";
 import { resolveShapeName } from "../../relay/shared";
 import type {
@@ -162,6 +162,42 @@ export function torqueQuatHeading(q: {
     2 * (q.w * q.z + q.x * q.y),
     q.w * q.w + q.x * q.x - q.y * q.y - q.z * q.z,
   );
+}
+
+/**
+ * Heading (radians) of a Three.js quaternion's +X-forward direction in the
+ * XZ plane — the yaw the orbit/follow camera faces (Three.js +X = Torque
+ * north, +Z = east). Distinct from torqueQuatHeading, which reads a
+ * Torque-space quaternion; this reads an already-Three.js quaternion
+ * (entity.rotation / a rendered group's quaternion).
+ */
+export function threeForwardHeading(q: {
+  x: number;
+  y: number;
+  z: number;
+  w: number;
+}): number {
+  const fx = 1 - 2 * (q.y * q.y + q.z * q.z);
+  const fz = 2 * (q.x * q.z - q.w * q.y);
+  return Math.atan2(fz, fx);
+}
+
+/**
+ * Unit direction from an orbit target back to the camera (Three.js space)
+ * for a view facing `yaw`/`pitch`. Positive pitch pulls the camera UP to
+ * look down at the target, matching applyOrbitCamera / Tribes2.exe
+ * (camZ = centerZ + sin(pitch)·dist). Writes into and returns `out`.
+ */
+export function orbitPullbackDir(
+  yaw: number,
+  pitch: number,
+  out: Vector3,
+): Vector3 {
+  const cy = Math.cos(yaw);
+  const sy = Math.sin(yaw);
+  const cp = Math.cos(pitch);
+  const sp = Math.sin(pitch);
+  return out.set(-cy * cp, sp, -sy * cp);
 }
 
 /** Extract pitch (rotation around Torque X axis) from a Torque quaternion. */

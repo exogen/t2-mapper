@@ -2,6 +2,7 @@ import { gameEntityStore } from "./gameEntityStore";
 import type { GameEntity } from "./gameEntityTypes";
 import { liveConnectionStore } from "./liveConnectionStore";
 import { streamPlaybackStore } from "./streamPlaybackStore";
+import { threeForwardHeading } from "../stream/streamHelpers";
 
 /**
  * Spectate-mode follow: a purely client-side reproduction of the real
@@ -58,9 +59,7 @@ function seedOrbitBehindTarget(targetId: string): void {
     // Model forward = entity quaternion applied to +X (Three.js space);
     // orbitOverrideYaw uses the same (cos, 0, sin) forward convention.
     const [x, y, z, w] = q;
-    const fx = 1 - 2 * (y * y + z * z);
-    const fz = 2 * (x * z - w * y);
-    yaw = Math.atan2(fz, fx);
+    yaw = threeForwardHeading({ x, y, z, w });
   }
   streamPlaybackStore.setState({
     orbitOverrideYaw: yaw,
