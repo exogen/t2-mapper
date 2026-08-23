@@ -5,7 +5,11 @@ import { useGameEntities } from "../state/gameEntityStore";
 import { cameraTourStore } from "../state/cameraTourStore";
 import type { GameEntity } from "../state/gameEntityTypes";
 import { torqueToThree } from "../scene/coordinates";
-import { gameEntityStore, useDebugHidden } from "../state/gameEntityStore";
+import {
+  gameEntityStore,
+  isStreamingSource,
+  useDebugHidden,
+} from "../state/gameEntityStore";
 import { useSettings } from "./SettingsProvider";
 import styles from "./DebugEntityList.module.css";
 import { FaRegMinusSquare, FaRegPlusSquare } from "react-icons/fa";
@@ -89,7 +93,7 @@ function EntityRow({ entity }: { entity: GameEntity }) {
 
   const handleToggle = useCallback(() => {
     const store = gameEntityStore.getState();
-    const entities = store.isStreaming
+    const entities = isStreamingSource(store.dataSource)
       ? store.streamEntities
       : store.missionEntities;
     const e = entities.get(entity.id);

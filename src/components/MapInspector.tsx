@@ -49,6 +49,7 @@ import { StreamDelayNotice } from "./StreamDelayNotice";
 import { engineStore } from "../state/engineStore";
 import {
   gameEntityStore,
+  isStreamingSource,
   useDataSource,
   useMissionName,
   useMissionType,
@@ -204,7 +205,7 @@ export function MapInspector() {
       }
     }
   }, [statsPending, dataSource, loadedMissionName]);
-  const hasStreamData = dataSource === "demo" || dataSource === "live";
+  const hasStreamData = isStreamingSource(dataSource);
 
   // Streams no longer sync the ?mission param, so anything that names
   // the current mission must prefer the store's (stream-fed) values.

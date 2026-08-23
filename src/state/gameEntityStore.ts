@@ -6,6 +6,12 @@ import { findMissionInfo } from "../manifest";
 
 export type DataSource = "map" | "demo" | "live";
 
+/** Whether a data source is a live/demo stream (vs a static map, or none).
+ *  The single source of truth — there is no stored `isStreaming` flag. */
+export function isStreamingSource(dataSource: DataSource | null): boolean {
+  return dataSource === "demo" || dataSource === "live";
+}
+
 export interface GameEntityState {
   /**
    * Mission-authored entities (from .mis TorqueObject tree).
@@ -18,9 +24,8 @@ export interface GameEntityState {
    * When non-empty, these are rendered instead of missionEntities.
    */
   streamEntities: Map<string, GameEntity>;
-  /** True when a demo/live source is actively driving entity state. */
-  isStreaming: boolean;
-  /** Which data source is currently populating entities, or null if empty. */
+  /** Which data source is currently populating entities, or null if empty.
+   *  demo/live means a stream is active (see isStreamingSource). */
   dataSource: DataSource | null;
   /** Mission slug (e.g. "ScarabRae") — the $MissionName / $CurrentMission value. */
   missionName: string | null;
@@ -81,7 +86,6 @@ export interface GameEntityState {
 export const gameEntityStore = createStore<GameEntityState>()((set, get) => ({
   missionEntities: new Map(),
   streamEntities: new Map(),
-  isStreaming: false,
   dataSource: null,
   missionName: null,
   missionType: null,
@@ -130,7 +134,9 @@ export const gameEntityStore = createStore<GameEntityState>()((set, get) => ({
       }
       return {
         missionEntities: next,
-        dataSource: state.isStreaming ? state.dataSource : "map",
+        dataSource: isStreamingSource(state.dataSource)
+          ? state.dataSource
+          : "map",
       };
     });
   },
@@ -140,7 +146,7 @@ export const gameEntityStore = createStore<GameEntityState>()((set, get) => ({
       if (state.missionEntities.size === 0) return state;
       // When streaming is active, only clear mission entities — don't
       // touch dataSource or metadata, those belong to the stream.
-      if (state.isStreaming) {
+      if (isStreamingSource(state.dataSource)) {
         return {
           missionEntities: new Map(),
           version: state.version + 1,
@@ -199,7 +205,6 @@ export const gameEntityStore = createStore<GameEntityState>()((set, get) => ({
 
   beginStreaming(source: "demo" | "live") {
     set((state) => ({
-      isStreaming: true,
       dataSource: source,
       streamEntities: new Map(),
       missionName: null,
@@ -216,9 +221,8 @@ export const gameEntityStore = createStore<GameEntityState>()((set, get) => ({
 
   endStreaming() {
     set((state) => {
-      if (!state.isStreaming) return state;
+      if (!isStreamingSource(state.dataSource)) return state;
       return {
-        isStreaming: false,
         dataSource: state.missionEntities.size > 0 ? "map" : null,
         missionName: null,
         missionType: null,
@@ -298,7 +302,9 @@ export const gameEntityStore = createStore<GameEntityState>()((set, get) => ({
 // ── Selectors ──
 
 function selectActiveEntities(state: GameEntityState) {
-  return state.isStreaming ? state.streamEntities : state.missionEntities;
+  return isStreamingSource(state.dataSource)
+    ? state.streamEntities
+    : state.missionEntities;
 }
 
 function selectVersion(state: GameEntityState) {
@@ -318,7 +324,7 @@ export function useGameEntities(): Map<string, GameEntity> {
 // ── All-entity selector ──
 
 function selectAllEntities(state: GameEntityState): GameEntity[] {
-  const entities = state.isStreaming
+  const entities = isStreamingSource(state.dataSource)
     ? state.streamEntities
     : state.missionEntities;
   const result: GameEntity[] = [];
@@ -409,7 +415,7 @@ import type { SceneSky, SceneSun, SceneMissionArea } from "../scene/types";
 // the hooks won't re-render when unrelated (dynamic) entities update.
 
 function selectSkyData(state: GameEntityState): SceneSky | null {
-  const entities = state.isStreaming
+  const entities = isStreamingSource(state.dataSource)
     ? state.streamEntities
     : state.missionEntities;
   for (const e of entities.values()) {
@@ -423,7 +429,7 @@ let lastSunInputs: SceneSun[] = [];
 let lastSunResult: SceneSun | null = null;
 
 function selectSunData(state: GameEntityState): SceneSun | null {
-  const entities = state.isStreaming
+  const entities = isStreamingSource(state.dataSource)
     ? state.streamEntities
     : state.missionEntities;
   const suns: SceneSun[] = [];
@@ -477,7 +483,7 @@ function selectSunData(state: GameEntityState): SceneSun | null {
 function selectMissionAreaData(
   state: GameEntityState,
 ): SceneMissionArea | null {
-  const entities = state.isStreaming
+  const entities = isStreamingSource(state.dataSource)
     ? state.streamEntities
     : state.missionEntities;
   for (const e of entities.values()) {
@@ -527,7 +533,7 @@ export function useMissionTypeDisplayName(): string | null {
 /** Hook returning the debugHidden state for a specific entity. */
 export function useDebugHidden(entityId: string): boolean {
   return useStoreWithEqualityFn(gameEntityStore, (state) => {
-    const entities = state.isStreaming
+    const entities = isStreamingSource(state.dataSource)
       ? state.streamEntities
       : state.missionEntities;
     return entities.get(entityId)?.debugHidden ?? false;

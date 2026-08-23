@@ -39,25 +39,6 @@ export class LiveStreamAdapter extends StreamEngine {
   private _snapshotTick = -1;
   private _ready = false;
 
-  // Generation counters for HUD caching in buildSnapshot() — avoids
-  // rebuilding arrays every tick when HUD state hasn't changed.
-  private _teamScoresGen = 0;
-  private _rosterGen = 0;
-  private _weaponsHudGen = 0;
-  private _inventoryHudGen = 0;
-  private _cachedHud: {
-    teamScoresGen: number;
-    rosterGen: number;
-    weaponsHudGen: number;
-    inventoryHudGen: number;
-    weaponsHud: StreamSnapshot["weaponsHud"];
-    inventoryHud: StreamSnapshot["inventoryHud"];
-    backpackPackIndex: number;
-    backpackActive: boolean;
-    backpackHud: StreamSnapshot["backpackHud"];
-    teamScores: StreamSnapshot["teamScores"];
-    playerRoster: StreamSnapshot["playerRoster"];
-  } | null = null;
   /** Class names for datablocks, tracked from SimDataBlockEvents. */
   private dataBlockClassNames = new Map<number, string>();
 
@@ -178,24 +159,6 @@ export class LiveStreamAdapter extends StreamEngine {
     return [...shapes];
   }
 
-  // ── Generation counter hooks ──
-
-  protected onTeamScoresChanged(): void {
-    this._teamScoresGen++;
-  }
-
-  protected onRosterChanged(): void {
-    this._rosterGen++;
-  }
-
-  protected onWeaponsHudChanged(): void {
-    this._weaponsHudGen++;
-  }
-
-  protected onInventoryHudChanged(): void {
-    this._inventoryHudGen++;
-  }
-
   // ── StreamingPlayback interface ──
 
   reset(): void {
@@ -204,7 +167,6 @@ export class LiveStreamAdapter extends StreamEngine {
     this.currentTimeSec = 0;
     this._snapshot = null;
     this._snapshotTick = -1;
-    this._cachedHud = null;
     this.dataBlockClassNames.clear();
     this.observerMode = "fly";
     this.missionName = null;
@@ -346,7 +308,7 @@ export class LiveStreamAdapter extends StreamEngine {
       });
     }
     this.onRosterChanged();
-    // playerCount is recomputed from the roster on every buildHudState.
+    // playerCount is recomputed from the roster on every HUD rebuild.
     this.teamScores = hud.teamScores.map((entry) => ({
       ...entry,
       playerCount: 0,
@@ -444,7 +406,7 @@ export class LiveStreamAdapter extends StreamEngine {
         this._ready = false;
         this._snapshot = null;
         this._snapshotTick = -1;
-        this._cachedHud = null;
+        this.invalidateHudCache();
         this.observerMode = "fly";
         this.lastMoveAck = 0;
         // Drop the old mission's camera AND control-object state so
@@ -848,45 +810,8 @@ export class LiveStreamAdapter extends StreamEngine {
     const timeSec = this.currentTimeSec;
     const { chatMessages, audioEvents } = this.buildTimeFilteredEvents(timeSec);
 
-    // Reuse cached HUD arrays when generation counters haven't changed.
-    const prev = this._cachedHud;
-    let weaponsHud: StreamSnapshot["weaponsHud"];
-    let inventoryHud: StreamSnapshot["inventoryHud"];
-    let backpackHud: StreamSnapshot["backpackHud"];
-    let teamScores: StreamSnapshot["teamScores"];
-    let playerRoster: StreamSnapshot["playerRoster"];
-
-    if (
-      prev &&
-      prev.weaponsHudGen === this._weaponsHudGen &&
-      prev.inventoryHudGen === this._inventoryHudGen &&
-      prev.teamScoresGen === this._teamScoresGen &&
-      prev.rosterGen === this._rosterGen &&
-      prev.backpackPackIndex === this.backpackHud.packIndex &&
-      prev.backpackActive === this.backpackHud.active
-    ) {
-      weaponsHud = prev.weaponsHud;
-      inventoryHud = prev.inventoryHud;
-      backpackHud = prev.backpackHud;
-      teamScores = prev.teamScores;
-      playerRoster = prev.playerRoster;
-    } else {
-      ({ weaponsHud, inventoryHud, backpackHud, teamScores, playerRoster } =
-        this.buildHudState());
-      this._cachedHud = {
-        weaponsHudGen: this._weaponsHudGen,
-        inventoryHudGen: this._inventoryHudGen,
-        teamScoresGen: this._teamScoresGen,
-        rosterGen: this._rosterGen,
-        backpackPackIndex: this.backpackHud.packIndex,
-        backpackActive: this.backpackHud.active,
-        weaponsHud,
-        inventoryHud,
-        backpackHud,
-        teamScores,
-        playerRoster,
-      };
-    }
+    const { weaponsHud, inventoryHud, backpackHud, teamScores, playerRoster } =
+      this.buildCachedHudState();
 
     // Default observer camera if none exists
     if (!this.camera) {

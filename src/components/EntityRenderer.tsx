@@ -11,7 +11,7 @@ import type { StaticShapeType } from "./ShapeInfoProvider";
 import { DebugSuspense } from "./DebugSuspense";
 import { FloatingLabel } from "./FloatingLabel";
 import { DEFAULT_TEAM_NAMES } from "../stringUtils";
-import { useDataSource } from "../state/gameEntityStore";
+import { isStreamingSource, useDataSource } from "../state/gameEntityStore";
 import { resolveEmapFromDatablock } from "./resolveEmap";
 import { Camera } from "./Camera";
 import { WayPoint } from "./WayPoint";
@@ -131,7 +131,7 @@ function ShapeEntity({
   objectMounts?: Record<number, React.ReactNode>;
 }) {
   const dataSource = useDataSource();
-  const isStreaming = dataSource === "demo" || dataSource === "live";
+  const isStreaming = isStreamingSource(dataSource);
   const groupRef = useRef<Group>(null);
 
   // Y-axis spinning for Items with rotate=true

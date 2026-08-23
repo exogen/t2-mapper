@@ -28,6 +28,7 @@ import { cameraRegistry } from "../state/cameraRegistry";
 import {
   gameEntityStore,
   isFlagEntity,
+  isStreamingSource,
   useSceneMissionArea,
 } from "../state/gameEntityStore";
 import { streamSnapshotStore } from "../state/streamSnapshotStore";
@@ -529,7 +530,9 @@ function CommandCircuitOrthoRig() {
     const camera = cameraRef.current;
     if (!camera) return;
 
-    const isStreaming = gameEntityStore.getState().isStreaming;
+    const isStreaming = isStreamingSource(
+      gameEntityStore.getState().dataSource,
+    );
 
     // Pressing a pan key (or drag-panning) while following switches to
     // pan mode. In demos the switch is local and takes effect this same

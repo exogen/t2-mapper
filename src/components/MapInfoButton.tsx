@@ -1,6 +1,10 @@
 import { LuClipboardList } from "react-icons/lu";
 import { hasMission } from "../manifest";
-import { useDataSource, useMissionName } from "../state/gameEntityStore";
+import {
+  isStreamingSource,
+  useDataSource,
+  useMissionName,
+} from "../state/gameEntityStore";
 import { useStreamSnapshot } from "../state/streamSnapshotStore";
 import styles from "./Button.module.css";
 
@@ -13,7 +17,7 @@ export function MapInfoButton({
 }) {
   const dataSource = useDataSource();
   const storeMissionName = useMissionName();
-  const hasStreamData = dataSource === "demo" || dataSource === "live";
+  const hasStreamData = isStreamingSource(dataSource);
   // When streaming, the URL query param may not reflect the actual map.
   // Use the store's mission name (from the server) for the manifest check.
   const effectiveMissionName = hasStreamData ? storeMissionName : missionName;

@@ -745,9 +745,21 @@ export class WatchSession {
         this.resyncCount = 0;
       }
       // NetStrings apply before responders so funcName refs resolve.
-      this.watchState.applyPacket(parsed);
-      this.ghostState.applyPacket(parsed);
-      this.maybeReObserve();
+      // The relay's own accumulators only feed catch-up snapshots and
+      // recording metadata — watchers parse the raw packet themselves and
+      // the demo already captured it above (onPacket) — so a parsing bug
+      // here must never crash the process and lose every in-flight demo.
+      // Contain it: log, skip this packet's local state update, carry on.
+      try {
+        this.watchState.applyPacket(parsed);
+        this.ghostState.applyPacket(parsed);
+        this.maybeReObserve();
+      } catch (e) {
+        relayLog.error(
+          { err: e, address: this.key, packet: this.packetCount },
+          "Watch state update threw — skipping this packet's state update",
+        );
+      }
       // The server naming itself (MsgMissionDropInfo/MsgLoadInfo)
       // permanently overrides any server-list seed.
       if (this.watchState.serverName) {
@@ -834,12 +846,6 @@ export class WatchSession {
   }
 
   /**
-   * Rough ms until the delayed stream begins, while buffering — but only
-   * once tournament mode is CONFIRMED. Before that the delay is
-   * provisional (fail-safe) and usually lifts within ~1s, so the notice
-   * would flash on every ordinary join; undefined suppresses it.
-   */
-  /**
    * Watcher-facing delay in ms: 0 until tournament mode is CONFIRMED, so
    * the provisional (fail-safe) delay during the ~1s decision window
    * never surfaces as a "delayed" badge/notice on the client. The real
@@ -849,6 +855,12 @@ export class WatchSession {
     return this.tourneyResolved ? this.delayMs : 0;
   }
 
+  /**
+   * Rough ms until the delayed stream begins, while buffering — but only
+   * once tournament mode is CONFIRMED. Before that the delay is
+   * provisional (fail-safe) and usually lifts within ~1s, so the notice
+   * would flash on every ordinary join; undefined suppresses it.
+   */
   private delayReadyInMs(): number | undefined {
     if (!this.tourneyResolved || !this.isDelayBuffering()) return undefined;
     return Math.max(0, this.delayReadyAt - Date.now());
@@ -1319,16 +1331,7 @@ export class WatchSession {
         this.resyncSession("ghost accumulator diverged");
       return;
     }
-    sendJson(ws, {
-      type: "sessionStatus",
-      status: "syncing",
-      address: this.key,
-      serverName: this.sessionServerName(),
-      mapName: this.sessionMapName(),
-      watcherCount: this.watcherCount,
-      recording: this.recording,
-      streamDelayMs: this.confirmedDelayMs(),
-    });
+    sendJson(ws, this.sessionStatus("syncing"));
 
     let gzipped: Uint8Array;
     try {
@@ -1361,16 +1364,7 @@ export class WatchSession {
 
     this.pending.delete(ws);
     this.watchers.add(ws);
-    sendJson(ws, {
-      type: "sessionStatus",
-      status: "live",
-      address: this.key,
-      serverName: this.sessionServerName(),
-      mapName: this.sessionMapName(),
-      watcherCount: this.watcherCount,
-      recording: this.recording,
-      streamDelayMs: this.confirmedDelayMs(),
-    });
+    sendJson(ws, this.sessionStatus("live"));
     relayLog.info(
       {
         address: this.key,
@@ -1433,31 +1427,43 @@ export class WatchSession {
     for (const ws of this.pending) sendJson(ws, message);
   }
 
-  private fanOutSessionStatus(message?: string): void {
-    this.fanOut({
+  /**
+   * The steady-state session-status payload shared by the syncing / live
+   * broadcasts (catch-up, fan-out, per-socket resend). Callers add
+   * `message` and `streamDelayReadyInMs` where those apply — the minimal
+   * connecting/ended notices deliberately omit these fields and build
+   * their own literals.
+   */
+  private sessionStatus(
+    status: WatchStatus,
+  ): Extract<ServerMessage, { type: "sessionStatus" }> {
+    return {
       type: "sessionStatus",
-      status: this.isDelayBuffering() ? "syncing" : this.watchStatus,
-      message,
+      status,
       address: this.key,
       serverName: this.sessionServerName(),
       mapName: this.sessionMapName(),
       watcherCount: this.watcherCount,
       recording: this.recording,
       streamDelayMs: this.confirmedDelayMs(),
+    };
+  }
+
+  private fanOutSessionStatus(message?: string): void {
+    this.fanOut({
+      ...this.sessionStatus(
+        this.isDelayBuffering() ? "syncing" : this.watchStatus,
+      ),
+      message,
       streamDelayReadyInMs: this.delayReadyInMs(),
     });
   }
 
   private sendSessionStatus(ws: WebSocket): void {
     sendJson(ws, {
-      type: "sessionStatus",
-      status: this.lastStatus === "connected" ? "syncing" : this.watchStatus,
-      address: this.key,
-      serverName: this.sessionServerName(),
-      mapName: this.sessionMapName(),
-      watcherCount: this.watcherCount,
-      recording: this.recording,
-      streamDelayMs: this.confirmedDelayMs(),
+      ...this.sessionStatus(
+        this.lastStatus === "connected" ? "syncing" : this.watchStatus,
+      ),
       streamDelayReadyInMs: this.delayReadyInMs(),
     });
     if (this.lastPingMs != null) {

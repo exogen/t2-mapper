@@ -1,6 +1,6 @@
 import { lazy, memo, Suspense } from "react";
 import { type RootState } from "@react-three/fiber";
-import { useDataSource } from "../state/gameEntityStore";
+import { isStreamingSource, useDataSource } from "../state/gameEntityStore";
 import { useRecording } from "./usePlayback";
 import { AudioProvider } from "./AudioContext";
 import { CamerasProvider } from "./CamerasProvider";
@@ -63,7 +63,7 @@ export const GameView = memo(function GameView({
 }) {
   const recording = useRecording();
   const dataSource = useDataSource();
-  const hasStreamData = dataSource === "demo" || dataSource === "live";
+  const hasStreamData = isStreamingSource(dataSource);
 
   return (
     <ThreeCanvas dpr={dpr} onCreated={onCreated}>

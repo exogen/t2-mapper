@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { loadMission, getUrlForPath, RESOURCE_ROOT_URL } from "../loaders";
 import { getStandardTextureResourceKey, hasMission } from "../manifest";
 import {
+  isStreamingSource,
   useDataSource,
   useMissionDisplayName,
   useMissionName,
@@ -191,7 +192,7 @@ export function MapInfoDialog({
   const storeMissionName = useMissionName();
   const storeDisplayName = useMissionDisplayName();
   const serverLoadInfo = useStreamSnapshot((s) => s?.loadInfo ?? null);
-  const hasStreamData = dataSource === "demo" || dataSource === "live";
+  const hasStreamData = isStreamingSource(dataSource);
   const effectiveMissionName =
     (hasStreamData ? storeMissionName : missionName) ?? missionName;
   const missionInManifest = hasMission(effectiveMissionName);

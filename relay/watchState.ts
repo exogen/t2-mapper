@@ -1,5 +1,11 @@
 import type { PacketData, ParsedData, SensorGroupColor } from "t2-demo-parser";
-import { parseScoreHudLine, stripTaggedStringMarkup } from "./shared.js";
+import { stripTaggedStringMarkup } from "./shared.js";
+import {
+  decodeTeamAdd,
+  decodeFlagEvent,
+  applyScoreHudToRoster,
+  applyDebriefRowToRoster,
+} from "./serverMessageDecode.js";
 import type { WatchHudStatePayload, WatchTargetEntry } from "./types.js";
 
 /**
@@ -283,90 +289,53 @@ export class WatchStateAccumulator {
         // Team objectives only score once the match is running.
         if (newScore > 0) this.matchStarted = true;
       }
-    } else if (msgType === "MsgCTFAddTeam" && args.length >= 6) {
-      const teamId = parseInt(this.resolveNetString(args[2]), 10);
-      const teamName = stripTaggedStringMarkup(this.resolveNetString(args[3]));
-      const statusText = stripTaggedStringMarkup(
-        this.resolveNetString(args[4]),
-      );
-      const flagStatus = statusText.startsWith("<At Base")
-        ? ("home" as const)
-        : statusText.startsWith("<In the Field")
-          ? ("field" as const)
-          : statusText
-            ? ("held" as const)
-            : ("home" as const);
-      const score = parseInt(this.resolveNetString(args[5]), 10);
-      if (score > 0) this.matchStarted = true;
-      const flagCarrier =
-        flagStatus === "held" ? statusText.trim() || undefined : undefined;
-      if (!isNaN(teamId) && teamId > 0) {
-        const existing = this.teamScores.find((t) => t.teamId === teamId);
-        if (existing) {
-          existing.name = teamName;
-          existing.score = isNaN(score) ? existing.score : score;
-          existing.flagStatus = flagStatus;
-          existing.flagCarrier = flagCarrier;
-        } else {
-          this.teamScores.push({
-            teamId,
-            name: teamName,
-            score: isNaN(score) ? 0 : score,
-            flagStatus,
-            flagCarrier,
-          });
+    } else if (
+      msgType === "MsgCTFAddTeam" ||
+      msgType === "MsgCnHAddTeam" ||
+      msgType === "MsgHuntAddTeam" ||
+      msgType === "MsgSiegeAddTeam"
+    ) {
+      const d = decodeTeamAdd(msgType, args, (s) => this.resolveNetString(s));
+      if (d) {
+        // Only CTF's team score drives match-started (mirrors the browser).
+        if (msgType === "MsgCTFAddTeam" && d.score != null && d.score > 0) {
+          this.matchStarted = true;
+        }
+        if (!isNaN(d.teamId) && d.teamId > 0) {
+          const existing = this.teamScores.find((t) => t.teamId === d.teamId);
+          if (existing) {
+            existing.name = d.name;
+            if (d.score != null) existing.score = d.score;
+            if (d.flag) {
+              existing.flagStatus = d.flag.status;
+              existing.flagCarrier = d.flag.carrier;
+            }
+          } else {
+            this.teamScores.push({
+              teamId: d.teamId,
+              name: d.name,
+              score: d.score ?? 0,
+              ...(d.flag && {
+                flagStatus: d.flag.status,
+                flagCarrier: d.flag.carrier,
+              }),
+            });
+          }
         }
       }
     } else if (
-      (msgType === "MsgCnHAddTeam" ||
-        msgType === "MsgHuntAddTeam" ||
-        msgType === "MsgSiegeAddTeam") &&
-      args.length >= 4
+      msgType === "MsgCTFFlagTaken" ||
+      msgType === "MsgCTFFlagDropped" ||
+      msgType === "MsgCTFFlagReturned" ||
+      msgType === "MsgCTFFlagCapped"
     ) {
-      // Non-CTF team games declare teams with the same leading wire
-      // order: args[2]=teamId (1-based), args[3]=teamName. CnH and
-      // TeamHunters also send args[4]=teamScore; Siege sends
-      // args[4]=isOffense (its scoring is time-based).
-      const teamId = parseInt(this.resolveNetString(args[2]), 10);
-      const teamName = stripTaggedStringMarkup(this.resolveNetString(args[3]));
-      const score =
-        msgType === "MsgSiegeAddTeam"
-          ? NaN
-          : parseInt(this.resolveNetString(args[4] ?? ""), 10);
-      if (!isNaN(teamId) && teamId > 0) {
-        const existing = this.teamScores.find((t) => t.teamId === teamId);
-        if (existing) {
-          existing.name = teamName;
-          existing.score = isNaN(score) ? existing.score : score;
-        } else {
-          this.teamScores.push({
-            teamId,
-            name: teamName,
-            score: isNaN(score) ? 0 : score,
-          });
+      const d = decodeFlagEvent(msgType, args, (s) => this.resolveNetString(s));
+      if (d) {
+        const entry = this.teamScores.find((t) => t.teamId === d.teamId);
+        if (entry) {
+          entry.flagStatus = d.status;
+          entry.flagCarrier = d.carrier;
         }
-      }
-    } else if (
-      (msgType === "MsgCTFFlagTaken" ||
-        msgType === "MsgCTFFlagDropped" ||
-        msgType === "MsgCTFFlagReturned" ||
-        msgType === "MsgCTFFlagCapped") &&
-      args.length >= 5
-    ) {
-      const teamId = parseInt(this.resolveNetString(args[4]), 10);
-      const entry = this.teamScores.find((t) => t.teamId === teamId);
-      if (entry) {
-        entry.flagStatus =
-          msgType === "MsgCTFFlagTaken"
-            ? "held"
-            : msgType === "MsgCTFFlagDropped"
-              ? "field"
-              : "home";
-        const actor = stripTaggedStringMarkup(
-          this.resolveNetString(args[2]),
-        ).trim();
-        entry.flagCarrier =
-          entry.flagStatus === "held" && actor ? actor : undefined;
       }
     } else if (msgType === "MsgClientJoin" && args.length >= 4) {
       const name = stripTaggedStringMarkup(
@@ -479,9 +448,17 @@ export class WatchStateAccumulator {
       // beginMissionChange, so clear here too.
       this.matchStarted = false;
     } else if (msgType === "SetLineHud" && args.length >= 7) {
-      this.applyScoreHudLine(args);
+      applyScoreHudToRoster(
+        args,
+        (s) => this.resolveNetString(s),
+        this.playerRoster,
+      );
     } else if (msgType === "MsgDebriefAddLine" && args.length >= 5) {
-      this.applyDebriefScoreLine(args);
+      applyDebriefRowToRoster(
+        args,
+        (s) => this.resolveNetString(s),
+        this.playerRoster,
+      );
     } else if (
       msgType === "MsgClearDebrief" ||
       msgType === "MsgDebriefResult"
@@ -496,60 +473,6 @@ export class WatchStateAccumulator {
 
   getTaggedStrings(): Array<[number, string]> {
     return [...this.netStrings.entries()];
-  }
-
-  /**
-   * Apply a live in-game score-HUD line (SetLineHud, sent while the relay
-   * has the score screen open) to the roster, matched by name — the
-   * server-authoritative live score, the only non-zero source on servers
-   * (TacoServer) whose MsgPlayerScore is 0. Only real-team players are
-   * updated, so team-header / observer / total lines are ignored.
-   * Mirrors StreamEngine.applyScoreHudLine.
-   */
-  private applyScoreHudLine(args: string[]): void {
-    const dataArgs = args.slice(5).map((a) => this.resolveNetString(a));
-    for (const { name, score, kills } of parseScoreHudLine(dataArgs)) {
-      for (const entry of this.playerRoster.values()) {
-        if (entry.teamId > 0 && entry.name === name) {
-          entry.score = score;
-          if (kills != null) entry.kills = kills;
-          break;
-        }
-      }
-    }
-  }
-
-  /**
-   * Apply an end-of-match debrief player row (MsgDebriefAddLine) to the
-   * roster, matched by name — the debrief carries the real final score
-   * and kills even where the live MsgPlayerScore channel reports 0
-   * (TacoServer). Mirrors StreamEngine.applyDebriefScoreLine. Stock
-   * formats: multi-team [_, "", fmt, name, team, score, kills];
-   * single-team [_, "", fmt, name, score, kills]. Header/team/MOTD rows
-   * match no roster name and are ignored.
-   */
-  private applyDebriefScoreLine(args: string[]): void {
-    const name = stripTaggedStringMarkup(
-      this.resolveNetString(args[3] ?? ""),
-    ).trim();
-    if (!name) return;
-    const singleTeam = /^-?\d+$/.test(this.resolveNetString(args[4] ?? ""));
-    const score = parseInt(
-      this.resolveNetString(args[singleTeam ? 4 : 5] ?? ""),
-      10,
-    );
-    const kills = parseInt(
-      this.resolveNetString(args[singleTeam ? 5 : 6] ?? ""),
-      10,
-    );
-    if (isNaN(score)) return;
-    for (const entry of this.playerRoster.values()) {
-      if (entry.name === name) {
-        entry.score = score;
-        if (!isNaN(kills)) entry.kills = kills;
-        return;
-      }
-    }
   }
 
   /**

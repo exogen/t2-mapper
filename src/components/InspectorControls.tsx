@@ -22,7 +22,11 @@ import { StatsPanel } from "./StatsPanel";
 import { useStats } from "../state/statsStore";
 import { useModeQueryState, type CurrentMission } from "./useQueryParams";
 import { useRecording } from "./usePlayback";
-import { useDataSource, useMissionName } from "../state/gameEntityStore";
+import {
+  isStreamingSource,
+  useDataSource,
+  useMissionName,
+} from "../state/gameEntityStore";
 import { useLiveSelector } from "../state/liveConnectionStore";
 import { hasMission } from "../manifest";
 import { ChooseMapButton } from "./ChooseMapButton";
@@ -79,7 +83,7 @@ export const InspectorControls = memo(function InspectorControls({
   const statsError = useStats((s) => s.error !== null);
   const features = useFeatures();
   const storeMissionName = useMissionName();
-  const hasStreamData = dataSource === "demo" || dataSource === "live";
+  const hasStreamData = isStreamingSource(dataSource);
   // When streaming, the URL query param may not reflect the actual map.
   // Use the store's mission name (from the server) for the manifest check.
   const effectiveMissionName = hasStreamData ? storeMissionName : missionName;

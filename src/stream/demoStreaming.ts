@@ -25,15 +25,7 @@ import {
   collectPreloadShapeNames,
 } from "./streamHelpers";
 import type { Vec3 } from "./streamHelpers";
-import type {
-  StreamRecording,
-  StreamSnapshot,
-  TeamScore,
-  PlayerRosterEntry,
-  WeaponsHudSlot,
-  InventoryHudSlot,
-  BackpackHudState,
-} from "./types";
+import type { StreamRecording, StreamSnapshot, TeamScore } from "./types";
 import { StreamEngine, type MutableEntity } from "./StreamEngine";
 
 interface DemoMissionInfo {
@@ -382,32 +374,10 @@ class StreamingPlayback extends StreamEngine {
   private lastAbsPitch = 0;
   private exhausted = false;
 
-  // Generation counters for derived-array caching in buildSnapshot().
-  private _teamScoresGen = 0;
-  private _rosterGen = 0;
-  private _weaponsHudGen = 0;
-  private _inventoryHudGen = 0;
-
   // Cached snapshot
   private _cachedSnapshot: StreamSnapshot | null = null;
   private _cachedSnapshotTick = -1;
   private _cachedSnapshotGen = -1;
-
-  // Cached derived arrays
-  private _snap: {
-    teamScoresGen: number;
-    rosterGen: number;
-    teamScores: TeamScore[];
-    playerRoster: PlayerRosterEntry[];
-    weaponsHudGen: number;
-    weaponsHud: { slots: WeaponsHudSlot[]; activeIndex: number };
-    inventoryHudGen: number;
-    inventoryHud: { slots: InventoryHudSlot[]; activeSlot: number };
-    backpackPackIndex: number;
-    backpackActive: boolean;
-    backpackText: string;
-    backpackHud: BackpackHudState | null;
-  } | null = null;
 
   constructor(parser: DemoParser) {
     super();
@@ -487,24 +457,6 @@ class StreamingPlayback extends StreamEngine {
     return clamp(this.absolutePitch / MAX_PITCH, -1, 1);
   }
 
-  // ── Generation counter hooks ──
-
-  protected onTeamScoresChanged(): void {
-    this._teamScoresGen++;
-  }
-
-  protected onRosterChanged(): void {
-    this._rosterGen++;
-  }
-
-  protected onWeaponsHudChanged(): void {
-    this._weaponsHudGen++;
-  }
-
-  protected onInventoryHudChanged(): void {
-    this._inventoryHudGen++;
-  }
-
   // ── StreamingPlayback interface ──
 
   reset(): void {
@@ -515,7 +467,6 @@ class StreamingPlayback extends StreamEngine {
     this._cachedSnapshot = null;
     this._cachedSnapshotTick = -1;
     this._cachedSnapshotGen = -1;
-    this._snap = null;
 
     this.resetSharedState();
 
@@ -994,83 +945,11 @@ class StreamingPlayback extends StreamEngine {
   private buildSnapshot(): StreamSnapshot {
     const entities = this.buildEntityList();
     const timeSec = this.getTimeSec();
-    const prev = this._snap;
 
     const { chatMessages, audioEvents } = this.buildTimeFilteredEvents(timeSec);
 
-    const weaponsHud =
-      prev && prev.weaponsHudGen === this._weaponsHudGen
-        ? prev.weaponsHud
-        : {
-            slots: Array.from(this.weaponsHud.slots.entries()).map(
-              ([index, ammo]): WeaponsHudSlot => ({ index, ammo }),
-            ),
-            activeIndex: this.weaponsHud.activeIndex,
-          };
-
-    const inventoryHud =
-      prev && prev.inventoryHudGen === this._inventoryHudGen
-        ? prev.inventoryHud
-        : {
-            slots: Array.from(this.inventoryHud.slots.entries()).map(
-              ([slot, count]): InventoryHudSlot => ({ slot, count }),
-            ),
-            activeSlot: this.inventoryHud.activeSlot,
-          };
-
-    const backpackHud =
-      prev &&
-      prev.backpackPackIndex === this.backpackHud.packIndex &&
-      prev.backpackActive === this.backpackHud.active &&
-      prev.backpackText === this.backpackHud.text
-        ? prev.backpackHud
-        : this.backpackHud.packIndex >= 0
-          ? { ...this.backpackHud }
-          : null;
-
-    let teamScores: TeamScore[];
-    let playerRoster: PlayerRosterEntry[];
-    if (
-      prev &&
-      prev.teamScoresGen === this._teamScoresGen &&
-      prev.rosterGen === this._rosterGen
-    ) {
-      teamScores = prev.teamScores;
-      playerRoster = prev.playerRoster;
-    } else {
-      teamScores = this.teamScores.map((ts) => ({ ...ts }));
-      // Team-score generation bumps on every flag event, so the skin map
-      // refreshes whenever it could matter.
-      this.attachTeamFlagSkins(teamScores);
-      const teamCounts = new Map<number, number>();
-      for (const { teamId } of this.playerRoster.values()) {
-        if (teamId > 0) {
-          teamCounts.set(teamId, (teamCounts.get(teamId) ?? 0) + 1);
-        }
-      }
-      for (const ts of teamScores) {
-        ts.playerCount = teamCounts.get(ts.teamId) ?? 0;
-      }
-      playerRoster = [];
-      for (const [clientId, entry] of this.playerRoster) {
-        playerRoster.push({ clientId, ...entry });
-      }
-    }
-
-    this._snap = {
-      teamScoresGen: this._teamScoresGen,
-      rosterGen: this._rosterGen,
-      teamScores,
-      playerRoster,
-      weaponsHudGen: this._weaponsHudGen,
-      weaponsHud,
-      inventoryHudGen: this._inventoryHudGen,
-      inventoryHud,
-      backpackPackIndex: this.backpackHud.packIndex,
-      backpackActive: this.backpackHud.active,
-      backpackText: this.backpackHud.text,
-      backpackHud,
-    };
+    const { weaponsHud, inventoryHud, backpackHud, teamScores, playerRoster } =
+      this.buildCachedHudState();
 
     return {
       timeSec,

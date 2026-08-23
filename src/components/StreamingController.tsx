@@ -707,10 +707,12 @@ export function StreamingController({
           const cx = Math.cos(spState.orbitOverridePitch);
           const sz = Math.sin(spState.orbitOverrideYaw);
           const cz = Math.cos(spState.orbitOverrideYaw);
-          // Watch follow matches the real observer orbit (applyOrbitCamera
-          // / Tribes2.exe): positive pitch raises the camera to look down.
-          // Demo orbitOverride keeps its historical inverted vertical.
-          _orbitDir.set(-cz * cx, isWatcher ? sx : -sx, -sz * cx);
+          // Positive pitch raises the camera to look down, matching the
+          // real orbit (applyOrbitCamera / Tribes2.exe: camZ = centerZ +
+          // sin(pitch)·dist). orbitOverridePitch is accumulated with the
+          // same sign as the live control camera's predPitch, so demo and
+          // watch share this — demo's vertical was historically inverted.
+          _orbitDir.set(-cz * cx, sx, -sz * cx);
           hasDirection = _orbitDir.lengthSq() > 1e-8;
         } else if (currentCamera.orbitDirection) {
           // Use explicit pullback direction (e.g. from full vehicle quaternion

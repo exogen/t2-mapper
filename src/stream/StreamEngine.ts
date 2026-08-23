@@ -43,7 +43,12 @@ import {
   detectControlObjectType,
 } from "./streamHelpers";
 import type { Vec3 } from "./streamHelpers";
-import { parseScoreHudLine } from "../../relay/shared";
+import {
+  decodeTeamAdd,
+  decodeFlagEvent,
+  applyScoreHudToRoster,
+  applyDebriefRowToRoster,
+} from "../../relay/serverMessageDecode";
 import type {
   ServerLoadInfo,
   BackpackHudState,
@@ -309,8 +314,6 @@ export abstract class StreamEngine implements StreamingPlayback {
   protected lastVehicleOrbitDir?: [number, number, number];
   /** Vehicle velocity in Torque space (estimated from linMomentum/mass). */
   protected lastVehicleVelocity?: [number, number, number];
-  /** Time (sec) of last vehicle position update from controlObjectData. */
-  protected lastVehiclePosTime = 0;
   /** Last known vehicle position in Torque space for extrapolation. */
   protected lastVehiclePos?: [number, number, number];
   protected firstPerson = true;
@@ -323,6 +326,27 @@ export abstract class StreamEngine implements StreamingPlayback {
   protected weaponsHud = { slots: new Map<number, number>(), activeIndex: -1 };
   protected backpackHud = { packIndex: -1, active: false, text: "" };
   protected inventoryHud = { slots: new Map<number, number>(), activeSlot: -1 };
+  // Generation counters bumped by the on*Changed hooks when the underlying
+  // state mutates, so buildCachedHudState() rebuilds only the derived arrays
+  // that actually changed on each playback frame.
+  private _teamScoresGen = 0;
+  private _rosterGen = 0;
+  private _weaponsHudGen = 0;
+  private _inventoryHudGen = 0;
+  private _hudCache: {
+    weaponsHudGen: number;
+    inventoryHudGen: number;
+    teamScoresGen: number;
+    rosterGen: number;
+    backpackPackIndex: number;
+    backpackActive: boolean;
+    backpackText: string;
+    weaponsHud: { slots: WeaponsHudSlot[]; activeIndex: number };
+    inventoryHud: { slots: InventoryHudSlot[]; activeSlot: number };
+    backpackHud: BackpackHudState | null;
+    teamScores: TeamScore[];
+    playerRoster: PlayerRosterEntry[];
+  } | null = null;
   protected teamScores: TeamScore[] = [];
   protected playerRoster = new Map<
     number,
@@ -371,65 +395,6 @@ export abstract class StreamEngine implements StreamingPlayback {
     if (score > 0) this.matchStarted = true;
   }
 
-  /**
-   * Apply a live in-game score-HUD line (SetLineHud) to the roster,
-   * matched by name — the server-authoritative live score, and the only
-   * non-zero source on servers (TacoServer) whose MsgPlayerScore is 0.
-   * Only real-team players are updated, so team-header / observer / total
-   * lines are ignored. Mirrors watchState.applyScoreHudLine.
-   */
-  private applyScoreHudLine(args: string[]): void {
-    const dataArgs = args.slice(5).map((a) => this.resolveNetString(a));
-    let changed = false;
-    for (const { name, score, kills } of parseScoreHudLine(dataArgs)) {
-      for (const entry of this.playerRoster.values()) {
-        if (entry.teamId > 0 && entry.name === name) {
-          entry.score = score;
-          if (kills != null) entry.kills = kills;
-          changed = true;
-          break;
-        }
-      }
-    }
-    if (changed) this.onRosterChanged();
-  }
-
-  /**
-   * Apply a player row from the end-of-match debrief (MsgDebriefAddLine)
-   * to the roster. TacoServer (and others) report per-player scores as 0
-   * in the live/lobby MsgPlayerScore channel, but the gameOver debrief
-   * carries the real final score and kills — matched to the roster by
-   * name (the debrief has no clientId). Stock formats:
-   *   multi-team CTF: [msgType, "", format, name, team, score, kills]
-   *   single-team:    [msgType, "", format, name, score, kills]
-   * Header/team/MOTD lines don't match a roster name and are ignored.
-   */
-  private applyDebriefScoreLine(args: string[]): void {
-    const name = stripTaggedStringMarkup(
-      this.resolveNetString(args[3] ?? ""),
-    ).trim();
-    if (!name) return;
-    // Single-team rows put a numeric score at args[4]; multi-team rows
-    // put the team name there.
-    const singleTeam = /^-?\d+$/.test(this.resolveNetString(args[4] ?? ""));
-    const score = parseInt(
-      this.resolveNetString(args[singleTeam ? 4 : 5] ?? ""),
-      10,
-    );
-    const kills = parseInt(
-      this.resolveNetString(args[singleTeam ? 5 : 6] ?? ""),
-      10,
-    );
-    if (isNaN(score)) return;
-    for (const entry of this.playerRoster.values()) {
-      if (entry.name === name) {
-        entry.score = score;
-        if (!isNaN(kills)) entry.kills = kills;
-        this.onRosterChanged();
-        return;
-      }
-    }
-  }
   /** Server name from MsgMissionDropInfo. */
   serverDisplayName: string | null = null;
   /** Server-assigned name of the connected/recording player. */
@@ -560,6 +525,7 @@ export abstract class StreamEngine implements StreamingPlayback {
   }
 
   protected resetSharedState(): void {
+    this._hudCache = null;
     this.serverLoadInfo = null;
     this.pendingLoadInfo = null;
     this.clearAllEntities();
@@ -593,7 +559,6 @@ export abstract class StreamEngine implements StreamingPlayback {
     this.lastVehiclePitch = 0;
     this.lastVehicleOrbitDir = undefined;
     this.lastVehicleVelocity = undefined;
-    this.lastVehiclePosTime = 0;
     this.lastVehiclePos = undefined;
     this.firstPerson = true;
     this.lastCameraMode = undefined;
@@ -703,7 +668,6 @@ export abstract class StreamEngine implements StreamingPlayback {
           this.lastVehiclePitch = 0;
           this.lastVehicleOrbitDir = undefined;
           this.lastVehicleVelocity = undefined;
-          this.lastVehiclePosTime = 0;
           this.lastVehiclePos = undefined;
         }
       } else {
@@ -2602,103 +2566,56 @@ export abstract class StreamEngine implements StreamingPlayback {
         }
         this.noteTeamScore(newScore);
       }
-    } else if (msgType === "MsgCTFAddTeam" && args.length >= 6) {
-      // Wire order: args[2]=teamId (1-based), args[3]=teamName,
-      // args[4]=flagStatus, args[5]=teamScore
-      const teamId = parseInt(this.resolveNetString(args[2]), 10);
-      const teamName = stripTaggedStringMarkup(this.resolveNetString(args[3]));
-      // $flagStatus[team]: "<At Base>", "<In the Field>", or carrier name.
-      const statusText = stripTaggedStringMarkup(
-        this.resolveNetString(args[4]),
-      );
-      const flagStatus = statusText.startsWith("<At Base")
-        ? ("home" as const)
-        : statusText.startsWith("<In the Field")
-          ? ("field" as const)
-          : statusText
-            ? ("held" as const)
-            : ("home" as const);
-      const score = parseInt(this.resolveNetString(args[5]), 10);
-      if (!isNaN(score)) this.noteTeamScore(score);
-      const flagCarrier =
-        flagStatus === "held" ? statusText.trim() || undefined : undefined;
-      if (!isNaN(teamId) && teamId > 0) {
-        const existing = this.teamScores.find((t) => t.teamId === teamId);
-        if (existing) {
-          existing.name = teamName;
-          existing.score = isNaN(score) ? existing.score : score;
-          existing.flagStatus = flagStatus;
-          existing.flagCarrier = flagCarrier;
-        } else {
-          this.teamScores.push({
-            teamId,
-            name: teamName,
-            score: isNaN(score) ? 0 : score,
-            playerCount: 0,
-            flagStatus,
-            flagCarrier,
-          });
+    } else if (
+      msgType === "MsgCTFAddTeam" ||
+      msgType === "MsgCnHAddTeam" ||
+      msgType === "MsgHuntAddTeam" ||
+      msgType === "MsgSiegeAddTeam"
+    ) {
+      const d = decodeTeamAdd(msgType, args, (s) => this.resolveNetString(s));
+      if (d) {
+        // Only CTF's team score notes match-started (non-CTF leaves it).
+        if (msgType === "MsgCTFAddTeam" && d.score != null) {
+          this.noteTeamScore(d.score);
         }
-        this.onTeamScoresChanged();
+        if (!isNaN(d.teamId) && d.teamId > 0) {
+          const existing = this.teamScores.find((t) => t.teamId === d.teamId);
+          if (existing) {
+            existing.name = d.name;
+            if (d.score != null) existing.score = d.score;
+            if (d.flag) {
+              existing.flagStatus = d.flag.status;
+              existing.flagCarrier = d.flag.carrier;
+            }
+          } else {
+            this.teamScores.push({
+              teamId: d.teamId,
+              name: d.name,
+              score: d.score ?? 0,
+              playerCount: 0,
+              ...(d.flag && {
+                flagStatus: d.flag.status,
+                flagCarrier: d.flag.carrier,
+              }),
+            });
+          }
+          this.onTeamScoresChanged();
+        }
       }
     } else if (
-      (msgType === "MsgCnHAddTeam" ||
-        msgType === "MsgHuntAddTeam" ||
-        msgType === "MsgSiegeAddTeam") &&
-      args.length >= 4
+      msgType === "MsgCTFFlagTaken" ||
+      msgType === "MsgCTFFlagDropped" ||
+      msgType === "MsgCTFFlagReturned" ||
+      msgType === "MsgCTFFlagCapped"
     ) {
-      // Non-CTF team games declare teams with the same leading wire
-      // order: args[2]=teamId (1-based), args[3]=teamName. CnH and
-      // TeamHunters also send args[4]=teamScore; Siege sends
-      // args[4]=isOffense (its scoring is time-based) so its score is
-      // left alone.
-      const teamId = parseInt(this.resolveNetString(args[2]), 10);
-      const teamName = stripTaggedStringMarkup(this.resolveNetString(args[3]));
-      const score =
-        msgType === "MsgSiegeAddTeam"
-          ? NaN
-          : parseInt(this.resolveNetString(args[4] ?? ""), 10);
-      if (!isNaN(teamId) && teamId > 0) {
-        const existing = this.teamScores.find((t) => t.teamId === teamId);
-        if (existing) {
-          existing.name = teamName;
-          existing.score = isNaN(score) ? existing.score : score;
-        } else {
-          this.teamScores.push({
-            teamId,
-            name: teamName,
-            score: isNaN(score) ? 0 : score,
-            playerCount: 0,
-          });
+      const d = decodeFlagEvent(msgType, args, (s) => this.resolveNetString(s));
+      if (d) {
+        const entry = this.teamScores.find((t) => t.teamId === d.teamId);
+        if (entry) {
+          entry.flagStatus = d.status;
+          entry.flagCarrier = d.carrier;
+          this.onTeamScoresChanged();
         }
-        this.onTeamScoresChanged();
-      }
-    } else if (
-      (msgType === "MsgCTFFlagTaken" ||
-        msgType === "MsgCTFFlagDropped" ||
-        msgType === "MsgCTFFlagReturned" ||
-        msgType === "MsgCTFFlagCapped") &&
-      args.length >= 5
-    ) {
-      // CTFGame.cs sends %flag.team as %3 for all four flag events.
-      const teamId = parseInt(this.resolveNetString(args[4]), 10);
-      const entry = this.teamScores.find((t) => t.teamId === teamId);
-      if (entry) {
-        entry.flagStatus =
-          msgType === "MsgCTFFlagTaken"
-            ? "held"
-            : msgType === "MsgCTFFlagDropped"
-              ? "field"
-              : "home";
-        // %1 is the acting client's name in every MsgCTFFlagTaken variant
-        // (only drop/cap self-directed variants pass 0, and those clear
-        // the carrier anyway).
-        const actor = stripTaggedStringMarkup(
-          this.resolveNetString(args[2]),
-        ).trim();
-        entry.flagCarrier =
-          entry.flagStatus === "held" && actor ? actor : undefined;
-        this.onTeamScoresChanged();
       }
     } else if (msgType === "MsgClientJoin" && args.length >= 4) {
       // Wire order: args[2]=clientName, args[3]=clientId, args[4]=targetId
@@ -2875,9 +2792,25 @@ export abstract class StreamEngine implements StreamingPlayback {
       this.matchStarted = false;
       this.onMissionInfoChange?.();
     } else if (msgType === "SetLineHud" && args.length >= 7) {
-      this.applyScoreHudLine(args);
+      if (
+        applyScoreHudToRoster(
+          args,
+          (s) => this.resolveNetString(s),
+          this.playerRoster,
+        )
+      ) {
+        this.onRosterChanged();
+      }
     } else if (msgType === "MsgDebriefAddLine" && args.length >= 5) {
-      this.applyDebriefScoreLine(args);
+      if (
+        applyDebriefRowToRoster(
+          args,
+          (s) => this.resolveNetString(s),
+          this.playerRoster,
+        )
+      ) {
+        this.onRosterChanged();
+      }
     } else if (
       msgType === "MsgClearDebrief" ||
       msgType === "MsgDebriefResult"
@@ -2890,11 +2823,14 @@ export abstract class StreamEngine implements StreamingPlayback {
     }
   }
 
-  /** Hook for subclasses to react to team score changes (e.g. generation counters). */
-  protected onTeamScoresChanged(): void {}
+  // ── HUD-cache invalidation hooks (bump the generation counters) ──
+  protected onTeamScoresChanged(): void {
+    this._teamScoresGen++;
+  }
 
-  /** Hook for subclasses to react to roster changes (e.g. generation counters). */
-  protected onRosterChanged(): void {}
+  protected onRosterChanged(): void {
+    this._rosterGen++;
+  }
 
   protected handleHudRemoteCommand(funcName: string, args: string[]): void {
     if (funcName === "setWeaponsHudItem" && args.length >= 3) {
@@ -2977,11 +2913,13 @@ export abstract class StreamEngine implements StreamingPlayback {
     }
   }
 
-  /** Hook for subclasses to react to weapons HUD changes (e.g. generation counters). */
-  protected onWeaponsHudChanged(): void {}
+  protected onWeaponsHudChanged(): void {
+    this._weaponsHudGen++;
+  }
 
-  /** Hook for subclasses to react to inventory HUD changes (e.g. generation counters). */
-  protected onInventoryHudChanged(): void {}
+  protected onInventoryHudChanged(): void {
+    this._inventoryHudGen++;
+  }
 
   // ── Snapshot building ──
 
@@ -3132,30 +3070,38 @@ export abstract class StreamEngine implements StreamingPlayback {
   }
 
   /** Build HUD arrays for snapshot. */
-  protected buildHudState(): {
-    weaponsHud: { slots: WeaponsHudSlot[]; activeIndex: number };
-    inventoryHud: { slots: InventoryHudSlot[]; activeSlot: number };
-    backpackHud: BackpackHudState | null;
-    teamScores: TeamScore[];
-    playerRoster: PlayerRosterEntry[];
+  private buildWeaponsHud(): {
+    slots: WeaponsHudSlot[];
+    activeIndex: number;
   } {
-    const weaponsHud = {
+    return {
       slots: Array.from(this.weaponsHud.slots.entries()).map(
         ([index, ammo]): WeaponsHudSlot => ({ index, ammo }),
       ),
       activeIndex: this.weaponsHud.activeIndex,
     };
+  }
 
-    const inventoryHud = {
+  private buildInventoryHud(): {
+    slots: InventoryHudSlot[];
+    activeSlot: number;
+  } {
+    return {
       slots: Array.from(this.inventoryHud.slots.entries()).map(
         ([slot, count]): InventoryHudSlot => ({ slot, count }),
       ),
       activeSlot: this.inventoryHud.activeSlot,
     };
+  }
 
-    const backpackHud: BackpackHudState | null =
-      this.backpackHud.packIndex >= 0 ? { ...this.backpackHud } : null;
+  private buildBackpackHud(): BackpackHudState | null {
+    return this.backpackHud.packIndex >= 0 ? { ...this.backpackHud } : null;
+  }
 
+  private buildTeamScoresAndRoster(): {
+    teamScores: TeamScore[];
+    playerRoster: PlayerRosterEntry[];
+  } {
     const teamScores = this.teamScores.map((ts) => ({ ...ts }));
     this.attachTeamFlagSkins(teamScores);
     const teamCounts = new Map<number, number>();
@@ -3170,7 +3116,71 @@ export abstract class StreamEngine implements StreamingPlayback {
     for (const [clientId, entry] of this.playerRoster) {
       playerRoster.push({ clientId, ...entry });
     }
+    return { teamScores, playerRoster };
+  }
 
+  /** Force the next buildCachedHudState() to rebuild every part (e.g. on a
+   *  mission change, alongside the outer snapshot cache reset). */
+  protected invalidateHudCache(): void {
+    this._hudCache = null;
+  }
+
+  /**
+   * HUD-derived arrays for a snapshot, rebuilding only the parts whose
+   * generation counter (or the backpack's identity) changed since the last
+   * call — steady playback frames reuse the prior arrays. Shared by both
+   * adapters' buildSnapshot().
+   */
+  protected buildCachedHudState(): {
+    weaponsHud: { slots: WeaponsHudSlot[]; activeIndex: number };
+    inventoryHud: { slots: InventoryHudSlot[]; activeSlot: number };
+    backpackHud: BackpackHudState | null;
+    teamScores: TeamScore[];
+    playerRoster: PlayerRosterEntry[];
+  } {
+    const prev = this._hudCache;
+    const weaponsHud =
+      prev && prev.weaponsHudGen === this._weaponsHudGen
+        ? prev.weaponsHud
+        : this.buildWeaponsHud();
+    const inventoryHud =
+      prev && prev.inventoryHudGen === this._inventoryHudGen
+        ? prev.inventoryHud
+        : this.buildInventoryHud();
+    const backpackHud =
+      prev &&
+      prev.backpackPackIndex === this.backpackHud.packIndex &&
+      prev.backpackActive === this.backpackHud.active &&
+      prev.backpackText === this.backpackHud.text
+        ? prev.backpackHud
+        : this.buildBackpackHud();
+    let teamScores: TeamScore[];
+    let playerRoster: PlayerRosterEntry[];
+    if (
+      prev &&
+      prev.teamScoresGen === this._teamScoresGen &&
+      prev.rosterGen === this._rosterGen
+    ) {
+      teamScores = prev.teamScores;
+      playerRoster = prev.playerRoster;
+    } else {
+      ({ teamScores, playerRoster } = this.buildTeamScoresAndRoster());
+    }
+
+    this._hudCache = {
+      weaponsHudGen: this._weaponsHudGen,
+      inventoryHudGen: this._inventoryHudGen,
+      teamScoresGen: this._teamScoresGen,
+      rosterGen: this._rosterGen,
+      backpackPackIndex: this.backpackHud.packIndex,
+      backpackActive: this.backpackHud.active,
+      backpackText: this.backpackHud.text,
+      weaponsHud,
+      inventoryHud,
+      backpackHud,
+      teamScores,
+      playerRoster,
+    };
     return { weaponsHud, inventoryHud, backpackHud, teamScores, playerRoster };
   }
 
