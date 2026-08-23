@@ -40,6 +40,23 @@ export function isRetryableDisconnect(message: string | undefined): boolean {
   );
 }
 
+/** Whether a disconnect should trigger an auto-reconnect: retryable reason
+ *  and the attempt budget isn't exhausted. Callers add their own guard
+ *  (watchers present / same address) and own the retry counter. */
+export function shouldRetryDisconnect(
+  message: string | undefined,
+  retryCount: number,
+): boolean {
+  return isRetryableDisconnect(message) && retryCount < MAX_RETRIES;
+}
+
+/** The client-facing "…retrying (n/N)…" status text — one place so the
+ *  watcher and player reconnect paths stay identical. `attempt` is the
+ *  post-increment count. */
+export function retryStatusMessage(reason: string, attempt: number): string {
+  return `${reason} — retrying (${attempt}/${MAX_RETRIES})...`;
+}
+
 /** All projectile class names. */
 export const projectileClassNames = new Set([
   "BombProjectile",

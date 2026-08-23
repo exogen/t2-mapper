@@ -294,6 +294,9 @@ export interface TeamScore {
 export interface PlayerRosterEntry {
   clientId: number;
   name: string;
+  /** Raw name preserving color-code bytes, for colored scoreboard display.
+   *  Match/key on `name` (stripped); render `rawName` via parseColorSegments. */
+  rawName: string;
   teamId: number;
   score: number;
   ping: number;

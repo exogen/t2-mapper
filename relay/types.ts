@@ -79,6 +79,7 @@ export interface WatchHudStatePayload {
   playerRoster: Array<{
     clientId: number;
     name: string;
+    rawName: string;
     targetId?: number;
     teamId: number;
     score: number;

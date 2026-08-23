@@ -299,6 +299,7 @@ export class LiveStreamAdapter extends StreamEngine {
     for (const entry of hud.playerRoster) {
       this.playerRoster.set(entry.clientId, {
         name: entry.name,
+        rawName: entry.rawName,
         targetId: entry.targetId,
         teamId: entry.teamId,
         score: entry.score,

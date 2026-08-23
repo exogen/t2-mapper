@@ -30,14 +30,14 @@ export async function queryServerList(
 ): Promise<ServerInfo[]> {
   masterLog.info({ master: masterAddress }, "Querying master server");
   const addresses = await queryMasterHTTP(masterAddress);
-  masterLog.info(
+  masterLog.debug(
     { count: addresses.length },
     "Master returned server addresses",
   );
   if (addresses.length === 0) return [];
 
   const servers = await queryServers(addresses);
-  masterLog.info(
+  masterLog.debug(
     { compatible: servers.length, total: addresses.length },
     "Server query complete",
   );

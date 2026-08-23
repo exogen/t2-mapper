@@ -321,7 +321,7 @@ describe("Patroller", () => {
     await patroller.tick();
     expect(patroller.pinnedCount).toBe(0);
 
-    vi.advanceTimersByTime(5 * 60_000 + 1);
+    vi.advanceTimersByTime(2 * 60_000 + 1);
     await patroller.tick();
     expect(patroller.pinnedCount).toBe(1);
   });
@@ -384,12 +384,12 @@ describe("Patroller", () => {
     const released = patroller.getStatus();
     expect(released.pinned).toEqual([]);
     expect(released.cooldowns).toEqual([
-      { address: "1.1.1.1:28000", remainingSec: 300 },
+      { address: "1.1.1.1:28000", remainingSec: 120 },
     ]);
 
     // An expired cooldown no longer blocks a re-pin — not reported,
     // even before the next tick prunes it.
-    vi.advanceTimersByTime(5 * 60_000 + 1);
+    vi.advanceTimersByTime(2 * 60_000 + 1);
     expect(patroller.getStatus().cooldowns).toEqual([]);
   });
 

@@ -15,7 +15,8 @@ import {
   AUTH_COMMANDS,
   MAX_RETRIES,
   RETRY_DELAY_MS,
-  isRetryableDisconnect,
+  shouldRetryDisconnect,
+  retryStatusMessage,
 } from "./shared.js";
 import { relayLog } from "./logger.js";
 import type { ClientMessage, ServerMessage, ServerInfo } from "./types.js";
@@ -561,8 +562,7 @@ wss.on("connection", (ws) => {
       // Auto-retry on retryable disconnect reasons.
       if (
         status === "disconnected" &&
-        isRetryableDisconnect(statusMessage) &&
-        retryCount < MAX_RETRIES &&
+        shouldRetryDisconnect(statusMessage, retryCount) &&
         lastJoinAddress === address
       ) {
         retryCount++;
@@ -577,7 +577,7 @@ wss.on("connection", (ws) => {
         sendToClient(ws, {
           type: "status",
           status: "connecting",
-          message: `${statusMessage} — retrying (${retryCount}/${MAX_RETRIES})...`,
+          message: retryStatusMessage(statusMessage ?? "", retryCount),
           mapName: conn.mapName,
         });
         retryTimer = setTimeout(() => {

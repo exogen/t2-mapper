@@ -15,14 +15,15 @@ import {
   AUTH_COMMANDS,
   MAX_RETRIES,
   RETRY_DELAY_MS,
-  isRetryableDisconnect,
+  shouldRetryDisconnect,
+  retryStatusMessage,
   buildCRCDataBlockList,
 } from "./shared.js";
 import { WatchStateAccumulator } from "./watchState.js";
 import { serializeCatchupPayload } from "./watchSerialize.js";
 import { buildCatchupPayload } from "./watchCatchup.js";
 import type { DemoCoordinator } from "./demoCoordinator.js";
-import type { DemoRecorder, ServerIdentity } from "./demoRecorder.js";
+import type { DemoRecorder } from "./demoRecorder.js";
 import { relayLog } from "./logger.js";
 import type {
   ConnectionStatus,
@@ -310,15 +311,6 @@ export class WatchSession {
   private rotateTimer: ReturnType<typeof setTimeout> | null = null;
   /** Patrol pin: exempt from idle teardown while set. */
   private pinned = false;
-  /**
-   * Stream-told server identity for demo metadata. The name is
-   * server-scoped and sticky across cycle reconnects; gameType is
-   * mission-scoped and cleared on each new connection epoch (the next
-   * mission's type may differ). Gaps are filled from the server-list
-   * cache at sample time, never stored — so stream values always win
-   * once known.
-   */
-  private serverIdentity: ServerIdentity = {};
   private destroyed = false;
   private lastStatus: ConnectionStatus = "connecting";
   private lastPingMs: number | null = null;
@@ -415,9 +407,6 @@ export class WatchSession {
     this.watchState.expectedSelfGuid = conn.selfGuid;
     const cached = this.options.getCachedServer(this.key);
     if (cached?.mapName) conn.setMapName(cached.mapName);
-    // Mission-scoped: a cycle reconnect may bring a different type,
-    // and its MsgLoadInfo/MsgMissionDropInfo arrives after flush.
-    this.serverIdentity.gameType = undefined;
 
     this.recorder =
       this.options.demoCoordinator?.createRecorder({
@@ -425,14 +414,17 @@ export class WatchSession {
         getConnectSequence: () => conn.connectSequence,
         getServerInfo: () => this.options.getCachedServer(this.key),
         getServerIdentity: () => {
-          // Stream-known values win; the server-list cache fills gaps
-          // live at sample time (an entry may only appear on a later
-          // poll, and `mod` has no stream source at all).
+          // Stream-known values (watchState) win; the server-list cache
+          // fills gaps live at sample time — an entry may only appear on a
+          // later poll, `mod` has no stream source at all, and the cache
+          // covers a name across the reconnect gap before the new epoch's
+          // MsgMissionDropInfo re-learns it. gameType is mission-scoped, so
+          // watchState.missionType (reset each epoch) is authoritative.
           const info = this.options.getCachedServer(this.key);
           return {
-            name: this.serverIdentity.name ?? info?.name,
-            gameType: this.serverIdentity.gameType ?? info?.gameType,
-            mod: this.serverIdentity.mod ?? info?.mod,
+            name: this.watchState.serverName ?? info?.name,
+            gameType: this.watchState.missionType ?? info?.gameType,
+            mod: info?.mod,
           };
         },
         getActivePlayerCount: () => this.watchState.countActivePlayers(),
@@ -622,13 +614,11 @@ export class WatchSession {
       // Covers both cycle styles: servers that hard-disconnect at mission
       // change ("Server is cycling mission") and terminal disconnects.
       this.stopRecording(`disconnected: ${message ?? "unknown"}`);
-      const retryable = isRetryableDisconnect(message);
       // Pinned (patrol) sessions retry like watched ones — without this
       // a disconnect-style mission cycle would destroy the session and
       // cost the next mission's recording.
       if (
-        retryable &&
-        this.retryCount < MAX_RETRIES &&
+        shouldRetryDisconnect(message, this.retryCount) &&
         (this.watcherCount > 0 || this.pinned)
       ) {
         this.retryCount++;
@@ -642,7 +632,7 @@ export class WatchSession {
         this.fanOut({
           type: "sessionStatus",
           status: "connecting",
-          message: `${message} — retrying (${this.retryCount}/${MAX_RETRIES})...`,
+          message: retryStatusMessage(message ?? "", this.retryCount),
           address: this.key,
           mapName: this.sessionMapName(),
           watcherCount: this.watcherCount,
@@ -759,14 +749,6 @@ export class WatchSession {
           { err: e, address: this.key, packet: this.packetCount },
           "Watch state update threw — skipping this packet's state update",
         );
-      }
-      // The server naming itself (MsgMissionDropInfo/MsgLoadInfo)
-      // permanently overrides any server-list seed.
-      if (this.watchState.serverName) {
-        this.serverIdentity.name = this.watchState.serverName;
-      }
-      if (this.watchState.missionType) {
-        this.serverIdentity.gameType = this.watchState.missionType;
       }
       // A skipped type — known only from the stream (MsgLoadInfo /
       // MsgMissionDropInfo), never the server-list cache — lifts the

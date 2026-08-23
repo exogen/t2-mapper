@@ -124,6 +124,7 @@ interface ParsedDemoValues {
     number,
     {
       name: string;
+      rawName: string;
       teamId: number;
       score: number;
       ping: number;
@@ -177,7 +178,8 @@ export function parseDemoValues(demoValues: string[]): ParsedDemoValues {
   const playerCountByTeam = new Map<number, number>();
   for (let i = 0; i < playerCount; i++) {
     const fields = next().split("\t");
-    const name = stripTaggedStringMarkup(fields[0] ?? "").trim();
+    const rawName = fields[0] ?? "";
+    const name = stripTaggedStringMarkup(rawName).trim();
     const clientId = parseInt(fields[2], 10);
     const teamId = parseInt(fields[4], 10);
     const score = parseInt(fields[5], 10) || 0;
@@ -186,6 +188,7 @@ export function parseDemoValues(demoValues: string[]): ParsedDemoValues {
     if (!isNaN(clientId) && !isNaN(teamId)) {
       result.playerRoster.set(clientId, {
         name,
+        rawName,
         teamId,
         score,
         ping,

@@ -22,7 +22,7 @@ const PATROL_STRIKES = 3;
 const CONNECT_GRACE_TICKS = 5;
 /** Re-pin cooldown after a quiet release or a died session — damps
  *  thrash loops (threshold oscillation, servers that kill sessions). */
-const RELEASE_COOLDOWN_MS = 5 * 60_000;
+const RELEASE_COOLDOWN_MS = 2 * 60_000;
 
 export interface PatrolOptions {
   /** Case-insensitive whole-name globs (`*` wildcard; no `*` = exact). */

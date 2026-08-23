@@ -21,7 +21,11 @@ import type { WatchHudStatePayload, WatchTargetEntry } from "./types.js";
  */
 
 interface RosterEntry {
+  /** Display name with markup stripped, for matching/keying. */
   name: string;
+  /** Raw name preserving color-code control bytes, for colored display
+   *  (the scoreboard). Stripped once at the display/sidecar boundary. */
+  rawName: string;
   targetId?: number;
   teamId: number;
   score: number;
@@ -338,9 +342,8 @@ export class WatchStateAccumulator {
         }
       }
     } else if (msgType === "MsgClientJoin" && args.length >= 4) {
-      const name = stripTaggedStringMarkup(
-        this.resolveNetString(args[2]),
-      ).trim();
+      const rawName = this.resolveNetString(args[2]);
+      const name = stripTaggedStringMarkup(rawName).trim();
       const clientId = parseInt(this.resolveNetString(args[3]), 10);
       const joinTargetId = parseInt(this.resolveNetString(args[4] ?? ""), 10);
       if (!isNaN(clientId)) {
@@ -349,6 +352,7 @@ export class WatchStateAccumulator {
       if (!isNaN(clientId)) {
         this.playerRoster.set(clientId, {
           name,
+          rawName,
           targetId: isNaN(joinTargetId) ? undefined : joinTargetId,
           teamId: 0,
           score: 0,
@@ -369,6 +373,7 @@ export class WatchStateAccumulator {
         } else {
           this.playerRoster.set(clientId, {
             name: "",
+            rawName: "",
             teamId,
             score: 0,
             ping: 0,
@@ -482,7 +487,9 @@ export class WatchStateAccumulator {
   getRosterNames(): string[] {
     const names: string[] = [];
     for (const entry of this.playerRoster.values()) {
-      if (entry.name) names.push(entry.name);
+      // Raw (unstripped) — the recorder's sanitizePlayerName is the single
+      // canonical strip, so names are never processed twice.
+      if (entry.name) names.push(entry.rawName);
     }
     return names;
   }

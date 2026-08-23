@@ -5,7 +5,12 @@ import type {
   RemoteCommandEventData,
 } from "t2-demo-parser";
 import { TICK_DURATION_MS } from "./entityClassification";
-import { extractWavTag, stripTaggedStringMarkup } from "./streamHelpers";
+import {
+  extractWavTag,
+  resolveNetString,
+  formatRemoteArgs,
+  stripTaggedStringMarkup,
+} from "./streamHelpers";
 import type { TimelineEvent } from "../state/demoTimelineStore";
 import { createLogger } from "../logger";
 
@@ -114,32 +119,19 @@ const SELF_KILL_BY_WEAPON: Record<string, string> = {
   explosion: "Killed by explosion",
 };
 
-function resolveNetString(s: string, netStrings: Map<number, string>): string {
-  if (s.length >= 2 && s.charCodeAt(0) === 1) {
-    const id = parseInt(s.slice(1), 10);
-    if (Number.isFinite(id)) return netStrings.get(id) ?? s;
-  }
-  return s;
-}
-
-function formatRemoteArgs(
+/**
+ * A message template formatted for timeline display: the shared
+ * formatRemoteArgs plus dropping the embedded `~w<path>` sound cue many
+ * templates end with, and trimming.
+ */
+function formatEventDescription(
   template: string,
   args: string[],
   netStrings: Map<number, string>,
 ): string {
-  let resolved = resolveNetString(template, netStrings);
-  for (let i = 0; i < args.length; i++) {
-    const placeholder = `%${i + 1}`;
-    if (resolved.includes(placeholder)) {
-      resolved = resolved.replaceAll(
-        placeholder,
-        stripTaggedStringMarkup(resolveNetString(args[i], netStrings)),
-      );
-    }
-  }
-  resolved = resolved.replace(/%\d+/g, "");
-  // Drop the embedded `~w<path>` sound cue many templates end with.
-  return extractWavTag(stripTaggedStringMarkup(resolved)).text.trim();
+  return extractWavTag(
+    formatRemoteArgs(template, args, netStrings),
+  ).text.trim();
 }
 
 export interface TimelineScanResult {
@@ -449,7 +441,7 @@ export async function scanDemoTimeline(
         // Flag capture.
         // Wire: args[2]=capturerName, args[3]=teamName, args[4]=flag.team, args[5]=capturer.team
         if (msgTypeLower === "msgctfflagcapped" && args.length >= 2) {
-          const description = formatRemoteArgs(
+          const description = formatEventDescription(
             args[1],
             args.slice(2),
             netStrings,
@@ -523,7 +515,7 @@ export async function scanDemoTimeline(
               normalizedKiller === normalizedRecorder &&
               normalizedVictim !== normalizedRecorder
             ) {
-              const description = formatRemoteArgs(
+              const description = formatEventDescription(
                 args[1],
                 args.slice(2),
                 netStrings,

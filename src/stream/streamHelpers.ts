@@ -451,6 +451,71 @@ export function stripTaggedStringMarkup(s: string): string {
 }
 
 /**
+ * Resolve a net-string reference (`\x01<id>`) against the connection's
+ * net-string table, or return the literal. Shared by StreamEngine (via
+ * `this.netStrings`) and the demo timeline scanner.
+ */
+export function resolveNetString(
+  s: string,
+  netStrings: Map<number, string>,
+): string {
+  if (s.length >= 2 && s.charCodeAt(0) === 1) {
+    const id = parseInt(s.slice(1), 10);
+    if (Number.isFinite(id)) return netStrings.get(id) ?? s;
+  }
+  return s;
+}
+
+/**
+ * Expand a `messageClient` template: resolve the template + each arg net
+ * string, substitute `%1..%N` with the tag-stripped args, drop leftover
+ * `%N`, and strip tagged markup. (Callers wanting chat display also strip
+ * the trailing `~w` sound cue via extractWavTag.)
+ */
+export function formatRemoteArgs(
+  template: string,
+  args: string[],
+  netStrings: Map<number, string>,
+): string {
+  let resolved = resolveNetString(template, netStrings);
+  for (let i = 0; i < args.length; i++) {
+    const placeholder = `%${i + 1}`;
+    if (resolved.includes(placeholder)) {
+      resolved = resolved.replaceAll(
+        placeholder,
+        stripTaggedStringMarkup(resolveNetString(args[i], netStrings)),
+      );
+    }
+  }
+  resolved = resolved.replace(/%\d+/g, "");
+  return stripTaggedStringMarkup(resolved);
+}
+
+/**
+ * Like formatRemoteArgs but preserves the color-code control bytes (and the
+ * args' own color), so the result can be split into colored segments via
+ * parseColorSegments — for chat, where per-segment color matters. Callers
+ * strip the trailing `~w` sound cue with extractWavTag first.
+ */
+export function formatRemoteArgsColored(
+  template: string,
+  args: string[],
+  netStrings: Map<number, string>,
+): string {
+  let resolved = resolveNetString(template, netStrings);
+  for (let i = 0; i < args.length; i++) {
+    const placeholder = `%${i + 1}`;
+    if (resolved.includes(placeholder)) {
+      resolved = resolved.replaceAll(
+        placeholder,
+        resolveNetString(args[i], netStrings),
+      );
+    }
+  }
+  return resolved.replace(/%\d+/g, "");
+}
+
+/**
  * Byte-to-fontColors-index remap table from the Torque V12 renderer (dgl.cc).
  *
  * TorqueScript `\cN` escapes are encoded via `collapseRemap` in scan.l,

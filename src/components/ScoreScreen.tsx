@@ -7,6 +7,7 @@ import { liveConnectionStore } from "../state/liveConnectionStore";
 import { useDataSource } from "../state/gameEntityStore";
 import type { PlayerRosterEntry, TeamScore } from "../stream/types";
 import { DEFAULT_TEAM_NAMES } from "../stringUtils";
+import { ColoredName } from "./ColoredName";
 import styles from "./ScoreScreen.module.css";
 
 function computePingStats(players: PlayerRosterEntry[]): {
@@ -64,7 +65,7 @@ function PairedPlayerRows({
             <td
               className={p1IsLocal ? styles.PlayerNameLocal : styles.PlayerName}
             >
-              {p1?.name || (p1 ? "..." : "")}
+              {p1 ? p1.name ? <ColoredName raw={p1.rawName} /> : "..." : ""}
             </td>
             <td
               className={
@@ -76,7 +77,7 @@ function PairedPlayerRows({
             <td
               className={p2IsLocal ? styles.PlayerNameLocal : styles.PlayerName}
             >
-              {p2?.name || (p2 ? "..." : "")}
+              {p2 ? p2.name ? <ColoredName raw={p2.rawName} /> : "..." : ""}
             </td>
             <td
               className={

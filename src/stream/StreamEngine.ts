@@ -41,6 +41,10 @@ import {
   detectColorCode,
   extractWavTag,
   detectControlObjectType,
+  resolveNetString as resolveNetStringHelper,
+  formatRemoteArgs as formatRemoteArgsHelper,
+  formatRemoteArgsColored,
+  parseColorSegments,
 } from "./streamHelpers";
 import type { Vec3 } from "./streamHelpers";
 import {
@@ -351,7 +355,10 @@ export abstract class StreamEngine implements StreamingPlayback {
   protected playerRoster = new Map<
     number,
     {
+      /** Markup-stripped name, for matching/keying. */
       name: string;
+      /** Raw name with color-code bytes, for colored display (scoreboard). */
+      rawName: string;
       targetId?: number;
       teamId: number;
       score: number;
@@ -587,26 +594,11 @@ export abstract class StreamEngine implements StreamingPlayback {
   // ── Net string resolution ──
 
   protected resolveNetString(s: string): string {
-    if (s.length >= 2 && s.charCodeAt(0) === 1) {
-      const id = parseInt(s.slice(1), 10);
-      if (Number.isFinite(id)) return this.netStrings.get(id) ?? s;
-    }
-    return s;
+    return resolveNetStringHelper(s, this.netStrings);
   }
 
   protected formatRemoteArgs(template: string, args: string[]): string {
-    let resolved = this.resolveNetString(template);
-    for (let i = 0; i < args.length; i++) {
-      const placeholder = `%${i + 1}`;
-      if (resolved.includes(placeholder)) {
-        resolved = resolved.replaceAll(
-          placeholder,
-          stripTaggedStringMarkup(this.resolveNetString(args[i])),
-        );
-      }
-    }
-    resolved = resolved.replace(/%\d+/g, "");
-    return stripTaggedStringMarkup(resolved);
+    return formatRemoteArgsHelper(template, args, this.netStrings);
   }
 
   // ── Control object processing ──
@@ -876,16 +868,21 @@ export abstract class StreamEngine implements StreamingPlayback {
       const timeSec = this.getTimeSec();
 
       if (funcName === "ChatMessage" && args.length >= 4) {
-        const rawTemplate = this.resolveNetString(args[3]);
-        const colorCode = detectColorCode(rawTemplate);
-        const sender = args[4]
-          ? stripTaggedStringMarkup(this.resolveNetString(args[4]))
-          : "";
-        const rawText = this.formatRemoteArgs(args[3], args.slice(4));
-        if (rawText) {
-          const colonIdx = rawText.indexOf(": ");
-          const text = colonIdx >= 0 ? rawText.slice(colonIdx + 2) : rawText;
-          const { text: displayText, wavPath } = extractWavTag(text);
+        // Preserve per-segment color: format the template + args WITHOUT
+        // stripping color bytes, drop the trailing ~w sound cue, then split
+        // into colored segments (mirrors the demo chat path). The sender's
+        // clan color and any mid-message colors survive to the UI.
+        const colored = extractWavTag(
+          formatRemoteArgsColored(args[3], args.slice(4), this.netStrings),
+        );
+        const wavPath = colored.wavPath;
+        const segments = parseColorSegments(colored.text);
+        const fullText = segments.map((s) => s.text).join("");
+        if (fullText.trim()) {
+          const colonIdx = fullText.indexOf(": ");
+          const sender = colonIdx >= 0 ? fullText.slice(0, colonIdx) : "";
+          const displayText =
+            colonIdx >= 0 ? fullText.slice(colonIdx + 2) : fullText;
           let soundPath: string | undefined;
           let soundPitch: number | undefined;
           if (wavPath) {
@@ -898,19 +895,13 @@ export abstract class StreamEngine implements StreamingPlayback {
                 soundPitch = Math.max(0.5, Math.min(2.0, p));
             }
           }
-          const cc = colorCode ?? 0;
           this.pushChatMessage({
             timeSec,
             sender,
             text: displayText,
             kind: "chat",
-            colorCode: cc,
-            segments: [
-              {
-                text: sender ? `${sender}: ${displayText}` : displayText,
-                colorCode: cc,
-              },
-            ],
+            colorCode: segments[0]?.colorCode ?? 0,
+            segments,
             soundPath,
             soundPitch,
           });
@@ -2619,9 +2610,8 @@ export abstract class StreamEngine implements StreamingPlayback {
       }
     } else if (msgType === "MsgClientJoin" && args.length >= 4) {
       // Wire order: args[2]=clientName, args[3]=clientId, args[4]=targetId
-      const name = stripTaggedStringMarkup(
-        this.resolveNetString(args[2]),
-      ).trim();
+      const rawName = this.resolveNetString(args[2]);
+      const name = stripTaggedStringMarkup(rawName).trim();
       const clientId = parseInt(this.resolveNetString(args[3]), 10);
       const joinTargetId = parseInt(this.resolveNetString(args[4] ?? ""), 10);
       if (!isNaN(clientId)) {
@@ -2629,6 +2619,7 @@ export abstract class StreamEngine implements StreamingPlayback {
         // ScriptObject with score=0, overwriting any previous entry.
         this.playerRoster.set(clientId, {
           name,
+          rawName,
           targetId: isNaN(joinTargetId) ? undefined : joinTargetId,
           teamId: 0,
           score: 0,
@@ -2668,6 +2659,7 @@ export abstract class StreamEngine implements StreamingPlayback {
         } else {
           this.playerRoster.set(clientId, {
             name: "",
+            rawName: "",
             teamId,
             score: 0,
             ping: 0,
