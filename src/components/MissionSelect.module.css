@@ -198,11 +198,11 @@
 }
 
 .Item[data-tournament] {
-  background: rgb(38, 30, 6);
+  background: rgba(109, 85, 12, 0.15);
 }
 
 .Item[data-tournament][data-active-item] {
-  background: rgba(174, 135, 18, 0.3);
+  background: rgba(190, 121, 9, 0.25);
 }
 
 .ItemHeader {
