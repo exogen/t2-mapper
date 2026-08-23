@@ -165,6 +165,14 @@ export interface ServerInfo {
   ping: number;
   buildVersion: number;
   passwordRequired: boolean;
+  /** Tournament mode — the "medal" the stock client shows in the server
+   *  list. From the info-response status byte (bit 0x08). */
+  tournament: boolean;
+  /** The server name matches a configured patrol name-pattern — i.e. one
+   *  of the servers we consider important/active. Purely a name match:
+   *  true even when patrol is disabled, the server is type-excluded (e.g.
+   *  LakRabbit), or it isn't currently pinned. */
+  isPatrolled: boolean;
   /** Roster from the info-response status tail (getServerStatusString);
    *  absent when the tail was missing, truncated, or mod-mangled. */
   teams?: Array<{ name: string; score: number }>;

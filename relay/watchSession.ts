@@ -430,6 +430,10 @@ export class WatchSession {
             name: this.watchState.serverName ?? info?.name,
             gameType: this.watchState.missionType ?? info?.gameType,
             mod: info?.mod,
+            // Detected from the stream (banner/vote), independent of the
+            // anti-peek delay feature. Sampled here at finalize entry so it
+            // reads the finalizing epoch's watchState, not the next one's.
+            tournament: this.watchState.tournamentMode === true,
           };
         },
         getActivePlayerCount: () => this.watchState.countActivePlayers(),

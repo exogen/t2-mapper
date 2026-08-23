@@ -39,6 +39,10 @@ export interface ServerIdentity {
   name?: string;
   gameType?: string;
   mod?: string;
+  /** Tournament mode for the mission being finalized, as told by the
+   *  server (the "Server is Running in Tournament Mode" banner / vote
+   *  menu). Mission-scoped like gameType. */
+  tournament?: boolean;
 }
 
 export interface DemoRecorderOptions {
@@ -102,6 +106,9 @@ export interface DemoGame {
    * Offset into the demo on the move-tick clock.
    */
   startMs: number;
+  /** This mission ran in tournament mode. A demo can mix tournament and
+   *  non-tournament missions, so it's per-game, not per-demo. */
+  tournament: boolean;
 }
 
 /**
@@ -550,6 +557,7 @@ export class DemoRecorder {
             mission: meta.mission,
             gameType: identity.gameType ?? "",
             startMs: 0,
+            tournament: identity.tournament ?? false,
           },
         ],
         mod: meta.mod,

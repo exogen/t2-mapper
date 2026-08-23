@@ -84,13 +84,47 @@
   z-index: 100;
   min-width: 360px;
   max-height: var(--popover-available-height, 90vh);
-  overflow-x: hidden;
-  overflow-y: auto;
-  overscroll-behavior: contain;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
   background: rgba(20, 20, 20, 0.95);
   border: 1px solid rgba(255, 255, 255, 0.5);
   border-radius: 3px;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6);
+}
+
+/* Pinned above the scrolling list. */
+.FilterBar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  padding: 7px 8px 7px 12px;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.7);
+  background: rgba(52, 28, 11, 0.95);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.3);
+  cursor: pointer;
+  user-select: none;
+}
+
+.FilterCheckbox {
+  cursor: pointer;
+  margin: 0;
+}
+
+/* Filter-bar laurel: one size smaller than the list-item laurel.
+   Centered by the row's align-items; -1px trims the gap to the label. */
+.FilterIcon {
+  margin-right: -1px;
+  font-size: 13px;
+  color: rgba(255, 200, 60, 0.9);
+}
+
+/* Optical nudge so the text sits level with the checkbox/laurel. In-flow:
+   with align-items:center, bottom margin shifts the text up half its size. */
+.FilterLabel {
+  margin-bottom: 1px;
 }
 
 @media (max-width: 499px) {
@@ -109,6 +143,10 @@
 
 .List {
   padding: 4px 0;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .List:has(> .Group:first-child) {
@@ -159,6 +197,14 @@
   background: rgba(100, 150, 255, 0.3);
 }
 
+.Item[data-tournament] {
+  background: rgb(38, 30, 6);
+}
+
+.Item[data-tournament][data-active-item] {
+  background: rgba(174, 135, 18, 0.3);
+}
+
 .ItemHeader {
   display: flex;
   align-items: center;
@@ -205,6 +251,14 @@
 .ItemPlayersIcon {
   vertical-align: -2px;
   font-size: 13px;
+}
+
+/* Marks a demo containing at least one tournament-mode mission. Spacing
+   comes from the .ItemHeader flex gap. */
+.ItemTournamentIcon {
+  vertical-align: -2px;
+  font-size: 14px;
+  color: rgba(255, 200, 60, 0.9);
 }
 
 .NoResults {

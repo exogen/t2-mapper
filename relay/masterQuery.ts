@@ -312,7 +312,13 @@ async function queryServers(addresses: string[]): Promise<ServerInfo[]> {
       botCount: info?.botCount ?? 0,
       ping: ping.ping,
       buildVersion: ping.buildVersion,
+      // status-byte flags: 0x01 dedicated, 0x02 passworded, 0x04 linux,
+      // 0x08 tournament (the "medal" the stock client shows in the list).
       passwordRequired: info ? (info.status & 0x02) !== 0 : false,
+      tournament: info ? (info.status & 0x08) !== 0 : false,
+      // Default; the relay overrides this from its patrol patterns when it
+      // serves the list (masterQuery has no patrol config).
+      isPatrolled: false,
       ...(info?.teams ? { teams: info.teams } : {}),
       ...(info?.players ? { players: info.players } : {}),
     });

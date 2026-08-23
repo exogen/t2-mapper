@@ -21,6 +21,7 @@ import { useQuery } from "@tanstack/react-query";
 import { matchSorter } from "match-sorter";
 import { IoMdCloseCircle } from "react-icons/io";
 import { LuUsers } from "react-icons/lu";
+import { TbLaurelWreathFilled } from "react-icons/tb";
 import {
   DEMOS_BASE_URL,
   demoDownloadUrl,
@@ -111,6 +112,13 @@ function DemoItemContent({ demo }: { demo: DemoIndexEntry }) {
             ))}
           </span>
         )}
+        {demo.games.some((game) => game.tournament) && (
+          <TbLaurelWreathFilled
+            className={styles.ItemTournamentIcon}
+            title="Tournament mode"
+            aria-label="Tournament mode"
+          />
+        )}
       </span>
       <span className={styles.ItemMissionName}>
         {demo.server} · {formatRecordedTime(demo.recordedAt)} ·{" "}
@@ -153,6 +161,7 @@ export function DemoSelect() {
   const [latestSearchValue, setSearchValue] = useState("");
   const searchValue = useDeferredValue(latestSearchValue);
   const [selectedFilename, setSelectedFilename] = useState("");
+  const [tournamentOnly, setTournamentOnly] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   // Clear the selection when a loaded demo is ejected so the input
@@ -218,7 +227,9 @@ export function DemoSelect() {
   // When searching, return a flat list sorted by relevance; otherwise
   // return newest-first grouped by server.
   const filteredResults = useMemo(() => {
-    const all = demos ?? [];
+    const all = (demos ?? []).filter(
+      (demo) => !tournamentOnly || demo.games.some((game) => game.tournament),
+    );
     if (!searchValue) {
       return { type: "grouped" as const, groups: groupDemos(all) };
     }
@@ -238,7 +249,7 @@ export function DemoSelect() {
       ],
     });
     return { type: "flat" as const, demos: matches };
-  }, [demos, searchValue]);
+  }, [demos, searchValue, tournamentOnly]);
 
   const emptyMessage = !enabled
     ? "Demo index not configured (DEMOS_BASE_URL)"
@@ -261,6 +272,9 @@ export function DemoSelect() {
       key={demo.filename}
       value={demo.filename}
       className={styles.Item}
+      data-tournament={
+        demo.games.some((game) => game.tournament) ? "" : undefined
+      }
       focusOnHover
     >
       <DemoItemContent demo={demo} />
@@ -334,6 +348,23 @@ export function DemoSelect() {
           }
         }}
       >
+        {emptyMessage == null && (
+          <label
+            className={styles.FilterBar}
+            // Keep combobox (virtual) focus so the popover stays open and
+            // typing still works after toggling.
+            onMouseDown={(event) => event.preventDefault()}
+          >
+            <input
+              type="checkbox"
+              className={styles.FilterCheckbox}
+              checked={tournamentOnly}
+              onChange={(event) => setTournamentOnly(event.target.checked)}
+            />
+            <TbLaurelWreathFilled className={styles.FilterIcon} />
+            <span className={styles.FilterLabel}>Tournament mode only</span>
+          </label>
+        )}
         <ComboboxList className={styles.List}>
           {emptyMessage != null ? (
             <div className={styles.NoResults}>{emptyMessage}</div>

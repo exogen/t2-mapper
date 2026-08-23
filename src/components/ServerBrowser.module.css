@@ -211,6 +211,36 @@
   font-size: 11px;
 }
 
+.TournamentIcon {
+  /* inline-flex + middle keeps the glyph inside the cell's line box so a
+     tournament row is the same height as every other row. */
+  display: inline-flex;
+  vertical-align: -2px;
+  margin-left: 5px;
+  color: rgba(255, 200, 60, 0.85);
+  font-size: 14px;
+}
+
+/* Patrolled ("pinned") marker, left of the server name. */
+.PinIcon {
+  display: inline-flex;
+  vertical-align: -2px;
+  margin-left: -6px;
+  margin-right: 5px;
+  color: rgba(125, 255, 255, 0.8);
+  font-size: 12px;
+  transform: scaleX(-1);
+}
+
+/* On the bright selected row (dark text), swap the icons to dark in-theme
+   tones so they stay legible against the cyan background. */
+.Table tbody tr:has(input:checked) .PinIcon {
+  color: #12403c;
+}
+.Table tbody tr:has(input:checked) .TournamentIcon {
+  color: #52470d;
+}
+
 .Table th[data-column="players"] {
   padding-top: 2px;
   padding-bottom: 2px;

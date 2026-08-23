@@ -50,6 +50,8 @@ function makeServer(
     ping: 40,
     buildVersion: 22337,
     passwordRequired: false,
+    tournament: false,
+    isPatrolled: false,
   };
 }
 

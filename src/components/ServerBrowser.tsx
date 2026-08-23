@@ -4,6 +4,8 @@ import styles from "./ServerBrowser.module.css";
 import { useLiveSelector } from "../state/liveConnectionStore";
 import { useSettings } from "./SettingsProvider";
 import { LuUsers } from "react-icons/lu";
+import { TbLaurelWreathFilled } from "react-icons/tb";
+import { BsPinAngleFill } from "react-icons/bs";
 
 /**
  * Server selector panel, filling the content area (not a modal). The
@@ -70,6 +72,8 @@ export function ServerBrowser({
 
   const sorted = useMemo(() => {
     return [...servers].sort((a, b) => {
+      // Patrolled servers always sort first, regardless of the column.
+      if (a.isPatrolled !== b.isPatrolled) return a.isPatrolled ? -1 : 1;
       const av = a[sortKey];
       const bv = b[sortKey];
       const cmp =
@@ -148,10 +152,28 @@ export function ServerBrowser({
                         setSelectedAddress(event.target.value);
                       }}
                     />
+                    {server.isPatrolled && (
+                      <span
+                        className={styles.PinIcon}
+                        title="Patrolled server"
+                        aria-label="Patrolled server"
+                      >
+                        <BsPinAngleFill />
+                      </span>
+                    )}
                     {server.passwordRequired && (
                       <span className={styles.PasswordIcon}>&#x1F512;</span>
                     )}
                     {server.name}
+                    {server.tournament && (
+                      <span
+                        className={styles.TournamentIcon}
+                        title="Tournament mode"
+                        aria-label="Tournament mode"
+                      >
+                        <TbLaurelWreathFilled />
+                      </span>
+                    )}
                   </td>
                   <td
                     className={

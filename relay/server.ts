@@ -10,7 +10,7 @@ import { loadCredentials } from "./auth.js";
 import { WatchSessionManager, normalizeAddress } from "./watchSession.js";
 import { DemoCoordinator } from "./demoCoordinator.js";
 import { DemoUploader, loadUploadConfig } from "./demoUpload.js";
-import { Patroller } from "./patrol.js";
+import { Patroller, globToRegExp } from "./patrol.js";
 import {
   AUTH_COMMANDS,
   MAX_RETRIES,
@@ -84,6 +84,13 @@ function parsePatrolServers(raw: string | undefined): string[] {
     .filter(Boolean);
 }
 const DEMO_PATROL_SERVERS = parsePatrolServers(process.env.DEMO_PATROL_SERVERS);
+/** Name-pattern matchers for the server-list `isPatrolled` flag. Built
+ *  from the configured patterns regardless of whether patrol is enabled,
+ *  so the UI can flag "important" servers even when we aren't recording. */
+const patrolNameMatchers = DEMO_PATROL_SERVERS.map(globToRegExp);
+function matchesPatrolName(name: string): boolean {
+  return patrolNameMatchers.some((re) => re.test(name));
+}
 /** Mission-type display names to patrol (same glob rules as the server
  *  list); empty = all types. */
 const DEMO_PATROL_MISSION_TYPES = parsePatrolServers(
@@ -275,6 +282,7 @@ function getServerList(): Promise<ServerInfo[]> {
   }
   serverListInFlight = queryServerList(MASTER_SERVER)
     .then((servers) => {
+      for (const s of servers) s.isPatrolled = matchesPatrolName(s.name);
       cachedServers = servers;
       serverListAt = Date.now();
       return servers;

@@ -33,13 +33,25 @@ function normalizeEntry(raw: unknown): DemoIndexEntry {
   };
   const players = Array.isArray(entry.players) ? entry.players : [];
   if (Array.isArray(entry.games)) {
-    return { ...entry, players };
+    // Coerce `tournament` for records written before it existed.
+    const games = entry.games.map((g) => ({
+      ...g,
+      tournament: g.tournament === true,
+    }));
+    return { ...entry, players, games };
   }
   return {
     ...entry,
     players,
     games: entry.mission
-      ? [{ mission: entry.mission, gameType: entry.gameType ?? "", startMs: 0 }]
+      ? [
+          {
+            mission: entry.mission,
+            gameType: entry.gameType ?? "",
+            startMs: 0,
+            tournament: false,
+          },
+        ]
       : [],
   };
 }

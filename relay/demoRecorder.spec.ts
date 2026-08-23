@@ -35,6 +35,8 @@ const serverInfo: ServerInfo = {
   ping: 40,
   buildVersion: 22337,
   passwordRequired: false,
+  tournament: false,
+  isPatrolled: false,
 };
 
 function buildPingPacket(seq: number): Uint8Array {
@@ -301,7 +303,12 @@ describe("DemoRecorder", () => {
       server: "| the cut |",
       address: "45.76.24.91:28000",
       games: [
-        { mission: "Katabatic", gameType: "Capture the Flag", startMs: 0 },
+        {
+          mission: "Katabatic",
+          gameType: "Capture the Flag",
+          startMs: 0,
+          tournament: false,
+        },
       ],
       mod: "classic",
       recorder: "Observer",
@@ -340,9 +347,26 @@ describe("DemoRecorder", () => {
     ) as Record<string, unknown>;
     expect(sidecar.server).toBe("| the cut |");
     expect(sidecar.games).toEqual([
-      { mission: "Katabatic", gameType: "LCTF", startMs: 0 },
+      { mission: "Katabatic", gameType: "LCTF", startMs: 0, tournament: false },
     ]);
     expect(sidecar.mod).toBe("");
+  });
+
+  it("records the mission's tournament mode on the sidecar game", async () => {
+    const recorder = createRecorder({
+      serverIdentity: () => ({ gameType: "CTF", tournament: true }),
+    });
+    recorder.onPacket(buildPingPacket(1));
+    recorder.setMissionName("Katabatic");
+    for (let i = 2; i <= 5; i++) {
+      recorder.onPacket(buildPingPacket(i));
+      time += 100;
+    }
+    const result = await recorder.finalize("test");
+    const sidecar = JSON.parse(
+      await fsp.readFile(`${result!.path}.json`, "utf-8"),
+    ) as { games: Array<{ tournament: boolean }> };
+    expect(sidecar.games[0].tournament).toBe(true);
   });
 
   it("ignores pre-flush start signals (they belong to the prior mission)", async () => {
