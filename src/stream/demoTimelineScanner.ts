@@ -20,6 +20,27 @@ const log = createLogger("demoTimelineScanner");
 const YIELD_INTERVAL = 500;
 
 /**
+ * `MsgMissionStart` is overloaded: the server broadcasts it for every
+ * pre-match countdown tick ("Match starts in N seconds", from
+ * `notifyMatchStart`) as well as the real kickoff ("Match started!" from
+ * `DefaultGame::startMatch`, or an admin force). Only the kickoff belongs
+ * on the timeline, distinguished here by the message body.
+ *
+ * This also handles a cancelled countdown for free: `CancelCountdown`
+ * sends clients no message, so a cancelled (then restarted) countdown
+ * never produces a kickoff body until the match truly starts — the entry
+ * lands at the moment the map actually starts, not when a since-aborted
+ * countdown first began.
+ */
+export function isRealMatchStart(rawBody: string): boolean {
+  const body = stripTaggedStringMarkup(rawBody).toLowerCase();
+  return (
+    body.includes("match started") ||
+    body.includes("forced the match to start")
+  );
+}
+
+/**
  * All death message types where args[2]=victimName, args[5]=killerName,
  * args[9]=DamageTypeText. Case-insensitive matching is used.
  *
@@ -325,16 +346,24 @@ export async function scanDemoTimeline(
           if (name) currentMissionName = name;
         }
 
-        // Match start: MsgMissionStart is sent when the match actually begins
-        // (after the countdown). MsgSystemClock is just the countdown timer.
-        if (msgTypeLower === "msgmissionstart" && !seenMatchStart) {
-          seenMatchStart = true;
-          const suffix = currentMissionName ? ` (${currentMissionName})` : "";
-          events.push({
-            timeSec,
-            type: "match-start",
-            description: `Match started${suffix}`,
-          });
+        // Match start. Ignore the pre-match countdown ticks that share
+        // this message type — only the real kickoff (or a cancelled-then-
+        // restarted countdown's eventual kickoff) should land on the
+        // timeline, so key off the message body rather than the mere
+        // arrival of a MsgMissionStart. See isRealMatchStart.
+        if (msgTypeLower === "msgmissionstart") {
+          if (
+            !seenMatchStart &&
+            isRealMatchStart(resolveNetString(args[1] ?? "", netStrings))
+          ) {
+            seenMatchStart = true;
+            const suffix = currentMissionName ? ` (${currentMissionName})` : "";
+            events.push({
+              timeSec,
+              type: "match-start",
+              description: `Match started${suffix}`,
+            });
+          }
           continue;
         }
 

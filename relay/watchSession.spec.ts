@@ -209,6 +209,50 @@ describe("WatchSessionManager", () => {
     expect(ws.binaryFrames()).toHaveLength(beforeLive + 1);
   });
 
+  it("resolves non-tournament after the mission-drop grace when no banner arrives", () => {
+    const { manager, connections } = createManager({ tourneyDelayMs: 1000 });
+    const ws = new FakeWebSocket();
+    manager.watch(ws as unknown as WebSocket, "1.2.3.4:28000");
+    const conn = connections[0];
+    conn.setStatus("connected");
+    const session = manager.getSession("1.2.3.4:28000")!;
+    // Provisional delay while the decision is pending.
+    expect(manager.getStatusSummary()[0].delayMs).toBe(1000);
+
+    // The mission-drop burst (MsgClientReady) lands with no tournament
+    // banner; a following packet arms the post-drop grace.
+    (session as unknown as { watchState: { sawMissionDropReady: boolean } })
+      .watchState.sawMissionDropReady = true;
+    conn.emit("packet", new Uint8Array([1, 2, 3]));
+    expect(manager.getStatusSummary()[0].delayMs).toBe(1000);
+
+    // Grace elapses with no banner → resolved non-tournament → live.
+    vi.advanceTimersByTime(4000);
+    expect(manager.getStatusSummary()[0].delayMs).toBe(0);
+  });
+
+  it("stays delayed when the tournament banner rides the mission-drop burst", () => {
+    const { manager, connections } = createManager({ tourneyDelayMs: 1000 });
+    const ws = new FakeWebSocket();
+    manager.watch(ws as unknown as WebSocket, "1.2.3.4:28000");
+    const conn = connections[0];
+    conn.setStatus("connected");
+    const session = manager.getSession("1.2.3.4:28000")!;
+
+    // Banner + drop burst in the same packet → resolves tournament at once,
+    // so the grace is never armed and the delay holds.
+    const ws2 = session as unknown as {
+      watchState: { sawMissionDropReady: boolean; tournamentMode: boolean };
+    };
+    ws2.watchState.sawMissionDropReady = true;
+    ws2.watchState.tournamentMode = true;
+    conn.emit("packet", new Uint8Array([1, 2, 3]));
+    expect(manager.getStatusSummary()[0].delayMs).toBe(1000);
+
+    vi.advanceTimersByTime(10_000);
+    expect(manager.getStatusSummary()[0].delayMs).toBe(1000);
+  });
+
   it("does not forward pre-attach packets to a late watcher", () => {
     const { manager, connections } = createManager();
     const ws1 = new FakeWebSocket();
@@ -589,7 +633,7 @@ describe("WatchSession demo recording", () => {
     manager.shutdown();
   });
 
-  it("rides a second mission cycle in place within the reconnect guard window", async () => {
+  it("reconnects on every mission cycle, however short the previous map", async () => {
     const { manager, connections } = await createRecordingManager();
     const ws = new FakeWebSocket();
     manager.watch(ws as unknown as WebSocket, "1.2.3.4:28000");
@@ -601,13 +645,16 @@ describe("WatchSession demo recording", () => {
     await vi.waitFor(() => expect(connections).toHaveLength(2));
     connections[1].setStatus("connected");
     firePhase1(session, "Damnation");
+    const secondRecorder = session.recorder;
 
+    // A second cycle right after the first: no "ride in place" any more,
+    // so every map change reconnects into a fresh epoch (which is what
+    // re-decides tournament mode per mission).
     fireEndGhosting(session);
-    await flushImmediate();
-    await new Promise((r) => setTimeout(r, 25));
-    // No third connection — but the recording still stopped.
-    expect(connections).toHaveLength(2);
-    expect(session.recorder).toBeNull();
+    await vi.waitFor(() => expect(connections).toHaveLength(3));
+    // The Damnation recording was rotated out; the new epoch buffers.
+    expect(session.recorder).not.toBe(secondRecorder);
+    expect(session.recorder?.state).toBe("buffering");
 
     manager.shutdown();
   });

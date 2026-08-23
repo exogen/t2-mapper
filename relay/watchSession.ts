@@ -62,13 +62,15 @@ const WATCH_ONLY_PASS = process.env.WATCH_ONLY_PASS || "ImaWatcher";
 /** Matches the real client's chat input limit ($Host::MaxMessageLen). */
 const CHAT_MAX_LENGTH = 255;
 const CATCHUP_CHUNK_BYTES = 256 * 1024;
-/** The vote-menu answer and the join banner both land seconds after
- *  connect; nothing by then (e.g. a vote was in progress, so the menu
- *  wasn't sent) means "not tournament mode" until the next epoch asks. */
-const TOURNEY_DECISION_GRACE_MS = 8_000;
-/** Min gap between recording-driven mission-cycle reconnects — a second
- *  cycle sooner than this rides in place instead (no reconnect loops). */
-const CYCLE_RECONNECT_MIN_MS = 60_000;
+/** Grace after the mission-drop burst (MsgClientReady) before resolving
+ *  the tournament decision. The "Server is Running in Tournament Mode"
+ *  banner, if any, rides in that same burst (it's the tail of
+ *  clientMissionDropReady), so once the burst has landed we only need
+ *  slack for packet spread / a lost-and-retransmitted packet. No banner
+ *  within the grace ⇒ not tournament. Anchoring on the drop (rather than
+ *  on connect) keeps this tight regardless of how long mission load and
+ *  the ghost download took. */
+const TOURNEY_POST_DROP_GRACE_MS = 4_000;
 /** How long watchers keep the frozen end-of-match state (scoreboard,
  *  game-over sound, end chat) before a mission-cycle rotation reconnects. */
 function cycleLingerMs(): number {
@@ -305,7 +307,6 @@ export class WatchSession {
   private resyncCount = 0;
   /** One recorder per connection epoch (one connection = one demo). */
   private recorder: DemoRecorder | null = null;
-  private lastCycleReconnectAt = 0;
   /** Mission-cycle rotation pending: stream frozen until reconnect. */
   private rotating = false;
   private rotateTimer: ReturnType<typeof setTimeout> | null = null;
@@ -325,6 +326,9 @@ export class WatchSession {
   /** Whether this epoch's tournament status has been acted on yet. */
   private tourneyResolved = false;
   private tourneyDecisionTimer: ReturnType<typeof setTimeout> | null = null;
+  /** The post-drop grace has been armed this epoch (armed once, when the
+   *  mission-drop burst first lands). */
+  private tourneyGraceArmed = false;
   private delayQueue: DelayedItem[] = [];
   /** Epoch ms when the delayed stream first has frames to serve (the
    *  live connect time + delayMs); meaningful only while buffering. */
@@ -394,6 +398,7 @@ export class WatchSession {
     // (A queue carried over from the previous epoch keeps draining; the
     // enqueued epoch marker rebuilds the replica when it is reached.)
     this.tourneyResolved = false;
+    this.tourneyGraceArmed = false;
     this.delayMs = this.options.tourneyDelayMs ?? 0;
     if (this.delayMs > 0) {
       this.enqueueDelayed({ kind: "epoch", at: Date.now(), epoch: this.epoch });
@@ -589,10 +594,10 @@ export class WatchSession {
       if (this.delayMs > 0) {
         this.delayReadyAt = Date.now() + this.delayMs;
         this.enqueueDelayed({ kind: "connected", at: Date.now() });
-        // Tournament-mode probe: sendGameVoteMenu answers with
-        // VoteFFAMode (tournament) or VoteTournamentMode (normal) under
-        // this key. Non-tournament servers lift the provisional delay.
-        conn.sendCommand("GetVoteMenu", "TourneyQuery");
+        // Tournament-mode probe: GetVoteMenu answers with VoteFFAMode
+        // (tournament) or VoteTournamentMode (normal) under this key. A
+        // reply resolves immediately; otherwise the post-drop grace
+        // (armed when the mission-drop burst lands) is the resolver.
         this.startTourneyDecision();
       }
       // Serve everyone who was waiting on the handshake. A live/warm
@@ -611,6 +616,7 @@ export class WatchSession {
       this.stopScoresPoll();
       this.stopScoreHudPoll();
       this.cancelReObserve();
+      this.cancelTourneyDecision();
       // Covers both cycle styles: servers that hard-disconnect at mission
       // change ("Server is cycling mission") and terminal disconnects.
       this.stopRecording(`disconnected: ${message ?? "unknown"}`);
@@ -758,6 +764,9 @@ export class WatchSession {
       } else {
         const tourney = this.watchState.tournamentMode;
         if (tourney !== null) this.setTournamentMode(tourney);
+        // Once the mission-drop burst has arrived, the banner (if any) is
+        // already in it — start the short grace, then resolve.
+        else if (this.watchState.sawMissionDropReady) this.armPostDropGrace();
       }
       for (const event of parsed.events) {
         if (event.parsedData) this.handleResponderEvent(event.parsedData);
@@ -897,12 +906,35 @@ export class WatchSession {
     }
   }
 
+  /**
+   * Kick off the tournament decision on connect: send a single
+   * GetVoteMenu probe. A VoteFFAMode/VoteTournamentMode reply (or the
+   * "Server is Running in Tournament Mode" banner) resolves immediately
+   * via the per-packet handler; otherwise armPostDropGrace, armed when
+   * the mission-drop burst lands, is the reliable resolver — so there's
+   * no need to re-send the probe.
+   */
   private startTourneyDecision(): void {
-    this.cancelTourneyDecision();
+    if (this.delayMs === 0) return;
+    this.connection?.sendCommand("GetVoteMenu", "TourneyQuery");
+  }
+
+  /**
+   * The mission-drop burst has landed (MsgClientReady). Any tournament
+   * banner is already in it, so give a short grace for packet spread and
+   * then resolve — banner seen ⇒ tournament, none ⇒ not. Armed once per
+   * epoch; a banner/vote reply that beats the grace resolves first and
+   * cancels the timer via setTournamentMode.
+   */
+  private armPostDropGrace(): void {
+    if (this.tourneyGraceArmed || this.tourneyResolved || this.delayMs === 0) {
+      return;
+    }
+    this.tourneyGraceArmed = true;
     this.tourneyDecisionTimer = setTimeout(() => {
       this.tourneyDecisionTimer = null;
       this.setTournamentMode(this.watchState.tournamentMode === true);
-    }, TOURNEY_DECISION_GRACE_MS);
+    }, TOURNEY_POST_DROP_GRACE_MS);
   }
 
   private cancelTourneyDecision(): void {
@@ -1088,19 +1120,12 @@ export class WatchSession {
   private handleMissionCycle(trigger: string): void {
     if (!this.recorder || this.destroyed) return;
     // A cycle before Phase1 ever arrived (we joined mid-cycle): keep
-    // buffering — the from-connect stream stays valid across an in-place
-    // cycle, and the new mission's Phase1 flushes it under its name.
+    // buffering — the from-connect stream stays valid, and the new
+    // mission's Phase1 flushes it under its name.
     if (this.recorder.state === "buffering") return;
-    const now = Date.now();
-    if (now - this.lastCycleReconnectAt < CYCLE_RECONNECT_MIN_MS) {
-      relayLog.warn(
-        { address: this.key, trigger },
-        "Mission cycle too soon after last recording reconnect — riding in place",
-      );
-      this.stopRecording(`mission-cycle (${trigger}, riding in place)`);
-      return;
-    }
-    this.lastCycleReconnectAt = now;
+    // Every map change reconnects (a fresh epoch), however short the
+    // previous map was — so tournament mode is re-decided per mission
+    // rather than latched for the life of the connection.
     const lingerMs = cycleLingerMs();
     relayLog.info(
       { address: this.key, trigger, lingerMs },

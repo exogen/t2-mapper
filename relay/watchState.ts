@@ -103,6 +103,14 @@ export class WatchStateAccumulator {
    */
   tournamentMode: boolean | null = null;
 
+  /**
+   * The per-client mission-drop burst has arrived (MsgClientReady, the
+   * first message of clientMissionDropReady). The tournament banner, if
+   * any, rides in that same burst, so this marks the point after which
+   * the session can resolve the tournament decision on a short grace.
+   */
+  sawMissionDropReady = false;
+
   /** Stream-authoritative server name (MsgMissionDropInfo), when known. */
   get serverName(): string | undefined {
     return this.serverDisplayName;
@@ -449,6 +457,9 @@ export class WatchStateAccumulator {
     } else if (msgType === "MsgClientReady" && args.length >= 3) {
       this.gameClassName = this.resolveNetString(args[2]) || this.gameClassName;
       this.matchEnded = false;
+      // First message of the mission-drop burst — the tournament banner,
+      // if any, follows in the same burst.
+      this.sawMissionDropReady = true;
       // Mission-scoped (mirrors the browser): a same-map restart skips
       // beginMissionChange, so clear here too.
       this.matchStarted = false;
