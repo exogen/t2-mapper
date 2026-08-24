@@ -17,9 +17,14 @@ import {
   useGameEntityCountByRenderType,
 } from "../state/gameEntityStore";
 import { FaAngleDoubleDown, FaAngleDoubleUp } from "react-icons/fa";
-import { PiMouseLeftClickFill, PiMouseScroll } from "react-icons/pi";
+import {
+  PiMouseLeftClickFill,
+  PiMouseRightClickFill,
+  PiMouseScroll,
+} from "react-icons/pi";
 import { ReactNode, useEffect, useRef, useState } from "react";
 import { usePointerLocked } from "./usePointerLocked";
+import { countFollowableFlags, isFollowingPlayer } from "../state/watchFollow";
 import styles from "./KeyboardOverlay.module.css";
 import { useControls } from "./SettingsProvider";
 import { MdSwipe } from "react-icons/md";
@@ -35,6 +40,8 @@ function actionPressed(state: InputState, name: string): boolean {
 function Key({
   action,
   input,
+  actionAfter,
+  inputAfter,
   label,
   labelPosition = "hidden",
   labelSize = "fill",
@@ -45,6 +52,11 @@ function Key({
 }: {
   action: string | ActionSelector;
   input: ReactNode;
+  /** Second action + input on the far side of a right-positioned label,
+   *  making a 3-panel chip (e.g. "[←] Cycle player [→]"). Either action
+   *  highlights the chip; each input panel only highlights for its own. */
+  actionAfter?: string | ActionSelector;
+  inputAfter?: ReactNode;
   label: ReactNode;
   labelPosition?: "left" | "right" | "hidden";
   labelSize?: "auto" | "fill";
@@ -65,6 +77,13 @@ function Key({
       : (s: InputState) => actionPressed(s, action);
 
   const rawIsPressed = useInputControls(baseSelector);
+  const afterSelector =
+    typeof actionAfter === "function"
+      ? actionAfter
+      : actionAfter != null
+        ? (s: InputState) => actionPressed(s, actionAfter)
+        : () => false;
+  const afterPressed = useInputControls(afterSelector);
 
   useEffect(() => {
     if (!debounce) return;
@@ -82,11 +101,14 @@ function Key({
   }, [rawIsPressed, debounce]);
 
   const isPressed = debounce ? held : rawIsPressed;
+  // In a 3-panel chip, each input panel only highlights for its own action.
+  const perInput = inputAfter != null;
 
   return (
     <div
       className={styles.Key}
-      data-pressed={isPressed}
+      data-pressed={isPressed || afterPressed}
+      data-per-input={perInput}
       data-size={size}
       data-disabled={disabled}
     >
@@ -104,13 +126,30 @@ function Key({
           ))}
         </div>
       ) : (
-        <span className={styles.Input} data-size={inputSize}>
+        <span
+          className={styles.Input}
+          data-size={inputSize}
+          data-pressed={perInput ? isPressed : undefined}
+        >
           {input}
         </span>
       )}
       {labelPosition === "right" ? (
-        <span className={styles.Label} data-size={labelSize}>
+        <span
+          className={styles.Label}
+          data-size={labelSize}
+          data-flanked={inputAfter != null}
+        >
           {label}
+        </span>
+      ) : null}
+      {inputAfter != null ? (
+        <span
+          className={styles.Input}
+          data-size={inputSize}
+          data-pressed={afterPressed}
+        >
+          {inputAfter}
         </span>
       ) : null}
     </div>
@@ -235,15 +274,83 @@ function OrbitZoomKey() {
   );
 }
 
-function RotateCameraKey() {
+function RotateCameraRow() {
   return (
-    <Key
-      action={(s) => (s.dragLook as DragState | undefined)?.dragging ?? false}
-      input={<MdSwipe className={styles.MouseIcon} />}
-      label="Rotate camera"
-      labelPosition="right"
-      inputSize="auto"
-    />
+    <div className={styles.Row}>
+      <Key
+        action={(s) => (s.dragLook as DragState | undefined)?.dragging ?? false}
+        input={<MdSwipe className={styles.MouseIcon} />}
+        label="Rotate camera"
+        labelPosition="right"
+        inputSize="auto"
+      />
+    </div>
+  );
+}
+
+/** Pointer-locked player cycling: right click = previous, left = next. */
+function CyclePlayerRow() {
+  return (
+    <div className={styles.Row}>
+      <Key
+        action="prevPlayer"
+        input={<PiMouseRightClickFill className={styles.MouseIcon} />}
+        actionAfter="nextPlayer"
+        inputAfter={<PiMouseLeftClickFill className={styles.MouseIcon} />}
+        label="Cycle player"
+        labelPosition="right"
+        inputSize="auto"
+      />
+    </div>
+  );
+}
+
+/**
+ * Follow-flag hint row, shaped by how many flags are in scope: a single
+ * key, a 3-panel pair (like player cycling), or a 1–n range like map
+ * mode's camera select. Flags stand in for the mission's observer camera
+ * spots (never sent over the wire) — see FLAG_FOLLOW_INPUT. Flag
+ * entities mutate in place without re-renders, so the count is polled.
+ * Fills the "Cycle player" slot in its column — callers only render it
+ * when that (and other higher-priority hints) are hidden, keeping
+ * columns at most two rows tall; `fallback` renders instead when no
+ * flags are in scope. The keys work regardless of what's shown.
+ */
+function FollowFlagKey({ fallback = null }: { fallback?: ReactNode }) {
+  const [count, setCount] = useState(0);
+  useEffect(() => {
+    const update = () => setCount(Math.min(countFollowableFlags(), 9));
+    update();
+    const id = setInterval(update, 1000);
+    return () => clearInterval(id);
+  }, []);
+  if (count === 0) return fallback;
+  return (
+    <div className={styles.Row}>
+      {count === 2 ? (
+        <Key
+          action="followFlag1"
+          input="1"
+          actionAfter="followFlag2"
+          inputAfter="2"
+          label="Follow flag"
+          labelPosition="right"
+          inputSize="auto"
+        />
+      ) : (
+        <Key
+          action={(s) =>
+            Array.from({ length: count }, (_, i) =>
+              actionPressed(s, `followFlag${i + 1}`),
+            ).some(Boolean)
+          }
+          input={count === 1 ? "1" : <>1&thinsp;&ndash;&thinsp;{count}</>}
+          label="Follow flag"
+          labelPosition="right"
+          inputSize="auto"
+        />
+      )}
+    </div>
   );
 }
 
@@ -288,11 +395,7 @@ function FreeFlyOverlay() {
         </div>
       </div>
       <div className={styles.Column} data-height="compact">
-        {!isPointerLocked ? (
-          <div className={styles.Row}>
-            <RotateCameraKey />
-          </div>
-        ) : null}
+        {!isPointerLocked ? <RotateCameraRow /> : null}
         {cameraCount > 0 && (
           <div className={styles.Row}>
             <SelectCameraKey />
@@ -306,11 +409,14 @@ function FreeFlyOverlay() {
 function CommandCircuitOverlay({
   followToggle,
   showObserverCycle,
+  showFlagFollow,
 }: {
   /** Current stream mode when the follow toggle applies (demo/live). */
   followToggle?: "follow" | "free";
   /** Live mode: show the observed-player cycling hint. */
   showObserverCycle?: boolean;
+  /** Number-key flag follow available (demo / watch spectate). */
+  showFlagFollow?: boolean;
 }) {
   return (
     <>
@@ -351,17 +457,23 @@ function CommandCircuitOverlay({
       </div>
       {followToggle && (
         <div className={styles.Column} data-height="compact">
-          {showObserverCycle && (
+          {/* The cycle slot: player cycling while following, else the
+              follow-flag hint (columns stay ≤2 rows). */}
+          {showObserverCycle ? (
             <div className={styles.Row}>
               <Key
-                action="observeNextPlayer"
-                label="Next player"
-                input="→"
+                action="observePrevPlayer"
+                input="←"
+                actionAfter="observeNextPlayer"
+                inputAfter="→"
+                label="Cycle player"
                 labelPosition="right"
                 inputSize="auto"
               />
             </div>
-          )}
+          ) : showFlagFollow ? (
+            <FollowFlagKey />
+          ) : null}
           <div className={styles.Row}>
             <Key
               action="toggleCommandFollow"
@@ -395,18 +507,26 @@ function CommandCircuitOverlay({
  */
 function DemoCameraOverlay() {
   const cameraMode = useStore(streamPlaybackStore, (s) => s.cameraMode);
+  const followEntityId = useStore(streamPlaybackStore, (s) => s.followEntityId);
+  const followFlagSlot = useStore(streamPlaybackStore, (s) => s.followFlagSlot);
   const isPointerLocked = usePointerLocked();
   const isFly = cameraMode === "freeFly";
   const isFollow = cameraMode === "orbitOverride";
   const following = isFollow || cameraMode === "firstPersonOverride";
   // Label names the mode F switches TO (same copy as ObserverOverlay).
+  // Flag follow is a "secret" cycle slot between original and free-fly
+  // (number keys only) — from it, F resumes the cycle at free-fly.
+  const playerFollow =
+    followEntityId != null && followFlagSlot == null && isFollowingPlayer();
   const nextModeLabel =
     cameraMode === "original"
       ? "Free-fly mode"
       : cameraMode === "freeFly"
         ? "Follow mode"
         : cameraMode === "orbitOverride"
-          ? "First-person mode"
+          ? playerFollow
+            ? "First-person mode"
+            : "Free-fly mode"
           : "Original view";
   return (
     <>
@@ -429,22 +549,23 @@ function DemoCameraOverlay() {
         </div>
       ) : null}
       <div className={styles.Column} data-height="compact">
-        {(isFly || isFollow) && !isPointerLocked ? (
-          <div className={styles.Row}>
-            <RotateCameraKey />
-          </div>
-        ) : null}
-        {following && isPointerLocked ? (
-          <div className={styles.Row}>
-            <Key
-              action="nextPlayer"
-              label="Next player"
-              input={<PiMouseLeftClickFill className={styles.MouseIcon} />}
-              labelPosition="right"
-              inputSize="auto"
-            />
-          </div>
-        ) : null}
+        {/* One prioritized slot above the F key (columns stay ≤2 rows):
+            player cycling while locked on a player; rotate during an
+            unlocked player follow; otherwise the follow-flag hint, with
+            rotate as its no-flags fallback. */}
+        {following && isPointerLocked && followFlagSlot == null ? (
+          <CyclePlayerRow />
+        ) : following && followFlagSlot == null && !isPointerLocked ? (
+          <RotateCameraRow />
+        ) : (
+          <FollowFlagKey
+            fallback={
+              (isFly || isFollow) && !isPointerLocked ? (
+                <RotateCameraRow />
+              ) : null
+            }
+          />
+        )}
         <div className={styles.Row}>
           <Key
             action="toggleObserverMode"
@@ -500,14 +621,20 @@ function ObserverOverlay({
   const inputMode = mode ?? contextMode;
   const following = inputMode === "follow" || inputMode === "firstPerson";
   const isPointerLocked = usePointerLocked();
+  const followEntityId = useStore(streamPlaybackStore, (s) => s.followEntityId);
+  const followFlagSlot = useStore(streamPlaybackStore, (s) => s.followFlagSlot);
   // The observer key cycles fly → follow → first person (watch mode);
   // the label names the NEXT mode. Live observers only toggle fly↔follow.
+  // Flag follow is a "secret" cycle slot (number keys only) — from it, F
+  // goes back to free-fly, never first person.
+  const playerFollow =
+    followEntityId != null && followFlagSlot == null && isFollowingPlayer();
   const nextModeLabel =
     inputMode === "fly"
       ? "Follow mode"
       : inputMode === "firstPerson"
         ? "Free-fly mode"
-        : mode != null
+        : mode != null && playerFollow
           ? "First-person mode"
           : "Free-fly mode";
   return (
@@ -529,21 +656,22 @@ function ObserverOverlay({
         </div>
       </div>
       <div className={styles.Column} data-height="compact">
-        {!isPointerLocked ? (
-          <div className={styles.Row}>
-            <RotateCameraKey />
-          </div>
-        ) : null}
-        {following && isPointerLocked ? (
-          <div className={styles.Row}>
-            <Key
-              action="nextPlayer"
-              label="Next player"
-              input={<PiMouseLeftClickFill className={styles.MouseIcon} />}
-              labelPosition="right"
-              inputSize="auto"
-            />
-          </div>
+        {/* One prioritized slot above the F key (columns stay ≤2 rows):
+            player cycling while locked on a player; rotate during an
+            unlocked player follow; otherwise the follow-flag hint —
+            watch spectate only (the sensor-group gate rejects
+            AttachCommanderCamera for real observers, so they don't get
+            the binding) — with rotate as the no-flags fallback. */}
+        {following && isPointerLocked && followFlagSlot == null ? (
+          <CyclePlayerRow />
+        ) : following && followFlagSlot == null && !isPointerLocked ? (
+          <RotateCameraRow />
+        ) : mode != null ? (
+          <FollowFlagKey
+            fallback={!isPointerLocked ? <RotateCameraRow /> : null}
+          />
+        ) : !isPointerLocked ? (
+          <RotateCameraRow />
         ) : null}
         <div className={styles.Row}>
           <Key
@@ -603,6 +731,7 @@ export function KeyboardOverlay() {
             isDemo || isLive ? (ccFollow ? "follow" : "free") : undefined
           }
           showObserverCycle={(isLive || isDemo) && ccFollow}
+          showFlagFollow={isDemo || (isLive && isWatcher)}
         />
       )}
       {isLiveObserver && !isCommandCircuit && (

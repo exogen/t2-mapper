@@ -423,6 +423,10 @@ export function StreamingController({
     if (isSeeking) {
       lastSeekTimeRef.current = playback.seekTime;
       playbackClockRef.current = playback.seekTime;
+      // In-flight sounds belong to the old timeline position. Loops that
+      // should still be playing at the target re-trigger from ghost state
+      // (sound slots, jet, weapon fire, projectiles) within a frame or two.
+      stopAllTrackedSounds();
     }
 
     // Advance the shared effect clock so all effect timers (particles,
@@ -707,6 +711,10 @@ export function StreamingController({
           _orbitTarget.y += currentCamera.orbitOffset;
         } else if (orbitEntity?.type === "Player") {
           _orbitTarget.y += 1.0;
+        } else if (((orbitEntity?.targetRenderFlags ?? 0) & 0x2) !== 0) {
+          // Flag follow (keys 1/2): the flag shape is ~2.35m tall with its
+          // origin at the base — orbit its center, not the ground.
+          _orbitTarget.y += 1.2;
         }
 
         let hasDirection = false;

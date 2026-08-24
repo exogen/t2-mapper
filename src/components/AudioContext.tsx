@@ -20,6 +20,17 @@ interface AudioContextType {
 
 const AudioContext = createContext<AudioContextType | undefined>(undefined);
 
+// Page-lifetime singletons. The listener owns the Web Audio graph: its gain
+// node is wired to the speakers in its constructor, and every sound ever
+// created keeps routing through the listener it was built with. Recreating
+// the listener (as this once did on every default-camera switch — observer ↔
+// command circuit) orphaned all in-flight sounds on a still-connected graph:
+// they kept playing forever, immune to the volume slider and mute. One
+// listener, moved between cameras, means volume/suspend always reach every
+// sound.
+let _audioListener: AudioListener | null = null;
+let _audioLoader: AudioLoader | null = null;
+
 /**
  * AudioProvider initializes the AudioLoader and AudioListener for spatial audio.
  * Must be rendered inside the Canvas component.
@@ -37,23 +48,35 @@ export function AudioProvider({ children }: { children: ReactNode }) {
   const reconcileRef = useRef<() => void>(() => {});
 
   useEffect(() => {
-    // Create audio loader
-    const audioLoader = new AudioLoader();
-
-    // Create listener if not already present
-    let listener = camera.children.find(
-      (child) => child instanceof AudioListener,
-    ) as AudioListener | undefined;
-
-    if (!listener) {
-      listener = new AudioListener();
-      camera.add(listener);
+    _audioLoader ??= new AudioLoader();
+    if (!_audioListener) {
+      _audioListener = new AudioListener();
+      // Safety limiter between the master gain and the speakers. Dozens of
+      // simultaneous effects sum well past full scale and hard-clip at the
+      // destination — harsh distortion that reads as crackle. A compressor
+      // with a high ratio and fast attack transparently catches the peaks
+      // instead. (setFilter wires gain → limiter → destination.)
+      const ctx = _audioListener.context;
+      const limiter = ctx.createDynamicsCompressor();
+      limiter.threshold.value = -6;
+      limiter.knee.value = 6;
+      limiter.ratio.value = 12;
+      limiter.attack.value = 0.003;
+      limiter.release.value = 0.25;
+      _audioListener.setFilter(limiter);
     }
+    const audioLoader = _audioLoader;
+    const listener = _audioListener;
+    camera.add(listener);
 
-    setAudioContext({
-      audioLoader,
-      audioListener: listener,
-    });
+    // Referentially stable across camera switches so useAudio() consumers
+    // (every shape/player/emitter) don't re-render when the command circuit
+    // opens or closes.
+    setAudioContext((prev) =>
+      prev.audioListener === listener && prev.audioLoader === audioLoader
+        ? prev
+        : { audioLoader, audioListener: listener },
+    );
 
     // A user gesture is required before the browser lets the AudioContext
     // resume (autoplay policy). Reconcile on any gesture: a stream that
@@ -68,7 +91,7 @@ export function AudioProvider({ children }: { children: ReactNode }) {
       document.removeEventListener("click", onGesture);
       document.removeEventListener("keydown", onGesture);
       document.removeEventListener("touchend", onGesture);
-      if (listener) camera.remove(listener);
+      camera.remove(listener);
     };
   }, [camera]);
 

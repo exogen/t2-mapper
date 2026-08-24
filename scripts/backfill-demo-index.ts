@@ -257,12 +257,16 @@ async function analyzeDemo(
         mission: pending.mission,
         gameType: watchState.missionType ?? "",
         startMs: pending.startMs,
+        tournament: watchState.tournamentMode ?? false,
       };
       games.push(lastGame);
       pending = null;
     }
     if (lastGame && !lastGame.gameType && watchState.missionType) {
       lastGame.gameType = watchState.missionType;
+    }
+    if (lastGame && !lastGame.tournament && watchState.tournamentMode) {
+      lastGame.tournament = true;
     }
 
     for (const raw of watchState.getRosterNames()) {

@@ -4,20 +4,3 @@
   right: 0;
   bottom: 0;
 }
-
-.AxisLabel {
-  font-size: 12px;
-  pointer-events: none;
-}
-
-.AxisLabel[data-axis="x"] {
-  color: rgb(255, 153, 0);
-}
-
-.AxisLabel[data-axis="y"] {
-  color: rgb(153, 255, 0);
-}
-
-.AxisLabel[data-axis="z"] {
-  color: rgb(0, 153, 255);
-}

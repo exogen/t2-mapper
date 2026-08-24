@@ -151,6 +151,10 @@ export interface StreamEntity {
   threads?: ThreadState[];
   /** Numeric ID of the ExplosionData datablock (for particle effect resolution). */
   explosionDataBlockId?: number;
+  /** Projectile has already detonated (client-side impact/expiry). The ghost
+   *  entity may linger until the server's delete arrives — flight effects
+   *  (trail, loop sound) must stop at the explosion, not at the delete. */
+  hasExploded?: boolean;
   /** Numeric ID of the ParticleEmitterData for in-flight trail particles. */
   maintainEmitterId?: number;
   /** Weapon image condition flags from ghost ImageMask data. */

@@ -12,8 +12,10 @@ import { useAudio } from "./AudioContext";
 import {
   resolveAudioProfile,
   getCachedAudioBuffer,
+  createPositionalAudio,
+  getSoundGeneration,
+  stopAndDetachSound,
   trackSound,
-  untrackSound,
   type ResolvedAudioProfile,
 } from "./AudioEmitter";
 import { getEffectiveSoundRate } from "./audioPlaybackRate";
@@ -32,6 +34,10 @@ interface SlotState {
   profileId: number;
   sound: PositionalAudio;
   profile: ResolvedAudioProfile;
+  /** Sound generation at play time. A bumped global generation means the
+   *  sound was stopped externally (seek / recording change), as opposed to
+   *  a non-looping profile simply finishing. */
+  gen: number;
 }
 
 /**
@@ -66,23 +72,25 @@ export function useEntitySoundSlots(
   useEffect(() => {
     return () => {
       for (const slot of slotsRef.current) {
-        if (!slot) continue;
-        untrackSound(slot.sound);
-        try {
-          slot.sound.stop();
-        } catch {
-          /* already stopped */
-        }
-        try {
-          slot.sound.disconnect();
-        } catch {
-          /* already disconnected */
-        }
-        slot.sound.parent?.remove(slot.sound);
+        if (slot) stopAndDetachSound(slot.sound);
       }
       slotsRef.current = Array.from({ length: MAX_SOUND_SLOTS }, () => null);
     };
   }, []);
+
+  // Turning audio off must silence loops that are already playing — the
+  // per-frame loop below early-returns while disabled, so it can't.
+  useEffect(() => {
+    if (audioEnabled) return;
+    const slots = slotsRef.current;
+    for (let i = 0; i < slots.length; i++) {
+      const slot = slots[i];
+      if (slot) {
+        stopAndDetachSound(slot.sound);
+        slots[i] = null;
+      }
+    }
+  }, [audioEnabled]);
 
   useFrame(() => {
     if (!audioEnabled || !audioListener || !audioLoader || !parentObject)
@@ -110,25 +118,24 @@ export function useEntitySoundSlots(
       const current = slots[i];
 
       if (shouldPlay && isPlaying) {
-        // Check if we need to start or change the sound.
-        if (
-          current &&
-          current.profileId === profileId &&
-          current.sound.isPlaying
-        ) {
+        if (current && current.profileId === profileId) {
           // Already playing the right sound — nothing to do.
-          continue;
+          if (current.sound.isPlaying) continue;
+          if (current.gen === getSoundGeneration()) {
+            // Non-looping profile finished naturally. The ghost latches
+            // `playing` until the server clears it, so don't restart —
+            // that would loop a one-shot.
+            continue;
+          }
+          // Stopped externally (seek / recording change) — clear the slot
+          // so the still-latched ghost state can restart the sound.
+          stopAndDetachSound(current.sound);
+          slots[i] = null;
         }
 
         // Stop old sound if profile changed.
         if (current && current.profileId !== profileId) {
-          untrackSound(current.sound);
-          try {
-            current.sound.stop();
-          } catch {
-            /* already stopped */
-          }
-          current.sound.parent?.remove(current.sound);
+          stopAndDetachSound(current.sound);
           slots[i] = null;
         }
 
@@ -137,12 +144,7 @@ export function useEntitySoundSlots(
         if (cached) {
           // Have profile + buffer — start playing.
           if (!slots[i]) {
-            const sound = new PositionalAudio(audioListener);
-            sound.setDistanceModel("inverse");
-            sound.setRefDistance(cached.profile.refDist);
-            sound.setMaxDistance(cached.profile.maxDist);
-            sound.setRolloffFactor(1);
-            sound.setVolume(cached.profile.volume);
+            const sound = createPositionalAudio(audioListener, cached.profile);
             sound.setBuffer(cached.buffer);
             sound.setLoop(cached.profile.isLooping);
             sound.setPlaybackRate(getEffectiveSoundRate());
@@ -153,7 +155,12 @@ export function useEntitySoundSlots(
             } catch {
               /* AudioContext suspended */
             }
-            slots[i] = { profileId, sound, profile: cached.profile };
+            slots[i] = {
+              profileId,
+              sound,
+              profile: cached.profile,
+              gen: getSoundGeneration(),
+            };
           }
         } else {
           // Need to resolve — do it once, then it'll be picked up next frame.
@@ -178,13 +185,7 @@ export function useEntitySoundSlots(
       } else {
         // Should not be playing — stop if active.
         if (current) {
-          untrackSound(current.sound);
-          try {
-            current.sound.stop();
-          } catch {
-            /* already stopped */
-          }
-          current.sound.parent?.remove(current.sound);
+          stopAndDetachSound(current.sound);
           slots[i] = null;
         }
       }

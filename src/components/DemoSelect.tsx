@@ -125,8 +125,10 @@ function DemoItemContent({ demo }: { demo: DemoIndexEntry }) {
       <span className={styles.ItemMissionName}>
         {demo.server} · {formatRecordedTime(demo.recordedAt)} ·{" "}
         {formatDuration(demo.durationMs)} ·{" "}
-        <LuUsers className={styles.ItemPlayersIcon} aria-label="Players" />{" "}
-        {demo.players.length}
+        <span title={demo.players.join(", ") || undefined}>
+          <LuUsers className={styles.ItemPlayersIcon} aria-label="Players" />{" "}
+          {demo.players.length}
+        </span>
       </span>
     </>
   );

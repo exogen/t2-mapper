@@ -7,11 +7,11 @@ import {
   getEffectiveSoundRate,
   getSoundGeneration,
   trackSound,
-  untrackSound,
+  stopAndDetachSound,
 } from "./AudioEmitter";
 import { useSettings } from "./SettingsProvider";
 import { useStreamSnapshot } from "../state/streamSnapshotStore";
-import type { ChatMessage } from "../stream/types";
+import { useRecording } from "./usePlayback";
 
 /**
  * Plays non-positional sound effects for chat messages with ~w sound tags.
@@ -22,7 +22,16 @@ export function ChatSoundPlayer() {
   const { audioEnabled } = useSettings();
   const messages = useStreamSnapshot((snap) => snap?.chatMessages);
   const timeSec = useStreamSnapshot((snap) => snap?.timeSec);
-  const playedSetRef = useRef(new WeakSet<ChatMessage>());
+  // Dedupe by message id, which is deterministic across seeks (a backward
+  // seek replays the demo from the start with the counter reset, assigning
+  // the same ids to the same messages) — object identity is NOT: the replay
+  // rebuilds message objects, so a WeakSet would re-fire every voice bind
+  // near the seek target. Ids restart per recording, so reset on change.
+  const playedIdsRef = useRef(new Set<number>());
+  const recording = useRecording();
+  useEffect(() => {
+    playedIdsRef.current.clear();
+  }, [recording]);
   // Track active voice chat sound per sender so a new voice bind from the
   // same player stops their previous one (matching Tribes 2 behavior).
   const activeBySenderRef = useRef(new Map<string, Audio<GainNode>>());
@@ -37,11 +46,11 @@ export function ChatSoundPlayer() {
     ) {
       return;
     }
-    const played = playedSetRef.current;
+    const played = playedIdsRef.current;
     const activeBySender = activeBySenderRef.current;
     for (const msg of messages) {
-      if (played.has(msg)) continue;
-      played.add(msg);
+      if (played.has(msg.id)) continue;
+      played.add(msg.id);
       if (!msg.soundPath) continue;
       // Skip sounds that are too old (e.g. after seeking).
       if (Math.abs(timeSec - msg.timeSec) > 2) continue;
@@ -56,17 +65,7 @@ export function ChatSoundPlayer() {
           if (sender) {
             const prev = activeBySender.get(sender);
             if (prev) {
-              try {
-                prev.stop();
-              } catch {
-                /* already stopped */
-              }
-              untrackSound(prev);
-              try {
-                prev.disconnect();
-              } catch {
-                /* already disconnected */
-              }
+              stopAndDetachSound(prev);
               activeBySender.delete(sender);
             }
           }
@@ -77,19 +76,17 @@ export function ChatSoundPlayer() {
           if (sender) {
             activeBySender.set(sender, sound);
           }
-          sound.play();
-          // Clean up the source node once playback finishes.
-          (sound.source as AudioBufferSourceNode).onended = () => {
-            untrackSound(sound);
-            try {
-              sound.disconnect();
-            } catch {
-              /* already disconnected */
-            }
+          // Chain (not replace) three's onEnded so isPlaying bookkeeping
+          // stays correct.
+          const baseOnEnded = sound.onEnded.bind(sound);
+          sound.onEnded = () => {
+            baseOnEnded();
+            stopAndDetachSound(sound);
             if (sender && activeBySender.get(sender) === sound) {
               activeBySender.delete(sender);
             }
           };
+          sound.play();
         });
       } catch {
         // File not in manifest — skip silently.

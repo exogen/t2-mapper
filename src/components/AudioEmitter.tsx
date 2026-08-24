@@ -18,7 +18,7 @@ import { FloatingLabel } from "./FloatingLabel";
 import { engineStore } from "../state/engineStore";
 import { AudioEmitterEntity } from "../state/gameEntityTypes";
 import {
-  getAdjustAudioSpeed,
+  getEffectiveSoundRate,
   onAdjustAudioSpeedChange,
 } from "./audioPlaybackRate";
 
@@ -33,11 +33,12 @@ export const audioBufferCache = new Map<string, AudioBuffer>();
 const _activeSounds = new Map<Audio<GainNode | PannerNode>, number>();
 
 // Re-apply playback rate to all active sounds when the flag changes.
-onAdjustAudioSpeedChange((value) => {
-  const rate = engineStore.getState().playback.rate;
+// (The flag is updated before listeners fire, so getEffectiveSoundRate —
+// which also applies the pitch-shift clamp — reads the new value.)
+onAdjustAudioSpeedChange(() => {
   for (const [sound, basePitch] of _activeSounds) {
     try {
-      sound.setPlaybackRate(basePitch * (value ? rate : 1));
+      sound.setPlaybackRate(getEffectiveSoundRate(basePitch));
     } catch {
       /* disposed */
     }
@@ -55,6 +56,27 @@ export function trackSound(
 /** Unregister a tracked sound. */
 export function untrackSound(sound: Audio<GainNode | PannerNode>): void {
   _activeSounds.delete(sound);
+}
+
+/**
+ * Stop a sound and fully discard it: untrack, stop, disconnect, and remove
+ * from its parent. For sounds being thrown away — not ones whose node will
+ * be reused (the jet loop, for example, keeps its node parented so it can
+ * restart).
+ */
+export function stopAndDetachSound(sound: Audio<GainNode | PannerNode>): void {
+  untrackSound(sound);
+  try {
+    sound.stop();
+  } catch {
+    /* already stopped */
+  }
+  try {
+    sound.disconnect();
+  } catch {
+    /* already disconnected */
+  }
+  sound.removeFromParent();
 }
 
 /**
@@ -86,15 +108,22 @@ export function stopAllTrackedSounds(): void {
       /* already disconnected */
     }
   }
+  // One-shots parent themselves into the scene and stop() suppresses their
+  // self-cleanup (three nulls source.onended), so detach them here. Looping
+  // sounds stay parented — their owning components manage them.
+  for (const sound of _oneShotSounds) {
+    sound.removeFromParent();
+  }
   _activeSounds.clear();
+  _oneShotSounds.clear();
 }
 
 engineStore.subscribe(
   (state) => state.playback.rate,
-  (rate) => {
+  () => {
     for (const [sound, basePitch] of _activeSounds) {
       try {
-        sound.setPlaybackRate(basePitch * (getAdjustAudioSpeed() ? rate : 1));
+        sound.setPlaybackRate(getEffectiveSoundRate(basePitch));
       } catch {
         // Sound may have been disposed.
       }
@@ -139,9 +168,52 @@ export function resolveAudioProfile(
 }
 
 /**
+ * Create a PositionalAudio with the panner configured for this app.
+ * three defaults panningModel to "HRTF" — per-source convolution, the
+ * expensive mode. Torque used simple stereo attenuation; "equalpower"
+ * matches it and costs a fraction as much on the audio thread, which is
+ * what matters at dozens of concurrent sources (audio-thread overload is
+ * audible as crackling).
+ *
+ * With `attenuation`, also applies the shared Torque distance model:
+ * "inverse" with rolloff 1 is exactly Torque's refDist/d curve. Web
+ * Audio's maxDistance param is a no-op for this model — Torque's hard
+ * cutoff at maxDist is the callers' range culling.
+ */
+export function createPositionalAudio(
+  audioListener: AudioListener,
+  attenuation?: { refDist: number; maxDist: number; volume: number },
+): PositionalAudio {
+  const sound = new PositionalAudio(audioListener);
+  sound.panner.panningModel = "equalpower";
+  if (attenuation) {
+    sound.setDistanceModel("inverse");
+    sound.setRefDistance(attenuation.refDist);
+    sound.setMaxDistance(attenuation.maxDist);
+    sound.setRolloffFactor(1);
+    sound.setVolume(attenuation.volume);
+  }
+  return sound;
+}
+
+// Cap on simultaneous one-shot effects. Beyond this the mix is
+// indistinguishable chaos, but every extra source still costs audio-thread
+// CPU. The distance cull runs first, so budget goes to audible sounds.
+const MAX_ONE_SHOTS = 32;
+const _oneShotSounds = new Set<Audio<GainNode | PannerNode>>();
+const _listenerPos = new Vector3();
+const _soundPos = new Vector3();
+
+/**
  * Play a one-shot sound effect. For 3D sounds, creates a PositionalAudio
  * attached to `parent` (at `position` if given, otherwise at the parent's
  * origin); for 2D, creates a non-positional Audio. Self-cleans on end.
+ *
+ * 3D one-shots past the profile's maxDistance are skipped entirely: Torque
+ * hard-stops sounds at maxDistance, but Web Audio's "inverse" model never
+ * reaches zero gain (its maxDistance param only applies to the "linear"
+ * model), so without this every shot anywhere on the map would be an
+ * actively-processed source.
  */
 export function playOneShotSound(
   resolved: ResolvedAudioProfile,
@@ -157,52 +229,58 @@ export function playOneShotSound(
     // File not in manifest — skip silently.
     return;
   }
-  const rate = engineStore.getState().playback.rate;
+  const is3D = resolved.is3D && !!parent;
+  if (is3D) {
+    if (_oneShotSounds.size >= MAX_ONE_SHOTS) return;
+    audioListener.getWorldPosition(_listenerPos);
+    if (position) {
+      parent!.updateWorldMatrix(true, false);
+      _soundPos.copy(position);
+      parent!.localToWorld(_soundPos);
+    } else {
+      parent!.getWorldPosition(_soundPos);
+    }
+    if (_soundPos.distanceTo(_listenerPos) > resolved.maxDist) return;
+  }
   const gen = _soundGeneration;
   getCachedAudioBuffer(url, audioLoader, (buffer) => {
     if (gen !== _soundGeneration) return;
     try {
-      if (resolved.is3D && parent) {
-        const sound = new PositionalAudio(audioListener);
+      if (is3D) {
+        // Re-check the cap: the check above ran at call time, but a burst
+        // of first plays of a not-yet-cached file all pass it before any
+        // of their async loads land here.
+        if (_oneShotSounds.size >= MAX_ONE_SHOTS) return;
+        const sound = createPositionalAudio(audioListener, resolved);
         sound.setBuffer(buffer);
-        // Torque uses inverse distance: gain = refDist / distance,
-        // hard cutoff at maxDistance. Web Audio's "inverse" model matches.
-        sound.setDistanceModel("inverse");
-        sound.setRefDistance(resolved.refDist);
-        sound.setMaxDistance(resolved.maxDist);
-        sound.setRolloffFactor(1);
-        sound.setVolume(resolved.volume);
-        sound.setPlaybackRate(getAdjustAudioSpeed() ? rate : 1);
+        sound.setPlaybackRate(getEffectiveSoundRate());
         if (position) {
           sound.position.copy(position);
         }
-        parent.add(sound);
+        parent!.add(sound);
         _activeSounds.set(sound, 1);
-        sound.play();
-        (sound.source as AudioBufferSourceNode).onended = () => {
-          _activeSounds.delete(sound);
-          try {
-            sound.disconnect();
-          } catch {
-            /* already disconnected */
-          }
-          parent.remove(sound);
+        _oneShotSounds.add(sound);
+        // Chain (not replace) three's onEnded so isPlaying bookkeeping —
+        // which also gates the panner's per-frame updates — stays correct.
+        const baseOnEnded = sound.onEnded.bind(sound);
+        sound.onEnded = () => {
+          baseOnEnded();
+          _oneShotSounds.delete(sound);
+          stopAndDetachSound(sound);
         };
+        sound.play();
       } else {
         const sound = new Audio(audioListener);
         sound.setBuffer(buffer);
         sound.setVolume(resolved.volume);
-        sound.setPlaybackRate(getAdjustAudioSpeed() ? rate : 1);
+        sound.setPlaybackRate(getEffectiveSoundRate());
         _activeSounds.set(sound, 1);
-        sound.play();
-        (sound.source as AudioBufferSourceNode).onended = () => {
-          _activeSounds.delete(sound);
-          try {
-            sound.disconnect();
-          } catch {
-            /* already disconnected */
-          }
+        const baseOnEnded = sound.onEnded.bind(sound);
+        sound.onEnded = () => {
+          baseOnEnded();
+          stopAndDetachSound(sound);
         };
+        sound.play();
       }
     } catch {
       // Playback failure (e.g. suspended AudioContext) — skip silently.
@@ -284,13 +362,12 @@ export const AudioEmitter = memo(function AudioEmitter({
 
     let sound: Audio<GainNode | PannerNode>;
     if (is3D) {
-      const positional = new PositionalAudio(audioListener);
+      const positional = createPositionalAudio(audioListener, {
+        refDist: minDistance,
+        maxDist: maxDistance,
+        volume,
+      });
       positional.position.copy(emitterPosRef.current);
-      positional.setDistanceModel("inverse");
-      positional.setRefDistance(minDistance);
-      positional.setMaxDistance(maxDistance);
-      positional.setRolloffFactor(1);
-      positional.setVolume(volume);
       sound = positional;
       scene.add(sound);
     } else {
@@ -321,6 +398,9 @@ export const AudioEmitter = memo(function AudioEmitter({
     audioLoader,
     audioListener,
     is3D,
+    // A ghost update can change the emitter's file; recreate the sound so
+    // the new buffer actually loads (loadAndPlay only loads once per sound).
+    fileName,
     minDistance,
     maxDistance,
     volume,

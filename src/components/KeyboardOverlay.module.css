@@ -165,6 +165,20 @@
   color: #fff;
 }
 
+/* 3-panel chips: the chip keeps the standard pressed background (the
+   translucent pressed border composites over it, so the border matches
+   regular keys exactly); the unpressed input panel covers its slice with
+   a muted grayish green instead. */
+.Key[data-per-input="true"][data-pressed="true"]:not([data-disabled="true"])
+  .Input[data-pressed="false"] {
+  background: rgba(58, 92, 87, 0.8);
+}
+
+.Key[data-pressed="true"]:not([data-disabled="true"])
+  .Input[data-pressed="false"] {
+  color: rgba(255, 255, 255, 0.3);
+}
+
 .MultiInput .Input {
   flex: 0 0 auto;
   border: 0;

@@ -15,7 +15,12 @@ import {
   RedFormat,
   UnsignedByteType,
   Vector3,
+  type Group,
 } from "three";
+import {
+  freezeStaticMatrices,
+  unfreezeStaticMatrices,
+} from "./staticMatrices";
 import type { TerrainBlockEntity } from "../state/gameEntityTypes";
 import { useIsDebugTourTarget } from "../state/cameraTourStore";
 import { useCommandCircuit } from "../state/commandCircuitStore";
@@ -644,6 +649,18 @@ export const TerrainBlock = memo(function TerrainBlock({
     // frozen shadow map (rare — only when the camera crosses a block).
     invalidateShadows();
   });
+  // Terrain never moves: the tile mesh and the pooled InstancedMesh keep
+  // fixed object transforms (pooled tiles reposition via instance
+  // matrices, which are independent of matrixAutoUpdate). Freeze the
+  // subtree so three stops recomposing the matrices every frame.
+  const staticRootRef = useRef<Group>(null);
+  useEffect(() => {
+    const root = staticRootRef.current;
+    if (!root) return;
+    freezeStaticMatrices(root);
+    return () => unfreezeStaticMatrices(root);
+  }, [terrain, sharedGeometry, packedAlphaTextures, basePosition, poolSize]);
+
   if (!terrain || !sharedGeometry || !packedAlphaTextures) {
     log.debug(
       "Not ready: terrain=%s geometry=%s alpha=%s",
@@ -654,7 +671,7 @@ export const TerrainBlock = memo(function TerrainBlock({
     return null;
   }
   return (
-    <>
+    <group ref={staticRootRef}>
       {/* Primary tile at (0,0) with emptySquares applied */}
       <TerrainTile
         tileX={0}
@@ -693,7 +710,7 @@ export const TerrainBlock = memo(function TerrainBlock({
           basePosition={basePosition}
         />
       )}
-    </>
+    </group>
   );
 });
 

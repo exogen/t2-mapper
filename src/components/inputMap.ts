@@ -52,10 +52,33 @@ export const LIVE_OBSERVER_INPUT = [
   { name: "toggleObserverMode", keys: ["KeyF"] },
 ] as const satisfies readonly InputMapEntry[];
 
+/**
+ * Flag follow while streaming (demo playback or watch spectate): the
+ * number keys orbit the flags (1 = Storm, 2 = Inferno; higher digits for
+ * games with more flags). The mission's observer camera spots aren't in
+ * the stream (the server never sends them), so the camera-select keys
+ * get flags instead.
+ */
+export const FLAG_FOLLOW_INPUT = [
+  { name: "followFlag1", keys: ["Digit1"] },
+  { name: "followFlag2", keys: ["Digit2"] },
+  { name: "followFlag3", keys: ["Digit3"] },
+  { name: "followFlag4", keys: ["Digit4"] },
+  { name: "followFlag5", keys: ["Digit5"] },
+  { name: "followFlag6", keys: ["Digit6"] },
+  { name: "followFlag7", keys: ["Digit7"] },
+  { name: "followFlag8", keys: ["Digit8"] },
+  { name: "followFlag9", keys: ["Digit9"] },
+] as const satisfies readonly InputMapEntry[];
+
 export const LIVE_FOLLOW_INPUT = [
   {
     name: "nextPlayer",
     keys: [{ type: "click", button: 0, whenPointerLocked: true }],
+  },
+  {
+    name: "prevPlayer",
+    keys: [{ type: "click", button: 2, whenPointerLocked: true }],
   },
 ] as const satisfies readonly InputMapEntry[];
 
@@ -76,11 +99,13 @@ export const COMMAND_CIRCUIT_TOGGLE_INPUT = [
  * Command circuit controls while streaming (demo playback or live): the
  * follow ↔ free-fly toggle (F — Space is play/pause in demos, and the
  * observer's own F toggle is unmounted while the CC is open) and the
- * next-player cycle (ArrowRight, like the non-CC observer click).
+ * next/prev player cycle (ArrowRight/ArrowLeft, like the non-CC
+ * observer's left/right click).
  */
 export const COMMAND_CIRCUIT_STREAM_INPUT = [
   { name: "toggleCommandFollow", keys: ["KeyF"] },
   { name: "observeNextPlayer", keys: ["ArrowRight"] },
+  { name: "observePrevPlayer", keys: ["ArrowLeft"] },
 ] as const satisfies readonly InputMapEntry[];
 
 /**
@@ -123,6 +148,7 @@ export type ActionName =
   | (typeof MAP_MODE_INPUT)[number]["name"]
   | (typeof DEMO_MODE_INPUT)[number]["name"]
   | (typeof LIVE_OBSERVER_INPUT)[number]["name"]
+  | (typeof FLAG_FOLLOW_INPUT)[number]["name"]
   | (typeof LIVE_FOLLOW_INPUT)[number]["name"]
   | (typeof TOUR_MODE_INPUT)[number]["name"]
   | (typeof COMMAND_CIRCUIT_TOGGLE_INPUT)[number]["name"]

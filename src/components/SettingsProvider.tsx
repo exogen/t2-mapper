@@ -30,6 +30,10 @@ import { setAdjustAudioSpeedFlag } from "./audioPlaybackRate";
 export const MIN_SPEED_MULTIPLIER = 0.01;
 export const MAX_SPEED_MULTIPLIER = 1;
 
+/** Render-scale fractions offered in the Graphics panel (of the standard
+ *  render resolution: devicePixelRatio clamped to [1, 2]). */
+export const RENDER_SCALE_OPTIONS: readonly number[] = [0.5, 0.75, 1];
+
 export const DEFAULT_MOUSE_SENSITIVITY = 32 / 16000; // 0.002
 export const MIN_MOUSE_SENSITIVITY = 1 / 16000;
 export const MAX_MOUSE_SENSITIVITY = 256 / 16000;
@@ -60,6 +64,10 @@ type SettingsContextType = {
   setSidebarOpen: StateSetter<boolean>;
   fpsLimit: number | null;
   setFpsLimit: StateSetter<number | null>;
+  /** 3D view resolution as a fraction of the standard render resolution
+   *  (devicePixelRatio clamped to [1, 2] — the r3f default). 1 = 100%. */
+  renderScale: number;
+  setRenderScale: StateSetter<number>;
   showInputOverlay: boolean;
   setShowInputOverlay: StateSetter<boolean>;
   showChat: boolean;
@@ -122,6 +130,7 @@ type PersistedSettings = {
   invertJoystick?: boolean;
   sidebarOpen?: boolean;
   fpsLimit?: number | null;
+  renderScale?: number;
   showInputOverlay?: boolean;
   showChat?: boolean;
   showReticle?: boolean;
@@ -181,6 +190,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   const [invertJoystick, setInvertJoystick] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [fpsLimit, setFpsLimit] = useState<number | null>(null);
+  const [renderScale, setRenderScale] = useState(1);
   const [showInputOverlay, setShowInputOverlay] = useState(true);
   const [showChat, setShowChat] = useState(true);
   const [showReticle, setShowReticle] = useState(true);
@@ -228,6 +238,8 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       setSidebarOpen,
       fpsLimit,
       setFpsLimit,
+      renderScale,
+      setRenderScale,
       showInputOverlay,
       setShowInputOverlay,
       showChat,
@@ -255,6 +267,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       adjustAudioSpeed,
       sidebarOpen,
       fpsLimit,
+      renderScale,
       showInputOverlay,
       showChat,
       showReticle,
@@ -381,6 +394,12 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     ) {
       setFpsLimit(savedSettings.fpsLimit!);
     }
+    if (
+      savedSettings.renderScale != null &&
+      RENDER_SCALE_OPTIONS.includes(savedSettings.renderScale)
+    ) {
+      setRenderScale(savedSettings.renderScale);
+    }
     if (savedSettings.showInputOverlay != null) {
       setShowInputOverlay(savedSettings.showInputOverlay);
     }
@@ -447,6 +466,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
         invertJoystick,
         sidebarOpen,
         fpsLimit,
+        renderScale,
         showInputOverlay,
         showChat,
         showReticle,
@@ -485,6 +505,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     invertJoystick,
     sidebarOpen,
     fpsLimit,
+    renderScale,
     showInputOverlay,
     showChat,
     showReticle,

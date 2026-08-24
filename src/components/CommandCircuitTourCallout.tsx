@@ -1,14 +1,13 @@
 import { useEffect, useRef } from "react";
-import { useFrame, useThree } from "@react-three/fiber";
+import { useFrame } from "@react-three/fiber";
 import type { Object3D, OrthographicCamera } from "three";
 import { useCameraTour } from "../state/cameraTourStore";
 import { gameEntityStore } from "../state/gameEntityStore";
 import { DEFAULT_TEAM_NAMES } from "../stringUtils";
 import { ScreenRectTracker } from "./screenRectTracker";
 import { tourFlash } from "./commandCircuitTourFlash";
-import styles from "./CommandCircuitTourCallout.module.css";
-
-const SVG_NS = "http://www.w3.org/2000/svg";
+import { drawCalloutLines, drawLabelChip } from "./canvasLabel";
+import { useOverlayLabel, type OverlayLabel } from "./LabelOverlay";
 
 /**
  * Minimum circle radius, so tiny objects (flags, items) still read.
@@ -19,16 +18,7 @@ const MIN_RADIUS = 20;
  */
 const RADIUS_PADDING = 10;
 /**
- * Length of the 45° leader segment off the circle, and of the horizontal
- * run to the label.
- */
-const LEADER_DIAGONAL = 16;
-const LEADER_RUN = 22;
-const SQRT1_2 = Math.SQRT1_2;
-
-/**
- * Fade in/out lengths; must cover the CSS animation durations so the
- * class isn't removed mid-animation.
+ * Fade in/out lengths (seconds).
  */
 const FADE_IN_DURATION = 0.35;
 const FADE_DURATION = 0.7;
@@ -36,6 +26,10 @@ const FADE_DURATION = 0.7;
  * How long after the green flash ends before the callout fades itself out.
  */
 const EXPIRE_DELAY = 0.5;
+
+/** The tour accent teal (the old .Circle/.Leader CSS stroke). */
+const TOUR_STROKE = "rgba(130, 225, 232, 0.65)";
+const LABEL_FONT_SIZE = 12;
 
 interface CalloutTarget {
   objectName: string;
@@ -48,14 +42,20 @@ interface CalloutTarget {
  */
 type PhaseName = "hidden" | "fadeIn" | "steady" | "fade" | "expire" | "done";
 
+/** Ease-out progress, matching the old CSS animations' feel. */
+function easeOut(t: number): number {
+  const clamped = Math.max(0, Math.min(1, t));
+  return 1 - (1 - clamped) * (1 - clamped);
+}
+
 /**
  * Futuristic callout for the active tour target in command circuit mode:
  * a circle enclosing the object's rendered bounds, a 45° leader line, and
- * the tour label at the end of a horizontal run. Geometry updates
- * imperatively every frame; the circle grows with the object's screen
- * footprint (a clipped label glides into view as the tour centers on the
- * target). The callout fades in on activation and out when the tour
- * moves on (still tracking the old target while it fades).
+ * the tour label at the end of a horizontal run — drawn by the shared
+ * LabelOverlay in the unified label style. The circle grows with the
+ * object's screen footprint (a clipped label glides into view as the tour
+ * centers on the target). The callout fades in on activation and out when
+ * the tour moves on (still tracking the old target while it fades).
  */
 export function CommandCircuitTourCallout() {
   const animation = useCameraTour((s) => s.animation);
@@ -91,47 +91,12 @@ function calloutLabel(target: { entityId: string; label: string }): string {
 }
 
 function TourCallout({ target }: { target: CalloutTarget | null }) {
-  const gl = useThree((state) => state.gl);
-  const partsRef = useRef<{
-    container: HTMLDivElement;
-    svg: SVGSVGElement;
-    circle: SVGCircleElement;
-    leader: SVGPathElement;
-    labelEl: HTMLDivElement;
-  } | null>(null);
-
   const targetRef = useRef<CalloutTarget | null>(null);
   useEffect(() => {
     targetRef.current = target;
   }, [target]);
 
-  useEffect(() => {
-    const container = document.createElement("div");
-    container.className = styles.Callout;
-    container.style.display = "none";
-
-    const svg = document.createElementNS(SVG_NS, "svg");
-    svg.setAttribute("class", styles.Lines);
-    const circle = document.createElementNS(SVG_NS, "circle");
-    circle.setAttribute("class", styles.Circle);
-    const leader = document.createElementNS(SVG_NS, "path");
-    leader.setAttribute("class", styles.Leader);
-    svg.append(circle, leader);
-
-    const labelEl = document.createElement("div");
-    labelEl.className = styles.Label;
-
-    container.append(svg, labelEl);
-    gl.domElement.parentElement?.appendChild(container);
-    partsRef.current = { container, svg, circle, leader, labelEl };
-    return () => {
-      partsRef.current = null;
-      container.remove();
-    };
-  }, [gl]);
-
   const trackerRef = useRef<ScreenRectTracker | null>(null);
-  const svgSize = useRef({ width: 0, height: 0 });
   // The target currently on screen — lags the prop while fading out.
   const shownRef = useRef<CalloutTarget | null>(null);
   // The circle's size is snapshotted per target in world units (so the
@@ -149,22 +114,44 @@ function TourCallout({ target }: { target: CalloutTarget | null }) {
     name: "hidden",
     elapsed: 0,
   });
+  // What draw() paints, refreshed by the frame handler below.
+  const displayRef = useRef({ radius: MIN_RADIUS, label: "" });
+
+  const item = useOverlayLabel(() => {
+    const it: OverlayLabel = {
+      object: null,
+      screenSpace: true,
+      bitmap: null,
+      anchorX: 0,
+      anchorY: 0,
+      opacity: 0,
+      // Line-work sits under text labels.
+      layer: -1,
+      // Visibility is managed here (rect-vs-viewport, fades) — never let
+      // the driver cull by the anchor point alone.
+      cullRadius: Number.POSITIVE_INFINITY,
+      draw: (ctx, x, y) => {
+        const { radius, label } = displayRef.current;
+        const anchor = drawCalloutLines(ctx, x, y, radius, TOUR_STROKE);
+        drawLabelChip(ctx, label, anchor.x, anchor.y, {
+          fontSize: LABEL_FONT_SIZE,
+          anchor: "left",
+        });
+      },
+    };
+    return it;
+  });
 
   useFrame(({ camera, scene, size }, delta) => {
-    const parts = partsRef.current;
-    if (!parts) return;
     const phase = phaseRef.current;
     phase.elapsed += delta;
 
     const setPhase = (name: PhaseName) => {
       phase.name = name;
       phase.elapsed = 0;
-      parts.container.className =
-        name === "fadeIn"
-          ? `${styles.Callout} ${styles.FadeIn}`
-          : name === "fade" || name === "expire"
-            ? `${styles.Callout} ${styles.Fade}`
-            : styles.Callout;
+    };
+    const hide = () => {
+      item.opacity = 0;
     };
 
     // Retarget: fade out what's shown, then swap and fade back in. (An
@@ -201,13 +188,13 @@ function TourCallout({ target }: { target: CalloutTarget | null }) {
     }
 
     if (phase.name === "done") {
-      parts.container.style.display = "none";
+      hide();
       return;
     }
 
     const display = shownRef.current;
     if (!display) {
-      parts.container.style.display = "none";
+      hide();
       return;
     }
 
@@ -223,7 +210,7 @@ function TourCallout({ target }: { target: CalloutTarget | null }) {
       rect.minY <= size.height;
     if (!onScreen) {
       if (!root) tracker.reset();
-      parts.container.style.display = "none";
+      hide();
       if (phase.name === "fadeIn") setPhase("hidden");
       return;
     }
@@ -233,10 +220,10 @@ function TourCallout({ target }: { target: CalloutTarget | null }) {
     // never activates at all.
     if (phase.name === "hidden") {
       if (tourFlash.idleTime >= EXPIRE_DELAY) {
-        parts.container.style.display = "none";
+        hide();
         return;
       }
-      parts.labelEl.textContent = display.label;
+      displayRef.current.label = display.label;
       setPhase("fadeIn");
     } else if (phase.name === "fadeIn" && phase.elapsed >= FADE_IN_DURATION) {
       setPhase("steady");
@@ -246,16 +233,6 @@ function TourCallout({ target }: { target: CalloutTarget | null }) {
       tourFlash.idleTime >= EXPIRE_DELAY
     ) {
       setPhase("expire");
-    }
-
-    if (
-      svgSize.current.width !== size.width ||
-      svgSize.current.height !== size.height
-    ) {
-      svgSize.current.width = size.width;
-      svgSize.current.height = size.height;
-      parts.svg.setAttribute("width", String(size.width));
-      parts.svg.setAttribute("height", String(size.height));
     }
 
     const cx = (rect.minX + rect.maxX) / 2;
@@ -285,32 +262,19 @@ function TourCallout({ target }: { target: CalloutTarget | null }) {
       };
       radiusSnapshotRef.current = snapshot;
     }
-    const radius = Math.min(
+    displayRef.current.radius = Math.min(
       Math.max(MIN_RADIUS, snapshot.worldRadius * zoom + RADIUS_PADDING),
       Math.min(size.width, size.height) * 0.35,
     );
 
-    // Always the canonical down-right orientation: the tour centers on the
-    // target, so a clipped label just glides into view.
-    const startX = cx + radius * SQRT1_2;
-    const startY = cy + radius * SQRT1_2;
-    const elbowX = startX + LEADER_DIAGONAL;
-    const elbowY = startY + LEADER_DIAGONAL;
-    const endX = elbowX + LEADER_RUN;
-
-    parts.circle.setAttribute("cx", cx.toFixed(1));
-    parts.circle.setAttribute("cy", cy.toFixed(1));
-    parts.circle.setAttribute("r", radius.toFixed(1));
-    parts.leader.setAttribute(
-      "d",
-      `M${startX.toFixed(1)} ${startY.toFixed(1)}` +
-        `L${elbowX.toFixed(1)} ${elbowY.toFixed(1)}` +
-        `L${endX.toFixed(1)} ${elbowY.toFixed(1)}`,
-    );
-    parts.labelEl.style.transform =
-      `translate3d(${endX.toFixed(1)}px, ${elbowY.toFixed(1)}px, 0) ` +
-      `translate(0, -50%)`;
-    parts.container.style.display = "";
+    item.screenX = cx;
+    item.screenY = cy;
+    item.opacity =
+      phase.name === "fadeIn"
+        ? easeOut(phase.elapsed / FADE_IN_DURATION)
+        : phase.name === "fade" || phase.name === "expire"
+          ? 1 - easeOut(phase.elapsed / FADE_DURATION)
+          : 1;
   });
 
   return null;

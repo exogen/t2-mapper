@@ -301,6 +301,17 @@ export function InputBindings<T extends string = string>({
       }
     }
 
+    // Right-button click bindings must not pop the browser context menu
+    // (some browsers still fire contextmenu during pointer lock).
+    function handleContextMenu(e: MouseEvent) {
+      for (const { binding } of clickBindings) {
+        if ((binding.button ?? 0) !== 2) continue;
+        if (!pointerLockMatches(binding.whenPointerLocked)) continue;
+        e.preventDefault();
+        return;
+      }
+    }
+
     function handleWheel(e: WheelEvent) {
       for (const { action } of scrollBindings) {
         setAction(action.name, {
@@ -455,6 +466,7 @@ export function InputBindings<T extends string = string>({
       handleMouseDown,
       handleMouseMove,
       handleMouseUp,
+      handleContextMenu,
       handleWheel,
       handleTouchStart,
       handleTouchMove,
@@ -463,6 +475,9 @@ export function InputBindings<T extends string = string>({
         clickBindings.length > 0 ||
         dragBindings.length > 0 ||
         pointerLockMoveBindings.length > 0,
+      hasRightClickBindings: clickBindings.some(
+        ({ binding }) => (binding.button ?? 0) === 2,
+      ),
       hasScrollBindings: scrollBindings.length > 0,
       hasTouchBindings: touchBindings.length > 0 || pinchBindings.length > 0,
     };
@@ -495,6 +510,10 @@ export function InputBindings<T extends string = string>({
       document.addEventListener("mouseup", bindings.handleMouseUp);
     }
 
+    if (bindings.hasRightClickBindings) {
+      canvas.addEventListener("contextmenu", bindings.handleContextMenu);
+    }
+
     if (bindings.hasScrollBindings) {
       canvas.addEventListener("wheel", bindings.handleWheel, {
         passive: true,
@@ -525,6 +544,10 @@ export function InputBindings<T extends string = string>({
         canvas.removeEventListener("mousedown", bindings.handleMouseDown);
         document.removeEventListener("mousemove", bindings.handleMouseMove);
         document.removeEventListener("mouseup", bindings.handleMouseUp);
+      }
+
+      if (bindings.hasRightClickBindings) {
+        canvas.removeEventListener("contextmenu", bindings.handleContextMenu);
       }
 
       if (bindings.hasScrollBindings) {

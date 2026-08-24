@@ -2989,6 +2989,7 @@ export abstract class StreamEngine implements StreamingPlayback {
         faceViewer: entity.faceViewer,
         threads: entity.threads,
         explosionDataBlockId: entity.explosionDataBlockId,
+        hasExploded: entity.hasExploded,
         maintainEmitterId: entity.maintainEmitterId,
         weaponImageState: entity.weaponImageState,
         weaponImageStates: entity.weaponImageStates,

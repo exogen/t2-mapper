@@ -7,6 +7,7 @@ import {
   resolveWatchFollowTarget,
 } from "../state/watchFollow";
 import { useInputAction } from "./InputControls";
+import { useFollowFlagActions } from "./useFollowFlagActions";
 
 /**
  * Demo-playback camera controller — the client-side companion to
@@ -22,12 +23,16 @@ import { useInputAction } from "./InputControls";
 export function DemoCameraController() {
   // F cycles camera modes (shares the action with the live observer).
   useInputAction("toggleObserverMode", cycleDemoCameraMode);
-  // Pointer-locked click cycles the followed player, T2-spectator style.
+  // Pointer-locked left/right click cycles the followed player forward/
+  // backward, T2-spectator style (fire and jet triggers).
   useInputAction("nextPlayer", () => {
     if (streamPlaybackStore.getState().followEntityId) cycleWatchFollow();
   });
-  // ArrowRight in the command circuit cycles the followed player (or
-  // enters follow from pan), mirroring live mode's observeNextPlayer.
+  useInputAction("prevPlayer", () => {
+    if (streamPlaybackStore.getState().followEntityId) cycleWatchFollow(-1);
+  });
+  // ArrowRight/ArrowLeft in the command circuit cycles the followed player
+  // (or enters follow from pan), mirroring live mode's observe actions.
   useInputAction("observeNextPlayer", () => {
     if (streamPlaybackStore.getState().followEntityId) {
       cycleWatchFollow();
@@ -35,6 +40,15 @@ export function DemoCameraController() {
       enterWatchFollow();
     }
   });
+  useInputAction("observePrevPlayer", () => {
+    if (streamPlaybackStore.getState().followEntityId) {
+      cycleWatchFollow(-1);
+    } else {
+      enterWatchFollow();
+    }
+  });
+  // Number keys orbit the flags (1 = Storm, 2 = Inferno, …).
+  useFollowFlagActions(() => true);
 
   useFrame(() => {
     // Only active while following (orbit / first-person). Cleared modes

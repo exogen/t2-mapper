@@ -69,6 +69,16 @@ export interface StreamPlaybackState {
    */
   lastFollowTargetId: number | null;
   lastFollowGhostIndex: number | null;
+  /**
+   * Flag-follow mode: the number key held as the follow target. While
+   * set, the follow target re-resolves every frame to the flag that slot
+   * selects (the matching team's flag, or the slot-th flag in teamless
+   * games — see resolveFlagSlot) — the item on its stand / on the
+   * ground, or the carrying player while held — so the camera hands off
+   * as the flag changes hands. Cleared by any player follow or follow
+   * exit.
+   */
+  followFlagSlot: number | null;
 }
 
 export const streamPlaybackStore = createStore<StreamPlaybackState>()(() => ({
@@ -83,6 +93,7 @@ export const streamPlaybackStore = createStore<StreamPlaybackState>()(() => ({
   followCameraMode: "orbitOverride",
   lastFollowTargetId: null,
   lastFollowGhostIndex: null,
+  followFlagSlot: null,
 }));
 
 /** Reset all streaming playback state. Called when streaming ends. */
@@ -99,6 +110,7 @@ export function resetStreamPlayback(): void {
     followCameraMode: "orbitOverride",
     lastFollowTargetId: null,
     lastFollowGhostIndex: null,
+    followFlagSlot: null,
   });
   // root is managed by the React ref callback in EntityScene — don't clear it
 }

@@ -6,6 +6,8 @@ import {
 import { gameEntityStore } from "../state/gameEntityStore";
 import { useStreamSnapshot } from "../state/streamSnapshotStore";
 import { stripTaggedStringMarkup } from "../stream/streamHelpers";
+import { resolveFlagTeam } from "./flagTeam";
+import type { GameEntity } from "../state/gameEntityTypes";
 import styles from "./WatchedPlayerHud.module.css";
 
 function clean(name: string | null | undefined): string | null {
@@ -13,22 +15,48 @@ function clean(name: string | null | undefined): string | null {
   return stripTaggedStringMarkup(name).trim() || null;
 }
 
+/** "Storm Flag" (real team name when known); target name or a plain
+ *  "Flag" for teamless flags (sensor group 0 counts as teamless — e.g.
+ *  Rabbit never assigns its flag a team). */
+function flagLabel(entity: GameEntity): string {
+  const { teamId, name } = resolveFlagTeam(entity);
+  const teamName = clean(name);
+  return teamId != null && teamId > 0 && teamName
+    ? `${teamName} Flag`
+    : (teamName ?? "Flag");
+}
+
 /**
- * The followed player's name — only while following (orbit / first-person).
- * Read from gameEntityStore (where `followEntityId` lives) so in-place
- * playerName updates are picked up on each snapshot tick. Other modes
- * (free-fly, original, live default) show nothing.
+ * The followed player's name — or the followed flag's, e.g. "Storm Flag"
+ * — only while following (orbit / first-person). Read from
+ * gameEntityStore (where `followEntityId` lives) so in-place playerName
+ * updates are picked up on each snapshot tick. Other modes (free-fly,
+ * original, live default) show nothing.
  */
 function resolveFollowedName(
   cameraMode: DemoCameraMode,
   followEntityId: string | null,
+  followFlagSlot: number | null,
 ): string | null {
   if (cameraMode !== "orbitOverride" && cameraMode !== "firstPersonOverride") {
     return null;
   }
   if (!followEntityId) return null;
   const entity = gameEntityStore.getState().streamEntities.get(followEntityId);
-  return clean(entity?.playerName ?? null);
+  if (!entity) return null;
+  // Flag follow names the flag even while a carrier holds it (the
+  // followed entity is then the carrier player).
+  const flagMarked =
+    "targetRenderFlags" in entity &&
+    (((entity.targetRenderFlags as number | undefined) ?? 0) & 0x2) !== 0;
+  if (
+    followFlagSlot != null ||
+    (entity.renderType !== "Player" && flagMarked)
+  ) {
+    return flagLabel(entity);
+  }
+  if (entity.renderType !== "Player") return null;
+  return clean(entity.playerName ?? null);
 }
 
 /**
@@ -39,8 +67,9 @@ function resolveFollowedName(
 export function WatchedPlayerHud() {
   const cameraMode = useStore(streamPlaybackStore, (s) => s.cameraMode);
   const followEntityId = useStore(streamPlaybackStore, (s) => s.followEntityId);
+  const followFlagSlot = useStore(streamPlaybackStore, (s) => s.followFlagSlot);
   const name = useStreamSnapshot(
-    () => resolveFollowedName(cameraMode, followEntityId),
+    () => resolveFollowedName(cameraMode, followEntityId, followFlagSlot),
     (a, b) => a === b,
   );
 

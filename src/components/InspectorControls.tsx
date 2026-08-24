@@ -1,6 +1,7 @@
 import { useEffect, useState, useRef, RefObject, memo } from "react";
 import { FaRotateRight } from "react-icons/fa6";
 import {
+  RENDER_SCALE_OPTIONS,
   useControls,
   useDebug,
   useSettings,
@@ -117,6 +118,8 @@ export const InspectorControls = memo(function InspectorControls({
     setAnimationEnabled,
     fpsLimit,
     setFpsLimit,
+    renderScale,
+    setRenderScale,
     showInputOverlay,
     setShowInputOverlay,
     showChat,
@@ -578,6 +581,28 @@ export const InspectorControls = memo(function InspectorControls({
                   <label className={styles.Label} htmlFor="animationInput">
                     Enable animations
                   </label>
+                </div>
+                <div className={styles.Field}>
+                  <label htmlFor="renderScaleInput">Render scale</label>
+                  <div className={styles.Control}>
+                    <select
+                      id="renderScaleInput"
+                      value={renderScale}
+                      onChange={(e) => {
+                        setRenderScale(parseFloat(e.target.value));
+                      }}
+                    >
+                      {RENDER_SCALE_OPTIONS.map((value) => (
+                        <option key={value} value={value}>
+                          {Math.round(value * 100)}%
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <p className={styles.Description}>
+                    Resolution of the 3D view. Lower percentages render fewer
+                    pixels and run faster.
+                  </p>
                 </div>
                 <div className={styles.Field}>
                   <label htmlFor="fpsLimitInput">FPS limit</label>

@@ -14,6 +14,7 @@ import {
   exitWatchFollow,
   resolveWatchFollowTarget,
 } from "../state/watchFollow";
+import { useFollowFlagActions } from "./useFollowFlagActions";
 import { cameraRegistry } from "../state/cameraRegistry";
 import { useInputAction } from "./InputControls";
 import { yawPitchToQuaternion } from "../stream/streamHelpers";
@@ -82,14 +83,20 @@ export function SpectatorController() {
   }, [liveReady]);
 
   // Client-side fly↔follow controls, mirroring the real observer's:
-  // F toggles modes, fire/click cycles players while following, and
-  // ArrowRight (command circuit) observes the next player.
+  // F toggles modes, left/right click cycles players forward/backward
+  // while following (fire and jet triggers), and ArrowRight/ArrowLeft
+  // (command circuit) observe the next/previous player.
   useInputAction("toggleObserverMode", () => {
     if (isWatching) cycleWatchObserverMode();
   });
   useInputAction("nextPlayer", () => {
     if (isWatching && streamPlaybackStore.getState().followEntityId) {
       cycleWatchFollow();
+    }
+  });
+  useInputAction("prevPlayer", () => {
+    if (isWatching && streamPlaybackStore.getState().followEntityId) {
+      cycleWatchFollow(-1);
     }
   });
   useInputAction("observeNextPlayer", () => {
@@ -100,6 +107,16 @@ export function SpectatorController() {
       enterWatchFollow();
     }
   });
+  useInputAction("observePrevPlayer", () => {
+    if (!isWatching) return;
+    if (streamPlaybackStore.getState().followEntityId) {
+      cycleWatchFollow(-1);
+    } else {
+      enterWatchFollow();
+    }
+  });
+  // Number keys orbit the flags (1 = Storm, 2 = Inferno, …).
+  useFollowFlagActions(() => isWatching);
 
   useFrame(() => {
     if (!activeAdapterRef.current) return;

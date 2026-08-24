@@ -27,6 +27,10 @@ import {
 import { setupTexture } from "../textureUtils";
 import { invalidateShadows } from "./shadowControl";
 import {
+  freezeStaticMatrices,
+  unfreezeStaticMatrices,
+} from "./staticMatrices";
+import {
   registerInteriorCollider,
   unregisterInteriorCollider,
 } from "../collision/worldCollision";
@@ -233,7 +237,13 @@ export const InteriorModel = memo(function InteriorModel({
       (child): child is Mesh => (child as Mesh).isMesh,
     );
     registerInteriorCollider(collisionId, meshes);
-    return () => unregisterInteriorCollider(collisionId);
+    // Static geometry: stop three from recomposing every mesh's matrix on
+    // every frame. Interiors are the biggest static subtrees in the scene.
+    freezeStaticMatrices(group);
+    return () => {
+      unfreezeStaticMatrices(group);
+      unregisterInteriorCollider(collisionId);
+    };
   }, [collisionId, nodes]);
 
   const debugBounds = useMemo(() => {
@@ -309,8 +319,18 @@ export const InteriorInstance = memo(function InteriorInstance({
   );
   const scale = useMemo(() => torqueScaleToThree(scene.scale), [scene.scale]);
 
+  // The placement group never moves after the ghost's transform is applied;
+  // freeze it (the model's own subtree freezes separately once it loads).
+  const rootRef = useRef<Group>(null);
+  useEffect(() => {
+    const root = rootRef.current;
+    if (!root) return;
+    freezeStaticMatrices(root);
+    return () => unfreezeStaticMatrices(root);
+  }, [position, q, scale]);
+
   return (
-    <group position={position} quaternion={q} scale={scale}>
+    <group ref={rootRef} position={position} quaternion={q} scale={scale}>
       <ErrorBoundary
         fallback={
           <DebugInteriorPlaceholder

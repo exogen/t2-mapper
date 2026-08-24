@@ -45,10 +45,11 @@ import { useAudio } from "./AudioContext";
 import {
   resolveAudioProfile,
   playOneShotSound,
+  createPositionalAudio,
   getCachedAudioBuffer,
   getSoundGeneration,
   trackSound,
-  untrackSound,
+  stopAndDetachSound,
 } from "./AudioEmitter";
 import { effectNow, engineStore } from "../state/engineStore";
 import { getEffectiveSoundRate } from "./AudioEmitter";
@@ -750,6 +751,28 @@ function setPrefixUpdateRange(
 
 const MAX_PROJECTILE_SOUNDS = 20;
 
+/** A projectile's looping in-flight sound plus the profile values needed
+ *  for the per-frame maxDistance gate. */
+interface ProjectileSound {
+  sound: PositionalAudio;
+  volume: number;
+  maxDist: number;
+  muted: boolean;
+}
+
+const _listenerWorldPos = new Vector3();
+
+/** Stop, detach, and forget a projectile's in-flight loop. */
+function stopProjectileSound(
+  projSounds: Map<string, ProjectileSound>,
+  entityId: string,
+): void {
+  const entry = projSounds.get(entityId);
+  if (!entry) return;
+  stopAndDetachSound(entry.sound);
+  projSounds.delete(entityId);
+}
+
 export function ParticleEffects({
   playback,
   snapshotRef,
@@ -768,7 +791,9 @@ export function ParticleEffects({
   /** Track which projectile entity IDs have trail emitters attached. */
   const trailEntitiesRef = useRef<Set<string>>(new Set());
   /** Active looping projectile sounds keyed by entity ID. */
-  const projectileSoundsRef = useRef<Map<string, PositionalAudio>>(new Map());
+  const projectileSoundsRef = useRef<Map<string, ProjectileSound>>(new Map());
+  /** Explosion entity IDs whose impact sound already played. */
+  const processedExplosionSoundsRef = useRef<Set<string>>(new Set());
   /** Track processed audio event keys to prevent replays on seek. */
   const processedAudioEventsRef = useRef<Set<string>>(new Set());
   /** Active wireframe explosion spheres. */
@@ -779,6 +804,24 @@ export function ParticleEffects({
     () => playback.getDataBlockData.bind(playback),
     [playback],
   );
+
+  // Turning audio off must silence projectile loops that are already
+  // playing — the per-frame audio block (including its despawn/stop pass)
+  // is gated on audioEnabled, so it can't.
+  useEffect(() => {
+    if (audioEnabled) return;
+    for (const entityId of [...projectileSoundsRef.current.keys()]) {
+      stopProjectileSound(projectileSoundsRef.current, entityId);
+    }
+  }, [audioEnabled]);
+
+  // A new recording reuses entity ids and event keys — stale dedupe entries
+  // from the previous demo would silently suppress its sounds.
+  useEffect(() => {
+    processedExplosionSoundsRef.current.clear();
+    processedAudioEventsRef.current.clear();
+  }, [playback]);
+
   useFrame((state, delta) => {
     const group = groupRef.current;
     const snapshot = snapshotRef.current;
@@ -1218,7 +1261,7 @@ export function ParticleEffects({
       }
     }
 
-    // ── Audio: explosion impact sounds ──
+    // ── Audio: explosion impact + projectile in-flight sounds ──
     // Only process new audio events while playing to avoid triggering
     // sounds during pause (existing sounds are frozen via AudioContext.suspend).
     if (
@@ -1228,61 +1271,81 @@ export function ParticleEffects({
       audioListener &&
       groupRef.current
     ) {
-      for (const entity of snapshot.entities) {
-        if (
-          entity.type !== "Explosion" ||
-          !entity.explosionDataBlockId ||
-          !entity.position
-        ) {
-          continue;
-        }
-        const soundKey = `snd:${entity.id}`;
-        if (processedAudioEventsRef.current.has(soundKey)) continue;
-        processedAudioEventsRef.current.add(soundKey);
-
-        const expBlock = getDataBlockData(entity.explosionDataBlockId);
-        if (!expBlock) continue;
-        const soundProfileId = expBlock.soundProfile as number | undefined;
-        if (typeof soundProfileId !== "number") continue;
-
-        const resolved = resolveAudioProfile(soundProfileId, getDataBlockData);
-        if (!resolved) continue;
-
-        const pos = new Vector3(
-          entity.position[1],
-          entity.position[2],
-          entity.position[0],
-        );
-        playOneShotSound(
-          resolved,
-          audioListener,
-          audioLoader,
-          pos,
-          groupRef.current,
-        );
-      }
-
-      // ── Audio: projectile in-flight sounds ──
       const projSounds = projectileSoundsRef.current;
-
+      audioListener.getWorldPosition(_listenerWorldPos);
       for (const entity of snapshot.entities) {
+        // Explosion impact one-shots, once per explosion entity.
         if (
-          entity.type !== "Projectile" ||
-          !entity.dataBlockId ||
-          !entity.position
+          entity.type === "Explosion" &&
+          entity.explosionDataBlockId &&
+          entity.position &&
+          !processedExplosionSoundsRef.current.has(entity.id)
         ) {
-          continue;
-        }
-        if (projSounds.has(entity.id)) {
-          // Update position of existing sound.
-          const sound = projSounds.get(entity.id)!;
-          sound.position.set(
+          processedExplosionSoundsRef.current.add(entity.id);
+
+          const expBlock = getDataBlockData(entity.explosionDataBlockId);
+          if (!expBlock) continue;
+          const soundProfileId = expBlock.soundProfile as number | undefined;
+          if (typeof soundProfileId !== "number") continue;
+
+          const resolved = resolveAudioProfile(
+            soundProfileId,
+            getDataBlockData,
+          );
+          if (!resolved) continue;
+
+          const pos = new Vector3(
             entity.position[1],
             entity.position[2],
             entity.position[0],
           );
+          playOneShotSound(
+            resolved,
+            audioListener,
+            audioLoader,
+            pos,
+            groupRef.current,
+          );
           continue;
         }
+        if (entity.type !== "Projectile" || !entity.dataBlockId) continue;
+        // A projectile that exploded or fizzled client-side lingers in the
+        // snapshot until the server's ghost delete arrives — its flight
+        // loop must stop at death, not at the delete (Torque stops the
+        // sound with the projectile object).
+        const dead = entity.hasExploded === true || !entity.position;
+        let existing = projSounds.get(entity.id);
+        // A looping sound that isn't playing was stopped externally (the
+        // global stop on seek) — clear the entry so it can restart below.
+        if (existing && !existing.sound.isPlaying) {
+          stopProjectileSound(projSounds, entity.id);
+          existing = undefined;
+        }
+        if (existing) {
+          if (dead) {
+            stopProjectileSound(projSounds, entity.id);
+            continue;
+          }
+          const { sound } = existing;
+          sound.position.set(
+            entity.position![1],
+            entity.position![2],
+            entity.position![0],
+          );
+          // Hard cutoff at maxDistance, like Torque: the inverse model
+          // alone never reaches zero gain, so a disc sailing into the
+          // distance would otherwise stay in the mix until it dies. Only
+          // touch volume on boundary crossings — each setVolume schedules
+          // an automation event.
+          const outOfRange =
+            sound.position.distanceTo(_listenerWorldPos) > existing.maxDist;
+          if (outOfRange !== existing.muted) {
+            existing.muted = outOfRange;
+            sound.setVolume(outOfRange ? 0 : existing.volume);
+          }
+          continue;
+        }
+        if (dead) continue;
         // Cap active projectile sounds.
         if (projSounds.size >= MAX_PROJECTILE_SOUNDS) continue;
 
@@ -1305,13 +1368,8 @@ export function ParticleEffects({
             const group = groupRef.current;
             if (!group) return;
 
-            const sound = new PositionalAudio(audioListener);
+            const sound = createPositionalAudio(audioListener, resolved);
             sound.setBuffer(buffer);
-            sound.setDistanceModel("inverse");
-            sound.setRefDistance(resolved.refDist);
-            sound.setMaxDistance(resolved.maxDist);
-            sound.setRolloffFactor(1);
-            sound.setVolume(resolved.volume);
             sound.setPlaybackRate(getEffectiveSoundRate());
             sound.setLoop(true);
             sound.position.set(
@@ -1322,7 +1380,12 @@ export function ParticleEffects({
             group.add(sound);
             trackSound(sound);
             sound.play();
-            projSounds.set(entity.id, sound);
+            projSounds.set(entity.id, {
+              sound,
+              volume: resolved.volume,
+              maxDist: resolved.maxDist,
+              muted: false,
+            });
           });
         } catch {
           // File not in manifest.
@@ -1330,21 +1393,9 @@ export function ParticleEffects({
       }
 
       // Despawn: stop sounds for entities no longer present.
-      for (const [entityId, sound] of projSounds) {
+      for (const entityId of projSounds.keys()) {
         if (!currentEntityIds.has(entityId)) {
-          untrackSound(sound);
-          try {
-            sound.stop();
-          } catch {
-            /* already stopped */
-          }
-          try {
-            sound.disconnect();
-          } catch {
-            /* already disconnected */
-          }
-          groupRef.current?.remove(sound);
-          projSounds.delete(entityId);
+          stopProjectileSound(projSounds, entityId);
         }
       }
 
@@ -1370,24 +1421,28 @@ export function ParticleEffects({
       }
     }
 
-    // Prune processed set when it gets large.
-    if (processedExplosionsRef.current.size > 500) {
+    // Prune processed sets when they get large: entries for entities no
+    // longer in the snapshot can never match again.
+    if (
+      processedExplosionsRef.current.size > 500 ||
+      processedExplosionSoundsRef.current.size > 500
+    ) {
       const currentIds = new Set(snapshot.entities.map((e) => e.id));
       for (const id of processedExplosionsRef.current) {
         if (!currentIds.has(id)) {
           processedExplosionsRef.current.delete(id);
         }
       }
-    }
-    // Prune processed audio events set: keep only entries for current entities
-    // and recent event keys.
-    if (processedAudioEventsRef.current.size > 500) {
-      const currentIds = new Set(snapshot.entities.map((e) => e.id));
-      for (const key of processedAudioEventsRef.current) {
-        // Keep explosion sound keys (prefixed "snd:") if entity is still present.
-        if (key.startsWith("snd:") && currentIds.has(key.slice(4))) continue;
-        processedAudioEventsRef.current.delete(key);
+      for (const id of processedExplosionSoundsRef.current) {
+        if (!currentIds.has(id)) {
+          processedExplosionSoundsRef.current.delete(id);
+        }
       }
+    }
+    // Event keys are time-based; anything past the engine's short replay
+    // window can never fire again, so just reset the set.
+    if (processedAudioEventsRef.current.size > 500) {
+      processedAudioEventsRef.current.clear();
     }
   });
 
@@ -1430,22 +1485,11 @@ export function ParticleEffects({
       activeShockwavesRef.current = [];
       processedExplosionsRef.current.clear();
       trailEntitiesRef.current.clear();
+      processedExplosionSoundsRef.current.clear();
       // Clean up projectile sounds.
-      for (const [, sound] of projectileSoundsRef.current) {
-        untrackSound(sound);
-        try {
-          sound.stop();
-        } catch {
-          /* already stopped */
-        }
-        try {
-          sound.disconnect();
-        } catch {
-          /* already disconnected */
-        }
-        if (group) group.remove(sound);
+      for (const entityId of [...projectileSoundsRef.current.keys()]) {
+        stopProjectileSound(projectileSoundsRef.current, entityId);
       }
-      projectileSoundsRef.current.clear();
       processedAudioEventsRef.current.clear();
     };
   }, []);

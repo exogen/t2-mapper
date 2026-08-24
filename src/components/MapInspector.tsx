@@ -19,6 +19,7 @@ import { StreamingMissionInfo } from "@/src/components/StreamingMissionInfo";
 import { ServerBrowserHeader } from "@/src/components/ServerBrowserHeader";
 import { ViewModeToggle } from "@/src/components/ViewModeToggle";
 import { useSettings } from "@/src/components/SettingsProvider";
+import { useDevicePixelRatio } from "@/src/components/useDevicePixelRatio";
 import { useAutoScoreScreen } from "@/src/components/useAutoScoreScreen";
 import { useRecording } from "@/src/components/usePlayback";
 import { useFeatures } from "@/src/components/FeaturesProvider";
@@ -104,8 +105,15 @@ const ScoreScreen = createLazy(
 export function MapInspector() {
   const [currentMission, setCurrentMission] = useMissionQueryState();
   const features = useFeatures();
-  const { clearFogEnabledOverride, sidebarOpen, setSidebarOpen } =
+  const { clearFogEnabledOverride, renderScale, sidebarOpen, setSidebarOpen } =
     useSettings();
+  // Standard render resolution: devicePixelRatio clamped to [1, 2] (what
+  // r3f's default dpr of [1, 2] resolves to). The render-scale preference
+  // is a fraction of this, so 100% matches the default exactly and the
+  // stored fraction stays meaningful across monitors. The hook keeps it
+  // live when the window moves to a display with a different ratio.
+  const devicePixelRatio = useDevicePixelRatio();
+  const renderDpr = Math.min(Math.max(devicePixelRatio, 1), 2) * renderScale;
   const { missionName, missionType } = currentMission;
   const [mapInfoOpen, setMapInfoOpen] = useState(false);
   const [scoreScreenOpen, setScoreScreenOpen] = useState(false);
@@ -701,7 +709,7 @@ export function MapInspector() {
                       dpr={
                         mapInfoOpen || scoreScreenOpen || showDisconnectDialog
                           ? 0.25
-                          : undefined
+                          : renderDpr
                       }
                       onCreated={handleCanvasCreated}
                       onLoadingChange={handleLoadingChange}

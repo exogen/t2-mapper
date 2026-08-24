@@ -116,8 +116,17 @@ export function resolveIffDisplay(
   return iff && iff.r > iff.g ? IFF_ENEMY : IFF_FRIENDLY;
 }
 
-export function rgbString({ r, g, b }: IffRgb): string {
-  return `rgb(${r}, ${g}, ${b})`;
+// Cached by object identity: theme colors are module constants, and
+// several overlay painters stringify them every frame.
+const _rgbStrings = new WeakMap<IffRgb, string>();
+
+export function rgbString(color: IffRgb): string {
+  let str = _rgbStrings.get(color);
+  if (!str) {
+    str = `rgb(${color.r}, ${color.g}, ${color.b})`;
+    _rgbStrings.set(color, str);
+  }
+  return str;
 }
 
 export function rgbaString({ r, g, b }: IffRgb, alpha: number): string {

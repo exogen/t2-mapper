@@ -1,28 +1,14 @@
-import { memo, ReactNode, useRef, useState } from "react";
+import { memo, ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { Object3D, Vector3 } from "three";
 import { useFrame } from "@react-three/fiber";
-import { Html } from "@react-three/drei";
 import { useCommandCircuit } from "../state/commandCircuitStore";
 import { useCameraTour } from "../state/cameraTourStore";
 import { resolveRootState } from "./r3fRootState";
-import styles from "./FloatingLabel.module.css";
+import { makeTextLabel } from "./canvasLabel";
+import { isBehindCamera, useOverlayLabel } from "./LabelOverlay";
 
 const DEFAULT_POSITION = [0, 0, 0] as [x: number, y: number, z: number];
 const _worldPos = new Vector3();
-
-/** Check if a world position is behind the camera using only scalar math. */
-function isBehindCamera(
-  camera: { matrixWorld: { elements: number[] } },
-  wx: number,
-  wy: number,
-  wz: number,
-): boolean {
-  const e = camera.matrixWorld.elements;
-  // Dot product of (objectPos - cameraPos) with camera forward (-Z column).
-  return (
-    (wx - e[12]) * -e[8] + (wy - e[13]) * -e[9] + (wz - e[14]) * -e[10] < 0
-  );
-}
 
 /** Default fade distance for fadeWithDistance labels. */
 const DEFAULT_FADE_DISTANCE = 200;
@@ -30,7 +16,7 @@ const DEFAULT_FADE_DISTANCE = 200;
 /**
  * Frames a label must stay out of view before it unmounts. Showing is
  * immediate; hiding is delayed so a camera hovering at the fade boundary
- * (or rotating an object in/out of view) doesn't thrash DOM mount state
+ * (or rotating an object in/out of view) doesn't thrash mount state
  * every few frames. The label is already at opacity 0 while it waits.
  */
 const HIDE_DELAY_FRAMES = 15;
@@ -38,7 +24,7 @@ const HIDE_DELAY_FRAMES = 15;
 /**
  * Hook that manages visibility and opacity fading for a floating label group.
  * Attach `groupRef` to a `<group>` so world-position lookups work. Apply
- * `opacityRef.current` to DOM elements each frame for smooth fading.
+ * `opacityRef.current` to overlay labels each frame for smooth fading.
  */
 export function useFloatingLabelFade({
   opacity: opacityProp = "fadeWithDistance" as number | "fadeWithDistance",
@@ -47,7 +33,7 @@ export function useFloatingLabelFade({
   const fadeWithDistance = opacityProp === "fadeWithDistance";
   const groupRef = useRef<Object3D>(null);
   const [isVisible, setIsVisible] = useState(opacityProp !== 0);
-  const opacityRef = useRef("0");
+  const opacityRef = useRef(0);
   const hideCountdownRef = useRef(HIDE_DELAY_FRAMES);
 
   function applyVisibility(shouldBeVisible: boolean) {
@@ -74,7 +60,7 @@ export function useFloatingLabelFade({
     const { camera } = resolveRootState(state);
     if (suppressed) {
       if (isVisible) setIsVisible(false);
-      opacityRef.current = "0";
+      opacityRef.current = 0;
       return;
     }
     const group = groupRef.current;
@@ -95,21 +81,35 @@ export function useFloatingLabelFade({
       const shouldBeVisible = distance < fadeDistance;
       applyVisibility(shouldBeVisible);
       opacityRef.current = shouldBeVisible
-        ? Math.max(0, Math.min(1, 1 - distance / fadeDistance)).toString()
-        : "0";
+        ? Math.max(0, Math.min(1, 1 - distance / fadeDistance))
+        : 0;
     } else {
       applyVisibility(!behind && opacityProp !== 0);
       // Opacity drops immediately; only the unmount is delayed.
-      opacityRef.current = behind ? "0" : (opacityProp as number).toString();
+      opacityRef.current = behind ? 0 : (opacityProp as number);
     }
   });
 
   return { groupRef, isVisible, opacityRef };
 }
 
+/** Flatten label children (strings, numbers, arrays thereof) to plain text. */
+function textFromChildren(children: ReactNode): string {
+  if (children == null || typeof children === "boolean") return "";
+  if (typeof children === "string") return children;
+  if (typeof children === "number") return String(children);
+  if (Array.isArray(children)) return children.map(textFromChildren).join("");
+  return "";
+}
+
+/**
+ * A world-anchored text label drawn by the shared LabelOverlay at a
+ * constant screen-pixel size and native display resolution.
+ */
 export const FloatingLabel = memo(function FloatingLabel({
   children,
-  color = "white",
+  // Default foreground: the unified label fill (canvasLabel).
+  color = undefined,
   position = DEFAULT_POSITION,
   opacity = "fadeWithDistance",
   fadeDistance,
@@ -124,23 +124,39 @@ export const FloatingLabel = memo(function FloatingLabel({
     opacity,
     fadeDistance,
   });
-  const labelRef = useRef<HTMLDivElement>(null);
+  const item = useOverlayLabel(() => ({
+    object: null,
+    bitmap: null,
+    anchorX: 0,
+    anchorY: 0,
+    opacity: 0,
+  }));
+
+  const text = textFromChildren(children);
+  const label = useMemo(
+    () => (isVisible && text ? makeTextLabel(text, color) : null),
+    [isVisible, text, color],
+  );
+  useEffect(() => {
+    item.bitmap = label;
+    if (label) {
+      item.anchorX = label.width / 2;
+      item.anchorY = label.height / 2;
+    }
+  }, [item, label]);
 
   useFrame(() => {
-    if (labelRef.current) {
-      labelRef.current.style.opacity = opacityRef.current;
-    }
+    item.opacity = opacityRef.current;
   });
 
   return (
     <group ref={groupRef}>
-      {isVisible ? (
-        <Html position={position} center style={{ pointerEvents: "none" }}>
-          <div ref={labelRef} className={styles.Label} style={{ color }}>
-            {children}
-          </div>
-        </Html>
-      ) : null}
+      <object3D
+        position={position}
+        ref={(node) => {
+          item.object = node;
+        }}
+      />
     </group>
   );
 });

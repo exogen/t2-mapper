@@ -68,6 +68,7 @@ export function MouseAndKeyboardHandler() {
 
   // Trigger flags set by event handlers, consumed in useFrame.
   const triggerFire = useRef(false);
+  const triggerJet = useRef(false);
   const triggerObserve = useRef(false);
 
   // Exit pointer lock when switching to touch mode.
@@ -93,20 +94,33 @@ export function MouseAndKeyboardHandler() {
     }
   });
 
-  // Next player (live observer follow mode): fire trigger 0.
+  // Next/prev player (live observer follow mode): fire trigger 0 cycles
+  // forward, jet trigger 3 cycles backward (camera.cs observerFollow).
   useInputAction("nextPlayer", () => {
     triggerFire.current = true;
   });
+  useInputAction("prevPlayer", () => {
+    triggerJet.current = true;
+  });
 
-  // Next observed player from the live command circuit. In follow mode
-  // this is the real client's fire trigger (camera.cs observerFollow
-  // onTrigger cycles to the next player); from fly mode, ObserveClient -1
-  // enters follow mode at the server's next observable player.
+  // Next/prev observed player from the live command circuit. In follow
+  // mode these are the real client's fire/jet triggers (camera.cs
+  // observerFollow onTrigger cycles next/prev); from fly mode,
+  // ObserveClient -1 enters follow mode at the server's next observable
+  // player (the server has no enter-at-prev, so both arrows enter there).
   useInputAction("observeNextPlayer", () => {
     // Live only — demo cycling is handled by DemoCameraController.
     if (!liveConnectionStore.getState().adapter) return;
     if (isCommandFollowActive()) {
       triggerFire.current = true;
+    } else {
+      liveConnectionStore.getState().sendCommand("ObserveClient", "-1");
+    }
+  });
+  useInputAction("observePrevPlayer", () => {
+    if (!liveConnectionStore.getState().adapter) return;
+    if (isCommandFollowActive()) {
+      triggerJet.current = true;
     } else {
       liveConnectionStore.getState().sendCommand("ObserveClient", "-1");
     }
@@ -184,6 +198,10 @@ export function MouseAndKeyboardHandler() {
         triggers[0] = true;
         triggerFire.current = false;
       }
+      if (triggerJet.current) {
+        triggers[3] = true;
+        triggerJet.current = false;
+      }
       if (commandCircuitStore.getState().consumeObserverToggle()) {
         triggers[2] = true;
       }
@@ -252,6 +270,10 @@ export function MouseAndKeyboardHandler() {
     if (triggerFire.current) {
       triggers[0] = true;
       triggerFire.current = false;
+    }
+    if (triggerJet.current) {
+      triggers[3] = true;
+      triggerJet.current = false;
     }
     if (triggerObserve.current) {
       triggers[2] = true;

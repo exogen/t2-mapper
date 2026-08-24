@@ -50,8 +50,10 @@ import { useAudio } from "./AudioContext";
 import {
   resolveAudioProfile,
   playOneShotSound,
+  createPositionalAudio,
   getCachedAudioBuffer,
   getSoundGeneration,
+  stopAndDetachSound,
   trackSound,
   untrackSound,
 } from "./AudioEmitter";
@@ -249,22 +251,10 @@ function countEmbeddedNonTableSequences(
 function stopLoopingSound(
   soundRef: React.MutableRefObject<PositionalAudio | null>,
   stateRef: React.MutableRefObject<number>,
-  parent?: Object3D,
 ) {
   const sound = soundRef.current;
   if (!sound) return;
-  untrackSound(sound);
-  try {
-    sound.stop();
-  } catch {
-    /* already stopped */
-  }
-  try {
-    sound.disconnect();
-  } catch {
-    /* already disconnected */
-  }
-  parent?.remove(sound);
+  stopAndDetachSound(sound);
   soundRef.current = null;
   stateRef.current = -1;
 }
@@ -907,12 +897,7 @@ export function PlayerModel({ entity }: { entity: PlayerEntity }) {
       if (audioEnabled && audioListener && jetBufferRef.current && jetProfile) {
         let sound = jetSound;
         if (!sound) {
-          sound = new PositionalAudio(audioListener);
-          sound.setDistanceModel("inverse");
-          sound.setRefDistance(jetProfile.refDist);
-          sound.setMaxDistance(jetProfile.maxDist);
-          sound.setRolloffFactor(1);
-          sound.setVolume(jetProfile.volume);
+          sound = createPositionalAudio(audioListener, jetProfile);
           clonedScene.add(sound);
           jetSoundRef.current = sound;
         }
@@ -926,7 +911,9 @@ export function PlayerModel({ entity }: { entity: PlayerEntity }) {
           /* AudioContext suspended */
         }
       }
-    } else if (!isJetting && jetPlaying) {
+    } else if (jetPlaying && (!isJetting || !audioEnabled)) {
+      // Also stop when audio is turned off mid-thrust — the start branch
+      // is gated on audioEnabled, but an already-running loop isn't.
       if (jetSound) {
         untrackSound(jetSound);
         try {
@@ -1251,7 +1238,7 @@ function WeaponModel({
         stateMachineRef.current = null;
       }
       currentWeaponAnimRef.current = null;
-      stopLoopingSound(loopingSoundRef, loopingSoundStateRef, weaponClone);
+      stopLoopingSound(loopingSoundRef, loopingSoundStateRef);
     }
 
     // Initialize state machine if we have states but haven't created it yet.
@@ -1263,6 +1250,24 @@ function WeaponModel({
     }
 
     const sm = stateMachineRef.current;
+
+    // The state-change stop below only runs while the state machine is
+    // ticking — a weapon that loses its image state (holstered, player
+    // died, ghost stopped sending) or audio being disabled must also kill
+    // an active fire loop, or it plays until the component unmounts. A
+    // loop that is no longer playing was stopped externally (global stop
+    // on seek) — clear it so the next state entry can re-trigger.
+    // (Pause is deliberately not a stop condition: the suspended
+    // AudioContext silences the loop, and it must survive to resume.)
+    if (
+      loopingSoundRef.current &&
+      (!sm ||
+        !imageState ||
+        !audioEnabled ||
+        !loopingSoundRef.current.isPlaying)
+    ) {
+      stopLoopingSound(loopingSoundRef, loopingSoundStateRef);
+    }
 
     if (sm && imageState && isPlaying) {
       const effectiveDelta = delta * playback.rate;
@@ -1280,7 +1285,7 @@ function WeaponModel({
         loopingSoundRef.current &&
         animState.stateIndex !== loopingSoundStateRef.current
       ) {
-        stopLoopingSound(loopingSoundRef, loopingSoundStateRef, weaponClone);
+        stopLoopingSound(loopingSoundRef, loopingSoundStateRef);
       }
 
       // Play weapon state-entry sounds as positional audio on transitions.
@@ -1314,13 +1319,11 @@ function WeaponModel({
                     if (loopingSoundRef.current) return;
                     // Read live state index (not the closure-captured one).
                     const currentIdx = sm.stateIndex;
-                    const sound = new PositionalAudio(audioListener);
+                    const sound = createPositionalAudio(
+                      audioListener,
+                      resolved,
+                    );
                     sound.setBuffer(buffer);
-                    sound.setDistanceModel("inverse");
-                    sound.setRefDistance(resolved.refDist);
-                    sound.setMaxDistance(resolved.maxDist);
-                    sound.setRolloffFactor(1);
-                    sound.setVolume(resolved.volume);
                     sound.setPlaybackRate(getEffectiveSoundRate());
                     sound.setLoop(true);
                     weaponClone.add(sound);

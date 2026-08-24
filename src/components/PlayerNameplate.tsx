@@ -1,6 +1,5 @@
 import { useMemo, useRef } from "react";
 import { useFrame } from "@react-three/fiber";
-import { Html } from "@react-three/drei";
 import { Box3 } from "three";
 import { getKeyframeAtTime } from "../stream/playbackUtils";
 import { textureToUrl } from "../loaders";
@@ -14,8 +13,17 @@ import {
   IFF_ENEMY,
 } from "./iffTheme";
 import { useSettings } from "./SettingsProvider";
+import {
+  createCanvasLabel,
+  drawLabelText,
+  getTintedIconLabel,
+  labelContext,
+  measureLabelText,
+  LABEL_FONT_FAMILY,
+  type CanvasLabel,
+} from "./canvasLabel";
+import { useOverlayLabel, type OverlayLabel } from "./LabelOverlay";
 import type { PlayerEntity } from "../state/gameEntityTypes";
-import styles from "./PlayerNameplate.module.css";
 
 /** Max distance at which nameplates are visible. */
 const NAMEPLATE_FADE_DISTANCE = 150;
@@ -31,9 +39,93 @@ const IFF_ENEMY_URL = textureToUrl("gui/hud_enemytriangle");
 
 const EMPTY_KEYFRAMES: never[] = [];
 
+// ── Layout (CSS pixels, mirroring the old PlayerNameplate.module.css) ──
+
+/** Triangle size; the bitmap adds a margin for its outline. */
+const ARROW_SIZE = 12;
+const ARROW_MARGIN = 2;
+const ARROW_LABEL_SIZE = ARROW_SIZE + ARROW_MARGIN * 2;
+/** The arrow's center floats this many pixels above its anchor. */
+const ARROW_RAISE = 10;
+
+const NAME_FONT_SIZE = 11;
+const NAME_ROW_HEIGHT = 14;
+/** Headroom for the name's stroke outline. */
+const PLATE_PAD = 3;
+const HEALTH_WIDTH = 60;
+const HEALTH_HEIGHT = 6;
+const HEALTH_GAP = 2;
+/** Health fill resolution: quantizing avoids redraws for sub-pixel changes. */
+const HEALTH_INNER_WIDTH = HEALTH_WIDTH - 2;
+/** The plate's top edge hangs this many pixels below its anchor. */
+const PLATE_DROP = 2;
+
+/** IFF arrow tint options (outline styling is the unified label style). */
+const ARROW_ICON_OPTIONS = {
+  size: ARROW_SIZE,
+  margin: ARROW_MARGIN,
+};
+
+// ── Name + health plate: one canvas, redrawn only when content changes ──
+
+function drawPlate(
+  label: CanvasLabel,
+  name: string,
+  colorStr: string,
+  healthPx: number,
+  hasHealth: boolean,
+): void {
+  const { width } = label;
+  const ctx = labelContext(label);
+  drawLabelText(
+    ctx,
+    name,
+    width / 2,
+    PLATE_PAD + NAME_ROW_HEIGHT / 2,
+    `${NAME_FONT_SIZE}px ${LABEL_FONT_FAMILY}`,
+  );
+
+  if (hasHealth) {
+    const barX = (width - HEALTH_WIDTH) / 2;
+    const barY = PLATE_PAD + NAME_ROW_HEIGHT + HEALTH_GAP;
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.2)";
+    ctx.lineWidth = 1;
+    ctx.strokeRect(barX + 0.5, barY + 0.5, HEALTH_WIDTH - 1, HEALTH_HEIGHT - 1);
+    ctx.fillStyle = "rgba(0, 0, 0, 0.5)";
+    ctx.fillRect(barX + 1, barY + 1, HEALTH_INNER_WIDTH, HEALTH_HEIGHT - 2);
+    if (healthPx > 0) {
+      ctx.fillStyle = colorStr;
+      ctx.fillRect(barX + 1, barY + 1, healthPx, HEALTH_HEIGHT - 2);
+    }
+  }
+}
+
+function plateSize(name: string, hasHealth: boolean): [number, number] {
+  const textWidth = measureLabelText(
+    name,
+    `${NAME_FONT_SIZE}px ${LABEL_FONT_FAMILY}`,
+  );
+  const width = Math.ceil(
+    Math.max(textWidth + PLATE_PAD * 2, HEALTH_WIDTH + 2),
+  );
+  const height =
+    PLATE_PAD * 2 +
+    NAME_ROW_HEIGHT +
+    (hasHealth ? HEALTH_GAP + HEALTH_HEIGHT : 0);
+  return [width, height];
+}
+
+function makeItem(): OverlayLabel {
+  return { object: null, bitmap: null, anchorX: 0, anchorY: 0, opacity: 0 };
+}
+
 /**
  * Floating nameplate above a player model showing the entity name and a health
- * bar. Fades out with distance.
+ * bar, plus the IFF arrow overhead. Fades out with distance. Drawn by the
+ * shared LabelOverlay at native display resolution — the old drei `<Html>`
+ * version cost two DOM projections per player per frame, and the interim
+ * sprite version cost two draw calls per player and blurred with the 3D
+ * render scale.
  */
 export function PlayerNameplate({ entity }: { entity: PlayerEntity }) {
   const gltf = useStaticShape(entity.shapeName!);
@@ -41,28 +133,19 @@ export function PlayerNameplate({ entity }: { entity: PlayerEntity }) {
   const { groupRef, isVisible, opacityRef } = useFloatingLabelFade({
     fadeDistance: NAMEPLATE_FADE_DISTANCE,
   });
-  const iffContainerRef = useRef<HTMLDivElement>(null);
-  const nameContainerRef = useRef<HTMLDivElement>(null);
-  const fillRef = useRef<HTMLDivElement>(null);
-  const iffArrowRef = useRef<HTMLDivElement>(null);
-  const nameRef = useRef<HTMLDivElement>(null);
+  const arrowItem = useOverlayLabel(makeItem);
+  const plateItem = useOverlayLabel(makeItem);
+  const plateLabelRef = useRef<CanvasLabel | null>(null);
 
-  // Last values written to the DOM, so the per-frame loop only touches
-  // styles that actually changed (style writes force recalc, and this runs
-  // for every player every frame). `colorStr` also memoizes rgbString() so
-  // it isn't re-allocated each frame from the same unchanged color.
-  const styleCacheRef = useRef({
-    opacity: "",
-    r: -1,
-    g: -1,
-    b: -1,
+  // What's currently drawn/applied, so per-frame work only happens on
+  // actual changes (canvas redraws, bitmap swaps).
+  const drawnRef = useRef({
+    name: "",
     colorStr: "",
-    fillWidth: "",
+    healthPx: -1,
+    hasHealth: false,
+    arrowKey: "",
   });
-  // The overlays unmount when the player leaves view and remount fresh
-  // (default styles) when it returns; track that so the cache is invalidated
-  // and every guarded style gets re-applied to the new DOM.
-  const wasVisibleRef = useRef(false);
 
   // Derive IFF height from the shape's bounding box.
   const iffHeight = useMemo(() => {
@@ -79,122 +162,88 @@ export function PlayerNameplate({ entity }: { entity: PlayerEntity }) {
 
   useFrame(() => {
     if (!isVisible) {
-      wasVisibleRef.current = false;
+      arrowItem.opacity = 0;
+      plateItem.opacity = 0;
       return;
     }
+    const drawn = drawnRef.current;
 
-    const cache = styleCacheRef.current;
-    if (!wasVisibleRef.current) {
-      // Fresh (re)mount — invalidate the write cache so every guarded style
-      // below is applied to the new DOM elements' default styles.
-      wasVisibleRef.current = true;
-      cache.opacity = "";
-      cache.r = cache.g = cache.b = -1;
-      cache.colorStr = "";
-      cache.fillWidth = "";
-    }
-    // Hide nameplate when the player is dead; otherwise apply the shared
-    // fade opacity. Write both containers only when the value changed.
+    // Hide when dead; otherwise apply the shared distance fade.
     const kf = getKeyframeAtTime(keyframes, streamClock.time);
     const health = kf?.health ?? 1;
     const dead = kf?.damageState != null && kf.damageState >= 1;
-    const opacity = dead ? "0" : opacityRef.current;
-    if (cache.opacity !== opacity) {
-      cache.opacity = opacity;
-      if (iffContainerRef.current)
-        iffContainerRef.current.style.opacity = opacity;
-      if (nameContainerRef.current)
-        nameContainerRef.current.style.opacity = opacity;
-    }
+    const opacity = dead ? 0 : opacityRef.current;
+    arrowItem.opacity = opacity;
+    plateItem.opacity = opacity;
     if (dead) return;
 
-    // Update player name imperatively — entity.playerName is mutated in-place
-    // by streaming playback without triggering re-renders.
-    if (nameRef.current) {
-      const name = entity.playerName ?? entity.id;
-      if (nameRef.current.textContent !== name) {
-        nameRef.current.textContent = name;
-      }
-    }
-
-    // Update IFF arrow imperatively — affiliation fields are mutated
-    // in-place by streaming playback without triggering re-renders. The
-    // arrow is the triangle texture as an alpha mask over a theme color:
-    // teamed viewers keep the texture-authentic friend/foe look (enemy
-    // shape + red vs allied shape + green); observers get team colors on
-    // the allied shape.
+    // Affiliation fields and playerName are mutated in-place by streaming
+    // playback without re-renders, so they're polled here. rgbString is
+    // cached by color identity (theme constants), so this is alloc-free.
     const observer = isObserverView();
     const display = resolveIffDisplay(entity, observer, observerTeamColors);
+    const colorStr = rgbString(display.color);
 
-    // Re-stringify the color only when it changed (by value, so a fresh
-    // object with the same rgb doesn't re-allocate). Both the arrow and the
-    // health fill share this string, so a stable color means no writes.
-    const color = display.color;
-    let colorChanged = false;
-    if (cache.r !== color.r || cache.g !== color.g || cache.b !== color.b) {
-      cache.r = color.r;
-      cache.g = color.g;
-      cache.b = color.b;
-      cache.colorStr = rgbString(color);
-      colorChanged = true;
+    // IFF arrow: enemy shape + theme color for teamed viewers, allied
+    // shape + team color for observers.
+    const arrowUrl =
+      !observer && display === IFF_ENEMY ? IFF_ENEMY_URL : IFF_FRIENDLY_URL;
+    const arrowKey = `${arrowUrl}|${colorStr}`;
+    if (drawn.arrowKey !== arrowKey) {
+      const bitmap = getTintedIconLabel(arrowUrl, colorStr, ARROW_ICON_OPTIONS);
+      if (bitmap) {
+        drawn.arrowKey = arrowKey;
+        arrowItem.bitmap = bitmap;
+        arrowItem.anchorX = ARROW_LABEL_SIZE / 2;
+        arrowItem.anchorY = ARROW_LABEL_SIZE / 2 + ARROW_RAISE;
+      }
     }
 
-    if (iffArrowRef.current) {
-      const maskUrl =
-        !observer && display === IFF_ENEMY
-          ? `url(${IFF_ENEMY_URL})`
-          : `url(${IFF_FRIENDLY_URL})`;
-      const arrowStyle = iffArrowRef.current.style;
-      if (arrowStyle.maskImage !== maskUrl) {
-        arrowStyle.maskImage = maskUrl;
-        arrowStyle.webkitMaskImage = maskUrl;
+    // Name + health plate, redrawn only when its content changes (the
+    // color matters too: the health fill is tinted by it).
+    const name = entity.playerName ?? entity.id;
+    const healthPx = hasHealthData
+      ? Math.round(Math.max(0, Math.min(1, health)) * HEALTH_INNER_WIDTH)
+      : -1;
+    if (
+      drawn.name !== name ||
+      drawn.healthPx !== healthPx ||
+      drawn.hasHealth !== hasHealthData ||
+      drawn.colorStr !== colorStr ||
+      plateItem.bitmap == null
+    ) {
+      drawn.name = name;
+      drawn.healthPx = healthPx;
+      drawn.hasHealth = hasHealthData;
+      drawn.colorStr = colorStr;
+      const [width, height] = plateSize(name, hasHealthData);
+      let label = plateLabelRef.current;
+      if (!label || label.width !== width || label.height !== height) {
+        label = createCanvasLabel(width, height);
+        plateLabelRef.current = label;
       }
-      if (colorChanged) arrowStyle.backgroundColor = cache.colorStr;
-    }
-
-    // Update health bar fill with the resolved theme color (friend/foe
-    // constants for teamed viewers, team color for observers).
-    if (fillRef.current && hasHealthData) {
-      const width = `${Math.max(0, Math.min(100, health * 100))}%`;
-      if (cache.fillWidth !== width) {
-        cache.fillWidth = width;
-        fillRef.current.style.width = width;
-      }
-      if (colorChanged) fillRef.current.style.background = cache.colorStr;
+      drawPlate(label, name, drawn.colorStr, healthPx, hasHealthData);
+      plateItem.bitmap = label;
+      plateItem.anchorX = width / 2;
+      // Anchor: top edge hangs just below the feet-level anchor point.
+      plateItem.anchorY = -PLATE_DROP;
     }
   });
 
   return (
     <group ref={groupRef}>
-      {isVisible && (
-        <>
-          <Html
-            position={[0, iffHeight, 0]}
-            center
-            style={{ pointerEvents: "none" }}
-          >
-            <div ref={iffContainerRef} className={styles.Top}>
-              <div ref={iffArrowRef} className={styles.IffArrow} />
-            </div>
-          </Html>
-          <Html
-            position={[0, NAME_HEIGHT, 0]}
-            center
-            style={{ pointerEvents: "none" }}
-          >
-            <div ref={nameContainerRef} className={styles.Bottom}>
-              <div ref={nameRef} className={styles.Name}>
-                {entity.playerName ?? entity.id}
-              </div>
-              {hasHealthData && (
-                <div className={styles.HealthBar}>
-                  <div ref={fillRef} className={styles.HealthFill} />
-                </div>
-              )}
-            </div>
-          </Html>
-        </>
-      )}
+      <object3D
+        position={[0, iffHeight, 0]}
+        ref={(node) => {
+          arrowItem.object = node;
+        }}
+      />
+      <object3D
+        position={[0, NAME_HEIGHT, 0]}
+        ref={(node) => {
+          plateItem.object = node;
+        }}
+      />
     </group>
   );
 }

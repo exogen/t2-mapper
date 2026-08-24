@@ -1,5 +1,7 @@
+import { useStore } from "zustand";
 import { useRecording } from "./usePlayback";
 import { useInputMode } from "./InputContext";
+import { streamPlaybackStore } from "../state/streamPlaybackStore";
 import { useCameraTour } from "../state/cameraTourStore";
 import { useCommandCircuit } from "../state/commandCircuitStore";
 import { useLiveSelector } from "../state/liveConnectionStore";
@@ -12,6 +14,7 @@ import {
   MAP_MODE_INPUT,
   DEMO_MODE_INPUT,
   LIVE_OBSERVER_INPUT,
+  FLAG_FOLLOW_INPUT,
   LIVE_FOLLOW_INPUT,
   TOUR_MODE_INPUT,
   COMMAND_CIRCUIT_TOGGLE_INPUT,
@@ -34,6 +37,11 @@ export function ActiveInputBindings() {
   // Watch mode: client-only free-fly camera; server-observer bindings
   // (fly/follow toggle, ObserveClient) don't apply.
   const isWatcher = useLiveSelector((s) => s.role === "watcher");
+  // Flag follow (number keys) is not a player follow — no player cycling.
+  const isFlagFollow = useStore(
+    streamPlaybackStore,
+    (s) => s.followFlagSlot != null,
+  );
   const { showChat } = useSettings();
   const isDemo = recording?.source === "demo";
   const isLive = recording?.source === "live";
@@ -82,9 +90,19 @@ export function ActiveInputBindings() {
         <InputBindings map={LIVE_OBSERVER_INPUT} />
       )}
       {/* Pointer-locked click cycles the followed player. inputMode is
-          "follow" during orbit/first-person in both live and demo. */}
-      {(isLive || isDemo) && inputMode === "follow" && (
+          "follow" during orbit/first-person in both live and demo —
+          but not while following a flag (nothing to cycle). */}
+      {(isLive || isDemo) && inputMode === "follow" && !isFlagFollow && (
         <InputBindings map={LIVE_FOLLOW_INPUT} />
+      )}
+      {/* Number keys orbit the flags — client-side follow (demo and watch
+          spectate). The server CAN orbit arbitrary targets
+          (serverCmdAttachCommanderCamera), but its sensor-group gate
+          rejects observers for EVERY target — verified live with
+          scripts/attach-camera-probe.ts — so real observers aren't
+          wired up. */}
+      {(isDemo || (isLive && isWatcher)) && !isTourActive && (
+        <InputBindings map={FLAG_FOLLOW_INPUT} />
       )}
       {isTourActive && <InputBindings map={TOUR_MODE_INPUT} />}
     </>

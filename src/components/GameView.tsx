@@ -6,6 +6,7 @@ import { AudioProvider } from "./AudioContext";
 import { CamerasProvider } from "./CamerasProvider";
 import { InputProducer } from "./InputProducer";
 import { SceneLighting } from "./SceneLighting";
+import { LightPool } from "./LightPool";
 import { ThreeCanvas } from "./ThreeCanvas";
 import { TickProvider } from "./TickProvider";
 import { EntityScene } from "./EntityScene";
@@ -17,6 +18,7 @@ import { AudioEnabled } from "./AudioEnabled";
 import { DebugEnabled } from "./DebugEnabled";
 import { FpsMeter } from "./FpsMeter";
 import { InputConsumer } from "./InputConsumer";
+import { LabelOverlay } from "./LabelOverlay";
 import { SpectatorController } from "./SpectatorController";
 import { DemoCameraController } from "./DemoCameraController";
 import { CameraTourConsumer } from "./CameraTourConsumer";
@@ -74,6 +76,7 @@ export const GameView = memo(function GameView({
           <InputProducer />
           <AudioProvider>
             <SceneLighting />
+            <LightPool />
             <Suspense>
               <EntityScene />
             </Suspense>
@@ -107,6 +110,7 @@ export const GameView = memo(function GameView({
             {recording?.source === "demo" ? <DemoCameraController /> : null}
             <CameraTourConsumer />
             <InputConsumer />
+            <LabelOverlay />
           </AudioProvider>
         </CamerasProvider>
       </TickProvider>
