@@ -180,8 +180,10 @@ export function StreamingMissionInfo({
                 <span className={styles.ServerName}>{serverName}</span>
               </>
             ) : null}
-            {isLive &&
-            isLiveConnected &&
+            {/* Live and demo both count the roster at the CURRENT stream
+                time (the demo's roster tracks joins/drops through playback
+                and seeks — not the sidecar's all-players-ever list). */}
+            {(isLive ? isLiveConnected : dataSource === "demo") &&
             playerCount != null &&
             onOpenScoreScreen ? (
               <button
