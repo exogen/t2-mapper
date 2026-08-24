@@ -811,6 +811,10 @@ class StreamingPlayback extends StreamEngine {
     const snapshot = this.buildSnapshot();
     this._cachedSnapshot = snapshot;
     this._cachedSnapshotTick = this.moveTicks;
+    // Must stamp the generation too, or the fast path above never hits and
+    // buildSnapshot() re-runs on every rendered frame (getSnapshot sets all
+    // three; this path drives demo playback and previously set only two).
+    this._cachedSnapshotGen = this.entityGeneration;
     return snapshot;
   }
 
@@ -865,7 +869,9 @@ class StreamingPlayback extends StreamEngine {
         this.advanceControlVehicle();
         this.advanceFades();
         this.advanceControlEnergy();
-        this.removeExpiredExplosions();
+        // updateCameraAndHud() calls removeExpiredExplosions() as its first
+        // step (and the live path relies on that), so calling it here too
+        // would drop expired explosions twice per tick.
         this.updateCameraAndHud();
         return true;
       }
