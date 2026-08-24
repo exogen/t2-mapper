@@ -33,16 +33,45 @@ function isDeadEntity(entity: GameEntity): boolean {
   );
 }
 
-/** Living player entity ids in stable (ghost index) order for cycling. */
+/**
+ * Living, followable players in a STABLE cycle order — one entry per
+ * client, deduped and sorted by the per-client target id (allocated at
+ * join, constant for the whole match). Sorting by ghost index instead
+ * would reshuffle the order every time someone respawns — a respawn is a
+ * brand-new ghost with a new, higher index — so cycling would revisit
+ * some players and take ages to reach others. A client without a target
+ * id falls back to a stable per-entity key so it still appears once.
+ */
 function playerEntityIds(): string[] {
-  const players: { id: string; ghostIndex?: number }[] = [];
+  const byIdentity = new Map<
+    string,
+    { id: string; targetId: number | null; ghostIndex: number }
+  >();
   for (const entity of gameEntityStore.getState().streamEntities.values()) {
-    if (entity.renderType === "Player" && !isDeadEntity(entity)) {
-      players.push({ id: entity.id, ghostIndex: entity.ghostIndex });
+    if (entity.renderType !== "Player" || isDeadEntity(entity)) continue;
+    // targetId -1 means "no target" on the wire — treat as absent.
+    const rawTargetId = "targetId" in entity ? entity.targetId : undefined;
+    const targetId =
+      rawTargetId != null && rawTargetId >= 0 ? rawTargetId : null;
+    const ghostIndex = entity.ghostIndex ?? 0;
+    const key = targetId != null ? `t${targetId}` : `e${entity.id}`;
+    const existing = byIdentity.get(key);
+    // During a respawn overlap two living bodies can briefly share an
+    // identity; keep the newest ghost so we follow the live body.
+    if (!existing || ghostIndex > existing.ghostIndex) {
+      byIdentity.set(key, { id: entity.id, targetId, ghostIndex });
     }
   }
-  players.sort((a, b) => (a.ghostIndex ?? 0) - (b.ghostIndex ?? 0));
-  return players.map((p) => p.id);
+  return [...byIdentity.values()]
+    .sort((a, b) => {
+      if (a.targetId != null && b.targetId != null) {
+        return a.targetId - b.targetId;
+      }
+      if (a.targetId != null) return -1;
+      if (b.targetId != null) return 1;
+      return a.ghostIndex - b.ghostIndex || a.id.localeCompare(b.id);
+    })
+    .map((p) => p.id);
 }
 
 /**
@@ -282,7 +311,22 @@ export function cycleWatchFollow(): void {
     exitWatchFollow();
     return;
   }
-  const current = streamPlaybackStore.getState().followEntityId;
-  const index = current ? players.indexOf(current) : -1;
+  const { followEntityId, followTargetId } = streamPlaybackStore.getState();
+  const entities = gameEntityStore.getState().streamEntities;
+  // Locate our slot by the followed player's stable target id (it survives
+  // respawns) rather than the current body's entity id, so the cycle
+  // advances exactly one player and never jumps back to the top when the
+  // followed body has just respawned. Fall back to the entity id, then to
+  // -1 (→ start at the first player) if neither resolves.
+  let index = -1;
+  if (followTargetId != null) {
+    index = players.findIndex((id) => {
+      const e = entities.get(id);
+      return e != null && "targetId" in e && e.targetId === followTargetId;
+    });
+  }
+  if (index === -1 && followEntityId != null) {
+    index = players.indexOf(followEntityId);
+  }
   enterWatchFollow(players[(index + 1) % players.length]);
 }
