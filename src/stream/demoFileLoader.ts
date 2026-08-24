@@ -38,11 +38,10 @@ export async function loadDemoFile(file: File): Promise<void> {
   // load starts while we're reading, that newer one wins — not whichever
   // happens to finish last.
   const token = ++parseToken;
-  demoLoadStore.getState().setSourceUrl(null);
   try {
     const buffer = await file.arrayBuffer();
     if (parseToken !== token) return;
-    await loadDemoBuffer(buffer);
+    await loadDemoBuffer(buffer, null);
   } catch (err) {
     log.error("Failed to load demo: %o", err);
     if (parseToken === token) {
@@ -57,7 +56,6 @@ export async function loadDemoFile(file: File): Promise<void> {
  */
 export async function loadDemoUrl(url: string): Promise<void> {
   const token = ++parseToken;
-  demoLoadStore.getState().setSourceUrl(null);
   demoLoadStore.getState().begin("downloading");
   try {
     const response = await fetch(url);
@@ -66,11 +64,10 @@ export async function loadDemoUrl(url: string): Promise<void> {
     }
     const buffer = await readWithProgress(response, token);
     if (parseToken !== token) return;
-    // Only a demo that actually loaded gets a source URL (the toolbar's
-    // download link).
-    if (await loadDemoBuffer(buffer)) {
-      demoLoadStore.getState().setSourceUrl(url);
-    }
+    // The URL is recorded as the source only on the success path inside
+    // loadDemoBuffer (atomically with the recording), so a failed parse
+    // never leaves a dangling download link.
+    await loadDemoBuffer(buffer, url);
   } catch (err) {
     log.error("Failed to load demo from %s: %o", url, err);
     if (parseToken === token) {
@@ -127,7 +124,10 @@ async function readWithProgress(
  * Resolves true once the recording is live; false if it failed or a
  * newer load replaced it first.
  */
-async function loadDemoBuffer(buffer: ArrayBuffer): Promise<boolean> {
+async function loadDemoBuffer(
+  buffer: ArrayBuffer,
+  sourceUrl: string | null = null,
+): Promise<boolean> {
   const token = ++parseToken;
   try {
     demoLoadStore.getState().begin("parsing");
@@ -141,8 +141,12 @@ async function loadDemoBuffer(buffer: ArrayBuffer): Promise<boolean> {
     const liveState = liveConnectionStore.getState();
     liveState.leaveServer();
     liveState.disconnectRelay();
-    // Metadata-first: mission/game-mode sync happens immediately.
+    // Metadata-first: mission/game-mode sync happens immediately. Set the
+    // source atomically with the recording so readers never observe a
+    // loaded demo with a stale/transient source (a null here means a
+    // local upload; a URL means an indexed demo).
     engineStore.getState().setRecording(recording);
+    demoLoadStore.getState().setSourceUrl(sourceUrl);
 
     // Kick off background timeline scan.
     scanAbort?.abort();

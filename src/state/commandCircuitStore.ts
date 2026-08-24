@@ -7,22 +7,12 @@ import { streamPlaybackStore } from "./streamPlaybackStore";
 export interface CommandCircuitState {
   active: boolean;
   /**
-   * Demo playback: whether the view tracks the recording player or pans
-   * freely under user control. Ignored in map mode (always free) AND in
-   * live mode — there the fly/follow state is server-owned and shared
-   * with the 3D observer view, so read it via `isCommandFollowActive()`
-   * (or derive from the input mode in React) instead of this flag.
-   */
-  follow: boolean;
-  /**
    * Enters command circuit mode. No-op until a map, demo, or live
    * stream is loaded.
    */
   activate(): void;
   deactivate(): void;
   toggle(): void;
-  toggleFollow(): void;
-  setFollow(follow: boolean): void;
   /**
    * Live mode: ask for the server-side fly/follow toggle (trigger 2) to
    * be sent with the next move. Set by the CC UI (F key, pan
@@ -46,10 +36,9 @@ export interface CommandCircuitState {
 export const commandCircuitStore = createStore<CommandCircuitState>(
   (set, get) => ({
     active: false,
-    follow: true,
     activate() {
       if (gameEntityStore.getState().dataSource == null) return;
-      set({ active: true, follow: true, observerToggleRequested: false });
+      set({ active: true, observerToggleRequested: false });
     },
     deactivate() {
       set({ active: false, observerToggleRequested: false });
@@ -60,12 +49,6 @@ export const commandCircuitStore = createStore<CommandCircuitState>(
       } else {
         get().activate();
       }
-    },
-    toggleFollow() {
-      set({ follow: !get().follow });
-    },
-    setFollow(follow) {
-      set({ follow });
     },
     observerToggleRequested: false,
     _observerTogglePendingUntil: 0,
@@ -98,12 +81,11 @@ export const commandCircuitStore = createStore<CommandCircuitState>(
 );
 
 /**
- * The effective command circuit follow state. Live mode reads the
- * server-owned fly/follow observer mode — the exact same state the 3D
- * observer view uses (kept in sync by InputConsumer's server camera
- * reconciliation) — so CC and non-CC can never disagree. Demo playback
- * uses the local flag. Non-reactive; for React rendering derive the live
- * half from the input mode instead.
+ * The effective command circuit follow state, shared with the 3D view so
+ * CC and non-CC can never disagree: live mode reads the server-owned
+ * fly/follow observer mode (kept in sync by InputConsumer's server camera
+ * reconciliation); demo reads the 3D camera mode. Non-reactive; for React
+ * rendering derive the live half from the input mode instead.
  */
 export function isCommandFollowActive(): boolean {
   if (gameEntityStore.getState().dataSource === "live") {
@@ -114,7 +96,11 @@ export function isCommandFollowActive(): boolean {
     }
     return liveConnectionStore.getState().adapter?.observerMode === "follow";
   }
-  return commandCircuitStore.getState().follow;
+  // Demo playback: shared with the 3D view. Only an orbit/first-person
+  // follow of a chosen player counts as following — the recorded
+  // "original" view (like free-fly) is treated as pan.
+  const mode = streamPlaybackStore.getState().cameraMode;
+  return mode === "orbitOverride" || mode === "firstPersonOverride";
 }
 
 export function useCommandCircuit<T>(

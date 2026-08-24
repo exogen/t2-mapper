@@ -1,0 +1,14 @@
+/* Bottom-centered HUD stack: the watched-player chip sits above the
+   input overlay, the two centered on each other. */
+.Stack {
+  position: absolute;
+  bottom: 6px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  pointer-events: none;
+  z-index: 1;
+}

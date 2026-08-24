@@ -29,6 +29,8 @@ import {
   type DemoIndexEntry,
 } from "../stream/demoIndex";
 import { loadDemoUrl } from "../stream/demoFileLoader";
+import { useDemoLoad } from "../state/demoLoadStore";
+import { useDemoQueryState } from "./useQueryParams";
 import { useRecording } from "./usePlayback";
 import { normalizeMissionType } from "../mission";
 import { findMissionInfo } from "../manifest";
@@ -164,19 +166,37 @@ export function DemoSelect() {
   const [tournamentOnly, setTournamentOnly] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // Clear the selection when a loaded demo is ejected so the input
-  // returns to its "Choose a demo…" placeholder — but only on the
-  // demo→none transition, not during a selection's own async download
-  // (where the recording is briefly absent).
+  const enabled = DEMOS_BASE_URL !== "";
+
+  // The `?demo=<filename>` param is the single trigger for loading a
+  // published demo: the dropdown selection writes it and a shared link
+  // arrives with it already set. This effect loads whatever it names.
+  const [demoParam, setDemoParam] = useDemoQueryState();
+  const loadedDemoRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!enabled || !demoParam || loadedDemoRef.current === demoParam) return;
+    loadedDemoRef.current = demoParam;
+    setSelectedFilename(demoParam);
+    void loadDemoUrl(demoDownloadUrl(demoParam));
+  }, [demoParam, enabled]);
+
+  // Keep the selection and the ?demo link tied to the loaded indexed
+  // demo. Drop both when the demo is ejected (demo→none) or replaced by a
+  // local upload — a local file has no source URL and can't be linked to,
+  // so a lingering ?demo would misdescribe what's playing.
   const recording = useRecording();
+  const sourceUrl = useDemoLoad((s) => s.sourceUrl);
   const hadDemoRef = useRef(false);
   useEffect(() => {
     const hasDemo = recording?.source === "demo";
-    if (hadDemoRef.current && !hasDemo) setSelectedFilename("");
+    const localUpload = hasDemo && sourceUrl === null;
+    if ((hadDemoRef.current && !hasDemo) || localUpload) {
+      setSelectedFilename("");
+      loadedDemoRef.current = null;
+      void setDemoParam(null);
+    }
     hadDemoRef.current = hasDemo;
-  }, [recording]);
-
-  const enabled = DEMOS_BASE_URL !== "";
+  }, [recording, sourceUrl, setDemoParam]);
   const {
     data: demos,
     isPending,
@@ -193,8 +213,9 @@ export function DemoSelect() {
     selectedValue: selectedFilename,
     setSelectedValue: (newValue) => {
       if (newValue) {
-        setSelectedFilename(newValue);
-        void loadDemoUrl(demoDownloadUrl(newValue));
+        // Route through the URL param; the effect above does the load,
+        // so dropdown picks and shared links share one code path.
+        void setDemoParam(newValue);
         inputRef.current?.blur();
       }
     },

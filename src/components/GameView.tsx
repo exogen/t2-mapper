@@ -18,6 +18,7 @@ import { DebugEnabled } from "./DebugEnabled";
 import { FpsMeter } from "./FpsMeter";
 import { InputConsumer } from "./InputConsumer";
 import { SpectatorController } from "./SpectatorController";
+import { DemoCameraController } from "./DemoCameraController";
 import { CameraTourConsumer } from "./CameraTourConsumer";
 import { ActiveInputBindings } from "./ActiveInputBindings";
 
@@ -103,6 +104,7 @@ export const GameView = memo(function GameView({
               </Suspense>
             ) : null}
             {spectator ? <SpectatorController /> : null}
+            {recording?.source === "demo" ? <DemoCameraController /> : null}
             <CameraTourConsumer />
             <InputConsumer />
           </AudioProvider>

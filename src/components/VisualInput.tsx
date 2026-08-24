@@ -7,6 +7,8 @@ import { useLiveSelector } from "../state/liveConnectionStore";
 import { streamPlaybackStore } from "../state/streamPlaybackStore";
 import { useSettings } from "./SettingsProvider";
 import { useRecording } from "./usePlayback";
+import { WatchedPlayerHud } from "./WatchedPlayerHud";
+import styles from "./VisualInput.module.css";
 
 const TouchJoystick = lazy(() =>
   import("@/src/components/TouchJoystick").then((mod) => ({
@@ -43,16 +45,33 @@ export function VisualInput() {
     ? cameraMode === "freeFly" || cameraMode === "orbitOverride"
     : true;
 
+  // isTouch can be `null` before we know for sure — only render the
+  // desktop HUD once it's definitively false.
+  const isDesktop = isTouch === false;
+  // The watched-player chip shows during any stream, independent of the
+  // input-overlay setting; the overlay obeys it.
+  const showWatchedPlayer = isDesktop && !!recording;
+  const showOverlay = isDesktop && showInputOverlay;
+
   return (
-    <Suspense>
+    <>
       {isTouch && !isTourActive && !isCommandCircuit && hasCameraControls ? (
-        <TouchJoystick />
+        <Suspense>
+          <TouchJoystick />
+        </Suspense>
       ) : null}
-      {isTouch === false && showInputOverlay ? (
-        // isTouch can be `null` before we know for sure; make sure this doesn't
-        // render until it's definitively false
-        <KeyboardOverlay />
+      {showWatchedPlayer || showOverlay ? (
+        <div className={styles.Stack}>
+          {showOverlay ? (
+            <Suspense>
+              <KeyboardOverlay />
+            </Suspense>
+          ) : null}
+          {/* Not lazy, and kept outside the overlay's Suspense so the
+              overlay's first chunk load never hides the chip. */}
+          {showWatchedPlayer ? <WatchedPlayerHud /> : null}
+        </div>
       ) : null}
-    </Suspense>
+    </>
   );
 }

@@ -16,7 +16,6 @@ import {
   TOUR_MODE_INPUT,
   COMMAND_CIRCUIT_TOGGLE_INPUT,
   COMMAND_CIRCUIT_STREAM_INPUT,
-  COMMAND_CIRCUIT_LIVE_INPUT,
   COMMAND_CIRCUIT_INPUT,
   COMMAND_CIRCUIT_EXIT_INPUT,
   LIVE_CHAT_INPUT,
@@ -41,11 +40,13 @@ export function ActiveInputBindings() {
   const isMap = !recording;
 
   // Free-fly movement: map mode (no tour), live server-observer fly
-  // mode, or watch-mode spectating.
+  // mode, watch-mode spectating, or demo playback (InputConsumer only
+  // acts on WASD when cameraMode is "freeFly", so it's inert otherwise).
   const showFreeFly =
     (isMap && !isTourActive && !isCommandCircuit) ||
     (isLive && inputMode === "fly") ||
-    (isLive && isWatcher && !isTourActive && !isCommandCircuit);
+    (isLive && isWatcher && !isTourActive && !isCommandCircuit) ||
+    (isDemo && !isTourActive && !isCommandCircuit);
 
   // Camera can be moved by drag/touch in most modes.
   const showMovableCamera = !isTourActive && !isCommandCircuit;
@@ -71,19 +72,18 @@ export function ActiveInputBindings() {
       {isCommandCircuit && (isDemo || isLive) && (
         <InputBindings map={COMMAND_CIRCUIT_STREAM_INPUT} />
       )}
-      {isCommandCircuit && isLive && (
-        <InputBindings map={COMMAND_CIRCUIT_LIVE_INPUT} />
-      )}
       {isDemo && <InputBindings map={DEMO_MODE_INPUT} />}
       {/* Y focuses chat only while the chat HUD is actually visible. */}
       {isLive && showChat && <InputBindings map={LIVE_CHAT_INPUT} />}
       {/* Observer fly/follow toggle shares F with the CC follow toggle —
-          only one is mounted at a time. Watchers get the same toggle,
-          handled client-side by SpectatorController. */}
-      {isLive && !isCommandCircuit && (
+          only one is mounted at a time. Watchers get the same toggle
+          (SpectatorController), demos too (DemoCameraController). */}
+      {(isLive || isDemo) && !isCommandCircuit && (
         <InputBindings map={LIVE_OBSERVER_INPUT} />
       )}
-      {isLive && inputMode === "follow" && (
+      {/* Pointer-locked click cycles the followed player. inputMode is
+          "follow" during orbit/first-person in both live and demo. */}
+      {(isLive || isDemo) && inputMode === "follow" && (
         <InputBindings map={LIVE_FOLLOW_INPUT} />
       )}
       {isTourActive && <InputBindings map={TOUR_MODE_INPUT} />}

@@ -96,12 +96,12 @@ export function CommandCircuitPlayerMarker({
   // server switches its camera to orbit, and the confirmed follow state
   // flows back down so the view snaps to the clicked player.
   const handleClick = () => {
-    if (!isLive) return;
     const kf = getKeyframeAtTime(entity.keyframes ?? [], streamClock.time);
     if (kf?.damageState != null && kf.damageState >= 1) return;
-    // Spectate mode: follow is purely client-side — orbit this player's
-    // ghost directly, no server round-trip.
-    if (isWatchSpectator()) {
+    // Client-side follow: demo playback and live spectate both orbit this
+    // player's ghost directly (no server round-trip), and it's shared with
+    // the 3D view so exiting either reverts both.
+    if (!isLive || isWatchSpectator()) {
       enterWatchFollow(entity.id);
       return;
     }

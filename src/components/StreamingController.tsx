@@ -666,9 +666,17 @@ export function StreamingController({
     // yaw/pitch instead of stream data.
     const isWatcher =
       isLive && liveConnectionStore.getState().role === "watcher";
+    // The follow target is chosen client-side (followEntityId) in watch
+    // AND in demo camera overrides — it wins over the recorder's own
+    // orbitTargetId, which is only meaningful for original-mode playback.
+    const userFollowing =
+      isWatcher ||
+      (!isLive &&
+        (cameraMode === "orbitOverride" ||
+          cameraMode === "firstPersonOverride"));
     const orbitTargetId =
+      (userFollowing ? streamPlaybackStore.getState().followEntityId : null) ??
       currentCamera?.orbitTargetId ??
-      (isWatcher ? streamPlaybackStore.getState().followEntityId : null) ??
       undefined;
     const orbitOverride =
       cameraMode === "orbitOverride" &&
@@ -742,10 +750,11 @@ export function StreamingController({
           // The real observer follow orbits at 4 (camera.cs setOrbitMode
           // 0.5/4.5/4.5 rendered at max − min); spectate mode pulls back
           // further for a better view of the action.
-          const orbitDistance = Math.max(
-            0.1,
-            currentCamera.orbitDistance ?? (isWatcher ? 8 : 4),
-          );
+          // User-controlled follow zooms distance via the scroll wheel;
+          // otherwise use the recorder's distance or the mode default.
+          const orbitDistance = orbitOverride
+            ? streamPlaybackStore.getState().orbitOverrideDistance
+            : Math.max(0.1, currentCamera.orbitDistance ?? (isWatcher ? 8 : 4));
           _orbitCandidate
             .copy(_orbitTarget)
             .addScaledVector(_orbitDir, orbitDistance);

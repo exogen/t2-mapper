@@ -67,12 +67,42 @@ function seedOrbitBehindTarget(targetId: string): void {
   });
 }
 
-/** Follow a specific player, or the current/first player when omitted. */
+/**
+ * Pick the target when re-entering follow with no explicit player:
+ * resume the last-followed player (by their respawn-stable target id);
+ * if they're gone, the next player past their old list slot; else the
+ * first. Keeps view toggles from restarting at the first player.
+ */
+function resumeFollowTarget(players: string[]): string | undefined {
+  if (players.length === 0) return undefined;
+  const { lastFollowTargetId, lastFollowGhostIndex } =
+    streamPlaybackStore.getState();
+  const entities = gameEntityStore.getState().streamEntities;
+  if (lastFollowTargetId != null) {
+    const same = players.find((id) => {
+      const e = entities.get(id);
+      return e && "targetId" in e && e.targetId === lastFollowTargetId;
+    });
+    if (same) return same;
+  }
+  if (lastFollowGhostIndex != null) {
+    const next = players.find(
+      (id) => (entities.get(id)?.ghostIndex ?? 0) > lastFollowGhostIndex,
+    );
+    if (next) return next;
+  }
+  return players[0];
+}
+
+/** Follow a specific player, or resume the last-followed one when omitted. */
 export function enterWatchFollow(targetId?: string): void {
   const current = streamPlaybackStore.getState().followEntityId;
   const players = playerEntityIds();
   const target =
-    targetId ?? (current && players.includes(current) ? current : players[0]);
+    targetId ??
+    (current && players.includes(current)
+      ? current
+      : resumeFollowTarget(players));
   if (!target) return;
   const entity = gameEntityStore.getState().streamEntities.get(target);
   seedOrbitBehindTarget(target);
@@ -81,12 +111,31 @@ export function enterWatchFollow(targetId?: string): void {
     entity && "targetId" in entity && entity.targetId != null
       ? entity.targetId
       : null;
+  const validTargetId =
+    entityTargetId != null && entityTargetId >= 0 ? entityTargetId : null;
   streamPlaybackStore.setState({
     followEntityId: target,
-    followTargetId:
-      entityTargetId != null && entityTargetId >= 0 ? entityTargetId : null,
+    followTargetId: validTargetId,
+    // Remember for resume across free-fly / pan (persists through exit).
+    lastFollowTargetId: validTargetId,
+    lastFollowGhostIndex: entity?.ghostIndex ?? null,
     // Cycling players keeps the current orbit/first-person choice.
     cameraMode: streamPlaybackStore.getState().followCameraMode,
+  });
+}
+
+/**
+ * Force the 3D camera to free-fly, clearing any follow. Unlike
+ * exitWatchFollow this applies even from the recorded "original" view
+ * (which has no followEntityId) — used by the demo command circuit's
+ * pan/toggle so exiting follow there reverts the 3D view too.
+ */
+export function exitToFreeFly(): void {
+  streamPlaybackStore.setState({
+    followEntityId: null,
+    followTargetId: null,
+    followCameraMode: "orbitOverride",
+    cameraMode: "freeFly",
   });
 }
 
@@ -185,6 +234,44 @@ export function cycleWatchObserverMode(): void {
     });
   } else {
     exitWatchFollow();
+  }
+}
+
+/**
+ * Demo-playback camera cycle (the F key): original → free-fly → follow
+ * (orbit) → first-person → original. Follow and first-person orbit /
+ * observe the chosen player; click cycles players (see cycleWatchFollow).
+ * With no players present, follow and first-person are skipped.
+ *
+ * Unlike watch mode (which defaults to free-fly), demo starts in
+ * "original" — the recorder's own viewpoint — and returns there.
+ */
+export function cycleDemoCameraMode(): void {
+  const mode = streamPlaybackStore.getState().cameraMode;
+  if (mode === "original") {
+    streamPlaybackStore.setState({
+      cameraMode: "freeFly",
+      followEntityId: null,
+      followTargetId: null,
+    });
+  } else if (mode === "freeFly") {
+    streamPlaybackStore.setState({ followCameraMode: "orbitOverride" });
+    enterWatchFollow();
+    // No players to orbit — skip follow + first-person, back to original.
+    if (!streamPlaybackStore.getState().followEntityId) {
+      streamPlaybackStore.setState({ cameraMode: "original" });
+    }
+  } else if (mode === "orbitOverride") {
+    streamPlaybackStore.setState({
+      followCameraMode: "firstPersonOverride",
+      cameraMode: "firstPersonOverride",
+    });
+  } else {
+    streamPlaybackStore.setState({
+      cameraMode: "original",
+      followEntityId: null,
+      followTargetId: null,
+    });
   }
 }
 

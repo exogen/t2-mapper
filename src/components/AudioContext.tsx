@@ -2,13 +2,14 @@ import {
   createContext,
   useContext,
   useEffect,
+  useRef,
   useState,
   ReactNode,
 } from "react";
 import { useThree } from "@react-three/fiber";
 import { AudioListener, AudioLoader } from "three";
-import { engineStore } from "../state/engineStore";
-import { useDataSource } from "../state/gameEntityStore";
+import { useEngineSelector } from "../state/engineStore";
+import { isStreamingSource, useDataSource } from "../state/gameEntityStore";
 import { useLiveSelector } from "../state/liveConnectionStore";
 import { useSettings } from "./SettingsProvider";
 
@@ -31,6 +32,10 @@ export function AudioProvider({ children }: { children: ReactNode }) {
     audioListener: null,
   });
 
+  // Latest reconcile of AudioContext state ↔ playback, kept in a ref so the
+  // gesture listeners (registered once) always call the current one.
+  const reconcileRef = useRef<() => void>(() => {});
+
   useEffect(() => {
     // Create audio loader
     const audioLoader = new AudioLoader();
@@ -50,49 +55,53 @@ export function AudioProvider({ children }: { children: ReactNode }) {
       audioListener: listener,
     });
 
-    // Resume the AudioContext on user interaction to satisfy browser autoplay
-    // policy. Without this, sounds won't play until the user clicks/taps.
-    const resumeOnGesture = () => {
-      const ctx = listener.context;
-      if (!ctx || ctx.state !== "suspended") return;
-      ctx.resume().finally(() => {
-        document.removeEventListener("click", resumeOnGesture);
-        document.removeEventListener("keydown", resumeOnGesture);
-        document.removeEventListener("touchend", resumeOnGesture);
-      });
-    };
-    document.addEventListener("click", resumeOnGesture);
-    document.addEventListener("keydown", resumeOnGesture);
-    document.addEventListener("touchend", resumeOnGesture);
-
-    // Suspend/resume the Web AudioContext when demo playback pauses/resumes.
-    // This freezes all playing sounds at their current position rather than
-    // stopping them, so they resume seamlessly.
-    const unsubscribe = engineStore.subscribe(
-      (state) => state.playback.status,
-      (status) => {
-        const ctx = listener.context;
-        if (!ctx) return;
-        if (status === "paused") {
-          ctx.suspend();
-        } else if (ctx.state === "suspended") {
-          ctx.resume();
-        }
-      },
-    );
+    // A user gesture is required before the browser lets the AudioContext
+    // resume (autoplay policy). Reconcile on any gesture: a stream that
+    // should be running gets sound, while a paused/stopped one stays silent
+    // even after the gesture (see the reconcile effect below).
+    const onGesture = () => reconcileRef.current();
+    document.addEventListener("click", onGesture);
+    document.addEventListener("keydown", onGesture);
+    document.addEventListener("touchend", onGesture);
 
     return () => {
-      document.removeEventListener("click", resumeOnGesture);
-      document.removeEventListener("keydown", resumeOnGesture);
-      document.removeEventListener("touchend", resumeOnGesture);
-      unsubscribe();
+      document.removeEventListener("click", onGesture);
+      document.removeEventListener("keydown", onGesture);
+      document.removeEventListener("touchend", onGesture);
       if (listener) camera.remove(listener);
     };
   }, [camera]);
 
+  // Keep the Web AudioContext running only while a demo/live stream is
+  // actually playing. Suspending (rather than muting) freezes every routed
+  // sound at its current position so it resumes seamlessly — and, crucially,
+  // covers the ambient emitters / chat / jet loops that rely on suspension
+  // instead of checking `isPlaying` themselves. A demo loads at "stopped"
+  // (never "paused"), so silence must cover any non-playing stream state,
+  // not just "paused". Map mode isn't a stream, so its ambient audio keeps
+  // running. Applied on every relevant change and immediately on mount,
+  // since the initial "stopped" fires no later transition to react to.
+  const status = useEngineSelector((state) => state.playback.status);
+  const dataSource = useDataSource();
+  const streaming = isStreamingSource(dataSource);
+  const listener = audioContext.audioListener;
+  useEffect(() => {
+    const reconcile = () => {
+      const ctx = listener?.context;
+      if (!ctx) return;
+      const shouldPlay = !streaming || status === "playing";
+      if (shouldPlay) {
+        if (ctx.state === "suspended") ctx.resume().catch(() => {});
+      } else if (ctx.state === "running") {
+        ctx.suspend().catch(() => {});
+      }
+    };
+    reconcileRef.current = reconcile;
+    reconcile();
+  }, [status, streaming, listener]);
+
   // A dead live session keeps rendering its last frame, but looping
   // entity sounds shouldn't keep playing after the disconnect.
-  const dataSource = useDataSource();
   const liveSessionDead = useLiveSelector(
     (s) =>
       s.gameStatus !== "connected" &&

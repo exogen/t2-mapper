@@ -5,12 +5,7 @@ import {
   type DragState,
   type KeyState,
 } from "./InputControls";
-import {
-  SPEED_OPTIONS,
-  useIsPlaying,
-  useRecording,
-  useSpeed,
-} from "./usePlayback";
+import { useRecording } from "./usePlayback";
 import { useStore } from "zustand";
 import { useInputMode } from "./InputContext";
 import { streamPlaybackStore } from "../state/streamPlaybackStore";
@@ -24,7 +19,6 @@ import {
 import { FaAngleDoubleDown, FaAngleDoubleUp } from "react-icons/fa";
 import { PiMouseLeftClickFill, PiMouseScroll } from "react-icons/pi";
 import { ReactNode, useEffect, useRef, useState } from "react";
-import { GrPauseFill, GrPlayFill } from "react-icons/gr";
 import { usePointerLocked } from "./usePointerLocked";
 import styles from "./KeyboardOverlay.module.css";
 import { useControls } from "./SettingsProvider";
@@ -227,6 +221,20 @@ function FlySpeedKey() {
   );
 }
 
+function OrbitZoomKey() {
+  // Same wheel as fly speed, but in follow mode it zooms orbit distance.
+  return (
+    <Key
+      action={(s) => ((s.adjustSpeed as ScrollState)?.deltaY ?? 0) !== 0}
+      debounce={50}
+      label="Zoom"
+      input={<PiMouseScroll className={styles.MouseIcon} />}
+      labelPosition="right"
+      inputSize="auto"
+    />
+  );
+}
+
 function RotateCameraKey() {
   return (
     <Key
@@ -380,51 +388,71 @@ function CommandCircuitOverlay({
   );
 }
 
-function DemoOverlay() {
-  const isPlaying = useIsPlaying();
-  const speed = useSpeed();
-
-  const nextSpeedIndex = SPEED_OPTIONS.indexOf(speed) + 1;
-  const prevSpeedIndex = SPEED_OPTIONS.indexOf(speed) - 1;
-  const atMaxSpeed = nextSpeedIndex >= SPEED_OPTIONS.length;
-  const atMinSpeed = prevSpeedIndex < 0;
-
+/**
+ * Demo-playback camera controls. F cycles original → free-fly → follow →
+ * first-person → original; each mode shows only the inputs it uses. (The
+ * behavior lives in DemoCameraController — this only visualizes it.)
+ */
+function DemoCameraOverlay() {
+  const cameraMode = useStore(streamPlaybackStore, (s) => s.cameraMode);
+  const isPointerLocked = usePointerLocked();
+  const isFly = cameraMode === "freeFly";
+  const isFollow = cameraMode === "orbitOverride";
+  const following = isFollow || cameraMode === "firstPersonOverride";
+  // Label names the mode F switches TO (same copy as ObserverOverlay).
+  const nextModeLabel =
+    cameraMode === "original"
+      ? "Free-fly mode"
+      : cameraMode === "freeFly"
+        ? "Follow mode"
+        : cameraMode === "orbitOverride"
+          ? "First-person mode"
+          : "Original view";
   return (
     <>
-      <div className={styles.Column}>
-        <div className={styles.Row}>
-          <Key
-            action="decreasePlaybackSpeed"
-            label="Slow down"
-            input={["<", ","]}
-            labelPosition="right"
-            disabled={atMinSpeed}
-          />
-          <Key
-            action="playPause"
-            label={
-              isPlaying ? (
-                <GrPauseFill className={styles.PlayPauseIcon} />
-              ) : (
-                <GrPlayFill className={styles.PlayPauseIcon} />
-              )
-            }
-            input="Space"
-            labelPosition="left"
-            size="auto"
-          />
-          <Key
-            action="increasePlaybackSpeed"
-            input={[">", "."]}
-            label="Speed up"
-            labelPosition="left"
-            disabled={atMaxSpeed}
-          />
+      {isFly ? <MoveKeys /> : null}
+      {cameraMode !== "original" ? (
+        <div className={styles.Column} data-height="compact">
+          {isFly ? (
+            <div className={styles.Row}>
+              <FlySpeedKey />
+            </div>
+          ) : null}
+          {isFollow ? (
+            <div className={styles.Row}>
+              <OrbitZoomKey />
+            </div>
+          ) : null}
+          <div className={styles.Row}>
+            <PointerLockKey />
+          </div>
         </div>
-      </div>
-      <div className={styles.Column}>
+      ) : null}
+      <div className={styles.Column} data-height="compact">
+        {(isFly || isFollow) && !isPointerLocked ? (
+          <div className={styles.Row}>
+            <RotateCameraKey />
+          </div>
+        ) : null}
+        {following && isPointerLocked ? (
+          <div className={styles.Row}>
+            <Key
+              action="nextPlayer"
+              label="Next player"
+              input={<PiMouseLeftClickFill className={styles.MouseIcon} />}
+              labelPosition="right"
+              inputSize="auto"
+            />
+          </div>
+        ) : null}
         <div className={styles.Row}>
-          <PointerLockKey />
+          <Key
+            action="toggleObserverMode"
+            label={nextModeLabel}
+            input="F"
+            labelPosition="right"
+            inputSize="auto"
+          />
         </div>
       </div>
     </>
@@ -478,10 +506,10 @@ function ObserverOverlay({
     inputMode === "fly"
       ? "Follow mode"
       : inputMode === "firstPerson"
-        ? "Fly mode"
+        ? "Free-fly mode"
         : mode != null
           ? "First-person mode"
-          : "Fly mode";
+          : "Free-fly mode";
   return (
     <>
       {inputMode === "fly" ? <MoveKeys /> : null}
@@ -489,6 +517,11 @@ function ObserverOverlay({
         {inputMode === "fly" ? (
           <div className={styles.Row}>
             <FlySpeedKey />
+          </div>
+        ) : null}
+        {inputMode === "follow" ? (
+          <div className={styles.Row}>
+            <OrbitZoomKey />
           </div>
         ) : null}
         <div className={styles.Row}>
@@ -532,25 +565,25 @@ export function KeyboardOverlay() {
 
   const isTourActive = useCameraTour((s) => s.animation !== null);
   const isCommandCircuit = useCommandCircuit((s) => s.active);
-  const demoFollow = useCommandCircuit((s) => s.follow);
   // Watch mode: client-only free-fly, no server-observer controls.
   const isWatcher = useLiveSelector((s) => s.role === "watcher");
+  const cameraMode = useStore(streamPlaybackStore, (s) => s.cameraMode);
 
   const isDemo = recording?.source === "demo";
   const isLive = recording?.source === "live";
   const isMap = !recording;
 
-  // Live and demo follow state come from different owners: live mirrors
-  // the server-owned observer mode (shared with the 3D view), demos use
-  // the local command circuit flag.
-  const ccFollow = isLive ? inputMode === "follow" : demoFollow;
+  // Follow state: live mirrors the server-owned observer mode; demo and
+  // watch share the 3D camera mode (anything but free-fly is following).
+  const ccFollow = isLive
+    ? inputMode === "follow"
+    : cameraMode === "orbitOverride" || cameraMode === "firstPersonOverride";
 
   // Watch mode always uses the observer overlay — its client-side camera
   // modes mirror the real observer's (plus first person), but fly state
   // reports inputMode "local", so pass the effective mode explicitly.
-  const watchCameraMode = useStore(streamPlaybackStore, (s) => s.cameraMode);
   const watcherObserverMode = isWatcher
-    ? watchCameraMode === "firstPersonOverride"
+    ? cameraMode === "firstPersonOverride"
       ? ("firstPerson" as const)
       : inputMode === "follow"
         ? ("follow" as const)
@@ -569,13 +602,13 @@ export function KeyboardOverlay() {
           followToggle={
             isDemo || isLive ? (ccFollow ? "follow" : "free") : undefined
           }
-          showObserverCycle={isLive && ccFollow}
+          showObserverCycle={(isLive || isDemo) && ccFollow}
         />
       )}
       {isLiveObserver && !isCommandCircuit && (
         <ObserverOverlay mode={watcherObserverMode} />
       )}
-      {isDemo && !isCommandCircuit && <DemoOverlay />}
+      {isDemo && !isCommandCircuit && <DemoCameraOverlay />}
       {isTourActive && <TourOverlay />}
     </div>
   );

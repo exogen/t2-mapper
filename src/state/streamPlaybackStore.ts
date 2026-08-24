@@ -4,6 +4,11 @@ import type { StreamingPlayback } from "../stream/types";
 export type DemoCameraMode =
   "original" | "freeFly" | "orbitOverride" | "firstPersonOverride";
 
+/** Default follow orbit distance, and the scroll-zoom clamp range. */
+export const DEFAULT_ORBIT_DISTANCE = 8;
+export const MIN_ORBIT_DISTANCE = 2;
+export const MAX_ORBIT_DISTANCE = 45;
+
 /**
  * Store for mutable streaming playback state that needs to be shared between
  * the playback controller (writer) and entity rendering components (readers).
@@ -31,6 +36,10 @@ export interface StreamPlaybackState {
   orbitOverrideYaw: number;
   /** User-controlled orbit pitch (radians), used when cameraMode is "orbitOverride". */
   orbitOverridePitch: number;
+  /** User-controlled orbit distance (world units), used when cameraMode
+   *  is "orbitOverride". The scroll wheel zooms this in/out in follow mode
+   *  (in free-fly the wheel adjusts fly speed instead). */
+  orbitOverrideDistance: number;
   /**
    * Spectate mode: the entity being followed by the client-side orbit
    * camera (the stream has no orbit target — the relay's server camera
@@ -52,6 +61,14 @@ export interface StreamPlaybackState {
    * cameraMode each frame while the follow target resolves.
    */
   followCameraMode: "orbitOverride" | "firstPersonOverride";
+  /**
+   * The last-followed player's target id and list position, remembered
+   * across free-fly / pan so re-entering follow resumes the same player.
+   * Persist through exit (only reset on stream end); if that player is
+   * gone, the ghost index picks the next one in the list.
+   */
+  lastFollowTargetId: number | null;
+  lastFollowGhostIndex: number | null;
 }
 
 export const streamPlaybackStore = createStore<StreamPlaybackState>()(() => ({
@@ -60,9 +77,12 @@ export const streamPlaybackStore = createStore<StreamPlaybackState>()(() => ({
   cameraMode: "original",
   orbitOverrideYaw: 0,
   orbitOverridePitch: 0,
+  orbitOverrideDistance: DEFAULT_ORBIT_DISTANCE,
   followEntityId: null,
   followTargetId: null,
   followCameraMode: "orbitOverride",
+  lastFollowTargetId: null,
+  lastFollowGhostIndex: null,
 }));
 
 /** Reset all streaming playback state. Called when streaming ends. */
@@ -73,9 +93,12 @@ export function resetStreamPlayback(): void {
     cameraMode: "original",
     orbitOverrideYaw: 0,
     orbitOverridePitch: 0,
+    orbitOverrideDistance: DEFAULT_ORBIT_DISTANCE,
     followEntityId: null,
     followTargetId: null,
     followCameraMode: "orbitOverride",
+    lastFollowTargetId: null,
+    lastFollowGhostIndex: null,
   });
   // root is managed by the React ref callback in EntityScene — don't clear it
 }

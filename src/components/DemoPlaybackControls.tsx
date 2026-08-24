@@ -1,6 +1,5 @@
 import { useCallback, useEffect, type ChangeEvent } from "react";
 import { useInputAction } from "./InputControls";
-// import { useStore } from "zustand";
 import {
   usePlaybackActions,
   useCurrentTime,
@@ -10,19 +9,8 @@ import {
   useSpeed,
   SPEED_OPTIONS,
 } from "./usePlayback";
-// import {
-// streamPlaybackStore,
-// type DemoCameraMode,
-// } from "../state/streamPlaybackStore";
-// import { useEngineStoreApi } from "../state/engineStore";
 import { GrPauseFill, GrPlayFill } from "react-icons/gr";
 import styles from "./DemoPlaybackControls.module.css";
-
-// const CAMERA_MODE_OPTIONS: { value: DemoCameraMode; label: string }[] = [
-//   { value: "original", label: "Original" },
-//   { value: "freeFly", label: "Free Fly" },
-//   { value: "orbitOverride", label: "Orbit Target" },
-// ];
 
 function formatTime(seconds: number): string {
   const h = Math.floor(seconds / 3600);
@@ -41,8 +29,6 @@ export function DemoPlaybackControls() {
   const duration = useDuration();
   const speed = useSpeed();
   const { play, pause, seek, setSpeed } = usePlaybackActions();
-  // const cameraMode = useStore(streamPlaybackStore, (s) => s.cameraMode);
-  // const engineStore = useEngineStoreApi();
 
   // Spacebar toggles play/pause during demo playback.
   useEffect(() => {
@@ -94,25 +80,6 @@ export function DemoPlaybackControls() {
     [setSpeed],
   );
 
-  // const handleCameraModeChange = useCallback(
-  //   (e: ChangeEvent<HTMLSelectElement>) => {
-  //     const newMode = e.target.value as DemoCameraMode;
-  //     if (newMode === "orbitOverride") {
-  //       // Seed yaw/pitch from current stream camera to avoid a jump.
-  //       const cam =
-  //         engineStore.getState().playback.streamSnapshot?.camera ?? null;
-  //       streamPlaybackStore.setState({
-  //         cameraMode: newMode,
-  //         orbitOverrideYaw: cam?.yaw ?? 0,
-  //         orbitOverridePitch: cam?.pitch ?? 0,
-  //       });
-  //     } else {
-  //       streamPlaybackStore.setState({ cameraMode: newMode });
-  //     }
-  //   },
-  //   [engineStore],
-  // );
-
   if (!recording || !Number.isFinite(recording.duration)) return null;
 
   return (
@@ -121,6 +88,7 @@ export function DemoPlaybackControls() {
         className={styles.PlayPause}
         onClick={isPlaying ? pause : play}
         aria-label={isPlaying ? "Pause" : "Play"}
+        title={isPlaying ? "Pause (Space)" : "Play (Space)"}
         autoFocus
       >
         {isPlaying ? <GrPauseFill /> : <GrPlayFill />}
@@ -137,13 +105,17 @@ export function DemoPlaybackControls() {
         value={currentTime}
         onChange={handleSeek}
       />
-      <div className={styles.Field}>
+      <div
+        className={styles.Field}
+        title="Playback speed (< slows down, > speeds up)"
+      >
         <label htmlFor="playbackSpeed">Speed</label>
         <select
           id="playbackSpeed"
           className={styles.Speed}
           value={speed}
           onChange={handleSpeedChange}
+          title="Playback speed (< slows down, > speeds up)"
         >
           {SPEED_OPTIONS.map((s) => (
             <option key={s} value={s}>
@@ -152,17 +124,6 @@ export function DemoPlaybackControls() {
           ))}
         </select>
       </div>
-      {/* <select
-        className={styles.CameraMode}
-        value={cameraMode}
-        onChange={handleCameraModeChange}
-      >
-        {CAMERA_MODE_OPTIONS.map((opt) => (
-          <option key={opt.value} value={opt.value}>
-            {opt.label}
-          </option>
-        ))}
-      </select> */}
     </div>
   );
 }

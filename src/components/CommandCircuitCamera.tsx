@@ -16,6 +16,8 @@ import {
   useCommandCircuit,
 } from "../state/commandCircuitStore";
 import {
+  enterWatchFollow,
+  exitToFreeFly,
   exitWatchFollow,
   isWatchSpectator,
   toggleWatchFollow,
@@ -263,7 +265,14 @@ export function CommandCircuitCamera() {
         commandCircuitStore.getState().requestObserverToggle();
       }
     } else {
-      commandCircuitStore.getState().toggleFollow();
+      // Demo: shared with the 3D view — follow ↔ pan maps to orbit-follow
+      // ↔ free-fly. The recorded "original" view counts as pan, so F from
+      // there enters follow.
+      if (isCommandFollowActive()) {
+        exitToFreeFly();
+      } else {
+        enterWatchFollow();
+      }
     }
   });
 
@@ -559,7 +568,8 @@ function CommandCircuitOrthoRig() {
             commandCircuitStore.getState().requestObserverToggle();
           }
         } else {
-          commandCircuitStore.getState().setFollow(false);
+          // Demo: panning breaks follow → free-fly in the 3D view too.
+          exitToFreeFly();
         }
       }
     }
@@ -571,15 +581,17 @@ function CommandCircuitOrthoRig() {
     // of follow mode, falling through to the free pan handling.
     if (isStreaming && isCommandFollowActive()) {
       const cam = streamSnapshotStore.getState().snapshot?.camera;
+      // A client-side follow target (demo click-to-follow, watch spectate)
+      // wins over the recorded/server camera's own orbit target — the
+      // latter only drives live non-watcher (server-authoritative) follow,
+      // where followEntityId is null.
       const followId =
+        streamPlaybackStore.getState().followEntityId ??
         (cam?.mode === "third-person"
           ? (cam.orbitTargetId ?? cam.controlEntityId)
           : cam?.mode === "first-person"
             ? cam.controlEntityId
             : undefined) ??
-        // Spectate mode: the client-side follow target (the stream camera
-        // is the relay's stationary observer, never in orbit mode).
-        streamPlaybackStore.getState().followEntityId ??
         undefined;
       const root = streamPlaybackStore.getState().root;
       const followObj = followId ? root?.getObjectByName(followId) : null;

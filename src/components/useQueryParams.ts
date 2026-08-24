@@ -71,6 +71,16 @@ export function useModeQueryState() {
   return [mode, setMode] as const;
 }
 
+/**
+ * Demo requested via the URL: `?demo=<filename>` loads that published
+ * demo when landing in demo mode, and mirrors the current dropdown
+ * selection so the page URL can be shared as a link to a demo.
+ */
+export function useDemoQueryState() {
+  const [demo, setDemo] = useQueryState("demo");
+  return [demo, setDemo] as const;
+}
+
 const VIEWS = ["cc"] as const;
 
 /**

@@ -29,6 +29,7 @@ import {
 import { usePublicWindowAPI } from "@/src/components/usePublicWindowAPI";
 import {
   CurrentMission,
+  useDemoQueryState,
   useMissionQueryState,
   useModeQueryState,
   useViewQueryState,
@@ -280,6 +281,24 @@ export function MapInspector() {
       setCurrentMission(null);
     }
   }, [mode, setCurrentMission]);
+
+  // The demo param belongs to demo mode only. A bare ?demo (no explicit
+  // ?mode) is a share link that should land in demo mode; once we're in
+  // any other mode the param no longer describes the page, so drop it.
+  // Coercion writes ?mode=demo, so it can only happen on the initial bare
+  // landing — no separate once-guard needed, and no race between switching
+  // in and clearing out.
+  const [, setDemoParam] = useDemoQueryState();
+  useEffect(() => {
+    if (mode === "demo") return;
+    const params = new URLSearchParams(window.location.search);
+    if (!params.has("demo")) return;
+    if (!params.has("mode")) {
+      setMode("demo");
+    } else {
+      setDemoParam(null);
+    }
+  }, [mode, setMode, setDemoParam]);
 
   const sessionActive = watchStatus !== null && watchStatus !== "ended";
 

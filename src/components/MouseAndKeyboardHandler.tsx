@@ -15,6 +15,11 @@ import {
 } from "../state/commandCircuitStore";
 import { liveConnectionStore } from "../state/liveConnectionStore";
 import {
+  streamPlaybackStore,
+  MIN_ORBIT_DISTANCE,
+  MAX_ORBIT_DISTANCE,
+} from "../state/streamPlaybackStore";
+import {
   useInputAction,
   useInputState,
   clearInputDeltas,
@@ -28,6 +33,8 @@ export const ARROW_LOOK_SPEED = 1; // radians/sec
 
 const MIN_SPEED_ADJUSTMENT = 1;
 const MAX_SPEED_ADJUSTMENT = 11;
+/** Orbit-distance zoom per scroll-delta unit (matches the CC map's feel). */
+const ORBIT_ZOOM_SENSITIVITY = 0.002;
 
 /** Hardcoded drag sensitivity for non-locked drag (not affected by user setting). */
 const DRAG_SENSITIVITY = 0.002;
@@ -96,6 +103,8 @@ export function MouseAndKeyboardHandler() {
   // onTrigger cycles to the next player); from fly mode, ObserveClient -1
   // enters follow mode at the server's next observable player.
   useInputAction("observeNextPlayer", () => {
+    // Live only — demo cycling is handled by DemoCameraController.
+    if (!liveConnectionStore.getState().adapter) return;
     if (isCommandFollowActive()) {
       triggerFire.current = true;
     } else {
@@ -107,6 +116,22 @@ export function MouseAndKeyboardHandler() {
   useInputAction("adjustSpeed", () => {
     const scroll = getInputState().adjustSpeed as ScrollState | undefined;
     if (!scroll || scroll.deltaY === 0) return;
+
+    // In follow (orbit) mode the wheel changes orbit distance, not fly
+    // speed. Direction matches the command-circuit map (scroll up = zoom
+    // in = closer): distance *= exp(deltaY * k), where up gives deltaY < 0.
+    // Like CC, this ignores invertScroll so the two stay in sync.
+    if (streamPlaybackStore.getState().cameraMode === "orbitOverride") {
+      const prev = streamPlaybackStore.getState().orbitOverrideDistance;
+      const next = prev * Math.exp(scroll.deltaY * ORBIT_ZOOM_SENSITIVITY);
+      streamPlaybackStore.setState({
+        orbitOverrideDistance: Math.max(
+          MIN_ORBIT_DISTANCE,
+          Math.min(MAX_ORBIT_DISTANCE, next),
+        ),
+      });
+      return;
+    }
 
     const scrollSign = invertScroll ? -1 : 1;
     const direction = (scroll.deltaY > 0 ? -1 : 1) * scrollSign;

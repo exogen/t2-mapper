@@ -1,13 +1,9 @@
+/* Positioning is owned by the VisualInput HUD stack that wraps this. */
 .Root {
-  position: absolute;
-  bottom: 16px;
-  left: 50%;
-  transform: translateX(-50%);
   display: flex;
   align-items: flex-end;
   gap: 10px;
   pointer-events: none;
-  z-index: 1;
 }
 
 .Column {
@@ -104,6 +100,23 @@
   border-left: 1px solid rgba(255, 255, 255, 0.2);
 }
 
+/* A label flanked by an input on each side (the 3-panel speed chip). */
+.Label[data-flanked="true"] {
+  border-left: 1px solid rgba(255, 255, 255, 0.2);
+  border-right: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+/* Per-side pressed / disabled states for the 3-panel speed chip, where
+   each input panel is toggled independently (not the whole Key box). */
+.MultiInput[data-pressed="true"] {
+  background: rgba(35, 145, 132, 0.6);
+  color: #fff;
+}
+
+.MultiInput[data-disabled="true"] {
+  opacity: 0.6;
+}
+
 /* .Column[data-height="compact"] .Label:first-child {
   padding-right: 5px;
 } */
@@ -165,10 +178,6 @@
   text-transform: uppercase;
   padding: 2px 0;
   text-align: center;
-}
-
-.PlayPauseIcon {
-  font-size: 9px;
 }
 
 .MouseIcon {
