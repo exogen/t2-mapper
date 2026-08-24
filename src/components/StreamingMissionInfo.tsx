@@ -30,15 +30,9 @@ import { WifiSignalIcon } from "./WifiSignalIcon";
 import { IoCalendarNumberOutline } from "react-icons/io5";
 import { BiSolidEject } from "react-icons/bi";
 import { FaArrowDown } from "react-icons/fa";
-import { formatPing } from "../stringUtils";
+import { formatDelay, formatPing } from "../stringUtils";
 import { lookupMissionType } from "../mission";
 import styles from "./StreamingMissionInfo.module.css";
-
-/** Compact delay label, e.g. "60s" or "2m". */
-function formatDelay(ms: number): string {
-  const sec = Math.round(ms / 1000);
-  return sec >= 60 && sec % 60 === 0 ? `${sec / 60}m` : `${sec}s`;
-}
 
 export function StreamingMissionInfo({
   onOpenScoreScreen,

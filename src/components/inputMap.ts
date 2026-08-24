@@ -123,15 +123,6 @@ export const COMMAND_CIRCUIT_INPUT = [
 ] as const satisfies readonly InputMapEntry[];
 
 /**
- * Live-stream chat, mounted only while the chat HUD is visible:
- * Y focuses the chat input; Escape inside the input blurs back to
- * the game.
- */
-export const LIVE_CHAT_INPUT = [
-  { name: "focusChat", keys: ["KeyY"] },
-] as const satisfies readonly InputMapEntry[];
-
-/**
  * Escape closes the command circuit — separate from the pan/zoom map
  * because during a tour Escape belongs to the tour (exitTour) and only
  * the C toggle switches the command circuit.

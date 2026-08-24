@@ -14,6 +14,12 @@ export function formatPing(ms: number): string {
   return `${ms.toLocaleString()} ms`;
 }
 
+/** Compact stream-delay label, e.g. "60s" or "2m". */
+export function formatDelay(ms: number): string {
+  const sec = Math.round(ms / 1000);
+  return sec >= 60 && sec % 60 === 0 ? `${sec / 60}m` : `${sec}s`;
+}
+
 /** Default team names from serverDefaults.cs. */
 export const DEFAULT_TEAM_NAMES: Record<number, string> = {
   1: "Storm",

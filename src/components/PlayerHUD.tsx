@@ -4,6 +4,7 @@ import { FaHand } from "react-icons/fa6";
 import { ImArrowDownRight, ImHome } from "react-icons/im";
 import { useStreamSnapshot } from "../state/streamSnapshotStore";
 import { streamPlaybackStore } from "../state/streamPlaybackStore";
+import { useDataSource } from "../state/gameEntityStore";
 import { useLiveSelector } from "../state/liveConnectionStore";
 import { DEFAULT_TEAM_NAMES } from "../stringUtils";
 import { textureToUrl } from "../loaders";
@@ -18,11 +19,15 @@ import { useCommandCircuit } from "../state/commandCircuitStore";
 
 function Compass({ commandCircuitActive }: { commandCircuitActive: boolean }) {
   const isWatcher = useLiveSelector((s) => s.role === "watcher");
+  const dataSource = useDataSource();
+  const cameraMode = useStore(streamPlaybackStore, (s) => s.cameraMode);
   const yaw = useStreamSnapshot((snap) => snap?.camera?.yaw);
   const matchClockMs = useMatchClockMs();
-  // Watch mode: the view camera is client-controlled (free-fly/orbit), so
-  // the stream camera's yaw is meaningless — track the render camera.
-  if (isWatcher) {
+  // Watch mode (always) and demo camera overrides (free-fly / follow /
+  // first-person / flag follow): the view camera is client-controlled,
+  // so the stream camera's yaw is the RECORDER's view, not what's on
+  // screen — track the render camera instead.
+  if (isWatcher || (dataSource === "demo" && cameraMode !== "original")) {
     return (
       <LocalCameraCompass
         commandCircuitActive={commandCircuitActive}

@@ -5,7 +5,6 @@ import { streamPlaybackStore } from "../state/streamPlaybackStore";
 import { useCameraTour } from "../state/cameraTourStore";
 import { useCommandCircuit } from "../state/commandCircuitStore";
 import { useLiveSelector } from "../state/liveConnectionStore";
-import { useSettings } from "./SettingsProvider";
 import { InputBindings } from "./InputBindings";
 import {
   FREE_FLY_INPUT,
@@ -21,7 +20,6 @@ import {
   COMMAND_CIRCUIT_STREAM_INPUT,
   COMMAND_CIRCUIT_INPUT,
   COMMAND_CIRCUIT_EXIT_INPUT,
-  LIVE_CHAT_INPUT,
 } from "./inputMap";
 
 /**
@@ -42,7 +40,6 @@ export function ActiveInputBindings() {
     streamPlaybackStore,
     (s) => s.followFlagSlot != null,
   );
-  const { showChat } = useSettings();
   const isDemo = recording?.source === "demo";
   const isLive = recording?.source === "live";
   const isMap = !recording;
@@ -81,8 +78,6 @@ export function ActiveInputBindings() {
         <InputBindings map={COMMAND_CIRCUIT_STREAM_INPUT} />
       )}
       {isDemo && <InputBindings map={DEMO_MODE_INPUT} />}
-      {/* Y focuses chat only while the chat HUD is actually visible. */}
-      {isLive && showChat && <InputBindings map={LIVE_CHAT_INPUT} />}
       {/* Observer fly/follow toggle shares F with the CC follow toggle —
           only one is mounted at a time. Watchers get the same toggle
           (SpectatorController), demos too (DemoCameraController). */}
