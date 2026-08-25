@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { PiCassetteTapeFill } from "react-icons/pi";
+import { PiCassetteTapeFill, PiCassetteTapeLight } from "react-icons/pi";
 import { LuChevronLeft, LuChevronRight, LuUser, LuUsers } from "react-icons/lu";
 import { TbLaurelWreathFilled } from "react-icons/tb";
 import { useDemoLoad } from "../state/demoLoadStore";
@@ -263,7 +263,12 @@ export function DemoDropScreen() {
               title="Load demo (.rec)"
               onClick={() => inputRef.current?.click()}
             >
-              <PiCassetteTapeFill aria-hidden />
+              {/* The outline cassette "fills in" while dragging a file. */}
+              {dragOver ? (
+                <PiCassetteTapeFill aria-hidden />
+              ) : (
+                <PiCassetteTapeLight aria-hidden />
+              )}
             </button>
             {loadError != null && (
               <p className={styles.LoadError}>{loadError}</p>
