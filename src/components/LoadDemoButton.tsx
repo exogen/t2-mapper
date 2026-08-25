@@ -1,5 +1,5 @@
 import { useCallback } from "react";
-import { PiCassetteTape } from "react-icons/pi";
+import { PiCassetteTapeFill } from "react-icons/pi";
 import { cameraTourStore } from "../state/cameraTourStore";
 import { unloadDemo } from "../stream/demoFileLoader";
 import { useRecording } from "./usePlayback";
@@ -42,7 +42,7 @@ export function LoadDemoButton({
       onClick={handleClick}
       data-active={isActive}
     >
-      <PiCassetteTape className={styles.DemoIcon} />
+      <PiCassetteTapeFill className={styles.DemoIcon} />
       <span className={styles.ButtonLabel}>Demo</span>
       <span className={styles.ButtonHint}>
         {choosingMap && isDemoLoaded

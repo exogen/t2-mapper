@@ -17,7 +17,6 @@ import {
   useComboboxStore,
   useStoreState,
 } from "@ariakit/react";
-import { useQuery } from "@tanstack/react-query";
 import { matchSorter } from "match-sorter";
 import { IoMdCloseCircle } from "react-icons/io";
 import { LuUsers } from "react-icons/lu";
@@ -25,69 +24,26 @@ import { TbLaurelWreathFilled } from "react-icons/tb";
 import {
   DEMOS_BASE_URL,
   demoDownloadUrl,
-  fetchDemoIndex,
   type DemoIndexEntry,
 } from "../stream/demoIndex";
 import { loadDemoUrl } from "../stream/demoFileLoader";
 import { useDemoLoad } from "../state/demoLoadStore";
+import { useDemoIndex } from "./useDemoIndex";
 import { useDemoQueryState } from "./useQueryParams";
 import { useRecording } from "./usePlayback";
 import { normalizeMissionType } from "../mission";
-import { findMissionInfo } from "../manifest";
+import {
+  demoTitle,
+  formatDuration,
+  formatRecordedTime,
+  missionDisplayName,
+  recordedDayLabel,
+} from "./demoFormat";
 import styles from "./MissionSelect.module.css";
 
 const isMac =
   typeof navigator !== "undefined" &&
   /Mac|iPhone|iPad|iPod/.test(navigator.platform);
-
-/**
- * Coarse length like "56m" or "1h 15m" — deliberately not clock-shaped,
- * so it can't be confused with the recording's time of day.
- */
-function formatDuration(durationMs: number): string {
-  const totalMin = Math.round(durationMs / 60_000);
-  if (totalMin < 1) return "<1m";
-  const hours = Math.floor(totalMin / 60);
-  const min = totalMin % 60;
-  if (hours === 0) return `${min}m`;
-  return min === 0 ? `${hours}h` : `${hours}h ${min}m`;
-}
-
-function formatRecordedTime(iso: string): string {
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return iso;
-  return date.toLocaleTimeString(undefined, {
-    hour: "numeric",
-    minute: "2-digit",
-  });
-}
-
-function recordedDayLabel(iso: string): string {
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return "Unknown date";
-  return date.toLocaleDateString(undefined, {
-    weekday: "short",
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  });
-}
-
-/**
- * The sidecar stores the mission's internal name (e.g. "DX_Ice"); resolve
- * it to the display name ("Dangerous Crossing (Ice)") via the manifest,
- * falling back to the raw name for missions we don't ship.
- */
-function missionDisplayName(mission: string): string {
-  return findMissionInfo(mission)?.displayName || mission;
-}
-
-function demoTitle(demo: DemoIndexEntry): string {
-  return (
-    demo.games.map((game) => missionDisplayName(game.mission)).join(" → ") ||
-    "Warmup only"
-  );
-}
 
 function DemoItemContent({ demo }: { demo: DemoIndexEntry }) {
   const gameTypes = [
@@ -124,11 +80,11 @@ function DemoItemContent({ demo }: { demo: DemoIndexEntry }) {
       </span>
       <span className={styles.ItemMissionName}>
         {demo.server} · {formatRecordedTime(demo.recordedAt)} ·{" "}
-        {formatDuration(demo.durationMs)} ·{" "}
         <span title={demo.players.join(", ") || undefined}>
           <LuUsers className={styles.ItemPlayersIcon} aria-label="Players" />{" "}
           {demo.players.length}
-        </span>
+        </span>{" "}
+        · {formatDuration(demo.durationMs)}
       </span>
     </>
   );
@@ -199,16 +155,7 @@ export function DemoSelect() {
     }
     hadDemoRef.current = hasDemo;
   }, [recording, sourceUrl, setDemoParam]);
-  const {
-    data: demos,
-    isPending,
-    isError,
-  } = useQuery({
-    queryKey: ["demoIndex"],
-    queryFn: fetchDemoIndex,
-    enabled,
-    staleTime: 60_000,
-  });
+  const { data: demos, isPending, isError } = useDemoIndex();
 
   const combobox = useComboboxStore({
     resetValueOnHide: true,

@@ -16,6 +16,7 @@ import {
   hasGuiMarkup,
 } from "./GuiMarkup";
 import type * as AST from "../torqueScript/ast";
+import { missionLoadScreenUrl, RawPreviewImage } from "./missionPreview";
 import styles from "./MapInfoDialog.module.css";
 
 function useParsedMission(name: string, enabled: boolean) {
@@ -63,67 +64,7 @@ function getBitmapUrl(
     }
   }
   // Fall back to Load_<MissionName>.png convention (multiplayer missions)
-  try {
-    const key = getStandardTextureResourceKey(
-      `textures/gui/Load_${missionName}`,
-    );
-    return getUrlForPath(key);
-  } catch {
-    /* expected */
-  }
-  return null;
-}
-
-/**
- * Renders a preview image bypassing browser color management, matching how
- * Tribes 2 displayed these textures (raw pixel values, no gamma conversion).
- * Many T2 preview PNGs embed an incorrect gAMA chunk (22727 = gamma 4.4
- * instead of the correct 45455 = gamma 2.2), which causes browsers to
- * over-darken them. `colorSpaceConversion: "none"` ignores gAMA/ICC data.
- */
-function RawPreviewImage({
-  src,
-  alt,
-  className = styles.PreviewImage,
-}: {
-  src: string;
-  alt: string;
-  className?: string;
-}) {
-  const [objectUrl, setObjectUrl] = useState<string | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    let url: string | undefined;
-    fetch(src)
-      .then((r) => r.blob())
-      .then((blob) => createImageBitmap(blob, { colorSpaceConversion: "none" }))
-      .then(
-        (bitmap) =>
-          new Promise<Blob | null>((resolve) => {
-            const canvas = document.createElement("canvas");
-            canvas.width = bitmap.width;
-            canvas.height = bitmap.height;
-            canvas.getContext("2d")?.drawImage(bitmap, 0, 0);
-            bitmap.close();
-            canvas.toBlob(resolve);
-          }),
-      )
-      .then((blob) => {
-        if (cancelled || !blob) return;
-        url = URL.createObjectURL(blob);
-        setObjectUrl(url);
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-      if (url) URL.revokeObjectURL(url);
-    };
-  }, [src]);
-
-  if (!objectUrl) return null;
-
-  return <img src={objectUrl} alt={alt} className={className} />;
+  return missionLoadScreenUrl(missionName);
 }
 
 function MusicPlayer({ track }: { track: string }) {
@@ -362,6 +303,7 @@ export function MapInfoDialog({
           {bitmapUrl && !isSinglePlayer && (
             <RawPreviewImage
               key={bitmapUrl}
+              className={styles.PreviewImage}
               src={bitmapUrl}
               alt={`${displayName} preview`}
             />
