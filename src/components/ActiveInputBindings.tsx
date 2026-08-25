@@ -44,36 +44,31 @@ export function ActiveInputBindings() {
   const isLive = recording?.source === "live";
   const isMap = !recording;
 
-  // Free-fly movement: map mode (no tour), live server-observer fly
-  // mode, watch-mode spectating, or demo playback (InputConsumer only
-  // acts on WASD when cameraMode is "freeFly", so it's inert otherwise).
+  // An active tour owns ALL input: only its bindings (click = next
+  // stop, Escape = exit) are mounted — no camera-mode cycling, pointer
+  // lock, CC toggling, or follow controls until the tour ends.
+  if (isTourActive) {
+    return <InputBindings map={TOUR_MODE_INPUT} />;
+  }
+
+  // Free-fly movement: map mode, live server-observer fly mode,
+  // watch-mode spectating, or demo playback (InputConsumer only acts on
+  // WASD when cameraMode is "freeFly", so it's inert otherwise).
   const showFreeFly =
-    (isMap && !isTourActive && !isCommandCircuit) ||
+    (isMap && !isCommandCircuit) ||
     (isLive && inputMode === "fly") ||
-    (isLive && isWatcher && !isTourActive && !isCommandCircuit) ||
-    (isDemo && !isTourActive && !isCommandCircuit);
-
-  // Camera can be moved by drag/touch in most modes.
-  const showMovableCamera = !isTourActive && !isCommandCircuit;
-
-  // Pointer lock: available when not touring.
-  const showPointerLockable = !isTourActive && !isCommandCircuit;
+    (isLive && isWatcher && !isCommandCircuit) ||
+    (isDemo && !isCommandCircuit);
 
   return (
     <>
       {showFreeFly && <InputBindings map={FREE_FLY_INPUT} />}
-      {showMovableCamera && <InputBindings map={MOVABLE_CAMERA_INPUT} />}
-      {showPointerLockable && <InputBindings map={POINTER_LOCKABLE_INPUT} />}
-      {isMap && !isTourActive && !isCommandCircuit && (
-        <InputBindings map={MAP_MODE_INPUT} />
-      )}
+      {!isCommandCircuit && <InputBindings map={MOVABLE_CAMERA_INPUT} />}
+      {!isCommandCircuit && <InputBindings map={POINTER_LOCKABLE_INPUT} />}
+      {isMap && !isCommandCircuit && <InputBindings map={MAP_MODE_INPUT} />}
       <InputBindings map={COMMAND_CIRCUIT_TOGGLE_INPUT} />
       {isCommandCircuit && <InputBindings map={COMMAND_CIRCUIT_INPUT} />}
-      {/* During a tour Escape always exits the tour, so CC's Escape
-          binding stays unmounted — C is the only CC toggle then. */}
-      {isCommandCircuit && !isTourActive && (
-        <InputBindings map={COMMAND_CIRCUIT_EXIT_INPUT} />
-      )}
+      {isCommandCircuit && <InputBindings map={COMMAND_CIRCUIT_EXIT_INPUT} />}
       {isCommandCircuit && (isDemo || isLive) && (
         <InputBindings map={COMMAND_CIRCUIT_STREAM_INPUT} />
       )}
@@ -96,10 +91,9 @@ export function ActiveInputBindings() {
           rejects observers for EVERY target — verified live with
           scripts/attach-camera-probe.ts — so real observers aren't
           wired up. */}
-      {(isDemo || (isLive && isWatcher)) && !isTourActive && (
+      {(isDemo || (isLive && isWatcher)) && (
         <InputBindings map={FLAG_FOLLOW_INPUT} />
       )}
-      {isTourActive && <InputBindings map={TOUR_MODE_INPUT} />}
     </>
   );
 }

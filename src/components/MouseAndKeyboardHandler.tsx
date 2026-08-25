@@ -9,6 +9,7 @@ import { useCameras } from "./CamerasProvider";
 import { useInputContext } from "./InputContext";
 import { useTouchDevice } from "./useTouchDevice";
 import { cameraTourStore } from "../state/cameraTourStore";
+import { isWelcomeSplashOpen } from "./WelcomeSplash";
 import {
   commandCircuitStore,
   isCommandFollowActive,
@@ -88,8 +89,14 @@ export function MouseAndKeyboardHandler() {
   }, []);
 
   // Canvas click: lock pointer (only fires when not already locked).
+  // Suppressed while the welcome splash is up — clicking around it
+  // shouldn't capture the mouse.
   useInputAction("canvasClick", () => {
-    if (!isTouch && !cameraTourStore.getState().animation) {
+    if (
+      !isTouch &&
+      !cameraTourStore.getState().animation &&
+      !isWelcomeSplashOpen()
+    ) {
       gl.domElement.requestPointerLock();
     }
   });

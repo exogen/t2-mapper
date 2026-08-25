@@ -1,0 +1,182 @@
+/* Centers the panel over the content area without blocking it: no
+   backdrop, and only the panel itself takes pointer events, so the
+   three.js view behind stays fully interactive. */
+.Positioner {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  pointer-events: none;
+}
+
+@media (max-width: 479px) {
+  .Positioner {
+    padding: 8px;
+  }
+}
+
+/* composes only adds the other class to the element — it does NOT give
+   this file's declarations precedence (cross-file order is whatever the
+   bundler emits). Overrides of composed properties live on higher-
+   specificity descendant rules below so they win regardless of order. */
+.Panel {
+  composes: Dialog from "./GameDialog.module.css";
+}
+
+.Positioner .Panel {
+  pointer-events: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  max-width: 440px;
+  /* The composed Dialog caps against the VIEWPORT (100dvh) with
+     overflow hidden; the splash must fit the CONTENT AREA (the padded
+     positioner) and scroll on short screens instead of clipping. */
+  max-height: 100%;
+  overflow-y: auto;
+  padding: 16px 24px 20px 24px;
+  text-align: center;
+}
+
+/* Don't let the scroll container squash its rows — overflow instead. */
+.Positioner .Panel > * {
+  flex-shrink: 0;
+}
+
+.Title {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+}
+
+.Brand {
+  font-size: 28px;
+  font-weight: 400;
+  letter-spacing: 0.02em;
+  color: #7dffff;
+  text-shadow: 0 1px 8px rgba(0, 0, 0, 0.5);
+}
+
+.Subtitle {
+  font-size: 13px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  color: #8eab7d;
+}
+
+.Blurb {
+  margin: 0;
+  max-width: 340px;
+  color: #b0d5c9;
+  text-wrap: balance;
+}
+
+.HeroButtons {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+  justify-content: center;
+  gap: 12px;
+}
+
+.Hero {
+  composes: DialogButton from "./GameDialog.module.css";
+}
+
+.HeroButtons .Hero {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  min-width: 128px;
+  padding: 10px 16px 12px 16px;
+}
+
+/* Fixed-height slot (like the sidebar chooser): the glyph's font-size
+   varies per icon, centered in the slot, so label/hint rows never move. */
+.HeroIcon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 38px;
+  margin-bottom: 3px;
+  font-size: 32px;
+}
+
+.HeroIcon[data-icon="live"] {
+  font-size: 26px;
+}
+
+/* Narrow screens: buttons stack in a column, each with its icon beside
+   the label instead of above it. */
+@media (max-width: 399px) {
+  .HeroButtons {
+    flex-direction: column;
+    align-self: stretch;
+    /* Match the panel's row gap so all three stacked buttons (heroes +
+       dismiss below) are evenly spaced. */
+    gap: 16px;
+  }
+
+  .HeroButtons .Hero {
+    flex-direction: row;
+    justify-content: center;
+    gap: 8px;
+    padding: 10px 16px;
+  }
+
+  .HeroIcon {
+    height: auto;
+    margin-bottom: 0;
+    font-size: 22px;
+  }
+
+  .HeroIcon[data-icon="live"] {
+    font-size: 18px;
+  }
+}
+
+.HeroLabel {
+  font-size: 15px;
+  font-weight: 500;
+}
+
+.HeroHint {
+  font-size: 10px;
+  opacity: 0.7;
+}
+
+/* Secondary button, matching GameDialog's .Secondary look. Standalone
+   rather than composed — composes gives no override precedence (see
+   above), so a self-contained rule is the predictable option. */
+.Dismiss {
+  padding: 4px 18px 6px;
+  border: 1px solid rgba(56, 124, 116, 0.8);
+  border-radius: 4px;
+  background: none;
+  color: rgba(162, 226, 207, 0.8);
+  font-family: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.Dismiss:hover {
+  border-color: rgba(64, 145, 136, 0.9);
+  color: rgb(177, 255, 245);
+}
+
+/* Narrow screens: full-width, taller tap target (matching the app's
+   pointer-coarse button bumps, e.g. Button.module.css ActionButton). */
+@media (max-width: 479px) {
+  .Dismiss {
+    align-self: stretch;
+    min-height: 40px;
+    padding: 8px 18px 10px;
+    font-size: 14px;
+  }
+}

@@ -45,6 +45,9 @@ export function ThreeCanvas({
       dpr={dprFromProps}
       gl={glSettings}
       shadows={{ type: PCFShadowMap }}
+      // Face Torque north (world +X; three's default forward −Z is west)
+      // so the compass reads N, not W, before a mission camera takes over.
+      camera={{ rotation: [0, -Math.PI / 2, 0] }}
       onCreated={handleCreated}
     >
       <Suspense>{children}</Suspense>

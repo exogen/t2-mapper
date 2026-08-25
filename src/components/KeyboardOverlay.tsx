@@ -720,12 +720,22 @@ export function KeyboardOverlay() {
   const isLiveObserver =
     isLive && (isWatcher || inputMode === "fly" || inputMode === "follow");
 
-  const showFreeFly = isMap && !isTourActive && !isCommandCircuit;
+  const showFreeFly = isMap && !isCommandCircuit;
+
+  // An active tour owns all input — only its overlay shows, matching
+  // ActiveInputBindings (only TOUR_MODE_INPUT is mounted).
+  if (isTourActive) {
+    return (
+      <div className={styles.Root}>
+        <TourOverlay />
+      </div>
+    );
+  }
 
   return (
     <div className={styles.Root}>
       {showFreeFly && <FreeFlyOverlay />}
-      {isCommandCircuit && !isTourActive && (
+      {isCommandCircuit && (
         <CommandCircuitOverlay
           followToggle={
             isDemo || isLive ? (ccFollow ? "follow" : "free") : undefined
@@ -738,7 +748,6 @@ export function KeyboardOverlay() {
         <ObserverOverlay mode={watcherObserverMode} />
       )}
       {isDemo && !isCommandCircuit && <DemoCameraOverlay />}
-      {isTourActive && <TourOverlay />}
     </div>
   );
 }

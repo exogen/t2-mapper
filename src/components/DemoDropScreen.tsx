@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { PiCassetteTapeFill, PiCassetteTapeLight } from "react-icons/pi";
+import { FaSearch } from "react-icons/fa";
 import { LuChevronLeft, LuChevronRight, LuUser, LuUsers } from "react-icons/lu";
 import { TbLaurelWreathFilled } from "react-icons/tb";
 import { useDemoLoad } from "../state/demoLoadStore";
@@ -16,6 +17,7 @@ import {
 import { RESOURCE_ROOT_URL } from "../loaders";
 import { missionLoadScreenUrl, RawPreviewImage } from "./missionPreview";
 import { useDemoQueryState } from "./useQueryParams";
+import { focusDemoSelect } from "./demoSelectFocus";
 import { LoadingIndicator } from "./LoadingIndicator";
 import styles from "./DemoDropScreen.module.css";
 
@@ -23,6 +25,18 @@ import styles from "./DemoDropScreen.module.css";
 const FEATURED_MIN_PLAYERS = 10;
 const FEATURED_MIN_DURATION_MS = 10 * 60_000;
 const FEATURED_COUNT = 6;
+
+/**
+ * Loading-screen name fallbacks for renamed mission variants, tried in
+ * order when the exact name has no art; the first capture group is the
+ * backup name (see missionLoadScreenUrl). E.g. "DangerousCrossingLT" →
+ * Load_DangerousCrossing, "Katabatic_b" → Load_Katabatic.
+ */
+const CARD_ART_NAME_FALLBACKS: readonly RegExp[] = [
+  /^(.+)LT$/,
+  /^(.+)Lak$/,
+  /^(.+)_b$/,
+];
 
 /**
  * Card art for missions with no Load_ screen (our choice for these cards,
@@ -39,7 +53,10 @@ function FeaturedCard({
   demo: DemoIndexEntry;
   onLoad: () => void;
 }) {
-  const missionArtUrl = missionLoadScreenUrl(demo.games[0]?.mission ?? "");
+  const missionArtUrl = missionLoadScreenUrl(
+    demo.games[0]?.mission ?? "",
+    CARD_ART_NAME_FALLBACKS,
+  );
   const previewUrl = missionArtUrl ?? CARD_FALLBACK_ART_URL;
   const gameTypes = [
     ...new Set(
@@ -137,28 +154,37 @@ function FeaturedDemos() {
     <div className={styles.Featured}>
       <div className={styles.FeaturedHeader}>
         <h2 className={styles.FeaturedTitle}>Featured recent demos</h2>
-        {pageCount > 1 && (
-          <div className={styles.FeaturedPager}>
-            <button
-              type="button"
-              className={styles.PagerButton}
-              aria-label="Previous page"
-              disabled={currentPage === 0}
-              onClick={() => setPage(currentPage - 1)}
-            >
-              <LuChevronLeft />
-            </button>
-            <button
-              type="button"
-              className={styles.PagerButton}
-              aria-label="Next page"
-              disabled={currentPage >= pageCount - 1}
-              onClick={() => setPage(currentPage + 1)}
-            >
-              <LuChevronRight />
-            </button>
-          </div>
-        )}
+        <div className={styles.FeaturedPager}>
+          <button
+            type="button"
+            className={styles.SearchButton}
+            onClick={focusDemoSelect}
+          >
+            <FaSearch className={styles.SearchIcon} /> Find a demo…
+          </button>
+          {pageCount > 1 && (
+            <>
+              <button
+                type="button"
+                className={styles.PagerButton}
+                aria-label="Previous page"
+                disabled={currentPage === 0}
+                onClick={() => setPage(currentPage - 1)}
+              >
+                <LuChevronLeft />
+              </button>
+              <button
+                type="button"
+                className={styles.PagerButton}
+                aria-label="Next page"
+                disabled={currentPage >= pageCount - 1}
+                onClick={() => setPage(currentPage + 1)}
+              >
+                <LuChevronRight />
+              </button>
+            </>
+          )}
+        </div>
       </div>
       <div className={styles.FeaturedGrid}>
         {featured.map((demo) => (

@@ -6,24 +6,12 @@ import {
 import { gameEntityStore } from "../state/gameEntityStore";
 import { useStreamSnapshot } from "../state/streamSnapshotStore";
 import { stripTaggedStringMarkup } from "../stream/streamHelpers";
-import { resolveFlagTeam } from "./flagTeam";
-import type { GameEntity } from "../state/gameEntityTypes";
+import { flagLabel } from "./flagTeam";
 import styles from "./WatchedPlayerHud.module.css";
 
 function clean(name: string | null | undefined): string | null {
   if (!name) return null;
   return stripTaggedStringMarkup(name).trim() || null;
-}
-
-/** "Storm Flag" (real team name when known); target name or a plain
- *  "Flag" for teamless flags (sensor group 0 counts as teamless — e.g.
- *  Rabbit never assigns its flag a team). */
-function flagLabel(entity: GameEntity): string {
-  const { teamId, name } = resolveFlagTeam(entity);
-  const teamName = clean(name);
-  return teamId != null && teamId > 0 && teamName
-    ? `${teamName} Flag`
-    : (teamName ?? "Flag");
 }
 
 /**

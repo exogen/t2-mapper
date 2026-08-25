@@ -52,6 +52,17 @@
   gap: 8px;
 }
 
+@media (max-width: 479px) {
+  .FeaturedHeader {
+    flex-direction: column;
+    align-items: flex-end;
+  }
+
+  .FeaturedHeader .FeaturedTitle {
+    align-self: flex-start;
+  }
+}
+
 .FeaturedTitle {
   margin: 0;
   font-size: 13px;
@@ -64,6 +75,35 @@
 .FeaturedPager {
   display: flex;
   gap: 4px;
+}
+
+/* Focuses the toolbar's demo dropdown; chip-styled like the pager. */
+.SearchButton {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 24px;
+  margin: 0 4px 0 0;
+  padding: 0 10px;
+  border: 1px solid rgba(65, 131, 139, 0.5);
+  border-radius: 5px;
+  background: rgba(0, 0, 0, 0.3);
+  color: #b0d5c9;
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  transition:
+    border-color 0.15s,
+    color 0.15s;
+}
+
+.SearchButton:hover {
+  border-color: rgba(125, 255, 255, 0.6);
+  color: #7dffff;
+}
+
+.SearchIcon {
+  font-size: 11px;
 }
 
 .PagerButton {
@@ -135,6 +175,12 @@
   border-right: 1px solid rgba(65, 131, 139, 0.35);
 }
 
+@media (max-width: 399px) {
+  .CardPreview {
+    display: none;
+  }
+}
+
 /* Map load screen filling behind the cassette, dimmed so it reads. */
 .CardImage {
   position: absolute;
@@ -179,6 +225,13 @@
   gap: 3px;
   min-width: 0;
   padding: 10px 12px 10px 0;
+}
+
+/* Without the preview column, pad the text's leading edge directly. */
+@media (max-width: 399px) {
+  .CardBody {
+    padding-left: 12px;
+  }
 }
 
 .CardTitle {

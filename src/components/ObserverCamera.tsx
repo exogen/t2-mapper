@@ -20,6 +20,9 @@ export function ObserverCamera() {
       ref={cameraRef}
       makeDefault
       position={[0, 256, 0]}
+      // Face Torque north (world +X; three's default −Z forward is west)
+      // so the compass reads N until a mission camera takes over.
+      rotation={[0, -Math.PI / 2, 0]}
       fov={fov}
     />
   );

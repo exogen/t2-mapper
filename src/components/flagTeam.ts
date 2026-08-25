@@ -1,5 +1,6 @@
 import { streamSnapshotStore } from "../state/streamSnapshotStore";
 import { DEFAULT_TEAM_NAMES } from "../stringUtils";
+import { stripTaggedStringMarkup } from "../stream/streamHelpers";
 import type { GameEntity } from "../state/gameEntityTypes";
 
 /**
@@ -49,4 +50,18 @@ export function resolveFlagTeam(entity: GameEntity): {
       ? (entity.playerName ?? null)
       : null;
   return { teamId, name };
+}
+
+/**
+ * Display name for a flag entity: "Rambo Flag" (real team name when
+ * known); the target's own name or a plain "Flag" for teamless flags
+ * (sensor group 0 counts as teamless — e.g. Rabbit never assigns its
+ * flag a team). Shared by the follow HUD, tour panel, and callouts.
+ */
+export function flagLabel(entity: GameEntity): string {
+  const { teamId, name } = resolveFlagTeam(entity);
+  const teamName = name ? stripTaggedStringMarkup(name).trim() || null : null;
+  return teamId != null && teamId > 0 && teamName
+    ? `${teamName} Flag`
+    : (teamName ?? "Flag");
 }

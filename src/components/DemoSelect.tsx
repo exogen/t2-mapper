@@ -29,6 +29,7 @@ import {
 import { loadDemoUrl } from "../stream/demoFileLoader";
 import { useDemoLoad } from "../state/demoLoadStore";
 import { useDemoIndex } from "./useDemoIndex";
+import { registerDemoSelectFocus } from "./demoSelectFocus";
 import { useDemoQueryState } from "./useQueryParams";
 import { useRecording } from "./usePlayback";
 import { normalizeMissionType } from "../mission";
@@ -174,6 +175,13 @@ export function DemoSelect() {
   });
 
   const isOpen = useStoreState(combobox, "open");
+
+  // The demo landing page's search button focuses this input (focusing
+  // also opens the popover via the input's onFocus).
+  useEffect(() => {
+    registerDemoSelectFocus(() => inputRef.current?.focus());
+    return () => registerDemoSelectFocus(null);
+  }, []);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {

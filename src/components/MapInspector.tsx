@@ -45,6 +45,7 @@ import { DemoDropScreen } from "./DemoDropScreen";
 import { statsStore, useStats } from "../state/statsStore";
 import { InputProvider } from "./InputProducer";
 import { VisualInput } from "./VisualInput";
+import { WelcomeSplash } from "./WelcomeSplash";
 import { MapCompass } from "./MapCompass";
 import { LoadingIndicator } from "./LoadingIndicator";
 import { StreamDelayNotice } from "./StreamDelayNotice";
@@ -130,10 +131,31 @@ export function MapInspector() {
   const [mode, setMode] = useModeQueryState();
   const [view, setView] = useViewQueryState();
 
+  // Welcome splash: shown over the default explore view when the URL
+  // carried no explicit selection (no mission/mode/demo/join params) —
+  // the visitor just landed on the bare app. Decided once after mount
+  // (URL reads aren't SSR-safe) and dismissed by any real navigation.
+  const [showSplash, setShowSplash] = useState(false);
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (
+      !params.has("mission") &&
+      !params.has("mode") &&
+      !params.has("demo") &&
+      !params.has("address") &&
+      !params.has("name")
+    ) {
+      setShowSplash(true);
+    }
+  }, []);
+  const splashVisible = showSplash && mode === "map" && !choosingMap;
+
   const changeMission = useCallback(
     (mission: CurrentMission) => {
       window.location.hash = "";
       clearFogEnabledOverride();
+      // Picking a map is a real selection — retire the welcome splash.
+      setShowSplash(false);
       // Exit command circuit — switching missions always starts at the
       // default camera view.
       setView(null);
@@ -176,6 +198,15 @@ export function MapInspector() {
   // open, so copying the URL always brings the current view along.
   const isCommandCircuit = useCommandCircuit((s) => s.active);
   const liveReady = useLiveSelector((s) => s.liveReady);
+
+  // Starting a tour or opening the command circuit while the splash is
+  // up counts as real navigation — retire it (it would otherwise float
+  // over the tour/CC view, and its VisualInput swap hides their overlays).
+  useEffect(() => {
+    if (showSplash && (isTourActive || isCommandCircuit)) {
+      setShowSplash(false);
+    }
+  }, [showSplash, isTourActive, isCommandCircuit]);
   const ccRestorePendingRef = useRef(view === "cc");
   useEffect(() => {
     if (!ccRestorePendingRef.current) return;
@@ -688,9 +719,9 @@ export function MapInspector() {
                   onBrowse={() => setErrorAcknowledged(true)}
                 />
               ) : (
-                <Suspense fallback={<GameDialogSpinner />}>
+                <Suspense fallback={<GameDialogSpinner contained />}>
                   <ServerBrowser
-                    joinLabel="Join Game"
+                    joinLabel="Join game"
                     showWarriorField={false}
                     onJoin={handleWatch}
                   />
@@ -721,8 +752,18 @@ export function MapInspector() {
                     <PlayerHUD />
                   </Suspense>
                 ) : null}
-                {dataSource === "map" ? <MapCompass /> : null}
-                <VisualInput />
+                {dataSource === "map" && !splashVisible ? <MapCompass /> : null}
+                {splashVisible ? (
+                  <WelcomeSplash
+                    onWatchDemos={handleEnterDemoMode}
+                    onWatchLive={
+                      features.live ? handleOpenServerBrowser : undefined
+                    }
+                    onDismiss={() => setShowSplash(false)}
+                  />
+                ) : (
+                  <VisualInput />
+                )}
                 {showLoadingIndicator && !streamDelayNoticeUp && (
                   <LoadingIndicator
                     id="loadingIndicator"

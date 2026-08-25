@@ -2,13 +2,7 @@ import { useEffect, useState } from "react";
 import { getUrlForPath } from "../loaders";
 import { getStandardTextureResourceKey } from "../manifest";
 
-/**
- * URL of a mission's loading-screen texture (the exact Load_<MissionName>
- * convention the game uses — no fuzzy matching), or null when we don't
- * ship one.
- */
-export function missionLoadScreenUrl(missionName: string): string | null {
-  if (!missionName) return null;
+function loadScreenUrlExact(missionName: string): string | null {
   try {
     return getUrlForPath(
       getStandardTextureResourceKey(`textures/gui/Load_${missionName}`),
@@ -16,6 +10,32 @@ export function missionLoadScreenUrl(missionName: string): string | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * URL of a mission's loading-screen texture (the exact Load_<MissionName>
+ * convention the game uses), or null when we don't ship one.
+ *
+ * `fallbacks` are tried in order ONLY when the exact name has no art:
+ * each regex is matched against the mission name and its first capture
+ * group becomes the backup name to look up — e.g. `/^(.+)LT$/` resolves
+ * "DangerousCrossingLT" to Load_DangerousCrossing. Non-matching patterns
+ * (or matches without art) are skipped.
+ */
+export function missionLoadScreenUrl(
+  missionName: string,
+  fallbacks?: readonly RegExp[],
+): string | null {
+  if (!missionName) return null;
+  const exact = loadScreenUrlExact(missionName);
+  if (exact) return exact;
+  for (const pattern of fallbacks ?? []) {
+    const backupName = missionName.match(pattern)?.[1];
+    if (!backupName || backupName === missionName) continue;
+    const url = loadScreenUrlExact(backupName);
+    if (url) return url;
+  }
+  return null;
 }
 
 /**
