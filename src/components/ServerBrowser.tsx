@@ -12,11 +12,8 @@ import { TbLaurelWreathFilled } from "react-icons/tb";
 import { BsPinAngleFill } from "react-icons/bs";
 import { WifiSignalIcon } from "./WifiSignalIcon";
 import { normalizeMissionType } from "../mission";
-import {
-  mapNameLoadScreenUrl,
-  RawPreviewImage,
-  TILE_FALLBACK_ART_URL,
-} from "./missionPreview";
+import { mapNameGalleryArtUrl, mapNameLoadScreenUrl } from "./missionPreview";
+import { PreviewTileArt } from "./PreviewTileArt";
 
 function ServerTile({
   server,
@@ -34,8 +31,6 @@ function ServerTile({
   onSelect: () => void;
   onJoin: () => void;
 }) {
-  const mapArtUrl = mapNameLoadScreenUrl(server.mapName);
-  const previewUrl = mapArtUrl ?? TILE_FALLBACK_ART_URL;
   const hasHumans = server.playerCount - server.botCount > 0;
   // Same thresholds as the toolbar's connection indicator.
   const pingQuality =
@@ -54,17 +49,15 @@ function ServerTile({
       onClick={onSelect}
       onDoubleClick={onJoin}
     >
-      <span
-        className={tileStyles.TilePreview}
-        data-variant="server"
-        data-default-image={mapArtUrl == null}
-        aria-hidden
+      {/* Local load-screen art, then the t2-maps gallery screenshot (a
+          fetch decides if it exists), then the generic background. */}
+      <PreviewTileArt
+        variant="server"
+        candidates={[
+          mapNameLoadScreenUrl(server.mapName),
+          mapNameGalleryArtUrl(server.mapName),
+        ]}
       >
-        <RawPreviewImage
-          src={previewUrl}
-          alt=""
-          className={tileStyles.TileImage}
-        />
         {server.isPatrolled && (
           <span
             className={styles.TilePinIcon}
@@ -74,7 +67,7 @@ function ServerTile({
             <BsPinAngleFill />
           </span>
         )}
-      </span>
+      </PreviewTileArt>
       <span className={tileStyles.TileBody}>
         <span className={tileStyles.TileTitle}>
           {server.passwordRequired && (

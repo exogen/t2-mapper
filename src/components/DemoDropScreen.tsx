@@ -14,11 +14,8 @@ import {
   formatRecordedTime,
   recordedDayLabel,
 } from "./demoFormat";
-import {
-  missionLoadScreenUrl,
-  RawPreviewImage,
-  TILE_FALLBACK_ART_URL,
-} from "./missionPreview";
+import { missionGalleryArtUrl, missionLoadScreenUrl } from "./missionPreview";
+import { PreviewTileArt } from "./PreviewTileArt";
 import tileStyles from "./PreviewTile.module.css";
 import { useDemoQueryState } from "./useQueryParams";
 import { focusDemoSelect } from "./demoSelectFocus";
@@ -49,11 +46,7 @@ function FeaturedCard({
   demo: DemoIndexEntry;
   onLoad: () => void;
 }) {
-  const missionArtUrl = missionLoadScreenUrl(
-    demo.games[0]?.mission ?? "",
-    CARD_ART_NAME_FALLBACKS,
-  );
-  const previewUrl = missionArtUrl ?? TILE_FALLBACK_ART_URL;
+  const mission = demo.games[0]?.mission ?? "";
   const gameTypes = [
     ...new Set(
       demo.games
@@ -63,20 +56,16 @@ function FeaturedCard({
   ];
   return (
     <button type="button" className={tileStyles.Tile} onClick={onLoad}>
-      <span
-        className={tileStyles.TilePreview}
-        data-default-image={missionArtUrl == null}
-        aria-hidden
+      {/* Local load-screen art (with variant-name fallbacks), then the
+          t2-maps gallery screenshot, then the generic background. */}
+      <PreviewTileArt
+        candidates={[
+          missionLoadScreenUrl(mission, CARD_ART_NAME_FALLBACKS),
+          missionGalleryArtUrl(mission),
+        ]}
       >
-        {previewUrl && (
-          <RawPreviewImage
-            src={previewUrl}
-            alt=""
-            className={tileStyles.TileImage}
-          />
-        )}
         <PiCassetteTapeFill className={tileStyles.TilePlaceholder} />
-      </span>
+      </PreviewTileArt>
       <span className={tileStyles.TileBody}>
         <span className={tileStyles.TileTitle}>
           <span className={tileStyles.TileMapTitle}>{demoTitle(demo)}</span>
