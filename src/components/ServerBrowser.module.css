@@ -29,6 +29,53 @@
   white-space: nowrap;
 }
 
+/* List/tile layout toggle, Finder-style: two joined chip buttons in the
+   sidebar's blue button theme (matching the Refresh button beside it —
+   see Button.module.css). */
+.ViewToggle {
+  display: flex;
+  flex: 0 0 auto;
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  border-radius: 5px;
+  overflow: hidden;
+  /* The background extends UNDER the translucent border
+     (background-clip: border-box) — this blue is what tints the white
+     border the same steel blue as the Refresh button's edge. */
+  background: rgba(0, 98, 179, 0.8);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+}
+
+.ViewToggleButton {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  background: rgba(19, 62, 105, 0.9);
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 14px;
+  cursor: pointer;
+  transition:
+    background 0.15s,
+    color 0.15s;
+}
+
+.ViewToggleButton + .ViewToggleButton {
+  border-left: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+.ViewToggleButton:hover {
+  background: rgba(3, 82, 147, 0.6);
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.ViewToggleButton[data-active="true"] {
+  background: rgba(0, 98, 179, 0.8);
+  color: #fff;
+}
+
 .Title {
   font-size: 18px;
   font-weight: 500;
@@ -69,6 +116,21 @@
 .ServerCount {
   font-size: 12px;
   color: rgba(201, 220, 216, 0.4);
+}
+
+/* Tile view: scrolling grid of PreviewTile cards (fills the Panel's
+   1fr grid row, like TableWrapper). */
+.TileWrapper {
+  min-height: 0;
+  overflow-y: auto;
+  padding: 12px;
+}
+
+.TileGrid {
+  display: grid;
+  /* min(…, 100%) keeps single columns from overflowing narrow viewports. */
+  grid-template-columns: repeat(auto-fill, minmax(min(400px, 100%), 1fr));
+  gap: 10px;
 }
 
 .TableWrapper {
@@ -221,7 +283,60 @@
   font-size: 14px;
 }
 
-/* Patrolled ("pinned") marker, left of the server name. */
+/* Mod name in the tile meta line, as quiet text (the chip style is
+   reserved for mission types app-wide). */
+.TileMod {
+  font-size: 12px;
+  color: #83938b;
+}
+
+/* Real humans playing (total minus bots > 0): lift the count out of the
+   meta gray with a subtle glow. */
+.TileHumanPlayers {
+  color: #61ffcb;
+  text-shadow: 0 0 6px rgba(125, 255, 255, 0.5);
+}
+
+/* Tile ping icon: quality colors matching the toolbar's connection
+   indicator (StreamingMissionInfo ServerIcon). */
+.TilePingIcon {
+  vertical-align: -2px;
+  font-size: 13px;
+}
+
+.TilePingIcon[data-quality="good"] {
+  color: rgb(116, 255, 69);
+}
+
+.TilePingIcon[data-quality="fine"] {
+  color: rgb(255, 158, 47);
+}
+
+.TilePingIcon[data-quality="poor"] {
+  color: rgb(246, 85, 60);
+}
+
+.TilePingIcon[data-quality="poor"] [data-bar="2"],
+.TilePingIcon[data-quality="poor"] [data-bar="3"],
+.TilePingIcon[data-quality="fine"] [data-bar="3"] {
+  color: #83938b;
+  opacity: 0.8;
+}
+
+/* Tile view: pin badge over the map art's top-left corner, mirrored
+   like the list view's pin (points inward from the corner). */
+.TilePinIcon {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  display: flex;
+  color: rgba(125, 255, 255, 0.7);
+  font-size: 15px;
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.9));
+  transform: scaleX(-1);
+}
+
+/* Patrolled ("pinned") marker, left of the server name (list view). */
 .PinIcon {
   display: inline-flex;
   vertical-align: -2px;

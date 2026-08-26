@@ -66,11 +66,19 @@ const missionTypeDisplayNames: Record<string, string> = {
  */
 export function lookupMissionType(gameType: string): string | null {
   const key = gameType.trim().toLowerCase();
-  return (
+  const exact =
     missionTypeDisplayNames[key] ??
     (normalizedMissionTypes as Record<string, string>)[key] ??
-    null
-  );
+    null;
+  if (exact != null) return exact;
+  // Compound types like "Capture the Flag - Team Aerial Combat":
+  // abbreviate the known base type, keep the mod's suffix verbatim.
+  const dash = gameType.indexOf(" - ");
+  if (dash > 0) {
+    const base = lookupMissionType(gameType.slice(0, dash));
+    if (base != null) return `${base} - ${gameType.slice(dash + 3)}`;
+  }
+  return null;
 }
 
 /**

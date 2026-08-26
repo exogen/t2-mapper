@@ -25,6 +25,13 @@ const CC_PLAYER_NAMES_VALUES: readonly CcPlayerNames[] = [
   "hover",
   "never",
 ];
+
+/** Server browser layout: the classic table or preview tiles. */
+export type ServerBrowserView = "list" | "tiles";
+const SERVER_BROWSER_VIEW_VALUES: readonly ServerBrowserView[] = [
+  "list",
+  "tiles",
+];
 import { setAdjustAudioSpeedFlag } from "./audioPlaybackRate";
 
 export const MIN_SPEED_MULTIPLIER = 0.01;
@@ -76,6 +83,8 @@ type SettingsContextType = {
   setShowReticle: StateSetter<boolean>;
   showCompass: boolean;
   setShowCompass: StateSetter<boolean>;
+  serverBrowserView: ServerBrowserView;
+  setServerBrowserView: StateSetter<ServerBrowserView>;
   /** Team color scheme used when spectating from the observer "team". */
   observerTeamColors: TeamColorScheme;
   setObserverTeamColors: StateSetter<TeamColorScheme>;
@@ -136,6 +145,7 @@ type PersistedSettings = {
   showReticle?: boolean;
   showCompass?: boolean;
   showFpsMeter?: boolean;
+  serverBrowserView?: ServerBrowserView;
   observerTeamColors?: TeamColorScheme;
   ccPlayerNames?: CcPlayerNames;
 };
@@ -195,6 +205,8 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   const [showChat, setShowChat] = useState(true);
   const [showReticle, setShowReticle] = useState(true);
   const [showCompass, setShowCompass] = useState(true);
+  const [serverBrowserView, setServerBrowserView] =
+    useState<ServerBrowserView>("list");
   const [observerTeamColors, setObserverTeamColors] = useState<TeamColorScheme>(
     DEFAULT_TEAM_COLOR_SCHEME,
   );
@@ -248,6 +260,8 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       setShowReticle,
       showCompass,
       setShowCompass,
+      serverBrowserView,
+      setServerBrowserView,
       observerTeamColors,
       setObserverTeamColors,
       ccPlayerNames,
@@ -272,6 +286,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       showChat,
       showReticle,
       showCompass,
+      serverBrowserView,
       observerTeamColors,
       ccPlayerNames,
     ],
@@ -424,6 +439,12 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     ) {
       setCcPlayerNames(savedSettings.ccPlayerNames);
     }
+    if (
+      savedSettings.serverBrowserView != null &&
+      SERVER_BROWSER_VIEW_VALUES.includes(savedSettings.serverBrowserView)
+    ) {
+      setServerBrowserView(savedSettings.serverBrowserView);
+    }
     if (savedSettings.sidebarOpen != null) {
       // Don't restore on touch devices!
       if (!isTouch) {
@@ -472,6 +493,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
         showReticle,
         showCompass,
         showFpsMeter,
+        serverBrowserView,
         observerTeamColors,
         ccPlayerNames,
       };
@@ -511,6 +533,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     showReticle,
     showCompass,
     showFpsMeter,
+    serverBrowserView,
     observerTeamColors,
     ccPlayerNames,
   ]);

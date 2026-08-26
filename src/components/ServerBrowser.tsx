@@ -1,11 +1,128 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import type { ServerInfo } from "../../relay/types";
 import styles from "./ServerBrowser.module.css";
-import { useLiveSelector } from "../state/liveConnectionStore";
+import tileStyles from "./PreviewTile.module.css";
+import {
+  liveConnectionStore,
+  useLiveSelector,
+} from "../state/liveConnectionStore";
 import { useSettings } from "./SettingsProvider";
 import { LuUsers } from "react-icons/lu";
 import { TbLaurelWreathFilled } from "react-icons/tb";
 import { BsPinAngleFill } from "react-icons/bs";
+import { WifiSignalIcon } from "./WifiSignalIcon";
+import { normalizeMissionType } from "../mission";
+import {
+  mapNameLoadScreenUrl,
+  RawPreviewImage,
+  TILE_FALLBACK_ART_URL,
+} from "./missionPreview";
+
+function ServerTile({
+  server,
+  ping,
+  pingMs,
+  selected,
+  onSelect,
+  onJoin,
+}: {
+  server: ServerInfo;
+  ping: string;
+  /** Numeric total ping for quality coloring, or null when unknown. */
+  pingMs: number | null;
+  selected: boolean;
+  onSelect: () => void;
+  onJoin: () => void;
+}) {
+  const mapArtUrl = mapNameLoadScreenUrl(server.mapName);
+  const previewUrl = mapArtUrl ?? TILE_FALLBACK_ART_URL;
+  const hasHumans = server.playerCount - server.botCount > 0;
+  // Same thresholds as the toolbar's connection indicator.
+  const pingQuality =
+    pingMs == null
+      ? undefined
+      : pingMs < 150
+        ? "good"
+        : pingMs < 300
+          ? "fine"
+          : "poor";
+  return (
+    <button
+      type="button"
+      className={tileStyles.Tile}
+      data-selected={selected}
+      onClick={onSelect}
+      onDoubleClick={onJoin}
+    >
+      <span
+        className={tileStyles.TilePreview}
+        data-variant="server"
+        data-default-image={mapArtUrl == null}
+        aria-hidden
+      >
+        <RawPreviewImage
+          src={previewUrl}
+          alt=""
+          className={tileStyles.TileImage}
+        />
+        {server.isPatrolled && (
+          <span
+            className={styles.TilePinIcon}
+            title="Patrolled server"
+            aria-label="Patrolled server"
+          >
+            <BsPinAngleFill />
+          </span>
+        )}
+      </span>
+      <span className={tileStyles.TileBody}>
+        <span className={tileStyles.TileTitle}>
+          {server.passwordRequired && (
+            <span className={styles.PasswordIcon}>&#x1F512;</span>
+          )}
+          <span className={tileStyles.TileServerName}>{server.name}</span>
+        </span>
+        <span className={tileStyles.TileMission}>
+          <span className={tileStyles.TileMapName}>{server.mapName}</span>
+          {server.gameType && (
+            <span
+              className={tileStyles.TileTag}
+              data-mission-type={normalizeMissionType(server.gameType)}
+            >
+              {normalizeMissionType(server.gameType)}
+            </span>
+          )}
+          {server.tournament && (
+            <TbLaurelWreathFilled
+              className={tileStyles.TileTournamentIcon}
+              title="Tournament mode"
+              aria-label="Tournament mode"
+            />
+          )}
+        </span>
+        <span className={tileStyles.TileMeta}>
+          {server.mod && (
+            <>
+              <span className={styles.TileMod}>{server.mod}</span> ·{" "}
+            </>
+          )}
+          <WifiSignalIcon
+            className={styles.TilePingIcon}
+            data-quality={pingQuality}
+            aria-label="Ping"
+          />{" "}
+          {ping} ms ·{" "}
+          <span className={hasHumans ? styles.TileHumanPlayers : undefined}>
+            <LuUsers className={tileStyles.TileMetaIcon} aria-label="Players" />{" "}
+            {server.playerCount}
+          </span>
+          &thinsp;/&thinsp;{server.maxPlayers} players
+          {server.botCount > 0 ? <> ({server.botCount} bots)</> : null}
+        </span>
+      </span>
+    </button>
+  );
+}
 
 /**
  * Server selector panel, filling the content area (not a modal). The
@@ -23,10 +140,10 @@ export function ServerBrowser({
   showWarriorField?: boolean;
 }) {
   const servers = useLiveSelector((s) => s.servers);
-  const browserToRelayPing = useLiveSelector((s) => s.browserToRelayPing);
+  const liveBrowserToRelayPing = useLiveSelector((s) => s.browserToRelayPing);
   const listServers = useLiveSelector((s) => s.listServers);
   const joinServer = useLiveSelector((s) => s.joinServer);
-  const { warriorName, setWarriorName } = useSettings();
+  const { warriorName, setWarriorName, serverBrowserView } = useSettings();
   const [selectedAddress, setSelectedAddress] = useState<string | null>(null);
   const handleJoin = (address: string) => {
     if (onJoin) {
@@ -83,6 +200,87 @@ export function ServerBrowser({
       return sortDir === "asc" ? cmp : -cmp;
     });
   }, [servers, sortDir, sortKey]);
+
+  // The WS ping keeps re-measuring in the background; latch the value so
+  // displayed pings only change on a list (re)fetch — rows/tiles must
+  // never churn without user interaction. Also fills in once when the
+  // first measurement lands after the list ("—" → value).
+  const [browserToRelayPing, setBrowserToRelayPing] = useState(
+    liveBrowserToRelayPing,
+  );
+  useEffect(() => {
+    setBrowserToRelayPing(liveConnectionStore.getState().browserToRelayPing);
+  }, [servers]);
+  useEffect(() => {
+    if (browserToRelayPing == null && liveBrowserToRelayPing != null) {
+      setBrowserToRelayPing(liveBrowserToRelayPing);
+    }
+  }, [browserToRelayPing, liveBrowserToRelayPing]);
+
+  const formatPing = (server: ServerInfo) =>
+    browserToRelayPing != null
+      ? (server.ping + browserToRelayPing).toLocaleString()
+      : "—";
+
+  const footer = (
+    <div className={styles.Footer}>
+      {showWarriorField ? (
+        <div className={styles.WarriorField}>
+          <label className={styles.WarriorLabel} htmlFor="warriorName">
+            Warrior
+          </label>
+          <input
+            id="warriorName"
+            className={styles.WarriorInput}
+            type="text"
+            value={warriorName}
+            onChange={(e) => setWarriorName(e.target.value)}
+            placeholder="Name thyself…"
+            maxLength={24}
+          />
+        </div>
+      ) : null}
+      <div className={styles.Actions}>
+        <button
+          onClick={handleJoinSelected}
+          disabled={!selectedAddress}
+          className={styles.JoinButton}
+        >
+          {joinLabel}
+        </button>
+      </div>
+    </div>
+  );
+
+  if (serverBrowserView === "tiles") {
+    return (
+      <div className={styles.Panel} ref={panelRef} tabIndex={-1}>
+        <div className={styles.TileWrapper}>
+          <div className={styles.TileGrid}>
+            {sorted.map((server) => (
+              <ServerTile
+                key={server.address}
+                server={server}
+                ping={formatPing(server)}
+                pingMs={
+                  browserToRelayPing != null
+                    ? server.ping + browserToRelayPing
+                    : null
+                }
+                selected={selectedAddress === server.address}
+                onSelect={() => setSelectedAddress(server.address)}
+                onJoin={() => {
+                  setSelectedAddress(server.address);
+                  handleJoin(server.address);
+                }}
+              />
+            ))}
+          </div>
+        </div>
+        {footer}
+      </div>
+    );
+  }
 
   return (
     <div className={styles.Panel} ref={panelRef} tabIndex={-1}>
@@ -186,11 +384,7 @@ export function ServerBrowser({
                       &thinsp;/&thinsp;{server.maxPlayers}
                     </span>
                   </td>
-                  <td data-column="ping">
-                    {browserToRelayPing != null
-                      ? (server.ping + browserToRelayPing).toLocaleString()
-                      : "—"}
-                  </td>
+                  <td data-column="ping">{formatPing(server)}</td>
                   <td data-column="map">{server.mapName}</td>
                   <td data-column="gameType">{server.gameType}</td>
                   <td data-column="mod">{server.mod}</td>
@@ -200,33 +394,7 @@ export function ServerBrowser({
           </table>
         </form>
       </div>
-      <div className={styles.Footer}>
-        {showWarriorField ? (
-          <div className={styles.WarriorField}>
-            <label className={styles.WarriorLabel} htmlFor="warriorName">
-              Warrior
-            </label>
-            <input
-              id="warriorName"
-              className={styles.WarriorInput}
-              type="text"
-              value={warriorName}
-              onChange={(e) => setWarriorName(e.target.value)}
-              placeholder="Name thyself…"
-              maxLength={24}
-            />
-          </div>
-        ) : null}
-        <div className={styles.Actions}>
-          <button
-            onClick={handleJoinSelected}
-            disabled={!selectedAddress}
-            className={styles.JoinButton}
-          >
-            {joinLabel}
-          </button>
-        </div>
-      </div>
+      {footer}
     </div>
   );
 }

@@ -1,6 +1,19 @@
 import { useEffect, useState } from "react";
-import { getUrlForPath } from "../loaders";
-import { getStandardTextureResourceKey } from "../manifest";
+import { getUrlForPath, RESOURCE_ROOT_URL } from "../loaders";
+import {
+  findMissionInfo,
+  getMissionList,
+  getStandardTextureResourceKey,
+} from "../manifest";
+
+/**
+ * The app's pick for preview tiles with no map art (NOT a game concept —
+ * the game's own fallback is the sparse gui/Loading strip): the shell's
+ * Hammers faction background. Pinned to the stock textures.vl2 source —
+ * manifest priority would serve the HD pack's 16:9 re-crop, which loses
+ * the top/bottom bands.
+ */
+export const TILE_FALLBACK_ART_URL = `${RESOURCE_ROOT_URL}@vl2/textures.vl2/textures/gui/bg_Hammers.png`;
 
 function loadScreenUrlExact(missionName: string): string | null {
   try {
@@ -36,6 +49,35 @@ export function missionLoadScreenUrl(
     if (url) return url;
   }
   return null;
+}
+
+/** Lowercased mission DISPLAY name → internal mission name, built lazily
+ *  (server queries report display names like "Dangerous Crossing"). */
+let _displayNameIndex: Map<string, string> | null = null;
+
+function internalNameForDisplayName(displayName: string): string | undefined {
+  if (!_displayNameIndex) {
+    _displayNameIndex = new Map();
+    for (const name of getMissionList()) {
+      const display = findMissionInfo(name)?.displayName;
+      if (display) _displayNameIndex.set(display.toLowerCase(), name);
+    }
+  }
+  return _displayNameIndex.get(displayName.toLowerCase());
+}
+
+/**
+ * Load-screen URL for a server-reported map name, which is usually the
+ * mission's DISPLAY name ("Dangerous Crossing") rather than the internal
+ * Load_ key ("DX_Ice") — try it as an internal name first, then resolve
+ * through the manifest's display names.
+ */
+export function mapNameLoadScreenUrl(mapName: string): string | null {
+  if (!mapName) return null;
+  const direct = loadScreenUrlExact(mapName);
+  if (direct) return direct;
+  const internal = internalNameForDisplayName(mapName);
+  return internal ? loadScreenUrlExact(internal) : null;
 }
 
 /**

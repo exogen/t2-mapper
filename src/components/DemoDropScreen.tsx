@@ -14,8 +14,12 @@ import {
   formatRecordedTime,
   recordedDayLabel,
 } from "./demoFormat";
-import { RESOURCE_ROOT_URL } from "../loaders";
-import { missionLoadScreenUrl, RawPreviewImage } from "./missionPreview";
+import {
+  missionLoadScreenUrl,
+  RawPreviewImage,
+  TILE_FALLBACK_ART_URL,
+} from "./missionPreview";
+import tileStyles from "./PreviewTile.module.css";
 import { useDemoQueryState } from "./useQueryParams";
 import { focusDemoSelect } from "./demoSelectFocus";
 import { LoadingIndicator } from "./LoadingIndicator";
@@ -38,14 +42,6 @@ const CARD_ART_NAME_FALLBACKS: readonly RegExp[] = [
   /^(.+)_b$/,
 ];
 
-/**
- * Card art for missions with no Load_ screen (our choice for these cards,
- * NOT the game's own fallback): the shell's Hammers faction background.
- * Pinned to the stock textures.vl2 source — manifest priority would serve
- * the HD pack's 16:9 re-crop, which loses the top/bottom bands.
- */
-const CARD_FALLBACK_ART_URL = `${RESOURCE_ROOT_URL}@vl2/textures.vl2/textures/gui/bg_Hammers.png`;
-
 function FeaturedCard({
   demo,
   onLoad,
@@ -57,7 +53,7 @@ function FeaturedCard({
     demo.games[0]?.mission ?? "",
     CARD_ART_NAME_FALLBACKS,
   );
-  const previewUrl = missionArtUrl ?? CARD_FALLBACK_ART_URL;
+  const previewUrl = missionArtUrl ?? TILE_FALLBACK_ART_URL;
   const gameTypes = [
     ...new Set(
       demo.games
@@ -66,9 +62,9 @@ function FeaturedCard({
     ),
   ];
   return (
-    <button type="button" className={styles.Card} onClick={onLoad}>
+    <button type="button" className={tileStyles.Tile} onClick={onLoad}>
       <span
-        className={styles.CardPreview}
+        className={tileStyles.TilePreview}
         data-default-image={missionArtUrl == null}
         aria-hidden
       >
@@ -76,18 +72,18 @@ function FeaturedCard({
           <RawPreviewImage
             src={previewUrl}
             alt=""
-            className={styles.CardImage}
+            className={tileStyles.TileImage}
           />
         )}
-        <PiCassetteTapeFill className={styles.CardPlaceholder} />
+        <PiCassetteTapeFill className={tileStyles.TilePlaceholder} />
       </span>
-      <span className={styles.CardBody}>
-        <span className={styles.CardTitle}>
-          <span className={styles.CardName}>{demoTitle(demo)}</span>
+      <span className={tileStyles.TileBody}>
+        <span className={tileStyles.TileTitle}>
+          <span className={tileStyles.TileMapTitle}>{demoTitle(demo)}</span>
           {gameTypes.map((type) => (
             <span
               key={type}
-              className={styles.CardType}
+              className={tileStyles.TileTag}
               data-mission-type={type}
             >
               {type}
@@ -95,25 +91,25 @@ function FeaturedCard({
           ))}
           {demo.games.some((game) => game.tournament) && (
             <TbLaurelWreathFilled
-              className={styles.CardTournamentIcon}
+              className={tileStyles.TileTournamentIcon}
               title="Tournament mode"
               aria-label="Tournament mode"
             />
           )}
         </span>
-        <span className={styles.CardMeta}>
+        <span className={tileStyles.TileMeta}>
           {demo.server} · {recordedDayLabel(demo.recordedAt)} ·{" "}
           {formatRecordedTime(demo.recordedAt)}
         </span>
-        <span className={styles.CardMeta}>
+        <span className={tileStyles.TileMeta}>
           {demo.recorder ? (
             <>
-              <LuUser className={styles.CardMetaIcon} title="Recorded by" />{" "}
+              <LuUser className={tileStyles.TileMetaIcon} title="Recorded by" />{" "}
               {demo.recorder} ·{" "}
             </>
           ) : null}
           <span title={demo.players.join(", ") || undefined}>
-            <LuUsers className={styles.CardMetaIcon} aria-label="Players" />{" "}
+            <LuUsers className={tileStyles.TileMetaIcon} aria-label="Players" />{" "}
             {demo.players.length} players
           </span>{" "}
           · {formatDuration(demo.durationMs)}
