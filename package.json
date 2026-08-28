@@ -30,7 +30,11 @@
     "test-connect": "node --env-file-if-exists=.env.development.local --import=tsx/esm scripts/test-connect.ts",
     "test:watch": "vitest",
     "test": "vitest run",
-    "typecheck": "tsc --build --noEmit"
+    "typecheck": "tsc --build --noEmit",
+    "backfill-casts": "node --env-file-if-exists=.env.development.local --import=tsx/esm scripts/backfill-cast-plans.ts",
+    "generate-commentary": "node --env-file-if-exists=.env.development.local --import=tsx/esm scripts/generate-game-commentary.ts",
+    "render-commentary": "node --env-file-if-exists=.env.development.local --import=tsx/esm scripts/render-commentary-audio.ts",
+    "upload-commentary": "node --env-file-if-exists=.env.development.local --import=tsx/esm scripts/upload-commentary.ts"
   },
   "dependencies": {
     "@ariakit/react": "^0.4.36",
@@ -45,6 +49,7 @@
     "match-sorter": "^8.3.0",
     "nipplejs": "^0.10.2",
     "nuqs": "^2.9.5",
+    "openai": "^7.8.0",
     "picomatch": "^4.0.5",
     "pino": "^10.3.1",
     "pino-pretty": "^13.1.3",

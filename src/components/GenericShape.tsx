@@ -1,4 +1,12 @@
-import { Fragment, memo, Suspense, useEffect, useMemo, useRef } from "react";
+import {
+  Fragment,
+  memo,
+  Suspense,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+} from "react";
 import type { ReactNode } from "react";
 import { ErrorBoundary } from "react-error-boundary";
 import type { AnimationAction, Object3D } from "three";
@@ -21,6 +29,8 @@ import {
   Vector3,
   RepeatWrapping,
   NoColorSpace,
+  Mesh,
+  SkinnedMesh,
 } from "three";
 import type { PointLight } from "three";
 import * as SkeletonUtils from "three/examples/jsm/utils/SkeletonUtils.js";
@@ -51,7 +61,7 @@ import {
   getPosedNodeTransform,
 } from "../stream/playbackUtils";
 import { resolveEmapFromImageSlot } from "./resolveEmap";
-import { playerEyePositions } from "./PlayerModel";
+import { playerEyePositions } from "./playerEyePositions";
 import type { ThreadState as StreamThreadState } from "../stream/types";
 import { loadTexture } from "../textureUtils";
 
@@ -126,6 +136,13 @@ interface StreamShapeEntity {
 }
 
 const log = createLogger("GenericShape");
+import {
+  registerStaticShapeCollider,
+  unregisterStaticShapeCollider,
+} from "../collision/worldCollision";
+
+const _colliderBox = new Box3();
+const _colliderSize = new Vector3();
 
 /**
  * Content for a mounted shape. Computes the Mountpoint inverse offset from the
@@ -346,7 +363,7 @@ export const ShapeModel = memo(function ShapeModel({
   /** Item/ShapeBase built-in light config (from datablock). */
   lightConfig?: ShapeLightConfig;
 }) {
-  const { object, shapeName } = useShapeInfo();
+  const { object, shapeName, type, isOrganic } = useShapeInfo();
   const { debugMode } = useDebug();
   const { animationEnabled } = useSettings();
   const runtime = useEngineSelector((state) => state.runtime.runtime);
@@ -572,6 +589,34 @@ export const ShapeModel = memo(function ShapeModel({
       mixer?.uncacheRoot(clonedScene);
     };
   }, [clonedScene, mixer]);
+
+  // Mission-placed statics (a generator, a bunker prop) occlude a camera
+  // exactly like interior walls, so register their meshes as CAMERA
+  // occluders — a separate collider class, so projectile physics keeps
+  // colliding with exactly what it always did. Vegetation is skipped
+  // (crossed alpha planes read solid to a ray while looking sparse), and
+  // so is anything too small to meaningfully block a frame. World
+  // matrices are snapshotted once, like interiors — these do not move.
+  const colliderId = useId();
+  useEffect(() => {
+    if ((type !== "TSStatic" && type !== "StaticShape") || isOrganic) return;
+    clonedScene.updateWorldMatrix(true, true);
+    const meshes: Mesh[] = [];
+    clonedScene.traverse((node) => {
+      const mesh = node as Mesh;
+      if (mesh.isMesh && !(mesh as unknown as SkinnedMesh).isSkinnedMesh) {
+        meshes.push(mesh);
+      }
+    });
+    if (meshes.length === 0) return;
+    _colliderBox.setFromObject(clonedScene);
+    _colliderBox.getSize(_colliderSize);
+    if (Math.max(_colliderSize.x, _colliderSize.y, _colliderSize.z) < 3) {
+      return;
+    }
+    registerStaticShapeCollider(colliderId, meshes);
+    return () => unregisterStaticShapeCollider(colliderId);
+  }, [clonedScene, colliderId, type, isOrganic]);
 
   const threadsRef = useRef(new Map<number, ThreadState>());
   const iflMeshAtlasRef = useRef(new Map<any, IflAtlas>());

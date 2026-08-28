@@ -128,6 +128,9 @@ export interface MutableEntity {
   damageState?: number;
   targetId?: number;
   projectilePhysics?: "linear" | "ballistic" | "seeker";
+  /** Shooter's ghost index from the projectile packet (sourceObject —
+   *  the engine transmits who fired every projectile). */
+  sourceGhostIndex?: number;
   simulatedVelocity?: [number, number, number];
   gravityMod?: number;
   /** Ticks since the projectile left the muzzle (seeded from currTick). */
@@ -1425,6 +1428,15 @@ export abstract class StreamEngine implements StreamingPlayback {
     const direction = isVec3Like(data.direction) ? data.direction : undefined;
     if (direction) {
       entity.direction = [direction.x, direction.y, direction.z];
+    }
+
+    // Projectile shooter, from the packet's source object ghost index.
+    if (
+      entity.type === "Projectile" &&
+      typeof data.sourceObject === "number" &&
+      data.sourceObject >= 0
+    ) {
+      entity.sourceGhostIndex = data.sourceObject;
     }
 
     // Rotation
@@ -2938,6 +2950,7 @@ export abstract class StreamEngine implements StreamingPlayback {
         visual: entity.visual,
         direction: entity.direction,
         ghostIndex: entity.ghostIndex,
+        sourceGhostIndex: entity.sourceGhostIndex,
         className: entity.className,
         dataBlockId: entity.dataBlockId,
         shapeHint: entity.shapeHint,

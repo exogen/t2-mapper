@@ -9,6 +9,7 @@ import { useCameras } from "./CamerasProvider";
 import { useInputContext } from "./InputContext";
 import { useTouchDevice } from "./useTouchDevice";
 import { cameraTourStore } from "../state/cameraTourStore";
+import { demoDirectorStore } from "../state/demoDirectorStore";
 import { isWelcomeSplashOpen } from "./WelcomeSplash";
 import {
   commandCircuitStore,
@@ -193,8 +194,11 @@ export function MouseAndKeyboardHandler() {
 
   // Build and emit InputFrame each render frame.
   useFrame((_state, delta) => {
-    // Suppress all input while a camera tour or command circuit is active.
+    // Suppress all input while a camera tour, the auto-director, or the
+    // command circuit is active. (The director unmounts these bindings
+    // anyway — this stops pointer-locked deltas from accumulating.)
     if (cameraTourStore.getState().animation) return;
+    if (demoDirectorStore.getState().status === "playing") return;
     if (commandCircuitStore.getState().active) {
       // Camera look/move stays suppressed, but observer triggers (player
       // cycling from the CC view) must still reach the server via moves.

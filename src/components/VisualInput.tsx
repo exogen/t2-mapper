@@ -2,6 +2,7 @@ import { lazy, Suspense } from "react";
 import { useStore } from "zustand";
 import { useTouchDevice } from "./useTouchDevice";
 import { useCameraTour } from "../state/cameraTourStore";
+import { useDirector } from "../state/demoDirectorStore";
 import { useCommandCircuit } from "../state/commandCircuitStore";
 import { useLiveSelector } from "../state/liveConnectionStore";
 import { streamPlaybackStore } from "../state/streamPlaybackStore";
@@ -25,6 +26,9 @@ const KeyboardOverlay = lazy(() =>
 export function VisualInput() {
   const isTouch = useTouchDevice();
   const isTourActive = useCameraTour((s) => s.animation !== null);
+  // While the auto-director drives the camera, a touch is the interrupt
+  // gesture — the joysticks would fight it.
+  const isDirecting = useDirector((s) => s.status === "playing");
   // Command circuit pans/zooms via direct touch gestures; the free-fly
   // joysticks don't apply.
   const isCommandCircuit = useCommandCircuit((s) => s.active);
@@ -55,7 +59,11 @@ export function VisualInput() {
 
   return (
     <>
-      {isTouch && !isTourActive && !isCommandCircuit && hasCameraControls ? (
+      {isTouch &&
+      !isTourActive &&
+      !isDirecting &&
+      !isCommandCircuit &&
+      hasCameraControls ? (
         <Suspense>
           <TouchJoystick />
         </Suspense>

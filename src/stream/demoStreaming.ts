@@ -418,18 +418,35 @@ class StreamingPlayback extends StreamEngine {
   }
 
   private _shapeConstructorCache: Map<string, string[]> | null = null;
+  private _shapeConstructorCacheSize = -1;
 
   getShapeConstructorSequences(shapeName: string): string[] | undefined {
-    if (!this._shapeConstructorCache) {
-      this._shapeConstructorCache = new Map();
+    // From-connect recordings (relay watch captures) carry NO datablocks
+    // in the initial block — they all arrive as SimDataBlockEvents in
+    // the packet stream instead, accumulated by the packet parser. Scan
+    // both, and rebuild when more datablocks have arrived, or every
+    // player renders with an empty action map and the dead keep walking.
+    const packetParser = this.parser.getPacketParser() as unknown as {
+      dataBlockDataMap?: Map<number, ParsedData>;
+    };
+    const packetMap = packetParser.dataBlockDataMap;
+    const size = this.initialBlock.dataBlocks.size + (packetMap?.size ?? 0);
+    if (
+      !this._shapeConstructorCache ||
+      size !== this._shapeConstructorCacheSize
+    ) {
+      const cache = new Map<string, string[]>();
+      const ingest = (data: ParsedData | undefined) => {
+        const shape = data?.shape as string | undefined;
+        const seqs = data?.sequences as string[] | undefined;
+        if (shape && Array.isArray(seqs)) cache.set(shape.toLowerCase(), seqs);
+      };
       for (const [, db] of this.initialBlock.dataBlocks) {
-        if (db.className !== "TSShapeConstructor" || !db.data) continue;
-        const shape = db.data.shape as string | undefined;
-        const seqs = db.data.sequences as string[] | undefined;
-        if (shape && seqs) {
-          this._shapeConstructorCache.set(shape.toLowerCase(), seqs);
-        }
+        if (db.className === "TSShapeConstructor") ingest(db.data);
       }
+      if (packetMap) for (const [, data] of packetMap) ingest(data);
+      this._shapeConstructorCache = cache;
+      this._shapeConstructorCacheSize = size;
     }
     return this._shapeConstructorCache.get(shapeName.toLowerCase());
   }

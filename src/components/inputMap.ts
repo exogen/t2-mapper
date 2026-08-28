@@ -88,6 +88,51 @@ export const TOUR_MODE_INPUT = [
 ] as const satisfies readonly InputMapEntry[];
 
 /**
+ * Auto-director lean-back mode: every camera-ish gesture maps to one
+ * interrupt that hands control back (transport stays in DEMO_MODE_INPUT).
+ * Drag and touch bindings can't fire one-shot actions, so those two are
+ * separate state-only actions the DirectorController polls per frame.
+ */
+export const DIRECTOR_MODE_INPUT = [
+  {
+    name: "directorInterrupt",
+    keys: [
+      "KeyF",
+      "Escape",
+      "KeyC",
+      "KeyW",
+      "KeyA",
+      "KeyS",
+      "KeyD",
+      "KeyQ",
+      "KeyE",
+      "ArrowUp",
+      "ArrowDown",
+      "ArrowLeft",
+      "ArrowRight",
+      "Digit1",
+      "Digit2",
+      "Digit3",
+      "Digit4",
+      "Digit5",
+      "Digit6",
+      "Digit7",
+      "Digit8",
+      "Digit9",
+    ],
+  },
+  {
+    name: "directorInterruptClick",
+    keys: [
+      { type: "click", button: 0 },
+      { type: "click", button: 2 },
+    ],
+  },
+  { name: "directorInterruptDrag", keys: [{ type: "drag", button: 0 }] },
+  { name: "directorInterruptTouch", keys: [{ type: "touch" }] },
+] as const satisfies readonly InputMapEntry[];
+
+/**
  * Active whenever command circuit mode is available or active, so the same
  * key toggles in both directions.
  */
@@ -142,6 +187,7 @@ export type ActionName =
   | (typeof FLAG_FOLLOW_INPUT)[number]["name"]
   | (typeof LIVE_FOLLOW_INPUT)[number]["name"]
   | (typeof TOUR_MODE_INPUT)[number]["name"]
+  | (typeof DIRECTOR_MODE_INPUT)[number]["name"]
   | (typeof COMMAND_CIRCUIT_TOGGLE_INPUT)[number]["name"]
   | (typeof COMMAND_CIRCUIT_STREAM_INPUT)[number]["name"]
   | (typeof COMMAND_CIRCUIT_INPUT)[number]["name"];

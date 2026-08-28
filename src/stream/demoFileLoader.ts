@@ -6,6 +6,10 @@
  */
 import { createLogger } from "../logger";
 import { commandCircuitStore } from "../state/commandCircuitStore";
+import {
+  resetDirector,
+  setDirectorDemoBuffer,
+} from "../state/demoDirectorStore";
 import { demoLoadStore } from "../state/demoLoadStore";
 import { demoTimelineStore } from "../state/demoTimelineStore";
 import { engineStore } from "../state/engineStore";
@@ -29,6 +33,7 @@ export function unloadDemo(): void {
   demoLoadStore.getState().setSourceUrl(null);
   engineStore.getState().setRecording(null);
   demoTimelineStore.getState().reset();
+  resetDirector();
   gameEntityStore.getState().endStreaming();
   commandCircuitStore.getState().deactivate();
 }
@@ -148,6 +153,10 @@ async function loadDemoBuffer(
     engineStore.getState().setRecording(recording);
     demoLoadStore.getState().setSourceUrl(sourceUrl);
 
+    // Retain the buffer for the auto-director's lazy scan pass.
+    resetDirector();
+    setDirectorDemoBuffer(buffer);
+
     // Kick off background timeline scan.
     scanAbort?.abort();
     const abortController = new AbortController();
@@ -170,7 +179,11 @@ async function loadDemoBuffer(
       .then((result) => {
         if (parseToken !== token) return;
         const s = demoTimelineStore.getState();
-        s.setEvents(result.events, result.observerPerspective);
+        s.setEvents(
+          result.events,
+          result.observerPerspective,
+          result.killEvents,
+        );
         s.setScanProgress(null);
       })
       .catch((err: unknown) => {

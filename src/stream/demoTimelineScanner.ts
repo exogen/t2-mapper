@@ -22,21 +22,39 @@ const YIELD_INTERVAL = 500;
 /**
  * `MsgMissionStart` is overloaded: the server broadcasts it for every
  * pre-match countdown tick ("Match starts in N seconds", from
- * `notifyMatchStart`) as well as the real kickoff ("Match started!" from
- * `DefaultGame::startMatch`, or an admin force). Only the kickoff belongs
- * on the timeline, distinguished here by the message body.
+ * `notifyMatchStart`), for an admin force, and for the real kickoff
+ * ("Match started!" from `DefaultGame::startMatch`). Only the last of
+ * those means play has begun.
  *
- * This also handles a cancelled countdown for free: `CancelCountdown`
- * sends clients no message, so a cancelled (then restarted) countdown
- * never produces a kickoff body until the match truly starts — the entry
- * lands at the moment the map actually starts, not when a since-aborted
- * countdown first began.
+ * An admin force is NOT a kickoff: `DefaultGame::voteMatchStart` prints
+ * "The admin has forced the match to start." and then calls
+ * `startTourneyCountdown()` — it begins a countdown, which
+ * `CancelCountdown` can still abort. A tournament demo can carry
+ * several forced starts and cancelled countdowns minutes apart before
+ * the one that completes (observed: forces at 821s and 1029s, real
+ * kickoff at 1059s), so keying off the force would put the match start
+ * four minutes early.
+ *
+ * Cancelled countdowns are handled for free: `CancelCountdown` sends no
+ * message, and a cancelled countdown never reaches a kickoff body — so
+ * the entry lands where play actually began.
  */
 export function isRealMatchStart(rawBody: string): boolean {
+  return stripTaggedStringMarkup(rawBody)
+    .toLowerCase()
+    .includes("match started");
+}
+
+/**
+ * An admin force or a passed start vote: the countdown is beginning,
+ * which is only a usable stand-in for the kickoff if the recording
+ * never contains one (a mod that skips `startMatch`'s broadcast).
+ */
+function isCountdownForced(rawBody: string): boolean {
   const body = stripTaggedStringMarkup(rawBody).toLowerCase();
   return (
-    body.includes("match started") ||
-    body.includes("forced the match to start")
+    body.includes("forced the match to start") ||
+    body.includes("started by vote")
   );
 }
 
@@ -162,6 +180,12 @@ export interface TimelineScanResult {
    * recording) — kill and death events are never emitted for these.
    */
   observerPerspective: boolean;
+  /**
+   * EVERY player-vs-player kill regardless of perspective, for the
+   * auto-director's weapon classification. Not shown on the timeline —
+   * dozens of players' kills are noise at timeline scale.
+   */
+  killEvents: TimelineEvent[];
 }
 
 /**
@@ -223,6 +247,9 @@ export async function scanDemoTimeline(
   let recorderEverOnTeam = recorderTeamId != null && recorderTeamId > 0;
 
   const events: TimelineEvent[] = [];
+  const killEvents: TimelineEvent[] = [];
+  /** Forced-start/vote countdowns, used only if no kickoff ever lands. */
+  const forcedStarts: TimelineEvent[] = [];
   let moveTicks = 0;
   let seenMatchStart = false;
   let currentMissionName: string | null = null;
@@ -319,7 +346,9 @@ export async function scanDemoTimeline(
                 for (let i = events.length - 1; i >= 0; i--) {
                   const e = events[i];
                   if (
-                    (e.type === "flag-grab" || e.type === "flag-return") &&
+                    (e.type === "flag-grab" ||
+                      e.type === "flag-drop" ||
+                      e.type === "flag-return") &&
                     e.teamAffinity === "neutral"
                   ) {
                     events.splice(i, 1);
@@ -352,13 +381,17 @@ export async function scanDemoTimeline(
         // timeline, so key off the message body rather than the mere
         // arrival of a MsgMissionStart. See isRealMatchStart.
         if (msgTypeLower === "msgmissionstart") {
-          if (
-            !seenMatchStart &&
-            isRealMatchStart(resolveNetString(args[1] ?? "", netStrings))
-          ) {
+          const body = resolveNetString(args[1] ?? "", netStrings);
+          const suffix = currentMissionName ? ` (${currentMissionName})` : "";
+          if (!seenMatchStart && isRealMatchStart(body)) {
             seenMatchStart = true;
-            const suffix = currentMissionName ? ` (${currentMissionName})` : "";
             events.push({
+              timeSec,
+              type: "match-start",
+              description: `Match started${suffix}`,
+            });
+          } else if (!seenMatchStart && isCountdownForced(body)) {
+            forcedStarts.push({
               timeSec,
               type: "match-start",
               description: `Match started${suffix}`,
@@ -418,6 +451,65 @@ export async function scanDemoTimeline(
               description: `You took the ${flagTeamName ?? "enemy"} flag`,
               teamAffinity: "friendly",
               flagTeamName: flagTeamName || undefined,
+            });
+          }
+          continue;
+        }
+
+        // Flag drop (carrier died or ejected it).
+        // Wire: args[2]=playerName (or "0" for the carrier's own copy),
+        // args[3]=teamName (or "0"), args[4]=flag.team
+        if (msgTypeLower === "msgctfflagdropped" && args.length >= 3) {
+          const playerName = stripTaggedStringMarkup(
+            resolveNetString(args[2], netStrings),
+          ).trim();
+          const flagTeamNameRaw =
+            args.length >= 4
+              ? stripTaggedStringMarkup(
+                  resolveNetString(args[3], netStrings),
+                ).trim()
+              : "";
+          // "0" is TorqueScript's empty for both fields.
+          const flagTeamName =
+            flagTeamNameRaw && flagTeamNameRaw !== "0"
+              ? flagTeamNameRaw
+              : undefined;
+          const actor =
+            playerName && playerName !== "0" ? playerName : undefined;
+          if (isObserverPerspective) {
+            const flagLabel = flagTeamName
+              ? `the ${flagTeamName} flag`
+              : "the flag";
+            events.push({
+              timeSec,
+              type: "flag-drop",
+              description: actor
+                ? `${actor} dropped ${flagLabel}`
+                : `${flagLabel.replace(/^the/, "The")} was dropped`,
+              teamAffinity: "neutral",
+              actor,
+              flagTeamName,
+            });
+          } else if (
+            normalizedRecorder &&
+            (actor?.toLowerCase() === normalizedRecorder ||
+              // The recorder receives only the messageClient copy of
+              // their own drop ("You dropped the %2 flag" with
+              // playerName "0") — key off the template body.
+              (!actor &&
+                stripTaggedStringMarkup(
+                  resolveNetString(args[1] ?? "", netStrings),
+                )
+                  .toLowerCase()
+                  .includes("you dropped")))
+          ) {
+            // Only include drops by the control player (recorder).
+            events.push({
+              timeSec,
+              type: "flag-drop",
+              description: `You dropped the ${flagTeamName ?? "enemy"} flag`,
+              teamAffinity: "friendly",
+              flagTeamName,
             });
           }
           continue;
@@ -530,6 +622,22 @@ export async function scanDemoTimeline(
                 ).trim()
               : undefined;
 
+          if (
+            !SELF_INFLICTED_MSG_TYPES.has(msgTypeLower) &&
+            killerName &&
+            victimName &&
+            killerName.toLowerCase() !== victimName.toLowerCase()
+          ) {
+            killEvents.push({
+              timeSec,
+              type: "kill",
+              description: `${killerName} killed ${victimName}`,
+              killer: killerName,
+              victim: victimName,
+              weapon: weapon || undefined,
+            });
+          }
+
           // Observer recordings keep only flag and match events —
           // other players' kills and deaths are noise at timeline
           // scale (Ctrl+K suicides are already excluded globally).
@@ -621,9 +729,21 @@ export async function scanDemoTimeline(
     }
   }
 
+  // A recording with no kickoff at all falls back to the first forced
+  // countdown — better than reporting no start — but a real kickoff
+  // always wins, however many forces preceded it.
+  if (
+    forcedStarts.length > 0 &&
+    !events.some((e) => e.type === "match-start")
+  ) {
+    events.push(forcedStarts[0]);
+    events.sort((a, b) => a.timeSec - b.timeSec);
+  }
+
   log.info("Scanned %d blocks, found %d events", blockCount, events.length);
   return {
     events,
     observerPerspective: !recorderEverOnTeam,
+    killEvents,
   };
 }

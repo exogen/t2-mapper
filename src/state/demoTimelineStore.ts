@@ -7,6 +7,7 @@ export type TimelineEventType =
   | "kill"
   | "death"
   | "flag-grab"
+  | "flag-drop"
   | "flag-return"
   | "flag-cap";
 
@@ -28,8 +29,8 @@ export interface TimelineEvent {
   /** For flag-cap events: name of the player who captured. */
   capturer?: string;
   /**
-   * For flag-grab/flag-return events: the player responsible (unset for
-   * auto-returns and recorder-perspective events).
+   * For flag-grab/flag-drop/flag-return events: the player responsible
+   * (unset for auto-returns and recorder-perspective events).
    */
   actor?: string;
   /** For flag events: name of the flag's team. */
@@ -38,28 +39,41 @@ export interface TimelineEvent {
 
 export interface DemoTimelineState {
   events: TimelineEvent[] | null;
+  /** All player-vs-player kills regardless of perspective (director
+   *  weapon classification) — never rendered on the timeline. */
+  killEvents: TimelineEvent[] | null;
   scanProgress: number | null;
   /**
    * The recorder never played — kill/death events are never emitted.
    */
   observerPerspective: boolean;
-  setEvents(events: TimelineEvent[], observerPerspective: boolean): void;
+  setEvents(
+    events: TimelineEvent[],
+    observerPerspective: boolean,
+    killEvents: TimelineEvent[],
+  ): void;
   setScanProgress(progress: number | null): void;
   reset(): void;
 }
 
 export const demoTimelineStore = createStore<DemoTimelineState>((set) => ({
   events: null,
+  killEvents: null,
   scanProgress: null,
   observerPerspective: false,
-  setEvents(events, observerPerspective) {
-    set({ events, observerPerspective });
+  setEvents(events, observerPerspective, killEvents) {
+    set({ events, observerPerspective, killEvents });
   },
   setScanProgress(progress) {
     set({ scanProgress: progress });
   },
   reset() {
-    set({ events: null, scanProgress: null, observerPerspective: false });
+    set({
+      events: null,
+      killEvents: null,
+      scanProgress: null,
+      observerPerspective: false,
+    });
   },
 }));
 

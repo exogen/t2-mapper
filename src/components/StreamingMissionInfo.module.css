@@ -119,6 +119,12 @@
   padding: 2px 9px;
 }
 
+@media (max-width: 479px) {
+  .DemoDownloadButton {
+    display: none;
+  }
+}
+
 .DemoDownloadTapeIcon {
   font-size: 18px;
 }

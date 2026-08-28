@@ -9,7 +9,7 @@ import {
 } from "../stream/playbackUtils";
 import { useSettings } from "./SettingsProvider";
 import { ParticleEffects } from "./ParticleEffects";
-import { playerEyePositions } from "./PlayerModel";
+import { playerEyePositions } from "./playerEyePositions";
 import { useProgress } from "@react-three/drei";
 import { startAssetPrefetch, stopAssetPrefetch } from "../assetPrefetch";
 import { stopAllTrackedSounds } from "./AudioEmitter";
@@ -17,6 +17,7 @@ import { useEngineStoreApi, advanceEffectClock } from "../state/engineStore";
 import { setStreamSnapshot } from "../state/streamSnapshotStore";
 import { cameraRegistry } from "../state/cameraRegistry";
 import { gameEntityStore } from "../state/gameEntityStore";
+import { DIRECTOR_ORBIT_TARGET_MAX_LAG } from "../director/cameraRig";
 import { liveConnectionStore } from "../state/liveConnectionStore";
 import {
   streamClock,
@@ -107,6 +108,7 @@ const _interpQuatB = new Quaternion();
 const _billboardFlip = new Quaternion(0, 1, 0, 0); // 180° around Y
 const _orbitDir = new Vector3();
 const _orbitTarget = new Vector3();
+const _smoothedOrbitTarget = new Vector3();
 const _orbitCandidate = new Vector3();
 
 /** PlayerData::maxLookAngle — all Tribes 2 armor datablocks use 1.5 rad (~85.9°). */
@@ -183,6 +185,7 @@ export function StreamingController({
 }) {
   const engineStore = useEngineStoreApi();
   const { fov: userFov } = useSettings();
+  const orbitTargetSmoothedRef = useRef(false);
   const playbackClockRef = useRef(0);
   const lastSeekTimeRef = useRef(0);
   const prevTickSnapshotRef = useRef<StreamSnapshot | null>(null);
@@ -703,6 +706,41 @@ export function StreamingController({
         const targetGroup = resolvedTarget.group;
         const orbitEntity = resolvedTarget.entity;
         _orbitTarget.copy(targetGroup.position);
+        // Loose-spring target for the auto-director: ease toward where
+        // the followed thing IS rather than teleporting with it through
+        // drops, passes and pickups. A jump far beyond hand-off range is
+        // a shot cut — snap, don't glide across the map.
+        const targetDamping = streamPlaybackStore.getState().orbitTargetDamping;
+        if (targetDamping != null) {
+          if (
+            !orbitTargetSmoothedRef.current ||
+            _smoothedOrbitTarget.distanceTo(_orbitTarget) > 60
+          ) {
+            _smoothedOrbitTarget.copy(_orbitTarget);
+            orbitTargetSmoothedRef.current = true;
+          } else {
+            _smoothedOrbitTarget.lerp(
+              _orbitTarget,
+              1 -
+                Math.exp(
+                  -targetDamping * delta * (isPlaying ? playback.rate : 0),
+                ),
+            );
+            // The spring may sag, but only so far: a fast capper on a
+            // straight line otherwise settles at speed/damping metres
+            // behind and rides the frame edge.
+            const lag = _smoothedOrbitTarget.distanceTo(_orbitTarget);
+            if (lag > DIRECTOR_ORBIT_TARGET_MAX_LAG) {
+              _smoothedOrbitTarget.lerp(
+                _orbitTarget,
+                1 - DIRECTOR_ORBIT_TARGET_MAX_LAG / lag,
+              );
+            }
+          }
+          _orbitTarget.copy(_smoothedOrbitTarget);
+        } else {
+          orbitTargetSmoothedRef.current = false;
+        }
         // Torque orbits the target's render world-box center; player positions
         // in our stream are feet-level, so lift to an approximate center.
         // For vehicles, use the datablock's cameraOffset (vertical Z offset
@@ -810,15 +848,17 @@ export function StreamingController({
       }
     }
 
-    // First-person camera: either add the eye offset on top of the
-    // stream camera position (original mode), or fully compute the
-    // camera transform from entity state (non-authoritative, e.g.
-    // observing a different player than the demo recorder). The
-    // spectate override above takes precedence — never overwrite the
-    // watcher's chosen view with the stream's own first-person eyes.
+    // First-person camera, recorded view ONLY ("original"): add the
+    // animated eye-bone offset on top of the stream camera position.
+    // Every other mode owns the camera itself — free-fly is the user
+    // flying it, orbitOverride is positioned by the orbit block above,
+    // firstPersonOverride by the spectate block, and demo-director
+    // shots write it directly — so applying the recorder's eyes here
+    // would yank the camera back to them every frame on any
+    // first-person recording.
     if (
       mode === "first-person" &&
-      cameraMode !== "firstPersonOverride" &&
+      cameraMode === "original" &&
       root &&
       currentCamera?.controlEntityId
     ) {
@@ -826,29 +866,11 @@ export function StreamingController({
       const playerGroup = root.children.find(
         (child) => child.name === currentCamera.controlEntityId,
       );
-
-      if (cameraMode === "original") {
-        // Stream camera position = entity base position. Add animated
-        // eye bone offset (rotated by body orientation).
-        if (eyePos && playerGroup) {
-          _tmpVec.copy(eyePos).applyQuaternion(playerGroup.quaternion);
-          streamCamera.position.add(_tmpVec);
-        } else {
-          streamCamera.position.y += DEFAULT_EYE_HEIGHT;
-        }
-      } else if (playerGroup) {
-        // Non-authoritative: compute full camera transform from entity
-        // state, matching Torque's Player::getEyeTransform.
-        const controlEntity = currentEntities.get(
-          currentCamera.controlEntityId,
-        );
-        computeFirstPersonCamera(
-          streamCamera,
-          playerGroup,
-          eyePos ?? _tmpVec.set(0, DEFAULT_EYE_HEIGHT, 0),
-          controlEntity?.headPitch ?? 0,
-          controlEntity?.headYaw ?? 0,
-        );
+      if (eyePos && playerGroup) {
+        _tmpVec.copy(eyePos).applyQuaternion(playerGroup.quaternion);
+        streamCamera.position.add(_tmpVec);
+      } else {
+        streamCamera.position.y += DEFAULT_EYE_HEIGHT;
       }
     }
 

@@ -21,6 +21,8 @@ import { InputConsumer } from "./InputConsumer";
 import { LabelOverlay } from "./LabelOverlay";
 import { SpectatorController } from "./SpectatorController";
 import { DemoCameraController } from "./DemoCameraController";
+import { CommentaryAudio } from "./CommentaryAudio";
+import { DirectorController } from "./DirectorController";
 import { CameraTourConsumer } from "./CameraTourConsumer";
 import { ActiveInputBindings } from "./ActiveInputBindings";
 
@@ -107,7 +109,15 @@ export const GameView = memo(function GameView({
               </Suspense>
             ) : null}
             {spectator ? <SpectatorController /> : null}
-            {recording?.source === "demo" ? <DemoCameraController /> : null}
+            {recording?.source === "demo" ? (
+              <>
+                <DemoCameraController />
+                <DirectorController />
+                <AudioEnabled>
+                  <CommentaryAudio />
+                </AudioEnabled>
+              </>
+            ) : null}
             <CameraTourConsumer />
             <InputConsumer />
             <LabelOverlay />

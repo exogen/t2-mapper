@@ -127,6 +127,8 @@ export interface StreamEntity {
   /** Target render flags bitmask from the Target Manager. */
   targetRenderFlags?: number;
   ghostIndex?: number;
+  /** Projectiles: the shooter's ghost index (packet sourceObject). */
+  sourceGhostIndex?: number;
   className?: string;
   dataBlockId?: number;
   shapeHint?: string;

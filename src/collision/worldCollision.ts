@@ -23,7 +23,7 @@ export interface WorldRayHit {
   point: Vec3;
   /** Unit surface normal in Torque space, oriented against the ray. */
   normal: Vec3;
-  source: "terrain" | "interior" | "forcefield";
+  source: "terrain" | "interior" | "forcefield" | "static";
 }
 
 /** Torque (x, y, z) → Three.js (y, z, x), matching torqueToThree. */
@@ -60,6 +60,10 @@ interface ForceFieldEntry {
 }
 
 const interiors = new Map<string, InteriorEntry>();
+/** Static DTS shapes (TSStatic / StaticShape) — camera occluders only:
+ *  castWorldRay skips them unless asked, so projectile physics keeps
+ *  colliding with exactly what it always did. */
+const staticShapes = new Map<string, InteriorEntry>();
 const forceFields = new Map<string, ForceFieldEntry>();
 
 /** BVHs are per-geometry and shared across instanced interiors. */
@@ -85,6 +89,13 @@ function getBvh(geometry: BufferGeometry): MeshBVH {
  * matrices are up to date).
  */
 export function registerInteriorCollider(id: string, meshes: Mesh[]): void {
+  const colliders = buildMeshColliders(meshes);
+  if (colliders.length > 0) {
+    interiors.set(id, { colliders });
+  }
+}
+
+function buildMeshColliders(meshes: Mesh[]): MeshCollider[] {
   const colliders: MeshCollider[] = [];
   for (const mesh of meshes) {
     const geometry = mesh.geometry;
@@ -101,13 +112,27 @@ export function registerInteriorCollider(id: string, meshes: Mesh[]): void {
       worldBox,
     });
   }
-  if (colliders.length > 0) {
-    interiors.set(id, { colliders });
-  }
+  return colliders;
 }
 
 export function unregisterInteriorCollider(id: string): void {
   interiors.delete(id);
+}
+
+/**
+ * Register a static shape's meshes (a generator, a bunker prop) as
+ * CAMERA occluders. Same snapshot semantics as interiors; only rays
+ * cast with `includeStatics` see them.
+ */
+export function registerStaticShapeCollider(id: string, meshes: Mesh[]): void {
+  const colliders = buildMeshColliders(meshes);
+  if (colliders.length > 0) {
+    staticShapes.set(id, { colliders });
+  }
+}
+
+export function unregisterStaticShapeCollider(id: string): void {
+  staticShapes.delete(id);
 }
 
 /**
@@ -139,9 +164,51 @@ export function unregisterForceFieldCollider(id: string): void {
   forceFields.delete(id);
 }
 
+/**
+ * Registered collider counts, for diagnostics — a world with zero
+ * interiors silently turns every occlusion test into a terrain-only one.
+ */
+export function getWorldColliderCounts(): {
+  interiors: number;
+  meshes: number;
+  forceFields: number;
+  staticShapes: number;
+} {
+  let meshes = 0;
+  for (const entry of interiors.values()) meshes += entry.colliders.length;
+  return {
+    interiors: interiors.size,
+    meshes,
+    forceFields: forceFields.size,
+    staticShapes: staticShapes.size,
+  };
+}
+
+/** Diagnostic: world-space box centers of registered static shapes. */
+export function getStaticColliderBoxes(): {
+  center: [number, number, number];
+  size: [number, number, number];
+}[] {
+  const out: {
+    center: [number, number, number];
+    size: [number, number, number];
+  }[] = [];
+  const c = new Vector3();
+  const sz = new Vector3();
+  for (const entry of staticShapes.values()) {
+    for (const collider of entry.colliders) {
+      collider.worldBox.getCenter(c);
+      collider.worldBox.getSize(sz);
+      out.push({ center: [c.z, c.x, c.y], size: [sz.z, sz.x, sz.y] });
+    }
+  }
+  return out;
+}
+
 /** Test-only: clear all registered colliders. */
 export function clearWorldColliders(): void {
   interiors.clear();
+  staticShapes.clear();
   forceFields.clear();
 }
 
@@ -158,7 +225,11 @@ const _segBox = new Box3();
  * Cast a segment (Torque space) against all registered static world
  * geometry plus the terrain. Returns the nearest hit or null.
  */
-export function castWorldRay(start: Vec3, end: Vec3): WorldRayHit | null {
+export function castWorldRay(
+  start: Vec3,
+  end: Vec3,
+  options?: { includeStatics?: boolean },
+): WorldRayHit | null {
   const terrainHit = castTerrainRay(start, end);
   let best: WorldRayHit | null = terrainHit
     ? { ...terrainHit, source: "terrain" }
@@ -176,29 +247,39 @@ export function castWorldRay(start: Vec3, end: Vec3): WorldRayHit | null {
   _segBox.expandByPoint(_start);
   _segBox.expandByPoint(_end);
 
-  for (const entry of interiors.values()) {
-    for (const collider of entry.colliders) {
-      if (!collider.worldBox.intersectsBox(_segBox)) continue;
-      _localRay.copy(_ray).applyMatrix4(collider.inverse);
-      // The local ray direction is unnormalized under scale; raycastFirst
-      // distances are in local units, so renormalize and track the scale.
-      const localScale = _localRay.direction.length();
-      _localRay.direction.divideScalar(localScale);
-      const isect = collider.bvh.raycastFirst(_localRay, DoubleSide);
-      if (!isect) continue;
-      const worldDist = isect.distance / localScale;
-      const t = worldDist / segLength;
-      if (t > 1 || (best && t >= best.t)) continue;
-      _point.copy(isect.point).applyMatrix4(collider.matrixWorld);
-      _normal.copy(isect.face!.normal).applyMatrix3(collider.normalMatrix);
-      if (_normal.dot(_dir) > 0) _normal.negate();
-      _normal.normalize();
-      best = {
-        t,
-        point: threeToTorqueVec(_point),
-        normal: threeToTorqueVec(_normal),
-        source: "interior",
-      };
+  const meshGroups: [Map<string, InteriorEntry>, WorldRayHit["source"]][] =
+    options?.includeStatics
+      ? [
+          [interiors, "interior"],
+          [staticShapes, "static"],
+        ]
+      : [[interiors, "interior"]];
+  for (const [group, source] of meshGroups) {
+    for (const entry of group.values()) {
+      for (const collider of entry.colliders) {
+        if (!collider.worldBox.intersectsBox(_segBox)) continue;
+        _localRay.copy(_ray).applyMatrix4(collider.inverse);
+        // The local ray direction is unnormalized under scale;
+        // raycastFirst distances are in local units, so renormalize and
+        // track the scale.
+        const localScale = _localRay.direction.length();
+        _localRay.direction.divideScalar(localScale);
+        const isect = collider.bvh.raycastFirst(_localRay, DoubleSide);
+        if (!isect) continue;
+        const worldDist = isect.distance / localScale;
+        const t = worldDist / segLength;
+        if (t > 1 || (best && t >= best.t)) continue;
+        _point.copy(isect.point).applyMatrix4(collider.matrixWorld);
+        _normal.copy(isect.face!.normal).applyMatrix3(collider.normalMatrix);
+        if (_normal.dot(_dir) > 0) _normal.negate();
+        _normal.normalize();
+        best = {
+          t,
+          point: threeToTorqueVec(_point),
+          normal: threeToTorqueVec(_normal),
+          source,
+        };
+      }
     }
   }
 

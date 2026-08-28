@@ -69,12 +69,7 @@ import { PlayerNameplate } from "./PlayerNameplate";
 import { streamClock } from "../state/streamPlaybackStore";
 import type { PlayerEntity } from "../state/gameEntityTypes";
 
-/**
- * Per-entity animated eye bone position in model space (GLB coordinates).
- * Written by PlayerModel after mixer.update(), read by StreamingController
- * for first-person camera positioning.
- */
-export const playerEyePositions = new Map<string, Vector3>();
+import { playerEyePositions } from "./playerEyePositions";
 
 const SKIN_BASE_URL = "https://assets.tribes2.online/skins/files/";
 const SKIN_MANIFEST_URL = "https://assets.tribes2.online/skins/manifest.json";

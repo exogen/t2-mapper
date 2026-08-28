@@ -25,6 +25,21 @@ export const MAX_ORBIT_DISTANCE = 45;
  */
 export const streamClock = { time: 0 };
 
+/**
+ * Whether the CastGenius commentary track is audibly playing right now,
+ * and where the broadcast intends to begin (the first cue's demo time
+ * from the `.commentary.json` sidecar — the intro may start before the
+ * plan's first scene, so the director starts playback there). Written
+ * by CommentaryAudio (same module-scope-mutable pattern as
+ * streamClock); read at trigger time by in-game sound players — the
+ * booth replaces the game announcer and ducks voice binds while it's
+ * on air — and by the director when it seeks past dead air.
+ */
+export const commentaryPlayback = {
+  active: false,
+  startSec: null as number | null,
+};
+
 export interface StreamPlaybackState {
   /** The active streaming playback source (demo or live). */
   playback: StreamingPlayback | null;
@@ -40,6 +55,16 @@ export interface StreamPlaybackState {
    *  is "orbitOverride". The scroll wheel zooms this in/out in follow mode
    *  (in free-fly the wheel adjusts fly speed instead). */
   orbitOverrideDistance: number;
+  /**
+   * Damping rate (per second) applied to the orbit camera's TARGET
+   * point, or null for the default rigid attachment. The auto-director
+   * sets this while it drives: a follow target teleports on every flag
+   * drop, pass and pickup (carrier → item → new carrier), and a rigidly
+   * attached camera jumps with it. A damped target reads as a
+   * human-operated camera catching up instead. Manual follow keeps the
+   * rigid feel (null).
+   */
+  orbitTargetDamping: number | null;
   /**
    * Spectate mode: the entity being followed by the client-side orbit
    * camera (the stream has no orbit target — the relay's server camera
@@ -88,6 +113,7 @@ export const streamPlaybackStore = createStore<StreamPlaybackState>()(() => ({
   orbitOverrideYaw: 0,
   orbitOverridePitch: 0,
   orbitOverrideDistance: DEFAULT_ORBIT_DISTANCE,
+  orbitTargetDamping: null,
   followEntityId: null,
   followTargetId: null,
   followCameraMode: "orbitOverride",

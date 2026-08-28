@@ -3,6 +3,7 @@ import { useRecording } from "./usePlayback";
 import { useInputMode } from "./InputContext";
 import { streamPlaybackStore } from "../state/streamPlaybackStore";
 import { useCameraTour } from "../state/cameraTourStore";
+import { useDirector } from "../state/demoDirectorStore";
 import { useCommandCircuit } from "../state/commandCircuitStore";
 import { useLiveSelector } from "../state/liveConnectionStore";
 import { InputBindings } from "./InputBindings";
@@ -16,6 +17,7 @@ import {
   FLAG_FOLLOW_INPUT,
   LIVE_FOLLOW_INPUT,
   TOUR_MODE_INPUT,
+  DIRECTOR_MODE_INPUT,
   COMMAND_CIRCUIT_TOGGLE_INPUT,
   COMMAND_CIRCUIT_STREAM_INPUT,
   COMMAND_CIRCUIT_INPUT,
@@ -31,6 +33,7 @@ export function ActiveInputBindings() {
   const recording = useRecording();
   const inputMode = useInputMode();
   const isTourActive = useCameraTour((s) => s.animation !== null);
+  const isDirecting = useDirector((s) => s.status === "playing");
   const isCommandCircuit = useCommandCircuit((s) => s.active);
   // Watch mode: client-only free-fly camera; server-observer bindings
   // (fly/follow toggle, ObserveClient) don't apply.
@@ -49,6 +52,18 @@ export function ActiveInputBindings() {
   // lock, CC toggling, or follow controls until the tour ends.
   if (isTourActive) {
     return <InputBindings map={TOUR_MODE_INPUT} />;
+  }
+
+  // The auto-director likewise owns all input: one interrupt action
+  // covering every camera gesture (exits back to free-fly), plus the
+  // demo transport (Space / , / .) which deliberately stays live.
+  if (isDirecting) {
+    return (
+      <>
+        <InputBindings map={DIRECTOR_MODE_INPUT} />
+        {isDemo && <InputBindings map={DEMO_MODE_INPUT} />}
+      </>
+    );
   }
 
   // Free-fly movement: map mode, live server-observer fly mode,

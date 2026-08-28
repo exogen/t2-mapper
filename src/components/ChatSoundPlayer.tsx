@@ -10,12 +10,22 @@ import {
   stopAndDetachSound,
 } from "./AudioEmitter";
 import { useSettings } from "./SettingsProvider";
+import { commentaryPlayback } from "../state/streamPlaybackStore";
 import { useStreamSnapshot } from "../state/streamSnapshotStore";
 import { useRecording } from "./usePlayback";
+
+/** The in-game announcer's sounds ("30 seconds", "Storm scores"...). */
+const ANNOUNCER_PREFIX = "voice/announcer/";
+/** Voice binds play at half volume under the commentary track. */
+const COMMENTARY_DUCK_VOLUME = 0.5;
 
 /**
  * Plays non-positional sound effects for chat messages with ~w sound tags.
  * Must be rendered inside the Canvas tree (within AudioProvider).
+ *
+ * While the CastGenius commentary track is on air, the in-game
+ * announcer is suppressed entirely (the booth makes those calls) and
+ * player voice binds duck to half volume under the commentary.
  */
 export function ChatSoundPlayer() {
   const { audioLoader, audioListener } = useAudio();
@@ -54,6 +64,8 @@ export function ChatSoundPlayer() {
       if (!msg.soundPath) continue;
       // Skip sounds that are too old (e.g. after seeking).
       if (Math.abs(timeSec - msg.timeSec) > 2) continue;
+      const onAir = commentaryPlayback.active;
+      if (onAir && msg.soundPath.startsWith(ANNOUNCER_PREFIX)) continue;
       try {
         const url = audioToUrl(msg.soundPath);
         const pitch = msg.soundPitch ?? 1;
@@ -71,6 +83,7 @@ export function ChatSoundPlayer() {
           }
           const sound = new Audio(audioListener);
           sound.setBuffer(buffer);
+          if (onAir) sound.setVolume(COMMENTARY_DUCK_VOLUME);
           sound.setPlaybackRate(getEffectiveSoundRate(pitch));
           trackSound(sound, pitch);
           if (sender) {

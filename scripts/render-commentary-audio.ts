@@ -1,0 +1,478 @@
+/**
+ * Render a commentary cue file (generate-game-commentary.ts output) to
+ * a single audio track synced to the demo clock, via ElevenLabs'
+ * Text to Dialogue API (Eleven v3).
+ *
+ *   npm run render-commentary -- <commentary.json> [options]
+ *     --out <file>      output audio (default <input minus .json>.mp3)
+ *     --limit <n>       render only the first n dialogue bursts
+ *     --seed <n>        generation seed (default 7)
+ *     --stability <x>   Eleven v3 stability: 0 creative (default, most
+ *                       expressive), 0.5 natural, 1 robust
+ *     --tempo <x>       per-burst time-stretch factor (default 1.0;
+ *                       the API has no speed control — ~1.08 makes the
+ *                       booth talk faster without pitch shift)
+ *     --pronunciations <file>  respellings JSON (default
+ *                       scripts/commentary/pronunciations.json)
+ *
+ * Pronunciations: the JSON maps written name → spoken respelling
+ * ({"Piata": "pinata"}), matched case-insensitively, longest first.
+ * It's applied only to the text SENT to ElevenLabs — transcripts keep
+ * exact display names.
+ *
+ * NEVER CUT INSIDE A RENDERED REQUEST. v3 renders a dialogue request
+ * as one continuous conversation (scripted pauses between cues do not
+ * exist in the audio, and there is no way to ask for exact silences),
+ * so cues are grouped into BURSTS at every scripted breather: a burst
+ * ends wherever the script leaves ≥2.5s of rest after a line's
+ * expected speech (or at the API's character limit). Each burst
+ * renders as one multi-speaker request — natural handoffs — and is
+ * placed WHOLE at its first cue's demo time; silence between bursts is
+ * real silence, not a cut. Tempo/fit stretching applies per burst,
+ * after anchoring, so it never shifts an anchor. Per-cue timestamps
+ * from the API are kept for the drift report (and future captions),
+ * not for cutting.
+ *
+ * Bursts cache under <out>.chunks/ (audio + timing, keyed by content
+ * hash) — reruns re-render nothing. Requires ELEVENLABS_API_KEY
+ * (loaded via the npm script) and ffmpeg.
+ */
+import { execFileSync } from "node:child_process";
+import crypto from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { parseArgs } from "node:util";
+
+const CHUNK_MAX_CHARS = 1800;
+// A burst ends where the script leaves at least this much rest after a
+// line's expected speech — the request boundary IS the pause.
+const BURST_REST_SPLIT_SEC = 2.5;
+// A burst that would overrun the gap to the next burst is
+// time-stretched to fit, up to this — beyond it speech sounds rushed,
+// so it overlaps the next burst instead (bounded crosstalk).
+const MAX_FIT_TEMPO = 1.3;
+// Placement search bounds: a burst may be delayed up to this many
+// seconds beyond its first cue when that lines up its LATER cues
+// better, but no cue may ever play more than EARLY_TOLERANCE before
+// its scripted moment — reacting before an event is a spoiler, worse
+// than reacting late.
+const MAX_PLACEMENT_DELAY_SEC = 3;
+const EARLY_TOLERANCE_SEC = 0.75;
+const WORDS_PER_SEC = 2.6;
+
+const { values, positionals } = parseArgs({
+  allowPositionals: true,
+  options: {
+    out: { type: "string" },
+    limit: { type: "string" },
+    seed: { type: "string", default: "7" },
+    stability: { type: "string", default: "0" },
+    tempo: { type: "string", default: "1" },
+    pronunciations: {
+      type: "string",
+      default: fileURLToPath(
+        new URL("commentary/pronunciations.json", import.meta.url),
+      ),
+    },
+    help: { type: "boolean", default: false, short: "h" },
+  },
+});
+
+if (values.help || positionals.length < 1) {
+  console.error(
+    "usage: npm run render-commentary -- <commentary.json> [--out f] [--limit n]",
+  );
+  process.exit(values.help ? 0 : 1);
+}
+
+interface Cue {
+  atSec: number;
+  speaker: string;
+  text: string;
+  energy: string;
+}
+interface CommentaryDoc {
+  format: string;
+  voices: { speaker: string; voiceId: string | null }[];
+  cues: Cue[];
+}
+
+/** Per-cue [start, end) positions within a burst's rendered audio. */
+interface ChunkTiming {
+  starts: number[];
+  ends: number[];
+}
+
+interface TimestampResponse {
+  audio_base64: string;
+  alignment?: {
+    characters: string[];
+    character_start_times_seconds: number[];
+    character_end_times_seconds: number[];
+  };
+  voice_segments?: {
+    voice_id: string;
+    start_time_seconds: number;
+    end_time_seconds: number;
+    dialogue_input_index?: number;
+  }[];
+}
+
+const inputPath = positionals[0];
+const outPath = values.out ?? inputPath.replace(/\.json$/, "") + ".mp3";
+const doc = JSON.parse(fs.readFileSync(inputPath, "utf8")) as CommentaryDoc;
+if (doc.format !== "castgenius-commentary") {
+  console.error(`${inputPath}: not a castgenius-commentary file`);
+  process.exit(1);
+}
+const voiceFor = new Map(doc.voices.map((v) => [v.speaker, v.voiceId]));
+for (const v of doc.voices) {
+  if (!v.voiceId) {
+    console.error(`voice "${v.speaker}" has no voiceId`);
+    process.exit(1);
+  }
+}
+if (!process.env.ELEVENLABS_API_KEY) {
+  console.error("ELEVENLABS_API_KEY is not set");
+  process.exit(1);
+}
+try {
+  execFileSync("ffprobe", ["-version"], { stdio: "ignore" });
+  execFileSync("ffmpeg", ["-version"], { stdio: "ignore" });
+} catch {
+  console.error("ffmpeg/ffprobe not found on PATH — install ffmpeg");
+  process.exit(1);
+}
+
+function loadPronunciations(file: string): [string, RegExp, string][] {
+  if (!fs.existsSync(file)) return [];
+  const map = JSON.parse(fs.readFileSync(file, "utf8")) as Record<
+    string,
+    string
+  >;
+  return Object.entries(map)
+    .sort((a, b) => b[0].length - a[0].length)
+    .map(([from, to]) => [
+      from,
+      new RegExp(from.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi"),
+      to,
+    ]);
+}
+
+/**
+ * The spoken form of a cue: the pronunciation file's respellings,
+ * nothing else. Only ever applied to the text sent to the TTS API.
+ */
+function spokenForm(
+  text: string,
+  overrides: [string, RegExp, string][],
+): string {
+  let out = text;
+  for (const [, pattern, to] of overrides) {
+    out = out.replace(pattern, to);
+  }
+  return out;
+}
+
+/** Group cues into dialogue bursts (one uncut request each). */
+function chunkCues(cues: Cue[]): Cue[][] {
+  const chunks: Cue[][] = [];
+  let current: Cue[] = [];
+  let chars = 0;
+  let expectedEnd = 0;
+  for (const cue of cues) {
+    const rest = current.length > 0 ? cue.atSec - expectedEnd : 0;
+    if (
+      current.length > 0 &&
+      (chars + cue.text.length > CHUNK_MAX_CHARS || rest > BURST_REST_SPLIT_SEC)
+    ) {
+      chunks.push(current);
+      current = [];
+      chars = 0;
+    }
+    current.push(cue);
+    chars += cue.text.length;
+    expectedEnd = cue.atSec + cue.text.split(/\s+/).length / WORDS_PER_SEC;
+  }
+  if (current.length > 0) chunks.push(current);
+  return chunks;
+}
+
+/**
+ * Per-cue timings from the API's timestamp metadata (for the drift
+ * report and future captions — never for cutting): voice_segments map
+ * straight back to input cues via dialogue_input_index; cues a merged
+ * segment swallowed fall back to character-offset lookup in the
+ * alignment (the characters are the inputs' texts concatenated).
+ */
+function cueTimings(
+  chunk: Cue[],
+  res: TimestampResponse,
+  audioDuration: number,
+): ChunkTiming {
+  const starts = new Array<number>(chunk.length).fill(-1);
+  const ends = new Array<number>(chunk.length).fill(-1);
+  for (const seg of res.voice_segments ?? []) {
+    const j = seg.dialogue_input_index;
+    if (j == null || j < 0 || j >= chunk.length) continue;
+    if (starts[j] < 0 || seg.start_time_seconds < starts[j]) {
+      starts[j] = seg.start_time_seconds;
+    }
+    if (seg.end_time_seconds > ends[j]) ends[j] = seg.end_time_seconds;
+  }
+  const align = res.alignment;
+  if (starts.some((s) => s < 0) && align) {
+    let offset = 0;
+    for (let j = 0; j < chunk.length; j++) {
+      const len = chunk[j].text.length;
+      if (starts[j] < 0 && offset + len <= align.characters.length) {
+        starts[j] = align.character_start_times_seconds[offset];
+        ends[j] = align.character_end_times_seconds[offset + len - 1];
+      }
+      offset += len;
+    }
+  }
+  for (let j = 0; j < chunk.length; j++) {
+    if (starts[j] < 0) {
+      console.warn(
+        `  no timing for cue ${j} ("${chunk[j].text.slice(0, 40)}…")`,
+      );
+      starts[j] = j > 0 ? ends[j - 1] : 0;
+      ends[j] =
+        j + 1 < chunk.length && starts[j + 1] >= 0
+          ? starts[j + 1]
+          : audioDuration;
+    }
+  }
+  return { starts, ends };
+}
+
+async function renderChunk(
+  chunk: Cue[],
+  mp3File: string,
+  timingFile: string,
+): Promise<void> {
+  const res = await fetch(
+    "https://api.elevenlabs.io/v1/text-to-dialogue/with-timestamps?output_format=mp3_44100_128",
+    {
+      method: "POST",
+      headers: {
+        "xi-api-key": process.env.ELEVENLABS_API_KEY!,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        model_id: "eleven_v3",
+        seed: parseInt(values.seed!, 10),
+        settings: { stability: parseFloat(values.stability!) },
+        inputs: chunk.map((cue) => ({
+          text: cue.text,
+          voice_id: voiceFor.get(cue.speaker),
+        })),
+      }),
+    },
+  );
+  if (!res.ok) {
+    throw new Error(
+      `ElevenLabs ${res.status}: ${(await res.text()).slice(0, 400)}`,
+    );
+  }
+  const body = (await res.json()) as TimestampResponse;
+  fs.writeFileSync(mp3File, Buffer.from(body.audio_base64, "base64"));
+  const timing = cueTimings(chunk, body, durationOf(mp3File));
+  fs.writeFileSync(timingFile, JSON.stringify(timing));
+}
+
+function durationOf(file: string): number {
+  return parseFloat(
+    execFileSync("ffprobe", [
+      "-v",
+      "error",
+      "-show_entries",
+      "format=duration",
+      "-of",
+      "default=noprint_wrappers=1:nokey=1",
+      file,
+    ])
+      .toString()
+      .trim(),
+  );
+}
+
+async function main(): Promise<void> {
+  const overrides = loadPronunciations(values.pronunciations!);
+  const spokenCues = doc.cues.map((c) => ({
+    ...c,
+    text: spokenForm(c.text, overrides),
+  }));
+  const chunks = chunkCues(spokenCues);
+  const limit = values.limit ? parseInt(values.limit, 10) : chunks.length;
+  const tempo = parseFloat(values.tempo!);
+  const cacheDir = `${outPath}.chunks`;
+  fs.mkdirSync(cacheDir, { recursive: true });
+  console.log(`${doc.cues.length} cues → ${chunks.length} dialogue bursts`);
+
+  const rendered: {
+    file: string;
+    cues: Cue[];
+    timing: ChunkTiming;
+    duration: number;
+  }[] = [];
+  for (let i = 0; i < Math.min(chunks.length, limit); i++) {
+    const chunk = chunks[i];
+    // Cache key includes generation params and the spoken text, so
+    // edited cues or pronunciations re-render — tempo is assembly-only.
+    const key = crypto
+      .createHash("sha1")
+      .update(
+        chunk.map((c) => `${voiceFor.get(c.speaker)}:${c.text}`).join("\n"),
+      )
+      .digest("hex")
+      .slice(0, 8);
+    const base = path.join(
+      cacheDir,
+      `${String(i).padStart(3, "0")}.${key}.seed${values.seed}.st${values.stability}`,
+    );
+    const mp3File = `${base}.mp3`;
+    const timingFile = `${base}.timing.json`;
+    if (!fs.existsSync(mp3File) || !fs.existsSync(timingFile)) {
+      await renderChunk(chunk, mp3File, timingFile);
+    }
+    const timing = JSON.parse(
+      fs.readFileSync(timingFile, "utf8"),
+    ) as ChunkTiming;
+    rendered.push({
+      file: mp3File,
+      cues: chunk,
+      timing,
+      duration: durationOf(mp3File),
+    });
+  }
+
+  if (rendered.length === 0) {
+    console.error("nothing to assemble (no cues, or --limit 0)");
+    process.exit(1);
+  }
+
+  // Assemble: every burst placed WHOLE at its first cue's demo time —
+  // no cuts, ever. Tempo and per-burst fit-stretch apply after
+  // anchoring, so they can't move an anchor.
+  const inputs = rendered.flatMap((r) => ["-i", r.file]);
+  const parts: string[] = [];
+  const mixIns: string[] = [];
+  let worstDrift = 0;
+  let worstOverlap = 0;
+  rendered.forEach((r, i) => {
+    const first = r.cues[0].atSec;
+    const nextAt =
+      i + 1 < rendered.length
+        ? rendered[i + 1].cues[0].atSec
+        : Number.POSITIVE_INFINITY;
+    // Placement search: v3 paces the burst its own way, so anchoring
+    // the first cue exactly can put all the error on the later cues.
+    // Try bounded delay × stretch combinations and keep the one with
+    // the least worst-case cue error, under the constraints: no cue
+    // early beyond tolerance, and the burst may not spill its slot.
+    let best = { delay: 0, rate: tempo, err: Number.POSITIVE_INFINITY };
+    for (let rate = tempo; rate <= MAX_FIT_TEMPO + 1e-9; rate += 0.02) {
+      for (
+        let delay = 0;
+        delay <= MAX_PLACEMENT_DELAY_SEC + 1e-9;
+        delay += 0.25
+      ) {
+        if (first + delay + r.duration / rate > nextAt) continue;
+        let err = delay;
+        let early = 0;
+        for (let j = 1; j < r.cues.length; j++) {
+          const d =
+            first +
+            delay +
+            (r.timing.starts[j] - r.timing.starts[0]) / rate -
+            r.cues[j].atSec;
+          err = Math.max(err, Math.abs(d));
+          early = Math.max(early, -d);
+        }
+        if (early > EARLY_TOLERANCE_SEC) continue;
+        if (err < best.err) best = { delay, rate, err };
+      }
+    }
+    if (!Number.isFinite(best.err)) {
+      // Nothing satisfies the slot — fall back to first-cue anchor
+      // with a hard fit-stretch (bounded overlap into the next burst).
+      const rate = Math.min(
+        MAX_FIT_TEMPO,
+        Math.max(tempo, (r.duration / (nextAt - first)) * 1.01),
+      );
+      best = { delay: 0, rate, err: 0 };
+      for (let j = 1; j < r.cues.length; j++) {
+        const d =
+          first +
+          (r.timing.starts[j] - r.timing.starts[0]) / rate -
+          r.cues[j].atSec;
+        best.err = Math.max(best.err, Math.abs(d));
+      }
+    }
+    const atSec = first + best.delay;
+    worstOverlap = Math.max(
+      worstOverlap,
+      atSec + r.duration / best.rate - nextAt,
+    );
+    worstDrift = Math.max(worstDrift, best.err);
+    const shaped =
+      best.delay > 0 || best.rate !== tempo
+        ? ` (${best.delay > 0 ? `+${best.delay.toFixed(2)}s` : ""}${
+            best.rate !== tempo ? ` ×${best.rate.toFixed(2)}` : ""
+          } → ±${best.err.toFixed(1)}s)`
+        : "";
+    console.log(
+      `[${i + 1}/${rendered.length}] at ${atSec.toFixed(1)}s: ${r.cues.length} cues, ${(r.duration / best.rate).toFixed(1)}s${
+        Number.isFinite(nextAt) ? ` / ${(nextAt - first).toFixed(1)}s slot` : ""
+      }${shaped}`,
+    );
+    const stretch = best.rate !== 1 ? `atempo=${best.rate},` : "";
+    // The first cue's SPEECH must land at the anchor, not the file
+    // start — v3 renders a beat of lead-in before the first word, and
+    // the optimizer measures cues relative to it, so an uncompensated
+    // delay would shift the whole burst late by that lead-in.
+    const delayMs = Math.max(
+      0,
+      Math.round((atSec - r.timing.starts[0] / best.rate) * 1000),
+    );
+    parts.push(`[${i}]${stretch}adelay=${delayMs}:all=1[c${i}]`);
+    mixIns.push(`[c${i}]`);
+  });
+  console.log(
+    `worst in-burst cue drift ${worstDrift.toFixed(1)}s` +
+      (worstOverlap > 0.5
+        ? `, worst burst runs ${worstOverlap.toFixed(1)}s past its slot`
+        : ""),
+  );
+  // asetpts after the mix regenerates clean monotonic timestamps —
+  // the delayed inputs otherwise upset the mp3 muxer.
+  const mix = `${mixIns.join("")}amix=inputs=${rendered.length}:normalize=0,asetpts=N/SR/TB[out]`;
+  execFileSync(
+    "ffmpeg",
+    [
+      "-y",
+      "-loglevel",
+      "error",
+      ...inputs,
+      "-filter_complex",
+      [...parts, mix].join(";"),
+      "-map",
+      "[out]",
+      "-codec:a",
+      "libmp3lame",
+      "-b:a",
+      "128k",
+      outPath,
+    ],
+    { maxBuffer: 64 * 1024 * 1024 },
+  );
+  const total = durationOf(outPath);
+  console.log(
+    `wrote ${outPath} (${(total / 60).toFixed(1)} min, ${rendered.length} uncut bursts anchored to the demo clock)`,
+  );
+}
+
+void main();

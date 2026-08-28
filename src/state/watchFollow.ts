@@ -122,6 +122,14 @@ export function countFollowableFlags(): number {
   return flagEntities().length;
 }
 
+/** The entity id a flag-follow slot resolves to right now (the item on
+ *  its stand / ground, or the carrier while held), or null when that
+ *  flag isn't in scope. Used by the director's dolly camera, which
+ *  tracks the flag without entering follow mode. */
+export function resolveFlagEntityId(slot: number): string | null {
+  return resolveFlagSlot(slot)?.id ?? null;
+}
+
 /**
  * The flag entity a number key selects RIGHT NOW: the matching team's
  * flag (slot = team id, 1 = Storm / 2 = Inferno by default); when no
@@ -340,30 +348,42 @@ export function resolveWatchFollowTarget(): string | null {
     exitWatchFollow();
     return null;
   }
-  let replacement: { id: string; ghostIndex?: number } | undefined;
-  for (const entity of entities.values()) {
-    if (
-      entity.renderType === "Player" &&
-      entity.id !== followEntityId &&
-      entity.targetId === followTargetId &&
-      !isDeadEntity(entity)
-    ) {
-      // Prefer the newest ghost if several match (stale corpse entries).
-      if (
-        !replacement ||
-        (entity.ghostIndex ?? 0) > (replacement.ghostIndex ?? 0)
-      ) {
-        replacement = { id: entity.id, ghostIndex: entity.ghostIndex };
-      }
-    }
-  }
+  const replacement = findLivingEntityByTargetId(
+    followTargetId,
+    followEntityId,
+  );
   if (replacement) {
-    seedOrbitBehindTarget(replacement.id);
-    streamPlaybackStore.setState({ followEntityId: replacement.id });
-    return replacement.id;
+    seedOrbitBehindTarget(replacement);
+    streamPlaybackStore.setState({ followEntityId: replacement });
+    return replacement;
   }
   // No living body yet: stay on the corpse while it lasts, then wait.
   return current ? followEntityId : null;
+}
+
+/**
+ * The living Player entity for a respawn-stable target id (a client's
+ * current body), preferring the newest ghost when several match (stale
+ * corpse entries). Null while the client has no living body.
+ */
+export function findLivingEntityByTargetId(
+  targetId: number,
+  excludeEntityId?: string | null,
+): string | null {
+  let found: { id: string; ghostIndex?: number } | undefined;
+  for (const entity of gameEntityStore.getState().streamEntities.values()) {
+    if (
+      entity.renderType === "Player" &&
+      entity.id !== excludeEntityId &&
+      entity.targetId === targetId &&
+      !isDeadEntity(entity)
+    ) {
+      if (!found || (entity.ghostIndex ?? 0) > (found.ghostIndex ?? 0)) {
+        found = { id: entity.id, ghostIndex: entity.ghostIndex };
+      }
+    }
+  }
+  return found?.id ?? null;
 }
 
 /** Command-circuit toggle: plain follow on/off (no first person there). */

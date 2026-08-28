@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect } from "react";
-import { PiFlagBannerFill } from "react-icons/pi";
+import { PiFlagBanner, PiFlagBannerFill } from "react-icons/pi";
 import { IoSkullSharp } from "react-icons/io5";
 import { useDemoTimeline } from "../state/demoTimelineStore";
 import type {
@@ -23,6 +23,7 @@ const EVENT_ICON: Record<TimelineEventType, React.ReactNode> = {
   kill: <LuCrosshair />,
   death: <IoSkullSharp />,
   "flag-grab": <PiFlagBannerFill />,
+  "flag-drop": <PiFlagBanner />,
   "flag-return": <PiFlagBannerFill />,
   "flag-cap": <PiFlagBannerFill />,
   "match-start": <BsPlayFill />,
@@ -90,6 +91,22 @@ function renderEventDescription(
       return (
         <>
           {isRecorder(event.actor) ? "You" : event.actor} grabbed {flagLabel}
+        </>
+      );
+    }
+    return <>{event.description}</>;
+  }
+  if (event.type === "flag-drop") {
+    const flagLabel = event.flagTeamName
+      ? `the ${event.flagTeamName} flag`
+      : "the flag";
+    if (event.teamAffinity === "friendly") {
+      return <>You dropped {flagLabel}</>;
+    }
+    if (event.actor) {
+      return (
+        <>
+          {isRecorder(event.actor) ? "You" : event.actor} dropped {flagLabel}
         </>
       );
     }
