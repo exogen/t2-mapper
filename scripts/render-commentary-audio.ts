@@ -59,6 +59,12 @@ const MAX_FIT_TEMPO = 1.3;
 // than reacting late.
 const MAX_PLACEMENT_DELAY_SEC = 3;
 const EARLY_TOLERANCE_SEC = 0.75;
+// Pre-match lineup cues are read against specific on-screen shots, so
+// they get STRICT per-cue placement: sliced at their measured
+// boundaries and placed exactly at atSec. Short fades keep the cuts
+// clean; the minimum breath separates back-to-back lines.
+const STRICT_EDGE_FADE_SEC = 0.06;
+const STRICT_MIN_GAP_SEC = 0.12;
 const WORDS_PER_SEC = 2.6;
 
 const { values, positionals } = parseArgs({
@@ -95,6 +101,7 @@ interface Cue {
 interface CommentaryDoc {
   format: string;
   voices: { speaker: string; voiceId: string | null }[];
+  match?: { matchStartSec?: number | null };
   cues: Cue[];
 }
 
@@ -354,15 +361,63 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  // Assemble: every burst placed WHOLE at its first cue's demo time —
-  // no cuts, ever. Tempo and per-burst fit-stretch apply after
-  // anchoring, so they can't move an anchor.
+  // Assemble. Two regimes:
+  // - PRE-MATCH (lineup) cues are read against specific on-screen
+  //   shots, so they get strict per-cue placement: sliced at their
+  //   measured boundaries (faded edges) and placed exactly at atSec,
+  //   with catch-up stretch when a line ran long.
+  // - IN-MATCH bursts play WHOLE at their optimized anchor — no cuts.
+  // In both regimes a global no-overlap rule holds: a late clip pushes
+  // the next one later; two clips never sound at once.
+  const strictBefore = doc.match?.matchStartSec ?? null;
   const inputs = rendered.flatMap((r) => ["-i", r.file]);
   const parts: string[] = [];
   const mixIns: string[] = [];
+  let n = 0;
+  let scheduleEnd = 0;
   let worstDrift = 0;
-  let worstOverlap = 0;
+  let worstLate = 0;
   rendered.forEach((r, i) => {
+    if (
+      strictBefore != null &&
+      r.cues[r.cues.length - 1].atSec < strictBefore
+    ) {
+      const labels = r.cues.map((_, j) => `[s${i}_${j}]`).join("");
+      parts.push(`[${i}]asplit=${r.cues.length}${labels}`);
+      r.cues.forEach((cue, j) => {
+        const rawStart = r.timing.starts[j];
+        const rawEnd = Math.max(r.timing.ends[j], rawStart + 0.05);
+        const raw = rawEnd - rawStart;
+        const start = Math.max(cue.atSec, scheduleEnd + STRICT_MIN_GAP_SEC);
+        const nextTarget =
+          j + 1 < r.cues.length
+            ? r.cues[j + 1].atSec
+            : i + 1 < rendered.length
+              ? rendered[i + 1].cues[0].atSec
+              : Number.POSITIVE_INFINITY;
+        let rate = tempo;
+        if (start + raw / rate > nextTarget - STRICT_MIN_GAP_SEC) {
+          rate = Math.min(
+            MAX_FIT_TEMPO,
+            raw / Math.max(0.5, nextTarget - STRICT_MIN_GAP_SEC - start),
+          );
+        }
+        worstLate = Math.max(worstLate, start - cue.atSec);
+        scheduleEnd = start + raw / rate;
+        const fadeOutAt = Math.max(0, raw - STRICT_EDGE_FADE_SEC).toFixed(3);
+        parts.push(
+          `[s${i}_${j}]atrim=start=${rawStart.toFixed(3)}:end=${rawEnd.toFixed(3)},asetpts=PTS-STARTPTS,` +
+            `afade=t=in:d=${STRICT_EDGE_FADE_SEC},afade=t=out:st=${fadeOutAt}:d=${STRICT_EDGE_FADE_SEC},` +
+            `${rate !== 1 ? `atempo=${rate},` : ""}adelay=${Math.round(start * 1000)}:all=1[c${n}]`,
+        );
+        mixIns.push(`[c${n}]`);
+        n++;
+      });
+      console.log(
+        `[${i + 1}/${rendered.length}] at ${r.cues[0].atSec.toFixed(1)}s: ${r.cues.length} lineup cues, strict per-cue placement`,
+      );
+      return;
+    }
     const first = r.cues[0].atSec;
     const nextAt =
       i + 1 < rendered.length
@@ -412,11 +467,12 @@ async function main(): Promise<void> {
         best.err = Math.max(best.err, Math.abs(d));
       }
     }
-    const atSec = first + best.delay;
-    worstOverlap = Math.max(
-      worstOverlap,
-      atSec + r.duration / best.rate - nextAt,
+    // No-overlap rule: never start while the previous clip still plays.
+    const atSec = Math.max(
+      first + best.delay,
+      scheduleEnd + STRICT_MIN_GAP_SEC,
     );
+    worstLate = Math.max(worstLate, atSec - first);
     worstDrift = Math.max(worstDrift, best.err);
     const shaped =
       best.delay > 0 || best.rate !== tempo
@@ -434,22 +490,22 @@ async function main(): Promise<void> {
     // start — v3 renders a beat of lead-in before the first word, and
     // the optimizer measures cues relative to it, so an uncompensated
     // delay would shift the whole burst late by that lead-in.
-    const delayMs = Math.max(
-      0,
-      Math.round((atSec - r.timing.starts[0] / best.rate) * 1000),
-    );
-    parts.push(`[${i}]${stretch}adelay=${delayMs}:all=1[c${i}]`);
-    mixIns.push(`[c${i}]`);
+    const fileStart = atSec - r.timing.starts[0] / best.rate;
+    scheduleEnd = fileStart + r.duration / best.rate;
+    const delayMs = Math.max(0, Math.round(fileStart * 1000));
+    parts.push(`[${i}]${stretch}adelay=${delayMs}:all=1[c${n}]`);
+    mixIns.push(`[c${n}]`);
+    n++;
   });
   console.log(
     `worst in-burst cue drift ${worstDrift.toFixed(1)}s` +
-      (worstOverlap > 0.5
-        ? `, worst burst runs ${worstOverlap.toFixed(1)}s past its slot`
+      (worstLate > 0.5
+        ? `, worst clip pushed ${worstLate.toFixed(1)}s late by the no-overlap rule`
         : ""),
   );
   // asetpts after the mix regenerates clean monotonic timestamps —
   // the delayed inputs otherwise upset the mp3 muxer.
-  const mix = `${mixIns.join("")}amix=inputs=${rendered.length}:normalize=0,asetpts=N/SR/TB[out]`;
+  const mix = `${mixIns.join("")}amix=inputs=${mixIns.length}:normalize=0,asetpts=N/SR/TB[out]`;
   execFileSync(
     "ffmpeg",
     [

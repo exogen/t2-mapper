@@ -3,6 +3,7 @@ import { useFrame } from "@react-three/fiber";
 import { createLogger } from "../logger";
 import { engineStore } from "../state/engineStore";
 import {
+  DIRECTOR_INTRO_LEAD_SEC,
   demoDirectorStore,
   setCommentaryGate,
 } from "../state/demoDirectorStore";
@@ -141,11 +142,19 @@ export function CommentaryAudio() {
           resolve();
         };
         const onMetadata = () => {
+          // Buffer where playback will actually begin — the director
+          // seeks to the intro MINUS its lead-in, and pre-seeking to
+          // the speech itself instead would force a first-frame snap
+          // against an unbuffered position (heard as the opening line
+          // clipping or stuttering).
           const startAt =
             commentaryPlayback.startSec ??
             demoDirectorStore.getState().plan?.skipToSec ??
             0;
-          audio.currentTime = Math.max(streamClock.time, startAt);
+          audio.currentTime = Math.max(
+            streamClock.time,
+            startAt - DIRECTOR_INTRO_LEAD_SEC,
+          );
         };
         const timer = setTimeout(done, HEADSTART_MS);
         if (audio.readyState >= HTMLMediaElement.HAVE_METADATA) onMetadata();

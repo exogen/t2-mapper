@@ -12,8 +12,10 @@ import {
   streamPlaybackStore,
 } from "./streamPlaybackStore";
 
-/** A beat of lead-in before the commentary's first line. */
-const DIRECTOR_INTRO_LEAD_SEC = 1;
+/** Lead-in before the commentary's first line: enough that demo-seek
+ *  tick granularity and clock settle can't swallow the opening word.
+ *  Exported so the audio player pre-buffers at the same position. */
+export const DIRECTOR_INTRO_LEAD_SEC = 2;
 /** An intro claiming to start further than this before the plan's own
  *  skip point is treated as bad sidecar data and ignored. */
 const DIRECTOR_INTRO_MAX_LEAD_SEC = 120;
