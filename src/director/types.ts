@@ -56,6 +56,9 @@ export interface DirectorPlayerSample {
  *  turret kills, which have no broadcast chat message. */
 export interface StructureTransition {
   timeSec: number;
+  /** Commentary name ("spider clamp turret", "generator", …) — never a
+   *  raw shape filename; placement variants (wall/floor/ceiling,
+   *  indoor/outdoor) are deliberately erased. */
   name: string;
   className: string;
   pos: DirectorVec3;

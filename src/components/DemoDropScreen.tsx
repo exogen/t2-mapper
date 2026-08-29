@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { PiCassetteTapeFill, PiCassetteTapeLight } from "react-icons/pi";
-import { FaSearch } from "react-icons/fa";
+import { FaMicrophoneAlt, FaSearch } from "react-icons/fa";
 import { LuChevronLeft, LuChevronRight, LuUser, LuUsers } from "react-icons/lu";
 import { TbLaurelWreathFilled } from "react-icons/tb";
 import { useDemoLoad } from "../state/demoLoadStore";
@@ -83,6 +83,13 @@ function FeaturedCard({
               className={tileStyles.TileTournamentIcon}
               title="Tournament mode"
               aria-label="Tournament mode"
+            />
+          )}
+          {demo.hasCommentary && (
+            <FaMicrophoneAlt
+              className={tileStyles.TileCommentaryIcon}
+              title="Commentary track"
+              aria-label="Commentary track"
             />
           )}
         </span>

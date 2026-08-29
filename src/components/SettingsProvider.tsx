@@ -188,7 +188,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     DEFAULT_MOUSE_SENSITIVITY,
   );
   const [fov, setFov] = useState(90);
-  const [audioEnabled, setAudioEnabled] = useState(false);
+  const [audioEnabled, setAudioEnabled] = useState(true);
   const [audioVolume, setAudioVolume] = useState(0.75);
   const [adjustAudioSpeed, setAdjustAudioSpeed] = useState(true);
   const [animationEnabled, setAnimationEnabled] = useState(true);

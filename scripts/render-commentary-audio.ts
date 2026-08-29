@@ -219,11 +219,17 @@ function loadPronunciations(file: string): [string, RegExp, string][] {
   >;
   return Object.entries(map)
     .sort((a, b) => b[0].length - a[0].length)
-    .map(([from, to]) => [
-      from,
-      new RegExp(from.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi"),
-      to,
-    ]);
+    .map(([from, to]) => {
+      const escaped = from.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      // Word-boundary anchoring wherever the key's edge is a word
+      // character, so short keys ("LOF" → "loff") can't rewrite the
+      // inside of ordinary words ("lofty"). Keys edged with symbols
+      // ("?k1ng0fth3b0ng0?") skip the assertion — \b would never match
+      // between two non-word characters.
+      const lead = /^\w/.test(from) ? "\\b" : "";
+      const tail = /\w$/.test(from) ? "\\b" : "";
+      return [from, new RegExp(lead + escaped + tail, "gi"), to];
+    });
 }
 
 /**

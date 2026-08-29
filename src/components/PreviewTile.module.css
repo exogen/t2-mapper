@@ -157,6 +157,14 @@
   color: #ffd76e;
 }
 
+/* Marks a featured demo with a commentary track sidecar. */
+.TileCommentaryIcon {
+  flex: 0 0 auto;
+  font-size: 14px;
+  margin-bottom: 1px;
+  color: rgba(23, 255, 70, 0.9);
+}
+
 .TileMeta {
   font-size: 12px;
   color: #83938b;

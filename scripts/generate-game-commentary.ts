@@ -94,6 +94,14 @@ function clock(sec: number): string {
   return `${m}:${String(s).padStart(2, "0")}`;
 }
 
+/** Minute-granularity phrasing ("about 16 minutes", "under a minute"). */
+function approxMinutes(sec: number): string {
+  const minutes = Math.round(sec / 60);
+  return minutes < 1
+    ? "under a minute"
+    : `about ${minutes} minute${minutes === 1 ? "" : "s"}`;
+}
+
 /** Scene facts for the prompt: trimmed, and with the future stripped —
  *  the booth must not know outcomes before they happen. */
 function shotBrief(shot: Shot): unknown {
@@ -242,7 +250,7 @@ function buildUserPrompt(
     `Write the booth's dialogue for demo time ${brief.startSec}s to ${brief.endSec}s.`,
     brief.preStart
       ? `The match has NOT started yet — there is no score to mention. ${brief.playersOnServer > 0 ? `There are ${brief.playersOnServer} players on the server — include that count in the opening map/server announcement.` : "The player count is unknown — do not state one."} LINEUP COVERAGE RULES: roster names may be read ONLY during shots whose topic is "lineup" (the camera is sweeping that exact group). For each lineup shot, one cue timed AT that shot\'s startSec reading names from THAT shot\'s playersOnScreen in the order given: announce EXACTLY the shot\'s namesToRead count (fewer only if the team has fewer players left unannounced) — the read should fill the shot with no trailing dead air. Separate the names with PERIODS, each name its own short sentence ("Irvin. Friendo. Carpenter. sake.") — never a comma list, so the delivery breathes between names; occasionally mention the skin a player is wearing. Never read names over any other shot: before the first lineup shot, do the welcome and anticipation only, and open the roster with a quick intro line ("On the field today:", "For Storm we\'ve got:", or similar) rather than starting the names cold. Announce each player at most ONCE across the whole lineup read: if a name already called appears in another shot, skip it. NEVER claim a team's read is complete ("the rest of X", "rounding out X") unless every name in that team's knownPlayers list (in the match info) has been announced — with big rosters you will not get to everyone, so close with open phrasing ("more Storm:", "also on Inferno:") instead.`
-      : `Match clock ${brief.clock}${brief.timeRemaining ? `, ${brief.timeRemaining} remaining` : ""}. Score: ${
+      : `Match clock ${brief.clock} at this window's start (it keeps running — round any spoken clock to the minute)${brief.timeRemaining ? `, ${brief.timeRemaining} remaining` : ""}. Score: ${
           brief.score
             .map((s) =>
               s.caps != null
@@ -486,9 +494,13 @@ async function main(): Promise<void> {
         matchStart != null
           ? clock(Math.max(0, startSec - matchStart))
           : clock(startSec),
+      // Sampled at the window MIDPOINT and rounded to the minute: an
+      // exact m:ss is only true for one instant, and a cue can air a
+      // full window after startSec — a second-precision figure read
+      // 60s late is a whole minute wrong on the viewer's screen.
       timeRemaining:
         matchStart != null && matchEnd != null && startSec >= matchStart
-          ? clock(Math.max(0, matchEnd - startSec))
+          ? approxMinutes(Math.max(0, matchEnd - (startSec + endSec) / 2))
           : null,
       preStart,
       // ALL connected players (observers included) — the number a

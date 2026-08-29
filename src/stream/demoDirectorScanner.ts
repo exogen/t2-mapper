@@ -92,6 +92,37 @@ const PACK_NAMES: Record<string, string> = {
   deploy_turreto: "deployable spike turret",
 };
 
+/**
+ * Deployed/base structure shape → commentary name. Placement variants
+ * collapse deliberately: the spider clamp's wall/floor/ceiling shapes
+ * are all one turret, and "indoor"/"outdoor" in the filenames must
+ * never reach the booth — whether a deployable actually sits indoors
+ * is unknowable from here (style guide: call them by official name or
+ * "deployable turret", never guess placement).
+ */
+const STRUCTURE_NAMES: Record<string, string> = {
+  turret_base_large: "base turret",
+  turret_sentry: "sentry turret",
+  turret_indoor_deployw: "spider clamp turret",
+  turret_indoor_deployf: "spider clamp turret",
+  turret_indoor_deployc: "spider clamp turret",
+  turret_outdoor_deploy: "land spike turret",
+  station_inv_human: "inventory station",
+  station_generator_large: "generator",
+  station_generator: "generator",
+  vehicle_pad_station: "vehicle station",
+  sensor_pulse_large: "large pulse sensor",
+  deploy_sensor_motion: "motion sensor",
+  deploy_sensor_pulse: "pulse sensor",
+  deploy_inventory: "deployable inventory",
+};
+
+function structureName(shapeName: string): string {
+  const key = shapeName.replace(/\.dts$/i, "").toLowerCase();
+  // Unknown shapes still read as words, never as a filename.
+  return STRUCTURE_NAMES[key] ?? key.replace(/_/g, " ");
+}
+
 function packName(shapeName: string | undefined): string | undefined {
   if (!shapeName) return undefined;
   const m = /^pack_([a-z_]+)\.dts$/i.exec(shapeName);
@@ -616,7 +647,7 @@ export async function scanDemoDirector(
       if (previous != null && previous !== entity.damageState) {
         structures.push({
           timeSec,
-          name: entity.dataBlock,
+          name: structureName(entity.dataBlock),
           className: entity.className ?? entity.type,
           pos: copyPos(entity.position),
           from: previous,

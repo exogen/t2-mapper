@@ -20,3 +20,4 @@
 - front-to-back: same as front-grab
 - nade: short for "grenade" (could be hand grenade, or grenade launcher)
 - pinned: teams can "pin" a dropped flag (usually when it's near their stand or base) by shooting it into a difficult to reach spot, like a corner
+- farm: defensive deployables - most importantly deployable turrets, but also pulse sensors, motion sensors, and deployable cameras

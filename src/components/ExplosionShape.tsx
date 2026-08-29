@@ -136,133 +136,141 @@ export function ExplosionShape({ entity }: { entity: ExplosionEntity }) {
   // Clone scene, process materials, collect vis nodes and IFL info.
   const { scene, mixer, visNodes, iflInfos, fadeMaterials, playSpeed } =
     useMemo(() => {
-    const scene = SkeletonUtils.clone(gltf.scene) as Group;
+      const scene = SkeletonUtils.clone(gltf.scene) as Group;
 
-    // Collect IFL info BEFORE processShapeScene replaces materials.
-    const iflInfos: IflInfo[] = [];
-    scene.traverse((node: any) => {
-      if (!node.isMesh || !node.material) return;
-      const mat = Array.isArray(node.material)
-        ? node.material[0]
-        : node.material;
-      if (!mat?.userData) return;
-      const flags = new Set<string>(mat.userData.flag_names ?? []);
-      const rp: string | undefined = mat.userData.resource_path;
-      if (flags.has("IflMaterial") && rp) {
+      // Collect IFL info BEFORE processShapeScene replaces materials.
+      const iflInfos: IflInfo[] = [];
+      scene.traverse((node: any) => {
+        if (!node.isMesh || !node.material) return;
+        const mat = Array.isArray(node.material)
+          ? node.material[0]
+          : node.material;
+        if (!mat?.userData) return;
+        const flags = new Set<string>(mat.userData.flag_names ?? []);
+        const rp: string | undefined = mat.userData.resource_path;
+        if (flags.has("IflMaterial") && rp) {
+          const ud = node.userData;
+          iflInfos.push({
+            mesh: node,
+            iflPath: `textures/${rp}.ifl`,
+            sequenceName: ud?.ifl_sequence
+              ? String(ud.ifl_sequence).toLowerCase()
+              : undefined,
+            duration: ud?.ifl_duration ? Number(ud.ifl_duration) : undefined,
+            cyclic: ud?.ifl_sequence ? !!ud.ifl_cyclic : undefined,
+            toolBegin:
+              ud?.ifl_tool_begin != null
+                ? Number(ud.ifl_tool_begin)
+                : undefined,
+          });
+        }
+      });
+
+      processShapeScene(scene, entity.shapeName, {
+        anisotropy,
+        // Explosion shapes keep their meshes in a negative-size detail
+        // ("Detail-1" in effect_plasma_explosion) — the engine renders
+        // detail 0 unconditionally for explosions.
+        ignoreDetailSize: true,
+      });
+
+      // Collect vis-animated nodes keyed by sequence name.
+      const visNodes: VisNode[] = [];
+      scene.traverse((node: any) => {
+        if (!node.isMesh) return;
         const ud = node.userData;
-        iflInfos.push({
-          mesh: node,
-          iflPath: `textures/${rp}.ifl`,
-          sequenceName: ud?.ifl_sequence
-            ? String(ud.ifl_sequence).toLowerCase()
-            : undefined,
-          duration: ud?.ifl_duration ? Number(ud.ifl_duration) : undefined,
-          cyclic: ud?.ifl_sequence ? !!ud.ifl_cyclic : undefined,
-          toolBegin:
-            ud?.ifl_tool_begin != null ? Number(ud.ifl_tool_begin) : undefined,
-        });
+        if (!ud) return;
+        const kf = ud.vis_keyframes;
+        const dur = ud.vis_duration;
+        const seqName = (ud.vis_sequence ?? "").toLowerCase();
+        if (
+          !seqName ||
+          !Array.isArray(kf) ||
+          kf.length <= 1 ||
+          !dur ||
+          dur <= 0
+        )
+          return;
+        // Only include vis nodes tied to the "ambient" sequence.
+        if (seqName === "ambient") {
+          visNodes.push({
+            mesh: node,
+            keyframes: kf,
+            duration: dur,
+            cyclic: !!ud.vis_cyclic,
+          });
+        }
+      });
+
+      // Activate vis nodes: make visible, ensure transparent material.
+      for (const v of visNodes) {
+        v.mesh.visible = true;
+        if (v.mesh.material && !Array.isArray(v.mesh.material)) {
+          v.mesh.material.transparent = true;
+          v.mesh.material.depthWrite = false;
+        }
       }
-    });
 
-    processShapeScene(scene, entity.shapeName, {
-      anisotropy,
-      // Explosion shapes keep their meshes in a negative-size detail
-      // ("Detail-1" in effect_plasma_explosion) — the engine renders
-      // detail 0 unconditionally for explosions.
-      ignoreDetailSize: true,
-    });
-
-    // Collect vis-animated nodes keyed by sequence name.
-    const visNodes: VisNode[] = [];
-    scene.traverse((node: any) => {
-      if (!node.isMesh) return;
-      const ud = node.userData;
-      if (!ud) return;
-      const kf = ud.vis_keyframes;
-      const dur = ud.vis_duration;
-      const seqName = (ud.vis_sequence ?? "").toLowerCase();
-      if (!seqName || !Array.isArray(kf) || kf.length <= 1 || !dur || dur <= 0)
-        return;
-      // Only include vis nodes tied to the "ambient" sequence.
-      if (seqName === "ambient") {
-        visNodes.push({
-          mesh: node,
-          keyframes: kf,
-          duration: dur,
-          cyclic: !!ud.vis_cyclic,
-        });
+      // Also un-hide IFL meshes that don't have vis_sequence (always visible).
+      for (const info of iflInfos) {
+        if (!info.mesh.userData?.vis_sequence) {
+          info.mesh.visible = true;
+        }
       }
-    });
 
-    // Activate vis nodes: make visible, ensure transparent material.
-    for (const v of visNodes) {
-      v.mesh.visible = true;
-      if (v.mesh.material && !Array.isArray(v.mesh.material)) {
-        v.mesh.material.transparent = true;
-        v.mesh.material.depthWrite = false;
+      // playSpeed is packed as value*20 on the wire; divide by 20. The engine
+      // plays ONE thread at this timescale — it drives node transforms, morph
+      // frames, vis, and IFL matFrames together.
+      const playSpeed = ((expBlock?.playSpeed as number) ?? 20) / 20;
+
+      // Set up animation mixer with the ambient clip (LoopOnce), plus the
+      // morph-frame clips ("Ambient_{Mesh}_frame") that carry DTS mesh frame
+      // animation (e.g. the plasma fireball's 35 billow frames).
+      let mixer: AnimationMixer | null = null;
+      for (const clip of gltf.animations) {
+        const lower = clip.name.toLowerCase();
+        const isAmbient =
+          lower === "ambient" ||
+          (lower.startsWith("ambient_") && lower.endsWith("_frame"));
+        if (!isAmbient) continue;
+        mixer ??= new AnimationMixer(scene);
+        const action = mixer.clipAction(clip);
+        action.setLoop(LoopOnce, 1);
+        action.clampWhenFinished = true;
+        action.timeScale = playSpeed;
+        action.play();
       }
-    }
 
-    // Also un-hide IFL meshes that don't have vis_sequence (always visible).
-    for (const info of iflInfos) {
-      if (!info.mesh.userData?.vis_sequence) {
-        info.mesh.visible = true;
-      }
-    }
+      // Collect non-vis materials for fade-out, with their base opacity so the
+      // fade doesn't compound frame-over-frame. Vis-animated materials are
+      // excluded — the vis loop recomputes their opacity (× fade) each frame.
+      const visMaterials = new Set<Material>(
+        visNodes.flatMap((v) =>
+          Array.isArray(v.mesh.material) ? v.mesh.material : [v.mesh.material],
+        ),
+      );
+      const fadeMaterials: Array<{ material: Material; baseOpacity: number }> =
+        [];
+      scene.traverse((child: any) => {
+        if (!child.isMesh) return;
+        const mats = Array.isArray(child.material)
+          ? child.material
+          : child.material
+            ? [child.material]
+            : [];
+        for (const material of mats) {
+          if (visMaterials.has(material)) continue;
+          fadeMaterials.push({ material, baseOpacity: material.opacity });
+        }
+      });
 
-    // playSpeed is packed as value*20 on the wire; divide by 20. The engine
-    // plays ONE thread at this timescale — it drives node transforms, morph
-    // frames, vis, and IFL matFrames together.
-    const playSpeed = ((expBlock?.playSpeed as number) ?? 20) / 20;
+      // Disable frustum culling (explosion may scale beyond bounds).
+      scene.traverse((child) => {
+        child.frustumCulled = false;
+      });
 
-    // Set up animation mixer with the ambient clip (LoopOnce), plus the
-    // morph-frame clips ("Ambient_{Mesh}_frame") that carry DTS mesh frame
-    // animation (e.g. the plasma fireball's 35 billow frames).
-    let mixer: AnimationMixer | null = null;
-    for (const clip of gltf.animations) {
-      const lower = clip.name.toLowerCase();
-      const isAmbient =
-        lower === "ambient" ||
-        (lower.startsWith("ambient_") && lower.endsWith("_frame"));
-      if (!isAmbient) continue;
-      mixer ??= new AnimationMixer(scene);
-      const action = mixer.clipAction(clip);
-      action.setLoop(LoopOnce, 1);
-      action.clampWhenFinished = true;
-      action.timeScale = playSpeed;
-      action.play();
-    }
-
-    // Collect non-vis materials for fade-out, with their base opacity so the
-    // fade doesn't compound frame-over-frame. Vis-animated materials are
-    // excluded — the vis loop recomputes their opacity (× fade) each frame.
-    const visMaterials = new Set<Material>(
-      visNodes.flatMap((v) =>
-        Array.isArray(v.mesh.material) ? v.mesh.material : [v.mesh.material],
-      ),
-    );
-    const fadeMaterials: Array<{ material: Material; baseOpacity: number }> =
-      [];
-    scene.traverse((child: any) => {
-      if (!child.isMesh) return;
-      const mats = Array.isArray(child.material)
-        ? child.material
-        : child.material
-          ? [child.material]
-          : [];
-      for (const material of mats) {
-        if (visMaterials.has(material)) continue;
-        fadeMaterials.push({ material, baseOpacity: material.opacity });
-      }
-    });
-
-    // Disable frustum culling (explosion may scale beyond bounds).
-    scene.traverse((child) => {
-      child.frustumCulled = false;
-    });
-
-    return { scene, mixer, visNodes, iflInfos, fadeMaterials, playSpeed };
-  }, [gltf, expBlock, anisotropy]);
+      return { scene, mixer, visNodes, iflInfos, fadeMaterials, playSpeed };
+    }, [gltf, expBlock, anisotropy]);
 
   useEffect(() => {
     return () => {

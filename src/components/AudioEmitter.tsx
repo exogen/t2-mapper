@@ -196,6 +196,20 @@ export function createPositionalAudio(
   return sound;
 }
 
+/**
+ * One-shots must never be scheduled against a non-running context: a
+ * suspended context's currentTime is frozen, so every sound started
+ * while it waits for the first user gesture queues at the SAME instant
+ * and detonates simultaneously on resume (minutes of background
+ * playback arriving as one speaker-blowing burst). Skipping the effect
+ * is strictly better — it was inaudible at its moment anyway. Looping
+ * ambients are exempt: they're meant to be playing continuously, and
+ * entity cleanup stops queued sources before they ever sound.
+ */
+export function audioContextRunning(audioListener: AudioListener): boolean {
+  return audioListener.context.state === "running";
+}
+
 // Cap on simultaneous one-shot effects. Beyond this the mix is
 // indistinguishable chaos, but every extra source still costs audio-thread
 // CPU. The distance cull runs first, so budget goes to audible sounds.
@@ -222,6 +236,7 @@ export function playOneShotSound(
   position?: Vector3,
   parent?: Object3D,
 ): void {
+  if (!audioContextRunning(audioListener)) return;
   let url: string;
   try {
     url = audioToUrl(resolved.filename);
@@ -245,6 +260,9 @@ export function playOneShotSound(
   const gen = _soundGeneration;
   getCachedAudioBuffer(url, audioLoader, (buffer) => {
     if (gen !== _soundGeneration) return;
+    // Re-check after the async load: the context may have suspended
+    // (or never resumed) between the call and the buffer arriving.
+    if (!audioContextRunning(audioListener)) return;
     try {
       if (is3D) {
         // Re-check the cap: the check above ran at call time, but a burst

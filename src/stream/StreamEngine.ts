@@ -1463,8 +1463,7 @@ export abstract class StreamEngine implements StreamingPlayback {
         entity.sourceGhostIndex = data.sourceObject;
       }
       const target = (data.targetObject ?? data.repairingObject) as
-        | number
-        | undefined;
+        number | undefined;
       if (typeof target === "number" && target >= 0) {
         entity.linkTargetGhostIndex = target;
       }

@@ -3,6 +3,7 @@ import { Audio } from "three";
 import { audioToUrl } from "../loaders";
 import { useAudio } from "./AudioContext";
 import {
+  audioContextRunning,
   getCachedAudioBuffer,
   getEffectiveSoundRate,
   getSoundGeneration,
@@ -14,18 +15,29 @@ import { commentaryPlayback } from "../state/streamPlaybackStore";
 import { useStreamSnapshot } from "../state/streamSnapshotStore";
 import { useRecording } from "./usePlayback";
 
-/** The in-game announcer's sounds ("30 seconds", "Storm scores"...). */
-const ANNOUNCER_PREFIX = "voice/announcer/";
-/** Voice binds play at half volume under the commentary track. */
-const COMMENTARY_DUCK_VOLUME = 0.5;
+/**
+ * The in-game announcer's spoken lines, skipped while the commentary
+ * track is on air (the casters call these moments themselves). Two
+ * homes: `voice/announcer/ann.*` (scores, flag events, game over) and —
+ * despite the fx path — `fx/misc/hunters_*`, which is the announcer
+ * VOICE counting down ("Thirty seconds!"): stock defaultGame.cs wires
+ * `hunters_%1.wav` for both the match-start and match-end counts.
+ * Torque paths are case-insensitive, so compare lowercased.
+ */
+function isAnnouncerSound(soundPath: string): boolean {
+  const path = soundPath.toLowerCase();
+  return (
+    path.startsWith("voice/announcer/") || path.startsWith("fx/misc/hunters_")
+  );
+}
 
 /**
  * Plays non-positional sound effects for chat messages with ~w sound tags.
  * Must be rendered inside the Canvas tree (within AudioProvider).
  *
  * While the CastGenius commentary track is on air, the in-game
- * announcer is suppressed entirely (the booth makes those calls) and
- * player voice binds duck to half volume under the commentary.
+ * announcer is suppressed entirely (the booth makes those calls);
+ * everything else rides the global master-volume duck.
  */
 export function ChatSoundPlayer() {
   const { audioLoader, audioListener } = useAudio();
@@ -65,7 +77,7 @@ export function ChatSoundPlayer() {
       // Skip sounds that are too old (e.g. after seeking).
       if (Math.abs(timeSec - msg.timeSec) > 2) continue;
       const onAir = commentaryPlayback.active;
-      if (onAir && msg.soundPath.startsWith(ANNOUNCER_PREFIX)) continue;
+      if (onAir && isAnnouncerSound(msg.soundPath)) continue;
       try {
         const url = audioToUrl(msg.soundPath);
         const pitch = msg.soundPitch ?? 1;
@@ -73,6 +85,9 @@ export function ChatSoundPlayer() {
         const gen = getSoundGeneration();
         getCachedAudioBuffer(url, audioLoader, (buffer) => {
           if (gen !== getSoundGeneration()) return;
+          // A suspended context queues the beep instead of playing it —
+          // it would join the pile-up on the first user gesture. Skip.
+          if (!audioContextRunning(audioListener)) return;
           // Stop the sender's previous voice chat sound.
           if (sender) {
             const prev = activeBySender.get(sender);
@@ -83,7 +98,9 @@ export function ChatSoundPlayer() {
           }
           const sound = new Audio(audioListener);
           sound.setBuffer(buffer);
-          if (onAir) sound.setVolume(COMMENTARY_DUCK_VOLUME);
+          // On-air ducking is global now (AudioContext's master duck):
+          // chat routes through the listener, so a per-sound duck here
+          // would stack to a double discount.
           sound.setPlaybackRate(getEffectiveSoundRate(pitch));
           trackSound(sound, pitch);
           if (sender) {
