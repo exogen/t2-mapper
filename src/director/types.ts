@@ -75,6 +75,11 @@ export interface MortarShot {
    *  authoritative, not inferred. Null when the source isn't a player
    *  (turret, vehicle weapon) or wasn't in scope. */
   shooterTargetId?: number | null;
+  /** When the round was last seen (≈ impact time). */
+  endSec?: number;
+  /** Its position one sample before `to`, for extrapolating the final
+   *  flight segment past the last sample. */
+  toPrev?: DirectorVec3;
 }
 
 /**
@@ -99,6 +104,29 @@ export interface DirectorDeath {
   airborne?: boolean;
   /** Victim's speed at death (u/s), from their last two samples. */
   speed?: number;
+  /** A verified MID-AIR: the server's own skill-shot announcement
+   *  ("X hit a mid air shot.") correlated to this death's killer.
+   *  Vehicle rams, splash and snipes never set this. */
+  midair?: boolean;
+  /** A sniper-rifle headshot, from the server's announcement. */
+  headshot?: boolean;
+}
+
+/**
+ * A server-announced skill shot (chat kind "server", color code 5):
+ * "X hit a mid air shot. [69m, Spinfusor]" or "X hit a sniper rifle
+ * headshot." Authoritative — no inference. `lethal` marks the ones
+ * correlated to a death (whose kill event then carries the flag).
+ */
+export interface SkillShot {
+  timeSec: number;
+  /** The shooter's target id, when the name resolved. */
+  targetId: number | null;
+  name: string;
+  kind: "midair" | "headshot";
+  rangeM?: number;
+  weapon?: string;
+  lethal?: boolean;
 }
 
 /**
@@ -139,6 +167,10 @@ export interface DirectorVehicleSample {
 export interface DirectorEvent extends TimelineEvent {
   /** Torque-space position correlated from entity samples, when known. */
   pos?: DirectorVec3;
+  /** Flag drops only — the carrier's intent, from chat-message order
+   *  and teammate proximity/pickup: "died" (killed holding it),
+   *  "thrown" (deliberate), or "pass" (thrown to teammates). */
+  dropKind?: "died" | "thrown" | "pass";
 }
 
 /**
@@ -172,6 +204,12 @@ export interface DirectorDataset {
   structures: StructureTransition[];
   /** Mortar shells seen in flight, oldest first. */
   mortarShots: MortarShot[];
+  /** Discs and grenade rounds, tracked the same way (absent in older
+   *  datasets) — the direct-hit evidence behind midair verdicts. */
+  discShots?: MortarShot[];
+  grenadeShots?: MortarShot[];
+  /** Server-announced mid-airs and headshots (absent in older data). */
+  skillShots?: SkillShot[];
   /** Every player death, from entity state. */
   deaths: DirectorDeath[];
   /** Inventory stations, for suit-up moments. */
@@ -186,6 +224,11 @@ export interface DirectorDataset {
     name: string;
     displayName?: string;
     skin?: string;
+    /** Official clan tag from the name's color-7 segments, when set —
+     *  includes its separator character as sent ("TF_", ">You"). */
+    clan?: string;
+    /** The color-6 base name (the name without the official tag). */
+    baseName?: string;
   }[];
   /** Sparse team-score timeline, one row per score change. */
   scoreSamples?: { timeSec: number; teamId: number; score: number }[];
@@ -239,6 +282,9 @@ export interface ScenePlayer {
   /** Mounted backpack ("energy pack", "shield pack", "mortar turret
    *  barrel", …) — often the clearest tell of a player's job. */
   pack?: string;
+  /** Clan tag (official color-delimited, or the typed "=USA=" style),
+   *  separated from the spoken name. */
+  clan?: string;
   /** Metres from the shot's anchor and a compass bearing from it. */
   dist: number;
   bearing: "N" | "NE" | "E" | "SE" | "S" | "SW" | "W" | "NW";
@@ -251,13 +297,20 @@ export interface ScenePlayer {
     | "carrying the flag"
     | "chasing the carrier"
     | "posted on defense"
-    | "shelling"
+    | "firing mortars"
     | "suiting up"
     | "skiing"
     | "fighting"
     | "inbound";
   /** Speed in u/s — ~40+ reads as skiing, ~70+ is coming in hot. */
   speed?: number;
+  /** Which way they're headed, relative to the bases — the ground truth
+   *  for "pouring out" vs "heading in" style calls. */
+  moving?:
+    | "into their own base"
+    | "out of their base"
+    | "toward the enemy base"
+    | "back toward their base";
 }
 
 export interface SceneEvent {
@@ -270,13 +323,17 @@ export interface SceneEvent {
     | "return"
     | "structure-destroyed"
     | "structure-repaired"
-    | "near-miss";
+    | "near-miss"
+    | "skill-shot"
+    | "teamkill";
   /** Factual one-liner: "MID-AIR disc kill, 84m" / "carrier died 32m
    *  from the capture". */
   detail: string;
   actors: { name: string; role: string }[];
   weapon?: string;
   midair?: boolean;
+  /** Drop events: died / thrown / pass (see DirectorEvent.dropKind). */
+  dropKind?: "died" | "thrown" | "pass";
 }
 
 export interface SceneFlagState {

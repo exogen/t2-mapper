@@ -22,7 +22,16 @@ import {
 } from "@aws-sdk/client-s3";
 import { loadUploadConfig } from "../relay/demoUpload.js";
 
-const { positionals } = parseArgs({ allowPositionals: true, options: {} });
+const { positionals, values } = parseArgs({
+  allowPositionals: true,
+  options: {
+    /** Also upload this local cast plan as <recKey>.cast.json — LAST,
+     *  as the commit point: consumers read the cast first, so the tiny
+     *  plan flipping after the big audio minimizes the window where a
+     *  new cast could pair with old commentary. */
+    cast: { type: "string" },
+  },
+});
 if (positionals.length !== 2) {
   console.error(
     "usage: npm run upload-commentary -- <audio.mp3> <recKeyOrSuffix>",
@@ -108,6 +117,21 @@ async function main(): Promise<void> {
     console.log(`wrote ${cueKey} (${cues.length} bytes)`);
   } catch {
     console.warn(`no cue transcript at ${cuePath} — skipped .commentary.json`);
+  }
+
+  if (values.cast) {
+    const cast = await fs.readFile(values.cast);
+    const castKey = `${matches[0]}.cast.json`;
+    await client.send(
+      new PutObjectCommand({
+        Bucket: config!.bucket,
+        Key: castKey,
+        Body: cast,
+        ContentType: "application/json",
+        CacheControl: "public, max-age=900",
+      }),
+    );
+    console.log(`wrote ${castKey} (${cast.length} bytes) — sidecar set live`);
   }
 }
 

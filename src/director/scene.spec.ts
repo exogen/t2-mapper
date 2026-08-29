@@ -91,10 +91,14 @@ function dataset(): DirectorDataset {
         killerPos: [430, 40, 100],
         weapon: "disc",
         airborne: true,
+        midair: true,
         speed: 55,
       },
     ],
-    stations: [],
+    // The defender's spot doubles as an invo visit, so loadout tells
+    // are readable for them (armor/pack are omitted until a player has
+    // suited up this life).
+    stations: [{ pos: [12, 8, 100], kind: "inventory", deployed: false }],
     playerNames: [
       { targetId: 5, name: "slayer", displayName: "Slayer", skin: "USA" },
       { targetId: 9, name: "guard", displayName: "Guard" },
@@ -170,6 +174,66 @@ describe("describeScenes", () => {
     expect(kill.actors[1].name).toBe("Victim");
     expect(kill.midair).toBe(true);
     expect(kill.detail).toContain("disc");
+  });
+
+  it("flags a teamkill on a carrier and marks the kill detail", () => {
+    const ds = dataset();
+    // Teammate 6 (Storm, same team as carrier 5) guns the carrier down
+    // mid-run — a critical teamkill the booth must react to.
+    for (let t = 0; t <= 120; t++) {
+      ds.playerSamples.push({
+        timeSec: t,
+        targetId: 6,
+        teamId: 1,
+        pos: [420, 10, 100],
+      });
+    }
+    ds.playerNames.push({ targetId: 6, name: "oops", displayName: "Oops" });
+    ds.deaths.push({
+      timeSec: 60,
+      targetId: 5,
+      teamId: 1,
+      pos: [410, 0, 100],
+      killerTargetId: 6,
+      killerPos: [420, 10, 100],
+      weapon: "disc",
+    });
+    const p = planShots(ds);
+    const withTk = p.shots.find((s) =>
+      s.scene!.events.some((e) => e.type === "teamkill"),
+    );
+    expect(withTk, "no teamkill event emitted").toBeDefined();
+    const tk = withTk!.scene!.events.find((e) => e.type === "teamkill")!;
+    expect(tk.detail).toContain("OWN teammate carrying the flag");
+    expect(tk.actors[0].name).toBe("Oops");
+    const kill = withTk!.scene!.events.find(
+      (e) => e.type === "kill" && e.actors[0].name === "Oops",
+    )!;
+    expect(kill.detail).toContain("TEAMKILL");
+  });
+
+  it("marks grabs taken off the stand and speaks distances in meters", () => {
+    const ds = dataset();
+    ds.events.push({
+      timeSec: 30,
+      type: "flag-grab",
+      description: "Slayer grabbed the Inferno flag",
+      actor: "Slayer",
+      flagTeamName: "Inferno",
+    });
+    const p = planShots(ds);
+    const withGrab = p.shots.find((s) =>
+      s.scene!.events.some((e) => e.type === "grab"),
+    );
+    expect(withGrab, "no grab event emitted").toBeDefined();
+    const grab = withGrab!.scene!.events.find((e) => e.type === "grab")!;
+    expect(grab.detail).toContain("RIGHT OFF THE STAND");
+    // Kill distances carry units now ("~30 meters"), never a bare "~30m".
+    const withKill = p.shots.find((s) =>
+      s.scene!.events.some((e) => e.type === "kill"),
+    );
+    const kill = withKill!.scene!.events.find((e) => e.type === "kill")!;
+    expect(kill.detail).not.toMatch(/~\d+m\b/);
   });
 
   it("labels rough frame positions from the planned camera", () => {

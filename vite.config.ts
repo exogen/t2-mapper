@@ -71,6 +71,10 @@ export default defineConfig(({ mode }) => {
     // Empty disables the indexed-demo browser in demo mode.
     DEMOS_BASE_URL:
       allEnv.DEMOS_BASE_URL || "https://demos.tribes2.online/demos",
+    // Debug: "1" makes CastGenius ignore pre-generated .cast.json
+    // sidecars (and their commentary audio) and always scan/plan in
+    // the browser — for testing director changes before regenerating.
+    CAST_LOCAL_PLAN: allEnv.CAST_LOCAL_PLAN || "",
     BASE_PATH: allEnv.BASE_PATH || "/",
     GAME_ASSETS_BASE_URL:
       allEnv.GAME_ASSETS_BASE_URL || `${allEnv.BASE_PATH || "/"}base/`,

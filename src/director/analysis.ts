@@ -46,7 +46,6 @@ import {
   DIRECTOR_TURTLE_MIN_SEC,
   DIRECTOR_TURTLE_SPEED,
   DIRECTOR_TURTLE_THREAT_RANGE,
-  DIRECTOR_MIDAIR_MIN_SPEED,
   DIRECTOR_RAID_RANGE,
   DIRECTOR_TRANSPORT_MIN_CREW,
   DIRECTOR_TRANSPORT_MIN_TRAVEL,
@@ -328,13 +327,9 @@ export function highlightKill(
       carriedFlagAt(death.targetId, death.timeSec, dataset) ||
       carriedFlagAt(death.killerTargetId, death.timeSec, dataset);
     if (!isHighlightWeapon(death.weapon) && !flagInvolved) continue;
-    // The MA: ordnance connecting with an airborne, moving victim —
-    // the game's signature skill shot, outranked only by the flag.
-    const midair =
-      death.airborne === true &&
-      (death.weapon?.includes("disc") || death.weapon?.includes("mortar")) ===
-        true &&
-      (death.speed ?? 0) >= DIRECTOR_MIDAIR_MIN_SPEED;
+    // The MA: the scanner's verified direct-hit verdict — a disc,
+    // grenade or mortar CONNECTING with an airborne, moving victim.
+    const midair = death.midair === true;
     // Ordnance kills read best on camera; a long-range hit beats a
     // point-blank scrum for legibility, and a kill on (or by) a flag
     // carrier outranks everything.

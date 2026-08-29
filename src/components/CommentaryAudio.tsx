@@ -3,6 +3,7 @@ import { useFrame } from "@react-three/fiber";
 import { createLogger } from "../logger";
 import { engineStore } from "../state/engineStore";
 import {
+  CAST_LOCAL_PLAN,
   DIRECTOR_INTRO_LEAD_SEC,
   demoDirectorStore,
   setCommentaryGate,
@@ -17,8 +18,15 @@ const HARD_SNAP_SEC = 0.4;
 /** Smaller drift is trimmed away by nudging playbackRate up to ±5%. */
 const RATE_TRIM_MAX = 0.05;
 const RATE_TRIM_GAIN = 0.25;
-/** How long the director start waits for the track (see the gate). */
-const HEADSTART_MS = 3000;
+/**
+ * The director start waits until this much audio is buffered at the
+ * start position (~470KB at the tracks' constant 128kbps — the browser
+ * only exposes buffered TIME ranges, so bytes convert via bitrate),
+ * showing the scan spinner meanwhile. The ceiling caps the wait: past
+ * it the director starts anyway and the track joins late, in sync.
+ */
+const MIN_BUFFER_SEC = 30;
+const BUFFER_MAX_WAIT_MS = 10000;
 /**
  * Commentary plays only at near-normal transport speeds — outside this
  * band (frame-stepping, fast-forward) speech is noise, and browsers
@@ -93,16 +101,23 @@ export function CommentaryAudio() {
       audio.removeAttribute("src");
       audio.load();
     }
-    if (armedUrlRef.current == null && wantTrack && sourceUrl) {
+    // CAST_LOCAL_PLAN debugging suppresses commentary entirely: its
+    // cues were timed against the sidecar plan, not the local one.
+    if (
+      armedUrlRef.current == null &&
+      wantTrack &&
+      sourceUrl &&
+      !CAST_LOCAL_PLAN
+    ) {
       armedUrlRef.current = sourceUrl;
       audio.src = `${sourceUrl}.commentary.mp3`;
     }
     return armedUrlRef.current != null && !unavailableRef.current;
   }, []);
 
-  // The director start awaits this gate: begin the download and give
-  // it a bounded head start, buffering at the position playback will
-  // begin from (the browser range-requests there, not from byte 0).
+  // The director start awaits this gate: begin the download and hold
+  // (spinner showing) until a real opening buffer exists at the start
+  // position (the browser range-requests there, not from byte 0).
   useEffect(() => {
     setCommentaryGate(async () => {
       const audio = audioRef.current;
@@ -132,35 +147,59 @@ export function CommentaryAudio() {
           // No transcript sidecar — the plan's own start applies.
         }
       }
-      if (audio.readyState >= HTMLMediaElement.HAVE_FUTURE_DATA) return;
+      // Buffer where playback will actually begin — the director seeks
+      // to the intro MINUS its lead-in, and pre-seeking to the speech
+      // itself would force a first-frame snap against an unbuffered
+      // position (heard as the opening line clipping or stuttering).
+      const target = Math.max(
+        streamClock.time,
+        (commentaryPlayback.startSec ??
+          demoDirectorStore.getState().plan?.skipToSec ??
+          0) - DIRECTOR_INTRO_LEAD_SEC,
+      );
+      // Buffered audio at the start position, as a fraction of the
+      // requirement (capped by the track's own remaining length).
+      const bufferedFraction = () => {
+        const required = Number.isFinite(audio.duration)
+          ? Math.min(MIN_BUFFER_SEC, Math.max(0.5, audio.duration - target))
+          : MIN_BUFFER_SEC;
+        for (let i = 0; i < audio.buffered.length; i++) {
+          if (
+            audio.buffered.start(i) <= target + 0.75 &&
+            audio.buffered.end(i) > target
+          ) {
+            return Math.min(1, (audio.buffered.end(i) - target) / required);
+          }
+        }
+        return 0;
+      };
       await new Promise<void>((resolve) => {
-        const done = () => {
-          clearTimeout(timer);
-          audio.removeEventListener("canplay", done);
-          audio.removeEventListener("error", done);
+        const finish = () => {
+          clearTimeout(ceiling);
+          clearInterval(poll);
+          audio.removeEventListener("progress", check);
+          audio.removeEventListener("error", finish);
           audio.removeEventListener("loadedmetadata", onMetadata);
           resolve();
         };
-        const onMetadata = () => {
-          // Buffer where playback will actually begin — the director
-          // seeks to the intro MINUS its lead-in, and pre-seeking to
-          // the speech itself instead would force a first-frame snap
-          // against an unbuffered position (heard as the opening line
-          // clipping or stuttering).
-          const startAt =
-            commentaryPlayback.startSec ??
-            demoDirectorStore.getState().plan?.skipToSec ??
-            0;
-          audio.currentTime = Math.max(
-            streamClock.time,
-            startAt - DIRECTOR_INTRO_LEAD_SEC,
-          );
+        const check = () => {
+          const fraction = unavailableRef.current ? 1 : bufferedFraction();
+          demoDirectorStore.setState({ scanProgress: fraction });
+          if (fraction >= 1 || unavailableRef.current) finish();
         };
-        const timer = setTimeout(done, HEADSTART_MS);
+        const onMetadata = () => {
+          audio.currentTime = target;
+        };
+        const ceiling = setTimeout(() => {
+          log.warn("commentary still buffering — starting without it");
+          finish();
+        }, BUFFER_MAX_WAIT_MS);
+        const poll = setInterval(check, 250);
         if (audio.readyState >= HTMLMediaElement.HAVE_METADATA) onMetadata();
         else audio.addEventListener("loadedmetadata", onMetadata);
-        audio.addEventListener("canplay", done);
-        audio.addEventListener("error", done);
+        audio.addEventListener("progress", check);
+        audio.addEventListener("error", finish);
+        check();
       });
     });
     return () => setCommentaryGate(null);
@@ -229,7 +268,11 @@ export function CommentaryAudio() {
     }
     wasDirectingRef.current = true;
 
-    if (audio.paused && !blockedRef.current) {
+    if (
+      audio.paused &&
+      !blockedRef.current &&
+      audio.readyState >= HTMLMediaElement.HAVE_FUTURE_DATA
+    ) {
       audio.play().catch((err: unknown) => {
         const name = (err as DOMException).name;
         if (name === "NotAllowedError") {

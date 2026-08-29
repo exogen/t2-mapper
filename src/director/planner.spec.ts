@@ -549,7 +549,9 @@ describe("planShots kickoff", () => {
     const kickoff = plan.shots.find((s) => s.reason?.startsWith("Kickoff"));
     expect(kickoff, "no kickoff wide emitted").toBeDefined();
     expect(kickoff!.startSec).toBeCloseTo(5, 1);
-    expect(kickoff!.endSec).toBeGreaterThanOrEqual(13);
+    // Holds while the rush is inside the wide frame (the tighter
+    // 70m wide cap releases it a beat sooner than the old 85m did).
+    expect(kickoff!.endSec).toBeGreaterThanOrEqual(11);
     // Framed on the busiest knot of the rush, never the map midpoint —
     // on a sparse foggy server the midpoint camera stares at an empty
     // hill with every player beyond the fog.

@@ -267,7 +267,7 @@ export const DIRECTOR_DOORWAY_HEIGHT = 0.4;
  * flag reveals nothing. Sweep past the assembled teams instead, like a
  * roster shot. Each team gets a pass of about this long.
  */
-export const DIRECTOR_LINEUP_SWEEP_SEC = 9;
+export const DIRECTOR_LINEUP_SWEEP_SEC = 11;
 /**
  * Roster close-up: a pass along the front of a knot of players, close
  * enough to read faces, positioned by their own facing so they look
@@ -378,7 +378,7 @@ export const DIRECTOR_SUITUP_COOLDOWN_SEC = 150;
 export const DIRECTOR_STATION_CAM_RADIUS = 14;
 export const DIRECTOR_STATION_CAM_HEIGHT = 0.35;
 /** Framing for the two bombardment shots: the impacts, and the crew. */
-export const DIRECTOR_BOMBARDMENT_CAM_RADIUS = 85;
+export const DIRECTOR_BOMBARDMENT_CAM_RADIUS = 70;
 export const DIRECTOR_BOMBARDMENT_CAM_HEIGHT = 0.55;
 export const DIRECTOR_SHOOTER_CAM_RADIUS = 22;
 /**
@@ -409,13 +409,13 @@ export const DIRECTOR_LOOK_SUBJECT_REACH = 1.5;
  */
 export const DIRECTOR_PATH_STANDOFF_FRACTION = 0.55;
 /**
- * A wide overview shot lives around 100u from the action — far enough to
- * read the shape of the play, close enough that the players are still
- * people rather than dots. The CAMERA sits at radius x sqrt(1 + height²)
- * from the anchor, so a 100u eye distance means a radius in the high
- * 80s, not 110 (which measured ~125-150u on screen).
+ * A wide overview shot lives well under 100u from the action — far
+ * enough to read the shape of the play, close enough that the players
+ * are still people rather than dots. The CAMERA sits at radius x
+ * sqrt(1 + height²) from the anchor, so the on-screen distance runs
+ * noticeably past the radius (85 here measured as an aerial map).
  */
-export const DIRECTOR_WIDE_CAM_MAX_RADIUS = 85;
+export const DIRECTOR_WIDE_CAM_MAX_RADIUS = 70;
 /**
  * Enemy presence, per second of the run, before a crowded stand counts
  * as a battle. A lone scout drifting through is not a battle — without

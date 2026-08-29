@@ -69,6 +69,12 @@ const KILL_MSG_TYPES = new Set([
   // Player-vs-player kills
   "msglegitkill",
   "msgheadshotkill",
+  // Community-server (TacoServer/QoL) variants, same arg layout —
+  // verified on real demos: mine-disc combos and rearshots each went
+  // 60-90 kills per match UNPARSED before these were added, silently
+  // breaking killer attribution and drop classification for them.
+  "msgminedisckill",
+  "msgrearshotkill",
   "msgteamkill",
   // Self-inflicted (own weapon damage, cratering)
   "msgselfkill",

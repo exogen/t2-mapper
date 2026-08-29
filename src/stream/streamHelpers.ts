@@ -551,26 +551,54 @@ export function detectColorCode(s: string): number | undefined {
   return undefined;
 }
 
-/** Parse a raw Torque HudMessageVector line into colored segments. */
-export function parseColorSegments(raw: string): ChatSegment[] {
+/**
+ * Parse a raw Torque HudMessageVector line into colored segments.
+ *
+ * Default (chat HUD): a \cp…\co span inherits the SURROUNDING color —
+ * T2's chat window does not recolor the embedded player name, so the
+ * whole line reads in the message color (color codes inside the span
+ * are ignored, matching the game).
+ *
+ * `taggedColors: true` (score screen, name parsing): color codes
+ * inside the pushed span apply, with push/pop as a color stack — this
+ * is how the server marks structure within one NAME string (server.cs
+ * wraps names as "\cp\c7" @ tag @ "\c6" @ name @ "\co", so the
+ * official clan tag is exactly the color-7 segments).
+ */
+export function parseColorSegments(
+  raw: string,
+  { taggedColors = false }: { taggedColors?: boolean } = {},
+): ChatSegment[] {
   const segments: ChatSegment[] = [];
   let currentColor = 0;
   let currentText = "";
-  let inTaggedString = false;
+  const colorStack: number[] = [];
+  let taggedDepth = 0;
+
+  const flush = () => {
+    if (currentText) {
+      segments.push({ text: currentText, colorCode: currentColor });
+      currentText = "";
+    }
+  };
 
   for (let i = 0; i < raw.length; i++) {
     const code = raw.charCodeAt(i);
 
     if (code === BYTE_COLOR_PUSH) {
-      inTaggedString = true;
+      colorStack.push(currentColor);
+      taggedDepth++;
       continue;
     }
     if (code === BYTE_COLOR_POP) {
-      inTaggedString = false;
+      if (taggedColors) flush();
+      currentColor = colorStack.pop() ?? currentColor;
+      if (taggedDepth > 0) taggedDepth--;
       continue;
     }
 
-    if (inTaggedString) {
+    if (!taggedColors && taggedDepth > 0) {
+      // Chat behavior: keep the surrounding color through the span.
       if (code >= 0x20) currentText += raw[i];
       continue;
     }

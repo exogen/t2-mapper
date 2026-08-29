@@ -108,10 +108,12 @@ export async function startDirector(): Promise<void> {
       const ok = await prepareDirector();
       if (!ok) return;
     }
-    // Give the commentary track a bounded head start (the gate resolves
-    // as soon as it's playable, on error, or on its own timeout) so the
-    // broadcast usually opens with the booth already talking.
+    // Hold for the commentary track's opening buffer (the gate resolves
+    // once enough audio is loaded at the start position, on error, or
+    // at its safety ceiling), showing the scan spinner meanwhile — the
+    // broadcast should open with the booth talking, not buffering.
     if (commentaryGate) {
+      demoDirectorStore.setState({ status: "scanning", scanProgress: 0 });
       await commentaryGate();
     }
   } finally {
@@ -195,6 +197,17 @@ function beginDirecting(): void {
 /** The sidecar schema this build understands (see backfill-cast-plans). */
 const CAST_FORMAT = "castgenius-plan";
 const CAST_VERSION = 1;
+
+/**
+ * Debug escape hatch (CAST_LOCAL_PLAN=1 in the env): force the
+ * director to scan and plan in the browser, ignoring any pre-generated
+ * .cast.json sidecar — for testing planner/scanner changes against
+ * demos whose sidecars haven't been regenerated yet. Commentary audio
+ * is suppressed too (its cues were authored against the sidecar plan,
+ * so they'd describe shots the local plan no longer takes).
+ */
+export const CAST_LOCAL_PLAN =
+  process.env.CAST_LOCAL_PLAN === "1" || process.env.CAST_LOCAL_PLAN === "true";
 
 /**
  * Try the demo's pre-generated plan sidecar. True when a valid plan was
@@ -284,7 +297,9 @@ async function prepareDirector(): Promise<boolean> {
   // detection, home-stand checks) is filled by a background scan while
   // playback runs — those features degrade gracefully until it lands,
   // and the sidecar's shot list is never replaced mid-watch.
-  if (await adoptPlanSidecar(token)) {
+  if (CAST_LOCAL_PLAN) {
+    log.info("CAST_LOCAL_PLAN — ignoring any cast sidecar, planning locally");
+  } else if (await adoptPlanSidecar(token)) {
     void fillDatasetInBackground(token, abort);
     return true;
   }

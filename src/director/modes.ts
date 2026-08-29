@@ -119,7 +119,9 @@ function kickoffWideShot(
     startSec,
     endSec: holdUntil,
     transitionIn: "cut",
-    reason: "Kickoff — teams pouring out",
+    // Neutral wording: the booth echoes camera labels, and at kickoff
+    // players scatter BOTH ways (spawns out, invs in) — see `moving`.
+    reason: "Kickoff — match is live",
   };
 }
 

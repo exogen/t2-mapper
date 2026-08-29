@@ -65,6 +65,9 @@ const EARLY_TOLERANCE_SEC = 0.75;
 // clean; the minimum breath separates back-to-back lines.
 const STRICT_EDGE_FADE_SEC = 0.06;
 const STRICT_MIN_GAP_SEC = 0.12;
+// The intro (everything before the first lineup shot) is RIGHT-ANCHORED
+// to end this close to the first lineup read, however long it rendered.
+const INTRO_END_PAD_SEC = 0.5;
 const WORDS_PER_SEC = 2.6;
 
 const { values, positionals } = parseArgs({
@@ -97,11 +100,13 @@ interface Cue {
   speaker: string;
   text: string;
   energy: string;
+  /** Index into doc.cues, so placement edits can be written back. */
+  idx?: number;
 }
 interface CommentaryDoc {
   format: string;
   voices: { speaker: string; voiceId: string | null }[];
-  match?: { matchStartSec?: number | null };
+  match?: { matchStartSec?: number | null; lineupStartSec?: number | null };
   cues: Cue[];
 }
 
@@ -260,6 +265,27 @@ async function renderChunk(
   mp3File: string,
   timingFile: string,
 ): Promise<void> {
+  // Transient API failures (rate limits, 5xx) killed whole render runs
+  // before this retry existed — same policy as the OpenAI caller.
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await renderChunkOnce(chunk, mp3File, timingFile);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      const transient = /ElevenLabs (429|5\d\d)/.test(msg);
+      if (attempt >= 4 || !transient) throw err;
+      const delay = 2000 * 2 ** attempt;
+      console.warn(`  retrying in ${delay / 1000}s: ${msg.slice(0, 120)}`);
+      await new Promise((r) => setTimeout(r, delay));
+    }
+  }
+}
+
+async function renderChunkOnce(
+  chunk: Cue[],
+  mp3File: string,
+  timingFile: string,
+): Promise<void> {
   const res = await fetch(
     "https://api.elevenlabs.io/v1/text-to-dialogue/with-timestamps?output_format=mp3_44100_128",
     {
@@ -308,8 +334,9 @@ function durationOf(file: string): number {
 
 async function main(): Promise<void> {
   const overrides = loadPronunciations(values.pronunciations!);
-  const spokenCues = doc.cues.map((c) => ({
+  const spokenCues = doc.cues.map((c, idx) => ({
     ...c,
+    idx,
     text: spokenForm(c.text, overrides),
   }));
   const chunks = chunkCues(spokenCues);
@@ -370,6 +397,26 @@ async function main(): Promise<void> {
   // In both regimes a global no-overlap rule holds: a late clip pushes
   // the next one later; two clips never sound at once.
   const strictBefore = doc.match?.matchStartSec ?? null;
+  const lineupStart = doc.match?.lineupStartSec ?? null;
+  // Intro bursts (all cues before the first lineup shot) get RIGHT-
+  // ANCHORED as one back-to-back block ending INTRO_END_PAD before the
+  // lineup: a fixed intro slot left dead air whenever the rendered
+  // speech came up short. The cue times this produces are written back
+  // to the commentary file so the app starts playback where the intro
+  // actually begins.
+  const introIdx = new Set<number>();
+  let introCursor = 0;
+  if (lineupStart != null) {
+    let total = 0;
+    rendered.forEach((r, i) => {
+      if (r.cues[r.cues.length - 1].atSec < lineupStart) {
+        introIdx.add(i);
+        total += r.duration / tempo + STRICT_MIN_GAP_SEC;
+      }
+    });
+    introCursor = Math.max(0, lineupStart - INTRO_END_PAD_SEC - total);
+  }
+  const cueTimeEdits = new Map<number, number>();
   const inputs = rendered.flatMap((r) => ["-i", r.file]);
   const parts: string[] = [];
   const mixIns: string[] = [];
@@ -378,6 +425,30 @@ async function main(): Promise<void> {
   let worstDrift = 0;
   let worstLate = 0;
   rendered.forEach((r, i) => {
+    if (introIdx.has(i)) {
+      const placed = Math.max(introCursor, scheduleEnd + STRICT_MIN_GAP_SEC);
+      const fileStart = placed - r.timing.starts[0] / tempo;
+      scheduleEnd = fileStart + r.duration / tempo;
+      introCursor = scheduleEnd + STRICT_MIN_GAP_SEC;
+      r.cues.forEach((cue, j) => {
+        if (cue.idx != null) {
+          cueTimeEdits.set(
+            cue.idx,
+            placed + (r.timing.starts[j] - r.timing.starts[0]) / tempo,
+          );
+        }
+      });
+      console.log(
+        `[${i + 1}/${rendered.length}] intro block → ${placed.toFixed(1)}s (right-anchored to lineup at ${lineupStart?.toFixed(1)}s)`,
+      );
+      const stretch = tempo !== 1 ? `atempo=${tempo},` : "";
+      parts.push(
+        `[${i}]${stretch}adelay=${Math.max(0, Math.round(fileStart * 1000))}:all=1[c${n}]`,
+      );
+      mixIns.push(`[c${n}]`);
+      n++;
+      return;
+    }
     if (
       strictBefore != null &&
       r.cues[r.cues.length - 1].atSec < strictBefore
@@ -526,6 +597,17 @@ async function main(): Promise<void> {
     { maxBuffer: 64 * 1024 * 1024 },
   );
   const total = durationOf(outPath);
+  if (cueTimeEdits.size > 0) {
+    // Persist the intro's true start times so the app (which reads the
+    // first cue's atSec) begins playback where the audio begins. A
+    // fresh generator run rebuilds these from the windows; this edit
+    // re-applies on every render.
+    for (const [idx, at] of cueTimeEdits) {
+      doc.cues[idx].atSec = Math.round(at * 10) / 10;
+    }
+    fs.writeFileSync(inputPath, JSON.stringify(doc, null, 2));
+    console.log(`updated ${cueTimeEdits.size} intro cue times in ${inputPath}`);
+  }
   console.log(
     `wrote ${outPath} (${(total / 60).toFixed(1)} min, ${rendered.length} uncut bursts anchored to the demo clock)`,
   );

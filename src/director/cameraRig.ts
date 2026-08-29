@@ -39,6 +39,21 @@ export const AIM_TOWARD_MIN_RANGE = 25;
  *  primary camera position in every field sport. */
 
 export const ORBIT_HEIGHT_FACTOR = 0.6;
+/**
+ * Absolute ceiling on an orbit's height above its anchor. Height scales
+ * with radius (heightFactor), which on the widest shots climbed past
+ * 50m — an aerial survey, not a broadcast frame. Capping the height
+ * keeps the pulled-back establishing views down near the field, like a
+ * press box rather than a blimp. Occlusion height boosts multiply on
+ * top of the capped base — seeing over a wall still wins.
+ */
+export const ORBIT_MAX_HEIGHT = 26;
+
+/** The effective orbit lift factor for a shot: its height factor,
+ *  lowered so radius x factor never exceeds ORBIT_MAX_HEIGHT. */
+export function orbitLiftFactor(radius: number, heightFactor: number): number {
+  return Math.min(heightFactor, ORBIT_MAX_HEIGHT / Math.max(1, radius));
+}
 /** Fixed orbits look slightly above the ground at the center point. */
 
 export const ORBIT_LOOK_LIFT = 2;
@@ -247,6 +262,22 @@ export const VISIBILITY_YAW_OFFSETS = [
  * frame rather than probed.
  */
 export const GROUND_MIN_CLEARANCE = 1;
+/**
+ * Smoothed terrain following — the "rollercoaster track". When the
+ * ground forces a moving camera up, hugging every jag at the bare
+ * minimum clearance reads as turbulence; instead the camera rides a
+ * smooth curve a few metres above the terrain: sampled ahead along its
+ * motion so climbs begin before a ridge arrives, eased up and down at
+ * capped vertical rates. The instant GROUND_MIN_CLEARANCE clamp stays
+ * underneath as the hard guarantee the lens never enters the hill.
+ */
+export const TERRAIN_FOLLOW_CLEARANCE = 4;
+/** Seconds ahead along the camera's motion to sample the terrain. */
+export const TERRAIN_FOLLOW_LOOKAHEAD_SEC = [0.5, 1.1];
+/** Vertical easing rates for the smoothed lift (m/s): climbs brisk
+ *  (the hard clamp backstops anything faster), descents gentle. */
+export const TERRAIN_LIFT_RISE_RATE = 14;
+export const TERRAIN_LIFT_FALL_RATE = 5;
 /** Vertical span the ground probe searches, in Torque Z. */
 
 const GROUND_PROBE_TOP = 2000;

@@ -11,11 +11,12 @@ import type {
   DirectorStation,
   DirectorVehicleSample,
   MortarShot,
+  SkillShot,
   StructureTransition,
 } from "../director/types";
 import { createDemoStreamingRecording } from "./demoStreaming";
 import { castWorldRay } from "../collision/worldCollision";
-import { threeForwardHeading } from "./streamHelpers";
+import { parseColorSegments, threeForwardHeading } from "./streamHelpers";
 import type { StreamEntity, StreamSnapshot } from "./types";
 
 const log = createLogger("demoDirectorScanner");
@@ -28,6 +29,13 @@ const PLAYER_EVERY_STEPS = 2;
 const YIELD_EVERY_SEC = 5;
 /** Kill events adopt the victim's nearest sample within this window. */
 const KILL_POS_WINDOW_SEC = 1.5;
+/** A carrier death message within this BEFORE the drop message means
+ *  they died holding the flag (drop-then-death = intentional throw). */
+const DROP_DEATH_WINDOW_SEC = 1.5;
+/** A throw is a PASS when a teammate is this close at the toss… */
+const PASS_FRIENDLY_RANGE = 100;
+/** …or picks the flag up this soon (before any return). */
+const PASS_PICKUP_WINDOW_SEC = 4;
 
 /** Base structures worth tracking for damageState transitions. */
 const STRUCTURE_DATABLOCK = /generator|sensor|turret|station|solar/i;
@@ -36,6 +44,16 @@ const STRUCTURE_DATABLOCK = /generator|sensor|turret|station|solar/i;
 const MORTAR_DATABLOCK = /mortar_projectile/i;
 /** Spinfusor discs, for flavouring a kill as a disc hit. */
 const DISC_DATABLOCK = /^disc\.dts$/i;
+/** Grenade-launcher rounds (also hand grenades — same shape). */
+const GRENADE_DATABLOCK = /grenade_projectile/i;
+/** Server skill-shot announcements: chat kind "server", colorCode 5
+ *  (live-verified) — the authoritative mid-air / headshot source. */
+const SKILL_SHOT_COLOR = 5;
+const MIDAIR_MSG = /^(.+) hit a mid air shot\.(?: \[(\d+)m, ([^\]]+)\])?$/;
+const HEADSHOT_MSG = /^(.+) hit a sniper rifle headshot\.$/;
+/** A skill shot within this of a death by the same shooter is the
+ *  killing blow (message and death sampling both jitter). */
+const SKILL_SHOT_KILL_WINDOW_SEC = 2;
 /** Inventory stations — where players suit up (verified from demos:
  *  station_inv_human.dts, plus deployable inventories). */
 /** ShapeBase thread slot for the activate animation ($ActivateThread). */
@@ -203,6 +221,10 @@ export async function scanDemoDirector(
     number,
     { displayName: string; skin?: string }
   >();
+  /** Official clan tags (color-7 rawName segments) and the base name
+   *  (color-6 segments), by lowercase full name. The tag includes its
+   *  separator character as sent ("TF_", ">You"). */
+  const officialNameParts = new Map<string, { clan: string; base: string }>();
   /** Sparse team-score timeline: one row per change. */
   const scoreSamples: {
     timeSec: number;
@@ -214,6 +236,9 @@ export async function scanDemoDirector(
   const structureStates = new Map<string, number>();
   const mortarShots: MortarShot[] = [];
   const discShots: MortarShot[] = [];
+  const grenadeShots: MortarShot[] = [];
+  const skillShots: SkillShot[] = [];
+  const seenChatIds = new Set<number>();
   const deaths: DirectorDeath[] = [];
   const stations = new Map<string, DirectorStation>();
   // Last seen alive-state and position per player, to catch the moment
@@ -235,6 +260,7 @@ export async function scanDemoDirector(
   // shooter, last sighting near the impact.
   const mortarsInFlight = new Map<string, MortarShot>();
   const discsInFlight = new Map<string, MortarShot>();
+  const grenadesInFlight = new Map<string, MortarShot>();
 
   const sampleFlags = (snapshot: StreamSnapshot, timeSec: number) => {
     const candidates = collectFlagCandidates(snapshot);
@@ -401,7 +427,9 @@ export async function scanDemoDirector(
       alive.add(entity.id);
       const tracked = inFlight.get(entity.id);
       if (tracked) {
+        tracked.toPrev = tracked.to;
         tracked.to = copyPos(entity.position);
+        tracked.endSec = timeSec;
         if (tracked.shooterTargetId == null) {
           tracked.shooterTargetId = resolveShooter(entity);
         }
@@ -621,8 +649,62 @@ export async function scanDemoDirector(
     sampleStructures(snapshot, t);
     sampleOrdnance(snapshot, t, MORTAR_DATABLOCK, mortarsInFlight, mortarShots);
     sampleOrdnance(snapshot, t, DISC_DATABLOCK, discsInFlight, discShots);
+    sampleOrdnance(
+      snapshot,
+      t,
+      GRENADE_DATABLOCK,
+      grenadesInFlight,
+      grenadeShots,
+    );
     sampleStations(snapshot, t);
     sampleDeaths(snapshot, t);
+    for (const entry of snapshot.playerRoster ?? []) {
+      if (!entry.rawName || officialNameParts.has(entry.name.toLowerCase())) {
+        continue;
+      }
+      // Stock server.cs wraps names "\cp\c7" @ tag @ "\c6" @ name @
+      // "\co" (or tag appended) — the official clan tag is exactly the
+      // color-7 segments, the base name the color-6 ones. Verified live
+      // (ski-club server): TF_flyersfan → [c7]"TF_" [c6]"flyersfan".
+      const segments = parseColorSegments(entry.rawName, {
+        taggedColors: true,
+      });
+      const tag = segments
+        .filter((seg) => seg.colorCode === 7)
+        .map((seg) => seg.text)
+        .join("")
+        .trim();
+      const base = segments
+        .filter((seg) => seg.colorCode === 6)
+        .map((seg) => seg.text)
+        .join("")
+        .trim();
+      if (tag && base) {
+        officialNameParts.set(entry.name.toLowerCase(), { clan: tag, base });
+      }
+    }
+    for (const msg of snapshot.chatMessages ?? []) {
+      if (
+        seenChatIds.has(msg.id) ||
+        msg.kind !== "server" ||
+        msg.colorCode !== SKILL_SHOT_COLOR
+      ) {
+        continue;
+      }
+      seenChatIds.add(msg.id);
+      const ma = MIDAIR_MSG.exec(msg.text);
+      const hs = ma ? null : HEADSHOT_MSG.exec(msg.text);
+      const name = ma?.[1] ?? hs?.[1];
+      if (!name) continue;
+      skillShots.push({
+        timeSec: msg.timeSec,
+        targetId: nameToTarget.get(name.toLowerCase()) ?? null,
+        name,
+        kind: ma ? "midair" : "headshot",
+        rangeM: ma?.[2] != null ? parseInt(ma[2], 10) : undefined,
+        weapon: ma?.[3],
+      });
+    }
     if (snapshot.exhausted) break;
     if (t - lastYield >= YIELD_EVERY_SEC) {
       lastYield = t;
@@ -685,6 +767,29 @@ export async function scanDemoDirector(
     }
   }
 
+  // MID-AIR / HEADSHOT verdicts: the server announces every skill
+  // shot itself (chat color 5) — correlate each announcement to the
+  // nearest death by that shooter. No geometry, no inference; a shot
+  // with no matching death was non-lethal (kept in skillShots for the
+  // scenes to call anyway).
+  for (const shot of skillShots) {
+    if (shot.targetId == null) continue;
+    let best: DirectorDeath | null = null;
+    for (const death of deaths) {
+      if (death.killerTargetId !== shot.targetId) continue;
+      const dt = Math.abs(death.timeSec - shot.timeSec);
+      if (dt > SKILL_SHOT_KILL_WINDOW_SEC) continue;
+      if (shot.kind === "midair" ? death.midair : death.headshot) continue;
+      if (!best || dt < Math.abs(best.timeSec - shot.timeSec)) {
+        best = death;
+      }
+    }
+    if (!best) continue;
+    shot.lethal = true;
+    if (shot.kind === "midair") best.midair = true;
+    else best.headshot = true;
+  }
+
   // Position-correlate kill events: victim name → target id → the
   // victim's nearest sample. Position-less events degrade gracefully
   // (the planner skips them for clustering).
@@ -710,6 +815,86 @@ export async function scanDemoDirector(
   });
 
   const finalSnapshot = playback.getSnapshot();
+
+  // Flag drops: died-holding vs thrown vs a pass — the intent question
+  // the booth keeps getting wrong. The chat ORDER tells the truth: the
+  // server prints the carrier's death message BEFORE the drop message
+  // when they died holding it; a drop with no immediately-preceding
+  // death is an intentional throw. A throw with teammates in reach, or
+  // one a teammate picks up within seconds, reads as a pass.
+  for (const event of events) {
+    if (event.type !== "flag-drop") continue;
+    const actorKey = event.actor?.toLowerCase();
+    const throwerId = actorKey != null ? nameToTarget.get(actorKey) : undefined;
+    const died = killEvents.some(
+      (k) =>
+        k.victim?.toLowerCase() === actorKey &&
+        event.timeSec - k.timeSec >= 0 &&
+        event.timeSec - k.timeSec <= DROP_DEATH_WINDOW_SEC,
+    );
+    if (died) {
+      event.dropKind = "died";
+      continue;
+    }
+    event.dropKind = "thrown";
+    // Thrower's team and position, from their nearest sample.
+    let thrower: DirectorPlayerSample | null = null;
+    for (const sample of samplesByTarget.get(throwerId ?? -1) ?? []) {
+      const dt = Math.abs(sample.timeSec - event.timeSec);
+      if (
+        dt <= 2 &&
+        (!thrower || dt < Math.abs(thrower.timeSec - event.timeSec))
+      ) {
+        thrower = sample;
+      }
+      if (sample.timeSec > event.timeSec + 2) break;
+    }
+    let pass = false;
+    if (thrower?.teamId != null) {
+      for (const p of playerSamples) {
+        if (
+          p.targetId !== throwerId &&
+          p.teamId === thrower.teamId &&
+          Math.abs(p.timeSec - event.timeSec) <= 1 &&
+          Math.hypot(
+            p.pos[0] - thrower.pos[0],
+            p.pos[1] - thrower.pos[1],
+            p.pos[2] - thrower.pos[2],
+          ) <= PASS_FRIENDLY_RANGE
+        ) {
+          pass = true;
+          break;
+        }
+      }
+    }
+    if (!pass && thrower?.teamId != null) {
+      // A teammate picking it up before it returns is a completed pass.
+      const slot = finalSnapshot.teamScores.find(
+        (t) => t.name.toLowerCase() === event.flagTeamName?.toLowerCase(),
+      )?.teamId;
+      for (const f of flagSamples) {
+        if (f.slot !== slot || f.timeSec <= event.timeSec) continue;
+        if (f.timeSec > event.timeSec + PASS_PICKUP_WINDOW_SEC) break;
+        if (f.status === "home") break;
+        if (f.carrierTargetId != null && f.carrierTargetId !== throwerId) {
+          let grabber: DirectorPlayerSample | null = null;
+          for (const sample of samplesByTarget.get(f.carrierTargetId) ?? []) {
+            const dt = Math.abs(sample.timeSec - f.timeSec);
+            if (
+              dt <= 2 &&
+              (!grabber || dt < Math.abs(grabber.timeSec - f.timeSec))
+            ) {
+              grabber = sample;
+            }
+            if (sample.timeSec > f.timeSec + 2) break;
+          }
+          if (grabber?.teamId === thrower.teamId) pass = true;
+          break;
+        }
+      }
+    }
+    if (pass) event.dropKind = "pass";
+  }
   // How far the map lets a camera see. A wide shot placed beyond the fog
   // frames a screen of haze, however many players are nominally inside
   // it, and Tribes maps range from 50m pea soup to 1200m clear air.
@@ -738,14 +923,26 @@ export async function scanDemoDirector(
     mortarShots: [...mortarShots, ...mortarsInFlight.values()].sort(
       (a, b) => a.timeSec - b.timeSec,
     ),
+    discShots: [...discShots, ...discsInFlight.values()].sort(
+      (a, b) => a.timeSec - b.timeSec,
+    ),
+    grenadeShots: [...grenadeShots, ...grenadesInFlight.values()].sort(
+      (a, b) => a.timeSec - b.timeSec,
+    ),
+    skillShots,
     deaths,
     stations: [...stations.values()],
     vehicles: vehicleSamples,
-    playerNames: [...nameToTarget.entries()].map(([name, targetId]) => ({
+    // Keyed by TARGET ID, not name: a player who rejoins gets a new
+    // target id, and a name-keyed map would orphan their earlier id
+    // (the "player 79" lineup bug — the entity had the name all along).
+    playerNames: [...playerIdentity.entries()].map(([targetId, id]) => ({
       targetId,
-      name,
-      displayName: playerIdentity.get(targetId)?.displayName,
-      skin: playerIdentity.get(targetId)?.skin,
+      name: id.displayName.toLowerCase(),
+      displayName: id.displayName,
+      skin: id.skin,
+      clan: officialNameParts.get(id.displayName.toLowerCase())?.clan,
+      baseName: officialNameParts.get(id.displayName.toLowerCase())?.base,
     })),
     scoreSamples,
   };

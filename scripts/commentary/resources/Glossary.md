@@ -1,12 +1,22 @@
-DJ: disc-jump (when you shoot the ground for a speed boost - like a rocket jump in Quake)
-MA: mid-air shot
-e-grab: emergency grab (when you just need to get their flag off the stand to prevent a cap)
-control-K: suicide (aka Ctrl-K, the keyboard combination you press to do it)
-inv: inventory station
-HoF: heavy on flag (a heavy armor player guarding the flag)
-LO: light offense
-HO: heavy offense
-MD: mine-disc
-gen / gens: generator / generators
-OOB: out of bounds
-one chain: the player has about one chaingun bullet of health left
+- DJ: disc-jump (when you shoot the ground for a speed boost - like a rocket jump in Quake)
+- MA: mid-air shot
+- e-grab: emergency grab (when you just need to get their flag off the stand to prevent a cap)
+- control-K: suicide (aka Ctrl-K, the keyboard combination you press to do it)
+- inv: inventory station
+- HoF: heavy on flag (a heavy armor player guarding the flag)
+- LO: light offense
+- HO: heavy offense
+- HO train: a wave of heavy offense en route to the enemy base
+- MD: mine-disc
+- gen / gens: generator / generators
+- OOB: out of bounds
+- one chain: the player has about one chaingun bullet of health left
+- turtle: holding the enemy's flag inside your base, usually with a heavy shield pack
+- stalemate: both teams holding the enemy's flag at their base
+- spam: blanketing an area (usually the flag or the enemy base) with splash damage weapons like mortars and grenades, to try to clear enemies from it
+- back-cap: a grab off the stand that comes from *behind* the enemy base (in relation to the two bases - it's "behind" if it's even farther from the capper's base than the enemy base is), set up so that the capper's direction of movement is optimized to move back toward their own base
+- front-grab: the opposite of a back-cap - a player grabs the enemy flag from the "front" (from the direction of their own base). less optimal than a back-cap
+- back-to-front: same as back-cap
+- front-to-back: same as front-grab
+- nade: short for "grenade" (could be hand grenade, or grenade launcher)
+- pinned: teams can "pin" a dropped flag (usually when it's near their stand or base) by shooting it into a difficult to reach spot, like a corner

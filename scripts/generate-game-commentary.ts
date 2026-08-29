@@ -26,6 +26,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { parseArgs } from "node:util";
 import { createDemoStreamingRecording } from "../src/stream/demoStreaming";
+import { spokenMapName, spokenName } from "../src/director/dataset";
 import { scanDemoTimeline } from "../src/stream/demoTimelineScanner";
 import type { Shot, ShotPlan } from "../src/director/types";
 import type { ShotScene } from "../src/director/scene";
@@ -79,6 +80,8 @@ interface WindowBrief {
   clock: string;
   timeRemaining: string | null;
   preStart: boolean;
+  /** Players on the server (assigned to a team) at this window. */
+  playersOnServer: number;
   score: { team: string; score: number; caps?: number; grabs?: number }[];
   topScorers: { name: string; team: string; score: number }[];
   wordBudget: number;
@@ -98,6 +101,13 @@ function shotBrief(shot: Shot): unknown {
   return {
     startSec: Math.round(shot.startSec * 10) / 10,
     endSec: Math.round(shot.endSec * 10) / 10,
+    // Lineup sweeps: how many names FIT the shot (~2s per name, read
+    // as separate sentences) — the read should fill the shot, not stop
+    // early into dead air.
+    namesToRead:
+      scene?.topic === "lineup"
+        ? Math.floor((shot.endSec - shot.startSec) / 2)
+        : undefined,
     camera: shot.reason,
     topic: scene?.topic,
     summary: scene?.summary,
@@ -105,8 +115,10 @@ function shotBrief(shot: Shot): unknown {
       name: p.name,
       team: p.team,
       armor: p.armor,
+      clan: p.clan,
       pack: p.pack,
       doing: p.doing,
+      moving: p.moving,
       frame: p.frame,
       speed: p.speed,
     })),
@@ -114,6 +126,7 @@ function shotBrief(shot: Shot): unknown {
       atSec: Math.round(e.timeSec * 10) / 10,
       type: e.type,
       detail: e.detail,
+      dropKind: e.dropKind,
       actors: e.actors,
     })),
     flags: scene?.flags.map(({ future: _future, ...flag }) => flag),
@@ -227,7 +240,7 @@ function buildUserPrompt(
   parts.push(
     `Write the booth's dialogue for demo time ${brief.startSec}s to ${brief.endSec}s.`,
     brief.preStart
-      ? "The match has NOT started yet — there is no score to mention. This is lineup coverage: the viewer is watching the players on screen, so keep announcing continuously until the start and call out as many of the visible players (from the shots' player lists) as you can fit, quickly spoken — a name and at most a couple of words each. Announce each player at most ONCE across the whole lineup read: if a name already called appears in another shot, skip it."
+      ? `The match has NOT started yet — there is no score to mention. There are ${brief.playersOnServer} players on the server — include that count in the opening map/server announcement. LINEUP COVERAGE RULES: roster names may be read ONLY during shots whose topic is "lineup" (the camera is sweeping that exact group). For each lineup shot, one cue timed AT that shot\'s startSec reading names from THAT shot\'s playersOnScreen in the order given: announce EXACTLY the shot\'s namesToRead count (fewer only if the team has fewer players left unannounced) — the read should fill the shot with no trailing dead air. Separate the names with PERIODS, each name its own short sentence ("Irvin. Friendo. Carpenter. sake.") — never a comma list, so the delivery breathes between names; occasionally mention the skin a player is wearing. Never read names over any other shot: before the first lineup shot, do the welcome and anticipation only, and open the roster with a quick intro line ("On the field today:", "For Storm we\'ve got:", or similar) rather than starting the names cold. Announce each player at most ONCE across the whole lineup read: if a name already called appears in another shot, skip it. NEVER claim a team's read is complete ("the rest of X", "rounding out X") unless every name in that team's knownPlayers list (in the match info) has been announced — with big rosters you will not get to everyone, so close with open phrasing ("more Storm:", "also on Inferno:") instead.`
       : `Match clock ${brief.clock}${brief.timeRemaining ? `, ${brief.timeRemaining} remaining` : ""}. Score: ${
           brief.score
             .map((s) =>
@@ -317,7 +330,7 @@ async function main(): Promise<void> {
   const fromSec =
     values.from != null
       ? parseFloat(values.from)
-      : Math.max(0, (matchStart ?? 60) - 60);
+      : Math.max(0, (matchStart ?? 75) - 75);
   const toSec = values.to != null ? parseFloat(values.to) : recording.duration;
 
   // Windows: consecutive shots grouped to ~windowSec, split at sequence
@@ -344,25 +357,99 @@ async function main(): Promise<void> {
   playback.stepToTime(Math.min(fromSec + 5, recording.duration));
   const first = playback.getSnapshot();
   const match = {
-    map: recording.missionName ?? null,
+    // Speak the mission's DISPLAY name (demo header) over its slug,
+    // cleaned of release prefixes/suffixes for the booth.
+    map: spokenMapName(
+      playback.missionDisplayName ?? recording.missionName ?? "",
+    ),
     gameType: recording.gameType ?? plan.gameMode,
     server: recording.serverDisplayName ?? null,
-    teams: first.teamScores?.map((t) => t.name) ?? [],
+    // Known roster per team, aggregated from every scene in the plan —
+    // the completeness reference for lineup reads ("the rest of X" is
+    // only true if every one of these was named).
+    teams: (first.teamScores ?? [])
+      .filter((t) => t.teamId > 0)
+      .map((t) => ({
+        name: t.name,
+        knownPlayers: [
+          ...new Set(
+            plan.shots.flatMap(
+              (shot) =>
+                shot.scene?.players
+                  .filter((p) => p.team === t.name)
+                  .map((p) => p.name) ?? [],
+            ),
+          ),
+        ],
+      })),
     durationSec: Math.round(recording.duration),
     matchStartSec: matchStart ?? null,
+    /** First lineup shot — the renderer right-anchors the intro audio
+     *  to end here, however long the intro rendered. */
+    lineupStartSec:
+      plan.shots.find((shot) => shot.scene?.topic === "lineup")?.startSec ??
+      null,
   };
+  // The intro is right-anchored to air just before the first lineup,
+  // so its player count must be the roster THERE — the demo's opening
+  // seconds routinely undercount while players are still connecting.
+  const introAirSec = Math.min(
+    match.lineupStartSec ?? matchStart ?? fromSec,
+    recording.duration,
+  );
+  playback.stepToTime(introAirSec);
+  const introPlayerCount = playback.getSnapshot().playerRoster?.length ?? 0;
+
   // Tribes 2 CTF team score = 100 × caps + 1 × grabs; the caps ARE the
   // score people talk about, so the booth gets them decoded.
   const isCtf = /ctf|capture/i.test(match.gameType ?? "");
+  // Nicknames: a user-maintained map of display name → allowed short
+  // forms (scripts/commentary/nicknames.json), filtered to players who
+  // actually appear in this cast so the prompt carries no strangers.
+  const nicknamesFile = path.join(
+    path.dirname(values.style!),
+    "nicknames.json",
+  );
+  // Roster display names, keyed lowercase — file keys match
+  // case-insensitively (decorated or stripped), and the prompt always
+  // labels entries with the in-game display name.
+  const rosterDisplay = new Map<string, string>();
+  for (const shot of plan.shots) {
+    for (const p of shot.scene?.players ?? []) {
+      rosterDisplay.set(p.name.toLowerCase(), p.name);
+    }
+  }
+  const nicknames: Record<string, string[]> = {};
+  if (fs.existsSync(nicknamesFile)) {
+    const all = JSON.parse(fs.readFileSync(nicknamesFile, "utf8")) as Record<
+      string,
+      string[]
+    >;
+    for (const [name, list] of Object.entries(all)) {
+      const display =
+        rosterDisplay.get(name.toLowerCase()) ??
+        rosterDisplay.get(spokenName(name).toLowerCase());
+      if (display) nicknames[display] = list;
+    }
+  }
   const system = [
     style,
+    ...(Object.keys(nicknames).length > 0
+      ? [
+          `## Nicknames\n\nKnown short forms for players in this match — use them for variety AFTER a player's first full-name mention (lineup reads always use full names). NEVER invent a nickname that is not listed here.\n${Object.entries(
+            nicknames,
+          )
+            .map(([name, list]) => `- ${name}: ${list.join(", ")}`)
+            .join("\n")}`,
+        ]
+      : []),
     ...resources,
     "## This match",
     JSON.stringify(match),
     "Return ONLY the cues JSON for the requested window.",
   ].join("\n\n");
   console.log(
-    `system prompt: style + ${resourceNames.length} reference docs (${Math.round(system.length / 1024)}KB)`,
+    `system prompt: style + ${resourceNames.length} reference docs + ${Object.keys(nicknames).length} nicknamed players (${Math.round(system.length / 1024)}KB)`,
   );
 
   const cacheDir = `${outPath}.windows`;
@@ -391,6 +478,12 @@ async function main(): Promise<void> {
           ? clock(Math.max(0, matchEnd - startSec))
           : null,
       preStart,
+      // ALL connected players (observers included) — the number a
+      // browser shows for the server, not the teamed subset. Pre-start
+      // windows air at the lineup, so they use the count from there.
+      playersOnServer: preStart
+        ? introPlayerCount
+        : (snap.playerRoster?.length ?? 0),
       score:
         snap.teamScores
           ?.filter((t) => t.teamId > 0)
@@ -408,7 +501,7 @@ async function main(): Promise<void> {
             .sort((a, b) => b.score - a.score)
             .slice(0, 4)
             .map((p) => ({
-              name: p.name,
+              name: spokenName(p.name),
               team:
                 snap.teamScores?.find((t) => t.teamId === p.teamId)?.name ?? "",
               score: p.score,

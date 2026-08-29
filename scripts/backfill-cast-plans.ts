@@ -40,6 +40,9 @@ const { values } = parseArgs({
     /** Only process .rec keys containing this substring (use with
      *  --force to regenerate one demo's sidecar). */
     only: { type: "string" },
+    /** Write the sidecar to this local file INSTEAD of uploading — for
+     *  staging a synchronized multi-sidecar upload later. */
+    out: { type: "string" },
     help: { type: "boolean", default: false, short: "h" },
   },
 });
@@ -223,7 +226,10 @@ async function main(): Promise<void> {
           demo: path.basename(key),
           plan: JSON.parse(planJson),
         });
-        if (values["dry-run"]) {
+        if (values.out) {
+          await fs.writeFile(values.out, sidecar);
+          console.log(`  staged ${values.out} (${sidecar.length} bytes)`);
+        } else if (values["dry-run"]) {
           console.log(
             `  dry-run: would write ${key}.cast.json (${sidecar.length} bytes)`,
           );

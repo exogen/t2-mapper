@@ -47,6 +47,11 @@ import {
   FOLLOW_YAW_DRIFT,
   GROUND_MIN_CLEARANCE,
   ORBIT_HEIGHT_FACTOR,
+  orbitLiftFactor,
+  TERRAIN_FOLLOW_CLEARANCE,
+  TERRAIN_FOLLOW_LOOKAHEAD_SEC,
+  TERRAIN_LIFT_FALL_RATE,
+  TERRAIN_LIFT_RISE_RATE,
   ORBIT_LOOK_LIFT,
   PARAM_EASE_RATE,
   STANDOFF_MIN,
@@ -228,6 +233,15 @@ export function DirectorController() {
   const dollyHeadingRef = useRef(0);
   /** Smoothed subject velocity for the dolly's feed-forward. */
   const dollyVelRef = useRef(new Vector3());
+  // Smoothed terrain-follow state: extra lift above the shot's natural
+  // height (-1 = seed on the next frame), and the previous frame's
+  // position for the motion look-ahead.
+  const terrainLiftRef = useRef(-1);
+  const terrainPrevRef = useRef<{ x: number; z: number; valid: boolean }>({
+    x: 0,
+    z: 0,
+    valid: false,
+  });
 
   /**
    * Commit a fixed-camera placement: bearing, height and standoff
@@ -379,13 +393,58 @@ export function DirectorController() {
     shot: Shot,
     delta: number,
   ) => {
-    // ── Never below the terrain ──
+    // ── Never below the terrain — and smoothly above it ──
     // Three (x, y, z) is Torque (y, z, x), so the sampler takes the
-    // camera's z as Torque x and its x as Torque y.
+    // camera's z as Torque x and its x as Torque y. Rather than hugging
+    // every jag of the ground at minimum clearance (turbulence), the
+    // camera rides a smoothed track a few metres up: terrain is sampled
+    // ahead along the motion so climbs start before a ridge, and the
+    // lift eases at capped rates. The instant clamp stays as backstop.
+    const naturalY = camera.position.y;
     const ground = groundHeightAt(camera.position.x, camera.position.z);
+    let required =
+      ground != null ? ground + TERRAIN_FOLLOW_CLEARANCE - naturalY : 0;
+    const prev = terrainPrevRef.current;
+    if (prev.valid && delta > 0) {
+      const vx = (camera.position.x - prev.x) / delta;
+      const vz = (camera.position.z - prev.z) / delta;
+      if (Math.hypot(vx, vz) > 2) {
+        for (const ahead of TERRAIN_FOLLOW_LOOKAHEAD_SEC) {
+          const g = groundHeightAt(
+            camera.position.x + vx * ahead,
+            camera.position.z + vz * ahead,
+          );
+          if (g != null) {
+            required = Math.max(
+              required,
+              g + TERRAIN_FOLLOW_CLEARANCE - naturalY,
+            );
+          }
+        }
+      }
+    }
+    const liftTarget = Math.max(0, required);
+    if (terrainLiftRef.current < 0) {
+      // Fresh shot: open ON the track rather than climbing onto it.
+      terrainLiftRef.current = liftTarget;
+    } else {
+      const rate =
+        liftTarget > terrainLiftRef.current
+          ? TERRAIN_LIFT_RISE_RATE
+          : TERRAIN_LIFT_FALL_RATE;
+      terrainLiftRef.current += Math.max(
+        -rate * delta,
+        Math.min(rate * delta, liftTarget - terrainLiftRef.current),
+      );
+    }
+    camera.position.y = naturalY + terrainLiftRef.current;
     if (ground != null && camera.position.y < ground + GROUND_MIN_CLEARANCE) {
       camera.position.y = ground + GROUND_MIN_CLEARANCE;
+      terrainLiftRef.current = camera.position.y - naturalY;
     }
+    prev.x = camera.position.x;
+    prev.z = camera.position.z;
+    prev.valid = true;
 
     // ── Keep the subject in view ──
     const subject = shotSubjectOf(shot);
@@ -495,7 +554,7 @@ export function DirectorController() {
       const placement = chooseClearPlacement(
         anchor,
         shot.radius,
-        shot.heightFactor ?? ORBIT_HEIGHT_FACTOR,
+        orbitLiftFactor(shot.radius, shot.heightFactor ?? ORBIT_HEIGHT_FACTOR),
         orbitAngleRef.current,
         { minScale: shot.lookSubject ? 0 : STANDOFF_MIN_SCALE },
       );
@@ -509,7 +568,8 @@ export function DirectorController() {
       }
       // Disruption budget: how far would the view swing, and how fast?
       const lift =
-        (shot.heightFactor ?? ORBIT_HEIGHT_FACTOR) * placement.heightScale;
+        orbitLiftFactor(shot.radius, shot.heightFactor ?? ORBIT_HEIGHT_FACTOR) *
+        placement.heightScale;
       const radius = shot.radius * placement.radiusScale;
       _visCandidate.set(
         _subjectPos.x + Math.cos(placement.angle) * radius,
@@ -537,7 +597,10 @@ export function DirectorController() {
           _subjectPos.x,
           _subjectPos.z,
         );
-        const lift0 = shot.heightFactor ?? ORBIT_HEIGHT_FACTOR;
+        const lift0 = orbitLiftFactor(
+          shot.radius,
+          shot.heightFactor ?? ORBIT_HEIGHT_FACTOR,
+        );
         const norm = Math.hypot(1, lift0);
         _visNewAim.set(
           Math.cos(bearing) / norm,
@@ -668,6 +731,8 @@ export function DirectorController() {
     travelMinDurationRef.current = 0;
     radiusScaleRef.current = 1;
     centerOverrideRef.current = null;
+    terrainLiftRef.current = -1;
+    terrainPrevRef.current.valid = false;
     applyShot(shot);
     dollySeededRef.current = false;
     if (shot.kind === "followFlag" || shot.kind === "followPlayer") {
@@ -762,7 +827,10 @@ export function DirectorController() {
       // live players is the fallback for sparse data.
       const doors = doorwaysNear(shot.doorwayOf);
       const planned = shot.startAngle ?? 0;
-      const height = shot.heightFactor ?? ORBIT_HEIGHT_FACTOR;
+      const height = orbitLiftFactor(
+        shot.radius,
+        shot.heightFactor ?? ORBIT_HEIGHT_FACTOR,
+      );
       const norm = Math.hypot(1, height);
       for (const door of doors) {
         // Camera on the OUTSIDE of the door, looking in at the mouth.
@@ -941,7 +1009,7 @@ export function DirectorController() {
       const placement = chooseClearPlacement(
         anchor,
         shot.radius,
-        shot.heightFactor ?? ORBIT_HEIGHT_FACTOR,
+        orbitLiftFactor(shot.radius, shot.heightFactor ?? ORBIT_HEIGHT_FACTOR),
         planned,
         { minScale: shot.lookSubject ? 0 : STANDOFF_MIN_SCALE },
       );
@@ -988,9 +1056,12 @@ export function DirectorController() {
     const cy = anchor[2];
     const cz = anchor[0];
     const radius = shot.radius * radiusScaleRef.current;
+    // The lift factor is capped by the PLANNED radius — the same basis
+    // chooseClearPlacement verified its sightline with; deriving it
+    // from the pulled-in radius would ride higher than was verified.
     const height =
       radius *
-      (shot.heightFactor ?? ORBIT_HEIGHT_FACTOR) *
+      orbitLiftFactor(shot.radius, shot.heightFactor ?? ORBIT_HEIGHT_FACTOR) *
       heightScaleRef.current;
     camera.position.set(
       cx + Math.cos(orbitAngleRef.current) * radius,

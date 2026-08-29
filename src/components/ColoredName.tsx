@@ -21,10 +21,12 @@ const SEGMENT_COLORS: Record<number, string> = {
 /**
  * Render a raw (unstripped) player name preserving its embedded color-code
  * segments — for the scoreboard, where clan colors are meaningful. Falls
- * back to plain text when the name has no markup.
+ * back to plain text when the name has no markup. Official clan tags are
+ * color-7 segments and render yellow via the palette; typed "=USA="
+ * conventions are indistinguishable from the name and stay name-colored.
  */
 export function ColoredName({ raw }: { raw: string }) {
-  const segments = parseColorSegments(raw);
+  const segments = parseColorSegments(raw, { taggedColors: true });
   return (
     <>
       {segments.map((seg, i) => {

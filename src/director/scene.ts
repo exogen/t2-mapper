@@ -23,6 +23,7 @@ import {
   flagLabel,
   playersAtSecFor,
   sampleAt,
+  spokenName,
   type FlagTrack,
   type PlayersAtSec,
 } from "./dataset";
@@ -38,6 +39,16 @@ export type {
   SceneTopic,
   ShotScene,
 } from "./types";
+
+/** Kills further than this from the shot are not called (unless a
+ *  carrier is involved) — the viewer cannot see them. */
+const SCENE_KILL_RANGE = 100;
+/** Players further than this from the CAMERA are announced only when
+ *  nobody closer is on screen. */
+const SCENE_PLAYER_CAM_RANGE = 100;
+/** A teamkill this close to the enemy flag is a disaster worth calling
+ *  wherever the camera is — the victim was moments from a grab. */
+const TEAMKILL_FLAG_RANGE = 12;
 
 /** Assumed horizontal FOV for framing labels (Tribes plays ~110°). */
 const FRAME_HALF_FOV_RAD = (110 / 2) * (Math.PI / 180);
@@ -186,6 +197,18 @@ function frameOf(camera: CameraEstimate, pos: DirectorVec3): FramePosition {
   return `${depth} ${side}` as FramePosition;
 }
 
+/** Distances are approximate on purpose ("~80 meters") — a booth
+ *  saying "413 meters" reads as a computer talking. */
+function approxMeters(range: number): string {
+  return `~${Math.round(range / 10) * 10} meters`;
+}
+
+/** Word-edge gamer-tag decorations stripped from free text (chat kill
+ *  descriptions carry raw names like "Heat_" or "--Gunther--"). */
+function spokenText(text: string): string {
+  return text.replace(/(^|\s)[-_|=~*]+(?=\S)|(?<=\S)[-_|=~*]+(?=\s|$)/g, "$1");
+}
+
 const BEARINGS = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"] as const;
 
 function compass(from: DirectorVec3, to: DirectorVec3): ScenePlayer["bearing"] {
@@ -235,6 +258,22 @@ function playerPosAt(
   return best?.pos ?? null;
 }
 
+function teamOfAt(
+  targetId: number | null,
+  atSec: number,
+  playersAtSec: PlayersAtSec,
+): number | null {
+  if (targetId == null) return null;
+  const sec = Math.round(atSec);
+  for (const dt of [0, -1, 1, -2, 2, -3, 3]) {
+    const team = playersAtSec
+      .get(sec + dt)
+      ?.find((p) => p.targetId === targetId)?.teamId;
+    if (team != null) return team;
+  }
+  return null;
+}
+
 function identityOf(targetId: number, dataset: DirectorDataset) {
   return dataset.playerNames.find((p) => p.targetId === targetId);
 }
@@ -245,7 +284,14 @@ function displayName(
 ): string {
   if (targetId == null) return "someone";
   const entry = identityOf(targetId, dataset);
-  return entry?.displayName ?? entry?.name ?? `player ${targetId}`;
+  // An official (control-code-delimited) tag lets us speak the base
+  // name confidently; otherwise the full name is the name.
+  return spokenName(
+    entry?.baseName ??
+      entry?.displayName ??
+      entry?.name ??
+      `player ${targetId}`,
+  );
 }
 
 function teamName(
@@ -254,6 +300,47 @@ function teamName(
 ): string | null {
   if (teamId == null) return null;
   return dataset.teams.find((t) => t.teamId === teamId)?.name ?? null;
+}
+
+/** Within this of an inventory station counts as using it. */
+const SUIT_RANGE = 8;
+
+/**
+ * Per-target times at an inventory station, plus deaths — the booth
+ * may only read loadout tells (armor/pack) for players who have
+ * ACTUALLY suited up since their last spawn: pre-match and fresh
+ * spawns are forced loadouts that say nothing about intent.
+ */
+function buildSuitIndex(dataset: DirectorDataset) {
+  const suitTimes = new Map<number, number[]>();
+  const stations = dataset.stations.filter((s) => s.kind === "inventory");
+  if (stations.length > 0) {
+    for (const p of dataset.playerSamples) {
+      for (const st of stations) {
+        if (dist(p.pos, st.pos) <= SUIT_RANGE) {
+          let list = suitTimes.get(p.targetId);
+          if (!list) suitTimes.set(p.targetId, (list = []));
+          list.push(p.timeSec);
+          break;
+        }
+      }
+    }
+  }
+  const deathTimes = new Map<number, number[]>();
+  for (const d of dataset.deaths) {
+    let list = deathTimes.get(d.targetId);
+    if (!list) deathTimes.set(d.targetId, (list = []));
+    list.push(d.timeSec);
+  }
+  return (targetId: number, atSec: number): boolean => {
+    let lastDeath = -1;
+    for (const t of deathTimes.get(targetId) ?? []) {
+      if (t < atSec && t > lastDeath) lastDeath = t;
+    }
+    return (suitTimes.get(targetId) ?? []).some(
+      (t) => t > lastDeath && t <= atSec,
+    );
+  };
 }
 
 /** How wide a net to cast for "in this scene". */
@@ -271,6 +358,7 @@ function describePlayers(
   playersAtSec: PlayersAtSec,
   tracks: Map<number, FlagTrack>,
   camera: CameraEstimate | null,
+  hasSuited: (targetId: number, atSec: number) => boolean,
 ): ScenePlayer[] {
   const range = sceneRange(shot);
   const players = playersAtSec.get(Math.round(midSec)) ?? [];
@@ -311,27 +399,55 @@ function describePlayers(
           Math.abs(m.timeSec - midSec) <= 4 && m.shooterTargetId === p.targetId,
       )
     ) {
-      doing = "shelling";
+      doing = "firing mortars";
     } else if (
       dataset.stations.some(
-        (st) => st.kind === "inventory" && dist(st.pos, p.pos) <= 8,
+        (st) => st.kind === "inventory" && dist(st.pos, p.pos) <= SUIT_RANGE,
       )
     ) {
       doing = "suiting up";
     } else if ((speed ?? 0) >= 40) {
       doing = "skiing";
     }
+    // Direction relative to the bases, from the sampled displacement —
+    // so "pouring out" vs "heading in to suit up" is data, not a guess.
+    let moving: ScenePlayer["moving"];
+    if (prev && (speed ?? 0) >= 4) {
+      const own = stands.find((st) => st.teamId === p.teamId);
+      const enemy = stands.find(
+        (st) => st.teamId != null && st.teamId !== p.teamId,
+      );
+      const closing = (st: (typeof stands)[number]) =>
+        dist(p.pos, st.pos) - dist(prev.pos, st.pos);
+      if (own && closing(own) < -2 && dist(p.pos, own.pos) < 120) {
+        moving = "into their own base";
+      } else if (own && closing(own) > 2 && dist(prev.pos, own.pos) < 120) {
+        moving = "out of their base";
+      } else if (enemy && closing(enemy) < -2) {
+        moving = "toward the enemy base";
+      } else if (own && closing(own) < -2) {
+        moving = "back toward their base";
+      }
+    }
+    // Loadout tells only for players who actually visited an invo
+    // this life — a spawn loadout says nothing about their plans.
+    const suited = hasSuited(p.targetId, midSec);
     out.push({
       name: displayName(p.targetId, dataset),
       targetId: p.targetId,
       team: teamName(p.teamId, dataset),
-      armor: p.armor,
+      armor: suited ? p.armor : undefined,
       skin: identity?.skin,
-      pack: p.pack,
+      // Only the control-code-delimited official tag — typed "=USA="
+      // conventions stay part of the name (intent is unknowable). The
+      // separator character is not spoken ("TF_" → "TF").
+      clan: identity?.clan ? spokenName(identity.clan) : undefined,
+      pack: suited ? p.pack : undefined,
       dist: Math.round(d),
       bearing: compass(anchor, p.pos),
       frame: camera ? frameOf(camera, p.pos) : undefined,
       doing,
+      moving,
       speed: speed != null ? Math.round(speed) : undefined,
     });
     camDist.set(
@@ -345,24 +461,97 @@ function describePlayers(
   // the background, so someone deep in the frame must not lead a
   // lineup call just because they stand near the look target.
   out.sort((a, b) => camDist.get(a.targetId)! - camDist.get(b.targetId)!);
-  return out.slice(0, 12);
+  // Prefer players near the CAMERA itself: someone deep in the
+  // background is unidentifiable on screen, so announce them only when
+  // nobody closer is in the scene.
+  const close = out.filter(
+    (p) => camDist.get(p.targetId)! <= SCENE_PLAYER_CAM_RANGE,
+  );
+  return (close.length > 0 ? close : out).slice(0, 12);
 }
 
 function describeEvents(
   shot: Shot,
+  anchor: DirectorVec3 | null,
   dataset: DirectorDataset,
   tracks: Map<number, FlagTrack>,
+  playersAtSec: PlayersAtSec,
 ): SceneEvent[] {
   const events: SceneEvent[] = [];
   const inWindow = (t: number) => t >= shot.startSec - 0.5 && t <= shot.endSec;
+  const carrierAt = (timeSec: number, targetId: number | null) =>
+    targetId != null &&
+    [...tracks.values()].some(
+      (track) => sampleAt(track.samples, timeSec)?.carrierTargetId === targetId,
+    );
   for (const death of dataset.deaths) {
     if (!inWindow(death.timeSec) || death.killerTargetId == null) continue;
+    // A kill the viewer cannot SEE is not worth calling: it must happen
+    // near the shot (killer or victim), or involve a flag carrier.
+    const near =
+      anchor != null &&
+      (dist(death.pos, anchor) <= SCENE_KILL_RANGE ||
+        (death.killerPos != null &&
+          dist(death.killerPos, anchor) <= SCENE_KILL_RANGE));
+    // A teamkill that costs a flag play — the victim was carrying, or
+    // standing on the enemy flag about to grab — is always worth
+    // calling; other kills stay gated by visibility.
+    const victimTeam =
+      death.teamId ?? teamOfAt(death.targetId, death.timeSec, playersAtSec);
+    const killerTeam = teamOfAt(
+      death.killerTargetId,
+      death.timeSec,
+      playersAtSec,
+    );
+    const teamkill =
+      killerTeam != null &&
+      victimTeam != null &&
+      killerTeam === victimTeam &&
+      death.killerTargetId !== death.targetId;
+    const victimCarried = carrierAt(death.timeSec, death.targetId);
+    let atEnemyFlag = false;
+    if (teamkill && !victimCarried) {
+      const enemyStand = dataset.flagStands.find(
+        (st) => st.teamId != null && st.teamId !== victimTeam,
+      );
+      const flagPos = enemyStand
+        ? sampleAt(tracks.get(enemyStand.slot)?.samples ?? [], death.timeSec)
+            ?.pos
+        : null;
+      atEnemyFlag =
+        flagPos != null && dist(death.pos, flagPos) <= TEAMKILL_FLAG_RANGE;
+    }
+    const criticalTeamkill = teamkill && (victimCarried || atEnemyFlag);
+    if (
+      !near &&
+      !victimCarried &&
+      !carrierAt(death.timeSec, death.killerTargetId) &&
+      !criticalTeamkill
+    ) {
+      continue;
+    }
     const range = death.killerPos ? dist(death.pos, death.killerPos) : null;
-    const midair = death.airborne === true && (death.speed ?? 0) >= 15;
+    const midair = death.midair === true;
+    // A distance earns a mention only when it makes the shot special —
+    // most kills carry none, long-range ones carry the story.
     events.push({
       timeSec: death.timeSec,
       type: "kill",
-      detail: "",
+      detail: [
+        teamkill ? "TEAMKILL — their own teammate" : null,
+        midair ? "mid-air" : null,
+        death.headshot ? "headshot" : null,
+        death.weapon ?? null,
+        range == null
+          ? null
+          : range > 300
+            ? "long range"
+            : range >= 75
+              ? approxMeters(range)
+              : null,
+      ]
+        .filter(Boolean)
+        .join(" "),
       actors: [
         { name: displayName(death.killerTargetId, dataset), role: "killer" },
         { name: displayName(death.targetId, dataset), role: "victim" },
@@ -370,14 +559,19 @@ function describeEvents(
       weapon: death.weapon,
       midair,
     });
-    const last = events[events.length - 1];
-    last.detail = [
-      last.midair ? "mid-air" : null,
-      death.weapon ?? null,
-      range != null ? `${Math.round(range)}m` : null,
-    ]
-      .filter(Boolean)
-      .join(" ");
+    if (criticalTeamkill) {
+      events.push({
+        timeSec: death.timeSec,
+        type: "teamkill",
+        detail: victimCarried
+          ? "shot down their OWN teammate carrying the flag"
+          : "shot down their OWN teammate right on the enemy flag",
+        actors: [
+          { name: displayName(death.killerTargetId, dataset), role: "killer" },
+          { name: displayName(death.targetId, dataset), role: "victim" },
+        ],
+      });
+    }
     // Near-miss: a carrier cut down close to completing the capture.
     for (const track of tracks.values()) {
       const before = sampleAt(track.samples, death.timeSec - 0.5);
@@ -387,7 +581,7 @@ function describeEvents(
         events.push({
           timeSec: death.timeSec,
           type: "near-miss",
-          detail: `carrier killed ${Math.round(dist(death.pos, goal.pos))}m short of the capture`,
+          detail: `carrier killed ${approxMeters(dist(death.pos, goal.pos))} short of the capture`,
           actors: [
             { name: displayName(death.targetId, dataset), role: "carrier" },
           ],
@@ -406,13 +600,73 @@ function describeEvents(
     const type = map[event.type];
     if (!type) continue;
     const actor = event.actor ?? event.capturer;
+    // A grab OFF THE STAND (flag was home) is the marquee version of
+    // the play — flagged so the booth knows to light up (and may call
+    // it a regrab/e-grab); a loose-field pickup is not.
+    let offTheStand = false;
+    if (type === "grab") {
+      const stand = dataset.flagStands.find(
+        (st) =>
+          st.name != null &&
+          event.flagTeamName != null &&
+          st.name.toLowerCase() === event.flagTeamName.toLowerCase(),
+      );
+      const before = stand
+        ? sampleAt(tracks.get(stand.slot)?.samples ?? [], event.timeSec - 0.7)
+        : null;
+      offTheStand = before?.status === "home";
+    }
+    // Drops carry the carrier's INTENT — the framing the booth needs.
+    const detail =
+      type === "grab" && offTheStand
+        ? `${spokenText(event.description)} — RIGHT OFF THE STAND`
+        : type !== "drop" || event.dropKind == null
+          ? spokenText(event.description)
+          : event.dropKind === "died"
+            ? "killed carrying it — flag loose"
+            : event.dropKind === "pass"
+              ? "an intentional throw to teammates — a pass"
+              : "threw the flag deliberately";
     events.push({
       timeSec: event.timeSec,
       type,
-      detail: event.description,
+      detail,
       actors: actor
-        ? [{ name: actor, role: type === "cap" ? "capturer" : "actor" }]
+        ? [
+            {
+              name: spokenName(actor),
+              role: type === "cap" ? "capturer" : "actor",
+            },
+          ]
         : [],
+      dropKind: type === "drop" ? event.dropKind : undefined,
+    });
+  }
+  // Non-lethal server-announced skill shots near the camera — an MA
+  // that didn't kill is still the play of the moment.
+  for (const skill of dataset.skillShots ?? []) {
+    if (skill.lethal || !inWindow(skill.timeSec) || skill.targetId == null) {
+      continue;
+    }
+    const pos = playerPosAt(skill.targetId, skill.timeSec, dataset);
+    if (anchor == null || pos == null || dist(pos, anchor) > SCENE_KILL_RANGE) {
+      continue;
+    }
+    events.push({
+      timeSec: skill.timeSec,
+      type: "skill-shot",
+      detail:
+        skill.kind === "midair"
+          ? `mid-air ${skill.weapon ?? "disc"}${
+              skill.rangeM != null && skill.rangeM > 300
+                ? " from long range"
+                : skill.rangeM != null && skill.rangeM >= 30
+                  ? ` ${approxMeters(skill.rangeM)}`
+                  : ""
+            } — target survived`
+          : "sniper headshot",
+      actors: [{ name: spokenName(skill.name), role: "shooter" }],
+      midair: skill.kind === "midair" || undefined,
     });
   }
   for (const st of dataset.structures) {
@@ -538,9 +792,9 @@ function summarize(
   const carried = flags.find((f) => f.status === "carried");
   if (carried && topic !== "lull") {
     parts.push(
-      `${carried.team} flag carried by ${carried.carrier}, ${carried.distFromHome}m from home` +
+      `${carried.team} flag carried by ${carried.carrier}, ${approxMeters(carried.distFromHome)} from home` +
         (carried.distToCapture != null
-          ? `, ${carried.distToCapture}m from a capture`
+          ? `, ${approxMeters(carried.distToCapture)} from a capture`
           : ""),
     );
   }
@@ -568,6 +822,7 @@ function summarize(
 export function describeScenes(plan: ShotPlan, dataset: DirectorDataset): void {
   const tracks = buildFlagTracks(dataset);
   const playersAtSec = playersAtSecFor(dataset);
+  const hasSuited = buildSuitIndex(dataset);
   let prevKey: string | null = null;
   let runStartSec = 0;
   for (const shot of plan.shots) {
@@ -593,9 +848,10 @@ export function describeScenes(plan: ShotPlan, dataset: DirectorDataset): void {
           playersAtSec,
           tracks,
           camera,
+          hasSuited,
         )
       : [];
-    const events = describeEvents(shot, dataset, tracks);
+    const events = describeEvents(shot, anchor, dataset, tracks, playersAtSec);
     const flags = describeFlags(shot, dataset, tracks);
     const scoreAt = (dataset.scoreSamples ?? []).filter(
       (s) => s.timeSec <= shot.startSec,

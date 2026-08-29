@@ -234,7 +234,45 @@ export function playerName(
   dataset: DirectorDataset,
 ): string | null {
   if (targetId == null) return null;
-  return dataset.playerNames.find((p) => p.targetId === targetId)?.name ?? null;
+  const entry = dataset.playerNames.find((p) => p.targetId === targetId);
+  if (!entry) return null;
+  return spokenName(entry.displayName ?? entry.name);
+}
+
+/**
+ * A display name normalized FOR COMMENTARY ONLY (matching always uses
+ * target ids or the exact name string): gamer-tag decorations are
+ * shorn from the edges ("--Gunther--" → "Gunther", "|HP|" → "HP"),
+ * and runs of three-plus single spaced-out characters are joined
+ * ("B i s h" → "Bish", "s l u s h" → "slush"). Falls back to the
+ * original when stripping would erase it.
+ */
+/**
+ * A mission name normalized FOR SPEECH: community release prefixes
+ * (S5/S8/TWL/TWL2/DMP/DMP2) and suffixes (_nef, LT) are packaging, not
+ * the map's name — "S5_Woodymyrk" is spoken "Woodymyrk",
+ * "Raindance_nef" is "Raindance", "DangerousCrossingLT" is
+ * "DangerousCrossing". Display only; matching always uses the exact
+ * mission name.
+ */
+export function spokenMapName(name: string): string {
+  let out = name;
+  out = out.replace(/^(?:S5|S8|TWL2?|DMP2?)[-_ ]+/i, "");
+  out = out.replace(/[-_ ]nef$/i, "");
+  // "LT" only when it reads as an appended marker (after a lowercase
+  // letter, digit, or separator) — never the tail of an all-caps name.
+  out = out.replace(/(?<=[a-z0-9])LT$/, "").replace(/[-_ ]LT$/i, "");
+  out = out.replace(/_/g, " ").trim();
+  return out.length > 0 ? out : name;
+}
+
+export function spokenName(name: string): string {
+  const joined = name.replace(
+    /(^|\s)((?:\S ){2,}\S)(?=\s|$)/g,
+    (_m, pre: string, run: string) => pre + run.replace(/ /g, ""),
+  );
+  const stripped = joined.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, "");
+  return stripped.length > 0 ? stripped : name;
 }
 
 /** Average speed of a flag over a window, from its own samples. */

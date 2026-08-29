@@ -134,7 +134,7 @@ export function bombardmentShots(
             startSec: t,
             endSec: chunkEnd,
             transitionIn: "cut",
-            reason: `Mortar fire — ${playerName(crew, dataset) ?? "crew"} shelling`,
+            reason: `Mortar fire — ${playerName(crew, dataset) ?? "crew"} raining mortars`,
           }
         : orbitShot({
             center: barrage.impact,
@@ -282,7 +282,7 @@ export function situationalShot(
               action.kind === "launch"
                 ? `Mortar fire beside the inventory${
                     shooter != null
-                      ? ` — ${playerName(shooter, dataset) ?? "a player"} shelling`
+                      ? ` — ${playerName(shooter, dataset) ?? "a player"} lobbing mortars`
                       : ""
                   }`
                 : "Mortar landing at the inventory",

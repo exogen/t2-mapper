@@ -599,6 +599,7 @@ describe("situationalShot story priority", () => {
         killerPos: [430, 300, 100] as DirectorVec3,
         weapon: "disc",
         airborne: true,
+        midair: true,
         speed: 50,
       },
     ];
@@ -720,6 +721,7 @@ describe("highlightKill mid-air ranking", () => {
         targetId: 11,
         pos: [400, 340, 120] as DirectorVec3,
         airborne: true,
+        midair: true,
         speed: 60,
       },
     ];
@@ -735,6 +737,8 @@ describe("highlightKill mid-air ranking", () => {
         ...base,
         targetId: 9,
         pos: [400, 300, 120] as DirectorVec3,
+        // The scanner's verified verdict is the only MA source now — a
+        // hovering victim never earns it, so the dataset carries none.
         airborne: true,
         speed: 3,
       },
