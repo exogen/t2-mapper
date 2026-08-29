@@ -15,8 +15,6 @@ import type {
   Shot,
 } from "./types";
 import {
-  DIRECTOR_MIN_RUN_SEC,
-  DIRECTOR_FIXED_CHUNK_SEC,
   DIRECTOR_ANTICIPATION_SEC,
   DIRECTOR_BASE_ORBIT_RADIUS,
   DIRECTOR_BASE_ORBIT_SPEED,
@@ -57,6 +55,7 @@ import {
 import type { Segment } from "./interest";
 import { lineupShots } from "./lineup";
 import {
+  forEachChunk,
   bombardmentShots,
   idleShots,
   pushReachingBack,
@@ -239,23 +238,14 @@ function emitCtfShots(
       // A long base segment is not one slow orbit: every other chunk
       // goes looking for the drama — a kill, a raid, a barrage, a
       // vehicle — so the base beat has perspective changes in it.
-      for (
-        let t = segment.startSec;
-        t < segment.endSec;
-        t += DIRECTOR_FIXED_CHUNK_SEC
-      ) {
-        const chunkEnd = Math.min(t + DIRECTOR_FIXED_CHUNK_SEC, segment.endSec);
-        if (chunkEnd - t < DIRECTOR_MIN_RUN_SEC) {
-          if (shots.length > 0) shots[shots.length - 1].endSec = chunkEnd;
-          break;
-        }
+      forEachChunk(segment.startSec, segment.endSec, shots, (t, chunkEnd) => {
         const situational =
           variety.fixedCount % 2 === 1
             ? situationalShot(t, chunkEnd, dataset, playersAtSec, variety)
             : null;
         if (situational) {
           pushReachingBack(shots, situational, segment.startSec);
-          continue;
+          return;
         }
         variety.fixedCount++;
         shots.push({
@@ -268,7 +258,7 @@ function emitCtfShots(
           transitionIn: "cut",
           reason: `${flagLabel(subject.slot, dataset).replace(/ flag$/, "")} base`,
         });
-      }
+      });
     } else {
       shots.push(
         ...idleShots(

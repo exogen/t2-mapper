@@ -17,6 +17,7 @@ import type {
 } from "./types";
 import {
   DIRECTOR_CAP_PREROLL_SEC,
+  DIRECTOR_DROPPED_FAR,
   DIRECTOR_CHASE_SEGMENT_SEC,
   DIRECTOR_CHASE_STYLES,
   DIRECTOR_CLUSTER_CAM_HEIGHT,
@@ -90,6 +91,7 @@ import {
   angleFacingLandmark,
   distanceForSpeed,
   farLandmark,
+  fixedFraming,
   onBroadcastSide,
   radiusForSpread,
 } from "./framing";
@@ -109,6 +111,7 @@ import {
   crowdNear,
 } from "./analysis";
 import {
+  forEachChunk,
   pushReachingBack,
   situationalShot,
   watchPlayersShots,
@@ -444,23 +447,42 @@ function fieldRunShots(run: StatusRun, ctx: RunCtx): boolean {
   } = ctx;
   // Dropped flag: a locked close orbit on a flag lying still is dead
   // air — park a stationary, zoomed-out camera over the area instead
-  // and let returners/re-grabbers converge on screen.
+  // and let returners/re-grabbers converge on screen. The center is
+  // always somewhere the flag actually IS — a thrown flag can still be
+  // sliding when settledPos gives up, and the old home-stand fallback
+  // anchored the "drop" across the map from the drop.
   const center =
     settledPos(run, track) ??
-    dataset.flagStands.find((s) => s.slot === slot)?.pos;
-  // ...but only while somebody is actually contesting it. A flag
-  // lying alone in a field is exactly as dull as an idle flagstand,
-  // so when nobody is near it, go watch the players instead.
+    sampleAt(track.samples, run.endSec - 0.25)?.pos ??
+    sampleAt(track.samples, (run.startSec + run.endSec) / 2)?.pos;
+  // ...covered while somebody is contesting it (checked at both where
+  // it settles AND where it fell — a long throw slides between them),
+  // or whenever it lies FAR from home: a live flag deep in enemy
+  // country is the story even before anyone reaches it.
+  const dropPos = sampleAt(track.samples, run.startSec + 0.3)?.pos;
   const contested =
     center != null &&
-    someoneNear(
+    (someoneNear(
       run.startSec,
       run.endSec,
       center,
       DIRECTOR_CONTESTED_RANGE,
       playersAtSec,
-    );
-  if (center && contested) {
+    ) ||
+      (dropPos != null &&
+        someoneNear(
+          run.startSec,
+          run.endSec,
+          dropPos,
+          DIRECTOR_CONTESTED_RANGE,
+          playersAtSec,
+        )));
+  const homePos = dataset.flagStands.find((s) => s.slot === slot)?.pos;
+  const farFromHome =
+    center != null &&
+    homePos != null &&
+    dist(center, homePos) >= DIRECTOR_DROPPED_FAR;
+  if (center && (contested || farFromHome)) {
     const crowded = runCrowd(run, track, playersAtSec) >= crowdMin;
     // Dead static and angled so a base sits behind the flag: the
     // point is to watch it fall, slide and get contested from a
@@ -476,25 +498,49 @@ function fieldRunShots(run: StatusRun, ctx: RunCtx): boolean {
     // returner racing a re-grabber, or the shrike the capper is trying
     // to reach — the scene around the flag IS the shot.
     const sceneSpread = dropSceneSpread(run, center, dataset, playersAtSec);
-    shots.push(
-      orbitShot({
-        center,
-        radius: Math.max(
-          DIRECTOR_DROPPED_ORBIT_RADIUS,
-          radiusForSpread(sceneSpread, dataset),
-        ),
-        angle: droppedAngle,
-        avoidPath: flagPath(run.startSec, run.endSec),
-        still: true,
-        heightFactor: crowded
-          ? DIRECTOR_CROWD_ORBIT_HEIGHT
-          : DIRECTOR_DROPPED_ORBIT_HEIGHT,
-        lookSubject: { type: "flag", slot },
-        startSec: run.startSec,
-        endSec: run.endSec,
-        reason: `${label} on the ground — wide view`,
-      }),
-    );
+    // A LONG lie is not one long stare: chunk it and swing the bearing
+    // a third-turn each chunk, so the subject stays the flag but the
+    // eye moves — an angle change on the same story, never a cut away
+    // from it. Explicit offsets, because the framing rotation can land
+    // back on the landmark bearing and merge into one long stare.
+    // The base bearing: the landmark angle when a base is in range,
+    // otherwise the house framing's — resolved ONCE so the per-chunk
+    // swings are guaranteed distinct (on big maps every framing call
+    // degenerates to the same sideline, which the redundancy merge
+    // would fold back into one long stare).
+    const baseAngle =
+      droppedAngle ?? fixedFraming(center, dataset, variety).startAngle;
+    let chunkIndex = 0;
+    forEachChunk(run.startSec, run.endSec, shots, (t, chunkEnd) => {
+      const swing = (Math.ceil(chunkIndex / 2) * Math.PI) / 3;
+      shots.push(
+        orbitShot({
+          center,
+          radius: Math.max(
+            DIRECTOR_DROPPED_ORBIT_RADIUS,
+            radiusForSpread(sceneSpread, dataset),
+          ),
+          angle:
+            baseAngle != null
+              ? onBroadcastSide(
+                  baseAngle + (chunkIndex % 2 === 1 ? 1 : -1) * swing,
+                  dataset,
+                )
+              : undefined,
+          ...(baseAngle == null ? { framing: { dataset, variety } } : {}),
+          avoidPath: flagPath(t, chunkEnd),
+          still: true,
+          heightFactor: crowded
+            ? DIRECTOR_CROWD_ORBIT_HEIGHT
+            : DIRECTOR_DROPPED_ORBIT_HEIGHT,
+          lookSubject: { type: "flag", slot },
+          startSec: t,
+          endSec: chunkEnd,
+          reason: `${label} on the ground — wide view`,
+        }),
+      );
+      chunkIndex++;
+    });
     if (returnTimes.some((rt) => Math.abs(rt - run.endSec) <= 2.5)) {
       aftermath(run.endSec, `${label} returned`, { requireCrowd: true });
     }
@@ -548,12 +594,7 @@ function standBattleShots(run: StatusRun, ctx: RunCtx): boolean {
   // A contested stand is a battle, but one camera on it for
   // minutes is a stare — chunk it and let duels, barrages and
   // suit-ups take their turn between the overheads.
-  for (let t = run.startSec; t < run.endSec; t += DIRECTOR_FIXED_CHUNK_SEC) {
-    const chunkEnd = Math.min(t + DIRECTOR_FIXED_CHUNK_SEC, run.endSec);
-    if (chunkEnd - t < DIRECTOR_MIN_RUN_SEC) {
-      if (shots.length > 0) shots[shots.length - 1].endSec = chunkEnd;
-      break;
-    }
+  forEachChunk(run.startSec, run.endSec, shots, (t, chunkEnd) => {
     // Every other chunk goes looking for something else happening.
     const situational =
       variety.fixedCount % 2 === 1
@@ -561,7 +602,7 @@ function standBattleShots(run: StatusRun, ctx: RunCtx): boolean {
         : null;
     if (situational) {
       pushReachingBack(shots, situational, run.startSec);
-      continue;
+      return;
     }
     const cluster = stableCluster(
       t,
@@ -594,7 +635,7 @@ function standBattleShots(run: StatusRun, ctx: RunCtx): boolean {
         reason: `${label} stand — battle overhead`,
       }),
     );
-  }
+  });
   return true;
 }
 
@@ -830,12 +871,7 @@ function turtleRunShots(run: StatusRun, ctx: RunCtx): boolean {
   const turtle = turtleHold(run, track, dataset, playersAtSec);
   if (!turtle) return false;
   {
-    for (let t = run.startSec; t < run.endSec; t += DIRECTOR_FIXED_CHUNK_SEC) {
-      const chunkEnd = Math.min(t + DIRECTOR_FIXED_CHUNK_SEC, run.endSec);
-      if (chunkEnd - t < DIRECTOR_MIN_RUN_SEC) {
-        if (shots.length > 0) shots[shots.length - 1].endSec = chunkEnd;
-        break;
-      }
+    forEachChunk(run.startSec, run.endSec, shots, (t, chunkEnd) => {
       // Re-anchor per chunk: over a long hold the carrier shuffles
       // around inside the base, and a 12m camera pinned to the whole
       // run's centroid ends up staring at the wall they left.
@@ -899,8 +935,7 @@ function turtleRunShots(run: StatusRun, ctx: RunCtx): boolean {
             }`,
           });
           // Skip the chunks the extended follow consumed.
-          t = followEnd - DIRECTOR_FIXED_CHUNK_SEC;
-          continue;
+          return followEnd - DIRECTOR_FIXED_CHUNK_SEC;
         }
       }
       const inside = pressing || rotation === 0;
@@ -932,7 +967,7 @@ function turtleRunShots(run: StatusRun, ctx: RunCtx): boolean {
               reason: `${label} turtled — watching the doors`,
             }),
       );
-    }
+    });
   }
   return true;
 }

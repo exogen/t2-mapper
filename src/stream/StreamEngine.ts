@@ -35,6 +35,9 @@ import {
   getNumberField,
   isTruthyField,
   resolveTracerVisual,
+  resolveBoltVisual,
+  resolveBeamVisual,
+  resolveLinkBeamVisual,
   resolveSpriteVisual,
   parseWeaponImageStates,
   stripTaggedStringMarkup,
@@ -135,6 +138,11 @@ export interface MutableEntity {
   gravityMod?: number;
   /** Ticks since the projectile left the muzzle (seeded from currTick). */
   projAgeTicks?: number;
+  /** Beam projectiles: Torque-space endpoints from the ghost. */
+  beamStart?: [number, number, number];
+  beamEnd?: [number, number, number];
+  /** Link beams (ELF/repair): the target's ghost index. */
+  linkTargetGhostIndex?: number;
   /** Precomputed flight segment for linear projectiles (Torque model:
    *  one static-world raycast at spawn, closed-form position per tick). */
   linearSegment?: LinearSegment;
@@ -149,6 +157,8 @@ export interface MutableEntity {
   isExplosion?: boolean;
   expiryTick?: number;
   faceViewer?: boolean;
+  /** Explosion datablock's faceViewer, stashed for spawnExplosion — NOT this entity's. */
+  explosionFaceViewer?: boolean;
   explosionDataBlockId?: number;
   maintainEmitterId?: number;
   sensorGroup?: number;
@@ -1100,6 +1110,7 @@ export abstract class StreamEngine implements StreamingPlayback {
     entity.explosionShape = undefined;
     entity.explosionLifetimeTicks = undefined;
     entity.faceViewer = undefined;
+    entity.explosionFaceViewer = undefined;
     entity.simulatedVelocity = undefined;
     entity.projectilePhysics = undefined;
     entity.gravityMod = undefined;
@@ -1166,6 +1177,9 @@ export abstract class StreamEngine implements StreamingPlayback {
       const shapeName = resolveShapeName(entity.className, blockData);
       entity.visual =
         resolveTracerVisual(entity.className, blockData) ??
+        resolveBoltVisual(entity.className, blockData) ??
+        resolveBeamVisual(entity.className, blockData) ??
+        resolveLinkBeamVisual(entity.className, blockData) ??
         resolveSpriteVisual(entity.className, blockData);
       if (typeof shapeName === "string") {
         entity.shapeHint = shapeName;
@@ -1220,7 +1234,7 @@ export abstract class StreamEngine implements StreamingPlayback {
         const info = this.resolveExplosionInfo(dataBlockId);
         if (info) {
           entity.explosionShape = info.shape;
-          entity.faceViewer = info.faceViewer;
+          entity.explosionFaceViewer = info.faceViewer;
           entity.explosionLifetimeTicks = info.lifetimeTicks;
           entity.explosionDataBlockId = info.explosionDataBlockId;
         }
@@ -1437,6 +1451,34 @@ export abstract class StreamEngine implements StreamingPlayback {
       data.sourceObject >= 0
     ) {
       entity.sourceGhostIndex = data.sourceObject;
+    }
+
+    // Link beams (ELF/repair): shooter and zapped/repaired object, by
+    // ghost index — the endpoints are LIVE and re-derived per frame.
+    if (
+      entity.className === "ELFProjectile" ||
+      entity.className === "RepairProjectile"
+    ) {
+      if (typeof data.sourceObject === "number" && data.sourceObject >= 0) {
+        entity.sourceGhostIndex = data.sourceObject;
+      }
+      const target = (data.targetObject ?? data.repairingObject) as
+        | number
+        | undefined;
+      if (typeof target === "number" && target >= 0) {
+        entity.linkTargetGhostIndex = target;
+      }
+    }
+
+    // Beam endpoints (SniperProjectile): the ghost carries the muzzle
+    // and the impact point; swing updates move the endpoint.
+    if (entity.className === "SniperProjectile") {
+      const start = data.initialPosition as Vec3 | undefined;
+      const end = data.endPos as Vec3 | undefined;
+      if (isValidPosition(start)) {
+        entity.beamStart = [start!.x, start!.y, start!.z];
+      }
+      if (isValidPosition(end)) entity.beamEnd = [end!.x, end!.y, end!.z];
     }
 
     // Rotation
@@ -1869,7 +1911,7 @@ export abstract class StreamEngine implements StreamingPlayback {
       position,
       rotation: [0, 0, 0, 1],
       isExplosion: true,
-      faceViewer: projectile.faceViewer !== false,
+      faceViewer: projectile.explosionFaceViewer !== false,
       expiryTick: this.tickCount + lifetimeTicks,
     };
     this.entities.set(fxId, fxEntity);
@@ -2000,6 +2042,12 @@ export abstract class StreamEngine implements StreamingPlayback {
       if (v[0] !== 0 || v[1] !== 0) {
         entity.rotation = playerYawToQuaternion(Math.atan2(v[0], v[1]));
       }
+      // The rendered orientation follows the LIVE velocity — the engine's
+      // bolt render calls getVelocity() each frame (FUN_00696ed0), so a
+      // blaster bolt that mirror-bounces must re-aim its quad along the
+      // reflected direction, not the muzzle direction it was ghosted with.
+      entity.velocity = [v[0], v[1], v[2]];
+      if (entity.direction) entity.direction = entity.velocity;
     }
   }
 
@@ -2951,6 +2999,16 @@ export abstract class StreamEngine implements StreamingPlayback {
         direction: entity.direction,
         ghostIndex: entity.ghostIndex,
         sourceGhostIndex: entity.sourceGhostIndex,
+        beamStart: entity.beamStart,
+        beamEnd: entity.beamEnd,
+        linkSourceId:
+          entity.sourceGhostIndex != null
+            ? this.entityIdByGhostIndex.get(entity.sourceGhostIndex)
+            : undefined,
+        linkTargetId:
+          entity.linkTargetGhostIndex != null
+            ? this.entityIdByGhostIndex.get(entity.linkTargetGhostIndex)
+            : undefined,
         className: entity.className,
         dataBlockId: entity.dataBlockId,
         shapeHint: entity.shapeHint,

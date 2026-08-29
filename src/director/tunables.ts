@@ -277,7 +277,9 @@ export const DIRECTOR_LINEUP_SWEEP_SEC = 11;
 export const DIRECTOR_ROSTER_STANDOFF = 7;
 /** Shortest roster pass worth making — below this it reads as a stare. */
 export const DIRECTOR_ROSTER_MIN_TRAVEL = 6;
-export const DIRECTOR_ROSTER_EYE_HEIGHT = 1.9;
+/** Roster passes fly LOW — a knee-height hero angle looking up at the
+ *  faces, not a chest-high drift past torsos. */
+export const DIRECTOR_ROSTER_EYE_HEIGHT = 0.9;
 /**
  * Players this close together can be panned across in one pass. Kept
  * SMALL on purpose: at a 7m standoff a knot spread over 20m puts most

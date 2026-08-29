@@ -6,6 +6,8 @@ import type {
   ForceFieldBareEntity,
   ExplosionEntity,
   TracerEntity,
+  BeamEntity,
+  LinkBeamEntity,
   SpriteEntity,
   AudioEmitterEntity,
   CameraEntity,
@@ -127,6 +129,26 @@ export function streamEntityToGameEntity(
         renderType: "Sprite",
         visual: entity.visual,
       } satisfies SpriteEntity;
+    case "linkBeam":
+      return {
+        ...positionedBase(entity, spawnTime),
+        renderType: "LinkBeam",
+        visual: entity.visual,
+        linkSourceId: entity.linkSourceId,
+        linkTargetId: entity.linkTargetId,
+      } satisfies LinkBeamEntity;
+    case "beam": {
+      const start = entity.beamStart ?? entity.position;
+      const end = entity.beamEnd ?? entity.beamStart ?? entity.position;
+      if (!start || !end) break;
+      return {
+        ...positionedBase(entity, spawnTime),
+        renderType: "Beam",
+        visual: entity.visual,
+        beamStart: start,
+        beamEnd: end,
+      } satisfies BeamEntity;
+    }
   }
 
   switch (entity.className) {

@@ -479,6 +479,12 @@ export function processShapeScene(
     emap?: boolean;
     skinUrl?: string;
     skinName?: string;
+    /**
+     * Render meshes in negative-size detail levels. Explosion shapes put
+     * their meshes in a "Detail-1" level: Explosion::renderObject never
+     * runs size-based detail selection, so detail 0 always renders.
+     */
+    ignoreDetailSize?: boolean;
   } = {},
 ): IflInitializer[] {
   const iflInitializers: IflInitializer[] = [];
@@ -497,6 +503,7 @@ export function processShapeScene(
       return;
     }
     if (
+      !options.ignoreDetailSize &&
       typeof node.userData?.dts_detail_size === "number" &&
       node.userData.dts_detail_size < 0
     ) {

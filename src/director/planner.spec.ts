@@ -738,12 +738,13 @@ describe("planShots capture priority", () => {
 
 describe("return guarantee anchoring", () => {
   it("covers a return at the flag's stand, not the touch spot", () => {
-    // The flag lies in a dead corner far from home when it is touched;
-    // it teleports to the stand the same instant. A cut-in parked at
-    // the corner frames an empty corridor (the r×0.17 wall portrait) —
-    // the story concludes at the stand.
+    // The flag lies in a dead corner when it is touched; it teleports
+    // to the stand the same instant. A cut-in parked at the corner
+    // frames an empty corridor (the r×0.17 wall portrait) — the story
+    // concludes at the stand. (The corner sits NEAR the flag's home so
+    // the drop stays uncovered: a far drop now earns its own camera.)
     const dataset = ctfDataset();
-    // Flag 1 out at a far corner, returned at t=40.
+    // Flag 1 out at a dead corner near its base, returned at t=40.
     // The return MESSAGE precedes the state flip by a beat (as in real
     // demos), so the sampled position at the event time is the corner.
     dataset.flagSamples = dataset.flagSamples.filter(
@@ -753,7 +754,7 @@ describe("return guarantee anchoring", () => {
       dataset.flagSamples.push({
         timeSec: t,
         slot: 1,
-        pos: [700, 900, 80],
+        pos: [120, 90, 80],
         carrierTargetId: null,
         status: "field",
       });
@@ -770,7 +771,7 @@ describe("return guarantee anchoring", () => {
     ];
     const plan = planShots(dataset);
     const guarantee = plan.shots.find(
-      (s) => s.reason?.startsWith("Guarantee") && s.kind === "fixedOrbit",
+      (s) => s.coverageCutIn && s.kind === "fixedOrbit",
     );
     expect(guarantee, "no guarantee cut-in spliced").toBeDefined();
     if (guarantee!.kind === "fixedOrbit") {
@@ -791,8 +792,8 @@ describe("planShots scramble handling", () => {
     // MANY_GRABS is a scramble: the flag changes hands every ~3s.
     // Covering each one meant four to six cuts across the map in half a
     // minute, which reads as a slideshow rather than coverage.
-    const shots = planShots(ctfDataset(MANY_GRABS)).shots.filter((s) =>
-      s.reason?.startsWith("Guarantee"),
+    const shots = planShots(ctfDataset(MANY_GRABS)).shots.filter(
+      (s) => s.coverageCutIn,
     );
     // One splice plus skipped repeats is a valid outcome (the companion
     // test asserts the skips); bunched cut-ins are what must never occur.
@@ -1151,14 +1152,31 @@ describe("planShots framing", () => {
     }
   });
 
-  it("abandons an uncontested dropped flag rather than filming a field", () => {
-    // Same drop, but nobody within range of it: an object lying alone
-    // is as dull as an idle flagstand, so the shot must not be anchored
-    // on the flag.
+  it("keeps covering an uncontested drop when it lies far from home", () => {
+    // Nobody within range of the drop, but it lies ~330m from its
+    // stand — a live flag deep in enemy country is the story even
+    // before anyone reaches it (never a "lull").
     const base = ctfDataset();
     const plan = planShots({
       ...base,
       playerSamples: base.playerSamples.filter((s) => s.targetId !== 9),
+    });
+    const shot = shotAt(plan.shots, 62);
+    expect(shot?.kind).toBe("fixedOrbit");
+    expect(shot!.reason).toContain("on the ground — wide view");
+  });
+
+  it("abandons an uncontested drop lying near its own stand", () => {
+    // Dropped at the stand's feet with nobody near: it will be
+    // trivially returned, exactly as dull as an idle flagstand.
+    const base = ctfDataset();
+    const nearHome = lerp(STAND_2, STAND_1, 5 / 60);
+    const plan = planShots({
+      ...base,
+      playerSamples: base.playerSamples.filter((s) => s.targetId !== 9),
+      flagSamples: base.flagSamples.map((f) =>
+        f.slot === 2 && f.status === "field" ? { ...f, pos: nearHome } : f,
+      ),
     });
     const shot = shotAt(plan.shots, 62);
     const anchoredOnFlag =
@@ -1199,14 +1217,16 @@ describe("planShots guarantee pass", () => {
       expect(shot.lookSubject).toEqual({ type: "flag", slot: 1 });
       expect(shot.angularSpeed).toBe(0);
     }
-    expect(shot!.reason).toMatch(/^Guarantee:/);
+    expect(shot!.coverageCutIn).toBe(true);
+    // The reason is the plain event text — no internal pass names.
+    expect(shot!.reason).toBe("Phantom grabbed the Storm flag");
     expectContiguous(plan.shots, 120);
     // The report is computed from the FINAL shot list, so it credits the
     // shot that actually covers the event rather than asserting that a
     // splice happened.
     const row = plan.coverage.find((r) => r.timeSec === 50);
     expect(row?.covered).toBe(true);
-    expect(row?.by).toMatch(/^Guarantee:/);
+    expect(row?.by).toBe("Phantom grabbed the Storm flag");
   });
 });
 

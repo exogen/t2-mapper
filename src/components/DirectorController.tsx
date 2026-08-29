@@ -5,7 +5,11 @@ import type { Camera } from "three";
 import { createLogger } from "../logger";
 import { engineStore } from "../state/engineStore";
 import { cameraRegistry } from "../state/cameraRegistry";
-import { demoDirectorStore, exitDirector } from "../state/demoDirectorStore";
+import {
+  demoDirectorStore,
+  exitDirector,
+  nearFlagStand,
+} from "../state/demoDirectorStore";
 import { streamClock, streamPlaybackStore } from "../state/streamPlaybackStore";
 import {
   enterWatchFollow,
@@ -26,6 +30,9 @@ import type {
   Shot,
 } from "../director/types";
 import { demoClock, describeShot } from "../director/shotLog";
+import { directorCamDebug } from "../state/cameraDebug";
+
+const camlog = createLogger("camdbg");
 import { bearingYaw } from "../director/geometry";
 
 /**
@@ -48,6 +55,7 @@ import {
   GROUND_MIN_CLEARANCE,
   ORBIT_HEIGHT_FACTOR,
   orbitLiftFactor,
+  smoothedGroundHeightAt,
   TERRAIN_FOLLOW_CLEARANCE,
   TERRAIN_FOLLOW_LOOKAHEAD_SEC,
   TERRAIN_LIFT_FALL_RATE,
@@ -57,6 +65,9 @@ import {
   STANDOFF_MIN,
   STANDOFF_MIN_SCALE,
   STATIC_PAN_DAMPING,
+  STATIC_PAN_MAX_RATE,
+  STATIC_PAN_DEADBAND_START,
+  STATIC_PAN_DEADBAND_STOP,
   PAN_STATE_COMMIT_SEC,
   findOpeningsByRay,
   surfaceLiftedAnchor,
@@ -67,6 +78,7 @@ import {
   TRANSITION_ARM_FRAMES,
   TRANSITION_MAX_DISTANCE,
   TRANSITION_MAX_SEC,
+  TRANSITION_MAX_TURN_RATE,
   TRANSITION_MIN_DISTANCE,
   TRANSITION_MIN_SEC,
   TRANSITION_SPEED,
@@ -93,7 +105,6 @@ import {
 } from "../director/cameraRig";
 import {
   findShotIndex,
-  keepFollowAboveGround,
   livingPlayerPositionsNear,
   resolveShotSubjectGroup,
   resolveSubjectGroup,
@@ -138,18 +149,239 @@ function doorwaysNear(holdTorque: DirectorVec3Tuple): Doorway[] {
   return doors;
 }
 /**
- * Whether a flag subject sits at (near) its own home stand — the
- * signature of a return or capture teleport, as opposed to sliding.
+ * The tripod pan's per-shot state, bundled so a shot boundary resets it
+ * in ONE place (its refs used to be scattered, and a forgotten reset —
+ * a pending state or a stale previous target surviving into the next
+ * shot — has caused real bugs).
  */
-function flagAtHomeStand(
-  slot: number,
-  threePos: { x: number; z: number },
-): boolean {
-  const stand = demoDirectorStore
-    .getState()
-    .dataset?.flagStands.find((s) => s.slot === slot);
-  if (!stand) return false;
-  return Math.hypot(threePos.x - stand.pos[1], threePos.z - stand.pos[0]) <= 25;
+interface PanState {
+  state: "visible" | "gone" | "respawned elsewhere" | "returned home" | null;
+  pending: { state: string; sinceSec: number } | null;
+  /** Mid-reframe (deadband hysteresis). */
+  active: boolean;
+  prevTarget: Vector3;
+  prevValid: boolean;
+}
+
+function newPanState(): PanState {
+  return {
+    state: null,
+    pending: null,
+    active: false,
+    prevTarget: new Vector3(),
+    prevValid: false,
+  };
+}
+
+function resetPanState(pan: PanState): void {
+  pan.state = null;
+  pan.pending = null;
+  pan.active = false;
+  pan.prevValid = false;
+}
+
+/**
+ * The tripod pan for a fixed shot with a lookSubject: subject state
+ * machine (visible / gone / respawned / returned home, with commit
+ * hysteresis), the anchor-homed aim target, the one-frame continuity
+ * debounce for teleport flickers, and the deadband-gated, rate-capped
+ * easing of `aim` (mutated in place; the caller looks at it).
+ */
+function driveSubjectPan(
+  pan: PanState,
+  shot: Extract<Shot, { kind: "fixedOrbit" }>,
+  subject: NonNullable<Extract<Shot, { kind: "fixedOrbit" }>["lookSubject"]>,
+  camera: { position: Vector3 },
+  aim: Vector3,
+  seedAim: boolean,
+  cx: number,
+  cy: number,
+  cz: number,
+  t: number,
+  demoDelta: number,
+  rawDelta: number,
+): void {
+  const subjectGroup = resolveShotSubjectGroup(subject);
+  // Coverage gate for PLAYER subjects: a player only leaves a
+  // fixed shot's coverage by dying and respawning — the body that
+  // reappears across the map is a different scene, not this
+  // shot's subject moving. (Flags slide continuously, and the
+  // strayed rail re-anchors on them — logged — so they stay.)
+  let state: "visible" | "gone" | "respawned elsewhere" | "returned home" =
+    "visible";
+  if (!subjectGroup) {
+    state = "gone";
+  } else if (
+    Math.hypot(subjectGroup.position.x - cx, subjectGroup.position.z - cz) >
+    Math.max(SUBJECT_MAX_RANGE, shot.radius)
+  ) {
+    if (subject.type === "player") {
+      state = "respawned elsewhere";
+    } else if (nearFlagStand(subjectGroup.position, subject.slot)) {
+      state = "returned home";
+    }
+  }
+  // A player's death ENDS this shot's story: the body that comes
+  // back is a new scene, wherever it spawns — never re-acquire.
+  // (A flag that reappears is still the flag.)
+  if (
+    subject.type === "player" &&
+    state === "visible" &&
+    (pan.state === "gone" || pan.state === "respawned elsewhere")
+  ) {
+    state = pan.state as typeof state;
+  }
+  // Hysteresis: the flag ghost flickers around a capture (hidden,
+  // visible, teleported home within a second) and reacting to each
+  // flicker swings the aim mid-ceremony. A new state must PERSIST
+  // briefly before the pan acts on it; holds lose nothing by
+  // committing late, and tracking resumes a beat later at worst.
+  if (state === pan.state) {
+    pan.pending = null;
+  } else if (pan.state == null) {
+    pan.state = state;
+  } else if (pan.pending?.state !== state) {
+    pan.pending = { state, sinceSec: t };
+  } else if (t - pan.pending.sinceSec >= PAN_STATE_COMMIT_SEC) {
+    log.info(
+      "%s pan: subject %s — %s",
+      demoClock(t),
+      state,
+      state === "visible" ? "tracking again" : "holding the last framing",
+    );
+    pan.state = state;
+    pan.pending = null;
+  }
+  // While a non-visible state change is PENDING (the hysteresis
+  // window right after a capture/return teleport), tracking must
+  // stop IMMEDIATELY — half a beat of lerp toward the teleported
+  // flag reads as the camera lunging at the home base before the
+  // hold commits.
+  const onSubject =
+    pan.state === "visible" &&
+    subjectGroup &&
+    (pan.pending == null || pan.pending.state === "visible");
+  // The aim's HOME blends between the anchor and the subject by how
+  // far the subject has strayed: inside the shot radius the
+  // anchor-centred frame contains it by construction
+  // (radiusForSpread sizes the frame for exactly that), so the aim
+  // point is the STATIC anchor and the camera holds dead still
+  // while a carrier dances around the stand. Only as the subject
+  // actually leaves the framed area does the aim ramp toward
+  // tracking it (full tracking by twice the radius) — continuous,
+  // so nothing flips at the boundary.
+  let panTarget: Vector3 | null = null;
+  if (onSubject) {
+    const fromAnchor = Math.hypot(
+      subjectGroup.position.x - cx,
+      subjectGroup.position.z - cz,
+    );
+    const track = Math.min(
+      1,
+      Math.max(0, fromAnchor / Math.max(1, shot.radius) - 1),
+    );
+    panTarget = _staticLook
+      .copy(subjectGroup.position)
+      .sub(_panAnchor.set(cx, cy, cz))
+      .multiplyScalar(track)
+      .add(_panAnchor);
+    panTarget.y += ORBIT_LOOK_LIFT;
+  } else if (pan.state === "returned home") {
+    panTarget = _staticLook.set(cx, cy + ORBIT_LOOK_LIFT, cz);
+  }
+  // Continuity gate: a pan target that moved 60m+ since last frame
+  // is never the subject moving — it is a flag item unhiding at a
+  // STALE position, or a capture teleport the state machine hasn't
+  // committed yet (measured 633m single-frame target jumps at
+  // drops). Hold the aim and let the target become continuous.
+  if (panTarget) {
+    const discontinuous =
+      pan.prevValid && panTarget.distanceTo(pan.prevTarget) > 60;
+    if (discontinuous) {
+      camlog.info(
+        "pan target discontinuity (%dm) — holding aim",
+        Math.round(panTarget.distanceTo(pan.prevTarget)),
+      );
+    }
+    // The previous target always advances — the gate is a ONE-frame
+    // debounce (a stale-position flicker never repeats a position;
+    // a target that genuinely settled somewhere new is continuous
+    // with itself next frame and the rate-capped pan swings over).
+    pan.prevTarget.copy(panTarget);
+    pan.prevValid = true;
+    if (discontinuous) panTarget = null;
+  }
+  if (seedAim) {
+    // Open the shot already framing its aim point. Seeding the pan
+    // at the shot's centre made every shot whose subject sat off-
+    // centre OPEN with a slow whip-pan across empty ground — a
+    // camera move that means nothing. The damped pan below is for
+    // FOLLOWING the subject's motion, not for correcting the
+    // opening frame.
+    if (panTarget) {
+      aim.copy(panTarget);
+    } else {
+      aim.set(cx, cy + ORBIT_LOOK_LIFT, cz);
+    }
+  }
+  // ALWAYS through the damped point — a subject dying mid-shot
+  // used to hard-snap the aim back to the centre in one frame,
+  // then swing it to their respawn when a new body resolved.
+  // A LOST player holds the last framing (swinging back to the
+  // now-empty anchor is the "mysterious rotate-back") — but a flag
+  // that went HOME concluded its story AT this shot's anchor (the
+  // capper and the defence are there), so the aim eases back onto
+  // the scene rather than staying parked on the patch of dirt the
+  // teleport whipped it toward.
+  if (panTarget) {
+    _panDirCurrent.copy(aim).sub(camera.position);
+    _panDirDesired.copy(panTarget).sub(camera.position);
+    let angle = 0;
+    if (_panDirCurrent.lengthSq() > 1e-6 && _panDirDesired.lengthSq() > 1e-6) {
+      angle = _panDirCurrent.angleTo(_panDirDesired);
+    }
+    // Tripod deadband with hysteresis: rock-still while the
+    // subject sits within the comfort zone of the current framing
+    // (a tossed flag wobbling the aim point is NOT a reason to
+    // move); one smooth rate-capped reframe when it nears the
+    // edge, locked again once it is back well inside.
+    if (!pan.active && angle > STATIC_PAN_DEADBAND_START) {
+      pan.active = true;
+    } else if (pan.active && angle < STATIC_PAN_DEADBAND_STOP) {
+      pan.active = false;
+    }
+    if (pan.active) {
+      // Damped, but never faster than a human tripod turn: damping
+      // alone scales with distance, and a flag flung off the stand
+      // by the killing blow used to whip the aim after it. The
+      // rate cap is enforced on the ACHIEVED rotation (lerping the
+      // aim POINT can turn the view far more than the dir-angle
+      // times the lerp fraction when the two points sit at very
+      // different depths), and per RENDERED frame — a demo-clock
+      // hitch must not deliver the whole pan in one frame.
+      const ease = 1 - Math.exp(-STATIC_PAN_DAMPING * demoDelta);
+      _panProposed.copy(aim).lerp(panTarget, ease);
+      _panDirDesired.copy(_panProposed).sub(camera.position);
+      const achieved =
+        _panDirCurrent.lengthSq() > 1e-6 && _panDirDesired.lengthSq() > 1e-6
+          ? _panDirCurrent.angleTo(_panDirDesired)
+          : 0;
+      const maxStep = STATIC_PAN_MAX_RATE * Math.min(demoDelta, rawDelta);
+      if (achieved > maxStep && achieved > 1e-4) {
+        camlog.info(
+          "pan step clamped: wanted %s rad in one frame (ease %s, target moved %sm)",
+          achieved.toFixed(3),
+          ease.toFixed(3),
+          aim.distanceTo(panTarget).toFixed(1),
+        );
+        aim.lerp(panTarget, (ease * maxStep) / achieved);
+      } else {
+        aim.copy(_panProposed);
+      }
+    }
+  }
+  directorCamDebug.panState = pan.state ?? "-";
+  directorCamDebug.panActive = pan.active;
 }
 
 const _sweepFrom = new Vector3();
@@ -159,6 +391,10 @@ const _dollySubject = new Vector3();
 const _dollyVelocity = new Vector3();
 const _dollyOut = new Vector3();
 const _staticLook = new Vector3();
+const _panDirCurrent = new Vector3();
+const _panDirDesired = new Vector3();
+const _panAnchor = new Vector3();
+const _panProposed = new Vector3();
 
 /**
  * Auto-director playback driver — while demoDirectorStore is "playing",
@@ -222,10 +458,7 @@ export function DirectorController() {
   >([]);
   /** The pan's view of its subject (visible / gone / respawned), so
    *  transitions log once instead of the pan moving silently. */
-  const panStateRef = useRef<string | null>(null);
-  const panPendingRef = useRef<{ state: string; sinceSec: number } | null>(
-    null,
-  );
+  const panRef = useRef<PanState>(newPanState());
 
   const dollyPosRef = useRef(new Vector3());
   const dollyAimRef = useRef(new Vector3());
@@ -304,20 +537,35 @@ export function DirectorController() {
       ) {
         travelStateRef.current = "active";
         travelElapsedRef.current = 0;
+        // Pace by the view SWING as well as the distance: a short hop
+        // whose aim turns ninety degrees compressed into half a second
+        // is a whip-pan, not an edit. The cubic ease peaks at 1.5x the
+        // average rate; the 2x divisor leaves margin under the cap.
+        const swing =
+          2 *
+          Math.acos(
+            Math.min(
+              1,
+              Math.abs(travelFromQuatRef.current.dot(camera.quaternion)),
+            ),
+          );
         travelDurationRef.current = Math.min(
           TRANSITION_MAX_SEC,
+          TRANSITION_MAX_TURN_RATE,
           Math.max(
             TRANSITION_MIN_SEC,
             distance / TRANSITION_SPEED,
+            (swing * 2) / TRANSITION_MAX_TURN_RATE,
             travelMinDurationRef.current,
           ),
         );
         travelMinDurationRef.current = 0;
         log.info(
-          "%s travel: flying %dm over %ss",
+          "%s travel: flying %dm over %ss (swing %d°)",
           demoClock(streamClock.time),
           Math.round(distance),
           travelDurationRef.current.toFixed(2),
+          Math.round((swing * 180) / Math.PI),
         );
       } else if (
         distance > TRANSITION_MAX_DISTANCE ||
@@ -401,16 +649,31 @@ export function DirectorController() {
     // ahead along the motion so climbs start before a ridge, and the
     // lift eases at capped rates. The instant clamp stays as backstop.
     const naturalY = camera.position.y;
+    // Over an empty terrain square (the mouth of an underground base)
+    // both samplers return null and the rail stands down — a camera
+    // below ground level there is where it belongs. No roof test: an
+    // open-top bucket base sitting in a hole has no ceiling to detect.
     const ground = groundHeightAt(camera.position.x, camera.position.z);
+    // The desired track rides the SMOOTHED surface (spatially low-pass,
+    // so jagged heightmap cells don't re-appear in the camera's path);
+    // the raw height only backs the hard clamp below. Sweeps are
+    // exempt from the track: their paths are AUTHORED low on purpose
+    // (the roster pass flies at knee height for the low hero angle),
+    // and they carry their own occlusion lift — only the hard floor
+    // applies.
+    const soft =
+      shot.kind === "sweep"
+        ? null
+        : smoothedGroundHeightAt(camera.position.x, camera.position.z);
     let required =
-      ground != null ? ground + TERRAIN_FOLLOW_CLEARANCE - naturalY : 0;
+      soft != null ? soft + TERRAIN_FOLLOW_CLEARANCE - naturalY : 0;
     const prev = terrainPrevRef.current;
-    if (prev.valid && delta > 0) {
+    if (soft != null && prev.valid && delta > 0) {
       const vx = (camera.position.x - prev.x) / delta;
       const vz = (camera.position.z - prev.z) / delta;
       if (Math.hypot(vx, vz) > 2) {
         for (const ahead of TERRAIN_FOLLOW_LOOKAHEAD_SEC) {
-          const g = groundHeightAt(
+          const g = smoothedGroundHeightAt(
             camera.position.x + vx * ahead,
             camera.position.z + vz * ahead,
           );
@@ -450,17 +713,9 @@ export function DirectorController() {
     const subject = shotSubjectOf(shot);
     if (!subject && shot.kind !== "fixedOrbit") return;
     // Follow shots are positioned by StreamingController, which is lazily
-    // mounted and so can write the camera AFTER this clamp — correcting
-    // its position here is not reliable. Steepen the orbit pitch instead,
-    // which is an input StreamingController reads, so the pose it
-    // computes is above ground in the first place.
-    if (
-      subject &&
-      (shot.kind === "followFlag" || shot.kind === "followPlayer") &&
-      keepFollowAboveGround(subject)
-    ) {
-      return;
-    }
+    // mounted and so can write the camera AFTER this clamp — their
+    // terrain clearance is applied THERE (the smoothed-track clamp on
+    // the orbit candidate), not here.
     visibilityTimerRef.current += delta;
     if (visibilityTimerRef.current < VISIBILITY_CHECK_SEC) return;
     visibilityTimerRef.current = 0;
@@ -490,12 +745,19 @@ export function DirectorController() {
     // framing. The bound also scales with the shot — a 110m overview is
     // allowed to hold a subject its own radius away.
     let strayed = false;
+    let atScene = false;
     if (shot.kind === "fixedOrbit") {
       const anchorNow = centerOverrideRef.current ?? shot.center;
       const fromAnchor = Math.hypot(
         _subjectPos.x - anchorNow[1],
         _subjectPos.z - anchorNow[0],
       );
+      // A subject INSIDE the shot's own radius is at the scene the
+      // camera frames: a moment behind the tower it is arriving at is
+      // not a lost subject, and a correction there is churn (the
+      // capture-incoming stand camera used to fly around the base
+      // because the carrier crossed behind it seconds before scoring).
+      atScene = subject != null && fromAnchor <= shot.radius;
       if (fromAnchor > Math.max(SUBJECT_MAX_RANGE, shot.radius)) {
         // Only a FLAG earns a re-anchor chase — it slides there
         // continuously and stays the story. A player this far out has
@@ -507,7 +769,7 @@ export function DirectorController() {
         // the scene (the aftermath shot owns what happens next).
         if (
           subject?.type === "flag" &&
-          !flagAtHomeStand(subject.slot, _subjectPos)
+          !nearFlagStand(_subjectPos, subject.slot)
         ) {
           strayed = true;
         } else {
@@ -519,6 +781,10 @@ export function DirectorController() {
           );
         }
       }
+    }
+    if (atScene && !strayed) {
+      visibilityStrikesRef.current = 0;
+      return;
     }
     if (!strayed && !subjectViewBlocked(camera.position, _subjectPos)) {
       visibilityStrikesRef.current = 0;
@@ -715,8 +981,17 @@ export function DirectorController() {
       );
     }
     log.info("%s %s", demoClock(t), describeShot(shot, index, shots.length));
+    directorCamDebug.shot = `#${index + 1} ${shot.kind} :: ${shot.reason}`;
+    directorCamDebug.panState = "";
+    directorCamDebug.panActive = false;
     shotIndexRef.current = index;
     appliedShotRef.current = shot;
+    // License the follow spring to snap: a shot boundary is the one
+    // moment a discontinuous camera move is an EDIT rather than a
+    // glitch (see StreamingController's mid-shot teleport freeze).
+    streamPlaybackStore.setState({
+      orbitSnapNonce: streamPlaybackStore.getState().orbitSnapNonce + 1,
+    });
     const leaving = cameraRegistry.perspective ?? fallbackCamera;
     travelFromRef.current.copy(leaving.position);
     travelFromQuatRef.current.copy(leaving.quaternion);
@@ -727,7 +1002,7 @@ export function DirectorController() {
     visibilityDistanceRef.current = null;
     lastCorrectionRef.current = -Infinity;
     budgetHoldsRef.current = 0;
-    panStateRef.current = null;
+    resetPanState(panRef.current);
     travelMinDurationRef.current = 0;
     radiusScaleRef.current = 1;
     centerOverrideRef.current = null;
@@ -1028,6 +1303,7 @@ export function DirectorController() {
     t: number,
     isPlaying: boolean,
     demoDelta: number,
+    rawDelta: number,
     fallbackCamera: Camera,
   ): void => {
     // Direct camera write: freeFly mode means nothing else touches the
@@ -1072,90 +1348,22 @@ export function DirectorController() {
     // the shot names one (a dropped flag slides after landing), eased
     // so the pan is gentle. Otherwise just look at the center point.
     if (shot.lookSubject) {
-      const subjectGroup = resolveShotSubjectGroup(shot.lookSubject);
-      // Coverage gate for PLAYER subjects: a player only leaves a
-      // fixed shot's coverage by dying and respawning — the body that
-      // reappears across the map is a different scene, not this
-      // shot's subject moving. (Flags slide continuously, and the
-      // strayed rail re-anchors on them — logged — so they stay.)
-      let state: "visible" | "gone" | "respawned elsewhere" | "returned home" =
-        "visible";
-      if (!subjectGroup) {
-        state = "gone";
-      } else if (
-        Math.hypot(subjectGroup.position.x - cx, subjectGroup.position.z - cz) >
-        Math.max(SUBJECT_MAX_RANGE, shot.radius)
-      ) {
-        if (shot.lookSubject.type === "player") {
-          state = "respawned elsewhere";
-        } else if (
-          flagAtHomeStand(shot.lookSubject.slot, subjectGroup.position)
-        ) {
-          state = "returned home";
-        }
-      }
-      // A player's death ENDS this shot's story: the body that comes
-      // back is a new scene, wherever it spawns — never re-acquire.
-      // (A flag that reappears is still the flag.)
-      if (
-        shot.lookSubject.type === "player" &&
-        state === "visible" &&
-        (panStateRef.current === "gone" ||
-          panStateRef.current === "respawned elsewhere")
-      ) {
-        state = panStateRef.current as typeof state;
-      }
-      // Hysteresis: the flag ghost flickers around a capture (hidden,
-      // visible, teleported home within a second) and reacting to each
-      // flicker swings the aim mid-ceremony. A new state must PERSIST
-      // briefly before the pan acts on it; holds lose nothing by
-      // committing late, and tracking resumes a beat later at worst.
-      if (state === panStateRef.current) {
-        panPendingRef.current = null;
-      } else if (panStateRef.current == null) {
-        panStateRef.current = state;
-      } else if (panPendingRef.current?.state !== state) {
-        panPendingRef.current = { state, sinceSec: t };
-      } else if (t - panPendingRef.current.sinceSec >= PAN_STATE_COMMIT_SEC) {
-        log.info(
-          "%s pan: subject %s — %s",
-          demoClock(t),
-          state,
-          state === "visible" ? "tracking again" : "holding the last framing",
-        );
-        panStateRef.current = state;
-        panPendingRef.current = null;
-      }
-      const onSubject = panStateRef.current === "visible" && subjectGroup;
-      if (!dollySeededRef.current) {
-        dollySeededRef.current = true;
-        // Open the shot already framing its subject. Seeding the pan
-        // at the shot's centre made every shot whose subject sat off-
-        // centre OPEN with a slow whip-pan across empty ground — a
-        // camera move that means nothing. The damped pan below is for
-        // FOLLOWING the subject's motion, not for correcting the
-        // opening frame.
-        if (onSubject) {
-          dollyAimRef.current.copy(subjectGroup.position);
-          dollyAimRef.current.y += ORBIT_LOOK_LIFT;
-        } else {
-          dollyAimRef.current.set(cx, cy + ORBIT_LOOK_LIFT, cz);
-        }
-      }
-      // ALWAYS through the damped point — a subject dying mid-shot
-      // used to hard-snap the aim back to the centre in one frame,
-      // then swing it to their respawn when a new body resolved.
-      // And when the subject is LOST, the aim HOLDS where it last saw
-      // them: swinging back to the (now empty) anchor is a camera
-      // move with no subject, the "mysterious rotate-back".
-      if (onSubject) {
-        _staticLook.copy(subjectGroup.position);
-        _staticLook.y += ORBIT_LOOK_LIFT;
-        dollyAimRef.current.lerp(
-          _staticLook,
-          1 - Math.exp(-STATIC_PAN_DAMPING * demoDelta),
-        );
-      }
+      const seedAim = !dollySeededRef.current;
+      dollySeededRef.current = true;
+      driveSubjectPan(
+        panRef.current,
+        shot,
+        shot.lookSubject,
+        camera,
+        dollyAimRef.current,
+        seedAim,
+        cx,
+        cy,
+        cz,
+        t,
+        demoDelta,
+        rawDelta,
+      );
       camera.lookAt(dollyAimRef.current);
     } else {
       camera.lookAt(cx, cy + ORBIT_LOOK_LIFT, cz);
@@ -1473,7 +1681,7 @@ export function DirectorController() {
     const demoDelta = isPlaying ? delta * playback.rate : 0;
 
     if (shot.kind === "fixedOrbit") {
-      driveFixedOrbit(shot, t, isPlaying, demoDelta, state.camera);
+      driveFixedOrbit(shot, t, isPlaying, demoDelta, delta, state.camera);
       return;
     }
     if (shot.kind === "sweep") {

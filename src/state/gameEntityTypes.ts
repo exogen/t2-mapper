@@ -3,6 +3,8 @@ import type {
   Keyframe,
   ThreadState,
   TracerVisual,
+  BeamVisual,
+  LinkBeamVisual,
   SpriteVisual,
   WeaponImageState,
   WeaponImageDataBlockState,
@@ -34,6 +36,8 @@ export type RenderType =
   | "ForceFieldBare"
   | "Explosion"
   | "Tracer"
+  | "Beam"
+  | "LinkBeam"
   | "Sprite"
   | "AudioEmitter"
   | "Camera"
@@ -224,6 +228,22 @@ export interface TracerEntity extends PositionedBase {
   direction?: [number, number, number];
 }
 
+export interface BeamEntity extends PositionedBase {
+  renderType: "Beam";
+  visual: BeamVisual;
+  /** Torque-space beam endpoints (muzzle → impact). */
+  beamStart: [number, number, number];
+  beamEnd: [number, number, number];
+}
+
+export interface LinkBeamEntity extends PositionedBase {
+  renderType: "LinkBeam";
+  visual: LinkBeamVisual;
+  /** Live endpoint entity ids (resolved per frame by the renderer). */
+  linkSourceId?: string;
+  linkTargetId?: string;
+}
+
 export interface SpriteEntity extends PositionedBase {
   renderType: "Sprite";
   visual: SpriteVisual;
@@ -271,6 +291,8 @@ export type GameEntity =
   | ForceFieldBareEntity
   | ExplosionEntity
   | TracerEntity
+  | BeamEntity
+  | LinkBeamEntity
   | SpriteEntity
   | AudioEmitterEntity
   | CameraEntity

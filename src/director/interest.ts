@@ -337,6 +337,14 @@ export function segmentByInterest(
     const sample = sampleAt(tracks.get(subject.slot)!.samples, t);
     return sample?.status === "held";
   };
+  /** A flag subject whose flag is OUT (held or in the field) — live
+   *  play the stale-static rotation must never wander away from. */
+  const isLiveFlag = (si: number, t: number): boolean => {
+    const subject = subjects[si];
+    if (subject.kind !== "flag") return false;
+    const sample = sampleAt(tracks.get(subject.slot)!.samples, t);
+    return sample != null && sample.status !== "home";
+  };
   for (let i = 1; i < tickCount; i++) {
     const t = i * DIRECTOR_TICK_SEC;
     let bestIndex = currentIndex === 0 ? 1 : 0;
@@ -387,10 +395,13 @@ export function segmentByInterest(
       }
     } else if (
       !chase &&
+      !isLiveFlag(currentIndex, t) &&
       elapsed >= DIRECTOR_MAX_STATIC_SEC &&
       scores[bestIndex][i] + DIRECTOR_SWITCH_PENALTY >= scores[currentIndex][i]
     ) {
-      // Rotate a stale static shot even without a decisive challenger.
+      // Rotate a stale static shot even without a decisive challenger
+      // — but never away from a flag that is OUT: a dropped flag deep
+      // in the field is live play however long it lies there.
       switchTo = bestIndex;
     } else if (chase && elapsed >= DIRECTOR_MAX_CHASE_SEC) {
       // Both flags are out: alternate between the two drives instead of

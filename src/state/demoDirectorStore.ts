@@ -194,6 +194,24 @@ function beginDirecting(): void {
   engine.setPlaybackStatus("playing");
 }
 
+/**
+ * Whether a Three-space point sits on a flag stand from the scanned
+ * dataset — the destination of a capture/return teleport. Pass a slot
+ * to test that flag's own stand; omit it to test all stands.
+ */
+export function nearFlagStand(
+  threePos: { x: number; z: number },
+  slot?: number,
+): boolean {
+  const stands = demoDirectorStore.getState().dataset?.flagStands;
+  if (!stands) return false;
+  return stands.some(
+    (st) =>
+      (slot == null || st.slot === slot) &&
+      Math.hypot(threePos.x - st.pos[1], threePos.z - st.pos[0]) <= 25,
+  );
+}
+
 /** The sidecar schema this build understands (see backfill-cast-plans). */
 const CAST_FORMAT = "castgenius-plan";
 const CAST_VERSION = 1;

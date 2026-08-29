@@ -135,7 +135,18 @@ export function mergeRedundantCuts(shots: Shot[]): Shot[] {
 export function framesTheSame(a: Shot, b: Shot): boolean {
   if (a.kind !== b.kind) return false;
   if (a.kind === "fixedOrbit" && b.kind === "fixedOrbit") {
+    // A deliberate bearing change on the same anchor is NOT redundant —
+    // it is how a long watch varies the eye without leaving the story.
+    const swung =
+      a.startAngle != null &&
+      b.startAngle != null &&
+      Math.abs(
+        ((((a.startAngle - b.startAngle) % (Math.PI * 2)) + Math.PI * 3) %
+          (Math.PI * 2)) -
+          Math.PI,
+      ) > DIRECTOR_REDUNDANT_AIM_RADIANS;
     return (
+      !swung &&
       dist(a.center, b.center) <= DIRECTOR_REDUNDANT_CUT_RANGE &&
       Math.abs(a.radius - b.radius) <= DIRECTOR_REDUNDANT_CUT_RANGE &&
       sameSubject(a.lookSubject, b.lookSubject)
@@ -329,7 +340,7 @@ function cutInFor(
 ): Shot {
   const startSec = Math.max(0, event.timeSec - 3);
   const endSec = Math.min(dataset.durationSec, event.timeSec + 2);
-  const reason = `Guarantee: ${event.description}`;
+  const reason = event.description;
   // A return's sampled position is wherever the flag lay when it was
   // touched — often a dead corridor the flag has already teleported out
   // of. The story concludes at the stand it came home to, so cover
@@ -347,6 +358,7 @@ function cutInFor(
       endSec,
       transitionIn: "cut",
       reason,
+      coverageCutIn: true,
     };
   }
   const landmark = farLandmark(pos, dataset);
@@ -362,20 +374,28 @@ function cutInFor(
   // cut-in that tracks the flag would whip toward its home base mid-
   // shot. Those cover the SPOT; only grabs keep tracking the item.
   const tracksFlag = event.type !== "flag-cap" && event.type !== "flag-return";
-  return orbitShot({
-    center: pos,
-    radius: DIRECTOR_CLUSTER_CAM_RADIUS,
-    angle: landmark
-      ? onBroadcastSide(angleFacingLandmark(pos, landmark), dataset)
-      : undefined,
-    avoidPath: path,
-    still: true,
-    heightFactor: DIRECTOR_CLUSTER_CAM_HEIGHT,
-    lookSubject: tracksFlag ? { type: "flag", slot } : undefined,
-    startSec,
-    endSec,
-    reason,
-  });
+  return asCoverageCutIn(
+    orbitShot({
+      center: pos,
+      radius: DIRECTOR_CLUSTER_CAM_RADIUS,
+      angle: landmark
+        ? onBroadcastSide(angleFacingLandmark(pos, landmark), dataset)
+        : undefined,
+      avoidPath: path,
+      still: true,
+      heightFactor: DIRECTOR_CLUSTER_CAM_HEIGHT,
+      lookSubject: tracksFlag ? { type: "flag", slot } : undefined,
+      startSec,
+      endSec,
+      reason,
+    }),
+  );
+}
+
+/** Mark a cut-in built by the coverage pass. */
+function asCoverageCutIn(shot: Shot): Shot {
+  shot.coverageCutIn = true;
+  return shot;
 }
 
 /**

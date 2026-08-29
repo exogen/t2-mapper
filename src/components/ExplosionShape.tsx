@@ -134,7 +134,8 @@ export function ExplosionShape({ entity }: { entity: ExplosionEntity }) {
   const faceViewer = entity.faceViewer !== false;
 
   // Clone scene, process materials, collect vis nodes and IFL info.
-  const { scene, mixer, visNodes, iflInfos, materials } = useMemo(() => {
+  const { scene, mixer, visNodes, iflInfos, fadeMaterials, playSpeed } =
+    useMemo(() => {
     const scene = SkeletonUtils.clone(gltf.scene) as Group;
 
     // Collect IFL info BEFORE processShapeScene replaces materials.
@@ -165,6 +166,10 @@ export function ExplosionShape({ entity }: { entity: ExplosionEntity }) {
 
     processShapeScene(scene, entity.shapeName, {
       anisotropy,
+      // Explosion shapes keep their meshes in a negative-size detail
+      // ("Detail-1" in effect_plasma_explosion) — the engine renders
+      // detail 0 unconditionally for explosions.
+      ignoreDetailSize: true,
     });
 
     // Collect vis-animated nodes keyed by sequence name.
@@ -205,32 +210,49 @@ export function ExplosionShape({ entity }: { entity: ExplosionEntity }) {
       }
     }
 
-    // Set up animation mixer with the ambient clip (LoopOnce).
-    const clips = new Map<string, any>();
-    for (const clip of gltf.animations) {
-      clips.set(clip.name.toLowerCase(), clip);
-    }
-    const ambientClip = clips.get("ambient");
+    // playSpeed is packed as value*20 on the wire; divide by 20. The engine
+    // plays ONE thread at this timescale — it drives node transforms, morph
+    // frames, vis, and IFL matFrames together.
+    const playSpeed = ((expBlock?.playSpeed as number) ?? 20) / 20;
+
+    // Set up animation mixer with the ambient clip (LoopOnce), plus the
+    // morph-frame clips ("Ambient_{Mesh}_frame") that carry DTS mesh frame
+    // animation (e.g. the plasma fireball's 35 billow frames).
     let mixer: AnimationMixer | null = null;
-    if (ambientClip) {
-      mixer = new AnimationMixer(scene);
-      const action = mixer.clipAction(ambientClip);
+    for (const clip of gltf.animations) {
+      const lower = clip.name.toLowerCase();
+      const isAmbient =
+        lower === "ambient" ||
+        (lower.startsWith("ambient_") && lower.endsWith("_frame"));
+      if (!isAmbient) continue;
+      mixer ??= new AnimationMixer(scene);
+      const action = mixer.clipAction(clip);
       action.setLoop(LoopOnce, 1);
       action.clampWhenFinished = true;
-      // playSpeed is packed as value*20 on the wire; divide by 20.
-      const playSpeed = ((expBlock?.playSpeed as number) ?? 20) / 20;
       action.timeScale = playSpeed;
       action.play();
     }
 
-    // Collect all materials for fade-out.
-    const materials: Material[] = [];
+    // Collect non-vis materials for fade-out, with their base opacity so the
+    // fade doesn't compound frame-over-frame. Vis-animated materials are
+    // excluded — the vis loop recomputes their opacity (× fade) each frame.
+    const visMaterials = new Set<Material>(
+      visNodes.flatMap((v) =>
+        Array.isArray(v.mesh.material) ? v.mesh.material : [v.mesh.material],
+      ),
+    );
+    const fadeMaterials: Array<{ material: Material; baseOpacity: number }> =
+      [];
     scene.traverse((child: any) => {
       if (!child.isMesh) return;
-      if (Array.isArray(child.material)) {
-        materials.push(...child.material);
-      } else if (child.material) {
-        materials.push(child.material);
+      const mats = Array.isArray(child.material)
+        ? child.material
+        : child.material
+          ? [child.material]
+          : [];
+      for (const material of mats) {
+        if (visMaterials.has(material)) continue;
+        fadeMaterials.push({ material, baseOpacity: material.opacity });
       }
     });
 
@@ -239,7 +261,7 @@ export function ExplosionShape({ entity }: { entity: ExplosionEntity }) {
       child.frustumCulled = false;
     });
 
-    return { scene, mixer, visNodes, iflInfos, materials };
+    return { scene, mixer, visNodes, iflInfos, fadeMaterials, playSpeed };
   }, [gltf, expBlock, anisotropy]);
 
   useEffect(() => {
@@ -278,7 +300,8 @@ export function ExplosionShape({ entity }: { entity: ExplosionEntity }) {
 
     const elapsed = effectNow() - startTimeRef.current;
     const t = Math.min(elapsed / lifetimeMS, 1);
-    const elapsedSec = elapsed / 1000;
+    // Vis and IFL follow the sequence thread, which runs at playSpeed.
+    const threadSec = (elapsed / 1000) * playSpeed;
 
     // Advance skeleton animation.
     if (mixer) {
@@ -292,7 +315,7 @@ export function ExplosionShape({ entity }: { entity: ExplosionEntity }) {
     for (const { mesh, keyframes, duration, cyclic } of visNodes) {
       const mat = mesh.material;
       if (!mat || Array.isArray(mat)) continue;
-      const rawT = elapsedSec / duration;
+      const rawT = threadSec / duration;
       const vt = cyclic ? rawT % 1 : Math.min(rawT, 1);
       const n = keyframes.length;
       const pos = vt * n;
@@ -303,13 +326,11 @@ export function ExplosionShape({ entity }: { entity: ExplosionEntity }) {
       mat.opacity = visOpacity * fadeAlpha;
     }
 
-    // Also fade non-vis materials.
+    // Also fade non-vis materials (from their base opacity, not compounding).
     if (fadeAlpha < 1) {
-      for (const mat of materials) {
-        if ("opacity" in mat) {
-          mat.transparent = true;
-          (mat as any).opacity *= fadeAlpha;
-        }
+      for (const { material, baseOpacity } of fadeMaterials) {
+        material.transparent = true;
+        material.opacity = baseOpacity * fadeAlpha;
       }
     }
 
@@ -318,11 +339,11 @@ export function ExplosionShape({ entity }: { entity: ExplosionEntity }) {
       let iflTime: number;
       if (info.sequenceName && info.duration) {
         const pos = info.cyclic
-          ? (elapsedSec / info.duration) % 1
-          : Math.min(elapsedSec / info.duration, 1);
+          ? (threadSec / info.duration) % 1
+          : Math.min(threadSec / info.duration, 1);
         iflTime = pos * info.duration + (info.toolBegin ?? 0);
       } else {
-        iflTime = elapsedSec;
+        iflTime = threadSec;
       }
       updateAtlasFrame(atlas, getFrameIndexForTime(atlas, iflTime));
     }

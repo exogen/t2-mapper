@@ -378,6 +378,9 @@ interface ShotBase {
   transitionIn: "cut" | "continuous";
   /** Human-readable story for debugging/tuning ("Storm flag carried…"). */
   reason: string;
+  /** Spliced by the coverage pass to put a missed tier-1 event on
+   *  camera (see assemble.ts cutInFor). */
+  coverageCutIn?: boolean;
 }
 
 /**

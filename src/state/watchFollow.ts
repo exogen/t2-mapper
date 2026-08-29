@@ -1,9 +1,12 @@
+import { createLogger } from "../logger";
 import { gameEntityStore } from "./gameEntityStore";
 import type { GameEntity } from "./gameEntityTypes";
 import { liveConnectionStore } from "./liveConnectionStore";
 import { streamPlaybackStore } from "./streamPlaybackStore";
 import { threeForwardHeading } from "../stream/streamHelpers";
 import { resolveFlagTeam } from "../components/flagTeam";
+
+const camlog = createLogger("camdbg");
 
 /**
  * Spectate-mode follow: a purely client-side reproduction of the real
@@ -330,9 +333,22 @@ export function resolveWatchFollowTarget(): string | null {
     const flag = resolveFlagSlot(followFlagSlot);
     if (flag) {
       if (flag.id !== followEntityId) {
+        camlog.info(
+          "flag hand-off: slot %d follow %s -> %s",
+          followFlagSlot,
+          followEntityId,
+          flag.id,
+        );
         streamPlaybackStore.setState({ followEntityId: flag.id });
       }
       return flag.id;
+    }
+    if (!current) {
+      camlog.info(
+        "flag follow: slot %d unresolvable and last body %s gone -> null",
+        followFlagSlot,
+        followEntityId,
+      );
     }
     return current ? followEntityId : null;
   }

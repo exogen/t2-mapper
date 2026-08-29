@@ -1,3 +1,5 @@
+import { createLogger } from "../logger";
+import { orbitSpringDebug } from "../state/cameraDebug";
 import { useCallback, useEffect, useRef } from "react";
 import { useFrame } from "@react-three/fiber";
 import { Quaternion, Vector3 } from "three";
@@ -17,7 +19,14 @@ import { useEngineStoreApi, advanceEffectClock } from "../state/engineStore";
 import { setStreamSnapshot } from "../state/streamSnapshotStore";
 import { cameraRegistry } from "../state/cameraRegistry";
 import { gameEntityStore } from "../state/gameEntityStore";
-import { DIRECTOR_ORBIT_TARGET_MAX_LAG } from "../director/cameraRig";
+import {
+  DIRECTOR_ORBIT_TARGET_MAX_LAG,
+  GROUND_MIN_CLEARANCE,
+  groundHeightAt,
+  smoothedGroundHeightAt,
+  TERRAIN_FOLLOW_CLEARANCE,
+  TERRAIN_TRACK_MIN_DISTANCE,
+} from "../director/cameraRig";
 import { liveConnectionStore } from "../state/liveConnectionStore";
 import {
   streamClock,
@@ -41,6 +50,8 @@ import type { GameEntity } from "../state/gameEntityTypes";
 import { isSceneEntity } from "../state/gameEntityTypes";
 
 type EntityById = Map<string, StreamEntity>;
+
+const camlog = createLogger("camdbg");
 
 /** Safely access a field that exists only on some GameEntity variants. */
 function getField(entity: GameEntity, field: string): string | undefined {
@@ -88,7 +99,145 @@ function mutateRenderFields(
       e.fadeVal = stream.fadeVal;
       e.cloakLevel = stream.cloakLevel;
       break;
+    case "Beam":
+      // Sniper beam swing updates move the endpoint on the live ghost.
+      if (stream.beamStart) e.beamStart = stream.beamStart;
+      if (stream.beamEnd) e.beamEnd = stream.beamEnd;
+      break;
+    case "Tracer":
+      // Live bolt orientation: a bouncing blaster bolt re-aims along
+      // its reflected velocity each tick — a direction copied once at
+      // entity creation would freeze the quad on the muzzle bearing.
+      e.direction = stream.direction;
+      break;
+    case "LinkBeam":
+      // ELF/repair beams re-anchor as the ghost updates its endpoints.
+      e.linkSourceId = stream.linkSourceId;
+      e.linkTargetId = stream.linkTargetId;
+      break;
   }
+}
+
+/**
+ * The director's follow-target spring, bundled so its state resets in
+ * one place. `target` arrives raw and leaves smoothed. A shot boundary
+ * (snapNonce changed) is the only licence to snap; mid-shot, a >60m
+ * jump is a capture/return teleport and freezes on the last framing,
+ * a target-id hand-off (carrier-item) glides with the lag clamp
+ * suspended, and continuous motion is carried by velocity feed-forward
+ * with damping on the residual (see the camdbg log for every event).
+ */
+interface FollowSpring {
+  smoothed: Vector3;
+  seeded: boolean;
+  lastId: string | null;
+  frozen: boolean;
+  handOff: boolean;
+  snapSeen: number;
+  prevRaw: Vector3;
+  prevRawValid: boolean;
+}
+
+function newFollowSpring(): FollowSpring {
+  return {
+    smoothed: new Vector3(),
+    seeded: false,
+    lastId: null,
+    frozen: false,
+    handOff: false,
+    snapSeen: -1,
+    prevRaw: new Vector3(),
+    prevRawValid: false,
+  };
+}
+
+function advanceFollowSpring(
+  spring: FollowSpring,
+  target: Vector3,
+  targetId: string,
+  snapNonce: number,
+  damping: number,
+  effDelta: number,
+): void {
+  // A shot boundary is the ONE moment a discontinuous move is
+  // an edit; the director bumps the nonce there. Mid-shot, a
+  // >60m jump is always a capture/return teleport (entities
+  // move continuously; a carrier-item hand-off is metres), and
+  // a hand-off glides WITHOUT the lag clamp — clamping is for
+  // continuous-motion sag, and snapping part of a target swap
+  // is itself the twitch it was meant to prevent.
+  const shotChanged = spring.snapSeen !== snapNonce;
+  spring.snapSeen = snapNonce;
+  const handOff = spring.lastId !== targetId;
+  if (handOff) {
+    camlog.info("spring target %s -> %s", spring.lastId, targetId);
+  }
+  spring.lastId = targetId;
+  const jump = spring.seeded ? spring.smoothed.distanceTo(target) : 0;
+  orbitSpringDebug.targetId = targetId;
+  orbitSpringDebug.jump = jump;
+  orbitSpringDebug.active = true;
+  if (shotChanged || !spring.seeded) {
+    if (jump > 2) {
+      camlog.info(
+        "spring SNAP seed (%s, jump %sm)",
+        shotChanged ? "shot changed" : "unseeded",
+        jump.toFixed(1),
+      );
+    }
+    spring.frozen = false;
+    spring.handOff = false;
+    spring.prevRawValid = false;
+    spring.smoothed.copy(target);
+    spring.seeded = true;
+  } else if (jump > 60) {
+    // Mid-shot teleport: hold the pre-teleport framing until
+    // the shot ends or the subject comes back near.
+    if (!spring.frozen) {
+      camlog.info("spring FREEZE (mid-shot jump %sm)", jump.toFixed(0));
+    }
+    spring.frozen = true;
+    spring.prevRawValid = false;
+    target.copy(spring.smoothed);
+  } else {
+    if (spring.frozen) {
+      camlog.info("spring unfreeze (subject back near)");
+    }
+    spring.frozen = false;
+    if (handOff && !spring.handOff) {
+      camlog.info("spring hand-off glide (jump %sm)", jump.toFixed(1));
+    }
+    if (handOff) spring.handOff = true;
+    // Feed-forward: carry the smoothed point along with the
+    // target's own frame-to-frame motion, then damp only the
+    // residual. Damping alone tops out at damping x lag m/s of
+    // catch-up (~31 m/s) — far below a skiing carrier — which
+    // parked the spring on the lag clamp and turned it into a
+    // per-frame yank (measured as sustained 150+ m/s camera
+    // jitter on chase shots). A hand-off's displacement is the
+    // target SWAP, not motion — never fed forward.
+    if (!handOff && spring.prevRawValid) {
+      _orbitFeedForward.copy(target).sub(spring.prevRaw);
+      if (_orbitFeedForward.lengthSq() < 25) {
+        spring.smoothed.add(_orbitFeedForward);
+      }
+    }
+    spring.prevRaw.copy(target);
+    spring.prevRawValid = true;
+    spring.smoothed.lerp(target, 1 - Math.exp(-damping * effDelta));
+    // The spring may sag, but only so far: a fast capper on a
+    // straight line otherwise settles at speed/damping metres
+    // behind and rides the frame edge.
+    const lag = spring.smoothed.distanceTo(target);
+    if (spring.handOff) {
+      if (lag < 1) spring.handOff = false;
+    } else if (lag > DIRECTOR_ORBIT_TARGET_MAX_LAG) {
+      spring.smoothed.lerp(target, 1 - DIRECTOR_ORBIT_TARGET_MAX_LAG / lag);
+    }
+    target.copy(spring.smoothed);
+  }
+  orbitSpringDebug.frozen = spring.frozen;
+  orbitSpringDebug.handOff = spring.handOff;
 }
 
 /** Cache entity-by-id Maps per snapshot so they're built once, not every frame. */
@@ -108,8 +257,8 @@ const _interpQuatB = new Quaternion();
 const _billboardFlip = new Quaternion(0, 1, 0, 0); // 180° around Y
 const _orbitDir = new Vector3();
 const _orbitTarget = new Vector3();
-const _smoothedOrbitTarget = new Vector3();
 const _orbitCandidate = new Vector3();
+const _orbitFeedForward = new Vector3();
 
 /** PlayerData::maxLookAngle — all Tribes 2 armor datablocks use 1.5 rad (~85.9°). */
 const DEFAULT_MAX_LOOK_ANGLE = 1.5;
@@ -185,7 +334,7 @@ export function StreamingController({
 }) {
   const engineStore = useEngineStoreApi();
   const { fov: userFov } = useSettings();
-  const orbitTargetSmoothedRef = useRef(false);
+  const springRef = useRef<FollowSpring>(newFollowSpring());
   const playbackClockRef = useRef(0);
   const lastSeekTimeRef = useRef(0);
   const prevTickSnapshotRef = useRef<StreamSnapshot | null>(null);
@@ -601,6 +750,14 @@ export function StreamingController({
         if (renderEntity && isSceneEntity(renderEntity)) {
           continue;
         }
+        // Link beams (ELF/repair) have no ghost position at all — they
+        // draw themselves in world space between two live objects, and
+        // manage their own visibility. The no-position hide below would
+        // blank them permanently.
+        if (renderEntity?.renderType === "LinkBeam") {
+          child.visible = true;
+          continue;
+        }
 
         const entity = currentEntities.get(child.name);
         // Retained entities (e.g. explosion shapes kept alive past their
@@ -709,37 +866,24 @@ export function StreamingController({
         // Loose-spring target for the auto-director: ease toward where
         // the followed thing IS rather than teleporting with it through
         // drops, passes and pickups. A jump far beyond hand-off range is
-        // a shot cut — snap, don't glide across the map.
-        const targetDamping = streamPlaybackStore.getState().orbitTargetDamping;
-        if (targetDamping != null) {
-          if (
-            !orbitTargetSmoothedRef.current ||
-            _smoothedOrbitTarget.distanceTo(_orbitTarget) > 60
-          ) {
-            _smoothedOrbitTarget.copy(_orbitTarget);
-            orbitTargetSmoothedRef.current = true;
-          } else {
-            _smoothedOrbitTarget.lerp(
-              _orbitTarget,
-              1 -
-                Math.exp(
-                  -targetDamping * delta * (isPlaying ? playback.rate : 0),
-                ),
-            );
-            // The spring may sag, but only so far: a fast capper on a
-            // straight line otherwise settles at speed/damping metres
-            // behind and rides the frame edge.
-            const lag = _smoothedOrbitTarget.distanceTo(_orbitTarget);
-            if (lag > DIRECTOR_ORBIT_TARGET_MAX_LAG) {
-              _smoothedOrbitTarget.lerp(
-                _orbitTarget,
-                1 - DIRECTOR_ORBIT_TARGET_MAX_LAG / lag,
-              );
-            }
-          }
-          _orbitTarget.copy(_smoothedOrbitTarget);
+        // a shot cut — snap, don't glide across the map. EXCEPT a
+        // followed flag arriving at a flag stand: that jump is the
+        // capture/return teleport, and chasing it yanks the viewer to
+        // the home base mid-shot — freeze on the last framing instead
+        // and let the next shot (the aftermath) own what follows.
+        const spState = streamPlaybackStore.getState();
+        if (spState.orbitTargetDamping != null) {
+          advanceFollowSpring(
+            springRef.current,
+            _orbitTarget,
+            orbitTargetId,
+            spState.orbitSnapNonce,
+            spState.orbitTargetDamping,
+            delta * (isPlaying ? playback.rate : 0),
+          );
         } else {
-          orbitTargetSmoothedRef.current = false;
+          springRef.current.seeded = false;
+          orbitSpringDebug.active = false;
         }
         // Torque orbits the target's render world-box center; player positions
         // in our stream are feet-level, so lift to an approximate center.
@@ -804,6 +948,37 @@ export function StreamingController({
           _orbitCandidate
             .copy(_orbitTarget)
             .addScaledVector(_orbitDir, orbitDistance);
+
+          // Auto-director terrain track: a follow camera trailing a
+          // skier dips into every jag of the ground. Ride the SMOOTHED
+          // terrain surface a few metres up instead — a rolling curve
+          // even where the heightmap is jagged — with the raw-height
+          // clamp underneath as the never-inside-the-hill guarantee.
+          // Tight close shots (the defender's hip, the hero frame) are
+          // deliberately near the ground and keep only the hard floor.
+          const directing =
+            streamPlaybackStore.getState().orbitTargetDamping != null;
+          if (directing && orbitDistance >= TERRAIN_TRACK_MIN_DISTANCE) {
+            const soft = smoothedGroundHeightAt(
+              _orbitCandidate.x,
+              _orbitCandidate.z,
+            );
+            if (
+              soft != null &&
+              _orbitCandidate.y < soft + TERRAIN_FOLLOW_CLEARANCE
+            ) {
+              _orbitCandidate.y = soft + TERRAIN_FOLLOW_CLEARANCE;
+            }
+          }
+          if (directing) {
+            const hard = groundHeightAt(_orbitCandidate.x, _orbitCandidate.z);
+            if (
+              hard != null &&
+              _orbitCandidate.y < hard + GROUND_MIN_CLEARANCE
+            ) {
+              _orbitCandidate.y = hard + GROUND_MIN_CLEARANCE;
+            }
+          }
 
           streamCamera.position.copy(_orbitCandidate);
           streamCamera.lookAt(_orbitTarget);

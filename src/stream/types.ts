@@ -88,6 +88,35 @@ export interface TracerVisual {
   crossViewAng: number;
   crossSize: number;
   renderCross: boolean;
+  /** Motion-blur tail (EnergyProjectile blur* fields) — an untextured
+   *  additive ribbon along the bolt's recent path. */
+  blur?: {
+    lifetime: number;
+    width: number;
+    /** sRGB rgb; alpha fades with segment age. */
+    color: { r: number; g: number; b: number };
+  };
+}
+
+/**
+ * Sniper-rifle laser beam (SniperProjectileData) — a camera-facing
+ * ribbon between two fixed endpoints, drawn in two passes (binary-
+ * verified in Tribes2.exe FUN_00642f60): the white core (textures[11])
+ * and the beamColor-tinted pulse overlay whose texture steps through
+ * the laserrip sequence as the beam fades.
+ */
+export interface BeamVisual {
+  kind: "beam";
+  /** sRGB beam color (the red pass tint). */
+  color: { r: number; g: number; b: number };
+  fadeTime: number;
+  startWidth: number;
+  endWidth: number;
+  pulseSpeed: number;
+  pulseLength: number;
+  /** The datablock's 12 textures: [0] flare, [1] nonlingradient,
+   *  [2..10] laserrip01-09, [11] the main beam (sniper00). */
+  textures: string[];
 }
 
 export interface SpriteVisual {
@@ -100,7 +129,44 @@ export interface SpriteVisual {
   size: number;
 }
 
-export type StreamVisual = TracerVisual | SpriteVisual;
+/**
+ * A beam linking two LIVE objects (ELF gun / repair beam): endpoints
+ * re-derived every frame from the source's muzzle and the target's
+ * position, unlike the sniper beam's fixed points. Binary-verified
+ * render passes (ELF FUN_0064cff0, repair FUN_00645fc0): an additive
+ * camera-facing ribbon whose U scrolls with age, plus an impact flare
+ * billboard at the target — the ELF adds a bow through the shooter's
+ * aim point and three jittered lightning ribbons.
+ */
+export interface LinkBeamVisual {
+  kind: "linkBeam";
+  variant: "elf" | "repair";
+  /** Main ribbon texture (ELFBeam / redbump2). */
+  texture: string;
+  /** Impact flare at the target (BlueImpact / redflare). */
+  flareTexture?: string;
+  /** ELF only: the lightning ribbon texture. */
+  lightningTexture?: string;
+  /** TOTAL ribbon width in meters (elf 2x mainBeamWidth; repair 0.2). */
+  width: number;
+  /** Main ribbon alpha (repair 0.75, elf 1). */
+  alpha: number;
+  /** U scroll rate (mainBeamSpeed / beamSpeed). */
+  scrollSpeed: number;
+  /** Texture repeats per meter (mainBeamRepeat / texRepeat). */
+  texRepeat: number;
+  /** Impact flare size in meters (elf 0.5, repair 0.6). */
+  flareSize: number;
+  /** ELF lightning: ribbon width and jitter distance off the beam. */
+  lightningWidth?: number;
+  lightningDist?: number;
+}
+
+export type StreamVisual =
+  | TracerVisual
+  | SpriteVisual
+  | BeamVisual
+  | LinkBeamVisual;
 
 export interface StreamEntity {
   id: string;
@@ -129,6 +195,14 @@ export interface StreamEntity {
   ghostIndex?: number;
   /** Projectiles: the shooter's ghost index (packet sourceObject). */
   sourceGhostIndex?: number;
+  /** Beam projectiles: Torque-space endpoints from the ghost
+   *  (SniperProjectile initialPosition/endPos). */
+  beamStart?: [number, number, number];
+  beamEnd?: [number, number, number];
+  /** Link beams (ELF/repair): live source and target entity ids,
+   *  resolved from the ghost's sourceObject/targetObject indices. */
+  linkSourceId?: string;
+  linkTargetId?: string;
   className?: string;
   dataBlockId?: number;
   shapeHint?: string;

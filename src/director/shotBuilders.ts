@@ -70,6 +70,31 @@ import {
   suitUp,
 } from "./analysis";
 
+/**
+ * Iterate a span in DIRECTOR_FIXED_CHUNK_SEC chunks. A trailing
+ * fragment shorter than the minimum run extends the last emitted shot
+ * instead of standing alone (every chunked emitter shares this
+ * boundary rule — hand-rolled copies of it have drifted before). The
+ * callback may return a time to resume from, for an emitter that
+ * consumed several chunks in one shot (the turtle's extended follow).
+ */
+export function forEachChunk(
+  startSec: number,
+  endSec: number,
+  shots: Shot[],
+  emit: (chunkStart: number, chunkEnd: number) => number | void,
+): void {
+  for (let t = startSec; t < endSec; t += DIRECTOR_FIXED_CHUNK_SEC) {
+    const chunkEnd = Math.min(t + DIRECTOR_FIXED_CHUNK_SEC, endSec);
+    if (chunkEnd - t < DIRECTOR_MIN_RUN_SEC) {
+      if (shots.length > 0) shots[shots.length - 1].endSec = chunkEnd;
+      break;
+    }
+    const resume = emit(t, chunkEnd);
+    if (resume != null) t = resume;
+  }
+}
+
 /** A PlayersAtSec view with everyone near `exclude` removed — for
  *  finding the best cluster somewhere OTHER than where we just looked. */
 function playersAwayFrom(
@@ -100,16 +125,11 @@ export function bombardmentShots(
   variety: ShotVariety,
 ): Shot[] {
   const shots: Shot[] = [];
-  for (let t = startSec; t < endSec; t += DIRECTOR_FIXED_CHUNK_SEC) {
-    const chunkEnd = Math.min(t + DIRECTOR_FIXED_CHUNK_SEC, endSec);
-    if (chunkEnd - t < DIRECTOR_MIN_RUN_SEC) {
-      if (shots.length > 0) shots[shots.length - 1].endSec = chunkEnd;
-      break;
-    }
+  forEachChunk(startSec, endSec, shots, (t, chunkEnd) => {
     const barrage = bombardment(t, chunkEnd, dataset);
     if (!barrage) {
       if (shots.length > 0) shots[shots.length - 1].endSec = chunkEnd;
-      continue;
+      return;
     }
     const crew = barrage.shooterTargetId;
     const showCrew = crew != null && variety.fixedCount % 2 === 1;
@@ -159,7 +179,7 @@ export function bombardmentShots(
               : `${barrage.shells} mortars hitting the base`,
           }),
     );
-  }
+  });
   return shots;
 }
 
@@ -440,13 +460,7 @@ export function watchPlayersShots(
   variety: ShotVariety,
 ): Shot[] {
   const shots: Shot[] = [];
-  for (let t = startSec; t < endSec; t += DIRECTOR_FIXED_CHUNK_SEC) {
-    const chunkEnd = Math.min(t + DIRECTOR_FIXED_CHUNK_SEC, endSec);
-    if (chunkEnd - t < DIRECTOR_MIN_RUN_SEC) {
-      // Too short to stand on its own — extend the previous shot.
-      if (shots.length > 0) shots[shots.length - 1].endSec = chunkEnd;
-      break;
-    }
+  forEachChunk(startSec, endSec, shots, (t, chunkEnd) => {
     // With the flags quiet, shelling is the story: alternate between
     // the impacts and the crew putting them there, so the lull has some
     // variety in what kind of activity it shows.
@@ -459,7 +473,7 @@ export function watchPlayersShots(
     );
     if (situational) {
       pushReachingBack(shots, situational, startSec);
-      continue;
+      return;
     }
     let held = stableCluster(
       t,
@@ -499,7 +513,7 @@ export function watchPlayersShots(
         transitionIn: "cut",
         reason: `Lull — watching ${held.count} players at ${placeName(held.center, dataset)}`,
       });
-      continue;
+      return;
     }
     // Players are on the move: follow one of them rather than point a
     // fixed camera at where they used to be — and pick one who is DOING
@@ -542,7 +556,7 @@ export function watchPlayersShots(
         transitionIn: "cut",
         reason: `Lull — following ${playerName(hero, dataset) ?? "a player"} near ${placeName(moving!.center, dataset)}`,
       });
-      continue;
+      return;
     }
     if (standPos) {
       const framing = fixedFraming(standPos, dataset, variety);
@@ -559,7 +573,7 @@ export function watchPlayersShots(
         reason: `${label} — quiet, wide on the base`,
       });
     }
-  }
+  });
   return shots;
 }
 

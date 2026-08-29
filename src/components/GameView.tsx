@@ -23,6 +23,7 @@ import { SpectatorController } from "./SpectatorController";
 import { DemoCameraController } from "./DemoCameraController";
 import { CommentaryAudio } from "./CommentaryAudio";
 import { DirectorController } from "./DirectorController";
+import { CameraDebugWatchdog } from "./CameraDebugWatchdog";
 import { CameraTourConsumer } from "./CameraTourConsumer";
 import { ActiveInputBindings } from "./ActiveInputBindings";
 
@@ -113,6 +114,7 @@ export const GameView = memo(function GameView({
               <>
                 <DemoCameraController />
                 <DirectorController />
+                <CameraDebugWatchdog />
                 <AudioEnabled>
                   <CommentaryAudio />
                 </AudioEnabled>

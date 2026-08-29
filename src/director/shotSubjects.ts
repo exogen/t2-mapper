@@ -8,7 +8,6 @@
  * caller keeps the shot it has.
  */
 import { Vector3 } from "three";
-import { createLogger } from "../logger";
 import type { Object3D } from "three";
 import { gameEntityStore } from "../state/gameEntityStore";
 import { streamPlaybackStore } from "../state/streamPlaybackStore";
@@ -16,24 +15,9 @@ import {
   findLivingEntityByTargetId,
   resolveFlagEntityId,
 } from "../state/watchFollow";
-import { orbitPullbackDir, threeForwardHeading } from "../stream/streamHelpers";
+import { threeForwardHeading } from "../stream/streamHelpers";
 import type { Shot, ShotSubject } from "./types";
-import {
-  AIM_MIN_SPEED,
-  FOLLOW_PITCH_MAX,
-  FOLLOW_PITCH_STEP,
-  FOLLOW_PITCH_STEPS,
-  GROUND_MIN_CLEARANCE,
-  groundHeightAt,
-} from "./cameraRig";
-
-const log = createLogger("director");
-
-const _groundTarget = new Vector3();
-
-const _groundCandidate = new Vector3();
-
-const _groundDir = new Vector3();
+import { AIM_MIN_SPEED } from "./cameraRig";
 
 export function shotContains(shot: Shot, t: number): boolean {
   return t >= shot.startSec && t < shot.endSec;
@@ -96,45 +80,6 @@ export function resolveSubjectGroup(entityId: string): Object3D | null {
     id = mountId;
   }
   return null;
-}
-
-/**
- * Steepen a follow shot's orbit pitch until the pose StreamingController
- * will compute from it clears the terrain, and report whether it had to
- * change. Correcting the camera's position directly does not work for
- * follow shots — StreamingController owns that write and can run after
- * this one — but pitch is an input it reads, so raising it moves the
- * camera up the arc before the pose is ever computed. A trailing camera
- * on a carrier skiing downhill is the case that needs it.
- */
-export function keepFollowAboveGround(subject: ShotSubject): boolean {
-  const group = resolveShotSubjectGroup(subject);
-  if (!group) return false;
-  const state = streamPlaybackStore.getState();
-  const distance = state.orbitOverrideDistance;
-  // StreamingController orbits a point lifted off the entity's origin.
-  _groundTarget.copy(group.position);
-  _groundTarget.y += subject.type === "flag" ? 1.2 : 1;
-  for (let step = 0; step <= FOLLOW_PITCH_STEPS; step++) {
-    const pitch = Math.min(
-      FOLLOW_PITCH_MAX,
-      state.orbitOverridePitch + step * FOLLOW_PITCH_STEP,
-    );
-    orbitPullbackDir(state.orbitOverrideYaw, pitch, _groundDir);
-    _groundCandidate.copy(_groundTarget).addScaledVector(_groundDir, distance);
-    const ground = groundHeightAt(_groundCandidate.x, _groundCandidate.z);
-    if (ground == null || _groundCandidate.y >= ground + GROUND_MIN_CLEARANCE) {
-      if (step === 0) return false;
-      log.debug(
-        "ground rail: steepening follow pitch to %s to clear terrain",
-        pitch.toFixed(2),
-      );
-      streamPlaybackStore.setState({ orbitOverridePitch: pitch });
-      return true;
-    }
-    if (pitch >= FOLLOW_PITCH_MAX) break;
-  }
-  return false;
 }
 
 /**

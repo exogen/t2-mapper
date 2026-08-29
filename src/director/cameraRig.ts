@@ -117,6 +117,24 @@ export const PAN_STATE_COMMIT_SEC = 0.4;
 
 export const STATIC_PAN_DAMPING = 1.2;
 /**
+ * Hard cap on the pan's angular rate (radians/second). Damping alone
+ * scales with distance, so a subject flung across the frame — a killed
+ * carrier's flag arcing off the stand — used to whip the aim after it.
+ * A tripod operator turns at a human speed no matter what the subject
+ * does; anything faster than this cap is the subject's problem.
+ */
+export const STATIC_PAN_MAX_RATE = 0.5;
+/**
+ * Tripod deadband, with hysteresis. The pan does NOTHING while the
+ * subject sits within START of the aim (a tossed flag wobbling a few
+ * degrees produces zero camera motion — at Tribes' ~100° FOV, 14° off
+ * axis is still comfortably in frame); once the subject nears the
+ * frame edge the pan reframes in one smooth move and keeps going
+ * until the subject is back within STOP, then locks again.
+ */
+export const STATIC_PAN_DEADBAND_START = 0.24;
+export const STATIC_PAN_DEADBAND_STOP = 0.09;
+/**
  * Occlusion testing for fixed shots: a static camera stuck behind a
  * hillside or inside a base wall shows nothing for its whole duration,
  * so candidate angles are ray-tested against the scene and the first
@@ -278,19 +296,15 @@ export const TERRAIN_FOLLOW_LOOKAHEAD_SEC = [0.5, 1.1];
  *  (the hard clamp backstops anything faster), descents gentle. */
 export const TERRAIN_LIFT_RISE_RATE = 14;
 export const TERRAIN_LIFT_FALL_RATE = 5;
+/** Follow orbits closer than this are deliberate low/tight shots (the
+ *  hip view, the hero frame) — they keep only the hard ground floor,
+ *  never the elevated track. */
+export const TERRAIN_TRACK_MIN_DISTANCE = 10;
 /** Vertical span the ground probe searches, in Torque Z. */
 
 const GROUND_PROBE_TOP = 2000;
 
 const GROUND_PROBE_BOTTOM = -500;
-/** Pitch search used to lift a follow orbit off the ground. */
-
-export const FOLLOW_PITCH_STEP = 0.08;
-
-export const FOLLOW_PITCH_MAX = 1.1;
-
-export const FOLLOW_PITCH_STEPS = 14;
-
 /**
  * Cuts between nearby camera positions read as a jolt rather than an
  * edit, so a new shot within this range of the current camera is flown
@@ -308,6 +322,10 @@ export const TRANSITION_MIN_DISTANCE = 1.5;
 export const TRANSITION_SPEED = 110;
 
 export const TRANSITION_MIN_SEC = 0.45;
+/** Peak view-turn rate a shot-change flight may reach (radians/sec) —
+ *  travels are paced by their SWING as well as their distance, so a
+ *  short hop with a big rotation stretches instead of whipping. */
+export const TRANSITION_MAX_TURN_RATE = 1.6;
 
 export const TRANSITION_MAX_SEC = 1.8;
 /** How many frames to wait for a shot's destination pose to appear
@@ -474,6 +492,45 @@ export function groundHeightAt(threeX: number, threeZ: number): number | null {
     [threeZ, threeX, GROUND_PROBE_BOTTOM],
   );
   return hit ? hit.point[2] : null;
+}
+
+/** Tap spacing of the smoothed terrain surface (footprint ±spacing). */
+const SMOOTH_GROUND_SPACING = 12;
+
+/**
+ * A low-pass terrain surface for camera clamping: 3x3 tent-weighted
+ * taps of the O(1) heightfield around the point. Jags inside the
+ * footprint average out, and a ridge entering it raises the surface
+ * BEFORE the camera arrives — the "rollercoaster track a few metres
+ * above the ground" a corrected camera can ride smoothly, where
+ * clamping to the raw height re-traces every bump. Each tap is
+ * continuous in (x, z), so the surface is too. Nine O(1) samples: fine
+ * to evaluate per frame.
+ */
+export function smoothedGroundHeightAt(
+  threeX: number,
+  threeZ: number,
+): number | null {
+  // Directly over an empty square (a terrain HOLE — the mouth of an
+  // underground base) there is no surface to ride: averaging the
+  // neighbors would re-invent the terrain over the hole and shove a
+  // camera that is legitimately below ground level back up through it.
+  if (groundHeightAt(threeX, threeZ) == null) return null;
+  let sum = 0;
+  let weightSum = 0;
+  for (let i = -1; i <= 1; i++) {
+    for (let j = -1; j <= 1; j++) {
+      const h = groundHeightAt(
+        threeX + i * SMOOTH_GROUND_SPACING,
+        threeZ + j * SMOOTH_GROUND_SPACING,
+      );
+      if (h == null) continue;
+      const w = (2 - Math.abs(i)) * (2 - Math.abs(j));
+      sum += h * w;
+      weightSum += w;
+    }
+  }
+  return weightSum > 0 ? sum / weightSum : null;
 }
 
 /** How far up the roof test looks, and how close together two door

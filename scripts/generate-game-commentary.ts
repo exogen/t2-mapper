@@ -240,7 +240,7 @@ function buildUserPrompt(
   parts.push(
     `Write the booth's dialogue for demo time ${brief.startSec}s to ${brief.endSec}s.`,
     brief.preStart
-      ? `The match has NOT started yet — there is no score to mention. There are ${brief.playersOnServer} players on the server — include that count in the opening map/server announcement. LINEUP COVERAGE RULES: roster names may be read ONLY during shots whose topic is "lineup" (the camera is sweeping that exact group). For each lineup shot, one cue timed AT that shot\'s startSec reading names from THAT shot\'s playersOnScreen in the order given: announce EXACTLY the shot\'s namesToRead count (fewer only if the team has fewer players left unannounced) — the read should fill the shot with no trailing dead air. Separate the names with PERIODS, each name its own short sentence ("Irvin. Friendo. Carpenter. sake.") — never a comma list, so the delivery breathes between names; occasionally mention the skin a player is wearing. Never read names over any other shot: before the first lineup shot, do the welcome and anticipation only, and open the roster with a quick intro line ("On the field today:", "For Storm we\'ve got:", or similar) rather than starting the names cold. Announce each player at most ONCE across the whole lineup read: if a name already called appears in another shot, skip it. NEVER claim a team's read is complete ("the rest of X", "rounding out X") unless every name in that team's knownPlayers list (in the match info) has been announced — with big rosters you will not get to everyone, so close with open phrasing ("more Storm:", "also on Inferno:") instead.`
+      ? `The match has NOT started yet — there is no score to mention. ${brief.playersOnServer > 0 ? `There are ${brief.playersOnServer} players on the server — include that count in the opening map/server announcement.` : "The player count is unknown — do not state one."} LINEUP COVERAGE RULES: roster names may be read ONLY during shots whose topic is "lineup" (the camera is sweeping that exact group). For each lineup shot, one cue timed AT that shot\'s startSec reading names from THAT shot\'s playersOnScreen in the order given: announce EXACTLY the shot\'s namesToRead count (fewer only if the team has fewer players left unannounced) — the read should fill the shot with no trailing dead air. Separate the names with PERIODS, each name its own short sentence ("Irvin. Friendo. Carpenter. sake.") — never a comma list, so the delivery breathes between names; occasionally mention the skin a player is wearing. Never read names over any other shot: before the first lineup shot, do the welcome and anticipation only, and open the roster with a quick intro line ("On the field today:", "For Storm we\'ve got:", or similar) rather than starting the names cold. Announce each player at most ONCE across the whole lineup read: if a name already called appears in another shot, skip it. NEVER claim a team's read is complete ("the rest of X", "rounding out X") unless every name in that team's knownPlayers list (in the match info) has been announced — with big rosters you will not get to everyone, so close with open phrasing ("more Storm:", "also on Inferno:") instead.`
       : `Match clock ${brief.clock}${brief.timeRemaining ? `, ${brief.timeRemaining} remaining` : ""}. Score: ${
           brief.score
             .map((s) =>
@@ -393,12 +393,24 @@ async function main(): Promise<void> {
   // The intro is right-anchored to air just before the first lineup,
   // so its player count must be the roster THERE — the demo's opening
   // seconds routinely undercount while players are still connecting.
+  // Floor of a few seconds: a demo that opens straight on the lineup
+  // has an empty roster at t=0 (the stream hasn't delivered it yet).
   const introAirSec = Math.min(
-    match.lineupStartSec ?? matchStart ?? fromSec,
+    Math.max(match.lineupStartSec ?? matchStart ?? fromSec, fromSec + 5),
     recording.duration,
   );
   playback.stepToTime(introAirSec);
-  const introPlayerCount = playback.getSnapshot().playerRoster?.length ?? 0;
+  let introPlayerCount = playback.getSnapshot().playerRoster?.length ?? 0;
+  // The roster streams in over the demo's first seconds — an intro that
+  // airs at t≈0 must wait for it rather than announce zero players.
+  for (
+    let probe = introAirSec + 5;
+    introPlayerCount === 0 && probe <= introAirSec + 30;
+    probe += 5
+  ) {
+    playback.stepToTime(Math.min(probe, recording.duration));
+    introPlayerCount = playback.getSnapshot().playerRoster?.length ?? 0;
+  }
 
   // Tribes 2 CTF team score = 100 × caps + 1 × grabs; the caps ARE the
   // score people talk about, so the booth gets them decoded.
@@ -481,9 +493,8 @@ async function main(): Promise<void> {
       // ALL connected players (observers included) — the number a
       // browser shows for the server, not the teamed subset. Pre-start
       // windows air at the lineup, so they use the count from there.
-      playersOnServer: preStart
-        ? introPlayerCount
-        : (snap.playerRoster?.length ?? 0),
+      playersOnServer:
+        (preStart ? introPlayerCount : 0) || (snap.playerRoster?.length ?? 0),
       score:
         snap.teamScores
           ?.filter((t) => t.teamId > 0)

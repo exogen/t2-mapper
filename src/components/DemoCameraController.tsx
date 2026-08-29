@@ -1,3 +1,4 @@
+import { createLogger } from "../logger";
 import { useFrame } from "@react-three/fiber";
 import { streamPlaybackStore } from "../state/streamPlaybackStore";
 import {
@@ -20,6 +21,9 @@ import { useFollowFlagActions } from "./useFollowFlagActions";
  * StreamingController does the actual camera positioning for every mode;
  * this only drives the `streamPlaybackStore` selection state.
  */
+
+const camlog = createLogger("camdbg");
+
 export function DemoCameraController() {
   // F cycles camera modes (shares the action with the live observer).
   useInputAction("toggleObserverMode", cycleDemoCameraMode);
@@ -58,12 +62,14 @@ export function DemoCameraController() {
     if (target) {
       const wanted = streamPlaybackStore.getState().followCameraMode;
       if (streamPlaybackStore.getState().cameraMode !== wanted) {
+        camlog.info("cameraMode -> %s (target %s resolved)", wanted, target);
         streamPlaybackStore.setState({ cameraMode: wanted });
       }
     } else if (streamPlaybackStore.getState().cameraMode !== "freeFly") {
       // Followed player has no body this instant (dead, corpse faded,
       // respawn pending) — hold in free-fly with follow still armed; it
       // re-locks onto their new body when it appears.
+      camlog.info("cameraMode -> freeFly (follow target unresolved)");
       streamPlaybackStore.setState({ cameraMode: "freeFly" });
     }
   });

@@ -55,6 +55,14 @@ const TracerProjectile = createLazy(
   "TracerProjectile",
   () => import("./Projectiles"),
 );
+const BeamProjectile = createLazy(
+  "BeamProjectile",
+  () => import("./BeamProjectiles"),
+);
+const LinkBeamProjectile = createLazy(
+  "LinkBeamProjectile",
+  () => import("./BeamProjectiles"),
+);
 const SpriteProjectile = createLazy(
   "SpriteProjectile",
   () => import("./Projectiles"),
@@ -93,6 +101,10 @@ export const EntityRenderer = memo(function EntityRenderer({
       return <TracerProjectile entity={entity} />;
     case "Sprite":
       return <SpriteProjectile entity={entity} />;
+    case "Beam":
+      return <BeamProjectile entity={entity} />;
+    case "LinkBeam":
+      return <LinkBeamProjectile entity={entity} />;
     case "AudioEmitter":
       return (
         <AudioEnabled>

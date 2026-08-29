@@ -354,6 +354,116 @@ export function resolveTracerVisual(
   };
 }
 
+/**
+ * Blaster bolt (EnergyProjectileData): rendered exactly like a tracer —
+ * an additive oriented quad plus an edge-on cross — with a motion-blur
+ * tail. Binary-verified in Tribes2.exe (bolt FUN_00696ed0, cross
+ * FUN_006973b0, blur FUN_00698100): quad half-width = scale.x, total
+ * length = scale.y, cross half-extent = crossSize/2 — the same
+ * conventions the tracer renderer already uses.
+ */
+export function resolveBoltVisual(
+  className: string,
+  data: ParsedData | undefined,
+): StreamVisual | undefined {
+  if (!data || className !== "EnergyProjectile") return undefined;
+  const texture = getStringField(data, ["texture0"]);
+  if (!texture) return undefined;
+  const scale = data.scale as { x: number; y: number } | undefined;
+  const blurColor = data.blurColor as
+    { r: number; g: number; b: number } | undefined;
+  const blurLifetime = getNumberField(data, ["blurLifetime"]) ?? 0;
+  return {
+    kind: "tracer",
+    texture,
+    crossTexture: getStringField(data, ["texture1"]),
+    tracerLength: scale?.y ?? 20,
+    tracerWidth: scale?.x ?? 0.25,
+    crossViewAng: getNumberField(data, ["crossViewAng"]) ?? 0.99,
+    crossSize: getNumberField(data, ["crossSize"]) ?? 0.55,
+    renderCross: true,
+    blur:
+      blurLifetime > 0 && blurColor
+        ? {
+            lifetime: blurLifetime,
+            width: getNumberField(data, ["blurWidth"]) ?? 0.25,
+            color: { r: blurColor.r, g: blurColor.g, b: blurColor.b },
+          }
+        : undefined,
+  };
+}
+
+/**
+ * ELF gun and repair beams — see LinkBeamVisual. Constants are
+ * binary-verified: repair ribbon width 0.2 @ alpha 0.75, flare 0.6
+ * (FUN_00645fc0); ELF ribbon width 2x mainBeamWidth, flare 0.5
+ * (FUN_0064cff0).
+ */
+export function resolveLinkBeamVisual(
+  className: string,
+  data: ParsedData | undefined,
+): StreamVisual | undefined {
+  if (!data) return undefined;
+  const textures = data.textures as string[] | undefined;
+  if (className === "ELFProjectile") {
+    if (!textures?.[0]) return undefined;
+    const mainBeamWidth = getNumberField(data, ["mainBeamWidth"]) ?? 0.1;
+    return {
+      kind: "linkBeam",
+      variant: "elf",
+      texture: textures[0],
+      lightningTexture: textures[1],
+      flareTexture: textures[2],
+      width: mainBeamWidth * 2,
+      alpha: 1,
+      scrollSpeed: getNumberField(data, ["mainBeamSpeed"]) ?? 9,
+      texRepeat: getNumberField(data, ["mainBeamRepeat"]) ?? 0.25,
+      flareSize: 0.5,
+      lightningWidth: getNumberField(data, ["lightningWidth"]) ?? 0.1,
+      lightningDist: getNumberField(data, ["lightningDist"]) ?? 0.15,
+    };
+  }
+  if (className === "RepairProjectile") {
+    if (!textures?.[0]) return undefined;
+    return {
+      kind: "linkBeam",
+      variant: "repair",
+      texture: textures[0],
+      flareTexture: textures[1],
+      width: 0.2,
+      alpha: 0.75,
+      scrollSpeed: getNumberField(data, ["beamSpeed"]) ?? 5,
+      texRepeat: getNumberField(data, ["texRepeat"]) ?? 0.2,
+      flareSize: 0.6,
+    };
+  }
+  return undefined;
+}
+
+/** Laser rifle beam (SniperProjectileData) — see BeamVisual. */
+export function resolveBeamVisual(
+  className: string,
+  data: ParsedData | undefined,
+): StreamVisual | undefined {
+  if (!data || className !== "SniperProjectile") return undefined;
+  const textures = data.textures as string[] | undefined;
+  if (!Array.isArray(textures) || textures.length < 12) return undefined;
+  const color = data.beamColor as
+    { r: number; g: number; b: number } | undefined;
+  return {
+    kind: "beam",
+    color: color
+      ? { r: color.r, g: color.g, b: color.b }
+      : { r: 1, g: 0.1, b: 0.1 },
+    fadeTime: getNumberField(data, ["fadeTime"]) ?? 1,
+    startWidth: getNumberField(data, ["startBeamWidth"]) ?? 0.145,
+    endWidth: getNumberField(data, ["endBeamWidth"]) ?? 0.25,
+    pulseSpeed: getNumberField(data, ["pulseSpeed"]) ?? 6,
+    pulseLength: getNumberField(data, ["pulseLength"]) ?? 0.15,
+    textures,
+  };
+}
+
 export function resolveSpriteVisual(
   className: string,
   data: ParsedData | undefined,
@@ -395,10 +505,9 @@ export function resolveSpriteVisual(
 
 /**
  * Parse weapon image state machine from a ShapeBaseImageData datablock.
- *
- * CRITICAL: The parser's field names for transitions are MISALIGNED with
- * the actual engine packing order. See demoStreaming.ts for details on the
- * remap table.
+ * The parser (2.0.1+) decodes transitions under their true engine
+ * names, so this is a straight read — the wire's 1-based state indices
+ * (0 = none) become 0-based with -1 = none.
  */
 export function parseWeaponImageStates(
   blockData: ParsedData,
@@ -407,7 +516,7 @@ export function parseWeaponImageStates(
   if (!Array.isArray(rawStates) || rawStates.length === 0) return undefined;
 
   return rawStates.map((s) => {
-    const remap = (v: unknown): number => {
+    const toIndex = (v: unknown): number => {
       const n = v as number;
       if (n == null) return -1;
       return n - 1;
@@ -415,17 +524,17 @@ export function parseWeaponImageStates(
 
     return {
       name: (s.name as string) ?? "",
-      transitionOnNotLoaded: remap(s.transitionOnAmmo),
-      transitionOnLoaded: remap(s.transitionOnNoAmmo),
-      transitionOnNoAmmo: remap(s.transitionOnTarget),
-      transitionOnAmmo: remap(s.transitionOnNoTarget),
-      transitionOnNoTarget: remap(s.transitionOnWet),
-      transitionOnTarget: remap(s.transitionOnNotWet),
-      transitionOnNotWet: remap(s.transitionOnTriggerUp),
-      transitionOnWet: remap(s.transitionOnTriggerDown),
-      transitionOnTriggerUp: remap(s.transitionOnTimeout),
-      transitionOnTriggerDown: remap(s.transitionGeneric0In),
-      transitionOnTimeout: remap(s.transitionGeneric0Out),
+      transitionOnNotLoaded: toIndex(s.transitionOnNotLoaded),
+      transitionOnLoaded: toIndex(s.transitionOnLoaded),
+      transitionOnNoAmmo: toIndex(s.transitionOnNoAmmo),
+      transitionOnAmmo: toIndex(s.transitionOnAmmo),
+      transitionOnNoTarget: toIndex(s.transitionOnNoTarget),
+      transitionOnTarget: toIndex(s.transitionOnTarget),
+      transitionOnNotWet: toIndex(s.transitionOnNotWet),
+      transitionOnWet: toIndex(s.transitionOnWet),
+      transitionOnTriggerUp: toIndex(s.transitionOnTriggerUp),
+      transitionOnTriggerDown: toIndex(s.transitionOnTriggerDown),
+      transitionOnTimeout: toIndex(s.transitionOnTimeout),
       timeoutValue: s.timeoutValue as number | undefined,
       waitForTimeout: (s.waitForTimeout as boolean) ?? false,
       fire: (s.fire as boolean) ?? false,

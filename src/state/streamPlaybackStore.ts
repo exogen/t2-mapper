@@ -65,6 +65,10 @@ export interface StreamPlaybackState {
    * rigid feel (null).
    */
   orbitTargetDamping: number | null;
+  /** Bumped at every director shot boundary: the follow spring may
+   *  SNAP to its target only when this changed (a cut) — any large
+   *  jump mid-shot is a capture/return teleport, never a real move. */
+  orbitSnapNonce: number;
   /**
    * Spectate mode: the entity being followed by the client-side orbit
    * camera (the stream has no orbit target — the relay's server camera
@@ -114,6 +118,7 @@ export const streamPlaybackStore = createStore<StreamPlaybackState>()(() => ({
   orbitOverridePitch: 0,
   orbitOverrideDistance: DEFAULT_ORBIT_DISTANCE,
   orbitTargetDamping: null,
+  orbitSnapNonce: 0,
   followEntityId: null,
   followTargetId: null,
   followCameraMode: "orbitOverride",
