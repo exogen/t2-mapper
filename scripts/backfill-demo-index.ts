@@ -377,12 +377,29 @@ let failed = 0;
 await runPool(recKeys, async (key) => {
   const filename = path.basename(key);
   const sidecarKey = `${key}.json`;
+  const hasCommentary = objects.has(`${key}.commentary.mp3`);
   try {
     if (!force && sidecarKeys.has(sidecarKey)) {
       const raw = JSON.parse(
         Buffer.from(await getObjectBytes(sidecarKey)).toString("utf-8"),
       ) as DemoMetadata;
       if (Array.isArray(raw.games)) {
+        // Reconcile the commentary flag against the bucket listing —
+        // the one sidecar field that changes after the demo is written.
+        if ((raw.hasCommentary === true) !== hasCommentary) {
+          raw.hasCommentary = hasCommentary;
+          if (!dryRun) {
+            await putJson(
+              sidecarKey,
+              JSON.stringify(raw, null, 2),
+              "public, max-age=31536000, immutable",
+            );
+          }
+          console.log(
+            `${dryRun ? "[dry-run] " : ""}${filename}: ` +
+              `hasCommentary → ${hasCommentary}`,
+          );
+        }
         records.push(raw);
         reused++;
         return;
@@ -395,6 +412,7 @@ await runPool(recKeys, async (key) => {
     }
     const bytes = await getObjectBytes(key);
     const record = await analyzeDemo(bytes, filename);
+    record.hasCommentary = hasCommentary;
     records.push(record);
     analyzed++;
     const gameSummary =

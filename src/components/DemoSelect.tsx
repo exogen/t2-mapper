@@ -18,6 +18,7 @@ import {
   useStoreState,
 } from "@ariakit/react";
 import { matchSorter } from "match-sorter";
+import { FaMicrophoneAlt } from "react-icons/fa";
 import { IoMdCloseCircle } from "react-icons/io";
 import { LuUsers } from "react-icons/lu";
 import { TbLaurelWreathFilled } from "react-icons/tb";
@@ -78,6 +79,13 @@ function DemoItemContent({ demo }: { demo: DemoIndexEntry }) {
             aria-label="Tournament mode"
           />
         )}
+        {demo.hasCommentary && (
+          <FaMicrophoneAlt
+            className={styles.ItemCommentaryIcon}
+            title="Commentary track"
+            aria-label="Commentary track"
+          />
+        )}
       </span>
       <span className={styles.ItemMissionName}>
         {demo.server} · {formatRecordedTime(demo.recordedAt)} ·{" "}
@@ -123,6 +131,7 @@ export function DemoSelect() {
   const searchValue = useDeferredValue(latestSearchValue);
   const [selectedFilename, setSelectedFilename] = useState("");
   const [tournamentOnly, setTournamentOnly] = useState(false);
+  const [commentaryOnly, setCommentaryOnly] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const enabled = DEMOS_BASE_URL !== "";
@@ -206,7 +215,9 @@ export function DemoSelect() {
   // return newest-first grouped by server.
   const filteredResults = useMemo(() => {
     const all = (demos ?? []).filter(
-      (demo) => !tournamentOnly || demo.games.some((game) => game.tournament),
+      (demo) =>
+        (!tournamentOnly || demo.games.some((game) => game.tournament)) &&
+        (!commentaryOnly || demo.hasCommentary === true),
     );
     if (!searchValue) {
       return { type: "grouped" as const, groups: groupDemos(all) };
@@ -227,7 +238,7 @@ export function DemoSelect() {
       ],
     });
     return { type: "flat" as const, demos: matches };
-  }, [demos, searchValue, tournamentOnly]);
+  }, [demos, searchValue, tournamentOnly, commentaryOnly]);
 
   const emptyMessage = !enabled
     ? "Demo index not configured (DEMOS_BASE_URL)"
@@ -327,21 +338,33 @@ export function DemoSelect() {
         }}
       >
         {emptyMessage == null && (
-          <label
+          <div
             className={styles.FilterBar}
             // Keep combobox (virtual) focus so the popover stays open and
             // typing still works after toggling.
             onMouseDown={(event) => event.preventDefault()}
           >
-            <input
-              type="checkbox"
-              className={styles.FilterCheckbox}
-              checked={tournamentOnly}
-              onChange={(event) => setTournamentOnly(event.target.checked)}
-            />
-            <TbLaurelWreathFilled className={styles.FilterIcon} />
-            <span className={styles.FilterLabel}>Tournament mode only</span>
-          </label>
+            <label className={styles.Filter}>
+              <input
+                type="checkbox"
+                className={styles.FilterCheckbox}
+                checked={tournamentOnly}
+                onChange={(event) => setTournamentOnly(event.target.checked)}
+              />
+              <TbLaurelWreathFilled className={styles.FilterIcon} />
+              <span className={styles.FilterLabel}>Tournament mode only</span>
+            </label>
+            <label className={styles.Filter}>
+              <input
+                type="checkbox"
+                className={styles.FilterCheckbox}
+                checked={commentaryOnly}
+                onChange={(event) => setCommentaryOnly(event.target.checked)}
+              />
+              <FaMicrophoneAlt className={styles.FilterMicIcon} />
+              <span className={styles.FilterLabel}>Has commentary</span>
+            </label>
+          </div>
         )}
         <ComboboxList className={styles.List}>
           {emptyMessage != null ? (

@@ -140,6 +140,12 @@ export interface DemoMetadata {
    * why a demo exists at all.
    */
   reason?: string;
+  /**
+   * A `.commentary.mp3` sidecar exists for this demo. Maintained by
+   * upload-commentary on upload and reconciled by backfill-demo-index
+   * from the bucket listing; drives the demo browser's indicator.
+   */
+  hasCommentary?: boolean;
 }
 
 /**

@@ -14,8 +14,10 @@
  * vars as the relay.
  */
 import fs from "node:fs/promises";
+import path from "node:path";
 import { parseArgs } from "node:util";
 import {
+  GetObjectCommand,
   ListObjectsV2Command,
   PutObjectCommand,
   S3Client,
@@ -132,6 +134,56 @@ async function main(): Promise<void> {
       }),
     );
     console.log(`wrote ${castKey} (${cast.length} bytes) — sidecar set live`);
+  }
+
+  // Flip the demo's hasCommentary flag (metadata sidecar + index entry)
+  // so the demo browser's indicator appears without a full index
+  // backfill. Best-effort: backfill-demo-index reconciles from the
+  // bucket listing if this half fails.
+  const getJson = async (key: string): Promise<unknown> => {
+    const res = await client.send(
+      new GetObjectCommand({ Bucket: config!.bucket, Key: key }),
+    );
+    return JSON.parse(await res.Body!.transformToString());
+  };
+  try {
+    const metaKey = `${matches[0]}.json`;
+    const meta = (await getJson(metaKey)) as { hasCommentary?: boolean };
+    if (meta.hasCommentary !== true) {
+      meta.hasCommentary = true;
+      await client.send(
+        new PutObjectCommand({
+          Bucket: config!.bucket,
+          Key: metaKey,
+          Body: JSON.stringify(meta, null, 2),
+          ContentType: "application/json",
+          CacheControl: "public, max-age=31536000, immutable",
+        }),
+      );
+      console.log(`flagged ${metaKey} hasCommentary`);
+    }
+    const indexKey = `${config!.prefix}index.json`;
+    const index = (await getJson(indexKey)) as { filename?: string }[];
+    const entry = index.find(
+      (e) => e.filename === path.basename(matches[0]),
+    ) as { hasCommentary?: boolean } | undefined;
+    if (entry && entry.hasCommentary !== true) {
+      entry.hasCommentary = true;
+      await client.send(
+        new PutObjectCommand({
+          Bucket: config!.bucket,
+          Key: indexKey,
+          Body: JSON.stringify(index),
+          ContentType: "application/json",
+          CacheControl: "no-cache",
+        }),
+      );
+      console.log(`flagged ${path.basename(matches[0])} in ${indexKey}`);
+    }
+  } catch (err) {
+    console.warn(
+      `could not update hasCommentary flag (run backfill-demos to reconcile): ${String(err)}`,
+    );
   }
 }
 
