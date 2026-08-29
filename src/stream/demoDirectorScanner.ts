@@ -341,6 +341,7 @@ export async function scanDemoDirector(
               ? "light"
               : undefined,
         pack: packName(entity.imageSlots?.[BACKPACK_SLOT]?.shapeName),
+        health: entity.health,
         heading: rotation
           ? threeForwardHeading({
               x: rotation[0],

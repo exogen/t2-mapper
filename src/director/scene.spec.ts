@@ -227,7 +227,7 @@ describe("describeScenes", () => {
     );
     expect(withGrab, "no grab event emitted").toBeDefined();
     const grab = withGrab!.scene!.events.find((e) => e.type === "grab")!;
-    expect(grab.detail).toContain("RIGHT OFF THE STAND");
+    expect(grab.detail).toContain("a stand grab — the flag was home");
     // Kill distances carry units now ("~30 meters"), never a bare "~30m".
     const withKill = p.shots.find((s) =>
       s.scene!.events.some((e) => e.type === "kill"),

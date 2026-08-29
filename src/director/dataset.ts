@@ -31,6 +31,7 @@ export type PlayersAtSec = Map<
     heading?: number;
     armor?: "light" | "medium" | "heavy";
     pack?: string;
+    health?: number;
   }[]
 >;
 
@@ -59,6 +60,7 @@ export function buildPlayersAtSec(dataset: DirectorDataset): PlayersAtSec {
       heading: sample.heading,
       armor: sample.armor,
       pack: sample.pack,
+      health: sample.health,
     });
   }
   return playersAtSec;

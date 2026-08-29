@@ -10,6 +10,7 @@ import {
 } from "../state/demoDirectorStore";
 import { demoLoadStore } from "../state/demoLoadStore";
 import { commentaryPlayback, streamClock } from "../state/streamPlaybackStore";
+import { useSettings } from "./SettingsProvider";
 
 const log = createLogger("commentary");
 
@@ -49,6 +50,7 @@ const MAX_PLAY_RATE = 2;
  * and the feature stays off for this demo.
  */
 export function CommentaryAudio() {
+  const { audioVolume } = useSettings();
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const armedUrlRef = useRef<string | null>(null);
   const startFetchedForRef = useRef<string | null>(null);
@@ -223,6 +225,10 @@ export function CommentaryAudio() {
     const audio = audioRef.current;
     commentaryPlayback.active = audio != null && !audio.paused && !audio.ended;
     if (!audio) return;
+    // The track follows the master volume slider (game sounds route
+    // through the AudioListener; this element doesn't).
+    const volume = Math.min(1, Math.max(0, audioVolume));
+    if (audio.volume !== volume) audio.volume = volume;
     const directing = demoDirectorStore.getState().status === "playing";
     // Fetch only once CastGenius runs (the pre-start gate normally arms
     // first); re-checking the armed URL swaps tracks on a demo switch.

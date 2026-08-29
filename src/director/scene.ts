@@ -376,7 +376,9 @@ function describePlayers(
     if (d > range) continue;
     const identity = identityOf(p.targetId, dataset);
     const prev = previous.find((q) => q.targetId === p.targetId);
-    const speed = prev ? dist(p.pos, prev.pos) : undefined;
+    // kph (samples are 1s apart and T2 world units are meters) —
+    // the same units as the in-game speedometer, so eyeball-checkable.
+    const speed = prev ? dist(p.pos, prev.pos) * 3.6 : undefined;
     let doing: ScenePlayer["doing"];
     if (carriers.has(p.targetId)) {
       doing = "carrying the flag";
@@ -388,7 +390,7 @@ function describePlayers(
     ) {
       doing = "chasing the carrier";
     } else if (
-      (speed ?? 0) < 5 &&
+      (speed ?? 0) < 18 &&
       stands.some((st) => st.teamId === p.teamId && dist(st.pos, p.pos) <= 45)
     ) {
       doing = "posted on defense";
@@ -406,13 +408,13 @@ function describePlayers(
       )
     ) {
       doing = "suiting up";
-    } else if ((speed ?? 0) >= 40) {
+    } else if ((speed ?? 0) >= 144) {
       doing = "skiing";
     }
     // Direction relative to the bases, from the sampled displacement —
     // so "pouring out" vs "heading in to suit up" is data, not a guess.
     let moving: ScenePlayer["moving"];
-    if (prev && (speed ?? 0) >= 4) {
+    if (prev && (speed ?? 0) >= 14) {
       const own = stands.find((st) => st.teamId === p.teamId);
       const enemy = stands.find(
         (st) => st.teamId != null && st.teamId !== p.teamId,
@@ -449,6 +451,7 @@ function describePlayers(
       doing,
       moving,
       speed: speed != null ? Math.round(speed) : undefined,
+      health: p.health != null ? Math.round(p.health * 100) : undefined,
     });
     camDist.set(
       p.targetId,
@@ -619,7 +622,7 @@ function describeEvents(
     // Drops carry the carrier's INTENT — the framing the booth needs.
     const detail =
       type === "grab" && offTheStand
-        ? `${spokenText(event.description)} — RIGHT OFF THE STAND`
+        ? `${spokenText(event.description)} (a stand grab — the flag was home)`
         : type !== "drop" || event.dropKind == null
           ? spokenText(event.description)
           : event.dropKind === "died"

@@ -78,6 +78,10 @@ const { values, positionals } = parseArgs({
     seed: { type: "string", default: "7" },
     stability: { type: "string", default: "0" },
     tempo: { type: "string", default: "1" },
+    /** Per-speaker gain in dB ("doc=2.5" or "doc=2.5,rip=-1"): evens
+     *  out voices mastered at different loudness. Assembly-only, like
+     *  tempo — cached ElevenLabs chunks are reused unchanged. */
+    gain: { type: "string", default: "doc=2.5" },
     pronunciations: {
       type: "string",
       default: fileURLToPath(
@@ -144,6 +148,56 @@ for (const v of doc.voices) {
     console.error(`voice "${v.speaker}" has no voiceId`);
     process.exit(1);
   }
+}
+
+// Per-speaker assembly gain (--gain "doc=2.5"): applied in the ffmpeg
+// graph over each cue's measured window, so one voice can be evened up
+// against the others sharing the same dialogue burst.
+const speakerGainDb = new Map<string, number>();
+for (const part of (values.gain ?? "").split(",")) {
+  const m = part.trim().match(/^([^=]+)=(-?\d+(?:\.\d+)?)$/);
+  if (m) speakerGainDb.set(m[1].trim().toLowerCase(), parseFloat(m[2]));
+}
+// Padding around a cue's measured speech window, so breaths and
+// lead-ins ride with the line (windows merge when they touch).
+const GAIN_WINDOW_PAD_SEC = 0.15;
+
+/**
+ * Volume filter chain for a rendered chunk, boosting the time windows
+ * where a gain-adjusted speaker talks. Windows are in raw chunk time,
+ * so this must precede any atempo in the filter chain. Returns "" or
+ * a chain ending in "," ready to prefix the rest of the filters.
+ */
+function gainFilterFor(r: {
+  cues: Cue[];
+  timing: ChunkTiming;
+  duration: number;
+}): string {
+  const filters: string[] = [];
+  for (const [speaker, db] of speakerGainDb) {
+    const windows: [number, number][] = [];
+    r.cues.forEach((cue, j) => {
+      if (cue.speaker.toLowerCase() !== speaker) return;
+      const start = Math.max(0, r.timing.starts[j] - GAIN_WINDOW_PAD_SEC);
+      const end = Math.min(r.duration, r.timing.ends[j] + GAIN_WINDOW_PAD_SEC);
+      const last = windows[windows.length - 1];
+      if (last && start <= last[1]) last[1] = Math.max(last[1], end);
+      else windows.push([start, end]);
+    });
+    if (windows.length === 0) continue;
+    const whole =
+      windows.length === 1 &&
+      windows[0][0] <= 0.01 &&
+      windows[0][1] >= r.duration - 0.01;
+    filters.push(
+      whole
+        ? `volume=${db}dB`
+        : `volume=${db}dB:enable='${windows
+            .map(([a, b]) => `between(t,${a.toFixed(3)},${b.toFixed(3)})`)
+            .join("+")}'`,
+    );
+  }
+  return filters.length > 0 ? `${filters.join(",")},` : "";
 }
 if (!process.env.ELEVENLABS_API_KEY) {
   console.error("ELEVENLABS_API_KEY is not set");
@@ -443,7 +497,7 @@ async function main(): Promise<void> {
       );
       const stretch = tempo !== 1 ? `atempo=${tempo},` : "";
       parts.push(
-        `[${i}]${stretch}adelay=${Math.max(0, Math.round(fileStart * 1000))}:all=1[c${n}]`,
+        `[${i}]${gainFilterFor(r)}${stretch}adelay=${Math.max(0, Math.round(fileStart * 1000))}:all=1[c${n}]`,
       );
       mixIns.push(`[c${n}]`);
       n++;
@@ -476,8 +530,12 @@ async function main(): Promise<void> {
         worstLate = Math.max(worstLate, start - cue.atSec);
         scheduleEnd = start + raw / rate;
         const fadeOutAt = Math.max(0, raw - STRICT_EDGE_FADE_SEC).toFixed(3);
+        // A sliced cue has a single speaker, so its gain needs no
+        // enable windows — a flat volume on the slice covers it.
+        const sliceGain = speakerGainDb.get(cue.speaker.toLowerCase());
         parts.push(
           `[s${i}_${j}]atrim=start=${rawStart.toFixed(3)}:end=${rawEnd.toFixed(3)},asetpts=PTS-STARTPTS,` +
+            `${sliceGain ? `volume=${sliceGain}dB,` : ""}` +
             `afade=t=in:d=${STRICT_EDGE_FADE_SEC},afade=t=out:st=${fadeOutAt}:d=${STRICT_EDGE_FADE_SEC},` +
             `${rate !== 1 ? `atempo=${rate},` : ""}adelay=${Math.round(start * 1000)}:all=1[c${n}]`,
         );
@@ -564,7 +622,9 @@ async function main(): Promise<void> {
     const fileStart = atSec - r.timing.starts[0] / best.rate;
     scheduleEnd = fileStart + r.duration / best.rate;
     const delayMs = Math.max(0, Math.round(fileStart * 1000));
-    parts.push(`[${i}]${stretch}adelay=${delayMs}:all=1[c${n}]`);
+    parts.push(
+      `[${i}]${gainFilterFor(r)}${stretch}adelay=${delayMs}:all=1[c${n}]`,
+    );
     mixIns.push(`[c${n}]`);
     n++;
   });

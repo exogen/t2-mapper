@@ -6,12 +6,19 @@ import {
   useState,
   ReactNode,
 } from "react";
-import { useThree } from "@react-three/fiber";
+import { useFrame, useThree } from "@react-three/fiber";
 import { AudioListener, AudioLoader } from "three";
 import { useEngineSelector } from "../state/engineStore";
 import { isStreamingSource, useDataSource } from "../state/gameEntityStore";
 import { useLiveSelector } from "../state/liveConnectionStore";
+import { commentaryPlayback } from "../state/streamPlaybackStore";
 import { useSettings } from "./SettingsProvider";
+
+/**
+ * While the commentary track plays, game sounds sit at this fraction of the
+ * master volume so the callers read over the action.
+ **/
+const COMMENTARY_DUCK = 0.5;
 
 interface AudioContextType {
   audioLoader: AudioLoader | null;
@@ -136,9 +143,19 @@ export function AudioProvider({ children }: { children: ReactNode }) {
   );
   const muted = dataSource === "live" && liveSessionDead;
 
-  useEffect(() => {
-    audioContext.audioListener?.setMasterVolume(muted ? 0 : audioVolume);
-  }, [audioVolume, muted, audioContext.audioListener]);
+  // Applied per frame (not in an effect) because the commentary flag is
+  // mutable per-frame state, not React state. The commentary element
+  // itself bypasses the listener, so ducking here leaves speech at full
+  // master volume.
+  useFrame(() => {
+    const target =
+      (muted ? 0 : audioVolume) *
+      (commentaryPlayback.active ? COMMENTARY_DUCK : 1);
+    const listener = audioContext.audioListener;
+    if (listener && listener.getMasterVolume() !== target) {
+      listener.setMasterVolume(target);
+    }
+  });
 
   return (
     <AudioContext.Provider value={audioContext}>

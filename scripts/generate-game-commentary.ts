@@ -101,12 +101,12 @@ function shotBrief(shot: Shot): unknown {
   return {
     startSec: Math.round(shot.startSec * 10) / 10,
     endSec: Math.round(shot.endSec * 10) / 10,
-    // Lineup sweeps: how many names FIT the shot (~2s per name, read
+    // Lineup sweeps: how many names FIT the shot (~1.7s per name, read
     // as separate sentences) — the read should fill the shot, not stop
     // early into dead air.
     namesToRead:
       scene?.topic === "lineup"
-        ? Math.floor((shot.endSec - shot.startSec) / 2)
+        ? Math.floor((shot.endSec - shot.startSec) / 1.7)
         : undefined,
     camera: shot.reason,
     topic: scene?.topic,
@@ -121,6 +121,7 @@ function shotBrief(shot: Shot): unknown {
       moving: p.moving,
       frame: p.frame,
       speed: p.speed,
+      health: p.health,
     })),
     events: scene?.events.map((e) => ({
       atSec: Math.round(e.timeSec * 10) / 10,

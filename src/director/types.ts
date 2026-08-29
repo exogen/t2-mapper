@@ -47,6 +47,8 @@ export interface DirectorPlayerSample {
   /** Mounted backpack, by commentary name ("energy pack", "mortar
    *  turret barrel", …) — what they're equipped FOR. */
   pack?: string;
+  /** Normalized health (0 = dead, 1 = full), from the ghost's damage. */
+  health?: number;
 }
 
 /** A base structure's damageState change (0 = Enabled, 1 = Disabled,
@@ -302,8 +304,11 @@ export interface ScenePlayer {
     | "skiing"
     | "fighting"
     | "inbound";
-  /** Speed in u/s — ~40+ reads as skiing, ~70+ is coming in hot. */
+  /** Speed in kph (the in-game speedometer's units) — ~145+ reads as
+   *  skiing, ~250+ is coming in hot. */
   speed?: number;
+  /** Health percent (100 = full) — worth a call on a mid-run carrier. */
+  health?: number;
   /** Which way they're headed, relative to the bases — the ground truth
    *  for "pouring out" vs "heading in" style calls. */
   moving?:
