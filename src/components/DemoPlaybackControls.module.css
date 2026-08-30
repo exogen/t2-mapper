@@ -171,6 +171,60 @@
   pointer-events: none;
 }
 
+/* Mission-start tick marks riding above the seek control (one per map
+   played in multi-mission demos), from the timeline scan's match-start
+   events. The layer's bottom edge butts the root's top, so the ticks
+   hang entirely above the control. */
+.SeekMarkers {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 100%;
+  pointer-events: none;
+}
+
+/* A padded click/hover target centered on the timestamp (tooltip needs
+   a reachable hit area); the visible 2px notch is the centered ::after.
+   Hangs above the control, dipping 2px into the root's top edge. */
+.SeekMissionTick {
+  position: absolute;
+  bottom: -2px;
+  width: 14px;
+  height: 11px;
+  margin-left: -7px;
+  pointer-events: auto;
+  cursor: pointer;
+  opacity: 0.3;
+  /* Button reset — the visible notch is the ::after. */
+  appearance: none;
+  border: 0;
+  padding: 0;
+  background: transparent;
+}
+
+.SeekMissionTick:hover,
+.SeekMissionTick:focus-visible {
+  opacity: 1;
+}
+
+.SeekMissionTick:focus-visible {
+  outline: 2px solid rgba(63, 140, 255, 0.8);
+  outline-offset: 1px;
+}
+
+/* The visible notch inherits the tick's height via top/bottom. */
+.SeekMissionTick::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  margin-left: -1px;
+  border-radius: 1px;
+  background: rgba(255, 255, 255, 0.75);
+}
+
 /* A requested seek waiting for the download to reach it. */
 .SeekPendingTick {
   position: absolute;

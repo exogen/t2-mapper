@@ -314,7 +314,7 @@ async function prepareDirector(): Promise<boolean> {
     // silently doing nothing.
     demoDirectorStore.setState({
       status: "error",
-      error: "Demo download incomplete — CastGenius unavailable",
+      error: "Demo download incomplete – CastGenius unavailable",
     });
     return false;
   }

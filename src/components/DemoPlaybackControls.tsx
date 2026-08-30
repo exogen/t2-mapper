@@ -1,4 +1,10 @@
-import { useCallback, useEffect, useState, type ChangeEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type ChangeEvent,
+} from "react";
 import { useInputAction } from "./InputControls";
 import {
   usePlaybackActions,
@@ -19,6 +25,7 @@ import {
 import * as Slider from "@radix-ui/react-slider";
 import { useEngineSelector } from "../state/engineStore";
 import { useDemoLoad } from "../state/demoLoadStore";
+import { useDemoTimeline } from "../state/demoTimelineStore";
 import styles from "./DemoPlaybackControls.module.css";
 
 /**
@@ -63,6 +70,34 @@ function formatTime(seconds: number): string {
     return `${h}:${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
   }
   return `${m}:${s.toString().padStart(2, "0")}`;
+}
+
+/**
+ * formatTime, but padded to the field width `template` would render at
+ * (the demo's duration). The transport label must NEVER change width as
+ * the playhead crosses 10 minutes or an hour: the label shares a flex
+ * row with the seek bar, so a width change resizes the bar and visibly
+ * shifts every percentage-positioned marker on it.
+ */
+function formatTimeAligned(seconds: number, template: number): string {
+  const templateH = Math.floor(template / 3600);
+  const s = Math.floor(seconds % 60)
+    .toString()
+    .padStart(2, "0");
+  if (templateH > 0) {
+    const h = Math.floor(seconds / 3600)
+      .toString()
+      .padStart(templateH.toString().length, "0");
+    const m = Math.floor((seconds % 3600) / 60)
+      .toString()
+      .padStart(2, "0");
+    return `${h}:${m}:${s}`;
+  }
+  const templateM = Math.floor(template / 60);
+  const m = Math.floor(seconds / 60)
+    .toString()
+    .padStart(templateM.toString().length, "0");
+  return `${m}:${s}`;
 }
 
 export function DemoPlaybackControls() {
@@ -185,6 +220,18 @@ export function DemoPlaybackControls() {
     [setSpeed],
   );
 
+  // Mission starts from the timeline scan (one per map in multi-mission
+  // demos) — rendered as tick marks above the seek track, with the
+  // scan's own label ("Match started (Mission)") as the tooltip.
+  const timelineEvents = useDemoTimeline((s) => s.events);
+  const missionStarts = useMemo(
+    () =>
+      (timelineEvents ?? [])
+        .filter((e) => e.type === "match-start")
+        .map((e) => ({ timeSec: e.timeSec, description: e.description })),
+    [timelineEvents],
+  );
+
   const directorStatus = useDirector((s) => s.status);
   const directorProgress = useDirector((s) => s.scanProgress);
   const directorError = useDirector((s) => s.error);
@@ -192,7 +239,7 @@ export function DemoPlaybackControls() {
   if (!recording || !Number.isFinite(recording.duration)) return null;
 
   const directorTitle = directorQueued
-    ? "Waiting for the download — CastGenius starts when it finishes (click to cancel)"
+    ? "Waiting for the download – CastGenius starts when it finishes (click to cancel)"
     : directorStatus === "playing"
       ? "Exit CastGenius (any camera input)"
       : directorStatus === "scanning"
@@ -256,7 +303,7 @@ export function DemoPlaybackControls() {
         )}
       </button>
       <span className={styles.Time}>
-        {`${formatTime(currentTime)} / ${formatTime(duration)}`}
+        {`${formatTimeAligned(currentTime, duration)} / ${formatTime(duration)}`}
       </span>
       <Slider.Root
         className={styles.SeekRoot}
@@ -312,6 +359,33 @@ export function DemoPlaybackControls() {
             </div>
           )}
         </Slider.Thumb>
+        {/* Mission-start ticks sit ABOVE the track (they'd be clipped by
+            its overflow: hidden), and AFTER the thumb in the DOM so the
+            playhead comes first in the tab order. */}
+        {missionStarts.length > 0 && duration > 0 && (
+          <div className={styles.SeekMarkers}>
+            {missionStarts.map(({ timeSec, description }) => (
+              <button
+                key={timeSec}
+                type="button"
+                className={styles.SeekMissionTick}
+                title={`${description} – ${formatTime(timeSec)}`}
+                aria-label={`Seek to ${description} – ${formatTime(timeSec)}`}
+                onClick={(e) => {
+                  seek(timeSec);
+                  // A pointer click leaves the button focused, where a
+                  // later Space re-seeks instead of toggling playback —
+                  // blur, but only for pointer activations (detail 0 =
+                  // keyboard, which must keep its focus position).
+                  if (e.detail > 0) e.currentTarget.blur();
+                }}
+                style={{
+                  left: `${Math.min(100, (timeSec / duration) * 100)}%`,
+                }}
+              />
+            ))}
+          </div>
+        )}
       </Slider.Root>
       <div
         className={styles.Field}
