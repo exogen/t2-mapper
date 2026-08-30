@@ -77,7 +77,7 @@ const client = new S3Client({
 
 /** The sidecar format version — bump when the plan/scene schema changes
  *  incompatibly so consumers and re-backfills can tell them apart. */
-const CAST_FORMAT_VERSION = 1;
+const CAST_FORMAT_VERSION = 2;
 
 /** Browsers/CDNs may cache sidecars for 15 minutes — long enough to be
  *  cheap, short enough that regenerated plans propagate quickly. */

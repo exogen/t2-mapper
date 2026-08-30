@@ -10,6 +10,7 @@ import type {
   DirectorDeath,
   DirectorStation,
   DirectorVehicleSample,
+  MatchFacts,
   MortarShot,
   SkillShot,
   StructureTransition,
@@ -263,6 +264,14 @@ export async function scanDemoDirector(
     score: number;
   }[] = [];
   const lastScores = new Map<number, number>();
+  // Match facts for the commentary layer, whose ONLY input is the
+  // cast.json: team identities, a score vector per change, and roster
+  // count + top scorers (pushed on count change, refreshed every 30s).
+  const factsTeams = new Map<number, string>();
+  const factsScores: MatchFacts["scores"] = [];
+  const factsRoster: MatchFacts["roster"] = [];
+  let factsRosterCount = -1;
+  let factsRosterPushedSec = Number.NEGATIVE_INFINITY;
   const samplesByTarget = new Map<number, DirectorPlayerSample[]>();
   const structureStates = new Map<string, number>();
   const mortarShots: MortarShot[] = [];
@@ -667,15 +676,41 @@ export async function scanDemoDirector(
     if (step % PLAYER_EVERY_STEPS === 0) {
       samplePlayers(snapshot, t);
       sampleVehicles(snapshot, t);
+      let anyScoreChanged = false;
       for (const team of snapshot.teamScores) {
-        if (team.teamId > 0 && lastScores.get(team.teamId) !== team.score) {
+        if (team.teamId <= 0) continue;
+        factsTeams.set(team.teamId, team.name);
+        if (lastScores.get(team.teamId) !== team.score) {
           lastScores.set(team.teamId, team.score);
+          anyScoreChanged = true;
           scoreSamples.push({
             timeSec: t,
             teamId: team.teamId,
             score: team.score,
           });
         }
+      }
+      if (anyScoreChanged) {
+        factsScores.push({
+          timeSec: t,
+          teams: snapshot.teamScores
+            .filter((team) => team.teamId > 0)
+            .map((team) => ({ teamId: team.teamId, score: team.score })),
+        });
+      }
+      const rosterCount = snapshot.playerRoster?.length ?? 0;
+      if (rosterCount !== factsRosterCount || t - factsRosterPushedSec >= 30) {
+        factsRosterCount = rosterCount;
+        factsRosterPushedSec = t;
+        factsRoster.push({
+          timeSec: t,
+          count: rosterCount,
+          scorers: (snapshot.playerRoster ?? [])
+            .filter((p) => p.score > 0)
+            .sort((a, b) => b.score - a.score)
+            .slice(0, 4)
+            .map((p) => ({ name: p.name, teamId: p.teamId, score: p.score })),
+        });
       }
     }
     sampleStructures(snapshot, t);
@@ -937,8 +972,25 @@ export async function scanDemoDirector(
     sky?.className === "Sky"
       ? { fogDistance: sky.fogDistance, visibleDistance: sky.visibleDistance }
       : undefined;
+  const matchFacts: MatchFacts = {
+    missionName: recording.missionName ?? null,
+    missionDisplayName: playback.missionDisplayName ?? null,
+    gameType: recording.gameType ?? null,
+    serverDisplayName:
+      playback.serverDisplayName ?? recording.serverDisplayName ?? null,
+    durationSec,
+    matchStartSec:
+      timelineEvents.find((e) => e.type === "match-start")?.timeSec ?? null,
+    matchEndSec:
+      timelineEvents.find((e) => e.type === "match-end")?.timeSec ?? null,
+    teams: [...factsTeams].map(([teamId, name]) => ({ teamId, name })),
+    scores: factsScores,
+    roster: factsRoster,
+  };
+
   const dataset: DirectorDataset = {
     durationSec,
+    matchFacts,
     visibility,
     flagSampleStepSec: FLAG_STEP_SEC,
     playerSampleStepSec: FLAG_STEP_SEC * PLAYER_EVERY_STEPS,

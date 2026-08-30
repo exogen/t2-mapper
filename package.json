@@ -31,10 +31,7 @@
     "test:watch": "vitest",
     "test": "vitest run",
     "typecheck": "tsc --build --noEmit",
-    "backfill-casts": "node --env-file-if-exists=.env.development.local --import=tsx/esm scripts/backfill-cast-plans.ts",
-    "generate-commentary": "node --env-file-if-exists=.env.development.local --import=tsx/esm scripts/generate-game-commentary.ts",
-    "render-commentary": "node --env-file-if-exists=.env.development.local --import=tsx/esm scripts/render-commentary-audio.ts",
-    "upload-commentary": "node --env-file-if-exists=.env.development.local --import=tsx/esm scripts/upload-commentary.ts"
+    "backfill-casts": "node --env-file-if-exists=.env.development.local --import=tsx/esm scripts/backfill-cast-plans.ts"
   },
   "dependencies": {
     "@ariakit/react": "^0.4.36",

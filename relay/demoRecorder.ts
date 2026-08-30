@@ -142,8 +142,9 @@ export interface DemoMetadata {
   reason?: string;
   /**
    * A `.commentary.mp3` sidecar exists for this demo. Maintained by
-   * upload-commentary on upload and reconciled by backfill-demo-index
-   * from the bucket listing; drives the demo browser's indicator.
+   * the CastGenius repo's upload script and reconciled by
+   * backfill-demo-index from the bucket listing; drives the demo
+   * browser's indicator.
    */
   hasCommentary?: boolean;
 }

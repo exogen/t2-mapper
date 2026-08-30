@@ -68,6 +68,7 @@ export function planShots(dataset: DirectorDataset): ShotPlan {
     shots,
     coverage: reportCoverage(shots, dataset),
     skipToSec: openingSkip(dataset),
+    matchFacts: dataset.matchFacts,
   };
   // The commentary layer last, over the FINAL shot list.
   describeScenes(plan, dataset);

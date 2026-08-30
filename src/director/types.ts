@@ -194,6 +194,9 @@ export interface DirectorVisibility {
 
 export interface DirectorDataset {
   durationSec: number;
+  /** See MatchFacts — collected during the scan, attached to the plan.
+   *  Optional so test fixtures don't need one; real scans always set it. */
+  matchFacts?: MatchFacts;
   /** Absent when the recording carried no Sky (fall back to defaults). */
   visibility?: DirectorVisibility;
   flagSampleStepSec: number;
@@ -510,6 +513,38 @@ export interface CoverageRow {
   by?: string;
 }
 
+/**
+ * Match facts embedded in the plan so the commentary generator (the
+ * CastGenius repo) can run from cast.json ALONE — no demo parsing
+ * downstream. Time-series values resolve as "last entry with
+ * timeSec <= t".
+ */
+export interface MatchFacts {
+  missionName: string | null;
+  missionDisplayName: string | null;
+  gameType: string | null;
+  serverDisplayName: string | null;
+  durationSec: number;
+  matchStartSec: number | null;
+  matchEndSec: number | null;
+  teams: { teamId: number; name: string }[];
+  /** Full score vector pushed on any team-score change. */
+  scores: {
+    timeSec: number;
+    teams: { teamId: number; score: number }[];
+  }[];
+  /**
+   * Connected-player counts + top scorers, pushed on count change and
+   * refreshed at least every 30s (score freshness for color talk).
+   * Count includes observers — the number a server browser shows.
+   */
+  roster: {
+    timeSec: number;
+    count: number;
+    scorers: { name: string; teamId: number; score: number }[];
+  }[];
+}
+
 export interface ShotPlan {
   gameMode: "ctf" | "rabbit" | "deathmatch" | "landmarks";
   /**
@@ -523,4 +558,7 @@ export interface ShotPlan {
   /** Time-ordered, non-overlapping, covering [0, durationSec]. */
   shots: Shot[];
   coverage: CoverageRow[];
+  /** Present on plans from current scans; the commentary generator
+   *  requires it (its only input is the cast.json). */
+  matchFacts?: MatchFacts;
 }
