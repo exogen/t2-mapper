@@ -84,11 +84,109 @@
   }
 }
 
-.Seek[type="range"] {
+/* Custom Radix seek bar, YouTube-anatomy: dim base track, gray
+   "downloaded so far" layer (progressive loads only), colored played
+   Range, and a round thumb. The root is a tall hit area around the
+   slim visual track. */
+.SeekRoot {
+  position: relative;
+  display: flex;
+  align-items: center;
   flex: 1 0 20px;
   width: 20px;
   min-width: 20px;
-  max-width: none;
+  height: 22px;
+  cursor: pointer;
+  touch-action: none;
+  user-select: none;
+}
+
+.SeekTrack {
+  position: relative;
+  flex-grow: 1;
+  height: 5px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.18);
+  overflow: hidden;
+}
+
+/* Demo time downloaded during a progressive load; the darker region
+   beyond it reads as "not seekable yet" (forward seeks are clamped). */
+.SeekBuffered {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  background: rgba(255, 255, 255, 0.2);
+  pointer-events: none;
+}
+
+.SeekRange {
+  position: absolute;
+  height: 100%;
+  background: #3f8cff;
+}
+
+.SeekThumb {
+  display: block;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
+  outline: none;
+}
+
+.SeekThumb:focus-visible {
+  box-shadow:
+    0 1px 3px rgba(0, 0, 0, 0.5),
+    0 0 0 3px rgba(63, 140, 255, 0.5);
+}
+
+/* Scrub-time preview bubble above the (ghost) thumb while dragging. */
+.SeekTooltip {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 2px 7px;
+  border-radius: 3px;
+  background: rgba(0, 0, 0, 0.85);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  color: #fff;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+/* Where playback actually still is while the ghost thumb scrubs. */
+.SeekLiveTick {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  margin-left: -1px;
+  background: rgba(255, 255, 255, 0.85);
+  pointer-events: none;
+}
+
+/* A requested seek waiting for the download to reach it. */
+.SeekPendingTick {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  margin-left: -1px;
+  background: rgba(255, 200, 60, 0.95);
+  pointer-events: none;
+}
+
+@media (pointer: coarse) {
+  .SeekThumb {
+    width: 16px;
+    height: 16px;
+  }
 }
 
 .Speed {

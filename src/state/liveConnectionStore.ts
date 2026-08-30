@@ -255,6 +255,10 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
             log.warn("received catch-up payload but no adapter is active");
             return;
           }
+          // PAIRED with hydrate(): it resets the adapter's ready latch,
+          // so onReady re-fires (restoring liveReady) once the hydrated
+          // world has entities — including on reconnect re-hydrations
+          // where the adapter had already been ready before the drop.
           set({ liveReady: false });
           a.hydrate(payload);
         },

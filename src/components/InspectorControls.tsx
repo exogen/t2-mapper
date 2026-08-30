@@ -110,6 +110,8 @@ export const InspectorControls = memo(function InspectorControls({
     setFov,
     audioEnabled,
     setAudioEnabled,
+    commentaryEnabled,
+    setCommentaryEnabled,
     audioVolume,
     setAudioVolume,
     adjustAudioSpeed,
@@ -515,6 +517,19 @@ export const InspectorControls = memo(function InspectorControls({
                   />
                   <label className={styles.Label} htmlFor="audioInput">
                     Enable audio
+                  </label>
+                </div>
+                <div className={styles.CheckboxField}>
+                  <input
+                    id="commentaryInput"
+                    type="checkbox"
+                    checked={commentaryEnabled}
+                    onChange={(event) => {
+                      setCommentaryEnabled(event.target.checked);
+                    }}
+                  />
+                  <label className={styles.Label} htmlFor="commentaryInput">
+                    Play commentary if available
                   </label>
                 </div>
                 <div className={styles.Field}>

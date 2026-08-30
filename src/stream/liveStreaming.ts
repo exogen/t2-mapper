@@ -222,6 +222,13 @@ export class LiveStreamAdapter extends StreamEngine {
   hydrate(payload: WatchCatchupPayload): void {
     // Fresh engine state (clears entities, HUD, net strings, targets).
     this.reset();
+    // Fresh ready latch too: EVERY catch-up — the initial attach and
+    // every reconnect re-hydration — is preceded by liveReady=false in
+    // liveConnectionStore (onCatchup), and only the onReady edge sets
+    // it back. Keeping the old latch across a reconnect meant onReady
+    // never re-fired, leaving the loading spinner stuck over a
+    // perfectly live stream.
+    this._ready = false;
 
     // Seeded parser stack — continues the raw stream in lockstep with
     // the relay's parser from the packet boundary the payload captured.

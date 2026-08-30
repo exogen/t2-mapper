@@ -336,7 +336,7 @@ export function StreamingController({
   const { fov: userFov } = useSettings();
   const springRef = useRef<FollowSpring>(newFollowSpring());
   const playbackClockRef = useRef(0);
-  const lastSeekTimeRef = useRef(0);
+  const lastSeekNonceRef = useRef(0);
   const prevTickSnapshotRef = useRef<StreamSnapshot | null>(null);
   const currentTickSnapshotRef = useRef<StreamSnapshot | null>(null);
   const streamRef = useRef<StreamingPlayback | null>(
@@ -469,7 +469,7 @@ export function StreamingController({
     lastPublishTimeRef.current = 0;
     resetStreamPlayback();
     playbackClockRef.current = 0;
-    lastSeekTimeRef.current = 0;
+    lastSeekNonceRef.current = engineStore.getState().playback.seekNonce;
     prevTickSnapshotRef.current = null;
     currentTickSnapshotRef.current = null;
 
@@ -571,9 +571,9 @@ export function StreamingController({
     const storeState = engineStore.getState();
     const playback = storeState.playback;
     const isPlaying = playback.status === "playing";
-    const isSeeking = playback.seekTime !== lastSeekTimeRef.current;
+    const isSeeking = playback.seekNonce !== lastSeekNonceRef.current;
     if (isSeeking) {
-      lastSeekTimeRef.current = playback.seekTime;
+      lastSeekNonceRef.current = playback.seekNonce;
       playbackClockRef.current = playback.seekTime;
       // In-flight sounds belong to the old timeline position. Loops that
       // should still be playing at the target re-trigger from ghost state
@@ -1049,7 +1049,11 @@ export function StreamingController({
       }
     }
 
-    if (isPlaying && snapshot.exhausted) {
+    // Pause at the true end of the demo. While a progressive download is
+    // still running, an exhausted snapshot is merely the buffering
+    // frontier — the playhead clamp above holds position and playback
+    // resumes on its own as bytes arrive.
+    if (isPlaying && snapshot.exhausted && stream.streamComplete !== false) {
       storeState.setPlaybackStatus("paused");
     }
   });

@@ -50,7 +50,7 @@ const MAX_PLAY_RATE = 2;
  * and the feature stays off for this demo.
  */
 export function CommentaryAudio() {
-  const { audioVolume } = useSettings();
+  const { audioVolume, commentaryEnabled } = useSettings();
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const armedUrlRef = useRef<string | null>(null);
   const startFetchedForRef = useRef<string | null>(null);
@@ -84,38 +84,62 @@ export function CommentaryAudio() {
     };
   }, []);
 
+  /** Stop the track and release it: clearing the src plus load()
+   *  aborts any in-flight download. */
+  const disarm = useCallback((audio: HTMLAudioElement) => {
+    armedUrlRef.current = null;
+    startFetchedForRef.current = null;
+    unavailableRef.current = false;
+    blockedRef.current = false;
+    wasDirectingRef.current = false;
+    commentaryPlayback.startSec = null;
+    audio.pause();
+    audio.removeAttribute("src");
+    audio.load();
+  }, []);
+
+  // Toggling the "Play commentary" preference off mid-broadcast stops
+  // the track and aborts its download; toggling back on re-arms and
+  // rejoins in sync on the next frame.
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!commentaryEnabled && audio && armedUrlRef.current != null) {
+      disarm(audio);
+      commentaryPlayback.active = false;
+    }
+  }, [commentaryEnabled, disarm]);
+
   // Keep the element pointed at the current demo's track: tear down on
   // a demo switch, and — only when the director wants audio — set the
   // new sidecar URL, so a demo watched without CastGenius never
   // downloads the track. Returns whether an armed track is playable.
-  const arm = useCallback((wantTrack: boolean): boolean => {
-    const audio = audioRef.current;
-    if (!audio) return false;
-    const sourceUrl = demoLoadStore.getState().sourceUrl;
-    if (armedUrlRef.current != null && armedUrlRef.current !== sourceUrl) {
-      armedUrlRef.current = null;
-      startFetchedForRef.current = null;
-      unavailableRef.current = false;
-      blockedRef.current = false;
-      wasDirectingRef.current = false;
-      commentaryPlayback.startSec = null;
-      audio.pause();
-      audio.removeAttribute("src");
-      audio.load();
-    }
-    // CAST_LOCAL_PLAN debugging suppresses commentary entirely: its
-    // cues were timed against the sidecar plan, not the local one.
-    if (
-      armedUrlRef.current == null &&
-      wantTrack &&
-      sourceUrl &&
-      !CAST_LOCAL_PLAN
-    ) {
-      armedUrlRef.current = sourceUrl;
-      audio.src = `${sourceUrl}.commentary.mp3`;
-    }
-    return armedUrlRef.current != null && !unavailableRef.current;
-  }, []);
+  const arm = useCallback(
+    (wantTrack: boolean): boolean => {
+      const audio = audioRef.current;
+      if (!audio) return false;
+      const sourceUrl = demoLoadStore.getState().sourceUrl;
+      if (armedUrlRef.current != null && armedUrlRef.current !== sourceUrl) {
+        disarm(audio);
+      }
+      // CAST_LOCAL_PLAN debugging suppresses commentary entirely: its
+      // cues were timed against the sidecar plan, not the local one.
+      if (
+        armedUrlRef.current == null &&
+        wantTrack &&
+        sourceUrl &&
+        !CAST_LOCAL_PLAN &&
+        // The "Play commentary" preference: off = the camera cast runs
+        // as usual, but the mp3 is never fetched (arming sets the src,
+        // which starts the download).
+        commentaryEnabled
+      ) {
+        armedUrlRef.current = sourceUrl;
+        audio.src = `${sourceUrl}.commentary.mp3`;
+      }
+      return armedUrlRef.current != null && !unavailableRef.current;
+    },
+    [commentaryEnabled, disarm],
+  );
 
   // The director start awaits this gate: begin the download and hold
   // (spinner showing) until a real opening buffer exists at the start

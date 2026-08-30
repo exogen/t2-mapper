@@ -65,6 +65,10 @@ type SettingsContextType = {
   setWarriorName: StateSetter<string>;
   audioVolume: number;
   setAudioVolume: StateSetter<number>;
+  /** Play the CastGenius commentary track when a demo has one. Off =
+   *  the camera cast still runs, but the mp3 is never downloaded. */
+  commentaryEnabled: boolean;
+  setCommentaryEnabled: StateSetter<boolean>;
   adjustAudioSpeed: boolean;
   setAdjustAudioSpeed: StateSetter<boolean>;
   sidebarOpen: boolean;
@@ -134,6 +138,7 @@ type PersistedSettings = {
   touchMode?: TouchMode;
   warriorName?: string;
   audioVolume?: number;
+  commentaryEnabled?: boolean;
   invertScroll?: boolean;
   invertDrag?: boolean;
   invertJoystick?: boolean;
@@ -190,6 +195,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   const [fov, setFov] = useState(90);
   const [audioEnabled, setAudioEnabled] = useState(true);
   const [audioVolume, setAudioVolume] = useState(0.75);
+  const [commentaryEnabled, setCommentaryEnabled] = useState(true);
   const [adjustAudioSpeed, setAdjustAudioSpeed] = useState(true);
   const [animationEnabled, setAnimationEnabled] = useState(true);
   const [debugMode, setDebugMode] = useState(false);
@@ -244,6 +250,8 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       setWarriorName,
       audioVolume,
       setAudioVolume,
+      commentaryEnabled,
+      setCommentaryEnabled,
       adjustAudioSpeed,
       setAdjustAudioSpeed,
       sidebarOpen,
@@ -278,6 +286,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       animationEnabled,
       warriorName,
       audioVolume,
+      commentaryEnabled,
       adjustAudioSpeed,
       sidebarOpen,
       fpsLimit,
@@ -391,6 +400,9 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     if (savedSettings.audioVolume != null) {
       setAudioVolume(savedSettings.audioVolume);
     }
+    if (savedSettings.commentaryEnabled != null) {
+      setCommentaryEnabled(savedSettings.commentaryEnabled);
+    }
     if (savedSettings.adjustAudioSpeed != null) {
       setAdjustAudioSpeed(savedSettings.adjustAudioSpeed);
     }
@@ -481,6 +493,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
         touchMode,
         warriorName,
         audioVolume,
+        commentaryEnabled,
         adjustAudioSpeed,
         invertScroll,
         invertDrag,
@@ -521,6 +534,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     touchMode,
     warriorName,
     audioVolume,
+    commentaryEnabled,
     adjustAudioSpeed,
     invertScroll,
     invertDrag,

@@ -376,6 +376,9 @@ class StreamingPlayback extends StreamEngine {
   private lastAbsYaw = 0;
   private lastAbsPitch = 0;
   private exhausted = false;
+  /** Decompressed byte length when `exhausted` latched — new bytes past
+   *  this mean the frontier moved and stepping may resume. */
+  private exhaustedAtBytes = 0;
 
   // Cached snapshot
   private _cachedSnapshot: StreamSnapshot | null = null;
@@ -790,6 +793,7 @@ class StreamingPlayback extends StreamEngine {
     targetTimeSec: number,
     maxMoveTicks = Number.POSITIVE_INFINITY,
   ): StreamSnapshot {
+    this.unlatchExhaustedIfGrown();
     const safeTargetSec = Number.isFinite(targetTimeSec)
       ? Math.max(0, targetTimeSec)
       : 0;
@@ -843,7 +847,42 @@ class StreamingPlayback extends StreamEngine {
    * would otherwise show black. Steps the cursor forward from its current
    * position; returns 0 (no skip) if nothing renders within `maxSec`.
    */
+  /**
+   * False while a progressive download is still feeding the parser:
+   * an exhausted snapshot then means "buffering at the frontier", not
+   * the end of the demo (the transport clamps instead of pausing).
+   */
+  get streamComplete(): boolean {
+    return this.parser.isComplete;
+  }
+
+  /**
+   * Demo time buffered so far, in seconds — exact, from the count of
+   * fixed-32ms move-tick blocks in the decompressed stream (compressed
+   * BYTE progress would misplace the mark badly: quiet stretches pack
+   * far denser than fights). Equals the duration once complete.
+   */
+  get bufferedSec(): number {
+    return (this.parser.bufferedMoveTicks * TICK_DURATION_MS) / 1000;
+  }
+
+  /**
+   * During a progressive download, "exhausted" only means the frontier
+   * of the data received when it latched — un-latch when the stream has
+   * grown since. (Keyed on byte growth, not isComplete: data that
+   * arrives together with finish() would otherwise stay latched.)
+   */
+  private unlatchExhaustedIfGrown(): void {
+    if (
+      this.exhausted &&
+      this.parser.decompressedByteLength > this.exhaustedAtBytes
+    ) {
+      this.exhausted = false;
+    }
+  }
+
   findSceneReadyTime(maxSec = 20): number {
+    this.unlatchExhaustedIfGrown();
     const limitTicks =
       this.moveTicks + Math.floor((maxSec * 1000) / TICK_DURATION_MS);
     while (this.moveTicks < limitTicks && !this.exhausted) {
@@ -873,6 +912,7 @@ class StreamingPlayback extends StreamEngine {
       const block = this.parser.nextBlock();
       if (!block) {
         this.exhausted = true;
+        this.exhaustedAtBytes = this.parser.decompressedByteLength;
         return false;
       }
 
@@ -1053,7 +1093,19 @@ export async function createDemoStreamingRecording(
   data: ArrayBuffer,
 ): Promise<StreamRecording> {
   const parser = new DemoParser(new Uint8Array(data));
-  const { header, initialBlock } = await parser.load();
+  await parser.load();
+  return createRecordingFromParser(parser);
+}
+
+/**
+ * Build a recording around an already-load()ed parser — the progressive
+ * download path constructs an incremental parser from the first chunks
+ * and keeps push()ing while this recording is already playing. Duration
+ * comes from the header, so it is exact before the download finishes.
+ */
+export function createRecordingFromParser(parser: DemoParser): StreamRecording {
+  const header = parser.header;
+  const initialBlock = parser.initialBlock;
   const info = extractMissionInfo(initialBlock.demoValues);
   const playback = new StreamingPlayback(parser);
 

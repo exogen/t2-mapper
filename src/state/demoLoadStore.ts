@@ -23,8 +23,16 @@ export interface DemoLoadState {
    * Outlives reset() — it describes the loaded demo, not the load.
    */
   sourceUrl: string | null;
+  /**
+   * Demo time downloaded so far (seconds) while a progressive load is
+   * still running, or null when complete / not applicable — drives the
+   * buffered bar under the seek control. Outlives reset(): the bar
+   * shows exactly while the demo plays mid-download.
+   */
+  downloadedSec: number | null;
   begin(phase: "downloading" | "parsing"): void;
   setProgress(progress: number | null): void;
+  setDownloadedSec(downloadedSec: number | null): void;
   fail(error: string): void;
   setSourceUrl(sourceUrl: string | null): void;
   reset(): void;
@@ -35,11 +43,15 @@ export const demoLoadStore = createStore<DemoLoadState>((set) => ({
   progress: null,
   error: null,
   sourceUrl: null,
+  downloadedSec: null,
   begin(phase) {
-    set({ phase, progress: null, error: null });
+    set({ phase, progress: null, error: null, downloadedSec: null });
   },
   setProgress(progress) {
     set({ progress });
+  },
+  setDownloadedSec(downloadedSec) {
+    set({ downloadedSec });
   },
   fail(error) {
     set({ phase: "error", progress: null, error });

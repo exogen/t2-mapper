@@ -3,9 +3,9 @@
 - e-grab: emergency grab (when you just need to get their flag off the stand to prevent a cap)
 - control-K: suicide (aka Ctrl-K, the keyboard combination you press to do it)
 - inv: inventory station
-- HoF: heavy on flag (a heavy armor player guarding the flag)
+- HoF: heavy on flag (a heavy armor player guarding the flag) - in addition to killing cappers, a big part of the job is just blocking the flag with their body
 - LO: light offense
-- HO: heavy offense
+- HO: heavy offense - their job is to clear the stand and destroy the enemy base
 - HO train: a wave of heavy offense en route to the enemy base
 - MD: mine-disc
 - gen / gens: generator / generators
@@ -21,3 +21,4 @@
 - nade: short for "grenade" (could be hand grenade, or grenade launcher)
 - pinned: teams can "pin" a dropped flag (usually when it's near their stand or base) by shooting it into a difficult to reach spot, like a corner
 - farm: defensive deployables - most importantly deployable turrets, but also pulse sensors, motion sensors, and deployable cameras
+- body block: when one player uses their body to stop an enemy (like an incoming capper or HO)

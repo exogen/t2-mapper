@@ -4,6 +4,7 @@ import { subscribeWithSelector } from "zustand/middleware";
 import { useStoreWithEqualityFn } from "zustand/traditional";
 import type { StreamRecording } from "../stream/types";
 import { setStreamSnapshot } from "./streamSnapshotStore";
+import { demoLoadStore } from "./demoLoadStore";
 import type {
   RuntimeMutationEvent,
   TorqueObject,
@@ -32,8 +33,25 @@ export interface PlaybackSliceState {
   /** Seek target in seconds. Written by UI seek actions, read by
    *  StreamingController to detect and execute seeks. */
   seekTime: number;
+  /** Bumped on EVERY seekPlayback call. The controller keys seek
+   *  detection on this, not on seekTime equality — two seeks to the
+   *  same position (click the same spot twice, or a deferred-commit
+   *  scrub released where it started) must both execute. */
+  seekNonce: number;
   rate: number;
   durationMs: number;
+  /**
+   * False while a progressive demo download is still running. Seeks
+   * into the not-yet-downloaded region become pending (below) instead
+   * of executing; seeks within the buffered region work normally.
+   */
+  downloadComplete: boolean;
+  /**
+   * A seek requested beyond the downloaded frontier, waiting for the
+   * buffer to reach it — fulfilled by fulfillPendingSeek() as the
+   * download progresses (the play button shows a wait indicator).
+   */
+  pendingSeekSec: number | null;
 }
 
 export interface RuntimeTickInfo {
@@ -50,7 +68,10 @@ export interface EngineStoreState {
     tickInfo?: RuntimeTickInfo,
   ): void;
   setRecording(recording: StreamRecording | null): void;
+  setDownloadComplete(complete: boolean): void;
   seekPlayback(timeSec: number): void;
+  /** Execute the pending beyond-the-buffer seek once fulfillable. */
+  fulfillPendingSeek(): void;
   setPlaybackStatus(status: PlaybackStatus): void;
   setPlaybackRate(rate: number): void;
 }
@@ -112,7 +133,9 @@ const initialState: Omit<
   | "clearRuntime"
   | "applyRuntimeBatch"
   | "setRecording"
+  | "setDownloadComplete"
   | "seekPlayback"
+  | "fulfillPendingSeek"
   | "setPlaybackStatus"
   | "setPlaybackRate"
 > = {
@@ -129,8 +152,11 @@ const initialState: Omit<
     recording: null,
     status: "stopped",
     seekTime: 0,
+    seekNonce: 0,
     rate: 1,
     durationMs: 0,
+    downloadComplete: true,
+    pendingSeekSec: null,
   },
 };
 
@@ -272,20 +298,70 @@ export const engineStore = createStore<EngineStoreState>()(
           recording,
           status: recording ? "stopped" : state.playback.status,
           seekTime: recording ? 0 : state.playback.seekTime,
+          // Monotonic across recordings; the controller re-syncs its
+          // ref at mount, so this never reads as a phantom seek.
+          seekNonce: state.playback.seekNonce,
           rate: recording ? 1 : state.playback.rate,
           durationMs,
+          // A progressively-loading recording reports incomplete; the
+          // loader flips this via setDownloadComplete when it finishes.
+          downloadComplete:
+            recording?.streamingPlayback?.streamComplete !== false,
+          pendingSeekSec: null,
         },
+      }));
+    },
+
+    setDownloadComplete(complete: boolean) {
+      set((state) => ({
+        ...state,
+        playback: { ...state.playback, downloadComplete: complete },
       }));
     },
 
     seekPlayback(timeSec: number) {
       set((state) => {
-        const clamped = clamp(timeSec, 0, state.playback.durationMs / 1000);
+        const target = clamp(timeSec, 0, state.playback.durationMs / 1000);
+        // A seek past the downloaded frontier can't execute yet — park
+        // it as pending; the loader fulfills it as the buffer catches
+        // up. Seeks within the buffered region run immediately (and
+        // supersede any pending request).
+        if (!state.playback.downloadComplete) {
+          const buffered = demoLoadStore.getState().downloadedSec ?? 0;
+          if (target > buffered) {
+            return {
+              ...state,
+              playback: { ...state.playback, pendingSeekSec: target },
+            };
+          }
+        }
         return {
           ...state,
           playback: {
             ...state.playback,
-            seekTime: clamped,
+            seekTime: target,
+            seekNonce: state.playback.seekNonce + 1,
+            pendingSeekSec: null,
+          },
+        };
+      });
+    },
+
+    fulfillPendingSeek() {
+      set((state) => {
+        const pending = state.playback.pendingSeekSec;
+        if (pending == null) return state;
+        const buffered = demoLoadStore.getState().downloadedSec ?? 0;
+        if (!state.playback.downloadComplete && buffered < pending) {
+          return state;
+        }
+        return {
+          ...state,
+          playback: {
+            ...state.playback,
+            seekTime: pending,
+            seekNonce: state.playback.seekNonce + 1,
+            pendingSeekSec: null,
           },
         };
       });

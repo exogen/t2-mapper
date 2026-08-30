@@ -163,10 +163,7 @@ export interface LinkBeamVisual {
 }
 
 export type StreamVisual =
-  | TracerVisual
-  | SpriteVisual
-  | BeamVisual
-  | LinkBeamVisual;
+  TracerVisual | SpriteVisual | BeamVisual | LinkBeamVisual;
 
 export interface StreamEntity {
   id: string;
@@ -486,6 +483,17 @@ export interface StreamingPlayback {
    * relay demos whose scene streams in. Steps the cursor forward.
    */
   findSceneReadyTime(maxSec?: number): number;
+  /**
+   * False while a progressive download is still feeding the stream —
+   * an exhausted snapshot then means "buffering", not end-of-demo.
+   * Absent (undefined) on sources without a download, e.g. live.
+   */
+  readonly streamComplete?: boolean;
+  /**
+   * Demo time buffered so far in seconds (exact, from move-tick
+   * counting). Absent on sources without a download, e.g. live.
+   */
+  readonly bufferedSec?: number;
   /** DTS shape names for weapon effects (explosions) that should be preloaded. */
   getEffectShapes(): string[];
   /**

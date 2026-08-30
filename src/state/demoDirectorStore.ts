@@ -114,7 +114,14 @@ export async function startDirector(): Promise<void> {
     // broadcast should open with the booth talking, not buffering.
     if (commentaryGate) {
       demoDirectorStore.setState({ status: "scanning", scanProgress: 0 });
-      await commentaryGate();
+      try {
+        await commentaryGate();
+      } catch (err) {
+        // The broadcast must start even if the pre-roll buffer hold
+        // misbehaves — a gate failure is a degraded start, not a stop
+        // (an unhandled throw here would strand status at "scanning").
+        log.warn("commentary gate failed: %o", err);
+      }
     }
   } finally {
     startingDirector = false;
@@ -299,7 +306,18 @@ async function fillDatasetInBackground(
 }
 
 async function prepareDirector(): Promise<boolean> {
-  if (!demoBuffer) return false;
+  if (!demoBuffer) {
+    // Only reachable when a progressive download failed partway (the
+    // button QUEUES instead of starting while a download runs): the
+    // whole demo never arrived, so neither the scan nor the background
+    // dataset pass behind a sidecar plan can run. Say so instead of
+    // silently doing nothing.
+    demoDirectorStore.setState({
+      status: "error",
+      error: "Demo download incomplete — CastGenius unavailable",
+    });
+    return false;
+  }
   const token = ++scanToken;
   scanAbort?.abort();
   const abort = new AbortController();
