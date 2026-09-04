@@ -20,16 +20,13 @@ import type { InteriorInstanceEntity } from "../state/gameEntityTypes";
 import { useIsDebugTourTarget } from "../state/cameraTourStore";
 import { DebugBounds } from "./DebugBounds";
 import {
-  torqueToThree,
-  torqueScaleToThree,
-  matrixFToQuaternion,
-} from "../scene/coordinates";
+  INTERIOR_MODEL_ROTATION_Y,
+  interiorPlacement,
+} from "../world/placement";
+import { interiorColliderMeshes } from "../world/colliderPolicy";
 import { setupTexture } from "../textureUtils";
 import { invalidateShadows } from "./shadowControl";
-import {
-  freezeStaticMatrices,
-  unfreezeStaticMatrices,
-} from "./staticMatrices";
+import { freezeStaticMatrices, unfreezeStaticMatrices } from "./staticMatrices";
 import {
   registerInteriorCollider,
   unregisterInteriorCollider,
@@ -224,19 +221,20 @@ export const InteriorModel = memo(function InteriorModel({
   const debugMode = debugContext?.debugMode ?? false;
 
   // Register this interior's meshes for projectile collision. Interiors
-  // are static, so world matrices are snapshotted once after mount. Only
-  // direct children are collected (the InteriorMesh meshes) — debug
-  // helpers live in nested groups.
-  const collisionId = useId();
+  // are static, so world matrices are snapshotted once after mount.
+  // Which meshes qualify is `interiorColliderMeshes` — shared with the
+  // headless world builder so both see identical geometry.
+  // Keyed on the GHOST index, not `entity.id` (a per-session counter
+  // that differs between stacks) and not `useId` (React-internal), so a
+  // dump of this world is comparable with a headless build's. Mission
+  // mode has no ghosts, hence the fallback.
+  const fallbackId = useId();
+  const collisionId = ghostIndex != null ? `ghost:${ghostIndex}` : fallbackId;
   const meshGroupRef = useRef<Group>(null);
   useEffect(() => {
     const group = meshGroupRef.current;
     if (!group) return;
-    group.updateWorldMatrix(true, true);
-    const meshes = group.children.filter(
-      (child): child is Mesh => (child as Mesh).isMesh,
-    );
-    registerInteriorCollider(collisionId, meshes);
+    registerInteriorCollider(collisionId, interiorColliderMeshes(group));
     // Static geometry: stop three from recomposing every mesh's matrix on
     // every frame. Interiors are the biggest static subtrees in the scene.
     freezeStaticMatrices(group);
@@ -260,7 +258,7 @@ export const InteriorModel = memo(function InteriorModel({
   }, [isTarget, gltf.scene]);
 
   return (
-    <group ref={meshGroupRef} rotation={[0, -Math.PI / 2, 0]}>
+    <group ref={meshGroupRef} rotation={[0, INTERIOR_MODEL_ROTATION_Y, 0]}>
       {Object.entries(nodes)
         .filter(([, node]: [string, any]) => node.isMesh)
         .map(([name, node]: [string, any]) => (
@@ -309,15 +307,11 @@ export const InteriorInstance = memo(function InteriorInstance({
 }) {
   const scene = entity.interiorData;
   const isTarget = useIsDebugTourTarget(entity.id);
-  const position = useMemo(
-    () => torqueToThree(scene.transform.position),
-    [scene.transform.position],
-  );
-  const q = useMemo(
-    () => matrixFToQuaternion(scene.transform),
-    [scene.transform],
-  );
-  const scale = useMemo(() => torqueScaleToThree(scene.scale), [scene.scale]);
+  const {
+    position,
+    quaternion: q,
+    scale,
+  } = useMemo(() => interiorPlacement(scene), [scene]);
 
   // The placement group never moves after the ghost's transform is applied;
   // freeze it (the model's own subtree freezes separately once it loads).

@@ -66,8 +66,8 @@ npm run relay:dev
 #### Deploying to Fly.io
 
 The relay is configured for [Fly.io](https://fly.io) deployment via
-`relay/Dockerfile` and `fly.toml`. It needs a persistent volume to hold game
-assets (~1.5 GB) used for the CRC integrity check.
+`relay/Dockerfile` and `fly.toml`. It needs a persistent volume for demo
+recordings and for the game assets used by the CRC integrity check.
 
 **1. Create the app and volume:**
 
@@ -95,27 +95,17 @@ fly secrets set \
 fly deploy
 ```
 
-**4. Populate game assets on the volume:**
+**4. Game assets on the volume:**
 
-SSH into the running machine and clone the repo to get `docs/base/`:
+Nothing to do: at every boot the relay refreshes a sparse git checkout of the
+shapes it needs (`relay/syncAssets.ts`, a few MB) at `/data/t2-mapper`, so the
+volume always matches `main`. After a push that adds shapes, `fly deploy` picks
+up both the new manifest (baked into the image) and the new files. To refresh
+without a deploy:
 
 ```console
-fly ssh console
+fly ssh console -C "node --import=tsx/esm relay/syncAssets.ts"
 ```
-
-Then inside the machine:
-
-```sh
-apt-get update && apt-get install -y git
-git clone --depth 1 --filter=blob:none --sparse \
-  https://github.com/exogen/t2-mapper.git /tmp/t2-mapper
-cd /tmp/t2-mapper
-git sparse-checkout set docs/base
-mv docs/base /data/base
-rm -rf /tmp/t2-mapper
-```
-
-This only needs to be done once — the volume persists across deploys.
 
 **Environment variables** (all optional, with defaults):
 
@@ -123,8 +113,27 @@ This only needs to be done once — the volume persists across deploys.
 | ------------------ | ----------------------------------------------- | ------------------------------------- |
 | `RELAY_PORT`       | `8765`                                          | WebSocket listen port                 |
 | `GAME_BASE_PATH`   | `docs/base` relative to relay                   | Path to extracted game assets         |
+| `ASSETS_REPO_*`    | see `.env.example`                              | Git checkout the Fly image syncs      |
 | `MANIFEST_PATH`    | `public/manifest.json` relative to project root | Path to resource manifest             |
 | `T2_MASTER_SERVER` | `master.tribesnext.com`                         | Master server for server list queries |
+
+### Adding game assets
+
+Point `add-vl2` at a `.vl2` and it walks through every consumer, asking
+before each step (`--dry-run` only reports; `--yes` takes the defaults):
+
+```console
+npm run add-vl2 -- path/to/MapPack.vl2
+```
+
+It extracts the archive under `docs/base/@vl2` (or updates an existing
+extraction), reports which existing resources it overrides, converts its
+`.dif`/`.dts` (Blender) and `.wav` (ffmpeg) files, rebuilds
+`src/manifest.json`, runs the typecheck, and then offers to commit, push
+(which deploys the assets and site), and redeploy the relay.
+
+The manifest carries the resource index, the mission list, and each shape's
+mount-node transforms; regenerate it on its own with `npm run build:manifest`.
 
 ### Running scripts
 
@@ -133,5 +142,5 @@ This only needs to be done once — the volume persists across deploys.
 Example:
 
 ```console
-tsx scripts/generate-manifest.ts
+tsx scripts/generate-manifest.ts --quiet
 ```

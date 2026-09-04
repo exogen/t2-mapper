@@ -17,4 +17,8 @@ export const directorCamDebug = {
   shot: "",
   panState: "" as string,
   panActive: false,
+  /** Shot-to-shot travel: idle, armed (destination not yet known) or
+   *  active, with the eased progress 0..1 while active. */
+  travel: "idle" as "idle" | "armed" | "active",
+  travelT: 0,
 };

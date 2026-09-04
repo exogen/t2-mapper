@@ -10,6 +10,7 @@ import {
   resetDirector,
   setDirectorDemoBuffer,
 } from "../state/demoDirectorStore";
+import { commentaryTracksStore } from "../state/commentaryTracksStore";
 import { demoLoadStore } from "../state/demoLoadStore";
 import { demoTimelineStore } from "../state/demoTimelineStore";
 import { engineStore } from "../state/engineStore";
@@ -36,6 +37,7 @@ export function unloadDemo(): void {
   engineStore.getState().setRecording(null);
   demoTimelineStore.getState().reset();
   resetDirector();
+  void commentaryTracksStore.getState().load(null);
   gameEntityStore.getState().endStreaming();
   commandCircuitStore.getState().deactivate();
 }
@@ -292,6 +294,8 @@ function installRecording(
   liveState.disconnectRelay();
   engineStore.getState().setRecording(recording);
   demoLoadStore.getState().setSourceUrl(sourceUrl);
+  // Which commentary tracks this demo has, from its record sidecar.
+  void commentaryTracksStore.getState().load(sourceUrl);
   resetDirector();
 }
 

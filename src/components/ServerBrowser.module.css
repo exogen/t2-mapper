@@ -267,20 +267,24 @@
   color: #1e2828;
 }
 
-.PasswordIcon {
-  color: rgba(255, 200, 60, 0.6);
-  margin-right: 4px;
-  font-size: 11px;
-}
-
-.TournamentIcon {
-  /* inline-flex + middle keeps the glyph inside the cell's line box so a
-     tournament row is the same height as every other row. */
+/* Small glyph trailing the server name in a table row. inline-flex keeps
+   the glyph inside the cell's line box so an annotated row is the same
+   height as every other row. */
+.RowIcon {
   display: inline-flex;
   vertical-align: -2px;
   margin-left: 5px;
-  color: rgba(255, 200, 60, 0.85);
   font-size: 14px;
+}
+
+.PasswordIcon {
+  composes: RowIcon;
+  color: rgba(255, 216, 118, 0.7);
+}
+
+.TournamentIcon {
+  composes: RowIcon;
+  color: rgba(255, 200, 60, 0.85);
 }
 
 /* Mod name in the tile meta line, as quiet text (the chip style is
@@ -295,6 +299,7 @@
 .TileHumanPlayers {
   color: #61ffcb;
   text-shadow: 0 0 6px rgba(125, 255, 255, 0.5);
+  font-weight: 600;
 }
 
 /* Tile ping icon: quality colors matching the toolbar's connection
@@ -354,6 +359,9 @@
 }
 .Table tbody tr:has(input:checked) .TournamentIcon {
   color: #52470d;
+}
+.Table tbody tr:has(input:checked) .PasswordIcon {
+  color: #5c6a3c;
 }
 
 .Table th[data-column="players"] {
@@ -470,4 +478,79 @@
   .ServerCount {
     display: none;
   }
+}
+
+/* The list body: one positioning context for both views so the loading
+   overlay can centre over whichever is showing. */
+.Body {
+  position: relative;
+  display: grid;
+  grid-template-rows: 1fr;
+  min-height: 0;
+}
+
+/* Waiting on the relay (first query or a refresh): the list behind the
+   spinner is stale data, so fade it and take it out of reach.
+   Nothing appears for the first LOADING_DELAY — a relay that answers
+   in 120ms would otherwise flash a spinner for two frames. React has
+   no built-in delay for this (the SuspenseConfig that would have
+   provided one was cut before React 18 shipped), so it is CSS's job:
+   `both` holds the from-state through the delay. */
+.Body[data-loading="true"] .TableWrapper,
+.Body[data-loading="true"] .TileWrapper {
+  animation: server-list-dim 0.2s ease-out 300ms both;
+  pointer-events: none;
+}
+
+.LoadingOverlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  pointer-events: none;
+  animation: server-loading-appear 0.2s ease-out 300ms both;
+}
+
+@keyframes server-list-dim {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0.1;
+  }
+}
+
+@keyframes server-loading-appear {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* Keep the delay, drop the fade. */
+@media (prefers-reduced-motion: reduce) {
+  .LoadingOverlay,
+  .Body[data-loading="true"] .TableWrapper,
+  .Body[data-loading="true"] .TileWrapper {
+    animation-duration: 0.01s;
+  }
+}
+
+/* A box exactly the spinner's size: the shared indicator positions
+   itself against this instead of the whole overlay. */
+.LoadingSpinner {
+  position: relative;
+  width: 48px;
+  height: 48px;
+}
+
+.LoadingLabel {
+  color: #8fb8ad;
+  font-size: 13px;
+  letter-spacing: 0.04em;
 }

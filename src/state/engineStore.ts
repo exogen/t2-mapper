@@ -444,79 +444,6 @@ export function useEngineSelector<T>(
   return useStoreWithEqualityFn(engineStore, selector, equality);
 }
 
-export function useRuntimeObjectById(
-  id: number | undefined,
-): TorqueObject | undefined {
-  const runtime = useEngineSelector((state) => state.runtime.runtime);
-  const version = useEngineSelector((state) =>
-    id == null ? -1 : (state.runtime.objectVersionById[id] ?? -1),
-  );
-
-  return useMemo(() => {
-    if (id == null || !runtime || version === -1) return undefined;
-    const object = runtime.state.objectsById.get(id);
-    return object ? { ...object } : undefined;
-  }, [id, runtime, version]);
-}
-
-export function useRuntimeObjectField<T = any>(
-  id: number | undefined,
-  fieldName: string,
-): T | undefined {
-  const runtime = useEngineSelector((state) => state.runtime.runtime);
-  const normalizedField = normalizeName(fieldName);
-  useEngineSelector((state) =>
-    id == null ? -1 : (state.runtime.objectVersionById[id] ?? -1),
-  );
-
-  if (id == null || !runtime) {
-    return undefined;
-  }
-  const object = runtime.state.objectsById.get(id);
-  if (!object) {
-    return undefined;
-  }
-  return object[normalizedField] as T;
-}
-
-export function useRuntimeGlobal<T = any>(
-  name: string | undefined,
-): T | undefined {
-  const runtime = useEngineSelector((state) => state.runtime.runtime);
-  const normalizedName = name ? normalizeGlobalName(name) : "";
-  useEngineSelector((state) =>
-    normalizedName
-      ? (state.runtime.globalVersionByName[normalizedName] ?? -1)
-      : -1,
-  );
-
-  if (!runtime || !normalizedName) {
-    return undefined;
-  }
-  return runtime.$g.get(normalizedName) as T;
-}
-
-export function useRuntimeObjectByName(
-  name: string | undefined,
-): TorqueObject | undefined {
-  const runtime = useEngineSelector((state) => state.runtime.runtime);
-  const normalizedName = name ? normalizeName(name) : "";
-  const objectId = useEngineSelector((state) =>
-    normalizedName ? state.runtime.objectIdsByName[normalizedName] : undefined,
-  );
-  const version = useEngineSelector((state) =>
-    objectId == null ? -1 : (state.runtime.objectVersionById[objectId] ?? -1),
-  );
-
-  return useMemo(() => {
-    if (!runtime || !normalizedName || objectId == null || version === -1) {
-      return undefined;
-    }
-    const object = runtime.state.objectsById.get(objectId);
-    return object ? { ...object } : undefined;
-  }, [runtime, normalizedName, objectId, version]);
-}
-
 export function useDatablockByName(
   name: string | undefined,
 ): TorqueObject | undefined {
@@ -538,29 +465,4 @@ export function useDatablockByName(
     const object = runtime.state.objectsById.get(objectId);
     return object ? { ...object } : undefined;
   }, [runtime, normalizedName, objectId, version]);
-}
-
-export function useRuntimeChildIds(
-  parentId: number | undefined,
-  fallbackChildren: readonly TorqueObject[] = [],
-): number[] {
-  const runtime = useEngineSelector((state) => state.runtime.runtime);
-  const version = useEngineSelector((state) =>
-    parentId == null ? -1 : (state.runtime.objectVersionById[parentId] ?? -1),
-  );
-
-  if (parentId == null) {
-    return fallbackChildren.map((child) => child._id);
-  }
-
-  if (!runtime || version === -1) {
-    return fallbackChildren.map((child) => child._id);
-  }
-
-  const parent = runtime.state.objectsById.get(parentId);
-  if (!parent?._children) {
-    return [];
-  }
-
-  return parent._children.map((child) => child._id);
 }

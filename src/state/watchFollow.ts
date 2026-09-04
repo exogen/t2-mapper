@@ -21,10 +21,6 @@ export function isWatchSpectator(): boolean {
   return liveConnectionStore.getState().role === "watcher";
 }
 
-export function watchFollowTargetId(): string | null {
-  return streamPlaybackStore.getState().followEntityId;
-}
-
 /**
  * Dead bodies are not followable: Torque DamageState 0 = Enabled (alive),
  * 1 = Disabled (dead player awaiting respawn), 2 = Destroyed.

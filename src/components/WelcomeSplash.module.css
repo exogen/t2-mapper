@@ -18,6 +18,19 @@
   }
 }
 
+/* Positioning context for the loading footer, which hangs below the
+   panel: the panel itself scrolls (overflow-y: auto) and would clip it.
+   The bottom margin reserves the footer's space inside the content area,
+   whether or not it's showing, so the panel never moves. */
+.PanelWrap {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  max-height: calc(100% - 30px);
+  margin-bottom: 30px;
+}
+
 /* composes only adds the other class to the element — it does NOT give
    this file's declarations precedence (cross-file order is whatever the
    bundler emits). Overrides of composed properties live on higher-
@@ -35,7 +48,10 @@
   max-width: 440px;
   /* The composed Dialog caps against the VIEWPORT (100dvh) with
      overflow hidden; the splash must fit the CONTENT AREA (the padded
-     positioner) and scroll on short screens instead of clipping. */
+     positioner, minus the footer's reserved strip) and scroll on short
+     screens instead of clipping — hence min-height: 0, so it shrinks
+     inside PanelWrap's cap. */
+  min-height: 0;
   max-height: 100%;
   overflow-y: auto;
   padding: 16px 24px 20px 24px;
@@ -168,6 +184,19 @@
 .Dismiss:hover {
   border-color: rgba(64, 145, 136, 0.9);
   color: rgb(177, 255, 245);
+}
+
+/* Scene load progress, in place of the content-area indicator that the
+   panel would otherwise sit on top of. Hangs off the panel's bottom
+   edge (see PanelWrap) so it can appear and go away without moving it. */
+.Footer {
+  position: absolute;
+  top: 100%;
+  left: 4px;
+  right: 4px;
+  display: flex;
+  align-items: center;
+  height: 30px;
 }
 
 /* Narrow screens: full-width, taller tap target (matching the app's

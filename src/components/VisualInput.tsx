@@ -6,6 +6,7 @@ import { useDirector } from "../state/demoDirectorStore";
 import { useCommandCircuit } from "../state/commandCircuitStore";
 import { useLiveSelector } from "../state/liveConnectionStore";
 import { streamPlaybackStore } from "../state/streamPlaybackStore";
+import { subtitlesStore } from "../state/commentaryTrack";
 import { useSettings } from "./SettingsProvider";
 import { useRecording } from "./usePlayback";
 import { WatchedPlayerHud } from "./WatchedPlayerHud";
@@ -55,7 +56,10 @@ export function VisualInput() {
   // The watched-player chip shows during any stream, independent of the
   // input-overlay setting; the overlay obeys it.
   const showWatchedPlayer = isDesktop && !!recording;
-  const showOverlay = isDesktop && showInputOverlay;
+  // Subtitles sit where the overlay does; when they are actually up
+  // (setting on AND lines found for this demo) they take the space.
+  const subtitlesUp = useStore(subtitlesStore, (s) => s.showing);
+  const showOverlay = isDesktop && showInputOverlay && !subtitlesUp;
 
   return (
     <>

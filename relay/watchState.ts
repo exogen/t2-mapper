@@ -1,6 +1,7 @@
 import type { PacketData, ParsedData, SensorGroupColor } from "t2-demo-parser";
 import { stripTaggedStringMarkup } from "./shared.js";
 import {
+  LoadInfoCollector,
   decodeTeamAdd,
   decodeFlagEvent,
   applyScoreHudToRoster,
@@ -68,6 +69,7 @@ export class WatchStateAccumulator {
    *  clock, or a team with points on the board (untimed servers send no
    *  running clock). Never true while a server sits in pre-match warmup. */
   matchStarted = false;
+  private loadInfo = new LoadInfoCollector();
   private missionDisplayName: string | undefined;
   private missionTypeDisplayName: string | undefined;
   private gameClassName: string | undefined;
@@ -137,6 +139,7 @@ export class WatchStateAccumulator {
     this.gameClassName = undefined;
     this.serverDisplayName = undefined;
     this.matchStarted = false;
+    this.loadInfo.reset();
   }
 
   resolveNetString(s: string): string {
@@ -371,6 +374,23 @@ export class WatchStateAccumulator {
     } else if (msgType === "MsgClientDrop" && args.length >= 4) {
       const clientId = parseInt(this.resolveNetString(args[3]), 10);
       if (!isNaN(clientId)) this.playerRoster.delete(clientId);
+    } else if (msgType === "MsgClientNameChanged" && args.length >= 5) {
+      // Community servers let a player change their clan tag — or the
+      // whole name — mid-match. Wire order: args[2]=old name,
+      // args[3]=new name, args[4]=clientId. The client id is the
+      // identity; the roster entry keeps its score and team.
+      const rawName = this.resolveNetString(args[3]);
+      const clientId = parseInt(this.resolveNetString(args[4]), 10);
+      const existing = isNaN(clientId)
+        ? undefined
+        : this.playerRoster.get(clientId);
+      if (existing) {
+        existing.rawName = rawName;
+        existing.name = stripTaggedStringMarkup(rawName).trim();
+        if (existing.targetId != null) {
+          this.targetNames.set(existing.targetId, existing.name);
+        }
+      }
     } else if (msgType === "MsgClientJoinTeam" && args.length >= 6) {
       const clientId = parseInt(this.resolveNetString(args[4]), 10);
       const teamId = parseInt(this.resolveNetString(args[5]), 10);
@@ -454,6 +474,9 @@ export class WatchStateAccumulator {
       this.missionDisplayName = missionDisplayName || this.missionDisplayName;
       this.missionTypeDisplayName =
         missionTypeDisplayName || this.missionTypeDisplayName;
+      this.loadInfo.begin();
+    } else if (LoadInfoCollector.handles(msgType)) {
+      this.loadInfo.apply(msgType, args, (s) => this.resolveNetString(s));
     } else if (msgType === "MsgClientReady" && args.length >= 3) {
       this.gameClassName = this.resolveNetString(args[2]) || this.gameClassName;
       this.matchEnded = false;
@@ -599,6 +622,7 @@ export class WatchStateAccumulator {
       serverDisplayName: this.serverDisplayName,
       matchEnded: this.matchEnded,
       matchStarted: this.matchStarted,
+      loadInfo: this.loadInfo.info ?? undefined,
     };
   }
 }

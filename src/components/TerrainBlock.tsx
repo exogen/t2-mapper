@@ -17,10 +17,7 @@ import {
   Vector3,
   type Group,
 } from "three";
-import {
-  freezeStaticMatrices,
-  unfreezeStaticMatrices,
-} from "./staticMatrices";
+import { freezeStaticMatrices, unfreezeStaticMatrices } from "./staticMatrices";
 import type { TerrainBlockEntity } from "../state/gameEntityTypes";
 import { useIsDebugTourTarget } from "../state/cameraTourStore";
 import { useCommandCircuit } from "../state/commandCircuitStore";
@@ -34,14 +31,13 @@ import { loadTerrain } from "../loaders";
 import { terrainHeightToWorld } from "../terrain";
 import { packMasksRGB } from "../textureUtils";
 import { TerrainTile, TerrainMaterial } from "./TerrainTile";
-import {
-  createTerrainHeightSampler,
-  setTerrainHeightSampler,
-} from "../terrainHeight";
 import { invalidateShadows } from "./shadowControl";
 import { setTerrainCollisionData } from "../collision/terrainCollision";
 import { setFogTerrainRows, clearFogTerrainRows } from "../globalFogUniforms";
-const DEFAULT_SQUARE_SIZE = 8;
+import {
+  DEFAULT_TERRAIN_SQUARE_SIZE,
+  terrainCollisionInput,
+} from "../world/placement";
 const DEFAULT_VISIBLE_DISTANCE = 600;
 const TERRAIN_SIZE = 256;
 const LIGHTMAP_SIZE = 512; // Match Tribes 2's 512x512 lightmap
@@ -499,7 +495,7 @@ export const TerrainBlock = memo(function TerrainBlock({
   const scene = entity.terrainData;
   const isTarget = useIsDebugTourTarget(entity.id);
   const terrainFile = scene.terrFileName;
-  const squareSize = scene.squareSize || DEFAULT_SQUARE_SIZE;
+  const squareSize = scene.squareSize || DEFAULT_TERRAIN_SQUARE_SIZE;
   const detailTexture = scene.detailTextureName || undefined;
   const blockSize = squareSize * 256;
   const skyVisibleDistance = useVisibleDistance();
@@ -536,14 +532,7 @@ export const TerrainBlock = memo(function TerrainBlock({
   // raw heightfield for projectile ray collision.
   useEffect(() => {
     if (!terrain) return;
-    setTerrainHeightSampler(
-      createTerrainHeightSampler(terrain.heightMap, squareSize),
-    );
-    setTerrainCollisionData({
-      heightMap: terrain.heightMap,
-      squareSize,
-      emptySquareRuns: emptySquares,
-    });
+    setTerrainCollisionData(terrainCollisionInput(scene, terrain));
     // Volume-fog height rows span the heightfield's min..max, mirroring
     // the engine's 64-row fog texture (it reads the same range from the
     // terrain's stored height extremes).
@@ -552,11 +541,10 @@ export const TerrainBlock = memo(function TerrainBlock({
       terrainHeightToWorld(terrain.maxHeight),
     );
     return () => {
-      setTerrainHeightSampler(null);
       setTerrainCollisionData(null);
       clearFogTerrainRows();
     };
-  }, [terrain, squareSize, emptySquares]);
+  }, [terrain, squareSize, scene]);
   // Get sun direction for lightmap generation
   const sun = useSceneSun();
   const sunDirection = useMemo(() => {

@@ -241,7 +241,7 @@ export function DemoPlaybackControls() {
   const directorTitle = directorQueued
     ? "Waiting for the download – CastGenius starts when it finishes (click to cancel)"
     : directorStatus === "playing"
-      ? "Exit CastGenius (any camera input)"
+      ? "Exit CastGenius (F or Esc)"
       : directorStatus === "scanning"
         ? "Analyzing demo…"
         : directorStatus === "error"

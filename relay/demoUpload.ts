@@ -2,9 +2,11 @@
  * Uploads finalized demo files to Cloudflare R2 (S3 API) along with
  * their metadata sidecars, and appends each record to the bucket's
  * `index.json` (the browse listing — one fetch, full metadata). Sweeps
- * the demo dir for leftovers: stale `.rec.partial` files are crash
- * debris (unfinished deflate, unpatched header) and are removed;
- * `.rec` files are complete and get (re-)enqueued for upload.
+ * the demo dir for leftovers: cold `.rec.partial` spools are crashed
+ * recordings and are salvaged into demos (demoSalvage.ts); `.rec`
+ * files are complete and get (re-)enqueued for upload; spools salvage
+ * couldn't read (`.partial.failed`) are parked in the bucket under
+ * `failed/` rather than left on the volume.
  */
 import fs from "node:fs";
 import fsp from "node:fs/promises";
@@ -17,16 +19,27 @@ import {
 import { Upload } from "@aws-sdk/lib-storage";
 import { demoLog as log } from "./logger.js";
 import type { DemoMetadata } from "./demoRecorder.js";
+import {
+  FAILED_SUFFIX,
+  PARTIAL_SUFFIX,
+  salvagePartialDemo,
+} from "./demoSalvage.js";
 
-/** A .partial nobody owns and with no writes for this long is crash
- *  debris. Live spools are excluded by `isLive` first; this mtime guard
- *  only covers spools of another process (a predecessor draining during
- *  a dev --watch restart), which DemoFileWriter sync-flushes every 30 s. */
+/** Bucket sub-prefix for spools salvage gave up on. */
+const FAILED_PREFIX = "failed/";
+
+/** A .partial nobody owns and with no writes for this long belongs to a
+ *  crashed recording. Live spools are excluded by `isLive` first; this
+ *  mtime guard only covers spools of another process (a predecessor
+ *  draining during a dev --watch restart), which DemoFileWriter
+ *  sync-flushes every few seconds. */
 const STALE_PARTIAL_MS = 5 * 60_000;
 
 export interface DemoUploaderOptions {
   /** Whether a `.partial` belongs to a recorder still in progress. */
   isLive?: (filePath: string) => boolean;
+  /** Keep gate for salvaged crash spools (the recorder's minLengthMs). */
+  salvageMinLengthMs?: number;
 }
 
 export interface DemoUploadConfig {
@@ -83,6 +96,7 @@ export class DemoUploader {
   private lastError: { file: string; message: string; at: string } | null =
     null;
   private isLive: (filePath: string) => boolean;
+  private salvageMinLengthMs: number;
 
   constructor(
     config: DemoUploadConfig | null,
@@ -92,6 +106,7 @@ export class DemoUploader {
     this.config = config;
     this.dir = dir;
     this.isLive = options.isLive ?? (() => false);
+    this.salvageMinLengthMs = options.salvageMinLengthMs ?? 0;
     this.client = config
       ? new S3Client({
           region: "auto",
@@ -181,7 +196,16 @@ export class DemoUploader {
    */
   private async uploadOne(filePath: string): Promise<string> {
     const config = this.config!;
-    const key = `${config.prefix}${path.basename(filePath)}`;
+    const basename = path.basename(filePath);
+    if (basename.endsWith(FAILED_SUFFIX)) {
+      // A spool salvage couldn't read: parked under failed/ for later
+      // inspection so it doesn't accumulate on the volume. No sidecar,
+      // no index entry — it isn't a demo.
+      const key = `${config.prefix}${FAILED_PREFIX}${basename}`;
+      await this.uploadDemoFile(filePath, key);
+      return key;
+    }
+    const key = `${config.prefix}${basename}`;
     const record = await this.readSidecar(`${filePath}.json`);
     await this.uploadDemoFile(filePath, key);
     if (record) {
@@ -305,20 +329,23 @@ export class DemoUploader {
     let requeued = 0;
     for (const name of entries) {
       const filePath = path.join(this.dir, name);
-      if (name.endsWith(".partial")) {
+      if (name.endsWith(PARTIAL_SUFFIX)) {
         // Live spools are .partial too: never touch one a recorder in
-        // this process owns (unlinking an open file doesn't error its
-        // stream — the recording would run on and only fail at
-        // finalize). For the rest, only a cold mtime marks crash debris.
+        // this process owns (salvaging an open file would race its
+        // writes). For the rest, only a cold mtime marks a crashed
+        // recording — which is then salvaged into a demo, not deleted.
         if (this.isLive(filePath)) continue;
         try {
           const stat = await fsp.stat(filePath);
           if (Date.now() - stat.mtimeMs < STALE_PARTIAL_MS) continue;
-          log.warn({ file: name }, "Removing stale partial demo");
-          await fsp.unlink(filePath);
         } catch {
-          // Renamed/removed between readdir and stat — nothing to do.
+          continue; // Renamed/removed between readdir and stat.
         }
+        log.warn({ file: name }, "Salvaging crashed recording");
+        const outcome = await salvagePartialDemo(filePath, {
+          minLengthMs: this.salvageMinLengthMs,
+        });
+        if (outcome.kind !== "dropped") this.enqueue(outcome.path);
       } else if (name.endsWith(".rec.json")) {
         // A sidecar without its .rec is a crash-window orphan (the demo
         // uploaded and unlinked, then the process died before this
@@ -336,7 +363,7 @@ export class DemoUploader {
             // Removed between readdir and stat — nothing to do.
           }
         }
-      } else if (name.endsWith(".rec")) {
+      } else if (name.endsWith(".rec") || name.endsWith(FAILED_SUFFIX)) {
         if (!this.queued.has(filePath)) requeued++;
         this.enqueue(filePath);
       }

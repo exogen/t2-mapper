@@ -9,7 +9,14 @@
  * action between the two bases — the 180-degree rule — and aimed so a
  * landmark sits behind the subject to say where on the map we are.
  */
-import type { DirectorDataset, DirectorVec3, Shot, ShotSubject } from "./types";
+import type {
+  DirectorDataset,
+  DirectorVec3,
+  Shot,
+  ShotRole,
+  ShotSubject,
+} from "./types";
+import type { SceneTopic } from "./castContract";
 import {
   DIRECTOR_BROADCAST_SIDE,
   DIRECTOR_CLUSTER_CAM_RADIUS,
@@ -197,6 +204,10 @@ export function orbitShot(opts: {
   heightFactor?: number;
   lookSubject?: ShotSubject;
   doorwayOf?: DirectorVec3;
+  /** What this shot is, for staging decisions (see ShotRole). */
+  role?: ShotRole;
+  /** What it is about, for the booth (see ShotBase.topic). */
+  topic?: SceneTopic;
 }): Shot {
   let startAngle: number | undefined;
   let drift = 0;
@@ -233,6 +244,8 @@ export function orbitShot(opts: {
     endSec: opts.endSec,
     transitionIn: "cut",
     reason: opts.reason,
+    role: opts.role,
+    topic: opts.topic,
   };
 }
 

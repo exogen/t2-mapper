@@ -1,0 +1,818 @@
+// DisplayName = Simple Soccer
+// MissionTypes = TR2
+
+//--- MISSION QUOTE BEGIN ---
+// 80m Crease
+// Little soccer map, fairly flat
+// Designed for 3v3
+//--- MISSION QUOTE END ---
+
+//--- MISSION STRING BEGIN ---
+// by Juke
+//--- MISSION STRING END ---
+
+//--- TR2 MAP COMMANDS BEGIN ---
+// Soccer Mode
+// Force Roles
+// Field Spawning
+// Goalie Crease = 80
+//--- TR2 MAP COMMANDS END ---
+
+//--- OBJECT WRITE BEGIN ---
+new SimGroup(MissionGroup) {
+
+	cdTrack = "2";
+	CTF_timeLimit = "25";
+	musicTrack = "lush";
+	CTF_scoreLimit = "6";
+	powerCount = "0";
+
+	new MissionArea(MissionArea) {
+		area = "-280 -288 576 560";
+		flightCeiling = "2000";
+		flightCeilingRange = "50";
+
+		locked = "true";
+	};
+	new Sun() {
+		position = "-1196 -820 0";
+		rotation = "1 0 0 0";
+		scale = "1 1 1";
+		direction = "0.57735 0.57735 -0.57735";
+		color = "0.600000 0.600000 0.600000 1.000000";
+		ambient = "0.600000 0.600000 0.600000 1.000000";
+		texture[0] = "special/sunFlare";
+		texture[1] = "special/sunFlare02";
+		texture[2] = "special/LensFlare/flare01";
+		texture[3] = "special/LensFlare/flare02";
+		texture[4] = "special/LensFlare/flare03";
+		lensFlareScale = "0.7";
+		lensFlareIntensity = "1";
+		frontFlareSize = "300";
+		backFlareSize = "450";
+		flareColor = "1.000000 1.000000 1.000000 1.000000";
+
+		locked = "true";
+	};
+	new TerrainBlock(Terrain) {
+		rotation = "1 0 0 0";
+		scale = "1 1 1";
+		detailTexture = "details/lushdet1";
+		terrainFile = "SimpleSoccer104.ter";
+		squareSize = "8";
+
+		locked = "true";
+		hazeDistance = "50";
+		visibleDistance = "450";
+		position = "-1024 -1024 0";
+	};
+	new NavigationGraph(NavGraph) {
+		conjoinAngleDev = "45";
+		cullDensity = "0.3";
+		customArea = "0 0 0 0";
+
+		locked = "true";
+		rotation = "0 0 0 0";
+		YDimOverSize = "0";
+		scale = "1 1 1";
+		GraphFile = "TreasureIsland.nav";
+		coverage = "0";
+		conjoinBowlDev = "20";
+		XDimOverSize = "0";
+		position = "0 0 0 1";
+	};
+	new Sky(Sky) {
+		position = "-1196 -820 0";
+		rotation = "1 0 0 0";
+		scale = "1 1 1";
+		cloudHeightPer[0] = "0.349971";
+		cloudHeightPer[1] = "0.25";
+		cloudHeightPer[2] = "0.199973";
+		cloudSpeed1 = "0.01";
+		cloudSpeed2 = "0.02";
+		cloudSpeed3 = "0.03";
+		visibleDistance = "850";
+		useSkyTextures = "1";
+		renderBottomTexture = "0";
+		SkySolidColor = "0.390000 0.390000 0.390000 0.000000";
+		fogDistance = "800";
+		fogColor = "0.800000 0.800000 0.900000 1.000000";
+		fogVolume1 = "1540 0 350";
+		fogVolume2 = "0 0 0";
+		fogVolume3 = "0 0 0";
+		materialList = "Nef5.dml";
+		windVelocity = "1 0 0";
+		windEffectPrecipitation = "0";
+		fogVolumeColor1 = "128.000000 128.000000 128.000000 0.000000";
+		fogVolumeColor2 = "128.000000 128.000000 128.000000 -198748244414614883000000000000000000000.000000";
+		fogVolumeColor3 = "128.000000 128.000000 128.000000 -222768174765569861000000000000000000000.000000";
+		high_visibleDistance = "-1";
+		high_fogDistance = "-1";
+		high_fogVolume1 = "-1 3.27833e-28 3148.48";
+		high_fogVolume2 = "-1 2.24208e-44 2.51673e-42";
+		high_fogVolume3 = "-1 7.74718e+31 1.49413e-07";
+
+		locked = "true";
+		cloudSpeed0 = "0.000000 0.000000";
+	};
+	new SimGroup(Teams) {
+
+		powerCount = "0";
+
+		new SimGroup(Team1) {
+
+			powerCount = "0";
+
+			new SimGroup(spawnspheres) {
+
+				powerCount = "0";
+
+				new Marker() {
+					position = "-247.435 218.686 135.543";
+					rotation = "0 0 1 128.342";
+					scale = "1 1 1";
+					seqNum = "0";
+					msToNext = "1000";
+
+					team = "1";
+					locked = "false";
+				};
+				new Marker() {
+					position = "-245.165 232.465 134.853";
+					rotation = "0 0 1 122.613";
+					scale = "1 1 1";
+					seqNum = "0";
+					msToNext = "1000";
+
+					team = "1";
+					locked = "false";
+				};
+				new Marker() {
+					position = "-257.661 212.113 135.653";
+					rotation = "0 0 1 128.342";
+					scale = "1 1 1";
+					seqNum = "0";
+					msToNext = "1000";
+
+					team = "1";
+					locked = "false";
+				};
+				new Marker() {
+					position = "-158.011 -188.261 135.161";
+					rotation = "0 0 1 44.1182";
+					scale = "1 1 1";
+					seqNum = "0";
+					msToNext = "1000";
+
+					team = "1";
+					locked = "false";
+				};
+				new Marker() {
+					position = "-175.217 -184.738 133.95";
+					rotation = "0 0 1 46.2272";
+					scale = "1 1 1";
+					seqNum = "0";
+					msToNext = "1000";
+
+					team = "1";
+					locked = "false";
+				};
+				new Marker() {
+					position = "-152.453 -202.709 134.75";
+					rotation = "0 0 1 50.4202";
+					scale = "1 1 1";
+					seqNum = "0";
+					msToNext = "1000";
+
+					team = "1";
+					locked = "false";
+				};
+				new Marker() {
+					position = "-259.293 227.941 135.345";
+					rotation = "0 0 1 128.342";
+					scale = "1 1 1";
+					seqNum = "0";
+					msToNext = "1000";
+
+					team = "1";
+					locked = "false";
+				};
+				new Marker() {
+					position = "-170.588 -201.053 135.158";
+					rotation = "0 0 1 44.1182";
+					scale = "1 1 1";
+					seqNum = "0";
+					msToNext = "1000";
+
+					team = "1";
+					locked = "false";
+				};
+			};
+			new SimGroup(Base0) {
+
+				powerCount = "0";
+			};
+			new SimGroup(Goal1) {
+
+				powerCount = "0";
+
+				new StaticShape() {
+					position = "-278.047 -0.893541 101.003";
+					rotation = "0 0 1 90.0457";
+					scale = "1 1 1";
+					dataBlock = "Goal";
+					lockCount = "0";
+					homingCount = "0";
+
+					team = "1";
+					locked = "false";
+					Target = "-1";
+				};
+				new WayPoint() {
+					position = "-277.797 -0.535341 99.614";
+					rotation = "-0 0 -1 89.9544";
+					scale = "1 1 1";
+					nameTag = "Goal";
+					dataBlock = "WayPointMarker";
+					lockCount = "0";
+					homingCount = "0";
+					name = "Goal";
+					team = "1";
+
+					locked = "false";
+				};
+				new InteriorInstance() {
+					position = "-58.5133 531.313 -10000";
+					rotation = "1 0 0 0";
+					scale = "2 2 2";
+					interiorFile = "dplat2.dif";
+					showTerrainInside = "0";
+
+					team = "1";
+					locked = "false";
+					defaultPosition = "-58.5133 531.313 153.932";
+				};
+				new StaticShape() {
+					position = "-279.665 -1.17309 99.994";
+					rotation = "-0 0 -1 89.9544";
+					scale = "1.1 1 1.1";
+					dataBlock = "GoldGoalBack";
+					lockCount = "0";
+					homingCount = "0";
+
+					team = "1";
+					locked = "false";
+					Target = "-1";
+				};
+				new StaticShape() {
+					position = "-277.395 17.5112 99.333";
+					rotation = "0 0 1 90.0457";
+					scale = "1 1 1";
+					dataBlock = "GoldGoalPost";
+					lockCount = "0";
+					homingCount = "0";
+
+					team = "1";
+					locked = "false";
+					Target = "-1";
+				};
+				new StaticShape() {
+					position = "-277.791 -0.682771 117.446";
+					rotation = "0 0 1 90.0457";
+					scale = "1 1 1";
+					dataBlock = "GoldGoalCrossbar";
+					lockCount = "0";
+					homingCount = "0";
+
+					team = "1";
+					locked = "false";
+					Target = "-1";
+				};
+				new StaticShape() {
+					position = "-277.419 -19.8433 118.877";
+					rotation = "0.707388 0.706825 3.08963e-08 180";
+					scale = "1 1 1";
+					dataBlock = "GoldGoalPost";
+					lockCount = "0";
+					homingCount = "0";
+
+					team = "1";
+					locked = "false";
+					Target = "-1";
+				};
+			};
+		};
+		new SimGroup(Team2) {
+
+			powerCount = "0";
+
+			new SimGroup(spawnspheres) {
+
+				powerCount = "0";
+
+				new Marker() {
+					position = "271.563 -221.647 136.912";
+					rotation = "0 0 -1 53.2851";
+					scale = "1 1 1";
+					seqNum = "0";
+					msToNext = "1000";
+
+					team = "2";
+					locked = "false";
+				};
+				new Marker() {
+					position = "270.717 -238.57 136";
+					rotation = "0 0 -1 52.7121";
+					scale = "1 1 1";
+					seqNum = "0";
+					msToNext = "1000";
+
+					team = "2";
+					locked = "false";
+				};
+				new Marker() {
+					position = "283.805 -216.988 136.4";
+					rotation = "0 0 -1 49.2743";
+					scale = "1 1 1";
+					seqNum = "0";
+					msToNext = "1000";
+
+					team = "2";
+					locked = "false";
+				};
+				new Marker() {
+					position = "148.807 179.785 128.024";
+					rotation = "0 0 1 216.005";
+					scale = "1 1 1";
+					seqNum = "0";
+					msToNext = "1000";
+
+					team = "2";
+					locked = "false";
+				};
+				new Marker() {
+					position = "162.285 177.816 127.601";
+					rotation = "0 0 1 210.848";
+					scale = "1 1 1";
+					seqNum = "0";
+					msToNext = "1000";
+
+					team = "2";
+					locked = "false";
+				};
+				new Marker() {
+					position = "142.028 192.305 127.801";
+					rotation = "0 0 1 218.87";
+					scale = "1 1 1";
+					seqNum = "0";
+					msToNext = "1000";
+
+					team = "2";
+					locked = "false";
+				};
+				new Marker() {
+					position = "284.969 -231.705 137.119";
+					rotation = "0 0 -1 53.2851";
+					scale = "1 1 1";
+					seqNum = "0";
+					msToNext = "1000";
+
+					team = "2";
+					locked = "false";
+				};
+				new Marker() {
+					position = "160.936 195.348 129.221";
+					rotation = "0 0 1 216.005";
+					scale = "1 1 1";
+					seqNum = "0";
+					msToNext = "1000";
+
+					team = "2";
+					locked = "false";
+				};
+			};
+			new SimGroup(Base0) {
+
+				powerCount = "0";
+			};
+			new SimGroup(Goal2) {
+
+				powerCount = "0";
+
+				new WayPoint() {
+					position = "300.857 -8.07732 99.663";
+					rotation = "-0 0 -1 89.9543";
+					scale = "1 1 1";
+					nameTag = "Goal";
+					dataBlock = "WayPointMarker";
+					lockCount = "0";
+					homingCount = "0";
+					name = "Goal";
+					team = "2";
+
+					locked = "false";
+				};
+				new InteriorInstance() {
+					position = "-0.658817 -512.526 -10000";
+					rotation = "1 0 0 0";
+					scale = "2 2 2";
+					interiorFile = "dplat2.dif";
+					showTerrainInside = "0";
+
+					team = "2";
+					locked = "false";
+					defaultPosition = "-0.658817 -512.526 154.732";
+				};
+				new StaticShape() {
+					position = "293.672 -9.05494 100.567";
+					rotation = "-0 0 -1 89.9543";
+					scale = "1 1 1";
+					dataBlock = "Goal";
+					lockCount = "0";
+					homingCount = "0";
+
+					team = "2";
+					locked = "false";
+					Target = "-1";
+				};
+				new StaticShape() {
+					position = "295.489 -8.77367 100.158";
+					rotation = "-0 0 -1 89.9543";
+					scale = "1.1 1 1.1";
+					dataBlock = "GoalBack";
+					lockCount = "0";
+					homingCount = "0";
+
+					team = "2";
+					locked = "false";
+					Target = "-1";
+				};
+				new StaticShape() {
+					position = "292.649 -27.4575 98.897";
+					rotation = "-0 0 -1 89.9543";
+					scale = "1 1 1";
+					dataBlock = "GoalPost";
+					lockCount = "0";
+					homingCount = "0";
+
+					team = "2";
+					locked = "false";
+					Target = "-1";
+				};
+				new StaticShape() {
+					position = "293.216 -9.26386 116.61";
+					rotation = "-0 0 -1 89.9543";
+					scale = "1 1 1";
+					dataBlock = "GoalCrossbar";
+					lockCount = "0";
+					homingCount = "0";
+
+					team = "2";
+					locked = "false";
+					Target = "-1";
+				};
+				new StaticShape() {
+					position = "292.814 9.8962 118.441";
+					rotation = "-0.706825 0.707389 3.08964e-08 180";
+					scale = "1 1 1";
+					dataBlock = "GoalPost";
+					lockCount = "0";
+					homingCount = "0";
+
+					team = "2";
+					locked = "false";
+					Target = "-1";
+				};
+			};
+		};
+		new SimGroup(team0) {
+
+			powerCount = "0";
+		};
+	};
+	new SimGroup(Ambiance) {
+
+		powerCount = "0";
+
+		new AudioEmitter() {
+			position = "46.6422 122.878 305.836";
+			rotation = "1 0 0 0";
+			scale = "1 1 1";
+			fileName = "fx/environment/seagull1.wav";
+			useProfileDescription = "0";
+			outsideAmbient = "1";
+			volume = "1";
+			isLooping = "1";
+			is3D = "1";
+			minDistance = "40";
+			maxDistance = "600";
+			coneInsideAngle = "360";
+			coneOutsideAngle = "360";
+			coneOutsideVolume = "1";
+			coneVector = "0 0 1";
+			loopCount = "-1";
+			minLoopGap = "15000";
+			maxLoopGap = "30000";
+			type = "EffectAudioType";
+
+			locked = "true";
+		};
+		new AudioEmitter() {
+			position = "-120.805 -104.752 257.743";
+			rotation = "1 0 0 0";
+			scale = "1 1 1";
+			fileName = "fx/environment/seagull1.wav";
+			useProfileDescription = "0";
+			outsideAmbient = "1";
+			volume = "1";
+			isLooping = "1";
+			is3D = "1";
+			minDistance = "40";
+			maxDistance = "600";
+			coneInsideAngle = "360";
+			coneOutsideAngle = "360";
+			coneOutsideVolume = "1";
+			coneVector = "0 0 1";
+			loopCount = "-1";
+			minLoopGap = "15000";
+			maxLoopGap = "30000";
+			type = "EffectAudioType";
+
+			locked = "true";
+		};
+		new AudioEmitter() {
+			position = "249.74 288.354 335.384";
+			rotation = "1 0 0 0";
+			scale = "1 1 1";
+			fileName = "fx/environment/seagull1.wav";
+			useProfileDescription = "0";
+			outsideAmbient = "1";
+			volume = "1";
+			isLooping = "1";
+			is3D = "1";
+			minDistance = "40";
+			maxDistance = "600";
+			coneInsideAngle = "360";
+			coneOutsideAngle = "360";
+			coneOutsideVolume = "1";
+			coneVector = "0 0 1";
+			loopCount = "-1";
+			minLoopGap = "15000";
+			maxLoopGap = "30000";
+			type = "EffectAudioType";
+
+			locked = "true";
+		};
+		new AudioEmitter() {
+			position = "160.593 -423.155 405.255";
+			rotation = "1 0 0 0";
+			scale = "1 1 1";
+			fileName = "fx/environment/seagull1.wav";
+			useProfileDescription = "0";
+			outsideAmbient = "1";
+			volume = "1";
+			isLooping = "1";
+			is3D = "1";
+			minDistance = "40";
+			maxDistance = "600";
+			coneInsideAngle = "360";
+			coneOutsideAngle = "360";
+			coneOutsideVolume = "1";
+			coneVector = "0 0 1";
+			loopCount = "-1";
+			minLoopGap = "15000";
+			maxLoopGap = "30000";
+			type = "EffectAudioType";
+
+			locked = "true";
+		};
+		new AudioEmitter() {
+			position = "-295.849 302.958 329.556";
+			rotation = "1 0 0 0";
+			scale = "1 1 1";
+			fileName = "fx/environment/seagull1.wav";
+			useProfileDescription = "0";
+			outsideAmbient = "1";
+			volume = "1";
+			isLooping = "1";
+			is3D = "1";
+			minDistance = "40";
+			maxDistance = "600";
+			coneInsideAngle = "360";
+			coneOutsideAngle = "360";
+			coneOutsideVolume = "1";
+			coneVector = "0 0 1";
+			loopCount = "-1";
+			minLoopGap = "15000";
+			maxLoopGap = "30000";
+			type = "EffectAudioType";
+
+			locked = "true";
+		};
+		new AudioEmitter() {
+			position = "-340.044 -442.953 402.22";
+			rotation = "1 0 0 0";
+			scale = "1 1 1";
+			fileName = "fx/environment/seagull1.wav";
+			useProfileDescription = "0";
+			outsideAmbient = "1";
+			volume = "1";
+			isLooping = "1";
+			is3D = "1";
+			minDistance = "40";
+			maxDistance = "600";
+			coneInsideAngle = "360";
+			coneOutsideAngle = "360";
+			coneOutsideVolume = "1";
+			coneVector = "0 0 1";
+			loopCount = "-1";
+			minLoopGap = "15000";
+			maxLoopGap = "30000";
+			type = "EffectAudioType";
+
+			locked = "true";
+		};
+	};
+	new SimGroup(RandomOrganics) {
+
+		powerCount = "0";
+
+		new TSStatic() {
+			position = "126.135 -207.433 122.942";
+			rotation = "1 0 0 0";
+			scale = "2 2 2";
+			shapeName = "borg19.dts";
+
+			locked = "false";
+		};
+		new TSStatic() {
+			position = "-168.766 182.577 114.176";
+			rotation = "1 0 0 0";
+			scale = "2 2 2";
+			shapeName = "borg16.dts";
+
+			locked = "false";
+		};
+		new TSStatic() {
+			position = "430.624 -235.429 101.946";
+			rotation = "0 0 1 51.5662";
+			scale = "2 2 2";
+			shapeName = "borg19.dts";
+		};
+		new TSStatic() {
+			position = "-485.203 225.408 84.14";
+			rotation = "1 0 0 0";
+			scale = "2 2 2";
+			shapeName = "borg17.dts";
+		};
+	};
+	new SimGroup(ObserverDropPoints) {
+
+		powerCount = "0";
+
+		new Camera() {
+			position = "-67.4071 272.156 224.07";
+			rotation = "1 0 0 0";
+			scale = "1 1 1";
+			dataBlock = "Observer";
+			lockCount = "0";
+			homingCount = "0";
+
+			team = "0";
+			locked = "false";
+		};
+		new Camera() {
+			position = "2.3521 -271.394 227.54";
+			rotation = "1 0 0 0";
+			scale = "1 1 1";
+			dataBlock = "Observer";
+			lockCount = "0";
+			homingCount = "0";
+
+			team = "0";
+			locked = "false";
+		};
+		new Camera() {
+			position = "-8.35488 -36.6744 194.923";
+			rotation = "1 0 0 0";
+			scale = "1 1 1";
+			dataBlock = "Observer";
+			lockCount = "0";
+			homingCount = "0";
+
+			team = "0";
+			locked = "true";
+		};
+	};
+	new SimGroup(Poles) {
+
+		powerCount = "0";
+	};
+	new Item() {
+		position = "-10.8213 -6.64507 105.956";
+		rotation = "1 0 0 0";
+		scale = "1.6 1.8 1.6";
+		dataBlock = "TR2Flag1";
+		lockCount = "0";
+		homingCount = "0";
+		collideable = "0";
+		static = "0";
+		rotate = "1";
+
+		WayPoint = "4419";
+		onGoal = "0";
+		locked = "false";
+		oneTimer = "0";
+		isHome = "1";
+		oneTimerCount = "0";
+		dropperHeight = "3.23697";
+		dropperKilled = "0";
+		dropperName = "\x01675";
+		originalPosition = "-10.8116 -6.65545 105.961 1 0 0 0";
+		dropperOrientation = "0.918711 0.137906 -0.370071";
+		lastMario = "0";
+		className = "FlagObj";
+		specialPass = "SoccerKick";
+		dropTime = "0";
+		dropperClient = "4357";
+		lastKTS = "0";
+		Target = "33";
+		slapCount = "0";
+		lastOneTimer = "444479";
+		dropperVelocity = "40.9943 -4.97673 8.16563";
+		dropperPosition = "99.4393 -7.81773 106.107";
+		LiteralDropTime = "0";
+	};
+	new SimGroup(RepairPatches) {
+
+		powerCount = "0";
+	};
+	new SimGroup(Toys) {
+
+		powerCount = "0";
+
+		new SimGroup(Launchers) {
+
+			powerCount = "0";
+		};
+		new SimGroup(InvRamp2) {
+
+			powerCount = "0";
+		};
+		new SimGroup(InvRamp1) {
+
+			powerCount = "0";
+		};
+		new SimGroup(Ramp2) {
+
+			powerCount = "0";
+		};
+		new SimGroup(ramp1) {
+
+			powerCount = "0";
+		};
+	};
+	new SimGroup(sphere) {
+
+		powerCount = "0";
+	};
+	new SimGroup(Billboards) {
+
+		powerCount = "0";
+	};
+	new SimGroup() {
+
+		powerCount = "0";
+	};
+	new SimGroup() {
+
+		powerCount = "0";
+	};
+	new SimGroup() {
+
+		powerCount = "0";
+	};
+	new InteriorInstance() {
+		position = "312.553 -8.71226 105.559";
+		rotation = "0 0 1 179.909";
+		scale = "2.80175 1.77737 2.60335";
+		interiorFile = "rs_stabilizer.dif";
+		showTerrainInside = "0";
+	};
+	new InteriorInstance() {
+		position = "-296.96 -1.14905 106.001";
+		rotation = "0 0 -1 0.167859";
+		scale = "2.80175 1.77737 2.60335";
+		interiorFile = "rs_stabilizer.dif";
+		showTerrainInside = "0";
+	};
+	new SimGroup() {
+
+		powerCount = "0";
+	};
+	new FileObject() {
+	};
+	new FileObject() {
+	};
+};
+//--- OBJECT WRITE END ---

@@ -15,7 +15,7 @@
 import { Vector3 } from "three";
 import { castWorldRay } from "../collision/worldCollision";
 import { castTerrainRay } from "../collision/terrainCollision";
-import type { DirectorVec3 } from "./types";
+import type { DirectorVec3, Shot } from "./types";
 
 /** Slow broadcast-style orbit drift for aimless shots (radians/second). */
 export const FOLLOW_YAW_DRIFT = 0.04;
@@ -81,6 +81,14 @@ export const DOLLY_HEADING_RATE = 1.1;
  *  velocity is stepwise per tick and re-adds the jitter the position
  *  damping just removed. */
 export const DOLLY_VELOCITY_SMOOTHING = 3;
+
+/**
+ * Furthest a dolly will GLIDE into its mark. Beyond this the entry is
+ * an edit, not a continuation: the damped pursuit would fly the camera
+ * the whole way (hundreds of metres, fastest at the first frame, aim
+ * swinging), so it opens on its mark instead.
+ */
+export const DOLLY_GLIDE_MAX_GAP = 25;
 
 export const DOLLY_DEFAULT_DISTANCE = 12;
 
@@ -160,7 +168,7 @@ const OCCLUSION_TARGET_MARGIN = 2.5;
  * beats a view of the inside of a wall.
  */
 
-const OCCLUSION_ANGLE_OFFSETS = [
+export const OCCLUSION_ANGLE_OFFSETS = [
   0,
   Math.PI / 8,
   -Math.PI / 8,
@@ -175,7 +183,7 @@ const OCCLUSION_ANGLE_OFFSETS = [
   Math.PI,
 ];
 
-const OCCLUSION_HEIGHT_BOOSTS = [1, 1.6, 2.4];
+export const OCCLUSION_HEIGHT_BOOSTS = [1, 1.6, 2.4];
 /** Clearance kept between the camera and the surface behind it. */
 
 const STANDOFF_WALL_MARGIN = 1.5;
@@ -319,19 +327,33 @@ export const TRANSITION_MAX_DISTANCE = 200;
 export const TRANSITION_MIN_DISTANCE = 1.5;
 /** Pace of the move, and the range its duration is clamped to. */
 
-export const TRANSITION_SPEED = 110;
+/**
+ * Cruise pace of a travel, in world units per second.
+ *
+ * MEASURED, not chosen. At 110 a 64-metre hop between two pre-match
+ * shots took 0.58s and was still doing 131 u/s a fifth of a second
+ * before it stopped — the settle curve was already in place, but there
+ * was no TIME for it to act. Slower means the deceleration is something
+ * a viewer can see rather than arithmetic.
+ */
+export const TRANSITION_SPEED = 45;
 
-export const TRANSITION_MIN_SEC = 0.45;
+export const TRANSITION_MIN_SEC = 0.8;
 /** Peak view-turn rate a shot-change flight may reach (radians/sec) —
  *  travels are paced by their SWING as well as their distance, so a
  *  short hop with a big rotation stretches instead of whipping. */
 export const TRANSITION_MAX_TURN_RATE = 1.6;
 
-export const TRANSITION_MAX_SEC = 1.8;
+export const TRANSITION_MAX_SEC = 2.4;
+/** Lever arm for the travel's blended aim point: the look-at each end
+ *  of a flight is treated as "this far along the view direction", so
+ *  blending aims interpolates angles at a scene-sized radius instead of
+ *  slerping quaternions toward a moving endpoint. */
+export const TRANSITION_AIM_LEVER = 30;
 /** How many frames to wait for a shot's destination pose to appear
  *  before concluding there is nothing to travel to. */
 
-export const TRANSITION_ARM_FRAMES = 6;
+export const TRANSITION_ARM_SEC = 0.1;
 
 const _rayTo = new Vector3();
 
@@ -355,22 +377,180 @@ export function easeInHold(t: number): number {
   return t <= k ? (speed * t * t) / (2 * k) : (speed * k) / 2 + speed * (t - k);
 }
 
-export function easeInOutCubic(t: number): number {
-  return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+/**
+ * Ease in, cruise, and settle to a STOP — with the deceleration given
+ * far more of the shot than the acceleration.
+ *
+ * `easeInHold` is right for a pan across a rank, which a broadcast cuts
+ * while it is still moving. It is wrong for a move that ARRIVES
+ * somewhere: an establishing run that reaches the far flag at full
+ * speed and then cuts reads as the film being spliced mid-shot. A long
+ * tail makes the camera come to rest on its subject, which is the frame
+ * the cut should land on.
+ *
+ * Velocity is a trapezoid with smoothstep ramps, so acceleration is
+ * continuous at both corners; the result is integrated and normalised,
+ * so the move still covers exactly its full distance.
+ */
+export function easeInSettle(
+  t: number,
+  rampIn = SETTLE_RAMP_IN,
+  rampOut = SETTLE_RAMP_OUT,
+): number {
+  if (t <= 0) return 0;
+  if (t >= 1) return 1;
+  // Area under one smoothstep ramp is half its width.
+  const total = 1 - rampIn / 2 - rampOut / 2;
+  // ∫ x²(3-2x) dx = x³ - x⁴/2
+  const ramp = (u: number) => u * u * u - (u * u * u * u) / 2;
+  let d: number;
+  if (t < rampIn) {
+    d = rampIn * ramp(t / rampIn);
+  } else if (t <= 1 - rampOut) {
+    d = rampIn / 2 + (t - rampIn);
+  } else {
+    // Distance still to run, measured backwards from the end.
+    d = total - rampOut * ramp((1 - t) / rampOut);
+  }
+  return d / total;
+}
+/** Short acceleration... */
+const SETTLE_RAMP_IN = 0.18;
+/** ...and a long deceleration: nearly half the move is the arrival. */
+const SETTLE_RAMP_OUT = 0.45;
+/**
+ * A TRAVEL settles harder still.
+ *
+ * A shot's own move is the picture; a travel is only getting somewhere,
+ * and what the viewer notices about it is the arrival. Nearly two
+ * thirds of it is deceleration.
+ */
+export const TRAVEL_RAMP_IN = 0.15;
+export const TRAVEL_RAMP_OUT = 0.6;
+/**
+ * The most of an arriving shot a travel may eat. A move that cannot be
+ * made gently inside this is a CUT — better a clean cut than a lunge.
+ */
+export const TRAVEL_SHOT_FRACTION = 0.35;
+
+/**
+ * Where a fixed orbit's camera sits, at bearing `angle`. TORQUE space.
+ *
+ * THE definition, used by the rig that flies it and by the validation
+ * that certifies it. These were separate expressions of the same
+ * arithmetic and they disagreed by exactly `ORBIT_LOOK_LIFT`: the
+ * validator placed the eye two units above where the rig actually puts
+ * it, so every fixed shot was approved at a height it never occupies.
+ * On a chest-height portrait that put the real camera underground.
+ */
+export function orbitEyeAt(
+  shot: Extract<Shot, { kind: "fixedOrbit" }>,
+  angle: number,
+  out: DirectorVec3 = [0, 0, 0],
+  /**
+   * Live overrides. The runtime's visibility rail re-solves the
+   * standoff, the height and even the anchor mid-shot, so it passes
+   * what it currently holds; plan-time validation passes nothing and
+   * gets the placement as planned.
+   */
+  live?: { radius?: number; heightScale?: number; anchor?: DirectorVec3 },
+): DirectorVec3 {
+  const anchor = live?.anchor ?? shot.staged?.anchor ?? shot.center;
+  const radius =
+    live?.radius ??
+    shot.radius *
+      (shot.staged ? shot.staged.radius / Math.max(1e-6, shot.radius) : 1);
+  // The lift factor is capped by the PLANNED radius — the same basis
+  // the placement was verified on; deriving it from a pulled-in radius
+  // would ride higher than was verified.
+  const plannedLift = orbitLiftFactor(
+    shot.radius,
+    shot.heightFactor ?? ORBIT_HEIGHT_FACTOR,
+  );
+  const heightScale =
+    live?.heightScale ??
+    (shot.staged && plannedLift > 1e-6
+      ? shot.staged.liftFactor / plannedLift
+      : 1);
+  out[0] = anchor[0] + Math.sin(angle) * radius;
+  out[1] = anchor[1] + Math.cos(angle) * radius;
+  out[2] = anchor[2] + radius * plannedLift * heightScale;
+  return out;
 }
 
-/** Step an angle toward a target along the shortest arc, rate-limited. */
-export function approachAngle(
+/**
+ * How far through its MOVE a sweep is at demo time `t`, 0..1.
+ *
+ * Against `moveSec`, never the on-air window: the window is rewritten
+ * after the shot is decided (sealed late, or stretched to keep a
+ * streaming playhead covered), and pacing the move to it rewound the
+ * camera every time the window grew. Past the move the camera holds.
+ * Plans written before `moveSec` existed fall back to the window.
+ */
+export function sweepClock(
+  shot: Extract<Shot, { kind: "sweep" }>,
+  t: number,
+): number {
+  const span = Math.max(0.001, shot.moveSec ?? shot.endSec - shot.startSec);
+  return Math.min(1, Math.max(0, (t - shot.startSec) / span));
+}
+
+/**
+ * How far along its path a sweep is, at raw fraction `t`.
+ *
+ * The shot says how it wants to be paced; the role is only the default
+ * for plans written before the field existed.
+ */
+export function sweepProgress(
+  shot: Extract<Shot, { kind: "sweep" }>,
+  t: number,
+): number {
+  const pacing =
+    shot.easing ??
+    (shot.role === "rosterWide" || shot.role === "rosterCloseUp"
+      ? "hold"
+      : "settle");
+  switch (pacing) {
+    // A TRACKING SHOT runs at one speed. Film cuts into a pan already
+    // moving and out of it still moving; ramping either end gives the
+    // move a beginning and an end it is not supposed to have.
+    case "linear":
+      return t;
+    // Cut while still travelling: a pass across a rank of faces.
+    case "hold":
+      return easeInHold(t);
+    // Arrives somewhere, so it decelerates onto it.
+    case "settle":
+      return easeInSettle(t);
+  }
+}
+
+/**
+ * Spring-like angular approach: ease toward the target along the
+ * shortest arc at a damping RATE (fast when far, gentle on arrival),
+ * still hard-capped at `maxStep` per frame. A constant-rate slew —
+ * what this replaced at the aim steering — turns at the same speed
+ * whatever the error, which reads mechanical: the camera swings, then
+ * stops dead on the mark.
+ */
+export function springAngle(
   current: number,
   target: number,
+  rate: number,
+  deltaSec: number,
   maxStep: number,
 ): number {
   const TWO_PI = Math.PI * 2;
   let diff = (target - current) % TWO_PI;
   if (diff > Math.PI) diff -= TWO_PI;
   if (diff < -Math.PI) diff += TWO_PI;
-  return current + Math.sign(diff) * Math.min(Math.abs(diff), maxStep);
+  const eased = diff * (1 - Math.exp(-rate * deltaSec));
+  const step = Math.sign(eased) * Math.min(Math.abs(eased), maxStep);
+  return current + step;
 }
+
+/** Damping rate for the aim spring (per second). */
+export const AIM_SPRING_RATE = 2.2;
 
 /**
  * Whether static world geometry blocks the view from `from` to `to`

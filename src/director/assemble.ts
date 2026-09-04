@@ -34,6 +34,7 @@ import {
   eventFlagSlot,
   sampleAt,
   type FlagTrack,
+  playerSampleAt,
 } from "./dataset";
 import {
   angleFacingLandmark,
@@ -41,7 +42,7 @@ import {
   onBroadcastSide,
   orbitShot,
 } from "./framing";
-import { idleShots } from "./shotBuilders";
+import { idleShots } from "./modes";
 
 /**
  * A fixed camera may only claim an aim subject that is actually inside
@@ -93,18 +94,7 @@ function subjectPosAt(
       sampleAt(tracks.get(subject.slot)?.samples ?? [], timeSec)?.pos ?? null
     );
   }
-  let best: { timeSec: number; pos: DirectorVec3 } | null = null;
-  for (const sample of dataset.playerSamples) {
-    if (sample.targetId !== subject.targetId) continue;
-    if (Math.abs(sample.timeSec - timeSec) > 3) continue;
-    if (
-      !best ||
-      Math.abs(sample.timeSec - timeSec) < Math.abs(best.timeSec - timeSec)
-    ) {
-      best = sample;
-    }
-  }
-  return best?.pos ?? null;
+  return playerSampleAt(dataset, subject.targetId, timeSec)?.pos ?? null;
 }
 
 /**
@@ -123,6 +113,10 @@ export function mergeRedundantCuts(shots: Shot[]): Shot[] {
     const shot = shots[i];
     if (framesTheSame(previous, shot)) {
       previous.endSec = shot.endSec;
+      // A merged run of identical quick cuts is a hold, not a rhythm.
+      if (previous.quickCut && previous.endSec - previous.startSec > 4) {
+        previous.quickCut = undefined;
+      }
       continue;
     }
     out.push(shot);
@@ -204,16 +198,20 @@ export function enforceMinDuration(
   dataset: DirectorDataset,
 ): Shot[] {
   if (shots.length === 0) return shots;
+  // Deliberate quick cuts (roster portraits) hold a 2s floor instead
+  // of the normal one — a planned rhythm, not an assembly sliver.
+  const holdsItsOwn = (s: Shot): boolean =>
+    s.endSec - s.startSec >= (s.quickCut ? 2 : DIRECTOR_MIN_SHOT_HOLD_SEC);
   const out: Shot[] = [shots[0]];
   for (let i = 1; i < shots.length; i++) {
     const previous = out[out.length - 1];
     const shot = shots[i];
-    if (shot.endSec - shot.startSec < DIRECTOR_MIN_SHOT_HOLD_SEC) {
+    if (!holdsItsOwn(shot)) {
       // Too short to stand alone: hand its time to the previous shot.
       previous.endSec = shot.endSec;
       continue;
     }
-    if (previous.endSec - previous.startSec < DIRECTOR_MIN_SHOT_HOLD_SEC) {
+    if (!holdsItsOwn(previous)) {
       // The previous one was the sliver: drop it and start this one early.
       out.pop();
       const before = out[out.length - 1];
@@ -225,10 +223,7 @@ export function enforceMinDuration(
   }
   // A lone sliver at the very end folds back into its predecessor.
   const last = out[out.length - 1];
-  if (
-    out.length > 1 &&
-    last.endSec - last.startSec < DIRECTOR_MIN_SHOT_HOLD_SEC
-  ) {
+  if (out.length > 1 && !holdsItsOwn(last)) {
     out.pop();
     out[out.length - 1].endSec = last.endSec;
   }
@@ -247,7 +242,7 @@ export function fillGaps(shots: Shot[], dataset: DirectorDataset): Shot[] {
     const start = Math.max(shot.startSec, cursor);
     if (shot.endSec - start <= 0.05) continue;
     if (start - cursor > 0.25) {
-      for (const filler of idleShots(cursor, start, dataset, 1)) {
+      for (const filler of idleShots(cursor, start, dataset)) {
         result.push(filler);
       }
     }
@@ -255,10 +250,10 @@ export function fillGaps(shots: Shot[], dataset: DirectorDataset): Shot[] {
     cursor = Math.max(cursor, shot.endSec);
   }
   if (result.length === 0) {
-    return idleShots(0, dataset.durationSec, dataset, 1);
+    return idleShots(0, dataset.durationSec, dataset);
   }
   if (cursor < dataset.durationSec - 0.25) {
-    result.push(...idleShots(cursor, dataset.durationSec, dataset, 1));
+    result.push(...idleShots(cursor, dataset.durationSec, dataset));
   } else {
     result[result.length - 1].endSec = dataset.durationSec;
   }

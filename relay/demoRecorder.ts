@@ -10,6 +10,7 @@ import fsp from "node:fs/promises";
 import path from "node:path";
 import { demoLog as log } from "./logger.js";
 import {
+  DEMO_TICK_MS,
   DemoFileWriter,
   MAX_BLOCK_SIZE,
   buildDemoValues,
@@ -20,13 +21,12 @@ import type { ServerInfo } from "./types.js";
 export type RecorderState =
   "buffering" | "recording" | "finalizing" | "done" | "aborted";
 
-const MOVE_TICK_MS = 32;
 /** Give up waiting for MissionStartPhase1 past these buffering caps. */
 const BUFFER_MAX_MS = 30_000;
 const BUFFER_MAX_BYTES = 2 * 1024 * 1024;
 /** Bound move synthesis across pathological event gaps. */
 const MOVE_BURST_CAP = 300;
-/** Deflate/fs backlog beyond this means the disk stalled — abort. */
+/** Deflate/fs backlog beyond this means the disk stalled — strand. */
 const MAX_STREAM_BACKLOG = 16 * 1024 * 1024;
 
 /**
@@ -77,7 +77,7 @@ export interface DemoRecorderOptions {
    */
   getRecordContext?: () => { pinned: boolean; watchers: number };
   recorderName: string;
-  /** Compressed size cap; recorder self-aborts beyond it. */
+  /** Compressed size cap; the recording stops growing beyond it. */
   maxBytes: number;
   /** Demos shorter than this are dropped at finalize. */
   minLengthMs: number;
@@ -207,6 +207,8 @@ export class DemoRecorder {
   private peakWatchers = 0;
   private matchStarted = false;
   private playerNames = new Set<string>();
+  /** Size cap reached: the spool is complete as it stands. */
+  private capped = false;
   /**
    * Fields fixed at flush time; completed into DemoMetadata at finalize.
    */
@@ -228,8 +230,8 @@ export class DemoRecorder {
     return this._state;
   }
 
-  /** Why the recording was lost, when it aborted on an error (vs the
-   *  normal empty/too-short drops). */
+  /** Why the recording stopped on an error (vs the normal empty/too-short
+   *  drops). The spool stays on disk for the boot salvage. */
   get failure(): string | null {
     return this._failure;
   }
@@ -384,7 +386,7 @@ export class DemoRecorder {
 
   private writeEntry(entry: QueuedEntry): void {
     const writer = this.writer;
-    if (!writer) return;
+    if (!writer || this.capped) return;
     try {
       this.syncClock(entry.time);
       if (entry.kind === "packet") {
@@ -403,8 +405,7 @@ export class DemoRecorder {
       }
     } catch (err) {
       log.error({ err, address: this.opts.address }, "Demo write failed");
-      this._failure = "write-failed";
-      void this.abort();
+      this.strand("write-failed");
       return;
     }
     if (writer.failed) {
@@ -412,35 +413,47 @@ export class DemoRecorder {
         { err: writer.failed, address: this.opts.address },
         "Demo stream failed",
       );
-      this._failure = "stream-error";
-      void this.abort();
+      this.strand("stream-error");
     } else if (writer.bufferedBytes > MAX_STREAM_BACKLOG) {
       log.error(
         { address: this.opts.address, buffered: writer.bufferedBytes },
-        "Demo stream backlog exceeded; aborting recording",
+        "Demo stream backlog exceeded; stranding recording",
       );
-      this._failure = "backlog";
-      void this.abort();
+      this.strand("backlog");
     } else if (writer.bytesWritten > this.opts.maxBytes) {
+      // The recording ends here but is kept: nothing more is written,
+      // and the usual finalize (mission end, disconnect, shutdown)
+      // turns what's on disk into a complete demo.
       log.warn(
         { address: this.opts.address, bytes: writer.bytesWritten },
-        "Demo size cap reached; aborting recording",
+        "Demo size cap reached; recording stops growing",
       );
-      this._failure = "size-cap";
-      void this.abort();
+      this.capped = true;
     }
+  }
+
+  /**
+   * The disk let us down mid-recording. Stop writing and leave the
+   * spool where it is: whatever reached the file is salvaged into a
+   * `.rec` by the next boot's sweep, which beats deleting a match.
+   */
+  private strand(failure: string): void {
+    if (this._state !== "recording") return;
+    this._failure = failure;
+    this.setState("aborted");
+    void this.writer?.strand();
   }
 
   /** Bring the synthesized move clock up to `now` (32 ms per move). */
   private syncClock(now: number): void {
     this.t0 ??= now;
-    const target = Math.floor((now - this.t0) / MOVE_TICK_MS);
+    const target = Math.floor((now - this.t0) / DEMO_TICK_MS);
     let pending = target - this.moveCount;
     if (pending <= 0) return;
     if (pending > MOVE_BURST_CAP) {
       // A huge event gap: skip the dead time instead of flooding the
       // file with silence (shift the anchor so the clock stays sane).
-      this.t0 += (pending - MOVE_BURST_CAP) * MOVE_TICK_MS;
+      this.t0 += (pending - MOVE_BURST_CAP) * DEMO_TICK_MS;
       pending = MOVE_BURST_CAP;
     }
     for (let i = 0; i < pending; i++) {
@@ -476,7 +489,7 @@ export class DemoRecorder {
       return null;
     }
     this.setState("finalizing");
-    const durationMs = this.moveCount * MOVE_TICK_MS;
+    const durationMs = this.moveCount * DEMO_TICK_MS;
     if (durationMs < this.opts.minLengthMs) {
       log.info(
         { address: this.opts.address, durationMs, reason },
@@ -512,9 +525,11 @@ export class DemoRecorder {
     try {
       await writer.finalize(durationMs);
     } catch (err) {
+      // Keep the spool: the boot salvage can still recover everything
+      // that reached the disk before the failure.
       log.error({ err, address: this.opts.address }, "Demo finalize failed");
       this._failure = "finalize-failed";
-      await writer.abort();
+      await writer.strand();
       this.setState("aborted");
       return null;
     }

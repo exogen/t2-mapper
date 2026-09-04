@@ -5,7 +5,7 @@
  * the stream engine.
  */
 import { castWorldRay, type Vec3, type WorldRayHit } from "./worldCollision";
-import { getWaterLevel } from "./waterLevel";
+import { castWaterRay, isWaterType } from "./waterLevel";
 
 export const TICK_MS = 32;
 /** Torque clamps projectile lifetime to at most 511 living ticks. */
@@ -26,6 +26,16 @@ export interface LinearSegment {
   endNormal: Vec3;
   /** Whether reaching msEnd should produce an explosion. */
   explodeAtEnd: boolean;
+  /**
+   * The leg after a water interaction, when there is one.
+   *
+   * `LinearProjectile` allows at most two segments, and water is the
+   * only thing that creates the second: a shallow-angle skip off the
+   * surface (reflected velocity), or a pass-through that continues
+   * underwater at `wetVelocity`. Its `msEnd` is absolute flight time,
+   * like the first segment's.
+   */
+  next?: LinearSegment;
 }
 
 /**
@@ -40,6 +50,26 @@ export function buildLinearSegment(options: {
   lifetimeMS: number;
   explodeOnDeath: boolean;
   explodeOnWaterImpact: boolean;
+  /** Whether the FIRE POINT was submerged (LinearProjectile::mWetStart).
+   *  A wet start skips water collision entirely and selects
+   *  `wetVelocity` for the muzzle speed. */
+  wetStart?: boolean;
+  /** The velocity a round continues at once it passes through the
+   *  surface, ALREADY composed the way the caller composed `vel`:
+   *  `direction * wetVelocity + excess`. The engine rebuilds it from
+   *  the direction rather than rescaling the dry velocity, so passing a
+   *  bare speed here would drop the excess (inherited shooter) term. */
+  wetVel?: Vec3;
+  /** Datablock `reflectOnWaterImpactAngle` (degrees): arrivals shallower
+   *  than this skip off the surface instead of detonating. The disc
+   *  ships with 15. */
+  reflectOnWaterImpactAngle?: number;
+  // Not modelled, deliberately: `fizzleUnderwaterMS` kills a round that
+  // has been submerged that long, but the engine clamps it to -1 when it
+  // exceeds the lifetime and every datablock we see sets it EQUAL to the
+  // lifetime (disc 5024/5024, chaingun 3008/3008) or leaves it unset, so
+  // it never truncates a flight. `deflectionOnWaterImpact` is parsed,
+  // clamped and networked by the engine but never actually read.
 }): LinearSegment {
   const { start, vel } = options;
   const lifeMs = roundUpToTick(
@@ -52,46 +82,137 @@ export function buildLinearSegment(options: {
     start[2] + vel[2] * lifeSec,
   ];
 
-  let hit: WorldRayHit | null = castWorldRay(start, end);
+  const hit: WorldRayHit | null = castWorldRay(start, end);
 
-  // Water impact: plane test at the registered water level, only when the
-  // projectile explodes on water (Phase 1: no wet-segment continuation).
-  if (options.explodeOnWaterImpact) {
-    const waterZ = getWaterLevel();
-    if (waterZ != null && start[2] > waterZ && end[2] < waterZ) {
-      const tWater = (start[2] - waterZ) / (start[2] - end[2]);
-      if (!hit || tWater < hit.t) {
-        hit = {
-          t: tWater,
-          point: [
-            start[0] + (end[0] - start[0]) * tWater,
-            start[1] + (end[1] - start[1]) * tWater,
-            waterZ,
-          ],
-          normal: [0, 0, 1],
-          source: "terrain",
-        };
+  const dry: LinearSegment = hit
+    ? {
+        start: [...start],
+        vel: [...vel],
+        msEnd: Math.floor(lifeMs * hit.t),
+        endPoint: hit.point,
+        endNormal: hit.normal,
+        explodeAtEnd: true,
       }
-    }
+    : {
+        start: [...start],
+        vel: [...vel],
+        msEnd: lifeMs,
+        endPoint: end,
+        endNormal: [0, 0, 1],
+        explodeAtEnd: options.explodeOnDeath,
+      };
+
+  // Water is tested SEPARATELY from the static mask, and only for a shot
+  // that started dry. LinearProjectile::createSegments guards the whole
+  // block with `if (mWetStart == false)`, which is why a projectile
+  // fired from underwater sails out through the surface untouched.
+  if (options.wetStart) return dry;
+
+  const water = castWaterRay(dry.start, dry.endPoint);
+  if (!water) return dry;
+
+  const waterMsEnd = Math.floor(dry.msEnd * water.t);
+  const speed = Math.hypot(vel[0], vel[1], vel[2]);
+
+  if (!options.explodeOnWaterImpact) {
+    // Passes through and keeps going, but SLOWER: the engine rebuilds
+    // segment 1 at wetVelocity. Without this a chaingun round carries
+    // on underwater at 750 u/s instead of 280.
+    const wetVel = options.wetVel;
+    if (!wetVel) return dry;
+    return {
+      ...dry,
+      msEnd: waterMsEnd,
+      endPoint: water.point,
+      endNormal: water.normal,
+      explodeAtEnd: false,
+      next: legFrom(
+        water.point,
+        wetVel,
+        waterMsEnd,
+        lifeMs,
+        options.explodeOnDeath,
+      ),
+    };
   }
 
-  if (hit) {
+  // explodeOnWaterImpact: skip off the surface, or detonate on it.
+  //
+  //   if (|dot(normVel, normal)| >= cos(90 - reflectOnWaterImpactAngle)
+  //       || !hitWater) -> explode, else reflect
+  //
+  // Two things fall out of that. A steep enough arrival always
+  // detonates; and `hitWater` is `WaterBlock::isWater(liquidType)`, so
+  // LAVA never skips — a disc that would stone-skip across water
+  // explodes on contact with lava.
+  const hitWater = isWaterType(water.info.liquidType);
+  const reflectAngle = options.reflectOnWaterImpactAngle ?? 0;
+  const cosLimit = Math.cos(((90 - reflectAngle) * Math.PI) / 180);
+  const n0 = water.normal;
+  const dot =
+    speed > 0 ? (vel[0] * n0[0] + vel[1] * n0[1] + vel[2] * n0[2]) / speed : -1;
+
+  if (Math.abs(dot) >= cosLimit || !hitWater) {
     return {
-      start: [...start],
-      vel: [...vel],
-      msEnd: Math.floor(lifeMs * hit.t),
-      endPoint: hit.point,
-      endNormal: hit.normal,
+      ...dry,
+      msEnd: waterMsEnd,
+      endPoint: water.point,
+      endNormal: water.normal,
       explodeAtEnd: true,
     };
   }
+
+  // Mirror the velocity about the surface normal and fly on.
+  const n = water.normal;
+  const d2 = 2 * (vel[0] * n[0] + vel[1] * n[1] + vel[2] * n[2]);
+  const refVel: Vec3 = [
+    vel[0] - n[0] * d2,
+    vel[1] - n[1] * d2,
+    vel[2] - n[2] * d2,
+  ];
+  return {
+    ...dry,
+    msEnd: waterMsEnd,
+    endPoint: water.point,
+    endNormal: water.normal,
+    explodeAtEnd: false,
+    next: legFrom(
+      water.point,
+      refVel,
+      waterMsEnd,
+      lifeMs,
+      options.explodeOnDeath,
+    ),
+  };
+}
+
+/**
+ * Build the leg that follows a water interaction — a skip or a slowed
+ * pass-through. BOTH are re-cast against the static world by the
+ * engine, which is what stops a round that entered the water from
+ * sailing on through the lake bed.
+ */
+function legFrom(
+  start: Vec3,
+  vel: Vec3,
+  msStart: number,
+  lifeMs: number,
+  explodeOnDeath: boolean,
+): LinearSegment {
+  const remainingSec = (lifeMs - msStart) / 1000;
+  const end: Vec3 = [
+    start[0] + vel[0] * remainingSec,
+    start[1] + vel[1] * remainingSec,
+    start[2] + vel[2] * remainingSec,
+  ];
+  const hit = castWorldRay(start, end);
   return {
     start: [...start],
     vel: [...vel],
-    msEnd: lifeMs,
-    endPoint: end,
-    endNormal: [0, 0, 1],
-    explodeAtEnd: options.explodeOnDeath,
+    msEnd: hit ? msStart + Math.floor((lifeMs - msStart) * hit.t) : lifeMs,
+    endPoint: hit ? hit.point : end,
+    endNormal: hit ? hit.normal : [0, 0, 1],
+    explodeAtEnd: hit ? true : explodeOnDeath,
   };
 }
 
@@ -101,6 +222,22 @@ export function linearSegmentPosition(
   ms: number,
   out: Vec3,
 ): Vec3 {
+  // Past the first leg's end, the round is on its water leg (a skip or
+  // a slowed pass-through) — follow it rather than freezing at the
+  // surface.
+  if (seg.next && ms > seg.msEnd) {
+    const legMs = Math.min(ms, seg.next.msEnd) - seg.msEnd;
+    const legSec = Math.max(0, legMs) / 1000;
+    out[0] = seg.next.start[0] + seg.next.vel[0] * legSec;
+    out[1] = seg.next.start[1] + seg.next.vel[1] * legSec;
+    out[2] = seg.next.start[2] + seg.next.vel[2] * legSec;
+    if (ms >= seg.next.msEnd) {
+      out[0] = seg.next.endPoint[0];
+      out[1] = seg.next.endPoint[1];
+      out[2] = seg.next.endPoint[2];
+    }
+    return out;
+  }
   const t = Math.min(ms, seg.msEnd) / 1000;
   out[0] = seg.start[0] + seg.vel[0] * t;
   out[1] = seg.start[1] + seg.vel[1] * t;

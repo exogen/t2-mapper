@@ -29,5 +29,14 @@
     "noFallthroughCasesInSwitch": true,
     "noUncheckedSideEffectImports": true
   },
-  "include": ["src"]
+  "include": ["src"],
+  /* Node-only; checked by tsconfig.node.json instead. This project has
+     no "node" types and the browser never loads them. */
+  "exclude": [
+    "src/world/headlessWorld.ts",
+    "src/world/nodeGltf.ts",
+    "src/world/nodeCollisionContext.ts",
+    "src/world/nodeCollisionContext.spec.ts",
+    "src/world/headlessWorld.spec.ts"
+  ]
 }

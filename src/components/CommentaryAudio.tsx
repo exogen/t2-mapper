@@ -9,6 +9,12 @@ import {
   setCommentaryGate,
 } from "../state/demoDirectorStore";
 import { demoLoadStore } from "../state/demoLoadStore";
+import { commentarySidecarUrl } from "../stream/demoIndex";
+import {
+  commentaryTrackKey,
+  loadCommentaryTrack,
+} from "../state/commentaryTrack";
+import { commentaryTracksStore } from "../state/commentaryTracksStore";
 import { commentaryPlayback, streamClock } from "../state/streamPlaybackStore";
 import { useSettings } from "./SettingsProvider";
 
@@ -41,22 +47,31 @@ const MAX_PLAY_RATE = 2;
  * Plays the pre-rendered commentary track (`<demo>.commentary.mp3`, an
  * R2 sidecar like the cast plan) alongside auto-directed demo playback.
  *
- * The track is authored on the demo clock (leading silence up to the
- * first cue), so sync is a clock-chase problem: every frame the audio
- * position is compared to `streamClock.time` — pause/rate follow the
- * transport, small drift (stutter, decode hiccups) is trimmed by
- * scaling playbackRate, and big divergence (a seek) hard-snaps
- * `currentTime`. If the sidecar doesn't exist, the element errors once
+ * The track is authored on the demo clock — from demo zero for a batch
+ * render, or from the second its slice began for a live-loop stitch
+ * (the cue file says which) — so sync is a clock-chase problem: every
+ * frame the audio position is compared to `streamClock.time` less that
+ * start. Pause and rate follow the transport, small drift (stutter,
+ * decode hiccups) is trimmed by scaling playbackRate, and big
+ * divergence (a seek) hard-snaps `currentTime`. If the sidecar doesn't exist, the element errors once
  * and the feature stays off for this demo.
  */
 export function CommentaryAudio() {
   const { audioVolume, commentaryEnabled } = useSettings();
   const audioRef = useRef<HTMLAudioElement | null>(null);
-  const armedUrlRef = useRef<string | null>(null);
-  const startFetchedForRef = useRef<string | null>(null);
+  /** `${sourceUrl}#${trackKey}` of the armed track, or null. */
+  const armedKeyRef = useRef<string | null>(null);
+  /** The armed track's cue file arriving; the gate waits on it. */
+  const trackLoadRef = useRef<Promise<void> | null>(null);
   const unavailableRef = useRef(false);
   const blockedRef = useRef(false);
   const wasDirectingRef = useRef(false);
+  /** Demo time at the track's first sample. A batch render starts at
+   *  demo zero; a live-loop stitch starts where its slice began, and
+   *  says so in the cue file (`livesim.audioStartSec`). */
+  const audioStartRef = useRef(0);
+  /** Track position for a demo time. */
+  const trackTime = (demoSec: number) => demoSec - audioStartRef.current;
 
   useEffect(() => {
     const audio = new Audio();
@@ -64,7 +79,7 @@ export function CommentaryAudio() {
     audio.preservesPitch = true;
     audio.addEventListener("error", () => {
       // Ignore errors surfaced by teardown (no track armed).
-      if (armedUrlRef.current != null) unavailableRef.current = true;
+      if (armedKeyRef.current != null) unavailableRef.current = true;
     });
     audio.addEventListener("canplaythrough", () => {
       log.info(`commentary track available (${Math.round(audio.duration)}s)`);
@@ -76,7 +91,7 @@ export function CommentaryAudio() {
       // Abort any in-flight download — clearing src alone doesn't.
       audio.load();
       audioRef.current = null;
-      armedUrlRef.current = null;
+      armedKeyRef.current = null;
       unavailableRef.current = false;
       blockedRef.current = false;
       commentaryPlayback.active = false;
@@ -87,11 +102,12 @@ export function CommentaryAudio() {
   /** Stop the track and release it: clearing the src plus load()
    *  aborts any in-flight download. */
   const disarm = useCallback((audio: HTMLAudioElement) => {
-    armedUrlRef.current = null;
-    startFetchedForRef.current = null;
+    armedKeyRef.current = null;
+    trackLoadRef.current = null;
     unavailableRef.current = false;
     blockedRef.current = false;
     wasDirectingRef.current = false;
+    audioStartRef.current = 0;
     commentaryPlayback.startSec = null;
     audio.pause();
     audio.removeAttribute("src");
@@ -103,40 +119,64 @@ export function CommentaryAudio() {
   // rejoins in sync on the next frame.
   useEffect(() => {
     const audio = audioRef.current;
-    if (!commentaryEnabled && audio && armedUrlRef.current != null) {
+    if (!commentaryEnabled && audio && armedKeyRef.current != null) {
       disarm(audio);
       commentaryPlayback.active = false;
     }
   }, [commentaryEnabled, disarm]);
 
-  // Keep the element pointed at the current demo's track: tear down on
-  // a demo switch, and — only when the director wants audio — set the
-  // new sidecar URL, so a demo watched without CastGenius never
-  // downloads the track. Returns whether an armed track is playable.
+  // Keep the element pointed at the current demo's chosen track: tear
+  // down on a demo switch or a track switch, and — only when the
+  // director wants audio — set the new sidecar URL, so a demo watched
+  // without CastGenius never downloads the track. Returns whether an
+  // armed track is playable.
   const arm = useCallback(
     (wantTrack: boolean): boolean => {
       const audio = audioRef.current;
       if (!audio) return false;
       const sourceUrl = demoLoadStore.getState().sourceUrl;
-      if (armedUrlRef.current != null && armedUrlRef.current !== sourceUrl) {
+      const track = commentaryTracksStore.getState().selected();
+      // The demo plus the track: a picker change mid-broadcast swaps
+      // the file and rejoins in sync on the next frame.
+      const armKey = sourceUrl ? commentaryTrackKey(sourceUrl, track) : null;
+      if (armedKeyRef.current != null && armedKeyRef.current !== armKey) {
         disarm(audio);
       }
       // CAST_LOCAL_PLAN debugging suppresses commentary entirely: its
       // cues were timed against the sidecar plan, not the local one.
       if (
-        armedUrlRef.current == null &&
+        armedKeyRef.current == null &&
         wantTrack &&
         sourceUrl &&
+        armKey &&
         !CAST_LOCAL_PLAN &&
         // The "Play commentary" preference: off = the camera cast runs
         // as usual, but the mp3 is never fetched (arming sets the src,
         // which starts the download).
         commentaryEnabled
       ) {
-        armedUrlRef.current = sourceUrl;
-        audio.src = `${sourceUrl}.commentary.mp3`;
+        armedKeyRef.current = armKey;
+        audio.src = commentarySidecarUrl(sourceUrl, track, "mp3");
+        // The track's own clock: where on the demo its first sample
+        // sits. Only the pre-start gate used to read this, so a track
+        // armed later — a picker change, or the track list arriving
+        // after the director had started on the default — played from
+        // demo zero and sat 37 seconds early.
+        // ONE load per arm, and its result lands only while this track
+        // is still the armed one: the gate used to run a second load of
+        // its own and stamp the answer without that check, so a switch
+        // during the await gave the new track the old one's start.
+        trackLoadRef.current = loadCommentaryTrack(sourceUrl, track).then(
+          (loaded) => {
+            if (armedKeyRef.current !== armKey) return;
+            audioStartRef.current = loaded?.audioStartSec ?? 0;
+            if (loaded && loaded.cues.length > 0) {
+              commentaryPlayback.startSec = loaded.cues[0].atSec;
+            }
+          },
+        );
       }
-      return armedUrlRef.current != null && !unavailableRef.current;
+      return armedKeyRef.current != null && !unavailableRef.current;
     },
     [commentaryEnabled, disarm],
   );
@@ -151,37 +191,26 @@ export function CommentaryAudio() {
       // The cue transcript sidecar tells us where the broadcast means
       // to begin (its intro may run ahead of the plan's first scene);
       // the director reads commentaryPlayback.startSec for its seek.
-      const url = armedUrlRef.current;
-      if (url && startFetchedForRef.current !== url) {
-        startFetchedForRef.current = url;
-        try {
-          const res = await fetch(`${url}.commentary.json`);
-          if (res.ok) {
-            const meta = (await res.json()) as {
-              format?: string;
-              cues?: { atSec?: number }[];
-            };
-            const at = meta.cues?.[0]?.atSec;
-            if (
-              meta.format === "castgenius-commentary" &&
-              typeof at === "number"
-            ) {
-              commentaryPlayback.startSec = at;
-            }
-          }
-        } catch {
-          // No transcript sidecar — the plan's own start applies.
-        }
-      }
+      // Arming started the load; wait for it. No cue file — the plan's
+      // own start applies.
+      const armKey = armedKeyRef.current;
+      await trackLoadRef.current;
+      if (armedKeyRef.current !== armKey) return;
       // Buffer where playback will actually begin — the director seeks
       // to the intro MINUS its lead-in, and pre-seeking to the speech
       // itself would force a first-frame snap against an unbuffered
       // position (heard as the opening line clipping or stuttering).
+      // In TRACK time: the element seeks and buffers in its own clock.
       const target = Math.max(
-        streamClock.time,
-        (commentaryPlayback.startSec ??
-          demoDirectorStore.getState().plan?.skipToSec ??
-          0) - DIRECTOR_INTRO_LEAD_SEC,
+        0,
+        trackTime(
+          Math.max(
+            streamClock.time,
+            (commentaryPlayback.startSec ??
+              demoDirectorStore.getState().plan?.skipToSec ??
+              0) - DIRECTOR_INTRO_LEAD_SEC,
+          ),
+        ),
       );
       // Buffered audio at the start position, as a fraction of the
       // requirement (capped by the track's own remaining length).
@@ -256,19 +285,21 @@ export function CommentaryAudio() {
     const directing = demoDirectorStore.getState().status === "playing";
     // Fetch only once CastGenius runs (the pre-start gate normally arms
     // first); re-checking the armed URL swaps tracks on a demo switch.
-    if (!directing && armedUrlRef.current == null) return;
+    if (!directing && armedKeyRef.current == null) return;
     if (!arm(directing)) {
       if (!audio.paused) audio.pause();
       return;
     }
     const { status, rate } = engineStore.getState().playback;
+    const position = trackTime(streamClock.time);
     const shouldPlay =
       directing &&
       status === "playing" &&
       rate >= MIN_PLAY_RATE &&
       rate <= MAX_PLAY_RATE &&
       Number.isFinite(audio.duration) &&
-      streamClock.time < audio.duration;
+      position >= 0 &&
+      position < audio.duration;
 
     if (!shouldPlay) {
       if (!audio.paused) audio.pause();
@@ -276,14 +307,14 @@ export function CommentaryAudio() {
       return;
     }
 
-    const drift = audio.currentTime - streamClock.time;
+    const drift = audio.currentTime - position;
     if (!wasDirectingRef.current || Math.abs(drift) > HARD_SNAP_SEC) {
       // Snap only when the element has data to play from: while it's
       // buffering, a seek restarts the network fetch, so re-snapping
       // every frame would thrash and never let it recover. A stalled
       // element gets one snap the moment it's ready again.
       if (audio.readyState >= HTMLMediaElement.HAVE_FUTURE_DATA) {
-        audio.currentTime = streamClock.time;
+        audio.currentTime = position;
       }
     } else {
       // Audio ahead → slow it a touch; behind → hurry it.

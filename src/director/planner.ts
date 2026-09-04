@@ -1,9 +1,11 @@
 import type { DirectorDataset, Shot, ShotPlan } from "./types";
+import { CAST_CONTRACT_VERSION } from "./castContract";
+import { describeVenue } from "./venue";
 import {
   DIRECTOR_LINEUP_LEAD_SEC,
   DIRECTOR_SKIP_DEAD_AIR_SEC,
 } from "./tunables";
-import { planCtf, planDeathmatch, planLandmarks, planRabbit } from "./modes";
+import { planDeathmatch, planLandmarks, planRabbit } from "./modes";
 import { describeScenes } from "./scene";
 import {
   enforceMinDuration,
@@ -15,36 +17,27 @@ import {
 } from "./assemble";
 
 /**
- * Plan the auto-director's shot list from a scanned dataset. Pure and
- * deterministic — same dataset, same plan — so a plan can be replayed
- * and diffed offline. Never fails: game modes degrade CTF → Rabbit
- * (chase the flag) → deathmatch (kill clusters) → landmark orbits.
+ * Plan a whole recording's shot list for the modes without an online
+ * switcher. Pure and deterministic — same dataset, same plan — so a
+ * plan can be replayed and diffed offline. Never fails: modes degrade
+ * Rabbit (chase the flag) → deathmatch (kill clusters) → landmark
+ * orbits.
  *
- * The CTF pipeline, in order:
- *  1. interest.ts — score every subject (flags, bases, bombardments)
- *     per tick with full future knowledge, then segment the timeline
- *     with hysteresis. A capture preempts every other rule.
- *  2. modes.ts — carve the pre-match line-up sweeps and the kickoff
- *     wide out of the segments, then hand each segment to its emitter.
- *  3. flagRuns.ts — per-run emitters: scrambles collapse to one
- *     overhead, drops ride through as passes, turtles rotate inside /
- *     inbound / doorway, chases rotate camera styles and widen into
- *     the capture ceremony; caps and returns end in aftermath holds.
- *  4. assemble.ts — make the timeline contiguous, strip aim subjects a
- *     frame can't actually contain, merge cuts that change nothing,
- *     splice cover for missed tier-1 events (rate-limited, except
- *     captures — never those), enforce the minimum hold, and report
- *     coverage from the FINAL shot list.
- * The runtime (DirectorController + cameraRig) then drives the camera
- * on the demo clock, verifying every framing against real geometry.
+ * CTF is not planned here: `planShotsCausal` (switcher.ts) casts it
+ * live, and only sends the other modes this way. A CTF dataset handed
+ * straight to this function gets the landmark tour.
+ *
+ * modes.ts emits the shots; assemble.ts makes the timeline contiguous,
+ * strips aim subjects a frame can't actually contain, merges cuts that
+ * change nothing, enforces the minimum hold, and reports coverage from
+ * the FINAL shot list. The runtime (DirectorController + cameraRig)
+ * then drives the camera on the demo clock, verifying every framing
+ * against real geometry.
  */
 export function planShots(dataset: DirectorDataset): ShotPlan {
   const gameMode = detectMode(dataset);
   let shots: Shot[];
   switch (gameMode) {
-    case "ctf":
-      shots = planCtf(dataset);
-      break;
     case "rabbit":
       shots = planRabbit(dataset);
       break;
@@ -64,11 +57,13 @@ export function planShots(dataset: DirectorDataset): ShotPlan {
   spliceMissingCoverage(shots, dataset);
   shots = enforceMinDuration(shots, dataset);
   const plan: ShotPlan = {
+    contractVersion: CAST_CONTRACT_VERSION,
     gameMode,
     shots,
     coverage: reportCoverage(shots, dataset),
     skipToSec: openingSkip(dataset),
     matchFacts: dataset.matchFacts,
+    venue: describeVenue(dataset) ?? undefined,
   };
   // The commentary layer last, over the FINAL shot list.
   describeScenes(plan, dataset);
@@ -81,7 +76,7 @@ export function planShots(dataset: DirectorDataset): ShotPlan {
  * Returns where coverage effectively begins so the director can jump
  * there instead of filming an empty map.
  */
-function openingSkip(dataset: DirectorDataset): number | undefined {
+export function openingSkip(dataset: DirectorDataset): number | undefined {
   const matchStart = dataset.events.find(
     (e) => e.type === "match-start",
   )?.timeSec;
@@ -91,7 +86,7 @@ function openingSkip(dataset: DirectorDataset): number | undefined {
   return Math.max(0, matchStart - DIRECTOR_LINEUP_LEAD_SEC);
 }
 
-function detectMode(dataset: DirectorDataset): ShotPlan["gameMode"] {
+export function detectMode(dataset: DirectorDataset): ShotPlan["gameMode"] {
   const cls = (dataset.gameClassName ?? "").toLowerCase();
   const teamedStands = dataset.flagStands.filter(
     (s) => s.teamId != null,

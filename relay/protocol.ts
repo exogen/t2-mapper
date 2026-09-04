@@ -4,6 +4,41 @@ import { connLog } from "./logger.js";
 
 const DataPacket = 0;
 const PingPacket = 1;
+const AckPacket = 2;
+
+/**
+ * NetConnection::checkTimeout (Tribes2.exe FUN_005870a0), run from the
+ * 1.5s connection tick: a ping goes out once the last ping is 4500ms
+ * old, and the connection is dead after 15 unanswered ones (~67s of
+ * silence). Any accepted packet is a keepAlive that restarts the clock.
+ * The constructor (0x00586e28) seeds count 0, retries 15, last-send now.
+ */
+export const PING_TIMEOUT_MS = 4500;
+export const PING_RETRY_COUNT = 15;
+
+export class PingTimeout {
+  private lastPingSendTime: number;
+  private pingSendCount = 0;
+
+  constructor(now: number) {
+    this.lastPingSendTime = now;
+  }
+
+  /** A packet arrived: the peer is alive. */
+  keepAlive(now: number): void {
+    this.lastPingSendTime = now;
+    this.pingSendCount = 0;
+  }
+
+  /** What the connection tick should do at `now`. */
+  check(now: number): "ping" | "timeout" | null {
+    if (now <= this.lastPingSendTime + PING_TIMEOUT_MS) return null;
+    if (this.pingSendCount >= PING_RETRY_COUNT) return "timeout";
+    this.lastPingSendTime = now;
+    this.pingSendCount++;
+    return "ping";
+  }
+}
 
 const NetEventClassFirst = 255;
 const CRCChallengeResponseEventClassId = NetEventClassFirst + 1; // index 1
@@ -38,9 +73,14 @@ export class ConnectionProtocol {
     // connectSeqBit — LSB of connectSequence
     bs.writeInt(this.connectSequence & 1, 1);
 
-    // Increment send sequence
-    this.lastSendSeq = (this.lastSendSeq + 1) >>> 0;
-    this.lastSeqRecvdAtSend[this.lastSendSeq & 0x1f] = this.lastSeqRecvd >>> 0;
+    // Only data packets take a sequence number (buildSendPacketHeader,
+    // Tribes2.exe FUN_0043d2d0): pings and acks reuse the current one,
+    // so the peer's ack mask never has to account for them.
+    if (packetType === DataPacket) {
+      this.lastSendSeq = (this.lastSendSeq + 1) >>> 0;
+      this.lastSeqRecvdAtSend[this.lastSendSeq & 0x1f] =
+        this.lastSeqRecvd >>> 0;
+    }
 
     // seqNumber (9 bits)
     bs.writeInt(this.lastSendSeq & 0x1ff, 9);
@@ -151,9 +191,15 @@ export class ConnectionProtocol {
     return { accepted: true, dispatchData, highestAck };
   }
 
-  /** Build a ping response packet. */
+  /** Build a keepalive ping (sendPingPacket, Tribes2.exe FUN_0043d3b0). */
   buildPingPacket(): Uint8Array {
     const bs = this.buildSendPacketHeader(PingPacket);
+    return bs.getBuffer();
+  }
+
+  /** Build the reply to a peer's ping (sendPingResponse, FUN_0043d440). */
+  buildAckPacket(): Uint8Array {
+    const bs = this.buildSendPacketHeader(AckPacket);
     return bs.getBuffer();
   }
 

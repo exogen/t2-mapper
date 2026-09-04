@@ -123,3 +123,98 @@ export function pickMoveAnimation(
   // Right strafe: same Side animation, reversed.
   return { animation: "side", timeScale: -1 };
 }
+
+/** Table actions (root, run, back, side, fall, jet, jump, land) occupy
+ *  indices 0-7 of the engine's action list; anything above is a
+ *  non-table action sent over the wire (deaths, cels, the PDA idle). */
+export const NUM_TABLE_ACTION_ANIMS = 8;
+
+/** The action animation the renderer has started, or none. */
+export interface ActionAnimState {
+  /** Action index and the ActionMask update it came from. */
+  index: number | null;
+  seq: number | null;
+  /** The clip has finished and movement animation has resumed (or the
+   *  action was already over when it arrived). */
+  ended: boolean;
+}
+
+export const NO_ACTION_ANIM: ActionAnimState = {
+  index: null,
+  seq: null,
+  ended: true,
+};
+
+export type ActionAnimCommand =
+  /** Play this action clip from its start. */
+  | { kind: "start"; index: number }
+  /** The clip finished and does not hold: back to movement animation. */
+  | { kind: "revert"; index: number }
+  /** The clip finished and holds its last frame. */
+  | { kind: "hold"; index: number }
+  | { kind: "none" };
+
+/**
+ * What to do with the action animation this frame.
+ *
+ * Replicates the client half of Tribes2.exe's action thread update
+ * (FUN_005d5bc0): a wired action plays to its end, and unless it was
+ * sent hold-at-end the client then picks its own movement animation
+ * again — the server never transmits table actions, so no packet ever
+ * says "the PDA pose is over". A renderer that waited for one left the
+ * player frozen in that pose for the rest of their life, running and
+ * aiming with it. Keyed on the update counter as well as the index, so
+ * the same action sent again (the PDA opened twice) restarts.
+ */
+export function stepActionAnim(
+  state: ActionAnimState,
+  kf: {
+    actionAnim?: number;
+    actionSeq?: number;
+    actionAtEnd?: boolean;
+    actionHoldAtEnd?: boolean;
+  },
+  /** The started clip has run to its end. */
+  clipFinished = false,
+): { state: ActionAnimState; command: ActionAnimCommand } {
+  const index = kf.actionAnim;
+  const seq = kf.actionSeq ?? 0;
+  const nonTable = index != null && index >= NUM_TABLE_ACTION_ANIMS;
+  if (!nonTable) {
+    // Cleared (an unmount reset): stop whatever was playing.
+    if (state.index != null && !state.ended) {
+      return {
+        state: NO_ACTION_ANIM,
+        command: { kind: "revert", index: state.index },
+      };
+    }
+    return { state: NO_ACTION_ANIM, command: { kind: "none" } };
+  }
+  if (state.index !== index || state.seq !== seq) {
+    // A new action. One the server already reports finished, and
+    // that does not hold, is over before it arrived.
+    if (kf.actionAtEnd && !kf.actionHoldAtEnd) {
+      const stopping = state.index != null && !state.ended;
+      return {
+        state: { index, seq, ended: true },
+        command: stopping
+          ? { kind: "revert", index: state.index! }
+          : { kind: "none" },
+      };
+    }
+    return {
+      state: { index, seq, ended: false },
+      command: { kind: "start", index },
+    };
+  }
+  if (!state.ended && clipFinished) {
+    if (kf.actionHoldAtEnd) {
+      return { state, command: { kind: "hold", index } };
+    }
+    return {
+      state: { ...state, ended: true },
+      command: { kind: "revert", index },
+    };
+  }
+  return { state, command: { kind: "none" } };
+}

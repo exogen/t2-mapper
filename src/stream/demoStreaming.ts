@@ -5,7 +5,12 @@ import {
   DemoParser,
 } from "t2-demo-parser";
 import type { ParsedData } from "t2-demo-parser";
-import { ghostToSceneObject } from "../scene";
+// Imported from the module rather than the `../scene` barrel: the
+// barrel re-exports misToScene, which pulls the entire TorqueScript
+// runtime (15 modules and a 0.2MB generated parser) into every
+// consumer. The demo/live path takes its scene objects from GHOSTS
+// and never interprets a line of TorqueScript.
+import { ghostToSceneObject } from "../scene/ghostToScene";
 import {
   toEntityType,
   allocateEntityId,
@@ -972,11 +977,11 @@ class StreamingPlayback extends StreamEngine {
     }
 
     if (block.type === BlockTypeInfo && this.isInfoData(block.parsed)) {
-      // InfoBlock: value1 byte 0 = $firstPerson flag, value2 = FOV.
-      // Verified against Tribes2.exe GameConnection::handleRecordedBlock.
-      this.firstPerson = (block.parsed.value1 & 0xff) !== 0;
-      if (Number.isFinite(block.parsed.value2)) {
-        this.latestFov = block.parsed.value2;
+      // InfoBlock: $firstPerson flag + camera FOV, decoded by the parser
+      // the way GameConnection::handleRecordedBlock reads them.
+      this.firstPerson = block.parsed.firstPerson;
+      if (Number.isFinite(block.parsed.cameraFov)) {
+        this.latestFov = block.parsed.cameraFov;
       }
       return;
     }
@@ -1012,13 +1017,15 @@ class StreamingPlayback extends StreamEngine {
     const entities = this.buildEntityList();
     const timeSec = this.getTimeSec();
 
-    const { chatMessages, audioEvents } = this.buildTimeFilteredEvents(timeSec);
+    const { chatMessages, serverEvents, audioEvents } =
+      this.buildTimeFilteredEvents(timeSec);
 
     const { weaponsHud, inventoryHud, backpackHud, teamScores, playerRoster } =
       this.buildCachedHudState();
 
     return {
       timeSec,
+      ghostAlwaysDoneSec: this.ghostAlwaysDoneSec,
       exhausted: this.exhausted,
       camera: this.camera,
       entities,
@@ -1026,6 +1033,7 @@ class StreamingPlayback extends StreamEngine {
       playerSensorGroup: this.playerSensorGroup,
       status: this.lastStatus,
       chatMessages,
+      serverEvents,
       audioEvents,
       weaponsHud,
       backpackHud,
@@ -1077,14 +1085,15 @@ class StreamingPlayback extends StreamEngine {
 
   private isInfoData(
     parsed: unknown,
-  ): parsed is { value1: number; value2: number } {
+  ): parsed is { firstPerson: boolean; cameraFov: number } {
     return (
       !!parsed &&
       typeof parsed === "object" &&
-      "value1" in parsed &&
-      typeof (parsed as { value1?: unknown }).value1 === "number" &&
-      "value2" in parsed &&
-      typeof (parsed as { value2?: unknown }).value2 === "number"
+      "firstPerson" in parsed &&
+      typeof (parsed as { firstPerson?: unknown }).firstPerson ===
+        "boolean" &&
+      "cameraFov" in parsed &&
+      typeof (parsed as { cameraFov?: unknown }).cameraFov === "number"
     );
   }
 }

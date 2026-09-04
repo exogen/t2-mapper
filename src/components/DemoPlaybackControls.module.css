@@ -89,6 +89,7 @@
    Range, and a round thumb. The root is a tall hit area around the
    slim visual track. */
 .SeekRoot {
+  --seek-thumb-size: 13px;
   position: relative;
   display: flex;
   align-items: center;
@@ -96,6 +97,9 @@
   width: 20px;
   min-width: 20px;
   height: 22px;
+  /* The knob overhangs the track ends by half its width (see
+     .SeekThumb); keep that overhang clear of the neighboring controls. */
+  margin: 0 calc(var(--seek-thumb-size) / 2);
   cursor: pointer;
   touch-action: none;
   user-select: none;
@@ -127,17 +131,34 @@
   background: #3f8cff;
 }
 
+/* The thumb element itself is zero-width; the visible knob is its
+   ::after, centered on it. Radix keeps a thumb inside the track by
+   shifting it by (thumbWidth/2 − thumbWidth × fraction), so a 13px
+   thumb's center drifts up to 6.5px from the true position — exact only
+   at 50% — while the range fill and every tick mark sit at the true
+   percentage. A zero-width thumb has no shift: its center, the fill's
+   edge, the ticks, and the pointer-to-time mapping all agree. */
 .SeekThumb {
+  position: relative;
   display: block;
-  width: 13px;
-  height: 13px;
-  border-radius: 50%;
-  background: #fff;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
+  width: 0;
+  height: var(--seek-thumb-size);
   outline: none;
 }
 
-.SeekThumb:focus-visible {
+.SeekThumb::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: calc(var(--seek-thumb-size) / -2);
+  width: var(--seek-thumb-size);
+  height: var(--seek-thumb-size);
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
+}
+
+.SeekThumb:focus-visible::after {
   box-shadow:
     0 1px 3px rgba(0, 0, 0, 0.5),
     0 0 0 3px rgba(63, 140, 255, 0.5);
@@ -237,9 +258,8 @@
 }
 
 @media (pointer: coarse) {
-  .SeekThumb {
-    width: 16px;
-    height: 16px;
+  .SeekRoot {
+    --seek-thumb-size: 16px;
   }
 }
 

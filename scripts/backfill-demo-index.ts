@@ -15,12 +15,7 @@
  */
 import path from "node:path";
 import { parseArgs } from "node:util";
-import {
-  GetObjectCommand,
-  ListObjectsV2Command,
-  PutObjectCommand,
-  S3Client,
-} from "@aws-sdk/client-s3";
+import { GetObjectCommand, PutObjectCommand } from "@aws-sdk/client-s3";
 import {
   BlockTypeMove,
   BlockTypePacket,
@@ -28,7 +23,7 @@ import {
   createLiveParser,
   type RemoteCommandEventData,
 } from "t2-demo-parser";
-import { loadUploadConfig } from "../relay/demoUpload.js";
+import { listAllObjects, r2Client } from "./lib/r2";
 import {
   sanitizePlayerName,
   type DemoGame,
@@ -62,26 +57,7 @@ const dryRun = values["dry-run"];
 const force = values.force;
 const concurrency = Math.max(1, parseInt(values.concurrency!, 10) || 4);
 
-const config = loadUploadConfig();
-if (!config) {
-  console.error(
-    "Missing DEMO_R2_* env vars (endpoint, bucket, access key, secret).",
-  );
-  console.error(
-    "Run via `npm run backfill-demos` to load .env.development.local.",
-  );
-  process.exit(1);
-}
-
-const client = new S3Client({
-  region: "auto",
-  endpoint: config.endpoint,
-  forcePathStyle: true,
-  credentials: {
-    accessKeyId: config.accessKeyId,
-    secretAccessKey: config.secretAccessKey,
-  },
-});
+const { client, config } = r2Client("npm run backfill-demos");
 
 const MONTHS = "Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec".split(" ");
 
@@ -301,27 +277,13 @@ async function analyzeDemo(
 }
 
 async function listBucket(): Promise<Map<string, number>> {
-  const keys = new Map<string, number>();
-  let continuationToken: string | undefined;
-  do {
-    const res = await client.send(
-      new ListObjectsV2Command({
-        Bucket: config!.bucket,
-        Prefix: config!.prefix,
-        ContinuationToken: continuationToken,
-      }),
-    );
-    for (const obj of res.Contents ?? []) {
-      if (obj.Key) keys.set(obj.Key, obj.Size ?? 0);
-    }
-    continuationToken = res.IsTruncated ? res.NextContinuationToken : undefined;
-  } while (continuationToken);
-  return keys;
+  const objects = await listAllObjects(client, config);
+  return new Map(objects.map((o) => [o.key, o.size]));
 }
 
 async function getObjectBytes(key: string): Promise<Uint8Array> {
   const res = await client.send(
-    new GetObjectCommand({ Bucket: config!.bucket, Key: key }),
+    new GetObjectCommand({ Bucket: config.bucket, Key: key }),
   );
   return res.Body!.transformToByteArray();
 }
@@ -333,7 +295,7 @@ async function putJson(
 ): Promise<void> {
   await client.send(
     new PutObjectCommand({
-      Bucket: config!.bucket,
+      Bucket: config.bucket,
       Key: key,
       Body: body,
       ContentType: "application/json; charset=utf-8",
@@ -374,30 +336,55 @@ let analyzed = 0;
 let reused = 0;
 let failed = 0;
 
+/**
+ * Does the bucket hold commentary audio for a demo — the unlabelled
+ * `<key>.commentary.mp3` or any labelled `<key>.<label>.commentary.mp3`?
+ * (The track LIST lives in the cast sidecar, appended to by the
+ * generators; the record only carries the flag the demo browser shows.)
+ */
+function commentaryInBucket(key: string): boolean {
+  const re = new RegExp(
+    `^${key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\.(?:[A-Za-z0-9_-]+\\.)?commentary\\.mp3$`,
+  );
+  for (const k of objects.keys()) if (re.test(k)) return true;
+  return false;
+}
+
+/** Reconcile the record's commentary flag against the bucket. Returns
+ *  whether it changed. */
+function reconcileCommentary(record: DemoMetadata, key: string): boolean {
+  const hasCommentary = commentaryInBucket(key);
+  if ((record.hasCommentary === true) === hasCommentary) return false;
+  record.hasCommentary = hasCommentary;
+  return true;
+}
+
+/** The flag changes after the demo is written, so records are cached
+ *  with revalidation, not as immutable. */
+const RECORD_CACHE_CONTROL = "no-cache";
+
 await runPool(recKeys, async (key) => {
   const filename = path.basename(key);
   const sidecarKey = `${key}.json`;
-  const hasCommentary = objects.has(`${key}.commentary.mp3`);
   try {
     if (!force && sidecarKeys.has(sidecarKey)) {
       const raw = JSON.parse(
         Buffer.from(await getObjectBytes(sidecarKey)).toString("utf-8"),
       ) as DemoMetadata;
       if (Array.isArray(raw.games)) {
-        // Reconcile the commentary flag against the bucket listing —
-        // the one sidecar field that changes after the demo is written.
-        if ((raw.hasCommentary === true) !== hasCommentary) {
-          raw.hasCommentary = hasCommentary;
+        // Reconcile the commentary fields against the bucket listing —
+        // the sidecar fields that change after the demo is written.
+        if (reconcileCommentary(raw, key)) {
           if (!dryRun) {
             await putJson(
               sidecarKey,
               JSON.stringify(raw, null, 2),
-              "public, max-age=31536000, immutable",
+              RECORD_CACHE_CONTROL,
             );
           }
           console.log(
             `${dryRun ? "[dry-run] " : ""}${filename}: ` +
-              `hasCommentary → ${hasCommentary}`,
+              `hasCommentary → ${raw.hasCommentary}`,
           );
         }
         records.push(raw);
@@ -412,7 +399,7 @@ await runPool(recKeys, async (key) => {
     }
     const bytes = await getObjectBytes(key);
     const record = await analyzeDemo(bytes, filename);
-    record.hasCommentary = hasCommentary;
+    reconcileCommentary(record, key);
     records.push(record);
     analyzed++;
     const gameSummary =
@@ -428,7 +415,7 @@ await runPool(recKeys, async (key) => {
       await putJson(
         sidecarKey,
         JSON.stringify(record, null, 2),
-        "public, max-age=31536000, immutable",
+        RECORD_CACHE_CONTROL,
       );
     }
   } catch (err) {

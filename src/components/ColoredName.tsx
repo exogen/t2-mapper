@@ -25,12 +25,25 @@ const SEGMENT_COLORS: Record<number, string> = {
  * color-7 segments and render yellow via the palette; typed "=USA="
  * conventions are indistinguishable from the name and stay name-colored.
  */
-export function ColoredName({ raw }: { raw: string }) {
+export function ColoredName({
+  raw,
+  tagsOnly = false,
+}: {
+  raw: string;
+  /** Color only the official clan tag (the color-7 segments); every
+   *  other segment inherits the surrounding text color — for places
+   *  like the timeline, where the tag is worth marking but a smurf's
+   *  blue or a full-color name would fight the row's own styling. */
+  tagsOnly?: boolean;
+}) {
   const segments = parseColorSegments(raw, { taggedColors: true });
   return (
     <>
       {segments.map((seg, i) => {
-        const color = SEGMENT_COLORS[seg.colorCode];
+        const color =
+          tagsOnly && seg.colorCode !== CLAN_TAG_COLOR
+            ? undefined
+            : SEGMENT_COLORS[seg.colorCode];
         return (
           <span key={i} style={color ? { color } : undefined}>
             {seg.text}
@@ -40,3 +53,6 @@ export function ColoredName({ raw }: { raw: string }) {
     </>
   );
 }
+
+/** Stock server.cs wraps the official clan tag in `\c7`. */
+const CLAN_TAG_COLOR = 7;

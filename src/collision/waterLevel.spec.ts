@@ -3,12 +3,15 @@ import {
   isPointSubmerged,
   isWaterType,
   setWaterInfo,
+  setWaterBody,
   setWaterTime,
-  getWaterLevel,
+  waterLevelAt,
+  submergedWaterAt,
+  clearWaterBodies,
 } from "./waterLevel";
 
 afterEach(() => {
-  setWaterInfo(null);
+  clearWaterBodies();
   setWaterTime(0);
 });
 
@@ -26,7 +29,7 @@ const damnation = {
 describe("isPointSubmerged", () => {
   it("tests against the surface height, not the block bottom", () => {
     setWaterInfo({ ...damnation, waveMagnitude: 0 });
-    expect(getWaterLevel()).toBe(88.688);
+    expect(waterLevelAt(200, -100)).toBe(88.688);
     expect(isPointSubmerged(200, -100, 80)).toBe(true);
     expect(isPointSubmerged(200, -100, 90)).toBe(false);
   });
@@ -65,7 +68,92 @@ describe("isPointSubmerged", () => {
 
   it("reports nothing when no water is registered", () => {
     expect(isPointSubmerged(0, 0, -1000)).toBe(false);
-    expect(getWaterLevel()).toBe(null);
+    expect(waterLevelAt(0, 0)).toBe(null);
+  });
+});
+
+describe("multiple water bodies", () => {
+  // Damnation really has TWO pools, same height, different places.
+  // A single-slot registry kept one and left the other with no
+  // collision at all.
+  const poolA = { ...damnation, minX: 1152, minY: 856 }; // (128, -168)
+  const poolB = { ...damnation, minX: 552, minY: 1256 }; // (-472, 232)
+
+  it("keeps every registered pool, not just the last", () => {
+    setWaterBody("a", { ...poolA, waveMagnitude: 0 });
+    setWaterBody("b", { ...poolB, waveMagnitude: 0 });
+    expect(waterLevelAt(200, -100)).toBe(88.688); // over pool A
+    expect(waterLevelAt(-400, 300)).toBe(88.688); // over pool B
+    expect(waterLevelAt(-900, -900)).toBe(null); // dry land
+  });
+
+  it("removing one pool leaves the other", () => {
+    setWaterBody("a", { ...poolA, waveMagnitude: 0 });
+    setWaterBody("b", { ...poolB, waveMagnitude: 0 });
+    setWaterBody("a", null);
+    expect(waterLevelAt(200, -100)).toBe(null);
+    expect(waterLevelAt(-400, 300)).toBe(88.688);
+  });
+
+  it("picks the highest surface where bodies overlap", () => {
+    // BeachBlitz: an ocean at z=148 over map-wide lava at z=-990.
+    // Last-one-wins could register the lava and lose the ocean.
+    const lava = {
+      surfaceZ: -990,
+      waveMagnitude: 0,
+      liquidType: 6,
+      minX: 0,
+      minY: 0,
+      sizeX: 2048,
+      sizeY: 2048,
+    };
+    // Ocean over the western half only, so the two are separable.
+    const ocean = {
+      surfaceZ: 148,
+      waveMagnitude: 0,
+      liquidType: 1,
+      minX: 0,
+      minY: 0,
+      sizeX: 1024,
+      sizeY: 2048,
+    };
+    setWaterBody("lava", lava);
+    setWaterBody("ocean", ocean);
+
+    // Where they overlap the ocean is on top, so that is what you meet.
+    expect(waterLevelAt(-512, 0)).toBe(148);
+    expect(submergedWaterAt(-512, 0, 100)?.liquidType).toBe(1);
+
+    // Outside the ocean's region only the lava covers the column —
+    // the discrimination a single-slot registry could not make.
+    expect(waterLevelAt(512, 0)).toBe(-990);
+    expect(submergedWaterAt(512, 0, -995)?.liquidType).toBe(6);
+    expect(submergedWaterAt(512, 0, 100)).toBe(null);
+  });
+
+  it("treats a body as unbounded below its surface", () => {
+    // WaterInfo carries a surface but no floor, so a point under
+    // several surfaces reports the topmost. Documenting the model, not
+    // asserting it is physically ideal.
+    setWaterBody("deep", {
+      surfaceZ: -990,
+      waveMagnitude: 0,
+      liquidType: 6,
+      minX: 0,
+      minY: 0,
+      sizeX: 2048,
+      sizeY: 2048,
+    });
+    setWaterBody("shallow", {
+      surfaceZ: 148,
+      waveMagnitude: 0,
+      liquidType: 1,
+      minX: 0,
+      minY: 0,
+      sizeX: 2048,
+      sizeY: 2048,
+    });
+    expect(submergedWaterAt(0, 0, -5000)?.liquidType).toBe(1);
   });
 });
 

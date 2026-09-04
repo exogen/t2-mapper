@@ -61,7 +61,7 @@ export function CameraDebugWatchdog() {
     if (++linesThisSec.current > MAX_LINES_PER_SEC) return;
     const sp = streamPlaybackStore.getState();
     log.info(
-      "%s SPIKE ang=%s rad/s pos=%s m/s | %s | mode=%s follow=%s slot=%s | spring{%s target=%s jump=%sm} | pan{%s%s}",
+      "%s SPIKE ang=%s rad/s pos=%s m/s | %s | mode=%s follow=%s slot=%s | spring{%s target=%s jump=%sm} | pan{%s%s} | travel=%s%s",
       demoClock(streamClock.time),
       angRate.toFixed(2),
       posRate.toFixed(0),
@@ -76,6 +76,10 @@ export function CameraDebugWatchdog() {
       orbitSpringDebug.jump.toFixed(1),
       directorCamDebug.panState,
       directorCamDebug.panActive ? " panning" : "",
+      directorCamDebug.travel,
+      directorCamDebug.travel === "active"
+        ? ` t=${directorCamDebug.travelT.toFixed(2)}`
+        : "",
     );
   });
 

@@ -23,7 +23,7 @@ import {
   createMaterialFromFlags,
   applyShapeShaderModifications,
 } from "../shapeMaterial";
-import { isOrganicShape } from "../components/ShapeInfoProvider";
+import { isOrganicShape } from "../organicShapes";
 import {
   loadIflAtlas,
   getFrameIndexForTime,

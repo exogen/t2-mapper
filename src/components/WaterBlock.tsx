@@ -12,7 +12,8 @@ import {
   RepeatWrapping,
 } from "three";
 import { textureToUrl } from "../loaders";
-import { setWaterInfo, setWaterTime } from "../collision/waterLevel";
+import { setWaterBody, setWaterTime } from "../collision/waterLevel";
+import { waterInfoFor } from "../world/placement";
 import {
   torqueToThree,
   torqueScaleToThree,
@@ -165,19 +166,11 @@ export const WaterBlock = memo(function WaterBlock({
   // Register the water body for projectile collision and the underwater
   // screen filter. Surface = position.z + scale.z (WaterBlock's mSurfaceZ).
   useEffect(() => {
-    const pos = scene.transform.position;
-    const snap = (v: number) =>
-      Math.max(0, Math.min(2040, Math.round((v + TERRAIN_OFFSET) / 8))) * 8;
-    setWaterInfo({
-      surfaceZ: pos.z + scene.scale.z,
-      waveMagnitude: scene.waveMagnitude,
-      liquidType: scene.liquidType,
-      minX: snap(pos.x),
-      minY: snap(pos.y),
-      sizeX: scene.scale.x,
-      sizeY: scene.scale.y,
-    });
-    return () => setWaterInfo(null);
+    // Keyed by ghost: a map's several water blocks all register, and
+    // one unmounting no longer wipes the others.
+    const id = `ghost:${scene.ghostIndex}`;
+    setWaterBody(id, waterInfoFor(scene));
+    return () => setWaterBody(id, null);
   }, [scene]);
 
   const basePosition = useMemo(() => {

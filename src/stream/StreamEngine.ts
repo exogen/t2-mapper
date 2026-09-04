@@ -1,4 +1,9 @@
-import { ghostToSceneObject } from "../scene";
+// Imported from the module rather than the `../scene` barrel: the
+// barrel re-exports misToScene, which pulls the entire TorqueScript
+// runtime (15 modules and a 0.2MB generated parser) into every
+// consumer. The demo/live path takes its scene objects from GHOSTS
+// and never interprets a line of TorqueScript.
+import { ghostToSceneObject } from "../scene/ghostToScene";
 import type { SceneObject } from "../scene/types";
 import {
   buildLinearSegment,
@@ -7,6 +12,7 @@ import {
   type LinearSegment,
 } from "../collision/projectilePhysics";
 import { castWorldRay } from "../collision/worldCollision";
+import { isPointSubmergedSimple } from "../collision/waterLevel";
 import {
   linearProjectileClassNames,
   ballisticProjectileClassNames,
@@ -51,6 +57,7 @@ import {
 } from "./streamHelpers";
 import type { Vec3 } from "./streamHelpers";
 import {
+  LoadInfoCollector,
   decodeTeamAdd,
   decodeFlagEvent,
   applyScoreHudToRoster,
@@ -76,6 +83,7 @@ import type {
   WeaponsHudSlot,
   WeaponImageState,
   WeaponImageDataBlockState,
+  ServerMessageEvent,
 } from "./types";
 import type {
   ParsedData,
@@ -92,6 +100,13 @@ import type {
 import { createLogger } from "../logger";
 
 const log = createLogger("StreamEngine");
+
+/**
+ * Raw ServerMessage ring for self-parsing consumers. Sized for the
+ * bursts that land between two snapshots: a catch-up's buffered live
+ * packets replayed at once, or a full-roster join sweep.
+ */
+const MAX_SERVER_EVENTS = 2000;
 
 /** Scratch segment end for advanceItems' swept casts (not retained). */
 const _itemCastEnd: [number, number, number] = [0, 0, 0];
@@ -115,6 +130,11 @@ export interface MutableEntity {
   /** Mounted image slots (0-7). Each has shape, mount bone from datablock. */
   imageSlots?: (ImageSlot | undefined)[];
   playerName?: string;
+  /** The name as sent, color codes included (see targetRawNames). */
+  playerRawName?: string;
+  /** Generation of `targetId` when this entity took it (see
+   *  targetGenerations). */
+  targetGeneration?: number;
   /** Player skin (team skin like "base", "baseb"). */
   skinName?: string;
   /** Player preferred skin override (chosen skin like "RandySavage"). */
@@ -127,6 +147,14 @@ export interface MutableEntity {
   maxEnergy?: number;
   actionAnim?: number;
   actionAtEnd?: boolean;
+  /** The action holds its last frame until the server sends another
+   *  (death poses, sitting); otherwise the client returns to its own
+   *  movement animation when the clip ends — table actions are never
+   *  sent, so nothing else would end it (Tribes2.exe FUN_005d5bc0). */
+  actionHoldAtEnd?: boolean;
+  /** Counts ActionMask updates, so a re-sent action of the same index
+   *  (the PDA opened twice) reads as a new one. */
+  actionSeq?: number;
   armAction?: number;
   damageState?: number;
   targetId?: number;
@@ -282,6 +310,11 @@ export abstract class StreamEngine implements StreamingPlayback {
 
   // ── Chat & audio ──
   protected chatMessages: ChatMessage[] = [];
+  protected serverEvents: ServerMessageEvent[] = [];
+  private serverEventIdCounter = 0;
+  private _serverEventsGen = 0;
+  private _serverEventsSnapshotGen = -1;
+  private _serverEventsSnapshot: ServerMessageEvent[] = [];
   protected chatMessageIdCounter = 0;
   private _chatGen = 0;
   private _chatSnapshotGen = -1;
@@ -293,6 +326,13 @@ export abstract class StreamEngine implements StreamingPlayback {
 
   // ── Target system ──
   protected targetNames = new Map<number, string>();
+  /** Target names as sent, color codes included — the official clan
+   *  tag is the color-7 segments, the base name the color-6 ones. */
+  protected targetRawNames = new Map<number, string>();
+  /** How many times each target id has been freed (TargetFreeEvent).
+   *  Target ids are recycled, so an id plus its generation is what
+   *  names one occupant. */
+  protected targetGenerations = new Map<number, number>();
   protected targetSkins = new Map<number, string>();
   protected targetSkinPrefs = new Map<number, string>();
   protected targetTeams = new Map<number, number>();
@@ -388,8 +428,10 @@ export abstract class StreamEngine implements StreamingPlayback {
   // ── Mission info (from server messages) ──
   /** Completed server loading-screen info (set on MsgLoadInfoDone). */
   serverLoadInfo: ServerLoadInfo | null = null;
-  /** Lines accumulating between MsgLoadInfo and MsgLoadInfoDone. */
-  private pendingLoadInfo: ServerLoadInfo | null = null;
+  private loadInfo = new LoadInfoCollector((info) => {
+    this.serverLoadInfo = info;
+    this.onMissionInfoChange?.();
+  });
 
   /** Mission display name (e.g. "Riverdance"), from MsgMissionDropInfo/MsgLoadInfo. */
   missionDisplayName: string | null = null;
@@ -538,7 +580,13 @@ export abstract class StreamEngine implements StreamingPlayback {
    *  Called on full reset and on GhostingMessageEvent (mission change).
    *  Does NOT reset the ID counter — IDs must never be reused to avoid
    *  stale entity collisions in the render store after seeks. */
+  /** See StreamSnapshot.ghostAlwaysDoneSec. */
+  protected ghostAlwaysDoneSec: number | null = null;
+
   protected clearAllEntities(): void {
+    // A reset invalidates every ghost, so the world is incomplete again
+    // until the server says otherwise.
+    this.ghostAlwaysDoneSec = null;
     this.entities.clear();
     this.entityIdByGhostIndex.clear();
     this.entityGeneration++;
@@ -547,7 +595,7 @@ export abstract class StreamEngine implements StreamingPlayback {
   protected resetSharedState(): void {
     this._hudCache = null;
     this.serverLoadInfo = null;
-    this.pendingLoadInfo = null;
+    this.loadInfo.reset();
     this.clearAllEntities();
     this.tickCount = 0;
     this.camera = null;
@@ -556,9 +604,17 @@ export abstract class StreamEngine implements StreamingPlayback {
     this._chatGen = 0;
     this._chatSnapshotGen = -1;
     this._chatSnapshot = [];
+    // The id counter deliberately survives resets so consumers' seen-id
+    // dedupe never collides across a rebuild.
+    this.serverEvents = [];
+    this._serverEventsGen = 0;
+    this._serverEventsSnapshotGen = -1;
+    this._serverEventsSnapshot = [];
     this.audioEvents = [];
     this.netStrings.clear();
     this.targetNames.clear();
+    this.targetRawNames.clear();
+    this.targetGenerations.clear();
     this.targetSkins.clear();
     this.targetSkinPrefs.clear();
     this.targetTeams.clear();
@@ -730,7 +786,7 @@ export abstract class StreamEngine implements StreamingPlayback {
       const ghostIndex = evt.ghostIndex;
       const classId = evt.classId;
       const objectData = evt.objectData;
-      const hasData = evt._hasObjectData;
+      const hasData = evt.hasObjectData;
       const className =
         typeof classId === "number"
           ? (this.registry.getGhostParser(classId)?.name ??
@@ -768,12 +824,34 @@ export abstract class StreamEngine implements StreamingPlayback {
           this.pendingNameTags.delete(id);
           const name = stripTaggedStringMarkup(value).trim();
           this.targetNames.set(pendingTargetId, name);
+          this.targetRawNames.set(pendingTargetId, value);
           for (const entity of this.entities.values()) {
             if (entity.targetId === pendingTargetId) {
               entity.playerName = name;
+              entity.playerRawName = value;
             }
           }
         }
+      }
+      return;
+    }
+
+    if (type === "TargetFreeEvent" || eventName === "TargetFreeEvent") {
+      // The slot is free: whatever wears this id next is somebody else,
+      // and nothing about the old holder (name, skin, team, flag bits)
+      // may leak onto it — the re-issue's TargetInfoEvent starts clean.
+      const targetId = (data as { targetId?: number }).targetId;
+      if (targetId != null) {
+        this.targetGenerations.set(
+          targetId,
+          (this.targetGenerations.get(targetId) ?? 0) + 1,
+        );
+        this.targetNames.delete(targetId);
+        this.targetRawNames.delete(targetId);
+        this.targetSkins.delete(targetId);
+        this.targetSkinPrefs.delete(targetId);
+        this.targetTeams.delete(targetId);
+        this.targetRenderFlags.delete(targetId);
       }
       return;
     }
@@ -789,6 +867,7 @@ export abstract class StreamEngine implements StreamingPlayback {
             targetId,
             stripTaggedStringMarkup(resolved).trim(),
           );
+          this.targetRawNames.set(targetId, resolved);
         } else {
           // NetStringEvent hasn't arrived yet — defer resolution.
           this.pendingNameTags.set(nameTag, targetId);
@@ -816,6 +895,7 @@ export abstract class StreamEngine implements StreamingPlayback {
       // Apply all known target info to existing entities.
       if (targetId != null) {
         const name = this.targetNames.get(targetId);
+        const rawName = this.targetRawNames.get(targetId);
         const team = this.targetTeams.get(targetId);
         const rf = this.targetRenderFlags.get(targetId);
         const skin = this.targetSkins.get(targetId);
@@ -823,6 +903,7 @@ export abstract class StreamEngine implements StreamingPlayback {
         for (const entity of this.entities.values()) {
           if (entity.targetId === targetId) {
             if (name) entity.playerName = name;
+            if (rawName) entity.playerRawName = rawName;
             if (team != null) entity.sensorGroup = team;
             if (rf != null) entity.targetRenderFlags = rf;
             if (skin) entity.skinName = skin;
@@ -870,6 +951,11 @@ export abstract class StreamEngine implements StreamingPlayback {
       const evt = data as GhostingMessageEventData;
       if (evt.message === GhostMessage.EndGhosting) {
         this.clearAllEntities();
+      } else if (evt.message === GhostMessage.GhostAlwaysDone) {
+        // The world is now all here. Consumers that need the whole map
+        // — the director's free-space grid, for one — wait for this
+        // rather than inferring it from what has arrived so far.
+        this.ghostAlwaysDoneSec = this.getTimeSec();
       }
       return;
     }
@@ -961,6 +1047,7 @@ export abstract class StreamEngine implements StreamingPlayback {
       } else if (funcName === "ServerMessage" && args.length >= 1) {
         // Some messages carry only a type and no format string (e.g.
         // MsgLoadInfoDone) — dispatch them, but skip the chat path.
+        this.pushServerEvent(timeSec, args);
         this.handleServerMessage(args);
         if (args.length >= 2) {
           const rawTemplate = this.resolveNetString(args[1]);
@@ -1130,6 +1217,7 @@ export abstract class StreamEngine implements StreamingPlayback {
     entity.targetRenderFlags = undefined;
     entity.sensorGroup = undefined;
     entity.playerName = undefined;
+    entity.playerRawName = undefined;
     entity.imageSlots = undefined;
     entity.mountObjectGhostIndex = undefined;
     entity.mountNode = undefined;
@@ -1154,6 +1242,7 @@ export abstract class StreamEngine implements StreamingPlayback {
     entity.cloakLevel = undefined;
     entity.actionAnim = undefined;
     entity.actionAtEnd = undefined;
+    entity.actionHoldAtEnd = undefined;
     entity.armAction = undefined;
     entity.explosionDataBlockId = undefined;
     entity.maintainEmitterId = undefined;
@@ -1619,28 +1708,54 @@ export abstract class StreamEngine implements StreamingPlayback {
           entity.dataBlockId != null
             ? this.getDataBlockData(entity.dataBlockId)
             : undefined;
+        // LinearProjectile::createSegments picks the muzzle speed from
+        // whether the FIRE POINT was underwater — dryVelocity or
+        // wetVelocity. The gap is large (disc 95 vs 55, chaingun 750 vs
+        // 280), so using dry unconditionally sends underwater shots
+        // flying at nearly double speed.
+        const wetStart =
+          entity.position != null &&
+          isPointSubmergedSimple(
+            entity.position[0],
+            entity.position[1],
+            entity.position[2],
+          );
         const dryVelocity =
           getNumberField(blockData, [
             "dryVelocity",
             "muzzleVelocity",
             "bulletVelocity",
           ]) ?? 80;
+        const wetVelocity = getNumberField(blockData, ["wetVelocity"]);
+        // The engine treats wetVelocity -1 as "unset".
+        const muzzle =
+          wetStart && wetVelocity != null && wetVelocity > 0
+            ? wetVelocity
+            : dryVelocity;
         const dir = entity.direction ?? [0, 1, 0];
-        let vx = dir[0] * dryVelocity;
-        let vy = dir[1] * dryVelocity;
-        let vz = dir[2] * dryVelocity;
         const excessVel = data.excessVel as number | undefined;
         const excessDir = data.excessDir as Vec3 | undefined;
-        if (
+        const hasExcess =
           typeof excessVel === "number" &&
           excessVel > 0 &&
-          isVec3Like(excessDir)
-        ) {
-          vx += excessDir.x * excessVel;
-          vy += excessDir.y * excessVel;
-          vz += excessDir.z * excessVel;
-        }
-        entity.simulatedVelocity = [vx, vy, vz];
+          isVec3Like(excessDir);
+        /** `direction * speed + excess`, the way createSegments composes
+         *  it. The excess (inherited shooter velocity) is ADDED, so a
+         *  wet velocity cannot be obtained by rescaling the dry one. */
+        const compose = (speed: number): [number, number, number] => {
+          const v: [number, number, number] = [
+            dir[0] * speed,
+            dir[1] * speed,
+            dir[2] * speed,
+          ];
+          if (hasExcess) {
+            v[0] += excessDir.x * excessVel;
+            v[1] += excessDir.y * excessVel;
+            v[2] += excessDir.z * excessVel;
+          }
+          return v;
+        };
+        entity.simulatedVelocity = compose(muzzle);
 
         // Precompute the flight segment against the static world, exactly
         // like LinearProjectile::createSegments — one raycast covering the
@@ -1652,12 +1767,20 @@ export abstract class StreamEngine implements StreamingPlayback {
           // tick-rounded by the engine's onAdd — disc 5024, chaingun 3008).
           entity.linearSegment = buildLinearSegment({
             start: [...entity.position] as [number, number, number],
-            vel: [vx, vy, vz],
+            vel: [...entity.simulatedVelocity] as [number, number, number],
             lifetimeMS: getNumberField(blockData, ["lifetimeMS"]) ?? 1000,
             explodeOnDeath: isTruthyField(blockData?.explodeOnDeath),
             explodeOnWaterImpact: isTruthyField(
               blockData?.explodeOnWaterImpact,
             ),
+            wetStart,
+            wetVel:
+              wetVelocity != null && wetVelocity > 0
+                ? compose(wetVelocity)
+                : undefined,
+            reflectOnWaterImpactAngle: getNumberField(blockData, [
+              "reflectOnWaterImpactAngle",
+            ]),
           });
         }
       } else if (isVec3Like(data.velocity)) {
@@ -1764,6 +1887,8 @@ export abstract class StreamEngine implements StreamingPlayback {
     if (typeof data.action === "number") {
       entity.actionAnim = data.action;
       entity.actionAtEnd = !!data.actionAtEnd;
+      entity.actionHoldAtEnd = !!data.actionHoldAtEnd;
+      entity.actionSeq = (entity.actionSeq ?? 0) + 1;
     }
     if (typeof data.armAction === "number") {
       entity.armAction = data.armAction;
@@ -1785,6 +1910,7 @@ export abstract class StreamEngine implements StreamingPlayback {
         entity.mountNode = undefined;
         entity.actionAnim = undefined;
         entity.actionAtEnd = undefined;
+        entity.actionHoldAtEnd = undefined;
       }
     }
 
@@ -1811,8 +1937,11 @@ export abstract class StreamEngine implements StreamingPlayback {
     // Target system
     if (typeof data.targetId === "number") {
       entity.targetId = data.targetId;
+      entity.targetGeneration = this.targetGenerations.get(data.targetId) ?? 0;
       const playerName = this.targetNames.get(data.targetId);
       if (playerName) entity.playerName = playerName;
+      const playerRawName = this.targetRawNames.get(data.targetId);
+      if (playerRawName) entity.playerRawName = playerRawName;
       const team = this.targetTeams.get(data.targetId);
       if (team != null) {
         entity.sensorGroup = team;
@@ -2590,6 +2719,21 @@ export abstract class StreamEngine implements StreamingPlayback {
 
   // ── Chat + HUD ──
 
+  /** Record the raw ServerMessage for self-parsing consumers (the
+   *  director's event scanner) — args resolved once, ring-capped. */
+  protected pushServerEvent(timeSec: number, args: string[]): void {
+    this.serverEvents.push({
+      id: ++this.serverEventIdCounter,
+      timeSec,
+      msgType: this.resolveNetString(args[0]),
+      args: args.map((a) => this.resolveNetString(a)),
+    });
+    if (this.serverEvents.length > MAX_SERVER_EVENTS) {
+      this.serverEvents.splice(0, this.serverEvents.length - MAX_SERVER_EVENTS);
+    }
+    this._serverEventsGen++;
+  }
+
   protected pushChatMessage(msg: Omit<ChatMessage, "id">): void {
     this.chatMessages.push({ ...msg, id: ++this.chatMessageIdCounter });
     if (this.chatMessages.length > 200) {
@@ -2707,6 +2851,37 @@ export abstract class StreamEngine implements StreamingPlayback {
         this.playerRoster.delete(clientId);
         this.onRosterChanged();
       }
+    } else if (msgType === "MsgClientNameChanged" && args.length >= 5) {
+      // Community servers let a player add or drop a clan tag — or
+      // change the whole name — mid-match. Wire order (verified on the
+      // Ski Club server): args[2]=old name, args[3]=new name,
+      // args[4]=clientId. The target table follows with its own
+      // TargetInfoEvent; both land on the same client here, and the
+      // player's entity is renamed at once rather than a packet later.
+      const rawName = this.resolveNetString(args[3]);
+      const name = stripTaggedStringMarkup(rawName).trim();
+      const clientId = parseInt(this.resolveNetString(args[4]), 10);
+      const entry = isNaN(clientId)
+        ? undefined
+        : this.playerRoster.get(clientId);
+      if (entry && name) {
+        entry.name = name;
+        entry.rawName = rawName;
+        this.onRosterChanged();
+        // The join told us their target on stock servers; rename it now
+        // rather than a packet later. Where the join carried no target
+        // (TacoServer sends it empty) the TargetInfoEvent alone does it.
+        if (entry.targetId != null) {
+          this.targetNames.set(entry.targetId, name);
+          this.targetRawNames.set(entry.targetId, rawName);
+          for (const entity of this.entities.values()) {
+            if (entity.targetId === entry.targetId) {
+              entity.playerName = name;
+              entity.playerRawName = rawName;
+            }
+          }
+        }
+      }
     } else if (msgType === "MsgClientJoinTeam" && args.length >= 6) {
       // Wire order: args[2]=clientName, args[3]=teamName, args[4]=clientId, args[5]=teamId
       const clientId = parseInt(this.resolveNetString(args[4]), 10);
@@ -2809,30 +2984,10 @@ export abstract class StreamEngine implements StreamingPlayback {
       this.missionDisplayName = missionDisplayName || this.missionDisplayName;
       this.missionTypeDisplayName =
         missionTypeDisplayName || this.missionTypeDisplayName;
-      // Loading-screen text for this mission follows (quote, objectives,
-      // rules), terminated by MsgLoadInfoDone.
-      this.pendingLoadInfo = {
-        quoteLines: [],
-        objectiveLines: [],
-        rulesLines: [],
-      };
+      this.loadInfo.begin();
       this.onMissionInfoChange?.();
-    } else if (msgType === "MsgLoadQuoteLine" && args.length >= 3) {
-      this.pendingLoadInfo?.quoteLines.push(this.resolveNetString(args[2]));
-    } else if (msgType === "MsgLoadObjectiveLine" && args.length >= 3) {
-      this.pendingLoadInfo?.objectiveLines.push(this.resolveNetString(args[2]));
-    } else if (msgType === "MsgLoadRulesLine" && args.length >= 3) {
-      this.pendingLoadInfo?.rulesLines.push(this.resolveNetString(args[2]));
-    } else if (msgType === "MsgLoadInfoDone") {
-      if (this.pendingLoadInfo) {
-        const { quoteLines, objectiveLines, rulesLines } = this.pendingLoadInfo;
-        this.serverLoadInfo =
-          quoteLines.length || objectiveLines.length || rulesLines.length
-            ? this.pendingLoadInfo
-            : null;
-        this.pendingLoadInfo = null;
-        this.onMissionInfoChange?.();
-      }
+    } else if (LoadInfoCollector.handles(msgType)) {
+      this.loadInfo.apply(msgType, args, (s) => this.resolveNetString(s));
     } else if (msgType === "MsgClientReady" && args.length >= 3) {
       // messageClient(%cl, 'MsgClientReady', "", %game.class)
       const gameClassName = this.resolveNetString(args[2]);
@@ -3027,6 +3182,8 @@ export abstract class StreamEngine implements StreamingPlayback {
         falling: entity.falling,
         jetting: entity.jetting,
         playerName: entity.playerName,
+        playerRawName: entity.playerRawName,
+        targetGeneration: entity.targetGeneration,
         skinName: entity.skinName,
         skinPrefName: entity.skinPrefName,
         targetRenderFlags: renderFlags,
@@ -3049,6 +3206,8 @@ export abstract class StreamEngine implements StreamingPlayback {
         energy: entity.energy,
         actionAnim: entity.actionAnim,
         actionAtEnd: entity.actionAtEnd,
+        actionHoldAtEnd: entity.actionHoldAtEnd,
+        actionSeq: entity.actionSeq,
         armAction: entity.armAction,
         damageState: entity.damageState,
         // Fade and cloak are independent systems, passed separately so the
@@ -3250,16 +3409,22 @@ export abstract class StreamEngine implements StreamingPlayback {
   /** Build filtered chat and audio event arrays for the current time. */
   protected buildTimeFilteredEvents(timeSec: number): {
     chatMessages: ChatMessage[];
+    serverEvents: ServerMessageEvent[];
     audioEvents: PendingAudioEvent[];
   } {
     if (this._chatSnapshotGen !== this._chatGen) {
       this._chatSnapshot = this.chatMessages.slice();
       this._chatSnapshotGen = this._chatGen;
     }
+    if (this._serverEventsSnapshotGen !== this._serverEventsGen) {
+      this._serverEventsSnapshot = this.serverEvents.slice();
+      this._serverEventsSnapshotGen = this._serverEventsGen;
+    }
     const chatMessages = this._chatSnapshot;
+    const serverEvents = this._serverEventsSnapshot;
     const audioEvents = this.audioEvents.filter(
       (e) => e.timeSec > timeSec - 0.5 && e.timeSec <= timeSec,
     );
-    return { chatMessages, audioEvents };
+    return { chatMessages, serverEvents, audioEvents };
   }
 }

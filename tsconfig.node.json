@@ -27,7 +27,22 @@
     "noFallthroughCasesInSwitch": true,
     "noUncheckedSideEffectImports": true
   },
-  "include": ["env.d.ts", "vite.config.ts", "relay", "scripts"],
+  "include": [
+    "env.d.ts",
+    "vite.config.ts",
+    "relay",
+    "scripts",
+    /* The Node-only half of src/world: these import node:fs / node:path
+       and never reach the browser bundle, so they belong to this
+       project and are excluded from tsconfig.app.json. The rest of
+       src/world (placement, colliderPolicy, worldDump) is shared with
+       the React components and stays in the app project. */
+    "src/world/headlessWorld.ts",
+    "src/world/nodeGltf.ts",
+    "src/world/nodeCollisionContext.ts",
+    "src/world/nodeCollisionContext.spec.ts",
+    "src/world/headlessWorld.spec.ts"
+  ],
   "exclude": [
     "scripts/play-demo.ts",
     "scripts/screenshot.ts",

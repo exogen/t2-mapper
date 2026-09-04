@@ -33,6 +33,7 @@ const excludeMissions = new Set([
 const sourceGroupNames: Record<string, string> = {
   "missions.vl2": "Official",
   "TR2final105-client.vl2": "Team Rabbit 2",
+  "z_mappacks/revtr2.vl2": "Team Rabbit 2",
   "z_mappacks/CTF/Classic_maps_v1.vl2": "Classic",
   "z_mappacks/CTF/DynamixFinalPack.vl2": "Official",
   "z_mappacks/CTF/KryMapPack_b3EDIT.vl2": "KryMapPack",
@@ -42,6 +43,7 @@ const sourceGroupNames: Record<string, string> = {
   "z_mappacks/CTF/TWL-MapPackEDIT.vl2": "TWL",
   "z_mappacks/CTF/TWL2-MapPack.vl2": "TWL2",
   "z_mappacks/CTF/TWL2-MapPackEDIT.vl2": "TWL2",
+  "z_mappacks/LCTF/clusterpack20_LCTF.vl2": "ClusterPack",
   "z_mappacks/TWL_T2arenaOfficialMaps.vl2": "Arena",
   "z_mappacks/xPack2.vl2": "xPack2",
   "z_mappacks/z_DMP2-V0.6.vl2": "DMP2 (Discord Map Pack)",

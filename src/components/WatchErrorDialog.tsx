@@ -6,13 +6,15 @@ import styles from "./WatchErrorDialog.module.css";
  * kicked mid-session) presented in the "Incoming transmission" dialog
  * style rather than dumping the visitor straight into the server
  * browser. When the lost server is known, a Rejoin action is offered
- * alongside browsing.
+ * alongside browsing; a refusal the server itself calls temporary
+ * (mission cycling) gets a Retry instead.
  */
 export function WatchErrorDialog({
   title = "Uplink failure",
   message,
   onBrowse,
   onRejoin,
+  onRetry,
   onDismiss,
 }: {
   title?: string;
@@ -20,6 +22,8 @@ export function WatchErrorDialog({
   onBrowse: () => void;
   /** Rejoin the server the session was lost from, when known. */
   onRejoin?: () => void;
+  /** Try the same server again after a retryable refusal. */
+  onRetry?: () => void;
   /** Escape handler; defaults to onBrowse. */
   onDismiss?: () => void;
 }) {
@@ -53,6 +57,15 @@ export function WatchErrorDialog({
               onClick={onRejoin}
             >
               Rejoin
+            </button>
+          ) : null}
+          {onRetry ? (
+            <button
+              type="button"
+              className={styles.PrimaryButton}
+              onClick={onRetry}
+            >
+              Retry
             </button>
           ) : null}
           <button

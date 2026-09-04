@@ -24,7 +24,28 @@ const manifest = untypedManifest as unknown as {
       missionTypes: string[];
     }
   >;
+  mounts: MountTransformTable;
 };
+
+export interface MountTransform {
+  /** Entity-local Three.js space. */
+  position: number[];
+  /** Quaternion [x, y, z, w], entity-local Three.js space. */
+  rotation: number[];
+}
+
+/**
+ * Mount-node transforms per shape (lowercased .dts basename → lowercased
+ * node name), from the winning source's GLB. See scripts/lib/mounts.ts.
+ */
+export type MountTransformTable = Record<
+  string,
+  Record<string, MountTransform>
+>;
+
+export function getMountTransforms(): MountTransformTable {
+  return manifest.mounts;
+}
 
 export function getResourceKey(resourcePath: string): string {
   return normalizePath(resourcePath).toLowerCase();

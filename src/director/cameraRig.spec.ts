@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
+import type { DirectorVec3, Shot } from "./types";
 import { BoxGeometry, Mesh, Vector3 } from "three";
 import {
   castWorldRay,
@@ -8,7 +9,6 @@ import {
 } from "../collision/worldCollision";
 import { setTerrainCollisionData } from "../collision/terrainCollision";
 import {
-  approachAngle,
   clearStandoffWide,
   subjectViewBlocked,
   surfaceLiftedAnchor,
@@ -18,6 +18,16 @@ import {
   chooseClearPlacement,
   clearStandoff,
   easeInHold,
+  easeInSettle,
+  orbitEyeAt,
+  TRANSITION_MAX_SEC,
+  TRANSITION_MIN_SEC,
+  TRANSITION_SPEED,
+  TRAVEL_RAMP_IN,
+  TRAVEL_RAMP_OUT,
+  TRAVEL_SHOT_FRACTION,
+  sweepClock,
+  sweepProgress,
   viewBlocked,
 } from "./cameraRig";
 
@@ -175,20 +185,6 @@ describe("easeInHold", () => {
       expect(v).toBeGreaterThanOrEqual(last);
       last = v;
     }
-  });
-});
-
-describe("approachAngle", () => {
-  it("turns the short way around the circle", () => {
-    // From just below +pi to just above -pi is a small step, not a
-    // near-full rotation the long way.
-    const next = approachAngle(3.1, -3.1, 0.2);
-    expect(Math.abs(next - 3.1)).toBeLessThanOrEqual(0.2 + 1e-9);
-    expect(next).toBeGreaterThan(3.1);
-  });
-
-  it("stops exactly on the target once within reach", () => {
-    expect(approachAngle(1, 1.05, 0.5)).toBeCloseTo(1.05, 6);
   });
 });
 
@@ -449,5 +445,256 @@ describe("surfaceLiftedAnchor", () => {
     ceiling.updateMatrixWorld(true);
     registerInteriorCollider("ceiling", [ceiling]);
     expect(surfaceLiftedAnchor([9, -30, 100])).toBeNull();
+  });
+});
+
+describe("easeInSettle", () => {
+  it("covers the whole move", () => {
+    expect(easeInSettle(0)).toBe(0);
+    expect(easeInSettle(1)).toBe(1);
+  });
+
+  it("is nearly stopped at the end", () => {
+    // The complaint this exists for: a fly-by that reaches the far flag
+    // at cruising speed and cuts. The last frames must crawl.
+    const lastStep = easeInSettle(1) - easeInSettle(0.99);
+    const middle = easeInSettle(0.5) - easeInSettle(0.49);
+    expect(lastStep).toBeLessThan(middle * 0.1);
+  });
+
+  it("decelerates for much longer than it accelerates", () => {
+    // Speed at the same offset from each end: the tail is the point.
+    const inSpeed = easeInSettle(0.1) - easeInSettle(0.09);
+    const outSpeed = easeInSettle(0.91) - easeInSettle(0.9);
+    expect(outSpeed).toBeLessThan(inSpeed);
+  });
+
+  it("starts gently rather than snapping into motion", () => {
+    const firstStep = easeInSettle(0.01) - easeInSettle(0);
+    const middle = easeInSettle(0.5) - easeInSettle(0.49);
+    expect(firstStep).toBeLessThan(middle * 0.2);
+  });
+
+  it("is monotonic and never overshoots", () => {
+    let last = -1;
+    for (let t = 0; t <= 1.0001; t += 0.005) {
+      const v = easeInSettle(Math.min(1, t));
+      expect(v).toBeGreaterThanOrEqual(last);
+      expect(v).toBeLessThanOrEqual(1);
+      last = v;
+    }
+  });
+
+  it("has no sudden change of speed at either corner", () => {
+    // Smoothstep ramps, so acceleration is continuous where the ramps
+    // meet the cruise — a linear ramp would kink here.
+    const speed = (t: number) => easeInSettle(t + 0.002) - easeInSettle(t);
+    for (const corner of [0.18, 0.55]) {
+      const before = speed(corner - 0.01);
+      const after = speed(corner + 0.01);
+      expect(Math.abs(after - before)).toBeLessThan(speed(0.4) * 0.25);
+    }
+  });
+});
+
+describe("sweepProgress", () => {
+  const sweep = (over: Record<string, unknown> = {}): Shot =>
+    ({
+      kind: "sweep",
+      from: [0, 0, 10],
+      to: [100, 0, 10],
+      target: [50, 20, 10],
+      startSec: 0,
+      endSec: 10,
+      transitionIn: "cut",
+      reason: "test",
+      ...over,
+    }) as Shot;
+
+  it("runs a tracking shot at ONE speed, start to finish", () => {
+    // A pan is cut into while already moving and out of while still
+    // moving. Easing either end gives it a beginning and an end it is
+    // not supposed to have.
+    const pan = sweep({ easing: "linear" }) as Extract<Shot, { kind: "sweep" }>;
+    const step = (t: number) =>
+      sweepProgress(pan, t + 0.01) - sweepProgress(pan, t);
+    const first = step(0);
+    for (const t of [0.25, 0.5, 0.75, 0.98]) {
+      expect(step(t)).toBeCloseTo(first, 9);
+    }
+    expect(sweepProgress(pan, 0)).toBe(0);
+    expect(sweepProgress(pan, 1)).toBe(1);
+  });
+
+  it("still settles a shot that arrives somewhere", () => {
+    const run = sweep() as Extract<Shot, { kind: "sweep" }>;
+    const last = sweepProgress(run, 1) - sweepProgress(run, 0.99);
+    const middle = sweepProgress(run, 0.5) - sweepProgress(run, 0.49);
+    expect(last).toBeLessThan(middle * 0.1);
+  });
+
+  it("still cuts a rank pass while it is travelling", () => {
+    const pass = sweep({ role: "rosterCloseUp" }) as Extract<
+      Shot,
+      { kind: "sweep" }
+    >;
+    const step = (t: number) =>
+      sweepProgress(pass, t + 0.01) - sweepProgress(pass, t);
+    // Full speed at the cut — that is the whole point of `hold`.
+    expect(step(0.98)).toBeGreaterThan(step(0.5) * 0.9);
+    // ...but it RAMPS UP, which is what distinguishes it from linear.
+    // Asserting only the tail let a plain `t` pass this test.
+    expect(step(0)).toBeLessThan(step(0.5) * 0.5);
+  });
+});
+
+describe("orbitEyeAt", () => {
+  const base = {
+    kind: "fixedOrbit" as const,
+    center: [10, 20, 50] as DirectorVec3,
+    radius: 8,
+    startAngle: 0,
+    angularSpeed: 0,
+    startSec: 0,
+    endSec: 6,
+    transitionIn: "cut" as const,
+    reason: "test",
+  };
+
+  it("puts the eye where the staged placement asked for it", () => {
+    // The bug this exists to prevent: the rig and the validator each
+    // wrote out this arithmetic and disagreed by exactly the look-lift,
+    // so a portrait certified at chest height flew two units lower —
+    // below ground. Every one of 92 staged orbits on a real demo was
+    // off by 2.00.
+    const wantedLift = 1.2;
+    const shot = {
+      ...base,
+      heightFactor: wantedLift / 8,
+      staged: {
+        angle: 0,
+        radius: 8,
+        liftFactor: wantedLift / 8,
+        visibility: 1,
+      },
+    } as Shot as Extract<Shot, { kind: "fixedOrbit" }>;
+    const eye = orbitEyeAt(shot, 0);
+    expect(eye[2] - base.center[2]).toBeCloseTo(wantedLift, 6);
+    // ...and on the ring, at the requested bearing.
+    expect(
+      Math.hypot(eye[0] - base.center[0], eye[1] - base.center[1]),
+    ).toBeCloseTo(8, 6);
+  });
+
+  it("orbits around the centre as the bearing turns", () => {
+    const shot = { ...base, heightFactor: 0.2 } as Shot as Extract<
+      Shot,
+      { kind: "fixedOrbit" }
+    >;
+    for (const angle of [0, Math.PI / 2, Math.PI, 4]) {
+      const eye = orbitEyeAt(shot, angle);
+      expect(
+        Math.hypot(eye[0] - base.center[0], eye[1] - base.center[1]),
+      ).toBeCloseTo(8, 6);
+    }
+  });
+
+  it("honours the live overrides the rail hands it mid-shot", () => {
+    const shot = { ...base, heightFactor: 0.25 } as Shot as Extract<
+      Shot,
+      { kind: "fixedOrbit" }
+    >;
+    const planned = orbitEyeAt(shot, 0);
+    const pulledIn = orbitEyeAt(shot, 0, [0, 0, 0], { radius: 4 });
+    expect(
+      Math.hypot(pulledIn[0] - base.center[0], pulledIn[1] - base.center[1]),
+    ).toBeCloseTo(4, 6);
+    expect(pulledIn[2]).toBeLessThan(planned[2]);
+  });
+});
+
+describe("travel pacing", () => {
+  /** Distance covered by fraction t of a travel of `dist` over `dur`. */
+  const travelled = (dist: number, dur: number, sec: number): number =>
+    easeInSettle(Math.min(1, sec / dur), TRAVEL_RAMP_IN, TRAVEL_RAMP_OUT) *
+    dist;
+  const speedAt = (dist: number, dur: number, sec: number): number =>
+    (travelled(dist, dur, sec + 0.02) - travelled(dist, dur, sec)) / 0.02;
+  const duration = (dist: number): number =>
+    Math.max(
+      TRANSITION_MIN_SEC,
+      Math.min(TRANSITION_MAX_SEC, dist / TRANSITION_SPEED),
+    );
+
+  it("arrives at a crawl, not at speed", () => {
+    // The reported shot: a 64m hop between a pick-up and a sensor. It
+    // used to take 0.58s and was still doing 131 u/s a fifth of a
+    // second before it stopped — the curve was right, the move had no
+    // time to use it.
+    const dur = duration(64);
+    expect(speedAt(64, dur, dur - 0.2)).toBeLessThan(20);
+    expect(speedAt(64, dur, dur * 0.4)).toBeGreaterThan(30);
+  });
+
+  it("gives even the shortest hop time to decelerate", () => {
+    const dur = duration(18);
+    expect(dur).toBeGreaterThanOrEqual(TRANSITION_MIN_SEC);
+    expect(speedAt(18, dur, dur - 0.2)).toBeLessThan(20);
+  });
+
+  it("spends most of the move slowing down", () => {
+    // A travel is only getting somewhere; what a viewer notices is the
+    // arrival, so the tail is longer than a shot's own settle.
+    expect(TRAVEL_RAMP_OUT).toBeGreaterThan(TRAVEL_RAMP_IN * 3);
+    const dur = duration(98);
+    // Two thirds of the way through, most of the distance is behind us.
+    expect(travelled(98, dur, dur * 0.66) / 98).toBeGreaterThan(0.75);
+  });
+
+  it("refuses to spend a whole shot arriving at it", () => {
+    // A move that cannot be made gently inside the shot it lands on is
+    // a cut. Better a clean cut than a lunge.
+    const shortShot = 2.9;
+    expect(duration(98)).toBeGreaterThan(shortShot * TRAVEL_SHOT_FRACTION);
+    const longShot = 10.5;
+    expect(duration(98)).toBeLessThan(longShot * TRAVEL_SHOT_FRACTION);
+  });
+});
+
+describe("sweepClock", () => {
+  const sweep = (over: Partial<Extract<Shot, { kind: "sweep" }>> = {}) =>
+    ({
+      kind: "sweep",
+      from: [0, 0, 0],
+      to: [100, 0, 0],
+      target: [50, 50, 0],
+      startSec: 10,
+      endSec: 30,
+      moveSec: 20,
+      transitionIn: "cut",
+      reason: "test",
+      ...over,
+    }) as Extract<Shot, { kind: "sweep" }>;
+
+  it("runs the move over moveSec and then holds", () => {
+    expect(sweepClock(sweep(), 10)).toBe(0);
+    expect(sweepClock(sweep(), 20)).toBeCloseTo(0.5, 9);
+    expect(sweepClock(sweep(), 30)).toBe(1);
+    expect(sweepClock(sweep(), 40)).toBe(1);
+  });
+
+  it("is untouched when the on-air window is stretched after the fact", () => {
+    // The streaming switcher rewrites endSec to keep the playhead
+    // covered while it waits on its next decision. Pacing the move to
+    // the window rewound the camera half a second at a time.
+    const before = sweepClock(sweep(), 25);
+    const stretched = sweep({ endSec: 33.5 });
+    expect(sweepClock(stretched, 25)).toBe(before);
+    expect(sweepClock(sweep({ endSec: 36.5 }), 30)).toBe(1);
+  });
+
+  it("falls back to the window for a plan written before moveSec", () => {
+    const legacy = sweep({ moveSec: undefined });
+    expect(sweepClock(legacy, 20)).toBeCloseTo(0.5, 9);
   });
 });

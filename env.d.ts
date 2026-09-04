@@ -4,5 +4,7 @@ declare namespace NodeJS {
     readonly LOG_LEVEL?: string;
     readonly RELAY_URL?: string;
     readonly CAST_LOCAL_PLAN?: string;
+    readonly CAST_BASE_URL?: string;
+    readonly CAST_LOOKAHEAD_SEC?: string;
   }
 }

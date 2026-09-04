@@ -30,6 +30,8 @@ export const DEMO_PROTOCOL_VERSION = 0x00330004;
 export const DEMO_LENGTH_MS_OFFSET = 1 + DEMO_IDENT_STRING.length + 4;
 /** Max payload bytes per block (12-bit size field). */
 export const MAX_BLOCK_SIZE = 0xfff;
+/** Playback advances this much per Move block — the demo's clock. */
+export const DEMO_TICK_MS = 32;
 
 const HEADER_SIZE = DEMO_LENGTH_MS_OFFSET + 8;
 
@@ -152,17 +154,15 @@ export interface InitialBlockOptions {
 }
 
 /**
- * The passive-observer lastSendSeq seed (t2-demo-parser LiveParser).
- * Guarantees the parser's `lastSendSeq < highestAck` rejection can
- * never fire regardless of SendPacket marker timing.
- */
-const PASSIVE_LAST_SEND_SEQ = 0x1fffffff;
-
-/**
  * Build a from-connect initial block: no tagged strings, datablocks,
  * scores, targets, events, ghosts, or control object — all of that
  * arrives in the recorded packet stream, exactly as the live parser
  * consumes it from a fresh connection.
+ *
+ * The recorder must be attached before the connection's first sequenced
+ * packet and write one SendPacket marker per packet actually sent, in
+ * order with the received packets: the engine's playback replays those
+ * markers to keep its notify queue in step with the server's acks.
  */
 export function buildInitialBlock(opts: InitialBlockOptions): Uint8Array {
   const bs = new BitStreamWriter(4096, { growable: true });
@@ -200,21 +200,34 @@ export function buildInitialBlock(opts: InitialBlockOptions): Uint8Array {
   for (let i = 0; i < 32 * 32; i++) bs.writeFlag(false);
   for (let i = 0; i < 512; i++) bs.writeFlag(false);
 
-  // ConnectionProtocol state: pre-first-packet, with the passive
-  // lastSendSeq seed and the live connection's connect sequence.
-  for (let i = 0; i < 32; i++) bs.writeU32(0);
+  // ConnectionProtocol state of a connection that has not exchanged a
+  // sequenced packet yet (t2-demo-parser freshConnectionProtocolState):
+  // everything zero except the live connection's connect sequence.
+  //
+  // This must be the real state, not a parser convenience. Tribes2.exe
+  // playback rebuilds the client side from it: each SendPacket marker
+  // runs checkPacketSend (FUN_005877e0), which queues a PacketNotify
+  // only while the send window is open (FUN_0043d720: lastSendSeq -
+  // highestAckedSeq <= 0x1d), and every newly acked sequence pops one
+  // notify in handleNotify (FUN_005874d0) with no empty-queue check. A
+  // lastSendSeq of 0x1fffffff (the parser's passive-observer seed) kept
+  // the window permanently full, so no notify was ever queued and the
+  // game crashed on the first acked packet.
+  for (let i = 0; i < 32; i++) bs.writeU32(0); // lastSeqRecvdAtSend
   bs.writeU32(0); // lastSeqRecvd
   bs.writeU32(0); // highestAckedSeq
-  bs.writeU32(PASSIVE_LAST_SEND_SEQ);
+  bs.writeU32(0); // lastSendSeq
   bs.writeU32(0); // ackMask
   bs.writeU32(opts.connectSequence >>> 0);
   bs.writeU32(0); // lastRecvAckAck
   bs.writeU8(1); // connectionEstablished
 
-  // rtt, packetLoss (F32 zeros), PathManager count, notify count.
+  // rtt, packetLoss (F32 zeros), PathManager count.
   bs.writeU32(0);
   bs.writeU32(0);
   bs.writeU32(0);
+  // Notify count: one PacketNotify per in-flight packet, i.e. exactly
+  // lastSendSeq - highestAckedSeq. Nothing is in flight at connect time.
   bs.writeU32(0);
 
   // Events: nextRecvEventSeq 0 + terminator; ghosts: sequence 0 + terminator.
@@ -228,9 +241,9 @@ export function buildInitialBlock(opts: InitialBlockOptions): Uint8Array {
 
   writeString(bs, opts.missionName);
   bs.writeU32(0); // missionCRC (consumed by nothing)
-  bs.alignToByte();
 
-  // Two simple TargetManager blocks.
+  // Two simple TargetManager blocks, read by FUN_006021b0 at the current
+  // bit position (the engine does not byte-align here).
   for (let i = 0; i < 2; i++) {
     bs.writeU8(0);
     for (let j = 0; j < 4; j++) bs.writeU32(0);
@@ -262,8 +275,11 @@ export function buildInfoBlock(firstPerson = true, fov = 90): Uint8Array {
 }
 
 const INFO_BLOCK = buildInfoBlock();
-/** Sync-flush cadence for live spools (see DemoFileWriter). */
-const DEFAULT_FLUSH_INTERVAL_MS = 30_000;
+/** Sync-flush cadence for live spools (see DemoFileWriter). Bounds what
+ *  a crash can lose: the spool is salvageable up to its last flush. */
+const DEFAULT_FLUSH_INTERVAL_MS = 5_000;
+/** How long strand() waits for the streams to drain before destroying. */
+const STRAND_DRAIN_MS = 10_000;
 
 /**
  * Streams a .rec to `<finalPath>.partial`: header + initial block
@@ -394,6 +410,36 @@ export class DemoFileWriter {
       await handle.close();
     }
     await fsp.rename(this.partialPath, this.finalPath);
+  }
+
+  /**
+   * Stop writing but keep the spool. The deflate stream is ended so
+   * everything buffered reaches the file if the disk still accepts it,
+   * and the `.partial` is left for the next boot's salvage to turn into
+   * a `.rec`. For failures where the data is worth more than the
+   * file's tidiness; abort() is for recordings nobody wants.
+   */
+  async strand(): Promise<void> {
+    this.stopFlushTimer();
+    const fileStream = this.fileStream;
+    if (!this.done) {
+      this.done = true;
+      // A failed deflate has already unpiped; end the file directly.
+      if (this.deflate && !this.deflate.destroyed) this.deflate.end();
+      else fileStream?.end();
+    }
+    if (!fileStream || fileStream.closed) return;
+    await new Promise<void>((resolve) => {
+      const timer = setTimeout(() => {
+        // The disk isn't draining — give up on the buffered tail.
+        fileStream.destroy();
+      }, STRAND_DRAIN_MS);
+      timer.unref();
+      fileStream.once("close", () => {
+        clearTimeout(timer);
+        resolve();
+      });
+    });
   }
 
   /** Tear down and remove the partial file. Safe to call in any state. */

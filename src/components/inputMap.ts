@@ -88,48 +88,13 @@ export const TOUR_MODE_INPUT = [
 ] as const satisfies readonly InputMapEntry[];
 
 /**
- * Auto-director lean-back mode: every camera-ish gesture maps to one
- * interrupt that hands control back (transport stays in DEMO_MODE_INPUT).
- * Drag and touch bindings can't fire one-shot actions, so those two are
- * separate state-only actions the DirectorController polls per frame.
+ * Auto-director lean-back mode: only an explicit "take control" key
+ * hands control back (transport stays in DEMO_MODE_INPUT). Clicks, drags
+ * and camera keys are deliberately unbound here so a stray click on the
+ * canvas doesn't end the broadcast.
  */
 export const DIRECTOR_MODE_INPUT = [
-  {
-    name: "directorInterrupt",
-    keys: [
-      "KeyF",
-      "Escape",
-      "KeyC",
-      "KeyW",
-      "KeyA",
-      "KeyS",
-      "KeyD",
-      "KeyQ",
-      "KeyE",
-      "ArrowUp",
-      "ArrowDown",
-      "ArrowLeft",
-      "ArrowRight",
-      "Digit1",
-      "Digit2",
-      "Digit3",
-      "Digit4",
-      "Digit5",
-      "Digit6",
-      "Digit7",
-      "Digit8",
-      "Digit9",
-    ],
-  },
-  {
-    name: "directorInterruptClick",
-    keys: [
-      { type: "click", button: 0 },
-      { type: "click", button: 2 },
-    ],
-  },
-  { name: "directorInterruptDrag", keys: [{ type: "drag", button: 0 }] },
-  { name: "directorInterruptTouch", keys: [{ type: "touch" }] },
+  { name: "directorInterrupt", keys: ["KeyF", "Escape"] },
 ] as const satisfies readonly InputMapEntry[];
 
 /**

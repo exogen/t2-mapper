@@ -7,6 +7,7 @@
  * best-effort: a subject that has left scope simply returns null and the
  * caller keeps the shot it has.
  */
+import { shotSubjectOf } from "./shotPath";
 import { Vector3 } from "three";
 import type { Object3D } from "three";
 import { gameEntityStore } from "../state/gameEntityStore";
@@ -108,22 +109,6 @@ export function livingPlayerPositionsNear(
   return out;
 }
 
-/** What a shot is trying to show, for the visibility check. */
-export function shotSubjectOf(shot: Shot): ShotSubject | null {
-  switch (shot.kind) {
-    case "followFlag":
-      return { type: "flag", slot: shot.slot };
-    case "followPlayer":
-      return { type: "player", targetId: shot.targetId };
-    case "dolly":
-      return shot.subject;
-    case "fixedOrbit":
-      return shot.lookSubject ?? null;
-    default:
-      return null;
-  }
-}
-
 /** The scene group for a planned shot subject, if it's in scope now. */
 export function resolveShotSubjectGroup(subject: ShotSubject): Object3D | null {
   const entityId =
@@ -145,3 +130,8 @@ export function findShotIndex(shots: Shot[], t: number): number {
   }
   return t < shots[lo].endSec ? lo : -1;
 }
+
+// Re-exported for the browser-side callers that already import it from
+// here. It LIVES in shotPath because it is pure — this module reaches
+// into the live entity store, and planner code cannot follow it there.
+export { shotSubjectOf };

@@ -54,8 +54,22 @@ export interface DirectorPlayerSample {
 /** A base structure's damageState change (0 = Enabled, 1 = Disabled,
  *  2 = Destroyed) — the only observer-visible signal for generator and
  *  turret kills, which have no broadcast chat message. */
+/** One structure standing on the map, from the moment it was seen. */
+export interface StructurePresence {
+  /** When this object first entered scope. Deployables appear
+   *  mid-match; permanent base hardware is there from the start. */
+  firstSeenSec: number;
+  name: string;
+  className: string;
+  teamId: number | null;
+  pos: DirectorVec3;
+}
+
 export interface StructureTransition {
   timeSec: number;
+  /** Owning team, from the ghost's own sensor group (StreamEntity
+   *  .teamId) — the game's answer, not an inference from position. */
+  teamId?: number | null;
   /** Commentary name ("spider clamp turret", "generator", …) — never a
    *  raw shape filename; placement variants (wall/floor/ceiling,
    *  indoor/outdoor) are deliberately erased. */
@@ -170,6 +184,8 @@ export interface DirectorVehicleSample {
 }
 
 export interface DirectorEvent extends TimelineEvent {
+  /** match-countdown only: seconds until the announced kickoff. */
+  secondsUntil?: number;
   /** Torque-space position correlated from entity samples, when known. */
   pos?: DirectorVec3;
   /** Flag drops only — the carrier's intent, from chat-message order
@@ -210,6 +226,20 @@ export interface DirectorDataset {
   /** Time-ordered; group by `targetId` for per-player tracks. */
   playerSamples: DirectorPlayerSample[];
   structures: StructureTransition[];
+  /**
+   * What is actually STANDING on the map, and when we first saw it.
+   *
+   * `structures` above is a damage LOG — an entry appears only when
+   * something is destroyed or repaired — so it says nothing about what
+   * exists. Reading it as an inventory produced a pre-match tour of 68
+   * assets, every one of which was deployed AFTER the whistle: the
+   * earliest first appeared 20 seconds into the match.
+   *
+   * `firstSeenSec` makes time-filtering possible, which matters because
+   * most of these are DEPLOYABLES that players place mid-match. A
+   * consumer must never show one before that time.
+   */
+  structureInventory: StructurePresence[];
   /** Mortar shells seen in flight, oldest first. */
   mortarShots: MortarShot[];
   /** Discs and grenade rounds, tracked the same way (absent in older
@@ -229,8 +259,21 @@ export interface DirectorDataset {
    *  original case for commentary, and `skin` the player's skin tag. */
   playerNames: {
     targetId: number;
+    /** The client wearing the target over this stretch — the stable
+     *  identity; target ids are recycled between players. */
+    clientId?: number;
+    /** When this client started wearing the target (absent: from the
+     *  start) and stopped (absent: still wearing it at the end). One
+     *  target id can have several entries, one per client. */
+    fromSec?: number;
+    toSec?: number;
     name: string;
     displayName?: string;
+    /** Every lowercase name this player went by over the stretch,
+     *  the current one included — some servers let players change
+     *  their clan tag, or their whole name, mid-match, and a kill
+     *  message names whoever they were at the time. */
+    aliases?: string[];
     skin?: string;
     /** Official clan tag from the name's color-7 segments, when set —
      *  includes its separator character as sent ("TF_", ">You"). */
@@ -242,144 +285,57 @@ export interface DirectorDataset {
   scoreSamples?: { timeSec: number; teamId: number; score: number }[];
 }
 
-// ── Commentary scene shapes ──
+// ── The published contract ──
 //
-// The structured, factual description of what a shot shows, attached by
-// the planner's final pass (scene.ts) and consumed by the LLM
-// commentator. Defined HERE because Shot carries one — types.ts is the
-// leaf of the director dependency DAG and must import no sibling.
+// Everything a cast.json consumer may rely on lives in castContract.ts,
+// with documentation written for that reader. Re-exported here so the
+// director's own code has one import for its types.
+export type {
+  CastPlan,
+  CastShot,
+  FramePosition,
+  MatchFacts,
+  ScenePlayer,
+  SceneEvent,
+  SceneFlagState,
+  SceneTopic,
+  ShotScene,
+  Venue,
+  VenueHardware,
+} from "./castContract";
+import type {
+  CastPlan,
+  CastShot,
+  MatchFacts,
+  SceneFlagState,
+  SceneTopic,
+  ShotScene,
+  Venue,
+} from "./castContract";
 
-/** What kind of story a shot tells — the coarse tag for a commentator. */
-export type SceneTopic =
-  | "lineup"
-  | "kickoff"
-  | "flag-run"
-  | "flag-stand"
-  | "capture"
-  | "aftermath"
-  | "turtle"
-  | "kill"
-  | "raid"
-  | "bombardment"
-  | "vehicle"
-  | "suit-up"
-  | "lull"
-  | "base"
-  | "action";
-
-/** Rough screen position, from the PLANNED camera (runtime corrections
- *  make this approximate — good enough for "actionswanson back right"). */
-export type FramePosition =
-  | "front left"
-  | "front center"
-  | "front right"
-  | "mid left"
-  | "mid center"
-  | "mid right"
-  | "back left"
-  | "back center"
-  | "back right"
-  | "offscreen";
-
-export interface ScenePlayer {
-  name: string;
-  targetId: number;
-  team: string | null;
-  armor?: "light" | "medium" | "heavy";
-  skin?: string;
-  /** Mounted backpack ("energy pack", "shield pack", "mortar turret
-   *  barrel", …) — often the clearest tell of a player's job. */
-  pack?: string;
-  /** Clan tag (official color-delimited, or the typed "=USA=" style),
-   *  separated from the spoken name. */
-  clan?: string;
-  /** Metres from the shot's anchor and a compass bearing from it. */
-  dist: number;
-  bearing: "N" | "NE" | "E" | "SE" | "S" | "SW" | "W" | "NW";
-  /** Rough position in the expected frame (110° hFOV from the PLANNED
-   *  camera; runtime corrections make this approximate). Absent when
-   *  the camera bearing isn't knowable at plan time. */
-  frame?: FramePosition;
-  /** What they are doing, from the same signals shot selection reads. */
-  doing?:
-    | "carrying the flag"
-    | "chasing the carrier"
-    | "posted on defense"
-    | "firing mortars"
-    | "suiting up"
-    | "skiing"
-    | "fighting"
-    | "inbound";
-  /** Speed in kph (the in-game speedometer's units) — ~145+ reads as
-   *  skiing, ~250+ is coming in hot. */
-  speed?: number;
-  /** Health percent (100 = full) — worth a call on a mid-run carrier. */
-  health?: number;
-  /** Which way they're headed, relative to the bases — the ground truth
-   *  for "pouring out" vs "heading in" style calls. */
-  moving?:
-    | "into their own base"
-    | "out of their base"
-    | "toward the enemy base"
-    | "back toward their base";
-}
-
-export interface SceneEvent {
-  timeSec: number;
-  type:
-    | "kill"
-    | "grab"
-    | "drop"
-    | "cap"
-    | "return"
-    | "structure-destroyed"
-    | "structure-repaired"
-    | "near-miss"
-    | "skill-shot"
-    | "teamkill";
-  /** Factual one-liner: "MID-AIR disc kill, 84m" / "carrier died 32m
-   *  from the capture". */
-  detail: string;
-  actors: { name: string; role: string }[];
-  weapon?: string;
-  midair?: boolean;
-  /** Drop events: died / thrown / pass (see DirectorEvent.dropKind). */
-  dropKind?: "died" | "thrown" | "pass";
-}
-
-export interface SceneFlagState {
-  slot: number;
-  team: string;
-  status: "home" | "carried" | "dropped";
-  carrier?: string;
-  /** Metres from its home stand (0 = at the stand). */
-  distFromHome: number;
-  /** Carrier's remaining distance to a capture, when carried. */
-  distToCapture?: number;
-  /**
-   * FUTURE KNOWLEDGE — how this possession resolves. Quarantined so a
-   * live commentator can skip it; a broadcast-style one may foreshadow.
-   */
-  future?: { outcome: "cap" | "return"; atSec: number };
-}
-
-export interface ShotScene {
-  /** Factual one-or-two sentence summary of what the shot shows. */
-  summary: string;
-  topic: SceneTopic;
-  /** Consecutive shots telling one story share an id (a whole capture
-   *  ceremony, a chunked stand battle) — commentators narrate scenes,
-   *  not cuts. */
-  sequenceId: string;
-  players: ScenePlayer[];
-  events: SceneEvent[];
-  flags: SceneFlagState[];
-  score?: { team: string; score: number }[];
-}
+/**
+ * What a shot IS, for code that has to make decisions about it.
+ *
+ * `reason` is a HUMAN-READABLE description for commentary and logs.
+ * Never parse it. Doing so caused three separate silent failures: a
+ * `/Pre-match/` test meant to catch roster passes also caught map
+ * fly-throughs and skipped their clearance check, converting every one
+ * to an orbit; a `/close-up/` test gated the path-trimming rescue so
+ * tour pans were discarded instead of trimmed; and reworded reasons
+ * changed behaviour with no type error anywhere.
+ */
+export type ShotRole = NonNullable<CastShot["role"]>;
 
 interface ShotBase {
   startSec: number;
   endSec: number;
+  /**
+   * Who the shot is OF when its camera geometry does not say so — a
+   * pick-up holds on or pans across a person without following them.
+   * Read by the scene pass (`focus`), never by the rig: the rig's
+   * subject is `shotSubjectOf`, which drives the visibility rail.
+   */
+  subject?: ShotSubject;
   /** Structured commentary metadata, attached by the planner's final
    *  pass (scene.ts). Facts for an LLM commentator; future knowledge
    *  quarantined under `flags[].future`. */
@@ -387,11 +343,25 @@ interface ShotBase {
   /** "cut" snaps camera parameters on entry; "continuous" (same-subject
    *  state change) eases them from the previous shot's values. */
   transitionIn: "cut" | "continuous";
-  /** Human-readable story for debugging/tuning ("Storm flag carried…"). */
+  /** Human-readable story for debugging/tuning and for the commentary
+   *  layer ("Storm flag carried…"). DESCRIPTIVE ONLY — never branch on
+   *  its text; use `role`. */
   reason: string;
+  /** What this shot is, for code that must decide how to treat it.
+   *  Absent means "coverage". */
+  role?: ShotRole;
+  /**
+   * What the shot is ABOUT, for the booth — set by the builder that
+   * knows. The scene's topic reads this first, then the role; there is
+   * no parsing of `reason`.
+   */
+  topic?: SceneTopic;
   /** Spliced by the coverage pass to put a missed tier-1 event on
    *  camera (see assemble.ts cutInFor). */
   coverageCutIn?: boolean;
+  /** A deliberate 2-3s cut (roster portraits): exempt from the normal
+   *  minimum hold — rhythm, not flicker. */
+  quickCut?: boolean;
 }
 
 /**
@@ -433,6 +403,12 @@ export type Shot =
       kind: "followFlag";
       slot: number;
       distance?: number;
+      /** Closest this shot may ever ride, in world units. Staging's
+       *  pull-in and the runtime's visibility rail both respect it —
+       *  a shot whose POINT is the wide view (a grab dive, a capper
+       *  closing on the stand) must not be squeezed into a portrait
+       *  just because the geometry allows one. */
+      minDistance?: number;
       pitch?: number;
       aim?: ShotAim;
     })
@@ -440,6 +416,8 @@ export type Shot =
       kind: "followPlayer";
       targetId: number;
       distance?: number;
+      /** See followFlag.minDistance. */
+      minDistance?: number;
       pitch?: number;
       aim?: ShotAim;
     })
@@ -453,6 +431,14 @@ export type Shot =
       angularSpeed?: number;
       /** Camera height as a fraction of radius (steeper = overhead). */
       heightFactor?: number;
+      /**
+       * How far above `center` the lens actually looks, overriding the
+       * rig's default. That default is two units — chosen for base
+       * hardware, and roughly the top of a PLAYER's head, so a portrait
+       * framed with it stares over its subject and leaves them sitting
+       * at the bottom of the picture.
+       */
+      lookLift?: number;
       /**
        * Aim the (still fixed-position) camera at this subject's live
        * position instead of `center` — a locked-off camera with a slow
@@ -470,6 +456,13 @@ export type Shot =
        * wherever the attackers happened to mass, often behind a hill.
        */
       doorwayOf?: DirectorVec3;
+      /**
+       * Geometry-solved placement, attached at plan time by stagePlan()
+       * (which runs where the collision world is loaded). When present
+       * the runtime applies it directly instead of searching for a
+       * clear bearing at the cut.
+       */
+      staged?: StagedPlacement;
     })
   | (ShotBase & {
       /**
@@ -481,9 +474,61 @@ export type Shot =
       from: DirectorVec3;
       to: DirectorVec3;
       target: DirectorVec3;
+      /**
+       * How long the move from `from` to `to` takes, in seconds. NOT
+       * the on-air window: `endSec` is rewritten freely after the shot
+       * is decided — sealed late when the next decision is slow, or
+       * stretched to keep a streaming playhead covered — and scaling
+       * the move to the window rewound the camera every time the
+       * window grew. The move runs from `startSec` for this long and
+       * then holds at its end.
+       */
+      moveSec: number;
+      /** Set by the staging pass: this exact path was verified against
+       *  geometry AND player visibility — the runtime must fly it
+       *  as-is, never re-lift it (the old ends-visibility probe used to
+       *  hoist verified low pans into the roof above the ranks). */
+      pathSolved?: boolean;
       /** When set, the look-at pans from `target` to here across the
        *  shot — a dolly past a line of faces rather than a fixed stare. */
       targetTo?: DirectorVec3;
+      /**
+       * Intermediate waypoints. With these the camera flies a smooth
+       * curve through them instead of a straight line — an establishing
+       * fly-by that rises over a ridge and settles again, rather than a
+       * ruler line drawn at the height of the tallest thing in the way.
+       * Plan-time validation and the runtime sample the SAME curve.
+       */
+      via?: DirectorVec3[];
+      /**
+       * Steepest the camera may look DOWN mid-route, in radians. The
+       * aim is raised toward the camera's own height where the slide
+       * from `target` to `targetTo` would pitch it steeper — a fly-by
+       * aiming at ground level from forty metres up stared at the
+       * ground under it instead of the map going by. The ends are
+       * exempt: the shot opens and arrives on what it is aimed at.
+       */
+      maxPitch?: number;
+      /**
+       * How the camera is paced along the path.
+       *
+       * `linear` is a true tracking shot: constant speed, no ramp at
+       * either end. Film cuts INTO a pan already moving and OUT of it
+       * still moving, and easing one gives it a beginning and an end it
+       * is not supposed to have. `settle` eases in and decelerates onto
+       * its subject (an establishing run that arrives somewhere);
+       * `hold` gets up to speed and stays there, for a pass across a
+       * rank that is cut while still travelling.
+       */
+      easing?: "linear" | "settle" | "hold";
+      /**
+       * The target is a HEADING, not a subject: an establishing flyover
+       * aims at a point far ahead of itself to hold the horizon, and
+       * nobody expects to "see" that point. Path validation checks such
+       * a shot for camera clearance only — demanding visibility of a
+       * look-ahead 300m out rejected every flyover on the map.
+       */
+      aimIsHeading?: boolean;
     })
   | (ShotBase & {
       /** Cinematic flying camera: trails the subject at a three-quarter
@@ -496,6 +541,10 @@ export type Shot =
       height?: number;
       /** Which side of the subject's path the camera rides. */
       side?: 1 | -1;
+      /** Angle off the subject's tail, radians (default
+       *  DOLLY_SIDE_ANGLE). Math.PI/2 rides level with them — the
+       *  "tagging along" flight beside a capper. */
+      sideAngle?: number;
       /**
        * A world point the camera should keep at its BACK — the map's
        * midpoint between the bases. The camera rides outside the subject
@@ -504,6 +553,26 @@ export type Shot =
        */
       awayFrom?: DirectorVec3;
     });
+
+/**
+ * A fixedOrbit placement solved against real geometry at plan time,
+ * verified across the shot's whole duration rather than at one instant.
+ * Values are ABSOLUTE (not scales of the planned shot) so the runtime
+ * applies them without re-deriving the planner's framing arithmetic.
+ */
+export interface StagedPlacement {
+  /** Solved orbit bearing (the fixedOrbit angle convention). */
+  angle: number;
+  /** Solved standoff radius in world units. */
+  radius: number;
+  /** Solved camera lift as a fraction of radius (already capped). */
+  liftFactor: number;
+  /** Anchor override (surface-lifted out of terrain), Torque space. */
+  anchor?: DirectorVec3;
+  /** Fraction of sampled shot time the subject was visible from the
+   *  solved eye (1 = never blocked). */
+  visibility: number;
+}
 
 /** Guarantee-pass report row: one per tier-1 event. */
 export interface CoverageRow {
@@ -514,38 +583,13 @@ export interface CoverageRow {
 }
 
 /**
- * Match facts embedded in the plan so the commentary generator (the
- * CastGenius repo) can run from cast.json ALONE — no demo parsing
- * downstream. Time-series values resolve as "last entry with
- * timeSec <= t".
+ * The director's plan. Everything a consumer reads is promised by
+ * `CastPlan`; the assignability check below is what keeps the two from
+ * drifting — a shot field renamed here without the contract following
+ * fails to compile.
  */
-export interface MatchFacts {
-  missionName: string | null;
-  missionDisplayName: string | null;
-  gameType: string | null;
-  serverDisplayName: string | null;
-  durationSec: number;
-  matchStartSec: number | null;
-  matchEndSec: number | null;
-  teams: { teamId: number; name: string }[];
-  /** Full score vector pushed on any team-score change. */
-  scores: {
-    timeSec: number;
-    teams: { teamId: number; score: number }[];
-  }[];
-  /**
-   * Connected-player counts + top scorers, pushed on count change and
-   * refreshed at least every 30s (score freshness for color talk).
-   * Count includes observers — the number a server browser shows.
-   */
-  roster: {
-    timeSec: number;
-    count: number;
-    scorers: { name: string; teamId: number; score: number }[];
-  }[];
-}
-
 export interface ShotPlan {
+  contractVersion: CastPlan["contractVersion"];
   gameMode: "ctf" | "rabbit" | "deathmatch" | "landmarks";
   /**
    * Dead air at the head of the recording worth jumping over — a long
@@ -555,10 +599,23 @@ export interface ShotPlan {
    * opens straight into play.
    */
   skipToSec?: number;
+  /**
+   * Flag state sampled on CHANGE, independent of camera cuts — see
+   * buildFlagTimeline. Scene flag state is one snapshot per shot and
+   * shots run to 20s, so a live consumer reading between cuts was
+   * describing state up to 12s stale.
+   */
+  flagTimeline?: { timeSec: number; flags: SceneFlagState[] }[];
   /** Time-ordered, non-overlapping, covering [0, durationSec]. */
   shots: Shot[];
   coverage: CoverageRow[];
   /** Present on plans from current scans; the commentary generator
    *  requires it (its only input is the cast.json). */
   matchFacts?: MatchFacts;
+  /** The map as a venue, once the world has arrived. */
+  venue?: Venue;
 }
+
+/** Compile-time only: the plan the director writes IS a CastPlan. */
+type PlanConformsToContract = ShotPlan extends CastPlan ? true : never;
+export const PLAN_CONFORMS_TO_CONTRACT: PlanConformsToContract = true;

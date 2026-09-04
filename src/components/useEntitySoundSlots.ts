@@ -10,6 +10,7 @@ import type { Object3D } from "three";
 import { useFrame } from "@react-three/fiber";
 import { useAudio } from "./AudioContext";
 import {
+  audioContextRunning,
   resolveAudioProfile,
   getCachedAudioBuffer,
   createPositionalAudio,
@@ -142,6 +143,14 @@ export function useEntitySoundSlots(
         // Resolve profile and buffer (may be cached).
         const cached = profileCacheRef.current.get(profileId);
         if (cached) {
+          // A one-shot started against a context that isn't running queues
+          // at its frozen currentTime and fires the instant the context
+          // resumes, alongside every other sound queued meanwhile (see
+          // audioContextRunning). Leaving the slot empty retries it on a
+          // later frame instead; looping slots are exempt, as they're
+          // meant to be playing continuously either way.
+          if (!cached.profile.isLooping && !audioContextRunning(audioListener))
+            continue;
           // Have profile + buffer — start playing.
           if (!slots[i]) {
             const sound = createPositionalAudio(audioListener, cached.profile);

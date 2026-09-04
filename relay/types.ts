@@ -104,6 +104,23 @@ export interface WatchHudStatePayload {
   /** Match-over interval: gameOver debrief seen, next MsgClientReady not. */
   matchEnded?: boolean;
   matchStarted?: boolean;
+  /**
+   * The mission's loading-screen text (MsgLoadInfo … MsgLoadInfoDone),
+   * sent once per client at join — a late joiner never sees it live.
+   */
+  loadInfo?: ServerLoadInfo;
+}
+
+/**
+ * Loading-screen content the server sends to every joining client
+ * (loadingGui.cs sendLoadInfoToClient) — the same MissionInfo text the
+ * map library parses from the .mis, but authoritative for the server's
+ * copy of the map. Lines are Torque GUI markup.
+ */
+export interface ServerLoadInfo {
+  quoteLines: string[];
+  objectiveLines: string[];
+  rulesLines: string[];
 }
 
 /** Target-system entry mirroring InitialBlockData's TargetEntry, with

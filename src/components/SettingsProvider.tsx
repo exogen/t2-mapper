@@ -39,7 +39,7 @@ export const MAX_SPEED_MULTIPLIER = 1;
 
 /** Render-scale fractions offered in the Graphics panel (of the standard
  *  render resolution: devicePixelRatio clamped to [1, 2]). */
-export const RENDER_SCALE_OPTIONS: readonly number[] = [0.5, 0.75, 1];
+export const RENDER_SCALE_OPTIONS: readonly number[] = [0.25, 0.5, 0.75, 1];
 
 export const DEFAULT_MOUSE_SENSITIVITY = 32 / 16000; // 0.002
 export const MIN_MOUSE_SENSITIVITY = 1 / 16000;
@@ -69,6 +69,10 @@ type SettingsContextType = {
    *  the camera cast still runs, but the mp3 is never downloaded. */
   commentaryEnabled: boolean;
   setCommentaryEnabled: StateSetter<boolean>;
+  /** Show the commentary's lines as subtitles, scheduled from the cue
+   *  file — works with or without the audio track. */
+  commentarySubtitles: boolean;
+  setCommentarySubtitles: StateSetter<boolean>;
   adjustAudioSpeed: boolean;
   setAdjustAudioSpeed: StateSetter<boolean>;
   sidebarOpen: boolean;
@@ -139,6 +143,7 @@ type PersistedSettings = {
   warriorName?: string;
   audioVolume?: number;
   commentaryEnabled?: boolean;
+  commentarySubtitles?: boolean;
   invertScroll?: boolean;
   invertDrag?: boolean;
   invertJoystick?: boolean;
@@ -196,6 +201,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   const [audioEnabled, setAudioEnabled] = useState(true);
   const [audioVolume, setAudioVolume] = useState(0.75);
   const [commentaryEnabled, setCommentaryEnabled] = useState(true);
+  const [commentarySubtitles, setCommentarySubtitles] = useState(false);
   const [adjustAudioSpeed, setAdjustAudioSpeed] = useState(true);
   const [animationEnabled, setAnimationEnabled] = useState(true);
   const [debugMode, setDebugMode] = useState(false);
@@ -252,6 +258,8 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       setAudioVolume,
       commentaryEnabled,
       setCommentaryEnabled,
+      commentarySubtitles,
+      setCommentarySubtitles,
       adjustAudioSpeed,
       setAdjustAudioSpeed,
       sidebarOpen,
@@ -287,6 +295,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       warriorName,
       audioVolume,
       commentaryEnabled,
+      commentarySubtitles,
       adjustAudioSpeed,
       sidebarOpen,
       fpsLimit,
@@ -403,6 +412,9 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     if (savedSettings.commentaryEnabled != null) {
       setCommentaryEnabled(savedSettings.commentaryEnabled);
     }
+    if (savedSettings.commentarySubtitles != null) {
+      setCommentarySubtitles(savedSettings.commentarySubtitles);
+    }
     if (savedSettings.adjustAudioSpeed != null) {
       setAdjustAudioSpeed(savedSettings.adjustAudioSpeed);
     }
@@ -494,6 +506,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
         warriorName,
         audioVolume,
         commentaryEnabled,
+        commentarySubtitles,
         adjustAudioSpeed,
         invertScroll,
         invertDrag,
@@ -535,6 +548,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     warriorName,
     audioVolume,
     commentaryEnabled,
+    commentarySubtitles,
     adjustAudioSpeed,
     invertScroll,
     invertDrag,

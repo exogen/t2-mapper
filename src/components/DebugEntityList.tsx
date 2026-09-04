@@ -1,7 +1,13 @@
-import { memo, useMemo, useCallback, useState, useDeferredValue } from "react";
+import {
+  memo,
+  useMemo,
+  useCallback,
+  useEffect,
+  useState,
+  useDeferredValue,
+} from "react";
 import { FaLocationArrow } from "react-icons/fa6";
 import { matchSorter } from "match-sorter";
-import { useGameEntities } from "../state/gameEntityStore";
 import { cameraTourStore } from "../state/cameraTourStore";
 import type { GameEntity } from "../state/gameEntityTypes";
 import { torqueToThree } from "../scene/coordinates";
@@ -158,43 +164,93 @@ const ENTITY_MATCH_KEYS = [
   "waterData.surfaceName",
 ];
 
+/** Not worth a row: scene-wide singletons and placeholders. */
+const UNLISTED_RENDER_TYPES = new Set(["Sky", "Sun", "MissionArea", "None"]);
+
+/**
+ * How often the list re-reads the entity store. Entities change every
+ * tick during playback; a panel that re-grouped (and re-ran the filter)
+ * on each change was jumpy and paid for it every frame.
+ */
+const REFRESH_MS = 500;
+
+interface EntitySnapshot {
+  /** The listed entities, as of the last refresh. */
+  entities: GameEntity[];
+  /** Every class seen since this data source appeared. A class that
+   *  empties out (projectiles, explosions) keeps its row at zero
+   *  instead of the tree reflowing around it. */
+  classes: string[];
+}
+
+function listedEntities(): GameEntity[] {
+  const state = gameEntityStore.getState();
+  const entities = isStreamingSource(state.dataSource)
+    ? state.streamEntities
+    : state.missionEntities;
+  const out: GameEntity[] = [];
+  for (const entity of entities.values()) {
+    if (!UNLISTED_RENDER_TYPES.has(entity.renderType)) out.push(entity);
+  }
+  return out;
+}
+
+/** The entity store, sampled at most every REFRESH_MS while it changes. */
+function useEntitySnapshot(): EntitySnapshot {
+  const [snapshot, setSnapshot] = useState<EntitySnapshot>(() => ({
+    entities: listedEntities(),
+    classes: [],
+  }));
+  useEffect(() => {
+    let source: unknown = null;
+    let classes = new Set<string>();
+    const take = () => {
+      const { dataSource } = gameEntityStore.getState();
+      if (source !== dataSource) {
+        source = dataSource;
+        classes = new Set();
+      }
+      const entities = listedEntities();
+      for (const entity of entities) classes.add(entity.className);
+      setSnapshot({ entities, classes: [...classes] });
+    };
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const unsubscribe = gameEntityStore.subscribe(() => {
+      if (timer == null) {
+        timer = setTimeout(() => {
+          timer = null;
+          take();
+        }, REFRESH_MS);
+      }
+    });
+    take();
+    return () => {
+      unsubscribe();
+      if (timer != null) clearTimeout(timer);
+    };
+  }, []);
+  return snapshot;
+}
+
 export const DebugEntityList = memo(function DebugEntityList() {
   const [filterText, setFilterText] = useState("");
   const activeFilterText = useDeferredValue(filterText.trim());
-
-  const entities = useGameEntities();
-  // useGameEntities re-renders on version bump, but the Map reference is
-  // stable (mutated in place). Use version as a useMemo dep to recompute.
-  const version = gameEntityStore.getState().version;
-
-  const filteredEntities = useMemo(() => {
-    const allEntities = Array.from(entities.values());
-
-    return activeFilterText
-      ? matchSorter(allEntities, activeFilterText, {
-          keys: ENTITY_MATCH_KEYS,
-        })
-      : allEntities;
-
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeFilterText, entities, version]);
+  const { entities, classes } = useEntitySnapshot();
 
   const grouped = useMemo(() => {
+    // The filter runs only while there is one. match-sorter scans every
+    // entity per call and keeps no index, so this is the whole cost.
+    const shown = activeFilterText
+      ? matchSorter(entities, activeFilterText, { keys: ENTITY_MATCH_KEYS })
+      : entities;
     const groups = new Map<string, GameEntity[]>();
-
-    for (const entity of filteredEntities) {
-      if (
-        entity.renderType === "Sky" ||
-        entity.renderType === "Sun" ||
-        entity.renderType === "MissionArea" ||
-        entity.renderType === "None"
-      )
-        continue;
-      const key = entity.className;
-      let list = groups.get(key);
+    // Filtering shows matches only; unfiltered, every class ever seen.
+    if (!activeFilterText) for (const name of classes) groups.set(name, []);
+    for (const entity of shown) {
+      let list = groups.get(entity.className);
       if (!list) {
         list = [];
-        groups.set(key, list);
+        groups.set(entity.className, list);
       }
       list.push(entity);
     }
@@ -204,7 +260,7 @@ export const DebugEntityList = memo(function DebugEntityList() {
       list.sort((a, b) => a.id.localeCompare(b.id));
     }
     return sorted;
-  }, [filteredEntities]);
+  }, [activeFilterText, entities, classes]);
 
   return (
     <section

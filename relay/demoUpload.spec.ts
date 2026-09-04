@@ -65,6 +65,8 @@ vi.mock("@aws-sdk/client-s3", () => ({
 }));
 
 const { DemoUploader, loadUploadConfig } = await import("./demoUpload.js");
+const { DemoFileWriter, buildDemoValues, buildInitialBlock } =
+  await import("./demoWriter.js");
 
 const config = {
   endpoint: "https://example.r2.cloudflarestorage.com",
@@ -244,7 +246,7 @@ describe("DemoUploader", () => {
     expect(uploadCalls).toHaveLength(2);
   });
 
-  it("sweep removes stale .partial debris and enqueues completed demos", async () => {
+  it("sweep sets aside unreadable .partial debris and enqueues completed demos", async () => {
     const partial = path.join(dir, "crashed.rec.partial");
     const complete = path.join(dir, "complete.rec");
     await fsp.writeFile(partial, new Uint8Array([1]));
@@ -255,12 +257,58 @@ describe("DemoUploader", () => {
     const uploader = new DemoUploader(config, dir);
     await uploader.sweep();
 
+    // The unreadable spool is parked in the bucket under failed/ (no
+    // sidecar, no index entry) and leaves the volume with the demo.
     await vi.waitFor(async () => {
       expect(await fsp.readdir(dir)).toEqual([]);
     });
     expect(uploadCalls).toEqual([
       { Bucket: "t2-demos", Key: "demos/complete.rec" },
+      { Bucket: "t2-demos", Key: "demos/failed/crashed.rec.partial.failed" },
     ]);
+    expect(s3Commands.filter((c) => c.type === "PutObject")).toEqual([]);
+  });
+
+  it("sweep salvages a cold crashed spool and uploads the demo", async () => {
+    const finalPath = path.join(dir, "crashed.rec");
+    const writer = new DemoFileWriter(finalPath, { flushIntervalMs: 0 });
+    writer.begin(
+      buildInitialBlock({
+        connectSequence: 1,
+        missionName: "Katabatic",
+        demoValues: buildDemoValues({
+          recorderName: "Observer",
+          serverName: "the cut",
+          serverAddress: "1.2.3.4:28000",
+          date: new Date(),
+          missionDisplayName: "Katabatic",
+          mod: "classic",
+          gameType: "Capture the Flag",
+        }),
+      }),
+    );
+    for (let i = 0; i < 3; i++) writer.writeMove();
+    await writer.strand();
+    const past = new Date(Date.now() - 10 * 60_000);
+    await fsp.utimes(writer.partialPath, past, past);
+
+    const uploader = new DemoUploader(config, dir, { salvageMinLengthMs: 64 });
+    await uploader.sweep();
+    await vi.waitFor(async () => {
+      expect(await fsp.readdir(dir)).toEqual([]);
+    });
+    expect(uploadCalls).toEqual([
+      { Bucket: "t2-demos", Key: "demos/crashed.rec" },
+    ]);
+    const sidecar = s3Commands.find(
+      (c) => c.type === "PutObject" && c.input.Key === "demos/crashed.rec.json",
+    );
+    expect(sidecar).toBeDefined();
+    expect(JSON.parse(sidecar!.input.Body!)).toMatchObject({
+      server: "the cut",
+      durationMs: 96,
+      players: [],
+    });
   });
 
   it("sweep leaves fresh .partial files alone (live spools)", async () => {
@@ -289,7 +337,14 @@ describe("DemoUploader", () => {
     });
     await uploader.sweep();
     await settle();
-    expect(await fsp.readdir(dir)).toEqual(["live.rec.partial"]);
+    // The debris (not a valid spool) is parked in the bucket; the live
+    // spool is untouched.
+    await vi.waitFor(async () => {
+      expect(await fsp.readdir(dir)).toEqual(["live.rec.partial"]);
+    });
+    expect(uploadCalls).toEqual([
+      { Bucket: "t2-demos", Key: "demos/failed/crashed.rec.partial.failed" },
+    ]);
   });
 
   it("does nothing without config (demos stay local)", async () => {

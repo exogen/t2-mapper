@@ -6,15 +6,11 @@ import { useTexture } from "@react-three/drei";
 import { useFrame } from "@react-three/fiber";
 import {
   AdditiveBlending,
-  Box3,
   BoxGeometry,
   Color,
   DoubleSide,
-  Matrix4,
   NoColorSpace,
-  Quaternion,
   RepeatWrapping,
-  Vector3,
 } from "three";
 import type { Texture } from "three";
 import type {
@@ -27,6 +23,7 @@ import {
   registerForceFieldCollider,
   unregisterForceFieldCollider,
 } from "../collision/worldCollision";
+import { forceFieldCollider } from "../world/placement";
 import {
   createForceFieldMaterial,
   OPACITY_FACTOR,
@@ -149,16 +146,14 @@ export function ForceFieldBare({ entity }: { entity: ForceFieldBareEntity }) {
   // collides with closed fields; open/close rebuilds the entity, so the
   // effect re-registers with the new state.
   useEffect(() => {
-    const dims = entity.forceFieldData?.dimensions;
-    if (!dims) return;
-    const matrix = new Matrix4().compose(
-      new Vector3(...(entity.position ?? [0, 0, 0])),
-      new Quaternion(...(entity.rotation ?? [0, 0, 0, 1])),
-      new Vector3(1, 1, 1),
+    const collider = forceFieldCollider(entity);
+    if (!collider) return;
+    registerForceFieldCollider(
+      entity.id,
+      collider.matrix,
+      collider.box,
+      collider.enabled,
     );
-    // Corner-origin box matching useCornerBoxGeometry.
-    const box = new Box3(new Vector3(0, 0, 0), new Vector3(...dims));
-    registerForceFieldCollider(entity.id, matrix, box, !entity.fieldOpen);
     return () => unregisterForceFieldCollider(entity.id);
   }, [entity]);
 

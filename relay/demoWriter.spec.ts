@@ -90,7 +90,11 @@ describe("buildInitialBlock", () => {
     expect(parsed.demoValues).toEqual(demoValues);
     expect(parsed.connectionState.lastSeqRecvd).toBe(0);
     expect(parsed.connectionState.highestAckedSeq).toBe(0);
-    expect(parsed.connectionState.lastSendSeq).toBe(0x1fffffff);
+    // Fresh-connection seed: the engine requires notifyCount to equal
+    // lastSendSeq - highestAckedSeq, and treats a larger difference as a
+    // full send window (no notify queued per marker → crash on first ack).
+    expect(parsed.connectionState.lastSendSeq).toBe(0);
+    expect(parsed.notifyCount).toBe(0);
     expect(parsed.connectionState.connectSequence).toBe(CONNECT_SEQUENCE);
     expect(parsed.connectionState.connectionEstablished).toBe(true);
     expect(parsed.roundTripTime).toBe(0);
@@ -103,7 +107,11 @@ describe("buildInitialBlock", () => {
     expect(parsed.missionName).toBe("Katabatic");
     expect(parsed.missionCRC).toBe(0);
     expect(parsed.phase2Valid).toBe(true);
-    expect(parsed.phase2TrailingBits).toBe(8);
+    // Bit padding plus the trailing pad byte: neither the engine nor the
+    // parser byte-aligns before the simple TargetManagers.
+    expect(parsed.phase2TrailingBits).toBeGreaterThanOrEqual(8);
+    expect(parsed.phase2TrailingBits).toBeLessThan(16);
+    expect(parsed.warnings).toEqual([]);
     expect(parser.blockCount).toBe(0);
   });
 });
@@ -242,6 +250,32 @@ describe("DemoFileWriter", () => {
       RangeError,
     );
     await writer.abort();
+  });
+
+  it("strand keeps the partial file with a complete deflate stream", async () => {
+    const finalPath = await makeTempPath();
+    const initialBlock = buildInitialBlock({
+      connectSequence: CONNECT_SEQUENCE,
+      missionName: "Katabatic",
+      demoValues,
+    });
+    const writer = new DemoFileWriter(finalPath, { flushIntervalMs: 0 });
+    writer.begin(initialBlock);
+    const packet = buildPingPacket(1);
+    writer.writeMove();
+    writer.writePacket(packet);
+    await writer.strand();
+    await writer.strand();
+
+    await expect(fsp.access(finalPath)).rejects.toThrow();
+    const spool = new Uint8Array(await fsp.readFile(`${finalPath}.partial`));
+    const prefix =
+      buildHeader(initialBlock.length).length + initialBlock.length;
+    // Everything buffered reached the file: the stream inflates without
+    // needing the salvage's lenient flush mode.
+    const stream = zlib.inflateRawSync(spool.subarray(prefix));
+    expect(stream.length).toBe(2 + 64 + 2 + packet.length);
+    expect(stream.subarray(2 + 64 + 2)).toEqual(Buffer.from(packet));
   });
 
   it("abort removes the partial file and is idempotent", async () => {

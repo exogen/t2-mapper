@@ -10,7 +10,8 @@ import { useRecorderName } from "../state/gameEntityStore";
 import { usePlaybackActions } from "./usePlayback";
 import { BsPlayFill } from "react-icons/bs";
 import { AiFillStop } from "react-icons/ai";
-import { LuCrosshair } from "react-icons/lu";
+import { LuCrosshair, LuUserPen } from "react-icons/lu";
+import { ColoredName } from "./ColoredName";
 import styles from "./DemoTimeline.module.css";
 
 function formatTime(seconds: number): string {
@@ -27,7 +28,11 @@ const EVENT_ICON: Record<TimelineEventType, React.ReactNode> = {
   "flag-return": <PiFlagBannerFill />,
   "flag-cap": <PiFlagBannerFill />,
   "match-start": <BsPlayFill />,
+  // Emitted only by the director's own event scanner, never by the
+  // timeline scan — present to satisfy the exhaustive record.
+  "match-countdown": <BsPlayFill />,
   "match-end": <AiFillStop />,
+  rename: <LuUserPen />,
 };
 
 const WEAPONS_PAST_TENSE: Record<string, string> = {
@@ -39,6 +44,10 @@ function renderEventDescription(
   event: TimelineEvent,
   recorderName: string | null,
 ): React.ReactNode {
+  // Names as sent, so the official clan tag shows in its yellow; a
+  // name without markup renders as plain text.
+  const named = (name: string | undefined, raw: string | undefined) =>
+    raw ? <ColoredName raw={raw} tagsOnly /> : (name ?? "");
   // First-person recordings phrase the recorder's own events as "You";
   // observer recordings (relay auto-capture) name the actual players.
   const isRecorder = (name: string | undefined) =>
@@ -49,7 +58,9 @@ function renderEventDescription(
     return (
       <>
         <span className={styles.Killer} title={event.killer}>
-          {isRecorder(event.killer) ? "You" : event.killer}
+          {isRecorder(event.killer)
+            ? "You"
+            : named(event.killer, event.raw?.killer)}
         </span>{" "}
         <span className={styles.DamageType}>
           {event.weapon
@@ -57,7 +68,9 @@ function renderEventDescription(
               `${event.weapon}${event.weapon.endsWith("e") ? "d" : "ed"}`)
             : "killed"}
         </span>{" "}
-        <span className={styles.Victim}>{event.victim}</span>
+        <span className={styles.Victim}>
+          {named(event.victim, event.raw?.victim)}
+        </span>
       </>
     );
   }
@@ -65,7 +78,9 @@ function renderEventDescription(
     if (event.killer) {
       return (
         <>
-          <span className={styles.Killer}>{event.killer}</span>{" "}
+          <span className={styles.Killer}>
+            {named(event.killer, event.raw?.killer)}
+          </span>{" "}
           <span className={styles.DamageType}>
             {event.weapon
               ? (WEAPONS_PAST_TENSE[event.weapon] ??
@@ -73,7 +88,9 @@ function renderEventDescription(
               : "killed"}
           </span>{" "}
           <span className={styles.Victim} title={event.victim}>
-            {isRecorder(event.victim) ? "you" : event.victim}
+            {isRecorder(event.victim)
+              ? "you"
+              : named(event.victim, event.raw?.victim)}
           </span>
         </>
       );
@@ -90,7 +107,10 @@ function renderEventDescription(
     if (event.actor) {
       return (
         <>
-          {isRecorder(event.actor) ? "You" : event.actor} grabbed {flagLabel}
+          {isRecorder(event.actor)
+            ? "You"
+            : named(event.actor, event.raw?.actor)}{" "}
+          grabbed {flagLabel}
         </>
       );
     }
@@ -106,7 +126,10 @@ function renderEventDescription(
     if (event.actor) {
       return (
         <>
-          {isRecorder(event.actor) ? "You" : event.actor} dropped {flagLabel}
+          {isRecorder(event.actor)
+            ? "You"
+            : named(event.actor, event.raw?.actor)}{" "}
+          dropped {flagLabel}
         </>
       );
     }
@@ -122,7 +145,10 @@ function renderEventDescription(
     if (event.actor) {
       return (
         <>
-          {isRecorder(event.actor) ? "You" : event.actor} returned {flagLabel}
+          {isRecorder(event.actor)
+            ? "You"
+            : named(event.actor, event.raw?.actor)}{" "}
+          returned {flagLabel}
         </>
       );
     }
@@ -142,7 +168,22 @@ function renderEventDescription(
             : "a flag";
     return (
       <>
-        {event.capturer} captured {flagLabel}
+        {named(event.capturer, event.raw?.capturer)} captured {flagLabel}
+      </>
+    );
+  }
+  if (event.type === "rename" && event.actor) {
+    return (
+      <>
+        <span className={styles.Victim} title={event.previousName}>
+          {event.previousName
+            ? named(event.previousName, event.raw?.previousName)
+            : "A player"}
+        </span>{" "}
+        <span className={styles.DamageType}>is now</span>{" "}
+        <span className={styles.Killer}>
+          {named(event.actor, event.raw?.actor)}
+        </span>
       </>
     );
   }
@@ -153,7 +194,13 @@ function renderEventDescription(
 }
 
 type Filter =
-  "all" | "kill" | "death" | "flag-grab" | "flag-return" | "flag-cap";
+  | "all"
+  | "kill"
+  | "death"
+  | "flag-grab"
+  | "flag-return"
+  | "flag-cap"
+  | "rename";
 
 export function DemoTimeline() {
   const events = useDemoTimeline((s) => s.events);
@@ -218,6 +265,7 @@ export function DemoTimeline() {
   const grabCount = events.filter((e) => e.type === "flag-grab").length;
   const returnCount = events.filter((e) => e.type === "flag-return").length;
   const capCount = events.filter((e) => e.type === "flag-cap").length;
+  const renameCount = events.filter((e) => e.type === "rename").length;
 
   return (
     <div className={styles.Root}>
@@ -274,6 +322,16 @@ export function DemoTimeline() {
         >
           Caps ({capCount})
         </button>
+        {renameCount > 0 && (
+          <button
+            type="button"
+            className={styles.FilterButton}
+            data-active={effectiveFilter === "rename"}
+            onClick={() => setFilter("rename")}
+          >
+            Renames ({renameCount})
+          </button>
+        )}
       </div>
       {filtered.length === 0 ? (
         <div className={styles.Empty}>No events found.</div>

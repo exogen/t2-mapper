@@ -1,28 +1,20 @@
 import { createStore } from "zustand/vanilla";
+import { streamClock } from "./streamPlaybackStore";
 import { useStoreWithEqualityFn } from "zustand/traditional";
 import { createLogger } from "../logger";
 import { engineStore } from "./engineStore";
 import { cameraTourStore } from "./cameraTourStore";
 import { commandCircuitStore } from "./commandCircuitStore";
-import { demoTimelineStore } from "./demoTimelineStore";
-import type { TimelineEvent } from "./demoTimelineStore";
-import {
-  commentaryPlayback,
-  streamClock,
-  streamPlaybackStore,
-} from "./streamPlaybackStore";
+import { commentaryPlayback, streamPlaybackStore } from "./streamPlaybackStore";
 
-/** Lead-in before the commentary's first line: enough that demo-seek
- *  tick granularity and clock settle can't swallow the opening word.
- *  Exported so the audio player pre-buffers at the same position. */
-export const DIRECTOR_INTRO_LEAD_SEC = 2;
-/** An intro claiming to start further than this before the plan's own
- *  skip point is treated as bad sidecar data and ignored. */
-const DIRECTOR_INTRO_MAX_LEAD_SEC = 120;
+export { DIRECTOR_INTRO_LEAD_SEC } from "./directorStart";
+import { directorStartSec } from "./directorStart";
 import { demoLoadStore } from "./demoLoadStore";
 import { DIRECTOR_ORBIT_TARGET_DAMPING } from "../director/cameraRig";
 import { exitToFreeFly } from "./watchFollow";
 import type { DirectorDataset, ShotPlan } from "../director/types";
+import { planFromSidecar } from "../director/castSidecar";
+import { sidecarUrl } from "../stream/demoIndex";
 
 const log = createLogger("demoDirectorStore");
 
@@ -32,14 +24,21 @@ export type DirectorStatus =
 /**
  * Auto-director state for the loaded demo. The scan/plan pipeline runs
  * lazily on the first button press (see startDirector); "playing" is the
- * lean-back mode where DirectorController drives the camera and every
- * camera input maps to a single interrupt that exits back to free-fly.
+ * lean-back mode where DirectorController drives the camera until F or
+ * Escape (or the CastGenius button) exits back to free-fly.
  */
 export interface DemoDirectorState {
   status: DirectorStatus;
   scanProgress: number | null;
   dataset: DirectorDataset | null;
   plan: ShotPlan | null;
+  /**
+   * How far the cast has been planned. The plan GROWS while it plays,
+   * so running off the end of `plan.shots` is not the end of the
+   * broadcast unless `planComplete` says so.
+   */
+  plannedToSec: number;
+  planComplete: boolean;
   error: string | null;
 }
 
@@ -48,8 +47,13 @@ export const demoDirectorStore = createStore<DemoDirectorState>()(() => ({
   scanProgress: null,
   dataset: null,
   plan: null,
+  plannedToSec: 0,
+  planComplete: false,
   error: null,
 }));
+
+/** How often the background planner tops the plan up. */
+const PLAN_AHEAD_POLL_MS = 1000;
 
 export function useDirector<T>(
   selector: (state: DemoDirectorState) => T,
@@ -82,6 +86,8 @@ export function resetDirector(): void {
     scanProgress: null,
     dataset: null,
     plan: null,
+    plannedToSec: 0,
+    planComplete: false,
     error: null,
   });
 }
@@ -164,35 +170,26 @@ function beginDirecting(): void {
   streamPlaybackStore.setState({
     orbitTargetDamping: DIRECTOR_ORBIT_TARGET_DAMPING,
   });
-  // Jump the dead air at the head of a recording — a tournament demo can
-  // spend a quarter of an hour on team-picking before the whistle, and
-  // nobody wants to watch a filling server. When a commentary track is
-  // on (its intro may open before the plan's first scene — server, map
-  // and matchup announcements), start where the broadcast starts
-  // instead, with a beat of lead-in. Only ever skips FORWARD, so it
-  // never fights a viewer who has already seeked into the match.
-  const skipTo = demoDirectorStore.getState().plan?.skipToSec;
-  // A sane intro opens a little before the plan's first scene; a stale
-  // or mismatched sidecar could claim one minutes earlier, which would
-  // drag the viewer back into the pre-match dead air the skip exists
-  // to avoid — ignore an intro that leads the skip by too much.
-  const introSane =
-    commentaryPlayback.startSec != null &&
-    (skipTo == null ||
-      skipTo - commentaryPlayback.startSec <= DIRECTOR_INTRO_MAX_LEAD_SEC);
-  const introAt = introSane
-    ? Math.max(0, commentaryPlayback.startSec! - DIRECTOR_INTRO_LEAD_SEC)
-    : null;
-  const startAt =
-    introAt != null && skipTo != null
-      ? Math.min(introAt, skipTo)
-      : (introAt ?? skipTo);
+  // Jump the dead air at the head of a recording: to a beat before the
+  // commentary's first line when a track is loaded — that is where the
+  // broadcast starts, on the bucket's legacy casts and the new ones
+  // alike — else to the plan's own skip mark. Forward only. (Directing
+  // ran from wherever the playhead sat for a while, on the grounds that
+  // the new director covers the picking period; it does, but the 207
+  // casts already in the bucket open on a quarter of an hour of a quiet
+  // flag stand, and their commentary starts ten minutes in.) Live never
+  // gets here: there is no head of a recording to seek past.
+  const startAt = directorStartSec({
+    nowSec: streamClock.time,
+    introSec: commentaryPlayback.startSec,
+    skipToSec: demoDirectorStore.getState().plan?.skipToSec,
+  });
   const engine = engineStore.getState();
-  if (startAt != null && streamClock.time < startAt) {
+  if (startAt != null) {
     log.info(
       "Skipping to %ds (%s)",
       Math.round(startAt),
-      introAt != null && introAt <= (skipTo ?? Infinity)
+      commentaryPlayback.startSec != null
         ? "broadcast intro"
         : "past pre-match dead air",
     );
@@ -219,10 +216,6 @@ export function nearFlagStand(
   );
 }
 
-/** The sidecar schema this build understands (see backfill-cast-plans). */
-const CAST_FORMAT = "castgenius-plan";
-const CAST_VERSION = 1;
-
 /**
  * Debug escape hatch (CAST_LOCAL_PLAN=1 in the env): force the
  * director to scan and plan in the browser, ignoring any pre-generated
@@ -242,31 +235,27 @@ async function adoptPlanSidecar(token: number): Promise<boolean> {
   const sourceUrl = demoLoadStore.getState().sourceUrl;
   if (!sourceUrl) return false;
   try {
-    const res = await fetch(`${sourceUrl}.cast.json`);
+    const res = await fetch(sidecarUrl(sourceUrl, "cast.json"));
     if (!res.ok) return false;
-    const doc = (await res.json()) as {
-      format?: string;
-      version?: number;
-      plan?: ShotPlan;
-    };
-    if (
-      doc.format !== CAST_FORMAT ||
-      doc.version !== CAST_VERSION ||
-      !doc.plan?.shots?.length
-    ) {
-      return false;
-    }
+    const plan = planFromSidecar(await res.json());
+    if (!plan) return false;
     if (scanToken !== token) return false;
     log.info(
       "Adopted pre-generated cast plan: %d shots (%s)",
-      doc.plan.shots.length,
-      doc.plan.gameMode,
+      plan.shots.length,
+      plan.gameMode,
     );
+    // A sidecar is a finished cast: past its last shot the broadcast is
+    // over and control goes back to the viewer. Left false, the
+    // controller held the final shot forever, waiting for a plan that
+    // was never going to grow.
     demoDirectorStore.setState({
       status: "ready",
       scanProgress: null,
       dataset: null,
-      plan: doc.plan,
+      plan,
+      plannedToSec: plan.shots[plan.shots.length - 1].endSec,
+      planComplete: true,
       error: null,
     });
     return true;
@@ -285,16 +274,8 @@ async function fillDatasetInBackground(
 ): Promise<void> {
   try {
     if (!demoBuffer) return;
-    const events = await waitForTimelineEvents(abort.signal);
-    const killEvents = demoTimelineStore.getState().killEvents ?? [];
     const { scanDemoDirector } = await import("../stream/demoDirectorScanner");
-    const dataset = await scanDemoDirector(
-      demoBuffer,
-      events,
-      killEvents,
-      undefined,
-      abort.signal,
-    );
+    const dataset = await scanDemoDirector(demoBuffer, undefined, abort.signal);
     if (scanToken === token) {
       demoDirectorStore.setState({ dataset });
       log.info("Background dataset scan complete behind the sidecar plan");
@@ -302,6 +283,44 @@ async function fillDatasetInBackground(
   } catch (err) {
     if (err instanceof Error && err.name === "AbortError") return;
     log.warn("Background dataset scan failed: %o", err);
+  }
+}
+
+/** How long the interior-collider registry must sit unchanged before
+ *  the world counts as loaded, and the longest staging will wait. */
+const COLLISION_QUIET_SEC = 4;
+const COLLISION_WAIT_CEILING_SEC = 30;
+
+/**
+ * Resolve once the collision world looks fully loaded: at least one
+ * interior registered and the registry quiet for a few seconds.
+ * Bounded — a map with genuinely few interiors (or a stalled load)
+ * proceeds at the ceiling rather than blocking the director forever.
+ */
+async function waitForCollisionWorld(signal: AbortSignal): Promise<void> {
+  const { interiorColliderCount } = await import("../collision/worldCollision");
+  const started = Date.now();
+  let lastCount = interiorColliderCount();
+  let quietSince = Date.now();
+  for (;;) {
+    if (signal.aborted) return;
+    const elapsed = (Date.now() - started) / 1000;
+    const count = interiorColliderCount();
+    if (count !== lastCount) {
+      lastCount = count;
+      quietSince = Date.now();
+    }
+    const quiet = (Date.now() - quietSince) / 1000;
+    if (count > 0 && quiet >= COLLISION_QUIET_SEC) return;
+    if (elapsed >= COLLISION_WAIT_CEILING_SEC) {
+      log.warn(
+        "Collision world still settling after %ds (%d interiors) — staging anyway",
+        Math.round(elapsed),
+        count,
+      );
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 500));
   }
 }
 
@@ -341,48 +360,84 @@ async function prepareDirector(): Promise<boolean> {
   }
   if (scanToken !== token) return false;
   try {
-    // Wait out the timeline scan rather than walking the buffer twice
-    // concurrently; the director's dataset embeds its events.
-    const events = await waitForTimelineEvents(abort.signal);
-    const killEvents = demoTimelineStore.getState().killEvents ?? [];
-    const { scanDemoDirector } = await import("../stream/demoDirectorScanner");
-    const dataset = await scanDemoDirector(
-      demoBuffer,
-      events,
-      killEvents,
-      (p) => {
-        if (scanToken === token) {
-          demoDirectorStore.setState({ scanProgress: p });
+    // CastGenius scans and parses its own events from the raw stream —
+    // no dependency on the app's timeline feature. The SEQUENCE lives in
+    // director/castPipeline so the headless build cannot drift from it.
+    // STREAMED, not scanned-then-planned. Walking the whole recording
+    // first is 64% of the wait before anything plays, and none of it is
+    // needed to choose the first shot — the director never looks past
+    // now + lookahead. Measured on a 25-minute demo: 10.1s to 1.7s,
+    // with the resulting plan identical shot for shot.
+    const { createCastStream } = await import("../director/castPipeline");
+    const stream = await createCastStream(demoBuffer, {
+      signal: abort.signal,
+      // On a cold start (the backfill's fresh page, a probe) the scan
+      // can outrun the interior GLBs. BOTH the scan and the staging
+      // pass raycast, so wait for the collider registry to go quiet
+      // before either runs — with no world, every death reads as
+      // airborne and every placement is certified against nothing.
+      ensureWorld: () => waitForCollisionWorld(abort.signal),
+    });
+    if (scanToken !== token) return false;
+    const plan = stream.plan;
+    const dataset = stream.dataset;
+    // NOT an error if it is empty right now. The director decides each
+    // shot as its moment arrives, so at the two-second mark the opening
+    // shot is still being framed and the plan is legitimately bare.
+    // Treating that as "no cast for this recording" refused every demo.
+    // FOLLOW THE PLAYHEAD, and nothing more.
+    //
+    // The stream can also be walked to the end — that is how a whole
+    // .rec is cast for backfill — but never here. Doing that in the
+    // browser is a batch job running behind a playing demo: it burns
+    // the main thread on a future the viewer has not reached, and it is
+    // what made playback stall for seconds at a time. On demand, the
+    // director is live: it decides each shot as its moment arrives.
+    void (async () => {
+      try {
+        while (scanToken === token) {
+          await stream.advanceTo(streamClock.time);
+          if (scanToken !== token) return;
+          const done = stream.plannedToSec >= stream.durationSec;
+          demoDirectorStore.setState({
+            plan: stream.plan,
+            dataset: stream.dataset,
+            plannedToSec: stream.plannedToSec,
+            // Only once the playhead has actually reached the end is
+            // running off the plan the end of the broadcast.
+            planComplete: done,
+          });
+          if (done && stream.plan.shots.length === 0) {
+            // Watched to the end and never decided a shot: now it is
+            // fair to say there is no cast here.
+            demoDirectorStore.setState({
+              status: "error",
+              scanProgress: null,
+              error: "No director plan for this recording",
+            });
+            return;
+          }
+          if (done) {
+            log.info(
+              "Cast complete: %d shots planned as it played",
+              stream.plan.shots.length,
+            );
+            return;
+          }
+          await new Promise<void>((r) => setTimeout(r, PLAN_AHEAD_POLL_MS));
         }
-      },
-      abort.signal,
-    );
-    if (scanToken !== token) return false;
-    const { planShots } = await import("../director/planner");
-    const plan = planShots(dataset);
-    if (scanToken !== token) return false;
-    log.info(
-      "Planned %d shots (%s), %d/%d events covered",
-      plan.shots.length,
-      plan.gameMode,
-      plan.coverage.filter((c) => c.covered).length,
-      plan.coverage.length,
-    );
-    if (plan.shots.length === 0) {
-      demoDirectorStore.setState({
-        status: "error",
-        scanProgress: null,
-        dataset,
-        plan,
-        error: "No director plan for this recording",
-      });
-      return false;
-    }
+      } catch (err) {
+        if (err instanceof Error && err.name === "AbortError") return;
+        log.error("Cast streaming failed: %o", err);
+      }
+    })();
     demoDirectorStore.setState({
       status: "ready",
       scanProgress: null,
       dataset,
       plan,
+      planComplete: false,
+      plannedToSec: stream.plannedToSec,
     });
     return true;
   } catch (err) {
@@ -396,36 +451,4 @@ async function prepareDirector(): Promise<boolean> {
     });
     return false;
   }
-}
-
-/**
- * Resolves with the timeline events once the background scan finishes
- * (empty if it never ran or failed — the director degrades to sample
- * data alone).
- */
-function waitForTimelineEvents(signal: AbortSignal): Promise<TimelineEvent[]> {
-  const state = demoTimelineStore.getState();
-  if (state.events) return Promise.resolve(state.events);
-  if (state.scanProgress == null) return Promise.resolve([]);
-  return new Promise((resolve, reject) => {
-    const cleanup = () => {
-      unsubscribe();
-      signal.removeEventListener("abort", onAbort);
-    };
-    const onAbort = () => {
-      cleanup();
-      reject(new DOMException("Aborted", "AbortError"));
-    };
-    const unsubscribe = demoTimelineStore.subscribe((s) => {
-      if (s.events) {
-        cleanup();
-        resolve(s.events);
-      } else if (s.scanProgress == null) {
-        // Scan ended without events (failed/aborted) — don't wait forever.
-        cleanup();
-        resolve([]);
-      }
-    });
-    signal.addEventListener("abort", onAbort);
-  });
 }

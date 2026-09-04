@@ -15,6 +15,8 @@ const HALF_SIZE = TERRAIN_SIZE / 2;
 const SQUARE_COUNT = TERRAIN_SIZE * TERRAIN_SIZE;
 const MAX_DDA_STEPS = 4096;
 
+import { collisionState } from "./collisionContext";
+
 export type Vec3 = [number, number, number];
 
 export interface TerrainRayHit {
@@ -25,7 +27,7 @@ export interface TerrainRayHit {
   normal: Vec3;
 }
 
-interface TerrainCollisionData {
+export interface TerrainCollisionData {
   heightMap: Uint16Array;
   squareSize: number;
   /** Per-square hole bitmap (row * 256 + col), or null when no holes. */
@@ -35,7 +37,9 @@ interface TerrainCollisionData {
   maxHeights: Float32Array;
 }
 
-let terrainData: TerrainCollisionData | null = null;
+// Held in collisionContext so more than one world can exist per
+// process; see that module. `export type` so the context can reference
+// the shape without a runtime import cycle.
 
 /** Decode Torque empty-square runs (x | y<<8 | count<<16) into a set. */
 export function decodeEmptySquares(runs: number[]): Set<number> {
@@ -60,7 +64,7 @@ export function setTerrainCollisionData(
   } | null,
 ): void {
   if (!data) {
-    terrainData = null;
+    collisionState().terrain = null;
     return;
   }
 
@@ -100,7 +104,7 @@ export function setTerrainCollisionData(
     }
   }
 
-  terrainData = {
+  collisionState().terrain = {
     heightMap,
     squareSize: data.squareSize,
     holes,
@@ -113,6 +117,42 @@ export function setTerrainCollisionData(
 function cornerHeight(data: TerrainCollisionData, col: number, row: number) {
   const index = (row & 0xff) * TERRAIN_SIZE + (col & 0xff);
   return terrainHeightToWorld(data.heightMap[index]);
+}
+
+/**
+ * The height MAP at a Torque-space point — the surface the heightfield
+ * describes, holes included, interpolated on the same Split45
+ * triangles the ray walker tests. Null only when no terrain is loaded.
+ *
+ * This is not "what a ray would hit": the ray skips empty squares,
+ * because a camera or a projectile over the mouth of a bunker is
+ * genuinely in open air. But "is this thing underground" asks about
+ * the terrain as a surface, and Raindance's generators sit under
+ * exactly such a hole.
+ */
+export function terrainHeightAt(x: number, y: number): number | null {
+  const data = collisionState().terrain;
+  if (!data) return null;
+  const gx = x / data.squareSize + HALF_SIZE;
+  const gy = y / data.squareSize + HALF_SIZE;
+  const col = Math.floor(gx);
+  const row = Math.floor(gy);
+  const fx = gx - col;
+  const fy = gy - row;
+  const hA = cornerHeight(data, col, row);
+  const hB = cornerHeight(data, col + 1, row);
+  const hC = cornerHeight(data, col, row + 1);
+  const hD = cornerHeight(data, col + 1, row + 1);
+  // Same diagonal rule as testSquare: A–D on Split45 squares, B–C
+  // otherwise. Each branch is the plane through that triangle's corners.
+  if (((col ^ row) & 1) === 0) {
+    return fx >= fy
+      ? hA + (hB - hA) * fx + (hD - hB) * fy
+      : hA + (hC - hA) * fy + (hD - hC) * fx;
+  }
+  return fx + fy <= 1
+    ? hA + (hB - hA) * fx + (hC - hA) * fy
+    : hD + (hB - hD) * (1 - fy) + (hC - hD) * (1 - fx);
 }
 
 const EPS = 1e-9;
@@ -305,7 +345,7 @@ function testSquare(
  * square are skipped without triangle tests.
  */
 export function castTerrainRay(start: Vec3, end: Vec3): TerrainRayHit | null {
-  const data = terrainData;
+  const data = collisionState().terrain;
   if (!data) return null;
   const sq = data.squareSize;
   const sx = start[0];

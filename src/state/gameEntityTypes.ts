@@ -158,6 +158,8 @@ interface PositionedBase extends EntityBase {
   energy?: number;
   actionAnim?: number;
   actionAtEnd?: boolean;
+  actionHoldAtEnd?: boolean;
+  actionSeq?: number;
 }
 
 // ── Gameplay entities ──

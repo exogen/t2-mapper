@@ -3,6 +3,7 @@ import { EventEmitter } from "node:events";
 import {
   ConnectionProtocol,
   ClientNetStringTable,
+  PingTimeout,
   buildConnectChallengeRequest,
   buildConnectRequest,
   buildClientGamePacket,
@@ -71,7 +72,11 @@ interface QueuedEvent {
 interface GameConnectionEvents {
   status: [status: ConnectionStatus, message?: string];
   packet: [data: Uint8Array];
-  /** A data-protocol packet was sent (never fired for OOB packets). */
+  /**
+   * A data packet was sent — the demo's SendPacket marker, which is
+   * what advances the recorded send sequence. Pings and acks take no
+   * sequence number and never fire this; neither do OOB packets.
+   */
   sent: [];
   ping: [ms: number];
   error: [error: Error];
@@ -93,6 +98,8 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
   private serverConnectSequence = 0;
   private _status: ConnectionStatus = "disconnected";
   private keepaliveTimer: ReturnType<typeof setInterval> | null = null;
+  /** Receive watchdog (NetConnection::checkTimeout); armed on accept. */
+  private pingTimeout: PingTimeout | null = null;
   private handshakeTimer: ReturnType<typeof setTimeout> | null = null;
   private challengeRetryTimer: ReturnType<typeof setTimeout> | null = null;
   private authDelayTimer: ReturnType<typeof setTimeout> | null = null;
@@ -442,6 +449,7 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
       "ConnectAccept received — connection established",
     );
     this.protocol.connectSequence = this.connectSequence;
+    this.pingTimeout = new PingTimeout(Date.now());
     this.startKeepalive();
     this.startOobPing();
 
@@ -542,20 +550,12 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
       ackMask,
     });
 
-    // Respond to PingPackets (type=1) with our own PingPacket.
-    // The server's processRawPacket calls sendPingResponse on receiving a
-    // PingPacket. Without this response, the server may time us out.
+    // A PingPacket (type 1) is the server's checkTimeout probing us —
+    // processRawPacket answers it with an AckPacket (sendPingResponse,
+    // FUN_0043d440), which carries no sequence number of its own.
     if (packetType === 1) {
-      connLog.debug(
-        { seq: seqNumber },
-        "Received PingPacket, sending ping response",
-      );
-      const pingResponse = this.protocol.buildPingPacket();
-      this.sendRaw(pingResponse);
-      this.emit("sent");
-      // Ledger: pong packets consume a wire seq with no RTT timestamp —
-      // log it so seq accounting stays auditable alongside "TX data".
-      connLog.debug({ wireSeq: this.protocol.lastSendSeq }, "TX pong");
+      connLog.debug({ seq: seqNumber }, "Received PingPacket, sending ack");
+      this.sendRaw(this.protocol.buildAckPacket());
     }
 
     if (this.dataPacketCount <= 20 || this.dataPacketCount % 50 === 0) {
@@ -613,6 +613,7 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
 
     if (result.accepted) {
       this.consecutiveRejects = 0;
+      this.pingTimeout?.keepAlive(Date.now());
     } else {
       this.consecutiveRejects++;
       connLog.warn(
@@ -631,13 +632,9 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
         "Data packet REJECTED by protocol",
       );
       if (this.consecutiveRejects >= STUCK_REJECT_LIMIT) {
-        connLog.error(
-          { address: this.address, rejects: this.consecutiveRejects },
-          "Receive window deadlocked — reconnecting",
-        );
-        // Retryable so the session reconnects from a fresh epoch.
-        this.setStatus("disconnected", STALLED_DISCONNECT_REASON);
-        this.disconnect();
+        this.stall("Receive window deadlocked — reconnecting", {
+          rejects: this.consecutiveRejects,
+        });
       }
     }
   }
@@ -992,8 +989,36 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
           "Connection status",
         );
       }
+      this.checkTimeout();
       this.checkPacketSend();
     }, SEND_LOOP_INTERVAL_MS);
+  }
+
+  /**
+   * Receive watchdog, the engine's checkTimeout: after 4.5s without an
+   * accepted packet, ping the server (pings bypass the send window, so a
+   * stalled window can't silence them); after 15 unanswered pings the
+   * server is gone.
+   */
+  private checkTimeout(): void {
+    const verdict = this.pingTimeout?.check(Date.now());
+    if (verdict === "ping") {
+      connLog.debug("No packets from server, sending keepalive ping");
+      this.sendRaw(this.protocol.buildPingPacket());
+    } else if (verdict === "timeout") {
+      this.stall("Connection to server timed out — reconnecting");
+    }
+  }
+
+  /**
+   * The connection can't be recovered in place (dead server, deadlocked
+   * receive window). The stalled reason is retryable, so the session
+   * reconnects from a fresh epoch.
+   */
+  private stall(message: string, context: Record<string, unknown> = {}): void {
+    connLog.error({ address: this.address, ...context }, message);
+    this.setStatus("disconnected", STALLED_DISCONNECT_REASON);
+    this.disconnect();
   }
 
   /** Start the out-of-band ping probe (see field docs). */

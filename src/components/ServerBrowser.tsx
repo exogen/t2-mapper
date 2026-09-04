@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import type { ReactNode } from "react";
 import type { ServerInfo } from "../../relay/types";
 import styles from "./ServerBrowser.module.css";
 import tileStyles from "./PreviewTile.module.css";
@@ -7,9 +8,11 @@ import {
   useLiveSelector,
 } from "../state/liveConnectionStore";
 import { useSettings } from "./SettingsProvider";
+import { LoadingIndicator } from "./LoadingIndicator";
 import { LuUsers } from "react-icons/lu";
 import { TbLaurelWreathFilled } from "react-icons/tb";
 import { BsPinAngleFill } from "react-icons/bs";
+import { FaLock } from "react-icons/fa";
 import { WifiSignalIcon } from "./WifiSignalIcon";
 import { normalizeMissionType } from "../mission";
 import { mapNameGalleryArtUrl, mapNameLoadScreenUrl } from "./missionPreview";
@@ -46,6 +49,8 @@ function ServerTile({
       type="button"
       className={tileStyles.Tile}
       data-selected={selected}
+      data-human-players={hasHumans || undefined}
+      data-patrolled={server.isPatrolled || undefined}
       onClick={onSelect}
       onDoubleClick={onJoin}
     >
@@ -70,9 +75,6 @@ function ServerTile({
       </PreviewTileArt>
       <span className={tileStyles.TileBody}>
         <span className={tileStyles.TileTitle}>
-          {server.passwordRequired && (
-            <span className={styles.PasswordIcon}>&#x1F512;</span>
-          )}
           <span className={tileStyles.TileServerName}>{server.name}</span>
         </span>
         <span className={tileStyles.TileMission}>
@@ -84,6 +86,13 @@ function ServerTile({
             >
               {normalizeMissionType(server.gameType)}
             </span>
+          )}
+          {server.passwordRequired && (
+            <FaLock
+              className={tileStyles.TileLockIcon}
+              title="Password required"
+              aria-label="Password required"
+            />
           )}
           {server.tournament && (
             <TbLaurelWreathFilled
@@ -133,6 +142,7 @@ export function ServerBrowser({
   showWarriorField?: boolean;
 }) {
   const servers = useLiveSelector((s) => s.servers);
+  const serversLoading = useLiveSelector((s) => s.serversLoading);
   const liveBrowserToRelayPing = useLiveSelector((s) => s.browserToRelayPing);
   const listServers = useLiveSelector((s) => s.listServers);
   const joinServer = useLiveSelector((s) => s.joinServer);
@@ -151,8 +161,8 @@ export function ServerBrowser({
       handleJoin(selectedAddress);
     }
   };
-  const [sortKey, setSortKey] = useState<keyof ServerInfo>("ping");
-  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+  const [sortKey, setSortKey] = useState<keyof ServerInfo>("playerCount");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
   const panelRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -245,149 +255,170 @@ export function ServerBrowser({
     </div>
   );
 
-  if (serverBrowserView === "tiles") {
-    return (
-      <div className={styles.Panel} ref={panelRef} tabIndex={-1}>
-        <div className={styles.TileWrapper}>
-          <div className={styles.TileGrid}>
-            {sorted.map((server) => (
-              <ServerTile
-                key={server.address}
-                server={server}
-                ping={formatPing(server)}
-                pingMs={
-                  browserToRelayPing != null
-                    ? server.ping + browserToRelayPing
-                    : null
-                }
-                selected={selectedAddress === server.address}
-                onSelect={() => setSelectedAddress(server.address)}
-                onJoin={() => {
-                  setSelectedAddress(server.address);
-                  handleJoin(server.address);
-                }}
-              />
-            ))}
-          </div>
-        </div>
-        {footer}
-      </div>
-    );
-  }
-
-  return (
+  // Both views share the panel shell so the loading overlay (and the
+  // footer) exist in exactly one place.
+  const shell = (body: ReactNode) => (
     <div className={styles.Panel} ref={panelRef} tabIndex={-1}>
-      <div className={styles.TableWrapper}>
-        <form name="serverList" onSubmit={handleJoinSelected}>
-          <table className={styles.Table}>
-            <thead>
-              <tr>
-                <th data-column="server" onClick={() => handleSort("name")}>
-                  Server Name
-                </th>
-                <th
-                  data-column="players"
-                  onClick={() => handleSort("playerCount")}
-                >
-                  <LuUsers
-                    className={styles.PlayersIcon}
-                    title="Players"
-                    aria-label="Players"
-                  />
-                </th>
-                <th data-column="ping" onClick={() => handleSort("ping")}>
-                  Ping
-                </th>
-                <th data-column="map" onClick={() => handleSort("mapName")}>
-                  Map
-                </th>
-                <th
-                  data-column="gameType"
-                  onClick={() => handleSort("gameType")}
-                >
-                  Type
-                </th>
-                <th data-column="mod" onClick={() => handleSort("mod")}>
-                  Mod
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {sorted.map((server) => (
-                <tr
-                  key={server.address}
-                  onClick={() => {
-                    setSelectedAddress(server.address);
-                    const form = document.forms.namedItem("serverList")!;
-                    const inputs = form.elements.namedItem(
-                      "serverAddress",
-                    ) as RadioNodeList;
-                    const input = Array.from(inputs).find(
-                      (input) => input.value === server.address,
-                    );
-                    input!.focus();
-                  }}
-                  onDoubleClick={() => {
-                    setSelectedAddress(server.address);
-                    handleJoin(server.address);
-                  }}
-                >
-                  <td data-column="server">
-                    <input
-                      type="radio"
-                      className={styles.HiddenRadio}
-                      name="serverAddress"
-                      value={server.address}
-                      checked={selectedAddress === server.address}
-                      onChange={(event) => {
-                        setSelectedAddress(event.target.value);
-                      }}
-                    />
-                    {server.isPatrolled && (
-                      <span
-                        className={styles.PinIcon}
-                        title="Patrolled server"
-                        aria-label="Patrolled server"
-                      >
-                        <BsPinAngleFill />
-                      </span>
-                    )}
-                    {server.passwordRequired && (
-                      <span className={styles.PasswordIcon}>&#x1F512;</span>
-                    )}
-                    {server.name}
-                    {server.tournament && (
-                      <span
-                        className={styles.TournamentIcon}
-                        title="Tournament mode"
-                        aria-label="Tournament mode"
-                      >
-                        <TbLaurelWreathFilled />
-                      </span>
-                    )}
-                  </td>
-                  <td
-                    className={
-                      server.playerCount === 0 ? styles.EmptyServer : undefined
-                    }
-                    data-column="players"
-                  >
-                    {server.playerCount}
-                    <span className={styles.CompactHidden}>
-                      &thinsp;/&thinsp;{server.maxPlayers}
-                    </span>
-                  </td>
-                  <td data-column="ping">{formatPing(server)}</td>
-                  <td data-column="map">{server.mapName}</td>
-                  <td data-column="gameType">{server.gameType}</td>
-                  <td data-column="mod">{server.mod}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </form>
+      <div className={styles.Body} data-loading={serversLoading}>
+        {body}
+        {serversLoading && (
+          <div className={styles.LoadingOverlay} role="status">
+            {/* LoadingIndicator centres itself in the nearest
+                positioned ancestor, so give it one its own size —
+                otherwise it lands on top of the label below. */}
+            <div className={styles.LoadingSpinner}>
+              <LoadingIndicator isLoading progress={null} />
+            </div>
+            <span className={styles.LoadingLabel}>
+              {servers.length > 0 ? "Refreshing servers…" : "Finding servers…"}
+            </span>
+          </div>
+        )}
       </div>
       {footer}
     </div>
+  );
+
+  if (serverBrowserView === "tiles") {
+    return shell(
+      <div className={styles.TileWrapper}>
+        <div className={styles.TileGrid}>
+          {sorted.map((server) => (
+            <ServerTile
+              key={server.address}
+              server={server}
+              ping={formatPing(server)}
+              pingMs={
+                browserToRelayPing != null
+                  ? server.ping + browserToRelayPing
+                  : null
+              }
+              selected={selectedAddress === server.address}
+              onSelect={() => setSelectedAddress(server.address)}
+              onJoin={() => {
+                setSelectedAddress(server.address);
+                handleJoin(server.address);
+              }}
+            />
+          ))}
+        </div>
+      </div>,
+    );
+  }
+
+  return shell(
+    <div className={styles.TableWrapper}>
+      <form name="serverList" onSubmit={handleJoinSelected}>
+        <table className={styles.Table}>
+          <thead>
+            <tr>
+              <th data-column="server" onClick={() => handleSort("name")}>
+                Server Name
+              </th>
+              <th
+                data-column="players"
+                onClick={() => handleSort("playerCount")}
+              >
+                <LuUsers
+                  className={styles.PlayersIcon}
+                  title="Players"
+                  aria-label="Players"
+                />
+              </th>
+              <th data-column="ping" onClick={() => handleSort("ping")}>
+                Ping
+              </th>
+              <th data-column="map" onClick={() => handleSort("mapName")}>
+                Map
+              </th>
+              <th data-column="gameType" onClick={() => handleSort("gameType")}>
+                Type
+              </th>
+              <th data-column="mod" onClick={() => handleSort("mod")}>
+                Mod
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {sorted.map((server) => (
+              <tr
+                key={server.address}
+                onClick={() => {
+                  setSelectedAddress(server.address);
+                  const form = document.forms.namedItem("serverList")!;
+                  const inputs = form.elements.namedItem(
+                    "serverAddress",
+                  ) as RadioNodeList;
+                  const input = Array.from(inputs).find(
+                    (input) => input.value === server.address,
+                  );
+                  input!.focus();
+                }}
+                onDoubleClick={() => {
+                  setSelectedAddress(server.address);
+                  handleJoin(server.address);
+                }}
+              >
+                <td data-column="server">
+                  <input
+                    type="radio"
+                    className={styles.HiddenRadio}
+                    name="serverAddress"
+                    value={server.address}
+                    checked={selectedAddress === server.address}
+                    onChange={(event) => {
+                      setSelectedAddress(event.target.value);
+                    }}
+                  />
+                  {server.isPatrolled && (
+                    <span
+                      className={styles.PinIcon}
+                      title="Patrolled server"
+                      aria-label="Patrolled server"
+                    >
+                      <BsPinAngleFill />
+                    </span>
+                  )}
+                  {server.name}
+                  {server.passwordRequired && (
+                    <span
+                      className={styles.PasswordIcon}
+                      title="Password required"
+                      aria-label="Password required"
+                    >
+                      <FaLock />
+                    </span>
+                  )}
+                  {server.tournament && (
+                    <span
+                      className={styles.TournamentIcon}
+                      title="Tournament mode"
+                      aria-label="Tournament mode"
+                    >
+                      <TbLaurelWreathFilled />
+                    </span>
+                  )}
+                </td>
+                <td
+                  className={
+                    server.playerCount === 0 ? styles.EmptyServer : undefined
+                  }
+                  data-column="players"
+                >
+                  {server.playerCount}
+                  <span className={styles.CompactHidden}>
+                    &thinsp;/&thinsp;{server.maxPlayers}
+                  </span>
+                </td>
+                <td data-column="ping">{formatPing(server)}</td>
+                <td data-column="map">{server.mapName}</td>
+                <td data-column="gameType">{server.gameType}</td>
+                <td data-column="mod">{server.mod}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </form>
+    </div>,
   );
 }

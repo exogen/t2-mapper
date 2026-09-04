@@ -21,6 +21,7 @@ import { LoadStatsButton } from "./LoadStatsButton";
 import { useFeatures } from "./FeaturesProvider";
 import { StatsPanel } from "./StatsPanel";
 import { useStats } from "../state/statsStore";
+import { trackKey, useCommentaryTracks } from "../state/commentaryTracksStore";
 import { useModeQueryState, type CurrentMission } from "./useQueryParams";
 import { useRecording } from "./usePlayback";
 import {
@@ -46,6 +47,37 @@ const DEFAULT_PANELS = [
   "timeline",
   "stats",
 ];
+
+/**
+ * Which of the demo's commentary tracks to play, when it has any. A
+ * session choice, not a preference: it is never saved, and a new demo
+ * starts on its own first-listed track.
+ */
+function CommentaryTrackPicker() {
+  const tracks = useCommentaryTracks((s) => s.tracks);
+  const selected = useCommentaryTracks((s) => s.selected());
+  const select = useCommentaryTracks((s) => s.select);
+  if (tracks.length === 0) return null;
+  return (
+    <div className={styles.Field}>
+      <label htmlFor="commentaryTrackInput">Commentary track</label>
+      <div className={styles.Control}>
+        <select
+          id="commentaryTrackInput"
+          value={selected ? trackKey(selected) : ""}
+          onChange={(event) => select(event.target.value)}
+        >
+          {tracks.map((track) => (
+            <option key={trackKey(track)} value={trackKey(track)}>
+              {track.label}
+              {track.model ? ` (${track.model})` : ""}
+            </option>
+          ))}
+        </select>
+      </div>
+    </div>
+  );
+}
 
 export const InspectorControls = memo(function InspectorControls({
   missionName,
@@ -112,6 +144,8 @@ export const InspectorControls = memo(function InspectorControls({
     setAudioEnabled,
     commentaryEnabled,
     setCommentaryEnabled,
+    commentarySubtitles,
+    setCommentarySubtitles,
     audioVolume,
     setAudioVolume,
     adjustAudioSpeed,
@@ -519,19 +553,6 @@ export const InspectorControls = memo(function InspectorControls({
                     Enable audio
                   </label>
                 </div>
-                <div className={styles.CheckboxField}>
-                  <input
-                    id="commentaryInput"
-                    type="checkbox"
-                    checked={commentaryEnabled}
-                    onChange={(event) => {
-                      setCommentaryEnabled(event.target.checked);
-                    }}
-                  />
-                  <label className={styles.Label} htmlFor="commentaryInput">
-                    Play commentary if available
-                  </label>
-                </div>
                 <div className={styles.Field}>
                   <label htmlFor="volumeInput">Master volume</label>
                   <div className={styles.Control}>
@@ -551,6 +572,36 @@ export const InspectorControls = memo(function InspectorControls({
                     />
                   </div>
                 </div>
+                <div className={styles.CheckboxField}>
+                  <input
+                    id="commentaryInput"
+                    type="checkbox"
+                    checked={commentaryEnabled}
+                    onChange={(event) => {
+                      setCommentaryEnabled(event.target.checked);
+                    }}
+                  />
+                  <label className={styles.Label} htmlFor="commentaryInput">
+                    Play commentary if available
+                  </label>
+                </div>
+                <div className={styles.CheckboxField}>
+                  <input
+                    id="commentarySubtitlesInput"
+                    type="checkbox"
+                    checked={commentarySubtitles}
+                    onChange={(event) => {
+                      setCommentarySubtitles(event.target.checked);
+                    }}
+                  />
+                  <label
+                    className={styles.Label}
+                    htmlFor="commentarySubtitlesInput"
+                  >
+                    Show commentary subtitles
+                  </label>
+                </div>
+                <CommentaryTrackPicker />
                 {variant === "full" && (
                   <div className={styles.CheckboxField}>
                     <input
@@ -633,6 +684,7 @@ export const InspectorControls = memo(function InspectorControls({
                       {import.meta.env.DEV ? (
                         <option value="1">1</option>
                       ) : null}
+                      <option value="20">20</option>
                       <option value="30">30</option>
                       <option value="60">60</option>
                       <option value="120">120</option>

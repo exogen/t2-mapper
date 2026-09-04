@@ -3,7 +3,7 @@ import type { StreamRecording } from "../stream/types";
 import { useEngineSelector } from "../state/engineStore";
 import { useStreamSnapshot } from "../state/streamSnapshotStore";
 
-export const SPEED_OPTIONS = [0.25, 0.5, 1, 1.5, 2, 3, 4];
+export const SPEED_OPTIONS = [0.25, 0.5, 1, 1.5, 2, 3, 4, 8];
 
 export function useRecording(): StreamRecording | null {
   return useEngineSelector((state) => state.playback.recording);

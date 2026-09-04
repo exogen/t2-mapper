@@ -3,13 +3,18 @@ import { useStoreWithEqualityFn } from "zustand/traditional";
 
 export type TimelineEventType =
   | "match-start"
+  | "match-countdown"
   | "match-end"
   | "kill"
   | "death"
   | "flag-grab"
   | "flag-drop"
   | "flag-return"
-  | "flag-cap";
+  | "flag-cap"
+  /** A player changed their name mid-match (MsgClientNameChanged) —
+   *  a clan tag added or dropped on the community servers that allow
+   *  it, occasionally a whole new name. */
+  | "rename";
 
 /** Relationship of the event to the recorder's team. */
 export type TeamAffinity = "friendly" | "enemy" | "neutral";
@@ -35,6 +40,21 @@ export interface TimelineEvent {
   actor?: string;
   /** For flag events: name of the flag's team. */
   flagTeamName?: string;
+  /** For rename events: the name before the change (`actor` is the
+   *  name after). */
+  previousName?: string;
+  /**
+   * The same names as sent, color codes included — the official clan
+   * tag is the color-7 segment. For display only; matching uses the
+   * stripped fields above.
+   */
+  raw?: {
+    killer?: string;
+    victim?: string;
+    actor?: string;
+    capturer?: string;
+    previousName?: string;
+  };
 }
 
 export interface DemoTimelineState {

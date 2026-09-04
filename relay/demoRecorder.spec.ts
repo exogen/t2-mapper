@@ -1,4 +1,5 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { EventEmitter } from "node:events";
 import fsp from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -78,6 +79,7 @@ describe("DemoRecorder", () => {
       serverIdentity?: () => ServerIdentity;
       matchStarted?: () => boolean;
       recordContext?: () => { pinned: boolean; watchers: number };
+      maxBytes?: number;
     } = {},
   ) {
     return new DemoRecorder({
@@ -97,7 +99,7 @@ describe("DemoRecorder", () => {
       getMatchStarted: overrides.matchStarted ?? (() => true),
       getRecordContext: overrides.recordContext,
       recorderName: "Observer",
-      maxBytes: 512 * 1024 * 1024,
+      maxBytes: overrides.maxBytes ?? 512 * 1024 * 1024,
       minLengthMs: overrides.minLengthMs ?? 0,
       minPlayers: overrides.minPlayers ?? 0,
       now: () => time,
@@ -442,6 +444,56 @@ describe("DemoRecorder", () => {
       buildPingPacket(1),
       smallPacket,
     ]);
+  });
+
+  it("stops growing at the size cap but keeps the recording", async () => {
+    const recorder = createRecorder({ maxBytes: 1 });
+    recorder.onPacket(buildPingPacket(1));
+    recorder.setMissionName("Katabatic");
+    // The cap is judged on bytes that reached the file; wait for the
+    // header to land so the next write trips it.
+    await vi.waitFor(() => {
+      expect(
+        (recorder as unknown as { writer: { bytesWritten: number } }).writer
+          .bytesWritten,
+      ).toBeGreaterThan(1);
+    });
+    time += 100;
+    recorder.onPacket(buildPingPacket(2));
+    time += 100;
+    recorder.onPacket(buildPingPacket(3));
+    expect(recorder.state).toBe("recording");
+
+    const result = await recorder.finalize("test");
+    expect(result).not.toBeNull();
+    expect(recorder.failure).toBeNull();
+    const { blocks } = await parseDemoFile(result!.path);
+    const packets = blocks
+      .filter((b) => b.type === BlockTypePacket)
+      .map((b) => b.data);
+    expect(packets).toEqual([buildPingPacket(1), buildPingPacket(2)]);
+  });
+
+  it("strands the spool on a stream error instead of deleting it", async () => {
+    const recorder = createRecorder();
+    recorder.onPacket(buildPingPacket(1));
+    recorder.setMissionName("Katabatic");
+    const partial = recorder.partialPath!;
+    const writer = (
+      recorder as unknown as { writer: { deflate: EventEmitter } }
+    ).writer;
+    writer.deflate.emit("error", new Error("disk gone"));
+    time += 100;
+    recorder.onPacket(buildPingPacket(2));
+    expect(recorder.state).toBe("aborted");
+    expect(recorder.failure).toBe("stream-error");
+    // The spool stays for the boot salvage; abort() must not remove it.
+    // (The stream opens the file asynchronously, hence the wait.)
+    await recorder.abort();
+    await vi.waitFor(async () => {
+      expect(await fsp.readdir(dir)).toEqual([path.basename(partial)]);
+    });
+    expect(await recorder.finalize("test")).toBeNull();
   });
 
   it("exposes its spool path only while a file is open", async () => {

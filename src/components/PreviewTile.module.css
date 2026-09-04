@@ -10,7 +10,7 @@
   padding: 0;
   overflow: hidden;
   text-align: left;
-  border: 1px solid rgba(65, 131, 139, 0.5);
+  border: 1px solid rgba(65, 131, 139, 0.3);
   border-radius: 8px;
   background: rgba(0, 0, 0, 0.3);
   color: inherit;
@@ -39,7 +39,7 @@
   align-items: center;
   justify-content: center;
   background: rgba(0, 0, 0, 0.4);
-  border-right: 1px solid rgba(65, 131, 139, 0.35);
+  border-right: 1px solid rgba(65, 131, 139, 0.3);
 }
 
 @media (max-width: 399px) {
@@ -150,6 +150,13 @@
   border-radius: 3px;
   background: rgba(255, 157, 0, 0.4);
   color: #fff;
+}
+
+/* Marks a server that requires a password to join. */
+.TileLockIcon {
+  flex: 0 0 auto;
+  font-size: 13px;
+  color: rgb(255, 216, 118, 0.7);
 }
 
 .TileTournamentIcon {

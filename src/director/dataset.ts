@@ -11,15 +11,9 @@ import type {
   DirectorDataset,
   DirectorEvent,
   DirectorFlagSample,
+  DirectorPlayerSample,
   DirectorVec3,
 } from "./types";
-import {
-  DIRECTOR_CROWD_MAX_ABSOLUTE,
-  DIRECTOR_CROWD_MIN_ABSOLUTE,
-  DIRECTOR_CROWD_PERCENTILE,
-  DIRECTOR_CROWD_RADIUS,
-} from "./tunables";
-import { boundingSpread, dist } from "./geometry";
 
 /** Player positions bucketed to whole seconds, for proximity queries. */
 export type PlayersAtSec = Map<
@@ -35,21 +29,97 @@ export type PlayersAtSec = Map<
   }[]
 >;
 
-/** One shared proximity index per dataset (several passes want it). */
-const _playersAtSecCache = new WeakMap<DirectorDataset, PlayersAtSec>();
+/**
+ * One shared proximity index per SAMPLE ARRAY (several passes want it).
+ *
+ * Keyed on the array, not the dataset object: a streamed scan hands out
+ * a fresh dataset object every slice over the same growing arrays, so
+ * keying on the object missed every second and rebuilt the index from
+ * zero. Indexing resumes where it left off.
+ */
+const _playersAtSecCache = new WeakMap<
+  DirectorPlayerSample[],
+  { index: PlayersAtSec; done: number }
+>();
 
 export function playersAtSecFor(dataset: DirectorDataset): PlayersAtSec {
-  let cached = _playersAtSecCache.get(dataset);
+  const samples = dataset.playerSamples;
+  let cached = _playersAtSecCache.get(samples);
   if (!cached) {
-    cached = buildPlayersAtSec(dataset);
-    _playersAtSecCache.set(dataset, cached);
+    cached = { index: new Map(), done: 0 };
+    _playersAtSecCache.set(samples, cached);
   }
-  return cached;
+  if (cached.done < samples.length) {
+    indexPlayerSamples(samples, cached.done, cached.index);
+    cached.done = samples.length;
+  }
+  return cached.index;
 }
 
-export function buildPlayersAtSec(dataset: DirectorDataset): PlayersAtSec {
-  const playersAtSec: PlayersAtSec = new Map();
-  for (const sample of dataset.playerSamples) {
+/**
+ * Each player's samples in time order, shared and grown incrementally
+ * like the per-second index. Three passes used to walk every sample of
+ * every player to find one player's position.
+ */
+const _playerTracksCache = new WeakMap<
+  DirectorPlayerSample[],
+  { tracks: Map<number, DirectorPlayerSample[]>; done: number }
+>();
+
+export function playerTracksFor(
+  dataset: DirectorDataset,
+): Map<number, DirectorPlayerSample[]> {
+  const samples = dataset.playerSamples;
+  let cached = _playerTracksCache.get(samples);
+  if (!cached) {
+    cached = { tracks: new Map(), done: 0 };
+    _playerTracksCache.set(samples, cached);
+  }
+  for (let i = cached.done; i < samples.length; i++) {
+    const sample = samples[i];
+    let list = cached.tracks.get(sample.targetId);
+    if (!list) cached.tracks.set(sample.targetId, (list = []));
+    list.push(sample);
+  }
+  cached.done = samples.length;
+  return cached.tracks;
+}
+
+/** The player's sample nearest `timeSec`, within `withinSec` of it. */
+export function playerSampleAt(
+  dataset: DirectorDataset,
+  targetId: number,
+  timeSec: number,
+  withinSec = 3,
+): DirectorPlayerSample | null {
+  const samples = playerTracksFor(dataset).get(targetId);
+  if (!samples || samples.length === 0) return null;
+  // Last sample at or before the time, then the one after if closer.
+  let lo = 0;
+  let hi = samples.length - 1;
+  while (lo < hi) {
+    const mid = (lo + hi + 1) >> 1;
+    if (samples[mid].timeSec <= timeSec) lo = mid;
+    else hi = mid - 1;
+  }
+  let best = samples[lo];
+  const next = samples[lo + 1];
+  if (
+    next &&
+    Math.abs(next.timeSec - timeSec) < Math.abs(best.timeSec - timeSec)
+  ) {
+    best = next;
+  }
+  return Math.abs(best.timeSec - timeSec) <= withinSec ? best : null;
+}
+
+function indexPlayerSamples(
+  samples: DirectorPlayerSample[],
+  from: number,
+  playersAtSec: PlayersAtSec,
+): void {
+  for (let i = from; i < samples.length; i++) {
+    const sample = samples[i];
     const sec = Math.round(sample.timeSec);
     let list = playersAtSec.get(sec);
     if (!list) playersAtSec.set(sec, (list = []));
@@ -63,41 +133,6 @@ export function buildPlayersAtSec(dataset: DirectorDataset): PlayersAtSec {
       health: sample.health,
     });
   }
-  return playersAtSec;
-}
-
-/**
- * The nearby-player count that counts as "crowded" for this match:
- * a high percentile of how many players are actually near the flags
- * across the whole recording (see DIRECTOR_CROWD_PERCENTILE).
- */
-export function crowdThreshold(
-  dataset: DirectorDataset,
-  playersAtSec: PlayersAtSec,
-): number {
-  const counts: number[] = [];
-  for (const sample of dataset.flagSamples) {
-    if (Math.round(sample.timeSec * 2) % 2 !== 0) continue;
-    const players = playersAtSec.get(Math.round(sample.timeSec)) ?? [];
-    let near = 0;
-    for (const p of players) {
-      if (dist(p.pos, sample.pos) <= DIRECTOR_CROWD_RADIUS) near++;
-    }
-    counts.push(near);
-  }
-  if (counts.length === 0) return DIRECTOR_CROWD_MIN_ABSOLUTE;
-  counts.sort((a, b) => a - b);
-  const percentile =
-    counts[
-      Math.min(
-        counts.length - 1,
-        Math.floor(counts.length * DIRECTOR_CROWD_PERCENTILE),
-      )
-    ];
-  return Math.min(
-    DIRECTOR_CROWD_MAX_ABSOLUTE,
-    Math.max(DIRECTOR_CROWD_MIN_ABSOLUTE, percentile),
-  );
 }
 
 export interface FlagTrack {
@@ -109,20 +144,47 @@ export interface FlagTrack {
   outPeriods: { startSec: number; endSec: number; endsInCap: boolean }[];
 }
 
-/** Whether this flag's current possession caps within `windowSec`. */
-export function capWithin(
-  track: FlagTrack,
-  t: number,
-  windowSec: number,
-): boolean {
-  return track.outPeriods.some(
-    (p) => p.endsInCap && t >= p.endSec - windowSec && t <= p.endSec,
-  );
-}
+/**
+ * Flag tracks, shared across the passes that read them.
+ *
+ * Keyed on the sample array (see playersAtSecFor for why not the
+ * dataset object) and rebuilt only when samples or events have been
+ * added — the view, staging, the audit and the scene pass each built
+ * their own copy on every streamed slice.
+ */
+const _flagTracksCache = new WeakMap<
+  DirectorFlagSample[],
+  {
+    tracks: Map<number, FlagTrack>;
+    samples: number;
+    events: number;
+    teams: number;
+  }
+>();
 
 export function buildFlagTracks(
   dataset: DirectorDataset,
 ): Map<number, FlagTrack> {
+  const cached = _flagTracksCache.get(dataset.flagSamples);
+  if (
+    cached &&
+    cached.samples === dataset.flagSamples.length &&
+    cached.events === dataset.events.length &&
+    cached.teams === dataset.teams.length
+  ) {
+    return cached.tracks;
+  }
+  const tracks = computeFlagTracks(dataset);
+  _flagTracksCache.set(dataset.flagSamples, {
+    tracks,
+    samples: dataset.flagSamples.length,
+    events: dataset.events.length,
+    teams: dataset.teams.length,
+  });
+  return tracks;
+}
+
+function computeFlagTracks(dataset: DirectorDataset): Map<number, FlagTrack> {
   const bySlot = new Map<number, DirectorFlagSample[]>();
   for (const sample of dataset.flagSamples) {
     let list = bySlot.get(sample.slot);
@@ -231,14 +293,72 @@ export function flagLabel(slot: number, dataset: DirectorDataset): string {
   return stand?.name ? `${stand.name} flag` : `flag ${slot}`;
 }
 
+/**
+ * The ONE name a player is called on air — in shot reasons and in the
+ * scene alike. An official (control-code-delimited) tag lets us speak
+ * the base name confidently; otherwise the display name, then the raw
+ * one. Two resolvers used to disagree, and "TF_Irvin" and "Irvin"
+ * named the same person in one payload.
+ */
 export function playerName(
   targetId: number | null,
   dataset: DirectorDataset,
+  atSec?: number,
 ): string | null {
   if (targetId == null) return null;
-  const entry = dataset.playerNames.find((p) => p.targetId === targetId);
+  const entry = identityAt(targetId, dataset, atSec);
   if (!entry) return null;
-  return spokenName(entry.displayName ?? entry.name);
+  return spokenName(entry.baseName ?? entry.displayName ?? entry.name);
+}
+
+/** Samples are a second apart, and a message can precede the first
+ *  sample of the player it names — a beat of slack either side. */
+const IDENTITY_SLACK_SEC = 1.5;
+
+/**
+ * Who wore this target id at `atSec` — target ids are recycled, so
+ * the same number can be two people over one recording. Without a
+ * time, the latest wearer. Null when nobody has.
+ */
+export function identityAt(
+  targetId: number,
+  dataset: DirectorDataset,
+  atSec?: number,
+): DirectorDataset["playerNames"][number] | null {
+  let best: DirectorDataset["playerNames"][number] | null = null;
+  for (const entry of dataset.playerNames) {
+    if (entry.targetId !== targetId) continue;
+    const from = entry.fromSec ?? 0;
+    if (atSec != null && from > atSec + IDENTITY_SLACK_SEC) continue;
+    if (!best || from >= (best.fromSec ?? 0)) best = entry;
+  }
+  return best;
+}
+
+/**
+ * The target id a name referred to at `atSec`: a message names whoever
+ * the player was at the time, and players rename mid-match on some
+ * servers, so every name a player has had counts. The latest wearer
+ * wins a clash.
+ */
+export function targetIdForName(
+  name: string,
+  dataset: DirectorDataset,
+  atSec?: number,
+): number | null {
+  const key = name.toLowerCase();
+  let best: DirectorDataset["playerNames"][number] | null = null;
+  for (const entry of dataset.playerNames) {
+    if (entry.name !== key && !entry.aliases?.includes(key)) continue;
+    if (atSec != null) {
+      if ((entry.fromSec ?? 0) > atSec + IDENTITY_SLACK_SEC) continue;
+      if (entry.toSec != null && entry.toSec < atSec - IDENTITY_SLACK_SEC) {
+        continue;
+      }
+    }
+    if (!best || (entry.fromSec ?? 0) >= (best.fromSec ?? 0)) best = entry;
+  }
+  return best?.targetId ?? null;
 }
 
 /**
@@ -268,31 +388,20 @@ export function spokenMapName(name: string): string {
   return out.length > 0 ? out : name;
 }
 
+/**
+ * Player name → spoken form. Pipes and underscores are word breaks
+ * ("AUTOTAUNT|Cannon" is two words, "The_D_e_V_i_L" is "The DeViL");
+ * single-letter runs are joined ("d K" style spacing); decoration is
+ * stripped from the edges.
+ */
 export function spokenName(name: string): string {
-  const joined = name.replace(
+  const spaced = name.replace(/[|_]+/g, " ").replace(/\s+/g, " ").trim();
+  const joined = spaced.replace(
     /(^|\s)((?:\S ){2,}\S)(?=\s|$)/g,
     (_m, pre: string, run: string) => pre + run.replace(/ /g, ""),
   );
   const stripped = joined.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, "");
   return stripped.length > 0 ? stripped : name;
-}
-
-/** Average speed of a flag over a window, from its own samples. */
-export function flagSpeed(
-  startSec: number,
-  endSec: number,
-  track: FlagTrack,
-): number | null {
-  const samples = track.samples.filter(
-    (x) => x.timeSec >= startSec && x.timeSec < endSec,
-  );
-  if (samples.length < 2) return null;
-  let travelled = 0;
-  for (let i = 1; i < samples.length; i++) {
-    travelled += dist(samples[i - 1].pos, samples[i].pos);
-  }
-  const span = samples[samples.length - 1].timeSec - samples[0].timeSec;
-  return span > 0 ? travelled / span : null;
 }
 
 /** Length of the contiguous "held" stretch containing `t`, or 0. */
@@ -309,62 +418,6 @@ export function heldRunLength(track: FlagTrack, t: number): number {
 }
 
 /**
- * Where a dropped flag comes to REST. Flags are physics objects: after
- * a drop they keep falling and sliding, measurably 30–120u downhill on
- * steep maps, so the position right after the drop is the wrong thing
- * to frame. Takes the median of the run's last third, by which point
- * the flag has settled (and which ignores a final bounce or pickup).
- */
-export function settledPos(
-  run: { startSec: number; endSec: number },
-  track: FlagTrack,
-): DirectorVec3 | null {
-  const positions = track.samples
-    .filter((s) => s.timeSec >= run.startSec && s.timeSec < run.endSec)
-    .map((s) => s.pos);
-  if (positions.length === 0) return null;
-  const tail = positions.slice(Math.floor((positions.length * 2) / 3));
-  const pick = (axis: 0 | 1 | 2) => {
-    const values = tail.map((p) => p[axis]).sort((a, b) => a - b);
-    return values[Math.floor(values.length / 2)];
-  };
-  return [pick(0), pick(1), pick(2)];
-}
-
-/**
- * How far a flag ranges over a window, and the centre of that range —
- * the test for whether a fixed camera can cover this stretch of a
- * carry (a carrier crossing the map cannot be framed from one spot,
- * but one pinned in a base can).
- */
-export function flagPathSpread(
-  startSec: number,
-  endSec: number,
-  track: FlagTrack,
-  playersAtSec?: PlayersAtSec,
-): { center: DirectorVec3; spread: number } | null {
-  const positions = track.samples
-    .filter((s) => s.timeSec >= startSec && s.timeSec < endSec)
-    .map((s) => s.pos);
-  if (positions.length === 0) return null;
-  const { center, spread: baseSpread } = boundingSpread(positions);
-  let spread = baseSpread;
-  // A tight follow frames the carrier AND the nearest defender, not the
-  // carrier alone — the contest is the shot. Widen enough to keep the
-  // closest opponent in it.
-  if (playersAtSec) {
-    for (let sec = Math.ceil(startSec); sec < endSec; sec++) {
-      let nearest = Infinity;
-      for (const p of playersAtSec.get(sec) ?? []) {
-        nearest = Math.min(nearest, dist(p.pos, center));
-      }
-      if (Number.isFinite(nearest)) spread = Math.max(spread, nearest);
-    }
-  }
-  return { center, spread };
-}
-
-/**
  * Where a flag carrier is HEADED: their own team's stand, which is the
  * other flag's stand in stock CTF (you carry the enemy flag home). Used
  * as the aim target so a chase frames the run's destination — and the
@@ -376,24 +429,4 @@ export function carryDestination(
 ): DirectorVec3 | null {
   const own = dataset.flagStands.find((s) => s.slot !== slot);
   return own?.pos ?? null;
-}
-
-/**
- * Whether a flag stays within `holdRadius` of one point for a window —
- * the same stay-put test for flag-anchored fixed cameras.
- */
-export function flagStaysNear(
-  startSec: number,
-  endSec: number,
-  track: FlagTrack,
-  center: DirectorVec3,
-  holdRadius: number,
-): boolean {
-  const positions = track.samples
-    .filter((s) => s.timeSec >= startSec && s.timeSec < endSec)
-    .map((s) => s.pos);
-  return (
-    positions.length > 0 &&
-    positions.every((p) => dist(p, center) <= holdRadius)
-  );
 }

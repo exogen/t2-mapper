@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import type { ReactNode } from "react";
 import { PiCassetteTapeFill, PiCassetteTapeLight } from "react-icons/pi";
 import { FaMicrophoneAlt, FaSearch } from "react-icons/fa";
 import { LuChevronLeft, LuChevronRight, LuUser, LuUsers } from "react-icons/lu";
@@ -6,7 +14,8 @@ import { TbLaurelWreathFilled } from "react-icons/tb";
 import { useDemoLoad } from "../state/demoLoadStore";
 import { loadDemoFile } from "../stream/demoFileLoader";
 import type { DemoIndexEntry } from "../stream/demoIndex";
-import { useDemoIndex } from "./useDemoIndex";
+import { useDemoIndexSuspense } from "./useDemoIndex";
+import { QuietErrorBoundary } from "./QuietErrorBoundary";
 import { normalizeMissionType } from "../mission";
 import {
   demoTitle,
@@ -115,13 +124,73 @@ function FeaturedCard({
   );
 }
 
+/** The section's chrome, shared by the skeleton and the loaded list so
+ *  the two can never drift apart (or shift the layout between them). */
+function FeaturedHeader({ pager }: { pager?: ReactNode }) {
+  return (
+    <div className={styles.FeaturedHeader}>
+      <h2 className={styles.FeaturedTitle}>Featured recent demos</h2>
+      <div className={styles.FeaturedPager}>
+        <button
+          type="button"
+          className={styles.SearchButton}
+          onClick={focusDemoSelect}
+        >
+          <FaSearch className={styles.SearchIcon} /> Find a demo…
+        </button>
+        {pager}
+      </div>
+    </div>
+  );
+}
+
+/** Placeholder cards held while the index is in flight. */
+function FeaturedSkeleton() {
+  return (
+    <div className={`${styles.Featured} ${styles.FeaturedSkeleton}`}>
+      <FeaturedHeader />
+      <div
+        className={styles.FeaturedGrid}
+        role="status"
+        aria-label="Loading featured demos"
+      >
+        {Array.from({ length: FEATURED_COUNT }, (_, i) => (
+          <div key={i} className={styles.SkeletonTile} aria-hidden="true">
+            <div className={styles.SkeletonPreview} />
+            <div className={styles.SkeletonBody}>
+              <div className={styles.SkeletonLine} data-line="title" />
+              <div className={styles.SkeletonLine} data-line="mission" />
+              <div className={styles.SkeletonLine} data-line="meta" />
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * The featured section. Suspends on the index behind a skeleton, and
+ * an index that fails to load simply leaves the section out — it is a
+ * convenience, never the only way to open a demo.
+ */
 function FeaturedDemos() {
+  return (
+    <QuietErrorBoundary label="Featured demos">
+      <Suspense fallback={<FeaturedSkeleton />}>
+        <FeaturedList />
+      </Suspense>
+    </QuietErrorBoundary>
+  );
+}
+
+function FeaturedList() {
   const [, setDemoParam] = useDemoQueryState();
   const [page, setPage] = useState(0);
-  const { data: demos } = useDemoIndex();
+  const { data: demos } = useDemoIndexSuspense();
   const matching = useMemo(
     () =>
-      (demos ?? [])
+      demos
         .filter(
           (demo) =>
             demo.players.length >= FEATURED_MIN_PLAYERS &&
@@ -144,17 +213,9 @@ function FeaturedDemos() {
   if (featured.length === 0) return null;
   return (
     <div className={styles.Featured}>
-      <div className={styles.FeaturedHeader}>
-        <h2 className={styles.FeaturedTitle}>Featured recent demos</h2>
-        <div className={styles.FeaturedPager}>
-          <button
-            type="button"
-            className={styles.SearchButton}
-            onClick={focusDemoSelect}
-          >
-            <FaSearch className={styles.SearchIcon} /> Find a demo…
-          </button>
-          {pageCount > 1 && (
+      <FeaturedHeader
+        pager={
+          pageCount > 1 ? (
             <>
               <button
                 type="button"
@@ -175,9 +236,9 @@ function FeaturedDemos() {
                 <LuChevronRight />
               </button>
             </>
-          )}
-        </div>
-      </div>
+          ) : null
+        }
+      />
       <div className={styles.FeaturedGrid}>
         {featured.map((demo) => (
           <FeaturedCard

@@ -11,19 +11,9 @@ import {
   type Quat,
   type Vec3,
 } from "./vecMath";
-import defaultMountTransforms from "./generated/mountTransforms.json";
+import { getMountTransforms, type MountTransformTable } from "../manifest";
 
 const log = createLogger("engineMethods");
-
-interface MountTransformEntry {
-  position: number[];
-  rotation: number[];
-}
-
-export type MountTransformTable = Record<
-  string,
-  Record<string, MountTransformEntry>
->;
 
 export interface EngineStubOptions {
   /** Mount-node transform table; injectable for tests. */
@@ -51,8 +41,7 @@ export function registerEngineStubs(
 ): void {
   const reg = runtime.$.registerMethod.bind(runtime.$);
   const regFn = runtime.$.registerFunction.bind(runtime.$);
-  const mountTransforms = (options.mountTransforms ??
-    defaultMountTransforms) as MountTransformTable;
+  const mountTransforms = options.mountTransforms ?? getMountTransforms();
 
   function getDatablockOf(this_: TorqueObject): TorqueObject | undefined {
     const dbName = this_.datablock;

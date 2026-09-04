@@ -45,7 +45,21 @@
   font-size: 11px;
   font-weight: 600;
   white-space: nowrap;
-  overflow: hidden;
+}
+
+/* Panels round their own outer corners (outer radius minus the border)
+   instead of the chip clipping them, so overlays like the level dot can
+   straddle the chip's edges. */
+.Key > :first-child {
+  border-radius: 3px 0 0 3px;
+}
+
+.Key > :last-child {
+  border-radius: 0 3px 3px 0;
+}
+
+.Key > :only-child {
+  border-radius: 3px;
 }
 
 /* .Column[data-height="compact"] .Key {
@@ -72,6 +86,7 @@
 }
 
 .Label {
+  position: relative;
   min-width: 30px;
   display: flex;
   align-items: center;
@@ -204,4 +219,25 @@
 
 .Input:has(.MouseIcon) {
   padding: 0 4px;
+}
+
+/* Sparkline-style range indicator riding the label's left divider:
+   --level 0 centers the dot on the bottom border, 1 on the top border. */
+.LevelDot {
+  --dot-size: 5px;
+  position: absolute;
+  left: -0.5px;
+  top: calc(-0.5px + (1 - var(--level)) * (100% + 1px));
+  width: var(--dot-size);
+  height: var(--dot-size);
+  box-sizing: border-box;
+  border-radius: 50%;
+  border: 1px solid rgb(24, 197, 171);
+  background: rgb(48, 48, 48);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+.Key[data-pressed="true"]:not([data-disabled="true"]) .LevelDot {
+  border-color: rgb(120, 255, 225);
 }

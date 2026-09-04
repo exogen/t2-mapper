@@ -101,7 +101,7 @@ export function resolveShapeName(
  * (the CRCChallengeEvent response required before mission Phase 2).
  */
 export function buildCRCDataBlockList(
-  dbMap: Map<number, ParsedData> | undefined,
+  dbMap: ReadonlyMap<number, ParsedData> | undefined,
   classNames: ReadonlyMap<number, string>,
 ): { objectId: number; className: string; shapeName: string }[] {
   const datablocks: {

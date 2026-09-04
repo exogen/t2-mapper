@@ -1,22 +1,11 @@
 import { createContext, ReactNode, useContext, useMemo } from "react";
 import { TorqueObject } from "../torqueScript";
+import { isOrganicShape } from "../organicShapes";
 
 export type StaticShapeType = "TSStatic" | "StaticShape" | "Item" | "Turret";
 
-/**
- * Detect organic/vegetation shapes that use alpha for transparency.
- * These need special handling for materials and shadows.
- *
- * Pattern matches:
- * - borg/xorg/porg/dorg: Tribes 2 organic environment types
- * - plant/tree/bush/fern/vine/grass/leaf/flower: common vegetation names
- */
-const ORGANIC_PATTERN =
-  /borg|xorg|porg|dorg|plant|tree|bush|fern|vine|grass|leaf|flower|frond|palm|foliage/i;
-
-export function isOrganicShape(shapeName: string): boolean {
-  return ORGANIC_PATTERN.test(shapeName);
-}
+// isOrganicShape moved to ../organicShapes so Node-side code (the
+// collider policy) can use it without importing a React component.
 
 interface ShapeInfoContextValue {
   object?: TorqueObject;

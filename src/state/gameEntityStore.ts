@@ -390,22 +390,6 @@ export function useGameEntitiesByRenderType(
   return result;
 }
 
-/** Hook returning entities filtered by class name. */
-export function useGameEntitiesByClass(className: string): GameEntity[] {
-  const entities = useGameEntitiesInternal();
-  const result: GameEntity[] = [];
-  for (const entity of entities.values()) {
-    if (entity.className === className) result.push(entity);
-  }
-  return result;
-}
-
-/** Hook returning a single entity by id, or undefined. */
-export function useGameEntity(id: string): GameEntity | undefined {
-  const entities = useGameEntitiesInternal();
-  return entities.get(id);
-}
-
 // ── Scene infrastructure queries ──
 
 import type { SceneSky, SceneSun, SceneMissionArea } from "../scene/types";
@@ -552,14 +536,6 @@ export function useMissionDisplayName(): string | null {
     if (!state.missionName) return null;
     return findMissionInfo(state.missionName)?.displayName ?? state.missionName;
   });
-}
-
-/** Hook returning the game class name (e.g. "CTFGame"). */
-export function useGameClassName(): string | null {
-  return useStoreWithEqualityFn(
-    gameEntityStore,
-    (state) => state.gameClassName,
-  );
 }
 
 /** Hook returning the server display name. */

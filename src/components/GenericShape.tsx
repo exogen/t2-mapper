@@ -29,8 +29,6 @@ import {
   Vector3,
   RepeatWrapping,
   NoColorSpace,
-  Mesh,
-  SkinnedMesh,
 } from "three";
 import type { PointLight } from "three";
 import * as SkeletonUtils from "three/examples/jsm/utils/SkeletonUtils.js";
@@ -106,13 +104,16 @@ export interface ShapeLightConfig {
 
 const STANDARD_90_ROTATION: [x: number, y: number, z: number] = [
   0,
-  Math.PI / 2,
+  SHAPE_MODEL_ROTATION_Y,
   0,
 ];
 
 /** Shape entity data readable in useFrame for streaming mode. */
 interface StreamShapeEntity {
   id: string;
+  /** The game's identity for this object, used to key its collider so
+   *  world dumps stay comparable across stacks. */
+  ghostIndex?: number;
   threads?: StreamThreadState[];
   damageState?: number;
   wheels?: Array<{
@@ -140,9 +141,8 @@ import {
   registerStaticShapeCollider,
   unregisterStaticShapeCollider,
 } from "../collision/worldCollision";
-
-const _colliderBox = new Box3();
-const _colliderSize = new Vector3();
+import { staticShapeColliderMeshes } from "../world/colliderPolicy";
+import { SHAPE_MODEL_ROTATION_Y } from "../world/placement";
 
 /**
  * Content for a mounted shape. Computes the Mountpoint inverse offset from the
@@ -597,23 +597,21 @@ export const ShapeModel = memo(function ShapeModel({
   // (crossed alpha planes read solid to a ray while looking sparse), and
   // so is anything too small to meaningfully block a frame. World
   // matrices are snapshotted once, like interiors — these do not move.
-  const colliderId = useId();
+  // Keyed on the GHOST index, not `entity.id` (a per-session counter
+  // that differs between stacks) and not `useId` (React-internal), so a
+  // dump of this world is comparable with a headless build's.
+  const fallbackColliderId = useId();
+  const colliderId =
+    streamEntity?.ghostIndex != null
+      ? `ghost:${streamEntity.ghostIndex}`
+      : fallbackColliderId;
   useEffect(() => {
-    if ((type !== "TSStatic" && type !== "StaticShape") || isOrganic) return;
-    clonedScene.updateWorldMatrix(true, true);
-    const meshes: Mesh[] = [];
-    clonedScene.traverse((node) => {
-      const mesh = node as Mesh;
-      if (mesh.isMesh && !(mesh as unknown as SkinnedMesh).isSkinnedMesh) {
-        meshes.push(mesh);
-      }
+    const meshes = staticShapeColliderMeshes({
+      root: clonedScene,
+      type,
+      isOrganic,
     });
-    if (meshes.length === 0) return;
-    _colliderBox.setFromObject(clonedScene);
-    _colliderBox.getSize(_colliderSize);
-    if (Math.max(_colliderSize.x, _colliderSize.y, _colliderSize.z) < 3) {
-      return;
-    }
+    if (!meshes) return;
     registerStaticShapeCollider(colliderId, meshes);
     return () => unregisterStaticShapeCollider(colliderId);
   }, [clonedScene, colliderId, type, isOrganic]);

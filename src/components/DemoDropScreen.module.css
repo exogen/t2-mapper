@@ -190,3 +190,107 @@
   font-size: 14px;
   color: #ff9d9d;
 }
+
+/* Featured-section skeleton: the same tile silhouette (88px preview
+   column, three text lines) so the real cards land without the layout
+   moving under them. */
+/* The whole placeholder waits out the same delay: an index served
+   from cache resolves in a few frames, and a skeleton that flashes is
+   worse than no skeleton. Nothing else renders in its place meanwhile,
+   so the section simply appears once — either as placeholders (slow)
+   or as the real cards (fast). */
+.FeaturedSkeleton {
+  animation: featured-skeleton-appear 0.2s ease-out 300ms both;
+}
+
+@keyframes featured-skeleton-appear {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .FeaturedSkeleton {
+    animation-duration: 0.01s;
+  }
+}
+
+.SkeletonTile {
+  display: flex;
+  align-items: stretch;
+  gap: 12px;
+  height: 72px;
+  overflow: hidden;
+  border: 1px solid rgba(65, 131, 139, 0.25);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.3);
+}
+
+.SkeletonPreview {
+  flex: 0 0 auto;
+  width: 88px;
+  background: rgba(125, 255, 255, 0.05);
+  border-right: 1px solid rgba(65, 131, 139, 0.2);
+}
+
+@media (max-width: 399px) {
+  .SkeletonPreview {
+    display: none;
+  }
+}
+
+.SkeletonBody {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  justify-content: center;
+  gap: 8px;
+  padding: 10px 12px 10px 0;
+}
+
+@media (max-width: 399px) {
+  .SkeletonBody {
+    padding-left: 12px;
+  }
+}
+
+.SkeletonLine {
+  height: 10px;
+  border-radius: 4px;
+  background: rgba(125, 255, 255, 0.09);
+  animation: skeleton-pulse 1.4s ease-in-out infinite;
+}
+
+.SkeletonLine[data-line="title"] {
+  width: 45%;
+  height: 13px;
+}
+
+.SkeletonLine[data-line="mission"] {
+  width: 78%;
+  animation-delay: 0.15s;
+}
+
+.SkeletonLine[data-line="meta"] {
+  width: 60%;
+  animation-delay: 0.3s;
+}
+
+@keyframes skeleton-pulse {
+  0%,
+  100% {
+    opacity: 0.5;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .SkeletonLine {
+    animation: none;
+  }
+}

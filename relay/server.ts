@@ -116,6 +116,11 @@ const DEMO_SHUTDOWN_DRAIN_MS = parseInt(
   process.env.DEMO_SHUTDOWN_DRAIN_MS || "8000",
   10,
 );
+/** Finalize drain on an uncaught error, before the non-zero exit. */
+const DEMO_CRASH_DRAIN_MS = parseInt(
+  process.env.DEMO_CRASH_DRAIN_MS || "5000",
+  10,
+);
 /** Watcher stream delay on servers in tournament mode (anti screen-peek):
  *  demos still record live; watchers see everything this much later.
  *  0 disables. */
@@ -333,6 +338,7 @@ function findKnownServer(address: string): ServerInfo | undefined {
 const demoUploader = new DemoUploader(loadUploadConfig(), DEMO_DIR, {
   // Sweeps only run after both are constructed.
   isLive: (filePath) => demoCoordinator.isLivePath(filePath),
+  salvageMinLengthMs: DEMO_MIN_LENGTH_MS,
 });
 const demoCoordinator = new DemoCoordinator({
   enabled: DEMO_RECORD_ENABLED,
@@ -509,16 +515,43 @@ process.on("exit", (code) => {
   logExit(`process exiting with code ${code}`);
 });
 
+/**
+ * A crash still exits non-zero (Fly restarts the machine), but first the
+ * in-progress recordings get the same finalize drain a deploy gets, so
+ * an ordinary bug costs no demo. The state that threw may throw again
+ * during the drain — a second failure, or the drain timer, exits at
+ * once; whatever was stranded is salvaged by the next boot's sweep.
+ */
+let crashing = false;
+function crashExit(detail: string): void {
+  logExit(detail);
+  if (shuttingDown) return; // the shutdown drain already owns the exit
+  if (crashing) {
+    process.exit(1);
+  }
+  crashing = true;
+  setTimeout(() => process.exit(1), DEMO_CRASH_DRAIN_MS + 2_000).unref();
+  try {
+    patroller?.stop();
+    watchSessions.shutdown();
+    void demoCoordinator.shutdown(DEMO_CRASH_DRAIN_MS).finally(() => {
+      logExit("crash drain complete — exiting");
+      process.exit(1);
+    });
+  } catch (err) {
+    logExit(`crash drain failed: ${err instanceof Error ? err.stack : err}`);
+    process.exit(1);
+  }
+}
+
 process.on("uncaughtException", (err) => {
-  logExit(`uncaught exception: ${err?.stack ?? err}`);
-  process.exit(1);
+  crashExit(`uncaught exception: ${err?.stack ?? err}`);
 });
 
 process.on("unhandledRejection", (reason) => {
   const detail =
     reason instanceof Error ? (reason.stack ?? reason.message) : String(reason);
-  logExit(`unhandled rejection: ${detail}`);
-  process.exit(1);
+  crashExit(`unhandled rejection: ${detail}`);
 });
 
 wss.on("connection", (ws) => {

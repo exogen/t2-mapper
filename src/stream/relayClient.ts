@@ -85,6 +85,13 @@ export class RelayClient {
   private catchupReceivedBytes = 0;
   private catchupTotalBytes = 0;
   private bufferedLivePackets: Uint8Array[] = [];
+  /**
+   * Bumped whenever the socket's watch/join target changes. The async
+   * catch-up decode checks it on completion: a payload from a session
+   * the user has since left must neither hydrate the new adapter nor
+   * flip the framing state under the new session's own catch-up.
+   */
+  private sessionGeneration = 0;
 
   constructor(url: string, handlers: RelayEventHandler) {
     this.url = url;
@@ -211,8 +218,10 @@ export class RelayClient {
     const chunks = this.catchupChunks;
     this.catchupChunks = [];
     this.catchupMode = "finalizing";
+    const generation = this.sessionGeneration;
     gunzipToString(chunks)
       .then((json) => {
+        if (generation !== this.sessionGeneration) return;
         const payload = deserializeCatchupPayload(json);
         log.info(
           "catch-up payload: %d ghosts, %d datablocks, epoch %d",
@@ -223,10 +232,12 @@ export class RelayClient {
         this.handlers.onCatchup?.(payload);
       })
       .catch((e) => {
+        if (generation !== this.sessionGeneration) return;
         log.error("Failed to decode catch-up payload: %o", e);
         this.handlers.onError?.("Failed to decode catch-up payload");
       })
       .finally(() => {
+        if (generation !== this.sessionGeneration) return;
         this.catchupMode = "live";
         const buffered = this.bufferedLivePackets;
         this.bufferedLivePackets = [];
@@ -234,6 +245,14 @@ export class RelayClient {
           this.handlers.onGamePacket?.(packet);
         }
       });
+  }
+
+  /** Forget any catch-up in flight for the previous session target. */
+  private resetSessionFraming(): void {
+    this.sessionGeneration++;
+    this.catchupMode = "live";
+    this.catchupChunks = [];
+    this.bufferedLivePackets = [];
   }
 
   /** Request the server list from the master server. */
@@ -249,21 +268,21 @@ export class RelayClient {
   /** Join a specific game server. */
   joinServer(address: string, warriorName?: string): void {
     log.info("Joining server: %s", address);
+    this.resetSessionFraming();
     this.send({ type: "joinServer", address, warriorName });
   }
 
   /** Attach to a shared watch session for a game server (spectator). */
   watchServer(address: string): void {
     log.info("Watching server: %s", address);
+    this.resetSessionFraming();
     this.send({ type: "watchServer", address });
   }
 
   /** Detach from the current watch session; the socket stays open. */
   leaveServer(): void {
     this.send({ type: "leaveServer" });
-    this.catchupMode = "live";
-    this.catchupChunks = [];
-    this.bufferedLivePackets = [];
+    this.resetSessionFraming();
   }
 
   /** Forward a T2csri auth event to the relay. */

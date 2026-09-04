@@ -16,8 +16,8 @@ import { createLogger } from "../logger";
 
 const log = createLogger("demoTimelineScanner");
 
-/** Yield control every N blocks to keep the UI responsive. */
-const YIELD_INTERVAL = 500;
+/** How long the scan may hold the event loop before yielding. */
+const YIELD_SLICE_MS = 8;
 
 /**
  * `MsgMissionStart` is overloaded: the server broadcasts it for every
@@ -260,6 +260,7 @@ export async function scanDemoTimeline(
   let seenMatchStart = false;
   let currentMissionName: string | null = null;
   let blockCount = 0;
+  let sliceStart = performance.now();
   const totalBlocks = parser.blockCount;
 
   while (true) {
@@ -425,12 +426,34 @@ export async function scanDemoTimeline(
         // everyone's events from a neutral perspective instead.
         const isObserverPerspective = !recorderEverOnTeam;
 
+        // A player changed their name — the community tag-change script
+        // (TacoServer dtChatCmdGame.cs). Wire: args[2]=old name,
+        // args[3]=new name, args[4]=clientId. The reconnect restore
+        // sends the same name twice; that is not a change.
+        if (msgTypeLower === "msgclientnamechanged" && args.length >= 5) {
+          const previousRaw = resolveNetString(args[2], netStrings);
+          const newRaw = resolveNetString(args[3], netStrings);
+          const previousName = stripTaggedStringMarkup(previousRaw).trim();
+          const newName = stripTaggedStringMarkup(newRaw).trim();
+          if (newName && previousName !== newName) {
+            events.push({
+              timeSec,
+              type: "rename",
+              description: `${previousName || "A player"} is now ${newName}`,
+              teamAffinity: "neutral",
+              actor: newName,
+              previousName: previousName || undefined,
+              raw: { actor: newRaw, previousName: previousRaw || undefined },
+            });
+          }
+          continue;
+        }
+
         // Flag grab (taken from base).
         // Wire: args[2]=playerName, args[3]=teamName, args[4]=flag.team, args[5]=playerNameBase
         if (msgTypeLower === "msgctfflagtaken" && args.length >= 3) {
-          const playerName = stripTaggedStringMarkup(
-            resolveNetString(args[2], netStrings),
-          ).trim();
+          const playerRaw = resolveNetString(args[2], netStrings);
+          const playerName = stripTaggedStringMarkup(playerRaw).trim();
           const flagTeamName =
             args.length >= 4
               ? stripTaggedStringMarkup(
@@ -445,6 +468,7 @@ export async function scanDemoTimeline(
               teamAffinity: "neutral",
               actor: playerName || undefined,
               flagTeamName: flagTeamName || undefined,
+              raw: playerName ? { actor: playerRaw } : undefined,
             });
           } else if (
             normalizedRecorder &&
@@ -466,9 +490,8 @@ export async function scanDemoTimeline(
         // Wire: args[2]=playerName (or "0" for the carrier's own copy),
         // args[3]=teamName (or "0"), args[4]=flag.team
         if (msgTypeLower === "msgctfflagdropped" && args.length >= 3) {
-          const playerName = stripTaggedStringMarkup(
-            resolveNetString(args[2], netStrings),
-          ).trim();
+          const playerRaw = resolveNetString(args[2], netStrings);
+          const playerName = stripTaggedStringMarkup(playerRaw).trim();
           const flagTeamNameRaw =
             args.length >= 4
               ? stripTaggedStringMarkup(
@@ -495,6 +518,7 @@ export async function scanDemoTimeline(
               teamAffinity: "neutral",
               actor,
               flagTeamName,
+              raw: actor ? { actor: playerRaw } : undefined,
             });
           } else if (
             normalizedRecorder &&
@@ -524,9 +548,8 @@ export async function scanDemoTimeline(
         // Flag return (returned to base).
         // Wire: args[2]=playerName, args[3]=teamName, args[4]=flag.team
         if (msgTypeLower === "msgctfflagreturned" && args.length >= 3) {
-          const playerName = stripTaggedStringMarkup(
-            resolveNetString(args[2], netStrings),
-          ).trim();
+          const playerRaw = resolveNetString(args[2], netStrings);
+          const playerName = stripTaggedStringMarkup(playerRaw).trim();
           if (isObserverPerspective) {
             const flagTeamName =
               args.length >= 4
@@ -549,6 +572,7 @@ export async function scanDemoTimeline(
               teamAffinity: "neutral",
               actor,
               flagTeamName: flagTeamName || undefined,
+              raw: actor ? { actor: playerRaw } : undefined,
             });
           } else if (
             normalizedRecorder &&
@@ -573,11 +597,13 @@ export async function scanDemoTimeline(
             args.slice(2),
             netStrings,
           );
-          const capturerName =
+          const capturerRaw =
             args.length >= 3
-              ? stripTaggedStringMarkup(
-                  resolveNetString(args[2], netStrings),
-                ).trim()
+              ? resolveNetString(args[2], netStrings)
+              : undefined;
+          const capturerName =
+            capturerRaw != null
+              ? stripTaggedStringMarkup(capturerRaw).trim()
               : undefined;
           const flagTeamName =
             args.length >= 4
@@ -608,6 +634,7 @@ export async function scanDemoTimeline(
             teamAffinity,
             capturer: capturerName,
             flagTeamName: flagTeamName || undefined,
+            raw: capturerName ? { capturer: capturerRaw } : undefined,
           });
           continue;
         }
@@ -615,12 +642,11 @@ export async function scanDemoTimeline(
         // Kill/death messages.
         if (KILL_MSG_TYPES.has(msgTypeLower) && args.length >= 6) {
           // args[2]=victimName, args[5]=killerName, args[9]=DamageTypeText
-          const killerName = stripTaggedStringMarkup(
-            resolveNetString(args[5], netStrings),
-          ).trim();
-          const victimName = stripTaggedStringMarkup(
-            resolveNetString(args[2], netStrings),
-          ).trim();
+          const killerRaw = resolveNetString(args[5], netStrings);
+          const victimRaw = resolveNetString(args[2], netStrings);
+          const killerName = stripTaggedStringMarkup(killerRaw).trim();
+          const victimName = stripTaggedStringMarkup(victimRaw).trim();
+          const rawNames = { killer: killerRaw, victim: victimRaw };
           const weapon =
             args.length >= 10
               ? stripTaggedStringMarkup(
@@ -641,6 +667,7 @@ export async function scanDemoTimeline(
               killer: killerName,
               victim: victimName,
               weapon: weapon || undefined,
+              raw: rawNames,
             });
           }
 
@@ -670,6 +697,7 @@ export async function scanDemoTimeline(
                 killer: killerName,
                 victim: victimName,
                 weapon: weapon || undefined,
+                raw: rawNames,
               });
             }
 
@@ -703,6 +731,7 @@ export async function scanDemoTimeline(
                   killer: killerName,
                   victim: victimName,
                   weapon: weapon || undefined,
+                  raw: rawNames,
                 });
               } else {
                 // No killer name (base turret, explosion, etc.) or
@@ -726,12 +755,15 @@ export async function scanDemoTimeline(
       }
     }
 
-    // Yield control periodically.
-    if (blockCount % YIELD_INTERVAL === 0) {
+    // Yield the event loop once a slice of wall time has gone by —
+    // by time, not by block count, so a stretch of heavy blocks cannot
+    // hold the page for longer than a frame's worth of work.
+    if (performance.now() - sliceStart >= YIELD_SLICE_MS) {
       if (totalBlocks && onProgress) {
         onProgress(Math.min(blockCount / totalBlocks, 1));
       }
       await new Promise<void>((r) => setTimeout(r, 0));
+      sliceStart = performance.now();
     }
   }
 

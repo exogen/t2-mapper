@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import { AxesHelper } from "three";
 import { FloatingLabel } from "./FloatingLabel";
+import { DebugFreeSpace } from "./DebugFreeSpace";
 
 /** Axis labels use the same colors as the axes helper lines below. The
  *  world axes are Torque's: Three +X = Torque Y, +Y = Z, +Z = X. */
@@ -29,6 +30,7 @@ export function DebugElements() {
           vertexColors
         />
       </axesHelper>
+      <DebugFreeSpace />
       <FloatingLabel position={[80, 0, 0]} opacity={1} color={AXIS_Y_COLOR}>
         Y
       </FloatingLabel>

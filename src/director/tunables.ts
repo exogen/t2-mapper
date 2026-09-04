@@ -3,10 +3,128 @@
  * thresholds, framing distances and timings. Scores are unitless;
  * distances and radii are world units; times are seconds of demo.
  *
- * They live apart from the planning code deliberately — this is the file
- * to open when tuning how the director behaves, without reading how it
- * is implemented.
+ * They live apart from the planning code deliberately: this is where to
+ * start when tuning how the director behaves, without reading how it is
+ * implemented.
+ *
+ * ## The rest of the knobs, and why they are not here
+ *
+ * About 150 more sit next to the code they steer, because each one is
+ * justified by a measurement recorded in the comment beside it — moving
+ * them here would separate the number from its evidence. Where to look:
+ *
+ * | to change | look in |
+ * |---|---|
+ * | pre-match pacing, tour holds, signing lengths | `preMatch.ts` — `TOUR_HOLD_SEC`, `SIGNING_HOLD_SEC`, `OBSERVER_DRAIN_SEC` |
+ * | the establishing fly-by (height, bow, waypoints) | `preMatch.ts` — the `FLYBY_*` family |
+ * | how far a lateral pan swings, how close a push-in ends | `preMatch.ts` — `PAN_SWING`, `MIN_PUSH_DIST`, `INDOOR_STANDOFF` |
+ * | how a subject is framed by kind (stand, generator…) | `preMatch.ts` — `KIND_FRAMING` |
+ * | anything about filming a PERSON | `humanScale.ts` |
+ * | where a camera may stand (grid resolution, clearance, water) | `freeSpace.ts` — `FREE_SPACE_*`, `TIGHT_CLEARANCE`, `WATERLINE_MARGIN` |
+ * | how camera positions are ranked | `freeSpace.ts` — `OPENNESS_WEIGHT`, `ELEV_COMFORT`, `TIGHT_PENALTY` |
+ * | camera pacing and easing | `cameraRig.ts` — `SETTLE_RAMP_IN/OUT`, `easeInHold`, `sweepProgress` |
+ * | terrain following and ground clearance | `cameraRig.ts` — `TERRAIN_FOLLOW_CLEARANCE`, `GROUND_MIN_CLEARANCE` |
+ * | how often the establishing run repeats | `switcher.ts` — `FLYBY_EVERY_SEC` |
+ * | roster block sizing and re-arming | `switcher.ts` — the `LINEUP_*` family |
+ * | how long a pick-up waits for its player to settle | `switcher.ts` — `SIGNING_SETTLE_SEC` |
+ * | placement repair: tight orbits, sweep lifts, drops | `stage.ts` — `STAGE_*`, `SWEEP_*`, `maxHold` |
+ *
+ * Two rules keep this from rotting. Camera POSITION and AIM come only
+ * from `shotPoseAt` (they are branded types; nothing else can make one),
+ * and VISIBILITY is only ever `subjectViewBlocked`. Tuning either of
+ * those means editing one function, not hunting for copies — which is
+ * what the whole system used to require.
  */
+
+/**
+ * The causal director's information horizon: how many seconds ahead of
+ * its own timestamp any cast decision (shot, cut, cue, scene fact) may
+ * see. This models a delayed live stream, so it applies to demos too —
+ * the same engine must behave identically on both. Tunable via the
+ * CAST_LOOKAHEAD_SEC env var (raise it if 2s proves too blind; the old
+ * oracle planner is effectively this at infinity). Distinct from the
+ * tracker resolution lags (directorTrackers), which are latency behind
+ * the present, and from any stream delay, which is latency budget.
+ */
+export const DIRECTOR_LOOKAHEAD_SEC = envSeconds(
+  process.env.CAST_LOOKAHEAD_SEC,
+  2,
+);
+
+/**
+ * Parse a seconds-valued env var, falling back when it is unset.
+ *
+ * The EMPTY-STRING trap: Vite's `define` substitutes an unset var as
+ * the literal `""`, and `Number("")` is 0 — so a naive isFinite check
+ * silently pinned the director's lookahead to ZERO in the browser
+ * while node scripts (where it is `undefined` → NaN) got the default.
+ * Every peek-based rule — grab and capture preemption, aftermath
+ * scheduling, peek holds — was dead in the app and alive in every
+ * offline verification.
+ */
+export function envSeconds(raw: string | undefined, fallback: number): number {
+  if (raw == null || raw.trim() === "") return fallback;
+  const value = Number(raw);
+  return Number.isFinite(value) && value >= 0 ? value : fallback;
+}
+
+/**
+ * THE VARIETY MIXER. Unless there is flag action to cover, a good cast
+ * rotates through many kinds of picture; these weights set the appetite
+ * for each story family in the causal switcher's lull scheduler.
+ * 0 disables a family outright; relative magnitude is what matters —
+ * a family's chance scales with (detector confidence x weight x
+ * freshness), freshness recovering fully over
+ * DIRECTOR_VARIETY_FRESH_SEC since the family last aired.
+ */
+export const DIRECTOR_VARIETY_WEIGHTS = {
+  /** Player kill shots (arrive-on-the-kill cut-ins). */
+  killCutIn: 1.0,
+  /** The busiest knot of players, wherever it is. */
+  cluster: 0.8,
+  /** Structures going down — raids in progress. */
+  destruction: 1.2,
+  /** Generators/turrets coming back online — repair stories. */
+  repair: 0.9,
+  /** Inventory-station queues outside the kickoff window. */
+  suitUp: 0.6,
+  /** A capper winding up their route toward the enemy stand. */
+  capperSetup: 1.2,
+  /** Ride-alongs with loaded transports / active vehicles. */
+  vehicle: 1.1,
+  /** Slow map fly-throughs between the bases. */
+  flyThrough: 0.45,
+};
+/**
+ * How hot the CURRENT story may be for each family to still interrupt
+ * it: breaking events (kills, structures falling) may cut in over
+ * quiet stand-watching; ambient filler (clusters, fly-throughs) waits
+ * for a true lull. A live carry (SCORE_CARRIED=100) outranks all.
+ */
+export const DIRECTOR_VARIETY_INTERRUPT: Record<
+  keyof typeof DIRECTOR_VARIETY_WEIGHTS,
+  number
+> = {
+  // 95: interrupt anything except an imminent grab (96) or live carry.
+  killCutIn: 95,
+  destruction: 95,
+  repair: 85,
+  capperSetup: 85,
+  vehicle: 85,
+  suitUp: 60,
+  cluster: 60,
+  flyThrough: 60,
+};
+/** Seconds for a family's freshness to fully recover after airing. */
+export const DIRECTOR_VARIETY_FRESH_SEC = 150;
+/** Minimum weighted value a variety candidate needs to air at all. */
+export const DIRECTOR_VARIETY_MIN_VALUE = 0.15;
+/**
+ * Tight-vs-wide balance for solved fixed framings: the fraction of
+ * subject-framing shots that take the HERO size target (subject large
+ * in frame) instead of the ACTION size. 0 = all wide, 1 = all tight.
+ */
+export const DIRECTOR_TIGHT_SHOT_SHARE = 0.5;
 
 /** Interest-grid tick. */
 export const DIRECTOR_TICK_SEC = 0.5;
@@ -16,42 +134,58 @@ export const DIRECTOR_MIN_SHOT_SEC = 5;
 export const DIRECTOR_HARD_FLOOR_SEC = 2.5;
 /** Switch subjects only when the challenger beats the current by this. */
 export const DIRECTOR_SWITCH_PENALTY = 25;
+/**
+ * …but the penalty exists to stop churn between COMPARABLE stories,
+ * not to strand the camera on a dead one. Once the current subject
+ * has decayed to this (a parked flag past its check-in, a stand
+ * nobody is near), anything better takes over after the minimum hold.
+ */
+export const DIRECTOR_ABANDON_SCORE = 10;
 /** Challenger score that allows preempting before MIN_SHOT. */
 export const DIRECTOR_PREEMPT_SCORE = 95;
 /** Static (non-chase) shots rotate away after this long. */
 export const DIRECTOR_MAX_STATIC_SEC = 20;
-/** Over-the-shoulder grab views ride the grabber for this long before
- *  the grab (alternating with the classic stand camera for variety). */
-export const DIRECTOR_GRAB_OTS_LEAD_SEC = 7;
 /** Camera parked at the flag this long before a known grab. */
 export const DIRECTOR_GRAB_LOOKAHEAD_SEC = 10;
+/**
+ * How long AFTER a grab the director will still cut to it. The peek
+ * (DIRECTOR_LOOKAHEAD_SEC) is anticipation; this is pure reaction, and
+ * it is what guarantees grab coverage at zero lookahead — a live feed
+ * with no delay still cuts to the carrier a beat after the touch.
+ */
+export const DIRECTOR_GRAB_REACT_SEC = 3;
 /** Inside this window the grab pre-empts whatever else is on. */
 export const DIRECTOR_GRAB_IMMINENT_SEC = 6;
-/** Boundary shift so the camera settles before a tier-1 event. */
-export const DIRECTOR_ANTICIPATION_SEC = 2;
-/**
- * A capture PREEMPTS everything inside this window — fairness holds,
- * hysteresis, the guarantee rate limit, aftermath holds. A flag capture
- * is always the most valuable thing on the map; no other rule may hold
- * the camera elsewhere while one lands.
- */
-export const DIRECTOR_CAP_PREEMPT_SEC = 8;
-/** Cap-ceremony framing begins this long before a capture. */
-export const DIRECTOR_CAP_PREROLL_SEC = 5;
 /**
  * A flag dropped this close to its own stand, uncontested, is about as
  * interesting as a flag AT the stand — it will be trivially returned.
  * Interest ramps with distance from home, saturating at the FAR mark:
  * a flag lying deep in enemy territory is a live grenade.
  */
+/**
+ * A flag left in the field is not automatically live play. Teams park
+ * one deliberately — deep in their own ground it is often EASIER to
+ * defend than at the stand — and a camera that treats every dropped
+ * flag as a story sits on a motionless prop while the match happens
+ * elsewhere. With no opponent inside QUIET_RANGE, interest holds for
+ * FRESH_SEC and then decays to FLOOR over DECAY_SEC, so the mixer can
+ * spend the time on other pictures; every CHECKIN_SEC it briefly
+ * becomes worth a look again ("still out there") for CHECKIN_WINDOW.
+ */
+export const DIRECTOR_FIELD_QUIET_RANGE = 200;
+export const DIRECTOR_FIELD_FRESH_SEC = 20;
+export const DIRECTOR_FIELD_DECAY_SEC = 45;
+/** Below SCORE_IDLE and SCORE_QUIET on purpose: once a flag is fully
+ *  stale, whatever players are actually doing outranks it. */
+export const DIRECTOR_FIELD_FLOOR_SCORE = 6;
+export const DIRECTOR_FIELD_CHECKIN_SEC = 50;
+/** A check-in outranks ambient filler (so it actually airs) but never
+ *  breaking news — see DIRECTOR_VARIETY_INTERRUPT. */
+export const DIRECTOR_FIELD_CHECKIN_SCORE = 65;
+export const DIRECTOR_FIELD_CHECKIN_WINDOW = 7;
+
 export const DIRECTOR_DROPPED_NEAR_HOME = 25;
 export const DIRECTOR_DROPPED_FAR = 175;
-/**
- * The first seconds after the whistle get one wide shot of the spawn
- * rush — everyone pouring out of the bases is the only action anywhere,
- * and it establishes both teams' opening routes.
- */
-export const DIRECTOR_KICKOFF_WIDE_SEC = 10;
 /** Enemy within this range of a home flag reads as a threat. */
 export const DIRECTOR_THREAT_RANGE = 80;
 /** Kill clustering: spatial radius and time window. */
@@ -66,8 +200,6 @@ export const DIRECTOR_CLUSTER_WINDOW_SEC = 8;
  * standoff camera staring at dirt.
  */
 export const DIRECTOR_FLOOR_BAND = 5;
-/** A cluster within this range of a stand is "at the X base". */
-export const DIRECTOR_PLACE_NAME_RANGE = 250;
 /** Kills within this range of a flag feed its interest. */
 export const DIRECTOR_KILL_NEAR_FLAG = 60;
 /** Guarantee pass: an event is covered within this range. */
@@ -83,16 +215,6 @@ export const DIRECTOR_COVER_RANGE = 120;
  * uncovered (and reported as such) rather than spliced.
  */
 export const DIRECTOR_GUARANTEE_MIN_GAP_SEC = 25;
-/**
- * A flag on the ground for less than this, between two carries, is a
- * PASS (or a fumble-and-regrab) — one continuous play, not three shots.
- * The follow machinery tracks item and carriers seamlessly, so the
- * camera just rides through it instead of cutting to a "dropped flag"
- * framing and back.
- */
-export const DIRECTOR_PASS_CONTINUITY_SEC = 5;
-/** Sub-shots (status runs) shorter than this merge into the previous. */
-export const DIRECTOR_MIN_RUN_SEC = 2;
 /**
  * Hard floor on a finished shot: anything briefer reads as a jump cut
  * rather than a shot, and is absorbed into its neighbour. Long enough
@@ -121,37 +243,44 @@ export const DIRECTOR_MAX_CHASE_SEC = 22;
  * pass then absorbs into its neighbour entirely.
  */
 export const DIRECTOR_FAIR_SHARE_SEC = 12;
-/** A grab held for less than this is a scramble, not a carry, and does
- *  not earn a cut away from whatever is already on screen. */
-export const DIRECTOR_MIN_POSSESSION_SEC = 4;
-/**
- * A defender posted near a home flag makes the stand shot: within this
- * range they join the frame, and the orbit widens (capped) so flag and
- * guard read together instead of a lone flag filling the lens.
- */
-export const DIRECTOR_STAND_GUARD_RANGE = 45;
-export const DIRECTOR_DIST_STAND_GUARDED_MAX = 30;
 /** Follow-shot orbit distances by flag state. A chase sits well back
  *  (a tight orbit fills the frame with one body and the dirt under it,
  *  which is the least informative shot available). */
 export const DIRECTOR_DIST_CHASE = 15;
 export const DIRECTOR_DIST_STAND = 14;
-export const DIRECTOR_DIST_CEREMONY = 16;
+/**
+ * Grab coverage rides WIDE: a capper arrives at ski speed, and a 14m
+ * lens on a dive that crosses fifty metres in a second is a blur of
+ * armour. These three framings rotate — the stand watched wide, the
+ * incoming capper ridden from behind with the stand beyond them, and
+ * a flight alongside them — so grabs never look the same twice.
+ */
+export const DIRECTOR_DIST_STAND_WIDE = 34;
+export const DIRECTOR_GRAB_CHASE_DIST = 28;
+export const DIRECTOR_GRAB_ALONGSIDE_DIST = 24;
+/** No grab shot rides closer than this, whatever the geometry
+ *  solvers would prefer — the whole point is the wide view. */
+export const DIRECTOR_GRAB_MIN_DIST = 20;
+/** Below this capper likelihood (see inboundAttacker) an approach is
+ *  a base push, not a flag dive — it gets no grab framing. */
+export const DIRECTOR_CAPPER_MIN_LIKELIHOOD = 0.5;
+export const DIRECTOR_GRAB_ALONGSIDE_HEIGHT = 6;
+/**
+ * Closing on the cap, the SHOT IS THE PAIR: the carrier and the stand
+ * they are about to touch. Inside this range the camera pulls back to
+ * hold both — framing scales with how far out they still are — and
+ * sits behind them looking across at the stand rather than head-on or
+ * tight from the side.
+ */
+export const DIRECTOR_CAP_APPROACH_RANGE = 220;
+export const DIRECTOR_CAP_APPROACH_MIN_DIST = 30;
+export const DIRECTOR_CAP_APPROACH_MAX_DIST = 70;
 export const DIRECTOR_DIST_HERO = 8;
 /** Follow-shot orbit pitch (radians; positive looks down). Chases stay
  *  shallow so the frame carries the horizon and the players ahead
  *  rather than the ground. */
 export const DIRECTOR_PITCH_CHASE = 0.16;
 export const DIRECTOR_PITCH_STAND = 0.4;
-/** The defender hip-view: tight and low beside the posted defender,
- *  looking across them at the flag — the counterweight to a diet of
- *  wide overheads on quiet stands. */
-export const DIRECTOR_DIST_HIP = 7;
-export const DIRECTOR_PITCH_HIP = 0.1;
-/** How much of a pre-grab stand the approach-aimed flag shot keeps for
- *  itself when a hip view covers the wait — the approach bearing only
- *  earns the frame once the grabber is actually closing. */
-export const DIRECTOR_STAND_APPROACH_TAIL_SEC = 4.5;
 /** Establishing/idle orbit framing. */
 export const DIRECTOR_BASE_ORBIT_RADIUS = 35;
 export const DIRECTOR_WIDE_ORBIT_RADIUS = 55;
@@ -183,16 +312,6 @@ export const DIRECTOR_LANDMARK_MAX_RANGE = 420;
 /** Two "hold" aims within this many radians point the same way. */
 export const DIRECTOR_REDUNDANT_AIM_RADIANS = 0.35;
 export const DIRECTOR_REDUNDANT_CUT_RANGE = 25;
-/** Aim: a pre-grab shot looks toward where the grabber was this long
- *  before the grab (their approach corridor). */
-export const DIRECTOR_APPROACH_LOOKBACK_SEC = 4;
-/** Aim: an approach farther than this from the flag is ignored. */
-export const DIRECTOR_APPROACH_MAX_RANGE = 400;
-/** Aim: a defender this close to the carrier counts as a chaser. */
-export const DIRECTOR_CHASE_RADIUS = 35;
-/** Aim: fraction of a chase shot spent with a chaser in range that
- *  flips the camera to look back at the pursuit. */
-export const DIRECTOR_CHASE_FRACTION = 0.35;
 /** Crowded action: players within this range of the subject count. */
 export const DIRECTOR_CROWD_RADIUS = 60;
 /**
@@ -208,20 +327,6 @@ export const DIRECTOR_CROWD_RADIUS = 60;
 export const DIRECTOR_CROWD_PERCENTILE = 0.75;
 export const DIRECTOR_CROWD_MIN_ABSOLUTE = 2;
 export const DIRECTOR_CROWD_MAX_ABSOLUTE = 3;
-/**
- * A dropped flag is only worth a camera while someone is this close to
- * it; otherwise it is just an object in a field. Kept in scale with the
- * dropped-flag camera's own frame (roughly its radius plus a beat of
- * approach) so "contested" means "will be on screen", not "somewhere on
- * the same hillside".
- */
-export const DIRECTOR_CONTESTED_RANGE = 70;
-/** Crowded chase: still locked on the carrier, but pulled back and
- *  near top-down so the whole fight reads. */
-export const DIRECTOR_DIST_CROWD = 20;
-/** Steep enough to read a scrum, shallow enough that the frame is
- *  still players and horizon rather than mostly dirt. */
-export const DIRECTOR_PITCH_CROWD = 0.45;
 /** Dropped flag: a stationary, zoomed-out camera watching the area
  *  (a close locked orbit on a flag lying on the ground is dead air).
  *  Wide enough to hold the players converging on it, not just the flag. */
@@ -243,22 +348,9 @@ export const DIRECTOR_SLOW_SPEED = 8;
 export const DIRECTOR_FAST_SPEED = 65;
 export const DIRECTOR_DIST_SLOW = 9;
 export const DIRECTOR_DIST_FAST = 24;
-/**
- * Turtling: a carrier sitting still deep inside a base (next to a
- * generator or inventory, which only ever exist indoors) rather than
- * running. It needs its own coverage — a static orbit on a stationary
- * body is nothing — alternating the carrier inside with the attackers
- * massing at the doors outside.
- */
-export const DIRECTOR_TURTLE_SPEED = 6;
-export const DIRECTOR_TURTLE_ASSET_RANGE = 35;
-export const DIRECTOR_TURTLE_MIN_SEC = 6;
 /** Inside-the-base shot on a turtling carrier: close, low, and tight. */
 export const DIRECTOR_TURTLE_INSIDE_RADIUS = 12;
 export const DIRECTOR_TURTLE_INSIDE_HEIGHT = 0.3;
-/** Enemies this close to a turtling carrier make the inside shot the
- *  more urgent of the two. */
-export const DIRECTOR_TURTLE_THREAT_RANGE = 30;
 /** Doorway watch: framing on the attackers outside trying to get in. */
 export const DIRECTOR_DOORWAY_RADIUS = 30;
 export const DIRECTOR_DOORWAY_HEIGHT = 0.4;
@@ -317,20 +409,11 @@ export const DIRECTOR_DOLLY_MIN_SEC = 8;
 export const DIRECTOR_DOLLY_DISTANCE = 12;
 export const DIRECTOR_DOLLY_HEIGHT = 4;
 /**
- * Carried-flag runs alternate locked chase ↔ cinematic dolly. (A fixed
- * camera can't cover a cross-map run — see DIRECTOR_FIXED_HOLD_RADIUS —
- * so fixed coverage of carries comes from the cap camera instead.)
- */
-export const DIRECTOR_CHASE_STYLES = 2;
-/**
  * A long carry is cut into segments of about this length, each taking
  * the next camera style. A single unbroken 110-second locked orbit is
  * monotonous however well aimed; real coverage changes angle.
  */
 export const DIRECTOR_CHASE_SEGMENT_SEC = 18;
-/** Cap camera: wide and high at the stand, for the arrival itself. */
-export const DIRECTOR_GOAL_CAM_RADIUS = 40;
-export const DIRECTOR_GOAL_CAM_HEIGHT = 0.6;
 /**
  * Watching a player cluster instead of an idle flag. The floor is
  * deliberately wide: the planner has no map geometry, so a camera
@@ -340,8 +423,6 @@ export const DIRECTOR_GOAL_CAM_HEIGHT = 0.6;
  */
 export const DIRECTOR_CLUSTER_CAM_RADIUS = 55;
 export const DIRECTOR_CLUSTER_CAM_HEIGHT = 0.8;
-/** A cluster needs this many players to be worth a camera of its own. */
-export const DIRECTOR_CLUSTER_CAM_MIN_PLAYERS = 2;
 /**
  * Bombardment coverage: with the flags static, shells landing on a base
  * are the story. Needs this many in the window to count as a barrage
@@ -351,21 +432,9 @@ export const DIRECTOR_BOMBARDMENT_MIN_SHELLS = 3;
 /** Shells within this much time of a tick count toward its barrage. */
 export const DIRECTOR_BOMBARDMENT_WINDOW_SEC = 5;
 export const DIRECTOR_BOMBARDMENT_RANGE = 120;
-/** How near the shells' origin a player must be to read as the crew. */
-export const DIRECTOR_SHOOTER_RANGE = 60;
-/**
- * Highlight kills: a death with an identifiable killer is a duel worth
- * showing, and the good ones (a mortar hit, a disc) are worth showing
- * most. The shot spans its whole chunk, so it is already up before the
- * kill lands and holds through the aftermath.
- *
- * A killer this far from their victim still frames as one duel.
- */
-export const DIRECTOR_HIGHLIGHT_MAX_SEPARATION = 140;
 /** Suit-up: players within this range of an inventory station, and how
  *  many of them make it a moment worth a tight camera inside. */
 export const DIRECTOR_STATION_RANGE = 18;
-export const DIRECTOR_STATION_MIN_PLAYERS = 3;
 /**
  * A crowd at an inventory only MEANS something at particular moments:
  * the pre-match/kickoff suit-up, or a base coming back online after a
@@ -374,21 +443,11 @@ export const DIRECTOR_STATION_MIN_PLAYERS = 3;
  * new monotony it was meant to break.
  */
 export const DIRECTOR_SUITUP_KICKOFF_SEC = 45;
-export const DIRECTOR_SUITUP_REPAIR_SEC = 30;
-/** Minimum gap between suit-up shots, whatever else is happening. */
-export const DIRECTOR_SUITUP_COOLDOWN_SEC = 150;
 export const DIRECTOR_STATION_CAM_RADIUS = 14;
 export const DIRECTOR_STATION_CAM_HEIGHT = 0.35;
 /** Framing for the two bombardment shots: the impacts, and the crew. */
 export const DIRECTOR_BOMBARDMENT_CAM_RADIUS = 70;
 export const DIRECTOR_BOMBARDMENT_CAM_HEIGHT = 0.55;
-export const DIRECTOR_SHOOTER_CAM_RADIUS = 22;
-/**
- * Live fire within this range of a candidate suit-up trumps it: a
- * mortar being FIRED (or landing) feet from the inventory is the shot,
- * and people topping up their packs is the background.
- */
-export const DIRECTOR_STATION_ACTION_RANGE = 60;
 /**
  * A fixed camera has to contain its subject for the whole shot. Rather
  * than reject any group that moves, the camera is pulled back to cover
@@ -418,13 +477,6 @@ export const DIRECTOR_PATH_STANDOFF_FRACTION = 0.55;
  * noticeably past the radius (85 here measured as an aerial map).
  */
 export const DIRECTOR_WIDE_CAM_MAX_RADIUS = 70;
-/**
- * Enemy presence, per second of the run, before a crowded stand counts
- * as a battle. A lone scout drifting through is not a battle — without
- * this floor the early game reads spawn crowds as "battle overhead"
- * shots of teams standing around.
- */
-export const DIRECTOR_BATTLE_MIN_ENEMY_RATE = 0.5;
 /** How far into the fog band a camera may stand off — 0 keeps it at the
  *  distance haze begins, 1 lets it reach the vanishing point. */
 export const DIRECTOR_FOG_TOLERANCE = 0.25;
@@ -447,15 +499,6 @@ export const DIRECTOR_FIXED_CHUNK_SEC = 8;
  */
 export const DIRECTOR_AFTERMATH_HOLD_SEC = 4.5;
 export const DIRECTOR_AFTERMATH_RADIUS = 30;
-/** Somebody must actually be at the scene for an aftermath hold (or a
- *  return-imminent score boost) to make sense — a flag whose return
- *  timer simply expired resolves in an empty field. */
-export const DIRECTOR_AFTERMATH_CROWD_RANGE = 30;
-/** A victim slower than this at death wasn't really flying — hovering
- *  in place and getting hit is not the MA highlight. */
-export const DIRECTOR_MIDAIR_MIN_SPEED = 15;
-/** Two non-generator asset kills within this range read as one raid. */
-export const DIRECTOR_RAID_RANGE = 40;
 /** Riders aboard (pilot included) before a transport reads as a raid
  *  under way, and how far it must move within the window to count as
  *  flying rather than loading. */
@@ -464,94 +507,15 @@ export const DIRECTOR_TRANSPORT_MIN_TRAVEL = 80;
 /** Opposing flyers this close, this often, are a dogfight. */
 export const DIRECTOR_DOGFIGHT_RANGE = 60;
 export const DIRECTOR_DOGFIGHT_MIN_MEETINGS = 3;
-/** One vehicle set piece per stretch — they repeat (ferry runs). */
-export const DIRECTOR_VEHICLE_COOLDOWN_SEC = 45;
 
-/**
- * Situational story priorities — which one story a coverage window
- * tells when several are available. Data, not statement order: a
- * MID-AIR disc or a kill on the flag carrier now outranks a routine
- * barrage, while a plain duel still defers to the (cooldown-limited)
- * suit-up so lulls keep their variety.
- */
-export const SCORE_STORY_KILL_FLAG = 85;
-export const SCORE_STORY_RAID = 80;
-export const SCORE_STORY_KILL_MIDAIR = 75;
-export const SCORE_STORY_BOMBARDMENT = 70;
-export const SCORE_STORY_VEHICLE = 60;
-export const SCORE_STORY_SUITUP = 55;
-export const SCORE_STORY_KILL = 50;
-/** A kill at longer range than this reads as two dots in a wide frame
- *  — follow the KILLER instead, looking down their line of fire. */
-export const DIRECTOR_KILL_FOLLOW_SEPARATION = 40;
-/** Players/vehicles this close to a dropped flag are part of its scene
- *  and the wide view widens to hold them. */
-export const DIRECTOR_DROP_SCENE_RANGE = 60;
-/** A lull anchored this close to the previous lull is the same shot
- *  again — look somewhere else if anyone is watchable there. */
-export const DIRECTOR_LULL_REPEAT_RANGE = 60;
 /** A lone flyer passing this close to enemies, repeatedly, is a
  *  strafing run — worth a camera even without an opposing flyer. */
-/** A generator repair only explains re-arming at stations in the SAME
- *  base — within this range of the repaired generator. */
-export const DIRECTOR_SUITUP_REPAIR_RANGE = 120;
 export const DIRECTOR_STRAFE_RANGE = 50;
 export const DIRECTOR_STRAFE_MIN_PASSES = 2;
 /** Every other bombardment impact shot sits IN the impact zone. */
 export const DIRECTOR_BOMBARDMENT_CLOSE_RADIUS = 24;
 export const DIRECTOR_BOMBARDMENT_CLOSE_HEIGHT = 0.35;
-/**
- * A scramble — the flag changing hands over and over in one area —
- * reads as chaos when every grab/drop cuts to a new camera. When this
- * many consecutive short runs stay inside DIRECTOR_SCRAMBLE_RADIUS, the
- * whole stretch gets ONE slowly rotating overhead that pans with the
- * flag instead.
- */
-export const DIRECTOR_SCRAMBLE_MIN_RUNS = 4;
-export const DIRECTOR_SCRAMBLE_RUN_SEC = 10;
 export const DIRECTOR_SCRAMBLE_RADIUS = 80;
-export const DIRECTOR_SCRAMBLE_ORBIT_SPEED = 0.05;
-/**
- * Turtle-stalemate variety: an attacker inbound from midfield — between
- * these fractions of the base separation, closing at least this fast —
- * is worth a cutaway. Mortar fire from their position ranks them up.
- */
-export const DIRECTOR_INBOUND_MIN_FRACTION = 0.2;
-export const DIRECTOR_INBOUND_MAX_FRACTION = 0.75;
-export const DIRECTOR_INBOUND_MIN_APPROACH = 15;
-export const DIRECTOR_INBOUND_MORTAR_RANGE = 25;
-/** How near the base a kill or asset hit must land to count as the
- *  attacker's payoff there. */
-export const DIRECTOR_INBOUND_PAYOFF_RANGE = 100;
-/** Held past the payoff so the viewer sees it land, and less past a
- *  death — a corpse needs only a beat. */
-export const DIRECTOR_INBOUND_PAYOFF_SEC = 2.5;
-export const DIRECTOR_INBOUND_DEATH_BEAT_SEC = 1.5;
-/** Never ride an attacker who circles forever — give up after this. */
-export const DIRECTOR_INBOUND_MAX_FOLLOW_SEC = 22;
-/** A followed hero should be DOING something; above this speed skiing
- *  itself counts as the something. */
-export const DIRECTOR_HERO_MIN_SPEED = 35;
-/**
- * Where a followed hero is HEADING, for the camera's aim: their travel
- * has to cover at least this much ground to count as a direction, a
- * base within this cosine of that direction snaps the aim to the base
- * ("show what he's about to attack"), and otherwise the aim projects
- * this far ahead along the path.
- */
-export const DIRECTOR_HERO_DEST_MIN_TRAVEL = 40;
-export const DIRECTOR_HERO_DEST_CONE_COS = 0.72;
-export const DIRECTOR_HERO_DEST_AHEAD = 250;
-/**
- * A "battle overhead" at a stand must actually be AT the stand: the
- * cluster it frames has to sit within this range of the flag, or the
- * shot gets labeled one thing and centred on another base entirely.
- */
-export const DIRECTOR_BATTLE_STAND_RANGE = 120;
-/** A kill highlight starts this long before the kill lands — arriving
- *  at the moment of the kill means the viewer missed it. */
-export const DIRECTOR_KILL_PREROLL_SEC = 4;
-export const DIRECTOR_KILL_POSTROLL_SEC = 4;
 /** Interest scores. */
 export const SCORE_CARRIED = 100;
 export const SCORE_DROPPED = 80;

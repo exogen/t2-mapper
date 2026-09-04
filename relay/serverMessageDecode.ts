@@ -1,4 +1,5 @@
 import { parseScoreHudLine, stripTaggedStringMarkup } from "./shared.js";
+import type { ServerLoadInfo } from "./types.js";
 
 /**
  * Pure decoders for the roster/score/team family of `ServerMessage`
@@ -194,3 +195,64 @@ export function applyDebriefRowToRoster(
   }
   return false;
 }
+
+/**
+ * The loading-screen burst (loadingGui.cs sendLoadInfoToClient):
+ * MsgLoadInfo opens it, quote/objective/rules lines fill it, and
+ * MsgLoadInfoDone publishes it — or nothing, when the mission has no
+ * text. Both sides feed it their MsgLoadInfo (which also carries names
+ * they decode themselves) and route the rest through `apply`.
+ */
+export class LoadInfoCollector {
+  private pending: ServerLoadInfo | null = null;
+  private complete: ServerLoadInfo | null = null;
+  private readonly onDone?: (info: ServerLoadInfo | null) => void;
+
+  constructor(onDone?: (info: ServerLoadInfo | null) => void) {
+    this.onDone = onDone;
+  }
+
+  /** The last completed burst, if it had any text. */
+  get info(): ServerLoadInfo | null {
+    return this.complete;
+  }
+
+  static handles(msgType: string): boolean {
+    return msgType in LOAD_INFO_LINES || msgType === "MsgLoadInfoDone";
+  }
+
+  /** MsgLoadInfo: a new burst begins. */
+  begin(): void {
+    this.pending = { quoteLines: [], objectiveLines: [], rulesLines: [] };
+  }
+
+  /** One of the messages `handles` accepts. */
+  apply(msgType: string, args: string[], resolve: ResolveNetString): void {
+    const section = LOAD_INFO_LINES[msgType];
+    if (section) {
+      if (args.length >= 3) this.pending?.[section].push(resolve(args[2]));
+      return;
+    }
+    if (msgType === "MsgLoadInfoDone" && this.pending) {
+      const { quoteLines, objectiveLines, rulesLines } = this.pending;
+      this.complete =
+        quoteLines.length || objectiveLines.length || rulesLines.length
+          ? this.pending
+          : null;
+      this.pending = null;
+      this.onDone?.(this.complete);
+    }
+  }
+
+  /** Mission change / full reset: forget both the burst and the result. */
+  reset(): void {
+    this.pending = null;
+    this.complete = null;
+  }
+}
+
+const LOAD_INFO_LINES: Record<string, keyof ServerLoadInfo> = {
+  MsgLoadQuoteLine: "quoteLines",
+  MsgLoadObjectiveLine: "objectiveLines",
+  MsgLoadRulesLine: "rulesLines",
+};

@@ -16,16 +16,22 @@ import type {
   SceneTopic,
   Shot,
   ShotPlan,
+  ShotScene,
 } from "./types";
 import { dist } from "./geometry";
+import { shotSubjectOf } from "./shotPath";
+import { liquidLabel, submergedWaterAt } from "../collision/waterLevel";
 import {
   buildFlagTracks,
   flagLabel,
   playersAtSecFor,
+  identityAt,
+  playerName,
   sampleAt,
   spokenName,
   type FlagTrack,
   type PlayersAtSec,
+  playerSampleAt,
 } from "./dataset";
 
 // The scene type shapes live in types.ts (the leaf of the director's
@@ -49,6 +55,30 @@ const SCENE_PLAYER_CAM_RANGE = 100;
 /** A teamkill this close to the enemy flag is a disaster worth calling
  *  wherever the camera is — the victim was moments from a grab. */
 const TEAMKILL_FLAG_RANGE = 12;
+/** A kill this close to a flag stand is stand defence or a stand
+ *  clear, not a random duel. */
+const KILL_STAND_RANGE = 40;
+/** Hardware players place themselves. It comes and goes by the dozen,
+ *  so it is reported as a raid, never piece by piece. */
+const DEPLOYABLE_NAMES = new Set([
+  "spider clamp turret",
+  "land spike turret",
+  "motion sensor",
+  "pulse sensor",
+  "deployable inventory",
+]);
+/** A raid of this many deployables is worth a line on its own. */
+const RAID_NOTABLE_COUNT = 3;
+/** A raid is judged over this trailing window, not over one shot:
+ *  shots run five to ten seconds, and a farm being stripped one clamp
+ *  per shot is one raid, not ten small ones. */
+const RAID_WINDOW_SEC = 30;
+/** Window for "recent" captures, the match's momentum. */
+const RECENT_CAPS_WINDOW_SEC = 300;
+/** Sampling cadence for the flag timeline, and how often to refresh a
+ *  moving flag's distances while nothing else has changed. */
+const FLAG_TIMELINE_STEP_SEC = 0.5;
+const FLAG_TIMELINE_MOVING_SEC = 2;
 
 /** Assumed horizontal FOV for framing labels (Tribes plays ~110°). */
 const FRAME_HALF_FOV_RAD = (110 / 2) * (Math.PI / 180);
@@ -80,15 +110,17 @@ function estimateCamera(
   };
   switch (shot.kind) {
     case "fixedOrbit": {
-      if (shot.startAngle == null) return null;
+      // The SOLVED placement when staging has run: the rig flies
+      // `staged`, and a description of the planned bearing would put the
+      // camera somewhere it never went.
+      const angle = shot.staged?.angle ?? shot.startAngle;
+      if (angle == null) return null;
       // fixedOrbit convention: camera offset (sin θ, cos θ)·r in Torque.
-      const r = shot.radius;
+      const r = shot.staged?.radius ?? shot.radius;
+      const center = shot.staged?.anchor ?? shot.center;
       return make(
-        [
-          shot.center[0] + Math.sin(shot.startAngle) * r,
-          shot.center[1] + Math.cos(shot.startAngle) * r,
-        ],
-        [shot.center[0], shot.center[1]],
+        [center[0] + Math.sin(angle) * r, center[1] + Math.cos(angle) * r],
+        [center[0], center[1]],
       );
     }
     case "sweep": {
@@ -197,16 +229,18 @@ function frameOf(camera: CameraEstimate, pos: DirectorVec3): FramePosition {
   return `${depth} ${side}` as FramePosition;
 }
 
+/** Which liquid, if any, a Torque-space point is sitting in. */
+function liquidAt(
+  pos: DirectorVec3,
+): "water" | "lava" | "quicksand" | undefined {
+  const info = submergedWaterAt(pos[0], pos[1], pos[2]);
+  return info ? liquidLabel(info.liquidType) : undefined;
+}
+
 /** Distances are approximate on purpose ("~80 meters") — a booth
  *  saying "413 meters" reads as a computer talking. */
 function approxMeters(range: number): string {
   return `~${Math.round(range / 10) * 10} meters`;
-}
-
-/** Word-edge gamer-tag decorations stripped from free text (chat kill
- *  descriptions carry raw names like "Heat_" or "--Gunther--"). */
-function spokenText(text: string): string {
-  return text.replace(/(^|\s)[-_|=~*]+(?=\S)|(?<=\S)[-_|=~*]+(?=\s|$)/g, "$1");
 }
 
 const BEARINGS = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"] as const;
@@ -226,7 +260,7 @@ function shotAnchor(
 ): DirectorVec3 | null {
   switch (shot.kind) {
     case "fixedOrbit":
-      return shot.center;
+      return shot.staged?.anchor ?? shot.center;
     case "sweep":
       return shot.target;
     case "followFlag":
@@ -249,13 +283,7 @@ function playerPosAt(
   atSec: number,
   dataset: DirectorDataset,
 ): DirectorVec3 | null {
-  let best: { dt: number; pos: DirectorVec3 } | null = null;
-  for (const p of dataset.playerSamples) {
-    if (p.targetId !== targetId) continue;
-    const dt = Math.abs(p.timeSec - atSec);
-    if (dt <= 3 && (!best || dt < best.dt)) best = { dt, pos: p.pos };
-  }
-  return best?.pos ?? null;
+  return playerSampleAt(dataset, targetId, atSec)?.pos ?? null;
 }
 
 function teamOfAt(
@@ -274,24 +302,59 @@ function teamOfAt(
   return null;
 }
 
-function identityOf(targetId: number, dataset: DirectorDataset) {
-  return dataset.playerNames.find((p) => p.targetId === targetId);
+function identityOf(
+  targetId: number,
+  dataset: DirectorDataset,
+  atSec?: number,
+) {
+  return identityAt(targetId, dataset, atSec) ?? undefined;
 }
 
+/** The one spoken name (see playerName), with a stand-in for a player
+ *  the dataset cannot name. */
 function displayName(
   targetId: number | null,
   dataset: DirectorDataset,
+  atSec?: number,
 ): string {
   if (targetId == null) return "someone";
-  const entry = identityOf(targetId, dataset);
-  // An official (control-code-delimited) tag lets us speak the base
-  // name confidently; otherwise the full name is the name.
-  return spokenName(
-    entry?.baseName ??
-      entry?.displayName ??
-      entry?.name ??
-      `player ${targetId}`,
-  );
+  return playerName(targetId, dataset, atSec) ?? `player ${targetId}`;
+}
+
+/**
+ * Chat messages name players with whatever decoration the client sent
+ * — "^i^Irvin", "sf.SterIO", "yeaunome[nif", and sometimes the bare
+ * "Irvin" for the same person in a different message. The roster knows
+ * the real split (official clan tag vs base name), so resolve a chat
+ * spelling back to the ONE canonical name `displayName` already gives
+ * scene players. Without this, `actors` and `players` disagree about
+ * who somebody is, and a consumer has no way to connect them.
+ *
+ * Matching ignores punctuation and case, and tries the tag on either
+ * side of the name, because clients place it both ways.
+ */
+function makeActorResolver(
+  dataset: DirectorDataset,
+): (raw: string | undefined) => string | undefined {
+  const key = (s: string) => s.replace(/[^\p{L}\p{N}]+/gu, "").toLowerCase();
+  const canonical = new Map<string, string>();
+  for (const entry of dataset.playerNames ?? []) {
+    const base = spokenName(entry.baseName ?? entry.displayName ?? entry.name);
+    if (!base) continue;
+    const tag = entry.clan ? spokenName(entry.clan) : "";
+    for (const variant of [
+      entry.name,
+      entry.displayName,
+      entry.baseName,
+      base,
+      tag && `${tag}${base}`,
+      tag && `${base}${tag}`,
+    ]) {
+      if (variant) canonical.set(key(variant), base);
+    }
+  }
+  return (raw) =>
+    raw == null ? undefined : (canonical.get(key(raw)) ?? spokenName(raw));
 }
 
 function teamName(
@@ -311,27 +374,63 @@ const SUIT_RANGE = 8;
  * ACTUALLY suited up since their last spawn: pre-match and fresh
  * spawns are forced loadouts that say nothing about intent.
  */
+/**
+ * "Did this player suit up before that moment?"
+ *
+ * Built INCREMENTALLY. It walks every player sample against every
+ * inventory station — a million distance checks on a long match — and a
+ * cast planned as it plays asks for it each time a shot closes.
+ * Rebuilding it every time was 4.8 of the 5.3 seconds `describeScenes`
+ * spent, and the largest single cost in planning a whole cast.
+ *
+ * The trackers' arrays only ever grow, and the same array object comes
+ * back each tick, so the work already done is still good. A station
+ * appearing (someone deploying an inventory) does invalidate it: a
+ * sample already dismissed might be beside the new one. That is rare,
+ * so it simply starts again.
+ */
+interface SuitIndex {
+  suitTimes: Map<number, number[]>;
+  deathTimes: Map<number, number[]>;
+  samplesDone: number;
+  deathsDone: number;
+  stationCount: number;
+}
+const suitIndexes = new WeakMap<object, SuitIndex>();
+
 function buildSuitIndex(dataset: DirectorDataset) {
-  const suitTimes = new Map<number, number[]>();
   const stations = dataset.stations.filter((s) => s.kind === "inventory");
-  if (stations.length > 0) {
-    for (const p of dataset.playerSamples) {
-      for (const st of stations) {
-        if (dist(p.pos, st.pos) <= SUIT_RANGE) {
-          let list = suitTimes.get(p.targetId);
-          if (!list) suitTimes.set(p.targetId, (list = []));
-          list.push(p.timeSec);
-          break;
-        }
+  let idx = suitIndexes.get(dataset.playerSamples);
+  if (!idx || idx.stationCount !== stations.length) {
+    idx = {
+      suitTimes: new Map(),
+      deathTimes: new Map(),
+      samplesDone: 0,
+      deathsDone: 0,
+      stationCount: stations.length,
+    };
+    suitIndexes.set(dataset.playerSamples, idx);
+  }
+  const { suitTimes, deathTimes } = idx;
+  for (let i = idx.samplesDone; i < dataset.playerSamples.length; i++) {
+    const p = dataset.playerSamples[i];
+    for (const st of stations) {
+      if (dist(p.pos, st.pos) <= SUIT_RANGE) {
+        let list = suitTimes.get(p.targetId);
+        if (!list) suitTimes.set(p.targetId, (list = []));
+        list.push(p.timeSec);
+        break;
       }
     }
   }
-  const deathTimes = new Map<number, number[]>();
-  for (const d of dataset.deaths) {
+  idx.samplesDone = dataset.playerSamples.length;
+  for (let i = idx.deathsDone; i < dataset.deaths.length; i++) {
+    const d = dataset.deaths[i];
     let list = deathTimes.get(d.targetId);
     if (!list) deathTimes.set(d.targetId, (list = []));
     list.push(d.timeSec);
   }
+  idx.deathsDone = dataset.deaths.length;
   return (targetId: number, atSec: number): boolean => {
     let lastDeath = -1;
     for (const t of deathTimes.get(targetId) ?? []) {
@@ -344,6 +443,157 @@ function buildSuitIndex(dataset: DirectorDataset) {
 }
 
 /** How wide a net to cast for "in this scene". */
+/**
+ * Ensure the shot's own subject is in `players`, flagged.
+ *
+ * `describePlayers` collects whoever stands near the anchor, which
+ * misses the subject in two ways: they can be outside the radius, and
+ * on a follow shot the anchor is the subject's own position — so if
+ * that sample is missing there is no anchor, no radius, and nobody
+ * described at all. Measured: 9 follow shots on one demo showed a named
+ * player or flag carrier and reported an empty scene, with 34-41
+ * players alive at the time.
+ */
+function markFocus(
+  shot: Shot,
+  players: ScenePlayer[],
+  midSec: number,
+  dataset: DirectorDataset,
+  playersAtSec: PlayersAtSec,
+  tracks: Map<number, FlagTrack>,
+): void {
+  // The rig's subject first, then the shot's own say-so: a pick-up's
+  // camera is placed on a position, not on a tracked player, so without
+  // `subject` its scene named nobody and the booth guessed from whoever
+  // was first in frame.
+  const subject = shotSubjectOf(shot) ?? shot.subject ?? null;
+  if (!subject) return;
+  const targetId =
+    subject.type === "player"
+      ? subject.targetId
+      : (sampleAt(tracks.get(subject.slot)?.samples ?? [], midSec)
+          ?.carrierTargetId ?? null);
+  if (targetId == null) return;
+  const already = players.find((p) => p.targetId === targetId);
+  if (already) {
+    already.focus = true;
+    return;
+  }
+  // Not in range, or not sampled at this instant: still name them. The
+  // position-derived fields are left at zero rather than guessed —
+  // `focus` says this is the subject, and `dist` is meaningless when
+  // the anchor IS them.
+  const identity = identityOf(targetId, dataset, midSec);
+  players.unshift({
+    name: displayName(targetId, dataset, midSec),
+    targetId,
+    team: teamName(teamOfAt(targetId, midSec, playersAtSec), dataset),
+    skin: identity?.skin,
+    clan: identity?.clan,
+    focus: true,
+    dist: 0,
+    bearing: "N",
+  });
+}
+
+/** A player closing on the enemy stand this fast, and this few
+ *  seconds from it at that speed, is making a run at it. 60 kph is
+ *  well above a walk; twelve seconds is about as far ahead as a line
+ *  of commentary needs to see — "building speed across midfield" is
+ *  five or six seconds out for a capper. */
+const INBOUND_MIN_KPH = 150;
+const INBOUND_ETA_SEC = 12;
+/** Closing on the stand at this share of their speed or more: heading
+ *  AT it, not skiing past it. With 60 kph and any closing at all, most
+ *  of the map read as inbound most of the time — 405 of 451 in-match
+ *  ticks on Raindance. */
+const INBOUND_DIRECTNESS = 0.8;
+/** How far ahead the map-wide list looks at a shot's START, so it
+ *  still has the runner as the shot plays out. */
+const INBOUND_LOOKAHEAD_SEC = 16;
+
+/**
+ * Seconds until a player reaches `stand` at their current pace, when
+ * they are making a run at it: fast, closing on it directly, and no
+ * further out than `withinSec`. Null otherwise. Samples are a second
+ * apart, so a metre of travel between them is a metre per second.
+ */
+function inboundEta(
+  p: { pos: DirectorVec3 },
+  prev: { pos: DirectorVec3 } | undefined,
+  stand: { pos: DirectorVec3 } | undefined,
+  withinSec: number,
+): number | null {
+  if (!prev || !stand) return null;
+  const mps = dist(p.pos, prev.pos);
+  if (mps * 3.6 < INBOUND_MIN_KPH) return null;
+  const toStand = dist(p.pos, stand.pos);
+  if (dist(prev.pos, stand.pos) - toStand < INBOUND_DIRECTNESS * mps) {
+    return null;
+  }
+  const eta = toStand / mps;
+  return eta <= withinSec ? eta : null;
+}
+
+/**
+ * Everyone running at the enemy stand as the shot begins, wherever the
+ * camera is. The booth sizes its lines by the nearest: Doc opened a
+ * two-sentence read while the camera followed someone ELSE and the
+ * capper was six seconds out, and the grab call had to cut across him.
+ */
+function describeInbound(
+  shot: Shot,
+  dataset: DirectorDataset,
+  playersAtSec: PlayersAtSec,
+  tracks: Map<number, FlagTrack>,
+): NonNullable<ShotScene["inbound"]> {
+  // Sampled through the shot, not just at its first second — a run
+  // that starts (or first gets a speed sample) a second in was missed
+  // entirely, and the shot is already planned with the same look-ahead
+  // its player list uses. Each runner keeps their EARLIEST predicted
+  // arrival, expressed from the shot's start.
+  const from = Math.round(shot.startSec);
+  const to = Math.round(
+    Math.min(shot.endSec, shot.startSec + INBOUND_LOOKAHEAD_SEC),
+  );
+  const arrival = new Map<number, { teamId: number | null; atSec: number }>();
+  for (let t = from; t <= to; t++) {
+    const players = playersAtSec.get(t) ?? [];
+    const previous = playersAtSec.get(t - 1) ?? [];
+    const carriers = new Set<number>();
+    for (const track of tracks.values()) {
+      const sample = sampleAt(track.samples, t);
+      if (sample?.carrierTargetId != null) carriers.add(sample.carrierTargetId);
+    }
+    // Nothing to grab at a stand whose flag is already out: a runner
+    // heading there is chasing, or arriving to fight.
+    const flagHome = (slot: number) =>
+      sampleAt(tracks.get(slot)?.samples ?? [], t)?.status === "home";
+    for (const p of players) {
+      if (carriers.has(p.targetId)) continue;
+      const prev = previous.find((q) => q.targetId === p.targetId);
+      const enemy = dataset.flagStands.find(
+        (st) => st.teamId != null && st.teamId !== p.teamId,
+      );
+      if (!enemy || !flagHome(enemy.slot)) continue;
+      const eta = inboundEta(p, prev, enemy, INBOUND_LOOKAHEAD_SEC);
+      if (eta == null) continue;
+      const at = t + eta;
+      const known = arrival.get(p.targetId);
+      if (!known || at < known.atSec) {
+        arrival.set(p.targetId, { teamId: p.teamId ?? null, atSec: at });
+      }
+    }
+  }
+  return [...arrival.entries()]
+    .map(([targetId, { teamId, atSec }]) => ({
+      name: displayName(targetId, dataset, shot.startSec),
+      team: teamName(teamId, dataset) ?? "neutral",
+      etaSec: Math.max(0, Math.round(atSec - shot.startSec)),
+    }))
+    .sort((a, b) => a.etaSec - b.etaSec);
+}
+
 function sceneRange(shot: Shot): number {
   if (shot.kind === "fixedOrbit") return Math.max(40, shot.radius * 1.3);
   if (shot.kind === "sweep") return 60;
@@ -374,14 +624,25 @@ function describePlayers(
   for (const p of players) {
     const d = dist(p.pos, anchor);
     if (d > range) continue;
-    const identity = identityOf(p.targetId, dataset);
+    const identity = identityOf(p.targetId, dataset, midSec);
     const prev = previous.find((q) => q.targetId === p.targetId);
     // kph (samples are 1s apart and T2 world units are meters) —
     // the same units as the in-game speedometer, so eyeball-checkable.
     const speed = prev ? dist(p.pos, prev.pos) * 3.6 : undefined;
+    // Inbound: closing on the ENEMY stand at pace and near enough that
+    // the grab attempt is imminent — with how long that is at the
+    // current speed. The booth sizes its line by it: Doc opened a
+    // two-sentence read on a capper "building speed across midfield"
+    // and the grab call had to cut across him.
+    const enemyStand = stands.find(
+      (st) => st.teamId != null && st.teamId !== p.teamId,
+    );
+    const eta = inboundEta(p, prev, enemyStand, INBOUND_ETA_SEC);
+    let etaSec = eta == null ? undefined : Math.round(eta);
     let doing: ScenePlayer["doing"];
     if (carriers.has(p.targetId)) {
       doing = "carrying the flag";
+      etaSec = undefined;
     } else if (
       [...carriers].some((c) => {
         const cp = players.find((q) => q.targetId === c);
@@ -389,6 +650,9 @@ function describePlayers(
       })
     ) {
       doing = "chasing the carrier";
+      etaSec = undefined;
+    } else if (etaSec != null) {
+      doing = "inbound";
     } else if (
       (speed ?? 0) < 18 &&
       stands.some((st) => st.teamId === p.teamId && dist(st.pos, p.pos) <= 45)
@@ -435,7 +699,7 @@ function describePlayers(
     // this life — a spawn loadout says nothing about their plans.
     const suited = hasSuited(p.targetId, midSec);
     out.push({
-      name: displayName(p.targetId, dataset),
+      name: displayName(p.targetId, dataset, midSec),
       targetId: p.targetId,
       team: teamName(p.teamId, dataset),
       armor: suited ? p.armor : undefined,
@@ -449,6 +713,7 @@ function describePlayers(
       bearing: compass(anchor, p.pos),
       frame: camera ? frameOf(camera, p.pos) : undefined,
       doing,
+      ...(etaSec != null ? { etaSec } : {}),
       moving,
       speed: speed != null ? Math.round(speed) : undefined,
       health: p.health != null ? Math.round(p.health * 100) : undefined,
@@ -482,6 +747,10 @@ function describeEvents(
 ): SceneEvent[] {
   const events: SceneEvent[] = [];
   const inWindow = (t: number) => t >= shot.startSec - 0.5 && t <= shot.endSec;
+  // Death-derived events name players by targetId, which resolves
+  // canonically. Chat-derived ones (flag plays, skill shots) carry
+  // whatever spelling the client sent, so they go through the roster.
+  const resolveActor = makeActorResolver(dataset);
   const carrierAt = (timeSec: number, targetId: number | null) =>
     targetId != null &&
     [...tracks.values()].some(
@@ -506,11 +775,19 @@ function describeEvents(
       death.timeSec,
       playersAtSec,
     );
-    const teamkill =
+    const sameSide =
       killerTeam != null &&
       victimTeam != null &&
       killerTeam === victimTeam &&
       death.killerTargetId !== death.targetId;
+    // A teammate's DEPLOYED turret is credited to its owner by the game
+    // (defaultGame.cs: "player got in the way of a teammates deployed
+    // but uncontrolled turret", msgCTurretKill), which is an accident,
+    // not a teamkill — the game keeps "TEAMKILLED" for a player's own
+    // shot. Raindance 6:54: "Friendo got in the way of a spike turret"
+    // went out as friendly fire on defence.
+    const turretAccident = sameSide && /turret/i.test(death.weapon ?? "");
+    const teamkill = sameSide && !turretAccident;
     const victimCarried = carrierAt(death.timeSec, death.targetId);
     let atEnemyFlag = false;
     if (teamkill && !victimCarried) {
@@ -535,13 +812,23 @@ function describeEvents(
     }
     const range = death.killerPos ? dist(death.pos, death.killerPos) : null;
     const midair = death.midair === true;
+    // What the kill is worth: a carrier on either end makes it a flag
+    // play; at a stand it is defence or a clear; anywhere else it is
+    // the background of a Tribes match.
+    const flagPlay =
+      victimCarried || carrierAt(death.timeSec, death.killerTargetId);
+    const atStand = dataset.flagStands.some(
+      (st) => dist(death.pos, st.pos) <= KILL_STAND_RANGE,
+    );
     // A distance earns a mention only when it makes the shot special —
     // most kills carry none, long-range ones carry the story.
     events.push({
       timeSec: death.timeSec,
       type: "kill",
+      weight: flagPlay ? 3 : atStand || midair || death.headshot ? 2 : 1,
       detail: [
         teamkill ? "TEAMKILL — their own teammate" : null,
+        turretAccident ? "got in the way of a teammate's" : null,
         midair ? "mid-air" : null,
         death.headshot ? "headshot" : null,
         death.weapon ?? null,
@@ -556,8 +843,14 @@ function describeEvents(
         .filter(Boolean)
         .join(" "),
       actors: [
-        { name: displayName(death.killerTargetId, dataset), role: "killer" },
-        { name: displayName(death.targetId, dataset), role: "victim" },
+        {
+          name: displayName(death.killerTargetId, dataset, death.timeSec),
+          role: "killer",
+        },
+        {
+          name: displayName(death.targetId, dataset, death.timeSec),
+          role: "victim",
+        },
       ],
       weapon: death.weapon,
       midair,
@@ -566,12 +859,19 @@ function describeEvents(
       events.push({
         timeSec: death.timeSec,
         type: "teamkill",
+        weight: 3,
         detail: victimCarried
           ? "shot down their OWN teammate carrying the flag"
           : "shot down their OWN teammate right on the enemy flag",
         actors: [
-          { name: displayName(death.killerTargetId, dataset), role: "killer" },
-          { name: displayName(death.targetId, dataset), role: "victim" },
+          {
+            name: displayName(death.killerTargetId, dataset, death.timeSec),
+            role: "killer",
+          },
+          {
+            name: displayName(death.targetId, dataset, death.timeSec),
+            role: "victim",
+          },
         ],
       });
     }
@@ -584,9 +884,13 @@ function describeEvents(
         events.push({
           timeSec: death.timeSec,
           type: "near-miss",
+          weight: 3,
           detail: `carrier killed ${approxMeters(dist(death.pos, goal.pos))} short of the capture`,
           actors: [
-            { name: displayName(death.targetId, dataset), role: "carrier" },
+            {
+              name: displayName(death.targetId, dataset, death.timeSec),
+              role: "carrier",
+            },
           ],
         });
       }
@@ -606,43 +910,98 @@ function describeEvents(
     // A grab OFF THE STAND (flag was home) is the marquee version of
     // the play — flagged so the booth knows to light up (and may call
     // it a regrab/e-grab); a loose-field pickup is not.
+    const stand =
+      type === "grab" || type === "cap" || type === "return" || type === "drop"
+        ? dataset.flagStands.find(
+            (st) =>
+              st.name != null &&
+              event.flagTeamName != null &&
+              st.name.toLowerCase() === event.flagTeamName.toLowerCase(),
+          )
+        : undefined;
+    const flagPosAt = stand
+      ? (sampleAt(tracks.get(stand.slot)?.samples ?? [], event.timeSec)?.pos ??
+        null)
+      : null;
     let offTheStand = false;
     if (type === "grab") {
-      const stand = dataset.flagStands.find(
-        (st) =>
-          st.name != null &&
-          event.flagTeamName != null &&
-          st.name.toLowerCase() === event.flagTeamName.toLowerCase(),
-      );
       const before = stand
         ? sampleAt(tracks.get(stand.slot)?.samples ?? [], event.timeSec - 0.7)
         : null;
       offTheStand = before?.status === "home";
     }
-    // Drops carry the carrier's INTENT — the framing the booth needs.
+    // `detail` says WHAT happened and never WHO — the player belongs
+    // to `actors`, in one canonical spoken spelling. The raw chat
+    // description embeds the game's own display name ("b l a k e",
+    // "^i^Irvin"), which does NOT match spokenName(actor); shipping
+    // both spellings in one payload is how a consumer loses track of
+    // who did what. Drops additionally carry the carrier's INTENT,
+    // which is the framing a booth needs.
+    const theFlag = event.flagTeamName
+      ? `the ${event.flagTeamName} flag`
+      : "the flag";
     const detail =
-      type === "grab" && offTheStand
-        ? `${spokenText(event.description)} (a stand grab — the flag was home)`
-        : type !== "drop" || event.dropKind == null
-          ? spokenText(event.description)
-          : event.dropKind === "died"
-            ? "killed carrying it — flag loose"
-            : event.dropKind === "pass"
-              ? "an intentional throw to teammates — a pass"
-              : "threw the flag deliberately";
+      type === "grab"
+        ? offTheStand
+          ? `grabbed ${theFlag} off the stand — it was home`
+          : `picked up ${theFlag}, loose in the field`
+        : type === "cap"
+          ? `captured ${theFlag}`
+          : type === "return"
+            ? `returned ${theFlag}`
+            : event.dropKind === "died"
+              ? `killed carrying ${theFlag} — it is loose`
+              : event.dropKind === "pass"
+                ? `passed ${theFlag} forward to a teammate`
+                : event.dropKind === "thrown"
+                  ? `threw ${theFlag} deliberately`
+                  : `dropped ${theFlag}`;
+    // How long the capper carried it, measured from the flag's own
+    // track (the last grab before the cap) rather than scraped out of
+    // the chat message — the wording of that message varies by scanner
+    // path, and a number belongs in a field anyway.
+    const lastGrabSec =
+      type === "cap" && stand
+        ? (tracks.get(stand.slot)?.grabTimes ?? [])
+            .filter((t) => t <= event.timeSec)
+            .pop()
+        : undefined;
     events.push({
       timeSec: event.timeSec,
       type,
+      // A grab, a cap or a pass is the game itself; a return or any
+      // other drop changes the picture but is calmer.
+      weight:
+        type === "grab" || type === "cap" || event.dropKind === "pass" ? 3 : 2,
       detail,
       actors: actor
         ? [
             {
-              name: spokenName(actor),
+              name: resolveActor(actor)!,
               role: type === "cap" ? "capturer" : "actor",
             },
           ]
         : [],
       dropKind: type === "drop" ? event.dropKind : undefined,
+      flagTeam: stand
+        ? flagLabel(stand.slot, dataset).replace(/ flag$/, "")
+        : (event.flagTeamName ?? undefined),
+      // A capture is always "seen" — it settles the match, so the booth
+      // calls it even when the director was looking elsewhere. Every
+      // other flag play is judged on whether the camera was near it.
+      // Flag events carry no position of their own, so visibility is
+      // judged from where the FLAG was at that moment — the thing the
+      // camera would have had to be near.
+      onScreen:
+        type === "cap"
+          ? true
+          : anchor != null && flagPosAt != null
+            ? dist(flagPosAt, anchor) <= SCENE_KILL_RANGE
+            : undefined,
+      holdSec:
+        lastGrabSec != null
+          ? Math.round((event.timeSec - lastGrabSec) * 10) / 10
+          : undefined,
     });
   }
   // Non-lethal server-announced skill shots near the camera — an MA
@@ -658,6 +1017,7 @@ function describeEvents(
     events.push({
       timeSec: skill.timeSec,
       type: "skill-shot",
+      weight: 2,
       detail:
         skill.kind === "midair"
           ? `mid-air ${skill.weapon ?? "disc"}${
@@ -668,21 +1028,115 @@ function describeEvents(
                   : ""
             } — target survived`
           : "sniper headshot",
-      actors: [{ name: spokenName(skill.name), role: "shooter" }],
+      actors: [{ name: resolveActor(skill.name)!, role: "shooter" }],
       midair: skill.kind === "midair" || undefined,
     });
   }
+  // Base hardware is reported piece by piece: a generator going down
+  // changes what a base can do. Deployables are not — a clamp farm
+  // being traded produced 257 events in one match, and a booth handed
+  // them one at a time narrated a turret ledger. They roll up into one
+  // raid per team per shot; repairs of deployables are noise.
+  const raids = new Map<string, { timeSec: number; kinds: string[] }>();
   for (const st of dataset.structures) {
     if (!inWindow(st.timeSec)) continue;
+    const destroyed = st.to > st.from;
+    // Whose base this was, from the structure ghost's own team — the
+    // game's answer. A consumer told only "base turret destroyed"
+    // cannot say whose defence fell, so it guesses.
+    const team =
+      st.teamId != null
+        ? (teamName(st.teamId, dataset) ?? undefined)
+        : undefined;
+    if (DEPLOYABLE_NAMES.has(st.name)) {
+      if (!destroyed) continue;
+      const key = team ?? "";
+      const raid = raids.get(key) ?? { timeSec: st.timeSec, kinds: [] };
+      raid.timeSec = Math.max(raid.timeSec, st.timeSec);
+      raid.kinds.push(st.name);
+      raids.set(key, raid);
+      continue;
+    }
     events.push({
       timeSec: st.timeSec,
-      type: st.to > st.from ? "structure-destroyed" : "structure-repaired",
+      type: destroyed ? "structure-destroyed" : "structure-repaired",
+      weight: destroyed ? 2 : 1,
       detail: `${st.name}`,
+      team,
+      actors: [],
+    });
+  }
+  for (const [team, raid] of raids) {
+    const tally = new Map<string, number>();
+    for (const kind of raid.kinds) tally.set(kind, (tally.get(kind) ?? 0) + 1);
+    // Weighed over the trailing window, so a sustained raid reads as
+    // one whatever the camera's cut rhythm was.
+    const recent = dataset.structures.filter(
+      (st) =>
+        st.to > st.from &&
+        DEPLOYABLE_NAMES.has(st.name) &&
+        (st.teamId != null ? (teamName(st.teamId, dataset) ?? "") : "") ===
+          team &&
+        st.timeSec > raid.timeSec - RAID_WINDOW_SEC &&
+        st.timeSec <= raid.timeSec,
+    ).length;
+    const kinds = [...tally.entries()]
+      .map(([kind, n]) => (n > 1 ? `${n} × ${kind}` : kind))
+      .join(", ");
+    events.push({
+      timeSec: raid.timeSec,
+      type: "raid",
+      weight: recent >= RAID_NOTABLE_COUNT ? 2 : 1,
+      count: recent,
+      detail: `${recent} deployable${recent === 1 ? "" : "s"} destroyed in the last ${RAID_WINDOW_SEC}s; just now: ${kinds}`,
+      team: team || undefined,
       actors: [],
     });
   }
   events.sort((a, b) => a.timeSec - b.timeSec);
   return events;
+}
+
+/**
+ * Flag state as a CHANGE-DRIVEN timeline, independent of camera cuts.
+ *
+ * Scene flag state is one snapshot per shot, and shots run to 20s — so
+ * a consumer reading state between cuts can be badly stale (measured:
+ * up to 12.5s on a real slice), long enough to describe a carrier who
+ * has already been cut down. The trackers sample flags every
+ * FLAG_STEP_SEC, so an accurate series already exists; this exposes
+ * it, compressed to the moments it actually changes.
+ *
+ * This is NOT a licence to commentate off-camera action. It exists so
+ * that what the camera IS showing gets described accurately and
+ * currently; `SceneEvent.onScreen` still says what was visible.
+ */
+export function buildFlagTimeline(
+  dataset: DirectorDataset,
+  tracks: Map<number, FlagTrack>,
+): { timeSec: number; flags: SceneFlagState[] }[] {
+  const out: { timeSec: number; flags: SceneFlagState[] }[] = [];
+  // Identity ignores distances, which drift every sample; a run's
+  // changing distance is refreshed by the interval rule below instead.
+  const identity = (flags: SceneFlagState[]) =>
+    flags.map((f) => `${f.slot}:${f.status}:${f.carrier ?? ""}`).join("|");
+  let lastId = "";
+  let lastPush = Number.NEGATIVE_INFINITY;
+  for (let t = 0; t <= dataset.durationSec; t += FLAG_TIMELINE_STEP_SEC) {
+    const flags = describeFlags(t, dataset, tracks).map(
+      ({ future: _future, ...rest }) => rest,
+    );
+    if (flags.length === 0) continue;
+    const id = identity(flags);
+    const live = flags.some((f) => f.status !== "home");
+    // Push on any change, and while a flag is OUT keep distances fresh.
+    if (id !== lastId || (live && t - lastPush >= FLAG_TIMELINE_MOVING_SEC)) {
+      out.push({ timeSec: Math.round(t * 10) / 10, flags });
+      lastId = id;
+      lastPush = t;
+    }
+  }
+  return out;
 }
 
 /** The stand a carried flag is being taken TO: the other team's. */
@@ -691,19 +1145,19 @@ function captureStandFor(slot: number, dataset: DirectorDataset) {
 }
 
 function describeFlags(
-  shot: Shot,
+  atSec: number,
   dataset: DirectorDataset,
   tracks: Map<number, FlagTrack>,
 ): SceneFlagState[] {
   const out: SceneFlagState[] = [];
   for (const stand of dataset.flagStands) {
     const track = tracks.get(stand.slot);
-    const sample = track ? sampleAt(track.samples, shot.startSec) : null;
+    const sample = track ? sampleAt(track.samples, atSec) : null;
     if (!sample) continue;
     const carried = sample.status === "held";
     const goal = captureStandFor(stand.slot, dataset);
     const period = track!.outPeriods.find(
-      (p) => shot.startSec >= p.startSec && shot.startSec <= p.endSec,
+      (p) => atSec >= p.startSec && atSec <= p.endSec,
     );
     out.push({
       slot: stand.slot,
@@ -711,9 +1165,12 @@ function describeFlags(
       status:
         sample.status === "home" ? "home" : carried ? "carried" : "dropped",
       carrier: carried
-        ? displayName(sample.carrierTargetId, dataset)
+        ? displayName(sample.carrierTargetId, dataset, sample.timeSec)
         : undefined,
       distFromHome: Math.round(dist(sample.pos, stand.pos)),
+      // A dropped flag lying in lava or quicksand is a different
+      // proposition from one in water — the retrieval is lethal ground.
+      liquid: liquidAt(sample.pos),
       distToCapture:
         carried && goal ? Math.round(dist(sample.pos, goal.pos)) : undefined,
       future: period
@@ -727,31 +1184,27 @@ function describeFlags(
   return out;
 }
 
-function aOrAn(noun: string): string {
-  return `${/^[aeiou]/i.test(noun) ? "an" : "a"} ${noun}`;
-}
+/** Topics a shot's ROLE settles outright. Every pre-match shot used to
+ *  match a `/Pre-match/` reason pattern and come out as "lineup" — a
+ *  pick-up, a fly-by and a generator all read to the booth as a rank
+ *  of players to be named. */
+const TOPIC_BY_ROLE: Partial<Record<NonNullable<Shot["role"]>, SceneTopic>> = {
+  rosterWide: "lineup",
+  rosterCloseUp: "lineup",
+  signing: "pick-up",
+  establishing: "base",
+  tourHold: "base",
+  tourMove: "base",
+  quiet: "lull",
+};
 
-const TOPIC_PATTERNS: [RegExp, SceneTopic][] = [
-  [/line-up|Pre-match/i, "lineup"],
-  [/kickoff|spawn rush/i, "kickoff"],
-  [/capture incoming|celebrates the capture/i, "capture"],
-  [/Aftermath/i, "aftermath"],
-  [/turtled|held inside the base/i, "turtle"],
-  [/kill by|Duel —/i, "kill"],
-  [/raid/i, "raid"],
-  [/mortars (hitting|raining)|Mortar fire|Mortar landing/i, "bombardment"],
-  [/Havoc|strafing run|Dogfight/i, "vehicle"],
-  [/suiting up/i, "suit-up"],
-  [/Lull|Quiet moment/i, "lull"],
-  [/ base$/i, "base"],
-  [/carried|at the stand|on the ground|Scramble|going in for/i, "flag-run"],
-];
-
+/**
+ * The builder's own word first, then the role. Nothing is read out of
+ * `reason`: a pattern table tuned to the oracle planner's wording sat
+ * here and called every live kill cut-in and cap approach "action".
+ */
 function topicOf(shot: Shot): SceneTopic {
-  for (const [pattern, topic] of TOPIC_PATTERNS) {
-    if (pattern.test(shot.reason)) return topic;
-  }
-  return "action";
+  return shot.topic ?? (shot.role && TOPIC_BY_ROLE[shot.role]) ?? "action";
 }
 
 /** Raw story key for a shot; runs of CONSECUTIVE shots sharing a key
@@ -784,51 +1237,50 @@ function sequenceKey(
   return `${topic}-${Math.round(shot.startSec)}`;
 }
 
-function summarize(
-  shot: Shot,
-  topic: SceneTopic,
-  players: ScenePlayer[],
-  events: SceneEvent[],
-  flags: SceneFlagState[],
-): string {
-  const parts: string[] = [shot.reason];
-  const carried = flags.find((f) => f.status === "carried");
-  if (carried && topic !== "lull") {
-    parts.push(
-      `${carried.team} flag carried by ${carried.carrier}, ${approxMeters(carried.distFromHome)} from home` +
-        (carried.distToCapture != null
-          ? `, ${approxMeters(carried.distToCapture)} from a capture`
-          : ""),
-    );
-  }
-  const kills = events.filter((e) => e.type === "kill");
-  if (kills.length > 0) {
-    const first = kills[0];
-    parts.push(
-      `${first.actors[0]?.name} kills ${first.actors[1]?.name}${first.detail ? ` (${first.detail})` : ""}` +
-        (kills.length > 1 ? ` — ${kills.length} kills in this window` : ""),
-    );
-  }
-  const notable = players.filter((p) => p.doing && p.doing !== "skiing");
-  if (notable.length > 0 && kills.length === 0) {
-    const p = notable[0];
-    parts.push(
-      `${p.name} ${p.doing}${p.armor ? ` in ${p.armor} armor` : ""}${
-        p.pack ? ` with ${aOrAn(p.pack)}` : ""
-      }`,
-    );
-  }
-  return parts.join(". ");
-}
-
 /** Attach a ShotScene to every shot in the plan, in place. */
-export function describeScenes(plan: ShotPlan, dataset: DirectorDataset): void {
+export function describeScenes(
+  plan: ShotPlan,
+  dataset: DirectorDataset,
+  /**
+   * Re-describe shots that already have a scene.
+   *
+   * A cast planned as it plays calls this each time a shot closes, and
+   * describing the whole plan every time is quadratic — measured at 7.7
+   * of the 19.8 seconds a full cast spent planning. So by default a
+   * shot that has been described is left alone, and the pass costs only
+   * the new ones. The run state and the flag timeline are still rebuilt
+   * across every shot, because a run spans cuts.
+   */
+  redescribeAll = false,
+): void {
   const tracks = buildFlagTracks(dataset);
+  // Flag state independent of the camera cuts, so a live consumer is
+  // never reading a snapshot that went stale mid-shot.
+  plan.flagTimeline = buildFlagTimeline(dataset, tracks);
   const playersAtSec = playersAtSecFor(dataset);
   const hasSuited = buildSuitIndex(dataset);
   let prevKey: string | null = null;
   let runStartSec = 0;
-  for (const shot of plan.shots) {
+  for (let i = 0; i < plan.shots.length; i++) {
+    const shot = plan.shots[i];
+    // An already-described shot still takes part in the run-key
+    // bookkeeping — a run spans cuts — but its description stands.
+    //
+    // Keyed on the SHOT, not on an index: the audit passes remove shots
+    // from this same array, so an index-based watermark would silently
+    // skip the ones that shuffled down past it.
+    if (!redescribeAll && shot.scene) {
+      // The SAME key the main pass computes — a run spans cuts, so the
+      // bookkeeping has to walk every shot. What it skips is the
+      // expensive part: the anchor solve, the camera estimate and the
+      // player description.
+      const key = sequenceKey(shot, topicOf(shot), tracks);
+      if (key !== prevKey) {
+        prevKey = key;
+        runStartSec = shot.startSec;
+      }
+      continue;
+    }
     const midSec = (shot.startSec + shot.endSec) / 2;
     const anchor =
       shotAnchor(shot, tracks, dataset, midSec) ??
@@ -854,15 +1306,19 @@ export function describeScenes(plan: ShotPlan, dataset: DirectorDataset): void {
           hasSuited,
         )
       : [];
+    // WHO THIS SHOT IS OF. A follow names its subject, so it belongs in
+    // the scene whether or not the proximity pass happened to catch it
+    // — and whether or not a position sample exists at this instant.
+    markFocus(shot, players, midSec, dataset, playersAtSec, tracks);
     const events = describeEvents(shot, anchor, dataset, tracks, playersAtSec);
-    const flags = describeFlags(shot, dataset, tracks);
+    const flags = describeFlags(shot.startSec, dataset, tracks);
+    const inbound = describeInbound(shot, dataset, playersAtSec, tracks);
     const scoreAt = (dataset.scoreSamples ?? []).filter(
       (s) => s.timeSec <= shot.startSec,
     );
     const latest = new Map<number, number>();
     for (const s of scoreAt) latest.set(s.teamId, s.score);
     shot.scene = {
-      summary: summarize(shot, topic, players, events, flags),
       topic,
       sequenceId: `${rawKey}@${Math.round(runStartSec)}`,
       players,
@@ -877,6 +1333,71 @@ export function describeScenes(plan: ShotPlan, dataset: DirectorDataset): void {
               score,
             }))
           : undefined,
+      ...describeMatchState(shot.startSec, dataset, tracks),
+      ...(inbound.length > 0 ? { inbound } : {}),
     };
   }
+}
+
+/**
+ * The macro picture as a shot begins — clock, momentum, who is carrying
+ * each side — so a lull can be filled with the match rather than with
+ * whatever hardware happens to be on screen. Causal: every value is
+ * the last one known at `atSec`.
+ */
+function describeMatchState(
+  atSec: number,
+  dataset: DirectorDataset,
+  tracks: Map<number, FlagTrack>,
+): Partial<Pick<ShotScene, "clockRemainingSec" | "recentCaps" | "topScorers">> {
+  const facts = dataset.matchFacts;
+  if (!facts) return {};
+  const lastAt = <T extends { timeSec: number }>(
+    series: T[],
+  ): T | undefined => {
+    let last: T | undefined;
+    for (const entry of series) {
+      if (entry.timeSec <= atSec) last = entry;
+      else break;
+    }
+    return last;
+  };
+  const clock = lastAt(facts.clock ?? []);
+  // Negative counts DOWN to the end; the remainder shrinks by the time
+  // elapsed since the sample. A sample from BEFORE the whistle is the
+  // countdown to the start, not the match clock — and it is never
+  // "time left": read by a shot spanning the kickoff it had the booth
+  // saying "under a minute left" as the match began.
+  const fromBeforeWhistle =
+    clock != null &&
+    facts.matchStartSec != null &&
+    clock.timeSec < facts.matchStartSec;
+  const clockRemainingSec =
+    clock && clock.clockMs < 0 && !fromBeforeWhistle
+      ? Math.max(0, -clock.clockMs / 1000 - (atSec - clock.timeSec))
+      : null;
+  // A capture of slot S is scored by the OTHER side.
+  const recentCaps = dataset.teams.map((team) => ({
+    team: team.name,
+    caps: [...tracks.values()].reduce(
+      (n, track) =>
+        n +
+        track.outPeriods.filter(
+          (p) =>
+            p.endsInCap &&
+            p.endSec <= atSec &&
+            p.endSec > atSec - RECENT_CAPS_WINDOW_SEC &&
+            dataset.flagStands.find((st) => st.slot === track.slot)?.teamId !==
+              team.teamId,
+        ).length,
+      0,
+    ),
+  }));
+  const roster = lastAt(facts.roster ?? []);
+  const topScorers = roster?.scorers.slice(0, 3).map((s) => ({
+    name: spokenName(s.name),
+    team: teamName(s.teamId, dataset) ?? null,
+    score: s.score,
+  }));
+  return { clockRemainingSec, recentCaps, topScorers };
 }

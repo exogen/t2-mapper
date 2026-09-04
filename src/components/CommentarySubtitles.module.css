@@ -1,0 +1,55 @@
+.Subtitles {
+  position: absolute;
+  left: 50%;
+  bottom: 30px;
+  transform: translateX(-50%);
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-width: min(72%, 900px);
+  /* The container stays transparent to the pointer so the space around
+     the lines still drives the camera; the lines themselves are real
+     text — selectable, copyable. */
+  pointer-events: none;
+  text-align: center;
+}
+
+.Line {
+  display: inline-block;
+  pointer-events: auto;
+  user-select: text;
+  cursor: text;
+  padding: 4px 8px;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.3);
+  color: #fff;
+  font-size: 17px;
+  line-height: 1.35;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
+}
+
+@media (pointer: coarse) {
+  .Line {
+    font-size: 15px;
+  }
+}
+
+.Speaker {
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.SpeakerRip {
+  composes: Speaker;
+  color: #6ee7f7;
+}
+
+.SpeakerDoc {
+  composes: Speaker;
+  color: #f2a6ff;
+}
+
+.Separator {
+  opacity: 0.5;
+}

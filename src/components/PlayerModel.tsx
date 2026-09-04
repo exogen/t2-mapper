@@ -25,7 +25,13 @@ import {
   getPosedNodeTransform,
   processShapeScene,
 } from "../stream/playbackUtils";
-import { pickMoveAnimation } from "../stream/playerAnimation";
+import {
+  NO_ACTION_ANIM,
+  NUM_TABLE_ACTION_ANIMS,
+  pickMoveAnimation,
+  stepActionAnim,
+  type ActionAnimState,
+} from "../stream/playerAnimation";
 import { WeaponImageStateMachine } from "../stream/weaponStateMachine";
 import { useQuery } from "@tanstack/react-query";
 import type { WeaponAnimState } from "../stream/weaponStateMachine";
@@ -112,9 +118,6 @@ function useCustomSkinManifest() {
     retry: 1,
   });
 }
-
-/** Number of table actions in the engine's ActionAnimationList (Tribes2.exe build 25034). */
-const NUM_TABLE_ACTION_ANIMS = 8;
 
 /** Table action names in engine order (indices 0-7). */
 const TABLE_ACTION_NAMES = [
@@ -389,6 +392,8 @@ export function PlayerModel({ entity }: { entity: PlayerEntity }) {
   const isDeadRef = useRef(false);
   // Action animation (taunts, celebrations, etc.) tracking.
   const actionAnimRef = useRef<number | undefined>(undefined);
+  // The wired action the mixer is playing, if any (see stepActionAnim).
+  const actionStateRef = useRef<ActionAnimState>(NO_ACTION_ANIM);
 
   // Build action index -> animation clip name mapping from TSShapeConstructor.
   const actionAnimMap = useMemo(() => {
@@ -646,18 +651,7 @@ export function PlayerModel({ entity }: { entity: PlayerEntity }) {
     return () => {
       const sound = jetSoundRef.current;
       if (sound) {
-        untrackSound(sound);
-        try {
-          sound.stop();
-        } catch {
-          /* already stopped */
-        }
-        try {
-          sound.disconnect();
-        } catch {
-          /* already disconnected */
-        }
-        sound.parent?.remove(sound);
+        stopAndDetachSound(sound);
         jetSoundRef.current = null;
       }
     };
@@ -717,6 +711,7 @@ export function PlayerModel({ entity }: { entity: PlayerEntity }) {
     if (!isDead && isDeadRef.current) {
       isDeadRef.current = false;
       actionAnimRef.current = undefined;
+      actionStateRef.current = NO_ACTION_ANIM;
 
       const deathAction = actions.get(
         currentAnimRef.current.name.toLowerCase(),
@@ -732,69 +727,68 @@ export function PlayerModel({ entity }: { entity: PlayerEntity }) {
       if (rootAction) rootAction.reset().play();
     }
 
-    // Action animation (taunts, celebrations, etc.).
-    // Non-table actions (index >= 7) override movement animation.
-    const actionAnim = kf?.actionAnim;
-    const prevActionAnim = actionAnimRef.current;
-    if (!isDeadRef.current && actionAnim !== prevActionAnim) {
-      actionAnimRef.current = actionAnim;
-      const isNonTableAction =
-        actionAnim != null && actionAnim >= NUM_TABLE_ACTION_ANIMS;
-      const wasNonTableAction =
-        prevActionAnim != null && prevActionAnim >= NUM_TABLE_ACTION_ANIMS;
-
-      if (isNonTableAction) {
-        // Start or change action animation.
-        const entry = actionAnimMap.get(actionAnim);
-        if (entry) {
-          const actionAction = actions.get(entry.clipName);
-          if (actionAction) {
-            const prevAction = actions.get(
-              currentAnimRef.current.name.toLowerCase(),
-            );
-            if (prevAction) prevAction.fadeOut(ANIM_TRANSITION_TIME);
-            actionAction.setLoop(LoopOnce, 1);
-            actionAction.clampWhenFinished = true;
-            actionAction.reset().fadeIn(ANIM_TRANSITION_TIME).play();
-            currentAnimRef.current = { name: entry.clipName, timeScale: 1 };
-          }
-        }
-      } else if (wasNonTableAction) {
-        // Action ended -- stop the action clip and resume movement.
-        const prevEntry = actionAnimMap.get(prevActionAnim);
-        if (prevEntry) {
-          const prevAction = actions.get(prevEntry.clipName);
-          if (prevAction) {
+    // Action animation (taunts, cels, the PDA idle). A wired non-table
+    // action overrides movement until its clip ends; then the client
+    // picks its own movement animation again unless the action holds —
+    // the server never sends the table action that ends it.
+    let playingActionAnim = false;
+    if (!isDeadRef.current) {
+      const started = actionStateRef.current;
+      const startedAction =
+        started.index != null
+          ? actions.get(actionAnimMap.get(started.index)?.clipName ?? "")
+          : undefined;
+      // LoopOnce with clampWhenFinished: the mixer pauses the action on
+      // its last frame, which is how "finished" reads.
+      const clipFinished = !!startedAction && startedAction.paused;
+      const { state, command } = stepActionAnim(
+        started,
+        kf ?? {},
+        clipFinished,
+      );
+      actionStateRef.current = state;
+      if (command.kind === "start") {
+        const entry = actionAnimMap.get(command.index);
+        const actionAction = entry ? actions.get(entry.clipName) : undefined;
+        if (entry && actionAction) {
+          const prevAction = actions.get(
+            currentAnimRef.current.name.toLowerCase(),
+          );
+          if (prevAction && prevAction !== actionAction) {
             prevAction.fadeOut(ANIM_TRANSITION_TIME);
-            prevAction.setLoop(LoopRepeat, Infinity);
-            prevAction.clampWhenFinished = false;
           }
+          actionAction.setLoop(LoopOnce, 1);
+          actionAction.clampWhenFinished = true;
+          actionAction.reset().fadeIn(ANIM_TRANSITION_TIME).play();
+          if (kf?.actionAtEnd) {
+            // Already on its last frame server-side (a held pose that
+            // came into scope late): land there.
+            actionAction.time = actionAction.getClip().duration;
+            actionAction.paused = true;
+          }
+          currentAnimRef.current = { name: entry.clipName, timeScale: 1 };
+        } else {
+          // No clip for this index on this shape: nothing to play, and
+          // nothing to wait for.
+          actionStateRef.current = { ...state, ended: true };
+        }
+      } else if (command.kind === "revert") {
+        const entry = actionAnimMap.get(command.index);
+        const actionAction = entry ? actions.get(entry.clipName) : undefined;
+        if (actionAction) {
+          actionAction.fadeOut(ANIM_TRANSITION_TIME);
+          actionAction.setLoop(LoopRepeat, Infinity);
+          actionAction.clampWhenFinished = false;
         }
         currentAnimRef.current = { name: "root", timeScale: 1 };
         const rootAction = actions.get("root");
         if (rootAction) rootAction.reset().fadeIn(ANIM_TRANSITION_TIME).play();
       }
-    }
-
-    // If atEnd, clamp the action animation at its final frame.
-    if (
-      actionAnim != null &&
-      actionAnim >= NUM_TABLE_ACTION_ANIMS &&
-      kf?.actionAtEnd
-    ) {
-      const entry = actionAnimMap.get(actionAnim);
-      if (entry) {
-        const actionAction = actions.get(entry.clipName);
-        if (actionAction) {
-          actionAction.paused = true;
-        }
-      }
+      playingActionAnim =
+        actionStateRef.current.index != null && !actionStateRef.current.ended;
     }
 
     // Movement animation selection (skip while dead or playing action anim).
-    const playingActionAnim =
-      actionAnimRef.current != null &&
-      actionAnimRef.current >= NUM_TABLE_ACTION_ANIMS;
     if (!isDeadRef.current && !playingActionAnim) {
       const anim = pickMoveAnimation(
         kf?.velocity,

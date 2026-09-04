@@ -1,11 +1,7 @@
 import { useEffect, useMemo, useRef } from "react";
 import { useFrame } from "@react-three/fiber";
 import { BufferAttribute, BufferGeometry, Mesh, ShaderMaterial } from "three";
-import {
-  isPointSubmerged,
-  isWaterType,
-  getWaterInfo,
-} from "../collision/waterLevel";
+import { isWaterType, submergedWaterAt } from "../collision/waterLevel";
 
 /**
  * Fullscreen underwater tint, matching Tribes2.exe's GameRenderFilters
@@ -59,13 +55,12 @@ export function UnderwaterFilter() {
   useFrame(({ camera }) => {
     const mesh = meshRef.current;
     if (!mesh) return;
-    const info = getWaterInfo();
     const pos = camera.position;
-    // Three (x, y, z) = Torque (y, z, x)
-    mesh.visible =
-      info !== null &&
-      isWaterType(info.liquidType) &&
-      isPointSubmerged(pos.z, pos.x, pos.y);
+    // Three (x, y, z) = Torque (y, z, x). Ask which body the camera is
+    // actually inside — a map can have several, and only that one's
+    // liquid type decides whether the filter shows.
+    const info = submergedWaterAt(pos.z, pos.x, pos.y);
+    mesh.visible = info !== null && isWaterType(info.liquidType);
   });
 
   return (

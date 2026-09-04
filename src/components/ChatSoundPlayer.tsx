@@ -57,6 +57,21 @@ export function ChatSoundPlayer() {
   // Track active voice chat sound per sender so a new voice bind from the
   // same player stops their previous one (matching Tribes 2 behavior).
   const activeBySenderRef = useRef(new Map<string, Audio<GainNode>>());
+  // Every sound still in flight, sender or not. Turning audio off unmounts
+  // this component, and a half-finished announcer line has to stop with
+  // it — nothing else owns these (they aren't parented to an entity, and
+  // stopAllTrackedSounds only runs on recording changes and seeks).
+  const liveSoundsRef = useRef(new Set<Audio<GainNode>>());
+
+  useEffect(() => {
+    const live = liveSoundsRef.current;
+    const activeBySender = activeBySenderRef.current;
+    return () => {
+      for (const sound of live) stopAndDetachSound(sound);
+      live.clear();
+      activeBySender.clear();
+    };
+  }, []);
 
   useEffect(() => {
     if (
@@ -93,8 +108,15 @@ export function ChatSoundPlayer() {
             const prev = activeBySender.get(sender);
             if (prev) {
               stopAndDetachSound(prev);
+              liveSoundsRef.current.delete(prev);
               activeBySender.delete(sender);
             }
+          }
+          // A global stop (seek, recording change) nulls three's onended,
+          // so those sounds never announce themselves as finished — sweep
+          // them here rather than holding dead nodes for the session.
+          for (const done of liveSoundsRef.current) {
+            if (!done.isPlaying) liveSoundsRef.current.delete(done);
           }
           const sound = new Audio(audioListener);
           sound.setBuffer(buffer);
@@ -103,6 +125,7 @@ export function ChatSoundPlayer() {
           // would stack to a double discount.
           sound.setPlaybackRate(getEffectiveSoundRate(pitch));
           trackSound(sound, pitch);
+          liveSoundsRef.current.add(sound);
           if (sender) {
             activeBySender.set(sender, sound);
           }
@@ -112,6 +135,7 @@ export function ChatSoundPlayer() {
           sound.onEnded = () => {
             baseOnEnded();
             stopAndDetachSound(sound);
+            liveSoundsRef.current.delete(sound);
             if (sender && activeBySender.get(sender) === sound) {
               activeBySender.delete(sender);
             }

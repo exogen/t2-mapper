@@ -1,0 +1,578 @@
+// DisplayName = Soccer Field
+// MissionTypes = TR2
+
+//--- MISSION QUOTE BEGIN ---
+//Soccer is fun for a minute, then it just feels like nub TR2, and makes me want TR2.
+//  -- Tekra
+//--- MISSION QUOTE END ---
+
+//--- MISSION STRING BEGIN ---
+//A Soccer Map for a Soccer Mode
+//Banner graphics by Red Shifter and Juke
+//Banner graphics borrow from many different sources
+//--- MISSION STRING END ---
+
+//--- TR2 MAP COMMANDS BEGIN ---
+// Soccer Mode
+// Force Roles
+// Field Spawning
+// Goalie Crease = 92
+//--- TR2 MAP COMMANDS END ---
+
+if( !$TR2::MapCommands )
+	messageAll(0, "\c2This map will not function properly with an earlier version of Team Rabbit 2.  Tell your Server Administrator to update to version 0324 or higher.");
+
+//--- OBJECT WRITE BEGIN ---
+new SimGroup(MissionGroup) {
+
+	powerCount = "0";
+	CTF_scoreLimit = "6";
+	cdTrack = "2";
+	CTF_timeLimit = "25";
+	musicTrack = "lush";
+
+	new MissionArea(MissionArea) {
+		area = "-240 -368 480 736";
+		flightCeiling = "2000";
+		flightCeilingRange = "50";
+
+		locked = "true";
+	};
+	new Sun() {
+		position = "-967 -62.6 258.8";
+		rotation = "1 0 0 0";
+		scale = "1 1 1";
+		direction = "0.57735 0.57735 -0.57735";
+		color = "0.700000 0.700000 0.700000 1.000000";
+		ambient = "0.690000 0.690000 0.690000 1.000000";
+		texture[0] = "special/sunFlare";
+		texture[1] = "special/sunFlare02";
+		texture[2] = "special/LensFlare/flare01";
+		texture[3] = "special/LensFlare/flare02";
+		texture[4] = "special/LensFlare/flare03";
+		lensFlareScale = "0.7";
+		lensFlareIntensity = "1";
+		frontFlareSize = "300";
+		backFlareSize = "450";
+		flareColor = "1.000000 1.000000 1.000000 1.000000";
+
+		locked = "false";
+	};
+	new NavigationGraph(NavGraph) {
+		conjoinAngleDev = "45";
+		cullDensity = "0.3";
+		customArea = "0 0 0 0";
+
+		coverage = "0";
+		scale = "1 1 1";
+		conjoinBowlDev = "20";
+		GraphFile = "SolsDescent.nav";
+		locked = "true";
+		XDimOverSize = "0";
+		position = "0 0 0 1";
+		YDimOverSize = "0";
+		rotation = "0 0 0 0";
+	};
+	new TerrainBlock(Terrain) {
+		rotation = "1 0 0 0";
+		scale = "1 1 1";
+		detailTexture = "details/lushdet1";
+		terrainFile = "SoccerField.ter";
+		squareSize = "16";
+
+		visibleDistance = "850";
+		locked = "true";
+		hazeDistance = "250";
+		position = "-1024 -1024 0";
+	};
+	new Sky(Sky) {
+		position = "-1216 -848 0";
+		rotation = "1 0 0 0";
+		scale = "1 1 1";
+		cloudHeightPer[0] = "0.349971";
+		cloudHeightPer[1] = "0.25";
+		cloudHeightPer[2] = "0.199973";
+		cloudSpeed1 = "0.0001";
+		cloudSpeed2 = "0.0002";
+		cloudSpeed3 = "0.0003";
+		visibleDistance = "1100";
+		useSkyTextures = "1";
+		renderBottomTexture = "0";
+		SkySolidColor = "0.390000 0.390000 0.390000 0.000000";
+		fogDistance = "900";
+		fogColor = "0.700000 0.700000 0.800000 1.000000";
+		fogVolume1 = "0 0 0";
+		fogVolume2 = "0 0 0";
+		fogVolume3 = "0 0 0";
+		materialList = "Nef5.dml";
+		windVelocity = "1 0 0";
+		windEffectPrecipitation = "0";
+		fogVolumeColor1 = "128.000000 128.000000 0.000000 0.000000";
+		fogVolumeColor2 = "128.000000 128.000000 128.000000 -198748244414614883000000000000000000000.000000";
+		fogVolumeColor3 = "128.000000 128.000000 128.000000 -222768174765569861000000000000000000000.000000";
+		high_visibleDistance = "-1";
+		high_fogDistance = "-1";
+		high_fogVolume1 = "-1 -nan -nan";
+		high_fogVolume2 = "-1 -nan -nan";
+		high_fogVolume3 = "-1 -nan -nan";
+
+		cloudSpeed0 = "0.000000 0.000000";
+		locked = "true";
+	};
+	new SimGroup(Teams) {
+
+		powerCount = "0";
+
+		new SimGroup(Team1) {
+
+			powerCount = "0";
+
+			new SimGroup(spawnspheres) {
+
+				powerCount = "0";
+
+				new Marker() {
+					position = "-170 300 311.754";
+					rotation = "0 0 1 180";
+					scale = "1 1 1";
+					seqNum = "0";
+					msToNext = "1000";
+
+					locked = "false";
+					team = "1";
+				};
+				new Marker() {
+					position = "-180 290 311.754";
+					rotation = "0 0 1 180";
+					scale = "1 1 1";
+					seqNum = "0";
+					msToNext = "1000";
+
+					locked = "false";
+					team = "1";
+				};
+				new Marker() {
+					position = "-190 280 311.754";
+					rotation = "0 0 1 180";
+					scale = "1 1 1";
+					seqNum = "0";
+					msToNext = "1000";
+
+					locked = "false";
+					team = "1";
+				};
+				new Marker() {
+					position = "170 300 311.754";
+					rotation = "0 0 1 178.854";
+					scale = "1 1 1";
+					seqNum = "0";
+					msToNext = "1000";
+
+					locked = "false";
+					team = "1";
+				};
+				new Marker() {
+					position = "180 290 311.754";
+					rotation = "0 0 1 178.854";
+					scale = "1 1 1";
+					seqNum = "0";
+					msToNext = "1000";
+
+					locked = "false";
+					team = "1";
+				};
+				new Marker() {
+					position = "190 280 311.754";
+					rotation = "0 0 1 178.854";
+					scale = "1 1 1";
+					seqNum = "0";
+					msToNext = "1000";
+
+					locked = "false";
+					team = "1";
+				};
+			};
+			new SimGroup(Base0) {
+
+				powerCount = "0";
+			};
+			new SimGroup(Goal1) {
+
+				powerCount = "0";
+
+				new StaticShape() {
+					position = "0.0866432 366.986 306.517";
+					rotation = "0 0 1 180";
+					scale = "1 1 1";
+					dataBlock = "Goal";
+					lockCount = "0";
+					homingCount = "0";
+
+					Target = "-1";
+					locked = "false";
+					team = "1";
+				};
+				new WayPoint() {
+					position = "0.444793 366.736 305.128";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					nameTag = "Goal";
+					dataBlock = "WayPointMarker";
+					lockCount = "0";
+					homingCount = "0";
+					name = "Goal";
+					team = "1";
+
+					locked = "false";
+				};
+				new StaticShape() {
+					position = "18.4917 366.948 304.847";
+					rotation = "0 0 1 180";
+					scale = "1 1 1";
+					dataBlock = "GoldGoalPost";
+					lockCount = "0";
+					homingCount = "0";
+
+					Target = "-1";
+					locked = "false";
+					team = "1";
+				};
+				new StaticShape() {
+					position = "0.205693 369.404 305.308";
+					rotation = "1 0 0 0";
+					scale = "1.1 1 1.1";
+					dataBlock = "GoldGoalBack";
+					lockCount = "0";
+					homingCount = "0";
+
+					Target = "-1";
+					locked = "false";
+					team = "1";
+				};
+				new StaticShape() {
+					position = "0.0649532 366.531 306.381";
+					rotation = "1 0 0 180";
+					scale = "1 1 1";
+					dataBlock = "GoldGoalCrossbar";
+					lockCount = "0";
+					homingCount = "0";
+
+					Target = "-1";
+					locked = "false";
+					team = "1";
+				};
+				new StaticShape() {
+					position = "0.297373 366.73 322.96";
+					rotation = "0 0 1 180";
+					scale = "1 1 1";
+					dataBlock = "GoldGoalCrossbar";
+					lockCount = "0";
+					homingCount = "0";
+
+					Target = "-1";
+					locked = "false";
+					team = "1";
+				};
+				new StaticShape() {
+					position = "-18.8629 366.343 324.391";
+					rotation = "1 0 0 180";
+					scale = "1 1 1";
+					dataBlock = "GoldGoalPost";
+					lockCount = "0";
+					homingCount = "0";
+
+					Target = "-1";
+					locked = "false";
+					team = "1";
+				};
+			};
+		};
+		new SimGroup(Team2) {
+
+			powerCount = "0";
+
+			new SimGroup(spawnspheres) {
+
+				powerCount = "0";
+
+				new Marker() {
+					position = "-170 -300 311.754";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					seqNum = "0";
+					msToNext = "1000";
+
+					locked = "false";
+					team = "2";
+				};
+				new Marker() {
+					position = "-180 -290 311.754";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					seqNum = "0";
+					msToNext = "1000";
+
+					locked = "false";
+					team = "2";
+				};
+				new Marker() {
+					position = "-190 -280 311.754";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					seqNum = "0";
+					msToNext = "1000";
+
+					locked = "false";
+					team = "2";
+				};
+				new Marker() {
+					position = "170 -300 311.754";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					seqNum = "0";
+					msToNext = "1000";
+
+					locked = "false";
+					team = "2";
+				};
+				new Marker() {
+					position = "180 -290 311.754";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					seqNum = "0";
+					msToNext = "1000";
+
+					locked = "false";
+					team = "2";
+				};
+				new Marker() {
+					position = "190 -280 311.754";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					seqNum = "0";
+					msToNext = "1000";
+
+					locked = "false";
+					team = "2";
+				};
+			};
+			new SimGroup(Base0) {
+
+				powerCount = "0";
+			};
+			new SimGroup(Goal2) {
+
+				powerCount = "0";
+
+				new WayPoint() {
+					position = "0.956373 -374.385 305.515";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					nameTag = "Goal";
+					dataBlock = "WayPointMarker";
+					lockCount = "0";
+					homingCount = "0";
+					name = "Goal";
+					team = "2";
+
+					locked = "false";
+				};
+				new StaticShape() {
+					position = "-18.4308 -366.992 304.749";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "GoalPost";
+					lockCount = "0";
+					homingCount = "0";
+
+					Target = "-1";
+					locked = "false";
+					team = "2";
+				};
+				new StaticShape() {
+					position = "-0.0276278 -367.001 306.419";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "Goal";
+					lockCount = "0";
+					homingCount = "0";
+
+					Target = "-1";
+					locked = "false";
+					team = "2";
+				};
+				new StaticShape() {
+					position = "0.255377 -369.218 305.21";
+					rotation = "1 0 0 0";
+					scale = "1.1 1 1.1";
+					dataBlock = "GoalBack";
+					lockCount = "0";
+					homingCount = "0";
+
+					Target = "-1";
+					locked = "false";
+					team = "2";
+				};
+				new StaticShape() {
+					position = "-0.00462519 -366.546 306.283";
+					rotation = "0 1 0 180";
+					scale = "1 1 1";
+					dataBlock = "GoalCrossbar";
+					lockCount = "0";
+					homingCount = "0";
+
+					Target = "-1";
+					locked = "false";
+					team = "2";
+				};
+				new StaticShape() {
+					position = "-0.236627 -366.745 322.662";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "GoalCrossbar";
+					lockCount = "0";
+					homingCount = "0";
+
+					Target = "-1";
+					locked = "false";
+					team = "2";
+				};
+				new StaticShape() {
+					position = "18.5234 -366.328 324.293";
+					rotation = "0 1 0 180";
+					scale = "1 1 1";
+					dataBlock = "GoalPost";
+					lockCount = "0";
+					homingCount = "0";
+
+					Target = "-1";
+					locked = "false";
+					team = "2";
+				};
+			};
+		};
+		new SimGroup(team0) {
+
+			powerCount = "0";
+		};
+	};
+	new SimGroup(ObserverDropPoints) {
+
+		powerCount = "0";
+
+		new Camera() {
+			position = "112.4 0 314.781";
+			rotation = "0 0 -1 90";
+			scale = "1 1 1";
+			dataBlock = "Observer";
+			lockCount = "0";
+			homingCount = "0";
+
+			locked = "false";
+		};
+		new Camera() {
+			position = "-112.4 0 314.781";
+			rotation = "0 0 1 90";
+			scale = "1 1 1";
+			dataBlock = "Observer";
+			lockCount = "0";
+			homingCount = "0";
+
+			locked = "false";
+		};
+	};
+	new Item() {
+		position = "0 0 307.998";
+		rotation = "1 0 0 0";
+		scale = "1.6 1.8 1.6";
+		dataBlock = "TR2Flag1";
+		lockCount = "0";
+		homingCount = "0";
+		collideable = "0";
+		static = "0";
+		rotate = "1";
+
+		lastOneTimer = "935983";
+		dropperVelocity = "1.91315 41.2891 15.5791";
+		dropperPosition = "-69.4869 281.861 308.509";
+		slapCount = "1";
+		oneTimerCount = "0";
+		LiteralDropTime = "939962";
+		Target = "33";
+		dropperOrientation = "0.0373035 0.805077 0.591997";
+		dropTime = "939962";
+		className = "FlagObj";
+		dropperClient = "5862";
+		oneTimer = "939962";
+		locked = "false";
+		dropperKilled = "0";
+		dropperName = "\x011927";
+		lastKTS = "0";
+		onGoal = "0";
+		dropperHeight = "8.509";
+		inLiquid = "0";
+		WayPoint = "5921";
+		lastMario = "0";
+		isHome = "1";
+		originalPosition = "0 0 307.99 1 0 0 0";
+	};
+	new SimGroup(sphere) {
+
+		powerCount = "0";
+
+		new InteriorInstance() {
+			position = "1391.44 50.9121 385.92";
+			rotation = "1 0 0 0";
+			scale = "1 1 1";
+			interiorFile = "sphere.dif";
+			showTerrainInside = "0";
+
+			locked = "false";
+		};
+		new InteriorInstance() {
+			position = "1391.44 50.9121 145.93";
+			rotation = "1 0 0 0";
+			scale = "1 1 1";
+			interiorFile = "cap.dif";
+			showTerrainInside = "0";
+
+			locked = "false";
+		};
+		new StaticShape() {
+			position = "1391.21 49.8584 265.64";
+			rotation = "1 0 0 0";
+			scale = "18.2666 33.4668 1";
+			dataBlock = "Launcher";
+			lockCount = "0";
+			homingCount = "0";
+
+			Target = "-1";
+			locked = "false";
+		};
+	};
+	new SimGroup(SoccerField) {
+
+		powerCount = "0";
+
+		new InteriorInstance() {
+			position = "0 0 307.6";
+			rotation = "0 0 1 90";
+			scale = "4 4 4";
+			interiorFile = "rs_soccerfield2.dif";
+			showTerrainInside = "0";
+
+		};
+		new InteriorInstance() {
+			position = "0 0 308.2";
+			rotation = "0 0 1 90";
+			scale = "3.94 1.76 2";
+			interiorFile = "rs_soccerstabilizer.dif";
+			showTerrainInside = "0";
+
+			locked = "false";
+		};
+	};
+	new SimGroup() {
+	};
+};
+//--- OBJECT WRITE END ---

@@ -731,6 +731,23 @@ export class WatchSession {
       this.resyncSession("packet parse failed");
       return;
     }
+    if (parsed.parseFault) {
+      // The parser kept going past a section it couldn't read (the
+      // engine would drop the connection here). Its ghost tracker and
+      // event sequence no longer mirror the server, so every later packet
+      // would be misread — same remedy as a thrown parse.
+      relayLog.error(
+        {
+          address: this.key,
+          packet: this.packetCount,
+          stage: parsed.parseFault.stage,
+          detail: parsed.parseFault.message,
+        },
+        "Watch session packet parse fault",
+      );
+      this.resyncSession(`${parsed.parseFault.stage} parse fault`);
+      return;
+    }
 
     // Record only packets the parser handled — an unparseable packet in
     // the demo would break playback at the same spot (the resync above

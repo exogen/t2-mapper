@@ -69,7 +69,7 @@
   background: transparent;
   color: rgba(255, 255, 255, 0.8);
   font-family: inherit;
-  font-size: 13px;
+  font-size: 12px;
   text-align: left;
   cursor: pointer;
   white-space: nowrap;
@@ -167,6 +167,10 @@
 
 .EventIcon[data-type="match-end"] {
   color: #74c0fc;
+}
+
+.EventIcon[data-type="rename"] {
+  color: #b197fc;
 }
 
 .EventDescription {

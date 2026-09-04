@@ -8,7 +8,11 @@ import {
 import { useRecording } from "./usePlayback";
 import { useStore } from "zustand";
 import { useInputMode } from "./InputContext";
-import { streamPlaybackStore } from "../state/streamPlaybackStore";
+import {
+  MAX_ORBIT_DISTANCE,
+  MIN_ORBIT_DISTANCE,
+  streamPlaybackStore,
+} from "../state/streamPlaybackStore";
 import { useCameraTour } from "../state/cameraTourStore";
 import { useDirector } from "../state/demoDirectorStore";
 import { useCommandCircuit } from "../state/commandCircuitStore";
@@ -23,11 +27,15 @@ import {
   PiMouseRightClickFill,
   PiMouseScroll,
 } from "react-icons/pi";
-import { ReactNode, useEffect, useRef, useState } from "react";
+import { CSSProperties, ReactNode, useEffect, useRef, useState } from "react";
 import { usePointerLocked } from "./usePointerLocked";
 import { countFollowableFlags, isFollowingPlayer } from "../state/watchFollow";
 import styles from "./KeyboardOverlay.module.css";
-import { useControls } from "./SettingsProvider";
+import {
+  MAX_SPEED_MULTIPLIER,
+  MIN_SPEED_MULTIPLIER,
+  useControls,
+} from "./SettingsProvider";
 import { MdSwipe } from "react-icons/md";
 
 type InputState = Record<string, ActionState>;
@@ -50,6 +58,7 @@ function Key({
   size = "fill",
   disabled = false,
   debounce,
+  level,
 }: {
   action: string | ActionSelector;
   input: ReactNode;
@@ -65,6 +74,9 @@ function Key({
   size?: "auto" | "fill";
   debounce?: number;
   disabled?: boolean;
+  /** Where an adjustable value sits in its range, 0 (bottom) to 1 (top),
+   *  shown as a dot riding the divider before a right-positioned label. */
+  level?: number;
 }) {
   // Debounce state: when the raw value goes false within the debounce
   // window, the selector keeps returning true (no re-render). A timer
@@ -141,6 +153,16 @@ function Key({
           data-size={labelSize}
           data-flanked={inputAfter != null}
         >
+          {level != null ? (
+            <span
+              className={styles.LevelDot}
+              style={
+                {
+                  "--level": Math.max(0, Math.min(1, level)),
+                } as CSSProperties
+              }
+            />
+          ) : null}
           {label}
         </span>
       ) : null}
@@ -257,12 +279,26 @@ function FlySpeedKey() {
       input={<PiMouseScroll className={styles.MouseIcon} />}
       labelPosition="right"
       inputSize="auto"
+      level={
+        (speedMultiplier - MIN_SPEED_MULTIPLIER) /
+        (MAX_SPEED_MULTIPLIER - MIN_SPEED_MULTIPLIER)
+      }
     />
   );
 }
 
 function OrbitZoomKey() {
   // Same wheel as fly speed, but in follow mode it zooms orbit distance.
+  const distance = useStore(
+    streamPlaybackStore,
+    (s) => s.orbitOverrideDistance,
+  );
+  // The wheel scales distance multiplicatively, so place the dot on a log
+  // scale; fully zoomed in (min distance) is the top.
+  const zoomLevel =
+    1 -
+    (Math.log(distance) - Math.log(MIN_ORBIT_DISTANCE)) /
+      (Math.log(MAX_ORBIT_DISTANCE) - Math.log(MIN_ORBIT_DISTANCE));
   return (
     <Key
       action={(s) => ((s.adjustSpeed as ScrollState)?.deltaY ?? 0) !== 0}
@@ -271,6 +307,7 @@ function OrbitZoomKey() {
       input={<PiMouseScroll className={styles.MouseIcon} />}
       labelPosition="right"
       inputSize="auto"
+      level={zoomLevel}
     />
   );
 }
@@ -759,7 +796,7 @@ export function KeyboardOverlay() {
     );
   }
 
-  // The auto-director owns all input likewise — any camera input is one
+  // The auto-director owns all input likewise — F or Escape is the one
   // interrupt (matching ActiveInputBindings' DIRECTOR_MODE_INPUT branch).
   if (isDirecting) {
     return (

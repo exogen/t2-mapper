@@ -86,6 +86,7 @@ describe("sanitizeLookSubjects", () => {
     })),
     playerSamples: [],
     structures: [],
+    structureInventory: [],
     mortarShots: [],
     deaths: [],
     stations: [],

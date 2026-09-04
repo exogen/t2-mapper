@@ -132,14 +132,17 @@ dist
 
 .DS_Store
 .tshy
+*.db
 
 # yalc
 .yalc
 
-# GameData folder with actual .vl2 files (unextracted) in it. Some scripts like
-# `extract-assets` and `generate-manifest` look at this to extract or build the
-# list of files. Once someone builds this, it's not really necessary for other
-# developers to have this folder.
+# Unextracted game data, if anyone still keeps it here (docs/base is the
+# extracted record; add archives with `npm run add-vl2`).
 GameData
 
 docs/dev
+
+# Local demo recordings and the casts/commentary generated beside them
+/demos/
+

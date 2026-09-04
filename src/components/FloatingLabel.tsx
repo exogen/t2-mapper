@@ -4,8 +4,9 @@ import { useFrame } from "@react-three/fiber";
 import { useCommandCircuit } from "../state/commandCircuitStore";
 import { useCameraTour } from "../state/cameraTourStore";
 import { resolveRootState } from "./r3fRootState";
-import { makeTextLabel } from "./canvasLabel";
+import { makeTextLabel, type CanvasLabel } from "./canvasLabel";
 import { isBehindCamera, useOverlayLabel } from "./LabelOverlay";
+import { useDebug } from "./SettingsProvider";
 
 const DEFAULT_POSITION = [0, 0, 0] as [x: number, y: number, z: number];
 const _worldPos = new Vector3();
@@ -21,10 +22,26 @@ const DEFAULT_FADE_DISTANCE = 200;
  */
 const HIDE_DELAY_FRAMES = 15;
 
+/** Gap between a label chip and its debug-mode distance chip. */
+const DEBUG_DISTANCE_GAP = 1;
+
+/** Debug-mode distance chips, shared by every label (keyed by meters). */
+const _distanceChips = new Map<number, CanvasLabel>();
+
+function distanceChip(meters: number): CanvasLabel {
+  let chip = _distanceChips.get(meters);
+  if (!chip) {
+    chip = makeTextLabel(`${meters} m`);
+    _distanceChips.set(meters, chip);
+  }
+  return chip;
+}
+
 /**
  * Hook that manages visibility and opacity fading for a floating label group.
  * Attach `groupRef` to a `<group>` so world-position lookups work. Apply
  * `opacityRef.current` to overlay labels each frame for smooth fading.
+ * `distanceRef` holds the camera distance (Infinity behind the camera).
  */
 export function useFloatingLabelFade({
   opacity: opacityProp = "fadeWithDistance" as number | "fadeWithDistance",
@@ -34,6 +51,7 @@ export function useFloatingLabelFade({
   const groupRef = useRef<Object3D>(null);
   const [isVisible, setIsVisible] = useState(opacityProp !== 0);
   const opacityRef = useRef(0);
+  const distanceRef = useRef(Infinity);
   const hideCountdownRef = useRef(HIDE_DELAY_FRAMES);
 
   function applyVisibility(shouldBeVisible: boolean) {
@@ -74,10 +92,10 @@ export function useFloatingLabelFade({
       _worldPos.z,
     );
 
+    const distance = behind ? Infinity : camera.position.distanceTo(_worldPos);
+    distanceRef.current = distance;
+
     if (fadeWithDistance) {
-      const distance = behind
-        ? Infinity
-        : camera.position.distanceTo(_worldPos);
       const shouldBeVisible = distance < fadeDistance;
       applyVisibility(shouldBeVisible);
       opacityRef.current = shouldBeVisible
@@ -90,7 +108,7 @@ export function useFloatingLabelFade({
     }
   });
 
-  return { groupRef, isVisible, opacityRef };
+  return { groupRef, isVisible, opacityRef, distanceRef };
 }
 
 /** Flatten label children (strings, numbers, arrays thereof) to plain text. */
@@ -120,10 +138,10 @@ export const FloatingLabel = memo(function FloatingLabel({
   opacity?: number | "fadeWithDistance";
   fadeDistance?: number;
 }) {
-  const { groupRef, isVisible, opacityRef } = useFloatingLabelFade({
-    opacity,
-    fadeDistance,
-  });
+  const { groupRef, isVisible, opacityRef, distanceRef } = useFloatingLabelFade(
+    { opacity, fadeDistance },
+  );
+  const { debugMode } = useDebug();
   const item = useOverlayLabel(() => ({
     object: null,
     bitmap: null,
@@ -144,6 +162,37 @@ export const FloatingLabel = memo(function FloatingLabel({
       item.anchorY = label.height / 2;
     }
   }, [item, label]);
+
+  // Debug mode: paint the chip ourselves with the camera distance under
+  // it. The painter reads the distance at draw time, so only the (shared,
+  // per-meter cached) distance chip changes — the label never re-rasters.
+  useEffect(() => {
+    if (!debugMode || !label) return;
+    item.cullRadius = Math.max(label.width, label.height);
+    item.draw = (ctx, x, y) => {
+      ctx.drawImage(
+        label.canvas,
+        x - label.width / 2,
+        y - label.height / 2,
+        label.width,
+        label.height,
+      );
+      const distance = distanceRef.current;
+      if (!Number.isFinite(distance)) return;
+      const chip = distanceChip(Math.round(distance));
+      ctx.drawImage(
+        chip.canvas,
+        x - chip.width / 2,
+        y + label.height / 2 + DEBUG_DISTANCE_GAP,
+        chip.width,
+        chip.height,
+      );
+    };
+    return () => {
+      item.draw = undefined;
+      item.cullRadius = undefined;
+    };
+  }, [item, label, debugMode, distanceRef]);
 
   useFrame(() => {
     item.opacity = opacityRef.current;

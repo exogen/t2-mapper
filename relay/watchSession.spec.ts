@@ -221,8 +221,9 @@ describe("WatchSessionManager", () => {
 
     // The mission-drop burst (MsgClientReady) lands with no tournament
     // banner; a following packet arms the post-drop grace.
-    (session as unknown as { watchState: { sawMissionDropReady: boolean } })
-      .watchState.sawMissionDropReady = true;
+    (
+      session as unknown as { watchState: { sawMissionDropReady: boolean } }
+    ).watchState.sawMissionDropReady = true;
     conn.emit("packet", new Uint8Array([1, 2, 3]));
     expect(manager.getStatusSummary()[0].delayMs).toBe(1000);
 
@@ -386,6 +387,43 @@ describe("WatchSessionManager", () => {
       .filter((m) => m.type === "catchupBegin") as Array<{ epoch: number }>;
     expect(begins).toHaveLength(2);
     expect(begins[1].epoch).toBe(begins[0].epoch + 1);
+  });
+
+  it("re-syncs when the parser reports a fault it swallowed", () => {
+    const { manager, connections } = createManager();
+    const ws = new FakeWebSocket();
+    manager.watch(ws as unknown as WebSocket, "1.2.3.4:28000");
+
+    const session = (manager as any).sessions.get("1.2.3.4:28000");
+    const conn1 = connections[0];
+    conn1.setStatus("connected");
+
+    // A ghost the parser could not read: parsePacket returns normally,
+    // but its tracker no longer mirrors the server.
+    session.parserKit.packetParser.parsePacket = () => ({
+      dnetHeader: {},
+      rateInfo: {},
+      gameState: {},
+      events: [],
+      ghosts: [
+        {
+          index: 9,
+          type: "create",
+          classId: 25,
+          updateBitsStart: 0,
+          updateBitsEnd: 0,
+          failed: true,
+        },
+      ],
+      parseFault: { stage: "ghost", message: "ghost 9 failed" },
+    });
+    const binBefore = ws.binaryFrames().length;
+    conn1.emit("packet", new Uint8Array([1, 2, 3]));
+
+    expect(ws.binaryFrames()).toHaveLength(binBefore);
+    expect(conn1.disconnectCalls).toBe(1);
+    expect(connections).toHaveLength(2);
+    expect(session.resyncCount).toBe(1);
   });
 
   it("ends the session when re-syncs repeat without a healthy stretch", () => {

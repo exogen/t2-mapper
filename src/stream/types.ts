@@ -75,6 +75,12 @@ export interface Keyframe {
   actionAnim?: number;
   /** True when the action animation has reached its final frame. */
   actionAtEnd?: boolean;
+  /** The action holds its last frame until another arrives; otherwise
+   *  the client ends it itself when the clip finishes. */
+  actionHoldAtEnd?: boolean;
+  /** Counts ActionMask updates: a re-sent action of the same index is
+   *  a new one. */
+  actionSeq?: number;
 }
 
 export interface TracerVisual {
@@ -181,8 +187,14 @@ export interface StreamEntity {
   lightOnlyStatic?: boolean;
   isStaticItem?: boolean;
   playerName?: string;
+  /** The name as sent, color codes included — the official clan tag is
+   *  the color-7 segments, the base name the color-6 ones. */
+  playerRawName?: string;
   /** Target manager id backing this entity's target info, if any. */
   targetId?: number;
+  /** How many times that id had been freed and reissued when this entity
+   *  took it: the id plus this names one occupant, since ids are recycled. */
+  targetGeneration?: number;
   /** Sensor group of the entity's target — the team number in stock T2. */
   teamId?: number;
   /** IFF color resolved from the sensor group color table (sRGB 0-255). */
@@ -213,6 +225,11 @@ export interface StreamEntity {
   energy?: number;
   actionAnim?: number;
   actionAtEnd?: boolean;
+  /** The action holds its last frame until another arrives (see
+   *  Keyframe.actionHoldAtEnd). */
+  actionHoldAtEnd?: boolean;
+  /** Counts ActionMask updates (see Keyframe.actionSeq). */
+  actionSeq?: number;
   damageState?: number;
   /** ShapeBase fade value (0=invisible, 1=fully visible). Matches mFadeVal. */
   fadeVal?: number;
@@ -322,6 +339,15 @@ export interface ChatSegment {
   colorCode: number;
 }
 
+/** One raw ServerMessage as broadcast: type + args with netstrings
+ *  resolved (markup intact), stamped at the message's own time. */
+export interface ServerMessageEvent {
+  id: number;
+  timeSec: number;
+  msgType: string;
+  args: string[];
+}
+
 export interface ChatMessage {
   id: number;
   timeSec: number;
@@ -407,20 +433,23 @@ export interface PendingAudioEvent {
   timeSec: number;
 }
 
-/**
- * Loading-screen content the server sends to every joining client
- * (loadingGui.cs sendLoadInfoToClient) — the same MissionInfo text our
- * local map library parses from the .mis, but authoritative for the
- * server's copy of the map. Lines are Torque GUI markup.
- */
-export interface ServerLoadInfo {
-  quoteLines: string[];
-  objectiveLines: string[];
-  rulesLines: string[];
-}
+import type { ServerLoadInfo } from "../../relay/types";
+export type { ServerLoadInfo };
 
 export interface StreamSnapshot {
   timeSec: number;
+  /**
+   * When the server said the always-scoped ghost set was complete
+   * (GhostingMessageEvent / GhostAlwaysDone), or null if it has not
+   * said so yet.
+   *
+   * This is the protocol's own answer to "is the world here" — terrain,
+   * interiors, flags, generators, every piece of base hardware. Anything
+   * that needs the whole map should wait for it rather than guess from
+   * what has turned up so far: a map whose only landmarks are flags
+   * would never satisfy such a guess.
+   */
+  ghostAlwaysDoneSec: number | null;
   exhausted: boolean;
   camera: StreamCamera | null;
   entities: StreamEntity[];
@@ -429,6 +458,9 @@ export interface StreamSnapshot {
   playerSensorGroup: number;
   status: { health: number; energy: number; heat: number };
   chatMessages: ChatMessage[];
+  /** Raw ServerMessage feed (netstring-resolved args), for consumers
+   *  that parse game events themselves — see directorEventScanner. */
+  serverEvents: ServerMessageEvent[];
   /** One-shot audio events from Sim3DAudioEvent / Sim2DAudioEvent. */
   audioEvents: PendingAudioEvent[];
   /** Weapons HUD state from inventory RemoteCommandEvents. */

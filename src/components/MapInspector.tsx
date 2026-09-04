@@ -49,9 +49,10 @@ import { WelcomeSplash } from "./WelcomeSplash";
 import { MapCompass } from "./MapCompass";
 import { LoadingIndicator } from "./LoadingIndicator";
 import { StreamDelayNotice } from "./StreamDelayNotice";
-import { engineStore } from "../state/engineStore";
+import { CommentarySubtitles } from "./CommentarySubtitles";
+import { unloadDemo } from "../stream/demoFileLoader";
+import { isRetryableDisconnect } from "../../relay/shared";
 import {
-  gameEntityStore,
   isStreamingSource,
   useDataSource,
   useMissionName,
@@ -169,8 +170,10 @@ export function MapInspector() {
       const liveState = liveConnectionStore.getState();
       liveState.leaveServer();
       liveState.disconnectRelay();
-      engineStore.getState().setRecording(null);
-      gameEntityStore.getState().endStreaming();
+      // Full recording teardown (director, timeline, streamed scene) —
+      // not just the recording handle, or a running cast would keep
+      // owning the controls in explore mode.
+      unloadDemo();
       setCurrentMission(mission);
       if (isTouch) {
         setSidebarOpen(false);
@@ -515,6 +518,8 @@ export function MapInspector() {
       ? missionLoadingProgress < 1
       : false;
 
+  const loadingIndicatorUp = showLoadingIndicator && !streamDelayNoticeUp;
+
   // Keep the loading indicator visible briefly after reaching 100%
   useEffect(() => {
     if (isLoading) {
@@ -543,9 +548,7 @@ export function MapInspector() {
   // session's status so its message doesn't resurface as a join error.
   const handleOpenServerBrowser = useCallback(() => {
     liveConnectionStore.getState().leaveServer();
-    engineStore.getState().setRecording(null);
-    gameEntityStore.getState().endStreaming();
-    commandCircuitStore.getState().deactivate();
+    unloadDemo();
     setChoosingMap(false);
     setMode("live");
     // When the sidebar overlays the content it would hide the server
@@ -561,9 +564,7 @@ export function MapInspector() {
     const liveState = liveConnectionStore.getState();
     liveState.leaveServer();
     liveState.disconnectRelay();
-    engineStore.getState().setRecording(null);
-    gameEntityStore.getState().endStreaming();
-    commandCircuitStore.getState().deactivate();
+    unloadDemo();
     setChoosingMap(false);
     setMode("demo");
     // Same as the server browser: don't leave the drop screen hidden
@@ -604,6 +605,13 @@ export function MapInspector() {
   // voluntary leave, or a drop after we actually reached the server.
   // A failed probe / name lookup never connected, so it offers no Rejoin.
   const canRejoin = disconnectReason === "voluntary" || sessionEstablished;
+  const rejoinAddress = serverAddress ?? lastServerAddress;
+  // A refusal the server itself calls temporary (mission cycling) is
+  // worth another try even though the session never established.
+  const retryAddress =
+    !canRejoin && isRetryableDisconnect(watchStatusMessage ?? undefined)
+      ? rejoinAddress
+      : null;
   const joinErrorMessage = !showJoinScreen ? null : autoJoin === "notFound" ? (
     <>No server named &ldquo;{autoName}&rdquo; is currently listed.</>
   ) : watchStatus === "ended" && watchStatusMessage ? (
@@ -711,11 +719,16 @@ export function MapInspector() {
                   // connection that never established (probe fail, failed
                   // ?name lookup) — so Rejoin is offered only in the rare
                   // case we did reach the server before landing here.
-                  onRejoin={(() => {
-                    if (!canRejoin || autoJoin === "notFound") return undefined;
-                    const address = serverAddress ?? lastServerAddress;
-                    return address ? () => handleWatch(address) : undefined;
-                  })()}
+                  onRejoin={
+                    canRejoin && autoJoin !== "notFound" && rejoinAddress
+                      ? () => handleWatch(rejoinAddress)
+                      : undefined
+                  }
+                  onRetry={
+                    retryAddress && autoJoin !== "notFound"
+                      ? () => handleWatch(retryAddress)
+                      : undefined
+                  }
                   onBrowse={() => setErrorAcknowledged(true)}
                 />
               ) : (
@@ -760,11 +773,18 @@ export function MapInspector() {
                       features.live ? handleOpenServerBrowser : undefined
                     }
                     onDismiss={() => setShowSplash(false)}
+                    // The splash takes the indicator over rather than
+                    // letting it show through the panel.
+                    loading={
+                      loadingIndicatorUp
+                        ? { isLoading, progress: loadingProgress }
+                        : null
+                    }
                   />
                 ) : (
                   <VisualInput />
                 )}
-                {showLoadingIndicator && !streamDelayNoticeUp && (
+                {loadingIndicatorUp && !splashVisible && (
                   <LoadingIndicator
                     id="loadingIndicator"
                     isLoading={isLoading}
@@ -772,6 +792,7 @@ export function MapInspector() {
                   />
                 )}
                 <StreamDelayNotice />
+                {recording?.source === "demo" ? <CommentarySubtitles /> : null}
                 {showDisconnectDialog ? (
                   <WatchErrorDialog
                     // A voluntary leave isn't an error — say so plainly.
@@ -786,11 +807,14 @@ export function MapInspector() {
                         : (watchStatusMessage ??
                           "Connection to the server was lost.")
                     }
-                    onRejoin={(() => {
-                      if (!canRejoin) return undefined;
-                      const address = serverAddress ?? lastServerAddress;
-                      return address ? () => handleWatch(address) : undefined;
-                    })()}
+                    onRejoin={
+                      canRejoin && rejoinAddress
+                        ? () => handleWatch(rejoinAddress)
+                        : undefined
+                    }
+                    onRetry={
+                      retryAddress ? () => handleWatch(retryAddress) : undefined
+                    }
                     onBrowse={handleOpenServerBrowser}
                     onDismiss={() => setErrorAcknowledged(true)}
                   />

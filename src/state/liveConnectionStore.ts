@@ -274,6 +274,9 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
           s._adapter = null;
           s._pending = [];
           s._listInFlight = false;
+          // A socket lost mid-list ends the wait: nothing will answer
+          // it, and a browser left "loading" spins forever.
+          if (s.serversLoading) set({ serversLoading: false });
           // A socket loss during an active session is involuntary;
           // voluntary paths set their reason before closing.
           const sessionWasLive =
@@ -454,6 +457,18 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
           recorderName: newAdapter.connectedPlayerName ?? undefined,
         });
       };
+      newAdapter.onParseFault = (fault) => {
+        if (get()._adapter !== newAdapter) return;
+        // The parser lost the stream (the engine would disconnect here);
+        // a fresh connection is the only way back into lockstep.
+        log.error(
+          "rejoining after %s parse fault: %s",
+          fault.stage,
+          fault.message,
+        );
+        get().leaveServer();
+        get().joinServer(address, warriorName);
+      };
       s._adapter = newAdapter;
 
       set({
@@ -528,6 +543,18 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
           gameClassName: newAdapter.gameClassName ?? undefined,
           serverDisplayName: newAdapter.serverDisplayName ?? undefined,
         });
+      };
+      newAdapter.onParseFault = (fault) => {
+        if (get()._adapter !== newAdapter) return;
+        // Re-attach for a fresh catch-up: the relay's own parser is fine
+        // (it re-syncs itself when it isn't), so a new hydration puts
+        // this adapter back in lockstep with the stream.
+        log.error(
+          "re-watching after %s parse fault: %s",
+          fault.stage,
+          fault.message,
+        );
+        get().watchServer(address);
       };
       s._adapter = newAdapter;
 
@@ -622,11 +649,4 @@ export function selectPing(s: LiveConnectionStore): number | null {
   return s.relayToGameServerPing != null && s.browserToRelayPing != null
     ? s.relayToGameServerPing + s.browserToRelayPing
     : (s.relayToGameServerPing ?? null);
-}
-
-/** Dispose the relay connection (for cleanup on unmount). */
-export function disposeLiveConnection(): void {
-  const s = liveConnectionStore.getState();
-  s._relay?.close();
-  s._relay = null;
 }

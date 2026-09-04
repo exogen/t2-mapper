@@ -276,7 +276,7 @@ export function playOneShotSound(
           sound.position.copy(position);
         }
         parent!.add(sound);
-        _activeSounds.set(sound, 1);
+        trackSound(sound);
         _oneShotSounds.add(sound);
         // Chain (not replace) three's onEnded so isPlaying bookkeeping —
         // which also gates the panner's per-frame updates — stays correct.
@@ -292,7 +292,7 @@ export function playOneShotSound(
         sound.setBuffer(buffer);
         sound.setVolume(resolved.volume);
         sound.setPlaybackRate(getEffectiveSoundRate());
-        _activeSounds.set(sound, 1);
+        trackSound(sound);
         const baseOnEnded = sound.onEnded.bind(sound);
         sound.onEnded = () => {
           baseOnEnded();
@@ -435,7 +435,7 @@ export const AudioEmitter = memo(function AudioEmitter({
       const gap =
         gapMin === gapMax ? gapMin : randomValue * (gapMax - gapMin) + gapMin;
 
-      (sound as any).loop = false;
+      sound.setLoop(false);
 
       const checkLoop = () => {
         // Discard callbacks from a previous sound generation.

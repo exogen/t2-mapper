@@ -1,10 +1,12 @@
 import {
   createLiveParser,
   passiveObserverProtocolState,
+  type PacketData,
   type PacketParser,
 } from "t2-demo-parser";
 import type {
   ParsedData,
+  ParseFault,
   RemoteCommandEventData,
   CRCChallengeEventData,
   GhostingMessageEventData,
@@ -46,6 +48,13 @@ export class LiveStreamAdapter extends StreamEngine {
   onReady?: () => void;
   /** Called when the server starts a new mission (map cycle). */
   onMissionChange?: (missionName: string) => void;
+  /**
+   * The parser could not fully read a packet, so its ghost tracker and
+   * event sequence no longer mirror the server (the engine drops the
+   * connection here). Every later packet would be misread: the owner
+   * must rebuild this adapter from a fresh catch-up or connection.
+   */
+  onParseFault?: (fault: ParseFault) => void;
   /** Current mission name as reported by the server. */
   missionName: string | null = null;
 
@@ -339,6 +348,7 @@ export class LiveStreamAdapter extends StreamEngine {
     this.missionTypeDisplayName = hud.missionTypeDisplayName ?? null;
     this.gameClassName = hud.gameClassName ?? null;
     this.serverDisplayName = hud.serverDisplayName ?? null;
+    this.serverLoadInfo = hud.loadInfo ?? null;
     this.matchEnded = hud.matchEnded ?? false;
     // Older relays don't send matchStarted; a running clock in the
     // payload proves the match is underway just as well.
@@ -573,168 +583,48 @@ export class LiveStreamAdapter extends StreamEngine {
         );
       }
 
+      if (parsed.parseFault) {
+        // Nothing past the fault is trustworthy, and neither is any
+        // packet after it: hand the adapter back for a rebuild.
+        log.error(
+          "packet #%d %s parse fault: %s",
+          this.tickCount,
+          parsed.parseFault.stage,
+          parsed.parseFault.message,
+        );
+        this.onParseFault?.(parsed.parseFault);
+        return;
+      }
+
       // Track move acknowledgments for client-side prediction replay.
       this.lastMoveAck = parsed.gameState.lastMoveAck;
 
       // Control object state
       this.processControlObject(parsed.gameState);
 
-      // Events
+      // Events and ghosts are applied one at a time: a handler that
+      // throws on one (an unsupported class, a bad datablock reference)
+      // must not drop the rest of the packet, which the parser has
+      // already registered in its tracker.
       for (const event of parsed.events) {
-        if (event.parsedData) {
-          const type = event.parsedData.type as string;
-          if (type === "RemoteCommandEvent") {
-            this.handleRelayCommands(
-              event.parsedData as RemoteCommandEventData,
-            );
-          } else if (type === "CRCChallengeEvent") {
-            this.handleCRCChallenge(event.parsedData as CRCChallengeEventData);
-          } else if (type === "GhostingMessageEvent") {
-            this.handleGhostingMessage(
-              event.parsedData as GhostingMessageEventData,
-            );
-          }
-
-          // Always log RemoteCommandEvents (chat, server messages, HUD).
-          if (type === "RemoteCommandEvent") {
-            const funcName = this.resolveNetString(
-              (event.parsedData.funcName as string) ?? "",
-            );
-            log.debug("remote: %s", funcName);
-          }
-          // Log other events in early packets
-          if (isEarlyPacket) {
-            if (type !== "NetStringEvent" && type !== "RemoteCommandEvent") {
-              log.debug(
-                "event: %s%s",
-                type,
-                type === "SimDataBlockEvent"
-                  ? ` id=${event.parsedData.objectId} class=${event.parsedData.dataBlockClassName}`
-                  : "",
-              );
-            }
-          }
-
-          // Track SimDataBlockEvent class names for CRC computation.
-          if (type === "SimDataBlockEvent") {
-            const dbId = event.parsedData.objectId as number | undefined;
-            const dbClassName = event.parsedData.dataBlockClassName as
-              string | undefined;
-            if (dbId != null && dbClassName) {
-              this.dataBlockClassNames.set(dbId, dbClassName);
-            }
-            if (shouldLog) {
-              const dbData = event.parsedData.dataBlockData as
-                ParsedData | undefined;
-              const shapeName = resolveShapeName(dbClassName ?? "", dbData);
-              log.debug(
-                "datablock: id=%d class=%s%s",
-                dbId,
-                dbClassName ?? "?",
-                shapeName ? ` shape=${shapeName}` : "",
-              );
-            }
-          }
-
-          const eventName = this.registry.getEventParser(event.classId)?.name;
-          this.processEvent(event, eventName);
-
-          // Log net strings in early packets
-          if (isEarlyPacket && type === "NetStringEvent") {
-            const id = event.parsedData.id as number;
-            const value = event.parsedData.value as string;
-            if (id != null && typeof value === "string") {
-              log.trace(
-                'netString #%d = "%s"',
-                id,
-                value.length > 60 ? value.slice(0, 60) + "…" : value,
-              );
-            }
-          }
-
-          // Log target info
-          if (type === "TargetInfoEvent") {
-            const targetId = event.parsedData.targetId as number | undefined;
-            const nameTag = event.parsedData.nameTag as number | undefined;
-            if (targetId != null && nameTag != null) {
-              const resolved = this.netStrings.get(nameTag);
-              if (resolved) {
-                const name = stripTaggedStringMarkup(resolved);
-                log.info(
-                  'target #%d: "%s" team=%s',
-                  targetId,
-                  name,
-                  event.parsedData.sensorGroup ?? "?",
-                );
-              }
-            }
-          }
-
-          // Log sensor group changes
-          if (type === "SetSensorGroupEvent") {
-            const sg = event.parsedData.sensorGroup as number | undefined;
-            if (sg != null) {
-              log.info("sensor group changed: → %d", sg);
-            }
-          }
-
-          // Log sensor group colors
-          if (type === "SensorGroupColorEvent") {
-            const sg = event.parsedData.sensorGroup as number;
-            const colors = event.parsedData.colors as
-              Array<unknown> | undefined;
-            if (colors) {
-              log.debug(
-                "sensor group colors: group=%d, %d entries",
-                sg,
-                colors.length,
-              );
-            }
-          }
+        try {
+          this.processParsedEvent(event, isEarlyPacket, shouldLog);
+        } catch (e) {
+          log.error("event %d handler failed: %o", event.classId, e);
         }
       }
 
-      // Ghosts
       for (const ghost of parsed.ghosts) {
-        if (ghost.type === "create") {
-          const pos = ghost.parsedData?.position as Vec3 | undefined;
-          const hasPos =
-            pos &&
-            typeof pos.x === "number" &&
-            typeof pos.y === "number" &&
-            typeof pos.z === "number";
-          const className = this.resolveGhostClassName(
+        try {
+          this.processParsedGhost(ghost);
+        } catch (e) {
+          log.error(
+            "ghost #%d %s handler failed: %o",
             ghost.index,
-            ghost.classId,
+            ghost.type,
+            e,
           );
-          log.debug(
-            "ghost create: #%d %s%s (%d entities total)",
-            ghost.index,
-            className ?? "?",
-            hasPos
-              ? ` at (${pos.x.toFixed(1)}, ${pos.y.toFixed(1)}, ${pos.z.toFixed(1)})`
-              : "",
-            this.entities.size + 1,
-          );
-          if (!this._ready) {
-            this._ready = true;
-            this.onReady?.();
-          }
-        } else if (ghost.type === "delete") {
-          const prevEntityId = this.entityIdByGhostIndex.get(ghost.index);
-          const prevEntity = prevEntityId
-            ? this.entities.get(prevEntityId)
-            : undefined;
-          if (this.tickCount < 50 || this.tickCount % 200 === 0) {
-            log.debug(
-              "ghost delete: #%d %s (%d entities remaining)",
-              ghost.index,
-              prevEntity?.className ?? "?",
-              this.entities.size - 1,
-            );
-          }
         }
-        this.processGhostUpdate(ghost);
       }
 
       this.tickCount++;
@@ -811,12 +701,167 @@ export class LiveStreamAdapter extends StreamEngine {
     }
   }
 
+  private processParsedEvent(
+    event: PacketData["events"][number],
+    isEarlyPacket: boolean,
+    shouldLog: boolean,
+  ): void {
+    if (event.parsedData) {
+      const type = event.parsedData.type as string;
+      if (type === "RemoteCommandEvent") {
+        this.handleRelayCommands(event.parsedData as RemoteCommandEventData);
+      } else if (type === "CRCChallengeEvent") {
+        this.handleCRCChallenge(event.parsedData as CRCChallengeEventData);
+      } else if (type === "GhostingMessageEvent") {
+        this.handleGhostingMessage(
+          event.parsedData as GhostingMessageEventData,
+        );
+      }
+
+      // Always log RemoteCommandEvents (chat, server messages, HUD).
+      if (type === "RemoteCommandEvent") {
+        const funcName = this.resolveNetString(
+          (event.parsedData.funcName as string) ?? "",
+        );
+        log.debug("remote: %s", funcName);
+      }
+      // Log other events in early packets
+      if (isEarlyPacket) {
+        if (type !== "NetStringEvent" && type !== "RemoteCommandEvent") {
+          log.debug(
+            "event: %s%s",
+            type,
+            type === "SimDataBlockEvent"
+              ? ` id=${event.parsedData.objectId} class=${event.parsedData.dataBlockClassName}`
+              : "",
+          );
+        }
+      }
+
+      // Track SimDataBlockEvent class names for CRC computation.
+      if (type === "SimDataBlockEvent") {
+        const dbId = event.parsedData.objectId as number | undefined;
+        const dbClassName = event.parsedData.dataBlockClassName as
+          string | undefined;
+        if (dbId != null && dbClassName) {
+          this.dataBlockClassNames.set(dbId, dbClassName);
+        }
+        if (shouldLog) {
+          const dbData = event.parsedData.dataBlockData as
+            ParsedData | undefined;
+          const shapeName = resolveShapeName(dbClassName ?? "", dbData);
+          log.debug(
+            "datablock: id=%d class=%s%s",
+            dbId,
+            dbClassName ?? "?",
+            shapeName ? ` shape=${shapeName}` : "",
+          );
+        }
+      }
+
+      const eventName = this.registry.getEventParser(event.classId)?.name;
+      this.processEvent(event, eventName);
+
+      // Log net strings in early packets
+      if (isEarlyPacket && type === "NetStringEvent") {
+        const id = event.parsedData.id as number;
+        const value = event.parsedData.value as string;
+        if (id != null && typeof value === "string") {
+          log.trace(
+            'netString #%d = "%s"',
+            id,
+            value.length > 60 ? value.slice(0, 60) + "…" : value,
+          );
+        }
+      }
+
+      // Log target info
+      if (type === "TargetInfoEvent") {
+        const targetId = event.parsedData.targetId as number | undefined;
+        const nameTag = event.parsedData.nameTag as number | undefined;
+        if (targetId != null && nameTag != null) {
+          const resolved = this.netStrings.get(nameTag);
+          if (resolved) {
+            const name = stripTaggedStringMarkup(resolved);
+            log.info(
+              'target #%d: "%s" team=%s',
+              targetId,
+              name,
+              event.parsedData.sensorGroup ?? "?",
+            );
+          }
+        }
+      }
+
+      // Log sensor group changes
+      if (type === "SetSensorGroupEvent") {
+        const sg = event.parsedData.sensorGroup as number | undefined;
+        if (sg != null) {
+          log.info("sensor group changed: → %d", sg);
+        }
+      }
+
+      // Log sensor group colors
+      if (type === "SensorGroupColorEvent") {
+        const sg = event.parsedData.sensorGroup as number;
+        const colors = event.parsedData.colors as Array<unknown> | undefined;
+        if (colors) {
+          log.debug(
+            "sensor group colors: group=%d, %d entries",
+            sg,
+            colors.length,
+          );
+        }
+      }
+    }
+  }
+
+  private processParsedGhost(ghost: PacketData["ghosts"][number]): void {
+    if (ghost.type === "create") {
+      const pos = ghost.parsedData?.position as Vec3 | undefined;
+      const hasPos =
+        pos &&
+        typeof pos.x === "number" &&
+        typeof pos.y === "number" &&
+        typeof pos.z === "number";
+      const className = this.resolveGhostClassName(ghost.index, ghost.classId);
+      log.debug(
+        "ghost create: #%d %s%s (%d entities total)",
+        ghost.index,
+        className ?? "?",
+        hasPos
+          ? ` at (${pos.x.toFixed(1)}, ${pos.y.toFixed(1)}, ${pos.z.toFixed(1)})`
+          : "",
+        this.entities.size + 1,
+      );
+      if (!this._ready) {
+        this._ready = true;
+        this.onReady?.();
+      }
+    } else if (ghost.type === "delete") {
+      const prevEntityId = this.entityIdByGhostIndex.get(ghost.index);
+      const prevEntity = prevEntityId
+        ? this.entities.get(prevEntityId)
+        : undefined;
+      if (this.tickCount < 50 || this.tickCount % 200 === 0) {
+        log.debug(
+          "ghost delete: #%d %s (%d entities remaining)",
+          ghost.index,
+          prevEntity?.className ?? "?",
+          this.entities.size - 1,
+        );
+      }
+    }
+    this.processGhostUpdate(ghost);
+  }
+
   // ── Build snapshot ──
 
   private buildSnapshot(): StreamSnapshot {
     const entities = this.buildEntityList();
     const timeSec = this.currentTimeSec;
-    const { chatMessages, audioEvents } = this.buildTimeFilteredEvents(timeSec);
+    const { chatMessages, serverEvents, audioEvents } =
+      this.buildTimeFilteredEvents(timeSec);
 
     const { weaponsHud, inventoryHud, backpackHud, teamScores, playerRoster } =
       this.buildCachedHudState();
@@ -834,6 +879,7 @@ export class LiveStreamAdapter extends StreamEngine {
 
     const snapshot: StreamSnapshot = {
       timeSec,
+      ghostAlwaysDoneSec: this.ghostAlwaysDoneSec,
       exhausted: false,
       camera: this.camera,
       entities,
@@ -841,6 +887,7 @@ export class LiveStreamAdapter extends StreamEngine {
       playerSensorGroup: this.playerSensorGroup,
       status: this.lastStatus,
       chatMessages,
+      serverEvents,
       audioEvents,
       weaponsHud,
       backpackHud,

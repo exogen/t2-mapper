@@ -2,6 +2,9 @@ import { describe, expect, it } from "vitest";
 import { BitStream } from "t2-demo-parser";
 import {
   ConnectionProtocol,
+  PING_RETRY_COUNT,
+  PING_TIMEOUT_MS,
+  PingTimeout,
   buildClientGamePacket,
   buildGhostingMessageEvent,
 } from "./protocol.js";
@@ -64,5 +67,59 @@ describe("buildClientGamePacket guaranteed events", () => {
       events: [{ seq: 130, event: buildGhostingMessageEvent(1, 1, 0) }],
     });
     expect(readGuaranteedEventSeqs(packet)).toEqual([130 & 0x7f]);
+  });
+});
+
+describe("ConnectionProtocol packet types", () => {
+  /** Read the sequence number and packet type from a dnet header. */
+  function readHeader(packet: Uint8Array): { seq: number; type: number } {
+    const bs = new BitStream(packet);
+    bs.readFlag(); // gameFlag
+    bs.readInt(1); // connectSeqBit
+    const seq = bs.readInt(9);
+    bs.readInt(9); // highestAck
+    const type = bs.readInt(2);
+    return { seq, type };
+  }
+
+  it("gives only data packets a new sequence number", () => {
+    const protocol = new ConnectionProtocol();
+    const data1 = readHeader(protocol.buildDataPacket(() => {}));
+    const ping = readHeader(protocol.buildPingPacket());
+    const ack = readHeader(protocol.buildAckPacket());
+    const data2 = readHeader(protocol.buildDataPacket(() => {}));
+
+    expect(data1).toEqual({ seq: 1, type: 0 });
+    // Pings and acks reuse the current sequence (FUN_0043d2d0 only
+    // increments for data), so the peer never sees them as lost packets.
+    expect(ping).toEqual({ seq: 1, type: 1 });
+    expect(ack).toEqual({ seq: 1, type: 2 });
+    expect(data2).toEqual({ seq: 2, type: 0 });
+    expect(protocol.lastSendSeq).toBe(2);
+  });
+});
+
+describe("PingTimeout", () => {
+  it("pings after the silence threshold and times out after the retries", () => {
+    const t = new PingTimeout(0);
+    expect(t.check(PING_TIMEOUT_MS)).toBeNull();
+    expect(t.check(PING_TIMEOUT_MS + 1)).toBe("ping");
+    // Not again until another full interval has passed.
+    expect(t.check(PING_TIMEOUT_MS + 2)).toBeNull();
+    let now = PING_TIMEOUT_MS + 1;
+    for (let i = 1; i < PING_RETRY_COUNT; i++) {
+      now += PING_TIMEOUT_MS + 1;
+      expect(t.check(now)).toBe("ping");
+    }
+    now += PING_TIMEOUT_MS + 1;
+    expect(t.check(now)).toBe("timeout");
+  });
+
+  it("restarts the clock on any received packet", () => {
+    const t = new PingTimeout(0);
+    expect(t.check(PING_TIMEOUT_MS + 1)).toBe("ping");
+    t.keepAlive(PING_TIMEOUT_MS + 100);
+    expect(t.check(2 * PING_TIMEOUT_MS + 50)).toBeNull();
+    expect(t.check(2 * PING_TIMEOUT_MS + 101)).toBe("ping");
   });
 });

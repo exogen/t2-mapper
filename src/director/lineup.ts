@@ -6,103 +6,21 @@
  * rank at head height, working across different knots of players so
  * successive passes show new faces.
  */
-import type { DirectorDataset, DirectorVec3, Shot } from "./types";
+import type { DirectorVec3, Shot } from "./types";
 import {
   DIRECTOR_LINEUP_HEIGHT,
   DIRECTOR_LINEUP_STANDOFF,
   DIRECTOR_LINEUP_STANDOFF_MAX_EXTRA,
-  DIRECTOR_LINEUP_SWEEP_SEC,
   DIRECTOR_LINEUP_TRAVEL,
-  DIRECTOR_MIN_SHOT_HOLD_SEC,
   DIRECTOR_ROSTER_EYE_HEIGHT,
   DIRECTOR_ROSTER_GROUP_RANGE,
   DIRECTOR_ROSTER_MIN_TRAVEL,
   DIRECTOR_ROSTER_STANDOFF,
 } from "./tunables";
 import { centroid, clamp, dist, sweepTravel } from "./geometry";
-import type { PlayersAtSec } from "./dataset";
-
-/**
- * Roster line-up sweeps for the pre-match window: before the whistle
- * the teams stand assembled at their bases and nothing moves, so a slow
- * pass along each line-up is the shot. One sweep per team, flying
- * across the line rather than orbiting a flag that will not budge.
- */
-export function lineupShots(
-  startSec: number,
-  endSec: number,
-  dataset: DirectorDataset,
-  playersAtSec: PlayersAtSec,
-): Shot[] {
-  const shots: Shot[] = [];
-  const teams = [...new Set(dataset.teams.map((t) => t.teamId))].sort(
-    (a, b) => a - b,
-  );
-  if (teams.length === 0) return shots;
-  // Alternate teams pass by pass, and alternate wide with close-up, so
-  // the two sides get equal time and neither treatment dominates.
-  // A whole number of ROUNDS, so every team gets the same number of
-  // passes — an odd count quietly handed one side half again as much
-  // screen time as the other.
-  const rounds = Math.max(
-    1,
-    Math.round(
-      (endSec - startSec) / (DIRECTOR_LINEUP_SWEEP_SEC * teams.length),
-    ),
-  );
-  const passes = rounds * teams.length;
-  const perPass = (endSec - startSec) / passes;
-  if (perPass < DIRECTOR_MIN_SHOT_HOLD_SEC) return shots;
-  // Which players each team has already had a close-up of: one pass
-  // catches a third of a squad at most, so without this the repeated
-  // "densest knot" pick would show the same handful of faces every time
-  // and never reach the rest of the team.
-  const featured = new Map<number, Set<number>>();
-  for (let i = 0; i < passes; i++) {
-    const from = startSec + perPass * i;
-    const to = i === passes - 1 ? endSec : startSec + perPass * (i + 1);
-    const teamId = teams[i % teams.length];
-    const teamName =
-      dataset.teams.find((t) => t.teamId === teamId)?.name ?? `team ${teamId}`;
-    const mid = Math.round((from + to) / 2);
-    const squad = (playersAtSec.get(mid) ?? []).filter(
-      (p) => p.teamId === teamId,
-    );
-    if (squad.length === 0) continue;
-    // One wide establishing pass per team, then close-ups along the
-    // ranks — the faces are the shot, and a second distant fly-by adds
-    // nothing a viewer has not already seen.
-    const closeUp = Math.floor(i / teams.length) >= 1;
-    let seen = featured.get(teamId);
-    if (!seen) {
-      seen = new Set<number>();
-      featured.set(teamId, seen);
-    }
-    const shot = closeUp
-      ? rosterCloseUp(
-          from,
-          to,
-          squad,
-          teamName,
-          dataset,
-          playersAtSec,
-          mid,
-          seen,
-        )
-      : rosterWide(from, to, squad, teamName);
-    if (shot) shots.push(shot);
-  }
-  // A small remainder extends the last pass so the window stays
-  // covered. A large one must NOT: absorbing it turned a 9-second pass
-  // into a 13-minute stare on a tournament demo's team-picking period.
-  if (shots.length > 0 && endSec - shots[shots.length - 1].endSec <= perPass) {
-    shots[shots.length - 1].endSec = endSec;
-  }
-  return shots;
-}
 
 /** The wide establishing pass: the whole squad and their base. */
-function rosterWide(
+export function rosterWide(
   startSec: number,
   endSec: number,
   squad: { pos: DirectorVec3 }[],
@@ -133,6 +51,7 @@ function rosterWide(
     Math.min(widest, DIRECTOR_LINEUP_STANDOFF_MAX_EXTRA);
   return {
     kind: "sweep",
+    role: "rosterWide",
     from: [
       center[0] + outX * standoff - axis.x * travel * 0.5,
       center[1] + outY * standoff - axis.y * travel * 0.5,
@@ -146,6 +65,7 @@ function rosterWide(
     target: [center[0], center[1], center[2] + 1],
     startSec,
     endSec,
+    moveSec: endSec - startSec,
     transitionIn: "cut",
     reason: `Pre-match — ${teamName} line-up (${squad.length})`,
   };
@@ -160,38 +80,52 @@ function rosterWide(
  * Adds the players it features to `alreadyFeatured`, so successive
  * passes work across the squad instead of revisiting the same knot.
  */
-function rosterCloseUp(
+export interface RosterFraming {
+  /** Multiplier on the standoff — a pass that cannot fly at the usual
+   *  distance may fly closer, or further out. */
+  standoffScale?: number;
+  /** Film the rank from behind instead of in front. A line facing a
+   *  wall has no room on its own front side. */
+  mirror?: boolean;
+  /** Extra height, when the ground-level line is the problem. */
+  lift?: number;
+}
+
+export function rosterCloseUp(
   startSec: number,
   endSec: number,
-  squad: { targetId: number; pos: DirectorVec3 }[],
+  squad: { targetId: number; pos: DirectorVec3; heading?: number }[],
   teamName: string,
-  dataset: DirectorDataset,
-  playersAtSec: PlayersAtSec,
-  midSec: number,
   alreadyFeatured: Set<number>,
+  framing: RosterFraming = {},
 ): Shot | null {
-  // The knot with the most faces not yet shown, densest as a tie-break.
+  // MULTI-SCALE group search: pre-match formations are often LOOSE
+  // lines 20-40m across, not 9m huddles — a trio spread across open
+  // ground is a better pan than a tight pair (the pan just moves a
+  // little faster to cover it). Try widening radii; more members wins,
+  // with a mild density preference and fresh faces as a bonus, never
+  // the primary criterion (that once picked two stragglers over the
+  // squad's actual line).
+  const MIN_KNOT = 2;
   let group: typeof squad = [];
-  let mostFresh = -1;
-  for (const anchor of squad) {
-    const near = squad.filter(
-      (p) => dist(p.pos, anchor.pos) <= DIRECTOR_ROSTER_GROUP_RANGE,
-    );
-    const fresh = near.filter((p) => !alreadyFeatured.has(p.targetId)).length;
-    if (
-      fresh > mostFresh ||
-      (fresh === mostFresh && near.length > group.length)
-    ) {
-      mostFresh = fresh;
-      group = near;
+  let bestValue = -Infinity;
+  for (const radius of [DIRECTOR_ROSTER_GROUP_RANGE, 18, 30]) {
+    for (const anchor of squad) {
+      const near = squad.filter((p) => dist(p.pos, anchor.pos) <= radius);
+      if (near.length < MIN_KNOT) continue;
+      const fresh = near.filter((p) => !alreadyFeatured.has(p.targetId)).length;
+      const value = near.length + fresh * 0.5 - (radius / 30) * 0.75;
+      if (value > bestValue) {
+        bestValue = value;
+        group = near;
+      }
     }
   }
-  if (group.length === 0) return null;
+  if (group.length < Math.min(MIN_KNOT, squad.length)) return null;
   for (const p of group) alreadyFeatured.add(p.targetId);
   const center = centroid(group.map((p) => p.pos));
   // Their average facing, so the camera can sit in front of the rank.
-  const headings = (playersAtSec.get(midSec) ?? [])
-    .filter((p) => group.some((g) => g.targetId === p.targetId))
+  const headings = group
     .map((p) => p.heading)
     .filter((h): h is number => h != null);
   if (headings.length === 0) return null;
@@ -222,8 +156,16 @@ function rosterCloseUp(
   // player up on a ledge lifts a mean and the whole pass floats above
   // the faces it is meant to be at.
   const heights = group.map((p) => p.pos[2]).sort((a, b) => a - b);
-  const eye = heights[heights.length >> 1] + DIRECTOR_ROSTER_EYE_HEIGHT;
-  const front = DIRECTOR_ROSTER_STANDOFF;
+  // Where the FACES are — the aim, whatever height the camera works at.
+  const faceZ = heights[heights.length >> 1] + DIRECTOR_ROSTER_EYE_HEIGHT;
+  // ...and where the camera sits. Lifting both together would raise the
+  // aim with the lens and point the pass over the rank it is filming,
+  // which is the whole failure this framing exists to escape.
+  const eye = faceZ + (framing.lift ?? 0);
+  const front =
+    DIRECTOR_ROSTER_STANDOFF *
+    (framing.standoffScale ?? 1) *
+    (framing.mirror ? -1 : 1);
   // The camera tracks along the rank at `front` metres out, and the
   // look-at tracks the SAME lateral position on the rank itself — so the
   // view stays square to the line and faces pass through frame. (Panning
@@ -240,6 +182,7 @@ function rosterCloseUp(
   const aimTo = clamp(travel * 0.5, -spread, spread);
   return {
     kind: "sweep",
+    role: "rosterCloseUp",
     from: [
       center[0] + fx * front - ax * (travel * 0.5 + lead),
       center[1] + fy * front - ay * (travel * 0.5 + lead),
@@ -250,10 +193,11 @@ function rosterCloseUp(
       center[1] + fy * front + ay * (travel * 0.5 - lead),
       eye,
     ],
-    target: [center[0] + ax * aimFrom, center[1] + ay * aimFrom, eye],
-    targetTo: [center[0] + ax * aimTo, center[1] + ay * aimTo, eye],
+    target: [center[0] + ax * aimFrom, center[1] + ay * aimFrom, faceZ],
+    targetTo: [center[0] + ax * aimTo, center[1] + ay * aimTo, faceZ],
     startSec,
     endSec,
+    moveSec: endSec - startSec,
     transitionIn: "cut",
     reason: `Pre-match — ${teamName} roster close-up (${group.length})`,
   };

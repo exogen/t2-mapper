@@ -1,12 +1,13 @@
 /**
- * One planner per game mode, plus the graceful degradation between them.
+ * The planners for game modes without an online switcher, plus the
+ * graceful degradation between them.
  *
- * CTF is the real one: score the subjects, cut the timeline into
- * segments, then hand each segment to the shot builders. The others
- * exist so the director never fails on a recording it does not fully
- * understand — Rabbit chases the single flag, deathmatch orbits kill
- * clusters, and landmarks tours the map when there is nothing else to
- * go on.
+ * CTF is cast live by the switcher (see switcher.ts). These exist so
+ * the director never fails on a recording it does not fully understand
+ * — Rabbit chases the single flag, deathmatch orbits kill clusters, and
+ * landmarks tours the map when there is nothing else to go on. They
+ * plan the whole recording at once, which is fine: none of them is
+ * streamed.
  */
 import type {
   DirectorDataset,
@@ -15,294 +16,76 @@ import type {
   Shot,
 } from "./types";
 import {
-  DIRECTOR_ANTICIPATION_SEC,
   DIRECTOR_BASE_ORBIT_RADIUS,
   DIRECTOR_BASE_ORBIT_SPEED,
   DIRECTOR_CLUSTER_OVERHEAD_HEIGHT,
   DIRECTOR_CLUSTER_OVERHEAD_KILLS,
   DIRECTOR_CLUSTER_RADIUS,
   DIRECTOR_CLUSTER_WINDOW_SEC,
-  DIRECTOR_CROWD_ORBIT_HEIGHT,
-  DIRECTOR_FIXED_HOLD_RADIUS,
   DIRECTOR_CROWD_ORBIT_RADIUS,
-  DIRECTOR_KICKOFF_WIDE_SEC,
   DIRECTOR_DIST_CHASE,
   DIRECTOR_DIST_HERO,
   DIRECTOR_DOLLY_DISTANCE,
   DIRECTOR_DOLLY_HEIGHT,
   DIRECTOR_DOLLY_MIN_SEC,
-  DIRECTOR_LINEUP_LEAD_SEC,
-  DIRECTOR_MIN_SHOT_HOLD_SEC,
   DIRECTOR_PITCH_CHASE,
   DIRECTOR_STAND_BATTLE_SPEED,
+  DIRECTOR_WIDE_ORBIT_RADIUS,
 } from "./tunables";
 import { centroid, dist } from "./geometry";
-import {
-  buildFlagTracks,
-  crowdThreshold,
-  flagLabel,
-  playersAtSecFor,
-} from "./dataset";
-import type { FlagTrack, PlayersAtSec } from "./dataset";
-import { busiestCluster } from "./analysis";
-import { newShotVariety, radiusForSpread } from "./framing";
-import {
-  buildSubjects,
-  interestContext,
-  scoreSubjects,
-  segmentByInterest,
-} from "./interest";
-import type { Segment } from "./interest";
-import { lineupShots } from "./lineup";
-import {
-  forEachChunk,
-  bombardmentShots,
-  idleShots,
-  pushReachingBack,
-  situationalShot,
-} from "./shotBuilders";
-import { flagSegmentShots } from "./flagRuns";
+import { fixedFraming, newShotVariety } from "./framing";
+
+/** How long each idle orbit holds before moving on. */
+const IDLE_CHUNK_SEC = 20;
 
 /**
- * The kickoff wide: an overhead of everybody streaming out of the
- * bases in the first seconds after the whistle. Centered between the
- * teams' spawn crowds, sized to hold both (fog-capped), dead static —
- * the motion on screen is the players', not the camera's.
+ * Idle B-roll: wide orbits of the flag stands in turn, or — on a map
+ * with none — of wherever the players are, re-anchored every chunk.
+ * Fills the gaps in a non-CTF plan and is the whole landmark tour.
  */
-function kickoffWideShot(
+export function idleShots(
   startSec: number,
   endSec: number,
   dataset: DirectorDataset,
-  playersAtSec: PlayersAtSec,
-): Shot | null {
-  // Frame the biggest KNOT of the rush, not the midpoint of the map:
-  // two teams leaving opposite bases average out to a centroid where
-  // nobody is — on a sparse, foggy server that camera stares at an
-  // empty hill with every player beyond the fog. The busiest cluster is
-  // where the picture is, and its members are inside the frame by
-  // construction.
-  const rush = busiestCluster(startSec, endSec, playersAtSec);
-  if (!rush || rush.count < 3) return null;
-  const center = rush.center;
-  const positions: DirectorVec3[] = [];
-  for (let sec = Math.ceil(startSec); sec < endSec; sec++) {
-    for (const p of playersAtSec.get(sec) ?? []) {
-      if (dist(p.pos, center) <= DIRECTOR_FIXED_HOLD_RADIUS) {
-        positions.push(p.pos);
-      }
-    }
-  }
-  if (positions.length < 4) return null;
-  const spread = Math.max(...positions.map((p) => dist(p, center)));
-  const radius = radiusForSpread(spread, dataset);
-  // Hold only while the rush is still IN the frame — within the shot's
-  // own radius, which the fog cap already bounds. Skiers disperse
-  // within seconds on a sparse server, and a static wide over an
-  // emptied hill is a shot of nothing. End when fewer than three
-  // players remain inside the framing.
-  let holdUntil = startSec;
-  for (let sec = Math.ceil(startSec); sec < endSec; sec++) {
-    const near = (playersAtSec.get(sec) ?? []).filter(
-      (p) => dist(p.pos, center) <= radius,
-    ).length;
-    if (near < 3) break;
-    holdUntil = sec + 1;
-  }
-  if (holdUntil - startSec < DIRECTOR_MIN_SHOT_HOLD_SEC) return null;
-  return {
-    kind: "fixedOrbit",
-    center,
-    radius,
-    angularSpeed: 0,
-    heightFactor: DIRECTOR_CROWD_ORBIT_HEIGHT,
-    startSec,
-    endSec: holdUntil,
-    transitionIn: "cut",
-    // Neutral wording: the booth echoes camera labels, and at kickoff
-    // players scatter BOTH ways (spawns out, invs in) — see `moving`.
-    reason: "Kickoff — match is live",
-  };
-}
-
-/**
- * CTF: interest grid → segments → shots. The pre-match line-up window is
- * carved out first and owned exclusively by the roster sweeps.
- */
-export function planCtf(dataset: DirectorDataset): Shot[] {
-  const tracks = buildFlagTracks(dataset);
-  const slots = [...tracks.keys()].sort((a, b) => a - b);
-  if (slots.length === 0) return planDeathmatch(dataset);
-  const playersAtSec = playersAtSecFor(dataset);
-  const ctx = interestContext(dataset, tracks, playersAtSec);
-  const subjects = buildSubjects(dataset, slots);
-  const segments = segmentByInterest(
-    subjects,
-    scoreSubjects(subjects, ctx),
-    ctx,
-  );
-  const shots = emitCtfShots(segments, dataset, tracks, playersAtSec);
-  applyAnticipation(shots, tracks);
-  return shots;
-}
-
-/** Segments → shots, threading the variety state that keeps successive
- *  shots from looking alike. */
-function emitCtfShots(
-  segments: Segment[],
-  dataset: DirectorDataset,
-  tracks: Map<number, FlagTrack>,
-  playersAtSec: PlayersAtSec,
 ): Shot[] {
+  const stands = dataset.flagStands;
   const shots: Shot[] = [];
-  let baseFlip = 1;
   const variety = newShotVariety();
-  const crowdMin = crowdThreshold(dataset, playersAtSec);
-  // The run-up to the whistle is the line-up: the teams stand assembled
-  // and nothing moves, so sweep the ranks rather than orbit flags that
-  // cannot budge. Only that last stretch counts — anything earlier is
-  // team-picking on a filling server, which gets skipped, not covered.
-  const matchStart = dataset.events.find(
-    (e) => e.type === "match-start",
-  )?.timeSec;
-  const preMatchEnd =
-    matchStart != null ? Math.min(matchStart, dataset.durationSec) : 0;
-  const lineupStart = Math.max(0, preMatchEnd - DIRECTOR_LINEUP_LEAD_SEC);
-  if (preMatchEnd - lineupStart >= DIRECTOR_MIN_SHOT_HOLD_SEC) {
-    shots.push(...lineupShots(lineupStart, preMatchEnd, dataset, playersAtSec));
-  }
-  // The whistle itself: one wide overhead of the spawn rush. Everyone
-  // pouring out of the bases is the only action anywhere in the first
-  // seconds, and it establishes both teams' opening routes — the flags
-  // certainly aren't doing anything yet.
-  let exclusiveEnd = preMatchEnd;
-  if (matchStart != null && matchStart < dataset.durationSec - 5) {
-    const kickoff = kickoffWideShot(
-      matchStart,
-      Math.min(dataset.durationSec, matchStart + DIRECTOR_KICKOFF_WIDE_SEC),
-      dataset,
-      playersAtSec,
-    );
-    if (kickoff) {
-      shots.push(kickoff);
-      exclusiveEnd = kickoff.endSec;
-    }
-  }
-  // Subtract the line-up + kickoff window from the segment list: those
-  // shots own it exclusively, while the team-picking dead air before it
-  // still gets ordinary coverage (the plan must stay contiguous even
-  // where the director intends to skip).
-  const playSegments = segments.flatMap((segment) => {
-    if (exclusiveEnd <= lineupStart) return [segment];
-    const pieces: typeof segments = [];
-    if (segment.startSec < lineupStart) {
-      pieces.push({
-        ...segment,
-        endSec: Math.min(segment.endSec, lineupStart),
-      });
-    }
-    if (segment.endSec > exclusiveEnd) {
-      pieces.push({
-        ...segment,
-        startSec: Math.max(segment.startSec, exclusiveEnd),
-      });
-    }
-    return pieces.filter((p) => p.endSec - p.startSec > 0.05);
-  });
-  for (const segment of playSegments) {
-    const { subject } = segment;
-    if (subject.kind === "flag") {
-      shots.push(
-        ...flagSegmentShots(segment.startSec, segment.endSec, subject.slot, {
-          dataset,
-          track: tracks.get(subject.slot)!,
-          previous: shots[shots.length - 1],
-          playersAtSec,
-          variety,
-          crowdMin,
-        }),
-      );
-    } else if (subject.kind === "bombard") {
-      shots.push(
-        ...bombardmentShots(
-          segment.startSec,
-          segment.endSec,
-          dataset,
-          playersAtSec,
-          variety,
-        ),
-      );
-    } else if (subject.kind === "base") {
-      const stand = dataset.flagStands.find((s) => s.slot === subject.slot);
-      if (!stand) continue;
-      baseFlip = -baseFlip;
-      // A long base segment is not one slow orbit: every other chunk
-      // goes looking for the drama — a kill, a raid, a barrage, a
-      // vehicle — so the base beat has perspective changes in it.
-      forEachChunk(segment.startSec, segment.endSec, shots, (t, chunkEnd) => {
-        const situational =
-          variety.fixedCount % 2 === 1
-            ? situationalShot(t, chunkEnd, dataset, playersAtSec, variety)
-            : null;
-        if (situational) {
-          pushReachingBack(shots, situational, segment.startSec);
-          return;
-        }
-        variety.fixedCount++;
-        shots.push({
-          kind: "fixedOrbit",
-          center: stand.pos,
-          radius: DIRECTOR_BASE_ORBIT_RADIUS,
-          angularSpeed: DIRECTOR_BASE_ORBIT_SPEED * baseFlip,
-          startSec: t,
-          endSec: chunkEnd,
-          transitionIn: "cut",
-          reason: `${flagLabel(subject.slot, dataset).replace(/ flag$/, "")} base`,
-        });
-      });
+  const overall =
+    stands.length === 0
+      ? centroid(dataset.playerSamples.map((s) => s.pos))
+      : null;
+  let turn = 0;
+  for (let t = startSec; t < endSec; t += IDLE_CHUNK_SEC) {
+    const chunkEnd = Math.min(t + IDLE_CHUNK_SEC, endSec);
+    const stand = stands.length > 0 ? stands[turn++ % stands.length] : null;
+    let center: DirectorVec3;
+    if (stand) {
+      center = stand.pos;
     } else {
-      shots.push(
-        ...idleShots(
-          segment.startSec,
-          segment.endSec,
-          dataset,
-          baseFlip,
-          variety,
-        ),
+      const window = dataset.playerSamples.filter(
+        (s) => s.timeSec >= t && s.timeSec < chunkEnd,
       );
-      baseFlip = -baseFlip;
+      center =
+        window.length > 0 ? centroid(window.map((s) => s.pos)) : overall!;
     }
+    const framing = fixedFraming(center, dataset, variety);
+    shots.push({
+      kind: "fixedOrbit",
+      center,
+      radius: stand ? DIRECTOR_BASE_ORBIT_RADIUS : DIRECTOR_WIDE_ORBIT_RADIUS,
+      startAngle: framing.startAngle,
+      angularSpeed: stand ? DIRECTOR_BASE_ORBIT_SPEED : framing.angularSpeed,
+      startSec: t,
+      endSec: chunkEnd,
+      transitionIn: "cut",
+      reason: stand
+        ? `Quiet moment — wide on the ${stand.name ?? "base"}`
+        : "Quiet moment — wide view",
+      topic: "lull",
+    });
   }
   return shots;
-}
-
-/**
- * Pass C: shift a cut that lands just before a grab earlier, so the
- * camera is already settled at the flag when it goes rather than
- * arriving mid-event.
- */
-function applyAnticipation(
-  shots: Shot[],
-  tracks: Map<number, FlagTrack>,
-): void {
-  for (let i = 1; i < shots.length; i++) {
-    const shot = shots[i];
-    if (shot.kind !== "followFlag" || shot.transitionIn !== "cut") continue;
-    const track = tracks.get(shot.slot);
-    const grabSoon = track?.grabTimes.some(
-      (t) => t >= shot.startSec && t <= shot.startSec + 5,
-    );
-    if (!grabSoon) continue;
-    const previous = shots[i - 1];
-    const shifted = shot.startSec - DIRECTOR_ANTICIPATION_SEC;
-    // The donor must stay a legible shot: shrinking it below the
-    // minimum hold just feeds it to the min-duration pass, which undoes
-    // the anticipation AND kills the donor (the defender hip views were
-    // silently dying this way).
-    if (shifted - previous.startSec >= DIRECTOR_MIN_SHOT_HOLD_SEC) {
-      previous.endSec = shifted;
-      shot.startSec = shifted;
-    }
-  }
 }
 
 export function planRabbit(dataset: DirectorDataset): Shot[] {
@@ -320,6 +103,7 @@ export function planRabbit(dataset: DirectorDataset): Shot[] {
       endSec: dataset.durationSec,
       transitionIn: "cut",
       reason: "Rabbit — chase the flag",
+      topic: "flag-run",
     },
   ];
 }
@@ -354,9 +138,14 @@ export function planDeathmatch(dataset: DirectorDataset): Shot[] {
       });
     }
   }
-  const nameToTarget = new Map(
-    dataset.playerNames.map((p) => [p.name.toLowerCase(), p.targetId]),
-  );
+  // Every name a player has answered to, since a kill names whoever
+  // they were at the time.
+  const nameToTarget = new Map<string, number>();
+  for (const p of dataset.playerNames) {
+    for (const alias of [p.name, ...(p.aliases ?? [])]) {
+      nameToTarget.set(alias.toLowerCase(), p.targetId);
+    }
+  }
   const shots: Shot[] = [];
   const variety = newShotVariety();
   for (const cluster of clusters) {
@@ -375,6 +164,7 @@ export function planDeathmatch(dataset: DirectorDataset): Shot[] {
         endSec,
         transitionIn: "cut",
         reason: `Firefight overhead (${cluster.kills.length} kills)`,
+        topic: "kill",
       });
       continue;
     }
@@ -413,6 +203,7 @@ export function planDeathmatch(dataset: DirectorDataset): Shot[] {
               endSec,
               transitionIn: "cut",
               reason: `Firefight — tracking ${heroName}`,
+              topic: "kill",
             }
           : {
               kind: "followPlayer",
@@ -426,6 +217,7 @@ export function planDeathmatch(dataset: DirectorDataset): Shot[] {
               endSec,
               transitionIn: "cut",
               reason: `Firefight — following ${heroName}`,
+              topic: "kill",
             },
       );
     } else {
@@ -438,6 +230,7 @@ export function planDeathmatch(dataset: DirectorDataset): Shot[] {
         endSec,
         transitionIn: "cut",
         reason: `Firefight (${cluster.kills.length} kills)`,
+        topic: "kill",
       });
     }
   }
@@ -445,5 +238,5 @@ export function planDeathmatch(dataset: DirectorDataset): Shot[] {
 }
 
 export function planLandmarks(dataset: DirectorDataset): Shot[] {
-  return idleShots(0, dataset.durationSec, dataset, 1);
+  return idleShots(0, dataset.durationSec, dataset);
 }
