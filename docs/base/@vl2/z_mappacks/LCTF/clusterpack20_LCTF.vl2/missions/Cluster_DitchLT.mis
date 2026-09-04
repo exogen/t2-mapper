@@ -1,0 +1,1794 @@
+// DisplayName = Cluster Ditch LT
+// MissionTypes = LCTF
+
+//--- MISSION STRING BEGIN ---
+//[CTF]800 points to win
+//<color:008B8B>Modified by Narcotic
+//--- MISSION STRING END ---
+
+//--- OBJECT WRITE BEGIN ---
+new SimGroup(MissionGroup) {
+
+	CTF_scoreLimit = "8";
+	cdTrack = "2";
+	powerCount = "1";
+	musicTrack = "lush";
+
+	new MissionArea(MissionArea) {
+		area = "-1000 -232 608 1376";
+		flightCeiling = "2000";
+		flightCeilingRange = "20";
+
+		locked = "true";
+	};
+	new Sky(Sky) {
+		position = "0 0 0";
+		rotation = "1 0 0 0";
+		scale = "1 1 1";
+		cloudHeightPer[0] = "0.349971";
+		cloudHeightPer[1] = "0.25";
+		cloudHeightPer[2] = "0.199973";
+		cloudSpeed1 = "0.0001";
+		cloudSpeed2 = "0.0002";
+		cloudSpeed3 = "0.0003";
+		visibleDistance = "450";
+		useSkyTextures = "1";
+		renderBottomTexture = "0";
+		SkySolidColor = "0.710000 0.710000 0.710000 1.000000";
+		fogDistance = "350";
+		fogColor = "0.710000 0.710000 0.710000 1.000000";
+		fogVolume1 = "150 0 50";
+		fogVolume2 = "0 0 0";
+		fogVolume3 = "0 0 0";
+		materialList = "nef_BlueClear.dml";
+		windVelocity = "1 1 0";
+		windEffectPrecipitation = "1";
+		fogVolumeColor1 = "128.000000 255.000000 128.000000 0.000000";
+		fogVolumeColor2 = "0.000000 0.000000 0.000000 0.000000";
+		fogVolumeColor3 = "0.000000 0.000000 0.000000 0.000000";
+		high_visibleDistance = "575";
+		high_fogDistance = "450";
+		high_fogVolume1 = "250 0 75";
+		high_fogVolume2 = "0 0 0";
+		high_fogVolume3 = "0 0 0";
+
+		locked = "true";
+	};
+	new Sun() {
+		position = "0 0 0";
+		rotation = "1 0 0 0";
+		scale = "1 1 1";
+		direction = "0.57735 0.57735 -0.57735";
+		color = "0.750000 0.750000 0.750000 1.000000";
+		ambient = "0.500000 0.500000 0.500000 1.000000";
+		texture[0] = "special/sunFlare";
+		texture[1] = "special/sunFlare02";
+		texture[2] = "special/LensFlare/flare01";
+		texture[3] = "special/LensFlare/flare02";
+		texture[4] = "special/LensFlare/flare03";
+		lensFlareScale = "0.7";
+		lensFlareIntensity = "1";
+		frontFlareSize = "300";
+		backFlareSize = "450";
+		flareColor = "1.000000 1.000000 1.000000 1.000000";
+
+		locked = "true";
+	};
+	new TerrainBlock(Terrain) {
+		rotation = "1 0 0 0";
+		scale = "1 1 1";
+		detailTexture = "details/lushdet2";
+		terrainFile = "Cluster_Ditch.ter";
+		squareSize = "8";
+		emptySquares = "104569 104595 170324 104825 104851 104887 301651 105081 105107 236214 170836 105337 105363 236470";
+
+		locked = "true";
+		position = "-1024 -1024 0";
+	};
+	new NavigationGraph(NavGraph) {
+		conjoinAngleDev = "70";
+		cullDensity = "0.1";
+		customArea = "0 0 0 0";
+
+		YDimOverSize = "0";
+		locked = "true";
+		position = "0 0 0 1";
+		GraphFile = "Titan.nav";
+		conjoinBowlDev = "20";
+		coverage = "0";
+		rotation = "0 0 0 0";
+		XDimOverSize = "0";
+		scale = "1 1 1";
+	};
+	new SimGroup(ObserverDropPoints) {
+
+		powerCount = "1";
+
+		new Camera() {
+			position = "-784.015 742.744 127.2";
+			rotation = "-0.10896 0.0343263 0.993453 35.1888";
+			scale = "1 1 1";
+			dataBlock = "Observer";
+			lockCount = "0";
+			homingCount = "0";
+		};
+		new Camera() {
+			position = "-637.274 147.884 131.904";
+			rotation = "-0.00428485 -0.00967807 0.999944 227.759";
+			scale = "1 1 1";
+			dataBlock = "Observer";
+			lockCount = "0";
+			homingCount = "0";
+		};
+	};
+	new SimGroup(Teams) {
+
+		powerCount = "1";
+
+		new SimGroup(Team1) {
+
+			powerCount = "2";
+			providesPower = "1";
+
+			new SimGroup(spawnspheres) {
+
+				powerCount = "2";
+
+				new SpawnSphere() {
+					position = "-748.469 853.433 205.558";
+					rotation = "0 0 1 163.866";
+					scale = "1 1 1";
+					dataBlock = "SpawnSphereMarker";
+					lockCount = "0";
+					homingCount = "0";
+					radius = "15";
+					sphereWeight = "100";
+					indoorWeight = "100";
+					outdoorWeight = "100";
+				};
+				new SpawnSphere() {
+					position = "-720.614 766.708 120.044";
+					rotation = "0 0 1 163.866";
+					scale = "1 1 1";
+					dataBlock = "SpawnSphereMarker";
+					lockCount = "0";
+					homingCount = "0";
+					radius = "15";
+					sphereWeight = "100";
+					indoorWeight = "100";
+					outdoorWeight = "100";
+				};
+			};
+			new SimGroup(base1) {
+
+				powerCount = "2";
+
+				new SimGroup(Tower_l) {
+
+					powerCount = "2";
+				};
+				new SimGroup(flag_base) {
+
+					powerCount = "2";
+				};
+				new SimGroup(tower_r) {
+
+					powerCount = "2";
+				};
+				new SimGroup(Walls) {
+
+					powerCount = "2";
+				};
+				new Item() {
+					position = "-717.05 749.877 119.232";
+					rotation = "0 0 -1 12.605";
+					scale = "1 1 1";
+					dataBlock = "FLAG";
+					lockCount = "0";
+					homingCount = "0";
+					collideable = "0";
+					static = "1";
+					rotate = "0";
+
+					Target = "33";
+					className = "FlagObj";
+					isHome = "1";
+					team = "1";
+					WayPoint = "12128";
+					Trigger = "12129";
+					originalPosition = "-717.05 749.877 119.232 0 0 -0.999999 0.219999";
+				};
+			};
+			new InteriorInstance() {
+				position = "-526.111 584.127 121.272";
+				rotation = "1 0 0 0";
+				scale = "1 1 1";
+				interiorFile = "rilke_whitedwarf_platform3_x2.dif";
+				showTerrainInside = "0";
+
+				team = "1";
+			};
+			new InteriorInstance() {
+				position = "-790.014 293.168 110.073";
+				rotation = "1 0 0 0";
+				scale = "1 1 1";
+				interiorFile = "rilke_whitedwarf_platform3_x2.dif";
+				showTerrainInside = "0";
+
+				team = "1";
+			};
+			new StaticShape() {
+				position = "-515.604 601.27 122.743";
+				rotation = "1 0 0 0";
+				scale = "1 1 1";
+				dataBlock = "SensorLargePulse";
+				lockCount = "0";
+				homingCount = "0";
+
+				Target = "35";
+				team = "1";
+			};
+		};
+		new SimGroup(Team2) {
+
+			powerCount = "1";
+			providesPower = "1";
+
+			new SimGroup(spawnspheres) {
+
+				powerCount = "1";
+
+				new SpawnSphere() {
+					position = "-696.94 135.789 101.309";
+					rotation = "-0 0 -1 16.2254";
+					scale = "1 1 1";
+					dataBlock = "SpawnSphereMarker";
+					lockCount = "0";
+					homingCount = "0";
+					radius = "15";
+					sphereWeight = "100";
+					indoorWeight = "100";
+					outdoorWeight = "100";
+				};
+				new SpawnSphere() {
+					position = "-695.575 44.6921 187.223";
+					rotation = "-0 0 -1 16.2254";
+					scale = "1 1 1";
+					dataBlock = "SpawnSphereMarker";
+					lockCount = "0";
+					homingCount = "0";
+					radius = "15";
+					sphereWeight = "100";
+					indoorWeight = "100";
+					outdoorWeight = "100";
+				};
+			};
+			new SimGroup(Base2) {
+
+				powerCount = "1";
+
+				new SimGroup(flag_base) {
+
+					powerCount = "1";
+				};
+				new SimGroup(Tower_l) {
+
+					powerCount = "1";
+				};
+				new SimGroup(Walls) {
+
+					powerCount = "1";
+				};
+				new SimGroup(tower_r) {
+
+					powerCount = "1";
+				};
+				new StaticShape() {
+					position = "-779.715 309.917 111.27";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "SensorLargePulse";
+					lockCount = "0";
+					homingCount = "0";
+
+					Target = "36";
+					team = "2";
+				};
+				new Item() {
+					position = "-685.827 124.471 102.553";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "RepairPatch";
+					lockCount = "0";
+					homingCount = "0";
+					collideable = "0";
+					static = "1";
+					rotate = "0";
+
+					Target = "-1";
+					team = "2";
+				};
+				new Item() {
+					position = "-684.882 124.635 102.332";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "RepairKit";
+					lockCount = "0";
+					homingCount = "0";
+					collideable = "0";
+					static = "1";
+					rotate = "0";
+
+					Target = "-1";
+					team = "2";
+				};
+				new Item() {
+					position = "-684.827 125.671 102.553";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "RepairPatch";
+					lockCount = "0";
+					homingCount = "0";
+					collideable = "0";
+					static = "1";
+					rotate = "0";
+
+					Target = "-1";
+					team = "2";
+				};
+				new Item() {
+					position = "-684.827 123.671 102.553";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "RepairPatch";
+					lockCount = "0";
+					homingCount = "0";
+					collideable = "0";
+					static = "1";
+					rotate = "0";
+
+					Target = "-1";
+					team = "2";
+				};
+				new Item() {
+					position = "-695.552 149.018 77.805";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "RepairPatch";
+					lockCount = "0";
+					homingCount = "0";
+					collideable = "0";
+					static = "1";
+					rotate = "0";
+
+					Target = "-1";
+					team = "2";
+				};
+				new Item() {
+					position = "-697.552 149.018 77.805";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "RepairPatch";
+					lockCount = "0";
+					homingCount = "0";
+					collideable = "0";
+					static = "1";
+					rotate = "0";
+
+					Target = "-1";
+					team = "2";
+				};
+				new Item() {
+					position = "-696.607 149.182 77.584";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "RepairKit";
+					lockCount = "0";
+					homingCount = "0";
+					collideable = "0";
+					static = "1";
+					rotate = "0";
+
+					Target = "-1";
+					team = "2";
+				};
+				new Item() {
+					position = "-696.552 150.218 77.805";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "RepairPatch";
+					lockCount = "0";
+					homingCount = "0";
+					collideable = "0";
+					static = "1";
+					rotate = "0";
+
+					Target = "-1";
+					team = "2";
+				};
+				new Item() {
+					position = "-696.552 148.218 77.805";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "RepairPatch";
+					lockCount = "0";
+					homingCount = "0";
+					collideable = "0";
+					static = "1";
+					rotate = "0";
+
+					Target = "-1";
+					team = "2";
+				};
+				new Item() {
+					position = "-683.827 124.471 102.553";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "RepairPatch";
+					lockCount = "0";
+					homingCount = "0";
+					collideable = "0";
+					static = "1";
+					rotate = "0";
+
+					Target = "-1";
+					team = "2";
+				};
+				new Item() {
+					position = "-696.025 153.053 101.338";
+					rotation = "1 0 0 0";
+					scale = "1 1 1";
+					dataBlock = "FLAG";
+					lockCount = "0";
+					homingCount = "0";
+					collideable = "0";
+					static = "1";
+					rotate = "0";
+
+					Target = "37";
+					className = "FlagObj";
+					searchSchedule = "23883";
+					isHome = "1";
+					team = "2";
+					WayPoint = "12130";
+					Trigger = "12131";
+					originalPosition = "-696.025 153.053 101.338 1 0 0 0";
+				};
+			};
+		};
+		new SimGroup(team0) {
+
+			powerCount = "1";
+		};
+	};
+	new SimGroup(Neutral) {
+
+		powerCount = "1";
+
+		new Item() {
+			position = "50.931 208.621 13.2237";
+			rotation = "1 0 0 0";
+			scale = "1 1 1";
+			dataBlock = "RepairPatch";
+			lockCount = "0";
+			homingCount = "0";
+			collideable = "0";
+			static = "1";
+			rotate = "0";
+
+			Target = "-1";
+			locked = "true";
+		};
+		new Item() {
+			position = "129.661 208.621 13.2237";
+			rotation = "1 0 0 0";
+			scale = "1 1 1";
+			dataBlock = "RepairPatch";
+			lockCount = "0";
+			homingCount = "0";
+			collideable = "0";
+			static = "1";
+			rotate = "0";
+
+			Target = "-1";
+			locked = "true";
+		};
+		new Item() {
+			position = "91.561 208.621 13.2237";
+			rotation = "1 0 0 0";
+			scale = "1 1 1";
+			dataBlock = "RepairPatch";
+			lockCount = "0";
+			homingCount = "0";
+			collideable = "0";
+			static = "1";
+			rotate = "0";
+
+			Target = "-1";
+			locked = "true";
+		};
+		new Item() {
+			position = "10.281 208.621 13.2237";
+			rotation = "1 0 0 0";
+			scale = "1 1 1";
+			dataBlock = "RepairPatch";
+			lockCount = "0";
+			homingCount = "0";
+			collideable = "0";
+			static = "1";
+			rotate = "0";
+
+			Target = "-1";
+			locked = "true";
+		};
+	};
+	new SimGroup(Ambiance) {
+
+		powerCount = "1";
+
+		new AudioEmitter() {
+			position = "-154.035 701.115 98.8816";
+			rotation = "1 0 0 0";
+			scale = "1 1 1";
+			fileName = "fx/environment/bird_echo2.wav";
+			useProfileDescription = "0";
+			outsideAmbient = "1";
+			volume = "1";
+			isLooping = "1";
+			is3D = "1";
+			minDistance = "35";
+			maxDistance = "2240";
+			coneInsideAngle = "360";
+			coneOutsideAngle = "360";
+			coneOutsideVolume = "1";
+			coneVector = "0 0 1";
+			loopCount = "-1";
+			minLoopGap = "0";
+			maxLoopGap = "0";
+			type = "EffectAudioType";
+
+			locked = "true";
+		};
+		new AudioEmitter() {
+			position = "872.708 653.718 34.5472";
+			rotation = "1 0 0 0";
+			scale = "1 1 1";
+			fileName = "fx/environment/bird_echo2.wav";
+			useProfileDescription = "0";
+			outsideAmbient = "1";
+			volume = "1";
+			isLooping = "1";
+			is3D = "1";
+			minDistance = "35";
+			maxDistance = "2240";
+			coneInsideAngle = "360";
+			coneOutsideAngle = "360";
+			coneOutsideVolume = "1";
+			coneVector = "0 0 1";
+			loopCount = "-1";
+			minLoopGap = "0";
+			maxLoopGap = "0";
+			type = "EffectAudioType";
+
+			locked = "true";
+		};
+		new AudioEmitter() {
+			position = "283.128 -467.935 36.468";
+			rotation = "1 0 0 0";
+			scale = "1 1 1";
+			fileName = "fx/environment/bird_echo2.wav";
+			useProfileDescription = "0";
+			outsideAmbient = "1";
+			volume = "1";
+			isLooping = "1";
+			is3D = "1";
+			minDistance = "35";
+			maxDistance = "2240";
+			coneInsideAngle = "360";
+			coneOutsideAngle = "360";
+			coneOutsideVolume = "1";
+			coneVector = "0 0 1";
+			loopCount = "-1";
+			minLoopGap = "0";
+			maxLoopGap = "0";
+			type = "EffectAudioType";
+
+			locked = "true";
+		};
+		new AudioEmitter() {
+			position = "-265.314 -706.895 118.534";
+			rotation = "1 0 0 0";
+			scale = "1 1 1";
+			fileName = "fx/environment/bird_echo2.wav";
+			useProfileDescription = "0";
+			outsideAmbient = "1";
+			volume = "1";
+			isLooping = "1";
+			is3D = "1";
+			minDistance = "35";
+			maxDistance = "2240";
+			coneInsideAngle = "360";
+			coneOutsideAngle = "360";
+			coneOutsideVolume = "1";
+			coneVector = "0 0 1";
+			loopCount = "-1";
+			minLoopGap = "0";
+			maxLoopGap = "0";
+			type = "EffectAudioType";
+
+			locked = "true";
+		};
+	};
+	new SimGroup(randomObjects) {
+
+		powerCount = "1";
+
+		new SimGroup(Addition2BEPlant1) {
+
+			powerCount = "1";
+
+			new TSStatic() {
+				position = "220 -476 19.4751";
+				rotation = "-0.0619354 -0.469834 -0.880579 46.0111";
+				scale = "1.3 1.3 1.3";
+				shapeName = "borg1.dts";
+
+				locked = "true";
+			};
+			new TSStatic() {
+				position = "836 364 84.6469";
+				rotation = "0.107857 -0.166852 0.980065 158.428";
+				scale = "1.5 1.5 1.5";
+				shapeName = "borg1.dts";
+
+				locked = "true";
+			};
+			new TSStatic() {
+				position = "-676 36 60.2876";
+				rotation = "-0.0420833 0.139405 -0.989341 109.579";
+				scale = "1.5 1.5 1.5";
+				shapeName = "borg1.dts";
+
+				locked = "true";
+			};
+			new TSStatic() {
+				position = "-676 28 59.6626";
+				rotation = "0.010354 -0.011007 0.999886 187";
+				scale = "1.9 1.9 1.9";
+				shapeName = "borg1.dts";
+
+				locked = "true";
+			};
+			new TSStatic() {
+				position = "-684 -28 87.2096";
+				rotation = "0.137937 0.0032154 0.990436 100.542";
+				scale = "1.8 1.8 1.8";
+				shapeName = "borg1.dts";
+
+				locked = "true";
+			};
+			new TSStatic() {
+				position = "220 268 21.1157";
+				rotation = "-0.212585 0.0588196 -0.975371 43.9836";
+				scale = "1.1 1.1 1.1";
+				shapeName = "borg1.dts";
+
+				locked = "true";
+			};
+			new TSStatic() {
+				position = "748 -220 41.1626";
+				rotation = "0.0421622 0.108361 0.993217 152.183";
+				scale = "1.1 1.1 1.1";
+				shapeName = "borg1.dts";
+
+				locked = "true";
+			};
+			new TSStatic() {
+				position = "876 -84 51.0221";
+				rotation = "-0.218229 -0.0862698 0.972077 40.0324";
+				scale = "1.2 1.2 1.2";
+				shapeName = "borg1.dts";
+
+				locked = "true";
+			};
+			new TSStatic() {
+				position = "-156 612 107.225";
+				rotation = "0.281003 0.111516 0.953206 78.6786";
+				scale = "1.8 1.8 1.8";
+				shapeName = "borg1.dts";
+
+				locked = "true";
+			};
+			new TSStatic() {
+				position = "236 -356 15.272";
+				rotation = "0.101492 0.243842 -0.96449 37.2353";
+				scale = "1.3 1.3 1.3";
+				shapeName = "borg1.dts";
+
+				locked = "true";
+			};
+			new TSStatic() {
+				position = "-828 132 109.006";
+				rotation = "-0.0822154 0.00890967 0.996575 86.1958";
+				scale = "1.6 1.6 1.6";
+				shapeName = "borg1.dts";
+
+				locked = "true";
+			};
+			new TSStatic() {
+				position = "-644 -4 62.0845";
+				rotation = "-0.0504487 0.093975 0.994296 123.274";
+				scale = "1.7 1.7 1.7";
+				shapeName = "borg1.dts";
+
+				locked = "true";
+			};
+			new TSStatic() {
+				position = "-68 892 58.9283";
+				rotation = "0.103194 -0.142236 -0.984439 75.8694";
+				scale = "1.8 1.8 1.8";
+				shapeName = "borg1.dts";
+
+				locked = "true";
+			};
+			new TSStatic() {
+				position = "-172 -540 109.663";
+				rotation = "0.0655961 -0.0197932 0.99765 158.05";
+				scale = "1.6 1.6 1.6";
+				shapeName = "borg1.dts";
+
+				locked = "true";
+			};
+			new TSStatic() {
+				position = "-540 1068 81.022";
+				rotation = "0.0117686 -0.045284 0.998905 175.006";
+				scale = "1.9 1.9 1.9";
+				shapeName = "borg1.dts";
+
+				locked = "true";
+			};
+			new TSStatic() {
+				position = "548 1076 38.8657";
+				rotation = "-0.0596132 0.113072 0.991797 195.871";
+				scale = "1 1 1";
+				shapeName = "borg1.dts";
+
+				locked = "true";
+			};
+			new TSStatic() {
+				position = "-636 628 38.8657";
+				rotation = "0.0679809 -0.116834 -0.990822 71.5005";
+				scale = "1.7 1.7 1.7";
+				shapeName = "borg1.dts";
+
+				locked = "true";
+			};
+			new TSStatic() {
+				position = "-92 108 6.25638";
+				rotation = "-0.770669 -0.0888065 0.631017 15.7871";
+				scale = "1.5 1.5 1.5";
+				shapeName = "borg1.dts";
+
+				locked = "true";
+			};
+			new TSStatic() {
+				position = "108 -572 170.834";
+				rotation = "-0.120277 0.100319 0.987659 149.364";
+				scale = "1.4 1.4 1.4";
+				shapeName = "borg1.dts";
+
+				locked = "true";
+			};
+			new TSStatic() {
+				position = "636 -212 53.6939";
+				rotation = "-0.00151716 0.0027444 0.999995 201";
+				scale = "1.2 1.2 1.2";
+				shapeName = "borg1.dts";
+
+				locked = "true";
+			};
+			new TSStatic() {
+				position = "-724 924 119.866";
+				rotation = "0.0570432 0.0675137 0.996086 91.2246";
+				scale = "1.5 1.5 1.5";
+				shapeName = "borg1.dts";
+
+				locked = "true";
+			};
+			new TSStatic() {
+				position = "388 -596 107.1";
+				rotation = "-0.191423 -0.531619 0.825069 33.6286";
+				scale = "1.5 1.5 1.5";
+				shapeName = "borg1.dts";
+
+				locked = "true";
+			};
+			new TSStatic() {
+				position = "500 -428 77.4282";
+				rotation = "-0.140459 -0.150112 -0.978641 116.116";
+				scale = "1.3 1.3 1.3";
+				shapeName = "borg1.dts";
+
+				locked = "true";
+			};
+			new TSStatic() {
+				position = "-620 -668 52.4907";
+				rotation = "-0.206892 -0.0125599 0.978283 116.135";
+				scale = "1 1 1";
+				shapeName = "borg1.dts";
+
+				locked = "true";
+			};
+			new TSStatic() {
+				position = "452 508 130.194";
+				rotation = "-0.04678 -0.195645 0.979558 111.108";
+				scale = "1.9 1.9 1.9";
+				shapeName = "borg1.dts";
+
+				locked = "true";
+			};
+			new TSStatic() {
+				position = "-52 -36 37.2095";
+				rotation = "-0.412201 -0.150072 0.898648 41.9298";
+				scale = "1.2 1.2 1.2";
+				shapeName = "borg1.dts";
+
+				locked = "true";
+			};
+			new TSStatic() {
+				position = "-20 -628 21.772";
+				rotation = "-0.135054 -0.334087 -0.932816 23.5419";
+				scale = "1.8 1.8 1.8";
+				shapeName = "borg1.dts";
+
+				locked = "true";
+			};
+			new TSStatic() {
+				position = "108 -588 172.584";
+				rotation = "-0.186757 -0.0787747 0.979243 239.954";
+				scale = "1.9 1.9 1.9";
+				shapeName = "borg1.dts";
+
+				locked = "true";
+			};
+			new TSStatic() {
+				position = "268 1044 33.1782";
+				rotation = "0.260129 -0.0787291 -0.962359 99.1761";
+				scale = "1.7 1.7 1.7";
+				shapeName = "borg1.dts";
+
+				locked = "true";
+			};
+			new TSStatic() {
+				position = "-100 188 16.022";
+				rotation = "0.0742071 0.210448 0.974785 29.7173";
+				scale = "1.7 1.7 1.7";
+				shapeName = "borg1.dts";
+
+				locked = "true";
+			};
+			new TSStatic() {
+				position = "-276 1084 40.8813";
+				rotation = "0.0197627 0.205347 -0.97849 63.1056";
+				scale = "1.6 1.6 1.6";
+				shapeName = "borg1.dts";
+
+				locked = "true";
+			};
+			new TSStatic() {
+				position = "-92 1020 37.9439";
+				rotation = "-0.29285 0.621186 0.726889 29.9427";
+				scale = "2 2 2";
+				shapeName = "borg1.dts";
+
+				locked = "true";
+			};
+			new TSStatic() {
+				position = "-692 364 82.5377";
+				rotation = "-0.0380199 0.0657915 0.997109 139.109";
+				scale = "1.5 1.5 1.5";
+				shapeName = "borg1.dts";
+
+				locked = "true";
+			};
+			new TSStatic() {
+				position = "-604 1036 67.4751";
+				rotation = "-0.00469803 -0.00563678 0.999973 212.999";
+				scale = "1.8 1.8 1.8";
+				shapeName = "borg1.dts";
+
+				locked = "true";
+			};
+			new TSStatic() {
+				position = "-508 -172 48.8345";
+				rotation = "-0.0165448 0.0560557 0.998291 151.048";
+				scale = "1 1 1";
+				shapeName = "borg1.dts";
+
+				locked = "true";
+			};
+			new TSStatic() {
+				position = "652 -596 74.3032";
+				rotation = "0.052264 -0.0828748 0.995189 121.237";
+				scale = "1.4 1.4 1.4";
+				shapeName = "borg1.dts";
+
+				locked = "true";
+			};
+			new TSStatic() {
+				position = "340 788 107.506";
+				rotation = "0.184802 0.0937937 -0.97829 87.2558";
+				scale = "1.7 1.7 1.7";
+				shapeName = "borg1.dts";
+
+				locked = "true";
+			};
+			new TSStatic() {
+				position = "-804 -484 102.256";
+				rotation = "-0.0554243 -0.0758691 0.995576 156.103";
+				scale = "1.6 1.6 1.6";
+				shapeName = "borg1.dts";
+
+				locked = "true";
+			};
+		};
+		new SimGroup(Addition3BEPlant5) {
+
+			powerCount = "1";
+
+			new TSStatic() {
+				position = "-84 940 41.0626";
+				rotation = "0.145161 0.224507 0.9636 47.5479";
+				scale = "1.5 1.5 1.5";
+				shapeName = "borg5.dts";
+
+				locked = "true";
+			};
+			new TSStatic() {
+				position = "68 268 167.375";
+				rotation = "-0.129944 0.0563715 -0.989918 69.5428";
+				scale = "2.3 2.3 2.3";
+				shapeName = "borg5.dts";
+
+				locked = "true";
+			};
+			new TSStatic() {
+				position = "-668 916 119.609";
+				rotation = "0.00618828 -0.0134854 0.99989 182.999";
+				scale = "1.2 1.2 1.2";
+				shapeName = "borg5.dts";
+
+				locked = "true";
+			};
+			new TSStatic() {
+				position = "251.991 -148.008 16.5135";
+				rotation = "-0.22446 0.143075 0.963923 34.1644";
+				scale = "0.5 0.5 0.5";
+				shapeName = "borg5.dts";
+
+				locked = "true";
+			};
+			new TSStatic() {
+				position = "-844 644 116.938";
+				rotation = "0.0333969 -0.0728298 -0.996785 34.1035";
+				scale = "2.7 2.7 2.7";
+				shapeName = "borg5.dts";
+
+				locked = "true";
+			};
+			new TSStatic() {
+				position = "-460 1028 109.235";
+				rotation = "0.0530417 0.0242213 0.998299 226.929";
+				scale = "1.5 1.5 1.5";
+				shapeName = "borg5.dts";
+
+				locked = "true";
+			};
+			new TSStatic() {
+				position = "828 148 139.563";
+				rotation = "0.0874888 0.0435482 0.995213 164.076";
+				scale = "1.9 1.9 1.9";
+				shapeName = "borg5.dts";
+
+				locked = "true";
+			};
+			new TSStatic() {
+				position = "-76 956 40.1563";
+				rotation = "-0.0994176 0.024115 0.994754 199.898";
+				scale = "0.6 0.6 0.6";
+				shapeName = "borg5.dts";
+
+				locked = "true";
+			};
+			new TSStatic() {
+				position = "60 60 167.25";
+				rotation = "-0.023334 -0.00980043 0.99968 113.017";
+				scale = "1.6 1.6 1.6";
+				shapeName = "borg5.dts";
+
+				locked = "true";
+			};
+			new TSStatic() {
+				position = "-308 1044 36.3282";
+				rotation = "-0.0997445 -0.00899458 0.994972 236.758";
+				scale = "1.8 1.8 1.8";
+				shapeName = "borg5.dts";
+
+				locked = "true";
+			};
+			new TSStatic() {
+				position = "-500 -332 115.359";
+				rotation = "-0.00512002 0.362882 -0.931821 41.6162";
+				scale = "1 1 1";
+				shapeName = "borg5.dts";
+
+				locked = "true";
+			};
+			new TSStatic() {
+				position = "100 604 164.156";
+				rotation = "0.0307095 0.147618 0.988568 36.3891";
+				scale = "2.6 2.6 2.6";
+				shapeName = "borg5.dts";
+
+				locked = "true";
+			};
+			new TSStatic() {
+				position = "500 -180 47.6094";
+				rotation = "0.0378594 -0.0507505 0.997994 123.096";
+				scale = "1.7 1.7 1.7";
+				shapeName = "borg5.dts";
+
+				locked = "true";
+			};
+			new TSStatic() {
+				position = "-44 -452 42.3125";
+				rotation = "-0.0276217 0.054789 0.998116 61.0945";
+				scale = "2.7 2.7 2.7";
+				shapeName = "borg5.dts";
+
+				locked = "true";
+			};
+			new TSStatic() {
+				position = "756 -212 38.9688";
+				rotation = "0.209896 -0.0545199 -0.976202 31.7183";
+				scale = "2.9 2.9 2.9";
+				shapeName = "borg5.dts";
+
+				locked = "true";
+			};
+			new TSStatic() {
+				position = "-52 -452 42.7187";
+				rotation = "0.755597 -0.591989 -0.280398 7.124";
+				scale = "2.5 2.5 2.5";
+				shapeName = "borg5.dts";
+
+				locked = "true";
+			};
+			new TSStatic() {
+				position = "260 436 24.0468";
+				rotation = "-0.0825084 0.00717972 0.996565 166.048";
+				scale = "2.8 2.8 2.8";
+				shapeName = "borg5.dts";
+
+				locked = "true";
+			};
+			new TSStatic() {
+				position = "540 388 59.3594";
+				rotation = "0.0137753 0.012002 -0.999833 61.0085";
+				scale = "2.1 2.1 2.1";
+				shapeName = "borg5.dts";
+
+				locked = "true";
+			};
+			new TSStatic() {
+				position = "-828 636 116.219";
+				rotation = "0.0408396 0.0148944 0.999055 149.028";
+				scale = "1 1 1";
+				shapeName = "borg5.dts";
+
+				locked = "true";
+			};
+			new TSStatic() {
+				position = "764 -452 88.6094";
+				rotation = "0.458021 -0.367773 -0.809296 20.9256";
+				scale = "1 1 1";
+				shapeName = "borg5.dts";
+
+				locked = "true";
+			};
+			new TSStatic() {
+				position = "-828 628 116.516";
+				rotation = "0.037596 0.00311729 0.999288 132.03";
+				scale = "0.7 0.7 0.7";
+				shapeName = "borg5.dts";
+
+				locked = "true";
+			};
+			new TSStatic() {
+				position = "508 -316 24.3438";
+				rotation = "-0.0978413 -0.0225715 -0.994946 72.2763";
+				scale = "1.1 1.1 1.1";
+				shapeName = "borg5.dts";
+
+				locked = "true";
+			};
+			new TSStatic() {
+				position = "620 500 156.188";
+				rotation = "-0.170897 -0.00990428 -0.985239 86.8507";
+				scale = "1.2 1.2 1.2";
+				shapeName = "borg5.dts";
+
+				locked = "true";
+			};
+			new TSStatic() {
+				position = "612 284 64.5469";
+				rotation = "0.0375894 -0.0166852 0.999154 79.0475";
+				scale = "2.3 2.3 2.3";
+				shapeName = "borg5.dts";
+
+				locked = "true";
+			};
+			new TSStatic() {
+				position = "476 532 132.172";
+				rotation = "-0.626917 -0.721872 -0.293046 10.2116";
+				scale = "1.2 1.2 1.2";
+				shapeName = "borg5.dts";
+
+				locked = "true";
+			};
+			new TSStatic() {
+				position = "-820 -196 99.9219";
+				rotation = "-0.00282076 0.252238 -0.967661 58.5935";
+				scale = "1.4 1.4 1.4";
+				shapeName = "borg5.dts";
+
+				locked = "true";
+			};
+			new TSStatic() {
+				position = "-732 44 61.9062";
+				rotation = "0.0651787 -0.105146 -0.992319 104.429";
+				scale = "1 1 1";
+				shapeName = "borg5.dts";
+
+				locked = "true";
+			};
+			new TSStatic() {
+				position = "-620 -220 62.5782";
+				rotation = "-0.112154 -0.0655775 0.991525 45.3459";
+				scale = "1.5 1.5 1.5";
+				shapeName = "borg5.dts";
+
+				locked = "true";
+			};
+			new TSStatic() {
+				position = "-100 -364 14.1875";
+				rotation = "-0.0478932 0.0595414 0.997076 70.1575";
+				scale = "2.8 2.8 2.8";
+				shapeName = "borg5.dts";
+
+				locked = "true";
+			};
+			new TSStatic() {
+				position = "52 100 172.25";
+				rotation = "-0.198685 0.0420952 -0.979159 46.8746";
+				scale = "0.9 0.9 0.9";
+				shapeName = "borg5.dts";
+
+				locked = "true";
+			};
+			new TSStatic() {
+				position = "-260 972 83.8594";
+				rotation = "0.000216615 0.108577 0.994088 217.792";
+				scale = "2 2 2";
+				shapeName = "borg5.dts";
+
+				locked = "true";
+			};
+			new TSStatic() {
+				position = "-532 924 78.1094";
+				rotation = "0.0549848 -0.00244251 0.998484 89.0869";
+				scale = "0.6 0.6 0.6";
+				shapeName = "borg5.dts";
+
+				locked = "true";
+			};
+			new TSStatic() {
+				position = "-324 1092 39.2344";
+				rotation = "-5.13069e-05 0.00588003 -0.999983 89.001";
+				scale = "1.3 1.3 1.3";
+				shapeName = "borg5.dts";
+
+				locked = "true";
+			};
+			new TSStatic() {
+				position = "-204.091 -67.9863 117.955";
+				rotation = "0.100149 -0.11135 0.988722 101.637";
+				scale = "2.8 2.8 2.8";
+				shapeName = "borg5.dts";
+
+				locked = "true";
+			};
+			new TSStatic() {
+				position = "420 1004 109.094";
+				rotation = "-0.0816891 -0.0509707 -0.995354 109.252";
+				scale = "0.8 0.8 0.8";
+				shapeName = "borg5.dts";
+
+				locked = "true";
+			};
+			new TSStatic() {
+				position = "-588 1012 67.9688";
+				rotation = "0.0753848 0.129974 0.988648 83.6497";
+				scale = "3 3 3";
+				shapeName = "borg5.dts";
+
+				locked = "true";
+			};
+			new TSStatic() {
+				position = "-772 -164 109.5";
+				rotation = "0.0104555 0.0408091 -0.999112 74.049";
+				scale = "2.8 2.8 2.8";
+				shapeName = "borg5.dts";
+
+				locked = "true";
+			};
+			new TSStatic() {
+				position = "-500 852 31";
+				rotation = "0.0961827 -0.0278696 0.994973 209.856";
+				scale = "2.7 2.7 2.7";
+				shapeName = "borg5.dts";
+
+				locked = "true";
+			};
+			new TSStatic() {
+				position = "-52 1132 14.8594";
+				rotation = "-0.0465322 -0.0922325 -0.99465 72.2924";
+				scale = "1.3 1.3 1.3";
+				shapeName = "borg5.dts";
+
+				locked = "true";
+			};
+		};
+		new SimGroup(Addition4BELgTree16) {
+
+			powerCount = "1";
+
+			new TSStatic() {
+				position = "580 380 56.0938";
+				rotation = "0 0 1 192";
+				scale = "0.7 0.7 0.7";
+				shapeName = "borg16.dts";
+
+				locked = "true";
+			};
+			new TSStatic() {
+				position = "860 652 23.6093";
+				rotation = "0 0 -1 103";
+				scale = "0.7 0.7 0.7";
+				shapeName = "borg16.dts";
+
+				locked = "true";
+			};
+			new TSStatic() {
+				position = "-828 -660 41.1875";
+				rotation = "0 0 -1 49.0002";
+				scale = "1 1 1";
+				shapeName = "borg16.dts";
+
+				locked = "true";
+			};
+			new TSStatic() {
+				position = "236 4 26.1593";
+				rotation = "0 0 1 139";
+				scale = "0.8 0.8 0.8";
+				shapeName = "borg16.dts";
+
+				locked = "true";
+			};
+			new TSStatic() {
+				position = "-100 -556 51.5156";
+				rotation = "0 0 -1 100";
+				scale = "1 1 1";
+				shapeName = "borg16.dts";
+
+				locked = "true";
+			};
+			new TSStatic() {
+				position = "-156 740 106.75";
+				rotation = "0 0 1 50";
+				scale = "1 1 1";
+				shapeName = "borg16.dts";
+
+				locked = "true";
+			};
+			new TSStatic() {
+				position = "50.4952 -216.25 177.953";
+				rotation = "0 0 1 150";
+				scale = "1 1 1";
+				shapeName = "borg16.dts";
+
+				locked = "true";
+			};
+			new TSStatic() {
+				position = "948 -188 71.5781";
+				rotation = "0 0 1 76.9998";
+				scale = "1 1 1";
+				shapeName = "borg16.dts";
+
+				locked = "true";
+			};
+			new TSStatic() {
+				position = "-444 -52 147.969";
+				rotation = "0 0 1 17";
+				scale = "0.9 0.9 0.9";
+				shapeName = "borg16.dts";
+
+				locked = "true";
+			};
+			new TSStatic() {
+				position = "971.289 -47.278 109.375";
+				rotation = "0 0 -1 53";
+				scale = "1.2 1.2 1.2";
+				shapeName = "borg16.dts";
+
+				locked = "true";
+			};
+		};
+		new SimGroup(Addition5BELgTree19) {
+
+			powerCount = "1";
+
+			new TSStatic() {
+				position = "-660 620 37.1719";
+				rotation = "0 0 1 79";
+				scale = "0.7 0.7 0.7";
+				shapeName = "borg19.dts";
+
+				locked = "true";
+			};
+			new TSStatic() {
+				position = "-68 964 38.5469";
+				rotation = "0 0 -1 41";
+				scale = "0.5 0.5 0.5";
+				shapeName = "borg19.dts";
+
+				locked = "true";
+			};
+			new TSStatic() {
+				position = "828 -420 48.4688";
+				rotation = "0 0 1 60.0001";
+				scale = "0.7 0.7 0.7";
+				shapeName = "borg19.dts";
+
+				locked = "true";
+			};
+			new TSStatic() {
+				position = "540 -652 35.4687";
+				rotation = "0 0 1 33";
+				scale = "0.6 0.6 0.6";
+				shapeName = "borg19.dts";
+
+				locked = "true";
+			};
+			new TSStatic() {
+				position = "500 388 58.3281";
+				rotation = "0 0 -1 28.0002";
+				scale = "0.7 0.7 0.7";
+				shapeName = "borg19.dts";
+
+				locked = "true";
+			};
+			new TSStatic() {
+				position = "-436 -220 30.7812";
+				rotation = "0 0 1 148";
+				scale = "0.6 0.6 0.6";
+				shapeName = "borg19.dts";
+
+				locked = "true";
+			};
+			new TSStatic() {
+				position = "-724 52 58.875";
+				rotation = "0 0 1 119";
+				scale = "0.7 0.7 0.7";
+				shapeName = "borg19.dts";
+
+				locked = "true";
+			};
+			new TSStatic() {
+				position = "-412 -284 65.8125";
+				rotation = "0 0 1 170";
+				scale = "0.6 0.6 0.6";
+				shapeName = "borg19.dts";
+
+				locked = "true";
+			};
+			new TSStatic() {
+				position = "812 636 47.7031";
+				rotation = "0 0 -1 34.0002";
+				scale = "0.5 0.5 0.5";
+				shapeName = "borg19.dts";
+
+				locked = "true";
+			};
+			new TSStatic() {
+				position = "125.922 737.579 175.352";
+				rotation = "0 0 1 85.9998";
+				scale = "0.5 0.5 0.5";
+				shapeName = "borg19.dts";
+
+				locked = "true";
+			};
+		};
+		new SimGroup(Addition6BELgTree18) {
+
+			powerCount = "1";
+
+			new TSStatic() {
+				position = "-140 660 73.8281";
+				rotation = "0 0 1 187";
+				scale = "2.6 2.6 2.6";
+				shapeName = "borg18.dts";
+
+				locked = "true";
+			};
+			new TSStatic() {
+				position = "788 -300 22.2031";
+				rotation = "0 0 1 197";
+				scale = "2.4 2.4 2.4";
+				shapeName = "borg18.dts";
+
+				locked = "true";
+			};
+			new TSStatic() {
+				position = "523.281 -65.1077 100.148";
+				rotation = "0 0 -1 32";
+				scale = "2.5 2.5 2.5";
+				shapeName = "borg18.dts";
+
+				locked = "true";
+			};
+			new TSStatic() {
+				position = "308 -484 10.75";
+				rotation = "0 0 1 32";
+				scale = "2.6 2.6 2.6";
+				shapeName = "borg18.dts";
+
+				locked = "true";
+			};
+			new TSStatic() {
+				position = "-260 -692 109.578";
+				rotation = "0 0 1 178";
+				scale = "2.2 2.2 2.2";
+				shapeName = "borg18.dts";
+
+				locked = "true";
+			};
+			new TSStatic() {
+				position = "684 940 91.6719";
+				rotation = "0 0 1 200";
+				scale = "2.6 2.6 2.6";
+				shapeName = "borg18.dts";
+
+				locked = "true";
+			};
+			new TSStatic() {
+				position = "-634.719 -588.854 26.8091";
+				rotation = "0 0 1 213";
+				scale = "2.6 2.6 2.6";
+				shapeName = "borg18.dts";
+
+				locked = "true";
+			};
+		};
+	};
+	new TSStatic() {
+		position = "-343.406 212.382 106.881";
+		rotation = "1 0 0 0";
+		scale = "9.75669 8.56346 2.51054";
+		shapeName = "bmiscf.dts";
+	};
+	new TSStatic() {
+		position = "-46.0785 205.818 21.4801";
+		rotation = "0.532818 0.59443 -0.602294 115.276";
+		scale = "10.2589 8.68853 18.6392";
+		shapeName = "bmiscf.dts";
+	};
+	new TSStatic() {
+		position = "441.821 211.757 107.329";
+		rotation = "1 0 0 0";
+		scale = "9.75669 8.56346 2.51054";
+		shapeName = "bmiscf.dts";
+	};
+	new TSStatic() {
+		position = "159.827 207.73 18.3933";
+		rotation = "0.532818 0.59443 -0.602294 115.276";
+		scale = "10.2589 8.68853 18.6392";
+		shapeName = "bmiscf.dts";
+	};
+	new InteriorInstance() {
+		position = "-696.925 67.6612 182.871";
+		rotation = "-0.0163693 -0.0080641 0.999833 89.3727";
+		scale = "1 1 1";
+		interiorFile = "spawnbase.dif";
+		showTerrainInside = "0";
+	};
+	new InteriorInstance() {
+		position = "-696.369 133.088 85.0442";
+		rotation = "1 0 0 0";
+		scale = "1 1 1";
+		interiorFile = "rilke_ctm1_flagstand1_x2.dif";
+		showTerrainInside = "0";
+	};
+	new InteriorInstance() {
+		position = "-696.339 162.735 78.7462";
+		rotation = "1 0 0 0";
+		scale = "1.05187 2.10912 1";
+		interiorFile = "dox_bb_steelsheet2_x2.dif";
+		showTerrainInside = "0";
+	};
+	new InteriorInstance() {
+		position = "-696.873 144.985 87.0189";
+		rotation = "-1 1.05737e-07 1.03726e-07 91.1003";
+		scale = "3.47962 9.97805 4.37798";
+		interiorFile = "dox_bb_steelsheet_x2.dif";
+		showTerrainInside = "0";
+	};
+	new InteriorInstance() {
+		position = "-695.264 114.68 88.5497";
+		rotation = "-1 1.05737e-07 1.03726e-07 91.1003";
+		scale = "2.92227 7.26847 4.37798";
+		interiorFile = "dox_bb_steelsheet_x2.dif";
+		showTerrainInside = "0";
+	};
+	new InteriorInstance() {
+		position = "-695.997 153.015 101.15";
+		rotation = "1 0 0 0";
+		scale = "1 1 1";
+		interiorFile = "dox_bb_fstand_x2.dif";
+		showTerrainInside = "0";
+	};
+	new InteriorInstance() {
+		position = "-717.099 749.941 119.044";
+		rotation = "0 0 1 163.866";
+		scale = "1 1 1";
+		interiorFile = "dox_bb_fstand_x2.dif";
+		showTerrainInside = "0";
+	};
+	new InteriorInstance() {
+		position = "-728.456 786.563 106.444";
+		rotation = "-0.100665 0.710237 0.696728 168.721";
+		scale = "2.92227 7.26847 4.37798";
+		interiorFile = "dox_bb_steelsheet_x2.dif";
+		showTerrainInside = "0";
+	};
+	new InteriorInstance() {
+		position = "-718.493 757.914 105.713";
+		rotation = "-0.100665 0.710237 0.696728 168.721";
+		scale = "3.47962 9.56377 4.37798";
+		interiorFile = "dox_bb_steelsheet_x2.dif";
+		showTerrainInside = "0";
+	};
+	new InteriorInstance() {
+		position = "-714.07 740.699 96.6403";
+		rotation = "0 0 1 163.866";
+		scale = "1.05187 2.10912 1";
+		interiorFile = "dox_bb_steelsheet2_x2.dif";
+		showTerrainInside = "0";
+	};
+	new InteriorInstance() {
+		position = "-722.279 769.187 102.938";
+		rotation = "0 0 1 163.866";
+		scale = "1 1 1";
+		interiorFile = "rilke_ctm1_flagstand1_x2.dif";
+		showTerrainInside = "0";
+	};
+	new Item() {
+		position = "-736.722 773.979 120.447";
+		rotation = "0 0 1 163.866";
+		scale = "1 1 1";
+		dataBlock = "RepairPatch";
+		lockCount = "0";
+		homingCount = "0";
+		collideable = "0";
+		static = "1";
+		rotate = "0";
+
+		Target = "-1";
+		team = "2";
+	};
+	new Item() {
+		position = "-734.8 774.535 120.447";
+		rotation = "0 0 1 163.866";
+		scale = "1 1 1";
+		dataBlock = "RepairPatch";
+		lockCount = "0";
+		homingCount = "0";
+		collideable = "0";
+		static = "1";
+		rotate = "0";
+
+		Target = "-1";
+		team = "2";
+	};
+	new Item() {
+		position = "-735.662 774.115 120.226";
+		rotation = "0 0 1 163.866";
+		scale = "1 1 1";
+		dataBlock = "RepairKit";
+		lockCount = "0";
+		homingCount = "0";
+		collideable = "0";
+		static = "1";
+		rotate = "0";
+
+		Target = "-1";
+		team = "2";
+	};
+	new Item() {
+		position = "-735.428 773.104 120.447";
+		rotation = "0 0 1 163.866";
+		scale = "1 1 1";
+		dataBlock = "RepairPatch";
+		lockCount = "0";
+		homingCount = "0";
+		collideable = "0";
+		static = "1";
+		rotate = "0";
+
+		Target = "-1";
+		team = "2";
+	};
+	new Item() {
+		position = "-735.983 775.026 120.447";
+		rotation = "0 0 1 163.866";
+		scale = "1 1 1";
+		dataBlock = "RepairPatch";
+		lockCount = "0";
+		homingCount = "0";
+		collideable = "0";
+		static = "1";
+		rotate = "0";
+
+		Target = "-1";
+		team = "2";
+	};
+	new Item() {
+		position = "-718.638 753.657 95.6991";
+		rotation = "0 0 1 163.866";
+		scale = "1 1 1";
+		dataBlock = "RepairPatch";
+		lockCount = "0";
+		homingCount = "0";
+		collideable = "0";
+		static = "1";
+		rotate = "0";
+
+		Target = "-1";
+		team = "2";
+	};
+	new Item() {
+		position = "-716.716 754.213 95.6991";
+		rotation = "0 0 1 163.866";
+		scale = "1 1 1";
+		dataBlock = "RepairPatch";
+		lockCount = "0";
+		homingCount = "0";
+		collideable = "0";
+		static = "1";
+		rotate = "0";
+
+		Target = "-1";
+		team = "2";
+	};
+	new Item() {
+		position = "-717.578 753.793 95.4781";
+		rotation = "0 0 1 163.866";
+		scale = "1 1 1";
+		dataBlock = "RepairKit";
+		lockCount = "0";
+		homingCount = "0";
+		collideable = "0";
+		static = "1";
+		rotate = "0";
+
+		Target = "-1";
+		team = "2";
+		ammoStore = "1";
+	};
+	new Item() {
+		position = "-717.343 752.782 95.6991";
+		rotation = "0 0 1 163.866";
+		scale = "1 1 1";
+		dataBlock = "RepairPatch";
+		lockCount = "0";
+		homingCount = "0";
+		collideable = "0";
+		static = "1";
+		rotate = "0";
+
+		Target = "-1";
+		team = "2";
+	};
+	new Item() {
+		position = "-717.899 754.704 95.6991";
+		rotation = "0 0 1 163.866";
+		scale = "1 1 1";
+		dataBlock = "RepairPatch";
+		lockCount = "0";
+		homingCount = "0";
+		collideable = "0";
+		static = "1";
+		rotate = "0";
+
+		Target = "-1";
+		team = "2";
+	};
+	new TSStatic() {
+		position = "-718.45 842.4 206.834";
+		rotation = "0.70929 -0.500766 0.496126 109.865";
+		scale = "4.54882 1.62632 1";
+		shapeName = "pmiscf.dts";
+	};
+	new InteriorInstance() {
+		position = "-739.93 832.222 200.765";
+		rotation = "0.00900728 -0.0132074 -0.999872 106.778";
+		scale = "1 1 1";
+		interiorFile = "spawnbase.dif";
+		showTerrainInside = "0";
+	};
+	new TSStatic() {
+		position = "-697.124 81.3609 189.466";
+		rotation = "1 -1.73353e-09 -1.73215e-09 89.9544";
+		scale = "4.46269 1.62632 1";
+		shapeName = "pmiscf.dts";
+	};
+	new TSStatic() {
+		position = "-680.78 77.4822 189.408";
+		rotation = "0.943552 -0.232995 0.235422 91.7065";
+		scale = "4.46269 1.62632 1";
+		shapeName = "pmiscf.dts";
+	};
+	new TSStatic() {
+		position = "-672.718 64.5112 189.333";
+		rotation = "0.577503 0.577503 -0.577044 119.947";
+		scale = "4.6081 1.62632 1";
+		shapeName = "pmiscf.dts";
+	};
+	new TSStatic() {
+		position = "-713.458 77.2015 189.444";
+		rotation = "0.940512 0.240343 -0.240152 93.4663";
+		scale = "4.46269 1.62632 1";
+		shapeName = "pmiscf.dts";
+	};
+	new TSStatic() {
+		position = "-720.576 64.127 189.415";
+		rotation = "0.565957 0.583195 -0.582731 120.945";
+		scale = "4.54882 1.62632 1";
+		shapeName = "pmiscf.dts";
+	};
+	new TSStatic() {
+		position = "-763.872 827.978 207.228";
+		rotation = "0.698078 -0.50855 0.504049 110.732";
+		scale = "4.89599 1.62632 1";
+		shapeName = "pmiscf.dts";
+	};
+	new TSStatic() {
+		position = "-751.944 818.146 207.204";
+		rotation = "-0.0569058 -0.694749 0.716997 187.112";
+		scale = "4.46269 1.62632 1";
+		shapeName = "pmiscf.dts";
+	};
+	new TSStatic() {
+		position = "-735.421 819.254 207.117";
+		rotation = "0.113813 -0.70168 0.703343 167.799";
+		scale = "4.46269 1.62632 1";
+		shapeName = "pmiscf.dts";
+	};
+	new TSStatic() {
+		position = "-721.173 827.978 206.933";
+		rotation = "-0.294062 0.675898 -0.675788 211.993";
+		scale = "4.46269 1.62632 1";
+		shapeName = "pmiscf.dts";
+	};
+};
+//--- OBJECT WRITE END ---

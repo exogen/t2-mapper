@@ -1,0 +1,1155 @@
+// DisplayName = Cluster Coppera LT
+// MissionTypes = LCTF
+
+//--- MISSION QUOTE BEGIN ---
+// I just want my name on the startup screen.
+//  -- Zeel
+//--- MISSION QUOTE END ---
+
+//--- MISSION STRING BEGIN ---
+//[Cluster]800 points to win
+//<color:ccc000>Map by Narcot!c.
+//<color:cccaaa>thx to loach, ArkhoN and $lick.
+//--- MISSION STRING END ---
+
+//--- OBJECT WRITE BEGIN ---
+new SimGroup(MissionGroup) {
+
+	musicTrack = "lush";
+	CTF_timeLimit = "25";
+	cdTrack = "2";
+	CTF_scoreLimit = "8";
+	powerCount = "0";
+
+	new MissionArea(MissionArea) {
+		area = "-616 -600 1232 1200";
+		flightCeiling = "2000";
+		flightCeilingRange = "50";
+
+		locked = "true";
+	};
+	new Sun() {
+		position = "-1216 -848 0";
+		rotation = "1 0 0 0";
+		scale = "1 1 1";
+		direction = "0.57735 0.57735 -0.57735";
+		color = "0.600000 0.600000 0.600000 1.000000";
+		ambient = "0.200000 0.200000 0.200000 1.000000";
+		texture[0] = "special/sunFlare";
+		texture[1] = "special/sunFlare02";
+		texture[2] = "special/LensFlare/flare01";
+		texture[3] = "special/LensFlare/flare02";
+		texture[4] = "special/LensFlare/flare03";
+		lensFlareScale = "0.7";
+		lensFlareIntensity = "1";
+		frontFlareSize = "300";
+		backFlareSize = "450";
+		flareColor = "1.000000 1.000000 1.000000 1.000000";
+
+		locked = "true";
+	};
+	new TerrainBlock(Terrain) {
+		rotation = "1 0 0 0";
+		scale = "1 1 1";
+		detailTexture = "details/lushdet1";
+		terrainFile = "Cluster_Coppera.ter";
+		squareSize = "8";
+
+		visibleDistance = "1200";
+		locked = "false";
+		position = "-1024 -1024 0";
+		hazeDistance = "250";
+	};
+	new NavigationGraph(NavGraph) {
+		conjoinAngleDev = "45";
+		cullDensity = "0.3";
+		customArea = "0 0 0 0";
+
+		GraphFile = "Abominable.nav";
+		scale = "1 1 1";
+		conjoinBowlDev = "20";
+		locked = "true";
+		coverage = "0";
+		XDimOverSize = "0";
+		position = "0 0 0 1";
+		rotation = "0 0 0 0";
+		YDimOverSize = "0";
+	};
+	new Sky(Sky) {
+		position = "-1216 -848 0";
+		rotation = "1 0 0 0";
+		scale = "1 1 1";
+		cloudHeightPer[0] = "0.349971";
+		cloudHeightPer[1] = "0.25";
+		cloudHeightPer[2] = "0.199973";
+		cloudSpeed1 = "0.0001";
+		cloudSpeed2 = "0.0002";
+		cloudSpeed3 = "0.0003";
+		visibleDistance = "500";
+		useSkyTextures = "1";
+		renderBottomTexture = "0";
+		SkySolidColor = "1.000000 0.600000 0.500000 1000000.000000";
+		fogDistance = "200";
+		fogColor = "1.000000 0.700000 0.700000 1.000000";
+		fogVolume1 = "0 0 0";
+		fogVolume2 = "0 0 0";
+		fogVolume3 = "0 0 0";
+		materialList = "eedessert.dml";
+		windVelocity = "1 0 0";
+		windEffectPrecipitation = "0";
+		fogVolumeColor1 = "128.000000 128.000000 128.000000 0.000000";
+		fogVolumeColor2 = "128.000000 128.000000 128.000000 -198748244414614883000000000000000000000.000000";
+		fogVolumeColor3 = "128.000000 128.000000 128.000000 -222768174765569861000000000000000000000.000000";
+		high_visibleDistance = "-1";
+		high_fogDistance = "-1";
+		high_fogVolume1 = "-1 2.72407e+20 7.2675e+31";
+		high_fogVolume2 = "-1 1.1136e+27 6.21002e+22";
+		high_fogVolume3 = "-1 7.00716e+22 1.79383e+25";
+
+		cloudSpeed0 = "0.000000 0.000000";
+	};
+	new SimGroup(Teams) {
+
+		powerCount = "0";
+
+		new SimGroup(Team1) {
+
+			powerCount = "1";
+
+			new SimGroup(spawnspheres) {
+
+				powerCount = "1";
+			};
+			new SimGroup(Base0) {
+
+				powerCount = "1";
+			};
+			new SpawnSphere() {
+				position = "-172.612 -202.292 183.132";
+				rotation = "1 0 0 0";
+				scale = "1 1 1";
+				dataBlock = "SpawnSphereMarker";
+				lockCount = "0";
+				homingCount = "0";
+				radius = "100";
+				sphereWeight = "100";
+				indoorWeight = "100";
+				outdoorWeight = "100";
+			};
+			new StaticShape() {
+				position = "-253.109 -146.355 156.255";
+				rotation = "0 0 1 218.479";
+				scale = "1 1 1";
+				dataBlock = "GeneratorLarge";
+				lockCount = "0";
+				homingCount = "0";
+
+				Target = "33";
+				team = "1";
+			};
+			new StaticShape() {
+				position = "-171.459 -230.859 161.191";
+				rotation = "0 0 1 43.5448";
+				scale = "1 1 1";
+				dataBlock = "SensorLargePulse";
+				lockCount = "0";
+				homingCount = "0";
+
+				Target = "34";
+				team = "1";
+			};
+			new Item() {
+				position = "-268.65 -273.357 114.751";
+				rotation = "1 0 0 0";
+				scale = "1 1 1";
+				dataBlock = "FLAG";
+				lockCount = "0";
+				homingCount = "0";
+				collideable = "0";
+				static = "1";
+				rotate = "0";
+
+				className = "FlagObj";
+				isHome = "1";
+				Target = "35";
+				team = "1";
+				WayPoint = "13000";
+				Trigger = "13001";
+				originalPosition = "-268.65 -273.357 114.751 1 0 0 0";
+			};
+		};
+		new SimGroup(Team2) {
+
+			powerCount = "1";
+
+			new SimGroup(spawnspheres) {
+
+				powerCount = "1";
+			};
+			new SimGroup(Base0) {
+
+				powerCount = "1";
+			};
+			new SpawnSphere() {
+				position = "191.931 208.998 198.777";
+				rotation = "1 0 0 0";
+				scale = "1 1 1";
+				dataBlock = "SpawnSphereMarker";
+				lockCount = "0";
+				homingCount = "0";
+				radius = "100";
+				sphereWeight = "100";
+				indoorWeight = "100";
+				outdoorWeight = "100";
+			};
+			new Item() {
+				position = "270.622 269.958 118.101";
+				rotation = "1 0 0 0";
+				scale = "1 1 1";
+				dataBlock = "FLAG";
+				lockCount = "0";
+				homingCount = "0";
+				collideable = "0";
+				static = "1";
+				rotate = "0";
+
+				searchSchedule = "8067";
+				className = "FlagObj";
+				isHome = "1";
+				Target = "36";
+				team = "2";
+				WayPoint = "13002";
+				Trigger = "13003";
+				originalPosition = "270.622 269.958 118.101 1 0 0 0";
+			};
+			new StaticShape() {
+				position = "162.653 223.143 164.187";
+				rotation = "1 0 0 0";
+				scale = "1 1 1";
+				dataBlock = "SensorLargePulse";
+				lockCount = "0";
+				homingCount = "0";
+
+				wasDisabled = "1";
+				damageTimeMS = "167415";
+				Target = "37";
+				team = "2";
+				lastDamagedByTeam = "1";
+				lastDamagedBy = "4858";
+			};
+			new StaticShape() {
+				position = "239.632 127.278 158.108";
+				rotation = "0 0 1 46.9825";
+				scale = "1 1 1";
+				dataBlock = "GeneratorLarge";
+				lockCount = "0";
+				homingCount = "0";
+
+				wasDisabled = "1";
+				damageTimeMS = "391507";
+				Target = "38";
+				team = "2";
+				lastDamagedByTeam = "1";
+				lastDamagedBy = "4867";
+			};
+		};
+		new SimGroup(team0) {
+
+			powerCount = "0";
+		};
+	};
+	new SimGroup(Ambiance) {
+
+		powerCount = "0";
+	};
+	new SimGroup(RandomOrganics) {
+
+		powerCount = "0";
+	};
+	new SimGroup(ObserverDropPoints) {
+
+		powerCount = "0";
+
+		new Camera() {
+			position = "-289.702 -294.212 124.697";
+			rotation = "-0.0132654 0.00554553 0.999897 45.3784";
+			scale = "1 1 1";
+			dataBlock = "Observer";
+			lockCount = "0";
+			homingCount = "0";
+
+			team = "0";
+		};
+		new Camera() {
+			position = "289.148 287.226 125.264";
+			rotation = "-0.0121573 -0.0274126 0.99955 227.815";
+			scale = "1 1 1";
+			dataBlock = "Observer";
+			lockCount = "0";
+			homingCount = "0";
+
+			team = "0";
+		};
+	};
+	new InteriorInstance() {
+		position = "270.558 269.768 116.081";
+		rotation = "1 0 0 0";
+		scale = "1 1 1";
+		interiorFile = "smisc_nef1.dif";
+		showTerrainInside = "0";
+	};
+	new InteriorInstance() {
+		position = "-268.454 -273.72 112.75";
+		rotation = "0 0 -1 2.29206";
+		scale = "1 1 1";
+		interiorFile = "smisc_nef1.dif";
+		showTerrainInside = "0";
+	};
+	new SimSet() {
+
+		new ScriptObject() {
+
+			guid = "0";
+			packetLoss = "0";
+			clientId = "24587";
+			isListening = "0";
+			isSmurf = "1";
+			className = "PlayerRep";
+			chatMuted = "0";
+			name = "\x10\c8Narcot!c\x11";
+			teamId = "0";
+			isBot = "0";
+			canListen = "0";
+			score = "0";
+			isAdmin = "1";
+			targetId = "32";
+			ping = "8";
+			voiceEnabled = "0";
+			isSuperAdmin = "1";
+		};
+	};
+	new SimSet() {
+
+		new ScriptObject() {
+
+			guid = "0";
+			packetLoss = "0";
+			clientId = "24587";
+			isListening = "0";
+			isSmurf = "1";
+			className = "PlayerRep";
+			chatMuted = "0";
+			name = "\x10\c8Narcot!c\x11";
+			teamId = "0";
+			isBot = "0";
+			canListen = "0";
+			score = "0";
+			isAdmin = "1";
+			targetId = "32";
+			ping = "8";
+			voiceEnabled = "0";
+			isSuperAdmin = "1";
+		};
+	};
+	new SimSet() {
+
+		new ScriptObject() {
+
+			guid = "0";
+			packetLoss = "0";
+			clientId = "24587";
+			isListening = "0";
+			isSmurf = "1";
+			className = "PlayerRep";
+			chatMuted = "0";
+			name = "\x10\c8Narcot!c\x11";
+			teamId = "0";
+			isBot = "0";
+			canListen = "0";
+			score = "0";
+			isAdmin = "1";
+			targetId = "32";
+			ping = "8";
+			voiceEnabled = "0";
+			isSuperAdmin = "1";
+		};
+	};
+	new SimSet() {
+
+		new ScriptObject() {
+
+			guid = "0";
+			packetLoss = "0";
+			clientId = "24587";
+			isListening = "0";
+			isSmurf = "1";
+			className = "PlayerRep";
+			chatMuted = "0";
+			name = "\x10\c8Narcot!c\x11";
+			teamId = "0";
+			isBot = "0";
+			canListen = "0";
+			score = "0";
+			isAdmin = "1";
+			targetId = "32";
+			ping = "8";
+			voiceEnabled = "0";
+			isSuperAdmin = "1";
+		};
+	};
+	new SimSet() {
+
+		new ScriptObject() {
+
+			guid = "0";
+			packetLoss = "0";
+			clientId = "13854";
+			isListening = "0";
+			isSmurf = "1";
+			className = "PlayerRep";
+			chatMuted = "0";
+			name = "\x10\c8Narcot!c\x11";
+			teamId = "0";
+			isBot = "0";
+			canListen = "0";
+			score = "0";
+			isAdmin = "1";
+			targetId = "32";
+			ping = "0";
+			voiceEnabled = "0";
+			isSuperAdmin = "1";
+		};
+	};
+	new InteriorInstance() {
+		position = "-288.511 -187.538 124.041";
+		rotation = "0 0 1 128.343";
+		scale = "1 1 1";
+		interiorFile = "brocka.dif";
+		showTerrainInside = "0";
+	};
+	new SimGroup() {
+
+		powerCount = "0";
+	};
+	new SimSet() {
+
+		new ScriptObject() {
+
+			guid = "0";
+			packetLoss = "0";
+			clientId = "24587";
+			isListening = "0";
+			isSmurf = "1";
+			className = "PlayerRep";
+			chatMuted = "0";
+			name = "\x10\c8Narcot!c\x11";
+			teamId = "0";
+			isBot = "0";
+			canListen = "0";
+			score = "0";
+			isAdmin = "1";
+			targetId = "32";
+			ping = "8";
+			voiceEnabled = "0";
+			isSuperAdmin = "1";
+		};
+	};
+	new SimSet() {
+
+		new ScriptObject() {
+
+			guid = "0";
+			packetLoss = "0";
+			clientId = "24587";
+			isListening = "0";
+			isSmurf = "1";
+			className = "PlayerRep";
+			chatMuted = "0";
+			name = "\x10\c8Narcot!c\x11";
+			teamId = "0";
+			isBot = "0";
+			canListen = "0";
+			score = "0";
+			isAdmin = "1";
+			targetId = "32";
+			ping = "8";
+			voiceEnabled = "0";
+			isSuperAdmin = "1";
+		};
+	};
+	new InteriorInstance() {
+		position = "-224.748 -185.136 139.652";
+		rotation = "0 0 -1 44.6907";
+		scale = "1 1.48684 1";
+		interiorFile = "sbrdg1.dif";
+		showTerrainInside = "0";
+	};
+	new FileObject() {
+	};
+	new FileObject() {
+	};
+	new SimSet() {
+
+		new ScriptObject() {
+
+			guid = "0";
+			packetLoss = "0";
+			clientId = "24587";
+			isListening = "0";
+			isSmurf = "1";
+			className = "PlayerRep";
+			chatMuted = "0";
+			name = "\x10\c8Narcot!c\x11";
+			teamId = "0";
+			isBot = "0";
+			canListen = "0";
+			score = "0";
+			isAdmin = "1";
+			targetId = "32";
+			ping = "8";
+			voiceEnabled = "0";
+			isSuperAdmin = "1";
+		};
+	};
+	new InteriorInstance() {
+		position = "222.336 174.308 142.146";
+		rotation = "0 0 1 134.072";
+		scale = "1 1.48684 1";
+		interiorFile = "sbrdg1.dif";
+		showTerrainInside = "0";
+	};
+	new SimSet() {
+
+		new ScriptObject() {
+
+			guid = "0";
+			packetLoss = "0";
+			clientId = "24587";
+			isListening = "0";
+			isSmurf = "1";
+			className = "PlayerRep";
+			chatMuted = "0";
+			name = "\x10\c8Narcot!c\x11";
+			teamId = "0";
+			isBot = "0";
+			canListen = "0";
+			score = "0";
+			isAdmin = "1";
+			targetId = "32";
+			ping = "8";
+			voiceEnabled = "0";
+			isSuperAdmin = "1";
+		};
+	};
+	new SimSet() {
+
+		new ScriptObject() {
+
+			guid = "0";
+			packetLoss = "0";
+			clientId = "24587";
+			isListening = "0";
+			isSmurf = "1";
+			className = "PlayerRep";
+			chatMuted = "0";
+			name = "\x10\c8Narcot!c\x11";
+			teamId = "0";
+			isBot = "0";
+			canListen = "0";
+			score = "0";
+			isAdmin = "1";
+			targetId = "32";
+			ping = "8";
+			voiceEnabled = "0";
+			isSuperAdmin = "1";
+		};
+	};
+	new SimSet() {
+
+		new ScriptObject() {
+
+			guid = "0";
+			packetLoss = "0";
+			clientId = "24587";
+			isListening = "0";
+			isSmurf = "1";
+			className = "PlayerRep";
+			chatMuted = "0";
+			name = "\x10\c8Narcot!c\x11";
+			teamId = "0";
+			isBot = "0";
+			canListen = "0";
+			score = "0";
+			isAdmin = "1";
+			targetId = "32";
+			ping = "8";
+			voiceEnabled = "0";
+			isSuperAdmin = "1";
+		};
+	};
+	new SimSet() {
+
+		new ScriptObject() {
+
+			guid = "0";
+			packetLoss = "0";
+			clientId = "24587";
+			isListening = "0";
+			isSmurf = "1";
+			className = "PlayerRep";
+			chatMuted = "0";
+			name = "\x10\c8Narcot!c\x11";
+			teamId = "0";
+			isBot = "0";
+			canListen = "0";
+			score = "0";
+			isAdmin = "1";
+			targetId = "32";
+			ping = "8";
+			voiceEnabled = "0";
+			isSuperAdmin = "1";
+		};
+	};
+	new SimSet() {
+
+		new ScriptObject() {
+
+			guid = "0";
+			packetLoss = "0";
+			clientId = "21927";
+			isListening = "0";
+			isSmurf = "1";
+			className = "PlayerRep";
+			chatMuted = "0";
+			name = "\x10\c8-Loque\x11";
+			teamId = "0";
+			isBot = "0";
+			canListen = "0";
+			score = "0";
+			isAdmin = "1";
+			targetId = "32";
+			ping = "0";
+			voiceEnabled = "0";
+			isSuperAdmin = "1";
+		};
+	};
+	new FileObject() {
+	};
+	new InteriorInstance() {
+		position = "280.027 165.702 128.787";
+		rotation = "0 0 -1 44.1178";
+		scale = "1 1.19701 1";
+		interiorFile = "brocka.dif";
+		showTerrainInside = "0";
+	};
+	new SimSet() {
+
+		new ScriptObject() {
+
+			guid = "0";
+			packetLoss = "0";
+			clientId = "21927";
+			isListening = "0";
+			isSmurf = "1";
+			className = "PlayerRep";
+			chatMuted = "0";
+			name = "\x10\c8-Loque\x11";
+			teamId = "0";
+			isBot = "0";
+			canListen = "0";
+			score = "0";
+			isAdmin = "1";
+			targetId = "32";
+			ping = "0";
+			voiceEnabled = "0";
+			isSuperAdmin = "1";
+		};
+	};
+	new SimSet() {
+
+		new ScriptObject() {
+
+			guid = "0";
+			packetLoss = "0";
+			clientId = "24587";
+			isListening = "0";
+			isSmurf = "1";
+			className = "PlayerRep";
+			chatMuted = "0";
+			name = "\x10\c8Narcot!c\x11";
+			teamId = "0";
+			isBot = "0";
+			canListen = "0";
+			score = "0";
+			isAdmin = "1";
+			targetId = "32";
+			ping = "8";
+			voiceEnabled = "0";
+			isSuperAdmin = "1";
+		};
+	};
+	new SimSet() {
+
+		new ScriptObject() {
+
+			guid = "0";
+			packetLoss = "0";
+			clientId = "24587";
+			isListening = "0";
+			isSmurf = "1";
+			className = "PlayerRep";
+			chatMuted = "0";
+			name = "\x10\c8Narcot!c\x11";
+			teamId = "0";
+			isBot = "0";
+			canListen = "0";
+			score = "0";
+			isAdmin = "1";
+			targetId = "32";
+			ping = "8";
+			voiceEnabled = "0";
+			isSuperAdmin = "1";
+		};
+	};
+	new SimSet() {
+
+		new ScriptObject() {
+
+			guid = "0";
+			packetLoss = "0";
+			clientId = "24587";
+			isListening = "0";
+			isSmurf = "1";
+			className = "PlayerRep";
+			chatMuted = "0";
+			name = "\x10\c8Narcot!c\x11";
+			teamId = "0";
+			isBot = "0";
+			canListen = "0";
+			score = "0";
+			isAdmin = "1";
+			targetId = "32";
+			ping = "8";
+			voiceEnabled = "0";
+			isSuperAdmin = "1";
+		};
+	};
+	new SimSet() {
+
+		new ScriptObject() {
+
+			guid = "0";
+			packetLoss = "0";
+			clientId = "13854";
+			isListening = "0";
+			isSmurf = "1";
+			className = "PlayerRep";
+			chatMuted = "0";
+			name = "\x10\c8Narcot!c\x11";
+			teamId = "0";
+			isBot = "0";
+			canListen = "0";
+			score = "0";
+			isAdmin = "1";
+			targetId = "32";
+			ping = "0";
+			voiceEnabled = "0";
+			isSuperAdmin = "1";
+		};
+	};
+	new SimSet() {
+
+		new ScriptObject() {
+
+			guid = "0";
+			packetLoss = "0";
+			clientId = "13854";
+			isListening = "0";
+			isSmurf = "1";
+			className = "PlayerRep";
+			chatMuted = "0";
+			name = "\x10\c8Narcot!c\x11";
+			teamId = "0";
+			isBot = "0";
+			canListen = "0";
+			score = "0";
+			isAdmin = "1";
+			targetId = "32";
+			ping = "0";
+			voiceEnabled = "0";
+			isSuperAdmin = "1";
+		};
+	};
+	new FileObject() {
+	};
+	new FileObject() {
+	};
+	new FileObject() {
+	};
+	new FileObject() {
+	};
+	new FileObject() {
+	};
+	new SimSet() {
+
+		new ScriptObject() {
+
+			guid = "0";
+			packetLoss = "0";
+			clientId = "13854";
+			isListening = "0";
+			isSmurf = "1";
+			className = "PlayerRep";
+			chatMuted = "0";
+			name = "\x10\c8Narcot!c\x11";
+			teamId = "0";
+			isBot = "0";
+			canListen = "0";
+			score = "0";
+			isAdmin = "1";
+			targetId = "32";
+			ping = "0";
+			voiceEnabled = "0";
+			isSuperAdmin = "1";
+		};
+	};
+	new TSStatic() {
+		position = "-255.955 -140.377 167.82";
+		rotation = "1 0 0 0";
+		scale = "1 1 1";
+		shapeName = "borg16.dts";
+	};
+	new TSStatic() {
+		position = "-392.895 -207.379 167.822";
+		rotation = "1 0 0 0";
+		scale = "1 1 1";
+		shapeName = "borg18.dts";
+	};
+	new TSStatic() {
+		position = "-260.614 -392.108 123.351";
+		rotation = "1 0 0 0";
+		scale = "1 1 1";
+		shapeName = "borg17.dts";
+	};
+	new TSStatic() {
+		position = "-113.914 -460.636 124.799";
+		rotation = "1 0 0 0";
+		scale = "1 1 1";
+		shapeName = "borg16.dts";
+	};
+	new TSStatic() {
+		position = "-56.7446 -265.931 125.345";
+		rotation = "1 0 0 0";
+		scale = "1 1 1";
+		shapeName = "borg17.dts";
+	};
+	new TSStatic() {
+		position = "158.922 -177.166 177.055";
+		rotation = "1 0 0 0";
+		scale = "1 1 1";
+		shapeName = "borg16.dts";
+	};
+	new TSStatic() {
+		position = "-27.181 -3.88121 220.681";
+		rotation = "1 0 0 0";
+		scale = "1 1 1";
+		shapeName = "borg19.dts";
+	};
+	new TSStatic() {
+		position = "-223.436 66.3509 121.499";
+		rotation = "1 0 0 0";
+		scale = "1 1 1";
+		shapeName = "borg18.dts";
+	};
+	new TSStatic() {
+		position = "134.959 238.451 165.067";
+		rotation = "1 0 0 0";
+		scale = "1 1 1";
+		shapeName = "borg16.dts";
+	};
+	new TSStatic() {
+		position = "249.251 106.004 165.79";
+		rotation = "1 0 0 0";
+		scale = "1 1 1";
+		shapeName = "borg17.dts";
+	};
+	new TSStatic() {
+		position = "410.621 182.1 165.25";
+		rotation = "1 0 0 0";
+		scale = "1 1 1";
+		shapeName = "borg16.dts";
+	};
+	new TSStatic() {
+		position = "187.388 411.766 167.282";
+		rotation = "1 0 0 0";
+		scale = "1 1 1";
+		shapeName = "borg19.dts";
+	};
+	new TSStatic() {
+		position = "-62.367 361.016 142.544";
+		rotation = "1 0 0 0";
+		scale = "1 1 1";
+		shapeName = "borg16.dts";
+	};
+	new Item() {
+		position = "278.072 165.716 153.841";
+		rotation = "1 0 0 0";
+		scale = "1 1 1";
+		dataBlock = "RepairPatch";
+		lockCount = "0";
+		homingCount = "0";
+		collideable = "0";
+		static = "1";
+		rotate = "0";
+
+		Target = "-1";
+	};
+	new Item() {
+		position = "279.272 164.716 153.641";
+		rotation = "1 0 0 0";
+		scale = "1 1 1";
+		dataBlock = "RepairPatch";
+		lockCount = "0";
+		homingCount = "0";
+		collideable = "0";
+		static = "1";
+		rotate = "0";
+
+		Target = "-1";
+	};
+	new Item() {
+		position = "279.12 165.735 153.963";
+		rotation = "1 0 0 0";
+		scale = "1 1 1";
+		dataBlock = "RepairKit";
+		lockCount = "0";
+		homingCount = "0";
+		collideable = "0";
+		static = "1";
+		rotate = "0";
+
+		Target = "-1";
+	};
+	new Item() {
+		position = "279.12 166.735 154.028";
+		rotation = "1 0 0 0";
+		scale = "1 1 1";
+		dataBlock = "RepairPatch";
+		lockCount = "0";
+		homingCount = "0";
+		collideable = "0";
+		static = "1";
+		rotate = "0";
+
+		Target = "-1";
+	};
+	new Item() {
+		position = "280.072 165.916 153.841";
+		rotation = "1 0 0 0";
+		scale = "1 1 1";
+		dataBlock = "RepairPatch";
+		lockCount = "0";
+		homingCount = "0";
+		collideable = "0";
+		static = "1";
+		rotate = "0";
+
+		Target = "-1";
+	};
+	new Item() {
+		position = "193.796 191.978 147.395";
+		rotation = "1 0 0 0";
+		scale = "1 1 1";
+		dataBlock = "RepairPatch";
+		lockCount = "0";
+		homingCount = "0";
+		collideable = "0";
+		static = "1";
+		rotate = "0";
+
+		Target = "-1";
+	};
+	new Item() {
+		position = "194.996 190.978 147.195";
+		rotation = "1 0 0 0";
+		scale = "1 1 1";
+		dataBlock = "RepairPatch";
+		lockCount = "0";
+		homingCount = "0";
+		collideable = "0";
+		static = "1";
+		rotate = "0";
+
+		Target = "-1";
+	};
+	new Item() {
+		position = "194.844 191.997 147.517";
+		rotation = "1 0 0 0";
+		scale = "1 1 1";
+		dataBlock = "RepairKit";
+		lockCount = "0";
+		homingCount = "0";
+		collideable = "0";
+		static = "1";
+		rotate = "0";
+
+		Target = "-1";
+	};
+	new Item() {
+		position = "194.844 192.997 147.582";
+		rotation = "1 0 0 0";
+		scale = "1 1 1";
+		dataBlock = "RepairPatch";
+		lockCount = "0";
+		homingCount = "0";
+		collideable = "0";
+		static = "1";
+		rotate = "0";
+
+		Target = "-1";
+	};
+	new Item() {
+		position = "195.796 192.178 147.395";
+		rotation = "1 0 0 0";
+		scale = "1 1 1";
+		dataBlock = "RepairPatch";
+		lockCount = "0";
+		homingCount = "0";
+		collideable = "0";
+		static = "1";
+		rotate = "0";
+
+		Target = "-1";
+	};
+	new Item() {
+		position = "-198.953 -203.164 144.751";
+		rotation = "1 0 0 0";
+		scale = "1 1 1";
+		dataBlock = "RepairPatch";
+		lockCount = "0";
+		homingCount = "0";
+		collideable = "0";
+		static = "1";
+		rotate = "0";
+
+		Target = "-1";
+	};
+	new Item() {
+		position = "-197.753 -204.164 144.751";
+		rotation = "1 0 0 0";
+		scale = "1 1 1";
+		dataBlock = "RepairPatch";
+		lockCount = "0";
+		homingCount = "0";
+		collideable = "0";
+		static = "1";
+		rotate = "0";
+
+		Target = "-1";
+	};
+	new Item() {
+		position = "-197.905 -203.145 144.673";
+		rotation = "1 0 0 0";
+		scale = "1 1 1";
+		dataBlock = "RepairKit";
+		lockCount = "0";
+		homingCount = "0";
+		collideable = "0";
+		static = "1";
+		rotate = "0";
+
+		Target = "-1";
+	};
+	new Item() {
+		position = "-197.905 -202.145 144.738";
+		rotation = "1 0 0 0";
+		scale = "1 1 1";
+		dataBlock = "RepairPatch";
+		lockCount = "0";
+		homingCount = "0";
+		collideable = "0";
+		static = "1";
+		rotate = "0";
+
+		Target = "-1";
+	};
+	new Item() {
+		position = "-196.953 -202.964 144.751";
+		rotation = "1 0 0 0";
+		scale = "1 1 1";
+		dataBlock = "RepairPatch";
+		lockCount = "0";
+		homingCount = "0";
+		collideable = "0";
+		static = "1";
+		rotate = "0";
+
+		Target = "-1";
+	};
+	new Item() {
+		position = "-290.221 -187.039 149.295";
+		rotation = "1 0 0 0";
+		scale = "1 1 1";
+		dataBlock = "RepairPatch";
+		lockCount = "0";
+		homingCount = "0";
+		collideable = "0";
+		static = "1";
+		rotate = "0";
+
+		Target = "-1";
+	};
+	new Item() {
+		position = "-289.021 -188.039 149.095";
+		rotation = "1 0 0 0";
+		scale = "1 1 1";
+		dataBlock = "RepairPatch";
+		lockCount = "0";
+		homingCount = "0";
+		collideable = "0";
+		static = "1";
+		rotate = "0";
+
+		Target = "-1";
+	};
+	new Item() {
+		position = "-289.173 -187.02 148.817";
+		rotation = "1 0 0 0";
+		scale = "1 1 1";
+		dataBlock = "RepairKit";
+		lockCount = "0";
+		homingCount = "0";
+		collideable = "0";
+		static = "1";
+		rotate = "0";
+
+		Target = "-1";
+	};
+	new Item() {
+		position = "-289.173 -186.02 148.882";
+		rotation = "1 0 0 0";
+		scale = "1 1 1";
+		dataBlock = "RepairPatch";
+		lockCount = "0";
+		homingCount = "0";
+		collideable = "0";
+		static = "1";
+		rotate = "0";
+
+		Target = "-1";
+	};
+	new Item() {
+		position = "-288.221 -186.839 148.895";
+		rotation = "1 0 0 0";
+		scale = "1 1 1";
+		dataBlock = "RepairPatch";
+		lockCount = "0";
+		homingCount = "0";
+		collideable = "0";
+		static = "1";
+		rotate = "0";
+
+		Target = "-1";
+	};
+};
+//--- OBJECT WRITE END ---
