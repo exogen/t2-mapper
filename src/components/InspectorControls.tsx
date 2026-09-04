@@ -70,7 +70,6 @@ function CommentaryTrackPicker() {
           {tracks.map((track) => (
             <option key={trackKey(track)} value={trackKey(track)}>
               {track.label}
-              {track.model ? ` (${track.model})` : ""}
             </option>
           ))}
         </select>

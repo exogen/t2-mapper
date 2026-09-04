@@ -47,6 +47,15 @@ class FakeGameConnection extends EventEmitter {
     this.status = status;
     this.emit("status", status, message);
   }
+
+  noAuthPromotions = 0;
+
+  /** Mirrors GameConnection: an unpoked auth wait ends at Phase1. */
+  missionStartedWithoutAuth(): void {
+    if (this.status !== "authenticating") return;
+    this.noAuthPromotions++;
+    this.setStatus("connected");
+  }
 }
 
 interface SentFrame {
@@ -126,6 +135,23 @@ describe("WatchSessionManager", () => {
         delayMs: 0,
       },
     ]);
+  });
+
+  it("treats a server that starts the mission without T2csri auth as connected", () => {
+    const { manager, connections } = createManager();
+    const ws = new FakeWebSocket();
+    manager.watch(ws as unknown as WebSocket, "1.2.3.4:28000");
+    const conn = connections[0];
+    conn.setStatus("authenticating");
+    const session = (manager as any).sessions.get("1.2.3.4:28000");
+    session.handleResponderEvent({
+      type: "RemoteCommandEvent",
+      funcName: "MissionStartPhase1",
+      args: ["1", "Galadon"],
+    });
+    expect(conn.noAuthPromotions).toBe(1);
+    expect(conn.status).toBe("connected");
+    expect(manager.getStatusSummary()[0].status).not.toBe("authenticating");
   });
 
   it("queues watchers during handshake and delivers ordered catch-up on connect", () => {

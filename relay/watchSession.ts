@@ -1201,6 +1201,7 @@ export class WatchSession {
           resolvedArgs.filter((a) => a !== ""),
         );
       } else if (funcName === "MissionStartPhase1") {
+        conn.missionStartedWithoutAuth();
         const seq = resolvedArgs[0] ?? "";
         const newMissionName = resolvedArgs[1] ?? null;
         if (newMissionName && newMissionName !== this.watchState.missionName) {

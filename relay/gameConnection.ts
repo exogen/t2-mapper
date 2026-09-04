@@ -103,6 +103,8 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
   private handshakeTimer: ReturnType<typeof setTimeout> | null = null;
   private challengeRetryTimer: ReturnType<typeof setTimeout> | null = null;
   private authDelayTimer: ReturnType<typeof setTimeout> | null = null;
+  /** The server has sent t2csri_pokeClient, i.e. it runs T2csri at all. */
+  private authPoked = false;
   private disconnectRetryTimer: ReturnType<typeof setTimeout> | null = null;
 
   private nextSendEventSeq = 0;
@@ -645,6 +647,7 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
 
     switch (eventName) {
       case "t2csri_pokeClient": {
+        this.authPoked = true;
         connLog.info(
           "Auth: received pokeClient, sending certificate + challenge",
         );
@@ -678,10 +681,17 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
           );
           this.authDelayTimer = setTimeout(() => {
             this.authDelayTimer = null;
-            if (this._status !== "authenticating") return;
+            if (
+              this._status !== "authenticating" &&
+              this._status !== "connected"
+            ) {
+              return;
+            }
             this.sendCommand(result.command.name, ...result.command.args);
-            this.enforceObserver();
-            this.setStatus("connected");
+            if (this._status === "authenticating") {
+              this.enforceObserver();
+              this.setStatus("connected");
+            }
           }, delay);
         } else {
           connLog.error("Auth: challenge verification failed");
@@ -691,6 +701,24 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
         break;
       }
     }
+  }
+
+  /**
+   * The server has begun the mission handshake without ever poking for
+   * T2csri. A T2csri server pokes from GameConnection::onConnect, before
+   * the mission phases, and drops unauthenticated clients after 15s — so
+   * a Phase1 with no poke means the server doesn't run the auth script,
+   * and a real client would simply be playing by now. Nothing else would
+   * ever promote us, so treat the connection as established. (Should a
+   * poke still arrive later, the handshake completes as usual.)
+   */
+  missionStartedWithoutAuth(): void {
+    if (this._status !== "authenticating" || this.authPoked) return;
+    connLog.info(
+      "Server started the mission without T2csri auth — treating as connected",
+    );
+    this.enforceObserver();
+    this.setStatus("connected");
   }
 
   /**
