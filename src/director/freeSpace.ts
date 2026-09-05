@@ -35,8 +35,18 @@ import { castWorldRay, pointObstructed } from "../collision/worldCollision";
 import { isPointSubmerged } from "../collision/waterLevel";
 import { subjectVisible } from "./shotPath";
 
-/** Default sampling step, in world units. */
-export const FREE_SPACE_STEP = 8;
+/**
+ * Default sampling step, in world units.
+ *
+ * Was 8, set by raycast throughput. A Tribes 2 corridor is about 8
+ * wide and 6 to 8 high, so at 8 whether it held ANY cell came down to
+ * where the lattice happened to fall — Wilderzone's spawn corridors had
+ * none, and every pick-up standing in one went unfilmed. Measured on
+ * Wilderzone: 8 → 0.5s build, no sighted spot for a player in one; 6 →
+ * 1.0s, ten spots, the nearest 5.6 units off; 4 → 3.3s and, by lattice
+ * luck, two. Six buys the corridors for double the build.
+ */
+export const FREE_SPACE_STEP = 6;
 /**
  * Room a camera needs around it.
  *

@@ -34,6 +34,7 @@ import type {
   MatchFacts,
   MortarShot,
   SkillShot,
+  VoiceBind,
   StructureTransition,
 } from "../director/types";
 import { castWorldRay } from "../collision/worldCollision";
@@ -86,6 +87,8 @@ const GRENADE_DATABLOCK = /grenade_projectile/i;
 /** Server skill-shot announcements: chat kind "server", colorCode 5
  *  (live-verified) — the authoritative mid-air / headshot source. */
 const SKILL_SHOT_COLOR = 5;
+/** The key sequence the chat HUD prefixes a canned line with. */
+const VOICE_BIND_KEYS = /^\[(V[A-Z]+)\]\s*$/;
 const MIDAIR_MSG = /^(.+) hit a mid air shot\.(?: \[(\d+)m, ([^\]]+)\])?$/;
 const HEADSHOT_MSG = /^(.+) hit a sniper rifle headshot\.$/;
 /** A skill shot within this of a death by the same shooter is the
@@ -354,6 +357,8 @@ export class DirectorTrackers {
   private readonly grenadeShots: MortarShot[] = [];
   private readonly skillShots: SkillShot[] = [];
   private readonly seenChatIds = new Set<number>();
+  private readonly voiceBinds: VoiceBind[] = [];
+  private readonly seenVoiceIds = new Set<number>();
   private readonly deaths: DirectorDeath[] = [];
   private readonly stations = new Map<string, DirectorStation>();
   // Last seen alive-state and position per player, to catch the moment
@@ -447,6 +452,7 @@ export class DirectorTrackers {
     this.sampleStations(snapshot, timeSec);
     this.sampleDeaths(snapshot, timeSec);
     this.sampleSkillShotMessages(snapshot);
+    this.sampleVoiceBinds(snapshot);
     this.lastTeamScores = snapshot.teamScores;
     const sky = snapshot.entities.find(
       (e) => e.sceneData?.className === "Sky",
@@ -819,12 +825,18 @@ export class DirectorTrackers {
         fromSec: timeSec,
         toSec: null,
         names: [],
-        skin: entity.skinName ?? entity.skinPrefName ?? undefined,
+        // The player's CHOSEN skin, which is what the renderer draws
+        // (PlayerModel reads skinPrefName first); skinName is only the
+        // team default. This used to be the other way round, and every
+        // player read as "base" or "baseb".
+        skin: entity.skinPrefName ?? entity.skinName ?? undefined,
       };
       stretches.push(stretch);
     }
     if (stretch.clientId == null && clientId != null)
       stretch.clientId = clientId;
+    if (entity.skinPrefName && stretch.skin !== entity.skinPrefName)
+      stretch.skin = entity.skinPrefName;
     const last = stretch.names[stretch.names.length - 1];
     if (!last || last.displayName !== displayName) {
       stretch.names.push({
@@ -1182,6 +1194,36 @@ export class DirectorTrackers {
     }
   }
 
+  /**
+   * Canned voice lines over global chat. The engine prints them with
+   * the key sequence as the first segment ("[VGTA] "), which is the
+   * only thing that tells a bind from typed chat.
+   */
+  private sampleVoiceBinds(snapshot: StreamSnapshot): void {
+    for (const msg of snapshot.chatMessages ?? []) {
+      if (this.seenVoiceIds.has(msg.id) || msg.kind !== "chat") continue;
+      const keys = VOICE_BIND_KEYS.exec(msg.segments?.[0]?.text ?? "")?.[1];
+      if (!keys) continue;
+      this.seenVoiceIds.add(msg.id);
+      const kind = keys.startsWith("VGT")
+        ? "taunt"
+        : keys === "VGW"
+          ? "cheer"
+          : keys.startsWith("VGC")
+            ? "compliment"
+            : null;
+      if (!kind || !msg.sender || !msg.text) continue;
+      this.voiceBinds.push({
+        timeSec: msg.timeSec,
+        targetId: this.nameToTarget.get(msg.sender.toLowerCase()) ?? null,
+        name: msg.sender,
+        kind,
+        keys,
+        text: msg.text,
+      });
+    }
+  }
+
   /** Drain every cursor and assemble the dataset. */
   /**
    * The dataset as it stands, covering everything stepped so far.
@@ -1241,6 +1283,7 @@ export class DirectorTrackers {
         ...this.grenadesInFlight.values(),
       ].sort((a, b) => a.timeSec - b.timeSec),
       skillShots: this.skillShots,
+      voiceBinds: this.voiceBinds,
       deaths: this.deaths,
       stations: [...this.stations.values()],
       vehicles: this.vehicleSamples,

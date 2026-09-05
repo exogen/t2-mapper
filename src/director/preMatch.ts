@@ -146,6 +146,11 @@ function kindOf(name: string): LandmarkKind | null {
   if (/generator/i.test(name)) return "generator";
   if (/inventory/i.test(name)) return "inventory";
   if (/sensor/i.test(name)) return "sensor";
+  // Sentry turrets hang from ceilings, and nothing here knows which way
+  // up a thing is mounted: the aim sits within the sight test's margin
+  // of the slab it hangs from, so a camera on the far side of that slab
+  // read the turret as visible. They are not worth the shot.
+  if (/sentry/i.test(name)) return null;
   if (/turret/i.test(name)) return "turret";
   return null;
 }

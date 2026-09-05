@@ -66,7 +66,7 @@ type SettingsContextType = {
   audioVolume: number;
   setAudioVolume: StateSetter<number>;
   /** Play the CastGenius commentary track when a demo has one. Off =
-   *  the camera cast still runs, but the mp3 is never downloaded. */
+   *  the camera cast still runs, but the audio is never downloaded. */
   commentaryEnabled: boolean;
   setCommentaryEnabled: StateSetter<boolean>;
   /** Show the commentary's lines as subtitles, scheduled from the cue

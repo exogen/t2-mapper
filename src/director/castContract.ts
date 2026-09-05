@@ -114,8 +114,11 @@ export interface ScenePlayer {
    *  not knowable when the shot was planned. */
   frame?: FramePosition;
   /** What they are doing right now, read from the same signals the
-   *  director used to choose the shot. "inbound" means running at a
-   *  flag stand: a grab attempt is coming. */
+   *  director used to choose the shot. "inbound" means a player who has
+   *  already grabbed off the enemy stand this match is running at it
+   *  again: a grab attempt is coming. A first-timer on the same run is
+   *  not marked — nobody knows yet whether they are going for the flag
+   *  or the base. */
   doing?:
     | "carrying the flag"
     | "chasing the carrier"
@@ -130,6 +133,13 @@ export interface ScenePlayer {
    *  longer than that gets cut off by the grab call — size the line
    *  by it. Never spoken as a figure. */
   etaSec?: number;
+  /** Flags taken OFF THE ENEMY STAND so far this match, when any. A
+   *  player with grabs is a capper: the one whose run at a stand is
+   *  worth a word, and whose grab count is fair colour ("his third
+   *  grab tonight"). Absent means none yet. */
+  standGrabs?: number;
+  /** Captures so far this match, when any. */
+  caps?: number;
   /** Speed in kph, the in-game speedometer's units: ~145+ is skiing
    *  well, ~250+ is coming in hot, under ~70 is crawling. Still
    *  changing while a line airs — describe it, never quote it. */
@@ -143,6 +153,18 @@ export interface ScenePlayer {
     | "out of their base"
     | "toward the enemy base"
     | "back toward their base";
+}
+
+/** One canned voice line over global chat. */
+export interface SceneChatter {
+  /** Demo time in seconds. Never spoken. */
+  timeSec: number;
+  kind: "taunt" | "cheer" | "compliment";
+  /** Spoken-name form. */
+  name: string;
+  team?: string;
+  /** The line as the game prints it, e.g. "Aww, that's too bad!". */
+  text: string;
 }
 
 /** Something that happened during (or just before) a shot. */
@@ -294,6 +316,14 @@ export interface ShotScene {
   /** The top scorers on the server as of this shot, from the game's
    *  own scoreboard; who is carrying each team. */
   topScorers?: { name: string; team: string | null; score: number }[];
+  /**
+   * Voice binds fired over global chat during the shot — taunts,
+   * cheers and compliments, wherever the speaker is. Filler at most:
+   * "Slush taunting in the chat there", or "players celebrating in
+   * the chat" when several cheer at once. Worth a line a couple of
+   * times a match when nothing else is happening, never over a play.
+   */
+  chatter?: SceneChatter[];
   /**
    * Players running at the enemy flag stand as the shot begins,
    * nearest first, whether or not the camera has them — a grab call

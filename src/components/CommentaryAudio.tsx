@@ -27,7 +27,7 @@ const RATE_TRIM_MAX = 0.05;
 const RATE_TRIM_GAIN = 0.25;
 /**
  * The director start waits until this much audio is buffered at the
- * start position (~470KB at the tracks' constant 128kbps — the browser
+ * start position (~120KB at the tracks' 32kbps Opus — the browser
  * only exposes buffered TIME ranges, so bytes convert via bitrate),
  * showing the scan spinner meanwhile. The ceiling caps the wait: past
  * it the director starts anyway and the track joins late, in sync.
@@ -44,7 +44,7 @@ const MIN_PLAY_RATE = 0.5;
 const MAX_PLAY_RATE = 2;
 
 /**
- * Plays the pre-rendered commentary track (`<demo>.commentary.mp3`, an
+ * Plays the pre-rendered commentary track (`<demo>.commentary.m4a`, an
  * R2 sidecar like the cast plan) alongside auto-directed demo playback.
  *
  * The track is authored on the demo clock — from demo zero for a batch
@@ -64,6 +64,8 @@ export function CommentaryAudio() {
   /** The armed track's cue file arriving; the gate waits on it. */
   const trackLoadRef = useRef<Promise<void> | null>(null);
   const unavailableRef = useRef(false);
+  /** The legacy mp3 URL for the armed track, tried once on error. */
+  const fallbackSrcRef = useRef<string | null>(null);
   const blockedRef = useRef(false);
   const wasDirectingRef = useRef(false);
   /** Demo time at the track's first sample. A batch render starts at
@@ -79,7 +81,15 @@ export function CommentaryAudio() {
     audio.preservesPitch = true;
     audio.addEventListener("error", () => {
       // Ignore errors surfaced by teardown (no track armed).
-      if (armedKeyRef.current != null) unavailableRef.current = true;
+      if (armedKeyRef.current == null) return;
+      // Tracks stitched before the Opus/MP4 switch sit in the bucket as
+      // mp3; try that once before giving the track up.
+      if (fallbackSrcRef.current) {
+        audio.src = fallbackSrcRef.current;
+        fallbackSrcRef.current = null;
+        return;
+      }
+      unavailableRef.current = true;
     });
     audio.addEventListener("canplaythrough", () => {
       log.info(`commentary track available (${Math.round(audio.duration)}s)`);
@@ -151,12 +161,13 @@ export function CommentaryAudio() {
         armKey &&
         !CAST_LOCAL_PLAN &&
         // The "Play commentary" preference: off = the camera cast runs
-        // as usual, but the mp3 is never fetched (arming sets the src,
+        // as usual, but the audio is never fetched (arming sets the src,
         // which starts the download).
         commentaryEnabled
       ) {
         armedKeyRef.current = armKey;
-        audio.src = commentarySidecarUrl(sourceUrl, track, "mp3");
+        fallbackSrcRef.current = commentarySidecarUrl(sourceUrl, track, "mp3");
+        audio.src = commentarySidecarUrl(sourceUrl, track, "m4a");
         // The track's own clock: where on the demo its first sample
         // sits. Only the pre-start gate used to read this, so a track
         // armed later — a picker change, or the track list arriving

@@ -26,7 +26,7 @@ export function demoDownloadUrl(filename: string): string {
 /**
  * Where a demo's sidecars live: `<name>.rec.cast.json` (which also
  * lists the commentary tracks) and the commentary pairs
- * `[.<suffix>].commentary.json` and `.mp3`, all named after the demo.
+ * `[.<suffix>].commentary.json` and `.m4a`, all named after the demo.
  * The bucket keeps them beside the recording; CAST_BASE_URL points
  * somewhere else — a folder the dev server serves — so casts and
  * commentary generated locally can be tried against demos still
@@ -50,7 +50,7 @@ export function sidecarUrl(sourceUrl: string, kind: SidecarKind): string {
  */
 export function commentaryFileName(
   track: Pick<DemoCommentaryTrack, "suffix"> | null,
-  ext: "json" | "mp3",
+  ext: "json" | "m4a" | "mp3",
 ): string {
   const suffix = track?.suffix;
   return `${suffix ? `${suffix}.` : ""}commentary.${ext}`;
@@ -60,7 +60,7 @@ export function commentaryFileName(
 export function commentarySidecarUrl(
   sourceUrl: string,
   track: Pick<DemoCommentaryTrack, "suffix"> | null,
-  ext: "json" | "mp3",
+  ext: "json" | "m4a" | "mp3",
 ): string {
   return `${CAST_BASE_URL}/${demoFileName(sourceUrl)}.${commentaryFileName(track, ext)}`;
 }

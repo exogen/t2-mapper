@@ -185,9 +185,10 @@ describe("settledSignings", () => {
     // news — and it is forgotten, not aired late.
     const known = new Map<number, number>();
     const signed = new Map<number, number>();
+    // Filmable from 107 (the settle wait), stale eight seconds later.
     settledSignings([player(1, 2)], known, signed, 100);
-    expect(settledSignings([player(1, 2)], known, signed, 129)).toHaveLength(1);
-    expect(settledSignings([player(1, 2)], known, signed, 131)).toHaveLength(0);
+    expect(settledSignings([player(1, 2)], known, signed, 114)).toHaveLength(1);
+    expect(settledSignings([player(1, 2)], known, signed, 116)).toHaveLength(0);
     expect(signed.has(1)).toBe(false);
     expect(settledSignings([player(1, 2)], known, signed, 140)).toHaveLength(0);
   });

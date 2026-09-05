@@ -1,0 +1,39 @@
+.Button {
+  composes: Button from "./Button.module.css";
+}
+
+.Button[data-copied="true"] {
+  background: rgba(0, 117, 213, 0.9);
+  border-color: rgba(255, 255, 255, 0.4);
+}
+
+/* Drawn at 15px, but sized like the 17px clipboard check that replaces
+   it on copy, so the label does not shift when the icon swaps. */
+.LinkIcon {
+  font-size: 15px;
+  width: 17px;
+  height: 17px;
+}
+
+.ClipboardIcon {
+  display: none;
+  font-size: 17px;
+}
+
+.Button[data-copied="true"] .ClipboardIcon {
+  display: block;
+  animation: showClipboardCheck 220ms linear infinite;
+}
+
+.Button[data-copied="true"] .LinkIcon {
+  display: none;
+}
+
+@keyframes showClipboardCheck {
+  0% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0.2;
+  }
+}

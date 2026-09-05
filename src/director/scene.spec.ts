@@ -127,6 +127,164 @@ function shotPlanOf(shot: Shot): ShotPlan {
   return { contractVersion: 1, gameMode: "ctf", coverage: [], shots: [shot] };
 }
 
+/**
+ * A dataset where player 7 (Inferno) runs at Storm's stand during
+ * 100..110s at 180 kph, and — when `grabbedBefore` — took Storm's flag
+ * off the stand at 22s and lost it at 26s.
+ */
+function datasetWithRunner(grabbedBefore: boolean): DirectorDataset {
+  const ds = dataset();
+  ds.flagSamples = ds.flagSamples.map((f) =>
+    f.slot === 1 && grabbedBefore && f.timeSec >= 22 && f.timeSec < 26
+      ? { ...f, carrierTargetId: 7, status: "held" as const }
+      : f,
+  );
+  for (let t = 100; t <= 110; t++) {
+    ds.playerSamples.push({
+      timeSec: t,
+      targetId: 7,
+      teamId: 2,
+      pos: [500 - (t - 100) * 50, 0, 100],
+      armor: "heavy",
+    });
+  }
+  ds.playerNames.push({ targetId: 7, name: "runner", displayName: "Runner" });
+  return ds;
+}
+
+function standShot(
+  startSec: number,
+  endSec: number,
+  center: DirectorVec3 = STAND_1,
+): Shot {
+  return {
+    kind: "fixedOrbit",
+    center,
+    radius: 20,
+    startAngle: 0,
+    angularSpeed: 0,
+    startSec,
+    endSec,
+    transitionIn: "cut",
+    reason: "Storm stand",
+  } as Shot;
+}
+
+describe("inbound", () => {
+  it("is not called for a runner who has never grabbed off the stand", () => {
+    const plan = shotPlanOf(standShot(100, 104));
+    describeScenes(plan, datasetWithRunner(false));
+    expect(plan.shots[0].scene!.inbound).toBeUndefined();
+    // On camera at 102s: 400 m out at 50 m/s, closing — but a stranger.
+    const close = shotPlanOf(standShot(101, 103, [400, 0, 100]));
+    describeScenes(close, datasetWithRunner(false));
+    const runner = close.shots[0].scene!.players.find(
+      (p) => p.name === "Runner",
+    );
+    expect(runner).toBeDefined();
+    expect(runner?.doing).not.toBe("inbound");
+    expect(runner?.etaSec).toBeUndefined();
+    expect(runner?.standGrabs).toBeUndefined();
+  });
+
+  it("is called for a runner with a stand grab behind them, with their tally", () => {
+    const plan = shotPlanOf(standShot(100, 104));
+    describeScenes(plan, datasetWithRunner(true));
+    const scene = plan.shots[0].scene!;
+    expect(scene.inbound?.map((r) => r.name)).toEqual(["Runner"]);
+    expect(scene.inbound?.[0].team).toBe("Inferno");
+    const close = shotPlanOf(standShot(101, 103, [400, 0, 100]));
+    describeScenes(close, datasetWithRunner(true));
+    const runner = close.shots[0].scene!.players.find(
+      (p) => p.name === "Runner",
+    );
+    expect(runner?.doing).toBe("inbound");
+    expect(runner?.etaSec).toBe(8);
+    expect(runner?.standGrabs).toBe(1);
+  });
+
+  it("counts only grabs before the shot", () => {
+    // The runner's grab is at 22s; a shot before it sees no history.
+    const plan = shotPlanOf(standShot(10, 14));
+    describeScenes(plan, datasetWithRunner(true));
+    expect(plan.shots[0].scene!.inbound).toBeUndefined();
+  });
+
+  it("credits the capper with a cap", () => {
+    // Player 5 carries flag 2 from 30s and caps at 90s.
+    const late = shotPlanOf({
+      ...standShot(95, 99),
+      center: [12, 8, 100],
+    } as Shot);
+    describeScenes(late, dataset());
+    const players = late.shots[0].scene!.players;
+    // The carrier is gone by then; the defender never grabbed or capped.
+    expect(players.find((p) => p.name === "Guard")?.caps).toBeUndefined();
+    const mid = shotPlanOf({
+      ...standShot(60, 62),
+      center: [410, 0, 100],
+    } as Shot);
+    describeScenes(mid, dataset());
+    const carrier = mid.shots[0].scene!.players.find(
+      (p) => p.name === "Slayer",
+    );
+    expect(carrier?.standGrabs).toBe(1);
+    expect(carrier?.caps).toBeUndefined();
+  });
+});
+
+describe("chatter", () => {
+  it("lists voice binds fired during the shot, with team and spoken name", () => {
+    const ds = dataset();
+    ds.voiceBinds = [
+      {
+        timeSec: 61,
+        targetId: 9,
+        name: "guard",
+        kind: "taunt",
+        keys: "VGTA",
+        text: "Aww, that's too bad!",
+      },
+      // A speaker whose name never resolved to a target id.
+      {
+        timeSec: 62,
+        targetId: null,
+        name: "s p a c e y",
+        kind: "cheer",
+        keys: "VGW",
+        text: "Woohoo!",
+      },
+      // Outside the shot.
+      {
+        timeSec: 70,
+        targetId: 9,
+        name: "guard",
+        kind: "compliment",
+        keys: "VGCG",
+        text: "Good game!",
+      },
+    ];
+    const plan = shotPlanOf(standShot(60, 64));
+    describeScenes(plan, ds);
+    expect(plan.shots[0].scene!.chatter).toEqual([
+      {
+        timeSec: 61,
+        kind: "taunt",
+        name: "Guard",
+        team: "Storm",
+        text: "Aww, that's too bad!",
+      },
+      { timeSec: 62, kind: "cheer", name: "spacey", text: "Woohoo!" },
+    ]);
+  });
+
+  it("leaves the field off when nobody spoke", () => {
+    const plan = shotPlanOf(standShot(60, 64));
+    describeScenes(plan, dataset());
+    expect(plan.shots[0].scene!.chatter).toBeUndefined();
+  });
+});
+
 describe("describeScenes", () => {
   const plan = planShotsCausal(dataset());
 
@@ -557,6 +715,13 @@ describe("describeScenes", () => {
       name: "capper",
       displayName: "Capper",
     });
+    // A run only reads as inbound from a player with a stand grab on
+    // record: the Capper took Inferno's flag at 20s and lost it at 24s.
+    ds.flagSamples = ds.flagSamples.map((f) =>
+      f.slot === 2 && f.timeSec >= 20 && f.timeSec < 24
+        ? { ...f, carrierTargetId: 30, status: "held" as const }
+        : f,
+    );
     const staged = shotPlanOf({
       kind: "fixedOrbit",
       center: [720, 0, 100],
@@ -600,6 +765,13 @@ describe("describeScenes", () => {
       name: "capper",
       displayName: "Capper",
     });
+    // A run only reads as inbound from a player with a stand grab on
+    // record: the Capper took Inferno's flag at 20s and lost it at 24s.
+    ds.flagSamples = ds.flagSamples.map((f) =>
+      f.slot === 2 && f.timeSec >= 20 && f.timeSec < 24
+        ? { ...f, carrierTargetId: 30, status: "held" as const }
+        : f,
+    );
     const staged = shotPlanOf({
       kind: "fixedOrbit",
       center: [0, 0, 100],

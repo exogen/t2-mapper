@@ -69,7 +69,7 @@ const DEFAULT_LOCAL_CASTS_PATH = "/casts";
  *
  * `LOCAL_CAST_DIR=demos` serves that folder AT CAST_BASE_URL — which
  * defaults to /casts when only the folder is given — so
- * `<name>.rec.cast.json`, `.commentary.json` and `.commentary.mp3`
+ * `<name>.rec.cast.json`, `.commentary.json` and `.commentary.m4a`
  * generated locally are tried against demos that are still listed and
  * streamed from R2. Range requests are honoured, which the commentary
  * audio needs to seek.
@@ -78,6 +78,7 @@ function localCasts(dir: string, mountPath: string): Plugin {
   const MIME: Record<string, string> = {
     ".json": "application/json",
     ".mp3": "audio/mpeg",
+    ".m4a": "audio/mp4",
   };
   return {
     name: "local-casts",

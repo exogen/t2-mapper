@@ -21,6 +21,7 @@ vi.mock("../collision/waterLevel", () => ({
 
 const {
   buildFreeSpace,
+  cellCenter,
   cameraSpotFor,
   createFreeSpaceBuild,
   eyesRoomy,
@@ -125,7 +126,17 @@ describe("the grid's clearance rule", () => {
       ]),
       0,
     )!;
-    expect(isFree(grid, [0, 0, 1])).toBe(false);
+    // Lattice-independent: whatever the step, no usable cell may sit
+    // closer to the floor than the least room a lens can work in.
+    const ix = Math.round((0 - grid.lo[0]) / grid.step);
+    const iy = Math.round((0 - grid.lo[1]) / grid.step);
+    let lowestFree = Infinity;
+    for (let iz = 0; iz < grid.nz; iz++) {
+      if (!grid.free[(iz * grid.ny + iy) * grid.nx + ix]) continue;
+      lowestFree = Math.min(lowestFree, cellCenter(grid, ix, iy, iz)[2]);
+    }
+    expect(lowestFree).toBeGreaterThanOrEqual(1.5);
+    expect(isFree(grid, [0, 0, -3])).toBe(false);
     expect(isFree(grid, [0, 0, 40])).toBe(true);
   });
 

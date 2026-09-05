@@ -257,7 +257,9 @@ export function settledSignings<
     // joiners ahead in the queue — it goes stale and is dropped rather
     // than aired minutes late; the roster intro covers them anyway.
     const pinned = firstSigned.get(team) === p.targetId;
-    if (!pinned && nowSec - since > SIGNING_STALE_SEC) {
+    // Stale is counted from when they became filmable, not from the
+    // pick: the settle wait is the same for everyone.
+    if (!pinned && nowSec - since > SIGNING_SETTLE_SEC + SIGNING_STALE_SEC) {
       signedAt.delete(p.targetId);
       continue;
     }
@@ -320,8 +322,16 @@ const SIGNING_PAN_SEC = 10;
 /** How long a new signing is left alone before the camera finds them —
  *  long enough to be moved to a spawn point and stop. */
 const SIGNING_SETTLE_SEC = 7;
-/** How long a signing stays worth airing. Past this it is dropped. */
-const SIGNING_STALE_SEC = 30;
+/** How long a signing stays worth airing once it is filmable. Past
+ *  this it is dropped: a pick-up read half a minute after the pick is
+ *  a name out of nowhere. */
+const SIGNING_STALE_SEC = 8;
+/** A side's first pick-up never goes stale, so it is retried this many
+ *  times before it is given up as unfilmable. */
+const SIGNING_MAX_ATTEMPTS = 8;
+/** How far from a pick-up who cannot be framed a landmark of their
+ *  side may be and still stand in for them on camera. */
+const SIGNING_FALLBACK_RANGE = 60;
 /** How long each side must have held at least one player before a
  *  pick-up or the roster block may air. Introducing a side that is
  *  still one person is worse than waiting. */
@@ -525,6 +535,8 @@ interface SwitcherState {
   signingStyle: number;
   /** When each player picked a side, until their shot is taken. */
   signedAt: Map<number, number>;
+  /** Framing attempts per queued pick-up that found no watchable shot. */
+  signingAttempts: Map<number, number>;
   /** When each side last went from empty to occupied. */
   teamOccupiedSince: Map<number, number>;
   /** Whether each landmark can be filmed at all, by landmark key. The
@@ -603,6 +615,7 @@ function newSwitcherState(view: CausalView): SwitcherState {
     flyByCount: 0,
     signingStyle: 0,
     signedAt: new Map(),
+    signingAttempts: new Map(),
     teamOccupiedSince: new Map(),
     knownTeam: new Map(),
     sidesReady: false,
@@ -1546,10 +1559,14 @@ function emitPreMatchFiller(
   // Both facts are OBSERVED every tick (observePreMatch), not here:
   // noticed only when a shot ended, a player who joined during a
   // twenty-second fly-by was stamped as having joined when it ended.
-  const signings = state.readySignings;
-  if (signings.length > 0 && state.sidesReady) {
-    const pick = signings[0];
-    state.signedAt.delete(pick.targetId);
+  // A pick-up that cannot be framed right now — spawned into a corner,
+  // mid-teleport — stays queued and is tried again at the next
+  // boundary, once they have moved; the next player in the queue takes
+  // this one. Dropping it outright lost Storm's FIRST pick-up on one
+  // demo (the one name a side is introduced by), and ten of thirty-five
+  // pick-ups overall. Ordinary pick-ups still go stale on their own
+  // clock; a side's first is only given up after repeated failures.
+  for (const pick of state.sidesReady ? state.readySignings : []) {
     const teamName =
       view.dataset.teams.find((team) => team.teamId === pick.teamId)?.name ??
       "the side";
@@ -1609,7 +1626,7 @@ function emitPreMatchFiller(
     // Face-on, knee-to-chest positions only. The grid is no help for a
     // person: its cells are eight units apart, so the lowest one above
     // someone's feet already looks down on them.
-    const shot = firstWatchable(
+    let shot = firstWatchable(
       rotate<ShotCandidate>(
         [
           {
@@ -1631,15 +1648,83 @@ function emitPreMatchFiller(
         state.signingStyle++,
       ),
     );
-    if (!shot) {
-      // Nothing works from ANY angle on this player — wedged in a
-      // corner, or mid-teleport. Skip the pick-up and let the tour fill
-      // instead. A trailing follow was the old answer and it is not an
-      // answer: the follow rig rides BEHIND its subject, so every one
-      // of those pick-ups was the back of someone's head.
-      state.signedAt.delete(pick.targetId);
-      return;
+    if (!shot && state.freeSpace) {
+      // No exact portrait spot works: a pre-match player stands frozen
+      // at their spawn, and a spawn inside the base can be a corridor
+      // where every ring position at portrait distance is in a wall.
+      // Ask the FREE-SPACE GRID, the same search that films base
+      // hardware in tighter rooms than this — it knows about the
+      // doorway the ring never tries. Front-on preferred, by their
+      // facing; the grid's spacing means the height is not chest-exact,
+      // which beats no shot of them at all.
+      const grid = state.freeSpace;
+      const gridSpots = () =>
+        cameraSpotsFor(grid, aimOf(subject), {
+          wantDist: PLAYER_STANDOFF,
+          bearing: pick.heading,
+          maxDist: PLAYER_STANDOFF * 3,
+        });
+      shot = firstWatchable(
+        rotate<ShotCandidate>(
+          [
+            {
+              build: (spot) => signing(holdShotAt(t, subject, spot, pass)),
+              spots: gridSpots,
+            },
+            {
+              build: (spot) => signing(dollyInShotAt(t, subject, spot, pass)),
+              spots: gridSpots,
+            },
+          ],
+          state.signingStyle,
+        ),
+      );
     }
+    if (!shot && state.freeSpace) {
+      // Not even the grid has a sighted spot near them. The pick-up is
+      // still news, so film the nearest landmark of their base instead
+      // and tag it as the pick-up: the booth announces the name over a
+      // shot of the base they joined, the way a broadcast cuts to the
+      // dugout when it cannot get the player's face.
+      const grid = state.freeSpace;
+      const near = (state.landmarks ?? [])
+        .filter((m) => m.teamId == null || m.teamId === pick.teamId)
+        .map((mark) => ({ mark, d: dist(mark.pos, pick.pos) }))
+        .filter(({ d }) => d <= SIGNING_FALLBACK_RANGE)
+        .sort((a, b) => a.d - b.d);
+      for (const { mark } of near) {
+        const spots = () =>
+          cameraSpotsFor(grid, aimOf(mark), {
+            wantDist: standoffFor(mark),
+            maxDist: mark.radius * 4,
+          });
+        shot = firstWatchable([
+          {
+            build: (spot) => ({
+              ...signing(holdShotAt(t, mark, spot, pass)),
+              reason: `${pickReason}, from the ${mark.name}`,
+            }),
+            spots,
+          },
+        ]);
+        if (shot) break;
+      }
+    }
+    if (!shot) {
+      // Nothing works from ANY angle on this player right now, and no
+      // landmark of theirs is near. A trailing follow was the old
+      // answer and it is not an answer: the follow rig rides BEHIND its
+      // subject, so every one of those pick-ups was the back of
+      // someone's head. Leave them queued.
+      const tries = (state.signingAttempts.get(pick.targetId) ?? 0) + 1;
+      state.signingAttempts.set(pick.targetId, tries);
+      const pinned = [...state.firstSigned.values()].includes(pick.targetId);
+      if (pinned && tries >= SIGNING_MAX_ATTEMPTS) {
+        state.signedAt.delete(pick.targetId);
+      }
+      continue;
+    }
+    state.signedAt.delete(pick.targetId);
     closeShot(state, t);
     state.shots.push(shot);
     state.segStartSec = t;

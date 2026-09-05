@@ -17,7 +17,7 @@ export const CAST_SIDECAR_FORMAT = "castgenius-plan";
 /**
  * One commentary track generated from this cast. Its files are
  * `<demo>.rec[.<suffix>].commentary.json` (the cue transcript) and
- * `.mp3` beside the cast; the unsuffixed pair is the original,
+ * `.m4a` beside the cast; the unsuffixed pair is the original,
  * labelled "Default".
  */
 export interface CastCommentaryTrack {

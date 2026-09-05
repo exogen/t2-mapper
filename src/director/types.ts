@@ -132,6 +132,24 @@ export interface DirectorDeath {
 }
 
 /**
+ * A voice bind a player fired over global chat — a canned line the game
+ * prints as "[VGTA] name: Aww, that's too bad!". Only the kinds a booth
+ * might mention are kept: taunts (VGT*), cheers (VGW) and compliments
+ * (VGC*).
+ */
+export interface VoiceBind {
+  timeSec: number;
+  /** The speaker's target id, when the name resolved. */
+  targetId: number | null;
+  name: string;
+  kind: "taunt" | "cheer" | "compliment";
+  /** The bind's key sequence, e.g. "VGTA". */
+  keys: string;
+  /** The line as printed, e.g. "Aww, that's too bad!". */
+  text: string;
+}
+
+/**
  * A server-announced skill shot (chat kind "server", color code 5):
  * "X hit a mid air shot. [69m, Spinfusor]" or "X hit a sniper rifle
  * headshot." Authoritative — no inference. `lethal` marks the ones
@@ -248,6 +266,9 @@ export interface DirectorDataset {
   grenadeShots?: MortarShot[];
   /** Server-announced mid-airs and headshots (absent in older data). */
   skillShots?: SkillShot[];
+  /** Taunts, cheers and compliments fired over global voice chat
+   *  (absent in older data). */
+  voiceBinds?: VoiceBind[];
   /** Every player death, from entity state. */
   deaths: DirectorDeath[];
   /** Inventory stations, for suit-up moments. */
@@ -296,6 +317,7 @@ export type {
   FramePosition,
   MatchFacts,
   ScenePlayer,
+  SceneChatter,
   SceneEvent,
   SceneFlagState,
   SceneTopic,

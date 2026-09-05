@@ -9,7 +9,10 @@
 import { createStore } from "zustand/vanilla";
 import { useStore } from "zustand";
 import { sidecarUrl, type DemoCommentaryTrack } from "../stream/demoIndex";
-import { commentaryFromSidecar } from "../director/castSidecar";
+import {
+  commentaryFromSidecar,
+  planFromSidecar,
+} from "../director/castSidecar";
 
 /** The map key for a track: its suffix, or "" for the default pair. */
 export function trackKey(track: Pick<DemoCommentaryTrack, "suffix">): string {
@@ -19,6 +22,8 @@ export function trackKey(track: Pick<DemoCommentaryTrack, "suffix">): string {
 export interface CommentaryTracksState {
   /** The demo the list belongs to. */
   sourceUrl: string | null;
+  /** The demo has a cast sidecar this build can play. */
+  hasCast: boolean;
   tracks: DemoCommentaryTrack[];
   /** `trackKey` of the viewer's pick, or null for the list's first. */
   selectedKey: string | null;
@@ -36,6 +41,7 @@ export interface CommentaryTracksState {
 export const commentaryTracksStore = createStore<CommentaryTracksState>(
   (set, get) => ({
     sourceUrl: null,
+    hasCast: false,
     tracks: [],
     selectedKey: null,
     selected() {
@@ -52,22 +58,28 @@ export const commentaryTracksStore = createStore<CommentaryTracksState>(
       set({ selectedKey: key });
     },
     async load(sourceUrl) {
-      set({ sourceUrl, tracks: [], selectedKey: null });
+      set({ sourceUrl, hasCast: false, tracks: [], selectedKey: null });
       if (!sourceUrl) return;
-      const tracks = await fetchTracks(sourceUrl);
+      const sidecar = await fetchSidecar(sourceUrl);
       // A newer load wins.
-      if (get().sourceUrl === sourceUrl) set({ tracks });
+      if (get().sourceUrl === sourceUrl) set(sidecar);
     },
   }),
 );
 
-async function fetchTracks(sourceUrl: string): Promise<DemoCommentaryTrack[]> {
+async function fetchSidecar(
+  sourceUrl: string,
+): Promise<Pick<CommentaryTracksState, "hasCast" | "tracks">> {
   try {
     const res = await fetch(sidecarUrl(sourceUrl, "cast.json"));
-    if (!res.ok) return [];
-    return commentaryFromSidecar(await res.json());
+    if (!res.ok) return { hasCast: false, tracks: [] };
+    const doc: unknown = await res.json();
+    return {
+      hasCast: planFromSidecar(doc) != null,
+      tracks: commentaryFromSidecar(doc),
+    };
   } catch {
-    return [];
+    return { hasCast: false, tracks: [] };
   }
 }
 

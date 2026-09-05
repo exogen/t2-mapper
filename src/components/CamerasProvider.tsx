@@ -95,10 +95,13 @@ export function CamerasProvider({ children }: { children: ReactNode }) {
     const handleHashChange = () => {
       // A command-circuit link's hash describes the ortho camera and is
       // restored by the command circuit rig itself — never apply it to the
-      // regular camera.
-      const isCommandCircuitLink =
-        new URLSearchParams(window.location.search).get("view") === "cc";
-      const parsed = isCommandCircuitLink
+      // regular camera. A demo link's hash is the camera for a moment in
+      // the demo, applied by DemoMomentLoader once the demo has loaded
+      // and seeked; applied here it would be overwritten by playback.
+      const search = new URLSearchParams(window.location.search);
+      const ownedElsewhere =
+        search.get("view") === "cc" || search.get("mode") === "demo";
+      const parsed = ownedElsewhere
         ? null
         : parseViewHash(window.location.hash);
       setInitialViewState({

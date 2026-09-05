@@ -294,6 +294,13 @@
           },
           "description": "The top scorers on the server as of this shot, from the game's own scoreboard; who is carrying each team."
         },
+        "chatter": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/SceneChatter"
+          },
+          "description": "Voice binds fired over global chat during the shot — taunts, cheers and compliments, wherever the speaker is. Filler at most: \"Slush taunting in the chat there\", or \"players celebrating in the chat\" when several cheer at once. Worth a line a couple of times a match when nothing else is happening, never over a play."
+        },
         "inbound": {
           "type": "array",
           "items": {
@@ -426,11 +433,19 @@
             "fighting",
             "inbound"
           ],
-          "description": "What they are doing right now, read from the same signals the director used to choose the shot. \"inbound\" means running at a flag stand: a grab attempt is coming."
+          "description": "What they are doing right now, read from the same signals the director used to choose the shot. \"inbound\" means a player who has already grabbed off the enemy stand this match is running at it again: a grab attempt is coming. A first-timer on the same run is not marked — nobody knows yet whether they are going for the flag or the base."
         },
         "etaSec": {
           "type": "number",
           "description": "With \"inbound\": seconds until they reach the stand at their current speed. A grab attempt is likely inside it, and a line longer than that gets cut off by the grab call — size the line by it. Never spoken as a figure."
+        },
+        "standGrabs": {
+          "type": "number",
+          "description": "Flags taken OFF THE ENEMY STAND so far this match, when any. A player with grabs is a capper: the one whose run at a stand is worth a word, and whose grab count is fair colour (\"his third grab tonight\"). Absent means none yet."
+        },
+        "caps": {
+          "type": "number",
+          "description": "Captures so far this match, when any."
         },
         "speed": {
           "type": "number",
@@ -579,6 +594,41 @@
         "actors"
       ],
       "description": "Something that happened during (or just before) a shot."
+    },
+    "SceneChatter": {
+      "type": "object",
+      "properties": {
+        "timeSec": {
+          "type": "number",
+          "description": "Demo time in seconds. Never spoken."
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "taunt",
+            "cheer",
+            "compliment"
+          ]
+        },
+        "name": {
+          "type": "string",
+          "description": "Spoken-name form."
+        },
+        "team": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string",
+          "description": "The line as the game prints it, e.g. \"Aww, that's too bad!\"."
+        }
+      },
+      "required": [
+        "timeSec",
+        "kind",
+        "name",
+        "text"
+      ],
+      "description": "One canned voice line over global chat."
     },
     "MatchFacts": {
       "type": "object",

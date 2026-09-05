@@ -10,6 +10,7 @@ import type {
   DirectorDataset,
   DirectorVec3,
   FramePosition,
+  SceneChatter,
   SceneEvent,
   SceneFlagState,
   ScenePlayer,
@@ -536,6 +537,66 @@ function inboundEta(
 }
 
 /**
+ * What each player has done so far this map, as of a moment — the
+ * start of a role: a player who has taken a flag off the enemy stand
+ * is a capper, and the only kind of player whose run at a stand is
+ * worth calling "inbound". Read from the flag tracks (a stand grab is
+ * a flag going from home to held; a cap is an out-period that ends in
+ * one), so it is causal: nothing after `atSec` counts.
+ */
+export interface PlayerHistory {
+  standGrabsBefore(targetId: number, atSec: number): number;
+  capsBefore(targetId: number, atSec: number): number;
+}
+
+export function buildPlayerHistory(
+  tracks: Map<number, FlagTrack>,
+): PlayerHistory {
+  const grabs = new Map<number, number[]>();
+  const caps = new Map<number, number[]>();
+  const push = (map: Map<number, number[]>, id: number, t: number) => {
+    let list = map.get(id);
+    if (!list) map.set(id, (list = []));
+    list.push(t);
+  };
+  for (const track of tracks.values()) {
+    const { samples } = track;
+    for (let i = 1; i < samples.length; i++) {
+      const prev = samples[i - 1];
+      const cur = samples[i];
+      if (
+        prev.status === "home" &&
+        cur.status === "held" &&
+        cur.carrierTargetId != null
+      ) {
+        push(grabs, cur.carrierTargetId, cur.timeSec);
+      }
+    }
+    for (const period of track.outPeriods) {
+      if (!period.endsInCap) continue;
+      // The last carrier before the flag went home is the capper.
+      let capper: number | null = null;
+      for (let i = samples.length - 1; i >= 0; i--) {
+        const sample = samples[i];
+        if (sample.timeSec > period.endSec) continue;
+        if (sample.timeSec < period.startSec) break;
+        if (sample.status === "held" && sample.carrierTargetId != null) {
+          capper = sample.carrierTargetId;
+          break;
+        }
+      }
+      if (capper != null) push(caps, capper, period.endSec);
+    }
+  }
+  const countBefore = (map: Map<number, number[]>, id: number, at: number) =>
+    (map.get(id) ?? []).filter((t) => t <= at).length;
+  return {
+    standGrabsBefore: (id, at) => countBefore(grabs, id, at),
+    capsBefore: (id, at) => countBefore(caps, id, at),
+  };
+}
+
+/**
  * Everyone running at the enemy stand as the shot begins, wherever the
  * camera is. The booth sizes its lines by the nearest: Doc opened a
  * two-sentence read while the camera followed someone ELSE and the
@@ -546,6 +607,7 @@ function describeInbound(
   dataset: DirectorDataset,
   playersAtSec: PlayersAtSec,
   tracks: Map<number, FlagTrack>,
+  history: PlayerHistory,
 ): NonNullable<ShotScene["inbound"]> {
   // Sampled through the shot, not just at its first second — a run
   // that starts (or first gets a speed sample) a second in was missed
@@ -576,6 +638,11 @@ function describeInbound(
         (st) => st.teamId != null && st.teamId !== p.teamId,
       );
       if (!enemy || !flagHome(enemy.slot)) continue;
+      // Only a player who has already taken a flag off the stand this
+      // map. Speed and heading alone read every heavy on its way to
+      // the base as a capper, and the booth called "incoming" on
+      // players who were never going to the flag.
+      if (history.standGrabsBefore(p.targetId, t) === 0) continue;
       const eta = inboundEta(p, prev, enemy, INBOUND_LOOKAHEAD_SEC);
       if (eta == null) continue;
       const at = t + eta;
@@ -609,6 +676,7 @@ function describePlayers(
   tracks: Map<number, FlagTrack>,
   camera: CameraEstimate | null,
   hasSuited: (targetId: number, atSec: number) => boolean,
+  history: PlayerHistory,
 ): ScenePlayer[] {
   const range = sceneRange(shot);
   const players = playersAtSec.get(Math.round(midSec)) ?? [];
@@ -637,7 +705,12 @@ function describePlayers(
     const enemyStand = stands.find(
       (st) => st.teamId != null && st.teamId !== p.teamId,
     );
-    const eta = inboundEta(p, prev, enemyStand, INBOUND_ETA_SEC);
+    const standGrabs = history.standGrabsBefore(p.targetId, midSec);
+    const caps = history.capsBefore(p.targetId, midSec);
+    // A run at the stand is only "inbound" from a player who has
+    // grabbed before (see describeInbound).
+    const eta =
+      standGrabs > 0 ? inboundEta(p, prev, enemyStand, INBOUND_ETA_SEC) : null;
     let etaSec = eta == null ? undefined : Math.round(eta);
     let doing: ScenePlayer["doing"];
     if (carriers.has(p.targetId)) {
@@ -714,6 +787,8 @@ function describePlayers(
       frame: camera ? frameOf(camera, p.pos) : undefined,
       doing,
       ...(etaSec != null ? { etaSec } : {}),
+      ...(standGrabs > 0 ? { standGrabs } : {}),
+      ...(caps > 0 ? { caps } : {}),
       moving,
       speed: speed != null ? Math.round(speed) : undefined,
       health: p.health != null ? Math.round(p.health * 100) : undefined,
@@ -1237,6 +1312,38 @@ function sequenceKey(
   return `${topic}-${Math.round(shot.startSec)}`;
 }
 
+/** Voice binds fired during the shot, from anywhere on the map. */
+function describeChatter(
+  shot: Shot,
+  dataset: DirectorDataset,
+  playersAtSec: PlayersAtSec,
+): SceneChatter[] {
+  const out: SceneChatter[] = [];
+  for (const bind of dataset.voiceBinds ?? []) {
+    if (bind.timeSec < shot.startSec - 0.5 || bind.timeSec > shot.endSec) {
+      continue;
+    }
+    const sample =
+      bind.targetId != null
+        ? playersAtSec
+            .get(Math.round(bind.timeSec))
+            ?.find((p) => p.targetId === bind.targetId)
+        : undefined;
+    const team = teamName(sample?.teamId ?? null, dataset);
+    out.push({
+      timeSec: bind.timeSec,
+      kind: bind.kind,
+      name:
+        bind.targetId != null
+          ? displayName(bind.targetId, dataset, bind.timeSec)
+          : spokenName(bind.name),
+      ...(team ? { team } : {}),
+      text: bind.text,
+    });
+  }
+  return out;
+}
+
 /** Attach a ShotScene to every shot in the plan, in place. */
 export function describeScenes(
   plan: ShotPlan,
@@ -1259,6 +1366,7 @@ export function describeScenes(
   plan.flagTimeline = buildFlagTimeline(dataset, tracks);
   const playersAtSec = playersAtSecFor(dataset);
   const hasSuited = buildSuitIndex(dataset);
+  const history = buildPlayerHistory(tracks);
   let prevKey: string | null = null;
   let runStartSec = 0;
   for (let i = 0; i < plan.shots.length; i++) {
@@ -1304,6 +1412,7 @@ export function describeScenes(
           tracks,
           camera,
           hasSuited,
+          history,
         )
       : [];
     // WHO THIS SHOT IS OF. A follow names its subject, so it belongs in
@@ -1311,8 +1420,15 @@ export function describeScenes(
     // — and whether or not a position sample exists at this instant.
     markFocus(shot, players, midSec, dataset, playersAtSec, tracks);
     const events = describeEvents(shot, anchor, dataset, tracks, playersAtSec);
+    const chatter = describeChatter(shot, dataset, playersAtSec);
     const flags = describeFlags(shot.startSec, dataset, tracks);
-    const inbound = describeInbound(shot, dataset, playersAtSec, tracks);
+    const inbound = describeInbound(
+      shot,
+      dataset,
+      playersAtSec,
+      tracks,
+      history,
+    );
     const scoreAt = (dataset.scoreSamples ?? []).filter(
       (s) => s.timeSec <= shot.startSec,
     );
@@ -1335,6 +1451,7 @@ export function describeScenes(
           : undefined,
       ...describeMatchState(shot.startSec, dataset, tracks),
       ...(inbound.length > 0 ? { inbound } : {}),
+      ...(chatter.length > 0 ? { chatter } : {}),
     };
   }
 }

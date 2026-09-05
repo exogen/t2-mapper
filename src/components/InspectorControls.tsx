@@ -9,6 +9,8 @@ import {
   type TouchMode,
 } from "./SettingsProvider";
 import { CopyCoordinatesButton } from "./CopyCoordinatesButton";
+import { CopyDemoLinkButton } from "./CopyDemoLinkButton";
+import { useDemoLoad } from "../state/demoLoadStore";
 import { LoadDemoButton } from "./LoadDemoButton";
 import { JoinServerButton } from "./JoinServerButton";
 import { Accordion, AccordionGroup } from "./Accordion";
@@ -41,6 +43,7 @@ import buttonStyles from "./Button.module.css";
 import styles from "./InspectorControls.module.css";
 
 const DEFAULT_PANELS = [
+  "cast",
   "controls",
   "preferences",
   "audio",
@@ -78,6 +81,50 @@ function CommentaryTrackPicker() {
   );
 }
 
+/**
+ * The demo's cast: commentary playback, subtitles, and which track.
+ * Shown only when the demo has a cast sidecar.
+ */
+function CastPanel() {
+  const {
+    commentaryEnabled,
+    setCommentaryEnabled,
+    commentarySubtitles,
+    setCommentarySubtitles,
+  } = useSettings();
+  return (
+    <>
+      <div className={styles.CheckboxField}>
+        <input
+          id="commentaryInput"
+          type="checkbox"
+          checked={commentaryEnabled}
+          onChange={(event) => {
+            setCommentaryEnabled(event.target.checked);
+          }}
+        />
+        <label className={styles.Label} htmlFor="commentaryInput">
+          Play audio commentary
+        </label>
+      </div>
+      <div className={styles.CheckboxField}>
+        <input
+          id="commentarySubtitlesInput"
+          type="checkbox"
+          checked={commentarySubtitles}
+          onChange={(event) => {
+            setCommentarySubtitles(event.target.checked);
+          }}
+        />
+        <label className={styles.Label} htmlFor="commentarySubtitlesInput">
+          Show commentary subtitles
+        </label>
+      </div>
+      <CommentaryTrackPicker />
+    </>
+  );
+}
+
 export const InspectorControls = memo(function InspectorControls({
   missionName,
   missionType,
@@ -111,6 +158,7 @@ export const InspectorControls = memo(function InspectorControls({
   const isTouch = useTouchDevice();
   const dataSource = useDataSource();
   const recording = useRecording();
+  const demoSourceUrl = useDemoLoad((s) => s.sourceUrl);
   const statsLoaded = useStats((s) => s.data !== null);
   const statsError = useStats((s) => s.error !== null);
   const features = useFeatures();
@@ -141,10 +189,6 @@ export const InspectorControls = memo(function InspectorControls({
     setFov,
     audioEnabled,
     setAudioEnabled,
-    commentaryEnabled,
-    setCommentaryEnabled,
-    commentarySubtitles,
-    setCommentarySubtitles,
     audioVolume,
     setAudioVolume,
     adjustAudioSpeed,
@@ -190,6 +234,7 @@ export const InspectorControls = memo(function InspectorControls({
     showFpsMeter,
     setShowFpsMeter,
   } = useDebug();
+  const hasCast = useCommentaryTracks((s) => s.hasCast);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
@@ -259,7 +304,15 @@ export const InspectorControls = memo(function InspectorControls({
                 )}
               </div>
             )}
-            {variant === "full" && (
+            {variant === "full" &&
+            recording?.source === "demo" &&
+            demoSourceUrl != null ? (
+              // An indexed demo is linked by its moment — the second and
+              // the camera — since the link can name the demo. A local
+              // upload has no URL to link to, so it keeps the coordinates
+              // link like any other loaded map.
+              <CopyDemoLinkButton />
+            ) : variant === "full" ? (
               <CopyCoordinatesButton
                 missionName={missionName}
                 missionType={missionType}
@@ -267,7 +320,7 @@ export const InspectorControls = memo(function InspectorControls({
                 // — the mission URL param alone has a default value.
                 disabled={!missionInManifest || dataSource == null}
               />
-            )}
+            ) : null}
             <MapInfoButton missionName={missionName} onClick={onOpenMapInfo} />
             <CommandCircuitButton />
             {onOpenScoreScreen && (
@@ -286,6 +339,11 @@ export const InspectorControls = memo(function InspectorControls({
                     <StatsPanel />
                   </Accordion>
                 )}
+              {hasCast && (
+                <Accordion value="cast" label="Cast">
+                  <CastPanel />
+                </Accordion>
+              )}
               {recording?.source === "demo" && (
                 <Accordion value="timeline" label="Timeline" noPadding>
                   <DemoTimeline />
@@ -571,36 +629,6 @@ export const InspectorControls = memo(function InspectorControls({
                     />
                   </div>
                 </div>
-                <div className={styles.CheckboxField}>
-                  <input
-                    id="commentaryInput"
-                    type="checkbox"
-                    checked={commentaryEnabled}
-                    onChange={(event) => {
-                      setCommentaryEnabled(event.target.checked);
-                    }}
-                  />
-                  <label className={styles.Label} htmlFor="commentaryInput">
-                    Play commentary if available
-                  </label>
-                </div>
-                <div className={styles.CheckboxField}>
-                  <input
-                    id="commentarySubtitlesInput"
-                    type="checkbox"
-                    checked={commentarySubtitles}
-                    onChange={(event) => {
-                      setCommentarySubtitles(event.target.checked);
-                    }}
-                  />
-                  <label
-                    className={styles.Label}
-                    htmlFor="commentarySubtitlesInput"
-                  >
-                    Show commentary subtitles
-                  </label>
-                </div>
-                <CommentaryTrackPicker />
                 {variant === "full" && (
                   <div className={styles.CheckboxField}>
                     <input

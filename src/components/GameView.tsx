@@ -21,6 +21,7 @@ import { InputConsumer } from "./InputConsumer";
 import { LabelOverlay } from "./LabelOverlay";
 import { SpectatorController } from "./SpectatorController";
 import { DemoCameraController } from "./DemoCameraController";
+import { DemoMomentLoader } from "./DemoMomentLoader";
 import { CommentaryAudio } from "./CommentaryAudio";
 import { DirectorController } from "./DirectorController";
 import { CameraDebugWatchdog } from "./CameraDebugWatchdog";
@@ -113,6 +114,7 @@ export const GameView = memo(function GameView({
             {recording?.source === "demo" ? (
               <>
                 <DemoCameraController />
+                <DemoMomentLoader />
                 <DirectorController />
                 <CameraDebugWatchdog />
                 <AudioEnabled>

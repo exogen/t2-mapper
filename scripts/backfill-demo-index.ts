@@ -338,13 +338,14 @@ let failed = 0;
 
 /**
  * Does the bucket hold commentary audio for a demo — the unlabelled
- * `<key>.commentary.mp3` or any labelled `<key>.<label>.commentary.mp3`?
+ * `<key>.commentary.m4a` or any labelled `<key>.<label>.commentary.m4a`
+ * (or the mp3 either was before the Opus switch)?
  * (The track LIST lives in the cast sidecar, appended to by the
  * generators; the record only carries the flag the demo browser shows.)
  */
 function commentaryInBucket(key: string): boolean {
   const re = new RegExp(
-    `^${key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\.(?:[A-Za-z0-9_-]+\\.)?commentary\\.mp3$`,
+    `^${key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\.(?:[A-Za-z0-9_-]+\\.)?commentary\\.(?:m4a|mp3)$`,
   );
   for (const k of objects.keys()) if (re.test(k)) return true;
   return false;

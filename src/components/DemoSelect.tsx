@@ -31,7 +31,7 @@ import { loadDemoUrl } from "../stream/demoFileLoader";
 import { useDemoLoad } from "../state/demoLoadStore";
 import { useDemoIndex } from "./useDemoIndex";
 import { registerDemoSelectFocus } from "./demoSelectFocus";
-import { useDemoQueryState } from "./useQueryParams";
+import { useDemoQueryState, useDemoTimeQueryState } from "./useQueryParams";
 import { useRecording } from "./usePlayback";
 import { normalizeMissionType } from "../mission";
 import {
@@ -140,6 +140,7 @@ export function DemoSelect() {
   // published demo: the dropdown selection writes it and a shared link
   // arrives with it already set. This effect loads whatever it names.
   const [demoParam, setDemoParam] = useDemoQueryState();
+  const [, setDemoTime] = useDemoTimeQueryState();
   const loadedDemoRef = useRef<string | null>(null);
   useEffect(() => {
     if (!enabled || !demoParam || loadedDemoRef.current === demoParam) return;
@@ -173,7 +174,16 @@ export function DemoSelect() {
     setSelectedValue: (newValue) => {
       if (newValue) {
         // Route through the URL param; the effect above does the load,
-        // so dropdown picks and shared links share one code path.
+        // so dropdown picks and shared links share one code path. A
+        // moment linked for the previous demo means nothing for this
+        // one: drop its second and its camera hash (the hash first, so
+        // nuqs writes the URL without it).
+        window.history.replaceState(
+          null,
+          "",
+          `${window.location.pathname}${window.location.search}`,
+        );
+        void setDemoTime(null);
         void setDemoParam(newValue);
         inputRef.current?.blur();
       }

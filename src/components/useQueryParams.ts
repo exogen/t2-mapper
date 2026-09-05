@@ -1,6 +1,8 @@
 import {
   createParser,
+  createSerializer,
   parseAsBoolean,
+  parseAsInteger,
   parseAsStringLiteral,
   useQueryState,
 } from "nuqs";
@@ -91,3 +93,16 @@ export function useViewQueryState() {
   const [view, setView] = useQueryState("view", parseAsStringLiteral(VIEWS));
   return [view, setView] as const;
 }
+
+/**
+ * The second of the loaded demo a link points at: `?t=<sec>`. The camera
+ * for that moment rides in the URL hash (see demoMoment.ts). Read once
+ * when the demo is ready, and written by the "Link to moment" button.
+ */
+export function useDemoTimeQueryState() {
+  const [t, setT] = useQueryState("t", parseAsInteger);
+  return [t, setT] as const;
+}
+
+/** Builds a shareable URL for a moment's second from the page URL. */
+export const serializeDemoTime = createSerializer({ t: parseAsInteger });
