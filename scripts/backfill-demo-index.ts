@@ -31,6 +31,7 @@ import {
 } from "../relay/demoRecorder.js";
 import { WatchStateAccumulator } from "../relay/watchState.js";
 import { extractMissionInfo } from "../src/stream/demoStreaming";
+import { parseDemoHeaderDate } from "../src/stream/demoDate";
 
 const { values } = parseArgs({
   options: {
@@ -58,32 +59,6 @@ const force = values.force;
 const concurrency = Math.max(1, parseInt(values.concurrency!, 10) || 4);
 
 const { client, config } = r2Client("npm run backfill-demos");
-
-const MONTHS = "Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec".split(" ");
-
-/**
- * Retail demo date ("May-16-2025 5:04AM", always UTC) → ISO string.
- */
-function parseDemoDate(value: string): string | null {
-  const m = /^([A-Z][a-z]{2})-(\d{1,2})-(\d{4}) (\d{1,2}):(\d{2})(AM|PM)$/.exec(
-    value.trim(),
-  );
-  if (!m) return null;
-  const month = MONTHS.indexOf(m[1]);
-  if (month < 0) return null;
-  let hours = parseInt(m[4], 10) % 12;
-  if (m[6] === "PM") hours += 12;
-  const date = new Date(
-    Date.UTC(
-      parseInt(m[3], 10),
-      month,
-      parseInt(m[2], 10),
-      hours,
-      parseInt(m[5], 10),
-    ),
-  );
-  return Number.isNaN(date.getTime()) ? null : date.toISOString();
-}
 
 /**
  * Fallback for demos with unparseable $DemoValue dates: the filename's
@@ -115,7 +90,9 @@ function parseDemoValues(demoValues: string[]) {
     recorder: info.recorderName ?? "",
     server: info.serverDisplayName ?? "",
     address: info.serverAddress ?? "",
-    recordedAt: info.recordingDate ? parseDemoDate(info.recordingDate) : null,
+    recordedAt: info.recordingDate
+      ? parseDemoHeaderDate(info.recordingDate)
+      : null,
     mission: info.missionDisplayName ?? "",
     mod: info.mod ?? "",
     gameType: info.missionType ?? "",

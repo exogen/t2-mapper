@@ -28,6 +28,10 @@ import { useDemoLoad } from "../state/demoLoadStore";
 import { useStreamSnapshot } from "../state/streamSnapshotStore";
 import { WifiSignalIcon } from "./WifiSignalIcon";
 import { IoCalendarNumberOutline } from "react-icons/io5";
+import { isRelayRecording, parseDemoHeaderDate } from "../stream/demoDate";
+import { formatRecordedTime, recordedDayLabel } from "./demoFormat";
+import { useDemoIndex } from "./useDemoIndex";
+import { useDemoQueryState } from "./useQueryParams";
 import { BiSolidEject } from "react-icons/bi";
 import { FaArrowDown } from "react-icons/fa";
 import { formatDelay, formatPing } from "../stringUtils";
@@ -56,11 +60,26 @@ export function StreamingMissionInfo({
   const serverName = useServerDisplayName();
   const playerName = useRecorderName();
   const dateString = useRecordingDate();
+  const isLive = dataSource === "live";
+  const demoSourceUrl = useDemoLoad((s) => s.sourceUrl);
+  // When the demo was recorded, on a clock: the index entry's instant
+  // for an indexed demo, or the header read as UTC for a relay recording
+  // (a local upload of one). A retail client's header is the recorder's
+  // own local time with no zone, so that one is shown as written.
+  const [demoParam] = useDemoQueryState();
+  const { data: demos } = useDemoIndex();
+  const indexedAt =
+    demoSourceUrl && demoParam
+      ? demos?.find((d) => d.filename === demoParam)?.recordedAt
+      : undefined;
+  const recordedIso =
+    indexedAt ??
+    (dateString && isRelayRecording(playerName)
+      ? parseDemoHeaderDate(dateString)
+      : null);
   const [datePart, timePart] = dateString
     ? dateString.split(" ")
     : [null, null];
-  const isLive = dataSource === "live";
-  const demoSourceUrl = useDemoLoad((s) => s.sourceUrl);
   const recording = useRecording();
   const isWatcher = useLiveSelector((s) => s.role === "watcher");
   const watcherCount = useLiveSelector((s) => s.watcherCount);
@@ -225,8 +244,9 @@ export function StreamingMissionInfo({
                   aria-hidden
                 />
                 <span className={styles.RecordingDate}>
-                  {datePart!.replace(/-/g, " ")}{" "}
-                  {(timePart ?? "").replace(/(AM|PM)$/, " $1")}
+                  {recordedIso
+                    ? `${recordedDayLabel(recordedIso)} ${formatRecordedTime(recordedIso)}`
+                    : `${datePart!.replace(/-/g, " ")} ${(timePart ?? "").replace(/(AM|PM)$/, " $1")}`}
                 </span>
               </>
             ) : null}
