@@ -45,6 +45,7 @@ import {
   resolveBoltVisual,
   resolveBeamVisual,
   resolveLinkBeamVisual,
+  resolveShockLanceVisual,
   resolveSpriteVisual,
   parseWeaponImageStates,
   stripTaggedStringMarkup,
@@ -190,6 +191,8 @@ export interface MutableEntity {
   beamEnd?: [number, number, number];
   /** Link beams (ELF/repair): the target's ghost index. */
   linkTargetGhostIndex?: number;
+  /** ShockLanceProjectile: whether the bolt pinned to its target. */
+  beamHit?: boolean;
   /** Precomputed flight segment for linear projectiles (Torque model:
    *  one static-world raycast at spawn, closed-form position per tick). */
   linearSegment?: LinearSegment;
@@ -1337,6 +1340,7 @@ export abstract class StreamEngine implements StreamingPlayback {
         resolveBoltVisual(entity.className, blockData) ??
         resolveBeamVisual(entity.className, blockData) ??
         resolveLinkBeamVisual(entity.className, blockData) ??
+        resolveShockLanceVisual(entity.className, blockData) ??
         resolveSpriteVisual(entity.className, blockData);
       if (typeof shapeName === "string") {
         entity.shapeHint = shapeName;
@@ -1660,7 +1664,8 @@ export abstract class StreamEngine implements StreamingPlayback {
     // ghost index — the endpoints are LIVE and re-derived per frame.
     if (
       entity.className === "ELFProjectile" ||
-      entity.className === "RepairProjectile"
+      entity.className === "RepairProjectile" ||
+      entity.className === "ShockLanceProjectile"
     ) {
       if (typeof data.sourceObject === "number" && data.sourceObject >= 0) {
         entity.sourceGhostIndex = data.sourceObject;
@@ -1670,6 +1675,18 @@ export abstract class StreamEngine implements StreamingPlayback {
       if (typeof target === "number" && target >= 0) {
         entity.linkTargetGhostIndex = target;
       }
+    }
+
+    // ShockLanceProjectile: fixed start/end and whether the bolt pinned
+    // to its target (client onAdd FUN_0064ec20 keeps them verbatim).
+    if (entity.className === "ShockLanceProjectile") {
+      const start = data.start as Vec3 | undefined;
+      const end = data.end as Vec3 | undefined;
+      if (isValidPosition(start)) {
+        entity.beamStart = [start!.x, start!.y, start!.z];
+      }
+      if (isValidPosition(end)) entity.beamEnd = [end!.x, end!.y, end!.z];
+      if (typeof data.hitObject === "boolean") entity.beamHit = data.hitObject;
     }
 
     // Beam endpoints (SniperProjectile): the ghost carries the muzzle
@@ -1781,15 +1798,20 @@ export abstract class StreamEngine implements StreamingPlayback {
         // Item::setVelocity sets mAtRest=false unconditionally (item.cc:309),
         // so scripted teleports like a CTF flag return — setVelocity("0 0 0")
         // + setTransform(home) — arrive as atRest=false with exactly zero
-        // velocity (physics-driven updates always carry nonzero velocity).
-        // The real client simulates anyway: it falls ~2cm for one tick and
-        // rests on the flag stand via its collision mask, which includes
-        // StaticShapes (item.cc:37). Our collision world has no shape
-        // colliders, so the faithful fall would sink through the stand —
-        // pin the scripted-teleport case at the server position instead.
-        // DIVERGENCE from the binary, compensating for missing StaticShape
-        // collision.
-        if (vel.x === 0 && vel.y === 0 && vel.z === 0) {
+        // velocity and NoWarpMask (warp=false). The real client simulates
+        // anyway: it falls ~2cm for one tick and rests on the flag stand via
+        // its collision mask, which includes StaticShapes. Our collision
+        // world has no colliders for small statics, so the faithful fall
+        // would sink through the stand — pin the scripted-teleport case at
+        // the server position instead. DIVERGENCE from the binary,
+        // compensating for missing StaticShape collision.
+        //
+        // Zero velocity WITH the warp flag is engine-originated (a dropped
+        // weapon or mine stopped by a player or vehicle collision, e.g. a
+        // shocklance dropped onto the killer); Item::unpackUpdate
+        // (FUN_00606600) keeps mAtRest=false and processTick resumes
+        // updatePos, so the client lets it fall — binary-verified.
+        if (vel.x === 0 && vel.y === 0 && vel.z === 0 && data.warp === false) {
           entity.itemPhysics = undefined;
         } else {
           entity.itemPhysics = {
@@ -3378,6 +3400,7 @@ export abstract class StreamEngine implements StreamingPlayback {
         sourceGhostIndex: entity.sourceGhostIndex,
         beamStart: entity.beamStart,
         beamEnd: entity.beamEnd,
+        beamHit: entity.beamHit,
         linkSourceId:
           entity.sourceGhostIndex != null
             ? this.entityIdByGhostIndex.get(entity.sourceGhostIndex)

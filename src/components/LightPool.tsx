@@ -1,12 +1,6 @@
 import { useThree } from "@react-three/fiber";
 import { useEffect, useRef } from "react";
-import {
-  Vector2,
-  Vector3,
-  type Camera,
-  type Object3D,
-  type PerspectiveCamera,
-} from "three";
+import { Vector2, Vector3, type Camera, type PerspectiveCamera } from "three";
 import {
   dynamicLightScreenFade,
   EFFECT_LIGHT_COUNT,
@@ -19,17 +13,11 @@ import {
   shapeSunWorldDir,
 } from "../shapeLighting";
 import { effectLights, type EffectLight } from "./effectLights";
+import { isVisibleInHierarchy } from "../objectUtils";
 
 const _viewPosition = new Vector3();
 const _viewDir = new Vector3();
 const _viewportSize = new Vector2();
-
-function isVisibleInHierarchy(object: Object3D): boolean {
-  for (let node: Object3D | null = object; node; node = node.parent) {
-    if (!node.visible) return false;
-  }
-  return true;
-}
 
 /**
  * The engine's projected light radius in pixels: radius / distance ×

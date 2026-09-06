@@ -519,6 +519,51 @@ export function resolveLinkBeamVisual(
 }
 
 /** Laser rifle beam (SniperProjectileData) — see BeamVisual. */
+function pairField(
+  data: ParsedData,
+  key: string,
+  fallback: [number, number],
+): [number, number] {
+  const value = data[key];
+  if (!Array.isArray(value)) return fallback;
+  return [
+    typeof value[0] === "number" ? value[0] : fallback[0],
+    typeof value[1] === "number" ? value[1] : fallback[1],
+  ];
+}
+
+/**
+ * ShockLanceProjectileData — see ShockLanceVisual. Defaults are the
+ * datablock constructor's (Tribes2.exe FUN_0064def0).
+ */
+export function resolveShockLanceVisual(
+  className: string,
+  data: ParsedData | undefined,
+): StreamVisual | undefined {
+  if (!data || className !== "ShockLanceProjectile") return undefined;
+  const textures = data.textures as string[] | undefined;
+  if (!Array.isArray(textures) || !textures[3]) return undefined;
+  const emitter = data.emitter;
+  const shockwave = data.shockwave;
+  return {
+    kind: "shockLance",
+    zapDuration: getNumberField(data, ["zapDuration"]) ?? 0.5,
+    boltLength: getNumberField(data, ["boltLength"]) ?? 2,
+    lightningFreq: getNumberField(data, ["lightningFreq"]) ?? 10,
+    lightningDensity: getNumberField(data, ["lightningDensity"]) ?? 3,
+    lightningAmp: getNumberField(data, ["lightningAmp"]) ?? 0.5,
+    lightningWidth: getNumberField(data, ["lightningWidth"]) ?? 0.1,
+    startWidth: pairField(data, "startWidth", [0.2, 0.2]),
+    endWidth: pairField(data, "endWidth", [1, 1]),
+    boltSpeed: pairField(data, "boltSpeed", [1, 1.2]),
+    texWrap: pairField(data, "texWrap", [1, 1]),
+    textures,
+    emitterId: typeof emitter === "number" ? emitter : undefined,
+    shockwaveId: typeof shockwave === "number" ? shockwave : undefined,
+    numParts: getNumberField(data, ["numParts"]) ?? 25,
+  };
+}
+
 export function resolveBeamVisual(
   className: string,
   data: ParsedData | undefined,

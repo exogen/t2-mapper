@@ -16,7 +16,6 @@ import {
   AdditiveBlending,
   Color,
   DoubleSide,
-  Quaternion,
   RepeatWrapping,
   SRGBColorSpace,
   Vector3,
@@ -31,13 +30,12 @@ import type {
 import { setupEffectTexture, torqueVecToThree } from "../stream/playbackUtils";
 import { textureToUrl } from "../loaders";
 import { streamClock, streamPlaybackStore } from "../state/streamPlaybackStore";
-import { gameEntityStore } from "../state/gameEntityStore";
-import {
-  MAX_PITCH,
-  threeForwardHeading,
-  yawPitchToQuaternion,
-} from "../stream/streamHelpers";
 import { BeamEntity, LinkBeamEntity } from "../state/gameEntityTypes";
+import {
+  LINK_MUZZLE_LIFT,
+  muzzleWorldPosition,
+  sourceAimDirection,
+} from "./linkBeamSource";
 import {
   ribbonIndices,
   writeLinkRibbon,
@@ -241,49 +239,6 @@ const LINK_BEAM_SEGMENTS = { elf: 16, repair: 20 } as const;
 const LIGHTNING_RIBBONS = 3;
 const LIGHTNING_POINTS = 16;
 const LIGHTNING_RESEED_SEC = 1 / 15;
-/** Fallback muzzle height above the source's origin, used only when
- *  no Muzzlepoint node resolves (weapon not mounted/loaded yet). */
-const LINK_MUZZLE_LIFT = 1.4;
-/** How often to re-search a source's subtree for its muzzle node —
- *  weapons swap on mount changes, so the cache is short-lived. */
-const MUZZLE_CACHE_SEC = 1;
-
-/**
- * The engine starts both link beams at getRenderMuzzlePoint(sourceSlot)
- * — the mounted weapon's Muzzlepoint node, animated with the player
- * (vtable +0x190 in FUN_0064cff0/FUN_00645fc0). Our mounted weapon
- * shapes portal into the player's subtree, so the same node is
- * reachable by name; cached briefly since weapons swap.
- */
-const _muzzleCache = new WeakMap<
-  object,
-  { node: { getWorldPosition(v: Vector3): Vector3 } | null; checkedAt: number }
->();
-function muzzleWorldPosition(
-  source: { traverse(cb: (o: unknown) => void): void },
-  nowSec: number,
-  out: Vector3,
-): boolean {
-  let entry = _muzzleCache.get(source);
-  if (
-    !entry ||
-    nowSec - entry.checkedAt > MUZZLE_CACHE_SEC ||
-    nowSec < entry.checkedAt
-  ) {
-    let found: { getWorldPosition(v: Vector3): Vector3 } | null = null;
-    source.traverse((o) => {
-      const name = (o as { name?: string }).name;
-      if (!found && name && name.toLowerCase().includes("muzzlepoint")) {
-        found = o as { getWorldPosition(v: Vector3): Vector3 };
-      }
-    });
-    entry = { node: found, checkedAt: nowSec };
-    _muzzleCache.set(source, entry);
-  }
-  if (!entry.node) return false;
-  entry.node.getWorldPosition(out);
-  return true;
-}
 /** Target attach height (body/object centre). */
 const LINK_TARGET_LIFT = 1.0;
 
@@ -294,10 +249,6 @@ const _linkControl = new Vector3();
 const _linkAim = new Vector3();
 const _linkFlareRight = new Vector3();
 const _linkFlareUp = new Vector3();
-const _linkAimQuat = new Quaternion();
-
-/** PlayerData::maxLookAngle — 1.5 rad in every Tribes 2 armor. */
-const LINK_MAX_LOOK_ANGLE = 1.5;
 
 /**
  * A beam linking two live objects. Repair: a straight scrolling ribbon
@@ -392,28 +343,7 @@ export function LinkBeamProjectile({ entity }: { entity: LinkBeamEntity }) {
     // head yaw/pitch through yawPitchToQuaternion, forward = -Z.
     const curved = visual.variant === "elf";
     if (curved) {
-      const srcEntity = entity.linkSourceId
-        ? gameEntityStore.getState().streamEntities.get(entity.linkSourceId)
-        : undefined;
-      const headPitch =
-        srcEntity && "headPitch" in srcEntity
-          ? ((srcEntity.headPitch as number | undefined) ?? 0)
-          : 0;
-      const headYaw =
-        srcEntity && "headYaw" in srcEntity
-          ? ((srcEntity.headYaw as number | undefined) ?? 0)
-          : 0;
-      const bodyYaw = threeForwardHeading(source.quaternion);
-      const pitch = Math.max(
-        -MAX_PITCH,
-        Math.min(MAX_PITCH, headPitch * LINK_MAX_LOOK_ANGLE),
-      );
-      const [rx, ry, rz, rw] = yawPitchToQuaternion(
-        bodyYaw + headYaw * LINK_MAX_LOOK_ANGLE,
-        pitch,
-      );
-      _linkAimQuat.set(rx, ry, rz, rw);
-      _linkAim.set(0, 0, -1).applyQuaternion(_linkAimQuat);
+      sourceAimDirection(entity.linkSourceId, source, _linkAim);
       _linkControl.copy(_linkStart).addScaledVector(_linkAim, length);
     }
     const sample = (t: number, out: Vector3): Vector3 => {

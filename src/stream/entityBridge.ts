@@ -8,6 +8,7 @@ import type {
   TracerEntity,
   BeamEntity,
   LinkBeamEntity,
+  ShockLanceEntity,
   SpriteEntity,
   FlareEntity,
   AudioEmitterEntity,
@@ -146,6 +147,19 @@ export function streamEntityToGameEntity(
         linkSourceId: entity.linkSourceId,
         linkTargetId: entity.linkTargetId,
       } satisfies LinkBeamEntity;
+    case "shockLance": {
+      if (!entity.beamStart || !entity.beamEnd) break;
+      return {
+        ...positionedBase(entity, spawnTime),
+        renderType: "ShockLance",
+        visual: entity.visual,
+        beamStart: entity.beamStart,
+        beamEnd: entity.beamEnd,
+        beamHit: entity.beamHit ?? false,
+        linkSourceId: entity.linkSourceId,
+        linkTargetId: entity.linkTargetId,
+      } satisfies ShockLanceEntity;
+    }
     case "beam": {
       const start = entity.beamStart ?? entity.position;
       const end = entity.beamEnd ?? entity.beamStart ?? entity.position;
@@ -242,9 +256,14 @@ export function streamEntityToGameEntity(
     // Non-rendered objects: editor-only markers, AI objectives, vehicle blockers.
     // MissionMarker::onAdd only calls addToScene when gEditingMission is true.
     // AIObjective and VehicleBlocker are server-side logic objects with no visuals.
+    // Lightning and Precipitation are weather: the engine draws bolts and
+    // drops, never a shape, and their ghost scale is the storm's volume
+    // (512 × 512 × 300 on Stonehenge), which a placeholder must not inherit.
     case "AIObjective":
+    case "Lightning":
     case "MissionMarker":
     case "PhysicalZone":
+    case "Precipitation":
     case "SpawnSphere":
     case "VehicleBlocker":
       return {

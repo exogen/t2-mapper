@@ -1128,6 +1128,9 @@ function MountedImageModel({
     weaponIflInitializers,
   } = useMemo(() => {
     const clone = SkeletonUtils.clone(weaponGltf.scene) as Group;
+    // Marks the subtree as a mounted image so effects that redraw the
+    // player's own shape (the shocklance zap) can skip it.
+    clone.userData.imageMount = true;
     const iflInits = processShapeScene(clone, undefined, {
       anisotropy,
       emap,

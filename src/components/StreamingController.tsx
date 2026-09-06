@@ -125,6 +125,11 @@ function mutateRenderFields(
       e.linkSourceId = stream.linkSourceId;
       e.linkTargetId = stream.linkTargetId;
       break;
+    case "ShockLance":
+      // The shooter/target ids resolve once those ghosts exist.
+      e.linkSourceId = stream.linkSourceId;
+      e.linkTargetId = stream.linkTargetId;
+      break;
     case "ForceFieldBare": {
       e.fieldAlpha = stream.forceFieldAlpha;
       const fieldOpen = fieldOpenFromState(stream.forceFieldState);
@@ -784,7 +789,10 @@ export function StreamingController({
         // draw themselves in world space between two live objects, and
         // manage their own visibility. The no-position hide below would
         // blank them permanently.
-        if (renderEntity?.renderType === "LinkBeam") {
+        if (
+          renderEntity?.renderType === "LinkBeam" ||
+          renderEntity?.renderType === "ShockLance"
+        ) {
           child.visible = true;
           continue;
         }

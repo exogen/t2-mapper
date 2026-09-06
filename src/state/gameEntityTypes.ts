@@ -5,6 +5,7 @@ import type {
   TracerVisual,
   BeamVisual,
   LinkBeamVisual,
+  ShockLanceVisual,
   SpriteVisual,
   FlareVisual,
   LightAnchor,
@@ -38,6 +39,7 @@ export type RenderType =
   | "Tracer"
   | "Beam"
   | "LinkBeam"
+  | "ShockLance"
   | "Sprite"
   | "Flare"
   | "AudioEmitter"
@@ -264,6 +266,19 @@ export interface LinkBeamEntity extends PositionedBase {
   linkTargetId?: string;
 }
 
+export interface ShockLanceEntity extends PositionedBase {
+  renderType: "ShockLance";
+  visual: ShockLanceVisual;
+  /** Torque-space bolt endpoints from the ghost (muzzle -> hit point). */
+  beamStart: [number, number, number];
+  beamEnd: [number, number, number];
+  /** Whether the bolt pinned to its target (hitObject). */
+  beamHit: boolean;
+  /** Live shooter and target entity ids. */
+  linkSourceId?: string;
+  linkTargetId?: string;
+}
+
 export interface SpriteEntity extends PositionedBase {
   renderType: "Sprite";
   visual: SpriteVisual;
@@ -318,6 +333,7 @@ export type GameEntity =
   | TracerEntity
   | BeamEntity
   | LinkBeamEntity
+  | ShockLanceEntity
   | SpriteEntity
   | FlareEntity
   | AudioEmitterEntity

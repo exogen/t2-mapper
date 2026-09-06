@@ -199,11 +199,7 @@ function Reticle() {
       </div>
     );
   }
-  return (
-    <div className={styles.Reticle}>
-      <div className={styles.ReticleDot} />
-    </div>
-  );
+  return null;
 }
 
 /** Maps $WeaponsHudData indices to simple icon textures (no baked background)

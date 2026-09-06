@@ -181,7 +181,11 @@ export function MountedShapeContent({
 
   return (
     <ShapeInfoProvider shapeName={shapeName} type={shapeType}>
-      <group position={offset?.position} quaternion={offset?.quaternion}>
+      <group
+        position={offset?.position}
+        quaternion={offset?.quaternion}
+        userData={{ imageMount: true }}
+      >
         <ShapeRenderer
           emap={emap}
           entityId={entityId}

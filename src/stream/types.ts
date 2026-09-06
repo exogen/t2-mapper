@@ -196,8 +196,49 @@ export interface FlareVisual {
   faceViewer: boolean;
 }
 
+/**
+ * ShockLanceProjectile (binary-verified, Tribes2.exe ShockLanceProjectile
+ * vtable 0x7b23b8: onAdd FUN_0064ec20, advanceTime FUN_0064f840,
+ * renderObject FUN_0064fd60). The ghost carries fixed start/end points
+ * and whether the bolt pinned to its target. A hit draws two textured
+ * strips muzzle -> target whose width grows startWidth -> endWidth over
+ * zapDuration, plus two jittered lightning ribbons regenerated at
+ * lightningFreq; a miss draws only a 0.2 m spark at the live muzzle. A
+ * hit also redraws the target's shape with the cycling lightning
+ * textures (the zap), a ShocklanceHit shockwave and a burst of
+ * ShockParticleEmitter particles along the bolt.
+ */
+export interface ShockLanceVisual {
+  kind: "shockLance";
+  zapDuration: number;
+  boltLength: number;
+  lightningFreq: number;
+  lightningDensity: number;
+  lightningAmp: number;
+  lightningWidth: number;
+  startWidth: [number, number];
+  endWidth: [number, number];
+  boltSpeed: [number, number];
+  texWrap: [number, number];
+  /** texture[0..3]: shockLightning01-03 (zap frames) and ELFBeam, which
+   *  the engine binds for BOTH strips and the ribbons (texture[3]). */
+  textures: string[];
+  /** emitter[0] datablock id: particles burst along a pinned bolt. */
+  emitterId?: number;
+  /** Shockwave datablock id spawned at a pinned bolt's end. */
+  shockwaveId?: number;
+  /** numParts: the burst's emission window in ms (engine passes it as
+   *  ParticleEmitter::emitParticles' numMilliseconds). */
+  numParts: number;
+}
+
 export type StreamVisual =
-  TracerVisual | SpriteVisual | FlareVisual | BeamVisual | LinkBeamVisual;
+  | TracerVisual
+  | SpriteVisual
+  | FlareVisual
+  | BeamVisual
+  | LinkBeamVisual
+  | ShockLanceVisual;
 
 /**
  * Where a shape's dynamic light sits: Item::registerLights uses the world
@@ -244,6 +285,9 @@ export interface StreamEntity {
    *  (SniperProjectile initialPosition/endPos). */
   beamStart?: [number, number, number];
   beamEnd?: [number, number, number];
+  /** ShockLanceProjectile: whether the bolt pinned to its target
+   *  (hitObject) — a miss only sparks at the muzzle. */
+  beamHit?: boolean;
   /** Link beams (ELF/repair): live source and target entity ids,
    *  resolved from the ghost's sourceObject/targetObject indices. */
   linkSourceId?: string;

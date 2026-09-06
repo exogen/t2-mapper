@@ -19,6 +19,7 @@ import { FlagMarker } from "./FlagMarker";
 import { CommandCircuitFlagCallout } from "./CommandCircuitFlagCallout";
 import { useCommandCircuit } from "../state/commandCircuitStore";
 import { entityTypeColor } from "../stream/playbackUtils";
+import { useDebug } from "./SettingsProvider";
 
 /**
  * The ONE rendering component tree for all game entities.
@@ -172,6 +173,7 @@ function PositionedEntityWrapper({
   entity: PositionedEntity;
   mountChildren?: Map<number, GameEntity>;
 }) {
+  const { debugMode } = useDebug();
   const position = entity.position;
   const scale = entity.scale;
   const quaternion = useMemo(() => {
@@ -202,7 +204,8 @@ function PositionedEntityWrapper({
     return mounts;
   }, [mountChildren]);
 
-  // Entities without a resolved shape get a wireframe placeholder.
+  // Entities without a resolved shape get a wireframe placeholder, a
+  // debugging aid only: a real object with no shape draws nothing.
   if (entity.renderType === "Shape" && !entity.shapeName) {
     return (
       <group
@@ -211,20 +214,22 @@ function PositionedEntityWrapper({
         quaternion={quaternion}
         scale={scale}
       >
-        <mesh>
-          <sphereGeometry args={[0.3, 6, 4]} />
-          <meshBasicMaterial
-            color={entityTypeColor(entity.className)}
-            wireframe
-          />
-        </mesh>
+        {debugMode && (
+          <mesh>
+            <sphereGeometry args={[0.3, 6, 4]} />
+            <meshBasicMaterial
+              color={entityTypeColor(entity.className)}
+              wireframe
+            />
+          </mesh>
+        )}
         <FlagMarkerSlot entity={entity} />
       </group>
     );
   }
 
   const fallback =
-    entity.renderType === "Explosion" ? null : (
+    entity.renderType === "Explosion" || !debugMode ? null : (
       <mesh>
         <sphereGeometry args={[0.5, 8, 6]} />
         <meshBasicMaterial

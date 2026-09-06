@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { Quaternion, Vector3 } from "three";
 import {
+  resolveShockLanceVisual,
   orientationAlongDirection,
   parseColorSegments,
   playerYawToQuaternion,
@@ -31,6 +32,63 @@ describe("parseColorSegments", () => {
       { text: "Smurf", colorCode: 8 },
       { text: " after", colorCode: 0 },
     ]);
+  });
+});
+
+describe("resolveShockLanceVisual", () => {
+  it("maps the datablock into a shockLance visual", () => {
+    const visual = resolveShockLanceVisual("ShockLanceProjectile", {
+      zapDuration: 1,
+      boltLength: 14,
+      lightningFreq: 25,
+      lightningDensity: 3,
+      lightningAmp: 0.25,
+      lightningWidth: 0.05,
+      startWidth: [0.3, 0.3],
+      endWidth: [0.6, 0.6],
+      boltSpeed: [2, -0.5],
+      texWrap: [1.5, 1.5],
+      textures: [
+        "special/shockLightning01",
+        "special/shockLightning02",
+        "special/shockLightning03",
+        "special/ELFBeam",
+      ],
+      emitter: 41,
+      shockwave: 42,
+      numParts: 25,
+    });
+    expect(visual).toEqual({
+      kind: "shockLance",
+      zapDuration: 1,
+      boltLength: 14,
+      lightningFreq: 25,
+      lightningDensity: 3,
+      lightningAmp: 0.25,
+      lightningWidth: 0.05,
+      startWidth: [0.3, 0.3],
+      endWidth: [0.6, 0.6],
+      boltSpeed: [2, -0.5],
+      texWrap: [1.5, 1.5],
+      textures: [
+        "special/shockLightning01",
+        "special/shockLightning02",
+        "special/shockLightning03",
+        "special/ELFBeam",
+      ],
+      emitterId: 41,
+      shockwaveId: 42,
+      numParts: 25,
+    });
+  });
+
+  it("ignores other classes and datablocks without the beam texture", () => {
+    expect(resolveShockLanceVisual("ELFProjectile", { textures: ["a"] })).toBe(
+      undefined,
+    );
+    expect(
+      resolveShockLanceVisual("ShockLanceProjectile", { textures: ["a"] }),
+    ).toBe(undefined);
   });
 });
 

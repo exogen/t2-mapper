@@ -20,6 +20,7 @@ import {
   Sprite,
   SpriteMaterial,
   Texture,
+  Quaternion,
   Uint16BufferAttribute,
   UnsignedByteType,
   Vector3,
@@ -29,6 +30,7 @@ import {
 import { audioToUrl, textureToUrl } from "../loaders";
 import { loadTexture } from "../textureUtils";
 import { setupEffectTexture } from "../stream/playbackUtils";
+import { orientationAlongDirection } from "../stream/streamHelpers";
 import {
   EmitterInstance,
   resolveEmitterData,
@@ -177,6 +179,9 @@ interface ShockwaveData {
   texWrap: number;
   lifetimeMS: number;
   is2D: boolean;
+  /** Ring rotated so its axis follows the spawn normal (Shockwave render
+   *  FUN_0068d5c0: orient(normal) x rotX(pi/2)). */
+  orientToNormal: boolean;
   renderSquare: boolean;
   renderBottom: boolean;
   mapToTerrain: boolean;
@@ -221,6 +226,7 @@ function resolveShockwaveData(
     texWrap: (raw.texWrap as number) ?? 1,
     lifetimeMS: (raw.lifetimeMS as number) ?? 500,
     is2D: !!raw.is2D,
+    orientToNormal: !!raw.orientToNormal,
     renderSquare: !!raw.renderSquare,
     renderBottom: !!raw.renderBottom,
     mapToTerrain: !!raw.mapToTerrain,
@@ -228,6 +234,74 @@ function resolveShockwaveData(
     times,
     textureName: (raw.textureName as string) ?? "",
     mapToTexture: (raw.mapToTexture as string) ?? "",
+  };
+}
+
+/** Torque rotX(pi/2) is a rotation about Three's Z axis. */
+const _shockwaveNormalRoll = new Quaternion().setFromAxisAngle(
+  new Vector3(0, 0, 1),
+  Math.PI / 2,
+);
+
+/**
+ * Spawn a shockwave ring at `origin` (Torque space). With
+ * orientToNormal the engine multiplies the ring's world matrix by
+ * orient(normal) x rotX(pi/2), tilting the ring's axis along the normal.
+ */
+function createShockwave(
+  shockwaveId: number,
+  origin: [number, number, number],
+  entityId: string,
+  getDataBlockData: (id: number) => Record<string, unknown> | undefined,
+  group: Group,
+  normal?: [number, number, number],
+): ActiveShockwave | null {
+  const swData = resolveShockwaveData(shockwaveId, getDataBlockData);
+  if (!swData) return null;
+  const texture = getParticleTexture(swData.textureName);
+  const geo = createShockwaveGeometry(swData.numSegments);
+  const mat = createShockwaveMaterial(texture);
+  const mesh = new Mesh(geo, mat);
+  mesh.frustumCulled = false;
+  mesh.position.set(origin[1], origin[2], origin[0]);
+  const orientation =
+    swData.orientToNormal && normal ? orientationAlongDirection(normal) : null;
+  if (orientation) {
+    mesh.quaternion
+      .set(orientation[0], orientation[1], orientation[2], orientation[3])
+      .multiply(_shockwaveNormalRoll);
+  }
+  group.add(mesh);
+
+  // Optional bottom face (renders the underside of the ring).
+  let bottomMesh: Mesh | null = null;
+  let bottomGeo: BufferGeometry | null = null;
+  if (swData.renderBottom) {
+    bottomGeo = createShockwaveGeometry(swData.numSegments);
+    bottomMesh = new Mesh(bottomGeo, mat);
+    bottomMesh.frustumCulled = false;
+    bottomMesh.position.copy(mesh.position);
+    bottomMesh.quaternion.copy(mesh.quaternion);
+    // Flip Y to render the underside.
+    bottomMesh.scale.y = -1;
+    group.add(bottomMesh);
+  }
+
+  // Clamp denormalized velocity values (parser bug workaround).
+  const initVelocity = Math.abs(swData.velocity) > 1e-10 ? swData.velocity : 0;
+
+  return {
+    entityId,
+    mesh,
+    bottomMesh,
+    geometry: geo,
+    bottomGeometry: bottomGeo,
+    material: mat,
+    creationTime: effectNow(),
+    lifetimeMS: swData.lifetimeMS,
+    data: swData,
+    radius: 0,
+    velocity: initVelocity,
   };
 }
 
@@ -811,6 +885,8 @@ export function ParticleEffects({
   const activeEmittersRef = useRef<ActiveEmitter[]>([]);
   /** Track which explosion entity IDs we've already processed. */
   const processedExplosionsRef = useRef<Set<string>>(new Set());
+  /** Shocklance bolts whose hit effects (shockwave, burst) have spawned. */
+  const processedShockLancesRef = useRef<Set<string>>(new Set());
   /** Track which projectile entity IDs have trail emitters attached. */
   const trailEntitiesRef = useRef<Set<string>>(new Set());
   /** Active looping projectile sounds keyed by entity ID. */
@@ -981,45 +1057,83 @@ export function ParticleEffects({
       // Spawn shockwave ring if the explosion datablock references one.
       const shockwaveId = expBlock?.shockwave as number | null | undefined;
       if (typeof shockwaveId === "number") {
-        const swData = resolveShockwaveData(shockwaveId, getDataBlockData);
-        if (swData) {
-          const texture = getParticleTexture(swData.textureName);
-          const geo = createShockwaveGeometry(swData.numSegments);
-          const mat = createShockwaveMaterial(texture);
-          const mesh = new Mesh(geo, mat);
+        const sw = createShockwave(
+          shockwaveId,
+          origin,
+          entity.id,
+          getDataBlockData,
+          group,
+        );
+        if (sw) activeShockwavesRef.current.push(sw);
+      }
+    }
+
+    // Shocklance hits: the ShocklanceHit shockwave at the bolt's end,
+    // its axis pointing back at the shooter (onAdd FUN_0064ec20 passes
+    // normalize(start - end)), plus one ShockParticleEmitter burst along
+    // the bolt over numParts milliseconds (emitParticles(start, end,
+    // dir, 0, numParts)). Misses spawn neither.
+    for (const entity of snapshot.entities) {
+      const visual = entity.visual;
+      if (
+        visual?.kind !== "shockLance" ||
+        !entity.beamHit ||
+        !entity.beamStart ||
+        !entity.beamEnd
+      ) {
+        continue;
+      }
+      if (processedShockLancesRef.current.has(entity.id)) continue;
+      processedShockLancesRef.current.add(entity.id);
+      const start = entity.beamStart;
+      const end = entity.beamEnd;
+      const dx = end[0] - start[0];
+      const dy = end[1] - start[1];
+      const dz = end[2] - start[2];
+      const len = Math.hypot(dx, dy, dz);
+      if (!(len > 0)) continue;
+      const axis: [number, number, number] = [dx / len, dy / len, dz / len];
+      if (visual.shockwaveId != null) {
+        const sw = createShockwave(
+          visual.shockwaveId,
+          end,
+          entity.id,
+          getDataBlockData,
+          group,
+          [-axis[0], -axis[1], -axis[2]],
+        );
+        if (sw) activeShockwavesRef.current.push(sw);
+      }
+      if (visual.emitterId != null) {
+        const emitterRaw = getDataBlockData(visual.emitterId);
+        const emitterData =
+          emitterRaw && resolveEmitterData(emitterRaw, getDataBlockData);
+        if (emitterData) {
+          const emitter = new EmitterInstance(
+            emitterData,
+            MAX_PARTICLES_PER_EMITTER,
+          );
+          emitter.worldGravity = snapshot.gravity;
+          emitter.emitPeriodic(start, end, visual.numParts, axis);
+          emitter.kill();
+          const texture = getParticleTexture(emitterData.particles.textureName);
+          const geometry = createParticleGeometry(MAX_PARTICLES_PER_EMITTER);
+          const material = createParticleMaterial(
+            texture,
+            emitterData.particles.useInvAlpha,
+            emitterData.orientParticles,
+          );
+          const mesh = new Mesh(geometry, material);
           mesh.frustumCulled = false;
-          mesh.position.set(origin[1], origin[2], origin[0]);
           group.add(mesh);
-
-          // Optional bottom face (renders the underside of the ring).
-          let bottomMesh: Mesh | null = null;
-          let bottomGeo: BufferGeometry | null = null;
-          if (swData.renderBottom) {
-            bottomGeo = createShockwaveGeometry(swData.numSegments);
-            bottomMesh = new Mesh(bottomGeo, mat);
-            bottomMesh.frustumCulled = false;
-            bottomMesh.position.set(origin[1], origin[2], origin[0]);
-            // Flip Y to render the underside.
-            bottomMesh.scale.y = -1;
-            group.add(bottomMesh);
-          }
-
-          // Clamp denormalized velocity values (parser bug workaround).
-          const initVelocity =
-            Math.abs(swData.velocity) > 1e-10 ? swData.velocity : 0;
-
-          activeShockwavesRef.current.push({
-            entityId: entity.id as string,
+          activeEmittersRef.current.push({
+            emitter,
             mesh,
-            bottomMesh,
-            geometry: geo,
-            bottomGeometry: bottomGeo,
-            material: mat,
-            creationTime: effectNow(),
-            lifetimeMS: swData.lifetimeMS,
-            data: swData,
-            radius: 0,
-            velocity: initVelocity,
+            geometry,
+            material,
+            targetTexture: texture,
+            origin: [end[0], end[1], end[2]],
+            isBurst: true,
           });
         }
       }
@@ -1477,7 +1591,8 @@ export function ParticleEffects({
     // longer in the snapshot can never match again.
     if (
       processedExplosionsRef.current.size > 500 ||
-      processedExplosionSoundsRef.current.size > 500
+      processedExplosionSoundsRef.current.size > 500 ||
+      processedShockLancesRef.current.size > 500
     ) {
       const currentIds = new Set(snapshot.entities.map((e) => e.id));
       for (const id of processedExplosionsRef.current) {
@@ -1488,6 +1603,11 @@ export function ParticleEffects({
       for (const id of processedExplosionSoundsRef.current) {
         if (!currentIds.has(id)) {
           processedExplosionSoundsRef.current.delete(id);
+        }
+      }
+      for (const id of processedShockLancesRef.current) {
+        if (!currentIds.has(id)) {
+          processedShockLancesRef.current.delete(id);
         }
       }
     }
@@ -1536,6 +1656,7 @@ export function ParticleEffects({
       }
       activeShockwavesRef.current = [];
       processedExplosionsRef.current.clear();
+      processedShockLancesRef.current.clear();
       trailEntitiesRef.current.clear();
       processedExplosionSoundsRef.current.clear();
       // Clean up projectile sounds.
