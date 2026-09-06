@@ -6,6 +6,7 @@ import {
   type KeyState,
 } from "./InputControls";
 import { useRecording } from "./usePlayback";
+import { isRelayRecording } from "../stream/demoDate";
 import { useStore } from "zustand";
 import { useInputMode } from "./InputContext";
 import {
@@ -542,8 +543,13 @@ function CommandCircuitOverlay({
  * Demo-playback camera controls. F cycles original → free-fly → follow →
  * first-person → original; each mode shows only the inputs it uses. (The
  * behavior lives in DemoCameraController — this only visualizes it.)
+ * Relay (MapGenius) recordings have no original view to return to —
+ * StreamingController hands "original" straight back to free-fly — so
+ * their last step is labelled as the free-fly it lands on.
  */
 function DemoCameraOverlay() {
+  const recording = useRecording();
+  const relayRecording = isRelayRecording(recording?.recorderName ?? null);
   const cameraMode = useStore(streamPlaybackStore, (s) => s.cameraMode);
   const followEntityId = useStore(streamPlaybackStore, (s) => s.followEntityId);
   const followFlagSlot = useStore(streamPlaybackStore, (s) => s.followFlagSlot);
@@ -565,7 +571,9 @@ function DemoCameraOverlay() {
           ? playerFollow
             ? "First-person mode"
             : "Free-fly mode"
-          : "Original view";
+          : relayRecording
+            ? "Free-fly mode"
+            : "Original view";
   return (
     <>
       {isFly ? <MoveKeys /> : null}
