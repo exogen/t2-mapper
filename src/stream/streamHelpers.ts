@@ -67,6 +67,56 @@ export function playerYawToQuaternion(
   return [0, Math.sin(halfAngle), 0, Math.cos(halfAngle)];
 }
 
+const _orientRight = new Vector3();
+const _orientForward = new Vector3();
+const _orientUp = new Vector3();
+const _orientMatrix = new Matrix4();
+const _orientQuat = new Quaternion();
+
+/**
+ * The rotation that points a shape's +y along a Torque-space direction,
+ * as Tribes2.exe builds a projectile's render transform every frame
+ * (LinearProjectile::interpolateTick 0x62eb20 → the matrix-from-forward
+ * helper 0x553d00): right = forward × (0,0,1), or (1,0,0) for a vertical
+ * forward; up = right × forward; columns right, forward, up. Returned as
+ * a Three.js quaternion in the app's world frame. Null for a zero vector.
+ */
+export function orientationAlongDirection(
+  dir: [number, number, number],
+): [number, number, number, number] | null {
+  const [x, y, z] = dir;
+  const len = Math.hypot(x, y, z);
+  if (!(len > 1e-9)) return null;
+  const fx = x / len;
+  const fy = y / len;
+  const fz = z / len;
+  // Torque cross(forward, z-up) = (fy, -fx, 0).
+  let rx = fy;
+  let ry = -fx;
+  let rz = 0;
+  const rlen = Math.hypot(rx, ry);
+  if (rlen <= 1e-4) {
+    rx = 1;
+    ry = 0;
+    rz = 0;
+  } else {
+    rx /= rlen;
+    ry /= rlen;
+  }
+  // up = right × forward (Torque space).
+  const ux = ry * fz - rz * fy;
+  const uy = rz * fx - rx * fz;
+  const uz = rx * fy - ry * fx;
+  // Torque (x, y, z) → Three (y, z, x): Torque +x (right) is Three Z,
+  // +y (forward) is Three X, +z (up) is Three Y.
+  _orientForward.set(fy, fz, fx);
+  _orientUp.set(uy, uz, ux);
+  _orientRight.set(ry, rz, rx);
+  _orientMatrix.makeBasis(_orientForward, _orientUp, _orientRight);
+  _orientQuat.setFromRotationMatrix(_orientMatrix);
+  return [_orientQuat.x, _orientQuat.y, _orientQuat.z, _orientQuat.w];
+}
+
 /** Convert a Torque quaternion (x-right, y-forward, z-up) to Three.js. */
 export function torqueQuatToThreeJS(q: {
   x: number;
@@ -261,12 +311,40 @@ export { resolveShapeName };
  *  (players, everything they carry, and static scenery) — the
  *  shape-prefetch scope. Vehicles/turrets/deployables load on demand at
  *  first sight. */
-export const PRELOAD_DATA_BLOCK_CLASSES: ReadonlySet<string> = new Set([
+const PRELOAD_DATA_BLOCK_CLASSES: ReadonlySet<string> = new Set([
   "PlayerData",
   "ShapeBaseImageData",
   "ItemData",
   "StaticShapeData",
 ]);
+
+/**
+ * Unique explosion shape names reachable from datablocks that reference an
+ * explosion, including each explosion's sub-explosions.
+ */
+export function collectEffectShapeNames(
+  dataBlocks: Iterable<ParsedData | undefined>,
+  getDataBlockData: (id: number) => ParsedData | undefined,
+): string[] {
+  const names = new Set<string>();
+  const addShape = (block: ParsedData | undefined) => {
+    const shape = block?.dtsFileName;
+    if (typeof shape === "string" && shape) names.add(shape);
+  };
+  for (const data of dataBlocks) {
+    const explosionId = data?.explosion;
+    if (typeof explosionId !== "number") continue;
+    const expBlock = getDataBlockData(explosionId);
+    if (!expBlock) continue;
+    addShape(expBlock);
+    const subExplosions = expBlock.subExplosions;
+    if (!Array.isArray(subExplosions)) continue;
+    for (const subId of subExplosions) {
+      if (typeof subId === "number") addShape(getDataBlockData(subId));
+    }
+  }
+  return [...names];
+}
 
 /** Unique shape names from datablocks in the prefetch categories. */
 export function collectPreloadShapeNames(
@@ -302,7 +380,7 @@ export function isTruthyField(value: unknown): boolean {
   return !!value;
 }
 
-export function getStringField(
+function getStringField(
   data: ParsedData | undefined,
   keys: readonly string[],
 ): string | undefined {
@@ -314,7 +392,7 @@ export function getStringField(
   return undefined;
 }
 
-export function getBooleanField(
+function getBooleanField(
   data: ParsedData | undefined,
   keys: readonly string[],
 ): boolean | undefined {
@@ -471,18 +549,26 @@ export function resolveSpriteVisual(
   if (!data) return undefined;
 
   if (className === "LinearFlareProjectile") {
-    const texture = getStringField(data, ["smokeTexture", "flareTexture"]);
-    if (!texture) return undefined;
+    const baseTexture = getStringField(data, ["flareBaseTexture"]);
+    const modTexture = getStringField(data, ["flareModTexture"]);
+    const shapeName = getStringField(data, ["projectileShapeName"]);
+    if (!baseTexture && !modTexture && !shapeName) return undefined;
     const color = data.flareColor as
       { r: number; g: number; b: number } | undefined;
-    const size = getNumberField(data, ["size"]) ?? 0.5;
+    const sizes = data.sizes as number[] | undefined;
+    const scale = data.scale as { x: number; y: number; z: number } | undefined;
     return {
-      kind: "sprite",
-      texture,
+      kind: "flare",
+      numFlares: getNumberField(data, ["numFlares"]) ?? 0,
+      sizes: [sizes?.[0] ?? 0, sizes?.[1] ?? 0, sizes?.[2] ?? 0],
       color: color
         ? { r: color.r, g: color.g, b: color.b }
         : { r: 1, g: 1, b: 1 },
-      size,
+      baseTexture: baseTexture ?? "",
+      modTexture: modTexture ?? "",
+      shapeName,
+      shapeScale: scale ? [scale.x, scale.y, scale.z] : [1, 1, 1],
+      faceViewer: isTruthyField(data.faceViewer),
     };
   }
 
@@ -751,7 +837,7 @@ export function extractWavTag(text: string): {
 
 // ── Control object detection ──
 
-export type ControlObjectType = "camera" | "player";
+type ControlObjectType = "camera" | "player";
 
 export function detectControlObjectType(
   data: ParsedData | undefined,

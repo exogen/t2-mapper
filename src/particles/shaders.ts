@@ -53,6 +53,9 @@ void main() {
 }
 `;
 
+// No fog: ParticleEmitter::renderObject (FUN_00623cb0 → FUN_006241d0) draws
+// each particle with its raw colour and no haze or GL fog. Distant particles
+// disappear only because the camera's far plane is visibleDistance.
 export const particleFragmentShader = /* glsl */ `
 uniform sampler2D particleTexture;
 uniform bool hasTexture;

@@ -6,7 +6,9 @@ import type {
 } from "./types";
 
 const DEG_TO_RAD = Math.PI / 180;
-const GRAVITY_Z = -9.81;
+/** World gravity at the T2 default (setGravity −20 × 0.4905). */
+const DEFAULT_GRAVITY_Z = -9.81;
+const ZERO_VELOCITY: [number, number, number] = [0, 0, 0];
 /** Converts (degrees/sec * ms) to radians. */
 const SPIN_FACTOR = Math.PI / (180 * 1000);
 
@@ -42,7 +44,7 @@ function getBool(
   return def;
 }
 
-export function resolveParticleData(
+function resolveParticleData(
   raw: Record<string, unknown>,
 ): ParticleDataResolved {
   // The demo parser packs keyframes into a `keys` array of {r,g,b,a,size,time}.
@@ -235,6 +237,19 @@ function interpolateKeys(
   return { r: last.r, g: last.g, b: last.b, a: last.a, size: last.size };
 }
 
+/** lerp(a, b, t) as a new vector. */
+function lerp3(
+  a: [number, number, number],
+  b: [number, number, number],
+  t: number,
+): [number, number, number] {
+  return [
+    a[0] + (b[0] - a[0]) * t,
+    a[1] + (b[1] - a[1]) * t,
+    a[2] + (b[2] - a[2]) * t,
+  ];
+}
+
 export class EmitterInstance {
   readonly data: EmitterDataResolved;
   readonly particles: Particle[] = [];
@@ -242,23 +257,22 @@ export class EmitterInstance {
 
   private internalClock = 0;
   private nextParticleTime = 0;
-  private emitterAge = 0;
-  private emitterLifetime: number;
-  private emitterDead = false;
+  private elapsedMS = 0;
+  private lifetimeMS: number;
+  private killed = false;
+  /** World gravity in m/s² (negative is down); the owner keeps it current. */
+  worldGravity = DEFAULT_GRAVITY_Z;
 
-  constructor(
-    data: EmitterDataResolved,
-    maxParticles = 256,
-    overrideLifetimeMS?: number,
-  ) {
+  constructor(data: EmitterDataResolved, maxParticles = 256) {
     this.data = data;
     this.maxParticles = maxParticles;
 
-    let lifetime = overrideLifetimeMS ?? data.lifetimeMS;
-    if (!overrideLifetimeMS && data.lifetimeVarianceMS > 0) {
+    // ParticleEmitter::onAdd: lifetimeMS ± integer variance (0 = unlimited).
+    let lifetime = data.lifetimeMS;
+    if (data.lifetimeVarianceMS > 0) {
       lifetime += Math.round(randomVariance(0, data.lifetimeVarianceMS));
     }
-    this.emitterLifetime = lifetime;
+    this.lifetimeMS = lifetime;
   }
 
   /**
@@ -275,122 +289,170 @@ export class EmitterInstance {
       i < count && this.particles.length < this.maxParticles;
       i++
     ) {
-      this.addParticle(pos, axis);
+      this.addParticle(pos, axis, ZERO_VELOCITY);
     }
   }
 
   /**
-   * Periodic emission over a time delta. Faithful to V12's emitParticles timing.
+   * Periodic emission over `dtMS` along the segment the emitter travelled,
+   * faithful to ParticleEmitter::emitParticles(start, end, axis, velocity,
+   * numMS): each particle spawns at lerp(start, end, emitTime / numMS), so a
+   * moving projectile leaves an evenly spaced trail (ejectionPeriodMS × speed
+   * apart) regardless of frame rate, and `velocity` feeds inheritedVelFactor.
+   * Time is whole milliseconds like the engine.
    */
   emitPeriodic(
-    pos: [number, number, number],
+    start: [number, number, number],
+    end: [number, number, number],
     dtMS: number,
     axis: [number, number, number] = [0, 0, 1],
+    velocity: [number, number, number] = ZERO_VELOCITY,
   ): void {
-    if (this.emitterDead) return;
+    if (this.killed || this.lifetimeExpired()) return;
+    const numMS = Math.round(dtMS);
+    if (numMS <= 0) return;
 
-    let timeLeft = dtMS;
-    while (timeLeft > 0) {
-      if (this.nextParticleTime > 0) {
-        const step = Math.min(timeLeft, this.nextParticleTime);
-        this.nextParticleTime -= step;
-        timeLeft -= step;
-        this.internalClock += step;
-        continue;
+    let currTime = 0;
+    if (this.nextParticleTime > 0) {
+      if (this.nextParticleTime > numMS) {
+        this.nextParticleTime -= numMS;
+        this.internalClock += numMS;
+        return;
       }
+      currTime = this.nextParticleTime;
+      this.nextParticleTime = 0;
+      this.internalClock += currTime;
+      // The engine always ages this carried-over particle, regardless of
+      // overrideAdvances.
+      this.emitAlong(start, end, currTime, numMS, axis, velocity, true);
+    }
 
-      if (this.particles.length < this.maxParticles) {
-        this.addParticle(pos, axis);
-
-        // V12: when overrideAdvances is false, immediately age the newly
-        // spawned particle by the remaining time in this frame. If that
-        // exceeds its lifetime, kill it immediately (never rendered).
-        if (!this.data.overrideAdvances && timeLeft > 0) {
-          const p = this.particles[this.particles.length - 1];
-          p.currentAge += timeLeft;
-          if (p.currentAge >= p.totalLifetime) {
-            this.particles.pop();
-          }
-        }
-      }
-
-      // Compute next emission time.
+    while (currTime < numMS) {
       let period = this.data.ejectionPeriodMS;
       if (this.data.periodVarianceMS > 0) {
         period += Math.round(randomVariance(0, this.data.periodVarianceMS));
       }
-      this.nextParticleTime = Math.max(1, period);
+      period = Math.max(1, period);
+      if (currTime + period > numMS) {
+        this.nextParticleTime = currTime + period - numMS;
+        this.internalClock += numMS - currTime;
+        break;
+      }
+      this.internalClock += period;
+      currTime += period;
+      this.emitAlong(
+        start,
+        end,
+        currTime,
+        numMS,
+        axis,
+        velocity,
+        !this.data.overrideAdvances,
+      );
     }
   }
 
-  /** Advance all live particles by dtMS. */
+  /** Advance all live particles by dtMS (ParticleEmitter::advanceTime). */
   update(dtMS: number): void {
-    this.emitterAge += dtMS;
+    const numMS = Math.round(dtMS);
+    if (numMS <= 0) return;
+    this.elapsedMS += numMS;
 
-    // Check emitter lifetime (V12 uses strictly greater).
-    if (this.emitterLifetime > 0 && this.emitterAge > this.emitterLifetime) {
-      this.emitterDead = true;
-    }
-
-    const dt = dtMS / 1000;
-    const pData = this.data.particles;
-
-    // Age particles, remove dead, update physics + interpolation.
     for (let i = this.particles.length - 1; i >= 0; i--) {
       const p = this.particles[i];
-      p.currentAge += dtMS;
-
+      p.currentAge += numMS;
       if (p.currentAge >= p.totalLifetime) {
         // Remove dead particle (swap with last for O(1) removal).
         this.particles[i] = this.particles[this.particles.length - 1];
         this.particles.pop();
         continue;
       }
-
-      // Physics integration (V12 updateSingleParticle).
-      const drag = pData.dragCoefficient;
-      const gravCoeff = pData.gravityCoefficient;
-
-      // a = acc - vel*drag - wind*windCoeff + gravity*gravCoeff
-      // We skip wind for now (no wind system yet).
-      const ax = p.acc[0] - p.vel[0] * drag;
-      const ay = p.acc[1] - p.vel[1] * drag;
-      const az = p.acc[2] - p.vel[2] * drag + GRAVITY_Z * gravCoeff;
-
-      // Symplectic Euler: update vel first, then pos with new vel.
-      p.vel[0] += ax * dt;
-      p.vel[1] += ay * dt;
-      p.vel[2] += az * dt;
-
-      p.pos[0] += p.vel[0] * dt;
-      p.pos[1] += p.vel[1] * dt;
-      p.pos[2] += p.vel[2] * dt;
-
-      // Color/size keyframe interpolation.
-      const normalizedAge = p.currentAge / p.totalLifetime;
-      const interp = interpolateKeys(pData.keys, normalizedAge);
-      p.r = interp.r;
-      p.g = interp.g;
-      p.b = interp.b;
-      p.a = interp.a;
-      p.size = interp.size;
-      p.currentSpin = p.spinSpeed * p.currentAge * SPIN_FACTOR;
+      this.updateParticle(p, numMS);
     }
   }
 
+  /** No more emission and no live particles (deleteWhenEmpty + lifetime). */
   isDead(): boolean {
-    return this.emitterDead && this.particles.length === 0;
+    return (
+      (this.killed || this.lifetimeExpired()) && this.particles.length === 0
+    );
   }
 
-  /** Immediately stop emitting new particles. Existing particles live out their lifetime. */
+  /** Stop emitting (deleteWhenEmpty); existing particles live out their lifetime. */
   kill(): void {
-    this.emitterDead = true;
+    this.killed = true;
+  }
+
+  private lifetimeExpired(): boolean {
+    return this.lifetimeMS > 0 && this.elapsedMS > this.lifetimeMS;
+  }
+
+  /**
+   * Spawn one particle at its point along the frame's segment, then move it
+   * through the remainder of the frame. The engine only integrates physics
+   * here — the age stays 0 until advanceTime — and drops the particle
+   * outright if the remainder exceeds its lifetime.
+   */
+  private emitAlong(
+    start: [number, number, number],
+    end: [number, number, number],
+    emitTime: number,
+    numMS: number,
+    axis: [number, number, number],
+    velocity: [number, number, number],
+    advance: boolean,
+  ): void {
+    if (this.particles.length >= this.maxParticles) return;
+    const p = this.addParticle(
+      lerp3(start, end, emitTime / numMS),
+      axis,
+      velocity,
+    );
+    const remaining = numMS - emitTime;
+    if (!advance || remaining <= 0) return;
+    if (p.totalLifetime < remaining) {
+      this.particles.pop();
+      return;
+    }
+    this.updateParticle(p, remaining);
+  }
+
+  /** Physics integration + keyframe interpolation (V12 updateSingleParticle). */
+  private updateParticle(p: Particle, dtMS: number): void {
+    const dt = dtMS / 1000;
+    const pData = this.data.particles;
+    const drag = pData.dragCoefficient;
+    const gravCoeff = pData.gravityCoefficient;
+
+    // a = acc - vel*drag - wind*windCoeff + gravity*gravCoeff
+    // We skip wind for now (no wind system yet).
+    const ax = p.acc[0] - p.vel[0] * drag;
+    const ay = p.acc[1] - p.vel[1] * drag;
+    const az = p.acc[2] - p.vel[2] * drag + this.worldGravity * gravCoeff;
+
+    // Symplectic Euler: update vel first, then pos with new vel.
+    p.vel[0] += ax * dt;
+    p.vel[1] += ay * dt;
+    p.vel[2] += az * dt;
+
+    p.pos[0] += p.vel[0] * dt;
+    p.pos[1] += p.vel[1] * dt;
+    p.pos[2] += p.vel[2] * dt;
+
+    const interp = interpolateKeys(pData.keys, p.currentAge / p.totalLifetime);
+    p.r = interp.r;
+    p.g = interp.g;
+    p.b = interp.b;
+    p.a = interp.a;
+    p.size = interp.size;
+    p.currentSpin = p.spinSpeed * p.currentAge * SPIN_FACTOR;
   }
 
   private addParticle(
     pos: [number, number, number],
     axis: [number, number, number],
-  ): void {
+    inheritedVelocity: [number, number, number],
+  ): Particle {
     const d = this.data;
     const pData = d.particles;
 
@@ -446,13 +508,14 @@ export class EmitterInstance {
       pos[2] + ejZ * d.ejectionOffset,
     ];
 
+    // ParticleData::initializeParticle: vel += inherited × inheritedVelFactor,
+    // then acc = vel × constantAcceleration, set once and applied every frame.
+    const ivf = pData.inheritedVelFactor;
     const vel: [number, number, number] = [
-      ejX * speed,
-      ejY * speed,
-      ejZ * speed,
+      ejX * speed + inheritedVelocity[0] * ivf,
+      ejY * speed + inheritedVelocity[1] * ivf,
+      ejZ * speed + inheritedVelocity[2] * ivf,
     ];
-
-    // V12: acc = vel * constantAcceleration, set once at spawn, applied every frame.
     const ca = pData.constantAcceleration;
     const acc: [number, number, number] = [
       vel[0] * ca,
@@ -474,7 +537,7 @@ export class EmitterInstance {
     // Initial color/size from first keyframe.
     const k0 = pData.keys[0];
 
-    this.particles.push({
+    const particle: Particle = {
       pos: spawnPos,
       vel,
       acc,
@@ -489,6 +552,8 @@ export class EmitterInstance {
       b: k0.b,
       a: k0.a,
       size: k0.size,
-    });
+    };
+    this.particles.push(particle);
+    return particle;
   }
 }

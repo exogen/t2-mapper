@@ -10,38 +10,68 @@ import {
   Texture,
 } from "three";
 import type { Material } from "three";
-import { SHAPE_LIGHTING } from "./lightingConfig";
-import { injectCustomFog } from "./fogShader";
+import {
+  effectLightUniforms,
+  glslEffectLightIgnoreDirect,
+  glslEffectLightsPars,
+} from "./effectLightUniforms";
+import { injectCustomFog, injectSpriteFog } from "./fogShader";
 import { globalFogUniforms } from "./globalFogUniforms";
+import { lightsFragmentBeginByType } from "./lightsChunk";
+import { glslColorSpace } from "./shaderUtils";
+import {
+  defaultShapeLightUniforms,
+  glslShapeLightingPars,
+  shapeSunUniforms,
+  type ShapeLightUniforms,
+} from "./shapeLighting";
 
 /**
- * Inject lighting multipliers into a MeshLambertMaterial or MeshBasicMaterial shader.
- * Call this from onBeforeCompile after other shader modifications (e.g., fog).
+ * Replace Three's Lambert lighting with the engine's (see shapeLighting.ts):
+ * the object's probed light set and the pooled point lights, summed and
+ * clamped in gamma space, then multiplied into the sRGB texture. Three's
+ * own light loops are diverted to a no-op. The per-shape uniforms come
+ * from the material (`userData.shapeLight`, attached by the shape), so
+ * one shared callback serves every shape and the program cache still
+ * matches by function identity.
  */
-export function injectShapeLighting(shader: any): void {
-  // Add lighting multiplier uniforms
-  shader.uniforms.shapeDirectionalFactor = {
-    value: SHAPE_LIGHTING.directional,
-  };
-  shader.uniforms.shapeAmbientFactor = { value: SHAPE_LIGHTING.ambient };
-
-  // Declare uniforms in fragment shader
+function injectShapeLighting(material: Material, shader: any): void {
+  const shapeLight =
+    (material.userData.shapeLight as ShapeLightUniforms | undefined) ??
+    defaultShapeLightUniforms;
+  Object.assign(
+    shader.uniforms,
+    shapeLight,
+    shapeSunUniforms,
+    effectLightUniforms,
+  );
   shader.fragmentShader = shader.fragmentShader.replace(
     "#include <common>",
     `#include <common>
-uniform float shapeDirectionalFactor;
-uniform float shapeAmbientFactor;
-`,
+${glslColorSpace}`,
   );
-
-  // Scale directional and ambient light contributions
   shader.fragmentShader = shader.fragmentShader.replace(
-    "#include <lights_fragment_end>",
-    `#include <lights_fragment_end>
-  // Apply shape-specific lighting multipliers
-  reflectedLight.directDiffuse *= shapeDirectionalFactor;
-  reflectedLight.indirectDiffuse *= shapeAmbientFactor;
-`,
+    "#include <lights_lambert_pars_fragment>",
+    `#include <lights_lambert_pars_fragment>
+${glslEffectLightIgnoreDirect}
+${glslEffectLightsPars}
+${glslShapeLightingPars}`,
+  );
+  shader.fragmentShader = shader.fragmentShader.replace(
+    "#include <lights_fragment_begin>",
+    lightsFragmentBeginByType({
+      directional: "RE_Direct_EffectLightIgnore",
+      punctual: "RE_Direct_EffectLightIgnore",
+    }),
+  );
+  shader.fragmentShader = shader.fragmentShader.replace(
+    "#include <opaque_fragment>",
+    `{
+  vec3 textureSRGB = torqueLinearToSRGB(diffuseColor.rgb);
+  vec3 lightingSRGB = shapeLightingSRGB(normalize(normal), -vViewPosition);
+  outgoingLight = torqueSRGBToLinear(clamp(lightingSRGB * textureSRGB, 0.0, 1.0)) + totalEmissiveRadiance;
+}
+#include <opaque_fragment>`,
   );
 }
 
@@ -84,7 +114,7 @@ export function resetShapeEnvMap(): void {
  * Uses a 2D sphere map texture with the classic GL_SPHERE_MAP UV formula.
  * Blends envmap color with diffuse based on the base texture's alpha channel.
  */
-export function injectShapeEnvMap(
+function injectShapeEnvMap(
   shader: {
     uniforms: Record<string, { value: unknown }>;
     fragmentShader: string;
@@ -176,20 +206,34 @@ if (shapeEnvMapActive && shapeReflectionAmount > 0.0) {
 
 // ── Shape material creation ──
 
-export type SingleMaterial =
+type SingleMaterial =
   MeshStandardMaterial | MeshBasicMaterial | MeshLambertMaterial;
-export type MaterialResult =
+type MaterialResult =
   SingleMaterial | [MeshLambertMaterial, MeshLambertMaterial];
 
 // Stable onBeforeCompile callbacks — using shared function references lets
 // Three.js's program cache match by identity rather than toString().
-const lambertBeforeCompile: Material["onBeforeCompile"] = (shader) => {
+const lambertBeforeCompile: Material["onBeforeCompile"] = function (
+  this: Material,
+  shader,
+) {
   injectCustomFog(shader, globalFogUniforms);
-  injectShapeLighting(shader);
+  injectShapeLighting(this, shader);
 };
 
 const basicBeforeCompile: Material["onBeforeCompile"] = (shader) => {
   injectCustomFog(shader, globalFogUniforms);
+};
+
+const additiveBeforeCompile: Material["onBeforeCompile"] = (shader) => {
+  injectCustomFog(shader, globalFogUniforms, { additive: true });
+};
+
+/** onBeforeCompile for additive SpriteMaterials (effect billboards). */
+export const additiveSpriteBeforeCompile: Material["onBeforeCompile"] = (
+  shader,
+) => {
+  injectSpriteFog(shader, globalFogUniforms, { additive: true });
 };
 
 /**
@@ -200,19 +244,23 @@ export function applyShapeShaderModifications(
   mat: MeshBasicMaterial | MeshLambertMaterial,
   envMapOptions?: { reflectionAmount: number },
 ): void {
+  const additive = mat.blending === AdditiveBlending;
   if (!envMapOptions) {
     mat.onBeforeCompile =
       mat instanceof MeshLambertMaterial
         ? lambertBeforeCompile
-        : basicBeforeCompile;
+        : additive
+          ? additiveBeforeCompile
+          : basicBeforeCompile;
     return;
   }
   const matType = mat instanceof MeshLambertMaterial ? "lambert" : "basic";
-  mat.customProgramCacheKey = () => `shape-envmap-${matType}`;
+  mat.customProgramCacheKey = () =>
+    `shape-envmap-${matType}${additive ? "-additive" : ""}`;
   const { reflectionAmount } = envMapOptions;
-  mat.onBeforeCompile = (shader) => {
-    injectCustomFog(shader, globalFogUniforms);
-    injectShapeLighting(shader);
+  mat.onBeforeCompile = function (this: Material, shader) {
+    injectCustomFog(shader, globalFogUniforms, { additive });
+    if (this instanceof MeshLambertMaterial) injectShapeLighting(this, shader);
     injectShapeEnvMap(shader, reflectionAmount);
   };
 }

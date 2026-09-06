@@ -109,13 +109,13 @@ fly ssh console -C "node --import=tsx/esm relay/syncAssets.ts"
 
 **Environment variables** (all optional, with defaults):
 
-| Variable           | Default                                         | Description                           |
-| ------------------ | ----------------------------------------------- | ------------------------------------- |
-| `RELAY_PORT`       | `8765`                                          | WebSocket listen port                 |
-| `GAME_BASE_PATH`   | `docs/base` relative to relay                   | Path to extracted game assets         |
-| `ASSETS_REPO_*`    | see `.env.example`                              | Git checkout the Fly image syncs      |
-| `MANIFEST_PATH`    | `public/manifest.json` relative to project root | Path to resource manifest             |
-| `T2_MASTER_SERVER` | `master.tribesnext.com`                         | Master server for server list queries |
+| Variable           | Default                                      | Description                           |
+| ------------------ | -------------------------------------------- | ------------------------------------- |
+| `RELAY_PORT`       | `8765`                                       | WebSocket listen port                 |
+| `GAME_BASE_PATH`   | `docs/base` relative to relay                | Path to extracted game assets         |
+| `ASSETS_REPO_*`    | see `.env.example`                           | Git checkout the Fly image syncs      |
+| `MANIFEST_PATH`    | `src/manifest.json` relative to project root | Path to resource manifest             |
+| `T2_MASTER_SERVER` | `master.tribesnext.com`                      | Master server for server list queries |
 
 ### Adding game assets
 

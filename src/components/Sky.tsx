@@ -21,12 +21,24 @@ import { loadTexture, setupTexture } from "../textureUtils";
 import { CloudLayers } from "./CloudLayers";
 import { fogStateFromScene, type FogState } from "./FogProvider";
 import { installCustomFogShader } from "../fogShader";
+import { cameraRegistry } from "../state/cameraRegistry";
 import {
   globalFogUniforms,
   updateGlobalFogUniforms,
   packFogVolumeData,
   resetGlobalFogUniforms,
 } from "../globalFogUniforms";
+
+/** three.js's PerspectiveCamera default — restored whenever fog is off. */
+const DEFAULT_CAMERA_FAR = 2000;
+
+/** Clip the perspective camera at `far` (the engine's far plane is visibleDistance). */
+function setPerspectiveFar(far: number): void {
+  const perspective = cameraRegistry.perspective;
+  if (!perspective || perspective.far === far) return;
+  perspective.far = far;
+  perspective.updateProjectionMatrix();
+}
 
 const log = createLogger("Sky");
 
@@ -233,7 +245,7 @@ function SkyBoxTexture({
   );
 }
 
-export function SkyBox({
+function SkyBox({
   materialList,
   fogColor,
   fogState,
@@ -507,6 +519,7 @@ function DynamicFog({
       fogRef.current = null;
       // Reset fog uniforms on unmount so next mission starts clean
       resetGlobalFogUniforms();
+      setPerspectiveFar(DEFAULT_CAMERA_FAR);
     };
   }, [scene, camera, fogState, fogVolumeData]);
 
@@ -525,6 +538,7 @@ function DynamicFog({
       // (fog factor = 0 when distance < near)
       fog.near = 1e10;
       fog.far = 1e10;
+      setPerspectiveFar(DEFAULT_CAMERA_FAR);
     }
   }, [enabled, fogState, camera.position.y]);
 
@@ -548,6 +562,13 @@ function DynamicFog({
       fog.near = scale > 1 ? Math.min(near, 100) : near;
       fog.far = far * scale;
       fog.color.copy(fogState.fogColor);
+      // The engine's frustum far plane IS visibleDistance (SceneGraph::
+      // renderScene builds the SceneState with it; every object's projection
+      // clips there). Haze reaches 1 exactly at that plane, so fogged
+      // surfaces fade out cleanly — and things the engine never fogs, like
+      // particles (ParticleEmitter::renderObject draws raw colours), simply
+      // stop existing past it instead of glowing through the haze.
+      setPerspectiveFar(fog.far);
     }
     // When disabled, fog.near/far are already set to 1e10 by the useEffect
   });

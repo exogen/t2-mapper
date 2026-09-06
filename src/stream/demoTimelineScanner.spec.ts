@@ -26,7 +26,9 @@ describe("isRealMatchStart", () => {
   // NOT be treated as the start — they are "starts", not "started".
   it("rejects the pre-match countdown ticks", () => {
     expect(
-      isRealMatchStart("\x02Match starts in %1 seconds.~wfx/misc/hunters_%1.wav"),
+      isRealMatchStart(
+        "\x02Match starts in %1 seconds.~wfx/misc/hunters_%1.wav",
+      ),
     ).toBe(false);
     expect(
       isRealMatchStart(

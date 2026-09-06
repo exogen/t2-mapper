@@ -23,6 +23,8 @@ import {
   Uint16BufferAttribute,
   UnsignedByteType,
   Vector3,
+  NoColorSpace,
+  SRGBColorSpace,
 } from "three";
 import { audioToUrl, textureToUrl } from "../loaders";
 import { loadTexture } from "../textureUtils";
@@ -84,10 +86,10 @@ function getParticleTexture(textureName: string): Texture {
   try {
     const url = textureToUrl(textureName);
     const tex = loadTexture(url, (t) => {
-      setupEffectTexture(t);
+      setupEffectTexture(t, NoColorSpace);
       _texturesReady.add(t);
     });
-    setupEffectTexture(tex);
+    setupEffectTexture(tex, NoColorSpace);
     _textureCache.set(textureName, tex);
     return tex;
   } catch {
@@ -149,6 +151,7 @@ function createExplosionLabel(
   ctx.fillText(text, padding, canvas.height / 2);
 
   const texture = new CanvasTexture(canvas);
+  texture.colorSpace = SRGBColorSpace;
   const material = new SpriteMaterial({
     map: texture,
     transparent: true,
@@ -546,15 +549,22 @@ interface ActiveEmitter {
   material: ShaderMaterial;
   /** The intended texture (may still be loading). */
   targetTexture: Texture;
+  /** Current emission point (Torque space). */
   origin: [number, number, number];
+  /** Emission point last frame; trails spawn along prevOrigin→origin. */
+  prevOrigin?: [number, number, number];
+  /** Driver velocity (Torque space) for inheritedVelFactor. */
+  emitVelocity?: [number, number, number];
   isBurst: boolean;
-  hasBurst: boolean;
   /** Whether shader compilation has been verified. */
   shaderChecked?: boolean;
   /** Particle count uploaded last frame (bounds partial buffer uploads). */
   prevCount?: number;
-  /** Entity ID this emitter follows (for projectile trails). */
-  followEntityId?: string;
+  /** Entity whose lifetime bounds emission: a trail's projectile or a
+   *  streaming emitter's explosion. Emission stops once it leaves the scene. */
+  driverEntityId?: string;
+  /** Trails: origin and axis track the driver each frame. */
+  followsDriver?: boolean;
   /** Emission axis in Torque space (defaults to [0,0,1] = up). */
   emitAxis?: [number, number, number];
   /** Debug: origin marker mesh. */
@@ -590,7 +600,6 @@ function checkShaderCompilation(
 interface ResolvedExplosion {
   burstEmitters: Array<{ data: EmitterDataResolved; density: number }>;
   streamingEmitters: EmitterDataResolved[];
-  lifetimeMS: number;
 }
 
 function resolveExplosion(
@@ -634,11 +643,7 @@ function resolveExplosion(
     return null;
   }
 
-  // lifetimeMS is in ticks (32ms each) in the demo parser.
-  const lifetimeTicks = (expBlock.lifetimeMS as number) ?? 31;
-  const lifetimeMS = lifetimeTicks * 32;
-
-  return { burstEmitters, streamingEmitters, lifetimeMS };
+  return { burstEmitters, streamingEmitters };
 }
 
 // ── Update GPU buffers from particle state ──
@@ -762,6 +767,24 @@ interface ProjectileSound {
 
 const _listenerWorldPos = new Vector3();
 
+/** out = −normalize(v), or straight up when v is (near) zero — the
+ *  engine's emission axis for projectile trails. */
+function reversedDirection(
+  v: [number, number, number],
+  out: [number, number, number],
+): void {
+  const len = Math.hypot(v[0], v[1], v[2]);
+  if (len < 1e-4) {
+    out[0] = 0;
+    out[1] = 0;
+    out[2] = 1;
+  } else {
+    out[0] = -v[0] / len;
+    out[1] = -v[1] / len;
+    out[2] = -v[2] / len;
+  }
+}
+
 /** Stop, detach, and forget a projectile's in-flight loop. */
 function stopProjectileSound(
   projSounds: Map<string, ProjectileSound>,
@@ -860,6 +883,8 @@ export function ParticleEffects({
           MAX_PARTICLES_PER_EMITTER,
         );
         emitter.emitBurst(origin, burst.density);
+        // Explosion::explode → deleteWhenEmpty on the burst emitter.
+        emitter.kill();
 
         const texture = getParticleTexture(burst.data.particles.textureName);
         const geometry = createParticleGeometry(MAX_PARTICLES_PER_EMITTER);
@@ -880,16 +905,16 @@ export function ParticleEffects({
           targetTexture: texture,
           origin,
           isBurst: true,
-          hasBurst: true,
         });
       }
 
-      // Create streaming emitters (lifetime capped by explosion duration).
+      // Streaming emitters (emitter[0..3]) are fed every frame while the
+      // explosion lives and stop at their own datablock lifetime, whichever
+      // comes first; already-emitted particles then live out their lifetime.
       for (const emitterData of resolved.streamingEmitters) {
         const emitter = new EmitterInstance(
           emitterData,
           MAX_PARTICLES_PER_EMITTER,
-          resolved.lifetimeMS,
         );
 
         const texture = getParticleTexture(emitterData.particles.textureName);
@@ -911,7 +936,7 @@ export function ParticleEffects({
           targetTexture: texture,
           origin,
           isBurst: false,
-          hasBurst: false,
+          driverEntityId: entity.id,
         });
       }
 
@@ -948,7 +973,7 @@ export function ParticleEffects({
           label: labelSprite,
           labelMaterial: labelMat,
           creationTime: effectNow(),
-          lifetimeMS: Math.max(resolved.lifetimeMS, 3000),
+          lifetimeMS: Math.max(entity.explosionLifetimeMS ?? 0, 3000),
           targetRadius: radius,
         });
       }
@@ -1049,15 +1074,19 @@ export function ParticleEffects({
         material,
         targetTexture: texture,
         origin,
+        prevOrigin: [...origin],
+        emitVelocity: [0, 0, 0],
+        emitAxis: [0, 0, 1],
         isBurst: false,
-        hasBurst: false,
-        followEntityId: entity.id,
+        driverEntityId: entity.id,
+        followsDriver: true,
       });
     }
 
-    // Mark trail emitters as dead when their projectile disappears.
+    // Stop emitting once the driving entity is gone: a trail's projectile, or
+    // a streaming emitter's explosion (Explosion::onRemove → deleteWhenEmpty).
     for (const entry of activeEmittersRef.current) {
-      if (entry.followEntityId && !currentEntityIds.has(entry.followEntityId)) {
+      if (entry.driverEntityId && !currentEntityIds.has(entry.driverEntityId)) {
         entry.emitter.kill();
       }
     }
@@ -1084,25 +1113,48 @@ export function ParticleEffects({
         entry.shaderChecked = true;
       }
 
-      // Update trail emitter origin and direction to follow the projectile.
-      if (entry.followEntityId) {
-        const tracked = _entitiesById.get(entry.followEntityId);
+      // Trails follow the projectile: this frame's segment runs from the
+      // previous emission point to the new one, and — as in
+      // Projectile::updateEmitters — the emission axis is the velocity
+      // direction reversed, with the velocity itself passed for
+      // inheritedVelFactor.
+      if (entry.followsDriver && entry.driverEntityId) {
+        const tracked = _entitiesById.get(entry.driverEntityId);
+        const prev = entry.prevOrigin!;
+        const vel = entry.emitVelocity!;
         if (tracked?.position) {
+          prev[0] = entry.origin[0];
+          prev[1] = entry.origin[1];
+          prev[2] = entry.origin[2];
           entry.origin[0] = tracked.position[0];
           entry.origin[1] = tracked.position[1];
           entry.origin[2] = tracked.position[2];
-        }
-        if (tracked?.direction) {
-          entry.emitAxis = tracked.direction;
+          if (tracked.velocity) {
+            vel[0] = tracked.velocity[0];
+            vel[1] = tracked.velocity[1];
+            vel[2] = tracked.velocity[2];
+          } else if (effectDelta > 0) {
+            vel[0] = (entry.origin[0] - prev[0]) / effectDelta;
+            vel[1] = (entry.origin[1] - prev[1]) / effectDelta;
+            vel[2] = (entry.origin[2] - prev[2]) / effectDelta;
+          }
+          reversedDirection(vel, entry.emitAxis!);
         }
       }
 
-      // Streaming emitters emit periodically.
+      // Streaming emitters emit periodically along the frame's segment.
       if (!entry.isBurst) {
-        entry.emitter.emitPeriodic(entry.origin, dtMS, entry.emitAxis);
+        entry.emitter.emitPeriodic(
+          entry.prevOrigin ?? entry.origin,
+          entry.origin,
+          dtMS,
+          entry.emitAxis,
+          entry.emitVelocity,
+        );
       }
 
       // Advance physics and interpolation.
+      entry.emitter.worldGravity = snapshot.gravity;
       entry.emitter.update(dtMS);
 
       // Swap in the real texture once it finishes loading.

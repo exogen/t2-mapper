@@ -8,6 +8,10 @@ export interface ImageSlot {
   mountPoint: number;
   dataBlockId: number;
   skinName?: string;
+  /** The slot's ghosted image state flags (trigger, ammo, loaded…). */
+  imageState?: WeaponImageState;
+  /** The image datablock's state table, for driving its animations. */
+  imageStates?: WeaponImageDataBlockState[];
 }
 
 /** DTS animation thread state from ghost ThreadMask data. */
@@ -168,8 +172,39 @@ export interface LinkBeamVisual {
   lightningDist?: number;
 }
 
+/**
+ * A LinearFlareProjectile (plasma bolt): its DTS drawn as a billboard at the
+ * datablock scale, plus `numFlares` additive spikes (see
+ * particles/flareSpikes.ts). Without a DTS the engine draws two additive
+ * flareBaseTexture billboards instead (0.6 and 0.3 × scale.x half-size).
+ */
+export interface FlareVisual {
+  kind: "flare";
+  numFlares: number;
+  /** size[0..2]: spike base scale, and the tip scale grown from and to. */
+  sizes: [number, number, number];
+  /** sRGB flareColor. */
+  color: { r: number; g: number; b: number };
+  /** Shapeless-bolt billboard texture (flareBaseTexture, the soft ball). */
+  baseTexture: string;
+  /** Spike texture (flareModTexture, a streak bright at its base). */
+  modTexture: string;
+  /** projectileShapeName, when the bolt has a DTS. */
+  shapeName?: string;
+  /** Datablock scale applied to the DTS. */
+  shapeScale: [number, number, number];
+  faceViewer: boolean;
+}
+
 export type StreamVisual =
-  TracerVisual | SpriteVisual | BeamVisual | LinkBeamVisual;
+  TracerVisual | SpriteVisual | FlareVisual | BeamVisual | LinkBeamVisual;
+
+/**
+ * Where a shape's dynamic light sits: Item::registerLights uses the world
+ * box centre (getBoxCenter), Projectile::registerLights the transform
+ * position.
+ */
+export type LightAnchor = "boxCenter" | "origin";
 
 export interface StreamEntity {
   id: string;
@@ -185,6 +220,7 @@ export interface StreamEntity {
   lightTime?: number;
   lightRadius?: number;
   lightOnlyStatic?: boolean;
+  lightAnchor?: LightAnchor;
   isStaticItem?: boolean;
   playerName?: string;
   /** The name as sent, color codes included — the official clan tag is
@@ -221,6 +257,12 @@ export interface StreamEntity {
   rotation?: [number, number, number, number];
   /** Velocity in Torque world space [x, y, z]. */
   velocity?: [number, number, number];
+  /** Ghost scale in Three.js axis order. */
+  scale?: [number, number, number];
+  /** Projectiles: age in ms since the muzzle, from the tick clock. */
+  projectileAgeMS?: number;
+  /** Linear projectiles: activateDelayMS for the shape's activate sequence. */
+  projectileActivateDelayMS?: number;
   health?: number;
   energy?: number;
   actionAnim?: number;
@@ -241,16 +283,18 @@ export interface StreamEntity {
   threads?: ThreadState[];
   /** Numeric ID of the ExplosionData datablock (for particle effect resolution). */
   explosionDataBlockId?: number;
+  /** Explosion entities: engine lifetime in ms (see explosionLifetime.ts). */
+  explosionLifetimeMS?: number;
+  /** Explosion entities: lifetime already elapsed at explode() (the delay). */
+  explosionStartAgeMS?: number;
+  /** Explosion entities: stream time at explode(), the animation origin. */
+  spawnTimeSec?: number;
   /** Projectile has already detonated (client-side impact/expiry). The ghost
    *  entity may linger until the server's delete arrives — flight effects
    *  (trail, loop sound) must stop at the explosion, not at the delete. */
   hasExploded?: boolean;
   /** Numeric ID of the ParticleEmitterData for in-flight trail particles. */
   maintainEmitterId?: number;
-  /** Weapon image condition flags from ghost ImageMask data. */
-  weaponImageState?: WeaponImageState;
-  /** Weapon image state machine states from the ShapeBaseImageData datablock. */
-  weaponImageStates?: WeaponImageDataBlockState[];
   /** Entity ID of the object this entity is mounted on (vehicle, etc.). */
   mountObjectId?: string;
   /** Mount point node index on the mount target (0 = pilot). */
@@ -297,16 +341,27 @@ export interface StreamEntity {
   /** Scene infrastructure data (terrain, interior, sky, etc.). */
   sceneData?: SceneObject;
   /** Force field visual data from ForceFieldBareData datablock. */
-  forceFieldData?: {
-    textures: string[];
-    color: [number, number, number];
-    baseTranslucency: number;
-    dimensions: [number, number, number];
-    framesPerSec: number;
-    scrollSpeed: number;
-    umapping: number;
-    vmapping: number;
-  };
+  forceFieldData?: StreamForceFieldData;
+  /** ForceFieldBare mCurrState (see forceFieldState.ts). */
+  forceFieldState?: number;
+  /** ForceFieldBare fade alpha: 1 closed, 0 open. */
+  forceFieldAlpha?: number;
+}
+
+/** ForceFieldBareData fields the renderer needs, plus the ghost's box. */
+export interface StreamForceFieldData {
+  textures: string[];
+  color: [number, number, number];
+  powerOffColor: [number, number, number];
+  baseTranslucency: number;
+  powerOffTranslucency: number;
+  fadeMS: number;
+  /** Ghost scale in Three.js axis order; zero while retracted. */
+  dimensions: [number, number, number];
+  framesPerSec: number;
+  scrollSpeed: number;
+  umapping: number;
+  vmapping: number;
 }
 
 export interface StreamCamera {
@@ -438,6 +493,8 @@ export type { ServerLoadInfo };
 
 export interface StreamSnapshot {
   timeSec: number;
+  /** World gravity in m/s² (negative is down) — see worldGravity.ts. */
+  gravity: number;
   /**
    * When the server said the always-scoped ghost set was complete
    * (GhostingMessageEvent / GhostAlwaysDone), or null if it has not

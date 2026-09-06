@@ -67,6 +67,10 @@ const SpriteProjectile = createLazy(
   "SpriteProjectile",
   () => import("./Projectiles"),
 );
+const FlareProjectile = createLazy(
+  "FlareProjectile",
+  () => import("./FlareProjectile"),
+);
 const ForceFieldBare = createLazy(
   "ForceFieldBare",
   () => import("./ForceFieldBare"),
@@ -101,6 +105,8 @@ export const EntityRenderer = memo(function EntityRenderer({
       return <TracerProjectile entity={entity} />;
     case "Sprite":
       return <SpriteProjectile entity={entity} />;
+    case "Flare":
+      return <FlareProjectile entity={entity} />;
     case "Beam":
       return <BeamProjectile entity={entity} />;
     case "LinkBeam":
@@ -213,8 +219,17 @@ function ShapeEntity({
       radius: entity.lightRadius ?? 10,
       onlyStatic: !!entity.lightOnlyStatic,
       isStatic: !!entity.isStaticItem,
+      anchor: entity.lightAnchor ?? "boxCenter",
     };
-  }, [entity.lightType]);
+  }, [
+    entity.lightType,
+    entity.lightColor,
+    entity.lightTime,
+    entity.lightRadius,
+    entity.lightOnlyStatic,
+    entity.isStaticItem,
+    entity.lightAnchor,
+  ]);
 
   return (
     <ShapeInfoProvider

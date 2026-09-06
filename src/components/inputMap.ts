@@ -50,6 +50,8 @@ export const DEMO_MODE_INPUT = [
 
 export const LIVE_OBSERVER_INPUT = [
   { name: "toggleObserverMode", keys: ["KeyF"] },
+  // Follow orbit ⇄ first person on a followed player (pointer locked).
+  { name: "toggleFollowFirstPerson", keys: ["Tab"] },
 ] as const satisfies readonly InputMapEntry[];
 
 /**

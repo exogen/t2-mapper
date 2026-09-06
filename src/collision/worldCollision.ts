@@ -82,7 +82,19 @@ export function registerInteriorCollider(id: string, meshes: Mesh[]): void {
   const colliders = buildMeshColliders(meshes);
   if (colliders.length > 0) {
     interiors().set(id, { colliders });
+    interiorVersion++;
   }
+}
+
+let interiorVersion = 0;
+
+/**
+ * Bumped whenever an interior registers or unregisters, so a cached
+ * query against the interiors (a shape's lighting probe) knows to re-run
+ * even when one interior replaced another between two frames.
+ */
+export function interiorColliderVersion(): number {
+  return interiorVersion;
 }
 
 function buildMeshColliders(meshes: Mesh[]): MeshCollider[] {
@@ -97,6 +109,7 @@ function buildMeshColliders(meshes: Mesh[]): MeshCollider[] {
     _scale.setFromMatrixScale(matrixWorld);
     const minScale = Math.min(_scale.x, _scale.y, _scale.z) || 1;
     colliders.push({
+      mesh,
       worldToLocalRadius: 1 / minScale,
       bvh,
       matrixWorld,
@@ -109,7 +122,7 @@ function buildMeshColliders(meshes: Mesh[]): MeshCollider[] {
 }
 
 export function unregisterInteriorCollider(id: string): void {
-  interiors().delete(id);
+  if (interiors().delete(id)) interiorVersion++;
 }
 
 /** How many interiors are currently registered for collision — lets
@@ -350,12 +363,27 @@ const _localRay = new Ray();
  * measured there, which is exact for any transform. The normal is in
  * world space and unit length; the caller decides its facing.
  */
+interface ColliderHit {
+  /** World distance from the ray origin. */
+  dist: number;
+  faceIndex: number;
+  /** Hit point in the collider mesh's local space (BVH scratch: copy it
+   *  before the next cast). */
+  localPoint: Vector3;
+}
+
+const _colliderHit: ColliderHit = {
+  dist: 0,
+  faceIndex: 0,
+  localPoint: new Vector3(),
+};
+
 function raycastCollider(
   collider: MeshCollider,
   worldRay: Ray,
   worldPoint: Vector3,
   worldNormal: Vector3,
-): number | null {
+): ColliderHit | null {
   _localRay.copy(worldRay).applyMatrix4(collider.inverse);
   const isect = collider.bvh.raycastFirst(_localRay, DoubleSide);
   if (!isect) return null;
@@ -364,7 +392,66 @@ function raycastCollider(
     .copy(isect.face!.normal)
     .applyMatrix3(collider.normalMatrix)
     .normalize();
-  return worldPoint.distanceTo(worldRay.origin);
+  _colliderHit.dist = worldPoint.distanceTo(worldRay.origin);
+  _colliderHit.faceIndex = isect.faceIndex ?? 0;
+  _colliderHit.localPoint = isect.point;
+  return _colliderHit;
+}
+
+/**
+ * Loads a Torque-space segment into the shared ray scratch (`_ray`,
+ * `_segBox`, `_start`); the segment's length, or null when degenerate.
+ */
+function setupSegment(start: Vec3, end: Vec3): number | null {
+  torqueToThreeVec(start, _start);
+  torqueToThreeVec(end, _end);
+  _dir.subVectors(_end, _start);
+  const segLength = _dir.length();
+  if (segLength < 1e-9) return null;
+  _dir.divideScalar(segLength);
+  _ray.origin.copy(_start);
+  _ray.direction.copy(_dir);
+  _segBox.makeEmpty();
+  _segBox.expandByPoint(_start);
+  _segBox.expandByPoint(_end);
+  return segLength;
+}
+
+export interface InteriorRayHit {
+  /** World distance from the ray origin. */
+  dist: number;
+  collider: MeshCollider;
+  /** Triangle index in the collider mesh's geometry. */
+  faceIndex: number;
+  /** Hit point in the collider mesh's local space. */
+  localPoint: Vector3;
+}
+
+/**
+ * The nearest interior mesh along a Torque-space segment, with the face
+ * that was hit — the engine's InteriorObjectType-only casts (a lighting
+ * probe needs the floor's lightmap texel, so it needs the triangle).
+ */
+export function castInteriorRay(start: Vec3, end: Vec3): InteriorRayHit | null {
+  const segLength = setupSegment(start, end);
+  if (segLength == null) return null;
+  let best: InteriorRayHit | null = null;
+  for (const entry of interiors().values()) {
+    for (const collider of entry.colliders) {
+      if (!collider.worldBox.intersectsBox(_segBox)) continue;
+      const hit = raycastCollider(collider, _ray, _point, _normal);
+      if (!hit || hit.dist > segLength || (best && hit.dist >= best.dist)) {
+        continue;
+      }
+      best = {
+        dist: hit.dist,
+        collider,
+        faceIndex: hit.faceIndex,
+        localPoint: hit.localPoint.clone(),
+      };
+    }
+  }
+  return best;
 }
 
 const _faceOrigin = new Vector3();
@@ -404,8 +491,9 @@ export function firstInteriorFace(
     for (const entry of group.values()) {
       for (const collider of entry.colliders) {
         if (!collider.worldBox.intersectsBox(_segBox)) continue;
-        const dist = raycastCollider(collider, _faceRay, _point, _faceNormal);
-        if (dist == null) continue;
+        const hit = raycastCollider(collider, _faceRay, _point, _faceNormal);
+        if (!hit) continue;
+        const dist = hit.dist;
         if (dist > maxDist || (best && dist >= best.dist)) continue;
         best = { dist, front: _faceNormal.dot(_faceDir) < 0 };
       }
@@ -522,6 +610,7 @@ export function pointObstructed(
 /** Test-only: clear all registered colliders. */
 export function clearWorldColliders(): void {
   interiors().clear();
+  interiorVersion++;
   staticShapes().clear();
   forceFields().clear();
 }
@@ -548,17 +637,8 @@ export function castWorldRay(
     ? { ...terrainHit, source: "terrain" }
     : null;
 
-  torqueToThreeVec(start, _start);
-  torqueToThreeVec(end, _end);
-  _dir.subVectors(_end, _start);
-  const segLength = _dir.length();
-  if (segLength < 1e-9) return best;
-  _dir.divideScalar(segLength);
-  _ray.origin.copy(_start);
-  _ray.direction.copy(_dir);
-  _segBox.makeEmpty();
-  _segBox.expandByPoint(_start);
-  _segBox.expandByPoint(_end);
+  const segLength = setupSegment(start, end);
+  if (segLength == null) return best;
 
   const meshGroups: [Map<string, InteriorEntry>, WorldRayHit["source"]][] =
     options?.includeStatics
@@ -571,9 +651,9 @@ export function castWorldRay(
     for (const entry of group.values()) {
       for (const collider of entry.colliders) {
         if (!collider.worldBox.intersectsBox(_segBox)) continue;
-        const worldDist = raycastCollider(collider, _ray, _point, _normal);
-        if (worldDist == null) continue;
-        const t = worldDist / segLength;
+        const hit = raycastCollider(collider, _ray, _point, _normal);
+        if (!hit) continue;
+        const t = hit.dist / segLength;
         if (t > 1 || (best && t >= best.t)) continue;
         if (_normal.dot(_dir) > 0) _normal.negate();
         best = {

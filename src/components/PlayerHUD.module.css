@@ -62,6 +62,13 @@
   transition: width 0.15s ease-out;
 }
 
+/* A value the stream never carries for the followed player. */
+.BarFillUnknown {
+  height: 100%;
+  width: 100%;
+  background: rgba(150, 150, 150, 0.45);
+}
+
 /* Heat signature: a slimmer bar directly under energy. */
 .BarTrackHeat {
   width: 100%;
@@ -242,6 +249,21 @@
   box-shadow: 0 0 8px rgba(128, 255, 200, 0.4);
 }
 
+/* An active pack (cloak, shield, repair, jammer, armed satchel): the box
+ * lights up cyan and the icon darkens against it. */
+.PackInventoryHUD .PackInvItem[data-active="true"] {
+  background: rgba(101, 246, 217, 0.7);
+  box-shadow: 0 0 10px rgba(128, 255, 230, 0.6);
+}
+
+.PackInventoryHUD .PackInvItem[data-active="true"] .PackInvIcon {
+  filter: brightness(0.25) saturate(0.5);
+}
+
+.PackInventoryHUD .PackInvItem[data-active="true"] .PackInvCount {
+  color: #023;
+}
+
 .PackInvIcon {
   display: block;
   image-rendering: pixelated;
@@ -252,6 +274,15 @@
   color: #bfe;
   min-width: 12px;
   text-align: center;
+}
+
+/* Slots whose count is unknown for the followed player. */
+.PackInvItem[data-unknown="true"] {
+  opacity: 0.7;
+}
+
+.PackInvCount[data-unknown="true"] {
+  color: #9ab;
 }
 
 .PackInvInfinity {

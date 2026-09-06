@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import {
   BufferAttribute,
   BufferGeometry,
+  Color,
   DataTexture,
   Float32BufferAttribute,
   InstancedMesh as ThreeInstancedMesh,
@@ -33,6 +34,7 @@ import { packMasksRGB } from "../textureUtils";
 import { TerrainTile, TerrainMaterial } from "./TerrainTile";
 import { invalidateShadows } from "./shadowControl";
 import { setTerrainCollisionData } from "../collision/terrainCollision";
+import { setTerrainLightmap } from "../shapeLighting";
 import { setFogTerrainRows, clearFogTerrainRows } from "../globalFogUniforms";
 import {
   DEFAULT_TERRAIN_SQUARE_SIZE,
@@ -558,6 +560,25 @@ export const TerrainBlock = memo(function TerrainBlock({
     if (!terrain) return null;
     return generateTerrainLightmap(terrain.heightMap, sunDirection, squareSize);
   }, [terrain, sunDirection, squareSize]);
+  // Shapes standing on terrain are lit from the lightmap texel under them
+  // (the terrain shader's own formula, ambient + NdotL × sun).
+  useEffect(() => {
+    if (!terrainLightmap) return;
+    setTerrainLightmap({
+      ndotl: terrainLightmap.image.data as Uint8Array,
+      size: LIGHTMAP_SIZE,
+      squareSize,
+      originX: basePosition.z,
+      originY: basePosition.x,
+      sunColor: sun
+        ? new Color(sun.color.r, sun.color.g, sun.color.b)
+        : new Color(0.7, 0.7, 0.7),
+      ambient: sun
+        ? new Color(sun.ambient.r, sun.ambient.g, sun.ambient.b)
+        : new Color(0.533, 0.533, 0.533),
+    });
+    return () => setTerrainLightmap(null);
+  }, [terrainLightmap, squareSize, basePosition, sun]);
   // Visibility mask for primary tile (0,0) - may have empty squares
   const primaryVisibilityMask = useMemo(
     () => createVisibilityMask(emptySquares),

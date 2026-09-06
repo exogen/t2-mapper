@@ -38,6 +38,10 @@ const _blurCross = new Vector3();
 /** Ring-buffer capacity for the blur tail (0.2s at 60fps is ~12). */
 const BLUR_MAX_POINTS = 32;
 
+// Unfogged on purpose: the engine's projectile renderers apply neither
+// haze nor GL fog — flare FUN_006875b0, tracer FUN_006405e0, blaster bolt
+// FUN_00696dd0 (all binary-verified). Fogging an additive quad whose
+// texture has no alpha channel paints its whole rectangle fog-coloured.
 export function SpriteProjectile({ entity }: { entity: SpriteEntity }) {
   const { visual } = entity;
   const url = textureToUrl(visual.texture);
@@ -68,6 +72,7 @@ export function SpriteProjectile({ entity }: { entity: SpriteEntity }) {
         blending={AdditiveBlending}
         depthWrite={false}
         toneMapped={false}
+        fog={false}
       />
     </sprite>
   );
@@ -336,6 +341,7 @@ export function TracerProjectile({ entity }: { entity: TracerEntity }) {
           side={DoubleSide}
           depthWrite={false}
           toneMapped={false}
+          fog={false}
         />
       </mesh>
       {visual.renderCross ? (
@@ -366,6 +372,7 @@ export function TracerProjectile({ entity }: { entity: TracerEntity }) {
             side={DoubleSide}
             depthWrite={false}
             toneMapped={false}
+            fog={false}
           />
         </mesh>
       ) : null}

@@ -9,12 +9,14 @@ import type {
   BeamEntity,
   LinkBeamEntity,
   SpriteEntity,
+  FlareEntity,
   AudioEmitterEntity,
   CameraEntity,
   WayPointEntity,
   NoneEntity,
 } from "../state/gameEntityTypes";
 import type { SceneTSStatic } from "../scene/types";
+import { fieldOpenFromState } from "./forceFieldState";
 
 /** Common fields extracted from a StreamEntity for positioned game entities. */
 function positionedBase(entity: StreamEntity, spawnTime?: number) {
@@ -29,6 +31,7 @@ function positionedBase(entity: StreamEntity, spawnTime?: number) {
     spawnTime,
     position: entity.position,
     rotation: entity.rotation,
+    scale: entity.scale,
     velocity: entity.velocity,
     mountObjectId: entity.mountObjectId,
     mountNode: entity.mountNode,
@@ -129,6 +132,12 @@ export function streamEntityToGameEntity(
         renderType: "Sprite",
         visual: entity.visual,
       } satisfies SpriteEntity;
+    case "flare":
+      return {
+        ...positionedBase(entity, spawnTime),
+        renderType: "Flare",
+        visual: entity.visual,
+      } satisfies FlareEntity;
     case "linkBeam":
       return {
         ...positionedBase(entity, spawnTime),
@@ -160,8 +169,6 @@ export function streamEntityToGameEntity(
         skinPrefName: entity.skinPrefName,
         falling: entity.falling,
         jetting: entity.jetting,
-        weaponImageState: entity.weaponImageState,
-        weaponImageStates: entity.weaponImageStates,
         headPitch: entity.headPitch,
         headYaw: entity.headYaw,
       } satisfies PlayerEntity;
@@ -171,12 +178,16 @@ export function streamEntityToGameEntity(
       // (e.g. BlasterExplosion) still exist as entities for ParticleEffects.
       if (entity.dataBlock) {
         return {
-          ...positionedBase(entity, spawnTime),
+          // The engine's explode() time, so the shape's thread starts where
+          // the engine's did rather than when the component mounted.
+          ...positionedBase(entity, entity.spawnTimeSec ?? spawnTime),
           renderType: "Explosion",
           shapeName: entity.dataBlock,
           dataBlock: entity.dataBlock,
           explosionDataBlockId: entity.explosionDataBlockId,
           faceViewer: entity.faceViewer,
+          lifetimeMS: entity.explosionLifetimeMS,
+          startAgeMS: entity.explosionStartAgeMS,
         } satisfies ExplosionEntity;
       }
       return {
@@ -188,11 +199,15 @@ export function streamEntityToGameEntity(
       return {
         ...positionedBase(entity, spawnTime),
         renderType: "ForceFieldBare",
+        fieldOpen: fieldOpenFromState(entity.forceFieldState),
+        fieldAlpha: entity.forceFieldAlpha,
         forceFieldData: entity.forceFieldData
           ? {
               textures: entity.forceFieldData.textures,
               color: entity.forceFieldData.color,
+              powerOffColor: entity.forceFieldData.powerOffColor,
               baseTranslucency: entity.forceFieldData.baseTranslucency,
+              powerOffTranslucency: entity.forceFieldData.powerOffTranslucency,
               numFrames: entity.forceFieldData.textures.length,
               framesPerSec: entity.forceFieldData.framesPerSec,
               scrollSpeed: entity.forceFieldData.scrollSpeed,
@@ -271,7 +286,10 @@ export function streamEntityToGameEntity(
         lightTime: entity.lightTime,
         lightRadius: entity.lightRadius,
         lightOnlyStatic: entity.lightOnlyStatic,
+        lightAnchor: entity.lightAnchor,
         isStaticItem: entity.isStaticItem,
+        projectileAgeMS: entity.projectileAgeMS,
+        projectileActivateDelayMS: entity.projectileActivateDelayMS,
       } satisfies ShapeEntity;
   }
 }

@@ -16,6 +16,7 @@ import {
   resolveShapeName,
   stripTaggedStringMarkup,
   collectPreloadShapeNames,
+  collectEffectShapeNames,
 } from "./streamHelpers";
 import type { Vec3 } from "./streamHelpers";
 import type { StreamSnapshot } from "./types";
@@ -154,18 +155,9 @@ export class LiveStreamAdapter extends StreamEngine {
   }
 
   getEffectShapes(): string[] {
-    const shapes = new Set<string>();
     const dbMap = this.packetParser.getDataBlockDataMap();
     if (!dbMap) return [];
-    for (const [, block] of dbMap) {
-      const explosionId = block.explosion as number | undefined;
-      if (explosionId == null) continue;
-      const expBlock = dbMap.get(explosionId);
-      if (expBlock?.dtsFileName) {
-        shapes.add(expBlock.dtsFileName as string);
-      }
-    }
-    return [...shapes];
+    return collectEffectShapeNames(dbMap.values(), (id) => dbMap.get(id));
   }
 
   // ── StreamingPlayback interface ──
@@ -632,6 +624,7 @@ export class LiveStreamAdapter extends StreamEngine {
       this.advanceItems();
       this.advanceControlVehicle();
       this.advanceFades();
+      this.advanceForceFields();
       this.advanceControlEnergy();
 
       // Periodic status at milestones
@@ -879,6 +872,7 @@ export class LiveStreamAdapter extends StreamEngine {
 
     const snapshot: StreamSnapshot = {
       timeSec,
+      gravity: this.gravity,
       ghostAlwaysDoneSec: this.ghostAlwaysDoneSec,
       exhausted: false,
       camera: this.camera,

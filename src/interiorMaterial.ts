@@ -1,4 +1,6 @@
 import { Vector3 } from "three";
+import { injectEffectLights } from "./effectLightUniforms";
+import { lightsFragmentBeginByType } from "./lightsChunk";
 import { glslColorSpace, glslDebugGrid } from "./shaderUtils";
 
 /**
@@ -29,6 +31,12 @@ import { glslColorSpace, glslDebugGrid } from "./shaderUtils";
 
 export type InteriorLightingOptions = {
   surfaceOutsideVisible?: boolean;
+  /**
+   * Lambert (lit) material: gets the engine's projected falloff-disc pass for
+   * dynamic lights. Self-illuminating surfaces use MeshBasicMaterial and
+   * skip it.
+   */
+  dynamicLights?: boolean;
 };
 
 export function injectInteriorLighting(
@@ -60,6 +68,18 @@ uniform vec3 interiorDebugColor;
 `,
   );
 
+  // The sun (directional loop) keeps the stock Lambert RE_Direct for the
+  // gamma-space extraction below; the point/spot loops are diverted to a
+  // no-op, since dynamic lights are the engine's projected falloff-disc
+  // pass added after fog (injectEffectLights).
+  if (options.dynamicLights) {
+    injectEffectLights(shader);
+    shader.fragmentShader = shader.fragmentShader.replace(
+      "#include <lights_fragment_begin>",
+      lightsFragmentBeginByType({ punctual: "RE_Direct_EffectLightIgnore" }),
+    );
+  }
+
   // Disable default lightmap handling - we'll handle it in the output.
   // Since three r183, MeshLambertMaterial DOES apply IBL when
   // scene.environment is set — we never set it, so only the lightmap
@@ -79,10 +99,6 @@ uniform vec3 interiorDebugColor;
     `// Torque-style lighting: output = clamp(lighting × texture, 0, 1) in sRGB space
 // Get texture in sRGB space (undo Three.js linear decode)
 vec3 textureSRGB = torqueLinearToSRGB(diffuseColor.rgb);
-
-// Save Three.js computed direct lighting (includes sun + point/spot lights).
-// We'll add it back for point/spot light contribution after our gamma-space calc.
-vec3 interiorAllLightsLinear = reflectedLight.directDiffuse;
 
 // Compute lighting in sRGB space
 vec3 lightingSRGB = vec3(0.0);
@@ -118,11 +134,7 @@ vec3 resultSRGB = clamp(lightingSRGB * textureSRGB, 0.0, 1.0);
 vec3 resultLinear = torqueSRGBToLinear(resultSRGB);
 
 // Reassign outgoingLight before opaque_fragment consumes it
-// Add dynamic point/spot lights when present (avoid sun double-count otherwise)
 outgoingLight = resultLinear + totalEmissiveRadiance;
-#if ( NUM_POINT_LIGHTS > 0 || NUM_SPOT_LIGHTS > 0 )
-  outgoingLight += interiorAllLightsLinear;
-#endif
 
 #include <opaque_fragment>`,
   );

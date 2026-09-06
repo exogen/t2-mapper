@@ -80,9 +80,10 @@ function InteriorTexture({
       injectCustomFog(shader, globalFogUniforms);
       injectInteriorLighting(shader, {
         surfaceOutsideVisible: isSurfaceOutsideVisible,
+        dynamicLights: !isSelfIlluminating,
       });
     },
-    [isSurfaceOutsideVisible],
+    [isSurfaceOutsideVisible, isSelfIlluminating],
   );
   // Refs for forcing shader recompilation
   const basicMaterialRef = useRef<MeshBasicMaterial>(null);
@@ -160,11 +161,23 @@ function InteriorMesh({ node }: { node: Mesh }) {
   // Extract lightmaps from original materials (stored in emissiveMap for glTF transport)
   const lightMaps = useMemo(() => {
     if (!node.material) return [];
-    if (Array.isArray(node.material)) {
-      return node.material.map((m) => getLightMap(m));
-    }
-    return [getLightMap(node.material)];
-  }, [node.material]);
+    const materials = Array.isArray(node.material)
+      ? node.material
+      : [node.material];
+    const maps = materials.map((m) => getLightMap(m));
+    // The shape lighting probe samples the lightmap under a shape through
+    // the collider's geometry; keep it there, with each slot's
+    // SurfaceOutsideVisible flag (those surfaces get the sun and ambient
+    // on top of the lightmap, as in injectInteriorLighting), so the probe
+    // never sees the loading placeholder material.
+    node.geometry.userData.lightMaps = maps;
+    node.geometry.userData.outsideVisible = materials.map((m) =>
+      new Set<string>(m?.userData?.surface_flag_names ?? []).has(
+        "SurfaceOutsideVisible",
+      ),
+    );
+    return maps;
+  }, [node.material, node.geometry]);
 
   // Shadow map is frozen (shadowControl.ts); newly loaded interior
   // geometry must trigger a one-time re-render, as must unmount.

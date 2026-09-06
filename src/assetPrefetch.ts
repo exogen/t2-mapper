@@ -23,6 +23,12 @@ import {
 import { loadTexture } from "./textureUtils";
 import { createLogger } from "./logger";
 import type { PreloadAsset } from "./stream/types";
+import { glbAnimationDurations, parseGlbJson } from "./glbJson";
+import { registerShapeSequences } from "./stream/shapeSequences";
+import {
+  registerShapeBounds,
+  shapeBoundsFromExtras,
+} from "./stream/shapeBounds";
 
 const log = createLogger("assetPrefetch");
 
@@ -39,36 +45,6 @@ let timer: ReturnType<typeof setTimeout> | null = null;
 /** Assets ever prefetched, keyed kind:name (the caches are global). */
 const preloaded = new Set<string>();
 
-interface GlbMaterial {
-  name?: string;
-  extras?: { resource_path?: string; flag_names?: string[] };
-}
-
-/**
- * Materials from a binary glTF's JSON chunk, read without three.js:
- * 12-byte header (magic "glTF") then chunks of [length, type, data]; the
- * first chunk is JSON.
- */
-function glbMaterials(buffer: ArrayBuffer): GlbMaterial[] {
-  const view = new DataView(buffer);
-  if (buffer.byteLength < 20 || view.getUint32(0, true) !== 0x46546c67) {
-    return [];
-  }
-  const chunkLength = view.getUint32(12, true);
-  const chunkType = view.getUint32(16, true);
-  if (chunkType !== 0x4e4f534a || 20 + chunkLength > buffer.byteLength) {
-    return [];
-  }
-  try {
-    const json = JSON.parse(
-      new TextDecoder().decode(new Uint8Array(buffer, 20, chunkLength)),
-    ) as { materials?: GlbMaterial[] };
-    return json.materials ?? [];
-  } catch {
-    return [];
-  }
-}
-
 /**
  * Fetch a GLB (shared HTTP cache with the loader) and preload the
  * textures its materials reference, so models appear fully textured
@@ -76,6 +52,7 @@ function glbMaterials(buffer: ArrayBuffer): GlbMaterial[] {
  * texture (InteriorTexture does textureToUrl(material.name)); shape
  * materials carry a resource_path in extras and load through the shared
  * loadTexture cache (IFL materials go through the atlas loader instead).
+ * Shape sequence durations are registered from the same JSON chunk.
  */
 async function prefetchGlbTextures(
   url: string,
@@ -84,8 +61,15 @@ async function prefetchGlbTextures(
 ): Promise<void> {
   const res = await fetch(url);
   if (!res.ok) return;
+  const json = parseGlbJson(await res.arrayBuffer());
+  if (!json) return;
+  if (kind === "shape") {
+    registerShapeSequences(name, glbAnimationDurations(json));
+    const bounds = shapeBoundsFromExtras(json.scenes?.[0]?.extras);
+    if (bounds) registerShapeBounds(name, bounds);
+  }
   let count = 0;
-  for (const mat of glbMaterials(await res.arrayBuffer())) {
+  for (const mat of json.materials ?? []) {
     if (kind === "interior") {
       if (mat.name) {
         useTexture.preload(textureToUrl(mat.name));

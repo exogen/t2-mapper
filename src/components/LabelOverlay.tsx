@@ -178,8 +178,10 @@ export function LabelOverlay() {
           if (isBehindCamera(camera, _worldPos.x, _worldPos.y, _worldPos.z)) {
             continue;
           }
+          // Beyond the camera's far plane the projected x/y are still
+          // right, only NDC z exceeds 1: labels (flags, waypoints) stay
+          // visible past the render distance, unlike the geometry.
           _worldPos.project(camera);
-          if (_worldPos.z > 1) continue;
           sx = (_worldPos.x * 0.5 + 0.5) * size.width;
           sy = (-_worldPos.y * 0.5 + 0.5) * size.height;
         }

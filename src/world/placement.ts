@@ -144,9 +144,9 @@ export function waterInfoFor(scene: SceneWaterBlock): WaterInfo {
 }
 
 /**
- * A force field's collider box. Torque only collides with CLOSED
- * fields, so `enabled` tracks `fieldOpen` — the one collider in the
- * world that changes during a match.
+ * A force field's collider box. Torque collides with any field that is
+ * not fully OPEN (castRay FUN_00676900), so `enabled` tracks `fieldOpen`
+ * — the one collider in the world that changes during a match.
  *
  * The box is corner-origin (0,0,0)→dimensions, matching
  * `useCornerBoxGeometry`; the matrix carries the placement, so scale

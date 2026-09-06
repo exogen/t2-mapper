@@ -179,7 +179,8 @@
   font-weight: 600;
   color: rgb(198, 202, 202);
   background: rgba(58, 69, 72, 0.95);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.3);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
   z-index: 1;
 }
 
@@ -204,19 +205,11 @@
 }
 
 .Item[data-active-item] {
-  background: rgba(255, 255, 255, 0.15);
+  background: rgba(93, 112, 133, 0.3);
 }
 
 .Item[aria-selected="true"] {
   background: rgba(100, 150, 255, 0.3);
-}
-
-.Item[data-tournament] {
-  background: rgba(109, 85, 12, 0.15);
-}
-
-.Item[data-tournament][data-active-item] {
-  background: rgba(190, 121, 9, 0.25);
 }
 
 .ItemHeader {

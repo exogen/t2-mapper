@@ -112,3 +112,50 @@ export function packFogVolumeData(
 
   return data;
 }
+
+/**
+ * SceneState::getHazeAndFog (Tribes2.exe 0x570b40) for one object: the
+ * quadratic distance haze between `near` and `far` (1 beyond `far`), plus
+ * the fog-volume walk from the camera height to the object's height —
+ * each volume adds its factor times the length of the sight line inside
+ * it (similar triangles: dist × overlap / |deltaHeight|; a level line
+ * inside a volume counts the whole distance) — clamped to 1. Objects that
+ * take a single haze value (force fields, shapes, interiors) use this;
+ * terrain samples the same maths through its row-quantized fog texture.
+ */
+export function hazeAndFog(
+  dist: number,
+  objectHeight: number,
+  near: number,
+  far: number,
+): number {
+  if (!globalFogUniforms.fogEnabled.value) return 0;
+  const scaledDist = dist / globalFogUniforms.fogDistanceScale.value;
+  if (scaledDist > far) return 1;
+  let total = 0;
+  if (scaledDist > near) {
+    const distFactor = (scaledDist - near) / (far - near) - 1;
+    total = 1 - distFactor * distFactor;
+  }
+  const cameraHeight = globalFogUniforms.cameraHeight.value;
+  const deltaHeight = objectHeight - cameraHeight;
+  const absDelta = Math.abs(deltaHeight);
+  const volumes = globalFogUniforms.fogVolumeData.value;
+  const rayMin = Math.min(cameraHeight, objectHeight);
+  const rayMax = Math.max(cameraHeight, objectHeight);
+  for (let i = 0; i < MAX_FOG_VOLUMES; i++) {
+    const factor = volumes[i * FLOATS_PER_VOLUME];
+    if (factor <= 0) continue;
+    const minH = volumes[i * FLOATS_PER_VOLUME + 1];
+    const maxH = volumes[i * FLOATS_PER_VOLUME + 2];
+    if (absDelta > 0.01) {
+      if (rayMin < maxH && rayMax > minH) {
+        const overlap = Math.min(rayMax, maxH) - Math.max(rayMin, minH);
+        total += scaledDist * (overlap / absDelta) * factor;
+      }
+    } else if (cameraHeight >= minH && cameraHeight <= maxH) {
+      total += scaledDist * factor;
+    }
+  }
+  return Math.min(total, 1);
+}

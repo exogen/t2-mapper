@@ -22,6 +22,9 @@ import type { SceneSky } from "../scene/types";
 import type { FogState } from "./FogProvider";
 import { useDebug, useSettings } from "./SettingsProvider";
 
+/** Right after the sky dome (renderOrder −1000), ahead of all scene effects. */
+const CLOUD_RENDER_ORDER = -990;
+
 const noop = () => {};
 
 const GRID_SIZE = 5;
@@ -466,22 +469,26 @@ function CloudLayer({
   );
 
   return (
-    // The engine draws layers in fixed index order, each blended over
-    // the last (Sky::renderSkyBox loop). Distinct renderOrder per layer
-    // pins that order — with a shared renderOrder, three.js's transparent
-    // depth sort is degenerate for camera-centered meshes and the blend
-    // order can flip with view angle (visible cloud "popping").
+    // The engine draws the sky box and then its cloud layers in fixed
+    // index order, each blended over the last, BEFORE anything in the
+    // scene (Sky::renderSkyBox). Distinct renderOrder per layer pins that
+    // order — with a shared renderOrder, three.js's transparent depth sort
+    // is degenerate for camera-centered meshes and the blend order can
+    // flip with view angle (visible cloud "popping"). They must also sort
+    // ahead of every default-order transparent effect: those write no
+    // depth, so clouds drawn after them blend over bolts, particles and
+    // explosion shapes, which then all but vanish against the sky.
     <mesh
       geometry={geometry}
       frustumCulled={false}
-      renderOrder={10 + layerIndex}
+      renderOrder={CLOUD_RENDER_ORDER + layerIndex}
     >
       <primitive object={material} attach="material" />
     </mesh>
   );
 }
 
-export interface CloudLayerConfig {
+interface CloudLayerConfig {
   texture: string;
   height: number;
   speed: number;
@@ -506,7 +513,7 @@ function useDetailMapList(name: string | undefined) {
   });
 }
 
-export interface CloudLayersProps {
+interface CloudLayersProps {
   scene: SceneSky;
   /** Fog state when fog is enabled — drives the fog band overlay. */
   fogState?: FogState;

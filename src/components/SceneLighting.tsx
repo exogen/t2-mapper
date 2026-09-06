@@ -4,6 +4,7 @@ import { createLogger } from "../logger";
 import { useSceneSun } from "../state/gameEntityStore";
 import { torqueToThree } from "../scene/coordinates";
 import { updateGlobalSunUniforms } from "../globalSunUniforms";
+import { setShapeSun } from "../shapeLighting";
 import { invalidateShadows } from "./shadowControl";
 
 const log = createLogger("SceneLighting");
@@ -80,6 +81,12 @@ function SunLighting({
   useEffect(() => {
     updateGlobalSunUniforms(sunLightPointsDown);
   }, [sunLightPointsDown]);
+
+  // Shapes light themselves from the sun's colour, ambient and direction
+  // (toward the light) rather than from Three's directional light.
+  useEffect(() => {
+    setShapeSun(color, ambient, lightPosition);
+  }, [color, ambient, lightPosition]);
 
   // The shadow map is frozen (see shadowControl.ts); re-render it when the
   // light itself changes.

@@ -1,20 +1,25 @@
 import { useEffect, useMemo, useRef } from "react";
 import { useFrame } from "@react-three/fiber";
 import { AnimationMixer, LoopOnce } from "three";
-import type { Group, Material } from "three";
-import { effectNow, engineStore } from "../state/engineStore";
+import type { Group } from "three";
 import * as SkeletonUtils from "three/examples/jsm/utils/SkeletonUtils.js";
 import { disposeClonedScene, processShapeScene } from "../stream/playbackUtils";
 import {
-  loadIflAtlas,
-  getFrameIndexForTime,
-  updateAtlasFrame,
+  collectIflMeshes,
+  iflSequenceTime,
+  loadIflMaterialInstance,
+  showIflFrame,
 } from "./iflAtlas";
-import type { IflAtlas } from "./iflAtlas";
+import type { IflMaterialInstance, IflMeshInfo } from "./iflAtlas";
 import { useStaticShape } from "./GenericShape";
 import { useAnisotropy } from "./useAnisotropy";
 import type { ExplosionEntity } from "../state/gameEntityTypes";
-import { streamPlaybackStore } from "../state/streamPlaybackStore";
+import { streamClock, streamPlaybackStore } from "../state/streamPlaybackStore";
+import {
+  explosionPlaySpeed,
+  resolveExplosionTiming,
+} from "../stream/explosionLifetime";
+import { getShapeSequenceDurationSec } from "../stream/shapeSequences";
 
 // ── Explosion shape rendering ──
 //
@@ -31,15 +36,6 @@ interface VisNode {
   keyframes: number[];
   duration: number;
   cyclic: boolean;
-}
-
-interface IflInfo {
-  mesh: any;
-  iflPath: string;
-  sequenceName?: string;
-  duration?: number;
-  cyclic?: boolean;
-  toolBegin?: number;
 }
 
 function extractSizeKeyframes(expBlock: Record<string, unknown>): {
@@ -105,10 +101,11 @@ export function ExplosionShape({ entity }: { entity: ExplosionEntity }) {
   const gltf = useStaticShape(entity.shapeName!);
   const anisotropy = useAnisotropy();
   const groupRef = useRef<Group>(null);
-  const startTimeRef = useRef(effectNow());
+  // Stream time the engine exploded at; the thread has run since then.
+  const spawnSecRef = useRef(entity.spawnTime ?? streamClock.time);
   // eslint-disable-next-line react-hooks/purity
   const randAngleRef = useRef(Math.random() * Math.PI * 2);
-  const iflAtlasesRef = useRef<Array<{ atlas: IflAtlas; info: IflInfo }>>([]);
+  const iflAtlasesRef = useRef<IflMaterialInstance[]>([]);
 
   const expBlock = useMemo(() => {
     if (!entity.explosionDataBlockId) return undefined;
@@ -120,250 +117,185 @@ export function ExplosionShape({ entity }: { entity: ExplosionEntity }) {
     [expBlock],
   );
 
-  const baseScale = useMemo<[number, number, number]>(() => {
-    const explosionScale = expBlock?.explosionScale as
-      { x: number; y: number; z: number } | undefined;
-    return explosionScale
-      ? [explosionScale.x / 100, explosionScale.y / 100, explosionScale.z / 100]
-      : [1, 1, 1];
-  }, [expBlock]);
-
-  // lifetimeMS is packed as value >> 5 (ticks); recover with << 5 (× 32).
-  const lifetimeTicks = (expBlock?.lifetimeMS as number) ?? 31;
-  const lifetimeMS = lifetimeTicks * 32;
+  // The stream engine fixes the engine lifetime at spawn; an entity without
+  // one gets the same rule here (useStaticShape has registered the clips).
+  const lifetimeMS = useMemo(
+    () =>
+      entity.lifetimeMS ??
+      resolveExplosionTiming(
+        expBlock,
+        getShapeSequenceDurationSec(entity.shapeName, "ambient"),
+      ).lifetimeMS,
+    [entity.lifetimeMS, entity.shapeName, expBlock],
+  );
   const faceViewer = entity.faceViewer !== false;
 
   // Clone scene, process materials, collect vis nodes and IFL info.
-  const { scene, mixer, visNodes, iflInfos, fadeMaterials, playSpeed } =
-    useMemo(() => {
-      const scene = SkeletonUtils.clone(gltf.scene) as Group;
+  const { scene, mixer, clips, visNodes, iflInfos, playSpeed } = useMemo(() => {
+    const scene = SkeletonUtils.clone(gltf.scene) as Group;
 
-      // Collect IFL info BEFORE processShapeScene replaces materials.
-      const iflInfos: IflInfo[] = [];
-      scene.traverse((node: any) => {
-        if (!node.isMesh || !node.material) return;
-        const mat = Array.isArray(node.material)
-          ? node.material[0]
-          : node.material;
-        if (!mat?.userData) return;
-        const flags = new Set<string>(mat.userData.flag_names ?? []);
-        const rp: string | undefined = mat.userData.resource_path;
-        if (flags.has("IflMaterial") && rp) {
-          const ud = node.userData;
-          iflInfos.push({
-            mesh: node,
-            iflPath: `textures/${rp}.ifl`,
-            sequenceName: ud?.ifl_sequence
-              ? String(ud.ifl_sequence).toLowerCase()
-              : undefined,
-            duration: ud?.ifl_duration ? Number(ud.ifl_duration) : undefined,
-            cyclic: ud?.ifl_sequence ? !!ud.ifl_cyclic : undefined,
-            toolBegin:
-              ud?.ifl_tool_begin != null
-                ? Number(ud.ifl_tool_begin)
-                : undefined,
-          });
-        }
-      });
+    // Collect IFL info BEFORE processShapeScene replaces materials.
+    const iflInfos: IflMeshInfo[] = collectIflMeshes(scene);
 
-      processShapeScene(scene, entity.shapeName, {
-        anisotropy,
-        // Explosion shapes keep their meshes in a negative-size detail
-        // ("Detail-1" in effect_plasma_explosion) — the engine renders
-        // detail 0 unconditionally for explosions.
-        ignoreDetailSize: true,
-      });
+    processShapeScene(scene, entity.shapeName, {
+      anisotropy,
+      // Explosion shapes keep their meshes in a negative-size detail
+      // ("Detail-1" in effect_plasma_explosion) — the engine renders
+      // detail 0 unconditionally for explosions.
+      ignoreDetailSize: true,
+    });
 
-      // Collect vis-animated nodes keyed by sequence name.
-      const visNodes: VisNode[] = [];
-      scene.traverse((node: any) => {
-        if (!node.isMesh) return;
-        const ud = node.userData;
-        if (!ud) return;
-        const kf = ud.vis_keyframes;
-        const dur = ud.vis_duration;
-        const seqName = (ud.vis_sequence ?? "").toLowerCase();
-        if (
-          !seqName ||
-          !Array.isArray(kf) ||
-          kf.length <= 1 ||
-          !dur ||
-          dur <= 0
-        )
-          return;
-        // Only include vis nodes tied to the "ambient" sequence.
-        if (seqName === "ambient") {
-          visNodes.push({
-            mesh: node,
-            keyframes: kf,
-            duration: dur,
-            cyclic: !!ud.vis_cyclic,
-          });
-        }
-      });
-
-      // Activate vis nodes: make visible, ensure transparent material.
-      for (const v of visNodes) {
-        v.mesh.visible = true;
-        if (v.mesh.material && !Array.isArray(v.mesh.material)) {
-          v.mesh.material.transparent = true;
-          v.mesh.material.depthWrite = false;
-        }
+    // Collect vis-animated nodes keyed by sequence name.
+    const visNodes: VisNode[] = [];
+    scene.traverse((node: any) => {
+      if (!node.isMesh) return;
+      const ud = node.userData;
+      if (!ud) return;
+      const kf = ud.vis_keyframes;
+      const dur = ud.vis_duration;
+      const seqName = (ud.vis_sequence ?? "").toLowerCase();
+      if (!seqName || !Array.isArray(kf) || kf.length <= 1 || !dur || dur <= 0)
+        return;
+      // Only include vis nodes tied to the "ambient" sequence.
+      if (seqName === "ambient") {
+        visNodes.push({
+          mesh: node,
+          keyframes: kf,
+          duration: dur,
+          cyclic: !!ud.vis_cyclic,
+        });
       }
+    });
 
-      // Also un-hide IFL meshes that don't have vis_sequence (always visible).
-      for (const info of iflInfos) {
-        if (!info.mesh.userData?.vis_sequence) {
-          info.mesh.visible = true;
-        }
+    // Activate vis nodes: make visible, ensure transparent material.
+    for (const v of visNodes) {
+      v.mesh.visible = true;
+      if (v.mesh.material && !Array.isArray(v.mesh.material)) {
+        v.mesh.material.transparent = true;
+        v.mesh.material.depthWrite = false;
       }
+    }
 
-      // playSpeed is packed as value*20 on the wire; divide by 20. The engine
-      // plays ONE thread at this timescale — it drives node transforms, morph
-      // frames, vis, and IFL matFrames together.
-      const playSpeed = ((expBlock?.playSpeed as number) ?? 20) / 20;
+    // Also un-hide IFL meshes that don't have vis_sequence (always visible).
+    for (const info of iflInfos) {
+      if (!info.hasVisSequence) info.mesh.visible = true;
+    }
 
-      // Set up animation mixer with the ambient clip (LoopOnce), plus the
-      // morph-frame clips ("Ambient_{Mesh}_frame") that carry DTS mesh frame
-      // animation (e.g. the plasma fireball's 35 billow frames).
-      let mixer: AnimationMixer | null = null;
-      for (const clip of gltf.animations) {
-        const lower = clip.name.toLowerCase();
-        const isAmbient =
-          lower === "ambient" ||
-          (lower.startsWith("ambient_") && lower.endsWith("_frame"));
-        if (!isAmbient) continue;
-        mixer ??= new AnimationMixer(scene);
-        const action = mixer.clipAction(clip);
-        action.setLoop(LoopOnce, 1);
-        action.clampWhenFinished = true;
-        action.timeScale = playSpeed;
-        action.play();
-      }
+    // The engine plays ONE thread at playSpeed — it drives node transforms,
+    // morph frames, vis, and IFL matFrames together.
+    const playSpeed = explosionPlaySpeed(expBlock);
 
-      // Collect non-vis materials for fade-out, with their base opacity so the
-      // fade doesn't compound frame-over-frame. Vis-animated materials are
-      // excluded — the vis loop recomputes their opacity (× fade) each frame.
-      const visMaterials = new Set<Material>(
-        visNodes.flatMap((v) =>
-          Array.isArray(v.mesh.material) ? v.mesh.material : [v.mesh.material],
-        ),
+    // The ambient clip plus the morph-frame clips ("Ambient_{Mesh}_frame")
+    // that carry DTS mesh frame animation (e.g. the plasma fireball's 35
+    // billow frames). The actions themselves are created in an effect below.
+    const clips = gltf.animations.filter((clip) => {
+      const lower = clip.name.toLowerCase();
+      return (
+        lower === "ambient" ||
+        (lower.startsWith("ambient_") && lower.endsWith("_frame"))
       );
-      const fadeMaterials: Array<{ material: Material; baseOpacity: number }> =
-        [];
-      scene.traverse((child: any) => {
-        if (!child.isMesh) return;
-        const mats = Array.isArray(child.material)
-          ? child.material
-          : child.material
-            ? [child.material]
-            : [];
-        for (const material of mats) {
-          if (visMaterials.has(material)) continue;
-          fadeMaterials.push({ material, baseOpacity: material.opacity });
-        }
-      });
+    });
+    const mixer = clips.length > 0 ? new AnimationMixer(scene) : null;
 
-      // Disable frustum culling (explosion may scale beyond bounds).
-      scene.traverse((child) => {
-        child.frustumCulled = false;
-      });
+    // Disable frustum culling (explosion may scale beyond bounds).
+    scene.traverse((child) => {
+      child.frustumCulled = false;
+    });
 
-      return { scene, mixer, visNodes, iflInfos, fadeMaterials, playSpeed };
-    }, [gltf, expBlock, anisotropy]);
+    return { scene, mixer, clips, visNodes, iflInfos, playSpeed };
+  }, [gltf, expBlock, anisotropy]);
 
   useEffect(() => {
-    return () => {
-      disposeClonedScene(scene);
-      mixer?.uncacheRoot(scene);
-    };
-  }, [scene, mixer]);
+    return () => disposeClonedScene(scene);
+  }, [scene]);
+
+  // Play every clip once at playSpeed and hold the last frame. Building the
+  // actions here, with the uncache as the cleanup, keeps them alive across
+  // React's development double-invoke of effects: uncaching a memoized
+  // mixer's actions in a cleanup that re-ran left explosions frozen on
+  // their first frame.
+  useEffect(() => {
+    if (!mixer) return;
+    for (const clip of clips) {
+      const action = mixer.clipAction(clip);
+      action.setLoop(LoopOnce, 1);
+      action.clampWhenFinished = true;
+      action.timeScale = playSpeed;
+      action.play();
+    }
+    return () => mixer.uncacheRoot(scene);
+  }, [mixer, clips, playSpeed, scene]);
 
   // Load IFL texture atlases.
   useEffect(() => {
     iflAtlasesRef.current = [];
     for (const info of iflInfos) {
-      loadIflAtlas(info.iflPath)
-        .then((atlas) => {
-          const mat = Array.isArray(info.mesh.material)
-            ? info.mesh.material[0]
-            : info.mesh.material;
-          if (mat) {
-            mat.map = atlas.texture;
-            mat.needsUpdate = true;
-          }
-          iflAtlasesRef.current.push({ atlas, info });
+      loadIflMaterialInstance(info)
+        .then((inst) => {
+          if (inst) iflAtlasesRef.current.push(inst);
         })
         .catch(() => {});
     }
   }, [iflInfos]);
 
-  useFrame((state, delta) => {
+  useFrame((state) => {
     const group = groupRef.current;
     if (!group) return;
 
-    const playbackState = engineStore.getState().playback;
-    const effectDelta =
-      playbackState.status === "playing" ? delta * playbackState.rate : 0;
-
-    const elapsed = effectNow() - startTimeRef.current;
-    const t = Math.min(elapsed / lifetimeMS, 1);
+    // Everything below is a function of stream time since explode(), so
+    // the morph clips, vis, IFL and size keyframes can never disagree.
+    const elapsedSec = Math.max(0, streamClock.time - spawnSecRef.current);
+    const elapsed = elapsedSec * 1000;
+    // Size keyframes run on the lifetime clock, which has been counting
+    // since onAdd — a delayed explosion starts partway through them.
+    const t = Math.min(((entity.startAgeMS ?? 0) + elapsed) / lifetimeMS, 1);
     // Vis and IFL follow the sequence thread, which runs at playSpeed.
     const threadSec = (elapsed / 1000) * playSpeed;
 
-    // Advance skeleton animation.
+    // Morph/node clips at their absolute position (actions run at playSpeed).
     if (mixer) {
-      mixer.update(effectDelta);
+      mixer.setTime(elapsedSec);
     }
-
-    // Fade multiplier for the last 20% of lifetime.
-    const fadeAlpha = t > 0.8 ? 1 - (t - 0.8) / 0.2 : 1;
 
     // Drive vis opacity animation.
     for (const { mesh, keyframes, duration, cyclic } of visNodes) {
       const mat = mesh.material;
       if (!mat || Array.isArray(mat)) continue;
+      // TS keyframe mapping: n keyframes span n − 1 intervals, and a
+      // non-cyclic sequence clamps at its last keyframe. The explosion
+      // shapes are all non-cyclic; mapping onto n intervals with a modulo
+      // showed keyframe 0 again on the final tick before the entity expired.
       const rawT = threadSec / duration;
-      const vt = cyclic ? rawT % 1 : Math.min(rawT, 1);
       const n = keyframes.length;
-      const pos = vt * n;
-      const lo = Math.floor(pos) % n;
-      const hi = (lo + 1) % n;
-      const frac = pos - Math.floor(pos);
-      const visOpacity = keyframes[lo] + (keyframes[hi] - keyframes[lo]) * frac;
-      mat.opacity = visOpacity * fadeAlpha;
-    }
-
-    // Also fade non-vis materials (from their base opacity, not compounding).
-    if (fadeAlpha < 1) {
-      for (const { material, baseOpacity } of fadeMaterials) {
-        material.transparent = true;
-        material.opacity = baseOpacity * fadeAlpha;
-      }
-    }
-
-    // Advance IFL texture atlases.
-    for (const { atlas, info } of iflAtlasesRef.current) {
-      let iflTime: number;
-      if (info.sequenceName && info.duration) {
-        const pos = info.cyclic
-          ? (threadSec / info.duration) % 1
-          : Math.min(threadSec / info.duration, 1);
-        iflTime = pos * info.duration + (info.toolBegin ?? 0);
+      let lo: number;
+      let hi: number;
+      let frac: number;
+      if (cyclic) {
+        const pos = (rawT % 1) * n;
+        lo = Math.floor(pos) % n;
+        hi = (lo + 1) % n;
+        frac = pos - Math.floor(pos);
       } else {
-        iflTime = threadSec;
+        const pos = Math.min(rawT, 1) * (n - 1);
+        lo = Math.min(Math.floor(pos), n - 1);
+        hi = Math.min(lo + 1, n - 1);
+        frac = pos - lo;
       }
-      updateAtlasFrame(atlas, getFrameIndexForTime(atlas, iflTime));
+      mat.opacity = keyframes[lo] + (keyframes[hi] - keyframes[lo]) * frac;
     }
 
-    // Size keyframe interpolation.
+    // Advance IFL texture atlases on the sequence thread.
+    for (const inst of iflAtlasesRef.current) {
+      showIflFrame(inst, iflSequenceTime(inst.info, inst.atlas, threadSec));
+    }
+
+    // Size keyframe interpolation. Explosion::prepRender (0x620ca0 →
+    // 0x620b80) writes the interpolated sizes straight into the object
+    // scale before every draw, so the datablock's explosionScale — applied
+    // once in explode() — never reaches the shape and is not used here.
     if (sizeKeyframes) {
       const size = interpolateSize(sizeKeyframes, t);
-      group.scale.set(
-        size[0] * baseScale[0],
-        size[1] * baseScale[1],
-        size[2] * baseScale[2],
-      );
+      group.scale.set(size[0], size[1], size[2]);
     }
 
     // faceViewer: billboard toward camera with random Z rotation.

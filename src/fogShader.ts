@@ -162,32 +162,20 @@ export const fogFragmentShader = `
   }
   float fogFactor = hazePct + volPct;
 
+  #ifdef FOG_ADDITIVE
+  // An additive surface cannot mix toward the fog colour — that would ADD
+  // fog. The engine disables the fog texture stage for Additive/Subtractive
+  // materials and scales their alpha by 1 - fog instead (tsMesh.cc; the
+  // flare spikes do the same with 1 - haze, FUN_0063e2e0), so they fade out.
+  gl_FragColor.rgb *= 1.0 - fogFactor;
+  #else
   // Apply fog using global fogColor (per-volume colors not used in Tribes 2)
   gl_FragColor.rgb = mix(gl_FragColor.rgb, fogColor, fogFactor);
+  #endif
 
   #ifdef USE_VOLUMETRIC_FOG
   } // end fogEnabled check
   #endif
-#endif
-`;
-
-/**
- * Vertex shader code to pass world position for fog calculation.
- */
-export const fogVertexShader = `
-#ifdef USE_FOG
-  #define USE_FOG_WORLD_POSITION
-  varying vec3 vFogWorldPosition;
-#endif
-`;
-
-export const fogVertexShaderWorldPos = `
-#ifdef USE_FOG
-  vec4 _fogPos = vec4(position, 1.0);
-  #ifdef USE_INSTANCING
-    _fogPos = instanceMatrix * _fogPos;
-  #endif
-  vFogWorldPosition = (modelMatrix * _fogPos).xyz;
 #endif
 `;
 
@@ -266,7 +254,7 @@ export function installCustomFogShader(): void {
  * Shared fog shader uniform objects interface.
  * These objects are passed directly to shaders so uniform values can be updated per-frame.
  */
-export interface FogShaderUniformObjects {
+interface FogShaderUniformObjects {
   fogVolumeData: { value: Float32Array };
   cameraHeight: { value: number };
   fogEnabled: { value: boolean };
@@ -282,7 +270,7 @@ export interface FogShaderUniformObjects {
  * @param shader - The shader object from onBeforeCompile
  * @param fogUniforms - Shared uniform objects (pass the objects, not values)
  */
-export function addFogUniformsToShader(
+function addFogUniformsToShader(
   shader: { uniforms: Record<string, { value: unknown }> },
   fogUniforms: FogShaderUniformObjects,
 ): void {
@@ -300,8 +288,8 @@ export function addFogUniformsToShader(
  * Call this in material's onBeforeCompile callback.
  * This enables full volumetric fog support for the material.
  *
- * @param shader - The shader object from onBeforeCompile
- * @param fogUniforms - Shared uniform objects from globalFogUniforms
+ * `additive` selects the engine's rule for additively blended surfaces:
+ * scale by 1 - fog instead of mixing toward the fog colour.
  */
 export function injectCustomFog(
   shader: {
@@ -310,9 +298,13 @@ export function injectCustomFog(
     fragmentShader: string;
   },
   fogUniforms: FogShaderUniformObjects,
+  options: { additive?: boolean } = {},
 ): void {
   // Add uniforms - pass objects directly so they stay linked
   addFogUniformsToShader(shader, fogUniforms);
+  if (options.additive) {
+    shader.fragmentShader = `#define FOG_ADDITIVE\n${shader.fragmentShader}`;
+  }
 
   // Add world position varying to vertex shader
   shader.vertexShader = shader.vertexShader.replace(
@@ -359,4 +351,27 @@ export function injectCustomFog(
     "#include <fog_fragment>",
     fogFragmentShader,
   );
+}
+
+/**
+ * injectCustomFog for a SpriteMaterial. three's sprite vertex shader has no
+ * `transformed`, so the sprite's centre stands in as the fog position. Use
+ * `additiveSpriteFog` for additive sprites: three's own fog mixes even the
+ * quad's transparent corners toward the fog colour, which additive blending
+ * then adds to the scene as a visible square.
+ */
+export function injectSpriteFog(
+  shader: {
+    uniforms: Record<string, { value: unknown }>;
+    vertexShader: string;
+    fragmentShader: string;
+  },
+  fogUniforms: FogShaderUniformObjects,
+  options: { additive?: boolean } = {},
+): void {
+  shader.vertexShader = shader.vertexShader.replace(
+    "#include <fog_vertex>",
+    "vec3 transformed = vec3(0.0);\n#include <fog_vertex>",
+  );
+  injectCustomFog(shader, fogUniforms, options);
 }

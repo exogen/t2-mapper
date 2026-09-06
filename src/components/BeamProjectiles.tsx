@@ -3,6 +3,11 @@
  * endpoints, two fading passes) and the ELF/repair link beams (live
  * endpoints between two objects). Split from Projectiles.tsx, which
  * keeps the quad-style sprite/tracer renderers.
+ *
+ * All of them are unfogged on purpose: the engine's beam renderers apply
+ * neither haze nor GL fog (sniper FUN_00642f60, ELF FUN_0064cff0, repair
+ * FUN_00645fc0, ribbon FUN_0044da90 — binary-verified), and fogging an
+ * additive ribbon whose texture has no alpha paints its whole strip.
  */
 import { useMemo, useRef } from "react";
 import { useFrame } from "@react-three/fiber";
@@ -194,6 +199,7 @@ export function BeamProjectile({ entity }: { entity: BeamEntity }) {
           depthWrite={false}
           side={DoubleSide}
           toneMapped={false}
+          fog={false}
         />
       </mesh>
       <mesh frustumCulled={false}>
@@ -218,6 +224,7 @@ export function BeamProjectile({ entity }: { entity: BeamEntity }) {
           depthWrite={false}
           side={DoubleSide}
           toneMapped={false}
+          fog={false}
         />
       </mesh>
     </group>
@@ -558,6 +565,7 @@ export function LinkBeamProjectile({ entity }: { entity: LinkBeamEntity }) {
           depthWrite={false}
           side={DoubleSide}
           toneMapped={false}
+          fog={false}
         />
       </mesh>
       {visual.lightningTexture
@@ -583,6 +591,7 @@ export function LinkBeamProjectile({ entity }: { entity: LinkBeamEntity }) {
                 depthWrite={false}
                 side={DoubleSide}
                 toneMapped={false}
+                fog={false}
               />
             </mesh>
           ))
@@ -608,6 +617,7 @@ export function LinkBeamProjectile({ entity }: { entity: LinkBeamEntity }) {
             depthWrite={false}
             side={DoubleSide}
             toneMapped={false}
+            fog={false}
           />
         </mesh>
       ) : null}

@@ -11,8 +11,9 @@ import {
   DoubleSide,
   NoColorSpace,
   RepeatWrapping,
+  Vector3,
 } from "three";
-import type { Texture } from "three";
+import type { Fog, Mesh, MeshBasicMaterial, Texture } from "three";
 import type {
   ForceFieldBareEntity,
   ForceFieldData,
@@ -26,8 +27,12 @@ import {
 import { forceFieldCollider } from "../world/placement";
 import {
   createForceFieldMaterial,
+  forceFieldTranslucency,
   OPACITY_FACTOR,
 } from "../forceFieldMaterial";
+import { hazeAndFog } from "../globalFogUniforms";
+
+const _fieldOrigin = new Vector3();
 
 function setupForceFieldTexture(texture: Texture) {
   texture.wrapS = texture.wrapT = RepeatWrapping;
@@ -51,27 +56,60 @@ function useCornerBoxGeometry(scale: [number, number, number]) {
   return geometry;
 }
 
-function ForceFieldFallback({
-  scale,
-  color,
-  baseTranslucency,
-}: {
-  scale: [number, number, number];
-  color: [number, number, number];
-  baseTranslucency: number;
-}) {
-  const geometry = useCornerBoxGeometry(scale);
-  const fallbackColor = useMemo(
-    () => new Color(color[0], color[1], color[2]),
-    [color],
+/**
+ * The open/close fade alpha (1 closed, 0 open). `fieldAlpha` is mutated
+ * in place per tick by StreamingController, so read it every frame.
+ */
+function currentFieldAlpha(entity: ForceFieldBareEntity): number {
+  return entity.fieldAlpha ?? (entity.fieldOpen ? 0 : 1);
+}
+
+/** A retracted (zero-scaled) or fully transparent field draws nothing. */
+function fieldVisible(data: ForceFieldData, alpha: number): boolean {
+  const [x, y, z] = data.dimensions;
+  return (
+    x > 0 &&
+    y > 0 &&
+    z > 0 &&
+    forceFieldTranslucency(
+      data.baseTranslucency,
+      data.powerOffTranslucency,
+      alpha,
+    ) > 0
+  );
+}
+
+function ForceFieldFallback({ entity }: { entity: ForceFieldBareEntity }) {
+  const data = entity.forceFieldData!;
+  const geometry = useCornerBoxGeometry(data.dimensions);
+  const meshRef = useRef<Mesh>(null);
+  const colors = useMemo(
+    () => ({
+      closed: new Color(...data.color),
+      open: new Color(...data.powerOffColor),
+    }),
+    [data.color, data.powerOffColor],
   );
 
+  useFrame(() => {
+    const mesh = meshRef.current;
+    if (!mesh) return;
+    const alpha = currentFieldAlpha(entity);
+    const material = mesh.material as MeshBasicMaterial;
+    material.color.copy(colors.open).lerp(colors.closed, alpha);
+    material.opacity =
+      forceFieldTranslucency(
+        data.baseTranslucency,
+        data.powerOffTranslucency,
+        alpha,
+      ) * OPACITY_FACTOR;
+    mesh.visible = fieldVisible(data, alpha);
+  });
+
   return (
-    <mesh geometry={geometry} renderOrder={1}>
+    <mesh ref={meshRef} geometry={geometry} renderOrder={1}>
       <meshBasicMaterial
-        color={fallbackColor}
         transparent
-        opacity={baseTranslucency * OPACITY_FACTOR}
         blending={AdditiveBlending}
         side={DoubleSide}
         depthWrite={false}
@@ -81,15 +119,12 @@ function ForceFieldFallback({
   );
 }
 
-function ForceFieldMesh({
-  scale,
-  data,
-}: {
-  scale: [number, number, number];
-  data: ForceFieldData;
-}) {
+function ForceFieldMesh({ entity }: { entity: ForceFieldBareEntity }) {
+  const data = entity.forceFieldData!;
+  const scale = data.dimensions;
   const { animationEnabled } = useSettings();
   const geometry = useCornerBoxGeometry(scale);
+  const meshRef = useRef<Mesh>(null);
 
   const textureUrls = useMemo(
     () => data.textures.map((t) => textureToUrl(t)),
@@ -107,7 +142,9 @@ function ForceFieldMesh({
       umapping: data.umapping,
       vmapping: data.vmapping,
       color: data.color,
+      powerOffColor: data.powerOffColor,
       baseTranslucency: data.baseTranslucency,
+      powerOffTranslucency: data.powerOffTranslucency,
     });
   }, [textures, scale, data]);
 
@@ -117,7 +154,25 @@ function ForceFieldMesh({
 
   const elapsedRef = useRef(0);
 
-  useFrame((_, delta) => {
+  useFrame((state, delta) => {
+    const alpha = currentFieldAlpha(entity);
+    material.uniforms.fieldAlpha.value = alpha;
+    const mesh = meshRef.current;
+    if (mesh) {
+      mesh.visible = fieldVisible(data, alpha);
+      // The engine hazes the whole field by the distance from the camera
+      // to its transform position (the box corner), not per fragment.
+      const fog = state.scene.fog as Fog | null;
+      mesh.getWorldPosition(_fieldOrigin);
+      material.uniforms.fieldHaze.value = fog
+        ? hazeAndFog(
+            _fieldOrigin.distanceTo(state.camera.position),
+            _fieldOrigin.y,
+            fog.near,
+            fog.far,
+          )
+        : 0;
+    }
     if (!animationEnabled) {
       elapsedRef.current = 0;
       material.uniforms.currentFrame.value = 0;
@@ -126,11 +181,18 @@ function ForceFieldMesh({
     }
     elapsedRef.current += delta;
     material.uniforms.currentFrame.value =
-      Math.floor(elapsedRef.current * data.framesPerSec) % data.numFrames;
+      Math.round(elapsedRef.current * data.framesPerSec) % data.numFrames;
     material.uniforms.vScroll.value = elapsedRef.current * data.scrollSpeed;
   });
 
-  return <mesh geometry={geometry} material={material} renderOrder={1} />;
+  return (
+    <mesh
+      ref={meshRef}
+      geometry={geometry}
+      material={material}
+      renderOrder={1}
+    />
+  );
 }
 
 /**
@@ -142,9 +204,10 @@ export function ForceFieldBare({ entity }: { entity: ForceFieldBareEntity }) {
   const scale = data.dimensions;
   const isTarget = useIsDebugTourTarget(entity.id);
 
-  // Register the field's box for projectile collision. Torque only
-  // collides with closed fields; open/close rebuilds the entity, so the
-  // effect re-registers with the new state.
+  // Register the field's box for projectile collision. Torque collides
+  // with any field that isn't fully open; open/close and the dimension
+  // change that comes with it rebuild the entity, so the effect
+  // re-registers with the new state.
   useEffect(() => {
     const collider = forceFieldCollider(entity);
     if (!collider) return;
@@ -157,39 +220,17 @@ export function ForceFieldBare({ entity }: { entity: ForceFieldBareEntity }) {
     return () => unregisterForceFieldCollider(entity.id);
   }, [entity]);
 
-  const textureUrls = useMemo(
-    () => data.textures.map((t) => textureToUrl(t)),
-    [data.textures],
-  );
-
-  // Opened (retracted) by scripts, e.g. powered-down force fields.
-  if (entity.fieldOpen) {
-    return null;
-  }
-
-  if (textureUrls.length === 0) {
-    return (
-      <ForceFieldFallback
-        scale={scale}
-        color={data.color}
-        baseTranslucency={data.baseTranslucency}
-      />
-    );
+  if (data.textures.length === 0) {
+    return <ForceFieldFallback entity={entity} />;
   }
 
   return (
     <>
       <DebugSuspense
         name={`ForceField`}
-        fallback={
-          <ForceFieldFallback
-            scale={scale}
-            color={data.color}
-            baseTranslucency={data.baseTranslucency}
-          />
-        }
+        fallback={<ForceFieldFallback entity={entity} />}
       >
-        <ForceFieldMesh scale={scale} data={data} />
+        <ForceFieldMesh entity={entity} />
       </DebugSuspense>
       {isTarget && scale && <DebugBounds size={scale} />}
     </>

@@ -28,6 +28,19 @@ export function resolveEmapFromDatablock(
   return false;
 }
 
+/**
+ * ShapeImageData.cloakable for a mounted image (default true, as in the
+ * engine): a cloaking wearer fades cloakable images with it.
+ */
+export function resolveCloakableFromImageSlot(
+  imageDataBlockId?: number,
+): boolean {
+  if (imageDataBlockId == null) return true;
+  const sp = engineStore.getState().playback.recording?.streamingPlayback;
+  const db = sp?.getDataBlockData(imageDataBlockId);
+  return db?.cloakable !== false;
+}
+
 /** Resolve emap for a mounted image by its datablock ID. */
 export function resolveEmapFromImageSlot(imageDataBlockId?: number): boolean {
   if (imageDataBlockId == null) return false;

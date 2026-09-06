@@ -22,11 +22,15 @@
  * by the browser bundle, so `node:async_hooks` never reaches Vite.
  */
 import type { Box3, BufferGeometry, Matrix3, Matrix4 } from "three";
+import type { Mesh } from "three";
 import type { MeshBVH } from "three-mesh-bvh";
 import type { TerrainCollisionData } from "./terrainCollision";
 import type { WaterInfo } from "./waterLevel";
 
 export interface MeshCollider {
+  /** The registered mesh: its geometry attributes and materials (interior
+   *  lightmaps) are what a lighting probe reads at a hit. */
+  mesh: Mesh;
   bvh: MeshBVH;
   matrixWorld: Matrix4;
   inverse: Matrix4;

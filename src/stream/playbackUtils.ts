@@ -6,13 +6,14 @@ import {
   LinearFilter,
   Matrix4,
   MeshLambertMaterial,
-  NoColorSpace,
   Object3D,
   Quaternion,
   QuaternionKeyframeTrack,
   Vector3,
   VectorKeyframeTrack,
+  SRGBColorSpace,
 } from "three";
+import type { ColorSpace } from "three";
 import type {
   BufferGeometry,
   Material,
@@ -26,8 +27,9 @@ import {
 import { isOrganicShape } from "../organicShapes";
 import {
   loadIflAtlas,
+  applyAtlasFrame,
+  createAtlasInstance,
   getFrameIndexForTime,
-  updateAtlasFrame,
 } from "../components/iflAtlas";
 import { loadTexture, setupTexture } from "../textureUtils";
 import { textureToUrl } from "../loaders";
@@ -39,7 +41,7 @@ export const DEFAULT_EYE_HEIGHT = 2.1;
 /** Torque's animation crossfade duration (seconds). */
 export const ANIM_TRANSITION_TIME = 0.25;
 
-export const STREAM_TICK_MS = 32;
+const STREAM_TICK_MS = 32;
 export const STREAM_TICK_SEC = STREAM_TICK_MS / 1000;
 
 // ── Temp vectors / quaternions (module-level to avoid per-frame alloc) ──
@@ -69,12 +71,25 @@ export function torqueHorizontalFovToThreeVerticalFov(
   return (vRad * 180) / Math.PI;
 }
 
-export function setupEffectTexture(tex: Texture): void {
+/**
+ * Clamped, mip-less setup for an effect texture whose raw texel values
+ * should reach the framebuffer unchanged, as the engine's GL_MODULATE
+ * did. Built-in materials (MeshBasic, Sprite) re-encode their output to
+ * sRGB, so the texture must be tagged sRGB for the round trip to be the
+ * identity — tagged NoColorSpace, a near-black border texel (9/255) is
+ * taken as linear and comes out as 53/255 grey, a visible box around an
+ * additive quad. Raw ShaderMaterials that skip the encode (particles,
+ * flare spikes) pass NoColorSpace.
+ */
+export function setupEffectTexture(
+  tex: Texture,
+  colorSpace: ColorSpace = SRGBColorSpace,
+): void {
   tex.wrapS = ClampToEdgeWrapping;
   tex.wrapT = ClampToEdgeWrapping;
   tex.minFilter = LinearFilter;
   tex.magFilter = LinearFilter;
-  tex.colorSpace = NoColorSpace;
+  tex.colorSpace = colorSpace;
   tex.flipY = false;
   if (tex.image) {
     tex.needsUpdate = true;
@@ -240,7 +255,7 @@ export function getPosedNodeTransform(
  * Smooth vertex normals across co-located split vertices (same position, different
  * UVs). Matches the technique used by ShapeModel for consistent lighting.
  */
-export function smoothVertexNormals(geometry: BufferGeometry): void {
+function smoothVertexNormals(geometry: BufferGeometry): void {
   // Cloned scenes share geometry with the useGLTF cache, so this runs once
   // per geometry, not per clone — the result is identical every time.
   if (geometry.userData.normalsSmoothed) return;
@@ -292,7 +307,7 @@ export function smoothVertexNormals(geometry: BufferGeometry): void {
   normAttr.needsUpdate = true;
 }
 
-export interface ShapeMaterialResult {
+interface ShapeMaterialResult {
   material: Material;
   /** Back-face material for organic/translucent two-pass rendering. */
   backMaterial?: Material;
@@ -425,7 +440,7 @@ export function replaceWithShapeMaterial(
   return { material: result };
 }
 
-export interface IflInitializer {
+interface IflInitializer {
   mesh: Object3D;
   initialize: (mesh: Object3D, getTime: () => number) => Promise<() => void>;
 }
@@ -439,8 +454,9 @@ async function initializeIflMaterial(
 ): Promise<() => void> {
   const iflPath = `textures/${resourcePath}.ifl`;
   const atlas = await loadIflAtlas(iflPath, { repeat });
+  const texture = createAtlasInstance(atlas);
 
-  (material as any).map = atlas.texture;
+  (material as any).map = texture;
   material.needsUpdate = true;
 
   let disposed = false;
@@ -451,13 +467,15 @@ async function initializeIflMaterial(
   ) {
     prevOnBeforeRender?.apply(this, args);
     if (disposed) return;
-    updateAtlasFrame(atlas, getFrameIndexForTime(atlas, getTime()));
-    // In swap mode, always sync material.map — multiple meshes may share
-    // the same atlas but have different material instances.
-    if (atlas.swapMode && (material as any).map !== atlas.texture) {
-      (material as any).map = atlas.texture;
-      material.needsUpdate = true;
-    }
+    const frame = applyAtlasFrame(
+      atlas,
+      texture,
+      getFrameIndexForTime(atlas, getTime()),
+    );
+    // Swapping one loaded frame texture for another changes no shader
+    // define, so no needsUpdate: that would cost a program lookup per
+    // frame per material.
+    if ((material as any).map !== frame) (material as any).map = frame;
   };
 
   return () => {

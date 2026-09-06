@@ -49,9 +49,13 @@ import { useIsDebugTourTarget } from "../state/cameraTourStore";
 import { DebugBounds } from "./DebugBounds";
 import { useEntitySoundSlots } from "./useEntitySoundSlots";
 import {
+  resolveCloakableFromImageSlot,
   resolveEmapFromDatablock,
   resolveEmapFromImageSlot,
 } from "./resolveEmap";
+import { useFadeAndCloak } from "./shapeFadeCloak";
+import { useShapeLighting } from "./useShapeLighting";
+import type { MountedImageRoot } from "./shapeFadeCloak";
 import { useAudio } from "./AudioContext";
 import {
   resolveAudioProfile,
@@ -611,6 +615,33 @@ export function PlayerModel({ entity }: { entity: PlayerEntity }) {
   entityRef.current = entity; // eslint-disable-line react-hooks/refs
   useEntitySoundSlots(entityRef, clonedScene);
 
+  // ShapeBase fade (mFadeVal) and cloak (mCloakLevel): the body takes the
+  // cloak texture, the mounted weapon/pack/flag only fade (when their
+  // image datablock is cloakable) — see shapeFadeCloak.ts.
+  useFadeAndCloak(
+    clonedScene,
+    () => entityRef.current,
+    () => {
+      const slots = entityRef.current.imageSlots;
+      const mounted: MountedImageRoot[] = [];
+      for (const [bone, slot] of [
+        [mount0, 0],
+        [mount1, 2],
+        [mount2, 3],
+      ] as const) {
+        if (bone)
+          mounted.push({
+            root: bone,
+            cloakable: resolveCloakableFromImageSlot(
+              slots?.[slot]?.dataBlockId,
+            ),
+          });
+      }
+      return mounted;
+    },
+  );
+  useShapeLighting(clonedScene);
+
   // Jet thrust sound. Played client-side by Player::updateJetEffects via
   // direct alxPlay3d — NOT networked through SoundMask. We derive it from
   // entity.jetting (which comes from move trigger[3] or ghost MoveMask).
@@ -963,30 +994,39 @@ export function PlayerModel({ entity }: { entity: PlayerEntity }) {
               <ShapePlaceholder color="cyan" label={currentWeaponShape} />
             }
           >
-            <WeaponModel
+            <MountedImageModel
               entity={entity}
-              weaponShape={currentWeaponShape}
-              mount0={mount0}
+              slot={0}
+              shape={currentWeaponShape}
+              mount={mount0}
             />
           </DebugSuspense>
         </ShapeErrorBoundary>
       )}
-      {currentPackShape &&
-        mount1 &&
-        createPortal(
-          <Suspense>
-            <MountedShapeContent
-              shapeName={currentPackShape}
-              imageDataBlockId={entity.imageSlots?.[2]?.dataBlockId}
-              entityId={entity.id}
+      {currentPackShape && mount1 && (
+        <ShapeErrorBoundary
+          key={currentPackShape}
+          fallback={<ShapePlaceholder color="red" label={currentPackShape} />}
+        >
+          <DebugSuspense
+            name={`Pack:${entity.id}/${currentPackShape}`}
+            fallback={
+              <ShapePlaceholder color="cyan" label={currentPackShape} />
+            }
+          >
+            <MountedImageModel
+              entity={entity}
+              slot={2}
+              shape={currentPackShape}
+              mount={mount1}
             />
-          </Suspense>,
-          mount1,
-        )}
+          </DebugSuspense>
+        </ShapeErrorBoundary>
+      )}
       {currentFlagShape &&
         mount2 &&
         createPortal(
-          <Suspense>
+          <Suspense key={currentFlagShape}>
             <MountedShapeContent
               shapeName={currentFlagShape}
               imageDataBlockId={entity.imageSlots?.[3]?.dataBlockId}
@@ -1050,29 +1090,32 @@ function buildSeqIndexToName(
 }
 
 /**
- * Attaches an animated weapon model to the player's Mount0 bone.
+ * Attaches an animated mounted image (weapon in slot 0, pack in slot 2)
+ * to one of the player's mount bones.
  * Drives a weapon-specific AnimationMixer using the WeaponImageStateMachine
  * to play fire, reload, spin, and other weapon animations based on the
  * server-replicated condition flags.
  *
- * Reads `entity.weaponImageState` and `entity.weaponImageStates` directly
- * from the entity inside useFrame, since these fields are mutated per-tick
- * without triggering React re-renders.
+ * Reads the slot's `imageState` and `imageStates` off `entity.imageSlots`
+ * inside useFrame, since the slots are mutated per-tick without
+ * triggering React re-renders.
  */
-function WeaponModel({
+function MountedImageModel({
   entity,
-  weaponShape,
-  mount0,
+  slot,
+  shape,
+  mount,
 }: {
   entity: PlayerEntity;
-  weaponShape: string;
-  mount0: Object3D;
+  slot: number;
+  shape: string;
+  mount: Object3D;
 }) {
   const engineStore = useEngineStoreApi();
-  const weaponGltf = useStaticShape(weaponShape);
+  const weaponGltf = useStaticShape(shape);
   const emap = useMemo(
-    () => resolveEmapFromImageSlot(entity.imageSlots?.[0]?.dataBlockId),
-    [entity.imageSlots],
+    () => resolveEmapFromImageSlot(entity.imageSlots?.[slot]?.dataBlockId),
+    [entity.imageSlots, slot],
   );
   const anisotropy = useAnisotropy();
 
@@ -1141,6 +1184,7 @@ function WeaponModel({
       weaponMixer.uncacheRoot(weaponClone);
     };
   }, [weaponClone, weaponMixer]);
+  useShapeLighting(weaponClone);
 
   // Build case-insensitive action map for weapon animations.
   const weaponActionsRef = useRef(new Map<string, AnimationAction>());
@@ -1190,19 +1234,19 @@ function WeaponModel({
   // Weapon state machine, lazily initialized on first tick with data.
   const stateMachineRef = useRef<WeaponImageStateMachine | null>(null);
   const currentWeaponAnimRef = useRef<string | null>(null);
-  const lastWeaponStatesRef = useRef(entity.weaponImageStates);
+  const lastWeaponStatesRef = useRef(entity.imageSlots?.[slot]?.imageStates);
 
   // Track active looping weapon sound (e.g. chaingun fire).
   const loopingSoundRef = useRef<PositionalAudio | null>(null);
   const loopingSoundStateRef = useRef<number>(-1);
 
-  // Imperatively attach/detach weapon clone to Mount0.
+  // Imperatively attach/detach the clone to the mount bone.
   useEffect(() => {
-    mount0.add(weaponClone);
+    mount.add(weaponClone);
     return () => {
-      mount0.remove(weaponClone);
+      mount.remove(weaponClone);
     };
-  }, [weaponClone, mount0]);
+  }, [weaponClone, mount]);
 
   // Per-frame: tick state machine and drive weapon animation mixer.
   useFrame((_, delta) => {
@@ -1210,9 +1254,11 @@ function WeaponModel({
     const isPlaying = playback.status === "playing";
     const actions = weaponActionsRef.current;
 
-    // Read weapon state directly from entity (mutated per-tick, not via props).
-    const imageState = entity.weaponImageState;
-    const imageStates = entity.weaponImageStates;
+    // Read the slot's image state directly from the entity (mutated
+    // per-tick, not via props).
+    const imageSlot = entity.imageSlots?.[slot];
+    const imageState = imageSlot?.imageState;
+    const imageStates = imageSlot?.imageStates;
 
     // Lazily create or recreate the state machine when the datablock states
     // become available or change (e.g. weapon switch within same shape).

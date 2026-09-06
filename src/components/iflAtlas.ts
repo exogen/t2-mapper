@@ -6,13 +6,14 @@ import {
   SRGBColorSpace,
   Texture,
 } from "three";
+import type { Material, Mesh, Object3D } from "three";
 import { iflTextureToUrl, loadImageFrameList } from "../loaders";
 import { loadTextureAsync } from "../textureUtils";
 
 /** One IFL tick in seconds (Torque converts at 1/30s per tick). */
-export const IFL_TICK_SECONDS = 1 / 30;
+const IFL_TICK_SECONDS = 1 / 30;
 
-export interface IflAtlas {
+interface IflAtlas {
   texture: CanvasTexture | Texture;
   columns: number;
   rows: number;
@@ -27,8 +28,6 @@ export interface IflAtlas {
   frameOffsetSeconds: number[];
   /** Total IFL cycle duration in seconds. */
   totalDurationSeconds: number;
-  /** Last rendered atlas slot, to avoid redundant offset updates. */
-  lastSlot: number;
   /** When true, swap individual textures instead of atlas offsets (for RepeatWrapping). */
   swapMode?: boolean;
   /** Individual textures per unique frame (only set when swapMode=true). */
@@ -113,7 +112,6 @@ function createAtlas(
     frameToSlot,
     frameOffsetSeconds: [],
     totalDurationSeconds: 0,
-    lastSlot: -1,
   };
 }
 
@@ -146,7 +144,6 @@ function createSwapAtlas(
     frameToSlot,
     frameOffsetSeconds: [],
     totalDurationSeconds: 0,
-    lastSlot: -1,
     swapMode: true,
     frameTextures: uniqueTextures,
   };
@@ -165,31 +162,164 @@ function computeTiming(
 }
 
 /**
- * Set the atlas texture offset to show the image for the given IFL entry.
- * Uses `frameToSlot` to map the entry index to the atlas grid position.
+ * A texture for one consumer of the atlas. Atlas mode shares the image and
+ * GPU upload (the Source) but owns its offset — the offset IS the current
+ * frame, and every shape animating the same IFL through one texture
+ * overwrote the others' frame each render (a mortar's three sub-explosions
+ * at three play speeds visibly thrashed). Built by hand rather than with
+ * Texture.clone(): copy() sets needsUpdate, which bumps the shared Source's
+ * version and re-uploads the whole atlas for every consumer on each spawn.
+ * Swap mode already keeps one texture per frame; it returns the first.
  */
+export function createAtlasInstance(atlas: IflAtlas): Texture {
+  if (atlas.swapMode && atlas.frameTextures) return atlas.frameTextures[0];
+  const src = atlas.texture;
+  const tex = new Texture();
+  tex.source = src.source;
+  tex.colorSpace = src.colorSpace;
+  tex.generateMipmaps = src.generateMipmaps;
+  tex.minFilter = src.minFilter;
+  tex.magFilter = src.magFilter;
+  tex.wrapS = src.wrapS;
+  tex.wrapT = src.wrapT;
+  tex.flipY = src.flipY;
+  tex.repeat.copy(src.repeat);
+  // Registers with the renderer (version > 0) without touching the Source.
+  tex.version = 1;
+  return tex;
+}
+
 /**
- * Update the atlas to show the given frame. In atlas mode, adjusts texture
- * offset. In swap mode, updates `atlas.texture` to the frame's texture
- * (caller must apply it to the material's .map).
- * Returns true if the texture changed (swap mode only — caller needs to
- * update material.map).
+ * Show IFL entry `frameIndex` on an instance texture from
+ * createAtlasInstance. Returns the texture the material must map — a
+ * different object only in swap mode.
  */
-export function updateAtlasFrame(atlas: IflAtlas, frameIndex: number): boolean {
+export function applyAtlasFrame(
+  atlas: IflAtlas,
+  texture: Texture,
+  frameIndex: number,
+): Texture {
   const slot = atlas.frameToSlot[frameIndex] ?? 0;
-  if (slot === atlas.lastSlot) return false;
-  atlas.lastSlot = slot;
-
   if (atlas.swapMode && atlas.frameTextures) {
-    atlas.texture = atlas.frameTextures[slot] ?? atlas.frameTextures[0];
-    return true;
+    return atlas.frameTextures[slot] ?? atlas.frameTextures[0];
   }
-
   const col = slot % atlas.columns;
   // Flip row: canvas Y=0 is top, but texture V=0 is bottom.
   const row = atlas.rows - 1 - Math.floor(slot / atlas.columns);
-  atlas.texture.offset.set(col / atlas.columns, row / atlas.rows);
-  return false;
+  texture.offset.set(col / atlas.columns, row / atlas.rows);
+  return texture;
+}
+
+/** An IFL-textured mesh found in a converted DTS, before its materials are
+ *  replaced (processShapeScene drops the userData this reads). */
+export interface IflMeshInfo {
+  mesh: Mesh;
+  iflPath: string;
+  /** SWrap/TWrap: the texture tiles, which an atlas cannot (swap mode). */
+  repeat: boolean;
+  /** Set when a sequence's ifl_matters drives this material's frame. */
+  sequenceName?: string;
+  /** That sequence's duration in seconds. */
+  duration?: number;
+  cyclic?: boolean;
+  /** Torque `toolBegin`: offset into the IFL timeline (seconds). */
+  toolBegin?: number;
+  /** The mesh also carries a vis (opacity) track, a separate system. */
+  hasVisSequence: boolean;
+}
+
+/** Collect IFL meshes from a cloned shape scene. Call BEFORE processShapeScene. */
+export function collectIflMeshes(scene: Object3D): IflMeshInfo[] {
+  const infos: IflMeshInfo[] = [];
+  scene.traverse((node) => {
+    const mesh = node as Mesh;
+    if (!mesh.isMesh || !mesh.material) return;
+    const mat = Array.isArray(mesh.material) ? mesh.material[0] : mesh.material;
+    const flags = new Set<string>(mat?.userData?.flag_names ?? []);
+    const rp: string | undefined = mat?.userData?.resource_path;
+    if (!flags.has("IflMaterial") || !rp) return;
+    const ud = mesh.userData;
+    // ifl_sequence is the controlling sequence; vis_sequence is the
+    // independent opacity track and must not stand in for it.
+    const driven = !!ud?.ifl_sequence;
+    infos.push({
+      mesh,
+      iflPath: `textures/${rp}.ifl`,
+      repeat: flags.has("SWrap") || flags.has("TWrap"),
+      sequenceName: driven ? String(ud.ifl_sequence).toLowerCase() : undefined,
+      duration: ud?.ifl_duration ? Number(ud.ifl_duration) : undefined,
+      cyclic: driven ? !!ud.ifl_cyclic : undefined,
+      toolBegin:
+        ud?.ifl_tool_begin != null ? Number(ud.ifl_tool_begin) : undefined,
+      hasVisSequence: !!ud?.vis_sequence,
+    });
+  });
+  return infos;
+}
+
+type MappedMaterial = Material & { map?: Texture | null };
+
+/** One mesh's live IFL: its atlas, its own texture, and the material to map. */
+export interface IflMaterialInstance {
+  atlas: IflAtlas;
+  texture: Texture;
+  material: MappedMaterial;
+  info: IflMeshInfo;
+}
+
+/**
+ * Load the atlas for an IFL mesh and map the mesh's (already replaced)
+ * material to a fresh instance texture. Null when the mesh has no material.
+ */
+export async function loadIflMaterialInstance(
+  info: IflMeshInfo,
+): Promise<IflMaterialInstance | null> {
+  const atlas = await loadIflAtlas(info.iflPath, { repeat: info.repeat });
+  const material = (
+    Array.isArray(info.mesh.material)
+      ? info.mesh.material[0]
+      : info.mesh.material
+  ) as MappedMaterial | undefined;
+  if (!material) return null;
+  const texture = createAtlasInstance(atlas);
+  material.map = texture;
+  material.needsUpdate = true;
+  return { atlas, texture, material, info };
+}
+
+/**
+ * Where a sequence-driven IFL is at `threadSec` into its controlling
+ * sequence — Torque's animateIfls (tsAnimate.cc): pos wraps [0,1) when
+ * cyclic, clamps to [0,1] otherwise; time = pos × duration + toolBegin. A
+ * non-cyclic sequence must hold its last frame, so its time is also clamped
+ * to the IFL's own length (the DTS duration carries float noise above the
+ * frame sum, and the lookup wraps past it). An IFL with no controlling
+ * sequence free-runs on the thread time.
+ */
+export function iflSequenceTime(
+  info: IflMeshInfo,
+  atlas: IflAtlas,
+  threadSec: number,
+): number {
+  if (!info.duration) return threadSec;
+  const pos = info.cyclic
+    ? (threadSec / info.duration) % 1
+    : Math.min(threadSec / info.duration, 1);
+  const time = pos * info.duration + (info.toolBegin ?? 0);
+  return info.cyclic ? time : Math.min(time, atlas.totalDurationSeconds);
+}
+
+/** Show the IFL frame for `iflTime` seconds on a material instance. */
+export function showIflFrame(inst: IflMaterialInstance, iflTime: number): void {
+  const frame = applyAtlasFrame(
+    inst.atlas,
+    inst.texture,
+    getFrameIndexForTime(inst.atlas, iflTime),
+  );
+  if (inst.material.map !== frame) {
+    inst.material.map = frame;
+    inst.material.needsUpdate = true;
+  }
 }
 
 /**
@@ -210,7 +340,7 @@ export function getFrameIndexForTime(atlas: IflAtlas, seconds: number): number {
 /**
  * Imperatively load an IFL atlas (all unique frames). Returns a cached atlas
  * if the same IFL has been loaded before. The returned atlas can be animated
- * per-frame with `updateAtlasFrame` + `getFrameIndexForTime`.
+ * per-frame with `createAtlasInstance` + `applyAtlasFrame` + `getFrameIndexForTime`.
  */
 export async function loadIflAtlas(
   iflPath: string,

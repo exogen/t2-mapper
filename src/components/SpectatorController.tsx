@@ -10,6 +10,7 @@ import { streamPlaybackStore } from "../state/streamPlaybackStore";
 import {
   cycleWatchFollow,
   cycleWatchObserverMode,
+  toggleFollowFirstPerson,
   enterWatchFollow,
   exitWatchFollow,
   resolveWatchFollowTarget,
@@ -88,6 +89,9 @@ export function SpectatorController() {
   // (command circuit) observe the next/previous player.
   useInputAction("toggleObserverMode", () => {
     if (isWatching) cycleWatchObserverMode();
+  });
+  useInputAction("toggleFollowFirstPerson", () => {
+    if (isWatching) toggleFollowFirstPerson();
   });
   useInputAction("nextPlayer", () => {
     if (isWatching && streamPlaybackStore.getState().followEntityId) {

@@ -434,13 +434,37 @@ export function cycleWatchObserverMode(): void {
 }
 
 /**
+ * Tab while the pointer is locked: follow orbit ⇄ first person on a
+ * followed player. Any other mode or situation (free-fly, original view,
+ * a flag follow, pointer not locked) is left alone.
+ */
+export function toggleFollowFirstPerson(): void {
+  if (!document.pointerLockElement) return;
+  const { cameraMode } = streamPlaybackStore.getState();
+  if (cameraMode === "orbitOverride" && isFollowingPlayer()) {
+    streamPlaybackStore.setState({
+      followCameraMode: "firstPersonOverride",
+      cameraMode: "firstPersonOverride",
+    });
+  } else if (cameraMode === "firstPersonOverride") {
+    streamPlaybackStore.setState({
+      followCameraMode: "orbitOverride",
+      cameraMode: "orbitOverride",
+    });
+  }
+}
+
+/**
  * Demo-playback camera cycle (the F key): original → free-fly → follow
  * (orbit) → first-person → original. Follow and first-person orbit /
  * observe the chosen player; click cycles players (see cycleWatchFollow).
  * With no players present, follow and first-person are skipped.
  *
  * Unlike watch mode (which defaults to free-fly), demo starts in
- * "original" — the recorder's own viewpoint — and returns there.
+ * "original" — the recorder's own viewpoint — and returns there. Relay
+ * (MapGenius) demos are the exception: StreamingController promotes
+ * "original" to free-fly as soon as the recorded view has placed the
+ * camera, so for them the cycle re-centers on the observer instead.
  */
 export function cycleDemoCameraMode(): void {
   const state = streamPlaybackStore.getState();

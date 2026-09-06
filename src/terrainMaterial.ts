@@ -17,7 +17,9 @@
  * 4. Final output = lightmap × texture, all in gamma space
  */
 
+import { injectEffectLights } from "./effectLightUniforms";
 import { globalSunUniforms } from "./globalSunUniforms";
+import { lightsFragmentBeginByType } from "./lightsChunk";
 import { glslColorSpace, glslDebugGrid } from "./shaderUtils";
 
 // Terrain and texture dimensions (must match TerrainBlock.tsx constants)
@@ -243,16 +245,20 @@ float terrainShadowFactor = 1.0;
 `,
   );
 
-  // When lightmap is available, override RE_Direct to extract shadow factor
-  // We don't compute lighting here - just capture the shadow for use in output
+  // Dynamic lights (flags, packs, projectiles) are the engine's projected
+  // falloff-disc pass, added after fog; Three's point/spot loops are diverted
+  // to a no-op so they never accumulate.
+  injectEffectLights(shader);
+
+  // When lightmap is available, the directional loop calls RE_Direct_TerrainSun,
+  // which only yields the sun's shadow factor (its lighting is computed in
+  // gamma space at output).
   if (lightmap) {
     shader.fragmentShader = shader.fragmentShader.replace(
       "#include <lights_lambert_pars_fragment>",
       `#include <lights_lambert_pars_fragment>
 
-// Override RE_Direct to extract shadow factor for Torque-style gamma-space lighting
-#undef RE_Direct
-void RE_Direct_TerrainShadow( const in IncidentLight directLight, const in vec3 geometryPosition, const in vec3 geometryNormal, const in vec3 geometryViewDir, const in vec3 geometryClearcoatNormal, const in LambertMaterial material, inout ReflectedLight reflectedLight ) {
+void RE_Direct_TerrainSun( const in IncidentLight directLight, const in vec3 geometryPosition, const in vec3 geometryNormal, const in vec3 geometryViewDir, const in vec3 geometryClearcoatNormal, const in LambertMaterial material, inout ReflectedLight reflectedLight ) {
   // Torque lighting (terrLighting.cc): if light points up, terrain gets only ambient
   // This prevents shadow acne from light hitting terrain backfaces
   if (!sunLightPointsDown) {
@@ -267,19 +273,18 @@ void RE_Direct_TerrainShadow( const in IncidentLight directLight, const in vec3 
     float shadowedMax = max(max(directLight.color.r, directLight.color.g), directLight.color.b);
     terrainShadowFactor = clamp(shadowedMax / max(sunMax, 0.001), 0.0, 1.0);
   #endif
-  // Don't add to reflectedLight - we'll compute lighting in gamma space at output
+  // The sun's lighting is not accumulated - it is computed in gamma space at output
 }
-#define RE_Direct RE_Direct_TerrainShadow
 
 `,
     );
 
-    // Override lights_fragment_begin: save directDiffuse before lights run,
-    // then after lights_fragment_end we can extract the point/spot contribution.
     shader.fragmentShader = shader.fragmentShader.replace(
       "#include <lights_fragment_begin>",
-      `vec3 terrainPreLightDirect = reflectedLight.directDiffuse;
-#include <lights_fragment_begin>
+      `${lightsFragmentBeginByType({
+        directional: "RE_Direct_TerrainSun",
+        punctual: "RE_Direct_EffectLightIgnore",
+      })}
 // Clear indirect diffuse - we'll compute ambient in gamma space
 #if defined( RE_IndirectDiffuse )
   irradiance = vec3(0.0);
@@ -290,15 +295,15 @@ void RE_Direct_TerrainShadow( const in IncidentLight directLight, const in vec3 
     shader.fragmentShader = shader.fragmentShader.replace(
       "#include <lights_fragment_end>",
       `#include <lights_fragment_end>
-  // Extract dynamic point/spot light contribution by subtracting what was
-  // there before lights ran. directDiffuse now has sun + point lights;
-  // terrainPreLightDirect was 0, so the difference is all lights.
-  // We'll subtract the sun part below and keep just the point/spot part.
-  vec3 terrainAllLightsLinear = reflectedLight.directDiffuse - terrainPreLightDirect;
   // Clear Three.js lighting - we compute sun/ambient in gamma space
   reflectedLight.directDiffuse = vec3(0.0);
   reflectedLight.indirectDiffuse = vec3(0.0);
 `,
+    );
+  } else {
+    shader.fragmentShader = shader.fragmentShader.replace(
+      "#include <lights_fragment_begin>",
+      lightsFragmentBeginByType({ punctual: "RE_Direct_EffectLightIgnore" }),
     );
   }
 
@@ -342,15 +347,6 @@ void RE_Direct_TerrainShadow( const in IncidentLight directLight, const in vec3 
 
   // Convert back to linear for Three.js output pipeline
   outgoingLight = torqueSRGBToLinear(resultSRGB) + totalEmissiveRadiance;
-  // Add dynamic point/spot light contributions when present.
-  // terrainAllLightsLinear includes both directional + point from Three.js.
-  // We only add it when point/spot lights exist to avoid double-counting
-  // the sun (already computed in gamma space above). The slight sun
-  // double-count when points are active is acceptable — point light
-  // intensity dominates near the source.
-  #if ( NUM_POINT_LIGHTS > 0 || NUM_SPOT_LIGHTS > 0 )
-    outgoingLight += terrainAllLightsLinear;
-  #endif
 }
 #include <opaque_fragment>`,
   );

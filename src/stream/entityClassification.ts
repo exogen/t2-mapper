@@ -43,6 +43,19 @@ export const ballisticProjectileClassNames = new Set([
 /** Projectile classes that use seeking (homing) physics. */
 export const seekerProjectileClassNames = new Set(["SeekerProjectile"]);
 
+/**
+ * Projectile classes whose shape is never turned: GrenadeProjectile's
+ * processTick (Tribes2.exe 0x634910) sets an identity-rotation transform
+ * and its interpolateTick (0x635b30) copies that rotation into the render
+ * transform, so grenades and mortar shells stay world-aligned while
+ * LinearProjectile and SeekerProjectile point along their velocity.
+ * BombProjectile derives from it and overrides neither.
+ */
+export const worldAlignedProjectileClassNames = new Set([
+  "GrenadeProjectile",
+  "BombProjectile",
+]);
+
 /** Deployable/placed object class names. */
 export const deployableClassNames = new Set([
   "StaticShape",

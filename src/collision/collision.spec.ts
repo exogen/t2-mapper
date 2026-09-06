@@ -543,7 +543,7 @@ describe("ballistic physics", () => {
     const pos: [number, number, number] = [0, 0, 0.5];
     const vel: [number, number, number] = [5, 0, -20];
     const unarmed = stepBallistic(pos, vel, {
-      gravityMod: 1,
+      gravity: -9.81,
       elasticity: 0.5,
       friction: 0.2,
       armed: false,
@@ -555,7 +555,7 @@ describe("ballistic physics", () => {
     const pos2: [number, number, number] = [0, 0, 0.5];
     const vel2: [number, number, number] = [5, 0, -20];
     const armed = stepBallistic(pos2, vel2, {
-      gravityMod: 1,
+      gravity: -9.81,
       elasticity: 0.5,
       friction: 0.2,
       armed: true,
@@ -569,7 +569,7 @@ describe("ballistic physics", () => {
     const pos: [number, number, number] = [0, 0, 100];
     const vel: [number, number, number] = [10, 0, 0];
     stepBallistic(pos, vel, {
-      gravityMod: 1,
+      gravity: -9.81,
       elasticity: 0.5,
       friction: 0.2,
       armed: false,

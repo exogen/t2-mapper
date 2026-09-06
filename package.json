@@ -52,7 +52,7 @@
     "react-dom": "^19.2.8",
     "react-error-boundary": "^6.1.2",
     "react-icons": "^5.7.0",
-    "t2-demo-parser": "^3.0.0",
+    "t2-demo-parser": "^3.0.2",
     "three": "^0.185.1",
     "three-mesh-bvh": "^0.8.3",
     "tsx": "^4.23.11",

@@ -1,12 +1,16 @@
 /**
  * Force field shader material for Tribes 2 ForceFieldBare objects.
  *
- * Tribes 2 rendering (forceFieldBare.cc):
- * - glBlendFunc(GL_SRC_ALPHA, GL_ONE) - additive blending
- * - glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE)
- * - Final: framebuffer += (texture.rgb * fieldColor.rgb) * fieldColor.alpha
- * - Renders 6 separate outward-facing quads with glDisable(GL_CULL_FACE)
- * - Depth test enabled but depth write disabled - back faces can be occluded
+ * Tribes2.exe ForceFieldBare::renderObject (FUN_00676050, binary-verified):
+ * - glBlendFunc(GL_SRC_ALPHA, GL_ONE), GL_MODULATE, cull off, depth write
+ *   off; six outward quads of the scaled unit box
+ * - glColor4f(mix(powerOffColor, color, alpha) blended toward the fog
+ *   color by haze, mix(powerOffTranslucency, baseTranslucency, alpha)
+ *   × (1 − haze)) where alpha is the open/close fade and
+ *   haze is SceneState::getHazeAndFog at the object's origin (distance
+ *   haze plus the fog-volume walk, see hazeAndFog)
+ * - frame = round(framesPerSec × age) % numFrames, v scrolls by
+ *   scrollSpeed × age
  *
  * Differences from engine that affect brightness:
  * 1. In T2, force fields are in doorways with geometry that occludes back faces
@@ -29,22 +33,19 @@ export const OPACITY_FACTOR = 1.0;
 
 // Vertex shader
 const vertexShader = `
-#include <fog_pars_vertex>
-
 varying vec2 vUv;
 
 void main() {
   vUv = uv;
-  vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
-  gl_Position = projectionMatrix * mvPosition;
-  #include <fog_vertex>
+  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
 }
 `;
 
 // Fragment shader - handles frame animation, UV scrolling, and color tinting
 // NOTE: Shader supports up to 5 texture frames (hardcoded samplers)
 const fragmentShader = `
-#include <fog_pars_fragment>
+uniform vec3 fogColor;
+uniform float fieldHaze;
 
 uniform sampler2D frame0;
 uniform sampler2D frame1;
@@ -55,7 +56,10 @@ uniform int currentFrame;
 uniform float vScroll;
 uniform vec2 uvScale;
 uniform vec3 tintColor;
+uniform vec3 powerOffColor;
 uniform float opacity;
+uniform float powerOffOpacity;
+uniform float fieldAlpha;
 uniform float opacityFactor;
 
 varying vec2 vUv;
@@ -78,43 +82,50 @@ void main() {
     texColor = texture2D(frame4, scrolledUv);
   }
 
+  // Open/close fade: color × alpha + powerOffColor × (1 − alpha), same
+  // for the translucency.
+  vec3 fieldColor = mix(powerOffColor, tintColor, fieldAlpha);
+  float translucency = mix(powerOffOpacity, opacity, fieldAlpha) * opacityFactor;
+
+  // Engine haze (ForceFieldBare::renderObject 0x676050): one
+  // getHazeAndFog value for the whole object, computed per frame by the
+  // component; glColor blends toward the fog color and the alpha is
+  // scaled by 1 - haze (the constant at 0x7b9894 is 0), so an additive
+  // field fades out into the fog instead of adding the fog colour.
+  // The fog color arrives linear while this shader works in the textures'
+  // raw sRGB values (sRGBTransferOETF comes from the colorspace chunk
+  // Three prepends to every fragment).
+  vec3 hazeColor = sRGBTransferOETF(vec4(fogColor, 1.0)).rgb;
+  fieldColor = mix(fieldColor, hazeColor, fieldHaze);
+  translucency *= 1.0 - fieldHaze;
+
   // Tribes 2 GL_MODULATE: output = texture * vertexColor
   // No gamma correction - textures use NoColorSpace and values pass through
   // directly to display, matching how WaterBlock handles sRGB textures.
-  vec3 modulatedColor = texColor.rgb * tintColor;
-
-  float adjustedOpacity = opacity * opacityFactor;
-
-  gl_FragColor = vec4(modulatedColor, adjustedOpacity);
-
-  // Custom fog for additive blending: fade out rather than blend to fog color.
-  // Standard fog (mix toward fogColor) doesn't work with additive blending
-  // because we'd still be adding fogColor to the framebuffer.
-  // Uses Torque's quadratic haze formula for consistency.
-  #ifdef USE_FOG
-    float dist = vFogDepth;
-    float fogFactor = 0.0;
-    if (dist > fogNear) {
-      if (dist >= fogFar) {
-        fogFactor = 1.0;
-      } else {
-        float fogScale = 1.0 / (fogFar - fogNear);
-        float distFactor = (dist - fogNear) * fogScale - 1.0;
-        fogFactor = 1.0 - distFactor * distFactor;
-      }
-    }
-    gl_FragColor.a *= 1.0 - fogFactor;
-  #endif
+  gl_FragColor = vec4(texColor.rgb * fieldColor, translucency);
 }
 `;
 
-export interface ForceFieldMaterialOptions {
+interface ForceFieldMaterialOptions {
   textures: Texture[];
   scale: [number, number, number];
   umapping: number;
   vmapping: number;
   color: [number, number, number];
+  powerOffColor: [number, number, number];
   baseTranslucency: number;
+  powerOffTranslucency: number;
+}
+
+/** The engine's glColor alpha for a fade position (1 closed, 0 open). */
+export function forceFieldTranslucency(
+  baseTranslucency: number,
+  powerOffTranslucency: number,
+  fieldAlpha: number,
+): number {
+  return (
+    baseTranslucency * fieldAlpha + powerOffTranslucency * (1 - fieldAlpha)
+  );
 }
 
 export function createForceFieldMaterial({
@@ -123,7 +134,9 @@ export function createForceFieldMaterial({
   umapping,
   vmapping,
   color,
+  powerOffColor,
   baseTranslucency,
+  powerOffTranslucency,
 }: ForceFieldMaterialOptions): ShaderMaterial {
   // UV scale based on the two largest dimensions (force fields are thin planes)
   const dims = [...scale].sort((a, b) => b - a);
@@ -143,12 +156,18 @@ export function createForceFieldMaterial({
       vScroll: { value: 0 },
       uvScale: { value: uvScale },
       tintColor: { value: new Color(...color) },
+      powerOffColor: { value: new Color(...powerOffColor) },
       opacity: { value: baseTranslucency },
+      powerOffOpacity: { value: powerOffTranslucency },
+      fieldAlpha: { value: 1 },
       opacityFactor: { value: OPACITY_FACTOR },
-      // Fog uniforms (Three.js populates from scene fog when fog: true)
+      // Three fills these from the scene fog (fog: true) and requires all
+      // three to exist; only fogColor is read. The haze itself is the
+      // object's getHazeAndFog, set by ForceFieldBare.
       fogColor: { value: new Color() },
       fogNear: { value: 1 },
       fogFar: { value: 2000 },
+      fieldHaze: { value: 0 },
     },
     vertexShader,
     fragmentShader,

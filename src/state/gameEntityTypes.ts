@@ -6,8 +6,8 @@ import type {
   BeamVisual,
   LinkBeamVisual,
   SpriteVisual,
-  WeaponImageState,
-  WeaponImageDataBlockState,
+  FlareVisual,
+  LightAnchor,
 } from "../stream/types";
 import type {
   SceneTerrainBlock,
@@ -39,6 +39,7 @@ export type RenderType =
   | "Beam"
   | "LinkBeam"
   | "Sprite"
+  | "Flare"
   | "AudioEmitter"
   | "Camera"
   | "WayPoint"
@@ -86,7 +87,7 @@ export interface SkyEntity extends EntityBase {
   skyData: SceneSky;
 }
 
-export interface SunEntity extends EntityBase {
+interface SunEntity extends EntityBase {
   renderType: "Sun";
   sunData: SceneSun;
 }
@@ -96,12 +97,12 @@ export interface WaterBlockEntity extends EntityBase {
   waterData: SceneWaterBlock;
 }
 
-export interface MissionAreaEntity extends EntityBase {
+interface MissionAreaEntity extends EntityBase {
   renderType: "MissionArea";
   missionAreaData: SceneMissionArea;
 }
 
-export type SceneEntity =
+type SceneEntity =
   | TerrainBlockEntity
   | InteriorInstanceEntity
   | SkyEntity
@@ -192,7 +193,13 @@ export interface ShapeEntity extends PositionedBase {
   lightTime?: number;
   lightRadius?: number;
   lightOnlyStatic?: boolean;
+  lightAnchor?: LightAnchor;
   isStaticItem?: boolean;
+  /** Projectile shapes: age in ms, mutated in place per tick (see
+   *  Projectile threads in GenericShape). */
+  projectileAgeMS?: number;
+  /** Linear projectiles: the shape's "activate" starts at this age. */
+  projectileActivateDelayMS?: number;
 }
 
 export interface PlayerEntity extends PositionedBase {
@@ -202,17 +209,24 @@ export interface PlayerEntity extends PositionedBase {
   skinPrefName?: string;
   falling?: boolean;
   jetting?: boolean;
-  weaponImageState?: WeaponImageState;
-  weaponImageStates?: WeaponImageDataBlockState[];
   headPitch?: number;
   headYaw?: number;
+  /** ShapeBase fade value (0=invisible, 1=fully visible). Matches mFadeVal. */
+  fadeVal?: number;
+  /** Cloak level (0=visible, 1=fully cloaked); the body takes the cloak
+   *  texture, mounted images fade with it (see shapeFadeCloak.ts). */
+  cloakLevel?: number;
 }
 
 export interface ForceFieldBareEntity extends PositionedBase {
   renderType: "ForceFieldBare";
   forceFieldData?: ForceFieldData;
-  /** Opened (retracted) by scripts, e.g. when its power source is down. */
+  /** Fully open (powered down): no collision, power-off look. */
   fieldOpen?: boolean;
+  /** Fade alpha, 1 closed → 0 open (see stream/forceFieldState.ts);
+   *  undefined means resting in the `fieldOpen` state. Mutated in place
+   *  per tick — read it in useFrame. */
+  fieldAlpha?: number;
 }
 
 export interface ExplosionEntity extends PositionedBase {
@@ -221,6 +235,10 @@ export interface ExplosionEntity extends PositionedBase {
   dataBlock?: string;
   explosionDataBlockId?: number;
   faceViewer?: boolean;
+  /** Engine lifetime in ms (see stream/explosionLifetime.ts). */
+  lifetimeMS?: number;
+  /** Lifetime already elapsed when it exploded (its delayMS). */
+  startAgeMS?: number;
 }
 
 export interface TracerEntity extends PositionedBase {
@@ -249,6 +267,11 @@ export interface LinkBeamEntity extends PositionedBase {
 export interface SpriteEntity extends PositionedBase {
   renderType: "Sprite";
   visual: SpriteVisual;
+}
+
+export interface FlareEntity extends PositionedBase {
+  renderType: "Flare";
+  visual: FlareVisual;
 }
 
 export interface AudioEmitterEntity extends PositionedBase {
@@ -296,6 +319,7 @@ export type GameEntity =
   | BeamEntity
   | LinkBeamEntity
   | SpriteEntity
+  | FlareEntity
   | AudioEmitterEntity
   | CameraEntity
   | WayPointEntity
@@ -304,7 +328,10 @@ export type GameEntity =
 export interface ForceFieldData {
   textures: string[];
   color: [number, number, number];
+  /** Color and translucency the field fades to as it opens. */
+  powerOffColor: [number, number, number];
   baseTranslucency: number;
+  powerOffTranslucency: number;
   numFrames: number;
   framesPerSec: number;
   scrollSpeed: number;

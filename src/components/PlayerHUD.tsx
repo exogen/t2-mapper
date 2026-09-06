@@ -83,8 +83,9 @@ function LocalCameraCompass({
   );
 }
 
-function HealthBar() {
-  const health = useStreamSnapshot((snap) => snap?.status?.health);
+function HealthBar({ followed }: { followed: FollowedPlayer | null }) {
+  const recorderHealth = useStreamSnapshot((snap) => snap?.status?.health);
+  const health = followed ? followed.health : recorderHealth;
   if (health == null) return null;
   const pct = Math.max(0, Math.min(100, health * 100));
   return (
@@ -94,10 +95,18 @@ function HealthBar() {
   );
 }
 
-function EnergyBar() {
+function EnergyBar({ followed }: { followed: FollowedPlayer | null }) {
   const energy = useStreamSnapshot((snap) => snap?.status?.energy);
-  if (energy == null) return null;
-  const pct = Math.max(0, Math.min(100, energy * 100));
+  if (followed && followed.energy == null) {
+    return (
+      <div className={styles.BarTrack}>
+        <div className={styles.BarFillUnknown} />
+      </div>
+    );
+  }
+  const shown = followed ? followed.energy : energy;
+  if (shown == null) return null;
+  const pct = Math.max(0, Math.min(100, shown * 100));
   return (
     <div className={styles.BarTrack}>
       <div className={styles.BarFillEnergy} style={{ width: `${pct}%` }} />
@@ -109,8 +118,16 @@ function EnergyBar() {
  *  minSeekHeat). Above this, the bar flashes as a warning. */
 const MISSILE_LOCK_HEAT = 0.7;
 
-function HeatBar() {
+function HeatBar({ followed }: { followed: FollowedPlayer | null }) {
   const heat = useStreamSnapshot((snap) => snap?.status?.heat);
+  // Heat is never ghosted for other players.
+  if (followed) {
+    return (
+      <div className={styles.BarTrackHeat}>
+        <div className={styles.BarFillUnknown} />
+      </div>
+    );
+  }
   if (heat == null) return null;
   const pct = Math.max(0, Math.min(100, heat * 100));
   const targetable = heat >= MISSILE_LOCK_HEAT;
@@ -144,13 +161,29 @@ function normalizeWeaponName(shape: string | undefined): string {
   return shape.replace(/\.dts$/i, "").toLowerCase();
 }
 
+/**
+ * The crosshair of whoever's eyes the view is looking through: the
+ * recorder's in the recorded first-person view, the followed player's in
+ * first-person follow. Any other camera has no reticle.
+ */
 function Reticle() {
+  const cameraMode = useStore(streamPlaybackStore, (s) => s.cameraMode);
+  const followEntityId = useStore(streamPlaybackStore, (s) => s.followEntityId);
   const weaponShape = useStreamSnapshot((snap) => {
-    if (!snap || snap.camera?.mode !== "first-person") return undefined;
-    const ctrl = snap.controlPlayerGhostId;
-    if (!ctrl) return undefined;
-    return snap.entities.find((e: StreamEntity) => e.id === ctrl)
-      ?.imageSlots?.[0]?.shapeName;
+    if (!snap) return undefined;
+    let viewedId: string | undefined;
+    if (cameraMode === "firstPersonOverride") {
+      viewedId = followEntityId ?? undefined;
+    } else if (
+      cameraMode === "original" &&
+      snap.camera?.mode === "first-person"
+    ) {
+      viewedId = snap.controlPlayerGhostId ?? undefined;
+    }
+    if (!viewedId) return undefined;
+    const entity = snap.entities.find((e: StreamEntity) => e.id === viewedId);
+    if (!entity) return undefined;
+    return entity.imageSlots?.[0]?.shapeName ?? "";
   });
   if (weaponShape === undefined) return null;
   const weapon = normalizeWeaponName(weaponShape);
@@ -174,7 +207,7 @@ function Reticle() {
 }
 
 /** Maps $WeaponsHudData indices to simple icon textures (no baked background)
- *  and labels. Mortar uses hud_new_ because no simple variant exists. */
+ *  and labels. The mortar's is spelled hud_mortor in the game files. */
 const WEAPON_HUD_SLOTS: Record<number, { icon: string; label: string }> = {
   0: { icon: "gui/hud_blaster", label: "Blaster" },
   1: { icon: "gui/hud_plasma", label: "Plasma" },
@@ -183,7 +216,7 @@ const WEAPON_HUD_SLOTS: Record<number, { icon: string; label: string }> = {
   4: { icon: "gui/hud_grenlaunch", label: "GL" },
   5: { icon: "gui/hud_sniper", label: "Laser Rifle" },
   6: { icon: "gui/hud_elfgun", label: "ELF Gun" },
-  7: { icon: "gui/hud_new_mortar", label: "Mortar" },
+  7: { icon: "gui/hud_mortor", label: "Mortar" },
   8: { icon: "gui/hud_missiles", label: "Missile" },
   9: { icon: "gui/hud_targetlaser", label: "Targeting" },
   10: { icon: "gui/hud_shocklance", label: "Shocklance" },
@@ -194,7 +227,7 @@ const WEAPON_HUD_SLOTS: Record<number, { icon: string; label: string }> = {
   14: { icon: "gui/hud_targetlaser", label: "Targeting" },
   15: { icon: "gui/hud_targetlaser", label: "Targeting" },
   16: { icon: "gui/hud_shocklance", label: "Shocklance" },
-  17: { icon: "gui/hud_new_mortar", label: "Mortar" },
+  17: { icon: "gui/hud_mortor", label: "Mortar" },
 };
 
 // Precompute URLs so we don't call textureToUrl on every render.
@@ -239,8 +272,30 @@ function WeaponSlotIcon({
   );
 }
 
-function WeaponHUD() {
+/** A followed player's HUD: the one weapon in their hands, count unknown. */
+function FollowedWeaponHUD({ weaponShape }: { weaponShape: string }) {
+  const index = WEAPON_SHAPE_HUD_INDEX[weaponShape];
+  const info = index != null ? WEAPON_HUD_SLOTS[index] : undefined;
+  if (index == null || !info) return null;
+  return (
+    <div className={styles.WeaponHUD}>
+      <div className={styles.PackInvItem} data-active="true">
+        <img
+          src={WEAPON_HUD_ICON_URLS.get(index)!}
+          alt={info.label}
+          className={styles.PackInvIcon}
+        />
+        <span className={styles.PackInvCount} data-unknown="true">
+          {UNKNOWN_COUNT}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function WeaponHUD({ followed }: { followed: FollowedPlayer | null }) {
   const weaponsHud = useStreamSnapshot((snap) => snap?.weaponsHud);
+  if (followed) return <FollowedWeaponHUD weaponShape={followed.weaponShape} />;
   if (!weaponsHud || !weaponsHud.slots.length) return null;
   const weapons: WeaponsHudSlot[] = [];
   const targeting: WeaponsHudSlot[] = [];
@@ -376,23 +431,111 @@ const BACKPACK_ICONS: Record<number, string> = {
   18: "gui/hud_satchel_unarmed",
   19: "gui/hud_new_packenergy",
 };
-/** Pack indices that have an armed/activated icon variant. */
-const BACKPACK_ARMED_ICONS: Record<number, string> = {
-  1: "gui/hud_new_packcloak_armed",
-  3: "gui/hud_new_packrepair_armed",
-  4: "gui/hud_satchel_armed",
-  5: "gui/hud_new_packshield_armed",
-  11: "gui/hud_new_packsensjam_armed",
+/** Mounted pack shape (imageSlots[$BackpackSlot=2]) → $BackpackHudData index. */
+const PACK_SHAPE_HUD_INDEX: Record<string, number> = {
+  pack_upgrade_ammo: 0,
+  pack_upgrade_cloaking: 1,
+  pack_upgrade_energy: 2,
+  pack_upgrade_repair: 3,
+  pack_upgrade_satchel: 4,
+  pack_upgrade_shield: 5,
+  pack_deploy_inventory: 6,
+  pack_deploy_sensor_motion: 7,
+  pack_deploy_sensor_pulse: 8,
+  pack_deploy_turreto: 9,
+  pack_deploy_turreti: 10,
+  pack_upgrade_sensorjammer: 11,
+  pack_barrel_aa: 12,
+  pack_barrel_missile: 14,
+  pack_barrel_fusion: 15,
+  pack_barrel_elf: 16,
+  pack_barrel_mortar: 17,
 };
+const BACKPACK_SLOT = 2;
+
+/** Normalized weapon shape name → $WeaponsHudData index (hud.cs). */
+const WEAPON_SHAPE_HUD_INDEX: Record<string, number> = {
+  weapon_energy: 0,
+  weapon_plasma: 1,
+  weapon_chaingun: 2,
+  weapon_disc: 3,
+  weapon_grenade_launcher: 4,
+  weapon_sniper: 5,
+  weapon_elf: 6,
+  weapon_mortar: 7,
+  weapon_missile: 8,
+  weapon_targeting: 9,
+  weapon_shocklance: 10,
+};
+
+/** What the ghost tells us about a player who is not the recorder. */
+interface FollowedPlayer {
+  /** From the DamageMask damage level; undefined until the first update. */
+  health: number | undefined;
+  /** Every Player ghost carries its energy (5 bits); undefined until then. */
+  energy: number | undefined;
+  /** Normalized shape of the mounted weapon (imageSlots[0]), "" if none. */
+  weaponShape: string;
+  /** $BackpackHudData index of the mounted pack, or -1. */
+  packIndex: number;
+  /** The pack image's trigger is down: the ghost's own activation state,
+   *  the same transition that fires the pack's onActivate script. */
+  packActive: boolean;
+}
+
+function followedPlayerEquals(
+  a: FollowedPlayer | null,
+  b: FollowedPlayer | null,
+): boolean {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  return (
+    a.health === b.health &&
+    a.energy === b.energy &&
+    a.weaponShape === b.weaponShape &&
+    a.packIndex === b.packIndex &&
+    a.packActive === b.packActive
+  );
+}
+
+/**
+ * The player HUD's subject while following someone other than the
+ * recorder. The stream's HUD commands (ammo, inventory, pack text) are
+ * the recorder's own and never sent for anyone else; a followed player's
+ * health, energy, held weapon and pack (with its activation) are read
+ * off their ghost instead, and everything else is shown as unknown.
+ */
+function useFollowedPlayer(): FollowedPlayer | null {
+  const followEntityId = useStore(streamPlaybackStore, (s) => s.followEntityId);
+  return useStreamSnapshot((snap) => {
+    if (
+      !snap ||
+      !followEntityId ||
+      followEntityId === snap.controlPlayerGhostId
+    )
+      return null;
+    const entity = snap.entities.find((e) => e.id === followEntityId);
+    if (!entity) return null;
+    const packSlot = entity.imageSlots?.[BACKPACK_SLOT];
+    const pack = packSlot?.shapeName;
+    return {
+      health: entity.health,
+      energy: entity.energy,
+      weaponShape: normalizeWeaponName(entity.imageSlots?.[0]?.shapeName),
+      packIndex: pack
+        ? (PACK_SHAPE_HUD_INDEX[pack.toLowerCase().replace(/\.dts$/, "")] ?? -1)
+        : -1,
+      packActive: !!packSlot?.imageState?.triggerDown,
+    };
+  }, followedPlayerEquals);
+}
+
+/** Count text for a value the stream never carries for this player. */
+const UNKNOWN_COUNT = "\u2014";
+
 // Precompute URLs.
 const BACKPACK_ICON_URLS = new Map(
   Object.entries(BACKPACK_ICONS).map(([idx, tex]) => [
-    Number(idx),
-    textureToUrl(tex),
-  ]),
-);
-const BACKPACK_ARMED_ICON_URLS = new Map(
-  Object.entries(BACKPACK_ARMED_ICONS).map(([idx, tex]) => [
     Number(idx),
     textureToUrl(tex),
   ]),
@@ -410,18 +553,22 @@ const INVENTORY_ICON_URLS = new Map(
     textureToUrl(info.icon),
   ]),
 );
-function PackAndInventoryHUD() {
-  const backpackHud = useStreamSnapshot((snap) => snap?.backpackHud);
+function PackAndInventoryHUD({
+  followed,
+}: {
+  followed: FollowedPlayer | null;
+}) {
+  const recorderBackpackHud = useStreamSnapshot((snap) => snap?.backpackHud);
+  const backpackHud = followed
+    ? { packIndex: followed.packIndex, active: followed.packActive, text: "" }
+    : recorderBackpackHud;
   const inventoryHud = useStreamSnapshot((snap) => snap?.inventoryHud);
   const hasPack = backpackHud && backpackHud.packIndex >= 0;
-  // Resolve pack icon.
-  let packIconUrl: string | undefined;
-  if (hasPack) {
-    const armedUrl = backpackHud.active
-      ? BACKPACK_ARMED_ICON_URLS.get(backpackHud.packIndex)
-      : undefined;
-    packIconUrl = armedUrl ?? BACKPACK_ICON_URLS.get(backpackHud.packIndex);
-  }
+  // An active pack is shown by highlighting its box (see the stylesheet)
+  // rather than the stock client's *_armed bitmaps.
+  const packIconUrl = hasPack
+    ? BACKPACK_ICON_URLS.get(backpackHud.packIndex)
+    : undefined;
   // Build count lookup from snapshot data.
   const countBySlot = new Map<number, number>();
   if (inventoryHud) {
@@ -433,7 +580,7 @@ function PackAndInventoryHUD() {
   const allSlotIds = Object.keys(INVENTORY_SLOT_ICONS)
     .map(Number)
     .sort((a, b) => a - b);
-  if (!hasPack && !countBySlot.size) return null;
+  if (!followed && !hasPack && !countBySlot.size) return null;
   return (
     <div className={styles.PackInventoryHUD}>
       {packIconUrl && (
@@ -452,14 +599,18 @@ function PackAndInventoryHUD() {
         const iconUrl = INVENTORY_ICON_URLS.get(slotId);
         if (!info || !iconUrl) return null;
         return (
-          <div key={slotId} className={styles.PackInvItem}>
+          <div
+            key={slotId}
+            className={styles.PackInvItem}
+            data-unknown={!!followed}
+          >
             <img
               src={iconUrl}
               alt={info.label}
               className={styles.PackInvIcon}
             />
-            <span className={styles.PackInvCount}>
-              {countBySlot.get(slotId) ?? 0}
+            <span className={styles.PackInvCount} data-unknown={!!followed}>
+              {followed ? UNKNOWN_COUNT : (countBySlot.get(slotId) ?? 0)}
             </span>
           </div>
         );
@@ -473,10 +624,18 @@ export function PlayerHUD() {
     (snap) => !!snap?.controlPlayerGhostId,
   );
   const cameraMode = useStore(streamPlaybackStore, (s) => s.cameraMode);
+  const followEntityId = useStore(streamPlaybackStore, (s) => s.followEntityId);
 
-  // In free-fly mode the camera is disconnected from the player, so
-  // player-specific HUD elements (health, energy, weapons, etc.) are hidden.
-  const showPlayerElements = hasControlPlayer && cameraMode !== "freeFly";
+  // Following (orbit or first-person) puts the followed player on the HUD
+  // whatever the recorder was — an observer recording has no control
+  // player of its own. Otherwise the HUD is the recorder's, hidden in
+  // free-fly where the camera is disconnected from them.
+  const following =
+    cameraMode === "orbitOverride" || cameraMode === "firstPersonOverride";
+  const showPlayerElements = following
+    ? !!followEntityId
+    : hasControlPlayer && cameraMode !== "freeFly";
+  const followed = useFollowedPlayer();
   const { showChat, showReticle, showCompass } = useSettings();
   const commandCircuitActive = useCommandCircuit((s) => s.active);
 
@@ -485,16 +644,16 @@ export function PlayerHUD() {
       {showChat && <ChatWindow />}
       {showPlayerElements && (
         <div className={styles.Bars}>
-          <HealthBar />
-          <EnergyBar />
-          <HeatBar />
+          <HealthBar followed={followed} />
+          <EnergyBar followed={followed} />
+          <HeatBar followed={followed} />
         </div>
       )}
       {showCompass && <Compass commandCircuitActive={commandCircuitActive} />}
       {showPlayerElements && (
         <>
-          <WeaponHUD />
-          <PackAndInventoryHUD />
+          <WeaponHUD followed={followed} />
+          <PackAndInventoryHUD followed={followed} />
           {showReticle && !commandCircuitActive && <Reticle />}
         </>
       )}

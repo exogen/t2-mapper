@@ -17,6 +17,7 @@ import {
   linearProjectileClassNames,
   ballisticProjectileClassNames,
   seekerProjectileClassNames,
+  worldAlignedProjectileClassNames,
   toEntityType,
   allocateEntityId,
   GhostMessage,
@@ -54,8 +55,14 @@ import {
   formatRemoteArgs as formatRemoteArgsHelper,
   formatRemoteArgsColored,
   parseColorSegments,
+  orientationAlongDirection,
 } from "./streamHelpers";
 import type { Vec3 } from "./streamHelpers";
+import {
+  advanceForceField,
+  forceFieldAlpha,
+  forceFieldPositionForState,
+} from "./forceFieldState";
 import {
   LoadInfoCollector,
   decodeTeamAdd,
@@ -81,10 +88,18 @@ import type {
   PlayerRosterEntry,
   TeamScore,
   WeaponsHudSlot,
-  WeaponImageState,
-  WeaponImageDataBlockState,
   ServerMessageEvent,
+  StreamForceFieldData,
+  LightAnchor,
 } from "./types";
+import {
+  explosionExplodeTicks,
+  explosionLifetimeTicks,
+  resolveExplosionTiming,
+} from "./explosionLifetime";
+import { getShapeSequenceDurationSec } from "./shapeSequences";
+import { getShapeBounds } from "./shapeBounds";
+import { DEFAULT_WORLD_GRAVITY, worldGravityToMS2 } from "./worldGravity";
 import type {
   ParsedData,
   GhostAlwaysObjectEventData,
@@ -166,6 +181,10 @@ export interface MutableEntity {
   gravityMod?: number;
   /** Ticks since the projectile left the muzzle (seeded from currTick). */
   projAgeTicks?: number;
+  /** LinearProjectileData activateDelayMS: the projectile's shape plays
+   *  its "activate" sequence once this old, then loops "maintain"
+   *  (binary-verified, FUN_0062e010 / FUN_0062ee40). */
+  projActivateDelayMS?: number;
   /** Beam projectiles: Torque-space endpoints from the ghost. */
   beamStart?: [number, number, number];
   beamEnd?: [number, number, number];
@@ -180,10 +199,15 @@ export interface MutableEntity {
   /** Tick after which contact explodes instead of bouncing. */
   projArmedTick?: number;
   explosionShape?: string;
-  explosionLifetimeTicks?: number;
   hasExploded?: boolean;
   isExplosion?: boolean;
   expiryTick?: number;
+  /** Engine lifetime (ms) of a spawned explosion entity (see explosionLifetime.ts). */
+  explosionLifetimeMS?: number;
+  /** How far into that lifetime the explosion was when it exploded (its delayMS). */
+  explosionStartAgeMS?: number;
+  /** Stream time (getTimeSec) at explode(): the renderer's animation origin. */
+  explosionSpawnSec?: number;
   faceViewer?: boolean;
   /** Explosion datablock's faceViewer, stashed for spawnExplosion — NOT this entity's. */
   explosionFaceViewer?: boolean;
@@ -191,9 +215,6 @@ export interface MutableEntity {
   maintainEmitterId?: number;
   sensorGroup?: number;
   threads?: ThreadState[];
-  weaponImageState?: WeaponImageState;
-  weaponImageStates?: WeaponImageDataBlockState[];
-  weaponImageStatesDbId?: number;
   falling?: boolean;
   jetting?: boolean;
   headPitch?: number;
@@ -226,6 +247,7 @@ export interface MutableEntity {
   lightTime?: number;
   lightRadius?: number;
   lightOnlyStatic?: boolean;
+  lightAnchor?: LightAnchor;
 
   /** Item velocity interpolation state. The client simulates full physics
    *  (gravity, collision, bounce) for non-static, non-at-rest items. */
@@ -255,35 +277,45 @@ export interface MutableEntity {
   frozen?: boolean;
   /** Vehicle max steering angle (radians), from VehicleData datablock. */
   maxSteeringAngle?: number;
+  /** Ghost scale in Three.js axis order (StaticShape PositionMask). */
+  scale?: [number, number, number];
+  /** ForceFieldBare mCurrState (see forceFieldState.ts). */
+  forceFieldState?: number;
+  /** ForceFieldBare mCurrPosition, ms along the fade. */
+  forceFieldPosition?: number;
   /** Force field visual data extracted from ForceFieldBareData datablock. */
-  forceFieldData?: {
-    textures: string[];
-    color: [number, number, number];
-    baseTranslucency: number;
-    dimensions: [number, number, number];
-    framesPerSec: number;
-    scrollSpeed: number;
-    umapping: number;
-    vmapping: number;
-  };
+  forceFieldData?: StreamForceFieldData;
 }
 
-export type RuntimeControlObject = {
+type RuntimeControlObject = {
   ghostIndex: number;
   data?: ParsedData;
   position?: Vec3;
 };
 
 /** Minimal interface for the parser registry (ghost/event class lookup). */
-export interface ParserRegistry {
+interface ParserRegistry {
   getGhostParser(classId: number): { name: string } | undefined;
   getEventParser(classId: number): { name: string } | undefined;
 }
 
 /** Minimal interface for ghost tracking (class name by ghost index). */
-export interface GhostTrackerLike {
+interface GhostTrackerLike {
   getGhost(ghostIndex: number): { className: string } | undefined;
   clear?(): void;
+}
+
+/** An explosion added (Explosion::onAdd) but still waiting on its delayMS. */
+interface PendingExplosion {
+  /** Tick of Explosion::onAdd (the lifetime clock starts here). */
+  addTick: number;
+  /** Tick at which explode() runs. */
+  explodeTick: number;
+  explosionDataBlockId: number;
+  shape?: string;
+  faceViewer: boolean;
+  position: [number, number, number];
+  lifetimeMS: number;
 }
 
 /**
@@ -467,7 +499,15 @@ export abstract class StreamEngine implements StreamingPlayback {
   onMissionInfoChange?: () => void;
 
   // ── Explosions ──
+  /**
+   * Never reset: renderers dedupe explosions (particles, impact sounds) by
+   * id, so an id must not come back after a seek re-simulates the demo.
+   */
   protected nextExplosionId = 0;
+  /** Explosions added but still waiting on their delayMS. */
+  protected pendingExplosions: PendingExplosion[] = [];
+  /** setGravity() units (see worldGravity.ts); demo header or GravityEvent. */
+  protected worldGravity = DEFAULT_WORLD_GRAVITY;
 
   // ── Abstract methods ──
 
@@ -481,6 +521,11 @@ export abstract class StreamEngine implements StreamingPlayback {
 
   /** Get the current playback time in seconds. */
   protected abstract getTimeSec(): number;
+
+  /** World gravity in m/s² (negative is down); −9.81 at the T2 default. */
+  get gravity(): number {
+    return worldGravityToMS2(this.worldGravity);
+  }
 
   /**
    * Get camera yaw/pitch for this tick. Demo accumulates from move deltas;
@@ -517,6 +562,12 @@ export abstract class StreamEngine implements StreamingPlayback {
       } else if (scene.className === "TSStatic" && scene.shapeName) {
         assets.push({ kind: "shape", name: scene.shapeName });
       }
+    }
+    // Explosion shapes next: few and small, and the explosion lifetime is
+    // read from the loaded shape's ambient sequence (shapeSequences.ts), as
+    // ExplosionData::preload makes it available to the engine.
+    for (const name of this.getEffectShapes()) {
+      assets.push({ kind: "shape", name });
     }
     for (const name of this.getPreloadShapeNames()) {
       assets.push({ kind: "shape", name });
@@ -650,7 +701,8 @@ export abstract class StreamEngine implements StreamingPlayback {
     this.clockDurationMs = 0;
     this.matchEnded = false;
     this.matchStarted = false;
-    this.nextExplosionId = 0;
+    this.pendingExplosions = [];
+    this.worldGravity = DEFAULT_WORLD_GRAVITY;
     this.missionDisplayName = null;
     this.missionTypeDisplayName = null;
     this.gameClassName = null;
@@ -777,6 +829,15 @@ export abstract class StreamEngine implements StreamingPlayback {
     const data = event.parsedData;
     if (!data) return;
     const type = data.type as string | undefined;
+
+    // GravityEvent: setGravity() on the server, and the current value on
+    // connect. Everything that falls uses it.
+    if (type === "GravityEvent") {
+      if (typeof data.gravity === "number" && Number.isFinite(data.gravity)) {
+        this.worldGravity = data.gravity;
+      }
+      return;
+    }
 
     // GhostAlwaysObjectEvent — scope-always objects (terrain, sky, interiors).
     // These arrive as events, not ghost updates, but contain full ghost data.
@@ -1195,13 +1256,13 @@ export abstract class StreamEngine implements StreamingPlayback {
     entity.rotation = [0, 0, 0, 1];
     entity.hasExploded = undefined;
     entity.explosionShape = undefined;
-    entity.explosionLifetimeTicks = undefined;
     entity.faceViewer = undefined;
     entity.explosionFaceViewer = undefined;
     entity.simulatedVelocity = undefined;
     entity.projectilePhysics = undefined;
     entity.gravityMod = undefined;
     entity.projAgeTicks = undefined;
+    entity.projActivateDelayMS = undefined;
     entity.linearSegment = undefined;
     entity.projElasticity = undefined;
     entity.projFriction = undefined;
@@ -1209,6 +1270,10 @@ export abstract class StreamEngine implements StreamingPlayback {
     entity.direction = undefined;
     entity.velocity = undefined;
     entity.position = undefined;
+    entity.scale = undefined;
+    entity.forceFieldState = undefined;
+    entity.forceFieldPosition = undefined;
+    entity.forceFieldData = undefined;
     entity.dataBlock = undefined;
     entity.dataBlockId = undefined;
     entity.shapeHint = undefined;
@@ -1225,9 +1290,6 @@ export abstract class StreamEngine implements StreamingPlayback {
     entity.skinPrefName = undefined;
     entity.falling = undefined;
     entity.jetting = undefined;
-    entity.weaponImageState = undefined;
-    entity.weaponImageStates = undefined;
-    entity.weaponImageStatesDbId = undefined;
     entity.itemPhysics = undefined;
     entity.threads = undefined;
     entity.headPitch = undefined;
@@ -1248,6 +1310,12 @@ export abstract class StreamEngine implements StreamingPlayback {
     entity.maintainEmitterId = undefined;
     entity.soundSlots = undefined;
     entity.isStaticItem = undefined;
+    entity.lightType = undefined;
+    entity.lightColor = undefined;
+    entity.lightTime = undefined;
+    entity.lightRadius = undefined;
+    entity.lightOnlyStatic = undefined;
+    entity.lightAnchor = undefined;
   }
 
   // ── Apply ghost data ──
@@ -1292,12 +1360,34 @@ export abstract class StreamEngine implements StreamingPlayback {
         entity.lightRadius =
           (blockData.lightRadius as number | undefined) ?? 10;
         entity.lightOnlyStatic = !!(blockData.lightOnlyStatic as boolean);
+        // Item::registerLights (FUN_00603de0) lights the world box centre.
+        entity.lightAnchor = "boxCenter";
       }
 
       // Classify projectile physics
       if (entity.type === "Projectile") {
+        // Projectile::registerLights (FUN_006323d0): a hasLight datablock
+        // adds a point light of lightRadius/lightColor at the projectile.
+        // The parser decodes the two only under the hasLight flag.
+        const projLightRadius = getNumberField(blockData, ["lightRadius"]);
+        if (projLightRadius != null && entity.lightType == null) {
+          const lc = blockData?.lightColor as
+            { r: number; g: number; b: number } | undefined;
+          entity.lightType = 1;
+          entity.lightColor = lc ? [lc.r, lc.g, lc.b, 1] : [1, 1, 1, 1];
+          entity.lightTime = 1000;
+          entity.lightRadius = projLightRadius;
+          entity.lightOnlyStatic = false;
+          entity.lightAnchor = "origin";
+        }
         if (linearProjectileClassNames.has(entity.className)) {
           entity.projectilePhysics = "linear";
+          const activateDelayMS = getNumberField(blockData, [
+            "activateDelayMS",
+          ]);
+          if (activateDelayMS != null && activateDelayMS >= 0) {
+            entity.projActivateDelayMS = activateDelayMS;
+          }
         } else if (ballisticProjectileClassNames.has(entity.className)) {
           entity.projectilePhysics = "ballistic";
           entity.gravityMod = getNumberField(blockData, ["gravityMod"]) ?? 1.0;
@@ -1324,7 +1414,6 @@ export abstract class StreamEngine implements StreamingPlayback {
         if (info) {
           entity.explosionShape = info.shape;
           entity.explosionFaceViewer = info.faceViewer;
-          entity.explosionLifetimeTicks = info.lifetimeTicks;
           entity.explosionDataBlockId = info.explosionDataBlockId;
         }
       }
@@ -1345,23 +1434,27 @@ export abstract class StreamEngine implements StreamingPlayback {
         entity.maxSteeringAngle = blockData.maxSteeringAngle;
       }
 
-      // Force field visual data from ForceFieldBareData datablock.
+      // Force field visual data from ForceFieldBareData datablock. The
+      // box dimensions are the ghost scale, applied below on every
+      // transform update (servers retract an open field by zeroing it).
       if (entity.className === "ForceFieldBare" && blockData) {
         const color1 = blockData.color1 as
+          { r: number; g: number; b: number } | undefined;
+        const color2 = blockData.color2 as
           { r: number; g: number; b: number } | undefined;
         const textures: string[] = [];
         for (let i = 0; i < 5; i++) {
           const tex = blockData[`texture${i}`] as string | undefined;
           if (tex) textures.push(tex);
         }
-        // Use scale from ghost data as box dimensions (same as mission bridge).
-        const scale = data.scale as
-          { x: number; y: number; z: number } | undefined;
         entity.forceFieldData = {
           textures,
           color: color1 ? [color1.r, color1.g, color1.b] : [1, 1, 1],
+          powerOffColor: color2 ? [color2.r, color2.g, color2.b] : [0, 0, 0],
           baseTranslucency: (blockData.baseTranslucency as number) ?? 1,
-          dimensions: scale ? [scale.y, scale.z, scale.x] : [1, 1, 1],
+          powerOffTranslucency: (blockData.powerOffTranslucency as number) ?? 0,
+          fadeMS: (blockData.fadeMS as number) ?? 1000,
+          dimensions: entity.forceFieldData?.dimensions ?? [1, 1, 1],
           framesPerSec: (blockData.framesPerSec as number) ?? 1,
           scrollSpeed: (blockData.scrollSpeed as number) ?? 0,
           umapping: (blockData.umapping as number) ?? 1,
@@ -1439,6 +1532,26 @@ export abstract class StreamEngine implements StreamingPlayback {
               skinName = img.skinName;
             }
 
+            // Every slot carries its image state (a pack's trigger is
+            // its activation); the state table is parsed once per datablock.
+            const prevSlot = entity.imageSlots?.[img.index];
+            const prev = prevSlot?.imageState;
+            const imageState = {
+              dataBlockId: img.dataBlockId,
+              triggerDown: img.triggerDown ?? prev?.triggerDown ?? false,
+              ammo: img.ammo ?? prev?.ammo ?? true,
+              loaded: img.loaded ?? prev?.loaded ?? true,
+              target: img.target ?? prev?.target ?? false,
+              wet: img.wet ?? prev?.wet ?? false,
+              fireCount: img.fireCount ?? prev?.fireCount ?? 0,
+            };
+            const imageStates =
+              prevSlot?.dataBlockId === img.dataBlockId && prevSlot.imageStates
+                ? prevSlot.imageStates
+                : blockData
+                  ? parseWeaponImageStates(blockData)
+                  : undefined;
+
             if (shapeName) {
               if (!entity.imageSlots) entity.imageSlots = [];
               entity.imageSlots[img.index] = {
@@ -1446,28 +1559,9 @@ export abstract class StreamEngine implements StreamingPlayback {
                 mountPoint,
                 dataBlockId: img.dataBlockId,
                 skinName,
+                imageState,
+                imageStates,
               };
-            }
-
-            // Slot 0: weapon state machine (triggerDown, ammo, etc.)
-            if (img.index === 0) {
-              const prev = entity.weaponImageState;
-              entity.weaponImageState = {
-                dataBlockId: img.dataBlockId,
-                triggerDown: img.triggerDown ?? prev?.triggerDown ?? false,
-                ammo: img.ammo ?? prev?.ammo ?? true,
-                loaded: img.loaded ?? prev?.loaded ?? true,
-                target: img.target ?? prev?.target ?? false,
-                wet: img.wet ?? prev?.wet ?? false,
-                fireCount: img.fireCount ?? prev?.fireCount ?? 0,
-              };
-              if (
-                blockData &&
-                entity.weaponImageStatesDbId !== img.dataBlockId
-              ) {
-                entity.weaponImageStates = parseWeaponImageStates(blockData);
-                entity.weaponImageStatesDbId = img.dataBlockId;
-              }
             }
 
             // Slot 3 on Players: flag — update targetRenderFlags bit 0x2.
@@ -1485,12 +1579,6 @@ export abstract class StreamEngine implements StreamingPlayback {
             // Clear slot.
             if (entity.imageSlots) {
               entity.imageSlots[img.index] = undefined;
-            }
-
-            // Slot 0: clear weapon state.
-            if (img.index === 0) {
-              entity.weaponImageState = undefined;
-              entity.weaponImageStates = undefined;
             }
 
             // Slot 3 on Players: clear flag render flag.
@@ -1525,6 +1613,32 @@ export abstract class StreamEngine implements StreamingPlayback {
               : undefined;
     if (position) {
       entity.position = [position.x, position.y, position.z];
+    }
+
+    // Scale, Torque xyz → Three.js axis order like getScale() for mission
+    // objects. ForceFieldBare uses it as its box dimensions instead.
+    if (isVec3Like(data.scale)) {
+      const s = data.scale;
+      if (entity.className === "ForceFieldBare") {
+        if (entity.forceFieldData) {
+          entity.forceFieldData.dimensions = [s.y, s.z, s.x];
+        }
+      } else {
+        entity.scale = [s.y, s.z, s.x];
+      }
+    }
+
+    // ForceFieldBare open/close state (see forceFieldState.ts).
+    if (
+      entity.className === "ForceFieldBare" &&
+      typeof data.state === "number"
+    ) {
+      entity.forceFieldState = data.state;
+      entity.forceFieldPosition = forceFieldPositionForState(
+        data.state,
+        typeof data.position === "number" ? data.position : undefined,
+        entity.forceFieldData?.fadeMS ?? 0,
+      );
     }
 
     // Direction
@@ -1625,8 +1739,12 @@ export abstract class StreamEngine implements StreamingPlayback {
               z: (data.endPos as Vec3).z - (data.initialPosition as Vec3).z,
             }
           : undefined);
-      if (isVec3Like(vec) && (vec.x !== 0 || vec.y !== 0)) {
-        entity.rotation = playerYawToQuaternion(Math.atan2(vec.x, vec.y));
+      if (
+        isVec3Like(vec) &&
+        !worldAlignedProjectileClassNames.has(entity.className)
+      ) {
+        entity.rotation =
+          orientationAlongDirection([vec.x, vec.y, vec.z]) ?? entity.rotation;
       }
     }
 
@@ -1756,6 +1874,12 @@ export abstract class StreamEngine implements StreamingPlayback {
           return v;
         };
         entity.simulatedVelocity = compose(muzzle);
+        // The engine orients the shape along the segment velocity every
+        // frame (LinearProjectile::interpolateTick), so the inherited
+        // shooter velocity turns the shape with the path, not the aim.
+        entity.rotation =
+          orientationAlongDirection(entity.simulatedVelocity) ??
+          entity.rotation;
 
         // Precompute the flight segment against the static world, exactly
         // like LinearProjectile::createSegments — one raycast covering the
@@ -1791,9 +1915,13 @@ export abstract class StreamEngine implements StreamingPlayback {
         ];
       }
 
-      // Fast-forward by currTick. Linear projectiles evaluate their
-      // precomputed segment; others integrate collision-free (the server
-      // already validated that span).
+      // currTick is the projectile's age on the server when it was packed.
+      // It seeds the age clock (arming, lifetime) for every projectile, but
+      // only a LinearProjectile derives its position from it: its ghost
+      // carries the INITIAL state and the client evaluates the precomputed
+      // segment at that time. Grenade and seeker ghosts carry the CURRENT
+      // position and velocity, which the client adopts as-is
+      // (GrenadeProjectile::unpackUpdate FUN_00636050 — no fast-forward).
       const currTick = data.currTick as number | undefined;
       if (typeof currTick === "number" && currTick > 0) {
         entity.projAgeTicks = currTick;
@@ -1805,22 +1933,6 @@ export abstract class StreamEngine implements StreamingPlayback {
           entity.projAgeTicks * TICK_DURATION_MS,
           entity.position,
         );
-      } else if (
-        typeof currTick === "number" &&
-        currTick > 0 &&
-        entity.simulatedVelocity &&
-        entity.position
-      ) {
-        const dt = (TICK_DURATION_MS / 1000) * currTick;
-        const v = entity.simulatedVelocity;
-        entity.position[0] += v[0] * dt;
-        entity.position[1] += v[1] * dt;
-        entity.position[2] += v[2] * dt;
-        if (entity.projectilePhysics === "ballistic") {
-          const g = -9.81 * (entity.gravityMod ?? 1);
-          entity.position[2] += 0.5 * g * dt * dt;
-          v[2] += g * dt;
-        }
       }
     }
 
@@ -1844,7 +1956,18 @@ export abstract class StreamEngine implements StreamingPlayback {
       entity.health = clamp(1 - data.damageLevel, 0, 1);
     }
     if (typeof data.damageState === "number") {
+      const prevDamageState = entity.damageState;
       entity.damageState = data.damageState;
+      // ShapeBase::unpackUpdate (FUN_005ef0e0): an object already in the
+      // scene blows up when it becomes Destroyed or the blowApart flag is
+      // set — thrown grenades, mines, turrets, stations, deployables.
+      if (
+        prevDamageState != null &&
+        ((prevDamageState !== 2 && data.damageState === 2) ||
+          data.blowApart === true)
+      ) {
+        this.blowUp(entity);
+      }
     }
     // CloakMask (binary-verified, shapeBase.cc:3457-3485):
     //   cloaked: mCloaked — drives client-side cloakLevel interpolation
@@ -2000,7 +2123,6 @@ export abstract class StreamEngine implements StreamingPlayback {
     | {
         shape?: string;
         faceViewer: boolean;
-        lifetimeTicks: number;
         explosionDataBlockId: number;
       }
     | undefined {
@@ -2011,11 +2133,9 @@ export abstract class StreamEngine implements StreamingPlayback {
     const expBlock = this.getDataBlockData(explosionId);
     if (!expBlock) return undefined;
     const shape = (expBlock.dtsFileName as string | undefined) || undefined;
-    const lifetimeTicks = (expBlock.lifetimeMS as number | undefined) ?? 31;
     return {
       shape,
       faceViewer: expBlock.faceViewer !== false && expBlock.faceViewer !== 0,
-      lifetimeTicks,
       explosionDataBlockId: explosionId,
     };
   }
@@ -2025,70 +2145,150 @@ export abstract class StreamEngine implements StreamingPlayback {
     position: [number, number, number],
   ): void {
     projectile.hasExploded = true;
-    const lifetimeTicks = projectile.explosionLifetimeTicks ?? 31;
-
-    const fxId = `fx_${this.nextExplosionId++}`;
-    const fxEntity: MutableEntity = {
-      id: fxId,
-      ghostIndex: -1,
-      className: "Explosion",
-      spawnTick: this.tickCount,
-      type: "Explosion",
-      dataBlock: projectile.explosionShape,
-      explosionDataBlockId: projectile.explosionDataBlockId,
-      position,
-      rotation: [0, 0, 0, 1],
-      isExplosion: true,
-      faceViewer: projectile.explosionFaceViewer !== false,
-      expiryTick: this.tickCount + lifetimeTicks,
-    };
-    this.entities.set(fxId, fxEntity);
-
-    // Spawn sub-explosion entities
     if (projectile.explosionDataBlockId != null) {
-      const expBlock = this.getDataBlockData(projectile.explosionDataBlockId);
-      const subExplosions = expBlock?.subExplosions as
-        (number | null)[] | undefined;
-      if (Array.isArray(subExplosions)) {
-        for (const subId of subExplosions) {
-          if (subId == null) continue;
-          const subBlock = this.getDataBlockData(subId);
-          if (!subBlock) continue;
-          const subShape =
-            (subBlock.dtsFileName as string | undefined) || undefined;
-          const subLifetimeTicks =
-            (subBlock.lifetimeMS as number | undefined) ?? 31;
-          const offset = (subBlock.offset as number | undefined) ?? 0;
-          const angle = Math.random() * Math.PI * 2;
-          const subPos: [number, number, number] = [
-            position[0] + Math.cos(angle) * offset,
-            position[1] + Math.sin(angle) * offset,
-            position[2],
-          ];
-          const subFxId = `fx_${this.nextExplosionId++}`;
-          const subFxEntity: MutableEntity = {
-            id: subFxId,
-            ghostIndex: -1,
-            className: "Explosion",
-            spawnTick: this.tickCount,
-            type: "Explosion",
-            dataBlock: subShape,
-            explosionDataBlockId: subId,
-            position: subPos,
-            rotation: [0, 0, 0, 1],
-            isExplosion: true,
-            faceViewer:
-              subBlock.faceViewer !== false && subBlock.faceViewer !== 0,
-            expiryTick: this.tickCount + subLifetimeTicks,
-          };
-          this.entities.set(subFxId, subFxEntity);
-        }
-      }
+      this.addExplosion(
+        projectile.explosionDataBlockId,
+        position,
+        this.tickCount,
+      );
     }
 
     // Stop the projectile
     projectile.position = undefined;
     projectile.simulatedVelocity = undefined;
+  }
+
+  /**
+   * Explosion::onAdd at `addTick`: resolve delay and lifetime, then either
+   * explode now or queue the explode tick. An explosion whose lifetime runs
+   * out while it is still waiting is deleted unseen, as in the engine.
+   */
+  /**
+   * ShapeBase::blowUp (FUN_005eaa90, client): the datablock's explosion —
+   * underwaterExplosion when the object is submerged — at the object box
+   * centre, i.e. position + (mObjBox.min + max) / 2 with the offset
+   * neither rotated nor scaled. mObjBox is the DTS bounds (shapeBounds.ts);
+   * a shape whose GLB has not loaded yet explodes at its origin. The
+   * engine also throws the datablock's debris, which is not modelled.
+   */
+  protected blowUp(entity: MutableEntity): void {
+    if (!entity.position || entity.dataBlockId == null) return;
+    const blockData = this.getDataBlockData(entity.dataBlockId);
+    if (!blockData) return;
+    let [x, y, z] = entity.position;
+    const box = getShapeBounds(entity.dataBlock);
+    if (box) {
+      x += (box.min[0] + box.max[0]) * 0.5;
+      y += (box.min[1] + box.max[1]) * 0.5;
+      z += (box.min[2] + box.max[2]) * 0.5;
+    }
+    const underwater = getNumberField(blockData, ["underwaterExplosion"]);
+    const explosionId =
+      underwater != null && underwater > 0 && isPointSubmergedSimple(x, y, z)
+        ? underwater
+        : getNumberField(blockData, ["explosion"]);
+    if (explosionId == null || explosionId <= 0) return;
+    this.addExplosion(explosionId, [x, y, z], this.tickCount);
+  }
+
+  protected addExplosion(
+    explosionDataBlockId: number,
+    position: [number, number, number],
+    addTick: number,
+  ): void {
+    const block = this.getDataBlockData(explosionDataBlockId);
+    if (!block) return;
+    const shape = (block.dtsFileName as string | undefined) || undefined;
+    const timing = resolveExplosionTiming(
+      block,
+      getShapeSequenceDurationSec(shape, "ambient"),
+    );
+    const explodeTicks = explosionExplodeTicks(timing.delayMS);
+    if (
+      explodeTicks > 0 &&
+      explodeTicks >= explosionLifetimeTicks(timing.armedLifetimeMS)
+    ) {
+      return;
+    }
+    const pending: PendingExplosion = {
+      explodeTick: addTick + explodeTicks,
+      addTick,
+      explosionDataBlockId,
+      shape,
+      faceViewer: block.faceViewer !== false && block.faceViewer !== 0,
+      position,
+      lifetimeMS: timing.lifetimeMS,
+    };
+    if (pending.explodeTick <= this.tickCount) {
+      this.explode(pending);
+    } else {
+      this.pendingExplosions.push(pending);
+    }
+  }
+
+  /** Explosion::explode: the entity appears, and sub-explosions are added. */
+  protected explode(p: PendingExplosion): void {
+    const block = this.getDataBlockData(p.explosionDataBlockId);
+    const fxId = `fx_${this.nextExplosionId++}`;
+    const fxEntity: MutableEntity = {
+      id: fxId,
+      ghostIndex: -1,
+      className: "Explosion",
+      spawnTick: p.explodeTick,
+      type: "Explosion",
+      dataBlock: p.shape,
+      explosionDataBlockId: p.explosionDataBlockId,
+      position: p.position,
+      rotation: [0, 0, 0, 1],
+      isExplosion: true,
+      faceViewer: p.faceViewer,
+      // Deleted on the processTick where the lifetime clock (running since
+      // onAdd) passes mEndingMS — at the earliest the tick after exploding.
+      expiryTick: Math.max(
+        p.explodeTick + 1,
+        p.addTick + explosionLifetimeTicks(p.lifetimeMS),
+      ),
+      explosionLifetimeMS: p.lifetimeMS,
+      explosionStartAgeMS: (p.explodeTick - p.addTick) * TICK_DURATION_MS,
+      explosionSpawnSec: this.getTimeSec(),
+    };
+    this.entities.set(fxId, fxEntity);
+
+    const subExplosions = block?.subExplosions as (number | null)[] | undefined;
+    if (!Array.isArray(subExplosions)) return;
+    for (const subId of subExplosions) {
+      if (subId == null) continue;
+      const subBlock = this.getDataBlockData(subId);
+      if (!subBlock) continue;
+      // The sub's onAdd scatters it by `offset` along a random direction in
+      // the hemisphere above the impact (the normal is taken as up here).
+      const offset = (subBlock.offset as number | undefined) ?? 0;
+      let subPos = p.position;
+      if (Math.abs(offset) > 1e-4) {
+        const dx = Math.random() * 2 - 1;
+        const dy = Math.random() * 2 - 1;
+        const dz = Math.random();
+        const len = Math.hypot(dx, dy, dz) || 1;
+        subPos = [
+          p.position[0] + (dx / len) * offset,
+          p.position[1] + (dy / len) * offset,
+          p.position[2] + (dz / len) * offset,
+        ];
+      }
+      this.addExplosion(subId, subPos, p.explodeTick);
+    }
+  }
+
+  /** Run explode() for queued explosions whose delay has elapsed. */
+  protected explodePendingExplosions(): void {
+    if (this.pendingExplosions.length === 0) return;
+    const waiting: PendingExplosion[] = [];
+    const due: PendingExplosion[] = [];
+    for (const p of this.pendingExplosions) {
+      (p.explodeTick <= this.tickCount ? due : waiting).push(p);
+    }
+    this.pendingExplosions = waiting;
+    for (const p of due) this.explode(p);
   }
 
   // ── Per-tick physics simulation ──
@@ -2130,15 +2330,21 @@ export abstract class StreamEngine implements StreamingPlayback {
           continue;
         }
         linearSegmentPosition(seg, ms, p);
+        // The water leg has its own velocity; the engine re-orients the
+        // shape along whichever leg it is on (interpolateTick).
+        if (seg.next && ms > seg.msEnd) {
+          entity.rotation =
+            orientationAlongDirection(seg.next.vel) ?? entity.rotation;
+        }
       } else if (
         entity.projectilePhysics === "ballistic" ||
         entity.projectilePhysics === "seeker"
       ) {
         const result = stepBallistic(p, v, {
           // Seekers coast on their transmitted velocity, no gravity.
-          gravityMod:
+          gravity:
             entity.projectilePhysics === "ballistic"
-              ? (entity.gravityMod ?? 1)
+              ? this.gravity * (entity.gravityMod ?? 1)
               : 0,
           elasticity: entity.projElasticity ?? 0.999,
           friction: entity.projFriction ?? 0.3,
@@ -2167,8 +2373,8 @@ export abstract class StreamEngine implements StreamingPlayback {
         p[2] += v[2] * dt;
       }
 
-      if (v[0] !== 0 || v[1] !== 0) {
-        entity.rotation = playerYawToQuaternion(Math.atan2(v[0], v[1]));
+      if (!worldAlignedProjectileClassNames.has(entity.className)) {
+        entity.rotation = orientationAlongDirection(v) ?? entity.rotation;
       }
       // The rendered orientation follows the LIVE velocity — the engine's
       // bolt render calls getVelocity() each frame (FUN_00696ed0), so a
@@ -2215,6 +2421,22 @@ export abstract class StreamEngine implements StreamingPlayback {
           entity.cloakLevel = Math.max(entity.cloakLevel - dt * 2, 0);
         }
       }
+    }
+  }
+
+  /** Walk force field fades one tick (ForceFieldBare::processTick). */
+  protected advanceForceFields(): void {
+    for (const entity of this.entities.values()) {
+      if (entity.forceFieldState == null || !entity.forceFieldData) continue;
+      const next = advanceForceField(
+        {
+          state: entity.forceFieldState,
+          position: entity.forceFieldPosition ?? 0,
+        },
+        entity.forceFieldData.fadeMS,
+      );
+      entity.forceFieldState = next.state;
+      entity.forceFieldPosition = next.position;
     }
   }
 
@@ -2425,6 +2647,7 @@ export abstract class StreamEngine implements StreamingPlayback {
     const data = control.data;
     const controlType = this.lastControlType;
 
+    this.explodePendingExplosions();
     this.removeExpiredExplosions();
 
     if (control.position) {
@@ -3201,6 +3424,7 @@ export abstract class StreamEngine implements StreamingPlayback {
             ? ([...entity.position] as [number, number, number])
             : entity.position,
         rotation: entity.rotation,
+        scale: entity.scale,
         velocity: entity.velocity,
         health: entity.health,
         energy: entity.energy,
@@ -3218,10 +3442,11 @@ export abstract class StreamEngine implements StreamingPlayback {
         faceViewer: entity.faceViewer,
         threads: entity.threads,
         explosionDataBlockId: entity.explosionDataBlockId,
+        explosionLifetimeMS: entity.explosionLifetimeMS,
+        explosionStartAgeMS: entity.explosionStartAgeMS,
+        spawnTimeSec: entity.explosionSpawnSec,
         hasExploded: entity.hasExploded,
         maintainEmitterId: entity.maintainEmitterId,
-        weaponImageState: entity.weaponImageState,
-        weaponImageStates: entity.weaponImageStates,
         headPitch: entity.headPitch,
         headYaw: entity.headYaw,
         label: entity.label,
@@ -3236,10 +3461,26 @@ export abstract class StreamEngine implements StreamingPlayback {
         wheels: entity.wheels,
         steeringYaw: entity.steeringYaw,
         frozen: entity.frozen,
+        projectileAgeMS:
+          entity.type === "Projectile" && entity.projAgeTicks != null
+            ? entity.projAgeTicks * TICK_DURATION_MS
+            : undefined,
+        projectileActivateDelayMS: entity.projActivateDelayMS,
         maxSteeringAngle: entity.maxSteeringAngle,
         soundSlots: entity.soundSlots,
         sceneData: entity.sceneData,
         forceFieldData: entity.forceFieldData,
+        forceFieldState: entity.forceFieldState,
+        forceFieldAlpha:
+          entity.forceFieldState != null && entity.forceFieldData
+            ? forceFieldAlpha(
+                {
+                  state: entity.forceFieldState,
+                  position: entity.forceFieldPosition ?? 0,
+                },
+                entity.forceFieldData.fadeMS,
+              )
+            : undefined,
       });
     }
     return entities;

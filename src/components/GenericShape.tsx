@@ -10,10 +10,11 @@ import {
 import type { ReactNode } from "react";
 import { ErrorBoundary } from "react-error-boundary";
 import type { AnimationAction, Object3D } from "three";
+import type { LightAnchor } from "../stream/types";
 import { useGLTF } from "@react-three/drei";
 import { createPortal, useFrame } from "@react-three/fiber";
 import { createLogger } from "../logger";
-import { shapeToUrl, textureToUrl } from "../loaders";
+import { shapeToUrl } from "../loaders";
 import {
   MeshStandardMaterial,
   AdditiveAnimationBlendMode,
@@ -22,15 +23,16 @@ import {
   AnimationUtils,
   LoopOnce,
   LoopRepeat,
-  NormalBlending,
   Color,
   Group,
   Box3,
   Vector3,
-  RepeatWrapping,
-  NoColorSpace,
 } from "three";
-import type { PointLight } from "three";
+import {
+  addEffectLight,
+  removeEffectLight,
+  type EffectLight,
+} from "./effectLights";
 import * as SkeletonUtils from "three/examples/jsm/utils/SkeletonUtils.js";
 import { useAnisotropy } from "./useAnisotropy";
 import { useDebug, useSettings } from "./SettingsProvider";
@@ -43,11 +45,12 @@ import {
 } from "../state/engineStore";
 import { FloatingLabel } from "./FloatingLabel";
 import {
-  loadIflAtlas,
-  getFrameIndexForTime,
-  updateAtlasFrame,
+  collectIflMeshes,
+  iflSequenceTime,
+  loadIflMaterialInstance,
+  showIflFrame,
 } from "./iflAtlas";
-import type { IflAtlas } from "./iflAtlas";
+import type { IflMaterialInstance } from "./iflAtlas";
 import { useIsDebugTourTarget } from "../state/cameraTourStore";
 import { DebugBounds } from "./DebugBounds";
 import { useEntitySoundSlots } from "./useEntitySoundSlots";
@@ -61,36 +64,8 @@ import {
 import { resolveEmapFromImageSlot } from "./resolveEmap";
 import { playerEyePositions } from "./playerEyePositions";
 import type { ThreadState as StreamThreadState } from "../stream/types";
-import { loadTexture } from "../textureUtils";
-
-// ── Cloak texture (binary-verified: special/cloakTexture with UV scrolling) ──
-// Lazy-loaded on first use since cloaking is rare.
-
-import type { Texture } from "three";
-
-let _cloakTexture: Texture | null = null;
-function getCloakTexture(): Texture {
-  if (!_cloakTexture) {
-    _cloakTexture = loadTexture(textureToUrl("special/cloakTexture"));
-    _cloakTexture.wrapS = RepeatWrapping;
-    _cloakTexture.wrapT = RepeatWrapping;
-    _cloakTexture.colorSpace = NoColorSpace;
-  }
-  return _cloakTexture;
-}
-
-// Global UV offset matching engine's static shiftX/shiftY with different moduli
-// to create a non-repeating shimmer pattern.
-let _cloakShiftX = 0;
-let _cloakShiftY = 0;
-let _cloakLastFrame = -1;
-function advanceCloakUV(frameId: number): void {
-  if (frameId === _cloakLastFrame) return;
-  _cloakLastFrame = frameId;
-  _cloakShiftX = (_cloakShiftX + 1) % 128;
-  _cloakShiftY = (_cloakShiftY + 1) % 127;
-  getCloakTexture().offset.set(_cloakShiftX / 127, _cloakShiftY / 126);
-}
+import { useFadeAndCloak } from "./shapeFadeCloak";
+import { shapeBoxCenter, useShapeLighting } from "./useShapeLighting";
 
 /** Item/ShapeBase built-in light config from datablock. */
 export interface ShapeLightConfig {
@@ -100,6 +75,17 @@ export interface ShapeLightConfig {
   radius: number;
   onlyStatic: boolean;
   isStatic: boolean;
+  anchor: LightAnchor;
+}
+
+/** The light's anchor-local position: the engine's box centre, or the origin. */
+function shapeLightOffset(
+  anchor: LightAnchor,
+  shapeName: string,
+  scene: Object3D,
+): Vector3 {
+  if (anchor === "origin") return new Vector3();
+  return shapeBoxCenter(shapeName, scene);
 }
 
 const STANDARD_90_ROTATION: [x: number, y: number, z: number] = [
@@ -134,7 +120,13 @@ interface StreamShapeEntity {
   lightRadius?: number;
   lightOnlyStatic?: boolean;
   isStaticItem?: boolean;
+  projectileAgeMS?: number;
+  projectileActivateDelayMS?: number;
 }
+
+/** Thread slots for a projectile shape's client-side sequences. */
+const PROJECTILE_AMBIENT_SLOT = 1;
+const PROJECTILE_ACTIVATE_SLOT = 2;
 
 const log = createLogger("GenericShape");
 import {
@@ -143,6 +135,12 @@ import {
 } from "../collision/worldCollision";
 import { staticShapeColliderMeshes } from "../world/colliderPolicy";
 import { SHAPE_MODEL_ROTATION_Y } from "../world/placement";
+import { registerShapeSequences } from "../stream/shapeSequences";
+import {
+  getShapeBounds,
+  registerShapeBounds,
+  shapeBoundsFromExtras,
+} from "../stream/shapeBounds";
 
 /**
  * Content for a mounted shape. Computes the Mountpoint inverse offset from the
@@ -214,7 +212,14 @@ function shapeNowSec(): number {
  */
 export function useStaticShape(shapeName: string) {
   const url = shapeToUrl(shapeName);
-  return useGLTF(url);
+  const gltf = useGLTF(url);
+  registerShapeSequences(shapeName, gltf.animations);
+  // This runs every render of every shape; parse the extra only once.
+  if (!getShapeBounds(shapeName)) {
+    const bounds = shapeBoundsFromExtras(gltf.scene.userData);
+    if (bounds) registerShapeBounds(shapeName, bounds);
+  }
+  return gltf;
 }
 
 // Dead code removed: IflTexture, StaticTexture, ShapeTexture, useDisposeMaterial
@@ -237,13 +242,7 @@ export function ShapePlaceholder({
   );
 }
 
-export function DebugPlaceholder({
-  color,
-  label,
-}: {
-  color: string;
-  label?: string;
-}) {
+function DebugPlaceholder({ color, label }: { color: string; label?: string }) {
   const { debugMode } = useDebug();
   return debugMode ? <ShapePlaceholder color={color} label={label} /> : null;
 }
@@ -381,48 +380,7 @@ export const ShapeModel = memo(function ShapeModel({
 
     // Detect IFL materials BEFORE processShapeScene replaces them, since the
     // replacement materials lose the original userData (flag_names, resource_path).
-    const iflInfos: Array<{
-      mesh: any;
-      iflPath: string;
-      hasVisSequence: boolean;
-      repeat: boolean;
-      iflSequence?: string;
-      iflDuration?: number;
-      iflCyclic?: boolean;
-      iflToolBegin?: number;
-    }> = [];
-    scene.traverse((node: any) => {
-      if (!node.isMesh || !node.material) return;
-      const mat = Array.isArray(node.material)
-        ? node.material[0]
-        : node.material;
-      if (!mat?.userData) return;
-      const flags = new Set<string>(mat.userData.flag_names ?? []);
-      const rp: string | undefined = mat.userData.resource_path;
-      if (flags.has("IflMaterial") && rp) {
-        const ud = node.userData;
-        // ifl_sequence is set by the addon when ifl_matters links this IFL to
-        // a controlling sequence. vis_sequence is a separate system (opacity
-        // animation) and must NOT be used as a fallback — the two are independent.
-        const iflSeq = ud?.ifl_sequence
-          ? String(ud.ifl_sequence).toLowerCase()
-          : undefined;
-        const iflDur = ud?.ifl_duration ? Number(ud.ifl_duration) : undefined;
-        const iflCyclic = ud?.ifl_sequence ? !!ud.ifl_cyclic : undefined;
-        const iflToolBegin =
-          ud?.ifl_tool_begin != null ? Number(ud.ifl_tool_begin) : undefined;
-        iflInfos.push({
-          mesh: node,
-          iflPath: `textures/${rp}.ifl`,
-          hasVisSequence: !!ud?.vis_sequence,
-          repeat: flags.has("SWrap") || flags.has("TWrap"),
-          iflSequence: iflSeq,
-          iflDuration: iflDur,
-          iflCyclic,
-          iflToolBegin,
-        });
-      }
-    });
+    const iflInfos = collectIflMeshes(scene);
 
     processShapeScene(scene, shapeName ?? undefined, {
       anisotropy,
@@ -617,20 +575,9 @@ export const ShapeModel = memo(function ShapeModel({
   }, [clonedScene, colliderId, type, isOrganic]);
 
   const threadsRef = useRef(new Map<number, ThreadState>());
-  const iflMeshAtlasRef = useRef(new Map<any, IflAtlas>());
-
-  interface IflAnimInfo {
-    atlas: IflAtlas;
-    /** Material reference for swap-mode texture updates. */
-    mat: any;
-    sequenceName?: string;
-    /** Controlling sequence duration in seconds. */
-    sequenceDuration?: number;
-    cyclic?: boolean;
-    /** Torque `toolBegin`: offset into IFL timeline (seconds). */
-    toolBegin?: number;
-  }
-  const iflAnimInfosRef = useRef<IflAnimInfo[]>([]);
+  /** Per-mesh live IFL (see loadIflMaterialInstance). */
+  const iflMeshInstanceRef = useRef(new Map<any, IflMaterialInstance>());
+  const iflAnimInfosRef = useRef<IflMaterialInstance[]>([]);
   const iflTimeRef = useRef(0);
   const animationEnabledRef = useRef(animationEnabled);
   animationEnabledRef.current = animationEnabled;
@@ -652,27 +599,13 @@ export const ShapeModel = memo(function ShapeModel({
   // .ifl paths since they require async loading of the frame list).
   useEffect(() => {
     iflAnimInfosRef.current = [];
-    iflMeshAtlasRef.current.clear();
+    iflMeshInstanceRef.current.clear();
     for (const info of iflMeshes) {
-      loadIflAtlas(info.iflPath, { repeat: info.repeat })
-        .then((atlas) => {
-          const mat = Array.isArray(info.mesh.material)
-            ? info.mesh.material[0]
-            : info.mesh.material;
-          if (mat) {
-            mat.map = atlas.texture;
-            mat.needsUpdate = true;
-          }
-          const iflInfo = {
-            atlas,
-            mat,
-            sequenceName: info.iflSequence,
-            sequenceDuration: info.iflDuration,
-            cyclic: info.iflCyclic,
-            toolBegin: info.iflToolBegin,
-          };
-          iflAnimInfosRef.current.push(iflInfo);
-          iflMeshAtlasRef.current.set(info.mesh, atlas);
+      loadIflMaterialInstance(info)
+        .then((inst) => {
+          if (!inst) return;
+          iflAnimInfosRef.current.push(inst);
+          iflMeshInstanceRef.current.set(info.mesh, inst);
         })
         .catch((err) => {
           log.warn("Failed to load IFL atlas for %s: %o", info.iflPath, err);
@@ -736,9 +669,9 @@ export const ShapeModel = memo(function ShapeModel({
           ud._visOrigAlphaTest = v.mesh.material.alphaTest;
         }
       }
-      const atlas = iflMeshAtlasRef.current.get(v.mesh);
-      if (atlas && v.mesh.material && !Array.isArray(v.mesh.material)) {
-        v.mesh.material.map = atlas.texture;
+      const inst = iflMeshInstanceRef.current.get(v.mesh);
+      if (inst && v.mesh.material && !Array.isArray(v.mesh.material)) {
+        v.mesh.material.map = inst.texture;
         v.mesh.material.needsUpdate = true;
       }
     }
@@ -887,6 +820,17 @@ export const ShapeModel = memo(function ShapeModel({
 
     // ── Demo/live mode: ghost thread handler in useFrame drives everything ──
     if (!isMissionMode) {
+      // A projectile's shape instance gets an ambient thread the moment it
+      // is added (Projectile::onAdd FUN_00631bb0, from ProjectileData's
+      // "ambient" sequence); activate/maintain follow in useFrame.
+      if (
+        streamEntityRef.current?.projectileAgeMS != null &&
+        (clipsByName.has("ambient") ||
+          visNodesBySequence.has("ambient") ||
+          morphClipsBySeq.has("ambient"))
+      ) {
+        handlePlayThread(PROJECTILE_AMBIENT_SLOT, "ambient");
+      }
       return () => {
         handlePlayThreadRef.current = null;
         handleStopThreadRef.current = null;
@@ -1024,6 +968,37 @@ export const ShapeModel = memo(function ShapeModel({
       : playbackState.status === "playing"
         ? delta * playbackState.rate
         : 0;
+
+    // LinearProjectile shape sequences (binary-verified): "activate" starts
+    // once the projectile's age reaches activateDelayMS (processTick
+    // FUN_0062e010) and plays once; when the next frame would run past its
+    // end, the looping "maintain" takes over (advanceTime FUN_0062ee40).
+    // The disc's blue trail is these vis-animated meshes.
+    const projectile = streamEntityRef.current;
+    const playProjectileThread = handlePlayThreadRef.current;
+    if (
+      projectile?.projectileAgeMS != null &&
+      projectile.projectileActivateDelayMS != null &&
+      playProjectileThread
+    ) {
+      const thread = threads.get(PROJECTILE_ACTIVATE_SLOT);
+      if (!thread) {
+        if (
+          projectile.projectileAgeMS >= projectile.projectileActivateDelayMS &&
+          seqCyclicByName.has("activate")
+        ) {
+          playProjectileThread(PROJECTILE_ACTIVATE_SLOT, "activate");
+        }
+      } else if (thread.sequence === "activate" && thread.action) {
+        const clip = thread.action.getClip();
+        if (
+          thread.action.time + effectDelta >= clip.duration &&
+          seqCyclicByName.has("maintain")
+        ) {
+          playProjectileThread(PROJECTILE_ACTIVATE_SLOT, "maintain");
+        }
+      }
+    }
 
     // React to demo thread state changes. The ghost ThreadMask data tells us
     // exactly which DTS sequences are playing/stopped on each of 4 thread slots.
@@ -1263,133 +1238,40 @@ export const ShapeModel = memo(function ShapeModel({
       }
     }
 
-    // Advance IFL texture atlases.
-    // Matches Torque's animateIfls():
-    //   time = th->pos * th->sequence->duration + th->sequence->toolBegin
-    // where pos is [0,1) cyclic or [0,1] clamped, then frame is looked up in
-    // cumulative iflFrameOffTimes (seconds, at 1/30s per IFL tick).
-    // toolBegin offsets into the IFL timeline so the sequence window aligns
-    // with the desired frames (e.g. skipping a long "off" period).
+    // Advance IFL texture atlases (Torque's animateIfls — see
+    // iflSequenceTime): a sequence-driven IFL follows the thread playing its
+    // sequence; one without a controlling sequence free-runs on real time
+    // (the engine would hold frame 0, but cycling is more useful to look at).
     const iflAnimInfos = iflAnimInfosRef.current;
     if (iflAnimInfos.length > 0) {
       iflTimeRef.current += effectDelta;
-      for (const info of iflAnimInfos) {
-        const updateAtlasAndMaterial = (
-          info: IflAnimInfo,
-          frameIndex: number,
-        ) => {
-          updateAtlasFrame(info.atlas, frameIndex);
-          if (info.atlas.swapMode && info.mat.map !== info.atlas.texture) {
-            info.mat.map = info.atlas.texture;
-            info.mat.needsUpdate = true;
-          }
-        };
-        let frameIndex = 0;
+      for (const inst of iflAnimInfos) {
+        let iflTime = 0;
         if (animationEnabled) {
-          let iflTime = 0;
-          if (info.sequenceName && info.sequenceDuration) {
-            // Sequence-driven IFL: find the thread playing this sequence and
-            // compute time = pos * duration + toolBegin (matching the engine).
+          const { info, atlas } = inst;
+          if (info.sequenceName && info.duration) {
             for (const [, thread] of threads) {
               if (thread.sequence === info.sequenceName) {
-                const elapsed = shapeNowSec() - thread.startTime;
-                const dur = info.sequenceDuration;
-                // Reproduce th->pos: cyclic wraps [0,1), non-cyclic clamps [0,1]
-                const pos = info.cyclic
-                  ? (elapsed / dur) % 1
-                  : Math.min(elapsed / dur, 1);
-                iflTime = pos * dur + (info.toolBegin ?? 0);
+                iflTime = iflSequenceTime(
+                  info,
+                  atlas,
+                  shapeNowSec() - thread.startTime,
+                );
                 break;
               }
             }
           } else {
-            // No controlling sequence: use accumulated real time.
-            // (In the engine, these would stay at frame 0, but cycling is more
-            // useful for display purposes.)
             iflTime = iflTimeRef.current;
           }
-          frameIndex = getFrameIndexForTime(info.atlas, iflTime);
         }
-        updateAtlasAndMaterial(info, frameIndex);
+        showIflFrame(inst, iflTime);
       }
     }
   });
 
-  // ShapeBase fade opacity and cloak texture effect.
-  // Fade (mFadeVal): opacity-only, used by startFade().
-  // Cloak (mCloakLevel): replaces textures with cloakTexture + UV scrolling,
-  // alpha = 0.125 + (1 - cloakLevel) * 0.875. Binary-verified rendering path.
-  const lastFadeValRef = useRef(1);
-  const lastCloakLevelRef = useRef(0);
-  useFrame((state) => {
-    const entity = streamEntityRef.current;
-    const fadeVal = entity?.fadeVal ?? 1;
-    const cloakLevel = entity?.cloakLevel ?? 0;
-    const isCloak = cloakLevel > 0;
-
-    // Advance global cloak UV offset once per frame (all cloaked shapes share it).
-    if (isCloak)
-      advanceCloakUV(
-        state.frameloop === "never" ? 0 : (state.clock.elapsedTime * 60) | 0,
-      );
-
-    if (
-      fadeVal === lastFadeValRef.current &&
-      cloakLevel === lastCloakLevelRef.current
-    )
-      return;
-    lastFadeValRef.current = fadeVal;
-    lastCloakLevelRef.current = cloakLevel;
-
-    // Cloak alpha OVERRIDES fade (binary-verified: TSMesh uses else-if —
-    // alwaysAlpha takes precedence over overrideFade when both are set).
-    const combinedAlpha = isCloak ? 0.125 + (1 - cloakLevel) * 0.875 : fadeVal;
-    const cloakTex = isCloak ? getCloakTexture() : _cloakTexture;
-
-    clonedScene.traverse((node: any) => {
-      if (!node.isMesh || !node.material || Array.isArray(node.material))
-        return;
-      const mat = node.material;
-      const ud = (mat.userData ??= {});
-
-      // Save originals on first encounter.
-      if (ud._baseFadeOpacity == null) {
-        ud._baseFadeOpacity = mat.opacity ?? 1;
-        ud._baseFadeTransparent = mat.transparent ?? false;
-        ud._originalMap = mat.map;
-        // Originally-translucent materials keep their own texture during cloak.
-        // Detect via alphaTest (organic/Translucent cutout) or non-normal blending
-        // (Additive). These match how createMaterialFromFlags sets up materials.
-        ud._isOriginallyTranslucent =
-          (ud._baseFadeTransparent as boolean) ||
-          mat.alphaTest > 0 ||
-          mat.blending !== NormalBlending;
-      }
-
-      const baseOpacity = ud._baseFadeOpacity as number;
-
-      // Cloak texture replacement (non-translucent materials only).
-      if (isCloak && !ud._isOriginallyTranslucent) {
-        if (mat.map !== cloakTex) {
-          mat.map = cloakTex;
-          mat.needsUpdate = true;
-        }
-      } else if (
-        !isCloak &&
-        ud._originalMap !== undefined &&
-        mat.map === cloakTex
-      ) {
-        mat.map = ud._originalMap;
-        mat.needsUpdate = true;
-      }
-
-      mat.opacity = combinedAlpha * baseOpacity;
-      mat.transparent =
-        combinedAlpha < 1 || (ud._baseFadeTransparent as boolean);
-      mat.depthWrite =
-        combinedAlpha >= 1 && !(ud._baseFadeTransparent as boolean);
-    });
-  });
+  // ShapeBase fade (mFadeVal) and cloak (mCloakLevel) — see shapeFadeCloak.ts.
+  useFadeAndCloak(clonedScene, () => streamEntityRef.current);
+  useShapeLighting(clonedScene, shapeName);
 
   // ShapeBase sound slots — managed as PositionalAudio, not entities.
   useEntitySoundSlots(streamEntityRef, clonedScene);
@@ -1456,36 +1338,50 @@ export const ShapeModel = memo(function ShapeModel({
     eyePos.set(gz, gy, -gx);
   });
 
-  // Item/ShapeBase built-in dynamic light (binary-verified pulsing formula).
-  // Torque places a GL point light at getBoxCenter() with:
-  //   constant_attenuation = 0, linear_attenuation = 1/radius, quadratic = 0
-  // This gives attenuation = radius/distance — surfaces at zero distance get
-  // infinite brightness, producing the characteristic "opaque glow" where the
-  // item's own mesh is massively overlit and goes pure white at peak pulse.
-  const lightRef = useRef<PointLight>(null);
+  // Item/ShapeBase built-in dynamic light. Item::registerLights
+  // (FUN_00603de0) skips lightOnlyStatic items that are not static and
+  // places the light at the world box centre; LightPool turns it into a
+  // GL-style point light for shapes and a projected falloff disc for
+  // terrain and interiors.
+  const effectLightRef = useRef<EffectLight | null>(null);
   const lightConfig = useMemo(() => {
     const cfg = lightConfigProp;
-    if (!cfg) return null;
-    const box = new Box3().setFromObject(gltf.scene);
-    const center = new Vector3();
-    box.getCenter(center);
+    if (!cfg || (cfg.onlyStatic && !cfg.isStatic)) return null;
     return {
       type: cfg.type,
       color: new Color(cfg.color[0], cfg.color[1], cfg.color[2]),
       time: cfg.time,
       radius: cfg.radius,
-      onlyStatic: cfg.onlyStatic,
-      isStatic: cfg.isStatic,
-      center: [center.x, center.y, center.z] as [number, number, number],
+      offset: shapeLightOffset(cfg.anchor, shapeName, gltf.scene),
     };
-  }, [gltf.scene, lightConfigProp]);
+  }, [gltf.scene, lightConfigProp, shapeName]);
+
+  // The light lives in the effect-light registry; LightPool drives a fixed
+  // set of real point lights from it, so mounting a glowing shape never
+  // changes the scene's light count (which would recompile every lit
+  // material). The pool resolves the anchor to a world position before each
+  // render; only the intensity is animated here.
+  useEffect(() => {
+    if (!lightConfig) return;
+    const light: EffectLight = {
+      anchor: clonedScene,
+      offset: lightConfig.offset,
+      position: new Vector3(),
+      color: lightConfig.color,
+      intensity: 0,
+      radius: lightConfig.radius,
+    };
+    addEffectLight(light);
+    effectLightRef.current = light;
+    return () => {
+      removeEffectLight(light);
+      effectLightRef.current = null;
+    };
+  }, [lightConfig, clonedScene]);
 
   useFrame(() => {
-    if (!lightRef.current || !lightConfig) return;
-    if (lightConfig.onlyStatic && !lightConfig.isStatic) {
-      lightRef.current.intensity = 0;
-      return;
-    }
+    const light = effectLightRef.current;
+    if (!light || !lightConfig) return;
     const fadeVal = streamEntityRef.current?.fadeVal ?? 1;
     const elapsed = shapeNowSec() * 1000; // ms
     let intensity: number;
@@ -1498,27 +1394,14 @@ export const ShapeModel = memo(function ShapeModel({
       // ConstantLight
       intensity = fadeVal;
     }
-    // Torque uses GL attenuation = radius/d (linear, constant=0). With decay=1
-    // in Three.js, the falloff is ~1/d within the distance window. Scale by
-    // radius² to approximate Torque's overbright behavior — surfaces near the
-    // light center get extremely bright (flag mesh goes pure white at peak pulse).
-    lightRef.current.intensity =
-      intensity * lightConfig.radius * lightConfig.radius;
+    // The colour × intensity clamp to [0,1] in Item::registerLights never
+    // binds for datablock colours ≤ 1.
+    light.intensity = intensity;
   });
 
   return (
     <group rotation={noRotation ? undefined : STANDARD_90_ROTATION}>
       <primitive object={clonedScene} />
-      {lightConfig && (
-        <pointLight
-          ref={lightRef}
-          color={lightConfig.color}
-          position={lightConfig.center}
-          intensity={0}
-          distance={lightConfig.radius * 2}
-          decay={1}
-        />
-      )}
       {debugMode ? (
         <FloatingLabel>
           {entityId}: {shapeName}

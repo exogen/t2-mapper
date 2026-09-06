@@ -12,7 +12,7 @@ export const TICK_MS = 32;
 const MAX_LIVING_TICKS = 511;
 
 /** Round milliseconds up to a whole tick, as ProjectileData::onAdd does. */
-export function roundUpToTick(ms: number): number {
+function roundUpToTick(ms: number): number {
   return (ms + TICK_MS - 1) & ~(TICK_MS - 1);
 }
 
@@ -275,7 +275,7 @@ export function bounceVelocity(
   return v;
 }
 
-export interface BallisticStepResult {
+interface BallisticStepResult {
   /** Hit that should explode the projectile (armed contact), if any. */
   explodeAt: WorldRayHit | null;
 }
@@ -294,7 +294,9 @@ export function stepBallistic(
   pos: Vec3,
   vel: Vec3,
   options: {
-    gravityMod: number;
+    /** Vertical acceleration in m/s² (negative is down): world gravity ×
+     *  the datablock's gravityMod. */
+    gravity: number;
     elasticity: number;
     friction: number;
     armed: boolean;
@@ -303,7 +305,7 @@ export function stepBallistic(
   },
 ): BallisticStepResult {
   const dt = TICK_MS / 1000;
-  vel[2] += -9.81 * options.gravityMod * dt;
+  vel[2] += options.gravity * dt;
 
   let sx = pos[0];
   let sy = pos[1];

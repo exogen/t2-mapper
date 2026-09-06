@@ -14,6 +14,7 @@ import { ParticleEffects } from "./ParticleEffects";
 import { playerEyePositions } from "./playerEyePositions";
 import { useProgress } from "@react-three/drei";
 import { startAssetPrefetch, stopAssetPrefetch } from "../assetPrefetch";
+import { isRelayRecording } from "../stream/demoDate";
 import { stopAllTrackedSounds } from "./AudioEmitter";
 import { useEngineStoreApi, advanceEffectClock } from "../state/engineStore";
 import { setStreamSnapshot } from "../state/streamSnapshotStore";
@@ -34,6 +35,7 @@ import {
   resetStreamPlayback,
 } from "../state/streamPlaybackStore";
 import { streamEntityToGameEntity } from "../stream/entityBridge";
+import { fieldOpenFromState } from "../stream/forceFieldState";
 import {
   yawPitchToQuaternion,
   MAX_PITCH,
@@ -46,7 +48,7 @@ import type {
   StreamSnapshot,
   StreamingPlayback,
 } from "../stream/types";
-import type { GameEntity } from "../state/gameEntityTypes";
+import type { ForceFieldData, GameEntity } from "../state/gameEntityTypes";
 import { isSceneEntity } from "../state/gameEntityTypes";
 
 type EntityById = Map<string, StreamEntity>;
@@ -61,13 +63,20 @@ function getField(entity: GameEntity, field: string): string | undefined {
 
 /** Mutate render-affecting fields on an entity in-place from stream data.
  * Components read these fields imperatively in useFrame — no React
- * re-render is needed. This is the key to avoiding Suspense starvation. */
+ * re-render is needed. This is the key to avoiding Suspense starvation.
+ *
+ * Returns true when a change is structural — one React only sees through
+ * a new entity reference (mount relationships, a force field opening or
+ * being resized). */
 function mutateRenderFields(
   renderEntity: GameEntity,
   stream: StreamEntity,
-): void {
+): boolean {
   // Shared fields (on PositionedBase, used by both Player and Shape).
   const e = renderEntity as unknown as Record<string, unknown>;
+  let structural =
+    e.mountObjectId !== stream.mountObjectId ||
+    e.mountNode !== stream.mountNode;
   e.mountObjectId = stream.mountObjectId;
   e.mountNode = stream.mountNode;
   e.imageSlots = stream.imageSlots;
@@ -85,19 +94,20 @@ function mutateRenderFields(
     case "Player":
       e.falling = stream.falling;
       e.jetting = stream.jetting;
-      e.weaponImageState = stream.weaponImageState;
-      e.weaponImageStates = stream.weaponImageStates;
       e.headPitch = stream.headPitch;
       e.headYaw = stream.headYaw;
       // Death arrives as a DamageMask update on the existing ghost
       // (0 = alive, 1 = Disabled/dead, 2 = Destroyed) — spectate follow
       // and player cycling depend on seeing it.
       e.damageState = stream.damageState;
+      e.fadeVal = stream.fadeVal;
+      e.cloakLevel = stream.cloakLevel;
       break;
     case "Shape":
       e.damageState = stream.damageState;
       e.fadeVal = stream.fadeVal;
       e.cloakLevel = stream.cloakLevel;
+      e.projectileAgeMS = stream.projectileAgeMS;
       break;
     case "Beam":
       // Sniper beam swing updates move the endpoint on the live ghost.
@@ -115,7 +125,25 @@ function mutateRenderFields(
       e.linkSourceId = stream.linkSourceId;
       e.linkTargetId = stream.linkTargetId;
       break;
+    case "ForceFieldBare": {
+      e.fieldAlpha = stream.forceFieldAlpha;
+      const fieldOpen = fieldOpenFromState(stream.forceFieldState);
+      if (e.fieldOpen !== fieldOpen) {
+        e.fieldOpen = fieldOpen;
+        structural = true;
+      }
+      // Servers retract an open field by zeroing its scale, so the box
+      // dimensions change under the same identity.
+      const dims = stream.forceFieldData?.dimensions;
+      const data = e.forceFieldData as ForceFieldData | undefined;
+      if (dims && data && data.dimensions !== dims) {
+        e.forceFieldData = { ...data, dimensions: dims };
+        structural = true;
+      }
+      break;
+    }
   }
+  return structural;
 }
 
 /**
@@ -388,19 +416,14 @@ export function StreamingController({
         map.set(entity.id, renderEntity);
         structuralChange = true;
       } else {
-        // Detect mount state changes — EntityScene re-evaluates mount
-        // relationships (portal rendering) only when entity references
-        // change (useAllGameEntities compares references, not versions),
-        // so clone the entity to make the transition visible. The clone
+        // Structural changes (mount relationships, force field state) are
+        // only seen through a new entity reference — EntityScene
+        // re-evaluates mounts (portal rendering) when references change
+        // (useAllGameEntities compares references, not versions) — so
+        // clone the entity to make the transition visible. The clone
         // shares keyframes/threads arrays, so imperative playback state
         // carries over.
-        const prevMount = renderEntity!.mountObjectId;
-        const prevNode = renderEntity!.mountNode;
-        mutateRenderFields(renderEntity!, entity);
-        if (
-          renderEntity!.mountObjectId !== prevMount ||
-          renderEntity!.mountNode !== prevNode
-        ) {
+        if (mutateRenderFields(renderEntity!, entity)) {
           renderEntity = { ...renderEntity! };
           map.set(entity.id, renderEntity);
           structuralChange = true;
@@ -438,17 +461,8 @@ export function StreamingController({
     // have arrived yet). Keeping the old render entities visible avoids a
     // blank screen flash; they'll be replaced when the new mission loads.
     if (currentIds.size > 0) {
-      for (const [id, entity] of map) {
+      for (const id of map.keys()) {
         if (currentIds.has(id)) continue;
-        // Retain explosion entities with DTS shapes for up to 5 seconds.
-        if (
-          entity.renderType === "Explosion" &&
-          entity.shapeName &&
-          entity.spawnTime != null
-        ) {
-          const age = snapshot.timeSec - entity.spawnTime;
-          if (age < 5) continue;
-        }
         map.delete(id);
         structuralChange = true;
       }
@@ -739,6 +753,20 @@ export function StreamingController({
       }
     }
 
+    // Relay (MapGenius) demos: the recorder is an observer that never
+    // moves, so its view is only worth a starting pose. "original" seeds
+    // the camera from the recorded view (the block above, this frame) and
+    // hands over to free-fly — on load, on a moment link without a camera,
+    // and when the camera cycle comes back around.
+    if (
+      cameraMode === "original" &&
+      currentCamera &&
+      !isLive &&
+      isRelayRecording(recording.recorderName)
+    ) {
+      streamPlaybackStore.setState({ cameraMode: "freeFly" });
+    }
+
     // Imperative position interpolation via the shared entity root.
     const currentEntities = getEntityMap(renderCurrent);
     const previousEntities = getEntityMap(renderPrev);
@@ -762,9 +790,8 @@ export function StreamingController({
         }
 
         const entity = currentEntities.get(child.name);
-        // Retained entities (e.g. explosion shapes kept alive past their
-        // snapshot lifetime) won't be in the snapshot entity map. Fall back
-        // to their last-known keyframe position from the render entity.
+        // An entity removed from the snapshot may still be mounted until
+        // React commits the removal; hold it at its last keyframe position.
         if (!entity) {
           const kfs =
             renderEntity && "keyframes" in renderEntity

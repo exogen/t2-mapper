@@ -23,9 +23,8 @@ async function run() {
       console.error("Cannot specify --list (-l) with other options.");
       return 1;
     }
-    // @ts-expect-error JSON import resolved at runtime by tsx
-    const manifest = (await import("../public/manifest.json")).default;
-    const fileNames = Object.keys(manifest);
+    const manifest = (await import("../src/manifest.json")).default;
+    const fileNames = Object.keys(manifest.resources);
     console.log(
       fileNames
         .map((f) => f.match(/^textures\/skins\/(.+)\.ifl$/))

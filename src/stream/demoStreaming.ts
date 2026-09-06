@@ -28,6 +28,7 @@ import {
   torqueQuatPitch,
   torqueQuatToThreeJS,
   collectPreloadShapeNames,
+  collectEffectShapeNames,
 } from "./streamHelpers";
 import type { Vec3 } from "./streamHelpers";
 import type { StreamRecording, StreamSnapshot, TeamScore } from "./types";
@@ -693,6 +694,8 @@ class StreamingPlayback extends StreamEngine {
 
     // Seed HUD state from demoValues
     const parsed = parseDemoValues(this.initialBlock.demoValues);
+    // recordings.cs setState(GRAVITY): the recorder's world gravity.
+    this.worldGravity = parsed.gravity;
     if (parsed.weaponsHud) {
       this.weaponsHud.slots = parsed.weaponsHud.slots;
       this.weaponsHud.activeIndex = parsed.weaponsHud.activeIndex;
@@ -769,29 +772,10 @@ class StreamingPlayback extends StreamEngine {
   }
 
   getEffectShapes(): string[] {
-    const shapes = new Set<string>();
-    const collectShapesFromExplosion = (expBlock: ParsedData) => {
-      const shape = expBlock.dtsFileName as string | undefined;
-      if (shape) shapes.add(shape);
-      const subExplosions = expBlock.subExplosions as
-        (number | null)[] | undefined;
-      if (Array.isArray(subExplosions)) {
-        for (const subId of subExplosions) {
-          if (subId == null) continue;
-          const subBlock = this.getDataBlockData(subId);
-          if (subBlock?.dtsFileName) {
-            shapes.add(subBlock.dtsFileName as string);
-          }
-        }
-      }
-    };
-    for (const [, block] of this.initialBlock.dataBlocks) {
-      const explosionId = block.data?.explosion as number | undefined;
-      if (explosionId == null) continue;
-      const expBlock = this.getDataBlockData(explosionId);
-      if (expBlock) collectShapesFromExplosion(expBlock);
-    }
-    return [...shapes];
+    return collectEffectShapeNames(
+      Array.from(this.initialBlock.dataBlocks.values(), (block) => block.data),
+      (id) => this.getDataBlockData(id),
+    );
   }
 
   stepToTime(
@@ -930,6 +914,7 @@ class StreamingPlayback extends StreamEngine {
         this.advanceItems();
         this.advanceControlVehicle();
         this.advanceFades();
+        this.advanceForceFields();
         this.advanceControlEnergy();
         // updateCameraAndHud() calls removeExpiredExplosions() as its first
         // step (and the live path relies on that), so calling it here too
@@ -1025,6 +1010,7 @@ class StreamingPlayback extends StreamEngine {
 
     return {
       timeSec,
+      gravity: this.gravity,
       ghostAlwaysDoneSec: this.ghostAlwaysDoneSec,
       exhausted: this.exhausted,
       camera: this.camera,
@@ -1090,8 +1076,7 @@ class StreamingPlayback extends StreamEngine {
       !!parsed &&
       typeof parsed === "object" &&
       "firstPerson" in parsed &&
-      typeof (parsed as { firstPerson?: unknown }).firstPerson ===
-        "boolean" &&
+      typeof (parsed as { firstPerson?: unknown }).firstPerson === "boolean" &&
       "cameraFov" in parsed &&
       typeof (parsed as { cameraFov?: unknown }).cameraFov === "number"
     );

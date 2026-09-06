@@ -6,6 +6,7 @@ import {
   cycleWatchFollow,
   enterWatchFollow,
   resolveWatchFollowTarget,
+  toggleFollowFirstPerson,
 } from "../state/watchFollow";
 import { useInputAction } from "./InputControls";
 import { useFollowFlagActions } from "./useFollowFlagActions";
@@ -27,6 +28,8 @@ const camlog = createLogger("camdbg");
 export function DemoCameraController() {
   // F cycles camera modes (shares the action with the live observer).
   useInputAction("toggleObserverMode", cycleDemoCameraMode);
+  // Tab (pointer locked) flips a player follow between orbit and first person.
+  useInputAction("toggleFollowFirstPerson", toggleFollowFirstPerson);
   // Pointer-locked left/right click cycles the followed player forward/
   // backward, T2-spectator style (fire and jet triggers).
   useInputAction("nextPlayer", () => {

@@ -322,6 +322,12 @@ function buildForceFieldEntity(
     : ([1, 1, 1] as [number, number, number]);
   const baseTranslucency =
     parseFloat(getProperty(datablock, "baseTranslucency")) || 1;
+  const powerOffColorStr = getProperty(datablock, "powerOffColor");
+  const powerOffColor = powerOffColorStr
+    ? parseColorTuple(powerOffColorStr)
+    : ([0, 0, 0] as [number, number, number]);
+  const powerOffTranslucency =
+    parseFloat(getProperty(datablock, "powerOffTranslucency")) || 0;
   const numFrames = parseInt(getProperty(datablock, "numFrames"), 10) || 1;
   const framesPerSec = parseFloat(getProperty(datablock, "framesPerSec")) || 1;
   const scrollSpeed = parseFloat(getProperty(datablock, "scrollSpeed")) || 0;
@@ -347,7 +353,9 @@ function buildForceFieldEntity(
     forceFieldData: {
       textures,
       color,
+      powerOffColor,
       baseTranslucency,
+      powerOffTranslucency,
       numFrames,
       framesPerSec,
       scrollSpeed,
