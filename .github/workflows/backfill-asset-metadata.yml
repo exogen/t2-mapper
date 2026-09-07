@@ -1,11 +1,11 @@
 name: Backfill R2 asset metadata
 
-# Manually-run maintenance task: re-stamps Content-Type and Cache-Control on
+# Manually-run maintenance task: rewrites Content-Type and Cache-Control on
 # every object in the game assets bucket, from the same table the deploy sync
 # uses (scripts/lib/assetMetadata.ts). Run it after changing that table, or to
 # repair objects an older job wrote.
 #
-# Safe to run at any time. It defaults to a dry run, and an apply always
+# Safe to run at any time. It defaults to a dry run, and a real run always
 # writes the COMPLETE metadata set: `--metadata-directive REPLACE` replaces
 # every system header, so a job that passes only some of them silently drops
 # the rest. That is what an earlier version of this workflow did with
@@ -15,7 +15,7 @@ on:
   workflow_dispatch:
     inputs:
       apply:
-        description: Stamp the bucket (unchecked = dry run, reports the plan)
+        description: Write the headers (leave unchecked for a dry run)
         type: boolean
         default: false
 
@@ -42,7 +42,7 @@ jobs:
 
       - run: npm ci
 
-      - name: Re-stamp metadata on all game assets
+      - name: Set Content-Type and Cache-Control on all game assets
         run: |
           npx tsx --tsconfig tsconfig.node.json scripts/backfill-asset-metadata.ts \
             --bucket s3://t2-assets/game/base/ \

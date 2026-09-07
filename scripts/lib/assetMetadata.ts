@@ -12,10 +12,10 @@ import path from "node:path";
 import { TEXT_EXTENSIONS } from "./encoding.js";
 
 /**
- * What browsers cache (revalidated hourly by ETag) and what the edge
+ * What browsers cache (revalidated every two hours by ETag) and what the edge
  * caches (long, because the deploy purges every changed URL).
  */
-export const ASSET_CACHE_CONTROL = "public, max-age=3600, s-maxage=31536000";
+export const ASSET_CACHE_CONTROL = "public, max-age=7200, s-maxage=31536000";
 
 /**
  * Text assets are all UTF-8: `scripts/lib/encoding.ts` converts them as

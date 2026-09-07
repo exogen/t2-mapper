@@ -1,5 +1,5 @@
 /**
- * Re-stamps the HTTP metadata on objects already in the game assets
+ * Rewrites the HTTP metadata on objects already in the game assets
  * bucket, for when the policy in `scripts/lib/assetMetadata.ts` changes.
  *
  * Safe to run at any time: it reads the same table the deploy sync uses
@@ -9,8 +9,8 @@
  * so silently dropped Content-Type from every object it touched — that is
  * why most of the bucket served no type at all.
  *
- * The default is a dry run: it reports what each group would be stamped
- * with and names any extension the table does not cover, so running it
+ * The default is a dry run: it reports the headers each group would get
+ * and names any extension the table does not cover, so running it
  * without --apply answers "does the bucket agree with the table?".
  *
  *   tsx scripts/backfill-asset-metadata.ts --bucket s3://t2-assets/game/base/
@@ -124,7 +124,7 @@ for (const [contentType, extensions] of [...groups].sort()) {
 
 if (!apply) {
   console.log(
-    "\nDry run: nothing was changed. Re-run with --apply to stamp the bucket.",
+    "\nDry run: nothing was changed. Re-run with --apply to write them.",
   );
   console.log("What each group would be set to:");
   for (const [contentType] of [...groups].sort()) {
@@ -132,7 +132,11 @@ if (!apply) {
   }
 }
 
-// A sanity line for the two formats that used to be typed wrongly.
+// Extension-to-type spot check, not a group: these are the two formats the
+// AWS CLI guesses wrongly on its own (DTS audio, DV video).
+console.log("\nExtension check:");
 for (const sample of ["shapes/x.dts", "interiors/x.dif"]) {
-  console.log(`  ${sample} -> ${contentTypeFor(sample)}`);
+  console.log(
+    `  ${sample} -> ${contentTypeFor(sample)}, ${ASSET_CACHE_CONTROL}`,
+  );
 }
