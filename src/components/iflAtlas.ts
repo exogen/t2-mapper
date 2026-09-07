@@ -7,6 +7,7 @@ import {
   Texture,
 } from "three";
 import type { Material, Mesh, Object3D } from "three";
+import { dtsNodeExtras } from "./dtsNodeExtras";
 import { iflTextureToUrl, loadImageFrameList } from "../loaders";
 import { loadTextureAsync } from "../textureUtils";
 
@@ -238,10 +239,10 @@ export function collectIflMeshes(scene: Object3D): IflMeshInfo[] {
     const flags = new Set<string>(mat?.userData?.flag_names ?? []);
     const rp: string | undefined = mat?.userData?.resource_path;
     if (!flags.has("IflMaterial") || !rp) return;
-    const ud = mesh.userData;
+    const ud = dtsNodeExtras(mesh);
     // ifl_sequence is the controlling sequence; vis_sequence is the
     // independent opacity track and must not stand in for it.
-    const driven = !!ud?.ifl_sequence;
+    const driven = !!ud.ifl_sequence;
     infos.push({
       mesh,
       iflPath: `textures/${rp}.ifl`,
@@ -363,4 +364,32 @@ export async function loadIflAtlas(
   atlasCache.set(cacheKey, atlas);
 
   return atlas;
+}
+
+/**
+ * Torque's animateIfls for a model's live IFL materials: a sequence-driven
+ * IFL shows the frame for how far its controlling thread is into the
+ * sequence (`threadSecondsFor`, null when no thread plays it → frame 0);
+ * one without a controlling sequence free-runs on `freeRunSec` (the
+ * engine would hold frame 0, but cycling is more useful to look at).
+ */
+export function driveIflFrames(
+  instances: readonly IflMaterialInstance[],
+  threadSecondsFor: (sequence: string) => number | null,
+  freeRunSec: number,
+  animationEnabled: boolean,
+): void {
+  for (const inst of instances) {
+    let iflTime = 0;
+    if (animationEnabled) {
+      const { info, atlas } = inst;
+      if (info.sequenceName && info.duration) {
+        const sec = threadSecondsFor(info.sequenceName);
+        if (sec != null) iflTime = iflSequenceTime(info, atlas, sec);
+      } else {
+        iflTime = freeRunSec;
+      }
+    }
+    showIflFrame(inst, iflTime);
+  }
 }

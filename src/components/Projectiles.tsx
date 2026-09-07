@@ -20,6 +20,7 @@ import { textureToUrl } from "../loaders";
 import { streamClock } from "../state/streamPlaybackStore";
 import { SpriteEntity, TracerEntity } from "../state/gameEntityTypes";
 import { writeRibbonQuad } from "./projectileGeometry";
+import { useEffectLight } from "./useEffectLight";
 
 const _tracerDir = new Vector3();
 const _tracerDirFromCam = new Vector3();
@@ -235,6 +236,8 @@ export function TracerProjectile({ entity }: { entity: TracerEntity }) {
   const { visual } = entity;
   const blurTail = useBlurTail(visual.blur);
   const tracerRef = useRef<Mesh>(null);
+  // Projectile::registerLights: the datablock's light rides at the bolt.
+  useEffectLight(tracerRef, visual.light);
   const tracerPosRef = useRef<BufferAttribute>(null);
   const crossRef = useRef<Mesh>(null);
   const orientQuatRef = useRef(new Quaternion());

@@ -89,7 +89,9 @@ export function applyFadeAndCloak(
     });
   }
 
-  root.traverse((node: any) => {
+  // Mounted objects (a pilot in the seat) fade and cloak on their own;
+  // only the shape's meshes and its mounted images take this shape's state.
+  const applyToMesh = (node: any) => {
     if (!node.isMesh || !node.material || Array.isArray(node.material)) return;
     const mat = node.material;
     const ud = (mat.userData ??= {});
@@ -140,7 +142,13 @@ export function applyFadeAndCloak(
     mat.opacity = alpha * baseOpacity;
     mat.transparent = alpha < 1 || baseTransparent;
     mat.depthWrite = alpha >= 1 && !baseTransparent;
-  });
+  };
+  const walk = (node: Object3D) => {
+    if (node !== root && node.userData.objectMount) return;
+    applyToMesh(node);
+    for (const child of node.children) walk(child);
+  };
+  walk(root);
 }
 
 /**

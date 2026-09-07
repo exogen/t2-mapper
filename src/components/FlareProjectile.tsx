@@ -25,6 +25,7 @@ import { effectNow, engineStore } from "../state/engineStore";
 import { injectCustomFog } from "../fogShader";
 import { globalFogUniforms } from "../globalFogUniforms";
 import { additiveSpriteBeforeCompile } from "../shapeMaterial";
+import { useEffectLight } from "./useEffectLight";
 import type { FlareEntity } from "../state/gameEntityTypes";
 import type { FlareVisual } from "../stream/types";
 import { FlareSpikes, VERTS_PER_SPIKE } from "../particles/flareSpikes";
@@ -281,8 +282,12 @@ function FlareBillboards({ visual }: { visual: FlareVisual }) {
 
 export function FlareProjectile({ entity }: { entity: FlareEntity }) {
   const { visual } = entity;
+  const groupRef = useRef<Group>(null);
+  // Projectile::registerLights (LinearFlareProjectile keeps the base
+  // behaviour): the datablock's light rides at the bolt.
+  useEffectLight(groupRef, visual.light);
   return (
-    <>
+    <group ref={groupRef}>
       {visual.shapeName ? (
         <FlareBoltShape
           shapeName={visual.shapeName}
@@ -295,6 +300,6 @@ export function FlareProjectile({ entity }: { entity: FlareEntity }) {
       {visual.baseTexture && visual.numFlares > 0 ? (
         <FlareSpikeMesh visual={visual} />
       ) : null}
-    </>
+    </group>
   );
 }

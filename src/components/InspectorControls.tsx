@@ -195,6 +195,8 @@ export const InspectorControls = memo(function InspectorControls({
     setAdjustAudioSpeed,
     animationEnabled,
     setAnimationEnabled,
+    shadowsEnabled,
+    setShadowsEnabled,
     fpsLimit,
     setFpsLimit,
     renderScale,
@@ -551,7 +553,7 @@ export const InspectorControls = memo(function InspectorControls({
                 </div>
                 <div className={styles.Field}>
                   <label htmlFor="ccPlayerNamesInput">
-                    Show names in command circuit
+                    Names in command circuit
                   </label>
                   <div className={styles.Control}>
                     <select
@@ -673,6 +675,19 @@ export const InspectorControls = memo(function InspectorControls({
                   />
                   <label className={styles.Label} htmlFor="animationInput">
                     Enable animations
+                  </label>
+                </div>
+                <div className={styles.CheckboxField}>
+                  <input
+                    id="shadowsInput"
+                    type="checkbox"
+                    checked={shadowsEnabled}
+                    onChange={(event) => {
+                      setShadowsEnabled(event.target.checked);
+                    }}
+                  />
+                  <label className={styles.Label} htmlFor="shadowsInput">
+                    Enable shadows
                   </label>
                 </div>
                 <div className={styles.Field}>

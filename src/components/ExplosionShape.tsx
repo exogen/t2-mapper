@@ -4,6 +4,7 @@ import { AnimationMixer, LoopOnce } from "three";
 import type { Group } from "three";
 import * as SkeletonUtils from "three/examples/jsm/utils/SkeletonUtils.js";
 import { disposeClonedScene, processShapeScene } from "../stream/playbackUtils";
+import { dtsNodeExtras } from "./dtsNodeExtras";
 import {
   collectIflMeshes,
   iflSequenceTime,
@@ -149,8 +150,7 @@ export function ExplosionShape({ entity }: { entity: ExplosionEntity }) {
     const visNodes: VisNode[] = [];
     scene.traverse((node: any) => {
       if (!node.isMesh) return;
-      const ud = node.userData;
-      if (!ud) return;
+      const ud = dtsNodeExtras(node) as Record<string, any>;
       const kf = ud.vis_keyframes;
       const dur = ud.vis_duration;
       const seqName = (ud.vis_sequence ?? "").toLowerCase();

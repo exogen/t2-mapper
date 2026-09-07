@@ -25,6 +25,7 @@ import {
   applyShapeShaderModifications,
 } from "../shapeMaterial";
 import { isOrganicShape } from "../organicShapes";
+import { dtsNodeExtras } from "../components/dtsNodeExtras";
 import {
   loadIflAtlas,
   applyAtlasFrame,
@@ -238,8 +239,9 @@ export function getPosedNodeTransform(
 
   let position: Vector3 | null = null;
   let quaternion: Quaternion | null = null;
+  const wanted = nodeName.toLowerCase();
   clone.traverse((n) => {
-    if (!position && n.name === nodeName) {
+    if (!position && n.name.toLowerCase() === wanted) {
       position = new Vector3();
       quaternion = new Quaternion();
       n.getWorldPosition(position);
@@ -520,10 +522,11 @@ export function processShapeScene(
       node.visible = false;
       return;
     }
+    const extras = dtsNodeExtras(node);
     if (
       !options.ignoreDetailSize &&
-      typeof node.userData?.dts_detail_size === "number" &&
-      node.userData.dts_detail_size < 0
+      typeof extras.dts_detail_size === "number" &&
+      extras.dts_detail_size < 0
     ) {
       node.visible = false;
       return;
@@ -532,7 +535,8 @@ export function processShapeScene(
     // Hide vis-animated meshes (default vis < 0.01) but DON'T skip material
     // replacement — they need correct textures for when they become visible
     // (e.g. disc launcher's Disc mesh toggles visibility via state machine).
-    if ((node.userData?.vis ?? 1) < 0.01) {
+    const defaultVis = typeof extras.vis === "number" ? extras.vis : 1;
+    if (defaultVis < 0.01) {
       node.visible = false;
     }
 
@@ -543,9 +547,7 @@ export function processShapeScene(
     // Replace PBR materials with diffuse-only Lambert materials.
     // For vis-animated meshes, use vis=1 so the material is fully opaque —
     // their visibility is toggled via node.visible, not material opacity.
-    const vis: number = node.userData?.vis_sequence
-      ? 1
-      : (node.userData?.vis ?? 1);
+    const vis: number = extras.vis_sequence ? 1 : defaultVis;
     if (Array.isArray(node.material)) {
       node.material = node.material.map((m: MeshStandardMaterial) => {
         const result = replaceWithShapeMaterial(m, vis, isOrganic, options);

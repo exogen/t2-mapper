@@ -61,6 +61,9 @@ type SettingsContextType = {
   setAudioEnabled: StateSetter<boolean>;
   animationEnabled: boolean;
   setAnimationEnabled: StateSetter<boolean>;
+  /** Engine-style projected shadows under players and vehicles. */
+  shadowsEnabled: boolean;
+  setShadowsEnabled: StateSetter<boolean>;
   warriorName: string;
   setWarriorName: StateSetter<string>;
   audioVolume: number;
@@ -138,6 +141,7 @@ type PersistedSettings = {
   audioEnabled?: boolean;
   adjustAudioSpeed?: boolean;
   animationEnabled?: boolean;
+  shadowsEnabled?: boolean;
   debugMode?: boolean;
   touchMode?: TouchMode;
   warriorName?: string;
@@ -204,6 +208,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   const [commentarySubtitles, setCommentarySubtitles] = useState(false);
   const [adjustAudioSpeed, setAdjustAudioSpeed] = useState(true);
   const [animationEnabled, setAnimationEnabled] = useState(true);
+  const [shadowsEnabled, setShadowsEnabled] = useState(true);
   const [debugMode, setDebugMode] = useState(false);
   const [touchMode, setTouchMode] = useState<TouchMode>("moveLookStick");
   const [warriorName, setWarriorName] = useState("MapGenius");
@@ -252,6 +257,8 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       setAudioEnabled,
       animationEnabled,
       setAnimationEnabled,
+      shadowsEnabled,
+      setShadowsEnabled,
       warriorName,
       setWarriorName,
       audioVolume,
@@ -292,6 +299,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       fov,
       audioEnabled,
       animationEnabled,
+      shadowsEnabled,
       warriorName,
       audioVolume,
       commentaryEnabled,
@@ -374,6 +382,9 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     }
     if (savedSettings.animationEnabled != null) {
       setAnimationEnabled(savedSettings.animationEnabled);
+    }
+    if (savedSettings.shadowsEnabled != null) {
+      setShadowsEnabled(savedSettings.shadowsEnabled);
     }
     if (savedSettings.fogEnabled != null) {
       setFogEnabled(savedSettings.fogEnabled);
@@ -501,6 +512,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
         fov,
         audioEnabled,
         animationEnabled,
+        shadowsEnabled,
         debugMode,
         touchMode,
         warriorName,
@@ -543,6 +555,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     fov,
     audioEnabled,
     animationEnabled,
+    shadowsEnabled,
     debugMode,
     touchMode,
     warriorName,

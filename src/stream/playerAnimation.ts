@@ -146,8 +146,8 @@ export const NO_ACTION_ANIM: ActionAnimState = {
 };
 
 export type ActionAnimCommand =
-  /** Play this action clip from its start. */
-  | { kind: "start"; index: number }
+  /** Play this action clip from normalized `position` (1 = its end). */
+  | { kind: "start"; index: number; position: number }
   /** The clip finished and does not hold: back to movement animation. */
   | { kind: "revert"; index: number }
   /** The clip finished and holds its last frame. */
@@ -176,10 +176,19 @@ export function stepActionAnim(
   },
   /** The started clip has run to its end. */
   clipFinished = false,
+  /** Where the server's thread is by now (actionStartPosition). */
+  startPos = 0,
+  /**
+   * Mounted in a vehicle: pickActionAnimation (FUN_005d6210) then only
+   * swaps a table action for root and leaves a finished wired action
+   * parked on its last frame, so a seat pose holds without holdAtEnd.
+   */
+  mounted = false,
 ): { state: ActionAnimState; command: ActionAnimCommand } {
   const index = kf.actionAnim;
   const seq = kf.actionSeq ?? 0;
   const nonTable = index != null && index >= NUM_TABLE_ACTION_ANIMS;
+  const holds = !!kf.actionHoldAtEnd || mounted;
   if (!nonTable) {
     // Cleared (an unmount reset): stop whatever was playing.
     if (state.index != null && !state.ended) {
@@ -191,9 +200,11 @@ export function stepActionAnim(
     return { state: NO_ACTION_ANIM, command: { kind: "none" } };
   }
   if (state.index !== index || state.seq !== seq) {
-    // A new action. One the server already reports finished, and
-    // that does not hold, is over before it arrived.
-    if (kf.actionAtEnd && !kf.actionHoldAtEnd) {
+    // A new action. One the server already reports finished — or whose
+    // clip would have run out by now — and that does not hold, is over
+    // before it starts.
+    const over = kf.actionAtEnd || startPos >= 1;
+    if (over && !holds) {
       const stopping = state.index != null && !state.ended;
       return {
         state: { index, seq, ended: true },
@@ -204,11 +215,11 @@ export function stepActionAnim(
     }
     return {
       state: { index, seq, ended: false },
-      command: { kind: "start", index },
+      command: { kind: "start", index, position: over ? 1 : startPos },
     };
   }
   if (!state.ended && clipFinished) {
-    if (kf.actionHoldAtEnd) {
+    if (holds) {
       return { state, command: { kind: "hold", index } };
     }
     return {
@@ -217,4 +228,23 @@ export function stepActionAnim(
     };
   }
   return { state, command: { kind: "none" } };
+}
+
+/**
+ * Where a wired action's clip stands at `nowSec`: the position the
+ * server packed (its thread's, when the update was not at the end) plus
+ * what has elapsed since the update, as the engine's own thread would
+ * have advanced. Player::unpackUpdate seats a scope-in ghost's action
+ * at that position; a model that starts late (a seek, a remount) must
+ * not replay the clip from its start.
+ */
+export function actionStartPosition(
+  kf: { actionAnimPos?: number; actionTimeSec?: number },
+  nowSec: number,
+  clipDurationSec: number,
+): number {
+  const packed = kf.actionAnimPos ?? 0;
+  if (kf.actionTimeSec == null || !(clipDurationSec > 0)) return packed;
+  const elapsed = Math.max(0, nowSec - kf.actionTimeSec);
+  return Math.min(1, packed + elapsed / clipDurationSec);
 }

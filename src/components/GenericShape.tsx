@@ -2,6 +2,7 @@ import {
   Fragment,
   memo,
   Suspense,
+  useCallback,
   useEffect,
   useId,
   useMemo,
@@ -9,7 +10,7 @@ import {
 } from "react";
 import type { ReactNode } from "react";
 import { ErrorBoundary } from "react-error-boundary";
-import type { AnimationAction, Object3D } from "three";
+import type { AnimationAction, Material, Object3D, Texture } from "three";
 import type { LightAnchor } from "../stream/types";
 import { useGLTF } from "@react-three/drei";
 import { createPortal, useFrame } from "@react-three/fiber";
@@ -28,11 +29,7 @@ import {
   Box3,
   Vector3,
 } from "three";
-import {
-  addEffectLight,
-  removeEffectLight,
-  type EffectLight,
-} from "./effectLights";
+import { useEffectLight } from "./useEffectLight";
 import * as SkeletonUtils from "three/examples/jsm/utils/SkeletonUtils.js";
 import { useAnisotropy } from "./useAnisotropy";
 import { useDebug, useSettings } from "./SettingsProvider";
@@ -46,9 +43,8 @@ import {
 import { FloatingLabel } from "./FloatingLabel";
 import {
   collectIflMeshes,
-  iflSequenceTime,
+  driveIflFrames,
   loadIflMaterialInstance,
-  showIflFrame,
 } from "./iflAtlas";
 import type { IflMaterialInstance } from "./iflAtlas";
 import { useIsDebugTourTarget } from "../state/cameraTourStore";
@@ -63,9 +59,36 @@ import {
 } from "../stream/playbackUtils";
 import { resolveEmapFromImageSlot } from "./resolveEmap";
 import { playerEyePositions } from "./playerEyePositions";
-import type { ThreadState as StreamThreadState } from "../stream/types";
+import type {
+  ImageSlot,
+  ThreadState as StreamThreadState,
+  TurretAim,
+} from "../stream/types";
+import { driveTurretAim, type TurretAnimActions } from "./turretAim";
+import { gameEntityStore } from "../state/gameEntityStore";
+import { streamClock } from "../state/streamPlaybackStore";
+import { dtsNodeExtras } from "./dtsNodeExtras";
+import { collectMorphClips, isMorphClip } from "./sequenceClips";
+import { useVehicleJets, type VehicleJetShape } from "./useVehicleJets";
+import { collectOwnNodes } from "./sceneNodes";
+import type { GameEntity } from "../state/gameEntityTypes";
+import { useImageStateAnimation } from "./useImageStateAnimation";
+import {
+  applyVisAt,
+  collectVisNodes,
+  prepareVisMaterial,
+  resetVisNode,
+  visThreadPosition,
+  type VisNode,
+} from "./visSequences";
 import { useFadeAndCloak } from "./shapeFadeCloak";
 import { shapeBoxCenter, useShapeLighting } from "./useShapeLighting";
+import { useShadowCaster } from "./useShadowCaster";
+import {
+  resolveImageLight,
+  useImageLight,
+  type ImageLightConfig,
+} from "./useImageLight";
 
 /** Item/ShapeBase built-in light config from datablock. */
 export interface ShapeLightConfig {
@@ -73,6 +96,8 @@ export interface ShapeLightConfig {
   color: [number, number, number, number];
   time: number;
   radius: number;
+  /** Projectile light withheld until this age (missile flechette phase). */
+  delayMS?: number;
   onlyStatic: boolean;
   isStatic: boolean;
   anchor: LightAnchor;
@@ -102,6 +127,7 @@ interface StreamShapeEntity {
   ghostIndex?: number;
   threads?: StreamThreadState[];
   damageState?: number;
+  turretAim?: TurretAim;
   wheels?: Array<{
     speed: number;
     lateralSlip: number;
@@ -110,6 +136,15 @@ interface StreamShapeEntity {
   steeringYaw?: number;
   frozen?: boolean;
   maxSteeringAngle?: number;
+  className?: string;
+  /** Vehicle jets on (Vehicle::unpackUpdate flag). */
+  jetting?: boolean;
+  /** Vehicle jet direction (0 forward, 1 backward, 2 down). */
+  thrustDirection?: number;
+  keyframes?: Array<{
+    rotation: [number, number, number, number];
+    velocity?: [number, number, number];
+  }>;
   soundSlots?: Array<{ index: number; playing: boolean; profileId?: number }>;
   fadeVal?: number;
   cloakLevel?: number;
@@ -118,6 +153,8 @@ interface StreamShapeEntity {
   lightColor?: [number, number, number, number];
   lightTime?: number;
   lightRadius?: number;
+  /** Projectile light withheld until this age in ms (missile flechette). */
+  lightDelayMS?: number;
   lightOnlyStatic?: boolean;
   isStaticItem?: boolean;
   projectileAgeMS?: number;
@@ -153,16 +190,23 @@ export function MountedShapeContent({
   entityId,
   shapeType = "StaticShape",
   skinName,
+  slot,
 }: {
   shapeName: string;
   imageDataBlockId?: number;
   entityId?: string;
+  /** Owner image slot, for the image datablock's light (fire flashes). */
+  slot?: number;
   shapeType?: StaticShapeType;
   skinName?: string;
 }) {
   const childGltf = useStaticShape(shapeName);
   const emap = useMemo(
     () => resolveEmapFromImageSlot(imageDataBlockId),
+    [imageDataBlockId],
+  );
+  const imageLight = useMemo(
+    () => resolveImageLight(imageDataBlockId),
     [imageDataBlockId],
   );
 
@@ -191,10 +235,20 @@ export function MountedShapeContent({
           entityId={entityId}
           skinName={skinName}
           noRotation
+          imageLight={imageLight}
+          imageSlot={slot}
         />
       </group>
     </ShapeInfoProvider>
   );
+}
+
+/** The owner's image slot, if the owner is a shape with image slots. */
+function ownerImageSlot(
+  owner: GameEntity | undefined,
+  slot: number,
+): ImageSlot | undefined {
+  return owner && "imageSlots" in owner ? owner.imageSlots?.[slot] : undefined;
 }
 
 /** WheeledVehicle per-wheel animation state (position-controlled, not threaded). */
@@ -265,6 +319,8 @@ export const ShapeRenderer = memo(function ShapeRenderer({
   noRotation,
   skinName,
   lightConfig,
+  imageLight,
+  imageSlot,
 }: {
   loadingColor?: string;
   /** Stable entity reference whose fields are mutated in-place. */
@@ -281,6 +337,9 @@ export const ShapeRenderer = memo(function ShapeRenderer({
   skinName?: string;
   /** Item/ShapeBase built-in light config (from datablock). */
   lightConfig?: ShapeLightConfig;
+  /** Mounted image datablock light and the owner slot that fires it. */
+  imageLight?: ImageLightConfig;
+  imageSlot?: number;
 }) {
   const { shapeName } = useShapeInfo();
 
@@ -306,6 +365,8 @@ export const ShapeRenderer = memo(function ShapeRenderer({
           noRotation={noRotation}
           skinName={skinName}
           lightConfig={lightConfig}
+          imageLight={imageLight}
+          imageSlot={imageSlot}
         >
           {children}
         </ShapeModelLoader>
@@ -313,14 +374,6 @@ export const ShapeRenderer = memo(function ShapeRenderer({
     </ErrorBoundary>
   );
 });
-
-/** Vis node info collected from the scene for vis opacity animation. */
-interface VisNode {
-  mesh: any;
-  keyframes: number[];
-  duration: number;
-  cyclic: boolean;
-}
 
 /** Active animation thread state, keyed by thread slot number. */
 interface ThreadState {
@@ -349,6 +402,8 @@ export const ShapeModel = memo(function ShapeModel({
   noRotation,
   skinName,
   lightConfig: lightConfigProp,
+  imageLight,
+  imageSlot,
 }: {
   gltf: ReturnType<typeof useStaticShape>;
   /** Stable entity reference whose fields are mutated in-place. */
@@ -365,6 +420,9 @@ export const ShapeModel = memo(function ShapeModel({
   skinName?: string;
   /** Item/ShapeBase built-in light config (from datablock). */
   lightConfig?: ShapeLightConfig;
+  /** Mounted image datablock light and the owner slot that fires it. */
+  imageLight?: ImageLightConfig;
+  imageSlot?: number;
 }) {
   const { object, shapeName, type, isOrganic } = useShapeInfo();
   const { debugMode } = useDebug();
@@ -401,64 +459,7 @@ export const ShapeModel = memo(function ShapeModel({
       }
     }
 
-    // Collect ALL vis-animated nodes, grouped by sequence name.
-    // Multiple sequences can animate the same mesh (e.g. station_inv_human
-    // has Activate1 + Activate with vis data). The addon exports both the
-    // primary vis_keyframes/vis_sequence AND per-sequence suffixed versions
-    // like vis_keyframes_activate, vis_duration_activate.
-    const visBySeq = new Map<string, VisNode[]>();
-    scene.traverse((node: any) => {
-      if (!node.isMesh) return;
-      const ud = node.userData;
-      if (!ud) return;
-
-      // Helper: register one vis entry
-      const addVis = (
-        seqName: string,
-        kf: number[],
-        dur: number,
-        cyclic: boolean,
-      ) => {
-        if (
-          !seqName ||
-          !Array.isArray(kf) ||
-          kf.length <= 1 ||
-          !dur ||
-          dur <= 0
-        )
-          return;
-        let list = visBySeq.get(seqName);
-        if (!list) {
-          list = [];
-          visBySeq.set(seqName, list);
-        }
-        // Avoid duplicate mesh entries for the same sequence
-        if (list.some((v) => v.mesh === node)) return;
-        list.push({ mesh: node, keyframes: kf, duration: dur, cyclic });
-      };
-
-      // Primary vis entry (backwards compatible)
-      addVis(
-        (ud.vis_sequence ?? "").toLowerCase(),
-        ud.vis_keyframes,
-        ud.vis_duration,
-        !!ud.vis_cyclic,
-      );
-
-      // Per-sequence suffixed entries (vis_keyframes_activate, etc.)
-      for (const key of Object.keys(ud)) {
-        const match = key.match(/^vis_keyframes_(.+)$/);
-        if (match) {
-          const suffix = match[1];
-          addVis(
-            suffix,
-            ud[`vis_keyframes_${suffix}`],
-            ud[`vis_duration_${suffix}`],
-            !!ud[`vis_cyclic_${suffix}`],
-          );
-        }
-      }
-    });
+    const visBySeq = collectVisNodes(scene);
 
     // Build clips by name (case-insensitive).
     // Blend sequences (DTS flag 0x8) store absolute transforms but must be
@@ -496,30 +497,10 @@ export const ShapeModel = memo(function ShapeModel({
     // Morph target frame animations are exported as separate clips named
     // "{SeqName}_{MeshName}_frame". Collect them so they can be played
     // alongside the main sequence clip.
-    const morphClipsBySeq = new Map<string, AnimationClip[]>();
+    const morphClipsBySeq = collectMorphClips(gltf.animations, knownSeqNames);
     for (const clip of gltf.animations) {
       const lower = clip.name.toLowerCase();
-      // Check if this is a morph target frame clip by testing if it ends
-      // with "_frame" and starts with a known sequence name prefix.
-      if (lower.endsWith("_frame")) {
-        let matched = false;
-        for (const seqName of knownSeqNames) {
-          if (
-            lower.startsWith(seqName + "_") &&
-            lower.length > seqName.length + 1 + 5
-          ) {
-            let list = morphClipsBySeq.get(seqName);
-            if (!list) {
-              list = [];
-              morphClipsBySeq.set(seqName, list);
-            }
-            list.push(clip);
-            matched = true;
-            break;
-          }
-        }
-        if (matched) continue;
-      }
+      if (isMorphClip(clip, morphClipsBySeq)) continue;
       if (blendNames.has(lower)) {
         const cloned = clip.clone();
         const restClip = buildRestPoseClip(scene, cloned);
@@ -587,6 +568,7 @@ export const ShapeModel = memo(function ShapeModel({
   animationEnabledRef.current = animationEnabled;
 
   const wheelAnimsRef = useRef<WheelAnimState[] | null>(null);
+  const turretAnimRef = useRef<TurretAnimActions | null>(null);
 
   // Stream entity reference for imperative thread reads in useFrame.
   // The entity is mutated in-place, so reading streamEntity?.threads
@@ -643,6 +625,60 @@ export const ShapeModel = memo(function ShapeModel({
     return { seqCyclicByName: cycMap, seqBlendByName: blendMap };
   }, [gltf]);
 
+  // Ready a vis-keyframed mesh for opacity animation: give it a shape
+  // material (with its default vis) and hook up its IFL atlas texture.
+  const prepareVisNode = useCallback((v: VisNode) => {
+    v.mesh.visible = true;
+    const material = v.mesh.material;
+    if (
+      !Array.isArray(material) &&
+      (material as MeshStandardMaterial).isMeshStandardMaterial
+    ) {
+      const result = replaceWithShapeMaterial(
+        material as MeshStandardMaterial,
+        (dtsNodeExtras(v.mesh).vis as number | undefined) ?? 0,
+      );
+      v.mesh.material = result.material;
+    }
+    prepareVisMaterial(v);
+    const inst = iflMeshInstanceRef.current.get(v.mesh);
+    if (inst && v.mesh.material && !Array.isArray(v.mesh.material)) {
+      const mapped = v.mesh.material as Material & { map?: Texture | null };
+      mapped.map = inst.texture;
+      mapped.needsUpdate = true;
+    }
+  }, []);
+
+  // Vehicle jet flares and nozzle/contrail emitters (FlyingVehicle and
+  // HoverVehicle ghosts only; other shapes get a no-op driver).
+  const vehicleJetShape = useMemo<VehicleJetShape>(
+    () => ({
+      scene: clonedScene,
+      mixer,
+      clipsByName,
+      morphClipsBySeq,
+      visNodesBySequence,
+      seqBlendByName,
+      prepareVisNode,
+    }),
+    [
+      clonedScene,
+      mixer,
+      clipsByName,
+      morphClipsBySeq,
+      visNodesBySequence,
+      seqBlendByName,
+      prepareVisNode,
+    ],
+  );
+  const driveVehicleJets = useVehicleJets(
+    streamEntityRef,
+    streamEntity?.id,
+    vehicleJetShape,
+    streamEntity?.className,
+    streamEntity?.dataBlockId,
+  );
+
   // Animation setup.
   //
   // Mission mode (streamEntity absent): seed threads from script state
@@ -655,30 +691,6 @@ export const ShapeModel = memo(function ShapeModel({
   useEffect(() => {
     const threads = threadsRef.current;
     const isMissionMode = streamEntityRef.current == null;
-
-    function prepareVisNode(v: VisNode) {
-      v.mesh.visible = true;
-      if (v.mesh.material?.isMeshStandardMaterial) {
-        const mat = v.mesh.material as MeshStandardMaterial;
-        const result = replaceWithShapeMaterial(mat, v.mesh.userData?.vis ?? 0);
-        v.mesh.material = result.material;
-      }
-      if (v.mesh.material && !Array.isArray(v.mesh.material)) {
-        // Save original transparent/depthWrite so they can be restored
-        // when the vis animation finishes or is stopped.
-        const ud = (v.mesh.material.userData ??= {});
-        if (ud._visOrigTransparent == null) {
-          ud._visOrigTransparent = v.mesh.material.transparent;
-          ud._visOrigDepthWrite = v.mesh.material.depthWrite;
-          ud._visOrigAlphaTest = v.mesh.material.alphaTest;
-        }
-      }
-      const inst = iflMeshInstanceRef.current.get(v.mesh);
-      if (inst && v.mesh.material && !Array.isArray(v.mesh.material)) {
-        v.mesh.material.map = inst.texture;
-        v.mesh.material.needsUpdate = true;
-      }
-    }
 
     // Match binary's updateThread (FUN_005ebf00): direction is implemented
     // via timeScale (+1 forward, -1 backward). State 0=Play, 1=Stop, 2=Pause.
@@ -755,21 +767,8 @@ export const ShapeModel = memo(function ShapeModel({
         for (const ma of thread.morphActions) ma.stop();
       }
       // Binary Stop: reset position to 0.0, freeze. Vis nodes go to frame 0.
-      // Restore original material properties saved by prepareVisNode.
       if (thread.visNodes) {
-        for (const v of thread.visNodes) {
-          if (v.mesh.material && !Array.isArray(v.mesh.material)) {
-            const mat = v.mesh.material;
-            mat.opacity = v.keyframes[0];
-            v.mesh.visible = v.keyframes[0] > 0.01;
-            const ud = mat.userData;
-            if (ud?._visOrigTransparent != null) {
-              mat.transparent = ud._visOrigTransparent;
-              mat.depthWrite = ud._visOrigDepthWrite;
-              mat.alphaTest = ud._visOrigAlphaTest;
-            }
-          }
-        }
+        for (const v of thread.visNodes) resetVisNode(v);
       }
       threads.delete(slot);
     }
@@ -822,6 +821,29 @@ export const ShapeModel = memo(function ShapeModel({
       wheelAnimsRef.current = null;
     }
 
+    // Turret aim: the engine scrubs "activate" to the activation level and
+    // "turn"/"elevate" to the aim (TurretData requires all three sequences,
+    // though a deployable's activate is empty and has no clip). The threads
+    // exist only while aiming, so the actions start stopped.
+    const activateClip = clipsByName.get("activate");
+    const elevateClip = clipsByName.get("elevate");
+    const turnClip = clipsByName.get("turn");
+    if (mixer && elevateClip && turnClip) {
+      const positional = (clip: AnimationClip) => {
+        const action = mixer.clipAction(clip);
+        action.setLoop(LoopOnce, 1);
+        action.clampWhenFinished = true;
+        return action;
+      };
+      turretAnimRef.current = {
+        activate: activateClip ? positional(activateClip) : undefined,
+        elevate: positional(elevateClip),
+        turn: positional(turnClip),
+      };
+    } else {
+      turretAnimRef.current = null;
+    }
+
     // ── Demo/live mode: ghost thread handler in useFrame drives everything ──
     if (!isMissionMode) {
       // A projectile's shape instance gets an ambient thread the moment it
@@ -840,6 +862,7 @@ export const ShapeModel = memo(function ShapeModel({
         handleStopThreadRef.current = null;
         prevDemoThreadsRef.current = undefined;
         wheelAnimsRef.current = null;
+        turretAnimRef.current = null;
         for (const slot of [...threads.keys()]) handleStopThread(slot);
       };
     }
@@ -907,12 +930,20 @@ export const ShapeModel = memo(function ShapeModel({
     // in the real engine (never script-driven), so it always autoplays;
     // the power thread is script truth when any script threads were
     // recorded, and only autoplays when scripts didn't manage this object.
-    const defaults: Array<[number, string]> = scriptThreads
-      ? [[1, "ambient"]]
-      : [
-          [0, "power"],
-          [1, "ambient"],
-        ];
+    // A streamed mounted image gets its ambient thread from
+    // useImageStateAnimation, as ShapeBase::setImage gives it one.
+    const streamedImage =
+      imageSlot != null &&
+      entityId != null &&
+      gameEntityStore.getState().streamEntities.has(entityId);
+    const defaults: Array<[number, string]> = streamedImage
+      ? []
+      : scriptThreads
+        ? [[1, "ambient"]]
+        : [
+            [0, "power"],
+            [1, "ambient"],
+          ];
     for (const [slot, seqName] of defaults) {
       if (seededSlots.has(slot)) continue;
       if (
@@ -930,6 +961,7 @@ export const ShapeModel = memo(function ShapeModel({
       handleStopThreadRef.current = null;
       prevDemoThreadsRef.current = undefined;
       wheelAnimsRef.current = null;
+      turretAnimRef.current = null;
       for (const slot of [...threads.keys()]) handleStopThread(slot);
     };
   }, [
@@ -940,6 +972,7 @@ export const ShapeModel = memo(function ShapeModel({
     seqBlendByName,
     object,
     runtime,
+    prepareVisNode,
   ]);
 
   // Build DTS sequence index → animation name lookup. If the glTF has the
@@ -959,13 +992,80 @@ export const ShapeModel = memo(function ShapeModel({
     return gltf.animations.map((a) => a.name.toLowerCase());
   }, [gltf]);
 
+  // A mounted image (turret barrel, vehicle turret) runs its datablock's
+  // state machine off the owner's ghosted image state, like a player's
+  // weapon: fire, reload and activate sequences, spin and state sounds.
+  const imageActionsRef = useRef(new Map<string, AnimationAction>());
+  const imageMorphActionsRef = useRef(new Map<string, AnimationAction[]>());
+  const spinActionRef = useRef<AnimationAction | null>(null);
+  const cyclicSequenceNames = useMemo(() => {
+    const names = new Set<string>();
+    for (const [name, cyclic] of seqCyclicByName) if (cyclic) names.add(name);
+    return names;
+  }, [seqCyclicByName]);
+  useEffect(() => {
+    if (!mixer || imageSlot == null) return;
+    const actions = new Map<string, AnimationAction>();
+    for (const [name, clip] of clipsByName) {
+      actions.set(name, mixer.clipAction(clip));
+    }
+    imageActionsRef.current = actions;
+    const morph = new Map<string, AnimationAction[]>();
+    for (const [name, clips] of morphClipsBySeq) {
+      morph.set(
+        name,
+        clips.map((clip) => mixer.clipAction(clip)),
+      );
+    }
+    imageMorphActionsRef.current = morph;
+    const spin = actions.get("spin");
+    if (spin) {
+      spin.setLoop(LoopRepeat, Infinity);
+      spin.timeScale = 0;
+      spin.play();
+    }
+    spinActionRef.current = spin ?? null;
+    return () => {
+      spin?.stop();
+      imageActionsRef.current = new Map();
+      imageMorphActionsRef.current = new Map();
+      spinActionRef.current = null;
+    };
+  }, [mixer, clipsByName, morphClipsBySeq, imageSlot]);
+  useImageStateAnimation(
+    () =>
+      entityId != null && imageSlot != null
+        ? ownerImageSlot(
+            gameEntityStore.getState().streamEntities.get(entityId),
+            imageSlot,
+          )
+        : undefined,
+    {
+      actions: imageActionsRef,
+      morphActions: imageMorphActionsRef,
+      setSpinTimeScale: (timeScale) => {
+        if (spinActionRef.current) spinActionRef.current.timeScale = timeScale;
+      },
+      visNodesBySequence,
+      imageRoot: clonedScene,
+      ownerId: entityId,
+      seqIndexToName,
+      cyclicSequences: cyclicSequenceNames,
+      iflInstances: iflAnimInfosRef,
+    },
+  );
+
   useFrame((_, delta) => {
     const threads = threadsRef.current;
 
     // In demo/live mode, scale animation by playback rate; freeze when paused.
     // Check streamEntity existence (not .threads) so shapes without thread
-    // data (e.g. Items) also freeze correctly when paused.
-    const inDemo = streamEntityRef.current != null;
+    // data (e.g. Items) also freeze correctly when paused. A mounted image
+    // has no stream entity of its own but belongs to one.
+    const inDemo =
+      streamEntityRef.current != null ||
+      (entityId != null &&
+        gameEntityStore.getState().streamEntities.has(entityId));
     const playbackState = engineStore.getState().playback;
     const effectDelta = !inDemo
       ? delta
@@ -1123,6 +1223,8 @@ export const ShapeModel = memo(function ShapeModel({
       }
     }
 
+    if (animationEnabled) driveVehicleJets(effectDelta);
+
     if (mixer && animationEnabled) {
       mixer.update(effectDelta);
     }
@@ -1132,56 +1234,22 @@ export const ShapeModel = memo(function ShapeModel({
     for (const [, thread] of threads) {
       if (!thread.visNodes) continue;
 
-      for (const { mesh, keyframes, duration, cyclic } of thread.visNodes) {
-        const mat = mesh.material;
-        if (!mat || Array.isArray(mat)) continue;
-
+      const elapsed = shapeNowSec() - thread.startTime;
+      for (const node of thread.visNodes) {
         if (!animationEnabled) {
-          mat.opacity = keyframes[0];
-          mesh.visible = mat.opacity > 0.01;
+          resetVisNode(node);
           continue;
         }
-
-        const elapsed = shapeNowSec() - thread.startTime;
-        let t: number;
-        if (cyclic) {
-          // Cyclic: wrap position, ignoring direction (cyclic always advances).
-          t = (((elapsed % duration) + duration) % duration) / duration;
-        } else if (thread.forward) {
-          t = Math.min(elapsed / duration, 1);
-        } else {
-          // Backward: start at 1.0 and move toward 0.0.
-          t = Math.max(1 - elapsed / duration, 0);
-        }
-
-        const n = keyframes.length;
-        const pos = t * (n - 1);
-        const lo = Math.min(Math.floor(pos), n - 1);
-        const hi = Math.min(lo + 1, n - 1);
-        const frac = pos - lo;
-        mat.opacity = keyframes[lo] + (keyframes[hi] - keyframes[lo]) * frac;
-        mesh.visible = mat.opacity > 0.01;
-        // Dynamically toggle transparent/depthWrite: only enable blending
-        // when partially transparent, restore originals at full opacity.
-        const ud = mat.userData;
-        // Toggle transparent/depthWrite based on current opacity.
-        // needsUpdate is required when changing transparent — Three.js
-        // uses different render lists for opaque vs transparent objects.
-        if (mat.opacity >= 0.99) {
-          if (ud?._visOrigTransparent != null) {
-            if (mat.transparent !== ud._visOrigTransparent) {
-              mat.transparent = ud._visOrigTransparent;
-              mat.needsUpdate = true;
-            }
-            mat.depthWrite = ud._visOrigDepthWrite;
-            mat.alphaTest = ud._visOrigAlphaTest;
-          }
-        } else if (!mat.transparent) {
-          mat.transparent = true;
-          mat.depthWrite = false;
-          mat.alphaTest = 0;
-          mat.needsUpdate = true;
-        }
+        // Cyclic sequences wrap and ignore direction; one-shots clamp.
+        applyVisAt(
+          node,
+          visThreadPosition(
+            elapsed,
+            node.duration,
+            node.cyclic,
+            thread.forward,
+          ),
+        );
       }
     }
 
@@ -1242,40 +1310,81 @@ export const ShapeModel = memo(function ShapeModel({
       }
     }
 
+    const turretAnim = turretAnimRef.current;
+    if (turretAnim && animationEnabled) {
+      driveTurretAim(turretAnim, streamEntityRef.current?.turretAim);
+    }
+
     // Advance IFL texture atlases (Torque's animateIfls — see
     // iflSequenceTime): a sequence-driven IFL follows the thread playing its
     // sequence; one without a controlling sequence free-runs on real time
     // (the engine would hold frame 0, but cycling is more useful to look at).
+    // A streamed mounted image's IFLs belong to its image threads
+    // (useImageStateAnimation drives them).
     const iflAnimInfos = iflAnimInfosRef.current;
-    if (iflAnimInfos.length > 0) {
+    if (iflAnimInfos.length > 0 && !(imageSlot != null && inDemo)) {
       iflTimeRef.current += effectDelta;
-      for (const inst of iflAnimInfos) {
-        let iflTime = 0;
-        if (animationEnabled) {
-          const { info, atlas } = inst;
-          if (info.sequenceName && info.duration) {
-            for (const [, thread] of threads) {
-              if (thread.sequence === info.sequenceName) {
-                iflTime = iflSequenceTime(
-                  info,
-                  atlas,
-                  shapeNowSec() - thread.startTime,
-                );
-                break;
-              }
-            }
-          } else {
-            iflTime = iflTimeRef.current;
+      const now = shapeNowSec();
+      driveIflFrames(
+        iflAnimInfos,
+        (sequence) => {
+          for (const [, thread] of threads) {
+            if (thread.sequence === sequence) return now - thread.startTime;
           }
-        }
-        showIflFrame(inst, iflTime);
-      }
+          return null;
+        },
+        iflTimeRef.current,
+        animationEnabled,
+      );
     }
   });
 
   // ShapeBase fade (mFadeVal) and cloak (mCloakLevel) — see shapeFadeCloak.ts.
   useFadeAndCloak(clonedScene, () => streamEntityRef.current);
   useShapeLighting(clonedScene, shapeName);
+  // Map mode has no stream entity; the mission object's class decides.
+  useShadowCaster(
+    clonedScene,
+    shapeName,
+    () => streamEntityRef.current ?? { className: type },
+  );
+  // ShapeImageData light (turret barrel fire flashes), driven by the
+  // owner's ghosted image slot.
+  useImageLight(clonedScene, imageLight, entityId, imageSlot);
+
+  // Turret::setImage on the client (Tribes2.exe FUN_00654e60) adds a
+  // "deploy" thread to a mounted barrel that advanceTime (FUN_00655b50)
+  // runs at half speed, so a base turret's barrel extends once on mount —
+  // in map mode too, where the mission script mounts the barrel. A model
+  // mounted after the image was set (a seek) starts the thread where it
+  // would be by now, or holds its end.
+  useEffect(() => {
+    if (!mixer || imageSlot == null || entityId == null) return;
+    const clip = clipsByName.get("deploy");
+    if (!clip) return;
+    const store = gameEntityStore.getState();
+    const owner =
+      store.streamEntities.get(entityId) ?? store.missionEntities.get(entityId);
+    if (owner?.className !== "Turret") return;
+    const mountedAt = ownerImageSlot(owner, imageSlot)?.mountedAtSec;
+    const elapsed =
+      mountedAt != null ? Math.max(0, streamClock.time - mountedAt) : 0;
+    const action = mixer.clipAction(clip);
+    action.setLoop(LoopOnce, 1);
+    action.clampWhenFinished = true;
+    action.timeScale = 0.5;
+    action.reset().play();
+    const at = elapsed * 0.5;
+    if (at >= clip.duration) {
+      action.time = clip.duration;
+      action.paused = true;
+    } else {
+      action.time = at;
+    }
+    return () => {
+      action.stop();
+    };
+  }, [mixer, clipsByName, entityId, imageSlot]);
 
   // ShapeBase sound slots — managed as PositionalAudio, not entities.
   useEntitySoundSlots(streamEntityRef, clonedScene);
@@ -1294,26 +1403,21 @@ export const ShapeModel = memo(function ShapeModel({
     };
   }, [isTarget, gltf.scene]);
 
-  // Find mount point bones in the cloned scene for portal rendering
-  // and for vehicle mount position tracking.
-  const mountBones = useMemo(() => {
-    const bones: Record<number, Group> = {};
-    // Always look for Mount0 (pilot seat for vehicles).
-    clonedScene.traverse((node: any) => {
-      const match = node.name.match(/^Mount(\d+)$/);
+  // The shape's own nodes: mount point bones for portal rendering and
+  // mount position tracking, and the Eye node vehicles define for the
+  // cockpit viewpoint. DTS node lookups are case insensitive (the tank
+  // and belly turret bases name their seats `mount0`).
+  const { mountBones, eyeBone } = useMemo(() => {
+    const nodes = collectOwnNodes(clonedScene);
+    const bones: Record<number, Object3D> = {};
+    for (const [name, node] of nodes) {
+      const match = name.match(/^mount(\d+)$/);
       if (match) bones[Number(match[1])] = node;
-    });
-    return Object.keys(bones).length > 0 ? bones : null;
-  }, [clonedScene]);
-
-  // Find Eye node for vehicle camera positioning. Vehicles have an Eye node
-  // in their DTS shape that defines the cockpit viewpoint.
-  const eyeBone = useMemo((): Object3D | null => {
-    let found: Object3D | null = null;
-    clonedScene.traverse((node: any) => {
-      if (node.name === "Eye") found = node;
-    });
-    return found;
+    }
+    return {
+      mountBones: Object.keys(bones).length > 0 ? bones : null,
+      eyeBone: nodes.get("eye") ?? null,
+    };
   }, [clonedScene]);
 
   // Write animated Eye node position to the shared eye position map so the
@@ -1347,7 +1451,6 @@ export const ShapeModel = memo(function ShapeModel({
   // places the light at the world box centre; LightPool turns it into a
   // GL-style point light for shapes and a projected falloff disc for
   // terrain and interiors.
-  const effectLightRef = useRef<EffectLight | null>(null);
   const lightConfig = useMemo(() => {
     const cfg = lightConfigProp;
     if (!cfg || (cfg.onlyStatic && !cfg.isStatic)) return null;
@@ -1356,6 +1459,7 @@ export const ShapeModel = memo(function ShapeModel({
       color: new Color(cfg.color[0], cfg.color[1], cfg.color[2]),
       time: cfg.time,
       radius: cfg.radius,
+      delayMS: cfg.delayMS,
       offset: shapeLightOffset(cfg.anchor, shapeName, gltf.scene),
     };
   }, [gltf.scene, lightConfigProp, shapeName]);
@@ -1365,23 +1469,11 @@ export const ShapeModel = memo(function ShapeModel({
   // changes the scene's light count (which would recompile every lit
   // material). The pool resolves the anchor to a world position before each
   // render; only the intensity is animated here.
-  useEffect(() => {
-    if (!lightConfig) return;
-    const light: EffectLight = {
-      anchor: clonedScene,
-      offset: lightConfig.offset,
-      position: new Vector3(),
-      color: lightConfig.color,
-      intensity: 0,
-      radius: lightConfig.radius,
-    };
-    addEffectLight(light);
-    effectLightRef.current = light;
-    return () => {
-      removeEffectLight(light);
-      effectLightRef.current = null;
-    };
-  }, [lightConfig, clonedScene]);
+  const effectLightRef = useEffectLight(
+    clonedScene,
+    lightConfig ?? undefined,
+    0,
+  );
 
   useFrame(() => {
     const light = effectLightRef.current;
@@ -1397,6 +1489,12 @@ export const ShapeModel = memo(function ShapeModel({
     } else {
       // ConstantLight
       intensity = fadeVal;
+    }
+    if (
+      lightConfig.delayMS != null &&
+      (streamEntityRef.current?.projectileAgeMS ?? 0) < lightConfig.delayMS
+    ) {
+      intensity = 0;
     }
     // The colour × intensity clamp to [0,1] in Item::registerLights never
     // binds for datablock colours ≤ 1.
@@ -1440,6 +1538,8 @@ function ShapeModelLoader({
   noRotation,
   skinName,
   lightConfig,
+  imageLight,
+  imageSlot,
 }: {
   streamEntity?: StreamShapeEntity;
   emap?: boolean;
@@ -1449,6 +1549,8 @@ function ShapeModelLoader({
   noRotation?: boolean;
   skinName?: string;
   lightConfig?: ShapeLightConfig;
+  imageLight?: ImageLightConfig;
+  imageSlot?: number;
 }) {
   const { shapeName } = useShapeInfo();
   const gltf = useStaticShape(shapeName);
@@ -1462,6 +1564,8 @@ function ShapeModelLoader({
       noRotation={noRotation}
       skinName={skinName}
       lightConfig={lightConfig}
+      imageLight={imageLight}
+      imageSlot={imageSlot}
     >
       {children}
     </ShapeModel>

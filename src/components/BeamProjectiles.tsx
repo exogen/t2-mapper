@@ -36,6 +36,7 @@ import {
   muzzleWorldPosition,
   sourceAimDirection,
 } from "./linkBeamSource";
+import { useEffectLight } from "./useEffectLight";
 import {
   ribbonIndices,
   writeLinkRibbon,
@@ -82,6 +83,9 @@ export function BeamProjectile({ entity }: { entity: BeamEntity }) {
   const pulseUvRef = useRef<BufferAttribute>(null);
   const mainMatRef = useRef<MeshBasicMaterial>(null);
   const pulseMatRef = useRef<MeshBasicMaterial>(null);
+  // SniperProjectile::registerLights (FUN_006441a0): the datablock light
+  // sits at the beam's end and fades with 1 - t.
+  const endLightRef = useEffectLight(groupRef, visual.light);
   // Textures [1..11]: nonlingradient, laserrip01-09, sniper00. The
   // overlay scrolls in U, so it needs horizontal repeat.
   const urls = useMemo(
@@ -119,8 +123,10 @@ export function BeamProjectile({ entity }: { entity: BeamEntity }) {
     }
     const elapsed = streamClock.time - (entity.spawnTime ?? 0);
     const t = elapsed / Math.max(0.001, visual.fadeTime);
+    const endLight = endLightRef.current;
     if (t < 0 || t >= 1) {
       group.visible = false;
+      if (endLight) endLight.intensity = 0;
       return;
     }
     torqueVecToThree(entity.beamStart, _beamA);
@@ -147,6 +153,10 @@ export function BeamProjectile({ entity }: { entity: BeamEntity }) {
     group.visible = true;
     const width = visual.startWidth + (visual.endWidth - visual.startWidth) * t;
     _beamScaledCross.copy(_beamCross).multiplyScalar(width * 0.5);
+    if (endLight) {
+      endLight.offset.copy(_beamB);
+      endLight.intensity = 1 - t;
+    }
     writeRibbonQuad(mainPos, _beamA, _beamB, _beamScaledCross);
     _beamScaledCross
       .copy(_beamCross)

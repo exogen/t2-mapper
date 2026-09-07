@@ -78,6 +78,7 @@ import type {
   ChatMessage,
   ImageSlot,
   ThreadState,
+  TurretAim,
   StreamVisual,
   StreamCamera,
   StreamEntity,
@@ -171,8 +172,11 @@ export interface MutableEntity {
   /** Counts ActionMask updates, so a re-sent action of the same index
    *  (the PDA opened twice) reads as a new one. */
   actionSeq?: number;
+  actionAnimPos?: number;
+  actionTimeSec?: number;
   armAction?: number;
   damageState?: number;
+  turretAim?: TurretAim;
   targetId?: number;
   projectilePhysics?: "linear" | "ballistic" | "seeker";
   /** Shooter's ghost index from the projectile packet (sourceObject —
@@ -220,6 +224,8 @@ export interface MutableEntity {
   threads?: ThreadState[];
   falling?: boolean;
   jetting?: boolean;
+  /** Vehicle jet direction (0 forward, 1 backward, 2 down). */
+  thrustDirection?: number;
   headPitch?: number;
   headYaw?: number;
   targetRenderFlags?: number;
@@ -246,6 +252,8 @@ export interface MutableEntity {
   isStaticItem?: boolean;
   /** Item/ShapeBase built-in dynamic light from datablock. */
   lightType?: number;
+  /** Projectile light withheld until this age (ms). */
+  lightDelayMS?: number;
   lightColor?: [number, number, number, number];
   lightTime?: number;
   lightRadius?: number;
@@ -404,7 +412,7 @@ export abstract class StreamEngine implements StreamingPlayback {
   protected lastVehicleHeading = 0;
   protected lastVehiclePitch = 0;
   protected lastVehicleOrbitDir?: [number, number, number];
-  /** Vehicle velocity in Torque space (estimated from linMomentum/mass). */
+  /** Vehicle velocity in Torque space (the ghost's linMomentum; Rigid mass is 1). */
   protected lastVehicleVelocity?: [number, number, number];
   /** Last known vehicle position in Torque space for extrapolation. */
   protected lastVehiclePos?: [number, number, number];
@@ -1293,6 +1301,7 @@ export abstract class StreamEngine implements StreamingPlayback {
     entity.skinPrefName = undefined;
     entity.falling = undefined;
     entity.jetting = undefined;
+    entity.thrustDirection = undefined;
     entity.itemPhysics = undefined;
     entity.threads = undefined;
     entity.headPitch = undefined;
@@ -1301,6 +1310,7 @@ export abstract class StreamEngine implements StreamingPlayback {
     entity.energy = undefined;
     entity.maxEnergy = undefined;
     entity.damageState = undefined;
+    entity.turretAim = undefined;
     entity.fadeVal = undefined;
     entity.fadeState = undefined;
     entity.cloaked = undefined;
@@ -1308,12 +1318,15 @@ export abstract class StreamEngine implements StreamingPlayback {
     entity.actionAnim = undefined;
     entity.actionAtEnd = undefined;
     entity.actionHoldAtEnd = undefined;
+    entity.actionAnimPos = undefined;
+    entity.actionTimeSec = undefined;
     entity.armAction = undefined;
     entity.explosionDataBlockId = undefined;
     entity.maintainEmitterId = undefined;
     entity.soundSlots = undefined;
     entity.isStaticItem = undefined;
     entity.lightType = undefined;
+    entity.lightDelayMS = undefined;
     entity.lightColor = undefined;
     entity.lightTime = undefined;
     entity.lightRadius = undefined;
@@ -1383,6 +1396,18 @@ export abstract class StreamEngine implements StreamingPlayback {
           entity.lightRadius = projLightRadius;
           entity.lightOnlyStatic = false;
           entity.lightAnchor = "origin";
+          // SeekerProjectile::registerLights (FUN_0063d250) withholds the
+          // light while a flechette missile is still in its flechette
+          // phase: ticks < flechetteDelayMs >> 5.
+          const flechetteDelayMs = getNumberField(blockData, [
+            "flechetteDelayMs",
+          ]);
+          entity.lightDelayMS =
+            entity.className === "SeekerProjectile" &&
+            isTruthyField(blockData?.useFlechette) &&
+            flechetteDelayMs != null
+              ? (flechetteDelayMs >> 5) * TICK_DURATION_MS
+              : undefined;
         }
         if (linearProjectileClassNames.has(entity.className)) {
           entity.projectilePhysics = "linear";
@@ -1495,6 +1520,53 @@ export abstract class StreamEngine implements StreamingPlayback {
     if (typeof data.frozen === "boolean") {
       entity.frozen = data.frozen;
     }
+    // Vehicle::unpackUpdate jetting flag and the flyer/hover 3-bit thrust
+    // direction (Tribes2.exe FlyingVehicle::unpackUpdate), which gate the
+    // jet flare threads and nozzle emitters.
+    if (typeof data.jetting === "boolean") entity.jetting = data.jetting;
+    if (typeof data.thrustDirection === "number") {
+      entity.thrustDirection = data.thrustDirection;
+    }
+    // Vehicle ghosts carry the rigid body's linear momentum, and the
+    // client's velocity is momentum × oneOverMass (Rigid::updateVelocity
+    // FUN_005c57a0). The Rigid's mass stays at its constructor default of
+    // 1 — VehicleData.mass only scales forces — so the momentum is the
+    // velocity in m/s, which the jet and contrail emitters inherit.
+    const momentum = data.linMomentum as
+      { x: number; y: number; z: number } | undefined;
+    if (momentum && isValidPosition(momentum)) {
+      entity.velocity = [momentum.x, momentum.y, momentum.z];
+    }
+
+    // Turret aim (Tribes2.exe Turret::unpackUpdate FUN_00655f60): phi is a
+    // 10-bit fraction of a turn, theta a 10-bit fraction of the datablock's
+    // [thetaMin, thetaMax] range, activation 8 bits. TurretData::onAdd
+    // (FUN_00653ed0) defaults and clamps the limits to [0,90] / [90,180].
+    if (
+      typeof data.phi === "number" &&
+      typeof data.theta === "number" &&
+      typeof data.activationLevel === "number"
+    ) {
+      const block =
+        entity.dataBlockId != null
+          ? this.getDataBlockData(entity.dataBlockId)
+          : undefined;
+      const thetaMin = clamp(
+        typeof block?.thetaMin === "number" ? block.thetaMin : 45,
+        0,
+        90,
+      );
+      const thetaMax = clamp(
+        typeof block?.thetaMax === "number" ? block.thetaMax : 135,
+        90,
+        180,
+      );
+      entity.turretAim = {
+        phi: data.phi * 360,
+        theta: thetaMin + (thetaMax - thetaMin) * data.theta,
+        activation: data.activationLevel,
+      };
+    }
 
     // Mounted images (ShapeBase slot 0-3). All ShapeBase subclasses have
     // image slots: Player weapons, Turret barrels, Vehicle turrets, etc.
@@ -1557,7 +1629,16 @@ export abstract class StreamEngine implements StreamingPlayback {
                   : undefined;
 
             if (shapeName) {
+              // A new image (barrel swap, weapon change) replaces the
+              // array so renderers keyed on its identity remount the
+              // mount; per-tick state changes only swap the slot object.
+              const newImage =
+                !prevSlot ||
+                prevSlot.dataBlockId !== img.dataBlockId ||
+                prevSlot.shapeName !== shapeName ||
+                prevSlot.skinName !== skinName;
               if (!entity.imageSlots) entity.imageSlots = [];
+              else if (newImage) entity.imageSlots = [...entity.imageSlots];
               entity.imageSlots[img.index] = {
                 shapeName,
                 mountPoint,
@@ -1565,6 +1646,9 @@ export abstract class StreamEngine implements StreamingPlayback {
                 skinName,
                 imageState,
                 imageStates,
+                mountedAtSec: newImage
+                  ? this.getTimeSec()
+                  : prevSlot.mountedAtSec,
               };
             }
 
@@ -1581,7 +1665,8 @@ export abstract class StreamEngine implements StreamingPlayback {
             }
           } else if (!img.dataBlockId) {
             // Clear slot.
-            if (entity.imageSlots) {
+            if (entity.imageSlots?.[img.index]) {
+              entity.imageSlots = [...entity.imageSlots];
               entity.imageSlots[img.index] = undefined;
             }
 
@@ -2034,6 +2119,9 @@ export abstract class StreamEngine implements StreamingPlayback {
       entity.actionAtEnd = !!data.actionAtEnd;
       entity.actionHoldAtEnd = !!data.actionHoldAtEnd;
       entity.actionSeq = (entity.actionSeq ?? 0) + 1;
+      entity.actionAnimPos =
+        typeof data.actionAnimPos === "number" ? data.actionAnimPos : undefined;
+      entity.actionTimeSec = this.getTimeSec();
     }
     if (typeof data.armAction === "number") {
       entity.armAction = data.armAction;
@@ -2056,6 +2144,8 @@ export abstract class StreamEngine implements StreamingPlayback {
         entity.actionAnim = undefined;
         entity.actionAtEnd = undefined;
         entity.actionHoldAtEnd = undefined;
+        entity.actionAnimPos = undefined;
+        entity.actionTimeSec = undefined;
       }
     }
 
@@ -2819,6 +2909,18 @@ export abstract class StreamEngine implements StreamingPlayback {
           const vehicleEntity = vehicleId
             ? this.entities.get(vehicleId)
             : undefined;
+          // The recorder's own body sits in the seat with the yaw the
+          // server zeroed on mount (Armor::onMount setTransform), which
+          // reaches the control client through its packet data.
+          const pilotEntity = this.controlPlayerGhostId
+            ? this.entities.get(this.controlPlayerGhostId)
+            : undefined;
+          if (
+            pilotEntity?.mountObjectGhostIndex != null &&
+            pilotEntity.mountNode === 0
+          ) {
+            pilotEntity.rotation = playerYawToQuaternion(0);
+          }
           if (vehicleEntity) {
             // compressionPoint provides position on every packet.
             vehicleEntity.position = [
@@ -2838,16 +2940,9 @@ export abstract class StreamEngine implements StreamingPlayback {
               const mom = nested.linMomentum as
                 { x: number; y: number; z: number } | undefined;
               if (mom && isValidPosition(mom)) {
-                const dbId = vehicleEntity.dataBlockId;
-                const dbData =
-                  dbId != null ? this.getDataBlockData(dbId) : undefined;
-                const mass = (dbData?.mass as number) ?? 200;
-                const invMass = mass > 0 ? 1 / mass : 1 / 200;
-                this.lastVehicleVelocity = [
-                  mom.x * invMass,
-                  mom.y * invMass,
-                  mom.z * invMass,
-                ];
+                // The client Rigid's mass is 1 (see applyGhostData), so
+                // the packed momentum already is the velocity.
+                this.lastVehicleVelocity = [mom.x, mom.y, mom.z];
                 vehicleEntity.velocity = this.lastVehicleVelocity;
               }
               const ang = nested.angPosition as
@@ -3418,6 +3513,7 @@ export abstract class StreamEngine implements StreamingPlayback {
         lightColor: entity.lightColor,
         lightTime: entity.lightTime,
         lightRadius: entity.lightRadius,
+        lightDelayMS: entity.lightDelayMS,
         lightOnlyStatic: entity.lightOnlyStatic,
         isStaticItem: entity.isStaticItem,
         mountObjectId:
@@ -3427,6 +3523,7 @@ export abstract class StreamEngine implements StreamingPlayback {
         mountNode: entity.mountNode,
         falling: entity.falling,
         jetting: entity.jetting,
+        thrustDirection: entity.thrustDirection,
         playerName: entity.playerName,
         playerRawName: entity.playerRawName,
         targetGeneration: entity.targetGeneration,
@@ -3455,8 +3552,11 @@ export abstract class StreamEngine implements StreamingPlayback {
         actionAtEnd: entity.actionAtEnd,
         actionHoldAtEnd: entity.actionHoldAtEnd,
         actionSeq: entity.actionSeq,
+        actionAnimPos: entity.actionAnimPos,
+        actionTimeSec: entity.actionTimeSec,
         armAction: entity.armAction,
         damageState: entity.damageState,
+        turretAim: entity.turretAim,
         // Fade and cloak are independent systems, passed separately so the
         // renderer can apply the correct visual treatment (texture replacement
         // for cloak, opacity-only for fade).

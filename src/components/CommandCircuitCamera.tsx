@@ -76,7 +76,7 @@ const ZOOM_SENSITIVITY = 0.002;
  */
 const PINCH_SENSITIVITY = 0.005;
 
-const MIN_ZOOM_FACTOR = 0.25;
+const MIN_ZOOM_FACTOR = 0.5;
 const MAX_ZOOM_FACTOR = 50;
 
 /**

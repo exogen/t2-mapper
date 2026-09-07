@@ -2,6 +2,7 @@ import type {
   ImageSlot,
   Keyframe,
   ThreadState,
+  TurretAim,
   TracerVisual,
   BeamVisual,
   LinkBeamVisual,
@@ -145,6 +146,8 @@ interface PositionedBase extends EntityBase {
   armAction?: number;
   /** Torque DamageState: 0=Enabled, 1=Disabled, 2=Destroyed. */
   damageState?: number;
+  /** Turret ghosts: where the barrel points and how far it has activated. */
+  turretAim?: TurretAim;
   targetRenderFlags?: number;
   /** Target manager id backing this entity's target info, if any. */
   targetId?: number;
@@ -185,6 +188,10 @@ export interface ShapeEntity extends PositionedBase {
   frozen?: boolean;
   /** Vehicle max steering angle (radians), from datablock. */
   maxSteeringAngle?: number;
+  /** Vehicle jets on (Vehicle::unpackUpdate flag). */
+  jetting?: boolean;
+  /** Vehicle jet direction (0 forward, 1 backward, 2 down). */
+  thrustDirection?: number;
   /** ShapeBase fade value (0=invisible, 1=fully visible). Matches mFadeVal. */
   fadeVal?: number;
   /** Cloak level (0=visible, 1=fully cloaked). Used for cloak texture effect. */
@@ -194,6 +201,8 @@ export interface ShapeEntity extends PositionedBase {
   lightColor?: [number, number, number, number];
   lightTime?: number;
   lightRadius?: number;
+  /** Projectile light withheld until this age in ms (missile flechette). */
+  lightDelayMS?: number;
   lightOnlyStatic?: boolean;
   lightAnchor?: LightAnchor;
   isStaticItem?: boolean;

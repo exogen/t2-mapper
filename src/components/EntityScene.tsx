@@ -189,13 +189,20 @@ function PositionedEntityWrapper({
     if (!mountChildren || mountChildren.size === 0) return undefined;
     const mounts: Record<number, React.ReactNode> = {};
     for (const [node, child] of mountChildren) {
-      // Object mounts (players in vehicles) need a counter-rotation because
-      // the mounted PlayerModel applies its own R90 Y which conflicts with
-      // the vehicle's bone chain. Image mounts (MountedShapeContent) handle
-      // their own orientation via the Mountpoint inverse, so no extra rotation.
+      // ShapeBase::getMountTransform (FUN_005f7540) is objToWorld × the
+      // mount node's transform, so the mounted shape's DTS frame sits at
+      // the node's DTS frame. The exporter writes every DTS node as a
+      // bone whose frame is the node frame turned −90° about X, and the
+      // PlayerModel adds the +90° Y shape rotation itself, so the content
+      // is turned +90° X to undo the bone convention and −90° Y to undo
+      // the model's rotation (Euler XYZ = Rx·Ry). Image mounts cancel the
+      // bone convention through the child's own Mountpoint bone instead.
       mounts[node] = (
         <Suspense key={child.id}>
-          <group rotation={[Math.PI / 2, -Math.PI / 2, 0]}>
+          <group
+            rotation={[Math.PI / 2, -Math.PI / 2, 0]}
+            userData={{ objectMount: true }}
+          >
             <EntityRenderer entity={child} />
           </group>
         </Suspense>

@@ -204,6 +204,7 @@ function ShapeEntity({
             imageDataBlockId={slot.dataBlockId}
             entityId={entity.id}
             skinName={slot.skinName}
+            slot={i}
           />
         );
       }
@@ -223,6 +224,7 @@ function ShapeEntity({
       ],
       time: entity.lightTime ?? 1000,
       radius: entity.lightRadius ?? 10,
+      delayMS: entity.lightDelayMS,
       onlyStatic: !!entity.lightOnlyStatic,
       isStatic: !!entity.isStaticItem,
       anchor: entity.lightAnchor ?? "boxCenter",
@@ -232,6 +234,7 @@ function ShapeEntity({
     entity.lightColor,
     entity.lightTime,
     entity.lightRadius,
+    entity.lightDelayMS,
     entity.lightOnlyStatic,
     entity.isStaticItem,
     entity.lightAnchor,

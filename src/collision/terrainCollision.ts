@@ -155,6 +155,110 @@ export function terrainHeightAt(x: number, y: number): number | null {
     : hD + (hB - hD) * (1 - fy) + (hC - hD) * (1 - fx);
 }
 
+/**
+ * Both triangles of every non-empty grid square whose footprint overlaps
+ * the Torque-space rectangle, appended to `out` as Three-world positions
+ * (x = Torque y, y = height, z = Torque x), three vertices per triangle —
+ * the receiver polygons a projected shadow is drawn onto (the engine's
+ * TerrainBlock::buildPolyList). The split rule matches testSquare and the
+ * rendered geometry. Returns the number of floats appended.
+ */
+export function terrainTrianglesInBox(
+  minX: number,
+  minY: number,
+  maxX: number,
+  maxY: number,
+  out: number[],
+  facing?: TriangleFacing,
+): number {
+  const data = collisionState().terrain;
+  if (!data) return 0;
+  const sq = data.squareSize;
+  const col0 = Math.floor(minX / sq + HALF_SIZE);
+  const row0 = Math.floor(minY / sq + HALF_SIZE);
+  // The heightfield repeats every TERRAIN_SIZE squares; a wider rectangle
+  // would only emit duplicates.
+  const col1 = Math.min(
+    Math.floor(maxX / sq + HALF_SIZE),
+    col0 + TERRAIN_SIZE - 1,
+  );
+  const row1 = Math.min(
+    Math.floor(maxY / sq + HALF_SIZE),
+    row0 + TERRAIN_SIZE - 1,
+  );
+  const start = out.length;
+  for (let row = row0; row <= row1; row++) {
+    for (let col = col0; col <= col1; col++) {
+      if (data.holes?.[(row & 0xff) * TERRAIN_SIZE + (col & 0xff)]) continue;
+      const x0 = (col - HALF_SIZE) * sq;
+      const y0 = (row - HALF_SIZE) * sq;
+      const x1 = x0 + sq;
+      const y1 = y0 + sq;
+      const hA = cornerHeight(data, col, row);
+      const hB = cornerHeight(data, col + 1, row);
+      const hC = cornerHeight(data, col, row + 1);
+      const hD = cornerHeight(data, col + 1, row + 1);
+      if (((col ^ row) & 1) === 0) {
+        pushTriangle(out, y0, hA, x0, y1, hC, x0, y1, hD, x1, facing);
+        pushTriangle(out, y0, hA, x0, y1, hD, x1, y0, hB, x1, facing);
+      } else {
+        pushTriangle(out, y0, hA, x0, y1, hC, x0, y0, hB, x1, facing);
+        pushTriangle(out, y0, hB, x1, y1, hC, x0, y1, hD, x1, facing);
+      }
+    }
+  }
+  return out.length - start;
+}
+
+/**
+ * Optional facing filter for gathered triangles: keep a triangle only
+ * when its unit normal · `dir` is below `threshold` (Three world space).
+ */
+export interface TriangleFacing {
+  dir: { x: number; y: number; z: number };
+  threshold: number;
+}
+
+/** Append a terrain triangle (Three world coords) unless it fails `facing`;
+ *  terrain normals always point up, whatever the winding. */
+function pushTriangle(
+  out: number[],
+  ax: number,
+  ay: number,
+  az: number,
+  bx: number,
+  by: number,
+  bz: number,
+  cx: number,
+  cy: number,
+  cz: number,
+  facing?: TriangleFacing,
+): void {
+  if (facing) {
+    const e1x = bx - ax;
+    const e1y = by - ay;
+    const e1z = bz - az;
+    const e2x = cx - ax;
+    const e2y = cy - ay;
+    const e2z = cz - az;
+    let nx = e1y * e2z - e1z * e2y;
+    let ny = e1z * e2x - e1x * e2z;
+    let nz = e1x * e2y - e1y * e2x;
+    if (ny < 0) {
+      nx = -nx;
+      ny = -ny;
+      nz = -nz;
+    }
+    const len = Math.sqrt(nx * nx + ny * ny + nz * nz);
+    if (len > 0) {
+      const dot =
+        (nx * facing.dir.x + ny * facing.dir.y + nz * facing.dir.z) / len;
+      if (dot >= facing.threshold) return;
+    }
+  }
+  out.push(ax, ay, az, bx, by, bz, cx, cy, cz);
+}
+
 const EPS = 1e-9;
 
 /**

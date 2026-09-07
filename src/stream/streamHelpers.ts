@@ -2,6 +2,7 @@ import { Matrix4, Quaternion, Vector3 } from "three";
 import type { ParsedData } from "t2-demo-parser";
 import { resolveShapeName } from "../../relay/shared";
 import type {
+  ProjectileLight,
   StreamVisual,
   WeaponImageDataBlockState,
   ChatSegment,
@@ -406,6 +407,20 @@ function getBooleanField(
 
 // ── Visual resolution ──
 
+/** The datablock's hasLight light, when the parser decoded one. */
+function projectileLight(data: ParsedData): ProjectileLight | undefined {
+  const radius = getNumberField(data, ["lightRadius"]);
+  if (radius == null || !(radius > 0)) return undefined;
+  const color = data.lightColor as
+    { r: number; g: number; b: number } | undefined;
+  return {
+    radius,
+    color: color
+      ? { r: color.r, g: color.g, b: color.b }
+      : { r: 1, g: 1, b: 1 },
+  };
+}
+
 export function resolveTracerVisual(
   className: string,
   data: ParsedData | undefined,
@@ -429,6 +444,7 @@ export function resolveTracerVisual(
     crossViewAng: getNumberField(data, ["crossViewAng"]) ?? 0.98,
     crossSize: getNumberField(data, ["crossSize"]) ?? 0.45,
     renderCross: getBooleanField(data, ["renderCross"]) ?? true,
+    light: projectileLight(data),
   };
 }
 
@@ -460,6 +476,7 @@ export function resolveBoltVisual(
     crossViewAng: getNumberField(data, ["crossViewAng"]) ?? 0.99,
     crossSize: getNumberField(data, ["crossSize"]) ?? 0.55,
     renderCross: true,
+    light: projectileLight(data),
     blur:
       blurLifetime > 0 && blurColor
         ? {
@@ -584,6 +601,7 @@ export function resolveBeamVisual(
     pulseSpeed: getNumberField(data, ["pulseSpeed"]) ?? 6,
     pulseLength: getNumberField(data, ["pulseLength"]) ?? 0.15,
     textures,
+    light: projectileLight(data),
   };
 }
 
@@ -614,6 +632,7 @@ export function resolveSpriteVisual(
       shapeName,
       shapeScale: scale ? [scale.x, scale.y, scale.z] : [1, 1, 1],
       faceViewer: isTruthyField(data.faceViewer),
+      light: projectileLight(data),
     };
   }
 
@@ -670,6 +689,8 @@ export function parseWeaponImageStates(
       waitForTimeout: (s.waitForTimeout as boolean) ?? false,
       fire: (s.fire as boolean) ?? false,
       sequence: s.sequence as number | undefined,
+      flashSequence: (s.flashSequence as boolean) ?? false,
+      sequenceVis: s.sequenceVis as number | undefined,
       spin: (s.spin as number) ?? 0,
       direction: (s.direction as boolean) ?? true,
       scaleAnimation: (s.scaleAnimation as boolean) ?? false,

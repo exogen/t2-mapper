@@ -7,6 +7,8 @@ import { CamerasProvider } from "./CamerasProvider";
 import { InputProducer } from "./InputProducer";
 import { SceneLighting } from "./SceneLighting";
 import { LightPool } from "./LightPool";
+import { ShadowPool } from "./ShadowPool";
+import { useSettings } from "./SettingsProvider";
 import { ThreeCanvas } from "./ThreeCanvas";
 import { TickProvider } from "./TickProvider";
 import { EntityScene } from "./EntityScene";
@@ -70,6 +72,7 @@ export const GameView = memo(function GameView({
 }) {
   const recording = useRecording();
   const dataSource = useDataSource();
+  const { shadowsEnabled } = useSettings();
   const hasStreamData = isStreamingSource(dataSource);
 
   return (
@@ -81,6 +84,7 @@ export const GameView = memo(function GameView({
           <AudioProvider>
             <SceneLighting />
             <LightPool />
+            {shadowsEnabled && <ShadowPool />}
             <Suspense>
               <EntityScene />
             </Suspense>

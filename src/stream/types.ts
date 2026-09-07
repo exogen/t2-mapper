@@ -12,6 +12,10 @@ export interface ImageSlot {
   imageState?: WeaponImageState;
   /** The image datablock's state table, for driving its animations. */
   imageStates?: WeaponImageDataBlockState[];
+  /** Stream time the image was set (ShapeBase::setImage): a model that
+   *  mounts later — a seek, a remount — fast-forwards its threads and
+   *  state machine to where the engine's would be by now. */
+  mountedAtSec?: number;
 }
 
 /** DTS animation thread state from ghost ThreadMask data. */
@@ -50,6 +54,13 @@ export interface WeaponImageDataBlockState {
   waitForTimeout: boolean;
   fire: boolean;
   sequence?: number;
+  /**
+   * stateSequenceRandomFlash: the anim thread freezes `sequence` at a
+   * random frame and a flash thread plays `sequenceVis` (the "_vis"
+   * companion sequence) once — the chaingun muzzle flash.
+   */
+  flashSequence: boolean;
+  sequenceVis?: number;
   spin: number;
   direction: boolean;
   scaleAnimation: boolean;
@@ -85,10 +96,29 @@ export interface Keyframe {
   /** Counts ActionMask updates: a re-sent action of the same index is
    *  a new one. */
   actionSeq?: number;
+  /** Where the server's thread was (0..1) when the update was packed,
+   *  when it said so; the client starts the clip there. */
+  actionAnimPos?: number;
+  /** Stream time the ActionMask update arrived: a model that starts the
+   *  action later (a seek, a remount) picks it up where the server's
+   *  thread would be by now. */
+  actionTimeSec?: number;
+}
+
+/**
+ * A projectile datablock's hasLight point light (lightRadius/lightColor),
+ * registered by Projectile::registerLights at the projectile — or, for
+ * the sniper beam, at its end point fading with the beam.
+ */
+export interface ProjectileLight {
+  radius: number;
+  /** sRGB colour. */
+  color: { r: number; g: number; b: number };
 }
 
 export interface TracerVisual {
   kind: "tracer";
+  light?: ProjectileLight;
   /** Main tracer streak texture (e.g. "special/tracer00"). */
   texture: string;
   /** Edge-on cross section texture (e.g. "special/tracercross"). */
@@ -117,6 +147,8 @@ export interface TracerVisual {
  */
 export interface BeamVisual {
   kind: "beam";
+  /** SniperProjectile::registerLights: at the beam end, x (1 - t). */
+  light?: ProjectileLight;
   /** sRGB beam color (the red pass tint). */
   color: { r: number; g: number; b: number };
   fadeTime: number;
@@ -180,6 +212,7 @@ export interface LinkBeamVisual {
  */
 export interface FlareVisual {
   kind: "flare";
+  light?: ProjectileLight;
   numFlares: number;
   /** size[0..2]: spike base scale, and the tip scale grown from and to. */
   sizes: [number, number, number];
@@ -260,6 +293,8 @@ export interface StreamEntity {
   lightColor?: [number, number, number, number];
   lightTime?: number;
   lightRadius?: number;
+  /** Projectile light withheld until this age in ms (missile flechette). */
+  lightDelayMS?: number;
   lightOnlyStatic?: boolean;
   lightAnchor?: LightAnchor;
   isStaticItem?: boolean;
@@ -316,7 +351,10 @@ export interface StreamEntity {
   actionHoldAtEnd?: boolean;
   /** Counts ActionMask updates (see Keyframe.actionSeq). */
   actionSeq?: number;
+  actionAnimPos?: number;
+  actionTimeSec?: number;
   damageState?: number;
+  turretAim?: TurretAim;
   /** ShapeBase fade value (0=invisible, 1=fully visible). Matches mFadeVal. */
   fadeVal?: number;
   /** Cloak level (0=visible, 1=fully cloaked). Separate from fadeVal so the
@@ -349,8 +387,10 @@ export interface StreamEntity {
   skinPrefName?: string;
   /** True when the player has no ground contact and is falling. */
   falling?: boolean;
-  /** True when the player is using jetpack thrust. */
+  /** True while a player's jetpack or a vehicle's jets are firing. */
   jetting?: boolean;
+  /** Vehicle jet direction, one of the THRUST_* values. */
+  thrustDirection?: number;
   /** Head pitch for blend animations, normalized [-1,1]. -1 = max down, 1 = max up. */
   headPitch?: number;
   /** Head yaw for blend animations (freelook), normalized [-1,1]. -1 = max right, 1 = max left. */
@@ -678,3 +718,25 @@ export interface StreamRecording {
   /** Streaming parser session for tick-driven playback. */
   streamingPlayback: StreamingPlayback;
 }
+
+/**
+ * A Turret's aim as its client ghost keeps it (Tribes2.exe
+ * Turret::unpackUpdate FUN_00655f60): phi in degrees around the primary
+ * axis, theta in degrees within the datablock's [thetaMin, thetaMax],
+ * activation 0..1. The client never smooths these; the turret snaps to
+ * every update.
+ */
+export interface TurretAim {
+  phi: number;
+  theta: number;
+  activation: number;
+}
+
+/**
+ * Vehicle thrust directions (FlyingVehicle/HoverVehicle ghost, 3 bits).
+ * FlyingVehicle::updateMove picks them from move.y alone: no input is
+ * down, reverse is backward, anything forward is forward.
+ */
+export const THRUST_FORWARD = 0;
+export const THRUST_BACKWARD = 1;
+export const THRUST_DOWN = 2;

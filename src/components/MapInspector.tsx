@@ -30,7 +30,9 @@ import {
 import { usePublicWindowAPI } from "@/src/components/usePublicWindowAPI";
 import {
   CurrentMission,
+  dropLocationHash,
   useDemoQueryState,
+  useDemoTimeQueryState,
   useMissionQueryState,
   useModeQueryState,
   useViewQueryState,
@@ -153,7 +155,7 @@ export function MapInspector() {
 
   const changeMission = useCallback(
     (mission: CurrentMission) => {
-      window.location.hash = "";
+      dropLocationHash();
       clearFogEnabledOverride();
       // Picking a map is a real selection — retire the welcome splash.
       setShowSplash(false);
@@ -324,23 +326,27 @@ export function MapInspector() {
     }
   }, [mode, setCurrentMission]);
 
-  // The demo param belongs to demo mode only. A bare ?demo (no explicit
+  // The demo params belong to demo mode only. A bare ?demo (no explicit
   // ?mode) is a share link that should land in demo mode; once we're in
-  // any other mode the param no longer describes the page, so drop it.
+  // any other mode the params no longer describe the page, so drop them:
+  // the demo, its linked second (?t) and the moment's camera hash.
   // Coercion writes ?mode=demo, so it can only happen on the initial bare
   // landing — no separate once-guard needed, and no race between switching
   // in and clearing out.
   const [, setDemoParam] = useDemoQueryState();
+  const [, setDemoTime] = useDemoTimeQueryState();
   useEffect(() => {
     if (mode === "demo") return;
     const params = new URLSearchParams(window.location.search);
-    if (!params.has("demo")) return;
-    if (!params.has("mode")) {
+    if (params.has("demo") && !params.has("mode")) {
       setMode("demo");
-    } else {
-      setDemoParam(null);
+      return;
     }
-  }, [mode, setMode, setDemoParam]);
+    if (!params.has("demo") && !params.has("t")) return;
+    dropLocationHash();
+    void setDemoTime(null);
+    void setDemoParam(null);
+  }, [mode, setMode, setDemoParam, setDemoTime]);
 
   const sessionActive = watchStatus !== null && watchStatus !== "ended";
 

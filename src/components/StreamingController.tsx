@@ -105,6 +105,9 @@ function mutateRenderFields(
       break;
     case "Shape":
       e.damageState = stream.damageState;
+      e.turretAim = stream.turretAim;
+      e.jetting = stream.jetting;
+      e.thrustDirection = stream.thrustDirection;
       e.fadeVal = stream.fadeVal;
       e.cloakLevel = stream.cloakLevel;
       e.projectileAgeMS = stream.projectileAgeMS;
@@ -457,6 +460,8 @@ export function StreamingController({
       kf.actionAtEnd = entity.actionAtEnd;
       kf.actionHoldAtEnd = entity.actionHoldAtEnd;
       kf.actionSeq = entity.actionSeq;
+      kf.actionAnimPos = entity.actionAnimPos;
+      kf.actionTimeSec = entity.actionTimeSec;
       kf.damageState = entity.damageState;
     }
 
@@ -547,7 +552,8 @@ export function StreamingController({
 
     gameEntityStore.getState().setMissionInfo({
       missionName: recording.missionName ?? undefined,
-      missionTypeDisplayName: recording.gameType ?? undefined,
+      missionTypeDisplayName:
+        savedMissionTypeDisplayName ?? recording.gameType ?? undefined,
       missionDisplayName: savedMissionDisplayName ?? undefined,
       gameClassName: savedGameClassName ?? undefined,
       serverDisplayName:

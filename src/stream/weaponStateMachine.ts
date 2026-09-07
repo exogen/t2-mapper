@@ -15,6 +15,10 @@ const SPIN_FULL = 4; // FullSpin
 export interface WeaponAnimState {
   /** Name of the current animation sequence to play (lowercase), or null. */
   sequenceName: string | null;
+  /** stateSequenceRandomFlash: freeze `sequenceName` at a random frame
+   *  and play `visSequenceName` once on the flash thread. */
+  flashSequence: boolean;
+  visSequenceName: string | null;
   /** Whether the current state is a fire state. */
   isFiring: boolean;
   /** Spin thread timeScale (0 = stopped, 1 = full speed). */
@@ -25,8 +29,13 @@ export interface WeaponAnimState {
   scaleAnimation: boolean;
   /** The timeout value of the current state (for timeScale calculation). */
   timeoutValue: number;
-  /** True when a state transition occurred this tick. */
+  /** True when a state transition occurred this tick, self-transitions
+   *  included (a timeout back into the same state). */
   transitioned: boolean;
+  /** True when a state was fully entered this tick (setImageState's
+   *  normal path: sound, sequence, spin); false for a self-transition,
+   *  which only resets the timeout and re-randomizes a flash. */
+  entered: boolean;
   /** AudioProfile datablock IDs for sounds that should play this tick.
    *  In the engine, every state entry triggers its stateSound; a single tick
    *  can chain through multiple states, so multiple sounds may fire. */
@@ -49,10 +58,13 @@ export class WeaponImageStateMachine {
   private delayTime = 0;
   private lastFireCount = -1;
   private spinTimeScale = 0;
+  /** The datablock's fireState: the first state flagged as fire. */
+  private readonly fireStateIndex: number;
 
   constructor(states: WeaponImageDataBlockState[], seqIndexToName: string[]) {
     this.states = states;
     this.seqIndexToName = seqIndexToName;
+    this.fireStateIndex = states.findIndex((s) => s.fire);
     if (states.length > 0) {
       this.delayTime = states[0].timeoutValue ?? 0;
     }
@@ -70,6 +82,50 @@ export class WeaponImageStateMachine {
   }
 
   /**
+   * Run the machine `seconds` ahead under constant `flags`, in engine
+   * ticks, discarding the outputs — for a model that mounts long after
+   * its image was set and must show the state the engine reached, not
+   * replay the activation chain.
+   */
+  fastForward(seconds: number, flags: WeaponImageState): void {
+    const step = 0.032;
+    for (let t = 0; t < seconds; t += step) this.tick(step, flags);
+  }
+
+  /**
+   * The current state's outputs as if just entered. With `withSound`
+   * the state's entry sound is included — setImageState(0) on a fresh
+   * image plays it (a weapon's activate sound); a fast-forwarded machine
+   * is long past it.
+   */
+  snapshot(withSound = false): WeaponAnimState {
+    const sound = this.states[this.currentStateIndex]?.soundDataBlockId ?? -1;
+    return this.output(false, true, withSound && sound >= 0 ? [sound] : []);
+  }
+
+  private output(
+    transitioned: boolean,
+    entered: boolean,
+    soundDataBlockIds: number[],
+  ): WeaponAnimState {
+    const state = this.states[this.currentStateIndex];
+    return {
+      sequenceName: this.resolveSequenceName(state),
+      flashSequence: state.flashSequence && state.sequenceVis != null,
+      visSequenceName: this.sequenceNameAt(state.sequenceVis),
+      isFiring: state.fire,
+      spinTimeScale: this.spinTimeScale,
+      reverse: !state.direction,
+      scaleAnimation: state.scaleAnimation,
+      timeoutValue: state.timeoutValue ?? 0,
+      transitioned,
+      entered,
+      soundDataBlockIds,
+      stateIndex: this.currentStateIndex,
+    };
+  }
+
+  /**
    * Advance the state machine by `dt` seconds using the given condition flags.
    * Returns the animation state to apply this frame.
    */
@@ -77,44 +133,42 @@ export class WeaponImageStateMachine {
     if (this.states.length === 0) {
       return {
         sequenceName: null,
+        flashSequence: false,
+        visSequenceName: null,
         isFiring: false,
         spinTimeScale: 0,
         reverse: false,
         scaleAnimation: false,
         timeoutValue: 0,
         transitioned: false,
+        entered: false,
         soundDataBlockIds: [],
         stateIndex: -1,
       };
     }
 
-    // Detect fire count changes — forces a resync to the Fire state.
-    // The server increments fireCount each time it fires; if our state machine
-    // has diverged, this brings us back in sync.
+    // A fire notification (the fireCount advancing) is the only way a
+    // ghost enters the fire state: ShapeBase::unpackUpdate (FUN_005ef0e0)
+    // answers it with setImageState(fireState, force) — a full entry even
+    // when already there — while setImageState (FUN_005f8860) refuses a
+    // ghost's own, unforced transition into the fire state.
     const fireCountChanged =
       this.lastFireCount >= 0 && flags.fireCount !== this.lastFireCount;
     this.lastFireCount = flags.fireCount;
 
     const soundDataBlockIds: number[] = [];
 
-    if (fireCountChanged) {
-      const fireIdx = this.states.findIndex((s) => s.fire);
-      if (fireIdx >= 0 && fireIdx !== this.currentStateIndex) {
-        this.currentStateIndex = fireIdx;
-        this.delayTime = this.states[fireIdx].timeoutValue ?? 0;
-        // Fire count resync is a state entry — play its sound.
-        const fireSound = this.states[fireIdx].soundDataBlockId;
-        if (fireSound >= 0) soundDataBlockIds.push(fireSound);
-      }
-    }
-
     this.delayTime -= dt;
 
-    let transitioned = fireCountChanged;
+    let transitioned = false;
+    let entered = false;
+    let forced = fireCountChanged && this.fireStateIndex >= 0;
 
     // Per-tick transition evaluation (C++ updateImageState): check conditions
     // and timeout when delayTime <= 0 or waitForTimeout is false.
-    let nextState = this.evaluateTickTransitions(flags);
+    let nextState = forced
+      ? this.fireStateIndex
+      : this.evaluateTickTransitions(flags);
 
     // Process transitions. Self-transitions just reset delayTime (matching
     // the C++ setImageState early return path). Different-state transitions
@@ -122,14 +176,26 @@ export class WeaponImageStateMachine {
     let transitionsThisTick = 0;
     while (nextState >= 0 && transitionsThisTick < MAX_TRANSITIONS_PER_TICK) {
       transitionsThisTick++;
-      transitioned = true;
 
-      if (nextState === this.currentStateIndex) {
-        // Self-transition (C++ setImageState self-transition path):
-        // reset delayTime only; skip entry transitions and spin handling.
-        this.delayTime = this.states[nextState].timeoutValue ?? 0;
-        break;
+      if (!forced) {
+        if (
+          nextState === this.fireStateIndex &&
+          nextState !== this.currentStateIndex
+        ) {
+          // Ghosts wait for the server's fire notification.
+          break;
+        }
+        if (nextState === this.currentStateIndex) {
+          // Self-transition (C++ setImageState self-transition path):
+          // reset delayTime only; skip entry transitions and spin handling.
+          transitioned = true;
+          this.delayTime = this.states[nextState].timeoutValue ?? 0;
+          break;
+        }
       }
+      transitioned = true;
+      entered = true;
+      forced = false;
 
       // Transition to a different state (C++ setImageState normal path).
       const lastSpin = this.states[this.currentStateIndex].spin;
@@ -196,17 +262,7 @@ export class WeaponImageStateMachine {
       // SPIN_IGNORE (0): leave spinTimeScale unchanged.
     }
 
-    return {
-      sequenceName: this.resolveSequenceName(state),
-      isFiring: state.fire,
-      spinTimeScale: this.spinTimeScale,
-      reverse: !state.direction,
-      scaleAnimation: state.scaleAnimation,
-      timeoutValue: state.timeoutValue ?? 0,
-      transitioned,
-      soundDataBlockIds,
-      stateIndex: this.currentStateIndex,
-    };
+    return this.output(transitioned, entered, soundDataBlockIds);
   }
 
   /**
@@ -304,8 +360,11 @@ export class WeaponImageStateMachine {
 
   /** Resolve a state's sequence index to a clip name via the GLB metadata. */
   private resolveSequenceName(state: WeaponImageDataBlockState): string | null {
-    if (state.sequence == null || state.sequence < 0) return null;
-    const name = this.seqIndexToName[state.sequence];
-    return name ?? null;
+    return this.sequenceNameAt(state.sequence);
+  }
+
+  private sequenceNameAt(index: number | undefined): string | null {
+    if (index == null || index < 0) return null;
+    return this.seqIndexToName[index] ?? null;
   }
 }

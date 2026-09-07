@@ -31,7 +31,11 @@ import { loadDemoUrl } from "../stream/demoFileLoader";
 import { useDemoLoad } from "../state/demoLoadStore";
 import { useDemoIndex } from "./useDemoIndex";
 import { registerDemoSelectFocus } from "./demoSelectFocus";
-import { useDemoQueryState, useDemoTimeQueryState } from "./useQueryParams";
+import {
+  dropLocationHash,
+  useDemoQueryState,
+  useDemoTimeQueryState,
+} from "./useQueryParams";
 import { useRecording } from "./usePlayback";
 import { normalizeMissionType } from "../mission";
 import {
@@ -152,7 +156,8 @@ export function DemoSelect() {
   // Keep the selection and the ?demo link tied to the loaded indexed
   // demo. Drop both when the demo is ejected (demo→none) or replaced by a
   // local upload — a local file has no source URL and can't be linked to,
-  // so a lingering ?demo would misdescribe what's playing.
+  // so a lingering ?demo would misdescribe what's playing. A linked
+  // moment (?t and the camera hash) belongs to that demo and goes too.
   const recording = useRecording();
   const sourceUrl = useDemoLoad((s) => s.sourceUrl);
   const hadDemoRef = useRef(false);
@@ -162,10 +167,12 @@ export function DemoSelect() {
     if ((hadDemoRef.current && !hasDemo) || localUpload) {
       setSelectedFilename("");
       loadedDemoRef.current = null;
+      dropLocationHash();
+      void setDemoTime(null);
       void setDemoParam(null);
     }
     hadDemoRef.current = hasDemo;
-  }, [recording, sourceUrl, setDemoParam]);
+  }, [recording, sourceUrl, setDemoParam, setDemoTime]);
   const { data: demos, isPending, isError } = useDemoIndex();
 
   const combobox = useComboboxStore({
@@ -178,11 +185,7 @@ export function DemoSelect() {
         // moment linked for the previous demo means nothing for this
         // one: drop its second and its camera hash (the hash first, so
         // nuqs writes the URL without it).
-        window.history.replaceState(
-          null,
-          "",
-          `${window.location.pathname}${window.location.search}`,
-        );
+        dropLocationHash();
         void setDemoTime(null);
         void setDemoParam(newValue);
         inputRef.current?.blur();

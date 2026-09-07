@@ -106,3 +106,17 @@ export function useDemoTimeQueryState() {
 
 /** Builds a shareable URL for a moment's second from the page URL. */
 export const serializeDemoTime = createSerializer({ t: parseAsInteger });
+
+/**
+ * Drops the URL hash without leaving a bare `#` behind (assigning
+ * `location.hash = ""` keeps one). Call before a nuqs setter that should
+ * write the URL without it: nuqs preserves whatever hash it finds.
+ */
+export function dropLocationHash(): void {
+  if (!window.location.hash) return;
+  window.history.replaceState(
+    null,
+    "",
+    `${window.location.pathname}${window.location.search}`,
+  );
+}

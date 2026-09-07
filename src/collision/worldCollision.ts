@@ -19,8 +19,13 @@ import {
   Vector3,
 } from "three";
 import type { BufferGeometry, Mesh } from "three";
-import { MeshBVH } from "three-mesh-bvh";
-import { castTerrainRay, terrainHeightAt, type Vec3 } from "./terrainCollision";
+import { INTERSECTED, MeshBVH, NOT_INTERSECTED } from "three-mesh-bvh";
+import {
+  castTerrainRay,
+  terrainHeightAt,
+  type TriangleFacing,
+  type Vec3,
+} from "./terrainCollision";
 import {
   collisionState,
   type ForceFieldEntry,
@@ -627,6 +632,71 @@ const _segBox = new Box3();
  * Cast a segment (Torque space) against all registered static world
  * geometry plus the terrain. Returns the nearest hit or null.
  */
+const _triBox = new Box3();
+const _localBox = new Box3();
+const _corner = new Vector3();
+const _triA = new Vector3();
+const _triB = new Vector3();
+const _triC = new Vector3();
+const _triNormal = new Vector3();
+
+/**
+ * Interior triangles whose bounds overlap the Three-world `box`,
+ * appended to `out` as world positions (three vertices per triangle).
+ * The receiver polygons a projected shadow is drawn onto (the engine's
+ * Interior::buildPolyList over InteriorObjectType). Returns the number
+ * of floats appended.
+ */
+export function interiorTrianglesInBox(
+  box: Box3,
+  out: number[],
+  facing?: TriangleFacing,
+): number {
+  const start = out.length;
+  for (const entry of interiors().values()) {
+    for (const collider of entry.colliders) {
+      if (!collider.worldBox.intersectsBox(box)) continue;
+      _localBox.makeEmpty();
+      for (let i = 0; i < 8; i++) {
+        _corner.set(
+          i & 1 ? box.max.x : box.min.x,
+          i & 2 ? box.max.y : box.min.y,
+          i & 4 ? box.max.z : box.min.z,
+        );
+        _localBox.expandByPoint(_corner.applyMatrix4(collider.inverse));
+      }
+      const matrix = collider.matrixWorld;
+      collider.bvh.shapecast({
+        intersectsBounds: (bounds) =>
+          bounds.intersectsBox(_localBox) ? INTERSECTED : NOT_INTERSECTED,
+        intersectsTriangle: (tri) => {
+          _triBox.makeEmpty();
+          _triBox.expandByPoint(tri.a);
+          _triBox.expandByPoint(tri.b);
+          _triBox.expandByPoint(tri.c);
+          if (!_triBox.intersectsBox(_localBox)) return false;
+          _triA.copy(tri.a).applyMatrix4(matrix);
+          _triB.copy(tri.b).applyMatrix4(matrix);
+          _triC.copy(tri.c).applyMatrix4(matrix);
+          if (facing) {
+            // Interior surfaces wind toward the room they face.
+            _triNormal
+              .subVectors(_triB, _triA)
+              .cross(_corner.subVectors(_triC, _triA))
+              .normalize();
+            if (_triNormal.dot(facing.dir) >= facing.threshold) return false;
+          }
+          out.push(_triA.x, _triA.y, _triA.z);
+          out.push(_triB.x, _triB.y, _triB.z);
+          out.push(_triC.x, _triC.y, _triC.z);
+          return false;
+        },
+      });
+    }
+  }
+  return out.length - start;
+}
+
 export function castWorldRay(
   start: Vec3,
   end: Vec3,

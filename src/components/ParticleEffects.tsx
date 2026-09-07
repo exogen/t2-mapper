@@ -10,6 +10,7 @@ import {
   DoubleSide,
   Float32BufferAttribute,
   Group,
+  Object3D,
   Mesh,
   MeshBasicMaterial,
   NormalBlending,
@@ -24,13 +25,17 @@ import {
   Uint16BufferAttribute,
   UnsignedByteType,
   Vector3,
+  LinearMipmapNearestFilter,
   NoColorSpace,
+  RepeatWrapping,
   SRGBColorSpace,
 } from "three";
 import { audioToUrl, textureToUrl } from "../loaders";
 import { loadTexture } from "../textureUtils";
 import { setupEffectTexture } from "../stream/playbackUtils";
 import { orientationAlongDirection } from "../stream/streamHelpers";
+import { takeShockwaveRequests } from "./shockwaveRequests";
+import { nodeEmitters, type NodeEmitter } from "./nodeEmitters";
 import {
   EmitterInstance,
   resolveEmitterData,
@@ -81,6 +86,22 @@ const _placeholderTexture = new DataTexture(
 );
 _placeholderTexture.needsUpdate = true;
 
+/**
+ * ParticleData::preload loads its texture as type 4 (TextureManager
+ * FUN_0044bbf0 / FUN_0044b730): mip levels are extruded and the GL filters
+ * are GL_LINEAR_MIPMAP_NEAREST / GL_LINEAR with GL_REPEAT wrap, so a small
+ * or distant particle samples an averaged blob rather than its full-res
+ * peak. Colour space stays raw: the engine modulates 8-bit texels by the
+ * datablock colour with no gamma handling.
+ */
+function setupParticleTexture(tex: Texture): void {
+  setupEffectTexture(tex, NoColorSpace);
+  tex.wrapS = RepeatWrapping;
+  tex.wrapT = RepeatWrapping;
+  tex.generateMipmaps = true;
+  tex.minFilter = LinearMipmapNearestFilter;
+}
+
 function getParticleTexture(textureName: string): Texture {
   if (!textureName) return _placeholderTexture;
   const cached = _textureCache.get(textureName);
@@ -88,10 +109,10 @@ function getParticleTexture(textureName: string): Texture {
   try {
     const url = textureToUrl(textureName);
     const tex = loadTexture(url, (t) => {
-      setupEffectTexture(t, NoColorSpace);
+      setupParticleTexture(t);
       _texturesReady.add(t);
     });
-    setupEffectTexture(tex, NoColorSpace);
+    setupParticleTexture(tex);
     _textureCache.set(textureName, tex);
     return tex;
   } catch {
@@ -641,6 +662,8 @@ interface ActiveEmitter {
   followsDriver?: boolean;
   /** Emission axis in Torque space (defaults to [0,0,1] = up). */
   emitAxis?: [number, number, number];
+  /** Node-anchored emitters: origin, axis and velocity track the node. */
+  node?: NodeEmitter;
   /** Debug: origin marker mesh. */
   debugOriginMesh?: Mesh;
   /** Debug: particle marker meshes. */
@@ -843,6 +866,71 @@ const _listenerWorldPos = new Vector3();
 
 /** out = −normalize(v), or straight up when v is (near) zero — the
  *  engine's emission axis for projectile trails. */
+/** A streaming emitter parked at `origin`, ready to emit along each frame. */
+function createStreamEmitter(
+  emitterData: EmitterDataResolved,
+  origin: [number, number, number],
+  group: Object3D,
+): ActiveEmitter {
+  const emitter = new EmitterInstance(emitterData, MAX_PARTICLES_PER_EMITTER);
+  const texture = getParticleTexture(emitterData.particles.textureName);
+  const geometry = createParticleGeometry(MAX_PARTICLES_PER_EMITTER);
+  const material = createParticleMaterial(
+    texture,
+    emitterData.particles.useInvAlpha,
+    emitterData.orientParticles,
+  );
+  const mesh = new Mesh(geometry, material);
+  mesh.frustumCulled = false;
+  group.add(mesh);
+  return {
+    emitter,
+    mesh,
+    geometry,
+    material,
+    targetTexture: texture,
+    origin,
+    prevOrigin: [...origin],
+    emitVelocity: [0, 0, 0],
+    emitAxis: [0, 0, 1],
+    isBurst: false,
+  };
+}
+
+/**
+ * Move a node-anchored emitter to its node: this frame's segment runs
+ * from last frame's node position to the current one, the ejection axis
+ * is the DTS node's local +Y, and the owner's velocity feeds
+ * inheritedVelFactor. The exporter writes DTS nodes as bones turned −90°
+ * about X, which puts the node's +Y on the bone's −Y column (Three world →
+ * Torque: x←z, y←x, z←y).
+ */
+function readNodeFrame(entry: ActiveEmitter, node: NodeEmitter): void {
+  node.anchor.updateWorldMatrix(true, false);
+  const m = node.anchor.matrixWorld.elements;
+  const prev = entry.prevOrigin!;
+  prev[0] = entry.origin[0];
+  prev[1] = entry.origin[1];
+  prev[2] = entry.origin[2];
+  entry.origin[0] = m[14];
+  entry.origin[1] = m[12];
+  entry.origin[2] = m[13];
+  const axis = entry.emitAxis!;
+  axis[0] = -m[6];
+  axis[1] = -m[4];
+  axis[2] = -m[5];
+  const len = Math.hypot(axis[0], axis[1], axis[2]);
+  if (len > 0) {
+    axis[0] /= len;
+    axis[1] /= len;
+    axis[2] /= len;
+  }
+  const vel = entry.emitVelocity!;
+  vel[0] = node.frame.velocity[0];
+  vel[1] = node.frame.velocity[1];
+  vel[2] = node.frame.velocity[2];
+}
+
 function reversedDirection(
   v: [number, number, number],
   out: [number, number, number],
@@ -888,6 +976,9 @@ export function ParticleEffects({
   /** Shocklance bolts whose hit effects (shockwave, burst) have spawned. */
   const processedShockLancesRef = useRef<Set<string>>(new Set());
   /** Track which projectile entity IDs have trail emitters attached. */
+  const nodeEmitterEntriesRef = useRef(
+    new Map<NodeEmitter, ActiveEmitter | null>(),
+  );
   const trailEntitiesRef = useRef<Set<string>>(new Set());
   /** Active looping projectile sounds keyed by entity ID. */
   const projectileSoundsRef = useRef<Map<string, ProjectileSound>>(new Map());
@@ -931,6 +1022,19 @@ export function ParticleEffects({
     // Scale delta by playback rate; 0 when paused.
     const effectDelta = isPlaying ? delta * playbackState.rate : 0;
     const dtMS = effectDelta * 1000;
+
+    // Rings other systems asked for this frame (mounted-image muzzle flashes).
+    for (const req of takeShockwaveRequests()) {
+      const sw = createShockwave(
+        req.dataBlockId,
+        req.origin,
+        req.ownerId,
+        getDataBlockData,
+        group,
+        req.normal,
+      );
+      if (sw) activeShockwavesRef.current.push(sw);
+    }
 
     // Detect new explosion entities and create emitters.
     for (const entity of snapshot.entities) {
@@ -1161,40 +1265,41 @@ export function ParticleEffects({
       const emitterData = resolveEmitterData(emitterRaw, getDataBlockData);
       if (!emitterData) continue;
 
-      const origin: [number, number, number] = entity.position
-        ? [...entity.position]
-        : [0, 0, 0];
-
-      const emitter = new EmitterInstance(
+      const entry = createStreamEmitter(
         emitterData,
-        MAX_PARTICLES_PER_EMITTER,
+        entity.position ? [...entity.position] : [0, 0, 0],
+        group,
       );
+      entry.driverEntityId = entity.id;
+      entry.followsDriver = true;
+      activeEmittersRef.current.push(entry);
+    }
 
-      const texture = getParticleTexture(emitterData.particles.textureName);
-      const geometry = createParticleGeometry(MAX_PARTICLES_PER_EMITTER);
-      const material = createParticleMaterial(
-        texture,
-        emitterData.particles.useInvAlpha,
-        emitterData.orientParticles,
-      );
-      const mesh = new Mesh(geometry, material);
-      mesh.frustumCulled = false;
-      group.add(mesh);
-
-      activeEmittersRef.current.push({
-        emitter,
-        mesh,
-        geometry,
-        material,
-        targetTexture: texture,
-        origin,
-        prevOrigin: [...origin],
-        emitVelocity: [0, 0, 0],
-        emitAxis: [0, 0, 1],
-        isBurst: false,
-        driverEntityId: entity.id,
-        followsDriver: true,
-      });
+    // Node-anchored emitters (jet nozzles, contrails) live as long as their
+    // registration; a dropped one stops emitting and dies when empty.
+    const nodeEntries = nodeEmitterEntriesRef.current;
+    const registered = nodeEmitters();
+    for (const node of registered) {
+      if (nodeEntries.has(node)) continue;
+      const raw = getDataBlockData(node.dataBlockId);
+      const data = raw ? resolveEmitterData(raw, getDataBlockData) : null;
+      if (!data) {
+        nodeEntries.set(node, null);
+        continue;
+      }
+      const entry = createStreamEmitter(data, [0, 0, 0], group);
+      entry.node = node;
+      readNodeFrame(entry, node);
+      entry.prevOrigin![0] = entry.origin[0];
+      entry.prevOrigin![1] = entry.origin[1];
+      entry.prevOrigin![2] = entry.origin[2];
+      nodeEntries.set(node, entry);
+      activeEmittersRef.current.push(entry);
+    }
+    for (const [node, entry] of nodeEntries) {
+      if (registered.has(node)) continue;
+      entry?.emitter.kill();
+      nodeEntries.delete(node);
     }
 
     // Stop emitting once the driving entity is gone: a trail's projectile, or
@@ -1256,12 +1361,14 @@ export function ParticleEffects({
         }
       }
 
+      if (entry.node) readNodeFrame(entry, entry.node);
+
       // Streaming emitters emit periodically along the frame's segment.
       if (!entry.isBurst) {
         entry.emitter.emitPeriodic(
           entry.prevOrigin ?? entry.origin,
           entry.origin,
-          dtMS,
+          entry.node ? dtMS * entry.node.frame.dtScale : dtMS,
           entry.emitAxis,
           entry.emitVelocity,
         );

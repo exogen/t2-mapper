@@ -31,7 +31,14 @@ import {
   collectEffectShapeNames,
 } from "./streamHelpers";
 import type { Vec3 } from "./streamHelpers";
-import type { StreamRecording, StreamSnapshot, TeamScore } from "./types";
+import {
+  THRUST_BACKWARD,
+  THRUST_DOWN,
+  THRUST_FORWARD,
+  type StreamRecording,
+  type StreamSnapshot,
+  type TeamScore,
+} from "./types";
 import { StreamEngine, type MutableEntity } from "./StreamEngine";
 
 interface DemoMissionInfo {
@@ -991,6 +998,29 @@ class StreamingPlayback extends StreamEngine {
         const entity = this.entities.get(this.controlPlayerGhostId);
         if (entity) {
           entity.jetting = !!triggers[3];
+        }
+      }
+      // The piloted vehicle's ghost skips its jet fields the same way
+      // (Vehicle/FlyingVehicle::unpackUpdate control gate). Vehicle::
+      // updateMove (FUN_0060b110) sets jetting from the same trigger and
+      // FlyingVehicle::updateMove (FUN_00610220) picks the thrust direction
+      // from move.y. The energy gate on jetting is not modelled.
+      if (triggers && this.isPiloting && this.lastPilotGhostIndex != null) {
+        const vehicleId = this.resolveEntityIdForGhostIndex(
+          this.lastPilotGhostIndex,
+        );
+        const vehicle = vehicleId ? this.entities.get(vehicleId) : undefined;
+        const moveY = (block.parsed as { y?: number }).y;
+        if (vehicle) {
+          vehicle.jetting = !!triggers[3];
+          if (vehicle.className === "FlyingVehicle" && moveY != null) {
+            vehicle.thrustDirection =
+              moveY === 0
+                ? THRUST_DOWN
+                : moveY < 0
+                  ? THRUST_BACKWARD
+                  : THRUST_FORWARD;
+          }
         }
       }
     }

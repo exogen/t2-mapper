@@ -1,5 +1,4 @@
 import { Suspense, useEffect, useMemo, useRef, useState } from "react";
-import type { MutableRefObject } from "react";
 import { createPortal, useFrame } from "@react-three/fiber";
 import {
   AdditiveAnimationBlendMode,
@@ -10,7 +9,6 @@ import {
   LoopOnce,
   LoopRepeat,
   Object3D,
-  PositionalAudio,
   Vector3,
   Box3,
 } from "three";
@@ -26,15 +24,45 @@ import {
   processShapeScene,
 } from "../stream/playbackUtils";
 import {
+  actionStartPosition,
   NO_ACTION_ANIM,
   NUM_TABLE_ACTION_ANIMS,
   pickMoveAnimation,
   stepActionAnim,
   type ActionAnimState,
 } from "../stream/playerAnimation";
-import { WeaponImageStateMachine } from "../stream/weaponStateMachine";
+import {
+  readCyclicSequences,
+  useImageStateAnimation,
+} from "./useImageStateAnimation";
+import {
+  applyVisAt,
+  collectVisNodes,
+  prepareVisMaterial,
+  type VisNode,
+} from "./visSequences";
+import { stepFlareThread } from "./jetThreads";
+import {
+  createJetSequence,
+  scrubJetSequence,
+  type JetSequence,
+} from "./jetSequence";
+import {
+  addNodeEmitter,
+  removeNodeEmitter,
+  type NodeEmitter,
+  type NodeEmitterFrame,
+} from "./nodeEmitters";
+import { useJetSound } from "./useJetSound";
+import { collectOwnNodes } from "./sceneNodes";
+import { useDebug } from "./SettingsProvider";
+import { collectMorphClips, isMorphClip } from "./sequenceClips";
+import {
+  collectIflMeshes,
+  loadIflMaterialInstance,
+  type IflMaterialInstance,
+} from "./iflAtlas";
 import { useQuery } from "@tanstack/react-query";
-import type { WeaponAnimState } from "../stream/weaponStateMachine";
 import { getAliasedActions } from "../torqueScript/shapeConstructor";
 import {
   useStaticShape,
@@ -55,22 +83,8 @@ import {
 } from "./resolveEmap";
 import { useFadeAndCloak } from "./shapeFadeCloak";
 import { useShapeLighting } from "./useShapeLighting";
+import { useShadowCaster } from "./useShadowCaster";
 import type { MountedImageRoot } from "./shapeFadeCloak";
-import { useAudio } from "./AudioContext";
-import {
-  resolveAudioProfile,
-  playOneShotSound,
-  createPositionalAudio,
-  getCachedAudioBuffer,
-  getSoundGeneration,
-  stopAndDetachSound,
-  trackSound,
-  untrackSound,
-} from "./AudioEmitter";
-import { getEffectiveSoundRate } from "./AudioEmitter";
-import type { ResolvedAudioProfile } from "./AudioEmitter";
-import { audioToUrl } from "../loaders";
-import { useSettings } from "./SettingsProvider";
 import { useEngineStoreApi, useEngineSelector } from "../state/engineStore";
 import { useStreamSnapshot } from "../state/streamSnapshotStore";
 import { useCommandCircuit } from "../state/commandCircuitStore";
@@ -249,18 +263,6 @@ function countEmbeddedNonTableSequences(
   return count;
 }
 
-/** Stop, disconnect, and remove a looping PositionalAudio from its parent. */
-function stopLoopingSound(
-  soundRef: React.MutableRefObject<PositionalAudio | null>,
-  stateRef: React.MutableRefObject<number>,
-) {
-  const sound = soundRef.current;
-  if (!sound) return;
-  stopAndDetachSound(sound);
-  soundRef.current = null;
-  stateRef.current = -1;
-}
-
 /**
  * Renders a player model with skeleton-preserving animation.
  *
@@ -269,6 +271,81 @@ function stopLoopingSound(
  * (Root, Forward, Back, Side, Fall) selected from the keyframe velocity data.
  * Weapon is attached to the animated Mount0 bone.
  */
+/**
+ * Debug view of the mixer's live actions (clip, effective weight, time,
+ * paused), published on the scene's userData for probes.
+ */
+function describeMixer(mixer: AnimationMixer): string {
+  const actions = (mixer as unknown as { _actions: AnimationAction[] })
+    ._actions;
+  return actions
+    .filter((a) => a.isScheduled())
+    .map((a) => {
+      const clip = a.getClip();
+      const pelvis = clip.tracks.some((t) => /pelvis/i.test(t.name));
+      const mode = a.blendMode === AdditiveAnimationBlendMode ? "add" : "";
+      return `${clip.name}:w${a.getEffectiveWeight().toFixed(2)}:t${a.time.toFixed(2)}${a.paused ? ":paused" : ""}${mode ? ":" + mode : ""}${pelvis ? ":pelvis" : ""}`;
+    })
+    .join(" ");
+}
+
+/** The JetFlare sequence's vis meshes and the nozzle emitters of one player. */
+interface JetFlareParts {
+  visNodes: VisNode[];
+  emitters: NodeEmitter[];
+}
+
+const NO_JET_FLARE: JetFlareParts = { visNodes: [], emitters: [] };
+
+function buildJetFlare(
+  scene: Object3D,
+  ownerId: string,
+  jetEmitterId: number | null,
+  frame: NodeEmitterFrame,
+): JetFlareParts {
+  const visNodes = collectVisNodes(scene).get("jetflare") ?? [];
+  for (const node of visNodes) {
+    prepareVisMaterial(node);
+    applyVisAt(node, 0);
+  }
+  const emitters: NodeEmitter[] = [];
+  if (jetEmitterId != null) {
+    // PlayerData resolves "jetNozzle0"/"jetNozzle1" on the player's own
+    // shape; the light armours only have the first.
+    const nodes = collectOwnNodes(scene);
+    for (const name of ["jetnozzle0", "jetnozzle1"]) {
+      const anchor = nodes.get(name);
+      if (anchor) {
+        emitters.push({ dataBlockId: jetEmitterId, anchor, frame, ownerId });
+      }
+    }
+  }
+  return { visNodes, emitters };
+}
+
+/**
+ * The JetFlare thread's outputs: its "{JetFlare}_{Mesh}_frame" morph clips
+ * and vis meshes, timed by the clip, or null when the shape has none.
+ */
+function buildJetFlareSequence(
+  actions: Map<string, AnimationAction>,
+  visNodes: VisNode[],
+): JetSequence | null {
+  // Only the morph frames and vis play: the JetFlare node track keys the
+  // pelvis at rest, which the engine's higher-priority body threads
+  // always override but the mixer would blend in at half weight.
+  const flareActions: AnimationAction[] = [];
+  const main = actions.get("jetflare");
+  for (const [name, action] of actions) {
+    if (name.startsWith("jetflare_") && name.endsWith("_frame")) {
+      flareActions.push(action);
+    }
+  }
+  const duration = main?.getClip().duration ?? visNodes[0]?.duration ?? 0;
+  if (duration <= 0) return null;
+  return createJetSequence(flareActions, visNodes, duration);
+}
+
 export function PlayerModel({ entity }: { entity: PlayerEntity }) {
   const engineStore = useEngineStoreApi();
   const shapeName = entity.shapeName!;
@@ -357,12 +434,12 @@ export function PlayerModel({ entity }: { entity: PlayerEntity }) {
     let m1: Object3D | null = null;
     let m2: Object3D | null = null;
     let eye: Object3D | null = null;
-    scene.traverse((n) => {
-      if (!m0 && n.name === "Mount0") m0 = n;
-      if (!m1 && n.name === "Mount1") m1 = n;
-      if (!m2 && n.name === "Mount2") m2 = n;
-      if (!eye && n.name === "Eye") eye = n;
-    });
+    // DTS node lookups are case insensitive.
+    const nodes = collectOwnNodes(scene);
+    m0 = nodes.get("mount0") ?? null;
+    m1 = nodes.get("mount1") ?? null;
+    m2 = nodes.get("mount2") ?? null;
+    eye = nodes.get("eye") ?? null;
 
     return {
       clonedScene: scene,
@@ -641,52 +718,53 @@ export function PlayerModel({ entity }: { entity: PlayerEntity }) {
     },
   );
   useShapeLighting(clonedScene);
+  useShadowCaster(clonedScene, entity.shapeName, () => entityRef.current);
 
-  // Jet thrust sound. Played client-side by Player::updateJetEffects via
-  // direct alxPlay3d — NOT networked through SoundMask. We derive it from
-  // entity.jetting (which comes from move trigger[3] or ghost MoveMask).
-  const { audioLoader, audioListener } = useAudio();
-  const { audioEnabled } = useSettings();
-  const jetSoundRef = useRef<PositionalAudio | null>(null);
-  const jetBufferRef = useRef<AudioBuffer | null>(null);
-  const jetProfileRef = useRef<ResolvedAudioProfile | null>(null);
-
-  // Resolve and preload the jet sound from the player's datablock.
-  useEffect(() => {
-    if (!audioLoader) return;
-    const playback = engineStore.getState().playback;
-    const sp = playback.recording?.streamingPlayback;
-    if (!sp || !entity.dataBlockId) return;
-    const getDb = sp.getDataBlockData.bind(sp);
-    const playerDb = getDb(entity.dataBlockId);
-    // PlayerData.Sounds enum: Tribes 2 reordered the open-source Torque
-    // enum to put jet sounds first (index 0 = jetSound, 1 = wetJetSound).
-    const sounds = playerDb?.sounds as (number | null)[] | undefined;
-    const jetSoundId = sounds?.[0];
-    if (jetSoundId == null) return;
-    const resolved = resolveAudioProfile(jetSoundId, getDb);
-    if (!resolved) return;
-    jetProfileRef.current = resolved;
-    try {
-      const url = audioToUrl(resolved.filename);
-      getCachedAudioBuffer(url, audioLoader, (buffer) => {
-        jetBufferRef.current = buffer;
-      });
-    } catch {
-      // File not in manifest.
-    }
-  }, [audioLoader, engineStore, entity.dataBlockId]);
-
-  // Cleanup jet sound on unmount.
-  useEffect(() => {
-    return () => {
-      const sound = jetSoundRef.current;
-      if (sound) {
-        stopAndDetachSound(sound);
-        jetSoundRef.current = null;
-      }
+  // Client-side jet effects (Player::updateJet, FUN_005d65e0): the jet
+  // sound loops and the jetEmitter runs at the JetNozzle nodes while
+  // jetting. PlayerData.Sounds puts the jet sounds first in Tribes 2
+  // (index 0 = jetSound, 1 = wetJetSound).
+  const { jetSoundId, jetEmitterId } = useMemo(() => {
+    const sp = engineStore.getState().playback.recording?.streamingPlayback;
+    const db =
+      entity.dataBlockId != null
+        ? sp?.getDataBlockData(entity.dataBlockId)
+        : undefined;
+    const sounds = db?.sounds as (number | null)[] | undefined;
+    const emitter = db?.jetEmitter;
+    return {
+      jetSoundId: sounds?.[0] ?? null,
+      jetEmitterId: typeof emitter === "number" ? emitter : null,
     };
-  }, []);
+  }, [engineStore, entity.dataBlockId]);
+  const updateJetSound = useJetSound(clonedScene, jetSoundId);
+  const { debugMode } = useDebug();
+  const jetFlareRef = useRef<JetFlareParts>(NO_JET_FLARE);
+  // The player's velocity this frame, shared by its nozzle emitters.
+  const jetFrameRef = useRef<NodeEmitterFrame>({
+    velocity: [0, 0, 0],
+    dtScale: 1,
+  });
+  const jetFlarePosRef = useRef(0);
+  const mountYawRef = useRef<Group>(null);
+  // The flare thread's outputs, rebuilt when the body's actions are.
+  const jetFlareThreadRef = useRef<{
+    source: Map<string, AnimationAction> | null;
+    sequence: JetSequence | null;
+  }>({ source: null, sequence: null });
+  useEffect(() => {
+    const parts = buildJetFlare(
+      clonedScene,
+      entity.id,
+      jetEmitterId,
+      jetFrameRef.current,
+    );
+    jetFlareRef.current = parts;
+    return () => {
+      for (const emitter of parts.emitters) removeNodeEmitter(emitter);
+      jetFlareRef.current = NO_JET_FLARE;
+    };
+  }, [clonedScene, entity.id, jetEmitterId]);
 
   // Per-frame animation selection and mixer update.
   useFrame((_, delta) => {
@@ -712,6 +790,16 @@ export function PlayerModel({ entity }: { entity: PlayerEntity }) {
     // Resolve velocity at current playback time.
     const kf = getKeyframeAtTime(entity.keyframes ?? [], time);
     const isDead = kf?.damageState != null && kf.damageState >= 1;
+    // Player::setPosition (FUN_005d97c0): a mounted player's transform is
+    // the vehicle's mount node transform × RotZ(its own yaw) — the seat
+    // places the body and the ghost's yaw turns it (passengers look
+    // around; the server zeroes a pilot's yaw on mount).
+    const mounted = entity.mountObjectId != null;
+    const mountYaw = mountYawRef.current;
+    if (mountYaw) {
+      if (mounted && kf?.rotation) mountYaw.quaternion.fromArray(kf.rotation);
+      else mountYaw.quaternion.identity();
+    }
     const actions = animActionsRef.current;
 
     // Alive->Dead transition: play the server-specified death animation.
@@ -762,8 +850,10 @@ export function PlayerModel({ entity }: { entity: PlayerEntity }) {
     // action overrides movement until its clip ends; then the client
     // picks its own movement animation again unless the action holds —
     // the server never sends the table action that ends it.
+    // Until the clip actions exist (they are built in an effect after
+    // the first frame) nothing can be judged, so leave the state alone.
     let playingActionAnim = false;
-    if (!isDeadRef.current) {
+    if (!isDeadRef.current && actions.size > 0) {
       const started = actionStateRef.current;
       const startedAction =
         started.index != null
@@ -772,10 +862,19 @@ export function PlayerModel({ entity }: { entity: PlayerEntity }) {
       // LoopOnce with clampWhenFinished: the mixer pauses the action on
       // its last frame, which is how "finished" reads.
       const clipFinished = !!startedAction && startedAction.paused;
+      const wiredEntry =
+        kf?.actionAnim != null ? actionAnimMap.get(kf.actionAnim) : undefined;
+      const wiredAction = wiredEntry
+        ? actions.get(wiredEntry.clipName)
+        : undefined;
       const { state, command } = stepActionAnim(
         started,
         kf ?? {},
         clipFinished,
+        wiredAction
+          ? actionStartPosition(kf ?? {}, time, wiredAction.getClip().duration)
+          : 0,
+        mounted,
       );
       actionStateRef.current = state;
       if (command.kind === "start") {
@@ -791,11 +890,14 @@ export function PlayerModel({ entity }: { entity: PlayerEntity }) {
           actionAction.setLoop(LoopOnce, 1);
           actionAction.clampWhenFinished = true;
           actionAction.reset().fadeIn(ANIM_TRANSITION_TIME).play();
-          if (kf?.actionAtEnd) {
+          if (command.position >= 1) {
             // Already on its last frame server-side (a held pose that
             // came into scope late): land there.
             actionAction.time = actionAction.getClip().duration;
             actionAction.paused = true;
+          } else if (command.position > 0) {
+            actionAction.time =
+              command.position * actionAction.getClip().duration;
           }
           currentAnimRef.current = { name: entry.clipName, timeScale: 1 };
         } else {
@@ -820,13 +922,17 @@ export function PlayerModel({ entity }: { entity: PlayerEntity }) {
     }
 
     // Movement animation selection (skip while dead or playing action anim).
+    // A mounted player never runs a movement animation: pickActionAnimation
+    // swaps any table action for root (HAPC passengers stand at root).
     if (!isDeadRef.current && !playingActionAnim) {
-      const anim = pickMoveAnimation(
-        kf?.velocity,
-        kf?.rotation ?? [0, 0, 0, 1],
-        entity.falling,
-        entity.jetting,
-      );
+      const anim = mounted
+        ? { animation: "root", timeScale: 1 }
+        : pickMoveAnimation(
+            kf?.velocity,
+            kf?.rotation ?? [0, 0, 0, 1],
+            entity.falling,
+            entity.jetting,
+          );
 
       const prev = currentAnimRef.current;
       if (anim.animation !== prev.name || anim.timeScale !== prev.timeScale) {
@@ -907,41 +1013,41 @@ export function PlayerModel({ entity }: { entity: PlayerEntity }) {
       headside.weight = blendWeight;
     }
 
-    // Jet thrust sound: start/stop based on entity.jetting.
-    // Client-side only — Player::updateJetEffects uses alxPlay3d directly.
+    // Jet flare thread (Player::processTick FUN_005d2d60): the non-cyclic
+    // JetFlare sequence runs at time scale +1 while jetting and −1
+    // otherwise, so its vis keyframes and morph frames fade the flare
+    // meshes in and back out. The nozzle emitters and jet sound run only
+    // while jetting.
     const isJetting = !!entity.jetting && !isDead;
-    const jetProfile = jetProfileRef.current;
-    const jetSound = jetSoundRef.current;
-    const jetPlaying = jetSound?.isPlaying ?? false;
-    if (isJetting && !jetPlaying) {
-      if (audioEnabled && audioListener && jetBufferRef.current && jetProfile) {
-        let sound = jetSound;
-        if (!sound) {
-          sound = createPositionalAudio(audioListener, jetProfile);
-          clonedScene.add(sound);
-          jetSoundRef.current = sound;
-        }
-        try {
-          sound.setBuffer(jetBufferRef.current);
-          sound.setLoop(true);
-          sound.setPlaybackRate(getEffectiveSoundRate());
-          sound.play();
-          trackSound(sound, 1);
-        } catch {
-          /* AudioContext suspended */
-        }
-      }
-    } else if (jetPlaying && (!isJetting || !audioEnabled)) {
-      // Also stop when audio is turned off mid-thrust — the start branch
-      // is gated on audioEnabled, but an already-running loop isn't.
-      if (jetSound) {
-        untrackSound(jetSound);
-        try {
-          jetSound.stop();
-        } catch {
-          /* already stopped */
-        }
-      }
+    updateJetSound(isJetting);
+    const jetDelta = isPlaying ? delta * playback.rate : 0;
+    const jetFlare = jetFlareRef.current;
+    const flareThread = jetFlareThreadRef.current;
+    if (flareThread.source !== actions) {
+      flareThread.source = actions;
+      flareThread.sequence = buildJetFlareSequence(actions, jetFlare.visNodes);
+    }
+    const flare = flareThread.sequence;
+    if (flare) {
+      const pos = stepFlareThread(
+        jetFlarePosRef.current,
+        isJetting,
+        jetDelta,
+        flare.duration,
+      );
+      jetFlarePosRef.current = pos;
+      scrubJetSequence(flare, pos, false);
+    }
+    const velocity = kf?.velocity;
+    if (velocity) {
+      const jetVelocity = jetFrameRef.current.velocity;
+      jetVelocity[0] = velocity[0];
+      jetVelocity[1] = velocity[1];
+      jetVelocity[2] = velocity[2];
+    }
+    for (const emitter of jetFlare.emitters) {
+      if (isJetting) addNodeEmitter(emitter);
+      else removeNodeEmitter(emitter);
     }
 
     // Advance or evaluate the body animation mixer.
@@ -950,6 +1056,7 @@ export function PlayerModel({ entity }: { entity: PlayerEntity }) {
     } else {
       mixer.update(0);
     }
+    if (debugMode) clonedScene.userData.animDebug = describeMixer(mixer);
 
     // Write animated Eye bone position for first-person camera.
     // Torque's Player::getEyeTransform reads the eye node's POSITION
@@ -979,9 +1086,11 @@ export function PlayerModel({ entity }: { entity: PlayerEntity }) {
         <PlayerNameplate entity={entity} />
       )}
       {commandCircuitActive && <CommandCircuitPlayerMarker entity={entity} />}
-      <group rotation={[0, Math.PI / 2, 0]}>
-        <primitive object={clonedScene} />
-        <PlayerDebugBounds entityId={entity.id} scene={gltf.scene} />
+      <group ref={mountYawRef}>
+        <group rotation={[0, Math.PI / 2, 0]}>
+          <primitive object={clonedScene} />
+          <PlayerDebugBounds entityId={entity.id} scene={gltf.scene} />
+        </group>
       </group>
       {currentWeaponShape && mount0 && (
         <ShapeErrorBoundary
@@ -1124,14 +1233,18 @@ function MountedImageModel({
     weaponClone,
     weaponMixer,
     seqIndexToName,
+    cyclicSequences,
     visNodesBySequence,
-    weaponIflInitializers,
+    weaponIflMeshes,
   } = useMemo(() => {
     const clone = SkeletonUtils.clone(weaponGltf.scene) as Group;
     // Marks the subtree as a mounted image so effects that redraw the
     // player's own shape (the shocklance zap) can skip it.
     clone.userData.imageMount = true;
-    const iflInits = processShapeScene(clone, undefined, {
+    // IFL meshes are collected before the materials are replaced; their
+    // frames follow the image's threads (useImageStateAnimation).
+    const iflInfos = collectIflMeshes(clone);
+    processShapeScene(clone, undefined, {
       anisotropy,
       emap,
     });
@@ -1149,23 +1262,7 @@ function MountedImageModel({
       clone.quaternion.copy(invQuat);
     }
 
-    // Collect vis-animated meshes grouped by controlling sequence name.
-    // E.g. the disc launcher's Disc mesh has vis_sequence="discSpin" and is
-    // hidden by default (vis=0). When "discSpin" plays, the mesh becomes
-    // visible; when a different sequence plays, it hides again.
-    const visBySeq = new Map<string, Object3D[]>();
-    clone.traverse((node: any) => {
-      if (!node.isMesh) return;
-      const ud = node.userData;
-      const seqName = (ud?.vis_sequence ?? "").toLowerCase();
-      if (!seqName) return;
-      let list = visBySeq.get(seqName);
-      if (!list) {
-        list = [];
-        visBySeq.set(seqName, list);
-      }
-      list.push(node);
-    });
+    const visBySeq = collectVisNodes(clone);
 
     const mix = new AnimationMixer(clone);
     const seq = buildSeqIndexToName(
@@ -1176,8 +1273,12 @@ function MountedImageModel({
       weaponClone: clone,
       weaponMixer: mix,
       seqIndexToName: seq,
+      cyclicSequences: readCyclicSequences(
+        weaponGltf.scene,
+        weaponGltf.animations,
+      ),
       visNodesBySequence: visBySeq,
-      weaponIflInitializers: iflInits,
+      weaponIflMeshes: iflInfos,
     };
   }, [weaponGltf, anisotropy, emap]);
 
@@ -1191,13 +1292,26 @@ function MountedImageModel({
 
   // Build case-insensitive action map for weapon animations.
   const weaponActionsRef = useRef(new Map<string, AnimationAction>());
+  const weaponMorphActionsRef = useRef(new Map<string, AnimationAction[]>());
   const spinActionRef = useRef<AnimationAction | null>(null);
   useEffect(() => {
+    // Mesh frame clips ("{Sequence}_{Mesh}_frame") ride along with their
+    // sequence's clip rather than standing as sequences of their own.
+    const morphClips = collectMorphClips(weaponGltf.animations, seqIndexToName);
     const actions = new Map<string, AnimationAction>();
     for (const clip of weaponGltf.animations) {
+      if (isMorphClip(clip, morphClips)) continue;
       actions.set(clip.name.toLowerCase(), weaponMixer.clipAction(clip));
     }
     weaponActionsRef.current = actions;
+    const morph = new Map<string, AnimationAction[]>();
+    for (const [name, clips] of morphClips) {
+      morph.set(
+        name,
+        clips.map((clip) => weaponMixer.clipAction(clip)),
+      );
+    }
+    weaponMorphActionsRef.current = morph;
 
     // Set up the spin thread: a looping "spin" animation with variable timeScale.
     const spinAction = actions.get("spin");
@@ -1213,35 +1327,28 @@ function MountedImageModel({
     return () => {
       weaponMixer.stopAllAction();
       weaponActionsRef.current = new Map();
+      weaponMorphActionsRef.current = new Map();
       spinActionRef.current = null;
-      stopLoopingSound(loopingSoundRef, loopingSoundStateRef);
     };
-  }, [weaponMixer, weaponGltf.animations]);
+  }, [weaponMixer, weaponGltf.animations, seqIndexToName]);
 
-  // Initialize IFL materials on the weapon model.
+  // Load the weapon's IFL atlases; the image threads pick the frames.
+  const weaponIflRef = useRef<IflMaterialInstance[]>([]);
   useEffect(() => {
-    const cleanups: (() => void)[] = [];
-    for (const { mesh, initialize } of weaponIflInitializers) {
-      initialize(mesh, () => streamClock.time)
-        .then((dispose) => cleanups.push(dispose))
+    let disposed = false;
+    weaponIflRef.current = [];
+    for (const info of weaponIflMeshes) {
+      loadIflMaterialInstance(info)
+        .then((inst) => {
+          if (inst && !disposed) weaponIflRef.current.push(inst);
+        })
         .catch(() => {});
     }
-    return () => cleanups.forEach((fn) => fn());
-  }, [weaponIflInitializers]);
-
-  // Audio context for weapon sounds.
-  const { audioLoader, audioListener } = useAudio();
-  const settings = useSettings();
-  const audioEnabled = settings?.audioEnabled ?? false;
-
-  // Weapon state machine, lazily initialized on first tick with data.
-  const stateMachineRef = useRef<WeaponImageStateMachine | null>(null);
-  const currentWeaponAnimRef = useRef<string | null>(null);
-  const lastWeaponStatesRef = useRef(entity.imageSlots?.[slot]?.imageStates);
-
-  // Track active looping weapon sound (e.g. chaingun fire).
-  const loopingSoundRef = useRef<PositionalAudio | null>(null);
-  const loopingSoundStateRef = useRef<number>(-1);
+    return () => {
+      disposed = true;
+      weaponIflRef.current = [];
+    };
+  }, [weaponIflMeshes]);
 
   // Imperatively attach/detach the clone to the mount bone.
   useEffect(() => {
@@ -1251,242 +1358,27 @@ function MountedImageModel({
     };
   }, [weaponClone, mount]);
 
-  // Per-frame: tick state machine and drive weapon animation mixer.
+  useImageStateAnimation(() => entity.imageSlots?.[slot], {
+    actions: weaponActionsRef,
+    morphActions: weaponMorphActionsRef,
+    setSpinTimeScale: (timeScale) => {
+      if (spinActionRef.current) spinActionRef.current.timeScale = timeScale;
+    },
+    visNodesBySequence,
+    imageRoot: weaponClone,
+    ownerId: entity.id,
+    seqIndexToName,
+    cyclicSequences,
+    iflInstances: weaponIflRef,
+  });
+
+  // Advance the weapon mixer.
   useFrame((_, delta) => {
     const playback = engineStore.getState().playback;
-    const isPlaying = playback.status === "playing";
-    const actions = weaponActionsRef.current;
-
-    // Read the slot's image state directly from the entity (mutated
-    // per-tick, not via props).
-    const imageSlot = entity.imageSlots?.[slot];
-    const imageState = imageSlot?.imageState;
-    const imageStates = imageSlot?.imageStates;
-
-    // Lazily create or recreate the state machine when the datablock states
-    // become available or change (e.g. weapon switch within same shape).
-    if (imageStates !== lastWeaponStatesRef.current) {
-      lastWeaponStatesRef.current = imageStates;
-      if (imageStates && imageStates.length > 0) {
-        stateMachineRef.current = new WeaponImageStateMachine(
-          imageStates,
-          seqIndexToName,
-        );
-      } else {
-        stateMachineRef.current = null;
-      }
-      currentWeaponAnimRef.current = null;
-      stopLoopingSound(loopingSoundRef, loopingSoundStateRef);
-    }
-
-    // Initialize state machine if we have states but haven't created it yet.
-    if (!stateMachineRef.current && imageStates && imageStates.length > 0) {
-      stateMachineRef.current = new WeaponImageStateMachine(
-        imageStates,
-        seqIndexToName,
-      );
-    }
-
-    const sm = stateMachineRef.current;
-
-    // The state-change stop below only runs while the state machine is
-    // ticking — a weapon that loses its image state (holstered, player
-    // died, ghost stopped sending) or audio being disabled must also kill
-    // an active fire loop, or it plays until the component unmounts. A
-    // loop that is no longer playing was stopped externally (global stop
-    // on seek) — clear it so the next state entry can re-trigger.
-    // (Pause is deliberately not a stop condition: the suspended
-    // AudioContext silences the loop, and it must survive to resume.)
-    if (
-      loopingSoundRef.current &&
-      (!sm ||
-        !imageState ||
-        !audioEnabled ||
-        !loopingSoundRef.current.isPlaying)
-    ) {
-      stopLoopingSound(loopingSoundRef, loopingSoundStateRef);
-    }
-
-    if (sm && imageState && isPlaying) {
-      const effectiveDelta = delta * playback.rate;
-      const animState = sm.tick(effectiveDelta, imageState);
-
-      applyWeaponAnim(
-        animState,
-        actions,
-        currentWeaponAnimRef,
-        visNodesBySequence,
-      );
-
-      // Stop active looping sound when the state changes.
-      if (
-        loopingSoundRef.current &&
-        animState.stateIndex !== loopingSoundStateRef.current
-      ) {
-        stopLoopingSound(loopingSoundRef, loopingSoundStateRef);
-      }
-
-      // Play weapon state-entry sounds as positional audio on transitions.
-      // The engine plays a sound for every state entered during a transition
-      // chain, so there may be multiple sounds per tick.
-      if (
-        audioEnabled &&
-        audioLoader &&
-        audioListener &&
-        animState.soundDataBlockIds.length > 0
-      ) {
-        const getDb =
-          playback.recording?.streamingPlayback.getDataBlockData.bind(
-            playback.recording.streamingPlayback,
-          );
-        if (getDb) {
-          for (const soundDbId of animState.soundDataBlockIds) {
-            const resolved = resolveAudioProfile(soundDbId, getDb);
-            if (!resolved) continue;
-
-            if (resolved.isLooping) {
-              // Looping sounds (e.g. chaingun fire) persist while in this
-              // state and stop on transition to a different state.
-              if (!loopingSoundRef.current) {
-                try {
-                  const url = audioToUrl(resolved.filename);
-                  const gen = getSoundGeneration();
-                  getCachedAudioBuffer(url, audioLoader, (buffer) => {
-                    // Guard: state may have changed by the time buffer loads.
-                    if (gen !== getSoundGeneration()) return;
-                    if (loopingSoundRef.current) return;
-                    // Read live state index (not the closure-captured one).
-                    const currentIdx = sm.stateIndex;
-                    const sound = createPositionalAudio(
-                      audioListener,
-                      resolved,
-                    );
-                    sound.setBuffer(buffer);
-                    sound.setPlaybackRate(getEffectiveSoundRate());
-                    sound.setLoop(true);
-                    weaponClone.add(sound);
-                    trackSound(sound);
-                    sound.play();
-                    loopingSoundRef.current = sound;
-                    loopingSoundStateRef.current = currentIdx;
-                  });
-                } catch {
-                  /* expected */
-                }
-              }
-            } else {
-              playOneShotSound(
-                resolved,
-                audioListener,
-                audioLoader,
-                undefined,
-                weaponClone,
-              );
-            }
-          }
-        }
-      }
-
-      // Drive the spin thread (e.g. chaingun barrel rotation).
-      if (spinActionRef.current) {
-        spinActionRef.current.timeScale = animState.spinTimeScale;
-      }
-    }
-
-    // Advance the weapon mixer.
-    if (isPlaying) {
-      weaponMixer.update(delta * playback.rate);
-    } else {
-      weaponMixer.update(0);
-    }
+    weaponMixer.update(
+      playback.status === "playing" ? delta * playback.rate : 0,
+    );
   });
 
   return null;
-}
-
-/**
- * Applies the weapon state machine output to the weapon's AnimationMixer.
- * Handles crossfading between sequences, configuring loop/timeScale, and
- * toggling DTS vis-node visibility (e.g. disc launcher's disc mesh).
- */
-function applyWeaponAnim(
-  animState: WeaponAnimState,
-  actions: Map<string, AnimationAction>,
-  currentAnimRef: MutableRefObject<string | null>,
-  visNodesBySequence: Map<string, Object3D[]>,
-): void {
-  const targetName = animState.sequenceName;
-  const currentName = currentAnimRef.current;
-
-  if (targetName === currentName && !animState.transitioned) {
-    return;
-  }
-
-  // Toggle vis-node visibility when the active sequence changes.
-  // Meshes with vis_sequence are hidden by default (processShapeScene sets
-  // visible=false for vis<0.01). They become visible only when their
-  // controlling sequence is the active one. E.g. the disc launcher's Disc
-  // mesh has vis_sequence="discspin" and appears only during the discSpin
-  // (Ready) state.
-  if (targetName !== currentName) {
-    // Hide vis nodes from the previous sequence.
-    if (currentName) {
-      const prevVis = visNodesBySequence.get(currentName);
-      if (prevVis) {
-        for (const node of prevVis) node.visible = false;
-      }
-    }
-    // Show vis nodes for the new sequence.
-    if (targetName) {
-      const nextVis = visNodesBySequence.get(targetName);
-      if (nextVis) {
-        for (const node of nextVis) node.visible = true;
-      }
-    }
-  }
-
-  if (!targetName) {
-    // No sequence for this state -- stop current animation.
-    if (currentName) {
-      const prev = actions.get(currentName);
-      if (prev) prev.fadeOut(ANIM_TRANSITION_TIME);
-      currentAnimRef.current = null;
-    }
-    return;
-  }
-
-  const action = actions.get(targetName);
-  if (!action) return;
-
-  // On state transition, restart the animation.
-  if (animState.transitioned || targetName !== currentName) {
-    const prevAction = currentName ? actions.get(currentName) : null;
-
-    // Fire/reload animations play once; others loop.
-    if (animState.isFiring || animState.timeoutValue > 0) {
-      action.setLoop(LoopOnce, 1);
-      action.clampWhenFinished = true;
-    } else {
-      action.setLoop(LoopRepeat, Infinity);
-      action.clampWhenFinished = false;
-    }
-
-    // Scale animation to fit the state timeout if requested.
-    if (animState.scaleAnimation && animState.timeoutValue > 0) {
-      const clipDuration = action.getClip().duration;
-      action.timeScale =
-        clipDuration > 0 ? clipDuration / animState.timeoutValue : 1;
-    } else {
-      action.timeScale = animState.reverse ? -1 : 1;
-    }
-
-    if (prevAction && prevAction !== action) {
-      prevAction.fadeOut(ANIM_TRANSITION_TIME);
-      action.reset().fadeIn(ANIM_TRANSITION_TIME).play();
-    } else {
-      action.reset().play();
-    }
-
-    currentAnimRef.current = targetName;
-  }
 }
