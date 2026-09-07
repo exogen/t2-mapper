@@ -61,7 +61,9 @@ const uploadable = all.filter((p) => !assetIgnoreList.ignores(p));
 const { groups, unknown } = groupByContentType(uploadable);
 
 console.log(
-  `${all.length} files under ${source}: ${uploadable.length} to sync, ${excluded.length} excluded.`,
+  `${all.length} files under ${source}: ${uploadable.length} eligible, ` +
+    `${excluded.length} excluded. Each pass uploads only the eligible files ` +
+    "whose size or timestamp differs from the bucket.",
 );
 
 if (unknown.size > 0) {
@@ -150,7 +152,11 @@ for (const [contentType, extensions] of [...groups].sort()) {
   }
 }
 
-if (reportFile && report.length > 0) {
+// Written even when empty: a sync that uploads nothing is the normal case
+// on a deploy that changed no assets, and the purge step reads this file
+// unconditionally. Skipping the write is how that step once failed with
+// ENOENT on a no-op deploy.
+if (reportFile) {
   await fs.writeFile(reportFile, report.join(""), "utf8");
   console.log(`\nWrote the change list to ${reportFile}.`);
 }

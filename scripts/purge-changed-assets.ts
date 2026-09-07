@@ -102,7 +102,16 @@ if (!inputFile) {
   process.exit(1);
 }
 
-const syncOutput = await fs.readFile(inputFile, "utf8");
+// A deploy that uploads nothing leaves an empty (or, from an older sync,
+// absent) report. That is success with nothing to do, not a reason to fail
+// the deploy.
+const syncOutput = await fs.readFile(inputFile, "utf8").catch((error) => {
+  if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+    console.log(`No sync report at ${inputFile}; nothing to purge.`);
+    return "";
+  }
+  throw error;
+});
 const urls = parseChangedUrls(syncOutput);
 
 if (urls.length === 0) {
