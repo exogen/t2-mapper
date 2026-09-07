@@ -58,7 +58,7 @@ jobs:
         # entry in the table, rather than shipping it untyped.
         run: |
           set -o pipefail
-          npx tsx scripts/sync-assets.ts \
+          npx tsx --tsconfig tsconfig.node.json scripts/sync-assets.ts \
             --bucket s3://t2-assets/game/base/ \
             --report r2-sync-output.txt \
             | tee sync-console.txt
@@ -70,7 +70,7 @@ jobs:
       - name: Purge changed assets from Cloudflare cache
         # Skips (visibly) until the purge secrets are configured.
         if: env.HAS_PURGE_SECRETS == 'true'
-        run: npx tsx scripts/purge-changed-assets.ts r2-sync-output.txt
+        run: npx tsx --tsconfig tsconfig.node.json scripts/purge-changed-assets.ts r2-sync-output.txt
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_PURGE_TOKEN }}
           CLOUDFLARE_ZONE_ID: ${{ secrets.CLOUDFLARE_ZONE_ID }}

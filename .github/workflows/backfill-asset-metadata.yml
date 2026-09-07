@@ -44,7 +44,7 @@ jobs:
 
       - name: Re-stamp metadata on all game assets
         run: |
-          npx tsx scripts/backfill-asset-metadata.ts \
+          npx tsx --tsconfig tsconfig.node.json scripts/backfill-asset-metadata.ts \
             --bucket s3://t2-assets/game/base/ \
             ${{ inputs.apply && '--apply' || '' }}
         env:

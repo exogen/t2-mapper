@@ -6,9 +6,9 @@
  */
 import fs from "node:fs/promises";
 import path from "node:path";
-import ignore from "ignore";
 import unzipper from "unzipper";
 import { normalizePath } from "@/src/stringUtils";
+import { assetIgnoreList } from "./assetIgnore";
 import { isTextAsset, toUtf8 } from "./encoding";
 import {
   archiveSortKey,
@@ -18,38 +18,6 @@ import {
 } from "./manifest";
 
 export const EXTRACTED_BASE_DIR = "docs/base";
-
-/**
- * Files the map tool never uses. Archives that are nothing but such files
- * — player skins, voice binds — are indistinguishable from useful ones by
- * type, so don't add those at all. Random scripts are typically fine,
- * since they're small (and other scripts may expect them to be available).
- *
- * effects/*.ifr are Immersion force-feedback projects (the game drives them
- * through IFC22.dll) and .sfk is Sound Forge's waveform cache — neither has
- * anything to render.
- */
-export const assetIgnoreList = ignore().add(`
-fonts/
-lighting/
-prefs/
-.DS_Store
-._*
-__MACOSX/
-desktop.ini
-*.dso
-*.gui
-*.ico
-*.ifr
-*.ml
-*.nav
-*.sfk
-*.txt
-*.md
-*.db
-.gitattributes
-.gitignore
-`);
 
 /** Source extension → the converted file the app actually loads. */
 const DERIVED_EXTENSIONS: Record<string, string> = {

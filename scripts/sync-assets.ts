@@ -18,7 +18,7 @@
 import { spawnSync } from "node:child_process";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { assetIgnoreList } from "./lib/assets.js";
+import { assetIgnoreList } from "./lib/assetIgnore.js";
 import {
   ASSET_CACHE_CONTROL,
   groupByContentType,
