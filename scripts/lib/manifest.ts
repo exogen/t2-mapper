@@ -55,6 +55,9 @@ export interface ManifestBuildResult {
  */
 const ignoreList = ignore().add(`
 .DS_Store
+._*
+__MACOSX/
+desktop.ini
 *.glb
 *.m4a
 *.ogg

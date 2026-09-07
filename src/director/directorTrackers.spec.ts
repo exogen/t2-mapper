@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import { DirectorTrackers } from "./directorTrackers";
 import type { PlayerRosterEntry, StreamSnapshot } from "../stream/types";
 import { playerName, targetIdForName } from "./dataset";
+import { DirectorFactReplay, type DirectorFactRecord } from "./factJournal";
+import { DirectorObservationReplay } from "./liveObservation";
 
 /** The least a snapshot needs for the trackers to sample players. */
 function snapshot(
@@ -57,6 +59,87 @@ function snapshot(
     matchStarted: true,
   } as unknown as StreamSnapshot;
 }
+
+describe("current-state recording", () => {
+  it("snapshots names, target generations, health, scores, and flags without changing the director", () => {
+    const recorded = new DirectorTrackers({ stateStreamId: "match" });
+    const cameraOnly = new DirectorTrackers();
+    const replay = new DirectorObservationReplay("match");
+    for (let t = 0; t <= 2; t += 0.5) {
+      const s = snapshot(t, [
+        {
+          targetId: 43,
+          name: t < 1 ? "Runner" : "Replacement",
+          clientId: t < 1 ? 1 : 2,
+          generation: t < 1 ? 0 : 1,
+        },
+      ]);
+      s.entities[0].health = t < 1 ? 0.5 : 1;
+      s.entities.push({
+        id: "flag",
+        type: "Item",
+        teamId: 2,
+        targetRenderFlags: 2,
+        position: [0, 0, 0],
+      });
+      s.teamScores = [
+        {
+          teamId: 2,
+          name: "Inferno",
+          score: t < 1 ? 0 : 1,
+          flagStatus: t < 1 ? "field" : "home",
+          playerCount: 1,
+        },
+      ];
+      s.matchClockMs = -60000 + t * 1000;
+      recorded.step(s, t);
+      cameraOnly.step(s, t);
+      replay.append(recorded.drainStates());
+      // Parsers can reuse and mutate their objects after a tick.
+      s.entities[0].playerName = "Future name";
+      s.teamScores[0].score = 99;
+    }
+    const atZero = replay.observe({ timeSec: 0, availableThroughSec: 2 });
+    expect(atZero.state?.players[0]).toMatchObject({
+      name: "Runner",
+      targetGeneration: 0,
+      clientId: 1,
+      health: 0.5,
+    });
+    expect(atZero.state?.teams[0].score).toBe(0);
+    expect(atZero.state?.flags[0]).toMatchObject({
+      status: "field",
+      teamId: 2,
+    });
+    expect(atZero.state?.match.clockMs).toBe(-60000);
+    expect(
+      replay.observe({ timeSec: 1, availableThroughSec: 2 }).state?.players[0],
+    ).toMatchObject({
+      name: "Replacement",
+      targetGeneration: 1,
+      clientId: 2,
+      health: 1,
+    });
+    const meta = { durationSec: 2, gameClassName: "CTFGame" };
+    expect(recorded.snapshot(meta, 2)).toEqual(cameraOnly.snapshot(meta, 2));
+    expect(cameraOnly.drainStates()).toEqual([]);
+    expect(recorded.drainFacts()).toEqual([]);
+  });
+
+  it("does not promote the director's missing-status home fallback to confirmed state", () => {
+    const tracker = new DirectorTrackers({ stateStreamId: "match" });
+    const s = snapshot(0, []);
+    s.entities.push({
+      id: "flag",
+      type: "Item",
+      teamId: 2,
+      targetRenderFlags: 2,
+      position: [0, 0, 0],
+    });
+    tracker.step(s, 0);
+    expect(tracker.drainStates()[0].flags[0].status).toBe("unknown");
+  });
+});
 
 describe("voice binds", () => {
   it("keeps taunts, cheers and compliments from canned chat, keyed to the speaker", () => {
@@ -191,5 +274,132 @@ describe("player identity tracking", () => {
     expect(entries.map((p) => p.name)).toEqual(["iwnljazzz", "jazzziwnl"]);
     expect(entries[1].aliases).toEqual(["iwnljazzz", "jazzziwnl"]);
     expect(entries[0].clientId).toBeUndefined();
+  });
+});
+
+describe("optional fact recording", () => {
+  const cast = [
+    { targetId: 7, name: "Killer", clientId: 1, generation: 0 },
+    { targetId: 8, name: "Runner", clientId: 2, generation: 0 },
+  ];
+  const meta = { durationSec: 12, gameClassName: "CTFGame" };
+  function play(t: number): StreamSnapshot {
+    const snap = snapshot(t, cast);
+    snap.entities[1].damageState = t >= 2 ? 2 : 0;
+    // Include already seen messages to exercise snapshot/reconnect deduping.
+    snap.serverEvents =
+      t >= 2
+        ? [
+            {
+              id: 1,
+              timeSec: 2,
+              msgType: "MsgLegitKill",
+              args: ["", "", "Runner", "", "", "Killer", "", "", "", "disc"],
+            },
+            {
+              id: 2,
+              timeSec: 2,
+              msgType: "MsgCTFFlagDropped",
+              args: ["", "", "Runner", "Inferno"],
+            },
+          ]
+        : [];
+    snap.chatMessages =
+      t >= 2
+        ? [
+            {
+              id: 1,
+              timeSec: 2,
+              kind: "server",
+              colorCode: 5,
+              sender: "",
+              text: "Killer hit a mid air shot. [69m, Spinfusor]",
+              segments: [],
+            },
+          ]
+        : [];
+    return snap;
+  }
+
+  it("records immediate messages and later attribution separately", () => {
+    const trackers = new DirectorTrackers({ factStreamId: "live-match" });
+    const records: DirectorFactRecord[] = [];
+    for (let t = 0; t <= 12; t += 0.5) {
+      trackers.step(play(t), t);
+      records.push(...trackers.drainFacts());
+    }
+    const drop = records.filter(
+      (r) => r.kind === "event" && r.value.type === "flag-drop",
+    );
+    expect(drop.map((r) => [r.revision, r.timeSec, r.availableAtSec])).toEqual([
+      [1, 2, 2],
+      [2, 2, 10],
+    ]);
+    expect(drop[0].kind === "event" && drop[0].value.dropKind).toBeUndefined();
+    expect(drop[1]).toMatchObject({ value: { dropKind: "died" } });
+    const deaths = records.filter((r) => r.kind === "death");
+    expect(
+      deaths.map((r) => [
+        r.availableAtSec,
+        r.value.killerTargetId,
+        r.value.midair,
+      ]),
+    ).toEqual([
+      [2, null, undefined],
+      [6, 7, undefined],
+      [10, 7, true],
+    ]);
+    const skills = records.filter((r) => r.kind === "skillShot");
+    expect(skills.map((r) => [r.availableAtSec, r.value.lethal])).toEqual([
+      [2, undefined],
+      [10, true],
+    ]);
+    // Replay cannot see the final dataset's classification at event time.
+    const replay = new DirectorFactReplay(records);
+    expect(replay.advanceTo(2).every((r) => r.revision === 1)).toBe(true);
+    expect(
+      replay.advanceTo(9).some((r) => r.kind === "event" && r.value.dropKind),
+    ).toBe(false);
+    expect(
+      replay
+        .advanceTo(10)
+        .some((r) => r.kind === "event" && r.value.dropKind === "died"),
+    ).toBe(true);
+  });
+
+  it("does not change the director dataset, regardless of consumer cadence", () => {
+    const cameraOnly = new DirectorTrackers();
+    const dynamic = new DirectorTrackers({ factStreamId: "same-match" });
+    const batch = new DirectorTrackers({ factStreamId: "same-match" });
+    const records: DirectorFactRecord[] = [];
+    for (let t = 0; t <= 12; t += 0.5) {
+      cameraOnly.step(play(t), t);
+      dynamic.step(play(t), t);
+      batch.step(play(t), t);
+      records.push(...dynamic.drainFacts());
+      expect(dynamic.snapshot(meta, t)).toEqual(cameraOnly.snapshot(meta, t));
+      expect(batch.snapshot(meta, t)).toEqual(cameraOnly.snapshot(meta, t));
+    }
+    expect(cameraOnly.drainFacts()).toEqual([]);
+    expect(batch.drainFacts()).toEqual(records);
+  });
+
+  it("keeps a recorded prefix unchanged when an unseen suffix resolves it", () => {
+    const short = new DirectorTrackers({ factStreamId: "same-match" });
+    const long = new DirectorTrackers({ factStreamId: "same-match" });
+    for (let t = 0; t <= 3; t += 0.5) {
+      short.step(play(t), t);
+      long.step(play(t), t);
+    }
+    const prefix = short.drainFacts();
+    const before = JSON.stringify(prefix);
+    // Finalizing the archive must not manufacture finite availability times.
+    short.snapshot(meta, Infinity);
+    expect(short.drainFacts()).toEqual([]);
+    for (let t = 3.5; t <= 12; t += 0.5) long.step(play(t), t);
+    expect(new DirectorFactReplay(long.drainFacts()).advanceTo(3)).toEqual(
+      prefix,
+    );
+    expect(JSON.stringify(prefix)).toBe(before);
   });
 });

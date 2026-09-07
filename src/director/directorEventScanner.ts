@@ -1,11 +1,11 @@
 /**
- * CastGenius's OWN chat-log event scanner.
+ * The auto-director's server-message scanner.
  *
  * The app has a timeline scanner (demoTimelineScanner) that curates
  * events for the seek bar — an app feature with app editorial rules
  * (observer recordings keep only flag/match events; the pub kill feed
  * is filtered as timeline noise). Cast generation is a different
- * product with different needs: it wants EVERY kill, positioned and
+ * consumer with different needs: it wants EVERY kill, positioned and
  * attributed, exactly when the server announced it. Both read the same
  * protocol tables (stream/serverMessages); what diverges is what each
  * scanner keeps, below.

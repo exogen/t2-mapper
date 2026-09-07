@@ -1,9 +1,10 @@
 import { readFileSync } from "node:fs";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createSwitcherStream, planShotsCausal, runSwitcher } from "./switcher";
 import { createFreeSpaceBuild } from "./freeSpace";
 import { CausalView } from "./causalView";
 import { DIRECTOR_LOOKAHEAD_SEC } from "./tunables";
+import * as variety from "./variety";
 import type {
   DirectorDataset,
   DirectorFlagSample,
@@ -128,6 +129,124 @@ function concernsFlag(shot: Shot, slot: number): boolean {
 }
 
 describe("planShotsCausal", () => {
+  it.each([
+    { eventType: "flag-grab" as const, lookahead: 0 },
+    { eventType: "flag-grab" as const, lookahead: 2 },
+    { eventType: "flag-cap" as const, lookahead: 2 },
+  ])(
+    "leaves a cutaway for $eventType on the previous flag at $lookahead seconds lookahead",
+    ({ eventType, lookahead }) => {
+      // The director was watching flag 2, then took a 9-second raid cutaway.
+      // Its remembered scoring subject is still flag 2, but that is not the
+      // picture. A major event there must end the raid. Grabs also react
+      // without lookahead, on the first tick after the server message.
+      const ds = dataset();
+      ds.durationSec = 90;
+      ds.events = [
+        { timeSec: 0, type: "match-start", description: "Match started" },
+        {
+          timeSec: 66.1,
+          type: eventType,
+          actor: "Slayer",
+          capturer: "Slayer",
+          flagTeamName: "Inferno",
+          description: "Slayer's flag play",
+        },
+      ];
+      ds.flagSamples = [];
+      ds.playerSamples = [];
+      for (let t = 0; t <= 90; t += 0.5) {
+        const held =
+          eventType === "flag-grab" ? t >= 66 : t >= 60.5 && t < 66.1;
+        const carriedPos: DirectorVec3 =
+          eventType === "flag-grab"
+            ? [800 - (t - 66) * 20, 0, 100]
+            : [Math.max(0, 800 - (t - 60.5) * 145), 0, 100];
+        ds.flagSamples.push({
+          timeSec: t,
+          slot: 1,
+          pos: STAND_1,
+          status: "home",
+          carrierTargetId: null,
+        });
+        ds.flagSamples.push({
+          timeSec: t,
+          slot: 2,
+          pos: held ? carriedPos : STAND_2,
+          status: held ? "held" : "home",
+          carrierTargetId: held ? 5 : null,
+        });
+        if (Number.isInteger(t))
+          ds.playerSamples.push({
+            timeSec: t,
+            targetId: 5,
+            teamId: 1,
+            pos: held ? carriedPos : [750, 0, 100],
+            armor: "light",
+          });
+      }
+      const pick = vi
+        .spyOn(variety, "pickVarietyShot")
+        .mockImplementation((_view, t) =>
+          t === 60
+            ? {
+                family: "destruction",
+                shot: {
+                  kind: "fixedOrbit",
+                  center: [400, 400, 100],
+                  radius: 30,
+                  startSec: 60,
+                  endSec: 69,
+                  transitionIn: "cut",
+                  reason: "Raid cutaway",
+                },
+              }
+            : null,
+        );
+      try {
+        const view = new CausalView(ds, lookahead);
+        const shots = runSwitcher(view);
+        const raid = shots.find((s) => s.reason === "Raid cutaway");
+        expect(raid).toBeDefined();
+        const before = shots[shots.indexOf(raid!) - 1];
+        expect(concernsFlag(before, 2)).toBe(true);
+        const reaction = Math.ceil((66.1 - lookahead) * 2) / 2;
+        expect(raid!.endSec).toBe(reaction);
+        const after = shots[shots.indexOf(raid!) + 1];
+        expect(after.startSec).toBe(reaction);
+        expect(concernsFlag(after, 2)).toBe(true);
+        expect(view.maxQueriedAhead).toBeLessThanOrEqual(lookahead);
+        if (eventType === "flag-cap") {
+          expect(
+            shots.some(
+              (s) => s.startSec === 66.1 && s.reason.startsWith("Aftermath"),
+            ),
+          ).toBe(true);
+        }
+
+        // Feed the same play dynamically, with the unseen suffix genuinely
+        // absent. The fix must make the same decisions in browser/live use.
+        const prefix = (through: number): DirectorDataset => ({
+          ...ds,
+          durationSec: Math.min(through, ds.durationSec),
+          flagSamples: ds.flagSamples.filter((s) => s.timeSec <= through),
+          playerSamples: ds.playerSamples.filter((s) => s.timeSec <= through),
+          events: ds.events.filter((e) => e.timeSec <= through),
+        });
+        const liveView = new CausalView(prefix(lookahead), lookahead);
+        const live = createSwitcherStream(liveView);
+        for (let t = 0.5; t <= ds.durationSec; t += 0.5) {
+          live.advanceTo(t, prefix(t + lookahead));
+        }
+        live.finish(ds.durationSec);
+        expect(live.shots).toEqual(shots);
+        expect(liveView.maxQueriedAhead).toBeLessThanOrEqual(lookahead);
+      } finally {
+        pick.mockRestore();
+      }
+    },
+  );
+
   it("produces a contiguous, ordered plan covering the whole demo", () => {
     const plan = planShotsCausal(dataset());
     expect(plan.gameMode).toBe("ctf");

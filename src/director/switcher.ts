@@ -755,9 +755,11 @@ function tick(state: SwitcherState, t: number): void {
     if (state.handledCaps.has(capEvent.timeSec)) continue;
     state.handledCaps.add(capEvent.timeSec);
     const slot = view.eventSlot(capEvent);
+    const interruptedDirective = state.directive != null;
     state.directive = null;
     if (slot != null) scheduleAftermath(state, slot, capEvent.timeSec);
     const onIt =
+      !interruptedDirective &&
       subjects[state.current].kind === "flag" &&
       (subjects[state.current] as { slot: number }).slot === slot;
     if (!onIt && slot != null) {
@@ -765,7 +767,13 @@ function tick(state: SwitcherState, t: number): void {
         state,
         subjects.findIndex((s) => s.kind === "flag" && s.slot === slot),
         t,
+        interruptedDirective,
       );
+      // The arrival beat may be shorter than the ordinary minimum hold.
+      // Keep it: dropping it when the aftermath opens would extend the
+      // interrupted cutaway across the capture's approach again.
+      const opened = state.shots[state.shots.length - 1];
+      if (opened && capEvent.timeSec > t) opened.quickCut = true;
     }
     return;
   }
@@ -788,9 +796,13 @@ function tick(state: SwitcherState, t: number): void {
     const slot = grab ? view.eventSlot(grab) : null;
     if (grab && slot != null) {
       const current = subjects[state.current];
-      const alreadyOnIt = current.kind === "flag" && current.slot === slot;
+      // A cutaway suspends the scoring subject without changing `current`.
+      // That remembered flag is NOT on screen while the set piece runs.
+      const watchingCurrent = state.directive == null;
+      const alreadyOnIt =
+        watchingCurrent && current.kind === "flag" && current.slot === slot;
       const ownStory =
-        current.kind === "flag"
+        watchingCurrent && current.kind === "flag"
           ? view.peekFlagEvents(current.slot, HOLD_EVENT_TYPES)[0]?.timeSec
           : undefined;
       const markHandled = () => {
@@ -805,12 +817,14 @@ function tick(state: SwitcherState, t: number): void {
         (ownStory == null || ownStory > grab.timeSec)
       ) {
         markHandled();
+        const interruptedDirective = state.directive != null;
         state.directive = null;
         state.suitUpUntil = Math.min(state.suitUpUntil, t);
         switchTo(
           state,
           subjects.findIndex((s) => s.kind === "flag" && s.slot === slot),
           t,
+          interruptedDirective,
         );
         // Anticipated grabs open a deliberately short pre-grab beat at
         // the stand; protect it from the fragment rule.
@@ -1172,8 +1186,16 @@ function bestSubject(state: SwitcherState, t: number): number {
   return best;
 }
 
-function switchTo(state: SwitcherState, index: number, t: number): void {
-  if (index < 0 || index === state.current) return;
+function switchTo(
+  state: SwitcherState,
+  index: number,
+  t: number,
+  resumeFromDirective = false,
+): void {
+  // Returning from a cutaway may select the SAME scoring subject, but it
+  // still needs a camera cut. Otherwise the cancelled set piece keeps its
+  // shot on screen until an unrelated restyle happens to replace it.
+  if (index < 0 || (index === state.current && !resumeFromDirective)) return;
   closeShot(state, t);
   state.current = index;
   state.segStartSec = t;

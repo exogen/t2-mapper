@@ -1,10 +1,9 @@
 /**
- * The commentary layer: a structured, factual description of what each
- * shot shows, computed as the planner's final pass with the same full
- * knowledge the shot selection had. The consumer is an LLM commentator
- * — the facts live here, the color lives there. Anything the scan can
- * only know because it read the future is quarantined under `future`,
- * so a live-style commentator can ignore it and never spoil a result.
+ * Archive shot summaries for commentary. Player descriptions use the
+ * midpoint and inbound estimates inspect part of the shot. Explicit flag
+ * outcomes live under `future`, but removing that field does NOT make an
+ * archive summary safe to read at the shot's start. Live consumers use
+ * liveObservation.ts with timestamped state and camera frames instead.
  */
 import type {
   DirectorDataset,

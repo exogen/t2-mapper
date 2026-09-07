@@ -1,0 +1,439 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$ref": "#/definitions/DirectorObservationTrace",
+  "definitions": {
+    "DirectorObservationTrace": {
+      "type": "object",
+      "properties": {
+        "format": {
+          "type": "string",
+          "const": "t2-director-observations"
+        },
+        "version": {
+          "type": "number",
+          "const": 1
+        },
+        "streamId": {
+          "type": "string"
+        },
+        "throughSec": {
+          "type": "number"
+        },
+        "states": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/DirectorStateFrame"
+          }
+        },
+        "cameras": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/DirectorCameraFrame"
+          }
+        }
+      },
+      "required": [
+        "format",
+        "version",
+        "streamId",
+        "throughSec",
+        "states",
+        "cameras"
+      ],
+      "additionalProperties": false,
+      "description": "State frames can be recorded without a camera, model, or audio track. A camera trace, when supplied, must come from its actual owner; do not relabel archive midpoint scene descriptions as rendered observations."
+    },
+    "DirectorStateFrame": {
+      "type": "object",
+      "properties": {
+        "streamId": {
+          "type": "string"
+        },
+        "sequence": {
+          "type": "number",
+          "description": "Starts at 1; independent of the fact journal's sequence."
+        },
+        "timeSec": {
+          "type": "number"
+        },
+        "availableAtSec": {
+          "type": "number"
+        },
+        "players": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/ObservedPlayer"
+          }
+        },
+        "flags": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/ObservedFlag"
+          }
+        },
+        "teams": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "teamId": {
+                "type": "number"
+              },
+              "name": {
+                "type": "string"
+              },
+              "score": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "teamId",
+              "name",
+              "score"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "match": {
+          "type": "object",
+          "properties": {
+            "clockMs": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "description": "Signed server clock: negative counts down, positive counts up. Neither file duration nor a positive clock proves overtime."
+            },
+            "started": {
+              "type": "boolean"
+            },
+            "ended": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "clockMs",
+            "started",
+            "ended"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "streamId",
+        "sequence",
+        "timeSec",
+        "availableAtSec",
+        "players",
+        "flags",
+        "teams",
+        "match"
+      ],
+      "additionalProperties": false,
+      "description": "A complete sampled state of scoped players/flags, not a delta. Absence means unobserved, not dead/disconnected. Sampling time is not a guarantee that every ghost received a fresh network update at that instant."
+    },
+    "ObservedPlayer": {
+      "type": "object",
+      "properties": {
+        "timeSec": {
+          "type": "number"
+        },
+        "targetId": {
+          "type": "number"
+        },
+        "teamId": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "pos": {
+          "$ref": "#/definitions/DirectorVec3"
+        },
+        "heading": {
+          "type": "number",
+          "description": "Which way they are facing, in the orbit-yaw convention (radians, atan2(dx, dy) over Torque x/y). Lets a camera be placed in FRONT of a player — needed for a roster close-up, where the point is their face rather than their back."
+        },
+        "armor": {
+          "type": "string",
+          "enum": [
+            "light",
+            "medium",
+            "heavy"
+          ],
+          "description": "Armor class from the player's shape (\"heavy\" carries the mortar; \"light\" cannot) — the ground truth for weapon attribution."
+        },
+        "pack": {
+          "type": "string",
+          "description": "Mounted backpack, by commentary name (\"energy pack\", \"mortar turret barrel\", …) — what they're equipped FOR."
+        },
+        "health": {
+          "type": "number",
+          "description": "Normalized health (0 = dead, 1 = full), from the ghost's damage."
+        },
+        "targetGeneration": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Together with streamId, targetId and generation identify an occupant. Null generation means identity continuity is unknown, not generation zero."
+        },
+        "clientId": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "name": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Name as observed at this sample, never the final roster's name."
+        }
+      },
+      "required": [
+        "clientId",
+        "name",
+        "pos",
+        "targetGeneration",
+        "targetId",
+        "teamId",
+        "timeSec"
+      ],
+      "additionalProperties": false
+    },
+    "DirectorVec3": {
+      "type": "array",
+      "items": {
+        "type": "number"
+      },
+      "minItems": 3,
+      "maxItems": 3,
+      "description": "Torque-space position [x, y, z]."
+    },
+    "ObservedFlag": {
+      "type": "object",
+      "properties": {
+        "slot": {
+          "type": "number"
+        },
+        "teamId": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "pos": {
+          "$ref": "#/definitions/DirectorVec3"
+        },
+        "carrierTargetId": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "home",
+            "held",
+            "field",
+            "unknown"
+          ],
+          "description": "Missing server status is unknown unless a carrier is observed."
+        }
+      },
+      "required": [
+        "slot",
+        "teamId",
+        "pos",
+        "carrierTargetId",
+        "status"
+      ],
+      "additionalProperties": false
+    },
+    "DirectorCameraFrame": {
+      "type": "object",
+      "properties": {
+        "streamId": {
+          "type": "string"
+        },
+        "timeSec": {
+          "type": "number",
+          "description": "Picture timestamp, not the planner's lookahead cursor."
+        },
+        "availableAtSec": {
+          "type": "number",
+          "description": "When this decision/pose became available on the source clock."
+        },
+        "shot": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "revision": {
+              "type": "number"
+            },
+            "kind": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "const": "followFlag"
+                },
+                {
+                  "type": "string",
+                  "const": "followPlayer"
+                },
+                {
+                  "type": "string",
+                  "const": "fixedOrbit"
+                },
+                {
+                  "type": "string",
+                  "const": "sweep",
+                  "description": "A slow lateral flyby along a fixed path, looking at a fixed point — the roster-lineup shot used over a pre-match line-up, where nobody is moving yet and an orbit has nothing to reveal."
+                },
+                {
+                  "type": "string",
+                  "const": "dolly",
+                  "description": "Cinematic flying camera: trails the subject at a three-quarter angle with damped, eased motion — film-style, not a rigid orbit lock. Driven directly by DirectorController in freeFly."
+                }
+              ]
+            },
+            "subject": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/ShotSubject"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "id",
+            "revision",
+            "kind",
+            "subject"
+          ],
+          "additionalProperties": false,
+          "description": "IDs and revisions belong to the camera publisher. A new decision or reset must not reuse an old identity for an unrelated shot."
+        },
+        "commitment": {
+          "type": "string",
+          "enum": [
+            "provisional",
+            "committed"
+          ]
+        },
+        "poseSource": {
+          "type": "string",
+          "enum": [
+            "rendered",
+            "planned",
+            "unknown"
+          ]
+        },
+        "view": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/DirectorCameraView"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "streamId",
+        "timeSec",
+        "availableAtSec",
+        "shot",
+        "commitment",
+        "poseSource",
+        "view"
+      ],
+      "additionalProperties": false
+    },
+    "ShotSubject": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "flag"
+            },
+            "slot": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "type",
+            "slot"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "player"
+            },
+            "targetId": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "type",
+            "targetId"
+          ],
+          "additionalProperties": false
+        }
+      ],
+      "description": "Which flag or player a shot's camera is concerned with."
+    },
+    "DirectorCameraView": {
+      "type": "object",
+      "properties": {
+        "eye": {
+          "$ref": "#/definitions/DirectorVec3"
+        },
+        "forward": {
+          "$ref": "#/definitions/DirectorVec3"
+        },
+        "up": {
+          "$ref": "#/definitions/DirectorVec3"
+        },
+        "verticalFovDeg": {
+          "type": "number"
+        },
+        "aspect": {
+          "type": "number"
+        },
+        "near": {
+          "type": "number"
+        },
+        "far": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "eye",
+        "forward",
+        "up",
+        "verticalFovDeg",
+        "aspect",
+        "near",
+        "far"
+      ],
+      "additionalProperties": false,
+      "description": "A perspective camera in Torque coordinates. Supplied by the camera owner; observation code never moves it or estimates a follow path."
+    }
+  }
+}

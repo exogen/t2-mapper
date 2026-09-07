@@ -4,7 +4,9 @@
  *   npm run cast:export-schema
  *
  * Reads src/director/castContract.ts and writes generated/cast.schema.json.
- * CastGenius imports that file (its `cast:import-schema`) to produce
+ * Also exports independent fact, state/camera trace, and resolved-observation
+ * schemas alongside it. CastGenius imports the archive cast schema
+ * (its `cast:import-schema`) to produce
  * its types, its validator, and the field guide its model reads — the
  * JSDoc in the contract is the documentation, so write it for that
  * reader.
@@ -41,3 +43,41 @@ await fs.writeFile(OUT, JSON.stringify(out, null, 2) + "\n");
 console.log(
   `wrote ${path.relative(ROOT, OUT)} (contract v${CAST_CONTRACT_VERSION}, ${Object.keys(schema.definitions ?? {}).length} definitions)`,
 );
+
+// Evidence traces are a separate contract: optional director diagnostics,
+// independent of the shot sidecar and its commentary consumers.
+const factSchema = createGenerator({
+  path: path.join(ROOT, "src/director/factJournal.ts"),
+  tsconfig: path.join(ROOT, "tsconfig.app.json"),
+  type: "DirectorFactTrace",
+  jsDoc: "extended",
+  additionalProperties: false,
+  expose: "export",
+  topRef: true,
+  skipTypeCheck: true,
+}).createSchema("DirectorFactTrace");
+const factOut = path.join(ROOT, "generated", "director-facts.schema.json");
+await fs.writeFile(factOut, JSON.stringify(factSchema, null, 2) + "\n");
+console.log(`wrote ${path.relative(ROOT, factOut)}`);
+
+for (const [type, filename] of [
+  ["DirectorObservationTrace", "director-observations.schema.json"],
+  ["DirectorObservation", "director-observation.schema.json"],
+] as const) {
+  const observationSchema = createGenerator({
+    path: path.join(ROOT, "src/director/observationContract.ts"),
+    tsconfig: path.join(ROOT, "tsconfig.app.json"),
+    type,
+    jsDoc: "extended",
+    additionalProperties: false,
+    expose: "export",
+    topRef: true,
+    skipTypeCheck: true,
+  }).createSchema(type);
+  const observationOut = path.join(ROOT, "generated", filename);
+  await fs.writeFile(
+    observationOut,
+    JSON.stringify(observationSchema, null, 2) + "\n",
+  );
+  console.log(`wrote ${path.relative(ROOT, observationOut)}`);
+}

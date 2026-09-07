@@ -114,20 +114,14 @@ export async function startDirector(): Promise<void> {
       const ok = await prepareDirector();
       if (!ok) return;
     }
-    // Hold for the commentary track's opening buffer (the gate resolves
-    // once enough audio is loaded at the start position, on error, or
-    // at its safety ceiling), showing the scan spinner meanwhile — the
-    // broadcast should open with the booth talking, not buffering.
-    if (commentaryGate) {
-      demoDirectorStore.setState({ status: "scanning", scanProgress: 0 });
-      try {
-        await commentaryGate();
-      } catch (err) {
-        // The broadcast must start even if the pre-roll buffer hold
-        // misbehaves — a gate failure is a degraded start, not a stop
-        // (an unhandled throw here would strand status at "scanning").
-        log.warn("commentary gate failed: %o", err);
-      }
+    // Audio preparation is optional and cannot delay camera startup. A
+    // missing, rejected, or never-resolving preload leaves directing alone.
+    if (commentaryPreload) {
+      void Promise.resolve()
+        .then(commentaryPreload)
+        .catch((err: unknown) => {
+          log.warn("commentary preload failed: %o", err);
+        });
     }
   } finally {
     startingDirector = false;
@@ -135,17 +129,13 @@ export async function startDirector(): Promise<void> {
   beginDirecting();
 }
 
-/**
- * A pre-start hold registered by the commentary audio player: begin
- * fetching the track and resolve when it's ready to play — or after a
- * short deadline, so a slow download never stalls the director for
- * long. Registered only while commentary can actually play (component
- * mounted, audio enabled).
- */
-let commentaryGate: (() => Promise<void>) | null = null;
+/** Optional audio warm-up, started alongside the camera with no readiness gate. */
+let commentaryPreload: (() => void | Promise<void>) | null = null;
 
-export function setCommentaryGate(gate: (() => Promise<void>) | null): void {
-  commentaryGate = gate;
+export function setCommentaryPreload(
+  preload: (() => void | Promise<void>) | null,
+): void {
+  commentaryPreload = preload;
 }
 
 /**

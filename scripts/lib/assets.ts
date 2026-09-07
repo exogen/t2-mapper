@@ -9,6 +9,7 @@ import path from "node:path";
 import ignore from "ignore";
 import unzipper from "unzipper";
 import { normalizePath } from "@/src/stringUtils";
+import { isTextAsset, toUtf8 } from "./encoding";
 import {
   archiveSortKey,
   resolveResourcePath,
@@ -23,17 +24,26 @@ export const EXTRACTED_BASE_DIR = "docs/base";
  * — player skins, voice binds — are indistinguishable from useful ones by
  * type, so don't add those at all. Random scripts are typically fine,
  * since they're small (and other scripts may expect them to be available).
+ *
+ * effects/*.ifr are Immersion force-feedback projects (the game drives them
+ * through IFC22.dll) and .sfk is Sound Forge's waveform cache — neither has
+ * anything to render.
  */
 export const assetIgnoreList = ignore().add(`
 fonts/
 lighting/
 prefs/
 .DS_Store
+._*
+__MACOSX/
+desktop.ini
 *.dso
 *.gui
 *.ico
+*.ifr
 *.ml
 *.nav
+*.sfk
 *.txt
 *.md
 *.db
@@ -64,7 +74,9 @@ export function isDerivedFile(filePath: string): boolean {
 export interface ArchiveEntry {
   /** Normalized (forward-slash) path inside the archive. */
   path: string;
+  /** Uncompressed size in the archive, before any text normalization. */
   size: number;
+  /** The bytes as they should land on disk: text files re-encoded as UTF-8. */
   read: () => Promise<Buffer>;
 }
 
@@ -86,13 +98,33 @@ export async function listArchiveEntries(
       throw new Error(`Refusing archive entry outside its root: ${entry.path}`);
     }
     if (assetIgnoreList.ignores(resourcePath)) continue;
+    let content: Promise<Buffer> | undefined;
     entries.set(resourcePath, {
       path: resourcePath,
       size: entry.uncompressedSize,
-      read: () => entry.buffer(),
+      read: () => (content ??= readAsUtf8(() => entry.buffer(), resourcePath)),
     });
   }
   return [...entries.values()];
+}
+
+/**
+ * Text files are normalized to UTF-8 on the way in, so docs/base holds one
+ * encoding and the app never has to guess. Binary files pass through.
+ */
+async function readAsUtf8(
+  read: () => Promise<Buffer>,
+  resourcePath: string,
+): Promise<Buffer> {
+  const bytes = await read();
+  if (!isTextAsset(resourcePath)) return bytes;
+  const converted = toUtf8(bytes);
+  if (converted.problem) {
+    console.warn(`WARNING: ${resourcePath}: ${converted.problem}`);
+  } else if (converted.warning) {
+    console.warn(`WARNING: ${resourcePath}: ${converted.warning}`);
+  }
+  return converted.bytes;
 }
 
 /**
@@ -147,7 +179,9 @@ export async function planExtract(
       continue;
     }
     const current = await fs.readFile(path.join(outDir, entry.path));
-    if (current.length === entry.size && current.equals(await entry.read())) {
+    // Compared against entry.read(), not entry.size: a normalized text file
+    // is longer on disk than it is in the archive.
+    if (current.equals(await entry.read())) {
       plan.unchanged.push(entry.path);
       const derived = derivedPath(entry.path);
       if (derived && existing.has(derived)) keep.add(derived);

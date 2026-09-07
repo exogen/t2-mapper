@@ -1,16 +1,17 @@
 /**
  * The staging pass: solve every fixedOrbit placement — and verify every
- * follow shot — against REAL geometry at plan time, across the shot's
- * whole duration.
+ * follow shot — against REAL geometry over the supplied time span.
  *
  * The planner (planShots) is pure and geometry-blind; the runtime used
  * to compensate with a reactive search at each cut that could silently
  * fail ("a bad angle still beats no shot") — measured at 24.5% of
  * airtime with the subject's sightline blocked. This pass runs where
  * plans are actually made (the app and the backfill browser, with the
- * collision world loaded) and has what the runtime never does: the
- * subject's entire future path. Placements are chosen by how much of
- * the shot they can actually SEE, and a location that admits no
+ * collision world loaded). The offline stagePlan can inspect the whole
+ * recorded path. The causal CTF pipeline calls stageShots before publishing
+ * each camera and limits the checked span to the available prefix; later
+ * motion is handled by the live visibility rail. Placements are chosen by
+ * how much of the shot they can actually SEE, and a location that admits no
  * watchable camera changes the shot instead of shipping it — pull in
  * tight, watch the doorway, follow the subject, or move to what the
  * subject is shooting at.

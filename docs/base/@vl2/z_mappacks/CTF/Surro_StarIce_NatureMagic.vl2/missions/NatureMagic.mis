@@ -1132,7 +1132,7 @@ new SimGroup(MissionGroup) {
 			dataBlock = "WayPointMarker";
 			lockCount = "0";
 			homingCount = "0";
-			name = "MotherNature´s Favorite Tree";
+			name = "MotherNatureÂ´s Favorite Tree";
 			team = "0";
 		};
 		new TSStatic() {

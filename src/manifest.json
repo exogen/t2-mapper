@@ -2383,10 +2383,6 @@
       "audio/fx/weapons/spinfusor_projectile.wav",
       ["audio.vl2"]
     ],
-    "audio/fx/weapons/spinfusor_reload.sfk": [
-      "audio/fx/weapons/spinfusor_reload.sfk",
-      ["audio.vl2"]
-    ],
     "audio/fx/weapons/spinfusor_reload.wav": [
       "audio/fx/weapons/spinfusor_reload.wav",
       ["audio.vl2"]
@@ -12293,14 +12289,6 @@
     ],
     "autoload.cs": ["autoload.cs", ["z_scripts/support.vl2"]],
     "console_end.cs": ["console_end.cs", ["base.vl2"]],
-    "effects/armor.ifr": ["effects/Armor.ifr", ["base.vl2"]],
-    "effects/explosions.ifr": ["effects/explosions.ifr", ["base.vl2"]],
-    "effects/gui.ifr": ["effects/gui.ifr", ["base.vl2"]],
-    "effects/misc.ifr": ["effects/misc.ifr", ["base.vl2"]],
-    "effects/packs.ifr": ["effects/packs.ifr", ["base.vl2"]],
-    "effects/powered.ifr": ["effects/powered.ifr", ["base.vl2"]],
-    "effects/vehicles.ifr": ["effects/vehicles.ifr", ["base.vl2"]],
-    "effects/weapons.ifr": ["effects/weapons.ifr", ["base.vl2"]],
     "flags.png": ["flags.png", ["z_textures/zflags.vl2"]],
     "gui/guiprofiles.cs": ["gui/guiProfiles.cs", ["scripts.vl2"]],
     "gui/multiinterpolateoptions.cs": [

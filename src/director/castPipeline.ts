@@ -32,7 +32,6 @@ import {
 import { detectMode } from "./planner";
 import {
   addReports,
-  auditAhead,
   emptyReport,
   stagePlan,
   stageShots,
@@ -40,10 +39,12 @@ import {
 } from "./stage";
 import { CausalView } from "./causalView";
 import { describeScenes } from "./scene";
-import { DIRECTOR_LOOKAHEAD_SEC } from "./tunables";
+import { DIRECTOR_LOOKAHEAD_SEC, DIRECTOR_TICK_SEC } from "./tunables";
 import type { DirectorDataset, Shot, ShotPlan } from "./types";
 import { CAST_CONTRACT_VERSION } from "./castContract";
 import { describeVenue } from "./venue";
+import type { DirectorFactRecord } from "./factJournal";
+import type { DirectorStateFrame } from "./observationContract";
 
 export interface CastPipelineOptions {
   /** Scan progress, 0..1. */
@@ -127,6 +128,10 @@ export function describeStaging(staged: StageReport): string {
 export interface CastStreamOptions {
   ensureWorld?: () => Promise<void>;
   signal?: AbortSignal;
+  /** Optional evidence recording, independent of camera planning. */
+  factStreamId?: string;
+  /** Optional fresh state recording. Use the same epoch as factStreamId. */
+  stateStreamId?: string;
 }
 
 export interface CastStream {
@@ -151,6 +156,10 @@ export interface CastStream {
   advanceTo(sec: number): Promise<void>;
   /** Everything remaining, for a caller that wants the whole thing. */
   finish(): Promise<ShotPlan>;
+  /** Pull newly available evidence without running a commentary consumer. */
+  drainFacts(): DirectorFactRecord[];
+  /** State at sampling time, never archive midpoint scene descriptions. */
+  drainStates(): DirectorStateFrame[];
 }
 
 /**
@@ -163,8 +172,8 @@ export interface CastStream {
  * and froze the picture for up to 3.3 seconds at a time.
  */
 export const CAST_MARGIN_SEC = 2;
-/** Chunk the batch path walks in, so its scan keeps yielding. */
-const FINISH_CHUNK_SEC = 60;
+/** Let cancellation and browser frames run during a long seek or batch build. */
+const WORK_SLICE_MS = 16;
 
 /** Thrown when a recording's game mode has no online switcher. */
 class NotStreamable extends Error {}
@@ -177,104 +186,139 @@ export async function createCastStream(
   // staging solves sight lines. Same ordering rule as the batch path.
   await options.ensureWorld?.();
 
-  const scan = await createDirectorScanStream(demoBuffer);
+  const scan = await createDirectorScanStream(demoBuffer, {
+    factStreamId: options.factStreamId,
+    stateStreamId: options.stateStreamId,
+  });
   let switcher: SwitcherStream | null = null;
   let view: CausalView | null = null;
   let planned = 0;
-  /** Shots the per-shot staging passes have solved. */
-  const staged = new WeakSet<Shot>();
-  /** Indices of closed shots (every one but the open tail) not yet
-   *  staged, in order. */
-  const unstagedClosed = (shots: Shot[]): number[] => {
-    const out: number[] = [];
-    for (let i = 0; i < shots.length - 1; i++) {
-      if (!staged.has(shots[i])) out.push(i);
-    }
-    return out;
-  };
+  // The switcher owns decisions; the renderer owns their staged copies.
+  // A placement repair can replace a camera mechanism without changing
+  // the switcher's remembered subject, directive, or style comparisons.
+  const cameras = new WeakMap<Shot, Shot>();
+  const described = new WeakSet<Shot>();
   let complete = false;
   let latestDataset: DirectorDataset | null = null;
-  // Everything from here on is still rewritable; everything before it
-  // has been handed to the playhead.
-  let playheadSec = 0;
   const report = emptyReport();
-  let current: ShotPlan = {
+  const current: ShotPlan = {
     contractVersion: CAST_CONTRACT_VERSION,
     gameMode: "ctf",
     shots: [],
     coverage: [],
   };
 
-  const grow = async (toSec: number): Promise<void> => {
+  const publish = (dataset: DirectorDataset): void => {
+    const decisions = switcher?.shots ?? [];
+    const shots = decisions.map((decision) => {
+      let camera = cameras.get(decision);
+      if (!camera) {
+        // Solve BEFORE publication using only the available path. Future
+        // movement belongs to the live camera's visibility rail, not an
+        // archive repair after the shot has already aired.
+        const candidate = structuredClone(decision);
+        candidate.endSec = Math.min(candidate.endSec, dataset.durationSec);
+        const pending = [candidate];
+        addReports(report, stageShots(pending, [0], dataset));
+        camera = pending[0];
+        cameras.set(decision, camera);
+      }
+      // Cuts may shorten an open shot or discard a provisional fragment.
+      // Its placement and object identity stay fixed once published.
+      camera.startSec = decision.startSec;
+      camera.endSec = decision.endSec;
+      camera.quickCut = decision.quickCut;
+      return camera;
+    });
+    current.shots.length = 0;
+    current.shots.push(...shots);
+  };
+
+  const step = async (toSec: number): Promise<void> => {
     if (options.signal?.aborted) {
       throw new DOMException("Aborted", "AbortError");
     }
     // Scan a lookahead beyond what we plan, so the causal view has the
     // information it is entitled to.
-    await scan.advanceTo(toSec + DIRECTOR_LOOKAHEAD_SEC + 1);
+    await scan.advanceTo(toSec + DIRECTOR_LOOKAHEAD_SEC);
     const dataset = scan.datasetTo(toSec + DIRECTOR_LOOKAHEAD_SEC);
     latestDataset = dataset;
+    planned = toSec;
     if (!switcher || !view) {
       // Only CTF has an online switcher; the other modes still go
       // through the oracle planner, which needs the whole recording.
       // Streaming one of those would silently cast it as CTF.
       if (detectMode(dataset) !== "ctf") {
+        // From-connect demos announce the mode after their first packets.
+        // An empty initial snapshot is not evidence for the offline
+        // landmark planner. Wait for metadata within the growing prefix.
+        if (dataset.gameClassName == null && toSec < scan.durationSec) return;
         throw new NotStreamable();
       }
       view = new CausalView(dataset);
       switcher = createSwitcherStream(view);
-      // The plan holds the switcher's OWN array, so a shot is in the
-      // plan the moment it is opened. Rebuilding `current` only when a
-      // shot CLOSED left the plan empty for the first fifteen seconds —
-      // and the store reads an empty plan as "no cast for this
-      // recording" and gives up.
-      current = {
-        contractVersion: CAST_CONTRACT_VERSION,
-        gameMode: "ctf",
-        shots: switcher.shots,
-        coverage: [],
-        matchFacts: dataset.matchFacts,
-      };
     }
     switcher.advanceTo(toSec, dataset);
-    planned = toSec;
-    // Stage the shots that have closed since last time. Staging reads
-    // the dataset for subject paths, so it runs on the same snapshot.
-    // "Since last time" is by IDENTITY, not by index: the audit below
-    // drops and merges shots in this same array, so a count of staged
-    // shots drifted past newly closed ones and they went to air
-    // unsolved and undescribed.
-    const pending = unstagedClosed(switcher.shots);
-    if (pending.length > 0) {
-      addReports(report, stageShots(switcher.shots, pending, dataset));
-      for (const i of pending) staged.add(switcher.shots[i]);
-    }
-    // The plan-level passes below are O(plan) and only have anything to
-    // do when a shot has CLOSED. Running them every tick is what turned
-    // live direction into a series of stalls. The plan itself is always
-    // current: it shares the switcher's array.
+    publish(dataset);
     current.matchFacts = dataset.matchFacts;
     // The venue is known once the world has arrived, and it does not
     // change — described once, before the booth's first word.
     if (!current.venue && dataset.matchFacts?.worldCompleteSec != null) {
       current.venue = describeVenue(dataset) ?? undefined;
     }
-    if (pending.length === 0) return;
-    // Only the shots that do not have a scene yet.
-    describeScenes(current, dataset);
-    // Audit the part of the plan the viewer has not reached. The
-    // verdicts need no lookahead — geometry does not move — so there is
-    // no reason to let a shot inside a wall reach air just because the
-    // plan is still being written.
-    addReports(report, auditAhead(current, dataset, playheadSec, true));
+    // Archive descriptions can wait for closure; camera placements cannot.
+    const closed = current.shots.slice(0, -1);
+    if (closed.some((shot) => !described.has(shot))) {
+      const archive = { ...current, shots: closed };
+      describeScenes(archive, dataset);
+      current.flagTimeline = archive.flagTimeline;
+      for (const shot of closed) described.add(shot);
+    }
+  };
+
+  const finalize = (): ShotPlan => {
+    if (complete) return current;
+    switcher?.finish(scan.durationSec);
+    const dataset = scan.datasetTo(scan.durationSec);
+    latestDataset = dataset;
+    publish(dataset);
+    // Assemble metadata without restaging or rewriting camera history.
+    // In particular, the offline cross-shot audit cannot remove footage
+    // or change placements that a dynamic viewer has already seen.
+    Object.assign(current, assembleCastPlan(current.shots, dataset));
+    complete = true;
+    return current;
+  };
+
+  const grow = async (toSec: number): Promise<void> => {
+    // Tracker records gain positions and classifications after their
+    // events arrive. Scanning a batch chunk before planning its earlier
+    // ticks exposed those revisions too soon, even through CausalView's
+    // event-time filter. Replay the same scan/decision steps regardless
+    // of caller cadence, including seeks and irregular browser frames.
+    const target = Math.min(
+      Math.ceil(toSec / DIRECTOR_TICK_SEC) * DIRECTOR_TICK_SEC,
+      scan.durationSec,
+    );
+    let yieldedAt = performance.now();
+    while (planned < target) {
+      await step(Math.min(planned + DIRECTOR_TICK_SEC, target));
+      if (performance.now() - yieldedAt >= WORK_SLICE_MS) {
+        await new Promise<void>((resolve) => setTimeout(resolve, 0));
+        yieldedAt = performance.now();
+      }
+    }
   };
 
   // Enough to open on, and no more.
   await grow(Math.min(CAST_MARGIN_SEC, scan.durationSec));
+  while (!switcher && planned < scan.durationSec) {
+    await grow(Math.min(planned + DIRECTOR_TICK_SEC, scan.durationSec));
+  }
 
   return {
     get shots() {
-      return switcher?.shots ?? [];
+      return current.shots;
     },
     get staged() {
       return report;
@@ -292,48 +336,19 @@ export async function createCastStream(
       return complete;
     },
     durationSec: scan.durationSec,
+    drainFacts: () => scan.drainFacts(),
+    drainStates: () => scan.drainStates(),
     async advanceTo(sec: number): Promise<void> {
-      playheadSec = Math.max(playheadSec, sec);
-      // Up to the PLAYHEAD, and no further. There is no planning ahead
-      // in a live cast — the future does not exist — and pretending
-      // otherwise is what produced multi-second stalls: work that
-      // belongs spread across playback got done in bursts.
-      //
-      // The director never queries past `now + lookahead` anyway, so
-      // this is not a compromise; it is the thing the causal design was
-      // for. A demo is simply a live game whose packets arrive early.
+      if (complete) return;
+      // Keep a small margin ahead of playback, using the same bounded
+      // input steps as batch generation even when the viewer seeks.
       await grow(Math.min(sec + CAST_MARGIN_SEC, scan.durationSec));
+      if (planned >= scan.durationSec) finalize();
     },
     async finish(): Promise<ShotPlan> {
-      // The batch caller wants the whole thing; nothing is playing, so
-      // there is no frame loop to protect. Walk it in chunks anyway so
-      // the scan keeps yielding.
-      while (planned < scan.durationSec) {
-        await grow(Math.min(planned + FINISH_CHUNK_SEC, scan.durationSec));
-      }
       if (complete) return current;
-      switcher?.finish(scan.durationSec);
-      const dataset = scan.datasetTo(scan.durationSec);
-      latestDataset = dataset;
-      const shots = switcher?.shots ?? [];
-      const pending = shots
-        .map((shot, i) => (staged.has(shot) ? -1 : i))
-        .filter((i) => i >= 0);
-      addReports(report, stageShots(shots, pending, dataset));
-      for (const i of pending) staged.add(shots[i]);
-      // Assembled by the SAME function the batch planner uses, so the
-      // streamed plan cannot quietly omit a field — it was missing
-      // `skipToSec`, which the commentary track reads.
-      const plan = assembleCastPlan(shots, dataset);
-      // Only now: these rewrite neighbours, so they wait until nothing
-      // more is coming.
-      // The tail was audited slice by slice; this catches the last one
-      // and anything the final staging pass changed. No floor: nothing
-      // is playing any more.
-      addReports(report, auditAhead(plan, dataset, -Infinity));
-      current = plan;
-      complete = true;
-      return plan;
+      await grow(scan.durationSec);
+      return finalize();
     },
   };
 }

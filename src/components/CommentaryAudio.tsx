@@ -4,9 +4,8 @@ import { createLogger } from "../logger";
 import { engineStore } from "../state/engineStore";
 import {
   CAST_LOCAL_PLAN,
-  DIRECTOR_INTRO_LEAD_SEC,
   demoDirectorStore,
-  setCommentaryGate,
+  setCommentaryPreload,
 } from "../state/demoDirectorStore";
 import { demoLoadStore } from "../state/demoLoadStore";
 import { commentarySidecarUrl } from "../stream/demoIndex";
@@ -25,15 +24,6 @@ const HARD_SNAP_SEC = 0.4;
 /** Smaller drift is trimmed away by nudging playbackRate up to ±5%. */
 const RATE_TRIM_MAX = 0.05;
 const RATE_TRIM_GAIN = 0.25;
-/**
- * The director start waits until this much audio is buffered at the
- * start position (~120KB at the tracks' 32kbps Opus — the browser
- * only exposes buffered TIME ranges, so bytes convert via bitrate),
- * showing the scan spinner meanwhile. The ceiling caps the wait: past
- * it the director starts anyway and the track joins late, in sync.
- */
-const MIN_BUFFER_SEC = 30;
-const BUFFER_MAX_WAIT_MS = 10000;
 /**
  * Commentary plays only at near-normal transport speeds — outside this
  * band (frame-stepping, fast-forward) speech is noise, and browsers
@@ -61,8 +51,8 @@ export function CommentaryAudio() {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   /** `${sourceUrl}#${trackKey}` of the armed track, or null. */
   const armedKeyRef = useRef<string | null>(null);
-  /** The armed track's cue file arriving; the gate waits on it. */
-  const trackLoadRef = useRef<Promise<void> | null>(null);
+  /** Audio waits for its own clock metadata; the camera never does. */
+  const trackReadyRef = useRef(false);
   const unavailableRef = useRef(false);
   /** The legacy mp3 URL for the armed track, tried once on error. */
   const fallbackSrcRef = useRef<string | null>(null);
@@ -113,7 +103,7 @@ export function CommentaryAudio() {
    *  aborts any in-flight download. */
   const disarm = useCallback((audio: HTMLAudioElement) => {
     armedKeyRef.current = null;
-    trackLoadRef.current = null;
+    trackReadyRef.current = false;
     unavailableRef.current = false;
     blockedRef.current = false;
     wasDirectingRef.current = false;
@@ -166,109 +156,39 @@ export function CommentaryAudio() {
         commentaryEnabled
       ) {
         armedKeyRef.current = armKey;
+        trackReadyRef.current = false;
         fallbackSrcRef.current = commentarySidecarUrl(sourceUrl, track, "mp3");
         audio.src = commentarySidecarUrl(sourceUrl, track, "m4a");
-        // The track's own clock: where on the demo its first sample
-        // sits. Only the pre-start gate used to read this, so a track
-        // armed later — a picker change, or the track list arriving
-        // after the director had started on the default — played from
-        // demo zero and sat 37 seconds early.
-        // ONE load per arm, and its result lands only while this track
-        // is still the armed one: the gate used to run a second load of
-        // its own and stamp the answer without that check, so a switch
-        // during the await gave the new track the old one's start.
-        trackLoadRef.current = loadCommentaryTrack(sourceUrl, track).then(
-          (loaded) => {
+        // The cue file locates this track's first sample on the demo
+        // clock. Wait for that offset before playing audio, and accept
+        // the result only while this track is still armed.
+        void loadCommentaryTrack(sourceUrl, track)
+          .then((loaded) => {
             if (armedKeyRef.current !== armKey) return;
             audioStartRef.current = loaded?.audioStartSec ?? 0;
+            trackReadyRef.current = true;
             if (loaded && loaded.cues.length > 0) {
               commentaryPlayback.startSec = loaded.cues[0].atSec;
             }
-          },
-        );
+          })
+          .catch((err: unknown) => {
+            if (armedKeyRef.current !== armKey) return;
+            unavailableRef.current = true;
+            log.warn("commentary metadata failed: %o", err);
+          });
       }
       return armedKeyRef.current != null && !unavailableRef.current;
     },
     [commentaryEnabled, disarm],
   );
 
-  // The director start awaits this gate: begin the download and hold
-  // (spinner showing) until a real opening buffer exists at the start
-  // position (the browser range-requests there, not from byte 0).
+  // Begin fetching alongside camera startup. Playback below joins the
+  // current picture when metadata and audio arrive; it never gates the camera.
   useEffect(() => {
-    setCommentaryGate(async () => {
-      const audio = audioRef.current;
-      if (!arm(true) || !audio) return;
-      // The cue transcript sidecar tells us where the broadcast means
-      // to begin (its intro may run ahead of the plan's first scene);
-      // the director reads commentaryPlayback.startSec for its seek.
-      // Arming started the load; wait for it. No cue file — the plan's
-      // own start applies.
-      const armKey = armedKeyRef.current;
-      await trackLoadRef.current;
-      if (armedKeyRef.current !== armKey) return;
-      // Buffer where playback will actually begin — the director seeks
-      // to the intro MINUS its lead-in, and pre-seeking to the speech
-      // itself would force a first-frame snap against an unbuffered
-      // position (heard as the opening line clipping or stuttering).
-      // In TRACK time: the element seeks and buffers in its own clock.
-      const target = Math.max(
-        0,
-        trackTime(
-          Math.max(
-            streamClock.time,
-            (commentaryPlayback.startSec ??
-              demoDirectorStore.getState().plan?.skipToSec ??
-              0) - DIRECTOR_INTRO_LEAD_SEC,
-          ),
-        ),
-      );
-      // Buffered audio at the start position, as a fraction of the
-      // requirement (capped by the track's own remaining length).
-      const bufferedFraction = () => {
-        const required = Number.isFinite(audio.duration)
-          ? Math.min(MIN_BUFFER_SEC, Math.max(0.5, audio.duration - target))
-          : MIN_BUFFER_SEC;
-        for (let i = 0; i < audio.buffered.length; i++) {
-          if (
-            audio.buffered.start(i) <= target + 0.75 &&
-            audio.buffered.end(i) > target
-          ) {
-            return Math.min(1, (audio.buffered.end(i) - target) / required);
-          }
-        }
-        return 0;
-      };
-      await new Promise<void>((resolve) => {
-        const finish = () => {
-          clearTimeout(ceiling);
-          clearInterval(poll);
-          audio.removeEventListener("progress", check);
-          audio.removeEventListener("error", finish);
-          audio.removeEventListener("loadedmetadata", onMetadata);
-          resolve();
-        };
-        const check = () => {
-          const fraction = unavailableRef.current ? 1 : bufferedFraction();
-          demoDirectorStore.setState({ scanProgress: fraction });
-          if (fraction >= 1 || unavailableRef.current) finish();
-        };
-        const onMetadata = () => {
-          audio.currentTime = target;
-        };
-        const ceiling = setTimeout(() => {
-          log.warn("commentary still buffering — starting without it");
-          finish();
-        }, BUFFER_MAX_WAIT_MS);
-        const poll = setInterval(check, 250);
-        if (audio.readyState >= HTMLMediaElement.HAVE_METADATA) onMetadata();
-        else audio.addEventListener("loadedmetadata", onMetadata);
-        audio.addEventListener("progress", check);
-        audio.addEventListener("error", finish);
-        check();
-      });
+    setCommentaryPreload(() => {
+      arm(true);
     });
-    return () => setCommentaryGate(null);
+    return () => setCommentaryPreload(null);
   }, [arm]);
 
   // Autoplay can be denied when the director starts without a recent
@@ -294,8 +214,8 @@ export function CommentaryAudio() {
     const volume = Math.min(1, Math.max(0, audioVolume));
     if (audio.volume !== volume) audio.volume = volume;
     const directing = demoDirectorStore.getState().status === "playing";
-    // Fetch only once CastGenius runs (the pre-start gate normally arms
-    // first); re-checking the armed URL swaps tracks on a demo switch.
+    // Fetch only once directing runs (the optional preload can arm first);
+    // re-checking the armed URL swaps tracks on a demo switch.
     if (!directing && armedKeyRef.current == null) return;
     if (!arm(directing)) {
       if (!audio.paused) audio.pause();
@@ -304,6 +224,7 @@ export function CommentaryAudio() {
     const { status, rate } = engineStore.getState().playback;
     const position = trackTime(streamClock.time);
     const shouldPlay =
+      trackReadyRef.current &&
       directing &&
       status === "playing" &&
       rate >= MIN_PLAY_RATE &&

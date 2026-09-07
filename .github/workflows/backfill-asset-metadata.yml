@@ -1,19 +1,21 @@
 name: Backfill R2 asset metadata
 
-# Manually-run maintenance task: re-stamps Cache-Control metadata on every
-# object in the game assets bucket. Needed once after introducing cache
-# headers (the deploy sync only sets metadata on objects it uploads), or
-# whenever the cache policy changes.
+# Manually-run maintenance task: re-stamps Content-Type and Cache-Control on
+# every object in the game assets bucket, from the same table the deploy sync
+# uses (scripts/lib/assetMetadata.ts). Run it after changing that table, or to
+# repair objects an older job wrote.
+#
+# Safe to run at any time. It defaults to a dry run, and an apply always
+# writes the COMPLETE metadata set: `--metadata-directive REPLACE` replaces
+# every system header, so a job that passes only some of them silently drops
+# the rest. That is what an earlier version of this workflow did with
+# --cache-control alone, which is how the bucket lost Content-Type.
 
 on:
   workflow_dispatch:
     inputs:
-      cache-control:
-        description: Cache-Control value to stamp on all objects
-        required: true
-        default: "public, max-age=3600, s-maxage=31536000"
-      dry-run:
-        description: Only list the objects that would be updated
+      apply:
+        description: Stamp the bucket (unchecked = dry run, reports the plan)
         type: boolean
         default: false
 
@@ -26,17 +28,43 @@ concurrency:
 jobs:
   backfill:
     runs-on: ubuntu-latest
+    env:
+      # The secrets context isn't available in step-level `if`, so evaluate
+      # the check here. Boolean only — no secret material in job env.
+      HAS_PURGE_SECRETS: ${{ secrets.CLOUDFLARE_PURGE_TOKEN != '' && secrets.CLOUDFLARE_ZONE_ID != '' }}
     steps:
-      - name: Re-stamp Cache-Control on all game assets
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Re-stamp metadata on all game assets
         run: |
-          args=(--recursive --metadata-directive REPLACE --cache-control "$CACHE_CONTROL")
-          if [ "$DRY_RUN" = "true" ]; then
-            args+=(--dryrun)
-          fi
-          aws s3 cp s3://t2-assets/game/base/ s3://t2-assets/game/base/ "${args[@]}"
+          npx tsx scripts/backfill-asset-metadata.ts \
+            --bucket s3://t2-assets/game/base/ \
+            ${{ inputs.apply && '--apply' || '' }}
         env:
-          CACHE_CONTROL: ${{ inputs.cache-control }}
-          DRY_RUN: ${{ inputs.dry-run }}
           AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
           AWS_ENDPOINT_URL: https://${{ secrets.CF_ACCOUNT_ID }}.r2.cloudflarestorage.com
+
+      # An apply rewrites every object, so any edge copies are stale.
+      # Purge by PREFIX is an Enterprise-only feature, so this purges the
+      # whole zone, which every plan allows. It is a no-op while the assets
+      # return cf-cache-status: DYNAMIC (nothing is edge-cached yet) and
+      # becomes necessary the moment a Cache Rule makes them cacheable.
+      - name: Purge the edge cache
+        if: inputs.apply && env.HAS_PURGE_SECRETS == 'true'
+        run: |
+          curl -sS --fail-with-body -X POST \
+            "https://api.cloudflare.com/client/v4/zones/$CLOUDFLARE_ZONE_ID/purge_cache" \
+            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            -H "Content-Type: application/json" \
+            --data '{"purge_everything":true}'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_PURGE_TOKEN }}
+          CLOUDFLARE_ZONE_ID: ${{ secrets.CLOUDFLARE_ZONE_ID }}

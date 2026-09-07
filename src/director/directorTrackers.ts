@@ -38,6 +38,9 @@ import type {
   StructureTransition,
 } from "./types";
 import { castWorldRay } from "../collision/worldCollision";
+import { DirectorFactJournal, type DirectorFactRecord } from "./factJournal";
+import { DirectorStateJournal } from "./stateJournal";
+import type { DirectorStateFrame } from "./observationContract";
 import { scanDirectorEvent } from "./directorEventScanner";
 import {
   parseColorSegments,
@@ -322,6 +325,30 @@ export interface TrackerSnapshotMeta {
 }
 
 export class DirectorTrackers {
+  private readonly factJournal?: DirectorFactJournal;
+  private readonly stateJournal?: DirectorStateJournal;
+
+  /** Recording is opt-in; camera-only callers allocate no journal. A live
+   *  source supplies a new stream id on a match/connection reset. */
+  constructor(options: { factStreamId?: string; stateStreamId?: string } = {}) {
+    if (options.factStreamId != null) {
+      this.factJournal = new DirectorFactJournal(options.factStreamId);
+    }
+    if (options.stateStreamId != null) {
+      this.stateJournal = new DirectorStateJournal(options.stateStreamId);
+    }
+  }
+
+  /** Optional evidence output. The director never calls or waits on a consumer. */
+  drainFacts(): DirectorFactRecord[] {
+    return this.factJournal?.drain() ?? [];
+  }
+
+  /** Fresh state continues during open shots, without waiting for a cut. */
+  drainStates(): DirectorStateFrame[] {
+    return this.stateJournal?.drain() ?? [];
+  }
+
   // ── Accumulated dataset state (all strictly forward) ──
   private readonly flagSamples: DirectorFlagSample[] = [];
   private readonly playerSamples: DirectorPlayerSample[] = [];
@@ -426,12 +453,22 @@ export class DirectorTrackers {
     if (snapshot.ghostAlwaysDoneSec != null && this.worldCompleteSec == null) {
       this.worldCompleteSec = snapshot.ghostAlwaysDoneSec;
     }
-    this.ingestServerEvents(snapshot);
+    this.ingestServerEvents(snapshot, timeSec);
+    const flagStart = this.flagSamples.length;
     this.sampleFlags(snapshot, timeSec);
     if (this.stepCount % PLAYER_EVERY_STEPS === 0) {
+      const playerStart = this.playerSamples.length;
       this.samplePlayers(snapshot, timeSec);
       this.sampleVehicles(snapshot, timeSec);
       this.sampleFacts(snapshot, timeSec);
+      // Evaluate arguments only when a consumer opted in. Capture the new
+      // samples and today's roster before either can acquire future state.
+      this.stateJournal?.record(
+        snapshot,
+        timeSec,
+        this.playerSamples.slice(playerStart),
+        this.flagSamples.slice(flagStart),
+      );
     }
     this.stepCount++;
     this.sampleStructures(snapshot, timeSec);
@@ -458,7 +495,7 @@ export class DirectorTrackers {
     );
     this.sampleStations(snapshot, timeSec);
     this.sampleDeaths(snapshot, timeSec);
-    this.sampleSkillShotMessages(snapshot);
+    this.sampleSkillShotMessages(snapshot, timeSec);
     this.sampleVoiceBinds(snapshot);
     this.lastTeamScores = snapshot.teamScores;
     const sky = snapshot.entities.find(
@@ -477,7 +514,10 @@ export class DirectorTrackers {
    *  Public so a harness can drain the tail of a recording — messages
    *  landing between the last grid step and the very end (a
    *  buzzer-beater cap at the final tick) still belong to the match. */
-  ingestServerEvents(snapshot: StreamSnapshot): void {
+  ingestServerEvents(
+    snapshot: StreamSnapshot,
+    availableAtSec = snapshot.timeSec,
+  ): void {
     for (const raw of snapshot.serverEvents ?? []) {
       if (this.seenServerEventIds.has(raw.id)) continue;
       this.seenServerEventIds.add(raw.id);
@@ -493,6 +533,7 @@ export class DirectorTrackers {
           if (this.matchEndSec == null) this.matchEndSec = event.timeSec;
         }
         this.events.push(event);
+        this.factJournal?.record("event", event, availableAtSec);
       }
     }
   }
@@ -547,6 +588,7 @@ export class DirectorTrackers {
         }
         death.killerPos = nearest?.pos;
       }
+      this.factJournal?.record("death", death, now);
     }
     // MID-AIR / HEADSHOT verdicts: the server announces every skill
     // shot itself — correlate each announcement to the nearest death
@@ -573,6 +615,8 @@ export class DirectorTrackers {
       shot.lethal = true;
       if (shot.kind === "midair") best.midair = true;
       else best.headshot = true;
+      this.factJournal?.record("skillShot", shot, now);
+      this.factJournal?.record("death", best, now);
     }
     // Position-correlate kill events: victim name → target id → the
     // victim's nearest sample. Position-less events degrade gracefully
@@ -602,7 +646,10 @@ export class DirectorTrackers {
         }
         if (sample.timeSec > event.timeSec + KILL_POS_WINDOW_SEC) break;
       }
-      if (best) event.pos = best.pos;
+      if (best) {
+        event.pos = best.pos;
+        this.factJournal?.record("event", event, now);
+      }
     }
     // Flag drops: died-holding vs thrown vs a pass — the intent
     // question the booth keeps getting wrong. The chat ORDER tells the
@@ -618,6 +665,7 @@ export class DirectorTrackers {
       const event = this.events[this.dropCursor++];
       if (event.type !== "flag-drop") continue;
       this.classifyDrop(event);
+      this.factJournal?.record("event", event, now);
     }
   }
 
@@ -1120,7 +1168,7 @@ export class DirectorTrackers {
             ) /
             (before.timeSec - before.prevTimeSec)
           : undefined;
-      this.deaths.push({
+      const death: DirectorDeath = {
         timeSec,
         targetId,
         teamId: now.teamId,
@@ -1134,7 +1182,9 @@ export class DirectorTrackers {
             : undefined,
         airborne: airborne || undefined,
         speed,
-      });
+      };
+      this.deaths.push(death);
+      this.factJournal?.record("death", death, timeSec);
     }
   }
 
@@ -1162,7 +1212,7 @@ export class DirectorTrackers {
       }
       const previous = this.structureStates.get(entity.id);
       if (previous != null && previous !== entity.damageState) {
-        this.structures.push({
+        const transition: StructureTransition = {
           timeSec,
           name: structureName(entity.dataBlock),
           className: entity.className ?? entity.type,
@@ -1170,13 +1220,18 @@ export class DirectorTrackers {
           pos: copyPos(entity.position),
           from: previous,
           to: entity.damageState,
-        });
+        };
+        this.structures.push(transition);
+        this.factJournal?.record("structure", transition, timeSec);
       }
       this.structureStates.set(entity.id, entity.damageState);
     }
   }
 
-  private sampleSkillShotMessages(snapshot: StreamSnapshot): void {
+  private sampleSkillShotMessages(
+    snapshot: StreamSnapshot,
+    availableAtSec: number,
+  ): void {
     for (const msg of snapshot.chatMessages ?? []) {
       if (
         this.seenChatIds.has(msg.id) ||
@@ -1190,14 +1245,16 @@ export class DirectorTrackers {
       const hs = ma ? null : HEADSHOT_MSG.exec(msg.text);
       const name = ma?.[1] ?? hs?.[1];
       if (!name) continue;
-      this.skillShots.push({
+      const shot: SkillShot = {
         timeSec: msg.timeSec,
         targetId: this.nameToTarget.get(name.toLowerCase()) ?? null,
         name,
         kind: ma ? "midair" : "headshot",
         rangeM: ma?.[2] != null ? parseInt(ma[2], 10) : undefined,
         weapon: ma?.[3],
-      });
+      };
+      this.skillShots.push(shot);
+      this.factJournal?.record("skillShot", shot, availableAtSec);
     }
   }
 

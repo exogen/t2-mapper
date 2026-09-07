@@ -3,14 +3,16 @@
  * pass over the demo with an independent headless StreamingPlayback,
  * pumping DirectorTrackers (the strictly-causal reducer that also
  * backs live casting) step by step. Events are parsed by the trackers
- * themselves from each snapshot's raw server-message feed — CastGenius
- * owns its own event scanning and needs nothing from the app's
+ * themselves from each snapshot's raw server-message feed — the director
+ * owns its event scanning and needs nothing from the app's
  * timeline. Yields to the event loop to stay responsive; safe to run
  * while the same buffer plays back (separate parser, no shared state).
  */
 import type { DirectorDataset } from "./types";
 import { createDemoStreamingRecording } from "../stream/demoStreaming";
 import { DirectorTrackers, FLAG_STEP_SEC } from "./directorTrackers";
+import type { DirectorFactRecord } from "./factJournal";
+import type { DirectorStateFrame } from "./observationContract";
 
 /** Yield to the event loop every N seconds of demo time. */
 const YIELD_EVERY_SEC = 5;
@@ -44,15 +46,23 @@ export interface DirectorScanStream {
   readonly durationSec: number;
   /** How far the walk has actually got. */
   readonly scannedToSec: number;
+  /** Last snapshot actually stepped, without the next grid tick's margin. */
+  readonly observedThroughSec: number;
   /** Step forward to `sec`. Yields to the event loop periodically so a
    *  browser caller keeps painting. */
   advanceTo(sec: number): Promise<void>;
   /** The dataset covering everything stepped so far. */
   datasetTo(sec: number): DirectorDataset;
+  /** New fact revisions, if factStreamId was supplied. Safe to drain at any
+   *  cadence; batch and browser callers observe the same availability times. */
+  drainFacts(): DirectorFactRecord[];
+  /** Optional 1 Hz current-state samples, independent of shot closure. */
+  drainStates(): DirectorStateFrame[];
 }
 
 export async function createDirectorScanStream(
   buffer: ArrayBuffer,
+  options: { factStreamId?: string; stateStreamId?: string } = {},
 ): Promise<DirectorScanStream> {
   const recording = await createDemoStreamingRecording(buffer);
   const playback = recording.streamingPlayback;
@@ -60,7 +70,7 @@ export async function createDirectorScanStream(
     ? Math.max(recording.duration, FLAG_STEP_SEC)
     : FLAG_STEP_SEC;
 
-  const trackers = new DirectorTrackers();
+  const trackers = new DirectorTrackers(options);
   const missionOverTime: { atSec: number; name: string }[] = [];
   const noteMission = (t: number): void => {
     const name = playback.missionDisplayName;
@@ -70,13 +80,19 @@ export async function createDirectorScanStream(
   };
 
   let cursor = 0;
+  let observedThroughSec = 0;
   let exhausted = false;
   noteMission(0);
 
   const stream: DirectorScanStream = {
     durationSec,
+    drainFacts: () => trackers.drainFacts(),
+    drainStates: () => trackers.drainStates(),
     get scannedToSec() {
       return cursor;
+    },
+    get observedThroughSec() {
+      return observedThroughSec;
     },
     async advanceTo(sec: number): Promise<void> {
       const target = Math.min(sec, durationSec);
@@ -84,6 +100,7 @@ export async function createDirectorScanStream(
       while (!exhausted && cursor <= target) {
         const snapshot = playback.stepToTime(cursor);
         trackers.step(snapshot, cursor);
+        observedThroughSec = cursor;
         noteMission(cursor);
         if (snapshot.exhausted) {
           exhausted = true;

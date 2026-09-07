@@ -49,17 +49,19 @@ jobs:
           LOG_LEVEL: ${{ secrets.LOG_LEVEL }}
 
       - name: Sync game assets to R2
-        # max-age is what browsers see (revalidate hourly via ETag);
-        # s-maxage is the Cloudflare edge TTL, safe to make long because the
-        # purge step below evicts changed files on every deploy. The
-        # cache-control only applies to objects this sync uploads; already
-        # up-to-date objects keep their existing metadata.
+        # One `aws s3 sync` pass per Content-Type, driven by
+        # scripts/lib/assetMetadata.ts — the same table the backfill uses, so
+        # an object's headers do not depend on which job wrote it. The CLI's
+        # own guesses are wrong for the game's formats (.dts reads as DTS
+        # audio, .dif as DV video) and absent for most of them, which is why
+        # nothing may be guessed here. The run fails if any extension has no
+        # entry in the table, rather than shipping it untyped.
         run: |
           set -o pipefail
-          aws s3 sync docs/base/ s3://t2-assets/game/base/ \
-            --follow-symlinks --delete --no-progress \
-            --cache-control "public, max-age=3600, s-maxage=31536000" \
-            | tee r2-sync-output.txt
+          npx tsx scripts/sync-assets.ts \
+            --bucket s3://t2-assets/game/base/ \
+            --report r2-sync-output.txt \
+            | tee sync-console.txt
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}

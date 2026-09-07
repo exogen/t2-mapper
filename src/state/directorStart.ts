@@ -9,8 +9,8 @@
 
 /** Lead-in before the commentary's first line: enough that demo-seek
  *  tick granularity and clock settle can't swallow the opening word,
- *  and a beat of the venue before anyone speaks. The audio player
- *  pre-buffers at the same position. */
+ *  and a beat of the venue before anyone speaks. Audio joins this
+ *  picture clock when ready, without holding camera startup. */
 export const DIRECTOR_INTRO_LEAD_SEC = 6;
 /**
  * The demo time to seek to when directing begins, or null to stay put.

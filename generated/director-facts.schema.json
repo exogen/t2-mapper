@@ -1,0 +1,504 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$ref": "#/definitions/DirectorFactTrace",
+  "definitions": {
+    "DirectorFactTrace": {
+      "type": "object",
+      "properties": {
+        "format": {
+          "type": "string",
+          "const": "t2-director-facts"
+        },
+        "version": {
+          "type": "number",
+          "const": 1
+        },
+        "streamId": {
+          "type": "string"
+        },
+        "throughSec": {
+          "type": "number",
+          "description": "End of the actually ingested prefix; not the eventual match end."
+        },
+        "records": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/DirectorFactRecord"
+          }
+        }
+      },
+      "required": [
+        "format",
+        "version",
+        "streamId",
+        "throughSec",
+        "records"
+      ],
+      "additionalProperties": false,
+      "description": "The serializable baseline; no camera or audio sidecar is required."
+    },
+    "DirectorFactRecord": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "streamId": {
+              "type": "string",
+              "description": "Caller-owned match/connection epoch. Start a new journal on reset."
+            },
+            "sequence": {
+              "type": "number",
+              "description": "Monotonically increasing across all kinds, starting at 1."
+            },
+            "id": {
+              "type": "string",
+              "description": "Stable within this stream; identity survives later enrichment."
+            },
+            "revision": {
+              "type": "number",
+              "description": "Starts at 1; each later record replaces this fact's entire value."
+            },
+            "timeSec": {
+              "type": "number",
+              "description": "When the underlying event happened, in game/demo seconds."
+            },
+            "availableAtSec": {
+              "type": "number",
+              "description": "When this revision became available, in the same clock domain."
+            },
+            "kind": {
+              "type": "string",
+              "const": "event"
+            },
+            "value": {
+              "$ref": "#/definitions/DirectorEvent",
+              "description": "Raw director evidence, not a commentary cue. Missing attribution is unknown. Existing inference fields keep their DirectorDataset meaning: e.g. dropKind=pass can be inferred from proximity, and airborne alone does not prove a mid-air skill shot. No camera visibility is implied."
+            }
+          },
+          "required": [
+            "streamId",
+            "sequence",
+            "id",
+            "revision",
+            "timeSec",
+            "availableAtSec",
+            "kind",
+            "value"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "streamId": {
+              "type": "string",
+              "description": "Caller-owned match/connection epoch. Start a new journal on reset."
+            },
+            "sequence": {
+              "type": "number",
+              "description": "Monotonically increasing across all kinds, starting at 1."
+            },
+            "id": {
+              "type": "string",
+              "description": "Stable within this stream; identity survives later enrichment."
+            },
+            "revision": {
+              "type": "number",
+              "description": "Starts at 1; each later record replaces this fact's entire value."
+            },
+            "timeSec": {
+              "type": "number",
+              "description": "When the underlying event happened, in game/demo seconds."
+            },
+            "availableAtSec": {
+              "type": "number",
+              "description": "When this revision became available, in the same clock domain."
+            },
+            "kind": {
+              "type": "string",
+              "const": "death"
+            },
+            "value": {
+              "$ref": "#/definitions/DirectorDeath",
+              "description": "Raw director evidence, not a commentary cue. Missing attribution is unknown. Existing inference fields keep their DirectorDataset meaning: e.g. dropKind=pass can be inferred from proximity, and airborne alone does not prove a mid-air skill shot. No camera visibility is implied."
+            }
+          },
+          "required": [
+            "streamId",
+            "sequence",
+            "id",
+            "revision",
+            "timeSec",
+            "availableAtSec",
+            "kind",
+            "value"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "streamId": {
+              "type": "string",
+              "description": "Caller-owned match/connection epoch. Start a new journal on reset."
+            },
+            "sequence": {
+              "type": "number",
+              "description": "Monotonically increasing across all kinds, starting at 1."
+            },
+            "id": {
+              "type": "string",
+              "description": "Stable within this stream; identity survives later enrichment."
+            },
+            "revision": {
+              "type": "number",
+              "description": "Starts at 1; each later record replaces this fact's entire value."
+            },
+            "timeSec": {
+              "type": "number",
+              "description": "When the underlying event happened, in game/demo seconds."
+            },
+            "availableAtSec": {
+              "type": "number",
+              "description": "When this revision became available, in the same clock domain."
+            },
+            "kind": {
+              "type": "string",
+              "const": "skillShot"
+            },
+            "value": {
+              "$ref": "#/definitions/SkillShot",
+              "description": "Raw director evidence, not a commentary cue. Missing attribution is unknown. Existing inference fields keep their DirectorDataset meaning: e.g. dropKind=pass can be inferred from proximity, and airborne alone does not prove a mid-air skill shot. No camera visibility is implied."
+            }
+          },
+          "required": [
+            "streamId",
+            "sequence",
+            "id",
+            "revision",
+            "timeSec",
+            "availableAtSec",
+            "kind",
+            "value"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "streamId": {
+              "type": "string",
+              "description": "Caller-owned match/connection epoch. Start a new journal on reset."
+            },
+            "sequence": {
+              "type": "number",
+              "description": "Monotonically increasing across all kinds, starting at 1."
+            },
+            "id": {
+              "type": "string",
+              "description": "Stable within this stream; identity survives later enrichment."
+            },
+            "revision": {
+              "type": "number",
+              "description": "Starts at 1; each later record replaces this fact's entire value."
+            },
+            "timeSec": {
+              "type": "number",
+              "description": "When the underlying event happened, in game/demo seconds."
+            },
+            "availableAtSec": {
+              "type": "number",
+              "description": "When this revision became available, in the same clock domain."
+            },
+            "kind": {
+              "type": "string",
+              "const": "structure"
+            },
+            "value": {
+              "$ref": "#/definitions/StructureTransition",
+              "description": "Raw director evidence, not a commentary cue. Missing attribution is unknown. Existing inference fields keep their DirectorDataset meaning: e.g. dropKind=pass can be inferred from proximity, and airborne alone does not prove a mid-air skill shot. No camera visibility is implied."
+            }
+          },
+          "required": [
+            "streamId",
+            "sequence",
+            "id",
+            "revision",
+            "timeSec",
+            "availableAtSec",
+            "kind",
+            "value"
+          ],
+          "additionalProperties": false
+        }
+      ],
+      "description": "One immutable revision of a fact, in the order it became available."
+    },
+    "DirectorEvent": {
+      "type": "object",
+      "properties": {
+        "timeSec": {
+          "type": "number"
+        },
+        "type": {
+          "$ref": "#/definitions/TimelineEventType"
+        },
+        "description": {
+          "type": "string"
+        },
+        "teamAffinity": {
+          "$ref": "#/definitions/TeamAffinity",
+          "description": "For flag events: whether the recorder's team or enemy team was involved."
+        },
+        "killer": {
+          "type": "string",
+          "description": "For kill/death events: name of the killer."
+        },
+        "victim": {
+          "type": "string",
+          "description": "For kill/death events: name of the victim."
+        },
+        "weapon": {
+          "type": "string",
+          "description": "For kill/death events: weapon or damage type (e.g. \"disc\", \"ground\")."
+        },
+        "capturer": {
+          "type": "string",
+          "description": "For flag-cap events: name of the player who captured."
+        },
+        "actor": {
+          "type": "string",
+          "description": "For flag-grab/flag-drop/flag-return events: the player responsible (unset for auto-returns and recorder-perspective events)."
+        },
+        "flagTeamName": {
+          "type": "string",
+          "description": "For flag events: name of the flag's team."
+        },
+        "previousName": {
+          "type": "string",
+          "description": "For rename events: the name before the change (`actor` is the name after)."
+        },
+        "raw": {
+          "type": "object",
+          "properties": {
+            "killer": {
+              "type": "string"
+            },
+            "victim": {
+              "type": "string"
+            },
+            "actor": {
+              "type": "string"
+            },
+            "capturer": {
+              "type": "string"
+            },
+            "previousName": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "description": "The same names as sent, color codes included — the official clan tag is the color-7 segment. For display only; matching uses the stripped fields above."
+        },
+        "secondsUntil": {
+          "type": "number",
+          "description": "match-countdown only: seconds until the announced kickoff."
+        },
+        "pos": {
+          "$ref": "#/definitions/DirectorVec3",
+          "description": "Torque-space position correlated from entity samples, when known."
+        },
+        "dropKind": {
+          "type": "string",
+          "enum": [
+            "died",
+            "thrown",
+            "pass"
+          ],
+          "description": "Flag drops only — the carrier's intent, from chat-message order and teammate proximity/pickup: \"died\" (killed holding it), \"thrown\" (deliberate), or \"pass\" (thrown to teammates)."
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "description",
+        "timeSec",
+        "type"
+      ]
+    },
+    "TimelineEventType": {
+      "type": "string",
+      "enum": [
+        "match-start",
+        "match-countdown",
+        "match-end",
+        "kill",
+        "death",
+        "flag-grab",
+        "flag-drop",
+        "flag-return",
+        "flag-cap",
+        "rename"
+      ]
+    },
+    "TeamAffinity": {
+      "type": "string",
+      "enum": [
+        "friendly",
+        "enemy",
+        "neutral"
+      ],
+      "description": "Relationship of the event to the recorder's team."
+    },
+    "DirectorVec3": {
+      "type": "array",
+      "items": {
+        "type": "number"
+      },
+      "minItems": 3,
+      "maxItems": 3,
+      "description": "Torque-space position [x, y, z]."
+    },
+    "DirectorDeath": {
+      "type": "object",
+      "properties": {
+        "timeSec": {
+          "type": "number"
+        },
+        "targetId": {
+          "type": "number"
+        },
+        "teamId": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "pos": {
+          "$ref": "#/definitions/DirectorVec3"
+        },
+        "killerTargetId": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Nearest opposing player at the moment of death, if any: the likely killer, and the other half of a highlight shot."
+        },
+        "killerPos": {
+          "$ref": "#/definitions/DirectorVec3"
+        },
+        "weapon": {
+          "type": "string",
+          "description": "Damage type from the kill message (\"disc\", \"laser\", \"shocklance\", …), or inferred from ordnance in flight nearby as the fallback."
+        },
+        "airborne": {
+          "type": "boolean",
+          "description": "Nothing under the victim's feet when they died — a mid-air kill, the game's signature skill shot when paired with a disc/mortar."
+        },
+        "speed": {
+          "type": "number",
+          "description": "Victim's speed at death (u/s), from their last two samples."
+        },
+        "midair": {
+          "type": "boolean",
+          "description": "A verified MID-AIR: the server's own skill-shot announcement (\"X hit a mid air shot.\") correlated to this death's killer. Vehicle rams, splash and snipes never set this."
+        },
+        "headshot": {
+          "type": "boolean",
+          "description": "A sniper-rifle headshot, from the server's announcement."
+        }
+      },
+      "required": [
+        "timeSec",
+        "targetId",
+        "teamId",
+        "pos",
+        "killerTargetId"
+      ],
+      "additionalProperties": false,
+      "description": "A player death seen in the entity stream (damageState alive → not), which — unlike chat kill messages — is available for EVERY player in both observer and first-person recordings."
+    },
+    "SkillShot": {
+      "type": "object",
+      "properties": {
+        "timeSec": {
+          "type": "number"
+        },
+        "targetId": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "The shooter's target id, when the name resolved."
+        },
+        "name": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "midair",
+            "headshot"
+          ]
+        },
+        "rangeM": {
+          "type": "number"
+        },
+        "weapon": {
+          "type": "string"
+        },
+        "lethal": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "timeSec",
+        "targetId",
+        "name",
+        "kind"
+      ],
+      "additionalProperties": false,
+      "description": "A server-announced skill shot (chat kind \"server\", color code 5): \"X hit a mid air shot. [69m, Spinfusor]\" or \"X hit a sniper rifle headshot.\" Authoritative — no inference. `lethal` marks the ones correlated to a death (whose kill event then carries the flag)."
+    },
+    "StructureTransition": {
+      "type": "object",
+      "properties": {
+        "timeSec": {
+          "type": "number"
+        },
+        "teamId": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Owning team, from the ghost's own sensor group (StreamEntity .teamId) — the game's answer, not an inference from position."
+        },
+        "name": {
+          "type": "string",
+          "description": "Commentary name (\"spider clamp turret\", \"generator\", …) — never a raw shape filename; placement variants (wall/floor/ceiling, indoor/outdoor) are deliberately erased."
+        },
+        "className": {
+          "type": "string"
+        },
+        "pos": {
+          "$ref": "#/definitions/DirectorVec3"
+        },
+        "from": {
+          "type": "number"
+        },
+        "to": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "timeSec",
+        "name",
+        "className",
+        "pos",
+        "from",
+        "to"
+      ],
+      "additionalProperties": false,
+      "description": "A base structure's damageState change (0 = Enabled, 1 = Disabled, 2 = Destroyed) — the only observer-visible signal for generator and turret kills, which have no broadcast chat message."
+    }
+  }
+}
