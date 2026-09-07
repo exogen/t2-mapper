@@ -6,57 +6,21 @@
  * (observer recordings keep only flag/match events; the pub kill feed
  * is filtered as timeline noise). Cast generation is a different
  * product with different needs: it wants EVERY kill, positioned and
- * attributed, exactly when the server announced it. So it parses the
- * server-message stream itself, deliberately duplicating the message
- * tables rather than sharing the app's — the two scanners may drift
- * apart on purpose.
+ * attributed, exactly when the server announced it. Both read the same
+ * protocol tables (stream/serverMessages); what diverges is what each
+ * scanner keeps, below.
  *
  * The server's chat log is the ground truth and is timestamped at the
  * moment of the kill/flag touch itself — there is no "attribution
  * lag" at this layer.
  */
-import type { ServerMessageEvent } from "./types";
-import { stripTaggedStringMarkup } from "./streamHelpers";
-import type { DirectorEvent } from "../director/types";
-
-/**
- * Death message types where args[2]=victimName, args[5]=killerName,
- * args[9]=DamageTypeText (case-insensitive; args arrive netstring-
- * resolved). Explicit Ctrl+K suicide is `msgSuicide` — excluded.
- */
-const KILL_MSG_TYPES = new Set([
-  "msglegitkill",
-  "msgheadshotkill",
-  "msgminedisckill",
-  "msgrearshotkill",
-  "msgteamkill",
-  "msgselfkill",
-  "msgexplosionkill",
-  "msgvehiclekill",
-  "msgvehiclecrash",
-  "msgvehiclespawnkill",
-  "msgturretkill",
-  "msgcturretkill",
-  "msgturretselfkill",
-  "msgoobkill",
-  "msgcampkill",
-  "msgrogueminekill",
-  "msglavakill",
-  "msglightningkill",
-]);
-
-/** The subset where the victim did it to themselves — a death, not a
- *  credited kill (the booth cares about the difference too). */
-const SELF_INFLICTED_MSG_TYPES = new Set([
-  "msgselfkill",
-  "msgturretselfkill",
-  "msgvehiclecrash",
-  "msgvehiclespawnkill",
-  "msgoobkill",
-  "msglavakill",
-  "msglightningkill",
-  "msgcampkill",
-]);
+import type { ServerMessageEvent } from "../stream/types";
+import { stripTaggedStringMarkup } from "../stream/streamHelpers";
+import type { DirectorEvent } from "./types";
+import {
+  KILL_MSG_TYPES,
+  SELF_INFLICTED_MSG_TYPES,
+} from "../stream/serverMessages";
 
 /** "Match started!" from DefaultGame::startMatch — the real kickoff,
  *  not the countdown ticks that share MsgMissionStart. */

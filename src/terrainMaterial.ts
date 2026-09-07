@@ -17,14 +17,19 @@
  * 4. Final output = lightmap × texture, all in gamma space
  */
 
+import type { Texture } from "three";
 import { injectEffectLights } from "./effectLightUniforms";
 import { globalSunUniforms } from "./globalSunUniforms";
 import { lightsFragmentBeginByType } from "./lightsChunk";
 import { glslColorSpace, glslDebugGrid } from "./shaderUtils";
+import { LIGHTMAP_SIZE, TERRAIN_SIZE } from "./terrain";
 
-// Terrain and texture dimensions (must match TerrainBlock.tsx constants)
-const TERRAIN_SIZE = 256; // Terrain grid size in squares
-const LIGHTMAP_SIZE = 512; // Lightmap texture size (2 pixels per terrain square)
+/** The subset of Three's onBeforeCompile shader object this module touches. */
+interface TerrainShader {
+  uniforms: Record<string, { value: unknown }>;
+  vertexShader: string;
+  fragmentShader: string;
+}
 
 // Detail texture tiling factor.
 const DETAIL_TILING = 64.0;
@@ -41,13 +46,13 @@ export function updateTerrainTextureShader({
   detailTexture = null,
   lightmap = null,
 }: {
-  shader: any;
-  baseTextures: any[];
-  alphaTextures: any[];
-  visibilityMask: any;
+  shader: TerrainShader;
+  baseTextures: Texture[];
+  alphaTextures: Texture[];
+  visibilityMask: Texture | null;
   tiling: Record<number, number>;
-  detailTexture?: any;
-  lightmap?: any;
+  detailTexture?: Texture | null;
+  lightmap?: Texture | null;
 }) {
   // Add global sun uniform (shared reference - value updates automatically)
   shader.uniforms.sunLightPointsDown = globalSunUniforms.sunLightPointsDown;

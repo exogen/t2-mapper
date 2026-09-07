@@ -26,7 +26,6 @@ import {
   LoopRepeat,
   Color,
   Group,
-  Box3,
   Vector3,
 } from "three";
 import { useEffectLight } from "./useEffectLight";
@@ -37,6 +36,7 @@ import { useShapeInfo, ShapeInfoProvider } from "./ShapeInfoProvider";
 import type { StaticShapeType } from "./ShapeInfoProvider";
 import {
   useEngineSelector,
+  effectDeltaSec,
   effectNow,
   engineStore,
 } from "../state/engineStore";
@@ -45,10 +45,9 @@ import {
   collectIflMeshes,
   driveIflFrames,
   loadIflMaterialInstance,
-} from "./iflAtlas";
-import type { IflMaterialInstance } from "./iflAtlas";
-import { useIsDebugTourTarget } from "../state/cameraTourStore";
-import { DebugBounds } from "./DebugBounds";
+} from "../iflAtlas";
+import type { IflMaterialInstance } from "../iflAtlas";
+import { DebugShapeBounds } from "./DebugShapeBounds";
 import { useEntitySoundSlots } from "./useEntitySoundSlots";
 import {
   processShapeScene,
@@ -58,7 +57,7 @@ import {
   getPosedNodeTransform,
 } from "../stream/playbackUtils";
 import { resolveEmapFromImageSlot } from "./resolveEmap";
-import { playerEyePositions } from "./playerEyePositions";
+import { useEyePosition } from "./eyePositions";
 import type {
   ImageSlot,
   ThreadState as StreamThreadState,
@@ -67,10 +66,11 @@ import type {
 import { driveTurretAim, type TurretAnimActions } from "./turretAim";
 import { gameEntityStore } from "../state/gameEntityStore";
 import { streamClock } from "../state/streamPlaybackStore";
-import { dtsNodeExtras } from "./dtsNodeExtras";
+import { dtsNodeExtras } from "../dtsNodeExtras";
 import { collectMorphClips, isMorphClip } from "./sequenceClips";
 import { useVehicleJets, type VehicleJetShape } from "./useVehicleJets";
 import { collectOwnNodes } from "./sceneNodes";
+import { readDtsSequences } from "../dtsSequences";
 import type { GameEntity } from "../state/gameEntityTypes";
 import { useImageStateAnimation } from "./useImageStateAnimation";
 import {
@@ -82,13 +82,27 @@ import {
   type VisNode,
 } from "./visSequences";
 import { useFadeAndCloak } from "./shapeFadeCloak";
-import { shapeBoxCenter, useShapeLighting } from "./useShapeLighting";
+import { shapeBoxCenter } from "../shapeLighting";
+import { useShapeLighting } from "./useShapeLighting";
 import { useShadowCaster } from "./useShadowCaster";
 import {
   resolveImageLight,
   useImageLight,
   type ImageLightConfig,
 } from "./useImageLight";
+import {
+  registerStaticShapeCollider,
+  unregisterStaticShapeCollider,
+} from "../collision/worldCollision";
+import { staticShapeColliderMeshes } from "../world/colliderPolicy";
+import { SHAPE_MODEL_ROTATION_Y } from "../world/placement";
+import { registerShapeSequences } from "../stream/shapeSequences";
+import { FramePriority } from "./framePriority";
+import {
+  getShapeBounds,
+  registerShapeBounds,
+  shapeBoundsFromExtras,
+} from "../stream/shapeBounds";
 
 /** Item/ShapeBase built-in light config from datablock. */
 export interface ShapeLightConfig {
@@ -149,14 +163,6 @@ interface StreamShapeEntity {
   fadeVal?: number;
   cloakLevel?: number;
   dataBlockId?: number;
-  lightType?: number;
-  lightColor?: [number, number, number, number];
-  lightTime?: number;
-  lightRadius?: number;
-  /** Projectile light withheld until this age in ms (missile flechette). */
-  lightDelayMS?: number;
-  lightOnlyStatic?: boolean;
-  isStaticItem?: boolean;
   projectileAgeMS?: number;
   projectileActivateDelayMS?: number;
 }
@@ -166,18 +172,6 @@ const PROJECTILE_AMBIENT_SLOT = 1;
 const PROJECTILE_ACTIVATE_SLOT = 2;
 
 const log = createLogger("GenericShape");
-import {
-  registerStaticShapeCollider,
-  unregisterStaticShapeCollider,
-} from "../collision/worldCollision";
-import { staticShapeColliderMeshes } from "../world/colliderPolicy";
-import { SHAPE_MODEL_ROTATION_Y } from "../world/placement";
-import { registerShapeSequences } from "../stream/shapeSequences";
-import {
-  getShapeBounds,
-  registerShapeBounds,
-  shapeBoundsFromExtras,
-} from "../stream/shapeBounds";
 
 /**
  * Content for a mounted shape. Computes the Mountpoint inverse offset from the
@@ -280,9 +274,10 @@ export function useStaticShape(shapeName: string) {
   return gltf;
 }
 
-// Dead code removed: IflTexture, StaticTexture, ShapeTexture, useDisposeMaterial
-// were part of an unused React-based IFL rendering path. All IFL materials
-// are now handled imperatively via loadIflAtlas + processShapeScene.
+// IFL materials are driven imperatively rather than by React components: the
+// animated meshes are collected with collectIflMeshes before processShapeScene
+// swaps in Tribes 2 materials, their atlases load via loadIflMaterialInstance,
+// and driveIflFrames advances the frames each render.
 
 export function ShapePlaceholder({
   color,
@@ -465,33 +460,9 @@ export const ShapeModel = memo(function ShapeModel({
     // Blend sequences (DTS flag 0x8) store absolute transforms but must be
     // played in additive mode. Clone and convert them here so the original
     // cached clips from useGLTF are never mutated.
-    const blendNames = new Set<string>();
-    const rawNames = scene.userData?.dts_sequence_names;
-    const rawBlend = scene.userData?.dts_sequence_blend;
-    if (typeof rawNames === "string") {
-      try {
-        const names: string[] = JSON.parse(rawNames);
-        const blend: boolean[] =
-          typeof rawBlend === "string" ? JSON.parse(rawBlend) : [];
-        for (let i = 0; i < names.length; i++) {
-          if (blend[i]) blendNames.add(names[i].toLowerCase());
-        }
-      } catch {
-        /* expected */
-      }
-    }
-    // Build a set of known sequence names (lowercase) from the DTS metadata
-    // so we can reliably identify morph target frame clips below.
-    const knownSeqNames = new Set<string>();
-    if (typeof rawNames === "string") {
-      try {
-        for (const n of JSON.parse(rawNames) as string[]) {
-          knownSeqNames.add(n.toLowerCase());
-        }
-      } catch {
-        /* expected */
-      }
-    }
+    const sequences = readDtsSequences(scene, gltf.animations);
+    const blendNames = sequences.blend;
+    const knownSeqNames = sequences.names;
 
     const clips = new Map<string, AnimationClip>();
     // Morph target frame animations are exported as separate clips named
@@ -599,28 +570,14 @@ export const ShapeModel = memo(function ShapeModel({
     }
   }, [iflMeshes]);
 
-  // DTS sequence flags by name, parsed from glTF extras.
+  // DTS sequence flags by name (readDtsSequences).
   const { seqCyclicByName, seqBlendByName } = useMemo(() => {
+    const table = readDtsSequences(gltf.scene, gltf.animations);
     const cycMap = new Map<string, boolean>();
     const blendMap = new Map<string, boolean>();
-    const rawNames = gltf.scene.userData?.dts_sequence_names;
-    const rawCyclic = gltf.scene.userData?.dts_sequence_cyclic;
-    const rawBlend = gltf.scene.userData?.dts_sequence_blend;
-    if (typeof rawNames === "string") {
-      try {
-        const names: string[] = JSON.parse(rawNames);
-        const cyclic: boolean[] =
-          typeof rawCyclic === "string" ? JSON.parse(rawCyclic) : [];
-        const blend: boolean[] =
-          typeof rawBlend === "string" ? JSON.parse(rawBlend) : [];
-        for (let i = 0; i < names.length; i++) {
-          const lower = names[i].toLowerCase();
-          cycMap.set(lower, cyclic[i] ?? true);
-          if (blend[i]) blendMap.set(lower, true);
-        }
-      } catch {
-        /* expected */
-      }
+    for (const name of table.names) {
+      cycMap.set(name, table.cyclic.has(name));
+      if (table.blend.has(name)) blendMap.set(name, true);
     }
     return { seqCyclicByName: cycMap, seqBlendByName: blendMap };
   }, [gltf]);
@@ -979,18 +936,10 @@ export const ShapeModel = memo(function ShapeModel({
   // dts_sequence_names extra (set by the addon), use it for an exact mapping
   // from ghost ThreadMask indices to animation names. Otherwise fall back to
   // positional indexing (which only works if no sequences were filtered).
-  const seqIndexToName = useMemo(() => {
-    const raw = gltf.scene.userData?.dts_sequence_names;
-    if (typeof raw === "string") {
-      try {
-        const names: string[] = JSON.parse(raw);
-        return names.map((n) => n.toLowerCase());
-      } catch {
-        /* expected */
-      }
-    }
-    return gltf.animations.map((a) => a.name.toLowerCase());
-  }, [gltf]);
+  const seqIndexToName = useMemo(
+    () => readDtsSequences(gltf.scene, gltf.animations).names,
+    [gltf],
+  );
 
   // A mounted image (turret barrel, vehicle turret) runs its datablock's
   // state machine off the owner's ghosted image state, like a player's
@@ -998,11 +947,10 @@ export const ShapeModel = memo(function ShapeModel({
   const imageActionsRef = useRef(new Map<string, AnimationAction>());
   const imageMorphActionsRef = useRef(new Map<string, AnimationAction[]>());
   const spinActionRef = useRef<AnimationAction | null>(null);
-  const cyclicSequenceNames = useMemo(() => {
-    const names = new Set<string>();
-    for (const [name, cyclic] of seqCyclicByName) if (cyclic) names.add(name);
-    return names;
-  }, [seqCyclicByName]);
+  const cyclicSequenceNames = useMemo(
+    () => readDtsSequences(gltf.scene, gltf.animations).cyclic,
+    [gltf],
+  );
   useEffect(() => {
     if (!mixer || imageSlot == null) return;
     const actions = new Map<string, AnimationAction>();
@@ -1066,12 +1014,7 @@ export const ShapeModel = memo(function ShapeModel({
       streamEntityRef.current != null ||
       (entityId != null &&
         gameEntityStore.getState().streamEntities.has(entityId));
-    const playbackState = engineStore.getState().playback;
-    const effectDelta = !inDemo
-      ? delta
-      : playbackState.status === "playing"
-        ? delta * playbackState.rate
-        : 0;
+    const effectDelta = !inDemo ? delta : effectDeltaSec(delta);
 
     // LinearProjectile shape sequences (binary-verified): "activate" starts
     // once the projectile's age reaches activateDelayMS (processTick
@@ -1337,7 +1280,7 @@ export const ShapeModel = memo(function ShapeModel({
         animationEnabled,
       );
     }
-  });
+  }, FramePriority.ShapeAnimation);
 
   // ShapeBase fade (mFadeVal) and cloak (mCloakLevel) — see shapeFadeCloak.ts.
   useFadeAndCloak(clonedScene, () => streamEntityRef.current);
@@ -1389,20 +1332,6 @@ export const ShapeModel = memo(function ShapeModel({
   // ShapeBase sound slots — managed as PositionalAudio, not entities.
   useEntitySoundSlots(streamEntityRef, clonedScene);
 
-  const isTarget = useIsDebugTourTarget(entityId ?? "");
-  const shapeBounds = useMemo(() => {
-    if (!isTarget) return null;
-    const box = new Box3().setFromObject(gltf.scene);
-    const center = new Vector3();
-    const size = new Vector3();
-    box.getCenter(center);
-    box.getSize(size);
-    return {
-      center: [center.x, center.y, center.z] as [number, number, number],
-      size: [size.x, size.y, size.z] as [number, number, number],
-    };
-  }, [isTarget, gltf.scene]);
-
   // The shape's own nodes: mount point bones for portal rendering and
   // mount position tracking, and the Eye node vehicles define for the
   // cockpit viewpoint. DTS node lookups are case insensitive (the tank
@@ -1420,31 +1349,7 @@ export const ShapeModel = memo(function ShapeModel({
     };
   }, [clonedScene]);
 
-  // Write animated Eye node position to the shared eye position map so the
-  // camera system can use it (same map as PlayerModel's eye bone).
-  useEffect(() => {
-    if (!eyeBone || !entityId) return;
-    return () => {
-      playerEyePositions.delete(entityId);
-    };
-  }, [eyeBone, entityId]);
-
-  useFrame(() => {
-    if (!eyeBone || !entityId) return;
-    let eyePos = playerEyePositions.get(entityId);
-    if (!eyePos) {
-      eyePos = new Vector3();
-      playerEyePositions.set(entityId, eyePos);
-    }
-    eyeBone.getWorldPosition(eyePos);
-    clonedScene.worldToLocal(eyePos);
-    // Convert GLB (x,y,z) → entity-local Three.js space via R90
-    // (same swizzle as PlayerModel's eye extraction).
-    const gx = eyePos.x;
-    const gy = eyePos.y;
-    const gz = eyePos.z;
-    eyePos.set(gz, gy, -gx);
-  });
+  useEyePosition(entityId, eyeBone, clonedScene);
 
   // Item/ShapeBase built-in dynamic light. Item::registerLights
   // (FUN_00603de0) skips lightOnlyStatic items that are not static and
@@ -1499,7 +1404,7 @@ export const ShapeModel = memo(function ShapeModel({
     // The colour × intensity clamp to [0,1] in Item::registerLights never
     // binds for datablock colours ≤ 1.
     light.intensity = intensity;
-  });
+  }, FramePriority.ShapeAnimation);
 
   return (
     <group rotation={noRotation ? undefined : STANDARD_90_ROTATION}>
@@ -1509,11 +1414,7 @@ export const ShapeModel = memo(function ShapeModel({
           {entityId}: {shapeName}
         </FloatingLabel>
       ) : null}
-      {shapeBounds && (
-        <group position={shapeBounds.center}>
-          <DebugBounds size={shapeBounds.size} />
-        </group>
-      )}
+      {entityId && <DebugShapeBounds entityId={entityId} scene={gltf.scene} />}
       {children}
       {mountBones &&
         mounted &&

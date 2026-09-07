@@ -43,7 +43,7 @@ vi.mock("../collision/worldCollision", async (importOriginal) => ({
 const { firstWatchable, settledSignings, sidesSettled, watchableWide } =
   await import("./switcher");
 const { buildFreeSpace } = await import("./freeSpace");
-const { DirectorTrackers } = await import("../stream/directorTrackers");
+const { DirectorTrackers } = await import("./directorTrackers");
 
 const shot = (reason: string): Shot =>
   ({

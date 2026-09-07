@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { DirectorTrackers } from "./directorTrackers";
-import type { PlayerRosterEntry, StreamSnapshot } from "./types";
-import { playerName, targetIdForName } from "../director/dataset";
+import type { PlayerRosterEntry, StreamSnapshot } from "../stream/types";
+import { playerName, targetIdForName } from "./dataset";
 
 /** The least a snapshot needs for the trackers to sample players. */
 function snapshot(

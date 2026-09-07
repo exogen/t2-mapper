@@ -9,8 +9,6 @@ import {
   LoopOnce,
   LoopRepeat,
   Object3D,
-  Vector3,
-  Box3,
 } from "three";
 import type { AnimationAction } from "three";
 import { AnimationClip } from "three";
@@ -20,7 +18,6 @@ import {
   buildRestPoseClip,
   disposeClonedScene,
   getKeyframeAtTime,
-  getPosedNodeTransform,
   processShapeScene,
 } from "../stream/playbackUtils";
 import {
@@ -32,21 +29,13 @@ import {
   type ActionAnimState,
 } from "../stream/playerAnimation";
 import {
-  readCyclicSequences,
-  useImageStateAnimation,
-} from "./useImageStateAnimation";
-import {
   applyVisAt,
   collectVisNodes,
   prepareVisMaterial,
   type VisNode,
 } from "./visSequences";
 import { stepFlareThread } from "./jetThreads";
-import {
-  createJetSequence,
-  scrubJetSequence,
-  type JetSequence,
-} from "./jetSequence";
+import { createDtsThread, scrubDtsThread, type DtsThread } from "./dtsThread";
 import {
   addNodeEmitter,
   removeNodeEmitter,
@@ -56,36 +45,28 @@ import {
 import { useJetSound } from "./useJetSound";
 import { collectOwnNodes } from "./sceneNodes";
 import { useDebug } from "./SettingsProvider";
-import { collectMorphClips, isMorphClip } from "./sequenceClips";
-import {
-  collectIflMeshes,
-  loadIflMaterialInstance,
-  type IflMaterialInstance,
-} from "./iflAtlas";
+import { readDtsSequences } from "../dtsSequences";
 import { useQuery } from "@tanstack/react-query";
 import { getAliasedActions } from "../torqueScript/shapeConstructor";
-import {
-  useStaticShape,
-  ShapePlaceholder,
-  MountedShapeContent,
-} from "./GenericShape";
+import { useStaticShape, MountedShapeContent } from "./GenericShape";
 import { textureToUrl } from "../loaders";
 import { useAnisotropy } from "./useAnisotropy";
-import { ShapeErrorBoundary } from "./ShapeErrorBoundary";
-import { DebugSuspense } from "./DebugSuspense";
-import { useIsDebugTourTarget } from "../state/cameraTourStore";
-import { DebugBounds } from "./DebugBounds";
+import { DebugShapeBounds } from "./DebugShapeBounds";
 import { useEntitySoundSlots } from "./useEntitySoundSlots";
 import {
   resolveCloakableFromImageSlot,
   resolveEmapFromDatablock,
-  resolveEmapFromImageSlot,
 } from "./resolveEmap";
 import { useFadeAndCloak } from "./shapeFadeCloak";
 import { useShapeLighting } from "./useShapeLighting";
 import { useShadowCaster } from "./useShadowCaster";
 import type { MountedImageRoot } from "./shapeFadeCloak";
-import { useEngineStoreApi, useEngineSelector } from "../state/engineStore";
+import {
+  effectDeltaSec,
+  useEngineStoreApi,
+  useEngineSelector,
+} from "../state/engineStore";
+import { SHAPE_MODEL_ROTATION_Y } from "../world/placement";
 import { useStreamSnapshot } from "../state/streamSnapshotStore";
 import { useCommandCircuit } from "../state/commandCircuitStore";
 import { CommandCircuitPlayerMarker } from "./CommandCircuitPlayerMarker";
@@ -93,7 +74,8 @@ import { PlayerNameplate } from "./PlayerNameplate";
 import { streamClock } from "../state/streamPlaybackStore";
 import type { PlayerEntity } from "../state/gameEntityTypes";
 
-import { playerEyePositions } from "./playerEyePositions";
+import { useEyePosition } from "./eyePositions";
+import { FramePriority } from "./framePriority";
 
 const SKIN_BASE_URL = "https://assets.tribes2.online/skins/files/";
 const SKIN_MANIFEST_URL = "https://assets.tribes2.online/skins/manifest.json";
@@ -113,7 +95,7 @@ const SKIN_SUFFIXES: Record<string, string> = {
 /** Processed custom skin manifest: suffix → Set of available skin names. */
 type SkinLookup = Record<string, Set<string>>;
 
-/** Skin manifest query key and fetcher, shared with App.tsx prefetch. */
+/** Skin manifest query key and fetcher, shared with AppProviders prefetch. */
 export const skinManifestQueryKey = ["customSkinManifest"] as const;
 export async function fetchSkinManifest(): Promise<SkinLookup> {
   const res = await fetch(SKIN_MANIFEST_URL);
@@ -227,18 +209,12 @@ const TABLE_ACTION_NAME_SET = new Set(TABLE_ACTION_NAMES);
  */
 function countEmbeddedNonTableSequences(
   scene: Group,
+  animations: readonly AnimationClip[],
   tscSequences: string[],
   shapePrefix: string,
 ): number {
-  const raw = scene.userData?.dts_sequence_names;
-  if (typeof raw !== "string") return 0;
-  let dtsNames: string[];
-  try {
-    dtsNames = JSON.parse(raw);
-  } catch {
-    return 0;
-  }
-  if (!Array.isArray(dtsNames) || dtsNames.length === 0) return 0;
+  const dtsNames = readDtsSequences(scene, animations).names;
+  if (dtsNames.length === 0) return 0;
 
   // Build set of clip names derived from TSShapeConstructor DSQ entries.
   const tscClipNames = new Set<string>();
@@ -255,22 +231,12 @@ function countEmbeddedNonTableSequences(
   // match any TSShapeConstructor clip name, excluding any that are table actions.
   let count = 0;
   for (const name of dtsNames) {
-    if (tscClipNames.has(name.toLowerCase())) break;
-    if (!TABLE_ACTION_NAME_SET.has(name.toLowerCase())) {
-      count++;
-    }
+    if (tscClipNames.has(name)) break;
+    if (!TABLE_ACTION_NAME_SET.has(name)) count++;
   }
   return count;
 }
 
-/**
- * Renders a player model with skeleton-preserving animation.
- *
- * Uses SkeletonUtils.clone to deep-clone the GLTF scene with skeleton bindings
- * intact, then drives a per-entity AnimationMixer to play movement animations
- * (Root, Forward, Back, Side, Fall) selected from the keyframe velocity data.
- * Weapon is attached to the animated Mount0 bone.
- */
 /**
  * Debug view of the mixer's live actions (clip, effective weight, time,
  * paused), published on the scene's userData for probes.
@@ -330,7 +296,7 @@ function buildJetFlare(
 function buildJetFlareSequence(
   actions: Map<string, AnimationAction>,
   visNodes: VisNode[],
-): JetSequence | null {
+): DtsThread | null {
   // Only the morph frames and vis play: the JetFlare node track keys the
   // pelvis at rest, which the engine's higher-priority body threads
   // always override but the mixer would blend in at half weight.
@@ -343,9 +309,17 @@ function buildJetFlareSequence(
   }
   const duration = main?.getClip().duration ?? visNodes[0]?.duration ?? 0;
   if (duration <= 0) return null;
-  return createJetSequence(flareActions, visNodes, duration);
+  return createDtsThread("jetflare", flareActions, visNodes, duration, false);
 }
 
+/**
+ * Renders a player model with skeleton-preserving animation.
+ *
+ * Uses SkeletonUtils.clone to deep-clone the GLTF scene with skeleton bindings
+ * intact, then drives a per-entity AnimationMixer to play movement animations
+ * (Root, Forward, Back, Side, Fall) selected from the keyframe velocity data.
+ * Weapon is attached to the animated Mount0 bone.
+ */
 export function PlayerModel({ entity }: { entity: PlayerEntity }) {
   const engineStore = useEngineStoreApi();
   const shapeName = entity.shapeName!;
@@ -363,7 +337,7 @@ export function PlayerModel({ entity }: { entity: PlayerEntity }) {
   const commandCircuitActive = useCommandCircuit((s) => s.active);
 
   // Resolve skin texture URL: local manifest first, then remote manifest.
-  // The manifest is prefetched at app startup (see App.tsx) so it's
+  // The manifest is prefetched at app startup (see AppProviders) so it's
   // available synchronously here — no async wait that could be starved
   // by store mutations during streaming playback.
   const { data: skinManifest } = useCustomSkinManifest();
@@ -397,64 +371,51 @@ export function PlayerModel({ entity }: { entity: PlayerEntity }) {
   );
 
   // Clone scene preserving skeleton bindings, create mixer, find mount bones.
-  const {
-    clonedScene,
-    mixer,
-    mount0,
-    mount1,
-    mount2,
-    eyeBone,
-    iflInitializers,
-  } = useMemo(() => {
-    const scene = SkeletonUtils.clone(gltf.scene) as Group;
-    const iflInits = processShapeScene(scene, undefined, {
-      anisotropy,
-      emap: emap,
-      skinUrl,
-    });
+  const { clonedScene, mixer, mount0, mount1, mount2, eyeBone } =
+    useMemo(() => {
+      const scene = SkeletonUtils.clone(gltf.scene) as Group;
+      processShapeScene(scene, undefined, {
+        anisotropy,
+        emap: emap,
+        skinUrl,
+      });
 
-    // Use front-face-only rendering so the camera can see out from inside the
-    // model in first-person (backface culling hides interior faces).
-    // Disable frustum culling — when portaled into a vehicle mount bone, the
-    // bounding sphere is in local space but the world transform comes from the
-    // bone chain, causing incorrect culling.
-    scene.traverse((n: any) => {
-      if (n.isMesh) {
-        n.frustumCulled = false;
-        if (n.material) {
-          const mats = Array.isArray(n.material) ? n.material : [n.material];
-          for (const m of mats) m.side = FrontSide;
+      // Use front-face-only rendering so the camera can see out from inside the
+      // model in first-person (backface culling hides interior faces).
+      // Disable frustum culling — when portaled into a vehicle mount bone, the
+      // bounding sphere is in local space but the world transform comes from the
+      // bone chain, causing incorrect culling.
+      scene.traverse((n: any) => {
+        if (n.isMesh) {
+          n.frustumCulled = false;
+          if (n.material) {
+            const mats = Array.isArray(n.material) ? n.material : [n.material];
+            for (const m of mats) m.side = FrontSide;
+          }
         }
-      }
-    });
+      });
 
-    const mix = new AnimationMixer(scene);
+      const mix = new AnimationMixer(scene);
 
-    let m0: Object3D | null = null;
-    let m1: Object3D | null = null;
-    let m2: Object3D | null = null;
-    let eye: Object3D | null = null;
-    // DTS node lookups are case insensitive.
-    const nodes = collectOwnNodes(scene);
-    m0 = nodes.get("mount0") ?? null;
-    m1 = nodes.get("mount1") ?? null;
-    m2 = nodes.get("mount2") ?? null;
-    eye = nodes.get("eye") ?? null;
+      // DTS node lookups are case insensitive.
+      const nodes = collectOwnNodes(scene);
+      const m0: Object3D | null = nodes.get("mount0") ?? null;
+      const m1: Object3D | null = nodes.get("mount1") ?? null;
+      const m2: Object3D | null = nodes.get("mount2") ?? null;
+      const eye: Object3D | null = nodes.get("eye") ?? null;
 
-    return {
-      clonedScene: scene,
-      mixer: mix,
-      mount0: m0,
-      mount1: m1,
-      mount2: m2,
-      eyeBone: eye as Object3D | null,
-      iflInitializers: iflInits,
-    };
-  }, [gltf.scene, anisotropy, emap, skinUrl]);
+      return {
+        clonedScene: scene,
+        mixer: mix,
+        mount0: m0,
+        mount1: m1,
+        mount2: m2,
+        eyeBone: eye as Object3D | null,
+      };
+    }, [gltf.scene, anisotropy, emap, skinUrl]);
 
   useEffect(() => {
     return () => {
-      playerEyePositions.delete(entity.id);
       disposeClonedScene(clonedScene);
       mixer.uncacheRoot(clonedScene);
     };
@@ -489,6 +450,7 @@ export function PlayerModel({ entity }: { entity: PlayerEntity }) {
     const prefix = stem + "_";
     const embeddedNonTable = countEmbeddedNonTableSequences(
       gltf.scene,
+      gltf.animations,
       sequences,
       prefix,
     );
@@ -664,18 +626,6 @@ export function PlayerModel({ entity }: { entity: PlayerEntity }) {
     };
   }, [mixer, gltf.animations, shapeAliases]);
 
-  // Initialize IFL materials: load atlas textures and set up onBeforeRender
-  // callbacks that animate texture offsets based on the current playback time.
-  useEffect(() => {
-    const cleanups: (() => void)[] = [];
-    for (const { mesh, initialize } of iflInitializers) {
-      initialize(mesh, () => streamClock.time)
-        .then((dispose) => cleanups.push(dispose))
-        .catch(() => {});
-    }
-    return () => cleanups.forEach((fn) => fn());
-  }, [iflInitializers]);
-
   // Track weaponShape changes. The entity is mutated in-place by the
   // streaming layer (no React re-render), so we sync it in useFrame.
   // Derive weapon/pack/flag from imageSlots.
@@ -738,6 +688,7 @@ export function PlayerModel({ entity }: { entity: PlayerEntity }) {
     };
   }, [engineStore, entity.dataBlockId]);
   const updateJetSound = useJetSound(clonedScene, jetSoundId);
+  useEyePosition(entity.id, eyeBone, clonedScene);
   const { debugMode } = useDebug();
   const jetFlareRef = useRef<JetFlareParts>(NO_JET_FLARE);
   // The player's velocity this frame, shared by its nozzle emitters.
@@ -750,7 +701,7 @@ export function PlayerModel({ entity }: { entity: PlayerEntity }) {
   // The flare thread's outputs, rebuilt when the body's actions are.
   const jetFlareThreadRef = useRef<{
     source: Map<string, AnimationAction> | null;
-    sequence: JetSequence | null;
+    sequence: DtsThread | null;
   }>({ source: null, sequence: null });
   useEffect(() => {
     const parts = buildJetFlare(
@@ -1020,7 +971,7 @@ export function PlayerModel({ entity }: { entity: PlayerEntity }) {
     // while jetting.
     const isJetting = !!entity.jetting && !isDead;
     updateJetSound(isJetting);
-    const jetDelta = isPlaying ? delta * playback.rate : 0;
+    const jetDelta = effectDeltaSec(delta);
     const jetFlare = jetFlareRef.current;
     const flareThread = jetFlareThreadRef.current;
     if (flareThread.source !== actions) {
@@ -1036,7 +987,7 @@ export function PlayerModel({ entity }: { entity: PlayerEntity }) {
         flare.duration,
       );
       jetFlarePosRef.current = pos;
-      scrubJetSequence(flare, pos, false);
+      scrubDtsThread(flare, pos);
     }
     const velocity = kf?.velocity;
     if (velocity) {
@@ -1057,28 +1008,7 @@ export function PlayerModel({ entity }: { entity: PlayerEntity }) {
       mixer.update(0);
     }
     if (debugMode) clonedScene.userData.animDebug = describeMixer(mixer);
-
-    // Write animated Eye bone position for first-person camera.
-    // Torque's Player::getEyeTransform reads the eye node's POSITION
-    // from the animated skeleton (rotation is discarded — head rotation
-    // is constructed from mHead pitch/yaw instead).
-    if (eyeBone) {
-      let eyePos = playerEyePositions.get(entity.id);
-      if (!eyePos) {
-        eyePos = new Vector3();
-        playerEyePositions.set(entity.id, eyePos);
-      }
-      // Get Eye bone position in GLB model-local space.
-      eyeBone.getWorldPosition(eyePos);
-      clonedScene.worldToLocal(eyePos);
-      // Convert GLB (x,y,z) → entity-local Three.js space via R90:
-      // same swizzle as PlayerEyeOffset's static extraction.
-      const gx = eyePos.x;
-      const gy = eyePos.y;
-      const gz = eyePos.z;
-      eyePos.set(gz, gy, -gx);
-    }
-  });
+  }, FramePriority.ShapeAnimation);
 
   return (
     <>
@@ -1087,51 +1017,39 @@ export function PlayerModel({ entity }: { entity: PlayerEntity }) {
       )}
       {commandCircuitActive && <CommandCircuitPlayerMarker entity={entity} />}
       <group ref={mountYawRef}>
-        <group rotation={[0, Math.PI / 2, 0]}>
+        <group rotation={[0, SHAPE_MODEL_ROTATION_Y, 0]}>
           <primitive object={clonedScene} />
-          <PlayerDebugBounds entityId={entity.id} scene={gltf.scene} />
+          <DebugShapeBounds entityId={entity.id} scene={gltf.scene} />
         </group>
       </group>
-      {currentWeaponShape && mount0 && (
-        <ShapeErrorBoundary
-          key={currentWeaponShape}
-          fallback={<ShapePlaceholder color="red" label={currentWeaponShape} />}
-        >
-          <DebugSuspense
-            name={`Weapon:${entity.id}/${currentWeaponShape}`}
-            fallback={
-              <ShapePlaceholder color="cyan" label={currentWeaponShape} />
-            }
-          >
-            <MountedImageModel
-              entity={entity}
+      {currentWeaponShape &&
+        mount0 &&
+        createPortal(
+          <Suspense key={currentWeaponShape}>
+            <MountedShapeContent
+              shapeName={currentWeaponShape}
+              imageDataBlockId={entity.imageSlots?.[0]?.dataBlockId}
+              entityId={entity.id}
+              skinName={entity.imageSlots?.[0]?.skinName}
               slot={0}
-              shape={currentWeaponShape}
-              mount={mount0}
             />
-          </DebugSuspense>
-        </ShapeErrorBoundary>
-      )}
-      {currentPackShape && mount1 && (
-        <ShapeErrorBoundary
-          key={currentPackShape}
-          fallback={<ShapePlaceholder color="red" label={currentPackShape} />}
-        >
-          <DebugSuspense
-            name={`Pack:${entity.id}/${currentPackShape}`}
-            fallback={
-              <ShapePlaceholder color="cyan" label={currentPackShape} />
-            }
-          >
-            <MountedImageModel
-              entity={entity}
+          </Suspense>,
+          mount0,
+        )}
+      {currentPackShape &&
+        mount1 &&
+        createPortal(
+          <Suspense key={currentPackShape}>
+            <MountedShapeContent
+              shapeName={currentPackShape}
+              imageDataBlockId={entity.imageSlots?.[2]?.dataBlockId}
+              entityId={entity.id}
+              skinName={entity.imageSlots?.[2]?.skinName}
               slot={2}
-              shape={currentPackShape}
-              mount={mount1}
             />
-          </DebugSuspense>
-        </ShapeErrorBoundary>
-      )}
+          </Suspense>,
+          mount1,
+        )}
       {currentFlagShape &&
         mount2 &&
         createPortal(
@@ -1147,238 +1065,4 @@ export function PlayerModel({ entity }: { entity: PlayerEntity }) {
         )}
     </>
   );
-}
-
-function PlayerDebugBounds({
-  entityId,
-  scene,
-}: {
-  entityId: string;
-  scene: Group;
-}) {
-  const isTarget = useIsDebugTourTarget(entityId);
-  const bounds = useMemo(() => {
-    if (!isTarget) return null;
-    const box = new Box3().setFromObject(scene);
-    const center = new Vector3();
-    const size = new Vector3();
-    box.getCenter(center);
-    box.getSize(size);
-    return {
-      center: [center.x, center.y, center.z] as [number, number, number],
-      size: [size.x, size.y, size.z] as [number, number, number],
-    };
-  }, [isTarget, scene]);
-  if (!bounds) return null;
-  return (
-    <group position={bounds.center}>
-      <DebugBounds size={bounds.size} />
-    </group>
-  );
-}
-
-/**
- * Build a DTS sequence-index -> name lookup from GLB metadata.
- * Weapon GLBs include `dts_sequence_names` in scene extras, providing the
- * original DTS sequence ordering that datablock state indices reference.
- */
-function buildSeqIndexToName(
-  scene: Group,
-  animations: AnimationClip[],
-): string[] {
-  const raw = scene.userData?.dts_sequence_names;
-  if (typeof raw === "string") {
-    try {
-      const names: string[] = JSON.parse(raw);
-      return names.map((n) => n.toLowerCase());
-    } catch {
-      /* fall through */
-    }
-  }
-  return animations.map((a) => a.name.toLowerCase());
-}
-
-/**
- * Attaches an animated mounted image (weapon in slot 0, pack in slot 2)
- * to one of the player's mount bones.
- * Drives a weapon-specific AnimationMixer using the WeaponImageStateMachine
- * to play fire, reload, spin, and other weapon animations based on the
- * server-replicated condition flags.
- *
- * Reads the slot's `imageState` and `imageStates` off `entity.imageSlots`
- * inside useFrame, since the slots are mutated per-tick without
- * triggering React re-renders.
- */
-function MountedImageModel({
-  entity,
-  slot,
-  shape,
-  mount,
-}: {
-  entity: PlayerEntity;
-  slot: number;
-  shape: string;
-  mount: Object3D;
-}) {
-  const engineStore = useEngineStoreApi();
-  const weaponGltf = useStaticShape(shape);
-  const emap = useMemo(
-    () => resolveEmapFromImageSlot(entity.imageSlots?.[slot]?.dataBlockId),
-    [entity.imageSlots, slot],
-  );
-  const anisotropy = useAnisotropy();
-
-  // Clone weapon with skeleton bindings, create dedicated mixer.
-  const {
-    weaponClone,
-    weaponMixer,
-    seqIndexToName,
-    cyclicSequences,
-    visNodesBySequence,
-    weaponIflMeshes,
-  } = useMemo(() => {
-    const clone = SkeletonUtils.clone(weaponGltf.scene) as Group;
-    // Marks the subtree as a mounted image so effects that redraw the
-    // player's own shape (the shocklance zap) can skip it.
-    clone.userData.imageMount = true;
-    // IFL meshes are collected before the materials are replaced; their
-    // frames follow the image's threads (useImageStateAnimation).
-    const iflInfos = collectIflMeshes(clone);
-    processShapeScene(clone, undefined, {
-      anisotropy,
-      emap,
-    });
-
-    // Compute Mountpoint inverse offset so the weapon's grip aligns to Mount0.
-    const mp = getPosedNodeTransform(
-      weaponGltf.scene,
-      weaponGltf.animations,
-      "Mountpoint",
-    );
-    if (mp) {
-      const invQuat = mp.quaternion.clone().invert();
-      const invPos = mp.position.clone().negate().applyQuaternion(invQuat);
-      clone.position.copy(invPos);
-      clone.quaternion.copy(invQuat);
-    }
-
-    const visBySeq = collectVisNodes(clone);
-
-    const mix = new AnimationMixer(clone);
-    const seq = buildSeqIndexToName(
-      weaponGltf.scene as Group,
-      weaponGltf.animations,
-    );
-    return {
-      weaponClone: clone,
-      weaponMixer: mix,
-      seqIndexToName: seq,
-      cyclicSequences: readCyclicSequences(
-        weaponGltf.scene,
-        weaponGltf.animations,
-      ),
-      visNodesBySequence: visBySeq,
-      weaponIflMeshes: iflInfos,
-    };
-  }, [weaponGltf, anisotropy, emap]);
-
-  useEffect(() => {
-    return () => {
-      disposeClonedScene(weaponClone);
-      weaponMixer.uncacheRoot(weaponClone);
-    };
-  }, [weaponClone, weaponMixer]);
-  useShapeLighting(weaponClone);
-
-  // Build case-insensitive action map for weapon animations.
-  const weaponActionsRef = useRef(new Map<string, AnimationAction>());
-  const weaponMorphActionsRef = useRef(new Map<string, AnimationAction[]>());
-  const spinActionRef = useRef<AnimationAction | null>(null);
-  useEffect(() => {
-    // Mesh frame clips ("{Sequence}_{Mesh}_frame") ride along with their
-    // sequence's clip rather than standing as sequences of their own.
-    const morphClips = collectMorphClips(weaponGltf.animations, seqIndexToName);
-    const actions = new Map<string, AnimationAction>();
-    for (const clip of weaponGltf.animations) {
-      if (isMorphClip(clip, morphClips)) continue;
-      actions.set(clip.name.toLowerCase(), weaponMixer.clipAction(clip));
-    }
-    weaponActionsRef.current = actions;
-    const morph = new Map<string, AnimationAction[]>();
-    for (const [name, clips] of morphClips) {
-      morph.set(
-        name,
-        clips.map((clip) => weaponMixer.clipAction(clip)),
-      );
-    }
-    weaponMorphActionsRef.current = morph;
-
-    // Set up the spin thread: a looping "spin" animation with variable timeScale.
-    const spinAction = actions.get("spin");
-    if (spinAction) {
-      spinAction.setLoop(LoopRepeat, Infinity);
-      spinAction.timeScale = 0;
-      spinAction.play();
-    }
-    spinActionRef.current = spinAction ?? null;
-
-    // Force initial pose.
-    weaponMixer.update(0);
-    return () => {
-      weaponMixer.stopAllAction();
-      weaponActionsRef.current = new Map();
-      weaponMorphActionsRef.current = new Map();
-      spinActionRef.current = null;
-    };
-  }, [weaponMixer, weaponGltf.animations, seqIndexToName]);
-
-  // Load the weapon's IFL atlases; the image threads pick the frames.
-  const weaponIflRef = useRef<IflMaterialInstance[]>([]);
-  useEffect(() => {
-    let disposed = false;
-    weaponIflRef.current = [];
-    for (const info of weaponIflMeshes) {
-      loadIflMaterialInstance(info)
-        .then((inst) => {
-          if (inst && !disposed) weaponIflRef.current.push(inst);
-        })
-        .catch(() => {});
-    }
-    return () => {
-      disposed = true;
-      weaponIflRef.current = [];
-    };
-  }, [weaponIflMeshes]);
-
-  // Imperatively attach/detach the clone to the mount bone.
-  useEffect(() => {
-    mount.add(weaponClone);
-    return () => {
-      mount.remove(weaponClone);
-    };
-  }, [weaponClone, mount]);
-
-  useImageStateAnimation(() => entity.imageSlots?.[slot], {
-    actions: weaponActionsRef,
-    morphActions: weaponMorphActionsRef,
-    setSpinTimeScale: (timeScale) => {
-      if (spinActionRef.current) spinActionRef.current.timeScale = timeScale;
-    },
-    visNodesBySequence,
-    imageRoot: weaponClone,
-    ownerId: entity.id,
-    seqIndexToName,
-    cyclicSequences,
-    iflInstances: weaponIflRef,
-  });
-
-  // Advance the weapon mixer.
-  useFrame((_, delta) => {
-    const playback = engineStore.getState().playback;
-    weaponMixer.update(
-      playback.status === "playing" ? delta * playback.rate : 0,
-    );
-  });
-
-  return null;
 }

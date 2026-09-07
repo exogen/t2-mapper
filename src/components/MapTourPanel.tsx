@@ -6,7 +6,7 @@ import {
   categorizeEntities,
   type TourCategory,
   type TourTarget,
-} from "./mapTourCategories";
+} from "../state/mapTourCategories";
 import { DEFAULT_TEAM_NAMES } from "../stringUtils";
 import styles from "./MapTourPanel.module.css";
 import { BsPlayFill } from "react-icons/bs";

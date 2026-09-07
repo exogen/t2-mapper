@@ -1,9 +1,8 @@
-"use client";
-import { AppProviders } from "@/src/components/AppProviders";
-import { MapInspector } from "@/src/components/MapInspector";
-import { NewAddressDialog } from "@/src/components/NewAddressDialog";
+import { AppProviders } from "./AppProviders";
+import { MapInspector } from "./MapInspector";
+import { NewAddressDialog } from "./NewAddressDialog";
 
-export default function HomePage() {
+export default function App() {
   return (
     <AppProviders>
       <MapInspector />

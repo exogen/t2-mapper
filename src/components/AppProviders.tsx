@@ -1,13 +1,9 @@
-"use client";
 import { Suspense, type ReactNode } from "react";
 import { NuqsAdapter } from "nuqs/adapters/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import {
-  skinManifestQueryKey,
-  fetchSkinManifest,
-} from "@/src/components/PlayerModel";
-import { FeaturesProvider } from "@/src/components/FeaturesProvider";
-import { SettingsProvider } from "@/src/components/SettingsProvider";
+import { skinManifestQueryKey, fetchSkinManifest } from "./PlayerModel";
+import { FeaturesProvider } from "./FeaturesProvider";
+import { SettingsProvider } from "./SettingsProvider";
 
 // Three.js has its own loaders for textures and models, but we need to load other
 // stuff too, e.g. missions, terrains, and more. This client is used for those.

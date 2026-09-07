@@ -1,7 +1,7 @@
-import { streamSnapshotStore } from "../state/streamSnapshotStore";
+import { streamSnapshotStore } from "./streamSnapshotStore";
 import { DEFAULT_TEAM_NAMES } from "../stringUtils";
 import { stripTaggedStringMarkup } from "../stream/streamHelpers";
-import type { GameEntity } from "../state/gameEntityTypes";
+import type { GameEntity } from "./gameEntityTypes";
 
 /**
  * Resolves which team's flag a flag-marked entity represents. Flag items

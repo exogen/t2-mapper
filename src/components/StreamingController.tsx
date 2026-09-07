@@ -11,7 +11,7 @@ import {
 } from "../stream/playbackUtils";
 import { useSettings } from "./SettingsProvider";
 import { ParticleEffects } from "./ParticleEffects";
-import { playerEyePositions } from "./playerEyePositions";
+import { eyePositions } from "./eyePositions";
 import { useProgress } from "@react-three/drei";
 import { startAssetPrefetch, stopAssetPrefetch } from "../assetPrefetch";
 import { isRelayRecording } from "../stream/demoDate";
@@ -19,6 +19,7 @@ import { stopAllTrackedSounds } from "./AudioEmitter";
 import { useEngineStoreApi, advanceEffectClock } from "../state/engineStore";
 import { setStreamSnapshot } from "../state/streamSnapshotStore";
 import { cameraRegistry } from "../state/cameraRegistry";
+import { FramePriority } from "./framePriority";
 import { gameEntityStore } from "../state/gameEntityStore";
 import {
   DIRECTOR_ORBIT_TARGET_MAX_LAG,
@@ -374,6 +375,15 @@ export function StreamingController({
   const playbackClockRef = useRef(0);
   const lastSeekNonceRef = useRef(0);
   const prevTickSnapshotRef = useRef<StreamSnapshot | null>(null);
+  /**
+   * What the playback pass resolved this frame, for the camera pass: the
+   * tick pair being blended and how far between them the playhead sits.
+   */
+  const frameRef = useRef<{
+    renderCurrent: StreamSnapshot;
+    renderPrev: StreamSnapshot;
+    interpT: number;
+  } | null>(null);
   const currentTickSnapshotRef = useRef<StreamSnapshot | null>(null);
   const streamRef = useRef<StreamingPlayback | null>(
     recording.streamingPlayback ?? null,
@@ -591,6 +601,9 @@ export function StreamingController({
     };
   }, [recording, engineStore, syncRenderableEntities]);
 
+  // ── Playback: advance the demo clock, step the stream and place every
+  // entity. Runs before shape animation and the camera ladder, which
+  // both read what it writes (see framePriority.ts).
   useFrame((state, delta) => {
     const stream = streamRef.current;
     if (!stream) return;
@@ -682,6 +695,115 @@ export function StreamingController({
         setStreamSnapshot(renderCurrent);
       }
     }
+
+    // Imperative position interpolation via the shared entity root.
+    const currentEntities = getEntityMap(renderCurrent);
+    const previousEntities = getEntityMap(renderPrev);
+    const renderEntities = gameEntityStore.getState().streamEntities;
+    const root = streamPlaybackStore.getState().root;
+    if (root) {
+      for (const child of root.children) {
+        // Scene infrastructure (terrain, interiors, sky, etc.) handles its
+        // own positioning — skip interpolation and visibility management.
+        const renderEntity = renderEntities.get(child.name);
+        if (renderEntity && isSceneEntity(renderEntity)) {
+          continue;
+        }
+        // Link beams (ELF/repair) have no ghost position at all — they
+        // draw themselves in world space between two live objects, and
+        // manage their own visibility. The no-position hide below would
+        // blank them permanently.
+        if (
+          renderEntity?.renderType === "LinkBeam" ||
+          renderEntity?.renderType === "ShockLance"
+        ) {
+          child.visible = true;
+          continue;
+        }
+
+        const entity = currentEntities.get(child.name);
+        // An entity removed from the snapshot may still be mounted until
+        // React commits the removal; hold it at its last keyframe position.
+        if (!entity) {
+          const kfs =
+            renderEntity && "keyframes" in renderEntity
+              ? renderEntity.keyframes
+              : undefined;
+          if (kfs?.[0]?.position) {
+            const kf = kfs[0];
+            child.visible = true;
+            child.position.set(kf.position[1], kf.position[2], kf.position[0]);
+            continue;
+          }
+        }
+        if (!entity?.position || (entity.fadeVal === 0 && !entity.cloakLevel)) {
+          child.visible = false;
+          continue;
+        }
+
+        child.visible = true;
+        const previousEntity = previousEntities.get(child.name);
+        if (previousEntity?.position) {
+          const px = previousEntity.position[0];
+          const py = previousEntity.position[1];
+          const pz = previousEntity.position[2];
+          const cx = entity.position[0];
+          const cy = entity.position[1];
+          const cz = entity.position[2];
+          const ix = px + (cx - px) * interpT;
+          const iy = py + (cy - py) * interpT;
+          const iz = pz + (cz - pz) * interpT;
+          child.position.set(iy, iz, ix);
+        } else {
+          child.position.set(
+            entity.position[1],
+            entity.position[2],
+            entity.position[0],
+          );
+        }
+
+        if (entity.faceViewer) {
+          child.quaternion
+            .copy(state.camera.quaternion)
+            .multiply(_billboardFlip);
+        } else if (entity.visual?.kind === "tracer") {
+          child.quaternion.identity();
+        } else if (entity.rotation) {
+          if (previousEntity?.rotation) {
+            _interpQuatA.set(...previousEntity.rotation);
+            _interpQuatB.set(...entity.rotation);
+            _interpQuatA.slerp(_interpQuatB, interpT);
+            child.quaternion.copy(_interpQuatA);
+          } else {
+            child.quaternion.set(...entity.rotation);
+          }
+        }
+      }
+    }
+
+    // Pause at the true end of the demo. While a progressive download is
+    // still running, an exhausted snapshot is merely the buffering
+    // frontier — the playhead clamp above holds position and playback
+    // resumes on its own as bytes arrive.
+    if (isPlaying && snapshot.exhausted && stream.streamComplete !== false) {
+      storeState.setPlaybackStatus("paused");
+    }
+
+    // Hand the camera pass the tick pair it must interpolate between.
+    frameRef.current = { renderCurrent, renderPrev, interpT };
+  }, FramePriority.StreamPlayback);
+
+  // ── The stream's camera pose: the recorded view, the orbit follow, or
+  // first person. Runs after the shapes have animated (the first-person
+  // eye node) and after the director has set its orbit parameters.
+  useFrame((state, delta) => {
+    const frame = frameRef.current;
+    if (!frame) return;
+    const { renderCurrent, renderPrev, interpT } = frame;
+    const playback = engineStore.getState().playback;
+    const isPlaying = playback.status === "playing";
+    const currentEntities = getEntityMap(renderCurrent);
+    const root = streamPlaybackStore.getState().root;
 
     const currentCamera = renderCurrent.camera;
     const previousCamera =
@@ -776,91 +898,6 @@ export function StreamingController({
       isRelayRecording(recording.recorderName)
     ) {
       streamPlaybackStore.setState({ cameraMode: "freeFly" });
-    }
-
-    // Imperative position interpolation via the shared entity root.
-    const currentEntities = getEntityMap(renderCurrent);
-    const previousEntities = getEntityMap(renderPrev);
-    const renderEntities = gameEntityStore.getState().streamEntities;
-    const root = streamPlaybackStore.getState().root;
-    if (root) {
-      for (const child of root.children) {
-        // Scene infrastructure (terrain, interiors, sky, etc.) handles its
-        // own positioning — skip interpolation and visibility management.
-        const renderEntity = renderEntities.get(child.name);
-        if (renderEntity && isSceneEntity(renderEntity)) {
-          continue;
-        }
-        // Link beams (ELF/repair) have no ghost position at all — they
-        // draw themselves in world space between two live objects, and
-        // manage their own visibility. The no-position hide below would
-        // blank them permanently.
-        if (
-          renderEntity?.renderType === "LinkBeam" ||
-          renderEntity?.renderType === "ShockLance"
-        ) {
-          child.visible = true;
-          continue;
-        }
-
-        const entity = currentEntities.get(child.name);
-        // An entity removed from the snapshot may still be mounted until
-        // React commits the removal; hold it at its last keyframe position.
-        if (!entity) {
-          const kfs =
-            renderEntity && "keyframes" in renderEntity
-              ? renderEntity.keyframes
-              : undefined;
-          if (kfs?.[0]?.position) {
-            const kf = kfs[0];
-            child.visible = true;
-            child.position.set(kf.position[1], kf.position[2], kf.position[0]);
-            continue;
-          }
-        }
-        if (!entity?.position || (entity.fadeVal === 0 && !entity.cloakLevel)) {
-          child.visible = false;
-          continue;
-        }
-
-        child.visible = true;
-        const previousEntity = previousEntities.get(child.name);
-        if (previousEntity?.position) {
-          const px = previousEntity.position[0];
-          const py = previousEntity.position[1];
-          const pz = previousEntity.position[2];
-          const cx = entity.position[0];
-          const cy = entity.position[1];
-          const cz = entity.position[2];
-          const ix = px + (cx - px) * interpT;
-          const iy = py + (cy - py) * interpT;
-          const iz = pz + (cz - pz) * interpT;
-          child.position.set(iy, iz, ix);
-        } else {
-          child.position.set(
-            entity.position[1],
-            entity.position[2],
-            entity.position[0],
-          );
-        }
-
-        if (entity.faceViewer) {
-          child.quaternion
-            .copy(state.camera.quaternion)
-            .multiply(_billboardFlip);
-        } else if (entity.visual?.kind === "tracer") {
-          child.quaternion.identity();
-        } else if (entity.rotation) {
-          if (previousEntity?.rotation) {
-            _interpQuatA.set(...previousEntity.rotation);
-            _interpQuatB.set(...entity.rotation);
-            _interpQuatA.slerp(_interpQuatB, interpT);
-            child.quaternion.copy(_interpQuatA);
-          } else {
-            child.quaternion.set(...entity.rotation);
-          }
-        }
-      }
     }
 
     const mode = currentCamera?.mode;
@@ -1058,7 +1095,7 @@ export function StreamingController({
           resolvedTarget.group,
           mounted
             ? _tmpVec.set(0, DEFAULT_EYE_HEIGHT, 0)
-            : (playerEyePositions.get(orbitTargetId) ??
+            : (eyePositions.get(orbitTargetId) ??
                 _tmpVec.set(0, DEFAULT_EYE_HEIGHT, 0)),
           followedEntity?.headPitch ?? 0,
           followedEntity?.headYaw ?? 0,
@@ -1080,7 +1117,7 @@ export function StreamingController({
       root &&
       currentCamera?.controlEntityId
     ) {
-      const eyePos = playerEyePositions.get(currentCamera.controlEntityId);
+      const eyePos = eyePositions.get(currentCamera.controlEntityId);
       const playerGroup = root.children.find(
         (child) => child.name === currentCamera.controlEntityId,
       );
@@ -1091,15 +1128,7 @@ export function StreamingController({
         streamCamera.position.y += DEFAULT_EYE_HEIGHT;
       }
     }
-
-    // Pause at the true end of the demo. While a progressive download is
-    // still running, an exhausted snapshot is merely the buffering
-    // frontier — the playhead clamp above holds position and playback
-    // resumes on its own as bytes arrive.
-    if (isPlaying && snapshot.exhausted && stream.streamComplete !== false) {
-      storeState.setPlaybackStatus("paused");
-    }
-  });
+  }, FramePriority.CameraStream);
 
   return (
     <>

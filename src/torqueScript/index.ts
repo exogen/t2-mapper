@@ -16,7 +16,6 @@ export {
   DEFAULT_REACTIVE_GLOBAL_NAMES,
   DEFAULT_REACTIVE_METHOD_RULES,
 } from "./reactivity";
-export { normalizePath } from "./utils";
 export type {
   BuiltinsContext,
   BuiltinsFactory,

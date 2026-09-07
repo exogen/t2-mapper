@@ -1,4 +1,8 @@
-const SIZE = 256;
+/** Terrain grid size in squares — the .ter heightfield is TERRAIN_SIZE². */
+export const TERRAIN_SIZE = 256;
+
+/** Lightmap texture size: 2 pixels per terrain square. */
+export const LIGHTMAP_SIZE = 512;
 
 /**
  * Convert a raw heightfield sample to world units. Heights are stored as
@@ -25,7 +29,7 @@ export function parseTerrainBuffer(arrayBuffer: ArrayBufferLike): TerrainFile {
   let offset = 0;
   const version = dataView.getUint8(offset++);
 
-  const heightMap1d = new Uint16Array(SIZE * SIZE);
+  const heightMap1d = new Uint16Array(TERRAIN_SIZE * TERRAIN_SIZE);
   const textureNames: string[] = [];
 
   const readString = (length: number) => {
@@ -41,7 +45,7 @@ export function parseTerrainBuffer(arrayBuffer: ArrayBufferLike): TerrainFile {
 
   let minHeight = 0xffff;
   let maxHeight = 0;
-  for (let i = 0; i < SIZE * SIZE; i++) {
+  for (let i = 0; i < TERRAIN_SIZE * TERRAIN_SIZE; i++) {
     const height = dataView.getUint16(offset, true);
     offset += 2;
     heightMap1d[i] = height;
@@ -64,8 +68,8 @@ export function parseTerrainBuffer(arrayBuffer: ArrayBufferLike): TerrainFile {
   const alphaMaps = [];
 
   for (const _textureName of textureNames) {
-    const alphaMap = new Uint8Array(SIZE * SIZE);
-    for (let j = 0; j < SIZE * SIZE; j++) {
+    const alphaMap = new Uint8Array(TERRAIN_SIZE * TERRAIN_SIZE);
+    for (let j = 0; j < TERRAIN_SIZE * TERRAIN_SIZE; j++) {
       const alphaMats = dataView.getUint8(offset++);
       alphaMap[j] = alphaMats;
     }

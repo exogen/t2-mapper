@@ -9,14 +9,14 @@
  * Open collides (castRay FUN_00676900).
  */
 
+import { TICK_DURATION_MS } from "./streamHelpers";
+
 export const ForceFieldState = {
   Open: 0,
   Opening: 1,
   Closing: 2,
   Closed: 3,
 } as const;
-
-const FORCE_FIELD_TICK_MS = 32;
 
 export interface ForceFieldMotion {
   state: number;
@@ -52,13 +52,13 @@ export function advanceForceField(
 ): ForceFieldMotion {
   switch (motion.state) {
     case ForceFieldState.Opening: {
-      const position = motion.position + FORCE_FIELD_TICK_MS;
+      const position = motion.position + TICK_DURATION_MS;
       return position >= fadeMS
         ? { state: ForceFieldState.Open, position: fadeMS }
         : { state: motion.state, position };
     }
     case ForceFieldState.Closing: {
-      const position = motion.position - FORCE_FIELD_TICK_MS;
+      const position = motion.position - TICK_DURATION_MS;
       return position <= 0
         ? { state: ForceFieldState.Closed, position: 0 }
         : { state: motion.state, position };

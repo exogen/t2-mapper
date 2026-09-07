@@ -26,6 +26,7 @@ import * as Slider from "@radix-ui/react-slider";
 import { useEngineSelector } from "../state/engineStore";
 import { useDemoLoad } from "../state/demoLoadStore";
 import { useDemoTimeline } from "../state/demoTimelineStore";
+import { formatPlayheadTime, formatPlayheadTimeAligned } from "./demoFormat";
 import styles from "./DemoPlaybackControls.module.css";
 
 /**
@@ -60,44 +61,6 @@ function ScanProgressPie({ progress }: { progress: number }) {
       />
     </svg>
   );
-}
-
-function formatTime(seconds: number): string {
-  const h = Math.floor(seconds / 3600);
-  const m = Math.floor((seconds % 3600) / 60);
-  const s = Math.floor(seconds % 60);
-  if (h > 0) {
-    return `${h}:${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
-  }
-  return `${m}:${s.toString().padStart(2, "0")}`;
-}
-
-/**
- * formatTime, but padded to the field width `template` would render at
- * (the demo's duration). The transport label must NEVER change width as
- * the playhead crosses 10 minutes or an hour: the label shares a flex
- * row with the seek bar, so a width change resizes the bar and visibly
- * shifts every percentage-positioned marker on it.
- */
-function formatTimeAligned(seconds: number, template: number): string {
-  const templateH = Math.floor(template / 3600);
-  const s = Math.floor(seconds % 60)
-    .toString()
-    .padStart(2, "0");
-  if (templateH > 0) {
-    const h = Math.floor(seconds / 3600)
-      .toString()
-      .padStart(templateH.toString().length, "0");
-    const m = Math.floor((seconds % 3600) / 60)
-      .toString()
-      .padStart(2, "0");
-    return `${h}:${m}:${s}`;
-  }
-  const templateM = Math.floor(template / 60);
-  const m = Math.floor(seconds / 60)
-    .toString()
-    .padStart(templateM.toString().length, "0");
-  return `${m}:${s}`;
 }
 
 export function DemoPlaybackControls() {
@@ -263,7 +226,7 @@ export function DemoPlaybackControls() {
         aria-label={isPlaying ? "Pause" : "Play"}
         title={
           pendingSeekProgress != null
-            ? `Downloading to ${formatTime(pendingSeekSec!)}…`
+            ? `Downloading to ${formatPlayheadTime(pendingSeekSec!)}…`
             : isPlaying
               ? "Pause (Space)"
               : "Play (Space)"
@@ -303,7 +266,7 @@ export function DemoPlaybackControls() {
         )}
       </button>
       <span className={styles.Time}>
-        {`${formatTimeAligned(currentTime, duration)} / ${formatTime(duration)}`}
+        {`${formatPlayheadTimeAligned(currentTime, duration)} / ${formatPlayheadTime(duration)}`}
       </span>
       <Slider.Root
         className={styles.SeekRoot}
@@ -355,7 +318,7 @@ export function DemoPlaybackControls() {
         <Slider.Thumb className={styles.SeekThumb} aria-label="Seek">
           {dragValue != null && (
             <div className={styles.SeekTooltip} aria-hidden="true">
-              {formatTime(dragValue)}
+              {formatPlayheadTime(dragValue)}
             </div>
           )}
         </Slider.Thumb>
@@ -369,8 +332,8 @@ export function DemoPlaybackControls() {
                 key={timeSec}
                 type="button"
                 className={styles.SeekMissionTick}
-                title={`${description} – ${formatTime(timeSec)}`}
-                aria-label={`Seek to ${description} – ${formatTime(timeSec)}`}
+                title={`${description} – ${formatPlayheadTime(timeSec)}`}
+                aria-label={`Seek to ${description} – ${formatPlayheadTime(timeSec)}`}
                 onClick={(e) => {
                   seek(timeSec);
                   // A pointer click leaves the button focused, where a

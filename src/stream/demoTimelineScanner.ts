@@ -4,13 +4,14 @@ import type {
   NetStringEventData,
   RemoteCommandEventData,
 } from "t2-demo-parser";
-import { TICK_DURATION_MS } from "./entityClassification";
 import {
+  TICK_DURATION_MS,
   extractWavTag,
   resolveNetString,
   formatRemoteArgs,
   stripTaggedStringMarkup,
 } from "./streamHelpers";
+import { KILL_MSG_TYPES, SELF_INFLICTED_MSG_TYPES } from "./serverMessages";
 import type { TimelineEvent } from "../state/demoTimelineStore";
 import { createLogger } from "../logger";
 
@@ -57,61 +58,6 @@ function isCountdownForced(rawBody: string): boolean {
     body.includes("started by vote")
   );
 }
-
-/**
- * All death message types where args[2]=victimName, args[5]=killerName,
- * args[9]=DamageTypeText. Case-insensitive matching is used.
- *
- * Note: explicit suicide (Ctrl+K) uses `msgSuicide` which is NOT in
- * this set — we intentionally ignore those.
- */
-const KILL_MSG_TYPES = new Set([
-  // Player-vs-player kills
-  "msglegitkill",
-  "msgheadshotkill",
-  // Community-server (TacoServer/QoL) variants, same arg layout —
-  // verified on real demos: mine-disc combos and rearshots each went
-  // 60-90 kills per match UNPARSED before these were added, silently
-  // breaking killer attribution and drop classification for them.
-  "msgminedisckill",
-  "msgrearshotkill",
-  "msgteamkill",
-  // Self-inflicted (own weapon damage, cratering)
-  "msgselfkill",
-  // Explosions (can be self or other)
-  "msgexplosionkill",
-  // Vehicle-related
-  "msgvehiclekill",
-  "msgvehiclecrash",
-  "msgvehiclespawnkill",
-  // Turret-related
-  "msgturretkill",
-  "msgcturretkill",
-  "msgturretselfkill",
-  // Environmental
-  "msgoobkill",
-  "msgcampkill",
-  "msgrogueminekill",
-  "msglavakill",
-  "msglightningkill",
-]);
-
-/**
- * Death message types where the victim killed themselves (own weapon,
- * cratering, environmental hazards). These are NOT credited as kills
- * but ARE shown as deaths. Does NOT include explicit Ctrl+K suicide
- * (which is `msgSuicide`, not in KILL_MSG_TYPES at all).
- */
-const SELF_INFLICTED_MSG_TYPES = new Set([
-  "msgselfkill", // Own weapon damage or cratering ($DamageType::Ground)
-  "msgturretselfkill", // Own turret
-  "msgvehiclecrash", // Vehicle crash
-  "msgvehiclespawnkill", // Crushed by vehicle spawning
-  "msgoobkill", // Out of bounds
-  "msglavakill", // Lava
-  "msglightningkill", // Lightning
-  "msgcampkill", // Nexus camping
-]);
 
 /** Descriptions for self-inflicted deaths by message type.
  *  Used for environmental deaths where the msg type alone is sufficient. */

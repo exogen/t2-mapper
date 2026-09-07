@@ -32,4 +32,24 @@ export default defineConfig([
       "no-control-regex": "off",
     },
   },
+  {
+    // Layer boundary: src/components is the React/r3f layer. Everything
+    // else in src is React-free and must not reach into it.
+    files: ["src/**/*.{ts,tsx}"],
+    ignores: ["src/components/**", "src/main.tsx"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            {
+              group: ["**/components/*"],
+              message:
+                "React-free code must not import from src/components; move the helper out of components instead.",
+            },
+          ],
+        },
+      ],
+    },
+  },
 ]);

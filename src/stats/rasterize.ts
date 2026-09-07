@@ -1,4 +1,4 @@
-import type { CommandCircuitFrame } from "../components/commandCircuitFrame";
+import type { CommandCircuitFrame } from "./commandCircuitFrame";
 import type { PositionSamples, StatsTeamFilter } from "./types";
 
 /**

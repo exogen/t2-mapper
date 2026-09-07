@@ -86,7 +86,12 @@ function buildMatrixF(
   const s = Math.sin(angleRad);
   const t = 1 - c;
 
-  // Row-major MatrixF: idx(row, col) = row + col * 4
+  // Torque's AngAxisF→MatrixF goes through QuatF::setMatrix, which
+  // rotates in the opposite sense of the standard Rodrigues matrix — so
+  // Torque's row-major mObjToWorld for this axis-angle is the transpose
+  // of the standard R. Storing standard R column-major produces exactly
+  // those bytes, and matrixFToQuaternion reads them as Torque does; the
+  // rotated interiors of every map are the proof.
   const elements = new Array<number>(16).fill(0);
   elements[0] = t * nx * nx + c;
   elements[1] = t * nx * ny + s * nz;

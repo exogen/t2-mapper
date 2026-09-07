@@ -13,6 +13,7 @@ import {
 import { parseDemoMoment, type DemoMomentCamera } from "./demoMoment";
 import { useDemoQueryState, useDemoTimeQueryState } from "./useQueryParams";
 import { createLogger } from "../logger";
+import { FramePriority } from "./framePriority";
 
 const log = createLogger("demoMoment");
 
@@ -125,7 +126,7 @@ export function DemoMomentLoader() {
       followFlagSlot: null,
     });
     applyOrbit(pending.camera);
-  });
+  }, FramePriority.CameraSelect);
 
   return null;
 }

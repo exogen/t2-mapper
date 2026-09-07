@@ -12,13 +12,8 @@ import { BsPlayFill } from "react-icons/bs";
 import { AiFillStop } from "react-icons/ai";
 import { LuCrosshair, LuUserPen } from "react-icons/lu";
 import { ColoredName } from "./ColoredName";
+import { formatPlayheadTime } from "./demoFormat";
 import styles from "./DemoTimeline.module.css";
-
-function formatTime(seconds: number): string {
-  const m = Math.floor(seconds / 60);
-  const s = Math.floor(seconds % 60);
-  return `${m}:${s.toString().padStart(2, "0")}`;
-}
 
 const EVENT_ICON: Record<TimelineEventType, React.ReactNode> = {
   kill: <LuCrosshair />,
@@ -345,7 +340,7 @@ export function DemoTimeline() {
               onClick={() => handleClick(event.timeSec)}
             >
               <span className={styles.EventTime}>
-                {formatTime(event.timeSec)}
+                {formatPlayheadTime(event.timeSec)}
               </span>
               <span
                 className={styles.EventIcon}

@@ -216,7 +216,7 @@ export class LiveStreamAdapter extends StreamEngine {
   /**
    * Rebuild parser + engine state from a WatchCatchupPayload, mirroring
    * how demo playback seeds from a mid-match recording's
-   * InitialBlockData (StreamingPlayback.reset in demoStreaming.ts).
+   * InitialBlockData (DemoStreamAdapter.reset in demoStreaming.ts).
    * Safe to call again on a new epoch (session reconnect): everything
    * is replaced.
    */

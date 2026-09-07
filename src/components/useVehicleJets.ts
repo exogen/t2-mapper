@@ -8,13 +8,14 @@ import {
 } from "three";
 import { engineStore } from "../state/engineStore";
 import { THRUST_FORWARD } from "../stream/types";
-import { visThreadPosition, type VisNode } from "./visSequences";
+import type { VisNode } from "./visSequences";
 import {
-  createJetSequence,
-  scrubJetSequence,
-  stopJetSequence,
-  type JetSequence,
-} from "./jetSequence";
+  createDtsThread,
+  destroyDtsThread,
+  dtsThreadPosition,
+  scrubDtsThread,
+  type DtsThread,
+} from "./dtsThread";
 import {
   addNodeEmitter,
   removeNodeEmitter,
@@ -71,8 +72,8 @@ interface VehicleJetConfig {
 
 interface JetDirection {
   state: JetDirectionState;
-  activate: JetSequence | null;
-  maintain: JetSequence | null;
+  activate: DtsThread | null;
+  maintain: DtsThread | null;
 }
 
 interface VehicleJetParts {
@@ -143,10 +144,11 @@ function readVehicleJetConfig(
   };
 }
 
-function buildJetSequence(
+function buildJetThread(
   shape: VehicleJetShape,
   name: string,
-): JetSequence | null {
+  cyclic: boolean,
+): DtsThread | null {
   const clip = shape.clipsByName.get(name);
   const morphs = shape.morphClipsBySeq.get(name) ?? [];
   const visNodes = shape.visNodesBySequence.get(name) ?? [];
@@ -163,10 +165,12 @@ function buildJetSequence(
     for (const morph of morphs) actions.push(shape.mixer.clipAction(morph));
   }
   for (const node of visNodes) shape.prepareVisNode(node);
-  return createJetSequence(
+  return createDtsThread(
+    name,
     actions,
     visNodes,
     clip?.duration ?? morphs[0]?.duration ?? visNodes[0].duration,
+    cyclic,
   );
 }
 
@@ -177,8 +181,8 @@ function buildDirection(
 ): JetDirection {
   return {
     state: createJetDirectionState(),
-    activate: buildJetSequence(shape, activateName),
-    maintain: buildJetSequence(shape, maintainName),
+    activate: buildJetThread(shape, activateName, false),
+    maintain: buildJetThread(shape, maintainName, true),
   };
 }
 
@@ -217,8 +221,8 @@ function buildVehicleJetParts(
 
 function releaseParts(parts: VehicleJetParts): void {
   for (const dir of [parts.back, parts.bottom]) {
-    if (dir.activate) stopJetSequence(dir.activate);
-    if (dir.maintain) stopJetSequence(dir.maintain);
+    if (dir.activate) destroyDtsThread(dir.activate);
+    if (dir.maintain) destroyDtsThread(dir.maintain);
   }
   for (const list of parts.jetEmitters) {
     for (const emitter of list) removeNodeEmitter(emitter);
@@ -248,20 +252,14 @@ function driveDirection(
     nowSec,
   );
   if (wasMaintaining && !dir.state.maintaining && dir.maintain) {
-    stopJetSequence(dir.maintain);
+    destroyDtsThread(dir.maintain);
     // Meshes both sequences key are Activate's again.
     if (dir.activate) dir.activate.appliedPosition = -1;
   }
-  if (dir.activate) {
-    scrubJetSequence(dir.activate, dir.state.activatePosition, false);
-  }
+  if (dir.activate) scrubDtsThread(dir.activate, dir.state.activatePosition);
   if (dir.state.maintaining && dir.maintain) {
     const elapsed = nowSec - dir.state.maintainStartSec;
-    scrubJetSequence(
-      dir.maintain,
-      visThreadPosition(elapsed, dir.maintain.duration, true),
-      true,
-    );
+    scrubDtsThread(dir.maintain, dtsThreadPosition(dir.maintain, elapsed));
   }
 }
 

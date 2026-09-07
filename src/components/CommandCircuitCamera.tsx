@@ -22,7 +22,10 @@ import {
   isWatchSpectator,
   toggleWatchFollow,
 } from "../state/watchFollow";
-import { cameraTourStore } from "../state/cameraTourStore";
+import {
+  cameraTourStore,
+  computeTravelDuration,
+} from "../state/cameraTourStore";
 import type { TourAnimation } from "../state/cameraTourStore";
 import { CommandCircuitTourCallout } from "./CommandCircuitTourCallout";
 import { tourFlash } from "./commandCircuitTourFlash";
@@ -39,15 +42,15 @@ import {
   liveConnectionStore,
   useLiveSelector,
 } from "../state/liveConnectionStore";
-import { computeCommandCircuitFrame } from "./commandCircuitFrame";
+import { computeCommandCircuitFrame } from "../stats/commandCircuitFrame";
 import { parseViewHash } from "./viewHash";
+import { FramePriority } from "./framePriority";
 import {
+  isPressed,
   useInputAction,
   useInputState,
   clearInputDeltas,
-  type ActionState,
   type DragState,
-  type KeyState,
   type PinchState,
   type ScrollState,
   type TouchState,
@@ -88,14 +91,6 @@ function clampZoom(value: number, fitZoom: number): number {
     Math.max(fitZoom * MIN_ZOOM_FACTOR, value),
   );
 }
-
-/**
- * Tour pan pacing, mirroring CameraTourConsumer's travel rules: duration
- * scales with distance between these bounds.
- */
-const TOUR_PAN_SPEED = 180;
-const TOUR_MIN_PAN_DURATION = 1.5;
-const TOUR_MAX_PAN_DURATION = 6.0;
 
 /**
  * How long to linger centered over a target before auto-advancing — the
@@ -230,11 +225,6 @@ function easeInOut(t: number, inPower: number, outPower: number): number {
 const TOP_DOWN_QUATERNION = new Quaternion().setFromEuler(
   new Euler(-Math.PI / 2, 0, -Math.PI / 2),
 );
-
-function isPressed(state: Record<string, ActionState>, name: string): boolean {
-  const s = state[name];
-  return s != null && "pressed" in s && (s as KeyState).pressed;
-}
 
 /**
  * Command circuit mode: a top-down orthographic overview of the whole map,
@@ -426,7 +416,7 @@ function CommandCircuitTourHighlight() {
 
     // The rig owns the flash clock; just apply its opacity.
     material.opacity = tourFlash.opacity;
-  });
+  }, FramePriority.CameraCommandCircuit);
 
   return null;
 }
@@ -637,10 +627,7 @@ function CommandCircuitOrthoRig() {
           fromZ: pan.current.z,
           fromZoom: zoom.current,
           elapsed: 0,
-          duration: Math.max(
-            TOUR_MIN_PAN_DURATION,
-            Math.min(TOUR_MAX_PAN_DURATION, distance / TOUR_PAN_SPEED),
-          ),
+          duration: computeTravelDuration(distance),
           distance,
           zoomTarget: null,
         };
@@ -811,7 +798,7 @@ function CommandCircuitOrthoRig() {
     camera.quaternion.copy(TOP_DOWN_QUATERNION);
     camera.zoom = zoom.current;
     camera.updateProjectionMatrix();
-  });
+  }, FramePriority.CameraCommandCircuit);
 
   return (
     <OrthographicCamera

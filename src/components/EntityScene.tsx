@@ -22,6 +22,24 @@ import { entityTypeColor } from "../stream/playbackUtils";
 import { useDebug } from "./SettingsProvider";
 
 /**
+ * Rotation applied to an object mounted on another object's mount node.
+ *
+ * ShapeBase::getMountTransform (FUN_005f7540) is objToWorld × the mount
+ * node's transform, so the mounted shape's DTS frame sits at the node's DTS
+ * frame. The exporter writes every DTS node as a bone whose frame is the node
+ * frame turned −90° about X, and the PlayerModel adds the +90° Y shape
+ * rotation itself, so the content is turned +90° X to undo the bone
+ * convention and −90° Y to undo the model's rotation (Euler XYZ = Rx·Ry).
+ * Image mounts cancel the bone convention through the child's own Mountpoint
+ * bone instead.
+ */
+const MOUNTED_OBJECT_ROTATION: [number, number, number] = [
+  Math.PI / 2,
+  -Math.PI / 2,
+  0,
+];
+
+/**
  * The ONE rendering component tree for all game entities.
  * Reads from the game entity store (active layer: mission or stream entities).
  * Data sources (mission .mis, demo .rec, live server) are controllers that
@@ -189,18 +207,10 @@ function PositionedEntityWrapper({
     if (!mountChildren || mountChildren.size === 0) return undefined;
     const mounts: Record<number, React.ReactNode> = {};
     for (const [node, child] of mountChildren) {
-      // ShapeBase::getMountTransform (FUN_005f7540) is objToWorld × the
-      // mount node's transform, so the mounted shape's DTS frame sits at
-      // the node's DTS frame. The exporter writes every DTS node as a
-      // bone whose frame is the node frame turned −90° about X, and the
-      // PlayerModel adds the +90° Y shape rotation itself, so the content
-      // is turned +90° X to undo the bone convention and −90° Y to undo
-      // the model's rotation (Euler XYZ = Rx·Ry). Image mounts cancel the
-      // bone convention through the child's own Mountpoint bone instead.
       mounts[node] = (
         <Suspense key={child.id}>
           <group
-            rotation={[Math.PI / 2, -Math.PI / 2, 0]}
+            rotation={MOUNTED_OBJECT_ROTATION}
             userData={{ objectMount: true }}
           >
             <EntityRenderer entity={child} />

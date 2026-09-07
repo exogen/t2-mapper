@@ -9,7 +9,7 @@ import path from "node:path";
 import orderBy from "lodash.orderby";
 import ignore from "ignore";
 import { normalizePath } from "@/src/stringUtils";
-import { walkDirectory } from "@/src/fileUtils";
+import { walkDirectory } from "./fileUtils";
 import { parseMissionScript } from "@/src/mission";
 import type { MountTransformTable } from "@/src/manifest";
 import { extractMountTransforms } from "./mounts";

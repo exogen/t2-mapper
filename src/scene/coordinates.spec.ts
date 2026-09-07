@@ -194,3 +194,34 @@ describe("torqueAxisAngleToQuaternion", () => {
     expect(Math.abs(dot)).toBeCloseTo(1, 4);
   });
 });
+
+describe("matrixFToQuaternion on a ghosted interior", () => {
+  it("turns the wire's row-major mObjToWorld the way the engine does", () => {
+    // dox_bb_rustbox_x2.dif on Beach Blitz, straight off the ghost: a
+    // 65.3° turn about Torque Z, M·v convention (column 0 is where +X
+    // lands). Torque east (+X) is Three +Z and north (+Y) is Three +X, so
+    // +X→(0.418, 0.909) about up is +65.3° about Three +Y.
+    const m: MatrixF = {
+      elements: [
+        0.418, -0.909, 0, -207.977, 0.909, 0.418, 0, 498.179, 0, 0, 1, 157.5, 0,
+        0, 0, 1,
+      ],
+      position: { x: -207.977, y: 498.179, z: 157.5 },
+    };
+    const q = matrixFToQuaternion(m);
+    const angle = Math.atan2(0.909, 0.418);
+    const expected = new Quaternion().setFromAxisAngle(
+      new Vector3(0, 1, 0),
+      angle,
+    );
+    // Three decimals of wire data are not exactly orthonormal.
+    expect(q.x).toBeCloseTo(expected.x, 2);
+    expect(q.y).toBeCloseTo(expected.y, 2);
+    expect(q.z).toBeCloseTo(expected.z, 2);
+    expect(q.w).toBeCloseTo(expected.w, 2);
+    // The rotated east axis, checked directly.
+    const east = new Vector3(0, 0, 1).applyQuaternion(q);
+    expect(east.z).toBeCloseTo(0.418, 2);
+    expect(east.x).toBeCloseTo(0.909, 2);
+  });
+});

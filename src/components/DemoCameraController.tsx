@@ -10,6 +10,7 @@ import {
 } from "../state/watchFollow";
 import { useInputAction } from "./InputControls";
 import { useFollowFlagActions } from "./useFollowFlagActions";
+import { FramePriority } from "./framePriority";
 
 /**
  * Demo-playback camera controller — the client-side companion to
@@ -75,7 +76,7 @@ export function DemoCameraController() {
       camlog.info("cameraMode -> freeFly (follow target unresolved)");
       streamPlaybackStore.setState({ cameraMode: "freeFly" });
     }
-  });
+  }, FramePriority.CameraSelect);
 
   return null;
 }

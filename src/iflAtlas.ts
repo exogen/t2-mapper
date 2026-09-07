@@ -8,8 +8,8 @@ import {
 } from "three";
 import type { Material, Mesh, Object3D } from "three";
 import { dtsNodeExtras } from "./dtsNodeExtras";
-import { iflTextureToUrl, loadImageFrameList } from "../loaders";
-import { loadTextureAsync } from "../textureUtils";
+import { iflTextureToUrl, loadImageFrameList } from "./loaders";
+import { loadTextureAsync } from "./textureUtils";
 
 /** One IFL tick in seconds (Torque converts at 1/30s per tick). */
 const IFL_TICK_SECONDS = 1 / 30;

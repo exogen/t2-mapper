@@ -18,7 +18,7 @@ import {
 } from "./InputContext";
 
 const TouchHandler = lazy(() =>
-  import("@/src/components/TouchHandler").then((mod) => ({
+  import("./TouchHandler").then((mod) => ({
     default: mod.TouchHandler,
   })),
 );

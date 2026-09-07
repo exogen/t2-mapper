@@ -23,16 +23,15 @@ import {
   GhostMessage,
   IFF_GREEN,
   IFF_RED,
-  TICK_DURATION_MS,
 } from "./entityClassification";
 import {
   clamp,
+  TICK_DURATION_MS,
   MAX_PITCH,
   CameraMode_OrbitObject,
   yawPitchToQuaternion,
   playerYawToQuaternion,
   torqueQuatToThreeJS,
-  matrixFToThreeJSQuat,
   torqueQuatHeading,
   torqueQuatPitch,
   isValidPosition,
@@ -58,6 +57,8 @@ import {
   parseColorSegments,
   orientationAlongDirection,
 } from "./streamHelpers";
+import { matrixFToQuaternion } from "../scene/coordinates";
+import type { MatrixF } from "../scene/types";
 import type { Vec3 } from "./streamHelpers";
 import {
   advanceForceField,
@@ -344,6 +345,8 @@ export abstract class StreamEngine implements StreamingPlayback {
   protected entityIdByGhostIndex = new Map<number, string>();
   /** Incremented on structural entity changes (add/remove/create). */
   protected entityGeneration = 0;
+  /** See StreamSnapshot.ghostAlwaysDoneSec. */
+  protected ghostAlwaysDoneSec: number | null = null;
 
   // ── Tick / time ──
   protected tickCount = 0;
@@ -642,9 +645,6 @@ export abstract class StreamEngine implements StreamingPlayback {
    *  Called on full reset and on GhostingMessageEvent (mission change).
    *  Does NOT reset the ID counter — IDs must never be reused to avoid
    *  stale entity collisions in the render store after seeks. */
-  /** See StreamSnapshot.ghostAlwaysDoneSec. */
-  protected ghostAlwaysDoneSec: number | null = null;
-
   protected clearAllEntities(): void {
     // A reset invalidates every ghost, so the world is incomplete again
     // until the server says otherwise.
@@ -1817,11 +1817,12 @@ export abstract class StreamEngine implements StreamingPlayback {
         (data.transform as { elements?: unknown } | undefined)?.elements,
       )
     ) {
-      // MatrixF (16 floats) — decompose rotation from the 3x3 submatrix.
-      const converted = matrixFToThreeJSQuat(
-        (data.transform as { elements: number[] }).elements,
-      );
-      if (converted) entity.rotation = converted;
+      // A MatrixF ghost transform (VehicleBlocker, PhysicalZone, the
+      // particle emission dummy): the one shared decoder of Torque's
+      // row-major mObjToWorld.
+      entity.rotation = matrixFToQuaternion(
+        data.transform as MatrixF,
+      ).toArray() as [number, number, number, number];
     } else if (
       entity.type === "Item" &&
       typeof (data.rotation as { angle?: unknown } | undefined)?.angle ===
@@ -2227,8 +2228,6 @@ export abstract class StreamEngine implements StreamingPlayback {
     }
   }
 
-  // ── Sound slot entities ──
-
   // ── Explosion spawning ──
 
   protected resolveExplosionInfo(projDataBlockId: number):
@@ -2271,11 +2270,6 @@ export abstract class StreamEngine implements StreamingPlayback {
   }
 
   /**
-   * Explosion::onAdd at `addTick`: resolve delay and lifetime, then either
-   * explode now or queue the explode tick. An explosion whose lifetime runs
-   * out while it is still waiting is deleted unseen, as in the engine.
-   */
-  /**
    * ShapeBase::blowUp (FUN_005eaa90, client): the datablock's explosion —
    * underwaterExplosion when the object is submerged — at the object box
    * centre, i.e. position + (mObjBox.min + max) / 2 with the offset
@@ -2303,6 +2297,11 @@ export abstract class StreamEngine implements StreamingPlayback {
     this.addExplosion(explosionId, [x, y, z], this.tickCount);
   }
 
+  /**
+   * Explosion::onAdd at `addTick`: resolve delay and lifetime, then either
+   * explode now or queue the explode tick. An explosion whose lifetime runs
+   * out while it is still waiting is deleted unseen, as in the engine.
+   */
   protected addExplosion(
     explosionDataBlockId: number,
     position: [number, number, number],
@@ -2497,18 +2496,6 @@ export abstract class StreamEngine implements StreamingPlayback {
     }
   }
 
-  /** Advance item positions using server-sent velocity.
-   *
-   * Verified against Tribes2.exe (build 25034): Item does NOT override
-   * GameBase::processTick — the vtable at offset 0x50 points to the
-   * inherited FUN_00586050 which does no physics. All item physics
-   * (gravity, collision, friction) run SERVER-SIDE only. The client just
-   * interpolates using velocity until the next ghost update.
-   *
-   * As a practical fallback for demo playback (where ghost updates can be
-   * sparse), we apply basic gravity after a few ticks without a server
-   * update to prevent items from flying upward indefinitely.
-   */
   /** Advance fade and cloak animations per tick, matching advanceTime. */
   protected advanceFades(): void {
     const dt = TICK_DURATION_MS / 1000;
@@ -2683,8 +2670,6 @@ export abstract class StreamEngine implements StreamingPlayback {
     }
   }
 
-  // ── Camera and HUD ──
-
   /**
    * Advance the control player's predicted energy by one tick, mirroring
    * the real client (binary-verified): Player::updateMove drains
@@ -2752,6 +2737,8 @@ export abstract class StreamEngine implements StreamingPlayback {
       1,
     );
   }
+
+  // ── Camera and HUD ──
 
   protected updateCameraAndHud(): void {
     const control = this.latestControl;

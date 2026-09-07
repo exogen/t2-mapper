@@ -21,7 +21,8 @@
  * lifetime (deleteWhenEmpty).
  */
 
-const EXPLOSION_TICK_MS = 32;
+import { TICK_DURATION_MS } from "./streamHelpers";
+
 const LIFETIME_SHIFT = 5;
 /** playSpeed is packed as value × 20 on the wire. */
 const PLAY_SPEED_SCALE = 20;
@@ -81,10 +82,10 @@ export function resolveExplosionTiming(
  * (mCurrMS = 32 × ticks); 0 when there is no delay (explode() in onAdd).
  */
 export function explosionExplodeTicks(delayMS: number): number {
-  return delayMS > 0 ? Math.floor(delayMS / EXPLOSION_TICK_MS) + 1 : 0;
+  return delayMS > 0 ? Math.floor(delayMS / TICK_DURATION_MS) + 1 : 0;
 }
 
 /** Ticks until processTick deletes an explosion with this lifetime. */
 export function explosionLifetimeTicks(lifetimeMS: number): number {
-  return Math.max(1, Math.ceil(lifetimeMS / EXPLOSION_TICK_MS));
+  return Math.max(1, Math.ceil(lifetimeMS / TICK_DURATION_MS));
 }

@@ -3,7 +3,7 @@ import picomatch from "picomatch";
 import { loadMission } from "../loaders";
 import { type ParsedMission } from "../mission";
 import { createScriptLoader } from "../torqueScript/scriptLoader.browser";
-import { memo, useEffect, useMemo, useState } from "react";
+import { memo, useEffect, useState } from "react";
 import { RuntimeProvider } from "./RuntimeProvider";
 import {
   createProgressTracker,
@@ -18,7 +18,6 @@ import {
   getResourceMap,
   getSourceAndPath,
 } from "../manifest";
-import { MissionProvider } from "./MissionContext";
 import { engineStore } from "../state/engineStore";
 import { gameEntityStore } from "../state/gameEntityStore";
 import { ignoreScripts } from "../torqueScript/ignoreScripts";
@@ -193,14 +192,6 @@ export const Mission = memo(function Mission({
   );
   const isLoading = !parsedMission || !ready || !runtime;
 
-  const missionContext = useMemo(
-    () => ({
-      metadata: parsedMission!,
-      missionType,
-    }),
-    [parsedMission, missionType],
-  );
-
   useEffect(() => {
     onLoadingChange?.(isLoading, progress);
   }, [isLoading, progress, onLoadingChange]);
@@ -209,9 +200,5 @@ export const Mission = memo(function Mission({
     return null;
   }
 
-  return (
-    <MissionProvider value={missionContext}>
-      <RuntimeProvider runtime={runtime} />
-    </MissionProvider>
-  );
+  return <RuntimeProvider runtime={runtime} />;
 });

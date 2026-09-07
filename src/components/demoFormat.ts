@@ -49,3 +49,48 @@ export function demoTitle(demo: DemoIndexEntry): string {
     "Warmup only"
   );
 }
+
+/**
+ * Playhead time like "4:07", growing an hours field only once the demo
+ * runs that long.
+ */
+export function formatPlayheadTime(seconds: number): string {
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = Math.floor(seconds % 60);
+  if (h > 0) {
+    return `${h}:${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
+  }
+  return `${m}:${s.toString().padStart(2, "0")}`;
+}
+
+/**
+ * formatPlayheadTime, but padded to the field width `template` would
+ * render at (the demo's duration). The transport label must NEVER change
+ * width as the playhead crosses 10 minutes or an hour: the label shares a
+ * flex row with the seek bar, so a width change resizes the bar and
+ * visibly shifts every percentage-positioned marker on it.
+ */
+export function formatPlayheadTimeAligned(
+  seconds: number,
+  template: number,
+): string {
+  const templateH = Math.floor(template / 3600);
+  const s = Math.floor(seconds % 60)
+    .toString()
+    .padStart(2, "0");
+  if (templateH > 0) {
+    const h = Math.floor(seconds / 3600)
+      .toString()
+      .padStart(templateH.toString().length, "0");
+    const m = Math.floor((seconds % 3600) / 60)
+      .toString()
+      .padStart(2, "0");
+    return `${h}:${m}:${s}`;
+  }
+  const templateM = Math.floor(template / 60);
+  const m = Math.floor(seconds / 60)
+    .toString()
+    .padStart(templateM.toString().length, "0");
+  return `${m}:${s}`;
+}

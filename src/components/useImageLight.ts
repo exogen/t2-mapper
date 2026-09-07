@@ -3,7 +3,7 @@ import { useFrame } from "@react-three/fiber";
 import type { Object3D } from "three";
 import { gameEntityStore } from "../state/gameEntityStore";
 import { streamClock } from "../state/streamPlaybackStore";
-import { engineStore } from "../state/engineStore";
+import { effectNow, engineStore } from "../state/engineStore";
 import { useEffectLight } from "./useEffectLight";
 
 /**
@@ -60,6 +60,7 @@ export function useImageLight(
     [config],
   );
   const lightRef = useEffectLight(root, lightConfig, 0);
+  /** Effect-clock time (ms) of the last shot, for the fire flash. */
   const fireTimeRef = useRef<number | null>(null);
   const lastFireCountRef = useRef<number | null>(null);
   const mountTimeRef = useRef(streamClock.time);
@@ -81,7 +82,7 @@ export function useImageLight(
         lastFireCountRef.current != null &&
         fireCount !== lastFireCountRef.current
       ) {
-        fireTimeRef.current = now;
+        fireTimeRef.current = effectNow();
       }
       lastFireCountRef.current = fireCount;
     }
@@ -94,7 +95,9 @@ export function useImageLight(
         0.15 +
         0.85 * (0.5 + 0.5 * Math.sin((Math.PI * elapsedMs) / config.time));
     } else if (config.type === 3 && fireTimeRef.current != null) {
-      const elapsedMs = (now - fireTimeRef.current) * 1000;
+      // The flash is timed on the effect clock, not the demo timeline, so a
+      // backward seek can't give a negative (or stuck-full) elapsed time.
+      const elapsedMs = effectNow() - fireTimeRef.current;
       intensity = elapsedMs <= config.time ? 1 - elapsedMs / config.time : 0;
     }
     light.intensity = Math.max(0, Math.min(1, intensity));

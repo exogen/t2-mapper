@@ -8,9 +8,8 @@
  * and world collision (non-React side) — the same bridge pattern as
  * terrainHeight.ts.
  */
-import { terrainHeightToWorld } from "../terrain";
+import { TERRAIN_SIZE, terrainHeightToWorld } from "../terrain";
 
-const TERRAIN_SIZE = 256;
 const HALF_SIZE = TERRAIN_SIZE / 2;
 const SQUARE_COUNT = TERRAIN_SIZE * TERRAIN_SIZE;
 const MAX_DDA_STEPS = 4096;

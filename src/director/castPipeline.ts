@@ -22,7 +22,7 @@
 import {
   createDirectorScanStream,
   scanDemoDirector,
-} from "../stream/demoDirectorScanner";
+} from "./demoDirectorScanner";
 import {
   assembleCastPlan,
   createSwitcherStream,

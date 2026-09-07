@@ -7,8 +7,6 @@ import {
   type ShapeLightUniforms,
 } from "../shapeLighting";
 
-export { shapeBoxCenter } from "../shapeLighting";
-
 /**
  * Runs the engine's per-object lighting probe for a cloned shape (see
  * shapeLighting.ts) and keeps its materials' uniforms current. Call it

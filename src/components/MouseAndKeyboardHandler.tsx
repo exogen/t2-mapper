@@ -9,25 +9,24 @@ import { useCameras } from "./CamerasProvider";
 import { useInputContext } from "./InputContext";
 import { useTouchDevice } from "./useTouchDevice";
 import { cameraTourStore } from "../state/cameraTourStore";
-import { demoDirectorStore } from "../state/demoDirectorStore";
 import { isWelcomeSplashOpen } from "./WelcomeSplash";
 import {
   commandCircuitStore,
   isCommandFollowActive,
 } from "../state/commandCircuitStore";
 import { liveConnectionStore } from "../state/liveConnectionStore";
+import { resolveCameraOwner } from "../state/cameraOwner";
 import {
   streamPlaybackStore,
   MIN_ORBIT_DISTANCE,
   MAX_ORBIT_DISTANCE,
 } from "../state/streamPlaybackStore";
 import {
+  isPressed,
   useInputAction,
   useInputState,
   clearInputDeltas,
-  type ActionState,
   type DragState,
-  type KeyState,
   type ScrollState,
 } from "./InputControls";
 
@@ -46,11 +45,6 @@ function quantizeSpeed(speedMultiplier: number): number {
     (speedMultiplier - MIN_SPEED_MULTIPLIER) / (1 - MIN_SPEED_MULTIPLIER);
   const steps = Math.round(t * 15);
   return (steps + 1) / 16;
-}
-
-function isPressed(state: Record<string, ActionState>, name: string): boolean {
-  const s = state[name];
-  return s != null && "pressed" in s && (s as KeyState).pressed;
 }
 
 export function MouseAndKeyboardHandler() {
@@ -194,12 +188,12 @@ export function MouseAndKeyboardHandler() {
 
   // Build and emit InputFrame each render frame.
   useFrame((_state, delta) => {
-    // Suppress all input while a camera tour, the auto-director, or the
-    // command circuit is active. (The director unmounts these bindings
-    // anyway — this stops pointer-locked deltas from accumulating.)
-    if (cameraTourStore.getState().animation) return;
-    if (demoDirectorStore.getState().status === "playing") return;
-    if (commandCircuitStore.getState().active) {
+    // Suppress all input while anything but local input owns the camera.
+    // (The director unmounts these bindings anyway — this stops
+    // pointer-locked deltas from accumulating.)
+    const cameraOwner = resolveCameraOwner();
+    if (cameraOwner === "tour" || cameraOwner === "director") return;
+    if (cameraOwner === "commandCircuit") {
       // Camera look/move stays suppressed, but observer triggers (player
       // cycling from the CC view) must still reach the server via moves.
       // Deltas are NOT cleared here — the CC rig consumes drag/scroll/

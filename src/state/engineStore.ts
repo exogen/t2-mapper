@@ -411,6 +411,16 @@ export function effectNow(): number {
 }
 
 /**
+ * The frame's share of effect time in seconds: the render delta scaled
+ * by the playback rate, and zero while paused. Self-timed effects (jets,
+ * particles, flares, shape threads) advance by this, never by wall time.
+ */
+export function effectDeltaSec(renderDeltaSec: number): number {
+  const playback = engineStore.getState().playback;
+  return playback.status === "playing" ? renderDeltaSec * playback.rate : 0;
+}
+
+/**
  * Advance the effect clock. Called once per frame from
  * StreamingController before other useFrame callbacks run.
  */

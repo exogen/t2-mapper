@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { rasterizeDensity, normalizeDensity } from "./rasterize";
 import type { PositionSamples } from "./types";
-import type { CommandCircuitFrame } from "../components/commandCircuitFrame";
+import type { CommandCircuitFrame } from "./commandCircuitFrame";
 
 function makeSamples(
   points: Array<{ x: number; z: number; team?: 1 | 2 }>,

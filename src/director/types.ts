@@ -51,9 +51,6 @@ export interface DirectorPlayerSample {
   health?: number;
 }
 
-/** A base structure's damageState change (0 = Enabled, 1 = Disabled,
- *  2 = Destroyed) — the only observer-visible signal for generator and
- *  turret kills, which have no broadcast chat message. */
 /** One structure standing on the map, from the moment it was seen. */
 export interface StructurePresence {
   /** When this object first entered scope. Deployables appear
@@ -65,6 +62,9 @@ export interface StructurePresence {
   pos: DirectorVec3;
 }
 
+/** A base structure's damageState change (0 = Enabled, 1 = Disabled,
+ *  2 = Destroyed) — the only observer-visible signal for generator and
+ *  turret kills, which have no broadcast chat message. */
 export interface StructureTransition {
   timeSec: number;
   /** Owning team, from the ghost's own sensor group (StreamEntity
@@ -213,10 +213,6 @@ export interface DirectorEvent extends TimelineEvent {
 }
 
 /**
- * Everything the shot planner needs, produced by one background pass of
- * a headless StreamingPlayback over the demo (demoDirectorScanner).
- */
-/**
  * The mission's fog range, which bounds how far a camera can usefully
  * stand off: beyond `fogDistance` subjects start washing out, and at
  * `visibleDistance` they are gone entirely.
@@ -226,6 +222,10 @@ export interface DirectorVisibility {
   visibleDistance: number;
 }
 
+/**
+ * Everything the shot planner needs, produced by one background pass of
+ * a headless DemoStreamAdapter over the demo (demoDirectorScanner).
+ */
 export interface DirectorDataset {
   durationSec: number;
   /** See MatchFacts — collected during the scan, attached to the plan.

@@ -36,11 +36,18 @@ import type {
   SkillShot,
   VoiceBind,
   StructureTransition,
-} from "../director/types";
+} from "./types";
 import { castWorldRay } from "../collision/worldCollision";
 import { scanDirectorEvent } from "./directorEventScanner";
-import { parseColorSegments, threeForwardHeading } from "./streamHelpers";
-import type { PlayerRosterEntry, StreamEntity, StreamSnapshot } from "./types";
+import {
+  parseColorSegments,
+  threeForwardHeading,
+} from "../stream/streamHelpers";
+import type {
+  PlayerRosterEntry,
+  StreamEntity,
+  StreamSnapshot,
+} from "../stream/types";
 
 /** Flag track cadence — carriers move ~70 u/s, so ≥2 Hz. */
 export const FLAG_STEP_SEC = 0.5;
@@ -411,10 +418,10 @@ export class DirectorTrackers {
   private visibility: DirectorDataset["visibility"];
   private stepCount = 0;
 
-  /** Feed one stepped snapshot. `timeSec` must be non-decreasing. */
   /** When the server said the world was fully ghosted in. */
   worldCompleteSec: number | null = null;
 
+  /** Feed one stepped snapshot. `timeSec` must be non-decreasing. */
   step(snapshot: StreamSnapshot, timeSec: number): void {
     if (snapshot.ghostAlwaysDoneSec != null && this.worldCompleteSec == null) {
       this.worldCompleteSec = snapshot.ghostAlwaysDoneSec;
@@ -1224,7 +1231,6 @@ export class DirectorTrackers {
     }
   }
 
-  /** Drain every cursor and assemble the dataset. */
   /**
    * The dataset as it stands, covering everything stepped so far.
    *

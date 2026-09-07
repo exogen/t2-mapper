@@ -11,12 +11,16 @@ import {
   Matrix4,
   Scene,
 } from "three";
-import { cameraTourStore } from "../state/cameraTourStore";
+import {
+  cameraTourStore,
+  computeTravelDuration,
+} from "../state/cameraTourStore";
 import type { TourAnimation } from "../state/cameraTourStore";
 import { commandCircuitStore } from "../state/commandCircuitStore";
-import type { TourTarget } from "./mapTourCategories";
+import type { TourTarget } from "../state/mapTourCategories";
 import { globalFogUniforms } from "../globalFogUniforms";
 import { createLogger } from "../logger";
+import { FramePriority } from "./framePriority";
 
 const log = createLogger("CameraTourConsumer");
 
@@ -44,9 +48,6 @@ const ORBIT_ANGULAR_SPEED = 0.6; // rad/s
 const ORBIT_SWEEP = (3 / 4) * (2 * Math.PI); // 270 degrees
 const ORBIT_CONSTANT_DURATION = ORBIT_SWEEP / ORBIT_ANGULAR_SPEED;
 const ORBIT_EASE_OUT_DURATION = 1.5; // seconds to decelerate to stop
-const MIN_TRAVEL_DURATION = 1.5;
-const MAX_TRAVEL_DURATION = 6.0;
-const TRAVEL_SPEED = 180; // units/s for duration calc
 /** Orientation completes at this fraction of total travel time (runs ahead of position). */
 const LOOK_LEAD = 1.4;
 
@@ -257,13 +258,6 @@ function computeEntryAngle(fromPos: Vector3, animation: TourAnimation): number {
   return Math.atan2(fromPos.z - focus.z, fromPos.x - focus.x);
 }
 
-function computeTravelDuration(distance: number): number {
-  return Math.max(
-    MIN_TRAVEL_DURATION,
-    Math.min(MAX_TRAVEL_DURATION, distance / TRAVEL_SPEED),
-  );
-}
-
 function advanceTravel(
   animation: TourAnimation,
   camera: Camera,
@@ -454,7 +448,7 @@ export function CameraTourConsumer() {
     } else {
       advanceOrbit(animation, camera, delta);
     }
-  });
+  }, FramePriority.CameraTour);
 
   return null;
 }

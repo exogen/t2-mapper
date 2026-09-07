@@ -1,5 +1,5 @@
 import type { Material, Mesh, Object3D } from "three";
-import { dtsNodeExtras } from "./dtsNodeExtras";
+import { dtsNodeExtras } from "../dtsNodeExtras";
 
 /**
  * A mesh whose visibility a DTS sequence keyframes (the addon exports the

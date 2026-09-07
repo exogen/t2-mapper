@@ -1,38 +1,34 @@
 import { lazy, Suspense } from "react";
 import { useStore } from "zustand";
 import { useTouchDevice } from "./useTouchDevice";
-import { useCameraTour } from "../state/cameraTourStore";
-import { useDirector } from "../state/demoDirectorStore";
-import { useCommandCircuit } from "../state/commandCircuitStore";
 import { useLiveSelector } from "../state/liveConnectionStore";
 import { streamPlaybackStore } from "../state/streamPlaybackStore";
 import { subtitlesStore } from "../state/commentaryTrack";
 import { useSettings } from "./SettingsProvider";
 import { useRecording } from "./usePlayback";
-import { WatchedPlayerHud } from "./WatchedPlayerHud";
+import { WatchedPlayerHUD } from "./WatchedPlayerHUD";
 import styles from "./VisualInput.module.css";
+import { useCameraOwner } from "../state/cameraOwner";
 
 const TouchJoystick = lazy(() =>
-  import("@/src/components/TouchJoystick").then((mod) => ({
+  import("./TouchJoystick").then((mod) => ({
     default: mod.TouchJoystick,
   })),
 );
 
 const KeyboardOverlay = lazy(() =>
-  import("@/src/components/KeyboardOverlay").then((mod) => ({
+  import("./KeyboardOverlay").then((mod) => ({
     default: mod.KeyboardOverlay,
   })),
 );
 
 export function VisualInput() {
   const isTouch = useTouchDevice();
-  const isTourActive = useCameraTour((s) => s.animation !== null);
-  // While the auto-director drives the camera, a touch is the interrupt
-  // gesture — the joysticks would fight it.
-  const isDirecting = useDirector((s) => s.status === "playing");
-  // Command circuit pans/zooms via direct touch gestures; the free-fly
-  // joysticks don't apply.
-  const isCommandCircuit = useCommandCircuit((s) => s.active);
+  const cameraOwner = useCameraOwner();
+  // Tour > director > command circuit > input. The joysticks show only
+  // while local input owns the camera: a touch is the director's
+  // interrupt gesture, and the command circuit pans and zooms by direct
+  // touch, so joysticks would fight both.
   const { showInputOverlay } = useSettings();
   const recording = useRecording();
   const isWatcher = useLiveSelector((s) => s.role === "watcher");
@@ -63,11 +59,7 @@ export function VisualInput() {
 
   return (
     <>
-      {isTouch &&
-      !isTourActive &&
-      !isDirecting &&
-      !isCommandCircuit &&
-      hasCameraControls ? (
+      {isTouch && cameraOwner === "input" && hasCameraControls ? (
         <Suspense>
           <TouchJoystick />
         </Suspense>
@@ -81,7 +73,7 @@ export function VisualInput() {
           ) : null}
           {/* Not lazy, and kept outside the overlay's Suspense so the
               overlay's first chunk load never hides the chip. */}
-          {showWatchedPlayer ? <WatchedPlayerHud /> : null}
+          {showWatchedPlayer ? <WatchedPlayerHUD /> : null}
         </div>
       ) : null}
     </>

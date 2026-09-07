@@ -6,14 +6,14 @@
  */
 import { castWorldRay, type Vec3, type WorldRayHit } from "./worldCollision";
 import { castWaterRay, isWaterType } from "./waterLevel";
+import { TICK_DURATION_MS } from "../stream/streamHelpers";
 
-export const TICK_MS = 32;
 /** Torque clamps projectile lifetime to at most 511 living ticks. */
 const MAX_LIVING_TICKS = 511;
 
 /** Round milliseconds up to a whole tick, as ProjectileData::onAdd does. */
 function roundUpToTick(ms: number): number {
-  return (ms + TICK_MS - 1) & ~(TICK_MS - 1);
+  return (ms + TICK_DURATION_MS - 1) & ~(TICK_DURATION_MS - 1);
 }
 
 export interface LinearSegment {
@@ -73,7 +73,10 @@ export function buildLinearSegment(options: {
 }): LinearSegment {
   const { start, vel } = options;
   const lifeMs = roundUpToTick(
-    Math.max(TICK_MS, Math.min(options.lifetimeMS, MAX_LIVING_TICKS * TICK_MS)),
+    Math.max(
+      TICK_DURATION_MS,
+      Math.min(options.lifetimeMS, MAX_LIVING_TICKS * TICK_DURATION_MS),
+    ),
   );
   const lifeSec = lifeMs / 1000;
   const end: Vec3 = [
@@ -304,7 +307,7 @@ export function stepBallistic(
     bounces?: boolean;
   },
 ): BallisticStepResult {
-  const dt = TICK_MS / 1000;
+  const dt = TICK_DURATION_MS / 1000;
   vel[2] += options.gravity * dt;
 
   let sx = pos[0];

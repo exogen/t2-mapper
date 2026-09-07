@@ -107,6 +107,38 @@ function cancelReconnect(): void {
   resumeAddress = null;
 }
 
+/**
+ * The store fields describing a fully torn-down relay session, shared by the
+ * give-up path in connectRelay and by disconnectRelay.
+ */
+function disconnectedState(
+  disconnectReason: LiveConnectionState["disconnectReason"],
+): Partial<LiveConnectionState> {
+  return {
+    disconnectReason,
+    relayConnected: false,
+    gameStatus: null,
+    gameStatusMessage: undefined,
+    mapName: undefined,
+    serverName: undefined,
+    relayToGameServerPing: null,
+    browserToRelayPing: null,
+    relayUrl: null,
+    serverAddress: null,
+    adapter: null,
+    liveReady: false,
+    role: null,
+    watchStatus: null,
+    watchStatusMessage: undefined,
+    watcherCount: 0,
+    recording: false,
+    streamDelayMs: 0,
+    streamDelayReadyAt: null,
+    catchupProgress: null,
+    reconnecting: false,
+  };
+}
+
 export const liveConnectionStore = createStore<LiveConnectionStore>(
   (set, get) => ({
     relayConnected: false,
@@ -337,30 +369,11 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
             );
           }
           cancelReconnect();
-          set({
-            disconnectReason:
+          set(
+            disconnectedState(
               s.disconnectReason ?? (sessionWasLive || resume ? "ended" : null),
-            relayConnected: false,
-            gameStatus: null,
-            gameStatusMessage: undefined,
-            mapName: undefined,
-            serverName: undefined,
-            relayToGameServerPing: null,
-            browserToRelayPing: null,
-            relayUrl: null,
-            serverAddress: null,
-            adapter: null,
-            liveReady: false,
-            role: null,
-            watchStatus: null,
-            watchStatusMessage: undefined,
-            watcherCount: 0,
-            recording: false,
-            streamDelayMs: 0,
-            streamDelayReadyAt: null,
-            catchupProgress: null,
-            reconnecting: false,
-          });
+            ),
+          );
         },
       });
 
@@ -377,28 +390,7 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
       s._adapter = null;
       s._pending = [];
       s._listInFlight = false;
-      set({
-        reconnecting: false,
-        relayConnected: false,
-        gameStatus: null,
-        gameStatusMessage: undefined,
-        mapName: undefined,
-        serverName: undefined,
-        relayToGameServerPing: null,
-        browserToRelayPing: null,
-        relayUrl: null,
-        serverAddress: null,
-        adapter: null,
-        liveReady: false,
-        role: null,
-        watchStatus: null,
-        watchStatusMessage: undefined,
-        watcherCount: 0,
-        recording: false,
-        streamDelayMs: 0,
-        streamDelayReadyAt: null,
-        catchupProgress: null,
-      });
+      set(disconnectedState(s.disconnectReason));
     },
 
     listServers() {

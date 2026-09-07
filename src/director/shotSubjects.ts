@@ -109,12 +109,22 @@ export function livingPlayerPositionsNear(
   return out;
 }
 
+/**
+ * The live entity a planned shot subject names right now: the flag in
+ * its slot, or the body currently carrying the target id. Null when
+ * the subject has left scope this frame.
+ */
+export function resolveShotSubjectEntityId(
+  subject: ShotSubject,
+): string | null {
+  return subject.type === "flag"
+    ? resolveFlagEntityId(subject.slot)
+    : findLivingEntityByTargetId(subject.targetId);
+}
+
 /** The scene group for a planned shot subject, if it's in scope now. */
 export function resolveShotSubjectGroup(subject: ShotSubject): Object3D | null {
-  const entityId =
-    subject.type === "flag"
-      ? resolveFlagEntityId(subject.slot)
-      : findLivingEntityByTargetId(subject.targetId);
+  const entityId = resolveShotSubjectEntityId(subject);
   return entityId ? resolveSubjectGroup(entityId) : null;
 }
 

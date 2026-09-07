@@ -4,7 +4,7 @@ import type { GameEntity } from "./gameEntityTypes";
 import { liveConnectionStore } from "./liveConnectionStore";
 import { streamPlaybackStore } from "./streamPlaybackStore";
 import { threeForwardHeading } from "../stream/streamHelpers";
-import { resolveFlagTeam } from "../components/flagTeam";
+import { resolveFlagTeam } from "./flagTeam";
 
 const camlog = createLogger("camdbg");
 

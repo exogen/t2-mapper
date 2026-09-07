@@ -3,7 +3,7 @@ import { useFrame } from "@react-three/fiber";
 import { Quaternion, Vector3 } from "three";
 import type { Camera } from "three";
 import { createLogger } from "../logger";
-import { engineStore } from "../state/engineStore";
+import { effectDeltaSec, engineStore } from "../state/engineStore";
 import { cameraRegistry } from "../state/cameraRegistry";
 import {
   demoDirectorStore,
@@ -16,7 +16,6 @@ import {
   exitToFreeFly,
   findLivingEntityByTargetId,
   followFlag,
-  resolveFlagEntityId,
 } from "../state/watchFollow";
 import { orbitPullbackDir } from "../stream/streamHelpers";
 import { aimCamera, placeCamera, shotPoseAt } from "../director/shotPath";
@@ -32,6 +31,7 @@ import { directorCamDebug } from "../state/cameraDebug";
 
 const camlog = createLogger("camdbg");
 import { bearingYaw } from "../director/geometry";
+import { FramePriority } from "./framePriority";
 
 /**
  * Shot debugging: every cut, travel and mid-shot correction logs at
@@ -111,6 +111,7 @@ import {
 import {
   findShotIndex,
   livingPlayerPositionsNear,
+  resolveShotSubjectEntityId,
   resolveShotSubjectGroup,
   resolveSubjectGroup,
   shotContains,
@@ -297,10 +298,7 @@ function driveSubjectPan(
     // Lead room: aim slightly AHEAD of a moving subject so they travel
     // into frame space instead of being pinned dead centre — scaled by
     // the tracking blend, so anchored framings stay anchored.
-    const entityId =
-      subject.type === "flag"
-        ? resolveFlagEntityId(subject.slot)
-        : findLivingEntityByTargetId(subject.targetId);
+    const entityId = resolveShotSubjectEntityId(subject);
     if (entityId && subjectVelocity(entityId, _panLead)) {
       panTarget.addScaledVector(_panLead, 0.35 * track);
     }
@@ -703,21 +701,21 @@ export function DirectorController() {
    * visible. Both are throttled — a full-scene raycast per frame is far
    * too costly — and both correct rather than merely detect.
    */
-  /**
-   * The point the current shot is looking at, when it has a fixed one.
-   *
-   * The terrain rail moves the camera AFTER the drive has aimed it, and
-   * a camera translated without being re-aimed is pointing wherever it
-   * was pointing from the old spot — four metres lower. That is why a
-   * player framed on the chest ended up at the bottom of the picture
-   * with the base behind him in the middle.
-   */
   const enforceCameraSanity = (
     camera: { position: Vector3; quaternion: Quaternion },
     shot: Shot,
     delta: number,
-    /** Re-aimed here if the rail moves the camera. Omit for shots
-     *  whose orientation is driven elsewhere (a travel, a follow). */
+    /**
+     * The point the current shot is looking at, when it has a fixed
+     * one; re-aimed here if the rail moves the camera. Omit for shots
+     * whose orientation is driven elsewhere (a travel, a follow).
+     *
+     * The terrain rail moves the camera AFTER the drive has aimed it,
+     * and a camera translated without being re-aimed is pointing
+     * wherever it was pointing from the old spot — four metres lower.
+     * That is why a player framed on the chest ended up at the bottom
+     * of the picture with the base behind him in the middle.
+     */
     aim?: Vector3,
   ) => {
     const aimedFromY = camera.position.y;
@@ -1166,11 +1164,7 @@ export function DirectorController() {
             shot.aim.target,
           );
         } else {
-          const heading = subjectHeading(
-            subject!.type === "flag"
-              ? resolveFlagEntityId(subject!.slot)
-              : findLivingEntityByTargetId(subject!.targetId),
-          );
+          const heading = subjectHeading(resolveShotSubjectEntityId(subject!));
           if (heading != null) {
             entryYaw =
               shot.aim?.mode === "backward" ? heading + Math.PI : heading;
@@ -1545,7 +1539,6 @@ export function DirectorController() {
   const driveSweep = (
     shot: Extract<Shot, { kind: "sweep" }>,
     t: number,
-    isPlaying: boolean,
     demoDelta: number,
     fallbackCamera: Camera,
   ): void => {
@@ -1569,8 +1562,6 @@ export function DirectorController() {
 
   const driveDolly = (
     shot: Extract<Shot, { kind: "dolly" }>,
-    t: number,
-    isPlaying: boolean,
     demoDelta: number,
     fallbackCamera: Camera,
   ): void => {
@@ -1578,22 +1569,13 @@ export function DirectorController() {
     // three-quarter offset off the subject's path, aim eased onto the
     // subject. Direct camera writes in freeFly, like fixedOrbit.
     const camera = cameraRegistry.perspective ?? fallbackCamera;
+    const entityId = resolveShotSubjectEntityId(shot.subject);
     const seeding = !dollySeededRef.current;
     if (seeding) {
       dollyVelRef.current.set(0, 0, 0);
-      const entryHeading = shot.subject
-        ? subjectHeading(
-            shot.subject.type === "flag"
-              ? resolveFlagEntityId(shot.subject.slot)
-              : findLivingEntityByTargetId(shot.subject.targetId),
-          )
-        : null;
+      const entryHeading = subjectHeading(entityId);
       if (entryHeading != null) dollyHeadingRef.current = entryHeading;
     }
-    const entityId =
-      shot.subject.type === "flag"
-        ? resolveFlagEntityId(shot.subject.slot)
-        : findLivingEntityByTargetId(shot.subject.targetId);
     const group = entityId ? resolveSubjectGroup(entityId) : null;
     if (group) {
       const heading = subjectHeading(entityId);
@@ -1708,7 +1690,6 @@ export function DirectorController() {
 
   const driveFollow = (
     shot: Extract<Shot, { kind: "followFlag" | "followPlayer" }>,
-    t: number,
     isPlaying: boolean,
     demoDelta: number,
     fallbackCamera: Camera,
@@ -1860,24 +1841,23 @@ export function DirectorController() {
     // playback freezes the camera entirely (a rotating orbit must not
     // keep rotating over a frozen world), and at 2x the camera moves
     // twice as fast to stay in step with it.
-    const playback = engineStore.getState().playback;
-    const isPlaying = playback.status === "playing";
-    const demoDelta = isPlaying ? delta * playback.rate : 0;
+    const isPlaying = engineStore.getState().playback.status === "playing";
+    const demoDelta = effectDeltaSec(delta);
 
     if (shot.kind === "fixedOrbit") {
       driveFixedOrbit(shot, t, isPlaying, demoDelta, delta, state.camera);
       return;
     }
     if (shot.kind === "sweep") {
-      driveSweep(shot, t, isPlaying, demoDelta, state.camera);
+      driveSweep(shot, t, demoDelta, state.camera);
       return;
     }
     if (shot.kind === "dolly") {
-      driveDolly(shot, t, isPlaying, demoDelta, state.camera);
+      driveDolly(shot, demoDelta, state.camera);
       return;
     }
-    driveFollow(shot, t, isPlaying, demoDelta, state.camera);
-  });
+    driveFollow(shot, isPlaying, demoDelta, state.camera);
+  }, FramePriority.CameraDirector);
 
   return null;
 }

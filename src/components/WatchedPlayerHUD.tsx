@@ -6,8 +6,8 @@ import {
 import { gameEntityStore } from "../state/gameEntityStore";
 import { useStreamSnapshot } from "../state/streamSnapshotStore";
 import { stripTaggedStringMarkup } from "../stream/streamHelpers";
-import { flagLabel } from "./flagTeam";
-import styles from "./WatchedPlayerHud.module.css";
+import { flagLabel } from "../state/flagTeam";
+import styles from "./WatchedPlayerHUD.module.css";
 
 function clean(name: string | null | undefined): string | null {
   if (!name) return null;
@@ -52,7 +52,7 @@ function resolveFollowedName(
  * label. Shown only in follow/first-person, independent of the input
  * overlay, stacked with it.
  */
-export function WatchedPlayerHud() {
+export function WatchedPlayerHUD() {
   const cameraMode = useStore(streamPlaybackStore, (s) => s.cameraMode);
   const followEntityId = useStore(streamPlaybackStore, (s) => s.followEntityId);
   const followFlagSlot = useStore(streamPlaybackStore, (s) => s.followFlagSlot);

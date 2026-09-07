@@ -8,8 +8,8 @@
  * timeline. Yields to the event loop to stay responsive; safe to run
  * while the same buffer plays back (separate parser, no shared state).
  */
-import type { DirectorDataset } from "../director/types";
-import { createDemoStreamingRecording } from "./demoStreaming";
+import type { DirectorDataset } from "./types";
+import { createDemoStreamingRecording } from "../stream/demoStreaming";
 import { DirectorTrackers, FLAG_STEP_SEC } from "./directorTrackers";
 
 /** Yield to the event loop every N seconds of demo time. */

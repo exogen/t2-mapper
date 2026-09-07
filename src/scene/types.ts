@@ -19,9 +19,12 @@ export interface Color4 {
 }
 
 /**
- * Row-major 4×4 transform matrix as used by Torque's MatrixF.
- * Index formula: idx(row, col) = row + col * 4.
- * Position is at elements[12], elements[13], elements[14].
+ * A Torque MatrixF (mObjToWorld): 16 floats in Torque's row-major order,
+ * idx(row, col) = row * 4 + col, applied as M·v. The wire carries it as
+ * is (translation at 3, 7, 11); the mission builder writes the same
+ * bytes from a .mis axis-angle. `position` is the translation regardless
+ * of which produced it. scene/coordinates.ts owns the conversion to
+ * Three.js; never decode `elements` by hand.
  */
 export interface MatrixF {
   elements: number[];

@@ -15,7 +15,7 @@ import {
   useMissionName,
   useSceneMissionArea,
 } from "../state/gameEntityStore";
-import { computeCommandCircuitFrame } from "./commandCircuitFrame";
+import { computeCommandCircuitFrame } from "../stats/commandCircuitFrame";
 import {
   HEATMAP_RESOLUTION,
   normalizeDensity,

@@ -5,7 +5,7 @@
  */
 import fs from "node:fs";
 import { createDemoStreamingRecording } from "@/src/stream/demoStreaming";
-import { scanDemoDirector } from "@/src/stream/demoDirectorScanner";
+import { scanDemoDirector } from "@/src/director/demoDirectorScanner";
 import {
   runCastPipeline,
   type CastPipelineResult,

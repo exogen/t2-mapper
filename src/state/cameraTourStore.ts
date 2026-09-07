@@ -1,7 +1,7 @@
 import { CatmullRomCurve3 } from "three";
 import { createStore } from "zustand/vanilla";
 import { useStoreWithEqualityFn } from "zustand/traditional";
-import type { TourTarget } from "../components/mapTourCategories";
+import type { TourTarget } from "./mapTourCategories";
 
 export interface TourAnimation {
   targets: TourTarget[];
@@ -94,6 +94,22 @@ export const cameraTourStore = createStore<CameraTourState>((set) => ({
     set({ animation: null });
   },
 }));
+
+const MIN_TRAVEL_DURATION = 1.5;
+const MAX_TRAVEL_DURATION = 6.0;
+const TRAVEL_SPEED = 180; // units/s for duration calc
+
+/**
+ * Tour travel pacing: how long the camera takes to cover `distance`,
+ * clamped so short hops don't snap and long ones don't drag. Shared by
+ * the 3D tour consumer and the command circuit's top-down pan.
+ */
+export function computeTravelDuration(distance: number): number {
+  return Math.max(
+    MIN_TRAVEL_DURATION,
+    Math.min(MAX_TRAVEL_DURATION, distance / TRAVEL_SPEED),
+  );
+}
 
 export function useCameraTour<T>(
   selector: (state: CameraTourState) => T,

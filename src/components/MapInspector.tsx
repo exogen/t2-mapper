@@ -1,33 +1,31 @@
-"use client";
 import {
   useState,
   useEffect,
   useCallback,
   Suspense,
   useRef,
-  lazy,
   Activity,
   ReactNode,
   // ViewTransition,
 } from "react";
 import { type RootState } from "@react-three/fiber";
-import { type InvalidateFunction } from "@/src/components/ThreeCanvas";
-import { InspectorControls } from "@/src/components/InspectorControls";
-import { MissionSelect } from "@/src/components/MissionSelect";
-import { DemoSelect } from "@/src/components/DemoSelect";
-import { StreamingMissionInfo } from "@/src/components/StreamingMissionInfo";
-import { ServerBrowserHeader } from "@/src/components/ServerBrowserHeader";
-import { ViewModeToggle } from "@/src/components/ViewModeToggle";
-import { useSettings } from "@/src/components/SettingsProvider";
-import { useDevicePixelRatio } from "@/src/components/useDevicePixelRatio";
-import { useAutoScoreScreen } from "@/src/components/useAutoScoreScreen";
-import { useRecording } from "@/src/components/usePlayback";
-import { useFeatures } from "@/src/components/FeaturesProvider";
+import { type InvalidateFunction } from "./ThreeCanvas";
+import { InspectorControls } from "./InspectorControls";
+import { MissionSelect } from "./MissionSelect";
+import { DemoSelect } from "./DemoSelect";
+import { StreamingMissionInfo } from "./StreamingMissionInfo";
+import { ServerBrowserHeader } from "./ServerBrowserHeader";
+import { ViewModeToggle } from "./ViewModeToggle";
+import { useSettings } from "./SettingsProvider";
+import { useDevicePixelRatio } from "./useDevicePixelRatio";
+import { useAutoScoreScreen } from "./useAutoScoreScreen";
+import { useRecording } from "./usePlayback";
+import { useFeatures } from "./FeaturesProvider";
 import {
   liveConnectionStore,
   useLiveSelector,
-} from "@/src/state/liveConnectionStore";
-import { usePublicWindowAPI } from "@/src/components/usePublicWindowAPI";
+} from "../state/liveConnectionStore";
+import { usePublicWindowAPI } from "./usePublicWindowAPI";
 import {
   CurrentMission,
   dropLocationHash,
@@ -36,7 +34,7 @@ import {
   useMissionQueryState,
   useModeQueryState,
   useViewQueryState,
-} from "@/src/components/useQueryParams";
+} from "./useQueryParams";
 import { useQueryState } from "nuqs";
 import {
   commandCircuitStore,
@@ -66,45 +64,28 @@ import { useTouchDevice } from "./useTouchDevice";
 import { GameDialogSpinner } from "./GameDialogSpinner";
 import { ToggleSidebarButton } from "./ToggleSidebarButton";
 import { ExitTourButton } from "./ExitTourButton";
+import { lazyNamed } from "./lazyNamed";
 import styles from "./MapInspector.module.css";
 
 function ViewTransition({ children }: { children: ReactNode }) {
   return children;
 }
 
-function createLazy(
-  name: string,
-  loader: () => Promise<{
-    [name]: React.ComponentType<any>;
-  }>,
-) {
-  return lazy(() => loader().then((mod) => ({ default: mod[name] })));
-}
-
-const GameView = createLazy(
-  "GameView",
-  () => import("@/src/components/GameView"),
-);
-const DemoPlaybackControls = createLazy(
+const GameView = lazyNamed("GameView", () => import("./GameView"));
+const DemoPlaybackControls = lazyNamed(
   "DemoPlaybackControls",
-  () => import("@/src/components/DemoPlaybackControls"),
+  () => import("./DemoPlaybackControls"),
 );
-const PlayerHUD = createLazy(
-  "PlayerHUD",
-  () => import("@/src/components/PlayerHUD"),
-);
-const MapInfoDialog = createLazy(
+const PlayerHUD = lazyNamed("PlayerHUD", () => import("./PlayerHUD"));
+const MapInfoDialog = lazyNamed(
   "MapInfoDialog",
-  () => import("@/src/components/MapInfoDialog"),
+  () => import("./MapInfoDialog"),
 );
-const ServerBrowser = createLazy(
+const ServerBrowser = lazyNamed(
   "ServerBrowser",
-  () => import("@/src/components/ServerBrowser"),
+  () => import("./ServerBrowser"),
 );
-const ScoreScreen = createLazy(
-  "ScoreScreen",
-  () => import("@/src/components/ScoreScreen"),
-);
+const ScoreScreen = lazyNamed("ScoreScreen", () => import("./ScoreScreen"));
 
 export function MapInspector() {
   const [currentMission, setCurrentMission] = useMissionQueryState();

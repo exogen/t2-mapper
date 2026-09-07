@@ -8,6 +8,7 @@ import {
   CanvasTexture,
   DataTexture,
   DoubleSide,
+  DynamicDrawUsage,
   Float32BufferAttribute,
   Group,
   Object3D,
@@ -47,8 +48,6 @@ import {
 import type { EmitterDataResolved } from "../particles/types";
 import type { StreamSnapshot, StreamingPlayback } from "../stream/types";
 import { createLogger } from "../logger";
-
-const log = createLogger("ParticleEffects");
 import { useDebug, useSettings } from "./SettingsProvider";
 import { useAudio } from "./AudioContext";
 import {
@@ -60,8 +59,10 @@ import {
   trackSound,
   stopAndDetachSound,
 } from "./AudioEmitter";
-import { effectNow, engineStore } from "../state/engineStore";
-import { getEffectiveSoundRate } from "./AudioEmitter";
+import { getEffectiveSoundRate } from "./audioPlaybackRate";
+import { effectDeltaSec, effectNow, engineStore } from "../state/engineStore";
+
+const log = createLogger("ParticleEffects");
 
 // ── Constants ──
 
@@ -411,15 +412,15 @@ function createShockwaveGeometry(numSegments: number): BufferGeometry {
 
   const geo = new BufferGeometry();
   const posAttr = new BufferAttribute(positions, 3);
-  posAttr.setUsage(35048); // DynamicDrawUsage
+  posAttr.setUsage(DynamicDrawUsage);
   geo.setAttribute("position", posAttr);
 
   const texAttr = new BufferAttribute(texCoords, 2);
-  texAttr.setUsage(35048);
+  texAttr.setUsage(DynamicDrawUsage);
   geo.setAttribute("texCoord", texAttr);
 
   const colorAttr = new BufferAttribute(vertexColors, 4);
-  colorAttr.setUsage(35048);
+  colorAttr.setUsage(DynamicDrawUsage);
   geo.setAttribute("vertexColor", colorAttr);
 
   geo.setIndex(new BufferAttribute(indices, 1));
@@ -864,9 +865,8 @@ interface ProjectileSound {
 
 const _listenerWorldPos = new Vector3();
 
-/** out = −normalize(v), or straight up when v is (near) zero — the
- *  engine's emission axis for projectile trails. */
-/** A streaming emitter parked at `origin`, ready to emit along each frame. */
+/** An emitter parked at `origin`, ready to emit along each frame. Callers
+ *  that emit only once flip `isBurst` and kill the emitter themselves. */
 function createStreamEmitter(
   emitterData: EmitterDataResolved,
   origin: [number, number, number],
@@ -931,6 +931,8 @@ function readNodeFrame(entry: ActiveEmitter, node: NodeEmitter): void {
   vel[2] = node.frame.velocity[2];
 }
 
+/** out = −normalize(v), or straight up when v is (near) zero — the
+ *  engine's emission axis for projectile trails. */
 function reversedDirection(
   v: [number, number, number],
   out: [number, number, number],
@@ -1017,10 +1019,9 @@ export function ParticleEffects({
     const snapshot = snapshotRef.current;
     if (!group || !snapshot) return;
 
-    const playbackState = engineStore.getState().playback;
-    const isPlaying = playbackState.status === "playing";
+    const isPlaying = engineStore.getState().playback.status === "playing";
     // Scale delta by playback rate; 0 when paused.
-    const effectDelta = isPlaying ? delta * playbackState.rate : 0;
+    const effectDelta = effectDeltaSec(delta);
     const dtMS = effectDelta * 1000;
 
     // Rings other systems asked for this frame (mounted-image muzzle flashes).
@@ -1058,66 +1059,21 @@ export function ParticleEffects({
 
       // Create burst emitters.
       for (const burst of resolved.burstEmitters) {
-        const emitter = new EmitterInstance(
-          burst.data,
-          MAX_PARTICLES_PER_EMITTER,
-        );
-        emitter.emitBurst(origin, burst.density);
+        const entry = createStreamEmitter(burst.data, origin, group);
+        entry.isBurst = true;
+        entry.emitter.emitBurst(origin, burst.density);
         // Explosion::explode → deleteWhenEmpty on the burst emitter.
-        emitter.kill();
-
-        const texture = getParticleTexture(burst.data.particles.textureName);
-        const geometry = createParticleGeometry(MAX_PARTICLES_PER_EMITTER);
-        const material = createParticleMaterial(
-          texture,
-          burst.data.particles.useInvAlpha,
-          burst.data.orientParticles,
-        );
-        const mesh = new Mesh(geometry, material);
-        mesh.frustumCulled = false;
-        group.add(mesh);
-
-        activeEmittersRef.current.push({
-          emitter,
-          mesh,
-          geometry,
-          material,
-          targetTexture: texture,
-          origin,
-          isBurst: true,
-        });
+        entry.emitter.kill();
+        activeEmittersRef.current.push(entry);
       }
 
       // Streaming emitters (emitter[0..3]) are fed every frame while the
       // explosion lives and stop at their own datablock lifetime, whichever
       // comes first; already-emitted particles then live out their lifetime.
       for (const emitterData of resolved.streamingEmitters) {
-        const emitter = new EmitterInstance(
-          emitterData,
-          MAX_PARTICLES_PER_EMITTER,
-        );
-
-        const texture = getParticleTexture(emitterData.particles.textureName);
-        const geometry = createParticleGeometry(MAX_PARTICLES_PER_EMITTER);
-        const material = createParticleMaterial(
-          texture,
-          emitterData.particles.useInvAlpha,
-          emitterData.orientParticles,
-        );
-        const mesh = new Mesh(geometry, material);
-        mesh.frustumCulled = false;
-        group.add(mesh);
-
-        activeEmittersRef.current.push({
-          emitter,
-          mesh,
-          geometry,
-          material,
-          targetTexture: texture,
-          origin,
-          isBurst: false,
-          driverEntityId: entity.id,
-        });
+        const entry = createStreamEmitter(emitterData, origin, group);
+        entry.driverEntityId = entity.id;
+        activeEmittersRef.current.push(entry);
       }
 
       const expBlock = getDataBlockData(entity.explosionDataBlockId);
@@ -1213,32 +1169,16 @@ export function ParticleEffects({
         const emitterData =
           emitterRaw && resolveEmitterData(emitterRaw, getDataBlockData);
         if (emitterData) {
-          const emitter = new EmitterInstance(
+          const entry = createStreamEmitter(
             emitterData,
-            MAX_PARTICLES_PER_EMITTER,
+            [end[0], end[1], end[2]],
+            group,
           );
-          emitter.worldGravity = snapshot.gravity;
-          emitter.emitPeriodic(start, end, visual.numParts, axis);
-          emitter.kill();
-          const texture = getParticleTexture(emitterData.particles.textureName);
-          const geometry = createParticleGeometry(MAX_PARTICLES_PER_EMITTER);
-          const material = createParticleMaterial(
-            texture,
-            emitterData.particles.useInvAlpha,
-            emitterData.orientParticles,
-          );
-          const mesh = new Mesh(geometry, material);
-          mesh.frustumCulled = false;
-          group.add(mesh);
-          activeEmittersRef.current.push({
-            emitter,
-            mesh,
-            geometry,
-            material,
-            targetTexture: texture,
-            origin: [end[0], end[1], end[2]],
-            isBurst: true,
-          });
+          entry.isBurst = true;
+          entry.emitter.worldGravity = snapshot.gravity;
+          entry.emitter.emitPeriodic(start, end, visual.numParts, axis);
+          entry.emitter.kill();
+          activeEmittersRef.current.push(entry);
         }
       }
     }
@@ -1322,8 +1262,8 @@ export function ParticleEffects({
     for (let i = active.length - 1; i >= 0; i--) {
       const entry = active[i];
 
-      // One-time shader compilation check.
-      if (!entry.shaderChecked) {
+      // One-time shader compilation check (debug only).
+      if (debugMode && !entry.shaderChecked) {
         checkShaderCompilation(
           gl,
           entry.material,

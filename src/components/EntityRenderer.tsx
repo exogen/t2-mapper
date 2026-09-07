@@ -1,4 +1,4 @@
-import { lazy, memo, useMemo, useRef } from "react";
+import { memo, useMemo, useRef } from "react";
 import type { Group } from "three";
 import type {
   GameEntity,
@@ -21,18 +21,17 @@ import { Sky } from "./Sky";
 import { AudioEnabled } from "./AudioEnabled";
 import type { TorqueObject } from "../torqueScript";
 import { useRotation } from "./useRotation";
+import { lazyNamed } from "./lazyNamed";
 
 function createLazy(
   name: string,
   loader: () => Promise<{ [key: string]: unknown }>,
 ): React.ComponentType<{ entity: GameEntity }> {
-  const LazyComponent = lazy(() =>
-    loader().then((mod) => {
-      const NamedComponent = mod[name] as React.ComponentType<{
-        entity: GameEntity;
-      }>;
-      return { default: NamedComponent };
-    }),
+  const LazyComponent = lazyNamed(
+    name,
+    loader as () => Promise<
+      Record<string, React.ComponentType<{ entity: GameEntity }>>
+    >,
   );
   const LazyComponentWithSuspense = ({ entity }: { entity: GameEntity }) => {
     return (

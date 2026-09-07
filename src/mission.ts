@@ -1,11 +1,4 @@
-import { Quaternion, Vector3 } from "three";
-import {
-  parse,
-  createRuntime,
-  type TorqueObject,
-  type TorqueRuntime,
-  type TorqueRuntimeOptions,
-} from "./torqueScript";
+import { parse, type TorqueObject } from "./torqueScript";
 import type * as AST from "./torqueScript/ast";
 
 // Patterns for extracting metadata from comments
@@ -213,30 +206,6 @@ export function parseMissionScript(script: string): ParsedMission {
   };
 }
 
-export async function executeMission(
-  parsedMission: ParsedMission,
-  options: TorqueRuntimeOptions = {},
-): Promise<ExecutedMission> {
-  // Create a runtime and execute the code
-  const runtime = createRuntime(options);
-  const loadedScript = await runtime.loadFromAST(parsedMission.ast);
-  loadedScript.execute();
-
-  // Find root objects (objects without parents that aren't datablocks)
-  const objects: TorqueObject[] = [];
-  for (const obj of runtime.state.objectsById.values()) {
-    if (!obj._isDatablock && !obj._parent) {
-      objects.push(obj);
-    }
-  }
-
-  return {
-    mission: parsedMission,
-    objects,
-    runtime,
-  };
-}
-
 export interface ParsedMission {
   displayName: string | null;
   missionTypes: string[];
@@ -252,42 +221,9 @@ export interface ParsedMission {
   ast: AST.Program;
 }
 
-export interface ExecutedMission {
-  mission: ParsedMission;
-  objects: TorqueObject[];
-  runtime: TorqueRuntime;
-}
-
-export function* iterObjects(
-  objectList: TorqueObject[],
-): Generator<TorqueObject> {
-  for (const obj of objectList) {
-    yield obj;
-    if (obj._children) {
-      yield* iterObjects(obj._children);
-    }
-  }
-}
-
 export function getProperty(obj: TorqueObject | undefined, name: string): any {
   if (!obj) return undefined;
   return obj[name.toLowerCase()];
-}
-
-export function getFloat(
-  obj: TorqueObject,
-  name: string,
-): number | null | undefined {
-  const value = obj[name.toLowerCase()];
-  return value == null ? value : parseFloat(value);
-}
-
-export function getInt(
-  obj: TorqueObject,
-  name: string,
-): number | null | undefined {
-  const value = obj[name.toLowerCase()];
-  return value == null ? value : parseInt(value, 10);
 }
 
 export function getPosition(obj: TorqueObject): [number, number, number] {
@@ -300,14 +236,4 @@ export function getScale(obj: TorqueObject): [number, number, number] {
   const scale = obj.scale ?? "1 1 1";
   const [sx, sy, sz] = scale.split(" ").map((s: string) => parseFloat(s));
   return [sy || 0, sz || 0, sx || 0];
-}
-
-export function getRotation(obj: TorqueObject): Quaternion {
-  const rotation = obj.rotation ?? "1 0 0 0";
-  const [ax, ay, az, angleDegrees] = rotation
-    .split(" ")
-    .map((s: string) => parseFloat(s));
-  const axis = new Vector3(ay, az, ax).normalize();
-  const angleRadians = -angleDegrees * (Math.PI / 180);
-  return new Quaternion().setFromAxisAngle(axis, angleRadians);
 }

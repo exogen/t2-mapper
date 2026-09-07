@@ -25,13 +25,7 @@ import {
   applyShapeShaderModifications,
 } from "../shapeMaterial";
 import { isOrganicShape } from "../organicShapes";
-import { dtsNodeExtras } from "../components/dtsNodeExtras";
-import {
-  loadIflAtlas,
-  applyAtlasFrame,
-  createAtlasInstance,
-  getFrameIndexForTime,
-} from "../components/iflAtlas";
+import { dtsNodeExtras } from "../dtsNodeExtras";
 import { loadTexture, setupTexture } from "../textureUtils";
 import { textureToUrl } from "../loaders";
 import type { Keyframe } from "./types";
@@ -42,8 +36,7 @@ export const DEFAULT_EYE_HEIGHT = 2.1;
 /** Torque's animation crossfade duration (seconds). */
 export const ANIM_TRANSITION_TIME = 0.25;
 
-const STREAM_TICK_MS = 32;
-export const STREAM_TICK_SEC = STREAM_TICK_MS / 1000;
+export { STREAM_TICK_SEC } from "./streamHelpers";
 
 // ── Temp vectors / quaternions (module-level to avoid per-frame alloc) ──
 
@@ -313,8 +306,6 @@ interface ShapeMaterialResult {
   material: Material;
   /** Back-face material for organic/translucent two-pass rendering. */
   backMaterial?: Material;
-  /** For IFL materials: loads atlas, configures texture, sets up animation. */
-  initialize?: (mesh: Object3D, getTime: () => number) => Promise<() => void>;
 }
 
 /**
@@ -356,7 +347,6 @@ export function replaceWithShapeMaterial(
   const effectiveReflectionAmount = emapEnabled ? reflectionAmount : 0;
 
   if (flagNames.has("IflMaterial")) {
-    const repeat = flagNames.has("SWrap") || flagNames.has("TWrap");
     const result = createMaterialFromFlags(
       mat,
       null,
@@ -371,14 +361,10 @@ export function replaceWithShapeMaterial(
       return {
         material,
         backMaterial: result[0],
-        initialize: (mesh, getTime) =>
-          initializeIflMaterial(material, resourcePath, mesh, getTime, repeat),
       };
     }
     return {
       material: result,
-      initialize: (mesh, getTime) =>
-        initializeIflMaterial(result, resourcePath, mesh, getTime, repeat),
     };
   }
 
@@ -442,54 +428,9 @@ export function replaceWithShapeMaterial(
   return { material: result };
 }
 
-interface IflInitializer {
-  mesh: Object3D;
-  initialize: (mesh: Object3D, getTime: () => number) => Promise<() => void>;
-}
-
-async function initializeIflMaterial(
-  material: Material,
-  resourcePath: string,
-  mesh: Object3D,
-  getTime: () => number,
-  repeat = false,
-): Promise<() => void> {
-  const iflPath = `textures/${resourcePath}.ifl`;
-  const atlas = await loadIflAtlas(iflPath, { repeat });
-  const texture = createAtlasInstance(atlas);
-
-  (material as any).map = texture;
-  material.needsUpdate = true;
-
-  let disposed = false;
-  const prevOnBeforeRender = mesh.onBeforeRender;
-  mesh.onBeforeRender = function (
-    this: any,
-    ...args: Parameters<typeof mesh.onBeforeRender>
-  ) {
-    prevOnBeforeRender?.apply(this, args);
-    if (disposed) return;
-    const frame = applyAtlasFrame(
-      atlas,
-      texture,
-      getFrameIndexForTime(atlas, getTime()),
-    );
-    // Swapping one loaded frame texture for another changes no shader
-    // define, so no needsUpdate: that would cost a program lookup per
-    // frame per material.
-    if ((material as any).map !== frame) (material as any).map = frame;
-  };
-
-  return () => {
-    disposed = true;
-    mesh.onBeforeRender = prevOnBeforeRender ?? (() => {});
-  };
-}
-
 /**
  * Post-process a cloned shape scene: hide collision/hull geometry, smooth
  * normals, and replace PBR materials with diffuse-only Lambert materials.
- * Returns IFL initializers for any IFL materials found.
  */
 export function processShapeScene(
   scene: Object3D,
@@ -506,8 +447,7 @@ export function processShapeScene(
      */
     ignoreDetailSize?: boolean;
   } = {},
-): IflInitializer[] {
-  const iflInitializers: IflInitializer[] = [];
+): void {
   const isOrganic = shapeName ? isOrganicShape(shapeName) : false;
 
   // Collect back-face meshes to add after traversal (can't modify during traverse).
@@ -551,9 +491,6 @@ export function processShapeScene(
     if (Array.isArray(node.material)) {
       node.material = node.material.map((m: MeshStandardMaterial) => {
         const result = replaceWithShapeMaterial(m, vis, isOrganic, options);
-        if (result.initialize) {
-          iflInitializers.push({ mesh: node, initialize: result.initialize });
-        }
         if (result.backMaterial && node.parent) {
           const backMesh = node.clone();
           backMesh.material = result.backMaterial;
@@ -568,9 +505,6 @@ export function processShapeScene(
         isOrganic,
         options,
       );
-      if (result.initialize) {
-        iflInitializers.push({ mesh: node, initialize: result.initialize });
-      }
       node.material = result.material;
       if (result.backMaterial && node.parent) {
         const backMesh = node.clone();
@@ -584,8 +518,6 @@ export function processShapeScene(
   for (const { parent, mesh } of backFaceMeshes) {
     parent.add(mesh);
   }
-
-  return iflInitializers;
 }
 
 /**

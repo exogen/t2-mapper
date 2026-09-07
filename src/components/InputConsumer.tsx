@@ -15,10 +15,15 @@ import { gameEntityStore } from "../state/gameEntityStore";
 import { cameraRegistry } from "../state/cameraRegistry";
 import { useInputContext } from "./InputContext";
 import { useTick, useGetTickFraction } from "./TickProvider";
-import { yawPitchToQuaternion, MAX_PITCH } from "../stream/streamHelpers";
+import {
+  orbitPullbackDir,
+  yawPitchToQuaternion,
+  MAX_PITCH,
+} from "../stream/streamHelpers";
 import type { StreamRecording, StreamCamera } from "../stream/types";
 import type { LiveStreamAdapter } from "../stream/liveStreaming";
 import type { ClientMove } from "../../relay/types";
+import { FramePriority } from "./framePriority";
 
 const log = createLogger("InputConsumer");
 
@@ -64,6 +69,7 @@ function quantizeRotation(radians: number): number {
 const _forwardVec = new Vector3();
 const _sideVec = new Vector3();
 const _moveVec = new Vector3();
+const _orbitDir = new Vector3();
 const _lookEuler = new Euler(0, 0, 0, "YXZ");
 
 /** A buffered move sent to the server, awaiting acknowledgment. */
@@ -484,11 +490,13 @@ export function InputConsumer() {
             applyLocalCamera(camera, dYaw, dPitch, x, y, z, frameDelta);
           } else if (spState.cameraMode === "orbitOverride") {
             // Accumulate orbit yaw/pitch for StreamingController to read.
-            spState.orbitOverrideYaw += dYaw;
-            spState.orbitOverridePitch = Math.max(
-              -MAX_PITCH,
-              Math.min(MAX_PITCH, spState.orbitOverridePitch + dPitch),
-            );
+            streamPlaybackStore.setState({
+              orbitOverrideYaw: spState.orbitOverrideYaw + dYaw,
+              orbitOverridePitch: Math.max(
+                -MAX_PITCH,
+                Math.min(MAX_PITCH, spState.orbitOverridePitch + dPitch),
+              ),
+            });
           }
           return;
         }
@@ -651,7 +659,7 @@ export function InputConsumer() {
         serverCam?.orbitTargetId,
       );
     }
-  });
+  }, FramePriority.CameraInput);
 
   // Clean up on unmount.
   useEffect(() => {
@@ -773,23 +781,17 @@ function applyOrbitCamera(
       "Player";
   const centerZ = tz + (isPlayer ? 1.0 : 0);
 
-  // Compute orbit pullback using frame-rate predicted rotation.
-  const sp = Math.sin(predPitch);
-  const cp = Math.cos(predPitch);
-  const sy = Math.sin(predYaw);
-  const cy = Math.cos(predYaw);
-
-  // Torque forward (column 1 of Rz*Rx, Torque convention):
-  //   {sy*cp, cy*cp, -sp}
-  // Camera pulls back along negative forward:
-  //   {-sy*cp, -cy*cp, sp}
+  // Pull back along the (Three.js space) orbit direction for the
+  // frame-rate predicted rotation.
   const dist = Math.max(0.1, orbitDistance);
-  const camX = tx - sy * cp * dist;
-  const camY = ty - cy * cp * dist;
-  const camZ = centerZ + sp * dist;
+  orbitPullbackDir(predYaw, predPitch, _orbitDir);
 
-  // Convert Torque coords to Three.js (x=north, y=up, z=east).
-  camera.position.set(camY, camZ, camX);
+  // Torque coords (x=east, y=north, z=up) → Three.js (x=north, y=up, z=east).
+  camera.position.set(
+    ty + _orbitDir.x * dist,
+    centerZ + _orbitDir.y * dist,
+    tx + _orbitDir.z * dist,
+  );
 
   const [qx, qy, qz, qw] = yawPitchToQuaternion(predYaw, predPitch);
   camera.quaternion.set(qx, qy, qz, qw);

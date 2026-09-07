@@ -1,4 +1,5 @@
 import type { WeaponImageDataBlockState, WeaponImageState } from "./types";
+import { STREAM_TICK_SEC } from "./streamHelpers";
 
 /** Transition index sentinel: -1 means "no transition defined". */
 const NO_TRANSITION = -1;
@@ -53,7 +54,7 @@ export interface WeaponAnimState {
  */
 export class WeaponImageStateMachine {
   private states: WeaponImageDataBlockState[];
-  private seqIndexToName: string[];
+  private seqIndexToName: readonly string[];
   private currentStateIndex = 0;
   private delayTime = 0;
   private lastFireCount = -1;
@@ -61,7 +62,10 @@ export class WeaponImageStateMachine {
   /** The datablock's fireState: the first state flagged as fire. */
   private readonly fireStateIndex: number;
 
-  constructor(states: WeaponImageDataBlockState[], seqIndexToName: string[]) {
+  constructor(
+    states: WeaponImageDataBlockState[],
+    seqIndexToName: readonly string[],
+  ) {
     this.states = states;
     this.seqIndexToName = seqIndexToName;
     this.fireStateIndex = states.findIndex((s) => s.fire);
@@ -88,8 +92,8 @@ export class WeaponImageStateMachine {
    * replay the activation chain.
    */
   fastForward(seconds: number, flags: WeaponImageState): void {
-    const step = 0.032;
-    for (let t = 0; t < seconds; t += step) this.tick(step, flags);
+    for (let t = 0; t < seconds; t += STREAM_TICK_SEC)
+      this.tick(STREAM_TICK_SEC, flags);
   }
 
   /**

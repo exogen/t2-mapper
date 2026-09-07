@@ -89,6 +89,3 @@ export function allocateEntityId(): string {
 /** Tribes 2 default IFF colors (sRGB 0-255). */
 export const IFF_GREEN = Object.freeze({ r: 0, g: 255, b: 0 });
 export const IFF_RED = Object.freeze({ r: 255, g: 0, b: 0 });
-
-/** Torque engine tick duration in milliseconds. */
-export const TICK_DURATION_MS = 32;

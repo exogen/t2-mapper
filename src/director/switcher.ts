@@ -146,6 +146,10 @@ import { publishFreeSpace } from "./freeSpaceRegistry";
 import { inspectShot, shotCameraPath } from "./shotPath";
 import { PLAYER_AIM_LIFT, PLAYER_STANDOFF } from "./humanScale";
 import { assetBoxCenter } from "../collision/worldCollision";
+import { pickVarietyShot, type VarietyMemory } from "./variety";
+import { framesTheSame, reportCoverage } from "./assemble";
+import { describeScenes } from "./scene";
+import { detectMode, openingSkip, planShots } from "./planner";
 
 /**
  * A move paired with the camera positions it may be built from.
@@ -336,11 +340,6 @@ const SIGNING_FALLBACK_RANGE = 60;
  *  pick-up or the roster block may air. Introducing a side that is
  *  still one person is worse than waiting. */
 const TEAM_SETTLE_SEC = 7;
-
-import { pickVarietyShot, type VarietyMemory } from "./variety";
-import { framesTheSame, reportCoverage } from "./assemble";
-import { describeScenes } from "./scene";
-import { detectMode, openingSkip, planShots } from "./planner";
 
 /** Tier-1 event types whose peek presence pins the current subject. */
 const HOLD_EVENT_TYPES = [
@@ -570,8 +569,6 @@ interface SwitcherState {
   lastNonFlagSec: number;
 }
 
-/** Exported for tests: run the tick loop over a caller-owned view, so
- *  the view's maxQueriedAhead can prove the run stayed causal. */
 /** Fresh switcher state for a view. Shared by the batch and streaming
  *  entry points so the two cannot drift. */
 function newSwitcherState(view: CausalView): SwitcherState {
@@ -1312,12 +1309,6 @@ function startLineupBlock(
   state.lineupUntil = untilSec ?? t + budget;
 }
 
-/**
- * One roster pass, built from where the players stand at this moment:
- * teams alternate, one wide establishing pass each, then close-ups
- * working across knots of not-yet-featured faces until each side's
- * budget is spent.
- */
 /**
  * Point a landmark's shots at the MIDDLE of the thing.
  *

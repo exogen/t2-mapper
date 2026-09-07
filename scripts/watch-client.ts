@@ -27,7 +27,9 @@ function done(code: number) {
   clearTimeout(timeout);
   try {
     ws.send(JSON.stringify({ type: "leaveServer" }));
-  } catch {}
+  } catch {
+    /* socket already closed */
+  }
   ws.close();
   process.exit(code);
 }

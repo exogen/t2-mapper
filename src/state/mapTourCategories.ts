@@ -1,4 +1,4 @@
-import type { GameEntity, ShapeEntity } from "../state/gameEntityTypes";
+import type { GameEntity, ShapeEntity } from "./gameEntityTypes";
 import type { TorqueObject } from "../torqueScript/types";
 import type { CaseInsensitiveMap } from "../torqueScript/utils";
 import { getGameName } from "../stringUtils";

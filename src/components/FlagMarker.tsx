@@ -2,7 +2,7 @@ import { useRef } from "react";
 import { useFrame } from "@react-three/fiber";
 import { Group, Vector3 } from "three";
 import { textureToUrl } from "../loaders";
-import { resolveFlagTeam } from "./flagTeam";
+import { resolveFlagTeam } from "../state/flagTeam";
 import {
   IFF_NEUTRAL,
   isObserverView,

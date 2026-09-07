@@ -1,5 +1,8 @@
 import type { ParsedData } from "t2-demo-parser";
 import type { SceneObject } from "../scene/types";
+import type { ServerLoadInfo } from "../../relay/types";
+
+export type { ServerLoadInfo };
 
 /** A mounted image in one of 8 ShapeBase image slots. The mount bone
  *  comes from the image datablock's mountPoint field, not the slot index. */
@@ -571,9 +574,6 @@ export interface PendingAudioEvent {
   position?: { x: number; y: number; z: number };
   timeSec: number;
 }
-
-import type { ServerLoadInfo } from "../../relay/types";
-export type { ServerLoadInfo };
 
 export interface StreamSnapshot {
   timeSec: number;

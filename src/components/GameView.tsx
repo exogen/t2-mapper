@@ -1,4 +1,4 @@
-import { lazy, memo, Suspense } from "react";
+import { memo, Suspense } from "react";
 import { type RootState } from "@react-three/fiber";
 import { isStreamingSource, useDataSource } from "../state/gameEntityStore";
 import { useRecording } from "./usePlayback";
@@ -29,28 +29,20 @@ import { DirectorController } from "./DirectorController";
 import { CameraDebugWatchdog } from "./CameraDebugWatchdog";
 import { CameraTourConsumer } from "./CameraTourConsumer";
 import { ActiveInputBindings } from "./ActiveInputBindings";
+import { lazyNamed } from "./lazyNamed";
 
-function createLazy(
-  name: string,
-  loader: () => Promise<{
-    [name]: React.ComponentType<any>;
-  }>,
-) {
-  return lazy(() => loader().then((mod) => ({ default: mod[name] })));
-}
-
-const StreamingController = createLazy(
+const StreamingController = lazyNamed(
   "StreamingController",
-  () => import("@/src/components/StreamingController"),
+  () => import("./StreamingController"),
 );
-const DebugElements = createLazy(
+const DebugElements = lazyNamed(
   "DebugElements",
-  () => import("@/src/components/DebugElements"),
+  () => import("./DebugElements"),
 );
-const Mission = createLazy("Mission", () => import("@/src/components/Mission"));
-const ChatSoundPlayer = createLazy(
+const Mission = lazyNamed("Mission", () => import("./Mission"));
+const ChatSoundPlayer = lazyNamed(
   "ChatSoundPlayer",
-  () => import("@/src/components/ChatSoundPlayer"),
+  () => import("./ChatSoundPlayer"),
 );
 
 export const GameView = memo(function GameView({
@@ -109,7 +101,7 @@ export const GameView = memo(function GameView({
                 <Mission
                   key={`${missionName}~${missionType}`}
                   name={missionName}
-                  missionType={missionType}
+                  missionType={missionType ?? ""}
                   onLoadingChange={onLoadingChange}
                 />
               </Suspense>

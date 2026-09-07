@@ -7,6 +7,7 @@ import { demoDirectorStore } from "../state/demoDirectorStore";
 import { directorCamDebug, orbitSpringDebug } from "../state/cameraDebug";
 import { streamClock, streamPlaybackStore } from "../state/streamPlaybackStore";
 import { demoClock } from "../director/shotLog";
+import { FramePriority } from "./framePriority";
 
 const log = createLogger("camdbg");
 
@@ -19,8 +20,9 @@ const SPIKE_POSITION_RATE = 120;
 const MAX_LINES_PER_SEC = 6;
 
 /**
- * Camera twitch watchdog: mounted AFTER every camera driver so it sees
- * each frame's FINAL pose, and logs one line whenever the view turns or
+ * Camera twitch watchdog: runs after every camera driver (its slot is
+ * the last of the ladder in framePriority.ts) so it sees each frame's
+ * FINAL pose, and logs one line whenever the view turns or
  * moves faster than a deliberate camera move ever should — with the
  * full decision context (shot, camera mode, follow target, spring and
  * pan state) needed to attribute it. Debug tooling; renders nothing.
@@ -81,7 +83,7 @@ export function CameraDebugWatchdog() {
         ? ` t=${directorCamDebug.travelT.toFixed(2)}`
         : "",
     );
-  });
+  }, FramePriority.CameraWatchdog);
 
   return null;
 }

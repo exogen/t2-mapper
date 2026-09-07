@@ -21,6 +21,7 @@ import { useInputAction } from "./InputControls";
 import { yawPitchToQuaternion } from "../stream/streamHelpers";
 import type { StreamRecording } from "../stream/types";
 import type { LiveStreamAdapter } from "../stream/liveStreaming";
+import { FramePriority } from "./framePriority";
 
 const log = createLogger("SpectatorController");
 
@@ -187,7 +188,7 @@ export function SpectatorController() {
         tz.toFixed(1),
       );
     }
-  });
+  }, FramePriority.CameraSelect);
 
   // Clean up on unmount.
   useEffect(() => {

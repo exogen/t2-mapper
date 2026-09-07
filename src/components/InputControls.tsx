@@ -197,6 +197,18 @@ export function defaultStateForBinding(binding: InputBinding): ActionState {
   }
 }
 
+/**
+ * True while a key-style action is held. Non-key action states (drag,
+ * scroll, touch, pinch) never report pressed.
+ */
+export function isPressed(
+  state: Record<string, ActionState>,
+  name: string,
+): boolean {
+  const s = state[name];
+  return s != null && "pressed" in s && (s as KeyState).pressed;
+}
+
 // ── Internal types ──
 
 type ActionCallback = () => void;

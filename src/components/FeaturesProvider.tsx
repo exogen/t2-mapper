@@ -1,5 +1,3 @@
-"use client";
-
 import { createContext, useContext, useState, type ReactNode } from "react";
 import { useQueryState, parseAsString } from "nuqs";
 

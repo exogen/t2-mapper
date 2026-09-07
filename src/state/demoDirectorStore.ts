@@ -274,7 +274,8 @@ async function fillDatasetInBackground(
 ): Promise<void> {
   try {
     if (!demoBuffer) return;
-    const { scanDemoDirector } = await import("../stream/demoDirectorScanner");
+    const { scanDemoDirector } =
+      await import("../director/demoDirectorScanner");
     const dataset = await scanDemoDirector(demoBuffer, undefined, abort.signal);
     if (scanToken === token) {
       demoDirectorStore.setState({ dataset });

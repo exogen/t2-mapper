@@ -29,7 +29,7 @@ import { torqueToThree } from "../scene/coordinates";
 const log = createLogger("TerrainBlock");
 import { useSceneSky, useSceneSun } from "../state/gameEntityStore";
 import { loadTerrain } from "../loaders";
-import { terrainHeightToWorld } from "../terrain";
+import { LIGHTMAP_SIZE, TERRAIN_SIZE, terrainHeightToWorld } from "../terrain";
 import { packMasksRGB } from "../textureUtils";
 import { TerrainTile, TerrainMaterial } from "./TerrainTile";
 import { invalidateShadows } from "./shadowControl";
@@ -41,8 +41,6 @@ import {
   terrainCollisionInput,
 } from "../world/placement";
 const DEFAULT_VISIBLE_DISTANCE = 600;
-const TERRAIN_SIZE = 256;
-const LIGHTMAP_SIZE = 512; // Match Tribes 2's 512x512 lightmap
 // Ceiling of the 11.5 fixed-point height format (65535/32, rounded up).
 const MAX_TERRAIN_HEIGHT = 2048;
 /**

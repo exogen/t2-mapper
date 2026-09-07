@@ -14,14 +14,9 @@ import {
   NoColorSpace,
 } from "three";
 import type { Group, Mesh } from "three";
-import * as SkeletonUtils from "three/examples/jsm/utils/SkeletonUtils.js";
-import {
-  disposeClonedScene,
-  processShapeScene,
-  setupEffectTexture,
-} from "../stream/playbackUtils";
+import { setupEffectTexture } from "../stream/playbackUtils";
 import { textureToUrl } from "../loaders";
-import { effectNow, engineStore } from "../state/engineStore";
+import { effectDeltaSec, effectNow } from "../state/engineStore";
 import { injectCustomFog } from "../fogShader";
 import { globalFogUniforms } from "../globalFogUniforms";
 import { additiveSpriteBeforeCompile } from "../shapeMaterial";
@@ -30,14 +25,8 @@ import type { FlareEntity } from "../state/gameEntityTypes";
 import type { FlareVisual } from "../stream/types";
 import { FlareSpikes, VERTS_PER_SPIKE } from "../particles/flareSpikes";
 import { useStaticShape } from "./GenericShape";
-import {
-  collectIflMeshes,
-  iflSequenceTime,
-  loadIflMaterialInstance,
-  showIflFrame,
-} from "./iflAtlas";
-import type { IflMaterialInstance } from "./iflAtlas";
-import { useAnisotropy } from "./useAnisotropy";
+import { useEffectShapeScene } from "./useEffectShapeScene";
+import { iflSequenceTime, showIflFrame } from "../iflAtlas";
 
 // ── LinearFlareProjectile (plasma bolt) ──
 //
@@ -88,12 +77,6 @@ const spikeBeforeCompile = (shader: {
   vertexShader: string;
   fragmentShader: string;
 }) => injectCustomFog(shader, globalFogUniforms, { additive: true });
-
-/** Playback-scaled frame time in seconds; 0 while paused. */
-function effectDeltaSec(delta: number): number {
-  const playback = engineStore.getState().playback;
-  return playback.status === "playing" ? delta * playback.rate : 0;
-}
 
 function FlareSpikeMesh({ visual }: { visual: FlareVisual }) {
   const texture = useTexture(textureToUrl(visual.modTexture), (tex) => {
@@ -190,35 +173,12 @@ function FlareBoltShape({
   faceViewer: boolean;
 }) {
   const gltf = useStaticShape(shapeName);
-  const anisotropy = useAnisotropy();
   const groupRef = useRef<Group>(null);
   const startTimeRef = useRef(effectNow());
-  const atlasesRef = useRef<IflMaterialInstance[]>([]);
-
-  const { scene, iflInfos } = useMemo(() => {
-    const scene = SkeletonUtils.clone(gltf.scene) as Group;
-    // Collect IFL info BEFORE processShapeScene replaces the materials.
-    const iflInfos = collectIflMeshes(scene);
-    processShapeScene(scene, shapeName, { anisotropy });
-    for (const info of iflInfos) info.mesh.visible = true;
-    scene.traverse((child) => {
-      child.frustumCulled = false;
-    });
-    return { scene, iflInfos };
-  }, [gltf, shapeName, anisotropy]);
-
-  useEffect(() => () => disposeClonedScene(scene), [scene]);
-
-  useEffect(() => {
-    atlasesRef.current = [];
-    for (const info of iflInfos) {
-      loadIflMaterialInstance(info)
-        .then((inst) => {
-          if (inst) atlasesRef.current.push(inst);
-        })
-        .catch(() => {});
-    }
-  }, [iflInfos]);
+  const { scene, iflInstances: atlasesRef } = useEffectShapeScene(
+    gltf,
+    shapeName,
+  );
 
   useFrame(({ camera }) => {
     const group = groupRef.current;

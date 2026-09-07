@@ -2,9 +2,7 @@ import { useStore } from "zustand";
 import { useRecording } from "./usePlayback";
 import { useInputMode } from "./InputContext";
 import { streamPlaybackStore } from "../state/streamPlaybackStore";
-import { useCameraTour } from "../state/cameraTourStore";
-import { useDirector } from "../state/demoDirectorStore";
-import { useCommandCircuit } from "../state/commandCircuitStore";
+import { useCameraOwner } from "../state/cameraOwner";
 import { useLiveSelector } from "../state/liveConnectionStore";
 import { InputBindings } from "./InputBindings";
 import {
@@ -32,9 +30,8 @@ import {
 export function ActiveInputBindings() {
   const recording = useRecording();
   const inputMode = useInputMode();
-  const isTourActive = useCameraTour((s) => s.animation !== null);
-  const isDirecting = useDirector((s) => s.status === "playing");
-  const isCommandCircuit = useCommandCircuit((s) => s.active);
+  // Tour > director > command circuit > input, resolved in one place.
+  const cameraOwner = useCameraOwner();
   // Watch mode: client-only free-fly camera; server-observer bindings
   // (fly/follow toggle, ObserveClient) don't apply.
   const isWatcher = useLiveSelector((s) => s.role === "watcher");
@@ -50,14 +47,14 @@ export function ActiveInputBindings() {
   // An active tour owns ALL input: only its bindings (click = next
   // stop, Escape = exit) are mounted — no camera-mode cycling, pointer
   // lock, CC toggling, or follow controls until the tour ends.
-  if (isTourActive) {
+  if (cameraOwner === "tour") {
     return <InputBindings map={TOUR_MODE_INPUT} />;
   }
 
   // The auto-director likewise owns all input: one interrupt action
   // covering every camera gesture (exits back to free-fly), plus the
   // demo transport (Space / , / .) which deliberately stays live.
-  if (isDirecting) {
+  if (cameraOwner === "director") {
     return (
       <>
         <InputBindings map={DIRECTOR_MODE_INPUT} />
@@ -65,6 +62,10 @@ export function ActiveInputBindings() {
       </>
     );
   }
+
+  // Past the two returns above the owner is either the command circuit
+  // or local input.
+  const isCommandCircuit = cameraOwner === "commandCircuit";
 
   // Free-fly movement: map mode, live server-observer fly mode,
   // watch-mode spectating, or demo playback (InputConsumer only acts on

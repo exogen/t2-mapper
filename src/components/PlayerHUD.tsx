@@ -549,11 +549,7 @@ const INVENTORY_ICON_URLS = new Map(
     textureToUrl(info.icon),
   ]),
 );
-function PackAndInventoryHUD({
-  followed,
-}: {
-  followed: FollowedPlayer | null;
-}) {
+function PackInventoryHUD({ followed }: { followed: FollowedPlayer | null }) {
   const recorderBackpackHud = useStreamSnapshot((snap) => snap?.backpackHud);
   const backpackHud = followed
     ? { packIndex: followed.packIndex, active: followed.packActive, text: "" }
@@ -649,7 +645,7 @@ export function PlayerHUD() {
       {showPlayerElements && (
         <>
           <WeaponHUD followed={followed} />
-          <PackAndInventoryHUD followed={followed} />
+          <PackInventoryHUD followed={followed} />
           {showReticle && !commandCircuitActive && <Reticle />}
         </>
       )}

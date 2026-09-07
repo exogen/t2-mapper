@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 import type { RefObject } from "react";
 import { useFrame } from "@react-three/fiber";
-import { LoopOnce, LoopRepeat, Vector3 } from "three";
+import { type AnimationClip, LoopOnce, LoopRepeat, Vector3 } from "three";
 import type {
   AnimationAction,
   AudioListener,
@@ -40,7 +40,9 @@ import {
   visThreadPosition,
   type VisNode,
 } from "./visSequences";
-import { driveIflFrames, type IflMaterialInstance } from "./iflAtlas";
+import { driveIflFrames, type IflMaterialInstance } from "../iflAtlas";
+import { readDtsSequences } from "../dtsSequences";
+import { FramePriority } from "./framePriority";
 
 /** What the hook drives on the mounted image's own model. */
 export interface ImageStateAnimationTarget {
@@ -60,7 +62,7 @@ export interface ImageStateAnimationTarget {
   /** The owner entity id, for effect bookkeeping. */
   ownerId?: string;
   /** DTS sequence index → lower-cased name, as the state table indexes. */
-  seqIndexToName: string[];
+  seqIndexToName: readonly string[];
   /** Lower-cased names of the shape's cyclic sequences. */
   cyclicSequences: ReadonlySet<string>;
   /** The model's live IFL materials, driven by the image's threads. */
@@ -68,30 +70,13 @@ export interface ImageStateAnimationTarget {
 }
 
 /**
- * The shape's cyclic sequences by lower-cased name, from the addon's
- * dts_sequence_cyclic extra; without it every clip counts as cyclic.
+ * The shape's cyclic sequences by lower-cased name (readDtsSequences).
  */
 export function readCyclicSequences(
   scene: Object3D,
-  animations: { name: string }[],
-): Set<string> {
-  const cyclic = new Set<string>();
-  const rawNames = scene.userData?.dts_sequence_names;
-  const rawCyclic = scene.userData?.dts_sequence_cyclic;
-  if (typeof rawNames === "string" && typeof rawCyclic === "string") {
-    try {
-      const names: string[] = JSON.parse(rawNames);
-      const flags: boolean[] = JSON.parse(rawCyclic);
-      names.forEach((n, i) => {
-        if (flags[i]) cyclic.add(n.toLowerCase());
-      });
-      return cyclic;
-    } catch {
-      /* fall through */
-    }
-  }
-  for (const clip of animations) cyclic.add(clip.name.toLowerCase());
-  return cyclic;
+  animations: readonly AnimationClip[],
+): ReadonlySet<string> {
+  return readDtsSequences(scene, animations).cyclic;
 }
 
 /**
@@ -342,7 +327,7 @@ export function useImageStateAnimation(
         });
       }
     }
-  });
+  }, FramePriority.ShapeAnimation);
 }
 
 /** How far past a late mount the machine is run to catch up, at most. */

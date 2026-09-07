@@ -11,24 +11,21 @@ import type { ParsedData } from "t2-demo-parser";
 // consumer. The demo/live path takes its scene objects from GHOSTS
 // and never interprets a line of TorqueScript.
 import { ghostToSceneObject } from "../scene/ghostToScene";
-import {
-  toEntityType,
-  allocateEntityId,
-  TICK_DURATION_MS,
-} from "./entityClassification";
+import { toEntityType, allocateEntityId } from "./entityClassification";
 import {
   clamp,
+  TICK_DURATION_MS,
   MAX_PITCH,
   isValidPosition,
   stripTaggedStringMarkup,
   detectControlObjectType,
   parseColorSegments,
   backpackBitmapToIndex,
+  collectPreloadShapeNames,
+  collectEffectShapeNames,
   torqueQuatHeading,
   torqueQuatPitch,
   torqueQuatToThreeJS,
-  collectPreloadShapeNames,
-  collectEffectShapeNames,
 } from "./streamHelpers";
 import type { Vec3 } from "./streamHelpers";
 import {
@@ -347,7 +344,7 @@ export function parseDemoValues(demoValues: string[]): ParsedDemoValues {
   return result;
 }
 
-class StreamingPlayback extends StreamEngine {
+class DemoStreamAdapter extends StreamEngine {
   private readonly parser: DemoParser;
   private readonly initialBlock: {
     dataBlocks: Map<number, { className: string; data: ParsedData }>;
@@ -1131,7 +1128,7 @@ export function createRecordingFromParser(parser: DemoParser): StreamRecording {
   const header = parser.header;
   const initialBlock = parser.initialBlock;
   const info = extractMissionInfo(initialBlock.demoValues);
-  const playback = new StreamingPlayback(parser);
+  const playback = new DemoStreamAdapter(parser);
 
   // Seed StreamEngine's mission info fields from the initial block so they're
   // available immediately (before any server messages arrive during playback).

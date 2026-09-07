@@ -138,7 +138,6 @@ export const InspectorControls = memo(function InspectorControls({
   choosingMap,
   invalidateRef,
   onClose,
-  variant = "full",
 }: {
   missionName: string;
   missionType?: string;
@@ -152,8 +151,6 @@ export const InspectorControls = memo(function InspectorControls({
   choosingMap?: boolean;
   invalidateRef: RefObject<(() => void) | null>;
   onClose: () => void;
-  /** "watch": spectator page — no map/demo/stats/server-switching tools. */
-  variant?: "full" | "watch";
 }) {
   const isTouch = useTouchDevice();
   const dataSource = useDataSource();
@@ -274,47 +271,42 @@ export const InspectorControls = memo(function InspectorControls({
           data-open={settingsOpen}
         >
           <div className={styles.Tools}>
-            {variant === "full" && (
-              <div className={buttonStyles.ButtonGroup}>
-                <ChooseMapButton
-                  isActive={
-                    (dataSource === "map" && !recording) ||
-                    (choosingMap ?? false)
-                  }
-                  onClick={onChooseMap}
+            <div className={buttonStyles.ButtonGroup}>
+              <ChooseMapButton
+                isActive={
+                  (dataSource === "map" && !recording) || (choosingMap ?? false)
+                }
+                onClick={onChooseMap}
+              />
+              <LoadDemoButton
+                isActive={
+                  !choosingMap &&
+                  (recording?.source === "demo" || mode === "demo")
+                }
+                choosingMap={choosingMap}
+                onCancelChoosingMap={onCancelChoosingMap}
+                onEnterDemoMode={onEnterDemoMode}
+              />
+              {features.stats && onChangeMission && (
+                <LoadStatsButton
+                  missionName={missionName}
+                  onChangeMission={onChangeMission}
                 />
-                <LoadDemoButton
-                  isActive={
-                    !choosingMap &&
-                    (recording?.source === "demo" || mode === "demo")
-                  }
-                  choosingMap={choosingMap}
-                  onCancelChoosingMap={onCancelChoosingMap}
-                  onEnterDemoMode={onEnterDemoMode}
+              )}
+              {onOpenServerBrowser && (
+                <JoinServerButton
+                  isActive={!choosingMap && isLiveMode}
+                  onOpenServerBrowser={onOpenServerBrowser}
                 />
-                {features.stats && onChangeMission && (
-                  <LoadStatsButton
-                    missionName={missionName}
-                    onChangeMission={onChangeMission}
-                  />
-                )}
-                {onOpenServerBrowser && (
-                  <JoinServerButton
-                    isActive={!choosingMap && isLiveMode}
-                    onOpenServerBrowser={onOpenServerBrowser}
-                  />
-                )}
-              </div>
-            )}
-            {variant === "full" &&
-            recording?.source === "demo" &&
-            demoSourceUrl != null ? (
+              )}
+            </div>
+            {recording?.source === "demo" && demoSourceUrl != null ? (
               // An indexed demo is linked by its moment — the second and
               // the camera — since the link can name the demo. A local
               // upload has no URL to link to, so it keeps the coordinates
               // link like any other loaded map.
               <CopyDemoLinkButton />
-            ) : variant === "full" ? (
+            ) : (
               <CopyCoordinatesButton
                 missionName={missionName}
                 missionType={missionType}
@@ -322,7 +314,7 @@ export const InspectorControls = memo(function InspectorControls({
                 // — the mission URL param alone has a default value.
                 disabled={!missionInManifest || dataSource == null}
               />
-            ) : null}
+            )}
             <MapInfoButton missionName={missionName} onClick={onOpenMapInfo} />
             <CommandCircuitButton />
             {onOpenScoreScreen && (
@@ -631,24 +623,22 @@ export const InspectorControls = memo(function InspectorControls({
                     />
                   </div>
                 </div>
-                {variant === "full" && (
-                  <div className={styles.CheckboxField}>
-                    <input
-                      id="adjustAudioSpeedInput"
-                      type="checkbox"
-                      checked={adjustAudioSpeed}
-                      onChange={(event) => {
-                        setAdjustAudioSpeed(event.target.checked);
-                      }}
-                    />
-                    <label
-                      className={styles.Label}
-                      htmlFor="adjustAudioSpeedInput"
-                    >
-                      Adjust audio speed to match demo playback
-                    </label>
-                  </div>
-                )}
+                <div className={styles.CheckboxField}>
+                  <input
+                    id="adjustAudioSpeedInput"
+                    type="checkbox"
+                    checked={adjustAudioSpeed}
+                    onChange={(event) => {
+                      setAdjustAudioSpeed(event.target.checked);
+                    }}
+                  />
+                  <label
+                    className={styles.Label}
+                    htmlFor="adjustAudioSpeedInput"
+                  >
+                    Adjust audio speed to match demo playback
+                  </label>
+                </div>
               </Accordion>
               <Accordion value="graphics" label="Graphics">
                 <div className={styles.CheckboxField}>
@@ -795,19 +785,17 @@ export const InspectorControls = memo(function InspectorControls({
                 </div>
                 <DebugNetworkInfo />
                 <DebugEntityList />
-                {variant === "full" && (
-                  <div className={styles.DebugActionField}>
-                    <button
-                      type="button"
-                      className={buttonStyles.SmallButton}
-                      onClick={showNewAddressDialog}
-                    >
-                      <span className={buttonStyles.ButtonLabel}>
-                        Show &ldquo;site moved&rdquo; dialog
-                      </span>
-                    </button>
-                  </div>
-                )}
+                <div className={styles.DebugActionField}>
+                  <button
+                    type="button"
+                    className={buttonStyles.SmallButton}
+                    onClick={showNewAddressDialog}
+                  >
+                    <span className={buttonStyles.ButtonLabel}>
+                      Show &ldquo;site moved&rdquo; dialog
+                    </span>
+                  </button>
+                </div>
               </Accordion>
             </AccordionGroup>
           </div>

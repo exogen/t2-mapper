@@ -3,6 +3,7 @@ import { useStoreWithEqualityFn } from "zustand/traditional";
 import type { GameEntity, RenderType } from "./gameEntityTypes";
 import { normalizedMissionTypes } from "../mission";
 import { findMissionInfo } from "../manifest";
+import type { SceneSky, SceneSun, SceneMissionArea } from "../scene/types";
 
 export type DataSource = "map" | "demo" | "live";
 
@@ -391,8 +392,6 @@ export function useGameEntitiesByRenderType(
 }
 
 // ── Scene infrastructure queries ──
-
-import type { SceneSky, SceneSun, SceneMissionArea } from "../scene/types";
 
 // Scene infrastructure selectors use Object.is equality (default) on the
 // extracted data object — these are set once and referentially stable, so

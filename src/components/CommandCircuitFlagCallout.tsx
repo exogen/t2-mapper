@@ -5,7 +5,7 @@ import { FaHand } from "react-icons/fa6";
 import { ImArrowDownRight, ImHome } from "react-icons/im";
 import { streamSnapshotStore } from "../state/streamSnapshotStore";
 import { ScreenRectTracker } from "./screenRectTracker";
-import { resolveFlagTeam } from "./flagTeam";
+import { resolveFlagTeam } from "../state/flagTeam";
 import {
   isObserverView,
   resolveIffDisplay,
