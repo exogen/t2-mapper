@@ -1,8 +1,21 @@
 /** Terrain grid size in squares — the .ter heightfield is TERRAIN_SIZE². */
 export const TERRAIN_SIZE = 256;
 
-/** Lightmap texture size: 2 pixels per terrain square. */
-export const LIGHTMAP_SIZE = 512;
+/**
+ * Lightmap texels per terrain square, matching stock Tribes 2. At the usual
+ * 8 m squares this is a 512 texel map at 4 m per texel.
+ *
+ * Building shadows are baked into this same texture (see terrainLightmap.ts),
+ * so this sets how sharply a shadow edge resolves — a 4 m ramp here. It does
+ * NOT change how much ground ends up shadowed: measured across 512, 1024 and
+ * 2048 the shadowed area agrees to within a quarter of a percent, because the
+ * edge pass averages coverage rather than rounding it to whole texels.
+ * Raising it costs roughly 4x the bake per doubling.
+ */
+export const LIGHTMAP_TEXELS_PER_SQUARE = 2;
+
+/** Lightmap texture size, a square of TERRAIN_SIZE x texels-per-square. */
+export const LIGHTMAP_SIZE = TERRAIN_SIZE * LIGHTMAP_TEXELS_PER_SQUARE;
 
 /**
  * Convert a raw heightfield sample to world units. Heights are stored as

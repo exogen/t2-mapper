@@ -38,11 +38,22 @@ export type VarietyFamily = keyof typeof DIRECTOR_VARIETY_WEIGHTS;
 /** When each family last aired (demo seconds). */
 export type VarietyMemory = Map<VarietyFamily, number>;
 
-interface Candidate {
+/** Evidence a developing shot still needs while it owns the screen. */
+export interface VarietyContinuation {
+  kind: "capperSetup";
+  targetId: number;
+  flagSlot: number;
+}
+
+export interface VarietyPick {
   family: VarietyFamily;
+  shot: Shot;
+  continuation?: VarietyContinuation;
+}
+
+interface Candidate extends VarietyPick {
   /** Detector confidence, 0..1. */
   confidence: number;
-  shot: Shot;
 }
 
 /** A capper wind-up reads as: fast, far out, and closing on the stand
@@ -51,6 +62,9 @@ const CAPPER_MIN_SPEED = 38;
 const CAPPER_MIN_RANGE = 250;
 /** Trailing window for motion differencing. */
 const MOTION_WINDOW_SEC = 3;
+/** Let a selected route slow or turn more than a new candidate can.
+ *  A three-second average below half the entry speed ends the wind-up. */
+const CAPPER_CONTINUE_SPEED = CAPPER_MIN_SPEED / 2;
 /** Players at an inventory before it reads as a suit-up queue. */
 const STATION_MIN_PLAYERS = 3;
 /** Players in a knot before a lull watches it rather than the base. */
@@ -70,7 +84,7 @@ export function pickVarietyShot(
   /** The hottest current subject score — families only interrupt what
    *  their DIRECTOR_VARIETY_INTERRUPT ceiling allows. */
   currentMax: number,
-): { family: VarietyFamily; shot: Shot } | null {
+): VarietyPick | null {
   const candidates: Candidate[] = [];
   const add = (candidate: Candidate | null) => {
     if (candidate) candidates.push(candidate);
@@ -97,7 +111,43 @@ export function pickVarietyShot(
   }
   if (!best) return null;
   memory.set(best.candidate.family, t);
-  return { family: best.candidate.family, shot: best.candidate.shot };
+  const { confidence: _confidence, ...pick } = best.candidate;
+  return pick;
+}
+
+/** Revalidate at picture time, without anticipating a death or interpreting
+ *  absent player samples as an aborted route. A respawn with the same target
+ *  ID does not revive the original attempt. Other families (for example a
+ *  kill's aftermath) deliberately have no movement/death dependency. */
+export function canContinueVarietyShot(
+  view: CausalView,
+  continuation: VarietyContinuation,
+  startedAt: number,
+): boolean {
+  const { targetId, flagSlot } = continuation;
+  if (
+    view
+      .deathsIn(startedAt, view.now)
+      .some((death) => death.targetId === targetId)
+  )
+    return false;
+  const flag = view.flagAt(flagSlot);
+  if (flag && flag.status !== "home") return false;
+  const stand = view.standFor(flagSlot);
+  // Whole-second samples at or BEFORE the picture; nearest-bucket rounding
+  // would read a future player sample on half-second ticks in batch mode.
+  const sec = Math.floor(view.now);
+  const current = view.playersAt(sec).find((p) => p.targetId === targetId);
+  const before = view
+    .playersAt(sec - MOTION_WINDOW_SEC)
+    .find((p) => p.targetId === targetId);
+  if (!stand || !current || !before) return true;
+  if (current.teamId != null && current.teamId === stand.teamId) return false;
+  const speed = dist(before.pos, current.pos) / MOTION_WINDOW_SEC;
+  const closing =
+    (dist(before.pos, stand.pos) - dist(current.pos, stand.pos)) /
+    MOTION_WINDOW_SEC;
+  return speed >= CAPPER_CONTINUE_SPEED && closing >= -speed * 0.5;
 }
 
 /** A kill landing inside the peek: cut now, land as it happens. */
@@ -195,14 +245,21 @@ function detectCapperSetup(
   t: number,
   hold: number,
 ): Candidate | null {
+  const sec = Math.floor(t);
   const before = new Map(
-    view.playersAt(t - MOTION_WINDOW_SEC).map((p) => [p.targetId, p]),
+    view.playersAt(sec - MOTION_WINDOW_SEC).map((p) => [p.targetId, p]),
   );
-  let best: { targetId: number; speed: number } | null = null;
-  for (const p of view.playersAt(t)) {
+  const died = new Set(
+    view.deathsIn(sec - MOTION_WINDOW_SEC, t).map((d) => d.targetId),
+  );
+  let best: { targetId: number; flagSlot: number; speed: number } | null = null;
+  for (const p of view.playersAt(sec)) {
     if (p.teamId == null || p.teamId <= 0) continue;
+    if (died.has(p.targetId)) continue;
     const enemyStand = view.stands.find((s) => s.teamId !== p.teamId);
     if (!enemyStand) continue;
+    const flag = view.flagAt(enemyStand.slot);
+    if (flag && flag.status !== "home") continue;
     const prev = before.get(p.targetId);
     if (!prev) continue;
     const speed = dist(prev.pos, p.pos) / MOTION_WINDOW_SEC;
@@ -212,12 +269,18 @@ function detectCapperSetup(
     const closing =
       (dist(prev.pos, enemyStand.pos) - range) / MOTION_WINDOW_SEC;
     if (closing < speed * 0.5) continue;
-    if (!best || speed > best.speed) best = { targetId: p.targetId, speed };
+    if (!best || speed > best.speed)
+      best = { targetId: p.targetId, flagSlot: enemyStand.slot, speed };
   }
   if (!best) return null;
   const name = playerName(best.targetId, view.dataset, t);
   return {
     family: "capperSetup",
+    continuation: {
+      kind: "capperSetup",
+      targetId: best.targetId,
+      flagSlot: best.flagSlot,
+    },
     confidence: Math.min(1, best.speed / 70),
     shot: {
       kind: "followPlayer",

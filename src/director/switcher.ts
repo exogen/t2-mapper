@@ -74,6 +74,10 @@ import {
   DIRECTOR_MAX_CHASE_SEC,
   DIRECTOR_MAX_STATIC_SEC,
   DIRECTOR_GRAB_REACT_SEC,
+  DIRECTOR_CAP_REACT_SEC,
+  DIRECTOR_POSSESSION_HOLD_SEC,
+  DIRECTOR_POSSESSION_SCORING_RANGE,
+  DIRECTOR_POSSESSION_DEFER_SEC,
   DIRECTOR_MIN_SHOT_SEC,
   DIRECTOR_PITCH_CHASE,
   DIRECTOR_PITCH_STAND,
@@ -146,7 +150,12 @@ import { publishFreeSpace } from "./freeSpaceRegistry";
 import { inspectShot, shotCameraPath } from "./shotPath";
 import { PLAYER_AIM_LIFT, PLAYER_STANDOFF } from "./humanScale";
 import { assetBoxCenter } from "../collision/worldCollision";
-import { pickVarietyShot, type VarietyMemory } from "./variety";
+import {
+  canContinueVarietyShot,
+  pickVarietyShot,
+  type VarietyContinuation,
+  type VarietyMemory,
+} from "./variety";
 import { framesTheSame, reportCoverage } from "./assemble";
 import { describeScenes } from "./scene";
 import { detectMode, openingSkip, planShots } from "./planner";
@@ -470,9 +479,11 @@ interface SwitcherState {
     untilSec: number;
     shot: Shot;
     kind: "ceremony" | "filler";
+    continuation?: VarietyContinuation;
   } | null;
-  /** Cap times already reacted to (the peek sees each for ~2s). */
-  handledCaps: Set<number>;
+  /** Latest capture handled, including anticipation. Older late messages
+   *  must not replay an aftermath over a newer capture. */
+  latestCapSec: number;
   /** Grabs already acted on, per PHASE: a grab may pull the camera
    *  once while it is still coming ("pre", anticipation) and once
    *  after it lands ("post", reaction) — so a shot that drifted away
@@ -488,6 +499,16 @@ interface SwitcherState {
    *  (home→held, held→field…) forces an immediate restyle, since quiet
    *  framings deliberately never rotate on their own. */
   currentStyleStatus: string | null;
+  /** Commitment to the flag play actually on screen, across restyles and
+   *  changes of carrier. A deferred flag is revalidated before handoff. */
+  possession: {
+    slot: number;
+    status: string;
+    carrierTargetId: number | null;
+    holdUntilSec: number;
+    canExtend: boolean;
+    deferred: { slot: number; sinceSec: number; grabSec?: number } | null;
+  } | null;
   /** When each variety family last aired (freshness rotation). */
   readonly varietyMem: VarietyMemory;
   /** Roster line-up mode: runs until this time once the pre-kickoff
@@ -584,13 +605,14 @@ function newSwitcherState(view: CausalView): SwitcherState {
     protectedUntil: 0,
     rotateAt: 0,
     directive: null,
-    handledCaps: new Set(),
+    latestCapSec: Number.NEGATIVE_INFINITY,
     handledGrabs: new Map(),
     handledKickoff: false,
     chaseStyle: 0,
     turtleViews: 0,
     freshSubject: false,
     currentStyleStatus: null,
+    possession: null,
     varietyMem: new Map(),
     lastNonFlagSec: 0,
     lineupUntil: Number.NEGATIVE_INFINITY,
@@ -745,24 +767,45 @@ export function createSwitcherStream(view: CausalView): SwitcherStream {
 
 function tick(state: SwitcherState, t: number): void {
   const { view, subjects } = state;
+  observePossession(state, t);
   // Before the whistle: watch every tick, shot or no shot. Decisions
   // come later in this function and read what was observed here.
   if (!state.handledKickoff) observePreMatch(state, view, t);
   // A CAPTURE preempts everything — fairness, phases, and any running
   // variety set piece. This check must come before the directive
   // branch, or a cap landing during a 9s cut-in goes uncovered.
-  for (const capEvent of view.peekFlagEvents(null, ["flag-cap"])) {
-    if (state.handledCaps.has(capEvent.timeSec)) continue;
-    state.handledCaps.add(capEvent.timeSec);
+  // Preserve anticipation first. If a message arrives too late for the peek,
+  // react to the newest recent capture instead, without queuing old outcomes.
+  const captures = [
+    ...view.peekFlagEvents(null, ["flag-cap"]),
+    ...view
+      .eventsIn(t - DIRECTOR_CAP_REACT_SEC, t)
+      .filter((e) => e.type === "flag-cap")
+      .reverse(),
+  ];
+  for (const capEvent of captures) {
+    if (capEvent.timeSec <= state.latestCapSec) continue;
     const slot = view.eventSlot(capEvent);
+    if (slot == null) continue;
+    const aftermath = captureAftermath(state, slot, capEvent.timeSec, t);
+    if (!aftermath) continue;
+    state.latestCapSec = capEvent.timeSec;
     const interruptedDirective = state.directive != null;
-    state.directive = null;
-    if (slot != null) scheduleAftermath(state, slot, capEvent.timeSec);
+    state.directive = aftermath;
+    if (capEvent.timeSec <= t) {
+      // The flag has already teleported home. Show the scoring scene now,
+      // not an approach to that returned flag, and never backdate the cut.
+      // Preserve a preceding short shot that a live viewer already saw.
+      const open = state.shots.at(-1);
+      if (open) open.quickCut = true;
+      pushShot(state, aftermath.shot, aftermath.atSec, aftermath.untilSec);
+      return;
+    }
     const onIt =
       !interruptedDirective &&
       subjects[state.current].kind === "flag" &&
       (subjects[state.current] as { slot: number }).slot === slot;
-    if (!onIt && slot != null) {
+    if (!onIt) {
       switchTo(
         state,
         subjects.findIndex((s) => s.kind === "flag" && s.slot === slot),
@@ -773,7 +816,7 @@ function tick(state: SwitcherState, t: number): void {
       // Keep it: dropping it when the aftermath opens would extend the
       // interrupted cutaway across the capture's approach again.
       const opened = state.shots[state.shots.length - 1];
-      if (opened && capEvent.timeSec > t) opened.quickCut = true;
+      if (opened) opened.quickCut = true;
     }
     return;
   }
@@ -782,7 +825,8 @@ function tick(state: SwitcherState, t: number): void {
   // the window spans both, so this works identically at ANY lookahead,
   // including zero (true live). Predictor ties, switch penalties and
   // filler cut-ins never hold the camera elsewhere while a grab lands;
-  // ceremonies do, and so does our own subject's SOONER story.
+  // ceremonies do, and so does a bounded commitment to the possession
+  // already on screen. Deferred plays get a turn only if still active.
   {
     const phaseOf = (e: { timeSec: number }) =>
       e.timeSec > t ? "pre" : ("post" as const);
@@ -814,6 +858,11 @@ function tick(state: SwitcherState, t: number): void {
         markHandled();
       } else if (
         state.directive?.kind !== "ceremony" &&
+        deferForPossession(state, slot, t, grab.timeSec)
+      ) {
+        markHandled();
+      } else if (
+        state.directive?.kind !== "ceremony" &&
         (ownStory == null || ownStory > grab.timeSec)
       ) {
         markHandled();
@@ -834,7 +883,48 @@ function tick(state: SwitcherState, t: number): void {
       }
     }
   }
-  // A running set piece owns the screen until it ends.
+  const deferred = takeDeferredPossession(state, t);
+  if (deferred != null) {
+    switchTo(
+      state,
+      subjects.findIndex((s) => s.kind === "flag" && s.slot === deferred),
+      t,
+    );
+    // Give the deferred play a readable beat before a new grab asks to
+    // switch back. This applies to this handoff, not every fresh carry.
+    observePossession(state, t);
+    if (state.possession)
+      state.possession.holdUntilSec = t + DIRECTOR_POSSESSION_HOLD_SEC;
+    return;
+  }
+  // Filler keeps the screen only while its premise survives. Observed flag
+  // state is enough to reclaim it: live feeds need not supply a grab message.
+  // A quiet, abandoned field flag still permits variety, as at selection time.
+  if (state.directive?.kind === "filler" && t < state.directive.untilSec) {
+    const directive = state.directive;
+    let urgent = -1;
+    let urgentScore = -Infinity;
+    for (let i = 0; i < subjects.length; i++) {
+      if (!isLiveFlag(view, subjects[i])) continue;
+      const score = scoreSubject(state, subjects[i], t);
+      if (score > urgentScore) {
+        urgent = i;
+        urgentScore = score;
+      }
+    }
+    const expired =
+      directive.continuation &&
+      !canContinueVarietyShot(view, directive.continuation, directive.atSec);
+    if (urgent >= 0 || expired) {
+      // If the cutaway already aired, preserve even a short interrupted beat.
+      // Fragment cleanup must not replace it with its predecessor afterwards.
+      if (state.shots.at(-1) === directive.shot) directive.shot.quickCut = true;
+      state.directive = null;
+      switchTo(state, urgent >= 0 ? urgent : bestSubject(state, t), t, true);
+      return;
+    }
+  }
+  // A still-valid set piece owns the screen until its deadline.
   if (state.directive) {
     state.lastNonFlagSec = t;
     if (t >= state.directive.atSec && state.shots.length > 0) {
@@ -1074,7 +1164,12 @@ function tick(state: SwitcherState, t: number): void {
     if (flag?.status !== "field") return false;
     return fieldStaleness(view, slot, flag.pos, t) < 0.5;
   });
-  if (state.handledKickoff && !anyFieldFlag && currentMax < SCORE_CARRIED) {
+  if (
+    state.handledKickoff &&
+    !anyFieldFlag &&
+    currentMax < SCORE_CARRIED &&
+    !holdingPossession(state, t)
+  ) {
     const pick = pickVarietyShot(
       view,
       t,
@@ -1089,6 +1184,7 @@ function tick(state: SwitcherState, t: number): void {
         untilSec: pick.shot.endSec,
         shot: pick.shot,
         kind: "filler",
+        continuation: pick.continuation,
       };
       return;
     }
@@ -1101,6 +1197,7 @@ function tick(state: SwitcherState, t: number): void {
   const elapsed = t - state.segStartSec;
   const chasing = isChasing(view, subjects[state.current]);
   let switchIndex = -1;
+  let fairShare = false;
   if (scores[best] > scores[state.current] + DIRECTOR_SWITCH_PENALTY) {
     if (elapsed >= DIRECTOR_MIN_SHOT_SEC) switchIndex = best;
     else if (
@@ -1138,11 +1235,146 @@ function tick(state: SwitcherState, t: number): void {
     }
     if (bestChase >= 0) {
       switchIndex = bestChase;
-      state.protectedUntil = t + DIRECTOR_FAIR_SHARE_SEC;
+      fairShare = true;
     }
   }
-  if (switchIndex >= 0) switchTo(state, switchIndex, t);
-  else maybeRotate(state, t);
+  if (switchIndex >= 0) {
+    const next = subjects[switchIndex];
+    const defer =
+      next.kind === "flag"
+        ? deferForPossession(state, next.slot, t)
+        : holdingPossession(state, t);
+    if (!defer) {
+      if (fairShare) state.protectedUntil = t + DIRECTOR_FAIR_SHARE_SEC;
+      switchTo(state, switchIndex, t);
+      return;
+    }
+  }
+  maybeRotate(state, t);
+}
+
+/** Observe only current state. A cutaway's remembered scoring subject is
+ *  not a possession the audience is following. Missing/stale samples cannot
+ *  renew commitment, and a resolved flag releases it immediately. */
+function observePossession(state: SwitcherState, t: number): void {
+  const subject = state.subjects[state.current];
+  const sample =
+    subject.kind === "flag" ? state.view.flagAt(subject.slot) : null;
+  if (state.directive || !sample || t - sample.timeSec > 3) {
+    state.possession = null;
+    return;
+  }
+  let story = state.possession;
+  if (!story || story.slot !== sample.slot) {
+    story = state.possession = {
+      slot: sample.slot,
+      status: sample.status,
+      carrierTargetId: sample.carrierTargetId,
+      holdUntilSec: Number.NEGATIVE_INFINITY,
+      canExtend: false,
+      deferred: null,
+    };
+  } else if (
+    sample.status !== story.status ||
+    sample.carrierTargetId !== story.carrierTargetId
+  ) {
+    // Protect an exchange near its scoring destination. Routine midfield
+    // drops and grabs from home retain normal breaking-event priorities.
+    const destination = state.view.carryDestination(sample.slot);
+    if (
+      story.status !== "home" &&
+      destination &&
+      dist(sample.pos, destination) <= DIRECTOR_POSSESSION_SCORING_RANGE
+    ) {
+      story.holdUntilSec = t + DIRECTOR_POSSESSION_HOLD_SEC;
+      story.canExtend = true;
+    }
+    story.status = sample.status;
+    story.carrierTargetId = sample.carrierTargetId;
+  }
+  if (!isLiveFlag(state.view, subject))
+    story.holdUntilSec = Number.NEGATIVE_INFINITY;
+  else if (story.canExtend && t <= story.holdUntilSec) {
+    // Finish an outcome already inside the normal peek. This never widens
+    // the information horizon or resets the competing play's deadline.
+    const next = state.view.peekFlagEvents(story.slot, HOLD_EVENT_TYPES)[0];
+    if (next)
+      story.holdUntilSec = Math.max(
+        story.holdUntilSec,
+        Math.ceil(next.timeSec / DIRECTOR_TICK_SEC) * DIRECTOR_TICK_SEC,
+      );
+  }
+}
+
+function holdingPossession(state: SwitcherState, t: number): boolean {
+  const story = state.possession;
+  return (
+    story != null &&
+    t <
+      Math.min(
+        story.holdUntilSec,
+        story.deferred
+          ? story.deferred.sinceSec + DIRECTOR_POSSESSION_DEFER_SEC
+          : Infinity,
+      )
+  );
+}
+
+function deferForPossession(
+  state: SwitcherState,
+  slot: number,
+  t: number,
+  grabSec?: number,
+): boolean {
+  const story = state.possession;
+  if (!story || slot === story.slot || !holdingPossession(state, t))
+    return false;
+  const previous = story.deferred;
+  story.deferred = {
+    slot,
+    sinceSec: previous?.sinceSec ?? t,
+    grabSec:
+      grabSec ?? (previous?.slot === slot ? previous.grabSec : undefined),
+  };
+  return true;
+}
+
+/** Hand off to the current play, not a replay of the grab that requested it.
+ *  Home/abandoned flags cancel the request. If the grab is still ahead in the
+ *  existing peek, its approach remains a valid destination. */
+function takeDeferredPossession(
+  state: SwitcherState,
+  t: number,
+): number | null {
+  const story = state.possession;
+  const pending = story?.deferred;
+  if (!story || !pending) return null;
+  const sample = state.view.flagAt(pending.slot);
+  const live =
+    sample &&
+    t - sample.timeSec <= 3 &&
+    // The deferred grab was a request to see a run. If it has already
+    // ended in a drop, discard that request; ordinary scoring can still
+    // choose the loose flag if the new situation merits it.
+    (pending.grabSec == null || sample.status === "held") &&
+    isLiveFlag(state.view, { kind: "flag", slot: pending.slot });
+  const imminent =
+    pending.grabSec != null &&
+    pending.grabSec > t &&
+    pending.grabSec <= state.view.horizon;
+  if (!live && !imminent) {
+    // Let an unobserved touch acquire its first sample, without showing a
+    // flag that is already known to have returned home after that touch.
+    const awaitingSample =
+      pending.grabSec != null &&
+      t - pending.grabSec <= DIRECTOR_GRAB_REACT_SEC &&
+      (!sample || sample.timeSec < pending.grabSec);
+    if (!awaitingSample) story.deferred = null;
+    return null;
+  }
+  if (holdingPossession(state, t)) return null;
+  story.deferred = null;
+  return pending.slot;
 }
 
 /** The stand a subject is anchored on, for same-scene detection. */
@@ -1196,6 +1428,7 @@ function switchTo(
   // still needs a camera cut. Otherwise the cancelled set piece keeps its
   // shot on screen until an unrelated restyle happens to replace it.
   if (index < 0 || (index === state.current && !resumeFromDirective)) return;
+  state.possession = null;
   closeShot(state, t);
   state.current = index;
   state.segStartSec = t;
@@ -2080,30 +2313,41 @@ function emitLineupPass(state: SwitcherState, t: number): void {
   pushShot(state, shot, t, shot.quickCut ? quickEnd : end);
 }
 
-function scheduleAftermath(
+function captureAftermath(
   state: SwitcherState,
   slot: number,
   capSec: number,
-): void {
+  now: number,
+): SwitcherState["directive"] {
   const view = state.view;
   // The ceremony happens where the flag was the instant before the cap
-  // teleports it home — inside the peek, so knowable.
-  const at = view.flagAt(slot, capSec - 0.5) ?? view.flagAt(slot);
-  if (!at) return;
-  state.directive = {
-    atSec: capSec,
-    untilSec: capSec + DIRECTOR_AFTERMATH_HOLD_SEC,
+  // teleports it home. If that sample is absent/already home, use the
+  // scoring stand, never the captured flag's stand on the opposite side.
+  const at = view.flagAt(slot, capSec - 0.5);
+  const center =
+    at && at.status !== "home" ? at.pos : view.carryDestination(slot);
+  if (!center) return null;
+  const startSec = Math.max(capSec, now);
+  const endSec = capSec + DIRECTOR_AFTERMATH_HOLD_SEC;
+  if (startSec >= endSec) return null;
+  const shot = orbitShot({
+    center,
+    radius: DIRECTOR_AFTERMATH_RADIUS,
+    still: true,
+    startSec,
+    endSec,
+    framing: { dataset: view.dataset, variety: state.variety },
+    reason: `Aftermath — ${flagLabel(slot, view.dataset)} captured`,
+    topic: "aftermath",
+  });
+  // A late arrival gets only the remaining aftermath, even if that is a
+  // deliberately short beat. Closure must not merge it back into the filler.
+  if (shot.endSec - startSec < 2) shot.quickCut = true;
+  return {
+    atSec: startSec,
+    untilSec: endSec,
     kind: "ceremony",
-    shot: orbitShot({
-      center: at.pos,
-      radius: DIRECTOR_AFTERMATH_RADIUS,
-      still: true,
-      startSec: capSec,
-      endSec: capSec + DIRECTOR_AFTERMATH_HOLD_SEC,
-      framing: { dataset: view.dataset, variety: state.variety },
-      reason: `Aftermath — ${flagLabel(slot, view.dataset)} captured`,
-      topic: "aftermath",
-    }),
+    shot,
   };
 }
 
@@ -2329,7 +2573,7 @@ function fieldStaleness(
   const idle = view.trailingFieldSec(slot);
   if (idle <= DIRECTOR_FIELD_FRESH_SEC) return 0;
   const threatened = view
-    .playersAt(t)
+    .playersAt(Math.floor(t))
     .some(
       (p) =>
         p.teamId !== slot && dist(p.pos, pos) <= DIRECTOR_FIELD_QUIET_RANGE,

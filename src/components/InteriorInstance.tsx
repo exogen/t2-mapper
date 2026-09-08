@@ -26,6 +26,8 @@ import {
 import { interiorColliderMeshes } from "../world/colliderPolicy";
 import { setupTexture } from "../textureUtils";
 import { invalidateShadows } from "./shadowControl";
+import { invalidateTerrainLightmap } from "./terrainLightmapControl";
+import { setShadowCasterBounds } from "../shadowBounds";
 import { freezeStaticMatrices, unfreezeStaticMatrices } from "./staticMatrices";
 import {
   registerInteriorCollider,
@@ -248,12 +250,20 @@ export const InteriorModel = memo(function InteriorModel({
     const group = meshGroupRef.current;
     if (!group) return;
     registerInteriorCollider(collisionId, interiorColliderMeshes(group));
+    // This building's shadow on the ground is baked into the terrain
+    // lightmap, and that bake reads the interior colliders.
+    invalidateTerrainLightmap();
+    // Interiors cast into the sun's shadow map, and a tower can stand
+    // above the terrain's own bounds, so the frustum has to include them.
+    setShadowCasterBounds(collisionId, new Box3().setFromObject(group));
     // Static geometry: stop three from recomposing every mesh's matrix on
     // every frame. Interiors are the biggest static subtrees in the scene.
     freezeStaticMatrices(group);
     return () => {
       unfreezeStaticMatrices(group);
       unregisterInteriorCollider(collisionId);
+      invalidateTerrainLightmap();
+      setShadowCasterBounds(collisionId, null);
     };
   }, [collisionId, nodes]);
 

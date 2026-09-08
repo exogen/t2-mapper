@@ -227,8 +227,8 @@ export const TerrainTile = memo(function TerrainTile({
     <mesh
       position={position}
       geometry={geometry}
+      // Casts only; see the pooled mesh in TerrainBlock for why.
       castShadow
-      receiveShadow
       visible={visible}
     >
       <TerrainMaterial

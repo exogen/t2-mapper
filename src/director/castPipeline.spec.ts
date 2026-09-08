@@ -2,10 +2,15 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createCastStream, runCastPipeline } from "./castPipeline";
 import type { DirectorDataset, Shot } from "./types";
 
-const facts = vi.hoisted(() => ({ locatedAt: 84, modeKnownAt: 0 }));
+const facts = vi.hoisted(() => ({
+  locatedAt: 84,
+  modeKnownAt: 0,
+  captureAvailableAt: Infinity,
+}));
 beforeEach(() => {
   facts.locatedAt = 84;
   facts.modeKnownAt = 0;
+  facts.captureAvailableAt = Infinity;
 });
 
 // A recording with one delayed fact: the kill message arrives at 80s,
@@ -48,6 +53,17 @@ vi.mock("./demoDirectorScanner", () => ({
         events: [
           { timeSec: 0, type: "match-start", description: "Match started" },
           ...(scanned >= 80 ? [kill] : []),
+          ...(scanned >= facts.captureAvailableAt
+            ? [
+                {
+                  timeSec: 80.1,
+                  type: "flag-cap" as const,
+                  capturer: "Runner",
+                  flagTeamName: "Inferno",
+                  description: "Runner captured the Inferno flag",
+                },
+              ]
+            : []),
         ],
         flagSamples: Array.from(
           { length: Math.floor(scanned * 2) + 1 },
@@ -111,6 +127,50 @@ describe("cast pipeline cadence", () => {
     expect(cameras(dynamicPlan.shots)).toEqual(cameras(plan.shots));
     expect(plan.shots.at(-1)?.endSec).toBe(100.25);
     expect(await dynamic.finish()).toBe(dynamicPlan);
+  });
+
+  it("reacts to a delayed capture identically in batch and playback, preserving aired cameras", async () => {
+    // Capture at 80.1, learned only at scan time 84.5. With the normal
+    // two-second lookahead the picture has already reached 82.5.
+    facts.captureAvailableAt = 84.5;
+    const stream = await createCastStream(new ArrayBuffer(0));
+    const aired: { time: number; shot: Shot; camera: object }[] = [];
+    const framing = ({
+      scene: _scene,
+      endSec: _end,
+      quickCut: _quick,
+      ...s
+    }: Shot) => structuredClone(s);
+    for (let time = 79; time <= 86; time += 0.5) {
+      await stream.advanceTo(time);
+      const shot = stream.shots.find(
+        (s) => s.startSec <= time && s.endSec > time,
+      );
+      expect(shot).toBeDefined();
+      aired.push({ time, shot: shot!, camera: framing(shot!) });
+      if (time === 82.5) {
+        expect(shot).toMatchObject({
+          topic: "aftermath",
+          startSec: 82.5,
+        });
+        if (shot?.kind === "fixedOrbit") expect(shot.staged).toBeDefined();
+      }
+    }
+    const dynamic = await stream.finish();
+    const { plan: batch } = await runCastPipeline(new ArrayBuffer(0));
+    expect(cameras(dynamic.shots)).toEqual(cameras(batch.shots));
+    expect(dynamic.shots.find((s) => s.topic === "aftermath")?.endSec).toBe(
+      84.6,
+    );
+    expect(dynamic.shots.filter((s) => s.topic === "aftermath")).toHaveLength(
+      1,
+    );
+    for (const { time, shot, camera } of aired) {
+      expect(
+        dynamic.shots.find((s) => s.startSec <= time && s.endSec > time),
+      ).toBe(shot);
+      expect(framing(shot)).toEqual(camera);
+    }
   });
 
   it("publishes solved cameras before playback and preserves their framing through EOF", async () => {

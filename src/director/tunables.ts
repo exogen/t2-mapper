@@ -154,6 +154,15 @@ export const DIRECTOR_GRAB_LOOKAHEAD_SEC = 10;
  * with no delay still cuts to the carrier a beat after the touch.
  */
 export const DIRECTOR_GRAB_REACT_SEC = 3;
+/** Recent captures still merit an aftermath if their message missed the
+ *  anticipation window. This does not change the picture's lookahead. */
+export const DIRECTOR_CAP_REACT_SEC = 3;
+/** Follow an exchange near the scoring stand long enough to read its next beat. */
+export const DIRECTOR_POSSESSION_HOLD_SEC = 2.5;
+/** The final delivery area where a recovery/drop can decide a scoring attempt. */
+export const DIRECTOR_POSSESSION_SCORING_RANGE = 100;
+/** Repeated exchanges cannot keep a competing flag play waiting forever. */
+export const DIRECTOR_POSSESSION_DEFER_SEC = 6;
 /** Inside this window the grab pre-empts whatever else is on. */
 export const DIRECTOR_GRAB_IMMINENT_SEC = 6;
 /**

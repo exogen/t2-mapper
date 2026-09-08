@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createSwitcherStream, planShotsCausal, runSwitcher } from "./switcher";
 import { createFreeSpaceBuild } from "./freeSpace";
 import { CausalView } from "./causalView";
@@ -128,6 +128,234 @@ function concernsFlag(shot: Shot, slot: number): boolean {
   );
 }
 
+describe("capture reaction fallback", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  function fixture(capSec = 66.1): DirectorDataset {
+    const ds = dataset();
+    ds.durationSec = 80;
+    ds.events = [
+      { timeSec: 0, type: "match-start", description: "Match started" },
+      {
+        timeSec: capSec,
+        type: "flag-cap",
+        capturer: "Slayer",
+        flagTeamName: "Inferno",
+        description: "Slayer captured the Inferno flag",
+      },
+    ];
+    // The carry wasn't observed. Both flags are now home; the aftermath
+    // must use the scoring stand, not follow the returned flag across the map.
+    ds.flagSamples = ds.flagSamples.map((s) => ({
+      ...s,
+      status: "home",
+      carrierTargetId: null,
+      pos: s.slot === 1 ? STAND_1 : STAND_2,
+    }));
+    ds.playerSamples = [];
+    vi.spyOn(variety, "pickVarietyShot").mockImplementation((_view, t) =>
+      t === 60
+        ? {
+            family: "destruction",
+            shot: {
+              kind: "fixedOrbit",
+              center: [400, 400, 100],
+              radius: 30,
+              startSec: 60,
+              endSec: 69,
+              transitionIn: "cut",
+              reason: "Raid cutaway",
+            },
+          }
+        : null,
+    );
+    return ds;
+  }
+
+  function prefix(
+    ds: DirectorDataset,
+    through: number,
+    availableAt: number,
+  ): DirectorDataset {
+    return {
+      ...ds,
+      durationSec: Math.min(through, ds.durationSec),
+      events: ds.events.filter(
+        (e) =>
+          e.timeSec <= through &&
+          (e.type !== "flag-cap" || through >= availableAt),
+      ),
+      flagSamples: ds.flagSamples.filter((s) => s.timeSec <= through),
+      playerSamples: [],
+    };
+  }
+
+  it.each([66, 66.1])(
+    "reacts on the first tick at/after a capture at %s without lookahead",
+    (capSec) => {
+      const ds = fixture(capSec);
+      const view = new CausalView(prefix(ds, 0, capSec), 0);
+      const stream = createSwitcherStream(view);
+      for (let t = 0.5; t <= 80; t += 0.5)
+        stream.advanceTo(t, prefix(ds, t, capSec));
+      stream.finish(80);
+      const aftermaths = stream.shots.filter((s) => s.topic === "aftermath");
+      expect(aftermaths).toHaveLength(1);
+      expect(aftermaths[0]).toMatchObject({
+        kind: "fixedOrbit",
+        center: STAND_1,
+        startSec: Math.ceil(capSec * 2) / 2,
+        endSec: capSec + 4.5,
+      });
+      expect(
+        stream.shots.find((s) => s.reason === "Raid cutaway")?.endSec,
+      ).toBe(aftermaths[0].startSec);
+      expect(stream.shots).toEqual(runSwitcher(new CausalView(ds, 0)));
+      expect(view.maxQueriedAhead).toBe(0);
+    },
+  );
+
+  it.each([
+    { lookahead: 0, reaction: 68 },
+    { lookahead: 2, reaction: 68 },
+    { lookahead: 0, reaction: 69 },
+    { lookahead: 2, reaction: 69 },
+  ])(
+    "starts a late aftermath now, without rewriting the picture ($lookahead lookahead, reaction at $reaction)",
+    ({ lookahead, reaction }) => {
+      const ds = fixture();
+      const availableAt = reaction + lookahead;
+      const view = new CausalView(
+        prefix(ds, lookahead, availableAt),
+        lookahead,
+      );
+      const stream = createSwitcherStream(view);
+      const aired: { t: number; shot: Shot }[] = [];
+      for (let t = 0.5; t <= 80; t += 0.5) {
+        stream.advanceTo(t, prefix(ds, t + lookahead, availableAt));
+        if (t >= 61 && t <= 71) {
+          const shot = stream.shots.find(
+            (s) => s.startSec <= t && s.endSec > t,
+          );
+          expect(shot).toBeDefined();
+          aired.push({ t, shot: structuredClone(shot!) });
+          if (t === reaction) expect(shot?.topic).toBe("aftermath");
+        }
+      }
+      stream.finish(80);
+      const aftermaths = stream.shots.filter((s) => s.topic === "aftermath");
+      expect(aftermaths).toHaveLength(1);
+      expect(aftermaths[0]).toMatchObject({
+        center: STAND_1,
+        startSec: reaction,
+        endSec: 70.6,
+      });
+      const framing = ({ endSec: _end, quickCut: _quick, ...s }: Shot) => s;
+      for (const { t, shot } of aired) {
+        const final = stream.shots.find((s) => s.startSec <= t && s.endSec > t);
+        expect(final).toBeDefined();
+        expect(framing(final!)).toEqual(framing(shot));
+      }
+      for (let i = 1; i < stream.shots.length; i++)
+        expect(stream.shots[i].startSec).toBe(stream.shots[i - 1].endSec);
+      expect(view.maxQueriedAhead).toBeLessThanOrEqual(lookahead);
+    },
+  );
+
+  it("ignores a capture that arrives after its reaction window", () => {
+    const ds = fixture();
+    const stream = createSwitcherStream(new CausalView(prefix(ds, 2, 72), 2));
+    for (let t = 0.5; t <= 80; t += 0.5)
+      stream.advanceTo(t, prefix(ds, t + 2, 72));
+    stream.finish(80);
+    expect(stream.shots.some((s) => s.topic === "aftermath")).toBe(false);
+  });
+
+  it("preserves a short cutaway already aired when a late capture interrupts it", () => {
+    const ds = fixture();
+    vi.mocked(variety.pickVarietyShot).mockImplementation((_view, t) =>
+      t === 67
+        ? {
+            family: "destruction",
+            shot: {
+              kind: "fixedOrbit",
+              center: [400, 400, 100],
+              radius: 30,
+              startSec: 67,
+              endSec: 76,
+              transitionIn: "cut",
+              reason: "Short raid",
+            },
+          }
+        : null,
+    );
+    const stream = createSwitcherStream(new CausalView(prefix(ds, 2, 70), 2));
+    for (let t = 0.5; t <= 67.5; t += 0.5)
+      stream.advanceTo(t, prefix(ds, t + 2, 70));
+    const aired = stream.shots.at(-1);
+    expect(aired?.reason).toBe("Short raid");
+    for (let t = 68; t <= 80; t += 0.5)
+      stream.advanceTo(t, prefix(ds, t + 2, 70));
+    stream.finish(80);
+    expect(
+      stream.shots.find((s) => s.startSec <= 67.5 && s.endSec > 67.5),
+    ).toBe(aired);
+    expect(aired?.endSec).toBe(68);
+  });
+
+  it("can resolve an initially unidentified capture and uses the observed scoring location", () => {
+    const ds = fixture();
+    const scoringPos: DirectorVec3 = [23, 5, 100];
+    ds.flagSamples = ds.flagSamples.map((s) =>
+      s.slot === 2 && s.timeSec === 65.5
+        ? { ...s, status: "held", carrierTargetId: 5, pos: scoringPos }
+        : s,
+    );
+    const feed = (through: number): DirectorDataset => ({
+      ...prefix(ds, through, 66.1),
+      events: ds.events
+        .filter((e) => e.timeSec <= through)
+        .map((e) =>
+          e.type === "flag-cap" && through < 70
+            ? { ...e, flagTeamName: undefined }
+            : e,
+        ),
+    });
+    const stream = createSwitcherStream(new CausalView(feed(2), 2));
+    for (let t = 0.5; t <= 80; t += 0.5) stream.advanceTo(t, feed(t + 2));
+    stream.finish(80);
+    const aftermaths = stream.shots.filter((s) => s.topic === "aftermath");
+    expect(aftermaths).toHaveLength(1);
+    expect(aftermaths[0]).toMatchObject({
+      center: scoringPos,
+      startSec: 68,
+      endSec: 70.6,
+    });
+  });
+
+  it.each([false, true])(
+    "does not replay an older capture over a newer one (newer anticipated: %s)",
+    (anticipated) => {
+      const ds = fixture();
+      const older = { ...ds.events[1], timeSec: 65.8, flagTeamName: "Storm" };
+      const feed = (through: number): DirectorDataset => {
+        const d = prefix(ds, through, anticipated ? 66.1 : 70);
+        if (through >= 70) d.events.push(older);
+        return d;
+      };
+      const stream = createSwitcherStream(new CausalView(feed(2), 2));
+      for (let t = 0.5; t <= 80; t += 0.5) stream.advanceTo(t, feed(t + 2));
+      stream.finish(80);
+      const aftermaths = stream.shots.filter((s) => s.topic === "aftermath");
+      expect(aftermaths).toHaveLength(1);
+      expect(aftermaths[0]).toMatchObject({
+        reason: "Aftermath — Inferno flag captured",
+        startSec: anticipated ? 66.1 : 68,
+      });
+    },
+  );
+});
+
 describe("planShotsCausal", () => {
   it.each([
     { eventType: "flag-grab" as const, lookahead: 0 },
@@ -156,12 +384,11 @@ describe("planShotsCausal", () => {
       ds.flagSamples = [];
       ds.playerSamples = [];
       for (let t = 0; t <= 90; t += 0.5) {
-        const held =
-          eventType === "flag-grab" ? t >= 66 : t >= 60.5 && t < 66.1;
+        const held = eventType === "flag-grab" ? t >= 66 : t >= 65 && t < 66.1;
         const carriedPos: DirectorVec3 =
           eventType === "flag-grab"
             ? [800 - (t - 66) * 20, 0, 100]
-            : [Math.max(0, 800 - (t - 60.5) * 145), 0, 100];
+            : [Math.max(0, 800 - (t - 65) * 725), 0, 100];
         ds.flagSamples.push({
           timeSec: t,
           slot: 1,
@@ -210,7 +437,13 @@ describe("planShotsCausal", () => {
         expect(raid).toBeDefined();
         const before = shots[shots.indexOf(raid!) - 1];
         expect(concernsFlag(before, 2)).toBe(true);
-        const reaction = Math.ceil((66.1 - lookahead) * 2) / 2;
+        // Observed flag state can now reclaim the camera even before the
+        // corresponding message. The capture is still anticipated before
+        // the observed carry starts, exercising message-based preemption.
+        const reaction = Math.min(
+          eventType === "flag-grab" ? 66 : 65,
+          Math.ceil((66.1 - lookahead) * 2) / 2,
+        );
         expect(raid!.endSec).toBe(reaction);
         const after = shots[shots.indexOf(raid!) + 1];
         expect(after.startSec).toBe(reaction);
@@ -243,6 +476,174 @@ describe("planShotsCausal", () => {
         expect(liveView.maxQueriedAhead).toBeLessThanOrEqual(lookahead);
       } finally {
         pick.mockRestore();
+      }
+    },
+  );
+
+  it.each([0, 2])(
+    "revalidates cutaways with %s seconds lookahead and no flag messages",
+    (lookahead) => {
+      for (const outcome of [
+        "held",
+        "field",
+        "parked",
+        "contest",
+        "dead",
+        "early-death",
+        "stopped",
+        "missing",
+        "valid",
+      ] as const) {
+        const ds = dataset();
+        ds.events = [
+          { timeSec: 0, type: "match-start", description: "Match started" },
+        ];
+        ds.flagSamples = [];
+        ds.playerSamples = [];
+        for (let t = 0; t <= ds.durationSec; t += 0.5) {
+          for (const slot of [1, 2]) {
+            const status =
+              slot === 2 &&
+              (outcome === "parked" || outcome === "contest") &&
+              t >= 10
+                ? "field"
+                : slot === 2 &&
+                    t >= 64 &&
+                    (outcome === "held" || outcome === "field")
+                  ? outcome
+                  : "home";
+            ds.flagSamples.push({
+              timeSec: t,
+              slot,
+              status,
+              carrierTargetId: status === "held" ? 5 : null,
+              pos:
+                status === "home"
+                  ? slot === 1
+                    ? STAND_1
+                    : STAND_2
+                  : [400, 0, 100],
+            });
+          }
+          if (Number.isInteger(t) && !(outcome === "missing" && t >= 62)) {
+            ds.playerSamples.push({
+              timeSec: t,
+              targetId: 5,
+              teamId: 1,
+              pos:
+                outcome === "contest" && t >= 64
+                  ? [400, 0, 100]
+                  : [
+                      -2000 +
+                        Math.min(t, outcome === "stopped" ? 61 : Infinity) * 40,
+                      1000,
+                      100,
+                    ],
+            });
+          }
+        }
+        if (outcome === "dead" || outcome === "early-death")
+          ds.deaths = [
+            {
+              timeSec: outcome === "early-death" ? 61 : 64,
+              targetId: 5,
+              teamId: 1,
+              pos: [300, 1000, 100],
+              killerTargetId: null,
+            },
+          ];
+        const pick = vi
+          .spyOn(variety, "pickVarietyShot")
+          .mockImplementation((_view, t) =>
+            t === 60
+              ? {
+                  family: "capperSetup",
+                  continuation: {
+                    kind: "capperSetup",
+                    targetId: 5,
+                    flagSlot: 2,
+                  },
+                  shot: {
+                    kind: "followPlayer",
+                    targetId: 5,
+                    distance: 20,
+                    pitch: 0.2,
+                    startSec: 60,
+                    endSec: 69,
+                    transitionIn: "cut",
+                    reason: "Route cutaway",
+                  },
+                }
+              : null,
+          );
+        // Parked flags concern the generic filler policy; they are not a valid
+        // stand-grab setup, so use an aftermath cutaway without that dependency.
+        if (outcome === "parked" || outcome === "contest")
+          pick.mockImplementation((_view, t) =>
+            t === 60
+              ? {
+                  family: "destruction",
+                  shot: {
+                    kind: "fixedOrbit",
+                    center: [400, 1000, 100],
+                    radius: 30,
+                    startSec: 60,
+                    endSec: 69,
+                    transitionIn: "cut",
+                    reason: "Route cutaway",
+                  },
+                }
+              : null,
+          );
+        try {
+          const shots = runSwitcher(new CausalView(ds, lookahead));
+          const cutaway = shots.find((s) => s.reason === "Route cutaway");
+          expect(cutaway, outcome).toBeDefined();
+          const interrupted = [
+            "held",
+            "field",
+            "contest",
+            "dead",
+            "stopped",
+          ].includes(outcome);
+          // Stopping at 61 is established by a complete three-second window
+          // below the continuation speed at 63. Death/state changes act at 64,
+          // never at 62 just because they are visible inside the planning peek.
+          const end =
+            outcome === "early-death"
+              ? 61
+              : outcome === "stopped"
+                ? 63
+                : interrupted
+                  ? 64
+                  : 69;
+          expect(cutaway!.endSec, outcome).toBe(end);
+          if (
+            outcome === "held" ||
+            outcome === "field" ||
+            outcome === "contest"
+          ) {
+            expect(concernsFlag(shots[shots.indexOf(cutaway!) + 1], 2)).toBe(
+              true,
+            );
+          }
+          const prefix = (through: number): DirectorDataset => ({
+            ...ds,
+            durationSec: Math.min(through, ds.durationSec),
+            flagSamples: ds.flagSamples.filter((s) => s.timeSec <= through),
+            playerSamples: ds.playerSamples.filter((s) => s.timeSec <= through),
+            deaths: ds.deaths.filter((s) => s.timeSec <= through),
+          });
+          const view = new CausalView(prefix(lookahead), lookahead);
+          const stream = createSwitcherStream(view);
+          for (let t = 0.5; t <= ds.durationSec; t += 0.5)
+            stream.advanceTo(t, prefix(t + lookahead));
+          stream.finish(ds.durationSec);
+          expect(stream.shots, outcome).toEqual(shots);
+          expect(view.maxQueriedAhead).toBeLessThanOrEqual(lookahead);
+        } finally {
+          pick.mockRestore();
+        }
       }
     },
   );

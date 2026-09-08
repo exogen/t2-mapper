@@ -137,6 +137,20 @@ export function interiorColliderCount(): number {
 }
 
 /**
+ * The union of every registered interior's world box, in Three space, or
+ * null when no interior is registered. Used to bound work that only
+ * matters near a building: the sun-occlusion pass of the terrain lightmap
+ * bake, and the fitting of the shadow camera.
+ */
+export function interiorWorldBounds(out = new Box3()): Box3 | null {
+  out.makeEmpty();
+  for (const entry of interiors().values()) {
+    for (const collider of entry.colliders) out.union(collider.worldBox);
+  }
+  return out.isEmpty() ? null : out;
+}
+
+/**
  * Register a static shape's meshes (a generator, a bunker prop) as
  * CAMERA occluders. Same snapshot semantics as interiors; only rays
  * cast with `includeStatics` see them.

@@ -38,6 +38,7 @@ import {
   type InteriorRayHit,
 } from "./collision/worldCollision";
 import { castTerrainRay, type Vec3 } from "./collision/terrainCollision";
+import { TERRAIN_SIZE } from "./terrain";
 import { getShapeBounds } from "./stream/shapeBounds";
 
 /** How far the probe casts up (for a roof) and down (for the floor). */
@@ -132,7 +133,10 @@ export function setTerrainLightmap(data: TerrainLightmap | null): void {
 function sampleTerrainLighting(x: number, y: number, out: Color): boolean {
   const lm = terrainLightmap;
   if (!lm) return false;
-  const half = lm.squareSize * 0.5;
+  // World size of one lightmap texel. Derived, not assumed: the lightmap
+  // is TERRAIN_SIZE x LIGHTMAP_TEXELS_PER_SQUARE across, and that ratio is
+  // configurable (terrain.ts).
+  const half = (lm.squareSize * TERRAIN_SIZE) / lm.size;
   const mask = lm.size - 1;
   const col = Math.round((x - lm.originX) / half) & mask;
   const row = Math.round((y - lm.originY) / half) & mask;

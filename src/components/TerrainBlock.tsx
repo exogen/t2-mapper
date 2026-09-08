@@ -1,14 +1,14 @@
-import { memo, useEffect, useMemo, useRef } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
 import { useQuery } from "@tanstack/react-query";
 import {
+  Box3,
   BufferAttribute,
   BufferGeometry,
   Color,
   DataTexture,
   Float32BufferAttribute,
   InstancedMesh as ThreeInstancedMesh,
-  LinearFilter,
   Matrix4,
   NearestFilter,
   NoColorSpace,
@@ -32,6 +32,10 @@ import { loadTerrain } from "../loaders";
 import { LIGHTMAP_SIZE, TERRAIN_SIZE, terrainHeightToWorld } from "../terrain";
 import { packMasksRGB } from "../textureUtils";
 import { TerrainTile, TerrainMaterial } from "./TerrainTile";
+import { bakeTerrainLightmap } from "../terrainLightmap";
+import { createInteriorSunOccluder } from "../terrainInteriorShadow";
+import { onTerrainLightmapInvalidated } from "./terrainLightmapControl";
+import { setShadowCasterBounds } from "../shadowBounds";
 import { invalidateShadows } from "./shadowControl";
 import { setTerrainCollisionData } from "../collision/terrainCollision";
 import { setTerrainLightmap } from "../shapeLighting";
@@ -42,7 +46,6 @@ import {
 } from "../world/placement";
 const DEFAULT_VISIBLE_DISTANCE = 600;
 // Ceiling of the 11.5 fixed-point height format (65535/32, rounded up).
-const MAX_TERRAIN_HEIGHT = 2048;
 /**
  * Create terrain geometry with Torque-style alternating diagonal triangulation.
  *
@@ -237,190 +240,6 @@ function displaceTerrainAndComputeNormals(
   normalAttr.needsUpdate = true;
 }
 /**
- * Ray-march through heightmap to determine if a point is in shadow.
- * Uses the same coordinate system as the terrain geometry.
- *
- * @param startCol - Starting column in heightmap coordinates
- * @param startRow - Starting row in heightmap coordinates
- * @param startHeight - Starting height in world units
- * @param lightDir - Direction TOWARD the light (normalized)
- * @param squareSize - World units per heightmap cell
- * @param getHeight - Function to sample terrain height at a position
- * @returns 1.0 if lit, 0.0 if in shadow
- */
-function rayMarchShadow(
-  startCol: number,
-  startRow: number,
-  startHeight: number,
-  lightDir: Vector3,
-  squareSize: number,
-  getHeight: (col: number, row: number) => number,
-): number {
-  // Convert light direction to heightmap coordinate steps
-  // World coordinate mapping (after geometry rotations):
-  // - col (U) → world +Z, so lightDir.z affects col
-  // - row (V) → world +X, so lightDir.x affects row
-  // - height → world +Y, so lightDir.y affects height
-  const stepCol = lightDir.z / squareSize;
-  const stepRow = lightDir.x / squareSize;
-  const stepHeight = lightDir.y;
-  // Normalize to step ~0.5 heightmap units per iteration for good sampling
-  const horizontalLen = Math.sqrt(stepCol * stepCol + stepRow * stepRow);
-  if (horizontalLen < 0.0001) {
-    // Light is nearly vertical - no self-shadowing possible
-    return 1.0;
-  }
-  const stepScale = 0.5 / horizontalLen;
-  const dCol = stepCol * stepScale;
-  const dRow = stepRow * stepScale;
-  const dHeight = stepHeight * stepScale;
-  let col = startCol;
-  let row = startRow;
-  let height = startHeight + 0.1; // Small offset to avoid self-intersection
-  // March until we exit terrain bounds or confirm we're lit
-  const maxSteps = TERRAIN_SIZE * 3; // Enough to cross terrain diagonally
-  for (let i = 0; i < maxSteps; i++) {
-    col += dCol;
-    row += dRow;
-    height += dHeight;
-    // Check if ray exited terrain bounds horizontally
-    if (col < 0 || col >= TERRAIN_SIZE || row < 0 || row >= TERRAIN_SIZE) {
-      return 1.0; // Exited terrain, not in shadow
-    }
-    // Check if ray is above max terrain height
-    if (height > MAX_TERRAIN_HEIGHT) {
-      return 1.0; // Above all terrain, not in shadow
-    }
-    // Sample terrain height at current position
-    const terrainHeight = getHeight(col, row);
-    // If ray is below terrain surface, we're in shadow
-    if (height < terrainHeight) {
-      return 0.0;
-    }
-  }
-  return 1.0; // Reached max steps, assume not in shadow
-}
-/**
- * Generate a terrain lightmap texture with smooth normals and ray-traced shadows.
- *
- * The key insight: banding occurs because vertex normals are computed from
- * discrete heightmap samples, creating discontinuities at grid boundaries.
- *
- * Solution: Compute normals from BILINEARLY INTERPOLATED heights at each
- * lightmap pixel. This produces smooth gradients because the interpolated
- * height surface is C0 continuous (no discontinuities).
- *
- * Shadows are computed by ray-marching through the heightmap toward the sun,
- * checking if the terrain blocks the light path. This avoids shadow acne
- * because it's a geometric intersection test, not a depth buffer comparison.
- *
- * @param heightMap - Uint16 heightmap data (256x256)
- * @param sunDirection - Normalized sun direction vector (points FROM sun TO scene)
- * @param squareSize - World units per heightmap cell
- * @returns DataTexture with lighting intensity values (NdotL * shadow)
- */
-function generateTerrainLightmap(
-  heightMap: Uint16Array,
-  sunDirection: Vector3,
-  squareSize: number,
-): DataTexture {
-  // Helper to get bilinearly interpolated height at any fractional position
-  // Supports negative and out-of-range coordinates via clamping for shadow rays
-  const getInterpolatedHeight = (col: number, row: number): number => {
-    // Clamp to valid range (don't wrap for shadow rays)
-    const clampedCol = Math.max(0, Math.min(TERRAIN_SIZE - 1, col));
-    const clampedRow = Math.max(0, Math.min(TERRAIN_SIZE - 1, row));
-    const col0 = Math.floor(clampedCol);
-    const row0 = Math.floor(clampedRow);
-    const col1 = Math.min(col0 + 1, TERRAIN_SIZE - 1);
-    const row1 = Math.min(row0 + 1, TERRAIN_SIZE - 1);
-    const fx = clampedCol - col0;
-    const fy = clampedRow - row0;
-    const h00 = heightMap[row0 * TERRAIN_SIZE + col0];
-    const h10 = heightMap[row0 * TERRAIN_SIZE + col1];
-    const h01 = heightMap[row1 * TERRAIN_SIZE + col0];
-    const h11 = heightMap[row1 * TERRAIN_SIZE + col1];
-    // Bilinear interpolation
-    const h0 = h00 * (1 - fx) + h10 * fx;
-    const h1 = h01 * (1 - fx) + h11 * fx;
-    return terrainHeightToWorld(h0 * (1 - fy) + h1 * fy);
-  };
-  // Light direction (negate sun direction since it points FROM sun)
-  const lightDir = new Vector3(
-    -sunDirection.x,
-    -sunDirection.y,
-    -sunDirection.z,
-  ).normalize();
-  const lightmapData = new Uint8Array(LIGHTMAP_SIZE * LIGHTMAP_SIZE);
-  // Epsilon for gradient sampling (in heightmap units)
-  // Use 0.5 to sample across a reasonable distance for smooth gradients
-  const eps = 0.5;
-  // Generate lightmap by computing normal and shadow at each pixel
-  for (let lRow = 0; lRow < LIGHTMAP_SIZE; lRow++) {
-    for (let lCol = 0; lCol < LIGHTMAP_SIZE; lCol++) {
-      // Generate texel for terrain position matching Torque's relight():
-      // Torque starts at halfStep (0.25) within each square, not at corner.
-      // With 2 lightmap pixels per terrain square: pos = lCol/2 + 0.25
-      const col = lCol / 2 + 0.25;
-      const row = lRow / 2 + 0.25;
-      // Get height at this position for shadow ray starting point
-      const surfaceHeight = getInterpolatedHeight(col, row);
-      // Compute gradient using central differences on interpolated heights
-      const hL = getInterpolatedHeight(col - eps, row);
-      const hR = getInterpolatedHeight(col + eps, row);
-      const hU = getInterpolatedHeight(col, row - eps);
-      const hD = getInterpolatedHeight(col, row + eps);
-      // Gradient in heightmap units
-      const dCol = (hR - hL) / (2 * eps);
-      const dRow = (hD - hU) / (2 * eps);
-      // Convert to world-space normal - must match displaceTerrainAndComputeNormals
-      // After geometry rotations: U (col) → +Z, V (row) → +X
-      const nx = -dRow;
-      const ny = squareSize;
-      const nz = -dCol;
-      const len = Math.sqrt(nx * nx + ny * ny + nz * nz);
-      // Compute NdotL
-      const NdotL = Math.max(
-        0,
-        (nx / len) * lightDir.x +
-          (ny / len) * lightDir.y +
-          (nz / len) * lightDir.z,
-      );
-      // Ray-march to determine shadow (only if surface faces the light)
-      let shadow = 1.0;
-      if (NdotL > 0) {
-        shadow = rayMarchShadow(
-          col,
-          row,
-          surfaceHeight,
-          lightDir,
-          squareSize,
-          getInterpolatedHeight,
-        );
-      }
-      // Store NdotL * shadow in lightmap
-      lightmapData[lRow * LIGHTMAP_SIZE + lCol] = Math.floor(
-        NdotL * shadow * 255,
-      );
-    }
-  }
-  const texture = new DataTexture(
-    lightmapData,
-    LIGHTMAP_SIZE,
-    LIGHTMAP_SIZE,
-    RedFormat,
-    UnsignedByteType,
-  );
-  texture.colorSpace = NoColorSpace;
-  texture.generateMipmaps = true;
-  texture.wrapS = ClampToEdgeWrapping;
-  texture.wrapT = ClampToEdgeWrapping;
-  texture.magFilter = LinearFilter;
-  texture.minFilter = LinearFilter;
-  texture.needsUpdate = true;
-  return texture;
-}
-/**
  * Load a .ter file, used for terrain heightmap and texture info.
  */
 function useTerrain(terrainFile: string) {
@@ -553,11 +372,71 @@ export const TerrainBlock = memo(function TerrainBlock({
     const len = Math.sqrt(x * x + y * y + z * z);
     return new Vector3(x / len, y / len, z / len);
   }, [sun]);
-  // Generate terrain lightmap for smooth per-pixel lighting
-  const terrainLightmap = useMemo(() => {
+  // Buildings are baked into the lightmap, so the occluder is rebuilt as
+  // interiors stream in (invalidations are coalesced in the control module)
+  // and its new identity is what re-runs the bake below.
+  const [interiorOccluder, setInteriorOccluder] = useState<
+    ((x: number, y: number, z: number) => boolean) | null
+  >(null);
+  useEffect(() => {
+    const rebuild = () =>
+      setInteriorOccluder(() =>
+        createInteriorSunOccluder(
+          new Vector3(-sunDirection.x, -sunDirection.y, -sunDirection.z),
+        ),
+      );
+    rebuild();
+    return onTerrainLightmapInvalidated(rebuild);
+  }, [sunDirection]);
+
+  // The ground is lit immediately; hard shadows arrive over the next frames
+  // and their edges are then averaged, all against a per-frame budget so a
+  // 1024² bake never stalls the load the way one blocking pass would.
+  const bake = useMemo(() => {
     if (!terrain) return null;
-    return generateTerrainLightmap(terrain.heightMap, sunDirection, squareSize);
-  }, [terrain, sunDirection, squareSize]);
+    return bakeTerrainLightmap(
+      terrain.heightMap,
+      sunDirection,
+      squareSize,
+      { x: basePosition.x, z: basePosition.z },
+      interiorOccluder,
+    );
+  }, [terrain, sunDirection, squareSize, basePosition, interiorOccluder]);
+  const terrainLightmap = bake?.texture ?? null;
+  const bakeDoneRef = useRef(false);
+  useEffect(() => {
+    bakeDoneRef.current = false;
+    // A re-bake (interiors finished loading) builds a new texture; the old
+    // one's GPU copy has to be released or it leaks for the session.
+    const previous = bake?.texture;
+    return () => previous?.dispose();
+  }, [bake]);
+  useFrame(() => {
+    if (bake && !bakeDoneRef.current) bakeDoneRef.current = bake.step(8);
+  });
+  // The sun's shadow camera is fitted to what casts; the terrain block is
+  // the largest caster and sets the frustum on every map.
+  useEffect(() => {
+    if (!terrain) return;
+    const size = squareSize * TERRAIN_SIZE;
+    setShadowCasterBounds(
+      "terrain",
+      new Box3(
+        new Vector3(
+          basePosition.x,
+          terrainHeightToWorld(terrain.minHeight),
+          basePosition.z,
+        ),
+        new Vector3(
+          basePosition.x + size,
+          terrainHeightToWorld(terrain.maxHeight),
+          basePosition.z + size,
+        ),
+      ),
+    );
+    return () => setShadowCasterBounds("terrain", null);
+  }, [terrain, squareSize, basePosition]);
+
   // Shapes standing on terrain are lit from the lightmap texel under them
   // (the terrain shader's own formula, ambient + NdotL × sun).
   useEffect(() => {
@@ -698,8 +577,10 @@ export const TerrainBlock = memo(function TerrainBlock({
       <instancedMesh
         ref={pooledMeshRef}
         args={[sharedGeometry, undefined, poolSize]}
+        // Casts (a hill shadows a building) but never receives: the ground's
+        // own shadowing is baked into the terrain lightmap, which is what
+        // keeps it free of acne and of bias pulling shadows off the slope.
         castShadow
-        receiveShadow
         frustumCulled={false}
       >
         <TerrainMaterial

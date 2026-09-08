@@ -22,7 +22,7 @@ import { injectEffectLights } from "./effectLightUniforms";
 import { globalSunUniforms } from "./globalSunUniforms";
 import { lightsFragmentBeginByType } from "./lightsChunk";
 import { glslColorSpace, glslDebugGrid } from "./shaderUtils";
-import { LIGHTMAP_SIZE, TERRAIN_SIZE } from "./terrain";
+import { TERRAIN_SIZE } from "./terrain";
 
 /** The subset of Three's onBeforeCompile shader object this module touches. */
 interface TerrainShader {
@@ -144,8 +144,6 @@ varying vec3 vTerrainWorldPos;`
 ${glslColorSpace}
 ${glslDebugGrid}
 
-// Global variable to store shadow factor from RE_Direct for use in output calculation
-float terrainShadowFactor = 1.0;
 ` + shader.fragmentShader;
 
   if (visibilityMask) {
@@ -255,39 +253,14 @@ float terrainShadowFactor = 1.0;
   // to a no-op so they never accumulate.
   injectEffectLights(shader);
 
-  // When lightmap is available, the directional loop calls RE_Direct_TerrainSun,
-  // which only yields the sun's shadow factor (its lighting is computed in
-  // gamma space at output).
+  // The directional loop is diverted to a no-op: the ground's sun lighting,
+  // self-shadowing and building shadows all come from the baked lightmap
+  // (terrainLightmap.ts), so there is no runtime shadow to sample.
   if (lightmap) {
-    shader.fragmentShader = shader.fragmentShader.replace(
-      "#include <lights_lambert_pars_fragment>",
-      `#include <lights_lambert_pars_fragment>
-
-void RE_Direct_TerrainSun( const in IncidentLight directLight, const in vec3 geometryPosition, const in vec3 geometryNormal, const in vec3 geometryViewDir, const in vec3 geometryClearcoatNormal, const in LambertMaterial material, inout ReflectedLight reflectedLight ) {
-  // Torque lighting (terrLighting.cc): if light points up, terrain gets only ambient
-  // This prevents shadow acne from light hitting terrain backfaces
-  if (!sunLightPointsDown) {
-    terrainShadowFactor = 0.0;
-    return;
-  }
-  // directLight.color = sunColor * shadowFactor (shadow already applied by Three.js)
-  // Extract shadow factor by comparing to original sun color
-  #if ( NUM_DIR_LIGHTS > 0 )
-    vec3 originalSunColor = directionalLights[0].color;
-    float sunMax = max(max(originalSunColor.r, originalSunColor.g), originalSunColor.b);
-    float shadowedMax = max(max(directLight.color.r, directLight.color.g), directLight.color.b);
-    terrainShadowFactor = clamp(shadowedMax / max(sunMax, 0.001), 0.0, 1.0);
-  #endif
-  // The sun's lighting is not accumulated - it is computed in gamma space at output
-}
-
-`,
-    );
-
     shader.fragmentShader = shader.fragmentShader.replace(
       "#include <lights_fragment_begin>",
       `${lightsFragmentBeginByType({
-        directional: "RE_Direct_TerrainSun",
+        directional: "RE_Direct_EffectLightIgnore",
         punctual: "RE_Direct_EffectLightIgnore",
       })}
 // Clear indirect diffuse - we'll compute ambient in gamma space
@@ -323,9 +296,13 @@ void RE_Direct_TerrainSun( const in IncidentLight directLight, const in vec3 geo
   ${
     lightmap
       ? `
-  // Sample terrain lightmap for smooth NdotL
-  vec2 lightmapUv = vTerrainUv + vec2(0.5 / ${LIGHTMAP_SIZE}.0);
-  float lightmapNdotL = texture2D(terrainLightmap, lightmapUv).r;
+  // The bake samples texel i at (i + 0.5) texel widths from the block
+  // origin, which is exactly where GL puts that texel's centre, so the
+  // geometry UV addresses it directly. A half-texel nudge here would slide
+  // the whole lightmap off the ground by half a texel — invisible when this
+  // texture held only a smooth NdotL, but not now that shadow edges are
+  // baked into it.
+  float lightmapNdotL = texture2D(terrainLightmap, vTerrainUv).r;
 
   // Get sun and ambient colors from Three.js lights (these ARE sRGB values from mission file)
   // Three.js interprets them as linear, but the numerical values are preserved
@@ -339,7 +316,7 @@ void RE_Direct_TerrainSun( const in IncidentLight directLight, const in vec3 geo
   // Torque formula (terrLighting.cc:471-483):
   // lighting = ambient + NdotL * shadowFactor * sunColor
   // Clamp lighting to [0,1] before multiplying by texture
-  vec3 lightingSRGB = clamp(ambientColorSRGB + lightmapNdotL * terrainShadowFactor * sunColorSRGB, 0.0, 1.0);
+  vec3 lightingSRGB = clamp(ambientColorSRGB + lightmapNdotL * sunColorSRGB, 0.0, 1.0);
   `
       : `
   // No lightmap - use simple ambient lighting
