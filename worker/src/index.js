@@ -17,6 +17,9 @@
  * here but not written by the sync just misses the cache and falls back.
  */
 const PRECOMPRESSED_EXTENSIONS = [".dts", ".dif"];
+// Ignore entries written before the precompressed cache-copy fix.
+const CACHE_VERSION_HEADER = "X-T2-Asset-Cache-Version";
+const CACHE_VERSION = "1";
 
 /**
  * CORS, matching what the R2 custom domain served before the worker took
@@ -125,18 +128,17 @@ function forMethod(response, method) {
 }
 
 /**
- * Re-wrap a cached response so an already-encoded body is not encoded again
- * on its way out, the same reason the fresh path passes encodeBody.
- *
- * @param {Response} response
- * @returns {Response}
+ * Cloudflare's Response.clone() resets encodeBody to automatic. Restore manual
+ * encoding on the R2 stream's cache copy so cache.put() doesn't compress it again.
  */
-function fromCache(response) {
-  if (!response.headers.has("Content-Encoding")) return response;
-  return new Response(response.body, {
+function cloneForCache(response) {
+  const clone = response.clone();
+  clone.headers.set(CACHE_VERSION_HEADER, CACHE_VERSION);
+  if (!clone.headers.has("Content-Encoding")) return clone;
+  return new Response(clone.body, {
     status: response.status,
     statusText: response.statusText,
-    headers: response.headers,
+    headers: clone.headers,
     encodeBody: "manual",
   });
 }
@@ -174,24 +176,27 @@ export default {
     // A compressed variant has entirely different byte offsets, so a ranged
     // request has to be answered from the original object.
     const rangeHeader = request.headers.get("Range");
+    // Cloudflare can normalize the header to "br, gzip" even for identity
+    // clients. An empty original value must also override the rewritten one.
+    const acceptEncoding =
+      request.cf?.clientAcceptEncoding ??
+      request.headers.get("Accept-Encoding");
     const useSibling =
-      !rangeHeader &&
-      hasSibling(key) &&
-      acceptsBrotli(request.headers.get("Accept-Encoding"));
+      !rangeHeader && hasSibling(key) && acceptsBrotli(acceptEncoding);
 
-    // The body differs by encoding, so the variant needs its own cache
-    // entry; relying on Vary alone would let one answer for the other.
-    //
-    // The compressed variant is keyed on the sibling's REAL url rather than
-    // a synthetic query param. A purge is by url, so a made-up key like
-    // `x.dts?__enc=br` is a url nothing ever purges: the deploy purges
-    // `x.dts` and `x.dts.br`, and the compressed copy would have stayed
-    // stale behind a year-long s-maxage. Keying on `x.dts.br` means the
-    // upload of that sibling already invalidates it.
-    const cacheKey = new Request(
-      useSibling ? `${url.origin}/${key}.br${url.search}` : url.toString(),
-      { method: "GET" },
-    );
+    // Key each representation by its actual object URL, keeping the variants
+    // separate and compatible with the asset sync's URL-based cache purges.
+    const cacheUrl = new URL(url);
+    if (useSibling) cacheUrl.pathname += ".br";
+    const cacheKey = new Request(cacheUrl, {
+      method: "GET",
+      // Cache API requests negotiate encoding too. Ask for the representation
+      // stored at this key, preserving Brotli on the cache-to-worker hop.
+      headers: {
+        "Accept-Encoding":
+          useSibling || key.endsWith(".br") ? "br" : "identity",
+      },
+    });
     const cache = caches.default;
 
     const conditional =
@@ -200,7 +205,11 @@ export default {
 
     if (!rangeHeader && !conditional) {
       const hit = await cache.match(cacheKey);
-      if (hit) return forMethod(fromCache(hit), request.method);
+      if (hit?.headers.get(CACHE_VERSION_HEADER) === CACHE_VERSION) {
+        // A Cache API response has native decoding/passthrough semantics.
+        // Unlike a raw R2 body, it must not be re-labelled encodeBody: manual.
+        return forMethod(hit, request.method);
+      }
     }
 
     try {
@@ -213,12 +222,14 @@ export default {
       let object = useSibling
         ? await env.BUCKET.get(`${key}.br`, options)
         : null;
-      let encoding = object ? "br" : null;
+      const encoding = object ? "br" : null;
       if (!object) object = await env.BUCKET.get(key, options);
       if (!object) return errorResponse("Not found", 404);
 
       const headers = responseHeaders(object, encoding);
       const body = "body" in object ? object.body : null;
+      // Direct .br requests also carry an encoding in the object's metadata.
+      const encodedBody = headers.has("Content-Encoding");
 
       if (!body) {
         // The precondition matched what the client already holds.
@@ -246,7 +257,7 @@ export default {
           new Response(body, {
             status: 206,
             headers,
-            ...(encoding ? { encodeBody: "manual" } : {}),
+            ...(encodedBody ? { encodeBody: "manual" } : {}),
           }),
           request.method,
         );
@@ -259,12 +270,13 @@ export default {
       const response = new Response(body, {
         status: 200,
         headers,
-        ...(encoding ? { encodeBody: "manual" } : {}),
+        ...(encodedBody ? { encodeBody: "manual" } : {}),
       });
       // Only a complete, unconditional 200 is safe to store.
-      if (!rangeHeader && !conditional) {
+      // Don't store a missing sibling's fallback under the real .br URL.
+      if (!rangeHeader && !conditional && (!useSibling || encoding)) {
         ctx.waitUntil(
-          cache.put(cacheKey, response.clone()).catch((error) => {
+          cache.put(cacheKey, cloneForCache(response)).catch((error) => {
             console.error("asset worker cache.put failed", key, error);
           }),
         );

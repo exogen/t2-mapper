@@ -1,11 +1,12 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { brotliCompressSync, brotliDecompressSync } from "node:zlib";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // @ts-expect-error -- plain JS worker module, no types package installed
 import handler from "./index.js";
 
 /** A stand-in for an R2 object, shaped like what the binding returns. */
 function r2Object(
   key: string,
-  body: string | null,
+  body: string | Uint8Array | null,
   { encoding }: { encoding?: string } = {},
 ) {
   const object: Record<string, unknown> = {
@@ -18,7 +19,8 @@ function r2Object(
     },
   };
   // A failed precondition returns an object with NO body property at all.
-  if (body !== null) object.body = body;
+  if (body !== null)
+    object.body = typeof body === "string" ? body : new Uint8Array(body);
   return object;
 }
 
@@ -26,6 +28,30 @@ let bucket: Record<string, ReturnType<typeof r2Object>>;
 let getCalls: string[];
 let cacheStore: Map<string, Response>;
 let putKeys: string[];
+let pendingWrites: Promise<unknown>[];
+let manualResponses: WeakSet<Response>;
+
+const NativeResponse = Response;
+type WorkerResponseInit = ResponseInit & {
+  encodeBody?: "manual" | "automatic";
+};
+
+// Model the workerd boundary that Node's Response doesn't implement:
+// clone() drops encodeBody, and cache.put() serializes/compresses the response.
+class WorkerResponse extends NativeResponse {
+  constructor(body?: BodyInit | null, init?: WorkerResponseInit) {
+    super(body, init);
+    if (init?.encodeBody === "manual") manualResponses.add(this);
+  }
+}
+
+async function wireBody(response: Response) {
+  const body = Buffer.from(await response.arrayBuffer());
+  return response.headers.get("Content-Encoding") === "br" &&
+    !manualResponses.has(response)
+    ? brotliCompressSync(body)
+    : body;
+}
 
 const env = {
   BUCKET: {
@@ -35,44 +61,75 @@ const env = {
     },
   },
 };
-const ctx = { waitUntil: (p: Promise<unknown>) => void p };
+const ctx = { waitUntil: (p: Promise<unknown>) => pendingWrites.push(p) };
 
 beforeEach(() => {
   getCalls = [];
   putKeys = [];
+  pendingWrites = [];
+  manualResponses = new WeakSet();
+  vi.stubGlobal("Response", WorkerResponse);
   cacheStore = new Map();
   bucket = {
     "game/base/shapes/a.dts": r2Object("plain", "PLAIN-DTS-BYTES"),
-    "game/base/shapes/a.dts.br": r2Object("br", "BROTLI-BYTES", {
-      encoding: "br",
-    }),
+    "game/base/shapes/a.dts.br": r2Object(
+      "br",
+      brotliCompressSync("PLAIN-DTS-BYTES"),
+      {
+        encoding: "br",
+      },
+    ),
     "game/base/shapes/lonely.dts": r2Object("lonely", "NO-SIBLING"),
     "game/base/textures/t.png": r2Object("png", "PNG"),
   };
-  (globalThis as unknown as { caches: unknown }).caches = {
+  vi.stubGlobal("caches", {
     default: {
       async match(request: Request) {
-        return cacheStore.get(request.url);
+        const stored = cacheStore.get(request.url);
+        if (!stored) return undefined;
+        const headers = new Headers(stored.headers);
+        let body = Buffer.from(await stored.clone().arrayBuffer());
+        if (headers.get("Content-Encoding") === "br") {
+          body = brotliDecompressSync(body);
+          // The cache negotiates its response independently of the client.
+          if (request.headers.get("Accept-Encoding") !== "br") {
+            headers.delete("Content-Encoding");
+            headers.delete("Content-Length");
+          }
+        }
+        // Native cached responses expose decoded bytes when read and perform
+        // automatic encoding/passthrough when returned to the client.
+        return new Response(body, { headers });
       },
       async put(request: Request, response: Response) {
         putKeys.push(request.url);
-        cacheStore.set(request.url, response);
+        cacheStore.set(
+          request.url,
+          new NativeResponse(await wireBody(response), {
+            headers: response.headers,
+          }),
+        );
       },
     },
-  };
+  });
 });
 
+afterEach(() => vi.unstubAllGlobals());
+
 const ORIGIN = "https://assets.tribes2.online";
-function get(
+async function get(
   path: string,
   headers: Record<string, string> = {},
   method = "GET",
+  clientAcceptEncoding?: string | null,
 ) {
-  return handler.fetch(
-    new Request(`${ORIGIN}${path}`, { method, headers }),
-    env,
-    ctx,
-  );
+  const request = new Request(`${ORIGIN}${path}`, { method, headers });
+  if (clientAcceptEncoding !== undefined) {
+    Object.assign(request, { cf: { clientAcceptEncoding } });
+  }
+  const response = await handler.fetch(request, env, ctx);
+  await Promise.all(pendingWrites);
+  return response;
 }
 
 describe("asset worker", () => {
@@ -94,6 +151,71 @@ describe("asset worker", () => {
     expect(await response.text()).toBe("PLAIN-DTS-BYTES");
   });
 
+  it.each(["identity", "gzip", "br;q=0", ""])(
+    "uses the original client encoding %j when Cloudflare rewrites the header",
+    async (original) => {
+      const response = await get(
+        "/game/base/shapes/a.dts",
+        {
+          "Accept-Encoding": "br, gzip",
+        },
+        "GET",
+        original,
+      );
+      expect(response.headers.get("Content-Encoding")).toBeNull();
+      expect(await response.text()).toBe("PLAIN-DTS-BYTES");
+      expect(getCalls).toEqual(["game/base/shapes/a.dts"]);
+    },
+  );
+
+  it.each([
+    ["identity", "br", "identity", "br", "gzip", "identity"],
+    ["br", "identity", "br", "identity", "gzip", "br"],
+  ])(
+    "preserves bytes across cold and warm alternating clients (%j)",
+    async (...encodings) => {
+      for (const encoding of encodings) {
+        const response = await get(
+          "/game/base/shapes/a.dts",
+          {
+            "Accept-Encoding": "br, gzip",
+          },
+          "GET",
+          encoding,
+        );
+        const bytes = await wireBody(response);
+        expect(response.headers.get("Content-Encoding")).toBe(
+          encoding === "br" ? "br" : null,
+        );
+        expect(response.headers.get("Cache-Control")).toBe(
+          "public, max-age=7200",
+        );
+        expect(
+          (encoding === "br" ? brotliDecompressSync(bytes) : bytes).toString(),
+        ).toBe("PLAIN-DTS-BYTES");
+      }
+      // Both representations are served from cache after their first request.
+      expect(getCalls).toHaveLength(2);
+    },
+  );
+
+  it("ignores legacy cache entries that may have been encoded twice", async () => {
+    cacheStore.set(
+      `${ORIGIN}/game/base/shapes/a.dts.br`,
+      new NativeResponse(
+        brotliCompressSync(brotliCompressSync("PLAIN-DTS-BYTES")),
+        { headers: { "Content-Encoding": "br" } },
+      ),
+    );
+    const response = await get("/game/base/shapes/a.dts", {
+      "Accept-Encoding": "br",
+    });
+    expect(brotliDecompressSync(await wireBody(response)).toString()).toBe(
+      "PLAIN-DTS-BYTES",
+    );
+    expect(getCalls).toEqual(["game/base/shapes/a.dts.br"]);
+  });
+
   it("falls back to the original when the sibling is missing", async () => {
     const response = await get("/game/base/shapes/lonely.dts", {
       "Accept-Encoding": "br",
@@ -104,6 +226,9 @@ describe("asset worker", () => {
       "game/base/shapes/lonely.dts.br",
       "game/base/shapes/lonely.dts",
     ]);
+    expect(putKeys).toEqual([]);
+    // The fallback must not make the missing .br file appear to exist.
+    expect((await get("/game/base/shapes/lonely.dts.br")).status).toBe(404);
   });
 
   it("never swaps in a sibling for a format that has none", async () => {
@@ -115,6 +240,18 @@ describe("asset worker", () => {
     // A synthetic key like `a.dts?__enc=br` is a url nothing ever purges.
     await get("/game/base/shapes/a.dts", { "Accept-Encoding": "br" });
     expect(putKeys).toEqual([`${ORIGIN}/game/base/shapes/a.dts.br`]);
+  });
+
+  it("preserves escaped path characters and query parameters in the cache key", async () => {
+    bucket["game/base/shapes/a#b?c.dts.br"] =
+      bucket["game/base/shapes/a.dts.br"];
+    await get("/game/base/shapes/a%23b%3Fc.dts?v=3", {
+      "Accept-Encoding": "br",
+    });
+    expect(getCalls).toEqual(["game/base/shapes/a#b?c.dts.br"]);
+    expect(putKeys).toEqual([
+      `${ORIGIN}/game/base/shapes/a%23b%3Fc.dts.br?v=3`,
+    ]);
   });
 
   it("caches the plain variant under the plain url", async () => {
@@ -147,6 +284,39 @@ describe("asset worker", () => {
     const bad = await get("/game/base/shapes/a.dts", {}, "DELETE");
     expect(bad.status).toBe(405);
     expect(bad.headers.get("Access-Control-Allow-Origin")).toBe("*");
+  });
+
+  it("passes through a directly requested .br with its stored encoding", async () => {
+    // Stored Content-Encoding needs the same handling as a negotiated sibling.
+    const response = await get("/game/base/shapes/a.dts.br", {
+      "Accept-Encoding": "identity",
+    });
+    expect(response.status).toBe(200);
+    expect(response.headers.get("Content-Encoding")).toBe("br");
+    expect(response.headers.get("Cache-Control")).toBe("public, max-age=7200");
+    // Fetched directly; no sibling lookup for something already a sibling.
+    expect(getCalls).toEqual(["game/base/shapes/a.dts.br"]);
+    expect(brotliDecompressSync(await wireBody(response)).toString()).toBe(
+      "PLAIN-DTS-BYTES",
+    );
+    const hit = await get("/game/base/shapes/a.dts.br", {
+      "Accept-Encoding": "br",
+    });
+    expect(hit.headers.get("Cache-Control")).toBe("public, max-age=7200");
+    expect(brotliDecompressSync(await wireBody(hit)).toString()).toBe(
+      "PLAIN-DTS-BYTES",
+    );
+    expect(getCalls).toHaveLength(1);
+  });
+
+  it("stores a single Brotli encoding in its own cache", async () => {
+    await get("/game/base/shapes/a.dts", { "Accept-Encoding": "br" });
+    const stored = cacheStore.get(`${ORIGIN}/game/base/shapes/a.dts.br`);
+    expect(stored).toBeDefined();
+    expect(stored!.headers.get("Cache-Control")).toBe("public, max-age=7200");
+    expect(
+      brotliDecompressSync(Buffer.from(await stored!.arrayBuffer())).toString(),
+    ).toBe("PLAIN-DTS-BYTES");
   });
 
   it("advertises Vary and range support", async () => {
@@ -199,6 +369,25 @@ describe("asset worker", () => {
       "application/octet-stream",
     );
     expect(await response.text()).toBe("");
+  });
+
+  it("keeps the Brotli GET cached when serving cold and warm HEADs", async () => {
+    for (let i = 0; i < 2; i++) {
+      const response = await get(
+        "/game/base/shapes/a.dts",
+        { "Accept-Encoding": "br" },
+        "HEAD",
+      );
+      expect(response.headers.get("Content-Encoding")).toBe("br");
+      expect(await response.text()).toBe("");
+    }
+    const response = await get("/game/base/shapes/a.dts", {
+      "Accept-Encoding": "br",
+    });
+    expect(brotliDecompressSync(await wireBody(response)).toString()).toBe(
+      "PLAIN-DTS-BYTES",
+    );
+    expect(getCalls).toHaveLength(1);
   });
 
   it("turns a bucket failure into a 502 rather than a stack", async () => {
