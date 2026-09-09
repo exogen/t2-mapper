@@ -124,7 +124,11 @@ vi.mock("../collision/worldCollision", () => ({
     p[2] < 0 || world.boxes.some((box) => inside(p, box, radius)),
 }));
 
-import { midAim, stagePlan } from "./stage";
+import { midAim, stagePlan, stageShots } from "./stage";
+import type { FreeSpaceGrid } from "./freeSpace";
+import { cameraBuried, shotPoseAt, subjectVisible } from "./shotPath";
+import { Vector3 } from "three";
+import { orbitPullbackDir } from "../stream/streamHelpers";
 
 const ANCHOR: DirectorVec3 = [0, 0, 1];
 
@@ -199,6 +203,145 @@ function enclose(): void {
 
 beforeEach(() => {
   world.boxes = [];
+});
+
+/** A surveyed cell: geometry is still checked when it is used. */
+function gridAt(spot: DirectorVec3): FreeSpaceGrid {
+  return {
+    step: 6,
+    lo: spot,
+    anchors: [],
+    nx: 1,
+    ny: 1,
+    nz: 1,
+    free: new Uint8Array([1]),
+    tested: new Uint8Array([1]),
+    assetRadius: 100,
+    usable: 1,
+    total: 1,
+    buildMs: 0,
+  };
+}
+
+function indoorFollow(): Extract<Shot, { kind: "followFlag" }> {
+  return {
+    kind: "followFlag",
+    slot: 1,
+    distance: 25,
+    pitch: 0.5,
+    startSec: 0,
+    endSec: 10,
+    transitionIn: "cut",
+    reason: "loose flag",
+  };
+}
+
+describe("staging with the director's free-space grid", () => {
+  it.each([0.6, 0, -0.2])(
+    "uses a room cell below a fixed subject (planned lift %s)",
+    (heightFactor) => {
+      // The subject is elevated in a low room. The usable camera is
+      // below it, where the old positive-height ring search never looks.
+      enclose();
+      const pos: DirectorVec3 = [0, 0, 5];
+      const spot: DirectorVec3 = [3, 0, 3];
+      const shot = fixedShot({ center: pos, angularSpeed: 0.2, heightFactor });
+      const shots = [shot];
+      const report = stageShots(
+        shots,
+        [0],
+        makeDataset(() => pos),
+        gridAt(spot),
+      );
+      expect(report.gridFixed).toBe(1);
+      expect(shots[0]).toBe(shot);
+      for (const f of [0, 0.5, 1]) {
+        const pose = shotPoseAt(shot, f)!;
+        pose.eye.forEach((value, i) => expect(value).toBeCloseTo(spot[i]));
+        expect(cameraBuried(pose.eye)).toBe(false);
+        expect(subjectVisible(pose.eye, pose.aim)).toBe(true);
+      }
+    },
+  );
+
+  it("repairs an indoor follow without turning it into a fixed room view", () => {
+    enclose();
+    const dataset = makeDataset((t) => [0, t / 10, 1]);
+    const shot = indoorFollow();
+    const shots: Shot[] = [shot];
+    const report = stageShots(shots, [0], dataset, gridAt([3, 0, 3]));
+    expect(report.gridFollow).toBe(1);
+    expect(shots[0]).toBe(shot);
+    expect(shot.aim?.mode).toBe("hold");
+    const yaw = shot.aim?.mode === "hold" ? shot.aim.yaw : NaN;
+    const offset = orbitPullbackDir(
+      yaw,
+      shot.pitch!,
+      new Vector3(),
+    ).multiplyScalar(shot.distance!);
+    for (const sample of dataset.flagSamples) {
+      const aim: DirectorVec3 = [
+        sample.pos[0],
+        sample.pos[1],
+        sample.pos[2] + 1.2,
+      ];
+      const eye: DirectorVec3 = [
+        aim[0] + offset.z,
+        aim[1] + offset.x,
+        aim[2] + offset.y,
+      ];
+      expect(cameraBuried(eye)).toBe(false);
+      expect(subjectVisible(eye, aim)).toBe(true);
+    }
+  });
+
+  it("rejects a follow offset that fits at the start but moves into a wall", () => {
+    enclose();
+    const shots: Shot[] = [indoorFollow()];
+    const dataset = makeDataset((t) => [t / 5, 0, 1]);
+    const report = stageShots(shots, [0], dataset, gridAt([3, 0, 3]));
+    expect(report.gridFollow).toBe(0);
+    expect(report.followConverted).toBe(1);
+  });
+
+  it("respects an explicit follow distance floor in a small room", () => {
+    enclose();
+    const shot = { ...indoorFollow(), minDistance: 15 };
+    const shots: Shot[] = [shot];
+    const report = stageShots(
+      shots,
+      [0],
+      makeDataset(() => ANCHOR),
+      gridAt([3, 0, 3]),
+    );
+    expect(report.gridFollow).toBe(0);
+    expect(shots[0]).toBe(shot);
+    expect(shot.distance).toBe(25);
+  });
+
+  it("rechecks cells against geometry that changed since the grid was built", () => {
+    enclose();
+    world.boxes.push({ min: [2.5, -1, 2], max: [3.5, 1, 4] });
+    const report = stageShots(
+      [indoorFollow()],
+      [0],
+      makeDataset(() => ANCHOR),
+      gridAt([3, 0, 3]),
+    );
+    expect(report.gridFollow).toBe(0);
+  });
+
+  it("falls back when this stream has no grid, without borrowing another's", () => {
+    enclose();
+    const dataset = makeDataset(() => ANCHOR);
+    expect(
+      stageShots([indoorFollow()], [0], dataset, gridAt([3, 0, 3])).gridFollow,
+    ).toBe(1);
+    const shots: Shot[] = [indoorFollow()];
+    const report = stageShots(shots, [0], dataset);
+    expect(report.gridFollow).toBe(0);
+    expect(report.followConverted).toBe(1);
+  });
 });
 
 describe("stagePlan", () => {

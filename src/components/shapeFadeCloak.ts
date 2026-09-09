@@ -1,3 +1,4 @@
+import { DTSShape } from "../dts/dtsModel";
 /**
  * ShapeBase fade and cloak rendering, shared by shapes and players.
  *
@@ -67,6 +68,8 @@ export interface FadeCloakState {
  * `root`. Meshes under a mounted image root follow the mounted-image
  * rule; everything else follows the shape rule.
  */
+const lateFade = new WeakMap<DTSShape, (node: Object3D) => void>();
+
 export function applyFadeAndCloak(
   root: Object3D,
   fadeVal: number,
@@ -102,8 +105,7 @@ export function applyFadeAndCloak(
       ud._baseFadeTransparent = mat.transparent ?? false;
       ud._originalMap = mat.map;
       // Originally-translucent materials keep their own texture during cloak.
-      // Detect via alphaTest (organic/Translucent cutout) or non-normal blending
-      // (Additive). These match how createMaterialFromFlags sets up materials.
+      // Include cutouts and non-normal blending as well as alpha blending.
       ud._isOriginallyTranslucent =
         (ud._baseFadeTransparent as boolean) ||
         mat.alphaTest > 0 ||
@@ -112,7 +114,17 @@ export function applyFadeAndCloak(
     const baseOpacity = ud._baseFadeOpacity as number;
     const baseTransparent = ud._baseFadeTransparent as boolean;
 
-    const mountedCloakable = mountedMeshes.get(node);
+    let mountedCloakable = mountedMeshes.get(node);
+    // A lazy part may not exist when the frame's mounted-mesh map is collected.
+    if (mountedCloakable === undefined) {
+      for (let parent = node.parent; parent; parent = parent.parent) {
+        const mount = mounted.find((entry) => entry.root === parent);
+        if (mount) {
+          mountedCloakable = mount.cloakable;
+          break;
+        }
+      }
+    }
     const alpha =
       mountedCloakable === undefined
         ? shapeAlpha
@@ -145,6 +157,11 @@ export function applyFadeAndCloak(
   };
   const walk = (node: Object3D) => {
     if (node !== root && node.userData.objectMount) return;
+    if (node instanceof DTSShape) {
+      if (!lateFade.has(node))
+        node.onMeshAdded((mesh) => lateFade.get(node)?.(mesh));
+      lateFade.set(node, applyToMesh);
+    }
     applyToMesh(node);
     for (const child of node.children) walk(child);
   };

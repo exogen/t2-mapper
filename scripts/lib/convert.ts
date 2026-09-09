@@ -1,22 +1,12 @@
 /**
- * The asset conversions the app depends on: .dif/.dts → .glb via Blender
- * (one invocation per kind, all files at once) and .wav → .m4a via
- * ffmpeg. Converted files sit beside their sources; the manifest resolves
+ * Audio conversion: .wav → .m4a via ffmpeg. Converted files sit beside their sources; the manifest resolves
  * them by swapping the extension.
  */
 import { execFileSync } from "node:child_process";
 import fs from "node:fs/promises";
 import { derivedPath } from "./assets";
 
-export const BLENDER_PATH =
-  process.env.BLENDER_PATH ||
-  "/Applications/Blender.app/Contents/MacOS/Blender";
 export const FFMPEG_PATH = process.env.FFMPEG_PATH || "ffmpeg";
-
-const BLENDER_SCRIPTS = {
-  dif: "scripts/blender/dif2gltf.py",
-  dts: "scripts/blender/dts2gltf.py",
-} as const;
 
 const toolProbes = new Map<string, boolean>();
 
@@ -62,19 +52,6 @@ export async function globSources(pattern: string): Promise<string[]> {
   const out: string[] = [];
   for await (const file of fs.glob(pattern)) out.push(file);
   return out.sort();
-}
-
-/** Blender converts every file in one background run; output streams through. */
-export function convertWithBlender(
-  kind: keyof typeof BLENDER_SCRIPTS,
-  files: string[],
-): void {
-  if (files.length === 0) return;
-  execFileSync(
-    BLENDER_PATH,
-    ["--background", "--python", BLENDER_SCRIPTS[kind], "--", ...files],
-    { stdio: "inherit" },
-  );
 }
 
 export interface WavConvertOptions {

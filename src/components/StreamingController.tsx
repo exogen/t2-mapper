@@ -1,3 +1,7 @@
+import {
+  applyStreamEntityPose,
+  streamRenderFrame,
+} from "../stream/interpolateEntity";
 import { createLogger } from "../logger";
 import { orbitSpringDebug } from "../state/cameraDebug";
 import { useCallback, useEffect, useRef } from "react";
@@ -291,7 +295,6 @@ function getEntityMap(snapshot: StreamSnapshot): EntityById {
 const _tmpVec = new Vector3();
 const _interpQuatA = new Quaternion();
 const _interpQuatB = new Quaternion();
-const _billboardFlip = new Quaternion(0, 1, 0, 0); // 180° around Y
 const _orbitDir = new Vector3();
 const _orbitTarget = new Vector3();
 const _orbitCandidate = new Vector3();
@@ -699,6 +702,9 @@ export function StreamingController({
     // Imperative position interpolation via the shared entity root.
     const currentEntities = getEntityMap(renderCurrent);
     const previousEntities = getEntityMap(renderPrev);
+    streamRenderFrame.current = currentEntities;
+    streamRenderFrame.previous = previousEntities;
+    streamRenderFrame.interpT = interpT;
     const renderEntities = gameEntityStore.getState().streamEntities;
     const root = streamPlaybackStore.getState().root;
     if (root) {
@@ -709,75 +715,14 @@ export function StreamingController({
         if (renderEntity && isSceneEntity(renderEntity)) {
           continue;
         }
-        // Link beams (ELF/repair) have no ghost position at all — they
-        // draw themselves in world space between two live objects, and
-        // manage their own visibility. The no-position hide below would
-        // blank them permanently.
-        if (
-          renderEntity?.renderType === "LinkBeam" ||
-          renderEntity?.renderType === "ShockLance"
-        ) {
-          child.visible = true;
-          continue;
-        }
-
-        const entity = currentEntities.get(child.name);
-        // An entity removed from the snapshot may still be mounted until
-        // React commits the removal; hold it at its last keyframe position.
-        if (!entity) {
-          const kfs =
-            renderEntity && "keyframes" in renderEntity
-              ? renderEntity.keyframes
-              : undefined;
-          if (kfs?.[0]?.position) {
-            const kf = kfs[0];
-            child.visible = true;
-            child.position.set(kf.position[1], kf.position[2], kf.position[0]);
-            continue;
-          }
-        }
-        if (!entity?.position || (entity.fadeVal === 0 && !entity.cloakLevel)) {
-          child.visible = false;
-          continue;
-        }
-
-        child.visible = true;
-        const previousEntity = previousEntities.get(child.name);
-        if (previousEntity?.position) {
-          const px = previousEntity.position[0];
-          const py = previousEntity.position[1];
-          const pz = previousEntity.position[2];
-          const cx = entity.position[0];
-          const cy = entity.position[1];
-          const cz = entity.position[2];
-          const ix = px + (cx - px) * interpT;
-          const iy = py + (cy - py) * interpT;
-          const iz = pz + (cz - pz) * interpT;
-          child.position.set(iy, iz, ix);
-        } else {
-          child.position.set(
-            entity.position[1],
-            entity.position[2],
-            entity.position[0],
-          );
-        }
-
-        if (entity.faceViewer) {
-          child.quaternion
-            .copy(state.camera.quaternion)
-            .multiply(_billboardFlip);
-        } else if (entity.visual?.kind === "tracer") {
-          child.quaternion.identity();
-        } else if (entity.rotation) {
-          if (previousEntity?.rotation) {
-            _interpQuatA.set(...previousEntity.rotation);
-            _interpQuatB.set(...entity.rotation);
-            _interpQuatA.slerp(_interpQuatB, interpT);
-            child.quaternion.copy(_interpQuatA);
-          } else {
-            child.quaternion.set(...entity.rotation);
-          }
-        }
+        applyStreamEntityPose(
+          child,
+          renderEntity,
+          currentEntities.get(child.name),
+          previousEntities.get(child.name),
+          interpT,
+          state.camera,
+        );
       }
     }
 

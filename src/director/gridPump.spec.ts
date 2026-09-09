@@ -4,7 +4,7 @@
  * froze it for the length of every fly-by, and the decision after the
  * fly-by then had no grid to decide with.
  */
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   DirectorDataset,
   DirectorFlagSample,
@@ -13,21 +13,37 @@ import type {
   MatchFacts,
 } from "./types";
 
-const build = vi.hoisted(() => ({ steps: 0 }));
+const build = vi.hoisted(() => ({ steps: 0, completeAfter: Infinity }));
 
 vi.mock("./freeSpace", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./freeSpace")>()),
-  // A build that never finishes, so every tick has a slice to do.
-  createFreeSpaceBuild: () => ({
-    grid: null,
-    step: () => {
-      build.steps++;
-      return false;
-    },
-  }),
+  createFreeSpaceBuild: () => {
+    let steps = 0;
+    return {
+      grid: {
+        step: 6,
+        lo: [0, 0, 0],
+        anchors: [],
+        nx: 0,
+        ny: 0,
+        nz: 0,
+        free: new Uint8Array(),
+        tested: new Uint8Array(),
+        assetRadius: 100,
+        usable: 0,
+        total: 0,
+        buildMs: 0,
+      },
+      step: () => {
+        build.steps++;
+        return ++steps >= build.completeAfter;
+      },
+    };
+  },
 }));
 
-const { planShotsCausal } = await import("./switcher");
+const { planShotsCausal, createSwitcherStream } = await import("./switcher");
+const { CausalView } = await import("./causalView");
 
 const STAND_1: DirectorVec3 = [0, 0, 100];
 const STAND_2: DirectorVec3 = [800, 0, 100];
@@ -106,6 +122,12 @@ function dataset(): DirectorDataset {
   };
 }
 
+beforeEach(() => {
+  build.steps = 0;
+  // Normally never finishes, so every tick has a slice to do.
+  build.completeAfter = Infinity;
+});
+
 describe("building the grid while a shot is on air", () => {
   it("pumps a slice on every pre-match tick, not only when choosing", () => {
     build.steps = 0;
@@ -114,5 +136,42 @@ describe("building the grid while a shot is on air", () => {
     // comes into the lookahead (73s). The filler chooses a few shots in
     // that span; pumped only there, this was in the single digits.
     expect(build.steps).toBeGreaterThanOrEqual(140);
+  });
+
+  it("keeps pumping after kickoff and when joining a running match", () => {
+    build.steps = 0;
+    const ds = dataset();
+    ds.events = [
+      { timeSec: 0, type: "match-start", description: "Match started" },
+    ];
+    ds.matchFacts!.matchStartSec = 0;
+    ds.matchFacts!.matchSeenRunningSec = 0;
+    const stream = createSwitcherStream(new CausalView(ds));
+    stream.advanceTo(2, ds);
+    expect(build.steps).toBe(0); // World arrival plus the usual settle.
+    stream.advanceTo(4, ds);
+    expect(build.steps).toBe(4); // 2.5, 3, 3.5, 4: one slice per tick.
+    expect(stream.freeSpace).toBeNull(); // No blocking wait for completion.
+    stream.advanceTo(6, ds);
+    expect(build.steps).toBe(8);
+  });
+
+  it("publishes only a finished grid and keeps each stream's grid separate", () => {
+    build.completeAfter = 2;
+    const ds = dataset();
+    const first = createSwitcherStream(new CausalView(ds));
+    const second = createSwitcherStream(new CausalView(ds));
+    first.advanceTo(2.5, ds);
+    expect(first.freeSpace).toBeNull();
+    second.advanceTo(3, ds);
+    expect(second.freeSpace).not.toBeNull();
+    expect(first.freeSpace).toBeNull();
+    first.advanceTo(3, ds);
+    expect(first.freeSpace).not.toBeNull();
+    expect(first.freeSpace).not.toBe(second.freeSpace);
+    const ready = first.freeSpace;
+    first.advanceTo(6, ds);
+    expect(first.freeSpace).toBe(ready);
+    expect(build.steps).toBe(4); // Completed grids are reused.
   });
 });

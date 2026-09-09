@@ -1,6 +1,7 @@
 import { createStore } from "zustand/vanilla";
 import type { Group } from "three";
 import type { StreamingPlayback } from "../stream/types";
+import { streamRenderFrame } from "../stream/interpolateEntity";
 export type DemoCameraMode =
   "original" | "freeFly" | "orbitOverride" | "firstPersonOverride";
 
@@ -130,6 +131,9 @@ export const streamPlaybackStore = createStore<StreamPlaybackState>()(() => ({
 /** Reset all streaming playback state. Called when streaming ends. */
 export function resetStreamPlayback(): void {
   streamClock.time = 0;
+  streamRenderFrame.current = null;
+  streamRenderFrame.previous = null;
+  streamRenderFrame.interpT = 0;
   streamPlaybackStore.setState({
     playback: null,
     cameraMode: "original",

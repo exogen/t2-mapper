@@ -1,6 +1,30 @@
+import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { Group, Mesh } from "three";
+import { getActualResourceKey, getSourceAndPath } from "../manifest";
+import { createDIFTestBuffer } from "../dif/difTestFixtures";
+import { createDTSTestBuffer } from "../dts/dtsTestFixtures";
+import { DTSLoader } from "../dts/dtsLoader";
+import {
+  interiorPlacement,
+  streamEntityPlacement,
+  SHAPE_MODEL_ROTATION_Y,
+} from "./placement";
+import { createDIFModel } from "../dif/difLoader";
+import {
+  interiorColliderMeshes,
+  staticShapeColliderMeshes,
+} from "./colliderPolicy";
+import { IDENTITY_MATRIX } from "../scene/types";
 import { describe, expect, it } from "vitest";
 import { HeadlessWorld, type WorldEntity } from "./headlessWorld";
-import { getColliderDump } from "../collision/worldCollision";
+import {
+  getColliderDump,
+  pointObstructed,
+  registerInteriorCollider,
+  registerStaticShapeCollider,
+} from "../collision/worldCollision";
 import { getWaterBodies } from "../collision/waterLevel";
 
 /**
@@ -109,5 +133,140 @@ describe("HeadlessWorld slot reuse", () => {
     const bodies = await world.run(() => getWaterBodies());
     expect(bodies).toHaveLength(1);
     expect(bodies[0].surfaceZ).toBe(90);
+  });
+});
+
+describe("HeadlessWorld native DTS collision", () => {
+  it.each(["TSStatic", "StaticShape"])(
+    "loads tree collision for %s with browser-equivalent placement",
+    async (type) => {
+      const root = await mkdtemp(path.join(tmpdir(), "native-dts-collision-"));
+      try {
+        const name = "borg18.dts";
+        const [source, actual] = getSourceAndPath(
+          getActualResourceKey(`shapes/${name}`),
+        );
+        const file = path.join(
+          root,
+          ...(source ? ["@vl2", source] : []),
+          actual,
+        );
+        const buffer = createDTSTestBuffer(
+          24,
+          type === "TSStatic" ? "Collision-1" : "LOS-9",
+        );
+        await mkdir(path.dirname(file), { recursive: true });
+        await writeFile(file, new Uint8Array(buffer));
+        const entity: WorldEntity = {
+          id: "native",
+          ghostIndex: 5,
+          className: type,
+          shapeHint: name,
+          sceneData: { shapeName: name },
+          position: [1, 2, 3],
+          rotation: [0, 0, Math.SQRT1_2, Math.SQRT1_2],
+          scale: [0.5, 2, 3],
+        };
+        const headlessWorld = new HeadlessWorld({ assetRoot: root });
+        await headlessWorld.sync([entity]);
+        expect(headlessWorld.stats().failedAssets).toBe(0);
+        const headless = await headlessWorld.run(() => getColliderDump());
+        expect(headless).toHaveLength(1);
+
+        const placement = streamEntityPlacement(entity);
+        const group = new Group(),
+          model = new Group();
+        group.position.set(...placement.position);
+        group.quaternion.set(...placement.rotation);
+        group.scale.set(...entity.scale!);
+        model.rotation.y = SHAPE_MODEL_ROTATION_Y;
+        group.add(model);
+        const instance = new DTSLoader().parse(buffer).scene.clone(true);
+        model.add(instance);
+        const browserWorld = new HeadlessWorld();
+        await browserWorld.run(() =>
+          registerStaticShapeCollider(
+            "ghost:5",
+            staticShapeColliderMeshes({ root: instance, type })!,
+          ),
+        );
+        expect(await browserWorld.run(() => getColliderDump())).toEqual(
+          headless,
+        );
+      } finally {
+        await rm(root, { recursive: true, force: true });
+      }
+    },
+  );
+});
+
+describe("HeadlessWorld native DIF", () => {
+  it("loads a DIF without a GLB and applies the same placement as the browser", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "native-dif-"));
+    try {
+      const name = "bbunk1.dif";
+      const [source, actual] = getSourceAndPath(
+        getActualResourceKey(`interiors/${name}`),
+      );
+      const file = path.join(root, ...(source ? ["@vl2", source] : []), actual);
+      const { buffer } = createDIFTestBuffer({
+        collision: true,
+        vehicleCollision: "box",
+      });
+      await mkdir(path.dirname(file), { recursive: true });
+      await writeFile(file, new Uint8Array(buffer));
+      const scene = {
+        className: "InteriorInstance" as const,
+        ghostIndex: 5,
+        interiorFile: name,
+        transform: { ...IDENTITY_MATRIX, position: { x: 1, y: 2, z: 3 } },
+        scale: { x: 1, y: 2, z: 3 },
+        showTerrainInside: false,
+        skinBase: "base",
+        alarmState: false,
+      };
+      const world = new HeadlessWorld({ assetRoot: root });
+      await world.sync([
+        {
+          id: "native",
+          ghostIndex: 5,
+          className: "InteriorInstance",
+          sceneData: scene,
+        },
+      ]);
+      expect(world.stats().failedAssets).toBe(0);
+      const headless = await world.run(() => getColliderDump());
+      expect(headless).toHaveLength(1);
+      expect(headless[0].worldBoxMin).toEqual([2, -3, 1]);
+      expect(headless[0].worldBoxMax).toEqual([6, 3, 4]);
+      const probeHulls = () => [
+        pointObstructed([3, 4, 0], 0.1),
+        pointObstructed([3, 4, 0], 0.1, { interiorHullType: "vehicle" }),
+      ];
+      expect(await world.run(probeHulls)).toEqual([true, false]);
+
+      // Mirror InteriorInstance's component groups, using the shared loader.
+      const browserWorld = new HeadlessWorld();
+      const group = new Group();
+      const placement = interiorPlacement(scene);
+      group.position.set(...placement.position);
+      group.quaternion.copy(placement.quaternion);
+      group.scale.set(...placement.scale);
+      const modelGroup = new Group();
+      group.add(modelGroup);
+      const model = createDIFModel(buffer);
+      for (const mesh of model.surfaceMeshes)
+        modelGroup.add(new Mesh(mesh.geometry, mesh.material));
+      await browserWorld.run(() =>
+        registerInteriorCollider(
+          "ghost:5",
+          interiorColliderMeshes(modelGroup, model),
+        ),
+      );
+      expect(await browserWorld.run(() => getColliderDump())).toEqual(headless);
+      expect(await browserWorld.run(probeHulls)).toEqual([true, false]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 });

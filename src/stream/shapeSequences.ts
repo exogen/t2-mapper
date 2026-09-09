@@ -2,8 +2,8 @@
  * Sequence durations of shapes the app has loaded, keyed by DTS name. This is
  * the runtime stand-in for the engine's preloaded TSShape: ExplosionData
  * preloads explosionShape, so Explosion::explode can read the "ambient"
- * sequence's duration. Filled wherever a shape GLB is parsed — the asset
- * prefetcher (GLB JSON chunk) and useStaticShape (loaded GLTF clips).
+ * sequence's duration. ShapeLoader fills this from native animation clips
+ * for both background prefetch and on-demand loading.
  */
 
 const sequencesByShape = new Map<string, ReadonlyMap<string, number>>();

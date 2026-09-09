@@ -49,7 +49,6 @@ import type {
   SceneWaterBlock,
 } from "../scene/types";
 import {
-  INTERIOR_MODEL_ROTATION_Y,
   SHAPE_MODEL_ROTATION_Y,
   forceFieldCollider,
   interiorPlacement,
@@ -63,13 +62,37 @@ import {
   OCCLUDER_SHAPE_TYPES,
   staticShapeColliderMeshes,
 } from "./colliderPolicy";
-import { glbMeshes, loadGlbScene } from "./nodeGltf";
-import { isOrganicShape } from "../organicShapes";
+import { loadDtsScene } from "../dts/nodeDts";
+import { createDIFModel, type DIFModel } from "../dif/difLoader";
+
 import {
   createCollisionState,
   runInCollisionWorld,
   type CollisionState,
 } from "./nodeCollisionContext";
+
+const difCache = new Map<string, Promise<DIFModel>>();
+
+function loadDIF(file: string): Promise<DIFModel> {
+  let pending = difCache.get(file);
+  if (!pending) {
+    pending = readFile(file)
+      .then((bytes) =>
+        createDIFModel(
+          bytes.buffer.slice(
+            bytes.byteOffset,
+            bytes.byteOffset + bytes.byteLength,
+          ) as ArrayBuffer,
+        ),
+      )
+      .catch((error) => {
+        difCache.delete(file);
+        throw error;
+      });
+    difCache.set(file, pending);
+  }
+  return pending;
+}
 
 const log = createLogger("headlessWorld");
 
@@ -122,7 +145,7 @@ export class HeadlessWorld {
     { kind: ColliderKind; occupant: string }
   >();
   /** Adds that are still loading. A live booth ticks far faster than a
-   *  GLB loads, and `registered` is only written after the await — so
+   *  DTS loads, and `registered` is only written after the await — so
    *  without this, re-entrant syncs re-load and re-BVH everything they
    *  have already started. Measured at exactly 3x for three overlapping
    *  syncs before this existed. */
@@ -172,7 +195,7 @@ export class HeadlessWorld {
    * Register what is new, drop what left, update what changed.
    *
    * Safe to call every tick: registration is keyed by entity id and
-   * loaded GLBs are cached, so a steady-state call does no I/O.
+   * loaded DTSs are cached, so a steady-state call does no I/O.
    */
   async sync(entities: Iterable<WorldEntity>): Promise<void> {
     return this.run(() => this.syncInWorld(entities));
@@ -353,34 +376,30 @@ export class HeadlessWorld {
     occupant: string,
     scene: SceneInteriorInstance,
   ): Promise<void> {
-    const file = this.localPath(`interiors/${scene.interiorFile}`).replace(
-      /\.dif$/i,
-      ".glb",
-    );
-    const glb = await this.loadOrWarn(file, scene.interiorFile);
-    if (!glb) return;
+    const file = this.localPath(`interiors/${scene.interiorFile}`);
+    let interior: DIFModel;
+    try {
+      interior = await loadDIF(file);
+    } catch (err) {
+      if (!this.failed.has(scene.interiorFile)) {
+        this.failed.add(scene.interiorFile);
+        log.warn(
+          "could not load %s: %s",
+          scene.interiorFile,
+          (err as Error).message,
+        );
+      }
+      return;
+    }
 
-    // Mirror the browser's two-group structure exactly: an outer group
-    // carrying the ghost transform, and an inner group holding the
-    // fixed model rotation. The meshes are re-parented FLAT under the
-    // inner group with identity local transforms, because that is what
-    // `<mesh geometry={node.geometry} />` does in InteriorInstance —
-    // the GLB's own node transforms are discarded there, and copying
-    // them here would offset every collider.
+    // Native geometry already uses the scene's (y, z, x) axis order.
     const { position, quaternion, scale } = interiorPlacement(scene);
     const root = new Group();
     root.position.set(...position);
     root.quaternion.copy(quaternion);
     root.scale.set(...scale);
 
-    const model = new Group();
-    model.rotation.set(0, INTERIOR_MODEL_ROTATION_Y, 0);
-    root.add(model);
-    for (const node of glbMeshes(glb)) {
-      model.add(new Mesh((node as Mesh).geometry));
-    }
-
-    const meshes = interiorColliderMeshes(model);
+    const meshes = interiorColliderMeshes(root, interior);
     registerInteriorCollider(id, meshes);
     this.registered.set(id, { kind: "interior", occupant });
     this.countGeometry(id, meshes);
@@ -398,21 +417,11 @@ export class HeadlessWorld {
         : (entity.shapeHint ?? entity.dataBlock);
     if (!shapeName) return;
 
-    // Vegetation never becomes a collider, so don't pay to load it.
-    // `staticShapeColliderMeshes` rejects it below anyway, but by then
-    // the mesh has already been fetched and decoded — wasted work that
-    // matters once assets come over the network per match rather than
-    // off local disk.
-    if (isOrganicShape(shapeName)) return;
+    const file = this.localPath(`shapes/${shapeName}`);
+    const shape = await this.loadOrWarn(file, shapeName);
+    if (!shape) return;
 
-    const file = this.localPath(`shapes/${shapeName}`).replace(
-      /\.dts$/i,
-      ".glb",
-    );
-    const glb = await this.loadOrWarn(file, shapeName);
-    if (!glb) return;
-
-    // Statics keep their GLB hierarchy (GenericShape renders the cloned
+    // Statics keep their DTS hierarchy (GenericShape renders the cloned
     // scene as-is and traverses it), so clone rather than flatten.
     //
     // Placement comes from the ENTITY, never from `sceneData.transform`
@@ -433,7 +442,7 @@ export class HeadlessWorld {
     const model = new Group();
     model.rotation.set(0, SHAPE_MODEL_ROTATION_Y, 0);
     root.add(model);
-    const instance = glb.clone(true);
+    const instance = shape.clone(true);
     model.add(instance);
 
     const meshes = staticShapeColliderMeshes({
@@ -441,7 +450,6 @@ export class HeadlessWorld {
       // Everything reaching here is an occluder class; `entityBridge`
       // maps unknown classNames to StaticShape, so match that.
       type: className === "TSStatic" ? "TSStatic" : "StaticShape",
-      shapeName,
     });
     if (!meshes) return;
     registerStaticShapeCollider(entity.id, meshes);
@@ -480,7 +488,7 @@ export class HeadlessWorld {
     name: string,
   ): Promise<Object3D | null> {
     try {
-      return await loadGlbScene(file);
+      return await loadDtsScene(file);
     } catch (err) {
       if (!this.failed.has(name)) {
         this.failed.add(name);

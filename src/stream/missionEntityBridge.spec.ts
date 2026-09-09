@@ -139,6 +139,34 @@ describe("mission-type visibility fidelity", () => {
 });
 
 describe("script-mounted images", () => {
+  it("retains inherited image offset and rotation for mounted and initial barrels", () => {
+    const { runtime, exec } = makeRuntime();
+    exec(`
+      datablock ShapeBaseImageData(OffsetBase) {
+        shapeFile = "turret_sentry_barrel.dts";
+        offset = "1 2 3";
+        rotation = "0 0 1 90";
+      };
+      datablock ShapeBaseImageData(OffsetImage) : OffsetBase { mountPoint = 4; };
+      new Turret(Mounted) {position = "0 0 0";};
+      new Turret(Initial) {position = "0 0 0";initialBarrel = "OffsetImage";};
+      Mounted.mountImage(OffsetImage, 0, true);
+    `);
+    const mounted = buildGameEntityFromMission(
+      runtime.getObjectByName("Mounted")!,
+      runtime,
+    ) as ShapeEntity;
+    const initial = buildGameEntityFromMission(
+      runtime.getObjectByName("Initial")!,
+      runtime,
+    ) as ShapeEntity;
+    const slot = mounted.imageSlots![0]!;
+    expect(slot.mountPoint).toBe(4);
+    expect(slot.mountOffset!.position).toEqual([-1, 3, 2]);
+    expect(slot.mountOffset!.quaternion[1]).toBeCloseTo(-Math.SQRT1_2);
+    expect(slot.mountOffset!.quaternion[3]).toBeCloseTo(Math.SQRT1_2);
+    expect(initial.imageSlots![0]!.mountOffset).toBe(slot.mountOffset);
+  });
   it("lifts imageSlots from _mountedImages", () => {
     const { runtime, exec } = makeRuntime();
     exec(`

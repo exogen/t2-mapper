@@ -1,3 +1,4 @@
+import { isProjectileEntity } from "../state/projectileEntities";
 import { memo, useMemo, useRef } from "react";
 import type { Group } from "three";
 import type {
@@ -23,20 +24,25 @@ import type { TorqueObject } from "../torqueScript";
 import { useRotation } from "./useRotation";
 import { lazyNamed } from "./lazyNamed";
 
+interface LazyEntityProps {
+  entity: GameEntity;
+  objectMounts?: Record<number, React.ReactNode>;
+}
+
 function createLazy(
   name: string,
   loader: () => Promise<{ [key: string]: unknown }>,
-): React.ComponentType<{ entity: GameEntity }> {
+): React.ComponentType<LazyEntityProps> {
   const LazyComponent = lazyNamed(
     name,
     loader as () => Promise<
-      Record<string, React.ComponentType<{ entity: GameEntity }>>
+      Record<string, React.ComponentType<LazyEntityProps>>
     >,
   );
-  const LazyComponentWithSuspense = ({ entity }: { entity: GameEntity }) => {
+  const LazyComponentWithSuspense = (props: LazyEntityProps) => {
     return (
-      <DebugSuspense name={`${name}:${entity.id}`}>
-        <LazyComponent entity={entity} />
+      <DebugSuspense name={`${name}:${props.entity.id}`}>
+        <LazyComponent {...props} />
       </DebugSuspense>
     );
   };
@@ -46,34 +52,6 @@ function createLazy(
 }
 
 const PlayerModel = createLazy("PlayerModel", () => import("./PlayerModel"));
-const ExplosionShape = createLazy(
-  "ExplosionShape",
-  () => import("./ExplosionShape"),
-);
-const TracerProjectile = createLazy(
-  "TracerProjectile",
-  () => import("./Projectiles"),
-);
-const BeamProjectile = createLazy(
-  "BeamProjectile",
-  () => import("./BeamProjectiles"),
-);
-const LinkBeamProjectile = createLazy(
-  "LinkBeamProjectile",
-  () => import("./BeamProjectiles"),
-);
-const ShockLanceProjectile = createLazy(
-  "ShockLanceProjectile",
-  () => import("./ShockLanceProjectile"),
-);
-const SpriteProjectile = createLazy(
-  "SpriteProjectile",
-  () => import("./Projectiles"),
-);
-const FlareProjectile = createLazy(
-  "FlareProjectile",
-  () => import("./FlareProjectile"),
-);
 const ForceFieldBare = createLazy(
   "ForceFieldBare",
   () => import("./ForceFieldBare"),
@@ -82,7 +60,8 @@ const AudioEmitter = createLazy("AudioEmitter", () => import("./AudioEmitter"));
 const WaterBlock = createLazy("WaterBlock", () => import("./WaterBlock"));
 
 /**
- * Renders a GameEntity by dispatching to the appropriate renderer based
+ * Renders persistent entities; transient visuals belong to Projectiles.
+ * Dispatches to the appropriate renderer based
  * on renderType. Does NOT handle positioning — the caller is responsible
  * for placing the entity group in world space (either declaratively for
  * mission mode or imperatively for streaming interpolation).
@@ -97,25 +76,12 @@ export const EntityRenderer = memo(function EntityRenderer({
 }) {
   switch (entity.renderType) {
     case "Shape":
+      if (isProjectileEntity(entity)) return null;
       return <ShapeEntity entity={entity} objectMounts={objectMounts} />;
     case "ForceFieldBare":
       return <ForceFieldBare entity={entity} />;
     case "Player":
-      return <PlayerModel entity={entity} />;
-    case "Explosion":
-      return <ExplosionShape entity={entity} />;
-    case "Tracer":
-      return <TracerProjectile entity={entity} />;
-    case "Sprite":
-      return <SpriteProjectile entity={entity} />;
-    case "Flare":
-      return <FlareProjectile entity={entity} />;
-    case "Beam":
-      return <BeamProjectile entity={entity} />;
-    case "LinkBeam":
-      return <LinkBeamProjectile entity={entity} />;
-    case "ShockLance":
-      return <ShockLanceProjectile entity={entity} />;
+      return <PlayerModel entity={entity} objectMounts={objectMounts} />;
     case "AudioEmitter":
       return (
         <AudioEnabled>
@@ -189,22 +155,27 @@ function ShapeEntity({
   // Merge image mounts (all 8 slots) with object mounts (players in vehicles).
   // Both use the same Mount bones. Each image slot's mount bone comes from
   // dataBlock->mountPoint (binary-verified), not from the slot index.
-  // Object mounts take priority over image mounts at the same bone.
+  // Objects and images can share a mount point; each retains its own state.
   const allMounts = useMemo(() => {
     const m: Record<number, React.ReactNode> = { ...objectMounts };
     const slots = entity.imageSlots;
     if (slots) {
       for (let i = 0; i < slots.length; i++) {
         const slot = slots[i];
-        if (!slot?.shapeName || slot.mountPoint in m) continue;
+        if (!slot?.shapeName) continue;
         m[slot.mountPoint] = (
-          <MountedShapeContent
-            shapeName={slot.shapeName}
-            imageDataBlockId={slot.dataBlockId}
-            entityId={entity.id}
-            skinName={slot.skinName}
-            slot={i}
-          />
+          <>
+            {m[slot.mountPoint]}
+            <MountedShapeContent
+              key={`image-${i}`}
+              shapeName={slot.shapeName}
+              imageDataBlockId={slot.dataBlockId}
+              entityId={entity.id}
+              skinName={slot.skinName}
+              slot={i}
+              mountOffset={slot.mountOffset}
+            />
+          </>
         );
       }
     }

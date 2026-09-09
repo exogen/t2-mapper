@@ -7,6 +7,8 @@ import {
   MeshLambertMaterial,
   MeshStandardMaterial,
   AdditiveBlending,
+  SubtractiveBlending,
+  FrontSide,
   Texture,
 } from "three";
 import type { Material } from "three";
@@ -161,9 +163,11 @@ varying vec2 vShapeSphereUV;
     "#include <fog_vertex>",
     `#include <fog_vertex>
 {
-  vec3 _eyePos = (modelViewMatrix * vec4(transformed, 1.0)).xyz;
+  vec3 _eyePos = mvPosition.xyz;
   #ifdef FLAT_SHADED
     vec3 _eyeN = vec3(0.0, 0.0, 1.0);
+  #elif defined(USE_SKINNING) || defined(USE_INSTANCING)
+    vec3 _eyeN = normalize(transformedNormal);
   #else
     vec3 _eyeN = normalize(normalMatrix * normal);
   #endif
@@ -208,8 +212,25 @@ if (shapeEnvMapActive && shapeReflectionAmount > 0.0) {
 
 type SingleMaterial =
   MeshStandardMaterial | MeshBasicMaterial | MeshLambertMaterial;
-type MaterialResult =
-  SingleMaterial | [MeshLambertMaterial, MeshLambertMaterial];
+
+// The instance renderer accepts only shaders installed here. This describes
+// shader compatibility without inspecting callback source or custom properties.
+const shapeShaderConfigurations = new WeakMap<
+  Material,
+  {
+    reflectionAmount: number;
+    beforeCompile: Material["onBeforeCompile"];
+  }
+>();
+export function getShapeShaderConfiguration(
+  material: Material,
+  beforeCompile = material.onBeforeCompile,
+) {
+  const configuration = shapeShaderConfigurations.get(material);
+  return configuration?.beforeCompile === beforeCompile
+    ? configuration.reflectionAmount
+    : undefined;
+}
 
 // Stable onBeforeCompile callbacks — using shared function references lets
 // Three.js's program cache match by identity rather than toString().
@@ -244,7 +265,8 @@ export function applyShapeShaderModifications(
   mat: MeshBasicMaterial | MeshLambertMaterial,
   envMapOptions?: { reflectionAmount: number },
 ): void {
-  const additive = mat.blending === AdditiveBlending;
+  const additive =
+    mat.blending === AdditiveBlending || mat.blending === SubtractiveBlending;
   if (!envMapOptions) {
     mat.onBeforeCompile =
       mat instanceof MeshLambertMaterial
@@ -252,6 +274,10 @@ export function applyShapeShaderModifications(
         : additive
           ? additiveBeforeCompile
           : basicBeforeCompile;
+    shapeShaderConfigurations.set(mat, {
+      reflectionAmount: 0,
+      beforeCompile: mat.onBeforeCompile,
+    });
     return;
   }
   const matType = mat instanceof MeshLambertMaterial ? "lambert" : "basic";
@@ -263,24 +289,40 @@ export function applyShapeShaderModifications(
     if (this instanceof MeshLambertMaterial) injectShapeLighting(this, shader);
     injectShapeEnvMap(shader, reflectionAmount);
   };
+  shapeShaderConfigurations.set(mat, {
+    reflectionAmount,
+    beforeCompile: mat.onBeforeCompile,
+  });
 }
 
 export function createMaterialFromFlags(
-  baseMaterial: MeshStandardMaterial,
+  baseMaterial: MeshStandardMaterial | MeshLambertMaterial,
   texture: Texture | null,
   flagNames: Set<string>,
-  isOrganic: boolean,
   vis: number = 1,
   animated: boolean = false,
   reflectionAmount: number = 0,
-): MaterialResult {
+): SingleMaterial {
   const isTranslucent = flagNames.has("Translucent");
   const isAdditive = flagNames.has("Additive");
+  const isSubtractive = flagNames.has("Subtractive");
   const isSelfIlluminating = flagNames.has("SelfIlluminating");
   // DTS per-object visibility: when vis < 1, the engine sets fadeSet=true which
   // forces the Translucent flag and renders with GL_SRC_ALPHA/GL_ONE_MINUS_SRC_ALPHA.
   // Animated vis also needs transparent materials so opacity can be updated per frame.
   const isFaded = vis < 1 || animated;
+  const isBlended = isAdditive || isSubtractive || isTranslucent || isFaded;
+  // TSMesh::initMaterials culls back faces; Translucent changes blending and
+  // depth writes, not sidedness. Sorted DTS meshes supply their own draw order.
+  const baseProps = {
+    map: texture,
+    vertexColors: baseMaterial.vertexColors,
+    side: FrontSide as typeof FrontSide,
+    transparent: isBlended,
+    depthWrite: !isBlended,
+    alphaTest: 0,
+    opacity: vis,
+  };
 
   // Env map reflectivity: gated only by NeverEnvMap flag and reflectionAmount
   // (which is 0 when the datablock doesn't have emap=true). Independent of
@@ -292,64 +334,18 @@ export function createMaterialFromFlags(
   // SelfIlluminating or Additive materials are unlit (use MeshBasicMaterial).
   // Additive materials without SelfIlluminating (e.g. explosion shells) must
   // also be unlit, otherwise they render black with no scene lighting.
-  if (isSelfIlluminating || isAdditive) {
-    const isBlended = isAdditive || isTranslucent || isFaded;
+  if (isSelfIlluminating || isAdditive || isSubtractive) {
     const mat = new MeshBasicMaterial({
-      map: texture,
-      side: 2, // DoubleSide
-      transparent: isBlended,
-      depthWrite: !isBlended,
-      alphaTest: 0,
+      ...baseProps,
       fog: true,
-      ...(isFaded && { opacity: vis }),
       ...(isAdditive && { blending: AdditiveBlending }),
+      ...(isSubtractive && { blending: SubtractiveBlending }),
     });
     applyShapeShaderModifications(mat, envMapOptions);
     return mat;
   }
 
-  // For organic shapes or Translucent flag, use alpha cutout with Lambert shading
-  // Tribes 2 used fixed-function GL with specular disabled - purely diffuse lighting
-  // MeshLambertMaterial gives us the diffuse-only look that matches the original
-  // Return [BackSide, FrontSide] materials to render in two passes - avoids z-fighting
-  if (isOrganic || isTranslucent) {
-    const baseProps = {
-      map: texture,
-      // When vis < 1, switch from alpha cutout to alpha blend (matching the engine's
-      // fadeSet behavior which forces GL_BLEND with no alpha test)
-      transparent: isFaded,
-      alphaTest: isFaded ? 0 : 0.5,
-      ...(isFaded && { opacity: vis, depthWrite: false }),
-      reflectivity: 0,
-    };
-    const backMat = new MeshLambertMaterial({
-      ...baseProps,
-      side: 1, // BackSide
-      // Push back faces slightly behind in depth to avoid z-fighting with front
-      polygonOffset: true,
-      polygonOffsetFactor: 1,
-      polygonOffsetUnits: 1,
-    });
-    const frontMat = new MeshLambertMaterial({
-      ...baseProps,
-      side: 0, // FrontSide
-    });
-    applyShapeShaderModifications(backMat, envMapOptions);
-    applyShapeShaderModifications(frontMat, envMapOptions);
-    return [backMat, frontMat];
-  }
-
-  // Default: use Lambert for diffuse-only lighting (matches Tribes 2)
-  const mat = new MeshLambertMaterial({
-    map: texture,
-    side: 2, // DoubleSide
-    reflectivity: 0,
-    ...(isFaded && {
-      transparent: true,
-      opacity: vis,
-      depthWrite: false,
-    }),
-  });
+  const mat = new MeshLambertMaterial({ ...baseProps, reflectivity: 0 });
   applyShapeShaderModifications(mat, envMapOptions);
   return mat;
 }

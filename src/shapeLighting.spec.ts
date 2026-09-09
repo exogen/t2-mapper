@@ -26,6 +26,9 @@ import {
   type ShapeLightProbe,
 } from "./shapeLighting";
 
+import { DIFMaterial } from "./dif/difLoader";
+import { DIFSurfaceFlags } from "./dif/dif";
+
 const TERRAIN_SIZE = 256;
 
 /** Flat heightmap at a uniform world height. */
@@ -42,15 +45,17 @@ function lightmap(r: number, g: number, b: number): DataTexture {
 
 /**
  * A 10 m interior box at a Three-space position, with lightmap UVs and a
- * lightmap the way InteriorMesh stores them.
+ * native DIF material holding the lightmap.
  */
-function interiorBox(position: Vector3, map: DataTexture | null): Mesh {
+function interiorBox(
+  position: Vector3,
+  map: DataTexture | null,
+): Mesh<BoxGeometry, DIFMaterial> {
   const geometry = new BoxGeometry(10, 10, 10);
   // One material slot, as a DIF surface mesh has.
   geometry.clearGroups();
   geometry.setAttribute("uv1", geometry.attributes.uv);
-  geometry.userData.lightMaps = [map];
-  const mesh = new Mesh(geometry);
+  const mesh = new Mesh(geometry, new DIFMaterial({ lightMap: map }));
   mesh.position.copy(position);
   mesh.updateMatrixWorld(true);
   return mesh;
@@ -84,6 +89,37 @@ describe("probeShapeLighting", () => {
     expect(out.color.b).toBeCloseTo(32 / 255, 3);
   });
 
+  it.each([
+    [0, 0, 1, 0, 0],
+    [1, 0, 0, 1, 0],
+    [0, 1, 0, 0, 1],
+    [1, 1, 1, 1, 1],
+    [0.5, 0.5, 0.5, 0.5, 0.5],
+  ])(
+    "clamps lightmap edges at (%s, %s) without losing bilinear filtering",
+    (u, v, r, g, b) => {
+      const map = new DataTexture(
+        new Uint8Array([
+          255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 255, 255,
+        ]),
+        2,
+        2,
+      );
+      const floor = interiorBox(new Vector3(), map);
+      const uv = floor.geometry.attributes.uv1;
+      for (let i = 0; i < uv.count; i++) uv.setXY(i, u, v);
+      registerInteriorCollider("roof", [
+        interiorBox(new Vector3(0, 30, 0), null),
+      ]);
+      registerInteriorCollider("floor", [floor]);
+      const out = probe();
+      probeShapeLighting([0, 0, 10], out);
+      expect(out.color.r).toBeCloseTo(r);
+      expect(out.color.g).toBeCloseTo(g);
+      expect(out.color.b).toBeCloseTo(b);
+    },
+  );
+
   it("adds the sun and ambient on an outside-visible floor", () => {
     setShapeSun(
       new Color(0.6, 0.6, 0.6),
@@ -91,7 +127,7 @@ describe("probeShapeLighting", () => {
       new Vector3(0, 1, 0),
     );
     const floor = interiorBox(new Vector3(0, 0, 0), lightmap(0, 0, 0));
-    floor.geometry.userData.outsideVisible = [true];
+    floor.material.surfaceFlags = DIFSurfaceFlags.OutsideVisible;
     registerInteriorCollider("roof", [
       interiorBox(new Vector3(0, 30, 0), null),
     ]);

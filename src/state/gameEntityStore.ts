@@ -1,3 +1,4 @@
+import { isProjectileEntity } from "./projectileEntities";
 import { createStore } from "zustand/vanilla";
 import { useStoreWithEqualityFn } from "zustand/traditional";
 import type { GameEntity, RenderType } from "./gameEntityTypes";
@@ -359,6 +360,22 @@ export function useAllGameEntities(): GameEntity[] {
   return useStoreWithEqualityFn(
     gameEntityStore,
     selectAllEntities,
+    entitySetEqual,
+  );
+}
+
+/** Projectile membership is managed imperatively and does not rebuild this list. */
+export function selectSceneEntities(state: GameEntityState): GameEntity[] {
+  const result: GameEntity[] = [];
+  for (const entity of selectActiveEntities(state).values())
+    if (entity.renderType !== "None" && !isProjectileEntity(entity))
+      result.push(entity);
+  return result;
+}
+export function useSceneEntities(): GameEntity[] {
+  return useStoreWithEqualityFn(
+    gameEntityStore,
+    selectSceneEntities,
     entitySetEqual,
   );
 }

@@ -102,11 +102,11 @@ export async function runCastPipeline(
 export function describeStaging(staged: StageReport): string {
   return (
     `${staged.fixedShots} fixed (${staged.presolved} pre-solved, ${staged.clean} clean, ` +
-    `${staged.adjusted} adjusted, ` +
+    `${staged.adjusted} adjusted, ${staged.gridFixed} grid, ` +
     `${staged.tight} tight, ${staged.doorway}→doorway, ${staged.follow}→follow, ` +
     `${staged.unsolved} unsolved, ${staged.unwatchable} dropped, ${staged.merged} merged) ` +
     `and ${staged.followShots} follows ` +
-    `(${staged.followClean} clean, ${staged.followPulledIn} pulled in, ` +
+    `(${staged.followClean} clean, ${staged.followPulledIn} pulled in, ${staged.gridFollow} grid, ` +
     `${staged.followConverted}→impact, ${staged.followUnsolved} unsolved)`
   );
 }
@@ -219,7 +219,10 @@ export async function createCastStream(
         const candidate = structuredClone(decision);
         candidate.endSec = Math.min(candidate.endSec, dataset.durationSec);
         const pending = [candidate];
-        addReports(report, stageShots(pending, [0], dataset));
+        addReports(
+          report,
+          stageShots(pending, [0], dataset, switcher?.freeSpace),
+        );
         camera = pending[0];
         cameras.set(decision, camera);
       }

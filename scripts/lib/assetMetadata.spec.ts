@@ -5,6 +5,7 @@ import {
   TEXT_CONTENT_TYPE,
   contentTypeFor,
   groupByContentType,
+  strandedKeys,
   knownExtensions,
   metadataFor,
 } from "./assetMetadata";
@@ -95,5 +96,55 @@ describe("knownExtensions", () => {
     ]) {
       expect(known, `${ext} must have a content type`).toContain(ext);
     }
+  });
+});
+
+describe("strandedKeys", () => {
+  it("finds objects whose extension is gone from disk entirely", () => {
+    // Retiring the .glb conversions: no sync pass names .glb any more, so
+    // --delete never considers them.
+    expect(
+      strandedKeys({
+        bucketKeys: ["shapes/a.dts", "shapes/a.glb", "interiors/b.glb"],
+        localPaths: ["shapes/a.dts"],
+      }),
+    ).toEqual(["interiors/b.glb", "shapes/a.glb"]);
+  });
+
+  it("leaves an extension alone while any file of it remains", () => {
+    // The ordinary case: --delete in that pass handles the missing one.
+    expect(
+      strandedKeys({
+        bucketKeys: ["a.glb", "b.glb"],
+        localPaths: ["a.glb"],
+      }),
+    ).toEqual([]);
+  });
+
+  it("never touches what the table does not own", () => {
+    expect(
+      strandedKeys({
+        bucketKeys: ["shapes/a.dts.br", "notes.md.br", "mystery.xyz"],
+        localPaths: ["shapes/a.dts"],
+      }),
+    ).toEqual([]);
+  });
+
+  it("treats case-different extensions as separate, because R2 keys are", () => {
+    expect(
+      strandedKeys({
+        bucketKeys: ["a.PNG", "b.png"],
+        localPaths: ["b.png"],
+      }),
+    ).toEqual(["a.PNG"]);
+  });
+
+  it("returns nothing when the bucket matches the tree", () => {
+    expect(
+      strandedKeys({
+        bucketKeys: ["a.dts", "b.png"],
+        localPaths: ["a.dts", "b.png"],
+      }),
+    ).toEqual([]);
   });
 });

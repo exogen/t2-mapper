@@ -38,13 +38,11 @@ export function getUrlForPath(resourcePath: string, fallbackUrl?: string) {
 }
 
 export function interiorToUrl(name: string) {
-  const url = getUrlForPath(`interiors/${name}`);
-  return url.replace(/\.dif$/i, ".glb");
+  return getUrlForPath(`interiors/${name}`);
 }
 
 export function shapeToUrl(name: string) {
-  const url = getUrlForPath(`shapes/${name}`);
-  return url.replace(/\.dts$/i, ".glb");
+  return getUrlForPath(`shapes/${name}`);
 }
 
 export function terrainTextureToUrl(name: string) {

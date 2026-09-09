@@ -1,21 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, type RefObject } from "react";
-import {
-  AdditiveAnimationBlendMode,
-  type AnimationAction,
-  type AnimationClip,
-  type AnimationMixer,
-  type Object3D,
-} from "three";
+import { type AnimationClip, type AnimationMixer, type Object3D } from "three";
 import { engineStore } from "../state/engineStore";
 import { THRUST_FORWARD } from "../stream/types";
-import type { VisNode } from "./visSequences";
 import {
   createDtsThread,
   destroyDtsThread,
   dtsThreadPosition,
   scrubDtsThread,
   type DtsThread,
-} from "./dtsThread";
+} from "../dts/dtsThread";
 import {
   addNodeEmitter,
   removeNodeEmitter,
@@ -32,18 +25,13 @@ import {
   type JetDirectionState,
 } from "./jetThreads";
 import { useJetSound } from "./useJetSound";
-import { collectOwnNodes } from "./sceneNodes";
+import { findOwnNode } from "../sceneNodes";
 
 /** The loaded shape pieces the jet threads animate. */
 export interface VehicleJetShape {
   scene: Object3D;
   mixer: AnimationMixer | null;
   clipsByName: ReadonlyMap<string, AnimationClip>;
-  morphClipsBySeq: ReadonlyMap<string, AnimationClip[]>;
-  visNodesBySequence: ReadonlyMap<string, VisNode[]>;
-  seqBlendByName: ReadonlyMap<string, boolean>;
-  /** Readies a vis mesh's material for opacity animation. */
-  prepareVisNode: (node: VisNode) => void;
 }
 
 /** The ghost fields FlyingVehicle/HoverVehicle::updateJet read. */
@@ -150,28 +138,8 @@ function buildJetThread(
   cyclic: boolean,
 ): DtsThread | null {
   const clip = shape.clipsByName.get(name);
-  const morphs = shape.morphClipsBySeq.get(name) ?? [];
-  const visNodes = shape.visNodesBySequence.get(name) ?? [];
-  if (!clip && morphs.length === 0 && visNodes.length === 0) return null;
-  const actions: AnimationAction[] = [];
-  if (shape.mixer) {
-    if (clip) {
-      const action = shape.mixer.clipAction(clip);
-      if (shape.seqBlendByName.has(name)) {
-        action.blendMode = AdditiveAnimationBlendMode;
-      }
-      actions.push(action);
-    }
-    for (const morph of morphs) actions.push(shape.mixer.clipAction(morph));
-  }
-  for (const node of visNodes) shape.prepareVisNode(node);
-  return createDtsThread(
-    name,
-    actions,
-    visNodes,
-    clip?.duration ?? morphs[0]?.duration ?? visNodes[0].duration,
-    cyclic,
-  );
+  if (!clip || !shape.mixer) return null;
+  return createDtsThread(shape.mixer.clipAction(clip), cyclic);
 }
 
 function buildDirection(
@@ -193,14 +161,14 @@ function buildVehicleJetParts(
   jetFrame: NodeEmitterFrame,
   contrailFrame: NodeEmitterFrame,
 ): VehicleJetParts {
-  const nodesByName = collectOwnNodes(shape.scene);
   const emitterAt = (
     nodeName: string,
     dataBlockId: number | null,
     frame: NodeEmitterFrame,
   ): NodeEmitter | null => {
-    const anchor = nodesByName.get(nodeName);
-    if (!anchor || dataBlockId == null) return null;
+    if (dataBlockId == null) return null;
+    const anchor = findOwnNode(shape.scene, nodeName);
+    if (!anchor) return null;
     return { dataBlockId, anchor, frame, ownerId };
   };
   const jetEmitters = NOZZLE_NODES.map((names, direction) =>
@@ -253,8 +221,6 @@ function driveDirection(
   );
   if (wasMaintaining && !dir.state.maintaining && dir.maintain) {
     destroyDtsThread(dir.maintain);
-    // Meshes both sequences key are Activate's again.
-    if (dir.activate) dir.activate.appliedPosition = -1;
   }
   if (dir.activate) scrubDtsThread(dir.activate, dir.state.activatePosition);
   if (dir.state.maintaining && dir.maintain) {

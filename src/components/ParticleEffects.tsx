@@ -61,6 +61,7 @@ import {
 } from "./AudioEmitter";
 import { getEffectiveSoundRate } from "./audioPlaybackRate";
 import { effectDeltaSec, effectNow, engineStore } from "../state/engineStore";
+import { ParticleSnapshotIndex } from "./particleSnapshot";
 
 const log = createLogger("ParticleEffects");
 
@@ -122,11 +123,6 @@ function getParticleTexture(textureName: string): Texture {
 }
 
 // ── Debug geometry (reusable) ──
-
-// Per-frame scratch collections, cleared and refilled each frame to avoid
-// Set/Map allocation churn in the useFrame hot loop.
-const _currentEntityIds = new Set<string>();
-const _entitiesById = new Map<string, StreamSnapshot["entities"][number]>();
 
 const _debugOriginGeo = new SphereGeometry(1, 6, 6);
 const _debugOriginMat = new MeshBasicMaterial({
@@ -225,6 +221,7 @@ interface ActiveShockwave {
   data: ShockwaveData;
   radius: number;
   velocity: number;
+  geometryTime?: number;
 }
 
 /** Resolve a ShockwaveData datablock from an explosion's shockwave ref. */
@@ -281,7 +278,7 @@ function createShockwave(
   const swData = resolveShockwaveData(shockwaveId, getDataBlockData);
   if (!swData) return null;
   const texture = getParticleTexture(swData.textureName);
-  const geo = createShockwaveGeometry(swData.numSegments);
+  const geo = createShockwaveGeometry(swData.numSegments, swData.texWrap);
   const mat = createShockwaveMaterial(texture);
   const mesh = new Mesh(geo, mat);
   mesh.frustumCulled = false;
@@ -299,7 +296,7 @@ function createShockwave(
   let bottomMesh: Mesh | null = null;
   let bottomGeo: BufferGeometry | null = null;
   if (swData.renderBottom) {
-    bottomGeo = createShockwaveGeometry(swData.numSegments);
+    bottomGeo = createShockwaveGeometry(swData.numSegments, swData.texWrap);
     bottomMesh = new Mesh(bottomGeo, mat);
     bottomMesh.frustumCulled = false;
     bottomMesh.position.copy(mesh.position);
@@ -387,12 +384,19 @@ const shockwaveFragmentShader = /* glsl */ `
  * Returns the geometry with position, texCoord, vertexColor attributes and
  * index buffer pre-allocated for numSegments quads.
  */
-function createShockwaveGeometry(numSegments: number): BufferGeometry {
+function createShockwaveGeometry(
+  numSegments: number,
+  texWrap: number,
+): BufferGeometry {
   // 2 vertices per segment (inner + outer) + 2 to close the loop.
   const numVerts = (numSegments + 1) * 2;
   const positions = new Float32Array(numVerts * 3);
   const texCoords = new Float32Array(numVerts * 2);
   const vertexColors = new Float32Array(numVerts * 4);
+  for (let i = 0; i <= numSegments; i++) {
+    const u = (i / numSegments) * texWrap;
+    texCoords.set([u, 0.05, u, 0.95], i * 4);
+  }
 
   // 2 triangles per segment = 6 indices.
   const numIndices = numSegments * 6;
@@ -416,7 +420,6 @@ function createShockwaveGeometry(numSegments: number): BufferGeometry {
   geo.setAttribute("position", posAttr);
 
   const texAttr = new BufferAttribute(texCoords, 2);
-  texAttr.setUsage(DynamicDrawUsage);
   geo.setAttribute("texCoord", texAttr);
 
   const colorAttr = new BufferAttribute(vertexColors, 4);
@@ -429,7 +432,7 @@ function createShockwaveGeometry(numSegments: number): BufferGeometry {
 }
 
 /**
- * Update shockwave ring vertex positions, UVs, and colors for the current
+ * Update shockwave ring vertex positions and colors for the current
  * frame. Implements the V12 renderWave algorithm: an expanding annular ring
  * with optional height on the outer edge.
  */
@@ -441,8 +444,6 @@ function updateShockwaveGeometry(
   is2D: boolean,
 ): void {
   const posArr = (geo.getAttribute("position") as BufferAttribute)
-    .array as Float32Array;
-  const texArr = (geo.getAttribute("texCoord") as BufferAttribute)
     .array as Float32Array;
   const colArr = (geo.getAttribute("vertexColor") as BufferAttribute)
     .array as Float32Array;
@@ -479,16 +480,6 @@ function updateShockwaveGeometry(
     posArr[ipi + 1] = 0;
     posArr[ipi + 2] = sin * innerRad;
 
-    // UV: U wraps around ring, V spans inner→outer.
-    const u = (i / numSegs) * sw.texWrap;
-    const oti = outerIdx * 2;
-    texArr[oti] = u;
-    texArr[oti + 1] = 0.05; // outer edge
-
-    const iti = innerIdx * 2;
-    texArr[iti] = u;
-    texArr[iti + 1] = 0.95; // inner edge
-
     // Vertex colors (uniform across ring).
     const oci = outerIdx * 4;
     colArr[oci] = lr;
@@ -504,7 +495,6 @@ function updateShockwaveGeometry(
   }
 
   geo.getAttribute("position").needsUpdate = true;
-  geo.getAttribute("texCoord").needsUpdate = true;
   geo.getAttribute("vertexColor").needsUpdate = true;
   geo.computeBoundingSphere();
 }
@@ -656,6 +646,7 @@ interface ActiveEmitter {
   shaderChecked?: boolean;
   /** Particle count uploaded last frame (bounds partial buffer uploads). */
   prevCount?: number;
+  uploadedRevision?: number;
   /** Entity whose lifetime bounds emission: a trail's projectile or a
    *  streaming emitter's explosion. Emission stops once it leaves the scene. */
   driverEntityId?: string;
@@ -747,6 +738,8 @@ function resolveExplosion(
 // ── Update GPU buffers from particle state ──
 
 function syncBuffers(active: ActiveEmitter): void {
+  if (active.uploadedRevision === active.emitter.revision) return;
+  active.uploadedRevision = active.emitter.revision;
   const particles = active.emitter.particles;
   const geo = active.geometry;
   const posAttr = geo.getAttribute("position") as Float32BufferAttribute;
@@ -972,6 +965,7 @@ export function ParticleEffects({
   const { audioLoader, audioListener } = useAudio();
   const gl = useThree((s) => s.gl);
   const groupRef = useRef<Group>(null);
+  const snapshotIndex = useMemo(() => new ParticleSnapshotIndex(), []);
   const activeEmittersRef = useRef<ActiveEmitter[]>([]);
   /** Track which explosion entity IDs we've already processed. */
   const processedExplosionsRef = useRef<Set<string>>(new Set());
@@ -1018,6 +1012,8 @@ export function ParticleEffects({
     const group = groupRef.current;
     const snapshot = snapshotRef.current;
     if (!group || !snapshot) return;
+    const snapshotChanged = snapshotIndex.update(snapshot);
+    const currentEntityIds = snapshotIndex.entities;
 
     const isPlaying = engineStore.getState().playback.status === "playing";
     // Scale delta by playback rate; 0 when paused.
@@ -1038,182 +1034,183 @@ export function ParticleEffects({
     }
 
     // Detect new explosion entities and create emitters.
-    for (const entity of snapshot.entities) {
-      if (
-        entity.type !== "Explosion" ||
-        !entity.explosionDataBlockId ||
-        !entity.position
-      ) {
-        continue;
-      }
-      if (processedExplosionsRef.current.has(entity.id)) continue;
-      processedExplosionsRef.current.add(entity.id);
+    if (snapshotChanged)
+      for (const entity of snapshotIndex.explosions) {
+        if (
+          entity.type !== "Explosion" ||
+          !entity.explosionDataBlockId ||
+          !entity.position
+        ) {
+          continue;
+        }
+        if (processedExplosionsRef.current.has(entity.id)) continue;
+        processedExplosionsRef.current.add(entity.id);
 
-      const resolved = resolveExplosion(
-        entity.explosionDataBlockId,
-        getDataBlockData,
-      );
-      if (!resolved) continue;
-
-      const origin: [number, number, number] = [...entity.position];
-
-      // Create burst emitters.
-      for (const burst of resolved.burstEmitters) {
-        const entry = createStreamEmitter(burst.data, origin, group);
-        entry.isBurst = true;
-        entry.emitter.emitBurst(origin, burst.density);
-        // Explosion::explode → deleteWhenEmpty on the burst emitter.
-        entry.emitter.kill();
-        activeEmittersRef.current.push(entry);
-      }
-
-      // Streaming emitters (emitter[0..3]) are fed every frame while the
-      // explosion lives and stop at their own datablock lifetime, whichever
-      // comes first; already-emitted particles then live out their lifetime.
-      for (const emitterData of resolved.streamingEmitters) {
-        const entry = createStreamEmitter(emitterData, origin, group);
-        entry.driverEntityId = entity.id;
-        activeEmittersRef.current.push(entry);
-      }
-
-      const expBlock = getDataBlockData(entity.explosionDataBlockId);
-
-      // Debug mode: show wireframe spheres and labels.
-      if (debugMode) {
-        const radius = expBlock ? getExplosionRadius(expBlock) : 5;
-        const color = getExplosionColor(entity.dataBlock);
-        const sphereMat = new MeshBasicMaterial({
-          color,
-          wireframe: true,
-          transparent: true,
-          opacity: 1,
-          depthWrite: false,
-        });
-        const sphereMesh = new Mesh(_explosionSphereGeo, sphereMat);
-        sphereMesh.frustumCulled = false;
-        sphereMesh.scale.setScalar(radius);
-        sphereMesh.position.set(origin[1], origin[2], origin[0]);
-        group.add(sphereMesh);
-
-        const labelText = `${entity.id}: ${entity.dataBlock ?? `expId:${entity.explosionDataBlockId}`}`;
-        const { sprite: labelSprite, material: labelMat } =
-          createExplosionLabel(labelText, color);
-        labelSprite.position.set(origin[1], origin[2] + radius + 2, origin[0]);
-        labelSprite.frustumCulled = false;
-        group.add(labelSprite);
-
-        activeExplosionSpheresRef.current.push({
-          entityId: entity.id as string,
-          mesh: sphereMesh,
-          material: sphereMat,
-          label: labelSprite,
-          labelMaterial: labelMat,
-          creationTime: effectNow(),
-          lifetimeMS: Math.max(entity.explosionLifetimeMS ?? 0, 3000),
-          targetRadius: radius,
-        });
-      }
-
-      // Spawn shockwave ring if the explosion datablock references one.
-      const shockwaveId = expBlock?.shockwave as number | null | undefined;
-      if (typeof shockwaveId === "number") {
-        const sw = createShockwave(
-          shockwaveId,
-          origin,
-          entity.id,
+        const resolved = resolveExplosion(
+          entity.explosionDataBlockId,
           getDataBlockData,
-          group,
         );
-        if (sw) activeShockwavesRef.current.push(sw);
+        if (!resolved) continue;
+
+        const origin: [number, number, number] = [...entity.position];
+
+        // Create burst emitters.
+        for (const burst of resolved.burstEmitters) {
+          const entry = createStreamEmitter(burst.data, origin, group);
+          entry.isBurst = true;
+          entry.emitter.emitBurst(origin, burst.density);
+          // Explosion::explode → deleteWhenEmpty on the burst emitter.
+          entry.emitter.kill();
+          activeEmittersRef.current.push(entry);
+        }
+
+        // Streaming emitters (emitter[0..3]) are fed every frame while the
+        // explosion lives and stop at their own datablock lifetime, whichever
+        // comes first; already-emitted particles then live out their lifetime.
+        for (const emitterData of resolved.streamingEmitters) {
+          const entry = createStreamEmitter(emitterData, origin, group);
+          entry.driverEntityId = entity.id;
+          activeEmittersRef.current.push(entry);
+        }
+
+        const expBlock = getDataBlockData(entity.explosionDataBlockId);
+
+        // Debug mode: show wireframe spheres and labels.
+        if (debugMode) {
+          const radius = expBlock ? getExplosionRadius(expBlock) : 5;
+          const color = getExplosionColor(entity.dataBlock);
+          const sphereMat = new MeshBasicMaterial({
+            color,
+            wireframe: true,
+            transparent: true,
+            opacity: 1,
+            depthWrite: false,
+          });
+          const sphereMesh = new Mesh(_explosionSphereGeo, sphereMat);
+          sphereMesh.frustumCulled = false;
+          sphereMesh.scale.setScalar(radius);
+          sphereMesh.position.set(origin[1], origin[2], origin[0]);
+          group.add(sphereMesh);
+
+          const labelText = `${entity.id}: ${entity.dataBlock ?? `expId:${entity.explosionDataBlockId}`}`;
+          const { sprite: labelSprite, material: labelMat } =
+            createExplosionLabel(labelText, color);
+          labelSprite.position.set(
+            origin[1],
+            origin[2] + radius + 2,
+            origin[0],
+          );
+          labelSprite.frustumCulled = false;
+          group.add(labelSprite);
+
+          activeExplosionSpheresRef.current.push({
+            entityId: entity.id as string,
+            mesh: sphereMesh,
+            material: sphereMat,
+            label: labelSprite,
+            labelMaterial: labelMat,
+            creationTime: effectNow(),
+            lifetimeMS: Math.max(entity.explosionLifetimeMS ?? 0, 3000),
+            targetRadius: radius,
+          });
+        }
+
+        // Spawn shockwave ring if the explosion datablock references one.
+        const shockwaveId = expBlock?.shockwave as number | null | undefined;
+        if (typeof shockwaveId === "number") {
+          const sw = createShockwave(
+            shockwaveId,
+            origin,
+            entity.id,
+            getDataBlockData,
+            group,
+          );
+          if (sw) activeShockwavesRef.current.push(sw);
+        }
       }
-    }
 
     // Shocklance hits: the ShocklanceHit shockwave at the bolt's end,
     // its axis pointing back at the shooter (onAdd FUN_0064ec20 passes
     // normalize(start - end)), plus one ShockParticleEmitter burst along
     // the bolt over numParts milliseconds (emitParticles(start, end,
     // dir, 0, numParts)). Misses spawn neither.
-    for (const entity of snapshot.entities) {
-      const visual = entity.visual;
-      if (
-        visual?.kind !== "shockLance" ||
-        !entity.beamHit ||
-        !entity.beamStart ||
-        !entity.beamEnd
-      ) {
-        continue;
-      }
-      if (processedShockLancesRef.current.has(entity.id)) continue;
-      processedShockLancesRef.current.add(entity.id);
-      const start = entity.beamStart;
-      const end = entity.beamEnd;
-      const dx = end[0] - start[0];
-      const dy = end[1] - start[1];
-      const dz = end[2] - start[2];
-      const len = Math.hypot(dx, dy, dz);
-      if (!(len > 0)) continue;
-      const axis: [number, number, number] = [dx / len, dy / len, dz / len];
-      if (visual.shockwaveId != null) {
-        const sw = createShockwave(
-          visual.shockwaveId,
-          end,
-          entity.id,
-          getDataBlockData,
-          group,
-          [-axis[0], -axis[1], -axis[2]],
-        );
-        if (sw) activeShockwavesRef.current.push(sw);
-      }
-      if (visual.emitterId != null) {
-        const emitterRaw = getDataBlockData(visual.emitterId);
-        const emitterData =
-          emitterRaw && resolveEmitterData(emitterRaw, getDataBlockData);
-        if (emitterData) {
-          const entry = createStreamEmitter(
-            emitterData,
-            [end[0], end[1], end[2]],
+    if (snapshotChanged)
+      for (const entity of snapshotIndex.shockLances) {
+        const visual = entity.visual;
+        if (
+          visual?.kind !== "shockLance" ||
+          !entity.beamHit ||
+          !entity.beamStart ||
+          !entity.beamEnd
+        ) {
+          continue;
+        }
+        if (processedShockLancesRef.current.has(entity.id)) continue;
+        processedShockLancesRef.current.add(entity.id);
+        const start = entity.beamStart;
+        const end = entity.beamEnd;
+        const dx = end[0] - start[0];
+        const dy = end[1] - start[1];
+        const dz = end[2] - start[2];
+        const len = Math.hypot(dx, dy, dz);
+        if (!(len > 0)) continue;
+        const axis: [number, number, number] = [dx / len, dy / len, dz / len];
+        if (visual.shockwaveId != null) {
+          const sw = createShockwave(
+            visual.shockwaveId,
+            end,
+            entity.id,
+            getDataBlockData,
             group,
+            [-axis[0], -axis[1], -axis[2]],
           );
-          entry.isBurst = true;
-          entry.emitter.worldGravity = snapshot.gravity;
-          entry.emitter.emitPeriodic(start, end, visual.numParts, axis);
-          entry.emitter.kill();
-          activeEmittersRef.current.push(entry);
+          if (sw) activeShockwavesRef.current.push(sw);
+        }
+        if (visual.emitterId != null) {
+          const emitterRaw = getDataBlockData(visual.emitterId);
+          const emitterData =
+            emitterRaw && resolveEmitterData(emitterRaw, getDataBlockData);
+          if (emitterData) {
+            const entry = createStreamEmitter(
+              emitterData,
+              [end[0], end[1], end[2]],
+              group,
+            );
+            entry.isBurst = true;
+            entry.emitter.worldGravity = snapshot.gravity;
+            entry.emitter.emitPeriodic(start, end, visual.numParts, axis);
+            entry.emitter.kill();
+            activeEmittersRef.current.push(entry);
+          }
         }
       }
-    }
 
     // Detect projectile entities with trail emitters (maintainEmitterId).
-    const currentEntityIds = _currentEntityIds;
-    currentEntityIds.clear();
-    _entitiesById.clear();
-    for (const entity of snapshot.entities) {
-      currentEntityIds.add(entity.id);
-      _entitiesById.set(entity.id, entity);
+    if (snapshotChanged)
+      for (const entity of snapshotIndex.trails) {
+        if (
+          !entity.maintainEmitterId ||
+          trailEntitiesRef.current.has(entity.id)
+        ) {
+          continue;
+        }
+        trailEntitiesRef.current.add(entity.id);
 
-      if (
-        !entity.maintainEmitterId ||
-        trailEntitiesRef.current.has(entity.id)
-      ) {
-        continue;
+        const emitterRaw = getDataBlockData(entity.maintainEmitterId);
+        if (!emitterRaw) continue;
+
+        const emitterData = resolveEmitterData(emitterRaw, getDataBlockData);
+        if (!emitterData) continue;
+
+        const entry = createStreamEmitter(
+          emitterData,
+          entity.position ? [...entity.position] : [0, 0, 0],
+          group,
+        );
+        entry.driverEntityId = entity.id;
+        entry.followsDriver = true;
+        activeEmittersRef.current.push(entry);
       }
-      trailEntitiesRef.current.add(entity.id);
-
-      const emitterRaw = getDataBlockData(entity.maintainEmitterId);
-      if (!emitterRaw) continue;
-
-      const emitterData = resolveEmitterData(emitterRaw, getDataBlockData);
-      if (!emitterData) continue;
-
-      const entry = createStreamEmitter(
-        emitterData,
-        entity.position ? [...entity.position] : [0, 0, 0],
-        group,
-      );
-      entry.driverEntityId = entity.id;
-      entry.followsDriver = true;
-      activeEmittersRef.current.push(entry);
-    }
 
     // Node-anchored emitters (jet nozzles, contrails) live as long as their
     // registration; a dropped one stops emitting and dies when empty.
@@ -1278,7 +1275,7 @@ export function ParticleEffects({
       // direction reversed, with the velocity itself passed for
       // inheritedVelFactor.
       if (entry.followsDriver && entry.driverEntityId) {
-        const tracked = _entitiesById.get(entry.driverEntityId);
+        const tracked = snapshotIndex.entities.get(entry.driverEntityId);
         const prev = entry.prevOrigin!;
         const vel = entry.emitVelocity!;
         if (tracked?.position) {
@@ -1431,31 +1428,34 @@ export function ParticleEffects({
       const t = Math.min(elapsed / sw.lifetimeMS, 1);
       const dtSec = effectDelta;
 
-      // V12 expansion physics: velocity += acceleration * dt; radius += velocity * dt
-      sw.velocity += sw.data.acceleration * dtSec;
-      sw.radius += sw.velocity * dtSec;
+      if (sw.geometryTime !== now || dtSec > 0) {
+        sw.geometryTime = now;
+        // V12 expansion physics: velocity += acceleration * dt; radius += velocity * dt
+        sw.velocity += sw.data.acceleration * dtSec;
+        sw.radius += sw.velocity * dtSec;
 
-      // Interpolate color from keyframes.
-      const color = interpolateShockwaveColor(sw.data, t);
+        // Interpolate color from keyframes.
+        const color = interpolateShockwaveColor(sw.data, t);
 
-      // Update ring geometry.
-      updateShockwaveGeometry(
-        sw.geometry,
-        sw.data,
-        sw.radius,
-        color,
-        sw.data.is2D,
-      );
-
-      // Update bottom ring if present.
-      if (sw.bottomGeometry) {
+        // Update ring geometry.
         updateShockwaveGeometry(
-          sw.bottomGeometry,
+          sw.geometry,
           sw.data,
           sw.radius,
           color,
           sw.data.is2D,
         );
+
+        // Update bottom ring if present.
+        if (sw.bottomGeometry) {
+          updateShockwaveGeometry(
+            sw.bottomGeometry,
+            sw.data,
+            sw.radius,
+            color,
+            sw.data.is2D,
+          );
+        }
       }
 
       // For is2D mode: billboard the ring to face the camera.
@@ -1486,7 +1486,7 @@ export function ParticleEffects({
     ) {
       const projSounds = projectileSoundsRef.current;
       audioListener.getWorldPosition(_listenerWorldPos);
-      for (const entity of snapshot.entities) {
+      for (const entity of snapshotIndex.audio) {
         // Explosion impact one-shots, once per explosion entity.
         if (
           entity.type === "Explosion" &&
@@ -1641,7 +1641,7 @@ export function ParticleEffects({
       processedExplosionSoundsRef.current.size > 500 ||
       processedShockLancesRef.current.size > 500
     ) {
-      const currentIds = new Set(snapshot.entities.map((e) => e.id));
+      const currentIds = snapshotIndex.entities;
       for (const id of processedExplosionsRef.current) {
         if (!currentIds.has(id)) {
           processedExplosionsRef.current.delete(id);

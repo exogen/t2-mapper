@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { useFrame } from "@react-three/fiber";
 import { Vector3, type Object3D } from "three";
 import { FramePriority } from "./framePriority";
+import { getOwnNodePosition } from "../sceneNodes";
 
 /**
  * Each shape's animated "Eye" node position in entity-local Three.js
@@ -37,10 +38,9 @@ export function useEyePosition(
       eyePos = new Vector3();
       eyePositions.set(entityId, eyePos);
     }
-    // GLB model-local position → entity-local Three.js space through the
+    // DTS model-local position → entity-local Three.js space through the
     // shape's 90° Y rotation (same swizzle as the static eye extraction).
-    eyeBone.getWorldPosition(eyePos);
-    root.worldToLocal(eyePos);
+    if (!getOwnNodePosition(root, eyeBone, eyePos)) return;
     const gx = eyePos.x;
     const gy = eyePos.y;
     const gz = eyePos.z;

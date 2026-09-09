@@ -20,6 +20,13 @@ const _bitmapLoader = new ImageBitmapLoader();
 // transparency (e.g. environment map masking) on many non-Translucent textures.
 _bitmapLoader.setOptions({ premultiplyAlpha: "none" });
 const _textureCache = new Map<string, Texture>();
+const _textureWaiters = new Map<
+  string,
+  Array<{
+    onLoad?: (texture: Texture) => void;
+    onError?: (url: string) => void;
+  }>
+>();
 
 /**
  * Load a texture using ImageBitmapLoader, which decodes images off the main
@@ -35,7 +42,12 @@ export function loadTexture(
   const cached = _textureCache.get(url);
   if (cached) {
     // Already loaded (or in flight) — fire callback if image is ready.
-    if (onLoad && cached.image) onLoad(cached);
+    if (cached.image) onLoad?.(cached);
+    else if (onLoad || onError) {
+      const waiters = _textureWaiters.get(url) ?? [];
+      waiters.push({ onLoad, onError });
+      _textureWaiters.set(url, waiters);
+    }
     return cached;
   }
   const texture = new Texture();
@@ -49,46 +61,47 @@ export function loadTexture(
       texture.image = bitmap;
       texture.needsUpdate = true;
       onLoad?.(texture);
+      const waiters = _textureWaiters.get(url);
+      _textureWaiters.delete(url);
+      for (const waiter of waiters ?? []) waiter.onLoad?.(texture);
     },
     undefined,
     () => {
       // Remove failed URL from cache so fallback can be tried.
       _textureCache.delete(url);
       onError?.(url);
+      const waiters = _textureWaiters.get(url);
+      _textureWaiters.delete(url);
+      for (const waiter of waiters ?? []) waiter.onError?.(url);
     },
   );
   return texture;
 }
 
+/** Independent sampler state backed by the shared image/Three Source. */
+export function loadTextureInstance(
+  url: string,
+  onError?: (url: string) => void,
+): Texture {
+  const texture = new Texture();
+  texture.flipY = false;
+  const source = loadTexture(
+    url,
+    (loaded) => {
+      texture.source = loaded.source;
+      texture.needsUpdate = true;
+    },
+    onError,
+  );
+  texture.source = source.source;
+  return texture;
+}
+
 /** Promise-based variant of loadTexture. */
 export function loadTextureAsync(url: string): Promise<Texture> {
-  const cached = _textureCache.get(url);
-  if (cached) {
-    return cached.image
-      ? Promise.resolve(cached)
-      : new Promise((resolve) => {
-          // In flight — poll until populated (bitmapLoader doesn't expose
-          // a way to attach multiple callbacks to the same request).
-          const check = () => {
-            if (cached.image) resolve(cached);
-            else setTimeout(check, 16);
-          };
-          check();
-        });
-  }
   return new Promise((resolve, reject) => {
-    const texture = new Texture();
-    texture.flipY = false;
-    _textureCache.set(url, texture);
-    _bitmapLoader.load(
-      url,
-      (bitmap) => {
-        texture.image = bitmap;
-        texture.needsUpdate = true;
-        resolve(texture);
-      },
-      undefined,
-      reject,
+    loadTexture(url, resolve, (failedUrl) =>
+      reject(new Error(`Failed to load texture: ${failedUrl}`)),
     );
   });
 }

@@ -36,7 +36,7 @@ export interface MountTransform {
 
 /**
  * Mount-node transforms per shape (lowercased .dts basename → lowercased
- * node name), from the winning source's GLB. See scripts/lib/mounts.ts.
+ * node name), from the winning source's DTS. See scripts/lib/mounts.ts.
  */
 export type MountTransformTable = Record<
   string,

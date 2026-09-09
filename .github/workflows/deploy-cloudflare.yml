@@ -48,6 +48,17 @@ jobs:
           RELAY_URL: ${{ secrets.RELAY_URL }}
           LOG_LEVEL: ${{ secrets.LOG_LEVEL }}
 
+      - name: Check the Cloudflare account id is set
+        # An empty value would build https://.r2.cloudflarestorage.com and
+        # the AWS CLI would report it as an opaque connection failure.
+        run: |
+          if [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then
+            echo "CLOUDFLARE_ACCOUNT_ID is not set." >&2
+            exit 1
+          fi
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
       - name: Sync game assets to R2
         # One `aws s3 sync` pass per Content-Type, driven by
         # scripts/lib/assetMetadata.ts — the same table the backfill uses, so
@@ -56,6 +67,12 @@ jobs:
         # audio, .dif as DV video) and absent for most of them, which is why
         # nothing may be guessed here. The run fails if any extension has no
         # entry in the table, rather than shipping it untyped.
+        #
+        # It also writes a brotli sibling next to every changed .dts and
+        # .dif (<name>.dts.br, Content-Encoding: br). Cloudflare compresses
+        # application/octet-stream not at all, so these go over the wire raw
+        # without it. The asset worker serves the siblings; a missing one
+        # just falls back, so the set can fill in over several deploys.
         run: |
           set -o pipefail
           npx tsx --tsconfig tsconfig.node.json scripts/sync-assets.ts \
@@ -65,7 +82,11 @@ jobs:
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-          AWS_ENDPOINT_URL: https://${{ secrets.CF_ACCOUNT_ID }}.r2.cloudflarestorage.com
+          AWS_ENDPOINT_URL: https://${{ secrets.CLOUDFLARE_ACCOUNT_ID }}.r2.cloudflarestorage.com
+          # Brotli runs on libuv's threadpool, which defaults to 4 threads.
+          # The interiors corpus is 262 MB, so this is what keeps a first
+          # run to minutes rather than tens of minutes.
+          UV_THREADPOOL_SIZE: "8"
 
       - name: Purge changed assets from Cloudflare cache
         # Skips (visibly) until the purge secrets are configured.

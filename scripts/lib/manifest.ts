@@ -13,7 +13,7 @@ import { walkDirectory } from "./fileUtils";
 import { parseMissionScript } from "@/src/mission";
 import type { MountTransformTable } from "@/src/manifest";
 import { extractMountTransforms } from "./mounts";
-import { parseGlbJson } from "./glb";
+import { parseDTS } from "../../src/dts/dts";
 
 export type SourceTuple =
   // If casing of the path within this source is the same as "first seen" casing
@@ -36,21 +36,19 @@ export interface Manifest {
   /**
    * Mount-node transforms per shape, keyed by the lowercased .dts basename
    * (how datablock `shapeFile`s are looked up), taken from the winning
-   * source's sibling .glb.
+   * source DTS.
    */
   mounts: MountTransformTable;
 }
 
 export interface ManifestBuildResult {
   manifest: Manifest;
-  /** .dts/.dif resources whose winning source has no .glb beside it. */
-  missingGlbs: string[];
 }
 
 /**
  * Most files we're not interested in would have already been ignored by the
  * `extract-assets` script - but some extra files still may have popped up
- * from the host system, and derived files (.glb, .m4a) are resolved from
+ * from the host system, and derived audio (.m4a) are resolved from
  * their source's entry rather than listed.
  */
 const ignoreList = ignore().add(`
@@ -202,7 +200,6 @@ export async function buildManifest({
   const resources: Record<string, ResourceEntry> = {};
   const missions: Record<string, MissionEntry> = {};
   const mounts: MountTransformTable = {};
-  const missingGlbs: string[] = [];
 
   for (const resourceKey of [...fileSources.keys()].sort()) {
     const entry = fileSources.get(resourceKey)!;
@@ -219,31 +216,24 @@ export async function buildManifest({
         missionTypes: mission.missionTypes,
       };
     } else if (resourceKey.endsWith(".dts")) {
-      const glbPath = resolvedPath.replace(/\.dts$/i, ".glb");
-      let glb: Buffer;
-      try {
-        glb = await fs.readFile(glbPath);
-      } catch {
-        missingGlbs.push(resourceKey);
-        continue;
-      }
-      const shapeMounts = extractMountTransforms(parseGlbJson(glb));
+      const buffer = await fs.readFile(resolvedPath);
+      const data = parseDTS(
+        buffer.buffer.slice(
+          buffer.byteOffset,
+          buffer.byteOffset + buffer.byteLength,
+        ),
+      );
+      const shapeMounts = extractMountTransforms(data);
       if (shapeMounts) {
         // Keyed by basename: a later (higher-sorting) key wins when two
         // shape directories hold the same basename, matching the
         // resource sort order above.
         mounts[path.basename(resourceKey, ".dts")] = shapeMounts;
       }
-    } else if (resourceKey.endsWith(".dif")) {
-      try {
-        await fs.access(resolvedPath.replace(/\.dif$/i, ".glb"));
-      } catch {
-        missingGlbs.push(resourceKey);
-      }
     }
   }
 
-  return { manifest: { resources, missions, mounts }, missingGlbs };
+  return { manifest: { resources, missions, mounts } };
 }
 
 export function serializeManifest(manifest: Manifest): string {

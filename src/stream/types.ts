@@ -1,6 +1,7 @@
 import type { ParsedData } from "t2-demo-parser";
 import type { SceneObject } from "../scene/types";
 import type { ServerLoadInfo } from "../../relay/types";
+import type { DTSImageOffset } from "../dts/dtsMount";
 
 export type { ServerLoadInfo };
 
@@ -9,6 +10,7 @@ export type { ServerLoadInfo };
 export interface ImageSlot {
   shapeName: string;
   mountPoint: number;
+  mountOffset?: DTSImageOffset;
   dataBlockId: number;
   skinName?: string;
   /** The slot's ghosted image state flags (trigger, ammo, loaded…). */
@@ -671,7 +673,7 @@ export interface StreamingPlayback {
   getEffectShapes(): string[];
   /**
    * Prioritized prefetch list for this session, scene geometry first:
-   * the terrain file, interior GLBs, and TSStatic shapes detected from
+   * the terrain file, interior DIFs, and TSStatic shapes detected from
    * scene entities, followed by DTS shapes from datablock categories
    * certain to render (player armors, held weapon/pack images, items,
    * static shapes). Order is priority — the prefetcher drains from the

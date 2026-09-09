@@ -1,7 +1,7 @@
 /**
  * Add one VL2 to the game assets, or update one already added, and bring
  * every consumer along: extract it under docs/base/@vl2, convert its
- * .dif/.dts/.wav files, rebuild the manifest, verify, then optionally
+ * .wav files, rebuild the manifest, verify, then optionally
  * commit/push (which deploys the assets to R2 and the site) and redeploy
  * the relay (which pulls its shapes from git). The extracted tree in git is
  * the record; the archive itself isn't kept.
@@ -28,13 +28,7 @@ import {
   type ExtractPlan,
   type PrecedenceRow,
 } from "./lib/assets";
-import {
-  BLENDER_PATH,
-  FFMPEG_PATH,
-  convertWav,
-  convertWithBlender,
-  toolAvailable,
-} from "./lib/convert";
+import { FFMPEG_PATH, convertWav, toolAvailable } from "./lib/convert";
 import {
   buildManifest,
   serializeManifest,
@@ -448,9 +442,7 @@ if (!extractNeeded) {
 
 heading("Convert");
 /** Sources needing conversion: written by this run, or missing their derived file. */
-const toConvert: Record<"dif" | "dts" | "wav", string[]> = {
-  dif: [],
-  dts: [],
+const toConvert: Record<"wav", string[]> = {
   wav: [],
 };
 {
@@ -503,12 +495,6 @@ async function conversionStep(
     skippedConversions.push(kind);
   }
 }
-await conversionStep("dif", BLENDER_PATH, "--version", async (files) =>
-  convertWithBlender("dif", files),
-);
-await conversionStep("dts", BLENDER_PATH, "--version", async (files) =>
-  convertWithBlender("dts", files),
-);
 await conversionStep("wav", FFMPEG_PATH, "-version", async (files) => {
   const { completed, failed } = await convertWav(files, {
     onProgress: (done, total) => process.stdout.write(`\r  ${done}/${total}`),
@@ -536,17 +522,7 @@ if (dryRun) {
   );
 } else {
   console.log("Rebuilding (this takes a moment)…");
-  const { manifest, missingGlbs } = await buildManifest();
-  if (missingGlbs.length > 0) {
-    console.warn(
-      `WARNING: ${missingGlbs.length} model(s) have no .glb and will not render:`,
-    );
-    listSome(missingGlbs);
-    const ours = new Set(entries.map((e) => e.path.toLowerCase()));
-    if (missingGlbs.some((k) => ours.has(k))) {
-      skippedConversions.push("unconverted models from this archive");
-    }
-  }
+  const { manifest } = await buildManifest();
   if (oldManifest) {
     const oldKeys = new Set(Object.keys(oldManifest.resources));
     const newKeys = new Set(Object.keys(manifest.resources));

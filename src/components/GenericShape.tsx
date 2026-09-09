@@ -2,32 +2,21 @@ import {
   Fragment,
   memo,
   Suspense,
-  useCallback,
   useEffect,
   useId,
+  useLayoutEffect,
   useMemo,
   useRef,
 } from "react";
-import type { ReactNode } from "react";
+import type { ReactNode, Ref } from "react";
 import { ErrorBoundary } from "react-error-boundary";
-import type { AnimationAction, Material, Object3D, Texture } from "three";
+import type { AnimationAction, Object3D, Group } from "three";
 import type { LightAnchor } from "../stream/types";
-import { useGLTF } from "@react-three/drei";
-import { createPortal, useFrame } from "@react-three/fiber";
+import { ShapeLoader } from "../shapeLoader";
+import { createPortal, useFrame, useLoader } from "@react-three/fiber";
 import { createLogger } from "../logger";
 import { shapeToUrl } from "../loaders";
-import {
-  MeshStandardMaterial,
-  AdditiveAnimationBlendMode,
-  AnimationMixer,
-  AnimationClip,
-  AnimationUtils,
-  LoopOnce,
-  LoopRepeat,
-  Color,
-  Group,
-  Vector3,
-} from "three";
+import { AnimationClip, LoopOnce, LoopRepeat, Color, Vector3 } from "three";
 import { useEffectLight } from "./useEffectLight";
 import * as SkeletonUtils from "three/examples/jsm/utils/SkeletonUtils.js";
 import { useAnisotropy } from "./useAnisotropy";
@@ -41,21 +30,9 @@ import {
   engineStore,
 } from "../state/engineStore";
 import { FloatingLabel } from "./FloatingLabel";
-import {
-  collectIflMeshes,
-  driveIflFrames,
-  loadIflMaterialInstance,
-} from "../iflAtlas";
-import type { IflMaterialInstance } from "../iflAtlas";
 import { DebugShapeBounds } from "./DebugShapeBounds";
 import { useEntitySoundSlots } from "./useEntitySoundSlots";
-import {
-  processShapeScene,
-  replaceWithShapeMaterial,
-  disposeClonedScene,
-  buildRestPoseClip,
-  getPosedNodeTransform,
-} from "../stream/playbackUtils";
+import { processShapeScene, disposeClonedScene } from "../stream/playbackUtils";
 import { resolveEmapFromImageSlot } from "./resolveEmap";
 import { useEyePosition } from "./eyePositions";
 import type {
@@ -66,21 +43,18 @@ import type {
 import { driveTurretAim, type TurretAnimActions } from "./turretAim";
 import { gameEntityStore } from "../state/gameEntityStore";
 import { streamClock } from "../state/streamPlaybackStore";
-import { dtsNodeExtras } from "../dtsNodeExtras";
-import { collectMorphClips, isMorphClip } from "./sequenceClips";
+import type { DTSShape } from "../dts/dtsModel";
 import { useVehicleJets, type VehicleJetShape } from "./useVehicleJets";
-import { collectOwnNodes } from "./sceneNodes";
-import { readDtsSequences } from "../dtsSequences";
+import { findOwnNode, getMountNode } from "../sceneNodes";
+import {
+  getDTSImageMountTransform,
+  type DTSImageOffset,
+} from "../dts/dtsMount";
+import { readDtsSequences } from "../dts/dtsSequences";
 import type { GameEntity } from "../state/gameEntityTypes";
 import { useImageStateAnimation } from "./useImageStateAnimation";
-import {
-  applyVisAt,
-  collectVisNodes,
-  prepareVisMaterial,
-  resetVisNode,
-  visThreadPosition,
-  type VisNode,
-} from "./visSequences";
+import { DTSAnimationMixer } from "../dts/dtsAnimationMixer";
+import { applyDtsThreadState, holdDtsAction } from "../dts/dtsThread";
 import { useFadeAndCloak } from "./shapeFadeCloak";
 import { shapeBoxCenter } from "../shapeLighting";
 import { useShapeLighting } from "./useShapeLighting";
@@ -96,13 +70,7 @@ import {
 } from "../collision/worldCollision";
 import { staticShapeColliderMeshes } from "../world/colliderPolicy";
 import { SHAPE_MODEL_ROTATION_Y } from "../world/placement";
-import { registerShapeSequences } from "../stream/shapeSequences";
 import { FramePriority } from "./framePriority";
-import {
-  getShapeBounds,
-  registerShapeBounds,
-  shapeBoundsFromExtras,
-} from "../stream/shapeBounds";
 
 /** Item/ShapeBase built-in light config from datablock. */
 export interface ShapeLightConfig {
@@ -164,18 +132,13 @@ interface StreamShapeEntity {
   cloakLevel?: number;
   dataBlockId?: number;
   projectileAgeMS?: number;
-  projectileActivateDelayMS?: number;
 }
-
-/** Thread slots for a projectile shape's client-side sequences. */
-const PROJECTILE_AMBIENT_SLOT = 1;
-const PROJECTILE_ACTIVATE_SLOT = 2;
 
 const log = createLogger("GenericShape");
 
 /**
  * Content for a mounted shape. Computes the Mountpoint inverse offset from the
- * child shape's GLB so the child's grip point aligns to the parent's mount bone.
+ * child shape so the child's grip point aligns to the parent's mount bone.
  * Rendered via createPortal into the parent's mount bone.
  */
 export function MountedShapeContent({
@@ -185,12 +148,16 @@ export function MountedShapeContent({
   shapeType = "StaticShape",
   skinName,
   slot,
+  mountOffset,
+  rootRef,
 }: {
   shapeName: string;
   imageDataBlockId?: number;
   entityId?: string;
   /** Owner image slot, for the image datablock's light (fire flashes). */
   slot?: number;
+  mountOffset?: DTSImageOffset;
+  rootRef?: Ref<Group>;
   shapeType?: StaticShapeType;
   skinName?: string;
 }) {
@@ -204,24 +171,14 @@ export function MountedShapeContent({
     [imageDataBlockId],
   );
 
-  // Compute Mountpoint inverse so the child's grip aligns to the bone origin.
-  const offset = useMemo(() => {
-    const mp = getPosedNodeTransform(
-      childGltf.scene as Group,
-      childGltf.animations,
-      "Mountpoint",
-    );
-    if (!mp) return null;
-    const invQuat = mp.quaternion.clone().invert();
-    const invPos = mp.position.clone().negate().applyQuaternion(invQuat);
-    return { position: invPos, quaternion: invQuat };
-  }, [childGltf.scene, childGltf.animations]);
+  const offset = getDTSImageMountTransform(childGltf.data, mountOffset);
 
   return (
     <ShapeInfoProvider shapeName={shapeName} type={shapeType}>
       <group
-        position={offset?.position}
-        quaternion={offset?.quaternion}
+        ref={rootRef}
+        matrix={offset}
+        matrixAutoUpdate={false}
         userData={{ imageMount: true }}
       >
         <ShapeRenderer
@@ -260,24 +217,12 @@ function shapeNowSec(): number {
 }
 
 /**
- * Load a .glb file that was converted from a .dts, used for static shapes.
+ * Load native DTS geometry and its external DSQ sequences.
  */
 export function useStaticShape(shapeName: string) {
   const url = shapeToUrl(shapeName);
-  const gltf = useGLTF(url);
-  registerShapeSequences(shapeName, gltf.animations);
-  // This runs every render of every shape; parse the extra only once.
-  if (!getShapeBounds(shapeName)) {
-    const bounds = shapeBoundsFromExtras(gltf.scene.userData);
-    if (bounds) registerShapeBounds(shapeName, bounds);
-  }
-  return gltf;
+  return useLoader(ShapeLoader, url);
 }
-
-// IFL materials are driven imperatively rather than by React components: the
-// animated meshes are collected with collectIflMeshes before processShapeScene
-// swaps in Tribes 2 materials, their atlases load via loadIflMaterialInstance,
-// and driveIflFrames advances the frames each render.
 
 export function ShapePlaceholder({
   color,
@@ -375,10 +320,6 @@ interface ThreadState {
   sequence: string;
   action?: AnimationAction;
   /** Morph target frame animation actions played alongside the main clip. */
-  morphActions?: AnimationAction[];
-  visNodes?: VisNode[];
-  startTime: number;
-  forward: boolean;
 }
 
 /**
@@ -419,25 +360,14 @@ export const ShapeModel = memo(function ShapeModel({
   imageLight?: ImageLightConfig;
   imageSlot?: number;
 }) {
-  const { object, shapeName, type, isOrganic } = useShapeInfo();
+  const { object, shapeName, type } = useShapeInfo();
   const { debugMode } = useDebug();
   const { animationEnabled } = useSettings();
   const runtime = useEngineSelector((state) => state.runtime.runtime);
   const anisotropy = useAnisotropy();
 
-  const {
-    clonedScene,
-    mixer,
-    clipsByName,
-    morphClipsBySeq,
-    visNodesBySequence,
-    iflMeshes,
-  } = useMemo(() => {
-    const scene = SkeletonUtils.clone(gltf.scene) as Group;
-
-    // Detect IFL materials BEFORE processShapeScene replaces them, since the
-    // replacement materials lose the original userData (flag_names, resource_path).
-    const iflInfos = collectIflMeshes(scene);
+  const { clonedScene, mixer, clipsByName } = useMemo(() => {
+    const scene = SkeletonUtils.clone(gltf.scene) as DTSShape;
 
     processShapeScene(scene, shapeName ?? undefined, {
       anisotropy,
@@ -445,53 +375,22 @@ export const ShapeModel = memo(function ShapeModel({
       skinName,
     });
 
-    // Un-hide IFL meshes that don't have a vis sequence — they should always
-    // be visible. IFL meshes WITH vis sequences stay hidden until their
-    // sequence is activated by playThread.
-    for (const { mesh, hasVisSequence } of iflInfos) {
-      if (!hasVisSequence) {
-        mesh.visible = true;
-      }
-    }
-
-    const visBySeq = collectVisNodes(scene);
-
     // Build clips by name (case-insensitive).
-    // Blend sequences (DTS flag 0x8) store absolute transforms but must be
-    // played in additive mode. Clone and convert them here so the original
-    // cached clips from useGLTF are never mutated.
-    const sequences = readDtsSequences(scene, gltf.animations);
-    const blendNames = sequences.blend;
-    const knownSeqNames = sequences.names;
+    // Native blend clips already contain local deltas and additive mode.
 
     const clips = new Map<string, AnimationClip>();
-    // Morph target frame animations are exported as separate clips named
-    // "{SeqName}_{MeshName}_frame". Collect them so they can be played
-    // alongside the main sequence clip.
-    const morphClipsBySeq = collectMorphClips(gltf.animations, knownSeqNames);
     for (const clip of gltf.animations) {
       const lower = clip.name.toLowerCase();
-      if (isMorphClip(clip, morphClipsBySeq)) continue;
-      if (blendNames.has(lower)) {
-        const cloned = clip.clone();
-        const restClip = buildRestPoseClip(scene, cloned);
-        AnimationUtils.makeClipAdditive(cloned, 0, restClip, 30);
-        clips.set(lower, cloned);
-      } else {
-        clips.set(lower, clip);
-      }
+      clips.set(lower, clip);
     }
 
     // Only create a mixer if there are skeleton animation clips.
-    const mix = clips.size > 0 ? new AnimationMixer(scene) : null;
+    const mix = clips.size > 0 ? new DTSAnimationMixer(scene) : null;
 
     return {
       clonedScene: scene,
       mixer: mix,
       clipsByName: clips,
-      morphClipsBySeq,
-      visNodesBySequence: visBySeq,
-      iflMeshes: iflInfos,
     };
   }, [gltf.scene, gltf.animations, shapeName, anisotropy, emap, skinName]);
 
@@ -507,10 +406,8 @@ export const ShapeModel = memo(function ShapeModel({
   // Mission-placed statics (a generator, a bunker prop) occlude a camera
   // exactly like interior walls, so register their meshes as CAMERA
   // occluders — a separate collider class, so projectile physics keeps
-  // colliding with exactly what it always did. Vegetation is skipped
-  // (crossed alpha planes read solid to a ray while looking sparse), and
-  // so is anything too small to meaningfully block a frame. World
-  // matrices are snapshotted once, like interiors — these do not move.
+  // colliding with exactly what it always did. DTS collision/LOS details
+  // select the authored hulls, including tree trunks without leaf planes.
   // Keyed on the GHOST index, not `entity.id` (a per-session counter
   // that differs between stacks) and not `useId` (React-internal), so a
   // dump of this world is comparable with a headless build's.
@@ -523,20 +420,18 @@ export const ShapeModel = memo(function ShapeModel({
     const meshes = staticShapeColliderMeshes({
       root: clonedScene,
       type,
-      isOrganic,
     });
     if (!meshes) return;
     registerStaticShapeCollider(colliderId, meshes);
     return () => unregisterStaticShapeCollider(colliderId);
-  }, [clonedScene, colliderId, type, isOrganic]);
+  }, [clonedScene, colliderId, type]);
 
   const threadsRef = useRef(new Map<number, ThreadState>());
-  /** Per-mesh live IFL (see loadIflMaterialInstance). */
-  const iflMeshInstanceRef = useRef(new Map<any, IflMaterialInstance>());
-  const iflAnimInfosRef = useRef<IflMaterialInstance[]>([]);
-  const iflTimeRef = useRef(0);
+  const damageActionRef = useRef<AnimationAction | null>(null);
   const animationEnabledRef = useRef(animationEnabled);
-  animationEnabledRef.current = animationEnabled;
+  useLayoutEffect(() => {
+    animationEnabledRef.current = animationEnabled;
+  }, [animationEnabled]);
 
   const wheelAnimsRef = useRef<WheelAnimState[] | null>(null);
   const turretAnimRef = useRef<TurretAnimActions | null>(null);
@@ -545,66 +440,19 @@ export const ShapeModel = memo(function ShapeModel({
   // The entity is mutated in-place, so reading streamEntity?.threads
   // always returns the latest value without requiring React re-renders.
   const streamEntityRef = useRef(streamEntity);
-  streamEntityRef.current = streamEntity;
+  useLayoutEffect(() => {
+    streamEntityRef.current = streamEntity;
+  }, [streamEntity]);
   const handlePlayThreadRef = useRef<
     ((slot: number, seq: string, forward?: boolean) => void) | null
   >(null);
-  const handleStopThreadRef = useRef<((slot: number) => void) | null>(null);
+  const handleDestroyThreadRef = useRef<((slot: number) => void) | null>(null);
   const prevDemoThreadsRef = useRef<StreamThreadState[] | undefined>(undefined);
 
-  // Load IFL texture atlases imperatively (processShapeScene can't resolve
-  // .ifl paths since they require async loading of the frame list).
-  useEffect(() => {
-    iflAnimInfosRef.current = [];
-    iflMeshInstanceRef.current.clear();
-    for (const info of iflMeshes) {
-      loadIflMaterialInstance(info)
-        .then((inst) => {
-          if (!inst) return;
-          iflAnimInfosRef.current.push(inst);
-          iflMeshInstanceRef.current.set(info.mesh, inst);
-        })
-        .catch((err) => {
-          log.warn("Failed to load IFL atlas for %s: %o", info.iflPath, err);
-        });
-    }
-  }, [iflMeshes]);
-
-  // DTS sequence flags by name (readDtsSequences).
-  const { seqCyclicByName, seqBlendByName } = useMemo(() => {
+  const seqCyclicByName = useMemo(() => {
     const table = readDtsSequences(gltf.scene, gltf.animations);
-    const cycMap = new Map<string, boolean>();
-    const blendMap = new Map<string, boolean>();
-    for (const name of table.names) {
-      cycMap.set(name, table.cyclic.has(name));
-      if (table.blend.has(name)) blendMap.set(name, true);
-    }
-    return { seqCyclicByName: cycMap, seqBlendByName: blendMap };
+    return new Map(table.names.map((name) => [name, table.cyclic.has(name)]));
   }, [gltf]);
-
-  // Ready a vis-keyframed mesh for opacity animation: give it a shape
-  // material (with its default vis) and hook up its IFL atlas texture.
-  const prepareVisNode = useCallback((v: VisNode) => {
-    v.mesh.visible = true;
-    const material = v.mesh.material;
-    if (
-      !Array.isArray(material) &&
-      (material as MeshStandardMaterial).isMeshStandardMaterial
-    ) {
-      const result = replaceWithShapeMaterial(
-        material as MeshStandardMaterial,
-        (dtsNodeExtras(v.mesh).vis as number | undefined) ?? 0,
-      );
-      v.mesh.material = result.material;
-    }
-    prepareVisMaterial(v);
-    const inst = iflMeshInstanceRef.current.get(v.mesh);
-    if (inst && v.mesh.material && !Array.isArray(v.mesh.material)) {
-      const mapped = v.mesh.material as Material & { map?: Texture | null };
-      mapped.map = inst.texture;
-      mapped.needsUpdate = true;
-    }
-  }, []);
 
   // Vehicle jet flares and nozzle/contrail emitters (FlyingVehicle and
   // HoverVehicle ghosts only; other shapes get a no-op driver).
@@ -613,20 +461,8 @@ export const ShapeModel = memo(function ShapeModel({
       scene: clonedScene,
       mixer,
       clipsByName,
-      morphClipsBySeq,
-      visNodesBySequence,
-      seqBlendByName,
-      prepareVisNode,
     }),
-    [
-      clonedScene,
-      mixer,
-      clipsByName,
-      morphClipsBySeq,
-      visNodesBySequence,
-      seqBlendByName,
-      prepareVisNode,
-    ],
+    [clonedScene, mixer, clipsByName],
   );
   const driveVehicleJets = useVehicleJets(
     streamEntityRef,
@@ -657,14 +493,11 @@ export const ShapeModel = memo(function ShapeModel({
       forward = true,
     ) {
       const seqLower = sequenceName.toLowerCase();
-      handleStopThread(slot);
+      destroyThread(slot);
 
       const clip = clipsByName.get(seqLower);
-      const vNodes = visNodesBySequence.get(seqLower);
       const thread: ThreadState = {
         sequence: seqLower,
-        startTime: shapeNowSec(),
-        forward,
       };
 
       if (clip && mixer) {
@@ -676,12 +509,6 @@ export const ShapeModel = memo(function ShapeModel({
           action.setLoop(LoopOnce, 1);
           action.clampWhenFinished = true;
         }
-        // Blend sequences (DTS flag 0x8) are delta transforms multiplied
-        // onto the existing pose. Use Three.js additive blending so they
-        // composite on top of non-blend threads (e.g. Deploy on Ambient).
-        if (seqBlendByName.has(seqLower)) {
-          action.blendMode = AdditiveAnimationBlendMode;
-        }
         action.timeScale = forward ? 1 : -1;
         action.reset();
         // For backward playback, start at the end of the clip.
@@ -690,48 +517,31 @@ export const ShapeModel = memo(function ShapeModel({
         }
         action.play();
         thread.action = action;
-
-        // Play associated morph target frame clips alongside the main clip.
-        const morphClips = morphClipsBySeq.get(seqLower);
-        if (morphClips) {
-          thread.morphActions = [];
-          for (const mc of morphClips) {
-            const ma = mixer.clipAction(mc);
-            ma.setLoop(cyclic ? LoopRepeat : LoopOnce, cyclic ? Infinity : 1);
-            if (!cyclic) ma.clampWhenFinished = true;
-            ma.timeScale = forward ? 1 : -1;
-            ma.reset();
-            if (!forward) ma.time = mc.duration;
-            ma.play();
-            thread.morphActions.push(ma);
-          }
-        }
-      }
-
-      if (vNodes) {
-        for (const v of vNodes) prepareVisNode(v);
-        thread.visNodes = vNodes;
       }
 
       threads.set(slot, thread);
     }
 
     function handleStopThread(slot: number) {
-      const thread = threads.get(slot);
-      if (!thread) return;
-      if (thread.action) thread.action.stop();
-      if (thread.morphActions) {
-        for (const ma of thread.morphActions) ma.stop();
-      }
-      // Binary Stop: reset position to 0.0, freeze. Vis nodes go to frame 0.
-      if (thread.visNodes) {
-        for (const v of thread.visNodes) resetVisNode(v);
-      }
+      const action = threads.get(slot)?.action;
+      if (action) holdDtsAction(action, 0);
+    }
+    function destroyThread(slot: number) {
+      threads.get(slot)?.action?.stop();
       threads.delete(slot);
     }
 
     handlePlayThreadRef.current = handlePlayThread;
-    handleStopThreadRef.current = handleStopThread;
+    handleDestroyThreadRef.current = destroyThread;
+    const visibility = clipsByName.get("visibility");
+    const damageAction =
+      mixer && visibility ? mixer.clipAction(visibility) : null;
+    damageActionRef.current = damageAction;
+    if (damageAction)
+      holdDtsAction(
+        damageAction,
+        (streamEntityRef.current?.damageState ?? 0) >= 2 ? 1 : 0,
+      );
 
     // Set up WheeledVehicle wheel/spring/turn animations.
     // These are position-controlled (setPos) not thread-controlled.
@@ -803,24 +613,15 @@ export const ShapeModel = memo(function ShapeModel({
 
     // ── Demo/live mode: ghost thread handler in useFrame drives everything ──
     if (!isMissionMode) {
-      // A projectile's shape instance gets an ambient thread the moment it
-      // is added (Projectile::onAdd FUN_00631bb0, from ProjectileData's
-      // "ambient" sequence); activate/maintain follow in useFrame.
-      if (
-        streamEntityRef.current?.projectileAgeMS != null &&
-        (clipsByName.has("ambient") ||
-          visNodesBySequence.has("ambient") ||
-          morphClipsBySeq.has("ambient"))
-      ) {
-        handlePlayThread(PROJECTILE_AMBIENT_SLOT, "ambient");
-      }
       return () => {
         handlePlayThreadRef.current = null;
-        handleStopThreadRef.current = null;
+        handleDestroyThreadRef.current = null;
+        damageAction?.stop();
+        damageActionRef.current = null;
         prevDemoThreadsRef.current = undefined;
         wheelAnimsRef.current = null;
         turretAnimRef.current = null;
-        for (const slot of [...threads.keys()]) handleStopThread(slot);
+        for (const slot of [...threads.keys()]) destroyThread(slot);
       };
     }
 
@@ -855,9 +656,6 @@ export const ShapeModel = memo(function ShapeModel({
             const thread = threads.get(Number(slot));
             if (thread?.action) {
               thread.action.paused = true;
-              if (thread.morphActions) {
-                for (const ma of thread.morphActions) ma.paused = true;
-              }
             }
           },
         ),
@@ -903,11 +701,7 @@ export const ShapeModel = memo(function ShapeModel({
           ];
     for (const [slot, seqName] of defaults) {
       if (seededSlots.has(slot)) continue;
-      if (
-        clipsByName.has(seqName) ||
-        visNodesBySequence.has(seqName) ||
-        morphClipsBySeq.has(seqName)
-      ) {
+      if (clipsByName.has(seqName)) {
         handlePlayThread(slot, seqName);
       }
     }
@@ -915,27 +709,17 @@ export const ShapeModel = memo(function ShapeModel({
     return () => {
       unsubs.forEach((fn) => fn());
       handlePlayThreadRef.current = null;
-      handleStopThreadRef.current = null;
+      handleDestroyThreadRef.current = null;
+      damageAction?.stop();
+      damageActionRef.current = null;
       prevDemoThreadsRef.current = undefined;
       wheelAnimsRef.current = null;
       turretAnimRef.current = null;
-      for (const slot of [...threads.keys()]) handleStopThread(slot);
+      for (const slot of [...threads.keys()]) destroyThread(slot);
     };
-  }, [
-    mixer,
-    clipsByName,
-    visNodesBySequence,
-    seqCyclicByName,
-    seqBlendByName,
-    object,
-    runtime,
-    prepareVisNode,
-  ]);
+  }, [mixer, clipsByName, seqCyclicByName, object, runtime]);
 
-  // Build DTS sequence index → animation name lookup. If the glTF has the
-  // dts_sequence_names extra (set by the addon), use it for an exact mapping
-  // from ghost ThreadMask indices to animation names. Otherwise fall back to
-  // positional indexing (which only works if no sequences were filtered).
+  // Ghost ThreadMask indices address the native DTS sequence order.
   const seqIndexToName = useMemo(
     () => readDtsSequences(gltf.scene, gltf.animations).names,
     [gltf],
@@ -945,7 +729,6 @@ export const ShapeModel = memo(function ShapeModel({
   // state machine off the owner's ghosted image state, like a player's
   // weapon: fire, reload and activate sequences, spin and state sounds.
   const imageActionsRef = useRef(new Map<string, AnimationAction>());
-  const imageMorphActionsRef = useRef(new Map<string, AnimationAction[]>());
   const spinActionRef = useRef<AnimationAction | null>(null);
   const cyclicSequenceNames = useMemo(
     () => readDtsSequences(gltf.scene, gltf.animations).cyclic,
@@ -958,14 +741,6 @@ export const ShapeModel = memo(function ShapeModel({
       actions.set(name, mixer.clipAction(clip));
     }
     imageActionsRef.current = actions;
-    const morph = new Map<string, AnimationAction[]>();
-    for (const [name, clips] of morphClipsBySeq) {
-      morph.set(
-        name,
-        clips.map((clip) => mixer.clipAction(clip)),
-      );
-    }
-    imageMorphActionsRef.current = morph;
     const spin = actions.get("spin");
     if (spin) {
       spin.setLoop(LoopRepeat, Infinity);
@@ -976,10 +751,9 @@ export const ShapeModel = memo(function ShapeModel({
     return () => {
       spin?.stop();
       imageActionsRef.current = new Map();
-      imageMorphActionsRef.current = new Map();
       spinActionRef.current = null;
     };
-  }, [mixer, clipsByName, morphClipsBySeq, imageSlot]);
+  }, [mixer, clipsByName, imageSlot]);
   useImageStateAnimation(
     () =>
       entityId != null && imageSlot != null
@@ -990,16 +764,13 @@ export const ShapeModel = memo(function ShapeModel({
         : undefined,
     {
       actions: imageActionsRef,
-      morphActions: imageMorphActionsRef,
       setSpinTimeScale: (timeScale) => {
         if (spinActionRef.current) spinActionRef.current.timeScale = timeScale;
       },
-      visNodesBySequence,
       imageRoot: clonedScene,
       ownerId: entityId,
       seqIndexToName,
       cyclicSequences: cyclicSequenceNames,
-      iflInstances: iflAnimInfosRef,
     },
   );
 
@@ -1016,47 +787,15 @@ export const ShapeModel = memo(function ShapeModel({
         gameEntityStore.getState().streamEntities.has(entityId));
     const effectDelta = !inDemo ? delta : effectDeltaSec(delta);
 
-    // LinearProjectile shape sequences (binary-verified): "activate" starts
-    // once the projectile's age reaches activateDelayMS (processTick
-    // FUN_0062e010) and plays once; when the next frame would run past its
-    // end, the looping "maintain" takes over (advanceTime FUN_0062ee40).
-    // The disc's blue trail is these vis-animated meshes.
-    const projectile = streamEntityRef.current;
-    const playProjectileThread = handlePlayThreadRef.current;
-    if (
-      projectile?.projectileAgeMS != null &&
-      projectile.projectileActivateDelayMS != null &&
-      playProjectileThread
-    ) {
-      const thread = threads.get(PROJECTILE_ACTIVATE_SLOT);
-      if (!thread) {
-        if (
-          projectile.projectileAgeMS >= projectile.projectileActivateDelayMS &&
-          seqCyclicByName.has("activate")
-        ) {
-          playProjectileThread(PROJECTILE_ACTIVATE_SLOT, "activate");
-        }
-      } else if (thread.sequence === "activate" && thread.action) {
-        const clip = thread.action.getClip();
-        if (
-          thread.action.time + effectDelta >= clip.duration &&
-          seqCyclicByName.has("maintain")
-        ) {
-          playProjectileThread(PROJECTILE_ACTIVATE_SLOT, "maintain");
-        }
-      }
-    }
-
     // React to demo thread state changes. The ghost ThreadMask data tells us
     // exactly which DTS sequences are playing/stopped on each of 4 thread slots.
     const currentDemoThreads = streamEntityRef.current?.threads;
     const prevDemoThreads = prevDemoThreadsRef.current;
     if (currentDemoThreads !== prevDemoThreads) {
       const playThread = handlePlayThreadRef.current;
-      const stopThread = handleStopThreadRef.current;
       // Don't consume thread data until handlers are ready — leave
       // prevDemoThreadsRef unchanged so the change is re-detected next frame.
-      if (playThread && stopThread) {
+      if (playThread) {
         prevDemoThreadsRef.current = currentDemoThreads;
         // Use sparse arrays instead of Maps — thread indices are 0-3.
         const currentBySlot: Array<StreamThreadState | undefined> = [];
@@ -1083,84 +822,20 @@ export const ShapeModel = memo(function ShapeModel({
             const seqName = seqIndexToName[t.sequence];
             if (!seqName) continue;
 
-            // Match binary updateThread (FUN_005ebf00):
-            // State 0=Play, 1=Stop, 2=Pause
-            if (t.state === 1) {
-              // Stop: reset to start, freeze.
-              stopThread(slot);
-            } else if (t.state === 2) {
-              // Pause: freeze at current position.
-              const thread = threads.get(slot);
-              if (thread?.action) {
-                thread.action.paused = true;
-                if (thread.morphActions) {
-                  for (const ma of thread.morphActions) ma.paused = true;
-                }
-              }
-            } else {
-              // Play (state === 0)
-              if (t.atEnd) {
-                // Already finished: snap to end pose, freeze.
-                // Check if we need to start the thread first.
-                let thread = threads.get(slot);
-                if (!thread || thread.sequence !== seqName) {
-                  playThread(slot, seqName, t.forward);
-                  thread = threads.get(slot);
-                }
-                if (thread?.action) {
-                  const clip = thread.action.getClip();
-                  thread.action.time = t.forward ? clip.duration : 0;
-                  thread.action.timeScale = 1;
-                  thread.action.setLoop(LoopOnce, 1);
-                  thread.action.clampWhenFinished = true;
-                  thread.action.paused = true;
-                  if (thread.morphActions) {
-                    for (const ma of thread.morphActions) {
-                      const mc = ma.getClip();
-                      ma.time = t.forward ? mc.duration : 0;
-                      ma.timeScale = 1;
-                      ma.setLoop(LoopOnce, 1);
-                      ma.clampWhenFinished = true;
-                      ma.paused = true;
-                    }
-                  }
-                }
-                // Snap vis nodes to end pose.
-                if (thread?.visNodes) {
-                  for (const v of thread.visNodes) {
-                    const mat = v.mesh.material;
-                    if (!mat || Array.isArray(mat)) continue;
-                    const endIdx = t.forward ? v.keyframes.length - 1 : 0;
-                    mat.opacity = v.keyframes[endIdx];
-                    v.mesh.visible = mat.opacity > 0.01;
-                  }
-                }
-              } else {
-                // Actively playing: (re)start with correct direction.
-                // Only restart if sequence or direction changed.
-                const thread = threads.get(slot);
-                const needRestart =
-                  !thread ||
-                  thread.sequence !== seqName ||
-                  thread.forward !== t.forward;
-                if (needRestart) {
-                  playThread(slot, seqName, t.forward);
-                } else if (thread?.action?.paused) {
-                  // Resume from pause with correct direction.
-                  thread.action.paused = false;
-                  thread.action.timeScale = t.forward ? 1 : -1;
-                  if (thread.morphActions) {
-                    for (const ma of thread.morphActions) {
-                      ma.paused = false;
-                      ma.timeScale = t.forward ? 1 : -1;
-                    }
-                  }
-                }
-              }
+            let thread = threads.get(slot);
+            if (!thread || thread.sequence !== seqName) {
+              playThread(slot, seqName, t.forward);
+              thread = threads.get(slot);
             }
+            if (thread?.action)
+              applyDtsThreadState(
+                thread.action,
+                t,
+                seqCyclicByName.get(seqName) ?? false,
+              );
           } else if (prev) {
-            // Thread disappeared — stop it.
-            stopThread(slot);
+            // Deleting a thread restores properties no remaining thread owns.
+            handleDestroyThreadRef.current?.(slot);
           }
         }
       }
@@ -1168,53 +843,13 @@ export const ShapeModel = memo(function ShapeModel({
 
     if (animationEnabled) driveVehicleJets(effectDelta);
 
-    if (mixer && animationEnabled) {
-      mixer.update(effectDelta);
-    }
-
-    // Drive vis opacity animations for active threads.
-    // Direction is handled by computing position forward or backward.
-    for (const [, thread] of threads) {
-      if (!thread.visNodes) continue;
-
-      const elapsed = shapeNowSec() - thread.startTime;
-      for (const node of thread.visNodes) {
-        if (!animationEnabled) {
-          resetVisNode(node);
-          continue;
-        }
-        // Cyclic sequences wrap and ignore direction; one-shots clamp.
-        applyVisAt(
-          node,
-          visThreadPosition(
-            elapsed,
-            node.duration,
-            node.cyclic,
-            thread.forward,
-          ),
-        );
-      }
-    }
-
-    // Drive damage state Visibility — swap normal/HULK meshes.
-    // In Torque, mHulkThread plays the "Visibility" sequence at pos 0.0
-    // (Enabled) or 1.0 (Destroyed). The vis_keyframes on each mesh encode:
-    // normal meshes [1,0] (visible→hidden), HULK meshes [0,1] (hidden→visible).
-    const entity = streamEntityRef.current;
-    const damageState = entity?.damageState ?? 0;
-    const visibilityNodes = visNodesBySequence.get("visibility");
-    if (visibilityNodes) {
-      // Position 0.0 = Enabled (normal visible), 1.0 = Destroyed (HULK visible)
-      const pos = damageState >= 2 ? 1.0 : 0.0;
-      for (const { mesh, keyframes } of visibilityNodes) {
-        const mat = mesh.material;
-        if (!mat || Array.isArray(mat)) continue;
-        const n = keyframes.length;
-        const idx = Math.min(Math.floor(pos * n), n - 1);
-        mat.opacity = keyframes[idx];
-        mesh.visible = mat.opacity > 0.01;
-      }
-    }
+    // The hulk sequence is a held native thread, just like ShapeBase's.
+    const damage = damageActionRef.current;
+    if (damage)
+      holdDtsAction(
+        damage,
+        (streamEntityRef.current?.damageState ?? 0) >= 2 ? 1 : 0,
+      );
 
     // Drive WheeledVehicle wheel/spring/turn animations from ghost state.
     const wheelAnims = wheelAnimsRef.current;
@@ -1258,28 +893,15 @@ export const ShapeModel = memo(function ShapeModel({
       driveTurretAim(turretAnim, streamEntityRef.current?.turretAim);
     }
 
-    // Advance IFL texture atlases (Torque's animateIfls — see
-    // iflSequenceTime): a sequence-driven IFL follows the thread playing its
-    // sequence; one without a controlling sequence free-runs on real time
-    // (the engine would hold frame 0, but cycling is more useful to look at).
-    // A streamed mounted image's IFLs belong to its image threads
-    // (useImageStateAnimation drives them).
-    const iflAnimInfos = iflAnimInfosRef.current;
-    if (iflAnimInfos.length > 0 && !(imageSlot != null && inDemo)) {
-      iflTimeRef.current += effectDelta;
-      const now = shapeNowSec();
-      driveIflFrames(
-        iflAnimInfos,
-        (sequence) => {
-          for (const [, thread] of threads) {
-            if (thread.sequence === sequence) return now - thread.startTime;
-          }
-          return null;
-        },
-        iflTimeRef.current,
-        animationEnabled,
-      );
-    }
+    // Evaluate once after every controller has set its action's time/state.
+    mixer?.update(animationEnabled ? effectDelta : 0);
+
+    // Native tracks drive sequence-controlled IFLs. Only unbound viewer IFLs
+    // use this pausable clock; disabling animation holds their first frame.
+    clonedScene.setImageAnimationTime(
+      (clonedScene.time ?? 0) + effectDelta,
+      animationEnabled,
+    );
   }, FramePriority.ShapeAnimation);
 
   // ShapeBase fade (mFadeVal) and cloak (mCloakLevel) — see shapeFadeCloak.ts.
@@ -1332,22 +954,7 @@ export const ShapeModel = memo(function ShapeModel({
   // ShapeBase sound slots — managed as PositionalAudio, not entities.
   useEntitySoundSlots(streamEntityRef, clonedScene);
 
-  // The shape's own nodes: mount point bones for portal rendering and
-  // mount position tracking, and the Eye node vehicles define for the
-  // cockpit viewpoint. DTS node lookups are case insensitive (the tank
-  // and belly turret bases name their seats `mount0`).
-  const { mountBones, eyeBone } = useMemo(() => {
-    const nodes = collectOwnNodes(clonedScene);
-    const bones: Record<number, Object3D> = {};
-    for (const [name, node] of nodes) {
-      const match = name.match(/^mount(\d+)$/);
-      if (match) bones[Number(match[1])] = node;
-    }
-    return {
-      mountBones: Object.keys(bones).length > 0 ? bones : null,
-      eyeBone: nodes.get("eye") ?? null,
-    };
-  }, [clonedScene]);
+  const eyeBone = useMemo(() => findOwnNode(clonedScene, "eye"), [clonedScene]);
 
   useEyePosition(entityId, eyeBone, clonedScene);
 
@@ -1416,15 +1023,14 @@ export const ShapeModel = memo(function ShapeModel({
       ) : null}
       {entityId && <DebugShapeBounds entityId={entityId} scene={gltf.scene} />}
       {children}
-      {mountBones &&
-        mounted &&
+      {mounted &&
         Object.entries(mounted).map(([slot, content]) => {
-          const bone = mountBones[Number(slot)];
-          return bone ? (
+          const bone = getMountNode(clonedScene, Number(slot));
+          return (
             <Fragment key={slot}>
               {createPortal(<group>{content}</group>, bone)}
             </Fragment>
-          ) : null;
+          );
         })}
     </group>
   );

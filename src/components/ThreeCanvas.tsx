@@ -1,9 +1,15 @@
-import { ReactNode, Suspense, useCallback } from "react";
+import { lazy, ReactNode, Suspense, useCallback } from "react";
 import { Canvas, GLProps, RootState } from "@react-three/fiber";
 import { NoToneMapping, PCFShadowMap, SRGBColorSpace } from "three";
 import { useDebug, useSettings } from "./SettingsProvider";
 import { LimitFPS } from "./LimitFPS";
 import { registerShadowRenderer } from "./shadowControl";
+
+const DTSAnimatedInstances = lazy(() =>
+  import("./DTSAnimatedInstances").then((module) => ({
+    default: module.DTSAnimatedInstances,
+  })),
+);
 
 export type InvalidateFunction = RootState["invalidate"];
 
@@ -50,7 +56,13 @@ export function ThreeCanvas({
       camera={{ rotation: [0, -Math.PI / 2, 0] }}
       onCreated={handleCreated}
     >
-      <Suspense>{children}</Suspense>
+      <Suspense>
+        {children}
+        {new URLSearchParams(window.location.search).get("dtsInstancing") !==
+        "0" ? (
+          <DTSAnimatedInstances />
+        ) : null}
+      </Suspense>
       {fpsLimitActive ? <LimitFPS /> : null}
     </Canvas>
   );

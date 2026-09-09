@@ -253,6 +253,8 @@ function lerp3(
 export class EmitterInstance {
   readonly data: EmitterDataResolved;
   readonly particles: Particle[] = [];
+  /** Changes only when particle data changes, for render-buffer synchronization. */
+  revision = 0;
   readonly maxParticles: number;
 
   private internalClock = 0;
@@ -357,6 +359,7 @@ export class EmitterInstance {
     const numMS = Math.round(dtMS);
     if (numMS <= 0) return;
     this.elapsedMS += numMS;
+    if (this.particles.length) this.revision++;
 
     for (let i = this.particles.length - 1; i >= 0; i--) {
       const p = this.particles[i];
@@ -554,6 +557,7 @@ export class EmitterInstance {
       size: k0.size,
     };
     this.particles.push(particle);
+    this.revision++;
     return particle;
   }
 }

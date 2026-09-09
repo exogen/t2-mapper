@@ -1,6 +1,6 @@
 /**
  * Convert .wav files under `docs/base` to AAC M4A, placed alongside the
- * originals (like .glb beside .dts). The manifest ignores .m4a files;
+ * originals. The manifest ignores .m4a files;
  * audioToUrl() swaps the extension at resolution time. --new converts
  * only those without an .m4a.
  */

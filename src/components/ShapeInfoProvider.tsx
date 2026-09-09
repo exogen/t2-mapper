@@ -1,17 +1,12 @@
 import { createContext, ReactNode, useContext, useMemo } from "react";
 import { TorqueObject } from "../torqueScript";
-import { isOrganicShape } from "../organicShapes";
 
 export type StaticShapeType = "TSStatic" | "StaticShape" | "Item" | "Turret";
-
-// isOrganicShape moved to ../organicShapes so Node-side code (the
-// collider policy) can use it without importing a React component.
 
 interface ShapeInfoContextValue {
   object?: TorqueObject;
   shapeName: string;
   type: StaticShapeType;
-  isOrganic: boolean;
 }
 
 const ShapeInfoContext = createContext<ShapeInfoContextValue | null>(null);
@@ -35,16 +30,13 @@ export function ShapeInfoProvider({
   shapeName: string;
   type: StaticShapeType;
 }) {
-  const isOrganic = useMemo(() => isOrganicShape(shapeName), [shapeName]);
-
   const context = useMemo(
     () => ({
       object,
       shapeName,
       type,
-      isOrganic,
     }),
-    [object, shapeName, type, isOrganic],
+    [object, shapeName, type],
   );
 
   return (

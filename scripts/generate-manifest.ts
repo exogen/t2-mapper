@@ -1,8 +1,7 @@
 /**
  * Regenerate the resource manifest from `docs/base` (or BASE_DIR). Logs
  * every resource with its sources unless --quiet; writes nothing without
- * -o. Exits non-zero when a .dts has no converted .glb beside it, since
- * that shape would render nothing and contribute no mount transforms.
+ * -o. Mount transforms are extracted from the native DTS shape data.
  *
  *   npm run build:manifest [-- --quiet]
  */
@@ -17,7 +16,7 @@ const { values } = parseArgs({
   },
 });
 
-const { manifest, missingGlbs } = await buildManifest({
+const { manifest } = await buildManifest({
   baseDir: process.env.BASE_DIR,
   onResource: values.quiet
     ? undefined
@@ -40,14 +39,6 @@ console.log(
     `${Object.keys(manifest.missions).length} missions, ` +
     `${Object.keys(manifest.mounts).length} shapes with mount nodes`,
 );
-if (missingGlbs.length > 0) {
-  console.error(
-    `${missingGlbs.length} model(s) have no .glb (run scripts/convert-dts.ts / convert-dif.ts --new):\n  ` +
-      missingGlbs.join("\n  "),
-  );
-  process.exitCode = 1;
-}
-
 if (values.output) {
   await fs.writeFile(values.output, serializeManifest(manifest), "utf8");
   console.log(`Wrote ${values.output}`);

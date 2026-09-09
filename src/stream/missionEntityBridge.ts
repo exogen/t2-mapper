@@ -8,6 +8,7 @@ import type {
   WayPointEntity,
 } from "../state/gameEntityTypes";
 import type { ImageSlot } from "./types";
+import { getImageMountOffset } from "./imageMount";
 import { getPosition, getProperty, getScale } from "../mission";
 import { misRotationToThreeQuat } from "../torqueScript/vecMath";
 import { DEFAULT_FLAG_SKINS } from "../stringUtils";
@@ -280,6 +281,9 @@ function buildShapeEntity(
       slots[Number(slotStr)] = {
         shapeName: imageShapeName,
         mountPoint: Number(getProperty(imageDb, "mountPoint")) || 0,
+        mountOffset: getImageMountOffset(imageDb, (name) =>
+          getProperty(imageDb, name),
+        ),
         dataBlockId: 0,
         skinName: entry.skin,
       };
@@ -293,7 +297,14 @@ function buildShapeEntity(
       if (turretShapeName) {
         const mountPoint = Number(getProperty(barrelDb, "mountPoint")) || 0;
         entity.imageSlots = [
-          { shapeName: turretShapeName, mountPoint, dataBlockId: 0 },
+          {
+            shapeName: turretShapeName,
+            mountPoint,
+            dataBlockId: 0,
+            mountOffset: getImageMountOffset(barrelDb, (name) =>
+              getProperty(barrelDb, name),
+            ),
+          },
         ];
       }
     }

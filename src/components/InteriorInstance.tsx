@@ -3,26 +3,22 @@ import { DebugSuspense } from "./DebugSuspense";
 import { ErrorBoundary } from "react-error-boundary";
 import { createLogger } from "../logger";
 import {
-  Mesh,
   Material,
-  MeshStandardMaterial,
-  MeshBasicMaterial,
   MeshLambertMaterial,
-  Texture,
-  SRGBColorSpace,
   Box3,
   Vector3,
   type Group,
+  type Texture,
 } from "three";
-import { useGLTF, useTexture } from "@react-three/drei";
+import { useTexture } from "@react-three/drei";
+import { useLoader } from "@react-three/fiber";
+import { type DIFMaterial, type DIFMesh } from "../dif/difLoader";
+import { InteriorLoader } from "../interiorLoader";
 import { textureToUrl, interiorToUrl } from "../loaders";
 import type { InteriorInstanceEntity } from "../state/gameEntityTypes";
 import { useIsDebugTourTarget } from "../state/cameraTourStore";
 import { DebugBounds } from "./DebugBounds";
-import {
-  INTERIOR_MODEL_ROTATION_Y,
-  interiorPlacement,
-} from "../world/placement";
+import { interiorPlacement } from "../world/placement";
 import { interiorColliderMeshes } from "../world/colliderPolicy";
 import { setupTexture } from "../textureUtils";
 import { invalidateShadows } from "./shadowControl";
@@ -42,58 +38,38 @@ import { injectInteriorLighting } from "../interiorMaterial";
 
 const log = createLogger("InteriorInstance");
 
-/**
- * Load a .gltf file that was converted from a .dif, used for "interior" models.
- */
+/** Load original DIF geometry, surface flags, and embedded lightmaps. */
 function useInterior(interiorFile: string) {
-  const url = interiorToUrl(interiorFile);
-  return useGLTF(url);
+  return useLoader(InteriorLoader, interiorToUrl(interiorFile));
 }
 
-function InteriorTexture({
-  materialName,
-  material,
-  lightMap,
-}: {
-  materialName: string;
-  material?: Material;
-  lightMap?: Texture | null;
-}) {
+function InteriorTexture({ material }: { material: DIFMaterial }) {
   const debugContext = useDebug();
   const debugMode = debugContext?.debugMode ?? false;
   const anisotropy = useAnisotropy();
-  const url = textureToUrl(materialName);
-  const texture = useTexture(url, (texture) =>
-    setupTexture(texture, { anisotropy }),
+  const url = textureToUrl(material.resourcePath);
+  const configureTexture = useCallback(
+    (texture: Texture) => {
+      setupTexture(texture, { anisotropy });
+    },
+    [anisotropy],
   );
-  // Check for self-illuminating flag in material userData
-  // Note: The io_dif Blender add-on needs to be updated to export material flags
-  const flagNames = new Set<string>(material?.userData?.flag_names ?? []);
-  const isSelfIlluminating = flagNames.has("SelfIlluminating");
-  // Check for SurfaceOutsideVisible flag (surfaces that receive scene ambient light)
-  const surfaceFlagNames = new Set<string>(
-    material?.userData?.surface_flag_names ?? [],
-  );
-  const isSurfaceOutsideVisible = surfaceFlagNames.has("SurfaceOutsideVisible");
+  const texture = useTexture(url, configureTexture);
+  const isSurfaceOutsideVisible = material.outsideVisible;
   // Inject volumetric fog and lighting multipliers into materials
-  // NOTE: This hook must be called unconditionally (before any early returns)
   const onBeforeCompile = useCallback(
     (shader: any) => {
       injectCustomFog(shader, globalFogUniforms);
       injectInteriorLighting(shader, {
         surfaceOutsideVisible: isSurfaceOutsideVisible,
-        dynamicLights: !isSelfIlluminating,
+        dynamicLights: true,
       });
     },
-    [isSurfaceOutsideVisible, isSelfIlluminating],
+    [isSurfaceOutsideVisible],
   );
-  // Refs for forcing shader recompilation
-  const basicMaterialRef = useRef<MeshBasicMaterial>(null);
-  const lambertMaterialRef = useRef<MeshLambertMaterial>(null);
-  // Force shader recompilation when debugMode changes
-  // r3f doesn't sync defines prop changes, so we update the material directly
+  const materialRef = useRef<MeshLambertMaterial>(null);
   useEffect(() => {
-    const mat = (basicMaterialRef.current ?? lambertMaterialRef.current) as
+    const mat = materialRef.current as
       (Material & { defines?: Record<string, number> }) | null;
     if (mat) {
       mat.defines ??= {};
@@ -101,122 +77,39 @@ function InteriorTexture({
       mat.needsUpdate = true;
     }
   }, [debugMode]);
-  const defines = { DEBUG_MODE: debugMode ? 1 : 0 };
-  // Key for shader structure changes (surfaceOutsideVisible affects lighting model)
-  const materialKey = `${isSurfaceOutsideVisible}`;
-  // Self-illuminating materials are fullbright (unlit), no lightmap
-  if (isSelfIlluminating) {
-    return (
-      <meshBasicMaterial
-        ref={basicMaterialRef}
-        key={materialKey}
-        map={texture}
-        toneMapped={false}
-        defines={defines}
-        onBeforeCompile={onBeforeCompile}
-      />
-    );
-  }
-  // MeshLambertMaterial for diffuse-only lighting (matches Tribes 2's GL pipeline)
-  // Shader modifications in onBeforeCompile:
-  // - Outside surfaces (SurfaceOutsideVisible): scene lighting + additive lightmap
-  // - Inside surfaces (ZoneInside): additive lightmap only, no scene lighting
-  // Lightmap intensity is handled in the shader, not via material prop
-  // toneMapped={false} to match Torque's direct output (no HDR tone mapping)
-  // Using FrontSide (default) - normals are fixed in io_dif Blender export
+
   return (
-    <meshLambertMaterial
-      ref={lambertMaterialRef}
-      key={materialKey}
+    <primitive
+      ref={materialRef}
+      object={material}
+      attach="material"
       map={texture}
-      lightMap={lightMap}
-      toneMapped={false}
-      defines={defines}
+      defines={{ DEBUG_MODE: debugMode ? 1 : 0 }}
       onBeforeCompile={onBeforeCompile}
+      customProgramCacheKey={() => `dif:${isSurfaceOutsideVisible}`}
     />
   );
 }
 
-/**
- * Extract lightmap texture from a glTF material.
- * The io_dif Blender addon stores lightmaps in the emissive channel for transport.
- *
- * Torque (2001) multiplied base_texture * lightmap directly in gamma/sRGB space
- * with no gamma correction. The lightmap PNGs contain sRGB-encoded values.
- * By setting colorSpace to SRGBColorSpace, Three.js correctly decodes the sRGB
- * values to linear for its lighting calculations.
- */
-function getLightMap(material: Material | null): Texture | null {
-  if (!material) return null;
-  // glTF materials come through as MeshStandardMaterial
-  const stdMat = material as MeshStandardMaterial;
-  // Lightmap is stored in emissiveMap with 0 strength (just for glTF transport)
-  const lightMap = stdMat.emissiveMap;
-  if (lightMap) {
-    // Lightmaps are sRGB-encoded PNGs - decode to linear for correct lighting
-    lightMap.colorSpace = SRGBColorSpace;
-  }
-  return lightMap ?? null;
-}
-
-function InteriorMesh({ node }: { node: Mesh }) {
-  // Extract lightmaps from original materials (stored in emissiveMap for glTF transport)
-  const lightMaps = useMemo(() => {
-    if (!node.material) return [];
-    const materials = Array.isArray(node.material)
-      ? node.material
-      : [node.material];
-    const maps = materials.map((m) => getLightMap(m));
-    // The shape lighting probe samples the lightmap under a shape through
-    // the collider's geometry; keep it there, with each slot's
-    // SurfaceOutsideVisible flag (those surfaces get the sun and ambient
-    // on top of the lightmap, as in injectInteriorLighting), so the probe
-    // never sees the loading placeholder material.
-    node.geometry.userData.lightMaps = maps;
-    node.geometry.userData.outsideVisible = materials.map((m) =>
-      new Set<string>(m?.userData?.surface_flag_names ?? []).has(
-        "SurfaceOutsideVisible",
-      ),
-    );
-    return maps;
-  }, [node.material, node.geometry]);
-
-  // Shadow map is frozen (shadowControl.ts); newly loaded interior
-  // geometry must trigger a one-time re-render, as must unmount.
+function InteriorMesh({ node }: { node: DIFMesh }) {
   useEffect(() => {
     invalidateShadows();
     return invalidateShadows;
   }, [node.geometry]);
 
   return (
-    <mesh geometry={node.geometry} castShadow receiveShadow>
-      {node.material ? (
-        <DebugSuspense
-          name={`InteriorTexture:${Array.isArray(node.material) ? node.material[0]?.userData?.resource_path : (node.material?.userData?.resource_path ?? "?")}`}
-          fallback={
-            // Allow the mesh to render while the texture is still loading;
-            // show a wireframe placeholder.
-            <meshStandardMaterial color="yellow" wireframe />
-          }
-        >
-          {Array.isArray(node.material) ? (
-            node.material.map((mat, index) => (
-              <InteriorTexture
-                key={index}
-                materialName={mat.userData.resource_path}
-                material={mat}
-                lightMap={lightMaps[index]}
-              />
-            ))
-          ) : (
-            <InteriorTexture
-              materialName={node.material.userData.resource_path}
-              material={node.material}
-              lightMap={lightMaps[0]}
-            />
-          )}
-        </DebugSuspense>
-      ) : null}
+    <mesh
+      geometry={node.geometry}
+      material={node.material}
+      castShadow
+      receiveShadow
+    >
+      <DebugSuspense
+        name={`InteriorTexture:${node.material.resourcePath}`}
+        fallback={null}
+      >
+        <InteriorTexture material={node.material} />
+      </DebugSuspense>
     </mesh>
   );
 }
@@ -230,12 +123,12 @@ export const InteriorModel = memo(function InteriorModel({
   ghostIndex?: number;
   isTarget?: boolean;
 }) {
-  const gltf = useInterior(interiorFile);
-  const { nodes } = gltf;
+  const interior = useInterior(interiorFile);
+  const { surfaceMeshes } = interior;
   const debugContext = useDebug();
   const debugMode = debugContext?.debugMode ?? false;
 
-  // Register this interior's meshes for projectile collision. Interiors
+  // Register this interior's native BSP/hulls for collision. Interiors
   // are static, so world matrices are snapshotted once after mount.
   // Which meshes qualify is `interiorColliderMeshes` — shared with the
   // headless world builder so both see identical geometry.
@@ -249,7 +142,10 @@ export const InteriorModel = memo(function InteriorModel({
   useEffect(() => {
     const group = meshGroupRef.current;
     if (!group) return;
-    registerInteriorCollider(collisionId, interiorColliderMeshes(group));
+    registerInteriorCollider(
+      collisionId,
+      interiorColliderMeshes(group, interior),
+    );
     // This building's shadow on the ground is baked into the terrain
     // lightmap, and that bake reads the interior colliders.
     invalidateTerrainLightmap();
@@ -265,11 +161,11 @@ export const InteriorModel = memo(function InteriorModel({
       invalidateTerrainLightmap();
       setShadowCasterBounds(collisionId, null);
     };
-  }, [collisionId, nodes]);
+  }, [collisionId, interior]);
 
   const debugBounds = useMemo(() => {
     if (!isTarget) return null;
-    const box = new Box3().setFromObject(gltf.scene);
+    const box = new Box3().setFromObject(interior.scene);
     const center = new Vector3();
     const size = new Vector3();
     box.getCenter(center);
@@ -278,15 +174,13 @@ export const InteriorModel = memo(function InteriorModel({
       center: [center.x, center.y, center.z] as [number, number, number],
       size: [size.x, size.y, size.z] as [number, number, number],
     };
-  }, [isTarget, gltf.scene]);
+  }, [isTarget, interior.scene]);
 
   return (
-    <group ref={meshGroupRef} rotation={[0, INTERIOR_MODEL_ROTATION_Y, 0]}>
-      {Object.entries(nodes)
-        .filter(([, node]: [string, any]) => node.isMesh)
-        .map(([name, node]: [string, any]) => (
-          <InteriorMesh key={name} node={node} />
-        ))}
+    <group ref={meshGroupRef} dispose={null}>
+      {surfaceMeshes.map((node) => (
+        <InteriorMesh key={node.name} node={node} />
+      ))}
       {debugMode ? (
         <FloatingLabel>
           {ghostIndex}: {interiorFile}

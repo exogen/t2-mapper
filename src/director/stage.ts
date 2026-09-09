@@ -71,6 +71,7 @@ import {
   DIRECTOR_DOORWAY_RADIUS,
 } from "./tunables";
 import { orbitPullbackDir } from "../stream/streamHelpers";
+import { cameraSpotsFor, type FreeSpaceGrid } from "./freeSpace";
 
 /** How often along a shot the subject's visibility is sampled. */
 const STAGE_SAMPLE_SEC = 1;
@@ -107,6 +108,9 @@ export interface StageReport {
   /** Placement solved by the planner against the free-space grid and
    *  kept as-is — no search needed here. */
   presolved: number;
+  /** Indoor placement found in the stream's free-space grid. */
+  gridFixed: number;
+  gridFollow: number;
   /** Planned bearing verified as-is. */
   clean: number;
   /** A different bearing/height/standoff was needed. */
@@ -160,6 +164,8 @@ export function emptyReport(): StageReport {
     sweepTrimmed: 0,
     sweepConverted: 0,
     presolved: 0,
+    gridFixed: 0,
+    gridFollow: 0,
     clean: 0,
     adjusted: 0,
     tight: 0,
@@ -180,6 +186,7 @@ export function emptyReport(): StageReport {
 function openStageContext(
   dataset: DirectorDataset,
   tracks: Map<number, FlagTrack>,
+  freeSpace?: FreeSpaceGrid | null,
 ): void {
   const vehiclesBySec = new Map<number, Vector3[]>();
   for (const v of dataset.vehicles ?? []) {
@@ -189,6 +196,7 @@ function openStageContext(
     list.push(new Vector3(v.pos[1], v.pos[2], v.pos[0]));
   }
   _stageCtx = {
+    freeSpace,
     tightAcc: 0,
     playersAtSec: playersAtSecFor(dataset),
     tracks,
@@ -210,10 +218,11 @@ function openStageContext(
 export function stagePlan(
   plan: ShotPlan,
   dataset: DirectorDataset,
+  freeSpace?: FreeSpaceGrid | null,
 ): StageReport {
   const report = emptyReport();
   const tracks = buildFlagTracks(dataset);
-  openStageContext(dataset, tracks);
+  openStageContext(dataset, tracks, freeSpace);
   try {
     for (let i = 0; i < plan.shots.length; i++) {
       stageSweepShot(plan, i, tracks, dataset, report);
@@ -282,11 +291,12 @@ export function stageShots(
   shots: Shot[],
   indices: number[],
   dataset: DirectorDataset,
+  freeSpace?: FreeSpaceGrid | null,
 ): StageReport {
   const report = emptyReport();
   const plan: ShotPlan = { shots, gameMode: "ctf" } as ShotPlan;
   const tracks = buildFlagTracks(dataset);
-  openStageContext(dataset, tracks);
+  openStageContext(dataset, tracks, freeSpace);
   try {
     for (const i of indices) stageSweepShot(plan, i, tracks, dataset, report);
     for (const i of indices) stageFixedShot(plan, i, tracks, dataset, report);
@@ -849,6 +859,15 @@ function stageFixedShot(
     report.presolved++;
     return;
   }
+  // Search actual room space before lifting the anchor or trying rings
+  // above it. Basement cameras may need to sit BELOW the subject.
+  if (_stageCtx?.freeSpace && isRoofed(shot.center)) {
+    const path = subjectPath(shot, tracks, dataset, shot.center);
+    if (placeFixedFromGrid(shot, path, _stageCtx.freeSpace)) {
+      report.gridFixed++;
+      return;
+    }
+  }
   const anchor = surfaceLiftedAnchor(shot.center) ?? shot.center;
   const path = subjectPath(shot, tracks, dataset, anchor);
   const plannedLift = orbitLiftFactor(
@@ -941,6 +960,54 @@ function stageFixedShot(
   report.unsolved++;
 }
 
+function placeFixedFromGrid(
+  shot: Extract<Shot, { kind: "fixedOrbit" }>,
+  path: PathSample[],
+  grid: FreeSpaceGrid,
+): boolean {
+  const subject = path[0]?.pos;
+  if (!subject) return false;
+  const anchor = shot.center;
+  _anchorThree.set(anchor[1], anchor[2], anchor[0]);
+  for (const spot of cameraSpotsFor(grid, [subject.z, subject.x, subject.y], {
+    wantDist: shot.radius,
+    bearing: shot.startAngle,
+  })) {
+    const dx = spot[0] - anchor[0];
+    const dy = spot[1] - anchor[1];
+    const radius = Math.hypot(dx, dy);
+    if (radius < 1e-3) continue;
+    const angle = Math.atan2(dx, dy);
+    const liftFactor = (spot[2] - anchor[2]) / radius;
+    // A clear cell does not imply a clear orbit. Hold the eye there;
+    // the look-subject can still move through the frame.
+    const evaluated = evaluateCandidate(
+      shot,
+      anchor,
+      path,
+      angle,
+      0,
+      liftFactor,
+      radius,
+      0.055,
+    );
+    if (evaluated.visibility < 1) continue;
+    const candidate = {
+      ...shot,
+      angularSpeed: 0,
+      heightFactor: liftFactor,
+      staged: { angle, radius, liftFactor, visibility: evaluated.visibility },
+    };
+    // Check the rig's actual pose too (including its fixed aim lift).
+    if (inspectShot(candidate)?.ok === false) continue;
+    shot.angularSpeed = 0;
+    shot.heightFactor = candidate.heightFactor;
+    shot.staged = candidate.staged;
+    return true;
+  }
+  return false;
+}
+
 /**
  * Verify a follow shot can see its subject FROM THE BEARING ITS AIM
  * ACTUALLY COMMANDS, across the shot — a clear bearing existing
@@ -972,8 +1039,9 @@ function stageFollowShot(
     sample: PathSample,
     yaw: number,
     distance: number,
+    cameraPitch = pitch,
   ): boolean => {
-    orbitPullbackDir(yaw, pitch, _dir);
+    orbitPullbackDir(yaw, cameraPitch, _dir);
     const room = clearStandoffWide(sample.pos, _dir, distance);
     if (room < distance * 0.85) return false;
     _eye.copy(sample.pos).addScaledVector(_dir, Math.min(room, distance));
@@ -1076,6 +1144,41 @@ function stageFollowShot(
       if (distance < wanted) shot.distance = distance;
       shot.aim = { mode: "hold", yaw: bestYaw };
       report.followPulledIn++;
+      return;
+    }
+  }
+  // The ring search keeps its pitch, which often puts every candidate
+  // above a low ceiling. Use room cells to propose an offset at a new
+  // height, then verify that offset along the available subject path.
+  // Keep a follow as a follow: a fixed room view would lose a carrier
+  // running out of the building after the current lookahead.
+  const grid = _stageCtx?.freeSpace;
+  const first = path[0].pos;
+  if (grid && isRoofed([first.z, first.x, first.y - 1])) {
+    for (const spot of cameraSpotsFor(grid, [first.z, first.x, first.y], {
+      wantDist: wanted,
+    })) {
+      const dx = spot[0] - first.z;
+      const dy = spot[1] - first.x;
+      const dz = spot[2] - first.y;
+      const distance = Math.hypot(dx, dy, dz);
+      if (distance < (shot.minDistance ?? 2)) continue;
+      const yaw = Math.atan2(-dx, -dy);
+      const cameraPitch = Math.atan2(dz, Math.hypot(dx, dy));
+      const clear = path.every((sample) => {
+        if (!clearFrom(sample, yaw, distance, cameraPitch)) return false;
+        _eye.copy(sample.pos).addScaledVector(_dir, distance);
+        // Recheck clearance against today's geometry, not just the
+        // cached cell. Flag render origins orbit 0.2m above this probe.
+        if (eyeBuried(_eye)) return false;
+        if (shot.kind === "followFlag") _eye.y += 0.2;
+        return !eyeBuried(_eye) && !subjectViewBlocked(_eye, sample.pos);
+      });
+      if (!clear) continue;
+      shot.distance = distance;
+      shot.pitch = cameraPitch;
+      shot.aim = { mode: "hold", yaw };
+      report.gridFollow++;
       return;
     }
   }
@@ -1446,6 +1549,7 @@ function stageFog(): number | undefined {
 }
 
 interface StageCtx {
+  freeSpace?: FreeSpaceGrid | null;
   /** Accumulator distributing DIRECTOR_TIGHT_SHOT_SHARE across the
    *  plan's subject framings (Bresenham-style, order-stable). */
   tightAcc: number;

@@ -41,6 +41,43 @@ function emitterData(overrides: Partial<EmitterDataResolved> = {}) {
   } satisfies EmitterDataResolved;
 }
 
+describe("EmitterInstance render revision", () => {
+  it("keeps paused buffers valid but invalidates on bursts, motion, and death", () => {
+    const emitter = new EmitterInstance(emitterData({ ejectionVelocity: 1 }));
+    emitter.update(16);
+    expect(emitter.revision).toBe(0);
+    emitter.emitBurst([0, 0, 0], 1);
+    const spawned = emitter.revision;
+    expect(spawned).toBeGreaterThan(0);
+    for (let i = 0; i < 120; i++) emitter.update(0);
+    emitter.update(0.1);
+    expect(emitter.revision).toBe(spawned);
+    expect(emitter.particles[0].pos).toEqual([0, 0, 0]);
+    emitter.update(10);
+    expect(emitter.particles[0].pos[2]).toBeCloseTo(0.01);
+    expect(emitter.revision).toBeGreaterThan(spawned);
+    const moving = emitter.revision;
+    emitter.kill();
+    expect(emitter.revision).toBe(moving);
+    emitter.update(1000);
+    expect(emitter.particles).toHaveLength(0);
+    expect(emitter.revision).toBeGreaterThan(moving);
+    const dead = emitter.revision;
+    emitter.update(16);
+    expect(emitter.revision).toBe(dead);
+  });
+
+  it("invalidates on periodic emission even before the next simulation update", () => {
+    const emitter = new EmitterInstance(emitterData());
+    emitter.emitPeriodic([0, 0, 0], [1, 0, 0], 10);
+    expect(emitter.particles).toHaveLength(1);
+    const first = emitter.revision;
+    emitter.emitPeriodic([1, 0, 0], [2, 0, 0], 10);
+    expect(emitter.particles).toHaveLength(2);
+    expect(emitter.revision).toBeGreaterThan(first);
+  });
+});
+
 describe("EmitterInstance.emitPeriodic", () => {
   it("spaces particles evenly along the frame's segment", () => {
     const e = new EmitterInstance(emitterData());

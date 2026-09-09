@@ -9,7 +9,7 @@ import React, {
 import { Quaternion } from "three";
 import type { Group } from "three";
 import { useFrame } from "@react-three/fiber";
-import { useAllGameEntities } from "../state/gameEntityStore";
+import { useSceneEntities } from "../state/gameEntityStore";
 import type { GameEntity, PositionedEntity } from "../state/gameEntityTypes";
 import { isSceneEntity } from "../state/gameEntityTypes";
 import { streamPlaybackStore } from "../state/streamPlaybackStore";
@@ -19,25 +19,9 @@ import { FlagMarker } from "./FlagMarker";
 import { CommandCircuitFlagCallout } from "./CommandCircuitFlagCallout";
 import { useCommandCircuit } from "../state/commandCircuitStore";
 import { entityTypeColor } from "../stream/playbackUtils";
+import { Projectiles } from "./Projectiles";
 import { useDebug } from "./SettingsProvider";
-
-/**
- * Rotation applied to an object mounted on another object's mount node.
- *
- * ShapeBase::getMountTransform (FUN_005f7540) is objToWorld × the mount
- * node's transform, so the mounted shape's DTS frame sits at the node's DTS
- * frame. The exporter writes every DTS node as a bone whose frame is the node
- * frame turned −90° about X, and the PlayerModel adds the +90° Y shape
- * rotation itself, so the content is turned +90° X to undo the bone
- * convention and −90° Y to undo the model's rotation (Euler XYZ = Rx·Ry).
- * Image mounts cancel the bone convention through the child's own Mountpoint
- * bone instead.
- */
-const MOUNTED_OBJECT_ROTATION: [number, number, number] = [
-  Math.PI / 2,
-  -Math.PI / 2,
-  0,
-];
+import { MOUNTED_OBJECT_ROTATION } from "../world/placement";
 
 /**
  * The ONE rendering component tree for all game entities.
@@ -53,78 +37,92 @@ export function EntityScene() {
   return (
     <group ref={rootRef}>
       <EntityLayer />
+      <Projectiles />
     </group>
   );
 }
 
-/** Renders all game entities. Uses an ID-stable selector so the component
- * only re-renders when entities are added or removed, not when their
- * fields change. */
+/** Renders persistent entities. The selector skips projectile churn and
+ * in-place field mutations, but detects entity replacement and membership. */
 const EntityLayer = memo(function EntityLayer() {
-  const entities = useAllGameEntities();
+  const entities = useSceneEntities();
 
-  // Cache entity references by ID so that in-place field mutations
-  // (threads, colors, weapon shape) don't cause unnecessary remounts.
-  // The cache IS updated when the store provides a genuinely new object
-  // reference (identity rebuild: armor change, datablock change, etc.).
-  const cacheRef = useRef(new Map<string, GameEntity>());
-  const cache = cacheRef.current;
-
-  const currentIds = new Set<string>();
-  for (const entity of entities) {
-    currentIds.add(entity.id);
-    cache.set(entity.id, entity); // eslint-disable-line react-hooks/refs
-  }
-  // Remove entities no longer in the set
-  // eslint-disable-next-line react-hooks/refs
-  for (const id of cache.keys()) {
-    if (!currentIds.has(id)) {
-      cache.delete(id); // eslint-disable-line react-hooks/refs
-    }
-  }
-
-  // Build object mount relationships: which entities are mounted on which.
-  // Mounted entities render inside their target's mount bone (via createPortal
-  // in ShapeRenderer), NOT as top-level positioned entities.
-  const mountedIds = new Set<string>();
-  const mountChildren = new Map<string, Map<number, GameEntity>>();
-  for (const entity of cache.values()) {
-    const mountId = entity.mountObjectId;
-    if (mountId && cache.has(mountId)) {
+  const { mountedIds, objectMounts } = useMemo(() => {
+    const byId = new Map(entities.map((entity) => [entity.id, entity]));
+    const mountedIds = new Set<string>();
+    const mountChildren = new Map<string, GameEntity[]>();
+    for (const entity of entities) {
+      const mountId = entity.mountObjectId;
+      if (!mountId || !byId.has(mountId)) continue;
       mountedIds.add(entity.id);
       let children = mountChildren.get(mountId);
-      if (!children) {
-        children = new Map();
-        mountChildren.set(mountId, children);
-      }
-      children.set(entity.mountNode ?? 0, entity);
+      if (!children) mountChildren.set(mountId, (children = []));
+      children.push(entity);
     }
-  }
+    const objectMounts = new Map<string, Record<number, React.ReactNode>>();
+    for (const entity of entities) {
+      if (mountedIds.has(entity.id)) continue;
+      const mounts = renderObjectMounts(entity.id, mountChildren);
+      if (mounts) objectMounts.set(entity.id, mounts);
+    }
+    return { mountedIds, objectMounts };
+  }, [entities]);
 
   return (
     <>
-      {
-        // eslint-disable-next-line react-hooks/refs
-        [...cache.values()]
-          .filter((entity) => !mountedIds.has(entity.id))
-          .map((entity) => (
-            <EntityWrapper
-              key={entity.id}
-              entity={entity}
-              mountChildren={mountChildren.get(entity.id)}
-            />
-          ))
-      }
+      {entities
+        .filter((entity) => !mountedIds.has(entity.id))
+        .map((entity) => (
+          <EntityWrapper
+            key={entity.id}
+            entity={entity}
+            objectMounts={objectMounts.get(entity.id)}
+          />
+        ))}
     </>
   );
 });
 
+/** The engine keeps a list of mounted objects, including shared mount points
+ * and objects mounted on other mounted objects. Build the portals once. */
+function renderObjectMounts(
+  id: string,
+  children: Map<string, GameEntity[]>,
+): Record<number, React.ReactNode> | undefined {
+  const mounted = children.get(id);
+  if (!mounted) return;
+  const mounts: Record<number, React.ReactNode> = {};
+  for (const child of mounted) {
+    if (child.hidden || child.debugHidden) continue;
+    const point = child.mountNode ?? 0;
+    // ShapeBase::mountObject clamps invalid slots to zero.
+    const node = point >= 0 && point < 32 ? point : 0;
+    mounts[node] = (
+      <>
+        {mounts[node]}
+        <Suspense key={child.id}>
+          <group
+            rotation={MOUNTED_OBJECT_ROTATION}
+            userData={{ objectMount: true }}
+          >
+            <EntityRenderer
+              entity={child}
+              objectMounts={renderObjectMounts(child.id, children)}
+            />
+          </group>
+        </Suspense>
+      </>
+    );
+  }
+  return mounts;
+}
+
 const EntityWrapper = memo(function EntityWrapper({
   entity,
-  mountChildren,
+  objectMounts,
 }: {
   entity: GameEntity;
-  mountChildren?: Map<number, GameEntity>;
+  objectMounts?: Record<number, React.ReactNode>;
 }) {
   if (entity.debugHidden || entity.hidden) return null;
 
@@ -142,7 +140,7 @@ const EntityWrapper = memo(function EntityWrapper({
 
   // From here, entity is a PositionedEntity
   return (
-    <PositionedEntityWrapper entity={entity} mountChildren={mountChildren} />
+    <PositionedEntityWrapper entity={entity} objectMounts={objectMounts} />
   );
 });
 
@@ -186,10 +184,10 @@ function FlagMarkerSlot({ entity }: { entity: GameEntity }) {
 
 function PositionedEntityWrapper({
   entity,
-  mountChildren,
+  objectMounts,
 }: {
   entity: PositionedEntity;
-  mountChildren?: Map<number, GameEntity>;
+  objectMounts?: Record<number, React.ReactNode>;
 }) {
   const { debugMode } = useDebug();
   const position = entity.position;
@@ -198,28 +196,6 @@ function PositionedEntityWrapper({
     if (!entity.rotation) return undefined;
     return new Quaternion(...entity.rotation);
   }, [entity.rotation]);
-
-  // Build object mount content for entities mounted on this one (e.g. players
-  // sitting in a vehicle). Each mounted entity renders via EntityRenderer
-  // inside the target's mount bone (portaled by ShapeRenderer).
-  // This must be above early returns to satisfy React's hooks rules.
-  const objectMounts = useMemo(() => {
-    if (!mountChildren || mountChildren.size === 0) return undefined;
-    const mounts: Record<number, React.ReactNode> = {};
-    for (const [node, child] of mountChildren) {
-      mounts[node] = (
-        <Suspense key={child.id}>
-          <group
-            rotation={MOUNTED_OBJECT_ROTATION}
-            userData={{ objectMount: true }}
-          >
-            <EntityRenderer entity={child} />
-          </group>
-        </Suspense>
-      );
-    }
-    return mounts;
-  }, [mountChildren]);
 
   // Entities without a resolved shape get a wireframe placeholder, a
   // debugging aid only: a real object with no shape draws nothing.

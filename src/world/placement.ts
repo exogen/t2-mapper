@@ -28,21 +28,20 @@ import type { WaterInfo } from "../collision/waterLevel";
 import type { TerrainFile } from "../terrain";
 
 /**
- * Interiors are authored Z-up and converted .dif → .glb with the axes
- * already swizzled, leaving a fixed -90° yaw between the model's frame
- * and the ghost's transform. Applied as a nested group in the browser,
- * so it composes AFTER the ghost placement below — order matters.
- */
-export const INTERIOR_MODEL_ROTATION_Y = -Math.PI / 2;
-
-/**
- * The same idea for `.dts` shapes, which land a quarter turn the OTHER
- * way — note the sign differs from interiors. Applied as a nested group
- * inside GenericShape, so it composes after the entity's own rotation.
+ * DTS model space needs a quarter turn to match world space. Applied inside
+ * GenericShape, so it composes after the entity's own rotation.
  * Skipped only for bone-mounted shapes (`noRotation`), whose orientation
  * comes from the mount point.
  */
 export const SHAPE_MODEL_ROTATION_Y = Math.PI / 2;
+
+/** ShapeBase::getMountTransform (FUN_005f7540) uses the native node frame.
+ * Cancel the child's model-to-world turn because its mount already supplies it. */
+export const MOUNTED_OBJECT_ROTATION: [number, number, number] = [
+  0,
+  -SHAPE_MODEL_ROTATION_Y,
+  0,
+];
 
 /**
  * Where a streamed ghost sits, matching what `StreamingController`

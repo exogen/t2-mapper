@@ -1,0 +1,15 @@
+name = "t2-assets"
+main = "src/index.js"
+compatibility_date = "2026-09-01"
+
+# The bucket is bound directly rather than fetched over HTTP, so there is no
+# second hop and no risk of the worker calling its own hostname.
+[[r2_buckets]]
+binding = "BUCKET"
+bucket_name = "t2-assets"
+
+# Everything on the asset host goes through the worker: it is the only thing
+# serving the bucket, not a filter in front of it.
+[[routes]]
+pattern = "assets.tribes2.online/*"
+zone_name = "tribes2.online"

@@ -14,12 +14,11 @@ import {
   type WeaponAnimState,
 } from "../stream/weaponStateMachine";
 import type { ImageSlot } from "../stream/types";
-import { ANIM_TRANSITION_TIME } from "../stream/playbackUtils";
 import { engineStore } from "../state/engineStore";
 import { streamClock } from "../state/streamPlaybackStore";
 import { audioToUrl } from "../loaders";
 import { requestShockwave } from "./shockwaveRequests";
-import { findOwnNode } from "./sceneNodes";
+import { findOwnNode } from "../sceneNodes";
 import { useAudio } from "./AudioContext";
 import { useSettings } from "./SettingsProvider";
 import {
@@ -32,28 +31,16 @@ import {
   stopAndDetachSound,
   trackSound,
 } from "./AudioEmitter";
-import {
-  applyVisAt,
-  prepareVisMaterial,
-  resetVisNode,
-  restoreDefaultVis,
-  visThreadPosition,
-  type VisNode,
-} from "./visSequences";
-import { driveIflFrames, type IflMaterialInstance } from "../iflAtlas";
-import { readDtsSequences } from "../dtsSequences";
+import { holdDtsAction } from "../dts/dtsThread";
+import { readDtsSequences } from "../dts/dtsSequences";
 import { FramePriority } from "./framePriority";
 
 /** What the hook drives on the mounted image's own model. */
 export interface ImageStateAnimationTarget {
   /** Lower-cased sequence name → action on the image's mixer. */
   actions: RefObject<Map<string, AnimationAction>>;
-  /** Mesh frame ("_frame") actions that play alongside each sequence. */
-  morphActions?: RefObject<Map<string, AnimationAction[]>>;
   /** Sets the looping "spin" action's speed as the spin state changes. */
   setSpinTimeScale: (timeScale: number) => void;
-  /** Vis-keyframed meshes by lower-cased sequence (collectVisNodes). */
-  visNodesBySequence: Map<string, VisNode[]>;
   /**
    * The image's model root, placed where the engine's image transform
    * is: state sounds attach here and the muzzle flash spawns here.
@@ -65,8 +52,6 @@ export interface ImageStateAnimationTarget {
   seqIndexToName: readonly string[];
   /** Lower-cased names of the shape's cyclic sequences. */
   cyclicSequences: ReadonlySet<string>;
-  /** The model's live IFL materials, driven by the image's threads. */
-  iflInstances?: RefObject<readonly IflMaterialInstance[]>;
 }
 
 /**
@@ -79,21 +64,10 @@ export function readCyclicSequences(
   return readDtsSequences(scene, animations).cyclic;
 }
 
-/**
- * One of the image's animation threads as TSShapeInstance keeps it: a
- * sequence, a position source (the mixer action when the sequence has
- * node tracks, else the image clock), and the time scale it advances at.
- */
+/** One engine image thread, represented by a native Three action. */
 interface ImageThread {
   sequence: string;
-  action: AnimationAction | null;
-  morphActions: AnimationAction[];
-  /** Image clock at which the thread (re)started, for clock-driven threads. */
-  startClock: number;
-  timeScale: number;
-  /** A frozen thread holds this normalized position. */
-  frozenAt: number | null;
-  duration: number;
+  action: AnimationAction;
 }
 
 /**
@@ -112,13 +86,10 @@ export function useImageStateAnimation(
   const settings = useSettings();
   const audioEnabled = settings?.audioEnabled ?? false;
 
-  const animationEnabled = settings?.animationEnabled ?? true;
-
   const stateMachineRef = useRef<WeaponImageStateMachine | null>(null);
   const animThreadRef = useRef<ImageThread | null>(null);
   const flashThreadRef = useRef<ImageThread | null>(null);
   const ambientThreadRef = useRef<ImageThread | null>(null);
-  const clockRef = useRef(0);
   const seatPendingRef = useRef<false | "enter" | "seat">(false);
   const lastActionsRef = useRef<Map<string, AnimationAction> | null>(null);
   const lastStatesRef = useRef(readSlot()?.imageStates);
@@ -129,13 +100,6 @@ export function useImageStateAnimation(
     () => () => stopLoopingSound(loopingSoundRef, loopingSoundStateRef),
     [],
   );
-
-  const threadsOf = () =>
-    [
-      animThreadRef.current,
-      flashThreadRef.current,
-      ambientThreadRef.current,
-    ].filter((thread): thread is ImageThread => thread != null);
 
   useFrame((_, delta) => {
     const playback = engineStore.getState().playback;
@@ -151,6 +115,8 @@ export function useImageStateAnimation(
     if (imageStates !== lastStatesRef.current) {
       lastStatesRef.current = imageStates;
       stateMachineRef.current = null;
+      animThreadRef.current?.action.stop();
+      flashThreadRef.current?.action.stop();
       animThreadRef.current = null;
       flashThreadRef.current = null;
       stopLoopingSound(loopingSoundRef, loopingSoundStateRef);
@@ -202,11 +168,7 @@ export function useImageStateAnimation(
     // ShapeBase::setImage gives every image an ambient thread looping its
     // "ambient" sequence (the plasma rifle's core glow, a pack's lights).
     if (!ambientThreadRef.current) {
-      ambientThreadRef.current = startAmbientThread(
-        actions,
-        target,
-        clockRef.current,
-      );
+      ambientThreadRef.current = startAmbientThread(actions);
     }
 
     // "enter": a fresh image plays its first state's sequence and sound.
@@ -217,14 +179,7 @@ export function useImageStateAnimation(
     if (seat) {
       seatPendingRef.current = false;
       const snapshot = sm.snapshot(seat === "enter");
-      enterState(
-        snapshot,
-        actions,
-        target,
-        animThreadRef,
-        flashThreadRef,
-        clockRef.current,
-      );
+      enterState(snapshot, actions, target, animThreadRef, flashThreadRef);
       const anim = animThreadRef.current;
       if (
         seat === "seat" &&
@@ -244,29 +199,13 @@ export function useImageStateAnimation(
       }
     }
 
-    if (!isPlaying) {
-      driveThreadOutputs(
-        target,
-        animationEnabled,
-        threadsOf(),
-        clockRef.current,
-      );
-      return;
-    }
+    if (!isPlaying) return;
 
     const dt = delta * playback.rate;
-    clockRef.current += dt;
     const animState = sm.tick(dt, imageState);
 
     if (animState.entered) {
-      enterState(
-        animState,
-        actions,
-        target,
-        animThreadRef,
-        flashThreadRef,
-        clockRef.current,
-      );
+      enterState(animState, actions, target, animThreadRef, flashThreadRef);
     } else if (animState.transitioned && animState.flashSequence) {
       // A flash state timing out into itself (the chaingun's Fire → Fire)
       // takes setImageState's self-transition path: no sound or restart,
@@ -275,11 +214,9 @@ export function useImageStateAnimation(
       if (anim) freezeThread(anim, Math.random());
       const flash = flashThreadRef.current;
       if (flash) {
-        flash.frozenAt = null;
-        flash.startClock = clockRef.current;
+        flash.action.reset().play();
       }
     }
-    driveThreadOutputs(target, animationEnabled, threadsOf(), clockRef.current);
 
     // Stop active looping sound when the state changes.
     if (
@@ -444,7 +381,6 @@ function enterState(
   target: ImageStateAnimationTarget,
   animThreadRef: RefObject<ImageThread | null>,
   flashThreadRef: RefObject<ImageThread | null>,
-  clock: number,
 ): void {
   const anim = animThreadRef.current;
   if (anim && target.cyclicSequences.has(anim.sequence)) {
@@ -456,65 +392,34 @@ function enterState(
   const targetName = animState.sequenceName;
   if (!targetName) return;
 
-  const duration = sequenceDuration(target, actions, targetName);
+  const action = actions.get(targetName);
+  if (!action) return;
+  const duration = action.getClip().duration;
   const timeScale =
     animState.scaleAnimation && animState.timeoutValue > 0 && duration > 0
       ? duration / animState.timeoutValue
       : 1;
 
-  if (anim && anim.sequence !== targetName) {
-    // Meshes only the old sequence animated fall back to the shape's
-    // default visibility once no thread drives them, and their frames to
-    // the first.
-    const prevVis = target.visNodesBySequence.get(anim.sequence);
-    if (prevVis) for (const node of prevVis) restoreDefaultVis(node);
-    for (const morph of anim.morphActions) morph.stop();
-  }
-
+  if (anim && anim.action !== action) anim.action.stop();
   const cyclic = target.cyclicSequences.has(targetName);
-  const signedScale = animState.reverse ? -timeScale : timeScale;
-  const action = actions.get(targetName) ?? null;
-  if (action) {
-    const prevAction =
-      anim && anim.sequence !== targetName ? actions.get(anim.sequence) : null;
-    configureAction(action, cyclic, signedScale);
-    if (prevAction && prevAction !== action) {
-      prevAction.fadeOut(ANIM_TRANSITION_TIME);
-      action.reset().fadeIn(ANIM_TRANSITION_TIME).play();
-    } else {
-      action.reset().play();
-    }
-    if (animState.reverse) action.time = action.getClip().duration;
-  }
-  const morphActions = target.morphActions?.current.get(targetName) ?? [];
-  for (const morph of morphActions) {
-    configureAction(morph, cyclic, signedScale);
-    morph.reset().play();
-    if (animState.reverse) morph.time = morph.getClip().duration;
-  }
-
-  const thread: ImageThread = {
-    sequence: targetName,
-    action,
-    morphActions,
-    startClock: clock,
-    timeScale: animState.reverse ? -timeScale : timeScale,
-    frozenAt: null,
-    duration,
-  };
+  configureAction(action, cyclic, animState.reverse ? -timeScale : timeScale);
+  action.reset().play();
+  if (animState.reverse) action.time = duration;
+  const thread: ImageThread = { sequence: targetName, action };
   animThreadRef.current = thread;
 
   if (animState.flashSequence && animState.visSequenceName) {
     freezeThread(thread, Math.random());
-    flashThreadRef.current = {
-      sequence: animState.visSequenceName,
-      action: null,
-      morphActions: [],
-      startClock: clock,
-      timeScale,
-      frozenAt: null,
-      duration: sequenceDuration(target, actions, animState.visSequenceName),
-    };
+    const flashAction = actions.get(animState.visSequenceName);
+    if (flash && flash.action !== flashAction) flash.action.stop();
+    if (flashAction) {
+      configureAction(flashAction, false, timeScale);
+      flashAction.reset().play();
+      flashThreadRef.current = {
+        sequence: animState.visSequenceName,
+        action: flashAction,
+      };
+    } else flashThreadRef.current = null;
   }
 }
 
@@ -533,132 +438,20 @@ function configureAction(
   action.timeScale = timeScale;
 }
 
-/** Hold the thread at normalized position `t`. */
-function freezeThread(thread: ImageThread, t: number): void {
-  thread.frozenAt = t;
-  for (const action of thread.action
-    ? [thread.action, ...thread.morphActions]
-    : thread.morphActions) {
-    action.paused = true;
-    action.time = t * action.getClip().duration;
-  }
+/** Hold all native outputs, including visibility and IFL state. */
+function freezeThread(thread: ImageThread, position: number): void {
+  holdDtsAction(thread.action, position);
 }
 
-/** The thread's normalized position now. */
-function threadPosition(
-  thread: ImageThread,
-  cyclic: boolean,
-  clock: number,
-): number {
-  if (thread.frozenAt != null) return thread.frozenAt;
-  if (thread.action) {
-    const d = thread.action.getClip().duration;
-    return d > 0 ? thread.action.time / d : 0;
-  }
-  return visThreadPosition(
-    (clock - thread.startClock) * Math.abs(thread.timeScale),
-    thread.duration,
-    cyclic,
-    thread.timeScale >= 0,
-  );
-}
-
-/**
- * Apply every thread to the model's outputs: vis-keyframed meshes at the
- * thread's position (animateVisibility) and IFL frames for the sequence
- * the thread plays (animateIfls).
- */
-function driveThreadOutputs(
-  target: ImageStateAnimationTarget,
-  animationEnabled: boolean,
-  threads: ImageThread[],
-  clock: number,
-): void {
-  const positions = new Map<string, number>();
-  for (const thread of threads) {
-    const t = threadPosition(
-      thread,
-      target.cyclicSequences.has(thread.sequence),
-      clock,
-    );
-    positions.set(thread.sequence, t);
-    const nodes = target.visNodesBySequence.get(thread.sequence);
-    if (!nodes) continue;
-    for (const node of nodes) {
-      prepareVisMaterial(node);
-      if (animationEnabled) applyVisAt(node, t);
-      else resetVisNode(node);
-    }
-  }
-  const ifl = target.iflInstances?.current;
-  if (ifl && ifl.length > 0) {
-    driveIflFrames(
-      ifl,
-      (sequence) => {
-        const t = positions.get(sequence);
-        if (t == null) return null;
-        const thread = threads.find((th) => th.sequence === sequence);
-        return t * (thread?.duration ?? 0);
-      },
-      clock,
-      animationEnabled,
-    );
-  }
-}
-
-/**
- * The image's ambient thread, if the shape has an "ambient" sequence:
- * cyclic, from the image clock, never stopped.
- */
+/** ShapeBase::setImage starts the image's ambient thread once. */
 function startAmbientThread(
   actions: Map<string, AnimationAction>,
-  target: ImageStateAnimationTarget,
-  clock: number,
 ): ImageThread | null {
-  const name = "ambient";
-  const action = actions.get(name) ?? null;
-  const duration = sequenceDuration(target, actions, name);
-  const drivesIfl = target.iflInstances?.current?.some(
-    (inst) => inst.info.sequenceName === name,
-  );
-  if (!action && !target.visNodesBySequence.has(name) && !drivesIfl) {
-    return null;
-  }
-  if (action) {
-    action.setLoop(LoopRepeat, Infinity);
-    action.clampWhenFinished = false;
-    action.timeScale = 1;
-    action.reset().play();
-  }
-  const morphActions = target.morphActions?.current.get(name) ?? [];
-  for (const morph of morphActions) {
-    configureAction(morph, true, 1);
-    morph.reset().play();
-  }
-  return {
-    sequence: name,
-    action,
-    morphActions,
-    startClock: clock,
-    timeScale: 1,
-    frozenAt: null,
-    duration,
-  };
-}
-
-/**
- * A sequence's length: its clip's when it has node tracks, else its vis
- * keyframes' (a "_vis" sequence may animate visibility only).
- */
-function sequenceDuration(
-  target: ImageStateAnimationTarget,
-  actions: Map<string, AnimationAction>,
-  sequence: string,
-): number {
-  const clipDuration = actions.get(sequence)?.getClip().duration;
-  if (clipDuration != null && clipDuration > 0) return clipDuration;
-  const vis = target.visNodesBySequence.get(sequence);
-  return vis?.[0]?.duration ?? 0;
+  const action = actions.get("ambient");
+  if (!action) return null;
+  configureAction(action, true, 1);
+  action.reset().play();
+  return { sequence: "ambient", action };
 }
 
 const _flashPos = new Vector3();

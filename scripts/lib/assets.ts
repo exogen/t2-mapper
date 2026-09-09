@@ -21,8 +21,6 @@ export const EXTRACTED_BASE_DIR = "docs/base";
 
 /** Source extension → the converted file the app actually loads. */
 const DERIVED_EXTENSIONS: Record<string, string> = {
-  ".dif": ".glb",
-  ".dts": ".glb",
   ".wav": ".m4a",
 };
 

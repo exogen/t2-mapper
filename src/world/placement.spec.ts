@@ -3,7 +3,6 @@ import { IDENTITY_MATRIX } from "../scene/types";
 import type { SceneInteriorInstance, SceneTerrainBlock } from "../scene/types";
 import {
   DEFAULT_TERRAIN_SQUARE_SIZE,
-  INTERIOR_MODEL_ROTATION_Y,
   SHAPE_MODEL_ROTATION_Y,
   forceFieldCollider,
   interiorPlacement,
@@ -83,9 +82,8 @@ describe("streamEntityPlacement", () => {
     });
   });
 
-  it("rotates shapes opposite to interiors", () => {
-    // Same magnitude, opposite sign — mixing them up is a quarter turn.
-    expect(SHAPE_MODEL_ROTATION_Y).toBeCloseTo(-INTERIOR_MODEL_ROTATION_Y);
+  it("retains the converted DTS shape rotation", () => {
+    expect(SHAPE_MODEL_ROTATION_Y).toBeCloseTo(Math.PI / 2);
   });
 });
 

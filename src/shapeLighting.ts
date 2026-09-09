@@ -1,3 +1,4 @@
+import { observeShapeMeshes } from "./dts/dtsScene";
 /**
  * How Tribes2.exe lights shapes (players, items, stations, vehicles):
  * never with the raw mission sun and never shadow-mapped. Before a
@@ -22,6 +23,9 @@
  * This module runs the probe per shape and hands the result to the shape
  * shader through per-shape uniforms; `glslShapeLighting` does the rest.
  */
+import { DIFMaterial } from "./dif/difLoader";
+import { DIFCollisionMesh } from "./dif/difCollision";
+import { DIFSurfaceFlags } from "./dif/dif";
 import {
   Box3,
   Color,
@@ -194,32 +198,20 @@ function faceMaterialIndex(
   return 0;
 }
 
-/**
- * The lightmap for a face: the DIF export's lightmaps that InteriorMesh
- * stores on the geometry (`userData.lightMaps`, per material slot), else
- * the current material's own lightmap or emissive map.
- */
+/** Read native lightmaps from the same material used for rendering. */
 function faceLightmap(mesh: Mesh, materialIndex: number): Texture | null {
-  const stored = mesh.geometry.userData.lightMaps as
-    (Texture | null)[] | undefined;
-  if (stored) return stored[materialIndex] ?? null;
   const material = (
     Array.isArray(mesh.material) ? mesh.material[materialIndex] : mesh.material
-  ) as
-    | (Material & { emissiveMap?: Texture | null; lightMap?: Texture | null })
-    | undefined;
-  return material?.lightMap ?? material?.emissiveMap ?? null;
+  ) as (Material & { lightMap?: Texture | null }) | undefined;
+  return material?.lightMap ?? null;
 }
 
-/**
- * Whether a face is SurfaceOutsideVisible: its baked lightmap holds only
- * the interior's own lights, and the mission's sun and ambient are added
- * when the scene is lit (the .ml pass), exactly as injectInteriorLighting
- * draws it.
- */
+/** Outside-visible surfaces receive mission sun/ambient in addition to DIF lighting. */
 function faceOutsideVisible(mesh: Mesh, materialIndex: number): boolean {
-  const flags = mesh.geometry.userData.outsideVisible as boolean[] | undefined;
-  return flags?.[materialIndex] ?? false;
+  const material = Array.isArray(mesh.material)
+    ? mesh.material[materialIndex]
+    : mesh.material;
+  return material instanceof DIFMaterial && material.outsideVisible;
 }
 
 const _a = new Vector3();
@@ -264,57 +256,77 @@ const _faceNormal = new Vector3();
 
 /**
  * The interior lightmap colour at a ray hit: the hit triangle's lightmap
- * UVs (glTF TEXCOORD_1) interpolated at the hit point, sampled bilinearly
- * from the lightmap the DIF export put in the material's emissive slot.
+ * UVs (DIF lightmap texgen) interpolated at the hit point, sampled bilinearly
+ * from the native material's lightmap.
  */
 export function sampleInteriorLightmap(
   hit: InteriorRayHit,
   out: Color,
 ): boolean {
   const mesh = hit.collider.mesh;
-  const geometry: BufferGeometry = mesh.geometry;
-  // Lightmap UVs are the DIF export's TEXCOORD_1; base UVs would sample
-  // the wrong place, so a mesh without them has no lightmap to give.
-  const uv = geometry.attributes.uv1;
-  const position = geometry.attributes.position;
-  if (!uv || !position) return false;
-  const materialIndex = faceMaterialIndex(geometry, hit.faceIndex);
-  const lightmap = faceLightmap(mesh, materialIndex);
+  let u: number, v: number, lightmap: Texture | null, outside: boolean;
+  if (mesh instanceof DIFCollisionMesh) {
+    const interior = mesh.collision.interior;
+    const surface = interior.surfaces[hit.faceIndex];
+    if (!surface) return false;
+    lightmap =
+      mesh.lightMaps[interior.normalLightMapIndices[hit.faceIndex]] ?? null;
+    const [s, t] = surface.lightMapTexGen;
+    const { x: y, y: z, z: x } = hit.localPoint;
+    u = s[0] * x + s[1] * y + s[2] * z + s[3];
+    v = t[0] * x + t[1] * y + t[2] * z + t[3];
+    outside = (surface.flags & DIFSurfaceFlags.OutsideVisible) !== 0;
+    const plane = interior.planes[surface.planeIndex & 0x7fff];
+    const normal = interior.normals[plane.normalIndex];
+    _faceNormal.set(normal[1], normal[2], normal[0]);
+    if (surface.planeIndex & 0x8000) _faceNormal.negate();
+  } else {
+    const geometry: BufferGeometry = mesh.geometry;
+    // Lightmap UVs come from DIF's lightmap texgen; base UVs would sample
+    // the wrong place, so a mesh without them has no lightmap to give.
+    const uv = geometry.attributes.uv1;
+    const position = geometry.attributes.position;
+    if (!uv || !position) return false;
+    const materialIndex = faceMaterialIndex(geometry, hit.faceIndex);
+    lightmap = faceLightmap(mesh, materialIndex);
+    outside = faceOutsideVisible(mesh, materialIndex);
+    const index = geometry.index;
+    const i0 = index ? index.getX(hit.faceIndex * 3) : hit.faceIndex * 3;
+    const i1 = index
+      ? index.getX(hit.faceIndex * 3 + 1)
+      : hit.faceIndex * 3 + 1;
+    const i2 = index
+      ? index.getX(hit.faceIndex * 3 + 2)
+      : hit.faceIndex * 3 + 2;
+    _a.fromBufferAttribute(position, i0);
+    _b.fromBufferAttribute(position, i1);
+    _c.fromBufferAttribute(position, i2);
+    barycentric(hit.localPoint, _a, _b, _c, _weights);
+    u =
+      uv.getX(i0) * _weights[0] +
+      uv.getX(i1) * _weights[1] +
+      uv.getX(i2) * _weights[2];
+    v =
+      uv.getY(i0) * _weights[0] +
+      uv.getY(i1) * _weights[1] +
+      uv.getY(i2) * _weights[2];
+    _faceNormal.crossVectors(_v0.subVectors(_b, _a), _v1.subVectors(_c, _a));
+  }
   if (!lightmap) return false;
   const pixels = texturePixels(lightmap);
   if (!pixels) return false;
-  const index = geometry.index;
-  const i0 = index ? index.getX(hit.faceIndex * 3) : hit.faceIndex * 3;
-  const i1 = index ? index.getX(hit.faceIndex * 3 + 1) : hit.faceIndex * 3 + 1;
-  const i2 = index ? index.getX(hit.faceIndex * 3 + 2) : hit.faceIndex * 3 + 2;
-  _a.fromBufferAttribute(position, i0);
-  _b.fromBufferAttribute(position, i1);
-  _c.fromBufferAttribute(position, i2);
-  barycentric(hit.localPoint, _a, _b, _c, _weights);
-  const u =
-    uv.getX(i0) * _weights[0] +
-    uv.getX(i1) * _weights[1] +
-    uv.getX(i2) * _weights[2];
-  const v =
-    uv.getY(i0) * _weights[0] +
-    uv.getY(i1) * _weights[1] +
-    uv.getY(i2) * _weights[2];
-  // glTF UVs have their origin at the image's top-left, so v maps straight
-  // onto rows. Bilinear, wrapping.
-  const fx = (u - Math.floor(u)) * pixels.width - 0.5;
-  const fy = (v - Math.floor(v)) * pixels.height - 0.5;
+  // DIF lightmap UVs have their origin at the image's top-left, so v maps straight
+  // onto rows. Match the loader's bilinear ClampToEdgeWrapping sampler.
+  const fx = Math.max(0, Math.min(pixels.width - 1, u * pixels.width - 0.5));
+  const fy = Math.max(0, Math.min(pixels.height - 1, v * pixels.height - 0.5));
   const x0 = Math.floor(fx);
   const y0 = Math.floor(fy);
   const tx = fx - x0;
   const ty = fy - y0;
-  const wrapX = (x: number) =>
-    ((x % pixels.width) + pixels.width) % pixels.width;
-  const wrapY = (y: number) =>
-    ((y % pixels.height) + pixels.height) % pixels.height;
-  const xa = wrapX(x0);
-  const xb = wrapX(x0 + 1);
-  const ya = wrapY(y0);
-  const yb = wrapY(y0 + 1);
+  const xa = x0;
+  const xb = Math.min(x0 + 1, pixels.width - 1);
+  const ya = y0;
+  const yb = Math.min(y0 + 1, pixels.height - 1);
   const { data, width } = pixels;
   for (let channel = 0; channel < 3; channel++) {
     const p00 = data[(ya * width + xa) * 4 + channel];
@@ -327,14 +339,11 @@ export function sampleInteriorLightmap(
     else if (channel === 1) out.g = value / 255;
     else out.b = value / 255;
   }
-  if (faceOutsideVisible(mesh, materialIndex)) {
+  if (outside) {
     // Scene lighting for outside surfaces: clamp(sun·N·L + ambient), added
     // to the lightmap and clamped again (sceneLighting.cc, as the interior
     // shader does per fragment). N is the face's world normal.
-    _faceNormal
-      .crossVectors(_v0.subVectors(_b, _a), _v1.subVectors(_c, _a))
-      .applyMatrix3(hit.collider.normalMatrix)
-      .normalize();
+    _faceNormal.applyMatrix3(hit.collider.normalMatrix).normalize();
     const nDotL = Math.max(_faceNormal.dot(shapeSunWorldDir), 0);
     const sun = shapeSunUniforms.shapeSunColor.value;
     const ambient = shapeSunUniforms.shapeSunAmbient.value;
@@ -383,10 +392,8 @@ export function probeShapeLighting(center: Vec3, out: ShapeLightProbe): void {
 // ── Per-shape state ──
 
 /**
- * The shape's box in the GLB's frame. The converter writes GLB axes as
- * (−x, z, y) of DTS object space, so the engine's box (TSShape::bounds,
- * mObjBox) maps the same way; the mesh box is the fallback for shapes
- * converted without the header extras.
+ * The engine's box in shape-local Three space: (−x, z, y) of DTS space.
+ * Ordinary Three scenes fall back to their geometry bounds.
  */
 export function shapeBox(shapeName: string | undefined, scene: Object3D): Box3 {
   const bounds = getShapeBounds(shapeName);
@@ -396,7 +403,7 @@ export function shapeBox(shapeName: string | undefined, scene: Object3D): Box3 {
   return new Box3(new Vector3(-x1, z0, y0), new Vector3(-x0, z1, y1));
 }
 
-/** The engine's box centre, in the GLB's frame (see shapeBox). */
+/** The engine's box centre, in shape-local space (see shapeBox). */
 export function shapeBoxCenter(
   shapeName: string | undefined,
   scene: Object3D,
@@ -426,7 +433,7 @@ export function attachShapeLightUniforms(
   root: Object3D,
   uniforms: ShapeLightUniforms,
 ): void {
-  root.traverse((node) => {
+  observeShapeMeshes(root, (node) => {
     const material = (node as Mesh).material;
     if (!material) return;
     for (const m of Array.isArray(material) ? material : [material]) {

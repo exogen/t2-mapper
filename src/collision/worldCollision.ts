@@ -19,6 +19,16 @@ import {
   Vector3,
 } from "three";
 import type { BufferGeometry, Mesh } from "three";
+import {
+  DIFCollisionMesh,
+  type DIFHullType,
+  type DIFRayHit,
+} from "../dif/difCollision";
+import {
+  DTSCollisionMesh,
+  castDTSHullRay,
+  getDTSHullPlanes,
+} from "../dts/dtsCollision";
 import { INTERSECTED, MeshBVH, NOT_INTERSECTED } from "three-mesh-bvh";
 import {
   castTerrainRay,
@@ -107,7 +117,8 @@ function buildMeshColliders(meshes: Mesh[]): MeshCollider[] {
   for (const mesh of meshes) {
     const geometry = mesh.geometry;
     if (!geometry?.attributes.position) continue;
-    const bvh = getBvh(geometry);
+    // Native DIF casts use the file's BSP. Only triangle consumers need a BVH.
+    let bvh: MeshBVH | undefined;
     const matrixWorld = mesh.matrixWorld.clone();
     if (!geometry.boundingBox) geometry.computeBoundingBox();
     const worldBox = geometry.boundingBox!.clone().applyMatrix4(matrixWorld);
@@ -116,7 +127,12 @@ function buildMeshColliders(meshes: Mesh[]): MeshCollider[] {
     colliders.push({
       mesh,
       worldToLocalRadius: 1 / minScale,
-      bvh,
+      get bvh() {
+        return (bvh ??= getBvh(geometry));
+      },
+      set bvh(value: MeshBVH) {
+        bvh = value;
+      },
       matrixWorld,
       inverse: matrixWorld.clone().invert(),
       normalMatrix: new Matrix3().getNormalMatrix(matrixWorld),
@@ -124,6 +140,28 @@ function buildMeshColliders(meshes: Mesh[]): MeshCollider[] {
     });
   }
   return colliders;
+}
+
+/** Native collision objects follow their animated node, frame, and visibility.
+ * Rendering's hidden detail groups and material state do not affect them. */
+function syncMeshCollider(collider: MeshCollider): boolean {
+  const mesh = collider.mesh;
+  if (!(mesh instanceof DTSCollisionMesh)) return true;
+  if (!mesh.updateForCollision()) return false;
+  const bvh = getBvh(mesh.geometry);
+  if (collider.bvh !== bvh || !collider.matrixWorld.equals(mesh.matrixWorld)) {
+    collider.bvh = bvh;
+    collider.matrixWorld.copy(mesh.matrixWorld);
+    collider.inverse.copy(mesh.matrixWorld).invert();
+    collider.normalMatrix.getNormalMatrix(mesh.matrixWorld);
+    collider.worldBox
+      .copy(mesh.geometry.boundingBox!)
+      .applyMatrix4(mesh.matrixWorld);
+    _scale.setFromMatrixScale(mesh.matrixWorld);
+    collider.worldToLocalRadius =
+      1 / (Math.min(_scale.x, _scale.y, _scale.z) || 1);
+  }
+  return true;
 }
 
 export function unregisterInteriorCollider(id: string): void {
@@ -151,15 +189,15 @@ export function interiorWorldBounds(out = new Box3()): Box3 | null {
 }
 
 /**
- * Register a static shape's meshes (a generator, a bunker prop) as
- * CAMERA occluders. Same snapshot semantics as interiors; only rays
- * cast with `includeStatics` see them.
+ * Register authored DTS collision/LOS meshes as camera occluders.
+ * Only queries with `includeStatics` see them. Ordinary meshes retain
+ * snapshot semantics; native meshes follow their DTS object's animation.
  */
 export function registerStaticShapeCollider(id: string, meshes: Mesh[]): void {
   const colliders = buildMeshColliders(meshes);
   if (colliders.length > 0) {
     staticShapes().set(id, { colliders });
-  }
+  } else staticShapes().delete(id);
 }
 
 export function unregisterStaticShapeCollider(id: string): void {
@@ -249,6 +287,7 @@ export function assetBoxCenter(torquePoint: Vec3, expand = 2): Vec3 | null {
   let bestVolume = Infinity;
   for (const entry of staticShapes().values()) {
     entry.colliders.forEach((collider) => {
+      if (!syncMeshCollider(collider)) return;
       const b = collider.worldBox;
       if (
         px < b.min.x - expand ||
@@ -295,6 +334,7 @@ export function getColliderDump(): ColliderDumpEntry[] {
   ) => {
     for (const [id, entry] of map) {
       entry.colliders.forEach((collider, mesh) => {
+        if (!syncMeshCollider(collider)) return;
         out.push({
           kind,
           id,
@@ -383,6 +423,7 @@ const _localRay = new Ray();
  * world space and unit length; the caller decides its facing.
  */
 interface ColliderHit {
+  startedSolid: boolean;
   /** World distance from the ray origin. */
   dist: number;
   faceIndex: number;
@@ -392,9 +433,17 @@ interface ColliderHit {
 }
 
 const _colliderHit: ColliderHit = {
+  startedSolid: false,
   dist: 0,
   faceIndex: 0,
   localPoint: new Vector3(),
+};
+const _difHit: DIFRayHit = {
+  t: 0,
+  point: new Vector3(),
+  normal: new Vector3(),
+  surfaceIndex: -1,
+  startedSolid: false,
 };
 
 function raycastCollider(
@@ -402,7 +451,29 @@ function raycastCollider(
   worldRay: Ray,
   worldPoint: Vector3,
   worldNormal: Vector3,
+  maxDist: number,
 ): ColliderHit | null {
+  _colliderHit.startedSolid = false;
+  if (collider.mesh instanceof DIFCollisionMesh) {
+    _hullStart.copy(worldRay.origin).applyMatrix4(collider.inverse);
+    _hullEnd
+      .copy(worldRay.origin)
+      .addScaledVector(worldRay.direction, maxDist)
+      .applyMatrix4(collider.inverse);
+    if (!collider.mesh.collision.castRay(_hullStart, _hullEnd, _difHit))
+      return null;
+    worldPoint.copy(_difHit.point).applyMatrix4(collider.matrixWorld);
+    worldNormal
+      .copy(_difHit.normal)
+      .applyMatrix3(collider.normalMatrix)
+      .normalize();
+    _colliderHit.dist = _difHit.t * maxDist;
+    _colliderHit.faceIndex = _difHit.surfaceIndex;
+    _colliderHit.localPoint = _difHit.point;
+    _colliderHit.startedSolid = _difHit.startedSolid;
+    return _colliderHit;
+  }
+  if (maxDist === 0) return null;
   _localRay.copy(worldRay).applyMatrix4(collider.inverse);
   const isect = collider.bvh.raycastFirst(_localRay, DoubleSide);
   if (!isect) return null;
@@ -426,8 +497,7 @@ function setupSegment(start: Vec3, end: Vec3): number | null {
   torqueToThreeVec(end, _end);
   _dir.subVectors(_end, _start);
   const segLength = _dir.length();
-  if (segLength < 1e-9) return null;
-  _dir.divideScalar(segLength);
+  if (segLength > 0) _dir.divideScalar(segLength);
   _ray.origin.copy(_start);
   _ray.direction.copy(_dir);
   _segBox.makeEmpty();
@@ -440,16 +510,16 @@ export interface InteriorRayHit {
   /** World distance from the ray origin. */
   dist: number;
   collider: MeshCollider;
-  /** Triangle index in the collider mesh's geometry. */
+  /** Authored surface index for a DIFCollisionMesh; triangle index otherwise.
+   * -1 means solid was hit without an associated render surface. */
   faceIndex: number;
   /** Hit point in the collider mesh's local space. */
   localPoint: Vector3;
 }
 
 /**
- * The nearest interior mesh along a Torque-space segment, with the face
- * that was hit — the engine's InteriorObjectType-only casts (a lighting
- * probe needs the floor's lightmap texel, so it needs the triangle).
+ * The nearest interior along a Torque-space segment. Native DIF hits carry
+ * the original surface index so lighting probes can evaluate lightmap texgen.
  */
 export function castInteriorRay(start: Vec3, end: Vec3): InteriorRayHit | null {
   const segLength = setupSegment(start, end);
@@ -458,7 +528,7 @@ export function castInteriorRay(start: Vec3, end: Vec3): InteriorRayHit | null {
   for (const entry of interiors().values()) {
     for (const collider of entry.colliders) {
       if (!collider.worldBox.intersectsBox(_segBox)) continue;
-      const hit = raycastCollider(collider, _ray, _point, _normal);
+      const hit = raycastCollider(collider, _ray, _point, _normal, segLength);
       if (!hit || hit.dist > segLength || (best && hit.dist >= best.dist)) {
         continue;
       }
@@ -483,9 +553,8 @@ const _faceNormal = new Vector3();
  *
  * `castWorldRay` turns every normal to face the ray, which is what a
  * bounce or a decal wants and exactly what an inside test cannot use.
- * Here `front` is whether the face's own front was towards the ray —
- * meeting a face from behind means the ray started inside the solid
- * that face bounds.
+ * Here `front` is whether the face's own front was towards the ray. A native
+ * DIF solid start is represented as dist=0, front=false.
  */
 export function firstInteriorFace(
   torqueOrigin: Vec3,
@@ -509,12 +578,22 @@ export function firstInteriorFace(
   for (const group of groups) {
     for (const entry of group.values()) {
       for (const collider of entry.colliders) {
+        if (!syncMeshCollider(collider)) continue;
         if (!collider.worldBox.intersectsBox(_segBox)) continue;
-        const hit = raycastCollider(collider, _faceRay, _point, _faceNormal);
+        const hit = raycastCollider(
+          collider,
+          _faceRay,
+          _point,
+          _faceNormal,
+          maxDist,
+        );
         if (!hit) continue;
         const dist = hit.dist;
         if (dist > maxDist || (best && dist >= best.dist)) continue;
-        best = { dist, front: _faceNormal.dot(_faceDir) < 0 };
+        best = {
+          dist,
+          front: !hit.startedSolid && _faceNormal.dot(_faceDir) < 0,
+        };
       }
     }
   }
@@ -524,18 +603,35 @@ export function firstInteriorFace(
 /**
  * Is this point INSIDE solid interior geometry?
  *
- * Proximity cannot say: deeper than the clearance inside a thick wall
- * there is no triangle within reach, so a sphere test reads open air.
- * Interiors are closed solids, so a ray leaving the point meets the
- * back of a face first if and only if it started inside one.
+ * Native DIFs use their BSP by default, or dedicated convex hulls for vehicle
+ * queries. Procedural mesh colliders retain the backface probe.
  */
-export function pointInsideInterior(torquePoint: Vec3): boolean {
+export function pointInsideInterior(
+  torquePoint: Vec3,
+  hullType: DIFHullType = "standard",
+): boolean {
+  torqueToThreeVec(torquePoint, _insidePoint);
+  let hasMeshColliders = false;
+  for (const entry of interiors().values())
+    for (const collider of entry.colliders) {
+      if (!(collider.mesh instanceof DIFCollisionMesh)) {
+        hasMeshColliders = true;
+        continue;
+      }
+      if (!collider.worldBox.containsPoint(_insidePoint)) continue;
+      _insideLocal.copy(_insidePoint).applyMatrix4(collider.inverse);
+      if (collider.mesh.collision.containsPoint(_insideLocal, hullType))
+        return true;
+    }
+  if (!hasMeshColliders) return false;
   const hit = firstInteriorFace(torquePoint, [0, 0, 1], INSIDE_PROBE_REACH);
   return hit != null && !hit.front;
 }
 
 /** How far the inside test looks for the face it is behind. */
 const INSIDE_PROBE_REACH = 400;
+const _insidePoint = new Vector3(),
+  _insideLocal = new Vector3();
 
 const _scale = new Vector3();
 const _probeSphere = new Sphere();
@@ -544,18 +640,18 @@ const _probeCenter = new Vector3();
 /**
  * Is there solid geometry within `radius` of a point?
  *
- * A DIRECT spatial query, not a bundle of rays. `MeshBVH.intersectsSphere`
- * descends the tree and stops at the first triangle that overlaps, so it
- * answers "is there room here" in one traversal — where six axis
- * raycasts both cost six traversals and miss anything that sits between
- * the axes.
+ * DIFs query authored hulls through spatial bins and measure world-space
+ * polygon distances. Other meshes use BVH sphere intersection. Both detect
+ * nearby geometry that a finite bundle of directional rays can miss.
+ * `interiorHullType: "vehicle"` selects the engine's vehicle hulls, falling
+ * back to ordinary hulls when absent. Ray/visibility queries still use the BSP.
  *
  * Takes a TORQUE-space point, like every other cast in this module.
  */
 export function pointObstructed(
   torquePoint: Vec3,
   radius: number,
-  options?: { includeStatics?: boolean },
+  options?: { includeStatics?: boolean; interiorHullType?: DIFHullType },
 ): boolean {
   // TERRAIN FIRST. The BVH only holds interiors and static shapes, so a
   // sphere query alone reports open air on a hillside — cross-checking
@@ -596,7 +692,7 @@ export function pointObstructed(
   // sphere test below is proximity, and deeper than `radius` inside a
   // thick wall — or the footing under a base — it finds no triangle at
   // all and reads open air; 251 Raindance grid cells were free that way.
-  if (pointInsideInterior(torquePoint)) return true;
+  if (pointInsideInterior(torquePoint, options?.interiorHullType)) return true;
 
   torqueToThreeVec(torquePoint, _probeCenter);
   const groups = options?.includeStatics
@@ -605,6 +701,7 @@ export function pointObstructed(
   for (const map of groups) {
     for (const entry of map.values()) {
       for (const collider of entry.colliders) {
+        if (!syncMeshCollider(collider)) continue;
         // Broadphase in world space before paying for a descent.
         if (
           _probeCenter.x + radius < collider.worldBox.min.x ||
@@ -616,9 +713,32 @@ export function pointObstructed(
         ) {
           continue;
         }
+        if (collider.mesh instanceof DIFCollisionMesh) {
+          if (
+            collider.mesh.collision.intersectsSphere(
+              _probeCenter,
+              radius,
+              collider.matrixWorld,
+              collider.inverse,
+              options?.interiorHullType,
+            )
+          )
+            return true;
+          continue;
+        }
         // The BVH lives in the mesh's own space.
         _probeSphere.center.copy(_probeCenter).applyMatrix4(collider.inverse);
         _probeSphere.radius = radius * collider.worldToLocalRadius;
+        if (collider.mesh instanceof DTSCollisionMesh) {
+          const planes = getDTSHullPlanes(collider.mesh.geometry);
+          if (
+            planes.length &&
+            planes.every(
+              (plane) => plane.distanceToPoint(_probeSphere.center) <= 0,
+            )
+          )
+            return true;
+        }
         if (collider.bvh.intersectsSphere(_probeSphere)) return true;
       }
     }
@@ -641,6 +761,8 @@ const _ray = new Ray();
 const _point = new Vector3();
 const _normal = new Vector3();
 const _segBox = new Box3();
+const _hullStart = new Vector3();
+const _hullEnd = new Vector3();
 
 /**
  * Cast a segment (Torque space) against all registered static world
@@ -680,6 +802,7 @@ export function interiorTrianglesInBox(
         _localBox.expandByPoint(_corner.applyMatrix4(collider.inverse));
       }
       const matrix = collider.matrixWorld;
+      if (!collider.mesh.geometry.getAttribute("position").count) continue;
       collider.bvh.shapecast({
         intersectsBounds: (bounds) =>
           bounds.intersectsBox(_localBox) ? INTERSECTED : NOT_INTERSECTED,
@@ -734,10 +857,33 @@ export function castWorldRay(
   for (const [group, source] of meshGroups) {
     for (const entry of group.values()) {
       for (const collider of entry.colliders) {
+        if (!syncMeshCollider(collider)) continue;
         if (!collider.worldBox.intersectsBox(_segBox)) continue;
-        const hit = raycastCollider(collider, _ray, _point, _normal);
-        if (!hit) continue;
-        const t = hit.dist / segLength;
+        let t: number;
+        if (collider.mesh instanceof DTSCollisionMesh) {
+          _hullStart.copy(_start).applyMatrix4(collider.inverse);
+          _hullEnd.copy(_end).applyMatrix4(collider.inverse);
+          const entry = castDTSHullRay(
+            getDTSHullPlanes(collider.mesh.geometry),
+            _hullStart,
+            _hullEnd,
+            _normal,
+          );
+          if (entry === null) continue;
+          t = entry;
+          _point.lerpVectors(_start, _end, t);
+          _normal.applyMatrix3(collider.normalMatrix).normalize();
+        } else {
+          const hit = raycastCollider(
+            collider,
+            _ray,
+            _point,
+            _normal,
+            segLength,
+          );
+          if (!hit) continue;
+          t = segLength === 0 ? 0 : hit.dist / segLength;
+        }
         if (t > 1 || (best && t >= best.t)) continue;
         if (_normal.dot(_dir) > 0) _normal.negate();
         best = {
@@ -751,6 +897,7 @@ export function castWorldRay(
   }
 
   for (const entry of forceFields().values()) {
+    if (segLength === 0) break;
     if (!entry.enabled) continue;
     if (!entry.worldBox.intersectsBox(_segBox)) continue;
     _localRay.copy(_ray).applyMatrix4(entry.inverse);

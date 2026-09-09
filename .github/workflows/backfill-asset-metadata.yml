@@ -42,6 +42,17 @@ jobs:
 
       - run: npm ci
 
+      - name: Check the Cloudflare account id is set
+        # An empty value would build https://.r2.cloudflarestorage.com and
+        # the AWS CLI would report it as an opaque connection failure.
+        run: |
+          if [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then
+            echo "CLOUDFLARE_ACCOUNT_ID is not set." >&2
+            exit 1
+          fi
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
       - name: Set Content-Type and Cache-Control on all game assets
         run: |
           npx tsx --tsconfig tsconfig.node.json scripts/backfill-asset-metadata.ts \
@@ -50,7 +61,7 @@ jobs:
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-          AWS_ENDPOINT_URL: https://${{ secrets.CF_ACCOUNT_ID }}.r2.cloudflarestorage.com
+          AWS_ENDPOINT_URL: https://${{ secrets.CLOUDFLARE_ACCOUNT_ID }}.r2.cloudflarestorage.com
 
       # An apply rewrites every object, so any edge copies are stale.
       # Purge by PREFIX is an Enterprise-only feature, so this purges the

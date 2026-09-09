@@ -363,7 +363,7 @@ async function prepareDirector(): Promise<boolean> {
     const stream = await createCastStream(demoBuffer, {
       signal: abort.signal,
       // On a cold start (the backfill's fresh page, a probe) the scan
-      // can outrun the interior GLBs. BOTH the scan and the staging
+      // can outrun the interior DIFs. BOTH the scan and the staging
       // pass raycast, so wait for the collider registry to go quiet
       // before either runs — with no world, every death reads as
       // airborne and every placement is certified against nothing.

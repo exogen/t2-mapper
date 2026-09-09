@@ -1,17 +1,13 @@
 import {
-  AnimationClip,
-  AnimationMixer,
   ClampToEdgeWrapping,
-  Group,
   LinearFilter,
   Matrix4,
   MeshLambertMaterial,
   Object3D,
   Quaternion,
-  QuaternionKeyframeTrack,
   Vector3,
-  VectorKeyframeTrack,
   SRGBColorSpace,
+  SkinnedMesh,
 } from "three";
 import type { ColorSpace } from "three";
 import type {
@@ -24,9 +20,21 @@ import {
   createMaterialFromFlags,
   applyShapeShaderModifications,
 } from "../shapeMaterial";
-import { isOrganicShape } from "../organicShapes";
-import { dtsNodeExtras } from "../dtsNodeExtras";
-import { loadTexture, setupTexture } from "../textureUtils";
+import { configureDTSImageTexture } from "../dts/dtsTextures";
+import { applyDTSMaterialMaps } from "../dts/dtsMaterialMaps";
+import {
+  DTSMaterial,
+  DTSMesh,
+  DTSShape,
+  isDTSMesh,
+  isDTSMeshBatch,
+} from "../dts/dtsModel";
+import { observeShapeMeshes, getDTSObject } from "../dts/dtsScene";
+import {
+  loadTexture,
+  loadTextureInstance,
+  setupTexture,
+} from "../textureUtils";
 import { textureToUrl } from "../loaders";
 import type { Keyframe } from "./types";
 
@@ -149,109 +157,11 @@ export function getKeyframeAtTime(
 }
 
 /**
- * Build a 1-frame AnimationClip that captures the skeleton's rest/bind pose
- * for every bone track in `targetClip`. Used as a reference for
- * `makeClipAdditive` on DTS blend sequences — the Blender glTF exporter
- * bakes `rest * delta` into blend keyframes, so subtracting the rest pose
- * recovers the pure deltas needed for Three.js additive blending.
- */
-export function buildRestPoseClip(
-  scene: Object3D,
-  targetClip: AnimationClip,
-): AnimationClip {
-  // Build a name → node lookup from the scene graph.
-  const nodesByName = new Map<string, Object3D>();
-  scene.traverse((n) => {
-    if (n.name) nodesByName.set(n.name, n);
-  });
-
-  const tracks: (QuaternionKeyframeTrack | VectorKeyframeTrack)[] = [];
-
-  for (const track of targetClip.tracks) {
-    // Track names are like "BoneName.quaternion" or "BoneName.position".
-    const dotIdx = track.name.lastIndexOf(".");
-    if (dotIdx === -1) continue;
-    const nodeName = track.name.slice(0, dotIdx);
-    const prop = track.name.slice(dotIdx + 1);
-    const node = nodesByName.get(nodeName);
-    if (!node) continue;
-
-    if (prop === "quaternion") {
-      const q = node.quaternion;
-      tracks.push(
-        new QuaternionKeyframeTrack(track.name, [0], [q.x, q.y, q.z, q.w]),
-      );
-    } else if (prop === "position") {
-      const p = node.position;
-      tracks.push(new VectorKeyframeTrack(track.name, [0], [p.x, p.y, p.z]));
-    } else if (prop === "scale") {
-      const s = node.scale;
-      tracks.push(new VectorKeyframeTrack(track.name, [0], [s.x, s.y, s.z]));
-    }
-  }
-
-  return new AnimationClip("_restPose", 0, tracks);
-}
-
-/**
- * Clone a shape scene, apply the "Root" idle animation at t=0, and return the
- * world-space transform of the named node. This evaluates the skeleton at its
- * idle pose rather than using the collapsed bind pose.
- */
-export function getPosedNodeTransform(
-  scene: Group,
-  animations: AnimationClip[],
-  nodeName: string,
-  overrideClipNames?: string[],
-): { position: Vector3; quaternion: Quaternion } | null {
-  const clone = scene.clone(true);
-
-  const rootClip = animations.find((a) => a.name === "Root");
-  if (rootClip) {
-    const mixer = new AnimationMixer(clone);
-    mixer.clipAction(rootClip).play();
-    // Play override clips (e.g. arm pose) which replace bone transforms
-    // on the bones they animate, at clip midpoint (neutral pose).
-    if (overrideClipNames) {
-      for (const name of overrideClipNames) {
-        const clip = animations.find(
-          (a) => a.name.toLowerCase() === name.toLowerCase(),
-        );
-        if (clip) {
-          const action = mixer.clipAction(clip);
-          action.time = clip.duration / 2;
-          action.setEffectiveTimeScale(0);
-          action.play();
-        }
-      }
-    }
-    mixer.setTime(0);
-  }
-
-  clone.updateMatrixWorld(true);
-
-  let position: Vector3 | null = null;
-  let quaternion: Quaternion | null = null;
-  const wanted = nodeName.toLowerCase();
-  clone.traverse((n) => {
-    if (!position && n.name.toLowerCase() === wanted) {
-      position = new Vector3();
-      quaternion = new Quaternion();
-      n.getWorldPosition(position);
-      n.getWorldQuaternion(quaternion);
-    }
-  });
-
-  if (!position || !quaternion) return null;
-  return { position, quaternion };
-}
-
-/**
  * Smooth vertex normals across co-located split vertices (same position, different
  * UVs). Matches the technique used by ShapeModel for consistent lighting.
  */
 function smoothVertexNormals(geometry: BufferGeometry): void {
-  // Cloned scenes share geometry with the useGLTF cache, so this runs once
+  // Cloned scenes share geometry with the loader cache, so this runs once
   // per geometry, not per clone — the result is identical every time.
   if (geometry.userData.normalsSmoothed) return;
   geometry.userData.normalsSmoothed = true;
@@ -304,20 +214,15 @@ function smoothVertexNormals(geometry: BufferGeometry): void {
 
 interface ShapeMaterialResult {
   material: Material;
-  /** Back-face material for organic/translucent two-pass rendering. */
-  backMaterial?: Material;
 }
 
 /**
- * Replace a PBR MeshStandardMaterial with a diffuse-only Lambert/Basic material
- * matching the Tribes 2 material pipeline. Textures are loaded asynchronously
- * from URLs (GLB files don't embed texture data; they store a resource_path in
- * material userData instead).
+ * Instance a native material with the viewer's lighting, fog, and skin settings.
+ * Texture paths and flags come directly from the typed DTS material.
  */
 export function replaceWithShapeMaterial(
-  mat: MeshStandardMaterial,
+  mat: MeshStandardMaterial | DTSMaterial,
   vis: number,
-  isOrganic = false,
   options: {
     anisotropy?: number;
     emap?: boolean;
@@ -325,9 +230,12 @@ export function replaceWithShapeMaterial(
     skinName?: string;
   } = {},
 ): ShapeMaterialResult {
-  const resourcePath: string | undefined = mat.userData?.resource_path;
-  const flagNames = new Set<string>(mat.userData?.flag_names ?? []);
-  const reflectionAmount: number = mat.userData?.reflection_amount ?? 1.0;
+  const resourcePath =
+    mat instanceof DTSMaterial ? mat.resourcePath : undefined;
+  const flagNames =
+    mat instanceof DTSMaterial ? mat.flagNames : new Set<string>();
+  const reflectionAmount =
+    mat instanceof DTSMaterial ? (mat.source?.reflectionAmount ?? 1) : 1;
 
   if (!resourcePath) {
     // No texture path — plain Lambert fallback with fog/lighting shaders.
@@ -340,9 +248,7 @@ export function replaceWithShapeMaterial(
     return { material: fallback };
   }
 
-  // IFL materials need async atlas loading — create with null map to avoid
-  // "Resource not found" warnings from textureToUrl, and return an initializer
-  // that loads the atlas and sets up per-frame animation.
+  // The DTS runtime assigns IFL frames as the loader decodes their textures.
   const emapEnabled = !!options.emap;
   const effectiveReflectionAmount = emapEnabled ? reflectionAmount : 0;
 
@@ -351,18 +257,10 @@ export function replaceWithShapeMaterial(
       mat,
       null,
       flagNames,
-      isOrganic,
       vis,
       false,
       effectiveReflectionAmount,
     );
-    if (Array.isArray(result)) {
-      const material = result[1];
-      return {
-        material,
-        backMaterial: result[0],
-      };
-    }
     return {
       material: result,
     };
@@ -389,9 +287,8 @@ export function replaceWithShapeMaterial(
   }
   const usingSkin = !!skinTextureUrl;
   const url = skinTextureUrl ?? textureToUrl(resourcePath);
-  const texture = loadTexture(
+  const texture = loadTextureInstance(
     url,
-    undefined,
     usingSkin
       ? () => {
           // Skin failed (404) — load the default texture into the same object.
@@ -403,28 +300,23 @@ export function replaceWithShapeMaterial(
         }
       : undefined,
   );
-  const isTranslucent = flagNames.has("Translucent");
-  if (isOrganic || isTranslucent) {
-    setupTexture(texture, {
-      disableMipmaps: true,
-      anisotropy: options.anisotropy,
-    });
-  } else {
-    setupTexture(texture, { anisotropy: options.anisotropy });
-  }
+  setupTexture(texture, { anisotropy: options.anisotropy });
+
+  configureDTSImageTexture(
+    texture,
+    mat instanceof DTSMaterial ? (mat.source?.flags ?? 0) : 0,
+  );
 
   const result = createMaterialFromFlags(
     mat,
     texture,
     flagNames,
-    isOrganic,
     vis,
     false,
     effectiveReflectionAmount,
   );
-  if (Array.isArray(result)) {
-    return { material: result[1], backMaterial: result[0] };
-  }
+  // Only this sampler is instance-owned; IFL, cloak, and secondary maps are shared.
+  result.addEventListener("dispose", () => texture.dispose());
   return { material: result };
 }
 
@@ -434,7 +326,7 @@ export function replaceWithShapeMaterial(
  */
 export function processShapeScene(
   scene: Object3D,
-  shapeName?: string,
+  _shapeName?: string,
   options: {
     anisotropy?: number;
     emap?: boolean;
@@ -448,86 +340,53 @@ export function processShapeScene(
     ignoreDetailSize?: boolean;
   } = {},
 ): void {
-  const isOrganic = shapeName ? isOrganicShape(shapeName) : false;
+  if (scene instanceof DTSShape)
+    scene.ignoreDetailSize = !!options.ignoreDetailSize;
 
-  // Collect back-face meshes to add after traversal (can't modify during traverse).
-  const backFaceMeshes: Array<{ parent: Object3D; mesh: any }> = [];
-
-  scene.traverse((node: any) => {
+  observeShapeMeshes(scene, (node: any) => {
     if (!node.isMesh) return;
 
-    // Hide collision-only meshes. In Torque, these live in detail levels with
-    // size < 0 (utility details). The Blender addon exports dts_detail_size.
+    // NoMaterial primitives contribute geometry for collision only.
     if (node.material?.name === "Unassigned") {
       node.visible = false;
       return;
     }
-    const extras = dtsNodeExtras(node);
-    if (
-      !options.ignoreDetailSize &&
-      typeof extras.dts_detail_size === "number" &&
-      extras.dts_detail_size < 0
-    ) {
-      node.visible = false;
-      return;
-    }
+    const owner = getDTSObject(node);
+    const defaultVis = owner?.opacity ?? 1;
 
-    // Hide vis-animated meshes (default vis < 0.01) but DON'T skip material
-    // replacement — they need correct textures for when they become visible
-    // (e.g. disc launcher's Disc mesh toggles visibility via state machine).
-    const defaultVis = typeof extras.vis === "number" ? extras.vis : 1;
-    if (defaultVis < 0.01) {
-      node.visible = false;
-    }
-
-    if (node.geometry) {
+    if (node.geometry && !isDTSMesh(node) && !isDTSMeshBatch(node))
       smoothVertexNormals(node.geometry);
-    }
 
     // Replace PBR materials with diffuse-only Lambert materials.
-    // For vis-animated meshes, use vis=1 so the material is fully opaque —
-    // their visibility is toggled via node.visible, not material opacity.
-    const vis: number = extras.vis_sequence ? 1 : defaultVis;
-    if (Array.isArray(node.material)) {
-      node.material = node.material.map((m: MeshStandardMaterial) => {
-        const result = replaceWithShapeMaterial(m, vis, isOrganic, options);
-        if (result.backMaterial && node.parent) {
-          const backMesh = node.clone();
-          backMesh.material = result.backMaterial;
-          backFaceMeshes.push({ parent: node.parent, mesh: backMesh });
-        }
-        return result.material;
-      });
-    } else if (node.material) {
-      const result = replaceWithShapeMaterial(
-        node.material,
-        vis,
-        isOrganic,
-        options,
-      );
-      node.material = result.material;
-      if (result.backMaterial && node.parent) {
-        const backMesh = node.clone();
-        backMesh.material = result.backMaterial;
-        backFaceMeshes.push({ parent: node.parent, mesh: backMesh });
-      }
-    }
+    // DTSObject owns visibility; hiding the mesh as well would prevent a
+    // native visibility track from revealing an initially hidden object.
+    const vis = defaultVis;
+    const replace = (
+      material: MeshStandardMaterial | DTSMaterial,
+    ): Material => {
+      const result = replaceWithShapeMaterial(material, vis, options);
+      if (material instanceof DTSMaterial)
+        applyDTSMaterialMaps(result.material, material);
+      return result.material;
+    };
+    // Keep the material table aligned with the sorted mesh's primitive groups.
+    // A single-material copy would paint every group with that texture.
+    if (Array.isArray(node.material))
+      node.material = node.material.map(replace);
+    else if (node.material) node.material = replace(node.material);
   });
-
-  // Add back-face meshes for two-pass organic/translucent rendering.
-  for (const { parent, mesh } of backFaceMeshes) {
-    parent.add(mesh);
-  }
 }
 
 /**
- * Dispose all geometries and materials on a cloned scene graph.
- * Textures are intentionally left alone since they're shared via caches.
+ * Dispose instance-owned geometry, skeletons and materials. Material disposal
+ * releases owned samplers while cached images and shared maps remain alive.
  */
 export function disposeClonedScene(root: Object3D): void {
   root.traverse((node: any) => {
-    // Do NOT dispose node.geometry: SkeletonUtils.clone shares
-    // BufferGeometry with the useGLTF cache and every other live instance
+    if (node instanceof DTSMesh) node.disposeGeometry();
+    if (node instanceof SkinnedMesh) node.skeleton?.dispose();
+    // Do NOT dispose shared node.geometry: SkeletonUtils.clone shares
+    // BufferGeometry with the loader cache and every other live instance
     // of the shape — disposing here frees the master's GPU buffers and
     // forces a re-upload for all survivors and future spawns. Materials
     // are created per-clone by processShapeScene, so they are ours to

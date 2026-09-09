@@ -58,9 +58,18 @@ const BINARY_EXTENSIONS = new Set([
 
 export const BINARY_CONTENT_TYPE = "application/octet-stream";
 
+/**
+ * The encoding on a precompressed `.br` sibling (see lib/precompress.ts).
+ * A writer using `--metadata-directive REPLACE` must pass this alongside
+ * Content-Type and Cache-Control, or the object serves compressed bytes
+ * with no encoding header and every client gets garbage.
+ */
+export const PRECOMPRESSED_CONTENT_ENCODING = "br";
+
 export interface AssetMetadata {
   contentType: string;
   cacheControl: string;
+  contentEncoding?: string;
 }
 
 /**
@@ -88,6 +97,19 @@ export function metadataFor(filePath: string): AssetMetadata | undefined {
   return { contentType, cacheControl: ASSET_CACHE_CONTROL };
 }
 
+/**
+ * Headers for the `.br` sibling of a source file: the SOURCE's content type
+ * (a compressed `.dts` is still a shape, not a brotli stream) plus the
+ * encoding that tells the browser to inflate it.
+ */
+export function precompressedMetadataFor(
+  sourcePath: string,
+): AssetMetadata | undefined {
+  const base = metadataFor(sourcePath);
+  if (!base) return undefined;
+  return { ...base, contentEncoding: PRECOMPRESSED_CONTENT_ENCODING };
+}
+
 /** Every extension the table knows, lower-cased and dot-prefixed. */
 export function knownExtensions(): string[] {
   return [
@@ -98,6 +120,43 @@ export function knownExtensions(): string[] {
       ...BINARY_EXTENSIONS,
     ]),
   ].sort();
+}
+
+/**
+ * Bucket keys this pipeline owns whose extension has no local file at all.
+ *
+ * The per-Content-Type sync passes prune with `--delete`, but each pass only
+ * includes the extensions still present on disk. Remove the LAST file of an
+ * extension — retiring the .glb conversions, say — and no pass ever names it
+ * again, so `--delete` never considers those objects and they are stranded
+ * in the bucket forever.
+ *
+ * Extensions are compared exactly, not case-folded: the tree holds `.PNG`
+ * beside `.png` and they are separate keys in R2, so a `.PNG` object with no
+ * `.PNG` on disk is genuinely without a source. Keys whose extension the
+ * table does not know are left alone — this only removes what it owns, never
+ * a `.br` sibling or something uploaded by hand.
+ */
+export function strandedKeys({
+  bucketKeys,
+  localPaths,
+}: {
+  bucketKeys: Iterable<string>;
+  localPaths: Iterable<string>;
+}): string[] {
+  const localExtensions = new Set<string>();
+  for (const localPath of localPaths) {
+    localExtensions.add(path.extname(localPath));
+  }
+  const known = new Set(knownExtensions());
+  const stranded: string[] = [];
+  for (const key of bucketKeys) {
+    const extension = path.extname(key);
+    if (!known.has(extension.toLowerCase())) continue;
+    if (localExtensions.has(extension)) continue;
+    stranded.push(key);
+  }
+  return stranded.sort();
 }
 
 /**

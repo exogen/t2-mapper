@@ -120,7 +120,7 @@ import {
   radiusForSpread,
   type ShotVariety,
 } from "./framing";
-import { flagLabel, playerName } from "./dataset";
+import { flagLabel, playerName, targetIdForName } from "./dataset";
 import { rosterCloseUp, rosterWide, type RosterFraming } from "./lineup";
 import {
   flyThroughShot,
@@ -713,6 +713,8 @@ export function runSwitcher(view: CausalView): Shot[] {
 export interface SwitcherStream {
   /** Shots decided so far. The tail is still open. */
   readonly shots: Shot[];
+  /** This stream's geometry grid, once its incremental build completes. */
+  readonly freeSpace: FreeSpaceGrid | null;
   /** How far the switcher has been driven. */
   readonly plannedToSec: number;
   /** Run ticks up to `sec`, against a dataset covering at least that. */
@@ -728,6 +730,9 @@ export function createSwitcherStream(view: CausalView): SwitcherStream {
   return {
     get shots() {
       return state.shots;
+    },
+    get freeSpace() {
+      return state.freeSpace;
     },
     get plannedToSec() {
       return cursor;
@@ -767,6 +772,9 @@ export function createSwitcherStream(view: CausalView): SwitcherStream {
 
 function tick(state: SwitcherState, t: number): void {
   const { view, subjects } = state;
+  // Indoor match shots need the same grid as the opening tour. Keep
+  // building after kickoff, including when we join an ongoing match.
+  ensureFreeSpace(state, view.dataset, t);
   observePossession(state, t);
   // Before the whistle: watch every tick, shot or no shot. Decisions
   // come later in this function and read what was observed here.
@@ -881,6 +889,41 @@ function tick(state: SwitcherState, t: number): void {
         if (opened && grab.timeSec > t) opened.quickCut = true;
         return;
       }
+    }
+  }
+  // Riding an inbound player is a prediction, not proof of possession.
+  // Correct it as soon as the ordinary peek or current flag state disagrees.
+  const currentSubject = subjects[state.current];
+  const approach = state.shots.at(-1);
+  if (
+    !state.directive &&
+    currentSubject.kind === "flag" &&
+    approach?.topic === "flag-stand"
+  ) {
+    const target =
+      approach.kind === "followPlayer"
+        ? approach.targetId
+        : approach.kind === "dolly" && approach.subject.type === "player"
+          ? approach.subject.targetId
+          : null;
+    const sample = view.flagAt(currentSubject.slot);
+    const confirmed =
+      sample?.status === "held"
+        ? sample.carrierTargetId
+        : nextGrabber(view, currentSubject.slot);
+    if (target != null && confirmed != null && target !== confirmed) {
+      // Both the prediction already shown and a brief correction are footage,
+      // even if the new carrier drops the flag on the very next tick.
+      approach.quickCut = true;
+      openShot(
+        state,
+        t,
+        sample?.status === "held"
+          ? undefined
+          : flagApproachShot(currentSubject.slot, view.dataset, t),
+      );
+      state.shots.at(-1)!.quickCut = true;
+      return;
     }
   }
   const deferred = takeDeferredPossession(state, t);
@@ -1486,8 +1529,8 @@ function pushShot(
 
 /** Cut times are decided by the switcher; every shot opens with a far
  *  end that the NEXT cut (or the finale) trims back. */
-function openShot(state: SwitcherState, t: number): void {
-  const shot = styleFor(state, t);
+function openShot(state: SwitcherState, t: number, replacement?: Shot): void {
+  const shot = replacement ?? styleFor(state, t);
   shot.startSec = t;
   shot.endSec = state.view.dataset.durationSec;
   const open = state.shots[state.shots.length - 1];
@@ -1712,10 +1755,6 @@ function prepareLandmarks(
   // so the tour grows during the match. Cheap — the inventory is tens
   // of entries — and caching it once was how the future leaked in.
   let marksAll = landmarksFor(view.dataset, t);
-  // The free-space grid is built ONCE (about 2 seconds) around the
-  // assets standing at that moment. Deployables placed later fall
-  // outside it and keep the old geometric placement.
-  ensureFreeSpace(state, view.dataset, t);
   // Drop what cannot be filmed at all, rather than planning a shot of
   // it and letting the staging pass discover the problem.
   //
@@ -2602,6 +2641,34 @@ function isLiveFlag(view: CausalView, subject: Subject): boolean {
 
 // ── Shot styles: what the present state calls for ──
 
+/** Known grab identity within the existing lookahead; no extra prediction. */
+function nextGrabber(view: CausalView, slot: number): number | null {
+  const grab = view.peekFlagEvents(slot, ["flag-grab"])[0];
+  return grab?.actor
+    ? targetIdForName(grab.actor, view.dataset, grab.timeSec)
+    : null;
+}
+
+/** A moving flag view carries the touch out of the stand's static framing. */
+function flagApproachShot(
+  slot: number,
+  dataset: DirectorDataset,
+  t: number,
+): Shot {
+  return {
+    kind: "followFlag",
+    slot,
+    distance: DIRECTOR_DIST_STAND_WIDE,
+    minDistance: DIRECTOR_GRAB_MIN_DIST,
+    pitch: DIRECTOR_PITCH_STAND,
+    startSec: t,
+    endSec: t,
+    transitionIn: "cut",
+    reason: `${flagLabel(slot, dataset)} — attacker inbound on the stand`,
+    topic: "flag-stand",
+  };
+}
+
 function styleFor(state: SwitcherState, t: number): Shot {
   const { view, variety } = state;
   const dataset = view.dataset;
@@ -2816,6 +2883,10 @@ function styleFor(state: SwitcherState, t: number): Shot {
         // alongside ride belongs to a story already on screen.
         let pick = rotation % 3;
         if (state.freshSubject && pick === 2) pick = 0;
+        // Keep the stand in view when a known touch contradicts the motion
+        // predictor. The predicted player's route can still be plausible.
+        const grabber = nextGrabber(view, slot);
+        if (grabber != null && grabber !== inbound.targetId) pick = 0;
         const attacker = playerName(inbound.targetId, dataset, t);
         if (pick === 1) {
           // Ride the capper in — the stand sits beyond them in frame.
@@ -2849,18 +2920,7 @@ function styleFor(state: SwitcherState, t: number): Shot {
             topic: "flag-stand",
           };
         }
-        return {
-          kind: "followFlag",
-          slot,
-          distance: DIRECTOR_DIST_STAND_WIDE,
-          minDistance: DIRECTOR_GRAB_MIN_DIST,
-          pitch: DIRECTOR_PITCH_STAND,
-          startSec: t,
-          endSec: t,
-          transitionIn: "cut",
-          reason: `${label} — attacker inbound on the stand`,
-          topic: "flag-stand",
-        };
+        return flagApproachShot(slot, dataset, t);
       }
       return orbitShot({
         center: anchor,

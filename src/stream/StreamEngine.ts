@@ -4,6 +4,7 @@
 // consumer. The demo/live path takes its scene objects from GHOSTS
 // and never interprets a line of TorqueScript.
 import { ghostToSceneObject } from "../scene/ghostToScene";
+import { getImageMountOffset } from "./imageMount";
 import type { SceneObject } from "../scene/types";
 import {
   buildLinearSegment,
@@ -556,7 +557,7 @@ export abstract class StreamEngine implements StreamingPlayback {
   protected abstract getPreloadShapeNames(): string[];
 
   /**
-   * Prioritized prefetch list: the terrain file, interior GLBs, and
+   * Prioritized prefetch list: the terrain file, interior DIFs, and
    * TSStatic shapes from scene entities come first (the world's biggest
    * visual chunks), then the category shapes. The prefetcher drains
    * from the front.
@@ -1642,6 +1643,7 @@ export abstract class StreamEngine implements StreamingPlayback {
               entity.imageSlots[img.index] = {
                 shapeName,
                 mountPoint,
+                mountOffset: getImageMountOffset(blockData),
                 dataBlockId: img.dataBlockId,
                 skinName,
                 imageState,
