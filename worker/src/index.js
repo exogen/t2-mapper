@@ -17,9 +17,9 @@
  * here but not written by the sync just misses the cache and falls back.
  */
 const PRECOMPRESSED_EXTENSIONS = [".dts", ".dif"];
-// Ignore entries written before the precompressed cache-copy fix.
+// Ignore entries written with older encoding/cache policies.
 const CACHE_VERSION_HEADER = "X-T2-Asset-Cache-Version";
-const CACHE_VERSION = "1";
+const CACHE_VERSION = "2";
 
 /**
  * CORS, matching what the R2 custom domain served before the worker took
@@ -110,6 +110,11 @@ function responseHeaders(object, encoding) {
   headers.set("Vary", "Accept-Encoding");
   headers.set("Accept-Ranges", "bytes");
   if (encoding) headers.set("Content-Encoding", encoding);
+  // Preserve precompressed bytes through the CDN. Set this on the response
+  // before cache.put(), so it applies to both cache misses and cache hits.
+  if (headers.has("Content-Encoding")) {
+    headers.append("Cache-Control", "no-transform");
+  }
   return withCors(headers);
 }
 

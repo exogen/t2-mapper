@@ -188,7 +188,9 @@ describe("asset worker", () => {
           encoding === "br" ? "br" : null,
         );
         expect(response.headers.get("Cache-Control")).toBe(
-          "public, max-age=7200",
+          encoding === "br"
+            ? "public, max-age=7200, no-transform"
+            : "public, max-age=7200",
         );
         expect(
           (encoding === "br" ? brotliDecompressSync(bytes) : bytes).toString(),
@@ -213,6 +215,34 @@ describe("asset worker", () => {
     expect(brotliDecompressSync(await wireBody(response)).toString()).toBe(
       "PLAIN-DTS-BYTES",
     );
+    expect(getCalls).toEqual(["game/base/shapes/a.dts.br"]);
+  });
+
+  it("replaces version 1 entries that allowed compression transforms", async () => {
+    cacheStore.set(
+      `${ORIGIN}/game/base/shapes/a.dts.br`,
+      new NativeResponse(brotliCompressSync("PLAIN-DTS-BYTES"), {
+        headers: {
+          "Content-Encoding": "br",
+          "Cache-Control": "public, max-age=7200",
+          "X-T2-Asset-Cache-Version": "1",
+        },
+      }),
+    );
+    const fresh = await get("/game/base/shapes/a.dts", {
+      "Accept-Encoding": "br",
+    });
+    const hit = await get("/game/base/shapes/a.dts", {
+      "Accept-Encoding": "br",
+    });
+    for (const response of [fresh, hit]) {
+      expect(response.headers.get("Cache-Control")).toBe(
+        "public, max-age=7200, no-transform",
+      );
+      expect(brotliDecompressSync(await wireBody(response)).toString()).toBe(
+        "PLAIN-DTS-BYTES",
+      );
+    }
     expect(getCalls).toEqual(["game/base/shapes/a.dts.br"]);
   });
 
@@ -293,7 +323,9 @@ describe("asset worker", () => {
     });
     expect(response.status).toBe(200);
     expect(response.headers.get("Content-Encoding")).toBe("br");
-    expect(response.headers.get("Cache-Control")).toBe("public, max-age=7200");
+    expect(response.headers.get("Cache-Control")).toBe(
+      "public, max-age=7200, no-transform",
+    );
     // Fetched directly; no sibling lookup for something already a sibling.
     expect(getCalls).toEqual(["game/base/shapes/a.dts.br"]);
     expect(brotliDecompressSync(await wireBody(response)).toString()).toBe(
@@ -302,7 +334,9 @@ describe("asset worker", () => {
     const hit = await get("/game/base/shapes/a.dts.br", {
       "Accept-Encoding": "br",
     });
-    expect(hit.headers.get("Cache-Control")).toBe("public, max-age=7200");
+    expect(hit.headers.get("Cache-Control")).toBe(
+      "public, max-age=7200, no-transform",
+    );
     expect(brotliDecompressSync(await wireBody(hit)).toString()).toBe(
       "PLAIN-DTS-BYTES",
     );
@@ -313,7 +347,9 @@ describe("asset worker", () => {
     await get("/game/base/shapes/a.dts", { "Accept-Encoding": "br" });
     const stored = cacheStore.get(`${ORIGIN}/game/base/shapes/a.dts.br`);
     expect(stored).toBeDefined();
-    expect(stored!.headers.get("Cache-Control")).toBe("public, max-age=7200");
+    expect(stored!.headers.get("Cache-Control")).toBe(
+      "public, max-age=7200, no-transform",
+    );
     expect(
       brotliDecompressSync(Buffer.from(await stored!.arrayBuffer())).toString(),
     ).toBe("PLAIN-DTS-BYTES");
