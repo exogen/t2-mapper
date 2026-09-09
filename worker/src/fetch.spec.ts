@@ -133,6 +133,102 @@ async function get(
 }
 
 describe("asset worker", () => {
+  describe("temporary encoding diagnostics", () => {
+    const key = "game/base/@vl2/shapes.vl2/shapes/borg3.dts";
+    const probePath = `/${key}?__t2_encoding_debug=test-run`;
+
+    beforeEach(() => {
+      bucket[key] = bucket["game/base/shapes/a.dts"];
+      bucket[`${key}.br`] = bucket["game/base/shapes/a.dts.br"];
+      vi.spyOn(console, "log").mockImplementation(() => {});
+    });
+    afterEach(() => vi.restoreAllMocks());
+
+    it("records cold and warm headers without consuming response bodies", async () => {
+      for (let i = 0; i < 2; i++) {
+        const response = await get(
+          probePath,
+          { "Accept-Encoding": "br, gzip" },
+          "GET",
+          "br, identity;q=0",
+        );
+        expect(response.bodyUsed).toBe(false);
+        expect(brotliDecompressSync(await wireBody(response)).toString()).toBe(
+          "PLAIN-DTS-BYTES",
+        );
+      }
+      const entries = vi.mocked(console.log).mock.calls.map(([label, json]) => {
+        expect(label).toBe("asset-encoding-debug");
+        return JSON.parse(json);
+      });
+      expect(entries.map(({ stage }) => stage)).toEqual([
+        "cache-match",
+        "r2-response",
+        "cache-put",
+        "cache-match",
+      ]);
+      expect(entries[0].response).toBeNull();
+      for (const entry of entries) {
+        expect(entry).toMatchObject({
+          url: `${ORIGIN}${probePath}`,
+          method: "GET",
+          clientAcceptEncoding: "br, identity;q=0",
+          workerAcceptEncoding: "br, gzip",
+          cacheUrl: `${ORIGIN}/${key}.br?__t2_encoding_debug=test-run`,
+          cacheAcceptEncoding: "br",
+        });
+      }
+      for (const entry of entries.slice(1)) {
+        expect(entry.response).toMatchObject({
+          contentEncoding: "br",
+          contentLength: String(brotliCompressSync("PLAIN-DTS-BYTES").length),
+          etag: '"etag-br"',
+          cacheControl: "public, max-age=7200, no-transform",
+        });
+      }
+      expect(entries[2].response.cacheVersion).toBe("2");
+      expect(entries[3].response.cacheVersion).toBe("2");
+      expect(getCalls).toEqual([`${key}.br`]);
+    });
+
+    it("returns a transformed cache hit unchanged and records its actual headers", async () => {
+      const hit = new Response("PLAIN-DTS-BYTES", {
+        headers: {
+          "X-T2-Asset-Cache-Version": "2",
+          "CF-Cache-Status": "HIT",
+          ETag: 'W/"etag-br"',
+        },
+      });
+      vi.spyOn(caches.default, "match").mockResolvedValueOnce(hit);
+      const response = await get(probePath, { "Accept-Encoding": "br" });
+      expect(response).toBe(hit);
+      expect(response.bodyUsed).toBe(false);
+      expect(getCalls).toEqual([]);
+      expect(putKeys).toEqual([]);
+      expect(console.log).toHaveBeenCalledExactlyOnceWith(
+        "asset-encoding-debug",
+        expect.any(String),
+      );
+      const entry = JSON.parse(vi.mocked(console.log).mock.calls[0][1]);
+      expect(entry).toMatchObject({
+        stage: "cache-match",
+        response: {
+          contentEncoding: null,
+          etag: 'W/"etag-br"',
+          cacheStatus: "HIT",
+        },
+      });
+    });
+
+    it("does not log unmarked requests or other assets", async () => {
+      await get(`/${key}`, { "Accept-Encoding": "br" });
+      await get("/game/base/shapes/a.dts?__t2_encoding_debug=test-run", {
+        "Accept-Encoding": "br",
+      });
+      expect(console.log).not.toHaveBeenCalled();
+    });
+  });
+
   it("serves the brotli sibling when the client accepts it", async () => {
     const response = await get("/game/base/shapes/a.dts", {
       "Accept-Encoding": "gzip, br",

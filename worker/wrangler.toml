@@ -2,6 +2,11 @@ name = "t2-assets"
 main = "src/index.js"
 compatibility_date = "2026-09-01"
 
+[observability.logs]
+enabled = true
+invocation_logs = true
+persist = true
+
 # The bucket is bound directly rather than fetched over HTTP, so there is no
 # second hop and no risk of the worker calling its own hostname.
 [[r2_buckets]]

@@ -204,12 +204,45 @@ export default {
     });
     const cache = caches.default;
 
+    // Temporary diagnostics for a marked probe URL. Read only headers: reading
+    // or rewrapping the cached body could change native encoding passthrough.
+    const traceEncoding =
+      key === "game/base/@vl2/shapes.vl2/shapes/borg3.dts" &&
+      url.searchParams.has("__t2_encoding_debug")
+        ? (stage, response) =>
+            console.log(
+              "asset-encoding-debug",
+              JSON.stringify({
+                stage,
+                url: request.url,
+                method: request.method,
+                ray: request.headers.get("CF-Ray"),
+                clientAcceptEncoding: acceptEncoding,
+                workerAcceptEncoding: request.headers.get("Accept-Encoding"),
+                cacheUrl: cacheKey.url,
+                cacheAcceptEncoding: cacheKey.headers.get("Accept-Encoding"),
+                response: response
+                  ? {
+                      status: response.status,
+                      contentEncoding: response.headers.get("Content-Encoding"),
+                      contentLength: response.headers.get("Content-Length"),
+                      etag: response.headers.get("ETag"),
+                      cacheControl: response.headers.get("Cache-Control"),
+                      cacheStatus: response.headers.get("CF-Cache-Status"),
+                      cacheVersion: response.headers.get(CACHE_VERSION_HEADER),
+                    }
+                  : null,
+              }),
+            )
+        : null;
+
     const conditional =
       request.headers.has("If-None-Match") ||
       request.headers.has("If-Modified-Since");
 
     if (!rangeHeader && !conditional) {
       const hit = await cache.match(cacheKey);
+      traceEncoding?.("cache-match", hit);
       if (hit?.headers.get(CACHE_VERSION_HEADER) === CACHE_VERSION) {
         // A Cache API response has native decoding/passthrough semantics.
         // Unlike a raw R2 body, it must not be re-labelled encodeBody: manual.
@@ -277,11 +310,14 @@ export default {
         headers,
         ...(encodedBody ? { encodeBody: "manual" } : {}),
       });
+      traceEncoding?.("r2-response", response);
       // Only a complete, unconditional 200 is safe to store.
       // Don't store a missing sibling's fallback under the real .br URL.
       if (!rangeHeader && !conditional && (!useSibling || encoding)) {
+        const cacheResponse = cloneForCache(response);
+        traceEncoding?.("cache-put", cacheResponse);
         ctx.waitUntil(
-          cache.put(cacheKey, cloneForCache(response)).catch((error) => {
+          cache.put(cacheKey, cacheResponse).catch((error) => {
             console.error("asset worker cache.put failed", key, error);
           }),
         );
