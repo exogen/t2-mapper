@@ -242,3 +242,34 @@ describe("retail player prediction", () => {
     }
   });
 });
+
+it("restores prediction, correction warps and interpolation deltas at a tick boundary", () => {
+  const original = player();
+  original.processTick(-20);
+  original.unpackUpdate({
+    position: { x: 3, y: 1, z: 10 },
+    velocity: { x: 16, y: 0, z: 0 },
+    rotationZ: 0.8,
+    allowWarp: true,
+    move: neutral,
+  });
+  original.processTick(-20);
+  expect(original.warpTicks).toBeGreaterThan(0);
+  const saved = original.saveState();
+  const preserved = structuredClone(saved);
+  const expected = Array.from({ length: 20 }, () => {
+    original.processTick(-20);
+    return original.saveState();
+  });
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const restored = new PlayerPrediction(armor);
+    restored.restoreState(saved);
+    expect(
+      Array.from({ length: 20 }, () => {
+        restored.processTick(-20);
+        return restored.saveState();
+      }),
+    ).toEqual(expected);
+    expect(saved).toEqual(preserved);
+  }
+});

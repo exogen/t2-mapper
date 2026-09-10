@@ -11,6 +11,7 @@ import type {
   FlareVisual,
   LightAnchor,
 } from "../stream/types";
+import type { WheelState } from "../stream/vehicleWheels";
 import type {
   SceneTerrainBlock,
   SceneInteriorInstance,
@@ -177,13 +178,7 @@ export interface ShapeEntity extends PositionedBase {
   shapeType?: string;
   rotate?: boolean;
   /** WheeledVehicle per-wheel state (speed, slip). */
-  wheels?: Array<{
-    speed: number;
-    lateralSlip: number;
-    longitudinalSlip: number;
-    rotation: number;
-    timeSec: number;
-  }>;
+  wheels?: WheelState[];
   /** Vehicle steering angle (radians). */
   steeringYaw?: number;
   /** Vehicle frozen state (deployed). */

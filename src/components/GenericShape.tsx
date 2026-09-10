@@ -54,8 +54,17 @@ import { readDtsSequences } from "../dts/dtsSequences";
 import type { GameEntity } from "../state/gameEntityTypes";
 import { useImageStateAnimation } from "./useImageStateAnimation";
 import { DTSAnimationMixer } from "../dts/dtsAnimationMixer";
+import {
+  createDtsDamageThreads,
+  type DtsDamageThreads,
+} from "../dts/dtsDamage";
 import { applyDtsThreadState, holdDtsAction } from "../dts/dtsThread";
 import { shapeThreadTime } from "../stream/shapeThreads";
+import {
+  wheelRotationAt,
+  wheelSteeringPosition,
+  type WheelState,
+} from "../stream/vehicleWheels";
 import { useFadeAndCloak } from "./shapeFadeCloak";
 import { shapeBoxCenter } from "../shapeLighting";
 import { useShapeLighting } from "./useShapeLighting";
@@ -111,15 +120,10 @@ interface StreamShapeEntity {
    *  world dumps stay comparable across stacks. */
   ghostIndex?: number;
   threads?: StreamThreadState[];
+  health?: number;
   damageState?: number;
   turretAim?: TurretAim;
-  wheels?: Array<{
-    speed: number;
-    lateralSlip: number;
-    longitudinalSlip: number;
-    rotation: number;
-    timeSec: number;
-  }>;
+  wheels?: WheelState[];
   steeringYaw?: number;
   frozen?: boolean;
   maxSteeringAngle?: number;
@@ -212,7 +216,6 @@ interface WheelAnimState {
   wheelAction?: AnimationAction;
   springAction?: AnimationAction;
   turnAction?: AnimationAction;
-  rotation: number;
 }
 
 /** Returns pausable time in seconds for demo mode, real time otherwise. */
@@ -443,7 +446,7 @@ export const ShapeModel = memo(function ShapeModel({
   }, [clonedScene, colliderId, type]);
 
   const threadsRef = useRef(new Map<number, ThreadState>());
-  const damageActionRef = useRef<AnimationAction | null>(null);
+  const damageThreadsRef = useRef<DtsDamageThreads | undefined>(undefined);
   const animationEnabledRef = useRef(animationEnabled);
   useLayoutEffect(() => {
     animationEnabledRef.current = animationEnabled;
@@ -549,15 +552,17 @@ export const ShapeModel = memo(function ShapeModel({
 
     handlePlayThreadRef.current = handlePlayThread;
     handleDestroyThreadRef.current = destroyThread;
-    const visibility = clipsByName.get("visibility");
-    const damageAction =
-      mixer && visibility ? mixer.clipAction(visibility) : null;
-    damageActionRef.current = damageAction;
-    if (damageAction)
-      holdDtsAction(
-        damageAction,
-        (streamEntityRef.current?.damageState ?? 0) >= 2 ? 1 : 0,
-      );
+    // Mounted images have their own state machine, not ShapeBase damage
+    // threads. Mounted ShapeBase objects receive their own ghost's health.
+    const damageThreads =
+      mixer && type !== "TSStatic" && imageSlot === undefined
+        ? createDtsDamageThreads(mixer, clipsByName.values())
+        : undefined;
+    damageThreadsRef.current = damageThreads;
+    damageThreads?.update(
+      streamEntityRef.current?.health,
+      streamEntityRef.current?.damageState,
+    );
 
     // Set up WheeledVehicle wheel/spring/turn animations.
     // These are position-controlled (setPos) not thread-controlled.
@@ -565,7 +570,7 @@ export const ShapeModel = memo(function ShapeModel({
     if (mixer && clipsByName.has("wheel0")) {
       const wheelAnims: WheelAnimState[] = [];
       for (let i = 0; i < 6; i++) {
-        const state: WheelAnimState = { rotation: 0 };
+        const state: WheelAnimState = {};
         const wheelClip = clipsByName.get(`wheel${i}`);
         if (wheelClip) {
           const action = mixer.clipAction(wheelClip);
@@ -632,8 +637,8 @@ export const ShapeModel = memo(function ShapeModel({
       return () => {
         handlePlayThreadRef.current = null;
         handleDestroyThreadRef.current = null;
-        damageAction?.stop();
-        damageActionRef.current = null;
+        damageThreads?.dispose();
+        damageThreadsRef.current = undefined;
         prevDemoThreadsRef.current = undefined;
         wheelAnimsRef.current = null;
         turretAnimRef.current = null;
@@ -726,14 +731,14 @@ export const ShapeModel = memo(function ShapeModel({
       unsubs.forEach((fn) => fn());
       handlePlayThreadRef.current = null;
       handleDestroyThreadRef.current = null;
-      damageAction?.stop();
-      damageActionRef.current = null;
+      damageThreads?.dispose();
+      damageThreadsRef.current = undefined;
       prevDemoThreadsRef.current = undefined;
       wheelAnimsRef.current = null;
       turretAnimRef.current = null;
       for (const slot of [...threads.keys()]) destroyThread(slot);
     };
-  }, [mixer, clipsByName, seqCyclicByName, object, runtime]);
+  }, [mixer, clipsByName, seqCyclicByName, object, runtime, type, imageSlot]);
 
   // Ghost ThreadMask indices address the native DTS sequence order.
   const seqIndexToName = useMemo(
@@ -874,52 +879,40 @@ export const ShapeModel = memo(function ShapeModel({
 
     if (animationEnabled) driveVehicleJets(effectDelta);
 
-    // The hulk sequence is a held native thread, just like ShapeBase's.
-    const damage = damageActionRef.current;
-    if (damage)
-      holdDtsAction(
-        damage,
-        (streamEntityRef.current?.damageState ?? 0) >= 2 ? 1 : 0,
-      );
+    damageThreadsRef.current?.update(
+      streamEntityRef.current?.health,
+      streamEntityRef.current?.damageState,
+    );
 
     // Drive WheeledVehicle wheel/spring/turn animations from ghost state.
     const wheelAnims = wheelAnimsRef.current;
     if (wheelAnims && animationEnabled) {
       const entity = streamEntityRef.current;
       const wheels = entity?.wheels;
-      const steeringYaw = entity?.steeringYaw ?? 0;
-      // From VehicleData datablock (e.g. MPB = 0.3 rad).
-      const maxSteeringAngle = entity?.maxSteeringAngle ?? 0.3;
+      const steeringPosition = wheelSteeringPosition(
+        entity?.steeringYaw ?? 0,
+        entity?.maxSteeringAngle,
+      );
 
       for (let i = 0; i < wheelAnims.length; i++) {
         const wa = wheelAnims[i];
         const wheel = wheels?.[i];
 
-        // Wheel rotation: accumulate from speed, matching Torque's
-        // advanceTime: rotation += wheelSpeed * dt * TWO_PI, then
-        // wrap to [0,1) and flip negative to 1-rotation.
         if (wa.wheelAction && wheel) {
-          wa.rotation =
-            wheel.rotation +
-            wheel.speed *
-              Math.max(0, streamClock.time - wheel.timeSec) *
-              Math.PI *
-              2;
-          wa.rotation -= Math.floor(wa.rotation); // wrap to [0,1)
-          wa.wheelAction.time = wa.rotation * wa.wheelAction.getClip().duration;
+          const rotation = wheelRotationAt(
+            wheel,
+            streamClock.time,
+            entity?.frozen,
+          );
+          holdDtsAction(wa.wheelAction, rotation);
         }
 
         // Spring: ghost vehicles stay at rest (fully extended = pos 0).
         // The server already accounts for spring height in the ghost position.
         // (Spring animation would only change with client-side raycasts.)
 
-        // Turn: steering angle → animation position.
-        // Torque: pos = 0.5 - t * 0.5 where t = steerAngle² / maxSteeringAngle
         if (wa.turnAction) {
-          const t = (steeringYaw * Math.abs(steeringYaw)) / maxSteeringAngle;
-          const pos = 0.5 - t * 0.5;
-          wa.turnAction.time =
-            Math.max(0, Math.min(1, pos)) * wa.turnAction.getClip().duration;
+          holdDtsAction(wa.turnAction, steeringPosition);
         }
       }
     }

@@ -229,13 +229,14 @@ function SkyBoxTexture({
               // above the saturation ring, and two alpha-graded pieces of
               // band geometry blend the transition. skyFogAlpha evaluates
               // the same bands analytically per ray.
-              float finalFogFactor = skyFogAlpha(direction.y);
-              finalColor = mix(skyColor.rgb, fogColor, finalFogFactor);
+              float finalFogFactor = skyFogAlpha(direction);
+              // Fixed-function GL blended the display-encoded colors.
+              finalColor = mix(linearToSRGB(skyColor.rgb), linearToSRGB(fogColor), finalFogFactor);
             } else {
-              finalColor = skyColor.rgb;
+              finalColor = linearToSRGB(skyColor.rgb);
             }
-            // Convert linear result to sRGB for display
-            gl_FragColor = vec4(linearToSRGB(finalColor), 1.0);
+            // The blend is already in display space.
+            gl_FragColor = vec4(finalColor, 1.0);
           }
         `}
         depthWrite={false}
@@ -282,19 +283,18 @@ function SkyBox({
     // textureToUrl returns the fallback URL for missing textures (e.g.
     // Katabatic's DML has a broken emap path). Don't set a fallback as envmap.
     if (url === FALLBACK_TEXTURE_URL) return;
-    // Load WITHOUT sRGB conversion (noColorSpace). The env map values stay as
-    // raw sRGB bytes, which is what Torque's fixed-function pipeline operates
-    // on. The 2x modulate: 2 * lit_base_linear * env_sRGB produces display
-    // values that closely match Torque's 2 * lit_base_sRGB * env_sRGB.
-    const tex = loadTexture(url, (loaded) => {
+    // The reflection shader blends raw sRGB samples with the lit base color.
+    let active = true;
+    loadTexture(url, (loaded) => {
+      // A previous map's pending load must not replace the current sky.
+      if (!active) return;
       setupTexture(loaded, { noColorSpace: true });
       setShapeEnvMap(loaded);
     });
-    if (tex.image) {
-      setupTexture(tex, { noColorSpace: true });
-      setShapeEnvMap(tex);
-    }
-    return () => resetShapeEnvMap();
+    return () => {
+      active = false;
+      resetShapeEnvMap();
+    };
   }, [detailMapList]);
 
   // In debug mode, show sphere map UVs as colors instead of the texture.
@@ -424,13 +424,13 @@ function SolidColorSky({
 
             if (enableFog) {
               // Tribes2.exe fog band model — see SkyBoxTexture.
-              float finalFogFactor = skyFogAlpha(direction.y);
-              finalColor = mix(skyColor, fogColor, finalFogFactor);
+              float finalFogFactor = skyFogAlpha(direction);
+              finalColor = mix(linearToSRGB(skyColor), linearToSRGB(fogColor), finalFogFactor);
             } else {
-              finalColor = skyColor;
+              finalColor = linearToSRGB(skyColor);
             }
 
-            gl_FragColor = vec4(linearToSRGB(finalColor), 1.0);
+            gl_FragColor = vec4(finalColor, 1.0);
           }
         `}
         depthWrite={false}

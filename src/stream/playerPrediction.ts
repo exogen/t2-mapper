@@ -125,6 +125,52 @@ export class PlayerPrediction {
     this.energy = data.maxEnergy ?? 0;
   }
 
+  /** Tick-boundary state; collision triangles and vector scratch are rebuilt. */
+  saveState() {
+    return {
+      position: this.position.toArray(),
+      velocity: this.velocity.toArray(),
+      posVec: this.posVec.toArray(),
+      size: this.size.toArray(),
+      warpOffset: this.warpOffset.toArray(),
+      jumpSurfaceNormal: this.jumpSurfaceNormal.toArray(),
+      values: {
+        yaw: this.yaw,
+        rotVec: this.rotVec,
+        headPitch: this.headPitch,
+        headYaw: this.headYaw,
+        headPitchVec: this.headPitchVec,
+        headYawVec: this.headYawVec,
+        energy: this.energy,
+        jetting: this.jetting,
+        falling: this.falling,
+        damageState: this.damageState,
+        mounted: this.mounted,
+        allowFreelook: this.allowFreelook,
+        disableMove: this.disableMove,
+        predictionCount: this.predictionCount,
+        warpTicks: this.warpTicks,
+        actionState: this.actionState,
+        recoverTicks: this.recoverTicks,
+        jumpDelay: this.jumpDelay,
+        jumpSurfaceLastContact: this.jumpSurfaceLastContact,
+        rotOffset: this.rotOffset,
+        initialized: this.initialized,
+        move: structuredClone(this.move),
+      },
+    };
+  }
+
+  restoreState(state: ReturnType<PlayerPrediction["saveState"]>): void {
+    this.position.fromArray(state.position);
+    this.velocity.fromArray(state.velocity);
+    this.posVec.fromArray(state.posVec);
+    this.size.fromArray(state.size);
+    this.warpOffset.fromArray(state.warpOffset);
+    this.jumpSurfaceNormal.fromArray(state.jumpSurfaceNormal);
+    Object.assign(this, structuredClone(state.values));
+  }
+
   /** Armor changes preserve the player's current simulation state. */
   setDataBlock(data: PlayerDataBlock): void {
     this.data = data;

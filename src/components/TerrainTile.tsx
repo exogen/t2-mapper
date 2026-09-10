@@ -1,8 +1,18 @@
-import { memo, Suspense, useCallback, useEffect, useMemo, useRef } from "react";
+import { useThree } from "@react-three/fiber";
+import {
+  memo,
+  Suspense,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+} from "react";
 import {
   type BufferGeometry,
   DataTexture,
   FrontSide,
+  NoColorSpace,
   type MeshLambertMaterial,
 } from "three";
 import { useTexture } from "@react-three/drei";
@@ -18,6 +28,7 @@ import { useAnisotropy } from "./useAnisotropy";
 import { injectCustomFog } from "../fogShader";
 import { globalFogUniforms } from "../globalFogUniforms";
 import { invalidateShadows } from "./shadowControl";
+import { TERRAIN_SIZE } from "../terrain";
 
 // Texture tiling factors for each terrain layer
 const TILING: Record<number, number> = {
@@ -48,22 +59,27 @@ const BlendedTerrainTextures = memo(function BlendedTerrainTextures({
   textureNames,
   alphaTextures,
   detailTextureName,
+  squareSize,
   lightmap,
 }: {
   visibilityMask: DataTexture;
   textureNames: string[];
   alphaTextures: DataTexture[];
   detailTextureName?: string;
+  squareSize: number;
   lightmap?: DataTexture;
 }) {
   const { debugMode } = useDebug();
   const anisotropy = useAnisotropy();
+  const height = useThree((state) => state.size.height);
+  const dpr = useThree((state) => state.viewport.dpr);
+  const detailViewportHeight = useMemo(() => ({ value: 0 }), []);
+  useEffect(() => {
+    detailViewportHeight.value = height * dpr;
+  }, [height, dpr, detailViewportHeight]);
 
   const baseTextures = useTexture(
     textureNames.map((name) => terrainTextureToUrl(name)),
-    (textures) => {
-      textures.forEach((tex) => setupTexture(tex, { anisotropy }));
-    },
   );
 
   // Load detail texture if specified
@@ -71,12 +87,16 @@ const BlendedTerrainTextures = memo(function BlendedTerrainTextures({
     ? textureToUrl(detailTextureName)
     : null;
 
-  const detailTexture = useTexture(
-    detailTextureUrl ?? FALLBACK_TEXTURE_URL,
-    (tex) => {
-      setupTexture(tex, { anisotropy });
-    },
-  );
+  const detailTexture = useTexture(detailTextureUrl ?? FALLBACK_TEXTURE_URL);
+
+  // Configure before upload, only when the loaded textures/settings change.
+  // An inline useTexture onLoad callback reruns on every resize/render.
+  useLayoutEffect(() => {
+    for (const tex of [...baseTextures, detailTexture]) {
+      tex.colorSpace = NoColorSpace;
+      setupTexture(tex, { anisotropy, noColorSpace: true });
+    }
+  }, [baseTextures, detailTexture, anisotropy]);
 
   const onBeforeCompile = useCallback(
     (shader: any) => {
@@ -86,6 +106,8 @@ const BlendedTerrainTextures = memo(function BlendedTerrainTextures({
         alphaTextures,
         visibilityMask,
         tiling: TILING,
+        squareSize,
+        detailViewportHeight,
         detailTexture: detailTextureUrl ? detailTexture : null,
         lightmap,
       });
@@ -97,6 +119,8 @@ const BlendedTerrainTextures = memo(function BlendedTerrainTextures({
       baseTextures,
       alphaTextures,
       visibilityMask,
+      squareSize,
+      detailViewportHeight,
       detailTexture,
       detailTextureUrl,
       lightmap,
@@ -165,12 +189,14 @@ export const TerrainMaterial = memo(function TerrainMaterial({
   textureNames,
   alphaTextures,
   detailTextureName,
+  squareSize,
   lightmap,
 }: {
   visibilityMask: DataTexture;
   textureNames: string[];
   alphaTextures: DataTexture[];
   detailTextureName?: string;
+  squareSize: number;
   lightmap?: DataTexture;
 }) {
   return (
@@ -185,6 +211,7 @@ export const TerrainMaterial = memo(function TerrainMaterial({
         textureNames={textureNames}
         alphaTextures={alphaTextures}
         detailTextureName={detailTextureName}
+        squareSize={squareSize}
         lightmap={lightmap}
       />
     </Suspense>
@@ -236,6 +263,7 @@ export const TerrainTile = memo(function TerrainTile({
         textureNames={textureNames}
         alphaTextures={alphaTextures}
         detailTextureName={detailTextureName}
+        squareSize={blockSize / TERRAIN_SIZE}
         lightmap={lightmap}
       />
     </mesh>

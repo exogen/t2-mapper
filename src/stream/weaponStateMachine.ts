@@ -74,6 +74,19 @@ export class WeaponImageStateMachine {
     }
   }
 
+  saveState() {
+    return {
+      currentStateIndex: this.currentStateIndex,
+      delayTime: this.delayTime,
+      lastFireCount: this.lastFireCount,
+      spinTimeScale: this.spinTimeScale,
+    };
+  }
+
+  restoreState(state: ReturnType<WeaponImageStateMachine["saveState"]>): void {
+    Object.assign(this, state);
+  }
+
   get stateIndex(): number {
     return this.currentStateIndex;
   }

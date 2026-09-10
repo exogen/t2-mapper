@@ -101,14 +101,17 @@ void RE_Direct_EffectLightIgnore( const in IncidentLight directLight, const in v
  * Declares the uniforms and `effectLightsSRGB(viewPosition)`: the summed
  * gamma-space contribution of every pooled light to the fragment's plane.
  */
-export const glslEffectLightsPars = `
+export const glslEffectLightUniforms = `
 #define EFFECT_LIGHT_COUNT ${EFFECT_LIGHT_COUNT}
 uniform vec3 effectLightViewPosition[EFFECT_LIGHT_COUNT];
 uniform vec3 effectLightColor[EFFECT_LIGHT_COUNT];
 uniform float effectLightFade[EFFECT_LIGHT_COUNT];
 uniform float effectLightRadius[EFFECT_LIGHT_COUNT];
 uniform sampler2D effectLightFalloff;
+`;
 
+export const glslEffectLightsPars = `
+${glslEffectLightUniforms}
 vec3 effectLightsSRGB(vec3 viewPosition) {
   // The engine projects onto each triangle's own plane.
   vec3 planeNormal = normalize(cross(dFdx(viewPosition), dFdy(viewPosition)));

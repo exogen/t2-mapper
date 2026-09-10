@@ -6,8 +6,7 @@
  *
  * Where:
  *   - lighting = clamp(ambient + NdotL × shadowFactor × sunColor, 0, 1)
- *   - NdotL and terrain self-shadows from pre-computed lightmap (ray-traced)
- *   - shadowFactor from Three.js real-time shadow maps (for building/object shadows)
+ *   - NdotL, terrain self-shadows and building shadows from the baked lightmap
  *   - All operations in sRGB/gamma space
  *
  * Key insights from Torque source (terrLighting.cc:471-483):
@@ -17,7 +16,7 @@
  * 4. Final output = lightmap × texture, all in gamma space
  */
 
-import type { Texture } from "three";
+import { Vector2, type Texture } from "three";
 import { injectEffectLights } from "./effectLightUniforms";
 import { globalSunUniforms } from "./globalSunUniforms";
 import { lightsFragmentBeginByType } from "./lightsChunk";
@@ -31,11 +30,8 @@ interface TerrainShader {
   fragmentShader: string;
 }
 
-// Detail texture tiling factor.
-const DETAIL_TILING = 64.0;
-
-// Distance at which detail texture fully fades out (in world units)
-const DETAIL_FADE_DISTANCE = 150.0;
+/** TerrainRender::renderBlock (Tribes2.exe 0x5a62c0): texels per world unit. */
+export const TERRAIN_DETAIL_TEXELS_PER_UNIT = 62;
 
 export function updateTerrainTextureShader({
   shader,
@@ -43,6 +39,8 @@ export function updateTerrainTextureShader({
   alphaTextures,
   visibilityMask,
   tiling,
+  squareSize,
+  detailViewportHeight,
   detailTexture = null,
   lightmap = null,
 }: {
@@ -51,6 +49,8 @@ export function updateTerrainTextureShader({
   alphaTextures: Texture[];
   visibilityMask: Texture | null;
   tiling: Record<number, number>;
+  squareSize: number;
+  detailViewportHeight: { value: number };
   detailTexture?: Texture | null;
   lightmap?: Texture | null;
 }) {
@@ -85,26 +85,79 @@ export function updateTerrainTextureShader({
     shader.uniforms.terrainLightmap = { value: lightmap };
   }
 
-  // Add detail texture uniforms
   if (detailTexture) {
+    const image = detailTexture.image as { width: number; height: number };
+    const blockSize = squareSize * TERRAIN_SIZE;
     shader.uniforms.detailTexture = { value: detailTexture };
-    shader.uniforms.detailTiling = { value: DETAIL_TILING };
-    shader.uniforms.detailFadeDistance = { value: DETAIL_FADE_DISTANCE };
-
-    // Add vertex shader code to pass world position to fragment shader
+    shader.uniforms.detailTiling = {
+      value: new Vector2(
+        (blockSize * TERRAIN_DETAIL_TEXELS_PER_UNIT) / image.width,
+        (blockSize * TERRAIN_DETAIL_TEXELS_PER_UNIT) / image.height,
+      ),
+    };
+    shader.uniforms.terrainSquareSize = { value: squareSize };
+    shader.uniforms.detailViewportHeight = detailViewportHeight;
     shader.vertexShader = shader.vertexShader.replace(
       "#include <common>",
       `#include <common>
-varying vec3 vTerrainWorldPos;`,
+uniform float terrainSquareSize;
+uniform float detailViewportHeight;
+varying float vTerrainDetailFade;
+#ifdef USE_FOG
+  uniform float fogNear;
+  uniform float fogFar;
+  uniform bool fogEnabled;
+  uniform float fogDistanceScale;
+  uniform float cameraHeight;
+  uniform vec4 fogVolumeData[3];
+#endif`,
     );
     shader.vertexShader = shader.vertexShader.replace(
       "#include <worldpos_vertex>",
       `#include <worldpos_vertex>
-vec4 _terrainPos = vec4(transformed, 1.0);
-#ifdef USE_INSTANCING
-  _terrainPos = instanceMatrix * _terrainPos;
+// dglProjectRadius(1, 1) uses the physical viewport and projection scale.
+float detailDistance = terrainSquareSize * detailViewportHeight * projectionMatrix[1][1] / 128.0
+  - floor(terrainSquareSize / 2.0);
+float detailVertexDistance = length(mvPosition.xyz);
+float detailFade = detailDistance > 0.0
+  ? clamp(1.0 - detailVertexDistance / detailDistance, 0.0, 1.0) : 0.0;
+#ifdef USE_FOG
+  if (fogEnabled) {
+    vec4 detailWorldPosition = vec4(transformed, 1.0);
+    #ifdef USE_INSTANCING
+      detailWorldPosition = instanceMatrix * detailWorldPosition;
+    #endif
+    float height = (modelMatrix * detailWorldPosition).y;
+    float dist = detailVertexDistance / fogDistanceScale;
+    float haze = dist >= fogFar ? 1.0 : 0.0;
+    if (dist > fogNear && dist < fogFar) {
+      float f = (dist - fogNear) / (fogFar - fogNear) - 1.0;
+      haze = 1.0 - f * f;
+    }
+    float deltaHeight = abs(height - cameraHeight);
+    for (int i = 0; i < 3; i++) {
+      vec4 vol = fogVolumeData[i];
+      if (deltaHeight > 0.01) {
+        float overlap = max(0.0, min(max(height, cameraHeight), vol.z)
+          - max(min(height, cameraHeight), vol.y));
+        haze += dist * overlap / deltaHeight * vol.x;
+      } else if (cameraHeight >= vol.y && cameraHeight <= vol.z) {
+        haze += dist * vol.x;
+      }
+    }
+    detailFade *= 1.0 - min(haze, 1.0);
+  }
 #endif
-vTerrainWorldPos = (modelMatrix * _terrainPos).xyz;`,
+// The original detail pass interpolates a byte-valued vertex color.
+vTerrainDetailFade = floor(detailFade * 255.0 + 0.5) / 255.0;`,
+    );
+    shader.fragmentShader = shader.fragmentShader.replace(
+      "#include <premultiplied_alpha_fragment>",
+      `// The engine draws detail AFTER fog with DST_COLOR, ONE_MINUS_SRC_ALPHA.
+vec4 terrainDetail = texture2D(detailTexture, vTerrainUv * detailTiling);
+gl_FragColor.rgb *= terrainDetail.rgb * vTerrainDetailFade
+  + vec3(1.0 - terrainDetail.a * vTerrainDetailFade);
+#include <premultiplied_alpha_fragment>`,
     );
   }
 
@@ -135,9 +188,8 @@ uniform bool sunLightPointsDown;
 ${
   detailTexture
     ? `uniform sampler2D detailTexture;
-uniform float detailTiling;
-uniform float detailFadeDistance;
-varying vec3 vTerrainWorldPos;`
+uniform vec2 detailTiling;
+varying float vTerrainDetailFade;`
     : ""
 }
 
@@ -165,7 +217,7 @@ ${glslDebugGrid}
   shader.fragmentShader = shader.fragmentShader.replace(
     "#include <map_fragment>",
     `
-  // Sample base albedo layers (sRGB textures auto-decoded to linear by Three.js)
+  // Sample stored color values: Torque blends and filters texture bytes in gamma space.
   vec2 baseUv = vTerrainUv;
   vec3 c0 = texture2D(albedo0, baseUv * vec2(tiling0)).rgb;
   ${
@@ -221,30 +273,8 @@ ${glslDebugGrid}
   ${layerCount > 4 ? `blended += c4 * a4;` : ""}
   ${layerCount > 5 ? `blended += c5 * a5;` : ""}
 
-  // Assign to diffuseColor before lighting
-  vec3 textureColor = blended;
-
-  ${
-    detailTexture
-      ? `// Detail texture blending (Torque-style multiplicative blend)
-  // Sample detail texture at high frequency tiling
-  vec3 detailColor = texture2D(detailTexture, baseUv * detailTiling).rgb;
-
-  // Calculate distance-based fade factor using world positions
-  // Torque: distFactor = (zeroDetailDistance - distance) / zeroDetailDistance
-  float distToCamera = distance(vTerrainWorldPos, cameraPosition);
-  float detailFade = clamp(1.0 - distToCamera / detailFadeDistance, 0.0, 1.0);
-
-  // Torque blending: dst * lerp(1.0, detailTexel, fadeFactor)
-  // Detail textures are authored with bright values (~0.8 mean), not 0.5 gray
-  // Direct multiplication adds subtle darkening for surface detail
-  textureColor *= mix(vec3(1.0), detailColor, detailFade);`
-      : ""
-  }
-
-  // Store blended texture in diffuseColor (still in linear space here)
-  // We'll convert to sRGB in the output calculation
-  diffuseColor.rgb = textureColor;
+  // Preserve the gamma-space blend for the original lightmap multiplication.
+  diffuseColor.rgb = blended;
 `,
   );
 
@@ -290,8 +320,8 @@ ${glslDebugGrid}
     "#include <opaque_fragment>",
     `// Torque-style terrain lighting: output = clamp(lighting × texture, 0, 1) in sRGB space
 {
-  // Get texture in sRGB space (undo Three.js linear decode)
-  vec3 textureSRGB = torqueLinearToSRGB(diffuseColor.rgb);
+  // Terrain samplers preserve stored color values through blending/filtering.
+  vec3 textureSRGB = diffuseColor.rgb;
 
   ${
     lightmap

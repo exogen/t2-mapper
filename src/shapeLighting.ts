@@ -21,7 +21,7 @@ import { observeShapeMeshes } from "./dts/dtsScene";
  * numbers: clamp(ambient + diffuse·N·L) × texture, clamped.
  *
  * This module runs the probe per shape and hands the result to the shape
- * shader through per-shape uniforms; `glslShapeLighting` does the rest.
+ * shader through per-shape uniforms; `glslShapeLightingPars` does the rest.
  */
 import { DIFMaterial } from "./dif/difLoader";
 import { DIFCollisionMesh } from "./dif/difCollision";
@@ -520,11 +520,11 @@ export function updateShapeLighting(
 // ── GLSL ──
 
 /**
- * Gamma-space shape lighting for a Lambert fragment: the engine's GL light
+ * Gamma-space shape lighting for a Lambert vertex: the engine's GL light
  * set for this object (indoor split or brightness-scaled sun) plus the
  * pooled point lights at radius/d, clamped, then multiplied into the sRGB
  * texture. Declares the per-shape and shared uniforms; needs the
- * effect-light uniform arrays (glslEffectLightsPars) in scope.
+ * effect-light uniform arrays (glslEffectLightUniforms) in scope.
  */
 export const glslShapeLightingPars = `
 uniform int shapeLightMode;

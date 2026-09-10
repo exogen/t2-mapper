@@ -346,7 +346,73 @@ export function parseDemoValues(demoValues: string[]): ParsedDemoValues {
   return result;
 }
 
+/** Checkpoint cadence in recorded simulation ticks; each tick is 32 ms. */
+export const DEMO_CHECKPOINT_TICKS = 8_000;
+
+export interface DemoStreamingOptions {
+  /** Event/director scans need no seek history. Playback retains it on demand. */
+  checkpoints?: boolean;
+}
+
 class DemoStreamAdapter extends StreamEngine {
+  private readonly checkpointsEnabled: boolean;
+  private readonly checkpoints = new Map<
+    number,
+    ReturnType<DemoStreamAdapter["captureCheckpoint"]>
+  >();
+  private lastCheckpointTick = 0;
+  private predictionModeChanged = false;
+
+  get checkpointTicks(): readonly number[] {
+    return Array.from(this.checkpoints.keys());
+  }
+
+  private clearCheckpoints(): void {
+    this.checkpoints.clear();
+    this.lastCheckpointTick = 0;
+  }
+
+  override setPlayerPredictionEnabled(enabled: boolean): void {
+    if (enabled !== this.playerPredictionEnabled) {
+      this.clearCheckpoints();
+      this.predictionModeChanged = this.moveTicks > 0;
+    }
+    super.setPlayerPredictionEnabled(enabled);
+  }
+
+  private captureCheckpoint() {
+    return {
+      parser: this.parser.createCheckpoint(),
+      simulation: this.captureSimulationState(),
+      cursor: structuredClone({
+        moveTicks: this.moveTicks,
+        pendingPlayerMoves: this.pendingPlayerMoves,
+        nextPlayerMoveId: this.nextPlayerMoveId,
+        lastClientMoveId: this.lastClientMoveId,
+        absoluteYaw: this.absoluteYaw,
+        absolutePitch: this.absolutePitch,
+        lastAbsYaw: this.lastAbsYaw,
+        lastAbsPitch: this.lastAbsPitch,
+      }),
+    };
+  }
+
+  private restoreCheckpoint(
+    checkpoint: ReturnType<DemoStreamAdapter["captureCheckpoint"]>,
+  ): void {
+    this.parser.restoreCheckpoint(checkpoint.parser);
+    this.ghostTracker = this.parser.getGhostTracker();
+    Object.assign(this, structuredClone(checkpoint.cursor));
+    this.restoreSimulationState(checkpoint.simulation);
+    this.exhausted = false;
+    this.exhaustedAtBytes = 0;
+    this._cachedSnapshot = null;
+    this._cachedSnapshotTick = -1;
+    this._cachedSnapshotGen = -1;
+    this._shapeConstructorCache = null;
+    this._shapeConstructorCacheSize = -1;
+  }
+
   private readonly parser: DemoParser;
   private readonly initialBlock: {
     dataBlocks: Map<number, { className: string; data: ParsedData }>;
@@ -400,8 +466,9 @@ class DemoStreamAdapter extends StreamEngine {
   private _cachedSnapshotTick = -1;
   private _cachedSnapshotGen = -1;
 
-  constructor(parser: DemoParser) {
+  constructor(parser: DemoParser, options: DemoStreamingOptions) {
     super();
+    this.checkpointsEnabled = options.checkpoints !== false;
     this.parser = parser;
     this.registry = parser.getRegistry();
     this.ghostTracker = parser.getGhostTracker();
@@ -498,6 +565,13 @@ class DemoStreamAdapter extends StreamEngine {
   // ── StreamingPlayback interface ──
 
   reset(): void {
+    this.clearCheckpoints();
+    this.predictionModeChanged = false;
+    this.collisionReplayComplete = false;
+    this.resetToStart();
+  }
+
+  private resetToStart(): void {
     this.skippedPlayerPrediction = false;
     this.parser.reset();
     // parser.reset() creates a fresh GhostTracker internally — refresh our
@@ -508,6 +582,15 @@ class DemoStreamAdapter extends StreamEngine {
     this._cachedSnapshotGen = -1;
 
     this.resetSharedState();
+    this._shapeConstructorCache = null;
+    this._shapeConstructorCacheSize = -1;
+    const info = extractMissionInfo(this.initialBlock.demoValues);
+    this.missionDisplayName = info.missionDisplayName;
+    this.missionTypeDisplayName = info.missionType;
+    this.gameClassName = info.gameClassName;
+    this.serverDisplayName = info.serverDisplayName;
+    this.connectedPlayerName = info.recorderName;
+    this.connectedClientId = info.recorderClientId;
 
     // Seed net strings from initial block
     for (const [id, value] of this.initialBlock.taggedStrings) {
@@ -805,9 +888,10 @@ class DemoStreamAdapter extends StreamEngine {
   private collisionReplayComplete = false;
   get needsReplay(): boolean {
     return (
-      !this.collisionReplayComplete &&
-      this.skippedPlayerPrediction &&
-      this.playerCollisionReady()
+      this.predictionModeChanged ||
+      (!this.collisionReplayComplete &&
+        this.skippedPlayerPrediction &&
+        this.playerCollisionReady())
     );
   }
 
@@ -822,10 +906,23 @@ class DemoStreamAdapter extends StreamEngine {
     const targetTicks = Math.floor((safeTargetSec * 1000) / TICK_DURATION_MS);
 
     let didReset = false;
-    const collisionReplay = this.needsReplay;
-    if (collisionReplay || targetTicks < this.moveTicks) {
-      if (collisionReplay) this.collisionReplayComplete = true;
-      this.reset();
+    if (this.needsReplay) {
+      if (!this.predictionModeChanged) this.collisionReplayComplete = true;
+      this.predictionModeChanged = false;
+      // A pass without prediction/collision cannot seed accurate later seeks.
+      this.clearCheckpoints();
+      this.resetToStart();
+      didReset = true;
+    }
+
+    const checkpointTick = Math.min(
+      Math.floor(targetTicks / DEMO_CHECKPOINT_TICKS) * DEMO_CHECKPOINT_TICKS,
+      this.lastCheckpointTick,
+    );
+    if (targetTicks < this.moveTicks || checkpointTick > this.moveTicks) {
+      const checkpoint = this.checkpoints.get(checkpointTick);
+      if (checkpoint) this.restoreCheckpoint(checkpoint);
+      else this.resetToStart();
       didReset = true;
     }
 
@@ -961,6 +1058,14 @@ class DemoStreamAdapter extends StreamEngine {
         // step (and the live path relies on that), so calling it here too
         // would drop expired explosions twice per tick.
         this.updateCameraAndHud();
+        if (
+          this.checkpointsEnabled &&
+          this.moveTicks % DEMO_CHECKPOINT_TICKS === 0 &&
+          !this.checkpoints.has(this.moveTicks)
+        ) {
+          this.checkpoints.set(this.moveTicks, this.captureCheckpoint());
+          this.lastCheckpointTick = this.moveTicks;
+        }
         return true;
       }
     }
@@ -1166,10 +1271,11 @@ class DemoStreamAdapter extends StreamEngine {
 
 export async function createDemoStreamingRecording(
   data: ArrayBuffer,
+  options: DemoStreamingOptions = {},
 ): Promise<StreamRecording> {
   const parser = new DemoParser(new Uint8Array(data));
   await parser.load();
-  return createRecordingFromParser(parser);
+  return createRecordingFromParser(parser, options);
 }
 
 /**
@@ -1178,11 +1284,14 @@ export async function createDemoStreamingRecording(
  * and keeps push()ing while this recording is already playing. Duration
  * comes from the header, so it is exact before the download finishes.
  */
-export function createRecordingFromParser(parser: DemoParser): StreamRecording {
+export function createRecordingFromParser(
+  parser: DemoParser,
+  options: DemoStreamingOptions = {},
+): StreamRecording {
   const header = parser.header;
   const initialBlock = parser.initialBlock;
   const info = extractMissionInfo(initialBlock.demoValues);
-  const playback = new DemoStreamAdapter(parser);
+  const playback = new DemoStreamAdapter(parser, options);
 
   // Seed StreamEngine's mission info fields from the initial block so they're
   // available immediately (before any server messages arrive during playback).

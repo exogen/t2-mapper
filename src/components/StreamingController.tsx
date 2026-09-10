@@ -40,9 +40,11 @@ import {
   streamPlaybackStore,
   resetStreamPlayback,
 } from "../state/streamPlaybackStore";
-import { streamEntityToGameEntity } from "../stream/entityBridge";
+import {
+  streamEntityToGameEntity,
+  updateGameEntityFromStream,
+} from "../stream/entityBridge";
 import { sameImageMounts } from "../stream/imageMount";
-import { fieldOpenFromState } from "../stream/forceFieldState";
 import {
   yawPitchToQuaternion,
   MAX_PITCH,
@@ -55,7 +57,7 @@ import type {
   StreamSnapshot,
   StreamingPlayback,
 } from "../stream/types";
-import type { ForceFieldData, GameEntity } from "../state/gameEntityTypes";
+import type { GameEntity } from "../state/gameEntityTypes";
 import { isSceneEntity } from "../state/gameEntityTypes";
 
 type EntityById = Map<string, StreamEntity>;
@@ -66,99 +68,6 @@ const camlog = createLogger("camdbg");
 function getField(entity: GameEntity, field: string): string | undefined {
   return (entity as unknown as Record<string, unknown>)[field] as
     string | undefined;
-}
-
-/** Mutate render-affecting fields on an entity in-place from stream data.
- * Components read these fields imperatively in useFrame — no React
- * re-render is needed. This is the key to avoiding Suspense starvation.
- *
- * Returns true when a change is structural — one React only sees through
- * a new entity reference (mount relationships, a force field opening or
- * being resized). */
-function mutateRenderFields(
-  renderEntity: GameEntity,
-  stream: StreamEntity,
-): boolean {
-  // Shared fields (on PositionedBase, used by both Player and Shape).
-  const e = renderEntity as unknown as Record<string, unknown>;
-  let structural =
-    e.mountObjectId !== stream.mountObjectId ||
-    e.mountNode !== stream.mountNode;
-  e.mountObjectId = stream.mountObjectId;
-  e.mountNode = stream.mountNode;
-  e.imageSlots = stream.imageSlots;
-  e.threads = stream.threads;
-  e.armAction = stream.armAction;
-  e.targetRenderFlags = stream.targetRenderFlags;
-  e.targetId = stream.targetId;
-  e.iffColor = stream.iffColor;
-  e.playerName = stream.playerName;
-  e.teamId = stream.teamId;
-  e.soundSlots = stream.soundSlots;
-
-  // Type-specific fields.
-  switch (renderEntity.renderType) {
-    case "Player":
-      e.falling = stream.falling;
-      e.jetting = stream.jetting;
-      e.headPitch = stream.headPitch;
-      e.headYaw = stream.headYaw;
-      // Death arrives as a DamageMask update on the existing ghost
-      // (0 = alive, 1 = Disabled/dead, 2 = Destroyed) — spectate follow
-      // and player cycling depend on seeing it.
-      e.damageState = stream.damageState;
-      e.fadeVal = stream.fadeVal;
-      e.cloakLevel = stream.cloakLevel;
-      break;
-    case "Shape":
-      e.damageState = stream.damageState;
-      e.turretAim = stream.turretAim;
-      e.jetting = stream.jetting;
-      e.thrustDirection = stream.thrustDirection;
-      e.fadeVal = stream.fadeVal;
-      e.cloakLevel = stream.cloakLevel;
-      e.projectileAgeMS = stream.projectileAgeMS;
-      break;
-    case "Beam":
-      // Sniper beam swing updates move the endpoint on the live ghost.
-      if (stream.beamStart) e.beamStart = stream.beamStart;
-      if (stream.beamEnd) e.beamEnd = stream.beamEnd;
-      break;
-    case "Tracer":
-      // Live bolt orientation: a bouncing blaster bolt re-aims along
-      // its reflected velocity each tick — a direction copied once at
-      // entity creation would freeze the quad on the muzzle bearing.
-      e.direction = stream.direction;
-      break;
-    case "LinkBeam":
-      // ELF/repair beams re-anchor as the ghost updates its endpoints.
-      e.linkSourceId = stream.linkSourceId;
-      e.linkTargetId = stream.linkTargetId;
-      break;
-    case "ShockLance":
-      // The shooter/target ids resolve once those ghosts exist.
-      e.linkSourceId = stream.linkSourceId;
-      e.linkTargetId = stream.linkTargetId;
-      break;
-    case "ForceFieldBare": {
-      e.fieldAlpha = stream.forceFieldAlpha;
-      const fieldOpen = fieldOpenFromState(stream.forceFieldState);
-      if (e.fieldOpen !== fieldOpen) {
-        e.fieldOpen = fieldOpen;
-        structural = true;
-      }
-      // Servers retract an open field by zeroing its scale, so the box
-      // dimensions change under the same identity.
-      const dims = stream.forceFieldData?.dimensions;
-      const data = e.forceFieldData as ForceFieldData | undefined;
-      if (dims && data && data.dimensions !== dims) {
-        e.forceFieldData = { ...data, dimensions: dims };
-        structural = true;
-      }
-      break;
-    }
-  }
-  return structural;
 }
 
 /**
@@ -450,7 +359,7 @@ export function StreamingController({
         // clone the entity to make the transition visible. The clone
         // shares keyframes/threads arrays, so imperative playback state
         // carries over.
-        if (mutateRenderFields(renderEntity!, entity)) {
+        if (updateGameEntityFromStream(renderEntity!, entity)) {
           renderEntity = { ...renderEntity! };
           map.set(entity.id, renderEntity);
           structuralChange = true;

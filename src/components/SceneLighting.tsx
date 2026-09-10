@@ -116,8 +116,8 @@ function SunLighting({
   // Shapes light themselves from the sun's colour, ambient and direction
   // (toward the light) rather than from Three's directional light.
   useEffect(() => {
-    setShapeSun(color, ambient, lightPosition);
-  }, [color, ambient, lightPosition]);
+    setShapeSun(color, ambient, direction.clone().negate());
+  }, [color, ambient, direction]);
 
   // The shadow map is frozen (see shadowControl.ts); re-render it when the
   // light itself changes.

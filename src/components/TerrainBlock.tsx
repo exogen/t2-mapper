@@ -588,6 +588,7 @@ export const TerrainBlock = memo(function TerrainBlock({
           textureNames={terrain.textureNames}
           alphaTextures={packedAlphaTextures}
           detailTextureName={detailTexture}
+          squareSize={squareSize}
           lightmap={terrainLightmap ?? undefined}
         />
       </instancedMesh>

@@ -1037,6 +1037,24 @@ function injectAnimatedInstances(
   shader.uniforms.dtsSkinArray = skins;
   shader.vertexShader = shader.vertexShader
     .replace(
+      "#include <common>",
+      `#include <common>
+    attribute vec4 dtsInstanceLight;
+    attribute vec4 dtsInstanceState;`,
+    )
+    .replace(
+      "uniform int shapeLightMode;",
+      "#define shapeLightMode int(dtsInstanceLight.w + 0.5)",
+    )
+    .replace(
+      "uniform vec3 shapeLightColor;",
+      "#define shapeLightColor dtsInstanceLight.rgb",
+    )
+    .replace(
+      "uniform float shapeBoundRadius;",
+      "#define shapeBoundRadius dtsInstanceState.x",
+    )
+    .replace(
       "#include <skinning_pars_vertex>",
       `
     ${
@@ -1054,18 +1072,14 @@ function injectAnimatedInstances(
     }`
         : ""
     }
-    attribute vec4 dtsInstanceLight;
-    attribute vec4 dtsInstanceState;
     attribute vec3 dtsInstanceUV0;
     attribute vec3 dtsInstanceUV1;
-    varying vec4 vDtsInstanceLight;
     varying vec4 vDtsInstanceState;
   `,
     )
     .replace(
       "#include <uv_vertex>",
       `#include <uv_vertex>
-    vDtsInstanceLight = dtsInstanceLight;
     vDtsInstanceState = dtsInstanceState;
     #ifdef USE_MAP
       vMapUv = vec2(dot(dtsInstanceUV0, vec3(MAP_UV, 1.0)), dot(dtsInstanceUV1, vec3(MAP_UV, 1.0)));
@@ -1077,23 +1091,10 @@ function injectAnimatedInstances(
       "#include <common>",
       `#include <common>
     uniform highp sampler2DArray dtsSkinArray;
-    varying vec4 vDtsInstanceLight;
     varying vec4 vDtsInstanceState;
   `,
     )
-    .replace("uniform float opacity;", "#define opacity vDtsInstanceState.z")
-    .replace(
-      "uniform int shapeLightMode;",
-      "#define shapeLightMode int(vDtsInstanceLight.w + 0.5)",
-    )
-    .replace(
-      "uniform vec3 shapeLightColor;",
-      "#define shapeLightColor vDtsInstanceLight.rgb",
-    )
-    .replace(
-      "uniform float shapeBoundRadius;",
-      "#define shapeBoundRadius vDtsInstanceState.x",
-    );
+    .replace("uniform float opacity;", "#define opacity vDtsInstanceState.z");
   if (array)
     shader.fragmentShader = shader.fragmentShader
       .replace(

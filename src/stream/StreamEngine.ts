@@ -1,5 +1,10 @@
 import { timelineRandom } from "./timelineRandom";
 import {
+  decodeVehicleSteering,
+  wheelRotationAt,
+  type WheelState,
+} from "./vehicleWheels";
+import {
   updateClientAnimation,
   type ClientAnimationState,
 } from "./clientAnimation";
@@ -302,13 +307,7 @@ export interface MutableEntity {
   sceneData?: SceneObject;
   clientAnimation?: ClientAnimationState;
   /** WheeledVehicle per-wheel state from ghost data. */
-  wheels?: Array<{
-    speed: number;
-    lateralSlip: number;
-    longitudinalSlip: number;
-    rotation: number;
-    timeSec: number;
-  }>;
+  wheels?: WheelState[];
   /** Vehicle steering angle (radians), from ghost data. */
   steeringYaw?: number;
   /** Vehicle frozen state (deployed MPB, etc.). */
@@ -673,6 +672,183 @@ export abstract class StreamEngine implements StreamingPlayback {
     return 0;
   }
 
+  /** Snapshot mutable simulation data, sharing immutable assets and timelines. */
+  protected captureSimulationState() {
+    const entities = new Map<
+      string,
+      Omit<
+        MutableEntity,
+        | "playerPrediction"
+        | "threads"
+        | "clientAnimation"
+        | "imageSlots"
+        | "sceneData"
+      >
+    >();
+    const shared = new Map<
+      string,
+      Pick<
+        MutableEntity,
+        "threads" | "clientAnimation" | "imageSlots" | "sceneData"
+      >
+    >();
+    const players = new Map<
+      string,
+      ReturnType<PlayerPrediction["saveState"]>
+    >();
+    for (const [id, entity] of this.entities) {
+      const {
+        playerPrediction,
+        threads,
+        clientAnimation,
+        imageSlots,
+        sceneData,
+        ...mutable
+      } = entity;
+      entities.set(id, mutable);
+      shared.set(id, { threads, clientAnimation, imageSlots, sceneData });
+      if (playerPrediction) players.set(id, playerPrediction.saveState());
+    }
+    return {
+      state: structuredClone({
+        entities,
+        entityIdByGhostIndex: this.entityIdByGhostIndex,
+        ghostAlwaysDoneSec: this.ghostAlwaysDoneSec,
+        tickCount: this.tickCount,
+        skippedPlayerPrediction: this.skippedPlayerPrediction,
+        camera: this.camera,
+        chatMessages: this.chatMessages,
+        serverEvents: this.serverEvents,
+        chatMessageIdCounter: this.chatMessageIdCounter,
+        audioEvents: this.audioEvents,
+        netStrings: this.netStrings,
+        targetNames: this.targetNames,
+        targetRawNames: this.targetRawNames,
+        targetGenerations: this.targetGenerations,
+        targetSkins: this.targetSkins,
+        targetSkinPrefs: this.targetSkinPrefs,
+        targetTeams: this.targetTeams,
+        targetRenderFlags: this.targetRenderFlags,
+        pendingNameTags: this.pendingNameTags,
+        sensorGroupColors: this.sensorGroupColors,
+        playerSensorGroup: this.playerSensorGroup,
+        lastStatus: this.lastStatus,
+        predictedEnergy: this.predictedEnergy,
+        predictedHeat: this.predictedHeat,
+        controlRechargeRate: this.controlRechargeRate,
+        lastEnergyCorrectionData: this.lastEnergyCorrectionData,
+        latestControl: this.latestControl,
+        controlPlayerGhostId: this.controlPlayerGhostId,
+        lastControlType: this.lastControlType,
+        isPiloting: this.isPiloting,
+        lastPilotGhostIndex: this.lastPilotGhostIndex,
+        lastVehicleHeading: this.lastVehicleHeading,
+        lastVehiclePitch: this.lastVehiclePitch,
+        lastVehicleOrbitDir: this.lastVehicleOrbitDir,
+        lastVehicleVelocity: this.lastVehicleVelocity,
+        lastVehiclePos: this.lastVehiclePos,
+        firstPerson: this.firstPerson,
+        lastCameraMode: this.lastCameraMode,
+        lastOrbitGhostIndex: this.lastOrbitGhostIndex,
+        lastOrbitDistance: this.lastOrbitDistance,
+        latestFov: this.latestFov,
+        weaponsHud: this.weaponsHud,
+        backpackHud: this.backpackHud,
+        inventoryHud: this.inventoryHud,
+        teamScores: this.teamScores,
+        playerRoster: this.playerRoster,
+        clockAnchorStreamSec: this.clockAnchorStreamSec,
+        clockDurationMs: this.clockDurationMs,
+        serverLoadInfo: this.serverLoadInfo,
+        missionDisplayName: this.missionDisplayName,
+        missionTypeDisplayName: this.missionTypeDisplayName,
+        gameClassName: this.gameClassName,
+        matchEnded: this.matchEnded,
+        matchStarted: this.matchStarted,
+        serverDisplayName: this.serverDisplayName,
+        connectedPlayerName: this.connectedPlayerName,
+        connectedClientId: this.connectedClientId,
+        pendingExplosions: this.pendingExplosions,
+        worldGravity: this.worldGravity,
+      }),
+      shared,
+      players,
+      images: new Map(
+        Array.from(this.imageAnimations, ([id, images]) => [
+          id,
+          images.map((image) => image?.saveState()),
+        ]),
+      ),
+      loadInfo: this.loadInfo.saveState(),
+    };
+  }
+
+  protected restoreSimulationState(
+    checkpoint: ReturnType<StreamEngine["captureSimulationState"]>,
+  ): void {
+    const state = structuredClone(checkpoint.state);
+    // Every restore creates new render lifetimes. Reusing checkpoint IDs would
+    // retain stale mounted models, effects and per-entity renderer caches.
+    const ids = new Map<string, string>();
+    for (const id of state.entities.keys()) ids.set(id, allocateEntityId());
+    for (const id of state.entityIdByGhostIndex.values())
+      if (!ids.has(id)) ids.set(id, allocateEntityId());
+    Object.assign(this, state);
+    this.entities = new Map();
+    this.imageAnimations = new Map();
+    for (const [oldId, mutable] of state.entities) {
+      const entity: MutableEntity = {
+        ...mutable,
+        ...checkpoint.shared.get(oldId),
+        id: ids.get(oldId)!,
+      };
+      this.entities.set(entity.id, entity);
+      const player = checkpoint.players.get(oldId);
+      if (player) this.ensurePlayerPrediction(entity)?.restoreState(player);
+      const images = checkpoint.images.get(oldId);
+      if (images)
+        this.imageAnimations.set(
+          entity.id,
+          images.map((saved, i) => {
+            const slot = entity.imageSlots?.[i];
+            if (!saved || !slot?.imageStates) return undefined;
+            const image = new ImageAnimation(
+              slot.imageStates,
+              saved.timeSec,
+              0,
+            );
+            image.restoreState(saved);
+            return image;
+          }),
+        );
+    }
+    this.entityIdByGhostIndex = new Map(
+      Array.from(state.entityIdByGhostIndex, ([index, id]) => [
+        index,
+        ids.get(id)!,
+      ]),
+    );
+    this.controlPlayerGhostId = state.controlPlayerGhostId
+      ? ids.get(state.controlPlayerGhostId)
+      : undefined;
+    if (this.camera?.controlEntityId)
+      this.camera.controlEntityId = ids.get(this.camera.controlEntityId);
+    if (this.camera?.orbitTargetId)
+      this.camera.orbitTargetId = ids.get(this.camera.orbitTargetId);
+    for (const event of this.serverEvents)
+      event.id = this.serverEventIdCounter++;
+    this.entityGeneration++;
+    this._chatGen++;
+    this._chatSnapshotGen = -1;
+    this._chatSnapshot = [];
+    this._serverEventsGen++;
+    this._serverEventsSnapshotGen = -1;
+    this._serverEventsSnapshot = [];
+    this.invalidateHudCache();
+    this.loadInfo.restoreState(checkpoint.loadInfo);
+    this.onMissionInfoChange?.();
+  }
+
   // ── Shared reset logic ──
 
   /** Clear all entity state (entities, ghost→ID map, generation).
@@ -709,6 +885,7 @@ export abstract class StreamEngine implements StreamingPlayback {
     this._serverEventsSnapshot = [];
     this.audioEvents = [];
     this.netStrings.clear();
+    this.pendingNameTags.clear();
     this.targetNames.clear();
     this.targetRawNames.clear();
     this.targetGenerations.clear();
@@ -1634,7 +1811,7 @@ export abstract class StreamEngine implements StreamingPlayback {
 
       // Vehicle maxSteeringAngle from VehicleData datablock.
       if (
-        entity.className === "WheeledVehicle" &&
+        entity.className.endsWith("Vehicle") &&
         typeof blockData?.maxSteeringAngle === "number"
       ) {
         entity.maxSteeringAngle = blockData.maxSteeringAngle;
@@ -1677,20 +1854,37 @@ export abstract class StreamEngine implements StreamingPlayback {
       ).map((w, i) => {
         const previous = entity.wheels?.[i];
         const rotation = previous
-          ? previous.rotation +
-            previous.speed * (now - previous.timeSec) * Math.PI * 2
+          ? wheelRotationAt(previous, now, entity.frozen)
           : 0;
         return {
           speed: w.avel,
           lateralSlip: w.dx,
           longitudinalSlip: w.dy,
-          rotation: rotation - Math.floor(rotation),
+          rotation,
           timeSec: now,
         };
       });
+    } else if (
+      entity.wheels &&
+      typeof data.frozen === "boolean" &&
+      data.frozen !== entity.frozen
+    ) {
+      // Freeze/resume can arrive without a new wheel speed. Preserve the
+      // phase at the transition so frozen time never becomes extra rotation.
+      const now = this.getTimeSec();
+      entity.wheels = entity.wheels.map((wheel) => ({
+        ...wheel,
+        rotation: wheelRotationAt(wheel, now, entity.frozen),
+        timeSec: now,
+      }));
     }
     if (typeof data.steeringYaw === "number") {
-      entity.steeringYaw = data.steeringYaw;
+      // t2-demo-parser exposes readFloat(9)'s [0, 1] wire value. Convert
+      // using the vehicle's datablock before passing radians to animation.
+      entity.steeringYaw = decodeVehicleSteering(
+        data.steeringYaw,
+        entity.maxSteeringAngle,
+      );
     }
     if (typeof data.frozen === "boolean") {
       entity.frozen = data.frozen;

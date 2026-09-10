@@ -15,7 +15,7 @@ import type { Material } from "three";
 import {
   effectLightUniforms,
   glslEffectLightIgnoreDirect,
-  glslEffectLightsPars,
+  glslEffectLightUniforms,
 } from "./effectLightUniforms";
 import { injectCustomFog, injectSpriteFog } from "./fogShader";
 import { globalFogUniforms } from "./globalFogUniforms";
@@ -56,8 +56,22 @@ ${glslColorSpace}`,
     "#include <lights_lambert_pars_fragment>",
     `#include <lights_lambert_pars_fragment>
 ${glslEffectLightIgnoreDirect}
-${glslEffectLightsPars}
+varying vec3 vShapeLighting;`,
+  );
+  // Tribes2.exe uses fixed-function GL vertex lighting. Interpolate the
+  // clamped vertex colors, rather than re-lighting normalized fragment normals.
+  shader.vertexShader = shader.vertexShader.replace(
+    "#include <common>",
+    `#include <common>
+varying vec3 vShapeLighting;
+${glslEffectLightUniforms}
 ${glslShapeLightingPars}`,
+  );
+  shader.vertexShader = shader.vertexShader.replace(
+    "#include <project_vertex>",
+    `#include <project_vertex>
+// GL_NORMALIZE is disabled in Tribes2.exe: mission scale affects lighting.
+vShapeLighting = shapeLightingSRGB(transformedNormal, mvPosition.xyz);`,
   );
   shader.fragmentShader = shader.fragmentShader.replace(
     "#include <lights_fragment_begin>",
@@ -70,7 +84,7 @@ ${glslShapeLightingPars}`,
     "#include <opaque_fragment>",
     `{
   vec3 textureSRGB = torqueLinearToSRGB(diffuseColor.rgb);
-  vec3 lightingSRGB = shapeLightingSRGB(normalize(normal), -vViewPosition);
+  vec3 lightingSRGB = vShapeLighting;
   outgoingLight = torqueSRGBToLinear(clamp(lightingSRGB * textureSRGB, 0.0, 1.0)) + totalEmissiveRadiance;
 }
 #include <opaque_fragment>`,

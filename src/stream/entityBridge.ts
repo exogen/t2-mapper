@@ -1,6 +1,7 @@
 import type { StreamEntity } from "./types";
 import type {
   GameEntity,
+  ForceFieldData,
   ShapeEntity,
   PlayerEntity,
   ForceFieldBareEntity,
@@ -18,6 +19,100 @@ import type {
 } from "../state/gameEntityTypes";
 import type { SceneTSStatic } from "../scene/types";
 import { fieldOpenFromState } from "./forceFieldState";
+
+/** Update an existing render entity without allocating. Animation state is
+ * read imperatively; return true only for changes React must commit (skins,
+ * mounts, or a force field opening or being resized). */
+export function updateGameEntityFromStream(
+  renderEntity: GameEntity,
+  stream: StreamEntity,
+): boolean {
+  // Shared fields (on PositionedBase, used by both Player and Shape).
+  const e = renderEntity as unknown as Record<string, unknown>;
+  let structural =
+    e.mountObjectId !== stream.mountObjectId ||
+    e.mountNode !== stream.mountNode ||
+    e.skinName !== stream.skinName;
+  e.mountObjectId = stream.mountObjectId;
+  e.mountNode = stream.mountNode;
+  e.skinName = stream.skinName;
+  e.imageSlots = stream.imageSlots;
+  e.threads = stream.threads;
+  e.armAction = stream.armAction;
+  e.targetRenderFlags = stream.targetRenderFlags;
+  e.targetId = stream.targetId;
+  e.iffColor = stream.iffColor;
+  e.playerName = stream.playerName;
+  e.teamId = stream.teamId;
+  e.soundSlots = stream.soundSlots;
+  // DamageMask updates mutate existing ghosts, including repairs. Both
+  // appearance threads and death/spectate checks need the current values.
+  e.health = stream.health;
+  e.damageState = stream.damageState;
+  e.fadeVal = stream.fadeVal;
+  e.cloakLevel = stream.cloakLevel;
+
+  // Type-specific fields.
+  switch (renderEntity.renderType) {
+    case "Player":
+      if (e.skinPrefName !== stream.skinPrefName) structural = true;
+      e.skinPrefName = stream.skinPrefName;
+      e.falling = stream.falling;
+      e.jetting = stream.jetting;
+      e.headPitch = stream.headPitch;
+      e.headYaw = stream.headYaw;
+      break;
+    case "Shape":
+      e.wheels = stream.wheels;
+      e.steeringYaw = stream.steeringYaw;
+      e.frozen = stream.frozen;
+      e.maxSteeringAngle = stream.maxSteeringAngle;
+      e.turretAim = stream.turretAim;
+      e.jetting = stream.jetting;
+      e.thrustDirection = stream.thrustDirection;
+      e.projectileAgeMS = stream.projectileAgeMS;
+      break;
+    case "Beam":
+      // Sniper beam swing updates move the endpoint on the live ghost.
+      if (stream.beamStart) e.beamStart = stream.beamStart;
+      if (stream.beamEnd) e.beamEnd = stream.beamEnd;
+      break;
+    case "Tracer":
+      // Live bolt orientation: a bouncing blaster bolt re-aims along
+      // its reflected velocity each tick — a direction copied once at
+      // entity creation would freeze the quad on the muzzle bearing.
+      e.direction = stream.direction;
+      break;
+    case "LinkBeam":
+      // ELF/repair beams re-anchor as the ghost updates its endpoints.
+      e.linkSourceId = stream.linkSourceId;
+      e.linkTargetId = stream.linkTargetId;
+      break;
+    case "ShockLance":
+      // The shooter/target ids resolve once those ghosts exist.
+      e.linkSourceId = stream.linkSourceId;
+      e.linkTargetId = stream.linkTargetId;
+      break;
+    case "ForceFieldBare": {
+      e.fieldAlpha = stream.forceFieldAlpha;
+      const fieldOpen = fieldOpenFromState(stream.forceFieldState);
+      if (e.fieldOpen !== fieldOpen) {
+        e.fieldOpen = fieldOpen;
+        structural = true;
+      }
+      // Servers retract an open field by zeroing its scale, so the box
+      // dimensions change under the same identity.
+      const dims = stream.forceFieldData?.dimensions;
+      const data = e.forceFieldData as ForceFieldData | undefined;
+      if (dims && data && data.dimensions !== dims) {
+        e.forceFieldData = { ...data, dimensions: dims };
+        structural = true;
+      }
+      break;
+    }
+  }
+  return structural;
+}
 
 /** Common fields extracted from a StreamEntity for positioned game entities. */
 function positionedBase(entity: StreamEntity, spawnTime?: number) {
@@ -40,6 +135,8 @@ function positionedBase(entity: StreamEntity, spawnTime?: number) {
     threads: entity.threads,
     armAction: entity.armAction,
     damageState: entity.damageState,
+    fadeVal: entity.fadeVal,
+    cloakLevel: entity.cloakLevel,
     turretAim: entity.turretAim,
     targetRenderFlags: entity.targetRenderFlags,
     targetId: entity.targetId,
@@ -301,8 +398,6 @@ export function streamEntityToGameEntity(
         maxSteeringAngle: entity.maxSteeringAngle,
         jetting: entity.jetting,
         thrustDirection: entity.thrustDirection,
-        fadeVal: entity.fadeVal,
-        cloakLevel: entity.cloakLevel,
         lightType: entity.lightType,
         lightColor: entity.lightColor,
         lightTime: entity.lightTime,

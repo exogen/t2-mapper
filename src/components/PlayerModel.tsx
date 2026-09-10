@@ -35,6 +35,10 @@ import {
 import { stepFlareThread } from "./jetThreads";
 import { DTSAnimationMixer } from "../dts/dtsAnimationMixer";
 import {
+  createDtsDamageThreads,
+  type DtsDamageThreads,
+} from "../dts/dtsDamage";
+import {
   holdDtsAction,
   createDtsThread,
   scrubDtsThread,
@@ -443,7 +447,20 @@ export function PlayerModel({
     return map;
   }, [gltf.scene, shapeAliases]);
 
+  const entityRef = useRef(entity);
+  entityRef.current = entity; // eslint-disable-line react-hooks/refs
+  const damageThreadsRef = useRef<DtsDamageThreads | undefined>(undefined);
   useEffect(() => {
+    const damageThreads = createDtsDamageThreads(
+      mixer,
+      gltf.animations,
+      "Player",
+    );
+    damageThreadsRef.current = damageThreads;
+    damageThreads?.update(
+      entityRef.current.health,
+      entityRef.current.damageState,
+    );
     const actions = getAliasedActions(gltf.animations, mixer, shapeAliases);
     animActionsRef.current = actions;
 
@@ -542,6 +559,8 @@ export function PlayerModel({
     mixer.update(0);
 
     return () => {
+      damageThreads?.dispose();
+      damageThreadsRef.current = undefined;
       mixer.stopAllAction();
       animActionsRef.current = new Map();
       blendActionsRef.current = { head: null, headside: null };
@@ -556,8 +575,6 @@ export function PlayerModel({
   const imageRoots = useRef(new Map<number, Group>());
 
   // ShapeBase sound slots (weapon switch sounds, etc.) — managed by shared hook.
-  const entityRef = useRef(entity);
-  entityRef.current = entity; // eslint-disable-line react-hooks/refs
   useEntitySoundSlots(entityRef, clonedScene);
 
   // ShapeBase fade (mFadeVal) and cloak (mCloakLevel): the body takes the
@@ -791,7 +808,8 @@ export function PlayerModel({
           : 0,
       );
     }
-    // Evaluate the sampled body pose and blends once.
+    damageThreadsRef.current?.update(entity.health, entity.damageState);
+    // Evaluate the sampled body pose, damage and blends once.
     mixer.update(0);
     if (debugMode) clonedScene.userData.animDebug = describeMixer(mixer);
   }, FramePriority.ShapeAnimation);

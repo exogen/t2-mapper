@@ -64,7 +64,9 @@ export async function createDirectorScanStream(
   buffer: ArrayBuffer,
   options: { factStreamId?: string; stateStreamId?: string } = {},
 ): Promise<DirectorScanStream> {
-  const recording = await createDemoStreamingRecording(buffer);
+  const recording = await createDemoStreamingRecording(buffer, {
+    checkpoints: false,
+  });
   const playback = recording.streamingPlayback;
   const durationSec = Number.isFinite(recording.duration)
     ? Math.max(recording.duration, FLAG_STEP_SEC)

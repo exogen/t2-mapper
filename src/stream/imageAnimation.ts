@@ -33,7 +33,7 @@ export interface ImageAnimationState {
  * or run an activation sequence to catch up after a seek. */
 export class ImageAnimation {
   private machine: WeaponImageStateMachine;
-  private random: () => number;
+  private random: ReturnType<typeof timelineRandom>;
   private spinTime = 0;
   private timeSec: number;
   current: ImageAnimationState;
@@ -64,6 +64,24 @@ export class ImageAnimation {
       spinTimeSec: timeSec,
     };
     this.enter(state, timeSec);
+  }
+
+  saveState() {
+    return {
+      machine: this.machine.saveState(),
+      randomState: this.random.state,
+      spinTime: this.spinTime,
+      timeSec: this.timeSec,
+      current: this.current,
+    };
+  }
+
+  restoreState(state: ReturnType<ImageAnimation["saveState"]>): void {
+    this.machine.restoreState(state.machine);
+    this.random.state = state.randomState;
+    this.spinTime = state.spinTime;
+    this.timeSec = state.timeSec;
+    this.current = state.current;
   }
 
   advance(

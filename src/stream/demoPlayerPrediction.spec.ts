@@ -6,7 +6,10 @@ import {
   type MoveData,
   type ParsedData,
 } from "t2-demo-parser";
-import { createRecordingFromParser } from "./demoStreaming";
+import {
+  createRecordingFromParser,
+  DEMO_CHECKPOINT_TICKS,
+} from "./demoStreaming";
 import { clearWorldColliders } from "../collision/worldCollision";
 import { setTerrainCollisionData } from "../collision/terrainCollision";
 
@@ -31,6 +34,7 @@ const move = () => ({
   type: BlockTypeMove,
   parsed: { yaw: 0, pitch: 0, x: 0, y: 0, z: 0, trigger: [] },
 });
+const atTick = (tick: number) => tick * 0.032 + 1e-9;
 function packet(ghosts: unknown[] = [], gameState: ParsedData = {}) {
   return {
     type: BlockTypePacket,
@@ -96,6 +100,10 @@ function demo(
       cursor = 0;
     },
     nextBlock: () => blocks[cursor++],
+    createCheckpoint: () => ({ cursor }),
+    restoreCheckpoint: (checkpoint: { cursor: number }) => {
+      cursor = checkpoint.cursor;
+    },
     decompressedByteLength: 1,
     bufferedMoveTicks: 10000,
     isComplete: true,
@@ -247,4 +255,67 @@ describe("demo player tick prediction", () => {
     stream.stepToTime(0.032);
     expect(stream.stepToTime(0.064).entities[0].playerDelta).toBeUndefined();
   });
+});
+
+it("rebuilds provisional checkpoints once collision assets arrive", () => {
+  const blocks = [
+    packet([{ index: 1, type: "create", classId: 2, parsedData: {} }]),
+    ...Array.from({ length: DEMO_CHECKPOINT_TICKS * 2 + 10 }, move),
+  ];
+  const stream = demo(blocks);
+  const cold = stream.stepToTime(atTick(DEMO_CHECKPOINT_TICKS * 2)).entities[0];
+  expect(stream.checkpointTicks).toEqual([
+    DEMO_CHECKPOINT_TICKS,
+    DEMO_CHECKPOINT_TICKS * 2,
+  ]);
+  expect(cold.position).toEqual([0, 0, 100]);
+  setTerrainCollisionData({
+    heightMap: new Uint16Array(256 * 256).fill(3200),
+    squareSize: 8,
+  });
+  expect(stream.needsReplay).toBe(true);
+  stream.stepToTime(atTick(DEMO_CHECKPOINT_TICKS * 2));
+  expect(stream.needsReplay).toBe(false);
+  const warm = demo(blocks);
+  const restored = stream.stepToTime(atTick(DEMO_CHECKPOINT_TICKS + 1))
+    .entities[0];
+  const expected = warm.stepToTime(atTick(DEMO_CHECKPOINT_TICKS + 1))
+    .entities[0];
+  expect(restored.position).toEqual(expected.position);
+  expect(restored.position).not.toEqual(cold.position);
+  expect(restored.playerDelta).toEqual(expected.playerDelta);
+  expect(restored.clientAnimation).toEqual(expected.clientAnimation);
+});
+
+it("resumes the control player's queued moves and packet corrections from checkpoints", () => {
+  const blocks: unknown[] = [];
+  for (let tick = 0; tick < DEMO_CHECKPOINT_TICKS + 20; tick++) {
+    if (tick % 5 === 0)
+      blocks.push(
+        packet([], {
+          lastMoveAck: Math.max(0, tick - 2),
+          controlObjectGhostIndex: 0,
+          controlObjectData: { ...pose(tick), energyLevel: 90 },
+        }),
+      );
+    blocks.push(move());
+  }
+  const stream = demo(blocks, true);
+  stream.stepToTime(atTick(DEMO_CHECKPOINT_TICKS + 19));
+  const restored = stream.stepToTime(atTick(DEMO_CHECKPOINT_TICKS + 3));
+  const expected = demo(blocks, true).stepToTime(
+    atTick(DEMO_CHECKPOINT_TICKS + 3),
+  );
+  expect(restored.entities[0].position).toEqual(expected.entities[0].position);
+  expect(restored.entities[0].playerDelta).toEqual(
+    expected.entities[0].playerDelta,
+  );
+  expect(restored.camera?.controlEntityId).toBe(restored.entities[0].id);
+  expect({ ...restored.camera, controlEntityId: undefined }).toEqual({
+    ...expected.camera,
+    controlEntityId: undefined,
+  });
+  const boundary = stream.stepToTime(atTick(DEMO_CHECKPOINT_TICKS));
+  expect(boundary.camera?.controlEntityId).toBe(boundary.entities[0].id);
+  expect(restored.status).toEqual(expected.status);
 });

@@ -5,6 +5,7 @@ import type { SceneObject } from "../scene/types";
 import type { ServerLoadInfo } from "../../relay/types";
 import type { DTSImageOffset } from "../dts/dtsMount";
 import type { ImageAnimationState } from "./imageAnimation";
+import type { WheelState } from "./vehicleWheels";
 
 export type { ServerLoadInfo };
 
@@ -427,14 +428,7 @@ export interface StreamEntity {
   audioMaxLoopGap?: number;
   clientAnimation?: ClientAnimationState;
   /** WheeledVehicle per-wheel state. */
-  wheels?: Array<{
-    speed: number;
-    lateralSlip: number;
-    longitudinalSlip: number;
-    /** Normalized rotation at the last speed update. */
-    rotation: number;
-    timeSec: number;
-  }>;
+  wheels?: WheelState[];
   /** Vehicle steering angle (radians). */
   steeringYaw?: number;
   /** Vehicle frozen state (deployed). */
@@ -663,6 +657,8 @@ export interface PreloadAsset {
 }
 
 export interface StreamingPlayback {
+  /** Retained seek checkpoints, in recorded ticks. Absent on live streams. */
+  readonly checkpointTicks?: readonly number[];
   /** The initial pass preceded collision loading and can now be reconstructed. */
   readonly needsReplay?: boolean;
   setPlayerPredictionEnabled?(enabled: boolean): void;

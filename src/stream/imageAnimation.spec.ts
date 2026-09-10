@@ -63,3 +63,21 @@ it("retains a finishing one-shot through a no-sequence state but resets cyclic t
   expect(imageThreadPosition(finished.anim!, 7, 2, false)).toBe(1);
   expect(imageThreadPosition(finished.anim!, 6, 2, true)).toBe(0);
 });
+
+it("restores the image timer, spin phase and random flash generator repeatedly", () => {
+  const image = new ImageAnimation(table, 0, 42);
+  image.advance(0, flags, true);
+  image.advance(0.2, flags);
+  const checkpoint = image.saveState();
+  const before = structuredClone(checkpoint);
+  const times = [0.4, 0.55, 0.72, 1.04, 1.51];
+  const expected = times.map((t) => image.advance(t, flags, t === 0.72));
+  for (let i = 0; i < 3; i++) {
+    const restored = new ImageAnimation(table, 200, 123);
+    restored.restoreState(checkpoint);
+    expect(times.map((t) => restored.advance(t, flags, t === 0.72))).toEqual(
+      expected,
+    );
+    expect(checkpoint).toEqual(before);
+  }
+});

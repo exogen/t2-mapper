@@ -309,6 +309,7 @@ const cloudFragmentShader = `
   uniform float debugMode;
   uniform int layerIndex;
   uniform vec3 cloudFogColor;
+  uniform bool cloudFogEnabled;
 
   varying vec2 vUv;
   varying float vAlpha;
@@ -353,9 +354,12 @@ const cloudFragmentShader = `
     // cloud quads below the fog line. Blending each fragment toward the
     // fog color by the band alpha reproduces both: at the fog line the
     // cloud matches the fog backdrop exactly and vanishes.
-    float band = skyFogAlpha(normalize(vEyeRay).y);
-    color = mix(color, cloudFogColor, band);
-    finalAlpha *= 1.0 - band;
+    if (cloudFogEnabled) {
+      float band = skyFogAlpha(normalize(vEyeRay));
+      color = mix(color, cloudFogColor, band);
+    }
+    // Keep cloud alpha: the backdrop already contains the same fog blend.
+    // Attenuating alpha here as well would fade the cloud twice.
 
     // Output clouds with texture color and combined alpha
     gl_FragColor = vec4(color, finalAlpha);
@@ -372,6 +376,7 @@ interface CloudBandUniforms {
   fogBands: { value: Vector4 };
   skyRadius: { value: number };
   cloudFogColor: { value: Vector3 };
+  cloudFogEnabled: { value: boolean };
 }
 
 interface CloudLayerProps {
@@ -430,6 +435,7 @@ function CloudLayer({
         fogBands: bandUniforms.fogBands,
         skyRadius: bandUniforms.skyRadius,
         cloudFogColor: bandUniforms.cloudFogColor,
+        cloudFogEnabled: bandUniforms.cloudFogEnabled,
       },
       vertexShader: cloudVertexShader,
       fragmentShader: cloudFragmentShader,
@@ -532,18 +538,6 @@ export function CloudLayers({ scene, fogState }: CloudLayersProps) {
     scene.visibleDistance > 0 ? scene.visibleDistance : 500;
   const radius = visibleDistance * 0.95;
 
-  const cloudSpeeds = useMemo(
-    () =>
-      scene.cloudLayers.map((l, i) => l.speed || [0.0001, 0.0002, 0.0003][i]),
-    [scene.cloudLayers],
-  );
-
-  const cloudHeights = useMemo(
-    () =>
-      scene.cloudLayers.map((l, i) => l.heightPercent || [0.35, 0.25, 0.2][i]),
-    [scene.cloudLayers],
-  );
-
   // Wind direction from windVelocity
   // Torque uses Z-up with windVelocity (x, y, z) where Y is forward.
   // Our cloud geometry has UV U along world X, UV V along world Z.
@@ -567,13 +561,13 @@ export function CloudLayers({ scene, fogState }: CloudLayersProps) {
       if (texture) {
         result.push({
           texture,
-          height: cloudHeights[i],
-          speed: cloudSpeeds[i],
+          height: scene.cloudLayers[i]?.heightPercent ?? [0.35, 0.25, 0.2][i],
+          speed: scene.cloudLayers[i]?.speed ?? [0.0001, 0.0002, 0.0003][i],
         });
       }
     }
     return result;
-  }, [detailMapList, cloudSpeeds, cloudHeights]);
+  }, [detailMapList, scene.cloudLayers]);
 
   // Reference for the group to follow camera
   const groupRef = useRef<Group>(null!);
@@ -586,6 +580,7 @@ export function CloudLayers({ scene, fogState }: CloudLayersProps) {
       fogBands: { value: new Vector4(0, 60, 0, 0) },
       skyRadius: { value: 300 },
       cloudFogColor: { value: new Vector3(0.5, 0.5, 0.5) },
+      cloudFogEnabled: { value: false },
     }),
     [],
   );
@@ -604,6 +599,7 @@ export function CloudLayers({ scene, fogState }: CloudLayersProps) {
     if (groupRef.current) {
       groupRef.current.position.copy(camera.position);
     }
+    bandUniforms.cloudFogEnabled.value = !!fogState;
     if (fogState) {
       const bands = computeSkyFogBands(
         fogState.visibleDistance,
@@ -617,9 +613,6 @@ export function CloudLayers({ scene, fogState }: CloudLayersProps) {
         bands.alpha1,
       );
       bandUniforms.skyRadius.value = bands.radius;
-    } else {
-      // Fog disabled: park the bands far below any view ray.
-      bandUniforms.fogBands.value.set(-1e9, -1e9 + 1, 0, 0);
     }
   });
 

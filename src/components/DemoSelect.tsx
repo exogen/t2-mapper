@@ -245,8 +245,11 @@ export function DemoSelect() {
         (demo) => demo.games.map((game) => game.gameType),
         (demo) => demo.games.map((game) => normalizeMissionType(game.gameType)),
         "server",
-        "players",
-        "recorder",
+        // Exclude the observer bot, including clan tags and numeric suffixes.
+        (demo) =>
+          [demo.recorder, ...demo.players].filter(
+            (name) => !/mapgenius/i.test(name),
+          ),
         "filename",
       ],
     });

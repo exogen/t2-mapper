@@ -172,25 +172,37 @@ function calcBands(
 }
 
 /**
- * GLSL evaluation of the band alpha for a ray, matching the engine's
- * vertex-interpolated strip + fan geometry: opaque below h0, 1 → alpha0
- * across the strip (h0..h1), alpha0 → alpha1 across the fan (h1..apex).
- * `s` is the ray's height on the eye-centered sky sphere.
- * Uniforms: `fogBands` = (h0, h1, alpha0, alpha1), `skyRadius` = p.
+ * Intersect the view ray with Sky::calcBans/renderBans' 16-sided strip and
+ * cap (Tribes2.exe 0x5ad780/0x5adae0). Interpolating sphere height instead
+ * gives a different gradient: GL interpolates colors on the planar faces.
+ * Direction uses Three's Y-up coordinates; the rings are symmetric in X/Z.
  */
 export const skyFogAlphaGlsl = /* glsl */ `
   uniform vec4 fogBands;
   uniform float skyRadius;
 
-  float skyFogAlpha(float dirUp) {
-    float s = dirUp * skyRadius;
+  float skyFogAlpha(vec3 direction) {
     float h0 = fogBands.x;
     float h1 = fogBands.y;
-    float a0 = fogBands.z;
-    float a1 = fogBands.w;
-    if (s <= h0) return 1.0;
-    if (h1 > h0 && s <= h1) return mix(1.0, a0, (s - h0) / (h1 - h0));
-    float t = clamp((s - h1) / max(skyRadius - h1, 0.001), 0.0, 1.0);
-    return mix(a0, a1, t);
+    float a0 = floor(fogBands.z * 255.0) / 255.0;
+    float a1 = floor(fogBands.w * 255.0) / 255.0;
+    if (direction.y <= 0.0) return 1.0;
+    float horizontal = length(direction.xz);
+    if (horizontal < 0.000001) return a1;
+
+    // Radial distance to a regular 16-gon's side in this azimuth.
+    float halfSector = 3.141592653589793 / 16.0;
+    float angle = mod(atan(direction.z, direction.x), 2.0 * halfSector) - halfSector;
+    float polygon = cos(halfSector) / cos(angle);
+    float r0 = sqrt(max(skyRadius * skyRadius - h0 * h0, 0.0)) * polygon;
+    float r1 = sqrt(max(skyRadius * skyRadius - h1 * h1, 0.0)) * polygon;
+    float slope = direction.y / horizontal;
+    if (slope * r0 <= h0) return 1.0;
+    if (h1 > h0 && slope * r1 <= h1) {
+      float t = (slope * r0 - h0) / ((h1 - h0) - slope * (r1 - r0));
+      return mix(1.0, a0, clamp(t, 0.0, 1.0));
+    }
+    float t = (slope * r1 - h1) / (skyRadius - h1 + slope * r1);
+    return mix(a0, a1, clamp(t, 0.0, 1.0));
   }
 `;

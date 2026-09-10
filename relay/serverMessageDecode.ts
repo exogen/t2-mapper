@@ -212,6 +212,14 @@ export class LoadInfoCollector {
     this.onDone = onDone;
   }
 
+  saveState() {
+    return structuredClone({ pending: this.pending, complete: this.complete });
+  }
+
+  restoreState(state: ReturnType<LoadInfoCollector["saveState"]>): void {
+    Object.assign(this, structuredClone(state));
+  }
+
   /** The last completed burst, if it had any text. */
   get info(): ServerLoadInfo | null {
     return this.complete;
