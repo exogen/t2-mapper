@@ -5,11 +5,16 @@ import React, {
   useRef,
   useState,
   useMemo,
+  useLayoutEffect,
 } from "react";
 import { Quaternion } from "three";
 import type { Group } from "three";
-import { useFrame } from "@react-three/fiber";
-import { useSceneEntities } from "../state/gameEntityStore";
+import { useFrame, useThree } from "@react-three/fiber";
+import {
+  gameEntityStore,
+  isStreamingSource,
+  useSceneEntities,
+} from "../state/gameEntityStore";
 import type { GameEntity, PositionedEntity } from "../state/gameEntityTypes";
 import { isSceneEntity } from "../state/gameEntityTypes";
 import { streamPlaybackStore } from "../state/streamPlaybackStore";
@@ -22,6 +27,10 @@ import { entityTypeColor } from "../stream/playbackUtils";
 import { Projectiles } from "./Projectiles";
 import { useDebug } from "./SettingsProvider";
 import { MOUNTED_OBJECT_ROTATION } from "../world/placement";
+import {
+  applyStreamEntityPose,
+  streamRenderFrame,
+} from "../stream/interpolateEntity";
 
 /**
  * The ONE rendering component tree for all game entities.
@@ -190,6 +199,25 @@ function PositionedEntityWrapper({
   objectMounts?: Record<number, React.ReactNode>;
 }) {
   const { debugMode } = useDebug();
+  const root = useRef<Group>(null);
+  const camera = useThree((state) => state.camera);
+  // A React commit can happen after the frame's interpolation pass (e.g.
+  // changing armor). Restore the current render pose before it is drawn.
+  useLayoutEffect(() => {
+    if (
+      !root.current ||
+      !isStreamingSource(gameEntityStore.getState().dataSource)
+    )
+      return;
+    applyStreamEntityPose(
+      root.current,
+      entity,
+      streamRenderFrame.current?.get(entity.id),
+      streamRenderFrame.previous?.get(entity.id),
+      streamRenderFrame.interpT,
+      camera,
+    );
+  });
   const position = entity.position;
   const scale = entity.scale;
   const quaternion = useMemo(() => {
@@ -202,6 +230,7 @@ function PositionedEntityWrapper({
   if (entity.renderType === "Shape" && !entity.shapeName) {
     return (
       <group
+        ref={root}
         name={entity.id}
         position={position}
         quaternion={quaternion}
@@ -234,6 +263,7 @@ function PositionedEntityWrapper({
 
   return (
     <group
+      ref={root}
       name={entity.id}
       position={position}
       quaternion={quaternion}

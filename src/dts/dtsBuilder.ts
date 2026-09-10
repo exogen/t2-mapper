@@ -323,9 +323,10 @@ export function buildDTS(
           };
           const material =
             materials[materialIndex]?.clone() ?? new DTSMaterial();
+          // TSDecalMesh::initDecalMaterials (Tribes2.exe FUN_006ae090).
           material.polygonOffset = true;
-          material.polygonOffsetFactor = -1;
-          material.polygonOffsetUnits = -1;
+          material.polygonOffsetFactor = -2;
+          material.polygonOffsetUnits = -2;
           const mesh = new DTSMesh(geometry, material);
           mesh.name = shape.names[decal.nameIndex];
           mesh.binding = {

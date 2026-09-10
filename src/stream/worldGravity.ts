@@ -3,8 +3,9 @@
  * −20 = $DefaultGravity) written by setGravity(), which also broadcasts a
  * GravityEvent to every client; GameConnection::onAdd sends the current
  * value to each new client, and a demo's header stores it (recordings.cs
- * GRAVITY state). Every consumer — grenade flight, particles, players,
- * vehicles — multiplies the global by 0.4905, so −20 is −9.81 m/s².
+ * GRAVITY state). Ballistic effects multiply the global by 0.4905, so −20 is
+ * −9.81 m/s² there. Player::updateMove uses the raw global directly with
+ * its own TickSec (retail 0x5d2d60), and must not use this conversion.
  */
 
 export const DEFAULT_WORLD_GRAVITY = -20;

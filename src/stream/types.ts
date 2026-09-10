@@ -1,3 +1,4 @@
+import type { PlayerRenderDelta } from "./playerPrediction";
 import type { ParsedData } from "t2-demo-parser";
 import type { SceneObject } from "../scene/types";
 import type { ServerLoadInfo } from "../../relay/types";
@@ -337,6 +338,7 @@ export interface StreamEntity {
   shapeHint?: string;
   /** Position in Torque space [x, y, z]. */
   position?: [number, number, number];
+  playerDelta?: PlayerRenderDelta;
   /** Quaternion in Three.js space [x, y, z, w]. */
   rotation?: [number, number, number, number];
   /** Velocity in Torque world space [x, y, z]. */
@@ -649,6 +651,7 @@ export interface PreloadAsset {
 }
 
 export interface StreamingPlayback {
+  setPlayerPredictionEnabled?(enabled: boolean): void;
   reset(): void;
   getSnapshot(): StreamSnapshot;
   stepToTime(targetTimeSec: number, maxMoveTicks?: number): StreamSnapshot;

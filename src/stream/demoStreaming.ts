@@ -1,4 +1,10 @@
 import {
+  MAX_PREDICTION_TICKS,
+  unclampMove,
+  type PlayerMove,
+} from "./playerPrediction";
+import type { PlayerPacketData } from "t2-demo-parser";
+import {
   BlockTypeInfo,
   BlockTypeMove,
   BlockTypePacket,
@@ -381,6 +387,9 @@ class DemoStreamAdapter extends StreamEngine {
   };
   // Demo-specific: move delta tracking for V12-style camera rotation
   private moveTicks = 0;
+  private pendingPlayerMoves: { id: number; move: PlayerMove }[] = [];
+  private nextPlayerMoveId = 0;
+  private lastClientMoveId = 0;
   private absoluteYaw = 0;
   private absolutePitch = 0;
   private lastAbsYaw = 0;
@@ -493,6 +502,7 @@ class DemoStreamAdapter extends StreamEngine {
   // ── StreamingPlayback interface ──
 
   reset(): void {
+    this.suppressPlayerPrediction = false;
     this.parser.reset();
     // parser.reset() creates a fresh GhostTracker internally — refresh our
     // reference so resolveGhostClassName doesn't use the stale one.
@@ -612,6 +622,14 @@ class DemoStreamAdapter extends StreamEngine {
       this.lastAbsYaw = initialAbsRot.yaw;
       this.lastAbsPitch = initialAbsRot.pitch;
     }
+    const initial = this.parser.initialBlock;
+    const firstMoveIndex = initial.connectionFields[4] ?? 0;
+    this.pendingPlayerMoves = initial.moves.map((move, i) => ({
+      id: firstMoveIndex + i,
+      move: unclampMove(move),
+    }));
+    this.nextPlayerMoveId = firstMoveIndex + this.pendingPlayerMoves.length;
+    this.lastClientMoveId = initial.connectionFields[3] ?? firstMoveIndex;
     this.exhausted = false;
     this.latestFov = 100;
     this.latestControl = {
@@ -653,6 +671,9 @@ class DemoStreamAdapter extends StreamEngine {
       this.entities.set(id, entity);
       this.entityIdByGhostIndex.set(ghost.index, id);
     }
+
+    if (this.latestControl.data)
+      this.correctControlPlayer(this.latestControl.data as PlayerPacketData);
 
     // Resolve control player entity ID from the ghost index map.
     this.controlPlayerGhostId =
@@ -800,15 +821,21 @@ class DemoStreamAdapter extends StreamEngine {
 
     const wasExhausted = this.exhausted;
     let movesProcessed = 0;
-    while (
-      !this.exhausted &&
-      this.moveTicks < targetTicks &&
-      movesProcessed < maxMoveTicks
-    ) {
-      if (!this.stepOneMoveTick()) {
-        break;
+    try {
+      while (
+        !this.exhausted &&
+        this.moveTicks < targetTicks &&
+        movesProcessed < maxMoveTicks
+      ) {
+        // Fast seeks consume authoritative packets, then reconstruct the
+        // bounded prediction window before publishing the destination.
+        this.suppressPlayerPrediction =
+          targetTicks - this.moveTicks > MAX_PREDICTION_TICKS;
+        if (!this.stepOneMoveTick()) break;
+        movesProcessed += 1;
       }
-      movesProcessed += 1;
+    } finally {
+      this.suppressPlayerPrediction = false;
     }
 
     if (
@@ -917,6 +944,11 @@ class DemoStreamAdapter extends StreamEngine {
         this.advanceProjectiles();
         this.advanceItems();
         this.advanceControlVehicle();
+        const controlMoves = this.pendingPlayerMoves
+          .filter(({ id }) => id >= this.lastClientMoveId)
+          .map(({ move }) => move);
+        this.advancePlayers(controlMoves);
+        this.lastClientMoveId = this.nextPlayerMoveId;
         this.advanceFades();
         this.advanceForceFields();
         this.advanceControlEnergy();
@@ -961,6 +993,18 @@ class DemoStreamAdapter extends StreamEngine {
       for (const ghost of packet.ghosts) {
         this.processGhostUpdate(ghost);
       }
+      const ack = packet.gameState.lastMoveAck;
+      this.pendingPlayerMoves = this.pendingPlayerMoves.filter(
+        ({ id }) => id >= ack,
+      );
+      this.nextPlayerMoveId = Math.max(this.nextPlayerMoveId, ack);
+      if (controlData) {
+        this.correctControlPlayer(
+          controlData as PlayerPacketData,
+          this.pendingPlayerMoves.map(({ move }) => move),
+        );
+        if (controlData.position) this.lastClientMoveId = this.nextPlayerMoveId;
+      }
 
       return;
     }
@@ -976,6 +1020,10 @@ class DemoStreamAdapter extends StreamEngine {
     }
 
     if (block.type === BlockTypeMove && this.isMoveData(block.parsed)) {
+      const id = this.nextPlayerMoveId++;
+      if (this.playerPredictionEnabled && this.lastControlType === "player") {
+        this.pendingPlayerMoves.push({ id, move: block.parsed as PlayerMove });
+      } else this.pendingPlayerMoves.length = 0;
       // Replicate V12 Player::updateMove(): apply delta then wrap/clamp.
       this.absoluteYaw += block.parsed.yaw ?? 0;
       const TWO_PI = Math.PI * 2;
@@ -1065,6 +1113,7 @@ class DemoStreamAdapter extends StreamEngine {
 
   private isPacketData(parsed: unknown): parsed is {
     gameState: {
+      lastMoveAck: number;
       controlObjectGhostIndex?: number;
       controlObjectData?: ParsedData;
       compressionPoint?: Vec3;

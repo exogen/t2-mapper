@@ -377,6 +377,7 @@ export function StreamingController({
   const { fov: userFov } = useSettings();
   const springRef = useRef<FollowSpring>(newFollowSpring());
   const playbackClockRef = useRef(0);
+  const wasSeekingRef = useRef(false);
   const lastSeekNonceRef = useRef(0);
   const prevTickSnapshotRef = useRef<StreamSnapshot | null>(null);
   /**
@@ -553,6 +554,7 @@ export function StreamingController({
     // and has accumulated protocol state (net strings, target info, sensor
     // group colors) that the server won't re-send.
     if (recording.source !== "live") {
+      stream.setPlayerPredictionEnabled?.(true);
       stream.reset();
     }
 
@@ -615,7 +617,11 @@ export function StreamingController({
     const storeState = engineStore.getState();
     const playback = storeState.playback;
     const isPlaying = playback.status === "playing";
+    const timeScale = playback.rate;
     const isSeeking = playback.seekNonce !== lastSeekNonceRef.current;
+    // A synchronous seek is parsing time, not elapsed playback time.
+    const playbackDelta = isSeeking || wasSeekingRef.current ? 0 : delta;
+    wasSeekingRef.current = isSeeking;
     if (isSeeking) {
       lastSeekNonceRef.current = playback.seekNonce;
       playbackClockRef.current = playback.seekTime;
@@ -628,13 +634,13 @@ export function StreamingController({
     // Advance the shared effect clock so all effect timers (particles,
     // explosions, shockwaves, shape animations) respect pause and rate.
     if (isPlaying) {
-      advanceEffectClock(delta, playback.rate);
-      playbackClockRef.current += delta * playback.rate;
+      advanceEffectClock(playbackDelta, timeScale);
+      playbackClockRef.current += playbackDelta * timeScale;
     }
 
     const moveTicksNeeded = Math.max(
       1,
-      Math.ceil((delta * 1000 * Math.max(playback.rate, 0.01)) / 32) + 2,
+      Math.ceil((delta * 1000 * Math.max(timeScale, 0.01)) / 32) + 2,
     );
 
     // Torque interpolates backwards from the end of the current 32ms tick.
@@ -773,6 +779,20 @@ export function StreamingController({
     // handles its control Camera). StreamingController still handles
     // entity interpolation, FOV, and orbit target positioning.
     const isLive = recording.source === "live";
+    const controlDelta =
+      !isLive && currentCamera?.controlEntityId
+        ? currentEntities.get(currentCamera.controlEntityId)?.playerDelta
+        : undefined;
+    const backstep = 1 - interpT;
+    const cameraYaw = controlDelta
+      ? controlDelta.rot +
+        controlDelta.rotVec * backstep +
+        controlDelta.head[1] +
+        controlDelta.headVec[1] * backstep
+      : currentCamera?.yaw;
+    const cameraPitch = controlDelta
+      ? controlDelta.head[0] + controlDelta.headVec[0] * backstep
+      : currentCamera?.pitch;
 
     // Demo/live camera state always lands on the perspective camera.
     // Normally that IS the default render camera; in command circuit mode
@@ -812,6 +832,29 @@ export function StreamingController({
             currentCamera.position[0],
           );
           streamCamera.quaternion.set(...currentCamera.rotation);
+        }
+      }
+
+      if (
+        !isLive &&
+        cameraMode !== "orbitOverride" &&
+        currentCamera.controlEntityId
+      ) {
+        const player = streamRenderFrame.current?.get(
+          currentCamera.controlEntityId,
+        );
+        const prediction = player?.playerDelta;
+        if (prediction && player?.position) {
+          const dt = 1 - interpT;
+          const p = player.position,
+            v = prediction.posVec;
+          streamCamera.position.set(
+            p[1] + v[1] * dt,
+            p[2] + v[2] * dt,
+            p[0] + v[0] * dt,
+          );
+          const rotation = yawPitchToQuaternion(cameraYaw!, cameraPitch!);
+          streamCamera.quaternion.set(...rotation);
         }
       }
 
@@ -950,14 +993,14 @@ export function StreamingController({
           );
           hasDirection = _orbitDir.lengthSq() > 1e-8;
         } else if (
-          typeof currentCamera.yaw === "number" &&
-          typeof currentCamera.pitch === "number"
+          typeof cameraYaw === "number" &&
+          typeof cameraPitch === "number"
         ) {
           // Pull back behind the model from the stream camera's yaw/pitch.
           // The stream camera's pitch is the negative of the orbit-override
           // convention, so negate it to reuse orbitPullbackDir — preserving
           // the original {-cz·cx, -sx, -sz·cx} behind-the-model direction.
-          orbitPullbackDir(currentCamera.yaw, -currentCamera.pitch, _orbitDir);
+          orbitPullbackDir(cameraYaw, -cameraPitch, _orbitDir);
           hasDirection = _orbitDir.lengthSq() > 1e-8;
         }
         if (!hasDirection) {
@@ -1038,6 +1081,8 @@ export function StreamingController({
         // vehicle-based). Yaw extraction ignores vehicle pitch/roll,
         // keeping the horizon stable like the real vehicle look.
         const followedEntity = currentEntities.get(orbitTargetId);
+        const look = followedEntity?.playerDelta;
+        const lookScale = look?.maxLookAngle || 1;
         const mounted = resolvedTarget.entity?.id !== orbitTargetId;
         computeFirstPersonCamera(
           streamCamera,
@@ -1046,8 +1091,12 @@ export function StreamingController({
             ? _tmpVec.set(0, DEFAULT_EYE_HEIGHT, 0)
             : (eyePositions.get(orbitTargetId) ??
                 _tmpVec.set(0, DEFAULT_EYE_HEIGHT, 0)),
-          followedEntity?.headPitch ?? 0,
-          followedEntity?.headYaw ?? 0,
+          look
+            ? (look.head[0] + look.headVec[0] * backstep) / lookScale
+            : (followedEntity?.headPitch ?? 0),
+          look
+            ? (look.head[1] + look.headVec[1] * backstep) / lookScale
+            : (followedEntity?.headYaw ?? 0),
         );
       }
     }

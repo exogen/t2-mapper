@@ -1,3 +1,4 @@
+import { getDTSCollisionMeshes } from "../dts/dtsCollision";
 import {
   Fragment,
   memo,
@@ -65,6 +66,8 @@ import {
   type ImageLightConfig,
 } from "./useImageLight";
 import {
+  registerPlayerShapeCollider,
+  unregisterPlayerShapeCollider,
   registerStaticShapeCollider,
   unregisterStaticShapeCollider,
 } from "../collision/worldCollision";
@@ -424,6 +427,17 @@ export const ShapeModel = memo(function ShapeModel({
     if (!meshes) return;
     registerStaticShapeCollider(colliderId, meshes);
     return () => unregisterStaticShapeCollider(colliderId);
+  }, [clonedScene, colliderId, type]);
+
+  useEffect(() => {
+    if (type === "Item") return;
+    const meshes = getDTSCollisionMeshes(
+      clonedScene,
+      type === "TSStatic" ? "TSStatic" : "ShapeBase",
+      "collision",
+    );
+    registerPlayerShapeCollider(colliderId, meshes);
+    return () => unregisterPlayerShapeCollider(colliderId);
   }, [clonedScene, colliderId, type]);
 
   const threadsRef = useRef(new Map<number, ThreadState>());

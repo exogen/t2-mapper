@@ -352,7 +352,6 @@ export function processShapeScene(
       return;
     }
     const owner = getDTSObject(node);
-    const defaultVis = owner?.opacity ?? 1;
 
     if (node.geometry && !isDTSMesh(node) && !isDTSMeshBatch(node))
       smoothVertexNormals(node.geometry);
@@ -360,11 +359,16 @@ export function processShapeScene(
     // Replace PBR materials with diffuse-only Lambert materials.
     // DTSObject owns visibility; hiding the mesh as well would prevent a
     // native visibility track from revealing an initially hidden object.
-    const vis = defaultVis;
     const replace = (
       material: MeshStandardMaterial | DTSMaterial,
     ): Material => {
-      const result = replaceWithShapeMaterial(material, vis, options);
+      // Authored material flags determine baseline blending. A hidden hulk
+      // must become opaque when its visibility thread reveals it.
+      const result = replaceWithShapeMaterial(material, 1, options);
+      // Decals share the body's positions and need their engine depth bias.
+      result.material.polygonOffset = material.polygonOffset;
+      result.material.polygonOffsetFactor = material.polygonOffsetFactor;
+      result.material.polygonOffsetUnits = material.polygonOffsetUnits;
       if (material instanceof DTSMaterial)
         applyDTSMaterialMaps(result.material, material);
       return result.material;
@@ -374,6 +378,7 @@ export function processShapeScene(
     if (Array.isArray(node.material))
       node.material = node.material.map(replace);
     else if (node.material) node.material = replace(node.material);
+    owner?.applyMeshOpacity(node);
   });
 }
 

@@ -1,3 +1,16 @@
+import {
+  MAX_PREDICTION_TICKS,
+  PlayerPrediction,
+  type PlayerMove,
+  type PlayerRenderDelta,
+} from "./playerPrediction";
+import type {
+  PlayerGhostData,
+  PlayerPacketData,
+  PlayerDataBlock,
+} from "t2-demo-parser";
+import { withCollisionQueryBatch } from "../collision/worldCollision";
+import { collisionState } from "../collision/collisionContext";
 // Imported from the module rather than the `../scene` barrel: the
 // barrel re-exports misToScene, which pulls the entire TorqueScript
 // runtime (15 modules and a 0.2MB generated parser) into every
@@ -62,6 +75,7 @@ import { matrixFToQuaternion } from "../scene/coordinates";
 import type { MatrixF } from "../scene/types";
 import type { Vec3 } from "./streamHelpers";
 import {
+  ForceFieldState,
   advanceForceField,
   forceFieldAlpha,
   forceFieldPositionForState,
@@ -178,6 +192,9 @@ export interface MutableEntity {
   actionTimeSec?: number;
   armAction?: number;
   damageState?: number;
+  playerPrediction?: PlayerPrediction;
+  deferredPlayerTicks?: number;
+  playerDelta?: PlayerRenderDelta;
   turretAim?: TurretAim;
   targetId?: number;
   projectilePhysics?: "linear" | "ballistic" | "seeker";
@@ -351,6 +368,13 @@ export abstract class StreamEngine implements StreamingPlayback {
 
   // ── Tick / time ──
   protected tickCount = 0;
+  protected playerPredictionEnabled = false;
+  protected suppressPlayerPrediction = false;
+
+  /** Rendering opts in; timeline/director scanners retain recorded packet poses. */
+  setPlayerPredictionEnabled(enabled: boolean): void {
+    this.playerPredictionEnabled = enabled;
+  }
 
   // ── Camera ──
   protected camera: StreamCamera | null = null;
@@ -1308,6 +1332,9 @@ export abstract class StreamEngine implements StreamingPlayback {
     entity.headPitch = undefined;
     entity.headYaw = undefined;
     entity.health = undefined;
+    entity.playerPrediction = undefined;
+    entity.deferredPlayerTicks = undefined;
+    entity.playerDelta = undefined;
     entity.energy = undefined;
     entity.maxEnergy = undefined;
     entity.damageState = undefined;
@@ -1336,6 +1363,150 @@ export abstract class StreamEngine implements StreamingPlayback {
   }
 
   // ── Apply ghost data ──
+
+  protected ensurePlayerPrediction(
+    entity: MutableEntity,
+  ): PlayerPrediction | undefined {
+    if (entity.dataBlockId != null) {
+      const data = this.getDataBlockData(entity.dataBlockId) as
+        PlayerDataBlock | undefined;
+      if (data?.boxSize) {
+        if (!entity.playerPrediction)
+          entity.playerPrediction = new PlayerPrediction(data, (id) => {
+            const field = this.entities.get(id);
+            if (!field || field.forceFieldState === ForceFieldState.Open)
+              return false;
+            const fieldData =
+              field.dataBlockId != null
+                ? this.getDataBlockData(field.dataBlockId)
+                : undefined;
+            const sameGroup =
+              (field.sensorGroup ?? 0) === (entity.sensorGroup ?? 0);
+            return !(sameGroup
+              ? fieldData?.teamPermiable
+              : fieldData?.otherPermiable);
+          });
+        else if (entity.playerPrediction.data !== data)
+          entity.playerPrediction.setDataBlock(data);
+      }
+    }
+    return entity.playerPrediction;
+  }
+
+  private playerCollisionReady(): boolean {
+    // Scene loading is progressive. Never predict a stationary player falling
+    // through a terrain/interior whose collision asset has not mounted yet.
+    const world = collisionState();
+    for (const entity of this.entities.values()) {
+      if (entity.className === "TerrainBlock" && !world.terrain) return false;
+      if (
+        entity.className === "InteriorInstance" &&
+        !world.interiors.has(`ghost:${entity.ghostIndex}`)
+      )
+        return false;
+    }
+    return true;
+  }
+
+  protected publishPlayerPrediction(
+    entity: MutableEntity,
+    prediction: PlayerPrediction,
+  ): void {
+    if (!prediction.hasPosition || prediction.mounted) {
+      entity.playerDelta = undefined;
+      return;
+    }
+    entity.position = prediction.position.toArray();
+    entity.velocity = prediction.velocity.toArray();
+    entity.rotation = playerYawToQuaternion(prediction.yaw);
+    entity.headPitch =
+      prediction.headPitch / (prediction.data.maxLookAngle || 1);
+    entity.headYaw = prediction.headYaw / (prediction.data.maxLookAngle || 1);
+    entity.jetting = prediction.jetting;
+    entity.falling = prediction.falling;
+    entity.playerDelta = prediction.renderDelta();
+  }
+
+  protected correctControlPlayer(
+    data: PlayerPacketData,
+    moves: readonly PlayerMove[] = [],
+  ): void {
+    if (
+      !this.playerPredictionEnabled ||
+      this.isPiloting ||
+      this.lastControlType !== "player"
+    )
+      return;
+    const id = this.entityIdByGhostIndex.get(this.latestControl.ghostIndex);
+    const entity = id ? this.entities.get(id) : undefined;
+    if (!entity || !data.position) return;
+    const prediction = this.ensurePlayerPrediction(entity);
+    if (!prediction) return;
+    prediction.damageState = entity.damageState ?? 0;
+    prediction.mounted = entity.mountObjectGhostIndex != null;
+    prediction.allowFreelook = !this.firstPerson;
+    prediction.readPacketData(data);
+    entity.deferredPlayerTicks = 0;
+    if (!this.suppressPlayerPrediction && this.playerCollisionReady())
+      withCollisionQueryBatch(() => {
+        for (const move of moves)
+          prediction.processTick(
+            this.worldGravity,
+            move,
+            data.rechargeRate ?? this.controlRechargeRate,
+          );
+      });
+    this.publishPlayerPrediction(entity, prediction);
+  }
+
+  protected advancePlayers(controlMoves: readonly PlayerMove[] = []): void {
+    if (!this.playerPredictionEnabled) return;
+    if (!this.playerCollisionReady()) {
+      for (const entity of this.entities.values()) {
+        entity.playerDelta = undefined;
+        entity.deferredPlayerTicks = 0;
+      }
+      return;
+    }
+    withCollisionQueryBatch(() => {
+      for (const entity of this.entities.values()) {
+        const prediction = entity.playerPrediction;
+        if (!prediction) continue;
+        const isControl =
+          this.lastControlType === "player" &&
+          entity.ghostIndex === this.latestControl.ghostIndex;
+        prediction.damageState = entity.damageState ?? 0;
+        prediction.mounted =
+          entity.mountObjectGhostIndex != null ||
+          (isControl && this.isPiloting);
+        prediction.allowFreelook = isControl && !this.firstPerson;
+        if (prediction.mounted) {
+          entity.deferredPlayerTicks = 0;
+          entity.playerDelta = undefined;
+          continue;
+        }
+        if (this.suppressPlayerPrediction) {
+          entity.deferredPlayerTicks = Math.min(
+            MAX_PREDICTION_TICKS,
+            (entity.deferredPlayerTicks ?? 0) + 1,
+          );
+          continue;
+        }
+        for (let tick = 0; tick < (entity.deferredPlayerTicks ?? 0); tick++)
+          prediction.processTick(this.worldGravity);
+        entity.deferredPlayerTicks = 0;
+        if (isControl) {
+          for (const move of controlMoves)
+            prediction.processTick(
+              this.worldGravity,
+              move,
+              this.controlRechargeRate,
+            );
+        } else prediction.processTick(this.worldGravity);
+        this.publishPlayerPrediction(entity, prediction);
+      }
+    });
+  }
 
   protected applyGhostData(
     entity: MutableEntity,
@@ -2079,24 +2250,18 @@ export abstract class StreamEngine implements StreamingPlayback {
         this.blowUp(entity);
       }
     }
-    // CloakMask (binary-verified, shapeBase.cc:3457-3485):
-    //   cloaked: mCloaked — drives client-side cloakLevel interpolation
-    //   fading: start a fade animation (fadeOut=direction, fadeTime=duration)
-    //   fadeVal: direct mFadeVal == 1.0 when not fading
     // CloakMask visibility (binary-verified, shapeBase.cc:3457-3485).
     // fadeVal (mFadeVal == 1.0): true = visible, false = invisible.
     // fading: fade animation (fadeOut=direction, fadeTime=duration).
     // cloaked: mCloaked (stealth/station pad effect — client-side render).
-    // setCloakedState (FUN_005f0200): on client, does NOT snap mCloakLevel —
-    // only sets mCloaked. advanceTime interpolates at rate dt*2 (0.5s).
+    // setCloakedState (FUN_005f0200): initial ghosts snap mCloakLevel;
+    // subsequent updates interpolate via advanceTime at dt*2 (0.5s).
     if (typeof data.cloaked === "boolean" && data.cloaked !== entity.cloaked) {
       const wasSet = entity.cloaked != null;
       entity.cloaked = data.cloaked;
-      if (!wasSet && data.cloaked) {
-        // First create with cloaked=true: start fully cloaked. The engine
-        // technically starts at 0 and animates, but the ghost isn't rendered
-        // during initial setup so players only ever see the cloaked state.
-        entity.cloakLevel = 1;
+      if (!wasSet) {
+        // Initialize both states so an initially visible player can later cloak.
+        entity.cloakLevel = data.cloaked ? 1 : 0;
       }
       // No snap for state changes — client interpolates via advanceFades().
     }
@@ -2227,6 +2392,19 @@ export abstract class StreamEngine implements StreamingPlayback {
         entity.audioMinLoopGap = data.minLoopGap;
       if (typeof data.maxLoopGap === "number")
         entity.audioMaxLoopGap = data.maxLoopGap;
+    }
+    if (entity.type === "Player" && this.playerPredictionEnabled) {
+      const prediction = this.ensurePlayerPrediction(entity);
+      if (prediction) {
+        prediction.damageState = entity.damageState ?? 0;
+        prediction.mounted = entity.mountObjectGhostIndex != null;
+        prediction.unpackUpdate(
+          data as PlayerGhostData,
+          this.suppressPlayerPrediction,
+        );
+        if (data.position) entity.deferredPlayerTicks = 0;
+        this.publishPlayerPrediction(entity, prediction);
+      }
     }
   }
 
@@ -2798,6 +2976,22 @@ export abstract class StreamEngine implements StreamingPlayback {
         control.position.z,
       ];
 
+      const predictedControlId = this.entityIdByGhostIndex.get(
+        control.ghostIndex,
+      );
+      const predictedControl = predictedControlId
+        ? this.entities.get(predictedControlId)?.playerPrediction
+        : undefined;
+      if (
+        predictedControl?.hasPosition &&
+        !predictedControl.mounted &&
+        !this.isPiloting
+      ) {
+        predictedControl.position.toArray(cameraPos);
+        yaw = predictedControl.yaw + predictedControl.headYaw;
+        pitch = predictedControl.headPitch;
+      }
+
       this.camera = {
         time: timeSec,
         position: cameraPos,
@@ -2944,7 +3138,7 @@ export abstract class StreamEngine implements StreamingPlayback {
           }
         } else if (this.controlPlayerGhostId) {
           const ghostEntity = this.entities.get(this.controlPlayerGhostId);
-          if (ghostEntity) {
+          if (ghostEntity && !ghostEntity.playerPrediction?.hasPosition) {
             ghostEntity.position = [
               control.position.x,
               control.position.y,
@@ -3533,6 +3727,7 @@ export abstract class StreamEngine implements StreamingPlayback {
             ? ([...entity.position] as [number, number, number])
             : entity.position,
         rotation: entity.rotation,
+        playerDelta: entity.playerDelta,
         scale: entity.scale,
         velocity: entity.velocity,
         health: entity.health,

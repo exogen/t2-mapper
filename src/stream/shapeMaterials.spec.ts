@@ -23,7 +23,7 @@ import {
 import { batchDTSRigidMeshes } from "../dts/dtsRigidBatch";
 import { clone } from "three/examples/jsm/utils/SkeletonUtils.js";
 import type { DTSShape } from "../dts/dtsModel";
-import { DTSMaterialFlags } from "../dts/dtsTypes";
+import { DTSMaterialFlags, DTSMeshType } from "../dts/dtsTypes";
 import { sampleDTSSequence } from "../dts/dtsAnimation";
 import {
   processShapeScene,
@@ -78,10 +78,69 @@ it("reveals initially hidden parts through native visibility tracks after materi
     });
     expect(visible).toHaveLength(1);
     expect((visible[0].material as MeshLambertMaterial).opacity).toBe(1);
+    expect((visible[0].material as MeshLambertMaterial).transparent).toBe(
+      false,
+    );
+    expect((visible[0].material as MeshLambertMaterial).depthWrite).toBe(true);
   }
   mixer.stopAllAction();
   expect(model.scene.getShapeObject(0)!.visible).toBe(false);
 });
+
+it.each([false, true])(
+  "preserves engine decal depth bias through material replacement (lazy: %s)",
+  (lazy) => {
+    const data = createDTSTestShape();
+    data.decals = [
+      { nameIndex: 1, objectIndex: 0, numMeshes: 1, startMeshIndex: 1 },
+    ];
+    data.subShapes[0].numDecals = 1;
+    data.decalStates = new Int32Array([-1]);
+    data.materials.push({
+      ...data.materials[0],
+      name: "damage",
+      flags: DTSMaterialFlags.Translucent,
+    });
+    data.meshes.push({
+      ...data.meshes[0],
+      type: DTSMeshType.Decal,
+      decal: {
+        startPrimitive: new Int32Array([0]),
+        texgenS: new Float32Array([1, 0, 0, 0]),
+        texgenT: new Float32Array([0, 1, 0, 0]),
+        materialIndex: 1,
+      },
+    });
+    const { scene } = buildDTS(data);
+    const camera = new PerspectiveCamera();
+    if (!lazy) {
+      scene.decalFrames[0] = 0;
+      scene.update(camera);
+    }
+    processShapeScene(scene);
+    scene.decalFrames[0] = 0;
+    scene.update(camera);
+    const meshes: DTSMesh[] = [];
+    scene.traverseVisible((node) => {
+      if (node instanceof DTSMesh) meshes.push(node);
+    });
+    const decal = meshes.find((mesh) => mesh.binding!.decalIndex === 0)!;
+    const body = meshes.find((mesh) => mesh.binding!.decalIndex == null)!;
+    expect(decal.material).toMatchObject({
+      polygonOffset: true,
+      polygonOffsetFactor: -2,
+      polygonOffsetUnits: -2,
+      depthTest: true,
+      depthWrite: false,
+      transparent: true,
+    });
+    expect(body.material).toMatchObject({ polygonOffset: false });
+    expect(decal.geometry.getAttribute("position")).toBe(
+      body.geometry.getAttribute("position"),
+    );
+    disposeClonedScene(scene);
+  },
+);
 
 describe("native tree materials in the viewer", () => {
   it.each([

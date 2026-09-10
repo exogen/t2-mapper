@@ -5,11 +5,11 @@ import type { Object3D, Vector3 } from "three";
  * vehicles (the engine also shadows items, which this app skips; statics,
  * turrets and projectiles never cast).
  * The owning component keeps `enabled` and `alpha` current every frame;
- * ShadowPool renders the silhouette of `root`'s subtree and projects it
+ * ShadowPool renders the shadow-eligible meshes in `root`'s subtree and projects them
  * onto the terrain and interiors beneath.
  */
 export interface ShadowCaster {
-  /** Model root; its whole subtree (mounted weapons included) is the silhouette. */
+  /** Model root; eligible geometry in its subtree (mounted weapons included) casts. */
   root: Object3D;
   /** DTS bounds centre in `root`'s local space. */
   center: Vector3;

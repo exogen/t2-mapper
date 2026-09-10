@@ -503,6 +503,52 @@ describe("WatchSessionManager", () => {
     expect(connections).toHaveLength(2);
   });
 
+  it("keeps polling scores while a pinned session records without watchers", () => {
+    const { manager, connections } = createManager();
+    manager.pin("1.2.3.4:28000");
+    const conn = connections[0];
+    conn.setStatus("connected");
+    expect(manager.getStatusSummary()[0]).toMatchObject({
+      watchers: 0,
+      pinned: true,
+    });
+    const requests = () =>
+      conn.commands.filter((c) => c.command === "getScores");
+    expect(requests()).toHaveLength(1);
+    vi.advanceTimersByTime(12_000);
+    expect(requests()).toHaveLength(4);
+
+    conn.setStatus("disconnected", "Server is cycling mission");
+    vi.advanceTimersByTime(6_000);
+    expect(requests()).toHaveLength(4);
+    const reconnected = connections[1];
+    reconnected.setStatus("connected");
+    vi.advanceTimersByTime(4_000);
+    expect(
+      reconnected.commands.filter((c) => c.command === "getScores"),
+    ).toHaveLength(2);
+
+    manager.shutdown();
+    const count = reconnected.commands.length;
+    vi.advanceTimersByTime(12_000);
+    expect(reconnected.commands).toHaveLength(count);
+  });
+
+  it("keeps polling scores after the last watcher leaves during recording grace", () => {
+    const { manager, connections } = createManager();
+    const ws = new FakeWebSocket();
+    manager.watch(ws as unknown as WebSocket, "1.2.3.4:28000");
+    const conn = connections[0];
+    conn.setStatus("connected");
+    manager.detachSocket(ws as unknown as WebSocket);
+    expect(manager.getStatusSummary()[0].watchers).toBe(0);
+    vi.advanceTimersByTime(8_000);
+    expect(conn.commands.filter((c) => c.command === "getScores")).toHaveLength(
+      3,
+    );
+    manager.shutdown();
+  });
+
   it("announces relayRestarting to watchers before shutdown teardown", () => {
     const { manager, connections } = createManager();
     const ws = new FakeWebSocket();

@@ -773,6 +773,7 @@ export function clearWorldColliders(): void {
   interiors().clear();
   interiorVersion++;
   staticShapes().clear();
+  collisionState().playerShapes.clear();
   forceFields().clear();
 }
 
@@ -811,9 +812,20 @@ export function interiorTrianglesInBox(
   facing?: TriangleFacing,
 ): number {
   const start = out.length;
-  for (const entry of interiors().values()) {
+  appendMeshTriangles(interiors().values(), box, out, facing);
+  return out.length - start;
+}
+
+function appendMeshTriangles(
+  entries: Iterable<InteriorEntry>,
+  box: Box3,
+  out: number[],
+  facing?: TriangleFacing,
+): void {
+  for (const entry of entries) {
     for (const collider of entry.colliders) {
-      if (!collider.worldBox.intersectsBox(box)) continue;
+      if (!syncMeshCollider(collider) || !collider.worldBox.intersectsBox(box))
+        continue;
       _localBox.makeEmpty();
       for (let i = 0; i < 8; i++) {
         _corner.set(
@@ -853,8 +865,58 @@ export function interiorTrianglesInBox(
       });
     }
   }
-  return out.length - start;
 }
+
+/** Player::buildPolyList selects collision hulls, whereas camera rays use LOS. */
+export function registerPlayerShapeCollider(id: string, meshes: Mesh[]): void {
+  const colliders = buildMeshColliders(meshes);
+  if (colliders.length) collisionState().playerShapes.set(id, { colliders });
+}
+
+export function unregisterPlayerShapeCollider(id: string): void {
+  collisionState().playerShapes.delete(id);
+}
+
+export function playerTrianglesInBox(
+  box: Box3,
+  out: number[],
+  collideWithField?: (id: string) => boolean,
+): void {
+  appendMeshTriangles(interiors().values(), box, out);
+  appendMeshTriangles(collisionState().playerShapes.values(), box, out);
+  for (const [id, field] of forceFields()) {
+    if (
+      !field.worldBox.intersectsBox(box) ||
+      !(collideWithField ? collideWithField(id) : field.enabled)
+    )
+      continue;
+    for (const [a, b, c] of BOX_TRIANGLES) {
+      for (const i of [a, b, c]) {
+        _corner.set(
+          i & 1 ? field.box.max.x : field.box.min.x,
+          i & 2 ? field.box.max.y : field.box.min.y,
+          i & 4 ? field.box.max.z : field.box.min.z,
+        );
+        _corner.applyMatrix4(field.matrixWorld);
+        out.push(_corner.x, _corner.y, _corner.z);
+      }
+    }
+  }
+}
+const BOX_TRIANGLES = [
+  [0, 4, 6],
+  [0, 6, 2],
+  [1, 3, 7],
+  [1, 7, 5],
+  [0, 1, 5],
+  [0, 5, 4],
+  [2, 6, 7],
+  [2, 7, 3],
+  [0, 2, 3],
+  [0, 3, 1],
+  [4, 5, 7],
+  [4, 7, 6],
+];
 
 export function castWorldRay(
   start: Vec3,

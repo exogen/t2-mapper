@@ -53,7 +53,15 @@ export function applyStreamEntityPose(
   }
 
   child.visible = true;
-  if (previousEntity?.position) {
+  if (entity.playerDelta) {
+    const delta = entity.playerDelta.posVec;
+    const dt = 1 - interpT;
+    child.position.set(
+      entity.position[1] + delta[1] * dt,
+      entity.position[2] + delta[2] * dt,
+      entity.position[0] + delta[0] * dt,
+    );
+  } else if (previousEntity?.position) {
     const px = previousEntity.position[0];
     const py = previousEntity.position[1];
     const pz = previousEntity.position[2];
@@ -76,6 +84,10 @@ export function applyStreamEntityPose(
     child.quaternion.copy(camera.quaternion).multiply(billboardFlip);
   } else if (entity.visual?.kind === "tracer") {
     child.quaternion.identity();
+  } else if (entity.playerDelta) {
+    const { rot, rotVec } = entity.playerDelta;
+    const halfAngle = -(rot + rotVec * (1 - interpT)) / 2;
+    child.quaternion.set(0, Math.sin(halfAngle), 0, Math.cos(halfAngle));
   } else if (entity.rotation) {
     if (previousEntity?.rotation) {
       quatA.set(...previousEntity.rotation);

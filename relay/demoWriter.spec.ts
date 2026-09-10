@@ -86,7 +86,7 @@ describe("buildInitialBlock", () => {
     expect(parsed.dataBlocks.size).toBe(0);
     expect(parsed.firstPerson).toBe(true);
     expect(parsed.connectionFields[1]).toBe(0x41200000);
-    expect(parsed.scoreEntries).toEqual([]);
+    expect(parsed.moves).toEqual([]);
     expect(parsed.demoValues).toEqual(demoValues);
     expect(parsed.connectionState.lastSeqRecvd).toBe(0);
     expect(parsed.connectionState.highestAckedSeq).toBe(0);

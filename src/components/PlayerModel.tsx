@@ -1,3 +1,4 @@
+import { streamRenderFrame } from "../stream/interpolateEntity";
 import { observeShapeMeshes } from "../dts/dtsScene";
 import {
   Fragment,
@@ -852,8 +853,15 @@ export function PlayerModel({
       : null;
     const blendWeight = isDead ? 0 : 1;
 
-    const headPitch = entity.headPitch ?? 0;
-    const headYaw = entity.headYaw ?? 0;
+    const prediction = streamRenderFrame.current?.get(entity.id)?.playerDelta;
+    const dt = 1 - streamRenderFrame.interpT;
+    const lookAngle = prediction?.maxLookAngle || 1;
+    const headPitch = prediction
+      ? (prediction.head[0] + prediction.headVec[0] * dt) / lookAngle
+      : (entity.headPitch ?? 0);
+    const headYaw = prediction
+      ? (prediction.head[1] + prediction.headVec[1] * dt) / lookAngle
+      : (entity.headYaw ?? 0);
     const pitchPos = (headPitch + 1) / 2;
     const yawPos = (headYaw + 1) / 2;
 

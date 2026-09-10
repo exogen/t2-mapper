@@ -1,4 +1,5 @@
-import { DTSShape } from "../dts/dtsModel";
+import { DTSShape, isDTSMesh } from "../dts/dtsModel";
+import { DTSMaterialFlags, DTSPrimitiveFlags } from "../dts/dtsTypes";
 /**
  * Engine-style projected shadows (Tribes2.exe shadow.cc) for the
  * registered shadowCasters: players and vehicles. Per caster and
@@ -258,9 +259,30 @@ function createProxy(source: Mesh, material: MeshBasicMaterial): Mesh {
   return proxy;
 }
 
-function collectMeshes(node: Object3D, out: Mesh[]): void {
-  if ((node as Mesh).isMesh) out.push(node as Mesh);
-  for (const child of node.children) collectMeshes(child, out);
+function castsSilhouette(mesh: Mesh, shape: DTSShape | undefined): boolean {
+  // Rigid body batches contain only opaque parts; other Three meshes keep
+  // their existing silhouette behavior. Native meshes retain authored flags
+  // even after the viewer replaces materials or applies object fading.
+  if (!isDTSMesh(mesh) || !mesh.binding || !shape) return true;
+  if (mesh.binding.decalIndex !== undefined) return false;
+  const first = mesh.binding.source.primitives[0];
+  if (!first) return false;
+  // TSMesh::renderShadow (FUN_006a7c40) tests the FIRST primitive of the
+  // original DTS mesh, before our material partitions, and skips translucency.
+  return (
+    !!(first.material & DTSPrimitiveFlags.NoMaterial) ||
+    !(
+      shape.data.materials[first.material & DTSPrimitiveFlags.MaterialMask]
+        ?.flags & DTSMaterialFlags.Translucent
+    )
+  );
+}
+
+function collectMeshes(node: Object3D, out: Mesh[], shape?: DTSShape): void {
+  if (node instanceof DTSShape) shape = node;
+  if ((node as Mesh).isMesh && castsSilhouette(node as Mesh, shape))
+    out.push(node as Mesh);
+  for (const child of node.children) collectMeshes(child, out, shape);
 }
 
 function sameSources(proxies: ShadowProxy[], sources: Mesh[]): boolean {

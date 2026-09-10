@@ -1509,7 +1509,9 @@ export class WatchSession {
   private startScoresPoll(): void {
     this.stopScoresPoll();
     this.scoresTimer = setInterval(() => {
-      if (this.watcherCount > 0 && this.lastStatus === "connected") {
+      // The relay records even without browser watchers (patrol/pinned
+      // sessions and idle grace). Keep scores fresh for the recording too.
+      if (this.lastStatus === "connected") {
         this.connection?.sendCommand("getScores");
       }
     }, SCORES_POLL_MS);

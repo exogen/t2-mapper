@@ -64,6 +64,8 @@ export interface CollisionState {
    *  only: castWorldRay skips them unless asked, so projectile physics
    *  keeps colliding with exactly what it always did. */
   staticShapes: Map<string, InteriorEntry>;
+  /** DTS collision details used by player movement (distinct from LOS). */
+  playerShapes: Map<string, InteriorEntry>;
   forceFields: Map<string, ForceFieldEntry>;
   /** BVHs are per-geometry and shared across instanced interiors.
    *  Deliberately per-state: a BVH belongs to the geometry, and two
@@ -86,6 +88,7 @@ export function createCollisionState(): CollisionState {
   return {
     interiors: new Map(),
     staticShapes: new Map(),
+    playerShapes: new Map(),
     forceFields: new Map(),
     bvhCache: new WeakMap(),
     terrain: null,
