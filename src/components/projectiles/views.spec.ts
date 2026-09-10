@@ -10,6 +10,7 @@ import {
 } from "three";
 import { createTracerView, createSpriteView } from "./tracer";
 import { createBeamView } from "./beam";
+import { ProjectilePool } from "./ProjectilePool";
 import { effectLights } from "../effectLights";
 import { streamClock } from "../../state/streamPlaybackStore";
 import { applyStreamEntityPose } from "../../stream/interpolateEntity";
@@ -43,6 +44,83 @@ const tracer: TracerEntity = {
 };
 
 describe("projectile views", () => {
+  it.each([
+    ["fizzle", { position: undefined }],
+    ["explosion", { position: undefined, hasExploded: true }],
+    ["fade", { fadeVal: 0 }],
+  ] as const)(
+    "keeps a tracer hidden after %s while its network ghost and last keyframe remain",
+    async (_reason, terminal) => {
+      const pool = new ProjectilePool(
+        new Group(),
+        async () => () =>
+          createTracerView(tracer.visual, [new Texture(), new Texture()]),
+      );
+      const snapshot: StreamEntity = {
+        id: tracer.id,
+        type: "TracerProjectile",
+        position: [10, 20, 30],
+        visual: tracer.visual,
+      };
+      const frame = (current: StreamEntity) => {
+        pool.prepare(0.016, (root, entity) =>
+          applyStreamEntityPose(root, entity, current, snapshot, 1, camera),
+        );
+        pool.update(camera, 0.016);
+      };
+      try {
+        pool.sync(new Map([[tracer.id, tracer]]));
+        await Promise.resolve();
+        frame(snapshot);
+        const view = pool.active.get(tracer.id)!.view!;
+        expect(view.root.visible).toBe(true);
+        expect(tracer.keyframes![0].position).toBeDefined();
+        for (let i = 0; i < 3; i++) {
+          frame({ ...snapshot, ...terminal });
+          expect(pool.active.has(tracer.id)).toBe(true);
+          expect(view.root.visible).toBe(false);
+        }
+        // Rewinding/fade recovery must not leave the recycled visual hidden.
+        frame(snapshot);
+        expect(view.root.visible).toBe(true);
+        pool.sync(new Map());
+        expect(view.root.parent).toBeNull();
+      } finally {
+        pool.dispose();
+      }
+    },
+  );
+  it("interpolates an existing pooled projectile on every frame between ticks", async () => {
+    const pool = new ProjectilePool(
+      new Group(),
+      async () => () =>
+        createTracerView(tracer.visual, [new Texture(), new Texture()]),
+    );
+    const previous: StreamEntity = {
+      id: tracer.id,
+      type: "TracerProjectile",
+      position: [10, 20, 30],
+      visual: tracer.visual,
+    };
+    const current: StreamEntity = { ...previous, position: [30, 40, 50] };
+    try {
+      pool.sync(new Map([[tracer.id, tracer]]));
+      await Promise.resolve();
+      for (const t of [0.25, 0.75]) {
+        pool.prepare(0.016, (root, entity) =>
+          applyStreamEntityPose(root, entity, current, previous, t, camera),
+        );
+        pool.update(camera, 0.016);
+        expect(pool.root.children[0].position.toArray()).toEqual([
+          20 + 20 * t,
+          30 + 20 * t,
+          10 + 20 * t,
+        ]);
+      }
+    } finally {
+      pool.dispose();
+    }
+  });
   it("reuses tracer buffers, bounds blur history, clears the old trail and unregisters light on release", () => {
     const before = effectLights().size,
       view = createTracerView(tracer.visual, [new Texture(), new Texture()]);

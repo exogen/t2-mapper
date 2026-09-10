@@ -25,6 +25,7 @@ import { setStreamSnapshot } from "../state/streamSnapshotStore";
 import { cameraRegistry } from "../state/cameraRegistry";
 import { FramePriority } from "./framePriority";
 import { gameEntityStore } from "../state/gameEntityStore";
+import { isProjectileEntity } from "../state/projectileEntities";
 import {
   DIRECTOR_ORBIT_TARGET_MAX_LAG,
   GROUND_MIN_CLEARANCE,
@@ -709,10 +710,13 @@ export function StreamingController({
     const root = streamPlaybackStore.getState().root;
     if (root) {
       for (const child of root.children) {
-        // Scene infrastructure (terrain, interiors, sky, etc.) handles its
-        // own positioning — skip interpolation and visibility management.
+        // Scene infrastructure handles its own positioning; the projectile
+        // pool applies these same inputs before animation and retains visibility.
         const renderEntity = renderEntities.get(child.name);
-        if (renderEntity && isSceneEntity(renderEntity)) {
+        if (
+          renderEntity &&
+          (isSceneEntity(renderEntity) || isProjectileEntity(renderEntity))
+        ) {
           continue;
         }
         applyStreamEntityPose(

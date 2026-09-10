@@ -17,6 +17,7 @@ type Entry = {
   key: string;
   bucket: Bucket;
   view?: ProjectileView;
+  poseVisible: boolean;
 };
 
 /** Bounded reusable visuals. Late loads never resurrect removed entities. */
@@ -116,12 +117,13 @@ export class ProjectilePool {
         entity,
         key,
         bucket: this.bucket(key, entity),
+        poseVisible: true,
       });
     }
   }
   prepare(
     delta: number,
-    initialize?: (root: Group, entity: ProjectileEntity) => void,
+    updatePose?: (root: Group, entity: ProjectileEntity) => void,
   ): void {
     for (const entry of this.active.values()) {
       if (!entry.view && entry.bucket.ready && !entry.bucket.failed) {
@@ -142,7 +144,6 @@ export class ProjectilePool {
           root.visible = true;
           view.reset(entity);
           this.root.add(root);
-          initialize?.(root, entity);
         } catch (error) {
           entry.view?.root.removeFromParent();
           entry.view?.dispose();
@@ -153,6 +154,9 @@ export class ProjectilePool {
       }
       const view = entry.view;
       if (view) {
+        view.root.visible = true;
+        updatePose?.(view.root, entry.entity);
+        entry.poseVisible = view.root.visible;
         if (entry.entity.hidden || entry.entity.debugHidden)
           view.root.visible = false;
         view.animate?.(entry.entity, delta);
@@ -160,12 +164,15 @@ export class ProjectilePool {
     }
   }
   update(camera: Camera, delta: number): void {
-    for (const { view, entity } of this.active.values())
+    for (const { view, entity, poseVisible } of this.active.values())
       if (view) {
         // Update internal lifetime/light state even while the entity wrapper is hidden.
         view.root.visible = true;
         view.update(entity, camera, delta);
-        if (entity.hidden || entity.debugHidden) view.root.visible = false;
+        // LinearProjectile::processTick (FUN_0062e010) hides spent projectiles
+        // before their network ghosts are deleted. A visual must not undo that.
+        if (!poseVisible || entity.hidden || entity.debugHidden)
+          view.root.visible = false;
       }
   }
   private release(entry: Entry): void {

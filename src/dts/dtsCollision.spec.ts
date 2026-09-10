@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { Group, Mesh, Vector3 } from "three";
 import { clone } from "three/examples/jsm/utils/SkeletonUtils.js";
 import { buildDTS } from "./dtsBuilder";
@@ -10,6 +10,7 @@ import {
   clearWorldColliders,
   pointObstructed,
   registerStaticShapeCollider,
+  withCollisionQueryBatch,
 } from "../collision/worldCollision";
 
 afterEach(clearWorldColliders);
@@ -66,6 +67,51 @@ describe("engine DTS detail selection", () => {
 });
 
 describe("engine DTS hull rays", () => {
+  it("shares current collider poses across a query batch without retaining them afterward", () => {
+    const { scene } = buildDTS(createDTSCollisionTestShape());
+    const meshes = getDTSCollisionMeshes(scene, "TSStatic");
+    registerStaticShapeCollider("batched", meshes);
+    const refresh = meshes.map((mesh) => vi.spyOn(mesh, "updateForCollision"));
+    const probe = () => [
+      ray([-5, 0, 0], [5, 0, 0]),
+      pointObstructed([0, 0, 0], 0.1, { includeStatics: true }),
+      ray([-15, 5, 0], [15, 5, 0]),
+    ];
+    const expected = probe();
+    refresh.forEach((spy) => spy.mockClear());
+    withCollisionQueryBatch(() => {
+      expect(probe()).toEqual(expected);
+      withCollisionQueryBatch(() => expect(probe()).toEqual(expected));
+      expect(probe()).toEqual(expected);
+    });
+    refresh.forEach((spy) => expect(spy).toHaveBeenCalledOnce());
+
+    // A later batch must see parent motion, even before a render traversal.
+    scene.position.z = 10;
+    withCollisionQueryBatch(() => {
+      expect(ray([-5, 0, 0], [5, 0, 0])).toBeNull();
+      expect(ray([0, 0, 0], [20, 0, 0])?.t).toBeCloseTo(0.45);
+    });
+    refresh.forEach((spy) => expect(spy).toHaveBeenCalledTimes(2));
+
+    const object = scene.getObjectByName("__dts_object_0") as DTSObject;
+    object.opacity = 0;
+    withCollisionQueryBatch(() => {
+      expect(ray([0, 0, 0], [20, 0, 0])).toBeNull();
+      expect(ray([0, 0, 0], [20, 0, 0])).toBeNull();
+    });
+    refresh.forEach((spy) => expect(spy).toHaveBeenCalledTimes(3));
+    object.opacity = 1;
+    expect(() =>
+      withCollisionQueryBatch(() => {
+        expect(ray([0, 0, 0], [20, 0, 0])).not.toBeNull();
+        throw new Error("cancel query");
+      }),
+    ).toThrow("cancel query");
+    scene.position.z = 30;
+    expect(ray([0, 0, 0], [20, 0, 0])).toBeNull();
+    refresh.forEach((spy) => expect(spy).toHaveBeenCalledTimes(5));
+  });
   function register(type: "TSStatic" | "ShapeBase" = "TSStatic") {
     const model = buildDTS(createDTSCollisionTestShape());
     registerStaticShapeCollider(

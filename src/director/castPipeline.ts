@@ -45,6 +45,7 @@ import { CAST_CONTRACT_VERSION } from "./castContract";
 import { describeVenue } from "./venue";
 import type { DirectorFactRecord } from "./factJournal";
 import type { DirectorStateFrame } from "./observationContract";
+import { withCollisionQueryBatch } from "../collision/worldCollision";
 
 export interface CastPipelineOptions {
   /** Scan progress, 0..1. */
@@ -152,8 +153,9 @@ export interface CastStream {
   /** False until `finish` has run. A consumer must NOT treat running
    *  off the end of the shots as the end of the broadcast. */
   readonly complete: boolean;
-  /** Plan far enough to cover `sec` of playback. */
-  advanceTo(sec: number): Promise<void>;
+  /** Plan far enough to cover `sec` of playback. A false continuation check
+   * pauses between ticks; a later call resumes without changing decisions. */
+  advanceTo(sec: number, shouldContinue?: () => boolean): Promise<void>;
   /** Everything remaining, for a caller that wants the whole thing. */
   finish(): Promise<ShotPlan>;
   /** Pull newly available evidence without running a commentary consumer. */
@@ -261,8 +263,10 @@ export async function createCastStream(
       view = new CausalView(dataset);
       switcher = createSwitcherStream(view);
     }
-    switcher.advanceTo(toSec, dataset);
-    publish(dataset);
+    withCollisionQueryBatch(() => {
+      switcher!.advanceTo(toSec, dataset);
+      publish(dataset);
+    });
     current.matchFacts = dataset.matchFacts;
     // The venue is known once the world has arrived, and it does not
     // change — described once, before the booth's first word.
@@ -293,7 +297,10 @@ export async function createCastStream(
     return current;
   };
 
-  const grow = async (toSec: number): Promise<void> => {
+  const grow = async (
+    toSec: number,
+    shouldContinue?: () => boolean,
+  ): Promise<void> => {
     // Tracker records gain positions and classifications after their
     // events arrive. Scanning a batch chunk before planning its earlier
     // ticks exposed those revisions too soon, even through CausalView's
@@ -305,6 +312,7 @@ export async function createCastStream(
     );
     let yieldedAt = performance.now();
     while (planned < target) {
+      if (shouldContinue && !shouldContinue()) return;
       await step(Math.min(planned + DIRECTOR_TICK_SEC, target));
       if (performance.now() - yieldedAt >= WORK_SLICE_MS) {
         await new Promise<void>((resolve) => setTimeout(resolve, 0));
@@ -341,11 +349,17 @@ export async function createCastStream(
     durationSec: scan.durationSec,
     drainFacts: () => scan.drainFacts(),
     drainStates: () => scan.drainStates(),
-    async advanceTo(sec: number): Promise<void> {
+    async advanceTo(
+      sec: number,
+      shouldContinue?: () => boolean,
+    ): Promise<void> {
       if (complete) return;
       // Keep a small margin ahead of playback, using the same bounded
       // input steps as batch generation even when the viewer seeks.
-      await grow(Math.min(sec + CAST_MARGIN_SEC, scan.durationSec));
+      await grow(
+        Math.min(sec + CAST_MARGIN_SEC, scan.durationSec),
+        shouldContinue,
+      );
       if (planned >= scan.durationSec) finalize();
     },
     async finish(): Promise<ShotPlan> {

@@ -38,6 +38,7 @@ import {
 } from "./terrainCollision";
 import {
   collisionState,
+  type CollisionState,
   type ForceFieldEntry,
   type InteriorEntry,
   type MeshCollider,
@@ -72,6 +73,22 @@ function threeToTorqueVec(v: Vector3): Vec3 {
 const interiors = () => collisionState().interiors;
 const staticShapes = () => collisionState().staticShapes;
 const forceFields = () => collisionState().forceFields;
+
+const queryBatches = new WeakMap<CollisionState, Map<MeshCollider, boolean>>();
+
+/** Reuse collider poses during synchronous queries of an unchanged world.
+ * Each batch refreshes animated DTS colliders on first use; no poses or hit
+ * results are retained across yields, animation updates, or later batches. */
+export function withCollisionQueryBatch<T>(query: () => T): T {
+  const state = collisionState();
+  if (queryBatches.has(state)) return query();
+  queryBatches.set(state, new Map());
+  try {
+    return query();
+  } finally {
+    queryBatches.delete(state);
+  }
+}
 
 function getBvh(geometry: BufferGeometry): MeshBVH {
   const bvhCache = collisionState().bvhCache;
@@ -147,7 +164,12 @@ function buildMeshColliders(meshes: Mesh[]): MeshCollider[] {
 function syncMeshCollider(collider: MeshCollider): boolean {
   const mesh = collider.mesh;
   if (!(mesh instanceof DTSCollisionMesh)) return true;
-  if (!mesh.updateForCollision()) return false;
+  const batch = queryBatches.get(collisionState());
+  const cached = batch?.get(collider);
+  if (cached !== undefined) return cached;
+  const visible = mesh.updateForCollision();
+  batch?.set(collider, visible);
+  if (!visible) return false;
   const bvh = getBvh(mesh.geometry);
   if (collider.bvh !== bvh || !collider.matrixWorld.equals(mesh.matrixWorld)) {
     collider.bvh = bvh;

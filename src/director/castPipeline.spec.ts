@@ -95,6 +95,22 @@ const cameras = (shots: Shot[]) =>
   shots.map(({ scene: _scene, ...camera }) => camera);
 
 describe("cast pipeline cadence", () => {
+  it("pauses catch-up between ticks and resumes with identical camera decisions", async () => {
+    const stream = await createCastStream(new ArrayBuffer(0));
+    await stream.advanceTo(90, () => stream.plannedToSec < 10);
+    expect(stream.plannedToSec).toBe(10);
+    expect(stream.complete).toBe(false);
+    const paused = structuredClone(stream.plan);
+    await stream.advanceTo(100, () => false);
+    expect(stream.plannedToSec).toBe(10);
+    expect(stream.plan).toEqual(paused);
+    await stream.advanceTo(100);
+    const resumed = await stream.finish();
+    const uninterrupted = await createCastStream(new ArrayBuffer(0));
+    expect(cameras(resumed.shots)).toEqual(
+      cameras((await uninterrupted.finish()).shots),
+    );
+  });
   it("waits for a from-connect recording's mode instead of choosing the offline fallback", async () => {
     facts.modeKnownAt = 4.5;
     const stream = await createCastStream(new ArrayBuffer(0));

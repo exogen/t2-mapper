@@ -384,10 +384,16 @@ async function prepareDirector(): Promise<boolean> {
     // the main thread on a future the viewer has not reached, and it is
     // what made playback stall for seconds at a time. On demand, the
     // director is live: it decides each shot as its moment arrives.
+    const isDirecting = () =>
+      scanToken === token && demoDirectorStore.getState().status === "playing";
     void (async () => {
       try {
         while (scanToken === token) {
-          await stream.advanceTo(streamClock.time);
+          if (!isDirecting()) {
+            await new Promise<void>((r) => setTimeout(r, PLAN_AHEAD_POLL_MS));
+            continue;
+          }
+          await stream.advanceTo(streamClock.time, isDirecting);
           if (scanToken !== token) return;
           const done = stream.plannedToSec >= stream.durationSec;
           demoDirectorStore.setState({

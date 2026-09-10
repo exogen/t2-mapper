@@ -224,18 +224,18 @@ export function DemoSelect() {
   );
   const selectedDemo = demosByFilename.get(selectedFilename);
 
-  // When searching, return a flat list sorted by relevance; otherwise
-  // return newest-first grouped by server.
-  const filteredResults = useMemo(() => {
+  // Search controls inclusion; demos always stay newest-first, grouped by day.
+  const filteredGroups = useMemo(() => {
     const all = (demos ?? []).filter(
       (demo) =>
         (!tournamentOnly || demo.games.some((game) => game.tournament)) &&
         (!commentaryOnly || demo.hasCommentary === true),
     );
     if (!searchValue) {
-      return { type: "grouped" as const, groups: groupDemos(all) };
+      return groupDemos(all);
     }
     const matches = matchSorter(all, searchValue, {
+      sorter: (items) => items,
       keys: [
         // Both the internal name and the display name, so "DX_Ice" and
         // "Dangerous Crossing" each match.
@@ -250,7 +250,7 @@ export function DemoSelect() {
         "filename",
       ],
     });
-    return { type: "flat" as const, demos: matches };
+    return groupDemos(matches);
   }, [demos, searchValue, tournamentOnly, commentaryOnly]);
 
   const emptyMessage = !enabled
@@ -263,11 +263,7 @@ export function DemoSelect() {
           ? "No demos indexed yet"
           : null;
 
-  const noResults =
-    emptyMessage == null &&
-    (filteredResults.type === "flat"
-      ? filteredResults.demos.length === 0
-      : filteredResults.groups.length === 0);
+  const noResults = emptyMessage == null && filteredGroups.length === 0;
 
   const renderItem = (demo: DemoIndexEntry) => (
     <ComboboxItem
@@ -382,10 +378,8 @@ export function DemoSelect() {
         <ComboboxList className={styles.List}>
           {emptyMessage != null ? (
             <div className={styles.NoResults}>{emptyMessage}</div>
-          ) : filteredResults.type === "flat" ? (
-            filteredResults.demos.map(renderItem)
           ) : (
-            filteredResults.groups.map(([day, dayDemos]) => (
+            filteredGroups.map(([day, dayDemos]) => (
               <ComboboxGroup key={day} className={styles.Group}>
                 <ComboboxGroupLabel className={styles.GroupLabel}>
                   {day}
