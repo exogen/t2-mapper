@@ -18,6 +18,18 @@ on:
         description: Write the headers (leave unchecked for a dry run)
         type: boolean
         default: false
+      max_age:
+        description: >-
+          Override max-age, in seconds. Leave BLANK to use the value in
+          scripts/lib/assetMetadata.ts, which is the source of truth.
+        type: string
+        default: ""
+      stale_while_revalidate:
+        description: >-
+          Override stale-while-revalidate, in seconds. Leave BLANK to use the
+          value in scripts/lib/assetMetadata.ts.
+        type: string
+        default: ""
 
 # Shares the deploy workflow's group so the backfill never rewrites object
 # metadata while a deploy sync is running.
@@ -53,21 +65,33 @@ jobs:
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
+      # The two overrides go through the environment rather than being
+      # interpolated into the script: `${{ inputs.x }}` in a run block is
+      # substituted before bash sees it, so a crafted value would run as
+      # shell. The script rejects anything that is not a whole number.
       - name: Set Content-Type and Cache-Control on all game assets
         run: |
-          npx tsx --tsconfig tsconfig.node.json scripts/backfill-asset-metadata.ts \
-            --bucket s3://t2-assets/game/base/ \
-            ${{ inputs.apply && '--apply' || '' }}
+          args=(--bucket s3://t2-assets/game/base/)
+          if [ -n "$MAX_AGE" ]; then args+=(--max-age "$MAX_AGE"); fi
+          if [ -n "$STALE_WHILE_REVALIDATE" ]; then
+            args+=(--stale-while-revalidate "$STALE_WHILE_REVALIDATE")
+          fi
+          npx tsx --tsconfig tsconfig.node.json \
+            scripts/backfill-asset-metadata.ts \
+            "${args[@]}" ${{ inputs.apply && '--apply' || '' }}
         env:
+          MAX_AGE: ${{ inputs.max_age }}
+          STALE_WHILE_REVALIDATE: ${{ inputs.stale_while_revalidate }}
           AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
           AWS_ENDPOINT_URL: https://${{ secrets.CLOUDFLARE_ACCOUNT_ID }}.r2.cloudflarestorage.com
 
-      # An apply rewrites every object, so any edge copies are stale.
-      # Purge by PREFIX is an Enterprise-only feature, so this purges the
-      # whole zone, which every plan allows. It is a no-op while the assets
-      # return cf-cache-status: DYNAMIC (nothing is edge-cached yet) and
-      # becomes necessary the moment a Cache Rule makes them cacheable.
+      # An apply rewrites every object, so any edge copies carry the old
+      # header. Purge by PREFIX is an Enterprise-only feature, so this purges
+      # the whole zone, which every plan allows. The assets ARE edge-cached
+      # (measured MISS then HIT, including .dts and .cs), so this is not
+      # optional after a policy change — without it the edge keeps answering
+      # with the previous Cache-Control until its own copy expires.
       - name: Purge the edge cache
         if: inputs.apply && env.HAS_PURGE_SECRETS == 'true'
         run: |

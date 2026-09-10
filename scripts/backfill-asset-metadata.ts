@@ -13,12 +13,19 @@
  * and names any extension the table does not cover, so running it
  * without --apply answers "does the bucket agree with the table?".
  *
+ * `--max-age` and `--stale-while-revalidate` override the Cache-Control the
+ * table would produce, for trying a policy on the live bucket before
+ * committing it. Left off, the table is the single source of truth.
+ *
  *   tsx scripts/backfill-asset-metadata.ts --bucket s3://t2-assets/game/base/
  *   tsx scripts/backfill-asset-metadata.ts --bucket … --apply
+ *   tsx scripts/backfill-asset-metadata.ts --bucket … --max-age 300 --apply
  */
 import { spawnSync } from "node:child_process";
 import {
-  ASSET_CACHE_CONTROL,
+  ASSET_MAX_AGE,
+  ASSET_STALE_WHILE_REVALIDATE,
+  cacheControl,
   contentTypeFor,
   groupByContentType,
   knownExtensions,
@@ -28,9 +35,36 @@ import { arg, flag } from "./lib/args.js";
 const bucket = arg("bucket");
 const apply = flag("apply");
 
+/**
+ * A seconds value from argv. Rejects anything that is not a whole
+ * non-negative number: a bad one would be written verbatim onto every object
+ * in the bucket, and a malformed Cache-Control is ignored by caches rather
+ * than erroring, so it would fail silently and look like a caching bug.
+ */
+function seconds(name: string, fallback: number): number {
+  const raw = arg(name);
+  if (raw === undefined) return fallback;
+  if (!/^\d+$/.test(raw)) {
+    console.error(`--${name} must be a whole number of seconds, got "${raw}".`);
+    process.exit(1);
+  }
+  return Number(raw);
+}
+
+const maxAge = seconds("max-age", ASSET_MAX_AGE);
+const staleWhileRevalidate = seconds(
+  "stale-while-revalidate",
+  ASSET_STALE_WHILE_REVALIDATE,
+);
+const assetCacheControl = cacheControl(maxAge, staleWhileRevalidate);
+const overridden =
+  maxAge !== ASSET_MAX_AGE ||
+  staleWhileRevalidate !== ASSET_STALE_WHILE_REVALIDATE;
+
 if (!bucket) {
   console.error(
-    "Usage: tsx scripts/backfill-asset-metadata.ts --bucket s3://bucket/prefix/ [--apply]",
+    "Usage: tsx scripts/backfill-asset-metadata.ts --bucket s3://bucket/prefix/\n" +
+      "  [--apply] [--max-age <seconds>] [--stale-while-revalidate <seconds>]",
   );
   process.exit(1);
 }
@@ -76,6 +110,13 @@ const keys = listKeys();
 const { groups, unknown } = groupByContentType(keys);
 
 console.log(`${keys.length} objects under ${bucket}.`);
+console.log(
+  `Cache-Control: ${assetCacheControl}` +
+    (overridden
+      ? "  (OVERRIDDEN on the command line; the table says " +
+        `${cacheControl()})`
+      : "  (from scripts/lib/assetMetadata.ts)"),
+);
 
 if (unknown.size > 0) {
   console.error(
@@ -109,7 +150,7 @@ for (const [contentType, extensions] of [...groups].sort()) {
     "--content-type",
     contentType,
     "--cache-control",
-    ASSET_CACHE_CONTROL,
+    assetCacheControl,
     "--no-progress",
     "--exclude",
     "*",
@@ -128,7 +169,7 @@ if (!apply) {
   );
   console.log("What each group would be set to:");
   for (const [contentType] of [...groups].sort()) {
-    console.log(`  ${contentType}   cache-control: ${ASSET_CACHE_CONTROL}`);
+    console.log(`  ${contentType}   cache-control: ${assetCacheControl}`);
   }
 }
 
@@ -136,7 +177,5 @@ if (!apply) {
 // AWS CLI guesses wrongly on its own (DTS audio, DV video).
 console.log("\nExtension check:");
 for (const sample of ["shapes/x.dts", "interiors/x.dif"]) {
-  console.log(
-    `  ${sample} -> ${contentTypeFor(sample)}, ${ASSET_CACHE_CONTROL}`,
-  );
+  console.log(`  ${sample} -> ${contentTypeFor(sample)}, ${assetCacheControl}`);
 }

@@ -11,11 +11,32 @@
 import path from "node:path";
 import { TEXT_EXTENSIONS } from "./encoding.js";
 
+/** Seconds a cache may reuse an asset without revalidating. */
+export const ASSET_MAX_AGE = 7200;
+
 /**
- * What browsers cache (revalidated every two hours by ETag) and what the edge
- * caches (long, because the deploy purges every changed URL).
+ * Seconds past max-age that a cache may serve the stale copy while it
+ * revalidates in the background, so an expiring asset never makes a request
+ * wait on the origin.
  */
-export const ASSET_CACHE_CONTROL = "public, max-age=7200, s-maxage=31536000";
+export const ASSET_STALE_WHILE_REVALIDATE = 21600;
+
+/**
+ * Deliberately NO `s-maxage`: Cloudflare treats it as implying
+ * `proxy-revalidate`, which stops a shared cache serving stale content at
+ * all, so pairing it with stale-while-revalidate turns the whole
+ * stale window off (requests come back EXPIRED rather than UPDATING).
+ * `must-revalidate`, `proxy-revalidate` and `no-cache` do the same.
+ */
+export function cacheControl(
+  maxAge: number = ASSET_MAX_AGE,
+  staleWhileRevalidate: number = ASSET_STALE_WHILE_REVALIDATE,
+): string {
+  return `max-age=${maxAge}, stale-while-revalidate=${staleWhileRevalidate}`;
+}
+
+/** The policy every asset carries unless a maintenance run overrides it. */
+export const ASSET_CACHE_CONTROL = cacheControl();
 
 /**
  * Text assets are all UTF-8: `scripts/lib/encoding.ts` converts them as

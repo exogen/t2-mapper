@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   ASSET_CACHE_CONTROL,
+  ASSET_MAX_AGE,
+  ASSET_STALE_WHILE_REVALIDATE,
+  cacheControl,
   BINARY_CONTENT_TYPE,
   TEXT_CONTENT_TYPE,
   contentTypeFor,
@@ -95,6 +98,35 @@ describe("knownExtensions", () => {
       ".wav",
     ]) {
       expect(known, `${ext} must have a content type`).toContain(ext);
+    }
+  });
+});
+
+describe("cacheControl", () => {
+  it("builds the policy from the table's values by default", () => {
+    expect(cacheControl()).toBe(
+      `max-age=${ASSET_MAX_AGE}, stale-while-revalidate=${ASSET_STALE_WHILE_REVALIDATE}`,
+    );
+    expect(ASSET_CACHE_CONTROL).toBe(cacheControl());
+  });
+
+  it("takes overrides, for a maintenance run trying a policy out", () => {
+    expect(cacheControl(300, 900)).toBe(
+      "max-age=300, stale-while-revalidate=900",
+    );
+  });
+
+  it("never emits a directive that would disable the stale window", () => {
+    // Cloudflare will not serve stale alongside any of these — s-maxage
+    // implies proxy-revalidate — so the header comes back EXPIRED rather
+    // than UPDATING and stale-while-revalidate does nothing.
+    for (const directive of [
+      "s-maxage",
+      "must-revalidate",
+      "proxy-revalidate",
+      "no-cache",
+    ]) {
+      expect(ASSET_CACHE_CONTROL).not.toContain(directive);
     }
   });
 });
