@@ -5,12 +5,17 @@
  * only those without an .m4a.
  */
 import { parseArgs } from "node:util";
-import { convertWav, findUnconverted, globSources } from "./lib/convert";
+import {
+  convertWav,
+  DEFAULT_BITRATE,
+  findUnconverted,
+  globSources,
+} from "./lib/convert";
 
 const { values } = parseArgs({
   options: {
     new: { type: "boolean", default: false, short: "n" },
-    bitrate: { type: "string", default: "96k", short: "b" },
+    bitrate: { type: "string", default: DEFAULT_BITRATE, short: "b" },
     concurrency: { type: "string", default: "8", short: "j" },
   },
 });

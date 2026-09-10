@@ -68,11 +68,12 @@ jobs:
         # nothing may be guessed here. The run fails if any extension has no
         # entry in the table, rather than shipping it untyped.
         #
-        # It also writes a brotli sibling next to every changed .dts and
-        # .dif (<name>.dts.br, Content-Encoding: br). Cloudflare compresses
-        # application/octet-stream not at all, so these go over the wire raw
-        # without it. The asset worker serves the siblings; a missing one
-        # just falls back, so the set can fill in over several deploys.
+        # It also writes a brotli sibling next to every changed .dts, .dif
+        # and .ter (<name>.dts.br, Content-Encoding: br). Nothing serves
+        # these right now — a Cloudflare compression rule on the asset host
+        # handles compression since the asset worker was retired — but they
+        # are kept so a worker can be brought back without recompressing the
+        # whole corpus first.
         run: |
           set -o pipefail
           npx tsx --tsconfig tsconfig.node.json scripts/sync-assets.ts \

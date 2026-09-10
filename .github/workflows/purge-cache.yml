@@ -4,12 +4,13 @@ name: Purge edge cache
 #
 # The deploy purges the URLs it changed, which covers the ordinary case. This
 # is for when cached entries are wrong for a reason the change list cannot
-# see — a worker serving the wrong representation, say. Purge by prefix is
-# Enterprise-only, so this purges everything; the cache refills on demand.
+# see — a compression rule serving the wrong representation, say. Purge by
+# prefix is Enterprise-only, so this purges everything; the cache refills on
+# demand.
 #
 # Assets carry s-maxage=31536000, so a bad entry does NOT age out on its own.
-# If the cause was a worker bug, DEPLOY THE FIX FIRST: purging while the
-# broken code is live just lets the next request cache the same wrong answer.
+# If the cause was a misconfiguration, FIX IT FIRST: purging while the broken
+# setting is live just lets the next request cache the same wrong answer.
 
 on:
   workflow_dispatch:

@@ -1,14 +1,20 @@
 /**
  * Brotli siblings for the formats worth precompressing.
  *
- * Cloudflare compresses nothing for these: they are served as
+ * Cloudflare compresses nothing for these by default: they are served as
  * `application/octet-stream`, which its compression rules skip, so a `.dts`
- * goes over the wire raw today. Storing a `<name>.dts.br` next to it lets an
- * edge rule hand the compressed copy to any client that accepts brotli.
+ * goes over the wire raw. Storing a `<name>.dts.br` next to it lets something
+ * at the edge hand the compressed copy to any client that accepts brotli.
  *
- * Measured: brotli quality 11 lands around a third of the original for both
- * shapes and interiors, and decompresses at ~220 MB/s in the browser's
- * network stack, about a millisecond for a typical file.
+ * NOTHING SERVES THESE TODAY. The asset worker that swapped them in was
+ * retired in favour of a Cloudflare compression rule, which compresses at
+ * brotli 4 rather than the 11 here. The siblings are still written so that
+ * bringing a worker back is a deploy rather than a full recompression of the
+ * corpus; they cost bucket storage and nothing else.
+ *
+ * Measured: brotli quality 11 lands around a third of the original for
+ * shapes and interiors and 38% for terrain, and decompresses at ~220 MB/s in
+ * the browser's network stack, about a millisecond for a typical file.
  */
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -18,10 +24,25 @@ import { promisify } from "node:util";
 const brotliCompress = promisify(zlib.brotliCompress);
 
 /**
- * Extensions that get a `.br` sibling. Both are served as
- * `application/octet-stream`, which Cloudflare's compression skips entirely.
+ * Extensions that get a `.br` sibling. All are served as
+ * `application/octet-stream`, which Cloudflare's compression skips by
+ * default.
+ *
+ * `.ter` is a raw 16-bit heightfield followed by raw per-square material and
+ * alpha bytes — nothing in it is compressed, and it is on the critical path
+ * for a mission load, one ~450 KB file before any ground can be drawn.
+ *
+ * `.dsq` earns far less than the rest: quantized keyframe rotations are close
+ * to noise, so quality 11 only reaches 76% where shapes reach 31%. It is here
+ * because the animation sequences are fetched per shape and the pass costs
+ * nothing extra once it is running, not because the ratio is good.
+ *
+ * Measured but deliberately left out: `.bm8` compresses well (30%) and `.spn`
+ * poorly (68%), and neither is ever requested — nothing in the app resolves a
+ * `.spn`, and the `.bm8` texture probe in src/manifest.ts is commented out.
+ * Revisit `.bm8` if paletted-texture loading is turned on.
  */
-export const PRECOMPRESS_EXTENSIONS = new Set([".dts", ".dif"]);
+export const PRECOMPRESS_EXTENSIONS = new Set([".dts", ".dif", ".dsq", ".ter"]);
 
 /**
  * Quality 11. This runs once per changed file in CI, and the transfer it

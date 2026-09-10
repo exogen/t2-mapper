@@ -27,11 +27,18 @@ afterEach(async () => {
 });
 
 describe("shouldPrecompress", () => {
-  it("takes shapes and interiors, and leaves everything else alone", () => {
+  it("takes shapes, interiors, terrain and sequences, and leaves everything else alone", () => {
     expect(shouldPrecompress("shapes/x.dts")).toBe(true);
     expect(shouldPrecompress("interiors/x.dif")).toBe(true);
+    expect(shouldPrecompress("terrains/x.ter")).toBe(true);
+    expect(shouldPrecompress("shapes/x.dsq")).toBe(true);
     expect(shouldPrecompress("shapes/X.DTS")).toBe(true);
     expect(shouldPrecompress("interiors/X.DIF")).toBe(true);
+    expect(shouldPrecompress("terrains/X.TER")).toBe(true);
+    expect(shouldPrecompress("shapes/X.DSQ")).toBe(true);
+    // Binary asset types that were measured and left out (see the module).
+    expect(shouldPrecompress("textures/x.bm8")).toBe(false);
+    expect(shouldPrecompress("missions/x.spn")).toBe(false);
     expect(shouldPrecompress("textures/x.png")).toBe(false);
     expect(shouldPrecompress("shapes/x.glb")).toBe(false);
     // Already compressed: a .br of a .br would be pointless.
