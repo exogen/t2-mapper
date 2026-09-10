@@ -27,7 +27,6 @@ import type { StaticShapeType } from "./ShapeInfoProvider";
 import {
   useEngineSelector,
   effectDeltaSec,
-  effectNow,
   engineStore,
 } from "../state/engineStore";
 import { FloatingLabel } from "./FloatingLabel";
@@ -56,6 +55,7 @@ import type { GameEntity } from "../state/gameEntityTypes";
 import { useImageStateAnimation } from "./useImageStateAnimation";
 import { DTSAnimationMixer } from "../dts/dtsAnimationMixer";
 import { applyDtsThreadState, holdDtsAction } from "../dts/dtsThread";
+import { shapeThreadTime } from "../stream/shapeThreads";
 import { useFadeAndCloak } from "./shapeFadeCloak";
 import { shapeBoxCenter } from "../shapeLighting";
 import { useShapeLighting } from "./useShapeLighting";
@@ -117,6 +117,8 @@ interface StreamShapeEntity {
     speed: number;
     lateralSlip: number;
     longitudinalSlip: number;
+    rotation: number;
+    timeSec: number;
   }>;
   steeringYaw?: number;
   frozen?: boolean;
@@ -216,7 +218,7 @@ interface WheelAnimState {
 /** Returns pausable time in seconds for demo mode, real time otherwise. */
 function shapeNowSec(): number {
   const { recording } = engineStore.getState().playback;
-  return recording != null ? effectNow() / 1000 : performance.now() / 1000;
+  return recording != null ? streamClock.time : performance.now() / 1000;
 }
 
 /**
@@ -743,7 +745,7 @@ export const ShapeModel = memo(function ShapeModel({
   // state machine off the owner's ghosted image state, like a player's
   // weapon: fire, reload and activate sequences, spin and state sounds.
   const imageActionsRef = useRef(new Map<string, AnimationAction>());
-  const spinActionRef = useRef<AnimationAction | null>(null);
+  const barrelDeployRef = useRef<AnimationAction | null>(null);
   const cyclicSequenceNames = useMemo(
     () => readDtsSequences(gltf.scene, gltf.animations).cyclic,
     [gltf],
@@ -761,11 +763,9 @@ export const ShapeModel = memo(function ShapeModel({
       spin.timeScale = 0;
       spin.play();
     }
-    spinActionRef.current = spin ?? null;
     return () => {
       spin?.stop();
       imageActionsRef.current = new Map();
-      spinActionRef.current = null;
     };
   }, [mixer, clipsByName, imageSlot]);
   useImageStateAnimation(
@@ -778,9 +778,6 @@ export const ShapeModel = memo(function ShapeModel({
         : undefined,
     {
       actions: imageActionsRef,
-      setSpinTimeScale: (timeScale) => {
-        if (spinActionRef.current) spinActionRef.current.timeScale = timeScale;
-      },
       imageRoot: clonedScene,
       ownerId: entityId,
       seqIndexToName,
@@ -827,6 +824,7 @@ export const ShapeModel = memo(function ShapeModel({
           if (t) {
             const changed =
               !prev ||
+              prev.timeline !== t.timeline ||
               prev.sequence !== t.sequence ||
               prev.state !== t.state ||
               prev.forward !== t.forward ||
@@ -852,6 +850,25 @@ export const ShapeModel = memo(function ShapeModel({
             handleDestroyThreadRef.current?.(slot);
           }
         }
+      }
+    }
+
+    // Stream threads belong to demo time, not the lifetime of this React model.
+    // This also seats completed deploys while paused or after an asset loads.
+    if (currentDemoThreads && animationEnabled) {
+      for (const state of currentDemoThreads) {
+        if (!state.timeline) continue;
+        const thread = threads.get(state.index);
+        const action = thread?.action;
+        if (!action) continue;
+        const duration = action.getClip().duration;
+        const time = shapeThreadTime(
+          state,
+          streamClock.time,
+          duration,
+          seqCyclicByName.get(thread.sequence) ?? false,
+        );
+        holdDtsAction(action, duration > 0 ? time / duration : 0);
       }
     }
 
@@ -882,7 +899,12 @@ export const ShapeModel = memo(function ShapeModel({
         // advanceTime: rotation += wheelSpeed * dt * TWO_PI, then
         // wrap to [0,1) and flip negative to 1-rotation.
         if (wa.wheelAction && wheel) {
-          wa.rotation += wheel.speed * effectDelta * Math.PI * 2;
+          wa.rotation =
+            wheel.rotation +
+            wheel.speed *
+              Math.max(0, streamClock.time - wheel.timeSec) *
+              Math.PI *
+              2;
           wa.rotation -= Math.floor(wa.rotation); // wrap to [0,1)
           wa.wheelAction.time = wa.rotation * wa.wheelAction.getClip().duration;
         }
@@ -907,13 +929,31 @@ export const ShapeModel = memo(function ShapeModel({
       driveTurretAim(turretAnim, streamEntityRef.current?.turretAim);
     }
 
+    const barrelDeploy = barrelDeployRef.current;
+    if (barrelDeploy && inDemo && imageSlot != null && entityId != null) {
+      const mountedAt = ownerImageSlot(
+        gameEntityStore.getState().streamEntities.get(entityId),
+        imageSlot,
+      )?.mountedAtSec;
+      const duration = barrelDeploy.getClip().duration;
+      holdDtsAction(
+        barrelDeploy,
+        animationEnabled && mountedAt != null && duration > 0
+          ? Math.min(
+              1,
+              (Math.max(0, streamClock.time - mountedAt) * 0.5) / duration,
+            )
+          : 0,
+      );
+    }
+
     // Evaluate once after every controller has set its action's time/state.
     mixer?.update(animationEnabled ? effectDelta : 0);
 
     // Native tracks drive sequence-controlled IFLs. Only unbound viewer IFLs
     // use this pausable clock; disabling animation holds their first frame.
     clonedScene.setImageAnimationTime(
-      (clonedScene.time ?? 0) + effectDelta,
+      inDemo ? streamClock.time : (clonedScene.time ?? 0) + effectDelta,
       animationEnabled,
     );
   }, FramePriority.ShapeAnimation);
@@ -945,23 +985,15 @@ export const ShapeModel = memo(function ShapeModel({
     const owner =
       store.streamEntities.get(entityId) ?? store.missionEntities.get(entityId);
     if (owner?.className !== "Turret") return;
-    const mountedAt = ownerImageSlot(owner, imageSlot)?.mountedAtSec;
-    const elapsed =
-      mountedAt != null ? Math.max(0, streamClock.time - mountedAt) : 0;
     const action = mixer.clipAction(clip);
     action.setLoop(LoopOnce, 1);
     action.clampWhenFinished = true;
     action.timeScale = 0.5;
     action.reset().play();
-    const at = elapsed * 0.5;
-    if (at >= clip.duration) {
-      action.time = clip.duration;
-      action.paused = true;
-    } else {
-      action.time = at;
-    }
+    barrelDeployRef.current = action;
     return () => {
       action.stop();
+      barrelDeployRef.current = null;
     };
   }, [mixer, clipsByName, entityId, imageSlot]);
 

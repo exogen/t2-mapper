@@ -21,6 +21,12 @@ export function applyStreamEntityPose(
   interpT: number,
   camera: Camera,
 ): void {
+  // React/Suspense may not have committed removals yet. The destination
+  // snapshot controls presence immediately, including during a seek.
+  if (!entity) {
+    child.visible = false;
+    return;
+  }
   // Link beams (ELF/repair) have no ghost position at all — they
   // draw themselves in world space between two live objects, and
   // manage their own visibility. The no-position hide below would
@@ -33,20 +39,6 @@ export function applyStreamEntityPose(
     return;
   }
 
-  // An entity removed from the snapshot may still be mounted until
-  // React commits the removal; hold it at its last keyframe position.
-  if (!entity) {
-    const kfs =
-      renderEntity && "keyframes" in renderEntity
-        ? renderEntity.keyframes
-        : undefined;
-    if (kfs?.[0]?.position) {
-      const kf = kfs[0];
-      child.visible = true;
-      child.position.set(kf.position[1], kf.position[2], kf.position[0]);
-      return;
-    }
-  }
   if (!entity?.position || (entity.fadeVal === 0 && !entity.cloakLevel)) {
     child.visible = false;
     return;

@@ -29,7 +29,7 @@ function positionedBase(entity: StreamEntity, spawnTime?: number) {
     shapeHint: entity.shapeHint,
     dataBlock: entity.dataBlock,
     skinName: entity.skinName,
-    spawnTime,
+    spawnTime: entity.spawnTimeSec ?? spawnTime,
     position: entity.position,
     rotation: entity.rotation,
     scale: entity.scale,

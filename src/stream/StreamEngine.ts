@@ -1,5 +1,9 @@
+import { timelineRandom } from "./timelineRandom";
 import {
-  MAX_PREDICTION_TICKS,
+  updateClientAnimation,
+  type ClientAnimationState,
+} from "./clientAnimation";
+import {
   PlayerPrediction,
   type PlayerMove,
   type PlayerRenderDelta,
@@ -116,6 +120,8 @@ import {
   resolveExplosionTiming,
 } from "./explosionLifetime";
 import { getShapeSequenceDurationSec } from "./shapeSequences";
+import { updateShapeThread } from "./shapeThreads";
+import { ImageAnimation } from "./imageAnimation";
 import { getShapeBounds } from "./shapeBounds";
 import { DEFAULT_WORLD_GRAVITY, worldGravityToMS2 } from "./worldGravity";
 import type {
@@ -193,7 +199,6 @@ export interface MutableEntity {
   armAction?: number;
   damageState?: number;
   playerPrediction?: PlayerPrediction;
-  deferredPlayerTicks?: number;
   playerDelta?: PlayerRenderDelta;
   turretAim?: TurretAim;
   targetId?: number;
@@ -295,11 +300,14 @@ export interface MutableEntity {
   audioMinLoopGap?: number;
   audioMaxLoopGap?: number;
   sceneData?: SceneObject;
+  clientAnimation?: ClientAnimationState;
   /** WheeledVehicle per-wheel state from ghost data. */
   wheels?: Array<{
     speed: number;
     lateralSlip: number;
     longitudinalSlip: number;
+    rotation: number;
+    timeSec: number;
   }>;
   /** Vehicle steering angle (radians), from ghost data. */
   steeringYaw?: number;
@@ -360,6 +368,7 @@ export abstract class StreamEngine implements StreamingPlayback {
 
   // ── Entities ──
   protected entities = new Map<string, MutableEntity>();
+  private imageAnimations = new Map<string, (ImageAnimation | undefined)[]>();
   protected entityIdByGhostIndex = new Map<number, string>();
   /** Incremented on structural entity changes (add/remove/create). */
   protected entityGeneration = 0;
@@ -369,7 +378,7 @@ export abstract class StreamEngine implements StreamingPlayback {
   // ── Tick / time ──
   protected tickCount = 0;
   protected playerPredictionEnabled = false;
-  protected suppressPlayerPrediction = false;
+  protected skippedPlayerPrediction = false;
 
   /** Rendering opts in; timeline/director scanners retain recorded packet poses. */
   setPlayerPredictionEnabled(enabled: boolean): void {
@@ -675,6 +684,7 @@ export abstract class StreamEngine implements StreamingPlayback {
     // until the server says otherwise.
     this.ghostAlwaysDoneSec = null;
     this.entities.clear();
+    this.imageAnimations.clear();
     this.entityIdByGhostIndex.clear();
     this.entityGeneration++;
   }
@@ -1227,6 +1237,7 @@ export abstract class StreamEngine implements StreamingPlayback {
 
     if (ghost.type === "delete") {
       if (prevEntityId) {
+        this.imageAnimations.delete(prevEntityId);
         this.entities.delete(prevEntityId);
         this.entityIdByGhostIndex.delete(ghostIndex);
         this.entityGeneration++;
@@ -1244,18 +1255,20 @@ export abstract class StreamEngine implements StreamingPlayback {
       return;
     }
 
-    const entityId = prevEntityId ?? allocateEntityId();
+    // A create is a new lifetime, even when the server reuses an occupied slot.
+    // Renderers and mounted-image state must not inherit the previous object.
+    const entityId =
+      ghost.type === "create"
+        ? allocateEntityId()
+        : (prevEntityId ?? allocateEntityId());
     if (prevEntityId && prevEntityId !== entityId) {
       this.entities.delete(prevEntityId);
+      this.imageAnimations.delete(prevEntityId);
     }
 
     let entity: MutableEntity;
     const existingEntity = this.entities.get(entityId);
-    if (existingEntity && ghost.type === "create") {
-      existingEntity.spawnTick = this.tickCount;
-      this.resetEntity(existingEntity);
-      entity = existingEntity;
-    } else if (existingEntity) {
+    if (existingEntity) {
       entity = existingEntity;
     } else {
       entity = {
@@ -1275,6 +1288,11 @@ export abstract class StreamEngine implements StreamingPlayback {
     entity.type = toEntityType(className);
     this.entityIdByGhostIndex.set(ghostIndex, entityId);
     this.applyGhostData(entity, ghost.parsedData);
+    entity.clientAnimation = updateClientAnimation(
+      entity.clientAnimation,
+      entity,
+      this.getTimeSec(),
+    );
     // Only set sceneData on ghost creates — updates contain sparse fields
     // that would overwrite the initial data with defaults (e.g. empty
     // interiorFile, identity transform).
@@ -1333,7 +1351,6 @@ export abstract class StreamEngine implements StreamingPlayback {
     entity.headYaw = undefined;
     entity.health = undefined;
     entity.playerPrediction = undefined;
-    entity.deferredPlayerTicks = undefined;
     entity.playerDelta = undefined;
     entity.energy = undefined;
     entity.maxEnergy = undefined;
@@ -1393,7 +1410,7 @@ export abstract class StreamEngine implements StreamingPlayback {
     return entity.playerPrediction;
   }
 
-  private playerCollisionReady(): boolean {
+  protected playerCollisionReady(): boolean {
     // Scene loading is progressive. Never predict a stationary player falling
     // through a terrain/interior whose collision asset has not mounted yet.
     const world = collisionState();
@@ -1446,8 +1463,7 @@ export abstract class StreamEngine implements StreamingPlayback {
     prediction.mounted = entity.mountObjectGhostIndex != null;
     prediction.allowFreelook = !this.firstPerson;
     prediction.readPacketData(data);
-    entity.deferredPlayerTicks = 0;
-    if (!this.suppressPlayerPrediction && this.playerCollisionReady())
+    if (this.playerCollisionReady())
       withCollisionQueryBatch(() => {
         for (const move of moves)
           prediction.processTick(
@@ -1464,7 +1480,7 @@ export abstract class StreamEngine implements StreamingPlayback {
     if (!this.playerCollisionReady()) {
       for (const entity of this.entities.values()) {
         entity.playerDelta = undefined;
-        entity.deferredPlayerTicks = 0;
+        if (entity.playerPrediction) this.skippedPlayerPrediction = true;
       }
       return;
     }
@@ -1481,20 +1497,9 @@ export abstract class StreamEngine implements StreamingPlayback {
           (isControl && this.isPiloting);
         prediction.allowFreelook = isControl && !this.firstPerson;
         if (prediction.mounted) {
-          entity.deferredPlayerTicks = 0;
           entity.playerDelta = undefined;
           continue;
         }
-        if (this.suppressPlayerPrediction) {
-          entity.deferredPlayerTicks = Math.min(
-            MAX_PREDICTION_TICKS,
-            (entity.deferredPlayerTicks ?? 0) + 1,
-          );
-          continue;
-        }
-        for (let tick = 0; tick < (entity.deferredPlayerTicks ?? 0); tick++)
-          prediction.processTick(this.worldGravity);
-        entity.deferredPlayerTicks = 0;
         if (isControl) {
           for (const move of controlMoves)
             prediction.processTick(
@@ -1664,27 +1669,25 @@ export abstract class StreamEngine implements StreamingPlayback {
       }
     }
 
-    // WheeledVehicle per-wheel state. Mutate in-place to avoid allocation
-    // on every ghost update (~32Hz).
+    // Preserve wheel phase and snapshot history across sparse speed updates.
     if (Array.isArray(data.wheels)) {
-      const incoming = data.wheels as Array<{
-        avel: number;
-        Dy: number;
-        Dx: number;
-      }>;
-      if (!entity.wheels || entity.wheels.length !== incoming.length) {
-        entity.wheels = incoming.map((w) => ({
+      const now = this.getTimeSec();
+      entity.wheels = (
+        data.wheels as Array<{ avel: number; dx: number; dy: number }>
+      ).map((w, i) => {
+        const previous = entity.wheels?.[i];
+        const rotation = previous
+          ? previous.rotation +
+            previous.speed * (now - previous.timeSec) * Math.PI * 2
+          : 0;
+        return {
           speed: w.avel,
-          lateralSlip: w.Dx,
-          longitudinalSlip: w.Dy,
-        }));
-      } else {
-        for (let i = 0; i < incoming.length; i++) {
-          entity.wheels[i].speed = incoming[i].avel;
-          entity.wheels[i].lateralSlip = incoming[i].Dx;
-          entity.wheels[i].longitudinalSlip = incoming[i].Dy;
-        }
-      }
+          lateralSlip: w.dx,
+          longitudinalSlip: w.dy,
+          rotation: rotation - Math.floor(rotation),
+          timeSec: now,
+        };
+      });
     }
     if (typeof data.steeringYaw === "number") {
       entity.steeringYaw = data.steeringYaw;
@@ -1755,6 +1758,7 @@ export abstract class StreamEngine implements StreamingPlayback {
             target?: boolean;
             wet?: boolean;
             fireCount?: number;
+            imageExtraFlag?: boolean;
           }>
         | undefined;
       if (images && images.length > 0) {
@@ -1801,16 +1805,34 @@ export abstract class StreamEngine implements StreamingPlayback {
                   : undefined;
 
             if (shapeName) {
-              // A new image (barrel swap, weapon change) replaces the
-              // array so renderers keyed on its identity remount the
-              // mount; per-tick state changes only swap the slot object.
+              // Keep image lifetime separate from its changing condition flags.
               const newImage =
                 !prevSlot ||
                 prevSlot.dataBlockId !== img.dataBlockId ||
                 prevSlot.shapeName !== shapeName ||
                 prevSlot.skinName !== skinName;
-              if (!entity.imageSlots) entity.imageSlots = [];
-              else if (newImage) entity.imageSlots = [...entity.imageSlots];
+              let animations = this.imageAnimations.get(entity.id);
+              if (!animations)
+                this.imageAnimations.set(entity.id, (animations = []));
+              if (newImage)
+                animations[img.index] = imageStates?.length
+                  ? new ImageAnimation(
+                      imageStates,
+                      this.getTimeSec(),
+                      entity.ghostIndex * 65537 +
+                        entity.spawnTick * 31 +
+                        img.index,
+                    )
+                  : undefined;
+              // unpackUpdate runs updateImageState(i, 0) after each packet;
+              // fire notifications must not be lost between simulation ticks.
+              animations[img.index]?.advance(
+                this.getTimeSec(),
+                imageState,
+                newImage && img.imageExtraFlag === true,
+              );
+              // Published snapshots retain their image flags at that tick.
+              entity.imageSlots = [...(entity.imageSlots ?? [])];
               entity.imageSlots[img.index] = {
                 shapeName,
                 mountPoint,
@@ -1819,6 +1841,7 @@ export abstract class StreamEngine implements StreamingPlayback {
                 skinName,
                 imageState,
                 imageStates,
+                animation: animations[img.index]?.current,
                 mountedAtSec: newImage
                   ? this.getTimeSec()
                   : prevSlot.mountedAtSec,
@@ -1837,6 +1860,8 @@ export abstract class StreamEngine implements StreamingPlayback {
               }
             }
           } else if (!img.dataBlockId) {
+            const animations = this.imageAnimations.get(entity.id);
+            if (animations) animations[img.index] = undefined;
             // Clear slot.
             if (entity.imageSlots?.[img.index]) {
               entity.imageSlots = [...entity.imageSlots];
@@ -2320,17 +2345,14 @@ export abstract class StreamEngine implements StreamingPlayback {
     // Threads
     if (Array.isArray(data.threads)) {
       const incoming = data.threads as ThreadState[];
-      if (entity.threads) {
-        const merged = [...entity.threads];
-        for (const t of incoming) {
-          const existingIdx = merged.findIndex((m) => m.index === t.index);
-          if (existingIdx >= 0) merged[existingIdx] = t;
-          else merged.push(t);
-        }
-        entity.threads = merged;
-      } else {
-        entity.threads = incoming;
+      const merged = [...(entity.threads ?? [])];
+      for (const t of incoming) {
+        const index = merged.findIndex((m) => m.index === t.index);
+        const next = updateShapeThread(merged[index], t, this.getTimeSec());
+        if (index >= 0) merged[index] = next;
+        else merged.push(next);
       }
+      entity.threads = merged;
     }
 
     if (typeof data.energy === "number") {
@@ -2398,11 +2420,7 @@ export abstract class StreamEngine implements StreamingPlayback {
       if (prediction) {
         prediction.damageState = entity.damageState ?? 0;
         prediction.mounted = entity.mountObjectGhostIndex != null;
-        prediction.unpackUpdate(
-          data as PlayerGhostData,
-          this.suppressPlayerPrediction,
-        );
-        if (data.position) entity.deferredPlayerTicks = 0;
+        prediction.unpackUpdate(data as PlayerGhostData);
         this.publishPlayerPrediction(entity, prediction);
       }
     }
@@ -2493,6 +2511,7 @@ export abstract class StreamEngine implements StreamingPlayback {
     const timing = resolveExplosionTiming(
       block,
       getShapeSequenceDurationSec(shape, "ambient"),
+      timelineRandom(explosionDataBlockId, addTick, ...position),
     );
     const explodeTicks = explosionExplodeTicks(timing.delayMS);
     if (
@@ -2547,6 +2566,11 @@ export abstract class StreamEngine implements StreamingPlayback {
 
     const subExplosions = block?.subExplosions as (number | null)[] | undefined;
     if (!Array.isArray(subExplosions)) return;
+    const random = timelineRandom(
+      p.explosionDataBlockId,
+      p.explodeTick,
+      ...p.position,
+    );
     for (const subId of subExplosions) {
       if (subId == null) continue;
       const subBlock = this.getDataBlockData(subId);
@@ -2556,9 +2580,9 @@ export abstract class StreamEngine implements StreamingPlayback {
       const offset = (subBlock.offset as number | undefined) ?? 0;
       let subPos = p.position;
       if (Math.abs(offset) > 1e-4) {
-        const dx = Math.random() * 2 - 1;
-        const dy = Math.random() * 2 - 1;
-        const dz = Math.random();
+        const dx = random() * 2 - 1;
+        const dy = random() * 2 - 1;
+        const dz = random();
         const len = Math.hypot(dx, dy, dz) || 1;
         subPos = [
           p.position[0] + (dx / len) * offset,
@@ -2673,6 +2697,33 @@ export abstract class StreamEngine implements StreamingPlayback {
       // reflected direction, not the muzzle direction it was ghosted with.
       entity.velocity = [v[0], v[1], v[2]];
       if (entity.direction) entity.direction = entity.velocity;
+    }
+  }
+
+  /** Advance client animations even while their render assets are absent. */
+  protected advanceShapeAnimations(): void {
+    const time = this.getTimeSec();
+    for (const entity of this.entities.values()) {
+      entity.clientAnimation = updateClientAnimation(
+        entity.clientAnimation,
+        entity,
+        time,
+      );
+    }
+    for (const [id, animations] of this.imageAnimations) {
+      const entity = this.entities.get(id);
+      if (!entity?.imageSlots) continue;
+      let changed = false;
+      for (let i = 0; i < animations.length; i++) {
+        const animation = animations[i],
+          slot = entity.imageSlots[i];
+        if (!animation || !slot?.imageState) continue;
+        const state = animation.advance(time, slot.imageState);
+        if (state === slot.animation) continue;
+        if (!changed) entity.imageSlots = [...entity.imageSlots];
+        changed = true;
+        entity.imageSlots[i] = { ...slot, animation: state };
+      }
     }
   }
 
@@ -3751,7 +3802,9 @@ export abstract class StreamEngine implements StreamingPlayback {
         explosionDataBlockId: entity.explosionDataBlockId,
         explosionLifetimeMS: entity.explosionLifetimeMS,
         explosionStartAgeMS: entity.explosionStartAgeMS,
-        spawnTimeSec: entity.explosionSpawnSec,
+        spawnTimeSec:
+          entity.explosionSpawnSec ??
+          entity.spawnTick * (TICK_DURATION_MS / 1000),
         hasExploded: entity.hasExploded,
         maintainEmitterId: entity.maintainEmitterId,
         headPitch: entity.headPitch,
@@ -3766,6 +3819,7 @@ export abstract class StreamEngine implements StreamingPlayback {
         audioMinLoopGap: entity.audioMinLoopGap,
         audioMaxLoopGap: entity.audioMaxLoopGap,
         wheels: entity.wheels,
+        clientAnimation: entity.clientAnimation,
         steeringYaw: entity.steeringYaw,
         frozen: entity.frozen,
         projectileAgeMS:

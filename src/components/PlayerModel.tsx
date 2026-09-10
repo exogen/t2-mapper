@@ -1,4 +1,6 @@
+import { shapeThreadTime } from "../stream/shapeThreads";
 import { streamRenderFrame } from "../stream/interpolateEntity";
+import { sameImageMounts } from "../stream/imageMount";
 import { observeShapeMeshes } from "../dts/dtsScene";
 import {
   Fragment,
@@ -15,8 +17,6 @@ import {
   type AnimationMixer,
   FrontSide,
   Group,
-  LoopOnce,
-  LoopRepeat,
   Object3D,
 } from "three";
 import type { AnimationAction } from "three";
@@ -29,16 +29,13 @@ import {
   processShapeScene,
 } from "../stream/playbackUtils";
 import {
-  actionStartPosition,
-  NO_ACTION_ANIM,
   NUM_TABLE_ACTION_ANIMS,
-  pickMoveAnimation,
-  stepActionAnim,
-  type ActionAnimState,
+  samplePlayerPose,
 } from "../stream/playerAnimation";
 import { stepFlareThread } from "./jetThreads";
 import { DTSAnimationMixer } from "../dts/dtsAnimationMixer";
 import {
+  holdDtsAction,
   createDtsThread,
   scrubDtsThread,
   type DtsThread,
@@ -410,13 +407,8 @@ export function PlayerModel({
   // Arm pose blend actions keyed by animation name (lookde, lookms, looksn).
   const armActionsRef = useRef(new Map<string, AnimationAction>());
   const activeArmRef = useRef<string | null>(null);
-  const currentAnimRef = useRef({ name: "root", timeScale: 1 });
-  const isDeadRef = useRef(false);
-  // Action animation (taunts, celebrations, etc.) tracking.
-  const actionAnimRef = useRef<number | undefined>(undefined);
-  // The wired action the mixer is playing, if any (see stepActionAnim).
-  const actionStateRef = useRef<ActionAnimState>(NO_ACTION_ANIM);
-
+  const bodyActionsRef = useRef<AnimationAction[]>([]);
+  const rootArmsRef = useRef<AnimationAction | null>(null);
   // Build action index -> animation clip name mapping from TSShapeConstructor.
   const actionAnimMap = useMemo(() => {
     const playback = engineStore.getState().playback;
@@ -460,7 +452,7 @@ export function PlayerModel({
     if (rootAction) {
       rootAction.play();
     }
-    currentAnimRef.current = { name: "root", timeScale: 1 };
+    bodyActionsRef.current = rootAction ? [rootAction] : [];
 
     // Set up additive blend animations for aim/head articulation.
     // These clips must be cloned before makeClipAdditive (which mutates in
@@ -519,6 +511,7 @@ export function PlayerModel({
         );
         const rootArmsAction = mixer.clipAction(rootArmsClip);
         rootArmsAction.play(); // weight=1, always on
+        rootArmsRef.current = rootArmsAction;
       }
     }
 
@@ -638,11 +631,13 @@ export function PlayerModel({
   // Per-frame animation selection and mixer update.
   useFrame((_, delta) => {
     if (entity.imageSlots !== imagesRef.current) {
+      const mountsChanged = !sameImageMounts(
+        entity.imageSlots,
+        imagesRef.current,
+      );
       imagesRef.current = entity.imageSlots;
-      setImages(entity.imageSlots);
+      if (mountsChanged) setImages(entity.imageSlots);
     }
-    const playback = engineStore.getState().playback;
-    const isPlaying = playback.status === "playing";
     const time = streamClock.time;
 
     // Resolve velocity at current playback time.
@@ -660,169 +655,36 @@ export function PlayerModel({
     }
     const actions = animActionsRef.current;
 
-    // Alive->Dead transition: play the server-specified death animation.
-    if (isDead && !isDeadRef.current) {
-      isDeadRef.current = true;
-
-      // The server sends the death animation as an actionAnim index.
-      const deathEntry =
-        kf.actionAnim != null ? actionAnimMap.get(kf.actionAnim) : undefined;
-      if (deathEntry) {
-        const deathAction = actions.get(deathEntry.clipName);
-        if (deathAction) {
-          const prevAction = actions.get(
-            currentAnimRef.current.name.toLowerCase(),
-          );
-          if (prevAction) prevAction.fadeOut(ANIM_TRANSITION_TIME);
-
-          deathAction.setLoop(LoopOnce, 1);
-          deathAction.clampWhenFinished = true;
-          deathAction.reset().fadeIn(ANIM_TRANSITION_TIME).play();
-          currentAnimRef.current = { name: deathEntry.clipName, timeScale: 1 };
-          actionAnimRef.current = kf.actionAnim;
-        }
-      }
-    }
-
-    // Dead->Alive transition: stop death animation, let movement resume.
-    if (!isDead && isDeadRef.current) {
-      isDeadRef.current = false;
-      actionAnimRef.current = undefined;
-      actionStateRef.current = NO_ACTION_ANIM;
-
-      const deathAction = actions.get(
-        currentAnimRef.current.name.toLowerCase(),
-      );
-      if (deathAction) {
-        deathAction.stop();
-        deathAction.setLoop(LoopRepeat, Infinity);
-        deathAction.clampWhenFinished = false;
-      }
-      // Reset to root so movement selection picks up on next iteration.
-      currentAnimRef.current = { name: "root", timeScale: 1 };
-      const rootAction = actions.get("root");
-      if (rootAction) rootAction.reset().play();
-    }
-
-    // Action animation (taunts, cels, the PDA idle). A wired non-table
-    // action overrides movement until its clip ends; then the client
-    // picks its own movement animation again unless the action holds —
-    // the server never sends the table action that ends it.
-    // Until the clip actions exist (they are built in an effect after
-    // the first frame) nothing can be judged, so leave the state alone.
-    let playingActionAnim = false;
-    if (!isDeadRef.current && actions.size > 0) {
-      const started = actionStateRef.current;
-      const startedAction =
-        started.index != null
-          ? actions.get(actionAnimMap.get(started.index)?.clipName ?? "")
-          : undefined;
-      // LoopOnce with clampWhenFinished: the mixer pauses the action on
-      // its last frame, which is how "finished" reads.
-      const clipFinished = !!startedAction && startedAction.paused;
-      const wiredEntry =
-        kf?.actionAnim != null ? actionAnimMap.get(kf.actionAnim) : undefined;
-      const wiredAction = wiredEntry
-        ? actions.get(wiredEntry.clipName)
-        : undefined;
-      const { state, command } = stepActionAnim(
-        started,
+    const recorded = streamRenderFrame.current?.get(entity.id)?.clientAnimation;
+    if (recorded?.move) {
+      const poses = samplePlayerPose(
+        recorded.move,
         kf ?? {},
-        clipFinished,
-        wiredAction
-          ? actionStartPosition(kf ?? {}, time, wiredAction.getClip().duration)
-          : 0,
         mounted,
+        time,
+        ANIM_TRANSITION_TIME,
+        (index) => actionAnimMap.get(index)?.clipName,
+        (name) => {
+          const action = actions.get(name);
+          return (
+            action && {
+              duration: action.getClip().duration,
+              cyclic: seqCyclicByAlias.get(name) ?? false,
+            }
+          );
+        },
       );
-      actionStateRef.current = state;
-      if (command.kind === "start") {
-        const entry = actionAnimMap.get(command.index);
-        const actionAction = entry ? actions.get(entry.clipName) : undefined;
-        if (entry && actionAction) {
-          const prevAction = actions.get(
-            currentAnimRef.current.name.toLowerCase(),
-          );
-          if (prevAction && prevAction !== actionAction) {
-            prevAction.fadeOut(ANIM_TRANSITION_TIME);
-          }
-          actionAction.setLoop(LoopOnce, 1);
-          actionAction.clampWhenFinished = true;
-          actionAction.reset().fadeIn(ANIM_TRANSITION_TIME).play();
-          if (command.position >= 1) {
-            // Already on its last frame server-side (a held pose that
-            // came into scope late): land there.
-            actionAction.time = actionAction.getClip().duration;
-            actionAction.paused = true;
-          } else if (command.position > 0) {
-            actionAction.time =
-              command.position * actionAction.getClip().duration;
-          }
-          currentAnimRef.current = { name: entry.clipName, timeScale: 1 };
-        } else {
-          // No clip for this index on this shape: nothing to play, and
-          // nothing to wait for.
-          actionStateRef.current = { ...state, ended: true };
-        }
-      } else if (command.kind === "revert") {
-        const entry = actionAnimMap.get(command.index);
-        const actionAction = entry ? actions.get(entry.clipName) : undefined;
-        if (actionAction) {
-          actionAction.fadeOut(ANIM_TRANSITION_TIME);
-          actionAction.setLoop(LoopRepeat, Infinity);
-          actionAction.clampWhenFinished = false;
-        }
-        currentAnimRef.current = { name: "root", timeScale: 1 };
-        const rootAction = actions.get("root");
-        if (rootAction) rootAction.reset().fadeIn(ANIM_TRANSITION_TIME).play();
+      const selected: AnimationAction[] = [];
+      for (const pose of poses) {
+        const action = actions.get(pose.name);
+        if (!action) continue;
+        holdDtsAction(action, pose.position);
+        action.setEffectiveWeight(pose.weight);
+        selected.push(action);
       }
-      playingActionAnim =
-        actionStateRef.current.index != null && !actionStateRef.current.ended;
-    }
-
-    // Movement animation selection (skip while dead or playing action anim).
-    // A mounted player never runs a movement animation: pickActionAnimation
-    // swaps any table action for root (HAPC passengers stand at root).
-    if (!isDeadRef.current && !playingActionAnim) {
-      const anim = mounted
-        ? { animation: "root", timeScale: 1 }
-        : pickMoveAnimation(
-            kf?.velocity,
-            kf?.rotation ?? [0, 0, 0, 1],
-            entity.falling,
-            entity.jetting,
-          );
-
-      const prev = currentAnimRef.current;
-      if (anim.animation !== prev.name || anim.timeScale !== prev.timeScale) {
-        const prevAction = actions.get(prev.name.toLowerCase());
-        const nextAction = actions.get(anim.animation.toLowerCase());
-
-        if (nextAction) {
-          // Set loop mode from the DTS cyclic flag. Non-cyclic sequences
-          // (fall, jet, jump, land) play once and hold their end pose.
-          const isCyclic = seqCyclicByAlias.get(anim.animation) ?? true;
-          if (isCyclic) {
-            nextAction.setLoop(LoopRepeat, Infinity);
-            nextAction.clampWhenFinished = false;
-          } else {
-            nextAction.setLoop(LoopOnce, 1);
-            nextAction.clampWhenFinished = true;
-          }
-
-          if (isPlaying && prevAction && prevAction !== nextAction) {
-            prevAction.fadeOut(ANIM_TRANSITION_TIME);
-            nextAction.reset().fadeIn(ANIM_TRANSITION_TIME).play();
-          } else {
-            if (prevAction && prevAction !== nextAction) prevAction.stop();
-            nextAction.reset().play();
-          }
-          nextAction.timeScale = anim.timeScale;
-          currentAnimRef.current = {
-            name: anim.animation,
-            timeScale: anim.timeScale,
-          };
-        }
-      }
+      for (const action of bodyActionsRef.current)
+        if (!selected.includes(action)) action.stop();
+      bodyActionsRef.current = selected;
     }
 
     // Switch arm blend animation based on the networked arm action index.
@@ -894,12 +756,16 @@ export function PlayerModel({
     }
     const flare = flareThread.sequence;
     if (flare) {
-      const pos = stepFlareThread(
-        jetFlarePosRef.current,
-        isJetting,
-        jetDelta,
-        flare.duration,
-      );
+      const pos =
+        recorded?.flare && flare.duration > 0
+          ? shapeThreadTime(recorded.flare, time, flare.duration, false) /
+            flare.duration
+          : stepFlareThread(
+              jetFlarePosRef.current,
+              isJetting,
+              jetDelta,
+              flare.duration,
+            );
       jetFlarePosRef.current = pos;
       scrubDtsThread(flare, pos);
     }
@@ -915,12 +781,18 @@ export function PlayerModel({
       else removeNodeEmitter(emitter);
     }
 
-    // Advance or evaluate the body animation mixer.
-    if (isPlaying) {
-      mixer.update(delta * playback.rate);
-    } else {
-      mixer.update(0);
+    const rootArms = rootArmsRef.current;
+    if (rootArms) {
+      const duration = rootArms.getClip().duration;
+      holdDtsAction(
+        rootArms,
+        duration > 0
+          ? (Math.max(0, time - (entity.spawnTime ?? 0)) % duration) / duration
+          : 0,
+      );
     }
+    // Evaluate the sampled body pose and blends once.
+    mixer.update(0);
     if (debugMode) clonedScene.userData.animDebug = describeMixer(mixer);
   }, FramePriority.ShapeAnimation);
 

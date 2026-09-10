@@ -41,6 +41,7 @@ import {
   resetStreamPlayback,
 } from "../state/streamPlaybackStore";
 import { streamEntityToGameEntity } from "../stream/entityBridge";
+import { sameImageMounts } from "../stream/imageMount";
 import { fieldOpenFromState } from "../stream/forceFieldState";
 import {
   yawPitchToQuaternion,
@@ -430,7 +431,10 @@ export function StreamingController({
           getField(renderEntity, "shapeName") !== entity.dataBlock) ||
         (renderEntity.renderType !== "Player" &&
           hasShapeName &&
-          getField(renderEntity, "imageSlots") !== entity.imageSlots);
+          !sameImageMounts(
+            "imageSlots" in renderEntity ? renderEntity.imageSlots : undefined,
+            entity.imageSlots,
+          ));
 
       if (needsNewIdentity) {
         const prevHidden = renderEntity?.debugHidden;
@@ -480,17 +484,11 @@ export function StreamingController({
       kf.damageState = entity.damageState;
     }
 
-    // Removal pass: delete entities no longer in the snapshot.
-    // Skip removal when the snapshot is empty — this happens during mission
-    // transitions (EndGhosting clears the engine's entities, but no new ones
-    // have arrived yet). Keeping the old render entities visible avoids a
-    // blank screen flash; they'll be replaced when the new mission loads.
-    if (currentIds.size > 0) {
-      for (const id of map.keys()) {
-        if (currentIds.has(id)) continue;
-        map.delete(id);
-        structuralChange = true;
-      }
+    // An empty snapshot is authoritative too (before ghosting or on mission change).
+    for (const id of map.keys()) {
+      if (currentIds.has(id)) continue;
+      map.delete(id);
+      structuralChange = true;
     }
 
     if (structuralChange) {
@@ -614,6 +612,12 @@ export function StreamingController({
     const stream = streamRef.current;
     if (!stream) return;
 
+    if (
+      stream.needsReplay &&
+      engineStore.getState().playback.seekNonce === lastSeekNonceRef.current
+    )
+      engineStore.getState().seekPlayback(playbackClockRef.current);
+
     const storeState = engineStore.getState();
     const playback = storeState.playback;
     const isPlaying = playback.status === "playing";
@@ -646,6 +650,11 @@ export function StreamingController({
     // Torque interpolates backwards from the end of the current 32ms tick.
     // We sample one tick ahead and blend previous->current for smooth render.
     const sampleTimeSec = playbackClockRef.current + STREAM_TICK_SEC;
+    // Reconstruct both sides of the destination tick. Collapsing this pair
+    // shows vehicles/items one tick ahead of uninterrupted playback.
+    const seekPrevious = isSeeking
+      ? stream.stepToTime(playbackClockRef.current)
+      : null;
     // During a seek, process all ticks to the target immediately so the world
     // state is fully reconstructed. The per-frame tick limit only applies
     // during normal playback advancement.
@@ -655,7 +664,10 @@ export function StreamingController({
     );
 
     const currentTick = currentTickSnapshotRef.current;
-    if (
+    if (seekPrevious) {
+      prevTickSnapshotRef.current = seekPrevious;
+      currentTickSnapshotRef.current = snapshot;
+    } else if (
       !currentTick ||
       snapshot.timeSec < currentTick.timeSec ||
       snapshot.timeSec - currentTick.timeSec > STREAM_TICK_SEC * 1.5
@@ -698,7 +710,8 @@ export function StreamingController({
     // and are unaffected either way.
     if (renderCurrent !== publishedSnapshotRef.current) {
       const now = performance.now();
-      const publishInterval = useProgress.getState().active ? 500 : 0;
+      const publishInterval =
+        !isSeeking && useProgress.getState().active ? 500 : 0;
       if (now - lastPublishTimeRef.current >= publishInterval) {
         lastPublishTimeRef.current = now;
         publishedSnapshotRef.current = renderCurrent;

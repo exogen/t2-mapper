@@ -181,6 +181,8 @@ export interface ShapeEntity extends PositionedBase {
     speed: number;
     lateralSlip: number;
     longitudinalSlip: number;
+    rotation: number;
+    timeSec: number;
   }>;
   /** Vehicle steering angle (radians). */
   steeringYaw?: number;

@@ -1,3 +1,4 @@
+import { timelineRandom } from "../../stream/timelineRandom";
 import { Group, type Vector3 } from "three";
 import type { DTSModel } from "../../dts/dtsModel";
 import type { ExplosionEntity } from "../../state/gameEntityTypes";
@@ -97,7 +98,14 @@ export function createExplosionView(
     reset(entity) {
       shape.reset();
       spawn = entity.spawnTime ?? streamClock.time;
-      angle = Math.random() * Math.PI * 2;
+      angle =
+        timelineRandom(
+          spawn,
+          entity.explosionDataBlockId ?? 0,
+          ...(entity.keyframes?.[0]?.position ?? []),
+        )() *
+        Math.PI *
+        2;
       group.scale.set(1, 1, 1);
       group.quaternion.identity();
     },

@@ -37,3 +37,37 @@ it("keeps identity offsets absent and does not re-read cached datablocks", () =>
   expect(reads).toBe(1);
   expect(getImageMountOffset(undefined)).toBeUndefined();
 });
+
+it("changes mount identity only for a changed image or lifetime, not changing flags or animation state", async () => {
+  const { sameImageMounts } = await import("./imageMount");
+  const slot = {
+    shapeName: "turret_muzzle.dts",
+    dataBlockId: 1,
+    mountPoint: 0,
+    mountedAtSec: 10,
+  };
+  expect(
+    sameImageMounts(
+      [slot],
+      [
+        {
+          ...slot,
+          imageState: {
+            dataBlockId: 1,
+            loaded: true,
+            ammo: true,
+            wet: false,
+            target: false,
+            triggerDown: true,
+            fireCount: 2,
+          },
+        },
+      ],
+    ),
+  ).toBe(true);
+  expect(sameImageMounts([slot], [{ ...slot, mountedAtSec: 20 }])).toBe(false);
+  expect(sameImageMounts([slot], [{ ...slot, skinName: "custom" }])).toBe(
+    false,
+  );
+  expect(sameImageMounts([slot], [])).toBe(false);
+});

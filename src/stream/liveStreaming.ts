@@ -624,6 +624,7 @@ export class LiveStreamAdapter extends StreamEngine {
       this.advanceItems();
       this.advanceControlVehicle();
       this.advanceFades();
+      this.advanceShapeAnimations();
       this.advanceForceFields();
       this.advanceControlEnergy();
 

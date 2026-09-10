@@ -248,3 +248,87 @@ export function actionStartPosition(
   const elapsed = Math.max(0, nowSec - kf.actionTimeSec);
   return Math.min(1, packed + elapsed / clipDurationSec);
 }
+
+export interface PlayerPose {
+  name: string;
+  position: number;
+  weight: number;
+}
+
+/** Sample the body's action and its transition from stream time. Loading a
+ * model late must not start a new death, taunt, seated pose or run cycle. */
+export function samplePlayerPose(
+  move: import("./clientAnimation").MoveAnimationTimeline,
+  wired: {
+    actionAnim?: number;
+    actionAnimPos?: number;
+    actionTimeSec?: number;
+    actionAtEnd?: boolean;
+    actionHoldAtEnd?: boolean;
+    damageState?: number;
+  },
+  mounted: boolean,
+  now: number,
+  transitionDuration: number,
+  actionName: (index: number) => string | undefined,
+  clipInfo: (name: string) => { duration: number; cyclic: boolean } | undefined,
+): PlayerPose[] {
+  const movementPose = (
+    m: MoveAnimationResult & { timeSec: number },
+    start = m.timeSec,
+  ): PlayerPose => {
+    const info = clipInfo(m.animation);
+    const elapsed =
+      info && info.duration > 0
+        ? (Math.max(0, now - start) * m.timeScale) / info.duration
+        : 0;
+    return {
+      name: m.animation,
+      position: info?.cyclic
+        ? ((elapsed % 1) + 1) % 1
+        : Math.max(0, Math.min(1, elapsed)),
+      weight: 1,
+    };
+  };
+  const name =
+    wired.actionAnim != null &&
+    (wired.actionAnim >= NUM_TABLE_ACTION_ANIMS ||
+      (wired.damageState ?? 0) >= 1)
+      ? actionName(wired.actionAnim)
+      : undefined;
+  const info = name ? clipInfo(name) : undefined;
+  const position = wired.actionAtEnd
+    ? 1
+    : actionStartPosition(wired, now, info?.duration ?? 0);
+  const actionStart =
+    (wired.actionTimeSec ?? now) -
+    (wired.actionAnimPos ?? 0) * (info?.duration ?? 0);
+  const actionEnd = actionStart + (info?.duration ?? 0);
+  const holds =
+    wired.actionHoldAtEnd || mounted || (wired.damageState ?? 0) >= 1;
+  let current: PlayerPose, previous: PlayerPose | undefined, changedAt: number;
+  if (name && info && (position < 1 || holds)) {
+    current = { name, position, weight: 1 };
+    previous = movementPose(move);
+    changedAt = wired.actionAtEnd ? -Infinity : actionStart;
+  } else {
+    const start = info ? Math.max(move.timeSec, actionEnd) : move.timeSec;
+    current = movementPose(move, start);
+    changedAt = start;
+    previous =
+      info && actionEnd >= move.timeSec
+        ? { name: name!, position: 1, weight: 1 }
+        : move.previous
+          ? movementPose(move.previous)
+          : undefined;
+  }
+  const weight =
+    transitionDuration > 0
+      ? Math.max(0, Math.min(1, (now - changedAt) / transitionDuration))
+      : 1;
+  if (!previous || previous.name === current.name || weight >= 1)
+    return [current];
+  current.weight = weight;
+  previous.weight = 1 - weight;
+  return [current, previous];
+}

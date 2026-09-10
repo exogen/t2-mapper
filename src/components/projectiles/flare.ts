@@ -15,7 +15,8 @@ import {
 import type { Texture } from "three";
 import type { DTSModel } from "../../dts/dtsModel";
 import type { FlareEntity } from "../../state/gameEntityTypes";
-import { effectDeltaSec, effectNow } from "../../state/engineStore";
+import { effectDeltaSec } from "../../state/engineStore";
+import { streamClock } from "../../state/streamPlaybackStore";
 import { createEffectShape } from "../../effectShape";
 import { FlareSpikes, VERTS_PER_SPIKE } from "../../particles/flareSpikes";
 import { injectCustomFog } from "../../fogShader";
@@ -84,7 +85,6 @@ export function createFlareView(
     effects = new Group(),
     shapeGroup = new Group();
   root.add(effects, shapeGroup);
-  let start = effectNow();
   const shape = model
     ? createEffectShape(model, visual.shapeName, { anisotropy })
     : null;
@@ -164,7 +164,6 @@ export function createFlareView(
   return {
     root,
     reset() {
-      start = effectNow();
       shape?.reset();
       light.acquire();
       if (spikes) spikes = new FlareSpikes(visual.numFlares, visual.sizes);
@@ -178,7 +177,12 @@ export function createFlareView(
     update(entity, camera, delta) {
       if (shape) {
         if (visual.faceViewer) shapeGroup.lookAt(camera.position);
-        shape.setTime((effectNow() - start) / 1000);
+        shape.setTime(
+          Math.max(
+            0,
+            streamClock.time - (entity.spawnTime ?? streamClock.time),
+          ),
+        );
       }
       if (spikes && geometry) {
         spikes.advance(effectDeltaSec(delta));

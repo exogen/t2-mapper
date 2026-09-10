@@ -133,7 +133,11 @@ export class WeaponImageStateMachine {
    * Advance the state machine by `dt` seconds using the given condition flags.
    * Returns the animation state to apply this frame.
    */
-  tick(dt: number, flags: WeaponImageState): WeaponAnimState {
+  tick(
+    dt: number,
+    flags: WeaponImageState,
+    forceFire = false,
+  ): WeaponAnimState {
     if (this.states.length === 0) {
       return {
         sequenceName: null,
@@ -166,7 +170,7 @@ export class WeaponImageStateMachine {
 
     let transitioned = false;
     let entered = false;
-    let forced = fireCountChanged && this.fireStateIndex >= 0;
+    let forced = (forceFire || fireCountChanged) && this.fireStateIndex >= 0;
 
     // Per-tick transition evaluation (C++ updateImageState): check conditions
     // and timeout when delayTime <= 0 or waitForTimeout is false.

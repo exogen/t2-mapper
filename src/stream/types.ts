@@ -1,8 +1,10 @@
+import type { ClientAnimationState } from "./clientAnimation";
 import type { PlayerRenderDelta } from "./playerPrediction";
 import type { ParsedData } from "t2-demo-parser";
 import type { SceneObject } from "../scene/types";
 import type { ServerLoadInfo } from "../../relay/types";
 import type { DTSImageOffset } from "../dts/dtsMount";
+import type { ImageAnimationState } from "./imageAnimation";
 
 export type { ServerLoadInfo };
 
@@ -22,6 +24,8 @@ export interface ImageSlot {
    *  mounts later — a seek, a remount — fast-forwards its threads and
    *  state machine to where the engine's would be by now. */
   mountedAtSec?: number;
+  /** Client image state reconstructed by the stream, including its thread clocks. */
+  animation?: ImageAnimationState;
 }
 
 /** DTS animation thread state from ghost ThreadMask data. */
@@ -31,6 +35,10 @@ export interface ThreadState {
   state: number;
   forward: boolean;
   atEnd: boolean;
+  /** Recorded state changes, independent of when the shape finishes loading.
+   * Durations come from DTS assets, so keep transitions until a renderer can
+   * resolve pauses, reversals and completed noncyclic sequences exactly. */
+  timeline?: { timeSec: number; previous?: ThreadState };
 }
 
 export interface WeaponImageState {
@@ -376,7 +384,7 @@ export interface StreamEntity {
   explosionLifetimeMS?: number;
   /** Explosion entities: lifetime already elapsed at explode() (the delay). */
   explosionStartAgeMS?: number;
-  /** Explosion entities: stream time at explode(), the animation origin. */
+  /** Stream time this ghost was created (or an explosion was spawned). */
   spawnTimeSec?: number;
   /** Projectile has already detonated (client-side impact/expiry). The ghost
    *  entity may linger until the server's delete arrives — flight effects
@@ -417,11 +425,15 @@ export interface StreamEntity {
   audioMaxDistance?: number;
   audioMinLoopGap?: number;
   audioMaxLoopGap?: number;
+  clientAnimation?: ClientAnimationState;
   /** WheeledVehicle per-wheel state. */
   wheels?: Array<{
     speed: number;
     lateralSlip: number;
     longitudinalSlip: number;
+    /** Normalized rotation at the last speed update. */
+    rotation: number;
+    timeSec: number;
   }>;
   /** Vehicle steering angle (radians). */
   steeringYaw?: number;
@@ -651,6 +663,8 @@ export interface PreloadAsset {
 }
 
 export interface StreamingPlayback {
+  /** The initial pass preceded collision loading and can now be reconstructed. */
+  readonly needsReplay?: boolean;
   setPlayerPredictionEnabled?(enabled: boolean): void;
   reset(): void;
   getSnapshot(): StreamSnapshot;

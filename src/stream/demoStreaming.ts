@@ -1,8 +1,4 @@
-import {
-  MAX_PREDICTION_TICKS,
-  unclampMove,
-  type PlayerMove,
-} from "./playerPrediction";
+import { unclampMove, type PlayerMove } from "./playerPrediction";
 import type { PlayerPacketData } from "t2-demo-parser";
 import {
   BlockTypeInfo,
@@ -502,7 +498,7 @@ class DemoStreamAdapter extends StreamEngine {
   // ── StreamingPlayback interface ──
 
   reset(): void {
-    this.suppressPlayerPrediction = false;
+    this.skippedPlayerPrediction = false;
     this.parser.reset();
     // parser.reset() creates a fresh GhostTracker internally — refresh our
     // reference so resolveGhostClassName doesn't use the stale one.
@@ -803,6 +799,18 @@ class DemoStreamAdapter extends StreamEngine {
     );
   }
 
+  // A cold seek can precede collision asset loading. Reconstruct once those
+  // assets arrive; later React collider remounts during rewinds must not cause
+  // an endless cycle of replay -> remount -> replay.
+  private collisionReplayComplete = false;
+  get needsReplay(): boolean {
+    return (
+      !this.collisionReplayComplete &&
+      this.skippedPlayerPrediction &&
+      this.playerCollisionReady()
+    );
+  }
+
   stepToTime(
     targetTimeSec: number,
     maxMoveTicks = Number.POSITIVE_INFINITY,
@@ -814,28 +822,24 @@ class DemoStreamAdapter extends StreamEngine {
     const targetTicks = Math.floor((safeTargetSec * 1000) / TICK_DURATION_MS);
 
     let didReset = false;
-    if (targetTicks < this.moveTicks) {
+    const collisionReplay = this.needsReplay;
+    if (collisionReplay || targetTicks < this.moveTicks) {
+      if (collisionReplay) this.collisionReplayComplete = true;
       this.reset();
       didReset = true;
     }
 
     const wasExhausted = this.exhausted;
     let movesProcessed = 0;
-    try {
-      while (
-        !this.exhausted &&
-        this.moveTicks < targetTicks &&
-        movesProcessed < maxMoveTicks
-      ) {
-        // Fast seeks consume authoritative packets, then reconstruct the
-        // bounded prediction window before publishing the destination.
-        this.suppressPlayerPrediction =
-          targetTicks - this.moveTicks > MAX_PREDICTION_TICKS;
-        if (!this.stepOneMoveTick()) break;
-        movesProcessed += 1;
-      }
-    } finally {
-      this.suppressPlayerPrediction = false;
+    // The same simulation ticks drive playback and seeks. Skipping prediction
+    // can preserve the last packet pose while losing intermediate animation state.
+    while (
+      !this.exhausted &&
+      this.moveTicks < targetTicks &&
+      movesProcessed < maxMoveTicks
+    ) {
+      if (!this.stepOneMoveTick()) break;
+      movesProcessed += 1;
     }
 
     if (
@@ -950,6 +954,7 @@ class DemoStreamAdapter extends StreamEngine {
         this.advancePlayers(controlMoves);
         this.lastClientMoveId = this.nextPlayerMoveId;
         this.advanceFades();
+        this.advanceShapeAnimations();
         this.advanceForceFields();
         this.advanceControlEnergy();
         // updateCameraAndHud() calls removeExpiredExplosions() as its first

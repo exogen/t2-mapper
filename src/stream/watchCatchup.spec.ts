@@ -10,6 +10,7 @@ import {
 import type { PacketData } from "t2-demo-parser";
 import { LiveStreamAdapter } from "./liveStreaming";
 import type { RelayClient } from "./relayClient";
+import type { ImageSlot, ThreadState } from "./types";
 import { WatchStateAccumulator } from "../../relay/watchState";
 import { buildCatchupPayload } from "../../relay/watchCatchup";
 import {
@@ -78,8 +79,18 @@ function project(entity: Record<string, unknown>, comparePosition: boolean) {
     mountNode: entity.mountNode,
     health: entity.health,
     damageState: entity.damageState,
-    threads: entity.threads,
-    imageSlots: entity.imageSlots,
+    // Catch-up carries wire state, not the client's earlier animation clocks
+    // or RNG. Demo seeking separately tests those against the full history.
+    threads: (entity.threads as ThreadState[] | undefined)?.map(
+      ({ timeline, ...wire }) => wire,
+    ),
+    imageSlots: (
+      entity.imageSlots as (ImageSlot | undefined)[] | undefined
+    )?.map((slot) => {
+      if (!slot) return slot;
+      const { animation, mountedAtSec, ...wire } = slot;
+      return wire;
+    }),
     skinName: entity.skinName,
     ...(comparePosition
       ? { position: entity.position, rotation: entity.rotation }

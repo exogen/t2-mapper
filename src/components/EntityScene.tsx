@@ -27,6 +27,7 @@ import { entityTypeColor } from "../stream/playbackUtils";
 import { Projectiles } from "./Projectiles";
 import { useDebug } from "./SettingsProvider";
 import { MOUNTED_OBJECT_ROTATION } from "../world/placement";
+import { FramePriority } from "./framePriority";
 import {
   applyStreamEntityPose,
   streamRenderFrame,
@@ -110,20 +111,46 @@ function renderObjectMounts(
       <>
         {mounts[node]}
         <Suspense key={child.id}>
-          <group
-            rotation={MOUNTED_OBJECT_ROTATION}
-            userData={{ objectMount: true }}
-          >
+          <MountedEntityPresence id={child.id}>
             <EntityRenderer
               entity={child}
               objectMounts={renderObjectMounts(child.id, children)}
             />
-          </group>
+          </MountedEntityPresence>
         </Suspense>
       </>
     );
   }
   return mounts;
+}
+
+/** Mounted objects bypass the root's pose pass, but still obey ghost deletion
+ * immediately while React is committing a changed mount tree. */
+function MountedEntityPresence({
+  id,
+  children,
+}: {
+  id: string;
+  children: React.ReactNode;
+}) {
+  const root = useRef<Group>(null);
+  useFrame(() => {
+    if (
+      root.current &&
+      isStreamingSource(gameEntityStore.getState().dataSource)
+    )
+      root.current.visible = streamRenderFrame.current?.has(id) ?? false;
+  }, FramePriority.ShapeAnimation - 1);
+  return (
+    <group
+      ref={root}
+      name={id}
+      rotation={MOUNTED_OBJECT_ROTATION}
+      userData={{ objectMount: true }}
+    >
+      {children}
+    </group>
+  );
 }
 
 const EntityWrapper = memo(function EntityWrapper({

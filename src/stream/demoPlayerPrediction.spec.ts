@@ -120,18 +120,26 @@ describe("demo player tick prediction", () => {
   });
 
   it("waits for collision assets instead of predicting a fall through the loading world", () => {
-    const stream = demo([
+    const blocks = [
       packet([{ index: 1, type: "create", classId: 2, parsedData: {} }]),
       ...Array.from({ length: 25 }, move),
-    ]);
+    ];
+    const stream = demo(blocks);
     expect(stream.stepToTime(0.64).entities[0].position).toEqual([0, 0, 100]);
     setTerrainCollisionData({
       heightMap: new Uint16Array(256 * 256).fill(3200),
       squareSize: 8,
     });
+    expect(stream.needsReplay).toBe(true);
     const player = stream.stepToTime(0.672).entities[0];
-    expect(player.position?.[0]).toBe(0.5);
+    const warm = demo(blocks);
+    for (let tick = 1; tick <= 21; tick++) warm.stepToTime(tick * 0.032 + 1e-9);
+    expect(player.position).toEqual(warm.getSnapshot().entities[0].position);
+    expect(player.clientAnimation).toEqual(
+      warm.getSnapshot().entities[0].clientAnimation,
+    );
     expect(player.position![2]).toBeGreaterThanOrEqual(100);
+    expect(stream.needsReplay).toBe(false);
   });
   it("advances players between packets while scanners retain recorded poses", () => {
     const blocks = [
@@ -218,6 +226,16 @@ describe("demo player tick prediction", () => {
     expect(after.id).not.toBe(before.id);
     expect(after.position?.[0]).toBe(50.5);
     expect(after.playerDelta?.posVec[0]).toBe(-0.5);
+  });
+
+  it("preserves client animation history through prediction while seeking over sparse packets", () => {
+    const blocks = Array.from({ length: 100 }, move);
+    const sequential = demo(blocks);
+    for (let tick = 1; tick <= 100; tick++)
+      sequential.stepToTime(tick * 0.032 + 1e-9);
+    expect(demo(blocks).stepToTime(3.2).entities[0].clientAnimation).toEqual(
+      sequential.getSnapshot().entities[0].clientAnimation,
+    );
   });
 
   it("keeps mount placement independent of the previous unmounted prediction", () => {

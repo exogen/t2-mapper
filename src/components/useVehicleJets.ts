@@ -1,3 +1,6 @@
+import { streamRenderFrame } from "../stream/interpolateEntity";
+import { streamClock } from "../state/streamPlaybackStore";
+import { sampleJetTimeline, type JetTimeline } from "../stream/clientAnimation";
 import { useCallback, useEffect, useMemo, useRef, type RefObject } from "react";
 import { type AnimationClip, type AnimationMixer, type Object3D } from "three";
 import { engineStore } from "../state/engineStore";
@@ -208,17 +211,27 @@ function driveDirection(
   active: boolean,
   dtSec: number,
   nowSec: number,
+  timeline?: JetTimeline,
 ): void {
   if (!dir.activate && !dir.maintain) return;
   const wasMaintaining = dir.state.maintaining;
-  stepJetDirection(
-    dir.state,
-    active,
-    dtSec,
-    dir.activate?.duration ?? 0,
-    dir.maintain != null,
-    nowSec,
-  );
+  if (timeline)
+    sampleJetTimeline(
+      timeline,
+      nowSec,
+      dir.activate?.duration ?? 0,
+      dir.maintain != null,
+      dir.state,
+    );
+  else
+    stepJetDirection(
+      dir.state,
+      active,
+      dtSec,
+      dir.activate?.duration ?? 0,
+      dir.maintain != null,
+      nowSec,
+    );
   if (wasMaintaining && !dir.state.maintaining && dir.maintain) {
     destroyDtsThread(dir.maintain);
   }
@@ -279,7 +292,10 @@ export function useVehicleJets(
       const parts = partsRef.current;
       if (!entity || !parts || !config) return;
       clockRef.current += dtSec;
-      const now = clockRef.current;
+      const recorded = streamRenderFrame.current?.get(
+        entity.id,
+      )?.clientAnimation;
+      const now = recorded ? streamClock.time : clockRef.current;
       const jetting = !!entity.jetting;
       const thrust = entity.thrustDirection ?? THRUST_FORWARD;
       updateJetSound(jetting);
@@ -293,12 +309,19 @@ export function useVehicleJets(
         shared[2] = velocity[2];
       }
 
-      driveDirection(parts.back, backJetsActive(thrust), dtSec, now);
+      driveDirection(
+        parts.back,
+        backJetsActive(thrust),
+        dtSec,
+        now,
+        recorded?.back,
+      );
       driveDirection(
         parts.bottom,
         bottomJetsActive(thrust, jetting),
         dtSec,
         now,
+        recorded?.bottom,
       );
 
       for (

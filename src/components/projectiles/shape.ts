@@ -1,3 +1,5 @@
+import { streamClock } from "../../state/streamPlaybackStore";
+import { holdDtsAction } from "../../dts/dtsThread";
 import {
   Group,
   LoopOnce,
@@ -10,7 +12,7 @@ import type { DTSModel, DTSShape } from "../../dts/dtsModel";
 import { DTSAnimationMixer } from "../../dts/dtsAnimationMixer";
 import { DTSSequenceFlags } from "../../dts/dtsTypes";
 import type { ShapeEntity } from "../../state/gameEntityTypes";
-import { effectDeltaSec, effectNow } from "../../state/engineStore";
+import { effectNow } from "../../state/engineStore";
 import {
   disposeClonedScene,
   processShapeScene,
@@ -46,7 +48,8 @@ export function createShapeProjectileView(
   const mixer = new DTSAnimationMixer(scene),
     clips = new Map(model.animations.map((c) => [c.name.toLowerCase(), c]));
   const lighting = createShapeLightState(scene, config.shapeName);
-  let active: AnimationAction | undefined,
+  let ambient: AnimationAction | undefined,
+    active: AnimationAction | undefined,
     phase = "",
     fade = NaN,
     cloak = NaN;
@@ -84,7 +87,7 @@ export function createShapeProjectileView(
       fade = NaN;
       cloak = NaN;
       // Projectile::onAdd creates the client-side ambient thread (FUN_00631bb0).
-      if (entity.projectileAgeMS != null) play("ambient");
+      ambient = entity.projectileAgeMS != null ? play("ambient") : undefined;
       scene.setImageAnimationTime(0, animationEnabled());
       light.acquire();
       lighting.lastProbe = null;
@@ -103,36 +106,60 @@ export function createShapeProjectileView(
       mixer.uncacheRoot(scene);
       disposeClonedScene(scene);
     },
-    animate(entity, delta) {
-      const dt = effectDeltaSec(delta);
-      // LinearProjectile starts activate at activateDelayMS (FUN_0062e010),
-      // then replaces it with maintain at the next end crossing (FUN_0062ee40).
+    animate(entity) {
+      const elapsed = Math.max(
+        0,
+        streamClock.time - (entity.spawnTime ?? streamClock.time),
+      );
+      const sample = (
+        action: AnimationAction | undefined,
+        name: string,
+        time: number,
+      ) => {
+        if (!action) return;
+        const clip = clips.get(name)!;
+        const cyclic = !!(
+          (clip.sequence?.flags ?? 0) & DTSSequenceFlags.Cyclic
+        );
+        const pos =
+          animationEnabled() && clip.duration > 0 ? time / clip.duration : 0;
+        holdDtsAction(action, cyclic ? ((pos % 1) + 1) % 1 : Math.min(1, pos));
+      };
+      sample(ambient, "ambient", elapsed);
+      // Ambient begins on the client's onAdd; activation is delayed by the
+      // projectile's simulation age, then maintain replaces it at its endpoint.
+      const age =
+        (entity.projectileAgeMS ?? 0) / 1000 +
+        streamClock.time -
+        (entity.keyframes?.[0]?.time ?? streamClock.time);
+      const activate = clips.get("activate");
+      let desired = "",
+        activeTime = 0;
       if (
-        entity.projectileAgeMS != null &&
-        entity.projectileActivateDelayMS != null
+        activate &&
+        entity.projectileActivateDelayMS != null &&
+        age * 1000 >= entity.projectileActivateDelayMS
       ) {
-        if (
-          !phase &&
-          entity.projectileAgeMS >= entity.projectileActivateDelayMS &&
-          clips.has("activate")
-        ) {
-          phase = "activate";
-          active = play(phase);
-        } else if (
-          phase === "activate" &&
-          active &&
-          active.time + dt >= active.getClip().duration &&
-          clips.has("maintain")
-        ) {
-          active.stop();
-          phase = "maintain";
-          active = play(phase);
+        activeTime = Math.min(
+          elapsed,
+          Math.max(0, age - entity.projectileActivateDelayMS / 1000),
+        );
+        desired = "activate";
+        if (activeTime >= activate.duration && clips.has("maintain")) {
+          desired = "maintain";
+          activeTime -= activate.duration;
         }
       }
-      mixer.update(animationEnabled() ? dt : 0);
-      scene.setImageAnimationTime((scene.time ?? 0) + dt, animationEnabled());
+      if (desired !== phase) {
+        active?.stop();
+        phase = desired;
+        active = desired ? play(desired) : undefined;
+      }
+      sample(active, phase, activeTime);
+      mixer.update(0);
+      scene.setImageAnimationTime(elapsed, animationEnabled());
       if (light.light) {
-        const t = effectNow(),
+        const t = streamClock.time * 1000,
           f = entity.fadeVal ?? 1;
         light.light.intensity =
           config.lightType === 2
