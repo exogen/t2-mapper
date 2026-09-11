@@ -1,8 +1,9 @@
 import fs from "node:fs/promises";
+import { parseChangedUrls } from "./lib/assetSyncReport.js";
 
 /**
- * Purges files changed by an `aws s3 sync` run from the Cloudflare edge
- * cache. Reads the sync's stdout (captured to a file) and purges the public
+ * Purges files changed by an asset sync from the Cloudflare edge
+ * cache. Reads the sync report and purges the public
  * URL of every uploaded or deleted object, in the batches the purge API
  * requires.
  *
@@ -21,24 +22,6 @@ const MAX_ATTEMPTS = 3;
  * A failure that will not succeed on retry (bad token, bad zone, etc.).
  */
 class FatalPurgeError extends Error {}
-
-function parseChangedUrls(syncOutput: string): string[] {
-  const urls: string[] = [];
-  for (const line of syncOutput.split("\n")) {
-    // Lines look like:
-    //   upload: docs/base/foo.cs to s3://t2-assets/game/base/foo.cs
-    //   delete: s3://t2-assets/game/base/bar.cs
-    const match = line.match(/^(?:upload:.* to |delete: )(s3:\/\/\S.*)$/);
-    if (!match) continue;
-    const s3Url = match[1].trim();
-    if (!s3Url.startsWith(BUCKET_PREFIX)) continue;
-    const path = s3Url.slice(BUCKET_PREFIX.length);
-    // new URL() encodes the path the same way browsers do when requesting
-    // it (spaces etc.), so the purge URL matches the cached URL.
-    urls.push(new URL(path, PUBLIC_ORIGIN).href);
-  }
-  return urls;
-}
 
 async function purgeBatchOnce(
   zoneId: string,
@@ -112,7 +95,7 @@ const syncOutput = await fs.readFile(inputFile, "utf8").catch((error) => {
   }
   throw error;
 });
-const urls = parseChangedUrls(syncOutput);
+const urls = parseChangedUrls(syncOutput, BUCKET_PREFIX, PUBLIC_ORIGIN);
 
 if (urls.length === 0) {
   console.log("No changed assets; nothing to purge.");

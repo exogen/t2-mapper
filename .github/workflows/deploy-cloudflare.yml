@@ -3,6 +3,12 @@ name: Deploy to Cloudflare Pages
 on:
   push:
     branches: [main]
+  workflow_dispatch:
+    inputs:
+      force_sync:
+        description: Check R2 even when the docs/base fingerprint is unchanged
+        type: boolean
+        default: false
 
 # Serialize deploys (and the asset-metadata backfill, which shares this
 # group): a running deploy always finishes cleanly, and only the newest
@@ -23,16 +29,6 @@ jobs:
       HAS_PURGE_SECRETS: ${{ secrets.CLOUDFLARE_PURGE_TOKEN != '' && secrets.CLOUDFLARE_ZONE_ID != '' }}
     steps:
       - uses: actions/checkout@v5
-        with:
-          # Full history, required by git-restore-mtime below.
-          fetch-depth: 0
-
-      # aws s3 sync decides what to upload by size + mtime, and a fresh
-      # checkout stamps every file with clone time — which would re-upload
-      # (and purge) all ~19k game assets on every deploy. Restoring each
-      # file's mtime to its last commit time makes the sync incremental and
-      # the purge list accurate.
-      - uses: chetan/git-restore-mtime-action@v2
 
       - uses: actions/setup-node@v5
         with:
@@ -50,7 +46,7 @@ jobs:
 
       - name: Check the Cloudflare account id is set
         # An empty value would build https://.r2.cloudflarestorage.com and
-        # the AWS CLI would report it as an opaque connection failure.
+        # the SDK would report it as an opaque connection failure.
         run: |
           if [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then
             echo "CLOUDFLARE_ACCOUNT_ID is not set." >&2
@@ -60,13 +56,10 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
       - name: Sync game assets to R2
-        # One `aws s3 sync` pass per Content-Type, driven by
-        # scripts/lib/assetMetadata.ts — the same table the backfill uses, so
-        # an object's headers do not depend on which job wrote it. The CLI's
-        # own guesses are wrong for the game's formats (.dts reads as DTS
-        # audio, .dif as DV video) and absent for most of them, which is why
-        # nothing may be guessed here. The run fails if any extension has no
-        # entry in the table, rather than shipping it untyped.
+        # Fingerprint only eligible docs/base assets and their upload policy.
+        # Unchanged runs read one saved R2 state object; changed runs list the
+        # prefix once and compare content, independent of checkout timestamps.
+        # Explicit headers still come from scripts/lib/assetMetadata.ts.
         #
         # It also writes a brotli sibling next to every changed .dts, .dif
         # and .ter (<name>.dts.br, Content-Encoding: br). Nothing serves
@@ -76,11 +69,17 @@ jobs:
         # whole corpus first.
         run: |
           set -o pipefail
+          extra_args=()
+          if [ "$FORCE_ASSET_SYNC" = "true" ]; then
+            extra_args+=(--force-sync)
+          fi
           npx tsx --tsconfig tsconfig.node.json scripts/sync-assets.ts \
             --bucket s3://t2-assets/game/base/ \
             --report r2-sync-output.txt \
+            "${extra_args[@]}" \
             | tee sync-console.txt
         env:
+          FORCE_ASSET_SYNC: ${{ inputs.force_sync || false }}
           AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
           AWS_ENDPOINT_URL: https://${{ secrets.CLOUDFLARE_ACCOUNT_ID }}.r2.cloudflarestorage.com
@@ -96,6 +95,17 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_PURGE_TOKEN }}
           CLOUDFLARE_ZONE_ID: ${{ secrets.CLOUDFLARE_ZONE_ID }}
+
+      - name: Acknowledge successful asset purge
+        if: env.HAS_PURGE_SECRETS == 'true'
+        run: |
+          npx tsx --tsconfig tsconfig.node.json scripts/sync-assets.ts \
+            --bucket s3://t2-assets/game/base/ \
+            --acknowledge-report r2-sync-output.txt
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_ENDPOINT_URL: https://${{ secrets.CLOUDFLARE_ACCOUNT_ID }}.r2.cloudflarestorage.com
 
       - name: Remove game assets from Pages deploy
         run: rm -rf docs/base

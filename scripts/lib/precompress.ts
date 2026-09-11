@@ -10,7 +10,7 @@
  * retired in favour of a Cloudflare compression rule, which compresses at
  * brotli 4 rather than the 11 here. The siblings are still written so that
  * bringing a worker back is a deploy rather than a full recompression of the
- * corpus; they cost bucket storage and nothing else.
+ * corpus; they cost storage and compression time when assets change.
  *
  * Measured: brotli quality 11 lands around a third of the original for
  * shapes and interiors and 38% for terrain, and decompresses at ~220 MB/s in
@@ -52,47 +52,8 @@ export const PRECOMPRESS_EXTENSIONS = new Set([".dts", ".dif", ".dsq", ".ter"]);
  */
 export const BROTLI_QUALITY = 11;
 
-/** The sibling key for a source path. */
-export function precompressedPath(sourcePath: string): string {
-  return `${sourcePath}.br`;
-}
-
 export function shouldPrecompress(sourcePath: string): boolean {
   return PRECOMPRESS_EXTENSIONS.has(path.extname(sourcePath).toLowerCase());
-}
-
-/**
- * Which files need a `.br` written: the ones just uploaded (their sibling is
- * now stale) plus any whose sibling is missing from the bucket entirely.
- *
- * The second half is what makes the step self-healing — a file that was
- * already in R2 before precompression existed, or one whose upload failed
- * partway, is picked up on the next run rather than staying uncompressed
- * forever.
- */
-export function precompressionTargets({
-  sourcePaths,
-  uploadedPaths,
-  existingKeys,
-}: {
-  /** Every candidate file, relative to the sync source. */
-  sourcePaths: Iterable<string>;
-  /** Files this run just uploaded, relative to the sync source. */
-  uploadedPaths: ReadonlySet<string>;
-  /** Keys already in the bucket, relative to its prefix. */
-  existingKeys: ReadonlySet<string>;
-}): string[] {
-  const targets: string[] = [];
-  for (const sourcePath of sourcePaths) {
-    if (!shouldPrecompress(sourcePath)) continue;
-    if (
-      uploadedPaths.has(sourcePath) ||
-      !existingKeys.has(precompressedPath(sourcePath))
-    ) {
-      targets.push(sourcePath);
-    }
-  }
-  return targets.sort();
 }
 
 /**
@@ -101,85 +62,6 @@ export function precompressionTargets({
  */
 export function isPrecompressedKey(key: string): boolean {
   return key.endsWith(".br") && shouldPrecompress(key.slice(0, -".br".length));
-}
-
-/**
- * Siblings in the bucket whose source file is gone, so they should be too.
- *
- * The main `aws s3 sync --delete` cannot see these: its filters select
- * `*.dts`, which does not match `*.dts.br`, so without this a removed shape
- * leaves its compressed copy behind forever — and an edge rule that rewrites
- * to the sibling would happily keep serving it.
- */
-export function orphanedSiblings({
-  sourcePaths,
-  existingKeys,
-}: {
-  sourcePaths: Iterable<string>;
-  existingKeys: Iterable<string>;
-}): string[] {
-  const live = new Set<string>();
-  for (const sourcePath of sourcePaths) {
-    if (shouldPrecompress(sourcePath)) live.add(precompressedPath(sourcePath));
-  }
-  const orphans: string[] = [];
-  for (const key of existingKeys) {
-    if (isPrecompressedKey(key) && !live.has(key)) orphans.push(key);
-  }
-  return orphans.sort();
-}
-
-/**
- * Compress every target into `stagingDir`, mirroring its relative path.
- *
- * Bounded concurrency because `zlib.brotliCompress` is asynchronous and runs
- * on libuv's threadpool: awaiting one at a time leaves every core but one
- * idle. It matters now that interiors are included — 262 MB of them against
- * 16 MB of shapes — so a first run is minutes rather than tens of seconds.
- */
-export async function compressAll(
-  targets: readonly string[],
-  {
-    sourceDir,
-    stagingDir,
-    concurrency = defaultConcurrency(),
-  }: { sourceDir: string; stagingDir: string; concurrency?: number },
-): Promise<{ rawBytes: number; packedBytes: number }> {
-  let rawBytes = 0;
-  let packedBytes = 0;
-  let next = 0;
-  async function worker(): Promise<void> {
-    for (;;) {
-      const index = next++;
-      if (index >= targets.length) return;
-      const target = targets[index];
-      const source = path.join(sourceDir, target);
-      // Read into a local before adding. `total += await f()` evaluates
-      // `total` BEFORE awaiting, so a lane that resumes after another has
-      // added writes back a stale sum and the count silently drifts.
-      const raw = (await fs.stat(source)).size;
-      rawBytes += raw;
-      const packed = await writeBrotli(
-        source,
-        path.join(stagingDir, precompressedPath(target)),
-      );
-      packedBytes += packed;
-    }
-  }
-  const lanes = Math.max(1, Math.min(concurrency, targets.length));
-  await Promise.all(Array.from({ length: lanes }, () => worker()));
-  return { rawBytes, packedBytes };
-}
-
-/**
- * Node's brotli calls land on libuv's threadpool, which defaults to 4
- * threads; going wider than that only queues unless UV_THREADPOOL_SIZE is
- * raised too (the deploy workflow does).
- */
-function defaultConcurrency(): number {
-  const pool = Number.parseInt(process.env.UV_THREADPOOL_SIZE ?? "", 10);
-  if (Number.isFinite(pool) && pool > 0) return pool;
-  return 4;
 }
 
 /** Compress one file, returning the compressed size. */

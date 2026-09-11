@@ -24,6 +24,7 @@ import { useEngineStoreApi, advanceEffectClock } from "../state/engineStore";
 import { setStreamSnapshot } from "../state/streamSnapshotStore";
 import { cameraRegistry } from "../state/cameraRegistry";
 import { FramePriority } from "./framePriority";
+import { PlaybackClock } from "../stream/PlaybackClock";
 import { gameEntityStore } from "../state/gameEntityStore";
 import { isProjectileEntity } from "../state/projectileEntities";
 import {
@@ -286,9 +287,8 @@ export function StreamingController({
   const engineStore = useEngineStoreApi();
   const { fov: userFov } = useSettings();
   const springRef = useRef<FollowSpring>(newFollowSpring());
-  const playbackClockRef = useRef(0);
-  const wasSeekingRef = useRef(false);
-  const lastSeekNonceRef = useRef(0);
+  const playbackClockRef = useRef<PlaybackClock>(null!);
+  if (!playbackClockRef.current) playbackClockRef.current = new PlaybackClock();
   const prevTickSnapshotRef = useRef<StreamSnapshot | null>(null);
   /**
    * What the playback pass resolved this frame, for the camera pass: the
@@ -416,8 +416,10 @@ export function StreamingController({
     publishedSnapshotRef.current = null;
     lastPublishTimeRef.current = 0;
     resetStreamPlayback();
-    playbackClockRef.current = 0;
-    lastSeekNonceRef.current = engineStore.getState().playback.seekNonce;
+    playbackClockRef.current.reset(
+      0,
+      engineStore.getState().playback.seekNonce,
+    );
     prevTickSnapshotRef.current = null;
     currentTickSnapshotRef.current = null;
 
@@ -495,7 +497,7 @@ export function StreamingController({
         : stream.getSnapshot();
 
     streamClock.time = snapshot.timeSec;
-    playbackClockRef.current = snapshot.timeSec;
+    playbackClockRef.current.time = snapshot.timeSec;
     prevTickSnapshotRef.current = snapshot;
     currentTickSnapshotRef.current = snapshot;
     syncRenderableEntities(snapshot);
@@ -520,57 +522,32 @@ export function StreamingController({
   useFrame((state, delta) => {
     const stream = streamRef.current;
     if (!stream) return;
+    const clock = playbackClockRef.current;
 
     if (
       stream.needsReplay &&
-      engineStore.getState().playback.seekNonce === lastSeekNonceRef.current
+      engineStore.getState().playback.seekNonce === clock.seekNonce
     )
-      engineStore.getState().seekPlayback(playbackClockRef.current);
+      engineStore.getState().seekPlayback(clock.time);
 
     const storeState = engineStore.getState();
     const playback = storeState.playback;
     const isPlaying = playback.status === "playing";
     const timeScale = playback.rate;
-    const isSeeking = playback.seekNonce !== lastSeekNonceRef.current;
-    // A synchronous seek is parsing time, not elapsed playback time.
-    const playbackDelta = isSeeking || wasSeekingRef.current ? 0 : delta;
-    wasSeekingRef.current = isSeeking;
-    if (isSeeking) {
-      lastSeekNonceRef.current = playback.seekNonce;
-      playbackClockRef.current = playback.seekTime;
+    if (playback.seekNonce !== clock.seekNonce) {
       // In-flight sounds belong to the old timeline position. Loops that
       // should still be playing at the target re-trigger from ghost state
       // (sound slots, jet, weapon fire, projectiles) within a frame or two.
       stopAllTrackedSounds();
     }
 
-    // Advance the shared effect clock so all effect timers (particles,
-    // explosions, shockwaves, shape animations) respect pause and rate.
-    if (isPlaying) {
-      advanceEffectClock(playbackDelta, timeScale);
-      playbackClockRef.current += playbackDelta * timeScale;
-    }
-
-    const moveTicksNeeded = Math.max(
-      1,
-      Math.ceil((delta * 1000 * Math.max(timeScale, 0.01)) / 32) + 2,
+    const { snapshot, seekPrevious, isSeeking, playbackDelta } = clock.step(
+      stream,
+      playback,
+      delta,
     );
-
-    // Torque interpolates backwards from the end of the current 32ms tick.
-    // We sample one tick ahead and blend previous->current for smooth render.
-    const sampleTimeSec = playbackClockRef.current + STREAM_TICK_SEC;
-    // Reconstruct both sides of the destination tick. Collapsing this pair
-    // shows vehicles/items one tick ahead of uninterrupted playback.
-    const seekPrevious = isSeeking
-      ? stream.stepToTime(playbackClockRef.current)
-      : null;
-    // During a seek, process all ticks to the target immediately so the world
-    // state is fully reconstructed. The per-frame tick limit only applies
-    // during normal playback advancement.
-    const snapshot = stream.stepToTime(
-      sampleTimeSec,
-      isPlaying && !isSeeking ? moveTicksNeeded : Number.POSITIVE_INFINITY,
-    );
+    // Effect timers advance with the successfully reconstructed playback frame.
+    if (isPlaying) advanceEffectClock(playbackDelta, timeScale);
 
     const currentTick = currentTickSnapshotRef.current;
     if (seekPrevious) {
@@ -593,16 +570,10 @@ export function StreamingController({
     const tickStartTime = renderCurrent.timeSec - STREAM_TICK_SEC;
     const interpT = Math.max(
       0,
-      Math.min(1, (playbackClockRef.current - tickStartTime) / STREAM_TICK_SEC),
+      Math.min(1, (clock.time - tickStartTime) / STREAM_TICK_SEC),
     );
 
-    streamClock.time = playbackClockRef.current;
-    if (snapshot.exhausted && isPlaying) {
-      playbackClockRef.current = Math.min(
-        playbackClockRef.current,
-        snapshot.timeSec,
-      );
-    }
+    streamClock.time = clock.time;
 
     syncRenderableEntities(renderCurrent);
 

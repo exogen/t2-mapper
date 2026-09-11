@@ -144,43 +144,6 @@ export function knownExtensions(): string[] {
 }
 
 /**
- * Bucket keys this pipeline owns whose extension has no local file at all.
- *
- * The per-Content-Type sync passes prune with `--delete`, but each pass only
- * includes the extensions still present on disk. Remove the LAST file of an
- * extension — retiring the .glb conversions, say — and no pass ever names it
- * again, so `--delete` never considers those objects and they are stranded
- * in the bucket forever.
- *
- * Extensions are compared exactly, not case-folded: the tree holds `.PNG`
- * beside `.png` and they are separate keys in R2, so a `.PNG` object with no
- * `.PNG` on disk is genuinely without a source. Keys whose extension the
- * table does not know are left alone — this only removes what it owns, never
- * a `.br` sibling or something uploaded by hand.
- */
-export function strandedKeys({
-  bucketKeys,
-  localPaths,
-}: {
-  bucketKeys: Iterable<string>;
-  localPaths: Iterable<string>;
-}): string[] {
-  const localExtensions = new Set<string>();
-  for (const localPath of localPaths) {
-    localExtensions.add(path.extname(localPath));
-  }
-  const known = new Set(knownExtensions());
-  const stranded: string[] = [];
-  for (const key of bucketKeys) {
-    const extension = path.extname(key);
-    if (!known.has(extension.toLowerCase())) continue;
-    if (localExtensions.has(extension)) continue;
-    stranded.push(key);
-  }
-  return stranded.sort();
-}
-
-/**
  * Group file paths by the Content-Type they should carry, keeping each
  * extension exactly as it is spelled on disk — the tree holds `.WAV` and
  * `.PNG` as well as their lower-cased twins, and the AWS CLI's
