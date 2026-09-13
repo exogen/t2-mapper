@@ -83,6 +83,8 @@ import {
 import { staticShapeColliderMeshes } from "../world/colliderPolicy";
 import { SHAPE_MODEL_ROTATION_Y } from "../world/placement";
 import { FramePriority } from "./framePriority";
+import { registerImageMuzzle } from "./linkBeamSource";
+import { renderShapeRaycast } from "../collision/renderShapeRaycast";
 
 /** Item/ShapeBase built-in light config from datablock. */
 export interface ShapeLightConfig {
@@ -401,6 +403,24 @@ export const ShapeModel = memo(function ShapeModel({
       clipsByName: clips,
     };
   }, [gltf.scene, gltf.animations, shapeName, anisotropy, emap, skinName]);
+
+  useLayoutEffect(() => {
+    if (entityId != null && imageSlot != null)
+      return registerImageMuzzle(entityId, imageSlot, clonedScene);
+  }, [entityId, imageSlot, clonedScene]);
+
+  const isStreamShape = streamEntity != null;
+  useLayoutEffect(() => {
+    if (entityId == null || imageSlot != null) return;
+    return renderShapeRaycast.register(
+      entityId,
+      clonedScene,
+      type,
+      () =>
+        !isStreamShape ||
+        gameEntityStore.getState().streamEntities.has(entityId),
+    );
+  }, [entityId, imageSlot, clonedScene, type, isStreamShape]);
 
   // Dispose cloned geometries and materials when the scene is replaced or
   // the component unmounts, to prevent GPU memory from accumulating.

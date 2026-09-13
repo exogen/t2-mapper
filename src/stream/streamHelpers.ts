@@ -474,6 +474,8 @@ export function resolveLinkBeamVisual(
     return {
       kind: "linkBeam",
       variant: "repair",
+      beamRange: getNumberField(data, ["beamRange"]) ?? 10,
+      cutoffAngle: getNumberField(data, ["cutoffAngle"]) ?? 40,
       texture: textures[0],
       flareTexture: textures[1],
       width: 0.2,

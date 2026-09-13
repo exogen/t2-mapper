@@ -1,11 +1,12 @@
 import { useMemo, useRef } from "react";
+import { useStore } from "zustand";
 import { useFrame } from "@react-three/fiber";
 import { Box3 } from "three";
 import { getKeyframeAtTime } from "../stream/playbackUtils";
 import { textureToUrl } from "../loaders";
 import { useStaticShape } from "./GenericShape";
 import { useFloatingLabelFade } from "./FloatingLabel";
-import { streamClock } from "../state/streamPlaybackStore";
+import { streamClock, streamPlaybackStore } from "../state/streamPlaybackStore";
 import {
   isObserverView,
   resolveIffDisplay,
@@ -128,6 +129,20 @@ function makeItem(): OverlayLabel {
  * render scale.
  */
 export function PlayerNameplate({ entity }: { entity: PlayerEntity }) {
+  const { showIffs } = useSettings();
+  const show = useStore(streamPlaybackStore, (state) => {
+    if (showIffs === "always") return true;
+    if (showIffs === "never") return false;
+    const isFollowed =
+      state.followEntityId === entity.id &&
+      (state.cameraMode === "orbitOverride" ||
+        state.cameraMode === "firstPersonOverride");
+    return showIffs === "followed" ? isFollowed : !isFollowed;
+  });
+  return show ? <VisiblePlayerNameplate entity={entity} /> : null;
+}
+
+function VisiblePlayerNameplate({ entity }: { entity: PlayerEntity }) {
   const gltf = useStaticShape(entity.shapeName!);
   const { observerTeamColors } = useSettings();
   const { groupRef, isVisible, opacityRef } = useFloatingLabelFade({

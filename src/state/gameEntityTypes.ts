@@ -269,6 +269,7 @@ export interface LinkBeamEntity extends PositionedBase {
   visual: LinkBeamVisual;
   /** Live endpoint entity ids (resolved per frame by the renderer). */
   linkSourceId?: string;
+  sourceSlot?: number;
   linkTargetId?: string;
 }
 
@@ -282,6 +283,7 @@ export interface ShockLanceEntity extends PositionedBase {
   beamHit: boolean;
   /** Live shooter and target entity ids. */
   linkSourceId?: string;
+  sourceSlot?: number;
   linkTargetId?: string;
 }
 

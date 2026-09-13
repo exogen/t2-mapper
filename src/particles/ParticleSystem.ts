@@ -144,6 +144,7 @@ export function resolveEmitterData(
     overrideAdvances: getBool(raw, "overrideAdvances", false),
     orientParticles: getBool(raw, "orientParticles", false),
     orientOnVelocity: getBool(raw, "orientOnVelocity", true),
+    useEmitterColors: getBool(raw, "useEmitterColors", false),
     lifetimeMS: getNumber(raw, "lifetimeMS", 0) << LIFETIME_SHIFT,
     lifetimeVarianceMS:
       getNumber(raw, "lifetimeVarianceMS", 0) << LIFETIME_SHIFT,
@@ -153,12 +154,16 @@ export function resolveEmitterData(
 
 // ── Emitter instance (owns particles, runs simulation) ──
 
-function randomRange(min: number, max: number): number {
-  return min + Math.random() * (max - min);
+function randomRange(min: number, max: number, random = Math.random): number {
+  return min + random() * (max - min);
 }
 
-function randomVariance(base: number, variance: number): number {
-  return base + (Math.random() * 2 - 1) * variance;
+function randomVariance(
+  base: number,
+  variance: number,
+  random = Math.random,
+): number {
+  return base + (random() * 2 - 1) * variance;
 }
 
 /**
@@ -262,19 +267,84 @@ export class EmitterInstance {
   private elapsedMS = 0;
   private lifetimeMS: number;
   private killed = false;
+  private colorKeys?: ParticleKey[];
+  private colors?: readonly Pick<ParticleKey, "r" | "g" | "b" | "a">[];
   /** World gravity in m/s² (negative is down); the owner keeps it current. */
   worldGravity = DEFAULT_GRAVITY_Z;
 
-  constructor(data: EmitterDataResolved, maxParticles = 256) {
+  private readonly random: () => number;
+
+  constructor(
+    data: EmitterDataResolved,
+    maxParticles = 256,
+    random = Math.random,
+  ) {
+    this.random = random;
     this.data = data;
     this.maxParticles = maxParticles;
 
     // ParticleEmitter::onAdd: lifetimeMS ± integer variance (0 = unlimited).
     let lifetime = data.lifetimeMS;
     if (data.lifetimeVarianceMS > 0) {
-      lifetime += Math.round(randomVariance(0, data.lifetimeVarianceMS));
+      lifetime += Math.round(
+        randomVariance(0, data.lifetimeVarianceMS, this.random),
+      );
     }
     this.lifetimeMS = lifetime;
+  }
+
+  /** ParticleEmitter::setColors: instance overrides, never shared datablock edits. */
+  setColors(colors: readonly Pick<ParticleKey, "r" | "g" | "b" | "a">[]): void {
+    if (!this.data.useEmitterColors || colors === this.colors) return;
+    this.colors = colors;
+    this.colorKeys = this.data.particles.keys.map((key, i) => ({
+      ...key,
+      ...(colors[i] ?? { r: 1, g: 1, b: 1, a: 0 }),
+    }));
+  }
+
+  /** The engine's radius/count overload (foot puffs), including its box-like
+   * hemisphere distribution and the surface normal used for theta rotation. */
+  emitRadial(
+    pos: [number, number, number],
+    radius: number,
+    count: number,
+    normal: [number, number, number] = [0, 0, 1],
+    velocity: [number, number, number] = ZERO_VELOCITY,
+    random = this.random,
+  ): void {
+    const length = Math.hypot(...normal);
+    const z: [number, number, number] =
+      length > 0 ? (normal.map((v) => v / length) as typeof normal) : [0, 0, 1];
+    const y = Math.abs(z[2]) < 0.98 ? [z[1], -z[0], 0] : [-z[2], 0, z[0]];
+    const yl = Math.hypot(...y);
+    for (let i = 0; i < 3; i++) y[i] /= yl;
+    const x = [
+      z[1] * y[2] - z[2] * y[1],
+      z[2] * y[0] - z[0] * y[2],
+      z[0] * y[1] - z[1] * y[0],
+    ];
+    for (
+      let i = 0;
+      i < count && this.particles.length < this.maxParticles;
+      i++
+    ) {
+      const a = radius * (1 - 2 * random()),
+        b = radius * (1 - 2 * random()),
+        c = radius * random();
+      const offset = x.map(
+        (v, j) => v * a + y[j] * b + z[j] * c,
+      ) as typeof normal;
+      const len = Math.hypot(...offset);
+      const axis = len > 0 ? (offset.map((v) => v / len) as typeof normal) : z;
+      this.addParticle(
+        offset.map((v, j) => v + pos[j]) as typeof normal,
+        axis,
+        velocity,
+        z,
+        random,
+      );
+    }
   }
 
   /**
@@ -332,7 +402,9 @@ export class EmitterInstance {
     while (currTime < numMS) {
       let period = this.data.ejectionPeriodMS;
       if (this.data.periodVarianceMS > 0) {
-        period += Math.round(randomVariance(0, this.data.periodVarianceMS));
+        period += Math.round(
+          randomVariance(0, this.data.periodVarianceMS, this.random),
+        );
       }
       period = Math.max(1, period);
       if (currTime + period > numMS) {
@@ -442,7 +514,10 @@ export class EmitterInstance {
     p.pos[1] += p.vel[1] * dt;
     p.pos[2] += p.vel[2] * dt;
 
-    const interp = interpolateKeys(pData.keys, p.currentAge / p.totalLifetime);
+    const interp = interpolateKeys(
+      this.colorKeys ?? pData.keys,
+      p.currentAge / p.totalLifetime,
+    );
     p.r = interp.r;
     p.g = interp.g;
     p.b = interp.b;
@@ -455,6 +530,8 @@ export class EmitterInstance {
     pos: [number, number, number],
     axis: [number, number, number],
     inheritedVelocity: [number, number, number],
+    thetaAxis?: [number, number, number],
+    random = this.random,
   ): Particle {
     const d = this.data;
     const pData = d.particles;
@@ -464,15 +541,15 @@ export class EmitterInstance {
     let ejY = axis[1];
     let ejZ = axis[2];
 
-    const axisx = computeAxisX(ejX, ejY, ejZ);
+    const axisx = thetaAxis ?? computeAxisX(ejX, ejY, ejZ);
 
     // Theta: angle off main axis.
     const theta =
-      (d.thetaMin + Math.random() * (d.thetaMax - d.thetaMin)) * DEG_TO_RAD;
+      (d.thetaMin + random() * (d.thetaMax - d.thetaMin)) * DEG_TO_RAD;
 
     // Phi: rotation around main axis.
     const phiRef = (this.internalClock / 1000) * d.phiReferenceVel;
-    const phi = (phiRef + Math.random() * d.phiVariance) * DEG_TO_RAD;
+    const phi = (phiRef + random() * d.phiVariance) * DEG_TO_RAD;
 
     // Rotate axis by theta around axisx, then by phi around original axis.
     [ejX, ejY, ejZ] = rotateAroundAxis(
@@ -503,7 +580,11 @@ export class EmitterInstance {
     }
 
     // Velocity with variance.
-    const speed = randomVariance(d.ejectionVelocity, d.velocityVariance);
+    const speed = randomVariance(
+      d.ejectionVelocity,
+      d.velocityVariance,
+      random,
+    );
 
     const spawnPos: [number, number, number] = [
       pos[0] + ejX * d.ejectionOffset,
@@ -529,16 +610,19 @@ export class EmitterInstance {
     // Particle lifetime with variance.
     let lifetime = pData.lifetimeMS;
     if (pData.lifetimeVarianceMS > 0) {
-      lifetime += Math.round(randomVariance(0, pData.lifetimeVarianceMS));
+      lifetime += Math.round(
+        randomVariance(0, pData.lifetimeVarianceMS, random),
+      );
     }
     lifetime = Math.max(1, lifetime);
 
     // Spin speed.
     const spin =
-      pData.spinSpeed + randomRange(pData.spinRandomMin, pData.spinRandomMax);
+      pData.spinSpeed +
+      randomRange(pData.spinRandomMin, pData.spinRandomMax, random);
 
     // Initial color/size from first keyframe.
-    const k0 = pData.keys[0];
+    const k0 = this.colorKeys?.[0] ?? pData.keys[0];
 
     const particle: Particle = {
       pos: spawnPos,

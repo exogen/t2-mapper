@@ -3,7 +3,7 @@ import type { Object3D } from "three";
 /**
  * A particle emitter a shape keeps alive at one of its nodes: player jet
  * nozzles, vehicle jet nozzles, contrails. Each frame ParticleEffects
- * emits along the node's movement with the node's local Y as the ejection
+ * emits along the node's movement with native DTS +Y (model +Z) as the ejection
  * axis, as Player/FlyingVehicle::updateJet do with emitParticles(nodePos,
  * useLastPosition, nodeAxis, velocity, dt). The owner mutates `velocity`
  * and `dtScale` per frame; removing the registration deletes the emitter
@@ -29,6 +29,24 @@ export interface NodeEmitterFrame {
    * vehicle is; 0 skips the frame.
    */
   dtScale: number;
+}
+
+/** Player::updateJet (0x005d65e0) reads the nozzle's native +Y column. */
+export function readNodeEmitterTransform(
+  anchor: Object3D,
+  origin: [number, number, number],
+  axis: [number, number, number],
+): void {
+  anchor.updateWorldMatrix(true, false);
+  const m = anchor.matrixWorld.elements;
+  // Native DTS +Y is model +Z. Swizzle Three world back to Torque [z,x,y].
+  origin[0] = m[14];
+  origin[1] = m[12];
+  origin[2] = m[13];
+  const length = Math.hypot(m[8], m[9], m[10]) || 1;
+  axis[0] = m[10] / length;
+  axis[1] = m[8] / length;
+  axis[2] = m[9] / length;
 }
 
 const _nodeEmitters = new Set<NodeEmitter>();

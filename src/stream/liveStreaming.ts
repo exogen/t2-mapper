@@ -627,6 +627,7 @@ export class LiveStreamAdapter extends StreamEngine {
       this.advanceShapeAnimations();
       this.advanceForceFields();
       this.advanceControlEnergy();
+      this.recordGroundEffects();
 
       // Periodic status at milestones
       if (isMilestonePacket && this.tickCount > 1) {

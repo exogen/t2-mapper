@@ -45,11 +45,7 @@ import {
 } from "../../state/streamPlaybackStore";
 import { orientationAlongDirection } from "../../stream/streamHelpers";
 import type { ShockLanceEntity } from "../../state/gameEntityTypes";
-import {
-  LINK_MUZZLE_LIFT,
-  muzzleWorldPosition,
-  sourceAimDirection,
-} from "../linkBeamSource";
+import { muzzleWorldPosition, sourceAimDirection } from "../linkBeamSource";
 import {
   SHOCK_LANCE_MAX_POINTS,
   SHOCK_LANCE_MISS_AMP,
@@ -356,11 +352,18 @@ export function createShockLanceView(
         density = SHOCK_LANCE_MISS_DENSITY;
         amp = SHOCK_LANCE_MISS_AMP;
         if (source) {
-          if (!muzzleWorldPosition(source, now, _start)) {
-            _start.copy(source.position);
-            _start.y += LINK_MUZZLE_LIFT;
-          }
-          sourceAimDirection(entity.linkSourceId, source, _aim);
+          muzzleWorldPosition(
+            entity.linkSourceId,
+            source,
+            entity.sourceSlot ?? 0,
+            _start,
+          );
+          sourceAimDirection(
+            entity.linkSourceId,
+            source,
+            entity.sourceSlot ?? 0,
+            _aim,
+          );
           _end.copy(_start).addScaledVector(_aim, SHOCK_LANCE_MISS_LENGTH);
         }
       }

@@ -27,6 +27,8 @@ export interface TerrainRayHit {
 }
 
 export interface TerrainCollisionData {
+  /** TerrainBlock::mMPMIndex[0] is resolved from this texture. */
+  textureName?: string;
   heightMap: Uint16Array;
   squareSize: number;
   /** Per-square hole bitmap (row * 256 + col), or null when no holes. */
@@ -60,6 +62,7 @@ export function setTerrainCollisionData(
     heightMap: Uint16Array;
     squareSize: number;
     emptySquareRuns?: number[];
+    textureName?: string;
   } | null,
 ): void {
   if (!data) {
@@ -104,6 +107,7 @@ export function setTerrainCollisionData(
   }
 
   collisionState().terrain = {
+    textureName: data.textureName,
     heightMap,
     squareSize: data.squareSize,
     holes,

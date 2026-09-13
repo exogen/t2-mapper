@@ -352,10 +352,13 @@ export const DEMO_CHECKPOINT_TICKS = 8_000;
 export interface DemoStreamingOptions {
   /** Event/director scans need no seek history. Playback retains it on demand. */
   checkpoints?: boolean;
+  /** Headless director scans do not render transient ground effects. */
+  groundEffects?: boolean;
 }
 
 class DemoStreamAdapter extends StreamEngine {
   private readonly checkpointsEnabled: boolean;
+  private readonly groundEffectsEnabled: boolean;
   private readonly checkpoints = new Map<
     number,
     ReturnType<DemoStreamAdapter["captureCheckpoint"]>
@@ -469,6 +472,7 @@ class DemoStreamAdapter extends StreamEngine {
   constructor(parser: DemoParser, options: DemoStreamingOptions) {
     super();
     this.checkpointsEnabled = options.checkpoints !== false;
+    this.groundEffectsEnabled = options.groundEffects !== false;
     this.parser = parser;
     this.registry = parser.getRegistry();
     this.ghostTracker = parser.getGhostTracker();
@@ -1054,6 +1058,7 @@ class DemoStreamAdapter extends StreamEngine {
         this.advanceShapeAnimations();
         this.advanceForceFields();
         this.advanceControlEnergy();
+        if (this.groundEffectsEnabled) this.recordGroundEffects();
         // updateCameraAndHud() calls removeExpiredExplosions() as its first
         // step (and the live path relies on that), so calling it here too
         // would drop expired explosions twice per tick.

@@ -26,6 +26,29 @@ function shape(overrides: Partial<StreamEntity> = {}): StreamEntity {
 }
 
 describe("streamed render entity updates", () => {
+  it("preserves a link beam's source image slot through creation and updates", () => {
+    const initial = shape({
+      type: "Projectile",
+      className: "RepairProjectile",
+      linkSourceId: "player",
+      linkTargetId: "generator",
+      sourceSlot: 2,
+      visual: {
+        kind: "linkBeam",
+        variant: "repair",
+        texture: "redbump2",
+        width: 0.2,
+        alpha: 0.75,
+        scrollSpeed: 5,
+        texRepeat: 0.2,
+        flareSize: 0.6,
+      },
+    });
+    const rendered = streamEntityToGameEntity(initial);
+    expect(rendered).toMatchObject({ renderType: "LinkBeam", sourceSlot: 2 });
+    updateGameEntityFromStream(rendered, { ...initial, sourceSlot: 0 });
+    expect(rendered).toMatchObject({ sourceSlot: 0 });
+  });
   it.each(["StaticShape", "Player", "WheeledVehicle"])(
     "keeps %s damage, repair, fade and cloak current without a React update",
     (className) => {

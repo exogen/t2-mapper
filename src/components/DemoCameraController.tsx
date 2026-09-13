@@ -11,6 +11,8 @@ import {
 import { useInputAction } from "./InputControls";
 import { useFollowFlagActions } from "./useFollowFlagActions";
 import { FramePriority } from "./framePriority";
+import { useRecording } from "./usePlayback";
+import { isRelayRecording } from "../stream/demoDate";
 
 /**
  * Demo-playback camera controller — the client-side companion to
@@ -27,8 +29,11 @@ import { FramePriority } from "./framePriority";
 const camlog = createLogger("camdbg");
 
 export function DemoCameraController() {
+  const recording = useRecording();
   // F cycles camera modes (shares the action with the live observer).
-  useInputAction("toggleObserverMode", cycleDemoCameraMode);
+  useInputAction("toggleObserverMode", () => {
+    cycleDemoCameraMode(!isRelayRecording(recording?.recorderName ?? null));
+  });
   // Tab (pointer locked) flips a player follow between orbit and first person.
   useInputAction("toggleFollowFirstPerson", toggleFollowFirstPerson);
   // Pointer-locked left/right click cycles the followed player forward/

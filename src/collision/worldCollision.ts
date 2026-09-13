@@ -821,6 +821,7 @@ function appendMeshTriangles(
   box: Box3,
   out: number[],
   facing?: TriangleFacing,
+  hullType?: DIFHullType,
 ): void {
   for (const entry of entries) {
     for (const collider of entry.colliders) {
@@ -836,6 +837,20 @@ function appendMeshTriangles(
         _localBox.expandByPoint(_corner.applyMatrix4(collider.inverse));
       }
       const matrix = collider.matrixWorld;
+      if (hullType && collider.mesh instanceof DIFCollisionMesh) {
+        collider.mesh.collision.visitHullTriangles(
+          _localBox,
+          (a, b, c) => {
+            for (const v of [a, b, c]) {
+              _corner.copy(v).applyMatrix4(matrix);
+              out.push(_corner.x, _corner.y, _corner.z);
+            }
+            return false;
+          },
+          hullType,
+        );
+        continue;
+      }
       if (!collider.mesh.geometry.getAttribute("position").count) continue;
       collider.bvh.shapecast({
         intersectsBounds: (bounds) =>
@@ -881,8 +896,15 @@ export function playerTrianglesInBox(
   box: Box3,
   out: number[],
   collideWithField?: (id: string) => boolean,
+  interiorHullType?: DIFHullType,
 ): void {
-  appendMeshTriangles(interiors().values(), box, out);
+  appendMeshTriangles(
+    interiors().values(),
+    box,
+    out,
+    undefined,
+    interiorHullType,
+  );
   appendMeshTriangles(collisionState().playerShapes.values(), box, out);
   for (const [id, field] of forceFields()) {
     if (
@@ -921,9 +943,14 @@ const BOX_TRIANGLES = [
 export function castWorldRay(
   start: Vec3,
   end: Vec3,
-  options?: { includeStatics?: boolean },
+  options?: {
+    includeStatics?: boolean;
+    includeTerrain?: boolean;
+    includeInteriors?: boolean;
+  },
 ): WorldRayHit | null {
-  const terrainHit = castTerrainRay(start, end);
+  const terrainHit =
+    options?.includeTerrain === false ? null : castTerrainRay(start, end);
   let best: WorldRayHit | null = terrainHit
     ? { ...terrainHit, source: "terrain" }
     : null;
@@ -939,6 +966,7 @@ export function castWorldRay(
         ]
       : [[interiors(), "interior"]];
   for (const [group, source] of meshGroups) {
+    if (source === "interior" && options?.includeInteriors === false) continue;
     for (const entry of group.values()) {
       for (const collider of entry.colliders) {
         if (!syncMeshCollider(collider)) continue;

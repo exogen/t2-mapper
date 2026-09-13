@@ -1,3 +1,4 @@
+import { GroundEffectHistory, type GroundActor } from "./groundEffectHistory";
 import { timelineRandom } from "./timelineRandom";
 import {
   decodeVehicleSteering,
@@ -211,6 +212,7 @@ export interface MutableEntity {
   /** Shooter's ghost index from the projectile packet (sourceObject —
    *  the engine transmits who fired every projectile). */
   sourceGhostIndex?: number;
+  sourceSlot?: number;
   simulatedVelocity?: [number, number, number];
   gravityMod?: number;
   /** Ticks since the projectile left the muzzle (seeded from currTick). */
@@ -361,6 +363,96 @@ interface PendingExplosion {
  * source: DemoParser blocks for demo playback, or PacketParser for live.
  */
 export abstract class StreamEngine implements StreamingPlayback {
+  readonly groundEffectHistory = new GroundEffectHistory();
+  private groundLifetimeData = new Map<number, number>();
+
+  private groundRetentionSec(dataBlockId: number): number {
+    const cached = this.groundLifetimeData.get(dataBlockId);
+    if (cached !== undefined) return cached;
+    const db = this.getDataBlockData(dataBlockId);
+    if (!db) return 0;
+    let complete = true,
+      retention = 0;
+    for (const name of [
+      "footPuffEmitter",
+      "dustEmitter",
+      "dustTrailEmitter",
+      "tireEmitter",
+    ]) {
+      const id = db[name];
+      if (typeof id !== "number") continue;
+      const emitter = this.getDataBlockData(id);
+      if (!emitter) {
+        complete = false;
+        continue;
+      }
+      for (const particleId of (emitter.particles as
+        (number | null)[] | undefined) ?? []) {
+        if (particleId == null) continue;
+        const particle = this.getDataBlockData(particleId);
+        if (!particle) {
+          complete = false;
+          continue;
+        }
+        const lifetime =
+          (Number(particle.lifetimeMS ?? 0) +
+            Number(particle.lifetimeVarianceMS ?? 0)) *
+          32;
+        if (Number.isFinite(lifetime))
+          retention = Math.max(retention, lifetime / 1000 + 1);
+      }
+    }
+    // References may arrive in later packets. Cache the duration, not whether
+    // it was applied: restoring a checkpoint can restore a shorter window.
+    if (complete) this.groundLifetimeData.set(dataBlockId, retention);
+    return retention;
+  }
+
+  /** Capture simulation inputs even when models have not loaded yet. */
+  protected recordGroundEffects(): void {
+    const actors: GroundActor[] = [];
+    for (const entity of this.entities.values()) {
+      if (
+        (entity.type !== "Player" && entity.type !== "Vehicle") ||
+        !entity.position ||
+        entity.dataBlockId == null
+      )
+        continue;
+      this.groundEffectHistory.retentionSec = Math.max(
+        this.groundEffectHistory.retentionSec,
+        this.groundRetentionSec(entity.dataBlockId),
+      );
+      actors.push({
+        key: `${entity.ghostIndex}:${entity.spawnTick}`,
+        ghostIndex: entity.ghostIndex,
+        spawnTick: entity.spawnTick,
+        type: entity.type,
+        className: entity.className,
+        dataBlockId: entity.dataBlockId,
+        position: [...entity.position],
+        rotation: entity.rotation ? [...entity.rotation] : [0, 0, 0, 1],
+        velocity: entity.velocity ? [...entity.velocity] : [0, 0, 0],
+        mounted: entity.mountObjectGhostIndex != null,
+        jetting: entity.jetting,
+        frozen: entity.frozen,
+        scale: entity.scale ? [...entity.scale] : undefined,
+        threads: entity.threads,
+        clientAnimation: entity.clientAnimation,
+        actionAnim: entity.actionAnim,
+        actionAnimPos: entity.actionAnimPos,
+        actionTimeSec: entity.actionTimeSec,
+        actionAtEnd: entity.actionAtEnd,
+        actionHoldAtEnd: entity.actionHoldAtEnd,
+        damageState: entity.damageState,
+      });
+    }
+    this.groundEffectHistory.append({
+      timeSec: this.getTimeSec(),
+      gravity: this.gravity,
+      actors,
+    });
+  }
+
   // ── Parser infrastructure (set by subclass constructors) ──
   protected registry!: ParserRegistry;
   protected ghostTracker!: GhostTrackerLike;
@@ -780,6 +872,7 @@ export abstract class StreamEngine implements StreamingPlayback {
         ]),
       ),
       loadInfo: this.loadInfo.saveState(),
+      groundEffects: this.groundEffectHistory.save(),
     };
   }
 
@@ -787,6 +880,7 @@ export abstract class StreamEngine implements StreamingPlayback {
     checkpoint: ReturnType<StreamEngine["captureSimulationState"]>,
   ): void {
     const state = structuredClone(checkpoint.state);
+    this.groundEffectHistory.restore(checkpoint.groundEffects);
     // Every restore creates new render lifetimes. Reusing checkpoint IDs would
     // retain stale mounted models, effects and per-entity renderer caches.
     const ids = new Map<string, string>();
@@ -859,6 +953,8 @@ export abstract class StreamEngine implements StreamingPlayback {
     // A reset invalidates every ghost, so the world is incomplete again
     // until the server says otherwise.
     this.ghostAlwaysDoneSec = null;
+    this.groundEffectHistory.clear();
+    this.groundLifetimeData.clear();
     this.entities.clear();
     this.imageAnimations.clear();
     this.entityIdByGhostIndex.clear();
@@ -2129,6 +2225,8 @@ export abstract class StreamEngine implements StreamingPlayback {
     }
 
     // Projectile shooter, from the packet's source object ghost index.
+    if (typeof data.sourceSlot === "number")
+      entity.sourceSlot = data.sourceSlot;
     if (
       entity.type === "Projectile" &&
       typeof data.sourceObject === "number" &&
@@ -3921,6 +4019,7 @@ export abstract class StreamEngine implements StreamingPlayback {
         direction: entity.direction,
         ghostIndex: entity.ghostIndex,
         sourceGhostIndex: entity.sourceGhostIndex,
+        sourceSlot: entity.sourceSlot,
         beamStart: entity.beamStart,
         beamEnd: entity.beamEnd,
         beamHit: entity.beamHit,

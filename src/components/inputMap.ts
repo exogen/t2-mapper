@@ -54,6 +54,10 @@ export const LIVE_OBSERVER_INPUT = [
   { name: "toggleFollowFirstPerson", keys: ["Tab"] },
 ] as const satisfies readonly InputMapEntry[];
 
+export const TARGET_FINDER_INPUT = [
+  { name: "findTarget", keys: ["KeyT"] },
+] as const satisfies readonly InputMapEntry[];
+
 /**
  * Flag follow while streaming (demo playback or watch spectate): the
  * number keys orbit the flags (1 = Storm, 2 = Inferno; higher digits for
@@ -151,6 +155,7 @@ export type ActionName =
   | (typeof MAP_MODE_INPUT)[number]["name"]
   | (typeof DEMO_MODE_INPUT)[number]["name"]
   | (typeof LIVE_OBSERVER_INPUT)[number]["name"]
+  | (typeof TARGET_FINDER_INPUT)[number]["name"]
   | (typeof FLAG_FOLLOW_INPUT)[number]["name"]
   | (typeof LIVE_FOLLOW_INPUT)[number]["name"]
   | (typeof TOUR_MODE_INPUT)[number]["name"]

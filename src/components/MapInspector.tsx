@@ -64,6 +64,7 @@ import { useTouchDevice } from "./useTouchDevice";
 import { GameDialogSpinner } from "./GameDialogSpinner";
 import { ToggleSidebarButton } from "./ToggleSidebarButton";
 import { ExitTourButton } from "./ExitTourButton";
+import { TargetFinder } from "./TargetFinder";
 import { lazyNamed } from "./lazyNamed";
 import styles from "./MapInspector.module.css";
 
@@ -779,6 +780,13 @@ export function MapInspector() {
                   />
                 )}
                 <StreamDelayNotice />
+                {hasStreamData &&
+                (recording?.source === "demo" || isWatcher) &&
+                !mapInfoOpen &&
+                !scoreScreenOpen &&
+                !showDisconnectDialog ? (
+                  <TargetFinder key={`${dataSource}:${effectiveMissionName}`} />
+                ) : null}
                 {recording?.source === "demo" ? <CommentarySubtitles /> : null}
                 {showDisconnectDialog ? (
                   <WatchErrorDialog

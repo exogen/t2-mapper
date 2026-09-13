@@ -1,3 +1,8 @@
+import {
+  buildActionAnimMap,
+  countEmbeddedNonTableSequences,
+  type ActionAnimEntry,
+} from "../stream/playerActionMap";
 import { shapeThreadTime } from "../stream/shapeThreads";
 import { streamRenderFrame } from "../stream/interpolateEntity";
 import { sameImageMounts } from "../stream/imageMount";
@@ -6,6 +11,7 @@ import {
   Fragment,
   Suspense,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -28,12 +34,11 @@ import {
   getKeyframeAtTime,
   processShapeScene,
 } from "../stream/playbackUtils";
-import {
-  NUM_TABLE_ACTION_ANIMS,
-  samplePlayerPose,
-} from "../stream/playerAnimation";
+import { samplePlayerPose } from "../stream/playerAnimation";
 import { stepFlareThread } from "./jetThreads";
 import { DTSAnimationMixer } from "../dts/dtsAnimationMixer";
+import { DTSShape } from "../dts/dtsModel";
+import { renderShapeRaycast } from "../collision/renderShapeRaycast";
 import {
   createDtsDamageThreads,
   type DtsDamageThreads,
@@ -76,6 +81,7 @@ import {
 } from "../state/engineStore";
 import { SHAPE_MODEL_ROTATION_Y } from "../world/placement";
 import { useStreamSnapshot } from "../state/streamSnapshotStore";
+import { gameEntityStore } from "../state/gameEntityStore";
 import { useCommandCircuit } from "../state/commandCircuitStore";
 import { CommandCircuitPlayerMarker } from "./CommandCircuitPlayerMarker";
 import { PlayerNameplate } from "./PlayerNameplate";
@@ -125,123 +131,6 @@ function useCustomSkinManifest() {
     staleTime: Infinity,
     retry: 1,
   });
-}
-
-/** Table action names in engine order (indices 0-7). */
-const TABLE_ACTION_NAMES = [
-  "root",
-  "run",
-  "back",
-  "side",
-  "fall",
-  "jet",
-  "jump",
-  "land",
-];
-
-interface ActionAnimEntry {
-  /** DTS clip name (lowercase, e.g. "diehead"). */
-  clipName: string;
-  /** Engine alias (lowercase, e.g. "death1"). */
-  alias: string;
-}
-
-/**
- * Build the engine's action index -> animation entry mapping from a
- * TSShapeConstructor's sequence entries (e.g. `"heavy_male_root.dsq root"`).
- *
- * The engine builds its action list as:
- * 1. Table actions (0-7): found by searching for aliased names (root, run, etc.)
- * 2. Non-table actions (8+): ALL remaining shape sequences in order.
- *
- * The shape's sequence array contains DTS-embedded sequences (e.g. JetFlare,
- * Damage) BEFORE the TSShapeConstructor-loaded ones. These occupy non-table
- * action slots and shift all TSShapeConstructor non-table indices up.
- */
-function buildActionAnimMap(
-  sequences: string[],
-  shapePrefix: string,
-  embeddedNonTableCount: number = 0,
-): Map<number, ActionAnimEntry> {
-  const result = new Map<number, ActionAnimEntry>();
-
-  // Parse each sequence entry into { clipName, alias }.
-  const parsed: Array<{ clipName: string; alias: string }> = [];
-  for (const entry of sequences) {
-    const spaceIdx = entry.indexOf(" ");
-    if (spaceIdx === -1) continue;
-    const dsqFile = entry.slice(0, spaceIdx).toLowerCase();
-    const alias = entry
-      .slice(spaceIdx + 1)
-      .trim()
-      .toLowerCase();
-    if (!alias || !dsqFile.startsWith(shapePrefix) || !dsqFile.endsWith(".dsq"))
-      continue;
-    const clipName = dsqFile.slice(shapePrefix.length, -4);
-    if (clipName) parsed.push({ clipName, alias });
-  }
-
-  // Find which parsed entries are table actions (by alias name).
-  const tableEntryIndices = new Set<number>();
-  for (let i = 0; i < TABLE_ACTION_NAMES.length; i++) {
-    const name = TABLE_ACTION_NAMES[i];
-    for (let pi = 0; pi < parsed.length; pi++) {
-      if (parsed[pi].alias === name) {
-        tableEntryIndices.add(pi);
-        result.set(i, parsed[pi]);
-        break;
-      }
-    }
-  }
-
-  // Non-table actions: remaining entries in TSShapeConstructor order, offset
-  // by embedded non-table sequences that precede them in the shape.
-  let actionIdx = NUM_TABLE_ACTION_ANIMS + embeddedNonTableCount;
-  for (let pi = 0; pi < parsed.length; pi++) {
-    if (!tableEntryIndices.has(pi)) {
-      result.set(actionIdx, parsed[pi]);
-      actionIdx++;
-    }
-  }
-
-  return result;
-}
-
-const TABLE_ACTION_NAME_SET = new Set(TABLE_ACTION_NAMES);
-
-/**
- * Count DTS-embedded sequences that occupy non-table action slots. The engine's
- * shape sequence array starts with embedded sequences (e.g. JetFlare, Damage)
- * before TSShapeConstructor sequences. We detect them by comparing the native DTS sequence table with TSShapeConstructor-derived clip names.
- */
-function countEmbeddedNonTableSequences(
-  scene: Object3D,
-  animations: readonly AnimationClip[],
-  tscSequences: string[],
-  shapePrefix: string,
-): number {
-  const dtsNames = readDtsSequences(scene, animations).names;
-  if (dtsNames.length === 0) return 0;
-
-  // Build set of clip names derived from TSShapeConstructor DSQ entries.
-  const tscClipNames = new Set<string>();
-  for (const entry of tscSequences) {
-    const spaceIdx = entry.indexOf(" ");
-    if (spaceIdx === -1) continue;
-    const dsqFile = entry.slice(0, spaceIdx).toLowerCase();
-    if (!dsqFile.startsWith(shapePrefix) || !dsqFile.endsWith(".dsq")) continue;
-    const clipName = dsqFile.slice(shapePrefix.length, -4);
-    if (clipName) tscClipNames.add(clipName);
-  }
-
-  // Embedded sequences come first in the DTS. Count leading entries that don't
-  // match any TSShapeConstructor clip name, excluding any that are table actions.
-  let count = 0;
-  for (const name of dtsNames) {
-    if (tscClipNames.has(name)) break;
-    if (!TABLE_ACTION_NAME_SET.has(name)) count++;
-  }
-  return count;
 }
 
 /**
@@ -362,7 +251,7 @@ export function PlayerModel({
 
   // Clone scene preserving skeleton bindings, create mixer, find mount bones.
   const { clonedScene, mixer, eyeBone } = useMemo(() => {
-    const scene = SkeletonUtils.clone(gltf.scene) as Group;
+    const scene = SkeletonUtils.clone(gltf.scene) as DTSShape;
     processShapeScene(scene, undefined, {
       anisotropy,
       emap: emap,
@@ -449,6 +338,23 @@ export function PlayerModel({
 
   const entityRef = useRef(entity);
   entityRef.current = entity; // eslint-disable-line react-hooks/refs
+  useLayoutEffect(() => {
+    const sp = engineStore.getState().playback.recording?.streamingPlayback;
+    const db =
+      entity.dataBlockId != null
+        ? sp?.getDataBlockData(entity.dataBlockId)
+        : undefined;
+    const box = db?.boxSize as { x: number; y: number; z: number } | undefined;
+    return renderShapeRaycast.register(
+      entity.id,
+      clonedScene,
+      "Player",
+      () =>
+        gameEntityStore.getState().streamEntities.has(entity.id) &&
+        (entityRef.current.damageState ?? 0) === 0,
+      box,
+    );
+  }, [entity.id, entity.dataBlockId, clonedScene, engineStore]);
   const damageThreadsRef = useRef<DtsDamageThreads | undefined>(undefined);
   useEffect(() => {
     const damageThreads = createDtsDamageThreads(

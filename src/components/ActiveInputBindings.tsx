@@ -5,6 +5,7 @@ import { streamPlaybackStore } from "../state/streamPlaybackStore";
 import { useCameraOwner } from "../state/cameraOwner";
 import { useLiveSelector } from "../state/liveConnectionStore";
 import { InputBindings } from "./InputBindings";
+import { targetFinderStore } from "../state/targetFinderStore";
 import {
   FREE_FLY_INPUT,
   MOVABLE_CAMERA_INPUT,
@@ -20,6 +21,7 @@ import {
   COMMAND_CIRCUIT_STREAM_INPUT,
   COMMAND_CIRCUIT_INPUT,
   COMMAND_CIRCUIT_EXIT_INPUT,
+  TARGET_FINDER_INPUT,
 } from "./inputMap";
 
 /**
@@ -43,6 +45,10 @@ export function ActiveInputBindings() {
   const isDemo = recording?.source === "demo";
   const isLive = recording?.source === "live";
   const isMap = !recording;
+  const targetFinderOpen = useStore(targetFinderStore, (s) => s.open);
+  const canFindTarget = isDemo || (isLive && isWatcher);
+
+  if (targetFinderOpen) return null;
 
   // An active tour owns ALL input: only its bindings (click = next
   // stop, Escape = exit) are mounted — no camera-mode cycling, pointer
@@ -51,14 +57,14 @@ export function ActiveInputBindings() {
     return <InputBindings map={TOUR_MODE_INPUT} />;
   }
 
-  // The auto-director likewise owns all input: one interrupt action
-  // covering every camera gesture (exits back to free-fly), plus the
-  // demo transport (Space / , / .) which deliberately stays live.
+  // The auto-director keeps manual camera controls disabled. Transport,
+  // the explicit interrupt, and target finding remain available.
   if (cameraOwner === "director") {
     return (
       <>
         <InputBindings map={DIRECTOR_MODE_INPUT} />
         {isDemo && <InputBindings map={DEMO_MODE_INPUT} />}
+        {canFindTarget && <InputBindings map={TARGET_FINDER_INPUT} />}
       </>
     );
   }
@@ -79,6 +85,7 @@ export function ActiveInputBindings() {
   return (
     <>
       {showFreeFly && <InputBindings map={FREE_FLY_INPUT} />}
+      {canFindTarget && <InputBindings map={TARGET_FINDER_INPUT} />}
       {!isCommandCircuit && <InputBindings map={MOVABLE_CAMERA_INPUT} />}
       {!isCommandCircuit && <InputBindings map={POINTER_LOCKABLE_INPUT} />}
       {isMap && !isCommandCircuit && <InputBindings map={MAP_MODE_INPUT} />}

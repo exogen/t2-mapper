@@ -1,0 +1,135 @@
+.Backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  background: rgba(0, 0, 0, 0.4);
+}
+
+.Dialog {
+  position: absolute;
+  z-index: 21;
+  top: 30%;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(560px, calc(100% - 32px));
+  max-height: calc(70% - 16px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  color: #e7f1f0;
+  background: rgba(25, 31, 31, 0.9);
+  border: 1px solid #526d6c;
+  border-radius: 10px;
+  box-shadow: 0 12px 48px rgb(0 0 0 / 60%);
+}
+
+.Search {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px;
+  border-bottom: 1px solid #364747;
+  color: #81c6c3;
+}
+
+.Icon {
+  display: inline-flex;
+  flex-shrink: 0;
+  opacity: 0.9;
+}
+
+.Input {
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  outline: none;
+  color: inherit;
+  background: transparent;
+  font: inherit;
+  font-size: 20px;
+}
+
+.Input::placeholder {
+  color: #99adac;
+}
+
+.Close {
+  display: grid;
+  place-items: center;
+  padding: 4px;
+  border: 0;
+  color: #99adac;
+  background: transparent;
+  cursor: pointer;
+}
+
+.List {
+  min-height: 0;
+  max-height: 320px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 6px;
+}
+
+.Item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.Item[data-active-item] {
+  color: #fff;
+  background: rgba(113, 158, 152, 0.2);
+}
+
+.Name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.Kind {
+  font-size: 12px;
+  color: rgba(218, 255, 253, 0.5);
+}
+
+.Empty {
+  padding: 24px 12px;
+  color: #99adac;
+  text-align: center;
+}
+
+.Footer {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  padding: 10px 16px;
+  border-top: 1px solid #364747;
+  color: #99adac;
+  font-size: 12px;
+}
+
+.Hint {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  margin-left: auto;
+}
+
+.PlayerCount,
+.Hint > span {
+  white-space: nowrap;
+}
+
+.Hint kbd {
+  font: inherit;
+  color: #d5e4e3;
+}

@@ -1,3 +1,4 @@
+import { GroundEffects } from "./GroundEffects";
 import {
   applyStreamEntityPose,
   streamRenderFrame,
@@ -288,7 +289,8 @@ export function StreamingController({
   const { fov: userFov } = useSettings();
   const springRef = useRef<FollowSpring>(newFollowSpring());
   const playbackClockRef = useRef<PlaybackClock>(null!);
-  if (!playbackClockRef.current) playbackClockRef.current = new PlaybackClock();
+  if (playbackClockRef.current == null)
+    playbackClockRef.current = new PlaybackClock();
   const prevTickSnapshotRef = useRef<StreamSnapshot | null>(null);
   /**
    * What the playback pass resolved this frame, for the camera pass: the
@@ -774,8 +776,8 @@ export function StreamingController({
     // Relay (MapGenius) demos: the recorder is an observer that never
     // moves, so its view is only worth a starting pose. "original" seeds
     // the camera from the recorded view (the block above, this frame) and
-    // hands over to free-fly — on load, on a moment link without a camera,
-    // and when the camera cycle comes back around.
+    // hands over to free-fly on load or a moment link without a camera.
+    // Manual mode cycling skips "original" for these recordings.
     if (
       cameraMode === "original" &&
       currentCamera &&
@@ -1023,6 +1025,7 @@ export function StreamingController({
 
   return (
     <>
+      <GroundEffects playback={recording.streamingPlayback} />
       <ParticleEffects
         playback={recording.streamingPlayback}
         snapshotRef={currentTickSnapshotRef}

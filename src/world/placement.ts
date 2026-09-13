@@ -101,9 +101,16 @@ export function interiorPlacement(scene: SceneInteriorInstance): Placement {
  */
 export function terrainCollisionInput(
   scene: SceneTerrainBlock,
-  terrain: Pick<TerrainFile, "heightMap">,
-): { heightMap: Uint16Array; squareSize: number; emptySquareRuns: number[] } {
+  terrain: Pick<TerrainFile, "heightMap"> &
+    Partial<Pick<TerrainFile, "textureNames">>,
+): {
+  heightMap: Uint16Array;
+  squareSize: number;
+  emptySquareRuns: number[];
+  textureName?: string;
+} {
   return {
+    textureName: terrain.textureNames?.[0],
     heightMap: terrain.heightMap,
     squareSize: scene.squareSize || DEFAULT_TERRAIN_SQUARE_SIZE,
     emptySquareRuns: scene.emptySquareRuns ?? [],

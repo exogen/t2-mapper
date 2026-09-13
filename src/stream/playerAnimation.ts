@@ -250,6 +250,8 @@ export function actionStartPosition(
 }
 
 export interface PlayerPose {
+  /** Unwrapped cycle position for animation triggers (including reverse play). */
+  phase?: number;
   name: string;
   position: number;
   weight: number;
@@ -284,6 +286,7 @@ export function samplePlayerPose(
         : 0;
     return {
       name: m.animation,
+      phase: info?.cyclic ? elapsed : Math.max(0, Math.min(1, elapsed)),
       position: info?.cyclic
         ? ((elapsed % 1) + 1) % 1
         : Math.max(0, Math.min(1, elapsed)),
@@ -308,7 +311,7 @@ export function samplePlayerPose(
     wired.actionHoldAtEnd || mounted || (wired.damageState ?? 0) >= 1;
   let current: PlayerPose, previous: PlayerPose | undefined, changedAt: number;
   if (name && info && (position < 1 || holds)) {
-    current = { name, position, weight: 1 };
+    current = { name, position, phase: position, weight: 1 };
     previous = movementPose(move);
     changedAt = wired.actionAtEnd ? -Infinity : actionStart;
   } else {

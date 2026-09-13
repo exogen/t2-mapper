@@ -16,11 +16,7 @@ import {
   streamPlaybackStore,
 } from "../../state/streamPlaybackStore";
 import type { BeamEntity, LinkBeamEntity } from "../../state/gameEntityTypes";
-import {
-  LINK_MUZZLE_LIFT,
-  muzzleWorldPosition,
-  sourceAimDirection,
-} from "../linkBeamSource";
+import { muzzleWorldPosition, sourceAimDirection } from "../linkBeamSource";
 import { writeLinkRibbon, writeRibbonQuad } from "../projectileGeometry";
 import {
   effectMesh,
@@ -30,6 +26,8 @@ import {
 } from "./geometry";
 import { projectileLight } from "./light";
 import type { ProjectileView } from "./types";
+import { renderShapeRaycast } from "../../collision/renderShapeRaycast";
+import { RepairBeamEndpoint, repairBeamWithinCutoff } from "./repairBeam";
 const _upY = new Vector3(0, 1, 0);
 const _linkPoint = new Vector3();
 
@@ -198,13 +196,14 @@ const _linkStart = new Vector3();
 const _linkEnd = new Vector3();
 const _linkControl = new Vector3();
 const _linkAim = new Vector3();
+const _linkRayEnd = new Vector3();
 const _linkFlareRight = new Vector3();
 const _linkFlareUp = new Vector3();
 
 /**
- * A beam linking two live objects. Repair: a straight scrolling ribbon
- * (redbump2, alpha 0.75) from the repairer's muzzle to the repaired
- * object, with a redflare impact billboard. ELF: the ribbon bows
+ * A beam linking two live objects. Repair: a curved scrolling ribbon
+ * (redbump2, alpha 0.75) chasing the last valid aim-ray contact, with a
+ * redflare impact billboard. ELF: the ribbon bows
  * through the shooter's aim point (quadratic through muzzle, aim point
  * and target — the signature whip), plus three lightning ribbons
  * jittered lightningDist off the beam (ends pinned) re-seeded at
@@ -217,6 +216,7 @@ export function createLinkBeamView(
 ): ProjectileView<LinkBeamEntity> {
   const viewRoot = new Group(),
     segments = LINK_BEAM_SEGMENTS[visual.variant];
+  const repairEndpoint = new RepairBeamEndpoint();
   const flareTexture = visual.flareTexture ? textures[1] : undefined;
   const lightningTexture = visual.lightningTexture
     ? textures[visual.flareTexture ? 2 : 1]
@@ -261,6 +261,7 @@ export function createLinkBeamView(
     root: viewRoot,
     reset() {
       lastSeed = -1;
+      repairEndpoint.reset();
     },
     release() {},
     dispose() {
@@ -273,10 +274,12 @@ export function createLinkBeamView(
       if (!group || !mainPos || !mainUv) return;
       const root = streamPlaybackStore.getState().root;
       const source = entity.linkSourceId
-        ? root?.children.find((c) => c.name === entity.linkSourceId)
+        ? (root?.children.find((c) => c.name === entity.linkSourceId) ??
+          renderShapeRaycast.getShape(entity.linkSourceId))
         : undefined;
       const target = entity.linkTargetId
-        ? root?.children.find((c) => c.name === entity.linkTargetId)
+        ? (root?.children.find((c) => c.name === entity.linkTargetId) ??
+          renderShapeRaycast.getShape(entity.linkTargetId))
         : undefined;
       if (!source || !target) {
         group.visible = false;
@@ -284,33 +287,67 @@ export function createLinkBeamView(
       }
       group.visible = true;
       group.getWorldPosition(_linkOrigin);
-      if (!muzzleWorldPosition(source, streamClock.time, _linkStart)) {
-        _linkStart.copy(source.position);
-        _linkStart.y += LINK_MUZZLE_LIFT;
+      muzzleWorldPosition(
+        entity.linkSourceId,
+        source,
+        entity.sourceSlot ?? 0,
+        _linkStart,
+      );
+      sourceAimDirection(
+        entity.linkSourceId,
+        source,
+        entity.sourceSlot ?? 0,
+        _linkAim,
+      );
+      if (visual.variant === "repair") {
+        _linkRayEnd
+          .copy(_linkStart)
+          .addScaledVector(_linkAim, visual.beamRange ?? 10);
+        if (
+          !repairEndpoint.update(
+            entity.linkTargetId!,
+            streamClock.time,
+            (out) =>
+              renderShapeRaycast.repairHit(
+                _linkStart,
+                _linkRayEnd,
+                entity.linkTargetId!,
+                out,
+              ),
+          )
+        ) {
+          group.visible = false;
+          return;
+        }
+        _linkEnd.copy(repairEndpoint.current);
+        if (
+          !repairBeamWithinCutoff(
+            _linkStart,
+            _linkEnd,
+            _linkAim,
+            visual.cutoffAngle ?? 40,
+          )
+        ) {
+          group.visible = false;
+          return;
+        }
+      } else {
+        target.getWorldPosition(_linkEnd);
+        _linkEnd.y += LINK_TARGET_LIFT;
       }
-      _linkEnd.copy(target.position);
-      _linkEnd.y += LINK_TARGET_LIFT;
       const length = _linkStart.distanceTo(_linkEnd);
-      if (length < 0.5) {
+      if (length < 1e-6) {
         group.visible = false;
         return;
       }
 
-      // The ELF bow: control point = muzzle + aim direction x range —
+      // Both native beams bow: control point = muzzle + aim direction x range —
       // the beam leaves the barrel where the shooter POINTS and curves
       // over to the locked target (engine path builder FUN_0064cd70,
-      // using getRenderMuzzleVector). The aim is rebuilt exactly the way
-      // the verified first-person camera is: body yaw plus replicated
-      // head yaw/pitch through yawPitchToQuaternion, forward = -Z.
-      const curved = visual.variant === "elf";
-      if (curved) {
-        sourceAimDirection(entity.linkSourceId, source, _linkAim);
-        _linkControl.copy(_linkStart).addScaledVector(_linkAim, length);
-      }
+      // using getRenderMuzzleVector). Turrets use their mounted barrel;
+      // players use the engine's look-direction override.
+      _linkControl.copy(_linkStart).addScaledVector(_linkAim, length);
       const sample = (t: number, out: Vector3): Vector3 => {
-        if (!curved) {
-          return out.copy(_linkStart).lerp(_linkEnd, t);
-        }
         // Quadratic Bezier through muzzle → aim point → target.
         const a = (1 - t) * (1 - t);
         const b = 2 * (1 - t) * t;
@@ -338,7 +375,7 @@ export function createLinkBeamView(
       );
 
       // ELF lightning: offsets re-seeded at flicker rate, ends pinned.
-      if (curved && lightningTexture) {
+      if (visual.variant === "elf" && lightningTexture) {
         if (
           lastSeed < 0 ||
           streamClock.time - lastSeed >= LIGHTNING_RESEED_SEC ||
@@ -400,6 +437,24 @@ export function createLinkBeamView(
       const flare = flareMesh;
       const flarePos = flarePosition;
       if (flare && flarePos && flareTexture) {
+        if (visual.variant === "repair") {
+          const { cameraMode, followEntityId } = streamPlaybackStore.getState();
+          // Other clients' sources have no controlling GameConnection here;
+          // the engine defaults those to first person for this occlusion test.
+          const firstPerson = !(
+            cameraMode === "orbitOverride" &&
+            followEntityId === entity.linkSourceId
+          );
+          flare.visible = renderShapeRaycast.repairFlareVisible(
+            camera.position,
+            _linkStart,
+            _linkEnd,
+            entity.linkTargetId!,
+            entity.linkSourceId,
+            firstPerson,
+          );
+          if (!flare.visible) return;
+        }
         const half = visual.flareSize * 0.5;
         _linkFlareRight
           .set(1, 0, 0)

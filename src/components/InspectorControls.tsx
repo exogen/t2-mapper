@@ -6,6 +6,7 @@ import {
   useDebug,
   useSettings,
   type CcPlayerNames,
+  type IffVisibility,
   type TouchMode,
 } from "./SettingsProvider";
 import { CopyCoordinatesButton } from "./CopyCoordinatesButton";
@@ -206,6 +207,8 @@ export const InspectorControls = memo(function InspectorControls({
     setShowReticle,
     showCompass,
     setShowCompass,
+    showIffs,
+    setShowIffs,
     observerTeamColors,
     setObserverTeamColors,
     ccPlayerNames,
@@ -542,6 +545,25 @@ export const InspectorControls = memo(function InspectorControls({
                   >
                     Show input overlay
                   </label>
+                </div>
+                <div className={styles.Field}>
+                  <label htmlFor="showIffsInput">IFFs &amp; nameplates</label>
+                  <div className={styles.Control}>
+                    <select
+                      id="showIffsInput"
+                      value={showIffs}
+                      onChange={(event) => {
+                        setShowIffs(event.target.value as IffVisibility);
+                      }}
+                    >
+                      <option value="always">Always</option>
+                      <option value="followed">Only followed player</option>
+                      <option value="exceptFollowed">
+                        Except followed player
+                      </option>
+                      <option value="never">Never</option>
+                    </select>
+                  </div>
                 </div>
                 <div className={styles.Field}>
                   <label htmlFor="ccPlayerNamesInput">

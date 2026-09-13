@@ -544,8 +544,7 @@ function CommandCircuitOverlay({
  * first-person → original; each mode shows only the inputs it uses. (The
  * behavior lives in DemoCameraController — this only visualizes it.)
  * Relay (MapGenius) recordings have no original view to return to —
- * StreamingController hands "original" straight back to free-fly — so
- * their last step is labelled as the free-fly it lands on.
+ * their mode cycle skips "original" and detaches in place instead.
  */
 function DemoCameraOverlay() {
   const recording = useRecording();

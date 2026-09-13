@@ -77,6 +77,8 @@ export function createExplosionView(
     flip = new Group();
   root.add(group);
   group.add(flip);
+  // Explosion::prepModelView (FUN_00620ca0) uses position - camera,
+  // opposite to Projectile::prepModelView. Keep this turn for explosions.
   flip.rotation.y = Math.PI;
   const shape = createEffectShape(model, shapeName, {
     anisotropy,

@@ -148,3 +148,46 @@ describe("EmitterInstance.emitPeriodic", () => {
     expect(e.isDead()).toBe(true);
   });
 });
+
+it("keeps terrain colour overrides per emitter and preserves sizes/times", () => {
+  const data = emitterData({ useEmitterColors: true });
+  const first = new EmitterInstance(data),
+    second = new EmitterInstance(data);
+  first.setColors([
+    { r: 0.46, g: 0.36, b: 0.26, a: 0.4 },
+    { r: 0.46, g: 0.36, b: 0.26, a: 0 },
+  ]);
+  first.emitBurst([0, 0, 0], 1);
+  second.emitBurst([0, 0, 0], 1);
+  expect(first.particles[0]).toMatchObject({
+    r: 0.46,
+    g: 0.36,
+    b: 0.26,
+    a: 0.4,
+    size: 1,
+  });
+  expect(second.particles[0]).toMatchObject({
+    r: 1,
+    g: 1,
+    b: 1,
+    a: 1,
+    size: 1,
+  });
+  first.update(500);
+  expect(first.particles[0].a).toBeCloseTo(0.2);
+  const fixed = new EmitterInstance({ ...data, useEmitterColors: false });
+  fixed.setColors([{ r: 0, g: 0, b: 0, a: 0 }]);
+  fixed.emitBurst([0, 0, 0], 1);
+  expect(fixed.particles[0].r).toBe(1);
+});
+it("emits foot puffs in the engine's radius/count distribution", () => {
+  const e = new EmitterInstance(emitterData(), 256, () => 0.25);
+  e.emitRadial([10, 20, 30], 0.25, 15);
+  expect(e.particles).toHaveLength(15);
+  for (const p of e.particles) {
+    expect(Math.abs(p.pos[0] - 10)).toBeLessThanOrEqual(0.25);
+    expect(Math.abs(p.pos[1] - 20)).toBeLessThanOrEqual(0.25);
+    expect(p.pos[2]).toBeGreaterThanOrEqual(30);
+    expect(p.pos[2]).toBeLessThanOrEqual(30.25);
+  }
+});

@@ -217,6 +217,9 @@ export interface LinkBeamVisual {
   /** ELF lightning: ribbon width and jitter distance off the beam. */
   lightningWidth?: number;
   lightningDist?: number;
+  /** Repair ray range and native dot-product cutoff (not an acos angle). */
+  beamRange?: number;
+  cutoffAngle?: number;
 }
 
 /**
@@ -331,6 +334,8 @@ export interface StreamEntity {
   ghostIndex?: number;
   /** Projectiles: the shooter's ghost index (packet sourceObject). */
   sourceGhostIndex?: number;
+  /** Mounted image slot that emitted the projectile. */
+  sourceSlot?: number;
   /** Beam projectiles: Torque-space endpoints from the ghost
    *  (SniperProjectile initialPosition/endPos). */
   beamStart?: [number, number, number];
@@ -657,6 +662,7 @@ export interface PreloadAsset {
 }
 
 export interface StreamingPlayback {
+  readonly groundEffectHistory?: import("./groundEffectHistory").GroundEffectHistory;
   /** Retained seek checkpoints, in recorded ticks. Absent on live streams. */
   readonly checkpointTicks?: readonly number[];
   /** The initial pass preceded collision loading and can now be reconstructed. */

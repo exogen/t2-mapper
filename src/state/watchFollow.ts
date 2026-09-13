@@ -3,8 +3,11 @@ import { gameEntityStore } from "./gameEntityStore";
 import type { GameEntity } from "./gameEntityTypes";
 import { liveConnectionStore } from "./liveConnectionStore";
 import { streamPlaybackStore } from "./streamPlaybackStore";
-import { threeForwardHeading } from "../stream/streamHelpers";
-import { resolveFlagTeam } from "./flagTeam";
+import {
+  threeForwardHeading,
+  stripTaggedStringMarkup,
+} from "../stream/streamHelpers";
+import { resolveFlagTeam, flagLabel } from "./flagTeam";
 
 const camlog = createLogger("camdbg");
 
@@ -119,6 +122,50 @@ function flagEntities(): { id: string; teamId: number | null }[] {
 /** Number of followable flags in scope (drives the overlay hint). */
 export function countFollowableFlags(): number {
   return flagEntities().length;
+}
+
+export interface FollowTarget {
+  key: string;
+  label: string;
+  entityId: string;
+  flagSlot: number | null;
+}
+
+/** Searchable targets use the same identities and eligibility as F / number keys. */
+export function getFollowTargets(): FollowTarget[] {
+  const entities = gameEntityStore.getState().streamEntities;
+  const targets: FollowTarget[] = [];
+  const flags = flagEntities();
+  const hasTeams = flags.some((flag) => flag.teamId != null);
+  const slots = new Set<number>();
+  for (const [index, flag] of flags.entries()) {
+    const slot = flag.teamId ?? (hasTeams ? null : index + 1);
+    if (slot == null || slots.has(slot)) continue;
+    slots.add(slot);
+    targets.push({
+      key: `flag:${slot}`,
+      label: flagLabel(entities.get(flag.id)!),
+      entityId: flag.id,
+      flagSlot: slot,
+    });
+  }
+  for (const id of playerEntityIds()) {
+    const entity = entities.get(id)!;
+    if (entity.renderType !== "Player") continue;
+    const targetId = entity.targetId;
+    targets.push({
+      key:
+        targetId != null && targetId >= 0
+          ? `player:${targetId}`
+          : `entity:${id}`,
+      label:
+        stripTaggedStringMarkup(entity.playerName ?? "").trim() ||
+        `Player ${id}`,
+      entityId: id,
+      flagSlot: null,
+    });
+  }
+  return targets;
 }
 
 /** The entity id a flag-follow slot resolves to right now (the item on
@@ -270,7 +317,8 @@ export function enterWatchFollow(targetId?: string): void {
 }
 
 /**
- * Force the 3D camera to free-fly, clearing any follow. Unlike
+ * Detach the 3D camera in place, clearing any follow without changing
+ * its position or orientation. Unlike
  * exitWatchFollow this applies even from the recorded "original" view
  * (which has no followEntityId) — used by the demo command circuit's
  * pan/toggle so exiting follow there reverts the 3D view too.
@@ -288,13 +336,7 @@ export function exitToFreeFly(): void {
 /** Back to free-fly; the camera stays where the orbit left it. */
 export function exitWatchFollow(): void {
   if (streamPlaybackStore.getState().followEntityId === null) return;
-  streamPlaybackStore.setState({
-    followEntityId: null,
-    followTargetId: null,
-    followCameraMode: "orbitOverride",
-    cameraMode: "freeFly",
-    followFlagSlot: null,
-  });
+  exitToFreeFly();
 }
 
 /**
@@ -462,25 +504,20 @@ export function toggleFollowFirstPerson(): void {
  *
  * Unlike watch mode (which defaults to free-fly), demo starts in
  * "original" — the recorder's own viewpoint — and returns there. Relay
- * (MapGenius) demos are the exception: StreamingController promotes
- * "original" to free-fly as soon as the recorded view has placed the
- * camera, so for them the cycle re-centers on the observer instead.
+ * (MapGenius) demos have no original-view cycle slot: their recorded
+ * camera is only used for initial placement. Exiting follow detaches
+ * in place, without visiting the recorder's position along the way.
  */
-export function cycleDemoCameraMode(): void {
+export function cycleDemoCameraMode(hasOriginalView = true): void {
   const state = streamPlaybackStore.getState();
   const mode = state.cameraMode;
   if (mode === "original") {
-    streamPlaybackStore.setState({
-      cameraMode: "freeFly",
-      followEntityId: null,
-      followTargetId: null,
-      followFlagSlot: null,
-    });
+    exitToFreeFly();
   } else if (mode === "freeFly") {
     streamPlaybackStore.setState({ followCameraMode: "orbitOverride" });
     enterWatchFollow();
-    // No players to orbit — skip follow + first-person, back to original.
-    if (!streamPlaybackStore.getState().followEntityId) {
+    // Without players, stay detached unless there is a real recorded view.
+    if (hasOriginalView && !streamPlaybackStore.getState().followEntityId) {
       streamPlaybackStore.setState({ cameraMode: "original" });
     }
   } else if (mode === "orbitOverride" && isFollowingPlayer()) {
@@ -492,12 +529,9 @@ export function cycleDemoCameraMode(): void {
     // Flag follow is a "secret" cycle slot between original and free-fly:
     // only the number keys enter it, and F resumes the cycle at free-fly
     // (no first person on a flag).
-    streamPlaybackStore.setState({
-      cameraMode: "freeFly",
-      followEntityId: null,
-      followTargetId: null,
-      followFlagSlot: null,
-    });
+    exitToFreeFly();
+  } else if (!hasOriginalView) {
+    exitToFreeFly();
   } else {
     streamPlaybackStore.setState({
       cameraMode: "original",

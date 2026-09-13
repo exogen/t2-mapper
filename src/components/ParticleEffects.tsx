@@ -1,3 +1,12 @@
+import {
+  MAX_PARTICLES_PER_EMITTER,
+  particleTexturesReady,
+  getParticleTexture,
+  createParticleGeometry,
+  createParticleMaterial,
+  syncBuffers,
+  type ParticleBuffers,
+} from "../particles/particleRenderer";
 import { useEffect, useMemo, useRef } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
 import {
@@ -6,45 +15,34 @@ import {
   BufferAttribute,
   BufferGeometry,
   CanvasTexture,
-  DataTexture,
   DoubleSide,
   DynamicDrawUsage,
-  Float32BufferAttribute,
   Group,
   Object3D,
   Mesh,
   MeshBasicMaterial,
-  NormalBlending,
   PositionalAudio,
-  RGBAFormat,
   ShaderMaterial,
   SphereGeometry,
   Sprite,
   SpriteMaterial,
   Texture,
   Quaternion,
-  Uint16BufferAttribute,
-  UnsignedByteType,
   Vector3,
-  LinearMipmapNearestFilter,
-  NoColorSpace,
-  RepeatWrapping,
   SRGBColorSpace,
 } from "three";
-import { audioToUrl, textureToUrl } from "../loaders";
-import { loadTexture } from "../textureUtils";
-import { setupEffectTexture } from "../stream/playbackUtils";
+import { audioToUrl } from "../loaders";
 import { orientationAlongDirection } from "../stream/streamHelpers";
 import { takeShockwaveRequests } from "./shockwaveRequests";
-import { nodeEmitters, type NodeEmitter } from "./nodeEmitters";
+import {
+  nodeEmitters,
+  readNodeEmitterTransform,
+  type NodeEmitter,
+} from "./nodeEmitters";
 import {
   EmitterInstance,
   resolveEmitterData,
 } from "../particles/ParticleSystem";
-import {
-  particleVertexShader,
-  particleFragmentShader,
-} from "../particles/shaders";
 import type { EmitterDataResolved } from "../particles/types";
 import type { StreamSnapshot, StreamingPlayback } from "../stream/types";
 import { createLogger } from "../logger";
@@ -66,61 +64,6 @@ import { ParticleSnapshotIndex } from "./particleSnapshot";
 const log = createLogger("ParticleEffects");
 
 // ── Constants ──
-
-const MAX_PARTICLES_PER_EMITTER = 256;
-const QUAD_CORNERS = new Float32Array([
-  -0.5, -0.5, 0.5, -0.5, 0.5, 0.5, -0.5, 0.5,
-]);
-
-// ── Texture cache ──
-
-const _textureCache = new Map<string, Texture>();
-/** Set of textures whose image data has finished loading. */
-const _texturesReady = new Set<Texture>();
-
-/** 1×1 white placeholder so particles are visible before async textures load. */
-const _placeholderTexture = new DataTexture(
-  new Uint8Array([255, 255, 255, 255]),
-  1,
-  1,
-  RGBAFormat,
-  UnsignedByteType,
-);
-_placeholderTexture.needsUpdate = true;
-
-/**
- * ParticleData::preload loads its texture as type 4 (TextureManager
- * FUN_0044bbf0 / FUN_0044b730): mip levels are extruded and the GL filters
- * are GL_LINEAR_MIPMAP_NEAREST / GL_LINEAR with GL_REPEAT wrap, so a small
- * or distant particle samples an averaged blob rather than its full-res
- * peak. Colour space stays raw: the engine modulates 8-bit texels by the
- * datablock colour with no gamma handling.
- */
-function setupParticleTexture(tex: Texture): void {
-  setupEffectTexture(tex, NoColorSpace);
-  tex.wrapS = RepeatWrapping;
-  tex.wrapT = RepeatWrapping;
-  tex.generateMipmaps = true;
-  tex.minFilter = LinearMipmapNearestFilter;
-}
-
-function getParticleTexture(textureName: string): Texture {
-  if (!textureName) return _placeholderTexture;
-  const cached = _textureCache.get(textureName);
-  if (cached) return cached;
-  try {
-    const url = textureToUrl(textureName);
-    const tex = loadTexture(url, (t) => {
-      setupParticleTexture(t);
-      _texturesReady.add(t);
-    });
-    setupParticleTexture(tex);
-    _textureCache.set(textureName, tex);
-    return tex;
-  } catch {
-    return _placeholderTexture;
-  }
-}
 
 // ── Debug geometry (reusable) ──
 
@@ -557,81 +500,10 @@ function getExplosionRadius(expBlock: Record<string, unknown>): number {
   return 5;
 }
 
-// ── Geometry builder ──
-
-function createParticleGeometry(maxParticles: number): BufferGeometry {
-  const geo = new BufferGeometry();
-  const vertCount = maxParticles * 4;
-  const indexCount = maxParticles * 6;
-
-  // Per-vertex quad corner offsets.
-  const corners = new Float32Array(vertCount * 2);
-  for (let i = 0; i < maxParticles; i++) {
-    corners.set(QUAD_CORNERS, i * 8);
-  }
-
-  // Index buffer.
-  const indices = new Uint16Array(indexCount);
-  for (let i = 0; i < maxParticles; i++) {
-    const vBase = i * 4;
-    const iBase = i * 6;
-    indices[iBase] = vBase;
-    indices[iBase + 1] = vBase + 1;
-    indices[iBase + 2] = vBase + 2;
-    indices[iBase + 3] = vBase;
-    indices[iBase + 4] = vBase + 2;
-    indices[iBase + 5] = vBase + 3;
-  }
-
-  // Per-particle attributes (4 verts share the same value).
-  const positions = new Float32Array(vertCount * 3);
-  const colors = new Float32Array(vertCount * 4);
-  const sizes = new Float32Array(vertCount);
-  const spins = new Float32Array(vertCount);
-  const orientDirs = new Float32Array(vertCount * 3);
-
-  geo.setIndex(new Uint16BufferAttribute(indices, 1));
-  geo.setAttribute("quadCorner", new Float32BufferAttribute(corners, 2));
-  geo.setAttribute("position", new Float32BufferAttribute(positions, 3));
-  geo.setAttribute("particleColor", new Float32BufferAttribute(colors, 4));
-  geo.setAttribute("particleSize", new Float32BufferAttribute(sizes, 1));
-  geo.setAttribute("particleSpin", new Float32BufferAttribute(spins, 1));
-  geo.setAttribute("orientDir", new Float32BufferAttribute(orientDirs, 3));
-
-  geo.setDrawRange(0, 0);
-  return geo;
-}
-
-function createParticleMaterial(
-  texture: Texture,
-  useInvAlpha: boolean,
-  orientParticles = false,
-): ShaderMaterial {
-  // Use the placeholder until the real texture's image data is ready.
-  const ready = _texturesReady.has(texture);
-  return new ShaderMaterial({
-    vertexShader: particleVertexShader,
-    fragmentShader: particleFragmentShader,
-    uniforms: {
-      particleTexture: { value: ready ? texture : _placeholderTexture },
-      hasTexture: { value: true },
-      debugOpacity: { value: 1.0 },
-      uOrientParticles: { value: orientParticles },
-    },
-    transparent: true,
-    depthWrite: false,
-    depthTest: true,
-    side: DoubleSide,
-    blending: useInvAlpha ? NormalBlending : AdditiveBlending,
-  });
-}
-
 // ── Per-emitter rendering state ──
 
-interface ActiveEmitter {
-  emitter: EmitterInstance;
+interface ActiveEmitter extends ParticleBuffers {
   mesh: Mesh;
-  geometry: BufferGeometry;
   material: ShaderMaterial;
   /** The intended texture (may still be loading). */
   targetTexture: Texture;
@@ -644,9 +516,6 @@ interface ActiveEmitter {
   isBurst: boolean;
   /** Whether shader compilation has been verified. */
   shaderChecked?: boolean;
-  /** Particle count uploaded last frame (bounds partial buffer uploads). */
-  prevCount?: number;
-  uploadedRevision?: number;
   /** Entity whose lifetime bounds emission: a trail's projectile or a
    *  streaming emitter's explosion. Emission stops once it leaves the scene. */
   driverEntityId?: string;
@@ -735,114 +604,6 @@ function resolveExplosion(
   return { burstEmitters, streamingEmitters };
 }
 
-// ── Update GPU buffers from particle state ──
-
-function syncBuffers(active: ActiveEmitter): void {
-  if (active.uploadedRevision === active.emitter.revision) return;
-  active.uploadedRevision = active.emitter.revision;
-  const particles = active.emitter.particles;
-  const geo = active.geometry;
-  const posAttr = geo.getAttribute("position") as Float32BufferAttribute;
-  const colorAttr = geo.getAttribute("particleColor") as Float32BufferAttribute;
-  const sizeAttr = geo.getAttribute("particleSize") as Float32BufferAttribute;
-  const spinAttr = geo.getAttribute("particleSpin") as Float32BufferAttribute;
-  const orientAttr = geo.getAttribute("orientDir") as Float32BufferAttribute;
-
-  const posArr = posAttr.array as Float32Array;
-  const colArr = colorAttr.array as Float32Array;
-  const sizeArr = sizeAttr.array as Float32Array;
-  const spinArr = spinAttr.array as Float32Array;
-  const orientArr = orientAttr.array as Float32Array;
-
-  const count = Math.min(particles.length, MAX_PARTICLES_PER_EMITTER);
-  const useVelocity = active.emitter.data.orientOnVelocity;
-
-  for (let i = 0; i < count; i++) {
-    const p = particles[i];
-
-    // Swizzle Torque [x,y,z] → Three.js [y,z,x].
-    const tx = p.pos[1];
-    const ty = p.pos[2];
-    const tz = p.pos[0];
-
-    // Orient direction: use velocity or initial orientDir, swizzled.
-    const dir = useVelocity ? p.vel : p.orientDir;
-    const odx = dir[1];
-    const ody = dir[2];
-    const odz = dir[0];
-
-    // Pass particle colors as-is (sRGB / gamma space). ShaderMaterial does
-    // not get automatic linear→sRGB output encoding, so linearizing here
-    // would darken colors without compensation — matching V12's direct
-    // gamma-space rendering.
-    const lr = p.r;
-    const lg = p.g;
-    const lb = p.b;
-    const la = p.a;
-
-    // Write the same values to all 4 vertices of the quad.
-    for (let v = 0; v < 4; v++) {
-      const vi = i * 4 + v;
-      const pi = vi * 3;
-      posArr[pi] = tx;
-      posArr[pi + 1] = ty;
-      posArr[pi + 2] = tz;
-
-      const ci = vi * 4;
-      colArr[ci] = lr;
-      colArr[ci + 1] = lg;
-      colArr[ci + 2] = lb;
-      colArr[ci + 3] = la;
-
-      const oi = vi * 3;
-      orientArr[oi] = odx;
-      orientArr[oi + 1] = ody;
-      orientArr[oi + 2] = odz;
-
-      sizeArr[vi] = p.size;
-      spinArr[vi] = p.currentSpin;
-    }
-  }
-
-  // Zero out sizes for quads that were live last frame but aren't now, so
-  // they collapse to zero-area. Only the previously-written range needs it.
-  const prevCount = active.prevCount ?? MAX_PARTICLES_PER_EMITTER;
-  for (let i = count; i < prevCount; i++) {
-    for (let v = 0; v < 4; v++) {
-      sizeArr[i * 4 + v] = 0;
-    }
-  }
-  active.prevCount = count;
-
-  // Upload only the touched prefix of each buffer instead of all
-  // MAX_PARTICLES_PER_EMITTER quads (sizes extend to prevCount for the
-  // zero-fill above).
-  const quads = Math.max(count, 0);
-  const sizeQuads = Math.max(
-    count,
-    Math.min(prevCount, MAX_PARTICLES_PER_EMITTER),
-  );
-  setPrefixUpdateRange(posAttr, quads * 4 * 3);
-  setPrefixUpdateRange(colorAttr, quads * 4 * 4);
-  setPrefixUpdateRange(sizeAttr, sizeQuads * 4);
-  setPrefixUpdateRange(spinAttr, quads * 4);
-  setPrefixUpdateRange(orientAttr, quads * 4 * 3);
-
-  geo.setDrawRange(0, count * 6);
-}
-
-/** Mark only the first `floatCount` floats of the attribute for upload. */
-function setPrefixUpdateRange(
-  attr: Float32BufferAttribute,
-  floatCount: number,
-): void {
-  attr.clearUpdateRanges();
-  if (floatCount > 0) {
-    attr.addUpdateRange(0, floatCount);
-    attr.needsUpdate = true;
-  }
-}
-
 // ── Main component ──
 
 const MAX_PROJECTILE_SOUNDS = 20;
@@ -892,32 +653,15 @@ function createStreamEmitter(
 
 /**
  * Move a node-anchored emitter to its node: this frame's segment runs
- * from last frame's node position to the current one, the ejection axis
- * is the DTS node's local +Y, and the owner's velocity feeds
- * inheritedVelFactor. The exporter writes DTS nodes as bones turned −90°
- * about X, which puts the node's +Y on the bone's −Y column (Three world →
- * Torque: x←z, y←x, z←y).
+ * from last frame's node position to the current one, and the owner's
+ * velocity feeds inheritedVelFactor.
  */
 function readNodeFrame(entry: ActiveEmitter, node: NodeEmitter): void {
-  node.anchor.updateWorldMatrix(true, false);
-  const m = node.anchor.matrixWorld.elements;
   const prev = entry.prevOrigin!;
   prev[0] = entry.origin[0];
   prev[1] = entry.origin[1];
   prev[2] = entry.origin[2];
-  entry.origin[0] = m[14];
-  entry.origin[1] = m[12];
-  entry.origin[2] = m[13];
-  const axis = entry.emitAxis!;
-  axis[0] = -m[6];
-  axis[1] = -m[4];
-  axis[2] = -m[5];
-  const len = Math.hypot(axis[0], axis[1], axis[2]);
-  if (len > 0) {
-    axis[0] /= len;
-    axis[1] /= len;
-    axis[2] /= len;
-  }
+  readNodeEmitterTransform(node.anchor, entry.origin, entry.emitAxis!);
   const vel = entry.emitVelocity!;
   vel[0] = node.frame.velocity[0];
   vel[1] = node.frame.velocity[1];
@@ -1317,7 +1061,7 @@ export function ParticleEffects({
 
       // Swap in the real texture once it finishes loading.
       if (
-        _texturesReady.has(entry.targetTexture) &&
+        particleTexturesReady.has(entry.targetTexture) &&
         entry.material.uniforms.particleTexture.value !== entry.targetTexture
       ) {
         entry.material.uniforms.particleTexture.value = entry.targetTexture;

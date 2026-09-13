@@ -2,10 +2,26 @@ import { describe, expect, it } from "vitest";
 import { Quaternion, Vector3 } from "three";
 import {
   resolveShockLanceVisual,
+  resolveLinkBeamVisual,
   orientationAlongDirection,
   parseColorSegments,
   playerYawToQuaternion,
 } from "./streamHelpers";
+
+it("preserves the repair datablock's range and cutoff", () => {
+  expect(
+    resolveLinkBeamVisual("RepairProjectile", {
+      textures: ["redbump2", "redflare"],
+      beamRange: 15,
+      cutoffAngle: 25,
+    }),
+  ).toMatchObject({ beamRange: 15, cutoffAngle: 25 });
+  expect(
+    resolveLinkBeamVisual("RepairProjectile", {
+      textures: ["redbump2"],
+    }),
+  ).toMatchObject({ beamRange: 10, cutoffAngle: 40 });
+});
 
 describe("parseColorSegments", () => {
   it("chat default: a pushed span inherits the line color (T2 chat HUD)", () => {

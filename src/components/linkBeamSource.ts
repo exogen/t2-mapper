@@ -6,6 +6,7 @@
  */
 import { Quaternion, Vector3 } from "three";
 import type { Object3D } from "three";
+import { findOwnNode } from "../sceneNodes";
 import { gameEntityStore } from "../state/gameEntityStore";
 import {
   MAX_PITCH,
@@ -13,68 +14,63 @@ import {
   yawPitchToQuaternion,
 } from "../stream/streamHelpers";
 
-/** Fallback muzzle height above the source's origin, used only when
- *  no Muzzlepoint node resolves (weapon not mounted/loaded yet). */
-export const LINK_MUZZLE_LIFT = 1.4;
-/** How often to re-search a source's subtree for its muzzle node —
- *  weapons swap on mount changes, so the cache is short-lived. */
-const MUZZLE_CACHE_SEC = 1;
 /** PlayerData::maxLookAngle — 1.5 rad in every Tribes 2 armor. */
 const LINK_MAX_LOOK_ANGLE = 1.5;
 
 const _aimQuat = new Quaternion();
 
-/**
- * The engine starts link beams at getRenderMuzzlePoint(sourceSlot) — the
- * mounted weapon's Muzzlepoint node, animated with the player (vtable
- * +0x190 in FUN_0064cff0/FUN_00645fc0). Our mounted weapon shapes portal
- * into the player's subtree, so the same node is reachable by name;
- * cached briefly since weapons swap.
- */
-const _muzzleCache = new WeakMap<
-  object,
-  { node: { getWorldPosition(v: Vector3): Vector3 } | null; checkedAt: number }
->();
-export function muzzleWorldPosition(
-  source: { traverse(cb: (o: unknown) => void): void },
-  nowSec: number,
-  out: Vector3,
-): boolean {
-  let entry = _muzzleCache.get(source);
-  if (
-    !entry ||
-    nowSec - entry.checkedAt > MUZZLE_CACHE_SEC ||
-    nowSec < entry.checkedAt
-  ) {
-    let found: { getWorldPosition(v: Vector3): Vector3 } | null = null;
-    source.traverse((o) => {
-      const name = (o as { name?: string }).name;
-      if (!found && name && name.toLowerCase().includes("muzzlepoint")) {
-        found = o as { getWorldPosition(v: Vector3): Vector3 };
-      }
-    });
-    entry = { node: found, checkedAt: nowSec };
-    _muzzleCache.set(source, entry);
-  }
-  if (!entry.node) return false;
-  entry.node.getWorldPosition(out);
-  return true;
+const imageMuzzles = new Map<string, Map<number, Object3D>>();
+
+/** Register only this mounted image's own muzzle, realizing its lazy DTS path.
+ * ShapeBase::getRenderImageTransform falls back to the image transform when
+ * the node is absent. Mount replacement/unmount invalidates immediately. */
+export function registerImageMuzzle(
+  ownerId: string,
+  slot: number,
+  image: Object3D,
+): () => void {
+  let slots = imageMuzzles.get(ownerId);
+  if (!slots) imageMuzzles.set(ownerId, (slots = new Map()));
+  const muzzle = findOwnNode(image, "muzzlePoint") ?? image;
+  slots.set(slot, muzzle);
+  return () => {
+    if (slots.get(slot) !== muzzle) return;
+    slots.delete(slot);
+    if (!slots.size && imageMuzzles.get(ownerId) === slots)
+      imageMuzzles.delete(ownerId);
+  };
 }
 
-/**
- * The shooter's aim (getRenderMuzzleVector) in Three world space,
- * rebuilt exactly the way the verified first-person camera is: body yaw
- * plus replicated head yaw/pitch through yawPitchToQuaternion, forward
- * = -Z.
- */
+/** ShapeBase::getRenderMuzzlePoint(sourceSlot): the selected image's animated
+ * muzzle in world space, or the source transform if no image is mounted. */
+export function muzzleWorldPosition(
+  sourceId: string | undefined,
+  source: Object3D,
+  slot: number,
+  out: Vector3,
+): Vector3 {
+  const muzzle = sourceId ? imageMuzzles.get(sourceId)?.get(slot) : undefined;
+  return (muzzle ?? source).getWorldPosition(out);
+}
+
+/** ShapeBase::getRenderMuzzleVector uses the mounted muzzle's orientation.
+ * Players have a separate look-direction override in getRenderMuzzleTransform. */
 export function sourceAimDirection(
   sourceId: string | undefined,
   source: Object3D,
+  slot: number,
   out: Vector3,
 ): Vector3 {
   const srcEntity = sourceId
     ? gameEntityStore.getState().streamEntities.get(sourceId)
     : undefined;
+  if (srcEntity?.renderType !== "Player") {
+    const muzzle = sourceId ? imageMuzzles.get(sourceId)?.get(slot) : undefined;
+    if (muzzle) return muzzle.getWorldDirection(out);
+    source.updateWorldMatrix(true, false);
+    // Native DTS +Y becomes model +Z; an unmounted source uses world +X.
+    return out.set(1, 0, 0).transformDirection(source.matrixWorld);
+  }
   const headPitch =
     srcEntity && "headPitch" in srcEntity
       ? ((srcEntity.headPitch as number | undefined) ?? 0)

@@ -1,3 +1,4 @@
+import { registerGroundEffectShape } from "./particles/groundEffectAssets";
 import type { FileLoader, LoadingManager } from "three";
 import { DTSLoader } from "./dts/dtsLoader";
 import { getResourceMap } from "./manifest";
@@ -83,6 +84,7 @@ export class ShapeLoader extends DTSLoader {
         });
         const name = decodeURIComponent(url.split("/").pop()!);
         registerShapeSequences(name, model.animations);
+        registerGroundEffectShape(name, model);
         registerShapeBounds(name, model.data.bounds);
         onLoad(model);
       },

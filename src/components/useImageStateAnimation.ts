@@ -344,16 +344,7 @@ function emitMuzzleFlash(
 ): void {
   const flashId = resolveMuzzleFlash(slot.dataBlockId);
   if (flashId == null) return;
-  const node = imageFlashNode(target.imageRoot);
-  node.updateWorldMatrix(true, false);
-  _flashPos.setFromMatrixPosition(node.matrixWorld);
-  _flashDir
-    .set(
-      0,
-      node === target.imageRoot ? 0 : -1,
-      node === target.imageRoot ? 1 : 0,
-    )
-    .transformDirection(node.matrixWorld);
+  imageFlashTransform(target.imageRoot, _flashPos, _flashDir);
   requestShockwave({
     dataBlockId: flashId,
     origin: [_flashPos.z, _flashPos.x, _flashPos.y],
@@ -364,14 +355,21 @@ function emitMuzzleFlash(
 /** Per recording, since datablock ids are reused between recordings. */
 const _flashNodeCache = new WeakMap<Object3D, Object3D>();
 
-/** The image's own "mount0" node, or the image root without one. */
-function imageFlashNode(imageRoot: Object3D): Object3D {
+/** ShapeBase muzzle flash (FUN_005f9a80): own mount0 position and +Y axis,
+ * which is +Z in native DTS model coordinates, including the root fallback. */
+export function imageFlashTransform(
+  imageRoot: Object3D,
+  position: Vector3,
+  direction: Vector3,
+): void {
   let node = _flashNodeCache.get(imageRoot);
   if (!node) {
     node = findOwnNode(imageRoot, "mount0") ?? imageRoot;
     _flashNodeCache.set(imageRoot, node);
   }
-  return node;
+  node.updateWorldMatrix(true, false);
+  position.setFromMatrixPosition(node.matrixWorld);
+  direction.set(0, 0, 1).transformDirection(node.matrixWorld);
 }
 
 const _muzzleFlashCache = new WeakMap<object, Map<number, number | null>>();

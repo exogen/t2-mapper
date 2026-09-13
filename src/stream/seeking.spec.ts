@@ -149,7 +149,7 @@ const timeline = () => [
   ...Array.from({ length: 80 }, move),
 ];
 const withoutId = (entity: object) => {
-  const { id, ...state } = entity as Record<string, unknown>;
+  const { id: _id, ...state } = entity as Record<string, unknown>;
   return state;
 };
 
@@ -444,4 +444,60 @@ describe("on-demand demo checkpoints", () => {
     expect(stream.checkpointTicks).toEqual([DEMO_CHECKPOINT_TICKS]);
     expect(stream.needsReplay).toBe(false);
   });
+});
+
+it("reconstructs the ground effect input window across checkpoint restores", () => {
+  const stream = demo(
+    Array.from({ length: DEMO_CHECKPOINT_TICKS + 300 }, move),
+  );
+  const target = (DEMO_CHECKPOINT_TICKS + 280) * 0.032;
+  stream.stepToTime(target);
+  const expected = structuredClone(stream.groundEffectHistory!.save());
+  stream.stepToTime(1);
+  stream.stepToTime(target);
+  expect(stream.groundEffectHistory!.save()).toEqual(expected);
+  expect(expected.frames.every((f) => f.timeSec <= target)).toBe(true);
+  expect(expected.frames.length).toBeLessThanOrEqual(251);
+});
+it("avoids ground effect history in headless scans", () => {
+  const stream = demo(timeline(), { checkpoints: false, groundEffects: false });
+  stream.stepToTime(3.2);
+  expect(stream.groundEffectHistory!.save().frames).toHaveLength(0);
+});
+
+it("extends ground history when a referenced particle datablock arrives late", () => {
+  const stream = demo(Array.from({ length: 100 }, move));
+  const data = new Map<number, Record<string, unknown>>([
+    [1, { tireEmitter: 10 }],
+  ]);
+  stream.getDataBlockData = (id) => data.get(id);
+  stream.stepToTime(0.32);
+  expect(stream.groundEffectHistory!.retentionSec).toBe(8);
+  data.set(10, { particles: [30] });
+  stream.stepToTime(0.64);
+  data.set(30, { lifetimeMS: 400, lifetimeVarianceMS: 50 });
+  stream.stepToTime(0.96);
+  expect(stream.groundEffectHistory!.retentionSec).toBeCloseTo(15.4);
+});
+
+it("recomputes ground history lifetimes after restoring an earlier checkpoint", () => {
+  const stream = demo([
+    ...Array.from({ length: DEMO_CHECKPOINT_TICKS + 50 }, move),
+    packet(update({ dataBlockId: 3 })),
+    ...Array.from({ length: 100 }, move),
+  ]);
+  const original = stream.getDataBlockData.bind(stream);
+  const data: Record<number, Record<string, unknown>> = {
+    3: { tireEmitter: 10 },
+    10: { particles: [30] },
+    30: { lifetimeMS: 400, lifetimeVarianceMS: 50 },
+  };
+  stream.getDataBlockData = (id) => data[id] ?? original(id);
+  const target = (DEMO_CHECKPOINT_TICKS + 100) * 0.032;
+  stream.stepToTime(target);
+  expect(stream.groundEffectHistory!.retentionSec).toBeCloseTo(15.4);
+  stream.stepToTime((DEMO_CHECKPOINT_TICKS + 10) * 0.032);
+  expect(stream.groundEffectHistory!.retentionSec).toBe(8);
+  stream.stepToTime(target);
+  expect(stream.groundEffectHistory!.retentionSec).toBeCloseTo(15.4);
 });

@@ -39,6 +39,7 @@ export interface EmitterDataResolved {
   overrideAdvances: boolean;
   orientParticles: boolean;
   orientOnVelocity: boolean;
+  useEmitterColors?: boolean;
   lifetimeMS: number;
   lifetimeVarianceMS: number;
   particles: ParticleDataResolved;

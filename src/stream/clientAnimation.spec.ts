@@ -56,17 +56,21 @@ it("samples player movement, action completion, death and seated holds from the 
   });
   const sample = (t: number, wire = {}, mounted = false) =>
     samplePlayerPose(move, wire, mounted, t, 0.15, () => "action", info);
-  expect(sample(15)).toEqual([{ name: "run", position: 0.5, weight: 1 }]);
+  expect(sample(15)).toEqual([
+    { name: "run", position: 0.5, phase: 2.5, weight: 1 },
+  ]);
   const wire = { actionAnim: 9, actionTimeSec: 11 };
   expect(sample(11.5, wire)).toEqual([
-    { name: "action", position: 0.5, weight: 1 },
+    { name: "action", position: 0.5, phase: 0.5, weight: 1 },
   ]);
-  expect(sample(13, wire)).toEqual([{ name: "run", position: 0.5, weight: 1 }]);
+  expect(sample(13, wire)).toEqual([
+    { name: "run", position: 0.5, phase: 0.5, weight: 1 },
+  ]);
   expect(sample(100, wire, true)).toEqual([
-    { name: "action", position: 1, weight: 1 },
+    { name: "action", position: 1, phase: 1, weight: 1 },
   ]);
   expect(sample(100, { ...wire, damageState: 1 })).toEqual([
-    { name: "action", position: 1, weight: 1 },
+    { name: "action", position: 1, phase: 1, weight: 1 },
   ]);
   expect(sample(11.075, wire)[0].weight).toBeCloseTo(0.5);
 });

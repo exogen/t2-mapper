@@ -26,6 +26,15 @@ const CC_PLAYER_NAMES_VALUES: readonly CcPlayerNames[] = [
   "never",
 ];
 
+/** Visibility of the player's world-space IFF triangle and nameplate. */
+export type IffVisibility = "always" | "followed" | "exceptFollowed" | "never";
+const IFF_VISIBILITY_VALUES: readonly IffVisibility[] = [
+  "always",
+  "followed",
+  "exceptFollowed",
+  "never",
+];
+
 /** Server browser layout: the classic table or preview tiles. */
 export type ServerBrowserView = "list" | "tiles";
 const SERVER_BROWSER_VIEW_VALUES: readonly ServerBrowserView[] = [
@@ -96,6 +105,8 @@ type SettingsContextType = {
   setShowCompass: StateSetter<boolean>;
   serverBrowserView: ServerBrowserView;
   setServerBrowserView: StateSetter<ServerBrowserView>;
+  showIffs: IffVisibility;
+  setShowIffs: StateSetter<IffVisibility>;
   /** Team color scheme used when spectating from the observer "team". */
   observerTeamColors: TeamColorScheme;
   setObserverTeamColors: StateSetter<TeamColorScheme>;
@@ -160,6 +171,7 @@ type PersistedSettings = {
   showCompass?: boolean;
   showFpsMeter?: boolean;
   serverBrowserView?: ServerBrowserView;
+  showIffs?: IffVisibility;
   observerTeamColors?: TeamColorScheme;
   ccPlayerNames?: CcPlayerNames;
 };
@@ -224,6 +236,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   const [showCompass, setShowCompass] = useState(true);
   const [serverBrowserView, setServerBrowserView] =
     useState<ServerBrowserView>("list");
+  const [showIffs, setShowIffs] = useState<IffVisibility>("always");
   const [observerTeamColors, setObserverTeamColors] = useState<TeamColorScheme>(
     DEFAULT_TEAM_COLOR_SCHEME,
   );
@@ -285,6 +298,8 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       setShowCompass,
       serverBrowserView,
       setServerBrowserView,
+      showIffs,
+      setShowIffs,
       observerTeamColors,
       setObserverTeamColors,
       ccPlayerNames,
@@ -313,6 +328,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       showReticle,
       showCompass,
       serverBrowserView,
+      showIffs,
       observerTeamColors,
       ccPlayerNames,
     ],
@@ -463,6 +479,12 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       setShowCompass(savedSettings.showCompass);
     }
     if (
+      savedSettings.showIffs != null &&
+      IFF_VISIBILITY_VALUES.includes(savedSettings.showIffs)
+    ) {
+      setShowIffs(savedSettings.showIffs);
+    }
+    if (
       savedSettings.observerTeamColors != null &&
       savedSettings.observerTeamColors in TEAM_COLOR_SCHEMES
     ) {
@@ -532,6 +554,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
         showCompass,
         showFpsMeter,
         serverBrowserView,
+        showIffs,
         observerTeamColors,
         ccPlayerNames,
       };
@@ -575,6 +598,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     showCompass,
     showFpsMeter,
     serverBrowserView,
+    showIffs,
     observerTeamColors,
     ccPlayerNames,
   ]);

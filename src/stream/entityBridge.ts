@@ -86,11 +86,13 @@ export function updateGameEntityFromStream(
     case "LinkBeam":
       // ELF/repair beams re-anchor as the ghost updates its endpoints.
       e.linkSourceId = stream.linkSourceId;
+      e.sourceSlot = stream.sourceSlot;
       e.linkTargetId = stream.linkTargetId;
       break;
     case "ShockLance":
       // The shooter/target ids resolve once those ghosts exist.
       e.linkSourceId = stream.linkSourceId;
+      e.sourceSlot = stream.sourceSlot;
       e.linkTargetId = stream.linkTargetId;
       break;
     case "ForceFieldBare": {
@@ -242,6 +244,7 @@ export function streamEntityToGameEntity(
         ...positionedBase(entity, spawnTime),
         renderType: "LinkBeam",
         visual: entity.visual,
+        sourceSlot: entity.sourceSlot,
         linkSourceId: entity.linkSourceId,
         linkTargetId: entity.linkTargetId,
       } satisfies LinkBeamEntity;
@@ -251,6 +254,7 @@ export function streamEntityToGameEntity(
         ...positionedBase(entity, spawnTime),
         renderType: "ShockLance",
         visual: entity.visual,
+        sourceSlot: entity.sourceSlot,
         beamStart: entity.beamStart,
         beamEnd: entity.beamEnd,
         beamHit: entity.beamHit ?? false,

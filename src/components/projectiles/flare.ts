@@ -24,6 +24,7 @@ import { globalFogUniforms } from "../../globalFogUniforms";
 import { additiveSpriteBeforeCompile } from "../../shapeMaterial";
 import { effectMesh, disposeGeometry } from "./geometry";
 import { projectileLight } from "./light";
+import { SHAPE_MODEL_ROTATION_Y } from "../../world/placement";
 import type { ProjectileView } from "./types";
 // ── LinearFlareProjectile (plasma bolt) ──
 //
@@ -94,10 +95,12 @@ export function createFlareView(
       visual.shapeScale[2],
       visual.shapeScale[0],
     );
-    const flip = new Group();
-    flip.rotation.y = Math.PI;
-    flip.add(shape.scene);
-    shapeGroup.add(flip);
+    const orientation = new Group();
+    // The native DTS quad already faces +Z. Turning it around after lookAt
+    // makes its front face point away from the camera and get culled.
+    orientation.rotation.y = visual.faceViewer ? 0 : SHAPE_MODEL_ROTATION_Y;
+    orientation.add(shape.scene);
+    shapeGroup.add(orientation);
   } else if (visual.modTexture && textures.base) {
     const color = new Color().setRGB(
       Math.sqrt(visual.color.r),

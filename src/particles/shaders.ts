@@ -12,9 +12,22 @@ uniform bool uOrientParticles;
 varying vec2 vUv;
 varying vec4 vColor;
 
+#ifdef INTERPOLATE_PARTICLES
+attribute vec3 particleVelocity;
+attribute vec3 particleAcceleration;
+attribute float particleSpinRate;
+uniform float renderDelta;
+#endif
+
 void main() {
   vUv = quadCorner + 0.5; // [0,1] range
   vColor = particleColor;
+  vec3 renderPosition = position;
+  float renderSpin = particleSpin;
+#ifdef INTERPOLATE_PARTICLES
+  renderPosition += (particleVelocity + particleAcceleration * renderDelta) * renderDelta;
+  renderSpin += particleSpinRate * renderDelta;
+#endif
 
   if (uOrientParticles) {
     if (length(orientDir) < 0.0001) {
@@ -23,7 +36,7 @@ void main() {
       return;
     }
     // V12 oriented particle: quad aligned along direction, facing camera.
-    vec3 worldPos = (modelMatrix * vec4(position, 1.0)).xyz;
+    vec3 worldPos = (modelMatrix * vec4(renderPosition, 1.0)).xyz;
     vec3 dir = normalize(orientDir);
     vec3 dirFromCam = worldPos - cameraPosition;
     vec3 crossDir = normalize(cross(dirFromCam, dir));
@@ -35,11 +48,11 @@ void main() {
     gl_Position = projectionMatrix * viewMatrix * vec4(worldPos, 1.0);
   } else {
     // Standard camera-facing billboard.
-    vec3 viewPos = (modelViewMatrix * vec4(position, 1.0)).xyz;
+    vec3 viewPos = (modelViewMatrix * vec4(renderPosition, 1.0)).xyz;
 
     // Apply spin rotation to quad corner.
-    float c = cos(particleSpin);
-    float s = sin(particleSpin);
+    float c = cos(renderSpin);
+    float s = sin(renderSpin);
     vec2 rotated = vec2(
       c * quadCorner.x - s * quadCorner.y,
       s * quadCorner.x + c * quadCorner.y
