@@ -16,6 +16,7 @@ import { PiFlagBannerFill } from "react-icons/pi";
 import { useStreamSnapshot } from "../state/streamSnapshotStore";
 import { streamPlaybackStore } from "../state/streamPlaybackStore";
 import { targetFinderStore } from "../state/targetFinderStore";
+import { commandCircuitStore } from "../state/commandCircuitStore";
 import { exitDirector } from "../state/demoDirectorStore";
 import { gameEntityStore } from "../state/gameEntityStore";
 import {
@@ -32,6 +33,8 @@ import {
   rgbString,
 } from "./iffTheme";
 import { useSettings } from "./SettingsProvider";
+import { ColoredName } from "./ColoredName";
+import { restorePointerLock } from "./restorePointerLock";
 import styles from "./TargetFinder.module.css";
 
 function close() {
@@ -45,6 +48,7 @@ function targetsEqual(a: FollowTarget[], b: FollowTarget[]) {
       (target, i) =>
         target.key === b[i].key &&
         target.label === b[i].label &&
+        target.rawName === b[i].rawName &&
         target.entityId === b[i].entityId,
     )
   );
@@ -66,17 +70,42 @@ function PlayerTargetIcon({ entityId }: { entityId: string }) {
 
 export function TargetFinder() {
   const open = useStore(targetFinderStore, (s) => s.open);
+  const pointerLockTarget = useRef<Element | null>(null);
+  const cancelRestore = useRef<(() => void) | null>(null);
   useInputAction("findTarget", () => {
+    cancelRestore.current?.();
+    cancelRestore.current = null;
     // Release held movement keys before the text input takes focus.
     inputControlsStore.setState({ keys: new Set() });
-    document.exitPointerLock?.();
+    pointerLockTarget.current = document.pointerLockElement;
+    if (pointerLockTarget.current) document.exitPointerLock();
     targetFinderStore.setState({ open: true });
   });
-  useEffect(() => close, []);
-  return open ? <TargetFinderDialog /> : null;
+  function dismiss() {
+    close();
+    const target = pointerLockTarget.current;
+    pointerLockTarget.current = null;
+    if (!target) return;
+    cancelRestore.current = restorePointerLock(
+      target,
+      () =>
+        !targetFinderStore.getState().open &&
+        document.hasFocus() &&
+        !commandCircuitStore.getState().active,
+    );
+  }
+  // Mission changes/unmounts close the finder without recapturing the mouse.
+  useEffect(
+    () => () => {
+      cancelRestore.current?.();
+      close();
+    },
+    [],
+  );
+  return open ? <TargetFinderDialog onClose={dismiss} /> : null;
 }
 
-function TargetFinderDialog() {
+function TargetFinderDialog({ onClose }: { onClose: () => void }) {
   const inputRef = useRef<HTMLInputElement>(null);
   useEffect(() => {
     // Let the opening key event finish before focusing, so T isn't typed
@@ -114,13 +143,13 @@ function TargetFinderDialog() {
       enterWatchFollow(target.entityId);
     }
     inputRef.current?.blur();
-    close();
+    onClose();
   }
 
   return (
     <Dialog
       open
-      onClose={close}
+      onClose={onClose}
       portal={false}
       autoFocusOnShow={false}
       autoFocusOnHide={false}
@@ -175,7 +204,13 @@ function TargetFinderDialog() {
                   <PlayerTargetIcon entityId={target.entityId} />
                 )}
               </span>
-              <span className={styles.Name}>{target.label}</span>
+              <span className={styles.Name}>
+                {target.rawName ? (
+                  <ColoredName raw={target.rawName} />
+                ) : (
+                  target.label
+                )}
+              </span>
               <span className={styles.Kind}>
                 {target.flagSlot != null ? "Flag" : "Player"}
               </span>

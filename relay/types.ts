@@ -127,6 +127,7 @@ export interface ServerLoadInfo {
  *  net-string references already resolved to strings. */
 export interface WatchTargetEntry {
   targetId: number;
+  /** Original target name, including the game's color-code bytes. */
   name?: string;
   skin?: string;
   skinPref?: string;

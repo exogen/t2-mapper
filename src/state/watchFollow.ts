@@ -127,6 +127,8 @@ export function countFollowableFlags(): number {
 export interface FollowTarget {
   key: string;
   label: string;
+  /** Player name with color codes; label stays plain text for searching. */
+  rawName?: string;
   entityId: string;
   flagSlot: number | null;
 }
@@ -161,6 +163,7 @@ export function getFollowTargets(): FollowTarget[] {
       label:
         stripTaggedStringMarkup(entity.playerName ?? "").trim() ||
         `Player ${id}`,
+      rawName: entity.playerRawName,
       entityId: id,
       flagSlot: null,
     });

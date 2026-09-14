@@ -156,6 +156,8 @@ interface PositionedBase extends EntityBase {
   /** Target name from the target system — a player's name on Players,
    *  the owning team's name on flag Items. */
   playerName?: string;
+  /** Target name with the game's embedded tag, player, smurf and bot colors. */
+  playerRawName?: string;
   /** Team number: sensor group of the target (streaming), or the owning
    *  team resolved from the mission tree (map mode). */
   teamId?: number;

@@ -74,6 +74,8 @@ function project(entity: Record<string, unknown>, comparePosition: boolean) {
     className: entity.className,
     dataBlockId: entity.dataBlockId,
     targetId: entity.targetId,
+    playerName: entity.playerName,
+    playerRawName: entity.playerRawName,
     sensorGroup: entity.sensorGroup,
     mountObjectGhostIndex: entity.mountObjectGhostIndex,
     mountNode: entity.mountNode,
@@ -88,7 +90,11 @@ function project(entity: Record<string, unknown>, comparePosition: boolean) {
       entity.imageSlots as (ImageSlot | undefined)[] | undefined
     )?.map((slot) => {
       if (!slot) return slot;
-      const { animation, mountedAtSec, ...wire } = slot;
+      const {
+        animation: _animation,
+        mountedAtSec: _mountedAtSec,
+        ...wire
+      } = slot;
       return wire;
     }),
     skinName: entity.skinName,
@@ -218,6 +224,7 @@ describe("watch catch-up equivalence", () => {
       const refShared = reference as unknown as {
         netStrings: Map<number, string>;
         targetNames: Map<number, string>;
+        targetRawNames: Map<number, string>;
         targetTeams: Map<number, number>;
         playerRoster: Map<number, unknown>;
         teamScores: unknown[];
@@ -226,6 +233,7 @@ describe("watch catch-up equivalence", () => {
       const lateShared = lateJoiner as unknown as typeof refShared;
       expect(lateShared.netStrings).toEqual(refShared.netStrings);
       expect(lateShared.targetNames).toEqual(refShared.targetNames);
+      expect(lateShared.targetRawNames).toEqual(refShared.targetRawNames);
       expect(lateShared.targetTeams).toEqual(refShared.targetTeams);
       expect(lateShared.playerRoster).toEqual(refShared.playerRoster);
       expect(lateShared.teamScores).toEqual(refShared.teamScores);

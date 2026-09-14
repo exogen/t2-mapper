@@ -258,6 +258,7 @@ export class LiveStreamAdapter extends StreamEngine {
           entry.targetId,
           stripTaggedStringMarkup(entry.name).trim(),
         );
+        this.targetRawNames.set(entry.targetId, entry.name);
       }
       if (entry.skin) this.targetSkins.set(entry.targetId, entry.skin);
       if (entry.skinPref) {

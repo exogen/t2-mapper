@@ -129,10 +129,25 @@ describe("target finder follow targets", () => {
         player("103", -1, { playerName: "Bot" }),
         { id: "104", renderType: "Camera", className: "Camera" },
       ]);
-    expect(getFollowTargets()).toEqual([
+    expect(getFollowTargets()).toMatchObject([
       { key: "player:32", label: "Alice", entityId: "102", flagSlot: null },
       { key: "entity:103", label: "Bot", entityId: "103", flagSlot: null },
     ]);
+  });
+
+  it("preserves name colors separately from searchable text, including color-only updates", () => {
+    const entity = player("100", 32, {
+      playerName: "PSYOP-Alice",
+      playerRawName: "\x10\x0bPSYOP-\x08Alice\x11",
+    });
+    gameEntityStore.getState().setAllStreamEntities([entity]);
+    for (const color of ["\x08", "\x0c", "\x0e"]) {
+      entity.playerRawName = `\x10\x0bPSYOP-${color}Alice\x11`;
+      expect(getFollowTargets()[0]).toMatchObject({
+        label: "PSYOP-Alice",
+        rawName: entity.playerRawName,
+      });
+    }
   });
 
   it("keeps a player's selection identity through respawn and follows their new body", () => {

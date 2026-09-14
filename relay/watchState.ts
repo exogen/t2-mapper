@@ -47,7 +47,7 @@ export class WatchStateAccumulator {
   readonly netStrings = new Map<number, string>();
   /** nameTag → targetId awaiting its NetStringEvent (StreamEngine.ts:703). */
   private pendingNameTags = new Map<number, number>();
-  private targetNames = new Map<number, string>();
+  private targetRawNames = new Map<number, string>();
   private targetSkins = new Map<number, string>();
   private targetSkinPrefs = new Map<number, string>();
   private targetTeams = new Map<number, number>();
@@ -178,7 +178,7 @@ export class WatchStateAccumulator {
           break;
         case "TargetFreeEvent":
           if (typeof data.targetId === "number") {
-            this.targetNames.delete(data.targetId);
+            this.targetRawNames.delete(data.targetId);
             this.targetSkins.delete(data.targetId);
             this.targetSkinPrefs.delete(data.targetId);
             this.targetTeams.delete(data.targetId);
@@ -223,10 +223,7 @@ export class WatchStateAccumulator {
     const pendingTargetId = this.pendingNameTags.get(id);
     if (pendingTargetId != null) {
       this.pendingNameTags.delete(id);
-      this.targetNames.set(
-        pendingTargetId,
-        stripTaggedStringMarkup(value).trim(),
-      );
+      this.targetRawNames.set(pendingTargetId, value);
     }
   }
 
@@ -238,10 +235,7 @@ export class WatchStateAccumulator {
     if (nameTag != null) {
       const resolved = this.netStrings.get(nameTag);
       if (resolved) {
-        this.targetNames.set(
-          targetId,
-          stripTaggedStringMarkup(resolved).trim(),
-        );
+        this.targetRawNames.set(targetId, resolved);
       } else {
         this.pendingNameTags.set(nameTag, targetId);
       }
@@ -388,7 +382,7 @@ export class WatchStateAccumulator {
         existing.rawName = rawName;
         existing.name = stripTaggedStringMarkup(rawName).trim();
         if (existing.targetId != null) {
-          this.targetNames.set(existing.targetId, existing.name);
+          this.targetRawNames.set(existing.targetId, rawName);
         }
       }
     } else if (msgType === "MsgClientJoinTeam" && args.length >= 6) {
@@ -576,7 +570,7 @@ export class WatchStateAccumulator {
 
   getTargetEntries(): WatchTargetEntry[] {
     const targetIds = new Set<number>([
-      ...this.targetNames.keys(),
+      ...this.targetRawNames.keys(),
       ...this.targetTeams.keys(),
       ...this.targetRenderFlags.keys(),
       ...this.targetSkins.keys(),
@@ -586,7 +580,7 @@ export class WatchStateAccumulator {
       .sort((a, b) => a - b)
       .map((targetId) => ({
         targetId,
-        name: this.targetNames.get(targetId),
+        name: this.targetRawNames.get(targetId),
         skin: this.targetSkins.get(targetId),
         skinPref: this.targetSkinPrefs.get(targetId),
         sensorGroup: this.targetTeams.get(targetId),

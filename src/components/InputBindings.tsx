@@ -162,12 +162,20 @@ export function InputBindings<T extends string = string>({
     let mouseDownX = 0;
     let mouseDownY = 0;
     let isDragging = false;
+    let skipNextLockedMove = true;
 
     function setAction(name: string, state: ActionState) {
       store.setState((prev) => ({
         ...prev,
         actions: { ...prev.actions, [name]: state },
       }));
+    }
+
+    function handlePointerLockChange() {
+      skipNextLockedMove = true;
+      for (const { action } of pointerLockMoveBindings) {
+        setAction(action.name, defaultDragState());
+      }
     }
 
     function handleMouseDown(e: MouseEvent) {
@@ -197,6 +205,15 @@ export function InputBindings<T extends string = string>({
       // Mutate in place and batch into a single setState.
       if (document.pointerLockElement) {
         if (pointerLockMoveBindings.length > 0) {
+          // Chrome can include cursor repositioning in the first relative
+          // movement after recapture. Start a fresh input sample on each
+          // lock (including bindings remounting after Target Finder closes).
+          if (skipNextLockedMove) {
+            if (e.movementX !== 0 || e.movementY !== 0) {
+              skipNextLockedMove = false;
+            }
+            return;
+          }
           const { actions } = store.getState();
           const updates: Record<string, ActionState> = {};
           for (const { action } of pointerLockMoveBindings) {
@@ -466,6 +483,7 @@ export function InputBindings<T extends string = string>({
       handleMouseDown,
       handleMouseMove,
       handleMouseUp,
+      handlePointerLockChange,
       handleContextMenu,
       handleWheel,
       handleTouchStart,
@@ -478,6 +496,7 @@ export function InputBindings<T extends string = string>({
       hasRightClickBindings: clickBindings.some(
         ({ binding }) => (binding.button ?? 0) === 2,
       ),
+      hasPointerLockMoveBindings: pointerLockMoveBindings.length > 0,
       hasScrollBindings: scrollBindings.length > 0,
       hasTouchBindings: touchBindings.length > 0 || pinchBindings.length > 0,
     };
@@ -508,6 +527,14 @@ export function InputBindings<T extends string = string>({
       canvas.addEventListener("mousedown", bindings.handleMouseDown);
       document.addEventListener("mousemove", bindings.handleMouseMove);
       document.addEventListener("mouseup", bindings.handleMouseUp);
+    }
+
+    if (bindings.hasPointerLockMoveBindings) {
+      bindings.handlePointerLockChange();
+      document.addEventListener(
+        "pointerlockchange",
+        bindings.handlePointerLockChange,
+      );
     }
 
     if (bindings.hasRightClickBindings) {
@@ -544,6 +571,13 @@ export function InputBindings<T extends string = string>({
         canvas.removeEventListener("mousedown", bindings.handleMouseDown);
         document.removeEventListener("mousemove", bindings.handleMouseMove);
         document.removeEventListener("mouseup", bindings.handleMouseUp);
+      }
+
+      if (bindings.hasPointerLockMoveBindings) {
+        document.removeEventListener(
+          "pointerlockchange",
+          bindings.handlePointerLockChange,
+        );
       }
 
       if (bindings.hasRightClickBindings) {

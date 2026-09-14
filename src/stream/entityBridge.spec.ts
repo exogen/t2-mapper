@@ -26,6 +26,26 @@ function shape(overrides: Partial<StreamEntity> = {}): StreamEntity {
 }
 
 describe("streamed render entity updates", () => {
+  it("preserves and refreshes target name colors without remounting the player", () => {
+    const initial = shape({
+      type: "Player",
+      className: "Player",
+      playerName: "PSYOP-Alice",
+      playerRawName: "\x10\x0bPSYOP-\x08Alice\x11",
+    });
+    const rendered = streamEntityToGameEntity(initial) as PlayerEntity;
+    expect(rendered.playerRawName).toBe(initial.playerRawName);
+    for (const rawName of ["\x0cAlice", "\x0eAlice", undefined]) {
+      expect(
+        updateGameEntityFromStream(rendered, {
+          ...initial,
+          playerRawName: rawName,
+        }),
+      ).toBe(false);
+      expect(rendered.playerRawName).toBe(rawName);
+    }
+  });
+
   it("preserves a link beam's source image slot through creation and updates", () => {
     const initial = shape({
       type: "Projectile",
