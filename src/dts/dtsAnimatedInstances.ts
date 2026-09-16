@@ -27,9 +27,11 @@ import {
   type DTSMeshBatch,
   type DTSRenderable,
 } from "./dtsModel";
-import { DTSInstanceRenderList } from "./dtsInstanceRenderList";
+import {
+  DTSInstanceRenderList,
+  type RenderItem,
+} from "./dtsInstanceRenderList";
 import { DTSInstanceKey } from "./dtsInstanceKey";
-import type { RenderItem } from "three/src/renderers/webgl/WebGLRenderLists.js";
 import {
   defaultShapeLightUniforms,
   type ShapeLightUniforms,
@@ -151,26 +153,11 @@ export class DTSAnimatedInstancePool {
       registration = { groups: new WeakMap() };
       this.registrations.set(node, registration);
     }
-    const group = item.group as unknown as {
-      start: number;
-      count: number;
-    } | null;
+    const group = item.group;
     let source = group ? registration.groups.get(group) : registration.single;
-    if (!source) {
-      source = {
-        node,
-        material: item.material as ShapeMaterial,
-        item,
-        key: new DTSInstanceKey(),
-        bucket: undefined!,
-        arrayTexture: false,
-      };
-      if (group) registration.groups.set(group, source);
-      else registration.single = source;
-      this.stats.registrations++;
-    }
+    const snapshot = source?.key ?? new DTSInstanceKey();
     const geometry = node.geometry;
-    const key = source.key
+    const key = snapshot
       .begin()
       .add("draw")
       .add(geometrySignature(geometry))
@@ -184,8 +171,9 @@ export class DTSAnimatedInstancePool {
       .add(item.renderOrder)
       .add(signature)
       .end();
-    if (source.bucket?.key !== key || source.bucket.retired) {
-      let bucket = this.buckets.get(key);
+    let bucket = source?.bucket;
+    if (!bucket || bucket.key !== key || bucket.retired) {
+      bucket = this.buckets.get(key);
       if (!bucket) {
         bucket = {
           key,
@@ -197,18 +185,33 @@ export class DTSAnimatedInstancePool {
         };
         this.buckets.set(key, bucket);
       }
-      source.bucket = bucket;
       this.stats.membershipChanges++;
     }
-    const bucket = source.bucket;
     if (bucket.frame !== this.frame) {
       bucket.frame = this.frame;
       bucket.sources.length = 0;
       bucket.runs = 0;
     }
-    source.material = item.material as ShapeMaterial;
-    source.arrayTexture = materialStates.get(item.material)!.arrayTexture;
-    source.item = item;
+    const material = item.material as ShapeMaterial;
+    const arrayTexture = materialStates.get(material)!.arrayTexture;
+    if (!source) {
+      source = {
+        node,
+        material,
+        item,
+        key: snapshot,
+        bucket,
+        arrayTexture,
+      };
+      if (group) registration.groups.set(group, source);
+      else registration.single = source;
+      this.stats.registrations++;
+    } else {
+      source.bucket = bucket;
+      source.material = material;
+      source.arrayTexture = arrayTexture;
+      source.item = item;
+    }
     return source;
   }
 
@@ -390,14 +393,14 @@ class AnimatedDraw {
   attributeBytes = 0;
   private attributes: InstancedBufferAttribute[] = [];
   private capacity = 0;
-  private boneTexture?: DataTexture;
+  private bonePalette?: { data: Float32Array; texture: DataTexture };
   private arrayMode = false;
   private uv0!: InstancedBufferAttribute;
   private uv1!: InstancedBufferAttribute;
   private light!: InstancedBufferAttribute;
   private state!: InstancedBufferAttribute;
-  private bones = { value: null as DataTexture | null };
-  private skins = { value: null as DataArrayTexture | null };
+  private bones: { value: DataTexture | null } = { value: null };
+  private skins: { value: DataArrayTexture | null } = { value: null };
   private skinEntries = new Map<
     Texture["source"],
     { texture: Texture; layer: number; version: number }
@@ -417,7 +420,7 @@ class AnimatedDraw {
     return this.arrayMode ? this.skinEntries.size : 0;
   }
   get boneBytes() {
-    return this.boneTexture?.image.data?.byteLength ?? 0;
+    return this.bonePalette?.data.byteLength ?? 0;
   }
 
   add(source: InstanceSource): boolean {
@@ -468,10 +471,7 @@ class AnimatedDraw {
     Object.assign(geometry.attributes, node.geometry.attributes);
     geometry.morphAttributes = node.geometry.morphAttributes;
     geometry.morphTargetsRelative = node.geometry.morphTargetsRelative;
-    const group = item.group as unknown as {
-      start: number;
-      count: number;
-    } | null;
+    const group = item.group;
     const range = node.geometry.drawRange;
     const start = Math.max(range.start, group?.start ?? 0);
     geometry.setDrawRange(
@@ -527,45 +527,28 @@ class AnimatedDraw {
       this.maxInstances,
       Math.max(count, this.capacity * 2),
     );
-    this.boneTexture?.dispose();
-    if (this.boneCount)
-      this.boneTexture = new DataTexture(
-        new Float32Array(this.capacity * this.boneCount * 16),
+    this.bonePalette?.texture.dispose();
+    if (this.boneCount) {
+      const data = new Float32Array(this.capacity * this.boneCount * 16);
+      const texture = new DataTexture(
+        data,
         this.boneCount * 4,
         this.capacity,
         RGBAFormat,
         FloatType,
       );
-    this.bones.value = this.boneTexture ?? null;
+      this.bonePalette = { data, texture };
+    }
+    this.bones.value = this.bonePalette?.texture ?? null;
     // Native disposal frees the old instanceMatrix buffer when the pool grows.
     this.mesh.dispose();
-    this.mesh.morphTexture?.dispose();
-    this.mesh.morphTexture = null;
     this.disposeInstanceAttributes();
-    this.mesh.instanceMatrix = new InstancedBufferAttribute(
-      new Float32Array(this.capacity * 16),
-      16,
-    ).setUsage(DynamicDrawUsage);
-    this.light = new InstancedBufferAttribute(
-      new Float32Array(this.capacity * 4),
-      4,
-    ).setUsage(DynamicDrawUsage);
-    this.state = new InstancedBufferAttribute(
-      new Float32Array(this.capacity * 4),
-      4,
-    ).setUsage(DynamicDrawUsage);
-    this.uv0 = new InstancedBufferAttribute(
-      new Float32Array(this.capacity * 3),
-      3,
-    ).setUsage(DynamicDrawUsage);
-    this.uv1 = new InstancedBufferAttribute(
-      new Float32Array(this.capacity * 3),
-      3,
-    ).setUsage(DynamicDrawUsage);
-    this.mesh.instanceColor = new InstancedBufferAttribute(
-      new Float32Array(this.capacity * 3),
-      3,
-    ).setUsage(DynamicDrawUsage);
+    this.mesh.instanceMatrix = this.createAttribute(16);
+    this.light = this.createAttribute(4);
+    this.state = this.createAttribute(4);
+    this.uv0 = this.createAttribute(3);
+    this.uv1 = this.createAttribute(3);
+    this.mesh.instanceColor = this.createAttribute(3);
     this.mesh.geometry.setAttribute("dtsInstanceUV0", this.uv0);
     this.mesh.geometry.setAttribute("dtsInstanceUV1", this.uv1);
     this.mesh.geometry.setAttribute("dtsInstanceLight", this.light);
@@ -576,8 +559,15 @@ class AnimatedDraw {
       this.state,
       this.uv0,
       this.uv1,
-      this.mesh.instanceColor!,
+      this.mesh.instanceColor,
     ];
+  }
+
+  private createAttribute(itemSize: number): InstancedBufferAttribute {
+    return new InstancedBufferAttribute(
+      new Float32Array(this.capacity * itemSize),
+      itemSize,
+    ).setUsage(DynamicDrawUsage);
   }
 
   private reserveSkin(map: Texture) {
@@ -647,7 +637,7 @@ class AnimatedDraw {
     this.mesh.material.map = this.sources[0].material.map;
     if (this.arrayMode) this.updateSkins();
     this.mesh.count = this.capacity;
-    const data = this.boneTexture?.image.data;
+    const palette = this.bonePalette;
     let bonesChanged = false;
     for (const attribute of this.attributes) attribute.clearUpdateRanges();
     for (let index = 0; index < this.sources.length; index++) {
@@ -675,7 +665,7 @@ class AnimatedDraw {
       const uv = material.map?.matrix.elements ?? identityUV;
       writeInstance(this.uv0, index, uv[0], uv[3], uv[6]);
       writeInstance(this.uv1, index, uv[1], uv[4], uv[7]);
-      if (node instanceof SkinnedMesh) {
+      if (palette && node instanceof SkinnedMesh) {
         const { skeleton } = node;
         for (let bone = 0; bone < this.boneCount; bone++) {
           this.matrix
@@ -687,7 +677,7 @@ class AnimatedDraw {
             .multiply(node.bindMatrix);
           bonesChanged =
             writeFloats(
-              data! as Float32Array,
+              palette.data,
               (index * this.boneCount + bone) * 16,
               this.matrix.elements,
             ) || bonesChanged;
@@ -715,7 +705,7 @@ class AnimatedDraw {
       );
     }
     this.mesh.count = this.sources.length;
-    if (this.boneTexture && bonesChanged) this.boneTexture.needsUpdate = true;
+    if (palette && bonesChanged) palette.texture.needsUpdate = true;
     if (this.mesh.morphTexture) this.mesh.morphTexture.needsUpdate = true;
     this.attributeBytes = 0;
     for (const attribute of this.attributes) {
@@ -752,7 +742,7 @@ class AnimatedDraw {
     this.mesh.dispose();
     this.disposeInstanceAttributes();
     this.mesh.material.dispose();
-    this.boneTexture?.dispose();
+    this.bonePalette?.texture.dispose();
     this.skins.value?.dispose();
     this.skinEntries.clear();
   }

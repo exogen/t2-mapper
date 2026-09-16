@@ -13,7 +13,7 @@ import { LuChevronLeft, LuChevronRight, LuUser, LuUsers } from "react-icons/lu";
 import { TbLaurelWreathFilled } from "react-icons/tb";
 import { useDemoLoad } from "../state/demoLoadStore";
 import { loadDemoFile } from "../stream/demoFileLoader";
-import type { DemoIndexEntry } from "../stream/demoIndex";
+import { demoPlayerCount, type DemoIndexEntry } from "../stream/demoIndex";
 import { useDemoIndexSuspense } from "./useDemoIndex";
 import { QuietErrorBoundary } from "./QuietErrorBoundary";
 import { normalizeMissionType } from "../mission";
@@ -115,7 +115,7 @@ function FeaturedCard({
           ) : null}
           <span title={demo.players.join(", ") || undefined}>
             <LuUsers className={tileStyles.TileMetaIcon} aria-label="Players" />{" "}
-            {demo.players.length} players
+            {demoPlayerCount(demo)} players
           </span>{" "}
           · {formatDuration(demo.durationMs)}
         </span>
@@ -193,7 +193,7 @@ function FeaturedList() {
       demos
         .filter(
           (demo) =>
-            demo.players.length >= FEATURED_MIN_PLAYERS &&
+            demoPlayerCount(demo) >= FEATURED_MIN_PLAYERS &&
             demo.durationMs > FEATURED_MIN_DURATION_MS,
         )
         .sort(

@@ -4,7 +4,23 @@ import {
   commentaryFileName,
   commentarySidecarUrl,
   sidecarUrl,
+  demoPlayerCount,
 } from "./demoIndex";
+
+describe("demo player count", () => {
+  it("uses the tag-less name count rather than counting aliases", () => {
+    expect(
+      demoPlayerCount({
+        players: ["Alice", "[TAG]Alice", "Bob"],
+        playerCount: 2,
+      }),
+    ).toBe(2);
+    expect(demoPlayerCount({ players: ["Old name"], playerCount: 0 })).toBe(0);
+  });
+  it("keeps old metadata usable before backfill", () => {
+    expect(demoPlayerCount({ players: ["Alice", "Bob"] })).toBe(2);
+  });
+});
 
 describe("sidecarUrl", () => {
   it("names the sidecar after the demo, under the cast base", () => {

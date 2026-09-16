@@ -1,3 +1,4 @@
+import type { ChatSegment } from "../../relay/shared";
 import type { ClientAnimationState } from "./clientAnimation";
 import type { PlayerRenderDelta } from "./playerPrediction";
 import type { ParsedData } from "t2-demo-parser";
@@ -490,11 +491,7 @@ export interface StreamCamera {
 }
 
 /** A colored text segment from inline \c color switching. */
-export interface ChatSegment {
-  text: string;
-  /** Torque \c color index (0–9) from the GuiChatHudProfile fontColors palette. */
-  colorCode: number;
-}
+export type { ChatSegment } from "../../relay/shared";
 
 /** One raw ServerMessage as broadcast: type + args with netstrings
  *  resolved (markup intact), stamped at the message's own time. */

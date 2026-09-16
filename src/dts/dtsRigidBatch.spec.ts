@@ -144,7 +144,7 @@ describe("rigid DTS body batching", () => {
       offset += p.count;
     }
     expect(Array.from(batch.geometry.index!.array)).toEqual([2, 1, 0, 5, 4, 3]);
-    expect(batch.frustumCulled).toBe(false);
+    expect(batch.frustumCulled).toBe(true);
   });
 
   it("shares geometry across players, but clones skeletons, poses and materials", () => {

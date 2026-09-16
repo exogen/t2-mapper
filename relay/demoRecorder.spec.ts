@@ -21,6 +21,8 @@ import {
   type ServerIdentity,
 } from "./demoRecorder.js";
 import type { ServerInfo } from "./types.js";
+import type { DemoPlayerRoster } from "./demoPlayers.js";
+import { GameConnection } from "./gameConnection.js";
 
 const CONNECT_SEQUENCE = 0x0badf00d;
 
@@ -75,7 +77,7 @@ describe("DemoRecorder", () => {
       minLengthMs?: number;
       minPlayers?: number;
       playerCount?: () => number;
-      playerNames?: () => string[];
+      playerRoster?: () => DemoPlayerRoster;
       serverIdentity?: () => ServerIdentity;
       matchStarted?: () => boolean;
       recordContext?: () => { pinned: boolean; watchers: number };
@@ -95,7 +97,8 @@ describe("DemoRecorder", () => {
           mod: serverInfo.mod,
         })),
       getActivePlayerCount: overrides.playerCount ?? (() => 2),
-      getPlayerNames: overrides.playerNames ?? (() => []),
+      getPlayerRoster: overrides.playerRoster ?? (() => new Map()),
+      getRecorderClientId: () => 1,
       getMatchStarted: overrides.matchStarted ?? (() => true),
       getRecordContext: overrides.recordContext,
       recorderName: "Observer",
@@ -149,6 +152,7 @@ describe("DemoRecorder", () => {
     expect(initialBlock.connectionState.connectSequence).toBe(CONNECT_SEQUENCE);
     const info = extractMissionInfo(initialBlock.demoValues);
     expect(info.recorderName).toBe("Observer");
+    expect(info.recorderClientId).toBe(1);
     expect(info.serverDisplayName).toBe("| the cut |");
     expect(info.missionDisplayName).toBe("Katabatic");
     expect(info.missionType).toBe("Capture the Flag");
@@ -276,9 +280,14 @@ describe("DemoRecorder", () => {
     expect(result).not.toBeNull();
   });
 
-  it("writes a metadata sidecar with unique sanitized player names", async () => {
-    let names = ["Observer", "\x02\x01Alice", "  ", "Bob"];
-    const recorder = createRecorder({ playerNames: () => names });
+  it("counts tag-less names once across tag changes while keeping sanitized aliases searchable", async () => {
+    const roster = new Map([
+      [1, { rawName: "Observer" }],
+      [2, { rawName: "\x02\x01Alice" }],
+      [3, { rawName: "Bob" }],
+      [4, { rawName: "  " }],
+    ]);
+    const recorder = createRecorder({ playerRoster: () => roster });
     recorder.onPacket(buildPingPacket(1));
     time += 100;
     recorder.setMissionName("Katabatic");
@@ -287,7 +296,9 @@ describe("DemoRecorder", () => {
       time += 100;
     }
     // Bob leaves (stays in the union); Chloé joins wrapped in C1/DEL junk.
-    names = ["Observer", "Alice", "\x9fChloé\x7f"];
+    roster.delete(3);
+    roster.set(2, { rawName: "\x10\x0b[TAG]\x08Alice\x11" });
+    roster.set(4, { rawName: "\x9fChloé\x7f" });
     for (let i = 6; i <= 10; i++) {
       recorder.onPacket(buildPingPacket(i));
       time += 100;
@@ -319,7 +330,8 @@ describe("DemoRecorder", () => {
       reason: "session recording, peak 2 players, match started",
       // Sorted, deduped, control chars stripped, blank and the
       // recorder's own connection excluded.
-      players: ["Alice", "Bob", "Chloé"],
+      players: ["[TAG]Alice", "Alice", "Bob", "Chloé"],
+      playerCount: 3,
     });
   });
 
@@ -426,24 +438,56 @@ describe("DemoRecorder", () => {
     );
   });
 
-  it("skips oversized packets and keeps recording", async () => {
-    const recorder = createRecorder();
-    recorder.onPacket(buildPingPacket(1));
+  it("keeps recording valid packets after oversized datagrams are discarded at reception", async () => {
+    const roster = new Map([[2, { rawName: "Alice" }]]);
+    const recorder = createRecorder({ playerRoster: () => roster });
+    const conn = new GameConnection(serverInfo.address);
+    const receiver = conn as unknown as {
+      _status: string;
+      protocol: { connectSequence: number };
+      handleMessage(msg: Buffer): void;
+    };
+    receiver._status = "connected";
+    receiver.protocol.connectSequence = CONNECT_SEQUENCE;
+    const recordPacket = vi.fn((data: Uint8Array) => recorder.onPacket(data));
+    conn.on("packet", recordPacket);
+    const receive = (seq: number, size?: number) => {
+      const packet = buildPingPacket(seq);
+      const datagram = Buffer.alloc(size ?? packet.length);
+      datagram.set(packet);
+      receiver.handleMessage(datagram);
+    };
+
+    receive(1);
+    time += 100;
+    receive(2, 5000);
+    expect(recorder.state).toBe("buffering");
     recorder.setMissionName("Katabatic");
     time += 100;
-    recorder.onPacket(new Uint8Array(5000));
+    receive(2);
     time += 100;
-    const smallPacket = buildPingPacket(2);
-    recorder.onPacket(smallPacket);
+    receive(3, 1501);
+    time += 100;
+    receive(3);
     expect(recorder.state).toBe("recording");
+    expect(recordPacket).toHaveBeenCalledTimes(3);
+    expect(conn.status).toBe("connected");
 
     const result = await recorder.finalize("test");
+    expect(result).not.toBeNull();
     const { blocks } = await parseDemoFile(result!.path);
     const packetBlocks = blocks.filter((b) => b.type === BlockTypePacket);
     expect(packetBlocks.map((b) => b.data)).toEqual([
       buildPingPacket(1),
-      smallPacket,
+      buildPingPacket(2),
+      buildPingPacket(3),
     ]);
+    expect(blocks.some((b) => b.type === BlockTypeSendPacket)).toBe(false);
+    const sidecar = JSON.parse(
+      await fsp.readFile(`${result!.path}.json`, "utf8"),
+    );
+    expect(sidecar.players).toEqual(["Alice"]);
+    expect(sidecar.playerCount).toBe(1);
   });
 
   it("stops growing at the size cap but keeps the recording", async () => {
@@ -472,6 +516,56 @@ describe("DemoRecorder", () => {
       .filter((b) => b.type === BlockTypePacket)
       .map((b) => b.data);
     expect(packets).toEqual([buildPingPacket(1), buildPingPacket(2)]);
+  });
+
+  it("freezes roster metadata at the size cap, including the final accepted packet", async () => {
+    const roster = new Map([[2, { rawName: "Alice" }]]);
+    const recorder = createRecorder({
+      maxBytes: 1,
+      playerRoster: () => roster,
+    });
+    recorder.onPacket(buildPingPacket(1));
+    recorder.setMissionName("Katabatic");
+    await vi.waitFor(() => {
+      expect(
+        (recorder as unknown as { writer: { bytesWritten: number } }).writer
+          .bytesWritten,
+      ).toBeGreaterThan(1);
+    });
+    expect(recorder.onPacket(buildPingPacket(2))).toBe(true);
+    // Live packet state applies after its bytes are accepted.
+    roster.set(3, { rawName: "Bob" });
+    recorder.sampleRecordedState();
+    roster.set(4, { rawName: "After cutoff" });
+    expect(recorder.onPacket(buildPingPacket(3))).toBe(false);
+    const result = await recorder.finalize("test");
+    const sidecar = JSON.parse(
+      await fsp.readFile(`${result!.path}.json`, "utf8"),
+    );
+    expect(sidecar.players).toEqual(["Alice", "Bob"]);
+    expect(sidecar.playerCount).toBe(2);
+  });
+
+  it("retains aliases from the recorded backlog and freezes them before async finalization", async () => {
+    const roster = new Map([[2, { rawName: "Before Phase1" }]]);
+    const recorder = createRecorder({ playerRoster: () => roster });
+    recorder.onPacket(buildPingPacket(1));
+    roster.clear();
+    recorder.setMissionName("Katabatic");
+    roster.set(3, { rawName: "During match" });
+    recorder.onPacket(buildPingPacket(2));
+    const finishing = recorder.finalize("test");
+    // A reconnect/new epoch cannot leak into the detached recorder.
+    roster.clear();
+    roster.set(4, { rawName: "Next connection" });
+    recorder.sampleRecordedState();
+    expect(recorder.onPacket(buildPingPacket(3))).toBe(false);
+    const result = await finishing;
+    const sidecar = JSON.parse(
+      await fsp.readFile(`${result!.path}.json`, "utf8"),
+    );
+    expect(sidecar.players).toEqual(["Before Phase1", "During match"]);
+    expect(sidecar.playerCount).toBe(2);
   });
 
   it("strands the spool on a stream error instead of deleting it", async () => {

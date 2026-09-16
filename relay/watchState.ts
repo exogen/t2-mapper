@@ -113,6 +113,12 @@ export class WatchStateAccumulator {
    */
   sawMissionDropReady = false;
 
+  constructor(initialRoster?: ReadonlyMap<number, RosterEntry>) {
+    if (initialRoster)
+      for (const [id, entry] of initialRoster)
+        this.playerRoster.set(id, { ...entry });
+  }
+
   /** Stream-authoritative server name (MsgMissionDropInfo), when known. */
   get serverName(): string | undefined {
     return this.serverDisplayName;
@@ -150,7 +156,8 @@ export class WatchStateAccumulator {
     return s;
   }
 
-  applyPacket(parsed: PacketData): void {
+  /** Notify in wire order, before a later event can rename or drop the same client. */
+  applyPacket(parsed: PacketData, onRosterChange?: () => void): void {
     if (parsed.gameState.controlObjectGhostIndex !== undefined) {
       this.controlObjectGhostIndex = parsed.gameState.controlObjectGhostIndex;
     }
@@ -199,7 +206,7 @@ export class WatchStateAccumulator {
           );
           const args = (data.args as string[]) ?? [];
           if (funcName === "ServerMessage" && args.length >= 1) {
-            this.handleServerMessage(args);
+            this.handleServerMessage(args, onRosterChange);
           } else if (funcName === "BottomPrint" && args.length >= 1) {
             if (
               /Server is Running in Tournament Mode/i.test(
@@ -283,7 +290,10 @@ export class WatchStateAccumulator {
   }
 
   /** Port of StreamEngine.handleServerMessage (StreamEngine.ts:2422). */
-  private handleServerMessage(args: string[]): void {
+  private handleServerMessage(
+    args: string[],
+    onRosterChange?: () => void,
+  ): void {
     const msgType = this.resolveNetString(args[0]);
 
     if (
@@ -364,10 +374,12 @@ export class WatchStateAccumulator {
           ping: 0,
           packetLoss: 0,
         });
+        onRosterChange?.();
       }
     } else if (msgType === "MsgClientDrop" && args.length >= 4) {
       const clientId = parseInt(this.resolveNetString(args[3]), 10);
-      if (!isNaN(clientId)) this.playerRoster.delete(clientId);
+      if (!isNaN(clientId) && this.playerRoster.delete(clientId))
+        onRosterChange?.();
     } else if (msgType === "MsgClientNameChanged" && args.length >= 5) {
       // Community servers let a player change their clan tag — or the
       // whole name — mid-match. Wire order: args[2]=old name,
@@ -384,6 +396,7 @@ export class WatchStateAccumulator {
         if (existing.targetId != null) {
           this.targetRawNames.set(existing.targetId, rawName);
         }
+        onRosterChange?.();
       }
     } else if (msgType === "MsgClientJoinTeam" && args.length >= 6) {
       const clientId = parseInt(this.resolveNetString(args[4]), 10);
@@ -402,6 +415,7 @@ export class WatchStateAccumulator {
             packetLoss: 0,
           });
         }
+        onRosterChange?.();
       }
     } else if (msgType === "MsgPlayerScore" && args.length >= 5) {
       const clientId = parseInt(this.resolveNetString(args[2]), 10);
@@ -508,18 +522,9 @@ export class WatchStateAccumulator {
     return [...this.netStrings.entries()];
   }
 
-  /**
-   * All roster names, observers included (JoinTeam-before-Join stubs
-   * have an empty name until MsgClientJoin backfills — skipped).
-   */
-  getRosterNames(): string[] {
-    const names: string[] = [];
-    for (const entry of this.playerRoster.values()) {
-      // Raw (unstripped) — the recorder's sanitizePlayerName is the single
-      // canonical strip, so names are never processed twice.
-      if (entry.name) names.push(entry.rawName);
-    }
-    return names;
+  /** Read-only roster view: preserves client identity without copying per packet. */
+  getPlayerRoster(): ReadonlyMap<number, Readonly<RosterEntry>> {
+    return this.playerRoster;
   }
 
   /**

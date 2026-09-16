@@ -1,13 +1,27 @@
-import { LOD, type Camera, type Scene, type WebGLRenderer } from "three";
+import {
+  LOD,
+  type Camera,
+  type GeometryGroup,
+  type Scene,
+  type WebGLRenderer,
+} from "three";
 import type {
-  RenderItem,
+  RenderItem as ThreeRenderItem,
   WebGLRenderList,
 } from "three/src/renderers/webgl/WebGLRenderLists.js";
 
+// @types/three 0.186 uses scene Group instead of GeometryGroup and still
+// describes the r185 push/sort signatures. Keep those corrections here.
+export interface RenderItem extends Omit<ThreeRenderItem, "group"> {
+  group: GeometryGroup | null;
+}
+
 type RenderItemSort = (a: RenderItem, b: RenderItem) => number;
 
-// @types/three 0.186 still describes the r185 push/sort signatures.
-export interface RenderList extends Omit<WebGLRenderList, "push" | "sort"> {
+export interface RenderList extends Pick<WebGLRenderList, "init" | "finish"> {
+  opaque: RenderItem[];
+  transparent: RenderItem[];
+  transmissive: RenderItem[];
   push(
     object: RenderItem["object"],
     geometry: RenderItem["geometry"],
@@ -17,7 +31,28 @@ export interface RenderList extends Omit<WebGLRenderList, "push" | "sort"> {
     group: RenderItem["group"],
     camera: Camera,
   ): void;
+  unshift(
+    object: RenderItem["object"],
+    geometry: RenderItem["geometry"],
+    material: RenderItem["material"],
+    groupOrder: number,
+    z: number,
+    group: RenderItem["group"],
+  ): void;
   sort(opaqueSort?: RenderItemSort, transparentSort?: RenderItemSort): void;
+}
+
+export function getRenderList(
+  renderer: WebGLRenderer,
+  scene: Scene,
+): RenderList {
+  return renderer.renderLists.get(scene, 0) as unknown as RenderList;
+}
+
+interface RenderListState {
+  readonly list: RenderList;
+  readonly originalSort: RenderList["sort"];
+  readonly wrappedSort: RenderList["sort"];
 }
 
 /** Isolates the renderer integration from the draw/animation code. A final LOD
@@ -27,12 +62,10 @@ export interface RenderList extends Omit<WebGLRenderList, "push" | "sort"> {
  * Keep the browser rendering regression tests when upgrading Three. */
 export class DTSInstanceRenderList {
   readonly root = new LOD();
-  readonly anchors = new Map<number, RenderItem>();
+  private anchors = new Map<number, RenderItem>();
   private consumed = new Set<RenderItem>();
-  private originals: RenderItem[] = [];
-  private list?: RenderList;
-  private originalSort?: RenderList["sort"];
-  private wrappedSort?: RenderList["sort"];
+  private prepared?: RenderListState;
+  private states = new WeakMap<RenderList, RenderListState>();
 
   private renderer: WebGLRenderer;
   constructor(renderer: WebGLRenderer, flush: () => void) {
@@ -45,13 +78,24 @@ export class DTSInstanceRenderList {
 
   prepare(scene: Scene) {
     this.restore();
-    this.list = this.renderer.renderLists.get(
-      scene,
-      0,
-    ) as unknown as RenderList;
-    const list = this.list;
-    const sort = (this.originalSort = list.sort);
-    this.wrappedSort = (opaqueSort, transparentSort) => {
+    const list = getRenderList(this.renderer, scene);
+    let state = this.states.get(list);
+    if (!state || list.sort !== state.originalSort) {
+      state = this.createState(list);
+      this.states.set(list, state);
+    }
+    this.prepared = state;
+    list.sort = state.wrappedSort;
+    // React can append entities after the pool between frames.
+    if (scene.children.at(-1) !== this.root) {
+      this.root.removeFromParent();
+      scene.add(this.root);
+    }
+  }
+
+  private createState(list: RenderList): RenderListState {
+    const originalSort = list.sort;
+    const wrappedSort: RenderList["sort"] = (opaqueSort, transparentSort) => {
       // Arbitrary custom sort functions can inspect object/material identity.
       // Retain native draws in that case instead of assuming our anchors suffice.
       const fallback = !!opaqueSort || !!transparentSort;
@@ -70,25 +114,28 @@ export class DTSInstanceRenderList {
         }
         items.length = write;
       }
-      if (fallback)
-        for (const item of this.originals)
+      if (fallback) {
+        for (const item of this.consumed)
           (item.material.transparent ? list.transparent : list.opaque).push(
             item,
           );
-      sort.call(list, opaqueSort, transparentSort);
+        this.consumed.clear();
+      }
+      originalSort.call(list, opaqueSort, transparentSort);
     };
-    list.sort = this.wrappedSort;
-    // React can append entities after the pool between frames.
-    if (scene.children.at(-1) !== this.root) {
-      this.root.removeFromParent();
-      scene.add(this.root);
-    }
+    return { list, originalSort, wrappedSort };
+  }
+
+  private get current(): RenderListState {
+    if (!this.prepared)
+      throw new Error("DTS render list has not been prepared");
+    return this.prepared;
   }
 
   get sorted(): RenderList {
-    const list = this.list!;
+    const { list, originalSort } = this.current;
     // Use the renderer's native comparator, including stable equal-depth order.
-    this.originalSort!.call(list);
+    originalSort.call(list);
     return list;
   }
 
@@ -96,15 +143,14 @@ export class DTSInstanceRenderList {
     sources: readonly { item: RenderItem }[],
     draw: LOD["children"][number],
   ) {
-    this.anchors.set(draw.id, { ...sources[0].item });
-    for (const { item } of sources) {
-      this.consumed.add(item);
-      this.originals.push(item);
-    }
+    // Three reuses these items only after the next prepare() clears our refs.
+    this.anchors.set(draw.id, sources[0].item);
+    for (const { item } of sources) this.consumed.add(item);
   }
 
   finish() {
-    for (const items of [this.list!.opaque, this.list!.transparent]) {
+    const { list } = this.current;
+    for (const items of [list.opaque, list.transparent]) {
       let write = 0;
       for (const item of items)
         if (!this.consumed.has(item)) items[write++] = item;
@@ -113,10 +159,11 @@ export class DTSInstanceRenderList {
   }
 
   restore() {
-    if (this.list && this.list.sort === this.wrappedSort)
-      this.list.sort = this.originalSort!;
+    const state = this.prepared;
+    if (state && state.list.sort === state.wrappedSort)
+      state.list.sort = state.originalSort;
+    this.prepared = undefined;
     this.anchors.clear();
     this.consumed.clear();
-    this.originals.length = 0;
   }
 }

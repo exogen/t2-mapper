@@ -12,11 +12,11 @@ import { demoLog as log } from "./logger.js";
 import {
   DEMO_TICK_MS,
   DemoFileWriter,
-  MAX_BLOCK_SIZE,
   buildDemoValues,
   buildInitialBlock,
 } from "./demoWriter.js";
 import type { ServerInfo } from "./types.js";
+import { DemoPlayers, type DemoPlayerRoster } from "./demoPlayers.js";
 
 export type RecorderState =
   "buffering" | "recording" | "finalizing" | "done" | "aborted";
@@ -63,10 +63,10 @@ export interface DemoRecorderOptions {
   /** Current non-observer player count (sampled; the peak decides keep). */
   getActivePlayerCount: () => number;
   /**
-   * Current roster names, observers included (sampled; the union across
-   * the whole recording lands in the sidecar metadata).
+   * Current roster keyed by stable client ID, observers included.
    */
-  getPlayerNames: () => string[];
+  getPlayerRoster: () => DemoPlayerRoster;
+  getRecorderClientId: () => number | null;
   /** Whether the match is underway (sampled; sticky — a demo that never
    *  saw the match start is dropped as pre-match warmup). */
   getMatchStarted: () => boolean;
@@ -131,9 +131,13 @@ export interface DemoMetadata {
   recorder: string;
   durationMs: number;
   /**
-   * Unique names observed at any point, observers included.
+   * Unique names observed at any point, observers included. A player can
+   * have several aliases; this is the search list, not the player count.
    */
   players: string[];
+  /** Unique tag-less names seen, excluding the recorder. Missing on legacy
+   *  or salvaged records whose roster has not been analyzed yet. */
+  playerCount?: number;
   /**
    * Why this recording was kept — the trigger (patrol pin / watchers)
    * plus the keep-gate facts (peak players, match started). For debugging
@@ -147,19 +151,6 @@ export interface DemoMetadata {
    * browser's indicator.
    */
   hasCommentary?: boolean;
-}
-
-/**
- * Drop C0/C1 control chars and DEL — tagged-string prefixes and color
- * codes that would garble JSON consumers. Latin-1 and above survive.
- */
-export function sanitizePlayerName(raw: string): string {
-  let out = "";
-  for (let i = 0; i < raw.length; i++) {
-    const code = raw.charCodeAt(i);
-    if (code >= 0x20 && (code < 0x7f || code > 0x9f)) out += raw[i];
-  }
-  return out.trim();
 }
 
 /** Lowercase slug: special chars stripped, word runs joined with dashes. */
@@ -206,7 +197,7 @@ export class DemoRecorder {
   private wasPinned = false;
   private peakWatchers = 0;
   private matchStarted = false;
-  private playerNames = new Set<string>();
+  private players: DemoPlayers;
   /** Size cap reached: the spool is complete as it stands. */
   private capped = false;
   /**
@@ -224,6 +215,7 @@ export class DemoRecorder {
 
   constructor(opts: DemoRecorderOptions) {
     this.opts = opts;
+    this.players = new DemoPlayers(opts.recorderName);
   }
 
   get state(): RecorderState {
@@ -247,8 +239,13 @@ export class DemoRecorder {
     this.opts.onStateChange?.(state);
   }
 
-  onPacket(data: Uint8Array): void {
-    if (this._state !== "buffering" && this._state !== "recording") return;
+  /** Whether this packet was accepted into the recording. */
+  onPacket(data: Uint8Array): boolean {
+    if (
+      this.capped ||
+      (this._state !== "buffering" && this._state !== "recording")
+    )
+      return false;
     this.sample();
     const now = this.opts.now?.() ?? Date.now();
     // Always copy: the input is a view over the dgram pool buffer, and
@@ -272,6 +269,14 @@ export class DemoRecorder {
     } else if (this._state === "recording") {
       this.writeEntry({ kind: "packet", data: copy, time: now });
     }
+    return true;
+  }
+
+  /** Sample during/after applying a packet accepted by onPacket, including
+   * the last packet that trips the size cap. Never sample later packets. */
+  sampleRecordedState(): void {
+    if (this._state === "buffering" || this._state === "recording")
+      this.sample();
   }
 
   /**
@@ -283,10 +288,10 @@ export class DemoRecorder {
     if (!this.matchStarted && this.opts.getMatchStarted()) {
       this.matchStarted = true;
     }
-    for (const raw of this.opts.getPlayerNames()) {
-      const name = sanitizePlayerName(raw);
-      if (name && name !== this.opts.recorderName) this.playerNames.add(name);
-    }
+    this.players.sample(
+      this.opts.getPlayerRoster(),
+      this.opts.getRecorderClientId(),
+    );
     const ctx = this.opts.getRecordContext?.();
     if (ctx) {
       if (ctx.pinned) this.wasPinned = true;
@@ -312,6 +317,7 @@ export class DemoRecorder {
   }
 
   onSent(): void {
+    if (this.capped) return;
     const now = this.opts.now?.() ?? Date.now();
     if (this._state === "buffering") {
       this.t0 ??= now;
@@ -326,13 +332,13 @@ export class DemoRecorder {
     if (this._state !== "buffering") return;
     // Samples taken while buffering belong to the previous mission
     // (e.g. connecting into an intermission debrief) — the keep gates
-    // and sidecar must describe the mission this file actually records.
+    // must describe the mission this file actually records. Keep names:
+    // buffered packets are also written, so those aliases are in the demo.
     // Current players re-latch immediately from the live roster. (The
     // buffering-cap fallback keeps them: with no Phase1, the buffered
     // packets are the same mission the file records.)
     this.matchStarted = false;
     this.peakPlayers = 0;
-    this.playerNames.clear();
     this.flush(missionName);
   }
 
@@ -342,6 +348,7 @@ export class DemoRecorder {
     const serverName = identity.name ?? this.opts.address;
     const demoValues = buildDemoValues({
       recorderName: this.opts.recorderName,
+      clientId: this.opts.getRecorderClientId() ?? undefined,
       serverName,
       serverAddress: this.opts.address,
       date,
@@ -390,16 +397,8 @@ export class DemoRecorder {
     try {
       this.syncClock(entry.time);
       if (entry.kind === "packet") {
-        const data = entry.data!;
-        if (data.length > MAX_BLOCK_SIZE) {
-          log.warn(
-            { address: this.opts.address, size: data.length },
-            "Skipping oversized packet block",
-          );
-        } else {
-          writer.writePacket(data);
-          writer.writeInfo();
-        }
+        writer.writePacket(entry.data!);
+        writer.writeInfo();
       } else {
         writer.writeSendMarker();
       }
@@ -477,8 +476,9 @@ export class DemoRecorder {
     // the next mission's LoadInfo while the awaits below are in flight.
     const identity = this.opts.getServerIdentity();
     // Final sample — the keep gates below run on up-to-date state even
-    // if no packet arrived since the last change.
-    this.sample();
+    // if no packet arrived since the last change. Capped files must retain
+    // the roster/keep gates at their recorded cutoff, not the later live state.
+    if (!this.capped) this.sample();
     const writer = this.writer;
     if (this._state === "buffering" || !writer) {
       log.debug(
@@ -542,7 +542,7 @@ export class DemoRecorder {
         durationMs,
         bytes: writer.bytesWritten,
         peakPlayers: this.peakPlayers,
-        players: this.playerNames.size,
+        players: this.players.count,
         reason,
       },
       "Demo recording finalized",
@@ -586,9 +586,7 @@ export class DemoRecorder {
         recorder: meta.recorder,
         durationMs,
         reason: this.describeKeepReason(),
-        players: [...this.playerNames].sort((a, b) =>
-          a.localeCompare(b, "en", { sensitivity: "base" }),
-        ),
+        ...this.players.metadata(),
       };
       await fsp.writeFile(`${finalPath}.json`, JSON.stringify(record, null, 2));
     } catch (err) {

@@ -10,6 +10,7 @@ import {
   Matrix3,
   Matrix4,
   Group,
+  Frustum,
   MeshLambertMaterial,
   RepeatWrapping,
   PerspectiveCamera,
@@ -17,6 +18,7 @@ import {
   ShaderLib,
   Vector3,
   type InstancedMesh,
+  type Material,
   type WebGLRenderer,
 } from "three";
 import { WebGLRenderLists } from "three/src/renderers/webgl/WebGLRenderLists.js";
@@ -31,10 +33,10 @@ import { batchDTSRigidMeshes } from "./dtsRigidBatch";
 import { createDTSRigidTestShape } from "./dtsTestFixtures";
 import { applyDTSMaterialMaps } from "./dtsMaterialMaps";
 import { applyShapeShaderModifications } from "../shapeMaterial";
-import type { RenderList } from "./dtsInstanceRenderList";
+import { DTSInstanceRenderList, getRenderList } from "./dtsInstanceRenderList";
 
-function fixture(count = 2) {
-  const renderer = {
+function createRenderer(): WebGLRenderer {
+  return {
     capabilities: { maxTextureSize: 1024 },
     renderLists: new WebGLRenderLists(undefined!),
     getContext: () => ({
@@ -48,6 +50,34 @@ function fixture(count = 2) {
       expect(position.z).toBeLessThan(target.image.depth);
     }),
   } as unknown as WebGLRenderer;
+}
+
+function compileShader(
+  material: Material | Material[],
+  renderer: WebGLRenderer,
+  source = ShaderLib.lambert,
+) {
+  if (Array.isArray(material)) throw new Error("Expected one pooled material");
+  const uniforms: Record<string, { value: unknown }> = {};
+  const shader = { ...source, uniforms };
+  material.onBeforeCompile(
+    shader as Parameters<Material["onBeforeCompile"]>[0],
+    renderer,
+  );
+  return shader;
+}
+
+function getBonePalette(shader: ReturnType<typeof compileShader>) {
+  const texture = shader.uniforms.boneTexture?.value;
+  if (!(texture instanceof DataTexture)) throw new Error("Missing palette");
+  const data = texture.image.data;
+  if (!(data instanceof Float32Array))
+    throw new Error("Expected float32 palette data");
+  return { texture, data };
+}
+
+function fixture(count = 2) {
+  const renderer = createRenderer();
   const world = new Scene(),
     camera = new PerspectiveCamera();
   const model = buildDTS(createDTSRigidTestShape());
@@ -76,10 +106,10 @@ function fixture(count = 2) {
   }
   const pool = new DTSAnimatedInstancePool(renderer);
   world.add(pool.root);
-  const prepare = () => {
+  const prepare = (frustum?: Frustum) => {
     world.updateMatrixWorld(true);
     pool.prepare(world, camera);
-    project(world, camera, pool, renderer);
+    project(world, camera, pool, renderer, frustum);
   };
   return { renderer, world, camera, shapes, bodies, pool, prepare };
 }
@@ -89,14 +119,19 @@ function project(
   camera: PerspectiveCamera,
   pool: DTSAnimatedInstancePool,
   renderer: WebGLRenderer,
+  frustum?: Frustum,
 ) {
-  const list = renderer.renderLists.get(world, 0) as unknown as RenderList;
+  const list = getRenderList(renderer, world);
   list.init();
   const visit = (node: import("three").Object3D) => {
     if (!node.visible) return;
     if (node instanceof DTSShape) node.update(camera);
     if (node === pool.root) pool.flush();
-    if (node instanceof Mesh && node.layers.test(camera.layers)) {
+    if (
+      node instanceof Mesh &&
+      node.layers.test(camera.layers) &&
+      (!frustum || !node.frustumCulled || node.intersectsFrustum(frustum))
+    ) {
       // Stand in for projected depth, which flips with reversed depth.
       const z =
         -node.matrixWorld.elements[14] * (camera.reversedDepth ? -1 : 1);
@@ -110,7 +145,7 @@ function project(
               materials[group.materialIndex!],
               0,
               z,
-              group as any,
+              group,
               camera,
             );
       } else if (materials.visible)
@@ -123,6 +158,65 @@ function project(
 }
 
 describe("animated DTS instancing", () => {
+  it("restores current poses across culled, individual and pooled draws", () => {
+    const { pool, renderer, world, camera, shapes, bodies, prepare } =
+      fixture();
+    const frustum = new Frustum().setFromProjectionMatrix(
+      camera.projectionMatrix,
+    );
+    for (const [i, shape] of shapes.entries()) {
+      shape.position.set(i * 3, 0, -20);
+      shape.rotation.set(0, 0, 0);
+      shape.scale.setScalar(1);
+    }
+    const draws = () => getRenderList(renderer, world).opaque;
+    prepare(frustum);
+    expect(pool.stats.instances).toBe(2);
+    expect(draws()).toHaveLength(1);
+    const pooled = draws()[0].object as InstancedMesh;
+
+    // Moving a bone can cull a shape even when its root stays on screen.
+    shapes[0].getNode(0)!.position.x = 1000;
+    prepare(frustum);
+    expect(pool.stats.instances).toBe(0);
+    expect(draws().map((item) => item.object)).toEqual([bodies[1]]);
+    expect(pooled.visible).toBe(false);
+    shapes[1].getNode(0)!.position.x = 1000;
+    prepare(frustum);
+    expect(draws()).toHaveLength(0);
+
+    for (const shape of shapes) {
+      shape.getNode(0)!.position.x = 0;
+      shape.getNode(1)!.rotation.set(0.7, 0.2, 0.9);
+    }
+    prepare(frustum);
+    expect(pool.stats.instances).toBe(2);
+    expect(draws().map((item) => item.object)).toEqual([pooled]);
+    const shader = compileShader(pooled.material, renderer);
+    const { data: boneData } = getBonePalette(shader);
+    for (const [i, body] of bodies.entries()) {
+      const instance = new Matrix4();
+      pooled.getMatrixAt(i, instance);
+      const position = pooled.geometry.getAttribute("position");
+      const indices = pooled.geometry.getAttribute("skinIndex");
+      for (let v = 0; v < position.count; v++) {
+        const bone = new Matrix4().fromArray(
+          boneData,
+          (i * body.skeleton.bones.length + indices.getX(v)) * 16,
+        );
+        const actual = new Vector3()
+          .fromBufferAttribute(position, v)
+          .applyMatrix4(bone)
+          .applyMatrix4(instance);
+        const expected = body
+          .getVertexPosition(v, new Vector3())
+          .applyMatrix4(body.matrixWorld);
+        expect(actual.distanceTo(expected)).toBeLessThan(1e-5);
+      }
+    }
+    pool.dispose();
+  });
+
   it("allocates enough array layers for many skins arriving in one frame", () => {
     const { pool, renderer, prepare } = fixture(20);
     prepare();
@@ -139,13 +233,8 @@ describe("animated DTS instancing", () => {
     expect(pool.stats.skinLayers).toBe(2);
     const draw = pool.root.children[0] as InstancedMesh;
     expect(draw.frustumCulled).toBe(false);
-    const shader = { ...ShaderLib.lambert, uniforms: {} };
-    (draw.material as MeshLambertMaterial).onBeforeCompile(
-      shader as Parameters<MeshLambertMaterial["onBeforeCompile"]>[0],
-      renderer,
-    );
-    const uniforms = shader.uniforms as Record<string, { value: any }>;
-    const boneData = uniforms.boneTexture.value.image.data;
+    const shader = compileShader(draw.material, renderer);
+    const { data: boneData } = getBonePalette(shader);
     const normals = draw.geometry.getAttribute("normal");
     for (let i = 0; i < bodies.length; i++) {
       const body = bodies[i];
@@ -228,8 +317,13 @@ describe("animated DTS instancing", () => {
   });
 
   it("grows buffers, reuses slots after despawns and restores draws when disabled", () => {
-    const { pool, world, shapes, bodies, prepare } = fixture(2);
+    const { pool, renderer, world, shapes, bodies, prepare } = fixture(2);
     prepare();
+    const draw = pool.root.children[0] as InstancedMesh;
+    const shader = compileShader(draw.material, renderer);
+    const initialTexture = getBonePalette(shader).texture;
+    const dispose = vi.fn();
+    initialTexture.addEventListener("dispose", dispose);
     for (let i = 0; i < 20; i++) {
       const shape = clone(shapes[0]) as DTSShape;
       const batch = shape.children.find((n) => n instanceof DTSRigidMeshBatch)!;
@@ -241,9 +335,18 @@ describe("animated DTS instancing", () => {
     }
     prepare();
     expect(pool.stats.instances).toBe(22);
-    expect(
-      (pool.root.children[0] as InstancedMesh).instanceMatrix.count,
-    ).toBeGreaterThanOrEqual(22);
+    expect(draw.instanceMatrix.count).toBeGreaterThanOrEqual(22);
+    expect(dispose).toHaveBeenCalledTimes(1);
+    const { texture, data } = getBonePalette(shader);
+    expect(texture).not.toBe(initialTexture);
+    expect(data.length).toBe(
+      draw.instanceMatrix.count * bodies[0].skeleton.bones.length * 16,
+    );
+    expect(Array.from(data)).toContain(1);
+    const version = texture.version;
+    prepare();
+    expect(getBonePalette(shader).texture).toBe(texture);
+    expect(texture.version).toBe(version);
     world.remove(shapes[0]);
     prepare();
     expect(pool.stats.instances).toBe(21);
@@ -319,7 +422,77 @@ function rigidFixture(count = 3) {
   return { ...result, meshes };
 }
 
+describe("DTS render-list lifecycle", () => {
+  it("restores scene sorting and reuses the wrapper across frames and scenes", () => {
+    const renderer = createRenderer();
+    const world = new Scene();
+    const adapter = new DTSInstanceRenderList(renderer, () => {});
+    const list = getRenderList(renderer, world);
+    const originalSort = list.sort;
+    expect(() => adapter.sorted).toThrow("has not been prepared");
+    adapter.prepare(world);
+    const wrappedSort = list.sort;
+    expect(wrappedSort).not.toBe(originalSort);
+    expect(adapter.sorted).toBe(list);
+    adapter.finish();
+    adapter.restore();
+    adapter.restore();
+    expect(list.sort).toBe(originalSort);
+    expect(() => adapter.finish()).toThrow("has not been prepared");
+
+    adapter.prepare(world);
+    expect(list.sort).toBe(wrappedSort);
+    const other = new Scene();
+    const otherList = getRenderList(renderer, other);
+    const otherSort = otherList.sort;
+    adapter.prepare(other);
+    expect(list.sort).toBe(originalSort);
+    expect(adapter.sorted).toBe(otherList);
+    adapter.prepare(world);
+    expect(otherList.sort).toBe(otherSort);
+    expect(list.sort).toBe(wrappedSort);
+    adapter.restore();
+  });
+
+  it("preserves external sort replacements when restoring and preparing again", () => {
+    const renderer = createRenderer();
+    const world = new Scene();
+    const adapter = new DTSInstanceRenderList(renderer, () => {});
+    const list = getRenderList(renderer, world);
+    const externalSort = vi.fn(list.sort);
+    adapter.prepare(world);
+    list.sort = externalSort;
+    adapter.restore();
+    expect(list.sort).toBe(externalSort);
+    adapter.prepare(world);
+    expect(adapter.sorted).toBe(list);
+    expect(externalSort).toHaveBeenCalledTimes(1);
+    const wrappedSort = list.sort;
+    adapter.prepare(world);
+    expect(list.sort).toBe(wrappedSort);
+    adapter.restore();
+    expect(list.sort).toBe(externalSort);
+  });
+});
+
 describe("shared DTS shape draws", () => {
+  it("restores opaque draws once for custom sorting and resumes pooling next frame", () => {
+    const { pool, renderer, world, meshes, prepare } = rigidFixture();
+    prepare();
+    const list = getRenderList(renderer, world);
+    expect(list.opaque).toHaveLength(1);
+    for (let i = 0; i < 2; i++) {
+      list.sort((a, b) => b.id - a.id);
+      expect(list.opaque.map((item) => item.object.id)).toEqual(
+        meshes.map((mesh) => mesh.id).reverse(),
+      );
+    }
+    prepare();
+    expect(list.opaque).toHaveLength(1);
+    expect(pool.stats.instances).toBe(meshes.length);
+    pool.dispose();
+  });
+
   it("reuses registrations and uploads only changed instance attributes", () => {
     const { pool, meshes, prepare } = rigidFixture();
     prepare();
@@ -455,7 +628,7 @@ describe("shared DTS shape draws", () => {
       prepare();
       expect(pool.stats.instances).toBe(4);
       expect(pool.stats.draws).toBe(2);
-      const items = renderer.renderLists.get(world, 0).transparent;
+      const items = getRenderList(renderer, world).transparent;
       expect(items).toHaveLength(3);
       expect(items[1].object).toBe(barrier);
       expect(items.map((i) => i.z)).toEqual([4, 2.5, 2]);
@@ -468,13 +641,13 @@ describe("shared DTS shape draws", () => {
       world.updateMatrixWorld(true);
       pool.prepare(world, camera);
       project(world, camera, pool, renderer);
-      (renderer.renderLists.get(world, 0) as unknown as RenderList).sort(
-        undefined,
-        (a, b) => a.id - b.id,
-      );
-      expect(
-        renderer.renderLists.get(world, 0).transparent.map((i) => i.object),
-      ).toEqual([...meshes, barrier]);
+      const list = getRenderList(renderer, world);
+      for (let i = 0; i < 2; i++) {
+        list.sort(undefined, (a, b) => a.id - b.id);
+        expect(list.transparent.map((item) => item.object.id)).toEqual(
+          [...meshes, barrier].map((mesh) => mesh.id),
+        );
+      }
       pool.dispose();
     },
   );
@@ -525,7 +698,7 @@ describe("shared DTS shape draws", () => {
   });
 
   it("retains native morph influences and detail-map shader configuration", () => {
-    const { pool, renderer, meshes, prepare } = rigidFixture(3);
+    const { pool, renderer, world, meshes, prepare } = rigidFixture(3);
     const geometry = meshes[0].geometry;
     geometry.morphAttributes.position = [
       geometry.getAttribute("position").clone(),
@@ -554,11 +727,29 @@ describe("shared DTS shape draws", () => {
     expect(Array.from(draw.morphTexture!.image.data!.slice(0, 6))).toEqual([
       1, 0, 0.5, 0.5, 0, 1,
     ]);
-    const shader = { ...ShaderLib.basic, uniforms: {} };
-    draw.material.onBeforeCompile(shader as any, renderer);
-    expect((shader.uniforms as any).dtsDetailMap.value).toBe(detailMap);
+    const shader = compileShader(draw.material, renderer, ShaderLib.basic);
+    expect(shader.uniforms.dtsDetailMap.value).toBe(detailMap);
     expect(shader.fragmentShader).toContain("dtsDetailMap");
+    const originalTexture = draw.morphTexture!;
+    const disposeOriginal = vi.fn();
+    originalTexture.addEventListener("dispose", disposeOriginal);
+    for (let i = 0; i < 2; i++) {
+      const mesh = new DTSMesh(geometry, meshes[2].material);
+      mesh.position.copy(meshes[2].position);
+      mesh.morphTargetInfluences = [0.25];
+      world.add(mesh);
+    }
+    prepare();
+    expect(pool.stats.instances).toBe(5);
+    expect(disposeOriginal).toHaveBeenCalledTimes(1);
+    expect(draw.morphTexture).not.toBe(originalTexture);
+    expect(Array.from(draw.morphTexture!.image.data!.slice(0, 10))).toEqual([
+      1, 0, 0.5, 0.5, 0, 1, 0.75, 0.25, 0.75, 0.25,
+    ]);
+    const disposeReplacement = vi.fn();
+    draw.morphTexture!.addEventListener("dispose", disposeReplacement);
     pool.dispose();
+    expect(disposeReplacement).toHaveBeenCalledTimes(1);
   });
 
   it("groups geometry views by their current shared frame buffers and honors material groups", () => {

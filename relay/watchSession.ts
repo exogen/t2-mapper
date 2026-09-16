@@ -437,7 +437,8 @@ export class WatchSession {
           };
         },
         getActivePlayerCount: () => this.watchState.countActivePlayers(),
-        getPlayerNames: () => this.watchState.getRosterNames(),
+        getPlayerRoster: () => this.watchState.getPlayerRoster(),
+        getRecorderClientId: () => this.watchState.selfClientId,
         getMatchStarted: () => this.watchState.matchStarted,
         getRecordContext: () => ({
           pinned: this.pinned,
@@ -752,7 +753,11 @@ export class WatchSession {
     // Record only packets the parser handled — an unparseable packet in
     // the demo would break playback at the same spot (the resync above
     // finalizes the recording, so the file stays valid to its last byte).
-    this.recorder?.onPacket(data);
+    const recorder = this.recorder;
+    const sampleRecordedState =
+      recorder && recorder.onPacket(data)
+        ? () => recorder.sampleRecordedState()
+        : undefined;
 
     if (parsed) {
       this.packetCount++;
@@ -768,7 +773,8 @@ export class WatchSession {
       // here must never crash the process and lose every in-flight demo.
       // Contain it: log, skip this packet's local state update, carry on.
       try {
-        this.watchState.applyPacket(parsed);
+        this.watchState.applyPacket(parsed, sampleRecordedState);
+        sampleRecordedState?.();
         this.ghostState.applyPacket(parsed);
         this.maybeReObserve();
       } catch (e) {

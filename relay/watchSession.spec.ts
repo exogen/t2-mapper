@@ -679,6 +679,58 @@ describe("WatchSession demo recording", () => {
     manager.shutdown();
   });
 
+  it("records roster events before a same-packet mission cycle finalizes the demo", async () => {
+    const { manager, connections, finalized, coordinator, dir } =
+      await createRecordingManager();
+    const ws = new FakeWebSocket();
+    manager.watch(ws as unknown as WebSocket, "1.2.3.4:28000");
+    const session = getSession(manager);
+    connections[0].setStatus("connected");
+    firePhase1(session, "Katabatic");
+    const commands = [
+      ["MsgClientJoin", "Welcome", "Actual observer name", "7", "1"],
+      ["MsgMissionStart", "Match started"],
+      ["MsgClientJoin", "", "Alice", "10", "2"],
+      ["MsgClientNameChanged", "", "Alice", "Bob", "10"],
+      ["MsgClientDrop", "", "Bob", "10"],
+    ];
+    session.parserKit.packetParser.parsePacket = () => ({
+      gameState: {},
+      ghosts: [],
+      events: [
+        ...commands.map((args) => ({
+          parsedData: {
+            type: "RemoteCommandEvent",
+            funcName: "ServerMessage",
+            args,
+          },
+        })),
+        {
+          parsedData: {
+            type: "GhostingMessageEvent",
+            message: 2,
+            sequence: 0,
+            ghostCount: 0,
+          },
+        },
+      ],
+    });
+    try {
+      connections[0].emit("packet", new Uint8Array([1, 2, 3]));
+      expect(session.recorder).toBeNull();
+      await vi.waitFor(() => expect(finalized).toHaveLength(1));
+      const sidecar = JSON.parse(
+        await fsp.readFile(`${finalized[0]}.json`, "utf8"),
+      );
+      expect(sidecar.players).toEqual(["Alice", "Bob"]);
+      expect(sidecar.playerCount).toBe(2);
+    } finally {
+      manager.shutdown();
+      await coordinator.shutdown(5000);
+      await fsp.rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it("rotates the recording on EndGhosting via a reconnect that skips the resync budget", async () => {
     const { manager, connections, finalized, coordinator } =
       await createRecordingManager();

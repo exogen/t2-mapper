@@ -39,7 +39,7 @@ import {
 import { samplePlayerPose } from "../stream/playerAnimation";
 import { stepFlareThread } from "./jetThreads";
 import { DTSAnimationMixer } from "../dts/dtsAnimationMixer";
-import { DTSShape } from "../dts/dtsModel";
+import { DTSShape, DTSRigidMeshBatch } from "../dts/dtsModel";
 import { renderShapeRaycast } from "../collision/renderShapeRaycast";
 import {
   createDtsDamageThreads,
@@ -253,17 +253,14 @@ export function PlayerModel({
 
     // Use front-face-only rendering so the camera can see out from inside the
     // model in first-person (backface culling hides interior faces).
-    // Disable frustum culling — when portaled into a vehicle mount bone, the
-    // bounding sphere is in local space but the world transform comes from the
-    // bone chain, causing incorrect culling.
-    observeShapeMeshes(scene, (n: any) => {
-      if (n.isMesh) {
-        n.frustumCulled = false;
-        if (n.material) {
-          const mats = Array.isArray(n.material) ? n.material : [n.material];
-          for (const m of mats) m.side = FrontSide;
-        }
-      }
+    // Rigid batches bound the current bone pose, including vehicle mounts.
+    // Keep the other paths uncullable until their animated bounds are reliable.
+    observeShapeMeshes(scene, (mesh) => {
+      mesh.frustumCulled = mesh instanceof DTSRigidMeshBatch;
+      const materials = Array.isArray(mesh.material)
+        ? mesh.material
+        : [mesh.material];
+      for (const material of materials) material.side = FrontSide;
     });
 
     const mix = new DTSAnimationMixer(scene);

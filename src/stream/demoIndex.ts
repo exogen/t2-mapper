@@ -11,6 +11,13 @@ import type { CastCommentaryTrack } from "../director/castSidecar";
  * import — no relay runtime reaches the bundle).
  */
 export type DemoIndexEntry = DemoMetadata;
+
+/** Legacy sidecars only have full names; new counts deduplicate tag-less names. */
+export function demoPlayerCount(
+  demo: Pick<DemoIndexEntry, "players" | "playerCount">,
+): number {
+  return demo.playerCount ?? demo.players.length;
+}
 /** A commentary track as the cast sidecar lists it. */
 export type DemoCommentaryTrack = CastCommentaryTrack;
 

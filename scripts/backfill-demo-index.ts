@@ -8,42 +8,36 @@
  * Finally `index.json` is rebuilt from all sidecar records, which makes
  * this script double as the index disaster-recovery tool.
  *
- * R2 credentials come from the same DEMO_R2_* env vars as the relay
- * (loaded from .env.development.local via the `backfill-demos` npm
- * script). Idempotent: existing sidecars are reused, not re-analyzed,
- * unless --force is given.
+ * R2 credentials come from the same DEMO_R2_* env vars as the relay.
+ * Run with node --env-file-if-exists=.env.development.local --import=tsx/esm.
+ * Existing sidecars are reused unless --force is given. --players-only
+ * fills missing tag-less name counts without changing other metadata.
  */
 import path from "node:path";
+import fs from "node:fs/promises";
 import { parseArgs } from "node:util";
 import { GetObjectCommand, PutObjectCommand } from "@aws-sdk/client-s3";
-import {
-  BlockTypeMove,
-  BlockTypePacket,
-  DemoParser,
-  createLiveParser,
-  type RemoteCommandEventData,
-} from "t2-demo-parser";
 import { listAllObjects, r2Client } from "./lib/r2";
-import {
-  sanitizePlayerName,
-  type DemoGame,
-  type DemoMetadata,
-} from "../relay/demoRecorder.js";
-import { WatchStateAccumulator } from "../relay/watchState.js";
-import { extractMissionInfo } from "../src/stream/demoStreaming";
-import { parseDemoHeaderDate } from "../src/stream/demoDate";
+import type { DemoMetadata } from "../relay/demoRecorder.js";
+import { analyzeDemo } from "./lib/analyzeDemo";
+import { repairDemoPlayerMetadata } from "./lib/repairDemoPlayerMetadata";
 
 const { values } = parseArgs({
   options: {
     "dry-run": { type: "boolean", default: false },
     force: { type: "boolean", default: false },
+    "players-only": { type: "boolean", default: false },
+    filter: { type: "string" },
+    "backup-dir": { type: "string" },
     concurrency: { type: "string", default: "4" },
     help: { type: "boolean", default: false, short: "h" },
   },
 });
 
 if (values.help) {
-  console.error("Usage: npm run backfill-demos [-- options]");
+  console.error(
+    "Usage: node --env-file-if-exists=.env.development.local --import=tsx/esm scripts/backfill-demo-index.ts [options]",
+  );
   console.error();
   console.error("Options:");
   console.error("  --dry-run          Analyze only; write nothing to R2");
@@ -51,206 +45,39 @@ if (values.help) {
     "  --force            Re-analyze demos that already have sidecars",
   );
   console.error("  --concurrency <n>  Parallel demo downloads (default: 4)");
-  process.exit(1);
+  console.error(
+    "  --players-only     Repair player counts/names, preserving other metadata",
+  );
+  console.error(
+    "  --filter <text>    Limit --players-only to matching filenames",
+  );
+  console.error("  --backup-dir <dir> Save replaced JSON records locally");
+  process.exit(0);
 }
 
 const dryRun = values["dry-run"];
 const force = values.force;
+const playersOnly = values["players-only"];
+if (values.filter && !playersOnly)
+  throw new Error("--filter requires --players-only");
+if (values["backup-dir"])
+  await fs.mkdir(values["backup-dir"], { recursive: true });
 const concurrency = Math.max(1, parseInt(values.concurrency!, 10) || 4);
 
-const { client, config } = r2Client("npm run backfill-demos");
+const { client, config } = r2Client();
 
-/**
- * Fallback for demos with unparseable $DemoValue dates: the filename's
- * `_YYYYMMDDTHHMM_` stamp (also UTC, also minute precision).
- */
-function parseFilenameDate(filename: string): string | null {
-  const m = /_(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})_/.exec(filename);
-  if (!m) return null;
-  const date = new Date(
-    Date.UTC(
-      parseInt(m[1], 10),
-      parseInt(m[2], 10) - 1,
-      parseInt(m[3], 10),
-      parseInt(m[4], 10),
-      parseInt(m[5], 10),
-    ),
-  );
-  return Number.isNaN(date.getTime()) ? null : date.toISOString();
-}
-
-/**
- * The PJ tail rows of the $DemoValue array, via the app's own extractor
- * (one reader for the layout the relay writes); the date is converted
- * to ISO here.
- */
-function parseDemoValues(demoValues: string[]) {
-  const info = extractMissionInfo(demoValues);
-  return {
-    recorder: info.recorderName ?? "",
-    server: info.serverDisplayName ?? "",
-    address: info.serverAddress ?? "",
-    recordedAt: info.recordingDate
-      ? parseDemoHeaderDate(info.recordingDate)
-      : null,
-    mission: info.missionDisplayName ?? "",
-    mod: info.mod ?? "",
-    gameType: info.missionType ?? "",
-  };
-}
-
-/**
- * Reproduce what the live recorder's sidecar would have contained, by
- * replaying the demo's packets through the relay's own accumulator and
- * sampling the roster after each packet (union = every name observed,
- * observers included, recorder excluded — same rules as live).
- */
-async function analyzeDemo(
-  bytes: Uint8Array,
-  filename: string,
-): Promise<DemoMetadata> {
-  const parser = new DemoParser(bytes);
-  const { header, initialBlock } = await parser.load();
-  const info = parseDemoValues(initialBlock.demoValues);
-
-  // Passive-observer parser seeded from the initial block, mirroring
-  // the relay session and the watch catch-up equivalence spec.
-  const kit = createLiveParser({
-    dataBlocks: [...initialBlock.dataBlocks.entries()].map(
-      ([id, db]) => [id, db.data] as [number, Record<string, unknown>],
-    ),
-    ghosts: initialBlock.initialGhosts
-      .filter((g) => g.type === "create" && g.classId != null)
-      .map((g) => ({ index: g.index, classId: g.classId! })),
-    connectionProtocolState: {
-      ...initialBlock.connectionState,
-      lastSendSeq: 0x1fffffff,
-    },
-    nextRecvEventSeq: initialBlock.nextRecvEventSeq,
-  });
-  const watchState = new WatchStateAccumulator();
-  for (const [id, value] of initialBlock.taggedStrings) {
-    watchState.netStrings.set(id, value);
-  }
-
-  const players = new Set<string>();
-  const games: DemoGame[] = [];
-  // The mission in progress but not yet confirmed started; promoted to
-  // `games` the moment the match starts (MsgMissionStart or a running
-  // clock), so warmup-only missions never produce an entry.
-  // || (not ??): the parser initializes missionName to "" and only
-  // fills it when the initial block's phase-2 parse succeeds.
-  const firstMission = initialBlock.missionName || info.mission;
-  let pending: { mission: string; startMs: number } | null = firstMission
-    ? { mission: firstMission, startMs: 0 }
-    : null;
-  // The most recent promoted game, patchable while its mission is still
-  // current (its MsgLoadInfo type may arrive after the match starts).
-  let lastGame: DemoGame | null = null;
-  let currentMission = pending?.mission ?? null;
-  // A from-connect recording (relay: empty initial datablock table, the
-  // stream carries them) replays MissionStartPhase1 for the mission the
-  // initial block already seeded — ignore that one repeat only, so a
-  // later back-to-back rematch on the same map still opens a new game.
-  // A retail mid-match demo's first Phase1 is always a new match.
-  let awaitingSeedPhase1 =
-    pending !== null && initialBlock.dataBlocks.size === 0;
-  let moveTicks = 0;
-  const MOVE_TICK_MS = 32;
-
-  for (let block = parser.nextBlock(); block; block = parser.nextBlock()) {
-    if (block.type === BlockTypeMove) {
-      moveTicks++;
-      continue;
-    }
-    if (block.type !== BlockTypePacket) continue;
-    let parsed;
+async function backup(key: string, body: string) {
+  if (values["backup-dir"]) {
     try {
-      parsed = kit.packetParser.parsePacket(block.data);
-    } catch (err) {
-      // Same stance as the live session: state past a parse failure is
-      // unreliable. Keep what was accumulated up to this point, but flag
-      // the demo so the summary (and exit code) say its metadata is
-      // partial rather than passing it off as complete.
-      partialDemos.push(filename);
-      console.warn(
-        `  ${filename}: packet parse failed mid-demo, ` +
-          `keeping ${players.size} players seen so far (${String(err)})`,
+      await fs.writeFile(
+        path.join(values["backup-dir"], path.basename(key)),
+        body,
+        { flag: "wx" },
       );
-      break;
-    }
-    if (!parsed) continue;
-    watchState.applyPacket(parsed);
-
-    // Mission boundary (mirrors the live session's Phase1 handling):
-    // reset mission-scoped state and open a new pending game.
-    for (const evt of parsed.events) {
-      if (evt.parsedData?.type !== "RemoteCommandEvent") continue;
-      const cmd = evt.parsedData as RemoteCommandEventData;
-      if (
-        watchState.resolveNetString(cmd.funcName ?? "") !== "MissionStartPhase1"
-      ) {
-        continue;
-      }
-      const mission = watchState.resolveNetString(cmd.args?.[1] ?? "");
-      if (!mission) continue;
-      if (awaitingSeedPhase1 && mission === currentMission) {
-        awaitingSeedPhase1 = false;
-        continue;
-      }
-      awaitingSeedPhase1 = false;
-      watchState.beginMissionChange();
-      currentMission = mission;
-      pending = { mission, startMs: moveTicks * MOVE_TICK_MS };
-      lastGame = null;
-    }
-
-    if (pending && watchState.matchStarted) {
-      lastGame = {
-        mission: pending.mission,
-        gameType: watchState.missionType ?? "",
-        startMs: pending.startMs,
-        tournament: watchState.tournamentMode ?? false,
-      };
-      games.push(lastGame);
-      pending = null;
-    }
-    if (lastGame && !lastGame.gameType && watchState.missionType) {
-      lastGame.gameType = watchState.missionType;
-    }
-    if (lastGame && !lastGame.tournament && watchState.tournamentMode) {
-      lastGame.tournament = true;
-    }
-
-    for (const raw of watchState.getRosterNames()) {
-      const name = sanitizePlayerName(raw);
-      if (name && name !== info.recorder) players.add(name);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
     }
   }
-
-  return {
-    filename,
-    bytes: bytes.length,
-    recordedAt:
-      info.recordedAt ??
-      parseFilenameDate(filename) ??
-      new Date(0).toISOString(),
-    // The stream is authoritative: the server names itself via
-    // MsgMissionDropInfo/MsgLoadInfo during the recording, overriding
-    // whatever the recorder baked into $DemoValues at flush time.
-    server: watchState.serverName ?? info.server,
-    address: info.address,
-    games,
-    mod: info.mod,
-    recorder: info.recorder,
-    durationMs: header.demoLengthMs,
-    // The recorder's original keep-trigger (patrol/watchers) isn't in the
-    // .rec; describe what the replay reconstructed instead.
-    reason: `backfilled: ${players.size} players, ${games.length} game${games.length === 1 ? "" : "s"}`,
-    players: [...players].sort((a, b) =>
-      a.localeCompare(b, "en", { sensitivity: "base" }),
-    ),
-  };
 }
 
 async function listBucket(): Promise<Map<string, number>> {
@@ -297,7 +124,13 @@ async function runPool(
 
 console.log(`Listing s3://${config.bucket}/${config.prefix}...`);
 const objects = await listBucket();
-const recKeys = [...objects.keys()].filter((k) => k.endsWith(".rec")).sort();
+const recKeys = [...objects.keys()]
+  .filter(
+    (k) =>
+      k.endsWith(".rec") &&
+      (!values.filter || path.basename(k).includes(values.filter)),
+  )
+  .sort();
 const sidecarKeys = new Set(
   [...objects.keys()].filter((k) => k.endsWith(".rec.json")),
 );
@@ -307,8 +140,6 @@ console.log(
 );
 
 const records: DemoMetadata[] = [];
-/** Demos whose replay stopped at a parse failure (metadata incomplete). */
-const partialDemos: string[] = [];
 let analyzed = 0;
 let reused = 0;
 let failed = 0;
@@ -345,14 +176,22 @@ await runPool(recKeys, async (key) => {
   const filename = path.basename(key);
   const sidecarKey = `${key}.json`;
   try {
-    if (!force && sidecarKeys.has(sidecarKey)) {
-      const raw = JSON.parse(
-        Buffer.from(await getObjectBytes(sidecarKey)).toString("utf-8"),
-      ) as DemoMetadata;
-      if (Array.isArray(raw.games)) {
+    let existing: DemoMetadata | undefined;
+    if (sidecarKeys.has(sidecarKey)) {
+      const body = Buffer.from(await getObjectBytes(sidecarKey)).toString(
+        "utf-8",
+      );
+      const raw = JSON.parse(body) as DemoMetadata;
+      existing = raw;
+      await backup(sidecarKey, body);
+      if (
+        !force &&
+        Array.isArray(raw.games) &&
+        (!playersOnly || raw.playerCount != null)
+      ) {
         // Reconcile the commentary fields against the bucket listing —
         // the sidecar fields that change after the demo is written.
-        if (reconcileCommentary(raw, key)) {
+        if (!playersOnly && reconcileCommentary(raw, key)) {
           if (!dryRun) {
             await putJson(
               sidecarKey,
@@ -373,29 +212,49 @@ await runPool(recKeys, async (key) => {
       // fall through to a full re-analysis instead of reshaping it —
       // the replay also recovers stream-authoritative server/gameType
       // and per-game data the old writer didn't record.
-      console.log(`${filename}: old-format sidecar — re-analyzing`);
+      if (!Array.isArray(raw.games))
+        console.log(`${filename}: old-format sidecar — re-analyzing`);
     }
     const bytes = await getObjectBytes(key);
-    const record = await analyzeDemo(bytes, filename);
-    reconcileCommentary(record, key);
+    const analyzedRecord = await analyzeDemo(bytes, filename);
+    let record =
+      playersOnly && existing
+        ? {
+            ...existing,
+            players: analyzedRecord.players,
+            playerCount: analyzedRecord.playerCount,
+          }
+        : analyzedRecord;
+    if (!playersOnly) reconcileCommentary(record, key);
+    if (!dryRun) {
+      if (playersOnly) {
+        record = await repairDemoPlayerMetadata(
+          client,
+          config.bucket,
+          sidecarKey,
+          record,
+          backup,
+        );
+      } else {
+        await putJson(
+          sidecarKey,
+          JSON.stringify(record, null, 2),
+          RECORD_CACHE_CONTROL,
+        );
+      }
+    }
     records.push(record);
     analyzed++;
     const gameSummary =
-      record.games.map((g) => `${g.mission} (${g.gameType})`).join(", ") ||
+      record.games?.map((g) => `${g.mission} (${g.gameType})`).join(", ") ||
       "no started games";
     console.log(
       `${dryRun ? "[dry-run] " : ""}${filename}: ` +
         `${gameSummary} on ${record.server}, ` +
         `${Math.round(record.durationMs / 1000)}s, ` +
-        `${record.players.length} players`,
+        `${record.playerCount} players (${record.players.length} names` +
+        `${existing ? `; previously displayed ${existing.playerCount ?? existing.players.length}` : ""})`,
     );
-    if (!dryRun) {
-      await putJson(
-        sidecarKey,
-        JSON.stringify(record, null, 2),
-        RECORD_CACHE_CONTROL,
-      );
-    }
   } catch (err) {
     failed++;
     console.error(`FAILED ${filename}: ${String(err)}`);
@@ -421,20 +280,67 @@ if (failed > 0) {
   console.error(`NOT writing ${indexKey}: no demos found under prefix`);
 } else if (dryRun) {
   console.log(
-    `[dry-run] Would write ${indexKey} with ${records.length} entries`,
+    playersOnly
+      ? `[dry-run] Would update player metadata for ${records.length} entries in ${indexKey}`
+      : `[dry-run] Would write ${indexKey} with ${records.length} entries`,
   );
 } else {
-  await putJson(indexKey, JSON.stringify(records), "no-cache");
-  console.log(`Wrote ${indexKey} with ${records.length} entries`);
+  if (playersOnly) {
+    // Merge onto the latest index, including recordings uploaded during the scan.
+    // Conditional writes retry if another uploader publishes between GET and PUT.
+    const repaired = new Map(
+      records.map((record) => [record.filename, record]),
+    );
+    for (let attempt = 0; ; attempt++) {
+      const current = await client.send(
+        new GetObjectCommand({ Bucket: config.bucket, Key: indexKey }),
+      );
+      const body = await current.Body!.transformToString();
+      const index: DemoMetadata[] = JSON.parse(body);
+      if (!Array.isArray(index) || !current.ETag)
+        throw new Error("Invalid current demo index");
+      await backup(indexKey, body);
+      const merged = index.map((entry) => {
+        const repair = repaired.get(entry.filename);
+        return repair
+          ? {
+              ...entry,
+              players: repair.players,
+              playerCount: repair.playerCount,
+            }
+          : entry;
+      });
+      try {
+        await client.send(
+          new PutObjectCommand({
+            Bucket: config.bucket,
+            Key: indexKey,
+            Body: JSON.stringify(merged),
+            ContentType: "application/json; charset=utf-8",
+            CacheControl: "no-cache",
+            IfMatch: current.ETag,
+          }),
+        );
+        break;
+      } catch (error) {
+        if (
+          attempt >= 4 ||
+          !(error instanceof Error) ||
+          error.name !== "PreconditionFailed"
+        )
+          throw error;
+      }
+    }
+  } else {
+    await putJson(indexKey, JSON.stringify(records), "no-cache");
+  }
+  console.log(
+    playersOnly
+      ? `Updated player metadata for ${records.length} entries in ${indexKey}`
+      : `Wrote ${indexKey} with ${records.length} entries`,
+  );
 }
 console.log(
   `Done: ${analyzed} analyzed, ${reused} sidecars reused, ${failed} failed`,
 );
-if (partialDemos.length > 0) {
-  console.error(
-    `WARNING: ${partialDemos.length} demo(s) hit a mid-demo parse failure; ` +
-      `their sidecars are partial (truncated players/games):\n  ` +
-      partialDemos.join("\n  "),
-  );
-}
-if (failed > 0 || partialDemos.length > 0) process.exitCode = 1;
+if (failed > 0) process.exitCode = 1;

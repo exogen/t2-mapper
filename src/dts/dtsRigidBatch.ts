@@ -15,11 +15,18 @@ import {
   DTSShape,
   isDTSMeshBatch,
   type DTSMeshBatch,
+  type DTSMeshBinding,
 } from "./dtsModel";
 import { getDTSObject } from "./dtsScene";
 import { DTSMaterialFlags, type DTSShapeData } from "./dtsTypes";
 
 const geometries = new WeakMap<DTSShapeData, Map<string, BufferGeometry>>();
+
+interface EligibleMesh extends DTSMesh {
+  binding: DTSMeshBinding;
+  material: DTSMaterial;
+  geometry: BufferGeometry & { index: BufferAttribute };
+}
 
 /** Call on a fresh model before cloning, material replacement or animation.
  * Instances share immutable geometry and own their materials and skeletons.
@@ -47,18 +54,18 @@ export function batchDTSRigidMeshes(scene: DTSShape): DTSMeshBatch[] {
       if (members.has(node)) return true;
     return false;
   };
-  const groups = new Map<string, DTSMesh[]>();
+  const groups = new Map<string, EligibleMesh[]>();
   const visit = (node: Object3D) => {
     if (node !== scene && node instanceof DTSShape) return;
     if (
       node instanceof DTSMesh &&
       eligible(node, scene) &&
       !affected(
-        scene.data.objects[node.binding!.objectIndex].nodeIndex,
+        scene.data.objects[node.binding.objectIndex].nodeIndex,
         scaledNodes,
       )
     ) {
-      const key = `${node.binding!.materialIndex}/${attributeLayout(node.geometry)}`;
+      const key = `${node.binding.materialIndex}/${attributeLayout(node.geometry)}`;
       const parts = groups.get(key) ?? [];
       parts.push(node);
       groups.set(key, parts);
@@ -74,7 +81,7 @@ export function batchDTSRigidMeshes(scene: DTSShape): DTSMeshBatch[] {
   for (const parts of groups.values()) {
     if (parts.length < 2) continue;
     const boneIndices = parts.map(
-      (part) => scene.data.objects[part.binding!.objectIndex].nodeIndex,
+      (part) => scene.data.objects[part.binding.objectIndex].nodeIndex,
     );
     const animated = boneIndices.some((index) =>
       affected(index, animatedNodes),
@@ -91,7 +98,7 @@ export function batchDTSRigidMeshes(scene: DTSShape): DTSMeshBatch[] {
       parts
         .map((part, i) => `${part.geometry.uuid}:${boneIndices[i]}`)
         .join("/");
-    let geometry = cache.get(key);
+    let geometry: BufferGeometry | null | undefined = cache.get(key);
     if (!geometry) {
       geometry = animated
         ? combineGeometry(parts, paletteIndices)
@@ -99,7 +106,7 @@ export function batchDTSRigidMeshes(scene: DTSShape): DTSMeshBatch[] {
             parts.map((part, index) =>
               part.geometry.clone().applyMatrix4(transforms[index]),
             ),
-          )!;
+          );
       if (!geometry) continue;
       if (!animated) {
         geometry.computeBoundingBox();
@@ -107,12 +114,12 @@ export function batchDTSRigidMeshes(scene: DTSShape): DTSMeshBatch[] {
       }
       cache.set(key, geometry);
     }
-    const material = (parts[0].material as DTSMaterial).clone();
+    const material = parts[0].material.clone();
     const batch = animated
       ? new DTSRigidMeshBatch(geometry, material)
       : new DTSStaticMeshBatch(geometry, material);
-    batch.name = `__dts_rigid_batch_${parts[0].binding!.materialIndex}`;
-    batch.bindings = parts.map((part) => part.binding!);
+    batch.name = `__dts_rigid_batch_${parts[0].binding.materialIndex}`;
+    batch.bindings = parts.map((part) => part.binding);
     // Vertices retain their authored node-local coordinates. Identity inverses
     // make each bone directly supply that node's complete animated transform.
     if (batch instanceof DTSRigidMeshBatch)
@@ -123,8 +130,7 @@ export function batchDTSRigidMeshes(scene: DTSShape): DTSMeshBatch[] {
         ),
         new Matrix4(),
       );
-    if (batch instanceof DTSRigidMeshBatch) batch.frustumCulled = false;
-    else batch.restTransforms = transforms;
+    if (batch instanceof DTSStaticMeshBatch) batch.restTransforms = transforms;
     batch.visible = false;
     scene.add(batch);
     batches.push(batch);
@@ -133,7 +139,7 @@ export function batchDTSRigidMeshes(scene: DTSShape): DTSMeshBatch[] {
   return batches;
 }
 
-function eligible(mesh: DTSMesh, scene: DTSShape): boolean {
+function eligible(mesh: DTSMesh, scene: DTSShape): mesh is EligibleMesh {
   const binding = mesh.binding;
   if (!binding) return false;
   const { source, detailIndices, materialIndex, objectIndex } = binding;
@@ -173,18 +179,21 @@ function attributeLayout(geometry: BufferGeometry): string {
     .join(",");
 }
 
-function combineGeometry(parts: DTSMesh[], bones: number[]): BufferGeometry {
+function combineGeometry(
+  parts: EligibleMesh[],
+  bones: number[],
+): BufferGeometry {
   const geometry = new BufferGeometry();
   const vertexCount = parts.reduce(
     (n, part) => n + part.geometry.getAttribute("position").count,
     0,
   );
   const indexCount = parts.reduce(
-    (n, part) => n + part.geometry.index!.count,
+    (n, part) => n + part.geometry.index.count,
     0,
   );
   for (const name of Object.keys(parts[0].geometry.attributes)) {
-    const source = parts[0].geometry.getAttribute(name) as BufferAttribute;
+    const source = parts[0].geometry.getAttribute(name);
     const ArrayType = source.array.constructor as {
       new (length: number): typeof source.array;
     };
@@ -210,7 +219,7 @@ function combineGeometry(parts: DTSMesh[], bones: number[]): BufferGeometry {
     indexOffset = 0;
   for (let i = 0; i < parts.length; i++) {
     const source = parts[i].geometry;
-    for (const index of source.index!.array)
+    for (const index of source.index.array)
       indices[indexOffset++] = index + vertexOffset;
     for (
       let vertex = 0;

@@ -25,6 +25,7 @@ import { TbLaurelWreathFilled } from "react-icons/tb";
 import {
   DEMOS_BASE_URL,
   demoDownloadUrl,
+  demoPlayerCount,
   type DemoIndexEntry,
 } from "../stream/demoIndex";
 import { loadDemoUrl } from "../stream/demoFileLoader";
@@ -95,7 +96,7 @@ function DemoItemContent({ demo }: { demo: DemoIndexEntry }) {
         {demo.server} · {formatRecordedTime(demo.recordedAt)} ·{" "}
         <span title={demo.players.join(", ") || undefined}>
           <LuUsers className={styles.ItemPlayersIcon} aria-label="Players" />{" "}
-          {demo.players.length}
+          {demoPlayerCount(demo)}
         </span>{" "}
         · {formatDuration(demo.durationMs)}
       </span>

@@ -26,6 +26,9 @@ import { computeGameCRC, type CRCDataBlock } from "./crc.js";
 // Tribes 2 protocol version and class CRC from the binary.
 // These must match what the server expects.
 const PROTOCOL_VERSION = 0x33; // 51 — from Tribes2.exe binary
+// Net::process (FUN_0055a820) passes a 1500-byte buffer to recvfrom.
+// Winsock rejects larger datagrams before protocol dispatch or recording.
+const MAX_PACKET_DATA_SIZE = 1500;
 
 // Faithful reproduction of the real client's sender, binary-verified:
 //
@@ -261,7 +264,7 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
 
   /** Handle an incoming UDP message. */
   private handleMessage(msg: Buffer): void {
-    if (msg.length === 0) return;
+    if (msg.length === 0 || msg.length > MAX_PACKET_DATA_SIZE) return;
 
     this.rawMessageCount++;
     if (this.rawMessageCount <= 30 || this.rawMessageCount % 50 === 0) {
@@ -541,7 +544,10 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
     const highestAck = bs.readInt(9);
     const packetType = bs.readInt(2);
     const ackByteCount = bs.readInt(3);
-    const ackMask = ackByteCount > 0 ? bs.readInt(8 * ackByteCount) : 0;
+    // Invalid counts are rejected by processReceivedHeader without reading
+    // their mask, matching processRawPacket (FUN_0043d4d0).
+    const ackMask =
+      ackByteCount > 0 && ackByteCount <= 4 ? bs.readInt(8 * ackByteCount) : 0;
 
     const result = this.protocol.processReceivedHeader({
       seqNumber,
@@ -555,7 +561,7 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
     // A PingPacket (type 1) is the server's checkTimeout probing us —
     // processRawPacket answers it with an AckPacket (sendPingResponse,
     // FUN_0043d440), which carries no sequence number of its own.
-    if (packetType === 1) {
+    if (result.accepted && packetType === 1) {
       connLog.debug({ seq: seqNumber }, "Received PingPacket, sending ack");
       this.sendRaw(this.protocol.buildAckPacket());
     }
@@ -1059,7 +1065,12 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
     });
     socket.on("message", (msg) => {
       // GamePingResponse (type 16) from our server = pong.
-      if (msg[0] !== 16 || !this.oobPingOutstanding) return;
+      if (
+        msg.length > MAX_PACKET_DATA_SIZE ||
+        msg[0] !== 16 ||
+        !this.oobPingOutstanding
+      )
+        return;
       this.oobPingOutstanding = false;
       this.oobPingMisses = 0;
       const rtt = Date.now() - this.oobPingSentAt;

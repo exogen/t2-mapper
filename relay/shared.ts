@@ -162,3 +162,121 @@ export function parseScoreHudLine(dataArgs: string[]): ScoreHudEntry[] {
   }
   return out;
 }
+
+export interface ChatSegment {
+  text: string;
+  /** Torque \c color index (0–9) from the GuiChatHudProfile fontColors palette. */
+  colorCode: number;
+}
+
+/**
+ * Byte-to-fontColors-index remap table from the Torque V12 renderer (dgl.cc).
+ *
+ * TorqueScript `\cN` escapes are encoded via `collapseRemap` in scan.l,
+ * producing byte values that skip \t (0x9), \n (0xa), and \r (0xd).
+ */
+const BYTE_TO_COLOR_INDEX: Record<number, number> = {
+  0x2: 0,
+  0x3: 1,
+  0x4: 2,
+  0x5: 3,
+  0x6: 4,
+  0x7: 5,
+  0x8: 6,
+  0xb: 7,
+  0xc: 8,
+  0xe: 9,
+};
+
+const BYTE_COLOR_RESET = 0x0f;
+const BYTE_COLOR_PUSH = 0x10;
+const BYTE_COLOR_POP = 0x11;
+
+/**
+ * Extract the leading Torque \c color index (0–9) from a tagged string.
+ */
+export function detectColorCode(s: string): number | undefined {
+  for (let i = 0; i < s.length; i++) {
+    const code = s.charCodeAt(i);
+    const colorIndex = BYTE_TO_COLOR_INDEX[code];
+    if (colorIndex !== undefined) return colorIndex;
+    if (code >= 0x20) return undefined;
+  }
+  return undefined;
+}
+
+/**
+ * Parse a raw Torque HudMessageVector line into colored segments.
+ *
+ * Default (chat HUD): a \cp…\co span inherits the SURROUNDING color —
+ * T2's chat window does not recolor the embedded player name, so the
+ * whole line reads in the message color (color codes inside the span
+ * are ignored, matching the game).
+ *
+ * `taggedColors: true` (score screen, name parsing): color codes
+ * inside the pushed span apply, with push/pop as a color stack — this
+ * is how the server marks structure within one NAME string (server.cs
+ * wraps names as "\cp\c7" @ tag @ "\c6" @ name @ "\co", so the
+ * official clan tag is exactly the color-7 segments).
+ */
+export function parseColorSegments(
+  raw: string,
+  { taggedColors = false }: { taggedColors?: boolean } = {},
+): ChatSegment[] {
+  const segments: ChatSegment[] = [];
+  let currentColor = 0;
+  let currentText = "";
+  const colorStack: number[] = [];
+  let taggedDepth = 0;
+
+  const flush = () => {
+    if (currentText) {
+      segments.push({ text: currentText, colorCode: currentColor });
+      currentText = "";
+    }
+  };
+
+  for (let i = 0; i < raw.length; i++) {
+    const code = raw.charCodeAt(i);
+
+    if (code === BYTE_COLOR_PUSH) {
+      colorStack.push(currentColor);
+      taggedDepth++;
+      continue;
+    }
+    if (code === BYTE_COLOR_POP) {
+      if (taggedColors) flush();
+      currentColor = colorStack.pop() ?? currentColor;
+      if (taggedDepth > 0) taggedDepth--;
+      continue;
+    }
+
+    if (!taggedColors && taggedDepth > 0) {
+      // Chat behavior: keep the surrounding color through the span.
+      if (code >= 0x20) currentText += raw[i];
+      continue;
+    }
+
+    const colorIndex = BYTE_TO_COLOR_INDEX[code];
+    if (colorIndex !== undefined) {
+      if (currentText) {
+        segments.push({ text: currentText, colorCode: currentColor });
+        currentText = "";
+      }
+      currentColor = colorIndex;
+    } else if (code === BYTE_COLOR_RESET) {
+      if (currentText) {
+        segments.push({ text: currentText, colorCode: currentColor });
+        currentText = "";
+      }
+      currentColor = 0;
+    } else if (code >= 0x20) {
+      currentText += raw[i];
+    }
+  }
+
+  if (currentText) {
+    segments.push({ text: currentText, colorCode: currentColor });
+  }
+  return segments;
+}

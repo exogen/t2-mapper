@@ -7,6 +7,7 @@ import {
   BufferGeometry,
   Camera,
   FrontSide,
+  type Frustum,
   Group,
   LOD,
   Material,
@@ -34,6 +35,7 @@ import {
 } from "./dtsGeometry";
 import { applyDTSMaterialMaps } from "./dtsMaterialMaps";
 import { DTSHierarchy } from "./dtsHierarchy";
+import { intersectsDTSSkinFrustum } from "./dtsSkinBounds";
 import { isDTSImpostor } from "./dtsImpostor";
 import {
   configureDTSImageTexture,
@@ -301,6 +303,9 @@ export interface DTSBranch {
 export class DTSRigidMeshBatch extends SkinnedMesh {
   bindings: readonly DTSMeshBinding[] = [];
   private batchState = new DTSMeshBatchState();
+  override intersectsFrustum(frustum: Frustum): boolean {
+    return intersectsDTSSkinFrustum(this, frustum);
+  }
   override copy(source: this, recursive = true): this {
     super.copy(source, recursive);
     this.bindings = source.bindings;
