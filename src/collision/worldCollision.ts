@@ -95,11 +95,8 @@ function getBvh(geometry: BufferGeometry): MeshBVH {
   let bvh = bvhCache.get(geometry);
   if (!bvh) {
     // indirect: true leaves the (render-shared) index buffer untouched,
-    // which also preserves multi-material group ranges. The option is
-    // supported at runtime but missing from the published .d.ts.
-    bvh = new MeshBVH(geometry, {
-      indirect: true,
-    } as ConstructorParameters<typeof MeshBVH>[1] & { indirect: boolean });
+    // which also preserves multi-material group ranges.
+    bvh = new MeshBVH(geometry, { indirect: true });
     bvhCache.set(geometry, bvh);
   }
   return bvh;

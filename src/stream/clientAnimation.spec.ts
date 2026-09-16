@@ -7,6 +7,57 @@ import {
 } from "./clientAnimation";
 import { shapeThreadTime } from "./shapeThreads";
 import { samplePlayerPose } from "./playerAnimation";
+import { playerYawToQuaternion } from "./streamHelpers";
+
+it("keeps Side's direction until a different action is selected", () => {
+  const player = {
+    type: "Player" as const,
+    velocity: [-10, 0, 0] as [number, number, number],
+  };
+  const left = updateClientAnimation(undefined, player, 5)!;
+  const right = updateClientAnimation(
+    left,
+    { ...player, velocity: [10, 0, 0] },
+    6,
+  )!;
+  expect(left.move).toMatchObject({ animation: "side", timeScale: 1 });
+  expect(right.move).toBe(left.move);
+  const idle = updateClientAnimation(
+    right,
+    { ...player, velocity: [0, 0, 0] },
+    7,
+  )!;
+  const reverse = updateClientAnimation(
+    idle,
+    { ...player, velocity: [10, 0, 0] },
+    8,
+  )!;
+  expect(reverse.move).toMatchObject({
+    animation: "side",
+    timeScale: -1,
+    timeSec: 8,
+  });
+});
+
+it("keeps the run cycle when forward motion turns with the player's body", () => {
+  const player = {
+    type: "Player" as const,
+    rotation: playerYawToQuaternion(0),
+    velocity: [0, 10, 0] as [number, number, number],
+  };
+  const initial = updateClientAnimation(undefined, player, 5)!;
+  const turned = updateClientAnimation(
+    initial,
+    {
+      ...player,
+      rotation: playerYawToQuaternion(Math.PI / 2),
+      velocity: [10, 0, 0],
+    },
+    6,
+  )!;
+  expect(initial.move?.animation).toBe("run");
+  expect(turned.move).toBe(initial.move);
+});
 
 it("records movement and flare transitions independently of model load time", () => {
   const player = {

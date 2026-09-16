@@ -167,6 +167,8 @@ export interface DTSMeshData {
 }
 export interface DTSSequence {
   nameIndex: number;
+  /** DSQ provenance, retained when the loader gives imported clips unique names. */
+  source?: { name?: string; sequenceName: string };
   flags: number;
   numKeyframes: number;
   duration: number;

@@ -98,6 +98,21 @@ beforeAll(async () => {
     { name: "forward", data: parseDSQ(await read("light_male_forward.dsq")) },
   ]);
   registerGroundEffectShape("light_male.dts", player);
+  const forward = parseDSQ(await read("light_male_forward.dsq"));
+  registerGroundEffectShape(
+    "aliased_player.dts",
+    loader.parse(await read("light_male.dts"), [
+      { name: "forward", data: forward },
+      {
+        name: "run",
+        data: {
+          ...forward,
+          triggers: [],
+          sequences: forward.sequences.map((s) => ({ ...s, numTriggers: 0 })),
+        },
+      },
+    ]),
+  );
   registerGroundEffectShape(
     "vehicle_land_mpbase.dts",
     loader.parse(await read("vehicle_land_mpbase.dts")),
@@ -108,6 +123,22 @@ afterEach(() => {
   setWaterInfo(null);
   clearWorldColliders();
 });
+it("takes footstep triggers from the mapped action even when a raw clip has its alias", () => {
+  terrain();
+  const mapped = {
+    getDataBlockData: (id: number) =>
+      id === 1 ? { ...blocks[1], shapeName: "aliased_player.dts" } : blocks[id],
+    getShapeConstructorSequences: () => ["aliased_player_forward.dsq run"],
+  } as unknown as StreamingPlayback;
+  const shape = getGroundEffectShape("aliased_player.dts")!;
+  expect(shape.clips.get("run")!.triggers).toHaveLength(0);
+  const sim = new GroundEffectSimulation(mapped);
+  sim.step(frame(0, player()));
+  sim.step(frame(shape.clips.get("forward")!.duration, player()));
+  expect(sim.decals).toHaveLength(1);
+  expect(sim.emitters.get("foot:10")!.emitter.particles).toHaveLength(15);
+});
+
 it("uses stock DTS left/right triggers, foot offsets and the terrain property map", () => {
   terrain();
   const sim = new GroundEffectSimulation(playback);
@@ -258,14 +289,15 @@ it("refreshes reused datablock IDs and action aliases after a live world reset",
 
   data[11] = { ...data[11], ejectionPeriodMS: 20 };
   data[30] = { ...data[30], lifetimeMS: 30 };
-  sequences = ["light_male_other.dsq run"];
+  sequences = ["light_male_forward.dsq side"];
   sim.clear();
   sim.step(frame(0, actor));
   sim.step(frame(0.032, actor));
   const refreshed = sim.emitters.get("1:1:jetDust")!.emitter.data;
   expect(refreshed.ejectionPeriodMS).toBe(20);
   expect(refreshed.particles.lifetimeMS).toBe(30 * 32);
-  expect(groundActionName(live, shape, "light_male.dts", 1)).toBe("other");
+  expect(groundActionName(live, shape, "light_male.dts", 1)).toBeUndefined();
+  expect(groundActionName(live, shape, "light_male.dts", 3)).toBe("forward");
 });
 
 it("blocks ground effects against the vehicle's historical DTS collision details", async () => {

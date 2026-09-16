@@ -14,13 +14,16 @@ describe("lightsFragmentBeginByType", () => {
     expect(lightsFragmentBeginByType({})).toBe(original);
   });
 
-  it("gives the directional loop its own function", () => {
+  it("gives the sun and directional loops their own function", () => {
     const out = lightsFragmentBeginByType({ directional: "RE_Direct_Sun" });
-    expect(calls(out, "RE_Direct_Sun")).toBe(1);
-    expect(calls(out, "RE_Direct")).toBe(total - 1);
+    expect(calls(out, "RE_Direct_Sun")).toBe(2);
+    expect(calls(out, "RE_Direct")).toBe(total - 2);
+    const sun = out.indexOf("#if ( NUM_SUN_LIGHTS > 0 )");
     const dir = out.indexOf("#if ( NUM_DIR_LIGHTS > 0 )");
-    expect(out.indexOf("RE_Direct_Sun(")).toBeGreaterThan(dir);
-    expect(out.indexOf("RE_Direct_Sun(")).toBeLessThan(
+    expect(out.indexOf("RE_Direct_Sun(")).toBeGreaterThan(sun);
+    expect(out.indexOf("RE_Direct_Sun(")).toBeLessThan(dir);
+    expect(out.lastIndexOf("RE_Direct_Sun(")).toBeGreaterThan(dir);
+    expect(out.lastIndexOf("RE_Direct_Sun(")).toBeLessThan(
       out.indexOf("#if ( NUM_RECT_AREA_LIGHTS > 0 )"),
     );
   });
@@ -29,7 +32,7 @@ describe("lightsFragmentBeginByType", () => {
     const out = lightsFragmentBeginByType({ punctual: "RE_Direct_Dyn" });
     expect(calls(out, "RE_Direct_Dyn")).toBe(2);
     expect(out.lastIndexOf("RE_Direct_Dyn(")).toBeLessThan(
-      out.indexOf("#if ( NUM_DIR_LIGHTS > 0 )"),
+      out.indexOf("#if ( NUM_SUN_LIGHTS > 0 )"),
     );
     expect(calls(out, "RE_Direct")).toBe(total - 2);
   });

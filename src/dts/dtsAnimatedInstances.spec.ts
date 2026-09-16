@@ -31,6 +31,7 @@ import { batchDTSRigidMeshes } from "./dtsRigidBatch";
 import { createDTSRigidTestShape } from "./dtsTestFixtures";
 import { applyDTSMaterialMaps } from "./dtsMaterialMaps";
 import { applyShapeShaderModifications } from "../shapeMaterial";
+import type { RenderList } from "./dtsInstanceRenderList";
 
 function fixture(count = 2) {
   const renderer = {
@@ -89,13 +90,16 @@ function project(
   pool: DTSAnimatedInstancePool,
   renderer: WebGLRenderer,
 ) {
-  const list = renderer.renderLists.get(world, 0);
+  const list = renderer.renderLists.get(world, 0) as unknown as RenderList;
   list.init();
   const visit = (node: import("three").Object3D) => {
     if (!node.visible) return;
     if (node instanceof DTSShape) node.update(camera);
     if (node === pool.root) pool.flush();
     if (node instanceof Mesh && node.layers.test(camera.layers)) {
+      // Stand in for projected depth, which flips with reversed depth.
+      const z =
+        -node.matrixWorld.elements[14] * (camera.reversedDepth ? -1 : 1);
       const materials = node.material;
       if (Array.isArray(materials)) {
         for (const group of node.geometry.groups)
@@ -105,23 +109,17 @@ function project(
               node.geometry,
               materials[group.materialIndex!],
               0,
-              -node.matrixWorld.elements[14],
+              z,
               group as any,
+              camera,
             );
       } else if (materials.visible)
-        list.push(
-          node,
-          node.geometry,
-          materials,
-          0,
-          -node.matrixWorld.elements[14],
-          null,
-        );
+        list.push(node, node.geometry, materials, 0, z, null, camera);
     }
     for (const child of node.children) visit(child);
   };
   visit(world);
-  list.sort(undefined!, undefined!, false);
+  list.sort();
 }
 
 describe("animated DTS instancing", () => {
@@ -435,45 +433,51 @@ describe("shared DTS shape draws", () => {
     pool.dispose();
   });
 
-  it("preserves transparent order around intervening non-DTS draws and independent fades", () => {
-    const { pool, world, camera, renderer, meshes, prepare } = rigidFixture(4);
-    for (const [i, mesh] of meshes.entries()) {
-      mesh.position.z = -(i + 1);
-      const material = mesh.material as MeshBasicMaterial;
-      material.transparent = true;
-      material.depthWrite = false;
-      material.opacity = 0.1 * (i + 1);
-    }
-    const barrier = new Mesh(
-      new BoxGeometry(),
-      new MeshBasicMaterial({ transparent: true, opacity: 0.5 }),
-    );
-    barrier.position.z = -2.5;
-    world.add(barrier);
-    prepare();
-    expect(pool.stats.instances).toBe(4);
-    expect(pool.stats.draws).toBe(2);
-    const items = renderer.renderLists.get(world, 0).transparent;
-    expect(items).toHaveLength(3);
-    expect(items[1].object).toBe(barrier);
-    expect(items.map((i) => i.z)).toEqual([4, 2.5, 2]);
-    expect(
-      (items[0].object as InstancedMesh).geometry
-        .getAttribute("dtsInstanceState")
-        .getZ(0),
-    ).toBeCloseTo(0.4);
-    // A custom sort gets the unmodified logical render items.
-    world.updateMatrixWorld(true);
-    pool.prepare(world, camera);
-    project(world, camera, pool, renderer);
-    renderer.renderLists
-      .get(world, 0)
-      .sort(undefined!, (a, b) => a.id - b.id, false);
-    expect(
-      renderer.renderLists.get(world, 0).transparent.map((i) => i.object),
-    ).toEqual([...meshes, barrier]);
-    pool.dispose();
-  });
+  it.each([false, true])(
+    "preserves transparent order and independent fades (reversed depth: %s)",
+    (reversedDepth) => {
+      const { pool, world, camera, renderer, meshes, prepare } =
+        rigidFixture(4);
+      vi.spyOn(camera, "reversedDepth", "get").mockReturnValue(reversedDepth);
+      for (const [i, mesh] of meshes.entries()) {
+        mesh.position.z = -(i + 1);
+        const material = mesh.material as MeshBasicMaterial;
+        material.transparent = true;
+        material.depthWrite = false;
+        material.opacity = 0.1 * (i + 1);
+      }
+      const barrier = new Mesh(
+        new BoxGeometry(),
+        new MeshBasicMaterial({ transparent: true, opacity: 0.5 }),
+      );
+      barrier.position.z = -2.5;
+      world.add(barrier);
+      prepare();
+      expect(pool.stats.instances).toBe(4);
+      expect(pool.stats.draws).toBe(2);
+      const items = renderer.renderLists.get(world, 0).transparent;
+      expect(items).toHaveLength(3);
+      expect(items[1].object).toBe(barrier);
+      expect(items.map((i) => i.z)).toEqual([4, 2.5, 2]);
+      expect(
+        (items[0].object as InstancedMesh).geometry
+          .getAttribute("dtsInstanceState")
+          .getZ(0),
+      ).toBeCloseTo(0.4);
+      // A custom sort gets the unmodified logical render items.
+      world.updateMatrixWorld(true);
+      pool.prepare(world, camera);
+      project(world, camera, pool, renderer);
+      (renderer.renderLists.get(world, 0) as unknown as RenderList).sort(
+        undefined,
+        (a, b) => a.id - b.id,
+      );
+      expect(
+        renderer.renderLists.get(world, 0).transparent.map((i) => i.object),
+      ).toEqual([...meshes, barrier]);
+      pool.dispose();
+    },
+  );
 
   it("separates blend modes and texture sizes but shares independent IFL frames", () => {
     const { pool, renderer, meshes, prepare } = rigidFixture(6);

@@ -92,12 +92,35 @@ describe("retail player prediction", () => {
   });
   it("fills ticks without a network update and stops after the prediction limit", () => {
     const p = player();
+    expect(p.contactTimer).toBe(0);
     for (let i = 0; i < MAX_PREDICTION_TICKS; i++) p.processTick(0);
+    expect(p.contactTimer).toBe(MAX_PREDICTION_TICKS);
     expect(p.position.x).toBe(16 * PLAYER_TICK_SEC * MAX_PREDICTION_TICKS);
     const last = p.position.clone();
     p.processTick(0);
     expect(p.position).toEqual(last);
     expect(p.posVec.length()).toBe(0);
+    expect(p.contactTimer).toBe(MAX_PREDICTION_TICKS);
+  });
+  it("resets contact on runnable slopes, but not merely jumpable slopes", () => {
+    for (const degrees of [60, 75]) {
+      clearWorldColliders();
+      const angle = (degrees * Math.PI) / 180;
+      const ramp = new Mesh(new BoxGeometry(100, 2, 100));
+      ramp.rotation.z = angle;
+      ramp.position.set(Math.sin(angle), -Math.cos(angle), 0);
+      ramp.updateMatrixWorld();
+      registerInteriorCollider("ramp", [ramp]);
+      const p = player({
+        position: { x: 0, y: 0, z: 0 },
+        velocity: { x: 0, y: 0, z: 0 },
+      });
+      p.contactTimer = 40;
+      p.jumpSurfaceLastContact = 40;
+      p.processTick(0);
+      expect(p.contactTimer).toBe(degrees === 60 ? 0 : 41);
+      expect(p.jumpSurfaceLastContact).toBe(0);
+    }
   });
   it("uses retail TickSec and raw world gravity for player physics", () => {
     const p = player();
@@ -174,6 +197,7 @@ describe("retail player prediction", () => {
   });
   it("warps a correction for at most three ticks and wraps yaw by the shortest arc", () => {
     const p = player({ rotationZ: Math.PI * 2 - 0.1 });
+    p.contactTimer = 12;
     p.unpackUpdate({
       position: { x: 6, y: 0, z: 10 },
       velocity: { x: 16, y: 0, z: 0 },
@@ -187,8 +211,21 @@ describe("retail player prediction", () => {
     p.processTick(0);
     p.processTick(0);
     expect(p.position.x).toBe(6);
+    expect(p.contactTimer).toBe(12);
     p.processTick(0);
     expect(p.position.x).toBe(6.5);
+    expect(p.contactTimer).toBe(13);
+  });
+  it("counts mounted movement ticks without moving the mount-owned position", () => {
+    box(0, 0, -1, 100, 100, 2);
+    const p = player({ position: { x: 0, y: 0, z: 0 } });
+    p.mounted = true;
+    for (let i = 0; i < 30; i++) p.processTick(0);
+    expect(p.contactTimer).toBe(30);
+    expect(p.position.toArray()).toEqual([0, 0, 0]);
+    p.mounted = false;
+    p.processTick(0, {});
+    expect(p.contactTimer).toBe(0);
   });
   it("snaps teleports and preserves snapshot deltas across subsequent ticks", () => {
     const p = player();
@@ -246,6 +283,7 @@ describe("retail player prediction", () => {
 it("restores prediction, correction warps and interpolation deltas at a tick boundary", () => {
   const original = player();
   original.processTick(-20);
+  expect(original.contactTimer).toBe(1);
   original.unpackUpdate({
     position: { x: 3, y: 1, z: 10 },
     velocity: { x: 16, y: 0, z: 0 },

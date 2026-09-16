@@ -93,6 +93,8 @@ export class PlayerPrediction {
   recoverTicks = 0;
   jumpDelay = 0;
   jumpSurfaceLastContact = 0;
+  /** Movement ticks since contact with a runnable surface (retail +0x984). */
+  contactTimer = 0;
   private readonly warpOffset = new Vector3();
   private rotOffset = 0;
   private readonly jumpSurfaceNormal = new Vector3(0, 0, 1);
@@ -154,6 +156,7 @@ export class PlayerPrediction {
         recoverTicks: this.recoverTicks,
         jumpDelay: this.jumpDelay,
         jumpSurfaceLastContact: this.jumpSurfaceLastContact,
+        contactTimer: this.contactTimer,
         rotOffset: this.rotOffset,
         initialized: this.initialized,
         move: structuredClone(this.move),
@@ -240,11 +243,18 @@ export class PlayerPrediction {
     this.disableMove = update.disableMove ?? false;
   }
 
+  private isRunSurface(): boolean {
+    return (
+      this.contactNormal.z >
+      Math.cos(((this.data.runSurfaceAngle ?? 0) * Math.PI) / 180)
+    );
+  }
+
   processTick(gravity: number, move?: PlayerMove, rechargeRate = 0): void {
     this.posVec.set(0, 0, 0);
     this.rotVec = 0;
     this.headPitchVec = this.headYawVec = 0;
-    if (!this.initialized || this.mounted) return;
+    if (!this.initialized) return;
     if (this.warpTicks > 0) {
       this.warpTicks--;
       this.position.add(this.warpOffset);
@@ -255,6 +265,11 @@ export class PlayerPrediction {
     }
     if (!move && this.predictionCount-- <= 0) return;
     if (move) this.move = move;
+    // Mounted players cannot find a run surface; their mount owns placement.
+    if (this.mounted) {
+      this.contactTimer++;
+      return;
+    }
     this.energy = Math.min(
       this.data.maxEnergy ?? 0,
       this.energy + rechargeRate,
@@ -335,10 +350,9 @@ export class PlayerPrediction {
       this.size,
       this.contactNormal,
     );
-    const run =
-      contacted &&
-      this.contactNormal.z >
-        Math.cos(((d.runSurfaceAngle ?? 0) * Math.PI) / 180);
+    const run = contacted && this.isRunSurface();
+    // Player::updateMove (0x5d2d60), before applying run/jump/jet forces.
+    this.contactTimer = run ? 0 : this.contactTimer + 1;
     const jump =
       contacted &&
       this.contactNormal.z >

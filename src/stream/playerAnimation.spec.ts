@@ -1,101 +1,101 @@
 import { describe, expect, it } from "vitest";
+import { Quaternion, Vector3 } from "three";
 import {
   actionStartPosition,
-  NO_ACTION_ANIM,
-  stepActionAnim,
+  pickMoveAnimation,
+  samplePlayerPose,
 } from "./playerAnimation";
+import { playerYawToQuaternion } from "./streamHelpers";
 
-describe("stepActionAnim", () => {
-  const PDA = 18;
+describe("movement animation direction", () => {
+  // Build velocity from the rendered body's axes, independently of the
+  // selector's world-to-object calculation. Three +X is forward, +Z right.
+  it.each([0, 45, 90, 135, 180, 225, 270, 315, 360, -90])(
+    "matches forward, backward and both strafes at heading %d°",
+    (degrees) => {
+      const rotation = playerYawToQuaternion((degrees * Math.PI) / 180);
+      const quaternion = new Quaternion().fromArray(rotation);
+      for (const [forward, right, animation, timeScale] of [
+        [10, 0, "run", 1],
+        [-10, 0, "back", 1],
+        [0, -10, "side", 1],
+        [0, 10, "side", -1],
+      ] as const) {
+        const v = new Vector3(forward, 0, right).applyQuaternion(quaternion);
+        const velocity: [number, number, number] = [v.z, v.x, v.y];
+        expect(pickMoveAnimation(velocity, rotation, 0)).toEqual({
+          animation,
+          timeScale,
+        });
+        // q and -q represent the same facing.
+        expect(
+          pickMoveAnimation(
+            velocity,
+            rotation.map((n) => -n) as typeof rotation,
+            0,
+          ),
+        ).toEqual({ animation, timeScale });
+      }
+    },
+  );
 
-  it("plays a wired action once and returns to movement when it ends", () => {
-    // The D_e_V_i_L, Dangerous Crossing LT at 81s: idle PDA arrives,
-    // the server never sends the root action that ends it.
-    let { state, command } = stepActionAnim(NO_ACTION_ANIM, {
-      actionAnim: PDA,
-      actionSeq: 1,
-      actionAtEnd: false,
-      actionHoldAtEnd: false,
+  it("uses the engine's strict movement threshold and forward/back priority on diagonal ties", () => {
+    const rotation = playerYawToQuaternion(0);
+    for (const velocity of [
+      [0, 0.1, 0],
+      [0, -0.1, 0],
+      [0.1, 0, 0],
+      [-0.1, 0, 0],
+    ] as const) {
+      expect(pickMoveAnimation([...velocity], rotation, 0).animation).toBe(
+        "root",
+      );
+    }
+    expect(pickMoveAnimation([5, 5, 0], rotation, 0).animation).toBe("run");
+    expect(pickMoveAnimation([-5, -5, 0], rotation, 0).animation).toBe("back");
+    expect(pickMoveAnimation([5, 4, 0], rotation, 0)).toEqual({
+      animation: "side",
+      timeScale: -1,
     });
-    expect(command).toEqual({ kind: "start", index: PDA, position: 0 });
-    // Still playing: nothing new.
-    ({ state, command } = stepActionAnim(
-      state,
-      { actionAnim: PDA, actionSeq: 1 },
-      false,
-    ));
-    expect(command.kind).toBe("none");
-    // The clip finishes: back to movement, and it stays that way while
-    // the entity keeps reporting the same action.
-    ({ state, command } = stepActionAnim(
-      state,
-      { actionAnim: PDA, actionSeq: 1 },
-      true,
-    ));
-    expect(command).toEqual({ kind: "revert", index: PDA });
-    ({ state, command } = stepActionAnim(
-      state,
-      { actionAnim: PDA, actionSeq: 1 },
-      true,
-    ));
-    expect(command.kind).toBe("none");
-    expect(state.ended).toBe(true);
+  });
+});
+
+describe("movement animation contact timer", () => {
+  const rotation = playerYawToQuaternion(0);
+
+  it("keeps directional movement below 30 ticks, regardless of speed or slope", () => {
+    for (const timer of [0, 1, 29]) {
+      expect(
+        pickMoveAnimation([0, 70, 20], rotation, timer, false, true),
+      ).toEqual({
+        animation: "run",
+        timeScale: 1,
+      });
+    }
   });
 
-  it("restarts the same action when the server sends it again", () => {
-    let { state } = stepActionAnim(NO_ACTION_ANIM, {
-      actionAnim: PDA,
-      actionSeq: 1,
-    });
-    ({ state } = stepActionAnim(
-      state,
-      { actionAnim: PDA, actionSeq: 1 },
-      true,
-    ));
-    const again = stepActionAnim(state, { actionAnim: PDA, actionSeq: 2 });
-    expect(again.command).toEqual({ kind: "start", index: PDA, position: 0 });
+  it("selects idle or jet at 30 ticks, even at zero velocity", () => {
+    for (const timer of [30, 31, 100]) {
+      for (const velocity of [
+        [0, 0, 0],
+        [0, 10, 0],
+      ] as [number, number, number][]) {
+        expect(
+          pickMoveAnimation(velocity, rotation, timer, false, false).animation,
+        ).toBe("root");
+        expect(
+          pickMoveAnimation(velocity, rotation, timer, false, true).animation,
+        ).toBe("jet");
+      }
+    }
   });
 
-  it("holds a hold-at-end action on its last frame", () => {
-    let { state, command } = stepActionAnim(NO_ACTION_ANIM, {
-      actionAnim: 29,
-      actionSeq: 1,
-      actionHoldAtEnd: true,
-    });
-    expect(command.kind).toBe("start");
-    ({ state, command } = stepActionAnim(
-      state,
-      { actionAnim: 29, actionSeq: 1, actionHoldAtEnd: true },
-      true,
-    ));
-    expect(command).toEqual({ kind: "hold", index: 29 });
-    expect(state.ended).toBe(false);
-  });
-
-  it("skips an action that was already over when it arrived", () => {
-    const { state, command } = stepActionAnim(NO_ACTION_ANIM, {
-      actionAnim: PDA,
-      actionSeq: 3,
-      actionAtEnd: true,
-      actionHoldAtEnd: false,
-    });
-    expect(command.kind).toBe("none");
-    expect(state.ended).toBe(true);
-  });
-
-  it("stops a running action when the entity's action is cleared", () => {
-    let { state } = stepActionAnim(NO_ACTION_ANIM, {
-      actionAnim: PDA,
-      actionSeq: 1,
-    });
-    ({ state } = stepActionAnim(
-      state,
-      { actionAnim: PDA, actionSeq: 1 },
-      false,
-    ));
-    const cleared = stepActionAnim(state, {}, false);
-    expect(cleared.command).toEqual({ kind: "revert", index: PDA });
-    expect(cleared.state).toEqual(NO_ACTION_ANIM);
+  it("gives falling priority over contact and jetting", () => {
+    for (const timer of [0, 30]) {
+      expect(
+        pickMoveAnimation([0, 10, -15], rotation, timer, true, true).animation,
+      ).toBe("fall");
+    }
   });
 });
 
@@ -119,58 +119,111 @@ describe("actionStartPosition", () => {
   });
 });
 
-describe("stepActionAnim late starts", () => {
-  const DEATH = 18;
-
-  it("skips a stale action a late model would otherwise replay", () => {
-    // |HP| on the Raindance flag, 115 s after his last death action was
-    // recorded: a seek mounts the model and must not play the death.
-    const { state, command } = stepActionAnim(
-      NO_ACTION_ANIM,
-      { actionAnim: DEATH, actionSeq: 2, actionAtEnd: false },
-      false,
-      1,
+describe("samplePlayerPose", () => {
+  const move = { animation: "run", timeScale: 1, timeSec: 0 };
+  type Wired = Parameters<typeof samplePlayerPose<string>>[1];
+  const sample = (time: number, wire: Wired = {}, mounted = false) =>
+    samplePlayerPose(
+      move,
+      wire,
+      mounted,
+      time,
+      0.25,
+      () => "pda",
+      (name) => ({ duration: 2, cyclic: name === "run" }),
     );
-    expect(command.kind).toBe("none");
-    expect(state).toEqual({ index: DEATH, seq: 2, ended: true });
+
+  it("returns to movement after a wired action, without another packet", () => {
+    const wire = { actionAnim: 18, actionTimeSec: 10 };
+    expect(sample(11, wire)[0]).toMatchObject({
+      name: "pda",
+      position: 0.5,
+      weight: 1,
+    });
+    expect(sample(13, wire)[0]).toMatchObject({
+      name: "run",
+      position: 0.5,
+      weight: 1,
+    });
+    expect(sample(101, wire)[0]).toMatchObject({
+      name: "run",
+      position: 0.5,
+      weight: 1,
+    });
   });
 
-  it("starts part-way when the update was mid-clip", () => {
-    const { command } = stepActionAnim(
-      NO_ACTION_ANIM,
-      { actionAnim: DEATH, actionSeq: 1, actionAtEnd: false },
-      false,
-      0.6,
+  it("restarts the same wired action from its new time anchor", () => {
+    expect(sample(20.5, { actionAnim: 18, actionTimeSec: 10 })[0].name).toBe(
+      "run",
     );
-    expect(command).toEqual({ kind: "start", index: DEATH, position: 0.6 });
+    expect(
+      sample(20.5, { actionAnim: 18, actionTimeSec: 20 })[0],
+    ).toMatchObject({
+      name: "pda",
+      position: 0.25,
+      weight: 1,
+    });
   });
 
-  it("lands a held action on its last frame when it is long over", () => {
-    const { command } = stepActionAnim(
-      NO_ACTION_ANIM,
-      { actionAnim: DEATH, actionSeq: 1, actionHoldAtEnd: true },
-      false,
-      1,
+  it("reconstructs mid-clip and held late starts", () => {
+    const wire = { actionAnim: 18, actionTimeSec: 10, actionAnimPos: 0.6 };
+    expect(sample(10, wire)[0]).toMatchObject({ name: "pda", position: 0.6 });
+    expect(sample(100, wire)[0].name).toBe("run");
+    expect(sample(100, { ...wire, actionHoldAtEnd: true })[0]).toMatchObject({
+      name: "pda",
+      position: 1,
+    });
+  });
+
+  it("holds a seated action until unmounted, even without holdAtEnd", () => {
+    const wire = { actionAnim: 18, actionTimeSec: 10, actionAtEnd: true };
+    expect(sample(20, wire, true)[0]).toMatchObject({
+      name: "pda",
+      position: 1,
+    });
+    expect(sample(20, wire, false)[0].name).toBe("run");
+  });
+
+  it("starts movement at the arrival time of an already-finished action", () => {
+    expect(
+      sample(10.5, { actionAnim: 18, actionTimeSec: 10, actionAtEnd: true })[0],
+    ).toMatchObject({
+      name: "run",
+      position: 0.25,
+      weight: 1,
+    });
+  });
+
+  it("clears an active wired action and samples movement on a backwards seek", () => {
+    expect(sample(11, { actionAnim: 18, actionTimeSec: 10 })[0].name).toBe(
+      "pda",
     );
-    expect(command).toEqual({ kind: "start", index: DEATH, position: 1 });
-  });
-});
-
-describe("stepActionAnim while mounted", () => {
-  const sitting = { actionAnim: 16, actionSeq: 1, actionAtEnd: true };
-
-  it("parks a finished unheld pose instead of reverting to movement", () => {
-    // The bomber's bombardier gets setActionThread(mountPose) without hold.
-    const first = stepActionAnim(NO_ACTION_ANIM, sitting, false, 0, true);
-    expect(first.command).toEqual({ kind: "start", index: 16, position: 1 });
-    const next = stepActionAnim(first.state, sitting, true, 0, true);
-    expect(next.command).toEqual({ kind: "hold", index: 16 });
-    expect(next.state.ended).toBe(false);
+    expect(sample(11)[0]).toMatchObject({ name: "run", position: 0.5 });
+    expect(sample(9)[0]).toMatchObject({ name: "run", position: 0.5 });
   });
 
-  it("still reverts once unmounted", () => {
-    const first = stepActionAnim(NO_ACTION_ANIM, sitting, false, 0, true);
-    const next = stepActionAnim(first.state, sitting, true, 0, false);
-    expect(next.command).toEqual({ kind: "revert", index: 16 });
+  it("holds the outgoing pose at the transition boundary while advancing the new clip", () => {
+    const sampleTransition = (time: number) =>
+      samplePlayerPose(
+        {
+          animation: "run",
+          timeScale: 1,
+          timeSec: 10.5,
+          previous: { animation: "root", timeScale: 1, timeSec: 10 },
+        },
+        {},
+        false,
+        time,
+        0.25,
+        () => undefined,
+        () => ({ duration: 1, cyclic: true }),
+      );
+    const first = sampleTransition(10.6),
+      next = sampleTransition(10.7);
+    expect(first[1]).toMatchObject({ name: "root", position: 0.5 });
+    expect(next[1]).toMatchObject({ name: "root", position: 0.5 });
+    expect(first[0].position).toBeCloseTo(0.1);
+    expect(next[0].position).toBeCloseTo(0.2);
+    expect(sampleTransition(11)).toHaveLength(1);
   });
 });

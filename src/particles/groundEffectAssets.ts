@@ -8,10 +8,7 @@ import { DTSAnimationMixer } from "../dts/dtsAnimationMixer";
 import { sampleDTSSequence } from "../dts/dtsAnimation";
 import { DTSSequenceFlags } from "../dts/dtsTypes";
 import { shapeKey } from "../stream/shapeSequences";
-import {
-  buildActionAnimMap,
-  countEmbeddedNonTableSequences,
-} from "../stream/playerActionMap";
+import { buildActionAnimMap } from "../stream/playerActionMap";
 import type { StreamingPlayback } from "../stream/types";
 
 export interface WheelGroundData {
@@ -58,23 +55,14 @@ export function groundActionName(
   if (!actions) {
     const sequences = playback.getShapeConstructorSequences(name) ?? [];
     const prefix = shapeKey(name).replace(/\.dts$/, "_");
-    actions = buildActionAnimMap(
-      sequences,
-      prefix,
-      countEmbeddedNonTableSequences(
-        shape.model.scene,
-        shape.model.animations,
-        sequences,
-        prefix,
-      ),
-    );
+    actions = buildActionAnimMap(sequences, prefix, shape.model.animations);
     // A model can arrive before its TSShapeConstructor datablock.
     if (sequences.length) maps.set(shape, actions);
   }
   return actions.get(index)?.clipName;
 }
-export function groundClipInfo(shape: GroundShape, name: string) {
-  const clip = shape.clips.get(name);
+export function groundClipInfo(shape: GroundShape, name: string | undefined) {
+  const clip = name != null ? shape.clips.get(name) : undefined;
   return clip
     ? {
         duration: clip.duration,

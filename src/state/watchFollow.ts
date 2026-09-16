@@ -168,7 +168,11 @@ export function getFollowTargets(): FollowTarget[] {
       flagSlot: null,
     });
   }
-  return targets;
+  return targets.sort((a, b) => {
+    if (a.flagSlot != null) return b.flagSlot != null ? 0 : -1;
+    if (b.flagSlot != null) return 1;
+    return a.label.localeCompare(b.label);
+  });
 }
 
 /** The entity id a flag-follow slot resolves to right now (the item on

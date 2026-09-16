@@ -1,5 +1,6 @@
 import { pickMoveAnimation, type MoveAnimationResult } from "./playerAnimation";
 import { updateShapeThread } from "./shapeThreads";
+import type { PlayerPrediction } from "./playerPrediction";
 import {
   THRUST_FORWARD,
   THRUST_DOWN,
@@ -37,6 +38,7 @@ type Inputs = Pick<
   | "thrustDirection"
 > & {
   mountObjectGhostIndex?: number;
+  playerPrediction?: Pick<PlayerPrediction, "contactTimer">;
 };
 
 function jet(
@@ -61,15 +63,14 @@ export function updateClientAnimation(
         : pickMoveAnimation(
             input.velocity,
             input.rotation ?? [0, 0, 0, 1],
+            input.playerPrediction?.contactTimer ?? 0,
             input.falling,
             input.jetting,
           );
     let move = previous?.move;
-    if (
-      !move ||
-      move.animation !== picked.animation ||
-      move.timeScale !== picked.timeScale
-    ) {
+    // Player::setActionThread (0x5d5a10) ignores an unchanged action index,
+    // including a new forward/reverse request for the same Side action.
+    if (!move || move.animation !== picked.animation) {
       move = {
         ...picked,
         timeSec,

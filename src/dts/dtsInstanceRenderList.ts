@@ -1,8 +1,24 @@
-import { LOD, type Scene, type WebGLRenderer } from "three";
+import { LOD, type Camera, type Scene, type WebGLRenderer } from "three";
 import type {
   RenderItem,
   WebGLRenderList,
 } from "three/src/renderers/webgl/WebGLRenderLists.js";
+
+type RenderItemSort = (a: RenderItem, b: RenderItem) => number;
+
+// @types/three 0.186 still describes the r185 push/sort signatures.
+export interface RenderList extends Omit<WebGLRenderList, "push" | "sort"> {
+  push(
+    object: RenderItem["object"],
+    geometry: RenderItem["geometry"],
+    material: RenderItem["material"],
+    groupOrder: number,
+    z: number,
+    group: RenderItem["group"],
+    camera: Camera,
+  ): void;
+  sort(opaqueSort?: RenderItemSort, transparentSort?: RenderItemSort): void;
+}
 
 /** Isolates the renderer integration from the draw/animation code. A final LOD
  * runs after Three has culled shapes, selected details and prepared geometry.
@@ -14,9 +30,9 @@ export class DTSInstanceRenderList {
   readonly anchors = new Map<number, RenderItem>();
   private consumed = new Set<RenderItem>();
   private originals: RenderItem[] = [];
-  private list?: WebGLRenderList;
-  private originalSort?: WebGLRenderList["sort"];
-  private wrappedSort?: WebGLRenderList["sort"];
+  private list?: RenderList;
+  private originalSort?: RenderList["sort"];
+  private wrappedSort?: RenderList["sort"];
 
   private renderer: WebGLRenderer;
   constructor(renderer: WebGLRenderer, flush: () => void) {
@@ -29,13 +45,16 @@ export class DTSInstanceRenderList {
 
   prepare(scene: Scene) {
     this.restore();
-    this.list = this.renderer.renderLists.get(scene, 0);
+    this.list = this.renderer.renderLists.get(
+      scene,
+      0,
+    ) as unknown as RenderList;
     const list = this.list;
     const sort = (this.originalSort = list.sort);
-    this.wrappedSort = (opaqueSort, transparentSort, reversedDepth) => {
+    this.wrappedSort = (opaqueSort, transparentSort) => {
       // Arbitrary custom sort functions can inspect object/material identity.
       // Retain native draws in that case instead of assuming our anchors suffice.
-      const fallback = !!opaqueSort || !!transparentSort || reversedDepth;
+      const fallback = !!opaqueSort || !!transparentSort;
       for (const items of [list.opaque, list.transparent]) {
         let write = 0;
         for (const item of items) {
@@ -56,7 +75,7 @@ export class DTSInstanceRenderList {
           (item.material.transparent ? list.transparent : list.opaque).push(
             item,
           );
-      sort.call(list, opaqueSort, transparentSort, reversedDepth);
+      sort.call(list, opaqueSort, transparentSort);
     };
     list.sort = this.wrappedSort;
     // React can append entities after the pool between frames.
@@ -66,10 +85,10 @@ export class DTSInstanceRenderList {
     }
   }
 
-  get sorted(): WebGLRenderList {
+  get sorted(): RenderList {
     const list = this.list!;
     // Use the renderer's native comparator, including stable equal-depth order.
-    this.originalSort!.call(list, undefined!, undefined!, false);
+    this.originalSort!.call(list);
     return list;
   }
 

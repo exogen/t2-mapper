@@ -17,7 +17,10 @@ import {
   stripTaggedStringMarkup,
   collectPreloadShapeNames,
   collectEffectShapeNames,
+  STREAM_TICK_SEC,
+  TICK_DURATION_MS,
 } from "./streamHelpers";
+import type { PlayerMove } from "./playerPrediction";
 import type { Vec3 } from "./streamHelpers";
 import type { StreamSnapshot } from "./types";
 import { StreamEngine } from "./StreamEngine";
@@ -36,7 +39,9 @@ export class LiveStreamAdapter extends StreamEngine {
   private packetParser: PacketParser;
   relay: RelayClient;
 
-  private currentTimeSec = 0;
+  private packetCount = 0;
+  private _serverUpdateId = 0;
+
   private connectSynced = false;
   private _snapshot: StreamSnapshot | null = null;
   private _snapshotTick = -1;
@@ -74,6 +79,7 @@ export class LiveStreamAdapter extends StreamEngine {
 
   constructor(relay: RelayClient, options?: { mode?: "play" | "watch" }) {
     super();
+    this.setPlayerPredictionEnabled(true);
     this.relay = relay;
     this.mode = options?.mode ?? "play";
     const { registry, ghostTracker, packetParser } = createLiveParser();
@@ -134,7 +140,7 @@ export class LiveStreamAdapter extends StreamEngine {
   }
 
   protected getTimeSec(): number {
-    return this.currentTimeSec;
+    return this.tickCount * STREAM_TICK_SEC;
   }
 
   protected getCameraYawPitch(data: ParsedData | undefined): {
@@ -160,12 +166,19 @@ export class LiveStreamAdapter extends StreamEngine {
     return collectEffectShapeNames(dbMap.values(), (id) => dbMap.get(id));
   }
 
+  /** Changes only when server state arrives, not when client simulation advances. */
+  get serverUpdateId(): number {
+    return this._serverUpdateId;
+  }
+
   // ── StreamingPlayback interface ──
 
   reset(): void {
     this.resetSharedState();
     this.ghostTracker.clear?.();
-    this.currentTimeSec = 0;
+    this.packetCount = 0;
+    this._serverUpdateId++;
+    this.lastMoveAck = 0;
     this._snapshot = null;
     this._snapshotTick = -1;
     this.dataBlockClassNames.clear();
@@ -180,9 +193,26 @@ export class LiveStreamAdapter extends StreamEngine {
     return this.buildSnapshot();
   }
 
-  stepToTime(targetTimeSec: number, _maxMoveTicks?: number): StreamSnapshot {
-    this.currentTimeSec = targetTimeSec;
+  stepToTime(
+    targetTimeSec: number,
+    maxMoveTicks = Number.POSITIVE_INFINITY,
+  ): StreamSnapshot {
+    const targetTick = Number.isFinite(targetTimeSec)
+      ? Math.floor((Math.max(0, targetTimeSec) * 1000) / TICK_DURATION_MS)
+      : this.tickCount;
+    for (
+      let ticks = 0;
+      this.tickCount < targetTick && ticks < maxMoveTicks;
+      ticks++
+    )
+      this.processTick();
     return this.getSnapshot();
+  }
+
+  /** Watchers' local camera input must not drive the relay's control object. */
+  submitMove(move: PlayerMove, id: number): void {
+    if (this.mode !== "play") return;
+    this.collectMove(move, id);
   }
 
   // ── Live-specific: connect sequence sync ──
@@ -303,6 +333,8 @@ export class LiveStreamAdapter extends StreamEngine {
     });
     this.updateCameraAndHud();
 
+    this._serverUpdateId++;
+
     // Roster/scores/clock (a late joiner can't recover these live).
     const hud = payload.hudState;
     for (const entry of hud.playerRoster) {
@@ -412,14 +444,16 @@ export class LiveStreamAdapter extends StreamEngine {
         this.missionName = newMissionName;
         // Mission-scoped, like the relay's beginMissionChange.
         this.matchStarted = false;
-        this.entities.clear();
-        this.entityIdByGhostIndex.clear();
+        this.clearAllEntities();
         this._ready = false;
         this._snapshot = null;
         this._snapshotTick = -1;
         this.invalidateHudCache();
         this.observerMode = "fly";
         this.lastMoveAck = 0;
+        this.pendingPlayerMoves = [];
+        this.nextPlayerMoveId = 0;
+        this.lastClientMoveId = 0;
         // Drop the old mission's camera AND control-object state so
         // consumers (e.g. spectator initial placement) wait for the new
         // mission's control data instead of a stale position —
@@ -531,6 +565,7 @@ export class LiveStreamAdapter extends StreamEngine {
   // ── Packet processing ──
 
   private processPacket(data: Uint8Array): void {
+    this.packetCount++;
     try {
       const rejectedBefore = this.packetParser.protocolRejected;
       const noDispatchBefore = this.packetParser.protocolNoDispatch;
@@ -548,7 +583,7 @@ export class LiveStreamAdapter extends StreamEngine {
       ) {
         log.warn(
           "packet #%d %s: %d bytes (total rejected=%d, noDispatch=%d)",
-          this.tickCount,
+          this.packetCount,
           wasRejected ? "REJECTED" : "duplicate-seq",
           data.length,
           this.packetParser.protocolRejected,
@@ -556,14 +591,16 @@ export class LiveStreamAdapter extends StreamEngine {
         );
       }
 
-      const isEarlyPacket = this.tickCount < 20;
-      const isMilestonePacket = this.tickCount % 100 === 0;
+      if (wasRejected || wasNoDispatch) return;
+
+      const isEarlyPacket = this.packetCount < 20;
+      const isMilestonePacket = this.packetCount % 100 === 0;
       const shouldLog = isEarlyPacket || isMilestonePacket;
 
       if (shouldLog) {
         log.debug(
           "packet #%d: %d events, %d ghosts, %d bytes%s%s",
-          this.tickCount,
+          this.packetCount,
           parsed.events.length,
           parsed.ghosts.length,
           data.length,
@@ -581,7 +618,7 @@ export class LiveStreamAdapter extends StreamEngine {
         // packet after it: hand the adapter back for a rebuild.
         log.error(
           "packet #%d %s parse fault: %s",
-          this.tickCount,
+          this.packetCount,
           parsed.parseFault.stage,
           parsed.parseFault.message,
         );
@@ -620,22 +657,19 @@ export class LiveStreamAdapter extends StreamEngine {
         }
       }
 
-      this.tickCount++;
-      this.advanceProjectiles();
-      this.advanceItems();
-      this.advanceControlVehicle();
-      this.advanceFades();
-      this.advanceShapeAnimations();
-      this.advanceForceFields();
-      this.advanceControlEnergy();
-      this.recordGroundEffects();
+      this.acknowledgeMoves(
+        this.lastMoveAck,
+        parsed.gameState.controlObjectData,
+      );
+      this._snapshot = null;
+      this._serverUpdateId++;
 
       // Periodic status at milestones
-      if (isMilestonePacket && this.tickCount > 1) {
+      if (isMilestonePacket && this.packetCount > 1) {
         const dbMap = this.packetParser.getDataBlockDataMap();
         log.info(
-          "status @ tick %d: %d entities, %d datablocks, rejected=%d, noDispatch=%d",
-          this.tickCount,
+          "status @ packet %d: %d entities, %d datablocks, rejected=%d, noDispatch=%d",
+          this.packetCount,
           this.entities.size,
           dbMap?.size ?? 0,
           this.packetParser.protocolRejected,
@@ -646,8 +680,8 @@ export class LiveStreamAdapter extends StreamEngine {
       // Entity count milestones
       const entityCount = this.entities.size;
       if (
-        this.tickCount === 1 ||
-        (entityCount > 0 && entityCount % 25 === 0 && this.tickCount < 100)
+        this.packetCount === 1 ||
+        (entityCount > 0 && entityCount % 25 === 0 && this.packetCount < 100)
       ) {
         const types = new Map<string, number>();
         for (const e of this.entities.values()) {
@@ -674,7 +708,7 @@ export class LiveStreamAdapter extends StreamEngine {
         );
       }
       // Log camera position for early packets
-      if (this.tickCount <= 5 && this.camera) {
+      if (this.packetCount <= 5 && this.camera) {
         const [cx, cy, cz] = this.camera.position;
         log.debug(
           "camera: mode=%s pos=(%s, %s, %s) fov=%s",
@@ -687,7 +721,7 @@ export class LiveStreamAdapter extends StreamEngine {
       }
     } catch (e) {
       const errorContext = {
-        tickCount: this.tickCount,
+        packetCount: this.packetCount,
         entityCount: this.entities.size,
         dataLength: data.length,
         controlGhost: this.latestControl.ghostIndex,
@@ -839,7 +873,7 @@ export class LiveStreamAdapter extends StreamEngine {
       const prevEntity = prevEntityId
         ? this.entities.get(prevEntityId)
         : undefined;
-      if (this.tickCount < 50 || this.tickCount % 200 === 0) {
+      if (this.packetCount < 50 || this.packetCount % 200 === 0) {
         log.debug(
           "ghost delete: #%d %s (%d entities remaining)",
           ghost.index,
@@ -855,7 +889,7 @@ export class LiveStreamAdapter extends StreamEngine {
 
   private buildSnapshot(): StreamSnapshot {
     const entities = this.buildEntityList();
-    const timeSec = this.currentTimeSec;
+    const timeSec = this.getTimeSec();
     const { chatMessages, serverEvents, audioEvents } =
       this.buildTimeFilteredEvents(timeSec);
 

@@ -1,10 +1,13 @@
 import {
   buildActionAnimMap,
-  countEmbeddedNonTableSequences,
+  getPlayerAnimationActions,
   type ActionAnimEntry,
 } from "../stream/playerActionMap";
 import { shapeThreadTime } from "../stream/shapeThreads";
-import { streamRenderFrame } from "../stream/interpolateEntity";
+import {
+  applyStreamEntityRotation,
+  streamRenderFrame,
+} from "../stream/interpolateEntity";
 import { sameImageMounts } from "../stream/imageMount";
 import { observeShapeMeshes } from "../dts/dtsScene";
 import {
@@ -26,7 +29,6 @@ import {
   Object3D,
 } from "three";
 import type { AnimationAction } from "three";
-import { AnimationClip } from "three";
 import * as SkeletonUtils from "three/examples/jsm/utils/SkeletonUtils.js";
 import {
   ANIM_TRANSITION_TIME,
@@ -60,7 +62,6 @@ import { findOwnNode, getMountNode } from "../sceneNodes";
 import { useDebug } from "./SettingsProvider";
 import { readDtsSequences } from "../dts/dtsSequences";
 import { useQuery } from "@tanstack/react-query";
-import { getAliasedActions } from "../torqueScript/shapeConstructor";
 import { useStaticShape, MountedShapeContent } from "./GenericShape";
 import { textureToUrl } from "../loaders";
 import { useAnisotropy } from "./useAnisotropy";
@@ -74,11 +75,7 @@ import { useFadeAndCloak } from "./shapeFadeCloak";
 import { useShapeLighting } from "./useShapeLighting";
 import { useShadowCaster } from "./useShadowCaster";
 import type { MountedImageRoot } from "./shapeFadeCloak";
-import {
-  effectDeltaSec,
-  useEngineStoreApi,
-  useEngineSelector,
-} from "../state/engineStore";
+import { effectDeltaSec, useEngineStoreApi } from "../state/engineStore";
 import { SHAPE_MODEL_ROTATION_Y } from "../world/placement";
 import { useStreamSnapshot } from "../state/streamSnapshotStore";
 import { gameEntityStore } from "../state/gameEntityStore";
@@ -179,7 +176,7 @@ function buildJetFlare(
 }
 
 function buildJetFlareSequence(
-  actions: Map<string, AnimationAction>,
+  actions: Map<string | number, AnimationAction>,
 ): DtsThread | null {
   const action = actions.get("jetflare");
   return action ? createDtsThread(action, false) : null;
@@ -203,10 +200,6 @@ export function PlayerModel({
   const engineStore = useEngineStoreApi();
   const shapeName = entity.shapeName!;
   const gltf = useStaticShape(shapeName);
-  const shapeAliases = useEngineSelector((state) => {
-    const sn = shapeName?.toLowerCase();
-    return sn ? state.runtime.sequenceAliases.get(sn) : undefined;
-  });
   const anisotropy = useAnisotropy();
   const controlPlayerGhostId = useStreamSnapshot(
     (snap) => snap?.controlPlayerGhostId,
@@ -292,16 +285,13 @@ export function PlayerModel({
   }, [clonedScene, mixer]);
 
   // Build case-insensitive clip lookup with alias support.
-  const animActionsRef = useRef(new Map<string, AnimationAction>());
+  const animActionsRef = useRef(new Map<string | number, AnimationAction>());
   const blendActionsRef = useRef<{
     head: AnimationAction | null;
     headside: AnimationAction | null;
   }>({ head: null, headside: null });
-  // Arm pose blend actions keyed by animation name (lookde, lookms, looksn).
-  const armActionsRef = useRef(new Map<string, AnimationAction>());
-  const activeArmRef = useRef<string | null>(null);
+  const activeArmRef = useRef<AnimationAction | null>(null);
   const bodyActionsRef = useRef<AnimationAction[]>([]);
-  const rootArmsRef = useRef<AnimationAction | null>(null);
   // Build action index -> animation clip name mapping from TSShapeConstructor.
   const actionAnimMap = useMemo(() => {
     const playback = engineStore.getState().playback;
@@ -309,32 +299,18 @@ export function PlayerModel({
     const sn = shapeName?.toLowerCase();
     if (!sp || !sn) return new Map<number, ActionAnimEntry>();
     const sequences = sp.getShapeConstructorSequences(sn);
-    if (!sequences) return new Map<number, ActionAnimEntry>();
     // Derive prefix: "heavy_male.dts" -> "heavy_male_"
     const stem = sn.replace(/\.dts$/i, "");
     const prefix = stem + "_";
-    const embeddedNonTable = countEmbeddedNonTableSequences(
-      gltf.scene,
-      gltf.animations,
-      sequences,
-      prefix,
-    );
-    return buildActionAnimMap(sequences, prefix, embeddedNonTable);
-  }, [engineStore, shapeName, gltf.scene]);
+    return buildActionAnimMap(sequences ?? [], prefix, gltf.animations);
+  }, [engineStore, shapeName, gltf.animations]);
 
-  // Build a map of animation alias → cyclic flag from DTS metadata.
+  // Read cyclicity from the resolved clip, not its action-table alias.
   // Non-cyclic sequences (fall, jet, jump, land) play once and clamp.
-  const seqCyclicByAlias = useMemo(() => {
-    const map = new Map<string, boolean>();
-    const table = readDtsSequences(gltf.scene, gltf.animations);
-    for (const name of table.names) map.set(name, table.cyclic.has(name));
-    if (shapeAliases)
-      for (const [alias, clipName] of shapeAliases) {
-        if (table.names.includes(clipName))
-          map.set(alias, table.cyclic.has(clipName));
-      }
-    return map;
-  }, [gltf.scene, shapeAliases]);
+  const cyclicSequences = useMemo(
+    () => readDtsSequences(gltf.scene, gltf.animations).cyclic,
+    [gltf.scene, gltf.animations],
+  );
 
   const entityRef = useRef(entity);
   entityRef.current = entity; // eslint-disable-line react-hooks/refs
@@ -367,7 +343,11 @@ export function PlayerModel({
       entityRef.current.health,
       entityRef.current.damageState,
     );
-    const actions = getAliasedActions(gltf.animations, mixer, shapeAliases);
+    const actions = getPlayerAnimationActions(
+      gltf.animations,
+      mixer,
+      actionAnimMap,
+    );
     animActionsRef.current = actions;
 
     // Start with root (idle) animation.
@@ -377,25 +357,14 @@ export function PlayerModel({
     }
     bodyActionsRef.current = rootAction ? [rootAction] : [];
 
-    // Set up additive blend animations for aim/head articulation.
-    // These clips must be cloned before makeClipAdditive (which mutates in
-    // place) since multiple player entities share the same shape cache.
-
-    // Head blend actions.
+    // Native DTS blend clips already postmultiply the current node pose.
     const blendRefs: typeof blendActionsRef.current = {
       head: null,
       headside: null,
     };
-    for (const { key, names } of [
-      { key: "head" as const, names: ["head"] },
-      { key: "headside" as const, names: ["headside"] },
-    ]) {
-      const clip = gltf.animations.find((c) =>
-        names.includes(c.name.toLowerCase()),
-      );
-      if (!clip) continue;
-      const action = mixer.clipAction(clip);
-      action.blendMode = AdditiveAnimationBlendMode;
+    for (const key of ["head", "headside"] as const) {
+      const action = actions.get(key);
+      if (!action) continue;
       action.timeScale = 0;
       action.weight = 1;
       action.play();
@@ -403,62 +372,12 @@ export function PlayerModel({
     }
     blendActionsRef.current = blendRefs;
 
-    // In Torque, the "root" animation provides arm bone values (R Clavicle,
-    // R UpperArm, etc.) that persist even when movement anims play — because
-    // movement anims don't animate arm bones. In Three.js, when root fades
-    // out, arm bones fall to the rest pose. Fix: extract root's arm-only
-    // tracks into a permanent action that always plays at weight=1.
-    const rootClip = gltf.animations.find(
-      (c) => c.name.toLowerCase() === "root",
-    );
-    if (rootClip) {
-      // Find bones that movement anims DON'T animate — these need root's values.
-      const movementBones = new Set<string>();
-      for (const clip of gltf.animations) {
-        const lower = clip.name.toLowerCase();
-        if (["forward", "back", "side", "fall"].includes(lower)) {
-          for (const t of clip.tracks) {
-            movementBones.add(t.name.slice(0, t.name.lastIndexOf(".")));
-          }
-        }
-      }
-      const rootArmTracks = rootClip.tracks.filter((t) => {
-        const bone = t.name.slice(0, t.name.lastIndexOf("."));
-        return !movementBones.has(bone);
-      });
-      if (rootArmTracks.length > 0) {
-        const rootArmsClip = new AnimationClip(
-          "root_arms",
-          rootClip.duration,
-          rootArmTracks,
-        );
-        const rootArmsAction = mixer.clipAction(rootArmsClip);
-        rootArmsAction.play(); // weight=1, always on
-        rootArmsRef.current = rootArmsAction;
-      }
-    }
-
-    // Native blend clips postmultiply the current pose. Head/headside
-    // are scrubbed separately; the remaining blends supply arm poses.
-    const armActions = new Map<string, AnimationAction>();
-    for (const name of readDtsSequences(gltf.scene, gltf.animations).blend) {
-      if (name === "head" || name === "headside") continue;
-      const clip = gltf.animations.find((c) => c.name.toLowerCase() === name);
-      if (!clip) continue;
-      const action = mixer.clipAction(clip);
-      action.blendMode = AdditiveAnimationBlendMode;
-      action.timeScale = 0;
-      action.weight = 0;
-      action.play();
-      armActions.set(name, action);
-    }
-    armActionsRef.current = armActions;
-
-    // Start with default arm pose.
-    const defaultArm = armActions.get("lookde");
+    // Player has one arm thread, initially the datablock's "look" action.
+    // Other aim clips are activated only when the server selects them.
+    const defaultArm = actions.get("look");
     if (defaultArm) {
-      defaultArm.weight = 1;
-      activeArmRef.current = "lookde";
+      holdDtsAction(defaultArm, 0);
+      activeArmRef.current = defaultArm;
     }
 
     // Force initial pose evaluation.
@@ -470,10 +389,9 @@ export function PlayerModel({
       mixer.stopAllAction();
       animActionsRef.current = new Map();
       blendActionsRef.current = { head: null, headside: null };
-      armActionsRef.current = new Map();
       activeArmRef.current = null;
     };
-  }, [mixer, gltf.animations, gltf.scene, shapeAliases]);
+  }, [mixer, gltf.animations, gltf.scene, actionAnimMap]);
 
   // StreamEngine replaces the array only when an image's visual identity changes.
   const imagesRef = useRef(entity.imageSlots);
@@ -534,7 +452,7 @@ export function PlayerModel({
   const mountYawRef = useRef<Group>(null);
   // The flare thread's outputs, rebuilt when the body's actions are.
   const jetFlareThreadRef = useRef<{
-    source: Map<string, AnimationAction> | null;
+    source: Map<string | number, AnimationAction> | null;
     sequence: DtsThread | null;
   }>({ source: null, sequence: null });
   useEffect(() => {
@@ -562,6 +480,7 @@ export function PlayerModel({
       if (mountsChanged) setImages(entity.imageSlots);
     }
     const time = streamClock.time;
+    const current = streamRenderFrame.current?.get(entity.id);
 
     // Resolve velocity at current playback time.
     const kf = getKeyframeAtTime(entity.keyframes ?? [], time);
@@ -573,12 +492,19 @@ export function PlayerModel({
     const mounted = entity.mountObjectId != null;
     const mountYaw = mountYawRef.current;
     if (mountYaw) {
-      if (mounted && kf?.rotation) mountYaw.quaternion.fromArray(kf.rotation);
+      const pose = current ?? kf;
+      if (mounted && pose)
+        applyStreamEntityRotation(
+          mountYaw.quaternion,
+          pose,
+          streamRenderFrame.previous?.get(entity.id),
+          streamRenderFrame.interpT,
+        );
       else mountYaw.quaternion.identity();
     }
     const actions = animActionsRef.current;
 
-    const recorded = streamRenderFrame.current?.get(entity.id)?.clientAnimation;
+    const recorded = current?.clientAnimation;
     if (recorded?.move) {
       const poses = samplePlayerPose(
         recorded.move,
@@ -586,13 +512,13 @@ export function PlayerModel({
         mounted,
         time,
         ANIM_TRANSITION_TIME,
-        (index) => actionAnimMap.get(index)?.clipName,
+        (index) => index,
         (name) => {
           const action = actions.get(name);
           return (
             action && {
               duration: action.getClip().duration,
-              cyclic: seqCyclicByAlias.get(name) ?? false,
+              cyclic: cyclicSequences.has(action.getClip().name.toLowerCase()),
             }
           );
         },
@@ -613,32 +539,18 @@ export function PlayerModel({
     // Switch arm blend animation based on the networked arm action index.
     // The server resolves the weapon datablock's armThread field to an action
     // index and sends it via Player::packUpdate (ActionMask).
-    const armEntry =
-      entity.armAction != null
-        ? actionAnimMap.get(entity.armAction)
-        : undefined;
-    const desiredArm = armEntry?.clipName ?? "lookde";
-    if (desiredArm !== activeArmRef.current) {
-      const armActions = armActionsRef.current;
-      const prev = activeArmRef.current
-        ? armActions.get(activeArmRef.current)
-        : null;
-      const next = armActions.get(desiredArm);
-      if (next) {
-        if (prev) prev.weight = 0;
-        next.weight = isDead ? 0 : 1;
-        activeArmRef.current = desiredArm;
-      }
+    const desiredArm = actions.get(entity.armAction ?? "look");
+    if (desiredArm && desiredArm !== activeArmRef.current) {
+      activeArmRef.current?.stop();
+      activeArmRef.current = desiredArm;
     }
 
-    // Drive additive blend animations for aim/head articulation.
+    // Drive the arm and head threads without changing their authored blend mode.
     const { head, headside } = blendActionsRef.current;
-    const armAction = activeArmRef.current
-      ? armActionsRef.current.get(activeArmRef.current)
-      : null;
+    const armAction = activeArmRef.current;
     const blendWeight = isDead ? 0 : 1;
 
-    const prediction = streamRenderFrame.current?.get(entity.id)?.playerDelta;
+    const prediction = current?.playerDelta;
     const dt = 1 - streamRenderFrame.interpT;
     const lookAngle = prediction?.maxLookAngle || 1;
     const headPitch = prediction
@@ -651,7 +563,7 @@ export function PlayerModel({
     const yawPos = (headYaw + 1) / 2;
 
     if (armAction) {
-      armAction.time = pitchPos * armAction.getClip().duration;
+      holdDtsAction(armAction, pitchPos);
       armAction.weight = blendWeight;
     }
     if (head) {
@@ -704,16 +616,6 @@ export function PlayerModel({
       else removeNodeEmitter(emitter);
     }
 
-    const rootArms = rootArmsRef.current;
-    if (rootArms) {
-      const duration = rootArms.getClip().duration;
-      holdDtsAction(
-        rootArms,
-        duration > 0
-          ? (Math.max(0, time - (entity.spawnTime ?? 0)) % duration) / duration
-          : 0,
-      );
-    }
     damageThreadsRef.current?.update(entity.health, entity.damageState);
     // Evaluate the sampled body pose, damage and blends once.
     mixer.update(0);

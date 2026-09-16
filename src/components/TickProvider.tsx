@@ -10,9 +10,10 @@ import {
 } from "react";
 import { useFrame } from "@react-three/fiber";
 
-/** Ticks per second, matching the Torque engine tick rate. */
-export const TICK_RATE = 32;
-const TICK_INTERVAL = 1 / TICK_RATE;
+import { STREAM_TICK_SEC } from "../stream/streamHelpers";
+
+// ProcessList schedules 32 ms ticks; the physics TickSec constant is separate.
+const TICK_INTERVAL = STREAM_TICK_SEC;
 
 export type TickCallback = (tick: number) => void;
 

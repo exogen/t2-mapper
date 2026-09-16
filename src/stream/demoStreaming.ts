@@ -7,13 +7,6 @@ import {
   DemoParser,
 } from "t2-demo-parser";
 import type { ParsedData } from "t2-demo-parser";
-// Imported from the module rather than the `../scene` barrel: the
-// barrel re-exports misToScene, which pulls the entire TorqueScript
-// runtime (15 modules and a 0.2MB generated parser) into every
-// consumer. The demo/live path takes its scene objects from GHOSTS
-// and never interprets a line of TorqueScript.
-import { ghostToSceneObject } from "../scene/ghostToScene";
-import { toEntityType, allocateEntityId } from "./entityClassification";
 import {
   clamp,
   TICK_DURATION_MS,
@@ -30,15 +23,8 @@ import {
   torqueQuatToThreeJS,
 } from "./streamHelpers";
 import type { Vec3 } from "./streamHelpers";
-import {
-  THRUST_BACKWARD,
-  THRUST_DOWN,
-  THRUST_FORWARD,
-  type StreamRecording,
-  type StreamSnapshot,
-  type TeamScore,
-} from "./types";
-import { StreamEngine, type MutableEntity } from "./StreamEngine";
+import type { StreamRecording, StreamSnapshot, TeamScore } from "./types";
+import { StreamEngine } from "./StreamEngine";
 
 interface DemoMissionInfo {
   /** Mission display name from readplayerinfo row 2 (e.g. "S5-WoodyMyrk"). */
@@ -358,7 +344,6 @@ export interface DemoStreamingOptions {
 
 class DemoStreamAdapter extends StreamEngine {
   private readonly checkpointsEnabled: boolean;
-  private readonly groundEffectsEnabled: boolean;
   private readonly checkpoints = new Map<
     number,
     ReturnType<DemoStreamAdapter["captureCheckpoint"]>
@@ -389,9 +374,6 @@ class DemoStreamAdapter extends StreamEngine {
       simulation: this.captureSimulationState(),
       cursor: structuredClone({
         moveTicks: this.moveTicks,
-        pendingPlayerMoves: this.pendingPlayerMoves,
-        nextPlayerMoveId: this.nextPlayerMoveId,
-        lastClientMoveId: this.lastClientMoveId,
         absoluteYaw: this.absoluteYaw,
         absolutePitch: this.absolutePitch,
         lastAbsYaw: this.lastAbsYaw,
@@ -452,9 +434,6 @@ class DemoStreamAdapter extends StreamEngine {
   };
   // Demo-specific: move delta tracking for V12-style camera rotation
   private moveTicks = 0;
-  private pendingPlayerMoves: { id: number; move: PlayerMove }[] = [];
-  private nextPlayerMoveId = 0;
-  private lastClientMoveId = 0;
   private absoluteYaw = 0;
   private absolutePitch = 0;
   private lastAbsYaw = 0;
@@ -727,33 +706,7 @@ class DemoStreamAdapter extends StreamEngine {
     };
     for (const ghost of this.initialBlock.initialGhosts) {
       if (ghost.type !== "create" || ghost.classId == null) continue;
-      const className = this.registry.getGhostParser(ghost.classId)?.name;
-      if (!className) {
-        throw new Error(
-          `No ghost parser for classId ${ghost.classId} (ghost index ${ghost.index})`,
-        );
-      }
-      const id = allocateEntityId();
-      this.entityIdByGhostIndex.set(ghost.index, id);
-      const entity: MutableEntity = {
-        id,
-        ghostIndex: ghost.index,
-        className,
-        spawnTick: 0,
-        type: toEntityType(className),
-        rotation: [0, 0, 0, 1],
-      };
-      this.applyGhostData(entity, ghost.parsedData);
-      if (ghost.parsedData) {
-        const sceneObj = ghostToSceneObject(
-          className,
-          ghost.index,
-          ghost.parsedData as ParsedData,
-        );
-        if (sceneObj) entity.sceneData = sceneObj;
-      }
-      this.entities.set(id, entity);
-      this.entityIdByGhostIndex.set(ghost.index, id);
+      this.processGhostUpdate(ghost);
     }
 
     if (this.latestControl.data)
@@ -1034,7 +987,10 @@ class DemoStreamAdapter extends StreamEngine {
   // ── Demo block processing ──
 
   private stepOneMoveTick(): boolean {
+    const packets = this.parser.getPacketParser();
     while (true) {
+      const rejected = packets.protocolRejected;
+      const noDispatch = packets.protocolNoDispatch;
       const block = this.parser.nextBlock();
       if (!block) {
         this.exhausted = true;
@@ -1042,28 +998,18 @@ class DemoStreamAdapter extends StreamEngine {
         return false;
       }
 
+      // Recorded packets use the same ConnectionProtocol dispatch gate as live
+      // packets. Keepalives/duplicates must not apply the parser's empty game state.
+      if (
+        packets.protocolRejected > rejected ||
+        packets.protocolNoDispatch > noDispatch
+      )
+        continue;
       this.handleBlock(block);
 
       if (block.type === BlockTypeMove) {
         this.moveTicks += 1;
-        this.tickCount = this.moveTicks;
-        this.advanceProjectiles();
-        this.advanceItems();
-        this.advanceControlVehicle();
-        const controlMoves = this.pendingPlayerMoves
-          .filter(({ id }) => id >= this.lastClientMoveId)
-          .map(({ move }) => move);
-        this.advancePlayers(controlMoves);
-        this.lastClientMoveId = this.nextPlayerMoveId;
-        this.advanceFades();
-        this.advanceShapeAnimations();
-        this.advanceForceFields();
-        this.advanceControlEnergy();
-        if (this.groundEffectsEnabled) this.recordGroundEffects();
-        // updateCameraAndHud() calls removeExpiredExplosions() as its first
-        // step (and the live path relies on that), so calling it here too
-        // would drop expired explosions twice per tick.
-        this.updateCameraAndHud();
+        this.processTick();
         if (
           this.checkpointsEnabled &&
           this.moveTicks % DEMO_CHECKPOINT_TICKS === 0 &&
@@ -1109,18 +1055,7 @@ class DemoStreamAdapter extends StreamEngine {
       for (const ghost of packet.ghosts) {
         this.processGhostUpdate(ghost);
       }
-      const ack = packet.gameState.lastMoveAck;
-      this.pendingPlayerMoves = this.pendingPlayerMoves.filter(
-        ({ id }) => id >= ack,
-      );
-      this.nextPlayerMoveId = Math.max(this.nextPlayerMoveId, ack);
-      if (controlData) {
-        this.correctControlPlayer(
-          controlData as PlayerPacketData,
-          this.pendingPlayerMoves.map(({ move }) => move),
-        );
-        if (controlData.position) this.lastClientMoveId = this.nextPlayerMoveId;
-      }
+      this.acknowledgeMoves(packet.gameState.lastMoveAck, controlData);
 
       return;
     }
@@ -1136,10 +1071,7 @@ class DemoStreamAdapter extends StreamEngine {
     }
 
     if (block.type === BlockTypeMove && this.isMoveData(block.parsed)) {
-      const id = this.nextPlayerMoveId++;
-      if (this.playerPredictionEnabled && this.lastControlType === "player") {
-        this.pendingPlayerMoves.push({ id, move: block.parsed as PlayerMove });
-      } else this.pendingPlayerMoves.length = 0;
+      this.collectMove(block.parsed as PlayerMove);
       // Replicate V12 Player::updateMove(): apply delta then wrap/clamp.
       this.absoluteYaw += block.parsed.yaw ?? 0;
       const TWO_PI = Math.PI * 2;
@@ -1149,41 +1081,6 @@ class DemoStreamAdapter extends StreamEngine {
         -MAX_PITCH,
         MAX_PITCH,
       );
-
-      // The control player's ghost skips MoveMask (the server knows the client
-      // predicts its own state). Derive jetting from the move's trigger[3],
-      // matching Tribes2.exe Player::updateMove: mJetting = trigger[3] &&
-      // energy >= minJetEnergy && state == MoveState && !disableMove.
-      const triggers = (block.parsed as { trigger?: boolean[] }).trigger;
-      if (triggers && this.controlPlayerGhostId) {
-        const entity = this.entities.get(this.controlPlayerGhostId);
-        if (entity) {
-          entity.jetting = !!triggers[3];
-        }
-      }
-      // The piloted vehicle's ghost skips its jet fields the same way
-      // (Vehicle/FlyingVehicle::unpackUpdate control gate). Vehicle::
-      // updateMove (FUN_0060b110) sets jetting from the same trigger and
-      // FlyingVehicle::updateMove (FUN_00610220) picks the thrust direction
-      // from move.y. The energy gate on jetting is not modelled.
-      if (triggers && this.isPiloting && this.lastPilotGhostIndex != null) {
-        const vehicleId = this.resolveEntityIdForGhostIndex(
-          this.lastPilotGhostIndex,
-        );
-        const vehicle = vehicleId ? this.entities.get(vehicleId) : undefined;
-        const moveY = (block.parsed as { y?: number }).y;
-        if (vehicle) {
-          vehicle.jetting = !!triggers[3];
-          if (vehicle.className === "FlyingVehicle" && moveY != null) {
-            vehicle.thrustDirection =
-              moveY === 0
-                ? THRUST_DOWN
-                : moveY < 0
-                  ? THRUST_BACKWARD
-                  : THRUST_FORWARD;
-          }
-        }
-      }
     }
   }
 

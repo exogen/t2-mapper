@@ -35,6 +35,10 @@ describe("DSQ sequences", () => {
     expect(Array.from(merged.translations)).toEqual([1, 2, 3, 4, 5, 6]);
     expect(merged.sequences[0].translationMatters).toEqual([0]);
     expect(merged.names[merged.sequences[0].nameIndex]).toBe("forward");
+    expect(merged.sequences[0].source).toEqual({
+      name: "forward",
+      sequenceName: "Walk",
+    });
     expect(merged.triggers).toEqual(source.triggers);
     expect(Array.from(merged.groundTranslations)).toEqual([1, 2, 3]);
     expect(shape.sequences).toEqual([]);

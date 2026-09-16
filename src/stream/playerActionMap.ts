@@ -1,5 +1,5 @@
-import type { Object3D, AnimationClip } from "three";
-import { readDtsSequences } from "../dts/dtsSequences";
+import type { AnimationClip, AnimationAction, AnimationMixer } from "three";
+import type { DTSAnimationClip } from "../dts/dtsModel";
 import { NUM_TABLE_ACTION_ANIMS } from "./playerAnimation";
 
 /** Table action names in engine order (indices 0-7). */
@@ -21,100 +21,77 @@ export interface ActionAnimEntry {
   alias: string;
 }
 
-/**
- * Build the engine's action index -> animation entry mapping from a
- * TSShapeConstructor's sequence entries (e.g. `"heavy_male_root.dsq root"`).
- *
- * The engine builds its action list as:
- * 1. Table actions (0-7): found by searching for aliased names (root, run, etc.)
- * 2. Non-table actions (8+): ALL remaining shape sequences in order.
- *
- * The shape's sequence array contains DTS-embedded sequences (e.g. JetFlare,
- * Damage) BEFORE the TSShapeConstructor-loaded ones. These occupy non-table
- * action slots and shift all TSShapeConstructor non-table indices up.
- */
-export function buildActionAnimMap(
-  sequences: string[],
-  shapePrefix: string,
-  embeddedNonTableCount: number = 0,
-): Map<number, ActionAnimEntry> {
-  const result = new Map<number, ActionAnimEntry>();
-
-  // Parse each sequence entry into { clipName, alias }.
-  const parsed: Array<{ clipName: string; alias: string }> = [];
-  for (const entry of sequences) {
-    const spaceIdx = entry.indexOf(" ");
-    if (spaceIdx === -1) continue;
-    const dsqFile = entry.slice(0, spaceIdx).toLowerCase();
-    const alias = entry
-      .slice(spaceIdx + 1)
-      .trim()
-      .toLowerCase();
-    if (!alias || !dsqFile.startsWith(shapePrefix) || !dsqFile.endsWith(".dsq"))
-      continue;
-    const clipName = dsqFile.slice(shapePrefix.length, -4);
-    if (clipName) parsed.push({ clipName, alias });
+/** Named engine actions and exact network indices share the same table.
+ * Raw DSQ filenames are only used to locate clips, never as engine aliases. */
+export function getPlayerAnimationActions(
+  clips: readonly AnimationClip[],
+  mixer: AnimationMixer,
+  actionMap: ReadonlyMap<number, ActionAnimEntry>,
+): Map<string | number, AnimationAction> {
+  const byName = new Map(clips.map((clip) => [clip.name.toLowerCase(), clip]));
+  const actions = new Map<string | number, AnimationAction>();
+  for (const [index, { alias, clipName }] of actionMap) {
+    const clip = byName.get(clipName);
+    if (!clip) continue;
+    const action = mixer.clipAction(clip);
+    actions.set(index, action);
+    if (!actions.has(alias)) actions.set(alias, action);
   }
-
-  // Find which parsed entries are table actions (by alias name).
-  const tableEntryIndices = new Set<number>();
-  for (let i = 0; i < TABLE_ACTION_NAMES.length; i++) {
-    const name = TABLE_ACTION_NAMES[i];
-    for (let pi = 0; pi < parsed.length; pi++) {
-      if (parsed[pi].alias === name) {
-        tableEntryIndices.add(pi);
-        result.set(i, parsed[pi]);
-        break;
-      }
-    }
-  }
-
-  // Non-table actions: remaining entries in TSShapeConstructor order, offset
-  // by embedded non-table sequences that precede them in the shape.
-  let actionIdx = NUM_TABLE_ACTION_ANIMS + embeddedNonTableCount;
-  for (let pi = 0; pi < parsed.length; pi++) {
-    if (!tableEntryIndices.has(pi)) {
-      result.set(actionIdx, parsed[pi]);
-      actionIdx++;
-    }
-  }
-
-  return result;
+  return actions;
 }
 
-const TABLE_ACTION_NAME_SET = new Set(TABLE_ACTION_NAMES);
-
-/**
- * Count DTS-embedded sequences that occupy non-table action slots. The engine's
- * shape sequence array starts with embedded sequences (e.g. JetFlare, Damage)
- * before TSShapeConstructor sequences. We detect them by comparing the native DTS sequence table with TSShapeConstructor-derived clip names.
- */
-export function countEmbeddedNonTableSequences(
-  scene: Object3D,
-  animations: readonly AnimationClip[],
-  tscSequences: string[],
+/** PlayerData::preload (0x5cddf0): fixed table actions first, then every
+ * remaining sequence in shape order. TSShapeConstructor (0x6bd1b0) imports
+ * each DSQ in declaration order and renames only its last sequence. */
+export function buildActionAnimMap(
+  sequences: readonly string[],
   shapePrefix: string,
-): number {
-  const dtsNames = readDtsSequences(scene, animations).names;
-  if (dtsNames.length === 0) return 0;
-
-  // Build set of clip names derived from TSShapeConstructor DSQ entries.
-  const tscClipNames = new Set<string>();
-  for (const entry of tscSequences) {
-    const spaceIdx = entry.indexOf(" ");
-    if (spaceIdx === -1) continue;
-    const dsqFile = entry.slice(0, spaceIdx).toLowerCase();
-    if (!dsqFile.startsWith(shapePrefix) || !dsqFile.endsWith(".dsq")) continue;
-    const clipName = dsqFile.slice(shapePrefix.length, -4);
-    if (clipName) tscClipNames.add(clipName);
+  clips: readonly DTSAnimationClip[],
+): Map<number, ActionAnimEntry> {
+  const entries: ActionAnimEntry[] = [];
+  const sources = new Map<string, ActionAnimEntry[]>();
+  for (const clip of clips) {
+    const source = clip.sequence?.source;
+    const entry = {
+      clipName: clip.name.toLowerCase(),
+      alias: (source?.sequenceName ?? clip.name).toLowerCase(),
+    };
+    if (!source) {
+      entries.push(entry);
+    } else if (source.name) {
+      const key = source.name.toLowerCase();
+      let imported = sources.get(key);
+      if (!imported) sources.set(key, (imported = []));
+      imported.push(entry);
+    }
+  }
+  for (const entry of sequences) {
+    const match = /^(\S+)(?:[ \t]+(.+?))?\s*$/.exec(entry.trim());
+    if (!match) continue;
+    const file = match[1].toLowerCase().replace(/\\/g, "/").split("/").pop()!;
+    if (!file.startsWith(shapePrefix) || !file.endsWith(".dsq")) continue;
+    const imported = sources.get(file.slice(shapePrefix.length, -4));
+    if (!imported?.length) continue;
+    // A DSQ can be imported more than once with different aliases. Preserve
+    // both action slots without duplicating its keyframe buffers.
+    entries.push(...imported.slice(0, -1), {
+      ...imported[imported.length - 1],
+      alias: match[2]?.toLowerCase() ?? imported[imported.length - 1].alias,
+    });
   }
 
-  // Embedded sequences come first in the DTS. Count leading entries that don't
-  // match any TSShapeConstructor clip name, excluding any that are table actions.
-  let count = 0;
-  for (const name of dtsNames) {
-    if (tscClipNames.has(name)) break;
-    if (!TABLE_ACTION_NAME_SET.has(name)) count++;
-  }
-  return count;
+  const result = new Map<number, ActionAnimEntry>();
+  const tableEntries = new Set<number>();
+  TABLE_ACTION_NAMES.forEach((name, index) => {
+    const sequence = entries.findIndex((entry) => entry.alias === name);
+    if (sequence !== -1) {
+      result.set(index, entries[sequence]);
+      tableEntries.add(sequence);
+    }
+  });
+  let index = NUM_TABLE_ACTION_ANIMS;
+  entries.forEach((entry, sequence) => {
+    if (!tableEntries.has(sequence)) result.set(index++, entry);
+  });
+  return result;
 }

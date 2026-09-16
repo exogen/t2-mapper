@@ -20,7 +20,7 @@ import {
   yawPitchToQuaternion,
   MAX_PITCH,
 } from "../stream/streamHelpers";
-import type { StreamRecording, StreamCamera } from "../stream/types";
+import type { StreamRecording } from "../stream/types";
 import type { LiveStreamAdapter } from "../stream/liveStreaming";
 import type { ClientMove } from "../../relay/types";
 import { FramePriority } from "./framePriority";
@@ -159,8 +159,8 @@ export function InputConsumer() {
   const nextMoveIndex = useRef(0);
   // The last lastMoveAck we processed (to detect new server corrections).
   const lastProcessedAck = useRef(0);
-  // The last server camera snapshot we reconciled from (identity check).
-  const lastReconciledCamera = useRef<StreamCamera | null>(null);
+  // Simulation snapshots also change each tick; only packets are corrections.
+  const lastReconciledUpdate = useRef(-1);
 
   // ── Local predicted state (Torque coordinates) ──
   // Absolute predicted yaw/pitch in Torque radians.
@@ -229,7 +229,7 @@ export function InputConsumer() {
       moveBuffer.current.length = 0;
       nextMoveIndex.current = 0;
       lastProcessedAck.current = 0;
-      lastReconciledCamera.current = null;
+      lastReconciledUpdate.current = -1;
 
       setMode("fly");
     } else if (!isLive && activeAdapterRef.current) {
@@ -261,7 +261,7 @@ export function InputConsumer() {
       moveBuffer.current.length = 0;
       nextMoveIndex.current = 0;
       lastProcessedAck.current = 0;
-      lastReconciledCamera.current = null;
+      lastReconciledUpdate.current = -1;
       tickDeltaYaw.current = 0;
       tickDeltaPitch.current = 0;
       tickMoveX.current = 0;
@@ -290,7 +290,7 @@ export function InputConsumer() {
     });
   }, [isLive, setMode]);
 
-  // ── processTick: send moves at the Torque tick rate (32Hz). ──
+  // ── processTick: collect/send one move every 32 ms. ──
   useTick(() => {
     if (!activeAdapterRef.current || gameStatus !== "connected" || !liveReady)
       return;
@@ -366,6 +366,18 @@ export function InputConsumer() {
       freeLook: false,
     };
 
+    activeAdapterRef.current.submitMove(
+      {
+        ...move,
+        yaw: qYaw,
+        pitch: qPitch,
+        x: Math.max(0, Math.min(32, Math.round(mx * 16 + 16))) / 16 - 1,
+        y: Math.max(0, Math.min(32, Math.round(my * 16 + 16))) / 16 - 1,
+        z: Math.max(0, Math.min(32, Math.round(mz * 16 + 16))) / 16 - 1,
+      },
+      moveIndex,
+    );
+
     // Buffer for prediction replay and re-sending.
     const buffer = moveBuffer.current;
     buffer.push({
@@ -402,7 +414,7 @@ export function InputConsumer() {
     // ── Orbit target position tracking (follow mode) ──
     // Read the orbit target's position from the snapshot at tick rate,
     // matching Camera::processTick which reads getWorldBox().getCenter().
-    // Only update when the snapshot has actually changed (new packet data),
+    // Only update when the simulation snapshot has actually changed,
     // otherwise prev gets overwritten with current on every useTick, destroying
     // the interpolation endpoints between packets.
     const snap = activeAdapterRef.current.getSnapshot();
@@ -524,11 +536,11 @@ export function InputConsumer() {
     // Check for new server correction.
     if (
       serverCam &&
-      serverCam !== lastReconciledCamera.current &&
+      adapterRef.serverUpdateId !== lastReconciledUpdate.current &&
       typeof serverCam.yaw === "number" &&
       typeof serverCam.pitch === "number"
     ) {
-      lastReconciledCamera.current = serverCam;
+      lastReconciledUpdate.current = adapterRef.serverUpdateId;
 
       // Prune acknowledged moves from the buffer.
       const ack = adapterRef.lastMoveAck;

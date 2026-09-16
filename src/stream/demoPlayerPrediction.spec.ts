@@ -1,11 +1,16 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   BlockTypeMove,
   BlockTypePacket,
   type DemoParser,
   type MoveData,
   type ParsedData,
+  type PacketData,
+  type PacketParser,
 } from "t2-demo-parser";
+import { LiveStreamAdapter } from "./liveStreaming";
+import type { RelayClient } from "./relayClient";
+import type { StreamEntity } from "./types";
 import {
   createRecordingFromParser,
   DEMO_CHECKPOINT_TICKS,
@@ -54,6 +59,7 @@ function demo(
   lastClientMove = 0,
 ) {
   let cursor = 0;
+  const packetParser = { protocolRejected: 0, protocolNoDispatch: 0 };
   const parser = {
     header: { demoLengthMs: 100000 },
     initialBlock: {
@@ -95,11 +101,17 @@ function demo(
       getEventParser: () => undefined,
     }),
     getGhostTracker: () => ({ getGhost: () => ({ classId: 1 }) }),
-    getPacketParser: () => ({}),
+    getPacketParser: () => packetParser,
     reset: () => {
       cursor = 0;
     },
-    nextBlock: () => blocks[cursor++],
+    nextBlock: () => {
+      const block = blocks[cursor++] as
+        { discarded?: "rejected" | "noDispatch" } | undefined;
+      if (block?.discarded === "rejected") packetParser.protocolRejected++;
+      if (block?.discarded === "noDispatch") packetParser.protocolNoDispatch++;
+      return block;
+    },
     createCheckpoint: () => ({ cursor }),
     restoreCheckpoint: (checkpoint: { cursor: number }) => {
       cursor = checkpoint.cursor;
@@ -115,6 +127,7 @@ function demo(
 }
 
 afterEach(() => {
+  vi.restoreAllMocks();
   clearWorldColliders();
   setTerrainCollisionData(null);
 });
@@ -319,3 +332,202 @@ it("resumes the control player's queued moves and packet corrections from checkp
   expect(boundary.camera?.controlEntityId).toBe(boundary.entities[0].id);
   expect(restored.status).toEqual(expected.status);
 });
+
+it("restores the contact grace period and its animation transition across seek checkpoints", () => {
+  const createdAt = DEMO_CHECKPOINT_TICKS - 15;
+  const endTick = DEMO_CHECKPOINT_TICKS + 40;
+  const airbornePose = {
+    ...pose(0),
+    velocity: { x: 0, y: 10, z: 0 },
+    moveFlag0: false,
+  };
+  const blocks: unknown[] = [];
+  for (let tick = 0; tick < endTick; tick++) {
+    if (tick === createdAt) {
+      blocks.push(
+        packet([
+          { index: 0, type: "delete" },
+          {
+            index: 0,
+            type: "create",
+            classId: 1,
+            parsedData: { ...airbornePose, dataBlockId: 1 },
+          },
+        ]),
+      );
+    } else if (tick > createdAt) {
+      // Refresh velocity without resetting the client's contact history.
+      blocks.push(packet([update({ ...airbornePose, allowWarp: false })]));
+    }
+    blocks.push(move());
+  }
+  const forward = demo(blocks);
+  for (let tick = 1; tick <= endTick; tick++) forward.stepToTime(atTick(tick));
+  const expected = forward.getSnapshot().entities[0].clientAnimation;
+  expect(expected?.move).toMatchObject({
+    animation: "root",
+    timeSec: (createdAt + 30) * 0.032,
+  });
+  const seeking = demo(blocks);
+  expect(
+    seeking.stepToTime(atTick(endTick)).entities[0].clientAnimation,
+  ).toEqual(expected);
+  const backward = seeking.stepToTime(atTick(DEMO_CHECKPOINT_TICKS + 5));
+  expect(backward.entities[0].clientAnimation?.move?.animation).toBe("run");
+  expect(
+    seeking.stepToTime(atTick(endTick)).entities[0].clientAnimation,
+  ).toEqual(expected);
+});
+
+it.each(["play", "watch"] as const)(
+  "matches demo ticks, interpolation and animation in live %s mode",
+  (mode) => {
+    class Live extends LiveStreamAdapter {
+      constructor() {
+        super({} as RelayClient, { mode });
+        this.registry = {
+          getGhostParser: () => ({ name: "Player" }),
+          getEventParser: () => undefined,
+        } as typeof this.registry;
+      }
+      override getDataBlockData() {
+        return armor;
+      }
+    }
+    const live = new Live();
+    const internals = live as unknown as {
+      packetParser: PacketParser;
+      hydratedEpoch: number;
+    };
+    // Protocol hydration is covered by watchCatchup.spec. Here, decode identical
+    // packet contents for both transports, then exercise their production ticks.
+    internals.hydratedEpoch = 1;
+    const send = (block: ReturnType<typeof packet>) => {
+      vi.spyOn(internals.packetParser, "parsePacket").mockReturnValueOnce({
+        ...block.parsed,
+        dnetHeader: { packetType: 0 },
+      } as unknown as PacketData);
+      live.feedPacket(new Uint8Array([0]));
+    };
+    send(
+      packet([
+        {
+          index: 0,
+          type: "create",
+          classId: 1,
+          parsedData: { ...pose(0), dataBlockId: 1 },
+        },
+      ]),
+    );
+    const packets = Array.from({ length: 70 }, (_, tick) =>
+      tick % 5 === 0
+        ? packet([
+            update({
+              ...pose(tick / 2),
+              rotationZ: ((tick % 4) * Math.PI) / 2,
+              allowWarp: tick % 10 === 0,
+            }),
+          ])
+        : null,
+    );
+    const blocks = packets.flatMap((p) => (p ? [p, move()] : [move()]));
+    const recorded = demo(blocks);
+    const project = (entity: StreamEntity) => ({
+      position: entity.position,
+      rotation: entity.rotation,
+      velocity: entity.velocity,
+      playerDelta: entity.playerDelta,
+      jetting: entity.jetting,
+      falling: entity.falling,
+      clientAnimation: entity.clientAnimation,
+    });
+    for (let tick = 0; tick < packets.length; tick++) {
+      if (packets[tick]) send(packets[tick]!);
+      expect(project(live.stepToTime(atTick(tick + 1)).entities[0])).toEqual(
+        project(recorded.stepToTime(atTick(tick + 1)).entities[0]),
+      );
+    }
+  },
+);
+
+it("uses the same control-move replay for live and recorded packets", () => {
+  class Live extends LiveStreamAdapter {
+    override getDataBlockData() {
+      return armor;
+    }
+    seed() {
+      this.registry = {
+        getGhostParser: () => ({ name: "Player" }),
+        getEventParser: () => undefined,
+      } as typeof this.registry;
+      this.processGhostUpdate({
+        index: 0,
+        type: "create",
+        classId: 1,
+        parsedData: { ...pose(0), dataBlockId: 1 },
+      });
+      this.processControlObject({
+        controlObjectGhostIndex: 0,
+        controlObjectData: { ...pose(0), energyLevel: 100 },
+      });
+      this.correctControlPlayer({ ...pose(0), energyLevel: 100 });
+    }
+  }
+  const live = new Live({} as RelayClient);
+  live.seed();
+  const correction = packet([], {
+    lastMoveAck: 1,
+    controlObjectGhostIndex: 0,
+    controlObjectData: { ...pose(10), energyLevel: 100 },
+  });
+  const recorded = demo([move(), move(), correction, move()], true);
+  live.submitMove(move().parsed, 0);
+  live.stepToTime(0.032);
+  live.submitMove(move().parsed, 1);
+  live.stepToTime(0.064);
+  const parser = (live as unknown as { packetParser: PacketParser })
+    .packetParser;
+  vi.spyOn(parser, "parsePacket").mockReturnValueOnce({
+    ...correction.parsed,
+    dnetHeader: { packetType: 0 },
+  } as unknown as PacketData);
+  live.feedPacket(new Uint8Array([0]));
+  live.submitMove(move().parsed, 2);
+  const expected = recorded.stepToTime(0.096);
+  const actual = live.stepToTime(0.096);
+  expect(actual.entities[0].position).toEqual(expected.entities[0].position);
+  expect(actual.entities[0].position?.[0]).toBe(11);
+  expect(actual.entities[0].playerDelta).toEqual(
+    expected.entities[0].playerDelta,
+  );
+  expect(actual.camera?.position).toEqual(expected.camera?.position);
+});
+
+it.each(["rejected", "noDispatch"] as const)(
+  "ignores recorded packets suppressed by ConnectionProtocol: %s",
+  (discarded) => {
+    const stream = demo(
+      [
+        move(),
+        { ...packet([], { lastMoveAck: 50 }), discarded },
+        packet([], {
+          lastMoveAck: 0,
+          controlObjectGhostIndex: 0,
+          controlObjectData: { ...pose(10), energyLevel: 100 },
+        }),
+        move(),
+        packet([], {
+          lastMoveAck: 1,
+          controlObjectGhostIndex: 0,
+          controlObjectData: { ...pose(20), energyLevel: 100 },
+        }),
+        move(),
+      ],
+      true,
+    );
+    const result = stream.stepToTime(0.096);
+    // The ignored packet must not advance the move index to 50: the real
+    // ack=1 should remove move 0, replay move 1, then process move 2.
+    expect(result.entities[0].position?.[0]).toBe(21);
+  },
+);

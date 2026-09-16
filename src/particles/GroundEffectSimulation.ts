@@ -162,17 +162,13 @@ export class GroundEffectSimulation {
     const move = actor.clientAnimation?.move;
     if (!move) return;
     const shapeName = String(db.shapeName ?? "");
-    const alias = (name: string) => {
-      if (shape.clips.has(name)) return name;
-      return (
-        groundActionName(
-          this.playback,
-          shape,
-          shapeName,
-          TABLE_ACTION_NAMES.indexOf(name),
-        ) ?? name
+    const clipName = (key: string | number) =>
+      groundActionName(
+        this.playback,
+        shape,
+        shapeName,
+        typeof key === "number" ? key : TABLE_ACTION_NAMES.indexOf(key),
       );
-    };
     const sample = (time: number) =>
       samplePlayerPose(
         move,
@@ -180,13 +176,14 @@ export class GroundEffectSimulation {
         actor.mounted,
         time,
         0,
-        (i) => groundActionName(this.playback, shape, shapeName, i),
-        (name) => groundClipInfo(shape, alias(name)),
+        (i) => i,
+        (key) => groundClipInfo(shape, clipName(key)),
       )[0];
     const pose = sample(now);
     const previous = this.poses.get(actor.key);
     let state = previous?.state ?? 0;
-    const clip = shape.clips.get(alias(pose.name));
+    const name = clipName(pose.name);
+    const clip = name != null ? shape.clips.get(name) : undefined;
     if (clip && previous) {
       const before = sample(previous.timeSec);
       const from =
@@ -195,7 +192,7 @@ export class GroundEffectSimulation {
         clip.triggers,
         from,
         pose.phase ?? pose.position,
-        groundClipInfo(shape, alias(pose.name))?.cyclic ?? false,
+        groundClipInfo(shape, name)?.cyclic ?? false,
         state,
       );
     }

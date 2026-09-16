@@ -183,6 +183,7 @@ export function mergeDSQ(
       s.firstTrigger += triggerOffset;
       s.nameIndex = result.names.length;
       const embeddedName = data.sequenceNames[original.nameIndex];
+      s.source = { name, sequenceName: embeddedName };
       result.names.push(
         name
           ? data.sequences.length === 1

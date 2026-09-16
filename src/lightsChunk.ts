@@ -5,7 +5,7 @@
  * interior shaders compute the sun in gamma space themselves — need to
  * know which loop a call came from. Rather than guessing from the light's
  * direction, hand each loop its own function: this rewrites the chunk so
- * the directional loop calls `directional` and the point/spot loops call
+ * the sun/directional loops call `directional` and the point/spot loops call
  * `punctual` (either defaults to `RE_Direct`).
  */
 import { ShaderChunk } from "three";
@@ -66,11 +66,17 @@ export function lightsFragmentBeginByType({
     source = renameCallsIn(
       source,
       "NUM_SPOT_LIGHTS",
-      "NUM_DIR_LIGHTS",
+      "NUM_SUN_LIGHTS",
       punctual,
     );
   }
   if (directional !== "RE_Direct") {
+    source = renameCallsIn(
+      source,
+      "NUM_SUN_LIGHTS",
+      "NUM_DIR_LIGHTS",
+      directional,
+    );
     source = renameCallsIn(
       source,
       "NUM_DIR_LIGHTS",

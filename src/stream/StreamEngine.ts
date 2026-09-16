@@ -1,3 +1,4 @@
+import { THRUST_BACKWARD, THRUST_DOWN, THRUST_FORWARD } from "./types";
 import { GroundEffectHistory, type GroundActor } from "./groundEffectHistory";
 import { timelineRandom } from "./timelineRandom";
 import {
@@ -468,6 +469,10 @@ export abstract class StreamEngine implements StreamingPlayback {
 
   // ── Tick / time ──
   protected tickCount = 0;
+  protected groundEffectsEnabled = true;
+  protected pendingPlayerMoves: { id: number; move: PlayerMove }[] = [];
+  protected nextPlayerMoveId = 0;
+  protected lastClientMoveId = 0;
   protected playerPredictionEnabled = false;
   protected skippedPlayerPrediction = false;
 
@@ -544,6 +549,7 @@ export abstract class StreamEngine implements StreamingPlayback {
   protected lastVehicleVelocity?: [number, number, number];
   /** Last known vehicle position in Torque space for extrapolation. */
   protected lastVehiclePos?: [number, number, number];
+  private lastVehicleControl?: RuntimeControlObject;
   protected firstPerson = true;
   protected lastCameraMode?: number;
   protected lastOrbitGhostIndex?: number;
@@ -807,6 +813,9 @@ export abstract class StreamEngine implements StreamingPlayback {
         entityIdByGhostIndex: this.entityIdByGhostIndex,
         ghostAlwaysDoneSec: this.ghostAlwaysDoneSec,
         tickCount: this.tickCount,
+        pendingPlayerMoves: this.pendingPlayerMoves,
+        nextPlayerMoveId: this.nextPlayerMoveId,
+        lastClientMoveId: this.lastClientMoveId,
         skippedPlayerPrediction: this.skippedPlayerPrediction,
         camera: this.camera,
         chatMessages: this.chatMessages,
@@ -839,6 +848,7 @@ export abstract class StreamEngine implements StreamingPlayback {
         lastVehicleOrbitDir: this.lastVehicleOrbitDir,
         lastVehicleVelocity: this.lastVehicleVelocity,
         lastVehiclePos: this.lastVehiclePos,
+        lastVehicleControl: this.lastVehicleControl,
         firstPerson: this.firstPerson,
         lastCameraMode: this.lastCameraMode,
         lastOrbitGhostIndex: this.lastOrbitGhostIndex,
@@ -967,6 +977,9 @@ export abstract class StreamEngine implements StreamingPlayback {
     this.loadInfo.reset();
     this.clearAllEntities();
     this.tickCount = 0;
+    this.pendingPlayerMoves = [];
+    this.nextPlayerMoveId = 0;
+    this.lastClientMoveId = 0;
     this.camera = null;
     this.chatMessages = [];
     this.chatMessageIdCounter = 0;
@@ -1006,6 +1019,7 @@ export abstract class StreamEngine implements StreamingPlayback {
     this.lastVehicleOrbitDir = undefined;
     this.lastVehicleVelocity = undefined;
     this.lastVehiclePos = undefined;
+    this.lastVehicleControl = undefined;
     this.firstPerson = true;
     this.lastCameraMode = undefined;
     this.lastOrbitGhostIndex = undefined;
@@ -1069,7 +1083,13 @@ export abstract class StreamEngine implements StreamingPlayback {
 
     this.latestControl = {
       ghostIndex: nextGhostIndex,
-      data: controlData,
+      // Absent fields mean unchanged, as GameConnection::readPacket only
+      // invokes readPacketData for a dirty control object (0x5fb9f0).
+      data:
+        controlData ??
+        (nextGhostIndex === prevControl.ghostIndex
+          ? prevControl.data
+          : undefined),
       position: controlPosition,
     };
 
@@ -1093,6 +1113,11 @@ export abstract class StreamEngine implements StreamingPlayback {
           this.isPiloting &&
           typeof controlData.controlObjectGhost === "number"
         ) {
+          if (this.lastPilotGhostIndex !== controlData.controlObjectGhost) {
+            this.lastVehicleControl = undefined;
+            this.lastVehiclePos = undefined;
+            this.lastVehicleVelocity = undefined;
+          }
           this.lastPilotGhostIndex = controlData.controlObjectGhost;
         } else if (!this.isPiloting) {
           this.lastPilotGhostIndex = undefined;
@@ -1104,6 +1129,7 @@ export abstract class StreamEngine implements StreamingPlayback {
         }
       } else {
         this.isPiloting = false;
+        this.controlPlayerGhostId = undefined;
         if (typeof controlData.cameraMode === "number") {
           this.lastCameraMode = controlData.cameraMode;
           if (controlData.cameraMode === CameraMode_OrbitObject) {
@@ -1717,6 +1743,79 @@ export abstract class StreamEngine implements StreamingPlayback {
     entity.playerDelta = prediction.renderDelta();
   }
 
+  /** ProcessList::advanceObjects: one 32 ms tick, regardless of packet source. */
+  protected processTick(): void {
+    this.tickCount++;
+    this.advanceProjectiles();
+    this.advanceItems();
+    this.advanceControlVehicle();
+    this.advancePlayers();
+    this.lastClientMoveId = this.nextPlayerMoveId;
+    this.advanceFades();
+    this.advanceShapeAnimations();
+    this.advanceForceFields();
+    this.advanceControlEnergy();
+    if (this.groundEffectsEnabled) this.recordGroundEffects();
+    this.updateCameraAndHud();
+  }
+
+  /** Newly collected input, never the retransmitted unacknowledged move array. */
+  protected collectMove(move: PlayerMove, id = this.nextPlayerMoveId): void {
+    if (id < this.nextPlayerMoveId) return;
+    this.nextPlayerMoveId = id + 1;
+    if (this.playerPredictionEnabled && this.lastControlType === "player")
+      this.pendingPlayerMoves.push({ id, move });
+    else this.pendingPlayerMoves.length = 0;
+    // The control player's ghost skips MoveMask (the server knows the client
+    // predicts its own state). Derive jetting from the move's trigger[3],
+    // matching Tribes2.exe Player::updateMove: mJetting = trigger[3] &&
+    // energy >= minJetEnergy && state == MoveState && !disableMove.
+    const triggers = move.trigger;
+    if (triggers && this.controlPlayerGhostId) {
+      const entity = this.entities.get(this.controlPlayerGhostId);
+      if (entity) {
+        entity.jetting = !!triggers[3];
+      }
+    }
+    // The piloted vehicle's ghost skips its jet fields the same way
+    // (Vehicle/FlyingVehicle::unpackUpdate control gate). Vehicle::
+    // updateMove (FUN_0060b110) sets jetting from the same trigger and
+    // FlyingVehicle::updateMove (FUN_00610220) picks the thrust direction
+    // from move.y. The energy gate on jetting is not modelled.
+    if (triggers && this.isPiloting && this.lastPilotGhostIndex != null) {
+      const vehicleId = this.resolveEntityIdForGhostIndex(
+        this.lastPilotGhostIndex,
+      );
+      const vehicle = vehicleId ? this.entities.get(vehicleId) : undefined;
+      const moveY = move.y;
+      if (vehicle) {
+        vehicle.jetting = !!triggers[3];
+        if (vehicle.className === "FlyingVehicle" && moveY != null) {
+          vehicle.thrustDirection =
+            moveY === 0
+              ? THRUST_DOWN
+              : moveY < 0
+                ? THRUST_BACKWARD
+                : THRUST_FORWARD;
+        }
+      }
+    }
+  }
+
+  protected acknowledgeMoves(ack: number, controlData?: ParsedData): void {
+    this.pendingPlayerMoves = this.pendingPlayerMoves.filter(
+      ({ id }) => id >= ack,
+    );
+    this.nextPlayerMoveId = Math.max(this.nextPlayerMoveId, ack);
+    if (controlData) {
+      this.correctControlPlayer(
+        controlData as PlayerPacketData,
+        this.pendingPlayerMoves.map(({ move }) => move),
+      );
+      if (controlData.position) this.lastClientMoveId = this.nextPlayerMoveId;
+    }
+  }
+
   protected correctControlPlayer(
     data: PlayerPacketData,
     moves: readonly PlayerMove[] = [],
@@ -1748,7 +1847,7 @@ export abstract class StreamEngine implements StreamingPlayback {
     this.publishPlayerPrediction(entity, prediction);
   }
 
-  protected advancePlayers(controlMoves: readonly PlayerMove[] = []): void {
+  protected advancePlayers(): void {
     if (!this.playerPredictionEnabled) return;
     if (!this.playerCollisionReady()) {
       for (const entity of this.entities.values()) {
@@ -1769,19 +1868,22 @@ export abstract class StreamEngine implements StreamingPlayback {
           entity.mountObjectGhostIndex != null ||
           (isControl && this.isPiloting);
         prediction.allowFreelook = isControl && !this.firstPerson;
-        if (prediction.mounted) {
-          entity.playerDelta = undefined;
-          continue;
-        }
+        let processed = !isControl;
         if (isControl) {
-          for (const move of controlMoves)
+          for (const { id, move } of this.pendingPlayerMoves) {
+            if (id < this.lastClientMoveId) continue;
             prediction.processTick(
               this.worldGravity,
               move,
               this.controlRechargeRate,
             );
+            processed = true;
+          }
         } else prediction.processTick(this.worldGravity);
         this.publishPlayerPrediction(entity, prediction);
+        // With no newly collected input, reusing the previous tick's backstep
+        // would visibly replay that movement even though the position is fixed.
+        if (!processed) entity.playerDelta = undefined;
       }
     });
   }
@@ -2599,6 +2701,30 @@ export abstract class StreamEngine implements StreamingPlayback {
       entity.fadeVal = data.fadeVal ? 1 : 0;
       entity.fadeState = undefined;
     }
+    // MountedMask: track mount state for position derivation and animation.
+    if (typeof data.mountObject === "number") {
+      if (data.mountObject >= 0) {
+        // Mounting on a vehicle/object.
+        entity.mountObjectGhostIndex = data.mountObject;
+        entity.mountNode =
+          typeof data.mountNode === "number" ? data.mountNode : 0;
+      } else {
+        // Unmounting — clear mount state and reset action animation.
+        // Server resets to RootAnim (table action 0) via onUnmount→
+        // setActionThread, but table actions (0-7) are never sent
+        // over the wire, so actionAnim would remain stale.
+        entity.mountObjectGhostIndex = undefined;
+        entity.mountNode = undefined;
+        entity.actionAnim = undefined;
+        entity.actionAtEnd = undefined;
+        entity.actionHoldAtEnd = undefined;
+        entity.actionAnimPos = undefined;
+        entity.actionTimeSec = undefined;
+      }
+    }
+
+    // Player::unpackUpdate (0x5db2d0) applies its action after ShapeBase's
+    // mount update. A simultaneous unmount must not erase a new death/pose.
     if (typeof data.action === "number") {
       entity.actionAnim = data.action;
       entity.actionAtEnd = !!data.actionAtEnd;
@@ -2610,28 +2736,6 @@ export abstract class StreamEngine implements StreamingPlayback {
     }
     if (typeof data.armAction === "number") {
       entity.armAction = data.armAction;
-    }
-
-    // MountedMask: track mount state for position derivation and animation.
-    if (typeof data.mountObject === "number") {
-      if (data.mountObject >= 0) {
-        // Mounting on a vehicle/object.
-        entity.mountObjectGhostIndex = data.mountObject;
-        entity.mountNode =
-          typeof data.mountNode === "number" ? data.mountNode : 0;
-      } else {
-        // Unmounting — clear mount state and reset action animation.
-        // Server resets to RootAnim (table action 0) via onUnmount→
-        // setActionThread, but table actions (0-6) are never sent
-        // over the wire, so actionAnim would remain stale.
-        entity.mountObjectGhostIndex = undefined;
-        entity.mountNode = undefined;
-        entity.actionAnim = undefined;
-        entity.actionAtEnd = undefined;
-        entity.actionHoldAtEnd = undefined;
-        entity.actionAnimPos = undefined;
-        entity.actionTimeSec = undefined;
-      }
     }
 
     // Threads
@@ -3062,10 +3166,68 @@ export abstract class StreamEngine implements StreamingPlayback {
     }
   }
 
+  /** Apply a control packet once; camera updates must not undo tick prediction. */
+  private syncControlVehicle(): void {
+    const control = this.latestControl;
+    if (
+      !this.isPiloting ||
+      this.lastPilotGhostIndex == null ||
+      !control.position ||
+      control === this.lastVehicleControl
+    )
+      return;
+    const id = this.resolveEntityIdForGhostIndex(this.lastPilotGhostIndex);
+    const vehicle = id ? this.entities.get(id) : undefined;
+    if (!vehicle) return;
+    // An unrelated packet retains the same position reference. Only a new
+    // position corrects extrapolation; sparse velocity/orientation updates persist.
+    if (
+      control.position !== this.lastVehicleControl?.position ||
+      !this.lastVehiclePos
+    ) {
+      this.lastVehiclePos = [
+        control.position.x,
+        control.position.y,
+        control.position.z,
+      ];
+      vehicle.position = [...this.lastVehiclePos];
+    }
+    const data = control.data;
+    if (data !== this.lastVehicleControl?.data) {
+      const nested = data?.controlObjectData as ParsedData | undefined;
+      const momentum = nested?.linMomentum as Vec3 | undefined;
+      if (isValidPosition(momentum)) {
+        // Client Rigid mass is 1, so packed momentum is velocity.
+        this.lastVehicleVelocity = [momentum.x, momentum.y, momentum.z];
+        vehicle.velocity = this.lastVehicleVelocity;
+      }
+      const rotation = nested?.angPosition as
+        { x: number; y: number; z: number; w: number } | undefined;
+      if (rotation && typeof rotation.w === "number") {
+        this.lastVehicleHeading = torqueQuatHeading(rotation);
+        this.lastVehiclePitch = torqueQuatPitch(rotation);
+        const converted = torqueQuatToThreeJS(rotation);
+        if (converted) {
+          vehicle.rotation = converted;
+          // ShapeBase::getCameraTransform pulls back along the eye's -Y
+          // in Torque space (Three.js -X). Use the full quaternion for roll.
+          const [qx, qy, qz, qw] = converted;
+          this.lastVehicleOrbitDir = [
+            -(1 - 2 * (qy * qy + qz * qz)),
+            -2 * (qx * qy + qz * qw),
+            -2 * (qx * qz - qy * qw),
+          ];
+        }
+      }
+    }
+    this.lastVehicleControl = control;
+  }
+
   /** Extrapolate the control vehicle's position each tick using velocity.
    *  controlObjectData arrives sparsely (~10 of ~62 packets/sec). Between
    *  updates, we integrate position from the last known velocity. */
   protected advanceControlVehicle(): void {
+    this.syncControlVehicle();
     if (!this.isPiloting || this.lastPilotGhostIndex == null) return;
     if (!this.lastVehiclePos || !this.lastVehicleVelocity) {
       if (this.tickCount % 100 === 0) {
@@ -3264,6 +3426,7 @@ export abstract class StreamEngine implements StreamingPlayback {
   // ── Camera and HUD ──
 
   protected updateCameraAndHud(): void {
+    this.syncControlVehicle();
     const control = this.latestControl;
     const timeSec = this.getTimeSec();
     const data = control.data;
@@ -3281,43 +3444,15 @@ export abstract class StreamEngine implements StreamingPlayback {
       // Use the vehicle's heading directly instead of move-accumulated yaw.
       // Verified against tribes2-engine Player::updateMove and Tribes2.exe.
       if (this.isPiloting) {
-        if (data) {
-          const nested = data.controlObjectData as ParsedData | undefined;
-          const ang = nested?.angPosition as
-            { x: number; y: number; z: number; w: number } | undefined;
-          if (ang && typeof ang.w === "number") {
-            this.lastVehicleHeading = torqueQuatHeading(ang);
-            this.lastVehiclePitch = torqueQuatPitch(ang);
-            // Compute pullback direction from full quaternion (preserves roll).
-            // ShapeBase::getCameraTransform pulls back along the eye's -Y axis.
-            // In Torque space, forward is +Y. Transform +Y by the quaternion,
-            // convert to Three.js, then negate for pullback.
-            const threeQ = torqueQuatToThreeJS(ang);
-            if (threeQ) {
-              // Rotate Three.js forward (+X, since model default is +X) by the
-              // converted quaternion: v' = q * v * q^-1.
-              // For unit vector (1,0,0), this simplifies to:
-              const [qx, qy, qz, qw] = threeQ;
-              const fx = 1 - 2 * (qy * qy + qz * qz);
-              const fy = 2 * (qx * qy + qz * qw);
-              const fz = 2 * (qx * qz - qy * qw);
-              // Pullback = -forward
-              this.lastVehicleOrbitDir = [-fx, -fy, -fz];
-            }
-          }
-        }
         yaw = this.lastVehicleHeading;
         pitch = this.lastVehiclePitch;
       }
 
-      // control.position falls back to compressionPoint, which is the vehicle's
-      // position when piloting. This updates every packet (~20/s), not just
-      // when controlObjectData is present (~1/s).
-      const cameraPos: [number, number, number] = [
-        control.position.x,
-        control.position.y,
-        control.position.z,
-      ];
+      // Follow the simulated vehicle position between server corrections.
+      const cameraPos: [number, number, number] =
+        this.isPiloting && this.lastVehiclePos
+          ? [...this.lastVehiclePos]
+          : [control.position.x, control.position.y, control.position.z];
 
       const predictedControlId = this.entityIdByGhostIndex.get(
         control.ghostIndex,
@@ -3423,18 +3558,10 @@ export abstract class StreamEngine implements StreamingPlayback {
         }
       }
 
-      // Sync control object positions. When piloting, control.position is
-      // the compressionPoint (= vehicle position), updated every packet.
-      // controlObjectData (with linMomentum, angPosition) arrives more
-      // sparsely (~1/s); we use it for velocity and rotation.
+      // Mounted placement owns the pilot's body; unpredicted players retain
+      // their packet poses (for example, headless timeline scans).
       if (controlType === "player" && control.position) {
         if (this.isPiloting && this.lastPilotGhostIndex != null) {
-          const vehicleId = this.resolveEntityIdForGhostIndex(
-            this.lastPilotGhostIndex,
-          );
-          const vehicleEntity = vehicleId
-            ? this.entities.get(vehicleId)
-            : undefined;
           // The recorder's own body sits in the seat with the yaw the
           // server zeroed on mount (Armor::onMount setTransform), which
           // reaches the control client through its packet data.
@@ -3446,38 +3573,6 @@ export abstract class StreamEngine implements StreamingPlayback {
             pilotEntity.mountNode === 0
           ) {
             pilotEntity.rotation = playerYawToQuaternion(0);
-          }
-          if (vehicleEntity) {
-            // compressionPoint provides position on every packet.
-            vehicleEntity.position = [
-              control.position.x,
-              control.position.y,
-              control.position.z,
-            ];
-            this.lastVehiclePos = vehicleEntity.position.slice() as [
-              number,
-              number,
-              number,
-            ];
-
-            // Sparse controlObjectData provides velocity and rotation.
-            const nested = data?.controlObjectData as ParsedData | undefined;
-            if (nested) {
-              const mom = nested.linMomentum as
-                { x: number; y: number; z: number } | undefined;
-              if (mom && isValidPosition(mom)) {
-                // The client Rigid's mass is 1 (see applyGhostData), so
-                // the packed momentum already is the velocity.
-                this.lastVehicleVelocity = [mom.x, mom.y, mom.z];
-                vehicleEntity.velocity = this.lastVehicleVelocity;
-              }
-              const ang = nested.angPosition as
-                { x: number; y: number; z: number; w: number } | undefined;
-              if (ang && typeof ang.w === "number") {
-                const converted = torqueQuatToThreeJS(ang);
-                if (converted) vehicleEntity.rotation = converted;
-              }
-            }
           }
         } else if (this.controlPlayerGhostId) {
           const ghostEntity = this.entities.get(this.controlPlayerGhostId);

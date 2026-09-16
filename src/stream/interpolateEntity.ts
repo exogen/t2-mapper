@@ -3,8 +3,7 @@ import type { Camera, Object3D } from "three";
 import type { GameEntity } from "../state/gameEntityTypes";
 import type { StreamEntity } from "./types";
 
-const quatA = new Quaternion(),
-  quatB = new Quaternion(),
+const quatB = new Quaternion(),
   billboardFlip = new Quaternion(0, 1, 0, 0);
 /** The current interpolation inputs, shared with visuals acquired later in the frame. */
 export const streamRenderFrame: {
@@ -12,6 +11,28 @@ export const streamRenderFrame: {
   previous: ReadonlyMap<string, StreamEntity> | null;
   interpT: number;
 } = { current: null, previous: null, interpT: 0 };
+
+/** Player body yaw is relative to its mount, but uses the same render delta
+ * and snapshot interpolation as an unmounted entity's rotation. */
+export function applyStreamEntityRotation(
+  target: Quaternion,
+  entity: Pick<StreamEntity, "rotation" | "playerDelta">,
+  previousEntity: Pick<StreamEntity, "rotation"> | undefined,
+  interpT: number,
+): void {
+  if (entity.playerDelta) {
+    const { rot, rotVec } = entity.playerDelta;
+    const halfAngle = -(rot + rotVec * (1 - interpT)) / 2;
+    target.set(0, Math.sin(halfAngle), 0, Math.cos(halfAngle));
+  } else if (entity.rotation) {
+    if (previousEntity?.rotation) {
+      quatB.fromArray(entity.rotation);
+      target.fromArray(previousEntity.rotation).slerp(quatB, interpT);
+    } else {
+      target.fromArray(entity.rotation);
+    }
+  }
+}
 
 export function applyStreamEntityPose(
   child: Object3D,
@@ -76,18 +97,12 @@ export function applyStreamEntityPose(
     child.quaternion.copy(camera.quaternion).multiply(billboardFlip);
   } else if (entity.visual?.kind === "tracer") {
     child.quaternion.identity();
-  } else if (entity.playerDelta) {
-    const { rot, rotVec } = entity.playerDelta;
-    const halfAngle = -(rot + rotVec * (1 - interpT)) / 2;
-    child.quaternion.set(0, Math.sin(halfAngle), 0, Math.cos(halfAngle));
-  } else if (entity.rotation) {
-    if (previousEntity?.rotation) {
-      quatA.set(...previousEntity.rotation);
-      quatB.set(...entity.rotation);
-      quatA.slerp(quatB, interpT);
-      child.quaternion.copy(quatA);
-    } else {
-      child.quaternion.set(...entity.rotation);
-    }
+  } else {
+    applyStreamEntityRotation(
+      child.quaternion,
+      entity,
+      previousEntity,
+      interpT,
+    );
   }
 }

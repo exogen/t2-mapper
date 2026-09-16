@@ -10,16 +10,11 @@ import type {
   TorqueObject,
   TorqueRuntime,
 } from "../torqueScript";
-import {
-  buildSequenceAliasMap,
-  type SequenceAliasMap,
-} from "../torqueScript/shapeConstructor";
 
 export type PlaybackStatus = "stopped" | "playing" | "paused";
 
 export interface RuntimeSliceState {
   runtime: TorqueRuntime | null;
-  sequenceAliases: SequenceAliasMap;
   objectVersionById: Record<number, number>;
   globalVersionByName: Record<string, number>;
   objectIdsByName: Record<string, number>;
@@ -141,7 +136,6 @@ const initialState: Omit<
 > = {
   runtime: {
     runtime: null,
-    sequenceAliases: new Map(),
     objectVersionById: {},
     globalVersionByName: {},
     objectIdsByName: {},
@@ -166,12 +160,10 @@ export const engineStore = createStore<EngineStoreState>()(
 
     setRuntime(runtime: TorqueRuntime) {
       const indexes = buildRuntimeIndexes(runtime);
-      const sequenceAliases = buildSequenceAliasMap(runtime);
       set((state) => ({
         ...state,
         runtime: {
           runtime,
-          sequenceAliases,
           objectVersionById: indexes.objectVersionById,
           globalVersionByName: indexes.globalVersionByName,
           objectIdsByName: indexes.objectIdsByName,
@@ -186,7 +178,6 @@ export const engineStore = createStore<EngineStoreState>()(
         ...state,
         runtime: {
           runtime: null,
-          sequenceAliases: new Map(),
           objectVersionById: {},
           globalVersionByName: {},
           objectIdsByName: {},
