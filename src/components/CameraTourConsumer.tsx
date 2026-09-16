@@ -21,6 +21,7 @@ import type { TourTarget } from "../state/mapTourCategories";
 import { globalFogUniforms } from "../globalFogUniforms";
 import { createLogger } from "../logger";
 import { FramePriority } from "./framePriority";
+import { computeObjectBounds } from "../sceneBounds";
 
 const log = createLogger("CameraTourConsumer");
 
@@ -54,8 +55,6 @@ const LOOK_LEAD = 1.4;
 // Reusable temp objects to avoid GC pressure.
 const _box = new Box3();
 const _localBox = new Box3();
-const _childBox = new Box3();
-const _childMat = new Matrix4();
 const _center = new Vector3();
 const _size = new Vector3();
 const _v = new Vector3();
@@ -114,40 +113,22 @@ function resolveTargetBounds(
   animation: TourAnimation,
 ): void {
   const obj = scene.getObjectByName(target.entityId);
-  // Check if the scene object has any geometry to compute bounds from.
-  let hasGeometry = false;
-  if (obj) {
-    obj.traverse((child: any) => {
-      if (child.geometry) hasGeometry = true;
-    });
-  }
-  if (obj && !hasGeometry) {
+  if (obj) computeObjectBounds(obj, _box, { localBounds: _localBox });
+  if (obj && _box.isEmpty()) {
     // Entity exists but has no geometry (WayPoints, markers, etc.).
     // Use target position directly with a wider orbit.
     animation.orbitCenter = [...target.position];
     animation.orbitRadius = POINT_ORBIT_RADIUS;
     return;
   }
-  if (obj && hasGeometry) {
+  if (obj) {
     // World-space AABB center for the orbit focus (where the camera looks).
-    _box.setFromObject(obj);
     _box.getCenter(_center);
     animation.orbitCenter = [_center.x, _center.y, _center.z];
 
     // Local-space AABB for sizing. World-space boxes inflate with rotation,
     // giving different sizes for identical models at different orientations.
-    // Instead, transform each child geometry's box into the root object's
-    // local frame so the size is rotation-independent.
-    const invWorld = _mat.copy(obj.matrixWorld).invert();
-    _localBox.makeEmpty();
-    obj.traverse((child: any) => {
-      if (!child.geometry) return;
-      if (!child.geometry.boundingBox) child.geometry.computeBoundingBox();
-      _childBox.copy(child.geometry.boundingBox);
-      _childMat.multiplyMatrices(invWorld, child.matrixWorld);
-      _childBox.applyMatrix4(_childMat);
-      _localBox.union(_childBox);
-    });
+    // computeObjectBounds measures each posed child in the root's local frame.
     _localBox.getSize(_size);
     // Pad each dimension's half-extent, then take the larger result.
     // This gives a consistent standoff distance regardless of object size.
@@ -158,7 +139,7 @@ function resolveTargetBounds(
     const computed = Math.max(fromHeight, fromSpread);
     // For very large objects (terrain, water), use target position as orbit
     // center and compute a stable radius from the single-tile geometry bounds
-    // (setFromObject includes dynamic instanced tiles that vary with camera).
+    // (world bounds include dynamic instanced tiles that vary with camera).
     const isLarge = computed > 200;
     if (isLarge) {
       animation.orbitCenter = [...target.position];

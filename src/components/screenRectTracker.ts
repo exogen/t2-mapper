@@ -1,7 +1,17 @@
-import { Mesh, Object3D, Vector3, type Camera } from "three";
+import {
+  Box3,
+  InstancedMesh,
+  Mesh,
+  Object3D,
+  SkinnedMesh,
+  Vector3,
+  type Camera,
+} from "three";
+import { computeDTSSkinBounds } from "../dts/dtsSkinBounds";
 import type { ScreenRect } from "./screenAnchor";
 
 const _corner = new Vector3();
+const _skinBounds = new Box3();
 
 export function isAttachedToScene(object: Object3D, scene: Object3D): boolean {
   let node: Object3D | null = object;
@@ -12,8 +22,7 @@ export function isAttachedToScene(object: Object3D, scene: Object3D): boolean {
 function collectMeshes(root: Object3D): Mesh[] {
   const meshes: Mesh[] = [];
   root.traverse((child) => {
-    const mesh = child as Mesh;
-    if (mesh.isMesh && mesh.geometry) meshes.push(mesh);
+    if (child instanceof Mesh) meshes.push(child);
   });
   return meshes;
 }
@@ -30,12 +39,12 @@ function isEffectivelyVisible(object: Object3D, root: Object3D): boolean {
     if (node === root) return true;
     node = node.parent;
   }
-  return true;
+  return false;
 }
 
 /**
  * Frame-by-frame projector of an object's screen-space bounding rectangle:
- * the 8 corners of each mesh's (cached) geometry bounding box go through
+ * the 8 corners of each mesh's posed bounding box go through
  * the camera to viewport pixels, accumulating `rect`. Mesh lists are
  * cached per target and rebuilt when the target changes, is replaced (e.g.
  * a Suspense placeholder swapping for the streamed model), or detaches;
@@ -86,7 +95,7 @@ export class ScreenRectTracker {
   ): boolean {
     if (
       this.cachedRoot !== root ||
-      (this.meshes.length > 0 && !isAttachedToScene(this.meshes[0], scene))
+      this.meshes.some((mesh) => !isAttachedToScene(mesh, scene))
     ) {
       this.cachedRoot = root;
       this.meshes = collectMeshes(root);
@@ -102,7 +111,7 @@ export class ScreenRectTracker {
     // callbacks — meshes added THIS frame (e.g. the tour flash clones)
     // still carry identity matrices and would project at the world origin,
     // wildly inflating the rect. Force the subtree current first.
-    root.updateWorldMatrix(true, true);
+    root.updateWorldMatrix(true, true, true);
     let minX = Infinity;
     let minY = Infinity;
     let maxX = -Infinity;
@@ -127,10 +136,27 @@ export class ScreenRectTracker {
     let projectedMeshes = 0;
     for (const mesh of this.meshes) {
       if (!isEffectivelyVisible(mesh, root)) continue;
-      projectedMeshes++;
       const geometry = mesh.geometry;
-      if (!geometry.boundingBox) geometry.computeBoundingBox();
-      const box = geometry.boundingBox!;
+      let box: Box3;
+      if (mesh instanceof SkinnedMesh) {
+        // Refresh the attached bind inverse, then bound bones rather than
+        // skinning every vertex on every frame. Unusual skins use Three's
+        // exact fallback (e.g. meshes with morph targets).
+        mesh.updateMatrixWorld(true);
+        if (computeDTSSkinBounds(mesh, _skinBounds)) box = _skinBounds;
+        else {
+          mesh.computeBoundingBox();
+          box = mesh.boundingBox!;
+        }
+      } else if (mesh instanceof InstancedMesh) {
+        mesh.computeBoundingBox();
+        box = mesh.boundingBox!;
+      } else {
+        if (!geometry.boundingBox) geometry.computeBoundingBox();
+        box = geometry.boundingBox!;
+      }
+      if (box.isEmpty()) continue;
+      projectedMeshes++;
       for (let i = 0; i < 8; i++) {
         _corner.set(
           i & 1 ? box.max.x : box.min.x,

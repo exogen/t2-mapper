@@ -28,7 +28,12 @@ import {
 } from "../state/cameraTourStore";
 import type { TourAnimation } from "../state/cameraTourStore";
 import { CommandCircuitTourCallout } from "./CommandCircuitTourCallout";
-import { tourFlash } from "./commandCircuitTourFlash";
+import {
+  createTourHighlightMesh,
+  removeTourHighlightMeshes,
+  tourFlash,
+} from "./commandCircuitTourFlash";
+import { isAttachedToScene } from "./screenRectTracker";
 import { cameraRegistry } from "../state/cameraRegistry";
 import {
   gameEntityStore,
@@ -45,6 +50,7 @@ import {
 import { computeCommandCircuitFrame } from "../stats/commandCircuitFrame";
 import { parseViewHash } from "./viewHash";
 import { FramePriority } from "./framePriority";
+import { computeObjectBounds } from "../sceneBounds";
 import {
   isPressed,
   useInputAction,
@@ -146,7 +152,6 @@ const FLASH_DURATION = 0.5;
 const FLASH_RENDER_ORDER = 999;
 
 const _tourBounds = new Box3();
-const _meshBounds = new Box3();
 
 /**
  * World-space bounds of the object's *visible* meshes only — shapes keep
@@ -154,15 +159,7 @@ const _meshBounds = new Box3();
  * the measured size.
  */
 function visibleWorldBounds(object: Object3D): Box3 {
-  _tourBounds.makeEmpty();
-  object.updateWorldMatrix(true, true);
-  object.traverseVisible((child) => {
-    const mesh = child as Mesh;
-    if (!mesh.isMesh || !mesh.geometry) return;
-    if (!mesh.geometry.boundingBox) mesh.geometry.computeBoundingBox();
-    _meshBounds.copy(mesh.geometry.boundingBox!).applyMatrix4(mesh.matrixWorld);
-    _tourBounds.union(_meshBounds);
-  });
+  computeObjectBounds(object, _tourBounds, { visibleOnly: true });
   return _tourBounds;
 }
 
@@ -347,12 +344,7 @@ function CommandCircuitTourHighlight() {
 
   const teardown = () => {
     const overlay = overlayRef.current;
-    if (overlay) {
-      for (const mesh of overlay.meshes) {
-        mesh.removeFromParent();
-      }
-      overlay.meshes.length = 0;
-    }
+    if (overlay) removeTourHighlightMeshes(overlay.meshes);
     overlayRef.current = null;
   };
   useEffect(() => teardown, []);
@@ -381,16 +373,8 @@ function CommandCircuitTourHighlight() {
 
     // If the meshes we attached to were replaced (e.g. a placeholder swapped
     // for the streamed-in model), our clones went with them — rebuild.
-    if (overlay.meshes.length > 0) {
-      let root: Object3D = overlay.meshes[0];
-      while (root.parent) root = root.parent;
-      if (root !== scene) {
-        for (const mesh of overlay.meshes) {
-          mesh.removeFromParent();
-        }
-        overlay.meshes.length = 0;
-      }
-    }
+    if (overlay.meshes.some((mesh) => !isAttachedToScene(mesh, scene)))
+      removeTourHighlightMeshes(overlay.meshes);
 
     // Build lazily (and retry) since the target's model may still be
     // streaming in when it becomes the active target.
@@ -402,12 +386,11 @@ function CommandCircuitTourHighlight() {
       if (object) {
         const sources: Mesh[] = [];
         object.traverse((child) => {
-          if ((child as Mesh).isMesh) sources.push(child as Mesh);
+          if (child instanceof Mesh) sources.push(child);
         });
         for (const source of sources) {
-          const clone = new Mesh(source.geometry, material);
+          const clone = createTourHighlightMesh(source, material);
           clone.renderOrder = FLASH_RENDER_ORDER;
-          clone.frustumCulled = false;
           source.add(clone);
           overlay.meshes.push(clone);
         }

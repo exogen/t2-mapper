@@ -48,7 +48,11 @@ export function WatchErrorDialog({
         }}
       >
         <h1 className={styles.Title}>{title}</h1>
-        <p className={styles.Message}>{message}</p>
+        <p className={styles.Message}>
+          {message === "PASSWORD"
+            ? "This server requires a password."
+            : message}
+        </p>
         <div className={styles.Buttons}>
           {onRejoin ? (
             <button
