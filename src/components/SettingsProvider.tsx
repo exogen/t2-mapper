@@ -113,6 +113,8 @@ type SettingsContextType = {
   /** Player names under command circuit dot markers. */
   ccPlayerNames: CcPlayerNames;
   setCcPlayerNames: StateSetter<CcPlayerNames>;
+  followBehindPlayer: boolean;
+  setFollowBehindPlayer: StateSetter<boolean>;
 };
 
 type DebugContextType = {
@@ -174,6 +176,7 @@ type PersistedSettings = {
   showIffs?: IffVisibility;
   observerTeamColors?: TeamColorScheme;
   ccPlayerNames?: CcPlayerNames;
+  followBehindPlayer?: boolean;
 };
 
 export function useSettings() {
@@ -241,6 +244,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     DEFAULT_TEAM_COLOR_SCHEME,
   );
   const [ccPlayerNames, setCcPlayerNames] = useState<CcPlayerNames>("always");
+  const [followBehindPlayer, setFollowBehindPlayer] = useState(false);
   const [renderOnDemand, setRenderOnDemand] = useState(false);
   const [showFpsMeter, setShowFpsMeter] = useState(false);
 
@@ -304,6 +308,8 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       setObserverTeamColors,
       ccPlayerNames,
       setCcPlayerNames,
+      followBehindPlayer,
+      setFollowBehindPlayer,
     }),
     [
       fogEnabled,
@@ -331,6 +337,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       showIffs,
       observerTeamColors,
       ccPlayerNames,
+      followBehindPlayer,
     ],
   );
 
@@ -496,6 +503,9 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     ) {
       setCcPlayerNames(savedSettings.ccPlayerNames);
     }
+    if (typeof savedSettings.followBehindPlayer === "boolean") {
+      setFollowBehindPlayer(savedSettings.followBehindPlayer);
+    }
     if (
       savedSettings.serverBrowserView != null &&
       SERVER_BROWSER_VIEW_VALUES.includes(savedSettings.serverBrowserView)
@@ -557,6 +567,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
         showIffs,
         observerTeamColors,
         ccPlayerNames,
+        followBehindPlayer,
       };
       try {
         localStorage.setItem("settings", JSON.stringify(settingsToSave));
@@ -601,6 +612,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     showIffs,
     observerTeamColors,
     ccPlayerNames,
+    followBehindPlayer,
   ]);
 
   return (

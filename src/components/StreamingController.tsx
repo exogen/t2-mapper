@@ -24,6 +24,17 @@ import { stopAllTrackedSounds } from "./AudioEmitter";
 import { useEngineStoreApi, advanceEffectClock } from "../state/engineStore";
 import { setStreamSnapshot } from "../state/streamSnapshotStore";
 import { cameraRegistry } from "../state/cameraRegistry";
+import { isPlayerOrbitLocked, resolveCameraOwner } from "../state/cameraOwner";
+import { getPlayerViewAngles } from "../stream/playerView";
+import { PlayerOrbitSpring } from "../stream/PlayerOrbitSpring";
+import {
+  OrbitDistanceSpring,
+  ORBIT_OBSTACLE_CUSHION,
+} from "../stream/OrbitDistanceSpring";
+import {
+  constrainOrbitCamera,
+  orbitCameraClearance,
+} from "../stream/orbitCollision";
 import { FramePriority } from "./framePriority";
 import { PlaybackClock } from "../stream/PlaybackClock";
 import { gameEntityStore } from "../state/gameEntityStore";
@@ -49,8 +60,6 @@ import {
 import { sameImageMounts } from "../stream/imageMount";
 import {
   yawPitchToQuaternion,
-  MAX_PITCH,
-  threeForwardHeading,
   orbitPullbackDir,
 } from "../stream/streamHelpers";
 import type {
@@ -212,9 +221,7 @@ const _orbitDir = new Vector3();
 const _orbitTarget = new Vector3();
 const _orbitCandidate = new Vector3();
 const _orbitFeedForward = new Vector3();
-
-/** PlayerData::maxLookAngle — all Tribes 2 armor datablocks use 1.5 rad (~85.9°). */
-const DEFAULT_MAX_LOOK_ANGLE = 1.5;
+const _playerView = { yaw: 0, pitch: 0 };
 
 /**
  * Compute first-person camera transform from entity state, matching
@@ -227,31 +234,26 @@ const DEFAULT_MAX_LOOK_ANGLE = 1.5;
  * so all sign/axis conventions match rendering that's verified in demos.
  *
  * The eye node's animated ROTATION is discarded — only its position is
- * used. headPitch/headYaw are the entity's normalized mHead values.
+ * used. The view angles are shared with the locked orbit camera.
  */
 function computeFirstPersonCamera(
   camera: { position: Vector3; quaternion: Quaternion },
   playerGroup: { position: Vector3; quaternion: Quaternion },
   eyePos: Vector3,
-  headPitch: number,
-  headYaw: number,
-  maxLookAngle = DEFAULT_MAX_LOOK_ANGLE,
+  player: StreamEntity | undefined,
+  interpT: number,
 ): void {
   // Position: body position + body rotation * eye offset.
   _tmpVec.copy(eyePos).applyQuaternion(playerGroup.quaternion);
   camera.position.copy(playerGroup.position).add(_tmpVec);
 
-  // Body quat is Ry(-rotationZ) (playerYawToQuaternion), so model forward
-  // is (cos rotZ, 0, sin rotZ) — recover the Torque body yaw from it.
-  const bodyYaw = threeForwardHeading(playerGroup.quaternion);
-  const pitch = Math.max(
-    -MAX_PITCH,
-    Math.min(MAX_PITCH, headPitch * maxLookAngle),
+  const { yaw, pitch } = getPlayerViewAngles(
+    playerGroup.quaternion,
+    player,
+    interpT,
+    _playerView,
   );
-  const [rx, ry, rz, rw] = yawPitchToQuaternion(
-    bodyYaw + headYaw * maxLookAngle,
-    pitch,
-  );
+  const [rx, ry, rz, rw] = yawPitchToQuaternion(yaw, pitch);
   camera.quaternion.set(rx, ry, rz, rw);
 }
 
@@ -286,7 +288,13 @@ export function StreamingController({
   recording: StreamRecording;
 }) {
   const engineStore = useEngineStoreApi();
-  const { fov: userFov } = useSettings();
+  const { fov: userFov, followBehindPlayer } = useSettings();
+  const lockedOrbitRef = useRef<PlayerOrbitSpring>(null!);
+  if (lockedOrbitRef.current == null)
+    lockedOrbitRef.current = new PlayerOrbitSpring();
+  const orbitDistanceRef = useRef<OrbitDistanceSpring>(null!);
+  if (orbitDistanceRef.current == null)
+    orbitDistanceRef.current = new OrbitDistanceSpring();
   const springRef = useRef<FollowSpring>(newFollowSpring());
   const playbackClockRef = useRef<PlaybackClock>(null!);
   if (playbackClockRef.current == null)
@@ -417,6 +425,8 @@ export function StreamingController({
     lastSyncedSnapshotRef.current = null;
     publishedSnapshotRef.current = null;
     lastPublishTimeRef.current = 0;
+    lockedOrbitRef.current.reset();
+    orbitDistanceRef.current.reset();
     resetStreamPlayback();
     playbackClockRef.current.reset(
       0,
@@ -813,6 +823,29 @@ export function StreamingController({
       cameraMode === "orbitOverride" &&
       (!isLive || isWatcher) &&
       orbitTargetId != null;
+    const orbitLocked = isPlayerOrbitLocked(followBehindPlayer);
+    const localOrbit = orbitOverride && resolveCameraOwner() === "input";
+    const { followFlagSlot } = streamPlaybackStore.getState();
+    // Both springs follow the flag across carrier/item hand-offs. A drop also
+    // unlocks at the last smoothed view angle instead of restoring old angles.
+    const orbitSpringKey =
+      followFlagSlot != null ? `flag:${followFlagSlot}` : orbitTargetId;
+    if (!localOrbit) orbitDistanceRef.current.reset();
+    const lastLockedOrbit = lockedOrbitRef.current;
+    if (!orbitLocked && lastLockedOrbit.targetId != null) {
+      // Unlock in place, once, instead of publishing changing angles every frame.
+      if (
+        orbitOverride &&
+        orbitSpringKey === lastLockedOrbit.targetId &&
+        resolveCameraOwner() === "input"
+      ) {
+        streamPlaybackStore.setState({
+          orbitOverrideYaw: lastLockedOrbit.yaw,
+          orbitOverridePitch: lastLockedOrbit.pitch,
+        });
+      }
+      lastLockedOrbit.reset();
+    }
     if (
       currentCamera &&
       cameraMode !== "freeFly" &&
@@ -868,13 +901,26 @@ export function StreamingController({
 
         let hasDirection = false;
         if (orbitOverride) {
-          // User-controlled orbit: yaw/pitch from the store. Positive pitch
-          // raises the camera to look down (see orbitPullbackDir); demo and
-          // watch share this — demo's vertical was historically inverted.
+          if (orbitLocked) {
+            getPlayerViewAngles(
+              targetGroup.quaternion,
+              currentEntities.get(orbitTargetId),
+              interpT,
+              _playerView,
+            );
+            lastLockedOrbit.update(
+              orbitSpringKey ?? orbitTargetId,
+              playback.seekNonce,
+              streamClock.time,
+              _playerView,
+            );
+          }
+          // Both camera modes use positive pitch to look down, with the
+          // orbit pulling back above the target. Demo and watch share this.
           const spState = streamPlaybackStore.getState();
           orbitPullbackDir(
-            spState.orbitOverrideYaw,
-            spState.orbitOverridePitch,
+            orbitLocked ? lastLockedOrbit.yaw : spState.orbitOverrideYaw,
+            orbitLocked ? lastLockedOrbit.pitch : spState.orbitOverridePitch,
             _orbitDir,
           );
           hasDirection = _orbitDir.lengthSq() > 1e-8;
@@ -947,8 +993,48 @@ export function StreamingController({
             }
           }
 
+          if (localOrbit) {
+            const distanceSpring = orbitDistanceRef.current;
+            _orbitCandidate
+              .copy(_orbitTarget)
+              .addScaledVector(
+                _orbitDir,
+                orbitDistance + ORBIT_OBSTACLE_CUSHION,
+              );
+            const safeDistance = constrainOrbitCamera(
+              _orbitTarget,
+              _orbitCandidate,
+              cameraRegistry.perspective
+                ? orbitCameraClearance(cameraRegistry.perspective)
+                : undefined,
+              (rayDistance) =>
+                Math.min(
+                  orbitDistance,
+                  rayDistance -
+                    Math.min(ORBIT_OBSTACLE_CUSHION, rayDistance * 0.25),
+                ),
+            );
+            // Ease the actual camera toward a validated destination, allowing
+            // brief intersections rather than snapping when clearance changes.
+            // Use frame time so zoom/manual orbit also work while paused.
+            const distance = distanceSpring.update(
+              orbitSpringKey ?? orbitTargetId,
+              playback.seekNonce,
+              delta,
+              safeDistance,
+            );
+            _orbitCandidate
+              .copy(_orbitTarget)
+              .addScaledVector(_orbitDir, distance);
+          }
           streamCamera.position.copy(_orbitCandidate);
-          streamCamera.lookAt(_orbitTarget);
+          // A wall against the pivot can collapse the arm completely. Keep
+          // its viewing direction rather than lookAt's coincident-point fallback.
+          streamCamera.lookAt(
+            _orbitCandidate.distanceToSquared(_orbitTarget) > 1e-10
+              ? _orbitTarget
+              : _tmpVec.copy(_orbitTarget).sub(_orbitDir),
+          );
         }
       }
     }
@@ -976,8 +1062,6 @@ export function StreamingController({
         // vehicle-based). Yaw extraction ignores vehicle pitch/roll,
         // keeping the horizon stable like the real vehicle look.
         const followedEntity = currentEntities.get(orbitTargetId);
-        const look = followedEntity?.playerDelta;
-        const lookScale = look?.maxLookAngle || 1;
         const mounted = resolvedTarget.entity?.id !== orbitTargetId;
         computeFirstPersonCamera(
           streamCamera,
@@ -986,12 +1070,8 @@ export function StreamingController({
             ? _tmpVec.set(0, DEFAULT_EYE_HEIGHT, 0)
             : (eyePositions.get(orbitTargetId) ??
                 _tmpVec.set(0, DEFAULT_EYE_HEIGHT, 0)),
-          look
-            ? (look.head[0] + look.headVec[0] * backstep) / lookScale
-            : (followedEntity?.headPitch ?? 0),
-          look
-            ? (look.head[1] + look.headVec[1] * backstep) / lookScale
-            : (followedEntity?.headYaw ?? 0),
+          followedEntity,
+          interpT,
         );
       }
     }

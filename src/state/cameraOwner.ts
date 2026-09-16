@@ -1,6 +1,8 @@
 import { cameraTourStore, useCameraTour } from "./cameraTourStore";
 import { commandCircuitStore, useCommandCircuit } from "./commandCircuitStore";
 import { demoDirectorStore, useDirector } from "./demoDirectorStore";
+import { streamPlaybackStore } from "./streamPlaybackStore";
+import { isFollowTargetPlayer } from "./watchFollow";
 
 /**
  * Who is driving the view right now.
@@ -44,4 +46,14 @@ export function useCameraOwner(): CameraOwner {
   const directing = useDirector((s) => s.status === "playing");
   const commandCircuit = useCommandCircuit((s) => s.active);
   return ownerOf(tourActive, directing, commandCircuit);
+}
+
+/** Lock local player orbits, including flag carriers; other owners keep control. */
+export function isPlayerOrbitLocked(enabled: boolean): boolean {
+  return (
+    enabled &&
+    streamPlaybackStore.getState().cameraMode === "orbitOverride" &&
+    resolveCameraOwner() === "input" &&
+    isFollowTargetPlayer()
+  );
 }

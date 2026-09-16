@@ -1,4 +1,5 @@
 import { useStore } from "zustand";
+import { TbArrowDownFromArc } from "react-icons/tb";
 import {
   streamPlaybackStore,
   type DemoCameraMode,
@@ -8,6 +9,8 @@ import { useStreamSnapshot } from "../state/streamSnapshotStore";
 import { stripTaggedStringMarkup } from "../stream/streamHelpers";
 import { flagLabel } from "../state/flagTeam";
 import styles from "./WatchedPlayerHUD.module.css";
+import { usePlayerOrbitAvailable } from "./usePlayerOrbitLocked";
+import { useSettings } from "./SettingsProvider";
 
 function clean(name: string | null | undefined): string | null {
   if (!name) return null;
@@ -53,6 +56,8 @@ function resolveFollowedName(
  * overlay, stacked with it.
  */
 export function WatchedPlayerHUD() {
+  const orbitAvailable = usePlayerOrbitAvailable();
+  const { followBehindPlayer, setFollowBehindPlayer } = useSettings();
   const cameraMode = useStore(streamPlaybackStore, (s) => s.cameraMode);
   const followEntityId = useStore(streamPlaybackStore, (s) => s.followEntityId);
   const followFlagSlot = useStore(streamPlaybackStore, (s) => s.followFlagSlot);
@@ -64,7 +69,26 @@ export function WatchedPlayerHUD() {
   if (name == null) return null;
   return (
     <div className={styles.WatchedPlayer}>
-      <span className={styles.Label}>Following:</span> {name}
+      <div className={styles.Badge}>
+        <span className={styles.Label}>Following:</span> {name}
+      </div>
+      {orbitAvailable && (
+        <button
+          type="button"
+          className={styles.ViewButton}
+          data-active={followBehindPlayer}
+          aria-pressed={followBehindPlayer}
+          aria-label="Keep follow camera behind player"
+          title={
+            followBehindPlayer
+              ? "Unlock orbit camera"
+              : "Keep follow camera behind player"
+          }
+          onClick={() => setFollowBehindPlayer((enabled) => !enabled)}
+        >
+          <TbArrowDownFromArc aria-hidden="true" />
+        </button>
+      )}
     </div>
   );
 }

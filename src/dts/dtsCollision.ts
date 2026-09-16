@@ -57,7 +57,7 @@ export class DTSCollisionMesh extends Mesh {
     this.updateForCollision();
   }
 
-  updateForCollision(): boolean {
+  updateForCollision(updatedTransforms?: Set<Object3D>): boolean {
     // MeshObjectInstance::castRay tests animated object visibility, not the
     // renderer's detail-group visibility. Negative-size details stay hidden.
     this.visible = this.object.opacity > 0.01;
@@ -68,10 +68,25 @@ export class DTSCollisionMesh extends Mesh {
           Math.min(this.frames.length - 1, Math.floor(this.object.frame)),
         )
       ];
-    this.object.updateWorldMatrix(true, false);
+    if (updatedTransforms)
+      updateCollisionTransform(this.object, updatedTransforms);
+    else this.object.updateWorldMatrix(true, false);
     this.matrixWorld.copy(this.object.matrixWorld);
     return this.visible;
   }
+}
+
+/** A synchronous collision batch can share ancestor updates across hulls.
+ * Discard the set before changing any transforms or yielding to animation. */
+function updateCollisionTransform(
+  object: Object3D,
+  updated: Set<Object3D>,
+): void {
+  if (updated.has(object)) return;
+  if (object.parent) updateCollisionTransform(object.parent, updated);
+  // Force propagation through matrixAutoUpdate=false DTS pose helpers too.
+  object.updateWorldMatrix(false, false, true);
+  updated.add(object);
 }
 
 export function getDTSCollisionMeshes(

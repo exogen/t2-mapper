@@ -9,6 +9,7 @@ import { useRecording } from "./usePlayback";
 import { WatchedPlayerHUD } from "./WatchedPlayerHUD";
 import styles from "./VisualInput.module.css";
 import { useCameraOwner } from "../state/cameraOwner";
+import { usePlayerOrbitLocked } from "./usePlayerOrbitLocked";
 
 const TouchJoystick = lazy(() =>
   import("./TouchJoystick").then((mod) => ({
@@ -25,6 +26,7 @@ const KeyboardOverlay = lazy(() =>
 export function VisualInput() {
   const isTouch = useTouchDevice();
   const cameraOwner = useCameraOwner();
+  const orbitLocked = usePlayerOrbitLocked();
   // Tour > director > command circuit > input. The joysticks show only
   // while local input owns the camera: a touch is the director's
   // interrupt gesture, and the command circuit pans and zooms by direct
@@ -43,7 +45,8 @@ export function VisualInput() {
   const isStreamCamera =
     recording?.source === "demo" || (recording?.source === "live" && isWatcher);
   const hasCameraControls = isStreamCamera
-    ? cameraMode === "freeFly" || cameraMode === "orbitOverride"
+    ? cameraMode === "freeFly" ||
+      (cameraMode === "orbitOverride" && !orbitLocked)
     : true;
 
   // isTouch can be `null` before we know for sure — only render the

@@ -24,6 +24,8 @@ import type { StreamRecording } from "../stream/types";
 import type { LiveStreamAdapter } from "../stream/liveStreaming";
 import type { ClientMove } from "../../relay/types";
 import { FramePriority } from "./framePriority";
+import { useSettings } from "./SettingsProvider";
+import { isPlayerOrbitLocked } from "../state/cameraOwner";
 
 const log = createLogger("InputConsumer");
 
@@ -143,6 +145,7 @@ function applyProcessTickPosition(
  * UDP reliability, just like the real Tribes 2 client.
  */
 export function InputConsumer() {
+  const { followBehindPlayer } = useSettings();
   const { moveQueue, mode, setMode } = useInputContext();
   const adapter = useLiveSelector((s) => s.adapter);
   const gameStatus = useLiveSelector((s) => s.gameStatus);
@@ -500,7 +503,10 @@ export function InputConsumer() {
         if (spState.playback) {
           if (spState.cameraMode === "freeFly") {
             applyLocalCamera(camera, dYaw, dPitch, x, y, z, frameDelta);
-          } else if (spState.cameraMode === "orbitOverride") {
+          } else if (
+            spState.cameraMode === "orbitOverride" &&
+            !isPlayerOrbitLocked(followBehindPlayer)
+          ) {
             // Accumulate orbit yaw/pitch for StreamingController to read.
             streamPlaybackStore.setState({
               orbitOverrideYaw: spState.orbitOverrideYaw + dYaw,

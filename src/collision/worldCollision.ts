@@ -16,9 +16,10 @@ import {
   Matrix3,
   Ray,
   Sphere,
+  Triangle,
   Vector3,
 } from "three";
-import type { BufferGeometry, Mesh } from "three";
+import type { BufferGeometry, Mesh, Object3D } from "three";
 import {
   DIFCollisionMesh,
   type DIFHullType,
@@ -33,6 +34,7 @@ import { INTERSECTED, MeshBVH, NOT_INTERSECTED } from "three-mesh-bvh";
 import {
   castTerrainRay,
   terrainHeightAt,
+  terrainTrianglesInBox,
   type TriangleFacing,
   type Vec3,
 } from "./terrainCollision";
@@ -74,7 +76,11 @@ const interiors = () => collisionState().interiors;
 const staticShapes = () => collisionState().staticShapes;
 const forceFields = () => collisionState().forceFields;
 
-const queryBatches = new WeakMap<CollisionState, Map<MeshCollider, boolean>>();
+interface CollisionQueryBatch {
+  colliders: Map<MeshCollider, boolean>;
+  transforms: Set<Object3D>;
+}
+const queryBatches = new WeakMap<CollisionState, CollisionQueryBatch>();
 
 /** Reuse collider poses during synchronous queries of an unchanged world.
  * Each batch refreshes animated DTS colliders on first use; no poses or hit
@@ -82,7 +88,7 @@ const queryBatches = new WeakMap<CollisionState, Map<MeshCollider, boolean>>();
 export function withCollisionQueryBatch<T>(query: () => T): T {
   const state = collisionState();
   if (queryBatches.has(state)) return query();
-  queryBatches.set(state, new Map());
+  queryBatches.set(state, { colliders: new Map(), transforms: new Set() });
   try {
     return query();
   } finally {
@@ -162,10 +168,10 @@ function syncMeshCollider(collider: MeshCollider): boolean {
   const mesh = collider.mesh;
   if (!(mesh instanceof DTSCollisionMesh)) return true;
   const batch = queryBatches.get(collisionState());
-  const cached = batch?.get(collider);
+  const cached = batch?.colliders.get(collider);
   if (cached !== undefined) return cached;
-  const visible = mesh.updateForCollision();
-  batch?.set(collider, visible);
+  const visible = mesh.updateForCollision(batch?.transforms);
+  batch?.colliders.set(collider, visible);
   if (!visible) return false;
   const bvh = getBvh(mesh.geometry);
   if (collider.bvh !== bvh || !collider.matrixWorld.equals(mesh.matrixWorld)) {
@@ -655,6 +661,33 @@ const _insidePoint = new Vector3(),
 const _scale = new Vector3();
 const _probeSphere = new Sphere();
 const _probeCenter = new Vector3();
+const _terrainProbeTriangle = new Triangle();
+const _terrainProbeVertices: number[] = [];
+const _terrainProbeClosest = new Vector3();
+
+function nearTerrainSurface(point: Vec3, radius: number): boolean {
+  _terrainProbeVertices.length = 0;
+  terrainTrianglesInBox(
+    point[0] - radius,
+    point[1] - radius,
+    point[0] + radius,
+    point[1] + radius,
+    _terrainProbeVertices,
+  );
+  torqueToThreeVec(point, _probeCenter);
+  for (let i = 0; i < _terrainProbeVertices.length; i += 9) {
+    _terrainProbeTriangle.a.fromArray(_terrainProbeVertices, i);
+    _terrainProbeTriangle.b.fromArray(_terrainProbeVertices, i + 3);
+    _terrainProbeTriangle.c.fromArray(_terrainProbeVertices, i + 6);
+    _terrainProbeTriangle.closestPointToPoint(
+      _probeCenter,
+      _terrainProbeClosest,
+    );
+    if (_terrainProbeClosest.distanceToSquared(_probeCenter) < radius * radius)
+      return true;
+  }
+  return false;
+}
 
 /**
  * Is there solid geometry within `radius` of a point?
@@ -670,26 +703,36 @@ const _probeCenter = new Vector3();
 export function pointObstructed(
   torquePoint: Vec3,
   radius: number,
-  options?: { includeStatics?: boolean; interiorHullType?: DIFHullType },
+  options?: {
+    includeStatics?: boolean;
+    includeForceFields?: boolean;
+    interiorHullType?: DIFHullType;
+    /** Camera clearance: test actual terrain triangles, including holes and
+     * basements. Pair with a sightline ray to prevent crossing the surface. */
+    terrainSurfaceOnly?: boolean;
+  },
 ): boolean {
   // TERRAIN FIRST. The BVH only holds interiors and static shapes, so a
   // sphere query alone reports open air on a hillside — cross-checking
   // against 26-direction raycasts found 318 of 3000 points near a base
   // where the rays hit ground the sphere never looked for.
   //
-  // Sampled rather than swept: the height field is smooth at this scale,
-  // so the centre plus four points at the probe radius bound the slope
-  // closely enough, and each sample is arithmetic rather than a descent.
+  // By default, sample heights as a solid volume. Camera clearance instead
+  // tests the surface triangles so holes and underground rooms stay open.
   const gz = torquePoint[2];
   let nearGround = false;
-  for (const [ox, oy] of TERRAIN_PROBE_OFFSETS) {
-    const h = terrainHeightAt(
-      torquePoint[0] + ox * radius,
-      torquePoint[1] + oy * radius,
-    );
-    if (h != null && gz - h < radius) {
-      nearGround = true;
-      break;
+  if (options?.terrainSurfaceOnly) {
+    if (nearTerrainSurface(torquePoint, radius)) return true;
+  } else {
+    for (const [ox, oy] of TERRAIN_PROBE_OFFSETS) {
+      const h = terrainHeightAt(
+        torquePoint[0] + ox * radius,
+        torquePoint[1] + oy * radius,
+      );
+      if (h != null && gz - h < radius) {
+        nearGround = true;
+        break;
+      }
     }
   }
   if (nearGround) {
@@ -760,6 +803,20 @@ export function pointObstructed(
         }
         if (collider.bvh.intersectsSphere(_probeSphere)) return true;
       }
+    }
+  }
+  if (options?.includeForceFields) {
+    for (const field of forceFields().values()) {
+      if (!field.enabled) continue;
+      _probeSphere.center.copy(_probeCenter).applyMatrix4(field.inverse);
+      field.box.clampPoint(_probeSphere.center, _probeSphere.center);
+      _probeSphere.center.applyMatrix4(field.matrixWorld);
+      // Measure in world space: force fields often have very uneven scales.
+      if (
+        _probeSphere.center.distanceToSquared(_probeCenter) <=
+        radius * radius
+      )
+        return true;
     }
   }
   return false;

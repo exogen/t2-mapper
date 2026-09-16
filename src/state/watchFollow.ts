@@ -236,8 +236,16 @@ export function followFlag(slot: number): void {
  * non-player follow targets.
  */
 export function isFollowingPlayer(): boolean {
-  const { followEntityId, followFlagSlot } = streamPlaybackStore.getState();
-  if (followFlagSlot != null || !followEntityId) return false;
+  return (
+    streamPlaybackStore.getState().followFlagSlot == null &&
+    isFollowTargetPlayer()
+  );
+}
+
+/** The current follow target is a player body, including a held flag's carrier. */
+export function isFollowTargetPlayer(): boolean {
+  const { followEntityId } = streamPlaybackStore.getState();
+  if (!followEntityId) return false;
   const entity = gameEntityStore.getState().streamEntities.get(followEntityId);
   return entity?.renderType === "Player";
 }

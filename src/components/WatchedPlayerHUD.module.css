@@ -1,10 +1,16 @@
 .WatchedPlayer {
-  padding: 4px 8px;
-  border-radius: 10px;
-  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  gap: 5px;
   color: #fff;
   font-size: 9px;
   font-weight: 500;
+}
+
+.Badge {
+  padding: 4px 8px;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.5);
   white-space: nowrap;
   max-width: 60vw;
   overflow: hidden;
@@ -15,4 +21,44 @@
 /* Grayer than the name so the two read as distinct parts. */
 .Label {
   color: rgba(255, 255, 255, 0.6);
+}
+
+.ViewButton {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.5);
+  color: #999;
+  border-radius: 100%;
+  outline: 1px solid rgba(255, 255, 255, 0.2);
+  border: 0;
+  padding: 3px;
+  font-size: 12px;
+  flex: 0 0 auto;
+  appearance: none;
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.ViewButton[data-active="false"] {
+  opacity: 0.6;
+}
+
+@media (hover: hover) {
+  .ViewButton:hover {
+    opacity: 1;
+  }
+}
+
+.ViewButton[data-active="true"] {
+  opacity: 1;
+  outline: 1px solid rgba(128, 255, 200, 0.2);
+  background: rgba(0, 50, 60, 0.65);
+  color: #bfe;
+}
+
+.ViewButton:focus-visible {
+  opacity: 1;
+  outline: 2px solid rgba(128, 255, 200, 0.7);
 }

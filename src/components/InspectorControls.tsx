@@ -213,6 +213,8 @@ export const InspectorControls = memo(function InspectorControls({
     setObserverTeamColors,
     ccPlayerNames,
     setCcPlayerNames,
+    followBehindPlayer,
+    setFollowBehindPlayer,
   } = useSettings();
   const {
     speedMultiplier,
@@ -544,6 +546,22 @@ export const InspectorControls = memo(function InspectorControls({
                     htmlFor="showInputOverlayInput"
                   >
                     Show input overlay
+                  </label>
+                </div>
+                <div className={styles.CheckboxField}>
+                  <input
+                    id="followBehindPlayerInput"
+                    type="checkbox"
+                    checked={followBehindPlayer}
+                    onChange={(event) => {
+                      setFollowBehindPlayer(event.target.checked);
+                    }}
+                  />
+                  <label
+                    className={styles.Label}
+                    htmlFor="followBehindPlayerInput"
+                  >
+                    Keep follow camera behind player
                   </label>
                 </div>
                 <div className={styles.Field}>

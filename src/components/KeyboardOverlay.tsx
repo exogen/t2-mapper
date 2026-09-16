@@ -6,6 +6,7 @@ import {
   type KeyState,
 } from "./InputControls";
 import { useRecording } from "./usePlayback";
+import { usePlayerOrbitLocked } from "./usePlayerOrbitLocked";
 import { isRelayRecording } from "../stream/demoDate";
 import { useStore } from "zustand";
 import { useInputMode } from "./InputContext";
@@ -314,6 +315,8 @@ function OrbitZoomKey() {
 }
 
 function RotateCameraRow() {
+  const orbitLocked = usePlayerOrbitLocked();
+  if (orbitLocked) return null;
   return (
     <div className={styles.Row}>
       <Key

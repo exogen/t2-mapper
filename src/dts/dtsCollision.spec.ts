@@ -1,10 +1,13 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { Group, Mesh, Vector3 } from "three";
+import { AnimationMixer, Group, Mesh, Vector3 } from "three";
 import { clone } from "three/examples/jsm/utils/SkeletonUtils.js";
 import { buildDTS } from "./dtsBuilder";
 import { DTSObject, isDTSMesh } from "./dtsModel";
 import { getDTSCollisionDetails, getDTSCollisionMeshes } from "./dtsCollision";
-import { createDTSCollisionTestShape } from "./dtsTestFixtures";
+import {
+  createDTSCollisionTestShape,
+  createDTSSequence,
+} from "./dtsTestFixtures";
 import {
   castWorldRay,
   clearWorldColliders,
@@ -67,6 +70,61 @@ describe("engine DTS detail selection", () => {
 });
 
 describe("engine DTS hull rays", () => {
+  it("shares ancestor updates without losing parent motion or animated child poses", () => {
+    const data = createDTSCollisionTestShape();
+    data.translations = new Float32Array([0, 0, 0, 4, 2, 6]);
+    data.sequences = [
+      createDTSSequence({
+        numKeyframes: 2,
+        duration: 1,
+        translationMatters: [0],
+      }),
+    ];
+    const wrappers = [new Group(), new Group()];
+    const mixers: AnimationMixer[] = [];
+    const colliders = wrappers.map((wrapper) => {
+      for (let i = 0; i < 2; i++) {
+        const model = buildDTS(data);
+        model.scene.position.x = i * 100;
+        wrapper.add(model.scene);
+        const mixer = new AnimationMixer(model.scene);
+        mixer.clipAction(model.animations[0]).play();
+        mixers.push(mixer);
+      }
+      return getDTSCollisionMeshes(wrapper, "TSStatic");
+    });
+    registerStaticShapeCollider("siblings", colliders[0]);
+    const updateParent = vi.spyOn(wrappers[0], "updateWorldMatrix");
+    const toTorque = (v: Vector3): [number, number, number] => [v.z, v.x, v.y];
+    for (let step = 0; step < 3; step++) {
+      for (const wrapper of wrappers) {
+        wrapper.position.set(step * 10, 3, 4);
+        wrapper.rotation.y = step * 0.3;
+        wrapper.scale.set(2, 3, 4);
+      }
+      for (const mixer of mixers) mixer.update(0.2);
+      for (const reference of colliders[1]) reference.updateForCollision();
+      updateParent.mockClear();
+      // Query before rendering; the two branches must each inherit the new
+      // parent transform and their independently updated animation helpers.
+      withCollisionQueryBatch(() => {
+        for (const [i, reference] of colliders[1].entries()) {
+          const from = new Vector3(-5, 0, 0).applyMatrix4(
+            reference.matrixWorld,
+          );
+          const to = new Vector3(5, 0, 0).applyMatrix4(reference.matrixWorld);
+          expect(ray(toTorque(from), toTorque(to))?.t).toBeCloseTo(0.4);
+          const actual = colliders[0][i].matrixWorld.elements;
+          reference.matrixWorld.elements.forEach((v, j) =>
+            expect(actual[j]).toBeCloseTo(v, 10),
+          );
+        }
+      });
+      expect(updateParent).toHaveBeenCalledOnce();
+    }
+    updateParent.mockRestore();
+  });
+
   it("shares current collider poses across a query batch without retaining them afterward", () => {
     const { scene } = buildDTS(createDTSCollisionTestShape());
     const meshes = getDTSCollisionMeshes(scene, "TSStatic");
@@ -160,26 +218,36 @@ describe("engine DTS hull rays", () => {
         expect(node.parent!.visible).toBe(false);
     });
   });
-  it("selects animated collision frames even while their render detail is hidden", () => {
-    const data = createDTSCollisionTestShape(),
-      source = data.meshes[1];
-    source.numFrames = 2;
-    source.vertices = new Float32Array([
-      ...source.vertices,
-      ...source.vertices.map((v, i) => (i % 3 === 0 ? v + 10 : v)),
-    ]);
-    source.normals = new Float32Array([...source.normals, ...source.normals]);
-    const { scene } = buildDTS(data);
-    registerStaticShapeCollider(
-      "animated",
-      getDTSCollisionMeshes(scene, "TSStatic"),
-    );
-    expect(ray([0, -5, 0], [0, 5, 0])).not.toBeNull();
-    const object = scene.getObjectByName("__dts_object_0") as DTSObject;
-    object.frame = 1;
-    expect(ray([0, -5, 0], [0, 5, 0])).toBeNull();
-    expect(ray([0, -15, 0], [0, -5, 0])?.t).toBeCloseTo(0.4);
-  });
+  it.each([false, true])(
+    "selects animated collision frames even while their render detail is hidden (batched=%s)",
+    (batched) => {
+      const data = createDTSCollisionTestShape(),
+        source = data.meshes[1];
+      source.numFrames = 2;
+      source.vertices = new Float32Array([
+        ...source.vertices,
+        ...source.vertices.map((v, i) => (i % 3 === 0 ? v + 10 : v)),
+      ]);
+      source.normals = new Float32Array([...source.normals, ...source.normals]);
+      const { scene } = buildDTS(data);
+      registerStaticShapeCollider(
+        "animated",
+        getDTSCollisionMeshes(scene, "TSStatic"),
+      );
+      const probe = (
+        start: [number, number, number],
+        end: [number, number, number],
+      ) =>
+        batched
+          ? withCollisionQueryBatch(() => ray(start, end))
+          : ray(start, end);
+      expect(probe([0, -5, 0], [0, 5, 0])).not.toBeNull();
+      const object = scene.getObjectByName("__dts_object_0") as DTSObject;
+      object.frame = 1;
+      expect(probe([0, -5, 0], [0, 5, 0])).toBeNull();
+      expect(probe([0, -15, 0], [0, -5, 0])?.t).toBeCloseTo(0.4);
+    },
+  );
   it("keeps transformed instances independent", () => {
     const original = buildDTS(createDTSCollisionTestShape()).scene;
     const instance = clone(original);
