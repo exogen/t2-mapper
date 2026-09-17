@@ -11,6 +11,7 @@ import type {
 } from "../../relay/types";
 
 const log = createLogger("relayClient");
+type SessionStatusMessage = Extract<ServerMessage, { type: "sessionStatus" }>;
 
 export type RelayEventHandler = {
   onOpen?: () => void;
@@ -35,7 +36,8 @@ export type RelayEventHandler = {
       address: string;
       serverName?: string;
       mapName?: string;
-      /** The relay is recording this session to a demo file. */
+      channelId?: string;
+      /** Whether the stream at the watcher playhead was being recorded. */
       recording?: boolean;
       /** Watcher-facing stream delay in ms (0 = live). */
       streamDelayMs?: number;
@@ -79,14 +81,18 @@ export class RelayClient {
    * Catch-up framing: between catchupBegin and catchupEnd every binary
    * frame is a gzip chunk; while the (async) decompress finalizes,
    * binary frames are live packets buffered for ordered flushing.
+   * A new watch request discards old packets until its snapshot begins.
    */
-  private catchupMode: "live" | "collecting" | "finalizing" = "live";
+  private catchupMode: "waiting" | "live" | "collecting" | "finalizing" =
+    "live";
   private catchupChunks: Uint8Array[] = [];
   private catchupReceivedBytes = 0;
   private catchupTotalBytes = 0;
-  private bufferedLivePackets: Uint8Array[] = [];
+  private catchupChunkCount = 0;
+  private catchupEpoch = 0;
+  private bufferedFrames: Array<Uint8Array | SessionStatusMessage> = [];
   /**
-   * Bumped whenever the socket's watch/join target changes. The async
+   * Bumped on each catch-up, socket close, or watch/join target change. The async
    * catch-up decode checks it on completion: a payload from a session
    * the user has since left must neither hydrate the new adapter nor
    * flip the framing state under the new session's own catch-up.
@@ -103,18 +109,22 @@ export class RelayClient {
   }
 
   connect(): void {
-    this.ws = new WebSocket(this.url);
-    this.ws.binaryType = "arraybuffer";
+    const ws = new WebSocket(this.url);
+    this.ws = ws;
+    ws.binaryType = "arraybuffer";
 
-    this.ws.onopen = () => {
+    ws.onopen = () => {
+      if (this.ws !== ws) return;
       log.info("WebSocket connected to %s", this.url);
       this._connected = true;
       this.startWsPing();
       this.handlers.onOpen?.();
     };
 
-    this.ws.onmessage = (event) => {
+    ws.onmessage = (event) => {
+      if (this.ws !== ws || ws.readyState !== WebSocket.OPEN) return;
       if (event.data instanceof ArrayBuffer) {
+        if (this.catchupMode === "waiting") return;
         const data = new Uint8Array(event.data);
         if (this.catchupMode === "collecting") {
           this.catchupChunks.push(data);
@@ -124,7 +134,7 @@ export class RelayClient {
             this.catchupTotalBytes,
           );
         } else if (this.catchupMode === "finalizing") {
-          this.bufferedLivePackets.push(data);
+          this.bufferedFrames.push(data);
         } else {
           // Binary message — game packet from server
           this.handlers.onGamePacket?.(data);
@@ -140,14 +150,18 @@ export class RelayClient {
       }
     };
 
-    this.ws.onclose = () => {
+    ws.onclose = () => {
+      if (this.ws !== ws) return;
       log.info("WebSocket disconnected");
+      this.ws = null;
+      this.resetSessionFraming();
       this._connected = false;
       this.stopWsPing();
       this.handlers.onClose?.();
     };
 
-    this.ws.onerror = () => {
+    ws.onerror = () => {
+      if (this.ws !== ws) return;
       log.error("WebSocket error");
       this.handlers.onError?.("WebSocket connection error");
     };
@@ -178,6 +192,11 @@ export class RelayClient {
         break;
       }
       case "sessionStatus":
+        if (this.catchupMode === "waiting" && message.status === "live") break;
+        if (this.catchupMode === "finalizing") {
+          this.bufferedFrames.push(message);
+          break;
+        }
         this.handlers.onSessionStatus?.(
           message.status,
           message.message,
@@ -185,6 +204,7 @@ export class RelayClient {
             address: message.address,
             serverName: message.serverName,
             mapName: message.mapName,
+            channelId: message.channelId,
             recording: message.recording,
             streamDelayMs: message.streamDelayMs,
             streamDelayReadyInMs: message.streamDelayReadyInMs,
@@ -199,13 +219,17 @@ export class RelayClient {
         this.handlers.onRelayRestarting?.();
         break;
       case "catchupBegin":
+        // A newer snapshot supersedes any older asynchronous decode and
+        // the packets already represented by this new snapshot.
+        this.resetSessionFraming();
         this.catchupMode = "collecting";
-        this.catchupChunks = [];
-        this.catchupReceivedBytes = 0;
         this.catchupTotalBytes = message.totalBytes;
+        this.catchupChunkCount = message.chunkCount;
+        this.catchupEpoch = message.epoch;
         this.handlers.onCatchupProgress?.(0, message.totalBytes);
         break;
       case "catchupEnd":
+        if (this.catchupMode === "waiting") break;
         this.finalizeCatchup();
         break;
       case "error":
@@ -215,7 +239,16 @@ export class RelayClient {
   }
 
   private finalizeCatchup(): void {
+    if (
+      this.catchupMode !== "collecting" ||
+      this.catchupReceivedBytes !== this.catchupTotalBytes ||
+      this.catchupChunks.length !== this.catchupChunkCount
+    ) {
+      this.failCatchup(new Error("Incomplete catch-up payload"));
+      return;
+    }
     const chunks = this.catchupChunks;
+    const epoch = this.catchupEpoch;
     this.catchupChunks = [];
     this.catchupMode = "finalizing";
     const generation = this.sessionGeneration;
@@ -223,6 +256,9 @@ export class RelayClient {
       .then((json) => {
         if (generation !== this.sessionGeneration) return;
         const payload = deserializeCatchupPayload(json);
+        if (payload.epoch !== epoch) {
+          throw new Error("Catch-up epoch does not match its framing");
+        }
         log.info(
           "catch-up payload: %d ghosts, %d datablocks, epoch %d",
           payload.initialGhosts.length,
@@ -230,29 +266,42 @@ export class RelayClient {
           payload.epoch,
         );
         this.handlers.onCatchup?.(payload);
+        if (generation !== this.sessionGeneration) return;
+        this.catchupMode = "live";
+        const buffered = this.bufferedFrames;
+        this.bufferedFrames = [];
+        for (const frame of buffered) {
+          // A packet handler may request another catch-up after a parse
+          // fault. Never feed the rest of this epoch into its new adapter.
+          if (generation !== this.sessionGeneration) break;
+          if (frame instanceof Uint8Array) this.handlers.onGamePacket?.(frame);
+          else this.handleMessage(frame);
+        }
       })
       .catch((e) => {
         if (generation !== this.sessionGeneration) return;
-        log.error("Failed to decode catch-up payload: %o", e);
-        this.handlers.onError?.("Failed to decode catch-up payload");
-      })
-      .finally(() => {
-        if (generation !== this.sessionGeneration) return;
-        this.catchupMode = "live";
-        const buffered = this.bufferedLivePackets;
-        this.bufferedLivePackets = [];
-        for (const packet of buffered) {
-          this.handlers.onGamePacket?.(packet);
-        }
+        this.failCatchup(e);
       });
   }
 
+  private failCatchup(error: unknown): void {
+    log.error("Failed to decode catch-up payload: %o", error);
+    this.resetSessionFraming();
+    this.handlers.onError?.("Failed to decode catch-up payload; reconnecting");
+    // Trigger the normal reconnect path. Raw packets cannot be decoded
+    // safely without a successfully hydrated snapshot.
+    this.ws?.close();
+  }
+
   /** Forget any catch-up in flight for the previous session target. */
-  private resetSessionFraming(): void {
+  private resetSessionFraming(mode: "live" | "waiting" = "live"): void {
     this.sessionGeneration++;
-    this.catchupMode = "live";
+    this.catchupMode = mode;
     this.catchupChunks = [];
-    this.bufferedLivePackets = [];
+    this.catchupReceivedBytes = 0;
+    this.catchupTotalBytes = 0;
+    this.catchupChunkCount = 0;
+    this.bufferedFrames = [];
   }
 
   /** Request the server list from the master server. */
@@ -273,16 +322,16 @@ export class RelayClient {
   }
 
   /** Attach to a shared watch session for a game server (spectator). */
-  watchServer(address: string): void {
+  watchServer(address: string, channelId?: string): void {
     log.info("Watching server: %s", address);
-    this.resetSessionFraming();
-    this.send({ type: "watchServer", address });
+    this.resetSessionFraming("waiting");
+    this.send({ type: "watchServer", address, channelId });
   }
 
   /** Detach from the current watch session; the socket stays open. */
   leaveServer(): void {
     this.send({ type: "leaveServer" });
-    this.resetSessionFraming();
+    this.resetSessionFraming("waiting");
   }
 
   /** Forward a T2csri auth event to the relay. */
@@ -324,6 +373,7 @@ export class RelayClient {
   /** Close the WebSocket connection entirely. */
   close(): void {
     this.stopWsPing();
+    this.resetSessionFraming();
     if (this.ws) {
       this.ws.close();
       this.ws = null;

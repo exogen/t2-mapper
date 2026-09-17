@@ -40,6 +40,8 @@ export interface LiveConnectionState {
   role: "player" | "watcher" | null;
   /** Watch-session status (watcher role only). */
   watchStatus: WatchStatus | null;
+  /** Relay channel continuity across catch-up retries and socket reconnects. */
+  watchChannelId: string | null;
   watchStatusMessage?: string;
   /** Why the last session ended — drives the disconnect messaging. */
   disconnectReason: "voluntary" | "ended" | null;
@@ -49,7 +51,7 @@ export interface LiveConnectionState {
   sessionEstablished: boolean;
   /** Number of watchers on the shared session (including us). */
   watcherCount: number;
-  /** The relay is recording this session to a demo file. */
+  /** Whether the stream at the watcher playhead was being recorded. */
   recording: boolean;
   /** Watcher-facing stream delay in ms (tournament anti-screen-peek);
    *  0 = live. */
@@ -129,6 +131,7 @@ function disconnectedState(
     liveReady: false,
     role: null,
     watchStatus: null,
+    watchChannelId: null,
     watchStatusMessage: undefined,
     watcherCount: 0,
     recording: false,
@@ -156,6 +159,7 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
     liveReady: false,
     role: null,
     watchStatus: null,
+    watchChannelId: null,
     watchStatusMessage: undefined,
     disconnectReason: null,
     sessionEstablished: false,
@@ -252,14 +256,24 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
             watchStatus: status,
             watchStatusMessage: message,
             watcherCount,
-            recording: info.recording ?? false,
-            streamDelayMs: info.streamDelayMs ?? 0,
+            ...(info.channelId ? { watchChannelId: info.channelId } : {}),
+            // Partial transition notices from older relays do not mean
+            // that recording or the tournament delay was switched off.
+            ...(info.recording != null ? { recording: info.recording } : {}),
+            ...(info.streamDelayMs != null
+              ? { streamDelayMs: info.streamDelayMs }
+              : {}),
             streamDelayReadyAt:
               info.streamDelayReadyInMs != null
                 ? Date.now() + info.streamDelayReadyInMs
                 : null,
             ...(status === "ended"
-              ? { disconnectReason: "ended" as const }
+              ? {
+                  disconnectReason: "ended" as const,
+                  watchChannelId: null,
+                  recording: false,
+                  streamDelayMs: 0,
+                }
               : {}),
             // Reaching the server (catch-up or live) marks the attempt as
             // established, so a later drop offers Rejoin; a probe that
@@ -349,8 +363,6 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
               watchStatus: "connecting",
               watchStatusMessage: "Reconnecting to relay...",
               watcherCount: 0,
-              recording: false,
-              streamDelayMs: 0,
               streamDelayReadyAt: null,
               catchupProgress: null,
               reconnecting: true,
@@ -488,6 +500,7 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
 
     watchServer(address) {
       const s = get();
+      const sameServer = s.role === "watcher" && s.serverAddress === address;
       // A fresh (or resumed) watch supersedes any pending reattach loop.
       cancelReconnect();
 
@@ -496,6 +509,16 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
         // fresh one and re-issue the watch when it connects. Show the
         // connecting state immediately so Rejoin visibly does something.
         set({
+          ...(!sameServer
+            ? {
+                mapName: undefined,
+                serverName: undefined,
+                recording: false,
+                watchChannelId: null,
+                streamDelayMs: 0,
+                streamDelayReadyAt: null,
+              }
+            : {}),
           role: "watcher",
           serverAddress: address,
           liveReady: false,
@@ -551,8 +574,10 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
       s._adapter = newAdapter;
 
       set({
-        mapName: cachedServer?.mapName ?? s.mapName,
-        serverName: cachedServer?.name,
+        // The server-list cache describes the present, not this delayed
+        // stream. Its mission must never replace the watcher's playhead.
+        mapName: sameServer ? s.mapName : undefined,
+        serverName: sameServer ? s.serverName : cachedServer?.name,
         serverAddress: address,
         liveReady: false,
         gameStatus: null,
@@ -563,17 +588,24 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
         disconnectReason: null,
         sessionEstablished: false,
         watcherCount: 0,
+        recording: sameServer ? s.recording : false,
+        watchChannelId: sameServer ? s.watchChannelId : null,
+        streamDelayMs: sameServer ? s.streamDelayMs : 0,
+        streamDelayReadyAt: null,
         catchupProgress: null,
         reconnecting: false,
       });
 
       gameEntityStore.getState().setMissionInfo({
-        missionName: cachedServer?.mapName ?? undefined,
-        missionTypeDisplayName: cachedServer?.gameType ?? undefined,
+        missionName: sameServer ? undefined : null,
+        missionTypeDisplayName: sameServer ? undefined : null,
         serverDisplayName: cachedServer?.name ?? undefined,
       });
 
-      s._relay.watchServer(address);
+      s._relay.watchServer(
+        address,
+        sameServer ? (s.watchChannelId ?? undefined) : undefined,
+      );
     },
 
     leaveServer() {
@@ -592,6 +624,7 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
         serverName: undefined,
         mapName: undefined,
         watchStatus: null,
+        watchChannelId: null,
         watchStatusMessage: undefined,
         ...(hadSession ? { disconnectReason: "voluntary" as const } : {}),
         watcherCount: 0,

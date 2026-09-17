@@ -1,4 +1,5 @@
 import { gzipSync } from "node:zlib";
+import { randomUUID } from "node:crypto";
 import type { WebSocket } from "ws";
 import {
   createLiveParser,
@@ -129,11 +130,12 @@ export class WatchSessionManager {
   }
 
   /** Attach a watcher socket to the session for `address`, creating it. */
-  watch(ws: WebSocket, address: string): void {
+  watch(ws: WebSocket, address: string, channelId?: string): void {
     // A socket watches at most one server.
+    channelId ??= this.getSession(address)?.getChannelId(ws);
     this.detachSocket(ws);
     const session = this.getOrCreateSession(address);
-    session.attach(ws);
+    session.attach(ws, channelId);
   }
 
   /**
@@ -208,7 +210,7 @@ export class WatchSessionManager {
     watchers: number;
     recording: boolean;
     pinned: boolean;
-    /** Watcher-facing tournament delay in effect (ms); 0 = live. */
+    /** Delay buffer in use (ms), including an older channel still draining. */
     delayMs: number;
   }> {
     return [...this.sessions.values()].map((s) => ({
@@ -237,11 +239,23 @@ export function normalizeAddress(address: string): string {
   return trimmed.includes(":") ? trimmed : `${trimmed}:28000`;
 }
 
+type SessionStatusMessage = Extract<ServerMessage, { type: "sessionStatus" }>;
+
+/** A delayed channel spans consecutive tournament missions. */
+type WatchChannel = { kind: "live" } | { kind: "delayed"; firstEpoch: number };
+
 /** One step of the delayed (tournament) watcher stream. */
 type DelayedItem =
   | { kind: "packet"; at: number; data: Uint8Array }
-  | { kind: "epoch"; at: number; epoch: number }
-  | { kind: "connected"; at: number };
+  | { kind: "epoch"; at: number; epoch: number; status: SessionStatusMessage }
+  | {
+      kind: "connected";
+      at: number;
+      epoch: number;
+      status: SessionStatusMessage;
+    }
+  | { kind: "status"; at: number; status: SessionStatusMessage }
+  | { kind: "end"; at: number; message?: string };
 
 /**
  * The watcher-facing replica of the live parse, fed from the delay queue:
@@ -255,6 +269,7 @@ interface DelayedReplica {
   watchState: WatchStateAccumulator;
   connectSynced: boolean;
   connected: boolean;
+  failed: boolean;
   packetCount: number;
 }
 
@@ -271,7 +286,9 @@ interface CatchupSource {
 
 /**
  * One shared game-server connection plus its parsed world state and
- * watcher fan-out. The session owns every protocol response (auth,
+ * watcher fan-out. Live and delayed channels share this connection;
+ * each viewer's catch-up, packets, and status follow its assigned channel.
+ * The session owns every protocol response (auth,
  * mission phases, CRC, ghost acks) — watchers are strictly read-only.
  *
  * Per-datagram work is fully synchronous (parse → accumulate → respond
@@ -285,13 +302,16 @@ export class WatchSession {
   private parserKit: LiveParserKit;
   private ghostState = new GhostStateAccumulator();
   private watchState = new WatchStateAccumulator();
-  /** Sockets receiving the live raw packet stream. */
+  /** Hydrated sockets receiving packets from their assigned channel. */
   private watchers = new Set<WebSocket>();
   /** Sockets awaiting handshake completion + catch-up delivery. */
   private pending = new Set<WebSocket>();
+  private channels = new Map<WebSocket, WatchChannel>();
+  private readonly channelPrefix = randomUUID();
   private epoch = 0;
   private packetCount = 0;
   private connectSynced = false;
+  private processingPacket = false;
   private idleTimer: ReturnType<typeof setTimeout> | null = null;
   private retryTimer: ReturnType<typeof setTimeout> | null = null;
   private scoresTimer: ReturnType<typeof setInterval> | null = null;
@@ -313,6 +333,8 @@ export class WatchSession {
   /** Patrol pin: exempt from idle teardown while set. */
   private pinned = false;
   private destroyed = false;
+  /** The upstream ended; keep serving the delayed tail before teardown. */
+  private ending = false;
   private lastStatus: ConnectionStatus = "connecting";
   private lastPingMs: number | null = null;
   private cachedPayload: {
@@ -321,7 +343,7 @@ export class WatchSession {
     packetCount: number;
     gzipped: Uint8Array;
   } | null = null;
-  /** Watcher-facing delay for the current epoch (ms); 0 = live. */
+  /** Queue delay (ms), retained while an older tournament channel drains. */
   private delayMs = 0;
   /** Whether this epoch's tournament status has been acted on yet. */
   private tourneyResolved = false;
@@ -330,11 +352,16 @@ export class WatchSession {
    *  mission-drop burst first lands). */
   private tourneyGraceArmed = false;
   private delayQueue: DelayedItem[] = [];
-  /** Epoch ms when the delayed stream first has frames to serve (the
-   *  live connect time + delayMs); meaningful only while buffering. */
-  private delayReadyAt = 0;
   private delayTimer: ReturnType<typeof setTimeout> | null = null;
   private replica: DelayedReplica | null = null;
+  /** Status at the watcher playhead, independent of the live connection. */
+  private delayedStatus: SessionStatusMessage | null = null;
+  /** Current upstream policy; provisional until the tournament probe resolves. */
+  private epochDelayed = false;
+  private lastNormalEpoch = 0;
+  private releasedNormalEpoch = 0;
+  /** Normal-mode boundaries still waiting in the delayed queue. */
+  private normalEpochs = new Set<number>();
 
   private options: WatchSessionManagerOptions;
   private onDestroyed: () => void;
@@ -352,6 +379,55 @@ export class WatchSession {
 
   get watcherCount(): number {
     return this.watchers.size + this.pending.size;
+  }
+
+  getChannelId(ws: WebSocket): string | undefined {
+    const channel = this.channels.get(ws);
+    return channel
+      ? `${this.channelPrefix}:${channel.kind === "live" ? "live" : channel.firstEpoch}`
+      : undefined;
+  }
+
+  private currentChannel(): WatchChannel {
+    // A new arrival during a mission change must wait for the next
+    // mission's policy. Resuming viewers carry their existing channel ID.
+    if (!this.ending && (this.lastStatus === "disconnected" || this.rotating)) {
+      return { kind: "live" };
+    }
+    return this.epochDelayed &&
+      (this.tourneyResolved || this.replica?.epoch === this.epoch)
+      ? { kind: "delayed", firstEpoch: this.lastNormalEpoch + 1 }
+      : { kind: "live" };
+  }
+
+  private resumeChannel(id?: string): WatchChannel | null {
+    if (!id?.startsWith(`${this.channelPrefix}:`)) return null;
+    const firstEpoch = Number(id.slice(this.channelPrefix.length + 1));
+    // A channel that has finished cannot rewind a returning viewer.
+    if (
+      !Number.isInteger(firstEpoch) ||
+      firstEpoch <= this.releasedNormalEpoch ||
+      firstEpoch > this.epoch
+    )
+      return null;
+    return { kind: "delayed", firstEpoch };
+  }
+
+  private isDelayedViewer(ws: WebSocket): boolean {
+    return this.channels.get(ws)?.kind === "delayed";
+  }
+
+  private receivesDelayedEpoch(ws: WebSocket, epoch: number): boolean {
+    const channel = this.channels.get(ws);
+    return channel?.kind === "delayed" && channel.firstEpoch <= epoch;
+  }
+
+  private moveToCurrentChannel(ws: WebSocket): void {
+    this.channels.set(ws, this.currentChannel());
+    this.watchers.delete(ws);
+    this.pending.add(ws);
+    this.sendSessionStatus(ws);
+    this.deliverCatchup(ws);
   }
 
   /** True when this socket is attached (live watchers only, not pending —
@@ -375,6 +451,11 @@ export class WatchSession {
   }
 
   start(): void {
+    if (this.destroyed || this.ending) return;
+    if (this.retryTimer) {
+      clearTimeout(this.retryTimer);
+      this.retryTimer = null;
+    }
     this.stopRecording("restart");
     if (this.rotateTimer) {
       clearTimeout(this.rotateTimer);
@@ -389,6 +470,7 @@ export class WatchSession {
     this.ghostState = new GhostStateAccumulator();
     this.watchState = new WatchStateAccumulator();
     this.cancelTourneyDecision();
+    this.lastStatus = "connecting";
 
     // Fail safe: when a tournament delay is configured, every epoch
     // starts DELAYED and only lifts once the server is confirmed NOT in
@@ -400,9 +482,7 @@ export class WatchSession {
     this.tourneyResolved = false;
     this.tourneyGraceArmed = false;
     this.delayMs = this.options.tourneyDelayMs ?? 0;
-    if (this.delayMs > 0) {
-      this.enqueueDelayed({ kind: "epoch", at: Date.now(), epoch: this.epoch });
-    }
+    this.epochDelayed = this.delayMs > 0;
 
     const conn =
       this.options.createConnection?.(this.key) ?? new GameConnection(this.key);
@@ -412,8 +492,18 @@ export class WatchSession {
     this.watchState.expectedSelfGuid = conn.selfGuid;
     const cached = this.options.getCachedServer(this.key);
     if (cached?.mapName) conn.setMapName(cached.mapName);
+    if (this.delayMs > 0) {
+      const status = this.liveSessionStatus("connecting");
+      this.delayedStatus ??= { ...status, streamDelayMs: 0 };
+      this.enqueueDelayed({
+        kind: "epoch",
+        at: Date.now(),
+        epoch: this.epoch,
+        status,
+      });
+    }
 
-    this.recorder =
+    const recorder =
       this.options.demoCoordinator?.createRecorder({
         address: this.key,
         getConnectSequence: () => conn.connectSequence,
@@ -444,8 +534,14 @@ export class WatchSession {
           pinned: this.pinned,
           watchers: this.watcherCount,
         }),
-        onStateChange: () => this.fanOutSessionStatus(),
+        onStateChange: () => {
+          // Finalizing an old file may finish after a new epoch starts.
+          if (this.connection === conn && this.recorder === recorder) {
+            this.fanOutSessionStatus();
+          }
+        },
       }) ?? null;
+    this.recorder = recorder;
 
     conn.on("status", (status: ConnectionStatus, message?: string) => {
       if (this.connection !== conn) return;
@@ -525,20 +621,34 @@ export class WatchSession {
     this.fanOut({ type: "relayRestarting" });
   }
 
-  attach(ws: WebSocket): void {
+  attach(ws: WebSocket, channelId?: string): void {
     if (this.destroyed) return;
     this.cancelIdleTimer();
+    this.channels.set(
+      ws,
+      this.resumeChannel(channelId) ?? this.currentChannel(),
+    );
     this.pending.add(ws);
+    // The retry timer can expire while nobody is watching. A returning
+    // viewer must restart that dormant connection during the idle grace.
+    if (
+      this.lastStatus === "disconnected" &&
+      !this.ending &&
+      !this.retryTimer
+    ) {
+      this.start();
+    }
     this.sendSessionStatus(ws);
     this.broadcastWatcherCount();
-    if (this.lastStatus === "connected") {
-      this.deliverCatchup(ws);
-    }
+    // A delayed replica remains usable while the upstream reconnects or
+    // has ended. Joining must not wait for another live packet or handshake.
+    this.deliverCatchup(ws);
   }
 
   detach(ws: WebSocket): void {
     const removed = this.watchers.delete(ws) || this.pending.delete(ws);
     if (!removed) return;
+    this.channels.delete(ws);
     this.broadcastWatcherCount();
     if (this.watcherCount === 0 && !this.pinned) {
       this.startIdleTimer();
@@ -597,8 +707,12 @@ export class WatchSession {
       this.startScoresPoll();
       this.startScoreHudPoll();
       if (this.delayMs > 0) {
-        this.delayReadyAt = Date.now() + this.delayMs;
-        this.enqueueDelayed({ kind: "connected", at: Date.now() });
+        this.enqueueDelayed({
+          kind: "connected",
+          at: Date.now(),
+          epoch: this.epoch,
+          status: this.liveSessionStatus("live"),
+        });
         // Tournament-mode probe: GetVoteMenu answers with VoteFFAMode
         // (tournament) or VoteTournamentMode (normal) under this key. A
         // reply resolves immediately; otherwise the post-drop grace
@@ -611,13 +725,21 @@ export class WatchSession {
       for (const ws of [...this.pending]) {
         this.deliverCatchup(ws);
       }
-      if (this.isDelayBuffering()) {
-        for (const ws of this.pending) this.sendSessionStatus(ws);
-      }
+      for (const ws of this.pending) this.sendSessionStatus(ws);
       return;
     }
 
     if (status === "disconnected") {
+      // A server may send EndGhosting and then disconnect. Only the
+      // retry may reconnect; a lingering cycle timer must not do it too.
+      if (this.rotateTimer) {
+        clearTimeout(this.rotateTimer);
+        this.rotateTimer = null;
+      }
+      if (this.retryTimer) {
+        clearTimeout(this.retryTimer);
+        this.retryTimer = null;
+      }
       this.stopScoresPoll();
       this.stopScoreHudPoll();
       this.cancelReObserve();
@@ -640,14 +762,10 @@ export class WatchSession {
         // A new connection means new sequence state and ghost IDs: every
         // watcher goes back to pending and re-hydrates from a fresh epoch.
         this.rehydrateWatchers();
-        this.fanOut({
-          type: "sessionStatus",
-          status: "connecting",
-          message: retryStatusMessage(message ?? "", this.retryCount),
-          address: this.key,
-          mapName: this.sessionMapName(),
-          watcherCount: this.watcherCount,
-        });
+        this.fanOutSessionStatus(
+          retryStatusMessage(message ?? "", this.retryCount),
+          "connecting",
+        );
         this.retryTimer = setTimeout(() => {
           this.retryTimer = null;
           if (!this.destroyed && (this.watcherCount > 0 || this.pinned)) {
@@ -664,13 +782,38 @@ export class WatchSession {
   }
 
   private endSession(message?: string): void {
-    this.fanOut({
-      type: "sessionStatus",
-      status: "ended",
-      message,
-      address: this.key,
-      watcherCount: 0,
-    });
+    if (this.ending || this.destroyed) return;
+    this.ending = true;
+    this.stopScoresPoll();
+    this.stopScoreHudPoll();
+    this.cancelReObserve();
+    this.cancelTourneyDecision();
+    if (this.retryTimer) clearTimeout(this.retryTimer);
+    if (this.rotateTimer) clearTimeout(this.rotateTimer);
+    this.stopRecording(message ?? "session ended");
+    const conn = this.connection;
+    this.connection = null;
+    if (conn && conn.status !== "disconnected") conn.disconnect();
+    if (this.delayMs > 0) {
+      for (const ws of this.channels.keys()) {
+        if (!this.isDelayedViewer(ws)) {
+          sendJson(ws, { ...this.sessionStatus(ws, "ended"), message });
+        }
+      }
+      this.enqueueDelayed({ kind: "end", at: Date.now(), message });
+      return;
+    }
+    this.finishSession(message);
+  }
+
+  private finishSession(message?: string): void {
+    for (const ws of this.channels.keys()) {
+      sendJson(ws, {
+        ...this.sessionStatus(ws, "ended"),
+        message,
+        watcherCount: 0,
+      });
+    }
     this.destroy();
   }
 
@@ -699,6 +842,7 @@ export class WatchSession {
     }
     this.watchers.clear();
     this.pending.clear();
+    this.channels.clear();
     const conn = this.connection;
     this.connection = null;
     if (conn && conn.status !== "disconnected") {
@@ -710,14 +854,25 @@ export class WatchSession {
   // ── Packet pipeline ──
 
   private handlePacket(data: Uint8Array): void {
+    this.processingPacket = true;
+    try {
+      this.processPacket(data);
+    } finally {
+      this.processingPacket = false;
+      // A responder can finish the handshake or lift the delay inside
+      // this packet. Hydrate only after all of its state is accumulated
+      // and the raw frame has gone to existing watchers.
+      if (this.pending.size > 0) {
+        for (const ws of [...this.pending]) this.deliverCatchup(ws);
+      }
+    }
+  }
+
+  private processPacket(data: Uint8Array): void {
     // Frozen for a pending mission-cycle rotation: the epoch's parser
     // state is dead and watchers are deliberately left on their
     // end-of-match view until the reconnect re-hydrates them.
     if (this.rotating) return;
-    // Detection can lift the delay mid-packet (a non-tournament server
-    // resolving); remember the state we entered with so the tail below
-    // doesn't also raw-send a packet the lift's catch-up already carried.
-    const wasDelayed = this.delayMs > 0;
     this.syncConnectSequence(data);
     let parsed;
     try {
@@ -823,14 +978,13 @@ export class WatchSession {
         at: Date.now(),
         data: data.slice(),
       });
-      return;
     }
-    // Delayed at entry but lifted while processing this packet: the
-    // lift re-hydrated watchers from a catch-up that already reflects
-    // it, so a raw send here would deliver it twice.
-    if (wasDelayed) return;
     for (const ws of this.watchers) {
-      if (ws.readyState === ws.OPEN) {
+      if (
+        !this.epochDelayed &&
+        !this.isDelayedViewer(ws) &&
+        ws.readyState === ws.OPEN
+      ) {
         ws.send(data, { binary: true });
       }
     }
@@ -838,7 +992,7 @@ export class WatchSession {
 
   // ── Tournament-mode stream delay ──
 
-  /** Watcher-facing delay currently applied (ms); 0 when live. */
+  /** Delay buffer currently retained (ms); individual viewers may be live. */
   get streamDelayMs(): number {
     return this.delayMs;
   }
@@ -853,69 +1007,59 @@ export class WatchSession {
     );
   }
 
-  /** Delayed, connected, but the first `delayMs` of buffer hasn't
-   *  elapsed — no delayed frames to serve a watcher yet. */
-  private isDelayBuffering(): boolean {
-    return (
-      this.delayMs > 0 &&
-      this.lastStatus === "connected" &&
-      !this.replica?.connected
+  /** Countdown to this channel's first usable snapshot, even across map cycles. */
+  private delayReadyInMs(ws: WebSocket): number | undefined {
+    const channel = this.channels.get(ws);
+    if (channel?.kind !== "delayed" || this.catchupSource(ws)) return undefined;
+    const connected = this.delayQueue.find(
+      (item) => item.kind === "connected" && item.epoch >= channel.firstEpoch,
     );
+    return connected
+      ? Math.max(0, connected.at + this.delayMs - Date.now())
+      : undefined;
   }
 
-  /**
-   * Watcher-facing delay in ms: 0 until tournament mode is CONFIRMED, so
-   * the provisional (fail-safe) delay during the ~1s decision window
-   * never surfaces as a "delayed" badge/notice on the client. The real
-   * (possibly provisional) delay stays visible to ops via getStatusSummary.
-   */
-  private confirmedDelayMs(): number {
-    return this.tourneyResolved ? this.delayMs : 0;
-  }
-
-  /**
-   * Rough ms until the delayed stream begins, while buffering — but only
-   * once tournament mode is CONFIRMED. Before that the delay is
-   * provisional (fail-safe) and usually lifts within ~1s, so the notice
-   * would flash on every ordinary join; undefined suppresses it.
-   */
-  private delayReadyInMs(): number | undefined {
-    if (!this.tourneyResolved || !this.isDelayBuffering()) return undefined;
-    return Math.max(0, this.delayReadyAt - Date.now());
-  }
-
-  /**
-   * Resolve this epoch's tournament status (from the vote-menu answer /
-   * banner, or the grace timeout). Tournament keeps the provisional
-   * delay; not-tournament lifts it. Idempotent per epoch. Also a test
-   * seam. No effect once resolved or when no delay is configured.
-   */
+  /** Resolve the new mission's policy without interrupting the old channel. */
   setTournamentMode(on: boolean): void {
-    if (this.tourneyResolved || this.delayMs === 0 || this.destroyed) return;
+    if (
+      this.tourneyResolved ||
+      this.delayMs === 0 ||
+      this.destroyed ||
+      this.ending
+    )
+      return;
     this.tourneyResolved = true;
+    this.epochDelayed = on;
     this.cancelTourneyDecision();
     relayLog.info(
       { address: this.key, tournamentMode: on, delayMs: this.delayMs },
       "Tournament mode resolved",
     );
     if (!on) {
-      this.liftDelay();
-    } else {
-      // Confirmed tournament while still buffering: push the now-known
-      // delay countdown to watchers waiting in the cold-start window.
-      for (const ws of this.pending) this.sendSessionStatus(ws);
+      this.lastNormalEpoch = this.epoch;
+      this.normalEpochs.add(this.epoch);
+      const earlierEpochPending =
+        (this.replica != null && this.replica.epoch < this.epoch) ||
+        this.delayQueue.some(
+          (item) => item.kind === "epoch" && item.epoch < this.epoch,
+        );
+      if (!earlierEpochPending) this.liftDelay();
+    }
+    // New arrivals and previously live viewers follow the new policy.
+    // Existing delayed viewers stay tuned until their channel finishes.
+    for (const ws of [...this.pending]) {
+      if (!this.isDelayedViewer(ws)) this.moveToCurrentChannel(ws);
     }
   }
 
-  /**
-   * Stop delaying: drop the buffer and re-hydrate every watcher from the
-   * live pipeline (jump to the present). In the common case (a
-   * non-tournament server resolving during its cold-start window) the
-   * queue holds only a second or two and no watcher has seen the delayed
-   * stream yet, so the jump is invisible. A mid-session tournament→normal
-   * switch (rare, admin-driven) fast-forwards watchers past the ended
-   * match's tail to live.
-   */
+  private finishDelayedChannel(epoch: number): void {
+    this.releasedNormalEpoch = epoch;
+    for (const ws of this.channels.keys()) {
+      if (this.receivesDelayedEpoch(ws, epoch)) this.moveToCurrentChannel(ws);
+    }
+  }
+
+  /** Release queue storage once the delayed playhead reaches the live mission. */
   private liftDelay(): void {
     if (this.delayMs === 0) return;
     this.delayMs = 0;
@@ -925,12 +1069,9 @@ export class WatchSession {
     }
     this.delayQueue = [];
     this.replica = null;
-    for (const ws of this.watchers) this.pending.add(ws);
-    this.watchers.clear();
-    this.broadcastWatcherCount();
-    if (this.lastStatus === "connected" && !this.rotating) {
-      for (const ws of [...this.pending]) this.deliverCatchup(ws);
-    }
+    this.delayedStatus = null;
+    this.normalEpochs.clear();
+    this.finishDelayedChannel(this.epoch);
   }
 
   /**
@@ -1016,50 +1157,118 @@ export class WatchSession {
           watchState: new WatchStateAccumulator(),
           connectSynced: false,
           connected: false,
+          failed: false,
           packetCount: 0,
         };
-        for (const ws of this.watchers) this.pending.add(ws);
-        this.watchers.clear();
+        this.delayedStatus = item.status;
+        if (this.normalEpochs.delete(item.epoch) && !this.ending) {
+          this.finishDelayedChannel(item.epoch);
+          if (item.epoch === this.epoch && !this.epochDelayed) {
+            this.liftDelay();
+            return;
+          }
+        }
+        // An unresolved probe still fails closed: once a full delay has
+        // elapsed, waiting viewers may use this epoch's delayed replica.
+        if (item.epoch === this.epoch && this.epochDelayed) {
+          for (const ws of [...this.pending]) {
+            if (!this.isDelayedViewer(ws)) this.moveToCurrentChannel(ws);
+          }
+        }
+        for (const ws of this.channels.keys()) {
+          if (!this.receivesDelayedEpoch(ws, item.epoch)) continue;
+          this.watchers.delete(ws);
+          this.pending.add(ws);
+          sendJson(ws, this.sessionStatus(ws, "connecting"));
+        }
         return;
       }
       case "connected": {
-        if (this.replica) this.replica.connected = true;
+        if (this.replica && !this.replica.failed) this.replica.connected = true;
+        this.delayedStatus = item.status;
+        return;
+      }
+      case "status": {
+        this.delayedStatus = item.status;
+        for (const ws of this.channels.keys()) {
+          if (
+            this.replica &&
+            this.receivesDelayedEpoch(ws, this.replica.epoch)
+          ) {
+            sendJson(ws, this.sessionStatus(ws, item.status.status));
+          }
+        }
+        return;
+      }
+      case "end": {
+        this.finishSession(item.message);
         return;
       }
       case "packet": {
         const r = this.replica;
-        if (!r) return;
+        if (!r || r.failed) return;
         if (!r.connectSynced && item.data.length >= 1) {
           r.kit.packetParser.setConnectionProtocolState(
             passiveObserverProtocolState(item.data[0]),
           );
           r.connectSynced = true;
         }
-        let parsed;
         try {
-          parsed = r.kit.packetParser.parsePacket(item.data);
-        } catch (e) {
-          // The live pipeline re-synced at this very packet `delayMs`
-          // ago; its "epoch" marker follows in the queue. Forwarding the
-          // packet would desync watchers the same way.
-          relayLog.debug(
-            { err: e, address: this.key },
-            "Delayed replica packet parse failed",
-          );
+          const parsed = r.kit.packetParser.parsePacket(item.data);
+          if (parsed.parseFault) throw new Error(parsed.parseFault.message);
+          if (parsed) {
+            r.packetCount++;
+            r.watchState.applyPacket(parsed);
+            r.ghostState.applyPacket(parsed);
+            // The replica has no protocol responders, but still needs their
+            // mission-phase metadata or a reconnect hydrates a nameless world.
+            for (const event of parsed.events) {
+              if (event.parsedData?.type === "RemoteCommandEvent") {
+                const cmd = event.parsedData as RemoteCommandEventData;
+                r.watchState.applyMissionStart(
+                  r.watchState.resolveNetString(cmd.funcName ?? ""),
+                  cmd.args ?? [],
+                );
+              }
+            }
+          }
+        } catch (err) {
+          relayLog.error({ err, address: this.key }, "Delayed replica failed");
+          this.invalidateReplica();
           return;
         }
-        if (parsed) {
-          r.packetCount++;
-          r.watchState.applyPacket(parsed);
-          r.ghostState.applyPacket(parsed);
-        }
         for (const ws of this.watchers) {
-          if (ws.readyState === ws.OPEN) {
+          if (
+            this.receivesDelayedEpoch(ws, r.epoch) &&
+            ws.readyState === ws.OPEN
+          ) {
             ws.send(item.data, { binary: true });
           }
         }
         return;
       }
+    }
+  }
+
+  private invalidateReplica(): void {
+    const replica = this.replica;
+    if (!replica || replica.failed) return;
+    replica.failed = true;
+    replica.connected = false;
+    this.cachedPayload = null;
+    for (const ws of this.channels.keys()) {
+      if (!this.receivesDelayedEpoch(ws, replica.epoch)) continue;
+      this.watchers.delete(ws);
+      this.pending.add(ws);
+      sendJson(ws, {
+        ...this.sessionStatus(ws, "syncing"),
+        message: "Re-syncing delayed stream...",
+      });
+    }
+    // If a newer epoch is already queued, it will repair the replica.
+    // Otherwise request one; never keep feeding a corrupt parser.
+    if (replica.epoch === this.epoch && !this.ending) {
+      this.resyncSession("delayed replica diverged");
     }
   }
 
@@ -1071,7 +1280,7 @@ export class WatchSession {
    * connection, and every watcher re-hydrates from a new epoch.
    */
   private resyncSession(reason: string): void {
-    if (this.destroyed) return;
+    if (this.destroyed || this.ending) return;
     if (this.resyncCount >= MAX_RETRIES) {
       this.endSession(`Stream state diverged: ${reason}`);
       return;
@@ -1092,9 +1301,11 @@ export class WatchSession {
    * receiving the previous epoch's delayed packets.
    */
   private rehydrateWatchers(): void {
-    if (this.delayMs > 0) return;
-    for (const ws of this.watchers) this.pending.add(ws);
-    this.watchers.clear();
+    for (const ws of this.watchers) {
+      if (this.isDelayedViewer(ws)) continue;
+      this.pending.add(ws);
+      this.watchers.delete(ws);
+    }
   }
 
   /**
@@ -1105,14 +1316,7 @@ export class WatchSession {
   private reconnect(statusMessage: string): void {
     this.lastStatus = "connecting";
     this.rehydrateWatchers();
-    this.fanOut({
-      type: "sessionStatus",
-      status: "connecting",
-      message: statusMessage,
-      address: this.key,
-      mapName: this.sessionMapName(),
-      watcherCount: this.watcherCount,
-    });
+    this.fanOutSessionStatus(statusMessage);
     const conn = this.connection;
     this.connection = null;
     if (conn && conn.status !== "disconnected") {
@@ -1133,6 +1337,7 @@ export class WatchSession {
     const recorder = this.recorder;
     if (!recorder) return;
     this.recorder = null;
+    this.fanOutSessionStatus();
     this.options.demoCoordinator?.finalize(recorder, reason);
   }
 
@@ -1145,11 +1350,12 @@ export class WatchSession {
    * re-hydrate flow during the intermission.
    */
   private handleMissionCycle(trigger: string): void {
-    if (!this.recorder || this.destroyed) return;
+    if (this.destroyed || this.ending || this.rotating) return;
     // A cycle before Phase1 ever arrived (we joined mid-cycle): keep
     // buffering — the from-connect stream stays valid, and the new
     // mission's Phase1 flushes it under its name.
-    if (this.recorder.state === "buffering") return;
+    if (!this.watchState.missionName || this.recorder?.state === "buffering")
+      return;
     // Every map change reconnects (a fresh epoch), however short the
     // previous map was — so tournament mode is re-decided per mission
     // rather than latched for the life of the connection.
@@ -1210,9 +1416,11 @@ export class WatchSession {
         conn.missionStartedWithoutAuth();
         const seq = resolvedArgs[0] ?? "";
         const newMissionName = resolvedArgs[1] ?? null;
-        if (newMissionName && newMissionName !== this.watchState.missionName) {
-          this.watchState.missionName = newMissionName;
-          this.watchState.beginMissionChange();
+        const previousMissionName = this.watchState.missionName;
+        if (
+          this.watchState.applyMissionStart(funcName, resolvedArgs) &&
+          previousMissionName !== null
+        ) {
           // A mission change reaching an already-open file means the
           // EndGhosting cycle trigger was missed — rotate late.
           this.handleMissionCycle("Phase1");
@@ -1223,8 +1431,7 @@ export class WatchSession {
         conn.sendCommand("MissionStartPhase2Done", resolvedArgs[0] ?? "");
       } else if (funcName === "MissionStartPhase3") {
         const seq = resolvedArgs[0] ?? "";
-        const currentMission = resolvedArgs[1] ?? null;
-        if (currentMission) this.watchState.missionName = currentMission;
+        this.watchState.applyMissionStart(funcName, resolvedArgs);
         conn.sendCommand("setClientFav", "");
         conn.sendCommand("MissionStartPhase3Done", seq);
       }
@@ -1332,12 +1539,13 @@ export class WatchSession {
   }
 
   /** Null when no catch-up can be built yet. */
-  private catchupSource(): CatchupSource | null {
-    if (this.delayMs > 0) {
+  private catchupSource(ws: WebSocket): CatchupSource | null {
+    if (this.isDelayedViewer(ws)) {
       // Tournament delay: joiners see the replica's (past) state — the
       // live connection's status is irrelevant to them.
       const r = this.replica;
-      if (!r || !r.connected) return null;
+      if (!r || !r.connected || !this.receivesDelayedEpoch(ws, r.epoch))
+        return null;
       return {
         kind: "delayed",
         packetParser: r.kit.packetParser,
@@ -1351,22 +1559,30 @@ export class WatchSession {
     // A re-sync may have started mid-delivery-loop; these watchers get a
     // fresh catch-up once the new connection is live. Same for a pending
     // rotation — its post-EndGhosting state would seed an empty world.
-    if (this.lastStatus !== "connected" || this.rotating) return null;
+    if (
+      this.epochDelayed ||
+      this.lastStatus !== "connected" ||
+      this.rotating ||
+      this.ending
+    )
+      return null;
     return this.liveSource();
   }
 
   private deliverCatchup(ws: WebSocket): void {
-    if (this.destroyed || !this.pending.has(ws)) return;
-    const source = this.catchupSource();
+    if (this.destroyed || this.processingPacket || !this.pending.has(ws))
+      return;
+    const source = this.catchupSource(ws);
     if (!source) return;
     // Never seed a joiner from diverged state — re-sync instead (the
     // replica can't be re-synced; it is rebuilt at the next epoch marker).
     if (!this.checkAccumulatorInvariant("catchup-build", source)) {
       if (source.kind === "live")
         this.resyncSession("ghost accumulator diverged");
+      else this.invalidateReplica();
       return;
     }
-    sendJson(ws, this.sessionStatus("syncing"));
+    sendJson(ws, this.sessionStatus(ws, "syncing"));
 
     let gzipped: Uint8Array;
     try {
@@ -1399,7 +1615,7 @@ export class WatchSession {
 
     this.pending.delete(ws);
     this.watchers.add(ws);
-    sendJson(ws, this.sessionStatus("live"));
+    sendJson(ws, this.sessionStatus(ws, "live"));
     relayLog.info(
       {
         address: this.key,
@@ -1462,16 +1678,8 @@ export class WatchSession {
     for (const ws of this.pending) sendJson(ws, message);
   }
 
-  /**
-   * The steady-state session-status payload shared by the syncing / live
-   * broadcasts (catch-up, fan-out, per-socket resend). Callers add
-   * `message` and `streamDelayReadyInMs` where those apply — the minimal
-   * connecting/ended notices deliberately omit these fields and build
-   * their own literals.
-   */
-  private sessionStatus(
-    status: WatchStatus,
-  ): Extract<ServerMessage, { type: "sessionStatus" }> {
+  /** Capture upstream metadata before its connection/recorder can change. */
+  private liveSessionStatus(status: WatchStatus): SessionStatusMessage {
     return {
       type: "sessionStatus",
       status,
@@ -1480,27 +1688,84 @@ export class WatchSession {
       mapName: this.sessionMapName(),
       watcherCount: this.watcherCount,
       recording: this.recording,
-      streamDelayMs: this.confirmedDelayMs(),
+      streamDelayMs: this.epochDelayed ? this.delayMs : 0,
     };
   }
 
-  private fanOutSessionStatus(message?: string): void {
-    this.fanOut({
-      ...this.sessionStatus(
-        this.isDelayBuffering() ? "syncing" : this.watchStatus,
-      ),
-      message,
-      streamDelayReadyInMs: this.delayReadyInMs(),
-    });
+  /** Watcher metadata must come from the same timeline as its catch-up. */
+  private sessionStatus(
+    ws: WebSocket,
+    status: WatchStatus,
+  ): SessionStatusMessage {
+    const delayed = this.isDelayedViewer(ws);
+    const hasReplica =
+      this.replica && this.receivesDelayedEpoch(ws, this.replica.epoch);
+    const waitingEpoch =
+      delayed && !hasReplica
+        ? this.delayQueue.find(
+            (item) =>
+              item.kind === "epoch" &&
+              this.receivesDelayedEpoch(ws, item.epoch),
+          )
+        : undefined;
+    const metadata =
+      (hasReplica
+        ? this.delayedStatus
+        : waitingEpoch?.kind === "epoch"
+          ? waitingEpoch.status
+          : null) ?? this.liveSessionStatus(status);
+    return {
+      ...metadata,
+      status:
+        status === "live" &&
+        (!this.watchers.has(ws) || (hasReplica && this.replica?.failed))
+          ? "syncing"
+          : status,
+      mapName:
+        (hasReplica ? this.replica?.watchState.missionName : undefined) ??
+        metadata.mapName,
+      serverName:
+        (hasReplica ? this.replica?.watchState.serverName : undefined) ??
+        metadata.serverName,
+      watcherCount: this.watcherCount,
+      streamDelayMs: delayed ? this.delayMs : 0,
+      streamDelayReadyInMs: this.delayReadyInMs(ws),
+      channelId: this.getChannelId(ws),
+    };
+  }
+
+  private fanOutSessionStatus(
+    message?: string,
+    status: WatchStatus = this.lastStatus === "disconnected"
+      ? "connecting"
+      : this.watchStatus,
+  ): void {
+    if (this.destroyed) return;
+    const update = { ...this.liveSessionStatus(status), message };
+    if (this.delayMs > 0) {
+      this.enqueueDelayed({ kind: "status", at: Date.now(), status: update });
+    }
+    for (const ws of this.channels.keys()) {
+      if (!this.isDelayedViewer(ws)) {
+        sendJson(ws, { ...this.sessionStatus(ws, status), message });
+      }
+    }
   }
 
   private sendSessionStatus(ws: WebSocket): void {
-    sendJson(ws, {
-      ...this.sessionStatus(
-        this.lastStatus === "connected" ? "syncing" : this.watchStatus,
+    sendJson(
+      ws,
+      this.sessionStatus(
+        ws,
+        this.ending && !this.isDelayedViewer(ws)
+          ? "ended"
+          : this.catchupSource(ws) ||
+              this.isDelayedViewer(ws) ||
+              this.lastStatus === "connected"
+            ? "syncing"
+            : "connecting",
       ),
-      streamDelayReadyInMs: this.delayReadyInMs(),
-    });
+    );
     if (this.lastPingMs != null) {
       sendJson(ws, { type: "ping", ms: this.lastPingMs });
     }

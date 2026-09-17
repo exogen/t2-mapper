@@ -148,6 +148,21 @@ export class WatchStateAccumulator {
     this.loadInfo.reset();
   }
 
+  /** Mission-phase metadata is shared by live and delayed catch-up state. */
+  applyMissionStart(funcName: string, args: string[]): boolean {
+    if (
+      funcName !== "MissionStartPhase1" &&
+      funcName !== "MissionStartPhase3"
+    ) {
+      return false;
+    }
+    const name = args[1] && this.resolveNetString(args[1]);
+    if (!name || name === this.missionName) return false;
+    this.missionName = name;
+    if (funcName === "MissionStartPhase1") this.beginMissionChange();
+    return true;
+  }
+
   resolveNetString(s: string): string {
     if (s.length >= 2 && s.charCodeAt(0) === 1) {
       const id = parseInt(s.slice(1), 10);

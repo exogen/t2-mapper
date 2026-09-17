@@ -818,7 +818,13 @@ wss.on("connection", (ws) => {
         // The socket may have closed during the probe; a dead watcher in
         // a session would pin it until the liveness sweep.
         if (ws.readyState === WebSocket.OPEN) {
-          watchSessions.watch(ws, address);
+          watchSessions.watch(
+            ws,
+            address,
+            typeof message.channelId === "string"
+              ? message.channelId
+              : undefined,
+          );
         }
         break;
       }

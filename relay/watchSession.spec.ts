@@ -3,6 +3,7 @@ import { EventEmitter } from "node:events";
 import fsp from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { gunzipSync } from "node:zlib";
 import type { WebSocket } from "ws";
 import {
   WatchSessionManager,
@@ -596,6 +597,630 @@ describe("WatchSessionManager", () => {
   });
 });
 
+describe("WatchSession delayed transitions", () => {
+  const address = "1.2.3.4:28000";
+  const delayMs = 60_000;
+  const managers: WatchSessionManager[] = [];
+
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => {
+    for (const manager of managers.splice(0)) manager.shutdown();
+    vi.useRealTimers();
+  });
+
+  function start() {
+    const { manager, connections } = createManager({ tourneyDelayMs: delayMs });
+    managers.push(manager);
+    const ws = new FakeWebSocket();
+    manager.watch(ws as unknown as WebSocket, address);
+    const session = manager.getSession(address)!;
+    connections[0].setStatus("connected");
+    session.setTournamentMode(true);
+    vi.advanceTimersByTime(delayMs);
+    return { manager, connections, ws, session };
+  }
+
+  function statuses(ws: FakeWebSocket) {
+    return ws.jsonMessages().filter((m) => m.type === "sessionStatus");
+  }
+
+  function catchup(ws: FakeWebSocket) {
+    const begin = ws.sent.findIndex(
+      (f) => !f.binary && JSON.parse(f.data as string).type === "catchupBegin",
+    );
+    expect(begin).toBeGreaterThanOrEqual(0);
+    const chunks: Uint8Array[] = [];
+    for (const frame of ws.sent.slice(begin + 1)) {
+      if (!frame.binary) break;
+      chunks.push(frame.data as Uint8Array);
+    }
+    return JSON.parse(gunzipSync(Buffer.concat(chunks)).toString());
+  }
+
+  // Seed a mission already parsed on both timelines, then exercise the
+  // real packet queue, connection events, socket framing, and catch-up.
+  function recordedMission(session: any, name = "OldMap") {
+    session.watchState.missionName = name;
+    session.replica.watchState.missionName = name;
+    session.cachedPayload = null;
+    session.recorder = { state: "recording", onPacket: () => false };
+    session.fanOutSessionStatus();
+    vi.advanceTimersByTime(delayMs);
+  }
+
+  function cycle(
+    connections: FakeGameConnection[],
+    session: ReturnType<WatchSessionManager["getSession"]>,
+    tournament: boolean,
+  ) {
+    connections.at(-1)!.setStatus("disconnected", "Server is cycling mission");
+    vi.advanceTimersByTime(6_000);
+    connections.at(-1)!.setStatus("connected");
+    session!.setTournamentMode(tournament);
+  }
+
+  it("moves live viewers to the tournament countdown without sending early packets", () => {
+    const { manager, connections } = createManager({ tourneyDelayMs: delayMs });
+    managers.push(manager);
+    const ws = new FakeWebSocket();
+    manager.watch(ws as unknown as WebSocket, address);
+    const session = manager.getSession(address)!;
+    connections[0].setStatus("connected");
+    session.setTournamentMode(false);
+    ws.sent = [];
+    cycle(connections, session, true);
+    expect(statuses(ws).at(-1)).toMatchObject({
+      status: "syncing",
+      streamDelayMs: delayMs,
+      streamDelayReadyInMs: delayMs,
+    });
+    const packet = new Uint8Array([7, 7, 7]);
+    connections[1].emit("packet", packet);
+    vi.advanceTimersByTime(delayMs - 1);
+    expect(ws.binaryFrames()).not.toContainEqual(packet);
+    vi.advanceTimersByTime(1);
+    expect(ws.binaryFrames()).toContainEqual(packet);
+    expect(catchup(ws).epoch).toBe(2);
+    expect(statuses(ws).at(-1)).toMatchObject({
+      status: "live",
+      streamDelayMs: delayMs,
+    });
+  });
+
+  it("serves old and new viewers on separate channels until the tournament tail finishes", () => {
+    const { manager, connections, ws, session } = start();
+    recordedMission(session);
+    const oldChannel = statuses(ws).at(-1)!.channelId;
+    ws.sent = [];
+    const tail = new Uint8Array([1, 2, 3]);
+    connections[0].emit("packet", tail);
+    vi.advanceTimersByTime(100);
+    cycle(connections, session, false);
+    const state = session as any;
+    state.watchState.missionName = "NormalMap";
+    const joiner = new FakeWebSocket();
+    manager.watch(joiner as unknown as WebSocket, address);
+    expect(catchup(joiner)).toMatchObject({
+      epoch: 2,
+      missionName: "NormalMap",
+    });
+    expect(statuses(joiner).at(-1)).toMatchObject({
+      streamDelayMs: 0,
+      recording: false,
+    });
+    expect(statuses(joiner).at(-1)!.channelId).not.toBe(oldChannel);
+    joiner.sent = [];
+    const current = new Uint8Array([7, 7, 7]);
+    connections[1].emit("packet", current);
+    expect(joiner.binaryFrames()).toEqual([current]);
+    expect(ws.binaryFrames()).toHaveLength(0);
+    vi.advanceTimersByTime(delayMs);
+    expect(ws.binaryFrames()[0]).toEqual(tail);
+    expect(catchup(ws)).toMatchObject({ epoch: 2, missionName: "NormalMap" });
+    expect(statuses(ws).at(-1)).toMatchObject({
+      streamDelayMs: 0,
+      status: "live",
+    });
+    expect(joiner.binaryFrames()).toEqual([current]);
+    expect(statuses(joiner)).toEqual([]);
+  });
+
+  it("waits for the mode decision before placing a new arrival on either channel", () => {
+    const { manager, connections, session } = start();
+    connections[0].setStatus("disconnected", "Server is cycling mission");
+    vi.advanceTimersByTime(6_000);
+    connections[1].setStatus("connected");
+    const joiner = new FakeWebSocket();
+    manager.watch(joiner as unknown as WebSocket, address);
+    expect(joiner.frameTypes()).not.toContain("catchupBegin");
+    session.setTournamentMode(false);
+    expect(catchup(joiner).epoch).toBe(2);
+    expect(statuses(joiner).at(-1)).toMatchObject({ streamDelayMs: 0 });
+  });
+
+  it.each(["disconnect", "in-place"])(
+    "does not put a new arrival on the old channel during a %s mission change",
+    (transition) => {
+      const { manager, connections, session } = start();
+      if (transition === "disconnect") {
+        connections[0].setStatus("disconnected", "Server is cycling mission");
+      } else {
+        const state = session as any;
+        state.watchState.missionName = "OldMap";
+        state.handleResponderEvent({
+          type: "GhostingMessageEvent",
+          message: 2,
+        });
+      }
+      const joiner = new FakeWebSocket();
+      manager.watch(joiner as unknown as WebSocket, address);
+      expect(joiner.frameTypes()).not.toContain("catchupBegin");
+      vi.advanceTimersByTime(6_000);
+      connections[1].setStatus("connected");
+      session.setTournamentMode(false);
+      expect(catchup(joiner).epoch).toBe(2);
+      expect(statuses(joiner).at(-1)).toMatchObject({
+        streamDelayMs: 0,
+        status: "live",
+      });
+    },
+  );
+
+  it("switches a drained channel to the latest normal mission after multiple rapid map cycles", () => {
+    const { manager, connections, ws, session } = start();
+    ws.sent = [];
+    cycle(connections, session, false);
+    const normalViewer = new FakeWebSocket();
+    manager.watch(normalViewer as unknown as WebSocket, address);
+    normalViewer.sent = [];
+    cycle(connections, session, false);
+    expect(catchup(normalViewer).epoch).toBe(3);
+    const snapshotCount = normalViewer
+      .frameTypes()
+      .filter((t) => t === "catchupEnd").length;
+    vi.advanceTimersByTime(delayMs - 6_000);
+    expect(catchup(ws).epoch).toBe(3);
+    expect(statuses(ws).at(-1)).toMatchObject({
+      status: "live",
+      streamDelayMs: 0,
+    });
+    // Old delayed epoch markers must not rehydrate viewers already live.
+    vi.advanceTimersByTime(6_000);
+    expect(
+      normalViewer.frameTypes().filter((t) => t === "catchupEnd"),
+    ).toHaveLength(snapshotCount);
+    expect(session.streamDelayMs).toBe(0);
+  });
+
+  it("keeps a same-socket catch-up retry on its existing delayed channel", () => {
+    const { manager, connections, ws, session } = start();
+    cycle(connections, session, false);
+    ws.sent = [];
+    manager.watch(ws as unknown as WebSocket, address);
+    expect(catchup(ws).epoch).toBe(1);
+    expect(statuses(ws).at(-1)?.streamDelayMs).toBe(delayMs);
+  });
+
+  it.each([false, true])(
+    "restarts a dormant connection when a viewer returns after the retry was skipped (tournament=%s)",
+    (tournament) => {
+      const { manager, connections } = createManager({
+        tourneyDelayMs: delayMs,
+      });
+      managers.push(manager);
+      const ws = new FakeWebSocket();
+      manager.watch(ws as unknown as WebSocket, address);
+      const session = manager.getSession(address)!;
+      connections[0].setStatus("connected");
+      session.setTournamentMode(tournament);
+      if (tournament) vi.advanceTimersByTime(delayMs);
+      const channelId = session.getChannelId(ws as unknown as WebSocket);
+      connections[0].setStatus("disconnected", "Server is cycling mission");
+      manager.detachSocket(ws as unknown as WebSocket);
+      vi.advanceTimersByTime(10_000);
+      expect(connections).toHaveLength(1);
+      const resumed = new FakeWebSocket();
+      manager.watch(resumed as unknown as WebSocket, address, channelId);
+      expect(connections).toHaveLength(2);
+      connections[1].setStatus("connected");
+      session.setTournamentMode(false);
+      if (tournament) {
+        expect(catchup(resumed).epoch).toBe(1);
+        expect(statuses(resumed).at(-1)?.streamDelayMs).toBe(delayMs);
+        vi.advanceTimersByTime(delayMs);
+      }
+      expect(statuses(resumed).at(-1)).toMatchObject({
+        status: "live",
+        streamDelayMs: 0,
+      });
+      expect(
+        resumed
+          .jsonMessages()
+          .filter((m) => m.type === "catchupBegin")
+          .at(-1),
+      ).toMatchObject({ epoch: 2 });
+    },
+  );
+
+  it("reconnects only once when EndGhosting is followed by a server disconnect", () => {
+    const { connections, session } = start();
+    const state = session as any;
+    state.watchState.missionName = "OldMap";
+    state.handleResponderEvent({ type: "GhostingMessageEvent", message: 2 });
+    connections[0].setStatus("disconnected", "Server is cycling mission");
+    vi.advanceTimersByTime(6_000);
+    expect(connections).toHaveLength(2);
+    connections[1].setStatus("connected");
+    session.setTournamentMode(false);
+    vi.advanceTimersByTime(delayMs);
+    expect(connections).toHaveLength(2);
+    expect(connections[1].disconnectCalls).toBe(0);
+  });
+
+  it("rejects channel continuity from a destroyed session", () => {
+    const { manager, ws, session, connections } = start();
+    const oldId = session.getChannelId(ws as unknown as WebSocket);
+    manager.shutdown();
+    const joiner = new FakeWebSocket();
+    manager.watch(joiner as unknown as WebSocket, address, oldId);
+    connections.at(-1)!.setStatus("connected");
+    manager.getSession(address)!.setTournamentMode(false);
+    expect(catchup(joiner).epoch).toBe(1);
+    expect(statuses(joiner).at(-1)).toMatchObject({ streamDelayMs: 0 });
+    expect(statuses(joiner).at(-1)!.channelId).not.toBe(oldId);
+  });
+
+  it("resumes a draining channel after socket loss, but cannot resume it after it finishes", () => {
+    const { manager, connections, ws, session } = start();
+    const channelId = statuses(ws).at(-1)!.channelId;
+    cycle(connections, session, false);
+    manager.detachSocket(ws as unknown as WebSocket);
+    const resumed = new FakeWebSocket();
+    manager.watch(resumed as unknown as WebSocket, address, channelId);
+    expect(catchup(resumed).epoch).toBe(1);
+    expect(statuses(resumed).at(-1)).toMatchObject({
+      channelId,
+      streamDelayMs: delayMs,
+    });
+    vi.advanceTimersByTime(delayMs);
+    manager.detachSocket(resumed as unknown as WebSocket);
+    const returned = new FakeWebSocket();
+    manager.watch(returned as unknown as WebSocket, address, channelId);
+    expect(catchup(returned).epoch).toBe(2);
+    expect(statuses(returned).at(-1)?.streamDelayMs).toBe(0);
+  });
+
+  it("keeps the original countdown when a tournament mission ends before its first delayed frame", () => {
+    const { manager, connections } = createManager({ tourneyDelayMs: delayMs });
+    managers.push(manager);
+    const ws = new FakeWebSocket();
+    manager.watch(ws as unknown as WebSocket, address);
+    const session = manager.getSession(address)!;
+    connections[0].setStatus("connected");
+    session.setTournamentMode(true);
+    const channelId = statuses(ws).at(-1)!.channelId;
+    cycle(connections, session, false);
+    connections[1].setMapName("FutureMap");
+    manager.detachSocket(ws as unknown as WebSocket);
+    const resumed = new FakeWebSocket();
+    manager.watch(resumed as unknown as WebSocket, address, channelId);
+    expect(statuses(resumed).at(-1)).toMatchObject({
+      streamDelayMs: delayMs,
+      streamDelayReadyInMs: delayMs - 6_000,
+    });
+    expect(statuses(resumed).at(-1)!.mapName).not.toBe("FutureMap");
+    vi.advanceTimersByTime(delayMs - 6_000);
+    expect(catchup(resumed).epoch).toBe(1);
+    vi.advanceTimersByTime(6_000);
+    expect(statuses(resumed).at(-1)).toMatchObject({
+      streamDelayMs: 0,
+      status: "live",
+    });
+  });
+
+  it("does not replay old tournament packets or leak new ones during a rapid tournament-normal-tournament switch", () => {
+    const { manager, connections, ws, session } = start();
+    ws.sent = [];
+    const oldPacket = new Uint8Array([1, 2, 3]);
+    connections[0].emit("packet", oldPacket);
+    cycle(connections, session, false);
+    const joiner = new FakeWebSocket();
+    manager.watch(joiner as unknown as WebSocket, address);
+    expect(catchup(joiner).epoch).toBe(2);
+    joiner.sent = [];
+    cycle(connections, session, true);
+    const newPacket = new Uint8Array([7, 7, 7]);
+    connections[2].emit("packet", newPacket);
+    vi.advanceTimersByTime(delayMs - 1);
+    expect(ws.binaryFrames()).toEqual([oldPacket]);
+    expect(joiner.binaryFrames()).toHaveLength(0);
+    expect(statuses(ws).at(-1)).toMatchObject({
+      streamDelayMs: delayMs,
+      status: "syncing",
+    });
+    vi.advanceTimersByTime(1);
+    expect(catchup(ws).epoch).toBe(3);
+    expect(catchup(joiner).epoch).toBe(3);
+    expect(joiner.binaryFrames()).not.toContainEqual(oldPacket);
+    expect(ws.binaryFrames().at(-1)).toEqual(newPacket);
+    expect(joiner.binaryFrames().at(-1)).toEqual(newPacket);
+  });
+
+  it("ends the live channel immediately but drains the delayed channel on terminal disconnect", () => {
+    const { manager, connections, ws, session } = start();
+    ws.sent = [];
+    const packet = new Uint8Array([1, 2, 3]);
+    connections[0].emit("packet", packet);
+    cycle(connections, session, false);
+    const joiner = new FakeWebSocket();
+    manager.watch(joiner as unknown as WebSocket, address);
+    joiner.sent = [];
+    connections[1].setStatus("disconnected", "You have been kicked");
+    expect(statuses(joiner).at(-1)).toMatchObject({
+      status: "ended",
+      streamDelayMs: 0,
+    });
+    expect(statuses(ws)).toHaveLength(0);
+    vi.advanceTimersByTime(delayMs);
+    expect(ws.binaryFrames()).toContainEqual(packet);
+    expect(joiner.binaryFrames()).toHaveLength(0);
+    expect(manager.has(address)).toBe(false);
+  });
+
+  it("keeps status, recording and catch-ups on the old timeline while the upstream reconnects", () => {
+    const { manager, connections, ws, session } = start();
+    recordedMission(session);
+    expect(statuses(ws).at(-1)).toMatchObject({
+      status: "live",
+      recording: true,
+      streamDelayMs: delayMs,
+    });
+    ws.sent = [];
+    const tail = new Uint8Array([1, 2, 3]);
+    connections[0].emit("packet", tail);
+    vi.advanceTimersByTime(100);
+    connections[0].setStatus("disconnected", "Server is cycling mission");
+    // The recording stopped upstream, but nothing changed at the playhead.
+    expect(ws.sent).toHaveLength(0);
+
+    const joiner = new FakeWebSocket();
+    manager.watch(
+      joiner as unknown as WebSocket,
+      address,
+      session.getChannelId(ws as unknown as WebSocket),
+    );
+    expect(catchup(joiner)).toMatchObject({ epoch: 1, missionName: "OldMap" });
+    expect(statuses(joiner).at(-1)).toMatchObject({
+      status: "live",
+      mapName: "OldMap",
+      recording: true,
+      streamDelayMs: delayMs,
+    });
+
+    vi.advanceTimersByTime(6_000);
+    connections[1].setMapName("FutureMap");
+    connections[1].setStatus("authenticating");
+    connections[1].setStatus("connected");
+    // Even the next epoch's unresolved tournament decision stays private.
+    expect(statuses(ws)).toHaveLength(0);
+    const laterJoiner = new FakeWebSocket();
+    manager.watch(laterJoiner as unknown as WebSocket, address);
+    expect(laterJoiner.frameTypes()).not.toContain("catchupBegin");
+    session.setTournamentMode(true);
+    expect(statuses(laterJoiner).at(-1)).toMatchObject({
+      mapName: "OldMap",
+      recording: true,
+      streamDelayMs: delayMs,
+    });
+
+    vi.advanceTimersByTime(delayMs - 6_100);
+    expect(ws.binaryFrames()).toEqual([tail]);
+    expect(statuses(ws)).toHaveLength(0);
+    vi.advanceTimersByTime(100);
+    expect(statuses(ws).at(-1)).toMatchObject({
+      status: "connecting",
+      streamDelayMs: delayMs,
+    });
+    expect(statuses(ws).some((s) => s.status === "ended")).toBe(false);
+    vi.advanceTimersByTime(6_000);
+    expect(statuses(ws).at(-1)).toMatchObject({
+      status: "live",
+      mapName: "FutureMap",
+      streamDelayMs: delayMs,
+    });
+  });
+
+  it("drains a terminal disconnect and still accepts catch-ups until the delayed end", () => {
+    const { manager, connections, ws, session } = start();
+    recordedMission(session);
+    ws.sent = [];
+    const tail = new Uint8Array([1, 2, 3]);
+    connections[0].emit("packet", tail);
+    vi.advanceTimersByTime(100);
+    connections[0].setStatus("disconnected", "You have been kicked");
+    expect(manager.has(address)).toBe(true);
+    expect(ws.sent).toHaveLength(0);
+    const joiner = new FakeWebSocket();
+    manager.watch(joiner as unknown as WebSocket, address);
+    expect(catchup(joiner).epoch).toBe(1);
+    expect(statuses(joiner).at(-1)).toMatchObject({
+      recording: true,
+      streamDelayMs: delayMs,
+    });
+    vi.advanceTimersByTime(delayMs - 100);
+    expect(ws.binaryFrames()).toEqual([tail]);
+    expect(manager.has(address)).toBe(true);
+    vi.advanceTimersByTime(100);
+    expect(statuses(ws).at(-1)).toMatchObject({
+      status: "ended",
+      message: "You have been kicked",
+    });
+    expect(manager.has(address)).toBe(false);
+    expect(connections).toHaveLength(1);
+  });
+
+  it("finishes the tournament tail before lifting delay on the next normal-mode epoch", () => {
+    const { connections, ws, session } = start();
+    ws.sent = [];
+    const tail = new Uint8Array([1, 2, 3]);
+    connections[0].emit("packet", tail);
+    vi.advanceTimersByTime(100);
+    connections[0].setStatus("disconnected", "Server is cycling mission");
+    vi.advanceTimersByTime(6_000);
+    connections[1].setStatus("connected");
+    session.setTournamentMode(false);
+    expect(session.streamDelayMs).toBe(delayMs);
+    expect(ws.sent).toHaveLength(0);
+    vi.advanceTimersByTime(delayMs - 6_100);
+    expect(ws.binaryFrames()).toEqual([tail]);
+    vi.advanceTimersByTime(6_100);
+    expect(session.streamDelayMs).toBe(0);
+    expect(statuses(ws).at(-1)).toMatchObject({
+      status: "live",
+      streamDelayMs: 0,
+    });
+    expect(catchup(ws).epoch).toBe(2);
+    const before = ws.binaryFrames().length;
+    connections[1].emit("packet", new Uint8Array([7, 7, 7]));
+    expect(ws.binaryFrames()).toHaveLength(before + 1);
+  });
+
+  it("lifts provisional delays promptly across ordinary non-tournament cycles", () => {
+    const { manager, connections } = createManager({ tourneyDelayMs: delayMs });
+    managers.push(manager);
+    const ws = new FakeWebSocket();
+    manager.watch(ws as unknown as WebSocket, address);
+    const session = manager.getSession(address)!;
+    expect(statuses(ws).at(-1)?.streamDelayMs).toBe(0);
+    connections[0].setStatus("connected");
+    session.setTournamentMode(false);
+    expect(session.streamDelayMs).toBe(0);
+    connections[0].setStatus("disconnected", "Server is cycling mission");
+    vi.advanceTimersByTime(6_000);
+    connections[1].setStatus("connected");
+    expect(statuses(ws).at(-1)?.streamDelayMs).toBe(0);
+    session.setTournamentMode(false);
+    // There is no old delayed tail, so the next mission need not wait a minute.
+    expect(session.streamDelayMs).toBe(0);
+    expect(
+      ws.frameTypes().filter((type) => type === "catchupEnd"),
+    ).toHaveLength(2);
+  });
+
+  it("rotates unrecorded missions too, without cutting off the delayed stream", () => {
+    const { manager, connections, ws, session } = start();
+    const state = session as any;
+    state.watchState.missionName = "OldMap";
+    state.replica.watchState.missionName = "OldMap";
+    ws.sent = [];
+    state.handleResponderEvent({ type: "GhostingMessageEvent", message: 2 });
+    vi.advanceTimersByTime(5_000);
+    expect(connections).toHaveLength(2);
+    expect(ws.sent).toHaveLength(0);
+    const joiner = new FakeWebSocket();
+    manager.watch(
+      joiner as unknown as WebSocket,
+      address,
+      session.getChannelId(ws as unknown as WebSocket),
+    );
+    expect(catchup(joiner)).toMatchObject({ epoch: 1, missionName: "OldMap" });
+  });
+
+  it("includes delayed mission-phase metadata in reconnect snapshots", () => {
+    const { manager, connections, session } = start();
+    const state = session as any;
+    const parsed = {
+      gameState: {},
+      ghosts: [],
+      events: [
+        {
+          parsedData: {
+            type: "RemoteCommandEvent",
+            funcName: "MissionStartPhase1",
+            args: ["1", "DelayedMap"],
+          },
+        },
+      ],
+    };
+    state.parserKit.packetParser.parsePacket = () => parsed;
+    state.replica.kit.packetParser.parsePacket = () => parsed;
+    connections[0].emit("packet", new Uint8Array([1, 2, 3]));
+    vi.advanceTimersByTime(delayMs);
+    const joiner = new FakeWebSocket();
+    manager.watch(joiner as unknown as WebSocket, address);
+    expect(catchup(joiner).missionName).toBe("DelayedMap");
+    expect(statuses(joiner).at(-1)).toMatchObject({ mapName: "DelayedMap" });
+  });
+
+  it.each([0, delayMs])(
+    "hydrates at the complete packet boundary when handshake/delay resolves inside a packet (delay=%d)",
+    (tourneyDelayMs) => {
+      const { manager, connections } = createManager({ tourneyDelayMs });
+      managers.push(manager);
+      const ws = new FakeWebSocket();
+      manager.watch(ws as unknown as WebSocket, address);
+      const session = manager.getSession(address) as any;
+      connections[0].setStatus(tourneyDelayMs ? "connected" : "authenticating");
+      session.watchState.tournamentMode = false;
+      session.parserKit.packetParser.parsePacket = () => ({
+        gameState: {},
+        ghosts: [],
+        events: [
+          {
+            parsedData: {
+              type: "RemoteCommandEvent",
+              funcName: "MissionStartPhase1",
+              args: ["1", "NewMap"],
+            },
+          },
+        ],
+      });
+      connections[0].emit("packet", new Uint8Array([1, 2, 3]));
+      expect(catchup(ws).missionName).toBe("NewMap");
+      // One compressed snapshot; its packet must not also be raw-forwarded.
+      expect(ws.binaryFrames()).toHaveLength(1);
+    },
+  );
+
+  it("still drains to completion if the upstream ends while a delay lift is pending", () => {
+    const { manager, connections, ws, session } = start();
+    connections[0].emit("packet", new Uint8Array([1, 2, 3]));
+    vi.advanceTimersByTime(100);
+    connections[0].setStatus("disconnected", "Server is cycling mission");
+    vi.advanceTimersByTime(6_000);
+    connections[1].setStatus("connected");
+    session.setTournamentMode(false);
+    connections[1].emit("packet", new Uint8Array([7, 7, 7]));
+    connections[1].setStatus("disconnected", "You have been kicked");
+    vi.advanceTimersByTime(delayMs);
+    expect(ws.binaryFrames()).toContainEqual(new Uint8Array([1, 2, 3]));
+    expect(ws.binaryFrames()).toContainEqual(new Uint8Array([7, 7, 7]));
+    expect(statuses(ws).at(-1)).toMatchObject({ status: "ended" });
+    expect(manager.has(address)).toBe(false);
+  });
+
+  it("stops forwarding a failed replica and repairs it with a fresh epoch", () => {
+    const { manager, connections, ws, session } = start();
+    ws.sent = [];
+    const state = session as any;
+    const parse = vi.fn(() => ({ parseFault: { message: "bad ghost" } }));
+    state.replica.kit.packetParser.parsePacket = parse;
+    connections[0].emit("packet", new Uint8Array([1, 2, 3]));
+    connections[0].emit("packet", new Uint8Array([1, 2, 3]));
+    vi.advanceTimersByTime(delayMs);
+    expect(parse).toHaveBeenCalledOnce();
+    expect(ws.binaryFrames()).toHaveLength(0);
+    expect(connections).toHaveLength(2);
+    const joiner = new FakeWebSocket();
+    manager.watch(joiner as unknown as WebSocket, address);
+    expect(joiner.frameTypes()).not.toContain("catchupBegin");
+    connections[1].setStatus("connected");
+    vi.advanceTimersByTime(delayMs);
+    expect(statuses(ws).at(-1)).toMatchObject({ status: "live" });
+    expect(catchup(joiner).epoch).toBe(2);
+  });
+});
+
 describe("WatchSession demo recording", () => {
   // Real timers: recorder finalize does real fs work. The mission-cycle
   // linger is zeroed so rotations happen on the next timer tick.
@@ -858,7 +1483,7 @@ describe("WatchSession demo recording", () => {
     manager.shutdown();
   });
 
-  it("creates no recorder and keeps in-place mission cycles when disabled", async () => {
+  it("does not reconnect before the first mission is known when recording is disabled", async () => {
     const connections: FakeGameConnection[] = [];
     const manager = new WatchSessionManager({
       gameBasePath: "/nonexistent",

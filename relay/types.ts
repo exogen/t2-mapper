@@ -10,7 +10,7 @@ import type {
 export type ClientMessage =
   | { type: "listServers" }
   | { type: "joinServer"; address: string; warriorName?: string }
-  | { type: "watchServer"; address: string }
+  | { type: "watchServer"; address: string; channelId?: string }
   | { type: "leaveServer" }
   | { type: "sendMoves"; moves: ClientMove[]; moveStartIndex: number }
   | { type: "sendCommand"; command: string; args: string[] }
@@ -41,10 +41,12 @@ export type ServerMessage =
       serverName?: string;
       mapName?: string;
       watcherCount: number;
-      /** The relay is recording this session to a demo file. */
+      /** Resume the same channel after transport loss, if it is still draining. */
+      channelId?: string;
+      /** Whether the stream at the watcher playhead was being recorded. */
       recording?: boolean;
       /** Watcher-facing stream delay in ms (tournament anti-screen-peek);
-       *  0/absent = live. */
+       *  0 = live; absent leaves the client's previous value unchanged. */
       streamDelayMs?: number;
       /** While a delayed session is still buffering its first `delayMs`
        *  (no delayed frames available yet), the rough ms until the
