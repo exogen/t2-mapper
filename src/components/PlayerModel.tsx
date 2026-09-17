@@ -476,7 +476,7 @@ export function PlayerModel({
       imagesRef.current = entity.imageSlots;
       if (mountsChanged) setImages(entity.imageSlots);
     }
-    const time = streamClock.time;
+    const time = streamClock.worldTime;
     const current = streamRenderFrame.current?.get(entity.id);
 
     // Resolve velocity at current playback time.

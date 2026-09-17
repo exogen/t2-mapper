@@ -99,13 +99,13 @@ export interface WatchHudStatePayload {
     flagCarrier?: string;
   }>;
   /** MsgSystemClock replay: original duration (0 ⇒ count-up clock) and
-   *  wall-clock ms elapsed since it was received. */
+   *  ms elapsed since it was received, held at match end. */
   clock?: { durationMs: number; elapsedMs: number };
   missionDisplayName?: string;
   missionTypeDisplayName?: string;
   gameClassName?: string;
   serverDisplayName?: string;
-  /** Match-over interval: gameOver debrief seen, next MsgClientReady not. */
+  /** Match-over interval: MissionEnd/debrief seen, next MsgClientReady not. */
   matchEnded?: boolean;
   matchStarted?: boolean;
   /**

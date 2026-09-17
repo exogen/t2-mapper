@@ -14,6 +14,7 @@ import {
   DEMO_CHECKPOINT_TICKS,
 } from "./demoStreaming";
 import { STREAM_TICK_SEC } from "./streamHelpers";
+import type { StreamSnapshot } from "./types";
 
 // A real wire-format recording: an empty from-connect start block followed
 // by 33 minutes of neutral moves. Keep the installed parser unmocked so a
@@ -74,6 +75,30 @@ async function setup() {
 }
 
 describe("playback clock with the installed demo parser", () => {
+  it("accepts same-tick live updates without replacing the previous interpolation tick", () => {
+    const previous = { timeSec: 1.024 } as StreamSnapshot;
+    let latest = { timeSec: 1.056, matchEnded: false } as StreamSnapshot;
+    const stream = { stepToTime: () => latest };
+    const clock = new PlaybackClock();
+    clock.reset(previous.timeSec, 0, previous);
+    const controls = {
+      status: "paused",
+      rate: 1,
+      seekTime: 0,
+      seekNonce: 0,
+    } as const;
+    expect(clock.step(stream, controls, 0).previousSnapshot).toBe(previous);
+    latest = { ...latest, matchEnded: true, matchEndedAtSec: latest.timeSec };
+    const ended = clock.step(stream, controls, 0);
+    expect(ended.snapshot).toBe(latest);
+    expect(ended.previousSnapshot).toBe(previous);
+    expect(clock.step(stream, controls, 0).previousSnapshot).toBe(previous);
+
+    // New-mission or reconnect state can also replace the same tick.
+    latest = { ...latest, matchEnded: false, matchEndedAtSec: null };
+    expect(clock.step(stream, controls, 0).snapshot).toBe(latest);
+  });
+
   it.each([0.25, 1, 8])(
     "seeks from 32:00 to 20:00 at %sx, then resumes at selected 1x",
     async (rate) => {

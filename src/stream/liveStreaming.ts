@@ -374,7 +374,7 @@ export class LiveStreamAdapter extends StreamEngine {
     this.gameClassName = hud.gameClassName ?? null;
     this.serverDisplayName = hud.serverDisplayName ?? null;
     this.serverLoadInfo = hud.loadInfo ?? null;
-    this.matchEnded = hud.matchEnded ?? false;
+    if (hud.matchEnded) this.endMatch();
     // Older relays don't send matchStarted; a running clock in the
     // payload proves the match is underway just as well.
     this.matchStarted =
@@ -928,6 +928,7 @@ export class LiveStreamAdapter extends StreamEngine {
       connectedClientId: this.connectedClientId,
       matchClockMs: this.computeMatchClockMs(timeSec),
       matchEnded: this.matchEnded,
+      matchEndedAtSec: this.matchEndedAtSec,
       matchStarted: this.matchStarted,
       loadInfo: this.serverLoadInfo,
     };

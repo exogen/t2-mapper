@@ -616,9 +616,21 @@ export abstract class StreamEngine implements StreamingPlayback {
   missionTypeDisplayName: string | null = null;
   /** Game class name (e.g. "CTFGame"), from MsgClientReady. */
   gameClassName: string | null = null;
-  /** Match-over interval: set by the gameOver debrief burst, cleared when
+  /** Match-over interval: set by MissionEnd or the debrief burst, cleared when
    *  the next mission's MsgClientReady drops the player in. */
   matchEnded = false;
+  /** Stream timestamp of the first end notification, retained across seeks. */
+  protected matchEndedAtSec: number | null = null;
+  private endedEntities: StreamEntity[] | null = null;
+
+  protected endMatch(): void {
+    if (this.matchEnded) return;
+    this.matchEnded = true;
+    this.matchEndedAtSec = this.getTimeSec();
+    // Keep receiving protocol/HUD updates, but preserve the final world even
+    // if late ghost updates or deletes arrive during the debrief.
+    this.endedEntities = structuredClone(this.buildEntityList());
+  }
   /**
    * The match has been seen running: MsgMissionStart (countdown/start),
    * a running clock > 60 s, or a team with points on the board (late
@@ -866,6 +878,7 @@ export abstract class StreamEngine implements StreamingPlayback {
         missionTypeDisplayName: this.missionTypeDisplayName,
         gameClassName: this.gameClassName,
         matchEnded: this.matchEnded,
+        matchEndedAtSec: this.matchEndedAtSec,
         matchStarted: this.matchStarted,
         serverDisplayName: this.serverDisplayName,
         connectedPlayerName: this.connectedPlayerName,
@@ -874,6 +887,7 @@ export abstract class StreamEngine implements StreamingPlayback {
         worldGravity: this.worldGravity,
       }),
       shared,
+      endedEntities: this.endedEntities,
       players,
       images: new Map(
         Array.from(this.imageAnimations, ([id, images]) => [
@@ -897,7 +911,23 @@ export abstract class StreamEngine implements StreamingPlayback {
     for (const id of state.entities.keys()) ids.set(id, allocateEntityId());
     for (const id of state.entityIdByGhostIndex.values())
       if (!ids.has(id)) ids.set(id, allocateEntityId());
+    for (const entity of checkpoint.endedEntities ?? [])
+      if (!ids.has(entity.id)) ids.set(entity.id, allocateEntityId());
     Object.assign(this, state);
+    this.endedEntities =
+      checkpoint.endedEntities?.map((entity) => ({
+        ...entity,
+        id: ids.get(entity.id)!,
+        mountObjectId: entity.mountObjectId
+          ? ids.get(entity.mountObjectId)
+          : undefined,
+        linkSourceId: entity.linkSourceId
+          ? ids.get(entity.linkSourceId)
+          : undefined,
+        linkTargetId: entity.linkTargetId
+          ? ids.get(entity.linkTargetId)
+          : undefined,
+      })) ?? null;
     this.entities = new Map();
     this.imageAnimations = new Map();
     for (const [oldId, mutable] of state.entities) {
@@ -960,6 +990,7 @@ export abstract class StreamEngine implements StreamingPlayback {
    *  Does NOT reset the ID counter — IDs must never be reused to avoid
    *  stale entity collisions in the render store after seeks. */
   protected clearAllEntities(): void {
+    this.endedEntities = null;
     // A reset invalidates every ghost, so the world is incomplete again
     // until the server says otherwise.
     this.ghostAlwaysDoneSec = null;
@@ -1033,6 +1064,7 @@ export abstract class StreamEngine implements StreamingPlayback {
     this.clockAnchorStreamSec = null;
     this.clockDurationMs = 0;
     this.matchEnded = false;
+    this.matchEndedAtSec = null;
     this.matchStarted = false;
     this.pendingExplosions = [];
     this.worldGravity = DEFAULT_WORLD_GRAVITY;
@@ -1372,7 +1404,9 @@ export abstract class StreamEngine implements StreamingPlayback {
       const args = evt.args;
       const timeSec = this.getTimeSec();
 
-      if (funcName === "ChatMessage" && args.length >= 4) {
+      if (funcName === "MissionEnd") {
+        this.endMatch();
+      } else if (funcName === "ChatMessage" && args.length >= 4) {
         // Preserve per-segment color: format the template + args WITHOUT
         // stripping color bytes, drop the trailing ~w sound cue, then split
         // into colored segments (mirrors the demo chat path). The sender's
@@ -1746,6 +1780,9 @@ export abstract class StreamEngine implements StreamingPlayback {
   /** ProcessList::advanceObjects: one 32 ms tick, regardless of packet source. */
   protected processTick(): void {
     this.tickCount++;
+    // Transport time must keep advancing to consume the debrief and next
+    // mission. Client simulation, including explosion expiry, stops here.
+    if (this.matchEnded) return;
     this.advanceProjectiles();
     this.advanceItems();
     this.advanceControlVehicle();
@@ -1763,6 +1800,11 @@ export abstract class StreamEngine implements StreamingPlayback {
   protected collectMove(move: PlayerMove, id = this.nextPlayerMoveId): void {
     if (id < this.nextPlayerMoveId) return;
     this.nextPlayerMoveId = id + 1;
+    if (this.matchEnded) {
+      this.pendingPlayerMoves.length = 0;
+      this.lastClientMoveId = this.nextPlayerMoveId;
+      return;
+    }
     if (this.playerPredictionEnabled && this.lastControlType === "player")
       this.pendingPlayerMoves.push({ id, move });
     else this.pendingPlayerMoves.length = 0;
@@ -1821,6 +1863,7 @@ export abstract class StreamEngine implements StreamingPlayback {
     moves: readonly PlayerMove[] = [],
   ): void {
     if (
+      this.matchEnded ||
       !this.playerPredictionEnabled ||
       this.isPiloting ||
       this.lastControlType !== "player"
@@ -3894,7 +3937,7 @@ export abstract class StreamEngine implements StreamingPlayback {
       // passes through zero into count-up overtime. args[2] is dead
       // data on the client ($Hud::TimeLimit, never read).
       const timeRemainingMS = parseFloat(this.resolveNetString(args[3]));
-      this.clockAnchorStreamSec = this.getTimeSec();
+      this.clockAnchorStreamSec = this.matchEndedAtSec ?? this.getTimeSec();
       this.clockDurationMs = Number.isFinite(timeRemainingMS)
         ? timeRemainingMS
         : 0;
@@ -3955,7 +3998,11 @@ export abstract class StreamEngine implements StreamingPlayback {
       log.info("client ready: gameClass=%s", gameClassName);
       this.gameClassName = gameClassName || this.gameClassName;
       // Dropping into a (new) mission ends any match-over interval.
+      if (this.matchEndedAtSec != null && this.clockAnchorStreamSec != null)
+        this.clockAnchorStreamSec += this.getTimeSec() - this.matchEndedAtSec;
       this.matchEnded = false;
+      this.matchEndedAtSec = null;
+      this.endedEntities = null;
       this.matchStarted = false;
       this.onMissionInfoChange?.();
     } else if (msgType === "SetLineHud" && args.length >= 7) {
@@ -3986,7 +4033,7 @@ export abstract class StreamEngine implements StreamingPlayback {
       // (and the Hunters/Siege variants) — the match-over signal. It stays
       // set through mission load until the next MsgClientReady.
       if (!this.matchEnded) log.info("match ended (debrief received)");
-      this.matchEnded = true;
+      this.endMatch();
     }
   }
 
@@ -4090,14 +4137,11 @@ export abstract class StreamEngine implements StreamingPlayback {
 
   // ── Snapshot building ──
 
-  /** Build entity list for snapshot, optionally filtering with a predicate. */
-  protected buildEntityList(
-    shouldInclude?: (entity: MutableEntity) => boolean,
-  ): StreamEntity[] {
+  /** Build entity list, holding the final world throughout the debrief. */
+  protected buildEntityList(): StreamEntity[] {
+    if (this.endedEntities) return this.endedEntities;
     const entities: StreamEntity[] = [];
     for (const entity of this.entities.values()) {
-      if (shouldInclude && !shouldInclude(entity)) continue;
-
       let renderFlags =
         entity.targetId != null && entity.targetId >= 0
           ? (this.targetRenderFlags.get(entity.targetId) ??
@@ -4242,7 +4286,8 @@ export abstract class StreamEngine implements StreamingPlayback {
    */
   protected computeMatchClockMs(timeSec: number): number | null {
     if (this.clockAnchorStreamSec == null) return null;
-    const elapsedMs = (timeSec - this.clockAnchorStreamSec) * 1000;
+    const elapsedMs =
+      ((this.matchEndedAtSec ?? timeSec) - this.clockAnchorStreamSec) * 1000;
     // actualTimeMS = -clockDurationMs + elapsed
     // duration=0 → positive (count-up), duration>0 → starts negative (count-down)
     return -this.clockDurationMs + elapsedMs;

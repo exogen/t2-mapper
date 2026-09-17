@@ -24,7 +24,18 @@ export const MAX_ORBIT_DISTANCE = 45;
  * mutable (not store state) so per-frame clock updates never notify
  * store subscribers.
  */
-export const streamClock = { time: 0 };
+export const streamClock = {
+  /** Transport/playhead time, including the debrief and mission transition. */
+  time: 0,
+  matchEndedAtSec: null as number | null,
+  /** Time used by world animation, held at the match-end boundary. */
+  get worldTime(): number {
+    return Math.min(this.time, this.matchEndedAtSec ?? Infinity);
+  },
+  get worldPaused(): boolean {
+    return this.matchEndedAtSec != null && this.time >= this.matchEndedAtSec;
+  },
+};
 
 /**
  * Whether the CastGenius commentary track is audibly playing right now,
@@ -131,6 +142,7 @@ export const streamPlaybackStore = createStore<StreamPlaybackState>()(() => ({
 /** Reset all streaming playback state. Called when streaming ends. */
 export function resetStreamPlayback(): void {
   streamClock.time = 0;
+  streamClock.matchEndedAtSec = null;
   streamRenderFrame.current = null;
   streamRenderFrame.previous = null;
   streamRenderFrame.interpT = 0;

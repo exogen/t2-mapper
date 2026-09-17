@@ -1,3 +1,4 @@
+import { worldDeltaSec } from "../state/engineStore";
 import { memo, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useIsDebugTourTarget } from "../state/cameraTourStore";
 import { DebugBounds } from "./DebugBounds";
@@ -383,7 +384,7 @@ const WaterReps = memo(function WaterReps({
       elapsedRef.current = 0;
       material.uniforms.uTime.value = 0;
     } else {
-      elapsedRef.current += delta;
+      elapsedRef.current += worldDeltaSec(delta);
       material.uniforms.uTime.value = elapsedRef.current;
     }
     // Keep the submersion test's wave phase in sync with the rendering.

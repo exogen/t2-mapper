@@ -1,6 +1,6 @@
 import type { PlaybackSliceState } from "../state/engineStore";
 import { STREAM_TICK_SEC } from "./streamHelpers";
-import type { StreamingPlayback } from "./types";
+import type { StreamSnapshot, StreamingPlayback } from "./types";
 
 type PlaybackControls = Pick<
   PlaybackSliceState,
@@ -12,11 +12,18 @@ export class PlaybackClock {
   time = 0;
   seekNonce = 0;
   private wasSeeking = false;
+  private currentSnapshot: StreamSnapshot | null = null;
+  private previousSnapshot: StreamSnapshot | null = null;
 
-  reset(time: number, seekNonce: number): void {
+  reset(
+    time: number,
+    seekNonce: number,
+    snapshot: StreamSnapshot | null = null,
+  ): void {
     this.time = time;
     this.seekNonce = seekNonce;
     this.wasSeeking = false;
+    this.currentSnapshot = this.previousSnapshot = snapshot;
   }
 
   step(
@@ -51,6 +58,27 @@ export class PlaybackClock {
         : targetTime;
     this.seekNonce = playback.seekNonce;
     this.wasSeeking = isSeeking;
-    return { snapshot, seekPrevious, isSeeking, playbackDelta };
+
+    const current = this.currentSnapshot;
+    if (seekPrevious) this.previousSnapshot = seekPrevious;
+    else if (
+      !current ||
+      snapshot.timeSec < current.timeSec ||
+      snapshot.timeSec - current.timeSec > STREAM_TICK_SEC * 1.5
+    ) {
+      this.previousSnapshot = snapshot;
+    } else if (snapshot.timeSec !== current.timeSec) {
+      this.previousSnapshot = current;
+    }
+    // Packets can change state without a move tick (including MissionEnd
+    // at EOF). Accept the replacement without advancing the previous tick.
+    this.currentSnapshot = snapshot;
+    return {
+      snapshot,
+      previousSnapshot: this.previousSnapshot ?? snapshot,
+      seekPrevious,
+      isSeeking,
+      playbackDelta,
+    };
   }
 }

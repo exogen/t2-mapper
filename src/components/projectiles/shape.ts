@@ -12,7 +12,7 @@ import type { DTSModel, DTSShape } from "../../dts/dtsModel";
 import { DTSAnimationMixer } from "../../dts/dtsAnimationMixer";
 import { DTSSequenceFlags } from "../../dts/dtsTypes";
 import type { ShapeEntity } from "../../state/gameEntityTypes";
-import { effectNow } from "../../state/engineStore";
+import { effectNow, worldDeltaSec } from "../../state/engineStore";
 import {
   disposeClonedScene,
   processShapeScene,
@@ -109,7 +109,7 @@ export function createShapeProjectileView(
     animate(entity) {
       const elapsed = Math.max(
         0,
-        streamClock.time - (entity.spawnTime ?? streamClock.time),
+        streamClock.worldTime - (entity.spawnTime ?? streamClock.worldTime),
       );
       const sample = (
         action: AnimationAction | undefined,
@@ -130,8 +130,8 @@ export function createShapeProjectileView(
       // projectile's simulation age, then maintain replaces it at its endpoint.
       const age =
         (entity.projectileAgeMS ?? 0) / 1000 +
-        streamClock.time -
-        (entity.keyframes?.[0]?.time ?? streamClock.time);
+        streamClock.worldTime -
+        (entity.keyframes?.[0]?.time ?? streamClock.worldTime);
       const activate = clips.get("activate");
       let desired = "",
         activeTime = 0;
@@ -159,7 +159,7 @@ export function createShapeProjectileView(
       mixer.update(0);
       scene.setImageAnimationTime(elapsed, animationEnabled());
       if (light.light) {
-        const t = streamClock.time * 1000,
+        const t = streamClock.worldTime * 1000,
           f = entity.fadeVal ?? 1;
         light.light.intensity =
           config.lightType === 2
@@ -185,7 +185,7 @@ export function createShapeProjectileView(
         fade = f;
         cloak = c;
       }
-      updateShapeLighting(lighting, delta * 1000);
+      updateShapeLighting(lighting, worldDeltaSec(delta) * 1000);
     },
   };
 }

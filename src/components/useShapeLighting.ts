@@ -1,3 +1,4 @@
+import { worldDeltaSec } from "../state/engineStore";
 import { useFrame } from "@react-three/fiber";
 import { useMemo } from "react";
 import type { Object3D } from "three";
@@ -22,7 +23,7 @@ export function useShapeLighting(
     [root, shapeName],
   );
   useFrame((_, delta) => {
-    updateShapeLighting(state, delta * 1000);
+    updateShapeLighting(state, worldDeltaSec(delta) * 1000);
   });
   return state.uniforms;
 }

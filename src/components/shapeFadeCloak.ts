@@ -14,6 +14,7 @@ import { DTSShape } from "../dts/dtsModel";
  */
 import { useRef } from "react";
 import { useFrame } from "@react-three/fiber";
+import { engineStore, effectNow } from "../state/engineStore";
 import { NormalBlending, RepeatWrapping, SRGBColorSpace } from "three";
 import type { Object3D, Texture } from "three";
 import { loadTexture } from "../textureUtils";
@@ -192,7 +193,13 @@ export function useFadeAndCloak(
     // Advance global cloak UV offset once per frame (all cloaked shapes share it).
     if (isCloak)
       advanceCloakUV(
-        state.frameloop === "never" ? 0 : (state.clock.elapsedTime * 60) | 0,
+        state.frameloop === "never"
+          ? 0
+          : Math.floor(
+              (engineStore.getState().playback.recording
+                ? effectNow() / 1000
+                : state.clock.elapsedTime) * 60,
+            ),
       );
 
     const atRest = fadeVal >= 1 && !isCloak;

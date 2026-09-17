@@ -125,7 +125,7 @@ function createBlurTail(
       geometry.setDrawRange(0, 0);
     },
     update(camera: Camera) {
-      const now = streamClock.time;
+      const now = streamClock.worldTime;
       if (count && now < points[at(count - 1) + 3]) {
         head = 0;
         count = 0;

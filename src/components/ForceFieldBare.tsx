@@ -1,3 +1,4 @@
+import { worldDeltaSec } from "../state/engineStore";
 import { useEffect, useMemo, useRef } from "react";
 import { useIsDebugTourTarget } from "../state/cameraTourStore";
 import { DebugBounds } from "./DebugBounds";
@@ -179,7 +180,7 @@ function ForceFieldMesh({ entity }: { entity: ForceFieldBareEntity }) {
       material.uniforms.vScroll.value = 0;
       return;
     }
-    elapsedRef.current += delta;
+    elapsedRef.current += worldDeltaSec(delta);
     material.uniforms.currentFrame.value =
       Math.round(elapsedRef.current * data.framesPerSec) % data.numFrames;
     material.uniforms.vScroll.value = elapsedRef.current * data.scrollSpeed;

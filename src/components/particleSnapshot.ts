@@ -1,8 +1,8 @@
 import type { StreamEntity, StreamSnapshot } from "../stream/types";
 
-/** Snapshot membership is stable between simulation ticks, including pause. */
+/** Entity membership is stable between ticks and throughout the debrief. */
 export class ParticleSnapshotIndex {
-  private snapshot?: StreamSnapshot;
+  private source?: StreamEntity[];
   readonly entities = new Map<string, StreamEntity>();
   readonly explosions: StreamEntity[] = [];
   readonly shockLances: StreamEntity[] = [];
@@ -10,8 +10,8 @@ export class ParticleSnapshotIndex {
   readonly audio: StreamEntity[] = [];
 
   update(snapshot: StreamSnapshot): boolean {
-    if (this.snapshot === snapshot) return false;
-    this.snapshot = snapshot;
+    if (this.source === snapshot.entities) return false;
+    this.source = snapshot.entities;
     this.entities.clear();
     this.explosions.length =
       this.shockLances.length =

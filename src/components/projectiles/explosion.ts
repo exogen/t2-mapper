@@ -93,13 +93,13 @@ export function createExplosionView(
     getShapeSequenceDurationSec(shapeName, "ambient"),
   ).lifetimeMS;
   const playSpeed = explosionPlaySpeed(expBlock);
-  let spawn = streamClock.time,
+  let spawn = streamClock.worldTime,
     angle = 0;
   return {
     root,
     reset(entity) {
       shape.reset();
-      spawn = entity.spawnTime ?? streamClock.time;
+      spawn = entity.spawnTime ?? streamClock.worldTime;
       angle =
         timelineRandom(
           spawn,
@@ -114,7 +114,7 @@ export function createExplosionView(
     release() {},
     dispose: shape.dispose,
     update(entity, camera) {
-      const elapsed = Math.max(0, streamClock.time - spawn);
+      const elapsed = Math.max(0, streamClock.worldTime - spawn);
       shape.setTime(elapsed * playSpeed);
       if (sizeKeyframes)
         interpolateSize(

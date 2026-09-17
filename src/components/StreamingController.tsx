@@ -203,13 +203,16 @@ function advanceFollowSpring(
   orbitSpringDebug.handOff = spring.handOff;
 }
 
-/** Cache entity-by-id Maps per snapshot so they're built once, not every frame. */
-const _snapshotEntityCache = new WeakMap<StreamSnapshot, EntityById>();
+/** HUD updates can share the same frozen world during the debrief. */
+const _snapshotEntityCache = new WeakMap<
+  StreamSnapshot["entities"],
+  EntityById
+>();
 function getEntityMap(snapshot: StreamSnapshot): EntityById {
-  let map = _snapshotEntityCache.get(snapshot);
+  let map = _snapshotEntityCache.get(snapshot.entities);
   if (!map) {
     map = new Map(snapshot.entities.map((e) => [e.id, e]));
-    _snapshotEntityCache.set(snapshot, map);
+    _snapshotEntityCache.set(snapshot.entities, map);
   }
   return map;
 }
@@ -299,7 +302,7 @@ export function StreamingController({
   const playbackClockRef = useRef<PlaybackClock>(null!);
   if (playbackClockRef.current == null)
     playbackClockRef.current = new PlaybackClock();
-  const prevTickSnapshotRef = useRef<StreamSnapshot | null>(null);
+  const snapshotRef = useRef<StreamSnapshot | null>(null);
   /**
    * What the playback pass resolved this frame, for the camera pass: the
    * tick pair being blended and how far between them the playhead sits.
@@ -309,7 +312,6 @@ export function StreamingController({
     renderPrev: StreamSnapshot;
     interpT: number;
   } | null>(null);
-  const currentTickSnapshotRef = useRef<StreamSnapshot | null>(null);
   const streamRef = useRef<StreamingPlayback | null>(
     recording.streamingPlayback ?? null,
   );
@@ -318,7 +320,14 @@ export function StreamingController({
   const lastSyncedSnapshotRef = useRef<StreamSnapshot | null>(null);
 
   const syncRenderableEntities = useCallback((snapshot: StreamSnapshot) => {
-    if (snapshot === lastSyncedSnapshotRef.current) return;
+    const last = lastSyncedSnapshotRef.current;
+    const worldTime = snapshot.matchEndedAtSec ?? snapshot.timeSec;
+    if (
+      last &&
+      snapshot.entities === last.entities &&
+      worldTime === (last.matchEndedAtSec ?? last.timeSec)
+    )
+      return;
     lastSyncedSnapshotRef.current = snapshot;
 
     // Operate directly on the store's Map — one canonical source of truth.
@@ -357,7 +366,7 @@ export function StreamingController({
 
       if (needsNewIdentity) {
         const prevHidden = renderEntity?.debugHidden;
-        renderEntity = streamEntityToGameEntity(entity, snapshot.timeSec);
+        renderEntity = streamEntityToGameEntity(entity, worldTime);
         if (prevHidden) renderEntity.debugHidden = true;
         map.set(entity.id, renderEntity);
         structuralChange = true;
@@ -382,13 +391,13 @@ export function StreamingController({
       const keyframes = renderEntity!.keyframes!;
       if (keyframes.length === 0) {
         keyframes.push({
-          time: snapshot.timeSec,
+          time: worldTime,
           position: entity.position ?? [0, 0, 0],
           rotation: entity.rotation ?? [0, 0, 0, 1],
         });
       }
       const kf = keyframes[0];
-      kf.time = snapshot.timeSec;
+      kf.time = worldTime;
       if (entity.position) kf.position = entity.position;
       if (entity.rotation) kf.rotation = entity.rotation;
       kf.velocity = entity.velocity;
@@ -432,8 +441,7 @@ export function StreamingController({
       0,
       engineStore.getState().playback.seekNonce,
     );
-    prevTickSnapshotRef.current = null;
-    currentTickSnapshotRef.current = null;
+    snapshotRef.current = null;
 
     const stream = streamRef.current;
     streamPlaybackStore.setState({ playback: stream });
@@ -509,9 +517,13 @@ export function StreamingController({
         : stream.getSnapshot();
 
     streamClock.time = snapshot.timeSec;
-    playbackClockRef.current.time = snapshot.timeSec;
-    prevTickSnapshotRef.current = snapshot;
-    currentTickSnapshotRef.current = snapshot;
+    streamClock.matchEndedAtSec = snapshot.matchEndedAtSec;
+    playbackClockRef.current.reset(
+      snapshot.timeSec,
+      engineStore.getState().playback.seekNonce,
+      snapshot,
+    );
+    snapshotRef.current = snapshot;
     syncRenderableEntities(snapshot);
 
     setStreamSnapshot(snapshot);
@@ -553,39 +565,35 @@ export function StreamingController({
       stopAllTrackedSounds();
     }
 
-    const { snapshot, seekPrevious, isSeeking, playbackDelta } = clock.step(
+    const { snapshot, previousSnapshot, isSeeking, playbackDelta } = clock.step(
       stream,
       playback,
       delta,
     );
-    // Effect timers advance with the successfully reconstructed playback frame.
-    if (isPlaying) advanceEffectClock(playbackDelta, timeScale);
-
-    const currentTick = currentTickSnapshotRef.current;
-    if (seekPrevious) {
-      prevTickSnapshotRef.current = seekPrevious;
-      currentTickSnapshotRef.current = snapshot;
-    } else if (
-      !currentTick ||
-      snapshot.timeSec < currentTick.timeSec ||
-      snapshot.timeSec - currentTick.timeSec > STREAM_TICK_SEC * 1.5
-    ) {
-      prevTickSnapshotRef.current = snapshot;
-      currentTickSnapshotRef.current = snapshot;
-    } else if (snapshot.timeSec !== currentTick.timeSec) {
-      prevTickSnapshotRef.current = currentTick;
-      currentTickSnapshotRef.current = snapshot;
-    }
-
-    const renderCurrent = currentTickSnapshotRef.current ?? snapshot;
-    const renderPrev = prevTickSnapshotRef.current ?? renderCurrent;
-    const tickStartTime = renderCurrent.timeSec - STREAM_TICK_SEC;
-    const interpT = Math.max(
-      0,
-      Math.min(1, (clock.time - tickStartTime) / STREAM_TICK_SEC),
-    );
-
+    const previousWorldTime = streamClock.worldTime;
     streamClock.time = clock.time;
+    streamClock.matchEndedAtSec = snapshot.matchEndedAtSec;
+    // Clip the final frame to the match-end boundary. Transport continues so
+    // final scores, chat, and the next mission can still arrive.
+    if (isPlaying && !isSeeking)
+      advanceEffectClock(
+        Math.min(
+          playbackDelta * timeScale,
+          Math.max(0, streamClock.worldTime - previousWorldTime),
+        ),
+        1,
+      );
+
+    const renderCurrent = snapshot;
+    const renderPrev = previousSnapshot;
+    snapshotRef.current = snapshot;
+    const tickStartTime = renderCurrent.timeSec - STREAM_TICK_SEC;
+    const interpT = streamClock.worldPaused
+      ? 1
+      : Math.max(
+          0,
+          Math.min(1, (clock.time - tickStartTime) / STREAM_TICK_SEC),
+        );
 
     syncRenderableEntities(renderCurrent);
 
@@ -603,7 +611,11 @@ export function StreamingController({
     if (renderCurrent !== publishedSnapshotRef.current) {
       const now = performance.now();
       const publishInterval =
-        !isSeeking && useProgress.getState().active ? 500 : 0;
+        !isSeeking &&
+        renderCurrent.matchEnded === publishedSnapshotRef.current?.matchEnded &&
+        useProgress.getState().active
+          ? 500
+          : 0;
       if (now - lastPublishTimeRef.current >= publishInterval) {
         lastPublishTimeRef.current = now;
         publishedSnapshotRef.current = renderCurrent;
@@ -1108,7 +1120,7 @@ export function StreamingController({
       <GroundEffects playback={recording.streamingPlayback} />
       <ParticleEffects
         playback={recording.streamingPlayback}
-        snapshotRef={currentTickSnapshotRef}
+        snapshotRef={snapshotRef}
       />
     </>
   );

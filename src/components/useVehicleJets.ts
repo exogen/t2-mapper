@@ -295,7 +295,7 @@ export function useVehicleJets(
       const recorded = streamRenderFrame.current?.get(
         entity.id,
       )?.clientAnimation;
-      const now = recorded ? streamClock.time : clockRef.current;
+      const now = recorded ? streamClock.worldTime : clockRef.current;
       const jetting = !!entity.jetting;
       const thrust = entity.thrustDirection ?? THRUST_FORWARD;
       updateJetSound(jetting);

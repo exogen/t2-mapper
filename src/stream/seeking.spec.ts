@@ -14,6 +14,7 @@ import { shapeThreadTime } from "./shapeThreads";
 import { imageThreadPosition } from "./imageAnimation";
 import { applyStreamEntityPose } from "./interpolateEntity";
 import { wheelRotationAt, wheelSteeringPosition } from "./vehicleWheels";
+import { PlaybackClock } from "./PlaybackClock";
 import {
   streamEntityToGameEntity,
   updateGameEntityFromStream,
@@ -50,6 +51,19 @@ const packet = (...ghosts: object[]) => ({
 const move = () => ({
   type: BlockTypeMove,
   parsed: { yaw: 0, pitch: 0, x: 0, y: 0, z: 0, trigger: [] },
+});
+const command = (funcName: string, ...args: string[]) => ({
+  type: BlockTypePacket,
+  parsed: {
+    ghosts: [],
+    gameState: { lastMoveAck: 0 },
+    events: [
+      {
+        classId: 0,
+        parsedData: { type: "RemoteCommandEvent", funcName, args },
+      },
+    ],
+  },
 });
 const stats = () => ({ movesRead: 0, captures: 0, restores: 0 });
 function demo(
@@ -152,6 +166,60 @@ const withoutId = (entity: object) => {
   const { id: _id, ...state } = entity as Record<string, unknown>;
   return state;
 };
+
+it("renders a final MissionEnd packet even without a following move tick", () => {
+  const stream = demo([
+    command("ServerMessage", "MsgSystemClock", "", "10", "600000"),
+    move(),
+    command("MissionEnd", "1"),
+  ]);
+  const initial = stream.stepToTime(0.032);
+  expect(initial.matchEnded).toBe(false);
+  const clock = new PlaybackClock();
+  clock.reset(initial.timeSec, 0, initial);
+  const frame = clock.step(
+    stream,
+    {
+      status: "playing",
+      rate: 1,
+      seekTime: 0,
+      seekNonce: 0,
+    },
+    0.016,
+  );
+  expect(frame.snapshot.timeSec).toBe(initial.timeSec);
+  expect(frame.snapshot.exhausted).toBe(true);
+  expect(frame.snapshot.matchEnded).toBe(true);
+  expect(frame.snapshot.matchClockMs).toBe(initial.matchClockMs);
+  expect(frame.previousSnapshot).toBe(initial);
+  expect(clock.time).toBe(initial.timeSec);
+});
+
+it("seeks into and out of the debrief without restarting world animation", () => {
+  const stream = demo([
+    command("ServerMessage", "MsgSystemClock", "", "10", "600000"),
+    ...Array.from({ length: 10 }, move),
+    command("MissionEnd", "1"),
+    ...Array.from({ length: DEMO_CHECKPOINT_TICKS + 20 }, move),
+    command("ServerMessage", "MsgClientReady", "", "CTFGame"),
+    ...Array.from({ length: 20 }, move),
+  ]);
+  const time = (DEMO_CHECKPOINT_TICKS + 10) * 0.032;
+  const played = stream.stepToTime(time);
+  expect(played.matchEndedAtSec).toBeCloseTo(0.32);
+  expect(played.matchClockMs).toBeCloseTo(-599680);
+  expect(stream.checkpointTicks).toEqual([DEMO_CHECKPOINT_TICKS]);
+  stream.stepToTime(0.16);
+  const sought = stream.stepToTime(time);
+  expect(sought.matchEndedAtSec).toBe(played.matchEndedAtSec);
+  expect(sought.entities.map(withoutId)).toEqual(
+    played.entities.map(withoutId),
+  );
+  expect(sought.matchClockMs).toBe(played.matchClockMs);
+  const resumed = stream.stepToTime((DEMO_CHECKPOINT_TICKS + 40) * 0.032);
+  expect(resumed.matchEnded).toBe(false);
+  expect(resumed.matchEndedAtSec).toBeNull();
+});
 
 describe("seek reconstruction", () => {
   it("keeps signed steering through ghost updates, rendering and seeks", () => {

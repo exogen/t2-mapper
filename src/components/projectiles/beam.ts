@@ -113,7 +113,7 @@ export function createBeamView(
       ) {
         return;
       }
-      const elapsed = streamClock.time - (entity.spawnTime ?? 0);
+      const elapsed = streamClock.worldTime - (entity.spawnTime ?? 0);
       const t = elapsed / Math.max(0.001, visual.fadeTime);
       const endLight = light.light;
       if (t < 0 || t >= 1) {
@@ -306,7 +306,7 @@ export function createLinkBeamView(
         if (
           !repairEndpoint.update(
             entity.linkTargetId!,
-            streamClock.time,
+            streamClock.worldTime,
             (out) =>
               renderShapeRaycast.repairHit(
                 _linkStart,
@@ -359,7 +359,7 @@ export function createLinkBeamView(
         );
       };
 
-      const age = streamClock.time - (entity.spawnTime ?? 0);
+      const age = streamClock.worldTime - (entity.spawnTime ?? 0);
       const u0 = -age * visual.scrollSpeed;
       const uLength = length * visual.texRepeat;
       writeLinkRibbon(
@@ -378,10 +378,10 @@ export function createLinkBeamView(
       if (visual.variant === "elf" && lightningTexture) {
         if (
           lastSeed < 0 ||
-          streamClock.time - lastSeed >= LIGHTNING_RESEED_SEC ||
-          streamClock.time < lastSeed
+          streamClock.worldTime - lastSeed >= LIGHTNING_RESEED_SEC ||
+          streamClock.worldTime < lastSeed
         ) {
-          lastSeed = streamClock.time;
+          lastSeed = streamClock.worldTime;
           for (const offsets of lightningOffsets) {
             for (let i = 0; i < LIGHTNING_POINTS; i++) {
               if (i === 0 || i === LIGHTNING_POINTS - 1) {

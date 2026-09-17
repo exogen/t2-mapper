@@ -1117,6 +1117,7 @@ class DemoStreamAdapter extends StreamEngine {
       connectedClientId: this.connectedClientId,
       matchClockMs: this.computeMatchClockMs(timeSec),
       matchEnded: this.matchEnded,
+      matchEndedAtSec: this.matchEndedAtSec,
       matchStarted: this.matchStarted,
       loadInfo: this.serverLoadInfo,
     };

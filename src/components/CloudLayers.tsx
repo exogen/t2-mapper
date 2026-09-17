@@ -1,3 +1,4 @@
+import { worldDeltaSec } from "../state/engineStore";
 import { Suspense, useRef, useMemo, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useFrame } from "@react-three/fiber";
@@ -458,7 +459,7 @@ function CloudLayer({
     animationEnabled
       ? (_, delta) => {
           // Match Tribes 2 timing: deltaTime(ms) / 32
-          const mOffset = (delta * 1000) / 32;
+          const mOffset = (worldDeltaSec(delta) * 1000) / 32;
 
           offsetRef.current ??= new Vector2(0, 0);
 

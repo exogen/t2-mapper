@@ -63,12 +63,12 @@ export function useImageLight(
   /** Effect-clock time (ms) of the last shot, for the fire flash. */
   const fireTimeRef = useRef<number | null>(null);
   const lastFireCountRef = useRef<number | null>(null);
-  const mountTimeRef = useRef(streamClock.time);
+  const mountTimeRef = useRef(streamClock.worldTime);
 
   useFrame(() => {
     const light = lightRef.current;
     if (!light || !config) return;
-    const now = streamClock.time;
+    const now = streamClock.worldTime;
     const owner =
       ownerId != null
         ? gameEntityStore.getState().streamEntities.get(ownerId)

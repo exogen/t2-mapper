@@ -162,6 +162,8 @@ export function AudioProvider({ children }: { children: ReactNode }) {
     // are no-ops when the context is already where we want it.
     const reconcile = () => {
       if (!ctx) return;
+      // The debrief freezes the world, but chat, announcements and ambient
+      // audio continue. The owners of gameplay loops stop those separately.
       const shouldPlay = !streaming || status === "playing";
       const settle = shouldPlay ? ctx.resume() : ctx.suspend();
       settle.catch(noop);

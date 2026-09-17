@@ -74,6 +74,13 @@ export class WatchStateAccumulator {
   private missionTypeDisplayName: string | undefined;
   private gameClassName: string | undefined;
   private matchEnded = false;
+  private matchEndedAt: number | null = null;
+
+  private endMatch(): void {
+    if (this.matchEnded) return;
+    this.matchEnded = true;
+    this.matchEndedAt = Date.now();
+  }
   private serverDisplayName: string | undefined;
 
   missionName: string | null = null;
@@ -220,7 +227,9 @@ export class WatchStateAccumulator {
             (data.funcName as string) ?? "",
           );
           const args = (data.args as string[]) ?? [];
-          if (funcName === "ServerMessage" && args.length >= 1) {
+          if (funcName === "MissionEnd") {
+            this.endMatch();
+          } else if (funcName === "ServerMessage" && args.length >= 1) {
             this.handleServerMessage(args, onRosterChange);
           } else if (funcName === "BottomPrint" && args.length >= 1) {
             if (
@@ -461,7 +470,7 @@ export class WatchStateAccumulator {
       const timeRemainingMS = parseFloat(this.resolveNetString(args[3]));
       this.clock = {
         durationMs: Number.isFinite(timeRemainingMS) ? timeRemainingMS : 0,
-        receivedAt: Date.now(),
+        receivedAt: this.matchEndedAt ?? Date.now(),
       };
       // A running match clock (late-join case): warmup joiners get 0,0
       // and pre-start countdown ticks stay under ~30s.
@@ -502,7 +511,10 @@ export class WatchStateAccumulator {
       this.loadInfo.apply(msgType, args, (s) => this.resolveNetString(s));
     } else if (msgType === "MsgClientReady" && args.length >= 3) {
       this.gameClassName = this.resolveNetString(args[2]) || this.gameClassName;
+      if (this.matchEndedAt != null && this.clock)
+        this.clock.receivedAt += Date.now() - this.matchEndedAt;
       this.matchEnded = false;
+      this.matchEndedAt = null;
       // First message of the mission-drop burst — the tournament banner,
       // if any, follows in the same burst.
       this.sawMissionDropReady = true;
@@ -527,7 +539,7 @@ export class WatchStateAccumulator {
     ) {
       // gameOver debrief burst — the match-over interval (until the next
       // MsgClientReady), so late joiners auto-open the score screen too.
-      this.matchEnded = true;
+      this.endMatch();
     }
   }
 
@@ -627,7 +639,8 @@ export class WatchStateAccumulator {
       clock: this.clock
         ? {
             durationMs: this.clock.durationMs,
-            elapsedMs: Date.now() - this.clock.receivedAt,
+            elapsedMs:
+              (this.matchEndedAt ?? Date.now()) - this.clock.receivedAt,
           }
         : undefined,
       missionDisplayName: this.missionDisplayName,

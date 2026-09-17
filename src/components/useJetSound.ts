@@ -14,6 +14,8 @@ import {
 } from "./AudioEmitter";
 import { audioToUrl } from "../loaders";
 import { engineStore } from "../state/engineStore";
+import { streamClock } from "../state/streamPlaybackStore";
+import { useStreamSnapshot } from "../state/streamSnapshotStore";
 
 /**
  * A looping jet sound the client plays itself rather than through the
@@ -31,6 +33,20 @@ export function useJetSound(
   const soundRef = useRef<PositionalAudio | null>(null);
   const bufferRef = useRef<AudioBuffer | null>(null);
   const profileRef = useRef<ResolvedAudioProfile | null>(null);
+  const matchEnded = useStreamSnapshot(
+    (snapshot) => snapshot?.matchEnded ?? false,
+  );
+
+  // Vehicle animation can be disabled, so don't depend on its frame callback
+  // to silence an existing loop at match end (or when audio is turned off).
+  useEffect(() => {
+    if (audioEnabled && !matchEnded) return;
+    const sound = soundRef.current;
+    if (sound) {
+      stopAndDetachSound(sound);
+      soundRef.current = null;
+    }
+  }, [audioEnabled, matchEnded]);
 
   useEffect(() => {
     bufferRef.current = null;
@@ -69,6 +85,7 @@ export function useJetSound(
 
   return useCallback(
     (jetting: boolean) => {
+      jetting &&= !streamClock.worldPaused;
       const sound = soundRef.current;
       const playing = sound?.isPlaying ?? false;
       if (jetting && !playing) {

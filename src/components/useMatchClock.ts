@@ -1,6 +1,21 @@
 import { useEffect, useState } from "react";
 import { streamClock } from "../state/streamPlaybackStore";
 import { streamSnapshotStore } from "../state/streamSnapshotStore";
+import type { StreamSnapshot } from "../stream/types";
+
+export function matchClockAt(
+  snapshot: Pick<
+    StreamSnapshot,
+    "matchClockMs" | "matchEnded" | "timeSec"
+  > | null,
+  timeSec: number,
+): number | null {
+  if (snapshot?.matchClockMs == null) return null;
+  return (
+    snapshot.matchClockMs +
+    (snapshot.matchEnded ? 0 : (timeSec - snapshot.timeSec) * 1000)
+  );
+}
 
 const pad2 = (n: number) => String(n).padStart(2, "0");
 
@@ -29,7 +44,8 @@ export function formatHudClock(clockMs: number): string {
  * displayed clock for seconds at a time. Instead, sample twice per
  * second and extrapolate the latest published value along the playback
  * clock, which advances every frame regardless of packets and stops
- * while paused (freezing the clock correctly). Extrapolation is exact,
+ * while paused. Match end holds the last value even as transport continues.
+ * Extrapolation is exact,
  * not drift-prone: both sides advance on the same playback clock, so
  * re-syncs from later snapshots never cause visible jumps. Re-renders
  * only when the displayed label changes.
@@ -40,10 +56,7 @@ export function useMatchClockMs(): number | null {
     let timer: ReturnType<typeof setTimeout> | undefined;
     const update = () => {
       const snap = streamSnapshotStore.getState().snapshot;
-      const next =
-        snap == null || snap.matchClockMs == null
-          ? null
-          : snap.matchClockMs + (streamClock.time - snap.timeSec) * 1000;
+      const next = matchClockAt(snap, streamClock.time);
       setClockMs((prev) =>
         next != null &&
         prev != null &&

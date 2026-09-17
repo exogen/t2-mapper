@@ -61,7 +61,7 @@ export function GroundEffects({ playback }: { playback: StreamingPlayback }) {
   useFrame(() => {
     const history = playback.groundEffectHistory;
     if (!history) return;
-    const now = streamClock.time,
+    const now = streamClock.worldTime,
       state = last.current;
     const seek = engineStore.getState().playback.seekNonce,
       terrain = collisionState().terrain;

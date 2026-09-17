@@ -183,7 +183,7 @@ export function createFlareView(
         shape.setTime(
           Math.max(
             0,
-            streamClock.time - (entity.spawnTime ?? streamClock.time),
+            streamClock.worldTime - (entity.spawnTime ?? streamClock.worldTime),
           ),
         );
       }

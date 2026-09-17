@@ -5,6 +5,7 @@ import { useStoreWithEqualityFn } from "zustand/traditional";
 import type { StreamRecording } from "../stream/types";
 import { setStreamSnapshot } from "./streamSnapshotStore";
 import { demoLoadStore } from "./demoLoadStore";
+import { streamClock } from "./streamPlaybackStore";
 import type {
   RuntimeMutationEvent,
   TorqueObject,
@@ -408,7 +409,16 @@ export function effectNow(): number {
  */
 export function effectDeltaSec(renderDeltaSec: number): number {
   const playback = engineStore.getState().playback;
-  return playback.status === "playing" ? renderDeltaSec * playback.rate : 0;
+  return playback.status === "playing" && !streamClock.worldPaused
+    ? renderDeltaSec * playback.rate
+    : 0;
+}
+
+/** Ambient world animation also runs in explorer mode, without a recording. */
+export function worldDeltaSec(renderDeltaSec: number): number {
+  return engineStore.getState().playback.recording
+    ? effectDeltaSec(renderDeltaSec)
+    : renderDeltaSec;
 }
 
 /**

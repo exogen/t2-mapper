@@ -59,6 +59,7 @@ import {
 } from "./AudioEmitter";
 import { getEffectiveSoundRate } from "./audioPlaybackRate";
 import { effectDeltaSec, effectNow, engineStore } from "../state/engineStore";
+import { streamClock } from "../state/streamPlaybackStore";
 import { ParticleSnapshotIndex } from "./particleSnapshot";
 
 const log = createLogger("ParticleEffects");
@@ -1219,6 +1220,13 @@ export function ParticleEffects({
     }
 
     // ── Audio: explosion impact + projectile in-flight sounds ──
+    // Frozen projectiles stay visible during debrief, but must not keep
+    // playing their flight loops. Voice and other one-shot events continue.
+    if (streamClock.worldPaused) {
+      for (const entityId of projectileSoundsRef.current.keys()) {
+        stopProjectileSound(projectileSoundsRef.current, entityId);
+      }
+    }
     // Only process new audio events while playing to avoid triggering
     // sounds during pause (existing sounds are frozen via AudioContext.suspend).
     if (
@@ -1265,7 +1273,12 @@ export function ParticleEffects({
           );
           continue;
         }
-        if (entity.type !== "Projectile" || !entity.dataBlockId) continue;
+        if (
+          streamClock.worldPaused ||
+          entity.type !== "Projectile" ||
+          !entity.dataBlockId
+        )
+          continue;
         // A projectile that exploded or fizzled client-side lingers in the
         // snapshot until the server's ghost delete arrives — its flight
         // loop must stop at death, not at the delete (Torque stops the
@@ -1319,7 +1332,7 @@ export function ParticleEffects({
           const gen = getSoundGeneration();
           getCachedAudioBuffer(url, audioLoader, (buffer) => {
             // Recording may have been unloaded by the time the buffer loads.
-            if (gen !== getSoundGeneration()) return;
+            if (gen !== getSoundGeneration() || streamClock.worldPaused) return;
             if (!currentEntityIds.has(entity.id)) return;
             if (projSounds.has(entity.id)) return;
             const group = groupRef.current;

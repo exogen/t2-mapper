@@ -322,7 +322,7 @@ export function createShockLanceView(
       const group = viewRoot;
       const boltGroup = bolts;
       if (!group || !boltGroup) return;
-      const now = streamClock.time;
+      const now = streamClock.worldTime;
       const age = now - (entity.spawnTime ?? 0);
       const zap = zapState;
       if (age < 0 || age >= zapDuration) {

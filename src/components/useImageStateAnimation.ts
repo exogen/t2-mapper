@@ -110,7 +110,7 @@ export function useImageStateAnimation(
 
   useFrame(() => {
     const playback = engineStore.getState().playback;
-    const isPlaying = playback.status === "playing";
+    const isPlaying = playback.status === "playing" && !streamClock.worldPaused;
     const actions = target.actions.current;
 
     const imageSlot = readSlot();
@@ -123,7 +123,7 @@ export function useImageStateAnimation(
       const rebuilt = actions !== lastActionsRef.current;
       lastActionsRef.current = actions;
       recordedRef.current = recorded;
-      const now = streamClock.time;
+      const now = streamClock.worldTime;
       const apply = (
         thread: ImageAnimationThread | undefined,
         ref: RefObject<ImageThread | null>,
@@ -187,6 +187,7 @@ export function useImageStateAnimation(
       if (
         loopingSoundRef.current &&
         (!audioEnabled ||
+          streamClock.worldPaused ||
           !loopingSoundRef.current.isPlaying ||
           loopingSoundStateRef.current !== recorded.state.stateIndex)
       )
@@ -316,7 +317,7 @@ function playStateSounds(
       const gen = getSoundGeneration();
       getCachedAudioBuffer(url, audioLoader, (buffer) => {
         // The state may have moved on by the time the buffer loads.
-        if (gen !== getSoundGeneration()) return;
+        if (gen !== getSoundGeneration() || streamClock.worldPaused) return;
         if (loopingSoundRef.current) return;
         const currentIdx = sm.stateIndex;
         if (currentIdx !== animState.stateIndex) return;

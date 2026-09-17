@@ -42,4 +42,14 @@ describe("particle snapshot index", () => {
     expect(index.audio).toEqual([explosion, bolt]);
     expect(index.trails).toHaveLength(0);
   });
+
+  it("retains the index while debrief HUD snapshots reuse the frozen world", () => {
+    const index = new ParticleSnapshotIndex();
+    const entities = [{ id: "explosion", type: "Explosion" }];
+    expect(index.update(snapshot(entities, 10))).toBe(true);
+    expect(index.update(snapshot(entities, 20))).toBe(false);
+    expect(index.audio).toEqual(entities);
+    expect(index.update(snapshot([], 21))).toBe(true);
+    expect(index.audio).toEqual([]);
+  });
 });

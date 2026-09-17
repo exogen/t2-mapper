@@ -12,6 +12,7 @@ import { createShapeProjectileView } from "./shape";
 
 afterEach(() => {
   streamClock.time = 0;
+  streamClock.matchEndedAtSec = null;
 });
 it("seats pooled projectiles at their recorded activate/maintain time, including late loads and backwards seeks", () => {
   const data = createDTSTestShape();
@@ -117,6 +118,13 @@ it("holds ambient while paused and resets recycled poses without disposing share
   // Wall-clock frames cannot advance a paused stream.
   view.animate!(entity, 2);
   expect(object.opacity).toBeCloseTo(0.4);
+  // Debrief transport keeps advancing, but the DTS pose stays on its final frame.
+  streamClock.matchEndedAtSec = 10.25;
+  streamClock.time = 30.75;
+  view.animate!(entity, 20.5);
+  expect(object.opacity).toBeCloseTo(0.4);
+  streamClock.matchEndedAtSec = null;
+  streamClock.time = 10.25;
   enabled = false;
   view.animate!(entity, 1);
   expect(object.opacity).toBe(0);

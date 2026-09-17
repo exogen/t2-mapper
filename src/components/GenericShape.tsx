@@ -223,7 +223,7 @@ interface WheelAnimState {
 /** Returns pausable time in seconds for demo mode, real time otherwise. */
 function shapeNowSec(): number {
   const { recording } = engineStore.getState().playback;
-  return recording != null ? streamClock.time : performance.now() / 1000;
+  return recording != null ? streamClock.worldTime : performance.now() / 1000;
 }
 
 /**
@@ -889,7 +889,7 @@ export const ShapeModel = memo(function ShapeModel({
         const duration = action.getClip().duration;
         const time = shapeThreadTime(
           state,
-          streamClock.time,
+          streamClock.worldTime,
           duration,
           seqCyclicByName.get(thread.sequence) ?? false,
         );
@@ -921,7 +921,7 @@ export const ShapeModel = memo(function ShapeModel({
         if (wa.wheelAction && wheel) {
           const rotation = wheelRotationAt(
             wheel,
-            streamClock.time,
+            streamClock.worldTime,
             entity?.frozen,
           );
           holdDtsAction(wa.wheelAction, rotation);
@@ -954,7 +954,7 @@ export const ShapeModel = memo(function ShapeModel({
         animationEnabled && mountedAt != null && duration > 0
           ? Math.min(
               1,
-              (Math.max(0, streamClock.time - mountedAt) * 0.5) / duration,
+              (Math.max(0, streamClock.worldTime - mountedAt) * 0.5) / duration,
             )
           : 0,
       );
@@ -966,7 +966,7 @@ export const ShapeModel = memo(function ShapeModel({
     // Native tracks drive sequence-controlled IFLs. Only unbound viewer IFLs
     // use this pausable clock; disabling animation holds their first frame.
     clonedScene.setImageAnimationTime(
-      inDemo ? streamClock.time : (clonedScene.time ?? 0) + effectDelta,
+      inDemo ? streamClock.worldTime : (clonedScene.time ?? 0) + effectDelta,
       animationEnabled,
     );
   }, FramePriority.ShapeAnimation);
