@@ -23,6 +23,8 @@ export interface DemoLoadState {
    * Outlives reset() — it describes the loaded demo, not the load.
    */
   sourceUrl: string | null;
+  /** Indexed load intent, including an in-flight or failed download. */
+  requestedUrl: string | null;
   /**
    * Demo time downloaded so far (seconds) while a progressive load is
    * still running, or null when complete / not applicable — drives the
@@ -43,6 +45,7 @@ export const demoLoadStore = createStore<DemoLoadState>((set) => ({
   progress: null,
   error: null,
   sourceUrl: null,
+  requestedUrl: null,
   downloadedSec: null,
   begin(phase) {
     set({ phase, progress: null, error: null, downloadedSec: null });

@@ -8,6 +8,7 @@ import { queryServerList, queryServerInfo } from "./masterQuery.js";
 import { GameConnection } from "./gameConnection.js";
 import { loadCredentials } from "./auth.js";
 import { WatchSessionManager, normalizeAddress } from "./watchSession.js";
+import { WatchRequest } from "./watchRequest.js";
 import { DemoCoordinator } from "./demoCoordinator.js";
 import { DemoUploader, loadUploadConfig } from "./demoUpload.js";
 import { Patroller, globToRegExp } from "./patrol.js";
@@ -562,8 +563,39 @@ wss.on("connection", (ws) => {
   /** First joinServer/watchServer claims the socket for that mode. */
   let role: "idle" | "player" | "watcher" = "idle";
   let warnedWatcherCommand = false;
-  /** One unlisted-server probe at a time per socket. */
-  let probeInFlight = false;
+  const watchRequest = new WatchRequest({
+    isKnown: (address) =>
+      watchSessions.has(address) || !!findKnownServer(address),
+    async probe(address) {
+      const cached = getFreshProbe(address);
+      if (cached) return cached.info !== null;
+      relayLog.info({ address }, "Probing unlisted server");
+      const info = await queryServerInfo(address);
+      probeCache.set(address, { info, at: Date.now() });
+      return info !== null;
+    },
+    checking: (address) =>
+      sendToClient(ws, {
+        type: "sessionStatus",
+        status: "connecting",
+        address,
+        message: "Checking server...",
+        watcherCount: 0,
+      }),
+    rejected: (address) =>
+      sendToClient(ws, {
+        type: "sessionStatus",
+        status: "ended",
+        address,
+        message: `No compatible Tribes 2 server responded at ${address}.`,
+        watcherCount: 0,
+      }),
+    attach(address, channelId) {
+      if (ws.readyState === WebSocket.OPEN)
+        watchSessions.watch(ws, address, channelId);
+    },
+    detach: () => watchSessions.detachSocket(ws),
+  });
 
   let gameConnection: GameConnection | null = null;
   let lastJoinAddress: string | null = null;
@@ -713,7 +745,7 @@ wss.on("connection", (ws) => {
     if (gameConnection) {
       gameConnection.disconnect();
     }
-    watchSessions.detachSocket(ws);
+    watchRequest.leave();
   });
 
   async function handleClientMessage(
@@ -758,79 +790,16 @@ wss.on("connection", (ws) => {
         const address = normalizeAddress(message.address);
         relayLog.info({ address }, "Watch server requested");
 
-        // Unlisted addresses are probed first (GamePing/GameInfo request,
-        // the same two-packet handshake the server browser uses), so the
-        // relay only ever opens game connections to real, compatible
-        // Tribes 2 servers — while still supporting private servers that
-        // aren't published on the master list. An already-active session
-        // is proof enough; otherwise both probe outcomes are cached for
-        // PROBE_TTL_MS, and a cached failure rejects with no traffic at
-        // all toward the target.
-        if (!watchSessions.has(address) && !findKnownServer(address)) {
-          if (getFreshProbe(address)?.info === null) {
-            sendToClient(ws, {
-              type: "sessionStatus",
-              status: "ended",
-              address,
-              message: `No compatible Tribes 2 server responded at ${address}.`,
-              watcherCount: 0,
-            });
-            return;
-          }
-          if (probeInFlight) {
-            // The earlier request's probe will answer this socket; tell
-            // the client something instead of silently dropping.
-            sendToClient(ws, {
-              type: "sessionStatus",
-              status: "connecting",
-              address,
-              message: "Checking server...",
-              watcherCount: 0,
-            });
-            return;
-          }
-          probeInFlight = true;
-          relayLog.info({ address }, "Probing unlisted server");
-          let info: ServerInfo | null = null;
-          try {
-            info = await queryServerInfo(address);
-          } finally {
-            probeInFlight = false;
-          }
-          probeCache.set(address, { info, at: Date.now() });
-          if (!info) {
-            relayLog.info({ address }, "Probe failed — not a T2 server");
-            sendToClient(ws, {
-              type: "sessionStatus",
-              status: "ended",
-              address,
-              message: `No compatible Tribes 2 server responded at ${address}.`,
-              watcherCount: 0,
-            });
-            return;
-          }
-          relayLog.info(
-            { address, name: info.name, mapName: info.mapName },
-            "Probe succeeded — unlisted T2 server",
-          );
-        }
-
-        // The socket may have closed during the probe; a dead watcher in
-        // a session would pin it until the liveness sweep.
-        if (ws.readyState === WebSocket.OPEN) {
-          watchSessions.watch(
-            ws,
-            address,
-            typeof message.channelId === "string"
-              ? message.channelId
-              : undefined,
-          );
-        }
+        const channelId =
+          typeof message.channelId === "string"
+            ? message.channelId
+            : watchSessions.getSession(address)?.getChannelId(ws);
+        await watchRequest.watch(address, channelId);
         break;
       }
 
       case "leaveServer": {
-        watchSessions.detachSocket(ws);
+        watchRequest.leave();
         break;
       }
 

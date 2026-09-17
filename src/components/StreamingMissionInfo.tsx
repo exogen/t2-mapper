@@ -1,4 +1,3 @@
-import { useCallback } from "react";
 import {
   useDataSource,
   useMissionDisplayName,
@@ -8,14 +7,9 @@ import {
   useRecordingDate,
   useServerDisplayName,
 } from "../state/gameEntityStore";
-import { engineStore } from "../state/engineStore";
-import {
-  liveConnectionStore,
-  selectPing,
-  useLiveSelector,
-} from "../state/liveConnectionStore";
+import { selectPing, useLiveSelector } from "../state/liveConnectionStore";
 import { useRecording } from "./usePlayback";
-import { unloadDemo } from "../stream/demoFileLoader";
+import { useAppNavigation } from "./useAppNavigation";
 import {
   LuCircleArrowOutUpLeft,
   LuClock,
@@ -123,21 +117,7 @@ export function StreamingMissionInfo({
     )
   ) : null;
 
-  const handleEject = useCallback(() => {
-    unloadDemo();
-  }, []);
-
-  const handleDisconnect = useCallback(() => {
-    const liveState = liveConnectionStore.getState();
-    if (liveState.role === "watcher") {
-      // Watchers detach from the shared session; the relay socket stays
-      // open so the server list is warm for the next join.
-      liveState.leaveServer();
-    } else {
-      liveState.disconnectServer();
-    }
-    engineStore.getState().setRecording(null);
-  }, []);
+  const navigation = useAppNavigation();
 
   return (
     <div className={styles.Header}>
@@ -280,7 +260,7 @@ export function StreamingMissionInfo({
           className={styles.EjectButton}
           title="Eject demo"
           aria-label="Eject demo"
-          onClick={handleEject}
+          onClick={navigation.demoIndex}
           disabled={!recording}
         >
           <BiSolidEject className={styles.EjectIcon} />
@@ -294,7 +274,7 @@ export function StreamingMissionInfo({
           className={styles.DisconnectButton}
           title="Disconnect"
           aria-label="Disconnect"
-          onClick={handleDisconnect}
+          onClick={navigation.disconnectServer}
           disabled={isWatcher ? false : !isLiveConnected}
         >
           <LuCircleArrowOutUpLeft />

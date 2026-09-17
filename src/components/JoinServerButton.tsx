@@ -1,4 +1,5 @@
 import { BsFillLightningChargeFill } from "react-icons/bs";
+import { useAppNavigation } from "./useAppNavigation";
 import { cameraTourStore } from "../state/cameraTourStore";
 import { useLiveSelector } from "../state/liveConnectionStore";
 import buttonStyles from "./Button.module.css";
@@ -12,8 +13,7 @@ export function JoinServerButton({
   onOpenServerBrowser: () => void;
 }) {
   const gameStatus = useLiveSelector((s) => s.gameStatus);
-  const disconnectServer = useLiveSelector((s) => s.disconnectServer);
-  const leaveServer = useLiveSelector((s) => s.leaveServer);
+  const navigation = useAppNavigation();
   const isWatcher = useLiveSelector((s) => s.role === "watcher");
   const watchStatus = useLiveSelector((s) => s.watchStatus);
 
@@ -35,13 +35,7 @@ export function JoinServerButton({
       onClick={() => {
         cameraTourStore.getState().cancel();
         if (isLive) {
-          // Watchers detach from the shared session; player connections
-          // (not yet exposed in the UI) disconnect outright.
-          if (isWatcher) {
-            leaveServer();
-          } else {
-            disconnectServer();
-          }
+          navigation.disconnectServer();
         } else {
           onOpenServerBrowser();
         }

@@ -1,5 +1,6 @@
 import { createLogger } from "../logger";
 import { deserializeCatchupPayload } from "../../relay/watchSerialize";
+import { normalizeAddress } from "../../relay/shared";
 import type {
   ClientMessage,
   ClientMove,
@@ -98,6 +99,7 @@ export class RelayClient {
    * flip the framing state under the new session's own catch-up.
    */
   private sessionGeneration = 0;
+  private watchAddress: string | null = null;
 
   constructor(url: string, handlers: RelayEventHandler) {
     this.url = url;
@@ -192,6 +194,7 @@ export class RelayClient {
         break;
       }
       case "sessionStatus":
+        if (normalizeAddress(message.address) !== this.watchAddress) break;
         if (this.catchupMode === "waiting" && message.status === "live") break;
         if (this.catchupMode === "finalizing") {
           this.bufferedFrames.push(message);
@@ -219,6 +222,12 @@ export class RelayClient {
         this.handlers.onRelayRestarting?.();
         break;
       case "catchupBegin":
+        if (
+          !this.watchAddress ||
+          (message.address &&
+            normalizeAddress(message.address) !== this.watchAddress)
+        )
+          break;
         // A newer snapshot supersedes any older asynchronous decode and
         // the packets already represented by this new snapshot.
         this.resetSessionFraming();
@@ -318,6 +327,7 @@ export class RelayClient {
   joinServer(address: string, warriorName?: string): void {
     log.info("Joining server: %s", address);
     this.resetSessionFraming();
+    this.watchAddress = null;
     this.send({ type: "joinServer", address, warriorName });
   }
 
@@ -325,6 +335,7 @@ export class RelayClient {
   watchServer(address: string, channelId?: string): void {
     log.info("Watching server: %s", address);
     this.resetSessionFraming("waiting");
+    this.watchAddress = normalizeAddress(address);
     this.send({ type: "watchServer", address, channelId });
   }
 
@@ -332,6 +343,7 @@ export class RelayClient {
   leaveServer(): void {
     this.send({ type: "leaveServer" });
     this.resetSessionFraming("waiting");
+    this.watchAddress = null;
   }
 
   /** Forward a T2csri auth event to the relay. */

@@ -5,6 +5,7 @@ import { useSettings } from "./SettingsProvider";
 import { useCommandCircuit } from "../state/commandCircuitStore";
 import { cameraRegistry } from "../state/cameraRegistry";
 import { encodeViewHash } from "./viewHash";
+import { useModeQueryState } from "./useQueryParams";
 import buttonStyles from "./Button.module.css";
 import styles from "./CopyCoordinatesButton.module.css";
 
@@ -18,6 +19,7 @@ export function CopyCoordinatesButton({
   disabled?: boolean;
 }) {
   const { fogEnabled } = useSettings();
+  const [mode] = useModeQueryState();
   const isCommandCircuit = useCommandCircuit((s) => s.active);
   const [showCopied, setShowCopied] = useState(false);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -48,7 +50,11 @@ export function CopyCoordinatesButton({
     }
     const fullPath = `${window.location.pathname}?${params}${hash}`;
     const fullUrl = `${window.location.origin}${fullPath}`;
-    window.history.replaceState(null, "", fullPath);
+    // A local demo/live stream can copy an explore link without changing
+    // its own route into map mode underneath the active stream.
+    if (mode === "map") {
+      window.history.replaceState(window.history.state, "", fullPath);
+    }
     try {
       await navigator.clipboard.writeText(fullUrl);
       setShowCopied(true);
@@ -58,7 +64,7 @@ export function CopyCoordinatesButton({
     } catch (err) {
       console.error(err);
     }
-  }, [missionName, missionType, fogEnabled, isCommandCircuit]);
+  }, [mode, missionName, missionType, fogEnabled, isCommandCircuit]);
 
   return (
     <button

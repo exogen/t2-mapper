@@ -28,14 +28,14 @@ import {
 import { usePublicWindowAPI } from "./usePublicWindowAPI";
 import {
   CurrentMission,
-  dropLocationHash,
-  useDemoQueryState,
-  useDemoTimeQueryState,
   useMissionQueryState,
   useModeQueryState,
-  useViewQueryState,
+  useNavigationQueryState,
+  clearEndedServerQuery,
 } from "./useQueryParams";
-import { useQueryState } from "nuqs";
+import { useAppNavigation } from "./useAppNavigation";
+import { useNavigationSync } from "./useNavigationSync";
+import { useCommandCircuitUrlSync } from "./useCommandCircuitUrlSync";
 import {
   commandCircuitStore,
   useCommandCircuit,
@@ -51,14 +51,14 @@ import { LoadingIndicator } from "./LoadingIndicator";
 import { StreamDelayNotice } from "./StreamDelayNotice";
 import { CommentarySubtitles } from "./CommentarySubtitles";
 import { unloadDemo } from "../stream/demoFileLoader";
-import { isRetryableDisconnect } from "../../relay/shared";
+import { isRetryableDisconnect, normalizeAddress } from "../../relay/shared";
 import {
   isStreamingSource,
   useDataSource,
   useMissionName,
   useMissionType,
 } from "../state/gameEntityStore";
-import { cameraTourStore, useCameraTour } from "../state/cameraTourStore";
+import { useCameraTour } from "../state/cameraTourStore";
 import { useMediaQuery } from "./useMediaQuery";
 import { useTouchDevice } from "./useTouchDevice";
 import { GameDialogSpinner } from "./GameDialogSpinner";
@@ -89,7 +89,10 @@ const ServerBrowser = lazyNamed(
 const ScoreScreen = lazyNamed("ScoreScreen", () => import("./ScoreScreen"));
 
 export function MapInspector() {
-  const [currentMission, setCurrentMission] = useMissionQueryState();
+  const [currentMission] = useMissionQueryState();
+  const navigation = useAppNavigation();
+  useNavigationSync();
+  useCommandCircuitUrlSync();
   const features = useFeatures();
   const { clearFogEnabledOverride, renderScale, sidebarOpen, setSidebarOpen } =
     useSettings();
@@ -113,8 +116,7 @@ export function MapInspector() {
   const sidebarOverlayMode = useMediaQuery("(max-width: 899px)") ?? false;
   const isTourActive = useCameraTour((s) => s.animation !== null);
 
-  const [mode, setMode] = useModeQueryState();
-  const [view, setView] = useViewQueryState();
+  const [mode] = useModeQueryState();
 
   // Welcome splash: shown over the default explore view when the URL
   // carried no explicit selection (no mission/mode/demo/join params) —
@@ -137,40 +139,18 @@ export function MapInspector() {
 
   const changeMission = useCallback(
     (mission: CurrentMission) => {
-      dropLocationHash();
       clearFogEnabledOverride();
       // Picking a map is a real selection — retire the welcome splash.
       setShowSplash(false);
       // Exit command circuit — switching missions always starts at the
       // default camera view.
-      setView(null);
-      setMode("map");
-      commandCircuitStore.getState().deactivate();
+      navigation.selectMission(mission);
       setChoosingMap(false);
-      cameraTourStore.getState().cancel();
-      // Leave any live session and close the relay socket — map mode
-      // has no use for it. (leaveServer first so the detach message
-      // goes out before the close.)
-      const liveState = liveConnectionStore.getState();
-      liveState.leaveServer();
-      liveState.disconnectRelay();
-      // Full recording teardown (director, timeline, streamed scene) —
-      // not just the recording handle, or a running cast would keep
-      // owning the controls in explore mode.
-      unloadDemo();
-      setCurrentMission(mission);
       if (isTouch) {
         setSidebarOpen(false);
       }
     },
-    [
-      clearFogEnabledOverride,
-      setView,
-      setMode,
-      setCurrentMission,
-      isTouch,
-      setSidebarOpen,
-    ],
+    [clearFogEnabledOverride, navigation, isTouch, setSidebarOpen],
   );
 
   usePublicWindowAPI({ onChangeMission: changeMission });
@@ -178,11 +158,6 @@ export function MapInspector() {
   const recording = useRecording();
   const dataSource = useDataSource();
 
-  // ── Command circuit view in the URL ──
-  // A shared ?view=cc link opens the command map once the current mode's
-  // data is ready — activate() is a no-op before then. After the pending
-  // restore is consumed, the param mirrors whether the command map is
-  // open, so copying the URL always brings the current view along.
   const isCommandCircuit = useCommandCircuit((s) => s.active);
   const liveReady = useLiveSelector((s) => s.liveReady);
 
@@ -194,22 +169,6 @@ export function MapInspector() {
       setShowSplash(false);
     }
   }, [showSplash, isTourActive, isCommandCircuit]);
-  const ccRestorePendingRef = useRef(view === "cc");
-  useEffect(() => {
-    if (!ccRestorePendingRef.current) return;
-    const ready =
-      dataSource === "map" ||
-      dataSource === "demo" ||
-      (dataSource === "live" && liveReady);
-    if (!ready) return;
-    ccRestorePendingRef.current = false;
-    commandCircuitStore.getState().activate();
-  }, [dataSource, liveReady]);
-  useEffect(() => {
-    // Leave the param alone until the pending restore has consumed it.
-    if (ccRestorePendingRef.current) return;
-    setView(isCommandCircuit ? "cc" : null);
-  }, [isCommandCircuit, setView]);
 
   // Enter command circuit once a freshly loaded stats file's mission is ready.
   // Gate on the entity store's mission name (set only after the mission
@@ -251,14 +210,6 @@ export function MapInspector() {
     }
   }, [recording]);
 
-  // Keep ?mode= in sync when a demo loads (drag/drop or the sidebar
-  // button work from any mode).
-  useEffect(() => {
-    if (recording?.source === "demo") {
-      setMode("demo");
-    }
-  }, [recording, setMode]);
-
   // ── Live spectating (shared relay watch sessions) ──
   const watchStatus = useLiveSelector((s) => s.watchStatus);
   const watchStatusMessage = useLiveSelector((s) => s.watchStatusMessage);
@@ -288,47 +239,8 @@ export function MapInspector() {
   }, [serverAddress]);
   // Share links: ?address=ip:port joins that host directly; ?name=Server
   // joins the first exact name match from the server list.
-  const [autoAddress, setAddressParam] = useQueryState("address");
-  const [autoName, setNameParam] = useQueryState("name");
-
-  // The share-link params only make sense in live mode.
-  useEffect(() => {
-    if (mode !== "live") {
-      if (autoAddress != null) setAddressParam(null);
-      if (autoName != null) setNameParam(null);
-    }
-  }, [mode, autoAddress, autoName, setAddressParam, setNameParam]);
-
-  // The mission param belongs to map mode only. (The parsed value can't
-  // signal absence — it has a default — so check the URL directly.)
-  useEffect(() => {
-    if (mode === "map") return;
-    if (new URLSearchParams(window.location.search).has("mission")) {
-      setCurrentMission(null);
-    }
-  }, [mode, setCurrentMission]);
-
-  // The demo params belong to demo mode only. A bare ?demo (no explicit
-  // ?mode) is a share link that should land in demo mode; once we're in
-  // any other mode the params no longer describe the page, so drop them:
-  // the demo, its linked second (?t) and the moment's camera hash.
-  // Coercion writes ?mode=demo, so it can only happen on the initial bare
-  // landing — no separate once-guard needed, and no race between switching
-  // in and clearing out.
-  const [, setDemoParam] = useDemoQueryState();
-  const [, setDemoTime] = useDemoTimeQueryState();
-  useEffect(() => {
-    if (mode === "demo") return;
-    const params = new URLSearchParams(window.location.search);
-    if (params.has("demo") && !params.has("mode")) {
-      setMode("demo");
-      return;
-    }
-    if (!params.has("demo") && !params.has("t")) return;
-    dropLocationHash();
-    void setDemoTime(null);
-    void setDemoParam(null);
-  }, [mode, setMode, setDemoParam, setDemoTime]);
+  const [{ address: autoAddress, name: autoName }, setNavigationQuery] =
+    useNavigationQueryState();
 
   const sessionActive = watchStatus !== null && watchStatus !== "ended";
 
@@ -341,21 +253,41 @@ export function MapInspector() {
     }
   }, [mode, sessionActive]);
 
-  // When a session ends (leave/kick), the share-link params no longer
-  // describe the page — drop them. Only on the active→inactive edge so
-  // share links still auto-join on a fresh load.
-  const prevSessionActiveRef = useRef(false);
+  // Subscribe to store transitions directly: React may batch connecting
+  // and ended into one render, or the toolbar may be hidden by Activity.
   useEffect(() => {
-    if (prevSessionActiveRef.current && !sessionActive) {
-      setNameParam(null);
-      setAddressParam(null);
-    }
-    prevSessionActiveRef.current = sessionActive;
-  }, [sessionActive, setNameParam, setAddressParam]);
+    let stopped = false;
+    const unsubscribe = liveConnectionStore.subscribe((state, previous) => {
+      if (
+        (state.watchStatus === "ended" && previous.watchStatus !== "ended") ||
+        (state.role === null && previous.role !== null)
+      ) {
+        // A synchronous rejection can arrive inside the navigation action,
+        // before nuqs has committed that action's queued selection.
+        queueMicrotask(() => {
+          const current = liveConnectionStore.getState();
+          if (
+            stopped ||
+            current.role !== state.role ||
+            current.adapter !== state.adapter ||
+            current.watchStatus !== state.watchStatus
+          )
+            return;
+          void setNavigationQuery((query) =>
+            clearEndedServerQuery(query, previous),
+          );
+        });
+      }
+    });
+    return () => {
+      stopped = true;
+      unsubscribe();
+    };
+  }, [setNavigationQuery]);
 
   // ── Auto-spectate from a share link ──
-  // One attempt per page load: after a manual leave (or a failed match)
-  // the normal server browser takes over.
+  // One attempt per URL target. Back/forward navigation can select another
+  // target; an ordinary re-render must never retry a failed join.
   const [autoJoin, setAutoJoin] = useState<
     "pending" | "joined" | "notFound" | "off"
   >(mode === "live" && (autoAddress || autoName) ? "pending" : "off");
@@ -365,50 +297,83 @@ export function MapInspector() {
   useEffect(() => {
     if (sessionActive) setErrorAcknowledged(false);
   }, [sessionActive]);
-  const requestedListRef = useRef(false);
+  const autoTargetRef = useRef<{
+    key: string;
+    attempted: boolean;
+    requestedList: boolean;
+  } | null>(null);
   useEffect(() => {
-    // Only attempt in live mode — leaving suspends a pending attempt.
-    if (autoJoin !== "pending" || sessionActive || mode !== "live") return;
-    // The params are cleared outside live mode and when a session ends;
-    // a pending attempt with nothing to join simply disarms.
-    if (!autoAddress && !autoName) {
+    const target =
+      mode !== "live"
+        ? null
+        : autoAddress
+          ? `address:${autoAddress}`
+          : autoName
+            ? `name:${autoName}`
+            : null;
+    if (!target) {
+      const current = liveConnectionStore.getState();
+      if (
+        mode === "live" &&
+        autoTargetRef.current &&
+        current.role === "watcher" &&
+        current.watchStatus !== null &&
+        current.watchStatus !== "ended"
+      ) {
+        // History navigation to the browser also detaches the active stream.
+        current.leaveServer();
+        unloadDemo();
+      }
+      autoTargetRef.current = null;
       setAutoJoin("off");
       return;
     }
-    // listServers() lazily connects the relay and is in-flight-guarded;
-    // it also warms the cached list the relay uses to label sessions.
-    if (!relayConnected) {
-      requestedListRef.current = true;
+    if (autoTargetRef.current?.key !== target) {
+      autoTargetRef.current = {
+        key: target,
+        attempted: false,
+        requestedList: false,
+      };
+      setErrorAcknowledged(false);
+    }
+    const attempt = autoTargetRef.current;
+    if (attempt.attempted) return;
+    const current = liveConnectionStore.getState();
+    const address = autoAddress
+      ? normalizeAddress(autoAddress)
+      : servers.find((s) => s.name === autoName)?.address;
+    if (
+      current.role === "watcher" &&
+      current.watchStatus !== null &&
+      address === current.serverAddress
+    ) {
+      // A manual join may already have failed before this effect runs.
+      // It is still an attempted selection, not a reason to join again.
+      attempt.attempted = true;
+      setAutoJoin("joined");
+      if (current.watchStatus === "ended")
+        void setNavigationQuery((query) =>
+          clearEndedServerQuery(query, current),
+        );
+      return;
+    }
+    setAutoJoin("pending");
+    if (address) {
+      attempt.attempted = true;
+      setAutoJoin("joined");
+      unloadDemo();
+      watchServer(address);
+      return;
+    }
+    if (!relayConnected || (!attempt.requestedList && servers.length === 0)) {
+      attempt.requestedList = true;
       listServers();
       return;
     }
-    if (autoAddress) {
-      setAutoJoin("joined");
-      watchServer(autoAddress);
-      return;
-    }
-    // Name mode needs the list; wait for a completed query (one request
-    // per attempt — an empty result means there's nothing to match).
     if (serversLoading) return;
-    if (servers.length === 0) {
-      if (!requestedListRef.current) {
-        requestedListRef.current = true;
-        listServers();
-        return;
-      }
-      setAutoJoin("notFound");
-      return;
-    }
-    const match = servers.find((sv) => sv.name === autoName);
-    if (match) {
-      setAutoJoin("joined");
-      watchServer(match.address);
-    } else {
-      setAutoJoin("notFound");
-    }
+    attempt.attempted = true;
+    setAutoJoin("notFound");
   }, [
-    autoJoin,
-    sessionActive,
     mode,
     autoAddress,
     autoName,
@@ -417,39 +382,17 @@ export function MapInspector() {
     serversLoading,
     listServers,
     watchServer,
+    setNavigationQuery,
   ]);
 
   const handleWatch = useCallback(
     (address: string) => {
-      watchServer(address);
-      setMode("live");
-      // Joining from the server browser always starts with the sidebar
-      // closed (auto-join links keep the persisted preference).
+      setAutoJoin("off");
+      setErrorAcknowledged(false);
+      navigation.watchServer(address);
       setSidebarOpen(false);
-      // Reflect the joined server in the URL so the link is shareable
-      // (nuqs updates via history.replaceState — no reload). Prefer the
-      // friendly ?name= form; fall back to ?address= when the name is
-      // ambiguous (or unknown) in the current list.
-      const server = servers.find((sv) => sv.address === address);
-      const nameIsUnique =
-        server != null &&
-        servers.filter((sv) => sv.name === server.name).length === 1;
-      if (server && nameIsUnique) {
-        setNameParam(server.name);
-        setAddressParam(null);
-      } else {
-        setAddressParam(address);
-        setNameParam(null);
-      }
     },
-    [
-      servers,
-      watchServer,
-      setMode,
-      setSidebarOpen,
-      setAddressParam,
-      setNameParam,
-    ],
+    [navigation, setSidebarOpen],
   );
 
   // Reveal the view when the stream goes live on touch devices.
@@ -535,30 +478,24 @@ export function MapInspector() {
   // frame) behind the join screen — leaveServer also resets an ended
   // session's status so its message doesn't resurface as a join error.
   const handleOpenServerBrowser = useCallback(() => {
-    liveConnectionStore.getState().leaveServer();
-    unloadDemo();
+    setAutoJoin("off");
+    setErrorAcknowledged(false);
+    navigation.serverBrowser();
     setChoosingMap(false);
-    setMode("live");
     // When the sidebar overlays the content it would hide the server
     // browser it just opened; in side-by-side mode leave it be.
     if (sidebarOverlayMode) setSidebarOpen(false);
-  }, [setMode, sidebarOverlayMode, setSidebarOpen]);
+  }, [navigation, sidebarOverlayMode, setSidebarOpen]);
 
   // The Demo sidebar button enters demo mode: the content area swaps to
   // the drag & drop screen, clearing any live session or loaded stream.
   const handleEnterDemoMode = useCallback(() => {
-    // Leave any live session and close the relay socket — demo mode has
-    // no use for it.
-    const liveState = liveConnectionStore.getState();
-    liveState.leaveServer();
-    liveState.disconnectRelay();
-    unloadDemo();
+    navigation.demoIndex();
     setChoosingMap(false);
-    setMode("demo");
     // Same as the server browser: don't leave the drop screen hidden
     // behind the overlay sidebar.
     if (sidebarOverlayMode) setSidebarOpen(false);
-  }, [setMode, sidebarOverlayMode, setSidebarOpen]);
+  }, [navigation, sidebarOverlayMode, setSidebarOpen]);
   const handleChooseMap = useCallback(() => setChoosingMap(true), []);
   const handleCancelChoosingMap = useCallback(() => {
     setChoosingMap(false);
@@ -717,7 +654,7 @@ export function MapInspector() {
                       ? () => handleWatch(retryAddress)
                       : undefined
                   }
-                  onBrowse={() => setErrorAcknowledged(true)}
+                  onBrowse={handleOpenServerBrowser}
                 />
               ) : (
                 <Suspense fallback={<GameDialogSpinner contained />}>

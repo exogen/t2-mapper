@@ -249,4 +249,31 @@ describe("RelayClient catch-up ordering", () => {
       expect(events).toEqual(["hydrate:2", "live", "packet:4"]),
     );
   });
+
+  it("ignores complete snapshots and statuses arriving after leave", () => {
+    const { client, ws, events } = setup();
+    client.leaveServer();
+    snapshot(ws, 1);
+    live(ws);
+    expect(decodes).toHaveLength(0);
+    expect(events).toEqual([]);
+  });
+
+  it("ignores a previous server's snapshot while awaiting the selected one", () => {
+    const { client, ws, events } = setup();
+    client.watchServer("other:28000");
+    ws.receive({
+      type: "catchupBegin",
+      address: "test:28000",
+      epoch: 1,
+      totalBytes: 3,
+      chunkCount: 1,
+      encoding: "gzip",
+    });
+    ws.receive(new Uint8Array([1, 2, 3]));
+    ws.receive({ type: "catchupEnd" });
+    live(ws);
+    expect(decodes).toHaveLength(0);
+    expect(events).toEqual([]);
+  });
 });

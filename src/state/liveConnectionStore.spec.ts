@@ -174,4 +174,49 @@ describe("watch connection metadata", () => {
       undefined,
     );
   });
+
+  it("cancels a queued join when leaving before the relay opens", () => {
+    const relay = state()._relay!;
+    Object.defineProperty(relay, "connected", {
+      value: false,
+      configurable: true,
+    });
+    vi.mocked(relay.watchServer).mockClear();
+    state().watchServer("queued:28000");
+    state().leaveServer();
+    Object.defineProperty(relay, "connected", { value: true });
+    handlers().onOpen!();
+    expect(relay.watchServer).not.toHaveBeenCalled();
+    expect(state().role).toBeNull();
+  });
+
+  it("only joins the last selection when the relay opens", () => {
+    const relay = state()._relay!;
+    Object.defineProperty(relay, "connected", {
+      value: false,
+      configurable: true,
+    });
+    vi.mocked(relay.watchServer).mockClear();
+    state().watchServer("first:28000");
+    state().watchServer("second:28000");
+    Object.defineProperty(relay, "connected", { value: true });
+    handlers().onOpen!();
+    expect(relay.watchServer).toHaveBeenCalledExactlyOnceWith(
+      "second:28000",
+      undefined,
+    );
+  });
+
+  it("ignores session notices after leaving or switching servers", () => {
+    const oldHandlers = handlers();
+    state().leaveServer();
+    oldHandlers.onSessionStatus!("live", undefined, { address }, 5);
+    expect(state()).toMatchObject({ watchStatus: null, watcherCount: 0 });
+    state().watchServer("other:28000");
+    oldHandlers.onSessionStatus!("ended", "old server", { address }, 0);
+    expect(state()).toMatchObject({
+      watchStatus: "connecting",
+      serverAddress: "other:28000",
+    });
+  });
 });

@@ -13,6 +13,7 @@ import {
 } from "t2-demo-parser";
 import { GameConnection } from "./gameConnection.js";
 import {
+  normalizeAddress,
   AUTH_COMMANDS,
   MAX_RETRIES,
   RETRY_DELAY_MS,
@@ -234,10 +235,7 @@ export class WatchSessionManager {
   }
 }
 
-export function normalizeAddress(address: string): string {
-  const trimmed = address.trim().toLowerCase();
-  return trimmed.includes(":") ? trimmed : `${trimmed}:28000`;
-}
+export { normalizeAddress } from "./shared";
 
 type SessionStatusMessage = Extract<ServerMessage, { type: "sessionStatus" }>;
 
@@ -1602,6 +1600,7 @@ export class WatchSession {
     );
     sendJson(ws, {
       type: "catchupBegin",
+      address: this.key,
       epoch: source.epoch,
       totalBytes: gzipped.length,
       chunkCount,

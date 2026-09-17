@@ -29,7 +29,7 @@
     "noFallthroughCasesInSwitch": true,
     "noUncheckedSideEffectImports": true
   },
-  "include": ["src"],
+  "include": ["src", "tests/browser"],
   /* Node-only; checked by tsconfig.node.json instead. This project has
      no "node" types and the browser never loads them. */
   "exclude": [

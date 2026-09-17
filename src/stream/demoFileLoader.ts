@@ -22,18 +22,30 @@ const log = createLogger("demoFileLoader");
 
 let parseToken = 0;
 let scanAbort: AbortController | null = null;
+let loadAbort: AbortController | null = null;
+
+function cancelLoad(): number {
+  loadAbort?.abort();
+  loadAbort = null;
+  scanAbort?.abort();
+  scanAbort = null;
+  return ++parseToken;
+}
 
 /**
  * Eject the current recording: cancel any in-flight load/scan and fully
  * clear the streamed scene, returning demo mode to its drop screen.
  */
 export function unloadDemo(): void {
-  parseToken += 1;
-  scanAbort?.abort();
-  scanAbort = null;
-  demoLoadStore.getState().reset();
-  demoLoadStore.getState().setSourceUrl(null);
-  demoLoadStore.getState().setDownloadedSec(null);
+  cancelLoad();
+  demoLoadStore.setState({
+    requestedUrl: null,
+    phase: "idle",
+    progress: null,
+    error: null,
+    sourceUrl: null,
+    downloadedSec: null,
+  });
   engineStore.getState().setRecording(null);
   demoTimelineStore.getState().reset();
   resetDirector();
@@ -46,11 +58,13 @@ export async function loadDemoFile(file: File): Promise<void> {
   // Take our turn number before the (possibly slow) read, so if another
   // load starts while we're reading, that newer one wins — not whichever
   // happens to finish last.
-  const token = ++parseToken;
+  const token = cancelLoad();
+  demoLoadStore.setState({ requestedUrl: null });
+  demoLoadStore.getState().begin("parsing");
   try {
     const buffer = await file.arrayBuffer();
     if (parseToken !== token) return;
-    await loadDemoBuffer(buffer, null);
+    await loadDemoBuffer(buffer, null, token);
   } catch (err) {
     log.error("Failed to load demo: %o", err);
     if (parseToken === token) {
@@ -64,10 +78,17 @@ export async function loadDemoFile(file: File): Promise<void> {
  * A newer load or an unload started mid-download wins over this one.
  */
 export async function loadDemoUrl(url: string): Promise<void> {
-  const token = ++parseToken;
+  const token = cancelLoad();
+  const abort = new AbortController();
+  loadAbort = abort;
+  demoLoadStore.setState({ requestedUrl: url });
   demoLoadStore.getState().begin("downloading");
   try {
-    const response = await fetch(url);
+    const response = await fetch(url, { signal: abort.signal });
+    if (parseToken !== token) {
+      void response.body?.cancel();
+      return;
+    }
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}`);
     }
@@ -75,12 +96,13 @@ export async function loadDemoUrl(url: string): Promise<void> {
       // No streaming body (ancient environment): one-shot fallback.
       const buffer = await response.arrayBuffer();
       if (parseToken !== token) return;
-      await loadDemoBuffer(buffer, url);
+      await loadDemoBuffer(buffer, url, token);
       return;
     }
     const totalBytes = Number(response.headers.get("content-length")) || 0;
     await streamDemoResponse(response.body, url, token, totalBytes);
   } catch (err) {
+    if (parseToken !== token) return;
     log.error("Failed to load demo from %s: %o", url, err);
     if (parseToken === token) {
       demoLoadStore.getState().fail("Couldn't download the demo");
@@ -258,7 +280,7 @@ async function streamDemoResponse(
   if (!parser || !recording) {
     // Never got a parsable header/initial block from the stream (or the
     // demo is tiny): parse the assembled whole the classic way.
-    await loadDemoBuffer(buffer, url);
+    await loadDemoBuffer(buffer, url, token);
     return;
   }
   parser.finish();
@@ -305,12 +327,13 @@ function installRecording(
  */
 async function loadDemoBuffer(
   buffer: ArrayBuffer,
-  sourceUrl: string | null = null,
+  sourceUrl: string | null,
+  token: number,
 ): Promise<boolean> {
-  const token = ++parseToken;
   try {
     demoLoadStore.getState().begin("parsing");
     const { createDemoStreamingRecording } = await import("./demoStreaming");
+    if (parseToken !== token) return false;
     const recording = await createDemoStreamingRecording(buffer);
     if (parseToken !== token) return false;
     installRecording(recording, sourceUrl);

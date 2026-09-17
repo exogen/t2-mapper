@@ -18,6 +18,11 @@ export const AUTH_COMMANDS: readonly string[] = [
 export const MAX_RETRIES = 3;
 export const RETRY_DELAY_MS = 6000;
 
+export function normalizeAddress(address: string): string {
+  const trimmed = address.trim().toLowerCase();
+  return trimmed.includes(":") ? trimmed : `${trimmed}:28000`;
+}
+
 /** Remove T2 tagged-string display markup (control bytes like
  *  \x10\x0e…\x11 wrapping player names). */
 export function stripTaggedStringMarkup(s: string): string {

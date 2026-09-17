@@ -59,6 +59,8 @@ export type ServerMessage =
   | { type: "relayRestarting" }
   | {
       type: "catchupBegin";
+      /** Identifies the snapshot when a viewer switches servers mid-flight. */
+      address?: string;
       epoch: number;
       /** Compressed payload size, for determinate progress UI. */
       totalBytes: number;

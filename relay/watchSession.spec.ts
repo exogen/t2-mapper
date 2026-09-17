@@ -10,6 +10,7 @@ import {
   type WatchSessionManagerOptions,
 } from "./watchSession";
 import { DemoCoordinator } from "./demoCoordinator";
+import { WatchRequest } from "./watchRequest";
 import type { GameConnection } from "./gameConnection";
 import type { ServerMessage } from "./types";
 
@@ -799,6 +800,46 @@ describe("WatchSession delayed transitions", () => {
     manager.watch(ws as unknown as WebSocket, address);
     expect(catchup(ws).epoch).toBe(1);
     expect(statuses(ws).at(-1)?.streamDelayMs).toBe(delayMs);
+  });
+
+  it("preserves channel continuity through the socket request coordinator", async () => {
+    const { manager, connections, ws, session } = start();
+    const socket = ws as unknown as WebSocket;
+    const channelId = session.getChannelId(socket);
+    cycle(connections, session, false);
+    const request = new WatchRequest({
+      isKnown: (address) => manager.has(address),
+      probe: async () => false,
+      checking: () => {},
+      rejected: () => {},
+      attach: (address, channelId) => manager.watch(socket, address, channelId),
+      detach: () => manager.detachSocket(socket),
+    });
+
+    // server.ts captures the channel before WatchRequest detaches the socket.
+    ws.sent = [];
+    await request.watch(address, session.getChannelId(socket));
+    expect(catchup(ws).epoch).toBe(1);
+    expect(statuses(ws).at(-1)).toMatchObject({
+      channelId,
+      streamDelayMs: delayMs,
+    });
+
+    request.leave();
+    ws.sent = [];
+    await request.watch(address, channelId);
+    expect(catchup(ws).epoch).toBe(1);
+    vi.advanceTimersByTime(delayMs);
+    expect(statuses(ws).at(-1)).toMatchObject({
+      status: "live",
+      streamDelayMs: 0,
+    });
+
+    request.leave();
+    ws.sent = [];
+    await request.watch(address, channelId);
+    expect(catchup(ws).epoch).toBe(2);
+    expect(statuses(ws).at(-1)?.channelId).not.toBe(channelId);
   });
 
   it.each([false, true])(

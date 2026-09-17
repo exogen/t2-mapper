@@ -12,7 +12,6 @@ import { FaMicrophoneAlt, FaSearch } from "react-icons/fa";
 import { LuChevronLeft, LuChevronRight, LuUser, LuUsers } from "react-icons/lu";
 import { TbLaurelWreathFilled } from "react-icons/tb";
 import { useDemoLoad } from "../state/demoLoadStore";
-import { loadDemoFile } from "../stream/demoFileLoader";
 import { demoPlayerCount, type DemoIndexEntry } from "../stream/demoIndex";
 import { useDemoIndexSuspense } from "./useDemoIndex";
 import { QuietErrorBoundary } from "./QuietErrorBoundary";
@@ -26,7 +25,7 @@ import {
 import { missionGalleryArtUrl, missionLoadScreenUrl } from "./missionPreview";
 import { PreviewTileArt } from "./PreviewTileArt";
 import tileStyles from "./PreviewTile.module.css";
-import { useDemoQueryState } from "./useQueryParams";
+import { useAppNavigation } from "./useAppNavigation";
 import { focusDemoSelect } from "./demoSelectFocus";
 import { LoadingIndicator } from "./LoadingIndicator";
 import styles from "./DemoDropScreen.module.css";
@@ -185,7 +184,7 @@ function FeaturedDemos() {
 }
 
 function FeaturedList() {
-  const [, setDemoParam] = useDemoQueryState();
+  const navigation = useAppNavigation();
   const [page, setPage] = useState(0);
   const { data: demos } = useDemoIndexSuspense();
   const matching = useMemo(
@@ -244,9 +243,7 @@ function FeaturedList() {
           <FeaturedCard
             key={demo.filename}
             demo={demo}
-            // Route through the ?demo param — the same code path as the
-            // demo dropdown and shared links (DemoSelect's effect loads it).
-            onLoad={() => void setDemoParam(demo.filename)}
+            onLoad={() => navigation.selectDemo(demo.filename)}
           />
         ))}
       </div>
@@ -259,6 +256,7 @@ function FeaturedList() {
  * a drag & drop target with a clickable cassette to browse for a .rec.
  */
 export function DemoDropScreen() {
+  const navigation = useAppNavigation();
   const inputRef = useRef<HTMLInputElement>(null);
   const [dragOver, setDragOver] = useState(false);
   const phase = useDemoLoad((s) => s.phase);
@@ -278,23 +276,26 @@ export function DemoDropScreen() {
     };
   }, []);
 
-  const handleDrop = useCallback((e: React.DragEvent) => {
-    e.preventDefault();
-    setDragOver(false);
-    const file = e.dataTransfer.files?.[0];
-    if (file && file.name.toLowerCase().endsWith(".rec")) {
-      void loadDemoFile(file);
-    }
-  }, []);
+  const handleDrop = useCallback(
+    (e: React.DragEvent) => {
+      e.preventDefault();
+      setDragOver(false);
+      const file = e.dataTransfer.files?.[0];
+      if (file && file.name.toLowerCase().endsWith(".rec")) {
+        navigation.selectDemoFile(file);
+      }
+    },
+    [navigation],
+  );
 
   const handleFileChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
       const file = e.target.files?.[0];
       if (!file) return;
       e.target.value = "";
-      void loadDemoFile(file);
+      navigation.selectDemoFile(file);
     },
-    [],
+    [navigation],
   );
 
   return (

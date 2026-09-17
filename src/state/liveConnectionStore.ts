@@ -1,5 +1,6 @@
 import { createStore } from "zustand/vanilla";
 import { useStoreWithEqualityFn } from "zustand/traditional";
+import { normalizeAddress } from "../../relay/shared";
 import { createLogger } from "../logger";
 import { RelayClient } from "../stream/relayClient";
 import { LiveStreamAdapter } from "../stream/liveStreaming";
@@ -98,6 +99,7 @@ let reconnectAttempts = 0;
  *  messages that follow are ignored rather than treated as an ending. */
 let restartPending = false;
 let resumeAddress: string | null = null;
+let watchRequest = 0;
 
 function cancelReconnect(): void {
   if (reconnectTimer) {
@@ -119,6 +121,7 @@ function disconnectedState(
   return {
     disconnectReason,
     relayConnected: false,
+    serversLoading: false,
     gameStatus: null,
     gameStatusMessage: undefined,
     mapName: undefined,
@@ -183,10 +186,12 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
 
       const relay = new RelayClient(url, {
         onOpen() {
+          if (get()._relay !== relay) return;
           set({ relayConnected: true });
+          const pending = get()._pending;
+          get()._pending = [];
+          for (const fn of pending) fn();
           const s = get();
-          for (const fn of s._pending) fn();
-          s._pending = [];
           if (s.reconnecting) {
             const address = resumeAddress ?? s.serverAddress;
             if (address && s.role === "watcher") {
@@ -199,6 +204,7 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
           }
         },
         onStatus(status, message, statusMapName) {
+          if (get()._relay !== relay || get().role !== "player") return;
           log.info(
             "game status: %s%s%s",
             status,
@@ -212,10 +218,12 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
           });
         },
         onServerList(list) {
+          if (get()._relay !== relay) return;
           get()._listInFlight = false;
           set({ servers: list, serversLoading: false });
         },
         onGamePacket(data) {
+          if (get()._relay !== relay) return;
           const a = get()._adapter;
           if (!a) {
             log.warn("received game packet but no adapter is active");
@@ -223,12 +231,15 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
           a?.feedPacket(data);
         },
         onPing(ms) {
+          if (get()._relay !== relay) return;
           set({ relayToGameServerPing: ms });
         },
         onWsPing(ms) {
+          if (get()._relay !== relay) return;
           set({ browserToRelayPing: ms });
         },
         onRelayRestarting() {
+          if (get()._relay !== relay) return;
           const s = get();
           if (s.role === "watcher" && s.serverAddress) {
             restartPending = true;
@@ -237,6 +248,12 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
           }
         },
         onSessionStatus(status, message, info, watcherCount) {
+          if (get()._relay !== relay) return;
+          if (
+            get().role !== "watcher" ||
+            normalizeAddress(info.address) !== get().serverAddress
+          )
+            return;
           // A restarting relay tears its sessions down noisily; that
           // "ended" is not this session's ending.
           if (status === "ended" && restartPending) return;
@@ -288,14 +305,17 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
           });
         },
         onWatcherCount(count) {
+          if (get()._relay !== relay) return;
           set({ watcherCount: count });
         },
         onCatchupProgress(receivedBytes, totalBytes) {
+          if (get()._relay !== relay) return;
           set({
             catchupProgress: totalBytes > 0 ? receivedBytes / totalBytes : 0,
           });
         },
         onCatchup(payload) {
+          if (get()._relay !== relay) return;
           const a = get()._adapter;
           if (!a) {
             log.warn("received catch-up payload but no adapter is active");
@@ -309,6 +329,7 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
           a.hydrate(payload);
         },
         onError(message) {
+          if (get()._relay !== relay) return;
           log.error("error: %s", message);
           get()._listInFlight = false;
           set({ serversLoading: false });
@@ -396,9 +417,11 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
 
     disconnectRelay() {
       const s = get();
+      watchRequest++;
       cancelReconnect();
-      s._relay?.close();
+      const relay = s._relay;
       s._relay = null;
+      relay?.close();
       s._adapter = null;
       s._pending = [];
       s._listInFlight = false;
@@ -429,14 +452,19 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
     },
 
     joinServer(address, warriorName) {
+      address = normalizeAddress(address);
+      watchRequest++;
       const s = get();
       if (!s._relay) return;
       cancelReconnect();
 
       const cachedServer = s.servers.find((sv) => sv.address === address);
       const newAdapter = new LiveStreamAdapter(s._relay);
-      newAdapter.onReady = () => set({ liveReady: true });
+      newAdapter.onReady = () => {
+        if (get()._adapter === newAdapter) set({ liveReady: true });
+      };
       newAdapter.onMissionChange = (missionName) => {
+        if (get()._adapter !== newAdapter) return;
         log.info("mission changed: %s", missionName);
         set({ mapName: missionName, liveReady: false });
         // Set the new mission name and clear stale fields — they'll be
@@ -450,6 +478,7 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
         });
       };
       newAdapter.onMissionInfoChange = () => {
+        if (get()._adapter !== newAdapter) return;
         gameEntityStore.getState().setMissionInfo({
           missionDisplayName: newAdapter.missionDisplayName ?? undefined,
           missionTypeDisplayName:
@@ -499,6 +528,8 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
     },
 
     watchServer(address) {
+      address = normalizeAddress(address);
+      const request = ++watchRequest;
       const s = get();
       const sameServer = s.role === "watcher" && s.serverAddress === address;
       // A fresh (or resumed) watch supersedes any pending reattach loop.
@@ -508,7 +539,9 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
         // The relay socket is gone (e.g. the relay restarted) — open a
         // fresh one and re-issue the watch when it connects. Show the
         // connecting state immediately so Rejoin visibly does something.
+        s._adapter = null;
         set({
+          adapter: null,
           ...(!sameServer
             ? {
                 mapName: undefined,
@@ -531,15 +564,20 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
           catchupProgress: null,
           reconnecting: false,
         });
-        s._pending.push(() => get().watchServer(address));
+        s._pending.push(() => {
+          if (request === watchRequest) get().watchServer(address);
+        });
         if (!s._relay) get().connectRelay();
         return;
       }
 
       const cachedServer = s.servers.find((sv) => sv.address === address);
       const newAdapter = new LiveStreamAdapter(s._relay, { mode: "watch" });
-      newAdapter.onReady = () => set({ liveReady: true });
+      newAdapter.onReady = () => {
+        if (get()._adapter === newAdapter) set({ liveReady: true });
+      };
       newAdapter.onMissionChange = (missionName) => {
+        if (get()._adapter !== newAdapter) return;
         log.info("mission changed: %s", missionName);
         set({ mapName: missionName, liveReady: false });
         gameEntityStore.getState().setMissionInfo({
@@ -551,6 +589,7 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
         });
       };
       newAdapter.onMissionInfoChange = () => {
+        if (get()._adapter !== newAdapter) return;
         gameEntityStore.getState().setMissionInfo({
           missionDisplayName: newAdapter.missionDisplayName ?? undefined,
           missionTypeDisplayName:
@@ -609,6 +648,7 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
     },
 
     leaveServer() {
+      watchRequest++;
       const s = get();
       cancelReconnect();
       // Only an actual departure records a reason — leaveServer is also
@@ -620,6 +660,8 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
         reconnecting: false,
         adapter: null,
         liveReady: false,
+        gameStatus: null,
+        gameStatusMessage: undefined,
         serverAddress: null,
         serverName: undefined,
         mapName: undefined,

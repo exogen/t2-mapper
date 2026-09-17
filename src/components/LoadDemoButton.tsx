@@ -1,7 +1,7 @@
 import { useCallback } from "react";
 import { PiCassetteTapeFill } from "react-icons/pi";
 import { cameraTourStore } from "../state/cameraTourStore";
-import { unloadDemo } from "../stream/demoFileLoader";
+import { useAppNavigation } from "./useAppNavigation";
 import { useRecording } from "./usePlayback";
 import styles from "./Button.module.css";
 
@@ -17,21 +17,28 @@ export function LoadDemoButton({
   /** Switch to demo mode — the drop screen handles file selection. */
   onEnterDemoMode?: () => void;
 }) {
+  const navigation = useAppNavigation();
   const recording = useRecording();
   const isDemoLoaded = recording?.source === "demo";
 
   const handleClick = useCallback(() => {
-    cameraTourStore.getState().cancel();
     if (choosingMap && isDemoLoaded) {
+      cameraTourStore.getState().cancel();
       onCancelChoosingMap?.();
       return;
     }
     if (isDemoLoaded) {
-      unloadDemo();
+      navigation.demoIndex();
       return;
     }
     onEnterDemoMode?.();
-  }, [isDemoLoaded, choosingMap, onCancelChoosingMap, onEnterDemoMode]);
+  }, [
+    isDemoLoaded,
+    choosingMap,
+    onCancelChoosingMap,
+    onEnterDemoMode,
+    navigation,
+  ]);
 
   return (
     <button

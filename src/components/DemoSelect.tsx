@@ -24,20 +24,13 @@ import { LuUsers } from "react-icons/lu";
 import { TbLaurelWreathFilled } from "react-icons/tb";
 import {
   DEMOS_BASE_URL,
-  demoDownloadUrl,
   demoPlayerCount,
   type DemoIndexEntry,
 } from "../stream/demoIndex";
-import { loadDemoUrl } from "../stream/demoFileLoader";
-import { useDemoLoad } from "../state/demoLoadStore";
 import { useDemoIndex } from "./useDemoIndex";
 import { registerDemoSelectFocus } from "./demoSelectFocus";
-import {
-  dropLocationHash,
-  useDemoQueryState,
-  useDemoTimeQueryState,
-} from "./useQueryParams";
-import { useRecording } from "./usePlayback";
+import { useDemoQueryState } from "./useQueryParams";
+import { useAppNavigation } from "./useAppNavigation";
 import { normalizeMissionType } from "../mission";
 import {
   demoTitle,
@@ -134,46 +127,15 @@ function groupDemos(
 export function DemoSelect() {
   const [latestSearchValue, setSearchValue] = useState("");
   const searchValue = useDeferredValue(latestSearchValue);
-  const [selectedFilename, setSelectedFilename] = useState("");
+  const [demoParam] = useDemoQueryState();
+  const selectedFilename = demoParam ?? "";
+  const navigation = useAppNavigation();
   const [tournamentOnly, setTournamentOnly] = useState(false);
   const [commentaryOnly, setCommentaryOnly] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const enabled = DEMOS_BASE_URL !== "";
 
-  // The `?demo=<filename>` param is the single trigger for loading a
-  // published demo: the dropdown selection writes it and a shared link
-  // arrives with it already set. This effect loads whatever it names.
-  const [demoParam, setDemoParam] = useDemoQueryState();
-  const [, setDemoTime] = useDemoTimeQueryState();
-  const loadedDemoRef = useRef<string | null>(null);
-  useEffect(() => {
-    if (!enabled || !demoParam || loadedDemoRef.current === demoParam) return;
-    loadedDemoRef.current = demoParam;
-    setSelectedFilename(demoParam);
-    void loadDemoUrl(demoDownloadUrl(demoParam));
-  }, [demoParam, enabled]);
-
-  // Keep the selection and the ?demo link tied to the loaded indexed
-  // demo. Drop both when the demo is ejected (demo→none) or replaced by a
-  // local upload — a local file has no source URL and can't be linked to,
-  // so a lingering ?demo would misdescribe what's playing. A linked
-  // moment (?t and the camera hash) belongs to that demo and goes too.
-  const recording = useRecording();
-  const sourceUrl = useDemoLoad((s) => s.sourceUrl);
-  const hadDemoRef = useRef(false);
-  useEffect(() => {
-    const hasDemo = recording?.source === "demo";
-    const localUpload = hasDemo && sourceUrl === null;
-    if ((hadDemoRef.current && !hasDemo) || localUpload) {
-      setSelectedFilename("");
-      loadedDemoRef.current = null;
-      dropLocationHash();
-      void setDemoTime(null);
-      void setDemoParam(null);
-    }
-    hadDemoRef.current = hasDemo;
-  }, [recording, sourceUrl, setDemoParam, setDemoTime]);
   const { data: demos, isPending, isError } = useDemoIndex();
 
   const combobox = useComboboxStore({
@@ -181,14 +143,7 @@ export function DemoSelect() {
     selectedValue: selectedFilename,
     setSelectedValue: (newValue) => {
       if (newValue) {
-        // Route through the URL param; the effect above does the load,
-        // so dropdown picks and shared links share one code path. A
-        // moment linked for the previous demo means nothing for this
-        // one: drop its second and its camera hash (the hash first, so
-        // nuqs writes the URL without it).
-        dropLocationHash();
-        void setDemoTime(null);
-        void setDemoParam(newValue);
+        navigation.selectDemo(newValue);
         inputRef.current?.blur();
       }
     },

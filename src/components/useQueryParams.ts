@@ -3,10 +3,14 @@ import {
   createSerializer,
   parseAsBoolean,
   parseAsInteger,
+  parseAsString,
   parseAsStringLiteral,
   useQueryState,
+  useQueryStates,
 } from "nuqs";
 import { getMissionInfo } from "../manifest";
+import { useCallback } from "react";
+import { normalizeAddress } from "../../relay/shared";
 
 export type CurrentMission = {
   missionName: string;
@@ -38,12 +42,12 @@ const parseAsMissionWithType = createParser<CurrentMission>({
   eq(a, b) {
     return a.missionName === b.missionName && a.missionType === b.missionType;
   },
-}).withDefault(defaultMission);
+});
 
 export function useMissionQueryState() {
   const [currentMission, setCurrentMission] = useQueryState(
     "mission",
-    parseAsMissionWithType,
+    parseAsMissionWithType.withDefault(defaultMission),
   );
   return [currentMission, setCurrentMission] as const;
 }
@@ -66,11 +70,97 @@ export type AppMode = (typeof APP_MODES)[number];
  * shows the server selector / an active spectate session.
  */
 export function useModeQueryState() {
-  const [mode, setMode] = useQueryState(
-    "mode",
-    parseAsStringLiteral(APP_MODES).withDefault("map"),
+  const [query, setQuery] = useQueryStates({
+    mode: navigationParsers.mode,
+    demo: navigationParsers.demo,
+    address: navigationParsers.address,
+    name: navigationParsers.name,
+  });
+  const mode = navigationMode(query);
+  const setMode = useCallback(
+    (mode: AppMode) => setQuery({ mode }),
+    [setQuery],
   );
   return [mode, setMode] as const;
+}
+
+const navigationParsers = {
+  mode: parseAsStringLiteral(APP_MODES),
+  mission: parseAsMissionWithType,
+  demo: parseAsString,
+  t: parseAsInteger,
+  address: parseAsString,
+  name: parseAsString,
+  view: parseAsStringLiteral(["cc"] as const),
+};
+
+/** Related route fields must change in one update, including pending nuqs writes. */
+export function useNavigationQueryState() {
+  return useQueryStates(navigationParsers);
+}
+
+export type NavigationQuery = ReturnType<typeof useNavigationQueryState>[0];
+
+/** Only patch incompatible fields; never replay an entire captured route. */
+export function normalizeNavigationQuery(query: NavigationQuery) {
+  const mode = navigationMode(query);
+  return {
+    ...(query.mode === null && mode !== "map" ? { mode } : {}),
+    ...(mode !== "map" && query.mission !== null ? { mission: null } : {}),
+    ...(mode !== "demo" && query.demo !== null ? { demo: null } : {}),
+    ...((mode !== "demo" || !query.demo) && query.t !== null
+      ? { t: null }
+      : {}),
+    ...((mode !== "live" || query.address) && query.name !== null
+      ? { name: null }
+      : {}),
+    ...(mode !== "live" && query.address !== null ? { address: null } : {}),
+  };
+}
+
+/** A view belongs to a selection, not to the share link's playback time. */
+export function navigationViewKey(query: NavigationQuery): string {
+  return JSON.stringify([
+    navigationMode(query),
+    query.mission?.missionName,
+    query.mission?.missionType,
+    query.demo,
+    query.address,
+    query.name,
+    query.view,
+  ]);
+}
+
+/** An ending session must not clear a newer server selection. */
+export function clearEndedServerQuery(
+  query: NavigationQuery,
+  server: {
+    serverAddress: string | null;
+    serverName?: string;
+    servers: readonly { address: string; name: string }[];
+  },
+): Partial<NavigationQuery> {
+  if (navigationMode(query) !== "live" || !server.serverAddress) return {};
+  const matches = query.address
+    ? normalizeAddress(query.address) === normalizeAddress(server.serverAddress)
+    : query.name &&
+      (query.name === server.serverName ||
+        server.servers.some(
+          (s) => s.name === query.name && s.address === server.serverAddress,
+        ));
+  return matches ? { name: null, address: null } : {};
+}
+
+export function navigationMode(query: {
+  mode: AppMode | null;
+  demo: string | null;
+  address: string | null;
+  name: string | null;
+}): AppMode {
+  return (
+    query.mode ??
+    (query.demo ? "demo" : query.address || query.name ? "live" : "map")
+  );
 }
 
 /**
@@ -81,17 +171,6 @@ export function useModeQueryState() {
 export function useDemoQueryState() {
   const [demo, setDemo] = useQueryState("demo");
   return [demo, setDemo] as const;
-}
-
-const VIEWS = ["cc"] as const;
-
-/**
- * View requested via the URL: `?view=cc` opens the command circuit once
- * the current mode's data is ready.
- */
-export function useViewQueryState() {
-  const [view, setView] = useQueryState("view", parseAsStringLiteral(VIEWS));
-  return [view, setView] as const;
 }
 
 /**
@@ -115,7 +194,7 @@ export const serializeDemoTime = createSerializer({ t: parseAsInteger });
 export function dropLocationHash(): void {
   if (!window.location.hash) return;
   window.history.replaceState(
-    null,
+    window.history.state,
     "",
     `${window.location.pathname}${window.location.search}`,
   );

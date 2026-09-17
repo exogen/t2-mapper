@@ -14,6 +14,7 @@ import { parseDemoMoment, type DemoMomentCamera } from "./demoMoment";
 import { useDemoQueryState, useDemoTimeQueryState } from "./useQueryParams";
 import { createLogger } from "../logger";
 import { FramePriority } from "./framePriority";
+import { demoDownloadUrl } from "../stream/demoIndex";
 
 const log = createLogger("demoMoment");
 
@@ -44,14 +45,25 @@ export function DemoMomentLoader() {
     streamPlaybackStore,
     (s) => s.playback != null && s.playback === recording?.streamingPlayback,
   );
-  const appliedRef = useRef<string | null>(null);
+  const appliedRef = useRef<{
+    recording: typeof recording;
+    key: string;
+  } | null>(null);
   const pendingFollowRef = useRef<{
     camera: Extract<DemoMomentCamera, { kind: "follow" | "fp" }>;
     untilMs: number;
   } | null>(null);
 
   useEffect(() => {
-    if (!demoParam || recording?.source !== "demo" || !sourceUrl) return;
+    if (
+      !demoParam ||
+      recording?.source !== "demo" ||
+      sourceUrl !== demoDownloadUrl(demoParam)
+    ) {
+      appliedRef.current = null;
+      pendingFollowRef.current = null;
+      return;
+    }
     if (durationMs <= 0 || !attached) return;
     // The hash is read here, not tracked: the copy button rewrites it
     // for the moment being watched, and that must not seek again.
@@ -59,8 +71,12 @@ export function DemoMomentLoader() {
     const moment = parseDemoMoment(t, hash);
     if (!moment) return;
     const key = `${demoParam}|${t}|${hash}`;
-    if (appliedRef.current === key) return;
-    appliedRef.current = key;
+    if (
+      appliedRef.current?.recording === recording &&
+      appliedRef.current.key === key
+    )
+      return;
+    appliedRef.current = { recording, key };
     // A follow still waiting for its player belongs to the previous
     // link; a player on this demo could share the target id.
     pendingFollowRef.current = null;
