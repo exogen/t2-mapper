@@ -1,14 +1,11 @@
 import { useEffect, useRef, useMemo } from "react";
 import { LuUsers } from "react-icons/lu";
 import { IoMdStopwatch } from "react-icons/io";
-import { useStreamSnapshot } from "../state/streamSnapshotStore";
 import { formatHudClock, useMatchClockMs } from "./useMatchClock";
-import { liveConnectionStore } from "../state/liveConnectionStore";
-import { useDataSource } from "../state/gameEntityStore";
 import type { PlayerRosterEntry, TeamScore } from "../stream/types";
-import { DEFAULT_TEAM_NAMES } from "../stringUtils";
 import { ColoredName } from "./ColoredName";
 import styles from "./ScoreScreen.module.css";
+import { getScoreboardTeamName, useScoreboard } from "./useScoreboard";
 
 function computePingStats(players: PlayerRosterEntry[]): {
   avg: number;
@@ -30,14 +27,6 @@ function MatchClock({ clockMs }: { clockMs: number }) {
       <span className={styles.Time}>{formatHudClock(clockMs)}</span>
     </span>
   );
-}
-
-function getTeamName(team: TeamScore): string {
-  return team.name || DEFAULT_TEAM_NAMES[team.teamId] || `Team ${team.teamId}`;
-}
-
-function byScoreThenName(a: PlayerRosterEntry, b: PlayerRosterEntry): number {
-  return b.score - a.score || (a.name ?? "").localeCompare(b.name ?? "");
 }
 
 /** Paired left/right player rows for the 4-column table layout. */
@@ -128,9 +117,11 @@ function TeamPairSection({
   return (
     <tbody className={styles.PlayerBody}>
       <tr className={styles.TeamHeaderRow}>
-        <th className={styles.TeamName}>{getTeamName(teamA)}</th>
+        <th className={styles.TeamName}>{getScoreboardTeamName(teamA)}</th>
         <th className={styles.TeamScore}>{teamA.score}</th>
-        <th className={styles.TeamName}>{teamB ? getTeamName(teamB) : " "}</th>
+        <th className={styles.TeamName}>
+          {teamB ? getScoreboardTeamName(teamB) : " "}
+        </th>
         <th className={styles.TeamScore}>{teamB ? teamB.score : " "}</th>
       </tr>
       <tr className={styles.ColumnHeaderRow}>
@@ -159,21 +150,14 @@ function TeamPairSection({
 
 export function ScoreScreen({ onClose }: { onClose: () => void }) {
   const dialogRef = useRef<HTMLDivElement>(null);
-  const dataSource = useDataSource();
-  const isLive = dataSource === "live";
-  const { connectedClientId, teamScores, playerRoster } = useStreamSnapshot(
-    (snap) => {
-      return {
-        connectedClientId: snap?.connectedClientId,
-        teamScores: snap?.teamScores,
-        playerRoster: snap?.playerRoster,
-      };
-    },
-    (a, b) =>
-      a.connectedClientId === b.connectedClientId &&
-      a.teamScores === b.teamScores &&
-      a.playerRoster === b.playerRoster,
-  );
+  const {
+    connectedClientId,
+    playerRoster,
+    teamPlayers,
+    observers,
+    sortedTeams,
+    ffaPlayers,
+  } = useScoreboard();
   const matchClockMs = useMatchClockMs();
 
   // Focus and exit pointer lock on open
@@ -204,61 +188,6 @@ export function ScoreScreen({ onClose }: { onClose: () => void }) {
       window.removeEventListener("keyup", handleKeyUp, { capture: true });
     };
   }, [onClose]);
-
-  // Poll for scores every 4 seconds in live mode
-  useEffect(() => {
-    if (!isLive) return;
-    const request = () => {
-      liveConnectionStore.getState().sendCommand("getScores");
-    };
-    request();
-    const interval = setInterval(request, 4000);
-    return () => clearInterval(interval);
-  }, [isLive]);
-
-  // Group players by team, sorted by score descending
-  const { teamPlayers, observers } = useMemo(() => {
-    const teamPlayers = new Map<number, PlayerRosterEntry[]>();
-    const observers: PlayerRosterEntry[] = [];
-    if (playerRoster) {
-      for (const player of playerRoster) {
-        if (player.teamId > 0) {
-          const list = teamPlayers.get(player.teamId);
-          if (list) {
-            list.push(player);
-          } else {
-            teamPlayers.set(player.teamId, [player]);
-          }
-        } else {
-          observers.push(player);
-        }
-      }
-    }
-    for (const list of teamPlayers.values()) {
-      list.sort(byScoreThenName);
-    }
-    observers.sort((a, b) => (a.name ?? "").localeCompare(b.name ?? ""));
-    return { teamPlayers, observers };
-  }, [playerRoster]);
-
-  // Teams exist only when the server declares them (the per-game
-  // MsgXxxAddTeam burst at mission drop). Roster team ids alone don't
-  // imply teams: teamless games still assign them (Rabbit uses 1 and 2,
-  // DM and Hunters give every player a unique sensor-group team).
-  const sortedTeams = useMemo(
-    () =>
-      teamScores?.length
-        ? [...teamScores].sort((a, b) => a.teamId - b.teamId)
-        : [],
-    [teamScores],
-  );
-
-  // Teamless games (Rabbit, DM, ...): everyone with a team id competes
-  // individually — one score-sorted list. Team id 0 is still observers.
-  const ffaPlayers = useMemo(() => {
-    if (sortedTeams.length > 0 || !playerRoster?.length) return null;
-    return playerRoster.filter((p) => p.teamId > 0).sort(byScoreThenName);
-  }, [sortedTeams, playerRoster]);
 
   // Two team columns per section; extra teams stack below.
   const teamPairs = useMemo(() => {

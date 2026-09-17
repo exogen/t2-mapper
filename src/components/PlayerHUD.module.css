@@ -8,6 +8,17 @@
   pointer-events: none;
 }
 
+.LeftHUD {
+  position: absolute;
+  top: 6px;
+  bottom: 6px;
+  left: 6px;
+  max-width: 50%;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
 .Compass {
   position: absolute;
   top: 10px;
@@ -127,12 +138,13 @@
 /* ── Team Scores (bottom-left) ── */
 
 .TeamScores {
-  position: absolute;
-  bottom: 6px;
-  left: 6px;
+  align-self: flex-start;
+  flex: 0 0 auto;
+  margin-top: auto;
   font-size: 12px;
   border: 1px solid rgba(128, 255, 200, 0.15);
-  border-collapse: collapse;
+  border-collapse: separate;
+  border-spacing: 0;
 }
 
 @media (max-width: 499px), (pointer: coarse) {
@@ -142,9 +154,7 @@
 }
 
 .ObserverCount {
-  position: absolute;
-  bottom: calc(100%);
-  display: block;
+  text-align: left;
   padding: 4px 6px;
   font-size: 10px;
   color: rgb(193, 228, 216);
@@ -156,7 +166,7 @@
   background: rgba(0, 50, 60, 0.65);
 }
 
-.TeamRow + .TeamRow {
+.TeamRow + .TeamRow td {
   border-top: 1px solid rgba(128, 255, 200, 0.15);
 }
 

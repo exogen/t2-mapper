@@ -1,0 +1,146 @@
+.ScoreHUD {
+  flex: 1 0 0;
+  width: min-content;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  max-width: 100%;
+  min-height: 0;
+  pointer-events: auto;
+  color: rgb(255, 255, 255);
+  font-size: 10px;
+  line-height: 1.2727;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(44, 172, 181, 0.4) transparent;
+  --header-background-color: rgba(1, 53, 62, 0.3);
+  --header-bottom-border: 1px solid rgba(44, 172, 181, 0.4);
+  --body-background-color: rgba(3, 67, 75, 0.65);
+  --body-padding-v: 4px;
+  --body-padding-l: 8px;
+  --score-color: rgb(176, 213, 201);
+  --border: 1px solid rgba(44, 172, 181, 0.4);
+  --gap: 3px;
+}
+
+.ScoreHUD[data-style="transparent"] {
+  --header-background-color: transparent;
+  --header-bottom-border: none;
+  --body-background-color: transparent;
+  --body-padding-v: 2px;
+  --body-padding-l: 6px;
+  --score-color: rgb(196, 255, 236);
+  --border: none;
+  --gap: 6px;
+  --tribes-color-6: rgb(255, 255, 255);
+  --tribes-color-7: rgb(245, 245, 46);
+  --tribes-color-8: rgb(203, 209, 255);
+  text-shadow:
+    0 1px 1px rgba(0, 0, 0, 0.7),
+    0 0 4px rgba(0, 0, 0, 0.9);
+}
+
+.ScoreHUD:focus-visible {
+  outline: 1px solid rgb(44, 172, 181);
+  outline-offset: -1px;
+}
+
+.Teams {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--gap);
+  max-height: 100%;
+}
+
+.Team {
+  display: flex;
+  flex: 0 1 auto;
+  min-height: 0;
+  background: var(--body-background-color);
+  border: var(--border);
+}
+
+.Table {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) max-content;
+  grid-template-rows: auto minmax(0, 1fr);
+  flex: 1 1 auto;
+  width: max-content;
+  min-width: 0;
+  min-height: 0;
+}
+
+.Table thead,
+.Table tbody {
+  display: grid;
+  grid-template-columns: subgrid;
+  grid-column: 1 / -1;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+}
+
+.Table thead {
+  overflow: hidden;
+}
+
+.Table tbody {
+  align-content: start;
+  min-height: 0;
+  overflow: auto;
+}
+
+.Table tr {
+  display: grid;
+  grid-template-columns: subgrid;
+  grid-column: 1 / -1;
+}
+
+.Table th {
+  color: rgb(132, 243, 255);
+  font-weight: 500;
+  background: var(--header-background-color);
+  border-bottom: var(--header-bottom-border);
+  padding: 3px 10px 3px var(--body-padding-l);
+}
+
+.Table td {
+  padding: 1px 10px 1px var(--body-padding-l);
+}
+
+.Table tbody tr:first-child td {
+  padding-top: var(--body-padding-v);
+}
+
+.Table tbody tr:last-child td {
+  padding-bottom: var(--body-padding-v);
+}
+
+.Name {
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.Score {
+  min-width: 4em;
+  padding-left: 6px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  color: var(--score-color);
+}
+
+.Table tr[data-local="true"] td {
+  color: #5dff8a;
+}
+
+.Empty {
+  grid-column: 1 / -1;
+  color: rgba(255, 255, 255, 0.4);
+  text-align: center;
+  text-shadow:
+    0 1px 1px rgba(0, 0, 0, 0.1),
+    0 0 4px rgba(0, 0, 0, 0.3);
+}

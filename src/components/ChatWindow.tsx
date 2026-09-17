@@ -3,6 +3,7 @@ import { useEngineSelector } from "../state/engineStore";
 import { useStreamSnapshot } from "../state/streamSnapshotStore";
 import { ChatMessage, ChatSegment } from "../stream/types";
 import styles from "./ChatWindow.module.css";
+import { useSettings } from "./SettingsProvider";
 
 const ChatInput = lazy(() =>
   import("./ChatInput").then((mod) => ({ default: mod.ChatInput })),
@@ -39,6 +40,7 @@ function chatColorClass(msg: ChatMessage): string {
 }
 
 export const ChatWindow = memo(function ChatWindow() {
+  const { chatHudStyle } = useSettings();
   const isLive = useEngineSelector(
     (state) => state.playback.recording?.source === "live",
   );
@@ -56,7 +58,7 @@ export const ChatWindow = memo(function ChatWindow() {
   }, [lastMessageId]);
 
   return (
-    <div className={styles.ChatContainer}>
+    <div className={styles.ChatContainer} data-style={chatHudStyle}>
       <div ref={scrollRef} className={styles.ChatWindow}>
         {messages.map((msg: ChatMessage) => (
           <div key={msg.id} className={styles.ChatMessage} hidden={!msg.text}>
@@ -77,7 +79,7 @@ export const ChatWindow = memo(function ChatWindow() {
       </div>
       {isLive && (
         <Suspense>
-          <ChatInput />
+          <ChatInput hudStyle={chatHudStyle} />
         </Suspense>
       )}
     </div>

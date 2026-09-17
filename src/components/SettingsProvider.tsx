@@ -26,6 +26,9 @@ const CC_PLAYER_NAMES_VALUES: readonly CcPlayerNames[] = [
   "never",
 ];
 
+export type HudStyle = "solid" | "transparent";
+const HUD_STYLE_VALUES: readonly HudStyle[] = ["solid", "transparent"];
+
 /** Visibility of the player's world-space IFF triangle and nameplate. */
 export type IffVisibility = "always" | "followed" | "exceptFollowed" | "never";
 const IFF_VISIBILITY_VALUES: readonly IffVisibility[] = [
@@ -99,6 +102,12 @@ type SettingsContextType = {
   setShowInputOverlay: StateSetter<boolean>;
   showChat: boolean;
   setShowChat: StateSetter<boolean>;
+  chatHudStyle: HudStyle;
+  setChatHudStyle: StateSetter<HudStyle>;
+  showScoreHud: boolean;
+  setShowScoreHud: StateSetter<boolean>;
+  scoreHudStyle: HudStyle;
+  setScoreHudStyle: StateSetter<HudStyle>;
   showReticle: boolean;
   setShowReticle: StateSetter<boolean>;
   showCompass: boolean;
@@ -169,6 +178,9 @@ type PersistedSettings = {
   renderScale?: number;
   showInputOverlay?: boolean;
   showChat?: boolean;
+  chatHudStyle?: HudStyle;
+  showScoreHud?: boolean;
+  scoreHudStyle?: HudStyle;
   showReticle?: boolean;
   showCompass?: boolean;
   showFpsMeter?: boolean;
@@ -235,6 +247,9 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   const [renderScale, setRenderScale] = useState(1);
   const [showInputOverlay, setShowInputOverlay] = useState(true);
   const [showChat, setShowChat] = useState(true);
+  const [chatHudStyle, setChatHudStyle] = useState<HudStyle>("solid");
+  const [showScoreHud, setShowScoreHud] = useState(false);
+  const [scoreHudStyle, setScoreHudStyle] = useState<HudStyle>("solid");
   const [showReticle, setShowReticle] = useState(true);
   const [showCompass, setShowCompass] = useState(true);
   const [serverBrowserView, setServerBrowserView] =
@@ -296,6 +311,12 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       setShowInputOverlay,
       showChat,
       setShowChat,
+      chatHudStyle,
+      setChatHudStyle,
+      showScoreHud,
+      setShowScoreHud,
+      scoreHudStyle,
+      setScoreHudStyle,
       showReticle,
       setShowReticle,
       showCompass,
@@ -331,6 +352,9 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       renderScale,
       showInputOverlay,
       showChat,
+      chatHudStyle,
+      showScoreHud,
+      scoreHudStyle,
       showReticle,
       showCompass,
       serverBrowserView,
@@ -479,6 +503,23 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     if (savedSettings.showChat != null) {
       setShowChat(savedSettings.showChat);
     }
+    if (
+      savedSettings.chatHudStyle != null &&
+      HUD_STYLE_VALUES.includes(savedSettings.chatHudStyle)
+    ) {
+      setChatHudStyle(savedSettings.chatHudStyle);
+    }
+    if (
+      savedSettings.scoreHudStyle != null &&
+      HUD_STYLE_VALUES.includes(savedSettings.scoreHudStyle)
+    ) {
+      setScoreHudStyle(savedSettings.scoreHudStyle);
+      // Previously, choosing a style also enabled the HUD.
+      if (savedSettings.showScoreHud == null) setShowScoreHud(true);
+    }
+    if (typeof savedSettings.showScoreHud === "boolean") {
+      setShowScoreHud(savedSettings.showScoreHud);
+    }
     if (savedSettings.showReticle != null) {
       setShowReticle(savedSettings.showReticle);
     }
@@ -560,6 +601,9 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
         renderScale,
         showInputOverlay,
         showChat,
+        chatHudStyle,
+        showScoreHud,
+        scoreHudStyle,
         showReticle,
         showCompass,
         showFpsMeter,
@@ -605,6 +649,9 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     renderScale,
     showInputOverlay,
     showChat,
+    chatHudStyle,
+    showScoreHud,
+    scoreHudStyle,
     showReticle,
     showCompass,
     showFpsMeter,

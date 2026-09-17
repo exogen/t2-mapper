@@ -5,8 +5,9 @@ import {
 } from "../state/liveConnectionStore";
 import { formatDelay } from "../stringUtils";
 import styles from "./ChatInput.module.css";
+import type { HudStyle } from "./SettingsProvider";
 
-export function ChatInput() {
+export function ChatInput({ hudStyle }: { hudStyle: HudStyle }) {
   const [chatText, setChatText] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
   // Tournament-delayed streams: warn that sent chat reaches the server
@@ -50,6 +51,7 @@ export function ChatInput() {
       <input
         ref={inputRef}
         className={styles.Input}
+        data-style={hudStyle}
         type="text"
         placeholder={
           streamDelayMs > 0

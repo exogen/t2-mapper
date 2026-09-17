@@ -7,6 +7,7 @@ import {
   useSettings,
   type CcPlayerNames,
   type IffVisibility,
+  type HudStyle,
   type TouchMode,
 } from "./SettingsProvider";
 import { CopyCoordinatesButton } from "./CopyCoordinatesButton";
@@ -203,6 +204,12 @@ export const InspectorControls = memo(function InspectorControls({
     setShowInputOverlay,
     showChat,
     setShowChat,
+    chatHudStyle,
+    setChatHudStyle,
+    showScoreHud,
+    setShowScoreHud,
+    scoreHudStyle,
+    setScoreHudStyle,
     showReticle,
     setShowReticle,
     showCompass,
@@ -490,19 +497,65 @@ export const InspectorControls = memo(function InspectorControls({
                   </div>
                 </div>
                 {hasStreamData && (
-                  <div className={styles.CheckboxField}>
-                    <input
-                      id="showChatInput"
-                      type="checkbox"
-                      checked={showChat}
-                      onChange={(event) => {
-                        setShowChat(event.target.checked);
-                      }}
-                    />
-                    <label className={styles.Label} htmlFor="showChatInput">
-                      Show chat HUD
-                    </label>
-                  </div>
+                  <>
+                    <div className={styles.CheckboxField}>
+                      <input
+                        id="showChatInput"
+                        type="checkbox"
+                        checked={showChat}
+                        onChange={(event) => {
+                          setShowChat(event.target.checked);
+                        }}
+                      />
+                      <label className={styles.Label} htmlFor="showChatInput">
+                        Show chat HUD
+                      </label>
+                      <div className={styles.Control}>
+                        <select
+                          id="chatHudStyleInput"
+                          aria-label="Chat HUD style"
+                          value={chatHudStyle}
+                          disabled={!showChat}
+                          onChange={(event) =>
+                            setChatHudStyle(event.target.value as HudStyle)
+                          }
+                        >
+                          <option value="solid">Solid</option>
+                          <option value="transparent">Transparent</option>
+                        </select>
+                      </div>
+                    </div>
+                    <div className={styles.CheckboxField}>
+                      <input
+                        id="showScoreHudInput"
+                        type="checkbox"
+                        checked={showScoreHud}
+                        onChange={(event) =>
+                          setShowScoreHud(event.target.checked)
+                        }
+                      />
+                      <label
+                        className={styles.Label}
+                        htmlFor="showScoreHudInput"
+                      >
+                        Show mini score HUD
+                      </label>
+                      <div className={styles.Control}>
+                        <select
+                          id="scoreHudStyleInput"
+                          aria-label="Player scores HUD style"
+                          value={scoreHudStyle}
+                          disabled={!showScoreHud}
+                          onChange={(event) =>
+                            setScoreHudStyle(event.target.value as HudStyle)
+                          }
+                        >
+                          <option value="solid">Solid</option>
+                          <option value="transparent">Transparent</option>
+                        </select>
+                      </div>
+                    </div>
+                  </>
                 )}
                 <div className={styles.CheckboxField}>
                   <input

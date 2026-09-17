@@ -11,6 +11,7 @@ import { textureToUrl } from "../loaders";
 import type { StreamEntity, TeamScore, WeaponsHudSlot } from "../stream/types";
 import styles from "./PlayerHUD.module.css";
 import { ChatWindow } from "./ChatWindow";
+import { ScoreHUD } from "./ScoreHUD";
 import { CompassDial } from "./CompassDial";
 import { useCameraHeadingRotor } from "./MapCompass";
 import { formatHudClock, useMatchClockMs } from "./useMatchClock";
@@ -344,14 +345,12 @@ function TeamScores() {
   const hasFlags = sorted.some((team) => team.flagStatus != null);
   return (
     <table className={styles.TeamScores}>
+      {observerCount > 0 && (
+        <caption className={styles.ObserverCount}>
+          {observerCount} {observerCount === 1 ? "observer" : "observers"}
+        </caption>
+      )}
       <tbody>
-        {observerCount > 0 && (
-          <tr>
-            <td className={styles.ObserverCount} colSpan={hasFlags ? 4 : 3}>
-              {observerCount} {observerCount === 1 ? "observer" : "observers"}
-            </td>
-          </tr>
-        )}
         {sorted.map((team: TeamScore) => {
           const isFriendly =
             playerSensorGroup != null &&
@@ -628,12 +627,17 @@ export function PlayerHUD() {
     ? !!followEntityId
     : hasControlPlayer && cameraMode !== "freeFly";
   const followed = useFollowedPlayer();
-  const { showChat, showReticle, showCompass } = useSettings();
+  const { showChat, showScoreHud, scoreHudStyle, showReticle, showCompass } =
+    useSettings();
   const commandCircuitActive = useCommandCircuit((s) => s.active);
 
   return (
     <div className={styles.PlayerHUD}>
-      {showChat && <ChatWindow />}
+      <div className={styles.LeftHUD}>
+        {showChat && <ChatWindow />}
+        {showScoreHud && <ScoreHUD hudStyle={scoreHudStyle} />}
+        <TeamScores />
+      </div>
       {showPlayerElements && (
         <div className={styles.Bars}>
           <HealthBar followed={followed} />
@@ -649,7 +653,6 @@ export function PlayerHUD() {
           {showReticle && !commandCircuitActive && <Reticle />}
         </>
       )}
-      <TeamScores />
     </div>
   );
 }

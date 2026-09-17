@@ -1,27 +1,51 @@
 .ChatContainer {
-  position: absolute;
-  top: 6px;
-  left: 6px;
-  width: 400px;
-  max-width: 50%;
+  flex: 0 0 auto;
+  min-height: 0;
   max-height: 25%;
+  width: 400px;
+  max-width: 100%;
   display: flex;
   flex-direction: column;
   pointer-events: auto;
   border: 1px solid rgba(44, 172, 181, 0.4);
+  --background-color: rgba(0, 50, 60, 0.65);
+}
+
+.ChatContainer[data-style="transparent"] {
+  --background-color: transparent;
+  --tribes-color-0: rgb(182, 250, 255); /* Default / death messages */
+  --tribes-color-1: rgb(94, 255, 147); /* Join / drop messages */
+  --tribes-color-2: rgb(255, 234, 157); /* Gameplay / flag messages */
+  --tribes-color-3: rgb(77, 253, 95); /* Team chat */
+  --tribes-color-4: rgb(103, 247, 255); /* Global chat */
+  --tribes-color-5: rgb(200, 200, 50); /* Highlights */
+  --tribes-color-6: rgb(220, 220, 220); /* Player names */
+  --tribes-color-7: rgb(220, 220, 20); /* Tribe tags */
+  --tribes-color-8: rgb(150, 150, 250); /* Smurf names */
+  --tribes-color-9: rgb(60, 220, 150); /* Bot names */
+  border: none;
+  text-shadow:
+    0 1px 1px rgba(0, 0, 0, 0.6),
+    0 0 6px rgba(0, 0, 0, 0.9);
 }
 
 .ChatWindow {
   min-height: 4em;
   max-height: 12.5em;
   overflow-y: auto;
-  background: rgba(0, 50, 60, 0.65);
+  background: var(--background-color);
   padding: 6px;
   font-size: 12px;
   line-height: 1.25;
   /* Thin scrollbar that doesn't take much space. */
   scrollbar-width: thin;
   scrollbar-color: rgba(44, 172, 181, 0.4) transparent;
+}
+
+.ChatContainer[data-style="transparent"] .ChatWindow {
+  font-weight: 500;
+  font-size: 11px;
+  line-height: 1.166667;
 }
 
 @media (pointer: fine) {
@@ -38,38 +62,38 @@
 
 .ChatMessage {
   /* Default to \c0 (GuiChatHudProfile fontColor) for untagged messages. */
-  color: rgb(44, 172, 181);
+  color: var(--tribes-color-0);
   padding: 2px 0;
 }
 
-/* T2 GuiChatHudProfile fontColors palette (\c0–\c9). */
+/* Shared Torque text palette (\c0–\c9), defined in main.css. */
 .ChatColor0 {
-  color: rgb(44, 172, 181);
+  color: var(--tribes-color-0);
 }
 .ChatColor1 {
-  color: rgb(4, 235, 105);
+  color: var(--tribes-color-1);
 }
 .ChatColor2 {
-  color: rgb(219, 200, 128);
+  color: var(--tribes-color-2);
 }
 .ChatColor3 {
-  color: rgb(77, 253, 95);
+  color: var(--tribes-color-3);
 }
 .ChatColor4 {
-  color: rgb(40, 231, 240);
+  color: var(--tribes-color-4);
 }
 .ChatColor5 {
-  color: rgb(200, 200, 50);
+  color: var(--tribes-color-5);
 }
 .ChatColor6 {
-  color: rgb(200, 200, 200);
+  color: var(--tribes-color-6);
 }
 .ChatColor7 {
-  color: rgb(220, 220, 20);
+  color: var(--tribes-color-7);
 }
 .ChatColor8 {
-  color: rgb(150, 150, 250);
+  color: var(--tribes-color-8);
 }
 .ChatColor9 {
-  color: rgb(60, 220, 150);
+  color: var(--tribes-color-9);
 }

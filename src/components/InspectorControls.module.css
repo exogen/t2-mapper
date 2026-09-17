@@ -30,6 +30,15 @@
   margin: 0 0 8px 0;
 }
 
+.CheckboxField:has(.Control) {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+}
+
+.CheckboxField .Control {
+  grid-column: 3;
+  grid-row: 1;
+}
+
 .CheckboxField input[type="checkbox"] {
   margin-left: 0;
   grid-column: 1;
@@ -53,7 +62,7 @@
 }
 
 .CheckboxField .Description {
-  grid-column: 2;
+  grid-column: 2 / -1;
   grid-row: 2;
 }
 
@@ -210,7 +219,8 @@
     padding-right: 6px;
   }
 
-  .Field select {
+  .Field select,
+  .CheckboxField select {
     width: 100%;
     max-width: none;
     font-size: 15px;

@@ -1,5 +1,6 @@
 .InputForm {
   display: flex;
+  flex-shrink: 0;
 }
 
 .Input {
@@ -8,7 +9,7 @@
   border: 0;
   border-top: 1px solid rgba(78, 179, 167, 0.2);
   border-radius: 0;
-  color: rgb(40, 231, 240);
+  color: var(--tribes-color-4);
   font-family: inherit;
   font-size: 12px;
   line-height: 1.25;
@@ -23,4 +24,20 @@
 
 .Input:focus {
   background: rgba(0, 50, 60, 0.9);
+}
+
+.Input[data-style="transparent"] {
+  background: linear-gradient(
+    to right,
+    rgba(24, 55, 62, 0.4),
+    rgba(24, 55, 62, 0)
+  );
+  border: none;
+  text-shadow:
+    0 1px 1px rgba(0, 0, 0, 0.6),
+    0 0 6px rgba(0, 0, 0, 0.9);
+}
+
+.Input[data-style="transparent"]::placeholder {
+  color: rgb(125, 190, 195);
 }
