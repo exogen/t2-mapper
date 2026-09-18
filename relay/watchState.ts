@@ -1,5 +1,5 @@
 import type { PacketData, ParsedData, SensorGroupColor } from "t2-demo-parser";
-import { stripTaggedStringMarkup } from "./shared.js";
+import { normalizePlayerGuid, stripTaggedStringMarkup } from "./shared.js";
 import {
   LoadInfoCollector,
   decodeTeamAdd,
@@ -27,6 +27,7 @@ interface RosterEntry {
   /** Raw name preserving color-code control bytes, for colored display
    *  (the scoreboard). Stripped once at the display/sidecar boundary. */
   rawName: string;
+  guid?: string;
   targetId?: number;
   teamId: number;
   score: number;
@@ -392,6 +393,7 @@ export class WatchStateAccumulator {
         this.playerRoster.set(clientId, {
           name,
           rawName,
+          guid: normalizePlayerGuid(this.resolveNetString(args[9] ?? "")),
           targetId: isNaN(joinTargetId) ? undefined : joinTargetId,
           teamId: 0,
           score: 0,

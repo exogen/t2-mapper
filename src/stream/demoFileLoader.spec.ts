@@ -101,7 +101,7 @@ describe("demo loads during navigation", () => {
     await loadDemoUrl("second.rec");
     first.resolve(recording("first"));
     await pending;
-    expect(mocks.install).toHaveBeenCalledExactlyOnceWith(second);
+    expect(mocks.install).toHaveBeenCalledExactlyOnceWith(second, buffer);
     expect(demoLoadStore.getState()).toMatchObject({
       requestedUrl: "second.rec",
       sourceUrl: "second.rec",
@@ -120,7 +120,7 @@ describe("demo loads during navigation", () => {
     await loadDemoUrl("next.rec");
     read.resolve(buffer);
     await pending;
-    expect(mocks.install).toHaveBeenCalledExactlyOnceWith(next);
+    expect(mocks.install).toHaveBeenCalledExactlyOnceWith(next, buffer);
     expect(demoLoadStore.getState().sourceUrl).toBe("next.rec");
   });
 

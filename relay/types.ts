@@ -82,6 +82,7 @@ export type WatchStatus =
 export interface WatchHudStatePayload {
   playerRoster: Array<{
     clientId: number;
+    guid?: string;
     name: string;
     rawName: string;
     targetId?: number;

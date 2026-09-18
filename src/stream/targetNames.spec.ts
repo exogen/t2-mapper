@@ -157,7 +157,18 @@ describe("initial target names", () => {
         {
           type: "RemoteCommandEvent",
           funcName: "ServerMessage",
-          args: ["MsgClientJoin", "", names[0].raw, "7", "32"],
+          args: [
+            "MsgClientJoin",
+            "",
+            names[0].raw,
+            "7",
+            "32",
+            "0",
+            "0",
+            "0",
+            "0",
+            "12345",
+          ],
         },
         {
           type: "RemoteCommandEvent",
@@ -168,6 +179,11 @@ describe("initial target names", () => {
     );
     const stream = new LiveStreamAdapter({} as RelayClient, { mode: "watch" });
     stream.hydrate(payload());
+    expect(stream.getSnapshot().playerRoster[0]).toMatchObject({
+      clientId: 7,
+      guid: "12345",
+      targetId: 32,
+    });
     expect(
       stream.getSnapshot().entities.find((e) => e.targetId === 32),
     ).toMatchObject({

@@ -1,5 +1,5 @@
 import type { CommandCircuitFrame } from "./commandCircuitFrame";
-import type { PositionSamples, StatsTeamFilter } from "./types";
+import type { PositionSamples } from "./types";
 
 /**
  * Density grid resolution (cells per side).
@@ -17,7 +17,7 @@ export const HEATMAP_GAMMA = 0.75;
 export interface RasterizeOptions {
   resolution?: number;
   radiusWorld?: number;
-  teamFilter?: StatsTeamFilter;
+  playerId?: number;
 }
 
 /**
@@ -36,19 +36,21 @@ export function rasterizeDensity(
 ): Float32Array {
   const resolution = options.resolution ?? HEATMAP_RESOLUTION;
   const radiusWorld = options.radiusWorld ?? HEATMAP_RADIUS_WORLD;
-  const teamFilter = options.teamFilter ?? "all";
 
   const density = new Float32Array(resolution * resolution);
   const minX = frame.centerX - frame.width / 2;
   const maxZ = frame.centerZ + frame.depth / 2;
   const cellsPerUnitX = resolution / frame.width;
   const cellsPerUnitZ = resolution / frame.depth;
-  // Splat radius in cells, per axis (frame may be non-square).
-  const radiusCellsX = radiusWorld * cellsPerUnitX;
-  const radiusCellsZ = radiusWorld * cellsPerUnitZ;
+  // Splat radius in cells, per axis (frame may be non-square). Preserve a
+  // pixel footprint even for very long OOB routes whose cells exceed the
+  // world-space radius, so samples cannot fall entirely between cell centers.
+  const radiusCellsX = Math.max(1, radiusWorld * cellsPerUnitX);
+  const radiusCellsZ = Math.max(1, radiusWorld * cellsPerUnitZ);
 
   for (let i = 0; i < samples.count; i++) {
-    if (teamFilter !== "all" && samples.team[i] !== teamFilter) continue;
+    if (options.playerId != null && samples.playerId[i] !== options.playerId)
+      continue;
 
     // Fractional cell center of the sample.
     const cx = (samples.x[i] - minX) * cellsPerUnitX;

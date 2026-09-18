@@ -25,6 +25,8 @@ export interface RuntimeSliceState {
 
 export interface PlaybackSliceState {
   recording: StreamRecording | null;
+  /** Source bytes for independent demo scans, retained with the loaded recording. */
+  demoBuffer: ArrayBuffer | null;
   status: PlaybackStatus;
   /** Seek target in seconds. Written by UI seek actions, read by
    *  StreamingController to detect and execute seeks. */
@@ -63,7 +65,11 @@ export interface EngineStoreState {
     events: RuntimeMutationEvent[],
     tickInfo?: RuntimeTickInfo,
   ): void;
-  setRecording(recording: StreamRecording | null): void;
+  setRecording(
+    recording: StreamRecording | null,
+    demoBuffer?: ArrayBuffer | null,
+  ): void;
+  setDemoBuffer(recording: StreamRecording, demoBuffer: ArrayBuffer): void;
   setDownloadComplete(complete: boolean): void;
   seekPlayback(timeSec: number): void;
   /** Execute the pending beyond-the-buffer seek once fulfillable. */
@@ -129,6 +135,7 @@ const initialState: Omit<
   | "clearRuntime"
   | "applyRuntimeBatch"
   | "setRecording"
+  | "setDemoBuffer"
   | "setDownloadComplete"
   | "seekPlayback"
   | "fulfillPendingSeek"
@@ -145,6 +152,7 @@ const initialState: Omit<
   },
   playback: {
     recording: null,
+    demoBuffer: null,
     status: "stopped",
     seekTime: 0,
     seekNonce: 0,
@@ -277,7 +285,10 @@ export const engineStore = createStore<EngineStoreState>()(
       });
     },
 
-    setRecording(recording: StreamRecording | null) {
+    setRecording(
+      recording: StreamRecording | null,
+      demoBuffer: ArrayBuffer | null = null,
+    ) {
       const durationMs = Math.max(0, (recording?.duration ?? 0) * 1000);
       // Reset the snapshot on new recordings; preserve it on unload so
       // HUD/chat persist. (The snapshot lives in streamSnapshotStore.)
@@ -288,6 +299,7 @@ export const engineStore = createStore<EngineStoreState>()(
         ...state,
         playback: {
           recording,
+          demoBuffer: recording?.source === "demo" ? demoBuffer : null,
           status: recording ? "stopped" : state.playback.status,
           seekTime: recording ? 0 : state.playback.seekTime,
           // Monotonic across recordings; the controller re-syncs its
@@ -302,6 +314,14 @@ export const engineStore = createStore<EngineStoreState>()(
           pendingSeekSec: null,
         },
       }));
+    },
+
+    setDemoBuffer(recording, demoBuffer) {
+      set((state) =>
+        state.playback.recording === recording && recording.source === "demo"
+          ? { playback: { ...state.playback, demoBuffer } }
+          : state,
+      );
     },
 
     setDownloadComplete(complete: boolean) {

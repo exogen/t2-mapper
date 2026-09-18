@@ -54,6 +54,8 @@
 }
 
 .Description {
+  user-select: text;
+  -webkit-touch-callout: default;
   font-size: 12px;
   line-height: 1.5;
   opacity: 0.6;

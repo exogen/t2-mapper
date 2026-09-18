@@ -32,6 +32,15 @@ export function stripTaggedStringMarkup(s: string): string {
   }
   return stripped;
 }
+
+/** GUID 0 is shared by hidden identities; never use it as an account key. */
+export function normalizePlayerGuid(
+  value: string | undefined,
+): string | undefined {
+  const guid = value?.trim();
+  if (!guid || !/^\d+$/.test(guid)) return undefined;
+  return guid.replace(/^0+/, "") || undefined;
+}
 /** Emitted when the receive window deadlocks (see gameConnection). */
 export const STALLED_DISCONNECT_REASON = "Connection stalled";
 const RETRYABLE_REASONS = [
@@ -284,4 +293,32 @@ export function parseColorSegments(
     segments.push({ text: currentText, colorCode: currentColor });
   }
   return segments;
+}
+
+/** Drop control/color bytes while preserving Latin-1 and Unicode names. */
+export function sanitizePlayerName(raw: string): string {
+  let out = "";
+  for (let i = 0; i < raw.length; i++) {
+    const code = raw.charCodeAt(i);
+    if (code >= 0x20 && (code < 0x7f || code > 0x9f)) out += raw[i];
+  }
+  return out.trim();
+}
+
+/** The stock server and tag-change scripts mark the official tribe tag with c7.
+ * A separately stripped display name is the fallback for absent/malformed markup. */
+export function taglessPlayerName(raw: string, displayName?: string): string {
+  const segments = parseColorSegments(raw, { taggedColors: true });
+  if (
+    displayName != null &&
+    !segments.some((segment) => segment.colorCode === 7)
+  )
+    return sanitizePlayerName(displayName);
+  const base = sanitizePlayerName(
+    segments
+      .filter((segment) => segment.colorCode !== 7)
+      .map((segment) => segment.text)
+      .join(""),
+  );
+  return base || sanitizePlayerName(displayName ?? "");
 }

@@ -21,12 +21,10 @@ import { DemoTimeline } from "./DemoTimeline";
 import { MapTourPanel } from "./MapTourPanel";
 import { CommandCircuitButton } from "./CommandCircuitButton";
 import { showNewAddressDialog } from "./NewAddressDialog";
-import { LoadStatsButton } from "./LoadStatsButton";
 import { useFeatures } from "./FeaturesProvider";
 import { StatsPanel } from "./StatsPanel";
-import { useStats } from "../state/statsStore";
 import { trackKey, useCommentaryTracks } from "../state/commentaryTracksStore";
-import { useModeQueryState, type CurrentMission } from "./useQueryParams";
+import { useModeQueryState } from "./useQueryParams";
 import { useRecording } from "./usePlayback";
 import {
   isStreamingSource,
@@ -136,7 +134,6 @@ export const InspectorControls = memo(function InspectorControls({
   onEnterDemoMode,
   onChooseMap,
   onCancelChoosingMap,
-  onChangeMission,
   choosingMap,
   invalidateRef,
   onClose,
@@ -149,7 +146,6 @@ export const InspectorControls = memo(function InspectorControls({
   onEnterDemoMode?: () => void;
   onChooseMap?: () => void;
   onCancelChoosingMap?: () => void;
-  onChangeMission?: (mission: CurrentMission) => void;
   choosingMap?: boolean;
   invalidateRef: RefObject<(() => void) | null>;
   onClose: () => void;
@@ -158,8 +154,6 @@ export const InspectorControls = memo(function InspectorControls({
   const dataSource = useDataSource();
   const recording = useRecording();
   const demoSourceUrl = useDemoLoad((s) => s.sourceUrl);
-  const statsLoaded = useStats((s) => s.data !== null);
-  const statsError = useStats((s) => s.error !== null);
   const features = useFeatures();
   const storeMissionName = useMissionName();
   const hasStreamData = isStreamingSource(dataSource);
@@ -299,12 +293,6 @@ export const InspectorControls = memo(function InspectorControls({
                 onCancelChoosingMap={onCancelChoosingMap}
                 onEnterDemoMode={onEnterDemoMode}
               />
-              {features.stats && onChangeMission && (
-                <LoadStatsButton
-                  missionName={missionName}
-                  onChangeMission={onChangeMission}
-                />
-              )}
               {onOpenServerBrowser && (
                 <JoinServerButton
                   isActive={!choosingMap && isLiveMode}
@@ -335,16 +323,11 @@ export const InspectorControls = memo(function InspectorControls({
           </div>
           <div className={styles.Accordions}>
             <AccordionGroup type="multiple" defaultValue={DEFAULT_PANELS}>
-              {features.stats &&
-                // Show load errors even before any data has loaded — a
-                // silently rejected file would otherwise give no feedback.
-                (statsLoaded
-                  ? dataSource === "map" && !recording
-                  : statsError) && (
-                  <Accordion value="stats" label="Stats">
-                    <StatsPanel />
-                  </Accordion>
-                )}
+              {features.stats && recording?.source === "demo" && (
+                <Accordion value="stats" label="Stats" noPadding>
+                  <StatsPanel />
+                </Accordion>
+              )}
               {hasCast && (
                 <Accordion value="cast" label="Cast">
                   <CastPanel />

@@ -73,6 +73,7 @@ import {
   resolveSpriteVisual,
   parseWeaponImageStates,
   stripTaggedStringMarkup,
+  normalizePlayerGuid,
   detectColorCode,
   extractWavTag,
   detectControlObjectType,
@@ -589,6 +590,7 @@ export abstract class StreamEngine implements StreamingPlayback {
       name: string;
       /** Raw name with color-code bytes, for colored display (scoreboard). */
       rawName: string;
+      guid?: string;
       targetId?: number;
       teamId: number;
       score: number;
@@ -3827,6 +3829,7 @@ export abstract class StreamEngine implements StreamingPlayback {
         this.playerRoster.set(clientId, {
           name,
           rawName,
+          guid: normalizePlayerGuid(this.resolveNetString(args[9] ?? "")),
           targetId: isNaN(joinTargetId) ? undefined : joinTargetId,
           teamId: 0,
           score: 0,

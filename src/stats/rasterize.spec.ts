@@ -79,26 +79,24 @@ describe("rasterizeDensity", () => {
     expect(density.every((d) => d === 0)).toBe(true);
   });
 
-  it("filters by team", () => {
+  it("filters by player, including player zero and players on the same team", () => {
     const samples = makeSamples([
-      { x: -19.5, z: 0, team: 1 },
-      { x: 20.5, z: 0, team: 2 },
+      { x: -19.5, z: 0 },
+      { x: 20.5, z: 0 },
     ]);
-    const storm = rasterizeDensity(samples, frame, {
+    samples.playerId.set([0, 1]);
+    const first = rasterizeDensity(samples, frame, {
       resolution: 100,
       radiusWorld: 4,
-      teamFilter: 1,
+      playerId: 0,
     });
-    const { col } = hottestCell(storm, 100);
-    expect(col).toBe(30); // only the x=-20 sample
-    const all = rasterizeDensity(samples, frame, {
+    const second = rasterizeDensity(samples, frame, {
       resolution: 100,
       radiusWorld: 4,
-      teamFilter: "all",
+      playerId: 1,
     });
-    expect(all.filter((d) => d > 0).length).toBeGreaterThan(
-      storm.filter((d) => d > 0).length,
-    );
+    expect(hottestCell(first, 100).col).toBe(30);
+    expect(hottestCell(second, 100).col).toBe(70);
   });
 
   it("returns zeros for empty samples", () => {

@@ -127,9 +127,8 @@ function snapshotHasWorld(snapshot: {
  * Progressive download: feed chunks into an incremental parser as they
  * arrive, install the recording as soon as the actual server ghosts
  * yield a renderable scene, and keep parsing the tail while it already
- * plays. Forward seeks stay disabled (engineStore clamps them) until
- * the download completes; the timeline scan and the auto-director need
- * the whole file, so they start at completion.
+ * plays. Seeks beyond the downloaded portion wait for more data; background
+ * scans start once the source bytes are available.
  *
  * Failure model: before the recording installs, any error surfaces as a
  * normal load failure. After install, a mid-download network error
@@ -267,6 +266,8 @@ async function streamDemoResponse(
       err,
     );
     parser?.finish();
+    // Keep the playable prefix available to independent scans too.
+    engineStore.getState().setDemoBuffer(recording!, assemble());
     // Fulfill before clearing downloadedSec: a render between the two
     // would show the pending-seek pie at 0% for a frame.
     engineStore.getState().setDownloadComplete(true);
@@ -287,8 +288,9 @@ async function streamDemoResponse(
   if (!installed) {
     // Download finished before a renderable scene appeared (odd but
     // possible): install now — everything is parsed and playable.
-    installRecording(recording, url);
+    installRecording(recording, url, buffer);
   }
+  engineStore.getState().setDemoBuffer(recording, buffer);
   engineStore.getState().setDownloadComplete(true);
   engineStore.getState().fulfillPendingSeek();
   demoLoadStore.getState().setDownloadedSec(null);
@@ -307,6 +309,7 @@ async function streamDemoResponse(
 function installRecording(
   recording: StreamRecording,
   sourceUrl: string | null,
+  demoBuffer: ArrayBuffer | null = null,
 ): void {
   demoLoadStore.getState().reset();
   // Leave any live session and close the relay socket before loading
@@ -314,7 +317,7 @@ function installRecording(
   const liveState = liveConnectionStore.getState();
   liveState.leaveServer();
   liveState.disconnectRelay();
-  engineStore.getState().setRecording(recording);
+  engineStore.getState().setRecording(recording, demoBuffer);
   demoLoadStore.getState().setSourceUrl(sourceUrl);
   // Which commentary tracks this demo has, from its record sidecar.
   void commentaryTracksStore.getState().load(sourceUrl);
@@ -336,7 +339,7 @@ async function loadDemoBuffer(
     if (parseToken !== token) return false;
     const recording = await createDemoStreamingRecording(buffer);
     if (parseToken !== token) return false;
-    installRecording(recording, sourceUrl);
+    installRecording(recording, sourceUrl, buffer);
 
     // Retain the buffer for the auto-director's lazy scan pass.
     setDirectorDemoBuffer(buffer);

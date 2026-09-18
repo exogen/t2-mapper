@@ -25,6 +25,28 @@ Click inside the map preview area to capture the mouse.
 | △ <small>Scroll/mouse wheel up</small>   | Increase speed       |
 | ▽ <small>Scroll/mouse wheel down</small> | Decrease speed       |
 
+### Demo heatmaps (experimental)
+
+Add `?features=stats` to the URL (or `&features=stats` alongside other query
+parameters), load a demo, and select a player in the **Stats** sidebar accordion.
+The selection opens a heatmap in command circuit covering the game at the playback
+cursor. Each game has a separate timeline interval and match ID, even when a map
+repeats. Loading and warmup select the upcoming game's heatmap, which appears once
+its scene is ready; its samples cover actual match play. Color intensity represents time spent:
+positions are sampled every eight simulation ticks (256 ms), including time
+standing still. Dead players are excluded; mounted players use their vehicle's
+position.
+
+Scanning follows mission loads, kickoffs, and match ends throughout the demo,
+excluding warmup and countdowns. Mid-match joins use the available positions
+when the clock or game state establishes that play is underway. Recordings that
+omit a match's start or end show the recorded portion with a notice. Only
+positions present in the recording can contribute. Samples are grouped by the player's base name, ignoring
+case and the game's marked clan tags, so reconnects and tag changes share one
+heatmap. This also applies to smurfs and accounts with different GUIDs.
+Scanning runs
+only with the feature enabled and is cancelled when the demo is replaced or ejected.
+
 ## Development
 
 Install dependencies:

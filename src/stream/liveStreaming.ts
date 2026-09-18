@@ -341,6 +341,7 @@ export class LiveStreamAdapter extends StreamEngine {
       this.playerRoster.set(entry.clientId, {
         name: entry.name,
         rawName: entry.rawName,
+        guid: entry.guid,
         targetId: entry.targetId,
         teamId: entry.teamId,
         score: entry.score,

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { isRealMatchStart } from "./demoTimelineScanner";
+import { isRealMatchStart } from "./matchEvents";
 
 describe("isRealMatchStart", () => {
   // The real kickoff bodies (DefaultGame::startMatch, SiegeGame) — only

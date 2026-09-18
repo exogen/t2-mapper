@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { DemoPlayers, taglessPlayerName } from "./demoPlayers.js";
+import { DemoPlayers } from "./demoPlayers.js";
+import { taglessPlayerName } from "./shared.js";
 import type { PacketData } from "t2-demo-parser";
 import { WatchStateAccumulator } from "./watchState.js";
 

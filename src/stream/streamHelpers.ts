@@ -721,7 +721,12 @@ export function formatRemoteArgsColored(
   return resolved.replace(/%\d+/g, "");
 }
 
-export { detectColorCode, parseColorSegments } from "../../relay/shared";
+export {
+  detectColorCode,
+  normalizePlayerGuid,
+  parseColorSegments,
+  taglessPlayerName,
+} from "../../relay/shared";
 
 /** Extract an embedded `~w<path>` sound tag from a message string. */
 export function extractWavTag(text: string): {

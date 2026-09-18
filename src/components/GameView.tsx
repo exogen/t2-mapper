@@ -1,6 +1,7 @@
 import { memo, Suspense } from "react";
 import { type RootState } from "@react-three/fiber";
 import { isStreamingSource, useDataSource } from "../state/gameEntityStore";
+import { useFeatures } from "./FeaturesProvider";
 import { useRecording } from "./usePlayback";
 import { AudioProvider } from "./AudioContext";
 import { CamerasProvider } from "./CamerasProvider";
@@ -63,6 +64,7 @@ export const GameView = memo(function GameView({
   spectator?: boolean;
 }) {
   const recording = useRecording();
+  const features = useFeatures();
   const dataSource = useDataSource();
   const { shadowsEnabled } = useSettings();
   const hasStreamData = isStreamingSource(dataSource);
@@ -82,7 +84,7 @@ export const GameView = memo(function GameView({
             </Suspense>
             <ObserverCamera />
             <CommandCircuitCamera />
-            <HeatmapOverlay />
+            {features.stats && <HeatmapOverlay />}
             <UnderwaterFilter />
             <AudioEnabled>
               <ChatSoundPlayer />

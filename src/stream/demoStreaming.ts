@@ -13,6 +13,7 @@ import {
   MAX_PITCH,
   isValidPosition,
   stripTaggedStringMarkup,
+  normalizePlayerGuid,
   detectControlObjectType,
   parseColorSegments,
   backpackBitmapToIndex,
@@ -123,6 +124,8 @@ interface ParsedDemoValues {
     {
       name: string;
       rawName: string;
+      guid?: string;
+      targetId?: number;
       teamId: number;
       score: number;
       ping: number;
@@ -179,6 +182,7 @@ export function parseDemoValues(demoValues: string[]): ParsedDemoValues {
     const rawName = fields[0] ?? "";
     const name = stripTaggedStringMarkup(rawName).trim();
     const clientId = parseInt(fields[2], 10);
+    const targetId = parseInt(fields[3], 10);
     const teamId = parseInt(fields[4], 10);
     const score = parseInt(fields[5], 10) || 0;
     const ping = parseInt(fields[6], 10) || 0;
@@ -187,6 +191,9 @@ export function parseDemoValues(demoValues: string[]): ParsedDemoValues {
       result.playerRoster.set(clientId, {
         name,
         rawName,
+        guid: normalizePlayerGuid(fields[1]),
+        targetId:
+          Number.isInteger(targetId) && targetId >= 0 ? targetId : undefined,
         teamId,
         score,
         ping,
@@ -1175,10 +1182,24 @@ class DemoStreamAdapter extends StreamEngine {
 
 export async function createDemoStreamingRecording(
   data: ArrayBuffer,
-  options: DemoStreamingOptions = {},
+  options: DemoStreamingOptions & {
+    /** Recover the playable prefix after an interrupted download. */
+    allowPartial?: boolean;
+  } = {},
 ): Promise<StreamRecording> {
-  const parser = new DemoParser(new Uint8Array(data));
-  await parser.load();
+  let parser = new DemoParser(new Uint8Array(data));
+  try {
+    await parser.load();
+  } catch (error) {
+    if (!options.allowPartial) throw error;
+    // Normal loads keep async decompression. For a truncated compressed
+    // stream, use the same recovery as progressive playback: finish() keeps
+    // complete blocks and bounds-checks the incomplete tail. Invalid headers
+    // and corrupt input still fail during load().
+    parser = new DemoParser(new Uint8Array(data), { incremental: true });
+    await parser.load();
+    parser.finish();
+  }
   return createRecordingFromParser(parser, options);
 }
 

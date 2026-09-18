@@ -16,19 +16,12 @@
  */
 import type { ServerMessageEvent } from "../stream/types";
 import { stripTaggedStringMarkup } from "../stream/streamHelpers";
+import { isRealMatchStart } from "../stream/matchEvents";
 import type { DirectorEvent } from "./types";
 import {
   KILL_MSG_TYPES,
   SELF_INFLICTED_MSG_TYPES,
 } from "../stream/serverMessages";
-
-/** "Match started!" from DefaultGame::startMatch — the real kickoff,
- *  not the countdown ticks that share MsgMissionStart. */
-function isRealMatchStart(rawBody: string): boolean {
-  return stripTaggedStringMarkup(rawBody)
-    .toLowerCase()
-    .includes("match started");
-}
 
 const clean = (value: string | undefined): string =>
   stripTaggedStringMarkup(value ?? "").trim();

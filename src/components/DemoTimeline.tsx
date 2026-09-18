@@ -13,6 +13,7 @@ import { AiFillStop } from "react-icons/ai";
 import { LuCrosshair, LuUserPen } from "react-icons/lu";
 import { ColoredName } from "./ColoredName";
 import { formatPlayheadTime } from "./demoFormat";
+import { ScanProgress } from "./ScanProgress";
 import styles from "./DemoTimeline.module.css";
 
 const EVENT_ICON: Record<TimelineEventType, React.ReactNode> = {
@@ -236,21 +237,7 @@ export function DemoTimeline() {
 
   // Scanning in progress.
   if (scanProgress != null && events == null) {
-    return (
-      <div className={styles.Root}>
-        <div className={styles.ProgressWrap}>
-          <span className={styles.ProgressLabel}>
-            Scanning… {Math.round(scanProgress * 100)}%
-          </span>
-          <div className={styles.ProgressBar}>
-            <div
-              className={styles.ProgressFill}
-              style={{ width: `${scanProgress * 100}%` }}
-            />
-          </div>
-        </div>
-      </div>
-    );
+    return <ScanProgress progress={scanProgress} />;
   }
 
   if (!events) return null;

@@ -1,5 +1,3 @@
-import type { StatsTeamFilter } from "./types";
-
 /**
  * A gradient stop: position t ∈ [0, 1] and sRGB color + alpha (0–255).
  */
@@ -59,7 +57,7 @@ export function colorize(levels: Uint8Array, lut: Uint8Array): Uint8Array {
 
 /**
  * Selectable color schemes: "team" uses HEATMAP_PALETTES (switched by the
- * team filter); the rest are standard colormaps applied regardless of team.
+ * player's team); the rest are standard colormaps applied regardless of team.
  */
 export type HeatmapScheme = "team" | "viridis" | "turbo";
 
@@ -118,10 +116,10 @@ export const HEATMAP_SCHEMES: Record<
 };
 
 /**
- * Palettes per team filter, authored in sRGB. "All" is a thermal ramp;
+ * Palettes per team, authored in sRGB. "All" is a thermal ramp;
  * team palettes echo Storm blue and Inferno red.
  */
-export const HEATMAP_PALETTES: Record<StatsTeamFilter, LutStop[]> = {
+export const HEATMAP_PALETTES: Record<"all" | 1 | 2, LutStop[]> = {
   all: [
     { t: 0, rgba: [0, 0, 0, 0] },
     { t: 0.25, rgba: [80, 0, 160, 110] },

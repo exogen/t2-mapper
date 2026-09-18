@@ -36,13 +36,10 @@ import {
 import { useAppNavigation } from "./useAppNavigation";
 import { useNavigationSync } from "./useNavigationSync";
 import { useCommandCircuitUrlSync } from "./useCommandCircuitUrlSync";
-import {
-  commandCircuitStore,
-  useCommandCircuit,
-} from "../state/commandCircuitStore";
+import { useCommandCircuit } from "../state/commandCircuitStore";
 import { WatchErrorDialog } from "./WatchErrorDialog";
 import { DemoDropScreen } from "./DemoDropScreen";
-import { statsStore, useStats } from "../state/statsStore";
+import { setStatsEnabled } from "../state/statsStore";
 import { InputProvider } from "./InputProducer";
 import { VisualInput } from "./VisualInput";
 import { WelcomeSplash } from "./WelcomeSplash";
@@ -170,27 +167,11 @@ export function MapInspector() {
     }
   }, [showSplash, isTourActive, isCommandCircuit]);
 
-  // Enter command circuit once a freshly loaded stats file's mission is ready.
-  // Gate on the entity store's mission name (set only after the mission
-  // actually loads) rather than the URL param, which updates before loading
-  // — activating too early loses to the dataSource kill-switch during the
-  // mission transition. Only consume the flag once activation sticks.
-  const statsPending = useStats((s) => s.pendingCommandCircuit);
-  const loadedMissionName = useMissionName();
   useEffect(() => {
-    if (!statsPending || dataSource !== "map") return;
-    const data = statsStore.getState().data;
-    if (
-      data &&
-      loadedMissionName &&
-      data.missionName.toLowerCase() === loadedMissionName.toLowerCase()
-    ) {
-      commandCircuitStore.getState().activate();
-      if (commandCircuitStore.getState().active) {
-        statsStore.getState().clearPendingCommandCircuit();
-      }
-    }
-  }, [statsPending, dataSource, loadedMissionName]);
+    setStatsEnabled(features.stats);
+    return () => setStatsEnabled(false);
+  }, [features.stats]);
+  const loadedMissionName = useMissionName();
   const hasStreamData = isStreamingSource(dataSource);
 
   // Streams no longer sync the ?mission param, so anything that names
@@ -614,7 +595,6 @@ export function MapInspector() {
               missionName={effectiveMissionName}
               missionType={effectiveMissionType}
               choosingMap={choosingMap}
-              onChangeMission={changeMission}
               invalidateRef={invalidateRef}
               onOpenMapInfo={handleOpenMapInfo}
               onOpenScoreScreen={
