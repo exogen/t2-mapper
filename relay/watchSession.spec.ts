@@ -13,6 +13,7 @@ import { DemoCoordinator } from "./demoCoordinator";
 import { WatchRequest } from "./watchRequest";
 import type { GameConnection } from "./gameConnection";
 import type { ServerMessage } from "./types";
+import { GAME_PROTOCOL_VERSION } from "./shared";
 
 class FakeGameConnection extends EventEmitter {
   address: string;
@@ -352,6 +353,11 @@ describe("WatchSessionManager", () => {
       .filter((m) => m.type === "catchupBegin") as Array<{ epoch: number }>;
     expect(begins).toHaveLength(2);
     expect(begins[1].epoch).toBe(begins[0].epoch + 1);
+    for (const frame of ws.binaryFrames()) {
+      expect(JSON.parse(gunzipSync(frame).toString()).protocolVersion).toBe(
+        GAME_PROTOCOL_VERSION,
+      );
+    }
   });
 
   it("relays watcher chat through the shared identity", () => {
@@ -635,7 +641,9 @@ describe("WatchSession delayed transitions", () => {
       if (!frame.binary) break;
       chunks.push(frame.data as Uint8Array);
     }
-    return JSON.parse(gunzipSync(Buffer.concat(chunks)).toString());
+    const payload = JSON.parse(gunzipSync(Buffer.concat(chunks)).toString());
+    expect(payload.protocolVersion).toBe(GAME_PROTOCOL_VERSION);
+    return payload;
   }
 
   // Seed a mission already parsed on both timelines, then exercise the

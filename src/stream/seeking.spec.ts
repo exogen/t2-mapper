@@ -66,6 +66,24 @@ const command = (funcName: string, ...args: string[]) => ({
   },
 });
 const stats = () => ({ movesRead: 0, captures: 0, restores: 0 });
+
+it("stops playback on a parse fault before applying partial packet data", () => {
+  const stream = demo([
+    move(),
+    {
+      type: BlockTypePacket,
+      parsed: {
+        parseFault: { stage: "ghost", message: "unreadable ghost" },
+        ghosts: [create()],
+      },
+    },
+    move(),
+  ]);
+  expect(() => stream.stepToTime(1)).toThrow(
+    "Demo parsing failed at 0.032s: unreadable ghost",
+  );
+});
+
 function demo(
   blocks: unknown[],
   options: DemoStreamingOptions = {},

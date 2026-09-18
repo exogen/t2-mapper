@@ -167,6 +167,8 @@ export interface WatchCatchupPayload {
   missionName: string | null;
 
   // ── Live-only extensions (no .rec equivalent) ──
+  /** Negotiated wire version; null for demo-derived state, absent on older relays (51). */
+  protocolVersion?: number | null;
   compressionPoint: { x: number; y: number; z: number };
   pendingGuaranteedEvents: Array<{
     absoluteSequenceNumber: number;

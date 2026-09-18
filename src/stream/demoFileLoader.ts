@@ -389,6 +389,8 @@ function startTimelineScan(
       if (parseToken !== token) return;
       if (err instanceof Error && err.name === "AbortError") return;
       log.error("Timeline scan failed: %o", err);
-      demoTimelineStore.getState().setScanProgress(null);
+      demoTimelineStore
+        .getState()
+        .setError(err instanceof Error ? err.message : String(err));
     });
 }

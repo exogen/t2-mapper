@@ -14,6 +14,7 @@ import {
 import { GameConnection } from "./gameConnection.js";
 import {
   normalizeAddress,
+  GAME_PROTOCOL_VERSION,
   AUTH_COMMANDS,
   MAX_RETRIES,
   RETRY_DELAY_MS,
@@ -372,7 +373,9 @@ export class WatchSession {
     this.key = key;
     this.options = options;
     this.onDestroyed = onDestroyed;
-    this.parserKit = createLiveParser();
+    this.parserKit = createLiveParser({
+      protocolVersion: GAME_PROTOCOL_VERSION,
+    });
   }
 
   get watcherCount(): number {
@@ -464,7 +467,9 @@ export class WatchSession {
     this.connectSynced = false;
     this.packetCount = 0;
     this.cachedPayload = null;
-    this.parserKit = createLiveParser();
+    this.parserKit = createLiveParser({
+      protocolVersion: GAME_PROTOCOL_VERSION,
+    });
     this.ghostState = new GhostStateAccumulator();
     this.watchState = new WatchStateAccumulator();
     this.cancelTourneyDecision();
@@ -1150,7 +1155,7 @@ export class WatchSession {
         // every watcher re-hydrates from it once its handshake completes.
         this.replica = {
           epoch: item.epoch,
-          kit: createLiveParser(),
+          kit: createLiveParser({ protocolVersion: GAME_PROTOCOL_VERSION }),
           ghostState: new GhostStateAccumulator(),
           watchState: new WatchStateAccumulator(),
           connectSynced: false,

@@ -27,7 +27,11 @@ import { StreamEngine } from "./StreamEngine";
 import { GhostMessage } from "./entityClassification";
 import type { RelayClient } from "./relayClient";
 import type { WatchCatchupPayload } from "../../relay/types";
-import { AUTH_COMMANDS, buildCRCDataBlockList } from "../../relay/shared";
+import {
+  AUTH_COMMANDS,
+  buildCRCDataBlockList,
+  GAME_PROTOCOL_VERSION,
+} from "../../relay/shared";
 
 const log = createLogger("liveStreaming");
 
@@ -82,7 +86,9 @@ export class LiveStreamAdapter extends StreamEngine {
     this.setPlayerPredictionEnabled(true);
     this.relay = relay;
     this.mode = options?.mode ?? "play";
-    const { registry, ghostTracker, packetParser } = createLiveParser();
+    const { registry, ghostTracker, packetParser } = createLiveParser({
+      protocolVersion: GAME_PROTOCOL_VERSION,
+    });
     this.packetParser = packetParser;
     this.ghostTracker = ghostTracker;
     this.registry = registry;
@@ -264,6 +270,10 @@ export class LiveStreamAdapter extends StreamEngine {
     // Seeded parser stack — continues the raw stream in lockstep with
     // the relay's parser from the packet boundary the payload captured.
     const { registry, ghostTracker, packetParser } = createLiveParser({
+      protocolVersion:
+        payload.protocolVersion === undefined
+          ? GAME_PROTOCOL_VERSION
+          : payload.protocolVersion,
       dataBlocks: payload.dataBlocks.map(([id, block]) => [id, block.data]),
       ghosts: payload.initialGhosts
         .filter((g) => g.classId != null)

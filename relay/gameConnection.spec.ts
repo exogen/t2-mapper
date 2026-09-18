@@ -5,6 +5,117 @@ import { createLiveParser } from "t2-demo-parser";
 import { GameConnection } from "./gameConnection";
 import { BitStreamWriter } from "./BitStreamWriter";
 import type { ConnectionProtocol } from "./protocol";
+import { GAME_PROTOCOL_VERSION } from "./shared";
+
+describe("GameConnection protocol negotiation", () => {
+  function handshake() {
+    const conn = new GameConnection("1.2.3.4:28000");
+    const inner = conn as unknown as {
+      _status: string;
+      clientConnectSequence: number;
+      serverConnectSequence: number;
+      handleChallengeResponse(msg: Buffer): void;
+      handleConnectAccept(msg: Buffer): void;
+      sendRaw(data: Uint8Array): void;
+      startKeepalive(): void;
+      startOobPing(): void;
+      enforceObserver(): void;
+    };
+    inner._status = "challenging";
+    inner.clientConnectSequence = 123;
+    const send = vi.spyOn(inner, "sendRaw").mockImplementation(() => {});
+    const keepalive = vi
+      .spyOn(inner, "startKeepalive")
+      .mockImplementation(() => {});
+    vi.spyOn(inner, "startOobPing").mockImplementation(() => {});
+    vi.spyOn(inner, "enforceObserver").mockImplementation(() => {});
+    return { conn, inner, send, keepalive };
+  }
+
+  function challenge(protocol = 51, client = 123, server = 456) {
+    const msg = Buffer.alloc(14);
+    msg[0] = 30;
+    msg.writeUInt32LE(protocol, 1);
+    msg.writeUInt32LE(server, 5);
+    msg.writeUInt32LE(client, 9);
+    return msg;
+  }
+
+  function accept(protocol = 51, client = 123, server = 456) {
+    const msg = Buffer.alloc(17);
+    msg[0] = 36;
+    msg.writeUInt32LE(server, 1);
+    msg.writeUInt32LE(client, 5);
+    msg.writeUInt32LE(protocol, 9);
+    msg.writeUInt32LE(1000, 13);
+    return msg;
+  }
+
+  it.each([51, 52])(
+    "negotiates retail layout with a protocol %i server",
+    (version) => {
+      const { conn, inner, send, keepalive } = handshake();
+      inner.handleChallengeResponse(challenge(version));
+      expect(Buffer.from(send.mock.calls[0][0]).readUInt32LE(9)).toBe(
+        GAME_PROTOCOL_VERSION,
+      );
+      inner.handleConnectAccept(accept());
+      expect(conn.status).toBe("connected");
+      expect(conn.connectSequence).toBe(123 ^ 456);
+      expect(keepalive).toHaveBeenCalledTimes(1);
+      inner.handleConnectAccept(accept());
+      expect(keepalive).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it.each([
+    ["truncated", accept().subarray(0, 16)],
+    ["stale client", accept(51, 122)],
+    ["stale server", accept(51, 123, 455)],
+    ["older protocol", accept(50)],
+    ["unrequested QoL protocol", accept(52)],
+  ])(
+    "ignores %s accepts and can still connect afterwards",
+    (_label, packet) => {
+      const { conn, inner, keepalive } = handshake();
+      inner.handleChallengeResponse(challenge(52));
+      inner.handleConnectAccept(packet as Buffer);
+      expect(conn.status).toBe("challenging");
+      expect(keepalive).not.toHaveBeenCalled();
+      inner.handleConnectAccept(accept());
+      expect(conn.status).toBe("connected");
+      expect(keepalive).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it("ignores accepts before a valid challenge and stale challenges without mutating state", () => {
+    const { conn, inner, send, keepalive } = handshake();
+    inner.handleConnectAccept(accept(51, 123, 0));
+    expect(keepalive).not.toHaveBeenCalled();
+    inner.handleChallengeResponse(challenge().subarray(0, 13));
+    inner.handleChallengeResponse(challenge(51, 999));
+    expect(send).not.toHaveBeenCalled();
+    expect(inner.serverConnectSequence).toBe(0);
+    inner.handleChallengeResponse(challenge());
+    inner.handleChallengeResponse(challenge(52, 999, 999));
+    expect(inner.serverConnectSequence).toBe(456);
+    inner.handleConnectAccept(accept());
+    expect(conn.status).toBe("connected");
+  });
+
+  it("reports unsupported old servers without sending a connect request", () => {
+    const { conn, inner, send } = handshake();
+    const status = vi.fn();
+    conn.on("status", status);
+    inner.handleChallengeResponse(challenge(48));
+    expect(status).toHaveBeenCalledWith(
+      "disconnected",
+      expect.stringContaining("Unsupported server protocol 48"),
+    );
+    expect(send).not.toHaveBeenCalled();
+    expect(conn.status).toBe("disconnected");
+  });
+});
 
 /** A connection past ConnectAccept, waiting on T2csri; no socket behind it. */
 function authenticating(): GameConnection {

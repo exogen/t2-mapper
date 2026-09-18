@@ -7,6 +7,9 @@ import type { ParsedData } from "t2-demo-parser";
  * contract as types.ts and watchSerialize.ts).
  */
 
+/** Retail handshake; QoL servers negotiate this version with legacy clients. */
+export const GAME_PROTOCOL_VERSION = 51;
+
 /** T2csri auth commands answered with relay-side crypto responses. */
 export const AUTH_COMMANDS: readonly string[] = [
   "t2csri_pokeClient",

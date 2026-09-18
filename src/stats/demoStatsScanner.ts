@@ -75,7 +75,9 @@ export async function scanDemoStats(
         if (current.ready || current.matchStartSec != null)
           nextMatch(event.timeSec);
         current.ready = true;
-        current.sceneFromSec = event.timeSec;
+        // The initial block can already contain this scene before ClientReady
+        // arrives. Only a pending mission load needs to wait for that message.
+        current.sceneFromSec ??= event.timeSec;
       } else if (type === "msgmissionstart") {
         const kickoff = isRealMatchStart(event.args[1] ?? "");
         if (kickoff) {
@@ -101,8 +103,8 @@ export async function scanDemoStats(
         type === "msgcleardebrief" ||
         type === "msgdebriefresult"
       ) {
-        if (type === "msggameover" && current.hasScene)
-          current.runningEvidence = true;
+        // GameOver also follows an admin map change during warmup, so it
+        // cannot establish that a kickoff happened before recording began.
         endMatch(event.timeSec);
       }
     }

@@ -19,13 +19,10 @@ import { BitStream } from "t2-demo-parser";
 import { BitStreamWriter } from "./BitStreamWriter.js";
 import { T2csriAuth, loadCredentials } from "./auth.js";
 import { connLog } from "./logger.js";
-import { STALLED_DISCONNECT_REASON } from "./shared.js";
+import { GAME_PROTOCOL_VERSION, STALLED_DISCONNECT_REASON } from "./shared.js";
 import type { ConnectionStatus } from "./types.js";
 import { computeGameCRC, type CRCDataBlock } from "./crc.js";
 
-// Tribes 2 protocol version and class CRC from the binary.
-// These must match what the server expects.
-const PROTOCOL_VERSION = 0x33; // 51 — from Tribes2.exe binary
 // Net::process (FUN_0055a820) passes a 1500-byte buffer to recvfrom.
 // Winsock rejects larger datagrams before protocol dispatch or recording.
 const MAX_PACKET_DATA_SIZE = 1500;
@@ -99,6 +96,7 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
 
   private clientConnectSequence = Math.floor(Math.random() * 0xffffffff);
   private serverConnectSequence = 0;
+  private connectRequested = false;
   private _status: ConnectionStatus = "disconnected";
   private keepaliveTimer: ReturnType<typeof setInterval> | null = null;
   /** Receive watchdog (NetConnection::checkTimeout); armed on accept. */
@@ -240,7 +238,7 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
   private sendChallengeRequest(): void {
     this.setStatus("challenging");
     const packet = buildConnectChallengeRequest(
-      PROTOCOL_VERSION,
+      GAME_PROTOCOL_VERSION,
       this.clientConnectSequence,
     );
     connLog.info(
@@ -388,13 +386,13 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
 
     const dv = new DataView(msg.buffer, msg.byteOffset, msg.byteLength);
     const serverProtocolVersion = dv.getUint32(1, true);
-    this.serverConnectSequence = dv.getUint32(5, true);
+    const serverConnectSequence = dv.getUint32(5, true);
     const echoedClientSeq = dv.getUint32(9, true);
 
     connLog.info(
       {
         serverProto: serverProtocolVersion,
-        serverSeq: this.serverConnectSequence,
+        serverSeq: serverConnectSequence,
         echoedClientSeq,
       },
       "Received ChallengeResponse",
@@ -408,12 +406,22 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
       return;
     }
 
+    if (serverProtocolVersion < GAME_PROTOCOL_VERSION) {
+      this.setStatus(
+        "disconnected",
+        `Unsupported server protocol ${serverProtocolVersion} (requires ${GAME_PROTOCOL_VERSION})`,
+      );
+      this.disconnect();
+      return;
+    }
+    this.serverConnectSequence = serverConnectSequence;
+
     // Send ConnectRequest
     const connectArgv = this.buildConnectArgv();
     const packet = buildConnectRequest(
       this.serverConnectSequence,
       this.clientConnectSequence,
-      PROTOCOL_VERSION,
+      GAME_PROTOCOL_VERSION,
       false, // not pre-authenticated
       connectArgv,
     );
@@ -421,6 +429,7 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
       { bytes: packet.length, argv: connectArgv },
       "Sending ConnectRequest",
     );
+    this.connectRequested = true;
     this.sendRaw(packet);
   }
 
@@ -437,9 +446,27 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
   }
 
   /** Handle ConnectAccept. */
-  private handleConnectAccept(_msg: Buffer): void {
+  private handleConnectAccept(msg: Buffer): void {
     // A duplicate accept would restart keepalive/ping timers.
     if (this._status !== "challenging") return;
+    // U8 type + U32 server sequence, client sequence, protocol, connection ID.
+    // Ignore stale/malformed accepts before they can choose the packet layout
+    // or start the connection's timers (netDispatch::handleConnectAccept).
+    if (!this.connectRequested || msg.length < 17) return;
+    const serverSeq = msg.readUInt32LE(1);
+    const clientSeq = msg.readUInt32LE(5);
+    const protocolVersion = msg.readUInt32LE(9);
+    if (
+      serverSeq !== this.serverConnectSequence ||
+      clientSeq !== this.clientConnectSequence ||
+      protocolVersion !== GAME_PROTOCOL_VERSION
+    ) {
+      connLog.warn(
+        { serverSeq, clientSeq, protocolVersion },
+        "ConnectAccept sequence or negotiated protocol mismatch, ignoring",
+      );
+      return;
+    }
     if (this.handshakeTimer) {
       clearTimeout(this.handshakeTimer);
       this.handshakeTimer = null;

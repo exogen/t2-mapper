@@ -26,6 +26,7 @@ import {
 import type { Vec3 } from "./streamHelpers";
 import type { StreamRecording, StreamSnapshot, TeamScore } from "./types";
 import { StreamEngine } from "./StreamEngine";
+import { assertDemoBlockParsed } from "./demoParseError";
 
 interface DemoMissionInfo {
   /** Mission display name from readplayerinfo row 2 (e.g. "S5-WoodyMyrk"). */
@@ -743,23 +744,9 @@ class DemoStreamAdapter extends StreamEngine {
       }
     }
 
-    // Process initial events
-    for (const evt of this.initialBlock.initialEvents) {
-      const eventName = this.registry.getEventParser(evt.classId)?.name;
-      if (eventName === "SetSensorGroupEvent" && evt.parsedData) {
-        const sg = evt.parsedData.sensorGroup as number | undefined;
-        if (sg != null) this.playerSensorGroup = sg;
-      } else if (eventName === "RemoteCommandEvent" && evt.parsedData) {
-        const funcName = this.resolveNetString(
-          evt.parsedData.funcName as string,
-        );
-        const args = evt.parsedData.args as string[];
-        if (funcName === "ServerMessage") {
-          this.handleServerMessage(args);
-        }
-        this.handleHudRemoteCommand(funcName, args);
-      }
-    }
+    // Saved events are pending, not snapshot state. DemoParser dispatches
+    // them with the first packet; applying them here too duplicates match
+    // boundaries and other server-message side effects.
 
     // Seed HUD state from demoValues
     const parsed = parseDemoValues(this.initialBlock.demoValues);
@@ -1004,6 +991,7 @@ class DemoStreamAdapter extends StreamEngine {
         this.exhaustedAtBytes = this.parser.decompressedByteLength;
         return false;
       }
+      assertDemoBlockParsed(block, this.moveTicks * (TICK_DURATION_MS / 1000));
 
       // Recorded packets use the same ConnectionProtocol dispatch gate as live
       // packets. Keepalives/duplicates must not apply the parser's empty game state.

@@ -72,7 +72,7 @@ describe("stats follow the playhead", () => {
       expect(statsStore.getState().activeMatch).toBe(matches[0]),
     );
     statsStore.getState().selectPlayer(0);
-    at(29.999);
+    at(19.999);
     expect(statsStore.getState().activeMatch).toBe(matches[0]);
     at(30); // Loading/warmup, ten seconds before kickoff.
     expect(statsStore.getState()).toMatchObject({
@@ -107,12 +107,55 @@ describe("stats follow the playhead", () => {
     expect(statsStore.getState().sceneReady).toBe(true);
     at(30); // Backwards seek into loading.
     expect(statsStore.getState().sceneReady).toBe(false);
-    at(20); // Previous game's debrief can still show that game's heat.
+    at(19.999); // Back into the previous game.
     expect(statsStore.getState()).toMatchObject({
       activeMatch: matches[0],
       selectedPlayerId: 0,
       sceneReady: true,
     });
+  });
+
+  it("uses the next match before the first interval when its scene is already loaded", async () => {
+    const upcoming = { ...match(0, 5, ["Runner"]), sceneFromSec: 0 };
+    mocks.scan.mockResolvedValue({ ...multi, matches: [upcoming] });
+    install(new ArrayBuffer(0));
+    at(0);
+    setStatsEnabled(true);
+    await vi.waitFor(() => expect(statsStore.getState().data).not.toBeNull());
+    statsStore.getState().selectPlayer(0);
+    expect(statsStore.getState()).toMatchObject({
+      activeMatch: upcoming,
+      selectedPlayerId: 0,
+      sceneReady: true,
+    });
+    at(6);
+    expect(statsStore.getState().selectedPlayerId).toBe(0);
+  });
+
+  it("uses the next match in a gap, while keeping heat off the previous scene", async () => {
+    mocks.scan.mockResolvedValue(multi);
+    install(new ArrayBuffer(0));
+    setStatsEnabled(true);
+    await vi.waitFor(() => expect(statsStore.getState().data).toBe(multi));
+    at(10);
+    statsStore.getState().selectPlayer(0);
+    setStreamSnapshot({
+      timeSec: 20,
+      matchEnded: true,
+      matchEndedAtSec: 20,
+    } as StreamSnapshot);
+    expect(statsStore.getState()).toMatchObject({
+      activeMatch: matches[1],
+      selectedPlayerId: 1,
+      sceneReady: false,
+    });
+    at(32);
+    expect(statsStore.getState().sceneReady).toBe(true);
+    at(19);
+    expect(statsStore.getState().activeMatch).toBe(matches[0]);
+    // Keep the last game when there is no later one to preview.
+    at(90);
+    expect(statsStore.getState().activeMatch).toBe(matches[2]);
   });
 
   it("hides a frozen scene whose end timestamp is also the next match's boundary", async () => {

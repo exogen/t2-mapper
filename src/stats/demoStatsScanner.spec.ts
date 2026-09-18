@@ -86,6 +86,28 @@ const load = (
 });
 
 describe("matches within a demo", () => {
+  it("keeps the initial scene available before a delayed first ClientReady", async () => {
+    fixture(
+      [
+        message(0, 1.056, "", "MsgClientReady"),
+        message(1, 2, "Match started!"),
+      ],
+      (time) => [
+        { id: "initial-world", type: "InteriorInstance" },
+        ...(time >= 1.056 ? [player()] : []),
+      ],
+    );
+    const { matches } = await scanDemoStats(new ArrayBuffer(0));
+    expect(matches).toHaveLength(1);
+    expect(matches[0]).toMatchObject({
+      fromSec: 0,
+      sceneFromSec: 0,
+      matchStartSec: 2,
+    });
+    expect(matches[0].players).toHaveLength(1);
+    expect(matches[0].positionSamples.t[0]).toBeCloseTo(0.048);
+  });
+
   it("does not sample the previous scene while loading into a running match", async () => {
     fixture(
       [
@@ -366,6 +388,25 @@ describe("matches within a demo", () => {
     expect(matches).toHaveLength(2);
     expect(matches[1]).toMatchObject({ fromSec: 2, matchStartSec: null });
     expect(matches[1].positionSamples.count).toBe(0);
+  });
+
+  it("discards warmup ended by an admin map change without a countdown", async () => {
+    fixture(
+      [
+        message(0, 1, "", "MsgGameOver"),
+        load(1, 1, "NextMap"),
+        message(2, 1.1, "", "MsgClientReady"),
+        message(3, 2, "Match started!"),
+      ],
+      undefined,
+      3,
+      (time) => ({ matchClockMs: time * 1000 }),
+    );
+    const { matches } = await scanDemoStats(new ArrayBuffer(0));
+    expect(matches).toHaveLength(2);
+    expect(matches[0].positionSamples.count).toBe(0);
+    expect(matches[0].players).toEqual([]);
+    expect(matches[1].positionSamples.count).toBeGreaterThan(0);
   });
 });
 

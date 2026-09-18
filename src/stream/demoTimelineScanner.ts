@@ -15,6 +15,7 @@ import { KILL_MSG_TYPES, SELF_INFLICTED_MSG_TYPES } from "./serverMessages";
 import type { TimelineEvent } from "../state/demoTimelineStore";
 import { createLogger } from "../logger";
 import { isRealMatchStart } from "./matchEvents";
+import { assertDemoBlockParsed } from "./demoParseError";
 
 const log = createLogger("demoTimelineScanner");
 
@@ -125,8 +126,10 @@ export async function scanDemoTimeline(
   onProgress?: (progress: number) => void,
   signal?: AbortSignal,
 ): Promise<TimelineScanResult> {
+  signal?.throwIfAborted();
   const parser = new DemoParser(new Uint8Array(buffer));
   const { initialBlock } = await parser.load();
+  signal?.throwIfAborted();
 
   const netStrings = new Map<number, string>();
   for (const [id, value] of initialBlock.taggedStrings) {
@@ -134,7 +137,7 @@ export async function scanDemoTimeline(
   }
 
   const registry = parser.getRegistry();
-  const normalizedRecorder = recorderName
+  let normalizedRecorder = recorderName
     ? stripTaggedStringMarkup(recorderName).trim().toLowerCase()
     : null;
 
@@ -161,6 +164,10 @@ export async function scanDemoTimeline(
       const fields = (dv[2 + i] ?? "").split("\t");
       const cid = parseInt(fields[2], 10);
       if (cid === recorderClientId) {
+        // readplayerinfo may contain only the base name, while messages
+        // use the full tagged name. The client ID identifies the roster row.
+        const name = stripTaggedStringMarkup(fields[0] ?? "").trim();
+        if (name) normalizedRecorder = name.toLowerCase();
         const tid = parseInt(fields[4], 10);
         if (!isNaN(tid)) recorderTeamId = tid;
         break;
@@ -185,22 +192,11 @@ export async function scanDemoTimeline(
   const totalBlocks = parser.blockCount;
 
   while (true) {
-    if (signal?.aborted) break;
+    signal?.throwIfAborted();
 
-    let block;
-    try {
-      block = parser.nextBlock();
-    } catch (err) {
-      // Parser cursor state is unknown after a throw — stop scanning and
-      // return whatever events we've found rather than risking an infinite loop.
-      log.warn(
-        "Stopping scan at block %d due to read error: %o",
-        blockCount,
-        err,
-      );
-      break;
-    }
+    const block = parser.nextBlock();
     if (!block) break;
+    assertDemoBlockParsed(block, moveTicks * (TICK_DURATION_MS / 1000));
     blockCount++;
 
     if (block.type === BlockTypeMove) {
@@ -253,6 +249,31 @@ export async function scanDemoTimeline(
 
         const msgType = resolveNetString(args[0], netStrings);
         const msgTypeLower = msgType.toLowerCase();
+
+        // Keep the recorder's message identity current across tag changes
+        // and map rejoins, without conflating other players with the same
+        // base name.
+        if (recorderClientId != null) {
+          const identity =
+            msgTypeLower === "msgclientjoin"
+              ? [args[3], args[2]]
+              : msgTypeLower === "msgclientjointeam"
+                ? [args[4], args[2]]
+                : msgTypeLower === "msgclientnamechanged"
+                  ? [args[4], args[3]]
+                  : null;
+          if (
+            identity?.[0] &&
+            parseInt(resolveNetString(identity[0], netStrings), 10) ===
+              recorderClientId &&
+            identity[1]
+          ) {
+            const name = stripTaggedStringMarkup(
+              resolveNetString(identity[1], netStrings),
+            ).trim();
+            if (name) normalizedRecorder = name.toLowerCase();
+          }
+        }
 
         // Track recorder's team changes.
         if (

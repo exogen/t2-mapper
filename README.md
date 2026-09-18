@@ -30,8 +30,9 @@ Click inside the map preview area to capture the mouse.
 Add `?features=stats` to the URL (or `&features=stats` alongside other query
 parameters), load a demo, and select a player in the **Stats** sidebar accordion.
 The selection opens a heatmap in command circuit covering the game at the playback
-cursor. Each game has a separate timeline interval and match ID, even when a map
-repeats. Loading and warmup select the upcoming game's heatmap, which appears once
+cursor, or the next game when the cursor is between matches. Each game has a
+separate timeline interval and match ID, even when a map repeats.
+Loading and warmup select the upcoming game's heatmap, which appears once
 its scene is ready; its samples cover actual match play. Color intensity represents time spent:
 positions are sampled every eight simulation ticks (256 ms), including time
 standing still. Dead players are excluded; mounted players use their vehicle's

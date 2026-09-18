@@ -7,12 +7,13 @@ import {
   createLiveParser,
   BlockTypePacket,
 } from "t2-demo-parser";
-import type { PacketData } from "t2-demo-parser";
+import type { PacketData, PacketParser } from "t2-demo-parser";
 import { LiveStreamAdapter } from "./liveStreaming";
 import type { RelayClient } from "./relayClient";
 import type { ImageSlot, ThreadState } from "./types";
 import { WatchStateAccumulator } from "../../relay/watchState";
 import { buildCatchupPayload } from "../../relay/watchCatchup";
+import { GAME_PROTOCOL_VERSION } from "../../relay/shared";
 import {
   serializeCatchupPayload,
   deserializeCatchupPayload,
@@ -48,6 +49,39 @@ function demoPath(): string | null {
 }
 
 const fakeRelay = {} as unknown as RelayClient;
+
+describe("live wire protocol propagation", () => {
+  const parserOf = (adapter: LiveStreamAdapter) =>
+    (adapter as unknown as { packetParser: PacketParser }).packetParser;
+
+  it("starts direct play with the protocol the relay requests", () => {
+    expect(
+      parserOf(new LiveStreamAdapter(fakeRelay)).getProtocolVersion(),
+    ).toBe(GAME_PROTOCOL_VERSION);
+  });
+
+  it("preserves the exported version through serialization, late joins and reconnects", () => {
+    const adapter = new LiveStreamAdapter(fakeRelay, { mode: "watch" });
+    for (const [i, version] of [52, 51, null, 52, undefined].entries()) {
+      const payload = buildCatchupPayload({
+        packetParser: createLiveParser({ protocolVersion: version })
+          .packetParser,
+        ghostState: new GhostStateAccumulator(),
+        watchState: new WatchStateAccumulator(),
+        epoch: i + 1,
+        serverAddress: "test:28000",
+      });
+      // Older relays omitted the field; explicit null denotes demo-derived state.
+      if (version === undefined) delete payload.protocolVersion;
+      adapter.hydrate(
+        deserializeCatchupPayload(serializeCatchupPayload(payload)),
+      );
+      expect(parserOf(adapter).getProtocolVersion()).toBe(
+        version === undefined ? GAME_PROTOCOL_VERSION : version,
+      );
+    }
+  });
+});
 
 interface RelaySim {
   parser: ReturnType<typeof createLiveParser>["packetParser"];

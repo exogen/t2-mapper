@@ -14,6 +14,9 @@ import { LuCrosshair, LuUserPen } from "react-icons/lu";
 import { ColoredName } from "./ColoredName";
 import { formatPlayheadTime } from "./demoFormat";
 import { ScanProgress } from "./ScanProgress";
+import { ImSad2 } from "react-icons/im";
+import accordionStyles from "./Accordion.module.css";
+import controlStyles from "./InspectorControls.module.css";
 import styles from "./DemoTimeline.module.css";
 
 const EVENT_ICON: Record<TimelineEventType, React.ReactNode> = {
@@ -201,6 +204,7 @@ type Filter =
 export function DemoTimeline() {
   const events = useDemoTimeline((s) => s.events);
   const scanProgress = useDemoTimeline((s) => s.scanProgress);
+  const error = useDemoTimeline((s) => s.error);
   const observerPerspective = useDemoTimeline((s) => s.observerPerspective);
   const recorderName = useRecorderName();
   const { seek } = usePlaybackActions();
@@ -234,6 +238,17 @@ export function DemoTimeline() {
     },
     [seek],
   );
+
+  if (error) {
+    return (
+      <div className={accordionStyles.Body}>
+        <p className={controlStyles.ErrorMessage} role="alert">
+          <ImSad2 />
+          <span>{error}</span>
+        </p>
+      </div>
+    );
+  }
 
   // Scanning in progress.
   if (scanProgress != null && events == null) {

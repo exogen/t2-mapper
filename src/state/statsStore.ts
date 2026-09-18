@@ -102,8 +102,15 @@ function syncActiveMatch(): void {
   const state = statsStore.getState();
   const snapshot = streamSnapshotStore.getState().snapshot;
   const timeSec = snapshot?.timeSec ?? engineStore.getState().playback.seekTime;
-  const activeMatch =
-    state.data?.matches.findLast((match) => match.fromSec <= timeSec) ?? null;
+  const matches = state.data?.matches ?? [];
+  let activeMatch =
+    matches.findLast((match) => match.fromSec <= timeSec) ?? null;
+  // Preview the upcoming game before the first interval or in a gap after
+  // an ended game. At EOF, retain the last game when no next one exists.
+  if (!activeMatch || timeSec >= activeMatch.matchEndSec) {
+    activeMatch =
+      matches.find((match) => match.fromSec > timeSec) ?? activeMatch;
+  }
   const sceneReady =
     snapshot != null &&
     activeMatch?.sceneFromSec != null &&

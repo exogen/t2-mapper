@@ -63,6 +63,7 @@ export interface DemoTimelineState {
    *  weapon classification) — never rendered on the timeline. */
   killEvents: TimelineEvent[] | null;
   scanProgress: number | null;
+  error: string | null;
   /**
    * The recorder never played — kill/death events are never emitted.
    */
@@ -73,6 +74,7 @@ export interface DemoTimelineState {
     killEvents: TimelineEvent[],
   ): void;
   setScanProgress(progress: number | null): void;
+  setError(error: string): void;
   reset(): void;
 }
 
@@ -80,18 +82,23 @@ export const demoTimelineStore = createStore<DemoTimelineState>((set) => ({
   events: null,
   killEvents: null,
   scanProgress: null,
+  error: null,
   observerPerspective: false,
   setEvents(events, observerPerspective, killEvents) {
-    set({ events, observerPerspective, killEvents });
+    set({ events, observerPerspective, killEvents, error: null });
   },
   setScanProgress(progress) {
     set({ scanProgress: progress });
+  },
+  setError(error) {
+    set({ error, scanProgress: null, events: null, killEvents: null });
   },
   reset() {
     set({
       events: null,
       killEvents: null,
       scanProgress: null,
+      error: null,
       observerPerspective: false,
     });
   },

@@ -25,6 +25,7 @@ export function buildCatchupPayload(options: {
   return {
     epoch,
     serverAddress,
+    protocolVersion: packetParser.getProtocolVersion(),
     taggedStrings: watchState.getTaggedStrings(),
     dataBlocks: [...dbMap.entries()].map(([objectId, blockData]) => [
       objectId,
