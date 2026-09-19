@@ -7,7 +7,8 @@ import type {
   TimelineEventType,
 } from "../state/demoTimelineStore";
 import { useRecorderName } from "../state/gameEntityStore";
-import { usePlaybackActions } from "./usePlayback";
+import { seekToTimelineEvent } from "../state/demoTimelineFollow";
+import { useRecording } from "./usePlayback";
 import { BsPlayFill } from "react-icons/bs";
 import { AiFillStop } from "react-icons/ai";
 import { LuCrosshair, LuUserPen } from "react-icons/lu";
@@ -207,7 +208,7 @@ export function DemoTimeline() {
   const error = useDemoTimeline((s) => s.error);
   const observerPerspective = useDemoTimeline((s) => s.observerPerspective);
   const recorderName = useRecorderName();
-  const { seek } = usePlaybackActions();
+  const recording = useRecording();
   const [filter, setFilter] = useState<Filter>("all");
 
   // Filters never persist across demos — each load starts on "All".
@@ -228,15 +229,15 @@ export function DemoTimeline() {
     ) ?? [];
 
   const handleClick = useCallback(
-    (timeSec: number) => {
-      seek(Math.max(0, timeSec - 3));
+    (event: TimelineEvent) => {
+      seekToTimelineEvent(recording, event);
       // Blur so focus returns to body — allows spacebar to toggle
       // play/pause instead of re-activating the timeline button.
       if (document.activeElement instanceof HTMLElement) {
         document.activeElement.blur();
       }
     },
-    [seek],
+    [recording],
   );
 
   if (error) {
@@ -339,7 +340,7 @@ export function DemoTimeline() {
               key={`${event.timeSec}-${event.type}-${i}`}
               type="button"
               className={styles.EventRow}
-              onClick={() => handleClick(event.timeSec)}
+              onClick={() => handleClick(event)}
             >
               <span className={styles.EventTime}>
                 {formatPlayheadTime(event.timeSec)}
