@@ -120,7 +120,8 @@
 }
 
 @media (max-width: 479px) {
-  .DemoDownloadButton {
+  .DemoDownloadButton,
+  .EjectButton {
     display: none;
   }
 }

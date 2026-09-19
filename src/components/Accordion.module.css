@@ -72,7 +72,7 @@
 @media (pointer: coarse) {
   .Trigger {
     font-size: 13px;
-    padding: 12px 10px;
+    padding: 10px;
     gap: 6px;
   }
 }

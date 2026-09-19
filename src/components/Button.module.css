@@ -105,6 +105,18 @@
     font-size: 12px;
   }
 
+  @media (pointer: coarse) {
+    .SmallButton {
+      min-height: 32px;
+      flex: 1 0 auto;
+      align-self: stretch;
+    }
+
+    .SmallButton .ButtonLabel {
+      font-size: 13px;
+    }
+  }
+
   .ButtonHint {
     font-size: 10px;
     opacity: 0.7;
