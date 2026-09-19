@@ -17,6 +17,7 @@ import {
 } from "./demoStreaming";
 import { clearWorldColliders } from "../collision/worldCollision";
 import { setTerrainCollisionData } from "../collision/terrainCollision";
+import { registerCollisionLoadFailure } from "../collision/collisionContext";
 
 const armor = { boxSize: { x: 1, y: 1, z: 2 }, mass: 90, maxEnergy: 100 };
 const neutral = {
@@ -96,7 +97,7 @@ function demo(
     },
     getRegistry: () => ({
       getGhostParser: (classId: number) => ({
-        name: classId === 2 ? "TerrainBlock" : "Player",
+        name: ["", "Player", "TerrainBlock", "InteriorInstance"][classId],
       }),
       getEventParser: () => undefined,
     }),
@@ -133,6 +134,45 @@ afterEach(() => {
 });
 
 describe("demo player tick prediction", () => {
+  it.each([2, 3])(
+    "allows a seek after collision asset class %s fails without predicting through missing geometry",
+    (classId) => {
+      const stream = demo([
+        packet([{ index: 1, type: "create", classId, parsedData: {} }]),
+        ...Array.from({ length: 25 }, move),
+      ]);
+      stream.stepToTime(0.032);
+      expect(stream.canStartSeek).toBe(false);
+      const clearFailure = registerCollisionLoadFailure(1);
+      expect(stream.canStartSeek).toBe(true);
+      expect(stream.needsReplay).toBe(false);
+      expect(stream.stepToTime(0.64).entities[0].position).toEqual([0, 0, 100]);
+      clearFailure();
+      expect(stream.canStartSeek).toBe(false);
+    },
+  );
+
+  it("keeps waiting for other assets and does not clear a replacement failure", () => {
+    const stream = demo([
+      packet([
+        { index: 1, type: "create", classId: 2, parsedData: {} },
+        { index: 2, type: "create", classId: 3, parsedData: {} },
+      ]),
+      move(),
+    ]);
+    stream.stepToTime(0.032);
+    const clearTerrainFailure = registerCollisionLoadFailure(1);
+    expect(stream.canStartSeek).toBe(false);
+    const clearInteriorFailure = registerCollisionLoadFailure(2);
+    expect(stream.canStartSeek).toBe(true);
+    const clearReplacement = registerCollisionLoadFailure(1);
+    clearTerrainFailure();
+    expect(stream.canStartSeek).toBe(true);
+    clearReplacement();
+    clearInteriorFailure();
+    expect(stream.canStartSeek).toBe(false);
+  });
+
   it("runs only the initial queued moves not yet processed by the recording client", () => {
     const stream = demo([move()], true, true, [neutral, neutral, neutral], 1);
     // Initial moves 1 and 2 are pending; move 0 is already reflected in
@@ -161,6 +201,10 @@ describe("demo player tick prediction", () => {
     );
     expect(player.position![2]).toBeGreaterThanOrEqual(100);
     expect(stream.needsReplay).toBe(false);
+    // After the startup repair, hiding or remounting geometry must not block
+    // subsequent seeks: there is no longer a collision replay to wait for.
+    setTerrainCollisionData(null);
+    expect(stream.canStartSeek).toBe(true);
   });
   it("advances players between packets while scanners retain recorded poses", () => {
     const blocks = [

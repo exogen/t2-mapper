@@ -824,6 +824,7 @@ export function pointObstructed(
 
 /** Test-only: clear all registered colliders. */
 export function clearWorldColliders(): void {
+  collisionState().failedAssets.clear();
   interiors().clear();
   interiorVersion++;
   staticShapes().clear();

@@ -49,6 +49,68 @@ afterEach(() => {
 });
 
 describe("frame publication and transport", () => {
+  it("waits for collision assets before starting a cold timestamp seek", () => {
+    let collisionReady = false;
+    Object.defineProperty(demo.streamingPlayback, "canStartSeek", {
+      get: () => collisionReady,
+    });
+    state().seekPlayback(80);
+    const nonce = state().playback.seekNonce;
+    const publish = vi.fn();
+    frame(publish);
+    frame(publish);
+    expect(step).not.toHaveBeenCalled();
+    expect(publish).not.toHaveBeenCalled();
+    expect(state().playback).toMatchObject({
+      status: "seeking",
+      seekTime: 80,
+      seekNonce: nonce,
+      seekProgress: null,
+    });
+    expect(streamSnapshotStore.getState().snapshot?.timeSec).toBe(0);
+
+    collisionReady = true;
+    frame(publish);
+    expect(publish).toHaveBeenCalledOnce();
+    expect(clock.time).toBe(80);
+    expect(state().playback).toMatchObject({
+      status: "playing",
+      seekNonce: nonce,
+    });
+  });
+
+  it("honors a replacement target and pause requested while waiting for assets", () => {
+    let collisionReady = false;
+    Object.defineProperty(demo.streamingPlayback, "canStartSeek", {
+      get: () => collisionReady,
+    });
+    state().seekPlayback(80);
+    frame();
+    state().seekPlayback(30);
+    state().setPlaybackStatus("paused");
+    frame();
+    expect(step).not.toHaveBeenCalled();
+    collisionReady = true;
+    frame();
+    expect(clock.time).toBe(30);
+    expect(state().playback.status).toBe("paused");
+  });
+
+  it("does not block a partial replay on collision for an unpublished scene", () => {
+    let collisionReady = true;
+    Object.defineProperty(demo.streamingPlayback, "canStartSeek", {
+      get: () => collisionReady,
+    });
+    state().seekPlayback(80);
+    step.mockReturnValueOnce(snapshot(1));
+    frame();
+    expect(state().playback.status).toBe("seeking");
+    collisionReady = false;
+    frame();
+    expect(clock.time).toBe(80);
+    expect(state().playback.status).toBe("playing");
+  });
+
   it("keeps partial reconstruction private and resumes only after publishing the destination", () => {
     state().seekPlayback(10);
     step.mockReturnValueOnce(snapshot(1));

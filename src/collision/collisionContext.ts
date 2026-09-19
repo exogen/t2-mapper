@@ -74,6 +74,9 @@ export interface CollisionState {
    *  releases its BVHs too. */
   bvhCache: WeakMap<BufferGeometry, MeshBVH>;
   terrain: TerrainCollisionData | null;
+  /** Mounted load failures let seeks proceed using packet poses, while
+   *  prediction still requires real collision geometry. Keyed by ghost index. */
+  failedAssets: Map<number, symbol>;
   /** The map's water bodies, by id. Maps really do have several —
    *  Damnation has two pools, BeachBlitz an ocean plus two lava
    *  planes — and the renderer draws them all, so collision has to
@@ -92,6 +95,7 @@ export function createCollisionState(): CollisionState {
     forceFields: new Map(),
     bvhCache: new WeakMap(),
     terrain: null,
+    failedAssets: new Map(),
     water: new Map(),
     waterTime: 0,
   };
@@ -121,4 +125,14 @@ export function setCollisionStateResolver(
 /** The collision world in effect for this call. */
 export function collisionState(): CollisionState {
   return resolve();
+}
+
+/** Keep a failure scoped to its mounted scene, including retries/replacements. */
+export function registerCollisionLoadFailure(ghostIndex: number): () => void {
+  const failures = collisionState().failedAssets;
+  const token = Symbol();
+  failures.set(ghostIndex, token);
+  return () => {
+    if (failures.get(ghostIndex) === token) failures.delete(ghostIndex);
+  };
 }

@@ -33,6 +33,17 @@ export function advancePlaybackFrame(
   const playback = engineStore.getState().playback;
   if (playback.recording !== recording || playback.pendingSeekSec != null)
     return;
+  // Keep the published opening scene mounted while its collision assets load.
+  // A cold timestamp link would otherwise replay without player prediction,
+  // then discard that work and restart when collision becomes available.
+  // Only gate the first slice: a replay can encounter a different mission
+  // whose entities cannot mount until we publish the completed destination.
+  if (
+    playback.status === "seeking" &&
+    clock.seekProgress == null &&
+    stream.canStartSeek === false
+  )
+    return;
   const nonce = playback.seekNonce;
   const retryTime =
     playback.status === "seeking" ? playback.seekTime : clock.time;

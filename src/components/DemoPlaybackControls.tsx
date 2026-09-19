@@ -328,7 +328,10 @@ export function DemoPlaybackControls() {
         )}
       </button>
       <span className={styles.Time}>
-        {`${formatPlayheadTimeAligned(currentTime, duration)} / ${formatPlayheadTime(duration)}`}
+        {formatPlayheadTimeAligned(currentTime, duration)}
+        <span className={styles.TotalTime}>
+          {` / ${formatPlayheadTime(duration)}`}
+        </span>
       </span>
       <Slider.Root
         className={styles.SeekRoot}

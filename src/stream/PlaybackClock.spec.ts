@@ -323,4 +323,15 @@ describe("playback clock with the installed demo parser", () => {
     clock.reset(0, clock.seekNonce);
     expect(clock.seekProgress).toBeNull();
   });
+
+  it("keeps the progress origin through floating-point rounding on a long seek", async () => {
+    const { parser, clock, stepFrame } = await setup();
+    slowTicks(parser);
+    engineStore.getState().seekPlayback(50);
+    for (let i = 0; i < 100; i++) {
+      expect(stepFrame()).toBeNull();
+      expect(clock.seekProgress?.startTimeSec).toBe(0);
+    }
+    expect(clock.seekProgress?.currentTimeSec).toBeCloseTo(38.4);
+  });
 });

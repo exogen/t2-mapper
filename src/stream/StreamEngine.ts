@@ -1746,11 +1746,13 @@ export abstract class StreamEngine implements StreamingPlayback {
     return entity.playerPrediction;
   }
 
-  protected playerCollisionReady(): boolean {
+  protected playerCollisionReady(allowFailedAssets = false): boolean {
     // Scene loading is progressive. Never predict a stationary player falling
     // through a terrain/interior whose collision asset has not mounted yet.
     const world = collisionState();
     for (const entity of this.entities.values()) {
+      if (allowFailedAssets && world.failedAssets.has(entity.ghostIndex))
+        continue;
       if (entity.className === "TerrainBlock" && !world.terrain) return false;
       if (
         entity.className === "InteriorInstance" &&

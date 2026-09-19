@@ -839,6 +839,17 @@ class DemoStreamAdapter extends StreamEngine {
   // assets arrive; later React collider remounts during rewinds must not cause
   // an endless cycle of replay -> remount -> replay.
   private collisionReplayComplete = false;
+  get canStartSeek(): boolean {
+    // A failed download must not leave transport waiting forever. Prediction
+    // stays disabled until real geometry arrives; recorded poses still work.
+    // After the startup repair, collider remounts cannot trigger another replay.
+    return (
+      !this.playerPredictionEnabled ||
+      this.collisionReplayComplete ||
+      this.playerCollisionReady(true)
+    );
+  }
+
   get needsReplay(): boolean {
     return (
       this.predictionModeChanged ||
@@ -886,7 +897,8 @@ class DemoStreamAdapter extends StreamEngine {
       didReset = true;
     }
 
-    this.lastStepStartTimeSec = (this.moveTicks * TICK_DURATION_MS) / 1000;
+    // Match snapshot rounding so forward progress never looks like a rewind.
+    this.lastStepStartTimeSec = this.getTimeSec();
     const wasExhausted = this.exhausted;
     let movesProcessed = 0;
     // The same simulation ticks drive playback and seeks. Skipping prediction

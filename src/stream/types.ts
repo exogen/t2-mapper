@@ -670,6 +670,10 @@ export interface StreamingPlayback {
   readonly checkpointTicks?: readonly number[];
   /** The initial pass preceded collision loading and can now be reconstructed. */
   readonly needsReplay?: boolean;
+  /** False while startup collision assets are still loading before a seek.
+   *  Failed assets permit playback using recorded poses. Sources without this
+   *  prerequisite can omit it; headless demo scans report true. */
+  readonly canStartSeek?: boolean;
   setPlayerPredictionEnabled?(enabled: boolean): void;
   reset(): void;
   getSnapshot(): StreamSnapshot;

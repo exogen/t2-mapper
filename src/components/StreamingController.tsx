@@ -317,9 +317,8 @@ export function StreamingController({
     renderPrev: StreamSnapshot;
     interpT: number;
   } | null>(null);
-  const streamRef = useRef<StreamingPlayback | null>(
-    recording.streamingPlayback ?? null,
-  );
+  // The frame loop must wait for the initialization effect to seed the clock.
+  const streamRef = useRef<StreamingPlayback | null>(null);
   const publishedSnapshotRef = useRef<StreamSnapshot | null>(null);
   const pendingMissionInfoRef = useRef(false);
   const silencedSeekRef = useRef(-1);

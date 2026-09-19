@@ -38,6 +38,7 @@ import { onTerrainLightmapInvalidated } from "./terrainLightmapControl";
 import { setShadowCasterBounds } from "../shadowBounds";
 import { invalidateShadows } from "./shadowControl";
 import { setTerrainCollisionData } from "../collision/terrainCollision";
+import { registerCollisionLoadFailure } from "../collision/collisionContext";
 import { setTerrainLightmap } from "../shapeLighting";
 import { setFogTerrainRows, clearFogTerrainRows } from "../globalFogUniforms";
 import {
@@ -336,7 +337,10 @@ export const TerrainBlock = memo(function TerrainBlock({
     () => scene.emptySquareRuns ?? [],
     [scene.emptySquareRuns],
   );
-  const { data: terrain } = useTerrain(terrainFile);
+  const { data: terrain, isError: terrainFailed } = useTerrain(terrainFile);
+  useEffect(() => {
+    if (terrainFailed) return registerCollisionLoadFailure(scene.ghostIndex);
+  }, [terrainFailed, scene.ghostIndex]);
   // Shared geometry for all tiles - with smooth normals computed from heightmap
   // Uses Torque-style alternating diagonal triangulation for accurate terrain
   const sharedGeometry = useMemo(() => {

@@ -8,10 +8,11 @@ import {
 } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
 import { AudioListener, AudioLoader } from "three";
-import { useEngineSelector } from "../state/engineStore";
-import { isStreamingSource, useDataSource } from "../state/gameEntityStore";
+import { useDataSource } from "../state/gameEntityStore";
 import { useLiveSelector } from "../state/liveConnectionStore";
 import { commentaryPlayback } from "../state/streamPlaybackStore";
+import { connectAudioPlayback } from "./audioPlayback";
+import { createAudioPlaybackFade } from "./audioPlaybackFade";
 import { useSettings } from "./SettingsProvider";
 
 /**
@@ -40,6 +41,7 @@ const AudioContext = createContext<AudioContextType | undefined>(undefined);
 // sound.
 let _audioListener: AudioListener | null = null;
 let _audioLoader: AudioLoader | null = null;
+let _playbackFade: ReturnType<typeof createAudioPlaybackFade> | null = null;
 
 /**
  * AudioProvider initializes the AudioLoader and AudioListener for spatial audio.
@@ -64,11 +66,13 @@ export function AudioProvider({ children }: { children: ReactNode }) {
     _audioLoader ??= new AudioLoader();
     if (!_audioListener) {
       _audioListener = new AudioListener();
+      // Stay silent until the first frame applies the user's volume.
+      _audioListener.gain.gain.value = 0;
       // Safety limiter between the master gain and the speakers. Dozens of
       // simultaneous effects sum well past full scale and hard-clip at the
       // destination — harsh distortion that reads as crackle. A compressor
       // with a high ratio and fast attack transparently catches the peaks
-      // instead. (setFilter wires gain → limiter → destination.)
+      // instead.
       const ctx = _audioListener.context;
       const limiter = ctx.createDynamicsCompressor();
       limiter.threshold.value = -6;
@@ -76,7 +80,13 @@ export function AudioProvider({ children }: { children: ReactNode }) {
       limiter.ratio.value = 12;
       limiter.attack.value = 0.003;
       limiter.release.value = 0.25;
-      _audioListener.setFilter(limiter);
+      _playbackFade = createAudioPlaybackFade(ctx);
+      // Master gain → limiter → playback fade → speakers. Fade the output
+      // after the limiter, including any samples buffered inside it.
+      _audioListener.gain.disconnect(ctx.destination);
+      _audioListener.gain.connect(limiter);
+      limiter.connect(_playbackFade.node);
+      _playbackFade.node.connect(ctx.destination);
     }
     const audioLoader = _audioLoader;
     const listener = _audioListener;
@@ -140,46 +150,24 @@ export function AudioProvider({ children }: { children: ReactNode }) {
     };
   }, [camera]);
 
-  // Keep the Web AudioContext running only while a demo/live stream is
-  // actually playing. Suspending (rather than muting) freezes every routed
-  // sound at its current position so it resumes seamlessly — and, crucially,
-  // covers the ambient emitters / chat / jet loops that rely on suspension
-  // instead of checking `isPlaying` themselves. A demo loads at "stopped"
-  // (never "paused"), so silence must cover any non-playing stream state,
-  // not just "paused". Map mode isn't a stream, so its ambient audio keeps
-  // running. Applied on every relevant change and immediately on mount,
-  // since the initial "stopped" fires no later transition to react to.
-  const status = useEngineSelector((state) => state.playback.status);
-  const dataSource = useDataSource();
-  const streaming = isStreamingSource(dataSource);
+  // Suspend all sounds at their current positions while a stream is stopped,
+  // paused or seeking. Subscribe directly: React can batch an entire short
+  // seek into one render and otherwise skip its mute/resume transition.
+  // Map ambience and the stream's debrief keep running normally.
   const listener = audioContext.audioListener;
   useEffect(() => {
-    const ctx = listener?.context;
-    // Ask for the state we want rather than testing ctx.state first: a
-    // transition already in flight leaves that reading stale (the state
-    // flips a quantum or two after suspend()/resume() is called), and a
-    // guard reading it would skip the call that corrects it. Both calls
-    // are no-ops when the context is already where we want it.
-    const reconcile = () => {
-      if (!ctx) return;
-      // The debrief freezes the world, but chat, announcements and ambient
-      // audio continue. The owners of gameplay loops stop those separately.
-      const shouldPlay = !streaming || status === "playing";
-      const settle = shouldPlay ? ctx.resume() : ctx.suspend();
-      settle.catch(noop);
+    if (!listener || !_playbackFade) return;
+    const playback = connectAudioPlayback(listener.context, _playbackFade);
+    reconcileRef.current = playback.reconcile;
+    return () => {
+      reconcileRef.current = noop;
+      playback.dispose();
     };
-    reconcileRef.current = reconcile;
-    reconcile();
-    if (!ctx) return;
-    // The context can also change state on its own — a browser that
-    // auto-resumes a blocked context on the first interaction, or an OS
-    // interruption — so re-assert whenever it does.
-    ctx.addEventListener("statechange", reconcile);
-    return () => ctx.removeEventListener("statechange", reconcile);
-  }, [status, streaming, listener]);
+  }, [listener]);
 
   // A dead live session keeps rendering its last frame, but looping
   // entity sounds shouldn't keep playing after the disconnect.
+  const dataSource = useDataSource();
   const liveSessionDead = useLiveSelector(
     (s) =>
       s.gameStatus !== "connected" &&

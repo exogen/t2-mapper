@@ -15,6 +15,8 @@ import { LuCrosshair, LuUserPen } from "react-icons/lu";
 import { ColoredName } from "./ColoredName";
 import { formatPlayheadTime } from "./demoFormat";
 import { ScanProgress } from "./ScanProgress";
+import { useSettings } from "./SettingsProvider";
+import { useMediaQuery } from "./useMediaQuery";
 import { ImSad2 } from "react-icons/im";
 import accordionStyles from "./Accordion.module.css";
 import controlStyles from "./InspectorControls.module.css";
@@ -209,6 +211,9 @@ export function DemoTimeline() {
   const observerPerspective = useDemoTimeline((s) => s.observerPerspective);
   const recorderName = useRecorderName();
   const recording = useRecording();
+  const { setSidebarOpen } = useSettings();
+  // Match the overlay layout and navigation actions in MapInspector.
+  const sidebarOverlayMode = useMediaQuery("(max-width: 899px)") ?? false;
   const [filter, setFilter] = useState<Filter>("all");
 
   // Filters never persist across demos — each load starts on "All".
@@ -231,13 +236,14 @@ export function DemoTimeline() {
   const handleClick = useCallback(
     (event: TimelineEvent) => {
       seekToTimelineEvent(recording, event);
+      if (sidebarOverlayMode) setSidebarOpen(false);
       // Blur so focus returns to body — allows spacebar to toggle
       // play/pause instead of re-activating the timeline button.
       if (document.activeElement instanceof HTMLElement) {
         document.activeElement.blur();
       }
     },
-    [recording],
+    [recording, sidebarOverlayMode, setSidebarOpen],
   );
 
   if (error) {

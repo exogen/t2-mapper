@@ -35,6 +35,7 @@ import { useAnisotropy } from "./useAnisotropy";
 import { injectCustomFog } from "../fogShader";
 import { globalFogUniforms } from "../globalFogUniforms";
 import { injectInteriorLighting } from "../interiorMaterial";
+import { registerCollisionLoadFailure } from "../collision/collisionContext";
 
 const log = createLogger("InteriorInstance");
 
@@ -211,7 +212,14 @@ function InteriorPlaceholder({
   );
 }
 
-function DebugInteriorPlaceholder({ label }: { label?: string }) {
+function FailedInterior({
+  ghostIndex,
+  label,
+}: {
+  ghostIndex: number;
+  label: string;
+}) {
+  useEffect(() => registerCollisionLoadFailure(ghostIndex), [ghostIndex]);
   const debugContext = useDebug();
   const debugMode = debugContext?.debugMode ?? false;
   return debugMode ? <InteriorPlaceholder color="red" label={label} /> : null;
@@ -243,8 +251,10 @@ export const InteriorInstance = memo(function InteriorInstance({
   return (
     <group ref={rootRef} position={position} quaternion={q} scale={scale}>
       <ErrorBoundary
+        resetKeys={[scene.interiorFile, scene.ghostIndex]}
         fallback={
-          <DebugInteriorPlaceholder
+          <FailedInterior
+            ghostIndex={scene.ghostIndex}
             label={`${scene.ghostIndex}: ${scene.interiorFile}`}
           />
         }

@@ -84,6 +84,12 @@
   }
 }
 
+@media (max-width: 479px) {
+  .TotalTime {
+    display: none;
+  }
+}
+
 @media (max-width: 399px) {
   .Time {
     font-size: 11px;
