@@ -29,17 +29,16 @@ const joinTeam = (name: string, id: string, team: string) =>
   serverMessage("MsgClientJoinTeam", "", name, "T", id, team);
 
 describe("WatchStateAccumulator self identity", () => {
-  it("picks our own welcome among clients sharing our account GUID", () => {
+  it("uses a welcome only as a fallback for old demos without a client ID", () => {
     const ws = new WatchStateAccumulator();
-    ws.expectedSelfGuid = "555000";
     // Another MapGenius observer on the SAME account, already connected —
     // arrives as a silent roster-sync join. Same GUID, but not us.
     ws.applyPacket(join("", "MapGenius", "3", "555000"));
     expect(ws.selfClientId).toBeNull();
-    // A different account's welcome-style join — GUID mismatch, ignored.
+    // A join announcement does not identify the recorder.
     ws.applyPacket(join("Impostor joined", "Impostor", "4", "999"));
     expect(ws.selfClientId).toBeNull();
-    // Our own welcome: matching GUID and a non-empty greeting.
+    // Our own private welcome identifies the recorder.
     ws.applyPacket(join("Welcome to Tribes2", "MapGenius", "7", "555000"));
     expect(ws.selfClientId).toBe(7);
     // A LATER same-account observer joining must not steal self.
@@ -49,14 +48,12 @@ describe("WatchStateAccumulator self identity", () => {
     expect(ws.selfClientId).toBe(7);
   });
 
-  it("ignores a matching-account silent join and a mismatched welcome", () => {
+  it("never replaces an ID supplied by the handshake or demo header", () => {
     const ws = new WatchStateAccumulator();
-    ws.expectedSelfGuid = "555000";
-    // Silent (roster) join on our account is never self...
+    ws.selfClientId = 7;
     ws.applyPacket(join("", "MapGenius", "3", "555000"));
-    // ...and a non-matching account's welcome is never self either.
     ws.applyPacket(join("Welcome to Tribes2", "Impostor", "4", "999"));
-    expect(ws.selfClientId).toBeNull();
+    expect(ws.selfClientId).toBe(7);
   });
 
   it("learns selfClientId from the welcome join, ignoring silent roster joins", () => {
@@ -73,19 +70,59 @@ describe("WatchStateAccumulator self identity", () => {
     expect(ws.selfClientId).toBe(7);
   });
 
-  it("reports our team via getSelfTeamId; > 0 means we were placed on a team", () => {
+  it("keeps roster team updates separate from the connection's sensor group", () => {
     const ws = new WatchStateAccumulator();
     ws.applyPacket(join("welcome", "MapGenius", "7"));
-    expect(ws.getSelfTeamId()).toBe(0); // observer
+    expect(ws.getPlayerRoster().get(7)?.teamId).toBe(0);
     ws.applyPacket(joinTeam("MapGenius", "7", "1"));
-    expect(ws.getSelfTeamId()).toBe(1); // teamed
+    expect(ws.getPlayerRoster().get(7)?.teamId).toBe(1);
+    expect(ws.playerSensorGroup).toBe(0);
     ws.applyPacket(joinTeam("MapGenius", "7", "0"));
-    expect(ws.getSelfTeamId()).toBe(0); // back to observer
+    expect(ws.getPlayerRoster().get(7)?.teamId).toBe(0);
   });
 
-  it("returns null when self is not yet identified", () => {
+  it("does not infer self identity from a roster team update", () => {
     const ws = new WatchStateAccumulator();
     ws.applyPacket(joinTeam("Alice", "3", "1"));
-    expect(ws.getSelfTeamId()).toBeNull();
+    expect(ws.selfClientId).toBeNull();
+  });
+
+  it.each(["%1 joined the game.", "%1 connected.", "A new player arrived"])(
+    "does not infer the recorder from a broadcast: %s",
+    (message) => {
+      const ws = new WatchStateAccumulator();
+      ws.applyPacket(join(message, "MapGenius", "3", "555000"));
+      expect(ws.selfClientId).toBeNull();
+      ws.applyPacket(join("Welcome to Tribes2", "MapGenius", "7", "555000"));
+      expect(ws.selfClientId).toBe(7);
+    },
+  );
+
+  it.each(["", "0"])(
+    "accepts our welcome when the server hides the GUID as %j",
+    (guid) => {
+      const ws = new WatchStateAccumulator();
+      ws.applyPacket(join("%1 joined the game.", "Alice", "3", guid));
+      expect(ws.selfClientId).toBeNull();
+      ws.applyPacket(join("\x02Welcome to Tribes2", "MapGenius", "7", guid));
+      expect(ws.selfClientId).toBe(7);
+    },
+  );
+
+  it("resets the roster team on a repeated join, like the stock client", () => {
+    const ws = new WatchStateAccumulator();
+    ws.applyPacket(join("welcome", "MapGenius", "7"));
+    ws.applyPacket(joinTeam("MapGenius", "7", "1"));
+    ws.applyPacket(join("", "MapGenius", "7"));
+    expect(ws.getPlayerRoster().get(7)?.teamId).toBe(0);
+    ws.applyPacket(joinTeam("MapGenius", "7", "1"));
+    expect(ws.getPlayerRoster().get(7)?.teamId).toBe(1);
+  });
+
+  it("resets a placeholder roster entry when the welcome arrives", () => {
+    const ws = new WatchStateAccumulator();
+    ws.applyPacket(joinTeam("MapGenius", "7", "2"));
+    ws.applyPacket(join("welcome", "MapGenius", "7"));
+    expect(ws.getPlayerRoster().get(7)?.teamId).toBe(0);
   });
 });

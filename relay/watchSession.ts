@@ -55,10 +55,10 @@ const SCORE_HUD_POLL_MS = parseInt(
 );
 /** Delay before HideHud cancels the server's 3s reschedule (< 3s). */
 const SCORE_HUD_CLOSE_MS = 2_000;
-/** Grace before reverting an observer that got placed on a team, and how
- *  many times to re-send the revert if it doesn't take. */
+/** Wait 2s for the first attempt, then retry every 10s until the server
+ *  confirms team 0. Mods may temporarily reject team changes. */
 const REOBSERVE_DELAY_MS = 2_000;
-const REOBSERVE_MAX_ATTEMPTS = 3;
+const REOBSERVE_RETRY_MS = 10_000;
 /** serverCmdWatchOnly pass that flags us isWatchOnly (exempt from the
  *  observer auto-kick); "ImaWatcher" is the stock $Host::ObserverOnlyPass. */
 const WATCH_ONLY_PASS = process.env.WATCH_ONLY_PASS || "ImaWatcher";
@@ -318,9 +318,6 @@ export class WatchSession {
   private scoreHudCloseTimer: ReturnType<typeof setTimeout> | null = null;
   private reObserveTimer: ReturnType<typeof setTimeout> | null = null;
   private reObserveAttempts = 0;
-  /** A team-revert sequence is in progress or exhausted; cleared only when
-   *  we're confirmed back on the observer team. */
-  private reObserveActive = false;
   private retryCount = 0;
   /** Re-syncs without a healthy stretch (~5000 packets) in between. */
   private resyncCount = 0;
@@ -453,6 +450,7 @@ export class WatchSession {
 
   start(): void {
     if (this.destroyed || this.ending) return;
+    this.cancelReObserve();
     if (this.retryTimer) {
       clearTimeout(this.retryTimer);
       this.retryTimer = null;
@@ -490,9 +488,6 @@ export class WatchSession {
     const conn =
       this.options.createConnection?.(this.key) ?? new GameConnection(this.key);
     this.connection = conn;
-    // Authenticated: our account GUID identifies our own client for the
-    // observer-team guard (falls back to the welcome join without it).
-    this.watchState.expectedSelfGuid = conn.selfGuid;
     const cached = this.options.getCachedServer(this.key);
     if (cached?.mapName) conn.setMapName(cached.mapName);
     if (this.delayMs > 0) {
@@ -531,7 +526,7 @@ export class WatchSession {
         },
         getActivePlayerCount: () => this.watchState.countActivePlayers(),
         getPlayerRoster: () => this.watchState.getPlayerRoster(),
-        getRecorderClientId: () => this.watchState.selfClientId,
+        getRecorderClientId: () => conn.selfClientId,
         getMatchStarted: () => this.watchState.matchStarted,
         getRecordContext: () => ({
           pinned: this.pinned,
@@ -552,6 +547,9 @@ export class WatchSession {
     });
     conn.on("packet", (data: Uint8Array) => {
       if (this.connection !== conn) return;
+      // ConnectAccept identifies our exact connection before any roster
+      // packets arrive. Welcome-message inference is only for old demos.
+      this.watchState.selfClientId = conn.selfClientId;
       this.handlePacket(data);
     });
     conn.on("sent", () => {
@@ -698,7 +696,7 @@ export class WatchSession {
 
     if (status === "connected") {
       this.retryCount = 0;
-      // Observer team was enforced by GameConnection; scope the whole map
+      // Observer mode was requested by GameConnection; scope the whole map
       // so every watcher's free camera sees all ghosts regardless of
       // position (commander-map scoping, binary-verified server behavior).
       conn.sendCommand("ScopeCommanderMap", "1");
@@ -707,6 +705,7 @@ export class WatchSession {
       // activity; WATCH_ONLY_PASS exempts us. Unknown serverCmds are
       // no-ops elsewhere.
       conn.sendCommand("WatchOnly", WATCH_ONLY_PASS);
+      this.maybeReObserve();
       this.startScoresPoll();
       this.startScoreHudPoll();
       if (this.delayMs > 0) {
@@ -1374,6 +1373,7 @@ export class WatchSession {
     // The fresh connection re-downloads everything regardless, so the
     // delay costs the next mission's demo nothing.
     this.rotating = true;
+    this.cancelReObserve();
     this.rotateTimer = setTimeout(() => {
       this.rotateTimer = null;
       if (this.destroyed || !this.rotating) return;
@@ -1841,14 +1841,21 @@ export class WatchSession {
    * demo. Watch mode only — this whole class is the watch path, so a
    * client-is-the-player connection (its own GameConnection) never runs
    * this. On detecting a team, revert to observer after a grace period,
-   * retrying a few times if the switch doesn't take, and stand down once
-   * back on team 0.
+   * retrying at a slower rate if the switch doesn't take, and stand down
+   * once back on team 0. Use GameConnection's SetSensorGroupEvent, which
+   * reports our own team without needing a roster client or target ID.
    */
   private maybeReObserve(): void {
-    const team = this.watchState.getSelfTeamId();
-    if (team != null && team > 0) {
-      if (!this.reObserveActive) {
-        this.reObserveActive = true;
+    if (
+      this.destroyed ||
+      this.ending ||
+      this.rotating ||
+      this.lastStatus !== "connected"
+    )
+      return;
+    const team = this.watchState.playerSensorGroup;
+    if (team > 0) {
+      if (!this.reObserveTimer) {
         this.reObserveAttempts = 0;
         relayLog.warn(
           { address: this.key, team },
@@ -1856,22 +1863,32 @@ export class WatchSession {
         );
         this.scheduleReObserve();
       }
-    } else if (this.reObserveActive) {
-      // Confirmed back on the observer team (or self identity lost) — done.
+    } else if (this.reObserveTimer) {
+      relayLog.info(
+        { address: this.key, attempts: this.reObserveAttempts },
+        "Observer team restored",
+      );
       this.cancelReObserve();
     }
   }
 
   private scheduleReObserve(): void {
     if (this.reObserveTimer) return;
+    const delay =
+      this.reObserveAttempts === 0 ? REOBSERVE_DELAY_MS : REOBSERVE_RETRY_MS;
     this.reObserveTimer = setTimeout(() => {
       this.reObserveTimer = null;
-      if (this.destroyed || this.lastStatus !== "connected") {
+      if (
+        this.destroyed ||
+        this.ending ||
+        this.rotating ||
+        this.lastStatus !== "connected"
+      ) {
         this.cancelReObserve();
         return;
       }
-      const team = this.watchState.getSelfTeamId();
-      if (team == null || team <= 0) {
+      const team = this.watchState.playerSensorGroup;
+      if (team === 0) {
         // Resolved between scheduling and firing.
         this.cancelReObserve();
         return;
@@ -1883,19 +1900,9 @@ export class WatchSession {
         "Reverting observer to team 0",
       );
       conn?.sendCommand("WatchOnly", WATCH_ONLY_PASS);
-      conn?.sendCommand("setPlayerTeam", "0");
-      if (this.reObserveAttempts < REOBSERVE_MAX_ATTEMPTS) {
-        this.scheduleReObserve();
-      } else {
-        // Give up sending until we're teamed again (avoid an endless
-        // stream of ignored commands); reObserveActive stays set so
-        // maybeReObserve won't restart while still stuck on the team.
-        relayLog.error(
-          { address: this.key, attempts: this.reObserveAttempts },
-          "Could not revert observer to team 0",
-        );
-      }
-    }, REOBSERVE_DELAY_MS);
+      conn?.sendCommand("ClientMakeObserver");
+      this.scheduleReObserve();
+    }, delay);
   }
 
   private cancelReObserve(): void {
@@ -1903,7 +1910,6 @@ export class WatchSession {
       clearTimeout(this.reObserveTimer);
       this.reObserveTimer = null;
     }
-    this.reObserveActive = false;
     this.reObserveAttempts = 0;
   }
 }

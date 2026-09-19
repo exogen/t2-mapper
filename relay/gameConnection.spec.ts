@@ -19,7 +19,7 @@ describe("GameConnection protocol negotiation", () => {
       sendRaw(data: Uint8Array): void;
       startKeepalive(): void;
       startOobPing(): void;
-      enforceObserver(): void;
+      requestObserver(): void;
     };
     inner._status = "challenging";
     inner.clientConnectSequence = 123;
@@ -28,7 +28,7 @@ describe("GameConnection protocol negotiation", () => {
       .spyOn(inner, "startKeepalive")
       .mockImplementation(() => {});
     vi.spyOn(inner, "startOobPing").mockImplementation(() => {});
-    vi.spyOn(inner, "enforceObserver").mockImplementation(() => {});
+    vi.spyOn(inner, "requestObserver").mockImplementation(() => {});
     return { conn, inner, send, keepalive };
   }
 
@@ -41,13 +41,13 @@ describe("GameConnection protocol negotiation", () => {
     return msg;
   }
 
-  function accept(protocol = 51, client = 123, server = 456) {
+  function accept(protocol = 51, client = 123, server = 456, clientId = 1000) {
     const msg = Buffer.alloc(17);
     msg[0] = 36;
     msg.writeUInt32LE(server, 1);
     msg.writeUInt32LE(client, 5);
     msg.writeUInt32LE(protocol, 9);
-    msg.writeUInt32LE(1000, 13);
+    msg.writeUInt32LE(clientId, 13);
     return msg;
   }
 
@@ -61,10 +61,12 @@ describe("GameConnection protocol negotiation", () => {
       );
       inner.handleConnectAccept(accept());
       expect(conn.status).toBe("connected");
+      expect(conn.selfClientId).toBe(1000);
       expect(conn.connectSequence).toBe(123 ^ 456);
       expect(keepalive).toHaveBeenCalledTimes(1);
-      inner.handleConnectAccept(accept());
+      inner.handleConnectAccept(accept(51, 123, 456, 9999));
       expect(keepalive).toHaveBeenCalledTimes(1);
+      expect(conn.selfClientId).toBe(1000);
     },
   );
 
@@ -81,6 +83,7 @@ describe("GameConnection protocol negotiation", () => {
       inner.handleChallengeResponse(challenge(52));
       inner.handleConnectAccept(packet as Buffer);
       expect(conn.status).toBe("challenging");
+      expect(conn.selfClientId).toBeNull();
       expect(keepalive).not.toHaveBeenCalled();
       inner.handleConnectAccept(accept());
       expect(conn.status).toBe("connected");
@@ -296,7 +299,7 @@ describe("GameConnection.missionStartedWithoutAuth", () => {
 
     expect(conn.status).toBe("connected");
     expect(statuses).toEqual(["connected"]);
-    expect(conn.sendCommand).toHaveBeenCalledWith("setPlayerTeam", "0");
+    expect(conn.sendCommand).toHaveBeenCalledWith("ClientMakeObserver");
   });
 
   it("leaves a poked connection to finish the T2csri handshake", () => {

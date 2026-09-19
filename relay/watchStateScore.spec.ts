@@ -84,6 +84,46 @@ describe("score-line parsing is crash-safe", () => {
     expect(entry?.kills).toBe(35);
   });
 
+  it("recreates the roster entry on every join, like the stock client", () => {
+    const ws = new WatchStateAccumulator();
+    teamPlayer(ws, "Vaxity", "7");
+    ws.applyPacket(serverMessage("MsgPlayerScore", "", "7", "470", "42", "3"));
+    ws.applyPacket(setLineHud("Vaxity", "470", "35"));
+
+    // Renaming updates the existing entry without resetting team or stats.
+    ws.applyPacket(
+      serverMessage("MsgClientNameChanged", "", "Vaxity", "[TAG]Vaxity", "7"),
+    );
+    expect(ws.getPlayerRoster().get(7)).toMatchObject({
+      name: "[TAG]Vaxity",
+      teamId: 1,
+      score: 470,
+      ping: 42,
+      packetLoss: 3,
+      kills: 35,
+    });
+
+    // A join creates a new PlayerRep, even if the client ID already exists.
+    ws.applyPacket(join("[TAG]Vaxity", "7"));
+    expect(ws.getPlayerRoster().get(7)).toMatchObject({
+      name: "[TAG]Vaxity",
+      teamId: 0,
+      score: 0,
+      ping: 0,
+      packetLoss: 0,
+    });
+    expect(ws.getPlayerRoster().get(7)?.kills).toBeUndefined();
+
+    ws.applyPacket(joinTeam("[TAG]Vaxity", "7", "2"));
+    ws.applyPacket(serverMessage("MsgPlayerScore", "", "7", "17", "31", "1"));
+    expect(ws.getPlayerRoster().get(7)).toMatchObject({
+      teamId: 2,
+      score: 17,
+      ping: 31,
+      packetLoss: 1,
+    });
+  });
+
   it("still applies a valid debrief line to a matched player", () => {
     const ws = new WatchStateAccumulator();
     teamPlayer(ws, "Vaxity", "7");

@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { gunzipSync } from "node:zlib";
 import type { WebSocket } from "ws";
+import type { ParsedData } from "t2-demo-parser";
 import {
   WatchSessionManager,
   type WatchSessionManagerOptions,
@@ -23,6 +24,7 @@ class FakeGameConnection extends EventEmitter {
   connectCalls = 0;
   disconnectCalls = 0;
   commands: Array<{ command: string; args: string[] }> = [];
+  selfClientId: number | null = null;
 
   constructor(address: string) {
     super();
@@ -109,6 +111,198 @@ function createManager(extra: Partial<WatchSessionManagerOptions> = {}) {
   });
   return { manager, connections };
 }
+
+describe("watch observer recovery", () => {
+  const address = "1.2.3.4:28000";
+  let manager: WatchSessionManager;
+  let conn: FakeGameConnection;
+  let session: any;
+
+  function events(...data: ParsedData[]) {
+    session.parserKit.packetParser.parsePacket = () => ({
+      gameState: {},
+      ghosts: [],
+      events: data.map((parsedData) => ({ parsedData })),
+    });
+    conn.emit("packet", new Uint8Array([1, 2, 3]));
+  }
+
+  function messages(...commands: string[][]) {
+    events(
+      ...commands.map((args) => ({
+        type: "RemoteCommandEvent",
+        funcName: "ServerMessage",
+        args,
+      })),
+    );
+  }
+
+  const sensorGroup = (group: number) =>
+    events({ type: "SetSensorGroupEvent", sensorGroup: group });
+  const joinTeam = (team: number, clientId = 7) =>
+    messages([
+      "MsgClientJoinTeam",
+      "",
+      "MapGenius",
+      "Team",
+      String(clientId),
+      String(team),
+    ]);
+  const requests = () =>
+    conn.commands.filter((c) => c.command === "ClientMakeObserver");
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    const setup = createManager();
+    manager = setup.manager;
+    manager.watch(new FakeWebSocket() as unknown as WebSocket, address);
+    conn = setup.connections[0];
+    session = manager.getSession(address);
+    conn.setStatus("connected");
+    conn.commands.length = 0;
+  });
+
+  afterEach(() => {
+    manager.shutdown();
+    vi.restoreAllMocks();
+    vi.useRealTimers();
+  });
+
+  it("uses the handshake client ID without a welcome or account GUID", () => {
+    conn.selfClientId = 7;
+    events();
+    expect(session.watchState.selfClientId).toBe(7);
+    messages(["MsgClientJoin", "Welcome", "Another client", "9", "33"]);
+    expect(session.watchState.selfClientId).toBe(7);
+    joinTeam(1);
+    vi.advanceTimersByTime(2_000);
+    expect(requests()).toHaveLength(0);
+    sensorGroup(1);
+    vi.advanceTimersByTime(2_000);
+    expect(requests()).toEqual([{ command: "ClientMakeObserver", args: [] }]);
+  });
+
+  it("keeps retrying through roster refreshes, team messages, and roster removal", () => {
+    messages(["MsgClientJoin", "Welcome to Tribes2", "MapGenius", "7", "32"]);
+    sensorGroup(1);
+    vi.advanceTimersByTime(2_000);
+    messages(["MsgClientJoin", "", "MapGenius", "7", "32"]);
+    joinTeam(0);
+    messages(["MsgClientDrop", "", "MapGenius", "7"]);
+    expect(session.watchState.getPlayerRoster().has(7)).toBe(false);
+    vi.advanceTimersByTime(10_000);
+    expect(requests()).toHaveLength(2);
+  });
+
+  it("ignores roster and target teams without a connection sensor-group change", () => {
+    messages(["MsgClientJoin", "Welcome to Tribes2", "MapGenius", "7", "32"]);
+    joinTeam(1);
+    joinTeam(1, 9);
+    events({ type: "TargetInfoEvent", targetId: 32, sensorGroup: 1 });
+    vi.advanceTimersByTime(2_000);
+    expect(requests()).toHaveLength(0);
+  });
+
+  it("uses the game's Join Observers command without a welcome, GUID, or roster", () => {
+    expect(session.watchState.selfClientId).toBeNull();
+    expect(conn.selfClientId).toBeNull();
+    sensorGroup(1);
+    vi.advanceTimersByTime(1_999);
+    expect(requests()).toHaveLength(0);
+    vi.advanceTimersByTime(1);
+    expect(requests()).toEqual([{ command: "ClientMakeObserver", args: [] }]);
+    expect(conn.commands.some((c) => c.command === "setPlayerTeam")).toBe(
+      false,
+    );
+    expect(conn.commands.some((c) => c.command === "WatchOnly")).toBe(true);
+  });
+
+  it("tries after 2s then every 10s, stops on confirmation, and rearms", () => {
+    sensorGroup(1);
+    vi.advanceTimersByTime(2_000);
+    expect(requests()).toHaveLength(1);
+    // Staying on a team, even a different one, must not restart the grace period.
+    sensorGroup(2);
+    vi.advanceTimersByTime(9_999);
+    expect(requests()).toHaveLength(1);
+    vi.advanceTimersByTime(1);
+    expect(requests()).toHaveLength(2);
+    vi.advanceTimersByTime(10_000);
+    expect(requests()).toHaveLength(3);
+    vi.advanceTimersByTime(10_000);
+    expect(requests()).toHaveLength(4);
+    sensorGroup(0);
+    vi.advanceTimersByTime(60_000);
+    expect(requests()).toHaveLength(4);
+    sensorGroup(2);
+    vi.advanceTimersByTime(2_000);
+    expect(requests()).toHaveLength(5);
+  });
+
+  it("cancels the grace timer if the server restores observer mode", () => {
+    sensorGroup(1);
+    sensorGroup(0);
+    vi.advanceTimersByTime(60_000);
+    expect(requests()).toHaveLength(0);
+  });
+
+  it("waits for connected status before acting on an earlier sensor group", () => {
+    conn.setStatus("authenticating");
+    sensorGroup(1);
+    vi.advanceTimersByTime(10_000);
+    expect(requests()).toHaveLength(0);
+    conn.setStatus("connected");
+    vi.advanceTimersByTime(2_000);
+    expect(requests()).toHaveLength(1);
+  });
+
+  it("starts a fresh grace period after reconnect and ignores the retired connection", () => {
+    sensorGroup(1);
+    vi.advanceTimersByTime(2_000);
+    expect(requests()).toHaveLength(1);
+    const retired = conn;
+    session.reconnect("Re-syncing with server...");
+    conn = session.connection;
+    conn.setStatus("connected");
+    conn.commands.length = 0;
+
+    retired.emit("packet", new Uint8Array([1, 2, 3]));
+    retired.setStatus("disconnected", "You have been kicked");
+    vi.advanceTimersByTime(10_000);
+    expect(session.watchState.playerSensorGroup).toBe(0);
+    expect(requests()).toHaveLength(0);
+
+    sensorGroup(2);
+    vi.advanceTimersByTime(1_999);
+    expect(requests()).toHaveLength(0);
+    vi.advanceTimersByTime(1);
+    expect(requests()).toHaveLength(1);
+    vi.advanceTimersByTime(10_000);
+    expect(requests()).toHaveLength(2);
+  });
+
+  it.each(["shutdown", "disconnect", "reconnect", "mission cycle"])(
+    "cancels recovery on %s",
+    (action) => {
+      sensorGroup(1);
+      vi.advanceTimersByTime(6_000);
+      const before = requests().length;
+      if (action === "shutdown") manager.shutdown();
+      if (action === "disconnect")
+        conn.setStatus("disconnected", "You have been kicked");
+      if (action === "reconnect")
+        session.reconnect("Re-syncing with server...");
+      if (action === "mission cycle") {
+        session.watchState.missionName = "Katabatic";
+        session.handleMissionCycle("EndGhosting");
+      }
+      expect(session.reObserveTimer).toBeNull();
+      expect(session.reObserveAttempts).toBe(0);
+      vi.advanceTimersByTime(60_000);
+      expect(requests()).toHaveLength(before);
+    },
+  );
+});
 
 describe("WatchSessionManager", () => {
   beforeEach(() => {
@@ -1359,10 +1553,12 @@ describe("WatchSession demo recording", () => {
     const ws = new FakeWebSocket();
     manager.watch(ws as unknown as WebSocket, "1.2.3.4:28000");
     const session = getSession(manager);
+    connections[0].selfClientId = 7;
     connections[0].setStatus("connected");
     firePhase1(session, "Katabatic");
     const commands = [
-      ["MsgClientJoin", "Welcome", "Actual observer name", "7", "1"],
+      // The handshake identifies the recorder even without a welcome or GUID.
+      ["MsgClientJoin", "", "Actual observer name", "7", "1"],
       ["MsgMissionStart", "Match started"],
       ["MsgClientJoin", "", "Alice", "10", "2"],
       ["MsgClientNameChanged", "", "Alice", "Bob", "10"],

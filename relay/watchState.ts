@@ -58,6 +58,9 @@ export class WatchStateAccumulator {
     number,
     Map<number, { r: number; g: number; b: number }>
   >();
+  /** GameConnection's own sensor group, delivered by SetSensorGroupEvent.
+   *  The stock game sets it to our team (0 = observer), independently of
+   *  roster identity and the target/control object we are viewing. */
   playerSensorGroup = 0;
   /** Datablock class names from SimDataBlockEvents (for CRC + payload). */
   readonly dataBlockClassNames = new Map<number, string>();
@@ -88,18 +91,9 @@ export class WatchStateAccumulator {
   controlObjectGhostIndex = -1;
   controlObjectData: ParsedData | undefined;
   /**
-   * Our own account GUID (from the T2csri certificate), set by the owner
-   * when authenticated. The server reports it as each client's `sendGuid`.
-   * It narrows self-identification to our account but does NOT pin a
-   * single connection — the same account can have several clients
-   * connected at once — so it's a filter, not the whole answer (see
-   * identifySelf). null when connecting without credentials.
-   */
-  expectedSelfGuid: string | null = null;
-  /**
-   * Our own client id, learned from the welcome MsgClientJoin the server
-   * sends only to us about us (see identifySelf). There is no dedicated
-   * self-id message. null until identified.
+   * Our server-side client ID, supplied by the live connection handshake
+   * or a demo header. Old demos without an ID can infer it from the welcome.
+   * Used for recording metadata, not observer recovery; null until known.
    */
   selfClientId: number | null = null;
   /**
@@ -388,8 +382,8 @@ export class WatchStateAccumulator {
       const joinTargetId = parseInt(this.resolveNetString(args[4] ?? ""), 10);
       if (!isNaN(clientId)) {
         this.identifySelf(clientId, args);
-      }
-      if (!isNaN(clientId)) {
+        // Match message.cs handleClientJoin and StreamEngine: each join
+        // creates a fresh roster entry, even for an existing client ID.
         this.playerRoster.set(clientId, {
           name,
           rawName,
@@ -557,39 +551,17 @@ export class WatchStateAccumulator {
   }
 
   /**
-   * Identify our own client from a MsgClientJoin. Our connection uniquely
-   * receives one non-empty "welcome" join about us (arg 1, the greeting);
-   * every other client — including ones on our SAME account (a GUID is an
-   * account, not a connection: multiple MapGenius observers can share it)
-   * — reaches us either as a silent roster-sync join (empty message) or,
-   * if they connect later, after we're already identified. So we take the
-   * first non-empty-message join, once.
-   *
-   * When authenticated we additionally require the join's `sendGuid` (arg
-   * 9) to be ours, which rejects other accounts outright. The only
-   * residual ambiguity is a same-account client joining within our own
-   * connect burst — itself a MapGenius observer, so tracking it instead is
-   * harmless (it should be an observer too).
+   * Fallback for old demos that omit the recorder ID and the handshake.
+   * Only a recognized private greeting identifies self; an account GUID
+   * can be shared by multiple connections and cannot identify our client.
    */
   private identifySelf(clientId: number, args: string[]): void {
     if (this.selfClientId != null) return;
-    if (this.resolveNetString(args[1] ?? "") === "") return;
-    if (this.expectedSelfGuid) {
-      const guid = this.resolveNetString(args[9] ?? "").trim();
-      if (guid !== this.expectedSelfGuid) return;
-    }
+    const message = stripTaggedStringMarkup(
+      this.resolveNetString(args[1] ?? ""),
+    ).trim();
+    if (!/^(welcome\b|mission insertion complete\b)/i.test(message)) return;
     this.selfClientId = clientId;
-  }
-
-  /**
-   * Our own team, or null if unknown (self not yet identified, or no
-   * roster entry for it). 0 means observer; > 0 means we've been placed
-   * on a real team — which, as a watch observer, we never want to be.
-   */
-  getSelfTeamId(): number | null {
-    if (this.selfClientId == null) return null;
-    const self = this.playerRoster.get(this.selfClientId);
-    return self ? self.teamId : null;
   }
 
   /** Roster entries on a real team — observers (including the relay's

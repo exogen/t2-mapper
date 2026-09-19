@@ -135,7 +135,8 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
   private consecutiveRejects = 0;
   private rawMessageCount = 0;
   private _mapName?: string;
-  private observerEnforced = false;
+  private _selfClientId: number | null = null;
+  private observerRequested = false;
   private lastLoggedMove: string = "";
   /** Send timestamps by sequence number for RTT measurement. */
   private sendTimestamps = new Map<number, number>();
@@ -187,10 +188,9 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
     return this._mapName;
   }
 
-  /** Our own account GUID when authenticated, else null. The server
-   *  echoes this as our client's `sendGuid`, uniquely identifying us. */
-  get selfGuid(): string | null {
-    return this.auth?.guid ?? null;
+  /** Server-side SimObject ID from ConnectAccept, also used in roster messages. */
+  get selfClientId(): number | null {
+    return this._selfClientId;
   }
 
   private setStatus(status: ConnectionStatus, message?: string): void {
@@ -467,6 +467,8 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
       );
       return;
     }
+    // Retail FUN_005c2130 writes conn->getId() as the final U32.
+    this._selfClientId = msg.readUInt32LE(13);
     if (this.handshakeTimer) {
       clearTimeout(this.handshakeTimer);
       this.handshakeTimer = null;
@@ -489,7 +491,7 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
       connLog.info("Starting T2csri authentication");
       this.setStatus("authenticating");
     } else {
-      this.enforceObserver();
+      this.requestObserver();
       this.setStatus("connected");
     }
   }
@@ -722,7 +724,7 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
             }
             this.sendCommand(result.command.name, ...result.command.args);
             if (this._status === "authenticating") {
-              this.enforceObserver();
+              this.requestObserver();
               this.setStatus("connected");
             }
           }, delay);
@@ -750,7 +752,7 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
     connLog.info(
       "Server started the mission without T2csri auth — treating as connected",
     );
-    this.enforceObserver();
+    this.requestObserver();
     this.setStatus("connected");
   }
 
@@ -894,11 +896,13 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
   }
 
   /** Enforce observer team so we spectate instead of spawning. */
-  private enforceObserver(): void {
-    if (this.observerEnforced) return;
-    this.observerEnforced = true;
-    connLog.info("Enforcing observer mode (setPlayerTeam 0)");
-    this.sendCommand("setPlayerTeam", "0");
+  private requestObserver(): void {
+    if (this.observerRequested) return;
+    this.observerRequested = true;
+    // LobbyGui's MakeObserver action calls this server command with no args.
+    // There is no stock serverCmdSetPlayerTeam handler.
+    connLog.info("Requesting observer mode (ClientMakeObserver)");
+    this.sendCommand("ClientMakeObserver");
   }
 
   /** Set the map name (from GameInfoResponse during server query). */
