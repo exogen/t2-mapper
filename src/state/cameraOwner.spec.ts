@@ -95,17 +95,15 @@ describe("player orbit lock", () => {
     (source) => {
       gameEntityStore.getState().beginStreaming(source);
       const showFlag = () =>
-        gameEntityStore
-          .getState()
-          .setAllStreamEntities([
-            {
-              id: "flag",
-              renderType: "Shape",
-              className: "Item",
-              teamId: 1,
-              targetRenderFlags: 2,
-            },
-          ]);
+        gameEntityStore.getState().setAllStreamEntities([
+          {
+            id: "flag",
+            renderType: "Shape",
+            className: "Item",
+            teamId: 1,
+            targetRenderFlags: 2,
+          },
+        ]);
       const showCarrier = (id: string) =>
         gameEntityStore.getState().setAllStreamEntities([
           {

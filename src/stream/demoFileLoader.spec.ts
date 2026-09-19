@@ -5,12 +5,18 @@ const mocks = vi.hoisted(() => ({
   install: vi.fn(),
   parse: vi.fn(),
   leave: vi.fn(),
+  current: null as StreamRecording | null,
 }));
 vi.mock("../logger", () => ({
   createLogger: () => ({ info: vi.fn(), error: vi.fn() }),
 }));
 vi.mock("../state/engineStore", () => ({
-  engineStore: { getState: () => ({ setRecording: mocks.install }) },
+  engineStore: {
+    getState: () => ({
+      setRecording: mocks.install,
+      playback: { recording: mocks.current },
+    }),
+  },
 }));
 vi.mock("../state/liveConnectionStore", () => ({
   liveConnectionStore: {
@@ -61,6 +67,9 @@ describe("demo loads during navigation", () => {
   beforeEach(() => {
     unloadDemo();
     vi.clearAllMocks();
+    mocks.install.mockImplementation((recording) => {
+      mocks.current = recording;
+    });
   });
   afterEach(() => {
     unloadDemo();

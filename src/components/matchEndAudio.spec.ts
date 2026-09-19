@@ -21,6 +21,7 @@ const test = vi.hoisted(() => ({
   cleanups: [] as Array<() => void>,
   pending: [] as Array<() => void>,
   defer: false,
+  looping: true,
   snapshot: null as StreamSnapshot | null,
   playback: {
     status: "playing",
@@ -71,7 +72,7 @@ vi.mock("./AudioEmitter", () => ({
   createPositionalAudio: () => new Audio(null!),
   resolveAudioProfile: () => ({
     filename: "loop.wav",
-    isLooping: true,
+    isLooping: test.looping,
     is3D: true,
     volume: 1,
     refDist: 20,
@@ -128,7 +129,7 @@ function frame() {
 function endMatch() {
   streamClock.matchEndedAtSec = streamClock.time;
 }
-function WeaponSounds() {
+function WeaponSounds(onSlot?: (slot: ImageSlot) => void) {
   const root = new Group();
   const slot: ImageSlot = {
     shapeName: "weapon",
@@ -158,6 +159,7 @@ function WeaponSounds() {
     // Only the sound profile is read when restoring a latched firing state.
     imageStates: [{ soundDataBlockId: 7 }] as ImageSlot["imageStates"],
   };
+  onSlot?.(slot);
   useImageStateAnimation(() => slot, {
     actions: { current: new Map<string, AnimationAction>() },
     imageRoot: root,
@@ -188,6 +190,8 @@ beforeEach(() => {
   resetStreamPlayback();
   streamClock.time = 10;
   test.defer = false;
+  test.looping = true;
+  test.playback.status = "playing";
   test.snapshot = null;
   test.playback.seekNonce = 0;
   vi.clearAllMocks();
@@ -315,4 +319,28 @@ it("plays the match-end announcement and voice binds while the world is frozen",
   for (const [sound] of vi.mocked(trackSound).mock.calls) {
     expect(sound.isPlaying).toBe(true);
   }
+});
+
+it("does not consume seek invalidation before the destination weapon state arrives", () => {
+  test.looping = false;
+  let slot!: ImageSlot;
+  WeaponSounds((value) => {
+    slot = value;
+  });
+  frame();
+  expect(playOneShotSound).toHaveBeenCalledOnce();
+  vi.mocked(playOneShotSound).mockClear();
+  test.playback.status = "seeking";
+  test.playback.seekNonce++;
+  frame();
+  frame();
+  streamClock.time = 500;
+  slot.animation = { ...slot.animation!, revision: 2, changedAtSec: 500 };
+  test.playback.status = "playing";
+  frame();
+  expect(playOneShotSound).not.toHaveBeenCalled();
+  // A genuinely new state transition still plays normally.
+  slot.animation = { ...slot.animation, revision: 3 };
+  frame();
+  expect(playOneShotSound).toHaveBeenCalledOnce();
 });

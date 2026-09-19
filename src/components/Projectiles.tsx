@@ -45,6 +45,7 @@ export function Projectiles() {
     if (!root) return;
     const { playback } = engineStore.getState(),
       state = gameEntityStore.getState();
+    if (playback.status === "seeking") return;
     let runtime = current.current;
     if (
       !runtime ||
@@ -92,6 +93,9 @@ export function Projectiles() {
         );
     });
   }, FramePriority.ShapeAnimation - 1);
-  useFrame(({ camera }, delta) => current.current?.pool.update(camera, delta));
+  useFrame(({ camera }, delta) => {
+    if (engineStore.getState().playback.status === "seeking") return;
+    current.current?.pool.update(camera, delta);
+  });
   return null;
 }

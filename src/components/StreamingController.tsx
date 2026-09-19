@@ -21,7 +21,11 @@ import { useProgress } from "@react-three/drei";
 import { startAssetPrefetch, stopAssetPrefetch } from "../assetPrefetch";
 import { isRelayRecording } from "../stream/demoDate";
 import { stopAllTrackedSounds } from "./AudioEmitter";
-import { useEngineStoreApi, advanceEffectClock } from "../state/engineStore";
+import {
+  useEngineStoreApi,
+  advanceEffectClock,
+  isCurrentPlayback,
+} from "../state/engineStore";
 import { setStreamSnapshot } from "../state/streamSnapshotStore";
 import { cameraRegistry } from "../state/cameraRegistry";
 import { isPlayerOrbitLocked, resolveCameraOwner } from "../state/cameraOwner";
@@ -37,6 +41,7 @@ import {
 } from "../stream/orbitCollision";
 import { FramePriority } from "./framePriority";
 import { PlaybackClock } from "../stream/PlaybackClock";
+import { advancePlaybackFrame } from "../stream/advancePlaybackFrame";
 import { gameEntityStore } from "../state/gameEntityStore";
 import { isProjectileEntity } from "../state/projectileEntities";
 import {
@@ -316,6 +321,8 @@ export function StreamingController({
     recording.streamingPlayback ?? null,
   );
   const publishedSnapshotRef = useRef<StreamSnapshot | null>(null);
+  const pendingMissionInfoRef = useRef(false);
+  const silencedSeekRef = useRef(-1);
   const lastPublishTimeRef = useRef(0);
   const lastSyncedSnapshotRef = useRef<StreamSnapshot | null>(null);
 
@@ -425,14 +432,18 @@ export function StreamingController({
   }, []);
 
   useEffect(() => {
+    if (!isCurrentPlayback(recording)) return;
     // Stop any lingering sounds from the previous recording before setting
     // up the new one. One-shot sounds and looping projectile sounds survive
     // across recording changes because ParticleEffects doesn't unmount.
     stopAllTrackedSounds();
 
     streamRef.current = recording.streamingPlayback ?? null;
+    frameRef.current = null;
+    silencedSeekRef.current = -1;
     lastSyncedSnapshotRef.current = null;
     publishedSnapshotRef.current = null;
+    pendingMissionInfoRef.current = false;
     lastPublishTimeRef.current = 0;
     lockedOrbitRef.current.reset();
     orbitDistanceRef.current.reset();
@@ -459,7 +470,17 @@ export function StreamingController({
 
     // Update gameEntityStore when mission info arrives via server messages
     // (MsgMissionDropInfo, MsgLoadInfo, MsgClientReady).
-    stream.onMissionInfoChange = () => {
+    const onMissionInfoChange = () => {
+      if (!isCurrentPlayback(recording)) return;
+      if (
+        recording.source === "demo" &&
+        engineStore.getState().playback.seekNonce !==
+          playbackClockRef.current.seekNonce
+      ) {
+        pendingMissionInfoRef.current = true;
+        return;
+      }
+      pendingMissionInfoRef.current = false;
       gameEntityStore.getState().setMissionInfo({
         missionDisplayName: stream.missionDisplayName ?? undefined,
         missionTypeDisplayName: stream.missionTypeDisplayName ?? undefined,
@@ -470,6 +491,8 @@ export function StreamingController({
         recorderName: stream.connectedPlayerName ?? undefined,
       });
     };
+
+    stream.onMissionInfoChange = onMissionInfoChange;
 
     // Save pre-populated mission info before reset clears it.
     const savedMissionDisplayName = stream.missionDisplayName;
@@ -518,9 +541,13 @@ export function StreamingController({
 
     streamClock.time = snapshot.timeSec;
     streamClock.matchEndedAtSec = snapshot.matchEndedAtSec;
+    const playback = engineStore.getState().playback;
     playbackClockRef.current.reset(
       snapshot.timeSec,
-      engineStore.getState().playback.seekNonce,
+      // Remounting during a seek must reconstruct its target again.
+      playback.status === "seeking"
+        ? playback.seekNonce - 1
+        : playback.seekNonce,
       snapshot,
     );
     snapshotRef.current = snapshot;
@@ -530,6 +557,10 @@ export function StreamingController({
     publishedSnapshotRef.current = snapshot;
 
     return () => {
+      if (stream.onMissionInfoChange === onMissionInfoChange) {
+        stream.onMissionInfoChange = undefined;
+      }
+      frameRef.current = null;
       stopAllTrackedSounds();
       stopAssetPrefetch();
       // Null out streamRef so useFrame stops syncing entities.
@@ -545,124 +576,119 @@ export function StreamingController({
   // both read what it writes (see framePriority.ts).
   useFrame((state, delta) => {
     const stream = streamRef.current;
-    if (!stream) return;
-    const clock = playbackClockRef.current;
-
     if (
-      stream.needsReplay &&
-      engineStore.getState().playback.seekNonce === clock.seekNonce
+      !stream ||
+      stream !== recording.streamingPlayback ||
+      !isCurrentPlayback(recording)
     )
-      engineStore.getState().seekPlayback(clock.time);
-
-    const storeState = engineStore.getState();
-    const playback = storeState.playback;
-    const isPlaying = playback.status === "playing";
-    const timeScale = playback.rate;
-    if (playback.seekNonce !== clock.seekNonce) {
-      // In-flight sounds belong to the old timeline position. Loops that
-      // should still be playing at the target re-trigger from ghost state
-      // (sound slots, jet, weapon fire, projectiles) within a frame or two.
+      return;
+    const clock = playbackClockRef.current;
+    const pending = engineStore.getState().playback;
+    if (
+      (pending.status === "seeking" || stream.needsReplay) &&
+      silencedSeekRef.current !== pending.seekNonce
+    ) {
       stopAllTrackedSounds();
+      silencedSeekRef.current = pending.seekNonce;
     }
-
-    const { snapshot, previousSnapshot, isSeeking, playbackDelta } = clock.step(
-      stream,
-      playback,
-      delta,
-    );
-    const previousWorldTime = streamClock.worldTime;
-    streamClock.time = clock.time;
-    streamClock.matchEndedAtSec = snapshot.matchEndedAtSec;
-    // Clip the final frame to the match-end boundary. Transport continues so
-    // final scores, chat, and the next mission can still arrive.
-    if (isPlaying && !isSeeking)
-      advanceEffectClock(
-        Math.min(
-          playbackDelta * timeScale,
-          Math.max(0, streamClock.worldTime - previousWorldTime),
-        ),
-        1,
-      );
-
-    const renderCurrent = snapshot;
-    const renderPrev = previousSnapshot;
-    snapshotRef.current = snapshot;
-    const tickStartTime = renderCurrent.timeSec - STREAM_TICK_SEC;
-    const interpT = streamClock.worldPaused
-      ? 1
-      : Math.max(
-          0,
-          Math.min(1, (clock.time - tickStartTime) / STREAM_TICK_SEC),
+    advancePlaybackFrame(recording, clock, delta, (frame, playback) => {
+      const isPlaying = playback.status === "playing";
+      const timeScale = playback.rate;
+      const { snapshot, previousSnapshot, isSeeking, playbackDelta } = frame;
+      if (pendingMissionInfoRef.current) stream.onMissionInfoChange?.();
+      if (!isCurrentPlayback(recording, playback.seekNonce)) return;
+      const previousWorldTime = streamClock.worldTime;
+      streamClock.time = clock.time;
+      streamClock.matchEndedAtSec = snapshot.matchEndedAtSec;
+      // Clip the final frame to the match-end boundary. Transport continues so
+      // final scores, chat, and the next mission can still arrive.
+      if (isPlaying && !isSeeking)
+        advanceEffectClock(
+          Math.min(
+            playbackDelta * timeScale,
+            Math.max(0, streamClock.worldTime - previousWorldTime),
+          ),
+          1,
         );
 
-    syncRenderableEntities(renderCurrent);
+      const renderCurrent = snapshot;
+      const renderPrev = previousSnapshot;
+      snapshotRef.current = snapshot;
+      const tickStartTime = renderCurrent.timeSec - STREAM_TICK_SEC;
+      const interpT = streamClock.worldPaused
+        ? 1
+        : Math.max(
+            0,
+            Math.min(1, (clock.time - tickStartTime) / STREAM_TICK_SEC),
+          );
 
-    // Publish snapshot when it changed. useSyncExternalStore
-    // notifications are handled SYNCHRONOUSLY by React and preempt (and
-    // restart) in-progress Suspense retry renders, so per-tick publishes
-    // starve asset pop-in while shapes are loading: loaded GLBs sit in
-    // cache while their retry render never gets to finish (pausing a
-    // demo made everything appear instantly). While three's
-    // DefaultLoadingManager reports active loads (via drei's useProgress
-    // store), throttle publishes hard so retries get long uninterrupted
-    // windows; otherwise publish every tick. Imperative per-frame
-    // consumers (nameplates, entity fields, streamClock) bypass React
-    // and are unaffected either way.
-    if (renderCurrent !== publishedSnapshotRef.current) {
-      const now = performance.now();
-      const publishInterval =
-        !isSeeking &&
-        renderCurrent.matchEnded === publishedSnapshotRef.current?.matchEnded &&
-        useProgress.getState().active
-          ? 500
-          : 0;
-      if (now - lastPublishTimeRef.current >= publishInterval) {
-        lastPublishTimeRef.current = now;
-        publishedSnapshotRef.current = renderCurrent;
-        setStreamSnapshot(renderCurrent);
-      }
-    }
+      syncRenderableEntities(renderCurrent);
+      if (!isCurrentPlayback(recording, playback.seekNonce)) return;
 
-    // Imperative position interpolation via the shared entity root.
-    const currentEntities = getEntityMap(renderCurrent);
-    const previousEntities = getEntityMap(renderPrev);
-    streamRenderFrame.current = currentEntities;
-    streamRenderFrame.previous = previousEntities;
-    streamRenderFrame.interpT = interpT;
-    const renderEntities = gameEntityStore.getState().streamEntities;
-    const root = streamPlaybackStore.getState().root;
-    if (root) {
-      for (const child of root.children) {
-        // Scene infrastructure handles its own positioning; the projectile
-        // pool applies these same inputs before animation and retains visibility.
-        const renderEntity = renderEntities.get(child.name);
-        if (
-          renderEntity &&
-          (isSceneEntity(renderEntity) || isProjectileEntity(renderEntity))
-        ) {
-          continue;
+      // Publish snapshot when it changed. useSyncExternalStore
+      // notifications are handled SYNCHRONOUSLY by React and preempt (and
+      // restart) in-progress Suspense retry renders, so per-tick publishes
+      // starve asset pop-in while shapes are loading: loaded GLBs sit in
+      // cache while their retry render never gets to finish (pausing a
+      // demo made everything appear instantly). While three's
+      // DefaultLoadingManager reports active loads (via drei's useProgress
+      // store), throttle publishes hard so retries get long uninterrupted
+      // windows; otherwise publish every tick. Imperative per-frame
+      // consumers (nameplates, entity fields, streamClock) bypass React
+      // and are unaffected either way.
+      if (renderCurrent !== publishedSnapshotRef.current) {
+        const now = performance.now();
+        const publishInterval =
+          !isSeeking &&
+          renderCurrent.matchEnded ===
+            publishedSnapshotRef.current?.matchEnded &&
+          useProgress.getState().active
+            ? 500
+            : 0;
+        if (now - lastPublishTimeRef.current >= publishInterval) {
+          lastPublishTimeRef.current = now;
+          publishedSnapshotRef.current = renderCurrent;
+          setStreamSnapshot(renderCurrent);
         }
-        applyStreamEntityPose(
-          child,
-          renderEntity,
-          currentEntities.get(child.name),
-          previousEntities.get(child.name),
-          interpT,
-          state.camera,
-        );
       }
-    }
 
-    // Pause at the true end of the demo. While a progressive download is
-    // still running, an exhausted snapshot is merely the buffering
-    // frontier — the playhead clamp above holds position and playback
-    // resumes on its own as bytes arrive.
-    if (isPlaying && snapshot.exhausted && stream.streamComplete !== false) {
-      storeState.setPlaybackStatus("paused");
-    }
+      if (!isCurrentPlayback(recording, playback.seekNonce)) return;
 
-    // Hand the camera pass the tick pair it must interpolate between.
-    frameRef.current = { renderCurrent, renderPrev, interpT };
+      // Imperative position interpolation via the shared entity root.
+      const currentEntities = getEntityMap(renderCurrent);
+      const previousEntities = getEntityMap(renderPrev);
+      streamRenderFrame.current = currentEntities;
+      streamRenderFrame.previous = previousEntities;
+      streamRenderFrame.interpT = interpT;
+      const renderEntities = gameEntityStore.getState().streamEntities;
+      const root = streamPlaybackStore.getState().root;
+      if (root) {
+        for (const child of root.children) {
+          // Scene infrastructure handles its own positioning; the projectile
+          // pool applies these same inputs before animation and retains visibility.
+          const renderEntity = renderEntities.get(child.name);
+          if (
+            renderEntity &&
+            (isSceneEntity(renderEntity) || isProjectileEntity(renderEntity))
+          ) {
+            continue;
+          }
+          applyStreamEntityPose(
+            child,
+            renderEntity,
+            currentEntities.get(child.name),
+            previousEntities.get(child.name),
+            interpT,
+            state.camera,
+          );
+        }
+      }
+
+      // Hand the camera pass the tick pair it must interpolate between.
+      frameRef.current = { renderCurrent, renderPrev, interpT };
+    });
+    if (engineStore.getState().playback.status === "seeking")
+      state.invalidate();
   }, FramePriority.StreamPlayback);
 
   // ── The stream's camera pose: the recorded view, the orbit follow, or
@@ -673,6 +699,12 @@ export function StreamingController({
     if (!frame) return;
     const { renderCurrent, renderPrev, interpT } = frame;
     const playback = engineStore.getState().playback;
+    if (
+      playback.recording !== recording ||
+      streamRef.current !== recording.streamingPlayback ||
+      playback.status === "seeking"
+    )
+      return;
     const isPlaying = playback.status === "playing";
     const currentEntities = getEntityMap(renderCurrent);
     const root = streamPlaybackStore.getState().root;

@@ -754,6 +754,12 @@ export function ParticleEffects({
   }, [playback]);
 
   useFrame((state, delta) => {
+    const transport = engineStore.getState().playback;
+    if (
+      transport.status === "seeking" ||
+      transport.recording?.streamingPlayback !== playback
+    )
+      return;
     const group = groupRef.current;
     const snapshot = snapshotRef.current;
     if (!group || !snapshot) return;
@@ -1424,8 +1430,14 @@ export function ParticleEffects({
 
   // Cleanup on unmount.
   useEffect(() => {
+    const group = groupRef.current;
+    const processedExplosions = processedExplosionsRef.current;
+    const processedShockLances = processedShockLancesRef.current;
+    const trailEntities = trailEntitiesRef.current;
+    const processedExplosionSounds = processedExplosionSoundsRef.current;
+    const projectileSounds = projectileSoundsRef.current;
+    const processedAudioEvents = processedAudioEventsRef.current;
     return () => {
-      const group = groupRef.current;
       for (const entry of activeEmittersRef.current) {
         if (group) {
           group.remove(entry.mesh);
@@ -1459,15 +1471,15 @@ export function ParticleEffects({
         sw.material.dispose();
       }
       activeShockwavesRef.current = [];
-      processedExplosionsRef.current.clear();
-      processedShockLancesRef.current.clear();
-      trailEntitiesRef.current.clear();
-      processedExplosionSoundsRef.current.clear();
+      processedExplosions.clear();
+      processedShockLances.clear();
+      trailEntities.clear();
+      processedExplosionSounds.clear();
       // Clean up projectile sounds.
-      for (const entityId of [...projectileSoundsRef.current.keys()]) {
-        stopProjectileSound(projectileSoundsRef.current, entityId);
+      for (const entityId of [...projectileSounds.keys()]) {
+        stopProjectileSound(projectileSounds, entityId);
       }
-      processedAudioEventsRef.current.clear();
+      processedAudioEvents.clear();
     };
   }, []);
 

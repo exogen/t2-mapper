@@ -1798,6 +1798,7 @@ export function DirectorController() {
   useInputAction("directorInterrupt", exitDirector);
 
   useFrame((state, delta) => {
+    if (engineStore.getState().playback.status === "seeking") return;
     const { status, plan, planComplete } = demoDirectorStore.getState();
     if (status !== "playing" || !plan || plan.shots.length === 0) {
       shotIndexRef.current = -1;

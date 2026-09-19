@@ -51,7 +51,9 @@ export function DemoMomentLoader() {
   } | null>(null);
   const pendingFollowRef = useRef<{
     camera: Extract<DemoMomentCamera, { kind: "follow" | "fp" }>;
-    untilMs: number;
+    recording: NonNullable<typeof recording>;
+    seekNonce: number;
+    untilMs: number | null;
   } | null>(null);
 
   useEffect(() => {
@@ -109,7 +111,9 @@ export function DemoMomentLoader() {
       case "fp":
         pendingFollowRef.current = {
           camera: cam,
-          untilMs: performance.now() + FOLLOW_ARM_TIMEOUT_MS,
+          recording,
+          seekNonce: engineStore.getState().playback.seekNonce,
+          untilMs: null,
         };
         break;
     }
@@ -120,6 +124,16 @@ export function DemoMomentLoader() {
   useFrame(() => {
     const pending = pendingFollowRef.current;
     if (!pending) return;
+    const playback = engineStore.getState().playback;
+    if (
+      playback.recording !== pending.recording ||
+      playback.seekNonce !== pending.seekNonce
+    ) {
+      pendingFollowRef.current = null;
+      return;
+    }
+    if (playback.status === "seeking") return;
+    pending.untilMs ??= performance.now() + FOLLOW_ARM_TIMEOUT_MS;
     if (performance.now() > pending.untilMs) {
       log.warn(
         "Follow link: player %d never appeared",

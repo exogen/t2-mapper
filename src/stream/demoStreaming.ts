@@ -341,7 +341,7 @@ export function parseDemoValues(demoValues: string[]): ParsedDemoValues {
 }
 
 /** Checkpoint cadence in recorded simulation ticks; each tick is 32 ms. */
-export const DEMO_CHECKPOINT_TICKS = 8_000;
+export const DEMO_CHECKPOINT_TICKS = 1_000;
 
 export interface DemoStreamingOptions {
   /** Event/director scans need no seek history. Playback retains it on demand. */
@@ -351,6 +351,7 @@ export interface DemoStreamingOptions {
 }
 
 class DemoStreamAdapter extends StreamEngine {
+  lastStepStartTimeSec = 0;
   private readonly checkpointsEnabled: boolean;
   private readonly checkpoints = new Map<
     number,
@@ -850,7 +851,11 @@ class DemoStreamAdapter extends StreamEngine {
   stepToTime(
     targetTimeSec: number,
     maxMoveTicks = Number.POSITIVE_INFINITY,
+    maxTimeMs = Number.POSITIVE_INFINITY,
   ): StreamSnapshot {
+    const deadline = Number.isFinite(maxTimeMs)
+      ? performance.now() + Math.max(0, maxTimeMs)
+      : Number.POSITIVE_INFINITY;
     this.unlatchExhaustedIfGrown();
     const safeTargetSec = Number.isFinite(targetTimeSec)
       ? Math.max(0, targetTimeSec)
@@ -867,10 +872,13 @@ class DemoStreamAdapter extends StreamEngine {
       didReset = true;
     }
 
-    const checkpointTick = Math.min(
+    let checkpointTick = Math.min(
       Math.floor(targetTicks / DEMO_CHECKPOINT_TICKS) * DEMO_CHECKPOINT_TICKS,
       this.lastCheckpointTick,
     );
+    while (checkpointTick > 0 && !this.checkpoints.has(checkpointTick)) {
+      checkpointTick -= DEMO_CHECKPOINT_TICKS;
+    }
     if (targetTicks < this.moveTicks || checkpointTick > this.moveTicks) {
       const checkpoint = this.checkpoints.get(checkpointTick);
       if (checkpoint) this.restoreCheckpoint(checkpoint);
@@ -878,6 +886,7 @@ class DemoStreamAdapter extends StreamEngine {
       didReset = true;
     }
 
+    this.lastStepStartTimeSec = (this.moveTicks * TICK_DURATION_MS) / 1000;
     const wasExhausted = this.exhausted;
     let movesProcessed = 0;
     // The same simulation ticks drive playback and seeks. Skipping prediction
@@ -885,7 +894,11 @@ class DemoStreamAdapter extends StreamEngine {
     while (
       !this.exhausted &&
       this.moveTicks < targetTicks &&
-      movesProcessed < maxMoveTicks
+      movesProcessed < maxMoveTicks &&
+      // Yield only between complete simulation ticks, always making progress.
+      (movesProcessed === 0 ||
+        deadline === Number.POSITIVE_INFINITY ||
+        performance.now() < deadline)
     ) {
       if (!this.stepOneMoveTick()) break;
       movesProcessed += 1;
@@ -1011,7 +1024,10 @@ class DemoStreamAdapter extends StreamEngine {
           !this.checkpoints.has(this.moveTicks)
         ) {
           this.checkpoints.set(this.moveTicks, this.captureCheckpoint());
-          this.lastCheckpointTick = this.moveTicks;
+          this.lastCheckpointTick = Math.max(
+            this.lastCheckpointTick,
+            this.moveTicks,
+          );
         }
         return true;
       }

@@ -663,6 +663,8 @@ export interface PreloadAsset {
 }
 
 export interface StreamingPlayback {
+  /** Simulation position after checkpoint restore, before the last step's ticks. */
+  readonly lastStepStartTimeSec?: number;
   readonly groundEffectHistory?: import("./groundEffectHistory").GroundEffectHistory;
   /** Retained seek checkpoints, in recorded ticks. Absent on live streams. */
   readonly checkpointTicks?: readonly number[];
@@ -671,7 +673,13 @@ export interface StreamingPlayback {
   setPlayerPredictionEnabled?(enabled: boolean): void;
   reset(): void;
   getSnapshot(): StreamSnapshot;
-  stepToTime(targetTimeSec: number, maxMoveTicks?: number): StreamSnapshot;
+  /** Demo work can be bounded in ticks or wall time; a partial snapshot resumes
+   *  on the next call. Budgets yield between complete simulation ticks. */
+  stepToTime(
+    targetTimeSec: number,
+    maxMoveTicks?: number,
+    maxTimeMs?: number,
+  ): StreamSnapshot;
   /**
    * First playback time (seconds) with a scene to render — world geometry
    * plus a camera. ~0 for retail demos; a few seconds for from-connect

@@ -59,6 +59,12 @@ export function GroundEffects({ playback }: { playback: StreamingPlayback }) {
     [decals],
   );
   useFrame(() => {
+    const transport = engineStore.getState().playback;
+    if (
+      transport.status === "seeking" ||
+      transport.recording?.streamingPlayback !== playback
+    )
+      return;
     const history = playback.groundEffectHistory;
     if (!history) return;
     const now = streamClock.worldTime,

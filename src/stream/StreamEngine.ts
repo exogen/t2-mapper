@@ -776,6 +776,7 @@ export abstract class StreamEngine implements StreamingPlayback {
   abstract stepToTime(
     targetTimeSec: number,
     maxMoveTicks?: number,
+    maxTimeMs?: number,
   ): StreamSnapshot;
 
   /** Live streams are always at the present; demo playback overrides this

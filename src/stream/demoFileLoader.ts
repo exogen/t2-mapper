@@ -2,7 +2,7 @@
  * Shared .rec demo file loading pipeline (sidebar button + drop screen):
  * parse the recording, swap it into the engine, and kick off the
  * background timeline scan. Module-level token/abort state means a new
- * load or an unload always cancels the previous pipeline.
+ * load cancels the previous download; scans belong to the installed recording.
  */
 import { createLogger } from "../logger";
 import { commandCircuitStore } from "../state/commandCircuitStore";
@@ -23,13 +23,20 @@ const log = createLogger("demoFileLoader");
 let parseToken = 0;
 let scanAbort: AbortController | null = null;
 let loadAbort: AbortController | null = null;
+let cancelDownload: ((preserveRecording: boolean) => void) | null = null;
 
-function cancelLoad(): number {
+function cancelLoad(preserveRecording = true): number {
+  ++parseToken;
   loadAbort?.abort();
   loadAbort = null;
-  scanAbort?.abort();
-  scanAbort = null;
-  return ++parseToken;
+  if (!preserveRecording) {
+    scanAbort?.abort();
+    scanAbort = null;
+  }
+  const cancel = cancelDownload;
+  cancelDownload = null;
+  cancel?.(preserveRecording);
+  return parseToken;
 }
 
 /**
@@ -37,7 +44,7 @@ function cancelLoad(): number {
  * clear the streamed scene, returning demo mode to its drop screen.
  */
 export function unloadDemo(): void {
-  cancelLoad();
+  cancelLoad(false);
   demoLoadStore.setState({
     requestedUrl: null,
     phase: "idle",
@@ -86,7 +93,7 @@ export async function loadDemoUrl(url: string): Promise<void> {
   try {
     const response = await fetch(url, { signal: abort.signal });
     if (parseToken !== token) {
-      void response.body?.cancel();
+      void response.body?.cancel().catch(() => {});
       return;
     }
     if (!response.ok) {
@@ -141,15 +148,15 @@ async function streamDemoResponse(
   token: number,
   totalBytes: number,
 ): Promise<void> {
-  const reader = body.getReader();
   const [{ DemoParser }, demoStreaming] = await Promise.all([
     import("t2-demo-parser"),
     import("./demoStreaming"),
   ]);
   if (parseToken !== token) {
-    void reader.cancel();
+    void body.cancel().catch(() => {});
     return;
   }
+  const reader = body.getReader();
   const chunks: Uint8Array[] = [];
   let received = 0;
   let reportedPercent = -1;
@@ -170,11 +177,36 @@ async function streamDemoResponse(
     return buffer.buffer;
   };
 
+  const finishInstalledPrefix = () => {
+    if (
+      !parser ||
+      !recording ||
+      !installed ||
+      engineStore.getState().playback.recording !== recording
+    )
+      return;
+    parser.finish();
+    const buffer = assemble();
+    engineStore.getState().setDemoBuffer(recording, buffer);
+    engineStore.getState().setDownloadComplete(true);
+    engineStore.getState().fulfillPendingSeek();
+    demoLoadStore.getState().setDownloadedSec(null);
+    setDirectorDemoBuffer(buffer);
+    startTimelineScan(buffer, recording);
+  };
+  const cancel = (preserveRecording: boolean) => {
+    void reader.cancel().catch(() => {});
+    // The next load can fail. Keep the already installed prefix playable,
+    // with a real EOF instead of waiting forever for the aborted download.
+    if (preserveRecording) finishInstalledPrefix();
+  };
+  cancelDownload = cancel;
+
   try {
     for (;;) {
       const { done, value } = await reader.read();
       if (parseToken !== token) {
-        void reader.cancel();
+        void reader.cancel().catch(() => {});
         return;
       }
       if (done) break;
@@ -217,7 +249,7 @@ async function streamDemoResponse(
         if (snapshotHasWorld(playback.getSnapshot())) {
           installed = true;
           installRecording(recording, url);
-          demoTimelineStore.getState().reset();
+          if (parseToken !== token) return;
           log.info(
             "progressive: playable at %d KB of %s",
             Math.round(received / 1024),
@@ -256,6 +288,7 @@ async function streamDemoResponse(
       }
     }
   } catch (err) {
+    void reader.cancel().catch(() => {});
     if (parseToken !== token) return;
     if (!installed) throw err;
     // Mid-download failure after the scene is already up: keep what we
@@ -265,15 +298,11 @@ async function streamDemoResponse(
       "download interrupted after install — keeping partial demo: %o",
       err,
     );
-    parser?.finish();
-    // Keep the playable prefix available to independent scans too.
-    engineStore.getState().setDemoBuffer(recording!, assemble());
-    // Fulfill before clearing downloadedSec: a render between the two
-    // would show the pending-seek pie at 0% for a frame.
-    engineStore.getState().setDownloadComplete(true);
-    engineStore.getState().fulfillPendingSeek();
-    demoLoadStore.getState().setDownloadedSec(null);
+    finishInstalledPrefix();
     return;
+  } finally {
+    if (cancelDownload === cancel) cancelDownload = null;
+    reader.releaseLock();
   }
 
   if (parseToken !== token) return;
@@ -297,7 +326,7 @@ async function streamDemoResponse(
   // The whole-file consumers unlock now: the auto-director's scan buffer
   // and the timeline scan.
   setDirectorDemoBuffer(buffer);
-  startTimelineScan(buffer, recording.recorderName, token);
+  startTimelineScan(buffer, recording);
 }
 
 /**
@@ -311,6 +340,9 @@ function installRecording(
   sourceUrl: string | null,
   demoBuffer: ArrayBuffer | null = null,
 ): void {
+  scanAbort?.abort();
+  scanAbort = null;
+  demoTimelineStore.getState().reset();
   demoLoadStore.getState().reset();
   // Leave any live session and close the relay socket before loading
   // the demo — demo playback has no use for it.
@@ -344,7 +376,7 @@ async function loadDemoBuffer(
     // Retain the buffer for the auto-director's lazy scan pass.
     setDirectorDemoBuffer(buffer);
 
-    startTimelineScan(buffer, recording.recorderName, token);
+    startTimelineScan(buffer, recording);
     return true;
   } catch (err) {
     log.error("Failed to load demo: %o", err);
@@ -358,35 +390,39 @@ async function loadDemoBuffer(
 /** Kick off the background timeline scan over the complete demo bytes. */
 function startTimelineScan(
   buffer: ArrayBuffer,
-  recorderName: string | null,
-  token: number,
+  recording: StreamRecording,
 ): void {
   scanAbort?.abort();
   const abortController = new AbortController();
   scanAbort = abortController;
+  const isCurrentScan = () =>
+    !abortController.signal.aborted &&
+    engineStore.getState().playback.recording === recording;
   const store = demoTimelineStore.getState();
   store.reset();
   store.setScanProgress(0);
   import("./demoTimelineScanner")
     .then(({ scanDemoTimeline }) =>
-      scanDemoTimeline(
-        buffer,
-        recorderName,
-        (p) => {
-          if (parseToken !== token) return;
-          demoTimelineStore.getState().setScanProgress(p);
-        },
-        abortController.signal,
-      ),
+      isCurrentScan()
+        ? scanDemoTimeline(
+            buffer,
+            recording.recorderName,
+            (p) => {
+              if (!isCurrentScan()) return;
+              demoTimelineStore.getState().setScanProgress(p);
+            },
+            abortController.signal,
+          )
+        : null,
     )
     .then((result) => {
-      if (parseToken !== token) return;
+      if (!result || !isCurrentScan()) return;
       const s = demoTimelineStore.getState();
       s.setEvents(result.events, result.observerPerspective, result.killEvents);
       s.setScanProgress(null);
     })
     .catch((err: unknown) => {
-      if (parseToken !== token) return;
+      if (!isCurrentScan()) return;
       if (err instanceof Error && err.name === "AbortError") return;
       log.error("Timeline scan failed: %o", err);
       demoTimelineStore

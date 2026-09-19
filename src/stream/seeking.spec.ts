@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   BlockTypeMove,
   BlockTypePacket,
@@ -19,6 +19,8 @@ import {
   streamEntityToGameEntity,
   updateGameEntityFromStream,
 } from "./entityBridge";
+
+afterEach(() => vi.restoreAllMocks());
 
 const playing = {
   index: 3,
@@ -205,11 +207,11 @@ it("renders a final MissionEnd packet even without a following move tick", () =>
     },
     0.016,
   );
-  expect(frame.snapshot.timeSec).toBe(initial.timeSec);
-  expect(frame.snapshot.exhausted).toBe(true);
-  expect(frame.snapshot.matchEnded).toBe(true);
-  expect(frame.snapshot.matchClockMs).toBe(initial.matchClockMs);
-  expect(frame.previousSnapshot).toBe(initial);
+  expect(frame?.snapshot.timeSec).toBe(initial.timeSec);
+  expect(frame?.snapshot.exhausted).toBe(true);
+  expect(frame?.snapshot.matchEnded).toBe(true);
+  expect(frame?.snapshot.matchClockMs).toBe(initial.matchClockMs);
+  expect(frame?.previousSnapshot).toBe(initial);
   expect(clock.time).toBe(initial.timeSec);
 });
 
@@ -494,6 +496,31 @@ describe("on-demand demo checkpoints", () => {
     expect(calls.movesRead - before).toBe(7);
     expect(snapshot.timeSec).toBe((DEMO_CHECKPOINT_TICKS + 12) * 0.032);
     expect(calls.restores).toBe(0);
+  });
+
+  it("resumes time-bounded slices without changing the reconstructed state or checkpoints", () => {
+    const blocks = checkpointTimeline(),
+      calls = stats(),
+      stream = demo(blocks, {}, calls);
+    vi.spyOn(performance, "now").mockImplementation(() => calls.movesRead);
+    const target = atTick(DEMO_CHECKPOINT_TICKS * 2 + 5);
+    let snapshot = stream.stepToTime(target, Infinity, 3);
+    expect(calls.movesRead).toBe(3);
+    expect(snapshot.timeSec).toBe(atTick(3) - 1e-9);
+    // A short budget must still make progress, and the tick cap also applies.
+    stream.stepToTime(target, Infinity, 0);
+    expect(calls.movesRead).toBe(4);
+    stream.stepToTime(target, 2, 8);
+    expect(calls.movesRead).toBe(6);
+    while (snapshot.timeSec < target - 1e-9)
+      snapshot = stream.stepToTime(target, Infinity, 8);
+    expect(stream.checkpointTicks).toEqual([
+      DEMO_CHECKPOINT_TICKS,
+      DEMO_CHECKPOINT_TICKS * 2,
+    ]);
+    expect(normalized(snapshot)).toEqual(
+      normalized(demo(blocks).stepToTime(target)),
+    );
   });
 
   it("reconstructs both interpolation endpoints on a checkpoint boundary", () => {

@@ -25,6 +25,12 @@
   font-size: 12px;
 }
 
+.PlaySpinner {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+}
+
 @media (pointer: coarse) {
   .PlayPause {
     width: 40px;
@@ -89,6 +95,7 @@
    Range, and a round thumb. The root is a tall hit area around the
    slim visual track. */
 .SeekRoot {
+  --seek-fill: #3f8cff;
   --seek-thumb-size: 13px;
   position: relative;
   display: flex;
@@ -114,8 +121,7 @@
   overflow: hidden;
 }
 
-/* Demo time downloaded during a progressive load; the darker region
-   beyond it reads as "not seekable yet" (forward seeks are clamped). */
+/* Demo time available locally; seeks beyond this wait for more data. */
 .SeekBuffered {
   position: absolute;
   top: 0;
@@ -128,7 +134,22 @@
 .SeekRange {
   position: absolute;
   height: 100%;
-  background: #3f8cff;
+  background: var(--seek-fill);
+}
+
+.SeekRoot[data-seeking="true"] .SeekRange {
+  background: rgba(6, 54, 116, 0.8);
+}
+
+/* Like the downloaded layer, this fill shows the actual replay cursor.
+   The dim range and loading thumb continue to mark the requested target. */
+.SeekReplayRange {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  background: var(--seek-fill);
+  pointer-events: none;
 }
 
 /* The thumb element itself is zero-width; the visible knob is its
@@ -162,6 +183,41 @@
   box-shadow:
     0 1px 3px rgba(0, 0, 0, 0.5),
     0 0 0 3px rgba(63, 140, 255, 0.5);
+}
+
+.SeekThumb[data-seeking="true"]::after {
+  background: rgba(255, 255, 255, 0.9);
+}
+
+.SeekThumb[data-seeking="true"]::before {
+  content: "";
+  position: absolute;
+  top: calc(var(--seek-thumb-size) / 2 - 2.5px);
+  left: -2.5px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--seek-fill);
+  z-index: 1;
+  animation: seekPulse 1.2s ease-in-out infinite;
+}
+
+@keyframes seekPulse {
+  0%,
+  100% {
+    opacity: 0.5;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.25);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .SeekThumb[data-seeking="true"]::before {
+    animation: none;
+  }
 }
 
 /* Scrub-time preview bubble above the (ghost) thumb while dragging. */
@@ -244,17 +300,6 @@
   margin-left: -1px;
   border-radius: 1px;
   background: rgba(255, 255, 255, 0.75);
-}
-
-/* A requested seek waiting for the download to reach it. */
-.SeekPendingTick {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  width: 2px;
-  margin-left: -1px;
-  background: rgba(255, 200, 60, 0.95);
-  pointer-events: none;
 }
 
 @media (pointer: coarse) {

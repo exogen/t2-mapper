@@ -1,6 +1,10 @@
 import { useCallback } from "react";
 import type { StreamRecording } from "../stream/types";
-import { useEngineSelector } from "../state/engineStore";
+import {
+  engineStore,
+  isCurrentPlayback,
+  useEngineSelector,
+} from "../state/engineStore";
 import { useStreamSnapshot } from "../state/streamSnapshotStore";
 
 export const SPEED_OPTIONS = [0.25, 0.5, 1, 1.5, 2, 3, 4, 8];
@@ -13,9 +17,11 @@ export function useIsPlaying(): boolean {
   return useEngineSelector((state) => state.playback.status === "playing");
 }
 
-/** Playback time for UI display, floored to whole seconds. The selectors
- *  evaluate on every store mutation but only trigger a re-render when
- *  the displayed second changes (~1/s). */
+export function useIsSeeking(): boolean {
+  return useEngineSelector((state) => state.playback.status === "seeking");
+}
+
+/** Whole seconds during playback; retain the exact requested time while seeking. */
 export function useCurrentTime(): number {
   const snapshotSec = useStreamSnapshot((snap) =>
     snap ? Math.floor(snap.timeSec) : null,
@@ -23,7 +29,10 @@ export function useCurrentTime(): number {
   const seekSec = useEngineSelector((state) =>
     Math.floor(state.playback.seekTime),
   );
-  return snapshotSec ?? seekSec;
+  const requestedTime = useEngineSelector((state) =>
+    state.playback.status === "seeking" ? state.playback.seekTime : null,
+  );
+  return requestedTime ?? snapshotSec ?? seekSec;
 }
 
 export function useDuration(): number {
@@ -37,46 +46,32 @@ export function useSpeed(): number {
 export function usePlaybackActions() {
   const recording = useRecording();
   const setRecording = useEngineSelector((state) => state.setRecording);
-  const setPlaybackStatus = useEngineSelector(
-    (state) => state.setPlaybackStatus,
-  );
   const seekPlayback = useEngineSelector((state) => state.seekPlayback);
   const setPlaybackRate = useEngineSelector((state) => state.setPlaybackRate);
 
-  const setRec = useCallback(
-    (recording: StreamRecording | null) => {
-      setRecording(recording);
-    },
-    [setRecording],
-  );
-
-  const play = useCallback(() => {
-    if (!recording) return;
-    setPlaybackStatus("playing");
-  }, [recording, setPlaybackStatus]);
-
-  const pause = useCallback(() => {
-    setPlaybackStatus("paused");
-  }, [setPlaybackStatus]);
-
   const seek = useCallback(
     (timeSec: number) => {
+      if (!recording || !isCurrentPlayback(recording)) return;
       seekPlayback(timeSec);
     },
-    [seekPlayback],
+    [recording, seekPlayback],
   );
 
   const setSpeed = useCallback(
     (speed: number) => {
+      if (!recording || !isCurrentPlayback(recording)) return;
       setPlaybackRate(speed);
     },
-    [setPlaybackRate],
+    [recording, setPlaybackRate],
   );
 
+  const toggle = useCallback(() => {
+    if (recording) engineStore.getState().togglePlayback(recording);
+  }, [recording]);
+
   return {
-    setRecording: setRec,
-    play,
-    pause,
+    setRecording,
+    toggle,
     seek,
     setSpeed,
   };

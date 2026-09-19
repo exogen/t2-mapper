@@ -2,6 +2,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ChangeEvent,
 } from "react";
@@ -11,6 +12,7 @@ import {
   useCurrentTime,
   useDuration,
   useIsPlaying,
+  useIsSeeking,
   useRecording,
   useSpeed,
   SPEED_OPTIONS,
@@ -23,10 +25,11 @@ import {
   useDirector,
 } from "../state/demoDirectorStore";
 import * as Slider from "@radix-ui/react-slider";
-import { useEngineSelector } from "../state/engineStore";
+import { isCurrentPlayback, useEngineSelector } from "../state/engineStore";
 import { useDemoLoad } from "../state/demoLoadStore";
 import { useDemoTimeline } from "../state/demoTimelineStore";
 import { formatPlayheadTime, formatPlayheadTimeAligned } from "./demoFormat";
+import { LoadingIndicator } from "./LoadingIndicator";
 import styles from "./DemoPlaybackControls.module.css";
 
 /**
@@ -66,13 +69,18 @@ function ScanProgressPie({ progress }: { progress: number }) {
 export function DemoPlaybackControls() {
   const recording = useRecording();
   const isPlaying = useIsPlaying();
+  const isSeeking = useIsSeeking();
   const currentTime = useCurrentTime();
   const duration = useDuration();
   // Demo time downloaded so far (progressive load), or null when the
   // whole file is local — drives the buffered bar under the seek track.
   const downloadedSec = useDemoLoad((s) => s.downloadedSec);
   const speed = useSpeed();
-  const { play, pause, seek, setSpeed } = usePlaybackActions();
+  const intendsToPlay = useEngineSelector(
+    (state) =>
+      (state.playback.resumeAfterSeek ?? state.playback.status) === "playing",
+  );
+  const { toggle, seek, setSpeed } = usePlaybackActions();
 
   // Spacebar toggles play/pause during demo playback.
   useEffect(() => {
@@ -90,15 +98,11 @@ export function DemoPlaybackControls() {
         return;
       }
       e.preventDefault();
-      if (isPlaying) {
-        pause();
-      } else {
-        play();
-      }
+      if (!e.repeat) toggle();
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [recording, isPlaying, play, pause]);
+  }, [recording, toggle]);
 
   useInputAction("decreasePlaybackSpeed", () => {
     const idx = SPEED_OPTIONS.indexOf(speed);
@@ -112,16 +116,14 @@ export function DemoPlaybackControls() {
 
   // Deferred-commit scrubbing: while dragging, only this local ghost
   // value moves (instant — no engine work); the real seek runs once on
-  // release. A backward seek replays the demo from the start, so
-  // per-pointermove seeks would reconstruct the world dozens of times
+  // release. Per-pointermove seeks would reconstruct the world dozens of times
   // per drag.
   const [dragValue, setDragValue] = useState<number | null>(null);
   const dragging = dragValue != null;
 
-  // A demo swap mid-drag would leave the ghost pointing into the OLD
-  // demo's timeline — drop it (Radix's commit for the dead drag then
-  // seeks to a clamped value at worst, and the store re-clamps anyway).
+  const scrubRecording = useRef<typeof recording>(null);
   useEffect(() => {
+    scrubRecording.current = null;
     setDragValue(null);
   }, [recording]);
 
@@ -129,7 +131,10 @@ export function DemoPlaybackControls() {
   // focus mid-drag), cancel the scrub instead of freezing the ghost.
   useEffect(() => {
     if (!dragging) return;
-    const cancel = () => setDragValue(null);
+    const cancel = () => {
+      scrubRecording.current = null;
+      setDragValue(null);
+    };
     window.addEventListener("pointercancel", cancel);
     window.addEventListener("blur", cancel);
     return () => {
@@ -140,41 +145,61 @@ export function DemoPlaybackControls() {
 
   // The ghost may roam the whole timeline: a release beyond the
   // downloaded frontier becomes a PENDING seek in the store (executed
-  // by the loader when the buffer reaches it), signalled by the wait
-  // pie on the play button and a marker at the requested time.
+  // by the loader when the buffer reaches it). Keep the thumb at that target.
   const downloadComplete = useEngineSelector(
     (state) => state.playback.downloadComplete,
   );
   const pendingSeekSec = useEngineSelector(
     (state) => state.playback.pendingSeekSec,
   );
+  const replay = useEngineSelector((state) => state.playback.seekProgress);
 
-  const handleSeekChange = useCallback((value: number[]) => {
-    setDragValue(value[0]);
-  }, []);
+  const beginScrub = () => {
+    scrubRecording.current = recording;
+  };
+  const handleSeekChange = useCallback(
+    (value: number[]) => {
+      if (
+        !recording ||
+        scrubRecording.current !== recording ||
+        !isCurrentPlayback(recording)
+      )
+        return;
+      setDragValue(value[0]);
+    },
+    [recording],
+  );
 
   const handleSeekCommit = useCallback(
     (value: number[]) => {
-      seek(value[0]);
+      if (recording && scrubRecording.current === recording) seek(value[0]);
+      scrubRecording.current = null;
       setDragValue(null);
     },
-    [seek],
+    [recording, seek],
   );
 
   // CastGenius needs the whole demo (its scan buffer arrives at
   // download completion) — a press while downloading queues the start
   // and the button shows download progress until then. Press again to
   // cancel the queue.
-  const [directorQueued, setDirectorQueued] = useState(false);
+  const [queuedRecording, setQueuedRecording] =
+    useState<typeof recording>(null);
+  const directorQueued = recording != null && queuedRecording === recording;
   useEffect(() => {
-    setDirectorQueued(false);
+    setQueuedRecording(null);
   }, [recording]);
   useEffect(() => {
-    if (directorQueued && downloadComplete) {
-      setDirectorQueued(false);
+    if (
+      directorQueued &&
+      downloadComplete &&
+      !isSeeking &&
+      isCurrentPlayback(recording!)
+    ) {
+      setQueuedRecording(null);
       void startDirector();
     }
-  }, [directorQueued, downloadComplete]);
+  }, [directorQueued, downloadComplete, isSeeking, recording]);
 
   const handleSpeedChange = useCallback(
     (e: ChangeEvent<HTMLSelectElement>) => {
@@ -217,24 +242,55 @@ export function DemoPlaybackControls() {
     pendingSeekSec != null && pendingSeekSec > 0
       ? Math.min(1, (downloadedSec ?? 0) / pendingSeekSec)
       : null;
+  const replayProgress = replay
+    ? Math.max(
+        0,
+        Math.min(
+          1,
+          replay.targetTimeSec > replay.startTimeSec
+            ? (replay.currentTimeSec - replay.startTimeSec) /
+                (replay.targetTimeSec - replay.startTimeSec)
+            : 1,
+        ),
+      )
+    : null;
+  const progress = pendingSeekProgress ?? replayProgress;
+  const replayTime =
+    pendingSeekSec != null
+      ? (downloadedSec ?? 0)
+      : (replay?.currentTimeSec ?? 0);
 
   return (
     <div className={styles.Root}>
       <button
         className={styles.PlayPause}
-        onClick={isPlaying ? pause : play}
-        aria-label={isPlaying ? "Pause" : "Play"}
+        onClick={toggle}
+        aria-label={
+          isSeeking
+            ? intendsToPlay
+              ? "Pause after seeking"
+              : "Play after seeking"
+            : isPlaying
+              ? "Pause"
+              : "Play"
+        }
         title={
           pendingSeekProgress != null
             ? `Downloading to ${formatPlayheadTime(pendingSeekSec!)}…`
-            : isPlaying
-              ? "Pause (Space)"
-              : "Play (Space)"
+            : isSeeking
+              ? `Seeking to ${formatPlayheadTime(currentTime)}… (${intendsToPlay ? "pause" : "play"} afterwards: Space)`
+              : isPlaying
+                ? "Pause (Space)"
+                : "Play (Space)"
         }
         autoFocus
       >
         {pendingSeekProgress != null ? (
           <ScanProgressPie progress={pendingSeekProgress} />
+        ) : isSeeking ? (
+          <span className={styles.PlaySpinner}>
+            <LoadingIndicator isLoading inline />
+          </span>
         ) : isPlaying ? (
           <GrPauseFill />
         ) : (
@@ -244,12 +300,18 @@ export function DemoPlaybackControls() {
       <button
         className={styles.Director}
         data-active={directorStatus === "playing"}
-        disabled={directorStatus === "scanning" || directorStatus === "error"}
+        disabled={
+          directorStatus === "scanning" ||
+          directorStatus === "error" ||
+          (isSeeking && directorStatus !== "playing")
+        }
         onClick={() => {
           if (directorStatus === "playing") {
             exitDirector();
           } else if (!downloadComplete) {
-            setDirectorQueued((queued) => !queued);
+            setQueuedRecording((queued) =>
+              queued === recording ? null : recording,
+            );
           } else {
             void startDirector();
           }
@@ -274,8 +336,12 @@ export function DemoPlaybackControls() {
         max={duration}
         step={0.01}
         value={[dragValue ?? currentTime]}
+        onPointerDownCapture={beginScrub}
+        onKeyDownCapture={beginScrub}
         onValueChange={handleSeekChange}
         onValueCommit={handleSeekCommit}
+        aria-busy={isSeeking}
+        data-seeking={isSeeking}
       >
         <Slider.Track className={styles.SeekTrack}>
           {/* YouTube-style layers: gray = demo time available locally,
@@ -293,6 +359,25 @@ export function DemoPlaybackControls() {
             />
           )}
           <Slider.Range className={styles.SeekRange} />
+          {isSeeking && duration > 0 && (
+            <div
+              className={styles.SeekReplayRange}
+              role="progressbar"
+              aria-label={
+                pendingSeekSec != null
+                  ? "Downloading demo"
+                  : "Replaying demo ticks"
+              }
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={
+                progress != null ? Math.round(progress * 100) : undefined
+              }
+              style={{
+                width: `${(Math.max(0, Math.min(duration, replayTime)) / duration) * 100}%`,
+              }}
+            />
+          )}
           {/* While scrubbing, mark where playback actually still is —
               the thumb is the ghost until release commits the seek. */}
           {dragValue != null && duration > 0 && (
@@ -304,18 +389,12 @@ export function DemoPlaybackControls() {
               }}
             />
           )}
-          {/* A seek waiting on the download: mark the requested time. */}
-          {pendingSeekSec != null && duration > 0 && (
-            <div
-              className={styles.SeekPendingTick}
-              aria-hidden="true"
-              style={{
-                left: `${Math.min(100, (pendingSeekSec / duration) * 100)}%`,
-              }}
-            />
-          )}
         </Slider.Track>
-        <Slider.Thumb className={styles.SeekThumb} aria-label="Seek">
+        <Slider.Thumb
+          className={styles.SeekThumb}
+          aria-label="Seek"
+          data-seeking={isSeeking && !dragging}
+        >
           {dragValue != null && (
             <div className={styles.SeekTooltip} aria-hidden="true">
               {formatPlayheadTime(dragValue)}

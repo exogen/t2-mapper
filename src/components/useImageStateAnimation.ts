@@ -110,6 +110,10 @@ export function useImageStateAnimation(
 
   useFrame(() => {
     const playback = engineStore.getState().playback;
+    if (playback.status === "seeking") {
+      stopLoopingSound(loopingSoundRef, loopingSoundStateRef);
+      return;
+    }
     const isPlaying = playback.status === "playing" && !streamClock.worldPaused;
     const actions = target.actions.current;
 

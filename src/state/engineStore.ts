@@ -3,6 +3,7 @@ import { createStore } from "zustand/vanilla";
 import { subscribeWithSelector } from "zustand/middleware";
 import { useStoreWithEqualityFn } from "zustand/traditional";
 import type { StreamRecording } from "../stream/types";
+import type { SeekProgress } from "../stream/PlaybackClock";
 import { setStreamSnapshot } from "./streamSnapshotStore";
 import { demoLoadStore } from "./demoLoadStore";
 import { streamClock } from "./streamPlaybackStore";
@@ -12,7 +13,8 @@ import type {
   TorqueRuntime,
 } from "../torqueScript";
 
-export type PlaybackStatus = "stopped" | "playing" | "paused";
+export type PlaybackStatus = "stopped" | "playing" | "paused" | "seeking";
+type SettledPlaybackStatus = Exclude<PlaybackStatus, "seeking">;
 
 export interface RuntimeSliceState {
   runtime: TorqueRuntime | null;
@@ -28,6 +30,9 @@ export interface PlaybackSliceState {
   /** Source bytes for independent demo scans, retained with the loaded recording. */
   demoBuffer: ArrayBuffer | null;
   status: PlaybackStatus;
+  /** Desired transport state after the current seek completes. */
+  resumeAfterSeek: SettledPlaybackStatus | null;
+  seekProgress: SeekProgress | null;
   /** Seek target in seconds. Written by UI seek actions, read by
    *  StreamingController to detect and execute seeks. */
   seekTime: number;
@@ -74,12 +79,49 @@ export interface EngineStoreState {
   seekPlayback(timeSec: number): void;
   /** Execute the pending beyond-the-buffer seek once fulfillable. */
   fulfillPendingSeek(): void;
-  setPlaybackStatus(status: PlaybackStatus): void;
+  updateSeekProgress(
+    recording: StreamRecording,
+    nonce: number,
+    progress: SeekProgress,
+  ): void;
+  /** Finish after publishing the target scene; ignore replaced seeks/recordings. */
+  completePlaybackSeek(
+    recording: StreamRecording,
+    nonce: number,
+    status?: SettledPlaybackStatus,
+  ): void;
+  setPlaybackStatus(status: SettledPlaybackStatus): void;
+  togglePlayback(recording: StreamRecording): void;
   setPlaybackRate(rate: number): void;
 }
 
 function normalizeName(name: string): string {
   return name.toLowerCase();
+}
+
+function isPendingReplay(
+  playback: PlaybackSliceState,
+  recording: StreamRecording,
+  nonce: number,
+): boolean {
+  return (
+    playback.recording === recording &&
+    playback.seekNonce === nonce &&
+    playback.status === "seeking" &&
+    playback.pendingSeekSec == null
+  );
+}
+
+/** Reject work from an old recording or a superseded seek. */
+export function isCurrentPlayback(
+  recording: StreamRecording,
+  nonce?: number,
+): boolean {
+  const playback = engineStore.getState().playback;
+  return (
+    playback.recording === recording &&
+    (nonce == null || playback.seekNonce === nonce)
+  );
 }
 
 function normalizeGlobalName(name: string): string {
@@ -139,7 +181,10 @@ const initialState: Omit<
   | "setDownloadComplete"
   | "seekPlayback"
   | "fulfillPendingSeek"
+  | "updateSeekProgress"
+  | "completePlaybackSeek"
   | "setPlaybackStatus"
+  | "togglePlayback"
   | "setPlaybackRate"
 > = {
   runtime: {
@@ -154,6 +199,8 @@ const initialState: Omit<
     recording: null,
     demoBuffer: null,
     status: "stopped",
+    resumeAfterSeek: null,
+    seekProgress: null,
     seekTime: 0,
     seekNonce: 0,
     rate: 1,
@@ -300,11 +347,17 @@ export const engineStore = createStore<EngineStoreState>()(
         playback: {
           recording,
           demoBuffer: recording?.source === "demo" ? demoBuffer : null,
-          status: recording ? "stopped" : state.playback.status,
+          status: recording
+            ? "stopped"
+            : state.playback.status === "seeking"
+              ? "paused"
+              : state.playback.status,
+          resumeAfterSeek: null,
+          seekProgress: null,
           seekTime: recording ? 0 : state.playback.seekTime,
           // Monotonic across recordings; the controller re-syncs its
           // ref at mount, so this never reads as a phantom seek.
-          seekNonce: state.playback.seekNonce,
+          seekNonce: state.playback.seekNonce + 1,
           rate: recording ? 1 : state.playback.rate,
           durationMs,
           // A progressively-loading recording reports incomplete; the
@@ -333,7 +386,21 @@ export const engineStore = createStore<EngineStoreState>()(
 
     seekPlayback(timeSec: number) {
       set((state) => {
+        if (!state.playback.recording || !Number.isFinite(timeSec))
+          return state;
         const target = clamp(timeSec, 0, state.playback.durationMs / 1000);
+        const playback: PlaybackSliceState = {
+          ...state.playback,
+          status: "seeking",
+          seekProgress: null,
+          resumeAfterSeek:
+            state.playback.status === "seeking"
+              ? state.playback.resumeAfterSeek
+              : state.playback.status,
+          seekTime: target,
+          seekNonce: state.playback.seekNonce + 1,
+          pendingSeekSec: null,
+        };
         // A seek past the downloaded frontier can't execute yet — park
         // it as pending; the loader fulfills it as the buffer catches
         // up. Seeks within the buffered region run immediately (and
@@ -343,18 +410,13 @@ export const engineStore = createStore<EngineStoreState>()(
           if (target > buffered) {
             return {
               ...state,
-              playback: { ...state.playback, pendingSeekSec: target },
+              playback: { ...playback, pendingSeekSec: target },
             };
           }
         }
         return {
           ...state,
-          playback: {
-            ...state.playback,
-            seekTime: target,
-            seekNonce: state.playback.seekNonce + 1,
-            pendingSeekSec: null,
-          },
+          playback,
         };
       });
     },
@@ -372,21 +434,68 @@ export const engineStore = createStore<EngineStoreState>()(
           playback: {
             ...state.playback,
             seekTime: pending,
-            seekNonce: state.playback.seekNonce + 1,
             pendingSeekSec: null,
           },
         };
       });
     },
 
-    setPlaybackStatus(status: PlaybackStatus) {
+    updateSeekProgress(recording, nonce, progress) {
+      set((state) => {
+        const playback = state.playback;
+        if (!isPendingReplay(playback, recording, nonce)) return state;
+        if (
+          playback.seekProgress?.startTimeSec === progress.startTimeSec &&
+          playback.seekProgress.currentTimeSec === progress.currentTimeSec &&
+          playback.seekProgress.targetTimeSec === progress.targetTimeSec
+        )
+          return state;
+        return { playback: { ...playback, seekProgress: progress } };
+      });
+    },
+
+    completePlaybackSeek(recording, nonce, status) {
+      set((state) => {
+        const playback = state.playback;
+        if (!isPendingReplay(playback, recording, nonce)) return state;
+        return {
+          playback: {
+            ...playback,
+            status: status ?? playback.resumeAfterSeek ?? "paused",
+            resumeAfterSeek: null,
+            seekProgress: null,
+          },
+        };
+      });
+    },
+
+    setPlaybackStatus(status: SettledPlaybackStatus) {
       set((state) => ({
         ...state,
         playback: {
           ...state.playback,
-          status,
+          ...(state.playback.status === "seeking"
+            ? { resumeAfterSeek: status }
+            : { status }),
         },
       }));
+    },
+
+    togglePlayback(recording) {
+      set((state) => {
+        const playback = state.playback;
+        if (playback.recording !== recording) return state;
+        const intendedStatus = playback.resumeAfterSeek ?? playback.status;
+        const status = intendedStatus === "playing" ? "paused" : "playing";
+        return {
+          playback: {
+            ...playback,
+            ...(playback.status === "seeking"
+              ? { resumeAfterSeek: status }
+              : { status }),
+          },
+        };
+      });
     },
 
     setPlaybackRate(rate: number) {
