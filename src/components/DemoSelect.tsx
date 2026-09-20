@@ -17,7 +17,6 @@ import {
   useComboboxStore,
   useStoreState,
 } from "@ariakit/react";
-import { matchSorter } from "match-sorter";
 import { FaMicrophoneAlt } from "react-icons/fa";
 import { IoMdCloseCircle } from "react-icons/io";
 import { LuUsers } from "react-icons/lu";
@@ -29,6 +28,7 @@ import {
 } from "../stream/demoIndex";
 import { useDemoIndex } from "./useDemoIndex";
 import { registerDemoSelectFocus } from "./demoSelectFocus";
+import { searchDemos } from "./demoSearch";
 import { useDemoQueryState } from "./useQueryParams";
 import { useAppNavigation } from "./useAppNavigation";
 import { normalizeMissionType } from "../mission";
@@ -36,7 +36,6 @@ import {
   demoTitle,
   formatDuration,
   formatRecordedTime,
-  missionDisplayName,
   recordedDayLabel,
 } from "./demoFormat";
 import styles from "./MissionSelect.module.css";
@@ -187,29 +186,7 @@ export function DemoSelect() {
         (!tournamentOnly || demo.games.some((game) => game.tournament)) &&
         (!commentaryOnly || demo.hasCommentary === true),
     );
-    if (!searchValue) {
-      return groupDemos(all);
-    }
-    const matches = matchSorter(all, searchValue, {
-      sorter: (items) => items,
-      keys: [
-        // Both the internal name and the display name, so "DX_Ice" and
-        // "Dangerous Crossing" each match.
-        (demo) => demo.games.map((game) => game.mission),
-        (demo) => demo.games.map((game) => missionDisplayName(game.mission)),
-        // Both forms so "CTF" and "capture the flag" each match.
-        (demo) => demo.games.map((game) => game.gameType),
-        (demo) => demo.games.map((game) => normalizeMissionType(game.gameType)),
-        "server",
-        // Exclude the observer bot, including clan tags and numeric suffixes.
-        (demo) =>
-          [demo.recorder, ...demo.players].filter(
-            (name) => !/mapgenius/i.test(name),
-          ),
-        "filename",
-      ],
-    });
-    return groupDemos(matches);
+    return groupDemos(searchDemos(all, searchValue));
   }, [demos, searchValue, tournamentOnly, commentaryOnly]);
 
   const emptyMessage = !enabled
