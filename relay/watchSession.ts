@@ -101,6 +101,8 @@ function sendJson(ws: WebSocket, message: ServerMessage): void {
 }
 
 export interface WatchSessionManagerOptions {
+  /** Allow browser chat through the shared identity (default: true). */
+  chatEnabled?: boolean;
   gameBasePath: string;
   getCachedServer: (address: string) => ServerInfo | undefined;
   /** When present and enabled, sessions auto-record each mission to a .rec. */
@@ -438,6 +440,7 @@ export class WatchSession {
    *  serverCmdMessageSent → chatMessageAll, hud.cs:862). Spam handling is
    *  the game server's business. */
   sendChat(text: string): void {
+    if (this.options.chatEnabled === false) return;
     if (this.lastStatus !== "connected") return;
     const trimmed = text.trim().slice(0, CHAT_MAX_LENGTH);
     if (!trimmed) return;
@@ -837,6 +840,7 @@ export class WatchSession {
       this.fanOut({
         type: "sessionStatus",
         status: "ended",
+        chatEnabled: this.options.chatEnabled !== false,
         message: reason,
         address: this.key,
         watcherCount: 0,
@@ -1687,6 +1691,7 @@ export class WatchSession {
     return {
       type: "sessionStatus",
       status,
+      chatEnabled: this.options.chatEnabled !== false,
       address: this.key,
       serverName: this.sessionServerName(),
       mapName: this.sessionMapName(),

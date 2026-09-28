@@ -86,6 +86,14 @@ dev server):
 npm run relay:dev
 ```
 
+#### Chat
+
+`RELAY_CHAT_ENABLED` defaults to `true`. Set it to `false` or `0` in the relay
+environment and restart to block outgoing chat from all browser connections
+through the relay (global, team, and canned voice chat). Incoming chat and native
+Tribes 2 clients are unaffected. The browser shows its chat input only when the
+relay reports `chatEnabled: true`; older relays leave it hidden.
+
 #### Server passwords
 
 For passworded game servers, set `T2_SERVER_PASSWORDS` in the relay environment

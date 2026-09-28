@@ -20,6 +20,7 @@ export type RelayEventHandler = {
     status: ConnectionStatus,
     message?: string,
     mapName?: string,
+    chatEnabled?: boolean,
   ) => void;
   onServerList?: (servers: ServerInfo[]) => void;
   onGamePacket?: (data: Uint8Array) => void;
@@ -40,6 +41,7 @@ export type RelayEventHandler = {
       channelId?: string;
       /** Whether the stream at the watcher playhead was being recorded. */
       recording?: boolean;
+      chatEnabled?: boolean;
       /** Watcher-facing stream delay in ms (0 = live). */
       streamDelayMs?: number;
       /** Rough ms until a still-buffering delayed stream begins. */
@@ -179,6 +181,7 @@ export class RelayClient {
           message.status,
           message.message,
           message.mapName,
+          message.chatEnabled,
         );
         break;
       case "ping":
@@ -209,6 +212,7 @@ export class RelayClient {
             mapName: message.mapName,
             channelId: message.channelId,
             recording: message.recording,
+            chatEnabled: message.chatEnabled,
             streamDelayMs: message.streamDelayMs,
             streamDelayReadyInMs: message.streamDelayReadyInMs,
           },

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   liveConnectionStore,
+  selectCanChat,
   useLiveSelector,
 } from "../state/liveConnectionStore";
 import { formatDelay } from "../stringUtils";
@@ -8,6 +9,14 @@ import styles from "./ChatInput.module.css";
 import type { HudStyle } from "./SettingsProvider";
 
 export function ChatInput({ hudStyle }: { hudStyle: HudStyle }) {
+  const canChat = useLiveSelector(selectCanChat);
+  const serverKey = useLiveSelector((s) => `${s.relayUrl}|${s.serverAddress}`);
+  // Unmount the composer when unavailable and reset it on server switches:
+  // a draft for one server must not reappear as a message to another.
+  return canChat ? <ChatComposer key={serverKey} hudStyle={hudStyle} /> : null;
+}
+
+function ChatComposer({ hudStyle }: { hudStyle: HudStyle }) {
   const [chatText, setChatText] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
   // Tournament-delayed streams: warn that sent chat reaches the server

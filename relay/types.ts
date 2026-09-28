@@ -30,12 +30,16 @@ export type ServerMessage =
   | {
       type: "status";
       status: ConnectionStatus;
+      /** Whether the relay allows browser-originated chat. */
+      chatEnabled?: boolean;
       message?: string;
       mapName?: string;
     }
   | {
       type: "sessionStatus";
       status: WatchStatus;
+      /** Whether the relay allows browser-originated chat. */
+      chatEnabled?: boolean;
       message?: string;
       address: string;
       serverName?: string;

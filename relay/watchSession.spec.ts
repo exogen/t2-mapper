@@ -554,6 +554,31 @@ describe("WatchSessionManager", () => {
     }
   });
 
+  it.each([true, false])(
+    "advertises and enforces watcher chatEnabled=%s",
+    (chatEnabled) => {
+      const { manager, connections } = createManager({ chatEnabled });
+      const ws = new FakeWebSocket();
+      manager.watch(ws as unknown as WebSocket, "1.2.3.4:28000");
+      const conn = connections[0];
+      conn.setStatus("connected");
+      manager.sendChat(ws as unknown as WebSocket, "hello");
+      expect(
+        conn.commands.filter((c) => c.command === "messageSent"),
+      ).toHaveLength(chatEnabled ? 1 : 0);
+      const late = new FakeWebSocket();
+      manager.watch(late as unknown as WebSocket, "1.2.3.4:28000");
+      for (const client of [ws, late]) {
+        const statuses = client
+          .jsonMessages()
+          .filter((m) => m.type === "sessionStatus");
+        expect(statuses.length).toBeGreaterThan(0);
+        expect(statuses.every((m) => m.chatEnabled === chatEnabled)).toBe(true);
+      }
+      manager.shutdown();
+    },
+  );
+
   it("relays watcher chat through the shared identity", () => {
     const { manager, connections } = createManager();
     const ws = new FakeWebSocket();

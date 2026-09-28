@@ -17,6 +17,8 @@ vi.mock("../stream/relayClient", () => ({
       this.connected = false;
     }
     watchServer = vi.fn();
+    joinServer = vi.fn();
+    sendCommand = vi.fn();
     leaveServer() {}
   },
 }));
@@ -37,6 +39,7 @@ describe("watch connection metadata", () => {
       true,
     );
     state().connectRelay("ws://test");
+    handlers().onOpen!();
     state().watchServer(address);
     handlers().onSessionStatus!(
       "live",
@@ -45,6 +48,7 @@ describe("watch connection metadata", () => {
         address,
         mapName: "DelayedMap",
         recording: true,
+        chatEnabled: true,
         streamDelayMs: 60_000,
         channelId: "session:delayed-channel",
       },
@@ -78,6 +82,100 @@ describe("watch connection metadata", () => {
     );
     expect(state()).toMatchObject({ recording: false, streamDelayMs: 0 });
   });
+
+  it("blocks outgoing chat until the relay enables it and resets it across reconnects", () => {
+    const relay = state()._relay!;
+    state().sendCommand("messageSent", "hello");
+    expect(relay.sendCommand).toHaveBeenCalledWith("messageSent", ["hello"]);
+    vi.mocked(relay.sendCommand).mockClear();
+    handlers().onSessionStatus!(
+      "live",
+      undefined,
+      { address, chatEnabled: false },
+      1,
+    );
+    state().sendCommand("messageSent", "blocked");
+    expect(relay.sendCommand).not.toHaveBeenCalled();
+    handlers().onSessionStatus!(
+      "live",
+      undefined,
+      { address, chatEnabled: true },
+      1,
+    );
+    expect(state().chatEnabled).toBe(true);
+    handlers().onClose!();
+    expect(state().chatEnabled).toBe(false);
+    vi.advanceTimersByTime(2_000);
+    handlers().onOpen!();
+    handlers().onSessionStatus!("live", undefined, { address }, 1);
+    expect(state().chatEnabled).toBe(false);
+  });
+
+  it("honors the player's advertised capability for all chat commands", () => {
+    state().joinServer(address);
+    const relay = state()._relay!;
+    expect(state().chatEnabled).toBe(false);
+    handlers().onStatus!("connected", undefined, undefined, false);
+    for (const command of ["messageSent", "TEAMMESSAGESENT", "CannedChat"])
+      state().sendCommand(command, "blocked");
+    expect(relay.sendCommand).not.toHaveBeenCalled();
+    state().sendCommand("getScores");
+    expect(relay.sendCommand).toHaveBeenCalledWith("getScores", []);
+    handlers().onStatus!("connected", undefined, undefined, true);
+    state().sendCommand("messageSent", "hello");
+    expect(relay.sendCommand).toHaveBeenCalledWith("messageSent", ["hello"]);
+    handlers().onStatus!("disconnected");
+    expect(state().chatEnabled).toBe(false);
+  });
+
+  it.each(["connecting", "syncing"] as const)(
+    "does not send watcher chat while %s even when advertised as enabled",
+    (status) => {
+      const relay = state()._relay!;
+      handlers().onSessionStatus!(
+        status,
+        undefined,
+        { address, chatEnabled: true },
+        1,
+      );
+      state().sendCommand("messageSent", "too early");
+      expect(relay.sendCommand).not.toHaveBeenCalled();
+      handlers().onSessionStatus!(
+        "live",
+        undefined,
+        { address, chatEnabled: true },
+        1,
+      );
+      state().sendCommand("messageSent", "ready");
+      expect(relay.sendCommand).toHaveBeenCalledWith("messageSent", ["ready"]);
+    },
+  );
+
+  it("does not let a previous watcher's live status enable chat during a player handshake", () => {
+    state().joinServer(address);
+    const relay = state()._relay!;
+    handlers().onStatus!("authenticating", undefined, undefined, true);
+    state().sendCommand("messageSent", "too early");
+    expect(relay.sendCommand).not.toHaveBeenCalled();
+    handlers().onStatus!("connected", undefined, undefined, true);
+    state().sendCommand("messageSent", "ready");
+    expect(relay.sendCommand).toHaveBeenCalledWith("messageSent", ["ready"]);
+  });
+
+  it.each(["player", "watcher"] as const)(
+    "stops %s chat as soon as the relay announces a restart",
+    (role) => {
+      if (role === "player") {
+        state().joinServer(address);
+        handlers().onStatus!("connected", undefined, undefined, true);
+      }
+      const relay = state()._relay!;
+      handlers().onRelayRestarting!();
+      expect(state().chatEnabled).toBe(false);
+      state().sendCommand("messageSent", "too late");
+      expect(relay.sendCommand).not.toHaveBeenCalled();
+    },
+  );
 
   it("preserves the playhead's metadata through socket reconnects and reattachment", () => {
     liveConnectionStore.setState({

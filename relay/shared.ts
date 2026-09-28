@@ -17,6 +17,27 @@ export const AUTH_COMMANDS: readonly string[] = [
   "t2csri_decryptChallenge",
 ];
 
+/** Stock T2 text/team chat and voice binds, matched as the engine sees them. */
+export function isChatCommand(command: string): boolean {
+  // HuffmanWriter sends only each character's low byte; Torque dispatches
+  // case-insensitive C strings. Check that name so an encoded alias or NUL
+  // suffix cannot bypass the browser chat policy.
+  let wireName = "";
+  for (let i = 0; i < command.length; i++) {
+    const byte = command.charCodeAt(i) & 0xff;
+    if (byte === 0) break;
+    wireName += String.fromCharCode(byte);
+  }
+  switch (wireName.toLowerCase()) {
+    case "messagesent":
+    case "teammessagesent":
+    case "cannedchat":
+      return true;
+    default:
+      return false;
+  }
+}
+
 /** Auto-reconnect policy for retryable game-server disconnects. */
 export const MAX_RETRIES = 3;
 export const RETRY_DELAY_MS = 6000;

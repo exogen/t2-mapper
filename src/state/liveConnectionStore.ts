@@ -1,6 +1,6 @@
 import { createStore } from "zustand/vanilla";
 import { useStoreWithEqualityFn } from "zustand/traditional";
-import { normalizeAddress } from "../../relay/shared";
+import { isChatCommand, normalizeAddress } from "../../relay/shared";
 import { createLogger } from "../logger";
 import { RelayClient } from "../stream/relayClient";
 import { LiveStreamAdapter } from "../stream/liveStreaming";
@@ -16,6 +16,8 @@ const log = createLogger("liveConnectionStore");
 
 export interface LiveConnectionState {
   relayConnected: boolean;
+  /** False until the current relay explicitly allows browser chat. */
+  chatEnabled: boolean;
   gameStatus: ConnectionStatus | null;
   gameStatusMessage?: string;
   /** Mission name from the server (updated on map cycle). */
@@ -121,6 +123,7 @@ function disconnectedState(
   return {
     disconnectReason,
     relayConnected: false,
+    chatEnabled: false,
     serversLoading: false,
     gameStatus: null,
     gameStatusMessage: undefined,
@@ -148,6 +151,7 @@ function disconnectedState(
 export const liveConnectionStore = createStore<LiveConnectionStore>(
   (set, get) => ({
     relayConnected: false,
+    chatEnabled: false,
     gameStatus: null,
     gameStatusMessage: undefined,
     mapName: undefined,
@@ -203,7 +207,7 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
             }
           }
         },
-        onStatus(status, message, statusMapName) {
+        onStatus(status, message, statusMapName, chatEnabled) {
           if (get()._relay !== relay || get().role !== "player") return;
           log.info(
             "game status: %s%s%s",
@@ -213,6 +217,10 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
           );
           set({
             gameStatus: status,
+            chatEnabled:
+              status === "disconnected"
+                ? false
+                : (chatEnabled ?? get().chatEnabled),
             gameStatusMessage: message,
             ...(statusMapName ? { mapName: statusMapName } : {}),
           });
@@ -240,6 +248,9 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
         },
         onRelayRestarting() {
           if (get()._relay !== relay) return;
+          // Upstream teardown can precede the socket closing. Stop accepting
+          // chat immediately rather than silently losing those last messages.
+          set({ chatEnabled: false });
           const s = get();
           if (s.role === "watcher" && s.serverAddress) {
             restartPending = true;
@@ -273,6 +284,9 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
             watchStatus: status,
             watchStatusMessage: message,
             watcherCount,
+            ...(info.chatEnabled != null
+              ? { chatEnabled: info.chatEnabled }
+              : {}),
             ...(info.channelId ? { watchChannelId: info.channelId } : {}),
             // Partial transition notices from older relays do not mean
             // that recording or the tournament delay was switched off.
@@ -287,6 +301,7 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
             ...(status === "ended"
               ? {
                   disconnectReason: "ended" as const,
+                  chatEnabled: false,
                   watchChannelId: null,
                   recording: false,
                   streamDelayMs: 0,
@@ -374,6 +389,7 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
             // toolbar stay intact while we get back in.
             set({
               relayConnected: false,
+              chatEnabled: false,
               gameStatus: null,
               gameStatusMessage: undefined,
               relayToGameServerPing: null,
@@ -412,7 +428,7 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
 
       relay.connect();
       get()._relay = relay;
-      set({ relayUrl: url });
+      set({ relayUrl: url, chatEnabled: false });
     },
 
     disconnectRelay() {
@@ -513,6 +529,7 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
         gameStatus: null,
         adapter: newAdapter,
         role: "player",
+        chatEnabled: false,
         disconnectReason: null,
       });
 
@@ -553,6 +570,7 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
               }
             : {}),
           role: "watcher",
+          chatEnabled: false,
           serverAddress: address,
           liveReady: false,
           gameStatus: null,
@@ -622,6 +640,7 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
         gameStatus: null,
         adapter: newAdapter,
         role: "watcher",
+        chatEnabled: false,
         watchStatus: "connecting",
         watchStatusMessage: undefined,
         disconnectReason: null,
@@ -658,6 +677,7 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
       s._adapter = null;
       set({
         reconnecting: false,
+        chatEnabled: false,
         adapter: null,
         liveReady: false,
         gameStatus: null,
@@ -694,6 +714,7 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
     },
 
     sendCommand(command, ...args) {
+      if (isChatCommand(command) && !selectCanChat(get())) return;
       // Watchers are read-only spectators except for chat (sent through
       // the relay's shared identity); the relay drops anything else
       // anyway, but don't even send it.
@@ -702,6 +723,13 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
     },
   }),
 );
+
+/** Chat needs both relay permission and a ready connection for this role. */
+export function selectCanChat(s: LiveConnectionState): boolean {
+  if (!s.relayConnected || !s.chatEnabled || s.reconnecting) return false;
+  if (s.role === "player") return s.gameStatus === "connected";
+  return s.role === "watcher" && s.watchStatus === "live";
+}
 
 /** Select state from the live connection store with optional equality fn. */
 export function useLiveSelector<T>(

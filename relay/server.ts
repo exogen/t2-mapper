@@ -7,6 +7,7 @@ import { WebSocketServer, WebSocket } from "ws";
 import { queryServerList, queryServerInfo } from "./masterQuery.js";
 import { GameConnection } from "./gameConnection.js";
 import { ServerPasswords } from "./serverPasswords.js";
+import { loadChatEnabled } from "./chatPolicy.js";
 import { loadCredentials } from "./auth.js";
 import { WatchSessionManager, normalizeAddress } from "./watchSession.js";
 import { WatchRequest } from "./watchRequest.js";
@@ -15,6 +16,7 @@ import { DemoUploader, loadUploadConfig } from "./demoUpload.js";
 import { Patroller, globToRegExp } from "./patrol.js";
 import {
   AUTH_COMMANDS,
+  isChatCommand,
   MAX_RETRIES,
   RETRY_DELAY_MS,
   shouldRetryDisconnect,
@@ -35,6 +37,7 @@ const MANIFEST_PATH =
 const RELAY_PORT = parseInt(process.env.RELAY_PORT || "8765", 10);
 const MASTER_SERVER = process.env.T2_MASTER_SERVER || "master.tribesnext.com";
 const serverPasswords = new ServerPasswords(process.env.T2_SERVER_PASSWORDS);
+const CHAT_ENABLED = loadChatEnabled(process.env.RELAY_CHAT_ENABLED);
 
 // ── Demo recording (env-gated) ──
 const DEMO_RECORD_ENABLED =
@@ -419,6 +422,7 @@ function persistWatchState(addresses: string[]): void {
 
 /** Shared watch sessions (one game connection per server, N watchers). */
 const watchSessions = new WatchSessionManager({
+  chatEnabled: CHAT_ENABLED,
   gameBasePath: GAME_BASE_PATH,
   getCachedServer: findKnownServer,
   createConnection: createGameConnection,
@@ -610,6 +614,7 @@ wss.on("connection", (ws) => {
       sendToClient(ws, {
         type: "sessionStatus",
         status: "connecting",
+        chatEnabled: CHAT_ENABLED,
         address,
         message: "Checking server...",
         watcherCount: 0,
@@ -618,6 +623,7 @@ wss.on("connection", (ws) => {
       sendToClient(ws, {
         type: "sessionStatus",
         status: "ended",
+        chatEnabled: CHAT_ENABLED,
         address,
         message: `No compatible Tribes 2 server responded at ${address}.`,
         watcherCount: 0,
@@ -682,6 +688,7 @@ wss.on("connection", (ws) => {
         sendToClient(ws, {
           type: "status",
           status: "connecting",
+          chatEnabled: CHAT_ENABLED,
           message: retryStatusMessage(statusMessage ?? "", retryCount),
           mapName: conn.mapName,
         });
@@ -703,6 +710,7 @@ wss.on("connection", (ws) => {
       sendToClient(ws, {
         type: "status",
         status,
+        chatEnabled: CHAT_ENABLED,
         message: statusMessage,
         mapName: conn.mapName,
       });
@@ -784,6 +792,15 @@ wss.on("connection", (ws) => {
     ws: WebSocket,
     message: ClientMessage,
   ): Promise<void> {
+    // Enforce this before either player or watcher dispatch. Hiding the
+    // input alone cannot prevent commands from a modified browser client.
+    if (
+      !CHAT_ENABLED &&
+      message.type === "sendCommand" &&
+      isChatCommand(message.command)
+    )
+      return;
+
     // Watcher sockets are read-only spectators, with one exception: chat,
     // sent through the session's shared identity. Every other
     // game-mutating message is dropped (the session owns the protocol).

@@ -118,6 +118,35 @@ describe("RelayClient catch-up ordering", () => {
     });
   }
 
+  it.each([true, false])(
+    "passes chatEnabled=%s through player and watcher status messages",
+    (chatEnabled) => {
+      const onStatus = vi.fn();
+      const onSessionStatus = vi.fn();
+      const { ws } = setup({ onStatus, onSessionStatus });
+      ws.receive({ type: "status", status: "connected", chatEnabled });
+      expect(onStatus).toHaveBeenCalledWith(
+        "connected",
+        undefined,
+        undefined,
+        chatEnabled,
+      );
+      ws.receive({
+        type: "sessionStatus",
+        status: "connecting",
+        address: "test:28000",
+        watcherCount: 1,
+        chatEnabled,
+      });
+      expect(onSessionStatus).toHaveBeenCalledWith(
+        "connecting",
+        undefined,
+        expect.objectContaining({ chatEnabled }),
+        1,
+      );
+    },
+  );
+
   it("hydrates before releasing statuses and raw packets, in wire order", async () => {
     const { ws, events } = setup();
     snapshot(ws, 1);
