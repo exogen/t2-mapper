@@ -86,7 +86,7 @@ dev server):
 npm run relay:dev
 ```
 
-#### Deploying to Fly.io
+#### Server passwords
 
 For passworded game servers, set `T2_SERVER_PASSWORDS` in the relay environment
 (locally, `.env.development.local`) to a JSON object:
@@ -102,6 +102,17 @@ patrol recording. Passwords remain in the relay: they are excluded from server
 lists, `/health`, and browser messages. Store this variable as a production
 secret and restart the relay after changes. Invalid JSON or non-string values
 prevent startup with a generic error that does not include the configuration.
+Passwords must fit the game's wire format: at most 255 single-byte characters,
+without NUL. An empty value disables that key, including patrol eligibility;
+an empty address override does not fall back to a name password.
+
+With `LOG_LEVEL=info` (the default), each join logs the password lookup outcome
+and whether it matched by address or name, followed by `passwordSent` on the
+handshake. Missing credentials and server password rejections produce warnings
+with the server address. A timeout means no acceptance or rejection arrived;
+it does not establish that the password is wrong. Password values are never logged.
+
+#### Deploying to Fly.io
 
 The relay is configured for [Fly.io](https://fly.io) deployment via
 `relay/Dockerfile` and `fly.toml`. It needs a persistent volume for demo

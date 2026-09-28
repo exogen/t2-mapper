@@ -159,6 +159,7 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
   private warriorName: string;
   /** Relay-only lookup; the password is used only by the UDP handshake. */
   #getJoinPassword?: () => Promise<string | undefined>;
+  #joinPasswordSent = false;
 
   /** The server address as "host:port". */
   get address(): string {
@@ -247,7 +248,14 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
     // Set overall connection timeout
     this.handshakeTimer = setTimeout(() => {
       if (this._status !== "connected" && this._status !== "authenticating") {
-        connLog.warn("Connection timed out");
+        connLog.warn(
+          {
+            address: this.address,
+            stage: this.connectRequested ? "connect" : "challenge",
+            passwordSent: this.#joinPasswordSent,
+          },
+          "Connection timed out without acceptance or rejection; password validity is unknown",
+        );
         this.setStatus("disconnected", "Connection timed out");
         this.disconnect();
       }
@@ -256,6 +264,7 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
 
   /** Send the initial ConnectChallengeRequest. */
   private sendChallengeRequest(joinPassword?: string): void {
+    this.#joinPasswordSent = !!joinPassword;
     this.setStatus("challenging");
     const packet = buildConnectChallengeRequest(
       GAME_PROTOCOL_VERSION,
@@ -263,7 +272,11 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
       joinPassword,
     );
     connLog.info(
-      { bytes: packet.length, clientSeq: this.clientConnectSequence },
+      {
+        address: this.address,
+        passwordSent: this.#joinPasswordSent,
+        clientSeq: this.clientConnectSequence,
+      },
       "Sending ConnectChallengeRequest",
     );
     // Retry every 2s until the handshake advances (like the real client);
@@ -273,7 +286,10 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
       this.challengeRetryTimer = setTimeout(() => {
         this.challengeRetryTimer = null;
         if (this._status === "challenging") {
-          connLog.info("No challenge response, retrying");
+          connLog.info(
+            { address: this.address, passwordSent: this.#joinPasswordSent },
+            "No challenge response, retrying",
+          );
           send();
         }
       }, 2000);
@@ -390,7 +406,7 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
         // Fall back to default reason
       }
     }
-    connLog.warn({ reason }, "ChallengeReject received");
+    this.logHandshakeReject("challenge", reason);
     this.setStatus("disconnected", reason);
     this.disconnect();
   }
@@ -551,9 +567,29 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
         // Fall back to default reason
       }
     }
-    connLog.warn({ reason }, "ConnectReject received");
+    this.logHandshakeReject("connect", reason);
     this.setStatus("disconnected", reason);
     this.disconnect();
+  }
+
+  private logHandshakeReject(
+    stage: "challenge" | "connect",
+    reason: string,
+  ): void {
+    const passwordRejected = /password/i.test(reason);
+    connLog.warn(
+      {
+        address: this.address,
+        stage,
+        reason,
+        passwordSent: this.#joinPasswordSent,
+      },
+      passwordRejected
+        ? this.#joinPasswordSent
+          ? "Server rejected the supplied join password; check T2_SERVER_PASSWORDS"
+          : "Server requires a join password, but no password was sent; check T2_SERVER_PASSWORDS and server metadata"
+        : "Server rejected connection handshake",
+    );
   }
 
   /** Handle a data protocol packet (established connection). */

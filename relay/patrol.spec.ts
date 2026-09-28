@@ -193,10 +193,10 @@ describe("Patroller", () => {
 
   it("patrols passworded servers only with configured credentials, keeping health summaries public", async () => {
     const passwords = new ServerPasswords(
-      '{"Known Locked":"private-server-password"}',
+      '{"Known Locked":"private-server-password","Empty Locked":"","Overridden Locked":"private-server-password","192.0.2.4:28000":""}',
     );
     const { connections, manager, servers, patroller } = setup(["*"], {
-      hasServerPassword: (server) => passwords.getPassword(server) != null,
+      hasServerPassword: (server) => passwords.hasPassword(server),
     });
     servers.push(
       {
@@ -205,6 +205,14 @@ describe("Patroller", () => {
       },
       {
         ...makeServer("Unknown Locked", "192.0.2.2:28000", 5),
+        passwordRequired: true,
+      },
+      {
+        ...makeServer("Empty Locked", "192.0.2.3:28000", 5),
+        passwordRequired: true,
+      },
+      {
+        ...makeServer("Overridden Locked", "192.0.2.4:28000", 5),
         passwordRequired: true,
       },
     );

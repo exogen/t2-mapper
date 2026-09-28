@@ -6,8 +6,103 @@ import { GameConnection } from "./gameConnection";
 import { BitStreamWriter } from "./BitStreamWriter";
 import type { ConnectionProtocol } from "./protocol";
 import { GAME_PROTOCOL_VERSION } from "./shared";
+import { writeString } from "./HuffmanWriter";
+import { connLog } from "./logger";
 
 describe("GameConnection server passwords", () => {
+  it.each([
+    [28, undefined],
+    [28, "private-server-password"],
+    [34, undefined],
+    [34, "private-server-password"],
+  ] as const)(
+    "logs password rejection type %s safely (%s)",
+    async (type, password) => {
+      vi.useFakeTimers();
+      const socket = Object.assign(new EventEmitter(), {
+        send: vi.fn(),
+        close: vi.fn(),
+      });
+      vi.spyOn(dgram, "createSocket").mockReturnValue(
+        socket as unknown as dgram.Socket,
+      );
+      const warn = vi.spyOn(connLog, "warn").mockImplementation(() => {});
+      const conn = new GameConnection("192.0.2.1:28000", {
+        getJoinPassword: async () => password,
+      });
+      const status = vi.fn();
+      conn.on("status", status);
+      try {
+        await conn.connect();
+        warn.mockClear(); // Ignore the independent TribesNext-account warning.
+        const challenge = new BitStream(socket.send.mock.calls[0][0]);
+        challenge.readU8();
+        challenge.readU32();
+        const clientSeq = challenge.readU32();
+        const reject = new BitStreamWriter();
+        reject.writeU8(type);
+        if (type === 34) reject.writeU32(0);
+        reject.writeU32(clientSeq);
+        writeString(reject, "CHR_PASSWORD");
+        socket.emit("message", Buffer.from(reject.getBuffer()));
+        expect(warn).toHaveBeenCalledWith(
+          {
+            address: "192.0.2.1:28000",
+            stage: type === 28 ? "challenge" : "connect",
+            reason: "CHR_PASSWORD",
+            passwordSent: !!password,
+          },
+          expect.stringContaining(
+            password
+              ? "rejected the supplied join password"
+              : "no password was sent",
+          ),
+        );
+        expect(status).toHaveBeenCalledWith("disconnected", "CHR_PASSWORD");
+        expect(
+          JSON.stringify([warn.mock.calls, status.mock.calls]),
+        ).not.toContain("private-server-password");
+        vi.advanceTimersByTime(30_000);
+        expect(socket.send).toHaveBeenCalledTimes(1);
+        expect(warn).toHaveBeenCalledTimes(1);
+      } finally {
+        conn.disconnect();
+        vi.restoreAllMocks();
+        vi.useRealTimers();
+      }
+    },
+  );
+
+  it("logs a silent timeout without claiming the password was rejected", async () => {
+    vi.useFakeTimers();
+    const socket = Object.assign(new EventEmitter(), {
+      send: vi.fn(),
+      close: vi.fn(),
+    });
+    vi.spyOn(dgram, "createSocket").mockReturnValue(
+      socket as unknown as dgram.Socket,
+    );
+    const warn = vi.spyOn(connLog, "warn").mockImplementation(() => {});
+    const conn = new GameConnection("192.0.2.1:28000", {
+      getJoinPassword: async () => "private-server-password",
+    });
+    try {
+      await conn.connect();
+      vi.advanceTimersByTime(30_000);
+      expect(warn).toHaveBeenCalledWith(
+        { address: "192.0.2.1:28000", stage: "challenge", passwordSent: true },
+        expect.stringContaining("password validity is unknown"),
+      );
+      expect(JSON.stringify(warn.mock.calls)).not.toContain(
+        "private-server-password",
+      );
+    } finally {
+      conn.disconnect();
+      vi.restoreAllMocks();
+      vi.useRealTimers();
+    }
+  });
+
   it.each([undefined, "private-server-password"])(
     "sends the configured password only in the challenge, including retries (%s)",
     async (password) => {

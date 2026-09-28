@@ -326,13 +326,18 @@ function getFreshProbe(
 }
 
 /** Look up a server by address in the master list or the probe cache. */
-function findKnownServer(address: string): ServerInfo | undefined {
+function findKnownServer(
+  address: string,
+  maxAgeMs = Infinity,
+): ServerInfo | undefined {
   const [host, port] = normalizeAddress(address).split(":");
   return (
-    cachedServers.find((s) => {
-      const [sHost, sPort] = s.address.toLowerCase().split(":");
-      return sHost === host && (sPort ?? "28000") === (port ?? "28000");
-    }) ??
+    (Date.now() - serverListAt < maxAgeMs
+      ? cachedServers.find((s) => {
+          const [sHost, sPort] = s.address.toLowerCase().split(":");
+          return sHost === host && (sPort ?? "28000") === (port ?? "28000");
+        })
+      : undefined) ??
     getFreshProbe(`${host}:${port}`)?.info ??
     undefined
   );
@@ -346,18 +351,18 @@ function createGameConnection(
   const key = normalizeAddress(address);
   return new GameConnection(key, {
     warriorName,
-    getJoinPassword: serverPasswords.enabled
-      ? async () => {
-          let server = findKnownServer(key);
-          // Warm boots and direct joins may precede the first server list.
-          if (!server && !getFreshProbe(key)) {
-            const info = await queryServerInfo(key);
-            probeCache.set(key, { info, at: Date.now() });
-            server = info ?? undefined;
-          }
-          return serverPasswords.getPassword(server);
-        }
-      : undefined,
+    getJoinPassword: async () => {
+      // Display metadata may be retained indefinitely, but password selection
+      // must re-probe old entries: the server may have changed its lock/name.
+      let server = findKnownServer(key, PROBE_TTL_MS);
+      // Warm boots and direct joins may precede the first server list.
+      if (serverPasswords.enabled && !server && !getFreshProbe(key)) {
+        const info = await queryServerInfo(key);
+        probeCache.set(key, { info, at: Date.now() });
+        server = info ?? undefined;
+      }
+      return serverPasswords.getPasswordForConnection(key, server);
+    },
   });
 }
 
@@ -432,8 +437,7 @@ const patroller =
         maxSessions: DEMO_PATROL_MAX_SESSIONS,
         intervalMs: DEMO_PATROL_INTERVAL_MS,
         getServerList,
-        hasServerPassword: (server) =>
-          serverPasswords.getPassword(server) != null,
+        hasServerPassword: (server) => serverPasswords.hasPassword(server),
         sessions: watchSessions,
       })
     : null;

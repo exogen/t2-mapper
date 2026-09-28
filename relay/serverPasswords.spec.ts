@@ -1,5 +1,9 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { ServerPasswords } from "./serverPasswords";
+import { connLog } from "./logger";
+import { BitStream } from "t2-demo-parser";
+import { buildConnectChallengeRequest } from "./protocol";
+import { GAME_PROTOCOL_VERSION } from "./shared";
 
 const server = {
   address: "192.0.2.1:28000",
@@ -8,6 +12,102 @@ const server = {
 };
 
 describe("ServerPasswords", () => {
+  it("treats an empty address override as unusable without falling back to a name password", () => {
+    const passwords = new ServerPasswords(
+      '{"192.0.2.1:28000":"","My Server":"name-secret"}',
+    );
+    expect(passwords.getPassword(server)).toBe("");
+    expect(passwords.hasPassword(server)).toBe(false);
+    expect(
+      passwords.hasPassword({ ...server, address: "192.0.2.2:28000" }),
+    ).toBe(true);
+  });
+
+  it.each(["x".repeat(256), "secret\u0100", "secret\u0000suffix"])(
+    "rejects passwords that cannot round-trip through the protocol without revealing them",
+    (password) => {
+      expect(
+        () => new ServerPasswords(JSON.stringify({ "My Server": password })),
+      ).toThrow(
+        new Error(
+          "T2_SERVER_PASSWORDS passwords must be at most 255 single-byte characters without NUL",
+        ),
+      );
+    },
+  );
+
+  it("preserves the largest supported single-byte password in a real challenge", () => {
+    const password = "\xff".repeat(255);
+    const passwords = new ServerPasswords(
+      JSON.stringify({ "My Server": password }),
+    );
+    const bs = new BitStream(
+      buildConnectChallengeRequest(
+        GAME_PROTOCOL_VERSION,
+        123,
+        passwords.getPassword(server),
+      ),
+    );
+    bs.readU8();
+    bs.readU32();
+    bs.readU32();
+    expect(bs.readString()).toBe(password);
+    expect(bs.readFlag()).toBe(false);
+  });
+
+  it.each([
+    [undefined, server, "disabled", undefined, true],
+    [
+      '{"192.0.2.1:28000":"private-secret"}',
+      server,
+      "selected",
+      "address",
+      false,
+    ],
+    ['{"My Server":"private-secret"}', server, "selected", "name", false],
+    ['{"Other Server":"private-secret"}', server, "missing", undefined, true],
+    ['{"My Server":""}', server, "empty", "name", true],
+    [
+      '{"My Server":"private-secret"}',
+      undefined,
+      "unknown-server",
+      undefined,
+      true,
+    ],
+    [
+      '{"My Server":"private-secret"}',
+      { ...server, passwordRequired: false },
+      "not-required",
+      undefined,
+      false,
+    ],
+  ] as const)(
+    "logs a safe lookup outcome for %s",
+    (raw, info, outcome, matchedBy, warn) => {
+      const infoLog = vi.spyOn(connLog, "info").mockImplementation(() => {});
+      const warnLog = vi.spyOn(connLog, "warn").mockImplementation(() => {});
+      try {
+        const passwords = new ServerPasswords(raw);
+        expect(passwords.getPasswordForConnection(server.address, info)).toBe(
+          passwords.getPassword(info),
+        );
+        expect(warn ? warnLog : infoLog).toHaveBeenCalledWith(
+          expect.objectContaining({
+            address: server.address,
+            outcome,
+            matchedBy,
+          }),
+          expect.any(String),
+        );
+        expect(
+          JSON.stringify([infoLog.mock.calls, warnLog.mock.calls]),
+        ).not.toContain("private-secret");
+      } finally {
+        vi.restoreAllMocks();
+      }
+    },
+  );
+
   it.each([undefined, "", "  ", "{}"])(
     "defaults to no passwords for %j",
     (raw) => {
