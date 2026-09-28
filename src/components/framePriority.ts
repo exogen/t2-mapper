@@ -16,6 +16,8 @@
  *
  * The order follows what each step reads:
  *
+ * 0. queued shadow atlases consume the previous frame's complete pose,
+ *    before interpolation or bone queries start changing world transforms;
  * 1. playback advances the demo clock and interpolates entity transforms;
  * 2. shapes animate their skeletons on those transforms;
  * 3. the eye node's animated position is published from that pose;
@@ -30,6 +32,8 @@
  * billboards and particle systems.
  */
 export const FramePriority = {
+  /** Queued shadow atlas draws, before any next-frame pose mutations. */
+  ShadowAtlas: -70,
   /** Demo clock, tick processing, entity interpolation, snapshot publish. */
   StreamPlayback: -60,
   /** Shape mixers: body, mounted images, turret aim, vehicle jets. */

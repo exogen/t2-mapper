@@ -697,6 +697,18 @@ describe("shared DTS shape draws", () => {
     pool.dispose();
   });
 
+  it("ignores leftover morph weights when the geometry has no morph targets", () => {
+    const { pool, meshes, prepare } = rigidFixture(3);
+    for (const mesh of meshes)
+      mesh.morphTargetInfluences = new Array(8).fill(0);
+    prepare();
+    expect(pool.stats.instances).toBe(3);
+    const draw = pool.root.children[0] as InstancedMesh;
+    expect(draw.geometry.morphAttributes).toEqual({});
+    expect(draw.morphTexture).toBeNull();
+    pool.dispose();
+  });
+
   it("retains native morph influences and detail-map shader configuration", () => {
     const { pool, renderer, world, meshes, prepare } = rigidFixture(3);
     const geometry = meshes[0].geometry;

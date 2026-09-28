@@ -27,18 +27,17 @@ import {
   Box3,
   BufferAttribute,
   Group,
-  DetachedBindMode,
   DoubleSide,
   Matrix4,
   Mesh,
   MeshBasicMaterial,
-  SkinnedMesh,
   Vector2,
   Vector3,
 } from "three";
-import type { BufferGeometry, Material, Object3D, Texture } from "three";
+import type { BufferGeometry, Object3D, Texture } from "three";
 import { torqueVecToThree } from "../../stream/playbackUtils";
 import { isVisibleInHierarchy } from "../../objectUtils";
+import { createWorldMeshOverlay } from "../../meshOverlay";
 import {
   streamClock,
   streamPlaybackStore,
@@ -160,41 +159,6 @@ function collectZapSources(node: Object3D, out: Mesh[]): void {
   if (node.userData.imageMount) return;
   if ((node as Mesh).isMesh) out.push(node as Mesh);
   for (const child of node.children) collectZapSources(child, out);
-}
-
-/**
- * An overlay drawing `source`'s geometry with the zap material. It
- * follows the source's world matrix (copied right before rendering, so
- * skinned bind matrices stay consistent) and shares its skeleton and
- * morph influences.
- */
-function createZapOverlay(source: Mesh, material: Material): Mesh {
-  let overlay: Mesh;
-  const skinned = (source as SkinnedMesh).isSkinnedMesh
-    ? (source as SkinnedMesh)
-    : null;
-  if (skinned) {
-    const clone = new SkinnedMesh(skinned.geometry, material);
-    clone.bind(skinned.skeleton, skinned.bindMatrix);
-    clone.bindMode = DetachedBindMode;
-    overlay = clone;
-  } else {
-    overlay = new Mesh(source.geometry, material);
-  }
-  overlay.morphTargetInfluences = source.morphTargetInfluences;
-  overlay.morphTargetDictionary = source.morphTargetDictionary;
-  overlay.frustumCulled = false;
-  overlay.matrixAutoUpdate = false;
-  overlay.matrixWorldAutoUpdate = false;
-  overlay.onBeforeRender = () => {
-    overlay.matrixWorld.copy(source.matrixWorld);
-    if (skinned) {
-      (overlay as SkinnedMesh).bindMatrixInverse.copy(
-        skinned.bindMatrixInverse,
-      );
-    }
-  };
-  return overlay;
 }
 
 function sameSources(overlays: ZapOverlay[], sources: Mesh[]): boolean {
@@ -481,7 +445,7 @@ export function createShockLanceView(
           clearZapOverlays(zap, zapGroup);
           zap.target = target;
           zap.overlays = sources.map((mesh) => {
-            const overlay = createZapOverlay(mesh, zapMaterial);
+            const overlay = createWorldMeshOverlay(mesh, zapMaterial);
             zapGroup.add(overlay);
             return { source: mesh, overlay };
           });

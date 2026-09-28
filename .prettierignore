@@ -1,4 +1,5 @@
 .claude/
+build/
 docs/
 generated/
 package-lock.json

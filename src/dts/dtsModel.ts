@@ -138,6 +138,8 @@ interface NativeMesh {
 export class DTSMesh extends Mesh implements NativeMesh {
   ownsGeometry = false;
   private geometrySource?: Pick<BufferGeometry, "attributes" | "index">;
+  private unprocessedGeometry?: BufferGeometry;
+  private geometryProcessor?: (source: BufferGeometry) => BufferGeometry;
   readonly isDTSMesh = true;
   binding?: DTSMeshBinding;
   override copy(source: this, recursive = true): this {
@@ -148,7 +150,33 @@ export class DTSMesh extends Mesh implements NativeMesh {
       : cloneMaterial(source.material);
     this.ownsGeometry = false;
     this.geometrySource = undefined;
+    this.unprocessedGeometry = undefined;
+    this.geometryProcessor = undefined;
+    // Processors are instance effects. A clone starts from the native surface,
+    // not a transient expanded topology that DTS cannot update directly.
+    if (source.unprocessedGeometry) {
+      this.geometry = source.unprocessedGeometry;
+      this.morphTargetInfluences = undefined;
+      this.morphTargetDictionary = undefined;
+      this.updateMorphTargets();
+    }
     return this;
+  }
+  /** Process the current native surface after LOD merging and decal updates.
+   * The processor owns its output; DTS continues to own only the input. */
+  setGeometryProcessor(processor?: (source: BufferGeometry) => BufferGeometry) {
+    this.restoreNativeGeometry();
+    if (processor) this.prepareGeometry();
+    this.geometryProcessor = processor;
+    this.unprocessedGeometry = processor ? this.geometry : undefined;
+    this.refreshProcessedGeometry();
+  }
+  restoreNativeGeometry(): void {
+    if (this.unprocessedGeometry) this.geometry = this.unprocessedGeometry;
+  }
+  refreshProcessedGeometry(): void {
+    if (this.geometryProcessor && this.unprocessedGeometry)
+      this.geometry = this.geometryProcessor(this.unprocessedGeometry);
   }
   override raycast(raycaster: Raycaster, intersects: Intersection[]): void {
     if (this.parent instanceof DTSDetail && this.parent.batched)
@@ -185,7 +213,7 @@ export class DTSMesh extends Mesh implements NativeMesh {
    * Detach cache-owned buffers so despawning a shape cannot evict other clones. */
   disposeGeometry(): void {
     if (!this.ownsGeometry) return;
-    const geometry = this.geometry;
+    const geometry = this.unprocessedGeometry ?? this.geometry;
     const attributes = geometry.attributes,
       index = geometry.index,
       morphAttributes = geometry.morphAttributes;
@@ -766,6 +794,7 @@ export class DTSShape extends LOD {
       if (!wasVisible) detailGroup.updateMatrixWorld(true);
       if (object && !object.visible) continue;
       if (!mesh.visible) continue;
+      if (mesh instanceof DTSMesh) mesh.restoreNativeGeometry();
       const dynamic =
         binding.source.sorted ||
         binding.source.numFrames > 1 ||
@@ -828,6 +857,7 @@ export class DTSShape extends LOD {
             material.depthWrite = true;
         this.sortMesh(mesh, frame);
       }
+      if (mesh instanceof DTSMesh) mesh.refreshProcessedGeometry();
     }
   }
   override raycast(): void {
@@ -890,7 +920,9 @@ export class DTSShape extends LOD {
       state.materialFrame = materialFrame;
       state.decalState = decalState;
     }
-    if (mesh.morphTargetInfluences) {
+    // Single-frame shapes may have procedural morphs (e.g. chest physics).
+    // Only native vertex-frame animation owns and resets these weights.
+    if (source.numFrames > 1 && mesh.morphTargetInfluences) {
       mesh.morphTargetInfluences.fill(0);
       mesh.morphTargetInfluences[frame] = 1;
     } else if (source.sorted || source.numFrames > 1) {

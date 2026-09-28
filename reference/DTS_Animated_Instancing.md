@@ -338,9 +338,141 @@ beam texture wrapping. The retained browser check compares 48 fresh/recycled
 snapshots, also including animated discs and flare spikes; all matched at the
 3/255 pixel threshold with identical triangle counts and no rendering errors.
 
+## Static world-transform experiment (2026-09-28)
+
+Terrain and interiors already disable local matrix recomposition, but Three
+still visits their descendants and can multiply their world matrices. An
+optimistic browser experiment skipped `updateMatrixWorld` entirely at their
+entity roots after the scene settled. This tests the potential saving before
+paying for invalidation, late children, or ancestor-motion handling; it is not
+a safe production implementation.
+
+Both recordings were paused during an active match at 1500 seconds, after the
+timeline scan. Four batches per mode alternated order, with 30 warm-up and 300
+measured full-scene traversals per batch. Matrix multiplication counters ran
+separately from timing. Values below are medians of the batch means.
+
+| Recording  | Static / total scene objects | Normal traversal | Skip static branches |
+| ---------- | ---------------------------: | ---------------: | -------------------: |
+| Harvester  |                 320 / 13,642 |         1.704 ms |             1.664 ms |
+| Wilderzone |                  344 / 8,750 |         0.807 ms |             0.814 ms |
+
+Skipping these branches removed 320 of 9,930 matrix multiplications on
+Harvester and 344 of 6,573 on Wilderzone. The saving was only 0.040 ms on the
+first map and absent within timing variation on the second. Both completed
+without JavaScript or WebGL errors. A Massive attempt lost its browser target
+during comparison and produced no usable timings.
+
+No runtime optimization was retained: these static branches are a small part
+of the current scene, and the measured saving does not justify the added
+invalidation machinery. These are isolated headless CPU measurements, not
+active-playback frame times or evidence about all static DTS shapes.
+`scripts/benchmark-static-transforms.ts` retains the experiment, pauses the
+render loop during measurement, and restores all overridden methods afterward.
+
+## React entity-list experiment (2026-09-28)
+
+Projectile churn is already filtered by `selectSceneEntities`, so it does not
+by itself rerender `EntityLayer`. Persistent entity additions, removals, and
+appearance changes still recreate JSX for the entire persistent list. A
+prototype cached each top-level `EntityWrapper` element in a `WeakMap` keyed
+by its `GameEntity` reference, reusing the element while its object-mount props
+also retained their identity. Mount-tree construction was left unchanged.
+
+Harvester was played from 1500 to 1520 seconds in separate baseline and
+candidate browser runs, with CPU sampling and store-change instrumentation.
+Each run saw 99 persistent additions, 67 removals, and 10 replacements
+(eight armor/datablock changes and two mount changes), ending with 390
+persistent entities. Production comparisons used the production React runtime
+with minification disabled to preserve profile function names. Builds went
+to temporary directories; the normal `docs` output was not touched.
+
+| Build       | Baseline `EntityLayer` CPU | Cached elements CPU |
+| ----------- | -------------------------: | ------------------: |
+| Development |                 678.191 ms |          141.381 ms |
+| Production  |                  20.792 ms |           12.610 ms |
+
+These are inclusive sampled CPU totals over 20 seconds, not per-frame costs.
+The production difference is only 8.182 ms across the entire run, roughly
+0.01 ms per rendered frame. Median frame time stayed at 25 ms and p95 at
+33.4 ms. Mean frame time was 26.07 vs. 25.82 ms, but one pair of runs cannot
+establish a change that small. Both production runs had no JavaScript errors.
+
+No runtime change was retained. The development profile was dominated by
+development JSX overhead and overstated the production opportunity. These
+headless Chromium measurements cover one active-playback segment, not a
+general FPS claim. Future candidate ranking should use production profiles.
+
+The model-construction investigation below subsequently found that this probe
+started playback before the seek's new scene had fully mounted. These timings
+describe that startup condition, not settled-scene performance.
+
+## Model-construction alternatives (2026-09-28)
+
+The initial production profile attributed about 2.9 seconds per 20-second
+Harvester run to `ShapeModel`, mainly scene cloning and material preparation.
+Construction counters found 6,003 generic models in that interval, including
+more than 400 attempts for each of three stationary turret bases. A separate
+10-second diagnostic saw 2,847 constructions but only 83 mounts. Most work was
+discarded before commit; it was not explained by changing clone dependencies.
+
+Three temporary production variants tested removing intermediate DTS material
+copies (immediately replaced by `processShapeScene`), putting a Suspense boundary
+inside each mounted-child portal, and allocating the model in a layout effect
+after a small React shell committed. None was applied to the repository's
+runtime source.
+
+Screenshots revealed that the initial baseline still displayed many loading
+placeholders. The probe waited for network idle **before** seek completion,
+then resumed immediately when the stream snapshot reached the target time.
+Letting the scene finish loading while paused removed the repeated turret
+construction without any runtime change. The corrected probe waits for seek
+and timeline completion, then network idle for 1.5 seconds and another three
+seconds for React commits, saving a start screenshot before profiling.
+
+Corrected runs use Harvester at 1500–1520 seconds, production React with
+minification disabled, 1280×720 headless Chromium, and ANGLE Metal on Apple
+M1 Max. Counters time only generic-model cloning and material preparation;
+CPU sampling and store-change instrumentation run in every variant.
+
+| Strategy                          | Constructions | Clone + material setup total | Mean frame | p95 frame |
+| --------------------------------- | ------------: | ---------------------------: | ---------: | --------: |
+| Baseline                          |           339 |                     129.8 ms |   52.56 ms |   58.4 ms |
+| Skip intermediate material copies |           338 |                     117.4 ms |   54.82 ms |   66.7 ms |
+| Isolate mounted-child loading     |           339 |                     134.5 ms |   51.13 ms |   66.6 ms |
+| Construct after commit            |           328 |                     114.5 ms |   52.65 ms |   58.4 ms |
+| Baseline repeated last            |           344 |                     134.2 ms |   49.88 ms |   58.4 ms |
+
+Setup totals span the entire 20-second run. The cheaper-construction variants
+differ from the baselines by only 12–20 ms, about 0.1% of elapsed playback time. These separate runs
+do not establish an end-to-end speedup. The loading-boundary variant did not
+reduce construction work, despite its slightly lower mean frame time. All
+five runs completed with no JavaScript errors, with 98–99 persistent additions,
+67 removals, and 10 replacements. No runtime optimization was kept.
+
+The retained change fixes the warm-up order in `scripts/profile-dts-demo.ts`
+and saves `<output-prefix>-start.png` so incomplete scenes can be spotted.
+Playback now starts after CDP setup, and counters reset at that point so
+paused frames and profiler setup do not count toward the playback interval.
+Earlier profiles that began as soon as seeking finished should not be used
+to rank steady-playback construction costs without this additional check.
+
+The repeated baseline's mean frame time was lower than every candidate's,
+illustrating why the small differences between separate runs are insufficient
+evidence of a performance improvement.
+
 ## Reproduce
 
 Use the existing development server on port 3000:
+
+```sh
+node --import=tsx scripts/benchmark-static-transforms.ts \
+  http://localhost:3000/demos/the-cut-back-to-ymir_20260830T0352_twl-wilderzone_4a1b2f.rec \
+  /private/tmp/static-transforms 1500
+```
+
+The static-transform command accepts any supported demo URL; the example uses
+a recording already present in the local `demos` folder.
 
 ```sh
 node --import=tsx scripts/compare-dts-instances.ts \

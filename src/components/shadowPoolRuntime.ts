@@ -32,7 +32,6 @@ import {
   Color,
   CustomBlending,
   DepthTexture,
-  DetachedBindMode,
   DoubleSide,
   Group,
   LinearFilter,
@@ -45,7 +44,6 @@ import {
   RGBAFormat,
   Scene,
   ShaderMaterial,
-  SkinnedMesh,
   Vector2,
   Vector3,
   Vector4,
@@ -61,6 +59,7 @@ import type {
 } from "three";
 import { hazeAndFog } from "../globalFogUniforms";
 import { isVisibleInHierarchy } from "../objectUtils";
+import { createWorldMeshOverlay } from "../meshOverlay";
 import {
   SHADOW_GENERIC_ALPHA,
   SHADOW_GENERIC_RADIUS_SCALE,
@@ -231,33 +230,6 @@ const _viewportSize = new Vector2();
 const _clearColor = new Color();
 const _positions: number[] = [];
 const _facing = { dir: new Vector3(), threshold: SHADOW_RECEIVER_FACING };
-
-function createProxy(source: Mesh, material: MeshBasicMaterial): Mesh {
-  const skinned = (source as SkinnedMesh).isSkinnedMesh
-    ? (source as SkinnedMesh)
-    : null;
-  let proxy: Mesh;
-  if (skinned) {
-    const clone = new SkinnedMesh(skinned.geometry, material);
-    clone.bind(skinned.skeleton, skinned.bindMatrix);
-    clone.bindMode = DetachedBindMode;
-    proxy = clone;
-  } else {
-    proxy = new Mesh(source.geometry, material);
-  }
-  proxy.morphTargetInfluences = source.morphTargetInfluences;
-  proxy.morphTargetDictionary = source.morphTargetDictionary;
-  proxy.frustumCulled = false;
-  proxy.matrixAutoUpdate = false;
-  proxy.matrixWorldAutoUpdate = false;
-  proxy.onBeforeRender = () => {
-    proxy.matrixWorld.copy(source.matrixWorld);
-    if (skinned) {
-      (proxy as SkinnedMesh).bindMatrixInverse.copy(skinned.bindMatrixInverse);
-    }
-  };
-  return proxy;
-}
 
 function castsSilhouette(mesh: Mesh, shape: DTSShape | undefined): boolean {
   // Rigid body batches contain only opaque parts; other Three meshes keep
@@ -494,7 +466,7 @@ export class ShadowPoolRuntime {
     if (sameSources(state.proxies, sources)) return;
     state.proxyGroup.clear();
     state.proxies = sources.map((source) => {
-      const proxy = createProxy(source, this.blackMaterial);
+      const proxy = createWorldMeshOverlay(source, this.blackMaterial);
       state.proxyGroup.add(proxy);
       return { source, proxy };
     });
@@ -654,10 +626,11 @@ export class ShadowPoolRuntime {
   }
 
   /**
-   * Runs from useFrame, between frames: Three's render() wraps the
+   * Runs before other frame callbacks: Three's render() wraps the
    * scene in its own output pass, so render targets cannot be switched
    * from inside onBeforeRender. The silhouettes therefore use the
-   * previous frame's transforms — invisible at their 25–100 ms cadence.
+   * previous frame's complete transforms. Running after animation/physics
+   * would mix old limbs with freshly queried torso/eye bones in one shadow.
    */
   renderPending(renderer: WebGLRenderer): void {
     let depthPending = false;
@@ -698,8 +671,6 @@ export class ShadowPoolRuntime {
       camera.lookAt(_center);
       camera.updateMatrixWorld(true);
       for (const { source, proxy } of state.proxies) {
-        // Native DTS instances allocate their mutable geometry on first use.
-        proxy.geometry = source.geometry;
         proxy.visible = isVisibleInHierarchy(source);
       }
       state.proxyGroup.visible = true;

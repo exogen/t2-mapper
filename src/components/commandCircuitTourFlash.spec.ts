@@ -5,6 +5,7 @@ import {
   BufferGeometry,
   DataTexture,
   Float32BufferAttribute,
+  InstancedBufferAttribute,
   InstancedMesh,
   Matrix4,
   Mesh,
@@ -122,5 +123,51 @@ describe("command circuit tour highlights", () => {
     expect(disposeOverlay).toHaveBeenCalledOnce();
     expect(disposeShared).not.toHaveBeenCalled();
     expect(source.morphTexture).toBe(texture);
+  });
+
+  it("refreshes instance buffers and morph textures when the surface changes after matrix traversal", () => {
+    const native = new BoxGeometry();
+    const morphed = native.clone();
+    morphed.morphAttributes.position = [native.attributes.position.clone()];
+    const source = new InstancedMesh(native, new MeshBasicMaterial(), 1);
+    const highlight = createTourHighlightMesh(
+      source,
+      source.material,
+    ) as InstancedMesh;
+    source.add(highlight);
+    source.updateMatrixWorld(true);
+    const texture = new DataTexture();
+    const disposeTexture = vi.fn();
+    texture.addEventListener("dispose", disposeTexture);
+    for (const geometry of [morphed, native, morphed, native]) {
+      source.geometry = geometry;
+      source.morphTargetInfluences = geometry === native ? undefined : [0.5];
+      source.morphTargetDictionary =
+        geometry === native ? undefined : { size: 0 };
+      source.morphTexture = geometry === native ? null : texture;
+      source.instanceMatrix = new InstancedBufferAttribute(
+        new Float32Array(32),
+        16,
+      );
+      source.setMatrixAt(0, new Matrix4().makeTranslation(10, 0, 0));
+      source.setMatrixAt(1, new Matrix4().makeTranslation(20, 0, 0));
+      source.count = 2;
+      // WebGLObjects reads geometry before uploading instance attributes.
+      expect(highlight.geometry).toBe(geometry);
+      expect(highlight.morphTargetInfluences).toBe(
+        source.morphTargetInfluences,
+      );
+      expect(highlight.morphTargetDictionary).toBe(
+        source.morphTargetDictionary,
+      );
+      expect(highlight.morphTexture).toBe(source.morphTexture);
+      expect(highlight.count).toBe(2);
+      expect(highlight.instanceMatrix.array).toEqual(
+        source.instanceMatrix.array,
+      );
+      expect(highlight.instanceMatrix).not.toBe(source.instanceMatrix);
+    }
+    removeTourHighlightMeshes([highlight]);
+    expect(disposeTexture).not.toHaveBeenCalled();
   });
 });

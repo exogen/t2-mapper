@@ -1,4 +1,5 @@
 import { InstancedMesh, Mesh, SkinnedMesh, type Material } from "three";
+import { shareMeshSurface } from "../meshOverlay";
 
 /**
  * Imperative per-frame channel from the command circuit rig (which owns
@@ -33,8 +34,7 @@ export function createTourHighlightMesh(
   } else {
     highlight = new Mesh(source.geometry, material);
   }
-  highlight.morphTargetInfluences = source.morphTargetInfluences;
-  highlight.morphTargetDictionary = source.morphTargetDictionary;
+  if (!(source instanceof InstancedMesh)) shareMeshSurface(highlight, source);
   highlight.frustumCulled = false;
   highlight.raycast = () => {};
   return highlight;
@@ -46,15 +46,20 @@ class InstancedTourHighlight extends InstancedMesh {
   private source: InstancedMesh;
   private sourceMatrix: InstancedMesh["instanceMatrix"];
   private sourceVersion: number;
+  private sourceGeometry: Mesh["geometry"];
 
   constructor(source: InstancedMesh, material: Material) {
     super(source.geometry, material, 0);
     this.source = source;
     this.sourceMatrix = source.instanceMatrix;
     this.sourceVersion = source.instanceMatrix.version;
+    this.sourceGeometry = source.geometry;
     this.instanceMatrix.copy(source.instanceMatrix);
     this.count = source.count;
     this.morphTexture = source.morphTexture;
+    // Pools may change after matrix traversal. Refresh our owned instance
+    // buffer before Three reads the surface to build/upload the draw call.
+    shareMeshSurface(this, source, () => this.syncInstances());
   }
 
   private syncInstances(): void {
@@ -77,11 +82,14 @@ class InstancedTourHighlight extends InstancedMesh {
       this.boundingBox = null;
       this.boundingSphere = null;
     }
-    if (this.geometry !== source.geometry || this.count !== source.count) {
+    if (
+      this.sourceGeometry !== source.geometry ||
+      this.count !== source.count
+    ) {
       this.boundingBox = null;
       this.boundingSphere = null;
     }
-    this.geometry = source.geometry;
+    this.sourceGeometry = source.geometry;
     this.count = source.count;
     this.morphTexture = source.morphTexture;
   }

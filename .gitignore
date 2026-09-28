@@ -146,3 +146,4 @@ docs/dev
 # Local demo recordings and the casts/commentary generated beside them
 /demos/
 
+/build/

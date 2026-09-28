@@ -68,6 +68,15 @@ ${glslEffectLightUniforms}
 ${glslShapeLightingPars}`,
   );
   shader.vertexShader = shader.vertexShader.replace(
+    "#include <morphnormal_vertex>",
+    `#include <morphnormal_vertex>
+#ifdef USE_MORPHNORMALS
+// Morph blending changes direction and length. Keep the authored length so
+// deformation cannot amplify lighting; later model/instance scale still applies.
+objectNormal *= length(normal) / max(length(objectNormal), 1e-6);
+#endif`,
+  );
+  shader.vertexShader = shader.vertexShader.replace(
     "#include <project_vertex>",
     `#include <project_vertex>
 // GL_NORMALIZE is disabled in Tribes2.exe: mission scale affects lighting.
@@ -163,6 +172,12 @@ varying vec2 vShapeSphereUV;
 varying vec2 vShapeSphereUV;
 `,
   );
+  // Basic materials normally skip normals without Three's own env map. Our
+  // sphere map also needs the morphed/instanced normal when those paths are used.
+  shader.vertexShader = shader.vertexShader.replace(
+    "#if defined ( USE_ENVMAP ) || defined ( USE_SKINNING )",
+    "#if defined ( USE_ENVMAP ) || defined ( USE_SKINNING ) || defined ( USE_INSTANCING ) || defined ( USE_MORPHNORMALS )",
+  );
 
   // GL_SPHERE_MAP formula adapted for Torque's coordinate system.
   // Torque puts darkToOGLCoord (Z-up to Y-up) in the PROJECTION matrix, so
@@ -180,7 +195,7 @@ varying vec2 vShapeSphereUV;
   vec3 _eyePos = mvPosition.xyz;
   #ifdef FLAT_SHADED
     vec3 _eyeN = vec3(0.0, 0.0, 1.0);
-  #elif defined(USE_SKINNING) || defined(USE_INSTANCING)
+  #elif defined(USE_SKINNING) || defined(USE_INSTANCING) || defined(USE_MORPHNORMALS)
     vec3 _eyeN = normalize(transformedNormal);
   #else
     vec3 _eyeN = normalize(normalMatrix * normal);

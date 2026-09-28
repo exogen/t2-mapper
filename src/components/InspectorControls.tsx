@@ -23,6 +23,7 @@ import { CommandCircuitButton } from "./CommandCircuitButton";
 import { showNewAddressDialog } from "./NewAddressDialog";
 import { useFeatures } from "./FeaturesProvider";
 import { StatsPanel } from "./StatsPanel";
+import { JigglePhysicsPanel } from "./JigglePhysicsPanel";
 import { trackKey, useCommentaryTracks } from "../state/commentaryTracksStore";
 import { useModeQueryState } from "./useQueryParams";
 import { useRecording } from "./usePlayback";
@@ -49,6 +50,7 @@ const DEFAULT_PANELS = [
   "audio",
   "timeline",
   "stats",
+  "jiggle",
 ];
 
 /**
@@ -323,6 +325,11 @@ export const InspectorControls = memo(function InspectorControls({
           </div>
           <div className={styles.Accordions}>
             <AccordionGroup type="multiple" defaultValue={DEFAULT_PANELS}>
+              {features.jiggle && (
+                <Accordion value="jiggle" label="Flap Genius">
+                  <JigglePhysicsPanel />
+                </Accordion>
+              )}
               {features.stats && recording?.source === "demo" && (
                 <Accordion value="stats" label="Stats" noPadding>
                   <StatsPanel />

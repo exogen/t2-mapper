@@ -1,12 +1,11 @@
 import { useEffect, useMemo } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
 import { ShadowPoolRuntime } from "./shadowPoolRuntime";
+import { FramePriority } from "./framePriority";
 
 /**
- * Mount once in the game scene. Drives the projected shadows from the
- * scene's onBeforeRender (after every useFrame and the matrix update,
- * like LightPool) so silhouettes and receiver polys use this frame's
- * transforms.
+ * Queue projected shadows after the scene's final matrix update. Draw their
+ * atlases at the start of the next frame, while that complete pose is intact.
  */
 export function ShadowPool() {
   const scene = useThree((s) => s.scene);
@@ -14,7 +13,7 @@ export function ShadowPool() {
 
   useFrame(({ gl }) => {
     runtime.renderPending(gl);
-  });
+  }, FramePriority.ShadowAtlas);
 
   useEffect(() => {
     scene.add(runtime.decals);

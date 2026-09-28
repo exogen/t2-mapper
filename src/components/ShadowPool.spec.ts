@@ -15,6 +15,7 @@ import { ShadowPoolRuntime } from "./shadowPoolRuntime";
 import { buildDTS } from "../dts/dtsBuilder";
 import { DTSMesh } from "../dts/dtsModel";
 import { batchDTSRigidMeshes } from "../dts/dtsRigidBatch";
+import { createChestDeformation } from "../player/chestDeformation";
 import {
   createDTSTestShape,
   createDTSRigidTestShape,
@@ -79,7 +80,7 @@ function setup(casterRoot: Object3D = root) {
     (runtime.decals.children[0] as Mesh).geometry.getAttribute(
       "position",
     ) as BufferAttribute;
-  return { frame, depthDraws, positions };
+  return { frame, depthDraws, positions, render };
 }
 
 afterEach(() => {
@@ -87,6 +88,7 @@ afterEach(() => {
   removeShadowCaster(caster);
   setTerrainCollisionData(null);
   unregisterInteriorCollider("shadow-test");
+  vi.restoreAllMocks();
 });
 
 describe("shadow receiver reuse", () => {
@@ -154,6 +156,56 @@ describe("shadow receiver reuse", () => {
 
 describe("DTS shadow silhouettes", () => {
   const proxies = () => runtime.silhouetteScene.children[0].children as Mesh[];
+
+  it.each([
+    [false, 1],
+    [false, 3],
+    [true, 1],
+    [true, 3],
+  ] as const)(
+    "keeps geometry and morph weights together when resizing an existing caster (batched=%s, initial=%s)",
+    (batched, initialSize) => {
+      const now = vi.spyOn(performance, "now").mockReturnValue(0);
+      const data = createDTSRigidTestShape();
+      data.names[data.objects[0].nameIndex] = "Submesh_torso";
+      const shape = buildDTS(data).scene;
+      if (batched) batchDTSRigidMeshes(shape);
+      const chest = createChestDeformation(shape, "light_female.dts")!;
+      const { frame, render } = setup(shape);
+      const zero = new Vector3();
+      chest.apply(initialSize, zero, zero);
+      shape.update(camera);
+      frame();
+      const originalProxies = [...proxies()];
+      let tick = 0;
+      for (const size of [3, 1, 0.7, 2, 1]) {
+        now.mockReturnValue(++tick * 100);
+        chest.apply(size, new Vector3(size === 1 ? 0 : 0.02, 0, 0), zero);
+        shape.update(camera);
+        frame();
+        expect(proxies()).toEqual(originalProxies);
+        let morphed = 0;
+        for (const proxy of proxies()) {
+          const count = proxy.geometry.morphAttributes.position?.length ?? 0;
+          expect(proxy.morphTargetInfluences?.length ?? 0).toBe(count);
+          if (count) {
+            morphed++;
+            expect(proxy.morphTargetInfluences![0]).toBeCloseTo(size - 1);
+            expect(proxy.morphTargetInfluences![1]).toBe(0.02);
+            expect(() =>
+              proxy.getVertexPosition(0, new Vector3()),
+            ).not.toThrow();
+          }
+        }
+        if (size === 1) expect(morphed).toBe(0);
+        else expect(morphed).toBeGreaterThan(0);
+      }
+      expect(
+        render.mock.calls.filter(([s]) => s === runtime.silhouetteScene),
+      ).toHaveLength(6);
+      chest.dispose();
+    },
+  );
 
   it.each([false, true])(
     "excludes flare meshes, including after lazy activation (%s)",

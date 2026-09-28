@@ -661,7 +661,14 @@ class AnimatedDraw {
         material.color.g,
         material.color.b,
       );
-      if (node.morphTargetInfluences?.length) this.mesh.setMorphAt(index, node);
+      // Procedural effects may restore the native geometry before clearing
+      // their weights. Never enable instanced morph shaders without targets.
+      const morphs = node.geometry.morphAttributes;
+      if (
+        (morphs.position ?? morphs.normal ?? morphs.color)?.length &&
+        node.morphTargetInfluences?.length
+      )
+        this.mesh.setMorphAt(index, node);
       const uv = material.map?.matrix.elements ?? identityUV;
       writeInstance(this.uv0, index, uv[0], uv[3], uv[6]);
       writeInstance(this.uv1, index, uv[1], uv[4], uv[7]);

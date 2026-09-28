@@ -87,6 +87,7 @@ import type { PlayerEntity } from "../state/gameEntityTypes";
 
 import { useEyePosition } from "./eyePositions";
 import { FramePriority } from "./framePriority";
+import { useChestPhysics } from "./useChestPhysics";
 
 const SKIN_BASE_URL = "https://assets.tribes2.online/skins/files/";
 const SKIN_MANIFEST_URL = "https://assets.tribes2.online/skins/manifest.json";
@@ -273,6 +274,8 @@ export function PlayerModel({
       eyeBone: eye as Object3D | null,
     };
   }, [gltf.scene, anisotropy, emap, skinUrl]);
+
+  const updateChestPhysics = useChestPhysics(clonedScene, entity);
 
   useEffect(() => {
     return () => {
@@ -616,6 +619,7 @@ export function PlayerModel({
     damageThreadsRef.current?.update(entity.health, entity.damageState);
     // Evaluate the sampled body pose, damage and blends once.
     mixer.update(0);
+    updateChestPhysics(time, engineStore.getState().playback.seekNonce);
     if (debugMode) clonedScene.userData.animDebug = describeMixer(mixer);
   }, FramePriority.ShapeAnimation);
 
