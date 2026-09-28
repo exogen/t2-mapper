@@ -157,18 +157,27 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
 
   /** Warrior name to send in the ConnectRequest. */
   private warriorName: string;
+  /** Relay-only lookup; the password is used only by the UDP handshake. */
+  #getJoinPassword?: () => Promise<string | undefined>;
 
   /** The server address as "host:port". */
   get address(): string {
     return `${this.host}:${this.port}`;
   }
 
-  constructor(address: string, options?: { warriorName?: string }) {
+  constructor(
+    address: string,
+    options?: {
+      warriorName?: string;
+      getJoinPassword?: () => Promise<string | undefined>;
+    },
+  ) {
     super();
     const [host, portStr] = address.split(":");
     this.host = host;
     this.port = parseInt(portStr, 10);
     this.warriorName = options?.warriorName || "";
+    this.#getJoinPassword = options?.getJoinPassword;
 
     // Wire up packet delivery notifications for event retransmission.
     this.protocol.onNotify = (packetSeq, acked) => {
@@ -220,9 +229,20 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
     });
 
     this.setStatus("connecting");
+    let joinPassword: string | undefined;
+    try {
+      joinPassword = this.#getJoinPassword
+        ? await this.#getJoinPassword()
+        : undefined;
+    } catch (err) {
+      this.disconnect();
+      throw err;
+    }
+    // A watcher/player may leave while server metadata is being queried.
+    if (this._status === "disconnected") return;
 
     // Start the handshake
-    this.sendChallengeRequest();
+    this.sendChallengeRequest(joinPassword);
 
     // Set overall connection timeout
     this.handshakeTimer = setTimeout(() => {
@@ -235,11 +255,12 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
   }
 
   /** Send the initial ConnectChallengeRequest. */
-  private sendChallengeRequest(): void {
+  private sendChallengeRequest(joinPassword?: string): void {
     this.setStatus("challenging");
     const packet = buildConnectChallengeRequest(
       GAME_PROTOCOL_VERSION,
       this.clientConnectSequence,
+      joinPassword,
     );
     connLog.info(
       { bytes: packet.length, clientSeq: this.clientConnectSequence },

@@ -4,6 +4,7 @@ import { Patroller, estimateEligiblePlayers, globToRegExp } from "./patrol";
 import { WatchSessionManager } from "./watchSession";
 import type { GameConnection } from "./gameConnection";
 import type { ServerInfo } from "./types";
+import { ServerPasswords } from "./serverPasswords";
 
 class FakeGameConnection extends EventEmitter {
   address: string;
@@ -57,7 +58,11 @@ function makeServer(
 
 function setup(
   patterns: string[],
-  opts: { maxSessions?: number; missionTypes?: string[] } = {},
+  opts: {
+    maxSessions?: number;
+    missionTypes?: string[];
+    hasServerPassword?: (server: ServerInfo) => boolean;
+  } = {},
 ) {
   const connections: FakeGameConnection[] = [];
   const manager = new WatchSessionManager({
@@ -78,6 +83,7 @@ function setup(
     intervalMs: 60_000,
     getServerList: () => Promise.resolve(servers),
     sessions: manager,
+    hasServerPassword: opts.hasServerPassword,
   });
   return { connections, manager, servers, patroller };
 }
@@ -183,6 +189,37 @@ describe("Patroller", () => {
   });
   afterEach(() => {
     vi.useRealTimers();
+  });
+
+  it("patrols passworded servers only with configured credentials, keeping health summaries public", async () => {
+    const passwords = new ServerPasswords(
+      '{"Known Locked":"private-server-password"}',
+    );
+    const { connections, manager, servers, patroller } = setup(["*"], {
+      hasServerPassword: (server) => passwords.getPassword(server) != null,
+    });
+    servers.push(
+      {
+        ...makeServer("Known Locked", "192.0.2.1:28000", 5),
+        passwordRequired: true,
+      },
+      {
+        ...makeServer("Unknown Locked", "192.0.2.2:28000", 5),
+        passwordRequired: true,
+      },
+    );
+    await patroller.tick();
+    expect(connections.map((conn) => conn.address)).toEqual([
+      "192.0.2.1:28000",
+    ]);
+    expect(JSON.stringify(patroller.getStatus())).not.toContain(
+      "private-server-password",
+    );
+    expect(JSON.stringify(manager.getStatusSummary())).not.toContain(
+      "private-server-password",
+    );
+    expect(JSON.stringify(servers)).not.toContain("private-server-password");
+    manager.shutdown();
   });
 
   it("pins matching servers that pass the player pre-filter", async () => {

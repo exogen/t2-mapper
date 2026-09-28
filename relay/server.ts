@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { WebSocketServer, WebSocket } from "ws";
 import { queryServerList, queryServerInfo } from "./masterQuery.js";
 import { GameConnection } from "./gameConnection.js";
+import { ServerPasswords } from "./serverPasswords.js";
 import { loadCredentials } from "./auth.js";
 import { WatchSessionManager, normalizeAddress } from "./watchSession.js";
 import { WatchRequest } from "./watchRequest.js";
@@ -33,6 +34,7 @@ const MANIFEST_PATH =
 
 const RELAY_PORT = parseInt(process.env.RELAY_PORT || "8765", 10);
 const MASTER_SERVER = process.env.T2_MASTER_SERVER || "master.tribesnext.com";
+const serverPasswords = new ServerPasswords(process.env.T2_SERVER_PASSWORDS);
 
 // ── Demo recording (env-gated) ──
 const DEMO_RECORD_ENABLED =
@@ -336,6 +338,29 @@ function findKnownServer(address: string): ServerInfo | undefined {
   );
 }
 
+/** Shared by player joins and every watch-session connection/reconnect. */
+function createGameConnection(
+  address: string,
+  warriorName?: string,
+): GameConnection {
+  const key = normalizeAddress(address);
+  return new GameConnection(key, {
+    warriorName,
+    getJoinPassword: serverPasswords.enabled
+      ? async () => {
+          let server = findKnownServer(key);
+          // Warm boots and direct joins may precede the first server list.
+          if (!server && !getFreshProbe(key)) {
+            const info = await queryServerInfo(key);
+            probeCache.set(key, { info, at: Date.now() });
+            server = info ?? undefined;
+          }
+          return serverPasswords.getPassword(server);
+        }
+      : undefined,
+  });
+}
+
 const demoUploader = new DemoUploader(loadUploadConfig(), DEMO_DIR, {
   // Sweeps only run after both are constructed.
   isLive: (filePath) => demoCoordinator.isLivePath(filePath),
@@ -391,6 +416,7 @@ function persistWatchState(addresses: string[]): void {
 const watchSessions = new WatchSessionManager({
   gameBasePath: GAME_BASE_PATH,
   getCachedServer: findKnownServer,
+  createConnection: createGameConnection,
   demoCoordinator,
   onSessionsChanged: persistWatchState,
   tourneyDelayMs: WATCH_TOURNEY_DELAY_MS,
@@ -406,6 +432,8 @@ const patroller =
         maxSessions: DEMO_PATROL_MAX_SESSIONS,
         intervalMs: DEMO_PATROL_INTERVAL_MS,
         getServerList,
+        hasServerPassword: (server) =>
+          serverPasswords.getPassword(server) != null,
         sessions: watchSessions,
       })
     : null;
@@ -612,7 +640,7 @@ wss.on("connection", (ws) => {
       gameConnection.disconnect();
     }
 
-    gameConnection = new GameConnection(address, { warriorName });
+    gameConnection = createGameConnection(address, warriorName);
     activeGameConnections.add(gameConnection);
 
     // Set mapName from the cached server list if available.

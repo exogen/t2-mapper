@@ -1,11 +1,86 @@
 import { describe, expect, it, vi } from "vitest";
 import dgram from "node:dgram";
 import { EventEmitter } from "node:events";
-import { createLiveParser } from "t2-demo-parser";
+import { BitStream, createLiveParser } from "t2-demo-parser";
 import { GameConnection } from "./gameConnection";
 import { BitStreamWriter } from "./BitStreamWriter";
 import type { ConnectionProtocol } from "./protocol";
 import { GAME_PROTOCOL_VERSION } from "./shared";
+
+describe("GameConnection server passwords", () => {
+  it.each([undefined, "private-server-password"])(
+    "sends the configured password only in the challenge, including retries (%s)",
+    async (password) => {
+      vi.useFakeTimers();
+      const socket = Object.assign(new EventEmitter(), {
+        send: vi.fn(),
+        close: vi.fn(),
+      });
+      vi.spyOn(dgram, "createSocket").mockReturnValue(
+        socket as unknown as dgram.Socket,
+      );
+      const conn = new GameConnection("192.0.2.1:28000", {
+        getJoinPassword: async () => password,
+      });
+      const status = vi.fn();
+      const packet = vi.fn();
+      conn.on("status", status);
+      conn.on("packet", packet);
+      try {
+        await conn.connect();
+        vi.advanceTimersByTime(2000);
+        expect(socket.send).toHaveBeenCalledTimes(2);
+        for (const [data] of socket.send.mock.calls) {
+          const bs = new BitStream(data);
+          expect(bs.readU8()).toBe(26);
+          expect(bs.readU32()).toBe(GAME_PROTOCOL_VERSION);
+          bs.readU32();
+          expect(bs.readString()).toBe(password ?? "");
+          expect(bs.readFlag()).toBe(false);
+        }
+        expect(packet).not.toHaveBeenCalled();
+        expect(JSON.stringify(status.mock.calls)).not.toContain(
+          "private-server-password",
+        );
+        expect(JSON.stringify(conn)).not.toContain("private-server-password");
+      } finally {
+        conn.disconnect();
+        vi.restoreAllMocks();
+        vi.useRealTimers();
+      }
+    },
+  );
+
+  it("does not start a handshake after disconnecting during password lookup", async () => {
+    const socket = Object.assign(new EventEmitter(), {
+      send: vi.fn(),
+      close: vi.fn(),
+    });
+    vi.spyOn(dgram, "createSocket").mockReturnValue(
+      socket as unknown as dgram.Socket,
+    );
+    let resolve!: (password: string) => void;
+    const conn = new GameConnection("192.0.2.1:28000", {
+      getJoinPassword: () =>
+        new Promise((done) => {
+          resolve = done;
+        }),
+    });
+    const close = vi.fn();
+    conn.on("close", close);
+    try {
+      const connecting = conn.connect();
+      conn.disconnect();
+      resolve("private-server-password");
+      await connecting;
+      expect(socket.send).not.toHaveBeenCalled();
+      expect(close).toHaveBeenCalledOnce();
+      expect(conn.status).toBe("disconnected");
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+});
 
 describe("GameConnection protocol negotiation", () => {
   function handshake() {

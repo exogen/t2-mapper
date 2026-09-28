@@ -38,6 +38,8 @@ export interface PatrolOptions {
   maxSessions: number;
   intervalMs: number;
   getServerList: () => Promise<ServerInfo[]>;
+  /** Relay-only availability check; no passwords enter patrol status. */
+  hasServerPassword?: (server: ServerInfo) => boolean;
   sessions: WatchSessionManager;
 }
 
@@ -297,7 +299,8 @@ export class Patroller {
       if (!this.matches(server.name)) continue;
       if (!this.matchesType(server.gameType)) continue;
       // Can't join what we can't authenticate to.
-      if (server.passwordRequired) continue;
+      if (server.passwordRequired && !this.opts.hasServerPassword?.(server))
+        continue;
       const eligible = estimateEligiblePlayers(server);
       if (eligible < this.opts.minPlayers) continue;
       log.info(

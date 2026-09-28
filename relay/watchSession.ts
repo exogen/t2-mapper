@@ -119,7 +119,7 @@ export interface WatchSessionManagerOptions {
    * tournament mode (e.g. LakRabbit) — skip the check and never delay.
    */
   tourneySkipTypes?: string[];
-  /** Test seam: construct the game connection (default: real UDP). */
+  /** Construct the game connection, including relay-only credentials. */
   createConnection?: (address: string) => GameConnection;
 }
 
