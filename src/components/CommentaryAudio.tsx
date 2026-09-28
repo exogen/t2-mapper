@@ -134,7 +134,7 @@ export function CommentaryAudio() {
     (wantTrack: boolean): boolean => {
       const audio = audioRef.current;
       if (!audio) return false;
-      const sourceUrl = demoLoadStore.getState().sourceUrl;
+      const sourceUrl = demoLoadStore.getState().sidecarSourceUrl;
       const track = commentaryTracksStore.getState().selected();
       // The demo plus the track: a picker change mid-broadcast swaps
       // the file and rejoins in sync on the next frame.

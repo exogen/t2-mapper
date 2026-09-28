@@ -3,8 +3,8 @@ import pino from "pino";
 const isDev = process.env.NODE_ENV !== "production";
 
 export const logger = pino({
-  // Level is controlled solely by LOG_LEVEL; NODE_ENV only picks the
-  // output format (pretty for dev, JSON for deploys).
+  // LOG_LEVEL controls diagnostics; browser input audits use a fixed info
+  // level. NODE_ENV only picks the output format (pretty for dev, JSON for deploys).
   level: process.env.LOG_LEVEL || "info",
   ...(isDev && {
     transport: {

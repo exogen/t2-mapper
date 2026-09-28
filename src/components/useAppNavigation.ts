@@ -4,10 +4,9 @@ import { engineStore } from "../state/engineStore";
 import { liveConnectionStore } from "../state/liveConnectionStore";
 import {
   loadDemoFile,
-  loadDemoUrl,
+  loadDemoReference,
   unloadDemo,
 } from "../stream/demoFileLoader";
-import { demoDownloadUrl } from "../stream/demoIndex";
 import {
   dropLocationHash,
   useNavigationQueryState,
@@ -47,10 +46,10 @@ export function useAppNavigation() {
 
     return {
       demoIndex,
-      selectDemo(filename: string) {
-        void setQuery({ ...destination("demo"), demo: filename });
+      selectDemo(reference: string) {
+        void setQuery({ ...destination("demo"), demo: reference });
         leaveStream(true);
-        void loadDemoUrl(demoDownloadUrl(filename));
+        void loadDemoReference(reference);
       },
       selectDemoFile(file: File) {
         demoIndex();

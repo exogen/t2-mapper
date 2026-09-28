@@ -17,6 +17,20 @@ import { engineStore } from "../state/engineStore";
 import { gameEntityStore } from "../state/gameEntityStore";
 import { liveConnectionStore } from "../state/liveConnectionStore";
 import type { StreamRecording } from "./types";
+import {
+  directDemoSource,
+  resolveDemoSource,
+  type DemoSource,
+  DemoSourceLoadError,
+} from "./demoSources";
+import type { SourceDemoMetadata } from "../../relay/demoSourceMetadata";
+
+interface LoadedDemoSource {
+  url: string;
+  sidecarSourceUrl: string | null;
+  metadata: SourceDemoMetadata | null;
+  installed: boolean;
+}
 
 const log = createLogger("demoFileLoader");
 
@@ -47,10 +61,13 @@ export function unloadDemo(): void {
   cancelLoad(false);
   demoLoadStore.setState({
     requestedUrl: null,
+    requestedDemo: null,
     phase: "idle",
     progress: null,
     error: null,
     sourceUrl: null,
+    sourceMetadata: null,
+    sidecarSourceUrl: null,
     downloadedSec: null,
   });
   engineStore.getState().setRecording(null);
@@ -66,7 +83,7 @@ export async function loadDemoFile(file: File): Promise<void> {
   // load starts while we're reading, that newer one wins — not whichever
   // happens to finish last.
   const token = cancelLoad();
-  demoLoadStore.setState({ requestedUrl: null });
+  demoLoadStore.setState({ requestedUrl: null, requestedDemo: null });
   demoLoadStore.getState().begin("parsing");
   try {
     const buffer = await file.arrayBuffer();
@@ -81,39 +98,95 @@ export async function loadDemoFile(file: File): Promise<void> {
 }
 
 /**
- * Download an indexed demo and load it exactly like an uploaded file.
+ * Download a demo and load it exactly like an uploaded file.
  * A newer load or an unload started mid-download wins over this one.
  */
 export async function loadDemoUrl(url: string): Promise<void> {
+  await loadRemoteDemo(() => directDemoSource(url));
+}
+
+/** Load a filename or a qualified reference from the demo URL parameter. */
+export async function loadDemoReference(reference: string): Promise<void> {
+  await loadRemoteDemo(() => resolveDemoSource(reference), reference);
+}
+
+async function loadRemoteDemo(
+  resolve: () => DemoSource,
+  reference: string | null = null,
+): Promise<void> {
   const token = cancelLoad();
   const abort = new AbortController();
   loadAbort = abort;
-  demoLoadStore.setState({ requestedUrl: url });
+  demoLoadStore.setState({ requestedUrl: null, requestedDemo: reference });
   demoLoadStore.getState().begin("downloading");
+  let source: DemoSource;
   try {
-    const response = await fetch(url, { signal: abort.signal });
-    if (parseToken !== token) {
-      void response.body?.cancel().catch(() => {});
-      return;
-    }
+    source = resolve();
+  } catch (err) {
+    abort.abort();
+    demoLoadStore
+      .getState()
+      .fail(err instanceof Error ? err.message : "Invalid demo source");
+    return;
+  }
+  const url = source.url;
+  demoLoadStore.setState({ requestedUrl: url });
+  let response: Response | undefined;
+  try {
+    response = await source.load(abort.signal);
+    if (parseToken !== token) return;
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}`);
+    }
+    const loadedSource: LoadedDemoSource = {
+      url,
+      sidecarSourceUrl: source.sidecarSourceUrl,
+      metadata: null,
+      installed: false,
+    };
+    // Metadata is optional and must not delay playback. Keep it on the source
+    // until installation, or update the installed demo if it arrives later.
+    if (source.loadMetadata) {
+      void source
+        .loadMetadata(response, abort.signal)
+        .then((metadata) => {
+          loadedSource.metadata = metadata;
+          if (parseToken === token && loadedSource.installed) {
+            demoLoadStore.setState({ sourceMetadata: metadata });
+          }
+        })
+        .catch((err) => {
+          if (parseToken === token && !abort.signal.aborted)
+            log.warn("Couldn't load demo metadata: %o", err);
+        });
     }
     if (!response.body) {
       // No streaming body (ancient environment): one-shot fallback.
       const buffer = await response.arrayBuffer();
       if (parseToken !== token) return;
-      await loadDemoBuffer(buffer, url, token);
+      if (!(await loadDemoBuffer(buffer, loadedSource, token))) abort.abort();
       return;
     }
     const totalBytes = Number(response.headers.get("content-length")) || 0;
-    await streamDemoResponse(response.body, url, token, totalBytes);
+    await streamDemoResponse(response.body, loadedSource, token, totalBytes);
+    if (!loadedSource.installed) abort.abort();
   } catch (err) {
+    abort.abort();
     if (parseToken !== token) return;
     log.error("Failed to load demo from %s: %o", url, err);
     if (parseToken === token) {
-      demoLoadStore.getState().fail("Couldn't download the demo");
+      demoLoadStore
+        .getState()
+        .fail(
+          err instanceof DemoSourceLoadError
+            ? err.message
+            : "Couldn't download the demo",
+        );
     }
+  } finally {
+    // Covers HTTP errors and failures before the streaming reader is created.
+    if (response?.body && !response.body.locked)
+      void response.body.cancel().catch(() => {});
   }
 }
 
@@ -144,10 +217,11 @@ function snapshotHasWorld(snapshot: {
  */
 async function streamDemoResponse(
   body: ReadableStream<Uint8Array>,
-  url: string,
+  source: LoadedDemoSource,
   token: number,
   totalBytes: number,
 ): Promise<void> {
+  const url = source.url;
   const [{ DemoParser }, demoStreaming] = await Promise.all([
     import("t2-demo-parser"),
     import("./demoStreaming"),
@@ -248,7 +322,7 @@ async function streamDemoResponse(
         playback.findSceneReadyTime(60);
         if (snapshotHasWorld(playback.getSnapshot())) {
           installed = true;
-          installRecording(recording, url);
+          installRecording(recording, source);
           if (parseToken !== token) return;
           log.info(
             "progressive: playable at %d KB of %s",
@@ -310,14 +384,14 @@ async function streamDemoResponse(
   if (!parser || !recording) {
     // Never got a parsable header/initial block from the stream (or the
     // demo is tiny): parse the assembled whole the classic way.
-    await loadDemoBuffer(buffer, url, token);
+    await loadDemoBuffer(buffer, source, token);
     return;
   }
   parser.finish();
   if (!installed) {
     // Download finished before a renderable scene appeared (odd but
     // possible): install now — everything is parsed and playable.
-    installRecording(recording, url, buffer);
+    installRecording(recording, source, buffer);
   }
   engineStore.getState().setDemoBuffer(recording, buffer);
   engineStore.getState().setDownloadComplete(true);
@@ -337,7 +411,7 @@ async function streamDemoResponse(
  */
 function installRecording(
   recording: StreamRecording,
-  sourceUrl: string | null,
+  source: LoadedDemoSource | null,
   demoBuffer: ArrayBuffer | null = null,
 ): void {
   scanAbort?.abort();
@@ -350,9 +424,16 @@ function installRecording(
   liveState.leaveServer();
   liveState.disconnectRelay();
   engineStore.getState().setRecording(recording, demoBuffer);
-  demoLoadStore.getState().setSourceUrl(sourceUrl);
+  if (source) source.installed = true;
+  demoLoadStore
+    .getState()
+    .setSourceUrl(
+      source?.url ?? null,
+      source?.sidecarSourceUrl ?? null,
+      source?.metadata ?? null,
+    );
   // Which commentary tracks this demo has, from its record sidecar.
-  void commentaryTracksStore.getState().load(sourceUrl);
+  void commentaryTracksStore.getState().load(source?.sidecarSourceUrl ?? null);
   resetDirector();
 }
 
@@ -362,7 +443,7 @@ function installRecording(
  */
 async function loadDemoBuffer(
   buffer: ArrayBuffer,
-  sourceUrl: string | null,
+  source: LoadedDemoSource | null,
   token: number,
 ): Promise<boolean> {
   try {
@@ -371,7 +452,7 @@ async function loadDemoBuffer(
     if (parseToken !== token) return false;
     const recording = await createDemoStreamingRecording(buffer);
     if (parseToken !== token) return false;
-    installRecording(recording, sourceUrl, buffer);
+    installRecording(recording, source, buffer);
 
     // Retain the buffer for the auto-director's lazy scan pass.
     setDirectorDemoBuffer(buffer);

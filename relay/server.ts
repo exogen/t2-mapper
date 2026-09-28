@@ -8,6 +8,9 @@ import { queryServerList, queryServerInfo } from "./masterQuery.js";
 import { GameConnection } from "./gameConnection.js";
 import { ServerPasswords } from "./serverPasswords.js";
 import { loadChatEnabled } from "./chatPolicy.js";
+import { BrowserAudit } from "./browserAudit.js";
+import { handleDemoDownload } from "./demoDownload.js";
+import { DemoSourceCache } from "./demoSourceCache.js";
 import { loadCredentials } from "./auth.js";
 import { WatchSessionManager, normalizeAddress } from "./watchSession.js";
 import { WatchRequest } from "./watchRequest.js";
@@ -38,6 +41,16 @@ const RELAY_PORT = parseInt(process.env.RELAY_PORT || "8765", 10);
 const MASTER_SERVER = process.env.T2_MASTER_SERVER || "master.tribesnext.com";
 const serverPasswords = new ServerPasswords(process.env.T2_SERVER_PASSWORDS);
 const CHAT_ENABLED = loadChatEnabled(process.env.RELAY_CHAT_ENABLED);
+const TRUST_FLY_PROXY = /^(1|true)$/i.test(
+  process.env.RELAY_TRUST_FLY_PROXY?.trim() ?? "",
+);
+const demoUploadConfig = loadUploadConfig();
+const demoSourceCache = demoUploadConfig
+  ? new DemoSourceCache(
+      demoUploadConfig,
+      process.env.DEMOS_BASE_URL || "https://demos.tribes2.online/demos",
+    )
+  : null;
 
 // ── Demo recording (env-gated) ──
 const DEMO_RECORD_ENABLED =
@@ -141,8 +154,10 @@ const WATCH_TOURNEY_SKIP_TYPES =
     ? parsePatrolServers(process.env.WATCH_TOURNEY_SKIP_TYPES)
     : ["LakRabbit"];
 
-/** HTTP server for health checks; WebSocket upgrades are handled separately. */
+/** HTTP health checks and demo downloads; WebSocket upgrades are separate. */
 const httpServer = http.createServer(async (req, res) => {
+  if (await handleDemoDownload(req, res, TRUST_FLY_PROXY, demoSourceCache))
+    return;
   if (req.url === "/health") {
     const checks: Record<
       string,
@@ -369,7 +384,7 @@ function createGameConnection(
   });
 }
 
-const demoUploader = new DemoUploader(loadUploadConfig(), DEMO_DIR, {
+const demoUploader = new DemoUploader(demoUploadConfig, DEMO_DIR, {
   // Sweeps only run after both are constructed.
   isLive: (filePath) => demoCoordinator.isLivePath(filePath),
   salvageMinLengthMs: DEMO_MIN_LENGTH_MS,
@@ -591,13 +606,27 @@ process.on("unhandledRejection", (reason) => {
   crashExit(`unhandled rejection: ${detail}`);
 });
 
-wss.on("connection", (ws) => {
-  relayLog.info("Browser client connected");
+wss.on("connection", (ws, req) => {
+  const audit = new BrowserAudit(req, TRUST_FLY_PROXY);
+  const clientLog = relayLog.child(audit.identity);
+  audit.log.info({ event: "browser_connected" }, "Browser client connected");
   liveSockets.add(ws);
-  ws.on("pong", () => liveSockets.add(ws));
 
   /** First joinServer/watchServer claims the socket for that mode. */
   let role: "idle" | "player" | "watcher" = "idle";
+  let serverAddress: string | null = null;
+  const browserContext = () => ({ role, serverAddress });
+  ws.on("ping", (data) => audit.control("ping", data, browserContext()));
+  ws.on("pong", (data) => {
+    audit.control("pong", data, browserContext());
+    liveSockets.add(ws);
+  });
+  ws.on("error", (err) => {
+    audit.log.error(
+      { event: "browser_error", ...browserContext(), err },
+      "Browser socket error",
+    );
+  });
   let warnedWatcherCommand = false;
   const watchRequest = new WatchRequest({
     isKnown: (address) =>
@@ -605,7 +634,7 @@ wss.on("connection", (ws) => {
     async probe(address) {
       const cached = getFreshProbe(address);
       if (cached) return cached.info !== null;
-      relayLog.info({ address }, "Probing unlisted server");
+      clientLog.info({ address }, "Probing unlisted server");
       const info = await queryServerInfo(address);
       probeCache.set(address, { info, at: Date.now() });
       return info !== null;
@@ -661,7 +690,7 @@ wss.on("connection", (ws) => {
 
     const conn = gameConnection;
     gameConnection.on("status", (status, statusMessage) => {
-      relayLog.info(
+      clientLog.info(
         {
           status,
           statusMessage,
@@ -677,7 +706,7 @@ wss.on("connection", (ws) => {
         lastJoinAddress === address
       ) {
         retryCount++;
-        relayLog.info(
+        clientLog.info(
           {
             attempt: retryCount,
             maxRetries: MAX_RETRIES,
@@ -696,7 +725,7 @@ wss.on("connection", (ws) => {
           retryTimer = null;
           if (lastJoinAddress === address && ws.readyState === WebSocket.OPEN) {
             connectToServer(ws, address, lastWarriorName).catch((err) => {
-              relayLog.error({ err }, "Retry connection failed");
+              clientLog.error({ err }, "Retry connection failed");
               sendToClient(ws, {
                 type: "error",
                 message: `Reconnect failed: ${err instanceof Error ? err.message : err}`,
@@ -726,13 +755,13 @@ wss.on("connection", (ws) => {
       if (ws.readyState === WebSocket.OPEN) {
         ws.send(packetData, { binary: true });
       } else {
-        relayLog.warn(
+        clientLog.warn(
           { wsState: ws.readyState, total: forwardedPackets },
           "Dropped game packet — WebSocket not open",
         );
       }
       if (forwardedPackets <= 5 || forwardedPackets % 500 === 0) {
-        relayLog.debug(
+        clientLog.debug(
           { bytes: packetData.length, total: forwardedPackets },
           "Forwarded game packet to browser",
         );
@@ -740,7 +769,7 @@ wss.on("connection", (ws) => {
     });
 
     gameConnection.on("error", (err) => {
-      relayLog.error({ err }, "Game connection error");
+      clientLog.error({ err }, "Game connection error");
       sendToClient(ws, {
         type: "error",
         message: err.message,
@@ -748,7 +777,7 @@ wss.on("connection", (ws) => {
     });
 
     gameConnection.on("close", () => {
-      relayLog.info("Game connection closed");
+      clientLog.info("Game connection closed");
       activeGameConnections.delete(conn);
       if (gameConnection === conn) {
         gameConnection = null;
@@ -759,22 +788,35 @@ wss.on("connection", (ws) => {
   }
 
   ws.on("message", async (data, isBinary) => {
+    const input = audit.receive(data, isBinary, browserContext());
     try {
       if (isBinary) {
         return;
       }
 
-      const message: ClientMessage = JSON.parse(data.toString());
+      if (!input.validJson) throw new Error("Invalid JSON message");
+      const message = input.message as ClientMessage;
       await handleClientMessage(ws, message);
     } catch (e) {
       const err = e instanceof Error ? e.message : String(e);
-      relayLog.error({ err: e }, "Error handling client message");
+      clientLog.error(
+        { inputSeq: input.inputSeq, err: e },
+        "Error handling client message",
+      );
       sendToClient(ws, { type: "error", message: err });
     }
   });
 
-  ws.on("close", () => {
-    relayLog.info("Browser client disconnected");
+  ws.on("close", (code, reason) => {
+    audit.log.info(
+      {
+        event: "browser_disconnected",
+        ...browserContext(),
+        code,
+        reason: reason.toString("utf8"),
+      },
+      "Browser client disconnected",
+    );
     // Clear retry state so we never auto-reconnect without a browser client.
     lastJoinAddress = null;
     retryCount = 0;
@@ -811,7 +853,7 @@ wss.on("connection", (ws) => {
       }
       const allowed = ["listServers", "watchServer", "leaveServer", "wsPing"];
       if (!allowed.includes(message.type)) {
-        relayLog.debug(
+        clientLog.debug(
           { type: message.type },
           "Dropping game message from watcher socket",
         );
@@ -837,7 +879,8 @@ wss.on("connection", (ws) => {
         }
         role = "watcher";
         const address = normalizeAddress(message.address);
-        relayLog.info({ address }, "Watch server requested");
+        serverAddress = address;
+        clientLog.info({ address }, "Watch server requested");
 
         const channelId =
           typeof message.channelId === "string"
@@ -849,20 +892,21 @@ wss.on("connection", (ws) => {
 
       case "leaveServer": {
         watchRequest.leave();
+        if (role === "watcher") serverAddress = null;
         break;
       }
 
       case "listServers": {
-        relayLog.info("Querying master server for server list");
+        clientLog.info("Querying master server for server list");
         try {
           const servers = await getServerList();
-          relayLog.info(
+          clientLog.info(
             { count: servers.length },
             "Returning server list to browser",
           );
           sendToClient(ws, { type: "serverList", servers });
         } catch (e) {
-          relayLog.error({ err: e }, "Master query failed");
+          clientLog.error({ err: e }, "Master query failed");
           sendToClient(ws, {
             type: "error",
             message: `Master query failed: ${e}`,
@@ -880,12 +924,13 @@ wss.on("connection", (ws) => {
           return;
         }
         role = "player";
-        relayLog.info(
+        serverAddress = normalizeAddress(message.address);
+        clientLog.info(
           { address: message.address, warriorName: message.warriorName },
           "Join server requested",
         );
         if (gameConnection) {
-          relayLog.info("Disconnecting existing game connection");
+          clientLog.info("Disconnecting existing game connection");
           gameConnection.disconnect();
         }
         if (retryTimer) {
@@ -903,13 +948,13 @@ wss.on("connection", (ws) => {
       case "sendCommand": {
         if (gameConnection) {
           if (AUTH_COMMANDS.includes(message.command)) {
-            relayLog.debug(
+            clientLog.debug(
               { event: message.command },
               "Forwarding auth event from browser",
             );
             gameConnection.handleAuthEvent(message.command, message.args);
           } else {
-            relayLog.debug(
+            clientLog.debug(
               { command: message.command },
               "Forwarding command to server",
             );
@@ -921,7 +966,7 @@ wss.on("connection", (ws) => {
 
       case "sendCRCCompute": {
         if (gameConnection) {
-          relayLog.info(
+          clientLog.info(
             {
               datablocks: message.datablocks.length,
               includeTextures: message.includeTextures,
@@ -942,7 +987,7 @@ wss.on("connection", (ws) => {
 
       case "sendGhostAck": {
         if (gameConnection) {
-          relayLog.debug("Forwarding ghost ack from browser");
+          clientLog.debug("Forwarding ghost ack from browser");
           gameConnection.handleGhostAlwaysDone(
             message.sequence,
             message.ghostCount,

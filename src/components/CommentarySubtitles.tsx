@@ -22,7 +22,7 @@ const TICK_MS = 100;
  */
 export function CommentarySubtitles() {
   const { commentarySubtitles } = useSettings();
-  const sourceUrl = useDemoLoad((s) => s.sourceUrl);
+  const sourceUrl = useDemoLoad((s) => s.sidecarSourceUrl);
   // The chosen track, re-read whenever the list or the pick changes.
   const chosen = useCommentaryTracks((s) => s.selected());
   const [track, setTrack] = useState<CommentaryTrack | null>(null);

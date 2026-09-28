@@ -14,7 +14,7 @@ import { parseDemoMoment, type DemoMomentCamera } from "./demoMoment";
 import { useDemoQueryState, useDemoTimeQueryState } from "./useQueryParams";
 import { createLogger } from "../logger";
 import { FramePriority } from "./framePriority";
-import { demoDownloadUrl } from "../stream/demoIndex";
+import { demoSourceUrl } from "../stream/demoSources";
 
 const log = createLogger("demoMoment");
 
@@ -60,7 +60,8 @@ export function DemoMomentLoader() {
     if (
       !demoParam ||
       recording?.source !== "demo" ||
-      sourceUrl !== demoDownloadUrl(demoParam)
+      !sourceUrl ||
+      sourceUrl !== demoSourceUrl(demoParam)
     ) {
       appliedRef.current = null;
       pendingFollowRef.current = null;

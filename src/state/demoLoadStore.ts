@@ -1,5 +1,6 @@
 import { createStore } from "zustand/vanilla";
 import { useStoreWithEqualityFn } from "zustand/traditional";
+import type { SourceDemoMetadata } from "../../relay/demoSourceMetadata";
 
 export type DemoLoadPhase = "idle" | "downloading" | "parsing" | "error";
 
@@ -23,7 +24,12 @@ export interface DemoLoadState {
    * Outlives reset() — it describes the loaded demo, not the load.
    */
   sourceUrl: string | null;
-  /** Indexed load intent, including an in-flight or failed download. */
+  sourceMetadata: SourceDemoMetadata | null;
+  /** Published sidecars for the loaded demo; null for external/local demos. */
+  sidecarSourceUrl: string | null;
+  /** URL-param load intent, including an in-flight or failed download. */
+  requestedDemo: string | null;
+  /** Download URL, including an in-flight or failed download. */
   requestedUrl: string | null;
   /**
    * Demo time downloaded so far (seconds) while a progressive load is
@@ -36,7 +42,11 @@ export interface DemoLoadState {
   setProgress(progress: number | null): void;
   setDownloadedSec(downloadedSec: number | null): void;
   fail(error: string): void;
-  setSourceUrl(sourceUrl: string | null): void;
+  setSourceUrl(
+    sourceUrl: string | null,
+    sidecarSourceUrl: string | null,
+    sourceMetadata: SourceDemoMetadata | null,
+  ): void;
   reset(): void;
 }
 
@@ -45,6 +55,9 @@ export const demoLoadStore = createStore<DemoLoadState>((set) => ({
   progress: null,
   error: null,
   sourceUrl: null,
+  sourceMetadata: null,
+  sidecarSourceUrl: null,
+  requestedDemo: null,
   requestedUrl: null,
   downloadedSec: null,
   begin(phase) {
@@ -59,8 +72,8 @@ export const demoLoadStore = createStore<DemoLoadState>((set) => ({
   fail(error) {
     set({ phase: "error", progress: null, error });
   },
-  setSourceUrl(sourceUrl) {
-    set({ sourceUrl });
+  setSourceUrl(sourceUrl, sidecarSourceUrl, sourceMetadata) {
+    set({ sourceUrl, sidecarSourceUrl, sourceMetadata });
   },
   reset() {
     set({ phase: "idle", progress: null, error: null });

@@ -222,7 +222,7 @@ export const CAST_LOCAL_PLAN =
  * adopted; false (never throwing) falls back to the in-browser scan.
  */
 async function adoptPlanSidecar(token: number): Promise<boolean> {
-  const sourceUrl = demoLoadStore.getState().sourceUrl;
+  const sourceUrl = demoLoadStore.getState().sidecarSourceUrl;
   if (!sourceUrl) return false;
   try {
     const res = await fetch(sidecarUrl(sourceUrl, "cast.json"));

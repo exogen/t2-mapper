@@ -3,8 +3,7 @@ import { demoLoadStore } from "../state/demoLoadStore";
 import { engineStore } from "../state/engineStore";
 import { gameEntityStore } from "../state/gameEntityStore";
 import { liveConnectionStore } from "../state/liveConnectionStore";
-import { loadDemoUrl, unloadDemo } from "../stream/demoFileLoader";
-import { DEMOS_BASE_URL, demoDownloadUrl } from "../stream/demoIndex";
+import { loadDemoReference, unloadDemo } from "../stream/demoFileLoader";
 import {
   navigationMode,
   normalizeNavigationQuery,
@@ -32,7 +31,8 @@ export function useNavigationSync() {
     const recording = engineStore.getState().playback.recording;
     if (
       (mode !== "demo" &&
-        (load.requestedUrl ||
+        (load.requestedDemo ||
+          load.requestedUrl ||
           load.phase !== "idle" ||
           recording?.source === "demo")) ||
       (mode !== "live" && gameEntityStore.getState().dataSource === "live")
@@ -46,17 +46,12 @@ export function useNavigationSync() {
     previousDemo.current = demo;
     if (!demo) {
       // Browser history can remove ?demo without an explicit eject action.
-      if (
-        previous &&
-        demoLoadStore.getState().requestedUrl === demoDownloadUrl(previous)
-      )
+      if (previous && demoLoadStore.getState().requestedDemo === previous)
         unloadDemo();
       return;
     }
-    const url = demoDownloadUrl(demo);
-    if (!DEMOS_BASE_URL || demoLoadStore.getState().requestedUrl === url)
-      return;
+    if (demoLoadStore.getState().requestedDemo === demo) return;
     unloadDemo();
-    void loadDemoUrl(url);
+    void loadDemoReference(demo);
   }, [mode, query.demo]);
 }

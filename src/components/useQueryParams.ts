@@ -164,9 +164,8 @@ export function navigationMode(query: {
 }
 
 /**
- * Demo requested via the URL: `?demo=<filename>` loads that published
- * demo when landing in demo mode, and mirrors the current dropdown
- * selection so the page URL can be shared as a link to a demo.
+ * Demo requested via the URL: a published filename or a qualified source
+ * such as `?demo=tribesforever:22945`. Preserved in shareable demo links.
  */
 export function useDemoQueryState() {
   const [demo, setDemo] = useQueryState("demo");

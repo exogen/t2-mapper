@@ -25,6 +25,42 @@ Click inside the map preview area to capture the mouse.
 | △ <small>Scroll/mouse wheel up</small>   | Increase speed       |
 | ▽ <small>Scroll/mouse wheel down</small> | Decrease speed       |
 
+### Demo links
+
+Use `?demo=<filename>` for a published demo, or `?demo=tribesforever:22945`
+to load [TribesForever demo 22945](https://tribesforever.com/demo/22945/download).
+Both support timestamp links (`&t=60`). Add source loaders in
+`src/stream/demoSources.ts`.
+
+TribesForever links use the relay configured by `RELAY_URL`. With `DEMO_R2_*`
+configured, the relay caches demos at `<DEMO_R2_PREFIX>sources/tribesforever/<id>.rec`
+and redirects browsers to R2. While an import is pending, the browser polls
+using HTTP 202 and `Retry-After`; later requests use the stored copy.
+Results (including errors) are retained for 30 seconds. Concurrent requests share
+the import, which continues if a browser leaves. Set the relay's `DEMOS_BASE_URL` to the
+public URL for that prefix (default: `https://demos.tribes2.online/demos`).
+
+Each relay allows one source transfer at a time, with up to 16 waiting. Cached
+demos bypass the queue; overflow receives HTTP 503 with `Retry-After: 30`.
+Without R2, queued requests return 503 after 20 seconds; disconnected requests
+leave the queue. Transfers time out after 5 minutes.
+Source downloads are throttled to 4 MiB/s, including the no-R2 fallback.
+The throttled stream goes straight into a single R2 upload. Sources must provide
+an unencoded file with `Content-Length`; demos larger than 150 MB (150,000,000
+bytes) are rejected before reading the body. Streamed bytes must match that length.
+Live-server traffic and direct R2 downloads are unaffected.
+
+Each cached `.rec` has a `.rec.json` sidecar with `fetchedAt`, `recordedAt`
+(upstream `Last-Modified`), `originalFilename` (from `Content-Disposition`),
+`gameVersion`, `protocolVersion`, and `durationMs`. Only v25034 demos are accepted.
+The browser reads this metadata without delaying playback. The download button
+links to TribesForever, which supplies the original filename. Missing dates/filenames
+are `null`. Old cache entries without valid metadata are re-imported once.
+
+Without R2 credentials, the relay streams directly from TribesForever to handle
+CORS. Deploy the updated relay as well as the client. External demos are not
+added to the published index and do not use its cast/commentary sidecars.
+
 ### Demo heatmaps (experimental)
 
 Add `?features=stats` to the URL (or `&features=stats` alongside other query
@@ -85,6 +121,21 @@ dev server):
 ```console
 npm run relay:dev
 ```
+
+#### Browser input logs
+
+Every browser WebSocket input is logged with `event: "browser_input"`,
+`connectionId`, `clientIp`, `peerIp`, and a per-connection `inputSeq`. This includes
+chat, movement, pings/pongs, and ignored or malformed messages. Audit entries are
+always emitted at `info`, independently of `LOG_LEVEL`. Search chat text in
+`input.args`, then use `connectionId` to trace that browser's other inputs.
+Connection, disconnect, and socket-error entries carry the same identity.
+
+Payloads over 16 KiB are marked `payloadTruncated` and include a SHA-256 hash;
+the input entry itself is never skipped. IPs come from the socket unless
+`RELAY_TRUST_FLY_PROXY=true` (set in `fly.toml`), which uses a valid
+`Fly-Client-IP` header and retains the socket peer IP. Enable this only behind
+Fly's HTTP proxy. `X-Forwarded-For` is ignored.
 
 #### Chat
 

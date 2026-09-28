@@ -6,6 +6,8 @@ const test = vi.hoisted(() => ({
   frames: [] as Array<() => void>,
   effects: [] as Array<() => void>,
   findPlayer: vi.fn(),
+  demoParam: "test.rec",
+  sourceUrl: "/test.rec",
 }));
 vi.mock("react", async (original) => ({
   ...(await original<typeof import("react")>()),
@@ -31,13 +33,16 @@ vi.mock("../state/engineStore", async (original) => {
 });
 vi.mock("../state/demoLoadStore", () => ({
   useDemoLoad: (selector: (s: { sourceUrl: string }) => unknown) =>
-    selector({ sourceUrl: "test.rec" }),
+    selector({ sourceUrl: test.sourceUrl }),
 }));
 vi.mock("./useQueryParams", () => ({
-  useDemoQueryState: () => ["test"],
+  useDemoQueryState: () => [test.demoParam],
   useDemoTimeQueryState: () => [500],
 }));
-vi.mock("../stream/demoIndex", () => ({ demoDownloadUrl: () => "test.rec" }));
+vi.mock("../stream/demoIndex", () => ({
+  DEMOS_BASE_URL: "/",
+  demoDownloadUrl: (name: string) => `/${name}`,
+}));
 vi.mock("../state/watchFollow", () => ({
   findLivingEntityByTargetId: test.findPlayer,
   exitToFreeFly() {},
@@ -56,6 +61,8 @@ let now = 0;
 const state = () => engineStore.getState();
 const frame = () => test.frames.forEach((fn) => fn());
 beforeEach(() => {
+  test.demoParam = "test.rec";
+  test.sourceUrl = "/test.rec";
   now = 0;
   vi.spyOn(performance, "now").mockImplementation(() => now);
   vi.stubGlobal("window", { location: { hash: "#f7~1,2,8" } });
@@ -119,4 +126,15 @@ it("still expires when a player never appears after the seek", () => {
   test.findPlayer.mockReturnValue("too-late");
   frame();
   expect(streamPlaybackStore.getState().followEntityId).toBeNull();
+});
+
+it("applies timestamp links to qualified demos", () => {
+  test.demoParam = "tribesforever:22945";
+  test.sourceUrl = "https://tribesforever.com/demo/22945/download";
+  state().setPlaybackStatus("playing");
+  const previousNonce = state().playback.seekNonce;
+  DemoMomentLoader();
+  test.effects.splice(0).forEach((fn) => fn());
+  expect(state().playback.seekNonce).toBe(previousNonce + 1);
+  expect(state().playback.seekTime).toBe(500);
 });

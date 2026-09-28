@@ -8,6 +8,9 @@ primary_region = 'ord'
 # Allow the shutdown drain to finalize in-progress demo recordings.
 kill_timeout = 15
 
+[env]
+  RELAY_TRUST_FLY_PROXY = 'true'
+
 [build]
   dockerfile = 'relay/Dockerfile'
 
