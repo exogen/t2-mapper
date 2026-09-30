@@ -109,6 +109,10 @@ export class PlaybackClock {
     const snapshot = stream.stepToTime(
       targetTime + STREAM_TICK_SEC,
       isPlaying && !isSeeking ? moveTicksNeeded : Number.POSITIVE_INFINITY,
+      Number.POSITIVE_INFINITY,
+      // Restoring a cached checkpoint replaces every entity ID. Walk forward
+      // during playback, including the extra interpolation tick after a seek.
+      false,
     );
     if (isSeeking && snapshot.exhausted && stream.streamComplete === false) {
       return null;

@@ -74,6 +74,7 @@ describe("demo loads during navigation", () => {
   beforeEach(() => {
     unloadDemo();
     vi.clearAllMocks();
+    vi.stubEnv("RELAY_URL", "wss://relay.example");
     mocks.install.mockImplementation((recording) => {
       mocks.current = recording;
     });
@@ -156,7 +157,6 @@ describe("demo loads during navigation", () => {
   });
 
   it("loads a qualified source through the existing parser without index sidecars", async () => {
-    vi.stubEnv("RELAY_URL", "wss://relay.example");
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => response()),
@@ -179,6 +179,20 @@ describe("demo loads during navigation", () => {
       requestedDemo: "tribesforever:22945",
       sidecarSourceUrl: null,
       phase: "idle",
+    });
+  });
+
+  it("reports missing relay configuration without downloading or parsing", async () => {
+    vi.stubEnv("RELAY_URL", undefined);
+    vi.stubGlobal("fetch", vi.fn());
+    await loadDemoReference("tribesforever:22945");
+    expect(fetch).not.toHaveBeenCalled();
+    expect(mocks.parse).not.toHaveBeenCalled();
+    expect(mocks.install).not.toHaveBeenCalled();
+    expect(demoLoadStore.getState()).toMatchObject({
+      requestedDemo: "tribesforever:22945",
+      phase: "error",
+      error: "RELAY_URL is not configured",
     });
   });
 

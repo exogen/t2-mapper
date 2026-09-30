@@ -777,6 +777,7 @@ export abstract class StreamEngine implements StreamingPlayback {
     targetTimeSec: number,
     maxMoveTicks?: number,
     maxTimeMs?: number,
+    allowForwardCheckpoint?: boolean,
   ): StreamSnapshot;
 
   /** Live streams are always at the present; demo playback overrides this

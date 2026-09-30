@@ -15,6 +15,7 @@ import { imageThreadPosition } from "./imageAnimation";
 import { applyStreamEntityPose } from "./interpolateEntity";
 import { wheelRotationAt, wheelSteeringPosition } from "./vehicleWheels";
 import { PlaybackClock } from "./PlaybackClock";
+import { STREAM_TICK_SEC } from "./streamHelpers";
 import {
   streamEntityToGameEntity,
   updateGameEntityFromStream,
@@ -485,6 +486,92 @@ describe("on-demand demo checkpoints", () => {
       DEMO_CHECKPOINT_TICKS * 3,
     ]);
     expect(calls.captures).toBe(3);
+  });
+
+  it.each([0.25, 1, 8])(
+    "preserves entity lifetimes when playing across cached checkpoints at %sx",
+    (rate) => {
+      const calls = stats();
+      const blocks = checkpointTimeline();
+      const stream = demo(blocks, {}, calls);
+      const reference = demo(blocks, { checkpoints: false });
+      stream.stepToTime(atTick(DEMO_CHECKPOINT_TICKS * 3 + 5));
+      const checkpointSec = DEMO_CHECKPOINT_TICKS * STREAM_TICK_SEC;
+      const delta = 1 / 60;
+      for (const boundary of [checkpointSec, checkpointSec * 2]) {
+        const start = boundary - 0.1;
+        const snapshot = stream.stepToTime(start);
+        const ids = snapshot.entities.map((entity) => entity.id);
+        const restores = calls.restores;
+        const clock = new PlaybackClock();
+        clock.reset(start, 0, snapshot);
+        const referenceClock = new PlaybackClock();
+        referenceClock.reset(start, 0, reference.stepToTime(start));
+        const playback = {
+          status: "playing" as const,
+          rate,
+          seekTime: start,
+          seekNonce: 0,
+        };
+        const frames = Math.ceil(0.2 / (delta * rate)) + 1;
+        for (let i = 0; i < frames; i++) {
+          const frame = clock.step(stream, playback, delta)!;
+          const expected = referenceClock.step(reference, playback, delta)!;
+          expect(frame.snapshot.entities.map((entity) => entity.id)).toEqual(
+            ids,
+          );
+          expect(
+            frame.previousSnapshot.entities.map((entity) => entity.id),
+          ).toEqual(ids);
+          expect(normalized(frame.snapshot)).toEqual(
+            normalized(expected.snapshot),
+          );
+          expect(normalized(frame.previousSnapshot)).toEqual(
+            normalized(expected.previousSnapshot),
+          );
+        }
+        expect(clock.time).toBeGreaterThan(boundary + 0.1);
+        expect(calls.restores).toBe(restores);
+      }
+    },
+  );
+
+  it("keeps seek interpolation endpoints in the same entity lifetimes at a checkpoint boundary", () => {
+    const stream = demo(checkpointTimeline());
+    const checkpointSec = DEMO_CHECKPOINT_TICKS * STREAM_TICK_SEC;
+    const start = checkpointSec * 2 + 6;
+    const snapshot = stream.stepToTime(start);
+    const clock = new PlaybackClock();
+    clock.reset(start, 0, snapshot);
+    const playback = {
+      status: "seeking" as const,
+      rate: 1,
+      seekTime: checkpointSec - 0.01,
+      seekNonce: 1,
+    };
+    let frame = clock.step(stream, playback, 0);
+    for (let attempts = 0; attempts < 100 && !frame; attempts++) {
+      frame = clock.step(stream, playback, 0);
+    }
+    expect(frame).not.toBeNull();
+    expect(frame!.snapshot.entities.map((entity) => entity.id)).toEqual(
+      frame!.previousSnapshot.entities.map((entity) => entity.id),
+    );
+  });
+
+  it("can rewind while forward checkpoint jumps are disabled", () => {
+    const calls = stats();
+    const blocks = checkpointTimeline();
+    const stream = demo(blocks, {}, calls);
+    stream.stepToTime(atTick(DEMO_CHECKPOINT_TICKS * 3 + 5));
+    const before = calls.movesRead;
+    const target = atTick(DEMO_CHECKPOINT_TICKS + 5);
+    const snapshot = stream.stepToTime(target, Infinity, Infinity, false);
+    expect(calls.movesRead - before).toBe(5);
+    expect(calls.restores).toBe(1);
+    expect(normalized(snapshot)).toEqual(
+      normalized(demo(blocks, { checkpoints: false }).stepToTime(target)),
+    );
   });
 
   it("keeps a closer current state and honors the simulation tick budget", () => {

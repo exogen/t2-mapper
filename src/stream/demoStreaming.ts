@@ -863,6 +863,7 @@ class DemoStreamAdapter extends StreamEngine {
     targetTimeSec: number,
     maxMoveTicks = Number.POSITIVE_INFINITY,
     maxTimeMs = Number.POSITIVE_INFINITY,
+    allowForwardCheckpoint = true,
   ): StreamSnapshot {
     const deadline = Number.isFinite(maxTimeMs)
       ? performance.now() + Math.max(0, maxTimeMs)
@@ -883,18 +884,20 @@ class DemoStreamAdapter extends StreamEngine {
       didReset = true;
     }
 
-    let checkpointTick = Math.min(
-      Math.floor(targetTicks / DEMO_CHECKPOINT_TICKS) * DEMO_CHECKPOINT_TICKS,
-      this.lastCheckpointTick,
-    );
-    while (checkpointTick > 0 && !this.checkpoints.has(checkpointTick)) {
-      checkpointTick -= DEMO_CHECKPOINT_TICKS;
-    }
-    if (targetTicks < this.moveTicks || checkpointTick > this.moveTicks) {
-      const checkpoint = this.checkpoints.get(checkpointTick);
-      if (checkpoint) this.restoreCheckpoint(checkpoint);
-      else this.resetToStart();
-      didReset = true;
+    if (targetTicks < this.moveTicks || allowForwardCheckpoint) {
+      let checkpointTick = Math.min(
+        Math.floor(targetTicks / DEMO_CHECKPOINT_TICKS) * DEMO_CHECKPOINT_TICKS,
+        this.lastCheckpointTick,
+      );
+      while (checkpointTick > 0 && !this.checkpoints.has(checkpointTick)) {
+        checkpointTick -= DEMO_CHECKPOINT_TICKS;
+      }
+      if (targetTicks < this.moveTicks || checkpointTick > this.moveTicks) {
+        const checkpoint = this.checkpoints.get(checkpointTick);
+        if (checkpoint) this.restoreCheckpoint(checkpoint);
+        else this.resetToStart();
+        didReset = true;
+      }
     }
 
     // Match snapshot rounding so forward progress never looks like a rewind.

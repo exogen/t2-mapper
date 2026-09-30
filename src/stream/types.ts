@@ -683,6 +683,8 @@ export interface StreamingPlayback {
     targetTimeSec: number,
     maxMoveTicks?: number,
     maxTimeMs?: number,
+    /** Forward checkpoint jumps replace entity lifetimes; disable for playback. */
+    allowForwardCheckpoint?: boolean,
   ): StreamSnapshot;
   /**
    * First playback time (seconds) with a scene to render — world geometry
