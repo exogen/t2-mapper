@@ -47,7 +47,8 @@ vi.mock("react", async (importOriginal) => ({
 vi.mock("@react-three/fiber", () => ({
   useFrame: (fn: (state: unknown, delta: number) => void) =>
     test.frames.push(fn),
-  useThree: () => undefined,
+  useThree: (selector: (state: unknown) => unknown) =>
+    selector({ gl: undefined, invalidate() {} }),
 }));
 vi.mock("three", async (importOriginal) => {
   const three = await importOriginal<typeof import("three")>();

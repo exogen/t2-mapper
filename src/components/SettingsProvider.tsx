@@ -10,8 +10,11 @@ import {
   useRef,
   useState,
 } from "react";
-import { useFogQueryState } from "./useQueryParams";
+import { useFogQueryState, useModeQueryState } from "./useQueryParams";
 import { useTouchDevice } from "./useTouchDevice";
+import { useDataSource } from "../state/gameEntityStore";
+import { cameraTourStore } from "../state/cameraTourStore";
+import { modeFeatureAccess } from "./modeFeatureAccess";
 import {
   DEFAULT_TEAM_COLOR_SCHEME,
   TEAM_COLOR_SCHEMES,
@@ -62,6 +65,7 @@ type StateSetter<T> = Dispatch<SetStateAction<T>>;
 export type TouchMode = "dualStick" | "moveLookStick";
 
 type SettingsContextType = {
+  canDisableFog: boolean;
   fogEnabled: boolean;
   setFogEnabled: StateSetter<boolean>;
   clearFogEnabledOverride: () => void;
@@ -127,6 +131,8 @@ type SettingsContextType = {
 };
 
 type DebugContextType = {
+  canShowDebugVisuals: boolean;
+  canShowEntityList: boolean;
   debugMode: boolean;
   setDebugMode: StateSetter<boolean>;
   renderOnDemand: boolean;
@@ -222,6 +228,10 @@ export function useControls() {
 }
 
 export function SettingsProvider({ children }: { children: ReactNode }) {
+  const [mode] = useModeQueryState();
+  const dataSource = useDataSource();
+  const { canDisableFog, canShowDebugVisuals, canShowEntityList } =
+    modeFeatureAccess(mode, dataSource);
   const [fogEnabled, setFogEnabled] = useState(true);
   const [highQualityFog, setHighQualityFog] = useState(false);
   const [speedMultiplier, setSpeedMultiplier] = useState(0.15);
@@ -278,7 +288,8 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
 
   const settingsContext: SettingsContextType = useMemo(
     () => ({
-      fogEnabled: fogEnabledOverride ?? fogEnabled,
+      canDisableFog,
+      fogEnabled: !canDisableFog || (fogEnabledOverride ?? fogEnabled),
       setFogEnabled: setFogEnabledWithoutOverride,
       clearFogEnabledOverride,
       highQualityFog,
@@ -333,6 +344,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       setFollowBehindPlayer,
     }),
     [
+      canDisableFog,
       fogEnabled,
       fogEnabledOverride,
       setFogEnabledWithoutOverride,
@@ -367,15 +379,30 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
 
   const debugContext: DebugContextType = useMemo(
     () => ({
-      debugMode,
+      canShowDebugVisuals,
+      canShowEntityList,
+      debugMode: canShowDebugVisuals && debugMode,
       setDebugMode,
       renderOnDemand,
       setRenderOnDemand,
       showFpsMeter,
       setShowFpsMeter,
     }),
-    [debugMode, setDebugMode, renderOnDemand, showFpsMeter],
+    [
+      canShowDebugVisuals,
+      canShowEntityList,
+      debugMode,
+      setDebugMode,
+      renderOnDemand,
+      showFpsMeter,
+    ],
   );
+
+  useEffect(() => {
+    if (canShowEntityList) return;
+    const tour = cameraTourStore.getState();
+    if (tour.animation?.tourType === "debug") tour.cancel();
+  }, [canShowEntityList]);
 
   const controlsContext: ControlsContextType = useMemo(
     () => ({

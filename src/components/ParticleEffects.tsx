@@ -94,6 +94,14 @@ interface ActiveExplosionSphere {
   targetRadius: number;
 }
 
+function disposeExplosionSphere(sphere: ActiveExplosionSphere): void {
+  sphere.mesh.removeFromParent();
+  sphere.label.removeFromParent();
+  sphere.material.dispose();
+  sphere.labelMaterial.map?.dispose();
+  sphere.labelMaterial.dispose();
+}
+
 /** Create a text label sprite for an explosion sphere. */
 function createExplosionLabel(
   text: string,
@@ -532,6 +540,17 @@ interface ActiveEmitter extends ParticleBuffers {
   debugParticleMeshes?: Mesh[];
 }
 
+function removeEmitterDebugMeshes(entry: ActiveEmitter): void {
+  if (entry.debugOriginMesh) {
+    entry.debugOriginMesh.removeFromParent();
+    entry.debugOriginMesh = undefined;
+  }
+  if (entry.debugParticleMeshes) {
+    for (const mesh of entry.debugParticleMeshes) mesh.removeFromParent();
+    entry.debugParticleMeshes = undefined;
+  }
+}
+
 /** Check if a ShaderMaterial compiled successfully. Must call after first render. */
 function checkShaderCompilation(
   renderer: import("three").WebGLRenderer,
@@ -709,6 +728,7 @@ export function ParticleEffects({
   const { audioEnabled } = useSettings();
   const { audioLoader, audioListener } = useAudio();
   const gl = useThree((s) => s.gl);
+  const invalidate = useThree((s) => s.invalidate);
   const groupRef = useRef<Group>(null);
   const snapshotIndex = useMemo(() => new ParticleSnapshotIndex(), []);
   const activeEmittersRef = useRef<ActiveEmitter[]>([]);
@@ -735,6 +755,20 @@ export function ParticleEffects({
     () => playback.getDataBlockData.bind(playback),
     [playback],
   );
+
+  // Clear debug visuals even while seeking or waiting for an on-demand frame.
+  useEffect(() => {
+    if (debugMode) return;
+    for (const entry of activeEmittersRef.current) {
+      removeEmitterDebugMeshes(entry);
+      entry.material.uniforms.debugOpacity.value = 1;
+    }
+    for (const sphere of activeExplosionSpheresRef.current) {
+      disposeExplosionSphere(sphere);
+    }
+    activeExplosionSpheresRef.current.length = 0;
+    invalidate();
+  }, [debugMode, invalidate]);
 
   // Turning audio off must silence projectile loops that are already
   // playing — the per-frame audio block (including its despawn/stop pass)
@@ -1120,16 +1154,7 @@ export function ParticleEffects({
         }
       } else {
         // Clean up debug meshes when debug mode is off.
-        if (entry.debugOriginMesh) {
-          group.remove(entry.debugOriginMesh);
-          entry.debugOriginMesh = undefined;
-        }
-        if (entry.debugParticleMeshes) {
-          for (const dm of entry.debugParticleMeshes) {
-            group.remove(dm);
-          }
-          entry.debugParticleMeshes = undefined;
-        }
+        removeEmitterDebugMeshes(entry);
       }
 
       // Remove dead emitters.
@@ -1137,10 +1162,7 @@ export function ParticleEffects({
         group.remove(entry.mesh);
         entry.geometry.dispose();
         entry.material.dispose();
-        if (entry.debugOriginMesh) group.remove(entry.debugOriginMesh);
-        if (entry.debugParticleMeshes) {
-          for (const dm of entry.debugParticleMeshes) group.remove(dm);
-        }
+        removeEmitterDebugMeshes(entry);
         active.splice(i, 1);
       }
     }
@@ -1163,10 +1185,7 @@ export function ParticleEffects({
 
       // Remove when lifetime expires.
       if (frac >= 1) {
-        group.remove(sphere.mesh);
-        group.remove(sphere.label);
-        sphere.material.dispose();
-        sphere.labelMaterial.dispose();
+        disposeExplosionSphere(sphere);
         spheres.splice(i, 1);
       }
     }
@@ -1439,25 +1458,15 @@ export function ParticleEffects({
     const processedAudioEvents = processedAudioEventsRef.current;
     return () => {
       for (const entry of activeEmittersRef.current) {
-        if (group) {
-          group.remove(entry.mesh);
-          if (entry.debugOriginMesh) group.remove(entry.debugOriginMesh);
-          if (entry.debugParticleMeshes) {
-            for (const dm of entry.debugParticleMeshes) group.remove(dm);
-          }
-        }
+        entry.mesh.removeFromParent();
+        removeEmitterDebugMeshes(entry);
         entry.geometry.dispose();
         entry.material.dispose();
       }
       activeEmittersRef.current = [];
       // Clean up explosion spheres.
       for (const sphere of activeExplosionSpheresRef.current) {
-        if (group) {
-          group.remove(sphere.mesh);
-          group.remove(sphere.label);
-        }
-        sphere.material.dispose();
-        sphere.labelMaterial.dispose();
+        disposeExplosionSphere(sphere);
       }
       activeExplosionSpheresRef.current = [];
       // Clean up shockwave rings.

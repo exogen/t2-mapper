@@ -1,5 +1,6 @@
 import { useMemo } from "react";
-import { BoxGeometry, EdgesGeometry, SphereGeometry } from "three";
+import { BoxGeometry, SphereGeometry } from "three";
+import { useDebug } from "./SettingsProvider";
 
 const debugMaterial = (
   <lineBasicMaterial
@@ -13,12 +14,16 @@ const debugMaterial = (
 
 /** Red wireframe bounding box for debug tour visualization. */
 export function DebugBounds({ size }: { size: [number, number, number] }) {
-  const edges = useMemo(
-    () => new EdgesGeometry(new BoxGeometry(size[0], size[1], size[2])),
-    [size[0], size[1], size[2]], // eslint-disable-line react-hooks/exhaustive-deps
+  const { canShowDebugVisuals } = useDebug();
+  const geometry = useMemo(
+    () =>
+      canShowDebugVisuals ? new BoxGeometry(size[0], size[1], size[2]) : null,
+    [canShowDebugVisuals, size[0], size[1], size[2]], // eslint-disable-line react-hooks/exhaustive-deps
   );
+  if (!geometry) return null;
   return (
-    <lineSegments geometry={edges} renderOrder={9999}>
+    <lineSegments renderOrder={9999}>
+      <edgesGeometry args={[geometry]} />
       {debugMaterial}
     </lineSegments>
   );
@@ -26,12 +31,15 @@ export function DebugBounds({ size }: { size: [number, number, number] }) {
 
 /** Red wireframe sphere for point entities without geometry. */
 export function DebugMarker({ radius = 1 }: { radius?: number }) {
-  const edges = useMemo(
-    () => new EdgesGeometry(new SphereGeometry(radius, 8, 6)),
-    [radius],
+  const { canShowDebugVisuals } = useDebug();
+  const geometry = useMemo(
+    () => (canShowDebugVisuals ? new SphereGeometry(radius, 8, 6) : null),
+    [canShowDebugVisuals, radius],
   );
+  if (!geometry) return null;
   return (
-    <lineSegments geometry={edges} renderOrder={9999}>
+    <lineSegments renderOrder={9999}>
+      <edgesGeometry args={[geometry]} />
       {debugMaterial}
     </lineSegments>
   );

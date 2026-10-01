@@ -178,6 +178,7 @@ export const InspectorControls = memo(function InspectorControls({
   const [mode] = useModeQueryState();
   const isLiveMode = isLiveConnected || mode === "live";
   const {
+    canDisableFog,
     fogEnabled,
     setFogEnabled,
     fov,
@@ -234,6 +235,8 @@ export const InspectorControls = memo(function InspectorControls({
     setInvertJoystick,
   } = useControls();
   const {
+    canShowDebugVisuals,
+    canShowEntityList,
     debugMode,
     setDebugMode,
     renderOnDemand,
@@ -724,19 +727,21 @@ export const InspectorControls = memo(function InspectorControls({
                 </div>
               </Accordion>
               <Accordion value="graphics" label="Graphics">
-                <div className={styles.CheckboxField}>
-                  <input
-                    id="fogInput"
-                    type="checkbox"
-                    checked={fogEnabled}
-                    onChange={(event) => {
-                      setFogEnabled(event.target.checked);
-                    }}
-                  />
-                  <label className={styles.Label} htmlFor="fogInput">
-                    Enable fog
-                  </label>
-                </div>
+                {canDisableFog && (
+                  <div className={styles.CheckboxField}>
+                    <input
+                      id="fogInput"
+                      type="checkbox"
+                      checked={fogEnabled}
+                      onChange={(event) => {
+                        setFogEnabled(event.target.checked);
+                      }}
+                    />
+                    <label className={styles.Label} htmlFor="fogInput">
+                      Enable fog
+                    </label>
+                  </div>
+                )}
                 <div className={styles.CheckboxField}>
                   <input
                     id="animationInput"
@@ -826,19 +831,21 @@ export const InspectorControls = memo(function InspectorControls({
                     Show FPS meter
                   </label>
                 </div>
-                <div className={styles.CheckboxField}>
-                  <input
-                    id="debugInput"
-                    type="checkbox"
-                    checked={debugMode}
-                    onChange={(event) => {
-                      setDebugMode(event.target.checked);
-                    }}
-                  />
-                  <label className={styles.Label} htmlFor="debugInput">
-                    Render debug visuals
-                  </label>
-                </div>
+                {canShowDebugVisuals && (
+                  <div className={styles.CheckboxField}>
+                    <input
+                      id="debugInput"
+                      type="checkbox"
+                      checked={debugMode}
+                      onChange={(event) => {
+                        setDebugMode(event.target.checked);
+                      }}
+                    />
+                    <label className={styles.Label} htmlFor="debugInput">
+                      Render debug visuals
+                    </label>
+                  </div>
+                )}
                 <div className={styles.CheckboxField}>
                   <input
                     id="onDemandInput"
@@ -867,7 +874,7 @@ export const InspectorControls = memo(function InspectorControls({
                   </p>
                 </div>
                 <DebugNetworkInfo />
-                <DebugEntityList />
+                {canShowEntityList && <DebugEntityList />}
                 <div className={styles.DebugActionField}>
                   <button
                     type="button"
