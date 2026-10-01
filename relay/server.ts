@@ -11,6 +11,7 @@ import { loadChatEnabled } from "./chatPolicy.js";
 import { BrowserAudit } from "./browserAudit.js";
 import { handleDemoDownload } from "./demoDownload.js";
 import { DemoSourceCache } from "./demoSourceCache.js";
+import { DemoCheckpointPublisher } from "./demoCheckpointPublisher.js";
 import { loadCredentials } from "./auth.js";
 import { WatchSessionManager, normalizeAddress } from "./watchSession.js";
 import { WatchRequest } from "./watchRequest.js";
@@ -45,10 +46,20 @@ const TRUST_FLY_PROXY = /^(1|true)$/i.test(
   process.env.RELAY_TRUST_FLY_PROXY?.trim() ?? "",
 );
 const demoUploadConfig = loadUploadConfig();
+const demoCheckpointPublisher =
+  demoUploadConfig &&
+  !/^(0|false)$/i.test(process.env.DEMO_CHECKPOINTS_ENABLED ?? "")
+    ? new DemoCheckpointPublisher(demoUploadConfig, GAME_BASE_PATH)
+    : null;
 const demoSourceCache = demoUploadConfig
   ? new DemoSourceCache(
       demoUploadConfig,
       process.env.DEMOS_BASE_URL || "https://demos.tribes2.online/demos",
+      {
+        publishCheckpoints: demoCheckpointPublisher
+          ? (key, force) => demoCheckpointPublisher.publish(key, { force })
+          : undefined,
+      },
     )
   : null;
 
@@ -388,6 +399,9 @@ const demoUploader = new DemoUploader(demoUploadConfig, DEMO_DIR, {
   // Sweeps only run after both are constructed.
   isLive: (filePath) => demoCoordinator.isLivePath(filePath),
   salvageMinLengthMs: DEMO_MIN_LENGTH_MS,
+  publishCheckpoints: demoCheckpointPublisher
+    ? (localFile, key) => demoCheckpointPublisher.publish(key, { localFile })
+    : undefined,
 });
 const demoCoordinator = new DemoCoordinator({
   enabled: DEMO_RECORD_ENABLED,

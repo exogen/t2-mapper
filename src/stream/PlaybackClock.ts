@@ -52,7 +52,10 @@ export class PlaybackClock {
   step(
     stream: Pick<
       StreamingPlayback,
-      "stepToTime" | "lastStepStartTimeSec" | "streamComplete"
+      | "stepToTime"
+      | "lastStepStartTimeSec"
+      | "streamComplete"
+      | "seekSceneSnapshot"
     >,
     playback: PlaybackControls,
     delta: number,
@@ -100,8 +103,9 @@ export class PlaybackClock {
     }
     if (
       seekPrevious &&
-      seekPrevious.timeSec < targetTickTime &&
-      (!seekPrevious.exhausted || stream.streamComplete === false)
+      (stream.seekSceneSnapshot != null ||
+        (seekPrevious.timeSec < targetTickTime &&
+          (!seekPrevious.exhausted || stream.streamComplete === false)))
     ) {
       return null;
     }

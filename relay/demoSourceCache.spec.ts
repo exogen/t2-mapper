@@ -168,6 +168,106 @@ function expireResult() {
 }
 
 describe("external demo R2 cache", () => {
+  it("saves cache readiness before replay so a restart reuses the completed transfer", async () => {
+    const gate = deferred<void>();
+    const publishCheckpoints = vi.fn(async () => {
+      expect(mocks.stored.get(key)).toEqual(Buffer.from(data));
+      expect(mocks.stored.has(`${key}.json`)).toBe(true);
+      await gate.promise;
+    });
+    const pending = new DemoSourceCache(config, publicBase, {
+      publishCheckpoints,
+    }).ensure(demo);
+    await vi.waitFor(() =>
+      expect(publishCheckpoints).toHaveBeenCalledWith(key, true),
+    );
+    const retryCheckpoints = vi.fn().mockResolvedValue("published");
+    expect(
+      await new DemoSourceCache(config, publicBase, {
+        publishCheckpoints: retryCheckpoints,
+      }).ensure(demo),
+    ).toBe(cachedUrl);
+    expect(retryCheckpoints).toHaveBeenCalledWith(key, undefined);
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(mocks.upload).toHaveBeenCalledOnce();
+    gate.resolve();
+    expect(await pending).toBe(cachedUrl);
+    expect(mocks.stored.has(`${key}.json`)).toBe(true);
+  });
+
+  it("fills missing/outdated checkpoints on cache hits without contacting the source", async () => {
+    seedCache();
+    const publishCheckpoints = vi.fn().mockResolvedValue("published");
+    expect(
+      await new DemoSourceCache(config, publicBase, {
+        publishCheckpoints,
+      }).ensure(demo),
+    ).toBe(cachedUrl);
+    expect(publishCheckpoints).toHaveBeenCalledExactlyOnceWith(key, undefined);
+    expect(fetch).not.toHaveBeenCalled();
+    expect(mocks.upload).not.toHaveBeenCalled();
+  });
+
+  it("does not run checkpoint generation on an incomplete download", async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(
+      new Response(data, {
+        headers: { "Content-Length": String(data.length + 1) },
+      }),
+    );
+    const publishCheckpoints = vi.fn();
+    await expect(
+      new DemoSourceCache(config, publicBase, { publishCheckpoints }).ensure(
+        demo,
+      ),
+    ).rejects.toThrow("Content-Length");
+    expect(publishCheckpoints).not.toHaveBeenCalled();
+  });
+
+  it("keeps the cached bytes playable when checkpoint replay is unavailable", async () => {
+    const publishCheckpoints = vi.fn().mockResolvedValue("failed");
+    expect(
+      await new DemoSourceCache(config, publicBase, {
+        publishCheckpoints,
+      }).ensure(demo),
+    ).toBe(cachedUrl);
+    expect(mocks.stored.has(`${key}.json`)).toBe(true);
+  });
+
+  it("keeps a new import playable after a checkpoint upload error and retries without redownloading", async () => {
+    const publishCheckpoints = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("checkpoint upload failed"));
+    const cache = new DemoSourceCache(config, publicBase, {
+      publishCheckpoints,
+    });
+    expect(await cache.ensure(demo)).toBe(cachedUrl);
+    expect(mocks.stored.has(key)).toBe(true);
+    expect(mocks.stored.has(`${key}.json`)).toBe(true);
+    expect(await cache.ensure(demo)).toBe(cachedUrl);
+    expect(publishCheckpoints).toHaveBeenCalledOnce();
+    expect(mocks.warn).toHaveBeenCalledOnce();
+    expireResult();
+    expect(await cache.ensure(demo)).toBe(cachedUrl);
+    expect(publishCheckpoints).toHaveBeenLastCalledWith(key, undefined);
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(mocks.upload).toHaveBeenCalledOnce();
+  });
+
+  it("keeps an existing cache hit playable when checking or uploading checkpoints fails", async () => {
+    seedCache();
+    const publishCheckpoints = vi
+      .fn()
+      .mockRejectedValue(new Error("R2 unavailable"));
+    expect(
+      await new DemoSourceCache(config, publicBase, {
+        publishCheckpoints,
+      }).ensure(demo),
+    ).toBe(cachedUrl);
+    expect(mocks.warn).toHaveBeenCalledOnce();
+    expect(fetch).not.toHaveBeenCalled();
+    expect(mocks.upload).not.toHaveBeenCalled();
+  });
+
   it("reuses an existing object without contacting the source or uploading", async () => {
     seedCache();
     const cache = new DemoSourceCache(config, publicBase);

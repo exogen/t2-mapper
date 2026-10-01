@@ -33,10 +33,12 @@ import {
   registerForceFieldCollider,
   registerInteriorCollider,
   registerStaticShapeCollider,
+  registerPlayerShapeCollider,
   setForceFieldEnabled,
   unregisterForceFieldCollider,
   unregisterInteriorCollider,
   unregisterStaticShapeCollider,
+  unregisterPlayerShapeCollider,
 } from "../collision/worldCollision";
 import { setTerrainCollisionData } from "../collision/terrainCollision";
 import { getActualResourceKey, getSourceAndPath } from "../manifest";
@@ -63,6 +65,7 @@ import {
   staticShapeColliderMeshes,
 } from "./colliderPolicy";
 import { loadDtsScene } from "../dts/nodeDts";
+import { getDTSCollisionMeshes } from "../dts/dtsCollision";
 import { createDIFModel, type DIFModel } from "../dif/difLoader";
 
 import {
@@ -122,9 +125,8 @@ export interface WorldEntity {
 export interface HeadlessWorldOptions {
   /** Root of the extracted assets. Relative paths resolve from cwd. */
   assetRoot?: string;
-  /** Skip mission statics (TSStatic/StaticShape). They are camera
-   *  occluders only, so projectile-physics-only consumers can save the
-   *  load time. */
+  /** Skip mission statics (TSStatic/StaticShape), including camera
+   *  occluders and player collision hulls. */
   includeStatics?: boolean;
 }
 
@@ -362,8 +364,10 @@ export class HeadlessWorld {
   /** Drop one collider, whatever kind it is. */
   private unregisterCollider(id: string, kind: ColliderKind): void {
     if (kind === "interior") unregisterInteriorCollider(id);
-    else if (kind === "static") unregisterStaticShapeCollider(id);
-    else {
+    else if (kind === "static") {
+      unregisterStaticShapeCollider(id);
+      unregisterPlayerShapeCollider(id);
+    } else {
       unregisterForceFieldCollider(id);
       this.fieldEnabled.delete(id);
     }
@@ -451,10 +455,16 @@ export class HeadlessWorld {
       // maps unknown classNames to StaticShape, so match that.
       type: className === "TSStatic" ? "TSStatic" : "StaticShape",
     });
-    if (!meshes) return;
-    registerStaticShapeCollider(entity.id, meshes);
+    const playerMeshes = getDTSCollisionMeshes(
+      instance,
+      className === "TSStatic" ? "TSStatic" : "ShapeBase",
+      "collision",
+    );
+    registerPlayerShapeCollider(entity.id, playerMeshes);
+    if (!meshes && !playerMeshes.length) return;
+    if (meshes) registerStaticShapeCollider(entity.id, meshes);
     this.registered.set(entity.id, { kind: "static", occupant });
-    this.countGeometry(entity.id, meshes);
+    this.countGeometry(entity.id, meshes ?? playerMeshes);
   }
 
   private syncForceField(entity: WorldEntity, occupant: string): void {
@@ -550,6 +560,7 @@ export class HeadlessWorld {
   dispose(): void {
     this.state.interiors.clear();
     this.state.staticShapes.clear();
+    this.state.playerShapes.clear();
     this.state.forceFields.clear();
     this.state.terrain = null;
     this.state.water.clear();

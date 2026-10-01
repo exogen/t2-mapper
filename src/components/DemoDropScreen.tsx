@@ -29,6 +29,7 @@ import { useAppNavigation } from "./useAppNavigation";
 import { focusDemoSelect } from "./demoSelectFocus";
 import { LoadingIndicator } from "./LoadingIndicator";
 import styles from "./DemoDropScreen.module.css";
+import { DEMO_CHECKPOINT_SUFFIX } from "../stream/demoCheckpoints";
 
 /** Featured demos: recently indexed games with a real crowd and length. */
 const FEATURED_MIN_PLAYERS = 10;
@@ -280,9 +281,18 @@ export function DemoDropScreen() {
     (e: React.DragEvent) => {
       e.preventDefault();
       setDragOver(false);
-      const file = e.dataTransfer.files?.[0];
-      if (file && file.name.toLowerCase().endsWith(".rec")) {
-        navigation.selectDemoFile(file);
+      const files = Array.from(e.dataTransfer.files ?? []);
+      const file = files.find((file) =>
+        file.name.toLowerCase().endsWith(".rec"),
+      );
+      if (file) {
+        navigation.selectDemoFile(
+          file,
+          files.find(
+            (candidate) =>
+              candidate.name === file.name + DEMO_CHECKPOINT_SUFFIX,
+          ),
+        );
       }
     },
     [navigation],
@@ -290,10 +300,18 @@ export function DemoDropScreen() {
 
   const handleFileChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
-      const file = e.target.files?.[0];
+      const files = Array.from(e.target.files ?? []);
+      const file = files.find((file) =>
+        file.name.toLowerCase().endsWith(".rec"),
+      );
       if (!file) return;
       e.target.value = "";
-      navigation.selectDemoFile(file);
+      navigation.selectDemoFile(
+        file,
+        files.find(
+          (candidate) => candidate.name === file.name + DEMO_CHECKPOINT_SUFFIX,
+        ),
+      );
     },
     [navigation],
   );
@@ -318,7 +336,8 @@ export function DemoDropScreen() {
       <input
         ref={inputRef}
         type="file"
-        accept=".rec"
+        accept=".rec,.checkpoints.json"
+        multiple
         style={{ display: "none" }}
         onChange={handleFileChange}
       />
@@ -357,6 +376,10 @@ export function DemoDropScreen() {
               Drag &amp; drop a Tribes 2 demo (.rec file) here
             </p>
             <p className={styles.SubHint}>or click the cassette to browse</p>
+            <p className={styles.SubHint}>
+              Include its .checkpoints.json file for faster seeking, if
+              available
+            </p>
           </div>
         </>
       )}

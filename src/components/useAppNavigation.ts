@@ -51,9 +51,9 @@ export function useAppNavigation() {
         leaveStream(true);
         void loadDemoReference(reference);
       },
-      selectDemoFile(file: File) {
+      selectDemoFile(file: File, checkpoints?: File) {
         demoIndex();
-        void loadDemoFile(file);
+        void loadDemoFile(file, checkpoints);
       },
       selectMission(mission: CurrentMission) {
         void setQuery({ ...destination("map"), mission });

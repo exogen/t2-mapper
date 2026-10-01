@@ -24,12 +24,14 @@ import {
   DemoSourceLoadError,
 } from "./demoSources";
 import type { SourceDemoMetadata } from "../../relay/demoSourceMetadata";
+import { DEMO_CHECKPOINT_SUFFIX, readDemoCheckpoints } from "./demoCheckpoints";
 
 interface LoadedDemoSource {
   url: string;
   sidecarSourceUrl: string | null;
   metadata: SourceDemoMetadata | null;
   installed: boolean;
+  checkpoints?: Promise<string | null>;
 }
 
 const log = createLogger("demoFileLoader");
@@ -78,7 +80,10 @@ export function unloadDemo(): void {
   commandCircuitStore.getState().deactivate();
 }
 
-export async function loadDemoFile(file: File): Promise<void> {
+export async function loadDemoFile(
+  file: File,
+  checkpoints?: File,
+): Promise<void> {
   // Take our turn number before the (possibly slow) read, so if another
   // load starts while we're reading, that newer one wins — not whichever
   // happens to finish last.
@@ -88,7 +93,17 @@ export async function loadDemoFile(file: File): Promise<void> {
   try {
     const buffer = await file.arrayBuffer();
     if (parseToken !== token) return;
-    await loadDemoBuffer(buffer, null, token);
+    await loadDemoBuffer(
+      buffer,
+      null,
+      token,
+      checkpoints
+        ? checkpoints.text().catch((error) => {
+            log.warn("Couldn't read seek checkpoints: %o", error);
+            return null;
+          })
+        : undefined,
+    );
   } catch (err) {
     log.error("Failed to load demo: %o", err);
     if (parseToken === token) {
@@ -144,6 +159,30 @@ async function loadRemoteDemo(
       metadata: null,
       installed: false,
     };
+    const checkpointSourceUrl =
+      source.checkpointSourceUrl?.(response) ?? source.sidecarSourceUrl;
+    if (checkpointSourceUrl) {
+      const checkpointUrl = new URL(
+        checkpointSourceUrl,
+        typeof location === "undefined" ? "http://localhost/" : location.href,
+      );
+      checkpointUrl.pathname += DEMO_CHECKPOINT_SUFFIX;
+      loadedSource.checkpoints = Promise.resolve()
+        .then(() =>
+          fetch(checkpointUrl.href, {
+            signal: AbortSignal.any([
+              abort.signal,
+              AbortSignal.timeout(10_000),
+            ]),
+          }),
+        )
+        .then(async (response) => {
+          if (response.ok) return response.text();
+          await response.body?.cancel();
+          return null;
+        })
+        .catch(() => null);
+    }
     // Metadata is optional and must not delay playback. Keep it on the source
     // until installation, or update the installed demo if it arrives later.
     if (source.loadMetadata) {
@@ -395,6 +434,7 @@ async function streamDemoResponse(
   }
   engineStore.getState().setDemoBuffer(recording, buffer);
   engineStore.getState().setDownloadComplete(true);
+  void installCheckpoints(buffer, recording, source.checkpoints, token);
   engineStore.getState().fulfillPendingSeek();
   demoLoadStore.getState().setDownloadedSec(null);
   // The whole-file consumers unlock now: the auto-director's scan buffer
@@ -445,6 +485,7 @@ async function loadDemoBuffer(
   buffer: ArrayBuffer,
   source: LoadedDemoSource | null,
   token: number,
+  localCheckpoints?: Promise<string | null>,
 ): Promise<boolean> {
   try {
     demoLoadStore.getState().begin("parsing");
@@ -452,7 +493,12 @@ async function loadDemoBuffer(
     if (parseToken !== token) return false;
     const recording = await createDemoStreamingRecording(buffer);
     if (parseToken !== token) return false;
+    if (localCheckpoints)
+      await installCheckpoints(buffer, recording, localCheckpoints, token);
+    if (parseToken !== token) return false;
     installRecording(recording, source, buffer);
+    if (!localCheckpoints)
+      void installCheckpoints(buffer, recording, source?.checkpoints, token);
 
     // Retain the buffer for the auto-director's lazy scan pass.
     setDirectorDemoBuffer(buffer);
@@ -465,6 +511,26 @@ async function loadDemoBuffer(
       demoLoadStore.getState().fail("Couldn't parse the demo");
     }
     return false;
+  }
+}
+
+async function installCheckpoints(
+  buffer: ArrayBuffer,
+  recording: StreamRecording,
+  pending: Promise<string | null> | undefined,
+  token: number,
+): Promise<void> {
+  if (!pending || !recording.streamingPlayback?.importCheckpoints) return;
+  try {
+    const text = await pending;
+    if (!text || parseToken !== token) return;
+    const checkpoints = await readDemoCheckpoints(text, buffer);
+    if (parseToken !== token) return;
+    recording.streamingPlayback.importCheckpoints(checkpoints);
+    log.info("Loaded %d precomputed seek checkpoints", checkpoints.length);
+  } catch (error) {
+    if (parseToken === token)
+      log.warn("Ignoring unusable seek checkpoints: %o", error);
   }
 }
 

@@ -75,6 +75,64 @@ describe("timeline scan failures", () => {
   });
 });
 
+describe("confirmed kickoffs", () => {
+  const message = (...args: string[]) => ({
+    type: BlockTypePacket,
+    parsed: {
+      events: [
+        {
+          parsedData: {
+            type: "RemoteCommandEvent",
+            funcName: "ServerMessage",
+            args,
+          },
+        },
+      ],
+    },
+  });
+  it("does not turn an abandoned countdown into a match start", async () => {
+    scan.blocks = [
+      message("MsgMissionStart", "The admin has forced the match to start."),
+      { type: BlockTypeMove },
+    ];
+    const result = await scanDemoTimeline(new ArrayBuffer(0), null);
+    expect(result.events.map((event) => event.type)).toEqual([
+      "match-countdown",
+    ]);
+  });
+  it("includes real kickoffs on later maps even when a vote bypassed game over", async () => {
+    scan.blocks = [
+      message("MsgMissionStart", "The admin has forced the match to start."),
+      { type: BlockTypeMove },
+      message("MsgMissionStart", "Match started!"),
+      {
+        type: BlockTypePacket,
+        parsed: {
+          events: [
+            { parsedData: { type: "GhostingMessageEvent", message: 2 } },
+          ],
+        },
+      },
+      { type: BlockTypeMove },
+      message("MsgMissionStart", "Match started!"),
+    ];
+    const result = await scanDemoTimeline(new ArrayBuffer(0), null);
+    expect(result.events.map((event) => [event.type, event.timeSec])).toEqual([
+      ["match-start", 0.032],
+      ["match-start", 0.064],
+    ]);
+  });
+  it("keeps a recording which began mid-match free of inferred kickoffs", async () => {
+    scan.blocks = [
+      { type: BlockTypeMove },
+      message("MsgClientJoin", "Welcome"),
+    ];
+    expect((await scanDemoTimeline(new ArrayBuffer(0), null)).events).toEqual(
+      [],
+    );
+  });
+});
+
 describe("recorder identity", () => {
   const tagged = "\x10\x0bTAG|\x08Runner\x11";
   function packet(...args: string[]) {

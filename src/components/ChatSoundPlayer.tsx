@@ -12,7 +12,10 @@ import {
 } from "./AudioEmitter";
 import { useSettings } from "./SettingsProvider";
 import { commentaryPlayback } from "../state/streamPlaybackStore";
-import { useStreamSnapshot } from "../state/streamSnapshotStore";
+import {
+  streamSnapshotStore,
+  useStreamSnapshot,
+} from "../state/streamSnapshotStore";
 import { useRecording } from "./usePlayback";
 
 /**
@@ -43,7 +46,6 @@ export function ChatSoundPlayer() {
   const { audioLoader, audioListener } = useAudio();
   const { audioEnabled } = useSettings();
   const messages = useStreamSnapshot((snap) => snap?.chatMessages);
-  const timeSec = useStreamSnapshot((snap) => snap?.timeSec);
   // Dedupe by message id, which is deterministic across seeks (a backward
   // seek replays the demo from the start with the counter reset, assigning
   // the same ids to the same messages) — object identity is NOT: the replay
@@ -74,6 +76,9 @@ export function ChatSoundPlayer() {
   }, []);
 
   useEffect(() => {
+    // Clock subscriptions issue urgent updates in the scene's React root,
+    // interrupting Suspense retries. Only new messages need processing.
+    const timeSec = streamSnapshotStore.getState().snapshot?.timeSec;
     if (
       !audioEnabled ||
       !audioLoader ||
@@ -146,7 +151,7 @@ export function ChatSoundPlayer() {
         // File not in manifest — skip silently.
       }
     }
-  }, [audioEnabled, audioLoader, audioListener, messages, timeSec]);
+  }, [audioEnabled, audioLoader, audioListener, messages]);
 
   return null;
 }

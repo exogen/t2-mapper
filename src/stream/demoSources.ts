@@ -15,6 +15,8 @@ export interface DemoSource {
   url: string;
   /** Published sidecars are only available for demos from our own index. */
   sidecarSourceUrl: string | null;
+  /** Cached external demos can have seek checkpoints without index sidecars. */
+  checkpointSourceUrl?(response: Response): string | null;
   load(signal: AbortSignal): Promise<Response>;
   loadMetadata?(
     response: Response,
@@ -49,6 +51,10 @@ export const demoSourceLoaders: ReadonlyMap<string, DemoSourceLoader> = new Map(
         return {
           url,
           sidecarSourceUrl: null,
+          checkpointSourceUrl: (response) =>
+            response.url?.endsWith(`/sources/tribesforever/${id}.rec`)
+              ? response.url
+              : null,
           async load(signal) {
             // TribesForever's download endpoint does not allow browser CORS.
             if (!process.env.RELAY_URL) {

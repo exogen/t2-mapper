@@ -1,12 +1,11 @@
 import type { PacketData, ParsedData, SensorGroupColor } from "t2-demo-parser";
-import { normalizePlayerGuid, stripTaggedStringMarkup } from "./shared.js";
+import { stripTaggedStringMarkup } from "./shared.js";
+import { LoadInfoCollector } from "./serverMessageDecode.js";
 import {
-  LoadInfoCollector,
-  decodeTeamAdd,
-  decodeFlagEvent,
-  applyScoreHudToRoster,
-  applyDebriefRowToRoster,
-} from "./serverMessageDecode.js";
+  applyServerMessageState,
+  type ServerMessageRosterEntry as RosterEntry,
+  type ServerMessageTeamScore as TeamScoreEntry,
+} from "./serverMessageState.js";
 import type { WatchHudStatePayload, WatchTargetEntry } from "./types.js";
 
 /**
@@ -15,34 +14,10 @@ import type { WatchHudStatePayload, WatchTargetEntry } from "./types.js";
  * scores/clock, mission info, and the latest control object. Ghost
  * state lives separately in GhostStateAccumulator (t2-demo-parser).
  *
- * The roster/score/clock/mission handlers are ports of
- * StreamEngine.handleServerMessage (src/stream/StreamEngine.ts:2422) —
- * kept relay-local so relay/ keeps zero src/ imports. Field semantics
- * reference the StreamEngine source lines they mirror.
+ * Roster, team and flag updates use the same server-message reducer as
+ * browser playback. Connection identity, recording callbacks and the wall
+ * clock stay relay-local.
  */
-
-interface RosterEntry {
-  /** Display name with markup stripped, for matching/keying. */
-  name: string;
-  /** Raw name preserving color-code control bytes, for colored display
-   *  (the scoreboard). Stripped once at the display/sidecar boundary. */
-  rawName: string;
-  guid?: string;
-  targetId?: number;
-  teamId: number;
-  score: number;
-  ping: number;
-  packetLoss: number;
-  kills?: number;
-}
-
-interface TeamScoreEntry {
-  teamId: number;
-  name: string;
-  score: number;
-  flagStatus?: "home" | "field" | "held";
-  flagCarrier?: string;
-}
 
 export class WatchStateAccumulator {
   readonly netStrings = new Map<number, string>();
@@ -308,154 +283,35 @@ export class WatchStateAccumulator {
     }
   }
 
-  /** Port of StreamEngine.handleServerMessage (StreamEngine.ts:2422). */
   private handleServerMessage(
     args: string[],
     onRosterChange?: () => void,
   ): void {
     const msgType = this.resolveNetString(args[0]);
 
-    if (
-      (msgType === "MsgTeamScoreIs" || msgType === "MsgTeamScore") &&
-      args.length >= 4
-    ) {
-      const teamId = parseInt(this.resolveNetString(args[2]), 10);
-      const newScore = parseInt(this.resolveNetString(args[3]), 10);
-      if (!isNaN(teamId) && !isNaN(newScore)) {
-        const entry = this.teamScores.find((t) => t.teamId === teamId);
-        if (entry) entry.score = newScore;
-        // Team objectives only score once the match is running.
-        if (newScore > 0) this.matchStarted = true;
+    const changes = applyServerMessageState(
+      msgType,
+      args,
+      (s) => this.resolveNetString(s),
+      { playerRoster: this.playerRoster, teamScores: this.teamScores },
+      (team) => team,
+    );
+    if (changes) {
+      if (changes.matchStarted) this.matchStarted = true;
+      if (changes.joinedClientId != null) {
+        this.identifySelf(changes.joinedClientId, args);
       }
-    } else if (
-      msgType === "MsgCTFAddTeam" ||
-      msgType === "MsgCnHAddTeam" ||
-      msgType === "MsgHuntAddTeam" ||
-      msgType === "MsgSiegeAddTeam"
-    ) {
-      const d = decodeTeamAdd(msgType, args, (s) => this.resolveNetString(s));
-      if (d) {
-        // Only CTF's team score drives match-started (mirrors the browser).
-        if (msgType === "MsgCTFAddTeam" && d.score != null && d.score > 0) {
-          this.matchStarted = true;
-        }
-        if (!isNaN(d.teamId) && d.teamId > 0) {
-          const existing = this.teamScores.find((t) => t.teamId === d.teamId);
-          if (existing) {
-            existing.name = d.name;
-            if (d.score != null) existing.score = d.score;
-            if (d.flag) {
-              existing.flagStatus = d.flag.status;
-              existing.flagCarrier = d.flag.carrier;
-            }
-          } else {
-            this.teamScores.push({
-              teamId: d.teamId,
-              name: d.name,
-              score: d.score ?? 0,
-              ...(d.flag && {
-                flagStatus: d.flag.status,
-                flagCarrier: d.flag.carrier,
-              }),
-            });
-          }
-        }
+      const renamed = changes.renamedPlayer;
+      if (renamed?.targetId != null) {
+        this.targetRawNames.set(renamed.targetId, renamed.rawName);
       }
-    } else if (
-      msgType === "MsgCTFFlagTaken" ||
-      msgType === "MsgCTFFlagDropped" ||
-      msgType === "MsgCTFFlagReturned" ||
-      msgType === "MsgCTFFlagCapped"
-    ) {
-      const d = decodeFlagEvent(msgType, args, (s) => this.resolveNetString(s));
-      if (d) {
-        const entry = this.teamScores.find((t) => t.teamId === d.teamId);
-        if (entry) {
-          entry.flagStatus = d.status;
-          entry.flagCarrier = d.carrier;
-        }
-      }
-    } else if (msgType === "MsgClientJoin" && args.length >= 4) {
-      const rawName = this.resolveNetString(args[2]);
-      const name = stripTaggedStringMarkup(rawName).trim();
-      const clientId = parseInt(this.resolveNetString(args[3]), 10);
-      const joinTargetId = parseInt(this.resolveNetString(args[4] ?? ""), 10);
-      if (!isNaN(clientId)) {
-        this.identifySelf(clientId, args);
-        // Match message.cs handleClientJoin and StreamEngine: each join
-        // creates a fresh roster entry, even for an existing client ID.
-        this.playerRoster.set(clientId, {
-          name,
-          rawName,
-          guid: normalizePlayerGuid(this.resolveNetString(args[9] ?? "")),
-          targetId: isNaN(joinTargetId) ? undefined : joinTargetId,
-          teamId: 0,
-          score: 0,
-          ping: 0,
-          packetLoss: 0,
-        });
-        onRosterChange?.();
-      }
-    } else if (msgType === "MsgClientDrop" && args.length >= 4) {
-      const clientId = parseInt(this.resolveNetString(args[3]), 10);
-      if (!isNaN(clientId) && this.playerRoster.delete(clientId))
-        onRosterChange?.();
-    } else if (msgType === "MsgClientNameChanged" && args.length >= 5) {
-      // Community servers let a player change their clan tag — or the
-      // whole name — mid-match. Wire order: args[2]=old name,
-      // args[3]=new name, args[4]=clientId. The client id is the
-      // identity; the roster entry keeps its score and team.
-      const rawName = this.resolveNetString(args[3]);
-      const clientId = parseInt(this.resolveNetString(args[4]), 10);
-      const existing = isNaN(clientId)
-        ? undefined
-        : this.playerRoster.get(clientId);
-      if (existing) {
-        existing.rawName = rawName;
-        existing.name = stripTaggedStringMarkup(rawName).trim();
-        if (existing.targetId != null) {
-          this.targetRawNames.set(existing.targetId, rawName);
-        }
-        onRosterChange?.();
-      }
-    } else if (msgType === "MsgClientJoinTeam" && args.length >= 6) {
-      const clientId = parseInt(this.resolveNetString(args[4]), 10);
-      const teamId = parseInt(this.resolveNetString(args[5]), 10);
-      if (!isNaN(clientId) && !isNaN(teamId)) {
-        const existing = this.playerRoster.get(clientId);
-        if (existing) {
-          existing.teamId = teamId;
-        } else {
-          this.playerRoster.set(clientId, {
-            name: "",
-            rawName: "",
-            teamId,
-            score: 0,
-            ping: 0,
-            packetLoss: 0,
-          });
-        }
-        onRosterChange?.();
-      }
-    } else if (msgType === "MsgPlayerScore" && args.length >= 5) {
-      const clientId = parseInt(this.resolveNetString(args[2]), 10);
-      if (!isNaN(clientId)) {
-        const existing = this.playerRoster.get(clientId);
-        if (existing) {
-          const score = parseInt(this.resolveNetString(args[3]), 10);
-          const ping = parseInt(this.resolveNetString(args[4]), 10);
-          const packetLoss = parseInt(this.resolveNetString(args[5] ?? ""), 10);
-          // The live score HUD (SetLineHud) is authoritative on servers
-          // (TacoServer) whose MsgPlayerScore reports 0; don't let a 0
-          // here clobber a real score already applied from that HUD.
-          if (!isNaN(score) && (score !== 0 || existing.score === 0)) {
-            existing.score = score;
-          }
-          if (!isNaN(ping)) existing.ping = ping;
-          if (!isNaN(packetLoss)) existing.packetLoss = packetLoss;
-        }
-      }
-    } else if (msgType === "MsgVoteItem" && args.length >= 4) {
+      // Capture aliases / peak player counts per event, before a later
+      // message in the same packet can rename or drop this client.
+      if (changes.rosterMetadataChanged) onRosterChange?.();
+      return;
+    }
+
+    if (msgType === "MsgVoteItem" && args.length >= 4) {
       // Wire: args[2]=key (echo of our GetVoteMenu key), args[3]=voteName.
       if (this.resolveNetString(args[2]) === "TourneyQuery") {
         const voteName = this.resolveNetString(args[3]);
@@ -517,18 +373,6 @@ export class WatchStateAccumulator {
       // Mission-scoped (mirrors the browser): a same-map restart skips
       // beginMissionChange, so clear here too.
       this.matchStarted = false;
-    } else if (msgType === "SetLineHud" && args.length >= 7) {
-      applyScoreHudToRoster(
-        args,
-        (s) => this.resolveNetString(s),
-        this.playerRoster,
-      );
-    } else if (msgType === "MsgDebriefAddLine" && args.length >= 5) {
-      applyDebriefRowToRoster(
-        args,
-        (s) => this.resolveNetString(s),
-        this.playerRoster,
-      );
     } else if (
       msgType === "MsgClearDebrief" ||
       msgType === "MsgDebriefResult"

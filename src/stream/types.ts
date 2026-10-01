@@ -668,12 +668,17 @@ export interface StreamingPlayback {
   readonly groundEffectHistory?: import("./groundEffectHistory").GroundEffectHistory;
   /** Retained seek checkpoints, in recorded ticks. Absent on live streams. */
   readonly checkpointTicks?: readonly number[];
+  importCheckpoints?(
+    checkpoints: readonly import("./demoStreaming").DemoSeekCheckpoint[],
+  ): void;
   /** The initial pass preceded collision loading and can now be reconstructed. */
   readonly needsReplay?: boolean;
   /** False while startup collision assets are still loading before a seek.
    *  Failed assets permit playback using recorded poses. Sources without this
    *  prerequisite can omit it; headless demo scans report true. */
   readonly canStartSeek?: boolean;
+  /** A restored scene that must mount its collision assets during a pending seek. */
+  readonly seekSceneSnapshot?: StreamSnapshot | null;
   setPlayerPredictionEnabled?(enabled: boolean): void;
   reset(): void;
   getSnapshot(): StreamSnapshot;

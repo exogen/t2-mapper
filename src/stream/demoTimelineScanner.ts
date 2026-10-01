@@ -13,6 +13,7 @@ import {
 } from "./streamHelpers";
 import { KILL_MSG_TYPES, SELF_INFLICTED_MSG_TYPES } from "./serverMessages";
 import type { TimelineEvent } from "../state/demoTimelineStore";
+import { GhostMessage } from "./entityClassification";
 import { createLogger } from "../logger";
 import { isRealMatchStart } from "./matchEvents";
 import { assertDemoBlockParsed } from "./demoParseError";
@@ -24,8 +25,7 @@ const YIELD_SLICE_MS = 8;
 
 /**
  * An admin force or a passed start vote: the countdown is beginning,
- * which is only a usable stand-in for the kickoff if the recording
- * never contains one (a mod that skips `startMatch`'s broadcast).
+ * which can still be cancelled before the actual kickoff.
  */
 function isCountdownForced(rawBody: string): boolean {
   const body = stripTaggedStringMarkup(rawBody).toLowerCase();
@@ -126,8 +126,22 @@ export async function scanDemoTimeline(
   onProgress?: (progress: number) => void,
   signal?: AbortSignal,
 ): Promise<TimelineScanResult> {
+  return scanDemoTimelineParser(
+    new DemoParser(new Uint8Array(buffer)),
+    recorderName,
+    onProgress,
+    signal,
+  );
+}
+
+/** Consume a parser that can be reset for replay, sharing its decompressed data. */
+export async function scanDemoTimelineParser(
+  parser: DemoParser,
+  recorderName: string | null,
+  onProgress?: (progress: number) => void,
+  signal?: AbortSignal,
+): Promise<TimelineScanResult> {
   signal?.throwIfAborted();
-  const parser = new DemoParser(new Uint8Array(buffer));
   const { initialBlock } = await parser.load();
   signal?.throwIfAborted();
 
@@ -220,6 +234,14 @@ export async function scanDemoTimeline(
       try {
         if (!evt.parsedData) continue;
         const type = evt.parsedData.type as string | undefined;
+        if (
+          type === "GhostingMessageEvent" &&
+          evt.parsedData.message === GhostMessage.EndGhosting
+        ) {
+          seenMatchStart = false;
+          currentMissionName = null;
+          continue;
+        }
 
         if (type === "NetStringEvent") {
           const nsData = evt.parsedData as NetStringEventData;
@@ -342,8 +364,8 @@ export async function scanDemoTimeline(
           } else if (!seenMatchStart && isCountdownForced(body)) {
             forcedStarts.push({
               timeSec,
-              type: "match-start",
-              description: `Match started${suffix}`,
+              type: "match-countdown",
+              description: `Countdown started${suffix}`,
             });
           }
           continue;
@@ -709,9 +731,7 @@ export async function scanDemoTimeline(
     }
   }
 
-  // A recording with no kickoff at all falls back to the first forced
-  // countdown — better than reporting no start — but a real kickoff
-  // always wins, however many forces preceded it.
+  // An unfinished forced countdown is useful context, but never a kickoff.
   if (
     forcedStarts.length > 0 &&
     !events.some((e) => e.type === "match-start")

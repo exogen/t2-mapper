@@ -209,13 +209,77 @@ describe("DemoUploader", () => {
     expect(storedIndex).toBeNull();
   });
 
+  it("waits for checkpoints before publishing metadata/index and removes both sidecars", async () => {
+    const file = path.join(dir, "checkpoint.rec");
+    const record = makeRecord("checkpoint.rec");
+    await fsp.writeFile(file, new Uint8Array([1, 2, 3]));
+    await fsp.writeFile(`${file}.json`, JSON.stringify(record));
+    let complete!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      complete = resolve;
+    });
+    const publishCheckpoints = vi.fn(async () => {
+      await fsp.writeFile(`${file}.checkpoints.json`, "{}");
+      await gate;
+    });
+    const uploader = new DemoUploader(config, dir, { publishCheckpoints });
+    uploader.enqueue(file);
+    await vi.waitFor(() =>
+      expect(publishCheckpoints).toHaveBeenCalledWith(
+        file,
+        "demos/checkpoint.rec",
+      ),
+    );
+    expect(uploadCalls).toHaveLength(1);
+    expect(s3Commands).toEqual([]);
+    complete();
+    await vi.waitFor(async () => expect(await fsp.readdir(dir)).toEqual([]));
+    expect(JSON.parse(storedIndex!)).toEqual([record]);
+  });
+
+  it("retains the demo and generated checkpoints when checkpoint upload fails", async () => {
+    const file = path.join(dir, "retry.rec");
+    await fsp.writeFile(file, new Uint8Array([1]));
+    const publishCheckpoints = vi.fn(async (): Promise<void> => {
+      await fsp.writeFile(`${file}.checkpoints.json`, "{}");
+      throw new Error("checkpoint upload failed");
+    });
+    const uploader = new DemoUploader(config, dir, { publishCheckpoints });
+    uploader.enqueue(file);
+    await vi.waitFor(() => expect(uploader.getStats().failed).toBe(1));
+    expect(await fsp.readdir(dir)).toEqual([
+      "retry.rec",
+      "retry.rec.checkpoints.json",
+    ]);
+    expect(storedIndex).toBeNull();
+    publishCheckpoints.mockImplementationOnce(async () => {});
+    await uploader.sweep();
+    await vi.waitFor(async () => expect(await fsp.readdir(dir)).toEqual([]));
+    expect(publishCheckpoints).toHaveBeenCalledTimes(2);
+  });
+
+  it("never generates checkpoints for unreadable failed spools", async () => {
+    const file = path.join(dir, "bad.rec.partial.failed");
+    await fsp.writeFile(file, new Uint8Array([1]));
+    const publishCheckpoints = vi.fn();
+    new DemoUploader(config, dir, { publishCheckpoints }).enqueue(file);
+    await vi.waitFor(async () => expect(await fsp.readdir(dir)).toEqual([]));
+    expect(publishCheckpoints).not.toHaveBeenCalled();
+  });
+
   it("sweep removes stale orphan sidecars, keeps fresh ones", async () => {
     const staleOrphan = path.join(dir, "gone.rec.json");
     const freshOrphan = path.join(dir, "racing.rec.json");
     await fsp.writeFile(staleOrphan, "{}");
+    const checkpointOrphan = path.join(dir, "gone.rec.checkpoints.json");
+    const temporaryOrphan = `${checkpointOrphan}.tmp`;
+    await fsp.writeFile(checkpointOrphan, "{}");
+    await fsp.writeFile(temporaryOrphan, "partial");
     await fsp.writeFile(freshOrphan, "{}");
     const past = new Date(Date.now() - 10 * 60_000);
     await fsp.utimes(staleOrphan, past, past);
+    await fsp.utimes(checkpointOrphan, past, past);
+    await fsp.utimes(temporaryOrphan, past, past);
     const uploader = new DemoUploader(config, dir);
     await uploader.sweep();
     await settle();

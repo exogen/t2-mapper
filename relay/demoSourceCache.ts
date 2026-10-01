@@ -34,11 +34,16 @@ export class DemoSourceNotFound extends Error {
   }
 }
 
+export interface DemoSourceCacheOptions {
+  publishCheckpoints?: (key: string, force?: boolean) => Promise<unknown>;
+}
+
 /** Persistent source cache. Only completed objects are advertised to browsers. */
 export class DemoSourceCache {
   private readonly client: S3Client;
   private readonly config: DemoUploadConfig;
   private readonly publicBaseUrl: string;
+  private readonly options: DemoSourceCacheOptions;
   // Retain completed results briefly so a poll sees failures as well as
   // successes, instead of silently starting another import after a failure.
   private readonly requests = new Map<
@@ -46,7 +51,11 @@ export class DemoSourceCache {
     { promise: Promise<string>; expiresAt: number }
   >();
 
-  constructor(config: DemoUploadConfig, publicBaseUrl: string) {
+  constructor(
+    config: DemoUploadConfig,
+    publicBaseUrl: string,
+    options: DemoSourceCacheOptions = {},
+  ) {
     const base = new URL(publicBaseUrl);
     if (
       !/^https?:$/.test(base.protocol) ||
@@ -58,6 +67,7 @@ export class DemoSourceCache {
       throw new Error("DEMOS_BASE_URL must be a public HTTP(S) directory URL");
     }
     this.config = config;
+    this.options = options;
     this.publicBaseUrl = base.href.replace(/\/+$/, "");
     this.client = new S3Client({
       region: "auto",
@@ -111,14 +121,30 @@ export class DemoSourceCache {
     const key = `${prefix ? `${prefix}/` : ""}${demo.cachePath}`;
     const url = `${this.publicBaseUrl}/${demo.cachePath}`;
     if (await this.ready(demo, key)) {
+      await this.publishCheckpoints(key);
       log.debug({ key }, "External demo cache hit");
       return url;
     }
     await demoImportQueue.run(async () => {
       // A different relay may have filled it while we were queued.
       if (!(await this.ready(demo, key))) await this.importDemo(demo, key);
+      else await this.publishCheckpoints(key);
     });
     return url;
+  }
+
+  private async publishCheckpoints(
+    key: string,
+    force?: boolean,
+  ): Promise<void> {
+    try {
+      await this.options.publishCheckpoints?.(key, force);
+    } catch (err) {
+      log.warn(
+        { err, key },
+        "External demo checkpoints failed; ordinary playback remains available",
+      );
+    }
   }
 
   private async ready(demo: RemoteDemo, key: string): Promise<boolean> {
@@ -250,7 +276,10 @@ export class DemoSourceCache {
         // Don't publish metadata if the source ends short or exceeds its size.
         finished(body, { cleanup: true }),
       ]);
-      // Publish the sidecar last; both files are required for a ready cache hit.
+      // Replay has its own worker deadline; the source-transfer timer must not
+      // abort a completed download while a checkpoint job is queued.
+      clearTimeout(timer);
+      // Save readiness before optional replay so a restart can reuse the demo.
       await this.client.send(
         new PutObjectCommand({
           Bucket: this.config.bucket,
@@ -259,8 +288,9 @@ export class DemoSourceCache {
           ContentType: "application/json; charset=utf-8",
           CacheControl: "public, max-age=31536000, immutable",
         }),
-        { abortSignal: abort.signal },
+        { abortSignal: AbortSignal.timeout(30_000) },
       );
+      await this.publishCheckpoints(key, true);
       log.info(
         { source: demo.source, id: demo.id, key },
         "External demo cached in R2",

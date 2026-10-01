@@ -25,8 +25,9 @@ import {
 } from "./streamHelpers";
 import type { Vec3 } from "./streamHelpers";
 import type { StreamRecording, StreamSnapshot, TeamScore } from "./types";
-import { StreamEngine } from "./StreamEngine";
+import { StreamEngine, type MutableEntity } from "./StreamEngine";
 import { assertDemoBlockParsed } from "./demoParseError";
+import { collisionState } from "../collision/collisionContext";
 
 interface DemoMissionInfo {
   /** Mission display name from readplayerinfo row 2 (e.g. "S5-WoodyMyrk"). */
@@ -350,34 +351,102 @@ export interface DemoStreamingOptions {
   groundEffects?: boolean;
 }
 
-class DemoStreamAdapter extends StreamEngine {
+export type DemoSeekCheckpoint = ReturnType<
+  DemoStreamAdapter["captureCheckpoint"]
+>;
+
+export class DemoStreamAdapter extends StreamEngine {
   lastStepStartTimeSec = 0;
   private readonly checkpointsEnabled: boolean;
   private readonly checkpoints = new Map<
     number,
     ReturnType<DemoStreamAdapter["captureCheckpoint"]>
   >();
-  private lastCheckpointTick = 0;
+  private readonly importedCheckpointTicks = new Set<number>();
+  private readonly persistedCheckpoints = new Map<number, DemoSeekCheckpoint>();
   private predictionModeChanged = false;
+  private pendingCheckpointCollision: ReturnType<
+    DemoStreamAdapter["captureCollisionWorld"]
+  > | null = null;
+
+  private captureCollisionWorld() {
+    const world = collisionState();
+    return {
+      terrain: world.terrain,
+      interiors: new Map(world.interiors),
+      failedAssets: new Map(world.failedAssets),
+    };
+  }
+
+  private checkpointCollisionReady(): boolean {
+    const previous = this.pendingCheckpointCollision;
+    if (!previous) return true;
+    const world = collisionState();
+    for (const entity of this.entities.values()) {
+      if (
+        world.failedAssets.has(entity.ghostIndex) &&
+        world.failedAssets.get(entity.ghostIndex) !==
+          previous.failedAssets.get(entity.ghostIndex)
+      )
+        continue;
+      if (
+        entity.className === "TerrainBlock" &&
+        (!world.terrain || world.terrain === previous.terrain)
+      )
+        return false;
+      if (entity.className === "InteriorInstance") {
+        const id = `ghost:${entity.ghostIndex}`;
+        if (
+          !world.interiors.has(id) ||
+          world.interiors.get(id) === previous.interiors.get(id)
+        )
+          return false;
+      }
+    }
+    this.pendingCheckpointCollision = null;
+    return true;
+  }
+
+  get seekSceneSnapshot(): StreamSnapshot | null {
+    return this.pendingCheckpointCollision ? this.getSnapshot() : null;
+  }
 
   get checkpointTicks(): readonly number[] {
     return Array.from(this.checkpoints.keys());
   }
 
-  private clearCheckpoints(): void {
-    this.checkpoints.clear();
-    this.lastCheckpointTick = 0;
+  private clearCheckpoints(preserveImported = false): void {
+    if (preserveImported) {
+      for (const tick of this.checkpoints.keys()) {
+        if (!this.importedCheckpointTicks.has(tick))
+          this.checkpoints.delete(tick);
+      }
+    } else {
+      this.checkpoints.clear();
+      this.importedCheckpointTicks.clear();
+    }
+    if (preserveImported) this.activateImportedCheckpoints();
+  }
+
+  private activateImportedCheckpoints(): void {
+    if (!this.playerPredictionEnabled) return;
+    for (const [tick, checkpoint] of this.persistedCheckpoints) {
+      this.checkpoints.set(tick, checkpoint);
+      this.importedCheckpointTicks.add(tick);
+    }
   }
 
   override setPlayerPredictionEnabled(enabled: boolean): void {
     if (enabled !== this.playerPredictionEnabled) {
       this.clearCheckpoints();
+      this.pendingCheckpointCollision = null;
       this.predictionModeChanged = this.moveTicks > 0;
     }
     super.setPlayerPredictionEnabled(enabled);
+    this.activateImportedCheckpoints();
   }
 
-  private captureCheckpoint() {
+  captureCheckpoint() {
     return {
       parser: this.parser.createCheckpoint(),
       simulation: this.captureSimulationState(),
@@ -389,6 +458,69 @@ class DemoStreamAdapter extends StreamEngine {
         lastAbsPitch: this.lastAbsPitch,
       }),
     };
+  }
+
+  /** Import already validated, collision-correct checkpoints for this recording. */
+  importCheckpoints(checkpoints: readonly DemoSeekCheckpoint[]): void {
+    const owner = this.parser.createCheckpoint().owner;
+    const stateKeys = Object.keys(this.captureSimulationState().state);
+    const imported = new Map<number, DemoSeekCheckpoint>();
+    for (const checkpoint of checkpoints) {
+      const tick = checkpoint.cursor.moveTicks;
+      const keys = Object.keys(checkpoint.simulation.state);
+      if (
+        !Number.isSafeInteger(tick) ||
+        tick < 0 ||
+        ![
+          checkpoint.cursor.absoluteYaw,
+          checkpoint.cursor.absolutePitch,
+          checkpoint.cursor.lastAbsYaw,
+          checkpoint.cursor.lastAbsPitch,
+        ].every(Number.isFinite) ||
+        checkpoint.simulation.state.skippedPlayerPrediction ||
+        !Number.isSafeInteger(checkpoint.parser.blockStreamOffset) ||
+        checkpoint.parser.blockStreamOffset < 0 ||
+        checkpoint.parser.blockStreamOffset >
+          this.parser.decompressedByteLength ||
+        !Number.isSafeInteger(checkpoint.parser.blockCursor) ||
+        checkpoint.parser.blockCursor < 0 ||
+        !(checkpoint.simulation.shared instanceof Map) ||
+        !(checkpoint.simulation.players instanceof Map) ||
+        !(checkpoint.simulation.images instanceof Map) ||
+        !(checkpoint.parser.ghosts instanceof Map) ||
+        keys.length !== stateKeys.length ||
+        keys.some((key) => !stateKeys.includes(key))
+      )
+        throw new Error("Invalid seek checkpoint");
+      imported.set(tick, {
+        ...checkpoint,
+        parser: { ...checkpoint.parser, owner },
+      });
+    }
+    for (const [tick, checkpoint] of imported)
+      this.persistedCheckpoints.set(tick, checkpoint);
+    this.activateImportedCheckpoints();
+  }
+
+  /** Offline generation loads new collision geometry before simulating each tick. */
+  async captureCheckpointAt(
+    tick: number,
+    prepareWorld: (entities: Iterable<MutableEntity>) => Promise<void>,
+  ): Promise<DemoSeekCheckpoint> {
+    if (!Number.isSafeInteger(tick) || tick < this.moveTicks)
+      throw new Error("Checkpoint targets must be ascending simulation ticks");
+    await prepareWorld(this.entities.values());
+    while (this.moveTicks < tick) {
+      if (!this.readMoveTick())
+        throw new Error("Checkpoint is past the end of the demo");
+      await prepareWorld(this.entities.values());
+      this.finishMoveTick();
+    }
+    if (this.skippedPlayerPrediction)
+      throw new Error(
+        "Checkpoint generation requires complete collision assets",
+      );
+    return this.captureCheckpoint();
   }
 
   private restoreCheckpoint(
@@ -557,7 +689,8 @@ class DemoStreamAdapter extends StreamEngine {
   // ── StreamingPlayback interface ──
 
   reset(): void {
-    this.clearCheckpoints();
+    this.pendingCheckpointCollision = null;
+    this.clearCheckpoints(true);
     this.predictionModeChanged = false;
     this.collisionReplayComplete = false;
     this.resetToStart();
@@ -840,6 +973,7 @@ class DemoStreamAdapter extends StreamEngine {
   // an endless cycle of replay -> remount -> replay.
   private collisionReplayComplete = false;
   get canStartSeek(): boolean {
+    if (!this.checkpointCollisionReady()) return false;
     // A failed download must not leave transport waiting forever. Prediction
     // stays disabled until real geometry arrives; recorded poses still work.
     // After the startup repair, collider remounts cannot trigger another replay.
@@ -873,30 +1007,55 @@ class DemoStreamAdapter extends StreamEngine {
       ? Math.max(0, targetTimeSec)
       : 0;
     const targetTicks = Math.floor((safeTargetSec * 1000) / TICK_DURATION_MS);
+    if (!this.checkpointCollisionReady()) return this.getSnapshot();
 
     let didReset = false;
     if (this.needsReplay) {
       if (!this.predictionModeChanged) this.collisionReplayComplete = true;
       this.predictionModeChanged = false;
       // A pass without prediction/collision cannot seed accurate later seeks.
-      this.clearCheckpoints();
+      this.clearCheckpoints(true);
       this.resetToStart();
       didReset = true;
     }
 
     if (targetTicks < this.moveTicks || allowForwardCheckpoint) {
-      let checkpointTick = Math.min(
-        Math.floor(targetTicks / DEMO_CHECKPOINT_TICKS) * DEMO_CHECKPOINT_TICKS,
-        this.lastCheckpointTick,
-      );
-      while (checkpointTick > 0 && !this.checkpoints.has(checkpointTick)) {
-        checkpointTick -= DEMO_CHECKPOINT_TICKS;
+      let checkpointTick: number | undefined;
+      for (const tick of this.checkpoints.keys()) {
+        if (
+          tick <= targetTicks &&
+          (checkpointTick === undefined || tick > checkpointTick)
+        )
+          checkpointTick = tick;
       }
-      if (targetTicks < this.moveTicks || checkpointTick > this.moveTicks) {
-        const checkpoint = this.checkpoints.get(checkpointTick);
+      if (
+        targetTicks < this.moveTicks ||
+        (checkpointTick !== undefined && checkpointTick > this.moveTicks)
+      ) {
+        const checkpoint =
+          checkpointTick === undefined
+            ? undefined
+            : this.checkpoints.get(checkpointTick);
+        const imported =
+          checkpointTick !== undefined &&
+          this.importedCheckpointTicks.has(checkpointTick);
+        const previousCollision = imported
+          ? this.captureCollisionWorld()
+          : null;
         if (checkpoint) this.restoreCheckpoint(checkpoint);
         else this.resetToStart();
         didReset = true;
+        if (imported) {
+          this.collisionReplayComplete = false;
+          this.pendingCheckpointCollision = previousCollision;
+          if (
+            this.playerPredictionEnabled &&
+            !this.checkpointCollisionReady()
+          ) {
+            this.lastStepStartTimeSec = this.getTimeSec();
+            return this.getSnapshot();
+          }
+        }
       }
     }
 
@@ -1009,6 +1168,24 @@ class DemoStreamAdapter extends StreamEngine {
   // ── Demo block processing ──
 
   private stepOneMoveTick(): boolean {
+    if (!this.readMoveTick()) return false;
+    this.finishMoveTick();
+    return true;
+  }
+
+  private finishMoveTick(): void {
+    this.moveTicks += 1;
+    this.processTick();
+    if (
+      this.checkpointsEnabled &&
+      this.moveTicks % DEMO_CHECKPOINT_TICKS === 0 &&
+      !this.checkpoints.has(this.moveTicks)
+    ) {
+      this.checkpoints.set(this.moveTicks, this.captureCheckpoint());
+    }
+  }
+
+  private readMoveTick(): boolean {
     const packets = this.parser.getPacketParser();
     while (true) {
       const rejected = packets.protocolRejected;
@@ -1031,19 +1208,6 @@ class DemoStreamAdapter extends StreamEngine {
       this.handleBlock(block);
 
       if (block.type === BlockTypeMove) {
-        this.moveTicks += 1;
-        this.processTick();
-        if (
-          this.checkpointsEnabled &&
-          this.moveTicks % DEMO_CHECKPOINT_TICKS === 0 &&
-          !this.checkpoints.has(this.moveTicks)
-        ) {
-          this.checkpoints.set(this.moveTicks, this.captureCheckpoint());
-          this.lastCheckpointTick = Math.max(
-            this.lastCheckpointTick,
-            this.moveTicks,
-          );
-        }
         return true;
       }
     }

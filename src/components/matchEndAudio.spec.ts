@@ -109,6 +109,7 @@ vi.mock("../state/engineStore", () => ({
   effectNow: () => 0,
 }));
 vi.mock("../state/streamSnapshotStore", () => ({
+  streamSnapshotStore: { getState: () => ({ snapshot: test.snapshot }) },
   useStreamSnapshot: (selector: (snapshot: StreamSnapshot | null) => unknown) =>
     selector(test.snapshot),
 }));
@@ -319,6 +320,19 @@ it("plays the match-end announcement and voice binds while the world is frozen",
   for (const [sound] of vi.mocked(trackSound).mock.calls) {
     expect(sound.isPlaying).toBe(true);
   }
+});
+
+it("skips chat sounds that became stale before the effect could run", () => {
+  test.snapshot = {
+    timeSec: 10,
+    chatMessages: [
+      { id: 1, timeSec: 10, soundPath: "voice/announcer/ann.stowins.wav" },
+    ],
+  } as StreamSnapshot;
+  ChatSoundPlayer();
+  test.snapshot = { ...test.snapshot, timeSec: 13 };
+  flushEffects();
+  expect(trackSound).not.toHaveBeenCalled();
 });
 
 it("does not consume seek invalidation before the destination weapon state arrives", () => {

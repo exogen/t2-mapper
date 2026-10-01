@@ -49,6 +49,29 @@ afterEach(() => {
 });
 
 describe("frame publication and transport", () => {
+  it.each([60, 80])(
+    "publishes a restored checkpoint scene while a seek to %s stays pending",
+    (target) => {
+      const scene = snapshot(60);
+      let pendingScene: StreamSnapshot | null = scene;
+      Object.defineProperty(demo.streamingPlayback, "seekSceneSnapshot", {
+        get: () => pendingScene,
+      });
+      state().seekPlayback(target);
+      step.mockReturnValueOnce(scene).mockReturnValueOnce(scene);
+      frame();
+      expect(streamSnapshotStore.getState().snapshot).toBe(scene);
+      expect(clock.time).toBe(60);
+      expect(state().playback.status).toBe("seeking");
+      frame();
+      expect(state().playback.status).toBe("seeking");
+      pendingScene = null;
+      frame();
+      expect(clock.time).toBe(target);
+      expect(state().playback.status).toBe("playing");
+    },
+  );
+
   it("waits for collision assets before starting a cold timestamp seek", () => {
     let collisionReady = false;
     Object.defineProperty(demo.streamingPlayback, "canStartSeek", {

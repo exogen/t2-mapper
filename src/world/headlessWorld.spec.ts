@@ -170,6 +170,9 @@ describe("HeadlessWorld native DTS collision", () => {
         const headlessWorld = new HeadlessWorld({ assetRoot: root });
         await headlessWorld.sync([entity]);
         expect(headlessWorld.stats().failedAssets).toBe(0);
+        expect(headlessWorld.state.playerShapes.has("ghost:5")).toBe(
+          type === "TSStatic",
+        );
         const headless = await headlessWorld.run(() => getColliderDump());
         expect(headless).toHaveLength(1);
 
@@ -193,6 +196,8 @@ describe("HeadlessWorld native DTS collision", () => {
         expect(await browserWorld.run(() => getColliderDump())).toEqual(
           headless,
         );
+        await headlessWorld.sync([]);
+        expect(headlessWorld.state.playerShapes.size).toBe(0);
       } finally {
         await rm(root, { recursive: true, force: true });
       }

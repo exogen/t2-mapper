@@ -51,6 +51,21 @@ export function advancePlaybackFrame(
     const frame = clock.step(stream, playback, delta);
     if (!isCurrentPlayback(recording, nonce)) return;
     if (!frame) {
+      const scene = stream.seekSceneSnapshot;
+      if (scene) {
+        clock.time = scene.timeSec;
+        publish(
+          {
+            snapshot: scene,
+            previousSnapshot: scene,
+            seekPrevious: scene,
+            isSeeking: true,
+            playbackDelta: 0,
+          },
+          playback,
+        );
+        if (!isCurrentPlayback(recording, nonce)) return;
+      }
       if (clock.seekProgress)
         engineStore
           .getState()

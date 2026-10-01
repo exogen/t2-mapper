@@ -17,6 +17,7 @@ import {
   S3Client,
 } from "@aws-sdk/client-s3";
 import { Upload } from "@aws-sdk/lib-storage";
+import { DEMO_CHECKPOINT_SUFFIX } from "../src/stream/demoCheckpoints";
 import { demoLog as log } from "./logger.js";
 import type { DemoMetadata } from "./demoRecorder.js";
 import {
@@ -40,6 +41,8 @@ export interface DemoUploaderOptions {
   isLive?: (filePath: string) => boolean;
   /** Keep gate for salvaged crash spools (the recorder's minLengthMs). */
   salvageMinLengthMs?: number;
+  /** Prepare and upload a seek sidecar before the demo is advertised. */
+  publishCheckpoints?: (filePath: string, key: string) => Promise<unknown>;
 }
 
 export interface DemoUploadConfig {
@@ -97,6 +100,7 @@ export class DemoUploader {
     null;
   private isLive: (filePath: string) => boolean;
   private salvageMinLengthMs: number;
+  private publishCheckpoints?: DemoUploaderOptions["publishCheckpoints"];
 
   constructor(
     config: DemoUploadConfig | null,
@@ -107,6 +111,7 @@ export class DemoUploader {
     this.dir = dir;
     this.isLive = options.isLive ?? (() => false);
     this.salvageMinLengthMs = options.salvageMinLengthMs ?? 0;
+    this.publishCheckpoints = options.publishCheckpoints;
     this.client = config
       ? new S3Client({
           region: "auto",
@@ -160,6 +165,12 @@ export class DemoUploader {
           // The sidecar is only unlinked after demo + sidecar + index
           // all landed; the sweep clears any crash-window orphan.
           await fsp.unlink(`${filePath}.json`).catch(() => {});
+          await fsp
+            .unlink(`${filePath}${DEMO_CHECKPOINT_SUFFIX}`)
+            .catch(() => {});
+          await fsp
+            .unlink(`${filePath}${DEMO_CHECKPOINT_SUFFIX}.tmp`)
+            .catch(() => {});
           this.uploadedCount++;
           this.lastUploaded = { key, at: new Date().toISOString() };
           log.info({ file: basename, key }, "Demo uploaded");
@@ -190,7 +201,7 @@ export class DemoUploader {
   }
 
   /**
-   * Upload the demo, then its sidecar, then fold the record into the
+   * Upload the demo, then checkpoints and metadata, then fold the record into the
    * index — in that order, so every failure keeps the local files and
    * the whole (idempotent) chain retries on the next sweep.
    */
@@ -208,6 +219,7 @@ export class DemoUploader {
     const key = `${config.prefix}${basename}`;
     const record = await this.readSidecar(`${filePath}.json`);
     await this.uploadDemoFile(filePath, key);
+    await this.publishCheckpoints?.(filePath, key);
     if (record) {
       await this.client!.send(
         new PutObjectCommand({
@@ -346,13 +358,19 @@ export class DemoUploader {
           minLengthMs: this.salvageMinLengthMs,
         });
         if (outcome.kind !== "dropped") this.enqueue(outcome.path);
-      } else if (name.endsWith(".rec.json")) {
+      } else if (
+        name.endsWith(".rec.json") ||
+        name.endsWith(`.rec${DEMO_CHECKPOINT_SUFFIX}`) ||
+        name.endsWith(`.rec${DEMO_CHECKPOINT_SUFFIX}.tmp`)
+      ) {
         // A sidecar without its .rec is a crash-window orphan (the demo
         // uploaded and unlinked, then the process died before this
         // unlink). The mtime guard covers the finalize race where the
         // .rec appears moments after its sidecar.
         try {
-          await fsp.access(filePath.slice(0, -".json".length));
+          await fsp.access(
+            filePath.replace(/(\.checkpoints\.json(?:\.tmp)?|\.json)$/, ""),
+          );
         } catch {
           try {
             const stat = await fsp.stat(filePath);

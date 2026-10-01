@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   leave: vi.fn(),
   commentary: vi.fn(),
   warn: vi.fn(),
+  readCheckpoints: vi.fn(),
   current: null as StreamRecording | null,
 }));
 vi.mock("../logger", () => ({
@@ -41,6 +42,10 @@ vi.mock("../state/commentaryTracksStore", () => ({
 vi.mock("./demoStreaming", () => ({
   createDemoStreamingRecording: mocks.parse,
 }));
+vi.mock("./demoCheckpoints", () => ({
+  DEMO_CHECKPOINT_SUFFIX: ".checkpoints.json",
+  readDemoCheckpoints: mocks.readCheckpoints,
+}));
 vi.mock("./demoTimelineScanner", () => ({
   scanDemoTimeline: async () => ({
     events: [],
@@ -74,6 +79,7 @@ describe("demo loads during navigation", () => {
   beforeEach(() => {
     unloadDemo();
     vi.clearAllMocks();
+    mocks.readCheckpoints.mockResolvedValue([]);
     vi.stubEnv("RELAY_URL", "wss://relay.example");
     mocks.install.mockImplementation((recording) => {
       mocks.current = recording;
@@ -83,6 +89,102 @@ describe("demo loads during navigation", () => {
     unloadDemo();
     vi.unstubAllGlobals();
     vi.unstubAllEnvs();
+  });
+
+  it("imports a paired local sidecar before installing the recording", async () => {
+    const importCheckpoints = vi.fn();
+    const demo = {
+      ...recording("local"),
+      streamingPlayback: { importCheckpoints },
+    } as unknown as StreamRecording;
+    mocks.parse.mockResolvedValueOnce(demo);
+    await loadDemoFile(
+      { arrayBuffer: async () => buffer } as File,
+      { text: async () => "checkpoint sidecar" } as File,
+    );
+    expect(mocks.readCheckpoints).toHaveBeenCalledWith(
+      "checkpoint sidecar",
+      buffer,
+    );
+    expect(importCheckpoints).toHaveBeenCalledWith([]);
+    expect(importCheckpoints.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.install.mock.invocationCallOrder[0],
+    );
+    expect(mocks.install).toHaveBeenCalledWith(demo, buffer);
+  });
+
+  it("loads a URL demo while its optional seek sidecar is still downloading", async () => {
+    const sidecar = deferred<Response>();
+    const importCheckpoints = vi.fn();
+    const demo = {
+      ...recording("remote"),
+      streamingPlayback: { importCheckpoints },
+    } as unknown as StreamRecording;
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValueOnce(response())
+        .mockReturnValueOnce(sidecar.promise),
+    );
+    mocks.parse.mockResolvedValueOnce(demo);
+    await loadDemoUrl("https://demos.example/demo.rec?token=example");
+    expect(mocks.install).toHaveBeenCalledWith(demo, buffer);
+    expect(fetch).toHaveBeenLastCalledWith(
+      "https://demos.example/demo.rec.checkpoints.json?token=example",
+      { signal: expect.any(AbortSignal) },
+    );
+    expect(importCheckpoints).not.toHaveBeenCalled();
+    sidecar.resolve(new Response("checkpoint sidecar"));
+    await vi.waitFor(() => expect(importCheckpoints).toHaveBeenCalledWith([]));
+  });
+
+  it("ignores seek checkpoints decoded after a recording is replaced", async () => {
+    const decoded = deferred<[]>();
+    const importCheckpoints = vi.fn();
+    mocks.readCheckpoints.mockReturnValueOnce(decoded.promise);
+    mocks.parse
+      .mockResolvedValueOnce({
+        ...recording("first"),
+        streamingPlayback: { importCheckpoints },
+      })
+      .mockResolvedValueOnce(recording("next"));
+    const pending = loadDemoFile(
+      { arrayBuffer: async () => buffer } as File,
+      { text: async () => "sidecar" } as File,
+    );
+    await vi.waitFor(() =>
+      expect(mocks.readCheckpoints).toHaveBeenCalledOnce(),
+    );
+    await loadDemoFile({ arrayBuffer: async () => buffer } as File);
+    decoded.resolve([]);
+    await pending;
+    expect(importCheckpoints).not.toHaveBeenCalled();
+    expect(mocks.install).toHaveBeenCalledOnce();
+    expect(mocks.current?.recorderName).toBe("next");
+  });
+
+  it("falls back to ordinary playback when a paired seek sidecar is unusable", async () => {
+    const importCheckpoints = vi.fn();
+    const demo = {
+      ...recording("local"),
+      streamingPlayback: { importCheckpoints },
+    } as unknown as StreamRecording;
+    mocks.parse.mockResolvedValueOnce(demo);
+    mocks.readCheckpoints.mockRejectedValueOnce(
+      new Error("Wrong recording hash"),
+    );
+    await loadDemoFile(
+      { arrayBuffer: async () => buffer } as File,
+      { text: async () => "sidecar" } as File,
+    );
+    expect(mocks.install).toHaveBeenCalledWith(demo, buffer);
+    expect(importCheckpoints).not.toHaveBeenCalled();
+    expect(mocks.warn).toHaveBeenCalledWith(
+      expect.stringContaining("Ignoring"),
+      expect.any(Error),
+    );
+    expect(demoLoadStore.getState().phase).toBe("idle");
   });
 
   it("aborts a download on eject and ignores a late response", async () => {
@@ -284,6 +386,39 @@ describe("demo loads during navigation", () => {
     durationMs: 1259725,
   };
 
+  it("loads seek checkpoints from a cached external demo without index/commentary sidecars", async () => {
+    const importCheckpoints = vi.fn();
+    const cached = {
+      ...recording("cached"),
+      streamingPlayback: { importCheckpoints },
+    } as unknown as StreamRecording;
+    const saved = { cursor: { moveTicks: 0 } };
+    mocks.readCheckpoints.mockResolvedValueOnce([saved]);
+    mocks.parse.mockResolvedValueOnce(cached);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url) => {
+        if (String(url).endsWith(".checkpoints.json"))
+          return new Response("saved checkpoints");
+        if (String(url).endsWith(".rec.json"))
+          return new Response(JSON.stringify(metadata));
+        return { ...response(), url: cachedUrl };
+      }),
+    );
+    await loadDemoReference("tribesforever:22945");
+    await vi.waitFor(() =>
+      expect(importCheckpoints).toHaveBeenCalledWith([saved]),
+    );
+    expect(mocks.readCheckpoints).toHaveBeenCalledWith(
+      "saved checkpoints",
+      buffer,
+    );
+    expect(fetch).toHaveBeenCalledWith(`${cachedUrl}.checkpoints.json`, {
+      signal: expect.any(AbortSignal),
+    });
+    expect(mocks.commentary).toHaveBeenCalledWith(null);
+  });
+
   it("installs a demo without waiting for metadata and receives metadata later", async () => {
     const sidecar = deferred<Response>();
     vi.stubGlobal(
@@ -296,7 +431,7 @@ describe("demo loads during navigation", () => {
     mocks.parse.mockResolvedValue(recording("cached"));
     await loadDemoReference("tribesforever:22945");
     expect(mocks.install).toHaveBeenCalledOnce();
-    expect(fetch).toHaveBeenLastCalledWith(`${cachedUrl}.json`, {
+    expect(fetch).toHaveBeenCalledWith(`${cachedUrl}.json`, {
       signal: expect.any(AbortSignal),
     });
     expect(demoLoadStore.getState()).toMatchObject({
@@ -341,6 +476,7 @@ describe("demo loads during navigation", () => {
           .fn()
           .mockResolvedValueOnce({ ...response(), url: cachedUrl })
           .mockReturnValueOnce(sidecar.promise)
+          .mockResolvedValueOnce(new Response(null, { status: 404 }))
           .mockResolvedValueOnce(response()),
       );
       mocks.parse.mockResolvedValue(recording("cached"));

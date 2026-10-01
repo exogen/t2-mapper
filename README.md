@@ -61,6 +61,52 @@ Without R2 credentials, the relay streams directly from TribesForever to handle
 CORS. Deploy the updated relay as well as the client. External demos are not
 added to the published index and do not use its cast/commentary sidecars.
 
+### Precomputed demo seek checkpoints
+
+The relay automatically generates seek sidecars for finalized recordings before
+adding them to the index, and for TribesForever imports before returning the
+cached download URL. Existing external cache entries get a sidecar on their next
+request. One background replay process runs at a time, using `GAME_BASE_PATH` for
+collision assets. Set `DEMO_CHECKPOINTS_ENABLED=false` to disable automatic
+generation. A generation failure is logged and the demo remains playable;
+upload failures retain local recordings for the retry sweep. External imports
+save their cache metadata before generation, so a relay restart can reuse the
+completed download. Checkpoint failures also leave those imports playable and
+are retried on a later request. Remote sidecars are checked against the demo's
+object ETag as well as its size and checkpoint version.
+
+For existing bucket demos, preview a backfill and then run it:
+
+```sh
+npm run demos:backfill-checkpoints -- --dry-run
+npm run demos:backfill-checkpoints
+```
+
+The backfill runs serially, skips current sidecars, and supports `--filter`,
+`--force`, and `--asset-root`. It uses the relay's `DEMO_R2_*` credentials from
+`.env.development.local` and does not change the demo index or metadata.
+
+Generate a local sidecar with:
+
+```sh
+npm run demos:checkpoints -- path/to/demo.rec
+```
+
+This writes `demo.rec.checkpoints.json`, with one checkpoint 60 seconds before
+each confirmed **Match started** timeline marker, across all maps. Short lead-ins
+use the beginning of the recording; demos without a confirmed start get no
+checkpoints. Cancelled countdowns do not produce checkpoints. Generation replays
+the demo with collision assets from `docs/base`; use `--asset-root` to override
+that folder or `--output` to choose the sidecar location. Valid local sidecars
+are reused on retries; `--force` regenerates them. Outputs are written atomically.
+
+For local playback, select or drop the demo and its sidecar together. For URL
+playback, host the sidecar alongside the demo at the same URL with
+`.checkpoints.json` appended to its filename. Loading is optional: missing,
+corrupt, mismatched, or outdated sidecars fall back to ordinary playback.
+After changes that invalidate persisted decoder or simulation state, bump
+`DEMO_CHECKPOINT_VERSION` and rerun the backfill; playback ignores old versions.
+
 ### Demo heatmaps (experimental)
 
 Add `?features=stats` to the URL (or `&features=stats` alongside other query
@@ -205,11 +251,13 @@ fly deploy
 
 **4. Game assets on the volume:**
 
-Nothing to do: at every boot the relay refreshes a sparse git checkout of the
-shapes it needs (`relay/syncAssets.ts`, a few MB) at `/data/t2-mapper`, so the
-volume always matches `main`. After a push that adds shapes, `fly deploy` picks
-up both the new manifest (baked into the image) and the new files. To refresh
-without a deploy:
+At every boot the relay refreshes a sparse git checkout of DTS shapes, DIF
+interiors, and TER terrain (`relay/syncAssets.ts`) at `/data/t2-mapper`, so the
+volume matches `main`. Terrain and interiors add about 470 MiB on the first
+sync; later updates transfer changed files. After a push that adds assets,
+`fly deploy` picks up both the new manifest (baked into the image) and the new
+files. A custom `ASSETS_SPARSE_PATTERNS` must include all three file types for
+checkpoint generation. To refresh without a deploy:
 
 ```console
 fly ssh console -C "node --import=tsx/esm relay/syncAssets.ts"

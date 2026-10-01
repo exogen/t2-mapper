@@ -10,7 +10,8 @@ COPY package.json package-lock.json ./
 RUN npm ci --omit=dev
 
 COPY relay/ relay/
-COPY src/manifest.json src/manifest.json
+# Checkpoint workers replay through the same decoder and simulation as playback.
+COPY src/ src/
 
 # Nothing sets this automatically (not the base image, not fly) — dev-only
 # code branches rely on it being "production" in deploys.

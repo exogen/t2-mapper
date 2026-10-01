@@ -14,6 +14,7 @@ import type { StreamEntity } from "./types";
 import {
   createRecordingFromParser,
   DEMO_CHECKPOINT_TICKS,
+  DemoStreamAdapter,
 } from "./demoStreaming";
 import { clearWorldColliders } from "../collision/worldCollision";
 import { setTerrainCollisionData } from "../collision/terrainCollision";
@@ -113,11 +114,17 @@ function demo(
       if (block?.discarded === "noDispatch") packetParser.protocolNoDispatch++;
       return block;
     },
-    createCheckpoint: () => ({ cursor }),
+    createCheckpoint: () => ({
+      cursor,
+      owner: {},
+      blockStreamOffset: cursor,
+      blockCursor: cursor,
+      ghosts: new Map(),
+    }),
     restoreCheckpoint: (checkpoint: { cursor: number }) => {
       cursor = checkpoint.cursor;
     },
-    decompressedByteLength: 1,
+    decompressedByteLength: blocks.length + 1,
     bufferedMoveTicks: 10000,
     isComplete: true,
   } as unknown as DemoParser;
@@ -131,6 +138,62 @@ afterEach(() => {
   vi.restoreAllMocks();
   clearWorldColliders();
   setTerrainCollisionData(null);
+});
+
+it("restores imported checkpoints at arbitrary ticks and keeps them through renderer reset", async () => {
+  const blocks = Array.from({ length: 1100 }, move);
+  const source = demo(blocks) as DemoStreamAdapter;
+  const checkpoint = await source.captureCheckpointAt(937, async () => {});
+  const restored = demo(blocks, false, false) as DemoStreamAdapter;
+  restored.importCheckpoints(structuredClone([checkpoint]));
+  expect(restored.checkpointTicks).not.toContain(937);
+  restored.setPlayerPredictionEnabled(true);
+  restored.reset();
+  expect(restored.checkpointTicks).toContain(937);
+  const actual = restored.stepToTime(atTick(968)).entities[0];
+  const expected = demo(blocks).stepToTime(atTick(968)).entities[0];
+  expect(restored.lastStepStartTimeSec).toBe(937 * 0.032);
+  const { id: _actualId, ...actualState } = actual;
+  const { id: _expectedId, ...expectedState } = expected;
+  expect(actualState).toEqual(expectedState);
+});
+
+it("waits for a restored map's collision geometry before advancing from its checkpoint", async () => {
+  const blocks = [
+    packet([{ index: 1, type: "create", classId: 2, parsedData: {} }]),
+    ...Array.from({ length: 1200 }, move),
+  ];
+  const terrain = {
+    heightMap: new Uint16Array(256 * 256).fill(3200),
+    squareSize: 8,
+  };
+  const source = demo(blocks) as DemoStreamAdapter;
+  setTerrainCollisionData(terrain);
+  const checkpoint = await source.captureCheckpointAt(900, async () => {});
+  // Geometry from the previously mounted map must not satisfy the gate.
+  const restored = demo(blocks) as DemoStreamAdapter;
+  restored.importCheckpoints([checkpoint]);
+  expect(restored.stepToTime(atTick(1100)).timeSec).toBe(900 * 0.032);
+  expect(restored.canStartSeek).toBe(false);
+  expect(restored.seekSceneSnapshot?.timeSec).toBe(900 * 0.032);
+  expect(restored.stepToTime(atTick(1100)).timeSec).toBe(900 * 0.032);
+  setTerrainCollisionData(terrain);
+  expect(restored.canStartSeek).toBe(true);
+  expect(restored.stepToTime(atTick(1100)).timeSec).toBe(1100 * 0.032);
+  expect(restored.needsReplay).toBe(false);
+});
+
+it("rejects an invalid import without retaining any partial checkpoints", async () => {
+  const blocks = Array.from({ length: 1100 }, move);
+  const source = demo(blocks) as DemoStreamAdapter;
+  const first = await source.captureCheckpointAt(900, async () => {});
+  const invalid = await source.captureCheckpointAt(950, async () => {});
+  invalid.parser.blockStreamOffset = NaN;
+  const restored = demo(blocks) as DemoStreamAdapter;
+  expect(() => restored.importCheckpoints([first, invalid])).toThrow(
+    "Invalid seek checkpoint",
+  );
+  expect(restored.checkpointTicks).toEqual([]);
 });
 
 describe("demo player tick prediction", () => {

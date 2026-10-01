@@ -4,9 +4,9 @@
  * up by hand. Runs before the relay starts (see relay/Dockerfile); a
  * failure is logged and leaves the previous checkout in place.
  *
- * The checkout is shallow, blobless, and sparse: only the shape files the
- * CRC needs are ever fetched (a few MB), and an update transfers just the
- * objects that changed. Run it on demand with
+ * The checkout is shallow, blobless, and sparse: shapes for CRC checks and
+ * collision replay, plus terrain and interiors for checkpoint generation.
+ * Updates transfer only changed objects. Run it on demand with
  * `fly ssh console -C "node --import=tsx/esm relay/syncAssets.ts"`.
  */
 import { execFileSync } from "node:child_process";
@@ -19,7 +19,8 @@ const REPO_DIR = process.env.ASSETS_REPO_DIR || "/data/t2-mapper";
 const REPO_REF = process.env.ASSETS_REPO_REF || "main";
 /** Comma-separated gitignore-style patterns (non-cone sparse checkout). */
 const SPARSE_PATTERNS = (
-  process.env.ASSETS_SPARSE_PATTERNS || "docs/base/**/*.dts"
+  process.env.ASSETS_SPARSE_PATTERNS ||
+  "docs/base/**/*.dts,docs/base/**/*.dif,docs/base/**/*.ter"
 ).split(",");
 
 function git(args: string[], cwd?: string): void {

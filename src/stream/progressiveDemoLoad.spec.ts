@@ -94,7 +94,11 @@ async function installPrefix() {
   });
   vi.stubGlobal(
     "fetch",
-    vi.fn(async () => new Response(body)),
+    vi.fn(async (url) =>
+      String(url).endsWith(".checkpoints.json")
+        ? new Response(null, { status: 404 })
+        : new Response(body),
+    ),
   );
   const loading = loadDemoUrl("first.rec");
   await vi.waitFor(() =>
