@@ -8,7 +8,6 @@ import {
   PositionalAudio,
   Vector3,
 } from "three";
-import { createLogger } from "../logger";
 import { audioToUrl } from "../loaders";
 import { useIsDebugTourTarget } from "../state/cameraTourStore";
 import { DebugMarker } from "./DebugBounds";
@@ -17,15 +16,13 @@ import { useDebug, useSettings } from "./SettingsProvider";
 import { FloatingLabel } from "./FloatingLabel";
 import { engineStore } from "../state/engineStore";
 import { AudioEmitterEntity } from "../state/gameEntityTypes";
+import { getCachedAudioBuffer } from "./audioBuffers";
 import {
   getEffectiveSoundRate,
   onAdjustAudioSpeedChange,
 } from "./audioPlaybackRate";
 
-const log = createLogger("AudioEmitter");
-
-// Global audio buffer cache shared across all audio components.
-export const audioBufferCache = new Map<string, AudioBuffer>();
+export { audioBufferCache, getCachedAudioBuffer } from "./audioBuffers";
 
 // Track active sounds so their playbackRate can be updated when the playback
 // rate changes (e.g. slow-motion or fast-forward). Maps each sound to its
@@ -304,28 +301,6 @@ export function playOneShotSound(
       // Playback failure (e.g. suspended AudioContext) — skip silently.
     }
   });
-}
-
-export function getCachedAudioBuffer(
-  audioUrl: string,
-  audioLoader: AudioLoader,
-  onLoad: (buffer: AudioBuffer) => void,
-) {
-  if (audioBufferCache.has(audioUrl)) {
-    onLoad(audioBufferCache.get(audioUrl)!);
-  } else {
-    audioLoader.load(
-      audioUrl,
-      (buffer: AudioBuffer) => {
-        audioBufferCache.set(audioUrl, buffer);
-        onLoad(buffer);
-      },
-      undefined,
-      (err: any) => {
-        log.error("Audio load error %s: %o", audioUrl, err);
-      },
-    );
-  }
 }
 
 export const AudioEmitter = memo(function AudioEmitter({

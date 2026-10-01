@@ -37,6 +37,7 @@ import { resolveEmapFromImageSlot } from "./resolveEmap";
 import { useEyePosition } from "./eyePositions";
 import type {
   ImageSlot,
+  StreamEntity,
   ThreadState as StreamThreadState,
   TurretAim,
 } from "../stream/types";
@@ -138,7 +139,7 @@ interface StreamShapeEntity {
     rotation: [number, number, number, number];
     velocity?: [number, number, number];
   }>;
-  soundSlots?: Array<{ index: number; playing: boolean; profileId?: number }>;
+  soundSlots?: StreamEntity["soundSlots"];
   fadeVal?: number;
   cloakLevel?: number;
   dataBlockId?: number;

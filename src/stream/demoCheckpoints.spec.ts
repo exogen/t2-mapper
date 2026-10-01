@@ -87,7 +87,10 @@ describe("checkpoint sidecar loading", () => {
     const buffer = new ArrayBuffer(3);
     const original = await sidecar(buffer);
     await expect(
-      readDemoCheckpoints(JSON.stringify({ ...original, version: 0 }), buffer),
+      readDemoCheckpoints(
+        JSON.stringify({ ...original, version: DEMO_CHECKPOINT_VERSION - 1 }),
+        buffer,
+      ),
     ).rejects.toThrow("version");
     original.checkpoints[0].tick = 1001;
     await expect(

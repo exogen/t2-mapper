@@ -102,6 +102,7 @@ import type {
   ChatSegment,
   ChatMessage,
   ImageSlot,
+  SoundSlot,
   ThreadState,
   TurretAim,
   StreamVisual,
@@ -265,9 +266,8 @@ export interface MutableEntity {
   mountObjectGhostIndex?: number;
   /** Mount point node on the mount target (0 = pilot, 1+ = passenger/turret). */
   mountNode?: number;
-  /** ShapeBase sound slots (4 max). Raw ghost SoundMask data — components
-   *  manage PositionalAudio objects directly, matching Tribes 2's approach. */
-  soundSlots?: Array<{ index: number; playing: boolean; profileId?: number }>;
+  /** ShapeBase sound slots (4 max), including repeated play commands. */
+  soundSlots?: SoundSlot[];
   /** ShapeBase fade value (0=invisible, 1=fully visible). Matches mFadeVal. */
   fadeVal?: number;
   /** Active fade animation state. Set when CloakMask fading=true. */
@@ -2807,12 +2807,23 @@ export abstract class StreamEngine implements StreamingPlayback {
       if (skinPref) entity.skinPrefName = skinPref;
     }
 
-    // ShapeBase sound slots — store on entity for component-level playback.
+    // SoundMask updates are sparse, and an identical play is a new command.
     const sounds = data.sounds as
       | Array<{ index: number; playing: boolean; profileId?: number }>
       | undefined;
-    if (Array.isArray(sounds)) {
-      entity.soundSlots = sounds;
+    if (Array.isArray(sounds) && sounds.length) {
+      const slots = entity.soundSlots?.slice() ?? [];
+      for (const sound of sounds) {
+        const index = slots.findIndex((slot) => slot.index === sound.index);
+        const updated: SoundSlot = {
+          ...sound,
+          revision: (index < 0 ? 0 : slots[index].revision) + 1,
+          changedAtSec: this.getTimeSec(),
+        };
+        if (index < 0) slots.push(updated);
+        else slots[index] = updated;
+      }
+      entity.soundSlots = slots;
     }
 
     // WayPoint ghost fields

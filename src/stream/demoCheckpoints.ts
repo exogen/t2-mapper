@@ -4,7 +4,7 @@ import { decodeCompressedCheckpoint } from "./checkpointCodec";
 import { TICK_DURATION_MS } from "./streamHelpers";
 
 // Bump when decoder or simulation changes invalidate persisted state.
-export const DEMO_CHECKPOINT_VERSION = 1;
+export const DEMO_CHECKPOINT_VERSION = 3;
 export const DEMO_CHECKPOINT_SUFFIX = ".checkpoints.json";
 
 export interface DemoCheckpointTarget {

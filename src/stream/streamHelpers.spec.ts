@@ -6,7 +6,17 @@ import {
   orientationAlongDirection,
   parseColorSegments,
   playerYawToQuaternion,
+  streamTimeToTick,
 } from "./streamHelpers";
+
+it("keeps exact tick boundaries stable without advancing fractional timestamps early", () => {
+  for (const tick of [0, 10, 284, 1001, 1011, 62500, 112501]) {
+    const time = (tick * 32) / 1000;
+    expect(streamTimeToTick(time)).toBe(tick);
+    expect(streamTimeToTick(time + 0.01)).toBe(tick);
+    if (tick > 0) expect(streamTimeToTick(time - 1e-9)).toBe(tick - 1);
+  }
+});
 
 it("preserves the repair datablock's range and cutoff", () => {
   expect(

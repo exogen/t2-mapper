@@ -10,6 +10,7 @@ import type { ParsedData } from "t2-demo-parser";
 import {
   clamp,
   TICK_DURATION_MS,
+  streamTimeToTick,
   MAX_PITCH,
   isValidPosition,
   stripTaggedStringMarkup,
@@ -1006,7 +1007,7 @@ export class DemoStreamAdapter extends StreamEngine {
     const safeTargetSec = Number.isFinite(targetTimeSec)
       ? Math.max(0, targetTimeSec)
       : 0;
-    const targetTicks = Math.floor((safeTargetSec * 1000) / TICK_DURATION_MS);
+    const targetTicks = streamTimeToTick(safeTargetSec);
     if (!this.checkpointCollisionReady()) return this.getSnapshot();
 
     let didReset = false;

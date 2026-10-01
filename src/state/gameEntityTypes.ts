@@ -1,5 +1,6 @@
 import type {
   ImageSlot,
+  SoundSlot,
   Keyframe,
   ThreadState,
   TurretAim,
@@ -162,7 +163,7 @@ interface PositionedBase extends EntityBase {
    *  team resolved from the mission tree (map mode). */
   teamId?: number;
   /** ShapeBase sound slots (from ghost SoundMask). */
-  soundSlots?: Array<{ index: number; playing: boolean; profileId?: number }>;
+  soundSlots?: SoundSlot[];
   health?: number;
   energy?: number;
   actionAnim?: number;

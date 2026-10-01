@@ -1,5 +1,9 @@
 import type { PlaybackSliceState } from "../state/engineStore";
-import { STREAM_TICK_SEC, TICK_DURATION_MS } from "./streamHelpers";
+import {
+  STREAM_TICK_SEC,
+  TICK_DURATION_MS,
+  streamTimeToTick,
+} from "./streamHelpers";
 import type { StreamSnapshot, StreamingPlayback } from "./types";
 
 type PlaybackControls = Pick<
@@ -81,9 +85,7 @@ export class PlaybackClock {
       ? stream.stepToTime(targetTime, Infinity, SEEK_FRAME_BUDGET_MS)
       : null;
     const targetTickTime =
-      (Math.floor((Math.max(0, targetTime) * 1000) / TICK_DURATION_MS) *
-        TICK_DURATION_MS) /
-      1000;
+      (streamTimeToTick(Math.max(0, targetTime)) * TICK_DURATION_MS) / 1000;
     if (seekPrevious) {
       const sliceStart =
         stream.lastStepStartTimeSec ??

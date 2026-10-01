@@ -70,6 +70,58 @@ const command = (funcName: string, ...args: string[]) => ({
 });
 const stats = () => ({ movesRead: 0, captures: 0, restores: 0 });
 
+it("preserves sound event identity and timestamps when the clock rewinds through checkpoints", () => {
+  const activation = packet(
+    update({ sounds: [{ index: 1, playing: true, profileId: 7 }] }),
+  );
+  const blocks = [
+    ...Array.from({ length: 10 }, move),
+    activation,
+    ...Array.from({ length: DEMO_CHECKPOINT_TICKS }, move),
+    activation,
+    ...Array.from({ length: 20 }, move),
+    activation,
+    ...Array.from({ length: 20 }, move),
+  ];
+  const calls = stats();
+  const stream = demo(blocks, {}, calls);
+  const finalTime = (DEMO_CHECKPOINT_TICKS + 50) * STREAM_TICK_SEC;
+  const end = stream.stepToTime(finalTime);
+  const clock = new PlaybackClock();
+  clock.reset(finalTime, 0, end);
+  expect(end.entities[0].soundSlots?.[0].revision).toBe(3);
+  const secondTime = (DEMO_CHECKPOINT_TICKS + 10) * STREAM_TICK_SEC;
+  let seekNonce = 0;
+  for (const [target, revision, changedAtSec] of [
+    [secondTime + 0.01, 2, secondTime],
+    [0.32, 1, 0.32],
+    [0.32 - 0.001, undefined, undefined],
+    [secondTime, 2, secondTime],
+  ] as const) {
+    const controls = {
+      status: "seeking" as const,
+      seekNonce: ++seekNonce,
+      seekTime: target,
+      rate: 1,
+    };
+    let frame = clock.step(stream, controls, 0);
+    for (let tries = 0; !frame && tries < 100; tries++) {
+      frame = clock.step(stream, controls, 0);
+    }
+    expect(frame).not.toBeNull();
+    const slot = frame!.snapshot.entities[0].soundSlots?.[0];
+    expect(slot?.revision, `seek target ${target}`).toBe(revision);
+    expect(slot?.changedAtSec).toBe(changedAtSec);
+    const reference = demo(blocks, { checkpoints: false });
+    const referenceClock = new PlaybackClock();
+    const expected = referenceClock.step(reference, controls, 0)!;
+    expect(frame!.snapshot.entities[0].soundSlots).toEqual(
+      expected.snapshot.entities[0].soundSlots,
+    );
+  }
+  expect(calls.restores).toBeGreaterThan(0);
+});
+
 it("stops playback on a parse fault before applying partial packet data", () => {
   const stream = demo([
     move(),

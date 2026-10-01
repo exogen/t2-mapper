@@ -23,22 +23,38 @@ import { getEffectiveSoundRate } from "./audioPlaybackRate";
 import { audioToUrl } from "../loaders";
 import { engineStore } from "../state/engineStore";
 import { useSettings } from "./SettingsProvider";
+import { streamClock } from "../state/streamPlaybackStore";
+import type { SoundSlot, StreamEntity } from "../stream/types";
+import { streamTimeToTick } from "../stream/streamHelpers";
 
 const MAX_SOUND_SLOTS = 4;
+const MAX_ONE_SHOT_AGE_SEC = 2;
 
 /** Per-frame scratch for slot lookup, shared across all entities. */
-const _slotByIndexScratch: Array<
-  { index: number; playing: boolean; profileId?: number } | undefined
-> = new Array(MAX_SOUND_SLOTS).fill(undefined);
+const _slotByIndexScratch: Array<SoundSlot | undefined> = new Array(
+  MAX_SOUND_SLOTS,
+).fill(undefined);
 
 interface SlotState {
+  sound: PositionalAudio | null;
   profileId: number;
-  sound: PositionalAudio;
-  profile: ResolvedAudioProfile;
-  /** Sound generation at play time. A bumped global generation means the
-   *  sound was stopped externally (seek / recording change), as opposed to
-   *  a non-looping profile simply finishing. */
+  revision: number;
+  /** Remember consumption separately from the lifetime of the audio node. */
+  handled: boolean;
+  isLooping?: boolean;
   gen: number;
+}
+
+interface ProfileBuffer {
+  profile: ResolvedAudioProfile;
+  buffer: AudioBuffer | null;
+  loading: boolean;
+}
+
+function stopSlotSound(slot: SlotState | null): void {
+  if (!slot?.sound) return;
+  stopAndDetachSound(slot.sound);
+  slot.sound = null;
 }
 
 /**
@@ -47,15 +63,7 @@ interface SlotState {
  */
 export function useEntitySoundSlots(
   streamEntityRef: React.RefObject<
-    | {
-        soundSlots?: Array<{
-          index: number;
-          playing: boolean;
-          profileId?: number;
-        }>;
-      }
-    | null
-    | undefined
+    Pick<StreamEntity, "soundSlots"> | null | undefined
   >,
   parentObject: Object3D | null,
 ): void {
@@ -64,44 +72,51 @@ export function useEntitySoundSlots(
   const slotsRef = useRef<(SlotState | null)[]>(
     Array.from({ length: MAX_SOUND_SLOTS }, () => null),
   );
-  // Cache resolved profiles + buffers by profileId.
-  const profileCacheRef = useRef(
-    new Map<number, { profile: ResolvedAudioProfile; buffer: AudioBuffer }>(),
+  const profileCacheRef = useRef(new Map<number, ProfileBuffer>());
+  const streamRef = useRef(
+    engineStore.getState().playback.recording?.streamingPlayback,
   );
 
-  // Cleanup on unmount.
+  // A model or listener replacement also retires its audio nodes.
   useEffect(() => {
     return () => {
-      for (const slot of slotsRef.current) {
-        if (slot) stopAndDetachSound(slot.sound);
-      }
-      slotsRef.current = Array.from({ length: MAX_SOUND_SLOTS }, () => null);
+      for (const slot of slotsRef.current) stopSlotSound(slot);
     };
-  }, []);
+  }, [parentObject, audioListener]);
 
   // Turning audio off must silence loops that are already playing — the
-  // per-frame loop below early-returns while disabled, so it can't.
+  // frame callbacks may not run while the canvas is inactive.
   useEffect(() => {
     if (audioEnabled) return;
-    const slots = slotsRef.current;
-    for (let i = 0; i < slots.length; i++) {
-      const slot = slots[i];
-      if (slot) {
-        stopAndDetachSound(slot.sound);
-        slots[i] = null;
-      }
+    for (const slot of slotsRef.current) {
+      stopSlotSound(slot);
+      if (slot) slot.handled = true;
     }
   }, [audioEnabled]);
 
   useFrame(() => {
-    if (!audioEnabled || !audioListener || !audioLoader || !parentObject)
-      return;
-
     const entity = streamEntityRef.current;
     const soundSlots = entity?.soundSlots;
     const slots = slotsRef.current;
     const playback = engineStore.getState().playback;
+    const stream = playback.recording?.streamingPlayback;
     const isPlaying = playback.status === "playing";
+    const gen = getSoundGeneration();
+    if (stream !== streamRef.current) {
+      for (const slot of slots) stopSlotSound(slot);
+      slots.fill(null);
+      profileCacheRef.current = new Map();
+      streamRef.current = stream;
+    }
+
+    // Reconstruction isn't a sequence of audible gameplay events.
+    if (playback.status === "seeking") {
+      for (const slot of slots) {
+        stopSlotSound(slot);
+        if (slot) slot.handled = true;
+      }
+      return;
+    }
 
     // Build index for O(1) slot lookup (avoids find() per slot per frame).
     // Module-scope scratch, cleared each use — this hook runs per entity
@@ -116,87 +131,111 @@ export function useEntitySoundSlots(
       const slotData = slotByIndex[i];
       const shouldPlay = !!slotData?.playing && slotData.profileId != null;
       const profileId = slotData?.profileId ?? -1;
-      const current = slots[i];
+      let current = slots[i];
+      if (!shouldPlay) {
+        stopSlotSound(current);
+        slots[i] = null;
+        continue;
+      }
+      if (
+        !current ||
+        current.revision !== slotData!.revision ||
+        current.profileId !== profileId
+      ) {
+        stopSlotSound(current);
+        current = slots[i] = {
+          sound: null,
+          profileId,
+          revision: slotData!.revision,
+          handled: false,
+          gen,
+        };
+      }
+      if (current.gen !== gen || !audioEnabled || !isPlaying) {
+        stopSlotSound(current);
+        current.handled = true;
+        current.gen = gen;
+      }
+      if (
+        !audioEnabled ||
+        !isPlaying ||
+        !audioListener ||
+        !audioLoader ||
+        !parentObject
+      )
+        continue;
+      if (current.sound) continue;
+      if (current.handled && current.isLooping === false) continue;
 
-      if (shouldPlay && isPlaying) {
-        if (current && current.profileId === profileId) {
-          // Already playing the right sound — nothing to do.
-          if (current.sound.isPlaying) continue;
-          if (current.gen === getSoundGeneration()) {
-            // Non-looping profile finished naturally. The ghost latches
-            // `playing` until the server clears it, so don't restart —
-            // that would loop a one-shot.
-            continue;
-          }
-          // Stopped externally (seek / recording change) — clear the slot
-          // so the still-latched ghost state can restart the sound.
-          stopAndDetachSound(current.sound);
-          slots[i] = null;
+      const cache = profileCacheRef.current;
+      let cached = cache.get(profileId);
+      if (!cached) {
+        if (!stream) continue;
+        const profile = resolveAudioProfile(
+          profileId,
+          stream.getDataBlockData.bind(stream),
+        );
+        if (!profile) continue;
+        cached = { profile, buffer: null, loading: false };
+        cache.set(profileId, cached);
+      }
+      const { profile } = cached;
+      current.isLooping = profile.isLooping;
+      if (!profile.isLooping) {
+        // Latched state at a seek target (including a newly mounted model)
+        // restores loops, but isn't another one-shot trigger.
+        if (
+          !audioContextRunning(audioListener) ||
+          streamClock.time - slotData!.changedAtSec > MAX_ONE_SHOT_AGE_SEC ||
+          (playback.recording?.source === "demo" &&
+            playback.seekTime > 0 &&
+            streamTimeToTick(slotData!.changedAtSec) <=
+              streamTimeToTick(playback.seekTime))
+        )
+          current.handled = true;
+        if (current.handled) continue;
+      }
+      if (!cached.buffer) {
+        if (cached.loading) continue;
+        cached.loading = true;
+        const entry = cached;
+        try {
+          getCachedAudioBuffer(
+            audioToUrl(profile.filename),
+            audioLoader,
+            (buffer) => {
+              entry.buffer = buffer;
+              entry.loading = false;
+            },
+            () => {
+              cache.delete(profileId);
+              if (!profile.isLooping) current.handled = true;
+            },
+          );
+        } catch {
+          // File not in manifest — don't retry it every frame.
         }
+        continue;
+      }
 
-        // Stop old sound if profile changed.
-        if (current && current.profileId !== profileId) {
-          stopAndDetachSound(current.sound);
-          slots[i] = null;
-        }
-
-        // Resolve profile and buffer (may be cached).
-        const cached = profileCacheRef.current.get(profileId);
-        if (cached) {
-          // A one-shot started against a context that isn't running queues
-          // at its frozen currentTime and fires the instant the context
-          // resumes, alongside every other sound queued meanwhile (see
-          // audioContextRunning). Leaving the slot empty retries it on a
-          // later frame instead; looping slots are exempt, as they're
-          // meant to be playing continuously either way.
-          if (!cached.profile.isLooping && !audioContextRunning(audioListener))
-            continue;
-          // Have profile + buffer — start playing.
-          if (!slots[i]) {
-            const sound = createPositionalAudio(audioListener, cached.profile);
-            sound.setBuffer(cached.buffer);
-            sound.setLoop(cached.profile.isLooping);
-            sound.setPlaybackRate(getEffectiveSoundRate());
-            parentObject.add(sound);
-            try {
-              sound.play();
-              trackSound(sound, 1);
-            } catch {
-              /* AudioContext suspended */
-            }
-            slots[i] = {
-              profileId,
-              sound,
-              profile: cached.profile,
-              gen: getSoundGeneration(),
-            };
-          }
-        } else {
-          // Need to resolve — do it once, then it'll be picked up next frame.
-          const sp = engineStore.getState().playback;
-          const stream = sp.recording?.streamingPlayback;
-          if (!stream) continue;
-          const getDb = stream.getDataBlockData.bind(stream);
-          const resolved = resolveAudioProfile(profileId, getDb);
-          if (!resolved) continue;
-          try {
-            const url = audioToUrl(resolved.filename);
-            getCachedAudioBuffer(url, audioLoader, (buffer) => {
-              profileCacheRef.current.set(profileId, {
-                profile: resolved,
-                buffer,
-              });
-            });
-          } catch {
-            // File not in manifest.
-          }
-        }
-      } else {
-        // Should not be playing — stop if active.
-        if (current) {
-          stopAndDetachSound(current.sound);
-          slots[i] = null;
-        }
+      const sound = createPositionalAudio(audioListener, profile);
+      sound.setBuffer(cached.buffer);
+      sound.setLoop(profile.isLooping);
+      sound.setPlaybackRate(getEffectiveSoundRate());
+      const baseOnEnded = sound.onEnded.bind(sound);
+      sound.onEnded = () => {
+        baseOnEnded();
+        stopAndDetachSound(sound);
+        if (current.sound === sound) current.sound = null;
+      };
+      parentObject.add(sound);
+      current.sound = sound;
+      current.handled = true;
+      try {
+        sound.play();
+        trackSound(sound, 1);
+      } catch {
+        stopSlotSound(current);
       }
     }
   });

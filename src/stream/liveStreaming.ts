@@ -18,7 +18,7 @@ import {
   collectPreloadShapeNames,
   collectEffectShapeNames,
   STREAM_TICK_SEC,
-  TICK_DURATION_MS,
+  streamTimeToTick,
 } from "./streamHelpers";
 import type { PlayerMove } from "./playerPrediction";
 import type { Vec3 } from "./streamHelpers";
@@ -204,7 +204,7 @@ export class LiveStreamAdapter extends StreamEngine {
     maxMoveTicks = Number.POSITIVE_INFINITY,
   ): StreamSnapshot {
     const targetTick = Number.isFinite(targetTimeSec)
-      ? Math.floor((Math.max(0, targetTimeSec) * 1000) / TICK_DURATION_MS)
+      ? streamTimeToTick(Math.max(0, targetTimeSec))
       : this.tickCount;
     for (
       let ticks = 0;

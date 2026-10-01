@@ -15,6 +15,12 @@ export const TICK_DURATION_MS = 32;
 /** The engine's 32 ms simulation tick, in seconds. */
 export const STREAM_TICK_SEC = TICK_DURATION_MS / 1000;
 
+/** Floor a timestamp to its tick without rounding an exact boundary down. */
+export function streamTimeToTick(timeSec: number): number {
+  const ticks = (timeSec * 1000) / TICK_DURATION_MS;
+  return Math.floor(ticks + Math.max(1, Math.abs(ticks)) * Number.EPSILON * 2);
+}
+
 // ── Math helpers ──
 
 const _rotMat = new Matrix4();

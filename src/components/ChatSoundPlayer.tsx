@@ -11,12 +11,14 @@ import {
   stopAndDetachSound,
 } from "./AudioEmitter";
 import { useSettings } from "./SettingsProvider";
-import { commentaryPlayback } from "../state/streamPlaybackStore";
+import { commentaryPlayback, streamClock } from "../state/streamPlaybackStore";
+import { engineStore } from "../state/engineStore";
 import {
   streamSnapshotStore,
   useStreamSnapshot,
 } from "../state/streamSnapshotStore";
 import { useRecording } from "./usePlayback";
+import { streamTimeToTick } from "../stream/streamHelpers";
 
 /**
  * The in-game announcer's spoken lines, skipped while the commentary
@@ -46,16 +48,14 @@ export function ChatSoundPlayer() {
   const { audioLoader, audioListener } = useAudio();
   const { audioEnabled } = useSettings();
   const messages = useStreamSnapshot((snap) => snap?.chatMessages);
-  // Dedupe by message id, which is deterministic across seeks (a backward
-  // seek replays the demo from the start with the counter reset, assigning
-  // the same ids to the same messages) — object identity is NOT: the replay
-  // rebuilds message objects, so a WeakSet would re-fire every voice bind
-  // near the seek target. Ids restart per recording, so reset on change.
+  // IDs are deterministic across reconstruction; dedupe within each traversal
+  // so rewinding allows the same voice bind to play when reached again.
   const playedIdsRef = useRef(new Set<number>());
   const recording = useRecording();
-  useEffect(() => {
-    playedIdsRef.current.clear();
-  }, [recording]);
+  const traversalRef = useRef({
+    recording,
+    seekNonce: engineStore.getState().playback.seekNonce,
+  });
   // Track active voice chat sound per sender so a new voice bind from the
   // same player stops their previous one (matching Tribes 2 behavior).
   const activeBySenderRef = useRef(new Map<string, Audio<GainNode>>());
@@ -78,6 +78,20 @@ export function ChatSoundPlayer() {
   useEffect(() => {
     // Clock subscriptions issue urgent updates in the scene's React root,
     // interrupting Suspense retries. Only new messages need processing.
+    const playback = engineStore.getState().playback;
+    if (playback.recording !== recording) return;
+    const played = playedIdsRef.current;
+    const activeBySender = activeBySenderRef.current;
+    if (
+      traversalRef.current.recording !== recording ||
+      traversalRef.current.seekNonce !== playback.seekNonce
+    ) {
+      for (const sound of liveSoundsRef.current) stopAndDetachSound(sound);
+      liveSoundsRef.current.clear();
+      activeBySender.clear();
+      played.clear();
+      traversalRef.current = { recording, seekNonce: playback.seekNonce };
+    }
     const timeSec = streamSnapshotStore.getState().snapshot?.timeSec;
     if (
       !audioEnabled ||
@@ -88,13 +102,18 @@ export function ChatSoundPlayer() {
     ) {
       return;
     }
-    const played = playedIdsRef.current;
-    const activeBySender = activeBySenderRef.current;
     for (const msg of messages) {
       if (played.has(msg.id)) continue;
       played.add(msg.id);
       if (!msg.soundPath) continue;
-      // Skip sounds that are too old (e.g. after seeking).
+      if (playback.status !== "playing") continue;
+      // A seek restores chat history without replaying nearby old lines.
+      if (
+        recording?.source === "demo" &&
+        playback.seekTime > 0 &&
+        streamTimeToTick(msg.timeSec) <= streamTimeToTick(playback.seekTime)
+      )
+        continue;
       if (Math.abs(timeSec - msg.timeSec) > 2) continue;
       const onAir = commentaryPlayback.active;
       if (onAir && isAnnouncerSound(msg.soundPath)) continue;
@@ -103,8 +122,17 @@ export function ChatSoundPlayer() {
         const pitch = msg.soundPitch ?? 1;
         const sender = msg.sender;
         const gen = getSoundGeneration();
+        const seekNonce = playback.seekNonce;
         getCachedAudioBuffer(url, audioLoader, (buffer) => {
-          if (gen !== getSoundGeneration()) return;
+          const currentPlayback = engineStore.getState().playback;
+          if (
+            gen !== getSoundGeneration() ||
+            currentPlayback.recording !== recording ||
+            currentPlayback.seekNonce !== seekNonce ||
+            currentPlayback.status !== "playing" ||
+            Math.abs(streamClock.time - msg.timeSec) > 2
+          )
+            return;
           // A suspended context queues the beep instead of playing it —
           // it would join the pile-up on the first user gesture. Skip.
           if (!audioContextRunning(audioListener)) return;
@@ -151,7 +179,7 @@ export function ChatSoundPlayer() {
         // File not in manifest — skip silently.
       }
     }
-  }, [audioEnabled, audioLoader, audioListener, messages]);
+  }, [audioEnabled, audioLoader, audioListener, messages, recording]);
 
   return null;
 }

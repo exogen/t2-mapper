@@ -299,6 +299,16 @@ export type StreamVisual =
  */
 export type LightAnchor = "boxCenter" | "origin";
 
+/** Latched slot state plus the identity and time of its latest wire command. */
+export interface SoundSlot {
+  index: number;
+  playing: boolean;
+  profileId?: number;
+  /** Increments on every update, including repeated plays of the same profile. */
+  revision: number;
+  changedAtSec: number;
+}
+
 export interface StreamEntity {
   id: string;
   type: string;
@@ -420,7 +430,7 @@ export interface StreamEntity {
   /** Arm blend animation action index from Player ghost (networked). */
   armAction?: number;
   /** ShapeBase sound slots (from ghost SoundMask). */
-  soundSlots?: Array<{ index: number; playing: boolean; profileId?: number }>;
+  soundSlots?: SoundSlot[];
   /** WayPoint display label. */
   label?: string;
   // AudioEmitter ghost fields
