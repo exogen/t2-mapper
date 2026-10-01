@@ -5,22 +5,20 @@ import {
 } from "../state/streamSnapshotStore";
 
 /** How long (in stream time) the match must have been seen running before
- *  its end counts as witnessed — out-waits the debrief burst some servers
- *  send to every joiner, and joining into a match's final seconds. */
+ *  its end counts as witnessed, excluding joins in its final seconds. */
 const MIN_WATCHED_SEC = 5;
 
 /**
  * Drive the score screen from the match-over interval, like the real
- * game's end-of-match debrief: open when the gameOver debrief arrives,
+ * game's end-of-match debrief: open when MissionEnd arrives,
  * close when the next mission's MsgClientReady drops the player in.
  *
  * Auto-open requires WITNESSING the match end: the match must have been
  * seen running (matchStarted — MsgMissionStart, a running clock, or a
  * team on the board; the same signal the relay uses) for at least
- * MIN_WATCHED_SEC of stream time before the debrief. Joining or
- * hydrating mid-debrief does not pop the screen, and neither does the
- * debrief burst some servers send to every joiner — indistinguishable
- * from a real end by message content alone. Measured in stream time so
+ * MIN_WATCHED_SEC of stream time before the end. Joining or
+ * hydrating mid-debrief does not pop the screen. Welcome screens don't
+ * carry MissionEnd and cannot freeze the world. Measured in stream time so
  * demo pause/seek/rate behave like the match they replay. Edge-
  * triggered, so manual open/close in between still wins.
  */

@@ -655,7 +655,7 @@ export interface StreamSnapshot {
    *  Negative = counting down (remaining time), positive = counting up (elapsed).
    *  Null if no clock has been set. Pauses/seeks with playback. */
   matchClockMs: number | null;
-  /** Match-over interval: MissionEnd or the debrief has arrived and the next
+  /** Match-over interval: MissionEnd has arrived and the next
    *  mission's MsgClientReady hasn't. Drives the auto score screen. */
   matchEnded: boolean;
   /** Freeze world animation at this stream time while transport keeps running. */

@@ -294,6 +294,39 @@ it("seeks into and out of the debrief without restarting world animation", () =>
   expect(resumed.matchEndedAtSec).toBeNull();
 });
 
+it("keeps welcome debrief messages out of the frozen state during playback and checkpoint seeks", () => {
+  const stream = demo([
+    command("ServerMessage", "MsgClientReady", "", "CTFGame"),
+    command("ServerMessage", "MsgSystemClock", "", "30", "1180000"),
+    ...Array.from({ length: 10 }, move),
+    command("ServerMessage", "MsgGameOver"),
+    command("ServerMessage", "MsgClearDebrief"),
+    command("ServerMessage", "MsgDebriefResult", "", "CLASSIC"),
+    packet(update({ position: { x: 10, y: 20, z: 30 } })),
+    ...Array.from({ length: DEMO_CHECKPOINT_TICKS }, move),
+    packet(update({ position: { x: 40, y: 50, z: 60 } })),
+    ...Array.from({ length: 10 }, move),
+    command("MissionEnd", "1"),
+    packet(update({ position: { x: 70, y: 80, z: 90 } })),
+    ...Array.from({ length: 10 }, move),
+  ]);
+  const target = (DEMO_CHECKPOINT_TICKS + 15) * STREAM_TICK_SEC;
+  const running = stream.stepToTime(target);
+  expect(running.matchEnded).toBe(false);
+  expect(running.entities[0].position).toEqual([40, 50, 60]);
+  expect(stream.checkpointTicks).toEqual([DEMO_CHECKPOINT_TICKS]);
+  const ended = stream.stepToTime(target + 1);
+  expect(ended.matchEnded).toBe(true);
+  expect(ended.entities[0].position).toEqual([40, 50, 60]);
+  stream.stepToTime(0);
+  const sought = stream.stepToTime(target);
+  expect(sought.matchEnded).toBe(false);
+  expect(sought.matchEndedAtSec).toBeNull();
+  expect(sought.entities.map(withoutId)).toEqual(
+    running.entities.map(withoutId),
+  );
+});
+
 describe("seek reconstruction", () => {
   it("keeps signed steering through ghost updates, rendering and seeks", () => {
     const stream = demo([

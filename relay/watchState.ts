@@ -373,13 +373,6 @@ export class WatchStateAccumulator {
       // Mission-scoped (mirrors the browser): a same-map restart skips
       // beginMissionChange, so clear here too.
       this.matchStarted = false;
-    } else if (
-      msgType === "MsgClearDebrief" ||
-      msgType === "MsgDebriefResult"
-    ) {
-      // gameOver debrief burst — the match-over interval (until the next
-      // MsgClientReady), so late joiners auto-open the score screen too.
-      this.endMatch();
     }
   }
 

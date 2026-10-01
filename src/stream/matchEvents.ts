@@ -1,4 +1,14 @@
 import { stripTaggedStringMarkup } from "../../relay/shared";
+import { extractWavTag } from "./streamHelpers";
+
+/** An empty MsgGameOver can open Classic's welcome GUI during play. */
+export function hasGameOverAnnouncement(rawBody: string | undefined): boolean {
+  return (
+    extractWavTag(stripTaggedStringMarkup(rawBody ?? ""))
+      .text.replace(/<[^>]*>/g, "")
+      .trim().length > 0
+  );
+}
 
 /**
  * `MsgMissionStart` is overloaded: the server broadcasts it for every

@@ -112,7 +112,7 @@ describe("matches within a demo", () => {
     fixture(
       [
         message(0, 0, "Match started!"),
-        message(1, 1, "", "MsgGameOver"),
+        message(1, 1, "Match has ended.", "MsgGameOver"),
         load(2, 2, "NextMap"),
         message(3, 3, "", "MsgClientReady"),
       ],
@@ -139,7 +139,7 @@ describe("matches within a demo", () => {
     fixture(
       [
         message(0, 0, "Match started!"),
-        message(1, 1, "", "MsgGameOver"),
+        message(1, 1, "Match has ended.", "MsgGameOver"),
         load(2, 2),
         load(3, 2.5),
       ],
@@ -156,6 +156,97 @@ describe("matches within a demo", () => {
     expect(matches[1]).toMatchObject({ fromSec: 2, sceneFromSec: null });
     expect(matches[1].positionSamples.count).toBe(0);
   });
+
+  it("keeps sampling when Classic resends the current map's load info after ClientReady", async () => {
+    fixture(
+      [
+        load(0, 0),
+        message(1, 0.1, "", "MsgClientReady"),
+        message(2, 1, "", "MsgGameOver"),
+        message(3, 1, "", "MsgClearDebrief"),
+        load(4, 1.1),
+      ],
+      (time) => [player({ position: [time, time, 0] })],
+      3,
+      () => ({ matchClockMs: -100_000 }),
+    );
+    const { matches } = await scanDemoStats(new ArrayBuffer(0));
+    expect(matches).toHaveLength(1);
+    expect(matches[0]).toMatchObject({
+      fromSec: 0,
+      sceneFromSec: 0.1,
+      missionName: "SameMap",
+      matchStartSec: null,
+      matchEndSec: 3,
+      matchComplete: false,
+    });
+    expect(matches[0].positionSamples.t.at(-1)).toBe(3);
+    expect(matches[0].positionSamples.x.at(-1)).toBe(3);
+  });
+
+  it("still separates a same-map restart confirmed by ClientReady without an end announcement", async () => {
+    const loadSameMap = (id: number, timeSec: number) => ({
+      ...load(id, timeSec),
+      args: ["MsgLoadInfo", "", "SameMap", "Same Map", "Capture the Flag"],
+    });
+    fixture([
+      loadSameMap(0, 0),
+      message(1, 0.1, "", "MsgClientReady"),
+      message(2, 0.5, "Match started!"),
+      loadSameMap(3, 1),
+      message(4, 1.2, "", "MsgClientReady"),
+      message(5, 2, "Match started!"),
+      loadSameMap(6, 2.5),
+    ]);
+    const { matches } = await scanDemoStats(new ArrayBuffer(0));
+    expect(matches).toHaveLength(2);
+    expect(matches[0].matchStartSec).toBe(0.5);
+    expect(matches[0].matchComplete).toBe(false);
+    expect(matches[1].matchStartSec).toBe(2);
+    expect(matches[1].missionName).toBe("Same Map");
+    expect([...matches[1].positionSamples.t]).toEqual([
+      expect.closeTo(0.048),
+      expect.closeTo(0.304),
+      expect.closeTo(0.56),
+      expect.closeTo(0.816),
+      1,
+    ]);
+  });
+
+  it.each([
+    { loadAt: 1.05, endedAt: 1.1, expectedMatches: 1 },
+    { loadAt: 1.2, endedAt: 1.1, expectedMatches: 2 },
+  ])(
+    "orders load info and MissionEnd within one heatmap interval ($loadAt)",
+    async ({ loadAt, endedAt, expectedMatches }) => {
+      fixture(
+        [
+          load(0, 0),
+          message(1, 0.01, "", "MsgClientReady"),
+          message(2, 0.1, "Match started!"),
+          load(3, loadAt),
+        ],
+        undefined,
+        3,
+        (time) => ({
+          matchEnded: time >= endedAt,
+          matchEndedAtSec: time >= endedAt ? endedAt : null,
+        }),
+      );
+      const { matches } = await scanDemoStats(new ArrayBuffer(0));
+      expect(matches).toHaveLength(expectedMatches);
+      expect(matches[0]).toMatchObject({
+        matchStartSec: 0.1,
+        matchEndSec: endedAt,
+        matchComplete: true,
+      });
+      expect(matches[0].positionSamples.count).toBeGreaterThan(0);
+      if (expectedMatches === 2) {
+        expect(matches[1].sceneFromSec).toBeNull();
+        expect(matches[1].positionSamples.count).toBe(0);
+      }
+    },
+  );
 
   it("retains a partial game when the demo transitions away without its end event", async () => {
     fixture(
@@ -208,12 +299,12 @@ describe("matches within a demo", () => {
         load(0, 0),
         message(1, 0.1, "", "MsgClientReady"),
         message(2, 1, "Match started!"),
-        message(3, 2, "", "MsgGameOver"),
+        message(3, 2, "Match has ended.", "MsgGameOver"),
         load(4, 3),
         message(5, 3.5, "", "MsgClientReady"),
         message(6, 5, "Match starts in 1 second."),
         message(7, 6, "Match started!"),
-        message(8, 7, "", "MsgGameOver"),
+        message(8, 7, "Match has ended.", "MsgGameOver"),
       ],
       (time) => [player({ position: time >= 6 ? [100, 200, 0] : [10, 20, 0] })],
       8,
@@ -271,7 +362,7 @@ describe("matches within a demo", () => {
     fixture(
       [
         message(0, 0, "Match started!"),
-        message(1, 1, "", "MsgGameOver"),
+        message(1, 1, "Match has ended.", "MsgGameOver"),
         message(2, 2, "Match starts in 1 second."),
         message(3, 3, "Match started!"),
       ],
@@ -323,11 +414,11 @@ describe("matches within a demo", () => {
   it("keeps a partial first game separate from a complete later game", async () => {
     fixture(
       [
-        message(0, 1, "", "MsgGameOver"),
+        message(0, 1, "Match has ended.", "MsgGameOver"),
         load(1, 2, "OtherMap"),
         message(2, 2.1, "", "MsgClientReady"),
         message(3, 3, "Match started!"),
-        message(4, 4, "", "MsgGameOver"),
+        message(4, 4, "Match has ended.", "MsgGameOver"),
       ],
       undefined,
       5,
@@ -378,7 +469,7 @@ describe("matches within a demo", () => {
     fixture(
       [
         message(0, 0, "Match started!"),
-        message(1, 1, "", "MsgGameOver"),
+        message(1, 1, "Match has ended.", "MsgGameOver"),
         load(2, 2),
       ],
       undefined,
@@ -393,7 +484,7 @@ describe("matches within a demo", () => {
   it("discards warmup ended by an admin map change without a countdown", async () => {
     fixture(
       [
-        message(0, 1, "", "MsgGameOver"),
+        message(0, 1, "Match has ended.", "MsgGameOver"),
         load(1, 1, "NextMap"),
         message(2, 1.1, "", "MsgClientReady"),
         message(3, 2, "Match started!"),
@@ -637,7 +728,7 @@ describe("demo heatmap scan", () => {
     expect([...result.positionSamples.playerId]).toEqual([0, 0]);
   });
 
-  it("honors MissionEnd and debrief state without a MsgGameOver", async () => {
+  it("honors MissionEnd state without a MsgGameOver", async () => {
     fixture([message(0, 0, "Match started!")], undefined, 3, (time) => ({
       matchEnded: time >= 1,
       matchEndedAtSec: time >= 1 ? 1 : null,
@@ -646,6 +737,25 @@ describe("demo heatmap scan", () => {
     expect(result.matchEndSec).toBe(1);
     expect(result.matchComplete).toBe(true);
     expect(result.positionSamples.count).toBe(4);
+  });
+
+  it("does not end stats sampling at Classic's welcome debrief", async () => {
+    fixture([
+      message(0, 0, "Match started!"),
+      message(1, 1, "", "MsgGameOver"),
+      message(2, 1, "", "MsgClearDebrief"),
+      {
+        ...message(3, 1, "", "MsgDebriefResult"),
+        args: ["MsgDebriefResult", "", "<font:Sui Generis:22>CLASSIC"],
+      },
+      message(4, 1.1, "\x02<font:Arial:16>  ", "MsgGameOver"),
+      message(5, 1.2, "~wvoice/announcer/ann.gameover.wav", "MsgGameOver"),
+    ]);
+    const result = (await scanDemoStats(new ArrayBuffer(0))).matches[0];
+    expect(result.matchEndSec).toBe(3);
+    expect(result.matchComplete).toBe(false);
+    expect(result.positionSamples.count).toBeGreaterThan(8);
+    expect(result.positionSamples.t.at(-1)).toBeGreaterThan(2);
   });
 
   it("stops at early EOF instead of repeating the last known position", async () => {

@@ -15,7 +15,7 @@ import { KILL_MSG_TYPES, SELF_INFLICTED_MSG_TYPES } from "./serverMessages";
 import type { TimelineEvent } from "../state/demoTimelineStore";
 import { GhostMessage } from "./entityClassification";
 import { createLogger } from "../logger";
-import { isRealMatchStart } from "./matchEvents";
+import { hasGameOverAnnouncement, isRealMatchStart } from "./matchEvents";
 import { assertDemoBlockParsed } from "./demoParseError";
 
 const log = createLogger("demoTimelineScanner");
@@ -372,7 +372,10 @@ export async function scanDemoTimelineParser(
         }
 
         // Match ended.
-        if (msgTypeLower === "msggameover") {
+        if (
+          msgTypeLower === "msggameover" &&
+          hasGameOverAnnouncement(resolveNetString(args[1], netStrings))
+        ) {
           const suffix = currentMissionName ? ` (${currentMissionName})` : "";
           events.push({
             timeSec,

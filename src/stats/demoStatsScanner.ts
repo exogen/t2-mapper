@@ -1,5 +1,8 @@
 import { createDemoStreamingRecording } from "../stream/demoStreaming";
-import { isRealMatchStart } from "../stream/matchEvents";
+import {
+  hasGameOverAnnouncement,
+  isRealMatchStart,
+} from "../stream/matchEvents";
 import type { PlayerRosterEntry, StreamEntity } from "../stream/types";
 import { taglessPlayerName, STREAM_TICK_SEC } from "../stream/streamHelpers";
 import type { MatchStats, StatsData, StatsPlayer } from "./types";
@@ -31,7 +34,7 @@ export async function scanDemoStats(
   let current = createMatch(0, recording.missionName);
   const nextMatch = (fromSec: number, missionName = current.missionName) => {
     matches.push(finishMatch(current, matches.length, fromSec));
-    current = createMatch(fromSec, missionName);
+    current = createMatch(fromSec, missionName, current.missionFile);
   };
   const endMatch = (timeSec: number) => {
     if (
@@ -51,21 +54,33 @@ export async function scanDemoStats(
     const timeSec = Math.min(step * HEATMAP_SAMPLE_INTERVAL_SEC, duration);
     const snapshot = playback.stepToTime(timeSec);
     lastTimeSec = snapshot.timeSec;
+    const snapshotEndSec = snapshot.matchEnded
+      ? (snapshot.matchEndedAtSec ?? snapshot.timeSec)
+      : null;
     for (const event of snapshot.serverEvents) {
       if (event.id <= lastEventId) continue;
       lastEventId = event.id;
+      // MissionEnd is absent from serverEvents. Apply it before any later
+      // load info so the completed game's end isn't assigned to the next one.
+      if (snapshotEndSec != null && snapshotEndSec <= event.timeSec)
+        endMatch(snapshotEndSec);
       const type = event.msgType.toLowerCase();
       if (type === "msgloadinfo") {
-        // Every load is a new game, even on the same mission. Initial
-        // connect/loading messages still belong to the interval from 0.
-        if (
-          current.ready ||
-          current.hasScene ||
-          current.matchStartSec != null
-        ) {
-          nextMatch(event.timeSec, null);
+        const missionFile = event.args[2]?.trim() || null;
+        const hasGame =
+          current.ready || current.hasScene || current.matchStartSec != null;
+        // Classic resends the loading text during its welcome screen.
+        // Same-map restarts need an end signal or a following ClientReady.
+        const refresh =
+          hasGame &&
+          current.matchEndSec == null &&
+          missionFile != null &&
+          missionFile.toLowerCase() === current.missionFile?.toLowerCase();
+        if (!refresh) {
+          if (hasGame) nextMatch(event.timeSec, null);
+          current.sceneFromSec = null;
         }
-        current.sceneFromSec = null;
+        current.missionFile = missionFile;
         current.missionName =
           event.args[3]?.trim() || event.args[2]?.trim() || current.missionName;
       } else if (type === "msgmissiondropinfo") {
@@ -99,10 +114,11 @@ export async function scanDemoStats(
         }
         if (!kickoff) current.sawCountdown = true;
       } else if (
-        type === "msggameover" ||
-        type === "msgcleardebrief" ||
-        type === "msgdebriefresult"
+        type === "msggameover" &&
+        hasGameOverAnnouncement(event.args[1])
       ) {
+        // An empty GameOver opens Classic's welcome UI; debrief messages
+        // also carry its credits. Only an announcement can end the stats.
         // GameOver also follows an admin map change during warmup, so it
         // cannot establish that a kickoff happened before recording began.
         endMatch(event.timeSec);
@@ -224,11 +240,16 @@ export async function scanDemoStats(
   return { sampleIntervalSec: HEATMAP_SAMPLE_INTERVAL_SEC, matches };
 }
 
-function createMatch(fromSec: number, missionName: string | null) {
+function createMatch(
+  fromSec: number,
+  missionName: string | null,
+  missionFile = missionName,
+) {
   return {
     fromSec,
     sceneFromSec: fromSec as number | null,
     missionName,
+    missionFile,
     matchStartSec: null as number | null,
     matchEndSec: null as number | null,
     ready: false,

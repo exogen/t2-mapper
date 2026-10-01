@@ -16,7 +16,10 @@
  */
 import type { ServerMessageEvent } from "../stream/types";
 import { stripTaggedStringMarkup } from "../stream/streamHelpers";
-import { isRealMatchStart } from "../stream/matchEvents";
+import {
+  hasGameOverAnnouncement,
+  isRealMatchStart,
+} from "../stream/matchEvents";
 import type { DirectorEvent } from "./types";
 import {
   KILL_MSG_TYPES,
@@ -169,7 +172,7 @@ export function scanDirectorEvent(event: ServerMessageEvent): DirectorEvent[] {
     }
     return [];
   }
-  if (msgType === "msggameover") {
+  if (msgType === "msggameover" && hasGameOverAnnouncement(args[1])) {
     return [{ timeSec, type: "match-end", description: "Match ended" }];
   }
   return [];

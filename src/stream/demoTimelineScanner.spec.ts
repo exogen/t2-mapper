@@ -90,6 +90,28 @@ describe("confirmed kickoffs", () => {
       ],
     },
   });
+
+  it("skips welcome debrief messages and retains the real game-over announcement", async () => {
+    scan.blocks = [
+      message("MsgMissionStart", "Match started!"),
+      { type: BlockTypeMove },
+      message("MsgGameOver"),
+      message("MsgGameOver", ""),
+      message("MsgGameOver", "\x02<font:Arial:16>  "),
+      message("MsgGameOver", "~wvoice/announcer/ann.gameover.wav"),
+      message("MsgClearDebrief"),
+      message("MsgDebriefResult", "", "CLASSIC"),
+      { type: BlockTypeMove },
+      message("MsgGameOver", "Match has ended."),
+    ];
+    const result = await scanDemoTimeline(new ArrayBuffer(0), null);
+    expect(
+      result.events.map(({ type, timeSec }) => ({ type, timeSec })),
+    ).toEqual([
+      { type: "match-start", timeSec: 0 },
+      { type: "match-end", timeSec: 0.064 },
+    ]);
+  });
   it("does not turn an abandoned countdown into a match start", async () => {
     scan.blocks = [
       message("MsgMissionStart", "The admin has forced the match to start."),

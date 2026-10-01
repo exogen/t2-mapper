@@ -600,13 +600,14 @@ export abstract class StreamEngine implements StreamingPlayback {
   missionTypeDisplayName: string | null = null;
   /** Game class name (e.g. "CTFGame"), from MsgClientReady. */
   gameClassName: string | null = null;
-  /** Match-over interval: set by MissionEnd or the debrief burst, cleared when
+  /** Viewer's match-over interval: set by MissionEnd, cleared when
    *  the next mission's MsgClientReady drops the player in. */
   matchEnded = false;
   /** Stream timestamp of the first end notification, retained across seeks. */
   protected matchEndedAtSec: number | null = null;
   private endedEntities: StreamEntity[] | null = null;
 
+  /** Hold the final scene; debrief UI messages can also arrive during play. */
   protected endMatch(): void {
     if (this.matchEnded) return;
     this.matchEnded = true;
@@ -619,9 +620,8 @@ export abstract class StreamEngine implements StreamingPlayback {
    * The match has been seen running: MsgMissionStart (countdown/start),
    * a running clock > 60 s, or a team with points on the board (late
    * joins — untimed servers never send a running clock). Cleared when
-   * the next mission drops us in. Gates the auto score screen: some
-   * servers send a debrief burst on join, which must not read as a
-   * witnessed match end.
+   * the next mission drops us in. Gates the auto score screen so joining
+   * an already-ended match doesn't count as witnessing its end.
    */
   matchStarted = false;
 
@@ -1763,8 +1763,8 @@ export abstract class StreamEngine implements StreamingPlayback {
   /** ProcessList::advanceObjects: one 32 ms tick, regardless of packet source. */
   protected processTick(): void {
     this.tickCount++;
-    // Transport time must keep advancing to consume the debrief and next
-    // mission. Client simulation, including explosion expiry, stops here.
+    // The viewer holds the final scene at MissionEnd while transport keeps
+    // consuming the debrief and next mission. This is a viewer pause policy.
     if (this.matchEnded) return;
     this.advanceProjectiles();
     this.advanceItems();
@@ -3861,15 +3861,6 @@ export abstract class StreamEngine implements StreamingPlayback {
       this.endedEntities = null;
       this.matchStarted = false;
       this.onMissionInfoChange?.();
-    } else if (
-      msgType === "MsgClearDebrief" ||
-      msgType === "MsgDebriefResult"
-    ) {
-      // The debrief burst is sent once per client from DefaultGame::gameOver
-      // (and the Hunters/Siege variants) — the match-over signal. It stays
-      // set through mission load until the next MsgClientReady.
-      if (!this.matchEnded) log.info("match ended (debrief received)");
-      this.endMatch();
     }
   }
 
