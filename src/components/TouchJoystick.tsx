@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
-import type nipplejs from "nipplejs";
+import { create } from "nipplejs";
 import { useControls } from "./SettingsProvider";
-import { useJoystick } from "./JoystickContext";
+import { useJoystick, type JoystickState } from "./JoystickContext";
 import styles from "./TouchJoystick.module.css";
 
 /** Apply styles to nipplejs-generated `.back` and `.front` elements imperatively. */
@@ -22,87 +22,65 @@ function applyNippleStyles(zone: HTMLElement) {
   }
 }
 
+function useTouchStick(
+  zone: HTMLDivElement | null,
+  side: "left" | "right",
+  setState: (state: Partial<JoystickState>) => void,
+) {
+  useEffect(() => {
+    if (!zone) return;
+
+    const manager = create({
+      zone,
+      mode: "static",
+      position: { [side]: "70px", bottom: "70px" },
+      size: 120,
+      restOpacity: 0.9,
+      dynamicPage: true,
+    });
+
+    applyNippleStyles(zone);
+
+    manager.on("move", ({ data }) => {
+      setState({
+        angle: data.angle.radian,
+        force: Math.min(1, data.force),
+      });
+    });
+
+    manager.on("end", () => {
+      setState({ force: 0 });
+    });
+
+    const reset = () => {
+      // nipplejs 1.0.4 destroy() leaves pressure timers running on held sticks.
+      for (const joystick of manager.actives.values()) joystick.end();
+      setState({ force: 0 });
+    };
+    const onVisibilityChange = () => {
+      if (document.hidden) reset();
+    };
+
+    window.addEventListener("blur", reset);
+    document.addEventListener("visibilitychange", onVisibilityChange);
+
+    return () => {
+      window.removeEventListener("blur", reset);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+      reset();
+      manager.destroy();
+    };
+  }, [zone, side, setState]);
+}
+
 export function TouchJoystick() {
   const { touchMode } = useControls();
   const [moveZone, setMoveZone] = useState<HTMLDivElement | null>(null);
   const [lookZone, setLookZone] = useState<HTMLDivElement | null>(null);
-  const { moveState, lookState, setMoveState, setLookState } = useJoystick();
+  const { setMoveState, setLookState } = useJoystick();
 
-  // Move joystick
-  useEffect(() => {
-    if (!moveZone) return;
-
-    let manager: nipplejs.JoystickManager | null = null;
-    let cancelled = false;
-
-    import("nipplejs").then((mod) => {
-      if (cancelled) return;
-      manager = mod.default.create({
-        zone: moveZone,
-        mode: "static",
-        position: { left: "70px", bottom: "70px" },
-        size: 120,
-        restOpacity: 0.9,
-        dynamicPage: true,
-      });
-
-      applyNippleStyles(moveZone);
-
-      manager.on("move", (_event, data) => {
-        setMoveState({
-          angle: data.angle.radian,
-          force: Math.min(1, data.force),
-        });
-      });
-
-      manager.on("end", () => {
-        setMoveState({ force: 0 });
-      });
-    });
-
-    return () => {
-      cancelled = true;
-      manager?.destroy();
-    };
-  }, [moveState, moveZone, setMoveState]);
-
-  // Look joystick (dual stick mode only)
-  useEffect(() => {
-    if (!lookZone) return;
-
-    let manager: nipplejs.JoystickManager | null = null;
-    let cancelled = false;
-
-    import("nipplejs").then((mod) => {
-      if (cancelled) return;
-      manager = mod.default.create({
-        zone: lookZone,
-        mode: "static",
-        position: { right: "70px", bottom: "70px" },
-        size: 120,
-        restOpacity: 0.9,
-        dynamicPage: true,
-      });
-
-      applyNippleStyles(lookZone);
-
-      manager.on("move", (_event, data) => {
-        setLookState({
-          angle: data.angle.radian,
-          force: Math.min(1, data.force),
-        });
-      });
-
-      manager.on("end", () => {
-        setLookState({ force: 0 });
-      });
-    });
-
-    return () => {
-      cancelled = true;
-      manager?.destroy();
-    };
-  }, [lookState, lookZone, setLookState]);
+  useTouchStick(moveZone, "left", setMoveState);
+  useTouchStick(lookZone, "right", setLookState);
 
   const blurActiveElement = () => {
     if (document.activeElement instanceof HTMLElement) {

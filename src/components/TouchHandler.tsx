@@ -11,11 +11,6 @@ const DUAL_MOVE_DEADZONE = 0.08;
 const DUAL_LOOK_DEADZONE = 0.15;
 const SINGLE_STICK_DEADZONE = 0.15;
 
-export type JoystickState = {
-  angle: number;
-  force: number;
-};
-
 /** Handles touch look and joystick-driven movement. Place inside Canvas. */
 export function TouchHandler() {
   const { speedMultiplier, touchMode, invertDrag, invertJoystick } =

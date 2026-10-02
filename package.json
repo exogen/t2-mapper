@@ -46,7 +46,7 @@
     "ignore": "^7.0.11",
     "lodash.orderby": "^4.18.0",
     "match-sorter": "^8.3.0",
-    "nipplejs": "^0.10.2",
+    "nipplejs": "^1.0.4",
     "nuqs": "^2.10.1",
     "openai": "^7.15.0",
     "picomatch": "^4.0.7",
