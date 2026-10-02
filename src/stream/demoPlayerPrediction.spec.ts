@@ -19,6 +19,7 @@ import {
 import { clearWorldColliders } from "../collision/worldCollision";
 import { setTerrainCollisionData } from "../collision/terrainCollision";
 import { registerCollisionLoadFailure } from "../collision/collisionContext";
+import { PlayerPrediction } from "./playerPrediction";
 
 const armor = { boxSize: { x: 1, y: 1, z: 2 }, mass: 90, maxEnergy: 100 };
 const neutral = {
@@ -59,6 +60,8 @@ function demo(
   prediction = true,
   moves: MoveData[] = [],
   lastClientMove = 0,
+  fromConnect = false,
+  firstMoveIndex = 0,
 ) {
   let cursor = 0;
   const packetParser = { protocolRejected: 0, protocolNoDispatch: 0 };
@@ -93,7 +96,14 @@ function demo(
       initialEvents: [],
       demoValues: [],
       firstPerson: true,
-      connectionFields: [0, 0, 0, lastClientMove, 0, 0],
+      connectionFields: [
+        0,
+        0,
+        firstMoveIndex,
+        lastClientMove,
+        firstMoveIndex,
+        0,
+      ],
       moves,
     },
     getRegistry: () => ({
@@ -128,11 +138,173 @@ function demo(
     bufferedMoveTicks: 10000,
     isComplete: true,
   } as unknown as DemoParser;
+  if (fromConnect) {
+    const initial = parser.initialBlock;
+    Object.assign(packetParser, {
+      dataBlockDataMap: new Map(
+        [...initial.dataBlocks].map(([id, block]) => [id, block.data]),
+      ),
+    });
+    blocks.unshift(packet(initial.initialGhosts));
+    initial.dataBlocks.clear();
+    initial.initialGhosts = [];
+    initial.controlObjectGhostIndex = -1;
+    initial.controlObjectData = undefined;
+  }
   const stream = createRecordingFromParser(parser).streamingPlayback;
   stream.setPlayerPredictionEnabled?.(prediction);
   stream.reset();
   return stream;
 }
+
+it.each([false, true])(
+  "recovers from an impossible input backlog without guessing recorder origin (empty start: %s)",
+  (fromConnect) => {
+    const make = () => {
+      const blocks: unknown[] = [];
+      for (let tick = 0; tick < DEMO_CHECKPOINT_TICKS + 20; tick++) {
+        if (tick % 5 === 0)
+          blocks.push(
+            packet([], {
+              lastMoveAck: 0,
+              controlObjectGhostIndex: 0,
+              controlObjectData: { ...pose(tick), energyLevel: 90 },
+            }),
+          );
+        blocks.push(move());
+      }
+      return demo(blocks, true, true, [], 0, fromConnect);
+    };
+    const tick = vi.spyOn(PlayerPrediction.prototype, "processTick");
+    const stream = make();
+    const end = DEMO_CHECKPOINT_TICKS + 19;
+    stream.stepToTime(atTick(50));
+    tick.mockClear();
+    const result = stream.stepToTime(atTick(end));
+    expect(tick).toHaveBeenCalledTimes(end - 50);
+    // The received velocity still advances between corrections, even though
+    // lastMoveAck stays at zero for the entire observer recording.
+    expect(result.entities[0].position?.[0]).toBe(end - 2);
+    const checkpoint = (stream as DemoStreamAdapter).captureCheckpoint();
+    expect(checkpoint.simulation.state.pendingPlayerMoves).toEqual([]);
+    expect(checkpoint.simulation.state.controlMovesAvailable).toBe(false);
+
+    const restored = stream.stepToTime(atTick(DEMO_CHECKPOINT_TICKS + 3));
+    const expected = make().stepToTime(atTick(DEMO_CHECKPOINT_TICKS + 3));
+    expect(restored.entities[0].position).toEqual(
+      expected.entities[0].position,
+    );
+    expect(restored.entities[0].playerDelta).toEqual(
+      expected.entities[0].playerDelta,
+    );
+    stream.stepToTime(atTick(20));
+    expect(
+      (stream as DemoStreamAdapter).captureCheckpoint().simulation.state
+        .controlMovesAvailable,
+    ).toBe(true);
+    expect(stream.stepToTime(atTick(end)).entities[0].position).toEqual(
+      result.entities[0].position,
+    );
+  },
+);
+
+it.each([
+  [true, true],
+  [true, false],
+  [false, true],
+  [false, false],
+])(
+  "validates 46 pending inputs independently of control=%s and prediction=%s",
+  (control, prediction) => {
+    const stream = demo(
+      Array.from({ length: 47 }, move),
+      control,
+      prediction,
+    ) as DemoStreamAdapter;
+    stream.stepToTime(atTick(46));
+    const valid = stream.captureCheckpoint().simulation.state;
+    expect(valid.controlMovesAvailable).toBe(true);
+    expect(valid.pendingPlayerMoves).toHaveLength(
+      control && prediction ? 46 : 0,
+    );
+    stream.stepToTime(atTick(47));
+    const invalid = stream.captureCheckpoint().simulation.state;
+    expect(invalid.controlMovesAvailable).toBe(false);
+    expect(invalid.pendingPlayerMoves).toHaveLength(0);
+  },
+);
+
+it("counts initial queued moves from their recorded index", () => {
+  const stream = demo(
+    Array.from({ length: 45 }, move),
+    true,
+    true,
+    [neutral, neutral],
+    1000,
+    false,
+    1000,
+  ) as DemoStreamAdapter;
+  stream.stepToTime(atTick(44));
+  expect(
+    stream.captureCheckpoint().simulation.state.controlMovesAvailable,
+  ).toBe(true);
+  stream.stepToTime(atTick(45));
+  expect(
+    stream.captureCheckpoint().simulation.state.controlMovesAvailable,
+  ).toBe(false);
+});
+
+it("discards retained control input when recovering, including after subsequent corrections", () => {
+  const turn = () => ({
+    type: BlockTypeMove,
+    parsed: {
+      ...move().parsed,
+      yaw: 0.01,
+      trigger: [false, false, false, true],
+    },
+  });
+  const { move: _move, ...correction } = pose(100);
+  const stream = demo(
+    [
+      ...Array.from({ length: 47 }, turn),
+      packet([], {
+        controlObjectGhostIndex: 0,
+        // Retail control corrections carry no Move; they cannot replace
+        // the predictor's retained input after we reject the recording queue.
+        controlObjectData: { ...correction, rotationZ: 0.7, energyLevel: 90 },
+      }),
+      turn(),
+    ],
+    true,
+  );
+  const before = stream.stepToTime(atTick(46));
+  const recovered = stream.stepToTime(atTick(47));
+  expect(recovered.camera?.yaw).toBeCloseTo(before.camera!.yaw!);
+  expect(recovered.entities[0].jetting).toBe(false);
+  const corrected = stream.stepToTime(atTick(48));
+  expect(corrected.camera?.yaw).toBeCloseTo(0.7);
+  expect(corrected.entities[0].position?.[0]).toBe(100.5);
+});
+
+it("keeps real input replay in an empty-start recording whose server acknowledges moves", () => {
+  const blocks: unknown[] = [];
+  for (let tick = 0; tick < 100; tick++) {
+    if (tick % 5 === 0)
+      blocks.push(
+        packet([], {
+          lastMoveAck: Math.max(0, tick - 2),
+          controlObjectGhostIndex: 0,
+          controlObjectData: { ...pose(tick), energyLevel: 90 },
+        }),
+      );
+    blocks.push(move());
+  }
+  const stream = demo(blocks, false, true, [], 0, true) as DemoStreamAdapter;
+  stream.stepToTime(atTick(100));
+  const state = stream.captureCheckpoint().simulation.state;
+  expect(state.controlMovesAvailable).toBe(true);
+  expect(state.pendingPlayerMoves).toHaveLength(7);
+});
 
 afterEach(() => {
   vi.restoreAllMocks();

@@ -14,8 +14,8 @@ import { trackKey } from "./commentaryTracksStore";
 
 /**
  * Whether subtitles are actually being shown for the current demo: the
- * setting is on AND a cue file with lines in it was found. Other HUD
- * pieces that would fight for the same screen space (the input
+ * setting is on, CastGenius is running, and a cue file with lines was found.
+ * Other HUD pieces that would fight for the same screen space (the input
  * overlay) yield only in that case — a demo with no commentary keeps
  * its overlay however the setting is set.
  */

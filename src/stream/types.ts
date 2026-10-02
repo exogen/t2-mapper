@@ -386,6 +386,8 @@ export interface StreamEntity {
   actionAnimPos?: number;
   actionTimeSec?: number;
   damageState?: number;
+  /** Retail renderWhenDestroyed / player blowApart visibility. */
+  destroyedHidden?: boolean;
   turretAim?: TurretAim;
   /** ShapeBase fade value (0=invisible, 1=fully visible). Matches mFadeVal. */
   fadeVal?: number;
@@ -675,6 +677,7 @@ export interface PreloadAsset {
 export interface StreamingPlayback {
   /** Simulation position after checkpoint restore, before the last step's ticks. */
   readonly lastStepStartTimeSec?: number;
+  readonly debrisHistory?: import("./debrisHistory").DebrisHistory;
   readonly groundEffectHistory?: import("./groundEffectHistory").GroundEffectHistory;
   /** Retained seek checkpoints, in recorded ticks. Absent on live streams. */
   readonly checkpointTicks?: readonly number[];

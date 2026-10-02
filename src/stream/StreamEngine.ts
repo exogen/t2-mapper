@@ -1,3 +1,4 @@
+import { DebrisHistory, debrisRetention } from "./debrisHistory";
 import { THRUST_BACKWARD, THRUST_DOWN, THRUST_FORWARD } from "./types";
 import { GroundEffectHistory, type GroundActor } from "./groundEffectHistory";
 import { timelineRandom } from "./timelineRandom";
@@ -204,6 +205,7 @@ export interface MutableEntity {
   actionTimeSec?: number;
   armAction?: number;
   damageState?: number;
+  destroyedHidden?: boolean;
   playerPrediction?: PlayerPrediction;
   playerDelta?: PlayerRenderDelta;
   turretAim?: TurretAim;
@@ -354,6 +356,7 @@ interface PendingExplosion {
   faceViewer: boolean;
   position: [number, number, number];
   lifetimeMS: number;
+  normal: [number, number, number];
 }
 
 /**
@@ -363,6 +366,7 @@ interface PendingExplosion {
  */
 export abstract class StreamEngine implements StreamingPlayback {
   readonly groundEffectHistory = new GroundEffectHistory();
+  readonly debrisHistory = new DebrisHistory();
   private groundLifetimeData = new Map<number, number>();
 
   private groundRetentionSec(dataBlockId: number): number {
@@ -473,6 +477,8 @@ export abstract class StreamEngine implements StreamingPlayback {
   protected lastClientMoveId = 0;
   protected playerPredictionEnabled = false;
   protected skippedPlayerPrediction = false;
+  /** False when a demo's input history cannot safely be replayed. */
+  protected controlMovesAvailable = true;
 
   /** Rendering opts in; timeline/director scanners retain recorded packet poses. */
   setPlayerPredictionEnabled(enabled: boolean): void {
@@ -809,6 +815,7 @@ export abstract class StreamEngine implements StreamingPlayback {
         pendingPlayerMoves: this.pendingPlayerMoves,
         nextPlayerMoveId: this.nextPlayerMoveId,
         lastClientMoveId: this.lastClientMoveId,
+        controlMovesAvailable: this.controlMovesAvailable,
         skippedPlayerPrediction: this.skippedPlayerPrediction,
         camera: this.camera,
         chatMessages: this.chatMessages,
@@ -878,6 +885,7 @@ export abstract class StreamEngine implements StreamingPlayback {
       ),
       loadInfo: this.loadInfo.saveState(),
       groundEffects: this.groundEffectHistory.save(),
+      debris: this.debrisHistory.save(),
     };
   }
 
@@ -886,6 +894,7 @@ export abstract class StreamEngine implements StreamingPlayback {
   ): void {
     const state = structuredClone(checkpoint.state);
     this.groundEffectHistory.restore(checkpoint.groundEffects);
+    this.debrisHistory.restore(checkpoint.debris);
     // Every restore creates new render lifetimes. Reusing checkpoint IDs would
     // retain stale mounted models, effects and per-entity renderer caches.
     const ids = new Map<string, string>();
@@ -976,6 +985,7 @@ export abstract class StreamEngine implements StreamingPlayback {
     // until the server says otherwise.
     this.ghostAlwaysDoneSec = null;
     this.groundEffectHistory.clear();
+    this.debrisHistory.clear();
     this.groundLifetimeData.clear();
     this.entities.clear();
     this.imageAnimations.clear();
@@ -992,6 +1002,7 @@ export abstract class StreamEngine implements StreamingPlayback {
     this.pendingPlayerMoves = [];
     this.nextPlayerMoveId = 0;
     this.lastClientMoveId = 0;
+    this.controlMovesAvailable = true;
     this.camera = null;
     this.chatMessages = [];
     this.chatMessageIdCounter = 0;
@@ -1193,6 +1204,7 @@ export abstract class StreamEngine implements StreamingPlayback {
     if (type === "GravityEvent") {
       if (typeof data.gravity === "number" && Number.isFinite(data.gravity)) {
         this.worldGravity = data.gravity;
+        this.debrisHistory.setGravity(this.getTimeSec(), this.gravity);
       }
       return;
     }
@@ -1669,6 +1681,7 @@ export abstract class StreamEngine implements StreamingPlayback {
     entity.energy = undefined;
     entity.maxEnergy = undefined;
     entity.damageState = undefined;
+    entity.destroyedHidden = undefined;
     entity.turretAim = undefined;
     entity.fadeVal = undefined;
     entity.fadeState = undefined;
@@ -1766,6 +1779,7 @@ export abstract class StreamEngine implements StreamingPlayback {
     // The viewer holds the final scene at MissionEnd while transport keeps
     // consuming the debrief and next mission. This is a viewer pause policy.
     if (this.matchEnded) return;
+    this.debrisHistory.prune(this.getTimeSec());
     this.advanceProjectiles();
     this.advanceItems();
     this.advanceControlVehicle();
@@ -1894,8 +1908,8 @@ export abstract class StreamEngine implements StreamingPlayback {
           entity.mountObjectGhostIndex != null ||
           (isControl && this.isPiloting);
         prediction.allowFreelook = isControl && !this.firstPerson;
-        let processed = !isControl;
-        if (isControl) {
+        let processed = !isControl || !this.controlMovesAvailable;
+        if (isControl && this.controlMovesAvailable) {
           for (const { id, move } of this.pendingPlayerMoves) {
             if (id < this.lastClientMoveId) continue;
             prediction.processTick(
@@ -2674,7 +2688,14 @@ export abstract class StreamEngine implements StreamingPlayback {
       explodePos &&
       entity.explosionDataBlockId != null
     ) {
-      this.spawnExplosion(entity, [explodePos.x, explodePos.y, explodePos.z]);
+      const normal = isValidPosition(data.explodeNormal as Vec3)
+        ? (data.explodeNormal as Vec3)
+        : undefined;
+      this.spawnExplosion(
+        entity,
+        [explodePos.x, explodePos.y, explodePos.z],
+        normal ? [normal.x, normal.y, normal.z] : undefined,
+      );
     }
 
     // Damage
@@ -2684,6 +2705,13 @@ export abstract class StreamEngine implements StreamingPlayback {
     if (typeof data.damageState === "number") {
       const prevDamageState = entity.damageState;
       entity.damageState = data.damageState;
+      const shapeData =
+        entity.dataBlockId == null
+          ? undefined
+          : this.getDataBlockData(entity.dataBlockId);
+      entity.destroyedHidden =
+        (data.damageState === 2 && shapeData?.renderWhenDestroyed === false) ||
+        (entity.type === "Player" && data.blowApart === true);
       // ShapeBase::unpackUpdate (FUN_005ef0e0): an object already in the
       // scene blows up when it becomes Destroyed or the blowApart flag is
       // set — thrown grenades, mines, turrets, stations, deployables.
@@ -2692,7 +2720,13 @@ export abstract class StreamEngine implements StreamingPlayback {
         ((prevDamageState !== 2 && data.damageState === 2) ||
           data.blowApart === true)
       ) {
-        this.blowUp(entity);
+        const normal = isValidPosition(data.damageDir as Vec3)
+          ? (data.damageDir as Vec3)
+          : undefined;
+        this.blowUp(
+          entity,
+          normal ? [normal.x, normal.y, normal.z] : [0, 0, 1],
+        );
       }
     }
     // CloakMask visibility (binary-verified, shapeBase.cc:3457-3485).
@@ -2885,6 +2919,7 @@ export abstract class StreamEngine implements StreamingPlayback {
   protected spawnExplosion(
     projectile: MutableEntity,
     position: [number, number, number],
+    normal: [number, number, number] = [0, 0, 1],
   ): void {
     projectile.hasExploded = true;
     if (projectile.explosionDataBlockId != null) {
@@ -2892,6 +2927,7 @@ export abstract class StreamEngine implements StreamingPlayback {
         projectile.explosionDataBlockId,
         position,
         this.tickCount,
+        normal,
       );
     }
 
@@ -2905,10 +2941,13 @@ export abstract class StreamEngine implements StreamingPlayback {
    * underwaterExplosion when the object is submerged — at the object box
    * centre, i.e. position + (mObjBox.min + max) / 2 with the offset
    * neither rotated nor scaled. mObjBox is the DTS bounds (shapeBounds.ts);
-   * a shape whose GLB has not loaded yet explodes at its origin. The
-   * engine also throws the datablock's debris, which is not modelled.
+   * a shape whose DTS has not loaded yet explodes at its origin. The
+   * debris input is retained separately from ghost lifetime.
    */
-  protected blowUp(entity: MutableEntity): void {
+  protected blowUp(
+    entity: MutableEntity,
+    normal: [number, number, number] = [0, 0, 1],
+  ): void {
     if (!entity.position || entity.dataBlockId == null) return;
     const blockData = this.getDataBlockData(entity.dataBlockId);
     if (!blockData) return;
@@ -2919,13 +2958,35 @@ export abstract class StreamEngine implements StreamingPlayback {
       y += (box.min[1] + box.max[1]) * 0.5;
       z += (box.min[2] + box.max[2]) * 0.5;
     }
+    const debris = getNumberField(blockData, ["debris"]);
+    if (
+      typeof blockData.debrisShapeName === "string" &&
+      blockData.debrisShapeName
+    ) {
+      const time = this.getTimeSec();
+      this.debrisHistory.add({
+        kind: "shape",
+        dataBlockId: debris ?? -1,
+        shape: blockData.debrisShapeName,
+        time,
+        expires:
+          time +
+          (debris == null
+            ? 4
+            : debrisRetention(debris, this.getDataBlockData.bind(this))),
+        position: [x, y, z],
+        rotation: entity.rotation ? [...entity.rotation] : [0, 0, 0, 1],
+        normal: [...normal],
+        gravity: this.gravity,
+      });
+    }
     const underwater = getNumberField(blockData, ["underwaterExplosion"]);
     const explosionId =
       underwater != null && underwater > 0 && isPointSubmergedSimple(x, y, z)
         ? underwater
         : getNumberField(blockData, ["explosion"]);
     if (explosionId == null || explosionId <= 0) return;
-    this.addExplosion(explosionId, [x, y, z], this.tickCount);
+    this.addExplosion(explosionId, [x, y, z], this.tickCount, normal);
   }
 
   /**
@@ -2937,6 +2998,7 @@ export abstract class StreamEngine implements StreamingPlayback {
     explosionDataBlockId: number,
     position: [number, number, number],
     addTick: number,
+    normal: [number, number, number] = [0, 0, 1],
   ): void {
     const block = this.getDataBlockData(explosionDataBlockId);
     if (!block) return;
@@ -2961,6 +3023,7 @@ export abstract class StreamEngine implements StreamingPlayback {
       faceViewer: block.faceViewer !== false && block.faceViewer !== 0,
       position,
       lifetimeMS: timing.lifetimeMS,
+      normal,
     };
     if (pending.explodeTick <= this.tickCount) {
       this.explode(pending);
@@ -2972,6 +3035,21 @@ export abstract class StreamEngine implements StreamingPlayback {
   /** Explosion::explode: the entity appears, and sub-explosions are added. */
   protected explode(p: PendingExplosion): void {
     const block = this.getDataBlockData(p.explosionDataBlockId);
+    if (typeof block?.debris === "number") {
+      const time = this.getTimeSec();
+      this.debrisHistory.add({
+        kind: "explosion",
+        dataBlockId: p.explosionDataBlockId,
+        time,
+        expires:
+          time +
+          debrisRetention(block.debris, this.getDataBlockData.bind(this)),
+        position: [...p.position],
+        rotation: [0, 0, 0, 1],
+        normal: [...p.normal],
+        gravity: this.gravity,
+      });
+    }
     const fxId = `fx_${this.nextExplosionId++}`;
     const fxEntity: MutableEntity = {
       id: fxId,
@@ -3023,7 +3101,7 @@ export abstract class StreamEngine implements StreamingPlayback {
           p.position[2] + (dz / len) * offset,
         ];
       }
-      this.addExplosion(subId, subPos, p.explodeTick);
+      this.addExplosion(subId, subPos, p.explodeTick, p.normal);
     }
   }
 
@@ -3065,11 +3143,7 @@ export abstract class StreamEngine implements StreamingPlayback {
             !entity.hasExploded &&
             entity.explosionDataBlockId != null
           ) {
-            this.spawnExplosion(entity, [...seg.endPoint] as [
-              number,
-              number,
-              number,
-            ]);
+            this.spawnExplosion(entity, [...seg.endPoint], [...seg.endNormal]);
           } else {
             // Lifetime expired without an explosion (fizzle) — hide.
             entity.position = undefined;
@@ -3104,11 +3178,11 @@ export abstract class StreamEngine implements StreamingPlayback {
         });
         if (result.explodeAt && !entity.hasExploded) {
           if (entity.explosionDataBlockId != null) {
-            this.spawnExplosion(entity, [...result.explodeAt.point] as [
-              number,
-              number,
-              number,
-            ]);
+            this.spawnExplosion(
+              entity,
+              [...result.explodeAt.point],
+              [...result.explodeAt.normal],
+            );
           } else {
             entity.position = undefined;
             entity.simulatedVelocity = undefined;
@@ -4050,6 +4124,7 @@ export abstract class StreamEngine implements StreamingPlayback {
         actionTimeSec: entity.actionTimeSec,
         armAction: entity.armAction,
         damageState: entity.damageState,
+        destroyedHidden: entity.destroyedHidden,
         turretAim: entity.turretAim,
         // Fade and cloak are independent systems, passed separately so the
         // renderer can apply the correct visual treatment (texture replacement

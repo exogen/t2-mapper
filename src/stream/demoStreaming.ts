@@ -345,6 +345,10 @@ export function parseDemoValues(demoValues: string[]): ParsedDemoValues {
 /** Checkpoint cadence in recorded simulation ticks; each tick is 32 ms. */
 export const DEMO_CHECKPOINT_TICKS = 1_000;
 
+// Retail getNextMove (0x006019b0) refuses collection above 45 queued moves;
+// collectMove's playback branch (0x00601ca0) also stops admission at 46.
+const MAX_RECORDED_PENDING_MOVES = 46;
+
 export interface DemoStreamingOptions {
   /** Event/director scans need no seek history. Playback retains it on demand. */
   checkpoints?: boolean;
@@ -453,6 +457,7 @@ export class DemoStreamAdapter extends StreamEngine {
       simulation: this.captureSimulationState(),
       cursor: structuredClone({
         moveTicks: this.moveTicks,
+        lastRecordedMoveAck: this.lastRecordedMoveAck,
         absoluteYaw: this.absoluteYaw,
         absolutePitch: this.absolutePitch,
         lastAbsYaw: this.lastAbsYaw,
@@ -472,6 +477,8 @@ export class DemoStreamAdapter extends StreamEngine {
       if (
         !Number.isSafeInteger(tick) ||
         tick < 0 ||
+        !Number.isSafeInteger(checkpoint.cursor.lastRecordedMoveAck) ||
+        checkpoint.cursor.lastRecordedMoveAck < 0 ||
         ![
           checkpoint.cursor.absoluteYaw,
           checkpoint.cursor.absolutePitch,
@@ -576,6 +583,7 @@ export class DemoStreamAdapter extends StreamEngine {
   };
   // Demo-specific: move delta tracking for V12-style camera rotation
   private moveTicks = 0;
+  private lastRecordedMoveAck = 0;
   private absoluteYaw = 0;
   private absolutePitch = 0;
   private lastAbsYaw = 0;
@@ -671,7 +679,8 @@ export class DemoStreamAdapter extends StreamEngine {
   } {
     // Move-derived angles are valid when the control object is a Player
     // (including when piloting a vehicle — moves still drive the camera).
-    const hasMoves = this.lastControlType === "player";
+    const hasMoves =
+      this.lastControlType === "player" && this.controlMovesAvailable;
     const yaw = hasMoves ? this.absoluteYaw : this.lastAbsYaw;
     const pitch = hasMoves ? this.absolutePitch : this.lastAbsPitch;
 
@@ -830,12 +839,14 @@ export class DemoStreamAdapter extends StreamEngine {
     }
     const initial = this.parser.initialBlock;
     const firstMoveIndex = initial.connectionFields[4] ?? 0;
+    this.lastRecordedMoveAck = firstMoveIndex;
     this.pendingPlayerMoves = initial.moves.map((move, i) => ({
       id: firstMoveIndex + i,
       move: unclampMove(move),
     }));
     this.nextPlayerMoveId = firstMoveIndex + this.pendingPlayerMoves.length;
     this.lastClientMoveId = initial.connectionFields[3] ?? firstMoveIndex;
+    this.validateControlMoves();
     this.exhausted = false;
     this.latestFov = 100;
     this.latestControl = {
@@ -1246,6 +1257,10 @@ export class DemoStreamAdapter extends StreamEngine {
       for (const ghost of packet.ghosts) {
         this.processGhostUpdate(ghost);
       }
+      this.lastRecordedMoveAck = Math.max(
+        this.lastRecordedMoveAck,
+        packet.gameState.lastMoveAck,
+      );
       this.acknowledgeMoves(packet.gameState.lastMoveAck, controlData);
 
       return;
@@ -1262,6 +1277,8 @@ export class DemoStreamAdapter extends StreamEngine {
     }
 
     if (block.type === BlockTypeMove && this.isMoveData(block.parsed)) {
+      this.validateControlMoves(1);
+      if (!this.controlMovesAvailable) return;
       this.collectMove(block.parsed as PlayerMove);
       // Replicate V12 Player::updateMove(): apply delta then wrap/clamp.
       this.absoluteYaw += block.parsed.yaw ?? 0;
@@ -1273,6 +1290,25 @@ export class DemoStreamAdapter extends StreamEngine {
         MAX_PITCH,
       );
     }
+  }
+
+  private validateControlMoves(incoming = 0): void {
+    // The replay queue omits camera moves and all inputs during headless scans.
+    // Validate the connection's move indices independently of that queue.
+    if (
+      !this.controlMovesAvailable ||
+      this.nextPlayerMoveId + incoming - this.lastRecordedMoveAck <=
+        MAX_RECORDED_PENDING_MOVES
+    )
+      return;
+    // Relay timing blocks can violate the native input-queue limit because
+    // the server never received them. This does not identify the recorder:
+    // any such input history is unusable. Recover from packet movement state
+    // instead of replaying an unbounded queue or freezing the entire viewer.
+    this.pendingPlayerMoves.length = 0;
+    this.controlMovesAvailable = false;
+    const id = this.entityIdByGhostIndex.get(this.latestControl.ghostIndex);
+    if (id) this.entities.get(id)?.playerPrediction?.discardMove();
   }
 
   // ── Build snapshot (with generation-counter caching) ──

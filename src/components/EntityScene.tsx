@@ -139,7 +139,9 @@ function MountedEntityPresence({
       root.current &&
       isStreamingSource(gameEntityStore.getState().dataSource)
     )
-      root.current.visible = streamRenderFrame.current?.has(id) ?? false;
+      root.current.visible =
+        !!streamRenderFrame.current?.has(id) &&
+        !streamRenderFrame.current.get(id)?.destroyedHidden;
   }, FramePriority.ShapeAnimation - 1);
   return (
     <group

@@ -191,3 +191,26 @@ it("emits foot puffs in the engine's radius/count distribution", () => {
     expect(p.pos[2]).toBeLessThanOrEqual(30.25);
   }
 });
+
+it("keeps per-emitter size and color overrides independent of shared particle datablocks", () => {
+  const data = emitterData({ useEmitterSizes: true, useEmitterColors: true });
+  const first = new EmitterInstance(data),
+    second = new EmitterInstance(data);
+  first.setSizes([2, 4]);
+  first.setColors([
+    { r: 0.5, g: 0, b: 0, a: 1 },
+    { r: 0, g: 0, b: 1, a: 0 },
+  ]);
+  first.emitBurst([0, 0, 0], 1);
+  second.emitBurst([0, 0, 0], 1);
+  expect(first.particles[0].size).toBe(2);
+  expect(first.particles[0].r).toBe(0.5);
+  expect(second.particles[0].size).toBe(1);
+  expect(second.particles[0].r).toBe(1);
+  first.update(500);
+  expect(first.particles[0].size).toBe(3);
+  const fixed = new EmitterInstance(emitterData());
+  fixed.setSizes([10, 20]);
+  fixed.emitBurst([0, 0, 0], 1);
+  expect(fixed.particles[0].size).toBe(1);
+});

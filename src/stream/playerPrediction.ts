@@ -250,6 +250,11 @@ export class PlayerPrediction {
     );
   }
 
+  /** Invalid recorded input must not become the next tick's extrapolated move. */
+  discardMove(): void {
+    this.move = nullMove;
+  }
+
   processTick(gravity: number, move?: PlayerMove, rechargeRate = 0): void {
     this.posVec.set(0, 0, 0);
     this.rotVec = 0;

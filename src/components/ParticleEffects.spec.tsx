@@ -64,7 +64,7 @@ vi.mock("../state/engineStore", () => ({
 }));
 
 const blocks: Record<number, Record<string, unknown>> = {
-  1: { particleEmitter: 2, particleDensity: 1 },
+  1: { particleEmitter: 2, particleDensity: 1, particleRadius: 4 },
   2: { particles: [3], overrideAdvances: true },
   3: { lifetimeMS: 400 },
 };
@@ -147,6 +147,16 @@ afterEach(() => {
   unmount();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
+});
+
+it("spreads explosion bursts over their authored particle radius", () => {
+  vi.spyOn(Math, "random").mockReturnValue(0.25);
+  const { particles } = spawnExplosion();
+  const position = particles.geometry.getAttribute("position");
+  // Radius 4, random 0.25: Torque (-2, -2, 1), converted to Three axes.
+  expect([position.getX(0), position.getY(0), position.getZ(0)]).toEqual([
+    -2, 1, -2,
+  ]);
 });
 
 it.each(["paused", "seeking"])(

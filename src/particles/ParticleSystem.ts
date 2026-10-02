@@ -145,6 +145,7 @@ export function resolveEmitterData(
     orientParticles: getBool(raw, "orientParticles", false),
     orientOnVelocity: getBool(raw, "orientOnVelocity", true),
     useEmitterColors: getBool(raw, "useEmitterColors", false),
+    useEmitterSizes: getBool(raw, "useEmitterSizes", false),
     lifetimeMS: getNumber(raw, "lifetimeMS", 0) << LIFETIME_SHIFT,
     lifetimeVarianceMS:
       getNumber(raw, "lifetimeVarianceMS", 0) << LIFETIME_SHIFT,
@@ -267,8 +268,9 @@ export class EmitterInstance {
   private elapsedMS = 0;
   private lifetimeMS: number;
   private killed = false;
-  private colorKeys?: ParticleKey[];
+  private instanceKeys?: ParticleKey[];
   private colors?: readonly Pick<ParticleKey, "r" | "g" | "b" | "a">[];
+  private sizes?: readonly number[];
   /** World gravity in m/s² (negative is down); the owner keeps it current. */
   worldGravity = DEFAULT_GRAVITY_Z;
 
@@ -297,13 +299,24 @@ export class EmitterInstance {
   setColors(colors: readonly Pick<ParticleKey, "r" | "g" | "b" | "a">[]): void {
     if (!this.data.useEmitterColors || colors === this.colors) return;
     this.colors = colors;
-    this.colorKeys = this.data.particles.keys.map((key, i) => ({
+    this.overrideKeys();
+  }
+
+  setSizes(sizes: readonly number[]): void {
+    if (!this.data.useEmitterSizes || sizes === this.sizes) return;
+    this.sizes = sizes;
+    this.overrideKeys();
+  }
+
+  private overrideKeys(): void {
+    this.instanceKeys = this.data.particles.keys.map((key, i) => ({
       ...key,
-      ...(colors[i] ?? { r: 1, g: 1, b: 1, a: 0 }),
+      ...(this.colors ? (this.colors[i] ?? { r: 1, g: 1, b: 1, a: 0 }) : {}),
+      size: this.sizes?.[i] ?? key.size,
     }));
   }
 
-  /** The engine's radius/count overload (foot puffs), including its box-like
+  /** The engine's radius/count overload (foot puffs and explosions), including its box-like
    * hemisphere distribution and the surface normal used for theta rotation. */
   emitRadial(
     pos: [number, number, number],
@@ -515,7 +528,7 @@ export class EmitterInstance {
     p.pos[2] += p.vel[2] * dt;
 
     const interp = interpolateKeys(
-      this.colorKeys ?? pData.keys,
+      this.instanceKeys ?? pData.keys,
       p.currentAge / p.totalLifetime,
     );
     p.r = interp.r;
@@ -622,7 +635,7 @@ export class EmitterInstance {
       randomRange(pData.spinRandomMin, pData.spinRandomMax, random);
 
     // Initial color/size from first keyframe.
-    const k0 = this.colorKeys?.[0] ?? pData.keys[0];
+    const k0 = this.instanceKeys?.[0] ?? pData.keys[0];
 
     const particle: Particle = {
       pos: spawnPos,

@@ -576,7 +576,11 @@ function checkShaderCompilation(
 // ── Explosion resolution ──
 
 interface ResolvedExplosion {
-  burstEmitters: Array<{ data: EmitterDataResolved; density: number }>;
+  burstEmitters: Array<{
+    data: EmitterDataResolved;
+    density: number;
+    radius: number;
+  }>;
   streamingEmitters: EmitterDataResolved[];
 }
 
@@ -598,7 +602,8 @@ function resolveExplosion(
       const resolved = resolveEmitterData(emitterRaw, getDataBlockData);
       if (resolved) {
         const density = (expBlock.particleDensity as number) ?? 10;
-        burstEmitters.push({ data: resolved, density });
+        const radius = (expBlock.particleRadius as number) ?? 1;
+        burstEmitters.push({ data: resolved, density, radius });
       }
     }
   }
@@ -843,7 +848,8 @@ export function ParticleEffects({
         for (const burst of resolved.burstEmitters) {
           const entry = createStreamEmitter(burst.data, origin, group);
           entry.isBurst = true;
-          entry.emitter.emitBurst(origin, burst.density);
+          // Explosion::explode (0x00621570) uses the radius/count overload.
+          entry.emitter.emitRadial(origin, burst.radius, burst.density);
           // Explosion::explode → deleteWhenEmpty on the burst emitter.
           entry.emitter.kill();
           activeEmittersRef.current.push(entry);

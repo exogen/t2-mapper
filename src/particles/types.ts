@@ -40,6 +40,7 @@ export interface EmitterDataResolved {
   orientParticles: boolean;
   orientOnVelocity: boolean;
   useEmitterColors?: boolean;
+  useEmitterSizes?: boolean;
   lifetimeMS: number;
   lifetimeVarianceMS: number;
   particles: ParticleDataResolved;

@@ -9,6 +9,7 @@ import {
   type CommentaryTrack,
 } from "../state/commentaryTrack";
 import { useCommentaryTracks } from "../state/commentaryTracksStore";
+import { useDirector } from "../state/demoDirectorStore";
 import { useSettings } from "./SettingsProvider";
 import styles from "./CommentarySubtitles.module.css";
 
@@ -16,12 +17,12 @@ import styles from "./CommentarySubtitles.module.css";
 const TICK_MS = 100;
 
 /**
- * The commentary as subtitles, scheduled off the stream clock from the
- * cue file alone — so a transcript can be checked against playback
- * before any audio for it exists.
+ * Commentary subtitles follow the CastGenius playback gate and demo clock.
+ * Their checkbox remains independent of whether commentary audio is enabled.
  */
 export function CommentarySubtitles() {
   const { commentarySubtitles } = useSettings();
+  const directing = useDirector((state) => state.status === "playing");
   const sourceUrl = useDemoLoad((s) => s.sidecarSourceUrl);
   // The chosen track, re-read whenever the list or the pick changes.
   const chosen = useCommentaryTracks((s) => s.selected());
@@ -31,7 +32,7 @@ export function CommentarySubtitles() {
   useEffect(() => {
     setTrack(null);
     subtitlesStore.setState({ showing: false });
-    if (!sourceUrl || !commentarySubtitles) return;
+    if (!sourceUrl || !commentarySubtitles || !directing) return;
     let current = true;
     void loadCommentaryTrack(sourceUrl, chosen).then((loaded) => {
       if (!current) return;
@@ -42,7 +43,7 @@ export function CommentarySubtitles() {
       current = false;
       subtitlesStore.setState({ showing: false });
     };
-  }, [sourceUrl, chosen, commentarySubtitles]);
+  }, [sourceUrl, chosen, commentarySubtitles, directing]);
 
   useEffect(() => {
     if (!track) {
@@ -60,7 +61,7 @@ export function CommentarySubtitles() {
     return () => clearInterval(timer);
   }, [track]);
 
-  if (cues.length === 0) return null;
+  if (!directing || !commentarySubtitles || cues.length === 0) return null;
   return (
     <div className={styles.Subtitles} aria-live="polite">
       {cues.map((cue) => (

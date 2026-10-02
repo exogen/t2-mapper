@@ -44,7 +44,7 @@ export function applyStreamEntityPose(
 ): void {
   // React/Suspense may not have committed removals yet. The destination
   // snapshot controls presence immediately, including during a seek.
-  if (!entity) {
+  if (!entity || entity.destroyedHidden) {
     child.visible = false;
     return;
   }

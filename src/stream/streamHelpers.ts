@@ -276,8 +276,7 @@ const PRELOAD_DATA_BLOCK_CLASSES: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * Unique explosion shape names reachable from datablocks that reference an
- * explosion, including each explosion's sub-explosions.
+ * Explosion and debris shapes, including sub-explosions and debris impacts.
  */
 export function collectEffectShapeNames(
   dataBlocks: Iterable<ParsedData | undefined>,
@@ -289,6 +288,14 @@ export function collectEffectShapeNames(
     if (typeof shape === "string" && shape) names.add(shape);
   };
   for (const data of dataBlocks) {
+    if (typeof data?.debrisShapeName === "string" && data.debrisShapeName)
+      names.add(data.debrisShapeName);
+    if (
+      typeof data?.shapeName === "string" &&
+      typeof data?.numBounces === "number" &&
+      data.shapeName
+    )
+      names.add(data.shapeName);
     const explosionId = data?.explosion;
     if (typeof explosionId !== "number") continue;
     const expBlock = getDataBlockData(explosionId);

@@ -1002,6 +1002,7 @@ export function castWorldRay(
     includeStatics?: boolean;
     includeTerrain?: boolean;
     includeInteriors?: boolean;
+    includeForceFields?: boolean;
   },
 ): WorldRayHit | null {
   const terrainHit =
@@ -1064,7 +1065,7 @@ export function castWorldRay(
   }
 
   for (const entry of forceFields().values()) {
-    if (segLength === 0) break;
+    if (segLength === 0 || options?.includeForceFields === false) break;
     if (!entry.enabled) continue;
     if (!entry.worldBox.intersectsBox(_segBox)) continue;
     _localRay.copy(_ray).applyMatrix4(entry.inverse);

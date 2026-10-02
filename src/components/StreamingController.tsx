@@ -1,3 +1,4 @@
+import { DebrisEffects } from "./DebrisEffects";
 import { GroundEffects } from "./GroundEffects";
 import {
   applyStreamEntityPose,
@@ -1149,6 +1150,7 @@ export function StreamingController({
   return (
     <>
       <GroundEffects playback={recording.streamingPlayback} />
+      <DebrisEffects playback={recording.streamingPlayback} />
       <ParticleEffects
         playback={recording.streamingPlayback}
         snapshotRef={snapshotRef}

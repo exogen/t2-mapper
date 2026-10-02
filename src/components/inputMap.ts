@@ -44,6 +44,10 @@ export const MAP_MODE_INPUT = [
 
 export const DEMO_MODE_INPUT = [
   { name: "playPause", keys: ["Space"] },
+  { name: "seekBackward", keys: ["BracketLeft"] },
+  { name: "seekForward", keys: ["BracketRight"] },
+  { name: "seekBackwardLarge", keys: ["Shift-BracketLeft"] },
+  { name: "seekForwardLarge", keys: ["Shift-BracketRight"] },
   { name: "decreasePlaybackSpeed", keys: ["Comma", "Shift-Comma"] },
   { name: "increasePlaybackSpeed", keys: ["Period", "Shift-Period"] },
 ] as const satisfies readonly InputMapEntry[];
