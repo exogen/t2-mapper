@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import dgram from "node:dgram";
 import { EventEmitter } from "node:events";
 import { BitStream, createLiveParser } from "t2-demo-parser";
@@ -8,6 +8,12 @@ import type { ConnectionProtocol } from "./protocol";
 import { GAME_PROTOCOL_VERSION } from "./shared";
 import { writeString } from "./HuffmanWriter";
 import { connLog } from "./logger";
+import { ConnectionCooldowns } from "./connectionCooldown";
+
+let cooldowns: ConnectionCooldowns;
+beforeEach(() => {
+  cooldowns = new ConnectionCooldowns();
+});
 
 describe("GameConnection server passwords", () => {
   it.each([
@@ -27,7 +33,9 @@ describe("GameConnection server passwords", () => {
         socket as unknown as dgram.Socket,
       );
       const warn = vi.spyOn(connLog, "warn").mockImplementation(() => {});
+      const info = vi.spyOn(connLog, "info").mockImplementation(() => {});
       const conn = new GameConnection("192.0.2.1:28000", {
+        cooldowns,
         getJoinPassword: async () => password,
       });
       const status = vi.fn();
@@ -43,13 +51,13 @@ describe("GameConnection server passwords", () => {
         reject.writeU8(type);
         if (type === 34) reject.writeU32(0);
         reject.writeU32(clientSeq);
-        writeString(reject, "CHR_PASSWORD");
+        writeString(reject, "PASSWORD");
         socket.emit("message", Buffer.from(reject.getBuffer()));
         expect(warn).toHaveBeenCalledWith(
           {
             address: "192.0.2.1:28000",
             stage: type === 28 ? "challenge" : "connect",
-            reason: "CHR_PASSWORD",
+            reason: "PASSWORD",
             passwordSent: !!password,
           },
           expect.stringContaining(
@@ -58,9 +66,9 @@ describe("GameConnection server passwords", () => {
               : "no password was sent",
           ),
         );
-        expect(status).toHaveBeenCalledWith("disconnected", "CHR_PASSWORD");
+        expect(status).toHaveBeenCalledWith("disconnected", "PASSWORD");
         expect(
-          JSON.stringify([warn.mock.calls, status.mock.calls]),
+          JSON.stringify([warn.mock.calls, info.mock.calls, status.mock.calls]),
         ).not.toContain("private-server-password");
         vi.advanceTimersByTime(30_000);
         expect(socket.send).toHaveBeenCalledTimes(1);
@@ -84,6 +92,7 @@ describe("GameConnection server passwords", () => {
     );
     const warn = vi.spyOn(connLog, "warn").mockImplementation(() => {});
     const conn = new GameConnection("192.0.2.1:28000", {
+      cooldowns,
       getJoinPassword: async () => "private-server-password",
     });
     try {
@@ -115,6 +124,7 @@ describe("GameConnection server passwords", () => {
         socket as unknown as dgram.Socket,
       );
       const conn = new GameConnection("192.0.2.1:28000", {
+        cooldowns,
         getJoinPassword: async () => password,
       });
       const status = vi.fn();
@@ -156,6 +166,7 @@ describe("GameConnection server passwords", () => {
     );
     let resolve!: (password: string) => void;
     const conn = new GameConnection("192.0.2.1:28000", {
+      cooldowns,
       getJoinPassword: () =>
         new Promise((done) => {
           resolve = done;
@@ -179,7 +190,7 @@ describe("GameConnection server passwords", () => {
 
 describe("GameConnection protocol negotiation", () => {
   function handshake() {
-    const conn = new GameConnection("1.2.3.4:28000");
+    const conn = new GameConnection("1.2.3.4:28000", { cooldowns });
     const inner = conn as unknown as {
       _status: string;
       clientConnectSequence: number;
@@ -292,7 +303,7 @@ describe("GameConnection protocol negotiation", () => {
 
 /** A connection past ConnectAccept, waiting on T2csri; no socket behind it. */
 function authenticating(): GameConnection {
-  const conn = new GameConnection("1.2.3.4:28000");
+  const conn = new GameConnection("1.2.3.4:28000", { cooldowns });
   (conn as any)._status = "authenticating";
   vi.spyOn(conn, "sendCommand").mockImplementation(() => {});
   return conn;

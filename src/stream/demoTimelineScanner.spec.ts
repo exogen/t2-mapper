@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const scan = vi.hoisted(() => ({
   blocks: [] as unknown[],
   demoValues: [] as string[],
+  taggedStrings: new Map<number, string>(),
   dataBlocks: new Map<number, { data: Record<string, unknown> }>(),
   initialGhosts: [] as unknown[],
   targetEntries: [] as unknown[],
@@ -15,7 +16,7 @@ vi.mock("t2-demo-parser", async (original) => ({
     async load() {
       return {
         initialBlock: {
-          taggedStrings: [],
+          taggedStrings: scan.taggedStrings,
           demoValues: scan.demoValues,
           dataBlocks: scan.dataBlocks,
           initialGhosts: scan.initialGhosts,
@@ -47,15 +48,209 @@ vi.mock("t2-demo-parser", async (original) => ({
   },
 }));
 
-import { BlockTypeMove, BlockTypePacket } from "t2-demo-parser";
-import { scanDemoTimeline } from "./demoTimelineScanner";
+import { BlockTypeMove, BlockTypePacket, DemoParser } from "t2-demo-parser";
+import {
+  scanDemoTimeline,
+  scanDemoTimelineParser,
+} from "./demoTimelineScanner";
 
 beforeEach(() => {
   scan.demoValues = [];
+  scan.taggedStrings = new Map();
   scan.dataBlocks = new Map();
   scan.initialGhosts = [];
   scan.targetEntries = [];
   scan.next.mockImplementation(() => scan.blocks.shift());
+});
+
+describe("server metadata discovered during the timeline scan", () => {
+  const message = (args: string[], funcName = "ServerMessage") => ({
+    type: BlockTypePacket,
+    parsed: {
+      events: [{ parsedData: { type: "RemoteCommandEvent", funcName, args } }],
+    },
+  });
+  const dropInfo = (server: string) =>
+    message(["MsgMissionDropInfo", "", "Surreal", "Capture the Flag", server]);
+
+  beforeEach(() => {
+    scan.blocks = [];
+    scan.next.mockClear();
+  });
+
+  it("resolves initial tagged message strings and strips server markup", async () => {
+    scan.taggedStrings = new Map([
+      [10, "ServerMessage"],
+      [11, "MsgMissionDropInfo"],
+      [12, "  \x10\x0bRapture Competition East\x11  "],
+    ]);
+    scan.blocks = [
+      message(
+        ["\x0111", "", "Surreal", "Capture the Flag", "\x0112"],
+        "\x0110",
+      ),
+    ];
+    const onServerName = vi.fn();
+    const result = await scanDemoTimeline(
+      new ArrayBuffer(0),
+      null,
+      undefined,
+      undefined,
+      onServerName,
+    );
+    expect(onServerName).toHaveBeenCalledExactlyOnceWith(
+      "Rapture Competition East",
+    );
+    expect(result.events).toEqual([]);
+  });
+
+  it("discovers a late Classic server in the existing parser pass", async () => {
+    scan.blocks = [
+      ...Array.from({ length: 2_000 }, () => ({ type: BlockTypeMove })),
+      {
+        type: BlockTypePacket,
+        parsed: {
+          events: [
+            {
+              parsedData: {
+                type: "NetStringEvent",
+                id: 10,
+                value: "Classic  1.3",
+              },
+            },
+            {
+              parsedData: {
+                type: "NetStringEvent",
+                id: 11,
+                value: "\x0bLate Server",
+              },
+            },
+            {
+              parsedData: {
+                type: "RemoteCommandEvent",
+                funcName: "ServerMessage",
+                args: ["MsgLoadInfo", "", "Surreal", "\x0110", "\x0111"],
+              },
+            },
+          ],
+        },
+      },
+    ];
+    const onServerName = vi.fn();
+    await scanDemoTimelineParser(
+      new DemoParser(new Uint8Array(0)),
+      null,
+      undefined,
+      undefined,
+      onServerName,
+    );
+    expect(onServerName).toHaveBeenCalledExactlyOnceWith("Late Server");
+    expect(scan.next).toHaveBeenCalledTimes(2_002);
+  });
+
+  it("ignores empty values and reports only the first nonempty server", async () => {
+    scan.blocks = [
+      dropInfo("  \x10\x0b\x11  "),
+      dropInfo("First Server"),
+      message(["MsgLoadInfo", "", "Surreal", "Classic  1.3", "Later Server"]),
+      dropInfo("Last Server"),
+    ];
+    const onServerName = vi.fn();
+    await scanDemoTimeline(
+      new ArrayBuffer(0),
+      null,
+      undefined,
+      undefined,
+      onServerName,
+    );
+    expect(onServerName).toHaveBeenCalledExactlyOnceWith("First Server");
+  });
+
+  it("waits for a resolved server name after an unknown tagged reference", async () => {
+    scan.blocks = [dropInfo("\x0199"), dropInfo("Known Server")];
+    const onServerName = vi.fn();
+    await scanDemoTimeline(
+      new ArrayBuffer(0),
+      null,
+      undefined,
+      undefined,
+      onServerName,
+    );
+    expect(onServerName).toHaveBeenCalledExactlyOnceWith("Known Server");
+  });
+
+  it.each([
+    ["MsgLoadInfo", "", "Surreal", "Classic Ruins", "Capture the Flag"],
+    ["MsgLoadInfo", "", "Surreal", "Classic  1.3 Ruins", "Capture the Flag"],
+    ["MsgLoadInfo", "", "Surreal", "Classic 1.3", "Capture the Flag"],
+    ["MsgLoadInfo", "Loading", "Surreal", "Classic  1.3", "Server"],
+    ["MsgLoadInfo", "", "Surreal", "Classic  1.3", "  "],
+  ])("does not infer a server from %j", async (...args) => {
+    scan.blocks = [message(args)];
+    const onServerName = vi.fn();
+    await scanDemoTimeline(
+      new ArrayBuffer(0),
+      null,
+      undefined,
+      undefined,
+      onServerName,
+    );
+    expect(onServerName).not.toHaveBeenCalled();
+  });
+
+  it("publishes metadata before a later parser fault rejects the scan", async () => {
+    scan.blocks = [
+      dropInfo("Known Server"),
+      { type: BlockTypeMove },
+      { type: BlockTypePacket, parseError: "bad later block" },
+    ];
+    const onServerName = vi.fn();
+    await expect(
+      scanDemoTimeline(
+        new ArrayBuffer(0),
+        null,
+        undefined,
+        undefined,
+        onServerName,
+      ),
+    ).rejects.toThrow("Demo parsing failed at 0.032s: bad later block");
+    expect(onServerName).toHaveBeenCalledExactlyOnceWith("Known Server");
+  });
+
+  it("does not inspect metadata when the scan was already aborted", async () => {
+    scan.blocks = [dropInfo("Unseen Server")];
+    const controller = new AbortController();
+    controller.abort();
+    const onServerName = vi.fn();
+    await expect(
+      scanDemoTimeline(
+        new ArrayBuffer(0),
+        null,
+        undefined,
+        controller.signal,
+        onServerName,
+      ),
+    ).rejects.toMatchObject({ name: "AbortError" });
+    expect(scan.next).not.toHaveBeenCalled();
+    expect(onServerName).not.toHaveBeenCalled();
+  });
+
+  it("retains discovery and stops before later blocks when aborted", async () => {
+    scan.blocks = [dropInfo("Found Server"), dropInfo("Unseen Server")];
+    const controller = new AbortController();
+    const onServerName = vi.fn(() => controller.abort());
+    await expect(
+      scanDemoTimeline(
+        new ArrayBuffer(0),
+        null,
+        undefined,
+        controller.signal,
+        onServerName,
+      ),
+    ).rejects.toMatchObject({ name: "AbortError" });
+    expect(onServerName).toHaveBeenCalledExactlyOnceWith("Found Server");
+    expect(scan.next).toHaveBeenCalledOnce();
+  });
 });
 
 describe("generator timeline events", () => {
@@ -1464,6 +1659,152 @@ describe("recorder identity", () => {
       "1\t100\tRunner\tStorm\t123",
     ];
     scan.blocks = [];
+  });
+
+  it.each(["missing", "invalid"])(
+    "recovers a stock recorder's client and team when PJ metadata is %s",
+    async (metadata) => {
+      scan.demoValues = scan.demoValues.slice(0, 3);
+      if (metadata === "invalid") {
+        scan.demoValues.push(
+          "readplayerinfo",
+          "1\tunknown\tRunner\tStorm\t123",
+        );
+      }
+      scan.blocks = [kill(tagged), kill("Opponent")];
+      const result = await scanDemoTimeline(
+        new ArrayBuffer(0),
+        "  \x0btag|runner  ",
+      );
+      expect(result.observerPerspective).toBe(false);
+      expect(result.events).toMatchObject([
+        { type: "kill", killer: "TAG|Runner", isRecorder: true },
+      ]);
+    },
+  );
+
+  it("does not guess a stock recorder client when normalized roster names are ambiguous", async () => {
+    scan.demoValues = [
+      "",
+      "2",
+      `${tagged}\t123\t100\t32\t1\t0\t50\t0`,
+      "  \x0btag|runner  \t456\t200\t33\t2\t0\t50\t0",
+    ];
+    scan.blocks = [
+      packet("MsgClientNameChanged", "", tagged, "Renamed", "100"),
+      packet("MsgClientJoinTeam", "", "Renamed", "Storm", "100", "1"),
+    ];
+    const result = await scanDemoTimeline(new ArrayBuffer(0), "TAG|Runner");
+    expect(result.observerPerspective).toBe(true);
+    expect(result.events).toMatchObject([
+      { type: "rename", isRecorder: false },
+    ]);
+  });
+
+  it("recovers a recorder's welcome connection before its roster and team arrive", async () => {
+    scan.demoValues = ["", "0"];
+    scan.taggedStrings = new Map([
+      [10, "\x0bWelcome to Tribes, %1!"],
+      [11, tagged],
+      [12, "100"],
+    ]);
+    scan.blocks = [
+      packet("MsgClientJoin", "\x0110", "\x0111", "\x0112"),
+      packet("MsgClientJoinTeam", "", tagged, "Storm", "100", "1"),
+      packet("MsgClientNameChanged", "", tagged, "NEW|Runner", "100"),
+      kill("NEW|Runner"),
+      kill("Opponent"),
+    ];
+    const result = await scanDemoTimeline(new ArrayBuffer(0), "  tag|runner  ");
+    expect(result.observerPerspective).toBe(false);
+    expect(
+      result.events.map(({ type, isRecorder }) => [type, isRecorder]),
+    ).toEqual([
+      ["rename", true],
+      ["kill", true],
+    ]);
+    expect(result.events.find((event) => event.type === "kill")?.killer).toBe(
+      "NEW|Runner",
+    );
+  });
+
+  it.each([
+    {
+      description: "a silent roster join",
+      format: "",
+      player: tagged,
+      clientId: "100",
+      recorder: "TAG|Runner",
+    },
+    {
+      description: "another player's welcome",
+      format: "Welcome to Tribes",
+      player: "Opponent",
+      clientId: "100",
+      recorder: "TAG|Runner",
+    },
+    {
+      description: "an invalid client ID",
+      format: "Welcome to Tribes",
+      player: tagged,
+      clientId: "unknown",
+      recorder: "TAG|Runner",
+    },
+    {
+      description: "an unresolved player name",
+      format: "Welcome to Tribes",
+      player: "\x0199",
+      clientId: "100",
+      recorder: "99",
+    },
+  ])("does not infer a welcome connection from $description", async (entry) => {
+    scan.demoValues = ["", "0"];
+    scan.blocks = [
+      packet("MsgClientJoin", entry.format, entry.player, entry.clientId),
+      packet(
+        "MsgClientJoinTeam",
+        "",
+        entry.player,
+        "Storm",
+        entry.clientId,
+        "1",
+      ),
+      packet(
+        "MsgClientNameChanged",
+        "",
+        entry.player,
+        "Renamed",
+        entry.clientId,
+      ),
+    ];
+    const result = await scanDemoTimeline(new ArrayBuffer(0), entry.recorder);
+    expect(result.observerPerspective).toBe(true);
+    expect(result.events).toMatchObject([
+      { type: "rename", isRecorder: false },
+    ]);
+  });
+
+  it("tracks the recovered stock client through its rename without adopting another client's name", async () => {
+    scan.demoValues = scan.demoValues.slice(0, 3);
+    scan.blocks = [
+      packet("MsgClientNameChanged", "", tagged, "NEW|Runner", "100"),
+      packet("MsgClientNameChanged", "", "Opponent", "OTHER|Runner", "200"),
+      kill("NEW|Runner"),
+      kill(tagged),
+      kill("OTHER|Runner"),
+    ];
+    const result = await scanDemoTimeline(new ArrayBuffer(0), "TAG|Runner");
+    expect(result.observerPerspective).toBe(false);
+    expect(
+      result.events.map(({ type, isRecorder }) => [type, isRecorder]),
+    ).toEqual([
+      ["rename", true],
+      ["rename", false],
+      ["kill", true],
+    ]);
+    expect(result.events.find((event) => event.type === "kill")?.killer).toBe(
+      "NEW|Runner",
+    );
   });
 
   it("matches the recorder's full roster name when metadata omits the tag", async () => {

@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { WebSocketServer, WebSocket } from "ws";
 import { queryServerList, queryServerInfo } from "./masterQuery.js";
 import { GameConnection } from "./gameConnection.js";
+import { getConnectionRetryPolicy } from "./connectionRetryPolicy.js";
 import { ServerPasswords } from "./serverPasswords.js";
 import { loadChatEnabled } from "./chatPolicy.js";
 import { BrowserAudit } from "./browserAudit.js";
@@ -22,7 +23,6 @@ import {
   AUTH_COMMANDS,
   isChatCommand,
   MAX_RETRIES,
-  RETRY_DELAY_MS,
   shouldRetryDisconnect,
   retryStatusMessage,
 } from "./shared.js";
@@ -704,6 +704,8 @@ wss.on("connection", (ws, req) => {
 
     const conn = gameConnection;
     gameConnection.on("status", (status, statusMessage) => {
+      if (gameConnection !== conn) return;
+      if (status === "connected") retryCount = 0;
       clientLog.info(
         {
           status,
@@ -714,40 +716,55 @@ wss.on("connection", (ws, req) => {
       );
 
       // Auto-retry on retryable disconnect reasons.
-      if (
-        status === "disconnected" &&
-        shouldRetryDisconnect(statusMessage, retryCount) &&
-        lastJoinAddress === address
-      ) {
-        retryCount++;
+      if (status === "disconnected") {
+        const { cooldownMs, autoRetry } =
+          getConnectionRetryPolicy(statusMessage);
+        const retryScheduled =
+          !conn.cooldownBlocked &&
+          shouldRetryDisconnect(statusMessage, retryCount) &&
+          lastJoinAddress === address;
         clientLog.info(
           {
-            attempt: retryCount,
+            address,
+            reason: statusMessage ?? null,
+            cooldownMs,
+            autoRetry,
+            retryScheduled,
+            retriesUsed: retryCount,
             maxRetries: MAX_RETRIES,
-            delay: RETRY_DELAY_MS,
+            cooldownBlocked: !!conn.cooldownBlocked,
+            sameServer: lastJoinAddress === address,
           },
-          "Retryable disconnect — will reconnect",
+          retryScheduled
+            ? "Player connection will reconnect"
+            : "Player connection will not reconnect",
         );
-        sendToClient(ws, {
-          type: "status",
-          status: "connecting",
-          chatEnabled: CHAT_ENABLED,
-          message: retryStatusMessage(statusMessage ?? "", retryCount),
-          mapName: conn.mapName,
-        });
-        retryTimer = setTimeout(() => {
-          retryTimer = null;
-          if (lastJoinAddress === address && ws.readyState === WebSocket.OPEN) {
-            connectToServer(ws, address, lastWarriorName).catch((err) => {
-              clientLog.error({ err }, "Retry connection failed");
-              sendToClient(ws, {
-                type: "error",
-                message: `Reconnect failed: ${err instanceof Error ? err.message : err}`,
+        if (retryScheduled) {
+          retryCount++;
+          sendToClient(ws, {
+            type: "status",
+            status: "connecting",
+            chatEnabled: CHAT_ENABLED,
+            message: retryStatusMessage(statusMessage ?? "", retryCount),
+            mapName: conn.mapName,
+          });
+          retryTimer = setTimeout(() => {
+            retryTimer = null;
+            if (
+              lastJoinAddress === address &&
+              ws.readyState === WebSocket.OPEN
+            ) {
+              connectToServer(ws, address, lastWarriorName).catch((err) => {
+                clientLog.error({ err }, "Retry connection failed");
+                sendToClient(ws, {
+                  type: "error",
+                  message: `Reconnect failed: ${err instanceof Error ? err.message : err}`,
+                });
               });
-            });
-          }
-        }, RETRY_DELAY_MS);
-        return;
+            }
+          }, cooldownMs);
+          return;
+        }
       }
 
       sendToClient(ws, {

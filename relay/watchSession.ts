@@ -12,12 +12,12 @@ import {
   type GhostingMessageEventData,
 } from "t2-demo-parser";
 import { GameConnection } from "./gameConnection.js";
+import { getConnectionRetryPolicy } from "./connectionRetryPolicy.js";
 import {
   normalizeAddress,
   GAME_PROTOCOL_VERSION,
   AUTH_COMMANDS,
   MAX_RETRIES,
-  RETRY_DELAY_MS,
   shouldRetryDisconnect,
   retryStatusMessage,
   buildCRCDataBlockList,
@@ -749,21 +749,34 @@ export class WatchSession {
       this.stopScoreHudPoll();
       this.cancelReObserve();
       this.cancelTourneyDecision();
-      // Covers both cycle styles: servers that hard-disconnect at mission
-      // change ("Server is cycling mission") and terminal disconnects.
       this.stopRecording(`disconnected: ${message ?? "unknown"}`);
       // Pinned (patrol) sessions retry like watched ones — without this
       // a disconnect-style mission cycle would destroy the session and
       // cost the next mission's recording.
-      if (
+      const { cooldownMs, autoRetry } = getConnectionRetryPolicy(message);
+      const retryScheduled =
+        !conn.cooldownBlocked &&
         shouldRetryDisconnect(message, this.retryCount) &&
-        (this.watcherCount > 0 || this.pinned)
-      ) {
+        (this.watcherCount > 0 || this.pinned);
+      relayLog.info(
+        {
+          address: this.key,
+          reason: message ?? null,
+          cooldownMs,
+          autoRetry,
+          retryScheduled,
+          retriesUsed: this.retryCount,
+          maxRetries: MAX_RETRIES,
+          cooldownBlocked: !!conn.cooldownBlocked,
+          watchers: this.watcherCount,
+          pinned: this.pinned,
+        },
+        retryScheduled
+          ? "Watch session will reconnect"
+          : "Watch session will not reconnect",
+      );
+      if (retryScheduled) {
         this.retryCount++;
-        relayLog.info(
-          { address: this.key, attempt: this.retryCount },
-          "Retryable disconnect — session will reconnect",
-        );
         // A new connection means new sequence state and ghost IDs: every
         // watcher goes back to pending and re-hydrates from a fresh epoch.
         this.rehydrateWatchers();
@@ -776,7 +789,7 @@ export class WatchSession {
           if (!this.destroyed && (this.watcherCount > 0 || this.pinned)) {
             this.start();
           }
-        }, RETRY_DELAY_MS);
+        }, cooldownMs);
         return;
       }
       this.endSession(message);

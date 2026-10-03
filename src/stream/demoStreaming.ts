@@ -77,14 +77,16 @@ export function extractMissionInfo(demoValues: string[]): DemoMissionInfo {
       // Row 1: "1\tclientId\trecorderName\tteamName\tguid"
       const fields = value.split("\t");
       if (fields[1]) recorderClientId = parseInt(fields[1], 10);
-      if (fields[2]) recorderName = stripTaggedStringMarkup(fields[2]).trim();
+      if (fields[2])
+        recorderName = stripTaggedStringMarkup(fields[2]).trim() || null;
       continue;
     }
 
     if (value.startsWith("2\t")) {
       // Row 2: "2\tserverName\taddress\tdate\tmissionDisplayName"
       const fields = value.split("\t");
-      if (fields[1]) serverDisplayName = fields[1];
+      if (fields[1])
+        serverDisplayName = stripTaggedStringMarkup(fields[1]).trim() || null;
       if (fields[2]) serverAddress = fields[2];
       if (fields[3]) recordingDate = fields[3];
       if (fields[4]) missionDisplayName = fields[4];
@@ -345,6 +347,10 @@ export function parseDemoValues(demoValues: string[]): ParsedDemoValues {
 /** Checkpoint cadence in recorded simulation ticks; each tick is 32 ms. */
 export const DEMO_CHECKPOINT_TICKS = 1_000;
 
+// Optional metadata must not turn startup into a scan of the recording.
+const METADATA_PROBE_MAX_SEC = 2;
+const METADATA_PROBE_MAX_BLOCKS = 512;
+
 // Retail getNextMove (0x006019b0) refuses collection above 45 queued moves;
 // collectMove's playback branch (0x00601ca0) also stops admission at 46.
 const MAX_RECORDED_PENDING_MOVES = 46;
@@ -537,7 +543,23 @@ export class DemoStreamAdapter extends StreamEngine {
     this.parser.restoreCheckpoint(checkpoint.parser);
     this.ghostTracker = this.parser.getGhostTracker();
     Object.assign(this, structuredClone(checkpoint.cursor));
-    this.restoreSimulationState(checkpoint.simulation);
+    // Recording attribution belongs to the first discovery, not the seek
+    // position. Apply it before restoration publishes mission metadata.
+    const info = this.initialMissionInfo;
+    const state = checkpoint.simulation.state;
+    this.restoreSimulationState({
+      ...checkpoint.simulation,
+      state: {
+        ...state,
+        connectedPlayerName:
+          info.recorderName ?? this.recorderFallback?.name ?? null,
+        connectedClientId: info.recorderName
+          ? info.recorderClientId
+          : (this.recorderFallback?.clientId ?? null),
+        serverDisplayName:
+          info.serverDisplayName ?? this.serverNameFallback ?? null,
+      },
+    });
     this.exhausted = false;
     this.exhaustedAtBytes = 0;
     this._cachedSnapshot = null;
@@ -548,6 +570,7 @@ export class DemoStreamAdapter extends StreamEngine {
   }
 
   private readonly parser: DemoParser;
+  private readonly initialMissionInfo: DemoMissionInfo;
   private readonly initialBlock: {
     dataBlocks: Map<number, { className: string; data: ParsedData }>;
     initialGhosts: Array<{
@@ -592,6 +615,8 @@ export class DemoStreamAdapter extends StreamEngine {
   /** Decompressed byte length when `exhausted` latched — new bytes past
    *  this mean the frontier moved and stepping may resume. */
   private exhaustedAtBytes = 0;
+  private recorderFallback: { name: string; clientId: number } | null = null;
+  private serverNameFallback: string | null = null;
 
   // Cached snapshot
   private _cachedSnapshot: StreamSnapshot | null = null;
@@ -618,6 +643,7 @@ export class DemoStreamAdapter extends StreamEngine {
       demoValues: initial.demoValues,
       firstPerson: initial.firstPerson,
     };
+    this.initialMissionInfo = extractMissionInfo(initial.demoValues);
 
     this.reset();
   }
@@ -719,13 +745,17 @@ export class DemoStreamAdapter extends StreamEngine {
     this.resetSharedState();
     this._shapeConstructorCache = null;
     this._shapeConstructorCacheSize = -1;
-    const info = extractMissionInfo(this.initialBlock.demoValues);
+    const info = this.initialMissionInfo;
     this.missionDisplayName = info.missionDisplayName;
     this.missionTypeDisplayName = info.missionType;
     this.gameClassName = info.gameClassName;
-    this.serverDisplayName = info.serverDisplayName;
-    this.connectedPlayerName = info.recorderName;
-    this.connectedClientId = info.recorderClientId;
+    this.serverNameFallback ??= info.serverDisplayName;
+    this.serverDisplayName = this.serverNameFallback;
+    this.connectedPlayerName =
+      info.recorderName ?? this.recorderFallback?.name ?? null;
+    this.connectedClientId = info.recorderName
+      ? info.recorderClientId
+      : (this.recorderFallback?.clientId ?? null);
 
     // Seed net strings from initial block
     for (const [id, value] of this.initialBlock.taggedStrings) {
@@ -952,6 +982,87 @@ export class DemoStreamAdapter extends StreamEngine {
     }
 
     this.updateCameraAndHud();
+  }
+
+  /** Inspect only a small available prefix, then rewind for normal playback. */
+  probeRecordingMetadata(): void {
+    if (this.connectedPlayerName && this.serverDisplayName) return;
+    try {
+      this.inferRecorderFromControlPlayer();
+      while (
+        (!this.connectedPlayerName || !this.serverDisplayName) &&
+        this.getTimeSec() + TICK_DURATION_MS / 1000 <= METADATA_PROBE_MAX_SEC &&
+        this.parser.blockCursor < METADATA_PROBE_MAX_BLOCKS
+      ) {
+        // Metadata comes from packet state, not simulated movement. Decode
+        // the prefix without advancing animations, prediction, or effects.
+        if (!this.readMoveTick(METADATA_PROBE_MAX_BLOCKS)) break;
+        this.moveTicks += 1;
+      }
+    } catch {
+      // Metadata is best effort. Rewinding lets normal playback report any
+      // malformed packet at its original time instead of failing the load.
+    } finally {
+      if (this.connectedPlayerName && this.connectedClientId != null) {
+        this.recorderFallback ??= {
+          name: this.connectedPlayerName,
+          clientId: this.connectedClientId,
+        };
+      }
+      this.serverNameFallback ??= this.serverDisplayName;
+      this.reset();
+    }
+  }
+
+  setServerNameFallback(serverName: string): void {
+    const name = stripTaggedStringMarkup(serverName).trim();
+    if (!name) return;
+    const previousName = this.serverDisplayName;
+    this.updateServerDisplayName(name);
+    if (this.serverDisplayName !== previousName) this.onMissionInfoChange?.();
+  }
+
+  protected override updateServerDisplayName(name: string): void {
+    if (!name) return;
+    this.serverNameFallback ??= name;
+    this.serverDisplayName = this.serverNameFallback;
+  }
+
+  protected override updateConnectedPlayerName(
+    name: string,
+    clientId: number,
+  ): void {
+    this.recorderFallback ??= { name, clientId };
+    this.connectedPlayerName = this.recorderFallback.name;
+    this.connectedClientId = this.recorderFallback.clientId;
+    this._cachedSnapshot = null;
+  }
+
+  private inferRecorderFromControlPlayer(): void {
+    if (
+      this.connectedPlayerName ||
+      this.recorderFallback ||
+      this.getTimeSec() > METADATA_PROBE_MAX_SEC ||
+      this.parser.blockCursor > METADATA_PROBE_MAX_BLOCKS ||
+      this.lastControlType !== "player"
+    )
+      return;
+    // Camera/HUD state is updated only on movement ticks; packet control
+    // changes can happen more than once before the next tick.
+    const controlId = this.entityIdByGhostIndex.get(
+      this.latestControl.ghostIndex,
+    );
+    const player = controlId ? this.entities.get(controlId) : undefined;
+    if (player?.className !== "Player" || player.targetId == null) return;
+    const matches = [...this.playerRoster].filter(
+      ([, entry]) => entry.targetId === player.targetId,
+    );
+    if (matches.length !== 1) return;
+    const [clientId, entry] = matches[0];
+    const name = stripTaggedStringMarkup(entry.name).trim();
+    if (!name) return;
+    this.updateConnectedPlayerName(name, clientId);
+    this.onMissionInfoChange?.();
   }
 
   getSnapshot(): StreamSnapshot {
@@ -1197,9 +1308,15 @@ export class DemoStreamAdapter extends StreamEngine {
     }
   }
 
-  private readMoveTick(): boolean {
+  private readMoveTick(blockLimit?: number): boolean {
     const packets = this.parser.getPacketParser();
     while (true) {
+      if (
+        blockLimit != null &&
+        (this.parser.blockCursor >= blockLimit ||
+          (this.connectedPlayerName && this.serverDisplayName))
+      )
+        return false;
       const rejected = packets.protocolRejected;
       const noDispatch = packets.protocolNoDispatch;
       const block = this.parser.nextBlock();
@@ -1268,6 +1385,7 @@ export class DemoStreamAdapter extends StreamEngine {
         packet.gameState.lastMoveAck,
       );
       this.acknowledgeMoves(packet.gameState.lastMoveAck, controlData);
+      this.inferRecorderFromControlPlayer();
 
       return;
     }
@@ -1443,23 +1561,15 @@ export function createRecordingFromParser(
   const initialBlock = parser.initialBlock;
   const info = extractMissionInfo(initialBlock.demoValues);
   const playback = new DemoStreamAdapter(parser, options);
-
-  // Seed StreamEngine's mission info fields from the initial block so they're
-  // available immediately (before any server messages arrive during playback).
-  playback.missionDisplayName = info.missionDisplayName;
-  playback.missionTypeDisplayName = info.missionType;
-  playback.gameClassName = info.gameClassName;
-  playback.serverDisplayName = info.serverDisplayName;
-  playback.connectedPlayerName = info.recorderName;
-  playback.connectedClientId = info.recorderClientId;
+  playback.probeRecordingMetadata();
 
   return {
     source: "demo",
     duration: header.demoLengthMs / 1000,
     missionName: initialBlock.missionName ?? null,
     gameType: info.missionType,
-    serverDisplayName: info.serverDisplayName,
-    recorderName: info.recorderName,
+    serverDisplayName: playback.serverDisplayName,
+    recorderName: playback.connectedPlayerName,
     recordingDate: info.recordingDate,
     streamingPlayback: playback,
   };

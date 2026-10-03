@@ -1,4 +1,5 @@
 import type { ParsedData } from "t2-demo-parser";
+import { getConnectionRetryPolicy } from "./connectionRetryPolicy.js";
 
 /**
  * Helpers shared between the relay (Node) and the browser stream engine.
@@ -40,7 +41,11 @@ export function isChatCommand(command: string): boolean {
 
 /** Auto-reconnect policy for retryable game-server disconnects. */
 export const MAX_RETRIES = 3;
-export const RETRY_DELAY_MS = 6000;
+
+/** Both automatic retries and new joins must respect this minimum delay. */
+export function getReconnectDelayMs(message: string | undefined): number {
+  return getConnectionRetryPolicy(message).cooldownMs;
+}
 
 export function normalizeAddress(address: string): string {
   const trimmed = address.trim().toLowerCase();
@@ -67,15 +72,9 @@ export function normalizePlayerGuid(
 }
 /** Emitted when the receive window deadlocks (see gameConnection). */
 export const STALLED_DISCONNECT_REASON = "Connection stalled";
-const RETRYABLE_REASONS = [
-  "Server is cycling mission",
-  STALLED_DISCONNECT_REASON,
-];
 
 export function isRetryableDisconnect(message: string | undefined): boolean {
-  return (
-    !!message && RETRYABLE_REASONS.some((reason) => message.includes(reason))
-  );
+  return getConnectionRetryPolicy(message).autoRetry;
 }
 
 /** Whether a disconnect should trigger an auto-reconnect: retryable reason

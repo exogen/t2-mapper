@@ -15,6 +15,10 @@ import { WatchRequest } from "./watchRequest";
 import type { GameConnection } from "./gameConnection";
 import type { ServerMessage } from "./types";
 import { GAME_PROTOCOL_VERSION } from "./shared";
+import { relayLog } from "./logger";
+
+const missionCyclingReason =
+  "Server is cycling missions.  Please try to connect in a moment.";
 
 class FakeGameConnection extends EventEmitter {
   address: string;
@@ -530,14 +534,16 @@ describe("WatchSessionManager", () => {
     const firstBegin = ws.jsonMessages().find((m) => m.type === "catchupBegin");
     expect(firstBegin).toBeDefined();
 
-    conn1.setStatus("disconnected", "Server is cycling mission");
+    conn1.setStatus("disconnected", missionCyclingReason);
     // Watcher is re-pended and told we're reconnecting.
     const statuses = ws
       .jsonMessages()
       .filter((m) => m.type === "sessionStatus");
     expect(statuses.at(-1)).toMatchObject({ status: "connecting" });
 
-    vi.advanceTimersByTime(6000);
+    vi.advanceTimersByTime(4_999);
+    expect(connections).toHaveLength(1);
+    vi.advanceTimersByTime(1);
     expect(connections).toHaveLength(2);
     const conn2 = connections[1];
     conn2.setStatus("connected");
@@ -551,6 +557,53 @@ describe("WatchSessionManager", () => {
       expect(JSON.parse(gunzipSync(frame).toString()).protocolVersion).toBe(
         GAME_PROTOCOL_VERSION,
       );
+    }
+  });
+
+  it("waits 30 seconds before automatically retrying a stalled connection", () => {
+    const { manager, connections } = createManager();
+    const ws = new FakeWebSocket();
+    manager.watch(ws as unknown as WebSocket, "1.2.3.4:28000");
+    connections[0].setStatus("connected");
+    connections[0].setStatus("disconnected", "Connection stalled");
+    vi.advanceTimersByTime(29_999);
+    expect(connections).toHaveLength(1);
+    vi.advanceTimersByTime(1);
+    expect(connections).toHaveLength(2);
+    manager.shutdown();
+  });
+
+  it("logs scheduled retries and stops at the retry limit", () => {
+    const info = vi.spyOn(relayLog, "info").mockImplementation(() => {});
+    const { manager, connections } = createManager();
+    try {
+      const ws = new FakeWebSocket();
+      manager.watch(ws as unknown as WebSocket, "1.2.3.4:28000");
+      for (let retriesUsed = 0; retriesUsed <= 3; retriesUsed++) {
+        connections.at(-1)!.setStatus("disconnected", missionCyclingReason);
+        const retryScheduled = retriesUsed < 3;
+        expect(info).toHaveBeenCalledWith(
+          expect.objectContaining({
+            address: "1.2.3.4:28000",
+            reason: missionCyclingReason,
+            cooldownMs: 5_000,
+            autoRetry: true,
+            retryScheduled,
+            retriesUsed,
+            maxRetries: 3,
+            cooldownBlocked: false,
+          }),
+          retryScheduled
+            ? "Watch session will reconnect"
+            : "Watch session will not reconnect",
+        );
+        vi.advanceTimersByTime(5_000);
+      }
+      expect(connections).toHaveLength(4);
+      expect(manager.getStatusSummary()).toEqual([]);
+    } finally {
+      manager.shutdown();
+      info.mockRestore();
     }
   });
 
@@ -724,9 +777,9 @@ describe("WatchSessionManager", () => {
 
     // A disconnect-style mission cycle must not destroy a patrol
     // session — the next mission's recording depends on the retry.
-    connections[0].setStatus("disconnected", "Server is cycling mission");
+    connections[0].setStatus("disconnected", missionCyclingReason);
     expect(manager.getStatusSummary()).toHaveLength(1);
-    vi.advanceTimersByTime(6000);
+    vi.advanceTimersByTime(5000);
     expect(connections).toHaveLength(2);
   });
 
@@ -745,8 +798,8 @@ describe("WatchSessionManager", () => {
     vi.advanceTimersByTime(12_000);
     expect(requests()).toHaveLength(4);
 
-    conn.setStatus("disconnected", "Server is cycling mission");
-    vi.advanceTimersByTime(6_000);
+    conn.setStatus("disconnected", missionCyclingReason);
+    vi.advanceTimersByTime(5_000);
     expect(requests()).toHaveLength(4);
     const reconnected = connections[1];
     reconnected.setStatus("connected");
@@ -881,8 +934,8 @@ describe("WatchSession delayed transitions", () => {
     session: ReturnType<WatchSessionManager["getSession"]>,
     tournament: boolean,
   ) {
-    connections.at(-1)!.setStatus("disconnected", "Server is cycling mission");
-    vi.advanceTimersByTime(6_000);
+    connections.at(-1)!.setStatus("disconnected", missionCyclingReason);
+    vi.advanceTimersByTime(5_000);
     connections.at(-1)!.setStatus("connected");
     session!.setTournamentMode(tournament);
   }
@@ -955,8 +1008,8 @@ describe("WatchSession delayed transitions", () => {
 
   it("waits for the mode decision before placing a new arrival on either channel", () => {
     const { manager, connections, session } = start();
-    connections[0].setStatus("disconnected", "Server is cycling mission");
-    vi.advanceTimersByTime(6_000);
+    connections[0].setStatus("disconnected", missionCyclingReason);
+    vi.advanceTimersByTime(5_000);
     connections[1].setStatus("connected");
     const joiner = new FakeWebSocket();
     manager.watch(joiner as unknown as WebSocket, address);
@@ -971,7 +1024,7 @@ describe("WatchSession delayed transitions", () => {
     (transition) => {
       const { manager, connections, session } = start();
       if (transition === "disconnect") {
-        connections[0].setStatus("disconnected", "Server is cycling mission");
+        connections[0].setStatus("disconnected", missionCyclingReason);
       } else {
         const state = session as any;
         state.watchState.missionName = "OldMap";
@@ -983,7 +1036,7 @@ describe("WatchSession delayed transitions", () => {
       const joiner = new FakeWebSocket();
       manager.watch(joiner as unknown as WebSocket, address);
       expect(joiner.frameTypes()).not.toContain("catchupBegin");
-      vi.advanceTimersByTime(6_000);
+      vi.advanceTimersByTime(5_000);
       connections[1].setStatus("connected");
       session.setTournamentMode(false);
       expect(catchup(joiner).epoch).toBe(2);
@@ -1006,14 +1059,14 @@ describe("WatchSession delayed transitions", () => {
     const snapshotCount = normalViewer
       .frameTypes()
       .filter((t) => t === "catchupEnd").length;
-    vi.advanceTimersByTime(delayMs - 6_000);
+    vi.advanceTimersByTime(delayMs - 5_000);
     expect(catchup(ws).epoch).toBe(3);
     expect(statuses(ws).at(-1)).toMatchObject({
       status: "live",
       streamDelayMs: 0,
     });
     // Old delayed epoch markers must not rehydrate viewers already live.
-    vi.advanceTimersByTime(6_000);
+    vi.advanceTimersByTime(5_000);
     expect(
       normalViewer.frameTypes().filter((t) => t === "catchupEnd"),
     ).toHaveLength(snapshotCount);
@@ -1083,7 +1136,7 @@ describe("WatchSession delayed transitions", () => {
       session.setTournamentMode(tournament);
       if (tournament) vi.advanceTimersByTime(delayMs);
       const channelId = session.getChannelId(ws as unknown as WebSocket);
-      connections[0].setStatus("disconnected", "Server is cycling mission");
+      connections[0].setStatus("disconnected", missionCyclingReason);
       manager.detachSocket(ws as unknown as WebSocket);
       vi.advanceTimersByTime(10_000);
       expect(connections).toHaveLength(1);
@@ -1115,8 +1168,8 @@ describe("WatchSession delayed transitions", () => {
     const state = session as any;
     state.watchState.missionName = "OldMap";
     state.handleResponderEvent({ type: "GhostingMessageEvent", message: 2 });
-    connections[0].setStatus("disconnected", "Server is cycling mission");
-    vi.advanceTimersByTime(6_000);
+    connections[0].setStatus("disconnected", missionCyclingReason);
+    vi.advanceTimersByTime(5_000);
     expect(connections).toHaveLength(2);
     connections[1].setStatus("connected");
     session.setTournamentMode(false);
@@ -1174,12 +1227,12 @@ describe("WatchSession delayed transitions", () => {
     manager.watch(resumed as unknown as WebSocket, address, channelId);
     expect(statuses(resumed).at(-1)).toMatchObject({
       streamDelayMs: delayMs,
-      streamDelayReadyInMs: delayMs - 6_000,
+      streamDelayReadyInMs: delayMs - 5_000,
     });
     expect(statuses(resumed).at(-1)!.mapName).not.toBe("FutureMap");
-    vi.advanceTimersByTime(delayMs - 6_000);
+    vi.advanceTimersByTime(delayMs - 5_000);
     expect(catchup(resumed).epoch).toBe(1);
-    vi.advanceTimersByTime(6_000);
+    vi.advanceTimersByTime(5_000);
     expect(statuses(resumed).at(-1)).toMatchObject({
       streamDelayMs: 0,
       status: "live",
@@ -1247,7 +1300,7 @@ describe("WatchSession delayed transitions", () => {
     const tail = new Uint8Array([1, 2, 3]);
     connections[0].emit("packet", tail);
     vi.advanceTimersByTime(100);
-    connections[0].setStatus("disconnected", "Server is cycling mission");
+    connections[0].setStatus("disconnected", missionCyclingReason);
     // The recording stopped upstream, but nothing changed at the playhead.
     expect(ws.sent).toHaveLength(0);
 
@@ -1265,7 +1318,7 @@ describe("WatchSession delayed transitions", () => {
       streamDelayMs: delayMs,
     });
 
-    vi.advanceTimersByTime(6_000);
+    vi.advanceTimersByTime(5_000);
     connections[1].setMapName("FutureMap");
     connections[1].setStatus("authenticating");
     connections[1].setStatus("connected");
@@ -1281,7 +1334,7 @@ describe("WatchSession delayed transitions", () => {
       streamDelayMs: delayMs,
     });
 
-    vi.advanceTimersByTime(delayMs - 6_100);
+    vi.advanceTimersByTime(delayMs - 5_100);
     expect(ws.binaryFrames()).toEqual([tail]);
     expect(statuses(ws)).toHaveLength(0);
     vi.advanceTimersByTime(100);
@@ -1290,7 +1343,7 @@ describe("WatchSession delayed transitions", () => {
       streamDelayMs: delayMs,
     });
     expect(statuses(ws).some((s) => s.status === "ended")).toBe(false);
-    vi.advanceTimersByTime(6_000);
+    vi.advanceTimersByTime(5_000);
     expect(statuses(ws).at(-1)).toMatchObject({
       status: "live",
       mapName: "FutureMap",
@@ -1333,15 +1386,15 @@ describe("WatchSession delayed transitions", () => {
     const tail = new Uint8Array([1, 2, 3]);
     connections[0].emit("packet", tail);
     vi.advanceTimersByTime(100);
-    connections[0].setStatus("disconnected", "Server is cycling mission");
-    vi.advanceTimersByTime(6_000);
+    connections[0].setStatus("disconnected", missionCyclingReason);
+    vi.advanceTimersByTime(5_000);
     connections[1].setStatus("connected");
     session.setTournamentMode(false);
     expect(session.streamDelayMs).toBe(delayMs);
     expect(ws.sent).toHaveLength(0);
-    vi.advanceTimersByTime(delayMs - 6_100);
+    vi.advanceTimersByTime(delayMs - 5_100);
     expect(ws.binaryFrames()).toEqual([tail]);
-    vi.advanceTimersByTime(6_100);
+    vi.advanceTimersByTime(5_100);
     expect(session.streamDelayMs).toBe(0);
     expect(statuses(ws).at(-1)).toMatchObject({
       status: "live",
@@ -1363,8 +1416,8 @@ describe("WatchSession delayed transitions", () => {
     connections[0].setStatus("connected");
     session.setTournamentMode(false);
     expect(session.streamDelayMs).toBe(0);
-    connections[0].setStatus("disconnected", "Server is cycling mission");
-    vi.advanceTimersByTime(6_000);
+    connections[0].setStatus("disconnected", missionCyclingReason);
+    vi.advanceTimersByTime(5_000);
     connections[1].setStatus("connected");
     expect(statuses(ws).at(-1)?.streamDelayMs).toBe(0);
     session.setTournamentMode(false);
@@ -1454,8 +1507,8 @@ describe("WatchSession delayed transitions", () => {
     const { manager, connections, ws, session } = start();
     connections[0].emit("packet", new Uint8Array([1, 2, 3]));
     vi.advanceTimersByTime(100);
-    connections[0].setStatus("disconnected", "Server is cycling mission");
-    vi.advanceTimersByTime(6_000);
+    connections[0].setStatus("disconnected", missionCyclingReason);
+    vi.advanceTimersByTime(5_000);
     connections[1].setStatus("connected");
     session.setTournamentMode(false);
     connections[1].emit("packet", new Uint8Array([7, 7, 7]));
@@ -1726,7 +1779,7 @@ describe("WatchSession demo recording", () => {
     connections[0].setStatus("connected");
     firePhase1(session, "Katabatic");
 
-    connections[0].setStatus("disconnected", "Server is cycling mission");
+    connections[0].setStatus("disconnected", missionCyclingReason);
     expect(finalizeSpy).toHaveBeenCalledTimes(1);
     expect(session.recorder).toBeNull();
 

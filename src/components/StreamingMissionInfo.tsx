@@ -99,9 +99,14 @@ export function StreamingMissionInfo({
       : undefined;
 
   // Demo recording attribution pieces, shown on the server line.
-  const hasRecordingInfo = !isLive && !!playerName && !!dateString;
+  const hasRecorder = !isLive && !!playerName;
+  const hasRecordingDate = !isLive && !!(recordedIso || dateString);
 
   const playerCount = useStreamSnapshot((s) => s?.playerRoster?.length);
+  const showPlayerCount =
+    (isLive ? isLiveConnected : dataSource === "demo") &&
+    playerCount != null &&
+    !!onOpenScoreScreen;
 
   // The right-side metadata column, omitted entirely when empty (e.g.
   // spectating and demo playback — the server line carries everything).
@@ -142,9 +147,9 @@ export function StreamingMissionInfo({
             </>
           ) : null}
         </div>
-        {serverName || hasRecordingInfo ? (
+        {serverName || hasRecorder || hasRecordingDate ? (
           <div className={styles.ServerInfo}>
-            {hasRecordingInfo ? (
+            {hasRecorder ? (
               <>
                 <LuUser
                   className={styles.RecorderIcon}
@@ -158,7 +163,7 @@ export function StreamingMissionInfo({
               <>
                 <WifiSignalIcon
                   className={
-                    hasRecordingInfo
+                    hasRecorder
                       ? `${styles.ServerIcon} ${styles.MetaGap}`
                       : styles.ServerIcon
                   }
@@ -176,9 +181,7 @@ export function StreamingMissionInfo({
             {/* Live and demo both count the roster at the CURRENT stream
                 time (the demo's roster tracks joins/drops through playback
                 and seeks — not the sidecar's all-players-ever list). */}
-            {(isLive ? isLiveConnected : dataSource === "demo") &&
-            playerCount != null &&
-            onOpenScoreScreen ? (
+            {showPlayerCount ? (
               <button
                 type="button"
                 className={styles.PlayersButton}
@@ -216,10 +219,14 @@ export function StreamingMissionInfo({
                 {formatDelay(streamDelayMs)} DELAY
               </span>
             ) : null}
-            {hasRecordingInfo ? (
+            {hasRecordingDate ? (
               <>
                 <IoCalendarNumberOutline
-                  className={`${styles.CalendarIcon} ${styles.MetaGap}`}
+                  className={
+                    hasRecorder || serverName || showPlayerCount
+                      ? `${styles.CalendarIcon} ${styles.MetaGap}`
+                      : styles.CalendarIcon
+                  }
                   title="Recorded on"
                   aria-hidden
                 />

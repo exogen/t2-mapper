@@ -549,19 +549,34 @@ function startTimelineScan(
   store.reset();
   store.setScanProgress(0);
   import("./demoTimelineScanner")
-    .then(({ scanDemoTimeline }) =>
-      isCurrentScan()
-        ? scanDemoTimeline(
-            buffer,
-            recording.recorderName,
-            (p) => {
-              if (!isCurrentScan()) return;
-              demoTimelineStore.getState().setScanProgress(p);
-            },
-            abortController.signal,
-          )
-        : null,
-    )
+    .then(({ scanDemoTimeline }) => {
+      if (!isCurrentScan()) return null;
+      const recorderName =
+        recording.streamingPlayback?.connectedPlayerName ??
+        recording.recorderName;
+      recording.recorderName ??= recorderName;
+      return scanDemoTimeline(
+        buffer,
+        recorderName,
+        (p) => {
+          if (!isCurrentScan()) return;
+          demoTimelineStore.getState().setScanProgress(p);
+        },
+        abortController.signal,
+        (name) => {
+          if (!isCurrentScan()) return;
+          const playback = recording.streamingPlayback;
+          recording.serverDisplayName ??= playback?.serverDisplayName ?? name;
+          playback?.setServerNameFallback?.(recording.serverDisplayName);
+          gameEntityStore.getState().setMissionInfo({
+            serverDisplayName:
+              playback?.serverDisplayName ??
+              recording.serverDisplayName ??
+              name,
+          });
+        },
+      );
+    })
     .then((result) => {
       if (!result || !isCurrentScan()) return;
       const s = demoTimelineStore.getState();

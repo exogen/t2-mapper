@@ -10,6 +10,8 @@ const harness = vi.hoisted(() => ({
   handleGhostAlwaysDone: vi.fn(),
   computeAndSendCRC: vi.fn(),
   logs: [] as Record<string, any>[],
+  connections: [] as EventEmitter[],
+  connectStatus: "connected",
 }));
 
 vi.mock("node:http", () => ({
@@ -32,9 +34,13 @@ vi.mock("./gameConnection", async () => {
   const { EventEmitter } = await import("node:events");
   return {
     GameConnection: class extends EventEmitter {
+      constructor() {
+        super();
+        harness.connections.push(this);
+      }
       setMapName() {}
       async connect() {
-        this.emit("status", "connected");
+        this.emit("status", harness.connectStatus);
       }
       disconnect() {
         this.emit("close");
@@ -105,6 +111,8 @@ describe("relay browser input", () => {
     vi.resetModules();
     vi.clearAllMocks();
     harness.logs.length = 0;
+    harness.connections.length = 0;
+    harness.connectStatus = "connected";
     vi.useFakeTimers();
     vi.stubEnv("DEMO_RECORD_ENABLED", "0");
     vi.stubEnv("DEMO_PATROL_ENABLED", "0");
@@ -143,6 +151,60 @@ describe("relay browser input", () => {
     });
     return browser;
   }
+
+  it("logs the player retry policy and whether another attempt is scheduled", async () => {
+    harness.connectStatus = "challenging";
+    await connect("player", "false");
+    const reason =
+      "Server is cycling missions.  Please try to connect in a moment.";
+    for (let retriesUsed = 0; retriesUsed <= 3; retriesUsed++) {
+      harness.connections.at(-1)!.emit("status", "disconnected", reason);
+      const retryScheduled = retriesUsed < 3;
+      expect(harness.logs).toContainEqual(
+        expect.objectContaining({
+          level: 30,
+          address: "192.0.2.1:28000",
+          reason,
+          cooldownMs: 5_000,
+          autoRetry: true,
+          retryScheduled,
+          retriesUsed,
+          maxRetries: 3,
+          cooldownBlocked: false,
+          msg: retryScheduled
+            ? "Player connection will reconnect"
+            : "Player connection will not reconnect",
+        }),
+      );
+      await vi.advanceTimersByTimeAsync(5_000);
+    }
+    expect(harness.connections).toHaveLength(4);
+  });
+
+  it("resets the player retry budget after a successful connection", async () => {
+    harness.connectStatus = "challenging";
+    await connect("player", "false");
+    const reason =
+      "Server is cycling missions.  Please try to connect in a moment.";
+    for (let i = 0; i < 3; i++) {
+      harness.connections.at(-1)!.emit("status", "disconnected", reason);
+      await vi.advanceTimersByTimeAsync(5_000);
+    }
+    expect(harness.connections).toHaveLength(4);
+    harness.connections.at(-1)!.emit("status", "connected");
+    harness.connections
+      .at(-1)!
+      .emit("status", "disconnected", "Connection stalled");
+    expect(harness.logs).toContainEqual(
+      expect.objectContaining({
+        reason: "Connection stalled",
+        retryScheduled: true,
+        retriesUsed: 0,
+      }),
+    );
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(harness.connections).toHaveLength(5);
+  });
 
   it.each(["player", "watcher"] as const)(
     "silently drops every stock chat command from a %s when disabled",

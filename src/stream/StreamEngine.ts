@@ -3,6 +3,10 @@ import { THRUST_BACKWARD, THRUST_DOWN, THRUST_FORWARD } from "./types";
 import { GroundEffectHistory, type GroundActor } from "./groundEffectHistory";
 import { timelineRandom } from "./timelineRandom";
 import {
+  getServerNameFromMessage,
+  isClassicModInfoMessage,
+} from "./serverMessageMetadata";
+import {
   decodeVehicleSteering,
   wheelRotationAt,
   type WheelState,
@@ -3832,6 +3836,15 @@ export abstract class StreamEngine implements StreamingPlayback {
     this._chatGen++;
   }
 
+  protected updateServerDisplayName(name: string): void {
+    if (name) this.serverDisplayName = name;
+  }
+
+  protected updateConnectedPlayerName(name: string, clientId: number): void {
+    this.connectedPlayerName = name;
+    this.connectedClientId = clientId;
+  }
+
   protected handleServerMessage(args: string[]): void {
     if (args.length < 1) return;
     const msgType = this.resolveNetString(args[0]);
@@ -3868,8 +3881,7 @@ export abstract class StreamEngine implements StreamingPlayback {
         // Own-join detection is connection-specific; silent roster sync
         // joins must not identify the connected player.
         if (name && msgFormat.includes("Welcome to Tribes")) {
-          this.connectedPlayerName = name;
-          this.connectedClientId = changes.joinedClientId;
+          this.updateConnectedPlayerName(name, changes.joinedClientId);
           this.onMissionInfoChange?.();
         }
       }
@@ -3900,15 +3912,10 @@ export abstract class StreamEngine implements StreamingPlayback {
       this.matchStarted = true;
     } else if (msgType === "MsgMissionDropInfo" && args.length >= 5) {
       // messageClient(%cl, 'MsgMissionDropInfo', ..., $MissionDisplayName, $MissionTypeDisplayName, $ServerName)
-      const missionDisplayName = stripTaggedStringMarkup(
-        this.resolveNetString(args[2]),
-      );
-      const missionTypeDisplayName = stripTaggedStringMarkup(
-        this.resolveNetString(args[3]),
-      );
-      const serverDisplayName = stripTaggedStringMarkup(
-        this.resolveNetString(args[4]),
-      );
+      const resolvedArgs = args.map((arg) => this.resolveNetString(arg));
+      const missionDisplayName = stripTaggedStringMarkup(resolvedArgs[2]);
+      const missionTypeDisplayName = stripTaggedStringMarkup(resolvedArgs[3]);
+      const serverDisplayName = getServerNameFromMessage(resolvedArgs) ?? "";
       log.info(
         "mission drop info: mission=%s gameType=%s server=%s",
         missionDisplayName,
@@ -3918,24 +3925,34 @@ export abstract class StreamEngine implements StreamingPlayback {
       this.missionDisplayName = missionDisplayName || this.missionDisplayName;
       this.missionTypeDisplayName =
         missionTypeDisplayName || this.missionTypeDisplayName;
-      this.serverDisplayName = serverDisplayName || this.serverDisplayName;
+      this.updateServerDisplayName(serverDisplayName);
       this.onMissionInfoChange?.();
     } else if (msgType === "MsgLoadInfo" && args.length >= 5) {
       // messageClient(%cl, 'MsgLoadInfo', "", $CurrentMission, $MissionDisplayName, $MissionTypeDisplayName)
-      const missionDisplayName = stripTaggedStringMarkup(
-        this.resolveNetString(args[3]),
-      );
-      const missionTypeDisplayName = stripTaggedStringMarkup(
-        this.resolveNetString(args[4]),
-      );
-      log.info(
-        "load info: mission=%s gameType=%s",
-        missionDisplayName,
-        missionTypeDisplayName,
-      );
-      this.missionDisplayName = missionDisplayName || this.missionDisplayName;
-      this.missionTypeDisplayName =
-        missionTypeDisplayName || this.missionTypeDisplayName;
+      const resolvedArgs = args.map((arg) => this.resolveNetString(arg));
+      const missionDisplayName = stripTaggedStringMarkup(resolvedArgs[3]);
+      const missionTypeDisplayName = stripTaggedStringMarkup(resolvedArgs[4]);
+      // Classic's sendModInfoToClient reuses this command for
+      // ($CurrentMission, "Classic  1.1", $Host::GameName), then sends
+      // the regular mission info again seven seconds later. Match its
+      // versioned label (including the two spaces), not arbitrary maps
+      // whose names begin with "Classic".
+      const classicModInfo = isClassicModInfoMessage(resolvedArgs);
+      if (classicModInfo) {
+        this.updateServerDisplayName(
+          getServerNameFromMessage(resolvedArgs) ?? "",
+        );
+        log.info("Classic load info: server=%s", this.serverDisplayName);
+      } else {
+        log.info(
+          "load info: mission=%s gameType=%s",
+          missionDisplayName,
+          missionTypeDisplayName,
+        );
+        this.missionDisplayName = missionDisplayName || this.missionDisplayName;
+        this.missionTypeDisplayName =
+          missionTypeDisplayName || this.missionTypeDisplayName;
+      }
       this.loadInfo.begin();
       this.onMissionInfoChange?.();
     } else if (LoadInfoCollector.handles(msgType)) {

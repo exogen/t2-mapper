@@ -20,6 +20,7 @@ import { assertDemoBlockParsed } from "./demoParseError";
 import { GeneratorTimeline } from "./generatorTimeline";
 import { parseDemoValues } from "./demoStreaming";
 import { isServerMessageCommand } from "../../relay/serverMessageDecode";
+import { getServerNameFromMessage } from "./serverMessageMetadata";
 
 const log = createLogger("demoTimelineScanner");
 
@@ -128,12 +129,14 @@ export async function scanDemoTimeline(
   recorderName: string | null,
   onProgress?: (progress: number) => void,
   signal?: AbortSignal,
+  onServerName?: (name: string) => void,
 ): Promise<TimelineScanResult> {
   return scanDemoTimelineParser(
     new DemoParser(new Uint8Array(buffer)),
     recorderName,
     onProgress,
     signal,
+    onServerName,
   );
 }
 
@@ -143,6 +146,7 @@ export async function scanDemoTimelineParser(
   recorderName: string | null,
   onProgress?: (progress: number) => void,
   signal?: AbortSignal,
+  onServerName?: (name: string) => void,
 ): Promise<TimelineScanResult> {
   signal?.throwIfAborted();
   const { initialBlock } = await parser.load();
@@ -154,10 +158,11 @@ export async function scanDemoTimelineParser(
   }
 
   const registry = parser.getRegistry();
+  const parsedDemoValues = parseDemoValues(initialBlock.demoValues);
   const generators = new GeneratorTimeline(
     initialBlock,
     netStrings,
-    parseDemoValues(initialBlock.demoValues).teamScores,
+    parsedDemoValues.teamScores,
     (classId) => registry.getGhostParser(classId)?.name,
   );
   let recorderRawName = recorderName;
@@ -178,27 +183,32 @@ export async function scanDemoTimelineParser(
       break;
     }
   }
-  // Get initial team from PLAYERLIST in demoValues.
-  if (recorderClientId != null) {
-    const dv = initialBlock.demoValues;
-    // PLAYERLIST starts after MISC (1 value): idx 1 is playerCount.
-    const playerCount =
-      parseInt(dv[1] === "<BLANK>" ? "0" : (dv[1] ?? "0"), 10) || 0;
-    for (let i = 0; i < playerCount; i++) {
-      const fields = (dv[2 + i] ?? "").split("\t");
-      const cid = parseInt(fields[2], 10);
-      if (cid === recorderClientId) {
-        // readplayerinfo may contain only the base name, while messages
-        // use the full tagged name. The client ID identifies the roster row.
-        const name = stripTaggedStringMarkup(fields[0] ?? "").trim();
-        if (name) {
-          normalizedRecorder = name.toLowerCase();
-          recorderRawName = fields[0];
-        }
-        const tid = parseInt(fields[4], 10);
-        if (!isNaN(tid)) recorderTeamId = tid;
+  // Stock recordings lack PJ recorder metadata. An inferred control-player
+  // name identifies a client only when exactly one initial roster row matches.
+  if (recorderClientId == null && normalizedRecorder) {
+    let matchingClientId: number | null = null;
+    for (const [clientId, entry] of parsedDemoValues.playerRoster) {
+      if (entry.name.toLowerCase() !== normalizedRecorder) continue;
+      if (matchingClientId != null) {
+        matchingClientId = null;
         break;
       }
+      matchingClientId = clientId;
+    }
+    recorderClientId = matchingClientId;
+  }
+
+  // Get initial team and full tagged name from the same parsed roster.
+  if (recorderClientId != null) {
+    const entry = parsedDemoValues.playerRoster.get(recorderClientId);
+    if (entry) {
+      // PJ metadata may contain only the base name, while messages use
+      // the full tagged name. The client ID identifies the roster row.
+      if (entry.name) {
+        normalizedRecorder = entry.name.toLowerCase();
+        recorderRawName = entry.rawName;
+      }
+      recorderTeamId = entry.teamId;
     }
   }
 
@@ -218,6 +228,7 @@ export async function scanDemoTimelineParser(
   let seenMatchStart = false;
   let currentMissionName: string | null = null;
   let blockCount = 0;
+  let serverNameFound = false;
   let sliceStart = performance.now();
   const totalBlocks = parser.blockCount;
 
@@ -284,6 +295,21 @@ export async function scanDemoTimelineParser(
 
         const msgType = resolveNetString(args[0], netStrings);
         const msgTypeLower = msgType.toLowerCase();
+        if (
+          onServerName &&
+          !serverNameFound &&
+          (msgType === "MsgLoadInfo" || msgType === "MsgMissionDropInfo")
+        ) {
+          const serverName = getServerNameFromMessage(
+            args.map((arg) => resolveNetString(arg, netStrings)),
+          );
+          if (serverName) {
+            serverNameFound = true;
+            // Publish immediately: a later corrupt block must not discard
+            // independently decoded metadata from the playable prefix.
+            onServerName(serverName);
+          }
+        }
         generators.serverMessage(
           msgType,
           args,
@@ -297,6 +323,31 @@ export async function scanDemoTimelineParser(
             ? { rawName: recorderRawName ?? "", teamId: recorderTeamId }
             : undefined,
         );
+
+        // From-connect recordings can start before the roster exists. Only
+        // the recorder's own welcome message identifies its connection;
+        // silent roster joins and other players' welcomes cannot supply it.
+        if (
+          recorderClientId == null &&
+          normalizedRecorder &&
+          msgTypeLower === "msgclientjoin" &&
+          args.length >= 4
+        ) {
+          const rawName = resolveNetString(args[2], netStrings);
+          const name = stripTaggedStringMarkup(rawName).trim().toLowerCase();
+          const format = stripTaggedStringMarkup(
+            resolveNetString(args[1], netStrings),
+          );
+          const clientId = parseInt(resolveNetString(args[3], netStrings), 10);
+          if (
+            !rawName.startsWith("\x01") &&
+            name === normalizedRecorder &&
+            format.includes("Welcome to Tribes") &&
+            Number.isFinite(clientId)
+          ) {
+            recorderClientId = clientId;
+          }
+        }
 
         // Keep the recorder's message identity current across tag changes
         // and map rejoins, without conflating other players with the same

@@ -749,6 +749,8 @@ export interface StreamingPlayback {
   gameClassName: string | null;
   /** Server name, from MsgMissionDropInfo. */
   serverDisplayName: string | null;
+  /** Remember a server name recovered by an independent demo scan. */
+  setServerNameFallback?(name: string): void;
   /** Server-assigned name of the connected/recording player, from MsgClientJoin. */
   connectedPlayerName: string | null;
   /** Called when any mission info field changes. */

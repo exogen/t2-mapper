@@ -8,6 +8,8 @@ const mocks = vi.hoisted(() => ({
   commentary: vi.fn(),
   warn: vi.fn(),
   readCheckpoints: vi.fn(),
+  scan: vi.fn(),
+  setMissionInfo: vi.fn(),
   current: null as StreamRecording | null,
 }));
 vi.mock("../logger", () => ({
@@ -27,7 +29,12 @@ vi.mock("../state/liveConnectionStore", () => ({
   },
 }));
 vi.mock("../state/gameEntityStore", () => ({
-  gameEntityStore: { getState: () => ({ endStreaming: vi.fn() }) },
+  gameEntityStore: {
+    getState: () => ({
+      endStreaming: vi.fn(),
+      setMissionInfo: mocks.setMissionInfo,
+    }),
+  },
 }));
 vi.mock("../state/commandCircuitStore", () => ({
   commandCircuitStore: { getState: () => ({ deactivate: vi.fn() }) },
@@ -47,11 +54,7 @@ vi.mock("./demoCheckpoints", () => ({
   readDemoCheckpoints: mocks.readCheckpoints,
 }));
 vi.mock("./demoTimelineScanner", () => ({
-  scanDemoTimeline: async () => ({
-    events: [],
-    killEvents: [],
-    observerPerspective: false,
-  }),
+  scanDemoTimeline: mocks.scan,
 }));
 
 import {
@@ -61,13 +64,16 @@ import {
   unloadDemo,
 } from "./demoFileLoader";
 import { demoLoadStore } from "../state/demoLoadStore";
+import { demoTimelineStore } from "../state/demoTimelineStore";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
-  const promise = new Promise<T>((r) => {
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<T>((r, j) => {
     resolve = r;
+    reject = j;
   });
-  return { promise, resolve };
+  return { promise, resolve, reject };
 }
 const buffer = new ArrayBuffer(4);
 const response = () =>
@@ -80,6 +86,11 @@ describe("demo loads during navigation", () => {
     unloadDemo();
     vi.clearAllMocks();
     mocks.readCheckpoints.mockResolvedValue([]);
+    mocks.scan.mockResolvedValue({
+      events: [],
+      killEvents: [],
+      observerPerspective: false,
+    });
     vi.stubEnv("RELAY_URL", "wss://relay.example");
     mocks.install.mockImplementation((recording) => {
       mocks.current = recording;
@@ -89,6 +100,157 @@ describe("demo loads during navigation", () => {
     unloadDemo();
     vi.unstubAllGlobals();
     vi.unstubAllEnvs();
+  });
+
+  it.each([
+    ["progressive playback", null, "First Player", "First Player"],
+    ["known recording metadata", "Header Player", null, "Header Player"],
+  ])(
+    "uses the recorder known from %s when scanning the timeline",
+    async (_source, recordedName, playbackName, expectedName) => {
+      const demo = {
+        ...recording("demo"),
+        recorderName: recordedName,
+        streamingPlayback: { connectedPlayerName: playbackName },
+      } as unknown as StreamRecording;
+      mocks.parse.mockResolvedValueOnce(demo);
+      await loadDemoFile({ arrayBuffer: async () => buffer } as File);
+      await vi.waitFor(() => expect(mocks.scan).toHaveBeenCalledOnce());
+
+      expect(mocks.scan).toHaveBeenCalledWith(
+        buffer,
+        expectedName,
+        expect.any(Function),
+        expect.any(AbortSignal),
+        expect.any(Function),
+      );
+      expect(demo.recorderName).toBe(expectedName);
+    },
+  );
+
+  it("publishes a server discovered later by the current timeline scan", async () => {
+    const setServerNameFallback = vi.fn();
+    const demo = {
+      ...recording("Flyers"),
+      missionName: "Surreal",
+      recordingDate: null,
+      serverDisplayName: null,
+      streamingPlayback: { serverDisplayName: null, setServerNameFallback },
+    } as unknown as StreamRecording;
+    mocks.parse.mockResolvedValueOnce(demo);
+    await loadDemoFile({ arrayBuffer: async () => buffer } as File);
+    await vi.waitFor(() => expect(mocks.scan).toHaveBeenCalledOnce());
+
+    mocks.scan.mock.calls[0][4]("Rapture Competition East");
+
+    expect(demo).toMatchObject({
+      serverDisplayName: "Rapture Competition East",
+      missionName: "Surreal",
+      recorderName: "Flyers",
+      recordingDate: null,
+    });
+    expect(setServerNameFallback).toHaveBeenCalledWith(
+      "Rapture Competition East",
+    );
+    expect(mocks.setMissionInfo).toHaveBeenCalledWith({
+      serverDisplayName: "Rapture Competition East",
+    });
+  });
+
+  it.each([
+    ["header", "Header Server", null, "Header Server", "Header Server"],
+    [
+      "current playback",
+      "Header Server",
+      "Current Server",
+      "Current Server",
+      "Header Server",
+    ],
+    [
+      "current playback without header metadata",
+      null,
+      "First Server",
+      "First Server",
+      "First Server",
+    ],
+  ])(
+    "preserves the known %s server when a later scan finds another",
+    async (_source, headerName, currentName, displayedName, recordedName) => {
+      const playback = {
+        serverDisplayName: currentName,
+        setServerNameFallback: vi.fn((name: string) => {
+          playback.serverDisplayName ??= name;
+        }),
+      };
+      const demo = {
+        ...recording("Flyers"),
+        serverDisplayName: headerName,
+        streamingPlayback: playback,
+      } as unknown as StreamRecording;
+      mocks.parse.mockResolvedValueOnce(demo);
+      await loadDemoFile({ arrayBuffer: async () => buffer } as File);
+      await vi.waitFor(() => expect(mocks.scan).toHaveBeenCalledOnce());
+
+      mocks.scan.mock.calls[0][4]("Later Server");
+
+      expect(demo.serverDisplayName).toBe(recordedName);
+      expect(playback.setServerNameFallback).toHaveBeenCalledWith(recordedName);
+      expect(mocks.setMissionInfo).toHaveBeenCalledWith({
+        serverDisplayName: displayedName,
+      });
+    },
+  );
+
+  it.each(["eject", "next demo"])(
+    "ignores server discoveries from an old scan after %s",
+    async (action) => {
+      const setServerNameFallback = vi.fn();
+      const demo = {
+        ...recording("first"),
+        serverDisplayName: null,
+        streamingPlayback: { setServerNameFallback },
+      } as unknown as StreamRecording;
+      mocks.parse.mockResolvedValueOnce(demo);
+      await loadDemoFile({ arrayBuffer: async () => buffer } as File);
+      await vi.waitFor(() => expect(mocks.scan).toHaveBeenCalledOnce());
+      const scan = mocks.scan.mock.calls[0];
+
+      if (action === "eject") unloadDemo();
+      else {
+        mocks.parse.mockResolvedValueOnce(recording("next"));
+        await loadDemoFile({ arrayBuffer: async () => buffer } as File);
+      }
+      expect(scan[3].aborted).toBe(true);
+      scan[4]("Old Server");
+
+      expect(demo.serverDisplayName).toBeNull();
+      expect(setServerNameFallback).not.toHaveBeenCalled();
+      expect(mocks.setMissionInfo).not.toHaveBeenCalled();
+    },
+  );
+
+  it("keeps a discovered server when the timeline scan later fails", async () => {
+    const scanned = deferred<never>();
+    mocks.scan.mockReturnValueOnce(scanned.promise);
+    const demo = {
+      ...recording("Flyers"),
+      serverDisplayName: null,
+      streamingPlayback: { setServerNameFallback: vi.fn() },
+    } as unknown as StreamRecording;
+    mocks.parse.mockResolvedValueOnce(demo);
+    await loadDemoFile({ arrayBuffer: async () => buffer } as File);
+    await vi.waitFor(() => expect(mocks.scan).toHaveBeenCalledOnce());
+
+    mocks.scan.mock.calls[0][4]("Rapture Competition East");
+    scanned.reject(new Error("Later packet failed"));
+    await vi.waitFor(() =>
+      expect(demoTimelineStore.getState().error).toBe("Later packet failed"),
+    );
+
+    expect(demo.serverDisplayName).toBe("Rapture Competition East");
+    expect(mocks.setMissionInfo).toHaveBeenCalledWith({
+      serverDisplayName: "Rapture Competition East",
+    });
   });
 
   it("imports a paired local sidecar before installing the recording", async () => {

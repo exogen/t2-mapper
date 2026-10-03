@@ -19,7 +19,19 @@ import { BitStream } from "t2-demo-parser";
 import { BitStreamWriter } from "./BitStreamWriter.js";
 import { T2csriAuth, loadCredentials } from "./auth.js";
 import { connLog } from "./logger.js";
-import { GAME_PROTOCOL_VERSION, STALLED_DISCONNECT_REASON } from "./shared.js";
+import {
+  GAME_PROTOCOL_VERSION,
+  normalizeAddress,
+  STALLED_DISCONNECT_REASON,
+} from "./shared.js";
+import {
+  connectionCooldowns,
+  type ConnectionCooldowns,
+} from "./connectionCooldown.js";
+import {
+  connectionErrorReason,
+  getConnectionRetryPolicy,
+} from "./connectionRetryPolicy.js";
 import type { ConnectionStatus } from "./types.js";
 import { computeGameCRC, type CRCDataBlock } from "./crc.js";
 
@@ -157,6 +169,8 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
 
   /** Warrior name to send in the ConnectRequest. */
   private warriorName: string;
+  private cooldowns: ConnectionCooldowns;
+  private _cooldownBlocked = false;
   /** Relay-only lookup; the password is used only by the UDP handshake. */
   #getJoinPassword?: () => Promise<string | undefined>;
   #joinPasswordSent = false;
@@ -171,14 +185,16 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
     options?: {
       warriorName?: string;
       getJoinPassword?: () => Promise<string | undefined>;
+      cooldowns?: ConnectionCooldowns;
     },
   ) {
     super();
-    const [host, portStr] = address.split(":");
+    const [host, portStr] = normalizeAddress(address).split(":");
     this.host = host;
     this.port = parseInt(portStr, 10);
     this.warriorName = options?.warriorName || "";
     this.#getJoinPassword = options?.getJoinPassword;
+    this.cooldowns = options?.cooldowns ?? connectionCooldowns;
 
     // Wire up packet delivery notifications for event retransmission.
     this.protocol.onNotify = (packetSeq, acked) => {
@@ -188,6 +204,11 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
 
   get status(): ConnectionStatus {
     return this._status;
+  }
+
+  /** A local refusal carrying the previous failure reason, not a new failure. */
+  get cooldownBlocked(): boolean {
+    return this._cooldownBlocked;
   }
 
   get connectSequence(): number {
@@ -208,58 +229,112 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
     this.emit("status", status, message);
   }
 
+  private fail(reason: string): void {
+    if (this._status === "disconnected") return;
+    const { cooldownMs, autoRetry } = getConnectionRetryPolicy(reason);
+    connLog.info(
+      {
+        address: this.address,
+        status: this._status,
+        reason,
+        cooldownMs,
+        autoRetry,
+      },
+      "Game connection failed — retry policy selected",
+    );
+    // Record before notifying callers: a status listener may immediately rejoin.
+    this.cooldowns.recordFailure(this.address, reason);
+    this.setStatus("disconnected", reason);
+    this.disconnect();
+  }
+
+  private handleSocketError(error: Error): void {
+    // Outstanding UDP callbacks may finish after a failure or intentional leave.
+    if (this._status === "disconnected") return;
+    this.fail(connectionErrorReason(error));
+    this.emit("error", error);
+  }
+
   /** Initiate connection to the game server. */
   async connect(): Promise<void> {
-    connLog.info(
-      { host: this.host, port: this.port },
-      "Connecting to game server",
-    );
-    const credentials = loadCredentials();
-    if (credentials) {
-      connLog.info("T2csri credentials loaded");
-      this.auth = new T2csriAuth(credentials);
-    } else {
-      connLog.warn("No T2csri credentials — connecting without auth");
+    this._cooldownBlocked = false;
+    const cooldownMessage = this.cooldowns.getMessage(this.address);
+    if (cooldownMessage) {
+      this._cooldownBlocked = true;
+      connLog.info(
+        { address: this.address, reason: cooldownMessage },
+        "Connection blocked by failure cooldown",
+      );
+      // WatchSession attaches its first viewer just after calling connect().
+      await Promise.resolve();
+      this.setStatus("disconnected", cooldownMessage);
+      this.emit("close");
+      return;
     }
-
-    this.socket = dgram.createSocket("udp4");
-    this.socket.on("message", (msg) => this.handleMessage(msg));
-    this.socket.on("error", (err) => {
-      this.emit("error", err);
-      this.disconnect();
-    });
-
     this.setStatus("connecting");
-    let joinPassword: string | undefined;
     try {
-      joinPassword = this.#getJoinPassword
+      connLog.info(
+        { host: this.host, port: this.port },
+        "Connecting to game server",
+      );
+      const credentials = loadCredentials();
+      if (credentials) {
+        connLog.info("T2csri credentials loaded");
+        this.auth = new T2csriAuth(credentials);
+      } else {
+        connLog.warn("No T2csri credentials — connecting without auth");
+      }
+
+      this.socket = dgram.createSocket("udp4");
+      this.socket.on("message", (msg) => this.handleMessage(msg));
+      this.socket.on("error", (err) => this.handleSocketError(err));
+
+      const joinPassword = this.#getJoinPassword
         ? await this.#getJoinPassword()
         : undefined;
+      // A watcher/player may leave while server metadata is being queried.
+      if (this._status === "disconnected") return;
+
+      // Another connection can fail while credentials/metadata are being fetched.
+      const cooldownAfterLookup = this.cooldowns.getMessage(this.address);
+      if (cooldownAfterLookup) {
+        this._cooldownBlocked = true;
+        connLog.info(
+          { address: this.address, reason: cooldownAfterLookup },
+          "Connection blocked by failure cooldown",
+        );
+        this.setStatus("disconnected", cooldownAfterLookup);
+        this.disconnect();
+        return;
+      }
+
+      // Start the handshake
+      this.sendChallengeRequest(joinPassword);
+      if (this.status === "disconnected") return;
+
+      // Set overall connection timeout
+      this.handshakeTimer = setTimeout(() => {
+        if (this._status !== "connected" && this._status !== "authenticating") {
+          connLog.warn(
+            {
+              address: this.address,
+              stage: this.connectRequested ? "connect" : "challenge",
+              passwordSent: this.#joinPasswordSent,
+            },
+            "Connection timed out without acceptance or rejection; password validity is unknown",
+          );
+          this.fail("Connection timed out");
+        }
+      }, CONNECT_TIMEOUT_MS);
     } catch (err) {
-      this.disconnect();
+      // Let a newly created watch session attach its first viewer before failure.
+      await Promise.resolve();
+      if (this._status === "disconnected") throw err;
+      const hadSocket = this.socket !== null;
+      this.fail(`Connect failed: ${connectionErrorReason(err)}`);
+      if (!hadSocket) this.emit("close");
       throw err;
     }
-    // A watcher/player may leave while server metadata is being queried.
-    if (this._status === "disconnected") return;
-
-    // Start the handshake
-    this.sendChallengeRequest(joinPassword);
-
-    // Set overall connection timeout
-    this.handshakeTimer = setTimeout(() => {
-      if (this._status !== "connected" && this._status !== "authenticating") {
-        connLog.warn(
-          {
-            address: this.address,
-            stage: this.connectRequested ? "connect" : "challenge",
-            passwordSent: this.#joinPasswordSent,
-          },
-          "Connection timed out without acceptance or rejection; password validity is unknown",
-        );
-        this.setStatus("disconnected", "Connection timed out");
-        this.disconnect();
-      }
-    }, CONNECT_TIMEOUT_MS);
   }
 
   /** Send the initial ConnectChallengeRequest. */
@@ -283,6 +358,7 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
     // the overall connect timeout bounds the attempts.
     const send = () => {
       this.sendRaw(packet);
+      if (this._status !== "challenging") return;
       this.challengeRetryTimer = setTimeout(() => {
         this.challengeRetryTimer = null;
         if (this._status === "challenging") {
@@ -371,8 +447,7 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
           this.onServerDisconnectConfirmed(reason);
         } else {
           // Server-initiated disconnect.
-          this.setStatus("disconnected", reason);
-          this.disconnect();
+          this.fail(reason);
         }
         break;
       }
@@ -407,8 +482,7 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
       }
     }
     this.logHandshakeReject("challenge", reason);
-    this.setStatus("disconnected", reason);
-    this.disconnect();
+    this.fail(reason);
   }
 
   /** Handle ConnectChallengeResponse. */
@@ -444,11 +518,9 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
     }
 
     if (serverProtocolVersion < GAME_PROTOCOL_VERSION) {
-      this.setStatus(
-        "disconnected",
+      this.fail(
         `Unsupported server protocol ${serverProtocolVersion} (requires ${GAME_PROTOCOL_VERSION})`,
       );
-      this.disconnect();
       return;
     }
     this.serverConnectSequence = serverConnectSequence;
@@ -568,8 +640,7 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
       }
     }
     this.logHandshakeReject("connect", reason);
-    this.setStatus("disconnected", reason);
-    this.disconnect();
+    this.fail(reason);
   }
 
   private logHandshakeReject(
@@ -787,8 +858,7 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
           }, delay);
         } else {
           connLog.error("Auth: challenge verification failed");
-          this.setStatus("disconnected", "Authentication failed");
-          this.disconnect();
+          this.fail("Authentication failed");
         }
         break;
       }
@@ -1139,8 +1209,7 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
    */
   private stall(message: string, context: Record<string, unknown> = {}): void {
     connLog.error({ address: this.address, ...context }, message);
-    this.setStatus("disconnected", STALLED_DISCONNECT_REASON);
-    this.disconnect();
+    this.fail(STALLED_DISCONNECT_REASON);
   }
 
   /** Start the out-of-band ping probe (see field docs). */
@@ -1203,12 +1272,17 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
 
   /** Send raw bytes to the server. */
   private sendRaw(data: Uint8Array): void {
-    if (!this.socket) return;
-    this.socket.send(data, this.port, this.host, (err) => {
-      if (err) {
-        connLog.error({ err, bytes: data.length }, "UDP send failed");
-      }
-    });
+    const socket = this.socket;
+    if (!socket) return;
+    try {
+      socket.send(data, this.port, this.host, (err) => {
+        if (err && this.socket === socket) this.handleSocketError(err);
+      });
+    } catch (err) {
+      this.handleSocketError(
+        err instanceof Error ? err : new Error(String(err)),
+      );
+    }
   }
 
   /** Clean up the socket and emit "close" (idempotent). */

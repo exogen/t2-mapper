@@ -161,6 +161,108 @@ function fixture() {
 }
 
 describe("browser and relay server-message state", () => {
+  it("keeps live server names current across later server messages", () => {
+    const stream = new MessageStream();
+    stream.message([
+      "MsgMissionDropInfo",
+      "",
+      "Surreal",
+      "Capture the Flag",
+      "First Server",
+    ]);
+    expect(stream.serverDisplayName).toBe("First Server");
+
+    stream.message([
+      "MsgLoadInfo",
+      "",
+      "Surreal",
+      "Classic  1.3",
+      "Second Server",
+    ]);
+    expect(stream.serverDisplayName).toBe("Second Server");
+
+    stream.message([
+      "MsgMissionDropInfo",
+      "",
+      "Blue Moon",
+      "Capture the Flag",
+      "Third Server",
+    ]);
+    expect(stream.serverDisplayName).toBe("Third Server");
+
+    stream.message(["MsgMissionDropInfo", "", "Blue Moon", "CTF", ""]);
+    stream.message(["MsgLoadInfo", "", "BlueMoon_x2", "Classic  1.3", ""]);
+    expect(stream.serverDisplayName).toBe("Third Server");
+  });
+
+  it("recovers Classic's server name without replacing mission metadata", () => {
+    const stream = new MessageStream();
+    const onMissionInfoChange = vi.fn();
+    stream.onMissionInfoChange = onMissionInfoChange;
+    stream.message([
+      "MsgLoadInfo",
+      "",
+      "Surreal",
+      "Surreal",
+      "Capture the Flag",
+    ]);
+    stream.setString(10, "Classic  1.3");
+    stream.setString(11, "\x0bRapture Competition East");
+    stream.message(["MsgLoadInfo", "", "Surreal", "\x0110", "\x0111"]);
+
+    expect(stream.missionDisplayName).toBe("Surreal");
+    expect(stream.missionTypeDisplayName).toBe("Capture the Flag");
+    expect(stream.serverDisplayName).toBe("Rapture Competition East");
+    expect(onMissionInfoChange).toHaveBeenCalledTimes(2);
+
+    stream.message([
+      "MsgLoadInfo",
+      "",
+      "Surreal",
+      "Surreal",
+      "Capture the Flag",
+    ]);
+    expect(stream.missionDisplayName).toBe("Surreal");
+    expect(stream.missionTypeDisplayName).toBe("Capture the Flag");
+    expect(stream.serverDisplayName).toBe("Rapture Competition East");
+  });
+
+  it.each(["Classic", "Classic Ruins", "Classic  1.3 Ruins", "Classic 1.3"])(
+    "treats %s as ordinary mission metadata",
+    (missionName) => {
+      const stream = new MessageStream();
+      stream.message([
+        "MsgLoadInfo",
+        "",
+        "classic_map",
+        missionName,
+        "Capture the Flag",
+      ]);
+      expect(stream.missionDisplayName).toBe(missionName);
+      expect(stream.missionTypeDisplayName).toBe("Capture the Flag");
+      expect(stream.serverDisplayName).toBeNull();
+    },
+  );
+
+  it.each([
+    ["MsgMissionDropInfo", "", "Surreal", "Capture the Flag", "\x0199"],
+    ["MsgLoadInfo", "", "Surreal", "Classic  1.3", "\x0199"],
+  ])(
+    "keeps the known server when its new reference is unresolved (%j)",
+    (...args) => {
+      const stream = new MessageStream();
+      stream.message([
+        "MsgMissionDropInfo",
+        "",
+        "Surreal",
+        "Capture the Flag",
+        "Known Server",
+      ]);
+      stream.message(args);
+      expect(stream.serverDisplayName).toBe("Known Server");
+    },
+  );
+
   it.each([
     "ServerMessage",
     "TeamDestroyMessage",
