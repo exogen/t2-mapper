@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>MapGenius – Spectate live Tribes 2 servers</title>
+    <meta name="robots" content="noindex" />
+    <script>
+      // The /watch page merged into the main app: spectating is
+      // ?mode=live, and the old ?mode=command view param is now ?view=cc.
+      // Preserve every other param (name, address, …) and the hash
+      // (command circuit links carry the camera in it).
+      var params = new URLSearchParams(location.search);
+      if (params.get("mode") === "command") {
+        params.set("view", "cc");
+      }
+      params.set("mode", "live");
+      location.replace("/?" + params.toString() + location.hash);
+    </script>
+  </head>
+  <body>
+    <p>
+      This page has moved to
+      <a href="/?mode=live">the main app</a>.
+    </p>
+  </body>
+</html>

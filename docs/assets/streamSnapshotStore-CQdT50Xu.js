@@ -1,0 +1,1 @@
+import{S as e,T as t,x as n}from"./gameEntityStore-yrDxjNog.js";var r=t(),i=e()(()=>({snapshot:null}));function a(e){i.setState({snapshot:e})}function o(e,t){let a=(0,r.c)(2),o;return a[0]===e?o=a[1]:(o=t=>e(t.snapshot),a[0]=e,a[1]=o),n(i,o,t)}export{i as n,o as r,a as t};

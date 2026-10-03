@@ -1,0 +1,1 @@
+import{w as e}from"./StreamEngine-Dl1Sknm6.js";import{S as t}from"./entityClassification-CV31Rlph.js";function n(n){return e(t(n??``)).text.replace(/<[^>]*>/g,``).trim().length>0}function r(e){return t(e).toLowerCase().includes(`match started`)}export{r as n,n as t};

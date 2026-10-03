@@ -1,0 +1,1 @@
+function e(){return{interiors:new Map,staticShapes:new Map,playerShapes:new Map,forceFields:new Map,bvhCache:new WeakMap,terrain:null,failedAssets:new Map,water:new Map,waterTime:0}}var t=e(),n=()=>t;function r(){return n()}function i(e){let t=r().failedAssets,n=Symbol();return t.set(e,n),()=>{t.get(e)===n&&t.delete(e)}}export{i as n,r as t};

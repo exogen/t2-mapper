@@ -1,0 +1,1 @@
+var e={perspective:null,ortho:null};export{e as t};
