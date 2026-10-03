@@ -13,6 +13,18 @@ import type { ServerLoadInfo } from "./types.js";
 export type FlagStatus = "home" | "field" | "held";
 export type ResolveNetString = (s: string) => string;
 
+/** Stock/Classic client wrappers forward these commands to clientCmdServerMessage. */
+export function isServerMessageCommand(command: string): boolean {
+  switch (command.toLowerCase()) {
+    case "servermessage":
+    case "teamdestroymessage":
+    case "teamrepairmessage":
+      return true;
+    default:
+      return false;
+  }
+}
+
 /** A roster entry as these decoders mutate it — the shared subset both
  *  sides' entries structurally satisfy. */
 export interface MutableRosterEntry {

@@ -18,8 +18,8 @@ import { isRelayRecording } from "../stream/demoDate";
  * Demo-playback camera controller — the client-side companion to
  * StreamingController, mounted only during demo playback (the non-live
  * counterpart to SpectatorController). Wires the F key to cycle camera
- * modes (original → free-fly → follow → first-person → original) and a
- * pointer-locked click to cycle players while following, then keeps the
+ * modes (original → free-fly → follow → first-person → original) and
+ * N / Shift-N or pointer-locked clicks to cycle players, then keeps the
  * follow target re-locked onto the player across respawns each frame.
  *
  * StreamingController does the actual camera positioning for every mode;
@@ -36,14 +36,15 @@ export function DemoCameraController() {
   });
   // Tab (pointer locked) flips a player follow between orbit and first person.
   useInputAction("toggleFollowFirstPerson", toggleFollowFirstPerson);
-  // Pointer-locked left/right click cycles the followed player forward/
-  // backward, T2-spectator style (fire and jet triggers).
-  useInputAction("nextPlayer", () => {
-    if (streamPlaybackStore.getState().followEntityId) cycleWatchFollow();
-  });
-  useInputAction("prevPlayer", () => {
-    if (streamPlaybackStore.getState().followEntityId) cycleWatchFollow(-1);
-  });
+  // N / Shift-N and optional captured clicks cycle forward/backward.
+  const cyclePlayer = (direction: 1 | -1) => {
+    if (streamPlaybackStore.getState().followEntityId)
+      cycleWatchFollow(direction);
+  };
+  useInputAction("nextPlayer", () => cyclePlayer(1));
+  useInputAction("prevPlayer", () => cyclePlayer(-1));
+  useInputAction("nextPlayerKey", () => cyclePlayer(1));
+  useInputAction("prevPlayerKey", () => cyclePlayer(-1));
   // ArrowRight/ArrowLeft in the command circuit cycles the followed player
   // (or enters follow from pan), mirroring live mode's observe actions.
   useInputAction("observeNextPlayer", () => {

@@ -496,6 +496,7 @@ export interface DIFRayHit {
 
 /** Collision-only instance; never attached to the render graph. */
 export class DIFCollisionMesh extends Mesh {
+  alarmState = false;
   readonly collision: DIFCollision;
   readonly lightMaps: Texture[];
   constructor(collision: DIFCollision, lightMaps: Texture[]) {

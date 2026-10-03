@@ -5,9 +5,9 @@ import { useDebug, useSettings } from "./SettingsProvider";
 import { LimitFPS } from "./LimitFPS";
 import { registerShadowRenderer } from "./shadowControl";
 
-const DTSAnimatedInstances = lazy(() =>
-  import("./DTSAnimatedInstances").then((module) => ({
-    default: module.DTSAnimatedInstances,
+const DTSRendering = lazy(() =>
+  import("./DTSRendering").then((module) => ({
+    default: module.DTSRendering,
   })),
 );
 
@@ -58,10 +58,7 @@ export function ThreeCanvas({
     >
       <Suspense>
         {children}
-        {new URLSearchParams(window.location.search).get("dtsInstancing") !==
-        "0" ? (
-          <DTSAnimatedInstances />
-        ) : null}
+        <DTSRendering />
       </Suspense>
       {fpsLimitActive ? <LimitFPS /> : null}
     </Canvas>

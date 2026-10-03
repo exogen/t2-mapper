@@ -1,6 +1,7 @@
 import { useStore } from "zustand";
 import { useRecording } from "./usePlayback";
 import { useInputMode } from "./InputContext";
+import { useControls } from "./SettingsProvider";
 import { streamPlaybackStore } from "../state/streamPlaybackStore";
 import { useCameraOwner } from "../state/cameraOwner";
 import { useLiveSelector } from "../state/liveConnectionStore";
@@ -15,6 +16,7 @@ import {
   LIVE_OBSERVER_INPUT,
   FLAG_FOLLOW_INPUT,
   LIVE_FOLLOW_INPUT,
+  FOLLOW_KEYBOARD_INPUT,
   TOUR_MODE_INPUT,
   DIRECTOR_MODE_INPUT,
   COMMAND_CIRCUIT_TOGGLE_INPUT,
@@ -32,6 +34,7 @@ import {
 export function ActiveInputBindings() {
   const recording = useRecording();
   const inputMode = useInputMode();
+  const { clickToCycle } = useControls();
   // Tour > director > command circuit > input, resolved in one place.
   const cameraOwner = useCameraOwner();
   // Watch mode: client-only free-fly camera; server-observer bindings
@@ -102,12 +105,18 @@ export function ActiveInputBindings() {
       {(isLive || isDemo) && !isCommandCircuit && (
         <InputBindings map={LIVE_OBSERVER_INPUT} />
       )}
-      {/* Pointer-locked click cycles the followed player. inputMode is
+      {/* N / Shift-N and optional pointer-locked clicks cycle players. inputMode is
           "follow" during orbit/first-person in both live and demo —
           but not while following a flag (nothing to cycle). */}
-      {(isLive || isDemo) && inputMode === "follow" && !isFlagFollow && (
-        <InputBindings map={LIVE_FOLLOW_INPUT} />
-      )}
+      {(isLive || isDemo) &&
+        inputMode === "follow" &&
+        !isFlagFollow &&
+        !isCommandCircuit && (
+          <>
+            <InputBindings map={FOLLOW_KEYBOARD_INPUT} />
+            {clickToCycle && <InputBindings map={LIVE_FOLLOW_INPUT} />}
+          </>
+        )}
       {/* Number keys orbit the flags — client-side follow (demo and watch
           spectate). The server CAN orbit arbitrary targets
           (serverCmdAttachCommanderCamera), but its sensor-group gate

@@ -21,9 +21,6 @@ import { useSettings } from "./SettingsProvider";
  **/
 const COMMENTARY_DUCK = 0.5;
 
-/** A blocked resume() never settles; a rejected one is nothing to act on. */
-const noop = () => {};
-
 interface AudioContextType {
   audioLoader: AudioLoader | null;
   audioListener: AudioListener | null;
@@ -55,12 +52,9 @@ export function AudioProvider({ children }: { children: ReactNode }) {
     audioListener: null,
   });
 
-  // Latest reconcile of AudioContext state ↔ playback, kept in a ref so the
-  // gesture listeners (registered once) always call the current one.
-  const reconcileRef = useRef<() => void>(() => {});
-  // Whether a user gesture has started this page's AudioContext at least
-  // once (see the unlock below).
-  const unlockedRef = useRef(false);
+  const playbackRef = useRef<ReturnType<typeof connectAudioPlayback> | null>(
+    null,
+  );
 
   useEffect(() => {
     _audioLoader ??= new AudioLoader();
@@ -101,39 +95,14 @@ export function AudioProvider({ children }: { children: ReactNode }) {
         : { audioLoader, audioListener: listener },
     );
 
-    // Autoplay policy: a suspended AudioContext only starts from inside a
-    // user gesture, and that permission is granted ONCE — after a
-    // gesture-driven start, later resumes are allowed on their own.
-    //
-    // So the first gesture has to spend that permission even when nothing
-    // wants to be audible yet. Reconciling alone doesn't: the clicks a
-    // viewer actually makes (pick a demo, press play) land while playback
-    // is still "stopped", so reconcile suspends instead of resuming, and
-    // the one resume that matters comes later — when the auto-director or
-    // the play button starts the stream, outside any gesture — where the
-    // browser refuses it. The refusal is invisible (a blocked resume()
-    // never rejects, it just never settles), and nothing retries, so every
-    // sound stays dead until the viewer happens to click again. That is
-    // the "audio is enabled but silent until I toggle it off and on" bug:
-    // the toggle isn't fixing anything, its clicks are.
-    //
-    // Resuming here and immediately handing back to reconcile leaves the
-    // context in whatever state the transport wants, unlocked either way.
-    const onGesture = () => {
-      const ctx = listener.context;
-      if (!unlockedRef.current && ctx.state === "suspended") {
-        // Only a resume that actually lands counts as the unlock, so a
-        // gesture the browser didn't credit leaves the next one to try.
-        ctx.resume().then(() => {
-          unlockedRef.current = true;
-        }, noop);
-      }
-      reconcileRef.current();
-    };
+    // Unlock even when playback is stopped; the device controller waits for
+    // resume to finish before suspending again. Overlapping opposite requests
+    // can leave Chrome reporting "running" with a frozen audio clock.
+    const onGesture = () => playbackRef.current?.unlock();
     // Also re-assert on visibility changes: a context created while the
     // tab is in the background can come up suspended with no gesture in
     // sight, and coming back to the tab is not itself a gesture.
-    const onVisibility = () => reconcileRef.current();
+    const onVisibility = () => playbackRef.current?.reconcile();
     document.addEventListener("pointerdown", onGesture);
     document.addEventListener("click", onGesture);
     document.addEventListener("keydown", onGesture);
@@ -158,9 +127,9 @@ export function AudioProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!listener || !_playbackFade) return;
     const playback = connectAudioPlayback(listener.context, _playbackFade);
-    reconcileRef.current = playback.reconcile;
+    playbackRef.current = playback;
     return () => {
-      reconcileRef.current = noop;
+      playbackRef.current = null;
       playback.dispose();
     };
   }, [listener]);

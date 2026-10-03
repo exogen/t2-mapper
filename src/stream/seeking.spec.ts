@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  BlockTypeInfo,
   BlockTypeMove,
   BlockTypePacket,
   type DemoParser,
@@ -70,6 +71,117 @@ const command = (funcName: string, ...args: string[]) => ({
 });
 const stats = () => ({ movesRead: 0, captures: 0, restores: 0 });
 
+const cameraPacket = () => ({
+  type: BlockTypePacket,
+  parsed: {
+    ghosts: [],
+    events: [],
+    gameState: {
+      lastMoveAck: 0,
+      controlObjectGhostIndex: -1,
+      controlObjectData: {
+        cameraMode: 0,
+        position: { x: 1, y: 2, z: 3 },
+      },
+    },
+  },
+});
+const info = (cameraFov: number) => ({
+  type: BlockTypeInfo,
+  parsed: { firstPerson: true, cameraFov },
+});
+
+it("applies a final zoom sample without a following movement tick", () => {
+  const stream = demo([cameraPacket(), info(104), move(), info(20.8)]);
+  const first = stream.stepToTime(STREAM_TICK_SEC);
+  expect(first.camera?.fov).toBe(104);
+  const end = stream.stepToTime(STREAM_TICK_SEC * 2);
+  expect(end.exhausted).toBe(true);
+  expect(end.timeSec).toBe(STREAM_TICK_SEC);
+  expect(end.camera?.fov).toBe(20.8);
+  expect(stream.getSnapshot()).toBe(end);
+  // The final sample must not mutate the previously published tick.
+  expect(first.camera?.fov).toBe(104);
+  expect(stream.stepToTime(0).camera?.fov).not.toBe(20.8);
+  expect(stream.stepToTime(STREAM_TICK_SEC * 2).camera?.fov).toBe(20.8);
+});
+
+it("restores recorded zoom exactly through forward and backward checkpoint seeks", () => {
+  const blocks = [
+    cameraPacket(),
+    info(104),
+    ...Array.from({ length: 10 }, move),
+    info(20.8),
+    ...Array.from({ length: DEMO_CHECKPOINT_TICKS }, move),
+    info(10.4),
+    ...Array.from({ length: 20 }, move),
+    info(104),
+    ...Array.from({ length: 20 }, move),
+  ];
+  const calls = stats();
+  const stream = demo(blocks, {}, calls);
+  for (const [tick, fov] of [
+    [DEMO_CHECKPOINT_TICKS + 50, 104],
+    [DEMO_CHECKPOINT_TICKS + 5, 20.8],
+    [15, 20.8],
+    [DEMO_CHECKPOINT_TICKS + 15, 10.4],
+    [5, 104],
+  ]) {
+    const time = tick * STREAM_TICK_SEC;
+    const snapshot = stream.stepToTime(time);
+    expect(snapshot.camera?.fov).toBe(fov);
+    expect(snapshot.camera).toEqual(
+      demo(blocks, { checkpoints: false }).stepToTime(time).camera,
+    );
+  }
+  expect(calls.restores).toBeGreaterThan(0);
+});
+
+it("replays team destruction and repair chat identically across backward checkpoint seeks", () => {
+  const blocks = [
+    ...Array.from({ length: 10 }, move),
+    command(
+      "TeamDestroyMessage",
+      "MsgDestroyed",
+      "%1 destroyed an enemy %2 Generator!",
+      "Alice",
+      "Main",
+    ),
+    ...Array.from({ length: DEMO_CHECKPOINT_TICKS }, move),
+    command(
+      "TeamRepairMessage",
+      "msgGenRepaired",
+      "%1 repaired the %2 Generator!",
+      "Bob",
+      "Main",
+    ),
+    ...Array.from({ length: 20 }, move),
+  ];
+  const stream = demo(blocks);
+  const end = (DEMO_CHECKPOINT_TICKS + 30) * STREAM_TICK_SEC;
+  expect(
+    stream.stepToTime(end).chatMessages.map((message) => message.text),
+  ).toEqual([
+    "Alice destroyed an enemy Main Generator!",
+    "Bob repaired the Main Generator!",
+  ]);
+  for (const time of [
+    (DEMO_CHECKPOINT_TICKS + 5) * STREAM_TICK_SEC,
+    0.1,
+    end,
+  ]) {
+    const reference = demo(blocks, { checkpoints: false }).stepToTime(time);
+    const restored = stream.stepToTime(time);
+    expect(restored.chatMessages).toEqual(reference.chatMessages);
+    // Server-event IDs are deliberately refreshed when restoring a checkpoint.
+    const content = (events: typeof restored.serverEvents) =>
+      events.map(({ timeSec, msgType, args }) => ({ timeSec, msgType, args }));
+    expect(content(restored.serverEvents)).toEqual(
+      content(reference.serverEvents),
+    );
+  }
+});
+
 it("preserves sound event identity and timestamps when the clock rewinds through checkpoints", () => {
   const activation = packet(
     update({ sounds: [{ index: 1, playing: true, profileId: 7 }] }),
@@ -114,9 +226,13 @@ it("preserves sound event identity and timestamps when the clock rewinds through
     expect(slot?.changedAtSec).toBe(changedAtSec);
     const reference = demo(blocks, { checkpoints: false });
     const referenceClock = new PlaybackClock();
-    const expected = referenceClock.step(reference, controls, 0)!;
+    let expected = referenceClock.step(reference, controls, 0);
+    for (let tries = 0; !expected && tries < 100; tries++) {
+      expected = referenceClock.step(reference, controls, 0);
+    }
+    expect(expected).not.toBeNull();
     expect(frame!.snapshot.entities[0].soundSlots).toEqual(
-      expected.snapshot.entities[0].soundSlots,
+      expected!.snapshot.entities[0].soundSlots,
     );
   }
   expect(calls.restores).toBeGreaterThan(0);

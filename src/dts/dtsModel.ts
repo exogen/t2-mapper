@@ -296,6 +296,9 @@ export class DTSAnimationTransform extends Bone {
 export class DTSNode extends Bone {
   readonly isDTSNode = true;
   nodeIndex = -1;
+  override updateMatrixWorld(force?: boolean): void {
+    if (!updateIdentityMatrixWorld(this)) super.updateMatrixWorld(force);
+  }
   override copy(source: this, recursive = true): this {
     super.copy(source, recursive);
     this.nodeIndex = source.nodeIndex;
@@ -314,6 +317,10 @@ export class DTSDetail extends Group {
   }
   override updateMatrixWorld(force?: boolean): void {
     if (this.visible) super.updateMatrixWorld(force);
+  }
+  override raycast(): boolean {
+    // Three's raycaster traverses invisible objects unless told to stop.
+    return this.visible || this.batched;
   }
 }
 
@@ -493,8 +500,40 @@ export class DTSObject extends Group {
     return this;
   }
   override updateMatrixWorld(force?: boolean): void {
-    if (this.visible) super.updateMatrixWorld(force);
+    if (this.visible && !updateIdentityMatrixWorld(this))
+      super.updateMatrixWorld(force);
   }
+}
+/** Most public bones and object controls add no transform of their own. Keep
+ * their world matrices and descendants current without composing/multiplying
+ * identity matrices. Edited controls retain Three's normal update path. */
+function updateIdentityMatrixWorld(object: Object3D): boolean {
+  const { position, quaternion, scale } = object;
+  if (
+    !object.matrixAutoUpdate ||
+    !object.matrixWorldAutoUpdate ||
+    object.pivot !== null ||
+    object.updateMatrix !== Object3D.prototype.updateMatrix ||
+    position.x !== 0 ||
+    position.y !== 0 ||
+    position.z !== 0 ||
+    quaternion.x !== 0 ||
+    quaternion.y !== 0 ||
+    quaternion.z !== 0 ||
+    quaternion.w !== 1 ||
+    scale.x !== 1 ||
+    scale.y !== 1 ||
+    scale.z !== 1
+  )
+    return false;
+  object.matrix.identity();
+  object.matrixWorld.copy(object.parent?.matrixWorld ?? object.matrix);
+  object.matrixWorldNeedsUpdate = false;
+  // matrixAutoUpdate normally propagates force, including identity → edited
+  // → identity transitions and children mounted since the previous update.
+  for (let i = 0, n = object.children.length; i < n; i++)
+    object.children[i].updateMatrixWorld(true);
+  return true;
 }
 const materialStates = new WeakMap<
   Material,
@@ -547,16 +586,37 @@ const cameraPosition = new Vector3(),
   worldScale = new Vector3();
 const billboard = new Matrix4(),
   rotation = new Quaternion();
+const cameraSettings = new WeakMap<
+  Camera,
+  { viewportHeight: number; lodEnabled: boolean }
+>();
+
+/** Supply render settings without visiting every shape or changing overrides. */
+export function setDTSRenderSettings(
+  camera: Camera,
+  viewportHeight: number,
+  lodEnabled = true,
+): void {
+  const settings = cameraSettings.get(camera);
+  if (settings) {
+    settings.viewportHeight = viewportHeight;
+    settings.lodEnabled = lodEnabled;
+  } else cameraSettings.set(camera, { viewportHeight, lodEnabled });
+}
 
 /** Renderer-recognized LOD with Torque's screen-size thresholds. Retains a
  * Object3D scene API, so SkeletonUtils.clone and AnimationMixer work normally. */
 export class DTSShape extends LOD {
   readonly isDTSShape = true;
   data!: DTSShapeData;
-  /** Set to the drawing-buffer height to match Torque pixel-size selection. */
-  viewportHeight = 1024;
+  /** Optional override; the renderer normally supplies the camera's viewport. */
+  viewportHeight: number | null = null;
   /** null selects by screen size; an index explicitly selects any detail. */
   detailLevel: number | null = 0;
+  /** Fraction of distance retained when returning to a more detailed mesh. */
+  lodHysteresis = 0.1;
+  private selectedDetail?: number;
+  private selectionCamera?: Camera;
   /** 1 retains this detail; 0 collapses its authored merge vertices. */
   intraDetailLevel = 1;
   ignoreDetailSize = false;
@@ -570,7 +630,13 @@ export class DTSShape extends LOD {
   private createdBranches = new Set<DTSBranch>();
   private branchesByDetail?: DTSBranch[][];
   private pendingBranches: Set<DTSBranch>[] = [];
-  private meshInitializers = new Set<(mesh: DTSRenderable) => void>();
+  private meshInitializers = new Set<
+    (mesh: DTSRenderable | DTSMeshBatch) => void
+  >();
+  meshBatchFactory?: (detail: number) => readonly DTSMeshBatch[];
+  private createdBatchDetails = new Set<number>();
+  /** Changes when lazy geometry is added, for consumers caching mesh lists. */
+  meshVersion = 0;
   /** Override the free-running IFL clock for deterministic playback. */
   time: number | null = null;
   setImageAnimationTime(
@@ -593,6 +659,9 @@ export class DTSShape extends LOD {
     this.data = source.data;
     this.viewportHeight = source.viewportHeight;
     this.detailLevel = source.detailLevel;
+    this.lodHysteresis = source.lodHysteresis;
+    this.selectedDetail = undefined;
+    this.selectionCamera = undefined;
     this.intraDetailLevel = source.intraDetailLevel;
     this.ignoreDetailSize = source.ignoreDetailSize;
     this.decalFrames = source.decalFrames.slice();
@@ -606,6 +675,9 @@ export class DTSShape extends LOD {
     this.branchesByDetail = source.branchesByDetail;
     this.pendingBranches = [];
     this.meshInitializers = new Set();
+    this.meshBatchFactory = source.meshBatchFactory;
+    this.createdBatchDetails = new Set(source.createdBatchDetails);
+    this.meshVersion = source.meshVersion;
     this.time = source.time;
     this.renderables = undefined;
     this.detailMeshes = undefined;
@@ -616,7 +688,9 @@ export class DTSShape extends LOD {
     return this;
   }
   /** Configure meshes added after cloning, before their first render. */
-  onMeshAdded(initialize: (mesh: DTSRenderable) => void): () => void {
+  onMeshAdded(
+    initialize: (mesh: DTSRenderable | DTSMeshBatch) => void,
+  ): () => void {
     this.meshInitializers.add(initialize);
     return () => this.meshInitializers.delete(initialize);
   }
@@ -660,7 +734,6 @@ export class DTSShape extends LOD {
     const pending = (this.pendingBranches[detail] ??= new Set(
       branches.filter((branch) => !this.createdBranches.has(branch)),
     ));
-    if (!pending.size) return;
     for (const branch of pending) {
       if (
         branch.decalIndex === undefined ||
@@ -668,6 +741,32 @@ export class DTSShape extends LOD {
       )
         this.realizeBranch(branch);
       if (this.createdBranches.has(branch)) pending.delete(branch);
+    }
+    if (this.meshBatchFactory && !this.createdBatchDetails.has(detail)) {
+      this.initializeRuntime();
+      this.createdBatchDetails.add(detail);
+      const meshes = new Map(
+        this.renderables!.map((mesh) => [mesh.binding!, mesh]),
+      );
+      for (const template of this.meshBatchFactory(detail)) {
+        const batch = template.clone();
+        if (
+          batch instanceof DTSRigidMeshBatch &&
+          template instanceof DTSRigidMeshBatch
+        )
+          batch.skeleton = new Skeleton(
+            template.skeleton.bones.map((bone) =>
+              this.getNode((bone as DTSNode).nodeIndex)!,
+            ),
+            template.skeleton.boneInverses,
+          );
+        batch.initialize(meshes, this.shapeObjects!);
+        this.add(batch);
+        this.meshBatches!.push(batch);
+        batch.updateMatrixWorld(true);
+        for (const initialize of this.meshInitializers) initialize(batch);
+        this.meshVersion++;
+      }
     }
   }
   /** Explicit expansion for tools that need to inspect every visual mesh. */
@@ -701,11 +800,7 @@ export class DTSShape extends LOD {
       for (const initialize of this.meshInitializers) initialize(node);
     });
     detail.updateWorldMatrix(true, true, true);
-  }
-  /** Called after asset preparation adds combined meshes to the scene. */
-  invalidateRuntime(): void {
-    this.renderables = undefined;
-    this.activeDetail = undefined;
+    this.meshVersion++;
   }
   private initializeRuntime(): void {
     if (!this.renderables) {
@@ -738,7 +833,15 @@ export class DTSShape extends LOD {
     this.initializeRuntime();
     // Like Three's LOD.update, consume the renderer's current camera matrix.
     cameraPosition.setFromMatrixPosition(camera.matrixWorld);
-    let detail = this.detailLevel ?? this.selectDetail(camera);
+    let detail: number;
+    if (this.detailLevel === null && !this.ignoreDetailSize) {
+      detail = this.selectDetail(camera);
+      this.intraDetailLevel = 1;
+    } else {
+      detail = this.detailLevel ?? 0;
+      this.selectedDetail = undefined;
+      this.selectionCamera = undefined;
+    }
     // Runtime-generated billboard details have no stored triangles. Until a
     // host supplies an impostor, retain the requested source mesh detail.
     if (
@@ -864,6 +967,12 @@ export class DTSShape extends LOD {
     /* Child meshes handle ray intersections. */
   }
   selectDetail(camera: Camera): number {
+    const settings = cameraSettings.get(camera);
+    if (settings?.lodEnabled === false) {
+      this.selectedDetail = undefined;
+      this.selectionCamera = undefined;
+      return 0;
+    }
     cameraPosition.setFromMatrixPosition(camera.matrixWorld);
     dtsVector(this.data.center, 0, center).applyMatrix4(this.matrixWorld);
     const distance = center.distanceTo(cameraPosition);
@@ -872,27 +981,39 @@ export class DTSShape extends LOD {
     const pixels =
       (this.data.radius *
         scale *
-        this.viewportHeight *
+        (this.viewportHeight ?? settings?.viewportHeight ?? 1024) *
         Math.abs(camera.projectionMatrix.elements[5])) /
       (2 * (perspective ? Math.max(distance, 0.001) : 1));
     let smallest = -1;
+    let selected = -1;
     for (let i = 0; i < this.data.details.length; i++) {
       const detail = this.data.details[i];
       if (detail.size < 0) continue;
       smallest = i;
       if (pixels > detail.size) {
-        const upper = i === 0 ? detail.size * 2 : this.data.details[i - 1].size;
-        this.intraDetailLevel = Math.max(
-          0,
-          Math.min(
-            1,
-            (pixels - detail.size) / Math.max(upper - detail.size, 0.001),
-          ),
-        );
-        return i;
+        selected = i;
+        break;
       }
     }
-    return pixels >= this.data.smallestVisibleSize ? smallest : -1;
+    if (selected < 0 && pixels >= this.data.smallestVisibleSize)
+      selected = smallest;
+    const previous =
+      this.selectionCamera === camera ? this.selectedDetail : undefined;
+    const hysteresis = Math.max(0, Math.min(0.99, this.lodHysteresis));
+    if (
+      previous !== undefined &&
+      selected >= 0 &&
+      (previous < 0 || selected < previous)
+    ) {
+      const threshold =
+        previous < 0
+          ? this.data.smallestVisibleSize
+          : this.data.details[previous - 1].size;
+      if (pixels <= threshold / (1 - hysteresis)) selected = previous;
+    }
+    this.selectionCamera = camera;
+    this.selectedDetail = selected;
+    return selected;
   }
   private updateMesh(
     mesh: DTSRenderable,

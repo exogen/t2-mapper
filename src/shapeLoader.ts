@@ -79,6 +79,7 @@ export class ShapeLoader extends DTSLoader {
       url,
       (model) => {
         batchDTSRigidMeshes(model.scene);
+        model.scene.detailLevel = null;
         void loadShapeImageLists(model).catch((error) => {
           console.warn(`Failed to load IFL textures for ${url}`, error);
         });

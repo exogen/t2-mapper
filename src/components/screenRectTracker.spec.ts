@@ -64,6 +64,32 @@ describe("screen rectangle tracking", () => {
     expect(tracker.rect.maxX).toBeCloseTo(60);
   });
 
+  it("discovers lazy DTS detail meshes when the original meshes remain attached", () => {
+    const data = createDTSRigidTestShape();
+    data.meshes = data.meshes.flatMap((mesh) => [mesh, { ...mesh }]);
+    data.objects.forEach((object, index) => {
+      object.startMeshIndex = index * 2;
+      object.numMeshes = 2;
+    });
+    data.details.push({ ...data.details[0], size: 0.1, objectDetail: 1 });
+    const { scene: shape } = buildDTS(data);
+    batchDTSRigidMeshes(shape);
+    const scene = new Scene(),
+      camera = makeCamera();
+    scene.add(shape);
+    scene.updateMatrixWorld(true);
+    shape.update(camera);
+    const tracker = new ScreenRectTracker();
+    tracker.update(shape, scene, camera, 200, 200);
+    const before = { ...tracker.rect },
+      version = tracker.meshesVersion;
+    shape.detailLevel = 1;
+    shape.update(camera);
+    tracker.update(shape, scene, camera, 200, 200);
+    expect(tracker.meshesVersion).toBeGreaterThan(version);
+    expect(tracker.rect).toEqual(before);
+  });
+
   it("refreshes a replaced part even when the first mesh remains attached", () => {
     const scene = new Scene(),
       root = new Group();

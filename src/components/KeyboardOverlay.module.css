@@ -191,7 +191,7 @@
 
 .Key[data-pressed="true"]:not([data-disabled="true"])
   .Input[data-pressed="false"] {
-  color: rgba(255, 255, 255, 0.3);
+  color: rgba(255, 255, 255, 0.25);
 }
 
 .MultiInput .Input {
@@ -211,6 +211,19 @@
 
 .MouseIcon {
   font-size: 19px;
+}
+
+.KeyChord {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.ShiftIcon {
+  scale: 0.9 1;
+  translate: 0 -1px;
+  margin-right: -3px;
+  margin-left: -3px;
 }
 
 /* .Column[data-height="compact"] .Key .MouseIcon {

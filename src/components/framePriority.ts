@@ -25,7 +25,8 @@
  * 5. the director picks the shot and writes its orbit parameters;
  * 6. the stream applies the resulting pose (recorded, orbit, first person);
  * 7. tour, local input and the command circuit override it in turn;
- * 8. the watchdog inspects the final pose.
+ * 8. projection follows the selected camera mode and recorded FOV;
+ * 9. the watchdog inspects the final pose.
  *
  * Everything else stays at the default 0 and therefore reads the camera
  * after the ladder has finished with it: fog, terrain tiling, labels,
@@ -52,6 +53,8 @@ export const FramePriority = {
   CameraInput: -20,
   /** The command circuit's orthographic rig. */
   CameraCommandCircuit: -15,
+  /** Perspective FOV, after all camera-mode changes for this frame. */
+  CameraProjection: -12,
   /** Reads the finished pose to detect discontinuities. */
   CameraWatchdog: -10,
 } as const;

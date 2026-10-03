@@ -10,11 +10,7 @@ import { useCallback, useEffect, useRef } from "react";
 import { useFrame } from "@react-three/fiber";
 import { Quaternion, Vector3 } from "three";
 import type { Group, Object3D } from "three";
-import {
-  DEFAULT_EYE_HEIGHT,
-  STREAM_TICK_SEC,
-  torqueHorizontalFovToThreeVerticalFov,
-} from "../stream/playbackUtils";
+import { DEFAULT_EYE_HEIGHT, STREAM_TICK_SEC } from "../stream/playbackUtils";
 import { useSettings } from "./SettingsProvider";
 import { ParticleEffects } from "./ParticleEffects";
 import { eyePositions } from "./eyePositions";
@@ -297,7 +293,7 @@ export function StreamingController({
   recording: StreamRecording;
 }) {
   const engineStore = useEngineStoreApi();
-  const { fov: userFov, followBehindPlayer } = useSettings();
+  const { followBehindPlayer } = useSettings();
   const lockedOrbitRef = useRef<PlayerOrbitSpring>(null!);
   if (lockedOrbitRef.current == null)
     lockedOrbitRef.current = new PlayerOrbitSpring();
@@ -710,6 +706,7 @@ export function StreamingController({
     const root = streamPlaybackStore.getState().root;
 
     const currentCamera = renderCurrent.camera;
+    streamRenderFrame.camera = currentCamera;
     const previousCamera =
       currentCamera &&
       renderPrev.camera &&
@@ -726,7 +723,7 @@ export function StreamingController({
     // In live mode, InputConsumer owns camera position and rotation
     // (moves are applied locally, matching how the real Tribes 2 client
     // handles its control Camera). StreamingController still handles
-    // entity interpolation, FOV, and orbit target positioning.
+    // entity interpolation and orbit target positioning.
     const isLive = recording.source === "live";
     const controlDelta =
       !isLive && currentCamera?.controlEntityId
@@ -754,7 +751,7 @@ export function StreamingController({
       // In live mode, InputConsumer owns both camera position and rotation
       // (client-side prediction with server reconciliation + interpolateTick,
       // matching Tribes 2's Camera behavior). StreamingController only
-      // handles entity interpolation, FOV, and orbit target positioning.
+      // handles entity interpolation and orbit target positioning.
       // In orbitOverride mode, skip stream position/rotation — the orbit
       // block below will position the camera using user-controlled yaw/pitch.
       if (!isLive && cameraMode !== "orbitOverride") {
@@ -804,25 +801,6 @@ export function StreamingController({
           );
           const rotation = yawPitchToQuaternion(cameraYaw!, cameraPitch!);
           streamCamera.quaternion.set(...rotation);
-        }
-      }
-
-      if (
-        "isPerspectiveCamera" in streamCamera &&
-        (streamCamera as any).isPerspectiveCamera
-      ) {
-        const perspectiveCamera = streamCamera as any;
-        // Use the user's FOV preference, matching how the real client applies
-        // $pref::Player::defaultFov locally. The stream's camera FOV is the
-        // recorder's setting (demos) or server default (live).
-        const fovValue = userFov;
-        const verticalFov = torqueHorizontalFovToThreeVerticalFov(
-          fovValue,
-          perspectiveCamera.aspect,
-        );
-        if (Math.abs(perspectiveCamera.fov - verticalFov) > 0.01) {
-          perspectiveCamera.fov = verticalFov;
-          perspectiveCamera.updateProjectionMatrix();
         }
       }
     }

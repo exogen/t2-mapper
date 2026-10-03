@@ -47,6 +47,7 @@ import { MapCompass } from "./MapCompass";
 import { LoadingIndicator } from "./LoadingIndicator";
 import { StreamDelayNotice } from "./StreamDelayNotice";
 import { CommentarySubtitles } from "./CommentarySubtitles";
+import { DemoSeekFeedback } from "./DemoSeekFeedback";
 import { unloadDemo } from "../stream/demoFileLoader";
 import { isRetryableDisconnect, normalizeAddress } from "../../relay/shared";
 import {
@@ -705,6 +706,7 @@ export function MapInspector() {
                   <TargetFinder key={`${dataSource}:${effectiveMissionName}`} />
                 ) : null}
                 {recording?.source === "demo" ? <CommentarySubtitles /> : null}
+                {recording?.source === "demo" ? <DemoSeekFeedback /> : null}
                 {showDisconnectDialog ? (
                   <WatchErrorDialog
                     // A voluntary leave isn't an error — say so plainly.

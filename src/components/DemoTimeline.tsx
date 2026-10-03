@@ -6,12 +6,12 @@ import type {
   TimelineEvent,
   TimelineEventType,
 } from "../state/demoTimelineStore";
-import { useRecorderName } from "../state/gameEntityStore";
 import { seekToTimelineEvent } from "../state/demoTimelineFollow";
 import { useRecording } from "./usePlayback";
 import { BsPlayFill } from "react-icons/bs";
 import { AiFillStop } from "react-icons/ai";
 import { LuCrosshair, LuUserPen } from "react-icons/lu";
+import { HiMiniBolt, HiMiniBoltSlash } from "react-icons/hi2";
 import { ColoredName } from "./ColoredName";
 import { formatPlayheadTime } from "./demoFormat";
 import { ScanProgress } from "./ScanProgress";
@@ -30,11 +30,11 @@ const EVENT_ICON: Record<TimelineEventType, React.ReactNode> = {
   "flag-return": <PiFlagBannerFill />,
   "flag-cap": <PiFlagBannerFill />,
   "match-start": <BsPlayFill />,
-  // Emitted only by the director's own event scanner, never by the
-  // timeline scan — present to satisfy the exhaustive record.
   "match-countdown": <BsPlayFill />,
   "match-end": <AiFillStop />,
   rename: <LuUserPen />,
+  "generator-offline": <HiMiniBoltSlash />,
+  "generator-online": <HiMiniBolt />,
 };
 
 const WEAPONS_PAST_TENSE: Record<string, string> = {
@@ -42,27 +42,16 @@ const WEAPONS_PAST_TENSE: Record<string, string> = {
   plasma: "plasma rifled",
 };
 
-function renderEventDescription(
-  event: TimelineEvent,
-  recorderName: string | null,
-): React.ReactNode {
+function renderEventDescription(event: TimelineEvent): React.ReactNode {
   // Names as sent, so the official clan tag shows in its yellow; a
   // name without markup renders as plain text.
   const named = (name: string | undefined, raw: string | undefined) =>
     raw ? <ColoredName raw={raw} tagsOnly /> : (name ?? "");
-  // First-person recordings phrase the recorder's own events as "You";
-  // observer recordings (relay auto-capture) name the actual players.
-  const isRecorder = (name: string | undefined) =>
-    !!name &&
-    !!recorderName &&
-    name.toLowerCase() === recorderName.toLowerCase();
   if (event.type === "kill" && event.killer && event.victim) {
     return (
       <>
         <span className={styles.Killer} title={event.killer}>
-          {isRecorder(event.killer)
-            ? "You"
-            : named(event.killer, event.raw?.killer)}
+          {event.isRecorder ? "You" : named(event.killer, event.raw?.killer)}
         </span>{" "}
         <span className={styles.DamageType}>
           {event.weapon
@@ -90,9 +79,8 @@ function renderEventDescription(
               : "killed"}
           </span>{" "}
           <span className={styles.Victim} title={event.victim}>
-            {isRecorder(event.victim)
-              ? "you"
-              : named(event.victim, event.raw?.victim)}
+            {/* The scanner emits deaths only when the recorder is the victim. */}
+            you
           </span>
         </>
       );
@@ -109,9 +97,7 @@ function renderEventDescription(
     if (event.actor) {
       return (
         <>
-          {isRecorder(event.actor)
-            ? "You"
-            : named(event.actor, event.raw?.actor)}{" "}
+          {event.isRecorder ? "You" : named(event.actor, event.raw?.actor)}{" "}
           grabbed {flagLabel}
         </>
       );
@@ -128,9 +114,7 @@ function renderEventDescription(
     if (event.actor) {
       return (
         <>
-          {isRecorder(event.actor)
-            ? "You"
-            : named(event.actor, event.raw?.actor)}{" "}
+          {event.isRecorder ? "You" : named(event.actor, event.raw?.actor)}{" "}
           dropped {flagLabel}
         </>
       );
@@ -147,9 +131,7 @@ function renderEventDescription(
     if (event.actor) {
       return (
         <>
-          {isRecorder(event.actor)
-            ? "You"
-            : named(event.actor, event.raw?.actor)}{" "}
+          {event.isRecorder ? "You" : named(event.actor, event.raw?.actor)}{" "}
           returned {flagLabel}
         </>
       );
@@ -189,6 +171,16 @@ function renderEventDescription(
       </>
     );
   }
+  if (event.type === "generator-offline" || event.type === "generator-online") {
+    if (!event.actor) return event.description;
+    const action = event.type === "generator-online" ? "repaired" : "destroyed";
+    return (
+      <>
+        {named(event.actor, event.raw?.actor)} {action} the{" "}
+        {event.generatorLabel ?? "generator"}
+      </>
+    );
+  }
   if (event.type === "match-start" || event.type === "match-end") {
     return event.description;
   }
@@ -202,14 +194,37 @@ type Filter =
   | "flag-grab"
   | "flag-return"
   | "flag-cap"
+  | "gens"
   | "rename";
+
+interface EventFilter {
+  value: Filter;
+  label: string;
+  types?: TimelineEventType[];
+  playerOnly?: boolean;
+  hideWhenEmpty?: boolean;
+}
+
+const EVENT_FILTERS: EventFilter[] = [
+  { value: "all", label: "All" },
+  { value: "kill", label: "Kills", types: ["kill"], playerOnly: true },
+  { value: "death", label: "Deaths", types: ["death"], playerOnly: true },
+  { value: "flag-grab", label: "Grabs", types: ["flag-grab"] },
+  { value: "flag-return", label: "Returns", types: ["flag-return"] },
+  { value: "flag-cap", label: "Caps", types: ["flag-cap"] },
+  {
+    value: "gens",
+    label: "Gens",
+    types: ["generator-offline", "generator-online"],
+  },
+  { value: "rename", label: "Names", types: ["rename"], hideWhenEmpty: true },
+];
 
 export function DemoTimeline() {
   const events = useDemoTimeline((s) => s.events);
   const scanProgress = useDemoTimeline((s) => s.scanProgress);
   const error = useDemoTimeline((s) => s.error);
   const observerPerspective = useDemoTimeline((s) => s.observerPerspective);
-  const recorderName = useRecorderName();
   const recording = useRecording();
   const { setSidebarOpen } = useSettings();
   // Match the overlay layout and navigation actions in MapInspector.
@@ -224,13 +239,14 @@ export function DemoTimeline() {
   // Observer recordings never emit kills/deaths — their chips are
   // hidden, and a selection guards against the pre-reset render.
   const effectiveFilter =
-    observerPerspective && (filter === "kill" || filter === "death")
-      ? "all"
-      : filter;
+    EVENT_FILTERS.find(
+      ({ value, playerOnly }) =>
+        value === filter && !(observerPerspective && playerOnly),
+    ) ?? EVENT_FILTERS[0];
 
   const filtered =
     events?.filter(
-      (e) => effectiveFilter === "all" || e.type === effectiveFilter,
+      (e) => !effectiveFilter.types || effectiveFilter.types.includes(e.type),
     ) ?? [];
 
   const handleClick = useCallback(
@@ -264,77 +280,39 @@ export function DemoTimeline() {
 
   if (!events) return null;
 
-  const killCount = events.filter((e) => e.type === "kill").length;
-  const deathCount = events.filter((e) => e.type === "death").length;
-  const grabCount = events.filter((e) => e.type === "flag-grab").length;
-  const returnCount = events.filter((e) => e.type === "flag-return").length;
-  const capCount = events.filter((e) => e.type === "flag-cap").length;
-  const renameCount = events.filter((e) => e.type === "rename").length;
+  const eventCounts = new Map<TimelineEventType, number>();
+  for (const event of events) {
+    eventCounts.set(event.type, (eventCounts.get(event.type) ?? 0) + 1);
+  }
 
   return (
     <div className={styles.Root}>
       <div className={styles.Filters}>
-        <button
-          type="button"
-          className={styles.FilterButton}
-          data-active={effectiveFilter === "all"}
-          onClick={() => setFilter("all")}
-        >
-          All ({events.length})
-        </button>
-        {!observerPerspective && (
-          <>
-            <button
-              type="button"
-              className={styles.FilterButton}
-              data-active={effectiveFilter === "kill"}
-              onClick={() => setFilter("kill")}
-            >
-              Kills ({killCount})
-            </button>
-            <button
-              type="button"
-              className={styles.FilterButton}
-              data-active={effectiveFilter === "death"}
-              onClick={() => setFilter("death")}
-            >
-              Deaths ({deathCount})
-            </button>
-          </>
-        )}
-        <button
-          type="button"
-          className={styles.FilterButton}
-          data-active={effectiveFilter === "flag-grab"}
-          onClick={() => setFilter("flag-grab")}
-        >
-          Grabs ({grabCount})
-        </button>
-        <button
-          type="button"
-          className={styles.FilterButton}
-          data-active={effectiveFilter === "flag-return"}
-          onClick={() => setFilter("flag-return")}
-        >
-          Returns ({returnCount})
-        </button>
-        <button
-          type="button"
-          className={styles.FilterButton}
-          data-active={effectiveFilter === "flag-cap"}
-          onClick={() => setFilter("flag-cap")}
-        >
-          Caps ({capCount})
-        </button>
-        {renameCount > 0 && (
-          <button
-            type="button"
-            className={styles.FilterButton}
-            data-active={effectiveFilter === "rename"}
-            onClick={() => setFilter("rename")}
-          >
-            Renames ({renameCount})
-          </button>
+        {EVENT_FILTERS.map(
+          ({ value, label, types, playerOnly, hideWhenEmpty }) => {
+            const count = types
+              ? types.reduce(
+                  (sum, type) => sum + (eventCounts.get(type) ?? 0),
+                  0,
+                )
+              : events.length;
+            if (
+              (observerPerspective && playerOnly) ||
+              (hideWhenEmpty && !count)
+            )
+              return null;
+            return (
+              <button
+                key={value}
+                type="button"
+                className={styles.FilterButton}
+                data-active={effectiveFilter.value === value}
+                onClick={() => setFilter(value)}
+              >
+                {label} ({count})
+              </button>
+            );
+          },
         )}
       </div>
       {filtered.length === 0 ? (
@@ -346,6 +324,7 @@ export function DemoTimeline() {
               key={`${event.timeSec}-${event.type}-${i}`}
               type="button"
               className={styles.EventRow}
+              title={event.description}
               onClick={() => handleClick(event)}
             >
               <span className={styles.EventTime}>
@@ -359,7 +338,7 @@ export function DemoTimeline() {
                 {EVENT_ICON[event.type]}
               </span>
               <span className={styles.EventDescription}>
-                {renderEventDescription(event, recorderName)}
+                {renderEventDescription(event)}
               </span>
             </button>
           ))}

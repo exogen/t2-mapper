@@ -322,6 +322,20 @@ export function registerEngineStubs(
   });
   reg("ForceFieldBare", "isOpen", (this_) => (this_._fieldopen ? 1 : 0));
 
+  // InteriorInstance's native console binding compares against "On".
+  reg("InteriorInstance", "setAlarmMode", (this_, mode) => {
+    const alarm = String(mode).toLowerCase() === "on";
+    if (alarm === (this_._alarmstate === true)) return;
+    const now = performance.now() / 1000;
+    const elapsed =
+      this_._alarmstate === true
+        ? Math.max(0, now - (this_._alarmchangedatsec ?? now))
+        : 0;
+    this_._alarmtimesec = (this_._alarmtimesec ?? 0) + elapsed;
+    this_._alarmchangedatsec = now;
+    runtime.$.setProp(this_, "_alarmstate", alarm);
+  });
+
   // ---- Power / energy (GameBase) ----
 
   reg("GameBase", "isEnabled", () => true);

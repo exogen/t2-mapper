@@ -8,6 +8,7 @@ import {
   type Camera,
 } from "three";
 import { computeDTSSkinBounds } from "../dts/dtsSkinBounds";
+import { DTSShape } from "../dts/dtsModel";
 import type { ScreenRect } from "./screenAnchor";
 
 const _corner = new Vector3();
@@ -19,9 +20,15 @@ export function isAttachedToScene(object: Object3D, scene: Object3D): boolean {
   return node === scene;
 }
 
-function collectMeshes(root: Object3D): Mesh[] {
+function collectMeshes(
+  root: Object3D,
+  shapes: { shape: DTSShape; version: number }[],
+): Mesh[] {
   const meshes: Mesh[] = [];
+  shapes.length = 0;
   root.traverse((child) => {
+    if (child instanceof DTSShape)
+      shapes.push({ shape: child, version: child.meshVersion });
     if (child instanceof Mesh) meshes.push(child);
   });
   return meshes;
@@ -59,6 +66,7 @@ export class ScreenRectTracker {
   meshesVersion = 0;
   private cachedRoot: Object3D | null = null;
   private meshes: Mesh[] = [];
+  private shapes: { shape: DTSShape; version: number }[] = [];
 
   /**
    * Resolves the target from an explicit object or a scene-object name
@@ -95,14 +103,15 @@ export class ScreenRectTracker {
   ): boolean {
     if (
       this.cachedRoot !== root ||
+      this.shapes.some(({ shape, version }) => shape.meshVersion !== version) ||
       this.meshes.some((mesh) => !isAttachedToScene(mesh, scene))
     ) {
       this.cachedRoot = root;
-      this.meshes = collectMeshes(root);
+      this.meshes = collectMeshes(root, this.shapes);
       this.meshesVersion++;
     } else if (this.meshes.length === 0) {
       // The model may still be streaming in; retry until meshes exist.
-      this.meshes = collectMeshes(root);
+      this.meshes = collectMeshes(root, this.shapes);
       if (this.meshes.length > 0) this.meshesVersion++;
     }
 
@@ -183,5 +192,6 @@ export class ScreenRectTracker {
   reset() {
     this.cachedRoot = null;
     this.meshes = [];
+    this.shapes = [];
   }
 }

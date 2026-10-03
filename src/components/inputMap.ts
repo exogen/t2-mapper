@@ -81,6 +81,13 @@ export const FLAG_FOLLOW_INPUT = [
   { name: "followFlag9", keys: ["Digit9"] },
 ] as const satisfies readonly InputMapEntry[];
 
+/** Player cycling in either follow view, with or without pointer lock. */
+export const FOLLOW_KEYBOARD_INPUT = [
+  { name: "nextPlayerKey", keys: ["KeyN"] },
+  { name: "prevPlayerKey", keys: ["Shift-KeyN"] },
+] as const satisfies readonly InputMapEntry[];
+
+/** Separate click actions keep mouse releases independent of held keys. */
 export const LIVE_FOLLOW_INPUT = [
   {
     name: "nextPlayer",
@@ -162,6 +169,7 @@ export type ActionName =
   | (typeof TARGET_FINDER_INPUT)[number]["name"]
   | (typeof FLAG_FOLLOW_INPUT)[number]["name"]
   | (typeof LIVE_FOLLOW_INPUT)[number]["name"]
+  | (typeof FOLLOW_KEYBOARD_INPUT)[number]["name"]
   | (typeof TOUR_MODE_INPUT)[number]["name"]
   | (typeof DIRECTOR_MODE_INPUT)[number]["name"]
   | (typeof COMMAND_CIRCUIT_TOGGLE_INPUT)[number]["name"]

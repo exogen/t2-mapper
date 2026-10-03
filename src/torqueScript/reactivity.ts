@@ -142,6 +142,7 @@ export const DEFAULT_REACTIVE_FIELD_RULES: ReactiveFieldRule[] = [
       "velocity",
       "name",
       "_fieldopen",
+      "_alarmstate",
       "_mountedimagesversion",
     ],
   },

@@ -4,6 +4,7 @@ import { registerEngineStubs } from "./engineMethods";
 import { transpile } from "./index";
 import { TYPE_MASKS } from "./classHierarchy";
 import type { TorqueRuntimeOptions } from "./types";
+import { interiorFromMis } from "../scene/misToScene";
 
 const mockLogger = vi.hoisted(() => ({
   warn: vi.fn(),
@@ -173,6 +174,40 @@ describe("visual state recording", () => {
     expect(field._fieldopen).toBe(true);
     runtime.$.call(field, "close");
     expect(field._fieldopen).toBe(false);
+  });
+
+  it("interior alarm changes notify map mode and preserve elapsed time through power restoration", () => {
+    const { runtime, exec } = makeRuntime();
+    exec('new InteriorInstance(Base) { interiorFile = "sbunk2.dif"; };');
+    const base = runtime.getObjectByName("Base")!;
+    const listener = vi.fn();
+    runtime.subscribeRuntimeEvents(listener);
+    const now = vi.spyOn(performance, "now").mockReturnValue(1000);
+    try {
+      runtime.$.call(base, "setAlarmMode", "On");
+      expect(interiorFromMis(base)).toMatchObject({
+        alarmState: true,
+        alarmChangedAtSec: 1,
+      });
+      expect(listener).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "field.changed",
+          field: "_alarmstate",
+          value: true,
+        }),
+      );
+      listener.mockClear();
+      runtime.$.call(base, "setAlarmMode", "on");
+      expect(listener).not.toHaveBeenCalled();
+      now.mockReturnValue(1500);
+      runtime.$.call(base, "setAlarmMode", "Off");
+      expect(interiorFromMis(base)).toMatchObject({
+        alarmState: false,
+        alarmTimeSec: 0.5,
+      });
+    } finally {
+      now.mockRestore();
+    }
   });
 
   it("getType combines class mask and datablock dynamicType", () => {

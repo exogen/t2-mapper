@@ -80,7 +80,7 @@ export function DemoPlaybackControls() {
     (state) =>
       (state.playback.resumeAfterSeek ?? state.playback.status) === "playing",
   );
-  const { toggle, seek, seekBy, setSpeed } = usePlaybackActions();
+  const { toggle, seek, setSpeed } = usePlaybackActions();
 
   // Spacebar toggles play/pause during demo playback.
   useEffect(() => {
@@ -103,11 +103,6 @@ export function DemoPlaybackControls() {
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [recording, toggle]);
-
-  useInputAction("seekBackward", () => seekBy(-5));
-  useInputAction("seekForward", () => seekBy(5));
-  useInputAction("seekBackwardLarge", () => seekBy(-30));
-  useInputAction("seekForwardLarge", () => seekBy(30));
 
   useInputAction("decreasePlaybackSpeed", () => {
     const idx = SPEED_OPTIONS.indexOf(speed);

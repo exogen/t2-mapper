@@ -24,6 +24,7 @@ import {
   useGameEntityCountByRenderType,
 } from "../state/gameEntityStore";
 import { FaAngleDoubleDown, FaAngleDoubleUp } from "react-icons/fa";
+import { BsShiftFill } from "react-icons/bs";
 import {
   PiMouseLeftClickFill,
   PiMouseRightClickFill,
@@ -65,7 +66,7 @@ function Key({
   action: string | ActionSelector;
   input: ReactNode;
   /** Second action + input on the far side of a right-positioned label,
-   *  making a 3-panel chip (e.g. "[←] Cycle player [→]"). Either action
+   *  making a 3-panel chip (e.g. "[N] Cycle player [⇧ N]"). Either action
    *  highlights the chip; each input panel only highlights for its own. */
   actionAfter?: string | ActionSelector;
   inputAfter?: ReactNode;
@@ -330,15 +331,28 @@ function RotateCameraRow() {
   );
 }
 
-/** Pointer-locked player cycling: right click = previous, left = next. */
+/** Show keyboard cycling unless captured mouse clicks are enabled. */
 function CyclePlayerRow() {
+  const { clickToCycle } = useControls();
+  const isPointerLocked = usePointerLocked();
+  const keyboard = !isPointerLocked || !clickToCycle;
   return (
     <div className={styles.Row}>
       <Key
-        action="prevPlayer"
-        input={<PiMouseRightClickFill className={styles.MouseIcon} />}
-        actionAfter="nextPlayer"
-        inputAfter={<PiMouseLeftClickFill className={styles.MouseIcon} />}
+        action={keyboard ? "nextPlayerKey" : "nextPlayer"}
+        input={
+          keyboard ? "N" : <PiMouseLeftClickFill className={styles.MouseIcon} />
+        }
+        actionAfter={keyboard ? "prevPlayerKey" : "prevPlayer"}
+        inputAfter={
+          keyboard ? (
+            <span className={styles.KeyChord} aria-label="Shift N">
+              <BsShiftFill className={styles.ShiftIcon} aria-hidden="true" />N
+            </span>
+          ) : (
+            <PiMouseRightClickFill className={styles.MouseIcon} />
+          )
+        }
         label="Cycle player"
         labelPosition="right"
         inputSize="auto"
@@ -504,10 +518,10 @@ function CommandCircuitOverlay({
           {showObserverCycle ? (
             <div className={styles.Row}>
               <Key
-                action="observePrevPlayer"
-                input="←"
-                actionAfter="observeNextPlayer"
-                inputAfter="→"
+                action="observeNextPlayer"
+                input="→"
+                actionAfter="observePrevPlayer"
+                inputAfter="←"
                 label="Cycle player"
                 labelPosition="right"
                 inputSize="auto"
@@ -597,14 +611,10 @@ function DemoCameraOverlay() {
         </div>
       ) : null}
       <div className={styles.Column} data-height="compact">
-        {/* One prioritized slot above the F key (columns stay ≤2 rows):
-            player cycling while locked on a player; rotate during an
-            unlocked player follow; otherwise the follow-flag hint, with
-            rotate as its no-flags fallback. */}
-        {following && isPointerLocked && followFlagSlot == null ? (
+        {/* One prioritized slot above F: player cycling while following,
+            otherwise flags, with rotate as the no-flags fallback. */}
+        {following && followFlagSlot == null ? (
           <CyclePlayerRow />
-        ) : following && followFlagSlot == null && !isPointerLocked ? (
-          <RotateCameraRow />
         ) : (
           <FollowFlagKey
             fallback={
@@ -729,16 +739,13 @@ function ObserverOverlay({
         </div>
       </div>
       <div className={styles.Column} data-height="compact">
-        {/* One prioritized slot above the F key (columns stay ≤2 rows):
-            player cycling while locked on a player; rotate during an
-            unlocked player follow; otherwise the follow-flag hint —
+        {/* One prioritized slot above F: player cycling while following;
+            otherwise the follow-flag hint —
             watch spectate only (the sensor-group gate rejects
             AttachCommanderCamera for real observers, so they don't get
             the binding) — with rotate as the no-flags fallback. */}
-        {following && isPointerLocked && followFlagSlot == null ? (
+        {following && followFlagSlot == null ? (
           <CyclePlayerRow />
-        ) : following && followFlagSlot == null && !isPointerLocked ? (
-          <RotateCameraRow />
         ) : mode != null ? (
           <FollowFlagKey
             fallback={!isPointerLocked ? <RotateCameraRow /> : null}

@@ -1,7 +1,7 @@
 import { Quaternion } from "three";
 import type { Camera, Object3D } from "three";
 import type { GameEntity } from "../state/gameEntityTypes";
-import type { StreamEntity } from "./types";
+import type { StreamCamera, StreamEntity } from "./types";
 
 const quatB = new Quaternion(),
   billboardFlip = new Quaternion(0, 1, 0, 0);
@@ -10,7 +10,9 @@ export const streamRenderFrame: {
   current: ReadonlyMap<string, StreamEntity> | null;
   previous: ReadonlyMap<string, StreamEntity> | null;
   interpT: number;
-} = { current: null, previous: null, interpT: 0 };
+  /** Recorded view used by the camera pass; held during incomplete seeks. */
+  camera: StreamCamera | null;
+} = { current: null, previous: null, interpT: 0, camera: null };
 
 /** Player body yaw is relative to its mount, but uses the same render delta
  * and snapshot interpolation as an unmounted entity's rotation. */

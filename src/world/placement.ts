@@ -86,7 +86,9 @@ export interface Placement {
  * reimplement it, a transposed rotation produces geometry that looks
  * plausible and collides wrongly.
  */
-export function interiorPlacement(scene: SceneInteriorInstance): Placement {
+export function interiorPlacement(
+  scene: Pick<SceneInteriorInstance, "transform" | "scale">,
+): Placement {
   return {
     position: torqueToThree(scene.transform.position),
     quaternion: matrixFToQuaternion(scene.transform),

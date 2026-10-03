@@ -29,6 +29,7 @@ import { collisionState } from "../collision/collisionContext";
 // consumer. The demo/live path takes its scene objects from GHOSTS
 // and never interprets a line of TorqueScript.
 import { ghostToSceneObject } from "../scene/ghostToScene";
+import { updateInteriorAlarm } from "../scene/interiorAlarm";
 import { getImageMountOffset } from "./imageMount";
 import type { SceneObject } from "../scene/types";
 import {
@@ -92,7 +93,10 @@ import {
   forceFieldAlpha,
   forceFieldPositionForState,
 } from "./forceFieldState";
-import { LoadInfoCollector } from "../../relay/serverMessageDecode";
+import {
+  isServerMessageCommand,
+  LoadInfoCollector,
+} from "../../relay/serverMessageDecode";
 import {
   applyServerMessageState,
   type ServerMessageRosterEntry,
@@ -1477,7 +1481,7 @@ export abstract class StreamEngine implements StreamingPlayback {
             soundPitch,
           });
         }
-      } else if (funcName === "ServerMessage" && args.length >= 1) {
+      } else if (isServerMessageCommand(funcName) && args.length >= 1) {
         // Some messages carry only a type and no format string (e.g.
         // MsgLoadInfoDone) — dispatch them, but skip the chat path.
         this.pushServerEvent(timeSec, args);
@@ -1619,16 +1623,30 @@ export abstract class StreamEngine implements StreamingPlayback {
       entity,
       this.getTimeSec(),
     );
-    // Only set sceneData on ghost creates — updates contain sparse fields
-    // that would overwrite the initial data with defaults (e.g. empty
-    // interiorFile, identity transform).
+    // Build full scene data on creates; sparse updates would overwrite the
+    // asset/placement with defaults. Merge alarm changes separately below.
     if (ghost.type === "create" && ghost.parsedData) {
       const sceneObj = ghostToSceneObject(
         className,
         ghostIndex,
         ghost.parsedData as ParsedData,
       );
-      if (sceneObj) entity.sceneData = sceneObj;
+      if (sceneObj) {
+        if (sceneObj.className === "InteriorInstance") {
+          sceneObj.alarmChangedAtSec = this.getTimeSec();
+          sceneObj.lightingStartTimeSec = this.getTimeSec();
+        }
+        entity.sceneData = sceneObj;
+      }
+    } else if (
+      entity.sceneData?.className === "InteriorInstance" &&
+      typeof ghost.parsedData?.alarmState === "boolean"
+    ) {
+      entity.sceneData = updateInteriorAlarm(
+        entity.sceneData,
+        ghost.parsedData.alarmState,
+        this.getTimeSec(),
+      );
     }
   }
 

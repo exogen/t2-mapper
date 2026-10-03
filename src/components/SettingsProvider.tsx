@@ -137,6 +137,8 @@ type DebugContextType = {
   setDebugMode: StateSetter<boolean>;
   renderOnDemand: boolean;
   setRenderOnDemand: StateSetter<boolean>;
+  lodEnabled: boolean;
+  setLodEnabled: StateSetter<boolean>;
   showFpsMeter: boolean;
   setShowFpsMeter: StateSetter<boolean>;
 };
@@ -146,6 +148,8 @@ type ControlsContextType = {
   setSpeedMultiplier: StateSetter<number>;
   mouseSensitivity: number;
   setMouseSensitivity: StateSetter<number>;
+  clickToCycle: boolean;
+  setClickToCycle: StateSetter<boolean>;
   touchMode: TouchMode;
   setTouchMode: StateSetter<TouchMode>;
   invertScroll: boolean;
@@ -165,6 +169,7 @@ type PersistedSettings = {
   highQualityFog?: boolean;
   speedMultiplier?: number;
   mouseSensitivity?: number;
+  clickToCycle?: boolean;
   fov?: number;
   audioEnabled?: boolean;
   adjustAudioSpeed?: boolean;
@@ -238,6 +243,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   const [mouseSensitivity, setMouseSensitivity] = useState(
     DEFAULT_MOUSE_SENSITIVITY,
   );
+  const [clickToCycle, setClickToCycle] = useState(true);
   const [fov, setFov] = useState(90);
   const [audioEnabled, setAudioEnabled] = useState(true);
   const [audioVolume, setAudioVolume] = useState(0.75);
@@ -271,6 +277,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   const [ccPlayerNames, setCcPlayerNames] = useState<CcPlayerNames>("always");
   const [followBehindPlayer, setFollowBehindPlayer] = useState(false);
   const [renderOnDemand, setRenderOnDemand] = useState(false);
+  const [lodEnabled, setLodEnabled] = useState(true);
   const [showFpsMeter, setShowFpsMeter] = useState(false);
 
   const [fogEnabledOverride, setFogEnabledOverride] = useFogQueryState();
@@ -385,6 +392,8 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       setDebugMode,
       renderOnDemand,
       setRenderOnDemand,
+      lodEnabled,
+      setLodEnabled,
       showFpsMeter,
       setShowFpsMeter,
     }),
@@ -394,6 +403,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       debugMode,
       setDebugMode,
       renderOnDemand,
+      lodEnabled,
       showFpsMeter,
     ],
   );
@@ -410,6 +420,8 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       setSpeedMultiplier,
       mouseSensitivity,
       setMouseSensitivity,
+      clickToCycle,
+      setClickToCycle,
       touchMode,
       setTouchMode,
       invertScroll,
@@ -423,6 +435,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       speedMultiplier,
       setSpeedMultiplier,
       mouseSensitivity,
+      clickToCycle,
       touchMode,
       setTouchMode,
       invertScroll,
@@ -484,6 +497,9 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     }
     if (savedSettings.fov != null) {
       setFov(savedSettings.fov);
+    }
+    if (typeof savedSettings.clickToCycle === "boolean") {
+      setClickToCycle(savedSettings.clickToCycle);
     }
     if (savedSettings.touchMode != null) {
       setTouchMode(savedSettings.touchMode);
@@ -609,6 +625,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
         highQualityFog,
         speedMultiplier,
         mouseSensitivity,
+        clickToCycle,
         fov,
         audioEnabled,
         animationEnabled,
@@ -657,6 +674,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     highQualityFog,
     speedMultiplier,
     mouseSensitivity,
+    clickToCycle,
     fov,
     audioEnabled,
     animationEnabled,

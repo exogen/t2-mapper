@@ -1,4 +1,12 @@
-import { memo, useMemo, useCallback, useEffect, useId, useRef } from "react";
+import {
+  memo,
+  useMemo,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useId,
+  useRef,
+} from "react";
 import { DebugSuspense } from "./DebugSuspense";
 import { ErrorBoundary } from "react-error-boundary";
 import { createLogger } from "../logger";
@@ -11,8 +19,15 @@ import {
   type Texture,
 } from "three";
 import { useTexture } from "@react-three/drei";
-import { useLoader } from "@react-three/fiber";
+import { useLoader, useThree } from "@react-three/fiber";
 import { type DIFMaterial, type DIFMesh } from "../dif/difLoader";
+import { DIFLighting } from "../dif/difLighting";
+import { DIFCollisionMesh } from "../dif/difCollision";
+import { interiorLightingTime } from "../scene/interiorAlarm";
+import type { SceneInteriorInstance } from "../scene/types";
+import { invalidateInteriorLighting } from "../shapeLighting";
+import { engineStore } from "../state/engineStore";
+import { streamClock } from "../state/streamPlaybackStore";
 import { InteriorLoader } from "../interiorLoader";
 import { textureToUrl, interiorToUrl } from "../loaders";
 import type { InteriorInstanceEntity } from "../state/gameEntityTypes";
@@ -92,7 +107,19 @@ function InteriorTexture({ material }: { material: DIFMaterial }) {
   );
 }
 
-function InteriorMesh({ node }: { node: DIFMesh }) {
+function InteriorMesh({
+  node,
+  material,
+  prepare,
+}: {
+  node: DIFMesh;
+  material: DIFMaterial;
+  prepare?: (material: DIFMaterial) => void;
+}) {
+  const onBeforeRender = useCallback(
+    () => prepare?.(material),
+    [prepare, material],
+  );
   useEffect(() => {
     invalidateShadows();
     return invalidateShadows;
@@ -101,7 +128,8 @@ function InteriorMesh({ node }: { node: DIFMesh }) {
   return (
     <mesh
       geometry={node.geometry}
-      material={node.material}
+      material={material}
+      onBeforeRender={prepare ? onBeforeRender : node.onBeforeRender}
       castShadow
       receiveShadow
     >
@@ -109,7 +137,7 @@ function InteriorMesh({ node }: { node: DIFMesh }) {
         name={`InteriorTexture:${node.material.resourcePath}`}
         fallback={null}
       >
-        <InteriorTexture material={node.material} />
+        <InteriorTexture material={material} />
       </DebugSuspense>
     </mesh>
   );
@@ -119,13 +147,41 @@ export const InteriorModel = memo(function InteriorModel({
   interiorFile,
   ghostIndex,
   isTarget,
+  lightingState,
 }: {
   interiorFile: string;
   ghostIndex?: number;
   isTarget?: boolean;
+  lightingState?: SceneInteriorInstance;
 }) {
   const interior = useInterior(interiorFile);
   const { surfaceMeshes } = interior;
+  const lighting = useMemo(() => new DIFLighting(interior), [interior]);
+  const colliderMeshes = useRef<DIFCollisionMesh[]>([]);
+  const invalidate = useThree((state) => state.invalidate);
+  useEffect(() => () => lighting.dispose(), [lighting]);
+  useLayoutEffect(() => {
+    if (lighting.setAlarmState(lightingState?.alarmState ?? false)) {
+      for (const mesh of colliderMeshes.current)
+        mesh.alarmState = lighting.alarmState;
+      invalidateInteriorLighting();
+    }
+    invalidate();
+  }, [lighting, lightingState, invalidate]);
+  const prepare = useCallback(
+    (material: DIFMaterial) => {
+      const time = engineStore.getState().playback.recording
+        ? streamClock.worldTime
+        : performance.now() / 1000;
+      const lightTime = interiorLightingTime(
+        lightingState,
+        time,
+        lighting.model.interior.hasAlarmState,
+      );
+      lighting.prepare(material, lightTime * 1000);
+    },
+    [lighting, lightingState],
+  );
   const debugContext = useDebug();
   const debugMode = debugContext?.debugMode ?? false;
 
@@ -143,10 +199,13 @@ export const InteriorModel = memo(function InteriorModel({
   useEffect(() => {
     const group = meshGroupRef.current;
     if (!group) return;
-    registerInteriorCollider(
-      collisionId,
-      interiorColliderMeshes(group, interior),
-    );
+    const meshes = interiorColliderMeshes(
+      group,
+      interior,
+    ) as DIFCollisionMesh[];
+    colliderMeshes.current = meshes;
+    for (const mesh of meshes) mesh.alarmState = lighting.alarmState;
+    registerInteriorCollider(collisionId, meshes);
     // This building's shadow on the ground is baked into the terrain
     // lightmap, and that bake reads the interior colliders.
     invalidateTerrainLightmap();
@@ -159,10 +218,11 @@ export const InteriorModel = memo(function InteriorModel({
     return () => {
       unfreezeStaticMatrices(group);
       unregisterInteriorCollider(collisionId);
+      colliderMeshes.current = [];
       invalidateTerrainLightmap();
       setShadowCasterBounds(collisionId, null);
     };
-  }, [collisionId, interior]);
+  }, [collisionId, interior, lighting]);
 
   const debugBounds = useMemo(() => {
     if (!isTarget) return null;
@@ -179,8 +239,20 @@ export const InteriorModel = memo(function InteriorModel({
 
   return (
     <group ref={meshGroupRef} dispose={null}>
-      {surfaceMeshes.map((node) => (
-        <InteriorMesh key={node.name} node={node} />
+      {surfaceMeshes.map((node, i) => (
+        <InteriorMesh
+          key={node.name}
+          node={node}
+          material={lighting.materials[i]}
+          prepare={
+            lighting.hasAnimatedLightMap(
+              lighting.materials[i],
+              lightingState?.alarmState ?? false,
+            )
+              ? prepare
+              : undefined
+          }
+        />
       ))}
       {debugMode ? (
         <FloatingLabel>
@@ -231,12 +303,16 @@ export const InteriorInstance = memo(function InteriorInstance({
   entity: InteriorInstanceEntity;
 }) {
   const scene = entity.interiorData;
+  const { transform, scale: sceneScale } = scene;
   const isTarget = useIsDebugTourTarget(entity.id);
   const {
     position,
     quaternion: q,
     scale,
-  } = useMemo(() => interiorPlacement(scene), [scene]);
+  } = useMemo(
+    () => interiorPlacement({ transform, scale: sceneScale }),
+    [transform, sceneScale],
+  );
 
   // The placement group never moves after the ghost's transform is applied;
   // freeze it (the model's own subtree freezes separately once it loads).
@@ -274,6 +350,7 @@ export const InteriorInstance = memo(function InteriorInstance({
             interiorFile={scene.interiorFile}
             ghostIndex={scene.ghostIndex}
             isTarget={isTarget}
+            lightingState={scene}
           />
         </DebugSuspense>
       </ErrorBoundary>

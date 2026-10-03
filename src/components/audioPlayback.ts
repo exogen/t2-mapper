@@ -1,14 +1,18 @@
 import { engineStore } from "../state/engineStore";
 import { gameEntityStore, isStreamingSource } from "../state/gameEntityStore";
 import type { createAudioPlaybackFade } from "./audioPlaybackFade";
+import { getAudioDevice } from "./audioDevice";
 
-const noop = () => {};
+const connections = new WeakMap<AudioContext, () => void>();
 
 /** Bind the audio device to every transport transition, including short seeks. */
 export function connectAudioPlayback(
   context: AudioContext,
   fade: Pick<ReturnType<typeof createAudioPlaybackFade>, "setPlaying">,
 ) {
+  // A new view can mount before the old view's passive cleanup runs.
+  connections.get(context)?.();
+  const device = getAudioDevice(context);
   let disposed = false;
   const shouldPlay = () => {
     const { recording, status } = engineStore.getState().playback;
@@ -25,13 +29,7 @@ export function connectAudioPlayback(
   const reconcile = () => {
     if (disposed) return;
     updateFade();
-    // Request the latest intent even if ctx.state looks correct: the
-    // opposite operation may still be in flight. Do not serialize behind
-    // resume(), which can remain pending until a browser gesture unlock.
-    const settled = shouldPlay() ? context.resume() : context.suspend();
-    // A statechange event need not expose every intermediate state. Read
-    // fresh transport state when a request settles, never its old intent.
-    settled.then(updateFade, noop);
+    device.setRunning(shouldPlay());
   };
 
   const unsubscribePlayback = engineStore.subscribe((state, previous) => {
@@ -45,21 +43,30 @@ export function connectAudioPlayback(
   const unsubscribeSource = gameEntityStore.subscribe((state, previous) => {
     if (state.dataSource !== previous.dataSource) reconcile();
   });
-  context.addEventListener("statechange", reconcile);
+  // Promise completion matters too: not every intermediate device state
+  // necessarily produces a separate statechange event.
+  const unsubscribeDevice = device.subscribe(updateFade);
   reconcile();
+
+  const dispose = () => {
+    if (disposed) return;
+    disposed = true;
+    connections.delete(context);
+    unsubscribePlayback();
+    unsubscribeSource();
+    unsubscribeDevice();
+    fade.setPlaying(false);
+    device.setRunning(false);
+  };
+  connections.set(context, dispose);
 
   return {
     reconcile,
-    dispose() {
+    unlock() {
       if (disposed) return;
-      disposed = true;
-      unsubscribePlayback();
-      unsubscribeSource();
-      context.removeEventListener("statechange", reconcile);
-      // The listener/graph outlive React. Silence them on teardown, and
-      // prevent old promise completions from touching a later mount's fade.
-      fade.setPlaying(false);
-      context.suspend().catch(noop);
+      reconcile();
+      device.unlock();
     },
+    dispose,
   };
 }

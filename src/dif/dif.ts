@@ -18,6 +18,27 @@ export const DIFSurfaceFlags = {
 type Vec3 = [number, number, number];
 type Plane = [number, number, number, number];
 
+export interface DIFAnimatedLight {
+  nameIndex: number;
+  stateIndex: number;
+  stateCount: number;
+  flags: number;
+  duration: number;
+}
+
+export interface DIFLightState {
+  color: Vec3;
+  activeTime: number;
+  dataIndex: number;
+  dataCount: number;
+}
+
+export interface DIFLightStateData {
+  surfaceIndex: number;
+  mapIndex: number;
+  lightStateIndex: number;
+}
+
 export interface DIFSurface {
   windingStart: number;
   windingCount: number;
@@ -49,6 +70,10 @@ export interface DIFInterior {
   normalLightMapIndices: Uint8Array;
   alarmLightMapIndices: Uint8Array;
   lightMaps: { png: Uint8Array<ArrayBuffer>; keep: boolean }[];
+  animatedLights: DIFAnimatedLight[];
+  lightStates: DIFLightState[];
+  lightStateData: DIFLightStateData[];
+  lightStateBuffer: Uint8Array;
   bspNodes: { planeIndex: number; frontIndex: number; backIndex: number }[];
   solidLeaves: { surfaceStart: number; surfaceCount: number }[];
   solidLeafSurfaces: number[];
@@ -274,7 +299,7 @@ function readInterior(r: DIFReader): DIFInterior {
   const boundingBox = { min: r.vec3(), max: r.vec3() };
   const boundingSphere = { center: r.vec3(), radius: r.f32() };
   const hasAlarmState = r.u8() !== 0;
-  r.u32(); // numLightStateEntries
+  const numLightStateEntries = r.u32();
   const normals = r.array("normals", 12, () => r.vec3());
   const planes = r.array("planes", 6, () => {
     const normalIndex = r.u16();
@@ -368,11 +393,30 @@ function readInterior(r: DIFReader): DIFInterior {
   }
 
   const solidLeafSurfaces = r.array("solid leaf surfaces", 4, () => r.u32());
-  r.skipArray("animated lights", 16);
-  r.skipArray("light states", 13);
-  r.skipArray("light state data", 10);
+  const animatedLights = r.array("animated lights", 16, () => ({
+    nameIndex: r.u32(),
+    stateIndex: r.u32(),
+    stateCount: r.u16(),
+    flags: r.u16(),
+    duration: r.u32(),
+  }));
+  const lightStates = r.array("light states", 13, () => ({
+    color: [r.u8(), r.u8(), r.u8()] as Vec3,
+    activeTime: r.u32(),
+    dataIndex: r.u32(),
+    dataCount: r.u16(),
+  }));
+  const lightStateData = r.array("light state data", 10, () => ({
+    surfaceIndex: r.u32(),
+    mapIndex: r.u32(),
+    lightStateIndex: r.u16(),
+  }));
   const stateBufferSize = r.count("light state buffer", 1);
   r.u32(); // flags
+  const lightStateBuffer = r.bytes.subarray(
+    r.offset,
+    r.offset + stateBufferSize,
+  );
   r.skip(stateBufferSize);
   r.skipArray("light names", 1);
   const mirrorCount = r.count("mirror subobjects", 36);
@@ -413,6 +457,23 @@ function readInterior(r: DIFReader): DIFInterior {
       index & 0x80000000 ? nullSurfaces.length : surfaces.length,
       "collision surface",
     );
+  for (const light of animatedLights) {
+    range(light.stateIndex, light.stateCount, lightStates.length);
+    if (!light.stateCount) r.fail("animated light has no states");
+  }
+  for (const state of lightStates)
+    range(state.dataIndex, state.dataCount, lightStateData.length);
+  for (const data of lightStateData) {
+    r.index(data.surfaceIndex, surfaces.length, "light surface");
+    r.index(data.lightStateIndex, numLightStateEntries, "light state entry");
+    const surface = surfaces[data.surfaceIndex];
+    if (data.mapIndex !== 0xffffffff)
+      range(
+        data.mapIndex,
+        surface.mapSize[0] * surface.mapSize[1],
+        stateBufferSize,
+      );
+  }
   for (const surface of nullSurfaces) {
     range(surface.windingStart, surface.windingCount, windings.length);
     r.index(surface.planeIndex & 0x7fff, planes.length, "null surface plane");
@@ -472,6 +533,10 @@ function readInterior(r: DIFReader): DIFInterior {
     normalLightMapIndices,
     alarmLightMapIndices,
     lightMaps,
+    animatedLights,
+    lightStates,
+    lightStateData,
+    lightStateBuffer,
     bspNodes,
     solidLeaves,
     solidLeafSurfaces,

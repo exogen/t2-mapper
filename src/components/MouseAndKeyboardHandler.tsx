@@ -104,6 +104,12 @@ export function MouseAndKeyboardHandler() {
   useInputAction("prevPlayer", () => {
     triggerJet.current = true;
   });
+  useInputAction("nextPlayerKey", () => {
+    triggerFire.current = true;
+  });
+  useInputAction("prevPlayerKey", () => {
+    triggerJet.current = true;
+  });
 
   // Next/prev observed player from the live command circuit. In follow
   // mode these are the real client's fire/jet triggers (camera.cs

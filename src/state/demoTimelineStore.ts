@@ -11,6 +11,8 @@ export type TimelineEventType =
   | "flag-drop"
   | "flag-return"
   | "flag-cap"
+  | "generator-offline"
+  | "generator-online"
   /** A player changed their name mid-match (MsgClientNameChanged) —
    *  a clan tag added or dropped on the community servers that allow
    *  it, occasionally a whole new name. */
@@ -23,7 +25,10 @@ export interface TimelineEvent {
   timeSec: number;
   type: TimelineEventType;
   description: string;
-  /** For flag events: whether the recorder's team or enemy team was involved. */
+  /** The navigation target is the recorder (deaths target the killer if known).
+   *  Resolved at scan time so renames during the seek lead-in don't matter. */
+  isRecorder?: boolean;
+  /** Whether the recorder's team or enemy team was involved. */
   teamAffinity?: TeamAffinity;
   /** For kill/death events: name of the killer. */
   killer?: string;
@@ -34,10 +39,18 @@ export interface TimelineEvent {
   /** For flag-cap events: name of the player who captured. */
   capturer?: string;
   /**
-   * For flag-grab/flag-drop/flag-return events: the player responsible
-   * (unset for auto-returns and recorder-perspective events).
+   * For flag and generator events: the player responsible, when known.
+   * Generator offline credit uses the server's destruction scorer, or falls
+   * back to the most recent nearby shooter at the offline transition.
+   * Each repairer with a continuous beam gets a separate online event.
    */
   actor?: string;
+  /** Generator destruction inferred from a nearby projectile, not server credit. */
+  actorInferred?: boolean;
+  /** Generator's team label, e.g. "Storm generator". */
+  generatorLabel?: string;
+  /** Event-time position in Torque coordinates, independent of ghost reuse. */
+  generator?: { position: [number, number, number]; dataBlockId: number };
   /** For flag events: name of the flag's team. */
   flagTeamName?: string;
   /** For rename events: the name before the change (`actor` is the

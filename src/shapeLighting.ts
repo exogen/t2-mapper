@@ -1,3 +1,4 @@
+import { texturePixels } from "./texturePixels";
 import { observeShapeMeshes } from "./dts/dtsScene";
 /**
  * How Tribes2.exe lights shapes (players, items, stations, vehicles):
@@ -153,36 +154,11 @@ function sampleTerrainLighting(x: number, y: number, out: Color): boolean {
 
 // ── Interior lightmap samples ──
 
-interface Pixels {
-  data: Uint8ClampedArray;
-  width: number;
-  height: number;
-}
+let interiorLightingVersion = 0;
 
-const pixelCache = new WeakMap<Texture, Pixels | null>();
-
-function texturePixels(texture: Texture): Pixels | null {
-  const cached = pixelCache.get(texture);
-  if (cached !== undefined) return cached;
-  const image = texture.image as
-    { width: number; height: number; data?: Uint8ClampedArray } | undefined;
-  let pixels: Pixels | null = null;
-  if (image && image.width > 0 && image.height > 0) {
-    if (image.data) {
-      pixels = { data: image.data, width: image.width, height: image.height };
-    } else if (typeof OffscreenCanvas !== "undefined") {
-      const canvas = new OffscreenCanvas(image.width, image.height);
-      const ctx = canvas.getContext("2d");
-      if (ctx) {
-        ctx.drawImage(image as unknown as CanvasImageSource, 0, 0);
-        const { data } = ctx.getImageData(0, 0, image.width, image.height);
-        pixels = { data, width: image.width, height: image.height };
-      }
-    }
-  }
-  // An image that has not arrived yet is retried; a failed readback is not.
-  if (image && image.width > 0) pixelCache.set(texture, pixels);
-  return pixels;
+/** Power transitions also change lighting on stationary shapes. */
+export function invalidateInteriorLighting(): void {
+  interiorLightingVersion++;
 }
 
 function faceMaterialIndex(
@@ -270,7 +246,11 @@ export function sampleInteriorLightmap(
     const surface = interior.surfaces[hit.faceIndex];
     if (!surface) return false;
     lightmap =
-      mesh.lightMaps[interior.normalLightMapIndices[hit.faceIndex]] ?? null;
+      mesh.lightMaps[
+        (mesh.alarmState && interior.hasAlarmState
+          ? interior.alarmLightMapIndices
+          : interior.normalLightMapIndices)[hit.faceIndex]
+      ] ?? null;
     const [s, t] = surface.lightMapTexGen;
     const { x: y, y: z, z: x } = hit.localPoint;
     u = s[0] * x + s[1] * y + s[2] * z + s[3];
@@ -422,6 +402,7 @@ export interface ShapeLightState {
   lastProbe: Vector3 | null;
   /** The world the last probe saw: interior and terrain versions. */
   lastInteriors: number;
+  lastInteriorLighting: number;
   lastTerrain: number;
 }
 
@@ -461,6 +442,7 @@ export function createShapeLightState(
     slewing: false,
     lastProbe: null,
     lastInteriors: -1,
+    lastInteriorLighting: -1,
     lastTerrain: -1,
   };
 }
@@ -489,6 +471,7 @@ export function updateShapeLighting(
   if (
     moved ||
     interiors !== state.lastInteriors ||
+    interiorLightingVersion !== state.lastInteriorLighting ||
     terrainLightmapVersion !== state.lastTerrain
   ) {
     _torque[0] = _world.z;
@@ -497,6 +480,7 @@ export function updateShapeLighting(
     probeShapeLighting(_torque, state.target);
     state.lastProbe = (state.lastProbe ?? new Vector3()).copy(_world);
     state.lastInteriors = interiors;
+    state.lastInteriorLighting = interiorLightingVersion;
     state.lastTerrain = terrainLightmapVersion;
   }
   const { uniforms, target } = state;

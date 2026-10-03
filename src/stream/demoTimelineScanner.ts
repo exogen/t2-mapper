@@ -1,8 +1,8 @@
 import { BlockTypeMove, BlockTypePacket, DemoParser } from "t2-demo-parser";
 import type {
-  ParsedData,
   NetStringEventData,
   RemoteCommandEventData,
+  PacketData,
 } from "t2-demo-parser";
 import {
   TICK_DURATION_MS,
@@ -17,6 +17,9 @@ import { GhostMessage } from "./entityClassification";
 import { createLogger } from "../logger";
 import { hasGameOverAnnouncement, isRealMatchStart } from "./matchEvents";
 import { assertDemoBlockParsed } from "./demoParseError";
+import { GeneratorTimeline } from "./generatorTimeline";
+import { parseDemoValues } from "./demoStreaming";
+import { isServerMessageCommand } from "../../relay/serverMessageDecode";
 
 const log = createLogger("demoTimelineScanner");
 
@@ -118,7 +121,7 @@ export interface TimelineScanResult {
 
 /**
  * Scan an entire demo recording for timeline events (kills, flag caps,
- * match start). Yields to the event loop periodically to stay responsive.
+ * generator state, match start). Yields periodically to stay responsive.
  */
 export async function scanDemoTimeline(
   buffer: ArrayBuffer,
@@ -151,6 +154,13 @@ export async function scanDemoTimelineParser(
   }
 
   const registry = parser.getRegistry();
+  const generators = new GeneratorTimeline(
+    initialBlock,
+    netStrings,
+    parseDemoValues(initialBlock.demoValues).teamScores,
+    (classId) => registry.getGhostParser(classId)?.name,
+  );
+  let recorderRawName = recorderName;
   let normalizedRecorder = recorderName
     ? stripTaggedStringMarkup(recorderName).trim().toLowerCase()
     : null;
@@ -181,7 +191,10 @@ export async function scanDemoTimelineParser(
         // readplayerinfo may contain only the base name, while messages
         // use the full tagged name. The client ID identifies the roster row.
         const name = stripTaggedStringMarkup(fields[0] ?? "").trim();
-        if (name) normalizedRecorder = name.toLowerCase();
+        if (name) {
+          normalizedRecorder = name.toLowerCase();
+          recorderRawName = fields[0];
+        }
         const tid = parseInt(fields[4], 10);
         if (!isNaN(tid)) recorderTeamId = tid;
         break;
@@ -195,6 +208,9 @@ export async function scanDemoTimelineParser(
   let recorderEverOnTeam = recorderTeamId != null && recorderTeamId > 0;
 
   const events: TimelineEvent[] = [];
+  // Generator credit may arrive later; match against the recorder's name
+  // when the transition happened, not their final name after a rename/rejoin.
+  const generatorRecorders = new Map<TimelineEvent, string | null>();
   const killEvents: TimelineEvent[] = [];
   /** Forced-start/vote countdowns, used only if no kickoff ever lands. */
   const forcedStarts: TimelineEvent[] = [];
@@ -220,20 +236,18 @@ export async function scanDemoTimelineParser(
 
     if (block.type !== BlockTypePacket || !block.parsed) continue;
 
-    const packet = block.parsed as {
-      events?: Array<{
-        classId: number;
-        parsedData?: ParsedData;
-      }>;
-    };
-    if (!packet.events) continue;
+    const packet = block.parsed as Partial<
+      Pick<PacketData, "events" | "ghosts">
+    >;
 
     const timeSec = moveTicks * (TICK_DURATION_MS / 1000);
 
-    for (const evt of packet.events) {
+    for (const evt of packet.events ?? []) {
       try {
         if (!evt.parsedData) continue;
         const type = evt.parsedData.type as string | undefined;
+        const eventName = registry.getEventParser(evt.classId)?.name;
+        generators.event(evt.parsedData, type ?? eventName, timeSec);
         if (
           type === "GhostingMessageEvent" &&
           evt.parsedData.message === GhostMessage.EndGhosting
@@ -254,7 +268,6 @@ export async function scanDemoTimelineParser(
         }
 
         // Also check the registry name for RemoteCommandEvent identification.
-        const eventName = registry.getEventParser(evt.classId)?.name;
         if (
           type !== "RemoteCommandEvent" &&
           eventName !== "RemoteCommandEvent"
@@ -264,13 +277,26 @@ export async function scanDemoTimelineParser(
 
         const rcData = evt.parsedData as RemoteCommandEventData;
         const funcName = resolveNetString(rcData.funcName, netStrings);
-        if (funcName !== "ServerMessage") continue;
+        if (!isServerMessageCommand(funcName)) continue;
 
         const args = rcData.args;
         if (!args || args.length < 2) continue;
 
         const msgType = resolveNetString(args[0], netStrings);
         const msgTypeLower = msgType.toLowerCase();
+        generators.serverMessage(
+          msgType,
+          args,
+          timeSec,
+          funcName.toLowerCase() === "teamdestroymessage"
+            ? recorderTeamId
+            : null,
+          recorderClientId != null &&
+            recorderTeamId != null &&
+            recorderTeamId > 0
+            ? { rawName: recorderRawName ?? "", teamId: recorderTeamId }
+            : undefined,
+        );
 
         // Keep the recorder's message identity current across tag changes
         // and map rejoins, without conflating other players with the same
@@ -290,10 +316,12 @@ export async function scanDemoTimelineParser(
               recorderClientId &&
             identity[1]
           ) {
-            const name = stripTaggedStringMarkup(
-              resolveNetString(identity[1], netStrings),
-            ).trim();
-            if (name) normalizedRecorder = name.toLowerCase();
+            const rawName = resolveNetString(identity[1], netStrings);
+            const name = stripTaggedStringMarkup(rawName).trim();
+            if (name) {
+              normalizedRecorder = name.toLowerCase();
+              recorderRawName = rawName;
+            }
           }
         }
 
@@ -360,12 +388,14 @@ export async function scanDemoTimelineParser(
               timeSec,
               type: "match-start",
               description: `Match started${suffix}`,
+              isRecorder: false,
             });
           } else if (!seenMatchStart && isCountdownForced(body)) {
             forcedStarts.push({
               timeSec,
               type: "match-countdown",
               description: `Countdown started${suffix}`,
+              isRecorder: false,
             });
           }
           continue;
@@ -381,6 +411,7 @@ export async function scanDemoTimelineParser(
             timeSec,
             type: "match-end",
             description: `Match ended${suffix}`,
+            isRecorder: false,
           });
           // Reset for the next match in the same demo.
           seenMatchStart = false;
@@ -407,6 +438,9 @@ export async function scanDemoTimelineParser(
               timeSec,
               type: "rename",
               description: `${previousName || "A player"} is now ${newName}`,
+              isRecorder:
+                parseInt(resolveNetString(args[4], netStrings), 10) ===
+                recorderClientId,
               teamAffinity: "neutral",
               actor: newName,
               previousName: previousName || undefined,
@@ -432,6 +466,7 @@ export async function scanDemoTimelineParser(
               timeSec,
               type: "flag-grab",
               description: `${playerName} grabbed the ${flagTeamName ?? "enemy"} flag`,
+              isRecorder: playerName.toLowerCase() === normalizedRecorder,
               teamAffinity: "neutral",
               actor: playerName || undefined,
               flagTeamName: flagTeamName || undefined,
@@ -446,6 +481,7 @@ export async function scanDemoTimelineParser(
               timeSec,
               type: "flag-grab",
               description: `You took the ${flagTeamName ?? "enemy"} flag`,
+              isRecorder: true,
               teamAffinity: "friendly",
               flagTeamName: flagTeamName || undefined,
             });
@@ -482,6 +518,7 @@ export async function scanDemoTimelineParser(
               description: actor
                 ? `${actor} dropped ${flagLabel}`
                 : `${flagLabel.replace(/^the/, "The")} was dropped`,
+              isRecorder: actor?.toLowerCase() === normalizedRecorder,
               teamAffinity: "neutral",
               actor,
               flagTeamName,
@@ -505,6 +542,7 @@ export async function scanDemoTimelineParser(
               timeSec,
               type: "flag-drop",
               description: `You dropped the ${flagTeamName ?? "enemy"} flag`,
+              isRecorder: true,
               teamAffinity: "friendly",
               flagTeamName,
             });
@@ -536,6 +574,7 @@ export async function scanDemoTimelineParser(
               description: actor
                 ? `${actor} returned ${flagLabel}`
                 : `${flagLabel.replace(/^the/, "The")} was returned`,
+              isRecorder: actor?.toLowerCase() === normalizedRecorder,
               teamAffinity: "neutral",
               actor,
               flagTeamName: flagTeamName || undefined,
@@ -550,6 +589,7 @@ export async function scanDemoTimelineParser(
               timeSec,
               type: "flag-return",
               description: "You returned your flag",
+              isRecorder: true,
               teamAffinity: "friendly",
             });
           }
@@ -598,6 +638,7 @@ export async function scanDemoTimelineParser(
             timeSec,
             type: "flag-cap",
             description: description || "Flag captured",
+            isRecorder: capturerName?.toLowerCase() === normalizedRecorder,
             teamAffinity,
             capturer: capturerName,
             flagTeamName: flagTeamName || undefined,
@@ -631,6 +672,7 @@ export async function scanDemoTimelineParser(
               timeSec,
               type: "kill",
               description: `${killerName} killed ${victimName}`,
+              isRecorder: killerName.toLowerCase() === normalizedRecorder,
               killer: killerName,
               victim: victimName,
               weapon: weapon || undefined,
@@ -661,6 +703,7 @@ export async function scanDemoTimelineParser(
                 timeSec,
                 type: "kill",
                 description: description || `${killerName} got a kill`,
+                isRecorder: true,
                 killer: killerName,
                 victim: victimName,
                 weapon: weapon || undefined,
@@ -684,6 +727,7 @@ export async function scanDemoTimelineParser(
                   timeSec,
                   type: "death",
                   description: msgDescription ?? weaponDescription ?? "Died",
+                  isRecorder: true,
                   weapon: weapon || undefined,
                 });
               } else if (
@@ -695,6 +739,7 @@ export async function scanDemoTimelineParser(
                   timeSec,
                   type: "death",
                   description: `Killed by ${killerName}`,
+                  isRecorder: false,
                   killer: killerName,
                   victim: victimName,
                   weapon: weapon || undefined,
@@ -711,6 +756,7 @@ export async function scanDemoTimelineParser(
                   description: weapon
                     ? `Killed by ${WEAPON_DISPLAY_NAMES[weaponLower!] ?? weapon}`
                     : "Died",
+                  isRecorder: true,
                   weapon: weapon || undefined,
                 });
               }
@@ -720,6 +766,15 @@ export async function scanDemoTimelineParser(
       } catch (err) {
         log.warn("Skipping malformed event in block %d: %o", blockCount, err);
       }
+    }
+
+    for (const event of generators.packet(
+      packet.ghosts ?? [],
+      timeSec,
+      recorderTeamId,
+    )) {
+      events.push(event);
+      generatorRecorders.set(event, normalizedRecorder);
     }
 
     // Yield the event loop once a slice of wall time has gone by —
@@ -734,6 +789,11 @@ export async function scanDemoTimelineParser(
     }
   }
 
+  generators.finish();
+  for (const [event, recorder] of generatorRecorders) {
+    event.isRecorder = event.actor?.toLowerCase() === recorder;
+  }
+
   // An unfinished forced countdown is useful context, but never a kickoff.
   if (
     forcedStarts.length > 0 &&
@@ -743,9 +803,22 @@ export async function scanDemoTimelineParser(
     events.sort((a, b) => a.timeSec - b.timeSec);
   }
 
-  log.info("Scanned %d blocks, found %d events", blockCount, events.length);
+  // Attribution is now final, as is the observer/player classification.
+  // Unattributed transitions remain useful to everyone.
+  const timelineEvents = recorderEverOnTeam
+    ? events.filter(
+        (event) =>
+          !generatorRecorders.has(event) || !event.actor || event.isRecorder,
+      )
+    : events;
+
+  log.info(
+    "Scanned %d blocks, found %d events",
+    blockCount,
+    timelineEvents.length,
+  );
   return {
-    events,
+    events: timelineEvents,
     observerPerspective: !recorderEverOnTeam,
     killEvents,
   };

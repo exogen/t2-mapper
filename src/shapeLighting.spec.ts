@@ -23,10 +23,13 @@ import {
   setShapeSun,
   setTerrainLightmap,
   updateShapeLighting,
+  invalidateInteriorLighting,
   type ShapeLightProbe,
 } from "./shapeLighting";
 
-import { DIFMaterial } from "./dif/difLoader";
+import { DIFMaterial, createDIFModel } from "./dif/difLoader";
+import { DIFCollisionMesh } from "./dif/difCollision";
+import { createDIFTestBuffer } from "./dif/difTestFixtures";
 import { DIFSurfaceFlags } from "./dif/dif";
 
 const TERRAIN_SIZE = 256;
@@ -192,6 +195,34 @@ describe("probeShapeLighting", () => {
 });
 
 describe("updateShapeLighting", () => {
+  it("refreshes a stationary shape from the native alarm atlas without rebuilding colliders", () => {
+    const model = createDIFModel(
+      createDIFTestBuffer({ collision: true, alarm: true }).buffer,
+    );
+    const floor = new DIFCollisionMesh(model.collision, [
+      lightmap(128, 128, 128),
+      lightmap(16, 16, 16),
+    ]);
+    registerInteriorCollider("floor", [floor]);
+    registerInteriorCollider("roof", [
+      interiorBox(new Vector3(0, 30, 0), null),
+    ]);
+    const root = new Group();
+    root.position.set(1, 10, 1);
+    root.updateMatrixWorld(true);
+    const state = createShapeLightState(root, undefined);
+    updateShapeLighting(state, 16);
+    expect(state.target.color.r).toBeCloseTo(128 / 255);
+    for (const alarm of [true, false]) {
+      floor.alarmState = alarm;
+      invalidateInteriorLighting();
+      updateShapeLighting(state, 10000);
+      expect(state.target.color.r).toBeCloseTo((alarm ? 16 : 128) / 255);
+      expect(state.uniforms.shapeLightColor.value.r).toBeCloseTo(
+        state.target.color.r,
+      );
+    }
+  });
   it("snaps from nothing below, then slews at the engine's rate", () => {
     const root = new Group();
     root.add(new Mesh(new BoxGeometry(1, 1, 1)));

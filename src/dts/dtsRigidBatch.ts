@@ -30,15 +30,33 @@ interface EligibleMesh extends DTSMesh {
 
 /** Call on a fresh model before cloning, material replacement or animation.
  * Instances share immutable geometry and own their materials and skeletons.
- * Only full-resolution rigid opaque parts are combined; other DTS paths remain
- * available, including lower LODs, merge vertices, effects and damage decals. */
+ * Each detail's rigid opaque parts are combined lazily; effects, damage decals
+ * and explicitly requested vertex merging retain their authored draw paths. */
 export function batchDTSRigidMeshes(scene: DTSShape): DTSMeshBatch[] {
   const existing = scene.children.filter(isDTSMeshBatch);
-  if (existing.length) return existing;
-  // Three's skin normal transform is not an inverse transpose. Keep authored
-  // scale animations on rigid meshes so nonuniform scale/shear stays correct.
+  if (scene.meshBatchFactory) return existing;
   if (scene.data.nodes.length > 65536) return [];
 
+  // Freeze the unmodified asset pose/materials before consumers animate clones
+  // or replace their skins. Lazy batches must never bake an instance's pose.
+  const template = scene.clone();
+  const details = new Map<number, readonly DTSMeshBatch[]>();
+  scene.meshBatchFactory = (detail) => {
+    let batches = details.get(detail);
+    if (!batches) {
+      template.ensureDetail(detail);
+      batches = buildDetailBatches(template, detail);
+      details.set(detail, batches);
+    }
+    return batches;
+  };
+  scene.ensureDetail(0);
+  return scene.children.filter(isDTSMeshBatch);
+}
+
+function buildDetailBatches(scene: DTSShape, detail: number): DTSMeshBatch[] {
+  // Three's skin normal transform is not an inverse transpose. Keep authored
+  // scale animations on rigid meshes so nonuniform scale/shear stays correct.
   const scaledNodes = new Set(
     scene.data.sequences.flatMap((sequence) => sequence.scaleMatters),
   );
@@ -59,7 +77,7 @@ export function batchDTSRigidMeshes(scene: DTSShape): DTSMeshBatch[] {
     if (node !== scene && node instanceof DTSShape) return;
     if (
       node instanceof DTSMesh &&
-      eligible(node, scene) &&
+      eligible(node, scene, detail) &&
       !affected(
         scene.data.objects[node.binding.objectIndex].nodeIndex,
         scaledNodes,
@@ -118,7 +136,7 @@ export function batchDTSRigidMeshes(scene: DTSShape): DTSMeshBatch[] {
     const batch = animated
       ? new DTSRigidMeshBatch(geometry, material)
       : new DTSStaticMeshBatch(geometry, material);
-    batch.name = `__dts_rigid_batch_${parts[0].binding.materialIndex}`;
+    batch.name = `__dts_rigid_batch_${parts[0].binding.materialIndex}_detail_${detail}`;
     batch.bindings = parts.map((part) => part.binding);
     // Vertices retain their authored node-local coordinates. Identity inverses
     // make each bone directly supply that node's complete animated transform.
@@ -132,14 +150,16 @@ export function batchDTSRigidMeshes(scene: DTSShape): DTSMeshBatch[] {
       );
     if (batch instanceof DTSStaticMeshBatch) batch.restTransforms = transforms;
     batch.visible = false;
-    scene.add(batch);
     batches.push(batch);
   }
-  scene.invalidateRuntime();
   return batches;
 }
 
-function eligible(mesh: DTSMesh, scene: DTSShape): mesh is EligibleMesh {
+function eligible(
+  mesh: DTSMesh,
+  scene: DTSShape,
+  detail: number,
+): mesh is EligibleMesh {
   const binding = mesh.binding;
   if (!binding) return false;
   const { source, detailIndices, materialIndex, objectIndex } = binding;
@@ -149,8 +169,8 @@ function eligible(mesh: DTSMesh, scene: DTSShape): mesh is EligibleMesh {
     mesh.parent instanceof DTSDetail &&
     mesh.parent.children.length === 1 &&
     detailIndices.length === 1 &&
-    detailIndices[0] === 0 &&
-    scene.data.details[0]?.size >= 0 &&
+    detailIndices[0] === detail &&
+    scene.data.details[detail]?.size >= 0 &&
     scene.data.objects[objectIndex]?.nodeIndex >= 0 &&
     getDTSObject(mesh)?.defaultVisibility === 1 &&
     material instanceof DTSMaterial &&

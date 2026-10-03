@@ -36,7 +36,7 @@
 .EventRow {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   padding: 3px 10px 3px 8px;
   border: 0;
   background: transparent;
@@ -144,6 +144,14 @@
 
 .EventIcon[data-type="rename"] {
   color: #b197fc;
+}
+
+.EventIcon[data-type="generator-offline"] {
+  color: #ff6b6b;
+}
+
+.EventIcon[data-type="generator-online"] {
+  color: #69db7c;
 }
 
 .EventDescription {

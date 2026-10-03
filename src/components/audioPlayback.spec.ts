@@ -5,8 +5,8 @@ import type { StreamRecording } from "../stream/types";
 import { connectAudioPlayback } from "./audioPlayback";
 import { createAudioPlaybackFade } from "./audioPlaybackFade";
 
-// Defer device transitions independently of transport changes. A blocked
-// resume can settle after a newer suspend, or without a statechange event.
+// Defer device transitions independently of transport changes. Chrome can freeze
+// its audio clock if opposite operations overlap, even while state says running.
 class TestAudioContext extends EventTarget {
   state: AudioContextState = "suspended";
   currentTime = 10;
@@ -21,6 +21,9 @@ class TestAudioContext extends EventTarget {
   resume = vi.fn(() => this.request("running"));
   suspend = vi.fn(() => this.request("suspended"));
   request(state: AudioContextState) {
+    if (this.pending.some((request) => request.state !== state)) {
+      throw new Error("Overlapping opposite audio device transitions");
+    }
     return new Promise<void>((resolve) => {
       this.pending.push({ state, resolve });
     });
@@ -174,6 +177,86 @@ describe("audio transport synchronization", () => {
     connect();
     connection.dispose();
     connect();
+    await context.flush();
+    expect(context.state).toBe("running");
+    expect(context.gain.linearRampToValueAtTime).toHaveBeenLastCalledWith(
+      1,
+      10.05,
+    );
+  });
+
+  it("waits for a departing map's suspend before starting the Watch view", async () => {
+    state().setRecording(null);
+    gameEntityStore.setState({ dataSource: "map" });
+    connect();
+    await context.flush();
+    connection.dispose();
+    expect(context.pending.map((request) => request.state)).toEqual([
+      "suspended",
+    ]);
+
+    state().setRecording({ source: "live" } as StreamRecording);
+    state().setPlaybackStatus("playing");
+    gameEntityStore.setState({ dataSource: "live" });
+    connect();
+    expect(context.resume).toHaveBeenCalledOnce();
+    await context.finish(); // The old view has finally released the device.
+    expect(context.resume).toHaveBeenCalledTimes(2);
+    await context.flush();
+    expect(context.state).toBe("running");
+  });
+
+  it("ignores a late cleanup from a view replaced before it unmounted", async () => {
+    connect();
+    await context.flush();
+    const oldConnection = connection;
+    connect();
+    await context.flush();
+    const suspends = context.suspend.mock.calls.length;
+    oldConnection.dispose();
+    oldConnection.reconcile();
+    oldConnection.unlock();
+    expect(context.suspend).toHaveBeenCalledTimes(suspends);
+    expect(context.state).toBe("running");
+  });
+
+  it("unlocks stopped playback silently before suspending the device", async () => {
+    state().setPlaybackStatus("stopped");
+    connect();
+    connection.unlock();
+    expect(context.resume).toHaveBeenCalledOnce();
+    expect(context.suspend).not.toHaveBeenCalled();
+    await context.flush();
+    expect(context.state).toBe("suspended");
+    expect(context.gain.linearRampToValueAtTime).not.toHaveBeenCalled();
+
+    // Once unlocked, clicks while paused need not wake the device again.
+    connection.unlock();
+    expect(context.resume).toHaveBeenCalledOnce();
+    state().setPlaybackStatus("playing");
+    await context.flush();
+    expect(context.state).toBe("running");
+  });
+
+  it("retries a blocked resume in the gesture without racing a newer pause", async () => {
+    connect(); // Blocked by autoplay.
+    state().setPlaybackStatus("paused");
+    connection.unlock(); // A fresh gesture must be allowed to retry resume.
+    expect(context.resume).toHaveBeenCalledTimes(2);
+    expect(context.suspend).not.toHaveBeenCalled();
+    await context.finish(1); // The gesture's promise settles first.
+    expect(context.suspend).not.toHaveBeenCalled();
+    expect(context.gain.linearRampToValueAtTime).not.toHaveBeenCalled();
+    await context.flush();
+    expect(context.state).toBe("suspended");
+  });
+
+  it("resumes after a browser suspension while playback is still playing", async () => {
+    connect();
+    await context.flush();
+    context.state = "suspended";
+    context.dispatchEvent(new Event("statechange"));
+    expect(context.gain.setValueAtTime).toHaveBeenLastCalledWith(0, 10);
     await context.flush();
     expect(context.state).toBe("running");
     expect(context.gain.linearRampToValueAtTime).toHaveBeenLastCalledWith(

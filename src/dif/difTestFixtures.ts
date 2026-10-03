@@ -5,6 +5,7 @@ export function createDIFTestBuffer(
     preview?: boolean;
     axisEncoding?: number;
     alarm?: boolean;
+    animated?: boolean;
     materialNames?: string[];
     surfacePairs?: number;
     /** Closed box with an invisible bottom and a six-plane BSP/hull. */
@@ -56,7 +57,7 @@ export function createDIFTestBuffer(
     floats([0, 0, collision ? -2 : 0, 3, 2, 0]); // box
     floats([1.5, 1, 0, 2]); // sphere
     u8(options.alarm ? 1 : 0);
-    u32(0); // no animated state entries
+    u32(options.animated ? 1 : 0); // animated state entries
     u32(collision ? 6 : 1);
     floats([0, 0, 1]); // normal
     if (collision) floats([0, 0, -1, -1, 0, 0, 1, 0, 0, 0, -1, 0, 0, 1, 0]);
@@ -123,7 +124,7 @@ export function createDIFTestBuffer(
       u16(((options.axisEncoding ?? 0) << 13) | (3 << 6) | 2);
       f32(0.125);
       f32(0.5);
-      u16(0);
+      u16(options.animated && surface === 0 ? 1 : 0);
       u32(0);
       bytes.push(0, 0, 1, 1);
     }
@@ -151,9 +152,34 @@ export function createDIFTestBuffer(
     u32(collision ? 6 : 0);
     offsets.solidLeafSurfaces = bytes.length;
     if (collision) collisionRefs.forEach(u32);
-    for (let i = 0; i < 3; i++) u32(0); // lights, states, state data
-    u32(0);
-    u32(0); // state buffer + flags
+    if (options.animated) {
+      u32(1); // ambient looping alarm light
+      u32(0);
+      u32(0);
+      u16(2);
+      u16(11);
+      u32(1000);
+      u32(2);
+      for (let state = 0; state < 2; state++) {
+        bytes.push(state === 0 ? 255 : 0, 0, 0);
+        u32(state * 500);
+        u32(state);
+        u16(1);
+      }
+      u32(2);
+      for (let state = 0; state < 2; state++) {
+        u32(0);
+        u32(state);
+        u16(0);
+      }
+      u32(2);
+      u32(0);
+      bytes.push(255, 128);
+    } else {
+      for (let i = 0; i < 3; i++) u32(0); // lights, states, state data
+      u32(0);
+      u32(0); // state buffer + flags
+    }
     u32(0);
     u32(0); // names, mirrors
     u32(collision ? 1 : 0);

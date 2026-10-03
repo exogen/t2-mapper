@@ -14,6 +14,20 @@ class MessageStream extends LiveStreamAdapter {
     this.handleServerMessage(args);
   }
 
+  command(funcName: string, args: string[]): void {
+    this.processEvent(
+      {
+        classId: 0,
+        parsedData: { type: "RemoteCommandEvent", funcName, args },
+      },
+      undefined,
+    );
+  }
+
+  history() {
+    return this.buildTimeFilteredEvents(this.getTimeSec());
+  }
+
   checkpoint() {
     return this.captureSimulationState();
   }
@@ -147,6 +161,76 @@ function fixture() {
 }
 
 describe("browser and relay server-message state", () => {
+  it.each([
+    "ServerMessage",
+    "TeamDestroyMessage",
+    "TeamRepairMessage",
+    "teamrepairmessage",
+  ])(
+    "renders %s as server chat and preserves it through checkpoint restoration",
+    (command) => {
+      const stream = new MessageStream();
+      const before = stream.checkpoint();
+      stream.setString(10, "%1 repaired the %2 Generator!~wfx/repair");
+      const args = [
+        "msgGenRepaired",
+        "\x0110",
+        "\x10\bAlice\x0b.TAG\x11",
+        "Main",
+      ];
+      stream.command(command, args);
+      const history = stream.history();
+      expect(history.chatMessages).toHaveLength(1);
+      expect(history.chatMessages[0]).toMatchObject({
+        text: "Alice.TAG repaired the Main Generator!",
+        kind: "server",
+        soundPath: "fx/repair",
+      });
+      expect(history.serverEvents).toHaveLength(1);
+      expect(history.serverEvents[0].args).toEqual([
+        args[0],
+        "%1 repaired the %2 Generator!~wfx/repair",
+        args[2],
+        args[3],
+      ]);
+      const after = stream.checkpoint();
+      stream.restore(before);
+      expect(stream.history().chatMessages).toEqual([]);
+      stream.restore(after);
+      expect(stream.history()).toEqual(history);
+    },
+  );
+
+  it.each(["TeamDestroyMessage", "TeamRepairMessage"])(
+    "dispatches empty %s messages without adding blank chat lines",
+    (command) => {
+      const stream = new MessageStream();
+      const relay = new WatchStateAccumulator();
+      const args = join("Alice");
+      const parsed = packet([args]);
+      parsed.events[0].parsedData!.funcName = command;
+      stream.command(command, args);
+      relay.applyPacket(parsed);
+      expect(stream.history().chatMessages).toEqual([]);
+      expect(stream.history().serverEvents).toHaveLength(1);
+      expect(stream.hud().playerRoster).toEqual(
+        relay.getHudState().playerRoster,
+      );
+    },
+  );
+
+  it("does not display arbitrary remote commands as server chat", () => {
+    const stream = new MessageStream();
+    stream.command("SomethingElse", [
+      "msgDestroyed",
+      "%1 destroyed a %2 Generator!",
+      "Alice",
+      "Main",
+    ]);
+    expect(stream.history().chatMessages).toEqual([]);
+    expect(stream.history().serverEvents).toEqual([]);
+  });
+
   it("applies messages to restored collections without mutating the saved checkpoint", () => {
     const browser = new MessageStream();
     browser.message(join("Alice"));

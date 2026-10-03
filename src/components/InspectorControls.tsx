@@ -225,6 +225,8 @@ export const InspectorControls = memo(function InspectorControls({
     setSpeedMultiplier,
     mouseSensitivity,
     setMouseSensitivity,
+    clickToCycle,
+    setClickToCycle,
     touchMode,
     setTouchMode,
     invertScroll,
@@ -241,6 +243,8 @@ export const InspectorControls = memo(function InspectorControls({
     setDebugMode,
     renderOnDemand,
     setRenderOnDemand,
+    lodEnabled,
+    setLodEnabled,
     showFpsMeter,
     setShowFpsMeter,
   } = useDebug();
@@ -470,6 +474,25 @@ export const InspectorControls = memo(function InspectorControls({
                         }}
                       />
                     </div>
+                  </div>
+                )}
+                {isTouch === false && (
+                  <div className={styles.CheckboxField}>
+                    <input
+                      id="clickToCycleInput"
+                      type="checkbox"
+                      checked={clickToCycle}
+                      onChange={(event) =>
+                        setClickToCycle(event.target.checked)
+                      }
+                    />
+                    <label className={styles.Label} htmlFor="clickToCycleInput">
+                      Enable click to cycle
+                    </label>
+                    <p className={styles.Description}>
+                      With the mouse captured, use left and right mouse buttons
+                      to cycle the followed player.
+                    </p>
                   </div>
                 )}
               </Accordion>
@@ -818,6 +841,23 @@ export const InspectorControls = memo(function InspectorControls({
                 </div>
               </Accordion>
               <Accordion value="debug" label="Debug">
+                <div className={styles.CheckboxField}>
+                  <input
+                    id="lodInput"
+                    type="checkbox"
+                    checked={lodEnabled}
+                    onChange={(event) => {
+                      setLodEnabled(event.target.checked);
+                    }}
+                  />
+                  <label className={styles.Label} htmlFor="lodInput">
+                    Enable LOD
+                  </label>
+                  <p className={styles.Description}>
+                    Level of detail selection: render simpler shapes when far
+                    away. Turn off to always use full detail.
+                  </p>
+                </div>
                 <div className={styles.CheckboxField}>
                   <input
                     id="fpsMeterInput"

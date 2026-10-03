@@ -1,6 +1,9 @@
 import type { PacketData, ParsedData, SensorGroupColor } from "t2-demo-parser";
 import { stripTaggedStringMarkup } from "./shared.js";
-import { LoadInfoCollector } from "./serverMessageDecode.js";
+import {
+  isServerMessageCommand,
+  LoadInfoCollector,
+} from "./serverMessageDecode.js";
 import {
   applyServerMessageState,
   type ServerMessageRosterEntry as RosterEntry,
@@ -199,7 +202,7 @@ export class WatchStateAccumulator {
           const args = (data.args as string[]) ?? [];
           if (funcName === "MissionEnd") {
             this.endMatch();
-          } else if (funcName === "ServerMessage" && args.length >= 1) {
+          } else if (isServerMessageCommand(funcName) && args.length >= 1) {
             this.handleServerMessage(args, onRosterChange);
           } else if (funcName === "BottomPrint" && args.length >= 1) {
             if (

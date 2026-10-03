@@ -58,6 +58,10 @@ export interface SceneInteriorInstance {
   showTerrainInside: boolean;
   skinBase: string;
   alarmState: boolean;
+  /** Accumulated alarm animation time at the last power transition. */
+  alarmTimeSec?: number;
+  alarmChangedAtSec?: number;
+  lightingStartTimeSec?: number;
 }
 
 export interface SceneTSStatic {

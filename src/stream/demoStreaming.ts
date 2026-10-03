@@ -1206,6 +1206,12 @@ export class DemoStreamAdapter extends StreamEngine {
       if (!block) {
         this.exhausted = true;
         this.exhaustedAtBytes = this.parser.decompressedByteLength;
+        // Info/packet FOV updates can follow the last movement tick (also
+        // at a progressive download's frontier). Publish them without
+        // advancing the simulation or mutating the previous snapshot.
+        if (this.camera && this.camera.fov !== this.latestFov) {
+          this.camera = { ...this.camera, fov: this.latestFov };
+        }
         return false;
       }
       assertDemoBlockParsed(block, this.moveTicks * (TICK_DURATION_MS / 1000));

@@ -85,7 +85,7 @@ export function SpectatorController() {
   }, [liveReady]);
 
   // Client-side fly↔follow controls, mirroring the real observer's:
-  // F toggles modes, left/right click cycles players forward/backward
+  // F toggles modes, N / Shift-N or captured clicks cycle players
   // while following (fire and jet triggers), and ArrowRight/ArrowLeft
   // (command circuit) observe the next/previous player.
   useInputAction("toggleObserverMode", () => {
@@ -94,16 +94,15 @@ export function SpectatorController() {
   useInputAction("toggleFollowFirstPerson", () => {
     if (isWatching) toggleFollowFirstPerson();
   });
-  useInputAction("nextPlayer", () => {
+  const cyclePlayer = (direction: 1 | -1) => {
     if (isWatching && streamPlaybackStore.getState().followEntityId) {
-      cycleWatchFollow();
+      cycleWatchFollow(direction);
     }
-  });
-  useInputAction("prevPlayer", () => {
-    if (isWatching && streamPlaybackStore.getState().followEntityId) {
-      cycleWatchFollow(-1);
-    }
-  });
+  };
+  useInputAction("nextPlayer", () => cyclePlayer(1));
+  useInputAction("prevPlayer", () => cyclePlayer(-1));
+  useInputAction("nextPlayerKey", () => cyclePlayer(1));
+  useInputAction("prevPlayerKey", () => cyclePlayer(-1));
   useInputAction("observeNextPlayer", () => {
     if (!isWatching) return;
     if (streamPlaybackStore.getState().followEntityId) {

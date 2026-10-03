@@ -153,7 +153,9 @@ export function interiorFromMis(obj: TorqueObject): SceneInteriorInstance {
     scale: parseVec3(prop(obj, "scale"), { x: 1, y: 1, z: 1 }),
     showTerrainInside: prop(obj, "showTerrainInside") === "1",
     skinBase: prop(obj, "skinBase") ?? "",
-    alarmState: false,
+    alarmState: obj._alarmstate === true,
+    alarmTimeSec: obj._alarmtimesec,
+    alarmChangedAtSec: obj._alarmchangedatsec,
   };
 }
 

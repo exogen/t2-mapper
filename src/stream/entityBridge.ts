@@ -55,6 +55,15 @@ export function updateGameEntityFromStream(
 
   // Type-specific fields.
   switch (renderEntity.renderType) {
+    case "InteriorInstance":
+      if (
+        stream.sceneData?.className === "InteriorInstance" &&
+        renderEntity.interiorData !== stream.sceneData
+      ) {
+        renderEntity.interiorData = stream.sceneData;
+        structural = true;
+      }
+      break;
     case "Player":
       if (e.skinPrefName !== stream.skinPrefName) structural = true;
       e.skinPrefName = stream.skinPrefName;
