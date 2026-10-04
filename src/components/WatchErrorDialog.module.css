@@ -15,7 +15,7 @@
 .Dialog {
   composes: Dialog from "./GameDialog.module.css";
   min-width: 0;
-  max-width: 480px;
+  width: min(480px, 100%);
   padding: 24px 28px;
 }
 
@@ -33,6 +33,7 @@
 
 .Buttons {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: center;
   gap: 12px;

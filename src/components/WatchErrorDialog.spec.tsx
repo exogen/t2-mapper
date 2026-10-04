@@ -14,7 +14,7 @@ it.each(["new join", "active viewer"])(
         onRetry={vi.fn()}
       />,
     );
-    expect(markup).toContain('aria-label="Watching disabled"');
+    expect(markup).toContain('aria-label="Transmission ended"');
     expect(markup).toContain("Server admins have disabled watching");
     expect(markup).toContain("Browse servers");
     expect(markup).not.toContain("Rejoin");

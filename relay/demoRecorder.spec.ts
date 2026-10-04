@@ -543,6 +543,31 @@ describe("DemoRecorder", () => {
     expect(packets).toEqual([buildPingPacket(1), buildPingPacket(2)]);
   });
 
+  it("drops capped footage when the required players and match start arrive after its cutoff", async () => {
+    let players = 1;
+    let started = false;
+    const recorder = createRecorder({
+      maxBytes: 1,
+      minPlayers: 2,
+      playerCount: () => players,
+      matchStarted: () => started,
+    });
+    recorder.onPacket(buildPingPacket(1));
+    recorder.setMissionName("Katabatic");
+    await vi.waitFor(() => {
+      expect(
+        (recorder as unknown as { writer: { bytesWritten: number } }).writer
+          .bytesWritten,
+      ).toBeGreaterThan(1);
+    });
+    expect(recorder.onPacket(buildPingPacket(2))).toBe(true);
+    recorder.sampleRecordedState();
+    players = 2;
+    started = true;
+    expect(recorder.onPacket(buildPingPacket(3))).toBe(false);
+    expect(await recorder.finalize("test")).toBeNull();
+  });
+
   it("freezes roster metadata at the size cap, including the final accepted packet", async () => {
     const roster = new Map([[2, { rawName: "Alice" }]]);
     const recorder = createRecorder({

@@ -8,6 +8,7 @@ import {
   parseMissionControlCommand,
   selectAdminVotesRequired,
 } from "./missionControls";
+import { detectColorCode } from "./shared";
 
 describe("always-admin players", () => {
   it.each([undefined, "", "  ", "[]"])("defaults to nobody for %j", (value) => {
@@ -343,23 +344,27 @@ describe("MapGenius commands", () => {
   });
 
   it("decodes sender identity from the global chat client ID, not its display name", () => {
-    expect(
-      decodeGlobalChat([
-        "7",
-        "",
-        "1",
-        "\x05%1: %2",
-        "Someone else",
-        "@MapGenius -rec",
-      ]),
-    ).toEqual({ clientId: 7, text: "@MapGenius -rec" });
+    const args = [
+      "7",
+      "",
+      "1",
+      "\x06%1: %2",
+      "Someone else",
+      "@MapGenius -rec",
+    ];
+    expect(detectColorCode(args[3])).toBe(4);
+    expect(decodeGlobalChat(args)).toEqual({
+      clientId: 7,
+      text: "@MapGenius -rec",
+    });
   });
 
   it.each([
+    ["7", "", "1", "\x05%1: %2", "Admin", "@MapGenius -rec"],
     ["7", "", "1", "\x04%1: %2", "Admin", "@MapGenius -rec"],
-    ["7", "", "1", "\x05%1: %2", "@MapGenius -rec"],
-    ["7junk", "", "1", "\x05%1: %2", "Admin", "@MapGenius -rec"],
-    ["0", "", "1", "\x05%1: %2", "Admin", "@MapGenius -rec"],
+    ["7", "", "1", "\x06%1: %2", "@MapGenius -rec"],
+    ["7junk", "", "1", "\x06%1: %2", "Admin", "@MapGenius -rec"],
+    ["0", "", "1", "\x06%1: %2", "Admin", "@MapGenius -rec"],
     ["7", "", "1", "Private message %1: %2", "Admin", "@MapGenius -rec"],
   ])("rejects non-global or malformed chat %j", (...args) => {
     expect(decodeGlobalChat(args)).toBeNull();

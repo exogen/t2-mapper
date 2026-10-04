@@ -227,6 +227,15 @@ export class DemoRecorder {
     return this._state;
   }
 
+  private get qualificationFailure():
+    "too-short" | "too-few-players" | "match-not-started" | null {
+    if (this.moveCount * DEMO_TICK_MS < this.opts.minLengthMs)
+      return "too-short";
+    if (this.peakPlayers < this.opts.minPlayers) return "too-few-players";
+    if (!this.matchStarted) return "match-not-started";
+    return null;
+  }
+
   /** Why the recording stopped on an error (vs the normal empty/too-short
    *  drops). The spool stays on disk for the boot salvage. */
   get failure(): string | null {
@@ -505,33 +514,21 @@ export class DemoRecorder {
     }
     this.setState("finalizing");
     const durationMs = this.moveCount * DEMO_TICK_MS;
-    if (durationMs < this.opts.minLengthMs) {
-      log.info(
-        { address: this.opts.address, durationMs, reason },
-        "Dropping too-short demo",
-      );
-      await writer.abort();
-      this.setState("aborted");
-      return null;
-    }
-    if (this.peakPlayers < this.opts.minPlayers) {
+    const qualificationFailure = this.qualificationFailure;
+    if (qualificationFailure) {
       log.info(
         {
           address: this.opts.address,
+          durationMs,
           peakPlayers: this.peakPlayers,
           minPlayers: this.opts.minPlayers,
           reason,
         },
-        "Dropping demo with too few players",
-      );
-      await writer.abort();
-      this.setState("aborted");
-      return null;
-    }
-    if (!this.matchStarted) {
-      log.info(
-        { address: this.opts.address, durationMs, reason },
-        "Dropping pre-match demo (match never started)",
+        {
+          "too-short": "Dropping too-short demo",
+          "too-few-players": "Dropping demo with too few players",
+          "match-not-started": "Dropping pre-match demo (match never started)",
+        }[qualificationFailure],
       );
       await writer.abort();
       this.setState("aborted");

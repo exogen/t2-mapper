@@ -32,7 +32,7 @@ export function WatchErrorDialog({
 }) {
   const dialogRef = useRef<HTMLDivElement>(null);
   const watchingDisabled = endReason === "watchingDisabled";
-  const heading = watchingDisabled ? "Watching disabled" : title;
+  const heading = watchingDisabled ? "Transmission ended" : title;
 
   useEffect(() => {
     if (document.pointerLockElement) document.exitPointerLock();

@@ -170,7 +170,7 @@ describe("watch mission controls", () => {
       smurf,
       guid,
     );
-  const chat = (text: string, id = 7, template = "\x05%1: %2") =>
+  const chat = (text: string, id = 7, template = "\x06%1: %2") =>
     remote(
       "ChatMessage",
       String(id),
@@ -191,6 +191,7 @@ describe("watch mission controls", () => {
   function start(options: Partial<WatchSessionManagerOptions> = {}) {
     ({ manager, connections } = createManager({
       adminVotePolicies: singleAdminPolicies,
+      demoCoordinator: policyCoordinator(),
       onSessionsChanged: (_addresses, controls) => {
         saved = controls;
       },
@@ -230,12 +231,124 @@ describe("watch mission controls", () => {
       join(99, "1", "1"),
       chat("-rec -watch", 8),
       chat("-watch", 99),
-      chat("-watch", 7, "\x04%1: %2"),
+      chat("-watch", 7, "\x05%1: %2"),
     );
     expect(saved).toEqual({});
     expect(session.watcherCount).toBe(1);
     expect(replies()).toHaveLength(1);
     expect(replies()[0]).toContain("Only server admins");
+    expect(replies()[0]).toMatch(/^Nothing changed\./);
+  });
+
+  it("responds to allowlisted self chat received from the server without replying to its own response", () => {
+    manager.shutdown();
+    start({ alwaysAdminPlayers: new Set(["MapGenius"]) });
+    events(join(99, "0", "0", "456", "\x10\x0b[TAG]\x08MapGenius\x11"));
+    session.sendChat("@MapGenius status");
+    expect(sentReplies()).toEqual(["@MapGenius status"]);
+    events(
+      { type: "NetStringEvent", id: 123, value: "\x06%1: %2" },
+      chat("status", 99, "\x01123"),
+    );
+    const response = sentReplies().at(-1)!;
+    expect(response).toContain("Watching is ON.");
+    events(
+      remote("ChatMessage", "99", "", "1", "\x06%1: %2", "MapGenius", response),
+    );
+    vi.advanceTimersByTime(3_000);
+    expect(sentReplies()).toEqual(["@MapGenius status", response]);
+  });
+
+  it("applies both controls from allowlisted self chat without game admin privileges", () => {
+    manager.shutdown();
+    start({ alwaysAdminPlayers: new Set(["MapGenius"]) });
+    events(join(99, "0", "0", "456", "MapGenius"), chat("-rec -watch", 99));
+    expect(saved[address]).toMatchObject({ recording: false, watching: false });
+    expect(replies().at(-1)).toContain("Watching is OFF.");
+  });
+
+  it("retains the shared account's single vote while still requiring a second admin", () => {
+    manager.shutdown();
+    start({
+      alwaysAdminPlayers: new Set(["MapGenius"]),
+      adminVotePolicies: twoAdminPolicies,
+    });
+    events(join(99, "0", "0", "456", "MapGenius"));
+    for (let i = 0; i < 4; i++) events(chat("-rec", 99));
+    events(chat("status", 7));
+    expect(session.controls.recording).toBe(true);
+    expect(replies().at(-1)).toContain("-record 1/2");
+    events(chat("-rec", 7));
+    expect(session.controls.recording).toBe(false);
+  });
+
+  it.each([
+    ["MapGenius", "0", []],
+    ["mapgenius", "0", ["MapGenius"]],
+    ["MapGenius", "1", ["MapGenius"]],
+    ["MapGenius", "", ["MapGenius"]],
+  ])(
+    "ignores ineligible self commands even with game admin flags: name=%s, smurf=%s, allowlist=%j",
+    (rawName, smurf, names) => {
+      manager.shutdown();
+      start({ alwaysAdminPlayers: new Set(names) });
+      const info = vi.spyOn(relayLog, "info").mockImplementation(() => {});
+      events(
+        join(99, "1", "1", "456", rawName, smurf),
+        chat("-rec -watch", 99),
+      );
+      expect(session.controls.snapshot()).toMatchObject({
+        recording: true,
+        watching: true,
+      });
+      expect(replies()).toEqual([]);
+      expect(info).toHaveBeenCalledWith(
+        expect.objectContaining({
+          clientId: 99,
+          isSelf: true,
+          isSmurf: smurf === "" ? null : smurf === "1",
+          isAlwaysAdmin: false,
+          outcome: "rejected-not-admin",
+        }),
+        "Mission control command rejected",
+      );
+    },
+  );
+
+  it("removes a pending self vote when its base name leaves the allowlist, even if still a game admin", () => {
+    manager.shutdown();
+    start({
+      alwaysAdminPlayers: new Set(["MapGenius"]),
+      adminVotePolicies: twoAdminPolicies,
+    });
+    events(join(99, "1", "1", "456", "MapGenius"), chat("-rec", 99));
+    events(
+      remote(
+        "ServerMessage",
+        "MsgClientNameChanged",
+        "",
+        "MapGenius",
+        "OtherName",
+        "99",
+      ),
+      chat("-rec", 7),
+    );
+    expect(session.controls.recording).toBe(true);
+    expect(replies().at(-1)).toContain("-record 1/2");
+  });
+
+  it("does not bypass a disabled vote policy for allowlisted self commands", () => {
+    manager.shutdown();
+    start({
+      alwaysAdminPlayers: new Set(["MapGenius"]),
+      adminVotePolicies: [],
+    });
+    events(join(99, "0", "0", "456", "MapGenius"), chat("-rec -watch", 99));
+    expect(session.controls.snapshot()).toMatchObject({
+      recording: true,
+      watching: true,
+    });
+    expect(replies().at(-1)).toContain("Admin controls: OFF.");
   });
 
   it("logs every command with its authenticated actor, vote outcome and policy context", () => {
@@ -442,7 +555,7 @@ describe("watch mission controls", () => {
       .playerRoster.find((entry: any) => entry.clientId === 8);
     expect(player.isAdmin).toBeUndefined();
     expect(player.isSuperAdmin).toBeUndefined();
-    expect(replies().at(-1)).toContain("Watching is disabled.");
+    expect(replies().at(-1)).toContain("Watching is OFF.");
     expect(info).toHaveBeenCalledWith(
       expect.objectContaining({
         clientId: 8,
@@ -493,7 +606,7 @@ describe("watch mission controls", () => {
       remote("ServerMessage", "MsgStripAdminPlayer", "", "Actor", "Alice", "8"),
       chat("status", 8),
     );
-    expect(replies().at(-1)).toContain("-rec 1/2");
+    expect(replies().at(-1)).toContain("-record 1/2");
     events(chat("-rec"));
     expect(session.controls.recording).toBe(false);
   });
@@ -514,7 +627,7 @@ describe("watch mission controls", () => {
       recording: true,
       watching: true,
     });
-    expect(replies().at(-1)).toContain("-rec 1/2");
+    expect(replies().at(-1)).toContain("-record 1/2");
   });
 
   it("restores allowlisted GUID votes across relay restarts without bypassing the threshold", () => {
@@ -533,7 +646,7 @@ describe("watch mission controls", () => {
       chat("-rec", 9),
     );
     expect(session.controls.recording).toBe(true);
-    expect(replies().at(-1)).toContain("-rec 1/2");
+    expect(replies().at(-1)).toContain("-record 1/2");
     events(chat("-rec"));
     expect(session.controls.recording).toBe(false);
   });
@@ -546,9 +659,7 @@ describe("watch mission controls", () => {
       recording: true,
       watching: true,
     });
-    expect(replies().at(-1)).toContain(
-      "Admin controls: disabled by relay policy.",
-    );
+    expect(replies().at(-1)).toContain("Admin controls: OFF.");
   });
 
   it("ends all viewers immediately, rejects new viewers, and keeps recording independently", () => {
@@ -577,8 +688,10 @@ describe("watch mission controls", () => {
     });
     expect(rejected.binaryFrames()).toHaveLength(0);
     expect(saved[address]).toMatchObject({ recording: true, watching: false });
-    expect(replies().at(-1)).toContain("Watching is disabled.");
+    expect(replies().at(-1)).toContain("Watching is OFF.");
+    expect(replies().at(-1)).toMatch(/Settings reset next map\.$/);
     events(chat("+watch"));
+    expect(replies().at(-1)).not.toContain("Settings reset next map.");
     for (const ws of [viewer, second, rejected]) {
       expect(ws.jsonMessages().at(-1)).toMatchObject({ status: "ended" });
       expect(ws.binaryFrames()).toHaveLength(0);
@@ -588,14 +701,102 @@ describe("watch mission controls", () => {
     expect(rejected.jsonMessages().at(-1)).toMatchObject({ status: "live" });
   });
 
-  it("reports the viewer count and replies even when browser chat is disabled", () => {
-    manager.shutdown();
-    start({ chatEnabled: false });
+  it.each([0, 1, 2])(
+    "omits spectator counts with %i viewers and replies even when browser chat is disabled",
+    (count) => {
+      manager.shutdown();
+      start({ chatEnabled: false });
+      manager.detachSocket(viewer as unknown as WebSocket);
+      for (let i = 0; i < count; i++)
+        manager.watch(new FakeWebSocket() as unknown as WebSocket, address);
+      events(chat("status"));
+      expect(replies()).toEqual(["Recording is ON. Watching is ON."]);
+      expect(saved).toEqual({});
+    },
+  );
+
+  it("reports recording as OFF when admins disable saving and ON when they restore it", () => {
     events(chat("status"));
-    expect(replies()).toEqual([
-      "Recording is disabled. Watching is enabled (1 spectator). Settings reset next map.",
-    ]);
-    expect(saved).toEqual({});
+    expect(replies().at(-1)).toBe("Recording is ON. Watching is ON.");
+    events(chat("-record"));
+    expect(replies().at(-1)).toContain("Recording is OFF.");
+    expect(replies().at(-1)).toMatch(/Settings reset next map\.$/);
+    events(chat("+record"));
+    expect(replies().at(-1)).toBe("Recording is ON. Watching is ON.");
+  });
+
+  it.each(["unconfigured", "disabled"] as const)(
+    "ignores both recording vote directions when recording is %s, without blocking watch votes",
+    (configuration) => {
+      manager.shutdown();
+      start({
+        adminVotePolicies: twoAdminPolicies,
+        demoCoordinator:
+          configuration === "disabled"
+            ? ({
+                ...policyCoordinator(),
+                enabled: false,
+              } as unknown as DemoCoordinator)
+            : undefined,
+      });
+      const info = vi.spyOn(relayLog, "info").mockImplementation(() => {});
+      events(chat("-rec -watch"));
+      expect(session.recording).toBe(false);
+      expect(session.controls.recording).toBe(true);
+      expect(session.controls.voteCount("recording")).toBe(0);
+      expect(session.controls.voteCount("watching")).toBe(1);
+      expect(replies().at(-1)).toContain("Recording is globally OFF.");
+      expect(replies().at(-1)).not.toContain("Nothing changed.");
+      expect(replies().at(-1)).not.toContain("Recording controls:");
+      expect(replies().at(-1)).toContain("Votes: -watch 1/2.");
+      expect(replies().at(-1)).not.toContain("Settings reset next map.");
+      events(chat("-record"));
+      expect(replies().at(-1)).toMatch(/^Nothing changed\./);
+      events(chat("+record +watch"));
+      expect(session.controls.voteCount("recording")).toBe(0);
+      expect(session.controls.voteCount("watching")).toBe(0);
+      expect(replies().at(-1)).not.toContain("Nothing changed.");
+      expect(info).toHaveBeenCalledWith(
+        expect.objectContaining({
+          command: "@MapGenius +record +watch",
+          recordingConfigured: false,
+          results: {
+            recording: "ignored-recording-disabled",
+            watching: "vote-withdrawn",
+          },
+        }),
+        "Mission control command processed",
+      );
+      events(join(8, "1"), chat("-watch"), chat("-watch", 8));
+      expect(session.controls.watching).toBe(false);
+      expect(session.watcherCount).toBe(0);
+      events(chat("+watch"), chat("+watch", 8));
+      expect(session.controls.watching).toBe(true);
+      expect(session.recording).toBe(false);
+    },
+  );
+
+  it("clears restored recording votes when relay recording is disabled, preserving watch votes and the mission's keep policy", () => {
+    manager.shutdown();
+    start({
+      adminVotePolicies: twoAdminPolicies,
+      demoCoordinator: undefined,
+      initialMissionControls: {
+        [address]: {
+          mission: ["1", "Katabatic"],
+          recording: true,
+          watching: true,
+          votes: { recording: ["guid:123"], watching: ["guid:123"] },
+        },
+      },
+    });
+    events(join(7, "1", "0", "123"), chat("status"));
+    expect(session.controls.recording).toBe(true);
+    expect(session.controls.voteCount("recording")).toBe(0);
+    expect(saved[address]).toMatchObject({ votes: { watching: ["guid:123"] } });
+    expect(saved[address]).not.toHaveProperty("votes.recording");
+    expect(replies().at(-1)).toContain("Votes: -watch 1/2.");
+    expect(replies().at(-1)).not.toContain("Settings reset next map.");
   });
 
   it.each([false, true])(
@@ -628,6 +829,41 @@ describe("watch mission controls", () => {
     expect(saved).toEqual({});
     expect(session.watcherCount).toBe(1);
     expect(replies()[0]).toContain("Use @MapGenius");
+    expect(replies()[0]).toMatch(/^Nothing changed\./);
+  });
+
+  it("prefixes only commands that change neither settings nor votes, excluding status requests", () => {
+    manager.shutdown();
+    start({ adminVotePolicies: twoAdminPolicies });
+    events(chat("+record +watch"));
+    expect(replies().at(-1)).toBe(
+      "Nothing changed. Recording is ON. Watching is ON.",
+    );
+    events(chat("-record status"));
+    const pending = replies().at(-1);
+    expect(pending).not.toContain("Nothing changed.");
+    expect(pending).toContain("Votes: -record 1/2.");
+    events(chat("-record"));
+    expect(replies().at(-1)).toBe(`Nothing changed. ${pending}`);
+    events(chat("status"));
+    expect(replies().at(-1)).not.toContain("Nothing changed.");
+    expect(replies().at(-1)).toContain("Votes: -record 1/2.");
+    events(chat("+record"));
+    expect(replies().at(-1)).not.toContain("Nothing changed.");
+    expect(session.controls.voteCount("recording")).toBe(0);
+    events(chat("-record"));
+    expect(replies().at(-1)).not.toContain("Nothing changed.");
+    events(join(8, "1"), chat("-record", 8));
+    expect(replies().at(-1)).toBe(
+      "Recording is OFF. Watching is ON. Settings reset next map.",
+    );
+    events(chat("-record -watch"));
+    expect(replies().at(-1)).not.toContain("Nothing changed.");
+    expect(replies().at(-1)).toContain("Votes: -watch 1/2.");
+    events(chat("-record -watch", 8));
+    expect(replies().at(-1)).toBe(
+      "Recording is OFF. Watching is OFF. Settings reset next map.",
+    );
   });
 
   it("preserves restrictions across reconnect, idle grace and session replacement", () => {
@@ -700,7 +936,7 @@ describe("watch mission controls", () => {
     events(chat("-rec -watch"), chat("-recording -spectate"), chat("status"));
     expect(saved[address]).toMatchObject({ recording: true, watching: true });
     expect(session.watcherCount).toBe(1);
-    expect(replies().at(-1)).toContain("Votes: -rec 1/2, -watch 1/2.");
+    expect(replies().at(-1)).toContain("Votes: -record 1/2, -watch 1/2.");
     events(join(8, "1"), chat("-rec", 8));
     expect(saved[address]).toMatchObject({ recording: false, watching: true });
     expect(replies().at(-1)).toContain("Votes: -watch 1/2.");
@@ -736,8 +972,9 @@ describe("watch mission controls", () => {
     expect(sentReplies()).toHaveLength(1);
     vi.advanceTimersByTime(3_000);
     expect(sentReplies()).toHaveLength(2);
-    expect(sentReplies().at(-1)).toContain("Recording is disabled.");
-    expect(sentReplies().at(-1)).toContain("Votes: +rec 1/2");
+    expect(sentReplies().at(-1)).toMatch(/^Nothing changed\./);
+    expect(sentReplies().at(-1)).toContain("Recording is OFF.");
+    expect(sentReplies().at(-1)).toContain("Votes: +record 1/2");
     events(chat("+rec", 7));
     expect(session.recording).toBe(true);
     events(chat("+rec -rec +rec -watch +watch", 7), chat("-rec typo", 8));
@@ -750,7 +987,8 @@ describe("watch mission controls", () => {
     events(chat("status"));
     vi.advanceTimersByTime(3_000);
     expect(sentReplies()).toHaveLength(3);
-    expect(sentReplies().at(-1)).toContain("Recording is enabled.");
+    expect(sentReplies().at(-1)).not.toContain("Nothing changed.");
+    expect(sentReplies().at(-1)).toContain("Recording is ON.");
     expect(sentReplies().at(-1)).not.toContain("Votes:");
   });
 
@@ -794,8 +1032,8 @@ describe("watch mission controls", () => {
     expect(sentReplies()).toHaveLength(1);
     vi.advanceTimersByTime(3_000);
     expect(sentReplies()).toHaveLength(2);
-    expect(sentReplies().at(-1)).toContain("Recording is disabled.");
-    expect(sentReplies().at(-1)).toContain("Watching is disabled.");
+    expect(sentReplies().at(-1)).toContain("Recording is OFF.");
+    expect(sentReplies().at(-1)).toContain("Watching is OFF.");
     expect(coordinator.updateMission).toHaveBeenLastCalledWith(
       address,
       expect.objectContaining({ recordingDecision: false, watching: false }),
@@ -818,7 +1056,7 @@ describe("watch mission controls", () => {
     expect(sentReplies().at(-1)).not.toContain("Votes:");
     events(join(7, "1"), chat("-rec"), remote("MissionEnd"));
     vi.advanceTimersByTime(3_000);
-    expect(sentReplies().at(-1)).toContain("Recording is enabled.");
+    expect(sentReplies().at(-1)).toContain("Recording is ON.");
     expect(sentReplies().at(-1)).not.toContain("Votes:");
   });
 
@@ -844,7 +1082,7 @@ describe("watch mission controls", () => {
       join(9, "1"),
     );
     vi.advanceTimersByTime(3_000);
-    expect(sentReplies().at(-1)).toContain("-rec 1/3");
+    expect(sentReplies().at(-1)).toContain("-record 1/3");
     events(chat("-rec", 8));
     expect(session.controls.recording).toBe(true);
     events(chat("-rec", 9));
@@ -888,7 +1126,7 @@ describe("watch mission controls", () => {
     expect(session.controls.recording).toBe(false);
     events(chat("+rec"), join(118), chat("-rec"));
     expect(session.controls.recording).toBe(true);
-    expect(replies().at(-1)).toContain("-rec 1/2");
+    expect(replies().at(-1)).toContain("-record 1/2");
     events(
       remote("ServerMessage", "MsgAdminPlayer", "", "100"),
       chat("-rec", 100),
@@ -910,13 +1148,13 @@ describe("watch mission controls", () => {
       join(8),
       chat("-rec"),
     );
-    expect(replies().at(-1)).toContain("-rec 1/2");
+    expect(replies().at(-1)).toContain("-record 1/2");
     events(
       remote("ServerMessage", "MsgClientDrop", "", "Same name", "8"),
       chat("status"),
     );
     expect(session.controls.recording).toBe(true);
-    expect(replies().at(-1)).toContain("-rec 1/1");
+    expect(replies().at(-1)).toContain("-record 1/1");
     events(chat("-rec"));
     expect(session.controls.recording).toBe(false);
   });
@@ -937,7 +1175,7 @@ describe("watch mission controls", () => {
     });
     events(join(7, "1"), chat("-rec"));
     expect(session.controls.recording).toBe(true);
-    expect(replies().at(-1)).toContain("-rec 1/2");
+    expect(replies().at(-1)).toContain("-record 1/2");
     events(
       remote(
         "ServerMessage",
@@ -954,7 +1192,7 @@ describe("watch mission controls", () => {
       chat("+rec"),
     );
     expect(session.controls.recording).toBe(false);
-    expect(replies().at(-1)).toContain("+rec 1/2");
+    expect(replies().at(-1)).toContain("+record 1/2");
     expect(session.streamDelayMs).toBe(0);
   });
 
@@ -967,7 +1205,7 @@ describe("watch mission controls", () => {
     });
     events(chat("-rec"));
     expect(session.controls.recording).toBe(true);
-    expect(replies().at(-1)).toContain("Admin controls: disabled");
+    expect(replies().at(-1)).toContain("Admin controls: OFF");
     events(remote("ServerMessage", "MsgClientReady", "", "CTFGame"));
     vi.advanceTimersByTime(4_000);
     events(chat("-rec"));
@@ -989,13 +1227,13 @@ describe("watch mission controls", () => {
     expect(session.streamDelayMs).toBe(0);
     events(chat("-rec"));
     expect(session.controls.recording).toBe(true);
-    expect(replies().at(-1)).toContain("-rec 1/2");
+    expect(replies().at(-1)).toContain("-record 1/2");
     events(
       remote("ServerMessage", "MsgVoteItem", "", "TourneyQuery", "VoteFFAMode"),
       chat("-rec"),
     );
     expect(session.controls.recording).toBe(true);
-    expect(replies().at(-1)).toContain("-rec 1/2");
+    expect(replies().at(-1)).toContain("-record 1/2");
     expect(session.streamDelayMs).toBe(0);
   });
 
@@ -1034,11 +1272,11 @@ describe("watch mission controls", () => {
     expect(session.watcherCount).toBe(1);
     expect(replies()).toHaveLength(2);
     expect(
-      replies().every((reply) =>
-        reply.includes("Admin controls: disabled by relay policy."),
-      ),
+      replies().every((reply) => reply.includes("Admin controls: OFF.")),
     ).toBe(true);
-    expect(replies().at(-1)).toContain("Watching is enabled (1 spectator).");
+    expect(replies()[0]).toMatch(/^Nothing changed\./);
+    expect(replies().at(-1)).not.toContain("Nothing changed.");
+    expect(replies().at(-1)).toContain("Watching is ON.");
   });
 
   it("deduplicates account GUIDs across simultaneous connections, reconnects and renamed players", () => {
@@ -1051,7 +1289,7 @@ describe("watch mission controls", () => {
       chat("-rec", 8),
     );
     expect(session.controls.recording).toBe(true);
-    expect(replies().at(-1)).toContain("-rec 1/2");
+    expect(replies().at(-1)).toContain("-record 1/2");
     session.reconnect("Test reconnect");
     connections.at(-1)!.setStatus("connected");
     events(
@@ -1098,7 +1336,7 @@ describe("watch mission controls", () => {
       }
       events(join(8, "1"), chat("-rec", 8));
       expect(session.controls.recording).toBe(true);
-      expect(replies().at(-1)).toContain("-rec 1/2");
+      expect(replies().at(-1)).toContain("-record 1/2");
     },
   );
 
@@ -1118,7 +1356,7 @@ describe("watch mission controls", () => {
       chat("status", 8),
     );
     expect(session.controls.recording).toBe(true);
-    expect(replies().at(-1)).toContain("-rec 1/2");
+    expect(replies().at(-1)).toContain("-record 1/2");
     events(chat("-rec", 8));
     expect(session.controls.recording).toBe(false);
   });
@@ -1135,7 +1373,8 @@ describe("watch mission controls", () => {
     events(chat("+rec"));
     expect(session.controls.recordingDecision).toBe(false);
     expect(session.recording).toBe(false);
-    expect(replies().at(-1)).toContain("Recording is disabled.");
+    expect(replies().at(-1)).toContain("Recording is OFF.");
+    expect(replies().at(-1)).toMatch(/^Nothing changed\./);
   });
 
   it("keeps REC on until votes pass, preserves it across reconnects, and locks at match end", () => {
@@ -1169,7 +1408,7 @@ describe("watch mission controls", () => {
     );
     expect(status()).toMatchObject({ recording: true });
     expect(session.controls.recordingDecision).toBe(true);
-    expect(replies().at(-1)).toContain("Recording is enabled.");
+    expect(replies().at(-1)).toContain("Recording is ON.");
     expect(replies().at(-1)).not.toContain("Votes:");
     expect(status()).not.toHaveProperty("recordingPolicy");
   });
@@ -2809,7 +3048,7 @@ describe("WatchSession demo recording", () => {
             "7",
             "",
             "1",
-            "\x05%1: %2",
+            "\x06%1: %2",
             "Admin",
             `@MapGenius ${text}`,
           ),
@@ -2823,7 +3062,7 @@ describe("WatchSession demo recording", () => {
         expect(session.watcherCount).toBe(1);
         expect(finalized).toEqual([]);
         expect(connections[0].commands.at(-1)?.args[0]).toContain(
-          "Recording is disabled.",
+          "Recording is OFF.",
         );
         if (reconnect) {
           session.reconnect("Test interruption");

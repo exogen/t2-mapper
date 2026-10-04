@@ -1575,7 +1575,10 @@ export class WatchSession {
         const id = Number(args[4]);
         const player = this.watchState.getPlayerRoster().get(id);
         const voter = player?.guid ? `guid:${player.guid}` : `client:${id}`;
-        if (!this.isControlAdmin(player) && this.controls.forgetVoter(voter)) {
+        if (
+          !this.isControlAdmin(player, id) &&
+          this.controls.forgetVoter(voter)
+        ) {
           relayLog.info(
             {
               ...this.controlLogContext(),
@@ -1594,14 +1597,20 @@ export class WatchSession {
     }
     if (name.toLowerCase() !== "chatmessage") return;
     const chat = decodeGlobalChat(args);
-    if (!chat || chat.clientId === this.watchState.selfClientId) return;
+    if (!chat) return;
     const command = parseMissionControlCommand(chat.text);
     if (!command) return;
+    const changesSetting =
+      command.recording !== undefined ||
+      command.watching !== undefined ||
+      command.error !== undefined;
     const player = this.watchState.getPlayerRoster().get(chat.clientId);
     const actor = {
       clientId: chat.clientId,
+      isSelf: chat.clientId === this.watchState.selfClientId,
       playerName: player?.name ?? null,
       guid: player?.guid ?? null,
+      isSmurf: player?.isSmurf ?? null,
       isAdmin: player?.isAdmin === true,
       isSuperAdmin: player?.isSuperAdmin === true,
       isAlwaysAdmin: isAlwaysAdminPlayer(
@@ -1614,7 +1623,7 @@ export class WatchSession {
       { ...this.controlLogContext(), ...actor },
       "Mission control command received",
     );
-    if (!this.isControlAdmin(player)) {
+    if (!this.isControlAdmin(player, chat.clientId)) {
       relayLog.info(
         {
           ...this.controlLogContext(),
@@ -1623,9 +1632,11 @@ export class WatchSession {
         },
         "Mission control command rejected",
       );
+      if (actor.isSelf) return;
       this.replyToControl(
         () =>
           "Only server admins or relay-authorized players can change MapGenius settings or request status.",
+        changesSetting,
       );
       return;
     }
@@ -1640,7 +1651,7 @@ export class WatchSession {
         },
         "Mission control command rejected",
       );
-      this.replyToControl(() => error);
+      this.replyToControl(() => error, true);
       return;
     }
     // A pending-demo timeout may have finalized the mission while this session
@@ -1656,7 +1667,9 @@ export class WatchSession {
     const results: Partial<Record<"recording" | "watching", string>> = {};
     for (const setting of ["recording", "watching"] as const) {
       if (command[setting] === undefined) continue;
-      if (votesRequired === null) {
+      if (setting === "recording" && !this.recordingConfigured) {
+        results[setting] = "ignored-recording-disabled";
+      } else if (votesRequired === null) {
         results[setting] = "ignored-policy-disabled";
       } else if (
         setting === "recording" &&
@@ -1685,6 +1698,9 @@ export class WatchSession {
       }
     }
     if (changed) this.onControlsChanged();
+    const settingsChanged =
+      wasRecording !== this.controls.recording ||
+      wasWatching !== this.controls.watching;
     if (wasWatching && !this.controls.watching) {
       this.minimumWatchEpoch = this.epoch;
       for (const ws of this.channels.keys()) this.rejectWatcher(ws);
@@ -1692,10 +1708,7 @@ export class WatchSession {
       this.pending.clear();
       this.channels.clear();
     }
-    if (
-      wasRecording !== this.controls.recording ||
-      wasWatching !== this.controls.watching
-    ) {
+    if (settingsChanged) {
       if (this.controls.restricted) this.cancelIdleTimer();
       else this.ensureIdleGrace();
       this.options.demoCoordinator?.updateMission(
@@ -1740,7 +1753,16 @@ export class WatchSession {
       },
       "Mission control command processed",
     );
-    this.replyToControl(() => this.controlStatus());
+    const commandChanged = Object.values(results).some(
+      (result) =>
+        result === "applied" ||
+        result === "vote-added" ||
+        result === "vote-withdrawn",
+    );
+    this.replyToControl(
+      () => this.controlStatus(),
+      changesSetting && !commandChanged,
+    );
   }
 
   private controlLogContext() {
@@ -1750,7 +1772,7 @@ export class WatchSession {
       recording: this.controls.recording,
       watching: this.controls.watching,
       recordingDecision: this.controls.recordingDecision ?? null,
-      recordingConfigured: !!this.options.demoCoordinator?.enabled,
+      recordingConfigured: this.recordingConfigured,
       votes: {
         recording: this.controls.voteCount("recording"),
         watching: this.controls.voteCount("watching"),
@@ -1780,17 +1802,22 @@ export class WatchSession {
   private retainCurrentAdminVotes(): boolean {
     const eligible = new Set<string>();
     for (const [id, entry] of this.watchState.getPlayerRoster()) {
-      if (id !== this.watchState.selfClientId && this.isControlAdmin(entry))
+      if (this.isControlAdmin(entry, id))
         eligible.add(entry.guid ? `guid:${entry.guid}` : `client:${id}`);
     }
     const before = this.controls.snapshot().votes;
-    const changed = this.controls.retainVoters(eligible);
+    const recordingVotesCleared =
+      !this.recordingConfigured && this.controls.clearVotes("recording");
+    const changed =
+      this.controls.retainVoters(eligible) || recordingVotesCleared;
     if (changed)
       relayLog.info(
         {
           ...this.controlLogContext(),
           previousVotes: before,
-          reason: "no-longer-eligible",
+          reason: recordingVotesCleared
+            ? "recording-disabled-by-relay"
+            : "no-longer-eligible",
         },
         "Pending admin votes removed",
       );
@@ -1799,18 +1826,22 @@ export class WatchSession {
 
   private isControlAdmin(
     player: ServerMessageRosterEntry | undefined,
+    clientId: number,
   ): player is ServerMessageRosterEntry {
+    // Browser chat through the shared relay identity requires an explicit
+    // allowlist entry, even when that game client has admin privileges.
     return (
       !!player &&
-      (player.isAdmin === true ||
-        player.isSuperAdmin === true ||
-        isAlwaysAdminPlayer(player, this.options.alwaysAdminPlayers))
+      (isAlwaysAdminPlayer(player, this.options.alwaysAdminPlayers) ||
+        (clientId !== this.watchState.selfClientId &&
+          (player.isAdmin === true || player.isSuperAdmin === true)))
     );
   }
 
   /** Commands take effect immediately; only their chat replies are coalesced. */
-  private replyToControl(reply: () => string): void {
-    this.pendingControlReply = reply;
+  private replyToControl(reply: () => string, nothingChanged = false): void {
+    this.pendingControlReply = () =>
+      `${nothingChanged ? "Nothing changed. " : ""}${reply()}`;
     if (this.controlReplyTimer) return;
     const waitMs =
       this.lastControlReplyAt + CONTROL_REPLY_INTERVAL_MS - Date.now();
@@ -1851,10 +1882,8 @@ export class WatchSession {
     if (this.retainCurrentAdminVotes()) this.onControlsChanged();
     const { votesRequired } = this.adminVoteContext();
     const status = [
-      `Recording is ${this.recording ? "enabled" : "disabled"}.`,
-      this.controls.watching
-        ? `Watching is enabled (${this.watcherCount} ${this.watcherCount === 1 ? "spectator" : "spectators"}).`
-        : "Watching is disabled.",
+      this.recordingStatus(),
+      `Watching is ${this.controls.watching ? "ON" : "OFF"}.`,
     ];
     const pending = (["recording", "watching"] as const)
       .filter(
@@ -1863,20 +1892,29 @@ export class WatchSession {
       )
       .map(
         (setting) =>
-          `${this.controls[setting] ? "-" : "+"}${setting === "recording" ? "rec" : "watch"} ${this.controls.voteCount(setting)}/${votesRequired}`,
+          `${this.controls[setting] ? "-" : "+"}${setting === "recording" ? "record" : "watch"} ${this.controls.voteCount(setting)}/${votesRequired}`,
       );
     if (pending.length) status.push(`Votes: ${pending.join(", ")}.`);
-    if (votesRequired === null)
-      status.push("Admin controls: disabled by relay policy.");
-    status.push("Settings reset next map.");
+    if (votesRequired === null) status.push("Admin controls: OFF.");
+    if (this.controls.restricted) status.push("Settings reset next map.");
     return status.join(" ");
+  }
+
+  private recordingStatus(): string {
+    if (!this.recordingConfigured) return "Recording is globally OFF.";
+    if (!this.recording) return "Recording is OFF.";
+    return "Recording is ON.";
   }
 
   get recording(): boolean {
     return (
-      !!this.options.demoCoordinator?.enabled &&
+      this.recordingConfigured &&
       (this.controls.recordingDecision ?? this.controls.recording)
     );
+  }
+
+  private get recordingConfigured(): boolean {
+    return !!this.options.demoCoordinator?.enabled;
   }
 
   /** Detach the recorder and hand it to the coordinator to finalize —

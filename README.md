@@ -155,11 +155,11 @@ directly.
 First, obtain TribesNext account credentials:
 
 ```console
-npm run login
+npm run login -- --env .env.development.local
 ```
 
 This prompts for your TribesNext username and password, downloads the account
-certificate and encrypted key, and writes them to `.env.local`.
+certificate and encrypted key, and writes them to `.env.development.local`.
 
 Then run the relay (or use `npm run start:both` to run it alongside the Next.js
 dev server):

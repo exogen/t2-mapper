@@ -39,8 +39,8 @@ export function isAlwaysAdminPlayer(
 export function decodeGlobalChat(
   args: string[],
 ): { clientId: number; text: string } | null {
-  // hud.cs: chatMessageAll(%client, '\c4%1: %2', %client.name, %text).
-  if (args.length < 6 || args[3] !== "\x05%1: %2" || !/^\d+$/.test(args[0]))
+  // hud.cs uses \c4 (byte 0x06); team chat uses \c3 (byte 0x05).
+  if (args.length < 6 || args[3] !== "\x06%1: %2" || !/^\d+$/.test(args[0]))
     return null;
   const clientId = Number(args[0]);
   return Number.isSafeInteger(clientId) && clientId > 0
@@ -245,6 +245,12 @@ export class MissionControls {
 
   voteCount(setting: MissionControlSetting): number {
     return this.votes[setting].size;
+  }
+
+  clearVotes(setting: MissionControlSetting): boolean {
+    if (this.votes[setting].size === 0) return false;
+    this.votes[setting].clear();
+    return true;
   }
 
   /** Returns whether the ballot or applied setting changed. */
