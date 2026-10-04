@@ -1882,8 +1882,8 @@ export class WatchSession {
     if (this.retainCurrentAdminVotes()) this.onControlsChanged();
     const { votesRequired } = this.adminVoteContext();
     const status = [
-      this.recordingStatus(),
-      `Watching is ${this.controls.watching ? "ON" : "OFF"}.`,
+      `Recording: ${this.recording ? "ON" : "OFF"}.`,
+      `Watching: ${this.controls.watching ? "ON" : "OFF"}.`,
     ];
     const pending = (["recording", "watching"] as const)
       .filter(
@@ -1898,12 +1898,6 @@ export class WatchSession {
     if (votesRequired === null) status.push("Admin controls: OFF.");
     if (this.controls.restricted) status.push("Settings reset next map.");
     return status.join(" ");
-  }
-
-  private recordingStatus(): string {
-    if (!this.recordingConfigured) return "Recording is globally OFF.";
-    if (!this.recording) return "Recording is OFF.";
-    return "Recording is ON.";
   }
 
   get recording(): boolean {

@@ -251,7 +251,7 @@ describe("watch mission controls", () => {
       chat("status", 99, "\x01123"),
     );
     const response = sentReplies().at(-1)!;
-    expect(response).toContain("Watching is ON.");
+    expect(response).toContain("Watching: ON.");
     events(
       remote("ChatMessage", "99", "", "1", "\x06%1: %2", "MapGenius", response),
     );
@@ -264,7 +264,7 @@ describe("watch mission controls", () => {
     start({ alwaysAdminPlayers: new Set(["MapGenius"]) });
     events(join(99, "0", "0", "456", "MapGenius"), chat("-rec -watch", 99));
     expect(saved[address]).toMatchObject({ recording: false, watching: false });
-    expect(replies().at(-1)).toContain("Watching is OFF.");
+    expect(replies().at(-1)).toContain("Watching: OFF.");
   });
 
   it("retains the shared account's single vote while still requiring a second admin", () => {
@@ -555,7 +555,7 @@ describe("watch mission controls", () => {
       .playerRoster.find((entry: any) => entry.clientId === 8);
     expect(player.isAdmin).toBeUndefined();
     expect(player.isSuperAdmin).toBeUndefined();
-    expect(replies().at(-1)).toContain("Watching is OFF.");
+    expect(replies().at(-1)).toContain("Watching: OFF.");
     expect(info).toHaveBeenCalledWith(
       expect.objectContaining({
         clientId: 8,
@@ -688,7 +688,7 @@ describe("watch mission controls", () => {
     });
     expect(rejected.binaryFrames()).toHaveLength(0);
     expect(saved[address]).toMatchObject({ recording: true, watching: false });
-    expect(replies().at(-1)).toContain("Watching is OFF.");
+    expect(replies().at(-1)).toContain("Watching: OFF.");
     expect(replies().at(-1)).toMatch(/Settings reset next map\.$/);
     events(chat("+watch"));
     expect(replies().at(-1)).not.toContain("Settings reset next map.");
@@ -710,19 +710,19 @@ describe("watch mission controls", () => {
       for (let i = 0; i < count; i++)
         manager.watch(new FakeWebSocket() as unknown as WebSocket, address);
       events(chat("status"));
-      expect(replies()).toEqual(["Recording is ON. Watching is ON."]);
+      expect(replies()).toEqual(["Recording: ON. Watching: ON."]);
       expect(saved).toEqual({});
     },
   );
 
   it("reports recording as OFF when admins disable saving and ON when they restore it", () => {
     events(chat("status"));
-    expect(replies().at(-1)).toBe("Recording is ON. Watching is ON.");
+    expect(replies().at(-1)).toBe("Recording: ON. Watching: ON.");
     events(chat("-record"));
-    expect(replies().at(-1)).toContain("Recording is OFF.");
+    expect(replies().at(-1)).toContain("Recording: OFF.");
     expect(replies().at(-1)).toMatch(/Settings reset next map\.$/);
     events(chat("+record"));
-    expect(replies().at(-1)).toBe("Recording is ON. Watching is ON.");
+    expect(replies().at(-1)).toBe("Recording: ON. Watching: ON.");
   });
 
   it.each(["unconfigured", "disabled"] as const)(
@@ -745,7 +745,7 @@ describe("watch mission controls", () => {
       expect(session.controls.recording).toBe(true);
       expect(session.controls.voteCount("recording")).toBe(0);
       expect(session.controls.voteCount("watching")).toBe(1);
-      expect(replies().at(-1)).toContain("Recording is globally OFF.");
+      expect(replies().at(-1)).toContain("Recording: OFF.");
       expect(replies().at(-1)).not.toContain("Nothing changed.");
       expect(replies().at(-1)).not.toContain("Recording controls:");
       expect(replies().at(-1)).toContain("Votes: -watch 1/2.");
@@ -837,7 +837,7 @@ describe("watch mission controls", () => {
     start({ adminVotePolicies: twoAdminPolicies });
     events(chat("+record +watch"));
     expect(replies().at(-1)).toBe(
-      "Nothing changed. Recording is ON. Watching is ON.",
+      "Nothing changed. Recording: ON. Watching: ON.",
     );
     events(chat("-record status"));
     const pending = replies().at(-1);
@@ -855,14 +855,14 @@ describe("watch mission controls", () => {
     expect(replies().at(-1)).not.toContain("Nothing changed.");
     events(join(8, "1"), chat("-record", 8));
     expect(replies().at(-1)).toBe(
-      "Recording is OFF. Watching is ON. Settings reset next map.",
+      "Recording: OFF. Watching: ON. Settings reset next map.",
     );
     events(chat("-record -watch"));
     expect(replies().at(-1)).not.toContain("Nothing changed.");
     expect(replies().at(-1)).toContain("Votes: -watch 1/2.");
     events(chat("-record -watch", 8));
     expect(replies().at(-1)).toBe(
-      "Recording is OFF. Watching is OFF. Settings reset next map.",
+      "Recording: OFF. Watching: OFF. Settings reset next map.",
     );
   });
 
@@ -973,7 +973,7 @@ describe("watch mission controls", () => {
     vi.advanceTimersByTime(3_000);
     expect(sentReplies()).toHaveLength(2);
     expect(sentReplies().at(-1)).toMatch(/^Nothing changed\./);
-    expect(sentReplies().at(-1)).toContain("Recording is OFF.");
+    expect(sentReplies().at(-1)).toContain("Recording: OFF.");
     expect(sentReplies().at(-1)).toContain("Votes: +record 1/2");
     events(chat("+rec", 7));
     expect(session.recording).toBe(true);
@@ -988,7 +988,7 @@ describe("watch mission controls", () => {
     vi.advanceTimersByTime(3_000);
     expect(sentReplies()).toHaveLength(3);
     expect(sentReplies().at(-1)).not.toContain("Nothing changed.");
-    expect(sentReplies().at(-1)).toContain("Recording is ON.");
+    expect(sentReplies().at(-1)).toContain("Recording: ON.");
     expect(sentReplies().at(-1)).not.toContain("Votes:");
   });
 
@@ -1032,8 +1032,8 @@ describe("watch mission controls", () => {
     expect(sentReplies()).toHaveLength(1);
     vi.advanceTimersByTime(3_000);
     expect(sentReplies()).toHaveLength(2);
-    expect(sentReplies().at(-1)).toContain("Recording is OFF.");
-    expect(sentReplies().at(-1)).toContain("Watching is OFF.");
+    expect(sentReplies().at(-1)).toContain("Recording: OFF.");
+    expect(sentReplies().at(-1)).toContain("Watching: OFF.");
     expect(coordinator.updateMission).toHaveBeenLastCalledWith(
       address,
       expect.objectContaining({ recordingDecision: false, watching: false }),
@@ -1056,7 +1056,7 @@ describe("watch mission controls", () => {
     expect(sentReplies().at(-1)).not.toContain("Votes:");
     events(join(7, "1"), chat("-rec"), remote("MissionEnd"));
     vi.advanceTimersByTime(3_000);
-    expect(sentReplies().at(-1)).toContain("Recording is ON.");
+    expect(sentReplies().at(-1)).toContain("Recording: ON.");
     expect(sentReplies().at(-1)).not.toContain("Votes:");
   });
 
@@ -1276,7 +1276,7 @@ describe("watch mission controls", () => {
     ).toBe(true);
     expect(replies()[0]).toMatch(/^Nothing changed\./);
     expect(replies().at(-1)).not.toContain("Nothing changed.");
-    expect(replies().at(-1)).toContain("Watching is ON.");
+    expect(replies().at(-1)).toContain("Watching: ON.");
   });
 
   it("deduplicates account GUIDs across simultaneous connections, reconnects and renamed players", () => {
@@ -1373,7 +1373,7 @@ describe("watch mission controls", () => {
     events(chat("+rec"));
     expect(session.controls.recordingDecision).toBe(false);
     expect(session.recording).toBe(false);
-    expect(replies().at(-1)).toContain("Recording is OFF.");
+    expect(replies().at(-1)).toContain("Recording: OFF.");
     expect(replies().at(-1)).toMatch(/^Nothing changed\./);
   });
 
@@ -1408,7 +1408,7 @@ describe("watch mission controls", () => {
     );
     expect(status()).toMatchObject({ recording: true });
     expect(session.controls.recordingDecision).toBe(true);
-    expect(replies().at(-1)).toContain("Recording is ON.");
+    expect(replies().at(-1)).toContain("Recording: ON.");
     expect(replies().at(-1)).not.toContain("Votes:");
     expect(status()).not.toHaveProperty("recordingPolicy");
   });
@@ -3062,7 +3062,7 @@ describe("WatchSession demo recording", () => {
         expect(session.watcherCount).toBe(1);
         expect(finalized).toEqual([]);
         expect(connections[0].commands.at(-1)?.args[0]).toContain(
-          "Recording is OFF.",
+          "Recording: OFF.",
         );
         if (reconnect) {
           session.reconnect("Test interruption");
