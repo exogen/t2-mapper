@@ -23,7 +23,13 @@ import {
 } from "./missionControls.js";
 import { DemoCoordinator } from "./demoCoordinator.js";
 import { DemoUploader, loadUploadConfig } from "./demoUpload.js";
-import { Patroller, globToRegExp } from "./patrol.js";
+import {
+  Patroller,
+  globToRegExp,
+  loadPatrolInteger,
+  loadPatrolList,
+  loadPatrolPlayerMinimums,
+} from "./patrol.js";
 import {
   AUTH_COMMANDS,
   isChatCommand,
@@ -92,7 +98,11 @@ const DEMO_MIN_LENGTH_MS = parseInt(
   10,
 );
 /** Peak non-observer players a recording must have seen to be kept. */
-const DEMO_MIN_PLAYERS = parseInt(process.env.DEMO_MIN_PLAYERS || "2", 10);
+const DEMO_MIN_PLAYERS = loadPatrolInteger(
+  process.env.DEMO_MIN_PLAYERS,
+  "DEMO_MIN_PLAYERS",
+  2,
+);
 const DEMO_PENDING_TIMEOUT_MS = Number(
   process.env.DEMO_PENDING_TIMEOUT_MS ?? 60 * 60_000,
 );
@@ -106,28 +116,10 @@ const WATCH_STATE_PATH = path.resolve(
 const DEMO_PATROL_ENABLED =
   process.env.DEMO_PATROL_ENABLED === "1" ||
   process.env.DEMO_PATROL_ENABLED === "true";
-/** JSON array (precise) or comma-separated globs matched against
- *  server names — `*` wildcard, no `*` = exact, case-insensitive. */
-function parsePatrolServers(raw: string | undefined): string[] {
-  if (!raw) return [];
-  const trimmed = raw.trim();
-  if (trimmed.startsWith("[")) {
-    try {
-      const parsed: unknown = JSON.parse(trimmed);
-      if (Array.isArray(parsed)) {
-        return parsed.filter((p): p is string => typeof p === "string");
-      }
-    } catch {
-      relayLog.error("DEMO_PATROL_SERVERS looks like JSON but failed to parse");
-      return [];
-    }
-  }
-  return trimmed
-    .split(",")
-    .map((p) => p.trim())
-    .filter(Boolean);
-}
-const DEMO_PATROL_SERVERS = parsePatrolServers(process.env.DEMO_PATROL_SERVERS);
+const DEMO_PATROL_SERVERS = loadPatrolList(
+  process.env.DEMO_PATROL_SERVERS,
+  "DEMO_PATROL_SERVERS",
+);
 /** Name-pattern matchers for the server-list `isPatrolled` flag. Built
  *  from the configured patterns regardless of whether patrol is enabled,
  *  so the UI can flag "important" servers even when we aren't recording. */
@@ -135,22 +127,34 @@ const patrolNameMatchers = DEMO_PATROL_SERVERS.map(globToRegExp);
 function matchesPatrolName(name: string): boolean {
   return patrolNameMatchers.some((re) => re.test(name));
 }
-/** Mission-type display names to patrol (same glob rules as the server
- *  list); empty = all types. */
-const DEMO_PATROL_MISSION_TYPES = parsePatrolServers(
+/** Exact mission-type display names, case-insensitive; empty = all types. */
+const DEMO_PATROL_MISSION_TYPES = loadPatrolList(
   process.env.DEMO_PATROL_MISSION_TYPES,
+  "DEMO_PATROL_MISSION_TYPES",
 );
-const DEMO_PATROL_MIN_PLAYERS = parseInt(
-  process.env.DEMO_PATROL_MIN_PLAYERS || `${DEMO_MIN_PLAYERS}`,
-  10,
+const DEMO_PATROL_EXCLUDED_MISSION_TYPES = loadPatrolList(
+  process.env.DEMO_PATROL_EXCLUDED_MISSION_TYPES,
+  "DEMO_PATROL_EXCLUDED_MISSION_TYPES",
 );
-const DEMO_PATROL_MAX_SESSIONS = parseInt(
-  process.env.DEMO_PATROL_MAX_SESSIONS || "4",
-  10,
+const DEMO_PATROL_MIN_PLAYERS_BY_TYPE = loadPatrolPlayerMinimums(
+  process.env.DEMO_PATROL_MIN_PLAYERS_BY_TYPE,
 );
-const DEMO_PATROL_INTERVAL_MS = parseInt(
-  process.env.DEMO_PATROL_INTERVAL_MS || "60000",
-  10,
+const DEMO_PATROL_MIN_PLAYERS = loadPatrolInteger(
+  process.env.DEMO_PATROL_MIN_PLAYERS,
+  "DEMO_PATROL_MIN_PLAYERS",
+  DEMO_MIN_PLAYERS,
+);
+const DEMO_PATROL_MAX_SESSIONS = loadPatrolInteger(
+  process.env.DEMO_PATROL_MAX_SESSIONS,
+  "DEMO_PATROL_MAX_SESSIONS",
+  4,
+);
+const DEMO_PATROL_INTERVAL_MS = loadPatrolInteger(
+  process.env.DEMO_PATROL_INTERVAL_MS,
+  "DEMO_PATROL_INTERVAL_MS",
+  60_000,
+  1,
+  2_147_483_647,
 );
 const DEMO_UPLOAD_RETRY_MS = parseInt(
   process.env.DEMO_UPLOAD_RETRY_MS || `${5 * 60_000}`,
@@ -176,7 +180,10 @@ const WATCH_TOURNEY_DELAY_MS = parseInt(
  *  the tournament check and never delay these (e.g. LakRabbit). */
 const WATCH_TOURNEY_SKIP_TYPES =
   process.env.WATCH_TOURNEY_SKIP_TYPES != null
-    ? parsePatrolServers(process.env.WATCH_TOURNEY_SKIP_TYPES)
+    ? loadPatrolList(
+        process.env.WATCH_TOURNEY_SKIP_TYPES,
+        "WATCH_TOURNEY_SKIP_TYPES",
+      )
     : ["LakRabbit"];
 
 /** HTTP health checks and demo downloads; WebSocket upgrades are separate. */
@@ -524,7 +531,9 @@ const patroller =
     ? new Patroller({
         patterns: DEMO_PATROL_SERVERS,
         missionTypes: DEMO_PATROL_MISSION_TYPES,
+        excludedMissionTypes: DEMO_PATROL_EXCLUDED_MISSION_TYPES,
         minPlayers: DEMO_PATROL_MIN_PLAYERS,
+        minPlayersByType: DEMO_PATROL_MIN_PLAYERS_BY_TYPE,
         maxSessions: DEMO_PATROL_MAX_SESSIONS,
         intervalMs: DEMO_PATROL_INTERVAL_MS,
         getServerList,

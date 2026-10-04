@@ -1618,6 +1618,227 @@ describe("confirmed kickoffs", () => {
   });
 });
 
+describe("flag team metadata", () => {
+  function packet(...args: string[]) {
+    return {
+      type: BlockTypePacket,
+      parsed: {
+        events: [
+          {
+            parsedData: {
+              type: "RemoteCommandEvent",
+              funcName: "ServerMessage",
+              args,
+            },
+          },
+        ],
+      },
+    };
+  }
+  function recorder(teamId: number) {
+    scan.demoValues = [
+      "",
+      "1",
+      `Runner\t123\t100\t32\t${teamId}\t0\t50\t0`,
+      "readplayerinfo",
+      "1\t100\tRunner\tTeam\t123",
+    ];
+  }
+
+  it("resolves every observer flag action's team, including automatic returns", async () => {
+    recorder(0);
+    scan.taggedStrings.set(10, "2");
+    scan.blocks = [
+      packet("MsgCTFFlagTaken", "", "Player", "Custom A", "1"),
+      packet("MsgCTFFlagDropped", "", "Player", "Custom A", "1"),
+      packet("MsgCTFFlagReturned", "", "0", "Custom A", "1"),
+      packet("MsgCTFFlagCapped", "", "Player", "Custom A", "1", "2"),
+      packet("MsgCTFFlagTaken", "", "Player", "Custom B", "\x0110"),
+      packet("MsgCTFFlagDropped", "", "Player", "Custom B", "2"),
+      packet("MsgCTFFlagReturned", "", "Player", "Custom B", "2"),
+      packet("MsgCTFFlagCapped", "", "Player", "Custom B", "2", "1"),
+    ];
+    const result = await scanDemoTimeline(new ArrayBuffer(0), "Runner");
+    expect(result.observerPerspective).toBe(true);
+    expect(
+      result.events.map(({ type, flagTeamId, actorTeamId }) => [
+        type,
+        flagTeamId,
+        actorTeamId,
+      ]),
+    ).toEqual([
+      ["flag-grab", 1, 2],
+      ["flag-drop", 1, 2],
+      ["flag-return", 1, 1],
+      ["flag-cap", 1, 2],
+      ["flag-grab", 2, 1],
+      ["flag-drop", 2, 1],
+      ["flag-return", 2, 2],
+      ["flag-cap", 2, 1],
+    ]);
+  });
+
+  it("classifies player flag events by the actor's team", async () => {
+    recorder(1);
+    scan.blocks = [
+      packet("MsgCTFFlagTaken", "", "Runner", "Inferno", "2"),
+      packet("MsgCTFFlagDropped", "You dropped the flag", "0", "0", "2"),
+      packet("MsgCTFFlagReturned", "", "Runner", "Storm", "1"),
+      packet("MsgCTFFlagCapped", "", "Teammate", "Inferno", "2", "1"),
+      packet("MsgCTFFlagCapped", "", "Opponent", "Storm", "1", "2"),
+    ];
+    const result = await scanDemoTimeline(new ArrayBuffer(0), "Runner");
+    expect(result.observerPerspective).toBe(false);
+    expect(
+      result.events.map(({ type, flagTeamId, teamAffinity }) => [
+        type,
+        flagTeamId,
+        teamAffinity,
+      ]),
+    ).toEqual([
+      ["flag-grab", 2, "friendly"],
+      ["flag-drop", 2, "friendly"],
+      ["flag-return", 1, "friendly"],
+      ["flag-cap", 2, "friendly"],
+      ["flag-cap", 1, "enemy"],
+    ]);
+    expect(result.events.slice(-2).map((event) => event.teamAffinity)).toEqual([
+      "friendly",
+      "enemy",
+    ]);
+  });
+
+  it("freezes each action's affinity before the recorder changes teams or enters observer mode", async () => {
+    recorder(1);
+    scan.blocks = [
+      packet("MsgCTFFlagCapped", "", "Opponent", "Storm", "1", "2"),
+      packet("MsgClientJoinTeam", "", "Runner", "Inferno", "100", "2"),
+      packet("MsgCTFFlagCapped", "", "Runner", "Storm", "1", "2"),
+      packet("MsgClientJoinTeam", "", "Runner", "Observer", "100", "0"),
+      packet("MsgCTFFlagCapped", "", "Opponent", "Storm", "1", "2"),
+    ];
+    const result = await scanDemoTimeline(new ArrayBuffer(0), "Runner");
+    expect(result.observerPerspective).toBe(false);
+    expect(result.events.map((event) => event.teamAffinity)).toEqual([
+      "enemy",
+      "friendly",
+      "neutral",
+    ]);
+  });
+
+  it("colors the action owner's team even when flag team metadata is missing or teamless", async () => {
+    recorder(1);
+    scan.blocks = [
+      packet("MsgCTFFlagTaken", "", "Runner", "Inferno"),
+      packet("MsgCTFFlagDropped", "You dropped the flag", "0", "0", "unknown"),
+      packet("MsgCTFFlagReturned", "", "Runner", "Storm"),
+      packet("MsgCTFFlagCapped", "", "Teammate", "Inferno", "", "1"),
+      packet("MsgCTFFlagCapped", "", "Opponent", "Storm", "", "2"),
+      packet("MsgCTFFlagTaken", "", "Runner", "Rabbit", "0"),
+    ];
+    const { events } = await scanDemoTimeline(new ArrayBuffer(0), "Runner");
+    expect(events.map((event) => event.teamAffinity)).toEqual([
+      "friendly",
+      "friendly",
+      "friendly",
+      "friendly",
+      "enemy",
+      "friendly",
+    ]);
+    expect(events.map((event) => event.flagTeamId)).toEqual([
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      0,
+    ]);
+  });
+
+  it("tracks action owners through roster renames, team changes, disconnects, and reused client IDs", async () => {
+    recorder(0);
+    scan.demoValues[1] = "2";
+    scan.demoValues.splice(3, 0, "\x0bTAG|Player\t456\t200\t33\t2\t0\t50\t0");
+    scan.taggedStrings.set(11, "Renamed");
+    scan.taggedStrings.set(12, "1");
+    scan.blocks = [
+      packet("MsgCTFFlagTaken", "", "TAG|Player", "Teamless", "0"),
+      packet("MsgClientNameChanged", "", "TAG|Player", "\x0111", "200"),
+      packet("MsgCTFFlagDropped", "", "Renamed", "Teamless", "0"),
+      packet("MsgClientJoinTeam", "", "Renamed", "Storm", "200", "\x0112"),
+      packet("MsgCTFFlagTaken", "", "Renamed", "Teamless", "0"),
+      packet("MsgClientDrop", "", "Renamed", "200"),
+      packet("MsgCTFFlagTaken", "", "Renamed", "Teamless", "0"),
+      packet("MsgClientJoin", "", "Replacement", "200", "33"),
+      packet("MsgClientJoinTeam", "", "Replacement", "Inferno", "200", "2"),
+      packet("MsgCTFFlagReturned", "", "Replacement", "Teamless", "0"),
+    ];
+    const { events } = await scanDemoTimeline(new ArrayBuffer(0), "Runner");
+    expect(
+      events
+        .filter((event) => event.type.startsWith("flag-"))
+        .map((event) => event.actorTeamId),
+    ).toEqual([2, 2, 1, undefined, 2]);
+  });
+
+  it("prefers the capturer's wire team, then the roster, before inferring from the flag", async () => {
+    recorder(0);
+    scan.demoValues[1] = "2";
+    scan.demoValues.splice(3, 0, "Player\t456\t200\t33\t1\t0\t50\t0");
+    scan.blocks = [
+      packet("MsgCTFFlagCapped", "", "Player", "Custom", "3", "2"),
+      packet("MsgCTFFlagCapped", "", "Player", "Custom", "3", "unknown"),
+      packet("MsgCTFFlagCapped", "", "Unknown", "Inferno", "2"),
+      packet("MsgCTFFlagCapped", "", "Unknown", "Custom", "unknown"),
+    ];
+    const { events } = await scanDemoTimeline(new ArrayBuffer(0), "Runner");
+    expect(events.map((event) => event.actorTeamId)).toEqual([
+      2,
+      1,
+      1,
+      undefined,
+    ]);
+  });
+
+  it("preserves custom scoring team names at the capture time", async () => {
+    recorder(0);
+    scan.blocks = [
+      packet("MsgCTFAddTeam", "", "1", "\x0bRambo", "<At Base>", "0"),
+      packet("MsgCTFFlagCapped", "", "Player", "Inferno", "2", "1"),
+      packet("MsgCTFAddTeam", "", "1", "Storm", "<At Base>", "0"),
+      packet("MsgCTFFlagCapped", "", "Player", "Inferno", "2", "1"),
+    ];
+    const { events } = await scanDemoTimeline(new ArrayBuffer(0), "Runner");
+    expect(events.map((event) => event.actorTeamName)).toEqual([
+      "Rambo",
+      "Storm",
+    ]);
+  });
+
+  it("names the recorder when their capture message omits the capper", async () => {
+    recorder(1);
+    scan.blocks = [
+      packet(
+        "MsgCTFFlagCapped",
+        "You captured the %2 flag",
+        "0",
+        "Inferno",
+        "2",
+        "1",
+      ),
+    ];
+    const { events } = await scanDemoTimeline(new ArrayBuffer(0), "Runner");
+    expect(events).toMatchObject([
+      {
+        type: "flag-cap",
+        capturer: "Runner",
+        isRecorder: true,
+        actorTeamName: "Storm",
+      },
+    ]);
+  });
+});
+
 describe("recorder identity", () => {
   const tagged = "\x10\x0bTAG|\x08Runner\x11";
   function packet(...args: string[]) {

@@ -112,24 +112,11 @@
   color: #8a8380;
 }
 
-.EventIcon[data-type="flag-cap"] {
-  color: #69db7c;
-  font-size: 15px;
-  margin: 0;
-}
-
+.EventIcon[data-type="flag-cap"],
 .EventIcon[data-type="flag-grab"],
 .EventIcon[data-type="flag-return"] {
   font-size: 15px;
   margin: 0;
-}
-
-.EventIcon[data-type="flag-cap"][data-affinity="enemy"] {
-  color: #ff6b6b;
-}
-
-.EventIcon[data-type="flag-cap"][data-affinity="neutral"] {
-  color: #adb5bd;
 }
 
 .EventIcon[data-type="match-start"] {

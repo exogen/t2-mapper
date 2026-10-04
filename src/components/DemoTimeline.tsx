@@ -18,6 +18,7 @@ import { ScanProgress } from "./ScanProgress";
 import { useSettings } from "./SettingsProvider";
 import { useMediaQuery } from "./useMediaQuery";
 import { ImSad2 } from "react-icons/im";
+import { timelineFlagColor } from "./demoTimelineColors";
 import accordionStyles from "./Accordion.module.css";
 import controlStyles from "./InspectorControls.module.css";
 import styles from "./DemoTimeline.module.css";
@@ -226,7 +227,7 @@ export function DemoTimeline() {
   const error = useDemoTimeline((s) => s.error);
   const observerPerspective = useDemoTimeline((s) => s.observerPerspective);
   const recording = useRecording();
-  const { setSidebarOpen } = useSettings();
+  const { setSidebarOpen, observerTeamColors } = useSettings();
   // Match the overlay layout and navigation actions in MapInspector.
   const sidebarOverlayMode = useMediaQuery("(max-width: 899px)") ?? false;
   const [filter, setFilter] = useState<Filter>("all");
@@ -333,7 +334,13 @@ export function DemoTimeline() {
               <span
                 className={styles.EventIcon}
                 data-type={event.type}
-                data-affinity={event.teamAffinity}
+                style={{
+                  color: timelineFlagColor(
+                    event,
+                    observerPerspective,
+                    observerTeamColors,
+                  ),
+                }}
               >
                 {EVENT_ICON[event.type]}
               </span>

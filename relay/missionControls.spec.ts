@@ -6,9 +6,12 @@ import {
   loadAlwaysAdminPlayers,
   MissionControls,
   parseMissionControlCommand,
-  selectAdminVotesRequired,
+  selectAdminVoteRequirements,
 } from "./missionControls";
 import { detectColorCode } from "./shared";
+
+const oneAdminVote = { adminVotes: 1, superAdminVotes: 0 };
+const twoAdminVotes = { adminVotes: 2, superAdminVotes: 0 };
 
 describe("always-admin players", () => {
   it.each([undefined, "", "  ", "[]"])("defaults to nobody for %j", (value) => {
@@ -71,8 +74,8 @@ describe("admin vote policies", () => {
     (value) => {
       const loaded = loadAdminVotePolicies(value);
       expect(loaded).toEqual([]);
-      expect(selectAdminVotesRequired(loaded, true, 20)).toBeNull();
-      expect(selectAdminVotesRequired(loaded, false, 20)).toBeNull();
+      expect(selectAdminVoteRequirements(loaded, true, 20)).toBeNull();
+      expect(selectAdminVoteRequirements(loaded, false, 20)).toBeNull();
     },
   );
 
@@ -80,12 +83,83 @@ describe("admin vote policies", () => {
     const loaded = loadAdminVotePolicies("[]");
     expect(loaded).toEqual([]);
     for (const mode of [true, false, null])
-      expect(selectAdminVotesRequired(loaded, mode, 20)).toBeNull();
+      expect(selectAdminVoteRequirements(loaded, mode, 20)).toBeNull();
   });
 
   it("loads a JSON array of policies", () => {
     expect(loadAdminVotePolicies(JSON.stringify(policies))).toEqual(policies);
   });
+
+  it.each([
+    { adminVotes: 2, superAdminVotes: 1 },
+    { superAdminVotes: 1 },
+    { adminVotes: 0, superAdminVotes: 2 },
+    { adminVotes: 2 },
+    { adminVotes: 2, superAdminVotes: 0 },
+  ])("loads optional role thresholds %j", (thresholds) => {
+    const policy = { tournament: true, minPlayerCount: 0, ...thresholds };
+    const loaded = loadAdminVotePolicies(JSON.stringify([policy]));
+    expect(loaded).toEqual([policy]);
+    expect(selectAdminVoteRequirements(loaded, true, 0)).toEqual({
+      adminVotes: thresholds.adminVotes ?? 0,
+      superAdminVotes: thresholds.superAdminVotes ?? 0,
+    });
+  });
+
+  it.each([
+    twoAdminVotes,
+    { adminVotes: 2, superAdminVotes: 2 },
+    { adminVotes: 2, superAdminVotes: 3 },
+  ])(
+    "preserves identical thresholds while tournament mode is unresolved: %j",
+    (requirements) => {
+      const matching = [true, false].map((tournament) => ({
+        tournament,
+        minPlayerCount: 0,
+        ...requirements,
+      }));
+      expect(selectAdminVoteRequirements(matching, null, 0)).toEqual(
+        requirements,
+      );
+    },
+  );
+
+  it.each([
+    [
+      { adminVotes: 2, superAdminVotes: 1 },
+      { adminVotes: 1 },
+      { adminVotes: 2, superAdminVotes: 1 },
+    ],
+    [
+      { superAdminVotes: 1 },
+      { adminVotes: 3 },
+      { adminVotes: 0, superAdminVotes: 3 },
+    ],
+    [
+      { adminVotes: 3 },
+      { superAdminVotes: 1 },
+      { adminVotes: 0, superAdminVotes: 3 },
+    ],
+    [
+      { superAdminVotes: 2 },
+      { superAdminVotes: 3 },
+      { adminVotes: 0, superAdminVotes: 3 },
+    ],
+  ])(
+    "keeps unresolved-mode thresholds safe for both policies: %j / %j",
+    (tournament, normal, expected) => {
+      expect(
+        selectAdminVoteRequirements(
+          [
+            { tournament: true, minPlayerCount: 0, ...tournament },
+            { tournament: false, minPlayerCount: 0, ...normal },
+          ],
+          null,
+          0,
+        ),
+      ).toEqual(expected);
+    },
+  );
 
   it.each([
     [true, 0, null],
@@ -101,18 +175,20 @@ describe("admin vote policies", () => {
   ] as const)(
     "selects tournament=%s with %i players: %s votes",
     (tournament, count, expected) => {
-      expect(selectAdminVotesRequired(policies, tournament, count)).toBe(
-        expected,
+      const requirements =
+        expected === null ? null : { adminVotes: expected, superAdminVotes: 0 };
+      expect(selectAdminVoteRequirements(policies, tournament, count)).toEqual(
+        requirements,
       );
       expect(
-        selectAdminVotesRequired([...policies].reverse(), tournament, count),
-      ).toBe(expected);
+        selectAdminVoteRequirements([...policies].reverse(), tournament, count),
+      ).toEqual(requirements);
     },
   );
 
   it("uses the highest eligible minimum, not the largest vote count", () => {
     expect(
-      selectAdminVotesRequired(
+      selectAdminVoteRequirements(
         [
           { tournament: true, minPlayerCount: 0, adminVotes: 3 },
           { tournament: true, minPlayerCount: 20, adminVotes: 2 },
@@ -120,14 +196,14 @@ describe("admin vote policies", () => {
         true,
         20,
       ),
-    ).toBe(2);
+    ).toEqual(twoAdminVotes);
   });
 
   it("disables controls for unmatched modes and player counts, including an unresolved mode", () => {
     const sparse = [{ tournament: true, minPlayerCount: 20, adminVotes: 2 }];
-    expect(selectAdminVotesRequired(sparse, false, 40)).toBeNull();
-    expect(selectAdminVotesRequired(sparse, true, 19)).toBeNull();
-    expect(selectAdminVotesRequired(sparse, null, 40)).toBeNull();
+    expect(selectAdminVoteRequirements(sparse, false, 40)).toBeNull();
+    expect(selectAdminVoteRequirements(sparse, true, 19)).toBeNull();
+    expect(selectAdminVoteRequirements(sparse, null, 40)).toBeNull();
   });
 
   it.each(["not json", "null", "2", "{}", "[null]", "[[]]", "[{}]"])(
@@ -150,10 +226,31 @@ describe("admin vote policies", () => {
     { adminVotes: 1.5 },
     { adminVotes: "2" },
     { adminVotes: Number.MAX_SAFE_INTEGER + 1 },
+    { adminVotes: null },
+    { superAdminVotes: -1 },
+    { superAdminVotes: 1.5 },
+    { superAdminVotes: "1" },
+    { superAdminVotes: null },
+    { superAdminVotes: Number.MAX_SAFE_INTEGER + 1 },
   ])("rejects invalid policy fields %j", (fields) => {
     expect(() =>
       loadAdminVotePolicies(JSON.stringify([{ ...policies[0], ...fields }])),
     ).toThrow("RELAY_ADMIN_VOTE_POLICIES[0]");
+  });
+
+  it.each([
+    {},
+    { adminVotes: 0 },
+    { superAdminVotes: 0 },
+    { adminVotes: 0, superAdminVotes: 0 },
+  ])("rejects policies with neither role enabled: %j", (thresholds) => {
+    expect(() =>
+      loadAdminVotePolicies(
+        JSON.stringify([
+          { tournament: true, minPlayerCount: 0, ...thresholds },
+        ]),
+      ),
+    ).toThrow("at least one positive");
   });
 
   it("rejects ambiguous duplicate mode/minimum pairs", () => {
@@ -166,6 +263,109 @@ describe("admin vote policies", () => {
 });
 
 describe("mission control votes", () => {
+  it.each(["", "client:7", "guid:0", "guid:000", "guid:-1", "guid:invalid"])(
+    "ignores votes without a valid account GUID: %j",
+    (voter) => {
+      const controls = new MissionControls();
+      for (const setting of ["recording", "watching"] as const) {
+        expect(controls.vote(setting, false, voter, oneAdminVote)).toBe(false);
+        expect(controls[setting]).toBe(true);
+        expect(controls.voteCount(setting)).toBe(0);
+      }
+    },
+  );
+
+  it("drops legacy client-ID ballots while restoring mission settings and GUID votes", () => {
+    const restored = MissionControls.restore({
+      mission: ["1", "Katabatic"],
+      recording: false,
+      watching: false,
+      votes: {
+        recording: ["client:7", "guid:123"],
+        watching: ["client:8"],
+      },
+    });
+    expect(restored?.snapshot()).toEqual({
+      mission: ["1", "Katabatic"],
+      recording: false,
+      watching: false,
+      votes: { recording: { "guid:123": "admin" } },
+    });
+  });
+
+  it.each(["recording", "watching"] as const)(
+    "allows two admins or one superadmin to change %s, clearing both tallies on reversal",
+    (setting) => {
+      const requirements = { adminVotes: 2, superAdminVotes: 1 };
+      const controls = new MissionControls();
+      controls.vote(setting, false, "guid:1", requirements);
+      expect(controls[setting]).toBe(true);
+      controls.vote(setting, false, "guid:2", requirements);
+      expect(controls[setting]).toBe(false);
+      controls.vote(setting, true, "guid:3", requirements, "superadmin");
+      expect(controls[setting]).toBe(true);
+      controls.vote(setting, false, "guid:1", requirements);
+      controls.vote(setting, false, "guid:3", requirements, "superadmin");
+      expect(controls[setting]).toBe(false);
+      expect(controls.voteCount(setting)).toBe(0);
+      expect(controls.voteCount(setting, "superadmin")).toBe(0);
+    },
+  );
+
+  it("rejects regular ballots when only superadmins may vote", () => {
+    const controls = new MissionControls();
+    const requirements = { adminVotes: 0, superAdminVotes: 2 };
+    expect(controls.vote("recording", false, "guid:1", requirements)).toBe(
+      false,
+    );
+    controls.vote("recording", false, "guid:2", requirements, "superadmin");
+    controls.vote("recording", false, "guid:2", requirements, "superadmin");
+    expect(controls.recording).toBe(true);
+    expect(controls.voteCount("recording")).toBe(1);
+    controls.vote("recording", false, "guid:3", requirements, "superadmin");
+    expect(controls.recording).toBe(false);
+  });
+
+  it("counts superadmins once toward the regular threshold when no shortcut applies", () => {
+    const controls = new MissionControls();
+    controls.vote("recording", false, "guid:1", twoAdminVotes, "superadmin");
+    controls.vote("recording", false, "guid:1", twoAdminVotes, "superadmin");
+    expect(controls.voteCount("recording")).toBe(1);
+    expect(controls.recording).toBe(true);
+    controls.vote("recording", false, "guid:2", twoAdminVotes);
+    expect(controls.recording).toBe(false);
+  });
+
+  it("preserves cast-time levels through restore and duplicate votes, capturing a new level only after withdrawal", () => {
+    const controls = new MissionControls();
+    const requirements = { adminVotes: 5, superAdminVotes: 3 };
+    controls.vote("recording", false, "guid:1", requirements);
+    controls.vote("recording", false, "guid:2", requirements, "superadmin");
+    const restored = MissionControls.restore(
+      JSON.parse(JSON.stringify(controls.snapshot())),
+    )!;
+    expect(
+      restored.vote("recording", false, "guid:1", requirements, "superadmin"),
+    ).toBe(false);
+    expect(restored.vote("recording", false, "guid:2", requirements)).toBe(
+      false,
+    );
+    expect(restored.recording).toBe(true);
+    expect(restored.voteCount("recording", "superadmin")).toBe(1);
+    expect(restored.snapshot().votes).toEqual({
+      recording: { "guid:1": "admin", "guid:2": "superadmin" },
+    });
+    restored.vote("recording", true, "guid:1", requirements, "superadmin");
+    restored.vote("recording", false, "guid:1", requirements, "superadmin");
+    expect(restored.voteCount("recording", "superadmin")).toBe(2);
+    restored.vote("recording", true, "guid:2", requirements);
+    restored.vote("recording", false, "guid:2", requirements);
+    expect(restored.voteCount("recording", "superadmin")).toBe(1);
+    expect(restored.snapshot().votes).toEqual({
+      recording: { "guid:1": "superadmin", "guid:2": "admin" },
+    });
+  });
+
   it.each(["recording", "watching"] as const)(
     "keeps %s disabled after two disable votes and one dissenting admin, in any order",
     (setting) => {
@@ -180,7 +380,7 @@ describe("mission control votes", () => {
       for (const order of permutations) {
         const controls = new MissionControls();
         for (const admin of order)
-          controls.vote(setting, admin === 3, `guid:${admin}`, 2);
+          controls.vote(setting, admin === 3, `guid:${admin}`, twoAdminVotes);
         expect(controls[setting], `admin order ${order}`).toBe(false);
         // Only a dissenting vote after the change starts a reversal ballot.
         expect(controls.voteCount(setting)).toBe(order.at(-1) === 3 ? 1 : 0);
@@ -195,12 +395,12 @@ describe("mission control votes", () => {
       for (let round = 0; round < 100; round++) {
         const before = controls[setting];
         for (let repeat = 0; repeat < 10; repeat++)
-          controls.vote(setting, !before, "guid:1", 2);
+          controls.vote(setting, !before, "guid:1", twoAdminVotes);
         expect(controls[setting]).toBe(before);
-        controls.vote(setting, before, "guid:1", 2);
-        controls.vote(setting, !before, "guid:2", 2);
+        controls.vote(setting, before, "guid:1", twoAdminVotes);
+        controls.vote(setting, !before, "guid:2", twoAdminVotes);
         expect(controls[setting]).toBe(before);
-        controls.vote(setting, !before, "guid:3", 2);
+        controls.vote(setting, !before, "guid:3", twoAdminVotes);
         expect(controls[setting]).toBe(!before);
         expect(controls.voteCount(setting)).toBe(0);
       }
@@ -210,36 +410,36 @@ describe("mission control votes", () => {
   it("counts each admin once and requires fresh agreement to reverse either setting", () => {
     const controls = new MissionControls();
     for (const setting of ["recording", "watching"] as const) {
-      controls.vote(setting, false, "guid:1", 2);
-      controls.vote(setting, false, "guid:1", 2);
+      controls.vote(setting, false, "guid:1", twoAdminVotes);
+      controls.vote(setting, false, "guid:1", twoAdminVotes);
       expect(controls[setting]).toBe(true);
       expect(controls.voteCount(setting)).toBe(1);
-      controls.vote(setting, false, "guid:2", 2);
+      controls.vote(setting, false, "guid:2", twoAdminVotes);
       expect(controls[setting]).toBe(false);
       expect(controls.voteCount(setting)).toBe(0);
-      controls.vote(setting, true, "guid:1", 2);
+      controls.vote(setting, true, "guid:1", twoAdminVotes);
       expect(controls[setting]).toBe(false);
-      controls.vote(setting, true, "guid:2", 2);
+      controls.vote(setting, true, "guid:2", twoAdminVotes);
       expect(controls[setting]).toBe(true);
     }
   });
 
   it("withdraws a pending vote when the same admin requests the current setting", () => {
     const controls = new MissionControls();
-    controls.vote("recording", false, "guid:1", 2);
-    controls.vote("watching", false, "guid:1", 2);
-    controls.vote("recording", true, "guid:1", 2);
+    controls.vote("recording", false, "guid:1", twoAdminVotes);
+    controls.vote("watching", false, "guid:1", twoAdminVotes);
+    controls.vote("recording", true, "guid:1", twoAdminVotes);
     expect(controls.voteCount("recording")).toBe(0);
     expect(controls.voteCount("watching")).toBe(1);
-    controls.retainVoters(new Set(["guid:2"]));
+    controls.vote("watching", true, "guid:1", twoAdminVotes);
     expect(controls.needsPersistence).toBe(false);
   });
 
   it("persists independent pending votes and resets them at the right boundaries", () => {
     const controls = new MissionControls();
     controls.observeMission("1", "Katabatic");
-    controls.vote("recording", false, "guid:1", 2);
-    controls.vote("watching", false, "guid:2", 2);
+    controls.vote("recording", false, "guid:1", twoAdminVotes);
+    controls.vote("watching", false, "guid:2", twoAdminVotes);
     expect(controls.needsPersistence).toBe(true);
     const restored = MissionControls.restore(
       JSON.parse(JSON.stringify(controls.snapshot())),
@@ -248,7 +448,7 @@ describe("mission control votes", () => {
     restored.finishRecording();
     expect(restored.voteCount("recording")).toBe(0);
     expect(restored.voteCount("watching")).toBe(1);
-    restored.vote("recording", false, "guid:2", 1);
+    restored.vote("recording", false, "guid:2", oneAdminVote);
     expect(restored.recording).toBe(true);
     restored.observeMission("2", "Katabatic");
     expect(restored.voteCount("watching")).toBe(0);
@@ -257,12 +457,12 @@ describe("mission control votes", () => {
 
   it("does not reinterpret pending votes when a newer demo journal restores a different policy", () => {
     const controls = new MissionControls();
-    controls.vote("recording", false, "guid:1", 2);
-    controls.vote("watching", false, "guid:1", 2);
+    controls.vote("recording", false, "guid:1", twoAdminVotes);
+    controls.vote("watching", false, "guid:1", twoAdminVotes);
     controls.restoreRecordingPolicy(true);
     expect(controls.voteCount("recording")).toBe(1);
     controls.restoreRecordingPolicy(false);
-    controls.vote("recording", true, "guid:2", 2);
+    controls.vote("recording", true, "guid:2", twoAdminVotes);
     expect(controls.recording).toBe(false);
     expect(controls.voteCount("recording")).toBe(1);
     controls.restoreRecordingPolicy(false, false);
@@ -276,6 +476,11 @@ describe("mission control votes", () => {
     { recording: "guid:1" },
     { watching: [42] },
     { recording: ["guid:0"] },
+    { recording: { "guid:1": "captain" } },
+    { recording: { "client:7": "admin" } },
+    { recording: { "guid:0": "superadmin" } },
+    { watching: { "guid:2": true } },
+    { watching: { "guid:2": null } },
   ])("rejects invalid saved votes %j", (votes) => {
     expect(
       MissionControls.restore({

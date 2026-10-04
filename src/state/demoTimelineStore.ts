@@ -53,6 +53,12 @@ export interface TimelineEvent {
   generator?: { position: [number, number, number]; dataBlockId: number };
   /** For flag events: name of the flag's team. */
   flagTeamName?: string;
+  /** For flag events: the flag's team ID, independent of the actor's team. */
+  flagTeamId?: number;
+  /** For flag events: the action owner's team at the event time. */
+  actorTeamId?: number;
+  /** For flag events: the action owner's team name at the event time. */
+  actorTeamName?: string;
   /** For rename events: the name before the change (`actor` is the
    *  name after). */
   previousName?: string;

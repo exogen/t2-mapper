@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ClientMessage } from "./types";
 import type { WatchSessionManagerOptions } from "./watchSession";
 import type { DemoCoordinatorOptions } from "./demoCoordinator";
+import type { PatrolOptions } from "./patrol";
 
 const harness = vi.hoisted(() => ({
   server: null as EventEmitter | null,
@@ -21,6 +22,7 @@ const harness = vi.hoisted(() => ({
   warmStart: vi.fn(),
   listen: vi.fn(),
   coordinatorOptions: null as DemoCoordinatorOptions | null,
+  patrolOptions: null as PatrolOptions | null,
   sweepPending: vi.fn(),
   shutdownCoordinator: vi.fn().mockResolvedValue(undefined),
   lifecycleHandlers: new Map<string | symbol, (...args: any[]) => void>(),
@@ -104,6 +106,16 @@ vi.mock("./demoCoordinator", () => ({
     shutdown = harness.shutdownCoordinator;
   },
 }));
+vi.mock("./patrol", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./patrol")>()),
+  Patroller: class {
+    constructor(options: PatrolOptions) {
+      harness.patrolOptions = options;
+    }
+    start() {}
+    stop() {}
+  },
+}));
 vi.mock("./logger", async () => {
   const { default: pino } = await import("pino");
   const log = pino(
@@ -142,11 +154,20 @@ describe("relay browser input", () => {
     harness.connections.length = 0;
     harness.connectStatus = "connected";
     harness.watchOptions = null;
+    harness.patrolOptions = null;
     harness.lifecycleHandlers.clear();
     harness.warmStart.mockReset();
     vi.useFakeTimers();
     vi.stubEnv("DEMO_RECORD_ENABLED", "0");
     vi.stubEnv("DEMO_PATROL_ENABLED", "0");
+    vi.stubEnv("DEMO_PATROL_SERVERS", undefined);
+    vi.stubEnv("DEMO_PATROL_MISSION_TYPES", undefined);
+    vi.stubEnv("DEMO_PATROL_EXCLUDED_MISSION_TYPES", undefined);
+    vi.stubEnv("DEMO_PATROL_MIN_PLAYERS_BY_TYPE", undefined);
+    vi.stubEnv("DEMO_PATROL_MIN_PLAYERS", undefined);
+    vi.stubEnv("DEMO_PATROL_MAX_SESSIONS", undefined);
+    vi.stubEnv("DEMO_PATROL_INTERVAL_MS", undefined);
+    vi.stubEnv("DEMO_MIN_PLAYERS", undefined);
     vi.stubEnv("T2_SERVER_PASSWORDS", "{}");
     vi.stubEnv("RELAY_TRUST_FLY_PROXY", "false");
     vi.stubEnv("RELAY_ADMIN_VOTE_POLICIES", undefined);
@@ -227,6 +248,63 @@ describe("relay browser input", () => {
     } finally {
       await fs.rm(dir, { recursive: true, force: true });
     }
+  });
+
+  it("passes patrol type minimums and exclusions from the relay environment", async () => {
+    vi.stubEnv("DEMO_RECORD_ENABLED", "1");
+    vi.stubEnv("DEMO_PATROL_ENABLED", "1");
+    vi.stubEnv("DEMO_PATROL_SERVERS", '["*"]');
+    vi.stubEnv("DEMO_PATROL_MISSION_TYPES", '["Capture the Flag","Arena"]');
+    vi.stubEnv("DEMO_PATROL_EXCLUDED_MISSION_TYPES", '["Arena"]');
+    vi.stubEnv("DEMO_PATROL_MIN_PLAYERS", "3");
+    vi.stubEnv(
+      "DEMO_PATROL_MIN_PLAYERS_BY_TYPE",
+      '{"Capture the Flag":8,"LCTF":2}',
+    );
+    await connect("watcher", "false");
+    expect(harness.patrolOptions).toMatchObject({
+      patterns: ["*"],
+      missionTypes: ["Capture the Flag", "Arena"],
+      excludedMissionTypes: ["Arena"],
+      minPlayers: 3,
+      minPlayersByType: { "Capture the Flag": 8, LCTF: 2 },
+    });
+  });
+
+  it("keeps patrol defaults when the new filters are unset", async () => {
+    vi.stubEnv("DEMO_RECORD_ENABLED", "1");
+    vi.stubEnv("DEMO_PATROL_ENABLED", "1");
+    vi.stubEnv("DEMO_PATROL_SERVERS", "My Server");
+    vi.stubEnv("DEMO_MIN_PLAYERS", "5");
+    await connect("watcher", "false");
+    expect(harness.patrolOptions).toMatchObject({
+      missionTypes: [],
+      excludedMissionTypes: [],
+      minPlayers: 5,
+      minPlayersByType: {},
+    });
+  });
+
+  it("rejects malformed patrol minimums before listening or warm-starting", async () => {
+    vi.stubEnv("DEMO_PATROL_MIN_PLAYERS_BY_TYPE", '{"Arena":-1}');
+    await expect(connect("watcher", "false")).rejects.toThrow(
+      "DEMO_PATROL_MIN_PLAYERS_BY_TYPE",
+    );
+    expect(harness.listen).not.toHaveBeenCalled();
+    expect(harness.warmStart).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["DEMO_MIN_PLAYERS", "2players"],
+    ["DEMO_PATROL_MIN_PLAYERS", "not-a-number"],
+    ["DEMO_PATROL_MAX_SESSIONS", "-1"],
+    ["DEMO_PATROL_INTERVAL_MS", "0"],
+    ["DEMO_PATROL_INTERVAL_MS", "2147483648"],
+  ])("rejects invalid %s before starting the relay", async (name, value) => {
+    vi.stubEnv(name, value);
+    await expect(connect("watcher", "false")).rejects.toThrow(name);
+    expect(harness.listen).not.toHaveBeenCalled();
+    expect(harness.warmStart).not.toHaveBeenCalled();
   });
 
   it("preserves the default storage paths when environment variables are unset", async () => {
@@ -347,7 +425,12 @@ describe("relay browser input", () => {
 
   it("passes the configured admin vote policies to shared watch sessions", async () => {
     const policies = [
-      { tournament: true, minPlayerCount: 20, adminVotes: 2 },
+      {
+        tournament: true,
+        minPlayerCount: 20,
+        adminVotes: 2,
+        superAdminVotes: 1,
+      },
       { tournament: true, minPlayerCount: 1, adminVotes: 1 },
       { tournament: false, minPlayerCount: 1, adminVotes: 1 },
     ];

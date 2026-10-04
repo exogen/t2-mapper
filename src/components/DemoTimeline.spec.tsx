@@ -2,12 +2,14 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, expect, it, vi } from "vitest";
 import type { TimelineEvent } from "../state/demoTimelineStore";
 import { DemoTimeline } from "./DemoTimeline";
+import type { TeamColorScheme } from "./iffTheme";
 
 const state = vi.hoisted(() => ({
   events: [] as TimelineEvent[],
   scanProgress: null,
   error: null,
   observerPerspective: false,
+  observerTeamColors: "blueOrange" as TeamColorScheme,
 }));
 
 vi.mock("../state/demoTimelineStore", () => ({
@@ -20,17 +22,25 @@ vi.mock("../state/gameEntityStore", () => ({
 vi.mock("../state/demoTimelineFollow", () => ({ seekToTimelineEvent() {} }));
 vi.mock("./usePlayback", () => ({ useRecording: () => null }));
 vi.mock("./SettingsProvider", () => ({
-  useSettings: () => ({ setSidebarOpen() {} }),
+  useSettings: () => ({
+    setSidebarOpen() {},
+    observerTeamColors: state.observerTeamColors,
+  }),
 }));
 vi.mock("./useMediaQuery", () => ({ useMediaQuery: () => false }));
 
 beforeEach(() => {
   state.observerPerspective = false;
+  state.observerTeamColors = "blueOrange";
 });
 
-function render(...events: TimelineEvent[]) {
+function renderMarkup(...events: TimelineEvent[]) {
   state.events = events;
-  return renderToStaticMarkup(<DemoTimeline />).replace(/<[^>]*>/g, "");
+  return renderToStaticMarkup(<DemoTimeline />);
+}
+
+function render(...events: TimelineEvent[]) {
+  return renderMarkup(...events).replace(/<[^>]*>/g, "");
 }
 
 it.each([
@@ -97,3 +107,97 @@ it("keeps empty player filters and hides an empty rename filter", () => {
   expect(text).toContain("Deaths (0)");
   expect(text).not.toContain("Names (");
 });
+
+const flagTypes = [
+  "flag-grab",
+  "flag-drop",
+  "flag-return",
+  "flag-cap",
+] as const;
+
+function flagColor(event: TimelineEvent) {
+  return /data-type="flag-[^"]+" style="color:([^"]+)"/.exec(
+    renderMarkup(event),
+  )?.[1];
+}
+
+it.each([
+  ["blueOrange", "rgb(45, 162, 255)", "rgb(255, 100, 15)"],
+  ["greenRed", "rgb(0, 212, 71)", "rgb(255, 60, 10)"],
+  ["redGreen", "rgb(255, 60, 10)", "rgb(0, 212, 71)"],
+] as const)(
+  "colors every observer flag action by its owner's team using %s",
+  (scheme, team1, team2) => {
+    state.observerPerspective = true;
+    state.observerTeamColors = scheme;
+    for (const type of flagTypes) {
+      for (const [actorTeamId, color] of [
+        [1, team1],
+        [2, team2],
+      ] as const) {
+        expect(
+          flagColor({
+            type,
+            timeSec: 1,
+            description: "Flag event",
+            actorTeamId,
+            flagTeamId: type === "flag-return" ? actorTeamId : 3 - actorTeamId,
+            teamAffinity: "neutral",
+          }),
+        ).toBe(color);
+      }
+    }
+  },
+);
+
+it.each(flagTypes)(
+  "colors player %s icons by friendly/enemy action",
+  (type) => {
+    state.observerTeamColors = "redGreen";
+    for (const [teamAffinity, color] of [
+      ["friendly", "rgb(0, 212, 71)"],
+      ["enemy", "rgb(255, 60, 10)"],
+    ] as const) {
+      expect(
+        flagColor({
+          type,
+          timeSec: 1,
+          description: "Flag event",
+          teamAffinity,
+          actorTeamId: teamAffinity === "friendly" ? 1 : 2,
+          flagTeamId: teamAffinity === "friendly" ? 2 : 1,
+        }),
+      ).toBe(color);
+    }
+  },
+);
+
+it("updates observer flag colors when the configured palette changes", () => {
+  state.observerPerspective = true;
+  const event: TimelineEvent = {
+    type: "flag-cap",
+    timeSec: 1,
+    description: "Flag captured",
+    actorTeamId: 1,
+    flagTeamId: 2,
+  };
+  expect(flagColor(event)).toBe("rgb(45, 162, 255)");
+  state.observerTeamColors = "redGreen";
+  expect(flagColor(event)).toBe("rgb(255, 60, 10)");
+});
+
+it.each([undefined, 0, 3])(
+  "keeps unknown observer action team %s neutral",
+  (actorTeamId) => {
+    state.observerPerspective = true;
+    expect(
+      flagColor({
+        type: "flag-cap",
+        timeSec: 1,
+        description: "Flag captured",
+        actorTeamId,
+        flagTeamId: 1,
+      }),
+    ).toBe("rgb(200, 200, 200)");
+  },
+);

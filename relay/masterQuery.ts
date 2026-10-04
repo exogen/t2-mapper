@@ -24,6 +24,7 @@ function parseAddress(addr: string): { host: string; port: number } {
  * Two-phase query matching the real Tribes 2 client:
  * 1. GamePingRequest (type 14) -> server name, version, protocol
  * 2. GameInfoRequest (type 18) -> mod, map, game type, players
+ * Only servers with both replies are included; the info roster is optional.
  */
 export async function queryServerList(
   masterAddress: string,
@@ -301,26 +302,27 @@ async function queryServers(addresses: string[]): Promise<ServerInfo[]> {
   for (const [addr, ping] of pingResults) {
     if (ping.buildVersion !== REQUIRED_BUILD_VERSION) continue;
     const info = infoResults.get(addr);
+    if (!info) continue;
     servers.push({
       address: addr,
       name: ping.name,
-      mod: info?.mod ?? "",
-      gameType: info?.gameType ?? "",
-      mapName: info?.mapName ?? "",
-      playerCount: info?.playerCount ?? 0,
-      maxPlayers: info?.maxPlayers ?? 0,
-      botCount: info?.botCount ?? 0,
+      mod: info.mod,
+      gameType: info.gameType,
+      mapName: info.mapName,
+      playerCount: info.playerCount,
+      maxPlayers: info.maxPlayers,
+      botCount: info.botCount,
       ping: ping.ping,
       buildVersion: ping.buildVersion,
       // status-byte flags: 0x01 dedicated, 0x02 passworded, 0x04 linux,
       // 0x08 tournament (the "medal" the stock client shows in the list).
-      passwordRequired: info ? (info.status & 0x02) !== 0 : false,
-      tournament: info ? (info.status & 0x08) !== 0 : false,
+      passwordRequired: (info.status & 0x02) !== 0,
+      tournament: (info.status & 0x08) !== 0,
       // Default; the relay overrides this from its patrol patterns when it
       // serves the list (masterQuery has no patrol config).
       isPatrolled: false,
-      ...(info?.teams ? { teams: info.teams } : {}),
-      ...(info?.players ? { players: info.players } : {}),
+      ...(info.teams ? { teams: info.teams } : {}),
+      ...(info.players ? { players: info.players } : {}),
     });
   }
 

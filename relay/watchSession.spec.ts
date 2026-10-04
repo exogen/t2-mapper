@@ -138,6 +138,13 @@ describe("watch mission controls", () => {
     { tournament: true, minPlayerCount: 0, adminVotes: 2 },
     { tournament: false, minPlayerCount: 0, adminVotes: 2 },
   ];
+  const rolePolicies = (adminVotes: number, superAdminVotes: number) =>
+    [true, false].map((tournament) => ({
+      tournament,
+      minPlayerCount: 0,
+      adminVotes,
+      superAdminVotes,
+    }));
   let manager: WatchSessionManager;
   let connections: FakeGameConnection[];
   let session: any;
@@ -153,7 +160,7 @@ describe("watch mission controls", () => {
     id: number,
     admin = "0",
     superAdmin = "0",
-    guid = "",
+    guid = String(1000 + id),
     rawName = "Same name",
     smurf = "0",
   ) =>
@@ -223,6 +230,253 @@ describe("watch mission controls", () => {
     manager.shutdown();
     vi.restoreAllMocks();
     vi.useRealTimers();
+  });
+
+  it.each([
+    ["admin", "", 8, "1", "0", "Alice", "0", []],
+    ["superadmin smurf", "0", 8, "0", "1", "Alice", "1", []],
+    ["admin with malformed GUID", "invalid", 8, "1", "1", "Alice", "0", []],
+    ["allowlisted player", "", 8, "0", "0", "Alice", "0", ["Alice"]],
+    ["allowlisted self", "0", 99, "0", "0", "MapGenius", "0", ["MapGenius"]],
+  ] as const)(
+    "ignores %s votes without a valid GUID but still permits status",
+    (_role, guid, id, admin, superAdmin, rawName, smurf, names) => {
+      manager.shutdown();
+      start({
+        adminVotePolicies: rolePolicies(2, 1),
+        alwaysAdminPlayers: new Set(names),
+      });
+      const info = vi.spyOn(relayLog, "info").mockImplementation(() => {});
+      events(
+        join(id, admin, superAdmin, guid, rawName, smurf),
+        chat("-record -watch", id),
+      );
+      expect(session.controls.snapshot()).not.toHaveProperty("votes");
+      expect(session.controls.recording).toBe(true);
+      expect(session.controls.watching).toBe(true);
+      expect(session.watcherCount).toBe(1);
+      expect(replies().at(-1)).toBe(
+        "Nothing changed. Recording: ON. Watching: ON.",
+      );
+      expect(info).toHaveBeenCalledWith(
+        expect.objectContaining({
+          clientId: id,
+          guid: null,
+          results: {
+            recording: "ignored-missing-guid",
+            watching: "ignored-missing-guid",
+          },
+        }),
+        "Mission control command processed",
+      );
+      events(chat("status", id));
+      expect(replies().at(-1)).toBe("Recording: ON. Watching: ON.");
+      events(join(9, "1", "0", "456"), chat("-record -watch", 9));
+      expect(session.controls.recording).toBe(true);
+      expect(session.controls.watching).toBe(true);
+      expect(replies().at(-1)).toContain("Votes: -record 1/2 A, 0/1 SA");
+    },
+  );
+
+  it("keeps an accepted vote when a roster refresh hides its GUID, while rejecting new votes without that GUID", () => {
+    manager.shutdown();
+    start({ adminVotePolicies: twoAdminPolicies });
+    events(join(8, "1", "0", "123"), chat("-record", 8));
+    expect(session.controls.voteCount("recording")).toBe(1);
+    events(join(8, "1", "0", "0", "Alias", "1"), chat("-watch", 8));
+    expect(session.controls.snapshot().votes).toEqual({
+      recording: { "guid:123": "admin" },
+    });
+    expect(session.controls.watching).toBe(true);
+    events(join(9, "1", "0", "456"), chat("-record", 9));
+    expect(session.controls.recording).toBe(false);
+    expect(session.controls.snapshot()).not.toHaveProperty("votes");
+  });
+
+  it.each(["record", "watch"] as const)(
+    "applies -%s with two admins or a single superadmin and logs both thresholds",
+    (setting) => {
+      manager.shutdown();
+      start({ adminVotePolicies: rolePolicies(2, 1) });
+      const info = vi.spyOn(relayLog, "info").mockImplementation(() => {});
+      events(chat(`-${setting}`));
+      expect(replies().at(-1)).toContain(`Votes: -${setting} 1/2 A, 0/1 SA.`);
+      expect(replies().at(-1)).not.toContain("Nothing changed.");
+      events(join(8, "0", "1", "123"), chat(`-${setting}`, 8));
+      const field = setting === "record" ? "recording" : "watching";
+      expect(session.controls[field]).toBe(false);
+      expect(replies().at(-1)).not.toContain("Votes:");
+      expect(replies().at(-1)).not.toContain("Nothing changed.");
+      expect(info).toHaveBeenCalledWith(
+        expect.objectContaining({
+          votesRequired: 2,
+          superAdminVotesRequired: 1,
+          isSuperAdmin: true,
+          results: { [field]: "applied" },
+        }),
+        "Mission control command processed",
+      );
+      events(chat(`+${setting}`), chat(`+${setting}`, 8));
+      expect(session.controls[field]).toBe(true);
+      events(chat(`-${setting}`), join(9, "1"), chat(`-${setting}`, 9));
+      expect(session.controls[field]).toBe(false);
+    },
+  );
+
+  it("rejects regular and allowlisted admin commands under a superadmin-only policy but allows their status requests", () => {
+    manager.shutdown();
+    start({
+      adminVotePolicies: rolePolicies(0, 2),
+      alwaysAdminPlayers: new Set(["Alice"]),
+    });
+    const info = vi.spyOn(relayLog, "info").mockImplementation(() => {});
+    events(join(8, "0", "0", "123", "Alice"), chat("-record -watch", 8));
+    expect(session.controls.snapshot()).not.toHaveProperty("votes");
+    expect(replies().at(-1)).toBe(
+      "Nothing changed. Recording: ON. Watching: ON.",
+    );
+    expect(info).toHaveBeenCalledWith(
+      expect.objectContaining({
+        results: {
+          recording: "ignored-superadmin-required",
+          watching: "ignored-superadmin-required",
+        },
+      }),
+      "Mission control command processed",
+    );
+    events(chat("status", 8));
+    expect(replies().at(-1)).toBe("Recording: ON. Watching: ON.");
+    events(chat("-record -watch"));
+    expect(session.controls.voteCount("recording")).toBe(0);
+    events(join(9, "0", "1", "456"), chat("-record -watch", 9));
+    expect(replies().at(-1)).toContain("Votes: -record 1/2 SA, -watch 1/2 SA.");
+    events(join(10, "0", "1", "789"), chat("-record -watch", 10));
+    expect(session.controls.snapshot()).toMatchObject({
+      recording: false,
+      watching: false,
+    });
+  });
+
+  it("counts a superadmin as an ordinary admin when the special threshold is zero", () => {
+    manager.shutdown();
+    start({ adminVotePolicies: rolePolicies(2, 0) });
+    events(join(8, "0", "1", "123"), chat("-record", 8));
+    expect(session.controls.recording).toBe(true);
+    expect(replies().at(-1)).toContain("Votes: -record 1/2.");
+    expect(replies().at(-1)).not.toContain(" SA");
+    events(chat("-record"));
+    expect(session.controls.recording).toBe(false);
+  });
+
+  it.each([2, 3])(
+    "shows both configured tallies before tournament mode is resolved when the superadmin threshold is %i",
+    (superAdminVotes) => {
+      manager.shutdown();
+      start({ adminVotePolicies: rolePolicies(2, superAdminVotes) });
+      events(join(8, "0", "1", "123"), chat("-record", 8));
+      expect(session.resolvedTournamentMode).toBeNull();
+      expect(replies().at(-1)).toContain(
+        `Votes: -record 1/2 A, 1/${superAdminVotes} SA.`,
+      );
+    },
+  );
+
+  it.each([false, true])(
+    "gives allowlisted browser self commands superadmin treatment only for a server-granted role (%s)",
+    (superadmin) => {
+      manager.shutdown();
+      start({
+        adminVotePolicies: rolePolicies(0, 1),
+        alwaysAdminPlayers: new Set(["MapGenius"]),
+      });
+      events(
+        join(99, "0", superadmin ? "1" : "0", "123", "MapGenius"),
+        chat("-record -watch", 99),
+      );
+      expect(session.controls.recording).toBe(!superadmin);
+      expect(session.controls.watching).toBe(!superadmin);
+      expect(replies().at(-1)?.startsWith("Nothing changed.")).toBe(
+        !superadmin,
+      );
+    },
+  );
+
+  it("keeps a superadmin vote at its original level after demotion", () => {
+    manager.shutdown();
+    start({
+      adminVotePolicies: rolePolicies(5, 2),
+      alwaysAdminPlayers: new Set(["Alice"]),
+    });
+    events(join(8, "0", "1", "123", "Alice"), chat("-record", 8));
+    expect(replies().at(-1)).toContain("-record 1/5 A, 1/2 SA");
+    events(
+      remote("ServerMessage", "MsgStripAdminPlayer", "", "Actor", "Alice", "8"),
+      chat("-record", 8),
+    );
+    expect(session.controls.recording).toBe(true);
+    expect(replies().at(-1)).toContain("-record 1/5 A, 1/2 SA");
+    expect(replies().at(-1)).toContain("Nothing changed.");
+    events(join(9, "0", "1", "456"), chat("-record", 9));
+    expect(session.controls.recording).toBe(false);
+  });
+
+  it("keeps superadmin-only votes on demotion but requires current superadmin privileges for new commands", () => {
+    manager.shutdown();
+    start({
+      adminVotePolicies: rolePolicies(0, 2),
+      alwaysAdminPlayers: new Set(["Alice"]),
+    });
+    events(join(8, "0", "1", "123", "Alice"), chat("-record -watch", 8));
+    expect(replies().at(-1)).toContain("Votes: -record 1/2 SA, -watch 1/2 SA.");
+    events(
+      remote("ServerMessage", "MsgStripAdminPlayer", "", "Actor", "Alice", "8"),
+      chat("-record -watch", 8),
+    );
+    expect(session.controls.snapshot().votes).toEqual({
+      recording: { "guid:123": "superadmin" },
+      watching: { "guid:123": "superadmin" },
+    });
+    expect(replies().at(-1)).toContain("Nothing changed.");
+    expect(replies().at(-1)).toContain("Votes: -record 1/2 SA, -watch 1/2 SA.");
+    events(join(9, "0", "1", "456"), chat("-record -watch", 9));
+    expect(session.controls.recording).toBe(false);
+    expect(session.controls.watching).toBe(false);
+  });
+
+  it("preserves both vote levels and deduplicates accounts through promotions, demotions, and relay restarts", () => {
+    manager.shutdown();
+    const options = { adminVotePolicies: rolePolicies(5, 3) };
+    start(options);
+    events(
+      join(8, "1", "0", "123"),
+      chat("-record", 8),
+      join(9, "0", "1", "456"),
+      chat("-record", 9),
+    );
+    const persisted = JSON.parse(JSON.stringify(saved));
+    manager.shutdown();
+    start({ ...options, initialMissionControls: persisted });
+    events(
+      join(9, "0", "1", "123"),
+      join(10, "1", "0", "456"),
+      chat("-record", 9),
+      chat("-record", 10),
+    );
+    expect(session.controls.recording).toBe(true);
+    expect(replies().at(-1)).toContain("-record 2/5 A, 1/3 SA");
+    expect(saved[address]).toMatchObject({
+      votes: { recording: { "guid:123": "admin", "guid:456": "superadmin" } },
+    });
+    events(join(11, "0", "1", "123"), chat("-record", 11));
+    expect(session.controls.recording).toBe(true);
+    expect(session.controls.voteCount("recording")).toBe(2);
+    events(
+      join(12, "0", "1", "789"),
+      chat("-record", 12),
+      chat("+record", 11),
+      chat("-record", 11),
+    );
+    expect(session.controls.recording).toBe(false);
   });
 
   it("rejects ordinary players, spoofed names, team chat and the relay's own browser chat", () => {
@@ -315,7 +569,7 @@ describe("watch mission controls", () => {
     },
   );
 
-  it("removes a pending self vote when its base name leaves the allowlist, even if still a game admin", () => {
+  it("keeps an accepted self vote after its base name leaves the allowlist, while rejecting new self commands", () => {
     manager.shutdown();
     start({
       alwaysAdminPlayers: new Set(["MapGenius"]),
@@ -331,10 +585,12 @@ describe("watch mission controls", () => {
         "OtherName",
         "99",
       ),
+      chat("-watch", 99),
       chat("-rec", 7),
     );
-    expect(session.controls.recording).toBe(true);
-    expect(replies().at(-1)).toContain("-record 1/2");
+    expect(session.controls.recording).toBe(false);
+    expect(session.controls.watching).toBe(true);
+    expect(replies().at(-1)).not.toContain("Votes:");
   });
 
   it("does not bypass a disabled vote policy for allowlisted self commands", () => {
@@ -611,7 +867,7 @@ describe("watch mission controls", () => {
     expect(session.controls.recording).toBe(false);
   });
 
-  it("removes an allowlisted player's pending votes when their base name changes", () => {
+  it("keeps an allowlisted player's accepted vote after a rename while rejecting their new commands", () => {
     manager.shutdown();
     start({
       alwaysAdminPlayers: new Set(["Alice"]),
@@ -621,13 +877,16 @@ describe("watch mission controls", () => {
     events(
       remote("ServerMessage", "MsgClientNameChanged", "", "Alice", "Bob", "8"),
       chat("-watch", 8),
-      chat("-rec"),
     );
+    expect(session.controls.snapshot().votes).toEqual({
+      recording: { "guid:123": "admin" },
+    });
+    events(chat("-rec"));
     expect(session.controls.snapshot()).toMatchObject({
-      recording: true,
+      recording: false,
       watching: true,
     });
-    expect(replies().at(-1)).toContain("-record 1/2");
+    expect(replies().at(-1)).not.toContain("Votes:");
   });
 
   it("restores allowlisted GUID votes across relay restarts without bypassing the threshold", () => {
@@ -793,7 +1052,9 @@ describe("watch mission controls", () => {
     events(join(7, "1", "0", "123"), chat("status"));
     expect(session.controls.recording).toBe(true);
     expect(session.controls.voteCount("recording")).toBe(0);
-    expect(saved[address]).toMatchObject({ votes: { watching: ["guid:123"] } });
+    expect(saved[address]).toMatchObject({
+      votes: { watching: { "guid:123": "admin" } },
+    });
     expect(saved[address]).not.toHaveProperty("votes.recording");
     expect(replies().at(-1)).toContain("Votes: -watch 1/2.");
     expect(replies().at(-1)).not.toContain("Settings reset next map.");
@@ -1040,7 +1301,7 @@ describe("watch mission controls", () => {
     );
   });
 
-  it("renders delayed replies using current eligibility and match-end state", () => {
+  it("renders delayed replies using accepted votes and match-end state", () => {
     manager.shutdown();
     start({
       demoCoordinator: policyCoordinator(),
@@ -1053,8 +1314,8 @@ describe("watch mission controls", () => {
       remote("ServerMessage", "MsgClientDrop", "", "Same name", "7"),
     );
     vi.advanceTimersByTime(3_000);
-    expect(sentReplies().at(-1)).not.toContain("Votes:");
-    events(join(7, "1"), chat("-rec"), remote("MissionEnd"));
+    expect(sentReplies().at(-1)).toContain("Votes: -record 1/2.");
+    events(join(7, "1", "0", "123"), chat("-rec"), remote("MissionEnd"));
     vi.advanceTimersByTime(3_000);
     expect(sentReplies().at(-1)).toContain("Recording: ON.");
     expect(sentReplies().at(-1)).not.toContain("Votes:");
@@ -1314,7 +1575,7 @@ describe("watch mission controls", () => {
   });
 
   it.each(["drop", "demote", "reuse"])(
-    "excludes a previous admin vote after %s",
+    "preserves an accepted admin vote after %s",
     (change) => {
       manager.shutdown();
       start({ adminVotePolicies: twoAdminPolicies });
@@ -1332,11 +1593,14 @@ describe("watch mission controls", () => {
         );
       else {
         events(remote("ServerMessage", "MsgClientDrop", "", "Same name", "7"));
-        if (change === "reuse") events(join(7, "1"));
+        if (change === "reuse") events(join(7, "1", "0", "2007"));
       }
+      expect(session.controls.snapshot().votes).toEqual({
+        recording: { "guid:1007": "admin" },
+      });
       events(join(8, "1"), chat("-rec", 8));
-      expect(session.controls.recording).toBe(true);
-      expect(replies().at(-1)).toContain("-record 1/2");
+      expect(session.controls.recording).toBe(false);
+      expect(replies().at(-1)).not.toContain("Votes:");
     },
   );
 
@@ -3042,6 +3306,8 @@ describe("WatchSession demo recording", () => {
             "0",
             "1",
             "0",
+            "0",
+            "123",
           ),
           remote(
             "ChatMessage",

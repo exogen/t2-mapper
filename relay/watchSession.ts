@@ -18,7 +18,7 @@ import {
   isAlwaysAdminPlayer,
   MissionControls,
   parseMissionControlCommand,
-  selectAdminVotesRequired,
+  selectAdminVoteRequirements,
   type AdminVotePolicy,
   type MissionControlState,
 } from "./missionControls.js";
@@ -33,7 +33,6 @@ import {
   buildCRCDataBlockList,
 } from "./shared.js";
 import { WatchStateAccumulator } from "./watchState.js";
-import { isServerMessageCommand } from "./serverMessageDecode.js";
 import type { ServerMessageRosterEntry } from "./serverMessageState.js";
 import { serializeCatchupPayload } from "./watchSerialize.js";
 import { buildCatchupPayload } from "./watchCatchup.js";
@@ -1555,46 +1554,6 @@ export class WatchSession {
       this.finishMissionRecording("match-end");
       return;
     }
-    // Connection IDs can be reused. Never let a new join inherit an anonymous
-    // admin's vote; account GUID votes survive reconnects and roster refreshes.
-    if (isServerMessageCommand(name)) {
-      if (args[0] === "MsgClientJoin" || args[0] === "MsgClientDrop") {
-        const voter = `client:${Number(args[3])}`;
-        if (this.controls.forgetVoter(voter)) {
-          relayLog.info(
-            { ...this.controlLogContext(), voter, reason: args[0] },
-            "Pending admin votes removed",
-          );
-          this.onControlsChanged();
-        }
-      }
-      if (
-        args[0] === "MsgStripAdminPlayer" ||
-        args[0] === "MsgClientNameChanged"
-      ) {
-        const id = Number(args[4]);
-        const player = this.watchState.getPlayerRoster().get(id);
-        const voter = player?.guid ? `guid:${player.guid}` : `client:${id}`;
-        if (
-          !this.isControlAdmin(player, id) &&
-          this.controls.forgetVoter(voter)
-        ) {
-          relayLog.info(
-            {
-              ...this.controlLogContext(),
-              voter,
-              reason:
-                args[0] === "MsgStripAdminPlayer"
-                  ? "admin-revoked"
-                  : "player-renamed",
-            },
-            "Pending admin votes removed",
-          );
-          this.onControlsChanged();
-        }
-      }
-      return;
-    }
     if (name.toLowerCase() !== "chatmessage") return;
     const chat = decodeGlobalChat(args);
     if (!chat) return;
@@ -1660,17 +1619,21 @@ export class WatchSession {
     const wasRecording = this.controls.recording;
     const wasWatching = this.controls.watching;
     const watchersBefore = this.watcherCount;
-    const { tournament, playerCount, votesRequired } = this.adminVoteContext();
-    const voterId = (id: number, guid?: string) =>
-      guid ? `guid:${guid}` : `client:${id}`;
-    let changed = this.retainCurrentAdminVotes();
+    const { tournament, playerCount, requirements } = this.adminVoteContext();
+    const votesRequired = requirements?.adminVotes ?? null;
+    const superAdminVotesRequired = requirements?.superAdminVotes ?? null;
+    let changed = this.clearDisabledRecordingVotes();
     const results: Partial<Record<"recording" | "watching", string>> = {};
     for (const setting of ["recording", "watching"] as const) {
       if (command[setting] === undefined) continue;
-      if (setting === "recording" && !this.recordingConfigured) {
+      if (!player.guid) {
+        results[setting] = "ignored-missing-guid";
+      } else if (setting === "recording" && !this.recordingConfigured) {
         results[setting] = "ignored-recording-disabled";
-      } else if (votesRequired === null) {
+      } else if (requirements === null) {
         results[setting] = "ignored-policy-disabled";
+      } else if (requirements.adminVotes === 0 && !player.isSuperAdmin) {
+        results[setting] = "ignored-superadmin-required";
       } else if (
         setting === "recording" &&
         this.controls.recordingDecision !== undefined
@@ -1683,8 +1646,9 @@ export class WatchSession {
           this.controls.vote(
             setting,
             command[setting],
-            voterId(chat.clientId, player.guid),
-            votesRequired,
+            `guid:${player.guid}`,
+            requirements,
+            player.isSuperAdmin ? "superadmin" : "admin",
           ) || changed;
         const votesAfter = this.controls.voteCount(setting);
         results[setting] =
@@ -1723,6 +1687,7 @@ export class WatchSession {
           previousWatching: wasWatching,
           watchersBefore,
           votesRequired,
+          superAdminVotesRequired,
           tournamentMode: tournament,
           playerCount,
         },
@@ -1748,6 +1713,7 @@ export class WatchSession {
         outcome: Object.keys(results).length ? "processed" : "status",
         results,
         votesRequired,
+        superAdminVotesRequired,
         tournamentMode: tournament,
         playerCount,
       },
@@ -1777,6 +1743,10 @@ export class WatchSession {
         recording: this.controls.voteCount("recording"),
         watching: this.controls.voteCount("watching"),
       },
+      superAdminVotes: {
+        recording: this.controls.voteCount("recording", "superadmin"),
+        watching: this.controls.voteCount("watching", "superadmin"),
+      },
       watchers: this.watcherCount,
     };
   }
@@ -1791,7 +1761,7 @@ export class WatchSession {
     return {
       tournament,
       playerCount,
-      votesRequired: selectAdminVotesRequired(
+      requirements: selectAdminVoteRequirements(
         this.options.adminVotePolicies ?? [],
         tournament,
         playerCount,
@@ -1799,25 +1769,16 @@ export class WatchSession {
     };
   }
 
-  private retainCurrentAdminVotes(): boolean {
-    const eligible = new Set<string>();
-    for (const [id, entry] of this.watchState.getPlayerRoster()) {
-      if (this.isControlAdmin(entry, id))
-        eligible.add(entry.guid ? `guid:${entry.guid}` : `client:${id}`);
-    }
+  private clearDisabledRecordingVotes(): boolean {
+    if (this.recordingConfigured) return false;
     const before = this.controls.snapshot().votes;
-    const recordingVotesCleared =
-      !this.recordingConfigured && this.controls.clearVotes("recording");
-    const changed =
-      this.controls.retainVoters(eligible) || recordingVotesCleared;
+    const changed = this.controls.clearVotes("recording");
     if (changed)
       relayLog.info(
         {
           ...this.controlLogContext(),
           previousVotes: before,
-          reason: recordingVotesCleared
-            ? "recording-disabled-by-relay"
-            : "no-longer-eligible",
+          reason: "recording-disabled-by-relay",
         },
         "Pending admin votes removed",
       );
@@ -1879,23 +1840,33 @@ export class WatchSession {
   }
 
   private controlStatus(): string {
-    if (this.retainCurrentAdminVotes()) this.onControlsChanged();
-    const { votesRequired } = this.adminVoteContext();
+    const { requirements } = this.adminVoteContext();
+    if (this.clearDisabledRecordingVotes()) this.onControlsChanged();
     const status = [
       `Recording: ${this.recording ? "ON" : "OFF"}.`,
       `Watching: ${this.controls.watching ? "ON" : "OFF"}.`,
     ];
-    const pending = (["recording", "watching"] as const)
-      .filter(
-        (setting) =>
-          votesRequired !== null && this.controls.voteCount(setting) > 0,
-      )
-      .map(
-        (setting) =>
-          `${this.controls[setting] ? "-" : "+"}${setting === "recording" ? "record" : "watch"} ${this.controls.voteCount(setting)}/${votesRequired}`,
-      );
+    const pending: string[] = [];
+    if (requirements) {
+      for (const setting of ["recording", "watching"] as const) {
+        const voteCount = this.controls.voteCount(setting);
+        if (voteCount === 0) continue;
+        const counts: string[] = [];
+        if (requirements.adminVotes > 0)
+          counts.push(
+            `${voteCount}/${requirements.adminVotes}${requirements.superAdminVotes > 0 ? " A" : ""}`,
+          );
+        if (requirements.superAdminVotes > 0)
+          counts.push(
+            `${this.controls.voteCount(setting, "superadmin")}/${requirements.superAdminVotes} SA`,
+          );
+        pending.push(
+          `${this.controls[setting] ? "-" : "+"}${setting === "recording" ? "record" : "watch"} ${counts.join(", ")}`,
+        );
+      }
+    }
     if (pending.length) status.push(`Votes: ${pending.join(", ")}.`);
-    if (votesRequired === null) status.push("Admin controls: OFF.");
+    if (requirements === null) status.push("Admin controls: OFF.");
     if (this.controls.restricted) status.push("Settings reset next map.");
     return status.join(" ");
   }

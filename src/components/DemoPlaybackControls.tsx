@@ -19,6 +19,7 @@ import {
 } from "./usePlayback";
 import { GrPauseFill, GrPlayFill } from "react-icons/gr";
 import { RiMovieAiLine } from "react-icons/ri";
+import { GoDotFill } from "react-icons/go";
 import {
   exitDirector,
   startDirector,
@@ -30,6 +31,9 @@ import { useDemoLoad } from "../state/demoLoadStore";
 import { useDemoTimeline } from "../state/demoTimelineStore";
 import { formatPlayheadTime, formatPlayheadTimeAligned } from "./demoFormat";
 import { LoadingIndicator } from "./LoadingIndicator";
+import { useSettings } from "./SettingsProvider";
+import { timelineFlagColor } from "./demoTimelineColors";
+import { DEFAULT_TEAM_NAMES } from "../stringUtils";
 import styles from "./DemoPlaybackControls.module.css";
 
 /**
@@ -208,15 +212,27 @@ export function DemoPlaybackControls() {
     [setSpeed],
   );
 
-  // Mission starts from the timeline scan (one per map in multi-mission
-  // demos) — rendered as tick marks above the seek track, with the
-  // scan's own label ("Match started (Mission)") as the tooltip.
+  // Timeline match starts and captures ride above the seek track, with
+  // match descriptions or the scoring team/capper, plus each timestamp.
   const timelineEvents = useDemoTimeline((s) => s.events);
-  const missionStarts = useMemo(
+  const observerPerspective = useDemoTimeline((s) => s.observerPerspective);
+  const { observerTeamColors } = useSettings();
+  const seekMarkers = useMemo(
     () =>
       (timelineEvents ?? [])
-        .filter((e) => e.type === "match-start")
-        .map((e) => ({ timeSec: e.timeSec, description: e.description })),
+        .filter((e) => e.type === "match-start" || e.type === "flag-cap")
+        .map((event) => {
+          if (event.type !== "flag-cap") return event;
+          const teamName =
+            event.actorTeamName ??
+            DEFAULT_TEAM_NAMES[event.actorTeamId ?? 0] ??
+            "Team";
+          const capper =
+            event.capturer && event.capturer !== "0"
+              ? ` (${event.capturer})`
+              : "";
+          return { ...event, description: `${teamName} scores${capper}` };
+        }),
     [timelineEvents],
   );
 
@@ -404,20 +420,29 @@ export function DemoPlaybackControls() {
             </div>
           )}
         </Slider.Thumb>
-        {/* Mission-start ticks sit ABOVE the track (they'd be clipped by
+        {/* Timeline markers sit ABOVE the track (they'd be clipped by
             its overflow: hidden), and AFTER the thumb in the DOM so the
             playhead comes first in the tab order. */}
-        {missionStarts.length > 0 && duration > 0 && (
+        {seekMarkers.length > 0 && duration > 0 && (
           <div className={styles.SeekMarkers}>
-            {missionStarts.map(({ timeSec, description }) => (
+            {seekMarkers.map((event, i) => (
               <button
-                key={timeSec}
+                key={`${event.type}-${event.timeSec}-${i}`}
                 type="button"
-                className={styles.SeekMissionTick}
-                title={`${description} – ${formatPlayheadTime(timeSec)}`}
-                aria-label={`Seek to ${description} – ${formatPlayheadTime(timeSec)}`}
+                className={
+                  event.type === "flag-cap"
+                    ? styles.SeekFlagTick
+                    : styles.SeekMissionTick
+                }
+                data-type={event.type}
+                title={`${event.description} – ${formatPlayheadTime(event.timeSec)}`}
+                aria-label={`Seek to ${event.description} – ${formatPlayheadTime(event.timeSec)}`}
+                onPointerDown={(e) => e.stopPropagation()}
+                onKeyDown={(e) => e.stopPropagation()}
                 onClick={(e) => {
-                  seek(timeSec);
+                  scrubRecording.current = null;
+                  // Match timeline clicks with a three-second lead-in.
+                  seek(Math.max(0, event.timeSec - 3));
                   // A pointer click leaves the button focused, where a
                   // later Space re-seeks instead of toggling playback —
                   // blur, but only for pointer activations (detail 0 =
@@ -425,9 +450,21 @@ export function DemoPlaybackControls() {
                   if (e.detail > 0) e.currentTarget.blur();
                 }}
                 style={{
-                  left: `${Math.min(100, (timeSec / duration) * 100)}%`,
+                  left: `${Math.max(0, Math.min(100, (event.timeSec / duration) * 100))}%`,
+                  color: timelineFlagColor(
+                    event,
+                    observerPerspective,
+                    observerTeamColors,
+                  ),
                 }}
-              />
+              >
+                {event.type === "flag-cap" && (
+                  <GoDotFill
+                    className={styles.SeekFlagIcon}
+                    aria-hidden="true"
+                  />
+                )}
+              </button>
             ))}
           </div>
         )}

@@ -12,7 +12,7 @@ import {
   stripTaggedStringMarkup,
 } from "./streamHelpers";
 import { KILL_MSG_TYPES, SELF_INFLICTED_MSG_TYPES } from "./serverMessages";
-import type { TimelineEvent } from "../state/demoTimelineStore";
+import type { TeamAffinity, TimelineEvent } from "../state/demoTimelineStore";
 import { GhostMessage } from "./entityClassification";
 import { createLogger } from "../logger";
 import { hasGameOverAnnouncement, isRealMatchStart } from "./matchEvents";
@@ -20,12 +20,25 @@ import { assertDemoBlockParsed } from "./demoParseError";
 import { GeneratorTimeline } from "./generatorTimeline";
 import { parseDemoValues } from "./demoStreaming";
 import { isServerMessageCommand } from "../../relay/serverMessageDecode";
+import {
+  applyServerMessageState,
+  type ServerMessageRosterEntry,
+  type ServerMessageTeamScore,
+} from "../../relay/serverMessageState";
 import { getServerNameFromMessage } from "./serverMessageMetadata";
+import { DEFAULT_TEAM_NAMES } from "../stringUtils";
 
 const log = createLogger("demoTimelineScanner");
 
 /** How long the scan may hold the event loop before yielding. */
 const YIELD_SLICE_MS = 8;
+const METADATA_MESSAGE_TYPES: Record<string, string> = {
+  msgclientjoin: "MsgClientJoin",
+  msgclientdrop: "MsgClientDrop",
+  msgclientjointeam: "MsgClientJoinTeam",
+  msgclientnamechanged: "MsgClientNameChanged",
+  msgctfaddteam: "MsgCTFAddTeam",
+};
 
 /**
  * An admin force or a passed start vote: the countdown is beginning,
@@ -159,6 +172,14 @@ export async function scanDemoTimelineParser(
 
   const registry = parser.getRegistry();
   const parsedDemoValues = parseDemoValues(initialBlock.demoValues);
+  const rosterState = {
+    playerRoster: new Map<number, ServerMessageRosterEntry>(
+      parsedDemoValues.playerRoster,
+    ),
+    teamScores: parsedDemoValues.teamScores.map((team) => ({
+      ...team,
+    })) as ServerMessageTeamScore[],
+  };
   const generators = new GeneratorTimeline(
     initialBlock,
     netStrings,
@@ -232,6 +253,70 @@ export async function scanDemoTimelineParser(
   let sliceStart = performance.now();
   const totalBlocks = parser.blockCount;
 
+  function flagMetadata(
+    action: "grab" | "drop" | "return" | "cap",
+    teamArg: string | undefined,
+    actor: string | undefined,
+    actorTeamArg?: string,
+  ): Pick<
+    TimelineEvent,
+    "flagTeamId" | "actorTeamId" | "actorTeamName" | "teamAffinity"
+  > {
+    const parseTeam = (arg: string | undefined) => {
+      const parsed =
+        arg == null ? NaN : parseInt(resolveNetString(arg, netStrings), 10);
+      return Number.isFinite(parsed) && parsed >= 0 ? parsed : undefined;
+    };
+    const flagTeamId = parseTeam(teamArg);
+    const matches = actor
+      ? [...rosterState.playerRoster.values()].filter(
+          (entry) => entry.name.toLowerCase() === actor.toLowerCase(),
+        )
+      : [];
+    const rosterTeam =
+      matches.length === 1 && matches[0].teamId > 0
+        ? matches[0].teamId
+        : undefined;
+    // Captures carry the action owner's team explicitly. Otherwise prefer
+    // the event-time roster, then the recorder's team for their own action.
+    // Stock two-team CTF: grabs/drops/caps belong to the opposing team;
+    // returns (including automatic returns) belong to the flag's owner.
+    const actorTeamId =
+      parseTeam(actorTeamArg) ??
+      rosterTeam ??
+      (actor?.toLowerCase() === normalizedRecorder &&
+      recorderTeamId != null &&
+      recorderTeamId > 0
+        ? recorderTeamId
+        : undefined) ??
+      (action === "return"
+        ? flagTeamId
+        : flagTeamId === 1
+          ? 2
+          : flagTeamId === 2
+            ? 1
+            : undefined);
+    const teamAffinity: TeamAffinity =
+      recorderTeamId == null ||
+      recorderTeamId <= 0 ||
+      actorTeamId == null ||
+      actorTeamId <= 0
+        ? "neutral"
+        : actorTeamId === recorderTeamId
+          ? "friendly"
+          : "enemy";
+    const actorTeamName =
+      actorTeamId != null && actorTeamId > 0
+        ? stripTaggedStringMarkup(
+            rosterState.teamScores.find((team) => team.teamId === actorTeamId)
+              ?.name ?? "",
+          ).trim() ||
+          DEFAULT_TEAM_NAMES[actorTeamId] ||
+          `Team ${actorTeamId}`
+        : undefined;
+    return { flagTeamId, actorTeamId, actorTeamName, teamAffinity };
+  }
+
   while (true) {
     signal?.throwIfAborted();
 
@@ -295,6 +380,16 @@ export async function scanDemoTimelineParser(
 
         const msgType = resolveNetString(args[0], netStrings);
         const msgTypeLower = msgType.toLowerCase();
+        const metadataMessage = METADATA_MESSAGE_TYPES[msgTypeLower];
+        if (metadataMessage) {
+          applyServerMessageState(
+            metadataMessage,
+            args,
+            (arg) => resolveNetString(arg, netStrings),
+            rosterState,
+            (entry) => entry,
+          );
+        }
         if (
           onServerName &&
           !serverNameFound &&
@@ -518,9 +613,9 @@ export async function scanDemoTimelineParser(
               type: "flag-grab",
               description: `${playerName} grabbed the ${flagTeamName ?? "enemy"} flag`,
               isRecorder: playerName.toLowerCase() === normalizedRecorder,
-              teamAffinity: "neutral",
               actor: playerName || undefined,
               flagTeamName: flagTeamName || undefined,
+              ...flagMetadata("grab", args[4], playerName),
               raw: playerName ? { actor: playerRaw } : undefined,
             });
           } else if (
@@ -533,8 +628,8 @@ export async function scanDemoTimelineParser(
               type: "flag-grab",
               description: `You took the ${flagTeamName ?? "enemy"} flag`,
               isRecorder: true,
-              teamAffinity: "friendly",
               flagTeamName: flagTeamName || undefined,
+              ...flagMetadata("grab", args[4], normalizedRecorder ?? undefined),
             });
           }
           continue;
@@ -570,9 +665,9 @@ export async function scanDemoTimelineParser(
                 ? `${actor} dropped ${flagLabel}`
                 : `${flagLabel.replace(/^the/, "The")} was dropped`,
               isRecorder: actor?.toLowerCase() === normalizedRecorder,
-              teamAffinity: "neutral",
               actor,
               flagTeamName,
+              ...flagMetadata("drop", args[4], actor),
               raw: actor ? { actor: playerRaw } : undefined,
             });
           } else if (
@@ -594,8 +689,8 @@ export async function scanDemoTimelineParser(
               type: "flag-drop",
               description: `You dropped the ${flagTeamName ?? "enemy"} flag`,
               isRecorder: true,
-              teamAffinity: "friendly",
               flagTeamName,
+              ...flagMetadata("drop", args[4], normalizedRecorder ?? undefined),
             });
           }
           continue;
@@ -626,9 +721,9 @@ export async function scanDemoTimelineParser(
                 ? `${actor} returned ${flagLabel}`
                 : `${flagLabel.replace(/^the/, "The")} was returned`,
               isRecorder: actor?.toLowerCase() === normalizedRecorder,
-              teamAffinity: "neutral",
               actor,
               flagTeamName: flagTeamName || undefined,
+              ...flagMetadata("return", args[4], actor),
               raw: actor ? { actor: playerRaw } : undefined,
             });
           } else if (
@@ -641,7 +736,11 @@ export async function scanDemoTimelineParser(
               type: "flag-return",
               description: "You returned your flag",
               isRecorder: true,
-              teamAffinity: "friendly",
+              ...flagMetadata(
+                "return",
+                args[4],
+                normalizedRecorder ?? undefined,
+              ),
             });
           }
           continue;
@@ -655,10 +754,21 @@ export async function scanDemoTimelineParser(
             args.slice(2),
             netStrings,
           );
-          const capturerRaw =
+          let capturerRaw =
             args.length >= 3
               ? resolveNetString(args[2], netStrings)
               : undefined;
+          // The recorder's own copy omits their name. Recover it from
+          // the current identity so capture tooltips still name the capper.
+          if (
+            capturerRaw === "0" &&
+            normalizedRecorder &&
+            stripTaggedStringMarkup(resolveNetString(args[1], netStrings))
+              .toLowerCase()
+              .includes("you captured")
+          ) {
+            capturerRaw = recorderRawName ?? undefined;
+          }
           const capturerName =
             capturerRaw != null
               ? stripTaggedStringMarkup(capturerRaw).trim()
@@ -669,30 +779,14 @@ export async function scanDemoTimelineParser(
                   resolveNetString(args[3], netStrings),
                 ).trim()
               : undefined;
-          let teamAffinity: "friendly" | "enemy" | "neutral" = "neutral";
-          if (
-            recorderTeamId != null &&
-            recorderTeamId > 0 &&
-            args.length >= 6
-          ) {
-            const capturerTeam = parseInt(
-              resolveNetString(args[5], netStrings),
-              10,
-            );
-            if (capturerTeam === recorderTeamId) {
-              teamAffinity = "friendly";
-            } else if (!isNaN(capturerTeam)) {
-              teamAffinity = "enemy";
-            }
-          }
           events.push({
             timeSec,
             type: "flag-cap",
             description: description || "Flag captured",
             isRecorder: capturerName?.toLowerCase() === normalizedRecorder,
-            teamAffinity,
             capturer: capturerName,
             flagTeamName: flagTeamName || undefined,
+            ...flagMetadata("cap", args[4], capturerName, args[5]),
             raw: capturerName ? { capturer: capturerRaw } : undefined,
           });
           continue;

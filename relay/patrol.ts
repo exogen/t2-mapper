@@ -32,8 +32,12 @@ export interface PatrolOptions {
    *  Flag", "Capture the Flag (Practice)", "LakRabbit", "LCTF",
    *  "MA Duel MOD", "Team Rabbit 2", "Arena", "Construction". */
   missionTypes: string[];
+  /** Exact, case-insensitive type exclusions, including allowed types. */
+  excludedMissionTypes?: string[];
   /** Non-observer players required to join and to stay pinned. */
   minPlayers: number;
+  /** Exact, case-insensitive type overrides; other types use minPlayers. */
+  minPlayersByType?: Readonly<Record<string, number>>;
   /** Concurrent pinned sessions cap (each is a full game connection). */
   maxSessions: number;
   intervalMs: number;
@@ -41,6 +45,93 @@ export interface PatrolOptions {
   /** Relay-only availability check; no passwords enter patrol status. */
   hasServerPassword?: (server: ServerInfo) => boolean;
   sessions: WatchSessionManager;
+}
+
+export function loadPatrolInteger(
+  raw: string | undefined,
+  envName: string,
+  fallback: number,
+  min = 0,
+  max = Number.MAX_SAFE_INTEGER,
+): number {
+  const value = raw?.trim();
+  const parsed = value ? Number(value) : fallback;
+  if (
+    (value && !/^\d+$/.test(value)) ||
+    !Number.isSafeInteger(parsed) ||
+    parsed < min ||
+    parsed > max
+  ) {
+    throw new Error(`${envName} must be an integer between ${min} and ${max}`);
+  }
+  return parsed;
+}
+
+/** JSON array or comma-separated list, shared by patrol and tournament filters. */
+export function loadPatrolList(
+  raw: string | undefined,
+  envName: string,
+): string[] {
+  const value = raw?.trim();
+  if (!value) return [];
+  if (!value.startsWith("[") && !value.startsWith("{")) {
+    return value
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean);
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    throw new Error(
+      `${envName} must be a JSON string array or comma-separated list`,
+    );
+  }
+  if (
+    !Array.isArray(parsed) ||
+    parsed.some((item) => typeof item !== "string")
+  ) {
+    throw new Error(
+      `${envName} must be a JSON string array or comma-separated list`,
+    );
+  }
+  return parsed.map((item: string) => item.trim()).filter(Boolean);
+}
+
+export function loadPatrolPlayerMinimums(
+  raw: string | undefined,
+): Record<string, number> {
+  if (!raw?.trim()) return {};
+  const error = () =>
+    new Error(
+      "DEMO_PATROL_MIN_PLAYERS_BY_TYPE must be a JSON object of distinct game types and non-negative integer minimums",
+    );
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw error();
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
+    throw error();
+  const seen = new Set<string>();
+  const entries: Array<[string, number]> = [];
+  for (const [type, minimum] of Object.entries(parsed)) {
+    const name = type.trim();
+    const normalized = name.toLowerCase();
+    if (
+      !name ||
+      seen.has(normalized) ||
+      !Number.isSafeInteger(minimum) ||
+      minimum < 0
+    ) {
+      throw error();
+    }
+    seen.add(normalized);
+    entries.push([name, minimum]);
+  }
+  return Object.fromEntries(entries);
 }
 
 /** Case-insensitive whole-string glob (only `*` is special). */
@@ -62,7 +153,7 @@ export function globToRegExp(pattern: string): RegExp {
  */
 export function estimateEligiblePlayers(server: ServerInfo): number {
   const { players, teams } = server;
-  if (!players) return server.playerCount - server.botCount;
+  if (!players) return Math.max(0, server.playerCount - server.botCount);
   let count = players.length;
   if (teams && teams.length >= 2) {
     const teamNames = new Set(teams.map((t) => t.name.toLowerCase()));
@@ -78,6 +169,7 @@ interface PinState {
    */
   ticks: number;
   serverName: string;
+  gameType: string;
   pinnedAt: number;
   /**
    * Eligible-player estimate from the most recent poll.
@@ -88,7 +180,9 @@ interface PinState {
 export interface PatrolStatus {
   patterns: string[];
   missionTypes: string[];
+  excludedMissionTypes: string[];
   minPlayers: number;
+  minPlayersByType: Record<string, number>;
   maxSessions: number;
   intervalMs: number;
   /**
@@ -99,6 +193,8 @@ export interface PatrolStatus {
   pinned: Array<{
     address: string;
     serverName: string;
+    gameType: string;
+    minPlayers: number;
     /**
      * "missing" = session died; released on the next tick.
      */
@@ -116,6 +212,8 @@ export class Patroller {
   private opts: PatrolOptions;
   private regexps: RegExp[];
   private missionTypes: Set<string>;
+  private excludedMissionTypes: Set<string>;
+  private minPlayersByType: Map<string, number>;
   /** Normalized addresses this patroller pinned, with failing-poll
    *  counts and total polls since the pin. */
   private pinned = new Map<string, PinState>();
@@ -132,6 +230,15 @@ export class Patroller {
     this.missionTypes = new Set(
       opts.missionTypes.map((t) => t.trim().toLowerCase()),
     );
+    this.excludedMissionTypes = new Set(
+      (opts.excludedMissionTypes ?? []).map((t) => t.trim().toLowerCase()),
+    );
+    this.minPlayersByType = new Map(
+      Object.entries(opts.minPlayersByType ?? {}).map(([type, minimum]) => [
+        type.trim().toLowerCase(),
+        minimum,
+      ]),
+    );
   }
 
   get pinnedCount(): number {
@@ -146,7 +253,9 @@ export class Patroller {
     return {
       patterns: [...this.opts.patterns],
       missionTypes: [...this.opts.missionTypes],
+      excludedMissionTypes: [...(this.opts.excludedMissionTypes ?? [])],
       minPlayers: this.opts.minPlayers,
+      minPlayersByType: { ...this.opts.minPlayersByType },
       maxSessions: this.opts.maxSessions,
       intervalMs: this.opts.intervalMs,
       lastTickAgoSec:
@@ -158,6 +267,8 @@ export class Patroller {
         return {
           address,
           serverName: state.serverName,
+          gameType: state.gameType,
+          minPlayers: this.minimumPlayers(state.gameType),
           status: session?.watchStatus ?? "missing",
           eligiblePlayers: state.lastEligible,
           watchers: session?.watcherCount ?? 0,
@@ -182,7 +293,10 @@ export class Patroller {
     log.info(
       {
         patterns: this.opts.patterns,
+        missionTypes: this.opts.missionTypes,
+        excludedMissionTypes: this.opts.excludedMissionTypes ?? [],
         minPlayers: this.opts.minPlayers,
+        minPlayersByType: this.opts.minPlayersByType ?? {},
         maxSessions: this.opts.maxSessions,
       },
       "Server patrol active",
@@ -205,8 +319,18 @@ export class Patroller {
   }
 
   private matchesType(gameType: string): boolean {
-    if (this.missionTypes.size === 0) return true;
-    return this.missionTypes.has(gameType.trim().toLowerCase());
+    const type = gameType.trim().toLowerCase();
+    return (
+      !this.excludedMissionTypes.has(type) &&
+      (this.missionTypes.size === 0 || this.missionTypes.has(type))
+    );
+  }
+
+  private minimumPlayers(gameType: string): number {
+    return (
+      this.minPlayersByType.get(gameType.trim().toLowerCase()) ??
+      this.opts.minPlayers
+    );
   }
 
   async tick(): Promise<void> {
@@ -251,18 +375,31 @@ export class Patroller {
         continue;
       }
       const listed = byAddress.get(address);
+      if (listed) {
+        state.serverName = listed.name;
+        state.gameType = listed.gameType;
+      }
+      if (!this.matches(state.serverName)) {
+        log.info(
+          { address, name: state.serverName },
+          "Patrol releasing server (server name not allowed)",
+        );
+        this.opts.sessions.unpin(address);
+        this.pinned.delete(address);
+        continue;
+      }
       // A disallowed mission type releases immediately (no strikes, no
       // cooldown — the type filter keeps it out until it rotates back).
-      if (listed && !this.matchesType(listed.gameType)) {
+      if (!this.matchesType(state.gameType)) {
         log.info(
-          { address, gameType: listed.gameType },
+          { address, gameType: state.gameType },
           "Patrol releasing server (mission type not allowed)",
         );
         this.opts.sessions.unpin(address);
         this.pinned.delete(address);
         continue;
       }
-      if (listed) state.serverName = listed.name;
+      const minPlayers = this.minimumPlayers(state.gameType);
       const eligible = listed?.players
         ? estimateEligiblePlayers(listed)
         : session.activePlayerCount;
@@ -276,14 +413,17 @@ export class Patroller {
       const qualifies =
         session.watchStatus !== "live"
           ? state.ticks <= CONNECT_GRACE_TICKS
-          : eligible >= this.opts.minPlayers;
+          : eligible >= minPlayers;
       if (qualifies) {
         state.strikes = 0;
         continue;
       }
       state.strikes++;
       if (state.strikes >= PATROL_STRIKES) {
-        log.info({ address, eligible }, "Patrol releasing quiet server");
+        log.info(
+          { address, gameType: state.gameType, eligible, minPlayers },
+          "Patrol releasing quiet server",
+        );
         this.opts.sessions.unpin(address);
         this.pinned.delete(address);
         this.cooldown.set(address, now + RELEASE_COOLDOWN_MS);
@@ -302,12 +442,15 @@ export class Patroller {
       if (server.passwordRequired && !this.opts.hasServerPassword?.(server))
         continue;
       const eligible = estimateEligiblePlayers(server);
-      if (eligible < this.opts.minPlayers) continue;
+      const minPlayers = this.minimumPlayers(server.gameType);
+      if (eligible < minPlayers) continue;
       log.info(
         {
           address,
           name: server.name,
+          gameType: server.gameType,
           eligible,
+          minPlayers,
           players: server.playerCount,
           bots: server.botCount,
           roster: server.players != null,
@@ -319,6 +462,7 @@ export class Patroller {
         strikes: 0,
         ticks: 0,
         serverName: server.name,
+        gameType: server.gameType,
         pinnedAt: now,
         lastEligible: eligible,
       });

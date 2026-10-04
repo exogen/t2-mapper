@@ -79,17 +79,57 @@ export interface MissionControlState {
   watching: boolean;
   /** The choice latched at match end; absent while captains can still change it. */
   recordingDecision?: boolean;
-  /** Distinct admins proposing the opposite of each currently applied setting. */
-  votes?: Partial<Record<MissionControlSetting, string[]>>;
+  /** Distinct accounts and their admin level when each pending vote was cast. */
+  votes?: Partial<Record<MissionControlSetting, Record<string, AdminVoteRole>>>;
 }
 
 export type MissionControlSetting = "recording" | "watching";
+export type AdminVoteRole = "admin" | "superadmin";
 const settings = ["recording", "watching"] as const;
+const guidVoterPattern = /^guid:[1-9]\d*$/;
+
+function restoreVoteBallot(value: unknown): Map<string, AdminVoteRole> | null {
+  if (value === undefined) return new Map();
+  if (Array.isArray(value)) {
+    if (
+      !value.every(
+        (voter) =>
+          typeof voter === "string" && /^(?:guid|client):[1-9]\d*$/.test(voter),
+      )
+    )
+      return null;
+    // Older ballots have no role; retain known GUIDs as ordinary admin votes.
+    return new Map(
+      value
+        .filter((voter) => guidVoterPattern.test(voter))
+        .map((voter) => [voter, "admin"] as const),
+    );
+  }
+  if (!value || typeof value !== "object") return null;
+  const entries = Object.entries(value);
+  if (
+    entries.some(
+      ([voter, role]) =>
+        !guidVoterPattern.test(voter) ||
+        (role !== "admin" && role !== "superadmin"),
+    )
+  )
+    return null;
+  return new Map(entries as [string, AdminVoteRole][]);
+}
 
 export interface AdminVotePolicy {
   tournament: boolean;
   minPlayerCount: number;
+  /** Zero or missing requires a server-granted superadmin role. */
+  adminVotes?: number;
+  /** Zero or missing counts superadmins only toward the ordinary threshold. */
+  superAdminVotes?: number;
+}
+
+export interface AdminVoteRequirements {
   adminVotes: number;
+  superAdminVotes: number;
 }
 
 export function loadAdminVotePolicies(
@@ -113,11 +153,15 @@ export function loadAdminVotePolicies(
       typeof policy.tournament !== "boolean" ||
       !Number.isSafeInteger(policy.minPlayerCount) ||
       policy.minPlayerCount < 0 ||
-      !Number.isSafeInteger(policy.adminVotes) ||
-      policy.adminVotes < 1
+      (policy.adminVotes !== undefined &&
+        (!Number.isSafeInteger(policy.adminVotes) || policy.adminVotes < 0)) ||
+      (policy.superAdminVotes !== undefined &&
+        (!Number.isSafeInteger(policy.superAdminVotes) ||
+          policy.superAdminVotes < 0)) ||
+      !((policy.adminVotes ?? 0) >= 1 || (policy.superAdminVotes ?? 0) >= 1)
     )
       throw new Error(
-        `RELAY_ADMIN_VOTE_POLICIES[${index}] requires a boolean tournament, nonnegative integer minPlayerCount, and positive integer adminVotes`,
+        `RELAY_ADMIN_VOTE_POLICIES[${index}] requires a boolean tournament, nonnegative integer minPlayerCount and vote thresholds, and at least one positive adminVotes or superAdminVotes threshold`,
       );
     const key = `${policy.tournament}:${policy.minPlayerCount}`;
     if (seen.has(key))
@@ -128,23 +172,48 @@ export function loadAdminVotePolicies(
     return {
       tournament: policy.tournament,
       minPlayerCount: policy.minPlayerCount,
-      adminVotes: policy.adminVotes,
+      ...(policy.adminVotes !== undefined && { adminVotes: policy.adminVotes }),
+      ...(policy.superAdminVotes !== undefined && {
+        superAdminVotes: policy.superAdminVotes,
+      }),
     };
   });
 }
 
-export function selectAdminVotesRequired(
+export function selectAdminVoteRequirements(
   policies: readonly AdminVotePolicy[],
   tournament: boolean | null,
   playerCount: number,
-): number | null {
+): AdminVoteRequirements | null {
   // Do not grant the less restrictive policy during the initial mode probe.
   if (tournament === null) {
-    const tourney = selectAdminVotesRequired(policies, true, playerCount);
-    const normal = selectAdminVotesRequired(policies, false, playerCount);
-    return tourney === null || normal === null
-      ? null
-      : Math.max(tourney, normal);
+    const tourney = selectAdminVoteRequirements(policies, true, playerCount);
+    const normal = selectAdminVoteRequirements(policies, false, playerCount);
+    if (!tourney || !normal) return null;
+    if (
+      tourney.adminVotes === normal.adminVotes &&
+      tourney.superAdminVotes === normal.superAdminVotes
+    )
+      return tourney;
+    const adminVotes =
+      tourney.adminVotes && normal.adminVotes
+        ? Math.max(tourney.adminVotes, normal.adminVotes)
+        : 0;
+    // Superadmins can also satisfy each mode's ordinary-admin threshold.
+    const superAdminMinimum = (requirements: AdminVoteRequirements) =>
+      Math.min(
+        requirements.adminVotes || Infinity,
+        requirements.superAdminVotes || Infinity,
+      );
+    const superAdminVotes = Math.max(
+      superAdminMinimum(tourney),
+      superAdminMinimum(normal),
+    );
+    return {
+      adminVotes,
+      superAdminVotes:
+        adminVotes > 0 && superAdminVotes >= adminVotes ? 0 : superAdminVotes,
+    };
   }
   let selected: AdminVotePolicy | undefined;
   for (const policy of policies) {
@@ -155,7 +224,12 @@ export function selectAdminVotesRequired(
     )
       selected = policy;
   }
-  return selected?.adminVotes ?? null;
+  return selected
+    ? {
+        adminVotes: selected.adminVotes ?? 0,
+        superAdminVotes: selected.superAdminVotes ?? 0,
+      }
+    : null;
 }
 
 /** Kept by server address across session replacement; only a new mission resets it. */
@@ -164,7 +238,10 @@ export class MissionControls {
   watching = true;
   recordingDecision: boolean | undefined;
   private mission: MissionControlState["mission"] = null;
-  private votes = { recording: new Set<string>(), watching: new Set<string>() };
+  private votes = {
+    recording: new Map<string, AdminVoteRole>(),
+    watching: new Map<string, AdminVoteRole>(),
+  };
 
   static restore(value: unknown): MissionControls | null {
     if (!value || typeof value !== "object") return null;
@@ -185,19 +262,7 @@ export class MissionControls {
       return null;
     if (
       votes !== undefined &&
-      (!votes ||
-        typeof votes !== "object" ||
-        Array.isArray(votes) ||
-        settings.some(
-          (setting) =>
-            votes[setting] !== undefined &&
-            (!Array.isArray(votes[setting]) ||
-              !votes[setting]!.every(
-                (voter) =>
-                  typeof voter === "string" &&
-                  /^(?:guid|client):[1-9]\d*$/.test(voter),
-              )),
-        ))
+      (!votes || typeof votes !== "object" || Array.isArray(votes))
     )
       return null;
     const controls = new MissionControls();
@@ -205,8 +270,11 @@ export class MissionControls {
     controls.recording = recording;
     controls.watching = watching;
     controls.recordingDecision = recordingDecision;
-    for (const setting of settings)
-      controls.votes[setting] = new Set(votes?.[setting]);
+    for (const setting of settings) {
+      const ballot = restoreVoteBallot(votes?.[setting]);
+      if (!ballot) return null;
+      controls.votes[setting] = ballot;
+    }
     if (recordingDecision !== undefined) controls.votes.recording.clear();
     return controls;
   }
@@ -223,7 +291,10 @@ export class MissionControls {
         votes: Object.fromEntries(
           settings
             .filter((setting) => this.votes[setting].size > 0)
-            .map((setting) => [setting, [...this.votes[setting]]]),
+            .map((setting) => [
+              setting,
+              Object.fromEntries(this.votes[setting]),
+            ]),
         ),
       }),
     };
@@ -243,8 +314,12 @@ export class MissionControls {
     return settings.some((setting) => this.votes[setting].size > 0);
   }
 
-  voteCount(setting: MissionControlSetting): number {
-    return this.votes[setting].size;
+  voteCount(setting: MissionControlSetting, role?: AdminVoteRole): number {
+    if (!role) return this.votes[setting].size;
+    let count = 0;
+    for (const voteRole of this.votes[setting].values())
+      if (voteRole === role) count++;
+    return count;
   }
 
   clearVotes(setting: MissionControlSetting): boolean {
@@ -258,37 +333,27 @@ export class MissionControls {
     setting: MissionControlSetting,
     enabled: boolean,
     voter: string,
-    required: number,
+    required: AdminVoteRequirements,
+    role: AdminVoteRole = "admin",
   ): boolean {
+    if (!guidVoterPattern.test(voter)) return false;
     if (setting === "recording" && this.recordingDecision !== undefined)
       return false;
+    if (required.adminVotes === 0 && role !== "superadmin") return false;
     const votes = this.votes[setting];
     if (enabled === this[setting]) return votes.delete(voter);
     const previousCount = votes.size;
-    votes.add(voter);
-    if (votes.size >= required) {
+    if (!votes.has(voter)) votes.set(voter, role);
+    if (
+      (required.adminVotes > 0 && votes.size >= required.adminVotes) ||
+      (required.superAdminVotes > 0 &&
+        this.voteCount(setting, "superadmin") >= required.superAdminVotes)
+    ) {
       this[setting] = enabled;
       votes.clear();
       return true;
     }
     return votes.size !== previousCount;
-  }
-
-  forgetVoter(voter: string): boolean {
-    const recording = this.votes.recording.delete(voter);
-    const watching = this.votes.watching.delete(voter);
-    return recording || watching;
-  }
-
-  retainVoters(eligible: ReadonlySet<string>): boolean {
-    let changed = false;
-    for (const setting of settings) {
-      for (const voter of this.votes[setting]) {
-        if (!eligible.has(voter))
-          changed = this.votes[setting].delete(voter) || changed;
-      }
-    }
-    return changed;
   }
 
   finishRecording(): void {

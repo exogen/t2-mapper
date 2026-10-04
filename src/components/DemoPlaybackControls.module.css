@@ -254,10 +254,9 @@
   pointer-events: none;
 }
 
-/* Mission-start tick marks riding above the seek control (one per map
-   played in multi-mission demos), from the timeline scan's match-start
-   events. The layer's bottom edge butts the root's top, so the ticks
-   hang entirely above the control. */
+/* Timeline mission ticks and capture markers ride above the seek control.
+   The layer's bottom edge butts the root's top, so the markers hang
+   entirely above the control. */
 .SeekMarkers {
   position: absolute;
   left: 0;
@@ -266,31 +265,52 @@
   pointer-events: none;
 }
 
-/* A padded click/hover target centered on the timestamp (tooltip needs
-   a reachable hit area); the visible 2px notch is the centered ::after.
-   Hangs above the control, dipping 2px into the root's top edge. */
-.SeekMissionTick {
+/* Padded click/hover targets centered on the timestamp. Hang above the
+   control, dipping 2px into the root's top edge. */
+.SeekMissionTick,
+.SeekFlagTick {
   position: absolute;
   bottom: -2px;
-  width: 14px;
-  height: 11px;
-  margin-left: -7px;
   pointer-events: auto;
   cursor: pointer;
-  opacity: 0.3;
-  /* Button reset — the visible notch is the ::after. */
+  /* Button reset — visuals come from a notch or capture icon. */
   appearance: none;
   border: 0;
   padding: 0;
   background: transparent;
+  opacity: 0.3;
+}
+
+.SeekMissionTick {
+  width: 14px;
+  height: 15px;
+  margin-left: -7px;
+}
+
+.SeekFlagTick {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.8;
+  font-size: 12px;
+  width: 12px;
+  height: 14px;
+  margin-left: -6px;
+}
+
+.SeekFlagIcon {
+  margin-top: 4px;
 }
 
 .SeekMissionTick:hover,
-.SeekMissionTick:focus-visible {
+.SeekMissionTick:focus-visible,
+.SeekFlagTick:hover,
+.SeekFlagTick:focus-visible {
   opacity: 1;
 }
 
-.SeekMissionTick:focus-visible {
+.SeekMissionTick:focus-visible,
+.SeekFlagTick:focus-visible {
   outline: 2px solid rgba(63, 140, 255, 0.8);
   outline-offset: 1px;
 }
@@ -300,7 +320,7 @@
   content: "";
   position: absolute;
   left: 50%;
-  top: 0;
+  top: 4px;
   bottom: 0;
   width: 2px;
   margin-left: -1px;

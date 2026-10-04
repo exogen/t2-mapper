@@ -1,6 +1,14 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { EventEmitter } from "node:events";
-import { Patroller, estimateEligiblePlayers, globToRegExp } from "./patrol";
+import {
+  Patroller,
+  estimateEligiblePlayers,
+  globToRegExp,
+  loadPatrolInteger,
+  loadPatrolList,
+  loadPatrolPlayerMinimums,
+  type PatrolOptions,
+} from "./patrol";
 import { WatchSessionManager } from "./watchSession";
 import type { GameConnection } from "./gameConnection";
 import type { ServerInfo } from "./types";
@@ -58,11 +66,17 @@ function makeServer(
 
 function setup(
   patterns: string[],
-  opts: {
-    maxSessions?: number;
-    missionTypes?: string[];
-    hasServerPassword?: (server: ServerInfo) => boolean;
-  } = {},
+  opts: Partial<
+    Pick<
+      PatrolOptions,
+      | "maxSessions"
+      | "missionTypes"
+      | "minPlayers"
+      | "minPlayersByType"
+      | "excludedMissionTypes"
+      | "hasServerPassword"
+    >
+  > = {},
 ) {
   const connections: FakeGameConnection[] = [];
   const manager = new WatchSessionManager({
@@ -78,7 +92,9 @@ function setup(
   const patroller = new Patroller({
     patterns,
     missionTypes: opts.missionTypes ?? [],
-    minPlayers: 2,
+    minPlayers: opts.minPlayers ?? 2,
+    minPlayersByType: opts.minPlayersByType,
+    excludedMissionTypes: opts.excludedMissionTypes,
     maxSessions: opts.maxSessions ?? 3,
     intervalMs: 60_000,
     getServerList: () => Promise.resolve(servers),
@@ -103,6 +119,90 @@ describe("globToRegExp", () => {
     expect(re.test("Ski Club")).toBe(false);
     expect(globToRegExp("| THE CUT | *").test("| THE CUT | Back to Ymir")).toBe(
       true,
+    );
+  });
+});
+
+describe("patrol configuration", () => {
+  it("loads integer settings with fallbacks and explicit zero", () => {
+    expect(loadPatrolInteger(undefined, "DEMO_PATROL_MIN_PLAYERS", 2)).toBe(2);
+    expect(loadPatrolInteger(" ", "DEMO_PATROL_MIN_PLAYERS", 2)).toBe(2);
+    expect(loadPatrolInteger("0", "DEMO_PATROL_MIN_PLAYERS", 2)).toBe(0);
+    expect(loadPatrolInteger(" 8 ", "DEMO_PATROL_MIN_PLAYERS", 2)).toBe(8);
+  });
+
+  it.each(["garbage", "2players", "1.5", "-1", "1e3", "9007199254740992"])(
+    "rejects malformed integer settings: %s",
+    (value) => {
+      expect(() =>
+        loadPatrolInteger(value, "DEMO_PATROL_MIN_PLAYERS", 2),
+      ).toThrow("DEMO_PATROL_MIN_PLAYERS");
+    },
+  );
+
+  it.each(["0", "2147483648"])(
+    "rejects intervals that Node would clamp to 1ms: %s",
+    (value) => {
+      expect(() =>
+        loadPatrolInteger(
+          value,
+          "DEMO_PATROL_INTERVAL_MS",
+          60_000,
+          1,
+          2_147_483_647,
+        ),
+      ).toThrow("DEMO_PATROL_INTERVAL_MS");
+    },
+  );
+
+  it("accepts JSON arrays and comma-separated lists, trimming empty entries", () => {
+    expect(loadPatrolList(undefined, "DEMO_PATROL_SERVERS")).toEqual([]);
+    expect(loadPatrolList("   ", "DEMO_PATROL_SERVERS")).toEqual([]);
+    expect(
+      loadPatrolList(
+        '[" My Server ", "", "Slope, One"]',
+        "DEMO_PATROL_SERVERS",
+      ),
+    ).toEqual(["My Server", "Slope, One"]);
+    expect(
+      loadPatrolList(
+        " Arena, , LakRabbit ",
+        "DEMO_PATROL_EXCLUDED_MISSION_TYPES",
+      ),
+    ).toEqual(["Arena", "LakRabbit"]);
+  });
+
+  it.each(['["Arena",', '["Arena", 1]', "{}"])(
+    "rejects invalid lists with the correct variable name: %s",
+    (raw) => {
+      expect(() =>
+        loadPatrolList(raw, "DEMO_PATROL_EXCLUDED_MISSION_TYPES"),
+      ).toThrow("DEMO_PATROL_EXCLUDED_MISSION_TYPES");
+    },
+  );
+
+  it("loads exact-type minimums including zero without changing display names", () => {
+    expect(loadPatrolPlayerMinimums(undefined)).toEqual({});
+    expect(loadPatrolPlayerMinimums(" ")).toEqual({});
+    expect(
+      loadPatrolPlayerMinimums('{" Capture the Flag ":8,"Arena":0}'),
+    ).toEqual({ "Capture the Flag": 8, Arena: 0 });
+  });
+
+  it.each([
+    "{",
+    "[]",
+    "null",
+    '{"Arena":-1}',
+    '{"Arena":1.5}',
+    '{"Arena":"2"}',
+    '{"Arena":null}',
+    '{"Arena":9007199254740992}',
+    '{" ":2}',
+    '{"Arena":2," arena ":3}',
+  ])("rejects invalid or ambiguous minimums: %s", (raw) => {
+    expect(() => loadPatrolPlayerMinimums(raw)).toThrow(
+      "DEMO_PATROL_MIN_PLAYERS_BY_TYPE",
     );
   });
 });
@@ -142,6 +242,9 @@ describe("estimateEligiblePlayers", () => {
     expect(
       estimateEligiblePlayers({ ...base, playerCount: 6, botCount: 5 }),
     ).toBe(1);
+    expect(
+      estimateEligiblePlayers({ ...base, playerCount: 0, botCount: 1 }),
+    ).toBe(0);
   });
 
   it("subtracts bots from roster counts (bot showcases report them)", () => {
@@ -307,6 +410,189 @@ describe("Patroller", () => {
     await patroller.tick();
     expect(connections).toHaveLength(2);
     expect(patroller.pinnedCount).toBe(2);
+  });
+
+  it("uses per-type minimums and the default for unspecified types", async () => {
+    const { connections, servers, patroller } = setup(["*"], {
+      minPlayers: 3,
+      minPlayersByType: { " Capture the Flag ": 8, Arena: 1, Construction: 0 },
+      maxSessions: 4,
+    });
+    servers.push(
+      {
+        ...makeServer("CTF below", "192.0.2.1:28000", 7),
+        gameType: "Capture the Flag",
+      },
+      {
+        ...makeServer("CTF qualifies", "192.0.2.2:28000", 8),
+        gameType: "CAPTURE THE FLAG",
+      },
+      { ...makeServer("Arena", "192.0.2.3:28000", 1), gameType: " arena " },
+      {
+        ...makeServer("Default below", "192.0.2.4:28000", 2),
+        gameType: "LakRabbit",
+      },
+      {
+        ...makeServer("Default qualifies", "192.0.2.5:28000", 3),
+        gameType: "LakRabbit",
+      },
+      {
+        ...makeServer("Empty", "192.0.2.6:28000", 0),
+        gameType: "Construction",
+      },
+    );
+    await patroller.tick();
+    expect(connections.map((connection) => connection.address)).toEqual([
+      "192.0.2.2:28000",
+      "192.0.2.3:28000",
+      "192.0.2.5:28000",
+      "192.0.2.6:28000",
+    ]);
+    expect(
+      patroller.getStatus().pinned.map(({ minPlayers }) => minPlayers),
+    ).toEqual([8, 1, 3, 0]);
+  });
+
+  it("excludes types even when explicitly included and given a zero minimum", async () => {
+    const { connections, manager, servers, patroller } = setup(["*"], {
+      missionTypes: ["CTF", "Arena"],
+      excludedMissionTypes: [" arena "],
+      minPlayersByType: { Arena: 0 },
+    });
+    servers.push(
+      { ...makeServer("Arena", "192.0.2.1:28000", 10), gameType: "ARENA" },
+      makeServer("CTF", "192.0.2.2:28000", 10),
+    );
+    await patroller.tick();
+    expect(connections.map((connection) => connection.address)).toEqual([
+      "192.0.2.2:28000",
+    ]);
+    servers[1].gameType = "Arena";
+    await patroller.tick();
+    expect(patroller.pinnedCount).toBe(0);
+    expect(manager.getSession(servers[1].address)?.isPinned).toBe(false);
+    expect(patroller.getStatus().cooldowns).toEqual([]);
+    servers[1].gameType = "CTF";
+    await patroller.tick();
+    expect(patroller.pinnedCount).toBe(1);
+    manager.shutdown();
+  });
+
+  it("keeps normal and practice CTF separate when selecting player minimums", async () => {
+    const { connections, manager, servers, patroller } = setup(["*"], {
+      minPlayersByType: {
+        "Capture the Flag": 8,
+        "Capture the Flag (Practice)": 2,
+      },
+    });
+    servers.push(
+      {
+        ...makeServer("Normal", "192.0.2.1:28000", 2),
+        gameType: "Capture the Flag",
+      },
+      {
+        ...makeServer("Practice", "192.0.2.2:28000", 2),
+        gameType: "Capture the Flag (Practice)",
+      },
+    );
+    await patroller.tick();
+    expect(connections.map((connection) => connection.address)).toEqual([
+      "192.0.2.2:28000",
+    ]);
+    expect(patroller.getStatus().pinned[0]).toMatchObject({
+      gameType: "Capture the Flag (Practice)",
+      minPlayers: 2,
+    });
+    manager.shutdown();
+  });
+
+  it("supports type exclusions without a type allowlist", async () => {
+    const { connections, servers, patroller } = setup(["*"], {
+      excludedMissionTypes: ["Arena"],
+    });
+    servers.push(
+      { ...makeServer("Arena", "192.0.2.1:28000", 10), gameType: "Arena" },
+      makeServer("CTF", "192.0.2.2:28000", 10),
+    );
+    await patroller.tick();
+    expect(connections.map((connection) => connection.address)).toEqual([
+      "192.0.2.2:28000",
+    ]);
+  });
+
+  it("releases a pin when its name no longer matches the included server patterns", async () => {
+    const { connections, manager, servers, patroller } = setup(["Open *"]);
+    servers.push(makeServer("Open Server", "192.0.2.3:28000", 10));
+    await patroller.tick();
+    expect(connections.map((connection) => connection.address)).toEqual([
+      "192.0.2.3:28000",
+    ]);
+    servers[0].name = "Closed Server";
+    await patroller.tick();
+    expect(patroller.pinnedCount).toBe(0);
+    expect(manager.getSession(servers[0].address)?.isPinned).toBe(false);
+    manager.shutdown();
+  });
+
+  it("updates the minimum on rotation and preserves it when the server list omits the pin", async () => {
+    const { connections, manager, servers, patroller } = setup(["*"], {
+      minPlayers: 2,
+      minPlayersByType: { Arena: 1, CTF: 4 },
+    });
+    const server = {
+      ...makeServer("Server", "192.0.2.1:28000", 2),
+      gameType: "Arena",
+    };
+    servers.push(server);
+    await patroller.tick();
+    connections[0].setStatus("connected");
+    const session = manager.getSession(server.address)!;
+    vi.spyOn(session, "activePlayerCount", "get").mockReturnValue(2);
+    await patroller.tick();
+    expect(patroller.getStatus().pinned[0]).toMatchObject({
+      minPlayers: 1,
+      strikes: 0,
+    });
+    server.gameType = "CTF";
+    await patroller.tick();
+    expect(patroller.getStatus().pinned[0]).toMatchObject({
+      gameType: "CTF",
+      minPlayers: 4,
+      strikes: 1,
+    });
+    servers.length = 0;
+    await patroller.tick();
+    expect(patroller.getStatus().pinned[0]).toMatchObject({
+      minPlayers: 4,
+      strikes: 2,
+    });
+    await patroller.tick();
+    expect(patroller.pinnedCount).toBe(0);
+    expect(patroller.getStatus().cooldowns).toHaveLength(1);
+    manager.shutdown();
+  });
+
+  it("clears quiet strikes when a rotation lowers the required minimum", async () => {
+    const { connections, manager, servers, patroller } = setup(["*"], {
+      minPlayersByType: { CTF: 4, Arena: 1 },
+    });
+    servers.push(makeServer("Server", "192.0.2.1:28000", 4));
+    await patroller.tick();
+    connections[0].setStatus("connected");
+    vi.spyOn(
+      manager.getSession(servers[0].address)!,
+      "activePlayerCount",
+      "get",
+    ).mockReturnValue(1);
+    await patroller.tick();
+    await patroller.tick();
+    servers[0].gameType = "Arena";
+    await patroller.tick();
+    expect(patroller.getStatus().pinned[0]).toMatchObject({
+      minPlayers: 1,
+      strikes: 0,
+    });
+    manager.shutdown();
   });
 
   it("releases a pinned server after consecutive quiet polls", async () => {
