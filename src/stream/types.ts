@@ -564,6 +564,8 @@ export interface PlayerRosterEntry {
   clientId: number;
   /** Account identity across reconnects; absent when hidden or unavailable. */
   guid?: string;
+  isAdmin?: boolean;
+  isSuperAdmin?: boolean;
   name: string;
   /** Raw name preserving color-code bytes, for colored scoreboard display.
    *  Match/key on `name` (stripped); render `rawName` via parseColorSegments. */

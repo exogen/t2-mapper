@@ -1,5 +1,6 @@
 import type { PlayerRosterEntry } from "../stream/types";
 import { ColoredName } from "./ColoredName";
+import { PlayerAdminBadge } from "./PlayerAdminBadge";
 import type { HudStyle } from "./SettingsProvider";
 import { getScoreboardTeamName, useScoreboard } from "./useScoreboard";
 import styles from "./ScoreHUD.module.css";
@@ -36,6 +37,7 @@ function PlayerScores({
             >
               <td className={styles.Name} title={player.name}>
                 {player.name ? <ColoredName raw={player.rawName} /> : "…"}
+                <PlayerAdminBadge player={player} />
               </td>
               <td className={styles.Score}>{player.score}</td>
             </tr>

@@ -16,6 +16,10 @@ import { DemoCheckpointPublisher } from "./demoCheckpointPublisher.js";
 import { loadCredentials } from "./auth.js";
 import { WatchSessionManager, normalizeAddress } from "./watchSession.js";
 import { WatchRequest } from "./watchRequest.js";
+import {
+  loadAdminVotePolicies,
+  type MissionControlState,
+} from "./missionControls.js";
 import { DemoCoordinator } from "./demoCoordinator.js";
 import { DemoUploader, loadUploadConfig } from "./demoUpload.js";
 import { Patroller, globToRegExp } from "./patrol.js";
@@ -42,6 +46,9 @@ const RELAY_PORT = parseInt(process.env.RELAY_PORT || "8765", 10);
 const MASTER_SERVER = process.env.T2_MASTER_SERVER || "master.tribesnext.com";
 const serverPasswords = new ServerPasswords(process.env.T2_SERVER_PASSWORDS);
 const CHAT_ENABLED = loadChatEnabled(process.env.RELAY_CHAT_ENABLED);
+const ADMIN_VOTE_POLICIES = loadAdminVotePolicies(
+  process.env.RELAY_ADMIN_VOTE_POLICIES,
+);
 const TRUST_FLY_PROXY = /^(1|true)$/i.test(
   process.env.RELAY_TRUST_FLY_PROXY?.trim() ?? "",
 );
@@ -67,7 +74,7 @@ const demoSourceCache = demoUploadConfig
 const DEMO_RECORD_ENABLED =
   process.env.DEMO_RECORD_ENABLED === "1" ||
   process.env.DEMO_RECORD_ENABLED === "true";
-const DEMO_DIR = process.env.DEMO_DIR || "/data/demos";
+const DEMO_DIR = path.resolve(process.env.DEMO_DIR || "/data/demos");
 const DEMO_MIN_FREE_BYTES = parseInt(
   process.env.DEMO_MIN_FREE_BYTES || `${1024 ** 3}`,
   10,
@@ -82,11 +89,14 @@ const DEMO_MIN_LENGTH_MS = parseInt(
 );
 /** Peak non-observer players a recording must have seen to be kept. */
 const DEMO_MIN_PLAYERS = parseInt(process.env.DEMO_MIN_PLAYERS || "2", 10);
+const DEMO_PENDING_TIMEOUT_MS = Number(
+  process.env.DEMO_PENDING_TIMEOUT_MS ?? 60 * 60_000,
+);
 
-/** Where the actively-watched server list persists across restarts
- *  (warm-boot continuity for deploys). Unwritable path = feature off. */
-const WATCH_STATE_PATH =
-  process.env.WATCH_STATE_PATH || "/data/watch-state.json";
+/** Saved sessions, mission controls, and votes for restart recovery. */
+const WATCH_STATE_PATH = path.resolve(
+  process.env.WATCH_STATE_PATH || "/data/watch-state.json",
+);
 
 // ── Server patrol (auto-record without watchers; needs recording on) ──
 const DEMO_PATROL_ENABLED =
@@ -295,9 +305,6 @@ const httpServer = http.createServer(async (req, res) => {
 });
 
 const wss = new WebSocketServer({ server: httpServer });
-httpServer.listen(RELAY_PORT, "0.0.0.0", () => {
-  relayLog.info({ port: RELAY_PORT }, "Relay server listening");
-});
 
 /** Cached server list from the most recent master query. */
 let cachedServers: ServerInfo[] = [];
@@ -410,6 +417,7 @@ const demoCoordinator = new DemoCoordinator({
   maxBytes: DEMO_MAX_BYTES,
   minLengthMs: DEMO_MIN_LENGTH_MS,
   minPlayers: DEMO_MIN_PLAYERS,
+  pendingTimeoutMs: DEMO_PENDING_TIMEOUT_MS,
   recorderName: process.env.T2_ACCOUNT_NAME || "Observer",
   onFinalized: (filePath) => demoUploader.enqueue(filePath),
 });
@@ -423,40 +431,85 @@ if (DEMO_RECORD_ENABLED || demoUploader.enabled) {
     "Demo recording configured",
   );
 }
-// Sweeps only exist to feed the upload queue (and tidy stale partials
-// along the way) — without R2 config the demo dir is left untouched.
+// Held recordings stay private across restarts. Only a completed keep
+// decision moves them into the root directory scanned by the uploader.
+relayLog.info(
+  { demoDir: DEMO_DIR, watchStatePath: WATCH_STATE_PATH },
+  "Relay storage configured",
+);
+await demoCoordinator.restorePending();
+// Older held recordings must still settle if recording and uploads are disabled.
+setInterval(() => void demoCoordinator.sweepPending(), DEMO_UPLOAD_RETRY_MS);
 if (demoUploader.enabled) {
   void demoUploader.sweep();
   setInterval(() => void demoUploader.sweep(), DEMO_UPLOAD_RETRY_MS);
 }
 
-/** Persist the watched-address list so a restarted relay can pre-warm
- *  its game connections before watchers reconnect. Writes are skipped
- *  during shutdown so the file reflects the pre-restart state. */
+/** Persist sessions and restrictions so a restart cannot re-enable a private map.
+ *  Skip writes during shutdown so the file reflects the pre-restart state. */
 let watchStateWriteChain = Promise.resolve();
-function persistWatchState(addresses: string[]): void {
+let pendingWatchState: string | null = null;
+let writingWatchState = false;
+let shuttingDown = false;
+function persistWatchState(
+  addresses: string[],
+  missionControls: Record<string, MissionControlState>,
+): void {
   if (shuttingDown) return;
-  const payload = JSON.stringify({ addresses });
-  // Serialize writes: concurrent writeFile calls to the same path have
-  // no ordering guarantee, so an older snapshot could land last.
-  watchStateWriteChain = watchStateWriteChain.then(() =>
-    fs.writeFile(WATCH_STATE_PATH, payload).catch((err: unknown) => {
-      relayLog.debug(
-        { err, path: WATCH_STATE_PATH },
-        "Watch state not persisted",
-      );
-    }),
-  );
+  pendingWatchState = JSON.stringify({ addresses, missionControls });
+  if (writingWatchState) return;
+  writingWatchState = true;
+  // One write in flight and one latest snapshot: spam cannot queue obsolete
+  // snapshots indefinitely, and an older write can never land after a newer one.
+  watchStateWriteChain = Promise.resolve().then(async () => {
+    try {
+      while (pendingWatchState !== null) {
+        const payload = pendingWatchState;
+        pendingWatchState = null;
+        try {
+          await fs.mkdir(path.dirname(WATCH_STATE_PATH), { recursive: true });
+          await fs.writeFile(`${WATCH_STATE_PATH}.tmp`, payload);
+          await fs.rename(`${WATCH_STATE_PATH}.tmp`, WATCH_STATE_PATH);
+        } catch (err) {
+          relayLog.warn(
+            { err, path: WATCH_STATE_PATH },
+            "Watch state not persisted",
+          );
+        }
+      }
+    } finally {
+      writingWatchState = false;
+    }
+  });
 }
+
+// Load before accepting watchers or starting patrol, so neither can bypass
+// a restriction while the asynchronous warm-boot read is still in flight.
+const savedWatchState = await fs
+  .readFile(WATCH_STATE_PATH, "utf-8")
+  .then(
+    (raw): { addresses?: unknown; missionControls?: unknown } =>
+      JSON.parse(raw) ?? {},
+  )
+  .catch((err: NodeJS.ErrnoException) => {
+    if (err.code !== "ENOENT")
+      relayLog.warn(
+        { err, path: WATCH_STATE_PATH },
+        "Saved watch state could not be restored",
+      );
+    return {} as { addresses?: unknown; missionControls?: unknown };
+  });
 
 /** Shared watch sessions (one game connection per server, N watchers). */
 const watchSessions = new WatchSessionManager({
   chatEnabled: CHAT_ENABLED,
+  adminVotePolicies: ADMIN_VOTE_POLICIES,
   gameBasePath: GAME_BASE_PATH,
   getCachedServer: findKnownServer,
   createConnection: createGameConnection,
   demoCoordinator,
   onSessionsChanged: persistWatchState,
+  initialMissionControls: savedWatchState.missionControls,
   tourneyDelayMs: WATCH_TOURNEY_DELAY_MS,
   tourneySkipTypes: WATCH_TOURNEY_SKIP_TYPES,
 });
@@ -484,22 +537,18 @@ if (DEMO_PATROL_ENABLED && !patroller) {
 // Warm boot: reconnect to servers that were being watched before the
 // restart so returning watchers get near-instant catch-up. Idle grace
 // tears these down if nobody comes back.
-void fs
-  .readFile(WATCH_STATE_PATH, "utf-8")
-  .then((raw) => {
-    const addresses: unknown = JSON.parse(raw)?.addresses;
-    if (!Array.isArray(addresses) || addresses.length === 0) return;
-    relayLog.info(
-      { addresses },
-      "Warm-booting watch sessions from previous run",
-    );
-    for (const address of addresses) {
-      if (typeof address === "string") watchSessions.warmStart(address);
-    }
-  })
-  .catch(() => {
-    // No state file — fresh start.
-  });
+if (
+  Array.isArray(savedWatchState.addresses) &&
+  savedWatchState.addresses.length > 0
+) {
+  relayLog.info(
+    { addresses: savedWatchState.addresses },
+    "Warm-booting watch sessions from previous run",
+  );
+  for (const address of savedWatchState.addresses) {
+    if (typeof address === "string") watchSessions.warmStart(address);
+  }
+}
 
 setInterval(() => {
   // Evict expired probe results (they're otherwise only deleted when the
@@ -556,19 +605,28 @@ function logExit(message: string): void {
   }
 }
 
-let shuttingDown = false;
+function drainSessions(timeoutMs: number): Promise<unknown> {
+  // Preserve the pre-exit snapshot: teardown must not save an empty server list.
+  shuttingDown = true;
+  patroller?.stop();
+  watchSessions.shutdown();
+  return Promise.race([
+    Promise.allSettled([
+      demoCoordinator.shutdown(timeoutMs),
+      watchStateWriteChain,
+    ]),
+    new Promise((resolve) => setTimeout(resolve, timeoutMs).unref()),
+  ]);
+}
+
 for (const signal of ["SIGTERM", "SIGINT", "SIGHUP"] as const) {
   process.on(signal, () => {
     if (shuttingDown) return;
-    shuttingDown = true;
     logExit(`received ${signal} — shutting down watch sessions and exiting`);
-    // Stop the patrol first so a late tick can't re-create sessions.
-    patroller?.stop();
     // Session teardown detaches every recorder into the coordinator;
-    // drain those finalizes (fast local file work, never uploads — the
-    // next boot's sweep uploads from the persistent volume) then exit.
-    watchSessions.shutdown();
-    void demoCoordinator.shutdown(DEMO_SHUTDOWN_DRAIN_MS).finally(() => {
+    // Drain finalizes and the last control snapshot within the shutdown
+    // deadline. Uploads resume from the persistent volume on the next boot.
+    void drainSessions(DEMO_SHUTDOWN_DRAIN_MS).finally(() => {
       logExit("demo finalize drain complete — exiting");
       // Give the relayRestarting notices queued on watcher sockets a
       // moment to flush before the process dies.
@@ -591,16 +649,14 @@ process.on("exit", (code) => {
 let crashing = false;
 function crashExit(detail: string): void {
   logExit(detail);
-  if (shuttingDown) return; // the shutdown drain already owns the exit
   if (crashing) {
     process.exit(1);
   }
+  if (shuttingDown) return; // the shutdown drain already owns the exit
   crashing = true;
   setTimeout(() => process.exit(1), DEMO_CRASH_DRAIN_MS + 2_000).unref();
   try {
-    patroller?.stop();
-    watchSessions.shutdown();
-    void demoCoordinator.shutdown(DEMO_CRASH_DRAIN_MS).finally(() => {
+    void drainSessions(DEMO_CRASH_DRAIN_MS).finally(() => {
       logExit("crash drain complete — exiting");
       process.exit(1);
     });
@@ -935,7 +991,14 @@ wss.on("connection", (ws, req) => {
             { count: servers.length },
             "Returning server list to browser",
           );
-          sendToClient(ws, { type: "serverList", servers });
+          sendToClient(ws, {
+            type: "serverList",
+            servers: servers.map((server) => ({
+              ...server,
+              watcherCount:
+                watchSessions.getSession(server.address)?.watcherCount ?? 0,
+            })),
+          });
         } catch (e) {
           clientLog.error({ err: e }, "Master query failed");
           sendToClient(ws, {
@@ -1052,6 +1115,10 @@ wss.on("connection", (ws, req) => {
       }
     }
   }
+});
+
+httpServer.listen(RELAY_PORT, "0.0.0.0", () => {
+  relayLog.info({ port: RELAY_PORT }, "Relay server listening");
 });
 
 function sendToClient(ws: WebSocket, message: ServerMessage): void {

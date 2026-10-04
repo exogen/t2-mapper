@@ -15,6 +15,8 @@ export interface ServerMessageRosterEntry {
   name: string;
   rawName: string;
   guid?: string;
+  isAdmin?: boolean;
+  isSuperAdmin?: boolean;
   targetId?: number;
   teamId: number;
   score: number;
@@ -137,6 +139,8 @@ export function applyServerMessageState<Team extends ServerMessageTeamScore>(
         name: stripTaggedStringMarkup(rawName).trim(),
         rawName,
         guid: normalizePlayerGuid(resolve(args[9] ?? "")),
+        ...(resolve(args[6] ?? "") === "1" && { isAdmin: true }),
+        ...(resolve(args[7] ?? "") === "1" && { isSuperAdmin: true }),
         targetId: isNaN(targetId) ? undefined : targetId,
         teamId: 0,
         score: 0,
@@ -155,6 +159,24 @@ export function applyServerMessageState<Team extends ServerMessageTeamScore>(
       if (isNaN(clientId)) return NO_CHANGES;
       const deleted = playerRoster.delete(clientId);
       return { rosterChanged: true, rosterMetadataChanged: deleted };
+    }
+    case "MsgAdminPlayer":
+    case "MsgAdminAdminPlayer":
+    case "MsgSuperAdminPlayer":
+    case "MsgStripAdminPlayer": {
+      // Stock LobbyGui.cs promotions; TacoServer's broadcast strip message
+      // carries the target after the two names, not in the first argument.
+      const id = resolve(args[msgType === "MsgStripAdminPlayer" ? 4 : 2] ?? "");
+      const entry = /^\d+$/.test(id) ? playerRoster.get(Number(id)) : undefined;
+      if (!entry) return NO_CHANGES;
+      if (msgType === "MsgStripAdminPlayer") {
+        delete entry.isAdmin;
+        delete entry.isSuperAdmin;
+      } else {
+        entry.isAdmin = true;
+        if (msgType === "MsgSuperAdminPlayer") entry.isSuperAdmin = true;
+      }
+      return { rosterChanged: true };
     }
     case "MsgClientNameChanged": {
       if (args.length < 5) return NO_CHANGES;

@@ -79,6 +79,9 @@ export function StreamingMissionInfo({
   const watcherCount = useLiveSelector((s) => s.watcherCount);
   const relayRecording = useLiveSelector((s) => s.recording);
   const streamDelayMs = useLiveSelector((s) => s.streamDelayMs);
+  const watchingDisabled = useLiveSelector(
+    (s) => s.watchEndReason === "watchingDisabled",
+  );
   const isLiveConnected = useLiveSelector(
     (s) =>
       s.gameStatus === "connected" ||
@@ -118,7 +121,9 @@ export function StreamingMissionInfo({
         </div>
       ) : null
     ) : (
-      <div className={styles.Error}>Disconnected</div>
+      <div className={styles.Error}>
+        {watchingDisabled ? "Watching disabled" : "Disconnected"}
+      </div>
     )
   ) : null;
 
@@ -205,7 +210,7 @@ export function StreamingMissionInfo({
             {isLive && isLiveConnected && relayRecording ? (
               <span
                 className={`${styles.RecBadge} ${styles.MetaGap}`}
-                title="The relay is recording this session as a demo"
+                title="Demo saving is enabled for this mission"
               >
                 <span className={styles.RecDot} aria-hidden /> REC
               </span>

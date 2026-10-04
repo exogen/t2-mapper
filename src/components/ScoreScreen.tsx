@@ -4,6 +4,7 @@ import { IoMdStopwatch } from "react-icons/io";
 import { formatHudClock, useMatchClockMs } from "./useMatchClock";
 import type { PlayerRosterEntry, TeamScore } from "../stream/types";
 import { ColoredName } from "./ColoredName";
+import { PlayerAdminBadge } from "./PlayerAdminBadge";
 import styles from "./ScoreScreen.module.css";
 import { getScoreboardTeamName, useScoreboard } from "./useScoreboard";
 
@@ -55,6 +56,7 @@ function PairedPlayerRows({
               className={p1IsLocal ? styles.PlayerNameLocal : styles.PlayerName}
             >
               {p1 ? p1.name ? <ColoredName raw={p1.rawName} /> : "..." : ""}
+              <PlayerAdminBadge player={p1} />
             </td>
             <td
               className={
@@ -67,6 +69,7 @@ function PairedPlayerRows({
               className={p2IsLocal ? styles.PlayerNameLocal : styles.PlayerName}
             >
               {p2 ? p2.name ? <ColoredName raw={p2.rawName} /> : "..." : ""}
+              <PlayerAdminBadge player={p2} />
             </td>
             <td
               className={

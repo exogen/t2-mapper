@@ -11,6 +11,15 @@ import { getConnectionRetryPolicy } from "./connectionRetryPolicy.js";
 /** Retail handshake; QoL servers negotiate this version with legacy clients. */
 export const GAME_PROTOCOL_VERSION = 51;
 
+/** MissionStartPhase1 carries the server's mission counter as a string. */
+export function parseMissionSequence(
+  value: string | undefined,
+): number | undefined {
+  if (value == null || !/^\d+$/.test(value)) return undefined;
+  const sequence = Number(value);
+  return Number.isSafeInteger(sequence) ? sequence : undefined;
+}
+
 /** T2csri auth commands answered with relay-side crypto responses. */
 export const AUTH_COMMANDS: readonly string[] = [
   "t2csri_pokeClient",

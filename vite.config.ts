@@ -182,7 +182,21 @@ export default defineConfig(({ mode }) => {
     // "spa" mode answers every miss with index.html, which hid a
     // sidecar route that was not mounted behind a page that loaded fine.
     appType: "mpa",
-    server: { port: 3000 },
+    server: {
+      port: 3000,
+      fs: {
+        // Preserve Vite's default exclusions and keep local relay data private.
+        deny: [
+          ".env",
+          ".env.*",
+          "*.{crt,pem,key,p12,pfx,cer,der}",
+          ".npmrc",
+          ".yarnrc.yml",
+          "**/.git/**",
+          "**/.relay/**",
+        ],
+      },
+    },
     define,
     build: {
       outDir: "docs",

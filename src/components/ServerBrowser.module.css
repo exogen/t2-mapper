@@ -294,12 +294,42 @@
   color: #83938b;
 }
 
-/* Real humans playing (total minus bots > 0): lift the count out of the
-   meta gray with a subtle glow. */
-.TileHumanPlayers {
+/* Human players and active spectators share the same highlighted count. */
+.TileActiveCount {
   color: #61ffcb;
   text-shadow: 0 0 6px rgba(125, 255, 255, 0.5);
   font-weight: 600;
+}
+
+.TileMeta {
+  composes: TileMeta from "./PreviewTile.module.css";
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.TileServerMeta {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.TileSpectators {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 5px;
+}
+
+.TileSpectatorIcon {
+  composes: SpectatorIcon from "./StreamingMissionInfo.module.css";
+  font-size: 14px;
+}
+
+.TileSpectatorCount {
+  display: flex;
+  align-items: center;
+  gap: 5px;
 }
 
 /* Tile ping icon: quality colors matching the toolbar's connection

@@ -219,6 +219,76 @@ describe("RelayClient catch-up ordering", () => {
     expect(events).toEqual([]);
   });
 
+  it.each(["waiting", "collecting", "finalizing", "corrupt", "live"])(
+    "ends immediately when watching is disabled while %s",
+    async (phase) => {
+      const status = vi.fn();
+      const { client, ws, events, error, closed } = setup({
+        onSessionStatus: status,
+      });
+      if (phase === "finalizing" || phase === "live") snapshot(ws, 1);
+      if (phase === "collecting" || phase === "corrupt") {
+        ws.receive({
+          type: "catchupBegin",
+          epoch: 1,
+          totalBytes: 3,
+          chunkCount: 1,
+          encoding: "gzip",
+        });
+        ws.receive(new Uint8Array([1, 2, 3]));
+        if (phase === "corrupt") ws.receive({ type: "catchupEnd" });
+      }
+      if (phase === "live") {
+        await decodes[0]();
+        await vi.waitFor(() => expect(events).toEqual(["hydrate:1"]));
+        events.length = 0;
+      }
+      live(ws);
+      ws.receive(new Uint8Array([7]));
+      status.mockClear();
+      events.length = 0;
+      ws.receive({
+        type: "sessionStatus",
+        status: "ended",
+        endReason: "watchingDisabled",
+        message: "Watching disabled",
+        address: "test:28000",
+        watcherCount: 0,
+      });
+      expect(status).toHaveBeenCalledExactlyOnceWith(
+        "ended",
+        "Watching disabled",
+        expect.objectContaining({ endReason: "watchingDisabled" }),
+        0,
+      );
+      if (phase === "finalizing" || phase === "corrupt") {
+        await decodes[0]();
+        // Flush both the decode success and failure continuations.
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+      live(ws);
+      snapshot(ws, 2);
+      ws.receive(new Uint8Array([8]));
+      expect(events).toEqual([]);
+      expect(status).toHaveBeenCalledTimes(1);
+      expect(error).not.toHaveBeenCalled();
+      expect(closed).not.toHaveBeenCalled();
+
+      // The same socket remains usable for an explicit new selection.
+      client.watchServer("test:28000");
+      snapshot(ws, 3);
+      live(ws);
+      await decodes.at(-1)!();
+      await vi.waitFor(() => expect(events).toEqual(["hydrate:3"]));
+      expect(status).toHaveBeenLastCalledWith(
+        "live",
+        undefined,
+        expect.objectContaining({ endReason: undefined }),
+        1,
+      );
+    },
+  );
+
   it("rejects incomplete framing without trying to hydrate", () => {
     const { ws, events, closed } = setup();
     ws.receive({

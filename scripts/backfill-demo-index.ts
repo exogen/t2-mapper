@@ -5,8 +5,8 @@
  * block's $DemoValue rows, and the player list is accumulated by
  * replaying every packet through the same parser + WatchStateAccumulator
  * the live relay uses, so backfilled sidecars match live-written ones.
- * Finally `index.json` is rebuilt from all sidecar records, which makes
- * this script double as the index disaster-recovery tool.
+ * Finally sidecar records are merged into the latest `index.json`, preserving
+ * uploads made during the scan. A missing index is rebuilt from the records.
  *
  * R2 credentials come from the same DEMO_R2_* env vars as the relay.
  * Run with node --env-file-if-exists=.env.development.local --import=tsx/esm.
@@ -19,6 +19,7 @@ import { parseArgs } from "node:util";
 import { GetObjectCommand, PutObjectCommand } from "@aws-sdk/client-s3";
 import { listAllObjects, r2Client } from "./lib/r2";
 import type { DemoMetadata } from "../relay/demoRecorder.js";
+import { updateDemoIndex } from "../relay/demoIndexStorage.js";
 import { analyzeDemo } from "./lib/analyzeDemo";
 import { repairDemoPlayerMetadata } from "./lib/repairDemoPlayerMetadata";
 
@@ -261,16 +262,10 @@ await runPool(recKeys, async (key) => {
   }
 });
 
-records.sort(
-  (a, b) =>
-    a.recordedAt.localeCompare(b.recordedAt) ||
-    a.filename.localeCompare(b.filename),
-);
 const indexKey = `${config.prefix}index.json`;
 if (failed > 0) {
-  // A partial rebuild would silently drop the failed demos from the
-  // index (their sidecars survive, but nothing re-adds them until a
-  // run where every fetch succeeds). Keep the existing index instead.
+  // Leave the current index alone when the scan is incomplete; successfully
+  // written sidecars can be reused on the next run.
   console.error(
     `NOT writing ${indexKey}: ${failed} demo(s) failed — fix and re-run`,
   );
@@ -282,62 +277,46 @@ if (failed > 0) {
   console.log(
     playersOnly
       ? `[dry-run] Would update player metadata for ${records.length} entries in ${indexKey}`
-      : `[dry-run] Would write ${indexKey} with ${records.length} entries`,
+      : `[dry-run] Would merge ${records.length} entries into ${indexKey}`,
   );
 } else {
-  if (playersOnly) {
-    // Merge onto the latest index, including recordings uploaded during the scan.
-    // Conditional writes retry if another uploader publishes between GET and PUT.
-    const repaired = new Map(
-      records.map((record) => [record.filename, record]),
-    );
-    for (let attempt = 0; ; attempt++) {
-      const current = await client.send(
-        new GetObjectCommand({ Bucket: config.bucket, Key: indexKey }),
-      );
-      const body = await current.Body!.transformToString();
-      const index: DemoMetadata[] = JSON.parse(body);
-      if (!Array.isArray(index) || !current.ETag)
-        throw new Error("Invalid current demo index");
-      await backup(indexKey, body);
-      const merged = index.map((entry) => {
-        const repair = repaired.get(entry.filename);
-        return repair
-          ? {
-              ...entry,
-              players: repair.players,
-              playerCount: repair.playerCount,
-            }
-          : entry;
-      });
-      try {
-        await client.send(
-          new PutObjectCommand({
-            Bucket: config.bucket,
-            Key: indexKey,
-            Body: JSON.stringify(merged),
-            ContentType: "application/json; charset=utf-8",
-            CacheControl: "no-cache",
-            IfMatch: current.ETag,
-          }),
-        );
-        break;
-      } catch (error) {
-        if (
-          attempt >= 4 ||
-          !(error instanceof Error) ||
-          error.name !== "PreconditionFailed"
-        )
-          throw error;
+  const repaired = new Map(records.map((record) => [record.filename, record]));
+  const count = await updateDemoIndex(
+    client,
+    config.bucket,
+    indexKey,
+    (index) => {
+      if (playersOnly) {
+        if (!index)
+          throw new Error("Cannot repair players in a missing demo index");
+        return index.map((entry) => {
+          const repair = repaired.get(entry.filename);
+          return repair
+            ? {
+                ...entry,
+                players: repair.players,
+                playerCount: repair.playerCount,
+              }
+            : entry;
+        });
       }
-    }
-  } else {
-    await putJson(indexKey, JSON.stringify(records), "no-cache");
-  }
+      // Preserve recordings added since the initial listing, including on retries.
+      const merged = new Map(
+        (index ?? []).map((entry) => [entry.filename, entry]),
+      );
+      for (const record of records) merged.set(record.filename, record);
+      return [...merged.values()].sort(
+        (a, b) =>
+          a.recordedAt.localeCompare(b.recordedAt) ||
+          a.filename.localeCompare(b.filename),
+      );
+    },
+    backup,
+  );
   console.log(
     playersOnly
       ? `Updated player metadata for ${records.length} entries in ${indexKey}`
-      : `Wrote ${indexKey} with ${records.length} entries`,
+      : `Wrote ${indexKey} with ${count} entries`,
   );
 }
 console.log(

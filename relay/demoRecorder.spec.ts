@@ -203,6 +203,22 @@ describe("DemoRecorder", () => {
     expect(initialBlock.missionName).toBe("Damnation");
   });
 
+  it("adds a late mission sequence after the buffering fallback without relabeling the map", async () => {
+    const recorder = createRecorder();
+    recorder.onPacket(buildPingPacket(1));
+    time += 31_000;
+    recorder.onPacket(buildPingPacket(2));
+    recorder.setMissionName("Katabatic", 40);
+    recorder.setMissionName("Damnation", 41);
+    const result = await recorder.finalize("test");
+    const record = JSON.parse(
+      await fsp.readFile(`${result!.path}.json`, "utf8"),
+    );
+    expect(record.games).toMatchObject([
+      { mission: "Damnation", missionSequence: 41 },
+    ]);
+  });
+
   it("returns null and keeps no file when finalized while buffering", async () => {
     const recorder = createRecorder();
     recorder.onPacket(buildPingPacket(1));
@@ -342,12 +358,15 @@ describe("DemoRecorder", () => {
     const recorder = createRecorder({ serverIdentity: () => identity });
     recorder.onPacket(buildPingPacket(1));
     time += 100;
-    recorder.setMissionName("Katabatic");
+    recorder.setMissionName("Katabatic", 41);
     identity = { name: "| the cut |", gameType: "LCTF" };
     for (let i = 2; i <= 5; i++) {
       recorder.onPacket(buildPingPacket(i));
       time += 100;
     }
+
+    // A later same-map phase must not relabel the segment being finalized.
+    recorder.setMissionName("Katabatic", 42);
 
     const result = await recorder.finalize("test");
     const { initialBlock } = await parseDemoFile(result!.path);
@@ -361,7 +380,13 @@ describe("DemoRecorder", () => {
     ) as Record<string, unknown>;
     expect(sidecar.server).toBe("| the cut |");
     expect(sidecar.games).toEqual([
-      { mission: "Katabatic", gameType: "LCTF", startMs: 0, tournament: false },
+      {
+        mission: "Katabatic",
+        missionSequence: 41,
+        gameType: "LCTF",
+        startMs: 0,
+        tournament: false,
+      },
     ]);
     expect(sidecar.mod).toBe("");
   });
@@ -598,6 +623,20 @@ describe("DemoRecorder", () => {
     expect(recorder.partialPath).toMatch(/\.rec\.partial$/);
     expect(path.dirname(recorder.partialPath!)).toBe(dir);
     await recorder.abort();
+  });
+
+  it("explicitly discards a failed spool when a server admin disables recording", async () => {
+    const recorder = createRecorder();
+    recorder.onPacket(buildPingPacket(1));
+    recorder.setMissionName("Katabatic");
+    const writer = (
+      recorder as unknown as { writer: { deflate: EventEmitter } }
+    ).writer;
+    writer.deflate.emit("error", new Error("disk gone"));
+    recorder.onPacket(buildPingPacket(2));
+    expect(recorder.state).toBe("aborted");
+    await recorder.abort({ discardStranded: true });
+    expect(await fsp.readdir(dir)).toEqual([]);
   });
 
   it("abort is idempotent and clears the partial file", async () => {

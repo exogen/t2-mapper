@@ -1,6 +1,11 @@
 import { EventEmitter } from "node:events";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ClientMessage } from "./types";
+import type { WatchSessionManagerOptions } from "./watchSession";
+import type { DemoCoordinatorOptions } from "./demoCoordinator";
 
 const harness = vi.hoisted(() => ({
   server: null as EventEmitter | null,
@@ -12,10 +17,17 @@ const harness = vi.hoisted(() => ({
   logs: [] as Record<string, any>[],
   connections: [] as EventEmitter[],
   connectStatus: "connected",
+  watchOptions: null as WatchSessionManagerOptions | null,
+  warmStart: vi.fn(),
+  listen: vi.fn(),
+  coordinatorOptions: null as DemoCoordinatorOptions | null,
+  sweepPending: vi.fn(),
+  shutdownCoordinator: vi.fn().mockResolvedValue(undefined),
+  lifecycleHandlers: new Map<string | symbol, (...args: any[]) => void>(),
 }));
 
 vi.mock("node:http", () => ({
-  default: { createServer: () => ({ listen: vi.fn() }) },
+  default: { createServer: () => ({ listen: harness.listen }) },
 }));
 vi.mock("ws", async () => {
   const { EventEmitter } = await import("node:events");
@@ -57,6 +69,13 @@ vi.mock("./watchSession", async () => {
   return {
     normalizeAddress,
     WatchSessionManager: class {
+      constructor(options: WatchSessionManagerOptions) {
+        harness.watchOptions = options;
+      }
+      warmStart = harness.warmStart;
+      shutdown() {
+        harness.watchOptions?.onSessionsChanged?.([], {});
+      }
       has() {
         return true;
       }
@@ -75,7 +94,16 @@ vi.mock("./demoUpload", () => ({
     enabled = false;
   },
 }));
-vi.mock("./demoCoordinator", () => ({ DemoCoordinator: class {} }));
+vi.mock("./demoCoordinator", () => ({
+  DemoCoordinator: class {
+    constructor(options: DemoCoordinatorOptions) {
+      harness.coordinatorOptions = options;
+    }
+    async restorePending() {}
+    sweepPending = harness.sweepPending;
+    shutdown = harness.shutdownCoordinator;
+  },
+}));
 vi.mock("./logger", async () => {
   const { default: pino } = await import("pino");
   const log = pino(
@@ -113,11 +141,17 @@ describe("relay browser input", () => {
     harness.logs.length = 0;
     harness.connections.length = 0;
     harness.connectStatus = "connected";
+    harness.watchOptions = null;
+    harness.lifecycleHandlers.clear();
+    harness.warmStart.mockReset();
     vi.useFakeTimers();
     vi.stubEnv("DEMO_RECORD_ENABLED", "0");
     vi.stubEnv("DEMO_PATROL_ENABLED", "0");
     vi.stubEnv("T2_SERVER_PASSWORDS", "{}");
     vi.stubEnv("RELAY_TRUST_FLY_PROXY", "false");
+    vi.stubEnv("RELAY_ADMIN_VOTE_POLICIES", undefined);
+    vi.stubEnv("DEMO_DIR", undefined);
+    vi.stubEnv("DEMO_UPLOAD_RETRY_MS", "300000");
     vi.stubEnv("WATCH_STATE_PATH", "/nonexistent/chat-policy-watch-state.json");
   });
   afterEach(() => {
@@ -134,7 +168,12 @@ describe("relay browser input", () => {
   ) {
     vi.stubEnv("RELAY_CHAT_ENABLED", enabled);
     // Importing the entry point must not register process exit/crash hooks.
-    const processOn = vi.spyOn(process, "on").mockReturnValue(process);
+    const processOn = vi
+      .spyOn(process, "on")
+      .mockImplementation((event, listener) => {
+        harness.lifecycleHandlers.set(event, listener);
+        return process;
+      });
     try {
       await import("./server");
     } finally {
@@ -151,6 +190,237 @@ describe("relay browser input", () => {
     });
     return browser;
   }
+
+  it("loads mission restrictions before listening or warm-starting, then persists changes", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "watch-controls-"));
+    const file = path.join(dir, "watch-state.json");
+    const address = "192.0.2.1:28000";
+    const controls = {
+      [address]: {
+        mission: ["1", "Katabatic"] as [string, string],
+        recording: false,
+        watching: false,
+      },
+    };
+    await fs.writeFile(
+      file,
+      JSON.stringify({ addresses: [address], missionControls: controls }),
+    );
+    vi.stubEnv("WATCH_STATE_PATH", file);
+    harness.warmStart.mockImplementation((address: string) => {
+      expect(harness.listen).not.toHaveBeenCalled();
+      expect(harness.watchOptions?.initialMissionControls).toEqual(controls);
+      harness.watchOptions?.onSessionsChanged?.([address], controls);
+    });
+    try {
+      await connect("watcher", "false");
+      expect(harness.warmStart).toHaveBeenCalledWith(address);
+      expect(harness.listen).toHaveBeenCalled();
+      harness.watchOptions?.onSessionsChanged?.([address], {});
+      await vi.waitFor(async () => {
+        expect(JSON.parse(await fs.readFile(file, "utf8"))).toEqual({
+          addresses: [address],
+          missionControls: {},
+        });
+      });
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves the default storage paths when environment variables are unset", async () => {
+    vi.stubEnv("WATCH_STATE_PATH", undefined);
+    await connect("watcher", "false");
+    expect(harness.coordinatorOptions?.dir).toBe("/data/demos");
+    expect(harness.logs).toContainEqual(
+      expect.objectContaining({
+        msg: "Relay storage configured",
+        watchStatePath: "/data/watch-state.json",
+      }),
+    );
+  });
+
+  it.each([false, true])(
+    "creates storage parents and restores controls after restart (relative env paths: %s)",
+    async (relativePaths) => {
+      const dir = await fs.mkdtemp(path.join(os.tmpdir(), "relay-storage-"));
+      const demoDir = path.join(dir, "recordings");
+      const file = path.join(dir, "state", "watch.json");
+      vi.stubEnv(
+        "DEMO_DIR",
+        relativePaths ? path.relative(process.cwd(), demoDir) : demoDir,
+      );
+      vi.stubEnv(
+        "WATCH_STATE_PATH",
+        relativePaths ? path.relative(process.cwd(), file) : file,
+      );
+      const controls = {
+        "192.0.2.1:28000": {
+          mission: ["1", "Katabatic"] as [string, string],
+          recording: false,
+          watching: false,
+        },
+      };
+      try {
+        await connect("watcher", "false");
+        expect(harness.coordinatorOptions?.dir).toBe(demoDir);
+        harness.watchOptions!.onSessionsChanged!([], controls);
+        await vi.waitFor(async () => {
+          expect(JSON.parse(await fs.readFile(file, "utf8"))).toEqual({
+            addresses: [],
+            missionControls: controls,
+          });
+        });
+        vi.resetModules();
+        await connect("watcher", "false");
+        expect(harness.watchOptions?.initialMissionControls).toEqual(controls);
+      } finally {
+        await fs.rm(dir, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it("keeps sweeping held recordings when new recording and uploads are disabled", async () => {
+    vi.stubEnv("DEMO_UPLOAD_RETRY_MS", "1000");
+    await connect("watcher", "false");
+    expect(harness.coordinatorOptions?.enabled).toBe(false);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(harness.sweepPending).toHaveBeenCalledOnce();
+  });
+
+  it.each(["SIGTERM", "uncaughtException"])(
+    "drains the latest watch state and preserves the warm-start list on %s",
+    async (event) => {
+      const dir = await fs.mkdtemp(path.join(os.tmpdir(), "relay-exit-"));
+      const file = path.join(dir, "watch-state.json");
+      vi.stubEnv("WATCH_STATE_PATH", file);
+      await connect("watcher", "false");
+      let releaseWrite!: () => void;
+      let started!: () => void;
+      const blocked = new Promise<void>((resolve) => {
+        releaseWrite = resolve;
+      });
+      const writing = new Promise<void>((resolve) => {
+        started = resolve;
+      });
+      const writeFile = fs.writeFile;
+      vi.spyOn(fs, "writeFile").mockImplementation(async (...args) => {
+        if (args[0] === `${file}.tmp`) {
+          started();
+          await blocked;
+        }
+        return writeFile(...args);
+      });
+      const exit = vi
+        .spyOn(process, "exit")
+        .mockImplementation(() => undefined as never);
+      const address = "192.0.2.1:28000";
+      const controls = {
+        [address]: {
+          mission: ["1", "Katabatic"] as [string, string],
+          recording: false,
+          watching: false,
+        },
+      };
+      try {
+        harness.watchOptions!.onSessionsChanged!([address], controls);
+        await writing;
+        harness.lifecycleHandlers.get(event)!(new Error("injected crash"));
+        await vi.advanceTimersByTimeAsync(0);
+        expect(exit).not.toHaveBeenCalled();
+        releaseWrite();
+        await vi.waitFor(async () => {
+          expect(JSON.parse(await fs.readFile(file, "utf8"))).toEqual({
+            addresses: [address],
+            missionControls: controls,
+          });
+        });
+        await vi.advanceTimersByTimeAsync(300);
+        expect(exit).toHaveBeenCalledWith(event === "SIGTERM" ? 0 : 1);
+      } finally {
+        releaseWrite();
+        await fs.rm(dir, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it("passes the configured admin vote policies to shared watch sessions", async () => {
+    const policies = [
+      { tournament: true, minPlayerCount: 20, adminVotes: 2 },
+      { tournament: true, minPlayerCount: 1, adminVotes: 1 },
+      { tournament: false, minPlayerCount: 1, adminVotes: 1 },
+    ];
+    vi.stubEnv("RELAY_ADMIN_VOTE_POLICIES", JSON.stringify(policies));
+    await connect("watcher", "false");
+    expect(harness.watchOptions?.adminVotePolicies).toEqual(policies);
+  });
+
+  it("coalesces a burst of control changes while a disk write is in flight and saves the latest state", async () => {
+    const dir = await fs.mkdtemp(
+      path.join(os.tmpdir(), "watch-control-burst-"),
+    );
+    const file = path.join(dir, "watch-state.json");
+    vi.stubEnv("WATCH_STATE_PATH", file);
+    await connect("watcher", "false");
+    let releaseWrite!: () => void;
+    let signalWriteStarted!: () => void;
+    const blockedWrite = new Promise<void>((resolve) => {
+      releaseWrite = resolve;
+    });
+    const writeStarted = new Promise<void>((resolve) => {
+      signalWriteStarted = resolve;
+    });
+    const writeFile = fs.writeFile;
+    let writes = 0;
+    const spy = vi
+      .spyOn(fs, "writeFile")
+      .mockImplementation(async (...args) => {
+        if (args[0] === `${file}.tmp` && ++writes === 1) {
+          signalWriteStarted();
+          await blockedWrite;
+        }
+        return writeFile(...args);
+      });
+    const address = "192.0.2.1:28000";
+    const persist = harness.watchOptions!.onSessionsChanged!;
+    const final = {
+      [address]: {
+        mission: ["1", "Katabatic"] as [string, string],
+        recording: false,
+        watching: false,
+      },
+    };
+    try {
+      persist([address], {});
+      await writeStarted;
+      for (let i = 0; i < 500; i++) persist([address], i % 2 ? final : {});
+      releaseWrite();
+      await vi.waitFor(async () => {
+        expect(JSON.parse(await fs.readFile(file, "utf8"))).toEqual({
+          addresses: [address],
+          missionControls: final,
+        });
+      });
+      expect(writes).toBe(2);
+      // A later burst starts a new writer after the previous one drains.
+      persist([address], {});
+      await vi.waitFor(async () => {
+        expect(
+          JSON.parse(await fs.readFile(file, "utf8")).missionControls,
+        ).toEqual({});
+      });
+      expect(writes).toBe(3);
+    } finally {
+      releaseWrite();
+      spy.mockRestore();
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("defaults admin controls to disabled when no policies are configured", async () => {
+    await connect("watcher", "false");
+    expect(harness.watchOptions?.adminVotePolicies).toEqual([]);
+  });
 
   it("logs the player retry policy and whether another attempt is scheduled", async () => {
     harness.connectStatus = "challenging";
@@ -367,7 +637,9 @@ describe("relay browser input", () => {
       "pong",
     ]);
     const connectionId = entries[0].connectionId;
-    for (const entry of harness.logs) {
+    for (const entry of harness.logs.filter(
+      (entry) => entry.msg !== "Relay storage configured",
+    )) {
       expect(entry).toMatchObject({ connectionId, clientIp: "192.0.2.10" });
     }
     expect(harness.logs).toContainEqual(

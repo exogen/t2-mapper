@@ -102,7 +102,10 @@ describe("salvagePartialDemo", () => {
   it("recovers everything up to the last sync flush as a parseable demo", async () => {
     await writeCrashedSpool(finalPath, 5, 3);
 
-    const result = await salvagePartialDemo(partialPath, { minLengthMs: 0 });
+    const result = await salvagePartialDemo(partialPath, {
+      minLengthMs: 0,
+      missionSequence: 41,
+    });
     expect(result).toEqual({
       kind: "kept",
       path: finalPath,
@@ -139,6 +142,7 @@ describe("salvagePartialDemo", () => {
       games: [
         {
           mission: "Katabatic",
+          missionSequence: 41,
           gameType: "Capture the Flag",
           startMs: 0,
           tournament: false,

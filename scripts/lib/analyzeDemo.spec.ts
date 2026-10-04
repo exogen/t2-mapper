@@ -39,6 +39,28 @@ function packet(...args: string[]): DemoBlock {
   };
 }
 
+function remoteCommand(funcName: string, ...args: string[]): DemoBlock {
+  const block = packet(...args);
+  if (block.parsed && "events" in block.parsed) {
+    block.parsed.events[0].parsedData = {
+      type: "RemoteCommandEvent",
+      funcName,
+      args,
+    };
+  }
+  return block;
+}
+
+function combinedPacket(...blocks: DemoBlock[]): DemoBlock {
+  const combined = packet();
+  if (combined.parsed && "events" in combined.parsed) {
+    combined.parsed.events = blocks.flatMap((block) =>
+      block.parsed && "events" in block.parsed ? block.parsed.events : [],
+    );
+  }
+  return combined;
+}
+
 function source(
   blocks: DemoBlock[],
   initialPlayers: string[] = [],
@@ -74,6 +96,83 @@ function source(
 afterEach(() => vi.restoreAllMocks());
 
 describe("demo metadata replay", () => {
+  it("keeps mission starts and metadata in wire order within one packet", async () => {
+    source([
+      combinedPacket(
+        remoteCommand("MissionStartPhase1", "41", "Test"),
+        packet("MsgMissionStart", "Match started"),
+        packet("MsgMissionDropInfo", "", "Test", "CTF", "Server"),
+        remoteCommand("MissionStartPhase1", "42", "Raindance"),
+        packet("MsgMissionStart", "Match started"),
+        packet("MsgMissionDropInfo", "", "Raindance", "CNH", "Server"),
+      ),
+    ]);
+    const record = await analyzeDemo(new Uint8Array(), "test.rec");
+    expect(record.games).toMatchObject([
+      { mission: "Test", missionSequence: 41, gameType: "CTF" },
+      { mission: "Raindance", missionSequence: 42, gameType: "CNH" },
+    ]);
+  });
+
+  it("does not lose a started game when the same packet begins an unstarted mission", async () => {
+    source([
+      combinedPacket(
+        remoteCommand("MissionStartPhase1", "41", "Test"),
+        packet("MsgMissionStart", "Match started"),
+        remoteCommand("MissionStartPhase1", "42", "Raindance"),
+      ),
+    ]);
+    const record = await analyzeDemo(new Uint8Array(), "test.rec");
+    expect(record.games).toMatchObject([
+      { mission: "Test", missionSequence: 41 },
+    ]);
+  });
+
+  it("does not attach the next same-map sequence to a retail mid-match game", async () => {
+    source(
+      [
+        packet("MsgMissionStart", "Match started"),
+        remoteCommand("MissionStartPhase1", "42", "Test"),
+        packet("MsgMissionStart", "Match started"),
+      ],
+      ["Alice\t1\t10\t\t1\t0\t40\t0"],
+    );
+    const record = await analyzeDemo(new Uint8Array(), "test.rec");
+    expect(record.games).toHaveLength(2);
+    expect(record.games[0].missionSequence).toBeUndefined();
+    expect(record.games[1].missionSequence).toBe(42);
+  });
+
+  it("links the initial handshake to the seeded game and distinguishes same-map rematches", async () => {
+    source([
+      remoteCommand("MissionStartPhase1", "41", "Test"),
+      packet("MsgMissionStart", "Match started"),
+      remoteCommand("MissionStartPhase1", "42", "Test"),
+      packet("MsgMissionStart", "Match started"),
+    ]);
+    const record = await analyzeDemo(new Uint8Array(), "test.rec");
+    expect(record.games).toMatchObject([
+      { mission: "Test", missionSequence: 41 },
+      { mission: "Test", missionSequence: 42 },
+    ]);
+  });
+
+  it.each([undefined, "", "invalid"])(
+    "does not invent a mission sequence when the handshake is missing or unreadable (%s)",
+    async (sequence) => {
+      source([
+        ...(sequence === undefined
+          ? []
+          : [remoteCommand("MissionStartPhase1", sequence, "Test")]),
+        packet("MsgMissionStart", "Match started"),
+      ]);
+      const record = await analyzeDemo(new Uint8Array(), "test.rec");
+      expect(record.games).toHaveLength(1);
+      expect(record.games[0].missionSequence).toBeUndefined();
+      expect(JSON.stringify(record)).not.toContain("missionSequence");
+    },
+  );
+
   it("counts header players once when their tags change before any join packet", async () => {
     source(
       [

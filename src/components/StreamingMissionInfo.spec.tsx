@@ -2,6 +2,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, expect, it, vi } from "vitest";
 import { formatRecordedTime, recordedDayLabel } from "./demoFormat";
 import { StreamingMissionInfo } from "./StreamingMissionInfo";
+import type { WatchEndReason } from "../../relay/types";
 
 const state = vi.hoisted(() => ({
   dataSource: "demo",
@@ -18,6 +19,7 @@ const state = vi.hoisted(() => ({
     streamDelayMs: 0,
     gameStatus: "disconnected",
     watchStatus: null,
+    watchEndReason: undefined as WatchEndReason | undefined,
     ping: null as number | null,
   },
 }));
@@ -63,11 +65,20 @@ beforeEach(() => {
   state.demoParam = null;
   state.demos = [];
   state.live.gameStatus = "disconnected";
+  state.live.watchEndReason = undefined;
 });
 
 function render() {
   return renderToStaticMarkup(<StreamingMissionInfo />);
 }
+
+it("keeps the admin restriction visible in the disconnected toolbar", () => {
+  state.dataSource = "live";
+  state.live.watchEndReason = "watchingDisabled";
+  const markup = render();
+  expect(markup).toContain("Watching disabled");
+  expect(markup).not.toContain("Disconnected");
+});
 
 it("shows the recorder when the demo has no date or server", () => {
   state.recorderName = "Flyers";

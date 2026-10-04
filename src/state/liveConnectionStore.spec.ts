@@ -22,7 +22,12 @@ vi.mock("../stream/relayClient", () => ({
     leaveServer() {}
   },
 }));
-vi.mock("../stream/liveStreaming", () => ({ LiveStreamAdapter: class {} }));
+vi.mock("../stream/liveStreaming", () => ({
+  LiveStreamAdapter: class {
+    hydrate = vi.fn();
+    feedPacket = vi.fn();
+  },
+}));
 
 import { liveConnectionStore } from "./liveConnectionStore";
 
@@ -251,6 +256,101 @@ describe("watch connection metadata", () => {
       recording: false,
       streamDelayMs: 0,
     });
+  });
+
+  function disableWatching() {
+    handlers().onSessionStatus!(
+      "ended",
+      "Server admins have disabled watching for this mission.",
+      { address, endReason: "watchingDisabled" },
+      0,
+    );
+  }
+
+  it.each(["connecting", "syncing", "live"] as const)(
+    "stops a %s viewer and discards late adapter callbacks and stream data",
+    (status) => {
+      state().watchServer(address);
+      handlers().onSessionStatus!(status, undefined, { address }, 1);
+      const adapter = state()._adapter!;
+      const relay = state()._relay!;
+      vi.mocked(relay.watchServer).mockClear();
+      disableWatching();
+      adapter.onReady!();
+      adapter.onMissionChange!("StaleMap");
+      adapter.onParseFault!({ stage: "ghost", message: "Stale fault" });
+      handlers().onGamePacket!(new Uint8Array([1]));
+      handlers().onCatchup!(
+        {} as Parameters<NonNullable<RelayEventHandler["onCatchup"]>>[0],
+      );
+      handlers().onCatchupProgress!(1, 2);
+      handlers().onWatcherCount!(5);
+      handlers().onSessionStatus!("live", undefined, { address }, 5);
+      expect(adapter.feedPacket).not.toHaveBeenCalled();
+      expect(adapter.hydrate).not.toHaveBeenCalled();
+      expect(relay.watchServer).not.toHaveBeenCalled();
+      expect(state()).toMatchObject({
+        watchStatus: "ended",
+        watchEndReason: "watchingDisabled",
+        disconnectReason: "ended",
+        mapName: "DelayedMap",
+        adapter: null,
+        liveReady: false,
+        chatEnabled: false,
+        recording: false,
+        watcherCount: 0,
+        streamDelayMs: 0,
+        streamDelayReadyAt: null,
+        catchupProgress: null,
+        reconnecting: false,
+      });
+    },
+  );
+
+  it.each([false, true])(
+    "preserves a refusal through transport closure, without rejoining (restart already announced: %s)",
+    (restarting) => {
+      if (restarting) handlers().onRelayRestarting!();
+      disableWatching();
+      // A broadcast restart after the refusal must not revive the session.
+      handlers().onRelayRestarting!();
+      handlers().onClose!();
+      vi.advanceTimersByTime(120_000);
+      expect(state()).toMatchObject({
+        watchStatus: "ended",
+        watchEndReason: "watchingDisabled",
+        watchStatusMessage:
+          "Server admins have disabled watching for this mission.",
+        serverAddress: address,
+        relayConnected: false,
+        reconnecting: false,
+        _relay: null,
+      });
+    },
+  );
+
+  it("accepts a refusal during relay reattachment and clears it on a fresh manual watch", () => {
+    handlers().onRelayRestarting!();
+    handlers().onSessionStatus!("ended", "Relay shutting down", { address }, 0);
+    expect(state().watchStatus).toBe("live");
+    handlers().onClose!();
+    vi.advanceTimersByTime(2_000);
+    handlers().onOpen!();
+    disableWatching();
+    expect(state()).toMatchObject({
+      watchStatus: "ended",
+      watchEndReason: "watchingDisabled",
+      reconnecting: false,
+    });
+    state().watchServer(address);
+    expect(state()).toMatchObject({
+      watchStatus: "connecting",
+      watchEndReason: undefined,
+      watchStatusMessage: undefined,
+      disconnectReason: null,
+    });
+    handlers().onSessionStatus!("live", undefined, { address }, 1);
+    expect(state().watchStatus).toBe("live");
   });
 
   it("updates channel continuity when the delayed tail switches to live", () => {

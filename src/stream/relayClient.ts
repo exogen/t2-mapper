@@ -9,6 +9,7 @@ import type {
   ConnectionStatus,
   WatchCatchupPayload,
   WatchStatus,
+  WatchEndReason,
 } from "../../relay/types";
 
 const log = createLogger("relayClient");
@@ -36,10 +37,11 @@ export type RelayEventHandler = {
     message: string | undefined,
     info: {
       address: string;
+      endReason?: WatchEndReason;
       serverName?: string;
       mapName?: string;
       channelId?: string;
-      /** Whether the stream at the watcher playhead was being recorded. */
+      /** Whether demo retention is enabled for the mission being watched. */
       recording?: boolean;
       chatEnabled?: boolean;
       /** Watcher-facing stream delay in ms (0 = live). */
@@ -198,6 +200,12 @@ export class RelayClient {
       }
       case "sessionStatus":
         if (normalizeAddress(message.address) !== this.watchAddress) break;
+        if (message.status === "ended") {
+          // A terminal notice must beat any pending snapshot decode, including
+          // a corrupt snapshot whose failure would otherwise trigger a retry.
+          this.resetSessionFraming("waiting");
+          this.watchAddress = null;
+        }
         if (this.catchupMode === "waiting" && message.status === "live") break;
         if (this.catchupMode === "finalizing") {
           this.bufferedFrames.push(message);
@@ -208,6 +216,7 @@ export class RelayClient {
           message.message,
           {
             address: message.address,
+            endReason: message.endReason,
             serverName: message.serverName,
             mapName: message.mapName,
             channelId: message.channelId,

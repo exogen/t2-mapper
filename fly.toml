@@ -10,6 +10,8 @@ kill_timeout = 15
 
 [env]
   RELAY_TRUST_FLY_PROXY = 'true'
+  DEMO_DIR = '/data/demos'
+  WATCH_STATE_PATH = '/data/watch-state.json'
 
 [build]
   dockerfile = 'relay/Dockerfile'

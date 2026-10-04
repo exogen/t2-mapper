@@ -1,7 +1,10 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import fsp from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { demoLog } from "./logger";
+
+afterEach(() => vi.restoreAllMocks());
 
 const uploadCalls: Array<{ Bucket: string; Key: string }> = [];
 let failUploads = false;
@@ -23,11 +26,19 @@ vi.mock("@aws-sdk/lib-storage", () => ({
 
 interface FakeCommand {
   type: "GetObject" | "PutObject";
-  input: { Key: string; Body?: string; CacheControl?: string };
+  input: {
+    Key: string;
+    Body?: string;
+    CacheControl?: string;
+    IfMatch?: string;
+    IfNoneMatch?: string;
+  };
 }
 const s3Commands: FakeCommand[] = [];
 /** Simulated stored index.json object (null = NoSuchKey). */
 let storedIndex: string | null = null;
+let indexVersion = 0;
+let beforeIndexPut: (() => void) | undefined;
 
 vi.mock("@aws-sdk/client-s3", () => ({
   S3Client: class {
@@ -40,10 +51,23 @@ vi.mock("@aws-sdk/client-s3", () => ({
           throw err;
         }
         const body = storedIndex;
-        return { Body: { transformToString: async () => body } };
+        return {
+          ETag: `"${indexVersion}"`,
+          Body: { transformToString: async () => body },
+        };
       }
       if (cmd.input.Key.endsWith("index.json")) {
+        beforeIndexPut?.();
+        beforeIndexPut = undefined;
+        if (
+          (cmd.input.IfMatch && cmd.input.IfMatch !== `"${indexVersion}"`) ||
+          (cmd.input.IfNoneMatch === "*" && storedIndex !== null)
+        )
+          throw Object.assign(new Error("conflict"), {
+            name: "PreconditionFailed",
+          });
         storedIndex = cmd.input.Body ?? null;
+        indexVersion++;
       }
       return {};
     }
@@ -107,6 +131,8 @@ describe("DemoUploader", () => {
     uploadCalls.length = 0;
     s3Commands.length = 0;
     storedIndex = null;
+    indexVersion = 0;
+    beforeIndexPut = undefined;
     failUploads = false;
   });
 
@@ -118,7 +144,12 @@ describe("DemoUploader", () => {
       server: "| the cut |",
       address: "45.76.24.91:28000",
       games: [
-        { mission: "Katabatic", gameType: "Capture the Flag", startMs: 0 },
+        {
+          mission: "Katabatic",
+          missionSequence: 41,
+          gameType: "Capture the Flag",
+          startMs: 0,
+        },
       ],
       mod: "classic",
       recorder: "Observer",
@@ -126,6 +157,30 @@ describe("DemoUploader", () => {
       players: ["Alice", "Bob"],
     };
   }
+
+  it("never uploads or salvages recordings awaiting a match-end decision", async () => {
+    const pending = path.join(dir, "pending", "current-match");
+    await fsp.mkdir(pending, { recursive: true });
+    for (const name of [
+      "held.rec",
+      "held.rec.json",
+      "interrupted.rec.partial",
+      "policy.json",
+    ]) {
+      await fsp.writeFile(path.join(pending, name), "held");
+      await fsp.utimes(path.join(pending, name), new Date(0), new Date(0));
+    }
+    const uploader = new DemoUploader(config, dir);
+    await uploader.sweep();
+    expect(uploadCalls).toEqual([]);
+    expect(s3Commands).toEqual([]);
+    expect((await fsp.readdir(pending)).sort()).toEqual([
+      "held.rec",
+      "held.rec.json",
+      "interrupted.rec.partial",
+      "policy.json",
+    ]);
+  });
 
   it("uploads with the prefixed key and unlinks on success", async () => {
     const filePath = path.join(dir, "auto-capture_test.rec");
@@ -151,6 +206,7 @@ describe("DemoUploader", () => {
   });
 
   it("uploads the sidecar and appends its record to the index", async () => {
+    const info = vi.spyOn(demoLog, "info").mockImplementation(() => {});
     const record = makeRecord("a.rec");
     await fsp.writeFile(path.join(dir, "a.rec"), new Uint8Array([1, 2, 3]));
     await fsp.writeFile(path.join(dir, "a.rec.json"), JSON.stringify(record));
@@ -167,9 +223,22 @@ describe("DemoUploader", () => {
       "demos/index.json",
     ]);
     expect(puts[0].input.CacheControl).toContain("immutable");
+    expect(JSON.parse(String(puts[0].input.Body))).toEqual(record);
     // The index mutates — it must never be cached as immutable.
     expect(puts[1].input.CacheControl).toBe("no-cache");
     expect(JSON.parse(storedIndex!)).toEqual([record]);
+    expect(info).toHaveBeenCalledWith(
+      expect.objectContaining({ file: "a.rec" }),
+      "Demo queued for upload",
+    );
+    expect(info).toHaveBeenCalledWith(
+      expect.objectContaining({ file: "a.rec", key: "demos/a.rec" }),
+      "Demo upload starting",
+    );
+    expect(info).toHaveBeenCalledWith(
+      expect.objectContaining({ file: "a.rec", key: "demos/a.rec" }),
+      "Demo uploaded",
+    );
   });
 
   it("appends to an existing index and dedupes retries by filename", async () => {
@@ -195,6 +264,34 @@ describe("DemoUploader", () => {
       expect(await fsp.readdir(dir)).toEqual([]);
     });
     expect(JSON.parse(storedIndex!)).toEqual([existing, record]);
+  });
+
+  it("retries an index conflict without overwriting a backfill or another upload", async () => {
+    const old = makeRecord("old.rec");
+    const repaired = {
+      ...old,
+      games: [{ ...old.games[0], missionSequence: 42 }],
+    };
+    const other = makeRecord("other.rec");
+    const record = makeRecord("new.rec");
+    storedIndex = JSON.stringify([old]);
+    beforeIndexPut = () => {
+      storedIndex = JSON.stringify([repaired, other]);
+      indexVersion++;
+    };
+    await fsp.writeFile(path.join(dir, "new.rec"), new Uint8Array([1]));
+    await fsp.writeFile(path.join(dir, "new.rec.json"), JSON.stringify(record));
+    const uploader = new DemoUploader(config, dir);
+    uploader.enqueue(path.join(dir, "new.rec"));
+    await vi.waitFor(() => expect(uploader.getStats().uploaded).toBe(1));
+    expect(JSON.parse(storedIndex!)).toEqual([repaired, other, record]);
+    expect(
+      s3Commands
+        .filter(
+          (c) => c.type === "PutObject" && c.input.Key.endsWith("index.json"),
+        )
+        .map((c) => c.input.IfMatch),
+    ).toEqual(['"0"', '"1"']);
   });
 
   it("uploads legacy demos without a sidecar and skips the index", async () => {

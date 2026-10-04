@@ -460,8 +460,8 @@ export class DemoFileWriter {
     }
     try {
       await fsp.unlink(this.partialPath);
-    } catch {
-      // Already gone or never created.
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
     }
   }
 }

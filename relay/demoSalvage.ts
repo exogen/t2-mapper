@@ -39,6 +39,8 @@ const MAX_INFLATED_BYTES = 512 * 1024 * 1024;
 export interface SalvageOptions {
   /** Spools shorter than this are discarded like any too-short demo. */
   minLengthMs: number;
+  /** Mission counter recovered from the recording's private policy journal. */
+  missionSequence?: number;
   /** Clock override for tests. */
   now?: () => number;
 }
@@ -160,6 +162,7 @@ async function salvage(
     games: [
       {
         mission: values.mission,
+        missionSequence: opts.missionSequence,
         gameType: values.gameType,
         startMs: 0,
         tournament: false,

@@ -1,13 +1,9 @@
 import { setImmediate } from "node:timers/promises";
-import {
-  BlockTypeMove,
-  BlockTypePacket,
-  DemoParser,
-  type RemoteCommandEventData,
-} from "t2-demo-parser";
+import { BlockTypeMove, BlockTypePacket, DemoParser } from "t2-demo-parser";
 import type { DemoGame, DemoMetadata } from "../../relay/demoRecorder.js";
 import { DemoPlayers } from "../../relay/demoPlayers.js";
 import { WatchStateAccumulator } from "../../relay/watchState.js";
+import { parseMissionSequence } from "../../relay/shared.js";
 import {
   extractMissionInfo,
   parseDemoValues,
@@ -97,9 +93,10 @@ export async function analyzeDemo(
   // || (not ??): the parser initializes missionName to "" and only
   // fills it when the initial block's phase-2 parse succeeds.
   const firstMission = initialBlock.missionName || info.mission;
-  let pending: { mission: string; startMs: number } | null = firstMission
-    ? { mission: firstMission, startMs: 0 }
-    : null;
+  let pending: Pick<
+    DemoGame,
+    "mission" | "missionSequence" | "startMs"
+  > | null = firstMission ? { mission: firstMission, startMs: 0 } : null;
   // The most recent promoted game, patchable while its mission is still
   // current (its MsgLoadInfo type may arrive after the match starts).
   let lastGame: DemoGame | null = null;
@@ -109,10 +106,29 @@ export async function analyzeDemo(
   // initial block already seeded — ignore that one repeat only, so a
   // later back-to-back rematch on the same map still opens a new game.
   // A retail mid-match demo's first Phase1 is always a new match.
-  let awaitingSeedPhase1 =
-    pending !== null && initialBlock.dataBlocks.size === 0;
+  let awaitingSeedPhase1 = pending !== null && fromConnect;
   let moveTicks = 0;
   const MOVE_TICK_MS = 32;
+
+  const sampleGame = () => {
+    if (pending && watchState.matchStarted) {
+      lastGame = {
+        mission: pending.mission,
+        missionSequence: pending.missionSequence,
+        gameType: watchState.missionType ?? "",
+        startMs: pending.startMs,
+        tournament: watchState.tournamentMode ?? false,
+      };
+      games.push(lastGame);
+      pending = null;
+    }
+    if (lastGame && !lastGame.gameType && watchState.missionType) {
+      lastGame.gameType = watchState.missionType;
+    }
+    if (lastGame && !lastGame.tournament && watchState.tournamentMode) {
+      lastGame.tournament = true;
+    }
+  };
 
   for (let block = parser.nextBlock(); block; block = parser.nextBlock()) {
     if (block.index % 1024 === 0) await setImmediate();
@@ -130,47 +146,29 @@ export async function analyzeDemo(
       throw new Error(
         `Block ${block.index}: ${parsed.parseFault.stage}: ${parsed.parseFault.message}`,
       );
-    watchState.applyPacket(parsed, samplePlayers);
-
-    // Mission boundary (mirrors the live session's Phase1 handling):
-    // reset mission-scoped state and open a new pending game.
-    for (const evt of parsed.events) {
-      if (evt.parsedData?.type !== "RemoteCommandEvent") continue;
-      const cmd = evt.parsedData as RemoteCommandEventData;
-      if (
-        watchState.resolveNetString(cmd.funcName ?? "") !== "MissionStartPhase1"
-      ) {
-        continue;
-      }
-      const mission = watchState.resolveNetString(cmd.args?.[1] ?? "");
-      if (!mission) continue;
-      if (awaitingSeedPhase1 && mission === currentMission) {
+    // Apply boundaries and sample games in wire order: the next event in this
+    // packet can start a match, provide metadata, or load another mission.
+    watchState.applyPacket(parsed, samplePlayers, (name, args) => {
+      if (name === "MissionStartPhase1" && args[1]) {
+        const mission = args[1];
+        const missionSequence = parseMissionSequence(args[0]);
+        if (awaitingSeedPhase1 && mission === currentMission) {
+          if (pending) pending.missionSequence = missionSequence;
+          else if (lastGame) lastGame.missionSequence = missionSequence;
+        } else {
+          watchState.beginMissionChange();
+          currentMission = mission;
+          pending = {
+            mission,
+            missionSequence,
+            startMs: moveTicks * MOVE_TICK_MS,
+          };
+          lastGame = null;
+        }
         awaitingSeedPhase1 = false;
-        continue;
       }
-      awaitingSeedPhase1 = false;
-      watchState.beginMissionChange();
-      currentMission = mission;
-      pending = { mission, startMs: moveTicks * MOVE_TICK_MS };
-      lastGame = null;
-    }
-
-    if (pending && watchState.matchStarted) {
-      lastGame = {
-        mission: pending.mission,
-        gameType: watchState.missionType ?? "",
-        startMs: pending.startMs,
-        tournament: watchState.tournamentMode ?? false,
-      };
-      games.push(lastGame);
-      pending = null;
-    }
-    if (lastGame && !lastGame.gameType && watchState.missionType) {
-      lastGame.gameType = watchState.missionType;
-    }
-    if (lastGame && !lastGame.tournament && watchState.tournamentMode) {
-      lastGame.tournament = true;
-    }
+      sampleGame();
+    });
 
     samplePlayers();
   }

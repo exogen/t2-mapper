@@ -9,7 +9,7 @@ import {
 } from "../state/liveConnectionStore";
 import { useSettings } from "./SettingsProvider";
 import { LoadingIndicator } from "./LoadingIndicator";
-import { LuUsers } from "react-icons/lu";
+import { LuEye, LuUsers } from "react-icons/lu";
 import { TbLaurelWreathFilled } from "react-icons/tb";
 import { BsPinAngleFill } from "react-icons/bs";
 import { FaLock } from "react-icons/fa";
@@ -35,6 +35,7 @@ function ServerTile({
   onJoin: () => void;
 }) {
   const hasHumans = server.playerCount - server.botCount > 0;
+  const spectatorCount = server.watcherCount;
   // Same thresholds as the toolbar's connection indicator.
   const pingQuality =
     pingMs == null
@@ -102,24 +103,50 @@ function ServerTile({
             />
           )}
         </span>
-        <span className={tileStyles.TileMeta}>
-          {server.mod && (
-            <>
-              <span className={styles.TileMod}>{server.mod}</span> ·{" "}
-            </>
-          )}
-          <WifiSignalIcon
-            className={styles.TilePingIcon}
-            data-quality={pingQuality}
-            aria-label="Ping"
-          />{" "}
-          {ping} ms ·{" "}
-          <span className={hasHumans ? styles.TileHumanPlayers : undefined}>
-            <LuUsers className={tileStyles.TileMetaIcon} aria-label="Players" />{" "}
-            {server.playerCount}
+        <span className={styles.TileMeta}>
+          <span className={styles.TileServerMeta}>
+            {server.mod && (
+              <>
+                <span className={styles.TileMod}>{server.mod}</span> ·{" "}
+              </>
+            )}
+            <WifiSignalIcon
+              className={styles.TilePingIcon}
+              data-quality={pingQuality}
+              aria-label="Ping"
+            />{" "}
+            {ping} ms ·{" "}
+            <span className={hasHumans ? styles.TileActiveCount : undefined}>
+              <LuUsers
+                className={tileStyles.TileMetaIcon}
+                aria-label="Players"
+              />{" "}
+              {server.playerCount}
+            </span>
+            &thinsp;/&thinsp;{server.maxPlayers} players
+            {server.botCount > 0 ? <> ({server.botCount} bots)</> : null}
           </span>
-          &thinsp;/&thinsp;{server.maxPlayers} players
-          {server.botCount > 0 ? <> ({server.botCount} bots)</> : null}
+          {spectatorCount != null && (
+            <span
+              className={styles.TileSpectators}
+              title={`${spectatorCount} spectating`}
+            >
+              ·
+              <span
+                className={
+                  spectatorCount > 0
+                    ? `${styles.TileSpectatorCount} ${styles.TileActiveCount}`
+                    : styles.TileSpectatorCount
+                }
+              >
+                <LuEye
+                  className={styles.TileSpectatorIcon}
+                  aria-label="Spectators"
+                />
+                {spectatorCount}
+              </span>
+            </span>
+          )}
         </span>
       </span>
     </button>

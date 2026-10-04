@@ -1,4 +1,5 @@
 import { useEffect, useRef, type ReactNode } from "react";
+import type { WatchEndReason } from "../../relay/types";
 import styles from "./WatchErrorDialog.module.css";
 
 /**
@@ -11,6 +12,7 @@ import styles from "./WatchErrorDialog.module.css";
  */
 export function WatchErrorDialog({
   title = "Uplink failure",
+  endReason,
   message,
   onBrowse,
   onRejoin,
@@ -18,6 +20,7 @@ export function WatchErrorDialog({
   onDismiss,
 }: {
   title?: string;
+  endReason?: WatchEndReason;
   message: ReactNode;
   onBrowse: () => void;
   /** Rejoin the server the session was lost from, when known. */
@@ -28,8 +31,11 @@ export function WatchErrorDialog({
   onDismiss?: () => void;
 }) {
   const dialogRef = useRef<HTMLDivElement>(null);
+  const watchingDisabled = endReason === "watchingDisabled";
+  const heading = watchingDisabled ? "Watching disabled" : title;
 
   useEffect(() => {
+    if (document.pointerLockElement) document.exitPointerLock();
     dialogRef.current?.focus();
   }, []);
 
@@ -40,21 +46,21 @@ export function WatchErrorDialog({
         className={styles.Dialog}
         role="dialog"
         aria-modal="true"
-        aria-label={title}
+        aria-label={heading}
         tabIndex={-1}
         onKeyDown={(e) => {
           e.stopPropagation();
           if (e.key === "Escape") (onDismiss ?? onBrowse)();
         }}
       >
-        <h1 className={styles.Title}>{title}</h1>
+        <h1 className={styles.Title}>{heading}</h1>
         <p className={styles.Message}>
           {message === "PASSWORD"
             ? "This server requires a password."
             : message}
         </p>
         <div className={styles.Buttons}>
-          {onRejoin ? (
+          {onRejoin && !watchingDisabled ? (
             <button
               type="button"
               className={styles.PrimaryButton}
@@ -63,7 +69,7 @@ export function WatchErrorDialog({
               Rejoin
             </button>
           ) : null}
-          {onRetry ? (
+          {onRetry && !watchingDisabled ? (
             <button
               type="button"
               className={styles.PrimaryButton}

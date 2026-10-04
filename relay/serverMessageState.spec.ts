@@ -53,6 +53,49 @@ function expectNoEffects(changes: ServerMessageChanges | null) {
 }
 
 describe("applyServerMessageState", () => {
+  it("tracks join privileges, retains them through renames, and clears them on rejoin", () => {
+    const { state, message } = harness();
+    message("MsgClientJoin", "Alice", "7", "1", "0", "1", "1");
+    expect(state.playerRoster.get(7)).toMatchObject({
+      isAdmin: true,
+      isSuperAdmin: true,
+    });
+    message("MsgClientNameChanged", "Alice", "Bob", "7");
+    expect(state.playerRoster.get(7)).toMatchObject({
+      name: "Bob",
+      isAdmin: true,
+      isSuperAdmin: true,
+    });
+    message("MsgClientJoin", "Bob", "7", "1", "0", "0", "0");
+    expect(state.playerRoster.get(7)?.isAdmin).toBeUndefined();
+    expect(state.playerRoster.get(7)?.isSuperAdmin).toBeUndefined();
+  });
+
+  it.each(["MsgAdminPlayer", "MsgAdminAdminPlayer", "MsgSuperAdminPlayer"])(
+    "handles stock %s promotions by target ID",
+    (type) => {
+      const { state, message } = harness({ "@id": "7" });
+      state.playerRoster.set(7, player());
+      expect(message(type, "@id")).toEqual({ rosterChanged: true });
+      expect(state.playerRoster.get(7)?.isAdmin).toBe(true);
+      expect(!!state.playerRoster.get(7)?.isSuperAdmin).toBe(
+        type === "MsgSuperAdminPlayer",
+      );
+    },
+  );
+
+  it("revokes the TacoServer strip target, not the actor or a name that resembles an ID", () => {
+    const { state, message } = harness();
+    state.playerRoster.set(7, player({ isAdmin: true, isSuperAdmin: true }));
+    state.playerRoster.set(8, player({ isAdmin: true, isSuperAdmin: true }));
+    message("MsgStripAdminPlayer", "7", "Target", "8");
+    expect(state.playerRoster.get(7)?.isAdmin).toBe(true);
+    expect(state.playerRoster.get(8)?.isAdmin).toBeUndefined();
+    expect(state.playerRoster.get(8)?.isSuperAdmin).toBeUndefined();
+    message("MsgStripAdminPlayer", "7", "Target");
+    expect(state.playerRoster.get(7)?.isAdmin).toBe(true);
+  });
+
   it("leaves unrelated server messages to the caller", () => {
     const { state, message, createTeam } = harness();
     state.playerRoster.set(7, player());

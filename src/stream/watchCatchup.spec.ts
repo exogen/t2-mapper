@@ -60,6 +60,41 @@ describe("live wire protocol propagation", () => {
     ).toBe(GAME_PROTOCOL_VERSION);
   });
 
+  it("preserves player admin privileges through catch-up serialization and hydration", () => {
+    const watchState = new WatchStateAccumulator();
+    watchState.applyPacket({
+      gameState: {},
+      events: [
+        {
+          parsedData: {
+            type: "RemoteCommandEvent",
+            funcName: "ServerMessage",
+            args: ["MsgClientJoin", "", "Admin", "7", "-1", "0", "1", "1"],
+          },
+        },
+      ],
+    } as unknown as PacketData);
+    const payload = buildCatchupPayload({
+      packetParser: createLiveParser({ protocolVersion: GAME_PROTOCOL_VERSION })
+        .packetParser,
+      ghostState: new GhostStateAccumulator(),
+      watchState,
+      epoch: 1,
+      serverAddress: "test:28000",
+    });
+    const adapter = new LiveStreamAdapter(fakeRelay, { mode: "watch" });
+    adapter.hydrate(
+      deserializeCatchupPayload(serializeCatchupPayload(payload)),
+    );
+    expect(adapter.getSnapshot().playerRoster).toEqual([
+      expect.objectContaining({
+        clientId: 7,
+        isAdmin: true,
+        isSuperAdmin: true,
+      }),
+    ]);
+  });
+
   it("preserves the exported version through serialization, late joins and reconnects", () => {
     const adapter = new LiveStreamAdapter(fakeRelay, { mode: "watch" });
     for (const [i, version] of [52, 51, null, 52, undefined].entries()) {

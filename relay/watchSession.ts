@@ -14,7 +14,16 @@ import {
 import { GameConnection } from "./gameConnection.js";
 import { getConnectionRetryPolicy } from "./connectionRetryPolicy.js";
 import {
+  decodeGlobalChat,
+  MissionControls,
+  parseMissionControlCommand,
+  selectAdminVotesRequired,
+  type AdminVotePolicy,
+  type MissionControlState,
+} from "./missionControls.js";
+import {
   normalizeAddress,
+  parseMissionSequence,
   GAME_PROTOCOL_VERSION,
   AUTH_COMMANDS,
   MAX_RETRIES,
@@ -23,9 +32,13 @@ import {
   buildCRCDataBlockList,
 } from "./shared.js";
 import { WatchStateAccumulator } from "./watchState.js";
+import { isServerMessageCommand } from "./serverMessageDecode.js";
 import { serializeCatchupPayload } from "./watchSerialize.js";
 import { buildCatchupPayload } from "./watchCatchup.js";
-import type { DemoCoordinator } from "./demoCoordinator.js";
+import type {
+  DemoCoordinator,
+  RecordingDecisionReason,
+} from "./demoCoordinator.js";
 import type { DemoRecorder } from "./demoRecorder.js";
 import { relayLog } from "./logger.js";
 import type {
@@ -64,6 +77,8 @@ const REOBSERVE_RETRY_MS = 10_000;
 const WATCH_ONLY_PASS = process.env.WATCH_ONLY_PASS || "ImaWatcher";
 /** Matches the real client's chat input limit ($Host::MaxMessageLen). */
 const CHAT_MAX_LENGTH = 255;
+/** Stock message.cs permits four chat lines per ten seconds. */
+const CONTROL_REPLY_INTERVAL_MS = 3_000;
 const CATCHUP_CHUNK_BYTES = 256 * 1024;
 /** Grace after the mission-drop burst (MsgClientReady) before resolving
  *  the tournament decision. The "Server is Running in Tournament Mode"
@@ -103,13 +118,18 @@ function sendJson(ws: WebSocket, message: ServerMessage): void {
 export interface WatchSessionManagerOptions {
   /** Allow browser chat through the shared identity (default: true). */
   chatEnabled?: boolean;
+  /** Select by tournament mode and connected players excluding the relay. No match disables controls. */
+  adminVotePolicies?: readonly AdminVotePolicy[];
   gameBasePath: string;
   getCachedServer: (address: string) => ServerInfo | undefined;
   /** When present and enabled, sessions auto-record each mission to a .rec. */
   demoCoordinator?: DemoCoordinator;
-  /** Fired whenever the set of session addresses changes (persistence
-   *  hook for warm-booting after a restart). */
-  onSessionsChanged?: (addresses: string[]) => void;
+  /** Persist sessions and per-mission restrictions across relay restarts. */
+  onSessionsChanged?: (
+    addresses: string[],
+    missionControls: Record<string, MissionControlState>,
+  ) => void;
+  initialMissionControls?: unknown;
   /**
    * Watcher-facing stream delay (ms) applied while a server is in
    * tournament mode (anti screen-peek). Recording and protocol handling
@@ -127,10 +147,33 @@ export interface WatchSessionManagerOptions {
 
 export class WatchSessionManager {
   private sessions = new Map<string, WatchSession>();
+  private missionControls = new Map<string, MissionControls>();
   private options: WatchSessionManagerOptions;
 
   constructor(options: WatchSessionManagerOptions) {
     this.options = options;
+    const initial = options.initialMissionControls;
+    if (initial && typeof initial === "object" && !Array.isArray(initial)) {
+      for (const [address, value] of Object.entries(initial)) {
+        const controls = MissionControls.restore(value);
+        if (controls?.needsPersistence) {
+          this.missionControls.set(normalizeAddress(address), controls);
+          relayLog.info(
+            {
+              address: normalizeAddress(address),
+              ...controls.snapshot(),
+              source: "watch-state",
+            },
+            "Saved mission controls restored",
+          );
+        } else if (!controls) {
+          relayLog.warn(
+            { address, source: "watch-state" },
+            "Invalid saved mission controls ignored",
+          );
+        }
+      }
+    }
   }
 
   /** Attach a watcher socket to the session for `address`, creating it. */
@@ -171,10 +214,19 @@ export class WatchSessionManager {
     const key = normalizeAddress(address);
     let session = this.sessions.get(key);
     if (!session) {
-      session = new WatchSession(key, this.options, () => {
-        this.sessions.delete(key);
-        this.notifySessionsChanged();
-      });
+      const controls = this.missionControls.get(key) ?? new MissionControls();
+      this.missionControls.set(key, controls);
+      session = new WatchSession(
+        key,
+        this.options,
+        () => {
+          this.sessions.delete(key);
+          if (!controls.needsPersistence) this.missionControls.delete(key);
+          this.notifySessionsChanged();
+        },
+        controls,
+        () => this.notifySessionsChanged(),
+      );
       this.sessions.set(key, session);
       session.start();
       this.notifySessionsChanged();
@@ -183,7 +235,14 @@ export class WatchSessionManager {
   }
 
   private notifySessionsChanged(): void {
-    this.options.onSessionsChanged?.([...this.sessions.keys()]);
+    this.options.onSessionsChanged?.(
+      [...this.sessions.keys()],
+      Object.fromEntries(
+        [...this.missionControls]
+          .filter(([, controls]) => controls.needsPersistence)
+          .map(([address, controls]) => [address, controls.snapshot()]),
+      ),
+    );
   }
 
   /** Whether an active session exists for this address. */
@@ -241,6 +300,10 @@ export class WatchSessionManager {
 export { normalizeAddress } from "./shared";
 
 type SessionStatusMessage = Extract<ServerMessage, { type: "sessionStatus" }>;
+/** Queued statuses share their mission's latest retention policy, even after reconnect. */
+type SessionStatusSnapshot = SessionStatusMessage & {
+  recordingPolicy?: { enabled: boolean };
+};
 
 /** A delayed channel spans consecutive tournament missions. */
 type WatchChannel = { kind: "live" } | { kind: "delayed"; firstEpoch: number };
@@ -248,14 +311,14 @@ type WatchChannel = { kind: "live" } | { kind: "delayed"; firstEpoch: number };
 /** One step of the delayed (tournament) watcher stream. */
 type DelayedItem =
   | { kind: "packet"; at: number; data: Uint8Array }
-  | { kind: "epoch"; at: number; epoch: number; status: SessionStatusMessage }
+  | { kind: "epoch"; at: number; epoch: number; status: SessionStatusSnapshot }
   | {
       kind: "connected";
       at: number;
       epoch: number;
-      status: SessionStatusMessage;
+      status: SessionStatusSnapshot;
     }
-  | { kind: "status"; at: number; status: SessionStatusMessage }
+  | { kind: "status"; at: number; status: SessionStatusSnapshot }
   | { kind: "end"; at: number; message?: string };
 
 /**
@@ -325,6 +388,7 @@ export class WatchSession {
   private resyncCount = 0;
   /** One recorder per connection epoch (one connection = one demo). */
   private recorder: DemoRecorder | null = null;
+  private minimumWatchEpoch = 0;
   /** Mission-cycle rotation pending: stream frozen until reconnect. */
   private rotating = false;
   private rotateTimer: ReturnType<typeof setTimeout> | null = null;
@@ -345,6 +409,8 @@ export class WatchSession {
   private delayMs = 0;
   /** Whether this epoch's tournament status has been acted on yet. */
   private tourneyResolved = false;
+  /** Post-drop fallback, separate from delay exemptions and later server reports. */
+  private resolvedTournamentMode: boolean | null = null;
   private tourneyDecisionTimer: ReturnType<typeof setTimeout> | null = null;
   /** The post-drop grace has been armed this epoch (armed once, when the
    *  mission-drop burst first lands). */
@@ -353,7 +419,8 @@ export class WatchSession {
   private delayTimer: ReturnType<typeof setTimeout> | null = null;
   private replica: DelayedReplica | null = null;
   /** Status at the watcher playhead, independent of the live connection. */
-  private delayedStatus: SessionStatusMessage | null = null;
+  private delayedStatus: SessionStatusSnapshot | null = null;
+  private recordingPolicy = { enabled: false };
   /** Current upstream policy; provisional until the tournament probe resolves. */
   private epochDelayed = false;
   private lastNormalEpoch = 0;
@@ -363,15 +430,24 @@ export class WatchSession {
 
   private options: WatchSessionManagerOptions;
   private onDestroyed: () => void;
+  private readonly controls: MissionControls;
+  private readonly onControlsChanged: () => void;
+  private controlReplyTimer: ReturnType<typeof setTimeout> | null = null;
+  private pendingControlReply: (() => string) | null = null;
+  private lastControlReplyAt = -Infinity;
 
   constructor(
     key: string,
     options: WatchSessionManagerOptions,
     onDestroyed: () => void,
+    controls = new MissionControls(),
+    onControlsChanged: () => void = () => {},
   ) {
     this.key = key;
     this.options = options;
     this.onDestroyed = onDestroyed;
+    this.controls = controls;
+    this.onControlsChanged = onControlsChanged;
     this.parserKit = createLiveParser({
       protocolVersion: GAME_PROTOCOL_VERSION,
     });
@@ -396,7 +472,13 @@ export class WatchSession {
     }
     return this.epochDelayed &&
       (this.tourneyResolved || this.replica?.epoch === this.epoch)
-      ? { kind: "delayed", firstEpoch: this.lastNormalEpoch + 1 }
+      ? {
+          kind: "delayed",
+          firstEpoch: Math.max(
+            this.lastNormalEpoch + 1,
+            this.minimumWatchEpoch,
+          ),
+        }
       : { kind: "live" };
   }
 
@@ -407,6 +489,7 @@ export class WatchSession {
     if (
       !Number.isInteger(firstEpoch) ||
       firstEpoch <= this.releasedNormalEpoch ||
+      firstEpoch < this.minimumWatchEpoch ||
       firstEpoch > this.epoch
     )
       return null;
@@ -453,6 +536,8 @@ export class WatchSession {
 
   start(): void {
     if (this.destroyed || this.ending) return;
+    this.cancelControlReply();
+    this.lastControlReplyAt = -Infinity;
     this.cancelReObserve();
     if (this.retryTimer) {
       clearTimeout(this.retryTimer);
@@ -484,6 +569,7 @@ export class WatchSession {
     // (A queue carried over from the previous epoch keeps draining; the
     // enqueued epoch marker rebuilds the replica when it is reached.)
     this.tourneyResolved = false;
+    this.resolvedTournamentMode = null;
     this.tourneyGraceArmed = false;
     this.delayMs = this.options.tourneyDelayMs ?? 0;
     this.epochDelayed = this.delayMs > 0;
@@ -590,6 +676,7 @@ export class WatchSession {
     if (
       !this.destroyed &&
       !this.pinned &&
+      !this.controls.restricted &&
       this.watcherCount === 0 &&
       !this.idleTimer
     ) {
@@ -627,6 +714,10 @@ export class WatchSession {
 
   attach(ws: WebSocket, channelId?: string): void {
     if (this.destroyed) return;
+    if (!this.controls.watching) {
+      this.rejectWatcher(ws);
+      return;
+    }
     this.cancelIdleTimer();
     this.channels.set(
       ws,
@@ -661,6 +752,7 @@ export class WatchSession {
 
   private startIdleTimer(): void {
     this.cancelIdleTimer();
+    if (this.controls.restricted) return;
     relayLog.info(
       { address: this.key, graceMs: WATCH_IDLE_GRACE_MS },
       "No watchers left — starting idle grace timer",
@@ -718,12 +810,9 @@ export class WatchSession {
           epoch: this.epoch,
           status: this.liveSessionStatus("live"),
         });
-        // Tournament-mode probe: GetVoteMenu answers with VoteFFAMode
-        // (tournament) or VoteTournamentMode (normal) under this key. A
-        // reply resolves immediately; otherwise the post-drop grace
-        // (armed when the mission-drop burst lands) is the resolver.
-        this.startTourneyDecision();
       }
+      // Vote policies also need the mode when stream delay is disabled.
+      this.startTourneyDecision();
       // Serve everyone who was waiting on the handshake. A live/warm
       // session hands them a catch-up; a delayed session still in its
       // cold-start buffer sends the "delayed, live in ~Xs" status.
@@ -757,7 +846,7 @@ export class WatchSession {
       const retryScheduled =
         !conn.cooldownBlocked &&
         shouldRetryDisconnect(message, this.retryCount) &&
-        (this.watcherCount > 0 || this.pinned);
+        (this.watcherCount > 0 || this.pinned || this.controls.restricted);
       relayLog.info(
         {
           address: this.key,
@@ -770,6 +859,7 @@ export class WatchSession {
           cooldownBlocked: !!conn.cooldownBlocked,
           watchers: this.watcherCount,
           pinned: this.pinned,
+          missionRestricted: this.controls.restricted,
         },
         retryScheduled
           ? "Watch session will reconnect"
@@ -786,7 +876,10 @@ export class WatchSession {
         );
         this.retryTimer = setTimeout(() => {
           this.retryTimer = null;
-          if (!this.destroyed && (this.watcherCount > 0 || this.pinned)) {
+          if (
+            !this.destroyed &&
+            (this.watcherCount > 0 || this.pinned || this.controls.restricted)
+          ) {
             this.start();
           }
         }, cooldownMs);
@@ -802,6 +895,7 @@ export class WatchSession {
   private endSession(message?: string): void {
     if (this.ending || this.destroyed) return;
     this.ending = true;
+    this.cancelControlReply();
     this.stopScoresPoll();
     this.stopScoreHudPoll();
     this.cancelReObserve();
@@ -838,6 +932,7 @@ export class WatchSession {
   destroy(reason?: string): void {
     if (this.destroyed) return;
     this.destroyed = true;
+    this.cancelControlReply();
     this.cancelIdleTimer();
     if (this.retryTimer) clearTimeout(this.retryTimer);
     if (this.rotateTimer) clearTimeout(this.rotateTimer);
@@ -940,14 +1035,26 @@ export class WatchSession {
       if (this.resyncCount > 0 && this.packetCount > 5000) {
         this.resyncCount = 0;
       }
-      // NetStrings apply before responders so funcName refs resolve.
+      // Remote commands run in wire order after their net strings and roster
+      // updates, before later commands can replace mission or admin state.
       // The relay's own accumulators only feed catch-up snapshots and
       // recording metadata — watchers parse the raw packet themselves and
       // the demo already captured it above (onPacket) — so a parsing bug
       // here must never crash the process and lose every in-flight demo.
       // Contain it: log, skip this packet's local state update, carry on.
       try {
-        this.watchState.applyPacket(parsed, sampleRecordedState);
+        this.watchState.applyPacket(
+          parsed,
+          sampleRecordedState,
+          (name, args) => {
+            this.handleMissionControlEvent(name, args);
+            this.handleResponderEvent({
+              type: "RemoteCommandEvent",
+              funcName: name,
+              args,
+            });
+          },
+        );
         sampleRecordedState?.();
         this.ghostState.applyPacket(parsed);
         this.maybeReObserve();
@@ -957,20 +1064,17 @@ export class WatchSession {
           "Watch state update threw — skipping this packet's state update",
         );
       }
-      // A skipped type — known only from the stream (MsgLoadInfo /
-      // MsgMissionDropInfo), never the server-list cache — lifts the
-      // provisional delay immediately, ahead of the vote-menu answer.
-      if (this.isTourneySkippedType(this.watchState.missionType)) {
+      const tourney = this.watchState.tournamentMode;
+      if (tourney !== null) this.resolveTournamentMode(tourney);
+      // Once the mission-drop burst has arrived, the banner (if any) is
+      // already in it — start the short grace, then resolve.
+      else if (this.watchState.sawMissionDropReady) this.armPostDropGrace();
+      // Delay exemptions do not change the server mode used by admin policies.
+      if (this.isTourneySkippedType(this.watchState.missionType))
         this.setTournamentMode(false);
-      } else {
-        const tourney = this.watchState.tournamentMode;
-        if (tourney !== null) this.setTournamentMode(tourney);
-        // Once the mission-drop burst has arrived, the banner (if any) is
-        // already in it — start the short grace, then resolve.
-        else if (this.watchState.sawMissionDropReady) this.armPostDropGrace();
-      }
       for (const event of parsed.events) {
-        if (event.parsedData) this.handleResponderEvent(event.parsedData);
+        if (event.parsedData && event.parsedData.type !== "RemoteCommandEvent")
+          this.handleResponderEvent(event.parsedData);
       }
 
       // The packet that triggered a rotation (EndGhosting) is recorded
@@ -1040,20 +1144,10 @@ export class WatchSession {
 
   /** Resolve the new mission's policy without interrupting the old channel. */
   setTournamentMode(on: boolean): void {
-    if (
-      this.tourneyResolved ||
-      this.delayMs === 0 ||
-      this.destroyed ||
-      this.ending
-    )
-      return;
+    if (this.tourneyResolved || this.destroyed || this.ending) return;
     this.tourneyResolved = true;
+    if (this.delayMs === 0) return;
     this.epochDelayed = on;
-    this.cancelTourneyDecision();
-    relayLog.info(
-      { address: this.key, tournamentMode: on, delayMs: this.delayMs },
-      "Tournament mode resolved",
-    );
     if (!on) {
       this.lastNormalEpoch = this.epoch;
       this.normalEpochs.add(this.epoch);
@@ -1102,8 +1196,22 @@ export class WatchSession {
    * no need to re-send the probe.
    */
   private startTourneyDecision(): void {
-    if (this.delayMs === 0) return;
+    if (this.delayMs === 0 && !this.options.adminVotePolicies?.length) return;
     this.connection?.sendCommand("GetVoteMenu", "TourneyQuery");
+  }
+
+  private resolveTournamentMode(on: boolean): void {
+    if (this.destroyed || this.ending) return;
+    if (this.resolvedTournamentMode !== on)
+      relayLog.info(
+        { address: this.key, tournamentMode: on, delayMs: this.delayMs },
+        "Tournament mode resolved",
+      );
+    this.resolvedTournamentMode = on;
+    this.cancelTourneyDecision();
+    this.setTournamentMode(
+      on && !this.isTourneySkippedType(this.watchState.missionType),
+    );
   }
 
   /**
@@ -1111,16 +1219,20 @@ export class WatchSession {
    * banner is already in it, so give a short grace for packet spread and
    * then resolve — banner seen ⇒ tournament, none ⇒ not. Armed once per
    * epoch; a banner/vote reply that beats the grace resolves first and
-   * cancels the timer via setTournamentMode.
+   * cancels the timer via resolveTournamentMode.
    */
   private armPostDropGrace(): void {
-    if (this.tourneyGraceArmed || this.tourneyResolved || this.delayMs === 0) {
+    if (
+      this.tourneyGraceArmed ||
+      this.resolvedTournamentMode !== null ||
+      (this.delayMs === 0 && !this.options.adminVotePolicies?.length)
+    ) {
       return;
     }
     this.tourneyGraceArmed = true;
     this.tourneyDecisionTimer = setTimeout(() => {
       this.tourneyDecisionTimer = null;
-      this.setTournamentMode(this.watchState.tournamentMode === true);
+      this.resolveTournamentMode(this.watchState.tournamentMode === true);
     }, TOURNEY_POST_DROP_GRACE_MS);
   }
 
@@ -1237,19 +1349,12 @@ export class WatchSession {
           if (parsed.parseFault) throw new Error(parsed.parseFault.message);
           if (parsed) {
             r.packetCount++;
-            r.watchState.applyPacket(parsed);
+            // The replica has no protocol responders, but needs mission phases
+            // in wire order so they cannot erase later metadata in this packet.
+            r.watchState.applyPacket(parsed, undefined, (name, args) => {
+              r.watchState.applyMissionStart(name, args);
+            });
             r.ghostState.applyPacket(parsed);
-            // The replica has no protocol responders, but still needs their
-            // mission-phase metadata or a reconnect hydrates a nameless world.
-            for (const event of parsed.events) {
-              if (event.parsedData?.type === "RemoteCommandEvent") {
-                const cmd = event.parsedData as RemoteCommandEventData;
-                r.watchState.applyMissionStart(
-                  r.watchState.resolveNetString(cmd.funcName ?? ""),
-                  cmd.args ?? [],
-                );
-              }
-            }
           }
         } catch (err) {
           relayLog.error({ err, address: this.key }, "Delayed replica failed");
@@ -1346,8 +1451,406 @@ export class WatchSession {
 
   // ── Demo recording ──
 
+  private rejectWatcher(ws: WebSocket): void {
+    relayLog.info(
+      this.controlLogContext(),
+      "Watcher blocked by mission controls",
+    );
+    sendJson(ws, {
+      type: "sessionStatus",
+      status: "ended",
+      endReason: "watchingDisabled",
+      address: this.key,
+      chatEnabled: false,
+      watcherCount: 0,
+      message:
+        "Server admins have disabled watching for this mission. You can join again when they enable watching or the next mission begins.",
+    });
+  }
+
+  private observeControlledMission(sequence: string, name: string): void {
+    if (!sequence || !name) return;
+    const previous = this.controls.snapshot();
+    const wasWatching = this.controls.watching;
+    if (
+      previous.mission &&
+      (previous.mission[0] !== sequence || previous.mission[1] !== name)
+    ) {
+      this.finishMissionRecording("mission-change");
+      // A same-map restart also needs a fresh recording when EndGhosting
+      // was missed. Close the old file before resetting its keep policy.
+      if (this.watchState.missionName) this.handleMissionCycle("Phase1");
+    }
+    const changed = this.controls.observeMission(sequence, name);
+    if (changed) this.cancelControlReply();
+    if (changed) this.recordingPolicy = { enabled: this.recording };
+    this.restoreRecordingPolicy();
+    this.recordingPolicy.enabled = this.recording;
+    this.options.demoCoordinator?.observeMission(
+      this.recorder,
+      this.key,
+      this.controls.snapshot(),
+    );
+    if (!changed) {
+      if (previous.mission && !this.watchState.missionName)
+        relayLog.info(
+          this.controlLogContext(),
+          "Mission controls retained on reconnect",
+        );
+      if (!previous.mission && this.controls.needsPersistence)
+        this.onControlsChanged();
+      if (this.controls.restricted) this.cancelIdleTimer();
+      return;
+    }
+    if (!wasWatching) this.minimumWatchEpoch = this.epoch;
+    this.onControlsChanged();
+    this.ensureIdleGrace();
+    relayLog.info(
+      { ...this.controlLogContext(), previousMission: previous.mission },
+      "Mission recording and watching controls reset",
+    );
+  }
+
+  private finishMissionRecording(
+    decisionReason: RecordingDecisionReason,
+  ): void {
+    this.restoreRecordingPolicy();
+    if (this.controls.recordingDecision !== undefined) return;
+    this.controls.finishRecording();
+    this.options.demoCoordinator?.updateMission(
+      this.key,
+      this.controls.snapshot(),
+      decisionReason,
+    );
+    relayLog.info(
+      { ...this.controlLogContext(), decisionReason },
+      "Mission recording decision finalized",
+    );
+    this.onControlsChanged();
+  }
+
+  private restoreRecordingPolicy(): void {
+    const restored = this.options.demoCoordinator?.takeRestoredPolicy(
+      this.key,
+      this.controls.snapshot().mission,
+    );
+    if (!restored) return;
+    this.controls.restoreRecordingPolicy(
+      restored.recording,
+      restored.recordingDecision,
+    );
+    relayLog.info(
+      { ...this.controlLogContext(), source: "recording-journal" },
+      "Mission recording policy restored",
+    );
+    this.onControlsChanged();
+  }
+
+  private handleMissionControlEvent(name: string, args: string[]): void {
+    if (name === "MissionEnd") {
+      this.finishMissionRecording("match-end");
+      return;
+    }
+    // Connection IDs can be reused. Never let a new join inherit an anonymous
+    // admin's vote; account GUID votes survive reconnects and roster refreshes.
+    if (isServerMessageCommand(name)) {
+      if (args[0] === "MsgClientJoin" || args[0] === "MsgClientDrop") {
+        const voter = `client:${Number(args[3])}`;
+        if (this.controls.forgetVoter(voter)) {
+          relayLog.info(
+            { ...this.controlLogContext(), voter, reason: args[0] },
+            "Pending admin votes removed",
+          );
+          this.onControlsChanged();
+        }
+      }
+      if (args[0] === "MsgStripAdminPlayer") {
+        const id = Number(args[4]);
+        const player = this.watchState.getPlayerRoster().get(id);
+        const voter = player?.guid ? `guid:${player.guid}` : `client:${id}`;
+        if (this.controls.forgetVoter(voter)) {
+          relayLog.info(
+            { ...this.controlLogContext(), voter, reason: "admin-revoked" },
+            "Pending admin votes removed",
+          );
+          this.onControlsChanged();
+        }
+      }
+      return;
+    }
+    if (name.toLowerCase() !== "chatmessage") return;
+    const chat = decodeGlobalChat(args);
+    if (!chat || chat.clientId === this.watchState.selfClientId) return;
+    const command = parseMissionControlCommand(chat.text);
+    if (!command) return;
+    const player = this.watchState.getPlayerRoster().get(chat.clientId);
+    const actor = {
+      clientId: chat.clientId,
+      playerName: player?.name ?? null,
+      guid: player?.guid ?? null,
+      isAdmin: player?.isAdmin === true,
+      isSuperAdmin: player?.isSuperAdmin === true,
+      command: chat.text,
+    };
+    relayLog.info(
+      { ...this.controlLogContext(), ...actor },
+      "Mission control command received",
+    );
+    if (!player?.isAdmin && !player?.isSuperAdmin) {
+      relayLog.info(
+        {
+          ...this.controlLogContext(),
+          ...actor,
+          outcome: "rejected-not-admin",
+        },
+        "Mission control command rejected",
+      );
+      this.replyToControl(
+        () =>
+          "Only server admins can change MapGenius settings or request status.",
+      );
+      return;
+    }
+    if (command.error) {
+      const error = command.error;
+      relayLog.info(
+        {
+          ...this.controlLogContext(),
+          ...actor,
+          outcome: "rejected-invalid-command",
+          error,
+        },
+        "Mission control command rejected",
+      );
+      this.replyToControl(() => error);
+      return;
+    }
+    // A pending-demo timeout may have finalized the mission while this session
+    // had no recorder. Later votes cannot reverse an already released decision.
+    this.restoreRecordingPolicy();
+    const wasRecording = this.controls.recording;
+    const wasWatching = this.controls.watching;
+    const watchersBefore = this.watcherCount;
+    const { tournament, playerCount, votesRequired } = this.adminVoteContext();
+    const voterId = (id: number, guid?: string) =>
+      guid ? `guid:${guid}` : `client:${id}`;
+    let changed = this.retainCurrentAdminVotes();
+    const results: Partial<Record<"recording" | "watching", string>> = {};
+    for (const setting of ["recording", "watching"] as const) {
+      if (command[setting] === undefined) continue;
+      if (votesRequired === null) {
+        results[setting] = "ignored-policy-disabled";
+      } else if (
+        setting === "recording" &&
+        this.controls.recordingDecision !== undefined
+      ) {
+        results[setting] = "ignored-final-decision";
+      } else {
+        const before = this.controls[setting];
+        const votesBefore = this.controls.voteCount(setting);
+        changed =
+          this.controls.vote(
+            setting,
+            command[setting],
+            voterId(chat.clientId, player.guid),
+            votesRequired,
+          ) || changed;
+        const votesAfter = this.controls.voteCount(setting);
+        results[setting] =
+          before !== this.controls[setting]
+            ? "applied"
+            : votesAfter > votesBefore
+              ? "vote-added"
+              : votesAfter < votesBefore
+                ? "vote-withdrawn"
+                : "unchanged";
+      }
+    }
+    if (changed) this.onControlsChanged();
+    if (wasWatching && !this.controls.watching) {
+      this.minimumWatchEpoch = this.epoch;
+      for (const ws of this.channels.keys()) this.rejectWatcher(ws);
+      this.watchers.clear();
+      this.pending.clear();
+      this.channels.clear();
+    }
+    if (
+      wasRecording !== this.controls.recording ||
+      wasWatching !== this.controls.watching
+    ) {
+      if (this.controls.restricted) this.cancelIdleTimer();
+      else this.ensureIdleGrace();
+      this.options.demoCoordinator?.updateMission(
+        this.key,
+        this.controls.snapshot(),
+      );
+      relayLog.info(
+        {
+          ...this.controlLogContext(),
+          ...actor,
+          previousRecording: wasRecording,
+          previousWatching: wasWatching,
+          watchersBefore,
+          votesRequired,
+          tournamentMode: tournament,
+          playerCount,
+        },
+        "Mission controls changed by server admin",
+      );
+      this.fanOutSessionStatus();
+      // Administrative retention policy is current even for delayed viewers.
+      // The snapshot reference keeps an older mission's decision separate.
+      if (wasRecording !== this.controls.recording) {
+        for (const ws of this.channels.keys()) {
+          if (this.isDelayedViewer(ws))
+            sendJson(
+              ws,
+              this.sessionStatus(ws, this.delayedStatus?.status ?? "syncing"),
+            );
+        }
+      }
+    }
+    relayLog.info(
+      {
+        ...this.controlLogContext(),
+        ...actor,
+        outcome: Object.keys(results).length ? "processed" : "status",
+        results,
+        votesRequired,
+        tournamentMode: tournament,
+        playerCount,
+      },
+      "Mission control command processed",
+    );
+    this.replyToControl(() => this.controlStatus());
+  }
+
+  private controlLogContext() {
+    return {
+      address: this.key,
+      mission: this.controls.snapshot().mission,
+      recording: this.controls.recording,
+      watching: this.controls.watching,
+      recordingDecision: this.controls.recordingDecision ?? null,
+      recordingConfigured: !!this.options.demoCoordinator?.enabled,
+      votes: {
+        recording: this.controls.voteCount("recording"),
+        watching: this.controls.voteCount("watching"),
+      },
+      watchers: this.watcherCount,
+    };
+  }
+
+  private adminVoteContext() {
+    const roster = this.watchState.getPlayerRoster();
+    const selfClientId = this.watchState.selfClientId;
+    const playerCount =
+      roster.size - (selfClientId != null && roster.has(selfClientId) ? 1 : 0);
+    const tournament =
+      this.watchState.tournamentMode ?? this.resolvedTournamentMode;
+    return {
+      tournament,
+      playerCount,
+      votesRequired: selectAdminVotesRequired(
+        this.options.adminVotePolicies ?? [],
+        tournament,
+        playerCount,
+      ),
+    };
+  }
+
+  private retainCurrentAdminVotes(): boolean {
+    const eligible = new Set<string>();
+    for (const [id, entry] of this.watchState.getPlayerRoster()) {
+      if (
+        id !== this.watchState.selfClientId &&
+        (entry.isAdmin || entry.isSuperAdmin)
+      )
+        eligible.add(entry.guid ? `guid:${entry.guid}` : `client:${id}`);
+    }
+    const before = this.controls.snapshot().votes;
+    const changed = this.controls.retainVoters(eligible);
+    if (changed)
+      relayLog.info(
+        {
+          ...this.controlLogContext(),
+          previousVotes: before,
+          reason: "no-longer-eligible",
+        },
+        "Pending admin votes removed",
+      );
+    return changed;
+  }
+
+  /** Commands take effect immediately; only their chat replies are coalesced. */
+  private replyToControl(reply: () => string): void {
+    this.pendingControlReply = reply;
+    if (this.controlReplyTimer) return;
+    const waitMs =
+      this.lastControlReplyAt + CONTROL_REPLY_INTERVAL_MS - Date.now();
+    if (waitMs > 0) {
+      this.controlReplyTimer = setTimeout(() => {
+        this.controlReplyTimer = null;
+        this.flushControlReply();
+      }, waitMs);
+    } else this.flushControlReply();
+  }
+
+  private flushControlReply(): void {
+    const reply = this.pendingControlReply;
+    this.pendingControlReply = null;
+    if (
+      !reply ||
+      this.destroyed ||
+      this.ending ||
+      this.lastStatus !== "connected"
+    )
+      return;
+    this.lastControlReplyAt = Date.now();
+    const text = reply();
+    this.connection?.sendCommand("messageSent", text);
+    relayLog.info(
+      { ...this.controlLogContext(), reply: text },
+      "Mission control reply sent",
+    );
+  }
+
+  private cancelControlReply(): void {
+    if (this.controlReplyTimer) clearTimeout(this.controlReplyTimer);
+    this.controlReplyTimer = null;
+    this.pendingControlReply = null;
+  }
+
+  private controlStatus(): string {
+    if (this.retainCurrentAdminVotes()) this.onControlsChanged();
+    const { votesRequired } = this.adminVoteContext();
+    const status = [
+      `Recording is ${this.recording ? "enabled" : "disabled"}.`,
+      this.controls.watching
+        ? `Watching is enabled (${this.watcherCount} ${this.watcherCount === 1 ? "spectator" : "spectators"}).`
+        : "Watching is disabled.",
+    ];
+    const pending = (["recording", "watching"] as const)
+      .filter(
+        (setting) =>
+          votesRequired !== null && this.controls.voteCount(setting) > 0,
+      )
+      .map(
+        (setting) =>
+          `${this.controls[setting] ? "-" : "+"}${setting === "recording" ? "rec" : "watch"} ${this.controls.voteCount(setting)}/${votesRequired}`,
+      );
+    if (pending.length) status.push(`Votes: ${pending.join(", ")}.`);
+    if (votesRequired === null)
+      status.push("Admin controls: disabled by relay policy.");
+    status.push("Settings reset next map.");
+    return status.join(" ");
+  }
+
   get recording(): boolean {
-    return this.recorder?.state === "recording";
+    return (
+      !!this.options.demoCoordinator?.enabled &&
+      (this.controls.recordingDecision ?? this.controls.recording)
+    );
   }
 
   /** Detach the recorder and hand it to the coordinator to finalize —
@@ -1375,6 +1878,7 @@ export class WatchSession {
     // mission's Phase1 flushes it under its name.
     if (!this.watchState.missionName || this.recorder?.state === "buffering")
       return;
+    this.finishMissionRecording("mission-change");
     // Every map change reconnects (a fresh epoch), however short the
     // previous map was — so tournament mode is re-decided per mission
     // rather than latched for the life of the connection.
@@ -1433,6 +1937,10 @@ export class WatchSession {
           resolvedArgs.filter((a) => a !== ""),
         );
       } else if (funcName === "MissionStartPhase1") {
+        this.observeControlledMission(
+          resolvedArgs[0] ?? "",
+          resolvedArgs[1] ?? "",
+        );
         conn.missionStartedWithoutAuth();
         const seq = resolvedArgs[0] ?? "";
         const newMissionName = resolvedArgs[1] ?? null;
@@ -1445,7 +1953,11 @@ export class WatchSession {
           // EndGhosting cycle trigger was missed — rotate late.
           this.handleMissionCycle("Phase1");
         }
-        if (newMissionName) this.recorder?.setMissionName(newMissionName);
+        if (newMissionName)
+          this.recorder?.setMissionName(
+            newMissionName,
+            parseMissionSequence(seq),
+          );
         conn.sendCommand("MissionStartPhase1Done", seq);
       } else if (funcName === "MissionStartPhase2") {
         conn.sendCommand("MissionStartPhase2Done", resolvedArgs[0] ?? "");
@@ -1590,7 +2102,12 @@ export class WatchSession {
   }
 
   private deliverCatchup(ws: WebSocket): void {
-    if (this.destroyed || this.processingPacket || !this.pending.has(ws))
+    if (
+      this.destroyed ||
+      !this.controls.watching ||
+      this.processingPacket ||
+      !this.pending.has(ws)
+    )
       return;
     const source = this.catchupSource(ws);
     if (!source) return;
@@ -1699,8 +2216,9 @@ export class WatchSession {
     for (const ws of this.pending) sendJson(ws, message);
   }
 
-  /** Capture upstream metadata before its connection/recorder can change. */
-  private liveSessionStatus(status: WatchStatus): SessionStatusMessage {
+  /** Capture upstream metadata; only retention follows later admin decisions. */
+  private liveSessionStatus(status: WatchStatus): SessionStatusSnapshot {
+    this.recordingPolicy.enabled = this.recording;
     return {
       type: "sessionStatus",
       status,
@@ -1710,6 +2228,7 @@ export class WatchSession {
       mapName: this.sessionMapName(),
       watcherCount: this.watcherCount,
       recording: this.recording,
+      recordingPolicy: this.recordingPolicy,
       streamDelayMs: this.epochDelayed ? this.delayMs : 0,
     };
   }
@@ -1730,7 +2249,7 @@ export class WatchSession {
               this.receivesDelayedEpoch(ws, item.epoch),
           )
         : undefined;
-    const metadata =
+    const { recordingPolicy, ...metadata } =
       (hasReplica
         ? this.delayedStatus
         : waitingEpoch?.kind === "epoch"
@@ -1738,6 +2257,7 @@ export class WatchSession {
           : null) ?? this.liveSessionStatus(status);
     return {
       ...metadata,
+      recording: recordingPolicy?.enabled ?? metadata.recording,
       status:
         status === "live" &&
         (!this.watchers.has(ws) || (hasReplica && this.replica?.failed))

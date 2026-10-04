@@ -38,6 +38,8 @@ export type ServerMessage =
   | {
       type: "sessionStatus";
       status: WatchStatus;
+      /** Distinguishes deliberate access restrictions from connection failures. */
+      endReason?: WatchEndReason;
       /** Whether the relay allows browser-originated chat. */
       chatEnabled?: boolean;
       message?: string;
@@ -47,7 +49,7 @@ export type ServerMessage =
       watcherCount: number;
       /** Resume the same channel after transport loss, if it is still draining. */
       channelId?: string;
-      /** Whether the stream at the watcher playhead was being recorded. */
+      /** Whether demo retention is enabled for the mission being watched. */
       recording?: boolean;
       /** Watcher-facing stream delay in ms (tournament anti-screen-peek);
        *  0 = live; absent leaves the client's previous value unchanged. */
@@ -80,6 +82,8 @@ export type ServerMessage =
 export type WatchStatus =
   "connecting" | "authenticating" | "syncing" | "live" | "ended";
 
+export type WatchEndReason = "watchingDisabled";
+
 /** Roster/score/clock state a late joiner can't recover from the live
  *  stream (MsgPlayerScore only updates existing roster entries).
  *  Structured stand-in for a .rec's demoValues sections. */
@@ -87,6 +91,8 @@ export interface WatchHudStatePayload {
   playerRoster: Array<{
     clientId: number;
     guid?: string;
+    isAdmin?: boolean;
+    isSuperAdmin?: boolean;
     name: string;
     rawName: string;
     targetId?: number;
@@ -191,6 +197,9 @@ export interface ServerInfo {
   playerCount: number;
   maxPlayers: number;
   botCount: number;
+  /** Browser viewers on this relay's shared session; absent in UDP info
+   *  responses and server lists from older relays. */
+  watcherCount?: number;
   ping: number;
   buildVersion: number;
   passwordRequired: boolean;

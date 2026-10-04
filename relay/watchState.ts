@@ -152,7 +152,11 @@ export class WatchStateAccumulator {
   }
 
   /** Notify in wire order, before a later event can rename or drop the same client. */
-  applyPacket(parsed: PacketData, onRosterChange?: () => void): void {
+  applyPacket(
+    parsed: PacketData,
+    onRosterChange?: () => void,
+    onRemoteCommand?: (name: string, args: string[]) => void,
+  ): void {
     if (parsed.gameState.controlObjectGhostIndex !== undefined) {
       this.controlObjectGhostIndex = parsed.gameState.controlObjectGhostIndex;
     }
@@ -213,6 +217,10 @@ export class WatchStateAccumulator {
               this.tournamentMode = true;
             }
           }
+          onRemoteCommand?.(
+            funcName,
+            args.map((arg) => this.resolveNetString(arg)),
+          );
           break;
         }
       }

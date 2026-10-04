@@ -101,6 +101,9 @@ interface QueuedEntry {
  */
 export interface DemoGame {
   mission: string;
+  /** Server mission counter; group with address + mission, not globally unique.
+   *  Absent when the recording never observed the mission handshake. */
+  missionSequence?: number;
   gameType: string;
   /**
    * Offset into the demo on the move-tick clock.
@@ -208,10 +211,12 @@ export class DemoRecorder {
     server: string;
     address: string;
     mission: string;
+    missionSequence?: number;
     mod: string;
     recorder: string;
   } | null = null;
   private _failure: string | null = null;
+  private strandedClose: Promise<void> | undefined;
 
   constructor(opts: DemoRecorderOptions) {
     this.opts = opts;
@@ -328,7 +333,15 @@ export class DemoRecorder {
   }
 
   /** Phase1 arrived: open the file and drain the buffered stream. */
-  setMissionName(missionName: string): void {
+  setMissionName(missionName: string, missionSequence?: number): void {
+    if (
+      this._state === "recording" &&
+      this.meta?.mission === missionName &&
+      this.meta.missionSequence === undefined
+    ) {
+      // Phase1 can arrive after the buffering-cap fallback already opened a file.
+      this.meta.missionSequence = missionSequence;
+    }
     if (this._state !== "buffering") return;
     // Samples taken while buffering belong to the previous mission
     // (e.g. connecting into an intermission debrief) — the keep gates
@@ -339,10 +352,10 @@ export class DemoRecorder {
     // packets are the same mission the file records.)
     this.matchStarted = false;
     this.peakPlayers = 0;
-    this.flush(missionName);
+    this.flush(missionName, missionSequence);
   }
 
-  private flush(missionName: string): void {
+  private flush(missionName: string, missionSequence?: number): void {
     const identity = this.opts.getServerIdentity();
     const date = new Date();
     const serverName = identity.name ?? this.opts.address;
@@ -366,6 +379,7 @@ export class DemoRecorder {
       server: serverName,
       address: this.opts.address,
       mission: missionName,
+      missionSequence,
       mod: identity.mod ?? "",
       recorder: this.opts.recorderName,
     };
@@ -440,7 +454,7 @@ export class DemoRecorder {
     if (this._state !== "recording") return;
     this._failure = failure;
     this.setState("aborted");
-    void this.writer?.strand();
+    this.strandedClose = this.writer?.strand();
   }
 
   /** Bring the synthesized move clock up to `now` (32 ms per move). */
@@ -469,6 +483,7 @@ export class DemoRecorder {
     reason: string,
   ): Promise<{ path: string; durationMs: number } | null> {
     if (this._state !== "buffering" && this._state !== "recording") {
+      await this.strandedClose;
       return null;
     }
     // Snapshot the identity now, synchronously: the session may start
@@ -577,6 +592,7 @@ export class DemoRecorder {
         games: [
           {
             mission: meta.mission,
+            missionSequence: meta.missionSequence,
             gameType: identity.gameType ?? "",
             startMs: 0,
             tournament: identity.tournament ?? false,
@@ -597,8 +613,12 @@ export class DemoRecorder {
     }
   }
 
-  async abort(): Promise<void> {
-    if (this._state === "done" || this._state === "aborted") return;
+  async abort(options?: { discardStranded?: boolean }): Promise<void> {
+    if (
+      this._state === "done" ||
+      (this._state === "aborted" && !options?.discardStranded)
+    )
+      return;
     this.setState("aborted");
     this.queue = [];
     this.queuedBytes = 0;

@@ -10,6 +10,7 @@ import type {
   ServerInfo,
   ConnectionStatus,
   WatchStatus,
+  WatchEndReason,
 } from "../../relay/types";
 
 const log = createLogger("liveConnectionStore");
@@ -46,6 +47,7 @@ export interface LiveConnectionState {
   /** Relay channel continuity across catch-up retries and socket reconnects. */
   watchChannelId: string | null;
   watchStatusMessage?: string;
+  watchEndReason?: WatchEndReason;
   /** Why the last session ended — drives the disconnect messaging. */
   disconnectReason: "voluntary" | "ended" | null;
   /** Whether the current/last watch attempt ever reached the server
@@ -54,7 +56,7 @@ export interface LiveConnectionState {
   sessionEstablished: boolean;
   /** Number of watchers on the shared session (including us). */
   watcherCount: number;
-  /** Whether the stream at the watcher playhead was being recorded. */
+  /** Whether demo retention is enabled for the mission being watched. */
   recording: boolean;
   /** Watcher-facing stream delay in ms (tournament anti-screen-peek);
    *  0 = live. */
@@ -139,6 +141,7 @@ function disconnectedState(
     watchStatus: null,
     watchChannelId: null,
     watchStatusMessage: undefined,
+    watchEndReason: undefined,
     watcherCount: 0,
     recording: false,
     streamDelayMs: 0,
@@ -168,6 +171,7 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
     watchStatus: null,
     watchChannelId: null,
     watchStatusMessage: undefined,
+    watchEndReason: undefined,
     disconnectReason: null,
     sessionEstablished: false,
     watcherCount: 0,
@@ -252,7 +256,12 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
           // chat immediately rather than silently losing those last messages.
           set({ chatEnabled: false });
           const s = get();
-          if (s.role === "watcher" && s.serverAddress) {
+          if (
+            s.role === "watcher" &&
+            s.serverAddress &&
+            s.watchStatus !== null &&
+            s.watchStatus !== "ended"
+          ) {
             restartPending = true;
             resumeAddress = s.serverAddress;
             log.info("relay restarting — will auto-reattach");
@@ -262,12 +271,20 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
           if (get()._relay !== relay) return;
           if (
             get().role !== "watcher" ||
+            get().watchStatus === "ended" ||
             normalizeAddress(info.address) !== get().serverAddress
           )
             return;
           // A restarting relay tears its sessions down noisily; that
           // "ended" is not this session's ending.
-          if (status === "ended" && restartPending) return;
+          if (status === "ended" && restartPending && !info.endReason) return;
+          if (status === "ended") {
+            cancelReconnect();
+            watchRequest++;
+            // Invalidate callbacks (including parse-fault retries) from the
+            // ended adapter, while the scene follows its usual end lifecycle.
+            get()._adapter = null;
+          }
           if (status === "live") {
             reconnectAttempts = 0;
             restartPending = false;
@@ -283,6 +300,7 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
           set({
             watchStatus: status,
             watchStatusMessage: message,
+            watchEndReason: status === "ended" ? info.endReason : undefined,
             watcherCount,
             ...(info.chatEnabled != null
               ? { chatEnabled: info.chatEnabled }
@@ -305,6 +323,10 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
                   watchChannelId: null,
                   recording: false,
                   streamDelayMs: 0,
+                  streamDelayReadyAt: null,
+                  adapter: null,
+                  liveReady: false,
+                  reconnecting: false,
                 }
               : {}),
             // Reaching the server (catch-up or live) marks the attempt as
@@ -320,11 +342,11 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
           });
         },
         onWatcherCount(count) {
-          if (get()._relay !== relay) return;
+          if (get()._relay !== relay || get().watchStatus === "ended") return;
           set({ watcherCount: count });
         },
         onCatchupProgress(receivedBytes, totalBytes) {
-          if (get()._relay !== relay) return;
+          if (get()._relay !== relay || !get()._adapter) return;
           set({
             catchupProgress: totalBytes > 0 ? receivedBytes / totalBytes : 0,
           });
@@ -418,11 +440,23 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
             );
           }
           cancelReconnect();
-          set(
-            disconnectedState(
+          set({
+            ...disconnectedState(
               s.disconnectReason ?? (sessionWasLive || resume ? "ended" : null),
             ),
-          );
+            // A later transport close must not erase a server's refusal.
+            ...(s.role === "watcher" && s.watchStatus === "ended"
+              ? {
+                  role: s.role,
+                  serverAddress: s.serverAddress,
+                  serverName: s.serverName,
+                  mapName: s.mapName,
+                  watchStatus: s.watchStatus,
+                  watchStatusMessage: s.watchStatusMessage,
+                  watchEndReason: s.watchEndReason,
+                }
+              : {}),
+          });
         },
       });
 
@@ -529,6 +563,7 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
         gameStatus: null,
         adapter: newAdapter,
         role: "player",
+        watchEndReason: undefined,
         chatEnabled: false,
         disconnectReason: null,
       });
@@ -576,6 +611,7 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
           gameStatus: null,
           watchStatus: "connecting",
           watchStatusMessage: undefined,
+          watchEndReason: undefined,
           disconnectReason: null,
           sessionEstablished: false,
           watcherCount: 0,
@@ -643,6 +679,7 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
         chatEnabled: false,
         watchStatus: "connecting",
         watchStatusMessage: undefined,
+        watchEndReason: undefined,
         disconnectReason: null,
         sessionEstablished: false,
         watcherCount: 0,
@@ -688,6 +725,7 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
         watchStatus: null,
         watchChannelId: null,
         watchStatusMessage: undefined,
+        watchEndReason: undefined,
         ...(hadSession ? { disconnectReason: "voluntary" as const } : {}),
         watcherCount: 0,
         recording: false,

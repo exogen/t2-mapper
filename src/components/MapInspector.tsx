@@ -195,6 +195,7 @@ export function MapInspector() {
   // ── Live spectating (shared relay watch sessions) ──
   const watchStatus = useLiveSelector((s) => s.watchStatus);
   const watchStatusMessage = useLiveSelector((s) => s.watchStatusMessage);
+  const watchEndReason = useLiveSelector((s) => s.watchEndReason);
   const catchupProgress = useLiveSelector((s) => s.catchupProgress);
   // The stream-delay notice owns the screen during tournament buffering;
   // its own spinner-free banner replaces the loading indicator (they clash).
@@ -620,6 +621,7 @@ export function MapInspector() {
                 <LoadingIndicator isLoading progress={null} />
               ) : joinErrorMessage != null && !errorAcknowledged ? (
                 <WatchErrorDialog
+                  endReason={watchEndReason}
                   message={joinErrorMessage}
                   // This dialog only appears with no stream data, i.e. a
                   // connection that never established (probe fail, failed
@@ -709,6 +711,7 @@ export function MapInspector() {
                 {recording?.source === "demo" ? <DemoSeekFeedback /> : null}
                 {showDisconnectDialog ? (
                   <WatchErrorDialog
+                    endReason={watchEndReason}
                     // A voluntary leave isn't an error — say so plainly.
                     title={
                       disconnectReason === "voluntary"

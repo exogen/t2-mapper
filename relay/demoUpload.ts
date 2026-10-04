@@ -11,15 +11,12 @@
 import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
-import {
-  GetObjectCommand,
-  PutObjectCommand,
-  S3Client,
-} from "@aws-sdk/client-s3";
+import { PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { Upload } from "@aws-sdk/lib-storage";
 import { DEMO_CHECKPOINT_SUFFIX } from "../src/stream/demoCheckpoints";
 import { demoLog as log } from "./logger.js";
 import type { DemoMetadata } from "./demoRecorder.js";
+import { updateDemoIndex } from "./demoIndexStorage.js";
 import {
   FAILED_SUFFIX,
   PARTIAL_SUFFIX,
@@ -146,6 +143,10 @@ export class DemoUploader {
     if (this.queued.has(filePath)) return;
     this.queued.add(filePath);
     this.queue.push(filePath);
+    log.info(
+      { file: path.basename(filePath), queued: this.queue.length },
+      "Demo queued for upload",
+    );
     void this.pump();
   }
 
@@ -258,44 +259,24 @@ export class DemoUploader {
   }
 
   /**
-   * Read-modify-write of `<prefix>index.json` — safe because the pump
-   * serializes uploads and this process is the only writer. Appends are
-   * deduped by filename so retries after a partial failure stay clean.
+   * Conditional updates preserve concurrent backfills and other uploaders.
+   * Appends are deduped by filename so retries after a partial failure stay clean.
    * Any unexpected read/parse error throws (kept + retried) rather than
    * risk clobbering the index with a truncated read.
    */
   private async updateIndex(record: DemoMetadata): Promise<void> {
     const config = this.config!;
     const key = `${config.prefix}index.json`;
-    let entries: DemoMetadata[] = [];
-    try {
-      const res = await this.client!.send(
-        new GetObjectCommand({ Bucket: config.bucket, Key: key }),
-      );
-      const parsed: unknown = JSON.parse(await res.Body!.transformToString());
-      if (!Array.isArray(parsed)) {
-        throw new Error("demo index is not an array");
-      }
-      entries = parsed as DemoMetadata[];
-    } catch (err) {
-      const missing =
-        err instanceof Error &&
-        (err.name === "NoSuchKey" || err.name === "NotFound");
-      if (!missing) throw err;
-    }
-    if (entries.some((e) => e.filename === record.filename)) return;
-    entries.push(record);
-    await this.client!.send(
-      new PutObjectCommand({
-        Bucket: config.bucket,
-        Key: key,
-        Body: JSON.stringify(entries),
-        ContentType: "application/json; charset=utf-8",
-        // Unlike the demos, the index mutates — revalidate every fetch.
-        CacheControl: "no-cache",
-      }),
+    const count = await updateDemoIndex(
+      this.client!,
+      config.bucket,
+      key,
+      (entries) =>
+        entries?.some((entry) => entry.filename === record.filename)
+          ? undefined
+          : [...(entries ?? []), record],
     );
-    log.debug({ entries: entries.length }, "Demo index updated");
+    log.debug({ entries: count }, "Demo index updated");
   }
 
   private async uploadDemoFile(filePath: string, key: string): Promise<void> {
@@ -303,7 +284,10 @@ export class DemoUploader {
       (s) => s.size,
       () => null,
     );
-    log.debug({ key, bytes }, "Demo upload starting");
+    log.info(
+      { key, file: path.basename(filePath), bytes },
+      "Demo upload starting",
+    );
     const body = fs.createReadStream(filePath);
     // Read errors surface through upload.done(); a bare 'error' on the
     // stream (e.g. the upload aborts before consuming it) must not

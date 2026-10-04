@@ -19,6 +19,22 @@ import { relayLog } from "./logger";
 
 const missionCyclingReason =
   "Server is cycling missions.  Please try to connect in a moment.";
+const singleAdminPolicies = [
+  { tournament: true, minPlayerCount: 0, adminVotes: 1 },
+  { tournament: false, minPlayerCount: 0, adminVotes: 1 },
+];
+
+/** Exercise retention/status without file I/O in fake-timer tests. */
+function policyCoordinator(): DemoCoordinator {
+  return {
+    enabled: true,
+    createRecorder: () => null,
+    finalize: vi.fn(),
+    observeMission: vi.fn(),
+    updateMission: vi.fn(),
+    takeRestoredPolicy: () => undefined,
+  } as unknown as DemoCoordinator;
+}
 
 class FakeGameConnection extends EventEmitter {
   address: string;
@@ -115,6 +131,954 @@ function createManager(extra: Partial<WatchSessionManagerOptions> = {}) {
   });
   return { manager, connections };
 }
+
+describe("watch mission controls", () => {
+  const address = "1.2.3.4:28000";
+  const twoAdminPolicies = [
+    { tournament: true, minPlayerCount: 0, adminVotes: 2 },
+    { tournament: false, minPlayerCount: 0, adminVotes: 2 },
+  ];
+  let manager: WatchSessionManager;
+  let connections: FakeGameConnection[];
+  let session: any;
+  let viewer: FakeWebSocket;
+  let saved: Record<string, unknown>;
+
+  const remote = (funcName: string, ...args: string[]): ParsedData => ({
+    type: "RemoteCommandEvent",
+    funcName,
+    args,
+  });
+  const join = (id: number, admin = "0", superAdmin = "0", guid = "") =>
+    remote(
+      "ServerMessage",
+      "MsgClientJoin",
+      "",
+      "Same name",
+      String(id),
+      "-1",
+      "0",
+      admin,
+      superAdmin,
+      "0",
+      guid,
+    );
+  const chat = (text: string, id = 7, template = "\x05%1: %2") =>
+    remote(
+      "ChatMessage",
+      String(id),
+      "",
+      "1",
+      template,
+      "Same name",
+      `@MapGenius ${text}`,
+    );
+  function events(...data: ParsedData[]) {
+    session.parserKit.packetParser.parsePacket = () => ({
+      gameState: {},
+      ghosts: [],
+      events: data.map((parsedData) => ({ parsedData })),
+    });
+    connections.at(-1)!.emit("packet", new Uint8Array([1, 2, 3]));
+  }
+  function start(options: Partial<WatchSessionManagerOptions> = {}) {
+    ({ manager, connections } = createManager({
+      adminVotePolicies: singleAdminPolicies,
+      onSessionsChanged: (_addresses, controls) => {
+        saved = controls;
+      },
+      ...options,
+    }));
+    viewer = new FakeWebSocket();
+    manager.watch(viewer as unknown as WebSocket, address);
+    session = manager.getSession(address);
+    connections[0].selfClientId = 99;
+    connections[0].setStatus("connected");
+    events(remote("MissionStartPhase1", "1", "Katabatic"), join(7, "1"));
+    connections[0].commands.length = 0;
+  }
+  const sentReplies = () =>
+    connections
+      .at(-1)!
+      .commands.filter((command) => command.command === "messageSent")
+      .map((command) => command.args[0]);
+  const replies = () => {
+    if (session.controlReplyTimer) vi.advanceTimersByTime(3_000);
+    return sentReplies();
+  };
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    start();
+  });
+  afterEach(() => {
+    manager.shutdown();
+    vi.restoreAllMocks();
+    vi.useRealTimers();
+  });
+
+  it("rejects ordinary players, spoofed names, team chat and the relay's own browser chat", () => {
+    events(
+      join(8),
+      join(99, "1", "1"),
+      chat("-rec -watch", 8),
+      chat("-watch", 99),
+      chat("-watch", 7, "\x04%1: %2"),
+    );
+    expect(saved).toEqual({});
+    expect(session.watcherCount).toBe(1);
+    expect(replies()).toHaveLength(1);
+    expect(replies()[0]).toContain("Only server admins");
+  });
+
+  it("logs every command with its authenticated actor, vote outcome and policy context", () => {
+    manager.shutdown();
+    start({ adminVotePolicies: twoAdminPolicies });
+    const info = vi.spyOn(relayLog, "info").mockImplementation(() => {});
+    events(
+      join(7, "1", "0", "123"),
+      chat("-rec"),
+      chat("-rec"),
+      chat("+rec"),
+      chat("status"),
+      chat("typo"),
+      join(8),
+      chat("-watch", 8),
+    );
+    const processed = info.mock.calls
+      .filter(([, message]) => message === "Mission control command processed")
+      .map(([data]) => data);
+    expect(processed).toEqual([
+      expect.objectContaining({
+        clientId: 7,
+        playerName: "Same name",
+        guid: "123",
+        mission: ["1", "Katabatic"],
+        command: "@MapGenius -rec",
+        results: { recording: "vote-added" },
+        votes: { recording: 1, watching: 0 },
+        votesRequired: 2,
+        playerCount: 1,
+      }),
+      expect.objectContaining({ results: { recording: "unchanged" } }),
+      expect.objectContaining({
+        results: { recording: "vote-withdrawn" },
+        votes: { recording: 0, watching: 0 },
+      }),
+      expect.objectContaining({ outcome: "status" }),
+    ]);
+    expect(info).toHaveBeenCalledWith(
+      expect.objectContaining({
+        outcome: "rejected-invalid-command",
+        clientId: 7,
+      }),
+      "Mission control command rejected",
+    );
+    expect(info).toHaveBeenCalledWith(
+      expect.objectContaining({ outcome: "rejected-not-admin", clientId: 8 }),
+      "Mission control command rejected",
+    );
+    expect(
+      info.mock.calls.filter(
+        ([, message]) => message === "Mission control command received",
+      ),
+    ).toHaveLength(6);
+    events(
+      chat("-rec"),
+      join(8, "1"),
+      chat("-rec", 8),
+      remote("MissionEnd", "1"),
+      chat("+rec"),
+    );
+    expect(info).toHaveBeenCalledWith(
+      expect.objectContaining({
+        results: { recording: "applied" },
+        recording: false,
+      }),
+      "Mission control command processed",
+    );
+    expect(info).toHaveBeenCalledWith(
+      expect.objectContaining({
+        decisionReason: "match-end",
+        recordingDecision: false,
+      }),
+      "Mission recording decision finalized",
+    );
+    expect(info).toHaveBeenCalledWith(
+      expect.objectContaining({
+        results: { recording: "ignored-final-decision" },
+      }),
+      "Mission control command processed",
+    );
+    vi.advanceTimersByTime(3_000);
+    expect(info).toHaveBeenCalledWith(
+      expect.objectContaining({
+        reply: expect.stringContaining("Settings reset next map."),
+      }),
+      "Mission control reply sent",
+    );
+  });
+
+  it("logs ignored votes when no policy matches", () => {
+    manager.shutdown();
+    start({ adminVotePolicies: [] });
+    const info = vi.spyOn(relayLog, "info").mockImplementation(() => {});
+    events(chat("-rec -watch"));
+    expect(info).toHaveBeenCalledWith(
+      expect.objectContaining({
+        votesRequired: null,
+        results: {
+          recording: "ignored-policy-disabled",
+          watching: "ignored-policy-disabled",
+        },
+      }),
+      "Mission control command processed",
+    );
+  });
+
+  it("logs restored controls and their retention on a same-mission reconnect", () => {
+    manager.shutdown();
+    const info = vi.spyOn(relayLog, "info").mockImplementation(() => {});
+    start({
+      initialMissionControls: {
+        [address]: {
+          mission: ["1", "Katabatic"],
+          recording: false,
+          watching: false,
+        },
+      },
+    });
+    expect(info).toHaveBeenCalledWith(
+      expect.objectContaining({
+        address,
+        source: "watch-state",
+        recording: false,
+        watching: false,
+      }),
+      "Saved mission controls restored",
+    );
+    expect(info).toHaveBeenCalledWith(
+      expect.objectContaining({
+        address,
+        mission: ["1", "Katabatic"],
+        recording: false,
+        watching: false,
+      }),
+      "Mission controls retained on reconnect",
+    );
+  });
+
+  it("preserves mission metadata and match starts following Phase1 in the same packet", () => {
+    session.reconnect("Test interruption");
+    connections.at(-1)!.setStatus("connected");
+    events(
+      remote("MissionStartPhase1", "1", "Katabatic"),
+      remote("ServerMessage", "MsgMissionStart", "Match started"),
+      remote(
+        "ServerMessage",
+        "MsgMissionDropInfo",
+        "",
+        "Katabatic",
+        "CTF",
+        "Server",
+      ),
+    );
+    expect(session.watchState.matchStarted).toBe(true);
+    expect(session.watchState.missionType).toBe("CTF");
+    expect(session.watchState.serverName).toBe("Server");
+    expect(session.rotating).toBe(false);
+  });
+
+  it("authorizes each message against the privileges at that point in the packet", () => {
+    events(
+      join(8),
+      chat("-rec", 8),
+      remote("ServerMessage", "MsgAdminPlayer", "", "8"),
+      chat("-rec", 8),
+      remote(
+        "ServerMessage",
+        "MsgStripAdminPlayer",
+        "",
+        "Admin",
+        "Target",
+        "8",
+      ),
+      chat("-watch", 8),
+    );
+    expect(saved[address]).toMatchObject({ recording: false, watching: true });
+    expect(
+      replies().filter((text) => text.includes("Only server admins")),
+    ).toHaveLength(2);
+    expect(
+      session.watchState
+        .getHudState()
+        .playerRoster.find((entry: any) => entry.clientId === 7),
+    ).toMatchObject({ isAdmin: true });
+  });
+
+  it("accepts super-admin privileges independently of the admin flag", () => {
+    events(join(8, "0", "1"), chat("-watch", 8));
+    expect(saved[address]).toMatchObject({ recording: true, watching: false });
+  });
+
+  it("ends all viewers immediately, rejects new viewers, and keeps recording independently", () => {
+    const second = new FakeWebSocket();
+    manager.watch(second as unknown as WebSocket, address);
+    viewer.sent.length = second.sent.length = 0;
+    events(chat("-watch"));
+    expect(session.watcherCount).toBe(0);
+    for (const ws of [viewer, second]) {
+      expect(ws.jsonMessages().at(-1)).toMatchObject({
+        type: "sessionStatus",
+        status: "ended",
+        endReason: "watchingDisabled",
+        chatEnabled: false,
+        message:
+          "Server admins have disabled watching for this mission. You can join again when they enable watching or the next mission begins.",
+      });
+      expect(ws.binaryFrames()).toHaveLength(0);
+    }
+    const rejected = new FakeWebSocket();
+    manager.watch(rejected as unknown as WebSocket, address);
+    expect(rejected.jsonMessages().at(-1)).toMatchObject({
+      status: "ended",
+      endReason: "watchingDisabled",
+      chatEnabled: false,
+    });
+    expect(rejected.binaryFrames()).toHaveLength(0);
+    expect(saved[address]).toMatchObject({ recording: true, watching: false });
+    expect(replies().at(-1)).toContain("Watching is disabled.");
+    events(chat("+watch"));
+    for (const ws of [viewer, second, rejected]) {
+      expect(ws.jsonMessages().at(-1)).toMatchObject({ status: "ended" });
+      expect(ws.binaryFrames()).toHaveLength(0);
+    }
+    manager.watch(rejected as unknown as WebSocket, address);
+    expect(session.watcherCount).toBe(1);
+    expect(rejected.jsonMessages().at(-1)).toMatchObject({ status: "live" });
+  });
+
+  it("reports the viewer count and replies even when browser chat is disabled", () => {
+    manager.shutdown();
+    start({ chatEnabled: false });
+    events(chat("status"));
+    expect(replies()).toEqual([
+      "Recording is disabled. Watching is enabled (1 spectator). Settings reset next map.",
+    ]);
+    expect(saved).toEqual({});
+  });
+
+  it.each([false, true])(
+    "ends delayed viewers immediately without delivering the queued tail (buffer ready: %s)",
+    (ready) => {
+      manager.shutdown();
+      start({ tourneyDelayMs: 60_000 });
+      session.setTournamentMode(true);
+      if (ready) vi.advanceTimersByTime(60_000);
+      expect(viewer.jsonMessages().at(-1)).toMatchObject({
+        status: ready ? "live" : "syncing",
+      });
+      viewer.sent.length = 0;
+      events(chat("-watch"));
+      const rejection = viewer.jsonMessages().at(-1);
+      expect(rejection).toMatchObject({
+        status: "ended",
+        endReason: "watchingDisabled",
+      });
+      events();
+      vi.advanceTimersByTime(120_000);
+      expect(viewer.jsonMessages().at(-1)).toEqual(rejection);
+      expect(viewer.binaryFrames()).toHaveLength(0);
+      expect(session.watcherCount).toBe(0);
+    },
+  );
+
+  it("does not apply part of a command with an invalid modifier", () => {
+    events(chat("-watch -rec typo"));
+    expect(saved).toEqual({});
+    expect(session.watcherCount).toBe(1);
+    expect(replies()[0]).toContain("Use @MapGenius");
+  });
+
+  it("preserves restrictions across reconnect, idle grace and session replacement", () => {
+    events(chat("-rec -watch"));
+    manager.unpin(address);
+    session.ensureIdleGrace();
+    vi.advanceTimersByTime(10 * 60_000);
+    expect(manager.has(address)).toBe(true);
+    session.reconnect("Test reconnect");
+    connections.at(-1)!.setStatus("connected");
+    events(remote("MissionStartPhase1", "1", "Katabatic"));
+    expect(saved[address]).toMatchObject({ recording: false, watching: false });
+    session.destroy();
+    const rejected = new FakeWebSocket();
+    manager.watch(rejected as unknown as WebSocket, address);
+    expect(rejected.jsonMessages().at(-1)).toMatchObject({ status: "ended" });
+    expect(saved[address]).toMatchObject({ recording: false, watching: false });
+  });
+
+  it("restores restrictions before the first post-restart attachment and recorder creation", () => {
+    events(chat("-rec -watch"));
+    const initialMissionControls = structuredClone(saved);
+    manager.shutdown();
+    start({ initialMissionControls });
+    expect(viewer.binaryFrames()).toHaveLength(0);
+    expect(viewer.jsonMessages()[0]).toMatchObject({ status: "ended" });
+    expect(saved[address]).toMatchObject({ recording: false, watching: false });
+    expect(session.recorder).toBeNull();
+  });
+
+  it("resets for a new mission sequence, including a restart of the same map", () => {
+    events(chat("-rec -watch"));
+    session.reconnect("Mission changing");
+    connections.at(-1)!.setStatus("connected");
+    events(remote("MissionStartPhase1", "2", "Katabatic"));
+    expect(saved).toEqual({});
+    const next = new FakeWebSocket();
+    manager.watch(next as unknown as WebSocket, address);
+    expect(next.binaryFrames().length).toBeGreaterThan(0);
+  });
+
+  it("cannot resume a delayed private mission after restrictions reset", () => {
+    manager.shutdown();
+    start({ tourneyDelayMs: 60_000 });
+    session.setTournamentMode(true);
+    const oldChannel = session.getChannelId(viewer);
+    events(chat("-watch"));
+    session.reconnect("Mission changing");
+    connections.at(-1)!.setStatus("connected");
+    events(remote("MissionStartPhase1", "2", "Katabatic"));
+    session.setTournamentMode(true);
+    const next = new FakeWebSocket();
+    manager.watch(next as unknown as WebSocket, address, oldChannel);
+    expect(session.channels.get(next)).toMatchObject({ firstEpoch: 2 });
+    vi.advanceTimersByTime(60_000);
+    expect(viewer.binaryFrames()).toHaveLength(0);
+  });
+
+  it("keeps controls scoped to their server", () => {
+    events(chat("-watch"));
+    const other = new FakeWebSocket();
+    manager.watch(other as unknown as WebSocket, "2.3.4.5:28000");
+    expect(manager.getSession("2.3.4.5:28000")?.watcherCount).toBe(1);
+    expect(saved["2.3.4.5:28000"]).toBeUndefined();
+  });
+
+  it("requires distinct admins, counts settings independently and reports progress", () => {
+    manager.shutdown();
+    start({ adminVotePolicies: twoAdminPolicies });
+    events(chat("-rec -watch"), chat("-recording -spectate"), chat("status"));
+    expect(saved[address]).toMatchObject({ recording: true, watching: true });
+    expect(session.watcherCount).toBe(1);
+    expect(replies().at(-1)).toContain("Votes: -rec 1/2, -watch 1/2.");
+    events(join(8, "1"), chat("-rec", 8));
+    expect(saved[address]).toMatchObject({ recording: false, watching: true });
+    expect(replies().at(-1)).toContain("Votes: -watch 1/2.");
+    events(chat("+rec"), chat("+rec", 8));
+    expect(saved[address]).toMatchObject({ recording: true, watching: true });
+    events(chat("-watch", 8));
+    expect(session.watcherCount).toBe(0);
+    expect(saved[address]).toMatchObject({ recording: true, watching: false });
+    events(chat("+watch"));
+    expect(saved[address]).toMatchObject({ watching: false });
+    events(chat("+watch", 8));
+    expect(saved[address]).toBeUndefined();
+  });
+
+  it("processes spam and conflicting commands immediately, with bounded replies showing the final decision", () => {
+    manager.shutdown();
+    const coordinator = policyCoordinator();
+    start({
+      adminVotePolicies: twoAdminPolicies,
+      demoCoordinator: coordinator,
+    });
+    events(join(8, "1"), join(9, "1"), chat("-rec"), chat("-rec", 8));
+    expect(session.recording).toBe(false);
+    expect(coordinator.updateMission).toHaveBeenCalledTimes(1);
+    events(
+      ...Array.from({ length: 500 }, () =>
+        chat("+rec +rec +recording status", 9),
+      ),
+    );
+    expect(session.recording).toBe(false);
+    expect(session.controls.voteCount("recording")).toBe(1);
+    expect(coordinator.updateMission).toHaveBeenCalledTimes(1);
+    expect(sentReplies()).toHaveLength(1);
+    vi.advanceTimersByTime(3_000);
+    expect(sentReplies()).toHaveLength(2);
+    expect(sentReplies().at(-1)).toContain("Recording is disabled.");
+    expect(sentReplies().at(-1)).toContain("Votes: +rec 1/2");
+    events(chat("+rec", 7));
+    expect(session.recording).toBe(true);
+    events(chat("+rec -rec +rec -watch +watch", 7), chat("-rec typo", 8));
+    expect(session.controls.snapshot()).toMatchObject({
+      recording: true,
+      watching: true,
+    });
+    expect(session.controls.snapshot().votes).toBeUndefined();
+    expect(coordinator.updateMission).toHaveBeenCalledTimes(2);
+    events(chat("status"));
+    vi.advanceTimersByTime(3_000);
+    expect(sentReplies()).toHaveLength(3);
+    expect(sentReplies().at(-1)).toContain("Recording is enabled.");
+    expect(sentReplies().at(-1)).not.toContain("Votes:");
+  });
+
+  it("keeps recording and watcher side effects in order during many changes in one packet", () => {
+    manager.shutdown();
+    const coordinator = policyCoordinator();
+    start({
+      adminVotePolicies: twoAdminPolicies,
+      demoCoordinator: coordinator,
+    });
+    const commands: ParsedData[] = [join(8, "1"), join(9, "1")];
+    for (let i = 0; i < 50; i++) {
+      commands.push(
+        chat("-rec -watch", 7),
+        chat("-rec -watch", 8),
+        chat("+rec +watch", 9),
+        chat("+rec +watch", 7),
+      );
+    }
+    commands.push(
+      chat("-rec", 8),
+      chat("-rec", 9),
+      remote("MissionEnd"),
+      chat("+rec -watch", 7),
+      chat("+rec -watch", 8),
+    );
+    events(...commands);
+    expect(session.controls.snapshot()).toMatchObject({
+      recording: false,
+      recordingDecision: false,
+      watching: false,
+    });
+    expect(session.controls.snapshot().votes).toBeUndefined();
+    expect(session.watcherCount).toBe(0);
+    expect(
+      viewer
+        .jsonMessages()
+        .filter((m) => m.type === "sessionStatus" && m.status === "ended"),
+    ).toHaveLength(1);
+    expect(connections).toHaveLength(1);
+    expect(sentReplies()).toHaveLength(1);
+    vi.advanceTimersByTime(3_000);
+    expect(sentReplies()).toHaveLength(2);
+    expect(sentReplies().at(-1)).toContain("Recording is disabled.");
+    expect(sentReplies().at(-1)).toContain("Watching is disabled.");
+    expect(coordinator.updateMission).toHaveBeenLastCalledWith(
+      address,
+      expect.objectContaining({ recordingDecision: false, watching: false }),
+    );
+  });
+
+  it("renders delayed replies using current eligibility and match-end state", () => {
+    manager.shutdown();
+    start({
+      demoCoordinator: policyCoordinator(),
+      adminVotePolicies: twoAdminPolicies,
+    });
+    events(
+      join(7, "1", "0", "123"),
+      chat("status"),
+      chat("-rec"),
+      remote("ServerMessage", "MsgClientDrop", "", "Same name", "7"),
+    );
+    vi.advanceTimersByTime(3_000);
+    expect(sentReplies().at(-1)).not.toContain("Votes:");
+    events(join(7, "1"), chat("-rec"), remote("MissionEnd"));
+    vi.advanceTimersByTime(3_000);
+    expect(sentReplies().at(-1)).toContain("Recording is enabled.");
+    expect(sentReplies().at(-1)).not.toContain("Votes:");
+  });
+
+  it("reports the current threshold if more players join while a reply is waiting", () => {
+    manager.shutdown();
+    start({
+      adminVotePolicies: [
+        { tournament: false, minPlayerCount: 1, adminVotes: 2 },
+        { tournament: false, minPlayerCount: 3, adminVotes: 3 },
+      ],
+    });
+    events(
+      remote(
+        "ServerMessage",
+        "MsgVoteItem",
+        "",
+        "TourneyQuery",
+        "VoteTournamentMode",
+      ),
+      chat("status"),
+      chat("-rec"),
+      join(8, "1"),
+      join(9, "1"),
+    );
+    vi.advanceTimersByTime(3_000);
+    expect(sentReplies().at(-1)).toContain("-rec 1/3");
+    events(chat("-rec", 8));
+    expect(session.controls.recording).toBe(true);
+    events(chat("-rec", 9));
+    expect(session.controls.recording).toBe(false);
+  });
+
+  it.each(["reconnect", "mission", "destroy"])(
+    "cancels stale replies on %s",
+    (boundary) => {
+      events(chat("status"), chat("typo"));
+      expect(sentReplies()).toHaveLength(1);
+      if (boundary === "reconnect") session.reconnect("Test reconnect");
+      else if (boundary === "mission")
+        session.observeControlledMission("2", "Raindance");
+      else session.destroy();
+      vi.advanceTimersByTime(3_000);
+      expect(
+        connections
+          .flatMap((conn) => conn.commands)
+          .filter((cmd) => cmd.command === "messageSent"),
+      ).toHaveLength(1);
+    },
+  );
+
+  it("selects the highest player threshold, counting observers but excluding MapGenius", () => {
+    manager.shutdown();
+    start({
+      adminVotePolicies: [
+        { tournament: true, minPlayerCount: 20, adminVotes: 2 },
+        { tournament: true, minPlayerCount: 1, adminVotes: 1 },
+        { tournament: false, minPlayerCount: 1, adminVotes: 1 },
+      ],
+    });
+    events(
+      remote("ServerMessage", "MsgVoteItem", "", "TourneyQuery", "VoteFFAMode"),
+      join(99, "1"),
+      ...Array.from({ length: 18 }, (_, i) => join(100 + i)),
+      chat("-rec"),
+    );
+    // 19 players, all observers, plus the relay: one admin still suffices.
+    expect(session.controls.recording).toBe(false);
+    events(chat("+rec"), join(118), chat("-rec"));
+    expect(session.controls.recording).toBe(true);
+    expect(replies().at(-1)).toContain("-rec 1/2");
+    events(
+      remote("ServerMessage", "MsgAdminPlayer", "", "100"),
+      chat("-rec", 100),
+    );
+    expect(session.controls.recording).toBe(false);
+    expect(session.streamDelayMs).toBe(0);
+  });
+
+  it("reselects when players leave, but status and departures alone never enact a vote", () => {
+    manager.shutdown();
+    start({
+      adminVotePolicies: [
+        { tournament: true, minPlayerCount: 2, adminVotes: 2 },
+        { tournament: true, minPlayerCount: 1, adminVotes: 1 },
+      ],
+    });
+    events(
+      remote("ServerMessage", "MsgVoteItem", "", "TourneyQuery", "VoteFFAMode"),
+      join(8),
+      chat("-rec"),
+    );
+    expect(replies().at(-1)).toContain("-rec 1/2");
+    events(
+      remote("ServerMessage", "MsgClientDrop", "", "Same name", "8"),
+      chat("status"),
+    );
+    expect(session.controls.recording).toBe(true);
+    expect(replies().at(-1)).toContain("-rec 1/1");
+    events(chat("-rec"));
+    expect(session.controls.recording).toBe(false);
+  });
+
+  it("detects mode without stream delay and reselects on a new server mode report", () => {
+    manager.shutdown();
+    start({
+      adminVotePolicies: [
+        { tournament: true, minPlayerCount: 1, adminVotes: 2 },
+        { tournament: false, minPlayerCount: 1, adminVotes: 1 },
+      ],
+    });
+    session.reconnect("Test reconnect");
+    connections.at(-1)!.setStatus("connected");
+    expect(connections.at(-1)!.commands).toContainEqual({
+      command: "GetVoteMenu",
+      args: ["TourneyQuery"],
+    });
+    events(join(7, "1"), chat("-rec"));
+    expect(session.controls.recording).toBe(true);
+    expect(replies().at(-1)).toContain("-rec 1/2");
+    events(
+      remote(
+        "ServerMessage",
+        "MsgVoteItem",
+        "",
+        "TourneyQuery",
+        "VoteTournamentMode",
+      ),
+      chat("-rec"),
+    );
+    expect(session.controls.recording).toBe(false);
+    events(
+      remote("ServerMessage", "MsgVoteItem", "", "TourneyQuery", "VoteFFAMode"),
+      chat("+rec"),
+    );
+    expect(session.controls.recording).toBe(false);
+    expect(replies().at(-1)).toContain("+rec 1/2");
+    expect(session.streamDelayMs).toBe(0);
+  });
+
+  it("resolves the post-drop mode fallback without requiring stream delay", () => {
+    manager.shutdown();
+    start({
+      adminVotePolicies: [
+        { tournament: false, minPlayerCount: 1, adminVotes: 1 },
+      ],
+    });
+    events(chat("-rec"));
+    expect(session.controls.recording).toBe(true);
+    expect(replies().at(-1)).toContain("Admin controls: disabled");
+    events(remote("ServerMessage", "MsgClientReady", "", "CTFGame"));
+    vi.advanceTimersByTime(4_000);
+    events(chat("-rec"));
+    expect(session.controls.recording).toBe(false);
+  });
+
+  it("keeps delay exemptions separate from the actual tournament mode for voting", () => {
+    manager.shutdown();
+    start({
+      tourneyDelayMs: 60_000,
+      tourneySkipTypes: ["CTF"],
+      adminVotePolicies: [
+        { tournament: true, minPlayerCount: 1, adminVotes: 2 },
+        { tournament: false, minPlayerCount: 1, adminVotes: 1 },
+      ],
+    });
+    session.watchState.missionTypeDisplayName = "CTF";
+    events();
+    expect(session.streamDelayMs).toBe(0);
+    events(chat("-rec"));
+    expect(session.controls.recording).toBe(true);
+    expect(replies().at(-1)).toContain("-rec 1/2");
+    events(
+      remote("ServerMessage", "MsgVoteItem", "", "TourneyQuery", "VoteFFAMode"),
+      chat("-rec"),
+    );
+    expect(session.controls.recording).toBe(true);
+    expect(replies().at(-1)).toContain("-rec 1/2");
+    expect(session.streamDelayMs).toBe(0);
+  });
+
+  it.each([
+    { adminVotePolicies: undefined },
+    { adminVotePolicies: [] },
+    {
+      adminVotePolicies: [
+        { tournament: true, minPlayerCount: 1, adminVotes: 1 },
+      ],
+    },
+    {
+      adminVotePolicies: [
+        { tournament: false, minPlayerCount: 20, adminVotes: 2 },
+      ],
+    },
+  ])("disables changes when no policy matches: %j", ({ adminVotePolicies }) => {
+    manager.shutdown();
+    start({ adminVotePolicies });
+    events(
+      remote(
+        "ServerMessage",
+        "MsgVoteItem",
+        "",
+        "TourneyQuery",
+        "VoteTournamentMode",
+      ),
+      chat("-rec -watch"),
+      chat("status"),
+    );
+    expect(session.controls.snapshot()).toMatchObject({
+      recording: true,
+      watching: true,
+    });
+    expect(session.controls.snapshot().votes).toBeUndefined();
+    expect(session.watcherCount).toBe(1);
+    expect(replies()).toHaveLength(2);
+    expect(
+      replies().every((reply) =>
+        reply.includes("Admin controls: disabled by relay policy."),
+      ),
+    ).toBe(true);
+    expect(replies().at(-1)).toContain("Watching is enabled (1 spectator).");
+  });
+
+  it("deduplicates account GUIDs across simultaneous connections, reconnects and renamed players", () => {
+    manager.shutdown();
+    start({ adminVotePolicies: twoAdminPolicies });
+    events(
+      join(7, "1", "0", "00123"),
+      join(8, "1", "0", "123"),
+      chat("-rec"),
+      chat("-rec", 8),
+    );
+    expect(session.controls.recording).toBe(true);
+    expect(replies().at(-1)).toContain("-rec 1/2");
+    session.reconnect("Test reconnect");
+    connections.at(-1)!.setStatus("connected");
+    events(
+      remote("MissionStartPhase1", "1", "Katabatic"),
+      join(9, "1", "0", "123"),
+      chat("-rec", 9),
+    );
+    expect(session.controls.recording).toBe(true);
+    events(
+      join(10, "1", "0", "456"),
+      remote(
+        "ServerMessage",
+        "MsgClientNameChanged",
+        "",
+        "Same name",
+        "Renamed",
+        "10",
+      ),
+      chat("-rec", 10),
+    );
+    expect(session.controls.recording).toBe(false);
+  });
+
+  it.each(["drop", "demote", "reuse"])(
+    "excludes a previous admin vote after %s",
+    (change) => {
+      manager.shutdown();
+      start({ adminVotePolicies: twoAdminPolicies });
+      events(chat("-rec"));
+      if (change === "demote")
+        events(
+          remote(
+            "ServerMessage",
+            "MsgStripAdminPlayer",
+            "",
+            "Actor",
+            "Target",
+            "7",
+          ),
+        );
+      else {
+        events(remote("ServerMessage", "MsgClientDrop", "", "Same name", "7"));
+        if (change === "reuse") events(join(7, "1"));
+      }
+      events(join(8, "1"), chat("-rec", 8));
+      expect(session.controls.recording).toBe(true);
+      expect(replies().at(-1)).toContain("-rec 1/2");
+    },
+  );
+
+  it("restores pending account votes after restart without treating status as a vote", () => {
+    manager.shutdown();
+    start({ adminVotePolicies: twoAdminPolicies });
+    events(join(7, "1", "0", "123"), chat("-rec"));
+    const persisted = JSON.parse(JSON.stringify(saved));
+    manager.shutdown();
+    start({
+      adminVotePolicies: twoAdminPolicies,
+      initialMissionControls: persisted,
+    });
+    events(
+      join(7, "1", "0", "123"),
+      join(8, "1", "0", "456"),
+      chat("status", 8),
+    );
+    expect(session.controls.recording).toBe(true);
+    expect(replies().at(-1)).toContain("-rec 1/2");
+    events(chat("-rec", 8));
+    expect(session.controls.recording).toBe(false);
+  });
+
+  it("does not let later votes reverse a recording decision settled by the pending timeout", () => {
+    manager.shutdown();
+    const coordinator = policyCoordinator();
+    start({ demoCoordinator: coordinator });
+    events(chat("-rec"));
+    vi.spyOn(coordinator, "takeRestoredPolicy").mockReturnValueOnce({
+      recording: false,
+      recordingDecision: false,
+    });
+    events(chat("+rec"));
+    expect(session.controls.recordingDecision).toBe(false);
+    expect(session.recording).toBe(false);
+    expect(replies().at(-1)).toContain("Recording is disabled.");
+  });
+
+  it("keeps REC on until votes pass, preserves it across reconnects, and locks at match end", () => {
+    manager.shutdown();
+    start({
+      adminVotePolicies: twoAdminPolicies,
+      demoCoordinator: policyCoordinator(),
+    });
+    const status = () =>
+      viewer
+        .jsonMessages()
+        .filter((m) => m.type === "sessionStatus")
+        .at(-1);
+    expect(status()).toMatchObject({ recording: true });
+    events(chat("-rec"));
+    expect(status()).toMatchObject({ recording: true });
+    events(join(8, "1"), chat("-rec", 8));
+    expect(status()).toMatchObject({ recording: false });
+    events(chat("+rec"), chat("+rec", 8));
+    expect(status()).toMatchObject({ recording: true });
+    session.reconnect("Test reconnect");
+    expect(status()).toMatchObject({ recording: true });
+    connections.at(-1)!.setStatus("connected");
+    events(
+      remote("MissionStartPhase1", "1", "Katabatic"),
+      join(7, "1"),
+      join(8, "1"),
+      remote("MissionEnd"),
+      chat("-rec"),
+      chat("-rec", 8),
+    );
+    expect(status()).toMatchObject({ recording: true });
+    expect(session.controls.recordingDecision).toBe(true);
+    expect(replies().at(-1)).toContain("Recording is enabled.");
+    expect(replies().at(-1)).not.toContain("Votes:");
+    expect(status()).not.toHaveProperty("recordingPolicy");
+  });
+
+  it("updates delayed REC immediately and keeps the previous mission's final policy during a map change", () => {
+    manager.shutdown();
+    start({ demoCoordinator: policyCoordinator(), tourneyDelayMs: 60_000 });
+    session.setTournamentMode(true);
+    vi.advanceTimersByTime(60_000);
+    // The synthetic packets don't carry a real handshake. Seed the parsed
+    // replica's map, as in the delayed-transition transport tests below.
+    session.replica.watchState.missionName = "Katabatic";
+    const status = () =>
+      viewer
+        .jsonMessages()
+        .filter((m) => m.type === "sessionStatus")
+        .at(-1);
+    expect(status()).toMatchObject({ recording: true });
+    events(chat("-rec"));
+    expect(status()).toMatchObject({ recording: false, mapName: "Katabatic" });
+    events(chat("+rec"));
+    expect(status()).toMatchObject({ recording: true });
+    events(chat("-rec"), remote("MissionEnd"));
+    expect(status()).toMatchObject({ recording: false });
+    session.reconnect("Mission changing");
+    connections.at(-1)!.setStatus("connected");
+    events(
+      remote("MissionStartPhase1", "2", "Raindance"),
+      join(7, "1"),
+      chat("-rec"),
+      chat("+rec"),
+    );
+    expect(session.recording).toBe(true);
+    expect(status()).toMatchObject({ recording: false, mapName: "Katabatic" });
+    vi.advanceTimersByTime(60_000);
+    expect(status()).toMatchObject({ recording: true });
+    expect(status()).not.toHaveProperty("recordingPolicy");
+  });
+});
 
 describe("watch observer recovery", () => {
   const address = "1.2.3.4:28000";
@@ -925,6 +1889,7 @@ describe("WatchSession delayed transitions", () => {
     session.replica.watchState.missionName = name;
     session.cachedPayload = null;
     session.recorder = { state: "recording", onPacket: () => false };
+    session.options.demoCoordinator = policyCoordinator();
     session.fanOutSessionStatus();
     vi.advanceTimersByTime(delayMs);
   }
@@ -987,7 +1952,7 @@ describe("WatchSession delayed transitions", () => {
     });
     expect(statuses(joiner).at(-1)).toMatchObject({
       streamDelayMs: 0,
-      recording: false,
+      recording: true,
     });
     expect(statuses(joiner).at(-1)!.channelId).not.toBe(oldChannel);
     joiner.sent = [];
@@ -1461,12 +2426,29 @@ describe("WatchSession delayed transitions", () => {
             args: ["1", "DelayedMap"],
           },
         },
+        {
+          parsedData: {
+            type: "RemoteCommandEvent",
+            funcName: "ServerMessage",
+            args: ["MsgMissionStart", "Match started"],
+          },
+        },
+        {
+          parsedData: {
+            type: "RemoteCommandEvent",
+            funcName: "ServerMessage",
+            args: ["MsgMissionDropInfo", "", "DelayedMap", "CTF", "Server"],
+          },
+        },
       ],
     };
     state.parserKit.packetParser.parsePacket = () => parsed;
     state.replica.kit.packetParser.parsePacket = () => parsed;
     connections[0].emit("packet", new Uint8Array([1, 2, 3]));
     vi.advanceTimersByTime(delayMs);
+    expect(state.replica.watchState.matchStarted).toBe(true);
+    expect(state.replica.watchState.missionType).toBe("CTF");
+    expect(state.replica.watchState.serverName).toBe("Server");
     const joiner = new FakeWebSocket();
     manager.watch(joiner as unknown as WebSocket, address);
     expect(catchup(joiner).missionName).toBe("DelayedMap");
@@ -1554,7 +2536,7 @@ describe("WatchSession demo recording", () => {
   const flushImmediate = () => new Promise((r) => setImmediate(r));
 
   async function createRecordingManager(
-    overrides: { minPlayers?: number } = {},
+    overrides: { minPlayers?: number; initialMissionControls?: unknown } = {},
   ) {
     const dir = await fsp.mkdtemp(path.join(os.tmpdir(), "watch-demo-"));
     const finalized: string[] = [];
@@ -1573,6 +2555,8 @@ describe("WatchSession demo recording", () => {
       gameBasePath: "/nonexistent",
       getCachedServer: () => undefined,
       demoCoordinator: coordinator,
+      adminVotePolicies: singleAdminPolicies,
+      initialMissionControls: overrides.initialMissionControls,
       createConnection: (address) => {
         const conn = new FakeGameConnection(address);
         connections.push(conn);
@@ -1603,7 +2587,206 @@ describe("WatchSession demo recording", () => {
     });
   }
 
-  it("starts recording at Phase1 and broadcasts the recording flag", async () => {
+  it("restores the previous mission's journal before settling stale watch state on a new map", async () => {
+    const address = "1.2.3.4:28000";
+    const { manager, connections, coordinator, finalized, dir } =
+      await createRecordingManager({
+        initialMissionControls: {
+          [address]: {
+            mission: ["1", "Katabatic"],
+            recording: true,
+            watching: false,
+          },
+        },
+      });
+    try {
+      const pending = path.join(dir, "pending", "previous-segment");
+      await fsp.mkdir(pending, { recursive: true });
+      await fsp.writeFile(
+        path.join(pending, "policy.json"),
+        JSON.stringify({
+          address,
+          mission: ["1", "Katabatic"],
+          keep: false,
+          complete: false,
+        }),
+      );
+      await fsp.writeFile(path.join(pending, "private.rec"), "private footage");
+      await coordinator.restorePending();
+      manager.warmStart(address);
+      connections[0].setStatus("connected");
+      firePhase1(getSession(manager), "Raindance");
+      await coordinator.sweepPending();
+      expect(finalized).toEqual([]);
+      expect(await fsp.stat(pending).catch(() => null)).toBeNull();
+      expect(getSession(manager).controls.snapshot()).toMatchObject({
+        mission: ["1", "Raindance"],
+        recording: true,
+        watching: true,
+      });
+    } finally {
+      manager.shutdown();
+      await coordinator.shutdown(5_000);
+      await fsp.rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    { keep: true, reconnect: false },
+    { keep: false, reconnect: false },
+    { keep: true, reconnect: true },
+    { keep: false, reconnect: true },
+  ])(
+    "holds the whole match until its final decision: %j",
+    async ({ keep, reconnect }) => {
+      const { manager, connections, coordinator, finalized, dir } =
+        await createRecordingManager();
+      manager.watch(
+        new FakeWebSocket() as unknown as WebSocket,
+        "1.2.3.4:28000",
+      );
+      const session = getSession(manager);
+      connections[0].setStatus("connected");
+      firePhase1(session, "Katabatic");
+      session.watchState.matchStarted = true;
+      const original = session.recorder;
+      const remote = (funcName: string, ...args: string[]) => ({
+        parsedData: { type: "RemoteCommandEvent", funcName, args },
+      });
+      const events = (...commands: ReturnType<typeof remote>[]) => {
+        session.parserKit.packetParser.parsePacket = () => ({
+          gameState: {},
+          ghosts: [],
+          events: commands,
+        });
+        connections.at(-1)!.emit("packet", new Uint8Array([1, 2, 3]));
+      };
+      const command = (text: string) =>
+        events(
+          remote(
+            "ServerMessage",
+            "MsgClientJoin",
+            "",
+            "Admin",
+            "7",
+            "-1",
+            "0",
+            "1",
+            "0",
+          ),
+          remote(
+            "ChatMessage",
+            "7",
+            "",
+            "1",
+            "\x05%1: %2",
+            "Admin",
+            `@MapGenius ${text}`,
+          ),
+        );
+      try {
+        command("-rec");
+        expect(original.state).toBe("recording");
+        expect(session.recorder).toBe(original);
+        expect(session.recording).toBe(false);
+        expect(connections).toHaveLength(1);
+        expect(session.watcherCount).toBe(1);
+        expect(finalized).toEqual([]);
+        expect(connections[0].commands.at(-1)?.args[0]).toContain(
+          "Recording is disabled.",
+        );
+        if (reconnect) {
+          session.reconnect("Test interruption");
+          connections[1].setStatus("connected");
+          firePhase1(session, "Katabatic");
+          session.watchState.matchStarted = true;
+          await vi.waitFor(() => expect(original.state).toBe("done"));
+          expect(finalized).toEqual([]);
+          expect(
+            (await fsp.readdir(dir)).filter((name) => name.endsWith(".rec")),
+          ).toEqual([]);
+        }
+        if (keep) command("+rec");
+        const current = session.recorder;
+        expect(current.state).toBe("recording");
+        expect(connections).toHaveLength(reconnect ? 2 : 1);
+        events(remote("MissionEnd"));
+        expect(session.controls.recordingDecision).toBe(keep);
+        // Changes during the debrief cannot reverse the already final decision.
+        command(keep ? "-rec" : "+rec");
+        expect(session.controls.recording).toBe(keep);
+        fireEndGhosting(session);
+        await vi.waitFor(() =>
+          expect(current.state).toBe(keep ? "done" : "aborted"),
+        );
+        const count = reconnect ? 2 : 1;
+        await vi.waitFor(() =>
+          expect(coordinator.getStats()).toMatchObject(
+            keep ? { kept: count } : { dropped: count },
+          ),
+        );
+        expect(finalized).toHaveLength(keep ? count : 0);
+        for (const file of finalized) {
+          const metadata = JSON.parse(
+            await fsp.readFile(`${file}.json`, "utf8"),
+          );
+          expect(metadata).toMatchObject({
+            address: "1.2.3.4:28000",
+            games: [{ mission: "Katabatic", missionSequence: 1 }],
+          });
+        }
+        expect(await fsp.readdir(path.dirname(original.partialPath!))).toEqual([
+          "policy.json",
+        ]);
+      } finally {
+        manager.shutdown();
+        await coordinator.shutdown(5000);
+        await fsp.rm(dir, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it("applies the old mission's discard choice before Phase1 resets defaults", async () => {
+    const { manager, connections, coordinator, finalized, dir } =
+      await createRecordingManager();
+    manager.watch(new FakeWebSocket() as unknown as WebSocket, "1.2.3.4:28000");
+    const session = getSession(manager);
+    connections[0].setStatus("connected");
+    firePhase1(session, "Katabatic");
+    session.watchState.matchStarted = true;
+    const original = session.recorder;
+    session.controls.recording = false;
+    coordinator.updateMission(session.key, session.controls.snapshot());
+    try {
+      // No MissionEnd or EndGhosting, including a restart of the same map.
+      session.parserKit.packetParser.parsePacket = () => ({
+        gameState: {},
+        ghosts: [],
+        events: [
+          {
+            parsedData: {
+              type: "RemoteCommandEvent",
+              funcName: "MissionStartPhase1",
+              args: ["2", "Katabatic"],
+            },
+          },
+        ],
+      });
+      connections[0].emit("packet", new Uint8Array([1, 2, 3]));
+      expect(session.controls.recording).toBe(true);
+      expect(session.controls.recordingDecision).toBeUndefined();
+      await vi.waitFor(() => expect(coordinator.getStats().dropped).toBe(1));
+      await vi.waitFor(() => expect(connections).toHaveLength(2));
+      expect(finalized).toEqual([]);
+      expect(original.state).toBe("aborted");
+    } finally {
+      manager.shutdown();
+      await coordinator.shutdown(5000);
+      await fsp.rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("reports the keep policy while buffering and after recording starts at Phase1", async () => {
     const { manager, connections } = await createRecordingManager();
     const ws = new FakeWebSocket();
     manager.watch(ws as unknown as WebSocket, "1.2.3.4:28000");
@@ -1612,7 +2795,7 @@ describe("WatchSession demo recording", () => {
 
     expect(session.recorder).not.toBeNull();
     expect(session.recorder.state).toBe("buffering");
-    expect(manager.getStatusSummary()[0].recording).toBe(false);
+    expect(manager.getStatusSummary()[0].recording).toBe(true);
 
     firePhase1(session, "Katabatic");
     expect(session.recorder.state).toBe("recording");
