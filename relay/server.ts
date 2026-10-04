@@ -18,6 +18,7 @@ import { WatchSessionManager, normalizeAddress } from "./watchSession.js";
 import { WatchRequest } from "./watchRequest.js";
 import {
   loadAdminVotePolicies,
+  loadAlwaysAdminPlayers,
   type MissionControlState,
 } from "./missionControls.js";
 import { DemoCoordinator } from "./demoCoordinator.js";
@@ -48,6 +49,9 @@ const serverPasswords = new ServerPasswords(process.env.T2_SERVER_PASSWORDS);
 const CHAT_ENABLED = loadChatEnabled(process.env.RELAY_CHAT_ENABLED);
 const ADMIN_VOTE_POLICIES = loadAdminVotePolicies(
   process.env.RELAY_ADMIN_VOTE_POLICIES,
+);
+const ALWAYS_ADMIN_PLAYERS = loadAlwaysAdminPlayers(
+  process.env.ALWAYS_ADMIN_PLAYERS,
 );
 const TRUST_FLY_PROXY = /^(1|true)$/i.test(
   process.env.RELAY_TRUST_FLY_PROXY?.trim() ?? "",
@@ -504,6 +508,7 @@ const savedWatchState = await fs
 const watchSessions = new WatchSessionManager({
   chatEnabled: CHAT_ENABLED,
   adminVotePolicies: ADMIN_VOTE_POLICIES,
+  alwaysAdminPlayers: ALWAYS_ADMIN_PLAYERS,
   gameBasePath: GAME_BASE_PATH,
   getCachedServer: findKnownServer,
   createConnection: createGameConnection,

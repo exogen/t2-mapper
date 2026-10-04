@@ -17,6 +17,8 @@ export interface ServerMessageRosterEntry {
   guid?: string;
   isAdmin?: boolean;
   isSuperAdmin?: boolean;
+  /** Explicit MsgClientJoin flag; absent if the server omitted it. */
+  isSmurf?: boolean;
   targetId?: number;
   teamId: number;
   score: number;
@@ -133,6 +135,7 @@ export function applyServerMessageState<Team extends ServerMessageTeamScore>(
       if (isNaN(clientId)) return NO_CHANGES;
       const rawName = resolve(args[2]);
       const targetId = parseInt(resolve(args[4] ?? ""), 10);
+      const smurf = resolve(args[8] ?? "");
       // message.cs handleClientJoin replaces an existing client entry,
       // clearing scores, team and identity left by a previous connection.
       playerRoster.set(clientId, {
@@ -141,6 +144,7 @@ export function applyServerMessageState<Team extends ServerMessageTeamScore>(
         guid: normalizePlayerGuid(resolve(args[9] ?? "")),
         ...(resolve(args[6] ?? "") === "1" && { isAdmin: true }),
         ...(resolve(args[7] ?? "") === "1" && { isSuperAdmin: true }),
+        ...((smurf === "0" || smurf === "1") && { isSmurf: smurf === "1" }),
         targetId: isNaN(targetId) ? undefined : targetId,
         teamId: 0,
         score: 0,

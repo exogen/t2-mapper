@@ -15,6 +15,7 @@ import { GameConnection } from "./gameConnection.js";
 import { getConnectionRetryPolicy } from "./connectionRetryPolicy.js";
 import {
   decodeGlobalChat,
+  isAlwaysAdminPlayer,
   MissionControls,
   parseMissionControlCommand,
   selectAdminVotesRequired,
@@ -33,6 +34,7 @@ import {
 } from "./shared.js";
 import { WatchStateAccumulator } from "./watchState.js";
 import { isServerMessageCommand } from "./serverMessageDecode.js";
+import type { ServerMessageRosterEntry } from "./serverMessageState.js";
 import { serializeCatchupPayload } from "./watchSerialize.js";
 import { buildCatchupPayload } from "./watchCatchup.js";
 import type {
@@ -120,6 +122,8 @@ export interface WatchSessionManagerOptions {
   chatEnabled?: boolean;
   /** Select by tournament mode and connected players excluding the relay. No match disables controls. */
   adminVotePolicies?: readonly AdminVotePolicy[];
+  /** Extra command voters: exact, tagless names of non-smurf players. */
+  alwaysAdminPlayers?: ReadonlySet<string>;
   gameBasePath: string;
   getCachedServer: (address: string) => ServerInfo | undefined;
   /** When present and enabled, sessions auto-record each mission to a .rec. */
@@ -1564,13 +1568,23 @@ export class WatchSession {
           this.onControlsChanged();
         }
       }
-      if (args[0] === "MsgStripAdminPlayer") {
+      if (
+        args[0] === "MsgStripAdminPlayer" ||
+        args[0] === "MsgClientNameChanged"
+      ) {
         const id = Number(args[4]);
         const player = this.watchState.getPlayerRoster().get(id);
         const voter = player?.guid ? `guid:${player.guid}` : `client:${id}`;
-        if (this.controls.forgetVoter(voter)) {
+        if (!this.isControlAdmin(player) && this.controls.forgetVoter(voter)) {
           relayLog.info(
-            { ...this.controlLogContext(), voter, reason: "admin-revoked" },
+            {
+              ...this.controlLogContext(),
+              voter,
+              reason:
+                args[0] === "MsgStripAdminPlayer"
+                  ? "admin-revoked"
+                  : "player-renamed",
+            },
             "Pending admin votes removed",
           );
           this.onControlsChanged();
@@ -1590,13 +1604,17 @@ export class WatchSession {
       guid: player?.guid ?? null,
       isAdmin: player?.isAdmin === true,
       isSuperAdmin: player?.isSuperAdmin === true,
+      isAlwaysAdmin: isAlwaysAdminPlayer(
+        player,
+        this.options.alwaysAdminPlayers,
+      ),
       command: chat.text,
     };
     relayLog.info(
       { ...this.controlLogContext(), ...actor },
       "Mission control command received",
     );
-    if (!player?.isAdmin && !player?.isSuperAdmin) {
+    if (!this.isControlAdmin(player)) {
       relayLog.info(
         {
           ...this.controlLogContext(),
@@ -1607,7 +1625,7 @@ export class WatchSession {
       );
       this.replyToControl(
         () =>
-          "Only server admins can change MapGenius settings or request status.",
+          "Only server admins or relay-authorized players can change MapGenius settings or request status.",
       );
       return;
     }
@@ -1762,10 +1780,7 @@ export class WatchSession {
   private retainCurrentAdminVotes(): boolean {
     const eligible = new Set<string>();
     for (const [id, entry] of this.watchState.getPlayerRoster()) {
-      if (
-        id !== this.watchState.selfClientId &&
-        (entry.isAdmin || entry.isSuperAdmin)
-      )
+      if (id !== this.watchState.selfClientId && this.isControlAdmin(entry))
         eligible.add(entry.guid ? `guid:${entry.guid}` : `client:${id}`);
     }
     const before = this.controls.snapshot().votes;
@@ -1780,6 +1795,17 @@ export class WatchSession {
         "Pending admin votes removed",
       );
     return changed;
+  }
+
+  private isControlAdmin(
+    player: ServerMessageRosterEntry | undefined,
+  ): player is ServerMessageRosterEntry {
+    return (
+      !!player &&
+      (player.isAdmin === true ||
+        player.isSuperAdmin === true ||
+        isAlwaysAdminPlayer(player, this.options.alwaysAdminPlayers))
+    );
   }
 
   /** Commands take effect immediately; only their chat replies are coalesced. */

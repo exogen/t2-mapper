@@ -53,6 +53,18 @@ function expectNoEffects(changes: ServerMessageChanges | null) {
 }
 
 describe("applyServerMessageState", () => {
+  it("uses the resolved join smurf flag, preserving it through renames and clearing it on an incomplete rejoin", () => {
+    const { state, message } = harness({ "@smurf": "1", "@real": "0" });
+    message("MsgClientJoin", "Alice", "7", "1", "0", "0", "0", "@smurf");
+    expect(state.playerRoster.get(7)?.isSmurf).toBe(true);
+    message("MsgClientNameChanged", "Alice", "Bob", "7");
+    expect(state.playerRoster.get(7)?.isSmurf).toBe(true);
+    message("MsgClientJoin", "Bob", "7", "1", "0", "0", "0", "@real");
+    expect(state.playerRoster.get(7)?.isSmurf).toBe(false);
+    message("MsgClientJoin", "Bob", "7");
+    expect(state.playerRoster.get(7)?.isSmurf).toBeUndefined();
+  });
+
   it("tracks join privileges, retains them through renames, and clears them on rejoin", () => {
     const { state, message } = harness();
     message("MsgClientJoin", "Alice", "7", "1", "0", "1", "1");
@@ -165,6 +177,7 @@ describe("applyServerMessageState", () => {
       name: "[TAG] Alice",
       rawName,
       guid: "12345678901234567890",
+      isSmurf: false,
       targetId: 31,
       teamId: 0,
       score: 0,

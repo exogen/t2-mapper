@@ -1,3 +1,40 @@
+import { taglessPlayerName } from "./shared.js";
+import type { ServerMessageRosterEntry } from "./serverMessageState.js";
+
+/** Exact base names; JSON preserves commas, spaces, and letter casing. */
+export function loadAlwaysAdminPlayers(
+  value: string | undefined,
+): ReadonlySet<string> {
+  if (!value?.trim()) return new Set();
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    throw new Error(
+      "ALWAYS_ADMIN_PLAYERS must be a JSON array of nonempty player names",
+    );
+  }
+  if (
+    !Array.isArray(parsed) ||
+    parsed.some((name) => typeof name !== "string" || !name.trim())
+  )
+    throw new Error(
+      "ALWAYS_ADMIN_PLAYERS must be a JSON array of nonempty player names",
+    );
+  return new Set(parsed);
+}
+
+export function isAlwaysAdminPlayer(
+  player: Pick<ServerMessageRosterEntry, "rawName" | "isSmurf"> | undefined,
+  names: ReadonlySet<string> | undefined,
+): boolean {
+  // Missing join metadata cannot establish that this is a non-smurf account.
+  return (
+    player?.isSmurf === false &&
+    names?.has(taglessPlayerName(player.rawName)) === true
+  );
+}
+
 /** Commands are accepted only from the stock/Classic global ChatMessage format. */
 export function decodeGlobalChat(
   args: string[],

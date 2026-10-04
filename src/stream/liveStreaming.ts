@@ -354,6 +354,7 @@ export class LiveStreamAdapter extends StreamEngine {
         guid: entry.guid,
         isAdmin: entry.isAdmin,
         isSuperAdmin: entry.isSuperAdmin,
+        isSmurf: entry.isSmurf,
         targetId: entry.targetId,
         teamId: entry.teamId,
         score: entry.score,

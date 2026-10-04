@@ -566,6 +566,7 @@ export interface PlayerRosterEntry {
   guid?: string;
   isAdmin?: boolean;
   isSuperAdmin?: boolean;
+  isSmurf?: boolean;
   name: string;
   /** Raw name preserving color-code bytes, for colored scoreboard display.
    *  Match/key on `name` (stripped); render `rawName` via parseColorSegments. */

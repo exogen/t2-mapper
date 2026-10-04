@@ -149,18 +149,25 @@ describe("watch mission controls", () => {
     funcName,
     args,
   });
-  const join = (id: number, admin = "0", superAdmin = "0", guid = "") =>
+  const join = (
+    id: number,
+    admin = "0",
+    superAdmin = "0",
+    guid = "",
+    rawName = "Same name",
+    smurf = "0",
+  ) =>
     remote(
       "ServerMessage",
       "MsgClientJoin",
       "",
-      "Same name",
+      rawName,
       String(id),
       "-1",
       "0",
       admin,
       superAdmin,
-      "0",
+      smurf,
       guid,
     );
   const chat = (text: string, id = 7, template = "\x05%1: %2") =>
@@ -419,6 +426,129 @@ describe("watch mission controls", () => {
   it("accepts super-admin privileges independently of the admin flag", () => {
     events(join(8, "0", "1"), chat("-watch", 8));
     expect(saved[address]).toMatchObject({ recording: true, watching: false });
+  });
+
+  it("accepts an exact non-smurf base name for both controls without granting roster admin flags", () => {
+    manager.shutdown();
+    start({ alwaysAdminPlayers: new Set(["Alice"]) });
+    const info = vi.spyOn(relayLog, "info").mockImplementation(() => {});
+    events(
+      join(8, "0", "0", "123", "\x10\x0b[TAG]\x08Alice\x11"),
+      chat("-rec -watch", 8),
+    );
+    expect(saved[address]).toMatchObject({ recording: false, watching: false });
+    const player = session.watchState
+      .getHudState()
+      .playerRoster.find((entry: any) => entry.clientId === 8);
+    expect(player.isAdmin).toBeUndefined();
+    expect(player.isSuperAdmin).toBeUndefined();
+    expect(replies().at(-1)).toContain("Watching is disabled.");
+    expect(info).toHaveBeenCalledWith(
+      expect.objectContaining({
+        clientId: 8,
+        isAdmin: false,
+        isSuperAdmin: false,
+        isAlwaysAdmin: true,
+      }),
+      "Mission control command processed",
+    );
+  });
+
+  it.each([
+    ["alice", "0"],
+    ["[TAG]Alice", "0"],
+    ["Alice", "1"],
+    ["Alice", ""],
+  ])(
+    "rejects an allowlisted name mismatch or smurf: %s / %s",
+    (rawName, smurf) => {
+      manager.shutdown();
+      start({ alwaysAdminPlayers: new Set(["Alice"]) });
+      events(join(8, "0", "0", "123", rawName, smurf), chat("-rec -watch", 8));
+      expect(session.controls.snapshot()).toMatchObject({
+        recording: true,
+        watching: true,
+      });
+      expect(replies().at(-1)).toContain("Only server admins");
+    },
+  );
+
+  it("counts allowlisted voters toward the same threshold, preserves tag changes and ignores loss of game admin privileges", () => {
+    manager.shutdown();
+    start({
+      alwaysAdminPlayers: new Set(["Alice"]),
+      adminVotePolicies: twoAdminPolicies,
+    });
+    events(join(8, "1", "0", "123", "Alice"), chat("-rec", 8));
+    expect(session.controls.recording).toBe(true);
+    events(
+      remote(
+        "ServerMessage",
+        "MsgClientNameChanged",
+        "",
+        "Alice",
+        "\x10\x08Alice\x0b[NEW]\x11",
+        "8",
+      ),
+      remote("ServerMessage", "MsgStripAdminPlayer", "", "Actor", "Alice", "8"),
+      chat("status", 8),
+    );
+    expect(replies().at(-1)).toContain("-rec 1/2");
+    events(chat("-rec"));
+    expect(session.controls.recording).toBe(false);
+  });
+
+  it("removes an allowlisted player's pending votes when their base name changes", () => {
+    manager.shutdown();
+    start({
+      alwaysAdminPlayers: new Set(["Alice"]),
+      adminVotePolicies: twoAdminPolicies,
+    });
+    events(join(8, "0", "0", "123", "Alice"), chat("-rec", 8));
+    events(
+      remote("ServerMessage", "MsgClientNameChanged", "", "Alice", "Bob", "8"),
+      chat("-watch", 8),
+      chat("-rec"),
+    );
+    expect(session.controls.snapshot()).toMatchObject({
+      recording: true,
+      watching: true,
+    });
+    expect(replies().at(-1)).toContain("-rec 1/2");
+  });
+
+  it("restores allowlisted GUID votes across relay restarts without bypassing the threshold", () => {
+    manager.shutdown();
+    const options = {
+      alwaysAdminPlayers: new Set(["Alice"]),
+      adminVotePolicies: twoAdminPolicies,
+    };
+    start(options);
+    events(join(8, "0", "0", "123", "Alice"), chat("-rec", 8));
+    const persisted = JSON.parse(JSON.stringify(saved));
+    manager.shutdown();
+    start({ ...options, initialMissionControls: persisted });
+    events(
+      join(9, "0", "0", "123", "\x10\x08Alice\x0b[TAG]\x11"),
+      chat("-rec", 9),
+    );
+    expect(session.controls.recording).toBe(true);
+    expect(replies().at(-1)).toContain("-rec 1/2");
+    events(chat("-rec"));
+    expect(session.controls.recording).toBe(false);
+  });
+
+  it("still disables commands for allowlisted players when no vote policy matches", () => {
+    manager.shutdown();
+    start({ alwaysAdminPlayers: new Set(["Alice"]), adminVotePolicies: [] });
+    events(join(8, "0", "0", "123", "Alice"), chat("-rec -watch", 8));
+    expect(session.controls.snapshot()).toMatchObject({
+      recording: true,
+      watching: true,
+    });
+    expect(replies().at(-1)).toContain(
+      "Admin controls: disabled by relay policy.",
+    );
   });
 
   it("ends all viewers immediately, rejects new viewers, and keeps recording independently", () => {

@@ -93,6 +93,7 @@ export interface WatchHudStatePayload {
     guid?: string;
     isAdmin?: boolean;
     isSuperAdmin?: boolean;
+    isSmurf?: boolean;
     name: string;
     rawName: string;
     targetId?: number;

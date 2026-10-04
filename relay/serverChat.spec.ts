@@ -150,6 +150,7 @@ describe("relay browser input", () => {
     vi.stubEnv("T2_SERVER_PASSWORDS", "{}");
     vi.stubEnv("RELAY_TRUST_FLY_PROXY", "false");
     vi.stubEnv("RELAY_ADMIN_VOTE_POLICIES", undefined);
+    vi.stubEnv("ALWAYS_ADMIN_PLAYERS", undefined);
     vi.stubEnv("DEMO_DIR", undefined);
     vi.stubEnv("DEMO_UPLOAD_RETRY_MS", "300000");
     vi.stubEnv("WATCH_STATE_PATH", "/nonexistent/chat-policy-watch-state.json");
@@ -353,6 +354,14 @@ describe("relay browser input", () => {
     vi.stubEnv("RELAY_ADMIN_VOTE_POLICIES", JSON.stringify(policies));
     await connect("watcher", "false");
     expect(harness.watchOptions?.adminVotePolicies).toEqual(policies);
+  });
+
+  it("passes exact always-admin player names from the environment to watch sessions", async () => {
+    vi.stubEnv("ALWAYS_ADMIN_PLAYERS", '["Alice","Some Player"]');
+    await connect("watcher", "false");
+    expect(harness.watchOptions?.alwaysAdminPlayers).toEqual(
+      new Set(["Alice", "Some Player"]),
+    );
   });
 
   it("coalesces a burst of control changes while a disk write is in flight and saves the latest state", async () => {

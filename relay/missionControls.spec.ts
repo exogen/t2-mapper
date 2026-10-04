@@ -1,11 +1,62 @@
 import { describe, expect, it } from "vitest";
 import {
   decodeGlobalChat,
+  isAlwaysAdminPlayer,
   loadAdminVotePolicies,
+  loadAlwaysAdminPlayers,
   MissionControls,
   parseMissionControlCommand,
   selectAdminVotesRequired,
 } from "./missionControls";
+
+describe("always-admin players", () => {
+  it.each([undefined, "", "  ", "[]"])("defaults to nobody for %j", (value) => {
+    expect([...loadAlwaysAdminPlayers(value)]).toEqual([]);
+  });
+
+  it("preserves exact case, spaces and commas, and deduplicates entries", () => {
+    expect([
+      ...loadAlwaysAdminPlayers('["Alice","alice","A, B","Alice"]'),
+    ]).toEqual(["Alice", "alice", "A, B"]);
+  });
+
+  it.each([
+    "Alice,Bob",
+    '"Alice"',
+    "{}",
+    "null",
+    "[null]",
+    "[1]",
+    '[""]',
+    '["   "]',
+  ])("rejects invalid configuration %s", (value) => {
+    expect(() => loadAlwaysAdminPlayers(value)).toThrow("ALWAYS_ADMIN_PLAYERS");
+  });
+
+  it.each([
+    ["Alice", false, true],
+    ["alice", false, false],
+    ["ALICE", false, false],
+    ["\x10\x0b[TAG]\x08Alice\x11", false, true],
+    ["\x10\x08Alice\x0b[TAG]\x11", false, true],
+    ["[TAG]Alice", false, false],
+    ["Alice", true, false],
+    ["\x10\x0cAlice\x11", true, false],
+    ["\x10\x0b[TAG]\x08Alice\x11", true, false],
+    ["Alice", undefined, false],
+  ] as const)("checks base name %j, smurf=%s", (rawName, isSmurf, expected) => {
+    expect(isAlwaysAdminPlayer({ rawName, isSmurf }, new Set(["Alice"]))).toBe(
+      expected,
+    );
+  });
+
+  it("does not authorize absent players or absent configuration", () => {
+    expect(isAlwaysAdminPlayer(undefined, new Set(["Alice"]))).toBe(false);
+    expect(
+      isAlwaysAdminPlayer({ rawName: "Alice", isSmurf: false }, undefined),
+    ).toBe(false);
+  });
+});
 
 describe("admin vote policies", () => {
   const policies = [
