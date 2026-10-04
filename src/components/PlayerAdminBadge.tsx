@@ -12,7 +12,7 @@ export function PlayerAdminBadge({
   const label = player.isSuperAdmin ? "Superadmin" : "Admin";
   return (
     <Icon
-      className={styles.Badge}
+      className={player.isSuperAdmin ? styles.SuperadminBadge : styles.Badge}
       role="img"
       aria-label={label}
       title={label}

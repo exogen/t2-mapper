@@ -1,6 +1,11 @@
 .Badge {
-  color: #ffb728;
+  color: #36d980;
   margin-inline-start: 0.3em;
   vertical-align: -0.125em;
   font-size: 1.1em;
+}
+
+.SuperadminBadge {
+  composes: Badge;
+  color: #27ff89;
 }
