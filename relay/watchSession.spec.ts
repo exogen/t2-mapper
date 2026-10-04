@@ -16,6 +16,7 @@ import type { GameConnection } from "./gameConnection";
 import type { ServerMessage } from "./types";
 import { GAME_PROTOCOL_VERSION } from "./shared";
 import { relayLog } from "./logger";
+import { extractWavTag } from "../src/stream/streamHelpers";
 
 const missionCyclingReason =
   "Server is cycling missions.  Please try to connect in a moment.";
@@ -219,7 +220,7 @@ describe("watch mission controls", () => {
       .map((command) => command.args[0]);
   const replies = () => {
     if (session.controlReplyTimer) vi.advanceTimersByTime(3_000);
-    return sentReplies();
+    return sentReplies().map((reply) => extractWavTag(reply).text);
   };
 
   beforeEach(() => {
@@ -230,6 +231,10 @@ describe("watch mission controls", () => {
     manager.shutdown();
     vi.restoreAllMocks();
     vi.useRealTimers();
+    for (const reply of sentReplies()) {
+      if (reply.includes("~w"))
+        expect(reply.length, reply).toBeLessThanOrEqual(120);
+    }
   });
 
   it.each([
@@ -511,6 +516,60 @@ describe("watch mission controls", () => {
     );
     vi.advanceTimersByTime(3_000);
     expect(sentReplies()).toEqual(["@MapGenius status", response]);
+  });
+
+  it("declines unauthorized status requests without advancing the status voice", () => {
+    events(join(8), chat("status", 8));
+    expect(sentReplies()).toEqual([
+      "Only server admins or relay-authorized players can use MapGenius commands.~wcmd.decline",
+    ]);
+    events(chat("status"));
+    replies();
+    expect(sentReplies().at(-1)).toMatch(/~wvqk\.anytime$/);
+  });
+
+  it("fits both role tallies in one reply by omitting the reset reminder when needed", () => {
+    manager.shutdown();
+    start({ adminVotePolicies: rolePolicies(2, 1) });
+    events(join(8, "1", "1"), chat("-record -watch", 8));
+    expect(replies().at(-1)).toContain("Settings reset next map.");
+
+    events(chat("+record +watch"));
+    expect(replies().at(-1)).toBe(
+      "Recording: OFF. Watching: OFF. Votes: +record 1/2 A, 0/1 SA, +watch 1/2 A, 0/1 SA.",
+    );
+    expect(sentReplies().at(-1)).toMatch(/~wcmd\.acknowledge$/);
+    events(chat("+record +watch"));
+    expect(replies().at(-1)).toBe(
+      "Nothing changed. Recording: OFF. Watching: OFF. Votes: +record 1/2 A, 0/1 SA, +watch 1/2 A, 0/1 SA.",
+    );
+    expect(sentReplies().at(-1)).toMatch(/~wcmd\.decline$/);
+    const count = sentReplies().length;
+    vi.advanceTimersByTime(10_000);
+    expect(sentReplies()).toHaveLength(count);
+  });
+
+  it("keeps two-digit vote counts and both role thresholds within the chat limit", () => {
+    manager.shutdown();
+    const ballot = Object.fromEntries(
+      Array.from({ length: 98 }, (_, i) => [`guid:${1007 + i}`, "superadmin"]),
+    );
+    start({
+      adminVotePolicies: rolePolicies(99, 99),
+      initialMissionControls: {
+        [address]: {
+          mission: ["1", "Katabatic"],
+          recording: false,
+          watching: false,
+          votes: { recording: ballot, watching: ballot },
+        },
+      },
+    });
+    events(chat("+record +watch"));
+    expect(sentReplies()).toEqual([
+      "Nothing changed. Recording: OFF. Watching: OFF. Votes: +record 98/99 A, 98/99 SA, +watch 98/99 A, 98/99 SA.~wcmd.decline",
+    ]);
+    expect(sentReplies()[0]).toHaveLength(120);
   });
 
   it("applies both controls from allowlisted self chat without game admin privileges", () => {
@@ -1127,6 +1186,45 @@ describe("watch mission controls", () => {
     );
   });
 
+  it("alternates status voices independently of counted votes and commands that change nothing", () => {
+    manager.shutdown();
+    start({ adminVotePolicies: twoAdminPolicies });
+    for (const [command, voice] of [
+      ["status", "vqk.anytime"],
+      ["-record status", "cmd.acknowledge"],
+      ["-record", "cmd.decline"],
+      ["status", "gbl.anytime"],
+      ["+record", "cmd.acknowledge"],
+      ["+record", "cmd.decline"],
+      ["-watch typo", "cmd.decline"],
+      ["", "vqk.anytime"],
+      ["status", "gbl.anytime"],
+    ]) {
+      events(chat(command));
+      replies();
+      expect(extractWavTag(sentReplies().at(-1)!).wavPath).toBe(voice);
+    }
+    events(join(8), chat("-watch", 8));
+    replies();
+    expect(sentReplies().at(-1)).toMatch(/^Nothing changed\..*~wcmd\.decline$/);
+  });
+
+  it("advances the status voice only for replies actually sent", () => {
+    events(chat("status"));
+    expect(sentReplies().at(-1)).toMatch(/~wvqk\.anytime$/);
+    events(chat("status"), chat("status"));
+    expect(sentReplies()).toHaveLength(1);
+    replies();
+    expect(sentReplies().at(-1)).toMatch(/~wgbl\.anytime$/);
+
+    events(chat("status"), chat("+record"));
+    replies();
+    expect(sentReplies().at(-1)).toMatch(/~wcmd\.decline$/);
+    events(chat("status"));
+    replies();
+    expect(sentReplies().at(-1)).toMatch(/~wvqk\.anytime$/);
+  });
+
   it("preserves restrictions across reconnect, idle grace and session replacement", () => {
     events(chat("-rec -watch"));
     manager.unpin(address);
@@ -1236,6 +1334,7 @@ describe("watch mission controls", () => {
     expect(sentReplies().at(-1)).toMatch(/^Nothing changed\./);
     expect(sentReplies().at(-1)).toContain("Recording: OFF.");
     expect(sentReplies().at(-1)).toContain("Votes: +record 1/2");
+    expect(sentReplies().at(-1)).toMatch(/~wcmd\.decline$/);
     events(chat("+rec", 7));
     expect(session.recording).toBe(true);
     events(chat("+rec -rec +rec -watch +watch", 7), chat("-rec typo", 8));
@@ -1251,6 +1350,7 @@ describe("watch mission controls", () => {
     expect(sentReplies().at(-1)).not.toContain("Nothing changed.");
     expect(sentReplies().at(-1)).toContain("Recording: ON.");
     expect(sentReplies().at(-1)).not.toContain("Votes:");
+    expect(sentReplies().at(-1)).toMatch(/~wvqk\.anytime$/);
   });
 
   it("keeps recording and watcher side effects in order during many changes in one packet", () => {

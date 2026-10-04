@@ -547,10 +547,10 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
     const name = this.warriorName || process.env.T2_ACCOUNT_NAME || "Observer";
     return [
       name, // player name
-      "Male Human", // race/gender
+      "Human Male", // race/gender
       "beagle", // skin
-      "male1", // voice
-      "1.0", // voice pitch
+      process.env.T2_VOICE?.trim() || "bot1", // voice
+      "0", // neutral pitch slider; server maps [-1, 1] to [0.875, 1.125]
     ];
   }
 
@@ -600,7 +600,6 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
       connLog.info("Starting T2csri authentication");
       this.setStatus("authenticating");
     } else {
-      this.requestObserver();
       this.setStatus("connected");
     }
   }
@@ -852,7 +851,6 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
             }
             this.sendCommand(result.command.name, ...result.command.args);
             if (this._status === "authenticating") {
-              this.requestObserver();
               this.setStatus("connected");
             }
           }, delay);
@@ -879,7 +877,6 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
     connLog.info(
       "Server started the mission without T2csri auth — treating as connected",
     );
-    this.requestObserver();
     this.setStatus("connected");
   }
 
@@ -945,6 +942,10 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
     const events = buildRemoteCommandEvent(this.stringTable, command, ...args);
     this.pendingEvents.push(...events);
     this.checkPacketSend();
+    // The server must finish clientMissionDropReady before switching us to
+    // observer. Guaranteed event ordering puts this after the final phase ACK
+    // for both relay-driven Watch and browser-driven mission loading.
+    if (command === "MissionStartPhase3Done") this.requestObserver();
   }
 
   /**
@@ -1028,7 +1029,10 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
     this.observerRequested = true;
     // LobbyGui's MakeObserver action calls this server command with no args.
     // There is no stock serverCmdSetPlayerTeam handler.
-    connLog.info("Requesting observer mode (ClientMakeObserver)");
+    connLog.info(
+      { address: this.address, clientId: this.selfClientId },
+      "Requesting observer mode after MissionStartPhase3Done (ClientMakeObserver)",
+    );
     this.sendCommand("ClientMakeObserver");
   }
 

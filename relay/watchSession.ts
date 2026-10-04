@@ -76,10 +76,12 @@ const REOBSERVE_RETRY_MS = 10_000;
 /** serverCmdWatchOnly pass that flags us isWatchOnly (exempt from the
  *  observer auto-kick); "ImaWatcher" is the stock $Host::ObserverOnlyPass. */
 const WATCH_ONLY_PASS = process.env.WATCH_ONLY_PASS || "ImaWatcher";
-/** Matches the real client's chat input limit ($Host::MaxMessageLen). */
+/** Browser chat input limit; the game server applies its own limit too. */
 const CHAT_MAX_LENGTH = 255;
 /** Stock message.cs permits four chat lines per ten seconds. */
 const CONTROL_REPLY_INTERVAL_MS = 3_000;
+/** Stock serverDefaults.cs limits chat text, including its voice tag. */
+const CONTROL_REPLY_MAX_LENGTH = 120;
 const CATCHUP_CHUNK_BYTES = 256 * 1024;
 /** Grace after the mission-drop burst (MsgClientReady) before resolving
  *  the tournament decision. The "Server is Running in Tournament Mode"
@@ -438,6 +440,7 @@ export class WatchSession {
   private controlReplyTimer: ReturnType<typeof setTimeout> | null = null;
   private pendingControlReply: (() => string) | null = null;
   private lastControlReplyAt = -Infinity;
+  private nextStatusVoice = "vqk.anytime";
 
   constructor(
     key: string,
@@ -794,9 +797,8 @@ export class WatchSession {
 
     if (status === "connected") {
       this.retryCount = 0;
-      // Observer mode was requested by GameConnection; scope the whole map
-      // so every watcher's free camera sees all ghosts regardless of
-      // position (commander-map scoping, binary-verified server behavior).
+      // Scope the whole map so every watcher's free camera sees all ghosts
+      // regardless of position (commander-map scoping, binary-verified server behavior).
       conn.sendCommand("ScopeCommanderMap", "1");
       // TacoServer-based servers auto-kick observers on a fixed timer
       // ($Host::KickObserverTimeout, "Observer Timeout") regardless of
@@ -1594,8 +1596,8 @@ export class WatchSession {
       if (actor.isSelf) return;
       this.replyToControl(
         () =>
-          "Only server admins or relay-authorized players can change MapGenius settings or request status.",
-        changesSetting,
+          "Only server admins or relay-authorized players can use MapGenius commands.",
+        { nothingChanged: changesSetting, voice: "decline" },
       );
       return;
     }
@@ -1610,7 +1612,7 @@ export class WatchSession {
         },
         "Mission control command rejected",
       );
-      this.replyToControl(() => error, true);
+      this.replyToControl(() => error, { nothingChanged: true });
       return;
     }
     // A pending-demo timeout may have finalized the mission while this session
@@ -1725,10 +1727,10 @@ export class WatchSession {
         result === "vote-added" ||
         result === "vote-withdrawn",
     );
-    this.replyToControl(
-      () => this.controlStatus(),
-      changesSetting && !commandChanged,
-    );
+    this.replyToControl((maxLength) => this.controlStatus(maxLength), {
+      nothingChanged: changesSetting && !commandChanged,
+      voice: changesSetting ? undefined : "status",
+    });
   }
 
   private controlLogContext() {
@@ -1800,9 +1802,28 @@ export class WatchSession {
   }
 
   /** Commands take effect immediately; only their chat replies are coalesced. */
-  private replyToControl(reply: () => string, nothingChanged = false): void {
-    this.pendingControlReply = () =>
-      `${nothingChanged ? "Nothing changed. " : ""}${reply()}`;
+  private replyToControl(
+    reply: (maxLength: number) => string,
+    {
+      nothingChanged = false,
+      voice = nothingChanged ? "decline" : "acknowledge",
+    }: {
+      nothingChanged?: boolean;
+      voice?: "status" | "acknowledge" | "decline";
+    } = {},
+  ): void {
+    this.pendingControlReply = () => {
+      let sound = `cmd.${voice}`;
+      if (voice === "status") {
+        // Advance only when sent, not for coalesced or cancelled requests.
+        sound = this.nextStatusVoice;
+        this.nextStatusVoice =
+          sound === "vqk.anytime" ? "gbl.anytime" : "vqk.anytime";
+      }
+      const prefix = nothingChanged ? "Nothing changed. " : "";
+      const suffix = `~w${sound}`;
+      return `${prefix}${reply(CONTROL_REPLY_MAX_LENGTH - prefix.length - suffix.length)}${suffix}`;
+    };
     if (this.controlReplyTimer) return;
     const waitMs =
       this.lastControlReplyAt + CONTROL_REPLY_INTERVAL_MS - Date.now();
@@ -1839,7 +1860,7 @@ export class WatchSession {
     this.pendingControlReply = null;
   }
 
-  private controlStatus(): string {
+  private controlStatus(maxLength: number): string {
     const { requirements } = this.adminVoteContext();
     if (this.clearDisabledRecordingVotes()) this.onControlsChanged();
     const status = [
@@ -1865,9 +1886,17 @@ export class WatchSession {
         );
       }
     }
-    if (pending.length) status.push(`Votes: ${pending.join(", ")}.`);
-    if (requirements === null) status.push("Admin controls: OFF.");
-    if (this.controls.restricted) status.push("Settings reset next map.");
+    // Keep each reply within the stock chat limit, prioritizing votes over
+    // the reset reminder. The prefix and voice tag already have space reserved.
+    const details = [
+      pending.length ? `Votes: ${pending.join(", ")}.` : "",
+      requirements === null ? "Admin controls: OFF." : "",
+      this.controls.restricted ? "Settings reset next map." : "",
+    ];
+    for (const detail of details) {
+      if (detail && [...status, detail].join(" ").length <= maxLength)
+        status.push(detail);
+    }
     return status.join(" ");
   }
 

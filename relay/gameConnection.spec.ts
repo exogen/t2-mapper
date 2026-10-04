@@ -200,7 +200,7 @@ describe("GameConnection protocol negotiation", () => {
       sendRaw(data: Uint8Array): void;
       startKeepalive(): void;
       startOobPing(): void;
-      requestObserver(): void;
+      checkPacketSend(): void;
     };
     inner._status = "challenging";
     inner.clientConnectSequence = 123;
@@ -209,8 +209,9 @@ describe("GameConnection protocol negotiation", () => {
       .spyOn(inner, "startKeepalive")
       .mockImplementation(() => {});
     vi.spyOn(inner, "startOobPing").mockImplementation(() => {});
-    vi.spyOn(inner, "requestObserver").mockImplementation(() => {});
-    return { conn, inner, send, keepalive };
+    vi.spyOn(inner, "checkPacketSend").mockImplementation(() => {});
+    const commands = vi.spyOn(conn, "sendCommand");
+    return { conn, inner, send, keepalive, commands };
   }
 
   function challenge(protocol = 51, client = 123, server = 456) {
@@ -232,6 +233,33 @@ describe("GameConnection protocol negotiation", () => {
     return msg;
   }
 
+  it.each([
+    [undefined, "bot1"],
+    ["   ", "bot1"],
+    [" male2 ", "male2"],
+  ])(
+    "sends voice %s with neutral pitch in the join packet",
+    (voice, expected) => {
+      vi.stubEnv("T2_VOICE", voice);
+      try {
+        const { inner, send } = handshake();
+        inner.handleChallengeResponse(challenge());
+        const packet = new BitStream(send.mock.calls[0][0]);
+        expect(packet.readU8()).toBe(32);
+        packet.readU32(); // server sequence
+        packet.readU32(); // client sequence
+        packet.readU32(); // protocol version
+        expect(packet.readFlag()).toBe(false);
+        const argv = Array.from({ length: packet.readU32() }, () =>
+          packet.readString(),
+        );
+        expect(argv.slice(1)).toEqual(["Human Male", "beagle", expected, "0"]);
+      } finally {
+        vi.unstubAllEnvs();
+      }
+    },
+  );
+
   it.each([51, 52])(
     "negotiates retail layout with a protocol %i server",
     (version) => {
@@ -250,6 +278,34 @@ describe("GameConnection protocol negotiation", () => {
       expect(conn.selfClientId).toBe(1000);
     },
   );
+
+  it("waits for the final mission ACK before requesting observer, once per connection", () => {
+    const { conn, inner, commands } = handshake();
+    inner.handleChallengeResponse(challenge());
+    inner.handleConnectAccept(accept());
+    expect(commands).not.toHaveBeenCalled();
+
+    conn.sendCommand("MissionStartPhase1Done", "7");
+    conn.sendCommand("MissionStartPhase2Done", "7");
+    expect(commands.mock.calls).toEqual([
+      ["MissionStartPhase1Done", "7"],
+      ["MissionStartPhase2Done", "7"],
+    ]);
+
+    conn.sendCommand("MissionStartPhase3Done", "7");
+    expect(commands.mock.calls.slice(2)).toEqual([
+      ["MissionStartPhase3Done", "7"],
+      ["ClientMakeObserver"],
+    ]);
+
+    commands.mockClear();
+    conn.sendCommand("MissionStartPhase3Done", "7");
+    conn.sendCommand("MissionStartPhase3Done", "8");
+    expect(commands.mock.calls).toEqual([
+      ["MissionStartPhase3Done", "7"],
+      ["MissionStartPhase3Done", "8"],
+    ]);
+  });
 
   it.each([
     ["truncated", accept().subarray(0, 16)],
@@ -471,7 +527,7 @@ describe("GameConnection UDP receive limit", () => {
 });
 
 describe("GameConnection.missionStartedWithoutAuth", () => {
-  it("promotes an unpoked connection to connected and enforces observer", () => {
+  it("promotes an unpoked connection without requesting observer during Phase1", () => {
     const conn = authenticating();
     const statuses: string[] = [];
     conn.on("status", (status) => statuses.push(status));
@@ -480,7 +536,7 @@ describe("GameConnection.missionStartedWithoutAuth", () => {
 
     expect(conn.status).toBe("connected");
     expect(statuses).toEqual(["connected"]);
-    expect(conn.sendCommand).toHaveBeenCalledWith("ClientMakeObserver");
+    expect(conn.sendCommand).not.toHaveBeenCalled();
   });
 
   it("leaves a poked connection to finish the T2csri handshake", () => {
@@ -501,5 +557,33 @@ describe("GameConnection.missionStartedWithoutAuth", () => {
     conn.missionStartedWithoutAuth();
 
     expect(conn.sendCommand).not.toHaveBeenCalled();
+  });
+});
+
+describe("GameConnection authentication", () => {
+  it("does not request observer when the auth response is sent", () => {
+    vi.useFakeTimers();
+    const conn = authenticating();
+    const inner = conn as unknown as {
+      auth: { onDecryptChallenge(): unknown };
+    };
+    inner.auth = {
+      onDecryptChallenge: () => ({
+        command: { name: "t2csri_challengeResponse", args: ["challenge"] },
+      }),
+    };
+    try {
+      conn.handleAuthEvent("t2csri_decryptChallenge", []);
+      expect(conn.status).toBe("authenticating");
+      expect(conn.sendCommand).not.toHaveBeenCalled();
+      vi.advanceTimersByTime(512);
+      expect(conn.status).toBe("connected");
+      expect(conn.sendCommand).toHaveBeenCalledExactlyOnceWith(
+        "t2csri_challengeResponse",
+        "challenge",
+      );
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
