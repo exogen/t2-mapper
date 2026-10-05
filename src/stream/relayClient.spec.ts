@@ -109,6 +109,21 @@ describe("RelayClient catch-up ordering", () => {
     ws.receive({ type: "catchupEnd" });
   }
 
+  it("identifies a server-list error without ending the watch session", () => {
+    const { ws, error, closed, events } = setup();
+    ws.receive({
+      type: "error",
+      requestType: "listServers",
+      message: "Unable to load the server list. Please try refreshing.",
+    });
+    expect(error).toHaveBeenCalledWith(
+      "Unable to load the server list. Please try refreshing.",
+      "listServers",
+    );
+    expect(closed).not.toHaveBeenCalled();
+    expect(events).not.toContain("ended");
+  });
+
   function live(ws: FakeWebSocket) {
     ws.receive({
       type: "sessionStatus",

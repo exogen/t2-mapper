@@ -76,7 +76,7 @@ export type ServerMessage =
   | { type: "catchupEnd" }
   | { type: "ping"; ms: number }
   | { type: "wsPong"; ts: number }
-  | { type: "error"; message: string };
+  | { type: "error"; message: string; requestType?: "listServers" };
 
 /** Watch-session status, sent only to watcher sockets. */
 export type WatchStatus =

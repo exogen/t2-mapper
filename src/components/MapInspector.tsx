@@ -23,6 +23,7 @@ import { useRecording } from "./usePlayback";
 import { useFeatures } from "./FeaturesProvider";
 import {
   liveConnectionStore,
+  selectConnectionFailureMessage,
   useLiveSelector,
 } from "../state/liveConnectionStore";
 import { usePublicWindowAPI } from "./usePublicWindowAPI";
@@ -194,7 +195,9 @@ export function MapInspector() {
 
   // ── Live spectating (shared relay watch sessions) ──
   const watchStatus = useLiveSelector((s) => s.watchStatus);
-  const watchStatusMessage = useLiveSelector((s) => s.watchStatusMessage);
+  const connectionFailureMessage = useLiveSelector(
+    selectConnectionFailureMessage,
+  );
   const watchEndReason = useLiveSelector((s) => s.watchEndReason);
   const catchupProgress = useLiveSelector((s) => s.catchupProgress);
   // The stream-delay notice owns the screen during tournament buffering;
@@ -206,6 +209,7 @@ export function MapInspector() {
   const relayConnected = useLiveSelector((s) => s.relayConnected);
   const servers = useLiveSelector((s) => s.servers);
   const serversLoading = useLiveSelector((s) => s.serversLoading);
+  const serverListError = useLiveSelector((s) => s.serverListError);
   const listServers = useLiveSelector((s) => s.listServers);
   const isWatcher = useLiveSelector((s) => s.role === "watcher");
   const serverAddress = useLiveSelector((s) => s.serverAddress);
@@ -272,7 +276,7 @@ export function MapInspector() {
   // One attempt per URL target. Back/forward navigation can select another
   // target; an ordinary re-render must never retry a failed join.
   const [autoJoin, setAutoJoin] = useState<
-    "pending" | "joined" | "notFound" | "off"
+    "pending" | "joined" | "notFound" | "listFailed" | "off"
   >(mode === "live" && (autoAddress || autoName) ? "pending" : "off");
   // Join-failure dialog dismissal; re-arms on the next session so a
   // later "session ended" failure gets its own transmission.
@@ -348,6 +352,11 @@ export function MapInspector() {
       watchServer(address);
       return;
     }
+    if (attempt.requestedList && serverListError) {
+      attempt.attempted = true;
+      setAutoJoin("listFailed");
+      return;
+    }
     if (!relayConnected || (!attempt.requestedList && servers.length === 0)) {
       attempt.requestedList = true;
       listServers();
@@ -363,6 +372,7 @@ export function MapInspector() {
     relayConnected,
     servers,
     serversLoading,
+    serverListError,
     listServers,
     watchServer,
     setNavigationQuery,
@@ -517,14 +527,17 @@ export function MapInspector() {
   // A refusal the server itself calls temporary (mission cycling) is
   // worth another try even though the session never established.
   const retryAddress =
-    !canRejoin && isRetryableDisconnect(watchStatusMessage ?? undefined)
+    !canRejoin && isRetryableDisconnect(connectionFailureMessage)
       ? rejoinAddress
       : null;
   const joinErrorMessage = !showJoinScreen ? null : autoJoin === "notFound" ? (
     <>No server named &ldquo;{autoName}&rdquo; is currently listed.</>
-  ) : watchStatus === "ended" && watchStatusMessage ? (
-    watchStatusMessage
-  ) : null;
+  ) : autoJoin === "listFailed" ? (
+    (serverListError ??
+    "Unable to load the server list. Please try refreshing.")
+  ) : (
+    connectionFailureMessage
+  );
 
   return (
     <main className={styles.Frame}>
@@ -628,14 +641,23 @@ export function MapInspector() {
                   // ?name lookup) — so Rejoin is offered only in the rare
                   // case we did reach the server before landing here.
                   onRejoin={
-                    canRejoin && autoJoin !== "notFound" && rejoinAddress
+                    canRejoin &&
+                    autoJoin !== "notFound" &&
+                    autoJoin !== "listFailed" &&
+                    rejoinAddress
                       ? () => handleWatch(rejoinAddress)
                       : undefined
                   }
                   onRetry={
-                    retryAddress && autoJoin !== "notFound"
-                      ? () => handleWatch(retryAddress)
-                      : undefined
+                    autoJoin === "listFailed"
+                      ? () => {
+                          autoTargetRef.current = null;
+                          setAutoJoin("pending");
+                          listServers();
+                        }
+                      : retryAddress && autoJoin !== "notFound"
+                        ? () => handleWatch(retryAddress)
+                        : undefined
                   }
                   onBrowse={handleOpenServerBrowser}
                 />
@@ -721,7 +743,7 @@ export function MapInspector() {
                     message={
                       disconnectReason === "voluntary"
                         ? "Uplink to the server closed. The wilderzone awaits your return."
-                        : (watchStatusMessage ??
+                        : (connectionFailureMessage ??
                           "Connection to the server was lost.")
                     }
                     onRejoin={

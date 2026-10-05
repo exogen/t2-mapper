@@ -519,6 +519,15 @@
   min-height: 0;
 }
 
+.Body:has(.ListError) {
+  grid-template-rows: auto 1fr;
+}
+
+.ListError {
+  margin: 12px;
+  color: #ffd876;
+}
+
 /* Waiting on the relay (first query or a refresh): the list behind the
    spinner is stale data, so fade it and take it out of reach.
    Nothing appears for the first LOADING_DELAY — a relay that answers

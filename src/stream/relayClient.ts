@@ -29,7 +29,7 @@ export type RelayEventHandler = {
   onPing?: (ms: number) => void;
   /** Browser↔relay WebSocket RTT. */
   onWsPing?: (ms: number) => void;
-  onError?: (message: string) => void;
+  onError?: (message: string, requestType?: "listServers") => void;
   onClose?: () => void;
   // ── Watch mode ──
   onSessionStatus?: (
@@ -255,7 +255,7 @@ export class RelayClient {
         this.finalizeCatchup();
         break;
       case "error":
-        this.handlers.onError?.(message.message);
+        this.handlers.onError?.(message.message, message.requestType);
         break;
     }
   }

@@ -112,6 +112,30 @@ describe("server queries", () => {
     ]);
   });
 
+  it.each(["network", "http"])(
+    "reports a %s master failure instead of an empty server list",
+    async (kind) => {
+      if (kind === "network")
+        vi.mocked(fetch).mockRejectedValue(new Error("Network unavailable"));
+      else
+        vi.mocked(fetch).mockResolvedValue(
+          new Response("Unavailable", { status: 503 }),
+        );
+      await Promise.all([
+        expect(queryServerList("master.test")).rejects.toThrow(),
+        vi.runAllTimersAsync(),
+      ]);
+      expect(fetch).toHaveBeenCalledTimes(3);
+      expect(dgram.createSocket).not.toHaveBeenCalled();
+    },
+  );
+
+  it("accepts a successful empty master list", async () => {
+    vi.mocked(fetch).mockResolvedValue(new Response(""));
+    await expect(queryServerList("master.test")).resolves.toEqual([]);
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
   it("returns null for a single-server probe with only a ping reply", async () => {
     const result = queryServerInfo(address);
     await vi.runAllTimersAsync();

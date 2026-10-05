@@ -35,6 +35,7 @@ export interface LiveConnectionState {
   serverAddress: string | null;
   servers: ServerInfo[];
   serversLoading: boolean;
+  serverListError: string | null;
   adapter: LiveStreamAdapter | null;
   /** True once the first ghost entity arrives (game is rendering). */
   liveReady: boolean;
@@ -81,7 +82,7 @@ export interface LiveConnectionStore extends LiveConnectionState {
   disconnectRelay(): void;
   listServers(): void;
   joinServer(address: string, warriorName?: string): void;
-  watchServer(address: string): void;
+  watchServer(address: string, options?: { resume?: boolean }): void;
   leaveServer(): void;
   disconnectServer(): void;
   sendMoves(moves: ClientMove[], moveStartIndex: number): void;
@@ -127,6 +128,7 @@ function disconnectedState(
     relayConnected: false,
     chatEnabled: false,
     serversLoading: false,
+    serverListError: null,
     gameStatus: null,
     gameStatusMessage: undefined,
     mapName: undefined,
@@ -165,6 +167,7 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
     serverAddress: null,
     servers: [],
     serversLoading: false,
+    serverListError: null,
     adapter: null,
     liveReady: false,
     role: null,
@@ -204,7 +207,7 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
             const address = resumeAddress ?? s.serverAddress;
             if (address && s.role === "watcher") {
               log.info("re-attaching watch to %s after relay restart", address);
-              get().watchServer(address);
+              get().watchServer(address, { resume: true });
             } else {
               cancelReconnect();
               set({ reconnecting: false });
@@ -232,7 +235,7 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
         onServerList(list) {
           if (get()._relay !== relay) return;
           get()._listInFlight = false;
-          set({ servers: list, serversLoading: false });
+          set({ servers: list, serversLoading: false, serverListError: null });
         },
         onGamePacket(data) {
           if (get()._relay !== relay) return;
@@ -365,11 +368,13 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
           set({ liveReady: false });
           a.hydrate(payload);
         },
-        onError(message) {
+        onError(message, requestType) {
           if (get()._relay !== relay) return;
           log.error("error: %s", message);
-          get()._listInFlight = false;
-          set({ serversLoading: false });
+          if (requestType === "listServers") {
+            get()._listInFlight = false;
+            set({ serversLoading: false, serverListError: message });
+          }
         },
         onClose() {
           const s = get();
@@ -380,7 +385,10 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
           s._listInFlight = false;
           // A socket lost mid-list ends the wait: nothing will answer
           // it, and a browser left "loading" spins forever.
-          if (s.serversLoading) set({ serversLoading: false });
+          const serverListError = s.serversLoading
+            ? "Unable to load the server list because the relay connection was lost. Please try refreshing."
+            : s.serverListError;
+          if (s.serversLoading) set({ serversLoading: false, serverListError });
           // A socket loss during an active session is involuntary;
           // voluntary paths set their reason before closing.
           const sessionWasLive =
@@ -440,19 +448,29 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
             );
           }
           cancelReconnect();
+          const failed = s.role !== null && s.disconnectReason !== "voluntary";
+          const failureMessage =
+            selectConnectionFailureMessage(s) ??
+            (resume
+              ? "Unable to reconnect to the relay."
+              : "Connection to the relay was lost.");
           set({
-            ...disconnectedState(
-              s.disconnectReason ?? (sessionWasLive || resume ? "ended" : null),
-            ),
-            // A later transport close must not erase a server's refusal.
-            ...(s.role === "watcher" && s.watchStatus === "ended"
+            ...disconnectedState(failed ? "ended" : s.disconnectReason),
+            serverListError,
+            // Keep failed attempts visible, including a refusal followed by
+            // transport closure or a relay that never finished connecting.
+            ...(failed
               ? {
                   role: s.role,
                   serverAddress: s.serverAddress,
                   serverName: s.serverName,
                   mapName: s.mapName,
-                  watchStatus: s.watchStatus,
-                  watchStatusMessage: s.watchStatusMessage,
+                  gameStatus: s.role === "player" ? "disconnected" : null,
+                  gameStatusMessage:
+                    s.role === "player" ? failureMessage : undefined,
+                  watchStatus: s.role === "watcher" ? "ended" : null,
+                  watchStatusMessage:
+                    s.role === "watcher" ? failureMessage : undefined,
                   watchEndReason: s.watchEndReason,
                 }
               : {}),
@@ -489,7 +507,7 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
         s._relay?.listServers();
       };
 
-      set({ serversLoading: true });
+      set({ serversLoading: true, serverListError: null });
 
       if (s._relay?.connected) {
         doList();
@@ -563,7 +581,11 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
         gameStatus: null,
         adapter: newAdapter,
         role: "player",
+        watchStatus: null,
+        watchChannelId: null,
+        watchStatusMessage: undefined,
         watchEndReason: undefined,
+        sessionEstablished: false,
         chatEnabled: false,
         disconnectReason: null,
       });
@@ -579,13 +601,14 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
       s._relay.joinServer(address, warriorName);
     },
 
-    watchServer(address) {
+    watchServer(address, { resume = false } = {}) {
       address = normalizeAddress(address);
       const request = ++watchRequest;
       const s = get();
       const sameServer = s.role === "watcher" && s.serverAddress === address;
-      // A fresh (or resumed) watch supersedes any pending reattach loop.
-      cancelReconnect();
+      // Opening a socket isn't a successful recovery. Preserve the retry
+      // budget on automatic reattachment until the stream becomes live.
+      if (!resume) cancelReconnect();
 
       if (!s._relay?.connected) {
         // The relay socket is gone (e.g. the relay restarted) — open a
@@ -616,10 +639,10 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
           sessionEstablished: false,
           watcherCount: 0,
           catchupProgress: null,
-          reconnecting: false,
+          reconnecting: resume,
         });
         s._pending.push(() => {
-          if (request === watchRequest) get().watchServer(address);
+          if (request === watchRequest) get().watchServer(address, { resume });
         });
         if (!s._relay) get().connectRelay();
         return;
@@ -688,7 +711,7 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
         streamDelayMs: sameServer ? s.streamDelayMs : 0,
         streamDelayReadyAt: null,
         catchupProgress: null,
-        reconnecting: false,
+        reconnecting: resume,
       });
 
       gameEntityStore.getState().setMissionInfo({
@@ -767,6 +790,23 @@ export function selectCanChat(s: LiveConnectionState): boolean {
   if (!s.relayConnected || !s.chatEnabled || s.reconnecting) return false;
   if (s.role === "player") return s.gameStatus === "connected";
   return s.role === "watcher" && s.watchStatus === "live";
+}
+
+/** An ended attempt is an error even when the relay supplied no message. */
+export function selectConnectionFailureMessage(
+  s: LiveConnectionState,
+): string | undefined {
+  if (s.disconnectReason === "voluntary") return;
+  if (s.role === "watcher" && s.watchStatus === "ended")
+    return (
+      s.watchStatusMessage?.trim() ||
+      "The connection ended without a reason from the server."
+    );
+  if (s.role === "player" && s.gameStatus === "disconnected")
+    return (
+      s.gameStatusMessage?.trim() ||
+      "The connection ended without a reason from the server."
+    );
 }
 
 /** Select state from the live connection store with optional equality fn. */

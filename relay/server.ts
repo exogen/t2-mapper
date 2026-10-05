@@ -712,6 +712,15 @@ wss.on("connection", (ws, req) => {
     );
   });
   let warnedWatcherCommand = false;
+  function rejectWatch(address: string, message: string): void {
+    sendToClient(ws, {
+      type: "sessionStatus",
+      status: "ended",
+      address,
+      message,
+      watcherCount: 0,
+    });
+  }
   const watchRequest = new WatchRequest({
     isKnown: (address) =>
       watchSessions.has(address) || !!findKnownServer(address),
@@ -733,14 +742,10 @@ wss.on("connection", (ws, req) => {
         watcherCount: 0,
       }),
     rejected: (address) =>
-      sendToClient(ws, {
-        type: "sessionStatus",
-        status: "ended",
-        chatEnabled: CHAT_ENABLED,
+      rejectWatch(
         address,
-        message: `No compatible Tribes 2 server responded at ${address}.`,
-        watcherCount: 0,
-      }),
+        `No compatible Tribes 2 server responded at ${address}.`,
+      ),
     attach(address, channelId) {
       if (ws.readyState === WebSocket.OPEN)
         watchSessions.watch(ws, address, channelId);
@@ -948,6 +953,15 @@ wss.on("connection", (ws, req) => {
     // sent through the session's shared identity. Every other
     // game-mutating message is dropped (the session owns the protocol).
     if (role === "watcher") {
+      if (message.type === "joinServer") {
+        sendToClient(ws, {
+          type: "status",
+          status: "disconnected",
+          message:
+            "Please reload the page before switching from watching to playing.",
+        });
+        return;
+      }
       if (message.type === "sendCommand" && message.command === "messageSent") {
         watchSessions.sendChat(ws, message.args[0] ?? "");
         return;
@@ -971,15 +985,15 @@ wss.on("connection", (ws, req) => {
 
     switch (message.type) {
       case "watchServer": {
+        const address = normalizeAddress(message.address);
         if (role === "player") {
-          sendToClient(ws, {
-            type: "error",
-            message: "Socket already joined as a player; reconnect to watch",
-          });
+          rejectWatch(
+            address,
+            "Please reload the page before switching from playing to watching.",
+          );
           return;
         }
         role = "watcher";
-        const address = normalizeAddress(message.address);
         serverAddress = address;
         clientLog.info({ address }, "Watch server requested");
 
@@ -987,7 +1001,15 @@ wss.on("connection", (ws, req) => {
           typeof message.channelId === "string"
             ? message.channelId
             : watchSessions.getSession(address)?.getChannelId(ws);
-        await watchRequest.watch(address, channelId);
+        try {
+          await watchRequest.watch(address, channelId);
+        } catch (err) {
+          clientLog.error({ err, address }, "Watch request failed");
+          rejectWatch(
+            address,
+            "Unable to join the game stream. Please try again.",
+          );
+        }
         break;
       }
 
@@ -1017,20 +1039,14 @@ wss.on("connection", (ws, req) => {
           clientLog.error({ err: e }, "Master query failed");
           sendToClient(ws, {
             type: "error",
-            message: `Master query failed: ${e}`,
+            requestType: "listServers",
+            message: "Unable to load the server list. Please try refreshing.",
           });
         }
         break;
       }
 
       case "joinServer": {
-        if (role === "watcher") {
-          sendToClient(ws, {
-            type: "error",
-            message: "Socket is watching; reconnect to join as a player",
-          });
-          return;
-        }
         role = "player";
         serverAddress = normalizeAddress(message.address);
         clientLog.info(

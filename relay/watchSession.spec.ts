@@ -2088,6 +2088,44 @@ describe("WatchSessionManager", () => {
     expect(ws.binaryFrames()).toHaveLength(packetsBefore + 1);
   });
 
+  it("ends a failed catch-up with a reason without disrupting other watchers", () => {
+    const { manager, connections } = createManager();
+    const address = "1.2.3.4:28000";
+    const existing = new FakeWebSocket();
+    manager.watch(existing as unknown as WebSocket, address);
+    const conn = connections[0];
+    conn.setStatus("connected");
+    const session = manager.getSession(address)!;
+    const build = vi
+      .spyOn(session as any, "buildPayloadBytes")
+      .mockImplementationOnce(() => {
+        throw new Error("Snapshot serialization failed");
+      });
+    const joining = new FakeWebSocket();
+    manager.watch(joining as unknown as WebSocket, address);
+    expect(joining.jsonMessages().at(-1)).toMatchObject({
+      type: "sessionStatus",
+      status: "ended",
+      address,
+      message: "Unable to prepare the game stream. Please try joining again.",
+    });
+    expect(session.watcherCount).toBe(1);
+    const messages = joining.sent.length;
+    conn.emit("packet", new Uint8Array([1, 2, 3]));
+    expect(joining.sent).toHaveLength(messages);
+    expect(build).toHaveBeenCalledTimes(1);
+    expect(existing.binaryFrames().at(-1)).toEqual(new Uint8Array([1, 2, 3]));
+    expect(conn.disconnectCalls).toBe(0);
+    // The failed viewer can retry normally.
+    manager.watch(joining as unknown as WebSocket, address);
+    expect(joining.jsonMessages().at(-1)).toMatchObject({
+      type: "sessionStatus",
+      status: "live",
+    });
+    expect(session.watcherCount).toBe(2);
+    build.mockRestore();
+  });
+
   it("holds the stream delayed until a server is confirmed non-tournament", () => {
     const { manager, connections } = createManager({ tourneyDelayMs: 1000 });
     const ws = new FakeWebSocket();
@@ -2478,6 +2516,30 @@ describe("WatchSessionManager", () => {
     expect(manager.getStatusSummary()).toHaveLength(1);
     vi.advanceTimersByTime(5000);
     expect(connections).toHaveLength(2);
+  });
+
+  it("preserves a rejected patrol join's reason for viewers arriving while its delay queue drains", () => {
+    const address = "1.2.3.4:28000";
+    const reason = "You are not allowed to play on this server.";
+    const { manager, connections } = createManager({ tourneyDelayMs: 120_000 });
+    manager.pin(address);
+    connections[0].setStatus("connected");
+    const early = new FakeWebSocket();
+    manager.watch(early as unknown as WebSocket, address);
+    connections[0].setStatus("disconnected", reason);
+    expect(manager.has(address)).toBe(true);
+    const late = new FakeWebSocket();
+    manager.watch(late as unknown as WebSocket, address);
+    for (const viewer of [early, late]) {
+      expect(
+        viewer
+          .jsonMessages()
+          .findLast((message) => message.type === "sessionStatus"),
+      ).toMatchObject({ status: "ended", message: reason });
+      expect(viewer.binaryFrames()).toHaveLength(0);
+    }
+    expect(connections).toHaveLength(1);
+    manager.shutdown();
   });
 
   it("keeps polling scores while a pinned session records without watchers", () => {

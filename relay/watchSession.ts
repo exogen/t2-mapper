@@ -402,6 +402,8 @@ export class WatchSession {
   private destroyed = false;
   /** The upstream ended; keep serving the delayed tail before teardown. */
   private ending = false;
+  /** Late joiners must receive the same refusal while the delayed tail drains. */
+  private endMessage?: string;
   private lastStatus: ConnectionStatus = "connecting";
   private lastPingMs: number | null = null;
   private cachedPayload: {
@@ -900,6 +902,7 @@ export class WatchSession {
   private endSession(message?: string): void {
     if (this.ending || this.destroyed) return;
     this.ending = true;
+    this.endMessage = message;
     this.cancelControlReply();
     this.stopScoresPoll();
     this.stopScoreHudPoll();
@@ -2185,9 +2188,10 @@ export class WatchSession {
     } catch (e) {
       relayLog.error({ err: e, address: this.key }, "Catch-up build failed");
       sendJson(ws, {
-        type: "error",
-        message: "Failed to build catch-up state",
+        ...this.sessionStatus(ws, "ended"),
+        message: "Unable to prepare the game stream. Please try joining again.",
       });
+      this.detach(ws);
       return;
     }
 
@@ -2315,6 +2319,7 @@ export class WatchSession {
           : null) ?? this.liveSessionStatus(status);
     return {
       ...metadata,
+      message: status === "ended" ? this.endMessage : metadata.message,
       recording: recordingPolicy?.enabled ?? metadata.recording,
       status:
         status === "live" &&

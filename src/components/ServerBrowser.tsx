@@ -170,6 +170,7 @@ export function ServerBrowser({
 }) {
   const servers = useLiveSelector((s) => s.servers);
   const serversLoading = useLiveSelector((s) => s.serversLoading);
+  const serverListError = useLiveSelector((s) => s.serverListError);
   const liveBrowserToRelayPing = useLiveSelector((s) => s.browserToRelayPing);
   const listServers = useLiveSelector((s) => s.listServers);
   const joinServer = useLiveSelector((s) => s.joinServer);
@@ -287,6 +288,11 @@ export function ServerBrowser({
   const shell = (body: ReactNode) => (
     <div className={styles.Panel} ref={panelRef} tabIndex={-1}>
       <div className={styles.Body} data-loading={serversLoading}>
+        {serverListError && (
+          <p className={styles.ListError} role="alert">
+            {serverListError}
+          </p>
+        )}
         {body}
         {serversLoading && (
           <div className={styles.LoadingOverlay} role="status">

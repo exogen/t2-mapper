@@ -55,6 +55,7 @@ async function queryMasterHTTP(masterAddress: string): Promise<string[]> {
       const res = await fetch(url, {
         signal: AbortSignal.timeout(QUERY_TIMEOUT_MS),
       });
+      if (!res.ok) throw new Error(`Master server returned HTTP ${res.status}`);
       const body = await res.text();
       return body
         .trim()
@@ -73,8 +74,7 @@ async function queryMasterHTTP(masterAddress: string): Promise<string[]> {
       }
     }
   }
-  masterLog.error("Master HTTP query failed after all retries");
-  return [];
+  throw new Error("Master HTTP query failed after all retries");
 }
 
 /**

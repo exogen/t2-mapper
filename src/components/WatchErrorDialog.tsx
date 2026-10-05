@@ -2,6 +2,22 @@ import { useEffect, useRef, type ReactNode } from "react";
 import type { WatchEndReason } from "../../relay/types";
 import styles from "./WatchErrorDialog.module.css";
 
+// Native rejection codes handled by scripts/client.cs in the shipped game.
+const rejectionMessages: Record<string, string> = {
+  PASSWORD: "This server requires a password.",
+  CR_YOUAREBANNED: "You are not allowed to play on this server.",
+  CR_SERVERFULL: "This server is full.",
+  CR_AUTHENTICATION_FAILED: "Authentication with the game server failed.",
+  CR_INVALID_CONNECT_PACKET:
+    "The server rejected the connection request as invalid.",
+  CHR_PROTOCOL_SERVER: "The server uses an older, incompatible game protocol.",
+  CHR_PROTOCOL: "The server requires a newer game protocol.",
+  CHR_NOT_AUTHENTICATED: "This server requires an authenticated game account.",
+  CHR_INVALID_SERVER_PACKET: "The server sent an invalid connection response.",
+  WS_PeerAuthServer_ExpiredClientCertificate:
+    "The game account's authentication has expired.",
+};
+
 /**
  * Spectate-mode failures (share-link server not found, session ended,
  * kicked mid-session) presented in the "Incoming transmission" dialog
@@ -55,8 +71,9 @@ export function WatchErrorDialog({
       >
         <h1 className={styles.Title}>{heading}</h1>
         <p className={styles.Message}>
-          {message === "PASSWORD"
-            ? "This server requires a password."
+          {typeof message === "string" &&
+          Object.hasOwn(rejectionMessages, message)
+            ? rejectionMessages[message]
             : message}
         </p>
         <div className={styles.Buttons}>

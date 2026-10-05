@@ -13,6 +13,8 @@ const harness = vi.hoisted(() => ({
   sendCommand: vi.fn(),
   sendChat: vi.fn(),
   sendMoves: vi.fn(),
+  watch: vi.fn(),
+  queryServerList: vi.fn(),
   handleGhostAlwaysDone: vi.fn(),
   computeAndSendCRC: vi.fn(),
   logs: [] as Record<string, any>[],
@@ -30,6 +32,10 @@ const harness = vi.hoisted(() => ({
 
 vi.mock("node:http", () => ({
   default: { createServer: () => ({ listen: harness.listen }) },
+}));
+vi.mock("./masterQuery", () => ({
+  queryServerList: harness.queryServerList,
+  queryServerInfo: vi.fn(),
 }));
 vi.mock("ws", async () => {
   const { EventEmitter } = await import("node:events");
@@ -81,7 +87,7 @@ vi.mock("./watchSession", async () => {
       has() {
         return true;
       }
-      watch() {}
+      watch = harness.watch;
       detachSocket() {}
       getSession() {
         return undefined;
@@ -153,6 +159,8 @@ describe("relay browser input", () => {
     harness.logs.length = 0;
     harness.connections.length = 0;
     harness.connectStatus = "connected";
+    harness.watch.mockReset();
+    harness.queryServerList.mockReset().mockResolvedValue([]);
     harness.watchOptions = null;
     harness.patrolOptions = null;
     harness.lifecycleHandlers.clear();
@@ -212,6 +220,63 @@ describe("relay browser input", () => {
     });
     return browser;
   }
+
+  it("reports unexpected watch attachment failures as an ended join", async () => {
+    harness.watch.mockImplementationOnce(() => {
+      throw new Error("Snapshot setup failed");
+    });
+    const browser = await connect("watcher", "false");
+    expect(JSON.parse(browser.send.mock.calls.at(-1)![0])).toMatchObject({
+      type: "sessionStatus",
+      status: "ended",
+      address: "192.0.2.1:28000",
+      message: "Unable to join the game stream. Please try again.",
+    });
+  });
+
+  it.each(["player", "watcher"] as const)(
+    "shows a reason when a %s socket tries to change roles",
+    async (role) => {
+      const browser = await connect(role, "false");
+      await browser.request({
+        type: role === "player" ? "watchServer" : "joinServer",
+        address: "192.0.2.2:28000",
+      });
+      expect(JSON.parse(browser.send.mock.calls.at(-1)![0])).toMatchObject(
+        role === "player"
+          ? {
+              type: "sessionStatus",
+              status: "ended",
+              address: "192.0.2.2:28000",
+              message:
+                "Please reload the page before switching from playing to watching.",
+            }
+          : {
+              type: "status",
+              status: "disconnected",
+              message:
+                "Please reload the page before switching from watching to playing.",
+            },
+      );
+    },
+  );
+
+  it("labels failed server-list queries for the browser and allows a subsequent refresh", async () => {
+    const browser = await connect("watcher", "false");
+    harness.queryServerList.mockRejectedValueOnce(new Error("Master timeout"));
+    await browser.request({ type: "listServers" });
+    expect(JSON.parse(browser.send.mock.calls.at(-1)![0])).toEqual({
+      type: "error",
+      requestType: "listServers",
+      message: "Unable to load the server list. Please try refreshing.",
+    });
+    await browser.request({ type: "listServers" });
+    expect(JSON.parse(browser.send.mock.calls.at(-1)![0])).toEqual({
+      type: "serverList",
+      servers: [],
+    });
+    expect(harness.queryServerList).toHaveBeenCalledTimes(2);
+  });
 
   it("loads mission restrictions before listening or warm-starting, then persists changes", async () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), "watch-controls-"));

@@ -19,6 +19,8 @@ vi.mock("../stream/relayClient", () => ({
     watchServer = vi.fn();
     joinServer = vi.fn();
     sendCommand = vi.fn();
+    listServers = vi.fn();
+    sendWsPing = vi.fn();
     leaveServer() {}
   },
 }));
@@ -29,7 +31,10 @@ vi.mock("../stream/liveStreaming", () => ({
   },
 }));
 
-import { liveConnectionStore } from "./liveConnectionStore";
+import {
+  liveConnectionStore,
+  selectConnectionFailureMessage,
+} from "./liveConnectionStore";
 
 describe("watch connection metadata", () => {
   const address = "test:28000";
@@ -256,6 +261,172 @@ describe("watch connection metadata", () => {
       recording: false,
       streamDelayMs: 0,
     });
+  });
+
+  it.each([false, true])(
+    "keeps a rejection visible through socket closure (session established: %s)",
+    (established) => {
+      state().leaveServer();
+      state().watchServer(address);
+      if (established)
+        handlers().onSessionStatus!("live", undefined, { address }, 1);
+      const reason = "You are not allowed to play on this server.";
+      handlers().onSessionStatus!("ended", reason, { address }, 0);
+      expect(selectConnectionFailureMessage(state())).toBe(reason);
+      handlers().onClose!();
+      vi.advanceTimersByTime(120_000);
+      expect(selectConnectionFailureMessage(state())).toBe(reason);
+      expect(state()).toMatchObject({
+        role: "watcher",
+        watchStatus: "ended",
+        serverAddress: address,
+        reconnecting: false,
+        _relay: null,
+      });
+      state().watchServer(address);
+      expect(selectConnectionFailureMessage(state())).toBeUndefined();
+    },
+  );
+
+  it.each([undefined, "", "   "])(
+    "shows a failure even when the ended notice contains no reason (%s)",
+    (reason) => {
+      state().leaveServer();
+      state().watchServer(address);
+      handlers().onSessionStatus!("ended", reason, { address }, 0);
+      expect(selectConnectionFailureMessage(state())).toBe(
+        "The connection ended without a reason from the server.",
+      );
+      state().leaveServer();
+      expect(selectConnectionFailureMessage(state())).toBeUndefined();
+    },
+  );
+
+  it.each([false, true])(
+    "keeps a failed join visible after exhausting relay reconnect attempts (socket opens: %s)",
+    (opens) => {
+      state().leaveServer();
+      state().watchServer(address);
+      handlers().onClose!();
+      for (const delay of [
+        2_000, 4_000, 6_000, 8_000, 10_000, 10_000, 10_000, 30_000, 30_000,
+      ]) {
+        vi.advanceTimersByTime(delay);
+        expect(selectConnectionFailureMessage(state())).toBeUndefined();
+        if (opens) {
+          handlers().onOpen!();
+          handlers().onSessionStatus!("syncing", undefined, { address }, 1);
+        }
+        handlers().onClose!();
+      }
+      expect(state()).toMatchObject({
+        role: "watcher",
+        watchStatus: "ended",
+        serverAddress: address,
+        disconnectReason: "ended",
+        reconnecting: false,
+        _relay: null,
+      });
+      expect(selectConnectionFailureMessage(state())).toBe(
+        "Unable to reconnect to the relay.",
+      );
+      vi.advanceTimersByTime(120_000);
+      expect(state()._relay).toBeNull();
+    },
+  );
+
+  it.each(["live", "manual"])("resets the retry budget after %s", (reset) => {
+    handlers().onClose!();
+    vi.advanceTimersByTime(2_000);
+    handlers().onOpen!();
+    handlers().onClose!();
+    vi.advanceTimersByTime(4_000);
+    handlers().onOpen!();
+    if (reset === "live") {
+      handlers().onSessionStatus!("live", undefined, { address }, 1);
+    } else {
+      state().watchServer(address);
+    }
+    handlers().onClose!();
+    vi.advanceTimersByTime(2_000);
+    expect(state()._relay).not.toBeNull();
+    expect(state().reconnecting).toBe(true);
+  });
+
+  it("preserves a direct player join rejection rather than replacing it on transport closure", () => {
+    // A previous watch status must not hide this failed player attempt.
+    state().joinServer(address);
+    handlers().onStatus!("disconnected", "PASSWORD");
+    expect(selectConnectionFailureMessage(state())).toBe("PASSWORD");
+    handlers().onClose!();
+    expect(selectConnectionFailureMessage(state())).toBe("PASSWORD");
+    expect(state()).toMatchObject({
+      role: "player",
+      gameStatus: "disconnected",
+      watchStatus: null,
+      serverAddress: address,
+    });
+  });
+
+  it("does not show a join failure when a server-list socket closes", () => {
+    state().leaveServer();
+    handlers().onClose!();
+    expect(state().role).toBeNull();
+    expect(selectConnectionFailureMessage(state())).toBeUndefined();
+  });
+
+  it("shows server-list failures and clears them on a fresh query", () => {
+    state().leaveServer();
+    const cached = [{ address, name: "Cached server" } as ServerInfo];
+    handlers().onServerList!(cached);
+    state().listServers();
+    handlers().onError!(
+      "Unable to load the server list. Please try refreshing.",
+      "listServers",
+    );
+    expect(state()).toMatchObject({
+      servers: cached,
+      serversLoading: false,
+      serverListError: "Unable to load the server list. Please try refreshing.",
+      _listInFlight: false,
+    });
+    state().listServers();
+    expect(state()).toMatchObject({
+      serversLoading: true,
+      serverListError: null,
+    });
+    handlers().onServerList!([]);
+    expect(state()).toMatchObject({
+      servers: [],
+      serversLoading: false,
+      serverListError: null,
+    });
+  });
+
+  it("reports transport loss during a server-list query without claiming a game join failed", () => {
+    state().leaveServer();
+    state().listServers();
+    handlers().onClose!();
+    expect(state()).toMatchObject({
+      serversLoading: false,
+      serverListError:
+        "Unable to load the server list because the relay connection was lost. Please try refreshing.",
+      _listInFlight: false,
+    });
+    expect(selectConnectionFailureMessage(state())).toBeUndefined();
+  });
+
+  it("does not let unrelated relay errors end an in-flight list query or watch session", () => {
+    state().listServers();
+    handlers().onError!("Chat is unavailable");
+    expect(state()).toMatchObject({
+      watchStatus: "live",
+      serversLoading: true,
+      _listInFlight: true,
+      serverListError: null,
+    });
+    handlers().onServerList!([]);
+    expect(state().serversLoading).toBe(false);
   });
 
   function disableWatching() {
