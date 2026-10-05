@@ -2,7 +2,7 @@ import { useEffect, useRef, type ReactNode } from "react";
 import type { WatchEndReason } from "../../relay/types";
 import styles from "./WatchErrorDialog.module.css";
 
-// Native rejection codes handled by scripts/client.cs in the shipped game.
+// Native rejection codes from Tribes2.exe and the shipped scripts/client.cs.
 const rejectionMessages: Record<string, string> = {
   PASSWORD: "This server requires a password.",
   CR_YOUAREBANNED: "You are not allowed to play on this server.",
@@ -10,10 +10,13 @@ const rejectionMessages: Record<string, string> = {
   CR_AUTHENTICATION_FAILED: "Authentication with the game server failed.",
   CR_INVALID_CONNECT_PACKET:
     "The server rejected the connection request as invalid.",
+  CR_INVALID_PROTOCOL_VERSION: "The server rejected the game protocol version.",
   CHR_PROTOCOL_SERVER: "The server uses an older, incompatible game protocol.",
   CHR_PROTOCOL: "The server requires a newer game protocol.",
   CHR_NOT_AUTHENTICATED: "This server requires an authenticated game account.",
   CHR_INVALID_SERVER_PACKET: "The server sent an invalid connection response.",
+  CHR_INVALID_CHALLENGE_PACKET:
+    "The server rejected the connection challenge as invalid.",
   WS_PeerAuthServer_ExpiredClientCertificate:
     "The game account's authentication has expired.",
 };

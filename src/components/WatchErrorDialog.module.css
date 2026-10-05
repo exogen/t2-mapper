@@ -29,6 +29,8 @@
 
 .Message {
   margin: 12px 0 0;
+  white-space: pre-line;
+  overflow-wrap: anywhere;
 }
 
 .Buttons {

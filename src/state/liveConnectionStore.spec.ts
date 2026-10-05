@@ -288,7 +288,7 @@ describe("watch connection metadata", () => {
     },
   );
 
-  it.each([undefined, "", "   "])(
+  it.each([undefined, "", "   ", "\0".repeat(87)])(
     "shows a failure even when the ended notice contains no reason (%s)",
     (reason) => {
       state().leaveServer();
@@ -301,6 +301,14 @@ describe("watch connection metadata", () => {
       expect(selectConnectionFailureMessage(state())).toBeUndefined();
     },
   );
+
+  it("shows a fallback for an invisible direct-join failure from an older relay", () => {
+    state().joinServer(address);
+    handlers().onStatus!("disconnected", "\0".repeat(87));
+    expect(selectConnectionFailureMessage(state())).toBe(
+      "The connection ended without a reason from the server.",
+    );
+  });
 
   it.each([false, true])(
     "keeps a failed join visible after exhausting relay reconnect attempts (socket opens: %s)",

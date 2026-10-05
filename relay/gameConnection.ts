@@ -74,6 +74,22 @@ const OOB_PING_FALLBACK_MISSES = 3;
 const MOVE_STREAM_TIMEOUT_MS = 100;
 const CONNECT_TIMEOUT_MS = 30000;
 
+/** Decode the final string in an OOB rejection/disconnect packet. */
+function readConnectionReason(data: Uint8Array): string | undefined {
+  const bs = new BitStream(data);
+  const reason = bs.readString();
+  if (!bs.isError() && bs.getRemainingBits() < 8) return reason;
+
+  // Legacy CTF+ sends Disconnect with writeString's stringBuffer flag
+  // (Tribes2.exe 0x0043c6d0). Only a false flag is self-contained: a true
+  // flag would refer to a previous string that this OOB packet doesn't carry.
+  const buffered = new BitStream(data);
+  if (buffered.readFlag()) return;
+  const bufferedReason = buffered.readString();
+  if (!buffered.isError() && buffered.getRemainingBits() < 8)
+    return bufferedReason;
+}
+
 /** An event queued for (re)transmission, with its serialized size cached. */
 interface QueuedEvent {
   seq: number;
@@ -421,23 +437,27 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
         break;
       case 38: {
         // Disconnect — U8(type) + U32(seq1) + U32(seq2) + HuffString(reason)
-        let reason = "Server disconnected";
-        if (msg.length > 9) {
-          try {
-            const data = new Uint8Array(
-              msg.buffer,
-              msg.byteOffset,
-              msg.byteLength,
-            );
-            // Skip 9-byte header (1 type + 4 connectSeq + 4 connectSeq2).
-            // Reason is Huffman-encoded via BitStream::writeString (no stringBuffer).
-            const bs = new BitStream(data.subarray(9));
-            const parsed = bs.readString();
-            if (parsed) reason = parsed;
-          } catch {
-            // Fall back to default reason
-          }
+        if (msg.length < 9) return;
+        const serverSeq = msg.readUInt32LE(1);
+        const clientSeq = msg.readUInt32LE(5);
+        // Like Tribes2.exe 0x005c1ec0, only end the matching connection.
+        if (
+          serverSeq !== this.serverConnectSequence ||
+          clientSeq !== this.clientConnectSequence
+        ) {
+          connLog.debug(
+            {
+              expectedServer: this.serverConnectSequence,
+              gotServer: serverSeq,
+              expectedClient: this.clientConnectSequence,
+              gotClient: clientSeq,
+            },
+            "Disconnect sequence mismatch, ignoring",
+          );
+          return;
         }
+        const reason =
+          readConnectionReason(msg.subarray(9)) || "Server disconnected";
         connLog.warn(
           { reason, bytes: msg.length },
           "Server sent Disconnect packet",
@@ -470,17 +490,8 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
       );
       return;
     }
-    let reason = "Challenge rejected";
-    if (msg.length > 5) {
-      try {
-        const data = new Uint8Array(msg.buffer, msg.byteOffset, msg.byteLength);
-        const bs = new BitStream(data.subarray(5));
-        const parsed = bs.readString();
-        if (parsed) reason = parsed;
-      } catch {
-        // Fall back to default reason
-      }
-    }
+    const reason =
+      readConnectionReason(msg.subarray(5)) || "Challenge rejected";
     this.logHandshakeReject("challenge", reason);
     this.fail(reason);
   }
@@ -627,17 +638,8 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
       );
       return;
     }
-    let reason = "Connection rejected";
-    if (msg.length > 9) {
-      try {
-        const data = new Uint8Array(msg.buffer, msg.byteOffset, msg.byteLength);
-        const bs = new BitStream(data.subarray(9));
-        const parsed = bs.readString();
-        if (parsed) reason = parsed;
-      } catch {
-        // Fall back to default reason
-      }
-    }
+    const reason =
+      readConnectionReason(msg.subarray(9)) || "Connection rejected";
     this.logHandshakeReject("connect", reason);
     this.fail(reason);
   }

@@ -799,12 +799,12 @@ export function selectConnectionFailureMessage(
   if (s.disconnectReason === "voluntary") return;
   if (s.role === "watcher" && s.watchStatus === "ended")
     return (
-      s.watchStatusMessage?.trim() ||
+      s.watchStatusMessage?.replaceAll("\0", "").trim() ||
       "The connection ended without a reason from the server."
     );
   if (s.role === "player" && s.gameStatus === "disconnected")
     return (
-      s.gameStatusMessage?.trim() ||
+      s.gameStatusMessage?.replaceAll("\0", "").trim() ||
       "The connection ended without a reason from the server."
     );
 }

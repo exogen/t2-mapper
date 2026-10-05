@@ -21,15 +21,31 @@ class Socket extends EventEmitter {
   close = vi.fn();
 }
 
-function reject(socket: Socket, type: 28 | 34 | 38, reason: string) {
+function rejectionPacket(
+  socket: Socket,
+  type: 28 | 34 | 38,
+  reason: string,
+  { buffered = false, huffman = true } = {},
+) {
   const challenge = socket.send.mock.calls[0][0] as Uint8Array;
   const clientSeq = Buffer.from(challenge).readUInt32LE(5);
   const packet = new BitStreamWriter();
   packet.writeU8(type);
   if (type !== 28) packet.writeU32(0);
   packet.writeU32(clientSeq);
-  writeString(packet, reason);
-  socket.emit("message", Buffer.from(packet.getBuffer()));
+  if (buffered) packet.writeFlag(false);
+  if (huffman) {
+    writeString(packet, reason);
+  } else {
+    packet.writeFlag(false);
+    packet.writeU8(reason.length);
+    packet.writeBitsBuffer(Buffer.from(reason, "latin1"), reason.length * 8);
+  }
+  return Buffer.from(packet.getBuffer());
+}
+
+function reject(socket: Socket, type: 28 | 34 | 38, reason: string) {
+  socket.emit("message", rejectionPacket(socket, type, reason));
 }
 
 describe("relay connection cooldowns", () => {
@@ -67,6 +83,121 @@ describe("relay connection cooldowns", () => {
     connections.push(conn);
     return conn;
   }
+
+  it("decodes Legacy CTF+'s captured ban disconnect and preserves it during cooldown", async () => {
+    // Captured from 64.177.124.10:28000 on 2026-10-04. Keep the wire bytes:
+    // the extra stringBuffer flag was missing from our generated fixtures.
+    const packet = Buffer.from(
+      "26ae3ed102cf57c5f2ae74abbbb43f52b81c438b0f077ad5c8da291dccdcaebd496f25",
+      "hex",
+    );
+    const conn = connection();
+    const status = vi.fn();
+    conn.on("status", status);
+    await conn.connect();
+    // Match this test connection's sequences, keeping the captured reason intact.
+    packet.writeUInt32LE(0, 1);
+    packet.writeUInt32LE(
+      Buffer.from(sockets[0].send.mock.calls[0][0]).readUInt32LE(5),
+      5,
+    );
+    sockets[0].emit("message", packet);
+    const reason = "You are not allowed to play on this server.";
+    expect(status).toHaveBeenCalledWith("disconnected", reason);
+    expect(cooldowns.getMessage(address)).toBe(reason);
+    const retry = connection();
+    retry.on("status", status);
+    status.mockClear();
+    await retry.connect();
+    expect(status).toHaveBeenCalledWith("disconnected", reason);
+    expect(sockets).toHaveLength(1);
+  });
+
+  describe.each([28, 34, 38] as const)("rejection packet %s", (type) => {
+    it.each([
+      { buffered: false, huffman: false },
+      { buffered: false, huffman: true },
+      { buffered: true, huffman: false },
+      { buffered: true, huffman: true },
+    ])("decodes the full reason with %j", async (encoding) => {
+      const conn = connection();
+      const status = vi.fn();
+      conn.on("status", status);
+      await conn.connect();
+      const reason =
+        "You have been kicked out of the game.\nReason: café & <test>";
+      sockets[0].emit(
+        "message",
+        rejectionPacket(sockets[0], type, reason, encoding),
+      );
+      expect(status).toHaveBeenCalledWith("disconnected", reason);
+    });
+
+    it.each([
+      { buffered: false, huffman: false },
+      { buffered: false, huffman: true },
+      { buffered: true, huffman: false },
+      { buffered: true, huffman: true },
+    ])("preserves a 255-character reason with %j", async (encoding) => {
+      const conn = connection();
+      const status = vi.fn();
+      conn.on("status", status);
+      await conn.connect();
+      // The native writer uses Huffman only when it saves bits: 'A' costs
+      // eight bits per character, while 'e' compresses.
+      const reason = (encoding.huffman ? "e" : "A").repeat(255);
+      sockets[0].emit(
+        "message",
+        rejectionPacket(sockets[0], type, reason, encoding),
+      );
+      expect(status).toHaveBeenCalledWith("disconnected", reason);
+    });
+
+    it.each([
+      "short header",
+      "wrong client sequence",
+      ...(type === 28 ? [] : ["wrong server sequence"]),
+    ])("ignores %s without recording a failure", async (corruption) => {
+      const conn = connection();
+      const status = vi.fn();
+      conn.on("status", status);
+      await conn.connect();
+      let packet = rejectionPacket(sockets[0], type, "You are banned");
+      if (corruption === "short header") {
+        packet = packet.subarray(0, type === 28 ? 4 : 8);
+      } else {
+        const offset =
+          corruption === "wrong server sequence" || type === 28 ? 1 : 5;
+        packet.writeUInt32LE((packet.readUInt32LE(offset) + 1) >>> 0, offset);
+      }
+      sockets[0].emit("message", packet);
+      expect(conn.status).toBe("challenging");
+      expect(cooldowns.getMessage(address)).toBeUndefined();
+      reject(sockets[0], type, "Actual rejection");
+      expect(status).toHaveBeenCalledWith("disconnected", "Actual rejection");
+    });
+  });
+
+  it.each([
+    [28, "Challenge rejected"],
+    [34, "Connection rejected"],
+    [38, "Server disconnected"],
+  ] as const)(
+    "uses a readable fallback for a truncated reason in packet %s",
+    async (type, fallback) => {
+      const conn = connection();
+      const status = vi.fn();
+      conn.on("status", status);
+      await conn.connect();
+      const packet = rejectionPacket(
+        sockets[0],
+        type,
+        "You are not allowed to play on this server.",
+      );
+      sockets[0].emit("message", packet.subarray(0, -5));
+      expect(status).toHaveBeenCalledWith("disconnected", fallback);
+    },
+  );
 
   it.each([
     [28, missionCyclingReason, 5_000, true],

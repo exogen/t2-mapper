@@ -49,6 +49,10 @@ it.each([
     "The server rejected the connection request as invalid.",
   ],
   [
+    "CR_INVALID_PROTOCOL_VERSION",
+    "The server rejected the game protocol version.",
+  ],
+  [
     "CHR_PROTOCOL_SERVER",
     "The server uses an older, incompatible game protocol.",
   ],
@@ -62,10 +66,20 @@ it.each([
     "The server sent an invalid connection response.",
   ],
   [
+    "CHR_INVALID_CHALLENGE_PACKET",
+    "The server rejected the connection challenge as invalid.",
+  ],
+  [
     "WS_PeerAuthServer_ExpiredClientCertificate",
     "The game account&#x27;s authentication has expired.",
   ],
   ["Custom server refusal", "Custom server refusal"],
+  ["CR_UNKNOWN_REASON", "CR_UNKNOWN_REASON"],
+  ["constructor", "constructor"],
+  [
+    "You have been kicked.\nReason: <test> & café",
+    "You have been kicked.\nReason: &lt;test&gt; &amp; café",
+  ],
   ["Unable to reconnect to the relay.", "Unable to reconnect to the relay."],
 ])("shows the join failure %s", (message, expected) => {
   const markup = renderToStaticMarkup(
