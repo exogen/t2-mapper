@@ -511,6 +511,15 @@ function CommandCircuitOrthoRig() {
   useFrame((state, delta) => {
     const camera = cameraRef.current;
     if (!camera) return;
+    const view = commandCircuitStore.getState().viewRequest;
+    if (view) {
+      pan.current = { x: view.x, z: view.z };
+      zoom.current = clampZoom(view.zoom, fitZoomRef.current);
+      userAdjusted.current = true;
+      tourPanRef.current = null;
+      endZoomRef.current = null;
+      commandCircuitStore.setState({ viewRequest: null });
+    }
 
     const isStreaming = isStreamingSource(
       gameEntityStore.getState().dataSource,

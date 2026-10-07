@@ -58,6 +58,7 @@ const key = "demos/example.rec";
 const contents = '{"checkpoints":[]}';
 const metadata = {
   "checkpoint-version": String(DEMO_CHECKPOINT_VERSION),
+  "checkpoint-count": "1",
   "demo-bytes": "3",
   "demo-etag": '"demo-v1"',
 };
@@ -66,6 +67,7 @@ let localFile: string;
 let publisher: DemoCheckpointPublisher;
 beforeEach(async () => {
   vi.resetAllMocks();
+  vi.stubEnv("DEMO_CHECKPOINT_COUNT", undefined);
   dir = await fs.mkdtemp(path.join(os.tmpdir(), "checkpoint-publisher-test-"));
   localFile = path.join(dir, "example.rec");
   await fs.writeFile(localFile, new Uint8Array([1, 2, 3]));
@@ -102,10 +104,20 @@ beforeEach(async () => {
   });
 });
 afterEach(async () => {
+  vi.unstubAllEnvs();
   await fs.rm(dir, { recursive: true, force: true });
 });
 
 describe("demo checkpoint publishing", () => {
+  it.each([-1, 1.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1])(
+    "rejects invalid numeric count %s at construction",
+    (count) => {
+      expect(
+        () => new DemoCheckpointPublisher(config, "/assets", count),
+      ).toThrow("Checkpoint count must be a non-negative integer");
+      expect(mocks.send).not.toHaveBeenCalled();
+    },
+  );
   it("reuses a current immutable remote sidecar without downloading or replaying", async () => {
     mocks.send
       .mockResolvedValueOnce({ Metadata: metadata })
@@ -137,6 +149,7 @@ describe("demo checkpoint publishing", () => {
         `${input}.checkpoints.json`,
         "/assets",
         false,
+        1,
       );
       await expect(fs.access(path.dirname(input))).rejects.toThrow();
     },
@@ -149,6 +162,7 @@ describe("demo checkpoint publishing", () => {
       `${localFile}.checkpoints.json`,
       "/assets",
       false,
+      1,
     );
     expect(mocks.send).toHaveBeenCalledTimes(2);
     expect(mocks.send).toHaveBeenCalledWith(
@@ -176,6 +190,43 @@ describe("demo checkpoint publishing", () => {
       mocks.send.mock.calls.some(([command]) => command.kind === "head"),
     ).toBe(false);
     expect(mocks.run.mock.calls[0][3]).toBe(true);
+  });
+
+  it.each([undefined, "3"])(
+    "regenerates when the requested count metadata is %s",
+    async (count) => {
+      mocks.send.mockResolvedValueOnce({
+        Metadata: { ...metadata, "checkpoint-count": count },
+      });
+      expect(await publisher.publish(key)).toBe("published");
+      expect(mocks.run.mock.calls[0][4]).toBe(1);
+    },
+  );
+
+  it.each([undefined, 4])(
+    "passes the env count or explicit override %s to the worker and metadata",
+    async (override) => {
+      vi.stubEnv("DEMO_CHECKPOINT_COUNT", "3");
+      publisher = new DemoCheckpointPublisher(config, "/assets", override);
+      expect(await publisher.publish(key, { localFile })).toBe("published");
+      const count = override ?? 3;
+      expect(mocks.run.mock.calls[0][4]).toBe(count);
+      const upload = mocks.send.mock.calls.find(
+        ([command]) => command.kind === "put",
+      )![0];
+      expect(upload.input.Metadata["checkpoint-count"]).toBe(String(count));
+    },
+  );
+
+  it("reuses short-demo sidecars using the requested count even if none were generated", async () => {
+    publisher = new DemoCheckpointPublisher(config, "/assets", 3);
+    mocks.send
+      .mockResolvedValueOnce({
+        Metadata: { ...metadata, "checkpoint-count": "3" },
+      })
+      .mockResolvedValueOnce({ ContentLength: 3, ETag: '"demo-v1"' });
+    expect(await publisher.publish(key)).toBe("current");
+    expect(mocks.run).not.toHaveBeenCalled();
   });
 
   it("shares a job for concurrent polls and serializes replay across demos", async () => {

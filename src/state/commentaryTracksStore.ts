@@ -22,8 +22,8 @@ export function trackKey(track: Pick<DemoCommentaryTrack, "suffix">): string {
 export interface CommentaryTracksState {
   /** The demo the list belongs to. */
   sourceUrl: string | null;
-  /** The demo has a cast sidecar this build can play. */
-  hasCast: boolean;
+  /** The sidecar lists commentary, or is a legacy cast using the default pair. */
+  hasCommentary: boolean;
   tracks: DemoCommentaryTrack[];
   /** `trackKey` of the viewer's pick, or null for the list's first. */
   selectedKey: string | null;
@@ -41,7 +41,7 @@ export interface CommentaryTracksState {
 export const commentaryTracksStore = createStore<CommentaryTracksState>(
   (set, get) => ({
     sourceUrl: null,
-    hasCast: false,
+    hasCommentary: false,
     tracks: [],
     selectedKey: null,
     selected() {
@@ -58,7 +58,12 @@ export const commentaryTracksStore = createStore<CommentaryTracksState>(
       set({ selectedKey: key });
     },
     async load(sourceUrl) {
-      set({ sourceUrl, hasCast: false, tracks: [], selectedKey: null });
+      set({
+        sourceUrl,
+        hasCommentary: false,
+        tracks: [],
+        selectedKey: null,
+      });
       if (!sourceUrl) return;
       const sidecar = await fetchSidecar(sourceUrl);
       // A newer load wins.
@@ -69,17 +74,23 @@ export const commentaryTracksStore = createStore<CommentaryTracksState>(
 
 async function fetchSidecar(
   sourceUrl: string,
-): Promise<Pick<CommentaryTracksState, "hasCast" | "tracks">> {
+): Promise<Pick<CommentaryTracksState, "hasCommentary" | "tracks">> {
   try {
     const res = await fetch(sidecarUrl(sourceUrl, "cast.json"));
-    if (!res.ok) return { hasCast: false, tracks: [] };
+    if (!res.ok) return { hasCommentary: false, tracks: [] };
     const doc: unknown = await res.json();
+    const tracks = commentaryFromSidecar(doc);
     return {
-      hasCast: planFromSidecar(doc) != null,
-      tracks: commentaryFromSidecar(doc),
+      // Older sidecars predate track lists and use the default audio pair.
+      hasCommentary:
+        tracks.length > 0 ||
+        (planFromSidecar(doc) != null &&
+          !Object.hasOwn(doc as object, "commentary") &&
+          [1, 2].includes((doc as { version?: number }).version ?? 0)),
+      tracks,
     };
   } catch {
-    return { hasCast: false, tracks: [] };
+    return { hasCommentary: false, tracks: [] };
   }
 }
 

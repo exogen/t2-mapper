@@ -6,7 +6,8 @@ import type { PlayerRosterEntry, TeamScore } from "../stream/types";
 import { ColoredName } from "./ColoredName";
 import { PlayerAdminBadge } from "./PlayerAdminBadge";
 import styles from "./ScoreScreen.module.css";
-import { getScoreboardTeamName, useScoreboard } from "./useScoreboard";
+import { useScoreboard } from "./useScoreboard";
+import { EditableTeamName } from "./TeamNameDialog";
 
 function computePingStats(players: PlayerRosterEntry[]): {
   avg: number;
@@ -107,12 +108,14 @@ function PlayersColumnHeader({ players }: { players: PlayerRosterEntry[] }) {
 function TeamPairSection({
   teamA,
   teamB,
+  teams,
   playersA,
   playersB,
   connectedClientId,
 }: {
   teamA: TeamScore;
   teamB: TeamScore | undefined;
+  teams: readonly TeamScore[];
   playersA: PlayerRosterEntry[];
   playersB: PlayerRosterEntry[];
   connectedClientId: number | null | undefined;
@@ -120,10 +123,16 @@ function TeamPairSection({
   return (
     <tbody className={styles.PlayerBody}>
       <tr className={styles.TeamHeaderRow}>
-        <th className={styles.TeamName}>{getScoreboardTeamName(teamA)}</th>
+        <th className={styles.TeamName}>
+          <EditableTeamName teamId={teamA.teamId} teams={teams} />
+        </th>
         <th className={styles.TeamScore}>{teamA.score}</th>
         <th className={styles.TeamName}>
-          {teamB ? getScoreboardTeamName(teamB) : " "}
+          {teamB ? (
+            <EditableTeamName teamId={teamB.teamId} teams={teams} />
+          ) : (
+            " "
+          )}
         </th>
         <th className={styles.TeamScore}>{teamB ? teamB.score : " "}</th>
       </tr>
@@ -159,6 +168,7 @@ export function ScoreScreen({ onClose }: { onClose: () => void }) {
     teamPlayers,
     observers,
     sortedTeams,
+    teamScores,
     ffaPlayers,
   } = useScoreboard();
   const matchClockMs = useMatchClockMs();
@@ -175,13 +185,22 @@ export function ScoreScreen({ onClose }: { onClose: () => void }) {
 
   // Block keyboard events from reaching Three.js while open
   useEffect(() => {
+    const belongsToAnotherDialog = (e: KeyboardEvent) => {
+      const dialog =
+        e.target instanceof Element
+          ? e.target.closest('[role="dialog"]')
+          : null;
+      return dialog != null && dialog !== dialogRef.current;
+    };
     const handleKeyDown = (e: KeyboardEvent) => {
+      if (belongsToAnotherDialog(e)) return;
       if (e.key === "Escape") {
         onClose();
       }
       e.stopImmediatePropagation();
     };
     const handleKeyUp = (e: KeyboardEvent) => {
+      if (belongsToAnotherDialog(e)) return;
       e.stopImmediatePropagation();
     };
     window.addEventListener("keydown", handleKeyDown, { capture: true });
@@ -233,6 +252,7 @@ export function ScoreScreen({ onClose }: { onClose: () => void }) {
                   key={teamA.teamId}
                   teamA={teamA}
                   teamB={teamB}
+                  teams={teamScores ?? []}
                   playersA={teamPlayers.get(teamA.teamId) ?? []}
                   playersB={teamB ? (teamPlayers.get(teamB.teamId) ?? []) : []}
                   connectedClientId={connectedClientId}

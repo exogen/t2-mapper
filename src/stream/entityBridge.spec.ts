@@ -26,6 +26,15 @@ function shape(overrides: Partial<StreamEntity> = {}): StreamEntity {
 }
 
 describe("streamed render entity updates", () => {
+  it("keeps target types current without remounting flag items", () => {
+    const initial = shape({ type: "Item", targetTypeName: "Flag" });
+    const rendered = streamEntityToGameEntity(initial) as ShapeEntity;
+    expect(rendered.targetTypeName).toBe("Flag");
+    expect(
+      updateGameEntityFromStream(rendered, { ...initial, targetTypeName: "" }),
+    ).toBe(false);
+    expect(rendered.targetTypeName).toBe("");
+  });
   it("preserves and refreshes target name colors without remounting the player", () => {
     const initial = shape({
       type: "Player",

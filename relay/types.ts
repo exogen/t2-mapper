@@ -140,11 +140,18 @@ export interface ServerLoadInfo {
 }
 
 /** Target-system entry mirroring InitialBlockData's TargetEntry, with
- *  net-string references already resolved to strings. */
+ *  resolved strings and any outstanding net-string references. */
 export interface WatchTargetEntry {
   targetId: number;
   /** Original target name, including the game's color-code bytes. */
   name?: string;
+  /** Resolved target type, matching demo TargetEntry.typeDescription. */
+  typeDescription?: string;
+  /** Unresolved target strings retained for late-join catch-up. */
+  nameTag?: number;
+  typeTag?: number;
+  skinTag?: number;
+  skinPrefTag?: number;
   skin?: string;
   skinPref?: string;
   /** Omitted (not defaulted) when the relay never saw the value, so
@@ -176,6 +183,8 @@ export interface WatchCatchupPayload {
   controlObjectGhostIndex: number;
   controlObjectData?: ParsedData;
   missionName: string | null;
+  /** Mission handshake sequence; absent on older relays. */
+  missionSequence?: string | null;
 
   // ── Live-only extensions (no .rec equivalent) ──
   /** Negotiated wire version; null for demo-derived state, absent on older relays (51). */

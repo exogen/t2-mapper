@@ -10,6 +10,7 @@
   padding: 0;
   overflow: hidden;
   text-align: left;
+  text-decoration: none;
   border: 1px solid rgba(65, 131, 139, 0.3);
   border-radius: 8px;
   background: rgba(0, 0, 0, 0.3);

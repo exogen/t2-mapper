@@ -1,6 +1,10 @@
 import type { PacketData, ParsedData, SensorGroupColor } from "t2-demo-parser";
 import { stripTaggedStringMarkup } from "./shared.js";
 import {
+  resolvePendingTargetStrings,
+  updateTargetString,
+} from "./targetStrings.js";
+import {
   isServerMessageCommand,
   LoadInfoCollector,
 } from "./serverMessageDecode.js";
@@ -24,9 +28,13 @@ import type { WatchHudStatePayload, WatchTargetEntry } from "./types.js";
 
 export class WatchStateAccumulator {
   readonly netStrings = new Map<number, string>();
-  /** nameTag → targetId awaiting its NetStringEvent (StreamEngine.ts:703). */
+  /** targetId → string tag, until its NetStringEvent arrives. */
   private pendingNameTags = new Map<number, number>();
+  private pendingTypeTags = new Map<number, number>();
+  private pendingSkinTags = new Map<number, number>();
+  private pendingSkinPrefTags = new Map<number, number>();
   private targetRawNames = new Map<number, string>();
+  private targetTypes = new Map<number, string>();
   private targetSkins = new Map<number, string>();
   private targetSkinPrefs = new Map<number, string>();
   private targetTeams = new Map<number, number>();
@@ -66,6 +74,7 @@ export class WatchStateAccumulator {
   private serverDisplayName: string | undefined;
 
   missionName: string | null = null;
+  missionSequence: string | null = null;
   controlObjectGhostIndex = -1;
   controlObjectData: ParsedData | undefined;
   /**
@@ -137,8 +146,12 @@ export class WatchStateAccumulator {
       return false;
     }
     const name = args[1] && this.resolveNetString(args[1]);
-    if (!name || name === this.missionName) return false;
+    const sequence = args[0] && this.resolveNetString(args[0]);
+    if (!name || !sequence) return false;
+    if (name === this.missionName && sequence === this.missionSequence)
+      return false;
     this.missionName = name;
+    this.missionSequence = sequence;
     if (funcName === "MissionStartPhase1") this.beginMissionChange();
     return true;
   }
@@ -185,6 +198,11 @@ export class WatchStateAccumulator {
         case "TargetFreeEvent":
           if (typeof data.targetId === "number") {
             this.targetRawNames.delete(data.targetId);
+            this.targetTypes.delete(data.targetId);
+            this.pendingNameTags.delete(data.targetId);
+            this.pendingTypeTags.delete(data.targetId);
+            this.pendingSkinTags.delete(data.targetId);
+            this.pendingSkinPrefTags.delete(data.targetId);
             this.targetSkins.delete(data.targetId);
             this.targetSkinPrefs.delete(data.targetId);
             this.targetTeams.delete(data.targetId);
@@ -232,40 +250,68 @@ export class WatchStateAccumulator {
     const value = data.value as string | undefined;
     if (id == null || typeof value !== "string") return;
     this.netStrings.set(id, value);
-    const pendingTargetId = this.pendingNameTags.get(id);
-    if (pendingTargetId != null) {
-      this.pendingNameTags.delete(id);
-      this.targetRawNames.set(pendingTargetId, value);
-    }
+    resolvePendingTargetStrings(
+      this.targetRawNames,
+      this.pendingNameTags,
+      id,
+      value,
+    );
+    resolvePendingTargetStrings(
+      this.targetTypes,
+      this.pendingTypeTags,
+      id,
+      value,
+    );
+    resolvePendingTargetStrings(
+      this.targetSkins,
+      this.pendingSkinTags,
+      id,
+      value,
+    );
+    resolvePendingTargetStrings(
+      this.targetSkinPrefs,
+      this.pendingSkinPrefTags,
+      id,
+      value,
+    );
   }
 
-  /** Mirrors StreamEngine.processEvent TargetInfoEvent (StreamEngine.ts:691). */
+  /** Uses the same target string resolution as browser playback. */
   private handleTargetInfo(data: ParsedData): void {
     const targetId = data.targetId as number | undefined;
     if (targetId == null) return;
-    const nameTag = data.nameTag as number | undefined;
-    if (nameTag != null) {
-      const resolved = this.netStrings.get(nameTag);
-      if (resolved) {
-        this.targetRawNames.set(targetId, resolved);
-      } else {
-        this.pendingNameTags.set(nameTag, targetId);
-      }
-    }
+    updateTargetString(
+      this.netStrings,
+      this.targetRawNames,
+      this.pendingNameTags,
+      targetId,
+      data.nameTag as number | undefined,
+    );
+    updateTargetString(
+      this.netStrings,
+      this.targetTypes,
+      this.pendingTypeTags,
+      targetId,
+      data.typeTag as number | undefined,
+    );
+    updateTargetString(
+      this.netStrings,
+      this.targetSkins,
+      this.pendingSkinTags,
+      targetId,
+      data.skinTag as number | undefined,
+    );
+    updateTargetString(
+      this.netStrings,
+      this.targetSkinPrefs,
+      this.pendingSkinPrefTags,
+      targetId,
+      data.skinPrefTag as number | undefined,
+    );
     const sensorGroup = data.sensorGroup as number | undefined;
     if (sensorGroup != null) this.targetTeams.set(targetId, sensorGroup);
     const renderFlags = data.renderFlags as number | undefined;
     if (renderFlags != null) this.targetRenderFlags.set(targetId, renderFlags);
-    const skinTag = data.skinTag as number | undefined;
-    if (skinTag != null && skinTag !== 0x400) {
-      const resolved = this.netStrings.get(skinTag);
-      if (resolved) this.targetSkins.set(targetId, resolved);
-    }
-    const skinPrefTag = data.skinPrefTag as number | undefined;
-    if (skinPrefTag != null && skinPrefTag !== 0x400) {
-      const resolved = this.netStrings.get(skinPrefTag);
-      if (resolved) this.targetSkinPrefs.set(targetId, resolved);
-    }
   }
 
   private handleSensorGroupColor(data: ParsedData): void {
@@ -314,6 +360,7 @@ export class WatchStateAccumulator {
       }
       const renamed = changes.renamedPlayer;
       if (renamed?.targetId != null) {
+        this.pendingNameTags.delete(renamed.targetId);
         this.targetRawNames.set(renamed.targetId, renamed.rawName);
       }
       // Capture aliases / peak player counts per event, before a later
@@ -425,6 +472,11 @@ export class WatchStateAccumulator {
   getTargetEntries(): WatchTargetEntry[] {
     const targetIds = new Set<number>([
       ...this.targetRawNames.keys(),
+      ...this.targetTypes.keys(),
+      ...this.pendingNameTags.keys(),
+      ...this.pendingTypeTags.keys(),
+      ...this.pendingSkinTags.keys(),
+      ...this.pendingSkinPrefTags.keys(),
       ...this.targetTeams.keys(),
       ...this.targetRenderFlags.keys(),
       ...this.targetSkins.keys(),
@@ -435,6 +487,11 @@ export class WatchStateAccumulator {
       .map((targetId) => ({
         targetId,
         name: this.targetRawNames.get(targetId),
+        typeDescription: this.targetTypes.get(targetId),
+        nameTag: this.pendingNameTags.get(targetId),
+        typeTag: this.pendingTypeTags.get(targetId),
+        skinTag: this.pendingSkinTags.get(targetId),
+        skinPrefTag: this.pendingSkinPrefTags.get(targetId),
         skin: this.targetSkins.get(targetId),
         skinPref: this.targetSkinPrefs.get(targetId),
         sensorGroup: this.targetTeams.get(targetId),

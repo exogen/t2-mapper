@@ -19,6 +19,7 @@ import {
   DemoCheckpointGenerationError,
   runDemoCheckpointProcess,
 } from "./demoCheckpointProcess.js";
+import { loadDemoCheckpointCount } from "./demoCheckpointConfig.js";
 
 export interface PublishDemoCheckpointsOptions {
   localFile?: string;
@@ -32,15 +33,24 @@ export class DemoCheckpointPublisher {
   private readonly client: S3Client;
   private readonly config: DemoUploadConfig;
   private readonly assetRoot: string;
+  private readonly checkpointCount: number;
   private tail: Promise<unknown> = Promise.resolve();
   private readonly pending = new Map<
     string,
     Promise<DemoCheckpointPublishResult>
   >();
 
-  constructor(config: DemoUploadConfig, assetRoot: string) {
+  constructor(
+    config: DemoUploadConfig,
+    assetRoot: string,
+    checkpointCount = loadDemoCheckpointCount(),
+  ) {
     this.config = config;
     this.assetRoot = assetRoot;
+    this.checkpointCount = loadDemoCheckpointCount(
+      checkpointCount,
+      "Checkpoint count",
+    );
     this.client = new S3Client({
       region: "auto",
       endpoint: config.endpoint,
@@ -64,7 +74,8 @@ export class DemoCheckpointPublisher {
       );
       if (
         sidecar.Metadata?.["checkpoint-version"] !==
-        String(DEMO_CHECKPOINT_VERSION)
+          String(DEMO_CHECKPOINT_VERSION) ||
+        sidecar.Metadata["checkpoint-count"] !== String(this.checkpointCount)
       )
         return false;
       const demo = await this.client.send(
@@ -150,6 +161,7 @@ export class DemoCheckpointPublisher {
           output,
           this.assetRoot,
           force,
+          this.checkpointCount,
         );
       } catch (error) {
         if (!(error instanceof DemoCheckpointGenerationError)) throw error;
@@ -172,6 +184,7 @@ export class DemoCheckpointPublisher {
             CacheControl: "no-cache",
             Metadata: {
               "checkpoint-version": String(result.version),
+              "checkpoint-count": String(this.checkpointCount),
               "demo-bytes": String(result.demoBytes),
               "demo-sha256": result.demoSha256,
               ...(demoETag ? { "demo-etag": demoETag } : {}),

@@ -43,6 +43,19 @@ export const DEFAULT_FLAG_SKINS: Record<number, string> = {
   6: "cotp",
 };
 
+/** Tribes2.exe TargetManager::getGameName (0x0066cbc0): name + type,
+ *  preserving case and omitting fields prefixed with "_". */
+export function formatTargetName(
+  name: string | null | undefined,
+  type: string | null | undefined,
+): string {
+  const visibleName = name && !name.startsWith("_") ? name : "";
+  const visibleType = type && !type.startsWith("_") ? type : "";
+  return visibleName && visibleType
+    ? `${visibleName} ${visibleType}`
+    : visibleName || visibleType;
+}
+
 /**
  * Replicates `GameBase::getGameName()` from gameBase.cs.
  * Combines targetNameTag and targetTypeTag from the datablock into a

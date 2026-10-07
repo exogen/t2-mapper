@@ -5,9 +5,12 @@ import {
   resetStreamPlayback,
 } from "./streamPlaybackStore";
 import type { PlayerEntity, ShapeEntity } from "./gameEntityTypes";
+import { setStreamSnapshot } from "./streamSnapshotStore";
+import type { StreamSnapshot } from "../stream/types";
 import {
   enterWatchFollow,
   followFlag,
+  getFollowableFlags,
   getFollowTargets,
   resolveWatchFollowTarget,
   cycleDemoCameraMode,
@@ -46,6 +49,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  setStreamSnapshot(null);
   gameEntityStore.getState().endStreaming();
   resetStreamPlayback();
 });
@@ -160,6 +164,28 @@ describe("target finder follow targets", () => {
   });
 
   it("keeps a flag distinct from its carrier and selects the same slot as the number key", () => {
+    setStreamSnapshot({
+      flagTargets: [
+        {
+          targetId: 40,
+          name: "Storm",
+          typeName: "Flag",
+          teamId: 1,
+          skinName: "base",
+        },
+        {
+          targetId: 41,
+          name: "Inferno",
+          typeName: "Flag",
+          teamId: 2,
+          skinName: "baseb",
+        },
+      ],
+      teamScores: [
+        { teamId: 1, name: "Storm", skinName: "base" },
+        { teamId: 2, name: "Inferno", skinName: "baseb" },
+      ],
+    } as StreamSnapshot);
     gameEntityStore
       .getState()
       .setAllStreamEntities([flag("90", 1), flag("91", 2)]);
@@ -188,6 +214,7 @@ describe("target finder follow targets", () => {
     ]);
     const targets = getFollowTargets();
     expect(targets.find((t) => t.key === chosen.key)?.entityId).toBe("100");
+    expect(targets.find((t) => t.key === chosen.key)?.label).toBe("Storm Flag");
     expect(targets.find((t) => t.key === "player:32")?.label).toBe("Alice");
     expect(resolveWatchFollowTarget()).toBe("100");
     expect(streamPlaybackStore.getState().followFlagSlot).toBe(1);
@@ -203,5 +230,35 @@ describe("target finder follow targets", () => {
     });
     followFlag(1);
     expect(streamPlaybackStore.getState().followEntityId).toBe("90");
+  });
+
+  it("keeps the original flag label while its camera target switches to the carrier", () => {
+    setStreamSnapshot({
+      flagTargets: [{ targetId: 40, typeName: "Flag", teamId: 0 }],
+    } as StreamSnapshot);
+    const item = { ...flag("90", 0), targetTypeName: "Flag" };
+    const carrier = player("100", 32, {
+      playerName: "Alice",
+      targetTypeName: "_ClientConnection",
+      targetRenderFlags: 2,
+      imageSlots: [{ shapeName: "flag", mountPoint: 0, dataBlockId: 1 }],
+    });
+    for (const [entity, label] of [
+      [item, "Flag"],
+      [carrier, "Flag"],
+      [item, "Flag"],
+    ] as const) {
+      gameEntityStore.getState().setAllStreamEntities([entity]);
+      expect(getFollowableFlags()).toEqual([
+        { slot: 1, teamId: null, label, entityId: entity.id },
+      ]);
+    }
+  });
+
+  it("preserves the case of other server-supplied neutral flag names", () => {
+    gameEntityStore
+      .getState()
+      .setAllStreamEntities([{ ...flag("90", 0), playerName: "golden flag" }]);
+    expect(getFollowableFlags()[0].label).toBe("golden flag");
   });
 });

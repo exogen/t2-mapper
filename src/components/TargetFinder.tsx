@@ -1,3 +1,4 @@
+import { useCaster } from "../state/casterStore";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Combobox,
@@ -115,7 +116,11 @@ function TargetFinderDialog({ onClose }: { onClose: () => void }) {
   }, []);
   const [query, setQuery] = useState("");
   // Mounted only while searching; closed launchers do no entity-list work.
-  const targets = useStreamSnapshot(getFollowTargets, targetsEqual);
+  const names = useCaster((s) => s.settings?.teamNames);
+  const targets = useStreamSnapshot(
+    () => getFollowTargets(names),
+    targetsEqual,
+  );
   const spawnedPlayers = targets.filter(
     (target) => target.flagSlot == null,
   ).length;

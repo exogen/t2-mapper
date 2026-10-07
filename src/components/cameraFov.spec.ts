@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { PerspectiveCamera } from "three";
 import { engineStore } from "../state/engineStore";
+import { casterStore } from "../state/casterStore";
 import { cameraTourStore } from "../state/cameraTourStore";
 import { demoDirectorStore } from "../state/demoDirectorStore";
 import {
@@ -42,12 +43,26 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  casterStore.getState().suspend();
   vi.restoreAllMocks();
   resetStreamPlayback();
   engineStore.getState().setRecording(null);
   cameraTourStore.getState().cancel();
   demoDirectorStore.setState({ status: "idle" });
 });
+
+it.each(["freeFly", "orbitOverride", "firstPersonOverride"] as const)(
+  "applies the recalled camera's FOV in demo %s and preserves Original zoom",
+  (cameraMode) => {
+    casterStore.setState({ fov: 110 });
+    streamPlaybackStore.setState({ cameraMode });
+    updateObserverCameraFov(camera, 90);
+    expect(horizontalFov()).toBeCloseTo(110);
+    streamPlaybackStore.setState({ cameraMode: "original" });
+    updateObserverCameraFov(camera, 90);
+    expect(horizontalFov()).toBeCloseTo(20.8);
+  },
+);
 
 it("uses absolute recorded FOVs, including fractional zoom and normal FOV", () => {
   for (const fov of [104, 20.8, 10.4, 104]) {

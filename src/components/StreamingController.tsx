@@ -24,6 +24,8 @@ import {
   isCurrentPlayback,
 } from "../state/engineStore";
 import { setStreamSnapshot } from "../state/streamSnapshotStore";
+import { demoLoadStore } from "../state/demoLoadStore";
+import { syncDemoCaster } from "../state/demoCaster";
 import { cameraRegistry } from "../state/cameraRegistry";
 import { isPlayerOrbitLocked, resolveCameraOwner } from "../state/cameraOwner";
 import { getPlayerViewAngles } from "../stream/playerView";
@@ -298,6 +300,7 @@ export function StreamingController({
   if (lockedOrbitRef.current == null)
     lockedOrbitRef.current = new PlayerOrbitSpring();
   const orbitDistanceRef = useRef<OrbitDistanceSpring>(null!);
+  const lastOrbitSnapNonceRef = useRef(0);
   if (orbitDistanceRef.current == null)
     orbitDistanceRef.current = new OrbitDistanceSpring();
   const springRef = useRef<FollowSpring>(newFollowSpring());
@@ -621,6 +624,16 @@ export function StreamingController({
       syncRenderableEntities(renderCurrent);
       if (!isCurrentPlayback(recording, playback.seekNonce)) return;
 
+      // A timestamp link may start in a later mission. Wait for its completed
+      // frame so the opening scene and intermediate seek scenes don't reset it.
+      if (!clock.seekProgress) {
+        syncDemoCaster(
+          recording,
+          renderCurrent.ghostAlwaysDoneSec,
+          demoLoadStore.getState().sourceUrl,
+        );
+      }
+
       // Publish snapshot when it changed. useSyncExternalStore
       // notifications are handled SYNCHRONOUSLY by React and preempt (and
       // restart) in-progress Suspense retry renders, so per-tick publishes
@@ -846,6 +859,12 @@ export function StreamingController({
       (!isLive || isWatcher) &&
       orbitTargetId != null;
     const orbitLocked = isPlayerOrbitLocked(followBehindPlayer);
+    const orbitSnapNonce = streamPlaybackStore.getState().orbitSnapNonce;
+    if (lastOrbitSnapNonceRef.current !== orbitSnapNonce) {
+      lockedOrbitRef.current.reset();
+      orbitDistanceRef.current.reset();
+      lastOrbitSnapNonceRef.current = orbitSnapNonce;
+    }
     const localOrbit = orbitOverride && resolveCameraOwner() === "input";
     const { followFlagSlot } = streamPlaybackStore.getState();
     // Both springs follow the flag across carrier/item hand-offs. A drop also

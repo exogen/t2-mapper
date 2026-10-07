@@ -1,5 +1,10 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { SettingsProvider, useDebug, useSettings } from "./SettingsProvider";
+import {
+  SettingsProvider,
+  useDebug,
+  useSettings,
+  type HudPosition,
+} from "./SettingsProvider";
 import { cameraTourStore } from "../state/cameraTourStore";
 import type { AppMode } from "./useQueryParams";
 import type { DataSource } from "../state/gameEntityStore";
@@ -101,6 +106,33 @@ afterEach(() => {
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();
 });
+
+it("defaults to showing unassigned quick cam slots and persists hiding them across modes", () => {
+  render();
+  const { settings } = render();
+  expect(settings.quickCamHideUnassignedSlots).toBe(false);
+  settings.setQuickCamHideUnassignedSlots(true);
+  for (const mode of ["live", "demo", "map"] as const) {
+    hooks.mode = mode;
+    hooks.dataSource = mode;
+    expect(render().settings.quickCamHideUnassignedSlots).toBe(true);
+  }
+  vi.advanceTimersByTime(1000);
+  const saved = JSON.parse(vi.mocked(localStorage.setItem).mock.lastCall![1]);
+  expect(saved.quickCamHideUnassignedSlots).toBe(true);
+});
+
+it.each([true, false])(
+  "restores the global hide-unassigned preference %s",
+  (value) => {
+    vi.stubGlobal("localStorage", {
+      getItem: () => JSON.stringify({ quickCamHideUnassignedSlots: value }),
+      setItem: vi.fn(),
+    });
+    render();
+    expect(render().settings.quickCamHideUnassignedSlots).toBe(value);
+  },
+);
 
 it.each<AppMode>(["map", "demo", "live"])(
   "allows all three features in development %s mode",
@@ -210,4 +242,125 @@ it("preserves ordinary map tours when applying the debug restriction", () => {
   hooks.mode = "demo";
   render();
   expect(cameraTourStore.getState().animation?.tourType).toBe("feature");
+});
+
+it.each([
+  [{ showScoreHud: true }, "left", true],
+  [{ showScoreHud: false, scoreHudStyle: "solid" }, "left", false],
+  [{ scoreHudStyle: "transparent" }, "left", false],
+  [{}, "left", false],
+  [{ showScoreHud: true, scoreHudPosition: "right" }, "right", true],
+  [{ scoreHudPosition: "right" }, "right", false],
+  [{ showScoreHud: false, scoreHudPosition: "right" }, "right", false],
+])(
+  "restores mini score HUD preferences from %j as %s, enabled %s",
+  (saved, position, enabled) => {
+    vi.stubGlobal("localStorage", {
+      getItem: () => JSON.stringify(saved),
+      setItem: vi.fn(),
+    });
+    render();
+    const { settings } = render();
+    expect(settings.scoreHudPosition).toBe(position);
+    expect(settings.showScoreHud).toBe(enabled);
+    expect(settings.quickCamHudPosition).toBe("left");
+    expect(settings.showQuickCamHud).toBe(false);
+  },
+);
+
+it.each([
+  [{}, "left", false],
+  [{ showQuickCamHud: true }, "left", true],
+  [{ quickCamHudPosition: "right" }, "right", false],
+  [{ showQuickCamHud: true, quickCamHudPosition: "right" }, "right", true],
+  [{ showQuickCamHud: false, quickCamHudPosition: "right" }, "right", false],
+])(
+  "restores quick cam HUD preferences from %j as %s, enabled %s",
+  (saved, position, enabled) => {
+    vi.stubGlobal("localStorage", {
+      getItem: () => JSON.stringify(saved),
+      setItem: vi.fn(),
+    });
+    render();
+    const { settings } = render();
+    expect(settings.quickCamHudPosition).toBe(position);
+    expect(settings.showQuickCamHud).toBe(enabled);
+  },
+);
+
+it.each<HudPosition>(["left", "right"])(
+  "gives the most recently selected HUD the %s position and persists both choices",
+  (position) => {
+    render();
+    let { settings } = render();
+    settings.setScoreHudPosition(position);
+    settings.setQuickCamHudPosition(position);
+    settings = render().settings;
+    expect(settings.showScoreHud).toBe(false);
+    expect(settings.showQuickCamHud).toBe(false);
+    settings.setShowScoreHud(true);
+    settings.setShowQuickCamHud(true);
+    settings = render().settings;
+    expect(settings.showScoreHud).toBe(false);
+    expect(settings.showQuickCamHud).toBe(true);
+    expect(settings.scoreHudPosition).toBe(position);
+    expect(settings.quickCamHudPosition).toBe(position);
+
+    settings.setShowScoreHud(true);
+    settings = render().settings;
+    expect(settings.scoreHudPosition).toBe(position);
+    expect(settings.showScoreHud).toBe(true);
+    expect(settings.showQuickCamHud).toBe(false);
+
+    const opposite = position === "left" ? "right" : "left";
+    settings.setQuickCamHudPosition(opposite);
+    settings.setShowQuickCamHud(true);
+    settings = render().settings;
+    expect(settings.scoreHudPosition).toBe(position);
+    expect(settings.quickCamHudPosition).toBe(opposite);
+    vi.advanceTimersByTime(500);
+    const saved = JSON.parse(vi.mocked(localStorage.setItem).mock.lastCall![1]);
+    expect(saved.scoreHudPosition).toBe(position);
+    expect(saved.quickCamHudPosition).toBe(opposite);
+    expect(saved.showScoreHud).toBe(true);
+    expect(saved.showQuickCamHud).toBe(true);
+
+    settings.setShowQuickCamHud(false);
+    settings = render().settings;
+    expect(settings.scoreHudPosition).toBe(position);
+    expect(settings.quickCamHudPosition).toBe(opposite);
+    expect(settings.showQuickCamHud).toBe(false);
+    settings.setShowQuickCamHud(true);
+    settings = render().settings;
+    expect(settings.quickCamHudPosition).toBe(opposite);
+    expect(settings.showScoreHud).toBe(true);
+    expect(settings.showQuickCamHud).toBe(true);
+
+    settings.setQuickCamHudPosition(position);
+    settings = render().settings;
+    expect(settings.showScoreHud).toBe(false);
+    expect(settings.scoreHudPosition).toBe(position);
+    expect(settings.showQuickCamHud).toBe(true);
+  },
+);
+
+it("restores both HUD positions and the mini score style", () => {
+  vi.stubGlobal("localStorage", {
+    getItem: () =>
+      JSON.stringify({
+        showScoreHud: true,
+        showQuickCamHud: true,
+        scoreHudPosition: "right",
+        quickCamHudPosition: "left",
+        scoreHudStyle: "transparent",
+      }),
+    setItem: vi.fn(),
+  });
+  render();
+  const { settings } = render();
+  expect(settings.scoreHudPosition).toBe("right");
+  expect(settings.quickCamHudPosition).toBe("left");
+  expect(settings.showScoreHud).toBe(true);
+  expect(settings.showQuickCamHud).toBe(true);
+  expect(settings.scoreHudStyle).toBe("transparent");
 });

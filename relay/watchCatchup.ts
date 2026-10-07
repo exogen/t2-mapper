@@ -42,6 +42,7 @@ export function buildCatchupPayload(options: {
     controlObjectGhostIndex: watchState.controlObjectGhostIndex,
     controlObjectData: watchState.controlObjectData,
     missionName: watchState.missionName,
+    missionSequence: watchState.missionSequence,
     compressionPoint: { ...packetParser.getCompressionPoint() },
     pendingGuaranteedEvents: packetParser.getPendingGuaranteedEvents(),
     playerSensorGroup: watchState.playerSensorGroup,

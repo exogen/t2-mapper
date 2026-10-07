@@ -5,43 +5,12 @@ import {
   useLiveSelector,
 } from "../state/liveConnectionStore";
 import { useStreamSnapshot } from "../state/streamSnapshotStore";
-import type { PlayerRosterEntry, TeamScore } from "../stream/types";
-import { DEFAULT_TEAM_NAMES } from "../stringUtils";
+import type { TeamScore } from "../stream/types";
+import { useCaster, displayTeamName } from "../state/casterStore";
+import { groupScoreboard } from "../state/scoreboard";
 
 export function getScoreboardTeamName(team: TeamScore): string {
-  return team.name || DEFAULT_TEAM_NAMES[team.teamId] || `Team ${team.teamId}`;
-}
-
-function byScoreThenName(a: PlayerRosterEntry, b: PlayerRosterEntry): number {
-  return b.score - a.score || a.name.localeCompare(b.name);
-}
-
-export function groupScoreboard(
-  playerRoster: readonly PlayerRosterEntry[] = [],
-  teamScores: readonly TeamScore[] = [],
-) {
-  const teamPlayers = new Map<number, PlayerRosterEntry[]>();
-  const observers: PlayerRosterEntry[] = [];
-  for (const player of playerRoster) {
-    if (player.teamId > 0) {
-      const list = teamPlayers.get(player.teamId);
-      if (list) list.push(player);
-      else teamPlayers.set(player.teamId, [player]);
-    } else {
-      observers.push(player);
-    }
-  }
-  for (const list of teamPlayers.values()) list.sort(byScoreThenName);
-  observers.sort((a, b) => a.name.localeCompare(b.name));
-
-  // Only server-declared teams count. Teamless modes also assign sensor
-  // group ids (Rabbit uses 1 and 2; DM assigns one per player).
-  const sortedTeams = [...teamScores].sort((a, b) => a.teamId - b.teamId);
-  const ffaPlayers =
-    sortedTeams.length === 0 && playerRoster.length > 0
-      ? playerRoster.filter((p) => p.teamId > 0).sort(byScoreThenName)
-      : null;
-  return { teamPlayers, observers, sortedTeams, ffaPlayers };
+  return displayTeamName(team.teamId, team.name);
 }
 
 /** Shared by the full score screen and the HUD (which unmounts while it is open). */
@@ -64,9 +33,16 @@ export function useScoreboard() {
     return () => clearInterval(interval);
   }, [dataSource, isWatcher]);
 
+  const names = useCaster((s) => s.settings?.teamNames);
   const grouped = useMemo(
-    () => groupScoreboard(playerRoster, teamScores),
-    [playerRoster, teamScores],
+    () =>
+      groupScoreboard(
+        playerRoster,
+        teamScores?.map((team) =>
+          names?.[team.teamId] ? { ...team, name: names[team.teamId] } : team,
+        ),
+      ),
+    [playerRoster, teamScores, names],
   );
-  return { ...grouped, connectedClientId, playerRoster };
+  return { ...grouped, connectedClientId, playerRoster, teamScores };
 }

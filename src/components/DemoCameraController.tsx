@@ -9,7 +9,6 @@ import {
   toggleFollowFirstPerson,
 } from "../state/watchFollow";
 import { useInputAction } from "./InputControls";
-import { useFollowFlagActions } from "./useFollowFlagActions";
 import { FramePriority } from "./framePriority";
 import { useRecording } from "./usePlayback";
 import { isRelayRecording } from "../stream/demoDate";
@@ -45,7 +44,7 @@ export function DemoCameraController() {
   useInputAction("prevPlayer", () => cyclePlayer(-1));
   useInputAction("nextPlayerKey", () => cyclePlayer(1));
   useInputAction("prevPlayerKey", () => cyclePlayer(-1));
-  // ArrowRight/ArrowLeft in the command circuit cycles the followed player
+  // N / Shift-N in the command circuit cycles the followed player
   // (or enters follow from pan), mirroring live mode's observe actions.
   useInputAction("observeNextPlayer", () => {
     if (streamPlaybackStore.getState().followEntityId) {
@@ -61,13 +60,10 @@ export function DemoCameraController() {
       enterWatchFollow();
     }
   });
-  // Number keys orbit the flags (1 = Storm, 2 = Inferno, …).
-  useFollowFlagActions(() => true);
-
   useFrame(() => {
-    // Only active while following (orbit / first-person). Cleared modes
-    // (original / free-fly) leave followEntityId null.
-    if (!streamPlaybackStore.getState().followEntityId) return;
+    const { followEntityId, pendingFollowPlayerName } =
+      streamPlaybackStore.getState();
+    if (!followEntityId && !pendingFollowPlayerName) return;
     const target = resolveWatchFollowTarget();
     if (target) {
       const wanted = streamPlaybackStore.getState().followCameraMode;

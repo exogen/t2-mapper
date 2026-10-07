@@ -14,7 +14,7 @@ import {
   MAP_MODE_INPUT,
   DEMO_MODE_INPUT,
   LIVE_OBSERVER_INPUT,
-  FLAG_FOLLOW_INPUT,
+  QUICK_CAM_INPUT,
   LIVE_FOLLOW_INPUT,
   FOLLOW_KEYBOARD_INPUT,
   TOUR_MODE_INPUT,
@@ -53,11 +53,14 @@ export function ActiveInputBindings() {
 
   if (targetFinderOpen) return null;
 
-  // An active tour owns ALL input: only its bindings (click = next
-  // stop, Escape = exit) are mounted — no camera-mode cycling, pointer
-  // lock, CC toggling, or follow controls until the tour ends.
+  // Tours keep manual controls disabled; quick cams can interrupt them.
   if (cameraOwner === "tour") {
-    return <InputBindings map={TOUR_MODE_INPUT} />;
+    return (
+      <>
+        <InputBindings map={TOUR_MODE_INPUT} />
+        {canFindTarget && <InputBindings map={QUICK_CAM_INPUT} />}
+      </>
+    );
   }
 
   // The auto-director keeps manual camera controls disabled. Transport,
@@ -66,6 +69,7 @@ export function ActiveInputBindings() {
     return (
       <>
         <InputBindings map={DIRECTOR_MODE_INPUT} />
+        {canFindTarget && <InputBindings map={QUICK_CAM_INPUT} />}
         {isDemo && <InputBindings map={DEMO_MODE_INPUT} />}
         {canFindTarget && <InputBindings map={TARGET_FINDER_INPUT} />}
       </>
@@ -117,15 +121,7 @@ export function ActiveInputBindings() {
             {clickToCycle && <InputBindings map={LIVE_FOLLOW_INPUT} />}
           </>
         )}
-      {/* Number keys orbit the flags — client-side follow (demo and watch
-          spectate). The server CAN orbit arbitrary targets
-          (serverCmdAttachCommanderCamera), but its sensor-group gate
-          rejects observers for EVERY target — verified live with
-          scripts/attach-camera-probe.ts — so real observers aren't
-          wired up. */}
-      {(isDemo || (isLive && isWatcher)) && (
-        <InputBindings map={FLAG_FOLLOW_INPUT} />
-      )}
+      {canFindTarget && <InputBindings map={QUICK_CAM_INPUT} />}
     </>
   );
 }

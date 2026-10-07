@@ -1,17 +1,22 @@
-import type { PlayerRosterEntry } from "../stream/types";
+import type { PlayerRosterEntry, TeamScore } from "../stream/types";
 import { ColoredName } from "./ColoredName";
 import { PlayerAdminBadge } from "./PlayerAdminBadge";
 import type { HudStyle } from "./SettingsProvider";
 import { getScoreboardTeamName, useScoreboard } from "./useScoreboard";
+import { EditableTeamName } from "./TeamNameDialog";
 import styles from "./ScoreHUD.module.css";
 
 function PlayerScores({
   label,
+  teamId,
+  teams,
   score,
   players,
   connectedClientId,
 }: {
   label: string;
+  teamId?: number;
+  teams?: readonly TeamScore[];
   score?: number;
   players: PlayerRosterEntry[];
   connectedClientId: number | null | undefined;
@@ -22,7 +27,11 @@ function PlayerScores({
         <thead>
           <tr>
             <th scope="col" className={styles.Name} title={label}>
-              {label}
+              {teamId != null && teams ? (
+                <EditableTeamName teamId={teamId} teams={teams} />
+              ) : (
+                label
+              )}
             </th>
             <th scope="col" className={styles.Score}>
               {score ?? "Score"}
@@ -56,8 +65,13 @@ function PlayerScores({
 }
 
 export function ScoreHUD({ hudStyle }: { hudStyle: HudStyle }) {
-  const { sortedTeams, teamPlayers, ffaPlayers, connectedClientId } =
-    useScoreboard();
+  const {
+    sortedTeams,
+    teamScores,
+    teamPlayers,
+    ffaPlayers,
+    connectedClientId,
+  } = useScoreboard();
   return (
     <section
       className={styles.ScoreHUD}
@@ -71,6 +85,8 @@ export function ScoreHUD({ hudStyle }: { hudStyle: HudStyle }) {
             <PlayerScores
               key={team.teamId}
               label={getScoreboardTeamName(team)}
+              teamId={team.teamId}
+              teams={teamScores ?? []}
               score={team.score}
               players={teamPlayers.get(team.teamId) ?? []}
               connectedClientId={connectedClientId}

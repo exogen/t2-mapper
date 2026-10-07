@@ -38,7 +38,7 @@ function flushEffect() {
   hooks.effect = null;
   effect?.();
 }
-function render(
+function Render(
   timeSec: number | null,
   matchStarted = true,
   matchEnded = false,
@@ -61,50 +61,50 @@ beforeEach(() => {
 });
 
 it("keeps the score screen closed through a welcome burst and opens at a witnessed MissionEnd", () => {
-  render(100);
-  render(102); // Welcome messages leave matchEnded false.
-  render(110);
+  Render(100);
+  Render(102); // Welcome messages leave matchEnded false.
+  Render(110);
   expect(setOpen).not.toHaveBeenCalled();
-  render(115, true, true);
+  Render(115, true, true);
   expect(setOpen).toHaveBeenCalledExactlyOnceWith(true);
   setOpen.mockClear(); // A manual close must survive later debrief snapshots.
-  render(120, true, true);
+  Render(120, true, true);
   expect(setOpen).not.toHaveBeenCalled();
 });
 
 it("does not pop the screen when joining or hydrating an already-ended match", () => {
-  render(100, true, true);
-  render(120, true, true);
+  Render(100, true, true);
+  Render(120, true, true);
   expect(setOpen).not.toHaveBeenCalled();
 });
 
 it("closes for the next mission and can witness a second match end", () => {
-  render(0);
-  render(10, true, true);
-  render(15, false);
-  render(20);
-  render(30, true, true);
+  Render(0);
+  Render(10, true, true);
+  Render(15, false);
+  Render(20);
+  Render(30, true, true);
   expect(setOpen.mock.calls).toEqual([[true], [false], [true]]);
 });
 
 it("closes when rewinding out of debrief and rearms for forward playback", () => {
-  render(0);
-  render(10, true, true);
-  render(0);
-  render(10, true, true);
+  Render(0);
+  Render(10, true, true);
+  Render(0);
+  Render(10, true, true);
   expect(setOpen.mock.calls).toEqual([[true], [false], [true]]);
 });
 
 it("does not auto-open after observing only the final seconds", () => {
-  render(100);
-  render(102, true, true);
+  Render(100);
+  Render(102, true, true);
   expect(setOpen).not.toHaveBeenCalled();
 });
 
 it("closes and disarms when the recording is unloaded", () => {
-  render(0);
-  render(10, true, true);
-  render(null);
-  render(100, true, true);
+  Render(0);
+  Render(10, true, true);
+  Render(null);
+  Render(100, true, true);
   expect(setOpen.mock.calls).toEqual([[true], [false]]);
 });

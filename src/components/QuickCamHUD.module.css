@@ -1,0 +1,101 @@
+.QuickCamHUD {
+  display: flex;
+  flex: 1 1 0;
+  flex-direction: column;
+  justify-content: safe center;
+  width: max-content;
+  max-width: 100%;
+  min-height: 0;
+  pointer-events: none;
+}
+
+.QuickCamHUD[data-position="right"] {
+  position: absolute;
+  top: 6px;
+  bottom: 6px;
+  right: 6px;
+  max-width: 35%;
+}
+
+.CameraList {
+  display: flex;
+  flex: 0 1 auto;
+  flex-direction: column;
+  gap: 2px;
+  min-height: 0;
+  overflow: auto;
+  pointer-events: auto;
+  scrollbar-width: thin;
+}
+
+.CameraButton {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 3px;
+  background: rgba(0, 0, 0, 0.4);
+  color: rgba(255, 255, 255, 0.7);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 500;
+  text-align: left;
+  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.7);
+  cursor: pointer;
+}
+
+.CameraButton:disabled {
+  opacity: 0.5;
+  cursor: default;
+  font-weight: 400;
+}
+
+.CameraButton kbd,
+.CameraButton svg {
+  flex-shrink: 0;
+}
+
+.CameraButton > svg {
+  font-size: 16px;
+}
+
+.Label {
+  flex: 1;
+  min-width: 0;
+  padding: 2px;
+  margin-left: -2px;
+  color: #fff;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.SetHint {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.SetHint kbd {
+  font: inherit;
+}
+
+.ShiftIcon {
+  font-size: 1em;
+  scale: 0.85 1;
+  margin-right: -2px;
+}
+
+@media (hover: hover) {
+  .CameraButton:not(:disabled):hover {
+    background: rgba(0, 0, 0, 0.7);
+    border-color: rgba(255, 255, 255, 0.3);
+  }
+}
+
+.CameraButton:focus-visible {
+  outline: 2px solid rgba(100, 180, 255, 0.7);
+  outline-offset: -2px;
+}

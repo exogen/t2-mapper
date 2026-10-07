@@ -64,7 +64,23 @@ function FeaturedCard({
     ),
   ];
   return (
-    <button type="button" className={tileStyles.Tile} onClick={onLoad}>
+    <a
+      href={`?demo=${encodeURIComponent(demo.filename)}`}
+      className={tileStyles.Tile}
+      onClick={(event) => {
+        if (
+          event.defaultPrevented ||
+          event.button !== 0 ||
+          event.metaKey ||
+          event.ctrlKey ||
+          event.shiftKey ||
+          event.altKey
+        )
+          return;
+        event.preventDefault();
+        onLoad();
+      }}
+    >
       {/* Local load-screen art (with variant-name fallbacks), then the
           t2-maps gallery screenshot, then the generic background. */}
       <PreviewTileArt
@@ -120,7 +136,7 @@ function FeaturedCard({
           · {formatDuration(demo.durationMs)}
         </span>
       </span>
-    </button>
+    </a>
   );
 }
 

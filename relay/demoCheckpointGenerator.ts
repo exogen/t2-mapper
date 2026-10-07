@@ -13,8 +13,8 @@ import { scanDemoTimelineParser } from "../src/stream/demoTimelineScanner";
 import {
   DEMO_CHECKPOINT_VERSION,
   demoSha256,
-  matchStartCheckpointTargets,
-  readDemoCheckpoints,
+  demoCheckpointTargets,
+  validateDemoCheckpoints,
   type DemoCheckpointSidecar,
 } from "../src/stream/demoCheckpoints";
 import { encodeCheckpoint, bytesToBase64 } from "../src/stream/checkpointCodec";
@@ -24,6 +24,8 @@ import { getActualResourceKey, getSourceAndPath } from "../src/manifest";
 import { registerShapeSequences } from "../src/stream/shapeSequences";
 import { OCCLUDER_SHAPE_TYPES } from "../src/world/colliderPolicy";
 import { ForceFieldState } from "../src/stream/forceFieldState";
+import { TICK_DURATION_MS } from "../src/stream/streamHelpers";
+import { loadDemoCheckpointCount } from "./demoCheckpointConfig.js";
 
 export interface DemoCheckpointGenerationResult {
   version: number;
@@ -42,7 +44,9 @@ export async function generateDemoCheckpoints(
   assetRoot: string,
   progress: (event: unknown) => void = () => {},
   reuseExisting = true,
+  count = loadDemoCheckpointCount(),
 ): Promise<DemoCheckpointGenerationResult> {
+  count = loadDemoCheckpointCount(count, "Checkpoint count");
   if (
     [output, `${output}.tmp`].some(
       (target) => path.resolve(target) === path.resolve(input),
@@ -62,8 +66,10 @@ export async function generateDemoCheckpoints(
   if (reuseExisting) {
     try {
       const text = await fs.readFile(output, "utf8");
-      await readDemoCheckpoints(text, buffer);
       const existing = JSON.parse(text) as DemoCheckpointSidecar;
+      if (existing.requestedCount !== count)
+        throw new Error("Checkpoint count changed");
+      await validateDemoCheckpoints(text, buffer);
       return {
         version: existing.version,
         demoBytes: existing.demoBytes,
@@ -79,17 +85,18 @@ export async function generateDemoCheckpoints(
   }
   const parser = new DemoParser(new Uint8Array(buffer));
   await parser.load();
-  const { recorderName } = extractMissionInfo(parser.initialBlock.demoValues);
-  const { events } = await scanDemoTimelineParser(parser, recorderName);
-  parser.reset();
-  const recording = createRecordingFromParser(parser, { checkpoints: false });
-  const targets = matchStartCheckpointTargets(events);
+  let targets: ReturnType<typeof demoCheckpointTargets> = [];
+  if (count > 0) {
+    const { recorderName } = extractMissionInfo(parser.initialBlock.demoValues);
+    const { events } = await scanDemoTimelineParser(parser, recorderName);
+    targets = demoCheckpointTargets(events, count, parser.bufferedMoveTicks);
+  }
   progress({
     phase: "targets",
     input,
     targets: targets.map((target) => ({
       ...target,
-      timeSec: target.tick * 0.032,
+      timeSec: (target.tick * TICK_DURATION_MS) / 1000,
     })),
   });
   const sidecar: DemoCheckpointSidecar = {
@@ -97,112 +104,120 @@ export async function generateDemoCheckpoints(
     version: DEMO_CHECKPOINT_VERSION,
     demoBytes: bytes.byteLength,
     demoSha256: await demoSha256(buffer),
+    requestedCount: count,
     checkpoints: [],
   };
-  const world = new HeadlessWorld({ assetRoot });
-  try {
-    await world.run(async () => {
-      const stream = recording.streamingPlayback as DemoStreamAdapter;
-      stream.setPlayerPredictionEnabled(true);
-      const loadedShapes = new Set<string>();
-      const collisionClasses = new Set([
-        ...OCCLUDER_SHAPE_TYPES,
-        "TerrainBlock",
-        "InteriorInstance",
-        "ForceFieldBare",
-        "WaterBlock",
-      ]);
-      let preparedWorld = new Map<
-        string,
-        { sceneData: unknown; fieldOpen?: boolean }
-      >();
-      let preparedTicks = 0;
-      let lastProgress = performance.now();
-      for (const target of targets) {
-        const checkpoint = await stream.captureCheckpointAt(
-          target.tick,
-          async (entities) => {
-            const collisionEntities: WorldEntity[] = [];
-            let worldChanged = false;
-            for (const entity of entities) {
-              if (!collisionClasses.has(entity.className)) continue;
-              const fieldOpen =
-                entity.className === "ForceFieldBare"
-                  ? entity.forceFieldState === ForceFieldState.Open
-                  : undefined;
-              collisionEntities.push(
-                entity.className === "ForceFieldBare"
-                  ? { ...entity, fieldOpen }
-                  : entity,
-              );
-              const previous = preparedWorld.get(entity.id);
+  if (targets.length > 0) {
+    parser.reset();
+    const recording = createRecordingFromParser(parser, { checkpoints: false });
+    const world = new HeadlessWorld({ assetRoot });
+    try {
+      await world.run(async () => {
+        const stream = recording.streamingPlayback as DemoStreamAdapter;
+        stream.setPlayerPredictionEnabled(true);
+        const loadedShapes = new Set<string>();
+        const collisionClasses = new Set([
+          ...OCCLUDER_SHAPE_TYPES,
+          "TerrainBlock",
+          "InteriorInstance",
+          "ForceFieldBare",
+          "WaterBlock",
+        ]);
+        let preparedWorld = new Map<
+          string,
+          { sceneData: unknown; fieldOpen?: boolean }
+        >();
+        let preparedTicks = 0;
+        let lastProgress = performance.now();
+        for (const target of targets) {
+          const checkpoint = await stream.captureCheckpointAt(
+            target.tick,
+            async (entities) => {
+              const collisionEntities: WorldEntity[] = [];
+              let worldChanged = false;
+              for (const entity of entities) {
+                if (!collisionClasses.has(entity.className)) continue;
+                const fieldOpen =
+                  entity.className === "ForceFieldBare"
+                    ? entity.forceFieldState === ForceFieldState.Open
+                    : undefined;
+                collisionEntities.push(
+                  entity.className === "ForceFieldBare"
+                    ? { ...entity, fieldOpen }
+                    : entity,
+                );
+                const previous = preparedWorld.get(entity.id);
+                if (
+                  !previous ||
+                  previous.sceneData !== entity.sceneData ||
+                  previous.fieldOpen !== fieldOpen
+                )
+                  worldChanged = true;
+              }
+              // Player/projectile updates do not change the static collision world.
               if (
-                !previous ||
-                previous.sceneData !== entity.sceneData ||
-                previous.fieldOpen !== fieldOpen
-              )
-                worldChanged = true;
-            }
-            // Player/projectile updates do not change the static collision world.
-            if (
-              worldChanged ||
-              collisionEntities.length !== preparedWorld.size
-            ) {
-              await world.sync(collisionEntities);
-              preparedWorld = new Map(
-                collisionEntities.map((entity) => [
-                  entity.id,
-                  { sceneData: entity.sceneData, fieldOpen: entity.fieldOpen },
-                ]),
-              );
-            }
-            if (world.stats().failedAssets)
-              throw new Error(
-                "Cannot generate accurate checkpoints with missing collision assets",
-              );
-            if (performance.now() - lastProgress > 10_000) {
-              lastProgress = performance.now();
-              progress({
-                phase: "replay",
-                preparedTicks,
-                targetTick: target.tick,
-                elapsedMS: lastProgress - start,
-              });
-            }
-            if (preparedTicks % 512 === 0) await setImmediate();
-            if (preparedTicks++ % 32 !== 0) return;
-            for (const asset of stream.getPreloadAssets()) {
-              if (asset.kind !== "shape" || loadedShapes.has(asset.name))
-                continue;
-              loadedShapes.add(asset.name);
-              let key: string;
-              try {
-                key = getActualResourceKey(asset.name);
-              } catch {
-                continue;
-              } // Missing cosmetic shapes use the same fallback as playback.
-              const [source, actual] = getSourceAndPath(key);
-              const file = source
-                ? path.join(assetRoot, "@vl2", source, actual)
-                : path.join(assetRoot, actual);
-              const scene = await loadDtsScene(file);
-              registerShapeSequences(asset.name, scene.animations);
-            }
-          },
-        );
-        const packed = gzipSync(encodeCheckpoint(checkpoint));
-        sidecar.checkpoints.push({ ...target, data: bytesToBase64(packed) });
-        progress({
-          phase: "checkpoint",
-          tick: target.tick,
-          matchStartSec: target.matchStartSec,
-          compressedBytes: packed.byteLength,
-          elapsedMS: performance.now() - start,
-        });
-      }
-    });
-  } finally {
-    world.dispose();
+                worldChanged ||
+                collisionEntities.length !== preparedWorld.size
+              ) {
+                await world.sync(collisionEntities);
+                preparedWorld = new Map(
+                  collisionEntities.map((entity) => [
+                    entity.id,
+                    {
+                      sceneData: entity.sceneData,
+                      fieldOpen: entity.fieldOpen,
+                    },
+                  ]),
+                );
+              }
+              if (world.stats().failedAssets)
+                throw new Error(
+                  "Cannot generate accurate checkpoints with missing collision assets",
+                );
+              if (performance.now() - lastProgress > 10_000) {
+                lastProgress = performance.now();
+                progress({
+                  phase: "replay",
+                  preparedTicks,
+                  targetTick: target.tick,
+                  elapsedMS: lastProgress - start,
+                });
+              }
+              if (preparedTicks % 512 === 0) await setImmediate();
+              if (preparedTicks++ % 32 !== 0) return;
+              for (const asset of stream.getPreloadAssets()) {
+                if (asset.kind !== "shape" || loadedShapes.has(asset.name))
+                  continue;
+                loadedShapes.add(asset.name);
+                let key: string;
+                try {
+                  key = getActualResourceKey(asset.name);
+                } catch {
+                  continue;
+                } // Missing cosmetic shapes use the same fallback as playback.
+                const [source, actual] = getSourceAndPath(key);
+                const file = source
+                  ? path.join(assetRoot, "@vl2", source, actual)
+                  : path.join(assetRoot, actual);
+                const scene = await loadDtsScene(file);
+                registerShapeSequences(asset.name, scene.animations);
+              }
+            },
+          );
+          const packed = gzipSync(encodeCheckpoint(checkpoint));
+          sidecar.checkpoints.push({ ...target, data: bytesToBase64(packed) });
+          progress({
+            phase: "checkpoint",
+            tick: target.tick,
+            matchStartSec: target.matchStartSec,
+            compressedBytes: packed.byteLength,
+            elapsedMS: performance.now() - start,
+          });
+        }
+      });
+    } finally {
+      world.dispose();
+    }
   }
   await fs.mkdir(path.dirname(output), { recursive: true });
   const temporary = `${output}.tmp`;

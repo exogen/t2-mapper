@@ -584,6 +584,7 @@ export class DemoStreamAdapter extends StreamEngine {
     targetEntries: Array<{
       targetId: number;
       name?: string;
+      typeDescription?: string;
       skin?: string;
       skinPref?: string;
       sensorGroup: number;
@@ -762,18 +763,10 @@ export class DemoStreamAdapter extends StreamEngine {
       this.netStrings.set(id, value);
     }
     for (const entry of this.initialBlock.targetEntries) {
-      if (entry.name) {
-        this.targetNames.set(
-          entry.targetId,
-          stripTaggedStringMarkup(entry.name).trim(),
-        );
-        this.targetRawNames.set(entry.targetId, entry.name);
-      }
-      if (entry.skin) this.targetSkins.set(entry.targetId, entry.skin);
-      if (entry.skinPref)
-        this.targetSkinPrefs.set(entry.targetId, entry.skinPref);
-      this.targetTeams.set(entry.targetId, entry.sensorGroup);
-      this.targetRenderFlags.set(entry.targetId, entry.targetData);
+      this.seedTargetInfo({
+        ...entry,
+        typeDescription: entry.typeDescription ?? "",
+      });
     }
     // Seed IFF color table from the initial block.
     for (const c of this.initialBlock.sensorGroupColors) {
@@ -1444,8 +1437,14 @@ export class DemoStreamAdapter extends StreamEngine {
     const { chatMessages, serverEvents, audioEvents } =
       this.buildTimeFilteredEvents(timeSec);
 
-    const { weaponsHud, inventoryHud, backpackHud, teamScores, playerRoster } =
-      this.buildCachedHudState();
+    const {
+      weaponsHud,
+      inventoryHud,
+      backpackHud,
+      teamScores,
+      flagTargets,
+      playerRoster,
+    } = this.buildCachedHudState();
 
     return {
       timeSec,
@@ -1454,6 +1453,7 @@ export class DemoStreamAdapter extends StreamEngine {
       exhausted: this.exhausted,
       camera: this.camera,
       entities,
+      flagTargets,
       controlPlayerGhostId: this.controlPlayerGhostId,
       playerSensorGroup: this.playerSensorGroup,
       status: this.lastStatus,

@@ -43,6 +43,7 @@ export function updateGameEntityFromStream(
   e.targetId = stream.targetId;
   e.iffColor = stream.iffColor;
   e.playerName = stream.playerName;
+  e.targetTypeName = stream.targetTypeName;
   e.playerRawName = stream.playerRawName;
   e.teamId = stream.teamId;
   e.soundSlots = stream.soundSlots;
@@ -154,6 +155,7 @@ function positionedBase(entity: StreamEntity, spawnTime?: number) {
     targetId: entity.targetId,
     iffColor: entity.iffColor,
     playerName: entity.playerName,
+    targetTypeName: entity.targetTypeName,
     playerRawName: entity.playerRawName,
     teamId: entity.teamId,
     soundSlots: entity.soundSlots,

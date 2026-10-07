@@ -1,5 +1,6 @@
 import type { PerspectiveCamera } from "three";
 import { engineStore } from "../state/engineStore";
+import { casterStore } from "../state/casterStore";
 import { resolveCameraOwner } from "../state/cameraOwner";
 import { streamPlaybackStore } from "../state/streamPlaybackStore";
 import { streamRenderFrame } from "../stream/interpolateEntity";
@@ -19,6 +20,14 @@ export function updateObserverCameraFov(
   const owner = resolveCameraOwner();
   const recordedFov = streamRenderFrame.camera?.fov;
   let fov = isValidFov(preferredFov) ? preferredFov : 90;
+  const savedFov = casterStore.getState().fov;
+  if (
+    recording != null &&
+    isValidFov(savedFov ?? undefined) &&
+    owner !== "tour" &&
+    owner !== "director"
+  )
+    fov = savedFov!;
   if (
     recording?.source === "demo" &&
     recording.streamingPlayback === stream.playback &&

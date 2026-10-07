@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import {
   BlockTypeMove,
   GhostStateAccumulator,
@@ -18,6 +18,10 @@ import { createRecordingFromParser } from "./demoStreaming";
 import { streamEntityToGameEntity } from "./entityBridge";
 import type { RelayClient } from "./relayClient";
 import type { StreamSnapshot } from "./types";
+import { flagLabel } from "../state/flagTeam";
+import { setStreamSnapshot } from "../state/streamSnapshotStore";
+
+afterEach(() => setStreamSnapshot(null));
 
 const names = [
   { name: "TAG|Alice", raw: "\x10\x0bTAG|\x08Alice\x11" },
@@ -55,6 +59,9 @@ function fixture() {
       },
     })),
   });
+  watchState.applyPacket(
+    packet({ type: "NetStringEvent", id: 20, value: "_ClientConnection" }),
+  );
   // Exercise both immediate and deferred string resolution at the relay.
   names.forEach(({ raw }, index) => {
     const string = { type: "NetStringEvent", id: index, value: raw };
@@ -62,6 +69,7 @@ function fixture() {
       type: "TargetInfoEvent",
       targetId: 32 + index,
       nameTag: index,
+      typeTag: 20,
       sensorGroup: 1,
       renderFlags: 0,
     };
@@ -81,22 +89,83 @@ function fixture() {
         }),
       ),
     );
-  return { kit, watchState, payload };
+  return { kit, watchState, ghostState, payload };
 }
 
 function expectNames(snapshot: StreamSnapshot) {
   for (const [index, { name, raw }] of names.entries()) {
     const entity = snapshot.entities.find((e) => e.targetId === 32 + index);
-    expect(entity).toMatchObject({ playerName: name, playerRawName: raw });
+    expect(entity).toMatchObject({
+      playerName: name,
+      playerRawName: raw,
+      targetTypeName: "_ClientConnection",
+    });
     expect(streamEntityToGameEntity(entity!)).toMatchObject({
       renderType: "Player",
       playerName: name,
       playerRawName: raw,
+      targetTypeName: "_ClientConnection",
     });
   }
 }
 
 describe("initial target names", () => {
+  it("retains the original flag target when catch-up only contains its carrier's ghost", () => {
+    const { watchState, payload } = fixture();
+    watchState.applyPacket(
+      packet(
+        { type: "NetStringEvent", id: 30, value: "Storm" },
+        { type: "NetStringEvent", id: 31, value: "Flag" },
+        {
+          type: "TargetInfoEvent",
+          targetId: 40,
+          nameTag: 30,
+          typeTag: 31,
+          renderFlags: 2,
+          sensorGroup: 1,
+        },
+        { type: "TargetInfoEvent", targetId: 32, renderFlags: 2 },
+      ),
+    );
+    const stream = new LiveStreamAdapter({} as RelayClient, { mode: "watch" });
+    stream.hydrate(payload());
+    const snapshot = stream.getSnapshot();
+    expect(snapshot.flagTargets).toEqual([
+      {
+        targetId: 40,
+        name: "Storm",
+        typeName: "Flag",
+        skinName: undefined,
+        teamId: 1,
+      },
+    ]);
+    expect(snapshot.entities.some((entity) => entity.targetId === 40)).toBe(
+      false,
+    );
+    setStreamSnapshot(snapshot);
+    const carrier = streamEntityToGameEntity(
+      snapshot.entities.find((entity) => entity.targetId === 32)!,
+    );
+    expect(flagLabel(carrier, "original", {})).toBe("Storm Flag");
+    expect(flagLabel(carrier, "contextual", {})).toBe("TAG|Alice");
+  });
+  it("does not reattach a freed ghost to a reissued target during relay catch-up", () => {
+    const { ghostState, watchState, payload } = fixture();
+    const updates = packet(
+      { type: "TargetFreeEvent", targetId: 32 },
+      { type: "TargetInfoEvent", targetId: 32, nameTag: 1, typeTag: 20 },
+    );
+    ghostState.applyPacket(updates);
+    watchState.applyPacket(updates);
+    const stream = new LiveStreamAdapter({} as RelayClient, { mode: "watch" });
+    stream.hydrate(payload());
+    const entity = stream
+      .getSnapshot()
+      .entities.find((entity) => entity.ghostIndex === 0)!;
+    expect(entity.targetId).toBe(-1);
+    expect(entity.playerName).toBeUndefined();
+    expect(entity.targetTypeName).toBeUndefined();
+  });
   it("retains colors through relay catch-up, serialization and reconnects", () => {
     const { payload } = fixture();
     const stream = new LiveStreamAdapter({} as RelayClient, { mode: "watch" });
@@ -107,7 +176,20 @@ describe("initial target names", () => {
   });
 
   it("preserves colors when a recorded demo already has players at its start", () => {
-    const { kit, payload } = fixture();
+    const { kit, watchState, payload } = fixture();
+    watchState.applyPacket(
+      packet(
+        { type: "NetStringEvent", id: 30, value: "Flag" },
+        {
+          type: "TargetInfoEvent",
+          targetId: 40,
+          typeTag: 30,
+          renderFlags: 2,
+          sensorGroup: 0,
+        },
+        { type: "TargetInfoEvent", targetId: 32, renderFlags: 2 },
+      ),
+    );
     const initial = payload();
     let cursor = 0;
     const parser = {
@@ -143,7 +225,17 @@ describe("initial target names", () => {
       checkpoints: false,
     }).streamingPlayback;
     for (const time of [0, 0.64, 0.16]) {
-      expectNames(stream.stepToTime(time));
+      const snapshot = stream.stepToTime(time);
+      expectNames(snapshot);
+      expect(snapshot.flagTargets).toEqual([
+        {
+          targetId: 40,
+          name: undefined,
+          typeName: "Flag",
+          skinName: undefined,
+          teamId: 0,
+        },
+      ]);
     }
     stream.reset();
     expectNames(stream.getSnapshot());

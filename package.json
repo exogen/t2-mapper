@@ -8,8 +8,9 @@
   "type": "module",
   "packageManager": "npm@11.7.0",
   "scripts": {
-    "demos:checkpoints": "node --import=tsx/esm scripts/generate-demo-checkpoints.ts",
+    "demos:checkpoints": "node --env-file-if-exists=.env.development.local --import=tsx/esm scripts/generate-demo-checkpoints.ts",
     "demos:backfill-checkpoints": "node --env-file-if-exists=.env.development.local --import=tsx/esm scripts/backfill-demo-checkpoints.ts",
+    "demos:delete": "node --env-file-if-exists=.env.development.local --import=tsx/esm scripts/delete-demos.ts",
     "build:manifest": "tsx --tsconfig tsconfig.node.json scripts/generate-manifest.ts -o src/manifest.json",
     "build:parser": "peggy TorqueScript.pegjs -o generated/TorqueScript.js --format es",
     "cast:export-schema": "tsx --tsconfig tsconfig.node.json scripts/export-cast-schema.ts",
@@ -56,7 +57,7 @@
     "react-dom": "^19.3.0",
     "react-error-boundary": "^6.1.6",
     "react-icons": "^5.7.0",
-    "t2-demo-parser": "^5.0.2",
+    "t2-demo-parser": "^5.0.3",
     "three": "^0.186.1",
     "three-mesh-bvh": "^0.9.15",
     "tsx": "^4.23.13",
@@ -97,7 +98,12 @@
     "ts-json-schema-generator": "^2.9.0",
     "typescript": "~5.9.3",
     "typescript-eslint": "^8.70.0",
-    "vite": "^8.3.0",
+    "vite": "^8.3.3",
     "vitest": "^4.1.10"
+  },
+  "allowScripts": {
+    "puppeteer@24.40.0": true,
+    "esbuild@0.28.1": true,
+    "fsevents@2.3.3": true
   }
 }

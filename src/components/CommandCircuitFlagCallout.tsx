@@ -5,7 +5,7 @@ import { FaHand } from "react-icons/fa6";
 import { ImArrowDownRight, ImHome } from "react-icons/im";
 import { streamSnapshotStore } from "../state/streamSnapshotStore";
 import { ScreenRectTracker } from "./screenRectTracker";
-import { resolveFlagTeam } from "../state/flagTeam";
+import { resolveFlagTeam, flagLabel } from "../state/flagTeam";
 import {
   isObserverView,
   resolveIffDisplay,
@@ -119,7 +119,7 @@ export function CommandCircuitFlagCallout({ entity }: { entity: GameEntity }) {
     cullRadius: 0,
     draw: (ctx, x, y) => {
       const { entity, observerTeamColors } = currentRef.current;
-      const { teamId, name } = resolveFlagTeam(entity);
+      const { teamId } = resolveFlagTeam(entity);
 
       // Circle + 45° leader, tinted by IFF/team color (entity fields are
       // mutated in place by streaming playback, so re-resolve each frame).
@@ -131,8 +131,7 @@ export function CommandCircuitFlagCallout({ entity }: { entity: GameEntity }) {
         resolveCalloutStroke(entity, teamId, observerTeamColors),
       );
 
-      // Shared label chip: "<Team> Flag" plus a status icon.
-      const label = name ? `${name} Flag` : "Flag";
+      const label = flagLabel(entity, "original");
       const status = resolveFlagStatus(entity, teamId);
       const icon = STATUS_ICONS[status];
       const iconBitmap = getSvgIconLabel(icon.markup, icon.size, icon.size);

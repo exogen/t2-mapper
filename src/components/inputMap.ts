@@ -62,24 +62,11 @@ export const TARGET_FINDER_INPUT = [
   { name: "findTarget", keys: ["KeyT"] },
 ] as const satisfies readonly InputMapEntry[];
 
-/**
- * Flag follow while streaming (demo playback or watch spectate): the
- * number keys orbit the flags (1 = Storm, 2 = Inferno; higher digits for
- * games with more flags). The mission's observer camera spots aren't in
- * the stream (the server never sends them), so the camera-select keys
- * get flags instead.
- */
-export const FLAG_FOLLOW_INPUT = [
-  { name: "followFlag1", keys: ["Digit1"] },
-  { name: "followFlag2", keys: ["Digit2"] },
-  { name: "followFlag3", keys: ["Digit3"] },
-  { name: "followFlag4", keys: ["Digit4"] },
-  { name: "followFlag5", keys: ["Digit5"] },
-  { name: "followFlag6", keys: ["Digit6"] },
-  { name: "followFlag7", keys: ["Digit7"] },
-  { name: "followFlag8", keys: ["Digit8"] },
-  { name: "followFlag9", keys: ["Digit9"] },
-] as const satisfies readonly InputMapEntry[];
+/** Demo/watch saved views; 1 and 2 retain their flag defaults until assigned. */
+export const QUICK_CAM_INPUT = Array.from({ length: 10 }, (_, slot) => [
+  { name: `quickCam${slot}` as const, keys: [`Digit${slot}`] },
+  { name: `saveQuickCam${slot}` as const, keys: [`Shift-Digit${slot}`] },
+]).flat() satisfies readonly InputMapEntry[];
 
 /** Player cycling in either follow view, with or without pointer lock. */
 export const FOLLOW_KEYBOARD_INPUT = [
@@ -126,13 +113,12 @@ export const COMMAND_CIRCUIT_TOGGLE_INPUT = [
  * Command circuit controls while streaming (demo playback or live): the
  * follow ↔ free-fly toggle (F — Space is play/pause in demos, and the
  * observer's own F toggle is unmounted while the CC is open) and the
- * next/prev player cycle (ArrowRight/ArrowLeft, like the non-CC
- * observer's left/right click).
+ * next/prev player cycle (N / Shift-N, matching the 3D follow view).
  */
 export const COMMAND_CIRCUIT_STREAM_INPUT = [
   { name: "toggleCommandFollow", keys: ["KeyF"] },
-  { name: "observeNextPlayer", keys: ["ArrowRight"] },
-  { name: "observePrevPlayer", keys: ["ArrowLeft"] },
+  { name: "observeNextPlayer", keys: ["KeyN"] },
+  { name: "observePrevPlayer", keys: ["Shift-KeyN"] },
 ] as const satisfies readonly InputMapEntry[];
 
 /**
@@ -160,6 +146,7 @@ export const COMMAND_CIRCUIT_EXIT_INPUT = [
 
 /** Union of all action names across all input maps. */
 export type ActionName =
+  | (typeof QUICK_CAM_INPUT)[number]["name"]
   | (typeof FREE_FLY_INPUT)[number]["name"]
   | (typeof MOVABLE_CAMERA_INPUT)[number]["name"]
   | (typeof POINTER_LOCKABLE_INPUT)[number]["name"]
@@ -167,7 +154,6 @@ export type ActionName =
   | (typeof DEMO_MODE_INPUT)[number]["name"]
   | (typeof LIVE_OBSERVER_INPUT)[number]["name"]
   | (typeof TARGET_FINDER_INPUT)[number]["name"]
-  | (typeof FLAG_FOLLOW_INPUT)[number]["name"]
   | (typeof LIVE_FOLLOW_INPUT)[number]["name"]
   | (typeof FOLLOW_KEYBOARD_INPUT)[number]["name"]
   | (typeof TOUR_MODE_INPUT)[number]["name"]

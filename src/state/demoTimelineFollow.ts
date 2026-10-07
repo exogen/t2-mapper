@@ -113,6 +113,7 @@ export function seekToTimelineEvent(
         cameraMode: "original",
         followEntityId: null,
         followTargetId: null,
+        pendingFollowPlayerName: null,
         followFlagSlot: null,
       });
       return;

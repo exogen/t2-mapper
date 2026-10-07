@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import {
@@ -51,6 +51,52 @@ function demoPath(): string | null {
 const fakeRelay = {} as unknown as RelayClient;
 
 describe("live wire protocol propagation", () => {
+  it("carries the playhead's mission sequence through catch-up and resets same-map games", () => {
+    const watchState = new WatchStateAccumulator();
+    watchState.applyMissionStart("MissionStartPhase1", ["21", "Katabatic"]);
+    watchState.matchStarted = true;
+    expect(
+      watchState.applyMissionStart("MissionStartPhase3", ["21", "Katabatic"]),
+    ).toBe(false);
+    expect(watchState.matchStarted).toBe(true);
+    const payload = buildCatchupPayload({
+      packetParser: createLiveParser({ protocolVersion: GAME_PROTOCOL_VERSION })
+        .packetParser,
+      ghostState: new GhostStateAccumulator(),
+      watchState,
+      epoch: 1,
+      serverAddress: "test:28000",
+    });
+    const adapter = new LiveStreamAdapter(fakeRelay, { mode: "watch" });
+    adapter.onMissionIdentity = vi.fn();
+    adapter.onMissionChange = vi.fn();
+    adapter.hydrate(
+      deserializeCatchupPayload(serializeCatchupPayload(payload)),
+    );
+    expect(adapter.missionSequence).toBe("21");
+    expect(adapter.onMissionIdentity).toHaveBeenLastCalledWith(
+      "21",
+      "Katabatic",
+    );
+    expect(
+      watchState.applyMissionStart("MissionStartPhase1", ["22", "Katabatic"]),
+    ).toBe(true);
+    expect(watchState.matchStarted).toBe(false);
+    const handle = adapter as unknown as {
+      handleRelayCommands(event: { funcName: string; args: string[] }): void;
+    };
+    handle.handleRelayCommands({
+      funcName: "MissionStartPhase1",
+      args: ["22", "Katabatic"],
+    });
+    expect(adapter.onMissionChange).toHaveBeenCalledTimes(2);
+    expect(adapter.onMissionIdentity).toHaveBeenLastCalledWith(
+      "22",
+      "Katabatic",
+    );
+    expect(adapter.missionSequence).toBe("22");
+  });
+
   const parserOf = (adapter: LiveStreamAdapter) =>
     (adapter as unknown as { packetParser: PacketParser }).packetParser;
 
@@ -138,14 +184,24 @@ function comparableEntities(adapter: LiveStreamAdapter) {
   return byGhostIndex;
 }
 
+function targetInfo(entity: Record<string, unknown>) {
+  return {
+    targetId: entity.targetId,
+    playerName: entity.playerName,
+    playerRawName: entity.playerRawName,
+    targetTypeName: entity.targetTypeName,
+    sensorGroup: entity.sensorGroup,
+    targetRenderFlags: entity.targetRenderFlags,
+    skinName: entity.skinName,
+    skinPrefName: entity.skinPrefName,
+  };
+}
+
 function project(entity: Record<string, unknown>, comparePosition: boolean) {
   return {
     className: entity.className,
     dataBlockId: entity.dataBlockId,
-    targetId: entity.targetId,
-    playerName: entity.playerName,
-    playerRawName: entity.playerRawName,
-    sensorGroup: entity.sensorGroup,
+    ...targetInfo(entity),
     mountObjectGhostIndex: entity.mountObjectGhostIndex,
     mountNode: entity.mountNode,
     health: entity.health,
@@ -166,7 +222,6 @@ function project(entity: Record<string, unknown>, comparePosition: boolean) {
       } = slot;
       return wire;
     }),
-    skinName: entity.skinName,
     ...(comparePosition
       ? { position: entity.position, rotation: entity.rotation }
       : {}),
@@ -259,6 +314,19 @@ describe("watch catch-up equivalence", () => {
       // Late joiner hydrates from the relay's state at K (epoch 2).
       const lateJoiner = new LiveStreamAdapter(fakeRelay, { mode: "watch" });
       lateJoiner.hydrate(buildPayload(2));
+      expect(lateJoiner.getSnapshot().flagTargets).toEqual(
+        reference.getSnapshot().flagTargets,
+      );
+
+      // Catch-up must carry target metadata immediately; subsequent packets
+      // must not be needed to repair missing names, types, skins or flag bits.
+      const hydratedEntities = comparableEntities(lateJoiner);
+      for (const [ghostIndex, entity] of comparableEntities(reference)) {
+        if (CLIENT_SIMULATED.test(entity.className as string)) continue;
+        const hydrated = hydratedEntities.get(ghostIndex);
+        expect(hydrated, `hydrated ghost #${ghostIndex} missing`).toBeDefined();
+        expect(targetInfo(hydrated!)).toEqual(targetInfo(entity));
+      }
 
       // Both continue through K+1..N.
       for (let i = cutover; i < end; i++) {
@@ -292,8 +360,11 @@ describe("watch catch-up equivalence", () => {
       // handleServerMessage logic in watchState.
       const refShared = reference as unknown as {
         netStrings: Map<number, string>;
-        targetNames: Map<number, string>;
         targetRawNames: Map<number, string>;
+        targetTypes: Map<number, string>;
+        targetSkins: Map<number, string>;
+        targetSkinPrefs: Map<number, string>;
+        targetRenderFlags: Map<number, number>;
         targetTeams: Map<number, number>;
         playerRoster: Map<number, unknown>;
         teamScores: unknown[];
@@ -301,12 +372,18 @@ describe("watch catch-up equivalence", () => {
       };
       const lateShared = lateJoiner as unknown as typeof refShared;
       expect(lateShared.netStrings).toEqual(refShared.netStrings);
-      expect(lateShared.targetNames).toEqual(refShared.targetNames);
       expect(lateShared.targetRawNames).toEqual(refShared.targetRawNames);
+      expect(lateShared.targetTypes).toEqual(refShared.targetTypes);
+      expect(lateShared.targetSkins).toEqual(refShared.targetSkins);
+      expect(lateShared.targetSkinPrefs).toEqual(refShared.targetSkinPrefs);
+      expect(lateShared.targetRenderFlags).toEqual(refShared.targetRenderFlags);
       expect(lateShared.targetTeams).toEqual(refShared.targetTeams);
       expect(lateShared.playerRoster).toEqual(refShared.playerRoster);
       expect(lateShared.teamScores).toEqual(refShared.teamScores);
       expect(lateShared.playerSensorGroup).toBe(refShared.playerSensorGroup);
+      expect(lateJoiner.getSnapshot().flagTargets).toEqual(
+        reference.getSnapshot().flagTargets,
+      );
     },
   );
 });

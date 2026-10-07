@@ -35,6 +35,7 @@ import {
   liveConnectionStore,
   selectConnectionFailureMessage,
 } from "./liveConnectionStore";
+import { casterStore } from "./casterStore";
 
 describe("watch connection metadata", () => {
   const address = "test:28000";
@@ -91,6 +92,29 @@ describe("watch connection metadata", () => {
       2,
     );
     expect(state()).toMatchObject({ recording: false, streamDelayMs: 0 });
+  });
+
+  it("uses the watched mission for caster settings and ignores superseded adapters", () => {
+    const adapter = state().adapter!;
+    adapter.onMissionIdentity!("4", "DelayedMap");
+    casterStore.getState().renameTeam(1, "Knights");
+    // Status metadata may describe the live server rather than the playhead.
+    handlers().onSessionStatus!(
+      "live",
+      undefined,
+      { address, mapName: "OtherMap" },
+      2,
+    );
+    expect(casterStore.getState().settings?.teamNames[1]).toBe("Knights");
+    state().watchServer(address);
+    adapter.onMissionIdentity!("5", "Old adapter");
+    expect(casterStore.getState().settings?.teamNames[1]).toBe("Knights");
+    state().adapter!.onMissionIdentity!("4", "DelayedMap");
+    expect(casterStore.getState().settings?.teamNames[1]).toBe("Knights");
+    state().adapter!.onMissionIdentity!("5", "DelayedMap");
+    expect(casterStore.getState().settings?.teamNames).toEqual({});
+    state().leaveServer();
+    expect(casterStore.getState().context).toBeNull();
   });
 
   it("blocks outgoing chat until the relay enables it and resets it across reconnects", () => {

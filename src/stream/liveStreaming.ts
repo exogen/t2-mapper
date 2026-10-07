@@ -58,6 +58,7 @@ export class LiveStreamAdapter extends StreamEngine {
   onReady?: () => void;
   /** Called when the server starts a new mission (map cycle). */
   onMissionChange?: (missionName: string) => void;
+  onMissionIdentity?: (sequence: string, missionName: string) => void;
   /**
    * The parser could not fully read a packet, so its ghost tracker and
    * event sequence no longer mirror the server (the engine drops the
@@ -67,6 +68,7 @@ export class LiveStreamAdapter extends StreamEngine {
   onParseFault?: (fault: ParseFault) => void;
   /** Current mission name as reported by the server. */
   missionName: string | null = null;
+  missionSequence: string | null = null;
 
   /** Server's latest move acknowledgment (which moveIndex it has processed). */
   lastMoveAck = 0;
@@ -190,6 +192,7 @@ export class LiveStreamAdapter extends StreamEngine {
     this.dataBlockClassNames.clear();
     this.observerMode = "fly";
     this.missionName = null;
+    this.missionSequence = null;
   }
 
   getSnapshot(): StreamSnapshot {
@@ -292,25 +295,7 @@ export class LiveStreamAdapter extends StreamEngine {
     for (const [id, value] of payload.taggedStrings) {
       this.netStrings.set(id, value);
     }
-    for (const entry of payload.targetEntries) {
-      if (entry.name) {
-        this.targetNames.set(
-          entry.targetId,
-          stripTaggedStringMarkup(entry.name).trim(),
-        );
-        this.targetRawNames.set(entry.targetId, entry.name);
-      }
-      if (entry.skin) this.targetSkins.set(entry.targetId, entry.skin);
-      if (entry.skinPref) {
-        this.targetSkinPrefs.set(entry.targetId, entry.skinPref);
-      }
-      if (entry.sensorGroup != null) {
-        this.targetTeams.set(entry.targetId, entry.sensorGroup);
-      }
-      if (entry.targetData != null) {
-        this.targetRenderFlags.set(entry.targetId, entry.targetData);
-      }
-    }
+    for (const entry of payload.targetEntries) this.seedTargetInfo(entry);
     for (const c of payload.sensorGroupColors) {
       let map = this.sensorGroupColors.get(c.group);
       if (!map) {
@@ -324,6 +309,7 @@ export class LiveStreamAdapter extends StreamEngine {
       if (block.className) this.dataBlockClassNames.set(id, block.className);
     }
     this.missionName = payload.missionName;
+    this.missionSequence = payload.missionSequence ?? null;
 
     // Ghosts flow through the normal create path: applyGhostData with
     // full merged parsedData, sceneData captured via ghostToSceneObject.
@@ -381,6 +367,8 @@ export class LiveStreamAdapter extends StreamEngine {
     this.hydratedEpoch = payload.epoch;
     if (payload.missionName) {
       this.onMissionChange?.(payload.missionName);
+      if (this.missionSequence)
+        this.onMissionIdentity?.(this.missionSequence, payload.missionName);
     }
 
     this.missionDisplayName = hud.missionDisplayName ?? null;
@@ -454,8 +442,12 @@ export class LiveStreamAdapter extends StreamEngine {
       );
       // Phase 1 signals a new mission load — clear all ghosts (the server
       // called resetGhosting before sending this) and update mission name.
-      if (newMissionName && newMissionName !== this.missionName) {
+      if (
+        newMissionName &&
+        (newMissionName !== this.missionName || seq !== this.missionSequence)
+      ) {
         this.missionName = newMissionName;
+        this.missionSequence = seq || null;
         // Mission-scoped, like the relay's beginMissionChange.
         this.matchStarted = false;
         this.clearAllEntities();
@@ -488,6 +480,7 @@ export class LiveStreamAdapter extends StreamEngine {
         this.serverDisplayName = null;
         this.onMissionChange?.(newMissionName);
       }
+      if (newMissionName && seq) this.onMissionIdentity?.(seq, newMissionName);
       this.sendToRelay.command("MissionStartPhase1Done", [seq]);
     } else if (funcName === "MissionStartPhase2") {
       const seq = resolvedArgs[0] ?? "";
@@ -504,6 +497,8 @@ export class LiveStreamAdapter extends StreamEngine {
       // Phase 3 sends $CurrentMission — update if different from phase 1.
       if (currentMission) {
         this.missionName = currentMission;
+        this.missionSequence = seq || null;
+        if (seq) this.onMissionIdentity?.(seq, currentMission);
       }
       // Send an empty favorites list then acknowledge phase 3.
       this.sendToRelay.command("setClientFav", [""]);
@@ -907,8 +902,14 @@ export class LiveStreamAdapter extends StreamEngine {
     const { chatMessages, serverEvents, audioEvents } =
       this.buildTimeFilteredEvents(timeSec);
 
-    const { weaponsHud, inventoryHud, backpackHud, teamScores, playerRoster } =
-      this.buildCachedHudState();
+    const {
+      weaponsHud,
+      inventoryHud,
+      backpackHud,
+      teamScores,
+      flagTargets,
+      playerRoster,
+    } = this.buildCachedHudState();
 
     // Default observer camera if none exists
     if (!this.camera) {
@@ -928,6 +929,7 @@ export class LiveStreamAdapter extends StreamEngine {
       exhausted: false,
       camera: this.camera,
       entities,
+      flagTargets,
       controlPlayerGhostId: this.controlPlayerGhostId,
       playerSensorGroup: this.playerSensorGroup,
       status: this.lastStatus,

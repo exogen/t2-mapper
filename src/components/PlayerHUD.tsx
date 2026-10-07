@@ -6,17 +6,19 @@ import { useStreamSnapshot } from "../state/streamSnapshotStore";
 import { streamPlaybackStore } from "../state/streamPlaybackStore";
 import { useDataSource } from "../state/gameEntityStore";
 import { useLiveSelector } from "../state/liveConnectionStore";
-import { DEFAULT_TEAM_NAMES } from "../stringUtils";
 import { textureToUrl } from "../loaders";
 import type { StreamEntity, TeamScore, WeaponsHudSlot } from "../stream/types";
 import styles from "./PlayerHUD.module.css";
 import { ChatWindow } from "./ChatWindow";
 import { ScoreHUD } from "./ScoreHUD";
+import { QuickCamHUD } from "./QuickCamHUD";
+import { useCaster } from "../state/casterStore";
 import { CompassDial } from "./CompassDial";
 import { useCameraHeadingRotor } from "./MapCompass";
 import { formatHudClock, useMatchClockMs } from "./useMatchClock";
 import { useSettings } from "./SettingsProvider";
 import { useCommandCircuit } from "../state/commandCircuitStore";
+import { EditableTeamName } from "./TeamNameDialog";
 
 function Compass({ commandCircuitActive }: { commandCircuitActive: boolean }) {
   const isWatcher = useLiveSelector((s) => s.role === "watcher");
@@ -356,9 +358,6 @@ function TeamScores() {
             playerSensorGroup != null &&
             playerSensorGroup > 0 &&
             team.teamId === playerSensorGroup;
-          const name =
-            team.name ||
-            (DEFAULT_TEAM_NAMES[team.teamId] ?? `Team ${team.teamId}`);
           return (
             <tr key={team.teamId} className={styles.TeamRow}>
               <td
@@ -366,7 +365,7 @@ function TeamScores() {
                   isFriendly ? styles.TeamNameFriendly : styles.TeamNameEnemy
                 }
               >
-                {name}
+                <EditableTeamName teamId={team.teamId} teams={teamScores} />
               </td>
               <td className={styles.TeamCount}>
                 ({team.playerCount.toLocaleString()})
@@ -627,31 +626,59 @@ export function PlayerHUD() {
     ? !!followEntityId
     : hasControlPlayer && cameraMode !== "freeFly";
   const followed = useFollowedPlayer();
-  const { showChat, showScoreHud, scoreHudStyle, showReticle, showCompass } =
-    useSettings();
+  const {
+    showChat,
+    showScoreHud,
+    scoreHudPosition,
+    showQuickCamHud,
+    quickCamHudPosition,
+    scoreHudStyle,
+    showReticle,
+    showCompass,
+  } = useSettings();
   const commandCircuitActive = useCommandCircuit((s) => s.active);
+  const quickCamAvailable = useCaster((s) => !!s.settings);
+  const showQuickCam = showQuickCamHud && quickCamAvailable;
+  const rightHudOccupied =
+    (showScoreHud && scoreHudPosition === "right") ||
+    (showQuickCam && quickCamHudPosition === "right");
 
   return (
     <div className={styles.PlayerHUD}>
       <div className={styles.LeftHUD}>
         {showChat && <ChatWindow />}
-        {showScoreHud && <ScoreHUD hudStyle={scoreHudStyle} />}
+        {showScoreHud && scoreHudPosition === "left" && (
+          <ScoreHUD hudStyle={scoreHudStyle} />
+        )}
+        {showQuickCam && quickCamHudPosition === "left" && <QuickCamHUD />}
         <TeamScores />
       </div>
-      {showPlayerElements && (
-        <div className={styles.Bars}>
-          <HealthBar followed={followed} />
-          <EnergyBar followed={followed} />
-          <HeatBar followed={followed} />
+      <div className={styles.RightHUD}>
+        <div className={styles.TopRightHUD}>
+          {showPlayerElements && (
+            <div className={styles.Bars}>
+              <HealthBar followed={followed} />
+              <EnergyBar followed={followed} />
+              <HeatBar followed={followed} />
+            </div>
+          )}
+          {showCompass && (
+            <Compass commandCircuitActive={commandCircuitActive} />
+          )}
         </div>
-      )}
-      {showCompass && <Compass commandCircuitActive={commandCircuitActive} />}
-      {showPlayerElements && (
-        <>
+        {showScoreHud && scoreHudPosition === "right" && (
+          <ScoreHUD hudStyle={scoreHudStyle} />
+        )}
+        {showPlayerElements && !rightHudOccupied && (
           <WeaponHUD followed={followed} />
-          <PackInventoryHUD followed={followed} />
-          {showReticle && !commandCircuitActive && <Reticle />}
-        </>
+        )}
+        {showPlayerElements && <PackInventoryHUD followed={followed} />}
+      </div>
+      {showQuickCam && quickCamHudPosition === "right" && (
+        <QuickCamHUD position="right" />
+      )}
+      {showPlayerElements && showReticle && !commandCircuitActive && (
+        <Reticle />
       )}
     </div>
   );

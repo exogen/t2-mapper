@@ -15,7 +15,6 @@ import {
   exitWatchFollow,
   resolveWatchFollowTarget,
 } from "../state/watchFollow";
-import { useFollowFlagActions } from "./useFollowFlagActions";
 import { cameraRegistry } from "../state/cameraRegistry";
 import { useInputAction } from "./InputControls";
 import { yawPitchToQuaternion } from "../stream/streamHelpers";
@@ -86,8 +85,8 @@ export function SpectatorController() {
 
   // Client-side fly↔follow controls, mirroring the real observer's:
   // F toggles modes, N / Shift-N or captured clicks cycle players
-  // while following (fire and jet triggers), and ArrowRight/ArrowLeft
-  // (command circuit) observe the next/previous player.
+  // while following (fire and jet triggers), with the same keys in the
+  // command circuit to observe the next/previous player.
   useInputAction("toggleObserverMode", () => {
     if (isWatching) cycleWatchObserverMode();
   });
@@ -120,7 +119,6 @@ export function SpectatorController() {
     }
   });
   // Number keys orbit the flags (1 = Storm, 2 = Inferno, …).
-  useFollowFlagActions(() => isWatching);
 
   useFrame(() => {
     if (!activeAdapterRef.current) return;
@@ -132,7 +130,7 @@ export function SpectatorController() {
     // body); while they have no body at all the camera free-flies in
     // place with follow still armed.
     const spState = streamPlaybackStore.getState();
-    if (spState.followEntityId) {
+    if (spState.followEntityId || spState.pendingFollowPlayerName) {
       const target = resolveWatchFollowTarget();
       if (target) {
         const wanted = streamPlaybackStore.getState().followCameraMode;

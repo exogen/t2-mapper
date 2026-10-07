@@ -1,3 +1,6 @@
+import { CastPanel } from "./CastPanel";
+import { QuickCamPanel } from "./QuickCamPanel";
+import { useCommentaryTracks } from "../state/commentaryTracksStore";
 import { useEffect, useState, useRef, RefObject, memo } from "react";
 import { FaRotateRight } from "react-icons/fa6";
 import {
@@ -8,6 +11,7 @@ import {
   type CcPlayerNames,
   type IffVisibility,
   type HudStyle,
+  type HudPosition,
   type TouchMode,
 } from "./SettingsProvider";
 import { CopyCoordinatesButton } from "./CopyCoordinatesButton";
@@ -24,7 +28,6 @@ import { showNewAddressDialog } from "./NewAddressDialog";
 import { useFeatures } from "./FeaturesProvider";
 import { StatsPanel } from "./StatsPanel";
 import { JigglePhysicsPanel } from "./JigglePhysicsPanel";
-import { trackKey, useCommentaryTracks } from "../state/commentaryTracksStore";
 import { useModeQueryState } from "./useQueryParams";
 import { useRecording } from "./usePlayback";
 import {
@@ -52,80 +55,6 @@ const DEFAULT_PANELS = [
   "stats",
   "jiggle",
 ];
-
-/**
- * Which of the demo's commentary tracks to play, when it has any. A
- * session choice, not a preference: it is never saved, and a new demo
- * starts on its own first-listed track.
- */
-function CommentaryTrackPicker() {
-  const tracks = useCommentaryTracks((s) => s.tracks);
-  const selected = useCommentaryTracks((s) => s.selected());
-  const select = useCommentaryTracks((s) => s.select);
-  if (tracks.length === 0) return null;
-  return (
-    <div className={styles.Field}>
-      <label htmlFor="commentaryTrackInput">Commentary track</label>
-      <div className={styles.Control}>
-        <select
-          id="commentaryTrackInput"
-          value={selected ? trackKey(selected) : ""}
-          onChange={(event) => select(event.target.value)}
-        >
-          {tracks.map((track) => (
-            <option key={trackKey(track)} value={trackKey(track)}>
-              {track.label}
-            </option>
-          ))}
-        </select>
-      </div>
-    </div>
-  );
-}
-
-/**
- * The demo's cast: commentary playback, subtitles, and which track.
- * Shown only when the demo has a cast sidecar.
- */
-function CastPanel() {
-  const {
-    commentaryEnabled,
-    setCommentaryEnabled,
-    commentarySubtitles,
-    setCommentarySubtitles,
-  } = useSettings();
-  return (
-    <>
-      <div className={styles.CheckboxField}>
-        <input
-          id="commentaryInput"
-          type="checkbox"
-          checked={commentaryEnabled}
-          onChange={(event) => {
-            setCommentaryEnabled(event.target.checked);
-          }}
-        />
-        <label className={styles.Label} htmlFor="commentaryInput">
-          Play audio commentary
-        </label>
-      </div>
-      <div className={styles.CheckboxField}>
-        <input
-          id="commentarySubtitlesInput"
-          type="checkbox"
-          checked={commentarySubtitles}
-          onChange={(event) => {
-            setCommentarySubtitles(event.target.checked);
-          }}
-        />
-        <label className={styles.Label} htmlFor="commentarySubtitlesInput">
-          Show commentary subtitles
-        </label>
-      </div>
-      <CommentaryTrackPicker />
-    </>
-  );
-}
 
 export const InspectorControls = memo(function InspectorControls({
   missionName,
@@ -159,6 +88,7 @@ export const InspectorControls = memo(function InspectorControls({
   const features = useFeatures();
   const storeMissionName = useMissionName();
   const hasStreamData = isStreamingSource(dataSource);
+  const hasCommentary = useCommentaryTracks((s) => s.hasCommentary);
   // When streaming, the URL query param may not reflect the actual map.
   // Use the store's mission name (from the server) for the manifest check.
   const effectiveMissionName = hasStreamData ? storeMissionName : missionName;
@@ -205,6 +135,8 @@ export const InspectorControls = memo(function InspectorControls({
     setChatHudStyle,
     showScoreHud,
     setShowScoreHud,
+    scoreHudPosition,
+    setScoreHudPosition,
     scoreHudStyle,
     setScoreHudStyle,
     showReticle,
@@ -248,7 +180,9 @@ export const InspectorControls = memo(function InspectorControls({
     showFpsMeter,
     setShowFpsMeter,
   } = useDebug();
-  const hasCast = useCommentaryTracks((s) => s.hasCast);
+  const watching = useLiveSelector((s) => s.role === "watcher");
+  const showCasterControls =
+    (dataSource === "live" && watching) || recording?.source === "demo";
   const [settingsOpen, setSettingsOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
@@ -342,8 +276,8 @@ export const InspectorControls = memo(function InspectorControls({
                   <StatsPanel />
                 </Accordion>
               )}
-              {hasCast && (
-                <Accordion value="cast" label="Cast">
+              {recording?.source === "demo" && hasCommentary && (
+                <Accordion value="cast" label="Cast Genius">
                   <CastPanel />
                 </Accordion>
               )}
@@ -357,145 +291,6 @@ export const InspectorControls = memo(function InspectorControls({
                   <MapTourPanel />
                 </Accordion>
               )}
-              <Accordion value="controls" label="Controls">
-                <div className={styles.Field}>
-                  <label htmlFor="speedInput">Fly speed</label>
-                  <div className={styles.Control}>
-                    <input
-                      id="speedInput"
-                      type="range"
-                      min={1}
-                      max={100}
-                      step={1}
-                      value={Math.round(speedMultiplier * 100)}
-                      onChange={(event) =>
-                        setSpeedMultiplier(parseFloat(event.target.value) / 100)
-                      }
-                    />
-                  </div>
-                  <p className={styles.Description}>
-                    How fast you move in free-flying mode.
-                    {isTouch === false
-                      ? " Use your scroll wheel or trackpad to adjust while flying."
-                      : ""}
-                  </p>
-                </div>
-                {isTouch ? (
-                  <div className={styles.Field}>
-                    <label htmlFor="touchModeInput">Joystick</label>{" "}
-                    <div className={styles.Control}>
-                      <select
-                        id="touchModeInput"
-                        value={touchMode}
-                        onChange={(e) =>
-                          setTouchMode(e.target.value as TouchMode)
-                        }
-                      >
-                        <option value="dualStick">Dual stick</option>
-                        <option value="moveLookStick">Single stick</option>
-                      </select>
-                    </div>
-                    <p className={styles.Description}>
-                      Single stick has a unified move + look control. Dual stick
-                      has independent move + look.
-                    </p>
-                  </div>
-                ) : null}
-                {isTouch === false ? (
-                  <div className={styles.CheckboxField}>
-                    <input
-                      id="invertScroll"
-                      type="checkbox"
-                      checked={invertScroll}
-                      onChange={(event) => {
-                        setInvertScroll(event.target.checked);
-                      }}
-                    />
-                    <label className={styles.Label} htmlFor="invertScroll">
-                      Invert scroll direction
-                    </label>
-                    <p className={styles.Description}>
-                      Reverse which scroll direction increases and decreases fly
-                      speed.
-                    </p>
-                  </div>
-                ) : null}
-                {isTouch ? (
-                  <div className={styles.CheckboxField}>
-                    <input
-                      id="invertJoystick"
-                      type="checkbox"
-                      checked={invertJoystick}
-                      onChange={(event) => {
-                        setInvertJoystick(event.target.checked);
-                      }}
-                    />
-                    <label className={styles.Label} htmlFor="invertJoystick">
-                      Invert joystick direction
-                    </label>
-                    <p className={styles.Description}>
-                      Reverse joystick look direction.
-                    </p>
-                  </div>
-                ) : null}
-                <div className={styles.CheckboxField}>
-                  <input
-                    id="invertDrag"
-                    type="checkbox"
-                    checked={invertDrag}
-                    onChange={(event) => {
-                      setInvertDrag(event.target.checked);
-                    }}
-                  />
-                  <label className={styles.Label} htmlFor="invertDrag">
-                    Invert drag direction
-                  </label>
-                  <p className={styles.Description}>
-                    Reverse how dragging the viewport aims the camera.
-                  </p>
-                </div>
-                {isTouch === false && (
-                  <div className={styles.Field}>
-                    <label htmlFor="mouseSensitivityInput">
-                      Mouse sensitivity
-                    </label>
-                    <div className={styles.Control}>
-                      <input
-                        id="mouseSensitivityInput"
-                        type="range"
-                        min={1}
-                        max={256}
-                        step={2}
-                        value={Math.round(mouseSensitivity * 16000)}
-                        onChange={(event) => {
-                          const value = parseInt(event.target.value);
-                          const sens = value / 16000;
-                          setMouseSensitivity(sens);
-                        }}
-                      />
-                    </div>
-                  </div>
-                )}
-                {isTouch === false && (
-                  <div className={styles.CheckboxField}>
-                    <input
-                      id="clickToCycleInput"
-                      type="checkbox"
-                      checked={clickToCycle}
-                      onChange={(event) =>
-                        setClickToCycle(event.target.checked)
-                      }
-                    />
-                    <label className={styles.Label} htmlFor="clickToCycleInput">
-                      Enable click to cycle
-                    </label>
-                    <p className={styles.Description}>
-                      With the mouse captured, use left and right mouse buttons
-                      to cycle the followed player.
-                    </p>
-                  </div>
-                )}
-              </Accordion>
               <Accordion value="preferences" label="Preferences">
                 <div className={styles.Field}>
                   <label htmlFor="fovInput">FOV</label>
@@ -554,9 +349,23 @@ export const InspectorControls = memo(function InspectorControls({
                         className={styles.Label}
                         htmlFor="showScoreHudInput"
                       >
-                        Show mini score HUD
+                        Mini score HUD
                       </label>
                       <div className={styles.Control}>
+                        <select
+                          id="scoreHudPositionInput"
+                          aria-label="Mini score HUD position"
+                          value={scoreHudPosition}
+                          disabled={!showScoreHud}
+                          onChange={(event) =>
+                            setScoreHudPosition(
+                              event.target.value as HudPosition,
+                            )
+                          }
+                        >
+                          <option value="left">Left</option>
+                          <option value="right">Right</option>
+                        </select>
                         <select
                           id="scoreHudStyleInput"
                           aria-label="Player scores HUD style"
@@ -698,6 +507,150 @@ export const InspectorControls = memo(function InspectorControls({
                     (Storm&thinsp;/&thinsp;Inferno) when spectating.
                   </p>
                 </div>
+              </Accordion>
+              {showCasterControls && (
+                <Accordion value="quickCam" label="Quick cam">
+                  <QuickCamPanel watching={dataSource === "live" && watching} />
+                </Accordion>
+              )}
+              <Accordion value="controls" label="Controls">
+                <div className={styles.Field}>
+                  <label htmlFor="speedInput">Fly speed</label>
+                  <div className={styles.Control}>
+                    <input
+                      id="speedInput"
+                      type="range"
+                      min={1}
+                      max={100}
+                      step={1}
+                      value={Math.round(speedMultiplier * 100)}
+                      onChange={(event) =>
+                        setSpeedMultiplier(parseFloat(event.target.value) / 100)
+                      }
+                    />
+                  </div>
+                  <p className={styles.Description}>
+                    How fast you move in free-flying mode.
+                    {isTouch === false
+                      ? " Use your scroll wheel or trackpad to adjust while flying."
+                      : ""}
+                  </p>
+                </div>
+                {isTouch ? (
+                  <div className={styles.Field}>
+                    <label htmlFor="touchModeInput">Joystick</label>{" "}
+                    <div className={styles.Control}>
+                      <select
+                        id="touchModeInput"
+                        value={touchMode}
+                        onChange={(e) =>
+                          setTouchMode(e.target.value as TouchMode)
+                        }
+                      >
+                        <option value="dualStick">Dual stick</option>
+                        <option value="moveLookStick">Single stick</option>
+                      </select>
+                    </div>
+                    <p className={styles.Description}>
+                      Single stick has a unified move + look control. Dual stick
+                      has independent move + look.
+                    </p>
+                  </div>
+                ) : null}
+                {isTouch === false ? (
+                  <div className={styles.CheckboxField}>
+                    <input
+                      id="invertScroll"
+                      type="checkbox"
+                      checked={invertScroll}
+                      onChange={(event) => {
+                        setInvertScroll(event.target.checked);
+                      }}
+                    />
+                    <label className={styles.Label} htmlFor="invertScroll">
+                      Invert scroll direction
+                    </label>
+                    <p className={styles.Description}>
+                      Reverse which scroll direction increases and decreases fly
+                      speed.
+                    </p>
+                  </div>
+                ) : null}
+                {isTouch ? (
+                  <div className={styles.CheckboxField}>
+                    <input
+                      id="invertJoystick"
+                      type="checkbox"
+                      checked={invertJoystick}
+                      onChange={(event) => {
+                        setInvertJoystick(event.target.checked);
+                      }}
+                    />
+                    <label className={styles.Label} htmlFor="invertJoystick">
+                      Invert joystick direction
+                    </label>
+                    <p className={styles.Description}>
+                      Reverse joystick look direction.
+                    </p>
+                  </div>
+                ) : null}
+                <div className={styles.CheckboxField}>
+                  <input
+                    id="invertDrag"
+                    type="checkbox"
+                    checked={invertDrag}
+                    onChange={(event) => {
+                      setInvertDrag(event.target.checked);
+                    }}
+                  />
+                  <label className={styles.Label} htmlFor="invertDrag">
+                    Invert drag direction
+                  </label>
+                  <p className={styles.Description}>
+                    Reverse how dragging the viewport aims the camera.
+                  </p>
+                </div>
+                {isTouch === false && (
+                  <div className={styles.Field}>
+                    <label htmlFor="mouseSensitivityInput">
+                      Mouse sensitivity
+                    </label>
+                    <div className={styles.Control}>
+                      <input
+                        id="mouseSensitivityInput"
+                        type="range"
+                        min={1}
+                        max={256}
+                        step={2}
+                        value={Math.round(mouseSensitivity * 16000)}
+                        onChange={(event) => {
+                          const value = parseInt(event.target.value);
+                          const sens = value / 16000;
+                          setMouseSensitivity(sens);
+                        }}
+                      />
+                    </div>
+                  </div>
+                )}
+                {isTouch === false && (
+                  <div className={styles.CheckboxField}>
+                    <input
+                      id="clickToCycleInput"
+                      type="checkbox"
+                      checked={clickToCycle}
+                      onChange={(event) =>
+                        setClickToCycle(event.target.checked)
+                      }
+                    />
+                    <label className={styles.Label} htmlFor="clickToCycleInput">
+                      Enable click to cycle
+                    </label>
+                    <p className={styles.Description}>
+                      With the mouse captured, use left and right mouse buttons
+                      to cycle the followed player.
+                    </p>
+                  </div>
+                )}
               </Accordion>
               <Accordion value="audio" label="Audio">
                 <div className={styles.CheckboxField}>

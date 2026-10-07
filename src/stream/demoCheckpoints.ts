@@ -3,9 +3,10 @@ import type { DemoSeekCheckpoint } from "./demoStreaming";
 import { decodeCompressedCheckpoint } from "./checkpointCodec";
 import { TICK_DURATION_MS } from "./streamHelpers";
 
-// Bump when decoder or simulation changes invalidate persisted state.
-export const DEMO_CHECKPOINT_VERSION = 8;
+// Bump when the sidecar format, decoder, or simulation invalidates persisted state.
+export const DEMO_CHECKPOINT_VERSION = 11;
 export const DEMO_CHECKPOINT_SUFFIX = ".checkpoints.json";
+const CHECKPOINT_INTERVAL_TICKS = (12 * 60 * 1000) / TICK_DURATION_MS;
 
 export interface DemoCheckpointTarget {
   tick: number;
@@ -18,13 +19,23 @@ export interface DemoCheckpointSidecar {
   version: number;
   demoBytes: number;
   demoSha256: string;
+  requestedCount: number;
   checkpoints: (DemoCheckpointTarget & { data: string })[];
 }
 
-export function matchStartCheckpointTargets(
+function firstCheckpointTick(matchStartSec: number): number {
+  return Math.max(
+    0,
+    Math.floor(((matchStartSec - 60) * 1000) / TICK_DURATION_MS + 1e-7),
+  );
+}
+
+export function demoCheckpointTargets(
   events: readonly TimelineEvent[],
+  count: number,
+  lastTick: number,
 ): DemoCheckpointTarget[] {
-  const targets = new Map<number, DemoCheckpointTarget>();
+  let firstStart: TimelineEvent | undefined;
   for (const event of events) {
     if (
       event.type !== "match-start" ||
@@ -32,18 +43,21 @@ export function matchStartCheckpointTargets(
       event.timeSec < 0
     )
       continue;
-    const tick = Math.max(
-      0,
-      Math.floor(((event.timeSec - 60) * 1000) / TICK_DURATION_MS + 1e-7),
-    );
-    if (!targets.has(tick))
-      targets.set(tick, {
-        tick,
-        matchStartSec: event.timeSec,
-        description: event.description,
-      });
+    if (!firstStart || event.timeSec < firstStart.timeSec) firstStart = event;
   }
-  return [...targets.values()].sort((a, b) => a.tick - b.tick);
+  if (!firstStart) return [];
+  const targets: DemoCheckpointTarget[] = [];
+  const firstTick = firstCheckpointTick(firstStart.timeSec);
+  for (let i = 0; i < count; i++) {
+    const tick = firstTick + i * CHECKPOINT_INTERVAL_TICKS;
+    if (tick >= lastTick) break;
+    targets.push({
+      tick,
+      matchStartSec: firstStart.timeSec,
+      description: firstStart.description,
+    });
+  }
+  return targets;
 }
 
 export async function demoSha256(buffer: ArrayBuffer): Promise<string> {
@@ -58,6 +72,28 @@ export async function readDemoCheckpoints(
   buffer: ArrayBuffer,
   signal?: AbortSignal,
 ): Promise<DemoSeekCheckpoint[]> {
+  const checkpoints: DemoSeekCheckpoint[] = [];
+  await visitDemoCheckpoints(text, buffer, signal, (checkpoint) =>
+    checkpoints.push(checkpoint),
+  );
+  return checkpoints;
+}
+
+/** Check persisted states one at a time without retaining them during a retry. */
+export async function validateDemoCheckpoints(
+  text: string,
+  buffer: ArrayBuffer,
+  signal?: AbortSignal,
+): Promise<void> {
+  await visitDemoCheckpoints(text, buffer, signal);
+}
+
+async function visitDemoCheckpoints(
+  text: string,
+  buffer: ArrayBuffer,
+  signal?: AbortSignal,
+  visit?: (checkpoint: DemoSeekCheckpoint) => void,
+): Promise<void> {
   const sidecar = JSON.parse(text) as DemoCheckpointSidecar;
   signal?.throwIfAborted();
   if (
@@ -65,29 +101,28 @@ export async function readDemoCheckpoints(
     sidecar.version !== DEMO_CHECKPOINT_VERSION ||
     sidecar.demoBytes !== buffer.byteLength ||
     !Array.isArray(sidecar.checkpoints) ||
+    !Number.isSafeInteger(sidecar.requestedCount) ||
+    sidecar.requestedCount < 0 ||
+    sidecar.checkpoints.length > sidecar.requestedCount ||
     sidecar.demoSha256 !== (await demoSha256(buffer))
   )
     throw new Error(
       "Seek checkpoints do not match this demo or engine version",
     );
-  const result: DemoSeekCheckpoint[] = [];
-  for (const entry of sidecar.checkpoints) {
+  for (const [index, entry] of sidecar.checkpoints.entries()) {
     signal?.throwIfAborted();
     if (
       !Number.isSafeInteger(entry.tick) ||
       entry.tick < 0 ||
       !Number.isFinite(entry.matchStartSec) ||
       entry.matchStartSec < 0 ||
+      entry.matchStartSec !== sidecar.checkpoints[0].matchStartSec ||
       entry.tick !==
-        Math.max(
-          0,
-          Math.floor(
-            ((entry.matchStartSec - 60) * 1000) / TICK_DURATION_MS + 1e-7,
-          ),
-        ) ||
+        firstCheckpointTick(entry.matchStartSec) +
+          index * CHECKPOINT_INTERVAL_TICKS ||
       typeof entry.data !== "string"
     )
-      throw new Error("Invalid match-start checkpoint");
+      throw new Error("Invalid seek checkpoint timing");
     const checkpoint = (await decodeCompressedCheckpoint(
       entry.data,
     )) as DemoSeekCheckpoint;
@@ -98,8 +133,7 @@ export async function readDemoCheckpoints(
       !(checkpoint.parser?.ghosts instanceof Map)
     )
       throw new Error("Invalid seek checkpoint state");
-    result.push(checkpoint);
+    visit?.(checkpoint);
   }
   signal?.throwIfAborted();
-  return result;
 }

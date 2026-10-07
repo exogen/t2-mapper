@@ -1,4 +1,9 @@
+import {
+  resolvePendingTargetStrings,
+  updateTargetString,
+} from "../../relay/targetStrings";
 import { DebrisHistory, debrisRetention } from "./debrisHistory";
+import type { WatchTargetEntry } from "../../relay/types";
 import { THRUST_BACKWARD, THRUST_DOWN, THRUST_FORWARD } from "./types";
 import { GroundEffectHistory, type GroundActor } from "./groundEffectHistory";
 import { timelineRandom } from "./timelineRandom";
@@ -124,6 +129,7 @@ import type {
   PendingAudioEvent,
   PlayerRosterEntry,
   TeamScore,
+  FlagTargetInfo,
   WeaponsHudSlot,
   ServerMessageEvent,
   StreamForceFieldData,
@@ -184,6 +190,8 @@ export interface MutableEntity {
   /** Mounted image slots (0-7). Each has shape, mount bone from datablock. */
   imageSlots?: (ImageSlot | undefined)[];
   playerName?: string;
+  /** TargetInfoEvent's resolved typeTag (e.g. "Flag", "_ClientConnection"). */
+  targetTypeName?: string;
   /** The name as sent, color codes included (see targetRawNames). */
   playerRawName?: string;
   /** Generation of `targetId` when this entity took it (see
@@ -513,10 +521,10 @@ export abstract class StreamEngine implements StreamingPlayback {
   protected netStrings = new Map<number, string>();
 
   // ── Target system ──
-  protected targetNames = new Map<number, string>();
   /** Target names as sent, color codes included — the official clan
    *  tag is the color-7 segments, the base name the color-6 ones. */
   protected targetRawNames = new Map<number, string>();
+  protected targetTypes = new Map<number, string>();
   /** How many times each target id has been freed (TargetFreeEvent).
    *  Target ids are recycled, so an id plus its generation is what
    *  names one occupant. */
@@ -525,8 +533,11 @@ export abstract class StreamEngine implements StreamingPlayback {
   protected targetSkinPrefs = new Map<number, string>();
   protected targetTeams = new Map<number, number>();
   protected targetRenderFlags = new Map<number, number>();
-  /** Deferred nameTag→targetId for TargetInfoEvents that arrived before their NetStringEvent. */
+  /** targetId → string tag, until its NetStringEvent arrives. */
   protected pendingNameTags = new Map<number, number>();
+  protected pendingTypeTags = new Map<number, number>();
+  protected pendingSkinTags = new Map<number, number>();
+  protected pendingSkinPrefTags = new Map<number, number>();
   protected sensorGroupColors = new Map<
     number,
     Map<number, { r: number; g: number; b: number }>
@@ -591,6 +602,7 @@ export abstract class StreamEngine implements StreamingPlayback {
     inventoryHud: { slots: InventoryHudSlot[]; activeSlot: number };
     backpackHud: BackpackHudState | null;
     teamScores: TeamScore[];
+    flagTargets: FlagTargetInfo[];
     playerRoster: PlayerRosterEntry[];
   } | null = null;
   protected teamScores: TeamScore[] = [];
@@ -831,14 +843,17 @@ export abstract class StreamEngine implements StreamingPlayback {
         chatMessageIdCounter: this.chatMessageIdCounter,
         audioEvents: this.audioEvents,
         netStrings: this.netStrings,
-        targetNames: this.targetNames,
         targetRawNames: this.targetRawNames,
+        targetTypes: this.targetTypes,
         targetGenerations: this.targetGenerations,
         targetSkins: this.targetSkins,
         targetSkinPrefs: this.targetSkinPrefs,
         targetTeams: this.targetTeams,
         targetRenderFlags: this.targetRenderFlags,
         pendingNameTags: this.pendingNameTags,
+        pendingTypeTags: this.pendingTypeTags,
+        pendingSkinTags: this.pendingSkinTags,
+        pendingSkinPrefTags: this.pendingSkinPrefTags,
         sensorGroupColors: this.sensorGroupColors,
         playerSensorGroup: this.playerSensorGroup,
         lastStatus: this.lastStatus,
@@ -999,6 +1014,7 @@ export abstract class StreamEngine implements StreamingPlayback {
     this.imageAnimations.clear();
     this.entityIdByGhostIndex.clear();
     this.entityGeneration++;
+    this.onTeamScoresChanged();
   }
 
   protected resetSharedState(): void {
@@ -1026,8 +1042,11 @@ export abstract class StreamEngine implements StreamingPlayback {
     this.audioEvents = [];
     this.netStrings.clear();
     this.pendingNameTags.clear();
-    this.targetNames.clear();
+    this.pendingTypeTags.clear();
+    this.pendingSkinTags.clear();
+    this.pendingSkinPrefTags.clear();
     this.targetRawNames.clear();
+    this.targetTypes.clear();
     this.targetGenerations.clear();
     this.targetSkins.clear();
     this.targetSkinPrefs.clear();
@@ -1257,20 +1276,39 @@ export abstract class StreamEngine implements StreamingPlayback {
       const value = evt.value;
       if (id != null && typeof value === "string") {
         this.netStrings.set(id, value);
-        // Resolve any TargetInfoEvents that were waiting for this string.
-        const pendingTargetId = this.pendingNameTags.get(id);
-        if (pendingTargetId != null) {
-          this.pendingNameTags.delete(id);
-          const name = stripTaggedStringMarkup(value).trim();
-          this.targetNames.set(pendingTargetId, name);
-          this.targetRawNames.set(pendingTargetId, value);
-          for (const entity of this.entities.values()) {
-            if (entity.targetId === pendingTargetId) {
-              entity.playerName = name;
-              entity.playerRawName = value;
-            }
-          }
-        }
+        const sync = (targetId: number) => {
+          this.syncTargetEntities(targetId);
+          if (((this.targetRenderFlags.get(targetId) ?? 0) & 0x2) !== 0)
+            this.onTeamScoresChanged();
+        };
+        resolvePendingTargetStrings(
+          this.targetRawNames,
+          this.pendingNameTags,
+          id,
+          value,
+          sync,
+        );
+        resolvePendingTargetStrings(
+          this.targetTypes,
+          this.pendingTypeTags,
+          id,
+          value,
+          sync,
+        );
+        resolvePendingTargetStrings(
+          this.targetSkins,
+          this.pendingSkinTags,
+          id,
+          value,
+          sync,
+        );
+        resolvePendingTargetStrings(
+          this.targetSkinPrefs,
+          this.pendingSkinPrefTags,
+          id,
+          value,
+          sync,
+        );
       }
       return;
     }
@@ -1281,16 +1319,30 @@ export abstract class StreamEngine implements StreamingPlayback {
       // may leak onto it — the re-issue's TargetInfoEvent starts clean.
       const targetId = (data as { targetId?: number }).targetId;
       if (targetId != null) {
+        if (((this.targetRenderFlags.get(targetId) ?? 0) & 0x2) !== 0)
+          this.onTeamScoresChanged();
         this.targetGenerations.set(
           targetId,
           (this.targetGenerations.get(targetId) ?? 0) + 1,
         );
-        this.targetNames.delete(targetId);
         this.targetRawNames.delete(targetId);
+        this.targetTypes.delete(targetId);
+        this.pendingNameTags.delete(targetId);
+        this.pendingTypeTags.delete(targetId);
+        this.pendingSkinTags.delete(targetId);
+        this.pendingSkinPrefTags.delete(targetId);
         this.targetSkins.delete(targetId);
         this.targetSkinPrefs.delete(targetId);
         this.targetTeams.delete(targetId);
         this.targetRenderFlags.delete(targetId);
+        // TargetFreeEvent (0x00673180) calls GameBase::onTargetInfoChanged
+        // (0x005e3790), which detaches the ghost from this target slot.
+        for (const entity of this.entities.values()) {
+          if (entity.targetId !== targetId) continue;
+          entity.targetId = -1;
+          entity.targetGeneration = undefined;
+          this.applyEntityTargetInfo(entity);
+        }
       }
       return;
     }
@@ -1298,58 +1350,52 @@ export abstract class StreamEngine implements StreamingPlayback {
     if (type === "TargetInfoEvent" || eventName === "TargetInfoEvent") {
       const evt = data as TargetInfoEventData;
       const targetId = evt.targetId;
-      const nameTag = evt.nameTag;
-      if (targetId != null && nameTag != null) {
-        const resolved = this.netStrings.get(nameTag);
-        if (resolved) {
-          this.targetNames.set(
-            targetId,
-            stripTaggedStringMarkup(resolved).trim(),
-          );
-          this.targetRawNames.set(targetId, resolved);
-        } else {
-          // NetStringEvent hasn't arrived yet — defer resolution.
-          this.pendingNameTags.set(nameTag, targetId);
-        }
-      }
+      if (targetId == null) return;
+      updateTargetString(
+        this.netStrings,
+        this.targetRawNames,
+        this.pendingNameTags,
+        targetId,
+        evt.nameTag,
+      );
+      updateTargetString(
+        this.netStrings,
+        this.targetTypes,
+        this.pendingTypeTags,
+        targetId,
+        evt.typeTag,
+      );
+      updateTargetString(
+        this.netStrings,
+        this.targetSkins,
+        this.pendingSkinTags,
+        targetId,
+        evt.skinTag,
+      );
+      updateTargetString(
+        this.netStrings,
+        this.targetSkinPrefs,
+        this.pendingSkinPrefTags,
+        targetId,
+        evt.skinPrefTag,
+      );
       const sensorGroup = evt.sensorGroup;
-      if (targetId != null && sensorGroup != null) {
+      if (sensorGroup != null) {
         this.targetTeams.set(targetId, sensorGroup);
       }
       const renderFlags = evt.renderFlags;
-      if (targetId != null && renderFlags != null) {
+      if (renderFlags != null) {
         this.targetRenderFlags.set(targetId, renderFlags);
       }
-      // Skin tags — resolve via net string table.
-      const skinTag = evt.skinTag;
-      if (targetId != null && skinTag != null && skinTag !== 0x400) {
-        const resolved = this.netStrings.get(skinTag);
-        if (resolved) this.targetSkins.set(targetId, resolved);
-      }
-      const skinPrefTag = evt.skinPrefTag;
-      if (targetId != null && skinPrefTag != null && skinPrefTag !== 0x400) {
-        const resolved = this.netStrings.get(skinPrefTag);
-        if (resolved) this.targetSkinPrefs.set(targetId, resolved);
-      }
-      // Apply all known target info to existing entities.
-      if (targetId != null) {
-        const name = this.targetNames.get(targetId);
-        const rawName = this.targetRawNames.get(targetId);
-        const team = this.targetTeams.get(targetId);
-        const rf = this.targetRenderFlags.get(targetId);
-        const skin = this.targetSkins.get(targetId);
-        const skinPref = this.targetSkinPrefs.get(targetId);
-        for (const entity of this.entities.values()) {
-          if (entity.targetId === targetId) {
-            if (name) entity.playerName = name;
-            if (rawName) entity.playerRawName = rawName;
-            if (team != null) entity.sensorGroup = team;
-            if (rf != null) entity.targetRenderFlags = rf;
-            if (skin) entity.skinName = skin;
-            if (skinPref) entity.skinPrefName = skinPref;
-          }
-        }
-      }
+      if (
+        evt.nameTag != null ||
+        evt.typeTag != null ||
+        evt.skinTag != null ||
+        sensorGroup != null ||
+        renderFlags != null
+      )
+        this.onTeamScoresChanged();
+      this.syncTargetEntities(targetId);
       return;
     }
 
@@ -1549,10 +1595,18 @@ export abstract class StreamEngine implements StreamingPlayback {
   }): void {
     const ghostIndex = ghost.index;
     const prevEntityId = this.entityIdByGhostIndex.get(ghostIndex);
+    const prevEntity = prevEntityId
+      ? this.entities.get(prevEntityId)
+      : undefined;
+    const previousFlagPlayerTarget =
+      prevEntity?.type === "Player" &&
+      prevEntity.targetId != null &&
+      ((this.targetRenderFlags.get(prevEntity.targetId) ?? 0) & 0x2) !== 0
+        ? prevEntity.targetId
+        : undefined;
 
     // Spawn explosion for projectiles being removed
     if (prevEntityId) {
-      const prevEntity = this.entities.get(prevEntityId);
       if (
         prevEntity &&
         prevEntity.type === "Projectile" &&
@@ -1576,6 +1630,7 @@ export abstract class StreamEngine implements StreamingPlayback {
         this.entityIdByGhostIndex.delete(ghostIndex);
         this.entityGeneration++;
       }
+      if (previousFlagPlayerTarget != null) this.onTeamScoresChanged();
       return;
     }
 
@@ -1622,6 +1677,18 @@ export abstract class StreamEngine implements StreamingPlayback {
     entity.type = toEntityType(className);
     this.entityIdByGhostIndex.set(ghostIndex, entityId);
     this.applyGhostData(entity, ghost.parsedData);
+    if (ghost.type === "create" || ghost.parsedData?.targetId != null) {
+      const flagPlayerTarget =
+        entity.type === "Player" &&
+        entity.targetId != null &&
+        ((this.targetRenderFlags.get(entity.targetId) ?? 0) & 0x2) !== 0
+          ? entity.targetId
+          : undefined;
+      // A scoped player excludes its own target from the original flags.
+      if (previousFlagPlayerTarget !== flagPlayerTarget) {
+        this.onTeamScoresChanged();
+      }
+    }
     entity.clientAnimation = updateClientAnimation(
       entity.clientAnimation,
       entity,
@@ -1681,10 +1748,12 @@ export abstract class StreamEngine implements StreamingPlayback {
     entity.shapeHint = undefined;
     entity.visual = undefined;
     entity.targetId = undefined;
+    entity.targetGeneration = undefined;
     entity.targetRenderFlags = undefined;
     entity.sensorGroup = undefined;
     entity.playerName = undefined;
     entity.playerRawName = undefined;
+    entity.targetTypeName = undefined;
     entity.imageSlots = undefined;
     entity.mountObjectGhostIndex = undefined;
     entity.mountNode = undefined;
@@ -2301,18 +2370,6 @@ export abstract class StreamEngine implements StreamingPlayback {
                   : prevSlot.mountedAtSec,
               };
             }
-
-            // Slot 3 on Players: flag — update targetRenderFlags bit 0x2.
-            if (img.index === 3 && entity.type === "Player") {
-              if (entity.targetId != null && entity.targetId >= 0) {
-                const prev = this.targetRenderFlags.get(entity.targetId) ?? 0;
-                const updated = prev | 0x2;
-                if (updated !== prev) {
-                  this.targetRenderFlags.set(entity.targetId, updated);
-                  entity.targetRenderFlags = updated;
-                }
-              }
-            }
           } else if (!img.dataBlockId) {
             const animations = this.imageAnimations.get(entity.id);
             if (animations) animations[img.index] = undefined;
@@ -2320,18 +2377,6 @@ export abstract class StreamEngine implements StreamingPlayback {
             if (entity.imageSlots?.[img.index]) {
               entity.imageSlots = [...entity.imageSlots];
               entity.imageSlots[img.index] = undefined;
-            }
-
-            // Slot 3 on Players: clear flag render flag.
-            if (img.index === 3 && entity.type === "Player") {
-              if (entity.targetId != null && entity.targetId >= 0) {
-                const prev = this.targetRenderFlags.get(entity.targetId) ?? 0;
-                const updated = prev & ~0x2;
-                if (updated !== prev) {
-                  this.targetRenderFlags.set(entity.targetId, updated);
-                  entity.targetRenderFlags = updated;
-                }
-              }
             }
           }
         }
@@ -2841,26 +2886,14 @@ export abstract class StreamEngine implements StreamingPlayback {
     if (typeof data.targetId === "number") {
       entity.targetId = data.targetId;
       entity.targetGeneration = this.targetGenerations.get(data.targetId) ?? 0;
-      const playerName = this.targetNames.get(data.targetId);
-      if (playerName) entity.playerName = playerName;
-      const playerRawName = this.targetRawNames.get(data.targetId);
-      if (playerRawName) entity.playerRawName = playerRawName;
-      const team = this.targetTeams.get(data.targetId);
-      if (team != null) {
-        entity.sensorGroup = team;
-        if (
-          entity.ghostIndex === this.latestControl.ghostIndex &&
-          this.lastControlType === "player"
-        ) {
-          this.playerSensorGroup = team;
-        }
+      this.applyEntityTargetInfo(entity);
+      if (
+        entity.sensorGroup != null &&
+        entity.ghostIndex === this.latestControl.ghostIndex &&
+        this.lastControlType === "player"
+      ) {
+        this.playerSensorGroup = entity.sensorGroup;
       }
-      const renderFlags = this.targetRenderFlags.get(data.targetId);
-      if (renderFlags != null) entity.targetRenderFlags = renderFlags;
-      const skin = this.targetSkins.get(data.targetId);
-      if (skin) entity.skinName = skin;
-      const skinPref = this.targetSkinPrefs.get(data.targetId);
-      if (skinPref) entity.skinPrefName = skinPref;
     }
 
     // SoundMask updates are sparse, and an identical play is a new command.
@@ -3864,14 +3897,9 @@ export abstract class StreamEngine implements StreamingPlayback {
       if (renamed?.targetId != null) {
         // Update every body sharing this client's target immediately; the
         // matching TargetInfoEvent can arrive a packet later.
-        this.targetNames.set(renamed.targetId, renamed.name);
+        this.pendingNameTags.delete(renamed.targetId);
         this.targetRawNames.set(renamed.targetId, renamed.rawName);
-        for (const entity of this.entities.values()) {
-          if (entity.targetId === renamed.targetId) {
-            entity.playerName = renamed.name;
-            entity.playerRawName = renamed.rawName;
-          }
-        }
+        this.syncTargetEntities(renamed.targetId);
       }
       if (changes.joinedClientId != null && !this.connectedPlayerName) {
         const name = this.playerRoster.get(changes.joinedClientId)!.name;
@@ -4071,6 +4099,65 @@ export abstract class StreamEngine implements StreamingPlayback {
     this._inventoryHudGen++;
   }
 
+  protected seedTargetInfo(entry: WatchTargetEntry): void {
+    const id = entry.targetId;
+    if (entry.name != null) this.targetRawNames.set(id, entry.name);
+    if (entry.typeDescription != null)
+      this.targetTypes.set(id, entry.typeDescription);
+    if (entry.skin != null) this.targetSkins.set(id, entry.skin);
+    if (entry.skinPref != null) this.targetSkinPrefs.set(id, entry.skinPref);
+    updateTargetString(
+      this.netStrings,
+      this.targetRawNames,
+      this.pendingNameTags,
+      id,
+      entry.nameTag,
+    );
+    updateTargetString(
+      this.netStrings,
+      this.targetTypes,
+      this.pendingTypeTags,
+      id,
+      entry.typeTag,
+    );
+    updateTargetString(
+      this.netStrings,
+      this.targetSkins,
+      this.pendingSkinTags,
+      id,
+      entry.skinTag,
+    );
+    updateTargetString(
+      this.netStrings,
+      this.targetSkinPrefs,
+      this.pendingSkinPrefTags,
+      id,
+      entry.skinPrefTag,
+    );
+    if (entry.sensorGroup != null) this.targetTeams.set(id, entry.sensorGroup);
+    if (entry.targetData != null)
+      this.targetRenderFlags.set(id, entry.targetData);
+  }
+
+  private applyEntityTargetInfo(entity: MutableEntity): void {
+    const targetId = entity.targetId ?? -1;
+    const rawName = this.targetRawNames.get(targetId);
+    entity.playerRawName = rawName;
+    entity.playerName =
+      rawName == null ? undefined : stripTaggedStringMarkup(rawName).trim();
+    entity.targetTypeName = this.targetTypes.get(targetId);
+    entity.sensorGroup = this.targetTeams.get(targetId);
+    entity.targetRenderFlags = this.targetRenderFlags.get(targetId);
+    entity.skinName = this.targetSkins.get(targetId) || undefined;
+    entity.skinPrefName = this.targetSkinPrefs.get(targetId) || undefined;
+  }
+
+  private syncTargetEntities(targetId: number): void {
+    for (const entity of this.entities.values()) {
+      if (entity.targetId === targetId) this.applyEntityTargetInfo(entity);
+    }
+  }
+
   // ── Snapshot building ──
 
   /** Build entity list, holding the final world throughout the debrief. */
@@ -4078,15 +4165,7 @@ export abstract class StreamEngine implements StreamingPlayback {
     if (this.endedEntities) return this.endedEntities;
     const entities: StreamEntity[] = [];
     for (const entity of this.entities.values()) {
-      let renderFlags =
-        entity.targetId != null && entity.targetId >= 0
-          ? (this.targetRenderFlags.get(entity.targetId) ??
-            entity.targetRenderFlags)
-          : entity.targetRenderFlags;
-      if (entity.type === "Player" && !entity.imageSlots?.[3]) {
-        renderFlags = renderFlags != null ? renderFlags & ~0x2 : renderFlags;
-      }
-
+      const renderFlags = entity.targetRenderFlags;
       entities.push({
         id: entity.id,
         type: entity.type,
@@ -4128,10 +4207,11 @@ export abstract class StreamEngine implements StreamingPlayback {
         thrustDirection: entity.thrustDirection,
         playerName: entity.playerName,
         playerRawName: entity.playerRawName,
+        targetTypeName: entity.targetTypeName,
         targetGeneration: entity.targetGeneration,
         skinName: entity.skinName,
         skinPrefName: entity.skinPrefName,
-        targetRenderFlags: renderFlags,
+        targetRenderFlags: entity.targetRenderFlags,
         targetId: entity.targetId,
         teamId: entity.sensorGroup,
         iffColor:
@@ -4231,18 +4311,12 @@ export abstract class StreamEngine implements StreamingPlayback {
   }
 
   /**
-   * Attach each team's flag skin from the target table. A flag target is
-   * exactly a target with the flag render bit (0x2, set only by CTF flag
-   * code) that is NOT a client's target — carriers get the bit on their
-   * own target while holding. Client targets are excluded via the roster
-   * (MsgClientJoin carries each client's targetId; covers unscoped
-   * players in live) unioned with scoped Player entities (covers demos,
-   * whose initial roster comes from the PLAYERLIST HUD state without
-   * targetIds). The flag target's sensor group IS the flag's team
-   * (CTFGame.cs setTargetSensorGroup) and its skin the team skin, and it
-   * outlives the flag item ghost while carried — no name matching.
+   * Original flag targets survive their item ghosts being hidden on pickup.
+   * Carriers also get render bit 0x2; exclude their client targets using
+   * target type, roster IDs and scoped Player entities (demo PLAYERLIST
+   * entries can lack target IDs). Rebuilt only when HUD metadata changes.
    */
-  protected attachTeamFlagSkins(teamScores: TeamScore[]): void {
+  private buildFlagTargets(): FlagTargetInfo[] {
     const clientTargetIds = new Set<number>();
     for (const entry of this.playerRoster.values()) {
       if (entry.targetId != null) clientTargetIds.add(entry.targetId);
@@ -4252,15 +4326,20 @@ export abstract class StreamEngine implements StreamingPlayback {
         clientTargetIds.add(entity.targetId);
       }
     }
+    const flags: FlagTargetInfo[] = [];
     for (const [targetId, renderFlags] of this.targetRenderFlags) {
       if ((renderFlags & 0x2) === 0) continue;
       if (clientTargetIds.has(targetId)) continue;
-      const teamId = this.targetTeams.get(targetId);
-      const skin = this.targetSkins.get(targetId);
-      if (teamId == null || !skin) continue;
-      const ts = teamScores.find((t) => t.teamId === teamId);
-      if (ts) ts.skinName = skin.toLowerCase();
+      if (this.targetTypes.get(targetId) === "_ClientConnection") continue;
+      flags.push({
+        targetId,
+        name: this.targetRawNames.get(targetId),
+        typeName: this.targetTypes.get(targetId),
+        teamId: this.targetTeams.get(targetId),
+        skinName: this.targetSkins.get(targetId)?.toLowerCase(),
+      });
     }
+    return flags;
   }
 
   /** Build HUD arrays for snapshot. */
@@ -4294,10 +4373,16 @@ export abstract class StreamEngine implements StreamingPlayback {
 
   private buildTeamScoresAndRoster(): {
     teamScores: TeamScore[];
+    flagTargets: FlagTargetInfo[];
     playerRoster: PlayerRosterEntry[];
   } {
     const teamScores = this.teamScores.map((ts) => ({ ...ts }));
-    this.attachTeamFlagSkins(teamScores);
+    const flagTargets = this.buildFlagTargets();
+    for (const flag of flagTargets) {
+      if (flag.teamId == null || !flag.skinName) continue;
+      const team = teamScores.find((t) => t.teamId === flag.teamId);
+      if (team) team.skinName = flag.skinName;
+    }
     const teamCounts = new Map<number, number>();
     for (const { teamId } of this.playerRoster.values()) {
       if (teamId > 0) teamCounts.set(teamId, (teamCounts.get(teamId) ?? 0) + 1);
@@ -4310,7 +4395,7 @@ export abstract class StreamEngine implements StreamingPlayback {
     for (const [clientId, entry] of this.playerRoster) {
       playerRoster.push({ clientId, ...entry });
     }
-    return { teamScores, playerRoster };
+    return { teamScores, flagTargets, playerRoster };
   }
 
   /** Force the next buildCachedHudState() to rebuild every part (e.g. on a
@@ -4330,6 +4415,7 @@ export abstract class StreamEngine implements StreamingPlayback {
     inventoryHud: { slots: InventoryHudSlot[]; activeSlot: number };
     backpackHud: BackpackHudState | null;
     teamScores: TeamScore[];
+    flagTargets: FlagTargetInfo[];
     playerRoster: PlayerRosterEntry[];
   } {
     const prev = this._hudCache;
@@ -4349,6 +4435,7 @@ export abstract class StreamEngine implements StreamingPlayback {
         ? prev.backpackHud
         : this.buildBackpackHud();
     let teamScores: TeamScore[];
+    let flagTargets: FlagTargetInfo[];
     let playerRoster: PlayerRosterEntry[];
     if (
       prev &&
@@ -4356,9 +4443,11 @@ export abstract class StreamEngine implements StreamingPlayback {
       prev.rosterGen === this._rosterGen
     ) {
       teamScores = prev.teamScores;
+      flagTargets = prev.flagTargets;
       playerRoster = prev.playerRoster;
     } else {
-      ({ teamScores, playerRoster } = this.buildTeamScoresAndRoster());
+      ({ teamScores, flagTargets, playerRoster } =
+        this.buildTeamScoresAndRoster());
     }
 
     this._hudCache = {
@@ -4373,9 +4462,17 @@ export abstract class StreamEngine implements StreamingPlayback {
       inventoryHud,
       backpackHud,
       teamScores,
+      flagTargets,
       playerRoster,
     };
-    return { weaponsHud, inventoryHud, backpackHud, teamScores, playerRoster };
+    return {
+      weaponsHud,
+      inventoryHud,
+      backpackHud,
+      teamScores,
+      flagTargets,
+      playerRoster,
+    };
   }
 
   /** Build filtered chat and audio event arrays for the current time. */

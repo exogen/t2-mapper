@@ -5,6 +5,7 @@ import { createLogger } from "../logger";
 import { RelayClient } from "../stream/relayClient";
 import { LiveStreamAdapter } from "../stream/liveStreaming";
 import { gameEntityStore } from "./gameEntityStore";
+import { casterStore } from "./casterStore";
 import type {
   ClientMove,
   ServerInfo,
@@ -484,6 +485,7 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
     },
 
     disconnectRelay() {
+      casterStore.getState().suspend();
       const s = get();
       watchRequest++;
       cancelReconnect();
@@ -520,6 +522,7 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
     },
 
     joinServer(address, warriorName) {
+      casterStore.getState().suspend();
       address = normalizeAddress(address);
       watchRequest++;
       const s = get();
@@ -603,6 +606,8 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
 
     watchServer(address, { resume = false } = {}) {
       address = normalizeAddress(address);
+      if (casterStore.getState().context?.server !== address)
+        casterStore.getState().suspend();
       const request = ++watchRequest;
       const s = get();
       const sameServer = s.role === "watcher" && s.serverAddress === address;
@@ -650,6 +655,10 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
 
       const cachedServer = s.servers.find((sv) => sv.address === address);
       const newAdapter = new LiveStreamAdapter(s._relay, { mode: "watch" });
+      newAdapter.onMissionIdentity = (sequence, missionName) => {
+        if (get()._adapter !== newAdapter) return;
+        casterStore.getState().activate(address, sequence, missionName);
+      };
       newAdapter.onReady = () => {
         if (get()._adapter === newAdapter) set({ liveReady: true });
       };
@@ -727,6 +736,7 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
     },
 
     leaveServer() {
+      casterStore.getState().suspend();
       watchRequest++;
       const s = get();
       cancelReconnect();

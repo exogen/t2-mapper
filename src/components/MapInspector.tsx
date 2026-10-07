@@ -49,6 +49,7 @@ import { LoadingIndicator } from "./LoadingIndicator";
 import { StreamDelayNotice } from "./StreamDelayNotice";
 import { CommentarySubtitles } from "./CommentarySubtitles";
 import { DemoSeekFeedback } from "./DemoSeekFeedback";
+import { QuickCamControls } from "./QuickCamControls";
 import { unloadDemo } from "../stream/demoFileLoader";
 import { isRetryableDisconnect, normalizeAddress } from "../../relay/shared";
 import {
@@ -731,6 +732,7 @@ export function MapInspector() {
                 ) : null}
                 {recording?.source === "demo" ? <CommentarySubtitles /> : null}
                 {recording?.source === "demo" ? <DemoSeekFeedback /> : null}
+                <QuickCamControls />
                 {showDisconnectDialog ? (
                   <WatchErrorDialog
                     endReason={watchEndReason}

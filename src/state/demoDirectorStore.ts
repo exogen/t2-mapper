@@ -159,6 +159,7 @@ function beginDirecting(): void {
   // with them. Manual follow keeps the rigid feel (cleared on exit).
   streamPlaybackStore.setState({
     orbitTargetDamping: DIRECTOR_ORBIT_TARGET_DAMPING,
+    pendingFollowPlayerName: null,
   });
   // Jump the dead air at the head of a recording: to a beat before the
   // commentary's first line when a track is loaded — that is where the

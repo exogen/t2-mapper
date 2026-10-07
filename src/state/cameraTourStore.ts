@@ -2,6 +2,7 @@ import { CatmullRomCurve3 } from "three";
 import { createStore } from "zustand/vanilla";
 import { useStoreWithEqualityFn } from "zustand/traditional";
 import type { TourTarget } from "./mapTourCategories";
+import { streamPlaybackStore } from "./streamPlaybackStore";
 
 export interface TourAnimation {
   targets: TourTarget[];
@@ -65,10 +66,14 @@ function makeAnimation(
 export const cameraTourStore = createStore<CameraTourState>((set) => ({
   animation: null,
   flyTo(target, tourType = "feature") {
+    if (streamPlaybackStore.getState().pendingFollowPlayerName)
+      streamPlaybackStore.setState({ pendingFollowPlayerName: null });
     set({ animation: makeAnimation([target], null, tourType) });
   },
   startTour(targets, categoryName, tourType = "feature") {
     if (targets.length === 0) return;
+    if (streamPlaybackStore.getState().pendingFollowPlayerName)
+      streamPlaybackStore.setState({ pendingFollowPlayerName: null });
     set({ animation: makeAnimation(targets, categoryName, tourType) });
   },
   advanceTarget() {

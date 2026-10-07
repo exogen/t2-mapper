@@ -2,6 +2,7 @@
 import path from "node:path";
 import { parseArgs } from "node:util";
 import { DemoCheckpointPublisher } from "../relay/demoCheckpointPublisher.js";
+import { loadDemoCheckpointCount } from "../relay/demoCheckpointConfig.js";
 import { listAllObjects, r2Client } from "./lib/r2.js";
 
 const { values } = parseArgs({
@@ -9,6 +10,7 @@ const { values } = parseArgs({
     "dry-run": { type: "boolean", default: false },
     force: { type: "boolean", default: false },
     concurrency: { type: "string", default: "1" },
+    count: { type: "string" },
     filter: { type: "string" },
     "asset-root": { type: "string", default: "docs/base" },
     help: { type: "boolean", default: false },
@@ -16,13 +18,36 @@ const { values } = parseArgs({
 });
 if (values.help) {
   console.log(
-    "Usage: npm run demos:backfill-checkpoints -- [--dry-run] [--force] [--concurrency=1] [--filter=substring] [--asset-root=docs/base]",
+    [
+      "Usage: npm run demos:backfill-checkpoints -- [options]",
+      "",
+      "  --count=N              Maximum checkpoints per demo (DEMO_CHECKPOINT_COUNT, or 1)",
+      "  --filter=TEXT          Case-sensitive substring of the full R2 key, including the demo filename",
+      "                         Example: --filter=stonehengelt matches demos/server_stonehengelt_id.rec",
+      "                         Server/map names match only when that text appears in the key",
+      "  --dry-run              List demos needing checkpoints without writing anything",
+      "  --force                Regenerate even current sidecars",
+      "  --concurrency=N        Parallel replay workers (default: 1)",
+      "  --asset-root=PATH      Collision asset folder (default: docs/base)",
+      "",
+      "DEMO_CHECKPOINT_HEAP_MB sets each worker's old-space heap cap in MiB (default: 256).",
+    ].join("\n"),
   );
   process.exit(0);
 }
 const concurrency = Number(values.concurrency);
 if (!Number.isSafeInteger(concurrency) || concurrency < 1) {
   console.error("--concurrency must be a positive integer");
+  process.exit(1);
+}
+let checkpointCount: number;
+try {
+  checkpointCount = loadDemoCheckpointCount(
+    values.count,
+    values.count !== undefined ? "--count" : "DEMO_CHECKPOINT_COUNT",
+  );
+} catch (error) {
+  console.error((error as Error).message);
   process.exit(1);
 }
 const { client, config } = r2Client("npm run demos:backfill-checkpoints");
@@ -39,6 +64,7 @@ await Promise.all(
     const publisher = new DemoCheckpointPublisher(
       config,
       path.resolve(values["asset-root"]),
+      checkpointCount,
     );
     while (next < demos.length) {
       const { key } = demos[next++];

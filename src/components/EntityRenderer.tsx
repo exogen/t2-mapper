@@ -11,7 +11,9 @@ import { ShapeInfoProvider } from "./ShapeInfoProvider";
 import type { StaticShapeType } from "./ShapeInfoProvider";
 import { DebugSuspense } from "./DebugSuspense";
 import { FloatingLabel } from "./FloatingLabel";
-import { DEFAULT_TEAM_NAMES } from "../stringUtils";
+import { useCaster } from "../state/casterStore";
+import { flagLabel } from "../state/flagTeam";
+import { useStreamSnapshot } from "../state/streamSnapshotStore";
 import { isStreamingSource, useDataSource } from "../state/gameEntityStore";
 import { resolveEmapFromDatablock } from "./resolveEmap";
 import { Camera } from "./Camera";
@@ -112,6 +114,12 @@ export const EntityRenderer = memo(function EntityRenderer({
   }
 });
 
+function FlagName({ entity }: { entity: ShapeEntityType }) {
+  const names = useCaster((s) => s.settings?.teamNames);
+  const name = useStreamSnapshot(() => flagLabel(entity, "original", names));
+  return name ? <FloatingLabel opacity={0.6}>{name}</FloatingLabel> : null;
+}
+
 function ShapeEntity({
   entity,
   objectMounts,
@@ -139,11 +147,6 @@ function ShapeEntity({
 
   // Flag label for flag Items
   const isFlag = entity.dataBlock?.toLowerCase() === "flag";
-  const teamName =
-    entity.teamId && entity.teamId > 0
-      ? DEFAULT_TEAM_NAMES[entity.teamId]
-      : null;
-  const flagLabel = isFlag && teamName ? `${teamName} Flag` : null;
 
   const loadingColor =
     entity.shapeType === "Item"
@@ -226,9 +229,7 @@ function ShapeEntity({
           mounted={allMounts}
           lightConfig={shapeLightConfig}
         >
-          {flagLabel ? (
-            <FloatingLabel opacity={0.6}>{flagLabel}</FloatingLabel>
-          ) : null}
+          {isFlag ? <FlagName entity={entity} /> : null}
         </ShapeRenderer>
       </group>
     </ShapeInfoProvider>

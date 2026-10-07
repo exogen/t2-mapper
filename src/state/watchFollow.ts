@@ -1,11 +1,12 @@
 import { createLogger } from "../logger";
 import { gameEntityStore } from "./gameEntityStore";
-import type { GameEntity } from "./gameEntityTypes";
+import type { GameEntity, PlayerEntity } from "./gameEntityTypes";
 import { liveConnectionStore } from "./liveConnectionStore";
 import { streamPlaybackStore } from "./streamPlaybackStore";
 import {
   threeForwardHeading,
   stripTaggedStringMarkup,
+  taglessPlayerName,
 } from "../stream/streamHelpers";
 import { resolveFlagTeam, flagLabel } from "./flagTeam";
 
@@ -119,9 +120,34 @@ function flagEntities(): { id: string; teamId: number | null }[] {
   );
 }
 
-/** Number of followable flags in scope (drives the overlay hint). */
-export function countFollowableFlags(): number {
-  return flagEntities().length;
+export interface FollowableFlag {
+  slot: number;
+  teamId: number | null;
+  label: string;
+  entityId: string;
+}
+
+/** The actual flag slots, shared by camera recall, labels and input hints. */
+export function getFollowableFlags(
+  teamNames?: Record<number, string>,
+): FollowableFlag[] {
+  const entities = gameEntityStore.getState().streamEntities;
+  const flags = flagEntities();
+  const hasTeams = flags.some((flag) => flag.teamId != null);
+  const slots = new Set<number>();
+  const targets: FollowableFlag[] = [];
+  for (const [index, flag] of flags.entries()) {
+    const slot = flag.teamId ?? (hasTeams ? null : index + 1);
+    if (slot == null || slots.has(slot)) continue;
+    slots.add(slot);
+    targets.push({
+      slot,
+      teamId: flag.teamId,
+      label: flagLabel(entities.get(flag.id)!, "original", teamNames),
+      entityId: flag.id,
+    });
+  }
+  return targets;
 }
 
 export interface FollowTarget {
@@ -134,21 +160,17 @@ export interface FollowTarget {
 }
 
 /** Searchable targets use the same identities and eligibility as F / number keys. */
-export function getFollowTargets(): FollowTarget[] {
+export function getFollowTargets(
+  teamNames?: Record<number, string>,
+): FollowTarget[] {
   const entities = gameEntityStore.getState().streamEntities;
   const targets: FollowTarget[] = [];
-  const flags = flagEntities();
-  const hasTeams = flags.some((flag) => flag.teamId != null);
-  const slots = new Set<number>();
-  for (const [index, flag] of flags.entries()) {
-    const slot = flag.teamId ?? (hasTeams ? null : index + 1);
-    if (slot == null || slots.has(slot)) continue;
-    slots.add(slot);
+  for (const flag of getFollowableFlags(teamNames)) {
     targets.push({
-      key: `flag:${slot}`,
-      label: flagLabel(entities.get(flag.id)!),
-      entityId: flag.id,
-      flagSlot: slot,
+      key: `flag:${flag.slot}`,
+      label: flag.label,
+      entityId: flag.entityId,
+      flagSlot: flag.slot,
     });
   }
   for (const id of playerEntityIds()) {
@@ -173,6 +195,30 @@ export function getFollowTargets(): FollowTarget[] {
     if (b.flagSlot != null) return 1;
     return a.label.localeCompare(b.label);
   });
+}
+
+/** Resolve a quick cam by base name, keeping respawn overlaps distinct from name collisions. */
+export function findLivingPlayersByName(name: string): PlayerEntity[] {
+  const matches: PlayerEntity[] = [];
+  const normalized = name.toLowerCase();
+  for (const entity of gameEntityStore.getState().streamEntities.values()) {
+    if (entity.renderType !== "Player" || isDeadEntity(entity)) continue;
+    if (
+      taglessPlayerName(
+        entity.playerRawName ?? "",
+        entity.playerName,
+      ).toLowerCase() !== normalized
+    )
+      continue;
+    const index =
+      entity.targetId != null && entity.targetId >= 0
+        ? matches.findIndex((match) => match.targetId === entity.targetId)
+        : -1;
+    if (index === -1) matches.push(entity);
+    else if ((entity.ghostIndex ?? 0) > (matches[index].ghostIndex ?? 0))
+      matches[index] = entity;
+  }
+  return matches;
 }
 
 /** The entity id a flag-follow slot resolves to right now (the item on
@@ -223,6 +269,7 @@ export function followFlag(slot: number): void {
   streamPlaybackStore.setState({
     followEntityId: target.id,
     followTargetId: null,
+    pendingFollowPlayerName: null,
     followFlagSlot: slot,
     followCameraMode: "orbitOverride",
     cameraMode: "orbitOverride",
@@ -321,6 +368,7 @@ export function enterWatchFollow(targetId?: string): void {
   streamPlaybackStore.setState({
     followEntityId: target,
     followTargetId: validTargetId,
+    pendingFollowPlayerName: null,
     // Remember for resume across free-fly / pan (persists through exit).
     lastFollowTargetId: validTargetId,
     lastFollowGhostIndex: entity?.ghostIndex ?? null,
@@ -342,6 +390,7 @@ export function exitToFreeFly(): void {
   streamPlaybackStore.setState({
     followEntityId: null,
     followTargetId: null,
+    pendingFollowPlayerName: null,
     followCameraMode: "orbitOverride",
     cameraMode: "freeFly",
     followFlagSlot: null,
@@ -350,7 +399,9 @@ export function exitToFreeFly(): void {
 
 /** Back to free-fly; the camera stays where the orbit left it. */
 export function exitWatchFollow(): void {
-  if (streamPlaybackStore.getState().followEntityId === null) return;
+  const { followEntityId, pendingFollowPlayerName } =
+    streamPlaybackStore.getState();
+  if (followEntityId === null && pendingFollowPlayerName === null) return;
   exitToFreeFly();
 }
 
@@ -366,10 +417,26 @@ export function exitWatchFollow(): void {
  * Returns the entity id to orbit this frame, or null while the player
  * has no body at all (corpse faded, respawn pending) — follow stays
  * armed and re-locks when they spawn. Call once per frame while
- * followEntityId is set.
+ * followEntityId is set or a quick cam is waiting for its player.
  */
 export function resolveWatchFollowTarget(): string | null {
   const state = streamPlaybackStore.getState();
+  if (state.pendingFollowPlayerName) {
+    const matches = findLivingPlayersByName(state.pendingFollowPlayerName);
+    if (matches.length !== 1) return null;
+    const player = matches[0];
+    const targetId =
+      player.targetId != null && player.targetId >= 0 ? player.targetId : null;
+    streamPlaybackStore.setState({
+      pendingFollowPlayerName: null,
+      followEntityId: player.id,
+      followTargetId: targetId,
+      lastFollowTargetId: targetId,
+      lastFollowGhostIndex: player.ghostIndex ?? null,
+      cameraMode: state.followCameraMode,
+    });
+    return player.id;
+  }
   const { followEntityId, followTargetId, followFlagSlot } = state;
   if (!followEntityId) return null;
   const entities = gameEntityStore.getState().streamEntities;
@@ -457,7 +524,9 @@ export function findLivingEntityByTargetId(
 
 /** Command-circuit toggle: plain follow on/off (no first person there). */
 export function toggleWatchFollow(): void {
-  if (streamPlaybackStore.getState().followEntityId) {
+  const { followEntityId, pendingFollowPlayerName } =
+    streamPlaybackStore.getState();
+  if (followEntityId || pendingFollowPlayerName) {
     exitWatchFollow();
   } else {
     streamPlaybackStore.setState({ followCameraMode: "orbitOverride" });
@@ -472,6 +541,10 @@ export function toggleWatchFollow(): void {
  */
 export function cycleWatchObserverMode(): void {
   const state = streamPlaybackStore.getState();
+  if (state.pendingFollowPlayerName) {
+    exitWatchFollow();
+    return;
+  }
   if (!state.followEntityId) {
     streamPlaybackStore.setState({ followCameraMode: "orbitOverride" });
     enterWatchFollow();
@@ -525,6 +598,10 @@ export function toggleFollowFirstPerson(): void {
  */
 export function cycleDemoCameraMode(hasOriginalView = true): void {
   const state = streamPlaybackStore.getState();
+  if (state.pendingFollowPlayerName) {
+    exitWatchFollow();
+    return;
+  }
   const mode = state.cameraMode;
   if (mode === "original") {
     exitToFreeFly();
@@ -552,6 +629,7 @@ export function cycleDemoCameraMode(hasOriginalView = true): void {
       cameraMode: "original",
       followEntityId: null,
       followTargetId: null,
+      pendingFollowPlayerName: null,
       followFlagSlot: null,
     });
   }

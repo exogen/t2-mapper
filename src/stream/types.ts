@@ -328,6 +328,8 @@ export interface StreamEntity {
   lightAnchor?: LightAnchor;
   isStaticItem?: boolean;
   playerName?: string;
+  /** TargetInfoEvent's resolved typeTag (e.g. "Flag", "_ClientConnection"). */
+  targetTypeName?: string;
   /** The name as sent, color codes included — the official clan tag is
    *  the color-7 segments, the base name the color-6 ones. */
   playerRawName?: string;
@@ -541,6 +543,16 @@ export interface WeaponsHudSlot {
   ammo: number;
 }
 
+/** A flag's own target, retained even while its item ghost is hidden. */
+export interface FlagTargetInfo {
+  targetId: number;
+  /** Server name with color codes, as stored in the target table. */
+  name?: string;
+  typeName?: string;
+  teamId?: number;
+  skinName?: string;
+}
+
 export interface TeamScore {
   teamId: number;
   name: string;
@@ -623,6 +635,8 @@ export interface StreamSnapshot {
   exhausted: boolean;
   camera: StreamCamera | null;
   entities: StreamEntity[];
+  /** Original flag targets, independently of their current carrier/ghost. */
+  flagTargets: FlagTargetInfo[];
   controlPlayerGhostId?: string;
   /** Recording player's sensor group (team number). */
   playerSensorGroup: number;

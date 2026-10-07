@@ -1,0 +1,120 @@
+.Controls {
+  border: 0;
+  padding: 0;
+  margin: 0;
+  min-width: 0;
+}
+
+.Cameras {
+  margin: 12px 0;
+}
+
+.Camera {
+  display: flex;
+  align-items: center;
+  margin: 6px 0;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.CameraButton {
+  composes: SmallButton from "./Button.module.css";
+  padding: 0 6px 0 8px;
+  align-self: stretch;
+  flex: 1;
+  min-width: 0;
+  gap: 8px;
+  font-size: 13px;
+  text-align: left;
+  justify-content: flex-start;
+  border: 0;
+  border-radius: 2px 0 0 2px;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.7);
+  box-shadow: none;
+}
+
+.CameraActions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 4px;
+  padding: 0 4px;
+  height: 32px;
+}
+
+.SaveButton,
+.ClearButton {
+  min-height: 0;
+  padding: 2px 6px;
+  align-self: center;
+  font-size: 12px;
+  line-height: calc(16 / 12);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 3px;
+  box-shadow: none;
+}
+
+.ShiftIcon {
+  font-size: 1em;
+  vertical-align: -1px;
+  scale: 0.85 1;
+  margin-right: -2px;
+}
+
+.SaveButton {
+  composes: SmallButton from "./Button.module.css";
+  background: rgba(0, 98, 179, 0.6);
+  border-color: rgba(100, 180, 255, 0.5);
+  color: #fff;
+}
+
+.ClearButton {
+  composes: SmallButton from "./Button.module.css";
+  background: rgba(255, 255, 255, 0.05);
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.ClearButton:not(:disabled) {
+  background: var(--destructive-background);
+  color: #fff;
+}
+
+@media (hover: hover) {
+  .CameraButton:not(:disabled):hover {
+    background: rgba(255, 255, 255, 0.05);
+  }
+
+  .SaveButton:not(:disabled):hover {
+    background: rgba(0, 98, 179, 0.8);
+    border-color: rgba(100, 180, 255, 0.7);
+  }
+
+  .ClearButton:not(:disabled):hover {
+    background: var(--destructive-hover-background);
+  }
+}
+
+.CameraLabel {
+  color: #fff;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.CameraButton kbd {
+  flex-shrink: 0;
+}
+
+.CameraIcon {
+  flex-shrink: 0;
+  font-size: 15px;
+}
+
+.CommandCircuitIcon {
+  flex-shrink: 0;
+  font-size: 18px;
+}

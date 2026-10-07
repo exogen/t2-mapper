@@ -6,8 +6,8 @@ import { STREAM_TICK_SEC } from "./streamHelpers";
 import { engineStore, effectDeltaSec } from "../state/engineStore";
 import { resetStreamPlayback, streamClock } from "../state/streamPlaybackStore";
 import { DirectorTrackers } from "../director/directorTrackers";
-import { groupScoreboard } from "../components/useScoreboard";
-import { matchClockAt } from "../components/useMatchClock";
+import { groupScoreboard } from "../state/scoreboard";
+import { matchClockAt } from "../state/matchClock";
 
 class MatchStream extends LiveStreamAdapter {
   constructor() {

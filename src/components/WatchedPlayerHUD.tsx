@@ -1,3 +1,4 @@
+import { useCaster } from "../state/casterStore";
 import { useStore } from "zustand";
 import { TbArrowDownFromArc } from "react-icons/tb";
 import {
@@ -28,6 +29,7 @@ function resolveFollowedName(
   cameraMode: DemoCameraMode,
   followEntityId: string | null,
   followFlagSlot: number | null,
+  teamNames?: Record<number, string>,
 ): string | null {
   if (cameraMode !== "orbitOverride" && cameraMode !== "firstPersonOverride") {
     return null;
@@ -35,8 +37,7 @@ function resolveFollowedName(
   if (!followEntityId) return null;
   const entity = gameEntityStore.getState().streamEntities.get(followEntityId);
   if (!entity) return null;
-  // Flag follow names the flag even while a carrier holds it (the
-  // followed entity is then the carrier player).
+  // Keep the objective's own label while its camera follows the carrier.
   const flagMarked =
     "targetRenderFlags" in entity &&
     (((entity.targetRenderFlags as number | undefined) ?? 0) & 0x2) !== 0;
@@ -44,7 +45,7 @@ function resolveFollowedName(
     followFlagSlot != null ||
     (entity.renderType !== "Player" && flagMarked)
   ) {
-    return flagLabel(entity);
+    return flagLabel(entity, "original", teamNames);
   }
   if (entity.renderType !== "Player") return null;
   return clean(entity.playerName ?? null);
@@ -56,17 +57,24 @@ function resolveFollowedName(
  * overlay, stacked with it.
  */
 export function WatchedPlayerHUD() {
+  const teamNames = useCaster((s) => s.settings?.teamNames);
   const orbitAvailable = usePlayerOrbitAvailable();
   const { followBehindPlayer, setFollowBehindPlayer } = useSettings();
   const cameraMode = useStore(streamPlaybackStore, (s) => s.cameraMode);
   const followEntityId = useStore(streamPlaybackStore, (s) => s.followEntityId);
   const followFlagSlot = useStore(streamPlaybackStore, (s) => s.followFlagSlot);
   const name = useStreamSnapshot(
-    () => resolveFollowedName(cameraMode, followEntityId, followFlagSlot),
+    () =>
+      resolveFollowedName(
+        cameraMode,
+        followEntityId,
+        followFlagSlot,
+        teamNames,
+      ),
     (a, b) => a === b,
   );
 
-  if (name == null) return null;
+  if (!name) return null;
   return (
     <div className={styles.WatchedPlayer}>
       <div className={styles.Badge}>

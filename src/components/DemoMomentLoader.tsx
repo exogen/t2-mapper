@@ -83,6 +83,8 @@ export function DemoMomentLoader() {
     // A follow still waiting for its player belongs to the previous
     // link; a player on this demo could share the target id.
     pendingFollowRef.current = null;
+    if (streamPlaybackStore.getState().pendingFollowPlayerName)
+      streamPlaybackStore.setState({ pendingFollowPlayerName: null });
     log.info("Seeking to %ds (%s)", moment.timeSec, moment.camera.kind);
     engineStore.getState().seekPlayback(moment.timeSec);
     const cam = moment.camera;
@@ -151,6 +153,7 @@ export function DemoMomentLoader() {
     streamPlaybackStore.setState({
       followEntityId: entityId,
       followTargetId: pending.camera.targetId,
+      pendingFollowPlayerName: null,
       lastFollowTargetId: pending.camera.targetId,
       followCameraMode,
       cameraMode: followCameraMode,

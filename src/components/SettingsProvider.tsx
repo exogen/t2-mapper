@@ -32,6 +32,9 @@ const CC_PLAYER_NAMES_VALUES: readonly CcPlayerNames[] = [
 export type HudStyle = "solid" | "transparent";
 const HUD_STYLE_VALUES: readonly HudStyle[] = ["solid", "transparent"];
 
+export type HudPosition = "left" | "right";
+type HudPreference = { enabled: boolean; position: HudPosition };
+
 /** Visibility of the player's world-space IFF triangle and nameplate. */
 export type IffVisibility = "always" | "followed" | "exceptFollowed" | "never";
 const IFF_VISIBILITY_VALUES: readonly IffVisibility[] = [
@@ -109,7 +112,15 @@ type SettingsContextType = {
   chatHudStyle: HudStyle;
   setChatHudStyle: StateSetter<HudStyle>;
   showScoreHud: boolean;
-  setShowScoreHud: StateSetter<boolean>;
+  setShowScoreHud: (enabled: boolean) => void;
+  scoreHudPosition: HudPosition;
+  setScoreHudPosition: (position: HudPosition) => void;
+  showQuickCamHud: boolean;
+  setShowQuickCamHud: (enabled: boolean) => void;
+  quickCamHudPosition: HudPosition;
+  setQuickCamHudPosition: (position: HudPosition) => void;
+  quickCamHideUnassignedSlots: boolean;
+  setQuickCamHideUnassignedSlots: StateSetter<boolean>;
   scoreHudStyle: HudStyle;
   setScoreHudStyle: StateSetter<HudStyle>;
   showReticle: boolean;
@@ -191,6 +202,10 @@ type PersistedSettings = {
   showChat?: boolean;
   chatHudStyle?: HudStyle;
   showScoreHud?: boolean;
+  scoreHudPosition?: HudPosition;
+  showQuickCamHud?: boolean;
+  quickCamHudPosition?: HudPosition;
+  quickCamHideUnassignedSlots?: boolean;
   scoreHudStyle?: HudStyle;
   showReticle?: boolean;
   showCompass?: boolean;
@@ -264,7 +279,34 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   const [showInputOverlay, setShowInputOverlay] = useState(true);
   const [showChat, setShowChat] = useState(true);
   const [chatHudStyle, setChatHudStyle] = useState<HudStyle>("solid");
-  const [showScoreHud, setShowScoreHud] = useState(false);
+  const [hudPreferences, setHudPreferences] = useState<{
+    score: HudPreference;
+    quickCam: HudPreference;
+  }>({
+    score: { enabled: false, position: "left" },
+    quickCam: { enabled: false, position: "left" },
+  });
+  const [quickCamHideUnassignedSlots, setQuickCamHideUnassignedSlots] =
+    useState(false);
+  const updateHudPreference = useCallback(
+    (hud: "score" | "quickCam", changes: Partial<HudPreference>) => {
+      const other = hud === "score" ? "quickCam" : "score";
+      setHudPreferences((previous) => {
+        const next = { ...previous[hud], ...changes };
+        return {
+          ...previous,
+          [hud]: next,
+          [other]:
+            next.enabled &&
+            previous[other].enabled &&
+            previous[other].position === next.position
+              ? { ...previous[other], enabled: false }
+              : previous[other],
+        };
+      });
+    },
+    [],
+  );
   const [scoreHudStyle, setScoreHudStyle] = useState<HudStyle>("solid");
   const [showReticle, setShowReticle] = useState(true);
   const [showCompass, setShowCompass] = useState(true);
@@ -331,8 +373,19 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       setShowChat,
       chatHudStyle,
       setChatHudStyle,
-      showScoreHud,
-      setShowScoreHud,
+      showScoreHud: hudPreferences.score.enabled,
+      setShowScoreHud: (enabled) => updateHudPreference("score", { enabled }),
+      scoreHudPosition: hudPreferences.score.position,
+      setScoreHudPosition: (position) =>
+        updateHudPreference("score", { position }),
+      showQuickCamHud: hudPreferences.quickCam.enabled,
+      setShowQuickCamHud: (enabled) =>
+        updateHudPreference("quickCam", { enabled }),
+      quickCamHudPosition: hudPreferences.quickCam.position,
+      setQuickCamHudPosition: (position) =>
+        updateHudPreference("quickCam", { position }),
+      quickCamHideUnassignedSlots,
+      setQuickCamHideUnassignedSlots,
       scoreHudStyle,
       setScoreHudStyle,
       showReticle,
@@ -372,7 +425,9 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       showInputOverlay,
       showChat,
       chatHudStyle,
-      showScoreHud,
+      hudPreferences,
+      updateHudPreference,
+      quickCamHideUnassignedSlots,
       scoreHudStyle,
       showReticle,
       showCompass,
@@ -557,11 +612,21 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       HUD_STYLE_VALUES.includes(savedSettings.scoreHudStyle)
     ) {
       setScoreHudStyle(savedSettings.scoreHudStyle);
-      // Previously, choosing a style also enabled the HUD.
-      if (savedSettings.showScoreHud == null) setShowScoreHud(true);
     }
-    if (typeof savedSettings.showScoreHud === "boolean") {
-      setShowScoreHud(savedSettings.showScoreHud);
+    const scorePosition = savedSettings.scoreHudPosition;
+    const quickCamPosition = savedSettings.quickCamHudPosition;
+    setHudPreferences({
+      score: {
+        position: scorePosition === "right" ? "right" : "left",
+        enabled: savedSettings.showScoreHud ?? false,
+      },
+      quickCam: {
+        position: quickCamPosition === "right" ? "right" : "left",
+        enabled: savedSettings.showQuickCamHud ?? false,
+      },
+    });
+    if (typeof savedSettings.quickCamHideUnassignedSlots === "boolean") {
+      setQuickCamHideUnassignedSlots(savedSettings.quickCamHideUnassignedSlots);
     }
     if (savedSettings.showReticle != null) {
       setShowReticle(savedSettings.showReticle);
@@ -646,7 +711,11 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
         showInputOverlay,
         showChat,
         chatHudStyle,
-        showScoreHud,
+        showScoreHud: hudPreferences.score.enabled,
+        scoreHudPosition: hudPreferences.score.position,
+        showQuickCamHud: hudPreferences.quickCam.enabled,
+        quickCamHudPosition: hudPreferences.quickCam.position,
+        quickCamHideUnassignedSlots,
         scoreHudStyle,
         showReticle,
         showCompass,
@@ -695,7 +764,8 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     showInputOverlay,
     showChat,
     chatHudStyle,
-    showScoreHud,
+    hudPreferences,
+    quickCamHideUnassignedSlots,
     scoreHudStyle,
     showReticle,
     showCompass,

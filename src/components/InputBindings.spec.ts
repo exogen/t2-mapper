@@ -6,10 +6,12 @@ import {
   type InputMapEntry,
 } from "./InputControls";
 import {
+  COMMAND_CIRCUIT_STREAM_INPUT,
   DEMO_MODE_INPUT,
   FOLLOW_KEYBOARD_INPUT,
   FREE_FLY_INPUT,
   LIVE_FOLLOW_INPUT,
+  QUICK_CAM_INPUT,
 } from "./inputMap";
 
 const test = vi.hoisted(() => {
@@ -64,6 +66,24 @@ afterEach(() => {
   for (const cleanup of test.cleanups.splice(0).reverse()) cleanup();
 });
 afterAll(() => vi.unstubAllGlobals());
+
+it.each([0, 1, 2, 9])(
+  "saves camera %s with Shift without also recalling it",
+  (slot) => {
+    mount(QUICK_CAM_INPUT);
+    const save = watch(`saveQuickCam${slot}`);
+    const recall = watch(`quickCam${slot}`);
+    key("keydown", "ShiftLeft");
+    key("keydown", `Digit${slot}`);
+    key("keydown", `Digit${slot}`);
+    key("keyup", "ShiftLeft");
+    key("keyup", `Digit${slot}`);
+    expect(save).toHaveBeenCalledOnce();
+    expect(recall).not.toHaveBeenCalled();
+    key("keydown", `Digit${slot}`);
+    expect(recall).toHaveBeenCalledOnce();
+  },
+);
 
 it.each([
   ["BracketLeft", "seekBackward", "seekBackwardLarge"],
@@ -148,15 +168,28 @@ it("does not treat a held key as a fresh press when bindings remount", () => {
   expect(seek).toHaveBeenCalledOnce();
 });
 
-it.each([false, true])(
-  "cycles players with N / Shift-N (pointer locked: %s)",
-  (locked) => {
+it.each([
+  ["3D", false],
+  ["3D", true],
+  ["CC", false],
+  ["CC", true],
+] as const)(
+  "cycles players with N / Shift-N in %s (pointer locked: %s)",
+  (mode, locked) => {
     Object.assign(document, {
       pointerLockElement: locked ? test.canvas : null,
     });
-    mount(FOLLOW_KEYBOARD_INPUT);
-    const next = watch("nextPlayerKey");
-    const previous = watch("prevPlayerKey");
+    mount(mode === "CC" ? COMMAND_CIRCUIT_STREAM_INPUT : FOLLOW_KEYBOARD_INPUT);
+    const next = watch(mode === "CC" ? "observeNextPlayer" : "nextPlayerKey");
+    const previous = watch(
+      mode === "CC" ? "observePrevPlayer" : "prevPlayerKey",
+    );
+    for (const arrow of ["ArrowLeft", "ArrowRight"]) {
+      key("keydown", arrow);
+      key("keyup", arrow);
+    }
+    expect(next).not.toHaveBeenCalled();
+    expect(previous).not.toHaveBeenCalled();
     key("keydown", "KeyN");
     key("keydown", "KeyN");
     expect(next).toHaveBeenCalledOnce();

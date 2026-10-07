@@ -11,6 +11,7 @@ import {
   setDirectorDemoBuffer,
 } from "../state/demoDirectorStore";
 import { commentaryTracksStore } from "../state/commentaryTracksStore";
+import { casterStore } from "../state/casterStore";
 import { demoLoadStore } from "../state/demoLoadStore";
 import { demoTimelineStore } from "../state/demoTimelineStore";
 import { engineStore } from "../state/engineStore";
@@ -61,6 +62,7 @@ function cancelLoad(preserveRecording = true): number {
  */
 export function unloadDemo(): void {
   cancelLoad(false);
+  casterStore.getState().suspend();
   demoLoadStore.setState({
     requestedUrl: null,
     requestedDemo: null,

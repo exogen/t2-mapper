@@ -6,6 +6,7 @@ import { streamPlaybackStore } from "./streamPlaybackStore";
 
 export interface CommandCircuitState {
   active: boolean;
+  viewRequest: { x: number; z: number; zoom: number } | null;
   /**
    * Enters command circuit mode. No-op until a map, demo, or live
    * stream is loaded.
@@ -36,12 +37,13 @@ export interface CommandCircuitState {
 export const commandCircuitStore = createStore<CommandCircuitState>(
   (set, get) => ({
     active: false,
+    viewRequest: null,
     activate() {
       if (gameEntityStore.getState().dataSource == null) return;
       set({ active: true, observerToggleRequested: false });
     },
     deactivate() {
-      set({ active: false, observerToggleRequested: false });
+      set({ active: false, viewRequest: null, observerToggleRequested: false });
     },
     toggle() {
       if (get().active) {

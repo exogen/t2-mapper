@@ -65,6 +65,7 @@ import {
 } from "./demoFileLoader";
 import { demoLoadStore } from "../state/demoLoadStore";
 import { demoTimelineStore } from "../state/demoTimelineStore";
+import { casterStore } from "../state/casterStore";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -100,6 +101,14 @@ describe("demo loads during navigation", () => {
     unloadDemo();
     vi.unstubAllGlobals();
     vi.unstubAllEnvs();
+  });
+
+  it("clears custom team names when ejecting a demo", () => {
+    casterStore.getState().activate("demo:test", "demo", "");
+    casterStore.getState().renameTeam(1, "Demo team");
+    unloadDemo();
+    expect(casterStore.getState().context).toBeNull();
+    expect(casterStore.getState().settings).toBeNull();
   });
 
   it.each([

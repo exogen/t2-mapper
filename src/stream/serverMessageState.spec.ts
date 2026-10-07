@@ -57,13 +57,12 @@ class MessageStream extends LiveStreamAdapter {
       playerRawName: rawName,
       rotation: [0, 0, 0, 1],
     });
-    this.targetNames.set(targetId, name);
     this.targetRawNames.set(targetId, rawName);
   }
 
   target(targetId: number) {
     return {
-      name: this.targetNames.get(targetId),
+      name: this.entities.get("player")?.playerName,
       rawName: this.targetRawNames.get(targetId),
       entity: this.buildEntityList().find(
         (entity) => entity.targetId === targetId,

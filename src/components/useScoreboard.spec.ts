@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { PlayerRosterEntry, TeamScore } from "../stream/types";
-import { groupScoreboard } from "./useScoreboard";
+import { groupScoreboard } from "../state/scoreboard";
 
 const player = (
   clientId: number,

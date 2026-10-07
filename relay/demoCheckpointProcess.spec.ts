@@ -14,6 +14,8 @@ let child: EventEmitter & {
   kill: ReturnType<typeof vi.fn>;
 };
 beforeEach(() => {
+  vi.stubEnv("DEMO_CHECKPOINT_COUNT", undefined);
+  vi.stubEnv("DEMO_CHECKPOINT_HEAP_MB", undefined);
   vi.useFakeTimers();
   child = Object.assign(new EventEmitter(), {
     stderr: new PassThrough(),
@@ -22,10 +24,28 @@ beforeEach(() => {
   mocks.fork.mockReturnValue(child);
 });
 afterEach(() => {
+  vi.unstubAllEnvs();
   vi.useRealTimers();
 });
 
 describe("checkpoint child process", () => {
+  it.each([-1, 1.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1])(
+    "rejects invalid numeric count %s without spawning a child",
+    (count) => {
+      const forks = mocks.fork.mock.calls.length;
+      expect(() =>
+        runDemoCheckpointProcess(
+          "demo.rec",
+          "output.json",
+          "/assets",
+          false,
+          count,
+        ),
+      ).toThrow("Checkpoint count must be a non-negative integer");
+      expect(mocks.fork).toHaveBeenCalledTimes(forks);
+      expect(vi.getTimerCount()).toBe(0);
+    },
+  );
   it("waits for successful process exit after receiving a result", async () => {
     const result = { count: 2, bytes: 12 };
     const pending = runDemoCheckpointProcess(
@@ -38,11 +58,11 @@ describe("checkpoint child process", () => {
     expect(await pending).toEqual(result);
     expect(mocks.fork).toHaveBeenCalledWith(
       expect.any(URL),
-      ["demo.rec", "output.json", "/assets", "false"],
+      ["demo.rec", "output.json", "/assets", "false", "1"],
       expect.objectContaining({
         execArgv: expect.arrayContaining([
           "--import=tsx/esm",
-          "--max-old-space-size=128",
+          "--max-old-space-size=256",
         ]),
       }),
     );
@@ -63,6 +83,52 @@ describe("checkpoint child process", () => {
     child.emit("close", 1, null);
     await failure;
     await expect(pending).rejects.toThrow("missing collision assets");
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("passes an explicit count to the child instead of the environment default", async () => {
+    vi.stubEnv("DEMO_CHECKPOINT_COUNT", "3");
+    const pending = runDemoCheckpointProcess(
+      "demo.rec",
+      "output.json",
+      "/assets",
+      false,
+      4,
+    );
+    child.emit("message", { count: 2 });
+    child.emit("close", 0, null);
+    await pending;
+    expect(mocks.fork.mock.calls.at(-1)![1]).toEqual([
+      "demo.rec",
+      "output.json",
+      "/assets",
+      "false",
+      "4",
+    ]);
+  });
+
+  it("applies the configured heap cap to the child process", async () => {
+    vi.stubEnv("DEMO_CHECKPOINT_HEAP_MB", "512");
+    const pending = runDemoCheckpointProcess(
+      "demo.rec",
+      "output.json",
+      "/assets",
+    );
+    child.emit("message", { count: 3 });
+    child.emit("close", 0, null);
+    await pending;
+    expect(mocks.fork.mock.calls.at(-1)![2].execArgv).toContain(
+      "--max-old-space-size=512",
+    );
+  });
+
+  it("rejects an invalid heap cap before spawning a child", () => {
+    vi.stubEnv("DEMO_CHECKPOINT_HEAP_MB", "0");
+    const forks = mocks.fork.mock.calls.length;
+    expect(() =>
+      runDemoCheckpointProcess("demo.rec", "output.json", "/assets"),
+    ).toThrow("DEMO_CHECKPOINT_HEAP_MB must be a positive integer");
+    expect(mocks.fork).toHaveBeenCalledTimes(forks);
     expect(vi.getTimerCount()).toBe(0);
   });
 

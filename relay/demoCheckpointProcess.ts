@@ -1,6 +1,10 @@
 import { fork } from "node:child_process";
 import os from "node:os";
 import type { DemoCheckpointGenerationResult } from "./demoCheckpointGenerator.js";
+import {
+  loadDemoCheckpointCount,
+  loadDemoCheckpointHeapMB,
+} from "./demoCheckpointConfig.js";
 
 export class DemoCheckpointGenerationError extends Error {}
 
@@ -10,15 +14,18 @@ export function runDemoCheckpointProcess(
   output: string,
   assetRoot: string,
   force = false,
+  count = loadDemoCheckpointCount(),
 ): Promise<DemoCheckpointGenerationResult> {
+  count = loadDemoCheckpointCount(count, "Checkpoint count");
+  const heapMB = loadDemoCheckpointHeapMB();
   return new Promise((resolve, reject) => {
     const child = fork(
       new URL("./demoCheckpointWorker.ts", import.meta.url),
-      [input, output, assetRoot, String(force)],
+      [input, output, assetRoot, String(force), String(count)],
       {
         execArgv: [
           "--import=tsx/esm",
-          "--max-old-space-size=128",
+          `--max-old-space-size=${heapMB}`,
           "--max-semi-space-size=8",
         ],
         stdio: ["ignore", "ignore", "pipe", "ipc"],

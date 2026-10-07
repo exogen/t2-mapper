@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { matchClockAt } from "./useMatchClock";
+import { matchClockAt } from "../state/matchClock";
 
 it.each([-123456, 123456, 0])(
   "holds an ended HUD clock (%i ms) instead of extrapolating",

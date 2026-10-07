@@ -96,6 +96,8 @@ export interface StreamPlaybackState {
    * like the real observer following a client rather than an object.
    */
   followTargetId: number | null;
+  /** Quick cam player name to resolve once a living body appears. */
+  pendingFollowPlayerName: string | null;
   /**
    * Which camera the spectate follow uses: the observer orbit or a
    * first-person view from the followed player's eyes. Enforced as
@@ -133,6 +135,7 @@ export const streamPlaybackStore = createStore<StreamPlaybackState>()(() => ({
   orbitSnapNonce: 0,
   followEntityId: null,
   followTargetId: null,
+  pendingFollowPlayerName: null,
   followCameraMode: "orbitOverride",
   lastFollowTargetId: null,
   lastFollowGhostIndex: null,
@@ -155,6 +158,7 @@ export function resetStreamPlayback(): void {
     orbitOverrideDistance: DEFAULT_ORBIT_DISTANCE,
     followEntityId: null,
     followTargetId: null,
+    pendingFollowPlayerName: null,
     followCameraMode: "orbitOverride",
     lastFollowTargetId: null,
     lastFollowGhostIndex: null,

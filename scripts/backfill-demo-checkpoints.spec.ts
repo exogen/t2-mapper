@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import path from "node:path";
 
 const mocks = vi.hoisted(() => ({
   r2Client: vi.fn(),
@@ -13,8 +14,8 @@ vi.mock("./lib/r2", () => ({
 }));
 vi.mock("../relay/demoCheckpointPublisher", () => ({
   DemoCheckpointPublisher: class {
-    constructor() {
-      mocks.construct(this);
+    constructor(config: unknown, assetRoot: string, count: number) {
+      mocks.construct(this, config, assetRoot, count);
     }
     publish(key: string, options: unknown) {
       return mocks.publish(this, key, options);
@@ -32,6 +33,7 @@ const keys = ["demos/a.rec", "demos/b.rec", "demos/c.rec", "demos/d.rec"];
 beforeEach(() => {
   vi.resetModules();
   vi.resetAllMocks();
+  vi.stubEnv("DEMO_CHECKPOINT_COUNT", undefined);
   vi.spyOn(console, "log").mockImplementation(() => {});
   vi.spyOn(console, "error").mockImplementation(() => {});
   process.exitCode = undefined;
@@ -45,6 +47,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.unstubAllEnvs();
   process.argv = originalArgv;
   process.exitCode = originalExitCode;
   vi.restoreAllMocks();
@@ -107,6 +110,54 @@ it("finishes other jobs and reports both worker and upload failures", async () =
     planned: 0,
   });
   expect(process.exitCode).toBe(1);
+});
+
+it.each([
+  [undefined, undefined, 1],
+  ["3", undefined, 3],
+  ["3", "4", 4],
+  ["3", "0", 0],
+  ["invalid", "2", 2],
+])(
+  "uses env=%s and --count=%s to request %i checkpoints",
+  async (env, arg, count) => {
+    vi.stubEnv("DEMO_CHECKPOINT_COUNT", env);
+    if (arg !== undefined) process.argv.push(`--count=${arg}`);
+    await import("./backfill-demo-checkpoints");
+    expect(mocks.construct).toHaveBeenCalledExactlyOnceWith(
+      expect.anything(),
+      {},
+      path.resolve("docs/base"),
+      count,
+    );
+  },
+);
+
+it.each(["", "-1", "1.5", "invalid", "Infinity", "9007199254740992"])(
+  "rejects invalid checkpoint count %s before accessing R2",
+  async (count) => {
+    process.argv.push(`--count=${count}`);
+    vi.spyOn(process, "exit").mockImplementation(() => {
+      throw new Error("exit");
+    });
+    await expect(import("./backfill-demo-checkpoints")).rejects.toThrow("exit");
+    expect(console.error).toHaveBeenCalledWith(
+      "--count must be a non-negative integer",
+    );
+    expect(mocks.r2Client).not.toHaveBeenCalled();
+  },
+);
+
+it("rejects an invalid environment count before accessing R2", async () => {
+  vi.stubEnv("DEMO_CHECKPOINT_COUNT", "-1");
+  vi.spyOn(process, "exit").mockImplementation(() => {
+    throw new Error("exit");
+  });
+  await expect(import("./backfill-demo-checkpoints")).rejects.toThrow("exit");
+  expect(console.error).toHaveBeenCalledWith(
+    "DEMO_CHECKPOINT_COUNT must be a non-negative integer",
+  );
+  expect(mocks.r2Client).not.toHaveBeenCalled();
 });
 
 it("honors the demo filter in dry-run mode without publishing", async () => {

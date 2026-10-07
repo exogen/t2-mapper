@@ -19,20 +19,22 @@ import { useCameraTour } from "../state/cameraTourStore";
 import { useDirector } from "../state/demoDirectorStore";
 import { useCommandCircuit } from "../state/commandCircuitStore";
 import { useLiveSelector } from "../state/liveConnectionStore";
+import { QUICK_CAM_SLOTS, useCaster } from "../state/casterStore";
+import { useFlagCameras } from "./useFlagCameras";
 import {
   useDataSource,
   useGameEntityCountByRenderType,
 } from "../state/gameEntityStore";
 import { FaAngleDoubleDown, FaAngleDoubleUp } from "react-icons/fa";
-import { BsShiftFill } from "react-icons/bs";
 import {
   PiMouseLeftClickFill,
   PiMouseRightClickFill,
   PiMouseScroll,
 } from "react-icons/pi";
+import { BsShiftFill } from "react-icons/bs";
 import { CSSProperties, ReactNode, useEffect, useRef, useState } from "react";
 import { usePointerLocked } from "./usePointerLocked";
-import { countFollowableFlags, isFollowingPlayer } from "../state/watchFollow";
+import { isFollowingPlayer } from "../state/watchFollow";
 import styles from "./KeyboardOverlay.module.css";
 import {
   MAX_SPEED_MULTIPLIER,
@@ -361,51 +363,59 @@ function CyclePlayerRow() {
   );
 }
 
-/**
- * Follow-flag hint row, shaped by how many flags are in scope: a single
- * key, a 3-panel pair (like player cycling), or a 1–n range like map
- * mode's camera select. Flags stand in for the mission's observer camera
- * spots (never sent over the wire) — see FLAG_FOLLOW_INPUT. Flag
- * entities mutate in place without re-renders, so the count is polled.
- * Fills the "Cycle player" slot in its column — callers only render it
- * when that (and other higher-priority hints) are hidden, keeping
- * columns at most two rows tall; `fallback` renders instead when no
- * flags are in scope. The keys work regardless of what's shown.
- */
-function FollowFlagKey({ fallback = null }: { fallback?: ReactNode }) {
-  const [count, setCount] = useState(0);
-  useEffect(() => {
-    const update = () => setCount(Math.min(countFollowableFlags(), 9));
-    update();
-    const id = setInterval(update, 1000);
-    return () => clearInterval(id);
-  }, []);
-  if (count === 0) return fallback;
+/** Number keys recall views; Shift saves the current camera. */
+export function QuickCamKey() {
+  const flags = useFlagCameras().filter((flag) =>
+    QUICK_CAM_SLOTS.some((slot) => slot === flag.slot),
+  );
+  const customized = useCaster((s) =>
+    QUICK_CAM_SLOTS.some((slot) => {
+      const camera = s.settings?.quickCams[slot];
+      if (!camera) return false;
+      return (
+        camera.kind !== "flag" ||
+        camera.slot !== slot ||
+        !flags.some((flag) => flag.slot === slot) ||
+        camera.commandCircuit != null
+      );
+    }),
+  );
+  if (!customized && flags.length > 0)
+    return (
+      <div className={styles.Row}>
+        <Key
+          action={
+            flags.length <= 2
+              ? `quickCam${flags[0].slot}`
+              : (s) =>
+                  flags.some((flag) => actionPressed(s, `quickCam${flag.slot}`))
+          }
+          input={
+            flags.length <= 2
+              ? flags[0].slot
+              : flags.map((flag) => flag.slot).join(", ")
+          }
+          actionAfter={
+            flags.length === 2 ? `quickCam${flags[1].slot}` : undefined
+          }
+          inputAfter={flags.length === 2 ? flags[1].slot : undefined}
+          label={flags.length === 1 ? "Follow flag" : "Follow flags"}
+          labelPosition="right"
+          inputSize="auto"
+        />
+      </div>
+    );
   return (
     <div className={styles.Row}>
-      {count === 2 ? (
-        <Key
-          action="followFlag1"
-          input="1"
-          actionAfter="followFlag2"
-          inputAfter="2"
-          label="Follow flag"
-          labelPosition="right"
-          inputSize="auto"
-        />
-      ) : (
-        <Key
-          action={(s) =>
-            Array.from({ length: count }, (_, i) =>
-              actionPressed(s, `followFlag${i + 1}`),
-            ).some(Boolean)
-          }
-          input={count === 1 ? "1" : <>1&thinsp;&ndash;&thinsp;{count}</>}
-          label="Follow flag"
-          labelPosition="right"
-          inputSize="auto"
-        />
-      )}
+      <Key
+        action={(s) =>
+          QUICK_CAM_SLOTS.some((slot) => actionPressed(s, `quickCam${slot}`))
+        }
+        input="0–9"
+        label="Quick cam"
+        labelPosition="right"
+        inputSize="auto"
+      />
     </div>
   );
 }
@@ -465,14 +475,14 @@ function FreeFlyOverlay() {
 function CommandCircuitOverlay({
   followToggle,
   showObserverCycle,
-  showFlagFollow,
+  showQuickCams,
 }: {
   /** Current stream mode when the follow toggle applies (demo/live). */
   followToggle?: "follow" | "free";
   /** Live mode: show the observed-player cycling hint. */
   showObserverCycle?: boolean;
-  /** Number-key flag follow available (demo / watch spectate). */
-  showFlagFollow?: boolean;
+  /** Saved camera bindings available (demo / watch spectate). */
+  showQuickCams?: boolean;
 }) {
   return (
     <>
@@ -513,22 +523,29 @@ function CommandCircuitOverlay({
       </div>
       {followToggle && (
         <div className={styles.Column} data-height="compact">
-          {/* The cycle slot: player cycling while following, else the
-              follow-flag hint (columns stay ≤2 rows). */}
+          {/* Player cycling or saved cameras, keeping columns at two rows. */}
           {showObserverCycle ? (
             <div className={styles.Row}>
               <Key
                 action="observeNextPlayer"
-                input="→"
+                input="N"
                 actionAfter="observePrevPlayer"
-                inputAfter="←"
+                inputAfter={
+                  <span className={styles.KeyChord} aria-label="Shift N">
+                    <BsShiftFill
+                      className={styles.ShiftIcon}
+                      aria-hidden="true"
+                    />
+                    N
+                  </span>
+                }
                 label="Cycle player"
                 labelPosition="right"
                 inputSize="auto"
               />
             </div>
-          ) : showFlagFollow ? (
-            <FollowFlagKey />
+          ) : showQuickCams ? (
+            <QuickCamKey />
           ) : null}
           <div className={styles.Row}>
             <Key
@@ -569,7 +586,6 @@ function DemoCameraOverlay() {
   const cameraMode = useStore(streamPlaybackStore, (s) => s.cameraMode);
   const followEntityId = useStore(streamPlaybackStore, (s) => s.followEntityId);
   const followFlagSlot = useStore(streamPlaybackStore, (s) => s.followFlagSlot);
-  const isPointerLocked = usePointerLocked();
   const isFly = cameraMode === "freeFly";
   const isFollow = cameraMode === "orbitOverride";
   const following = isFollow || cameraMode === "firstPersonOverride";
@@ -611,18 +627,11 @@ function DemoCameraOverlay() {
         </div>
       ) : null}
       <div className={styles.Column} data-height="compact">
-        {/* One prioritized slot above F: player cycling while following,
-            otherwise flags, with rotate as the no-flags fallback. */}
+        {/* Player cycling while following, otherwise saved camera controls. */}
         {following && followFlagSlot == null ? (
           <CyclePlayerRow />
         ) : (
-          <FollowFlagKey
-            fallback={
-              (isFly || isFollow) && !isPointerLocked ? (
-                <RotateCameraRow />
-              ) : null
-            }
-          />
+          <QuickCamKey />
         )}
         <div className={styles.Row}>
           <Key
@@ -739,17 +748,11 @@ function ObserverOverlay({
         </div>
       </div>
       <div className={styles.Column} data-height="compact">
-        {/* One prioritized slot above F: player cycling while following;
-            otherwise the follow-flag hint —
-            watch spectate only (the sensor-group gate rejects
-            AttachCommanderCamera for real observers, so they don't get
-            the binding) — with rotate as the no-flags fallback. */}
+        {/* Player cycling while following; saved cameras in watch mode. */}
         {following && followFlagSlot == null ? (
           <CyclePlayerRow />
         ) : mode != null ? (
-          <FollowFlagKey
-            fallback={!isPointerLocked ? <RotateCameraRow /> : null}
-          />
+          <QuickCamKey />
         ) : !isPointerLocked ? (
           <RotateCameraRow />
         ) : null}
@@ -832,7 +835,7 @@ export function KeyboardOverlay() {
             isDemo || isLive ? (ccFollow ? "follow" : "free") : undefined
           }
           showObserverCycle={(isLive || isDemo) && ccFollow}
-          showFlagFollow={isDemo || (isLive && isWatcher)}
+          showQuickCams={isDemo || (isLive && isWatcher)}
         />
       )}
       {isLiveObserver && !isCommandCircuit && (
