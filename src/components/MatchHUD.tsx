@@ -198,10 +198,10 @@ function BroadcastTeam({
 function useBroadcastSize(contentKey: string) {
   const containerRef = useRef<HTMLElement>(null);
   const [contentSize, setContentSize] = useState<{
-    width: number;
+    panelWidth: number;
     scoreWidth: number;
   }>({
-    width: layout.maxWidth,
+    panelWidth: (layout.maxWidth - layout.clockWidth - FRAME_PADDING * 2) / 2,
     scoreWidth: 0,
   });
   useLayoutEffect(() => {
@@ -215,6 +215,7 @@ function useBroadcastSize(contentKey: string) {
       const teamElements = [
         ...container.querySelectorAll<SVGGElement>("g[data-side]"),
       ];
+      if (teamElements.length === 0) return;
       let detailsWidth = 0;
       let scoreWidth = 0;
       for (const team of teamElements) {
@@ -260,15 +261,10 @@ function useBroadcastSize(contentKey: string) {
         layout.outerTextPadding +
         layout.scoreInnerPadding +
         layout.panelClockGap;
-      const width = Math.ceil(
-        Math.min(2, teamElements.length) * panelWidth +
-          layout.clockWidth +
-          FRAME_PADDING * 2,
-      );
       setContentSize((previous) =>
-        previous.width === width && previous.scoreWidth === scoreWidth
+        previous.panelWidth === panelWidth && previous.scoreWidth === scoreWidth
           ? previous
-          : { width, scoreWidth },
+          : { panelWidth, scoreWidth },
       );
     }
     measure();
@@ -309,11 +305,13 @@ function BroadcastMatchHUD({
       team.flagStatus != null,
     ]),
   ]);
-  const {
-    containerRef,
-    width: viewWidth,
-    scoreWidth,
-  } = useBroadcastSize(contentKey);
+  const { containerRef, panelWidth, scoreWidth } = useBroadcastSize(contentKey);
+  // The row's width must reflect its current teams, even before remeasuring.
+  const viewWidth = Math.ceil(
+    Math.min(2, teams.length) * panelWidth +
+      layout.clockWidth +
+      FRAME_PADDING * 2,
+  );
   const maxWidth = Math.min(
     viewWidth,
     teams.length === 1 ? layout.singleTeamMaxWidth : layout.maxWidth,
