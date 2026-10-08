@@ -3,7 +3,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { PlayerHUD } from "./PlayerHUD";
 import { casterStore } from "../state/casterStore";
 import { streamPlaybackStore } from "../state/streamPlaybackStore";
-import type { HudPosition } from "./SettingsProvider";
+import type { HudPosition, MatchHudStyle } from "./SettingsProvider";
 
 const settings = vi.hoisted(() => ({
   showChat: false,
@@ -14,6 +14,9 @@ const settings = vi.hoisted(() => ({
   showQuickCamHud: false,
   quickCamHudPosition: "left" as HudPosition,
   scoreHudStyle: "solid",
+  showMatchHud: true,
+  matchHudStyle: "classic" as MatchHudStyle,
+  observerTeamColors: "blueOrange",
 }));
 
 vi.mock("zustand", async (original) => ({
@@ -33,12 +36,21 @@ vi.mock("./ScoreHUD", () => ({
 vi.mock("./QuickCamHUD", () => ({
   QuickCamHUD: () => <nav aria-label="Quick cams" />,
 }));
+vi.mock("./useMatchClock", async (original) => ({
+  ...(await original<typeof import("./useMatchClock")>()),
+  useMatchClockMs: () => -123_000,
+}));
 vi.mock("../state/streamSnapshotStore", () => ({
   useStreamSnapshot: (select: (snapshot: unknown) => unknown) =>
     select({
       controlPlayerGhostId: "player",
       entities: [],
-      teamScores: [],
+      teamScores: [
+        { teamId: 1, name: "Storm", score: 3, playerCount: 5 },
+        { teamId: 2, name: "Inferno", score: 2, playerCount: 5 },
+      ],
+      playerSensorGroup: 0,
+      camera: { yaw: 0 },
       weaponsHud: { slots: [{ index: 0, ammo: 5 }], activeIndex: 0 },
     }),
 }));
@@ -46,6 +58,9 @@ vi.mock("../state/streamSnapshotStore", () => ({
 beforeEach(() => {
   settings.showScoreHud = settings.showQuickCamHud = false;
   settings.scoreHudPosition = settings.quickCamHudPosition = "left";
+  settings.matchHudStyle = "classic";
+  settings.showMatchHud = true;
+  settings.showCompass = false;
   streamPlaybackStore.setState({
     cameraMode: "original",
     followEntityId: null,
@@ -84,4 +99,22 @@ it("keeps weapon slots when a right-side quick cam HUD has no active mission", (
   const html = renderToStaticMarkup(<PlayerHUD />);
   expect(html).not.toContain('aria-label="Quick cams"');
   expect(html).toContain('alt="Blaster"');
+});
+
+it("toggles either Match HUD style while preserving mini scores and showing the clock once", () => {
+  settings.showCompass = settings.showScoreHud = true;
+  for (const variant of ["classic", "broadcast"] as const) {
+    settings.matchHudStyle = variant;
+    settings.showMatchHud = true;
+    const html = renderToStaticMarkup(<PlayerHUD />);
+    expect(html).toContain('aria-label="Player scores"');
+    expect(html.match(/aria-label="Match HUD"/g)).toHaveLength(1);
+    expect(html.match(/02:03/g)).toHaveLength(1);
+    expect(html.includes("<table")).toBe(variant === "classic");
+    settings.showMatchHud = false;
+    const hidden = renderToStaticMarkup(<PlayerHUD />);
+    expect(hidden).not.toContain('aria-label="Match HUD"');
+    expect(hidden).toContain('aria-label="Player scores"');
+    expect(hidden.match(/02:03/g)).toHaveLength(1);
+  }
 });

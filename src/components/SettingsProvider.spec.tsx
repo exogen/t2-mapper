@@ -107,6 +107,58 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+it("defaults to showing the classic Match HUD and persists its preferences independently of mini scores", () => {
+  render();
+  const { settings } = render();
+  expect(settings.matchHudStyle).toBe("classic");
+  expect(settings.showMatchHud).toBe(true);
+  settings.setMatchHudStyle("broadcast");
+  settings.setShowMatchHud(false);
+  const next = render().settings;
+  expect(next.matchHudStyle).toBe("broadcast");
+  expect(next.showMatchHud).toBe(false);
+  expect(next.showScoreHud).toBe(false);
+  expect(next.scoreHudPosition).toBe("left");
+  vi.advanceTimersByTime(1000);
+  const saved = JSON.parse(vi.mocked(localStorage.setItem).mock.lastCall![1]);
+  expect(saved.matchHudStyle).toBe("broadcast");
+  expect(saved.showMatchHud).toBe(false);
+});
+
+it("restores a hidden Broadcast Match HUD without losing its style", () => {
+  vi.stubGlobal("localStorage", {
+    getItem: () =>
+      JSON.stringify({ showMatchHud: false, matchHudStyle: "broadcast" }),
+    setItem: vi.fn(),
+  });
+  render();
+  const { settings } = render();
+  expect(settings.matchHudStyle).toBe("broadcast");
+  expect(settings.showMatchHud).toBe(false);
+});
+
+it("defaults to Classic scores and persists Competition independently of the HUD layout", () => {
+  render();
+  const { settings } = render();
+  expect(settings.scoreStyle).toBe("classic");
+  settings.setScoreStyle("competition");
+  const next = render().settings;
+  expect(next.scoreStyle).toBe("competition");
+  expect(next.matchHudStyle).toBe("classic");
+  vi.advanceTimersByTime(1000);
+  const saved = JSON.parse(vi.mocked(localStorage.setItem).mock.lastCall![1]);
+  expect(saved.scoreStyle).toBe("competition");
+});
+
+it("restores the Competition score preference", () => {
+  vi.stubGlobal("localStorage", {
+    getItem: () => JSON.stringify({ scoreStyle: "competition" }),
+    setItem: vi.fn(),
+  });
+  render();
+  expect(render().settings.scoreStyle).toBe("competition");
+});
+
 it("defaults to showing unassigned quick cam slots and persists hiding them across modes", () => {
   render();
   const { settings } = render();

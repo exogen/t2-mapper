@@ -107,7 +107,7 @@ it("shows ten quick cams and their HUD setting without team or commentary contro
   expect(html.match(/aria-label="Save camera \d"/g)).toHaveLength(10);
   expect(html).toContain('id="quickCamHudPositionInput"');
   expect(html).toContain('id="showQuickCamHudInput"');
-  expect(html).toContain("Show quick cam HUD");
+  expect(html).toContain("Quick cam HUD");
   expect(html).not.toContain('<option value="off"');
   expect(html).toContain('id="quickCamHideUnassignedSlotsInput"');
   expect(html).toContain("Hide unassigned slots");

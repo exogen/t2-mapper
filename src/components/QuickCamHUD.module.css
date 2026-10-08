@@ -21,7 +21,7 @@
   display: flex;
   flex: 0 1 auto;
   flex-direction: column;
-  gap: 2px;
+  gap: 3px;
   min-height: 0;
   overflow: auto;
   pointer-events: auto;

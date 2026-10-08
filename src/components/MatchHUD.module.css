@@ -1,0 +1,305 @@
+/* Tektur. License: public/licenses/Tektur-OFL.txt. */
+/* latin-ext */
+@font-face {
+  font-family: "Tektur";
+  font-style: normal;
+  font-weight: 400 900;
+  font-stretch: 75% 100%;
+  font-display: swap;
+  src: url(../assets/fonts/tektur-latin-ext.woff2) format("woff2");
+  unicode-range:
+    U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304,
+    U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB,
+    U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+/* latin */
+@font-face {
+  font-family: "Tektur";
+  font-style: normal;
+  font-weight: 400 900;
+  font-stretch: 75% 100%;
+  font-display: swap;
+  src: url(../assets/fonts/tektur-latin.woff2) format("woff2");
+  unicode-range:
+    U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC,
+    U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212,
+    U+2215, U+FEFF, U+FFFD;
+}
+
+/* ── Team Scores (bottom-left) ── */
+
+.TeamScores {
+  align-self: flex-start;
+  flex: 0 0 auto;
+  margin-top: auto;
+  font-size: 12px;
+  border: 1px solid rgba(128, 255, 200, 0.15);
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+@media (max-width: 499px), (pointer: coarse) {
+  .TeamScores {
+    display: none;
+  }
+}
+
+.ObserverCount {
+  text-align: left;
+  padding: 4px 6px;
+  font-size: 10px;
+  color: rgb(193, 228, 216);
+  text-shadow: 0 0 2px rgba(0, 0, 0, 0.6);
+}
+
+.TeamRow {
+  flex: 1 0 auto;
+  background: rgba(0, 50, 60, 0.65);
+}
+
+.TeamRow + .TeamRow td {
+  border-top: 1px solid rgba(128, 255, 200, 0.15);
+}
+
+.TeamName {
+  min-width: 6em;
+  font-size: 12px;
+  font-weight: 500;
+  padding: 5px 6px;
+}
+
+.TeamNameFriendly {
+  composes: TeamName;
+  color: #2de46a;
+}
+
+.TeamNameEnemy {
+  composes: TeamName;
+  color: rgb(121, 203, 212);
+}
+
+.TeamScore {
+  color: #fff;
+  font-weight: 500;
+  text-align: center;
+  padding: 0 10px;
+  border-left: 1px solid rgba(128, 255, 200, 0.15);
+}
+
+.TeamCount {
+  color: rgb(125, 155, 150);
+  font-size: 11px;
+  text-align: center;
+  padding: 0 6px;
+}
+
+.TeamFlag {
+  color: rgb(159, 190, 185);
+  font-size: 11px;
+  padding: 0 8px;
+  border-left: 1px solid rgba(128, 255, 200, 0.15);
+  white-space: nowrap;
+  max-width: 13em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.TeamFlag[data-status="held"] {
+  color: rgb(174, 255, 242);
+}
+
+.TeamFlag[data-status="field"] {
+  color: rgb(203, 205, 173);
+}
+
+.TeamFlag svg {
+  margin-right: 7px;
+  width: 10px;
+  height: 10px;
+  vertical-align: middle;
+}
+
+.Broadcast {
+  flex: 0 0 auto;
+  width: calc(100% - 2 * var(--hud-side-margin));
+  margin: var(--hud-top-margin) auto var(--hud-bottom-margin);
+  color: #e3e9f3;
+  font-family: "Tektur", system-ui, sans-serif;
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 1.25px 1.25px rgba(0, 0, 0, 0.35);
+}
+
+.BroadcastFrame {
+  display: block;
+  width: 100%;
+  height: auto;
+  overflow: visible;
+}
+
+.BroadcastFrame + .BroadcastFrame {
+  margin-top: var(--hud-row-gap);
+}
+
+.Panel {
+  fill: rgba(19, 27, 32, 0.72);
+  stroke: rgba(178, 190, 199, 0.27);
+  stroke-width: var(--hud-panel-border-width);
+  stroke-linejoin: miter;
+}
+
+.ClockPanel {
+  fill: rgba(12, 20, 27, 0.68);
+  stroke: rgba(190, 200, 213, 0.52);
+  stroke-width: var(--hud-clock-border-width);
+}
+
+.Rail {
+  stroke: currentColor;
+  stroke-width: var(--hud-rail-width);
+}
+
+.Accent {
+  fill: currentColor;
+  opacity: 0.7;
+}
+
+.BroadcastTeam {
+  --team-align: flex-start;
+  text-align: left;
+}
+
+.BroadcastTeam[data-side="left"] {
+  --team-align: flex-end;
+  text-align: right;
+}
+
+.TeamContent {
+  display: flex;
+  align-items: center;
+  gap: var(--hud-name-score-gap);
+  height: 100%;
+}
+
+.BroadcastTeam[data-side="right"] .TeamContent {
+  flex-direction: row-reverse;
+}
+
+.TeamDetails {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  justify-content: center;
+  height: 100%;
+  min-width: 0;
+  gap: var(--hud-name-details-gap);
+}
+
+.BroadcastName {
+  font-size: var(--hud-name-font-size);
+  line-height: 1.15;
+  font-weight: 600;
+}
+
+.BroadcastName,
+.BroadcastName > button {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  letter-spacing: 0.03em;
+}
+
+.BroadcastName > button {
+  display: inline-block;
+  text-align: inherit;
+  text-transform: inherit;
+}
+
+.BroadcastScore {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: var(--team-align);
+  height: 100%;
+  width: var(--hud-score-width, auto);
+  color: var(--team-color);
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.BroadcastScore.CompetitionScore {
+  font-size: var(--hud-large-score-font-size);
+  font-weight: 700;
+  font-stretch: 100%;
+}
+
+.BroadcastScore.ClassicScore {
+  font-size: var(--hud-score-font-size);
+  font-weight: 650;
+  font-stretch: 75%;
+}
+
+.FinePrint {
+  display: flex;
+  align-items: center;
+  justify-content: var(--team-align);
+  gap: var(--hud-details-gap);
+  min-width: 0;
+  color: rgba(255, 255, 255, 0.8);
+  font-size: var(--hud-details-font-size);
+  font-family: var(--default-font);
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.FinePrint svg {
+  flex-shrink: 0;
+  color: var(--team-color);
+  font-size: 16px;
+}
+
+.PlayerCount {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: var(--hud-player-icon-gap);
+}
+
+.BroadcastTeam[data-side="left"] .PlayerCount {
+  order: 1;
+}
+
+.PlayerCount,
+.FlagStatus {
+  pointer-events: auto;
+}
+
+.FlagStatus {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: var(--hud-flag-icon-gap);
+}
+
+.FlagStatus svg {
+  font-size: 18px;
+}
+
+.FlagLabel {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.Clock {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  font-size: var(--hud-clock-font-size);
+  font-weight: 600;
+  font-stretch: 85%;
+  line-height: 1;
+  white-space: nowrap;
+}

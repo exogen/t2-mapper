@@ -6,6 +6,14 @@
   bottom: 0;
   z-index: 1;
   pointer-events: none;
+  display: flex;
+  flex-direction: column;
+}
+
+.SideHUDs {
+  position: relative;
+  flex: 1;
+  min-height: 0;
 }
 
 .LeftHUD {
@@ -163,97 +171,6 @@
 
 .WeaponSeparator {
   height: 6px;
-}
-
-/* ── Team Scores (bottom-left) ── */
-
-.TeamScores {
-  align-self: flex-start;
-  flex: 0 0 auto;
-  margin-top: auto;
-  font-size: 12px;
-  border: 1px solid rgba(128, 255, 200, 0.15);
-  border-collapse: separate;
-  border-spacing: 0;
-}
-
-@media (max-width: 499px), (pointer: coarse) {
-  .TeamScores {
-    display: none;
-  }
-}
-
-.ObserverCount {
-  text-align: left;
-  padding: 4px 6px;
-  font-size: 10px;
-  color: rgb(193, 228, 216);
-  text-shadow: 0 0 2px rgba(0, 0, 0, 0.6);
-}
-
-.TeamRow {
-  flex: 1 0 auto;
-  background: rgba(0, 50, 60, 0.65);
-}
-
-.TeamRow + .TeamRow td {
-  border-top: 1px solid rgba(128, 255, 200, 0.15);
-}
-
-.TeamName {
-  min-width: 6em;
-  font-size: 12px;
-  font-weight: 500;
-  padding: 5px 6px;
-}
-
-.TeamNameFriendly {
-  composes: TeamName;
-  color: #2de46a;
-}
-
-.TeamNameEnemy {
-  composes: TeamName;
-  color: rgb(121, 203, 212);
-}
-
-.TeamScore {
-  color: #fff;
-  font-weight: 500;
-  text-align: center;
-  padding: 0 10px;
-  border-left: 1px solid rgba(128, 255, 200, 0.15);
-}
-
-.TeamCount {
-  color: rgb(125, 155, 150);
-  font-size: 11px;
-  text-align: center;
-  padding: 0 6px;
-}
-
-.TeamFlag {
-  color: rgb(159, 190, 185);
-  font-size: 11px;
-  padding: 0 8px;
-  border-left: 1px solid rgba(128, 255, 200, 0.15);
-  white-space: nowrap;
-  max-width: 13em;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.TeamFlag[data-status="held"] {
-  color: rgb(174, 255, 242);
-}
-
-.TeamFlag[data-status="field"] {
-  color: rgb(203, 205, 173);
-}
-
-.TeamFlag svg {
-  margin-right: 7px;
-  vertical-align: -1px;
 }
 
 /* ── Pack + Inventory HUD (bottom-right) ── */

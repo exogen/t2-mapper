@@ -1,13 +1,11 @@
 import { useRef } from "react";
 import { useStore } from "zustand";
-import { FaHand } from "react-icons/fa6";
-import { ImArrowDownRight, ImHome } from "react-icons/im";
 import { useStreamSnapshot } from "../state/streamSnapshotStore";
 import { streamPlaybackStore } from "../state/streamPlaybackStore";
 import { useDataSource } from "../state/gameEntityStore";
 import { useLiveSelector } from "../state/liveConnectionStore";
 import { textureToUrl } from "../loaders";
-import type { StreamEntity, TeamScore, WeaponsHudSlot } from "../stream/types";
+import type { StreamEntity, WeaponsHudSlot } from "../stream/types";
 import styles from "./PlayerHUD.module.css";
 import { ChatWindow } from "./ChatWindow";
 import { ScoreHUD } from "./ScoreHUD";
@@ -18,14 +16,19 @@ import { useCameraHeadingRotor } from "./MapCompass";
 import { formatHudClock, useMatchClockMs } from "./useMatchClock";
 import { useSettings } from "./SettingsProvider";
 import { useCommandCircuit } from "../state/commandCircuitStore";
-import { EditableTeamName } from "./TeamNameDialog";
+import { MatchHUD } from "./MatchHUD";
 
-function Compass({ commandCircuitActive }: { commandCircuitActive: boolean }) {
+function Compass({
+  commandCircuitActive,
+  showClock,
+}: {
+  commandCircuitActive: boolean;
+  showClock: boolean;
+}) {
   const isWatcher = useLiveSelector((s) => s.role === "watcher");
   const dataSource = useDataSource();
   const cameraMode = useStore(streamPlaybackStore, (s) => s.cameraMode);
   const yaw = useStreamSnapshot((snap) => snap?.camera?.yaw);
-  const matchClockMs = useMatchClockMs();
   // Watch mode (always) and demo camera overrides (free-fly / follow /
   // first-person / flag follow): the view camera is client-controlled,
   // so the stream camera's yaw is the RECORDER's view, not what's on
@@ -34,7 +37,7 @@ function Compass({ commandCircuitActive }: { commandCircuitActive: boolean }) {
     return (
       <LocalCameraCompass
         commandCircuitActive={commandCircuitActive}
-        matchClockMs={matchClockMs}
+        showClock={showClock}
       />
     );
   }
@@ -48,32 +51,21 @@ function Compass({ commandCircuitActive }: { commandCircuitActive: boolean }) {
   const deg = commandCircuitActive ? 0 : (yaw * 180) / Math.PI;
   return (
     <div className={styles.Compass}>
-      <CompassDial deg={deg}>
-        {matchClockMs != null && (
-          <span className={styles.CompassClock}>
-            {formatHudClock(matchClockMs)}
-          </span>
-        )}
-      </CompassDial>
+      <CompassDial deg={deg}>{showClock && <CompassClock />}</CompassDial>
     </div>
   );
 }
 
 function LocalCameraCompass({
   commandCircuitActive,
-  matchClockMs,
+  showClock,
 }: {
   commandCircuitActive: boolean;
-  matchClockMs: number | null | undefined;
+  showClock: boolean;
 }) {
   const rotorRef = useRef<SVGGElement>(null);
   useCameraHeadingRotor(rotorRef);
-  const clock =
-    matchClockMs != null ? (
-      <span className={styles.CompassClock}>
-        {formatHudClock(matchClockMs)}
-      </span>
-    ) : null;
+  const clock = showClock ? <CompassClock /> : null;
   return (
     <div className={styles.Compass}>
       {commandCircuitActive ? (
@@ -84,6 +76,13 @@ function LocalCameraCompass({
       )}
     </div>
   );
+}
+
+function CompassClock() {
+  const matchClockMs = useMatchClockMs();
+  return matchClockMs != null ? (
+    <span className={styles.CompassClock}>{formatHudClock(matchClockMs)}</span>
+  ) : null;
 }
 
 function HealthBar({ followed }: { followed: FollowedPlayer | null }) {
@@ -326,81 +325,6 @@ function WeaponHUD({ followed }: { followed: FollowedPlayer | null }) {
   );
 }
 
-function TeamScores() {
-  const teamScores = useStreamSnapshot((snap) => snap?.teamScores);
-  const playerSensorGroup = useStreamSnapshot(
-    (snap) => snap?.playerSensorGroup,
-  );
-  const observerCount = useStreamSnapshot(
-    (snap) => snap?.playerRoster?.filter((p) => p.teamId <= 0).length ?? 0,
-  );
-  if (!teamScores?.length) return null;
-  // Sort: friendly team first (if known), then by teamId.
-  const sorted = [...teamScores].sort((a, b) => {
-    if (playerSensorGroup) {
-      if (a.teamId === playerSensorGroup) return -1;
-      if (b.teamId === playerSensorGroup) return 1;
-    }
-    return a.teamId - b.teamId;
-  });
-  // Flag state column only applies to flag game modes (CTF).
-  const hasFlags = sorted.some((team) => team.flagStatus != null);
-  return (
-    <table className={styles.TeamScores}>
-      {observerCount > 0 && (
-        <caption className={styles.ObserverCount}>
-          {observerCount} {observerCount === 1 ? "observer" : "observers"}
-        </caption>
-      )}
-      <tbody>
-        {sorted.map((team: TeamScore) => {
-          const isFriendly =
-            playerSensorGroup != null &&
-            playerSensorGroup > 0 &&
-            team.teamId === playerSensorGroup;
-          return (
-            <tr key={team.teamId} className={styles.TeamRow}>
-              <td
-                className={
-                  isFriendly ? styles.TeamNameFriendly : styles.TeamNameEnemy
-                }
-              >
-                <EditableTeamName teamId={team.teamId} teams={teamScores} />
-              </td>
-              <td className={styles.TeamCount}>
-                ({team.playerCount.toLocaleString()})
-              </td>
-              <td className={styles.TeamScore}>
-                {team.score.toLocaleString()}
-              </td>
-              {hasFlags && (
-                <td className={styles.TeamFlag} data-status={team.flagStatus}>
-                  {team.flagStatus === "held" ? (
-                    <>
-                      <FaHand size={10} />
-                      {team.flagCarrier ?? "Held"}
-                    </>
-                  ) : team.flagStatus === "field" ? (
-                    <>
-                      <ImArrowDownRight size={9} />
-                      Dropped
-                    </>
-                  ) : (
-                    <>
-                      <ImHome size={10} />
-                      Home
-                    </>
-                  )}
-                </td>
-              )}
-            </tr>
-          );
-        })}
-      </tbody>
-    </table>
-  );
-}
-
 // ── Backpack + Inventory HUD (bottom-right) ──
 /** Maps $BackpackHudData indices to icon textures. */
 const BACKPACK_ICONS: Record<number, string> = {
@@ -633,46 +557,57 @@ export function PlayerHUD() {
     showQuickCamHud,
     quickCamHudPosition,
     scoreHudStyle,
+    showMatchHud,
+    matchHudStyle,
     showReticle,
     showCompass,
   } = useSettings();
   const commandCircuitActive = useCommandCircuit((s) => s.active);
   const quickCamAvailable = useCaster((s) => !!s.settings);
   const showQuickCam = showQuickCamHud && quickCamAvailable;
+  const showBroadcastMatchHud = showMatchHud && matchHudStyle === "broadcast";
   const rightHudOccupied =
     (showScoreHud && scoreHudPosition === "right") ||
     (showQuickCam && quickCamHudPosition === "right");
 
   return (
     <div className={styles.PlayerHUD}>
-      <div className={styles.LeftHUD}>
-        {showChat && <ChatWindow />}
-        {showScoreHud && scoreHudPosition === "left" && (
-          <ScoreHUD hudStyle={scoreHudStyle} />
-        )}
-        {showQuickCam && quickCamHudPosition === "left" && <QuickCamHUD />}
-        <TeamScores />
-      </div>
-      <div className={styles.RightHUD}>
-        <div className={styles.TopRightHUD}>
-          {showPlayerElements && (
-            <div className={styles.Bars}>
-              <HealthBar followed={followed} />
-              <EnergyBar followed={followed} />
-              <HeatBar followed={followed} />
-            </div>
+      {showBroadcastMatchHud && <MatchHUD variant="broadcast" />}
+      <div className={styles.SideHUDs}>
+        <div className={styles.LeftHUD}>
+          {showChat && <ChatWindow />}
+          {showScoreHud && scoreHudPosition === "left" && (
+            <ScoreHUD hudStyle={scoreHudStyle} />
           )}
-          {showCompass && (
-            <Compass commandCircuitActive={commandCircuitActive} />
+          {showQuickCam && quickCamHudPosition === "left" && <QuickCamHUD />}
+          {showMatchHud && !showBroadcastMatchHud && (
+            <MatchHUD variant="classic" />
           )}
         </div>
-        {showScoreHud && scoreHudPosition === "right" && (
-          <ScoreHUD hudStyle={scoreHudStyle} />
-        )}
-        {showPlayerElements && !rightHudOccupied && (
-          <WeaponHUD followed={followed} />
-        )}
-        {showPlayerElements && <PackInventoryHUD followed={followed} />}
+        <div className={styles.RightHUD}>
+          <div className={styles.TopRightHUD}>
+            {showPlayerElements && (
+              <div className={styles.Bars}>
+                <HealthBar followed={followed} />
+                <EnergyBar followed={followed} />
+                <HeatBar followed={followed} />
+              </div>
+            )}
+            {showCompass && (
+              <Compass
+                commandCircuitActive={commandCircuitActive}
+                showClock={!showBroadcastMatchHud}
+              />
+            )}
+          </div>
+          {showScoreHud && scoreHudPosition === "right" && (
+            <ScoreHUD hudStyle={scoreHudStyle} />
+          )}
+          {showPlayerElements && !rightHudOccupied && (
+            <WeaponHUD followed={followed} />
+          )}
+          {showPlayerElements && <PackInventoryHUD followed={followed} />}
+        </div>
       </div>
       {showQuickCam && quickCamHudPosition === "right" && (
         <QuickCamHUD position="right" />

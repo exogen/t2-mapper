@@ -11,6 +11,8 @@ import {
   type CcPlayerNames,
   type IffVisibility,
   type HudStyle,
+  type MatchHudStyle,
+  type ScoreStyle,
   type HudPosition,
   type TouchMode,
 } from "./SettingsProvider";
@@ -133,6 +135,12 @@ export const InspectorControls = memo(function InspectorControls({
     setShowChat,
     chatHudStyle,
     setChatHudStyle,
+    showMatchHud,
+    setShowMatchHud,
+    matchHudStyle,
+    setMatchHudStyle,
+    scoreStyle,
+    setScoreStyle,
     showScoreHud,
     setShowScoreHud,
     scoreHudPosition,
@@ -319,7 +327,7 @@ export const InspectorControls = memo(function InspectorControls({
                         }}
                       />
                       <label className={styles.Label} htmlFor="showChatInput">
-                        Show chat HUD
+                        Chat HUD
                       </label>
                       <div className={styles.Control}>
                         <select
@@ -379,6 +387,59 @@ export const InspectorControls = memo(function InspectorControls({
                           <option value="transparent">Transparent</option>
                         </select>
                       </div>
+                    </div>
+                    <div className={styles.CheckboxField}>
+                      <input
+                        id="showMatchHudInput"
+                        type="checkbox"
+                        checked={showMatchHud}
+                        onChange={(event) =>
+                          setShowMatchHud(event.target.checked)
+                        }
+                      />
+                      <label
+                        className={styles.Label}
+                        htmlFor="showMatchHudInput"
+                      >
+                        Match HUD
+                      </label>
+                      <div className={styles.Control}>
+                        <select
+                          id="matchHudStyleInput"
+                          aria-label="Match HUD style"
+                          value={matchHudStyle}
+                          disabled={!showMatchHud}
+                          onChange={(event) =>
+                            setMatchHudStyle(
+                              event.target.value as MatchHudStyle,
+                            )
+                          }
+                        >
+                          <option value="classic">Classic</option>
+                          <option value="broadcast">Broadcast</option>
+                        </select>
+                      </div>
+                    </div>
+                    <div className={styles.Field}>
+                      <label htmlFor="scoreStyleInput">Score style</label>
+                      <div className={styles.Control}>
+                        <select
+                          id="scoreStyleInput"
+                          value={scoreStyle}
+                          disabled={!showMatchHud}
+                          title="Competition shows captures only in CTF games."
+                          onChange={(event) =>
+                            setScoreStyle(event.target.value as ScoreStyle)
+                          }
+                        >
+                          <option value="classic">100, 200, 300</option>
+                          <option value="competition">1, 2, 3</option>
+                        </select>
+                      </div>
+                      <p className={styles.Description}>
+                        How team scores are displayed for CTF games: 100 points
+                        per cap <em>Tribes 2</em> style, or 1 point per cap.
+                      </p>
                     </div>
                   </>
                 )}
@@ -821,7 +882,7 @@ export const InspectorControls = memo(function InspectorControls({
                     }}
                   />
                   <label className={styles.Label} htmlFor="fpsMeterInput">
-                    Show FPS meter
+                    FPS meter
                   </label>
                 </div>
                 {canShowDebugVisuals && (

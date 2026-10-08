@@ -32,6 +32,15 @@ const CC_PLAYER_NAMES_VALUES: readonly CcPlayerNames[] = [
 export type HudStyle = "solid" | "transparent";
 const HUD_STYLE_VALUES: readonly HudStyle[] = ["solid", "transparent"];
 
+export type MatchHudStyle = "classic" | "broadcast";
+const MATCH_HUD_STYLE_VALUES: readonly MatchHudStyle[] = [
+  "classic",
+  "broadcast",
+];
+
+export type ScoreStyle = "classic" | "competition";
+const SCORE_STYLE_VALUES: readonly ScoreStyle[] = ["classic", "competition"];
+
 export type HudPosition = "left" | "right";
 type HudPreference = { enabled: boolean; position: HudPosition };
 
@@ -111,6 +120,12 @@ type SettingsContextType = {
   setShowChat: StateSetter<boolean>;
   chatHudStyle: HudStyle;
   setChatHudStyle: StateSetter<HudStyle>;
+  showMatchHud: boolean;
+  setShowMatchHud: StateSetter<boolean>;
+  matchHudStyle: MatchHudStyle;
+  setMatchHudStyle: StateSetter<MatchHudStyle>;
+  scoreStyle: ScoreStyle;
+  setScoreStyle: StateSetter<ScoreStyle>;
   showScoreHud: boolean;
   setShowScoreHud: (enabled: boolean) => void;
   scoreHudPosition: HudPosition;
@@ -201,6 +216,9 @@ type PersistedSettings = {
   showInputOverlay?: boolean;
   showChat?: boolean;
   chatHudStyle?: HudStyle;
+  showMatchHud?: boolean;
+  matchHudStyle?: MatchHudStyle;
+  scoreStyle?: ScoreStyle;
   showScoreHud?: boolean;
   scoreHudPosition?: HudPosition;
   showQuickCamHud?: boolean;
@@ -279,6 +297,9 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   const [showInputOverlay, setShowInputOverlay] = useState(true);
   const [showChat, setShowChat] = useState(true);
   const [chatHudStyle, setChatHudStyle] = useState<HudStyle>("solid");
+  const [showMatchHud, setShowMatchHud] = useState(true);
+  const [matchHudStyle, setMatchHudStyle] = useState<MatchHudStyle>("classic");
+  const [scoreStyle, setScoreStyle] = useState<ScoreStyle>("classic");
   const [hudPreferences, setHudPreferences] = useState<{
     score: HudPreference;
     quickCam: HudPreference;
@@ -373,6 +394,12 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       setShowChat,
       chatHudStyle,
       setChatHudStyle,
+      showMatchHud,
+      setShowMatchHud,
+      matchHudStyle,
+      setMatchHudStyle,
+      scoreStyle,
+      setScoreStyle,
       showScoreHud: hudPreferences.score.enabled,
       setShowScoreHud: (enabled) => updateHudPreference("score", { enabled }),
       scoreHudPosition: hudPreferences.score.position,
@@ -426,6 +453,9 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
       showChat,
       chatHudStyle,
       hudPreferences,
+      showMatchHud,
+      matchHudStyle,
+      scoreStyle,
       updateHudPreference,
       quickCamHideUnassignedSlots,
       scoreHudStyle,
@@ -613,6 +643,21 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     ) {
       setScoreHudStyle(savedSettings.scoreHudStyle);
     }
+    if (savedSettings.showMatchHud != null) {
+      setShowMatchHud(savedSettings.showMatchHud);
+    }
+    if (
+      savedSettings.matchHudStyle != null &&
+      MATCH_HUD_STYLE_VALUES.includes(savedSettings.matchHudStyle)
+    ) {
+      setMatchHudStyle(savedSettings.matchHudStyle);
+    }
+    if (
+      savedSettings.scoreStyle != null &&
+      SCORE_STYLE_VALUES.includes(savedSettings.scoreStyle)
+    ) {
+      setScoreStyle(savedSettings.scoreStyle);
+    }
     const scorePosition = savedSettings.scoreHudPosition;
     const quickCamPosition = savedSettings.quickCamHudPosition;
     setHudPreferences({
@@ -711,6 +756,9 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
         showInputOverlay,
         showChat,
         chatHudStyle,
+        showMatchHud,
+        matchHudStyle,
+        scoreStyle,
         showScoreHud: hudPreferences.score.enabled,
         scoreHudPosition: hudPreferences.score.position,
         showQuickCamHud: hudPreferences.quickCam.enabled,
@@ -765,6 +813,9 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     showChat,
     chatHudStyle,
     hudPreferences,
+    showMatchHud,
+    matchHudStyle,
+    scoreStyle,
     quickCamHideUnassignedSlots,
     scoreHudStyle,
     showReticle,

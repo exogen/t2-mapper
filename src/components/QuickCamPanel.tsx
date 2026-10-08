@@ -29,7 +29,7 @@ export function QuickCamPanel({ watching }: { watching: boolean }) {
           onChange={(event) => setShowQuickCamHud(event.target.checked)}
         />
         <label className={styles.Label} htmlFor="showQuickCamHudInput">
-          Show quick cam HUD
+          Quick cam HUD
         </label>
         <div className={styles.Control}>
           <select
