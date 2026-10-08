@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { gunzipSync } from "node:zlib";
 import type { WebSocket } from "ws";
-import type { ParsedData } from "t2-demo-parser";
+import type { PacketData, ParsedData } from "t2-demo-parser";
 import {
   WatchSessionManager,
   type WatchSessionManagerOptions,
@@ -2086,6 +2086,44 @@ describe("WatchSessionManager", () => {
     const packetsBefore = ws.binaryFrames().length;
     conn.emit("packet", new Uint8Array([1, 2, 3]));
     expect(ws.binaryFrames()).toHaveLength(packetsBefore + 1);
+  });
+
+  it("refreshes catch-up timer ages during packet gaps while sharing concurrent joins", () => {
+    const { manager, connections } = createManager();
+    const address = "1.2.3.4:28000";
+    const first = new FakeWebSocket();
+    manager.watch(first as unknown as WebSocket, address);
+    const session = manager.getSession(address)!;
+    session["watchState"].applyPacket({
+      gameState: {},
+      ghosts: [],
+      events: [
+        ["MsgClientReady", "", "CTFGame"],
+        ["MsgCTFFlagDropped", "", "Alice", "Storm", "1"],
+        ["MsgSystemClock", "", "20", "1200000"],
+      ].map((args) => ({
+        parsedData: {
+          type: "RemoteCommandEvent",
+          funcName: "ServerMessage",
+          args,
+        },
+      })),
+    } as unknown as PacketData);
+    connections[0].setStatus("connected");
+    const cached = session["cachedPayload"];
+    const concurrent = new FakeWebSocket();
+    manager.watch(concurrent as unknown as WebSocket, address);
+    expect(session["cachedPayload"]).toBe(cached);
+
+    vi.advanceTimersByTime(10_000);
+    const later = new FakeWebSocket();
+    manager.watch(later as unknown as WebSocket, address);
+    const payload = JSON.parse(
+      gunzipSync(Buffer.concat(later.binaryFrames())).toString(),
+    );
+    expect(payload.hudState.flagDropElapsedSec).toEqual({ 1: 10 });
+    expect(payload.hudState.clock.elapsedMs).toBe(10_000);
+    manager.shutdown();
   });
 
   it("ends a failed catch-up with a reason without disrupting other watchers", () => {

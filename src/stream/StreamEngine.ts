@@ -3,6 +3,10 @@ import {
   updateTargetString,
 } from "../../relay/targetStrings";
 import { DebrisHistory, debrisRetention } from "./debrisHistory";
+import {
+  updateFlagDropTimes,
+  type FlagDropTimes,
+} from "../../relay/flagReturnState";
 import type { WatchTargetEntry } from "../../relay/types";
 import { THRUST_BACKWARD, THRUST_DOWN, THRUST_FORWARD } from "./types";
 import { GroundEffectHistory, type GroundActor } from "./groundEffectHistory";
@@ -606,6 +610,7 @@ export abstract class StreamEngine implements StreamingPlayback {
     playerRoster: PlayerRosterEntry[];
   } | null = null;
   protected teamScores: TeamScore[] = [];
+  protected flagDroppedAtSec: FlagDropTimes = {};
   protected playerRoster = new Map<number, ServerMessageRosterEntry>();
   /** Stream time (seconds) when the clock was last set. */
   protected clockAnchorStreamSec: number | null = null;
@@ -881,6 +886,7 @@ export abstract class StreamEngine implements StreamingPlayback {
         backpackHud: this.backpackHud,
         inventoryHud: this.inventoryHud,
         teamScores: this.teamScores,
+        flagDroppedAtSec: this.flagDroppedAtSec,
         playerRoster: this.playerRoster,
         clockAnchorStreamSec: this.clockAnchorStreamSec,
         clockDurationMs: this.clockDurationMs,
@@ -1003,6 +1009,7 @@ export abstract class StreamEngine implements StreamingPlayback {
    *  Does NOT reset the ID counter — IDs must never be reused to avoid
    *  stale entity collisions in the render store after seeks. */
   protected clearAllEntities(): void {
+    this.flagDroppedAtSec = {};
     this.endedEntities = null;
     // A reset invalidates every ghost, so the world is incomplete again
     // until the server says otherwise.
@@ -3881,6 +3888,14 @@ export abstract class StreamEngine implements StreamingPlayback {
   protected handleServerMessage(args: string[]): void {
     if (args.length < 1) return;
     const msgType = this.resolveNetString(args[0]);
+
+    this.flagDroppedAtSec = updateFlagDropTimes(
+      this.flagDroppedAtSec,
+      msgType,
+      args,
+      (s) => this.resolveNetString(s),
+      this.matchEndedAtSec ?? this.getTimeSec(),
+    );
 
     const changes = applyServerMessageState(
       msgType,

@@ -89,12 +89,18 @@ describe("precomputed checkpoint targets", () => {
   });
 });
 
-function checkpointData(tick: number): string {
+function checkpointData(
+  tick: number,
+  flagDroppedAtSec: Record<number, number> = {},
+): string {
   return bytesToBase64(
     gzipSync(
       encodeCheckpoint({
         cursor: { moveTicks: tick },
-        simulation: { state: { entities: new Map() }, shared: new Map() },
+        simulation: {
+          state: { entities: new Map(), flagDroppedAtSec },
+          shared: new Map(),
+        },
         parser: { ghosts: new Map() },
       }),
     ),
@@ -130,15 +136,29 @@ describe("checkpoint sidecar loading", () => {
       readDemoCheckpoints(text, new Uint8Array([3, 2, 1]).buffer),
     ).rejects.toThrow("do not match");
   });
-  it("rejects outdated formats, changed timestamps and corrupt payloads", async () => {
+  it.each([10, DEMO_CHECKPOINT_VERSION + 1, 11.5, "11"])(
+    "rejects unsupported checkpoint version %s",
+    async (version) => {
+      const buffer = new ArrayBuffer(3);
+      const original = await sidecar(buffer);
+      await expect(
+        readDemoCheckpoints(JSON.stringify({ ...original, version }), buffer),
+      ).rejects.toThrow("version");
+    },
+  );
+  it("preserves flag timing in current checkpoints", async () => {
     const buffer = new ArrayBuffer(3);
     const original = await sidecar(buffer);
-    await expect(
-      readDemoCheckpoints(
-        JSON.stringify({ ...original, version: DEMO_CHECKPOINT_VERSION - 1 }),
-        buffer,
-      ),
-    ).rejects.toThrow("version");
+    original.checkpoints[0].data = checkpointData(1000, { 1: 30 });
+    const [checkpoint] = await readDemoCheckpoints(
+      JSON.stringify(original),
+      buffer,
+    );
+    expect(checkpoint.simulation.state.flagDroppedAtSec).toEqual({ 1: 30 });
+  });
+  it("rejects changed timestamps and corrupt payloads", async () => {
+    const buffer = new ArrayBuffer(3);
+    const original = await sidecar(buffer);
     original.checkpoints[0].tick = 1001;
     await expect(
       readDemoCheckpoints(JSON.stringify(original), buffer),

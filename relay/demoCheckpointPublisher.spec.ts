@@ -118,17 +118,23 @@ describe("demo checkpoint publishing", () => {
       expect(mocks.send).not.toHaveBeenCalled();
     },
   );
-  it("reuses a current immutable remote sidecar without downloading or replaying", async () => {
-    mocks.send
-      .mockResolvedValueOnce({ Metadata: metadata })
-      .mockResolvedValueOnce({ ContentLength: 3, ETag: '"demo-v1"' });
-    expect(await publisher.publish(key)).toBe("current");
-    expect(mocks.run).not.toHaveBeenCalled();
-    expect(mocks.send).toHaveBeenCalledTimes(2);
-  });
+  it.each([11, DEMO_CHECKPOINT_VERSION])(
+    "reuses a compatible v%i remote sidecar without downloading or replaying",
+    async (version) => {
+      mocks.send
+        .mockResolvedValueOnce({
+          Metadata: { ...metadata, "checkpoint-version": String(version) },
+        })
+        .mockResolvedValueOnce({ ContentLength: 3, ETag: '"demo-v1"' });
+      expect(await publisher.publish(key)).toBe("current");
+      expect(mocks.run).not.toHaveBeenCalled();
+      expect(mocks.send).toHaveBeenCalledTimes(2);
+    },
+  );
 
   it.each([
     { ...metadata, "checkpoint-version": "0" },
+    { ...metadata, "checkpoint-version": String(DEMO_CHECKPOINT_VERSION + 1) },
     { ...metadata, "demo-bytes": "4" },
     { ...metadata, "demo-etag": '"old-demo-with-the-same-size"' },
     { ...metadata, "demo-etag": undefined },

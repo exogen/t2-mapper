@@ -292,6 +292,10 @@
   white-space: nowrap;
 }
 
+.FlagSeparator {
+  opacity: 0.5;
+}
+
 .Clock {
   display: flex;
   align-items: center;

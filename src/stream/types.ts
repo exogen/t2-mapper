@@ -1,4 +1,5 @@
 import type { ChatSegment } from "../../relay/shared";
+import type { FlagDropTimes } from "../../relay/flagReturnState";
 import type { ClientAnimationState } from "./clientAnimation";
 import type { PlayerRenderDelta } from "./playerPrediction";
 import type { ParsedData } from "t2-demo-parser";
@@ -637,6 +638,10 @@ export interface StreamSnapshot {
   entities: StreamEntity[];
   /** Original flag targets, independently of their current carrier/ghost. */
   flagTargets: FlagTargetInfo[];
+  /** Observed drops on the playback clock; team 0 is Rabbit's neutral flag. */
+  flagDroppedAtSec: FlagDropTimes;
+  /** Assumed game-type timeout, or null for unsupported game types. */
+  flagReturnDelaySec: number | null;
   controlPlayerGhostId?: string;
   /** Recording player's sensor group (team number). */
   playerSensorGroup: number;

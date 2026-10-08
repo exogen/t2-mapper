@@ -24,6 +24,7 @@ import type { PlayerMove } from "./playerPrediction";
 import type { Vec3 } from "./streamHelpers";
 import type { StreamSnapshot } from "./types";
 import { StreamEngine } from "./StreamEngine";
+import { flagReturnDelaySec } from "./flagReturnTimer";
 import { GhostMessage } from "./entityClassification";
 import type { RelayClient } from "./relayClient";
 import type { WatchCatchupPayload } from "../../relay/types";
@@ -333,6 +334,12 @@ export class LiveStreamAdapter extends StreamEngine {
 
     // Roster/scores/clock (a late joiner can't recover these live).
     const hud = payload.hudState;
+    this.flagDroppedAtSec = Object.fromEntries(
+      Object.entries(hud.flagDropElapsedSec ?? {}).map(([team, elapsed]) => [
+        team,
+        this.getTimeSec() - elapsed!,
+      ]),
+    );
     for (const entry of hud.playerRoster) {
       this.playerRoster.set(entry.clientId, {
         name: entry.name,
@@ -931,6 +938,11 @@ export class LiveStreamAdapter extends StreamEngine {
       entities,
       flagTargets,
       controlPlayerGhostId: this.controlPlayerGhostId,
+      flagDroppedAtSec: this.flagDroppedAtSec,
+      flagReturnDelaySec: flagReturnDelaySec(
+        this.gameClassName,
+        this.missionTypeDisplayName,
+      ),
       playerSensorGroup: this.playerSensorGroup,
       status: this.lastStatus,
       chatMessages,

@@ -11,7 +11,7 @@ import {
 } from "@aws-sdk/client-s3";
 import {
   DEMO_CHECKPOINT_SUFFIX,
-  DEMO_CHECKPOINT_VERSION,
+  isSupportedDemoCheckpointVersion,
 } from "../src/stream/demoCheckpoints";
 import type { DemoUploadConfig } from "./demoUpload.js";
 import { demoLog as log } from "./logger.js";
@@ -73,9 +73,10 @@ export class DemoCheckpointPublisher {
         { abortSignal: AbortSignal.timeout(30_000) },
       );
       if (
-        sidecar.Metadata?.["checkpoint-version"] !==
-          String(DEMO_CHECKPOINT_VERSION) ||
-        sidecar.Metadata["checkpoint-count"] !== String(this.checkpointCount)
+        !isSupportedDemoCheckpointVersion(
+          Number(sidecar.Metadata?.["checkpoint-version"]),
+        ) ||
+        sidecar.Metadata?.["checkpoint-count"] !== String(this.checkpointCount)
       )
         return false;
       const demo = await this.client.send(

@@ -1,12 +1,24 @@
-import { type CSSProperties, useLayoutEffect, useRef, useState } from "react";
+import {
+  type CSSProperties,
+  useCallback,
+  useLayoutEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import { FaHand } from "react-icons/fa6";
 import { ImArrowDownRight, ImHome } from "react-icons/im";
 import { LuUsers } from "react-icons/lu";
 import { PiFlagBannerFill } from "react-icons/pi";
-import { useStreamSnapshot } from "../state/streamSnapshotStore";
+import {
+  streamSnapshotStore,
+  useStreamSnapshot,
+} from "../state/streamSnapshotStore";
+import { streamClock } from "../state/streamPlaybackStore";
 import { useMissionType } from "../state/gameEntityStore";
 import { displayTeamName, useCaster } from "../state/casterStore";
 import type { TeamScore } from "../stream/types";
+import { flagReturnSecondsRemaining } from "../stream/flagReturnTimer";
 import { EditableTeamName } from "./TeamNameDialog";
 import { type MatchHudStyle, useSettings } from "./SettingsProvider";
 import { formatHudClock, useMatchClockMs } from "./useMatchClock";
@@ -402,6 +414,40 @@ function BroadcastMatchHUD({
   );
 }
 
+function subscribeFlagCountdown(onChange: () => void) {
+  const unsubscribe = streamSnapshotStore.subscribe(onChange);
+  // Playback time keeps advancing even when no new packets arrive.
+  const timer = setInterval(onChange, 250);
+  return () => {
+    unsubscribe();
+    clearInterval(timer);
+  };
+}
+
+function DroppedFlagLabel({ teamId }: { teamId: number }) {
+  const getRemaining = useCallback(
+    () =>
+      flagReturnSecondsRemaining(
+        streamSnapshotStore.getState().snapshot,
+        teamId,
+        streamClock.time,
+      ),
+    [teamId],
+  );
+  const remaining = useSyncExternalStore(
+    subscribeFlagCountdown,
+    getRemaining,
+    getRemaining,
+  );
+  return remaining == null ? (
+    "Dropped"
+  ) : (
+    <>
+      Dropped <span className={styles.FlagSeparator}>–</span> {remaining}s
+    </>
+  );
+}
+
 function FlagStatus({
   team,
   statusIcons = true,
@@ -418,7 +464,7 @@ function FlagStatus({
       break;
     case "field":
       Icon = ImArrowDownRight;
-      label = "Dropped";
+      label = <DroppedFlagLabel teamId={team.teamId} />;
       break;
     case "home":
       Icon = ImHome;

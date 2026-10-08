@@ -113,6 +113,8 @@ export interface WatchHudStatePayload {
   /** MsgSystemClock replay: original duration (0 ⇒ count-up clock) and
    *  ms elapsed since it was received, held at match end. */
   clock?: { durationMs: number; elapsedMs: number };
+  /** Observed flag drop ages at catch-up, keyed by team (0 = Rabbit). */
+  flagDropElapsedSec?: Partial<Record<number, number>>;
   missionDisplayName?: string;
   missionTypeDisplayName?: string;
   gameClassName?: string;

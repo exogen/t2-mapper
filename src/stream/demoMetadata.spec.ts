@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { gzipSync } from "node:zlib";
 import {
   BlockTypeMove,
   BlockTypePacket,
@@ -6,6 +7,9 @@ import {
   type DemoParser,
 } from "t2-demo-parser";
 import { createRecordingFromParser, DemoStreamAdapter } from "./demoStreaming";
+import { bytesToBase64, encodeCheckpoint } from "./checkpointCodec";
+import { demoSha256, readDemoCheckpoints } from "./demoCheckpoints";
+import { flagReturnSecondsRemaining } from "./flagReturnTimer";
 
 const player = {
   position: { x: 0, y: 0, z: 100 },
@@ -151,6 +155,60 @@ function fixture(
   } as unknown as DemoParser;
   return { parser, nextBlock };
 }
+
+describe("v11 checkpoint playback", () => {
+  it("seeks without stale flag timing, then times newly observed drops", async () => {
+    const { parser } = fixture([
+      serverMessage("MsgClientReady", "", "CTFGame"),
+      serverMessage("MsgCTFAddTeam", "", "1", "Storm", "At Home", "0"),
+      serverMessage("MsgCTFFlagDropped", "", "Alice", "Storm", "1"),
+      ...Array.from({ length: 100 }, move),
+      serverMessage("MsgCTFFlagReturned", "", "Alice", "Storm", "1"),
+      serverMessage("MsgCTFFlagDropped", "", "Alice", "Storm", "1"),
+      ...Array.from({ length: 100 }, move),
+    ]);
+    const stream = createRecordingFromParser(parser)
+      .streamingPlayback as DemoStreamAdapter;
+    stream.setPlayerPredictionEnabled(true);
+    stream.stepToTime(3);
+    const checkpoint = stream.captureCheckpoint();
+    Reflect.deleteProperty(checkpoint.simulation.state, "flagDroppedAtSec");
+    const buffer = new ArrayBuffer(3);
+    const text = JSON.stringify({
+      format: "t2-mapper-seek-checkpoints",
+      version: 11,
+      demoBytes: buffer.byteLength,
+      demoSha256: await demoSha256(buffer),
+      requestedCount: 1,
+      checkpoints: [
+        {
+          tick: checkpoint.cursor.moveTicks,
+          matchStartSec: checkpoint.cursor.moveTicks * 0.032 + 60,
+          description: "Match started",
+          data: bytesToBase64(gzipSync(encodeCheckpoint(checkpoint))),
+        },
+      ],
+    });
+    stream.importCheckpoints(await readDemoCheckpoints(text, buffer));
+    expect(stream.stepToTime(6).flagDroppedAtSec).toEqual({ 1: 3.2 });
+
+    const restore = vi.spyOn(parser, "restoreCheckpoint");
+    const snapshot = stream.stepToTime(3.1);
+    expect(restore).toHaveBeenCalledOnce();
+    expect(stream.lastStepStartTimeSec).toBe(
+      checkpoint.cursor.moveTicks * 0.032,
+    );
+    expect(snapshot.teamScores[0].flagStatus).toBe("field");
+    expect(snapshot.flagDroppedAtSec).toEqual({});
+    expect(
+      flagReturnSecondsRemaining(snapshot, 1, snapshot.timeSec),
+    ).toBeNull();
+
+    const later = stream.stepToTime(4);
+    expect(later.flagDroppedAtSec).toEqual({ 1: 3.2 });
+    expect(flagReturnSecondsRemaining(later, 1, later.timeSec)).toBe(45);
+  });
+});
 
 describe("bounded demo metadata fallback", () => {
   it("identifies a controlled Player and rewinds without needing a date", () => {

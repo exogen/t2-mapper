@@ -1,5 +1,6 @@
 import type { PacketData, ParsedData, SensorGroupColor } from "t2-demo-parser";
 import { stripTaggedStringMarkup } from "./shared.js";
+import { updateFlagDropTimes, type FlagDropTimes } from "./flagReturnState.js";
 import {
   resolvePendingTargetStrings,
   updateTargetString,
@@ -53,6 +54,7 @@ export class WatchStateAccumulator {
 
   private playerRoster = new Map<number, RosterEntry>();
   private teamScores: TeamScoreEntry[] = [];
+  private flagDroppedAtSec: FlagDropTimes = {};
   private clock: { durationMs: number; receivedAt: number } | null = null;
   /** The match is underway (or seconds away): set by MsgMissionStart
    *  (start/countdown — idle warmup sends neither), a running match
@@ -129,6 +131,7 @@ export class WatchStateAccumulator {
    * and MsgMissionDropInfo once the new mission loads.
    */
   beginMissionChange(): void {
+    this.flagDroppedAtSec = {};
     this.missionDisplayName = undefined;
     this.missionTypeDisplayName = undefined;
     this.gameClassName = undefined;
@@ -346,6 +349,14 @@ export class WatchStateAccumulator {
   ): void {
     const msgType = this.resolveNetString(args[0]);
 
+    this.flagDroppedAtSec = updateFlagDropTimes(
+      this.flagDroppedAtSec,
+      msgType,
+      args,
+      (s) => this.resolveNetString(s),
+      (this.matchEndedAt ?? Date.now()) / 1000,
+    );
+
     const changes = applyServerMessageState(
       msgType,
       args,
@@ -515,6 +526,12 @@ export class WatchStateAccumulator {
         ([clientId, entry]) => ({ clientId, ...entry }),
       ),
       teamScores: this.teamScores.map((entry) => ({ ...entry })),
+      flagDropElapsedSec: Object.fromEntries(
+        Object.entries(this.flagDroppedAtSec).map(([team, droppedAt]) => [
+          team,
+          (this.matchEndedAt ?? Date.now()) / 1000 - droppedAt!,
+        ]),
+      ),
       clock: this.clock
         ? {
             durationMs: this.clock.durationMs,

@@ -27,6 +27,7 @@ import {
 import type { Vec3 } from "./streamHelpers";
 import type { StreamRecording, StreamSnapshot, TeamScore } from "./types";
 import { StreamEngine, type MutableEntity } from "./StreamEngine";
+import { flagReturnDelaySec } from "./flagReturnTimer";
 import { assertDemoBlockParsed } from "./demoParseError";
 import { collisionState } from "../collision/collisionContext";
 
@@ -1455,6 +1456,11 @@ export class DemoStreamAdapter extends StreamEngine {
       entities,
       flagTargets,
       controlPlayerGhostId: this.controlPlayerGhostId,
+      flagDroppedAtSec: this.flagDroppedAtSec,
+      flagReturnDelaySec: flagReturnDelaySec(
+        this.gameClassName,
+        this.missionTypeDisplayName,
+      ),
       playerSensorGroup: this.playerSensorGroup,
       status: this.lastStatus,
       chatMessages,

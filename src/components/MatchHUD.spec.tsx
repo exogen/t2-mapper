@@ -2,15 +2,20 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { MatchHUD } from "./MatchHUD";
 import { casterStore } from "../state/casterStore";
+import { streamClock } from "../state/streamPlaybackStore";
 import type { StreamSnapshot, TeamScore } from "../stream/types";
 import type { TeamColorScheme } from "./iffTheme";
 import type { ScoreStyle } from "./SettingsProvider";
 
 const state = vi.hoisted(() => ({
   snapshot: {
+    timeSec: 0,
     teamScores: [] as TeamScore[],
     playerSensorGroup: 0,
     playerRoster: [],
+    flagDroppedAtSec: {} as Partial<Record<number, number>>,
+    flagReturnDelaySec: 45 as number | null,
+    matchEndedAtSec: null as number | null,
   },
   observerTeamColors: "blueOrange" as TeamColorScheme,
   scoreStyle: "classic" as ScoreStyle,
@@ -28,6 +33,7 @@ vi.mock("./SettingsProvider", () => ({ useSettings: () => state }));
 vi.mock("../state/streamSnapshotStore", () => ({
   useStreamSnapshot: (select: (snapshot: Partial<StreamSnapshot>) => unknown) =>
     select(state.snapshot),
+  streamSnapshotStore: { getState: () => ({ snapshot: state.snapshot }) },
 }));
 vi.mock("../state/gameEntityStore", () => ({
   useDataSource: () => "demo",
@@ -57,12 +63,53 @@ beforeEach(() => {
     },
   ];
   state.snapshot.playerSensorGroup = 0;
+  state.snapshot.timeSec = 0;
+  state.snapshot.flagDroppedAtSec = {};
+  state.snapshot.flagReturnDelaySec = 45;
+  state.snapshot.matchEndedAtSec = null;
+  streamClock.time = 0;
   state.observerTeamColors = "blueOrange";
   state.scoreStyle = "classic";
   state.missionType = "CTF";
   casterStore.getState().activate("test:28000", "1", "Katabatic");
 });
-afterEach(() => casterStore.getState().suspend());
+afterEach(() => {
+  casterStore.getState().suspend();
+  streamClock.time = 0;
+});
+
+it.each(["classic", "broadcast"] as const)(
+  "counts down a dropped flag on the playback clock in %s",
+  (variant) => {
+    state.snapshot.teamScores[0].flagStatus = "field";
+    state.snapshot.flagDroppedAtSec = { 1: 10 };
+    streamClock.time = 25;
+    const render = () => renderToStaticMarkup(<MatchHUD variant={variant} />);
+    expect(render()).toMatch(/Dropped <span[^>]*>–<\/span> 30s/);
+    streamClock.time = 26;
+    expect(render()).toMatch(/Dropped <span[^>]*>–<\/span> 29s/);
+    // Seeking back uses the restored playback time, not time spent viewing.
+    streamClock.time = 20;
+    expect(render()).toMatch(/Dropped <span[^>]*>–<\/span> 35s/);
+    state.snapshot.matchEndedAtSec = 20;
+    streamClock.time = 100;
+    expect(render()).toMatch(/Dropped <span[^>]*>–<\/span> 35s/);
+    state.snapshot.teamScores[0].flagStatus = "home";
+    expect(render()).not.toContain("Dropped");
+  },
+);
+
+it.each(["classic", "broadcast"] as const)(
+  "keeps unknown dropped-flag timers unlabeled in %s",
+  (variant) => {
+    state.snapshot.teamScores[0].flagStatus = "field";
+    const render = () => renderToStaticMarkup(<MatchHUD variant={variant} />);
+    expect(render()).toContain(">Dropped</span>");
+    state.snapshot.flagDroppedAtSec = { 1: 0 };
+    state.snapshot.flagReturnDelaySec = null;
+    expect(render()).toContain(">Dropped</span>");
+  },
+);
 
 it("uses custom team names and the existing match clock in the Broadcast HUD", () => {
   casterStore.getState().renameTeams({ 1: "Blood Eagle" });

@@ -55,6 +55,8 @@ const WATCH_IDLE_GRACE_MS = parseInt(
 );
 /** Matches the real client's lobby refresh (LobbyGui.cs updateLobbyPlayerList). */
 const SCORES_POLL_MS = 4_000;
+/** Catch-up contains elapsed clock/flag ages even when packets stop arriving. */
+const CATCHUP_CACHE_MAX_AGE_MS = 250;
 /**
  * Live in-game score-HUD poll cadence (ms), 0 = off. Opens the score
  * screen (ShowHud) for one snapshot then closes it (HideHud) so the
@@ -410,6 +412,7 @@ export class WatchSession {
     kind: CatchupSource["kind"];
     epoch: number;
     packetCount: number;
+    createdAt: number;
     gzipped: Uint8Array;
   } | null = null;
   /** Queue delay (ms), retained while an older tournament channel drains. */
@@ -2229,12 +2232,14 @@ export class WatchSession {
   }
 
   private buildPayloadBytes(source: CatchupSource): Uint8Array {
+    const now = Date.now();
     const cached = this.cachedPayload;
     if (
       cached &&
       cached.kind === source.kind &&
       cached.epoch === source.epoch &&
-      cached.packetCount === source.packetCount
+      cached.packetCount === source.packetCount &&
+      now - cached.createdAt < CATCHUP_CACHE_MAX_AGE_MS
     ) {
       return cached.gzipped;
     }
@@ -2253,6 +2258,7 @@ export class WatchSession {
       kind: source.kind,
       epoch: source.epoch,
       packetCount: source.packetCount,
+      createdAt: now,
       gzipped,
     };
     return gzipped;

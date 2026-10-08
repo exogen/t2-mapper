@@ -1,4 +1,4 @@
-/** Generate missing/current-version seek sidecars for demos already in R2. */
+/** Generate missing or incompatible seek sidecars for demos already in R2. */
 import path from "node:path";
 import { parseArgs } from "node:util";
 import { DemoCheckpointPublisher } from "../relay/demoCheckpointPublisher.js";
@@ -26,7 +26,7 @@ if (values.help) {
       "                         Example: --filter=stonehengelt matches demos/server_stonehengelt_id.rec",
       "                         Server/map names match only when that text appears in the key",
       "  --dry-run              List demos needing checkpoints without writing anything",
-      "  --force                Regenerate even current sidecars",
+      "  --force                Regenerate even compatible sidecars",
       "  --concurrency=N        Parallel replay workers (default: 1)",
       "  --asset-root=PATH      Collision asset folder (default: docs/base)",
       "",
