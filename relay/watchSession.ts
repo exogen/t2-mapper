@@ -2253,7 +2253,7 @@ export class WatchSession {
     });
 
     const json = serializeCatchupPayload(payload);
-    const gzipped = gzipSync(json);
+    const gzipped = gzipSync(json, { level: 3 });
     this.cachedPayload = {
       kind: source.kind,
       epoch: source.epoch,
