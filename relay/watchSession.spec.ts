@@ -2738,6 +2738,48 @@ describe("WatchSession delayed transitions", () => {
     session!.setTournamentMode(tournament);
   }
 
+  it("keeps datablock caches current and separate across live, delayed and reconnected parsers", () => {
+    const { connections, ws, session } = start();
+    type Source = ReturnType<(typeof session)["liveSource"]>;
+    const live = session["liveSource"]();
+    const delayed = session["catchupSource"](ws as unknown as WebSocket)!;
+    expect(delayed.kind).toBe("delayed");
+    // Seed parsed datablocks as the parser does on a dispatched update.
+    const seed = (source: Source, label: string) => {
+      const saved = source.packetParser.saveState();
+      source.packetParser.restoreState({
+        ...saved,
+        dataBlockDataMap: new Map([[7, { label }]]),
+      });
+      source.watchState.dataBlockClassNames.set(7, "PlayerData");
+    };
+    const read = (source: Source) => {
+      // Exercise table reuse independently of the existing whole-payload cache.
+      session["cachedPayload"] = null;
+      return JSON.parse(
+        gunzipSync(session["buildPayloadBytes"](source)).toString(),
+      );
+    };
+    seed(live, "present");
+    seed(delayed, "past");
+    for (let i = 0; i < 3; i++) {
+      expect(read(live).dataBlocks[0][1].data.label).toBe("present");
+      expect(read(delayed).dataBlocks[0][1].data.label).toBe("past");
+    }
+    seed(live, "updated");
+    expect(read(live).dataBlocks[0][1].data.label).toBe("updated");
+    expect(read(delayed).dataBlocks[0][1].data.label).toBe("past");
+
+    cycle(connections, session, true);
+    const reconnected = session["liveSource"]();
+    expect(reconnected.packetParser).not.toBe(live.packetParser);
+    expect(read(reconnected).dataBlocks).toEqual([]);
+    seed(reconnected, "new mission");
+    expect(read(reconnected).dataBlocks[0][1].data.label).toBe("new mission");
+    // An older tournament stream can remain active while the upstream reconnects.
+    expect(read(delayed).dataBlocks[0][1].data.label).toBe("past");
+  });
+
   it("moves live viewers to the tournament countdown without sending early packets", () => {
     const { manager, connections } = createManager({ tourneyDelayMs: delayMs });
     managers.push(manager);

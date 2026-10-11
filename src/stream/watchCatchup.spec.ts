@@ -15,6 +15,7 @@ import { WatchStateAccumulator } from "../../relay/watchState";
 import { buildCatchupPayload } from "../../relay/watchCatchup";
 import { GAME_PROTOCOL_VERSION } from "../../relay/shared";
 import {
+  CatchupDataBlockCache,
   serializeCatchupPayload,
   deserializeCatchupPayload,
 } from "../../relay/watchSerialize";
@@ -272,6 +273,7 @@ describe("watch catch-up equivalence", () => {
       sim.watchState.controlObjectData = initialBlock.controlObjectData;
       sim.watchState.missionName = initialBlock.missionName ?? null;
 
+      const dataBlockCache = new CatchupDataBlockCache();
       const buildPayload = (epoch: number) =>
         deserializeCatchupPayload(
           serializeCatchupPayload(
@@ -282,6 +284,7 @@ describe("watch catch-up equivalence", () => {
               epoch,
               serverAddress: "test:28000",
             }),
+            dataBlockCache,
           ),
         );
 

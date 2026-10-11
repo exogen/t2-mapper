@@ -34,7 +34,10 @@ import {
 } from "./shared.js";
 import { WatchStateAccumulator } from "./watchState.js";
 import type { ServerMessageRosterEntry } from "./serverMessageState.js";
-import { serializeCatchupPayload } from "./watchSerialize.js";
+import {
+  CatchupDataBlockCache,
+  serializeCatchupPayload,
+} from "./watchSerialize.js";
 import { buildCatchupPayload } from "./watchCatchup.js";
 import type {
   DemoCoordinator,
@@ -408,6 +411,11 @@ export class WatchSession {
   private endMessage?: string;
   private lastStatus: ConnectionStatus = "connecting";
   private lastPingMs: number | null = null;
+  /** Live/delayed parsers keep separate tables; retired parsers aren't retained. */
+  private readonly dataBlockCaches = new WeakMap<
+    LiveParserKit["packetParser"],
+    CatchupDataBlockCache
+  >();
   private cachedPayload: {
     kind: CatchupSource["kind"];
     epoch: number;
@@ -2252,7 +2260,12 @@ export class WatchSession {
       serverAddress: this.key,
     });
 
-    const json = serializeCatchupPayload(payload);
+    let dataBlockCache = this.dataBlockCaches.get(source.packetParser);
+    if (!dataBlockCache) {
+      dataBlockCache = new CatchupDataBlockCache();
+      this.dataBlockCaches.set(source.packetParser, dataBlockCache);
+    }
+    const json = serializeCatchupPayload(payload, dataBlockCache);
     const gzipped = gzipSync(json, { level: 3 });
     this.cachedPayload = {
       kind: source.kind,
