@@ -2,6 +2,11 @@ import { EventEmitter } from "node:events";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import type {
+  IncomingMessage,
+  RequestListener,
+  ServerResponse,
+} from "node:http";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ClientMessage } from "./types";
 import type { WatchSessionManagerOptions } from "./watchSession";
@@ -10,6 +15,18 @@ import type { PatrolOptions } from "./patrol";
 
 const harness = vi.hoisted(() => ({
   server: null as EventEmitter | null,
+  httpHandler: null as RequestListener | null,
+  eventLoopStats: {
+    sampledAt: "2026-10-11T03:02:00.000Z",
+    windowMs: 60_000,
+    resolutionMs: 20,
+    samples: 1_000,
+    meanMs: 60,
+    p95Ms: 1_000,
+    p99Ms: 2_000,
+    maxMs: 2_847,
+  },
+  stopEventLoopMonitor: vi.fn(),
   sendCommand: vi.fn(),
   sendChat: vi.fn(),
   sendMoves: vi.fn(),
@@ -31,7 +48,20 @@ const harness = vi.hoisted(() => ({
 }));
 
 vi.mock("node:http", () => ({
-  default: { createServer: () => ({ listen: harness.listen }) },
+  default: {
+    createServer: (handler: RequestListener) => {
+      harness.httpHandler = handler;
+      return { listen: harness.listen };
+    },
+  },
+}));
+vi.mock("./eventLoopMonitor", () => ({
+  EventLoopMonitor: class {
+    getStats() {
+      return harness.eventLoopStats;
+    }
+    stop = harness.stopEventLoopMonitor;
+  },
 }));
 vi.mock("./masterQuery", () => ({
   queryServerList: harness.queryServerList,
@@ -91,6 +121,9 @@ vi.mock("./watchSession", async () => {
       detachSocket() {}
       getSession() {
         return undefined;
+      }
+      getStatusSummary() {
+        return [];
       }
       sendChat = harness.sendChat;
     },
@@ -220,6 +253,34 @@ describe("relay browser input", () => {
     });
     return browser;
   }
+
+  it("includes event loop diagnostics in health without failing on high delay", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "relay-health-"));
+    const manifest = path.join(dir, "manifest.json");
+    await fs.writeFile(manifest, JSON.stringify({ resources: { test: {} } }));
+    vi.stubEnv("GAME_BASE_PATH", dir);
+    vi.stubEnv("MANIFEST_PATH", manifest);
+    try {
+      await connect("watcher", "false");
+      const auth = await import("./auth");
+      vi.spyOn(auth, "loadCredentials").mockReturnValue({
+        certificate: "test",
+        privateKey: "test",
+      });
+      const response = { writeHead: vi.fn(), end: vi.fn() };
+      await harness.httpHandler!(
+        { url: "/health" } as IncomingMessage,
+        response as unknown as ServerResponse,
+      );
+      expect(response.writeHead).toHaveBeenCalledWith(200, expect.anything());
+      expect(JSON.parse(response.end.mock.calls[0][0])).toMatchObject({
+        status: "ok",
+        eventLoopDelay: harness.eventLoopStats,
+      });
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
 
   it("reports unexpected watch attachment failures as an ended join", async () => {
     harness.watch.mockImplementationOnce(() => {
@@ -470,6 +531,7 @@ describe("relay browser input", () => {
         harness.watchOptions!.onSessionsChanged!([address], controls);
         await writing;
         harness.lifecycleHandlers.get(event)!(new Error("injected crash"));
+        expect(harness.stopEventLoopMonitor).toHaveBeenCalledOnce();
         await vi.advanceTimersByTimeAsync(0);
         expect(exit).not.toHaveBeenCalled();
         releaseWrite();

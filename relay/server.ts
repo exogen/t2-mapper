@@ -10,6 +10,7 @@ import { getConnectionRetryPolicy } from "./connectionRetryPolicy.js";
 import { ServerPasswords } from "./serverPasswords.js";
 import { loadChatEnabled } from "./chatPolicy.js";
 import { BrowserAudit } from "./browserAudit.js";
+import { EventLoopMonitor } from "./eventLoopMonitor.js";
 import { handleDemoDownload } from "./demoDownload.js";
 import { DemoSourceCache } from "./demoSourceCache.js";
 import { DemoCheckpointPublisher } from "./demoCheckpointPublisher.js";
@@ -186,6 +187,8 @@ const WATCH_TOURNEY_SKIP_TYPES =
       )
     : ["LakRabbit"];
 
+const eventLoopMonitor = new EventLoopMonitor();
+
 /** HTTP health checks and demo downloads; WebSocket upgrades are separate. */
 const httpServer = http.createServer(async (req, res) => {
   if (await handleDemoDownload(req, res, TRUST_FLY_PROXY, demoSourceCache))
@@ -302,6 +305,7 @@ const httpServer = http.createServer(async (req, res) => {
           status: allOk ? "ok" : "degraded",
           uptimeSec: Math.round(process.uptime()),
           rssBytes: process.memoryUsage.rss(),
+          eventLoopDelay: eventLoopMonitor.getStats(),
           checks,
         },
         null,
@@ -622,6 +626,7 @@ function logExit(message: string): void {
 function drainSessions(timeoutMs: number): Promise<unknown> {
   // Preserve the pre-exit snapshot: teardown must not save an empty server list.
   shuttingDown = true;
+  eventLoopMonitor.stop();
   patroller?.stop();
   watchSessions.shutdown();
   return Promise.race([
