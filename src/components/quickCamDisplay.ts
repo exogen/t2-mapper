@@ -1,3 +1,4 @@
+import { getPlayerResolver } from "../state/playerResolver";
 import { BiSolidCameraHome } from "react-icons/bi";
 import { LuUser } from "react-icons/lu";
 import { PiFlagBannerFill } from "react-icons/pi";
@@ -8,6 +9,7 @@ export function quickCamDisplay(
   slot: QuickCamSlot,
   camera: SavedCamera | undefined,
   flags: readonly FlagCamera[],
+  players = getPlayerResolver(),
 ) {
   const flagSlot =
     camera?.kind === "flag" ? camera.slot : !camera ? slot : null;
@@ -19,7 +21,7 @@ export function quickCamDisplay(
   } else {
     switch (camera?.kind) {
       case "player":
-        label = camera.displayName;
+        label = players.display(camera.player).name || "Player";
         break;
       case "flag":
         label = `Flag ${camera.slot}`;

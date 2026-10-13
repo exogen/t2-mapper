@@ -153,6 +153,7 @@ interface PositionedBase extends EntityBase {
   targetRenderFlags?: number;
   /** Target manager id backing this entity's target info, if any. */
   targetId?: number;
+  targetGeneration?: number;
   iffColor?: { r: number; g: number; b: number };
   /** Target name from the target system — a player's name on Players,
    *  the owning team's name on flag Items. */

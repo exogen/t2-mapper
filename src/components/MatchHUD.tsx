@@ -5,6 +5,7 @@ import { useMissionType } from "../state/gameEntityStore";
 import { displayTeamName, useCaster } from "../state/casterStore";
 import type { TeamScore } from "../stream/types";
 import { FlagStatus } from "./FlagStatus";
+import { useFollowCamera } from "./useFollowCamera";
 import { EditableTeamName } from "./TeamNameDialog";
 import { type MatchHudStyle, useSettings } from "./SettingsProvider";
 import { formatHudClock, useMatchClockMs } from "./useMatchClock";
@@ -28,6 +29,11 @@ const PANEL_OUTER = layout.accentWidth + layout.accentGap;
 const FRAME_HEIGHT = PANEL_BOTTOM + 3.75;
 const CLOCK_TOP = PANEL_TOP + layout.clockTopOffset;
 const CLOCK_BOTTOM = CLOCK_TOP + layout.clockHeight;
+
+interface MatchHUDActions {
+  onOpenScoreScreen: () => void;
+  onFollowFlag?: (slot: number) => void;
+}
 
 function TeamFrame({
   side,
@@ -110,6 +116,8 @@ function BroadcastTeam({
   frameWidth,
   panelInner,
   competitionScores,
+  onOpenScoreScreen,
+  onFollowFlag,
 }: {
   team: TeamScore;
   teams: readonly TeamScore[];
@@ -118,7 +126,7 @@ function BroadcastTeam({
   frameWidth: number;
   panelInner: number;
   competitionScores: boolean;
-}) {
+} & MatchHUDActions) {
   const name = useCaster(() => displayTeamName(team.teamId, team.name));
   const nameWidthProgress = Math.min(
     1,
@@ -168,20 +176,27 @@ function BroadcastTeam({
               <EditableTeamName teamId={team.teamId} teams={teams} />
             </div>
             <div className={styles.FinePrint}>
-              <span
-                className={styles.PlayerCount}
-                title={`${team.playerCount} ${team.playerCount === 1 ? "player" : "players"}`}
+              <button
+                type="button"
+                className={`${styles.Action} ${styles.PlayerCount}`}
+                title={`${team.playerCount} ${team.playerCount === 1 ? "player" : "players"} — show score screen`}
+                aria-haspopup="dialog"
+                onClick={onOpenScoreScreen}
               >
                 <LuUsers aria-hidden />
                 {team.playerCount.toLocaleString()}
-              </span>
-              {team.flagStatus != null && (
-                <span
-                  className={styles.FlagStatus}
-                  data-status={team.flagStatus}
+              </button>
+              {team.flag != null && (
+                <button
+                  type="button"
+                  className={`${styles.Action} ${styles.FlagStatus}`}
+                  data-status={team.flag?.status}
+                  title={onFollowFlag ? "Follow flag" : undefined}
+                  disabled={!onFollowFlag}
+                  onClick={() => onFollowFlag?.(team.teamId)}
                 >
-                  <FlagStatus team={team} icons="flag" coloredNames />
-                </span>
+                  <FlagStatus flag={team.flag} icons="flag" coloredNames />
+                </button>
               )}
             </div>
           </div>
@@ -288,12 +303,14 @@ function BroadcastMatchHUD({
   playerSensorGroup,
   colorScheme,
   competitionScores,
+  onOpenScoreScreen,
+  onFollowFlag,
 }: {
   teams: readonly TeamScore[];
   playerSensorGroup: number | undefined;
   colorScheme: TeamColorScheme;
   competitionScores: boolean;
-}) {
+} & MatchHUDActions) {
   const customNames = useCaster((state) => state.settings?.teamNames);
   // Carrier changes fit the reserved space; only these values affect sizing.
   const contentKey = JSON.stringify([
@@ -303,7 +320,7 @@ function BroadcastMatchHUD({
       customNames?.[team.teamId] || team.name,
       displayedScore(team.score, competitionScores),
       team.playerCount,
-      team.flagStatus != null,
+      team.flag != null,
     ]),
   ]);
   const { containerRef, panelWidth, scoreWidth } = useBroadcastSize(contentKey);
@@ -364,6 +381,8 @@ function BroadcastMatchHUD({
                 color={teamColor(left, playerSensorGroup, colorScheme)}
                 frameWidth={frameWidth}
                 panelInner={panelInner}
+                onOpenScoreScreen={onOpenScoreScreen}
+                onFollowFlag={onFollowFlag}
               />
             )}
             {right && (
@@ -375,6 +394,8 @@ function BroadcastMatchHUD({
                 color={teamColor(right, playerSensorGroup, colorScheme)}
                 frameWidth={frameWidth}
                 panelInner={panelInner}
+                onOpenScoreScreen={onOpenScoreScreen}
+                onFollowFlag={onFollowFlag}
               />
             )}
             {row === 0 && (
@@ -403,7 +424,14 @@ function BroadcastMatchHUD({
   );
 }
 
-export function MatchHUD({ variant }: { variant: MatchHudStyle }) {
+export function MatchHUD({
+  variant,
+  onOpenScoreScreen,
+}: {
+  variant: MatchHudStyle;
+  onOpenScoreScreen: () => void;
+}) {
+  const { enabled, followFlag } = useFollowCamera();
   const teamScores = useStreamSnapshot((snap) => snap?.teamScores);
   const playerSensorGroup = useStreamSnapshot(
     (snap) => snap?.playerSensorGroup,
@@ -428,6 +456,8 @@ export function MatchHUD({ variant }: { variant: MatchHudStyle }) {
         playerSensorGroup={playerSensorGroup}
         colorScheme={observerTeamColors}
         competitionScores={competitionScores}
+        onOpenScoreScreen={onOpenScoreScreen}
+        onFollowFlag={enabled ? followFlag : undefined}
       />
     );
   }
@@ -436,6 +466,8 @@ export function MatchHUD({ variant }: { variant: MatchHudStyle }) {
       teams={sorted}
       playerSensorGroup={playerSensorGroup}
       competitionScores={competitionScores}
+      onOpenScoreScreen={onOpenScoreScreen}
+      onFollowFlag={enabled ? followFlag : undefined}
     />
   );
 }
@@ -444,11 +476,13 @@ function ClassicMatchHUD({
   teams,
   playerSensorGroup,
   competitionScores,
+  onOpenScoreScreen,
+  onFollowFlag,
 }: {
   teams: readonly TeamScore[];
   playerSensorGroup: number | undefined;
   competitionScores: boolean;
-}) {
+} & MatchHUDActions) {
   const observerCount = useStreamSnapshot(
     (snap) =>
       snap?.playerRoster?.reduce(
@@ -457,12 +491,20 @@ function ClassicMatchHUD({
       ) ?? 0,
   );
   // Keep the column aligned when only some teams have known flag state.
-  const hasFlags = teams.some((team) => team.flagStatus != null);
+  const hasFlags = teams.some((team) => team.flag != null);
   return (
     <table className={styles.TeamScores} aria-label="Match HUD">
       {observerCount > 0 && (
         <caption className={styles.ObserverCount}>
-          {observerCount} {observerCount === 1 ? "observer" : "observers"}
+          <button
+            type="button"
+            className={styles.Action}
+            title="Show score screen"
+            aria-haspopup="dialog"
+            onClick={onOpenScoreScreen}
+          >
+            {observerCount} {observerCount === 1 ? "observer" : "observers"}
+          </button>
         </caption>
       )}
       <tbody>
@@ -481,7 +523,15 @@ function ClassicMatchHUD({
                 <EditableTeamName teamId={team.teamId} teams={teams} />
               </td>
               <td className={styles.TeamCount}>
-                ({team.playerCount.toLocaleString()})
+                <button
+                  type="button"
+                  className={styles.Action}
+                  title="Show score screen"
+                  aria-haspopup="dialog"
+                  onClick={onOpenScoreScreen}
+                >
+                  ({team.playerCount.toLocaleString()})
+                </button>
               </td>
               <td
                 className={`${styles.TeamScore} ${competitionScores ? styles.CompetitionScore : styles.ClassicScore}`}
@@ -489,8 +539,18 @@ function ClassicMatchHUD({
                 {displayedScore(team.score, competitionScores).toLocaleString()}
               </td>
               {hasFlags && (
-                <td className={styles.TeamFlag} data-status={team.flagStatus}>
-                  <FlagStatus team={team} />
+                <td className={styles.TeamFlag} data-status={team.flag?.status}>
+                  {team.flag && (
+                    <button
+                      type="button"
+                      className={styles.Action}
+                      title={onFollowFlag ? "Follow flag" : undefined}
+                      disabled={!onFollowFlag}
+                      onClick={() => onFollowFlag?.(team.teamId)}
+                    >
+                      <FlagStatus flag={team.flag} />
+                    </button>
+                  )}
                 </td>
               )}
             </tr>

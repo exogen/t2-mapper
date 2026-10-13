@@ -130,7 +130,7 @@ export function SpectatorController() {
     // body); while they have no body at all the camera free-flies in
     // place with follow still armed.
     const spState = streamPlaybackStore.getState();
-    if (spState.followEntityId || spState.pendingFollowPlayerName) {
+    if (spState.followEntityId || spState.followPlayer) {
       const target = resolveWatchFollowTarget();
       if (target) {
         const wanted = streamPlaybackStore.getState().followCameraMode;

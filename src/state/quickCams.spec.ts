@@ -25,6 +25,7 @@ import {
 } from "./watchFollow";
 import { streamEntityToGameEntity } from "../stream/entityBridge";
 import type { StreamSnapshot } from "../stream/types";
+import { getPlayerResolver } from "./playerResolver";
 
 function body(
   id: string,
@@ -73,6 +74,190 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+it.each([undefined, "12345"])(
+  "recalls and labels a renamed player with GUID %s across respawns",
+  (guid) => {
+    const roster = {
+      clientId: 7,
+      clientGeneration: 1,
+      targetId: 30,
+      guid,
+      name: "Player",
+      rawName: "Player",
+      teamId: 1,
+      score: 0,
+      isSmurf: !guid,
+    };
+    setStreamSnapshot({
+      playerIdentityScope: "session",
+      playerRoster: [roster],
+      playerTargets: [
+        {
+          targetId: 30,
+          targetGeneration: 0,
+          name: "Player",
+          rawName: "Player",
+        },
+      ],
+    } as StreamSnapshot);
+    body("before", 30);
+    enterWatchFollow("before");
+    saveQuickCam(3);
+    const saved = casterStore.getState().settings!.quickCams[3];
+    exitToFreeFly();
+    // The body can retain old text briefly; current metadata wins.
+    setStreamSnapshot({
+      playerIdentityScope: "session",
+      playerRoster: [{ ...roster, name: "Renamed", rawName: "\x0cRenamed" }],
+      playerTargets: [
+        {
+          targetId: 30,
+          targetGeneration: 0,
+          name: "Renamed",
+          rawName: "\x0cRenamed",
+        },
+      ],
+    } as StreamSnapshot);
+    body("after", 30);
+    expect(saved?.kind).toBe("player");
+    if (saved?.kind !== "player") throw new Error("Expected saved player");
+    expect(getPlayerResolver().display(saved.player).name).toBe("Renamed");
+    restoreQuickCam(3);
+    expect(streamPlaybackStore.getState().followEntityId).toBe("after");
+    body("respawn", 30);
+    expect(resolveWatchFollowTarget()).toBe("respawn");
+    expect(
+      getPlayerResolver().resolve(streamPlaybackStore.getState().followPlayer!)
+        ?.rawName,
+    ).toBe("\x0cRenamed");
+    // Preserve the confirmed rename across reloads/reconnects, even for smurfs.
+    casterStore.getState().suspend();
+    casterStore.getState().activate("test:28000", "1", "Katabatic");
+    setStreamSnapshot({
+      playerIdentityScope: "reconnected",
+      playerRoster: [
+        {
+          ...roster,
+          clientId: 8,
+          targetId: 90,
+          name: "Renamed",
+          rawName: "\x0cRenamed",
+        },
+      ],
+    } as StreamSnapshot);
+    body("reconnected", 90, 0, "Renamed");
+    restoreQuickCam(3);
+    expect(streamPlaybackStore.getState().followEntityId).toBe("reconnected");
+  },
+);
+
+it("only persists confirmed reference changes and stops observing after suspension", () => {
+  const roster = {
+    clientId: 7,
+    clientGeneration: 1,
+    targetId: 30,
+    name: "Player",
+    rawName: "Player",
+    teamId: 1,
+    score: 0,
+    ping: 0,
+    packetLoss: 0,
+  };
+  setStreamSnapshot({
+    playerIdentityScope: "session",
+    playerRoster: [roster],
+  } as StreamSnapshot);
+  body("player", 30);
+  enterWatchFollow("player");
+  saveQuickCam(3);
+  const persist = vi.spyOn(sessionStorage, "setItem");
+  const changed = {
+    playerIdentityScope: "session",
+    playerRoster: [{ ...roster, rawName: "\x0cRenamed", name: "Renamed" }],
+  } as StreamSnapshot;
+  const action = casterStore.getState().lastCameraAction;
+  setStreamSnapshot(changed);
+  expect(persist).toHaveBeenCalledOnce();
+  expect(casterStore.getState().lastCameraAction).toBe(action);
+  setStreamSnapshot({ ...changed, timeSec: 2 });
+  setStreamSnapshot({
+    ...changed,
+    playerRoster: changed.playerRoster.map((p) => ({ ...p })),
+  });
+  expect(persist).toHaveBeenCalledOnce();
+  casterStore.getState().suspend();
+  setStreamSnapshot({ ...changed, playerRoster: [roster] });
+  expect(persist).toHaveBeenCalledOnce();
+});
+
+it("does not recall a different player after its target/client IDs are recycled", () => {
+  const roster = {
+    clientId: 7,
+    clientGeneration: 1,
+    targetId: 30,
+    name: "Player",
+    rawName: "Player",
+    teamId: 1,
+    score: 0,
+  };
+  setStreamSnapshot({
+    playerIdentityScope: "session",
+    playerRoster: [roster],
+    playerTargets: [
+      { targetId: 30, targetGeneration: 0, name: "Player", rawName: "Player" },
+    ],
+  } as StreamSnapshot);
+  body("before", 30);
+  enterWatchFollow("before");
+  saveQuickCam(3);
+  exitToFreeFly();
+  setStreamSnapshot({
+    playerIdentityScope: "session",
+    playerRoster: [{ ...roster, clientGeneration: 2 }],
+    playerTargets: [
+      { targetId: 30, targetGeneration: 1, name: "Player", rawName: "Player" },
+    ],
+  } as StreamSnapshot);
+  body("impostor", 30);
+  restoreQuickCam(3);
+  expect(streamPlaybackStore.getState().followEntityId).toBeNull();
+  expect(resolveWatchFollowTarget()).toBeNull();
+});
+
+it("does not reattach a freed client's target by name before its roster entry is dropped", () => {
+  const roster = {
+    clientId: 7,
+    clientGeneration: 1,
+    targetId: 30,
+    name: "Player",
+    rawName: "Player",
+    teamId: 1,
+    score: 0,
+  };
+  setStreamSnapshot({
+    playerIdentityScope: "session",
+    playerRoster: [roster],
+    playerTargets: [
+      { targetId: 30, targetGeneration: 0, name: "Player", rawName: "Player" },
+    ],
+  } as StreamSnapshot);
+  body("before", 30);
+  enterWatchFollow("before");
+  saveQuickCam(3);
+  exitToFreeFly();
+  // TargetFreeEvent arrives before MsgClientDrop; the target slot is already reused.
+  setStreamSnapshot({
+    playerIdentityScope: "session",
+    playerRoster: [{ ...roster, targetId: -1 }],
+    playerTargets: [
+      { targetId: 30, targetGeneration: 1, name: "Player", rawName: "Player" },
+    ],
+  } as StreamSnapshot);
+  body("other", 30);
+  restoreQuickCam(3);
+  expect(streamPlaybackStore.getState().followEntityId).toBeNull();
+});
+
 it.each(["live", "demo"] as const)(
   "saves and restores a free camera in %s, including its orientation and FOV",
   (source) => {
@@ -118,8 +303,7 @@ it.each([
     expect(casterStore.getState().settings?.quickCams[3]).toMatchObject({
       kind: "player",
       mode: mode === "firstPersonOverride" ? "firstPerson" : "follow",
-      displayName: "Player",
-      playerName: "Player",
+      player: expect.objectContaining({ rawName: "Player" }),
     });
     exitToFreeFly();
     body("after-seek", 30);
@@ -160,8 +344,7 @@ it.each(["orbitOverride", "firstPersonOverride"] as const)(
     saveQuickCam(1);
     expect(casterStore.getState().settings?.quickCams[1]).toMatchObject({
       kind: "player",
-      playerName: "Player",
-      displayName: "[OLD]Player",
+      player: expect.objectContaining({ targetId: 30 }),
     });
     casterStore.getState().suspend();
     casterStore.getState().activate("test:28000", "1", "Katabatic");
@@ -197,10 +380,14 @@ it("waits for the saved player without following someone who reused their target
   body("dead-body", 30, 1);
   restoreQuickCam(3);
   expect(streamPlaybackStore.getState().cameraMode).toBe("freeFly");
-  expect(streamPlaybackStore.getState().pendingFollowPlayerName).toBe("Player");
+  expect(streamPlaybackStore.getState().followPlayer).toMatchObject({
+    rawName: "Player",
+  });
   body("reused-body", 30, 0, "Someone else");
   expect(resolveWatchFollowTarget()).toBeNull();
-  expect(streamPlaybackStore.getState().pendingFollowPlayerName).toBe("Player");
+  expect(streamPlaybackStore.getState().followPlayer).toMatchObject({
+    rawName: "Player",
+  });
   expect(streamPlaybackStore.getState().cameraMode).toBe("freeFly");
 });
 
@@ -235,7 +422,7 @@ it.each([
       followCameraMode: mode,
       followEntityId: null,
       followTargetId: null,
-      pendingFollowPlayerName: "Player",
+      followPlayer: expect.objectContaining({ rawName: "Player" }),
     });
     expect(camera.position.equals(position)).toBe(true);
     expect(camera.quaternion.equals(orientation)).toBe(true);
@@ -252,7 +439,7 @@ it.each([
       followCameraMode: mode,
       followEntityId: "respawn",
       followTargetId: 90,
-      pendingFollowPlayerName: null,
+      followPlayer: expect.objectContaining({ targetId: 90 }),
       orbitOverrideYaw: 0.8,
       orbitOverridePitch: 0.4,
       orbitOverrideDistance: 40,
@@ -281,7 +468,9 @@ it("can arm a saved player with no entities and see their existing body become a
   if (entity.renderType !== "Player") throw Error("Expected a player");
   entity.damageState = 0;
   expect(resolveWatchFollowTarget()).toBe("new-body");
-  expect(streamPlaybackStore.getState().pendingFollowPlayerName).toBeNull();
+  expect(streamPlaybackStore.getState().followPlayer).toMatchObject({
+    targetId: 90,
+  });
 });
 
 it("does not resolve a pending name collision until only one player matches", () => {
@@ -301,7 +490,9 @@ it("does not resolve a pending name collision until only one player matches", ()
     }),
   );
   expect(resolveWatchFollowTarget()).toBeNull();
-  expect(streamPlaybackStore.getState().pendingFollowPlayerName).toBe("Player");
+  expect(streamPlaybackStore.getState().followPlayer).toMatchObject({
+    rawName: "Player",
+  });
   gameEntityStore.getState().deleteStreamEntity("second-body");
   expect(resolveWatchFollowTarget()).toBe("first-body");
 });
@@ -343,9 +534,13 @@ it.each([
     targetRenderFlags: 2,
   });
   restoreQuickCam(3);
-  expect(streamPlaybackStore.getState().pendingFollowPlayerName).toBe("Player");
+  expect(streamPlaybackStore.getState().followPlayer).toMatchObject({
+    rawName: "Player",
+  });
   cancel();
-  expect(streamPlaybackStore.getState().pendingFollowPlayerName).toBeNull();
+  expect(streamPlaybackStore.getState().followPlayer?.rawName).not.toBe(
+    "Player",
+  );
   gameEntityStore.getState().setStreamEntity(
     streamEntityToGameEntity({
       id: "late-body",
@@ -369,7 +564,7 @@ it("can save the pending player and view into another slot", () => {
   expect(casterStore.getState().settings?.quickCams[4]).toMatchObject({
     kind: "player",
     mode: "firstPerson",
-    playerName: "Player",
+    player: expect.objectContaining({ rawName: "Player" }),
   });
 });
 
@@ -399,6 +594,32 @@ it("leaves the camera alone when multiple players share the saved base name", ()
       playerRawName: "\x10\x0b[B]\x08Player\x11",
     }),
   );
+  const current = streamPlaybackStore.getState();
+  const action = casterStore.getState().lastCameraAction;
+  restoreQuickCam(3);
+  expect(streamPlaybackStore.getState()).toBe(current);
+  expect(casterStore.getState().lastCameraAction).toBe(action);
+});
+
+it("keeps an ambiguous camera unchanged when only one matching player has a body", () => {
+  body("saved", 30);
+  enterWatchFollow("saved");
+  saveQuickCam(3);
+  exitToFreeFly();
+  setStreamSnapshot({
+    playerIdentityScope: "new-session",
+    playerRoster: [7, 8].map((clientId) => ({
+      clientId,
+      targetId: clientId + 80,
+      name: "Player",
+      rawName: "Player",
+      teamId: 1,
+      score: 0,
+      ping: 0,
+      packetLoss: 0,
+    })),
+  } as StreamSnapshot);
+  body("only-visible-match", 87);
   const current = streamPlaybackStore.getState();
   const action = casterStore.getState().lastCameraAction;
   restoreQuickCam(3);
@@ -436,7 +657,7 @@ it("saves the chosen follow view while waiting for a respawn", () => {
   expect(casterStore.getState().settings?.quickCams[3]).toMatchObject({
     kind: "player",
     mode: "firstPerson",
-    playerName: "Player",
+    player: expect.objectContaining({ rawName: "Player" }),
   });
 });
 

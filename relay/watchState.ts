@@ -1,3 +1,14 @@
+import { randomUUID } from "node:crypto";
+import {
+  PlayerResolver,
+  collectPlayerTargets,
+  type PlayerIdentityState,
+} from "./playerReference.js";
+import {
+  refreshFlagCarriers,
+  legacyFlagFields,
+  type FlagState,
+} from "./flagState.js";
 import type { PacketData, ParsedData, SensorGroupColor } from "t2-demo-parser";
 import { stripTaggedStringMarkup } from "./shared.js";
 import { updateFlagDropTimes, type FlagDropTimes } from "./flagReturnState.js";
@@ -54,6 +65,12 @@ export class WatchStateAccumulator {
 
   private playerRoster = new Map<number, RosterEntry>();
   private teamScores: TeamScoreEntry[] = [];
+  private flags = new Map<number, FlagState>();
+  private playerIdentity = {
+    scope: randomUUID(),
+    generations: new Map<number, number>(),
+  } satisfies PlayerIdentityState;
+  private targetGenerations = new Map<number, number>();
   private flagDroppedAtSec: FlagDropTimes = {};
   private clock: { durationMs: number; receivedAt: number } | null = null;
   /** The match is underway (or seconds away): set by MsgMissionStart
@@ -106,8 +123,10 @@ export class WatchStateAccumulator {
 
   constructor(initialRoster?: ReadonlyMap<number, RosterEntry>) {
     if (initialRoster)
-      for (const [id, entry] of initialRoster)
+      for (const [id, entry] of initialRoster) {
         this.playerRoster.set(id, { ...entry });
+        this.playerIdentity.generations.set(id, entry.clientGeneration ?? 0);
+      }
   }
 
   /** Stream-authoritative server name (MsgMissionDropInfo), when known. */
@@ -132,6 +151,7 @@ export class WatchStateAccumulator {
    */
   beginMissionChange(): void {
     this.flagDroppedAtSec = {};
+    this.flags.clear();
     this.missionDisplayName = undefined;
     this.missionTypeDisplayName = undefined;
     this.gameClassName = undefined;
@@ -200,6 +220,12 @@ export class WatchStateAccumulator {
           break;
         case "TargetFreeEvent":
           if (typeof data.targetId === "number") {
+            this.targetGenerations.set(
+              data.targetId,
+              (this.targetGenerations.get(data.targetId) ?? 0) + 1,
+            );
+            for (const player of this.playerRoster.values())
+              if (player.targetId === data.targetId) player.targetId = -1;
             this.targetRawNames.delete(data.targetId);
             this.targetTypes.delete(data.targetId);
             this.pendingNameTags.delete(data.targetId);
@@ -361,7 +387,13 @@ export class WatchStateAccumulator {
       msgType,
       args,
       (s) => this.resolveNetString(s),
-      { playerRoster: this.playerRoster, teamScores: this.teamScores },
+      {
+        playerRoster: this.playerRoster,
+        teamScores: this.teamScores,
+        flags: this.flags,
+        playerIdentity: this.playerIdentity,
+        resolvePlayers: () => this.resolvePlayers(),
+      },
       (team) => team,
     );
     if (changes) {
@@ -432,6 +464,7 @@ export class WatchStateAccumulator {
       this.loadInfo.apply(msgType, args, (s) => this.resolveNetString(s));
     } else if (msgType === "MsgClientReady" && args.length >= 3) {
       this.gameClassName = this.resolveNetString(args[2]) || this.gameClassName;
+      this.flags.clear();
       if (this.matchEndedAt != null && this.clock)
         this.clock.receivedAt += Date.now() - this.matchEndedAt;
       this.matchEnded = false;
@@ -520,12 +553,38 @@ export class WatchStateAccumulator {
     return flat;
   }
 
+  private resolvePlayers(): PlayerResolver {
+    const players = Array.from(this.playerRoster, ([clientId, player]) => ({
+      clientId,
+      ...player,
+    }));
+    const targets = collectPlayerTargets(
+      this.targetRawNames,
+      this.targetTypes,
+      this.targetTeams,
+      this.targetGenerations,
+      players.flatMap((p) => (p.targetId != null ? [p.targetId] : [])),
+    );
+    return new PlayerResolver(this.playerIdentity.scope, players, targets);
+  }
+
   getHudState(): WatchHudStatePayload {
+    const players = this.resolvePlayers();
+    refreshFlagCarriers(this.flags, players);
     return {
+      playerIdentity: {
+        scope: this.playerIdentity.scope,
+        generations: Array.from(this.playerIdentity.generations),
+      },
+      targetGenerations: Array.from(this.targetGenerations),
+      flags: Array.from(this.flags.values()),
       playerRoster: [...this.playerRoster.entries()].map(
         ([clientId, entry]) => ({ clientId, ...entry }),
       ),
-      teamScores: this.teamScores.map((entry) => ({ ...entry })),
+      teamScores: this.teamScores.map((entry) => ({
+        ...entry,
+        ...legacyFlagFields(this.flags.get(entry.teamId), players),
+      })),
       flagDropElapsedSec: Object.fromEntries(
         Object.entries(this.flagDroppedAtSec).map(([team, droppedAt]) => [
           team,

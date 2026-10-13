@@ -3,8 +3,8 @@ import { LuUsers } from "react-icons/lu";
 import { IoMdStopwatch } from "react-icons/io";
 import { formatHudClock, useMatchClockMs } from "./useMatchClock";
 import type { PlayerRosterEntry, TeamScore } from "../stream/types";
-import { ColoredName } from "./ColoredName";
-import { PlayerAdminBadge } from "./PlayerAdminBadge";
+import { ScorePlayerName } from "./ScorePlayerName";
+import { useFollowCamera } from "./useFollowCamera";
 import styles from "./ScoreScreen.module.css";
 import { useScoreboard } from "./useScoreboard";
 import { EditableTeamName } from "./TeamNameDialog";
@@ -36,10 +36,12 @@ function PairedPlayerRows({
   left,
   right,
   connectedClientId,
+  onFollow,
 }: {
   left: PlayerRosterEntry[];
   right: PlayerRosterEntry[];
   connectedClientId: number | null | undefined;
+  onFollow?: (player: PlayerRosterEntry) => void;
 }) {
   const maxRows = Math.max(left.length, right.length);
   return (
@@ -56,8 +58,7 @@ function PairedPlayerRows({
             <td
               className={p1IsLocal ? styles.PlayerNameLocal : styles.PlayerName}
             >
-              {p1 ? p1.name ? <ColoredName raw={p1.rawName} /> : "..." : ""}
-              <PlayerAdminBadge player={p1} />
+              <ScorePlayerName player={p1} onFollow={onFollow} />
             </td>
             <td
               className={
@@ -69,8 +70,7 @@ function PairedPlayerRows({
             <td
               className={p2IsLocal ? styles.PlayerNameLocal : styles.PlayerName}
             >
-              {p2 ? p2.name ? <ColoredName raw={p2.rawName} /> : "..." : ""}
-              <PlayerAdminBadge player={p2} />
+              <ScorePlayerName player={p2} onFollow={onFollow} />
             </td>
             <td
               className={
@@ -112,6 +112,7 @@ function TeamPairSection({
   playersA,
   playersB,
   connectedClientId,
+  onFollow,
 }: {
   teamA: TeamScore;
   teamB: TeamScore | undefined;
@@ -119,6 +120,7 @@ function TeamPairSection({
   playersA: PlayerRosterEntry[];
   playersB: PlayerRosterEntry[];
   connectedClientId: number | null | undefined;
+  onFollow?: (player: PlayerRosterEntry) => void;
 }) {
   return (
     <tbody className={styles.PlayerBody}>
@@ -155,12 +157,19 @@ function TeamPairSection({
         left={playersA}
         right={playersB}
         connectedClientId={connectedClientId}
+        onFollow={onFollow}
       />
     </tbody>
   );
 }
 
 export function ScoreScreen({ onClose }: { onClose: () => void }) {
+  const { enabled, followPlayer } = useFollowCamera();
+  const onFollow = enabled
+    ? (player: PlayerRosterEntry) => {
+        if (followPlayer(player)) onClose();
+      }
+    : undefined;
   const dialogRef = useRef<HTMLDivElement>(null);
   const {
     connectedClientId,
@@ -256,6 +265,7 @@ export function ScoreScreen({ onClose }: { onClose: () => void }) {
                   playersA={teamPlayers.get(teamA.teamId) ?? []}
                   playersB={teamB ? (teamPlayers.get(teamB.teamId) ?? []) : []}
                   connectedClientId={connectedClientId}
+                  onFollow={onFollow}
                 />
               ))}
               {ffaPlayers ? (
@@ -270,6 +280,7 @@ export function ScoreScreen({ onClose }: { onClose: () => void }) {
                     left={ffaPlayers.slice(0, ffaHalf)}
                     right={ffaPlayers.slice(ffaHalf)}
                     connectedClientId={connectedClientId}
+                    onFollow={onFollow}
                   />
                 </tbody>
               ) : null}
@@ -287,6 +298,7 @@ export function ScoreScreen({ onClose }: { onClose: () => void }) {
                     left={observers.slice(0, Math.ceil(observers.length / 2))}
                     right={observers.slice(Math.ceil(observers.length / 2))}
                     connectedClientId={connectedClientId}
+                    onFollow={onFollow}
                   />
                 </tbody>
               ) : null}

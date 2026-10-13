@@ -40,7 +40,8 @@ vi.mock("./useMatchClock", async (original) => ({
   ...(await original<typeof import("./useMatchClock")>()),
   useMatchClockMs: () => -123_000,
 }));
-vi.mock("../state/streamSnapshotStore", () => ({
+vi.mock("../state/streamSnapshotStore", async (original) => ({
+  ...(await original<typeof import("../state/streamSnapshotStore")>()),
   useStreamSnapshot: (select: (snapshot: unknown) => unknown) =>
     select({
       controlPlayerGhostId: "player",
@@ -85,7 +86,9 @@ it.each<[boolean, HudPosition, boolean, HudPosition, boolean]>([
     settings.scoreHudPosition = score;
     settings.showQuickCamHud = showQuickCam;
     settings.quickCamHudPosition = quickCam;
-    const html = renderToStaticMarkup(<PlayerHUD />);
+    const html = renderToStaticMarkup(
+      <PlayerHUD onOpenScoreScreen={() => {}} />,
+    );
     expect(html.includes('aria-label="Player scores"')).toBe(showScore);
     expect(html.includes('aria-label="Quick cams"')).toBe(showQuickCam);
     expect(html.includes('alt="Blaster"')).toBe(weapons);
@@ -96,7 +99,7 @@ it("keeps weapon slots when a right-side quick cam HUD has no active mission", (
   settings.showQuickCamHud = true;
   settings.quickCamHudPosition = "right";
   casterStore.getState().suspend();
-  const html = renderToStaticMarkup(<PlayerHUD />);
+  const html = renderToStaticMarkup(<PlayerHUD onOpenScoreScreen={() => {}} />);
   expect(html).not.toContain('aria-label="Quick cams"');
   expect(html).toContain('alt="Blaster"');
 });
@@ -106,13 +109,17 @@ it("toggles either Match HUD style while preserving mini scores and showing the 
   for (const variant of ["classic", "broadcast"] as const) {
     settings.matchHudStyle = variant;
     settings.showMatchHud = true;
-    const html = renderToStaticMarkup(<PlayerHUD />);
+    const html = renderToStaticMarkup(
+      <PlayerHUD onOpenScoreScreen={() => {}} />,
+    );
     expect(html).toContain('aria-label="Player scores"');
     expect(html.match(/aria-label="Match HUD"/g)).toHaveLength(1);
     expect(html.match(/02:03/g)).toHaveLength(1);
     expect(html.includes("<table")).toBe(variant === "classic");
     settings.showMatchHud = false;
-    const hidden = renderToStaticMarkup(<PlayerHUD />);
+    const hidden = renderToStaticMarkup(
+      <PlayerHUD onOpenScoreScreen={() => {}} />,
+    );
     expect(hidden).not.toContain('aria-label="Match HUD"');
     expect(hidden).toContain('aria-label="Player scores"');
     expect(hidden.match(/02:03/g)).toHaveLength(1);

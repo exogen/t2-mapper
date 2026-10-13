@@ -1,7 +1,11 @@
+import type { PlayerReference } from "../../relay/playerReference";
+import { readPlayerReference } from "./playerReferenceStorage";
 import { createStore } from "zustand/vanilla";
 import { useStore } from "zustand";
 import { DEFAULT_TEAM_NAMES } from "../stringUtils";
 import { streamPlaybackStore } from "./streamPlaybackStore";
+import { streamSnapshotStore } from "./streamSnapshotStore";
+import { getPlayerResolver } from "./playerResolver";
 
 export const QUICK_CAM_SLOTS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 0] as const;
 export type QuickCamSlot = (typeof QUICK_CAM_SLOTS)[number];
@@ -12,14 +16,16 @@ export type SavedCamera = {
   commandCircuit?: { x: number; z: number; zoom: number };
 } & (
   | { kind: "original" }
-  | { kind: "fly"; position: number[]; quaternion: number[] }
+  | {
+      kind: "fly";
+      position: [number, number, number];
+      quaternion: [number, number, number, number];
+    }
   | ({ kind: "flag"; slot: number } & Orbit)
   | ({
       kind: "player";
       mode: "follow" | "firstPerson";
-      /** Tagless name used to find the player after respawning or reconnecting. */
-      playerName: string;
-      displayName: string;
+      player: PlayerReference;
     } & Orbit)
 );
 
@@ -34,7 +40,7 @@ interface MissionContext {
 }
 
 interface StoredSettings extends MissionSettings, MissionContext {
-  version: 2;
+  version: 3;
 }
 
 interface CasterState {
@@ -58,7 +64,7 @@ function read(): StoredSettings | null {
       sessionStorage.getItem(CASTER_STORAGE_KEY) ?? "null",
     );
     if (
-      (value?.version !== 1 && value?.version !== 2) ||
+      (value?.version !== 1 && value?.version !== 2 && value?.version !== 3) ||
       typeof value.server !== "string" ||
       typeof value.mission !== "string" ||
       !value.teamNames ||
@@ -71,7 +77,7 @@ function read(): StoredSettings | null {
     )
       return null;
     return {
-      version: 2,
+      version: 3,
       server: value.server,
       mission: value.mission,
       teamNames: value.teamNames,
@@ -129,8 +135,8 @@ function readCamera(value: unknown, version: number): SavedCamera | null {
     )
       return {
         kind: "fly",
-        position: c.position,
-        quaternion: c.quaternion,
+        position: c.position as [number, number, number],
+        quaternion: c.quaternion as [number, number, number, number],
         ...common,
       };
     return null;
@@ -147,32 +153,30 @@ function readCamera(value: unknown, version: number): SavedCamera | null {
     return typeof c.slot === "number" && Number.isInteger(c.slot) && c.slot > 0
       ? { kind: "flag", slot: c.slot, ...orbit, ...common }
       : null;
-  if (typeof c.playerName !== "string" || !c.playerName.trim()) return null;
-  if (version === 1 && (c.kind === "follow" || c.kind === "fp")) {
-    // Old labels mixed names with presentation text. Migrate from identity fields only.
-    return {
-      kind: "player",
-      mode: c.kind === "fp" ? "firstPerson" : "follow",
-      playerName: c.playerName,
-      displayName: c.playerName,
-      ...orbit,
-      ...common,
-    };
-  }
+  const mode =
+    version === 1
+      ? c.kind === "fp"
+        ? "firstPerson"
+        : c.kind === "follow"
+          ? "follow"
+          : null
+      : c.mode;
+  const player =
+    version < 3
+      ? typeof c.playerName === "string" && c.playerName.trim()
+        ? {
+            kind: "name" as const,
+            rawName: c.playerName,
+            match: "base" as const,
+          }
+        : null
+      : readPlayerReference(c.player);
   if (
-    c.kind === "player" &&
-    (c.mode === "follow" || c.mode === "firstPerson") &&
-    typeof c.displayName === "string" &&
-    c.displayName.trim()
+    player &&
+    (mode === "follow" || mode === "firstPerson") &&
+    (version === 1 || c.kind === "player")
   )
-    return {
-      kind: "player",
-      mode: c.mode,
-      playerName: c.playerName,
-      displayName: c.displayName,
-      ...orbit,
-      ...common,
-    };
+    return { kind: "player", mode, player, ...orbit, ...common };
   return null;
 }
 
@@ -184,7 +188,7 @@ function write(context: MissionContext, settings: MissionSettings) {
     ) {
       sessionStorage.setItem(
         CASTER_STORAGE_KEY,
-        JSON.stringify({ version: 2, ...context, ...settings }),
+        JSON.stringify({ version: 3, ...context, ...settings }),
       );
     } else {
       sessionStorage.removeItem(CASTER_STORAGE_KEY);
@@ -195,6 +199,27 @@ function write(context: MissionContext, settings: MissionSettings) {
 }
 
 export const casterStore = createStore<CasterState>((set, get) => {
+  let unsubscribePlayers: (() => void) | undefined;
+
+  function refreshPlayers() {
+    const { context, settings } = get();
+    if (!context || !settings) return;
+    const players = getPlayerResolver();
+    let quickCams = settings.quickCams;
+    for (const slot of QUICK_CAM_SLOTS) {
+      const camera = quickCams[slot];
+      if (camera?.kind !== "player") continue;
+      const player = players.refresh(camera.player);
+      if (player === camera.player) continue;
+      if (quickCams === settings.quickCams) quickCams = { ...quickCams };
+      quickCams[slot] = { ...camera, player };
+    }
+    if (quickCams === settings.quickCams) return;
+    const next = { ...settings, quickCams };
+    write(context, next);
+    set({ settings: next });
+  }
+
   function edit(
     update: (settings: MissionSettings) => MissionSettings,
     savedSlot?: QuickCamSlot,
@@ -229,8 +254,8 @@ export const casterStore = createStore<CasterState>((set, get) => {
       if (old?.server === server && old.mission === mission) {
         return;
       }
-      if (streamPlaybackStore.getState().pendingFollowPlayerName)
-        streamPlaybackStore.setState({ pendingFollowPlayerName: null });
+      if (streamPlaybackStore.getState().followPlayer)
+        streamPlaybackStore.setState({ followPlayer: null });
       const stored = read();
       const matches = stored?.server === server && stored.mission === mission;
       const settings: MissionSettings = matches
@@ -243,10 +268,22 @@ export const casterStore = createStore<CasterState>((set, get) => {
         fov: null,
         lastCameraAction: null,
       });
+      unsubscribePlayers ??= streamSnapshotStore.subscribe((next, previous) => {
+        if (
+          next.snapshot &&
+          (next.snapshot.playerRoster !== previous.snapshot?.playerRoster ||
+            next.snapshot.playerTargets !== previous.snapshot?.playerTargets ||
+            next.snapshot.playerIdentityScope !==
+              previous.snapshot?.playerIdentityScope)
+        )
+          refreshPlayers();
+      });
     },
     suspend() {
-      if (streamPlaybackStore.getState().pendingFollowPlayerName)
-        streamPlaybackStore.setState({ pendingFollowPlayerName: null });
+      unsubscribePlayers?.();
+      unsubscribePlayers = undefined;
+      if (streamPlaybackStore.getState().followPlayer)
+        streamPlaybackStore.setState({ followPlayer: null });
       set({
         context: null,
         settings: null,

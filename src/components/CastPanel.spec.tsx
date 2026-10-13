@@ -68,6 +68,7 @@ vi.mock("../state/streamSnapshotStore", async (original) => ({
       playerSensorGroup: fixture.playerSensorGroup,
       playerRoster: fixture.playerRoster,
       teamScores: fixture.teamScores,
+      flags: fixture.teamScores.flatMap((t) => (t.flag ? [t.flag] : [])),
     }),
 }));
 vi.mock("../state/liveConnectionStore", async (original) => ({
@@ -169,9 +170,12 @@ it.each(["live", "demo"] as const)(
   "shows current flag status below default and saved flag names in the %s HUD",
   (source) => {
     fixture.source = source;
-    fixture.teamScores[0].flagStatus = "home";
-    fixture.teamScores[1].flagStatus = "held";
-    fixture.teamScores[1].flagCarrier = "[TAG]Carrier";
+    fixture.teamScores[0].flag = { teamId: 1, status: "home" };
+    fixture.teamScores[1].flag = {
+      teamId: 2,
+      status: "held",
+      carrier: { kind: "name", rawName: "[TAG]Carrier" },
+    };
     casterStore.getState().saveCamera(3, {
       kind: "flag",
       slot: 2,
@@ -195,7 +199,7 @@ it.each(["live", "demo"] as const)(
       "[TAG]Carrier",
     );
 
-    fixture.teamScores[1].flagStatus = "field";
+    fixture.teamScores[1].flag = { teamId: 2, status: "field" };
     setStreamSnapshot({
       timeSec: 10,
       flagDroppedAtSec: { 2: 10 },
@@ -208,15 +212,15 @@ it.each(["live", "demo"] as const)(
     expect(render().match(/Dropped <span[^>]*>–<\/span> 29s/g)).toHaveLength(2);
     streamClock.time = 20;
     expect(render().match(/Dropped <span[^>]*>–<\/span> 35s/g)).toHaveLength(2);
-    fixture.teamScores[1].flagStatus = "home";
+    fixture.teamScores[1].flag = { teamId: 2, status: "home" };
     expect(render()).not.toContain("Dropped");
     expect(render().match(/>Home<\/span>/g)).toHaveLength(3);
   },
 );
 
 it("shows status only for flag entries and handles incomplete flag metadata", () => {
-  fixture.teamScores[0].flagStatus = "held";
-  fixture.teamScores[1].flagStatus = "field";
+  fixture.teamScores[0].flag = { teamId: 1, status: "held" };
+  fixture.teamScores[1].flag = { teamId: 2, status: "field" };
   setStreamSnapshot({
     flagDroppedAtSec: {},
     flagReturnDelaySec: null,
@@ -226,7 +230,7 @@ it("shows status only for flag entries and handles incomplete flag metadata", ()
   expect(html).toContain(">Dropped</span>");
   expect(html.match(/<small\b/g)).toHaveLength(2);
   casterStore.getState().saveCamera(1, playerCamera);
-  fixture.teamScores[1].flagStatus = undefined;
+  fixture.teamScores[1].flag = undefined;
   html = renderToStaticMarkup(<QuickCamHUD />);
   expect(html).not.toContain(">Held</span>");
   expect(html).toContain(">Status unknown</small>");
@@ -447,17 +451,16 @@ it.each([1, 2])(
   },
 );
 
-const playerCamera: SavedCamera = {
+const playerCamera = {
   kind: "player",
   mode: "follow",
-  playerName: "Player",
-  displayName: "Player",
+  player: { kind: "name", rawName: "Player", match: "base" },
   fov: 90,
   followBehindPlayer: false,
   yaw: 0,
   pitch: 0,
   distance: 10,
-};
+} satisfies SavedCamera;
 
 it.each([
   ["follow", "CC: Player · Follow", undefined],
@@ -474,7 +477,7 @@ it.each([
     casterStore.getState().saveCamera(3, {
       ...playerCamera,
       mode,
-      displayName,
+      player: { kind: "name", rawName: displayName },
       commandCircuit,
     });
     for (const html of [

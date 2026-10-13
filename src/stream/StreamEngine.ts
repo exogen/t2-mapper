@@ -1,4 +1,16 @@
 import {
+  refreshFlagCarriers,
+  legacyFlagFields,
+  restoreFlagStates,
+  type FlagState,
+} from "../../relay/flagState";
+import {
+  PlayerResolver,
+  collectPlayerTargets,
+  type PlayerIdentityState,
+  type PlayerRecord,
+} from "../../relay/playerReference";
+import {
   resolvePendingTargetStrings,
   updateTargetString,
 } from "../../relay/targetStrings";
@@ -607,9 +619,15 @@ export abstract class StreamEngine implements StreamingPlayback {
     backpackHud: BackpackHudState | null;
     teamScores: TeamScore[];
     flagTargets: FlagTargetInfo[];
+    playerTargets: PlayerRecord[];
     playerRoster: PlayerRosterEntry[];
   } | null = null;
   protected teamScores: TeamScore[] = [];
+  protected flagStates = new Map<number, FlagState>();
+  protected playerIdentity: PlayerIdentityState = {
+    scope: "demo",
+    generations: new Map(),
+  };
   protected flagDroppedAtSec: FlagDropTimes = {};
   protected playerRoster = new Map<number, ServerMessageRosterEntry>();
   /** Stream time (seconds) when the clock was last set. */
@@ -831,6 +849,7 @@ export abstract class StreamEngine implements StreamingPlayback {
       shared.set(id, { threads, clientAnimation, imageSlots, sceneData });
       if (playerPrediction) players.set(id, playerPrediction.saveState());
     }
+    const playersForCheckpoint = this.resolvePlayers();
     return {
       state: structuredClone({
         entities,
@@ -885,7 +904,15 @@ export abstract class StreamEngine implements StreamingPlayback {
         weaponsHud: this.weaponsHud,
         backpackHud: this.backpackHud,
         inventoryHud: this.inventoryHud,
-        teamScores: this.teamScores,
+        teamScores: this.teamScores.map((team) => ({
+          ...team,
+          ...legacyFlagFields(
+            this.flagStates.get(team.teamId),
+            playersForCheckpoint,
+          ),
+        })),
+        flagStates: this.flagStates,
+        playerIdentity: this.playerIdentity,
         flagDroppedAtSec: this.flagDroppedAtSec,
         playerRoster: this.playerRoster,
         clockAnchorStreamSec: this.clockAnchorStreamSec,
@@ -933,6 +960,27 @@ export abstract class StreamEngine implements StreamingPlayback {
     for (const entity of checkpoint.endedEntities ?? [])
       if (!ids.has(entity.id)) ids.set(entity.id, allocateEntityId());
     Object.assign(this, state);
+    this.playerIdentity = state.playerIdentity ?? {
+      scope: "demo",
+      generations: null,
+    };
+    this.flagStates = restoreFlagStates(
+      state.flagStates?.values(),
+      state.teamScores,
+      this.playerIdentity.scope,
+      Array.from(state.playerRoster, ([clientId, entry]) => ({
+        clientId,
+        ...entry,
+      })),
+    );
+    this.teamScores = state.teamScores.map(
+      ({ teamId, name, score, playerCount }) => ({
+        teamId,
+        name,
+        score,
+        playerCount,
+      }),
+    );
     this.endedEntities =
       checkpoint.endedEntities?.map((entity) => ({
         ...entity,
@@ -1086,6 +1134,8 @@ export abstract class StreamEngine implements StreamingPlayback {
     this.backpackHud = { packIndex: -1, active: false, text: "" };
     this.inventoryHud = { slots: new Map(), activeSlot: -1 };
     this.teamScores = [];
+    this.flagStates.clear();
+    this.playerIdentity.generations = new Map();
     this.playerRoster.clear();
     this.clockAnchorStreamSec = null;
     this.clockDurationMs = 0;
@@ -1284,6 +1334,7 @@ export abstract class StreamEngine implements StreamingPlayback {
       if (id != null && typeof value === "string") {
         this.netStrings.set(id, value);
         const sync = (targetId: number) => {
+          this.onRosterChanged();
           this.syncTargetEntities(targetId);
           if (((this.targetRenderFlags.get(targetId) ?? 0) & 0x2) !== 0)
             this.onTeamScoresChanged();
@@ -1326,12 +1377,15 @@ export abstract class StreamEngine implements StreamingPlayback {
       // may leak onto it — the re-issue's TargetInfoEvent starts clean.
       const targetId = (data as { targetId?: number }).targetId;
       if (targetId != null) {
+        this.onRosterChanged();
         if (((this.targetRenderFlags.get(targetId) ?? 0) & 0x2) !== 0)
           this.onTeamScoresChanged();
         this.targetGenerations.set(
           targetId,
           (this.targetGenerations.get(targetId) ?? 0) + 1,
         );
+        for (const player of this.playerRoster.values())
+          if (player.targetId === targetId) player.targetId = -1;
         this.targetRawNames.delete(targetId);
         this.targetTypes.delete(targetId);
         this.pendingNameTags.delete(targetId);
@@ -1358,6 +1412,7 @@ export abstract class StreamEngine implements StreamingPlayback {
       const evt = data as TargetInfoEventData;
       const targetId = evt.targetId;
       if (targetId == null) return;
+      this.onRosterChanged();
       updateTargetString(
         this.netStrings,
         this.targetRawNames,
@@ -3901,12 +3956,19 @@ export abstract class StreamEngine implements StreamingPlayback {
       msgType,
       args,
       (s) => this.resolveNetString(s),
-      { playerRoster: this.playerRoster, teamScores: this.teamScores },
+      {
+        playerRoster: this.playerRoster,
+        teamScores: this.teamScores,
+        flags: this.flagStates,
+        playerIdentity: this.playerIdentity,
+        resolvePlayers: () => this.resolvePlayers(),
+      },
       (team) => ({ ...team, playerCount: 0 }),
     );
     if (changes) {
       if (changes.matchStarted) this.matchStarted = true;
-      if (changes.teamScoresChanged) this.onTeamScoresChanged();
+      if (changes.teamScoresChanged || changes.flagsChanged)
+        this.onTeamScoresChanged();
       if (changes.rosterChanged) this.onRosterChanged();
       const renamed = changes.renamedPlayer;
       if (renamed?.targetId != null) {
@@ -4005,6 +4067,8 @@ export abstract class StreamEngine implements StreamingPlayback {
       const gameClassName = this.resolveNetString(args[2]);
       log.info("client ready: gameClass=%s", gameClassName);
       this.gameClassName = gameClassName || this.gameClassName;
+      this.flagStates.clear();
+      this.onTeamScoresChanged();
       // Dropping into a (new) mission ends any match-over interval.
       if (this.matchEndedAtSec != null && this.clockAnchorStreamSec != null)
         this.clockAnchorStreamSec += this.getTimeSec() - this.matchEndedAtSec;
@@ -4357,6 +4421,33 @@ export abstract class StreamEngine implements StreamingPlayback {
     return flags;
   }
 
+  private buildPlayerTargets(): PlayerRecord[] {
+    const ids = Array.from(this.playerRoster.values()).flatMap((p) =>
+      p.targetId != null ? [p.targetId] : [],
+    );
+    for (const entity of this.entities.values())
+      if (entity.type === "Player" && entity.targetId != null)
+        ids.push(entity.targetId);
+    return collectPlayerTargets(
+      this.targetRawNames,
+      this.targetTypes,
+      this.targetTeams,
+      this.targetGenerations,
+      ids,
+    );
+  }
+
+  private resolvePlayers(targets = this.buildPlayerTargets()): PlayerResolver {
+    return new PlayerResolver(
+      this.playerIdentity.scope,
+      Array.from(this.playerRoster, ([clientId, player]) => ({
+        clientId,
+        ...player,
+      })),
+      targets,
+    );
+  }
+
   /** Build HUD arrays for snapshot. */
   private buildWeaponsHud(): {
     slots: WeaponsHudSlot[];
@@ -4389,9 +4480,15 @@ export abstract class StreamEngine implements StreamingPlayback {
   private buildTeamScoresAndRoster(): {
     teamScores: TeamScore[];
     flagTargets: FlagTargetInfo[];
+    playerTargets: PlayerRecord[];
     playerRoster: PlayerRosterEntry[];
   } {
-    const teamScores = this.teamScores.map((ts) => ({ ...ts }));
+    const playerTargets = this.buildPlayerTargets();
+    refreshFlagCarriers(this.flagStates, this.resolvePlayers(playerTargets));
+    const teamScores = this.teamScores.map((ts) => ({
+      ...ts,
+      flag: this.flagStates.get(ts.teamId),
+    }));
     const flagTargets = this.buildFlagTargets();
     for (const flag of flagTargets) {
       if (flag.teamId == null || !flag.skinName) continue;
@@ -4410,7 +4507,7 @@ export abstract class StreamEngine implements StreamingPlayback {
     for (const [clientId, entry] of this.playerRoster) {
       playerRoster.push({ clientId, ...entry });
     }
-    return { teamScores, flagTargets, playerRoster };
+    return { teamScores, flagTargets, playerTargets, playerRoster };
   }
 
   /** Force the next buildCachedHudState() to rebuild every part (e.g. on a
@@ -4431,6 +4528,7 @@ export abstract class StreamEngine implements StreamingPlayback {
     backpackHud: BackpackHudState | null;
     teamScores: TeamScore[];
     flagTargets: FlagTargetInfo[];
+    playerTargets: PlayerRecord[];
     playerRoster: PlayerRosterEntry[];
   } {
     const prev = this._hudCache;
@@ -4451,6 +4549,7 @@ export abstract class StreamEngine implements StreamingPlayback {
         : this.buildBackpackHud();
     let teamScores: TeamScore[];
     let flagTargets: FlagTargetInfo[];
+    let playerTargets: PlayerRecord[];
     let playerRoster: PlayerRosterEntry[];
     if (
       prev &&
@@ -4459,9 +4558,10 @@ export abstract class StreamEngine implements StreamingPlayback {
     ) {
       teamScores = prev.teamScores;
       flagTargets = prev.flagTargets;
+      playerTargets = prev.playerTargets;
       playerRoster = prev.playerRoster;
     } else {
-      ({ teamScores, flagTargets, playerRoster } =
+      ({ teamScores, flagTargets, playerTargets, playerRoster } =
         this.buildTeamScoresAndRoster());
     }
 
@@ -4478,6 +4578,7 @@ export abstract class StreamEngine implements StreamingPlayback {
       backpackHud,
       teamScores,
       flagTargets,
+      playerTargets,
       playerRoster,
     };
     return {
@@ -4486,6 +4587,7 @@ export abstract class StreamEngine implements StreamingPlayback {
       backpackHud,
       teamScores,
       flagTargets,
+      playerTargets,
       playerRoster,
     };
   }

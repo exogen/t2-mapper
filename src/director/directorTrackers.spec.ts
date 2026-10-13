@@ -87,7 +87,7 @@ describe("current-state recording", () => {
           teamId: 2,
           name: "Inferno",
           score: t < 1 ? 0 : 1,
-          flagStatus: t < 1 ? "field" : "home",
+          flag: { teamId: 1, status: t < 1 ? "field" : "home" },
           playerCount: 1,
         },
       ];

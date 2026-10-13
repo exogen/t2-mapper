@@ -7,13 +7,15 @@ import {
   ReactNode,
 } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
-import { AudioListener, AudioLoader } from "three";
+import { AudioLoader, LoadingManager } from "three";
 import { useDataSource } from "../state/gameEntityStore";
 import { useLiveSelector } from "../state/liveConnectionStore";
 import { commentaryPlayback } from "../state/streamPlaybackStore";
 import { connectAudioPlayback } from "./audioPlayback";
 import { createAudioPlaybackFade } from "./audioPlaybackFade";
 import { useSettings } from "./SettingsProvider";
+import { PlaybackAudioListener } from "./PlaybackAudioListener";
+import { preloadMatchSounds } from "./preloadMatchSounds";
 
 /**
  * While the commentary track plays, game sounds sit at this fraction of the
@@ -23,7 +25,7 @@ const COMMENTARY_DUCK = 0.5;
 
 interface AudioContextType {
   audioLoader: AudioLoader | null;
-  audioListener: AudioListener | null;
+  audioListener: PlaybackAudioListener | null;
 }
 
 const AudioContext = createContext<AudioContextType | undefined>(undefined);
@@ -36,7 +38,7 @@ const AudioContext = createContext<AudioContextType | undefined>(undefined);
 // they kept playing forever, immune to the volume slider and mute. One
 // listener, moved between cameras, means volume/suspend always reach every
 // sound.
-let _audioListener: AudioListener | null = null;
+let _audioListener: PlaybackAudioListener | null = null;
 let _audioLoader: AudioLoader | null = null;
 let _playbackFade: ReturnType<typeof createAudioPlaybackFade> | null = null;
 
@@ -46,7 +48,7 @@ let _playbackFade: ReturnType<typeof createAudioPlaybackFade> | null = null;
  */
 export function AudioProvider({ children }: { children: ReactNode }) {
   const camera = useThree((state) => state.camera);
-  const { audioVolume } = useSettings();
+  const { audioEnabled, audioVolume } = useSettings();
   const [audioContext, setAudioContext] = useState<AudioContextType>({
     audioLoader: null,
     audioListener: null,
@@ -57,9 +59,10 @@ export function AudioProvider({ children }: { children: ReactNode }) {
   );
 
   useEffect(() => {
-    _audioLoader ??= new AudioLoader();
+    // Audio doesn't suspend rendering; exclude it from visual loading progress.
+    _audioLoader ??= new AudioLoader(new LoadingManager());
     if (!_audioListener) {
-      _audioListener = new AudioListener();
+      _audioListener = new PlaybackAudioListener();
       // Stay silent until the first frame applies the user's volume.
       _audioListener.gain.gain.value = 0;
       // Safety limiter between the master gain and the speakers. Dozens of
@@ -119,14 +122,23 @@ export function AudioProvider({ children }: { children: ReactNode }) {
     };
   }, [camera]);
 
+  const loader = audioContext.audioLoader;
+  useEffect(() => {
+    if (audioEnabled && loader) return preloadMatchSounds(loader);
+  }, [audioEnabled, loader]);
+
   // Suspend all sounds at their current positions while a stream is stopped,
   // paused or seeking. Subscribe directly: React can batch an entire short
   // seek into one render and otherwise skip its mute/resume transition.
-  // Map ambience and the stream's debrief keep running normally.
+  // At natural EOF only chat stays audible until the final sounds finish.
   const listener = audioContext.audioListener;
   useEffect(() => {
     if (!listener || !_playbackFade) return;
-    const playback = connectAudioPlayback(listener.context, _playbackFade);
+    const playback = connectAudioPlayback(listener.context, {
+      output: _playbackFade,
+      world: listener.world,
+      chat: listener.chat,
+    });
     playbackRef.current = playback;
     return () => {
       playbackRef.current = null;

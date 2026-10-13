@@ -649,6 +649,7 @@ export function StreamingController({
         const now = performance.now();
         const publishInterval =
           !isSeeking &&
+          !renderCurrent.exhausted &&
           renderCurrent.matchEnded ===
             publishedSnapshotRef.current?.matchEnded &&
           useProgress.getState().active

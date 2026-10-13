@@ -1,11 +1,15 @@
+import { PlayerResolver, type PlayerIdentityState } from "./playerReference.js";
+import {
+  refreshFlagCarriers,
+  applyFlagMessage,
+  type FlagState,
+} from "./flagState.js";
 import { normalizePlayerGuid, stripTaggedStringMarkup } from "./shared.js";
 import {
   applyDebriefRowToRoster,
   applyScoreHudToRoster,
-  decodeFlagEvent,
   decodeTeamAdd,
   shouldReplaceScore,
-  type FlagStatus,
   type ResolveNetString,
 } from "./serverMessageDecode.js";
 
@@ -15,6 +19,7 @@ export interface ServerMessageRosterEntry {
   name: string;
   rawName: string;
   guid?: string;
+  clientGeneration?: number;
   isAdmin?: boolean;
   isSuperAdmin?: boolean;
   /** Explicit MsgClientJoin flag; absent if the server omitted it. */
@@ -31,14 +36,12 @@ export interface ServerMessageTeamScore {
   teamId: number;
   name: string;
   score: number;
-  flagStatus?: FlagStatus;
-  flagCarrier?: string;
-  flagCarrierRawName?: string;
 }
 
 export interface ServerMessageChanges {
   /** Accepted updates invalidate browser snapshots even if values are equal. */
   readonly rosterChanged?: boolean;
+  readonly flagsChanged?: boolean;
   readonly teamScoresChanged?: boolean;
   /** Membership, name or team updates that the relay records in wire order. */
   readonly rosterMetadataChanged?: boolean;
@@ -69,10 +72,30 @@ export function applyServerMessageState<Team extends ServerMessageTeamScore>(
   state: {
     playerRoster: Map<number, ServerMessageRosterEntry>;
     teamScores: Team[];
+    flags: Map<number, FlagState>;
+    playerIdentity: PlayerIdentityState;
+    resolvePlayers?: () => PlayerResolver;
   },
   createTeam: (entry: ServerMessageTeamScore) => Team,
 ): ServerMessageChanges | null {
-  const { playerRoster, teamScores } = state;
+  const { playerRoster, teamScores, flags, playerIdentity } = state;
+  const resolvePlayers =
+    state.resolvePlayers ??
+    (() =>
+      new PlayerResolver(
+        playerIdentity.scope,
+        Array.from(playerRoster, ([clientId, entry]) => ({
+          clientId,
+          ...entry,
+        })),
+      ));
+  const flagsChanged = applyFlagMessage(
+    flags,
+    msgType,
+    args,
+    resolve,
+    resolvePlayers,
+  );
   switch (msgType) {
     case "MsgTeamScoreIs":
     case "MsgTeamScore": {
@@ -99,40 +122,26 @@ export function applyServerMessageState<Team extends ServerMessageTeamScore>(
       if (team) {
         team.name = decoded.name;
         if (decoded.score != null) team.score = decoded.score;
-        if (decoded.flag) {
-          team.flagStatus = decoded.flag.status;
-          team.flagCarrier = decoded.flag.carrier;
-          team.flagCarrierRawName = decoded.flag.carrierRawName;
-        }
       } else {
         teamScores.push(
           createTeam({
             teamId: decoded.teamId,
             name: decoded.name,
             score: decoded.score ?? 0,
-            ...(decoded.flag && {
-              flagStatus: decoded.flag.status,
-              flagCarrier: decoded.flag.carrier,
-              flagCarrierRawName: decoded.flag.carrierRawName,
-            }),
           }),
         );
       }
-      return { teamScoresChanged: true, matchStarted };
+      return { teamScoresChanged: true, matchStarted, flagsChanged };
     }
     case "MsgCTFFlagTaken":
     case "MsgCTFFlagDropped":
     case "MsgCTFFlagReturned":
-    case "MsgCTFFlagCapped": {
-      const decoded = decodeFlagEvent(msgType, args, resolve);
-      if (!decoded) return NO_CHANGES;
-      const team = teamScores.find((entry) => entry.teamId === decoded.teamId);
-      if (!team) return NO_CHANGES;
-      team.flagStatus = decoded.status;
-      team.flagCarrier = decoded.carrier;
-      team.flagCarrierRawName = decoded.carrierRawName;
-      return { teamScoresChanged: true };
-    }
+    case "MsgCTFFlagCapped":
+    case "MsgRabbitFlagTaken":
+    case "MsgRabbitFlagDropped":
+    case "MsgRabbitFlagReturned":
+    case "MsgRabbitFlagStatus":
+      return flagsChanged ? { flagsChanged } : NO_CHANGES;
     case "MsgClientJoin": {
       if (args.length < 4) return NO_CHANGES;
       const clientId = parseInt(resolve(args[3]), 10);
@@ -142,7 +151,13 @@ export function applyServerMessageState<Team extends ServerMessageTeamScore>(
       const smurf = resolve(args[8] ?? "");
       // message.cs handleClientJoin replaces an existing client entry,
       // clearing scores, team and identity left by a previous connection.
+      let clientGeneration: number | undefined;
+      if (playerIdentity.generations) {
+        clientGeneration = (playerIdentity.generations.get(clientId) ?? 0) + 1;
+        playerIdentity.generations.set(clientId, clientGeneration);
+      }
       playerRoster.set(clientId, {
+        clientGeneration,
         name: stripTaggedStringMarkup(rawName).trim(),
         rawName,
         guid: normalizePlayerGuid(resolve(args[9] ?? "")),
@@ -195,6 +210,7 @@ export function applyServerMessageState<Team extends ServerMessageTeamScore>(
       // Empty/markup-only names cannot match score rows. Ignore them on
       // both sides so catch-up does not erase a name the browser retained.
       if (!entry || !name) return NO_CHANGES;
+      refreshFlagCarriers(flags, resolvePlayers());
       entry.name = name;
       entry.rawName = rawName;
       return {

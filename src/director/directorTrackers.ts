@@ -766,8 +766,8 @@ export class DirectorTrackers {
       if (!pos) continue;
       const teamStatus =
         chosen.teamId != null
-          ? snapshot.teamScores.find((t) => t.teamId === chosen.teamId)
-              ?.flagStatus
+          ? snapshot.teamScores.find((t) => t.teamId === chosen.teamId)?.flag
+              ?.status
           : undefined;
       const status: DirectorFlagSample["status"] =
         teamStatus ?? (carrier ? "held" : "home");

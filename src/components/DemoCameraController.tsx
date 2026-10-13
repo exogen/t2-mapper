@@ -61,9 +61,8 @@ export function DemoCameraController() {
     }
   });
   useFrame(() => {
-    const { followEntityId, pendingFollowPlayerName } =
-      streamPlaybackStore.getState();
-    if (!followEntityId && !pendingFollowPlayerName) return;
+    const { followEntityId, followPlayer } = streamPlaybackStore.getState();
+    if (!followEntityId && !followPlayer) return;
     const target = resolveWatchFollowTarget();
     if (target) {
       const wanted = streamPlaybackStore.getState().followCameraMode;

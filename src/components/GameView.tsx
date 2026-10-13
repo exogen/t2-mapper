@@ -86,9 +86,9 @@ export const GameView = memo(function GameView({
             <CommandCircuitCamera />
             {features.stats && <HeatmapOverlay />}
             <UnderwaterFilter />
-            <AudioEnabled>
+            <Suspense>
               <ChatSoundPlayer />
-            </AudioEnabled>
+            </Suspense>
             <DebugEnabled>
               <DebugElements />
             </DebugEnabled>

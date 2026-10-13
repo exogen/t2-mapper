@@ -1,13 +1,15 @@
+import {
+  getPlayerResolver,
+  playerForEntity,
+  referencePlayerEntity,
+  resolvePlayerBody,
+} from "./playerResolver";
 import { createLogger } from "../logger";
 import { gameEntityStore } from "./gameEntityStore";
-import type { GameEntity, PlayerEntity } from "./gameEntityTypes";
+import type { GameEntity } from "./gameEntityTypes";
 import { liveConnectionStore } from "./liveConnectionStore";
 import { streamPlaybackStore } from "./streamPlaybackStore";
-import {
-  threeForwardHeading,
-  stripTaggedStringMarkup,
-  taglessPlayerName,
-} from "../stream/streamHelpers";
+import { threeForwardHeading } from "../stream/streamHelpers";
 import { resolveFlagTeam, flagLabel } from "./flagTeam";
 
 const camlog = createLogger("camdbg");
@@ -178,15 +180,14 @@ export function getFollowTargets(
     const entity = entities.get(id)!;
     if (entity.renderType !== "Player") continue;
     const targetId = entity.targetId;
+    const player = playerForEntity(entity);
     targets.push({
       key:
         targetId != null && targetId >= 0
           ? `player:${targetId}`
           : `entity:${id}`,
-      label:
-        stripTaggedStringMarkup(entity.playerName ?? "").trim() ||
-        `Player ${id}`,
-      rawName: entity.playerRawName,
+      label: player.name || `Player ${id}`,
+      rawName: player.rawName,
       entityId: id,
       flagSlot: null,
     });
@@ -196,30 +197,6 @@ export function getFollowTargets(
     if (b.flagSlot != null) return 1;
     return a.label.localeCompare(b.label);
   });
-}
-
-/** Resolve a quick cam by base name, keeping respawn overlaps distinct from name collisions. */
-export function findLivingPlayersByName(name: string): PlayerEntity[] {
-  const matches: PlayerEntity[] = [];
-  const normalized = name.toLowerCase();
-  for (const entity of gameEntityStore.getState().streamEntities.values()) {
-    if (entity.renderType !== "Player" || isDeadEntity(entity)) continue;
-    if (
-      taglessPlayerName(
-        entity.playerRawName ?? "",
-        entity.playerName,
-      ).toLowerCase() !== normalized
-    )
-      continue;
-    const index =
-      entity.targetId != null && entity.targetId >= 0
-        ? matches.findIndex((match) => match.targetId === entity.targetId)
-        : -1;
-    if (index === -1) matches.push(entity);
-    else if ((entity.ghostIndex ?? 0) > (matches[index].ghostIndex ?? 0))
-      matches[index] = entity;
-  }
-  return matches;
 }
 
 /** The entity id a flag-follow slot resolves to right now (the item on
@@ -270,7 +247,7 @@ export function followFlag(slot: number): void {
   streamPlaybackStore.setState({
     followEntityId: target.id,
     followTargetId: null,
-    pendingFollowPlayerName: null,
+    followPlayer: null,
     followFlagSlot: slot,
     followCameraMode: "orbitOverride",
     cameraMode: "orbitOverride",
@@ -369,7 +346,8 @@ export function enterWatchFollow(targetId?: string): void {
   streamPlaybackStore.setState({
     followEntityId: target,
     followTargetId: validTargetId,
-    pendingFollowPlayerName: null,
+    followPlayer:
+      entity?.renderType === "Player" ? referencePlayerEntity(entity) : null,
     // Remember for resume across free-fly / pan (persists through exit).
     lastFollowTargetId: validTargetId,
     lastFollowGhostIndex: entity?.ghostIndex ?? null,
@@ -391,7 +369,7 @@ export function exitToFreeFly(): void {
   streamPlaybackStore.setState({
     followEntityId: null,
     followTargetId: null,
-    pendingFollowPlayerName: null,
+    followPlayer: null,
     followCameraMode: "orbitOverride",
     cameraMode: "freeFly",
     followFlagSlot: null,
@@ -400,9 +378,8 @@ export function exitToFreeFly(): void {
 
 /** Back to free-fly; the camera stays where the orbit left it. */
 export function exitWatchFollow(): void {
-  const { followEntityId, pendingFollowPlayerName } =
-    streamPlaybackStore.getState();
-  if (followEntityId === null && pendingFollowPlayerName === null) return;
+  const { followEntityId, followPlayer } = streamPlaybackStore.getState();
+  if (followEntityId === null && followPlayer === null) return;
   exitToFreeFly();
 }
 
@@ -422,21 +399,34 @@ export function exitWatchFollow(): void {
  */
 export function resolveWatchFollowTarget(): string | null {
   const state = streamPlaybackStore.getState();
-  if (state.pendingFollowPlayerName) {
-    const matches = findLivingPlayersByName(state.pendingFollowPlayerName);
-    if (matches.length !== 1) return null;
-    const player = matches[0];
-    const targetId =
-      player.targetId != null && player.targetId >= 0 ? player.targetId : null;
-    streamPlaybackStore.setState({
-      pendingFollowPlayerName: null,
-      followEntityId: player.id,
-      followTargetId: targetId,
-      lastFollowTargetId: targetId,
-      lastFollowGhostIndex: player.ghostIndex ?? null,
-      cameraMode: state.followCameraMode,
-    });
-    return player.id;
+  if (state.followPlayer && state.followFlagSlot == null) {
+    const player = getPlayerResolver().refresh(state.followPlayer);
+    if (player !== state.followPlayer)
+      streamPlaybackStore.setState({ followPlayer: player });
+    const body = resolvePlayerBody(player);
+    if (body) {
+      if (state.followEntityId !== body.id) {
+        if (state.followEntityId) seedOrbitBehindTarget(body.id);
+        streamPlaybackStore.setState({
+          followPlayer: referencePlayerEntity(body),
+          followEntityId: body.id,
+          followTargetId:
+            body.targetId != null && body.targetId >= 0 ? body.targetId : null,
+          lastFollowTargetId:
+            body.targetId != null && body.targetId >= 0 ? body.targetId : null,
+          cameraMode: state.followCameraMode,
+        });
+      }
+      return body.id;
+    }
+    const corpse = resolvePlayerBody(player, false);
+    if (corpse && corpse.id === state.followEntityId) return corpse.id;
+    if (state.followEntityId)
+      streamPlaybackStore.setState({
+        followEntityId: null,
+        cameraMode: "freeFly",
+      });
+    return null;
   }
   const { followEntityId, followTargetId, followFlagSlot } = state;
   if (!followEntityId) return null;
@@ -525,9 +515,8 @@ export function findLivingEntityByTargetId(
 
 /** Command-circuit toggle: plain follow on/off (no first person there). */
 export function toggleWatchFollow(): void {
-  const { followEntityId, pendingFollowPlayerName } =
-    streamPlaybackStore.getState();
-  if (followEntityId || pendingFollowPlayerName) {
+  const { followEntityId, followPlayer } = streamPlaybackStore.getState();
+  if (followEntityId || followPlayer) {
     exitWatchFollow();
   } else {
     streamPlaybackStore.setState({ followCameraMode: "orbitOverride" });
@@ -542,7 +531,7 @@ export function toggleWatchFollow(): void {
  */
 export function cycleWatchObserverMode(): void {
   const state = streamPlaybackStore.getState();
-  if (state.pendingFollowPlayerName) {
+  if (state.followPlayer && !state.followEntityId) {
     exitWatchFollow();
     return;
   }
@@ -599,7 +588,7 @@ export function toggleFollowFirstPerson(): void {
  */
 export function cycleDemoCameraMode(hasOriginalView = true): void {
   const state = streamPlaybackStore.getState();
-  if (state.pendingFollowPlayerName) {
+  if (state.followPlayer && !state.followEntityId) {
     exitWatchFollow();
     return;
   }
@@ -630,7 +619,7 @@ export function cycleDemoCameraMode(hasOriginalView = true): void {
       cameraMode: "original",
       followEntityId: null,
       followTargetId: null,
-      pendingFollowPlayerName: null,
+      followPlayer: null,
       followFlagSlot: null,
     });
   }

@@ -11,13 +11,8 @@ import { streamPlaybackStore } from "./streamPlaybackStore";
 import { cameraTourStore } from "./cameraTourStore";
 import { demoDirectorStore, exitDirector } from "./demoDirectorStore";
 import { commandCircuitStore } from "./commandCircuitStore";
-import { taglessPlayerName } from "../stream/streamHelpers";
-import {
-  exitToFreeFly,
-  followFlag,
-  findLivingPlayersByName,
-  resolveFlagEntityId,
-} from "./watchFollow";
+import { referencePlayerEntity, lookupPlayerBody } from "./playerResolver";
+import { exitToFreeFly, followFlag, resolveFlagEntityId } from "./watchFollow";
 
 function ready() {
   const source = gameEntityStore.getState().dataSource;
@@ -40,7 +35,7 @@ export function saveQuickCam(
     cameraTourStore.getState().animation != null ||
     demoDirectorStore.getState().status === "playing";
   const following =
-    (stream.followEntityId != null || stream.pendingFollowPlayerName != null) &&
+    (stream.followEntityId != null || stream.followPlayer != null) &&
     !automatic;
   const orbit = {
     yaw: stream.orbitOverrideYaw,
@@ -87,10 +82,8 @@ export function saveQuickCam(
       .getState()
       .streamEntities.get(stream.followEntityId!);
     const body = entity?.renderType === "Player" ? entity : undefined;
-    const playerName =
-      stream.pendingFollowPlayerName ??
-      (body && taglessPlayerName(body.playerRawName ?? "", body.playerName));
-    if (!playerName) return;
+    const player = (body && referencePlayerEntity(body)) ?? stream.followPlayer;
+    if (!player) return;
     const firstPerson =
       stream.cameraMode === "firstPersonOverride" ||
       (stream.cameraMode === "freeFly" &&
@@ -101,8 +94,7 @@ export function saveQuickCam(
       ...orbit,
       fov,
       followBehindPlayer,
-      displayName: body?.playerName || playerName,
-      playerName,
+      player,
     };
   }
   const ortho = cameraRegistry.ortho;
@@ -124,7 +116,7 @@ export function restoreQuickCam(slot: QuickCamSlot): SavedCamera | undefined {
   const flagSlot = saved?.kind === "flag" ? saved.slot : !saved ? slot : null;
   let entityId: string | null = null;
   let targetId: number | null = null;
-  let pendingPlayerName: string | null = null;
+  let pending = false;
   let ghostIndex: number | null = null;
   if (flagSlot != null) {
     entityId = resolveFlagEntityId(flagSlot);
@@ -132,12 +124,12 @@ export function restoreQuickCam(slot: QuickCamSlot): SavedCamera | undefined {
   } else if (!saved) {
     return;
   } else if (saved.kind === "player") {
-    const matches = findLivingPlayersByName(saved.playerName);
-    if (matches.length > 1) return;
-    const entity = matches[0];
+    const match = lookupPlayerBody(saved.player);
+    if (match.status === "ambiguous") return;
+    const entity = match.body;
     entityId = entity?.id ?? null;
     ghostIndex = entity?.ghostIndex ?? null;
-    if (!entity) pendingPlayerName = saved.playerName;
+    pending = !entity;
     if (
       entity?.renderType === "Player" &&
       entity.targetId != null &&
@@ -166,15 +158,15 @@ export function restoreQuickCam(slot: QuickCamSlot): SavedCamera | undefined {
     exitToFreeFly();
     cameraRegistry.perspective.position.fromArray(saved.position);
     cameraRegistry.perspective.quaternion.fromArray(saved.quaternion);
-  } else if (saved?.kind === "player" && (entityId || pendingPlayerName)) {
+  } else if (saved?.kind === "player") {
     const mode =
       saved.mode === "firstPerson" ? "firstPersonOverride" : "orbitOverride";
     streamPlaybackStore.setState({
-      cameraMode: pendingPlayerName ? "freeFly" : mode,
+      cameraMode: pending ? "freeFly" : mode,
       followCameraMode: mode,
       followEntityId: entityId,
       followTargetId: targetId,
-      pendingFollowPlayerName: pendingPlayerName,
+      followPlayer: saved.player,
       lastFollowTargetId: targetId,
       lastFollowGhostIndex: ghostIndex,
       followFlagSlot: null,

@@ -66,14 +66,14 @@ function makeAnimation(
 export const cameraTourStore = createStore<CameraTourState>((set) => ({
   animation: null,
   flyTo(target, tourType = "feature") {
-    if (streamPlaybackStore.getState().pendingFollowPlayerName)
-      streamPlaybackStore.setState({ pendingFollowPlayerName: null });
+    if (streamPlaybackStore.getState().followPlayer)
+      streamPlaybackStore.setState({ followPlayer: null });
     set({ animation: makeAnimation([target], null, tourType) });
   },
   startTour(targets, categoryName, tourType = "feature") {
     if (targets.length === 0) return;
-    if (streamPlaybackStore.getState().pendingFollowPlayerName)
-      streamPlaybackStore.setState({ pendingFollowPlayerName: null });
+    if (streamPlaybackStore.getState().followPlayer)
+      streamPlaybackStore.setState({ followPlayer: null });
     set({ animation: makeAnimation(targets, categoryName, tourType) });
   },
   advanceTarget() {

@@ -34,10 +34,14 @@ vi.mock("zustand", async (original) => ({
   ) => select(store.getState()),
 }));
 vi.mock("./SettingsProvider", () => ({ useSettings: () => state }));
-vi.mock("../state/streamSnapshotStore", () => ({
+vi.mock("../state/streamSnapshotStore", async (original) => ({
   useStreamSnapshot: (select: (snapshot: Partial<StreamSnapshot>) => unknown) =>
     select(state.snapshot),
-  streamSnapshotStore: { getState: () => ({ snapshot: state.snapshot }) },
+  streamSnapshotStore: {
+    ...(await original<typeof import("../state/streamSnapshotStore")>())
+      .streamSnapshotStore,
+    getState: () => ({ snapshot: state.snapshot }),
+  },
 }));
 vi.mock("../state/gameEntityStore", () => ({
   useDataSource: () => "demo",
@@ -56,14 +60,23 @@ vi.mock("./useMatchClock", async (original) => ({
 
 beforeEach(() => {
   state.snapshot.teamScores = [
-    { teamId: 1, name: "Storm", score: 3, playerCount: 12, flagStatus: "home" },
+    {
+      teamId: 1,
+      name: "Storm",
+      score: 3,
+      playerCount: 12,
+      flag: { teamId: 1, status: "home" },
+    },
     {
       teamId: 2,
       name: "Inferno",
       score: 2,
       playerCount: 11,
-      flagStatus: "held",
-      flagCarrier: "Carrier",
+      flag: {
+        teamId: 2,
+        status: "held",
+        carrier: { kind: "name", rawName: "Carrier" },
+      },
     },
   ];
   state.snapshot.playerSensorGroup = 0;
@@ -86,10 +99,13 @@ afterEach(() => {
 it.each(["classic", "broadcast"] as const)(
   "counts down a dropped flag on the playback clock in %s",
   (variant) => {
-    state.snapshot.teamScores[0].flagStatus = "field";
+    state.snapshot.teamScores[0].flag!.status = "field";
     state.snapshot.flagDroppedAtSec = { 1: 10 };
     streamClock.time = 25;
-    const render = () => renderToStaticMarkup(<MatchHUD variant={variant} />);
+    const render = () =>
+      renderToStaticMarkup(
+        <MatchHUD onOpenScoreScreen={() => {}} variant={variant} />,
+      );
     expect(render()).toMatch(/Dropped <span[^>]*>–<\/span> 30s/);
     streamClock.time = 26;
     expect(render()).toMatch(/Dropped <span[^>]*>–<\/span> 29s/);
@@ -99,7 +115,7 @@ it.each(["classic", "broadcast"] as const)(
     state.snapshot.matchEndedAtSec = 20;
     streamClock.time = 100;
     expect(render()).toMatch(/Dropped <span[^>]*>–<\/span> 35s/);
-    state.snapshot.teamScores[0].flagStatus = "home";
+    state.snapshot.teamScores[0].flag!.status = "home";
     expect(render()).not.toContain("Dropped");
   },
 );
@@ -107,8 +123,11 @@ it.each(["classic", "broadcast"] as const)(
 it.each(["classic", "broadcast"] as const)(
   "keeps unknown dropped-flag timers unlabeled in %s",
   (variant) => {
-    state.snapshot.teamScores[0].flagStatus = "field";
-    const render = () => renderToStaticMarkup(<MatchHUD variant={variant} />);
+    state.snapshot.teamScores[0].flag!.status = "field";
+    const render = () =>
+      renderToStaticMarkup(
+        <MatchHUD onOpenScoreScreen={() => {}} variant={variant} />,
+      );
     expect(render()).toContain(">Dropped</span>");
     state.snapshot.flagDroppedAtSec = { 1: 0 };
     state.snapshot.flagReturnDelaySec = null;
@@ -118,7 +137,9 @@ it.each(["classic", "broadcast"] as const)(
 
 it("uses custom team names and the existing match clock in the Broadcast HUD", () => {
   casterStore.getState().renameTeams({ 1: "Blood Eagle" });
-  const html = renderToStaticMarkup(<MatchHUD variant="broadcast" />);
+  const html = renderToStaticMarkup(
+    <MatchHUD onOpenScoreScreen={() => {}} variant="broadcast" />,
+  );
   expect(html).toContain("Rename team 1: Blood Eagle");
   expect(html).toContain("Rename team 2: Inferno");
   expect(html).toContain("02:03");
@@ -129,21 +150,29 @@ it("uses custom team names and the existing match clock in the Broadcast HUD", (
 });
 
 it("renders the broadcast flag carrier's clan and name colors from the flag message", () => {
-  state.snapshot.teamScores[1].flagCarrier = "=TAG=Carrier";
-  state.snapshot.teamScores[1].flagCarrierRawName =
-    "\x10\x0b=TAG=\x0cCarrier\x11";
-  const html = renderToStaticMarkup(<MatchHUD variant="broadcast" />);
+  state.snapshot.teamScores[1].flag!.carrier = {
+    kind: "name",
+    rawName: "\x10\x0b=TAG=\x0cCarrier\x11",
+  };
+  const html = renderToStaticMarkup(
+    <MatchHUD onOpenScoreScreen={() => {}} variant="broadcast" />,
+  );
   expect(html).toContain('data-status="held"');
   expect(html).toContain('title="=TAG=Carrier"');
   expect(html).toContain('style="color:var(--tribes-color-7)">=TAG=</span>');
   expect(html).toContain('style="color:var(--tribes-color-8)">Carrier</span>');
-  const classic = renderToStaticMarkup(<MatchHUD variant="classic" />);
+  const classic = renderToStaticMarkup(
+    <MatchHUD onOpenScoreScreen={() => {}} variant="classic" />,
+  );
   expect(classic).toContain(">=TAG=Carrier</span>");
   expect(classic).not.toContain("--tribes-color-7");
 });
 
 it("uses roster name colors for older checkpoint state without raw carrier names", () => {
-  state.snapshot.teamScores[1].flagCarrier = "=TAG=Carrier";
+  state.snapshot.teamScores[1].flag!.carrier = {
+    kind: "name",
+    rawName: "=TAG=Carrier",
+  };
   state.snapshot.playerRoster = [
     {
       clientId: 7,
@@ -155,16 +184,22 @@ it("uses roster name colors for older checkpoint state without raw carrier names
       packetLoss: 0,
     },
   ];
-  const render = () => renderToStaticMarkup(<MatchHUD variant="broadcast" />);
+  const render = () =>
+    renderToStaticMarkup(
+      <MatchHUD onOpenScoreScreen={() => {}} variant="broadcast" />,
+    );
   expect(render()).toContain(
     'style="color:var(--tribes-color-7)">=TAG=</span>',
   );
   // A duplicate display name cannot identify which raw name belongs to the carrier.
-  state.snapshot.playerRoster.push({
-    ...state.snapshot.playerRoster[0],
-    clientId: 8,
-    rawName: "=TAG=Carrier",
-  });
+  state.snapshot.playerRoster = [
+    ...state.snapshot.playerRoster,
+    {
+      ...state.snapshot.playerRoster[0],
+      clientId: 8,
+      rawName: "=TAG=Carrier",
+    },
+  ];
   expect(render()).not.toContain("--tribes-color-7");
   expect(render()).toContain(">=TAG=Carrier</span>");
 });
@@ -176,7 +211,9 @@ it("shows every team without inventing flags for non-CTF games", () => {
     score: i * 100,
     playerCount: 5,
   }));
-  const html = renderToStaticMarkup(<MatchHUD variant="broadcast" />);
+  const html = renderToStaticMarkup(
+    <MatchHUD onOpenScoreScreen={() => {}} variant="broadcast" />,
+  );
   for (const team of state.snapshot.teamScores)
     expect(html).toContain(`Rename team ${team.teamId}: ${team.name}`);
   expect(html).not.toContain("Own flag");
@@ -187,7 +224,9 @@ it("does not assume a second team exists", () => {
   state.snapshot.teamScores = [
     { teamId: 1, name: "Rabbit", score: 7, playerCount: 1 },
   ];
-  const html = renderToStaticMarkup(<MatchHUD variant="broadcast" />);
+  const html = renderToStaticMarkup(
+    <MatchHUD onOpenScoreScreen={() => {}} variant="broadcast" />,
+  );
   expect(html).toContain("Rename team 1: Rabbit");
   expect(html).not.toContain("Rename team 2");
   expect(html).not.toContain("Inferno");
@@ -196,8 +235,14 @@ it("does not assume a second team exists", () => {
 
 it("keeps a clock without phantom teams before team data is available", () => {
   state.snapshot.teamScores = [];
-  expect(renderToStaticMarkup(<MatchHUD variant="classic" />)).toBe("");
-  const html = renderToStaticMarkup(<MatchHUD variant="broadcast" />);
+  expect(
+    renderToStaticMarkup(
+      <MatchHUD onOpenScoreScreen={() => {}} variant="classic" />,
+    ),
+  ).toBe("");
+  const html = renderToStaticMarkup(
+    <MatchHUD onOpenScoreScreen={() => {}} variant="broadcast" />,
+  );
   expect(html).toContain("02:03");
   expect(html).not.toContain("Rename team");
 });
@@ -205,8 +250,10 @@ it("keeps a clock without phantom teams before team data is available", () => {
 it.each(["classic", "broadcast"] as const)(
   "leaves an unknown flag state blank in %s",
   (variant) => {
-    state.snapshot.teamScores[0].flagStatus = undefined;
-    const html = renderToStaticMarkup(<MatchHUD variant={variant} />);
+    state.snapshot.teamScores[0].flag = undefined;
+    const html = renderToStaticMarkup(
+      <MatchHUD onOpenScoreScreen={() => {}} variant={variant} />,
+    );
     expect(html).not.toContain("Home");
     expect(html).toContain("Carrier");
   },
@@ -214,12 +261,16 @@ it.each(["classic", "broadcast"] as const)(
 
 it("uses observer color preferences and keeps the recorder's friendly team first", () => {
   state.observerTeamColors = "redGreen";
-  let html = renderToStaticMarkup(<MatchHUD variant="broadcast" />);
+  let html = renderToStaticMarkup(
+    <MatchHUD onOpenScoreScreen={() => {}} variant="broadcast" />,
+  );
   expect(html.indexOf("--team-color:rgb(255, 0, 0)")).toBeLessThan(
     html.indexOf("--team-color:rgb(0, 155, 53)"),
   );
   state.snapshot.playerSensorGroup = 2;
-  html = renderToStaticMarkup(<MatchHUD variant="broadcast" />);
+  html = renderToStaticMarkup(
+    <MatchHUD onOpenScoreScreen={() => {}} variant="broadcast" />,
+  );
   expect(html.indexOf("Rename team 2")).toBeLessThan(
     html.indexOf("Rename team 1"),
   );
@@ -245,14 +296,18 @@ it.each(["classic", "broadcast"] as const)(
       state.snapshot.teamScores.forEach((team, i) => {
         team.score = raw[i];
       });
-      const html = renderToStaticMarkup(<MatchHUD variant={variant} />);
+      const html = renderToStaticMarkup(
+        <MatchHUD onOpenScoreScreen={() => {}} variant={variant} />,
+      );
       for (const score of expected) {
         expect(html).toMatch(new RegExp(`>${score}</(?:div|td)>`));
       }
       expect(state.snapshot.teamScores.map((team) => team.score)).toEqual(raw);
     }
     state.scoreStyle = "classic";
-    const html = renderToStaticMarkup(<MatchHUD variant={variant} />);
+    const html = renderToStaticMarkup(
+      <MatchHUD onOpenScoreScreen={() => {}} variant={variant} />,
+    );
     expect(html).toMatch(/>99<\/(?:div|td)>/);
     expect(html).toMatch(/>1,234<\/(?:div|td)>/);
   },
@@ -265,7 +320,9 @@ it.each(["TR2", "Rabbit", "Arena", "CnH", null])(
     state.missionType = missionType;
     state.snapshot.teamScores[0].score = 302;
     for (const variant of ["classic", "broadcast"] as const) {
-      const html = renderToStaticMarkup(<MatchHUD variant={variant} />);
+      const html = renderToStaticMarkup(
+        <MatchHUD onOpenScoreScreen={() => {}} variant={variant} />,
+      );
       expect(html).toMatch(/>302<\/(?:div|td)>/);
     }
   },

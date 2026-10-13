@@ -533,7 +533,11 @@ function PackInventoryHUD({ followed }: { followed: FollowedPlayer | null }) {
   );
 }
 
-export function PlayerHUD() {
+export function PlayerHUD({
+  onOpenScoreScreen,
+}: {
+  onOpenScoreScreen: () => void;
+}) {
   const hasControlPlayer = useStreamSnapshot(
     (snap) => !!snap?.controlPlayerGhostId,
   );
@@ -572,7 +576,9 @@ export function PlayerHUD() {
 
   return (
     <div className={styles.PlayerHUD}>
-      {showBroadcastMatchHud && <MatchHUD variant="broadcast" />}
+      {showBroadcastMatchHud && (
+        <MatchHUD variant="broadcast" onOpenScoreScreen={onOpenScoreScreen} />
+      )}
       <div className={styles.SideHUDs}>
         <div className={styles.LeftHUD}>
           {showChat && <ChatWindow />}
@@ -581,7 +587,7 @@ export function PlayerHUD() {
           )}
           {showQuickCam && quickCamHudPosition === "left" && <QuickCamHUD />}
           {showMatchHud && !showBroadcastMatchHud && (
-            <MatchHUD variant="classic" />
+            <MatchHUD variant="classic" onOpenScoreScreen={onOpenScoreScreen} />
           )}
         </div>
         <div className={styles.RightHUD}>

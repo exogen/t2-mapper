@@ -1,3 +1,4 @@
+import { restoreFlagStates } from "../../relay/flagState";
 import {
   createLiveParser,
   passiveObserverProtocolState,
@@ -86,6 +87,7 @@ export class LiveStreamAdapter extends StreamEngine {
 
   constructor(relay: RelayClient, options?: { mode?: "play" | "watch" }) {
     super();
+    this.playerIdentity.scope = crypto.randomUUID();
     this.setPlayerPredictionEnabled(true);
     this.relay = relay;
     this.mode = options?.mode ?? "play";
@@ -335,6 +337,18 @@ export class LiveStreamAdapter extends StreamEngine {
 
     // Roster/scores/clock (a late joiner can't recover these live).
     const hud = payload.hudState;
+    this.playerIdentity = {
+      scope: hud.playerIdentity?.scope ?? crypto.randomUUID(),
+      generations: hud.playerIdentity
+        ? new Map(hud.playerIdentity.generations)
+        : null,
+    };
+    this.targetGenerations = new Map(hud.targetGenerations);
+    for (const entity of this.entities.values()) {
+      if (entity.targetId != null && entity.targetId >= 0)
+        entity.targetGeneration =
+          this.targetGenerations.get(entity.targetId) ?? 0;
+    }
     this.flagDroppedAtSec = Object.fromEntries(
       Object.entries(hud.flagDropElapsedSec ?? {}).map(([team, elapsed]) => [
         team,
@@ -346,6 +360,7 @@ export class LiveStreamAdapter extends StreamEngine {
         name: entry.name,
         rawName: entry.rawName,
         guid: entry.guid,
+        clientGeneration: entry.clientGeneration,
         isAdmin: entry.isAdmin,
         isSuperAdmin: entry.isSuperAdmin,
         isSmurf: entry.isSmurf,
@@ -359,8 +374,16 @@ export class LiveStreamAdapter extends StreamEngine {
     }
     this.onRosterChanged();
     // playerCount is recomputed from the roster on every HUD rebuild.
-    this.teamScores = hud.teamScores.map((entry) => ({
-      ...entry,
+    this.flagStates = restoreFlagStates(
+      hud.flags,
+      hud.teamScores,
+      this.playerIdentity.scope,
+      hud.playerRoster,
+    );
+    this.teamScores = hud.teamScores.map(({ teamId, name, score }) => ({
+      teamId,
+      name,
+      score,
       playerCount: 0,
     }));
     this.onTeamScoresChanged();
@@ -458,6 +481,7 @@ export class LiveStreamAdapter extends StreamEngine {
         this.missionSequence = seq || null;
         // Mission-scoped, like the relay's beginMissionChange.
         this.matchStarted = false;
+        this.flagStates.clear();
         this.clearAllEntities();
         this._ready = false;
         this._snapshot = null;
@@ -916,6 +940,7 @@ export class LiveStreamAdapter extends StreamEngine {
       backpackHud,
       teamScores,
       flagTargets,
+      playerTargets,
       playerRoster,
     } = this.buildCachedHudState();
 
@@ -938,6 +963,9 @@ export class LiveStreamAdapter extends StreamEngine {
       camera: this.camera,
       entities,
       flagTargets,
+      playerTargets,
+      playerIdentityScope: this.playerIdentity.scope,
+      flags: Array.from(this.flagStates.values()),
       controlPlayerGhostId: this.controlPlayerGhostId,
       flagDroppedAtSec: this.flagDroppedAtSec,
       flagReturnDelaySec: flagReturnDelaySec(

@@ -1,0 +1,20 @@
+.Name {
+  display: block;
+  max-width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: inherit;
+  text-shadow: inherit;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+
+.Name:focus-visible {
+  outline: 1px solid currentColor;
+  outline-offset: 1px;
+}

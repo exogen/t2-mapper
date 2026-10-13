@@ -1,6 +1,6 @@
 import type { PlayerRosterEntry, TeamScore } from "../stream/types";
-import { ColoredName } from "./ColoredName";
-import { PlayerAdminBadge } from "./PlayerAdminBadge";
+import { ScorePlayerName } from "./ScorePlayerName";
+import { useFollowCamera } from "./useFollowCamera";
 import type { HudStyle } from "./SettingsProvider";
 import { getScoreboardTeamName, useScoreboard } from "./useScoreboard";
 import { EditableTeamName } from "./TeamNameDialog";
@@ -13,6 +13,7 @@ function PlayerScores({
   score,
   players,
   connectedClientId,
+  onFollow,
 }: {
   label: string;
   teamId?: number;
@@ -20,6 +21,7 @@ function PlayerScores({
   score?: number;
   players: PlayerRosterEntry[];
   connectedClientId: number | null | undefined;
+  onFollow?: (player: PlayerRosterEntry) => void;
 }) {
   return (
     <div className={styles.Team}>
@@ -45,8 +47,7 @@ function PlayerScores({
               data-local={player.clientId === connectedClientId}
             >
               <td className={styles.Name} title={player.name}>
-                {player.name ? <ColoredName raw={player.rawName} /> : "…"}
-                <PlayerAdminBadge player={player} />
+                <ScorePlayerName player={player} onFollow={onFollow} />
               </td>
               <td className={styles.Score}>{player.score}</td>
             </tr>
@@ -65,6 +66,7 @@ function PlayerScores({
 }
 
 export function ScoreHUD({ hudStyle }: { hudStyle: HudStyle }) {
+  const { enabled, followPlayer } = useFollowCamera();
   const {
     sortedTeams,
     teamScores,
@@ -90,6 +92,7 @@ export function ScoreHUD({ hudStyle }: { hudStyle: HudStyle }) {
               score={team.score}
               players={teamPlayers.get(team.teamId) ?? []}
               connectedClientId={connectedClientId}
+              onFollow={enabled ? followPlayer : undefined}
             />
           ))
         ) : (
@@ -97,6 +100,7 @@ export function ScoreHUD({ hudStyle }: { hudStyle: HudStyle }) {
             label="Players"
             players={ffaPlayers ?? []}
             connectedClientId={connectedClientId}
+            onFollow={enabled ? followPlayer : undefined}
           />
         )}
       </div>

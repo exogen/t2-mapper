@@ -198,7 +198,7 @@ describe("v11 checkpoint playback", () => {
     expect(stream.lastStepStartTimeSec).toBe(
       checkpoint.cursor.moveTicks * 0.032,
     );
-    expect(snapshot.teamScores[0].flagStatus).toBe("field");
+    expect(snapshot.teamScores[0].flag?.status).toBe("field");
     expect(snapshot.flagDroppedAtSec).toEqual({});
     expect(
       flagReturnSecondsRemaining(snapshot, 1, snapshot.timeSec),

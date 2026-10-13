@@ -19,10 +19,12 @@ export interface InputFrame {
 export type OnInput = (frame: InputFrame) => void;
 
 export interface InputContextValue {
-  /** Ref to accumulated input frames. Consumer reads and clears. */
+  /** Ref to accumulated input frames. */
   moveQueue: React.RefObject<InputFrame[]>;
   /** Callback for producers to report input each frame. */
   onInput: OnInput;
+  /** Clear queued frames after the consumer has processed them. */
+  clearInput: () => void;
   /** Current input mode. Set by InputConsumer, read by producers. */
   mode: InputMode;
   /** Setter for mode (called by InputConsumer). */

@@ -1,3 +1,4 @@
+import { playerForEntity } from "../state/playerResolver";
 import { useEffect, useRef, useState } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { FaSkullCrossbones } from "react-icons/fa";
@@ -12,7 +13,6 @@ import {
 } from "./iffTheme";
 import { useSettings } from "./SettingsProvider";
 import { useDataSource } from "../state/gameEntityStore";
-import { streamSnapshotStore } from "../state/streamSnapshotStore";
 import { enterWatchFollow, isWatchSpectator } from "../state/watchFollow";
 import { liveConnectionStore } from "../state/liveConnectionStore";
 import {
@@ -174,15 +174,8 @@ export function CommandCircuitPlayerMarker({
           enterWatchFollow(entity.id);
           return;
         }
-        // The targetId from MsgClientJoin is the exact join key to the
-        // player entity; the name comparison is a fallback for
-        // servers/replays where the join message predates our tracking.
-        const roster = streamSnapshotStore.getState().snapshot?.playerRoster;
-        const entry =
-          roster?.find(
-            (p) => p.targetId != null && p.targetId === entity.targetId,
-          ) ?? roster?.find((p) => p.name === entity.playerName);
-        if (!entry) return;
+        const entry = playerForEntity(entity);
+        if (entry.clientId == null) return;
         liveConnectionStore
           .getState()
           .sendCommand("ObserveClient", String(entry.clientId));
@@ -269,7 +262,7 @@ export function CommandCircuitPlayerMarker({
           ccPlayerNames === "always" ||
           (ccPlayerNames === "hover" && hoverRef.current);
         if (showName) {
-          const text = entity.playerName ?? "";
+          const text = playerForEntity(entity).name;
           if (text) {
             let cached = nameBitmapRef.current;
             if (!cached || cached.text !== text) {

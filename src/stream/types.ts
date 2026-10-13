@@ -1,3 +1,5 @@
+import type { FlagState } from "../../relay/flagState";
+import type { PlayerRecord } from "../../relay/playerReference";
 import type { ChatSegment } from "../../relay/shared";
 import type { FlagDropTimes } from "../../relay/flagReturnState";
 import type { ClientAnimationState } from "./clientAnimation";
@@ -559,8 +561,6 @@ export interface TeamScore {
   name: string;
   score: number;
   playerCount: number;
-  /** CTF flag state for this team's flag, from MsgCTFFlag* messages. */
-  flagStatus?: "home" | "held" | "field";
   /**
    * The team's flag skin (lowercase), from the flag target's skin tag —
    * the target is named exactly the team name and outlives the flag item
@@ -568,15 +568,12 @@ export interface TeamScore {
    * use custom skins (beagle/dsword).
    */
   skinName?: string;
-  /** Name of the player holding this team's flag, while flagStatus is
-   *  "held" (from MsgCTFFlagTaken / MsgCTFAddTeam). */
-  flagCarrier?: string;
-  /** Unstripped carrier name for rendering clan and name colors. */
-  flagCarrierRawName?: string;
+  flag?: FlagState;
 }
 
 export interface PlayerRosterEntry {
   clientId: number;
+  clientGeneration?: number;
   /** Account identity across reconnects; absent when hidden or unavailable. */
   guid?: string;
   isAdmin?: boolean;
@@ -640,6 +637,9 @@ export interface StreamSnapshot {
   entities: StreamEntity[];
   /** Original flag targets, independently of their current carrier/ghost. */
   flagTargets: FlagTargetInfo[];
+  flags?: FlagState[];
+  playerIdentityScope?: string;
+  playerTargets?: PlayerRecord[];
   /** Observed drops on the playback clock; team 0 is Rabbit's neutral flag. */
   flagDroppedAtSec: FlagDropTimes;
   /** Assumed game-type timeout, or null for unsupported game types. */

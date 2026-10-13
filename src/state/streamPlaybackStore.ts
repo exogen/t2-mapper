@@ -1,3 +1,4 @@
+import type { PlayerReference } from "../../relay/playerReference";
 import { createStore } from "zustand/vanilla";
 import type { Group } from "three";
 import type { StreamingPlayback } from "../stream/types";
@@ -96,8 +97,8 @@ export interface StreamPlaybackState {
    * like the real observer following a client rather than an object.
    */
   followTargetId: number | null;
-  /** Quick cam player name to resolve once a living body appears. */
-  pendingFollowPlayerName: string | null;
+  /** Player identity retained while waiting for a body or reconnect. */
+  followPlayer: PlayerReference | null;
   /**
    * Which camera the spectate follow uses: the observer orbit or a
    * first-person view from the followed player's eyes. Enforced as
@@ -135,7 +136,7 @@ export const streamPlaybackStore = createStore<StreamPlaybackState>()(() => ({
   orbitSnapNonce: 0,
   followEntityId: null,
   followTargetId: null,
-  pendingFollowPlayerName: null,
+  followPlayer: null,
   followCameraMode: "orbitOverride",
   lastFollowTargetId: null,
   lastFollowGhostIndex: null,
@@ -158,7 +159,7 @@ export function resetStreamPlayback(): void {
     orbitOverrideDistance: DEFAULT_ORBIT_DISTANCE,
     followEntityId: null,
     followTargetId: null,
-    pendingFollowPlayerName: null,
+    followPlayer: null,
     followCameraMode: "orbitOverride",
     lastFollowTargetId: null,
     lastFollowGhostIndex: null,

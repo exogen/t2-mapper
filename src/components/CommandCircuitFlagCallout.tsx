@@ -86,7 +86,7 @@ function resolveFlagStatus(
   return (
     streamSnapshotStore
       .getState()
-      .snapshot?.teamScores?.find((t) => t.teamId === teamId)?.flagStatus ??
+      .snapshot?.teamScores?.find((t) => t.teamId === teamId)?.flag?.status ??
     "home"
   );
 }

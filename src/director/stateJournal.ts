@@ -73,7 +73,7 @@ export class DirectorStateJournal {
         pos: f.pos,
         carrierTargetId: f.carrierTargetId,
         status:
-          teams.get(f.slot)?.flagStatus ??
+          teams.get(f.slot)?.flag?.status ??
           (f.carrierTargetId != null ? "held" : "unknown"),
       })),
       teams: snapshot.teamScores.map(({ teamId, name, score }) => ({

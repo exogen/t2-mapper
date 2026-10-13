@@ -120,8 +120,7 @@ it("persists a followed player's base name without any roster or account identit
   const follow: SavedCamera = {
     kind: "player",
     mode: "firstPerson",
-    displayName: "[TAG]Player",
-    playerName: "Player",
+    player: { kind: "name", rawName: "Player", match: "base" },
     yaw: 0.4,
     pitch: 0.2,
     distance: 20,
@@ -173,15 +172,60 @@ it.each([
         0: camera,
         1: flagCamera,
         2: original,
-        3: { kind: "player", mode, displayName: player.playerName, ...player },
+        3: {
+          kind: "player",
+          mode,
+          player: { kind: "name", rawName: player.playerName, match: "base" },
+          yaw: player.yaw,
+          pitch: player.pitch,
+          distance: player.distance,
+          fov: player.fov,
+          followBehindPlayer: player.followBehindPlayer,
+          commandCircuit: player.commandCircuit,
+        },
       },
     });
     state().renameTeam(2, "Dragons");
     const stored = JSON.parse(sessionStorage.getItem(CASTER_STORAGE_KEY)!);
-    expect(stored.version).toBe(2);
+    expect(stored.version).toBe(3);
     expect(stored.quickCams).toEqual(state().settings?.quickCams);
   },
 );
+
+it("preserves released v2 player bindings without depending on their display label", () => {
+  state().activate(server, "3", "Katabatic");
+  state().renameTeam(1, "Knights");
+  const saved = {
+    kind: "player",
+    mode: "follow",
+    playerName: "Alice",
+    displayName: "Old tag Alice",
+    yaw: 0.4,
+    pitch: 0.2,
+    distance: 20,
+    fov: 90,
+    followBehindPlayer: false,
+  };
+  sessionStorage.setItem(
+    CASTER_STORAGE_KEY,
+    JSON.stringify({
+      ...JSON.parse(sessionStorage.getItem(CASTER_STORAGE_KEY)!),
+      version: 2,
+      quickCams: { 3: saved },
+    }),
+  );
+  state().suspend();
+  state().activate(server, "3", "Katabatic");
+  const {
+    playerName: _playerName,
+    displayName: _displayName,
+    ...camera
+  } = saved;
+  expect(state().settings?.quickCams[3]).toEqual({
+    ...camera,
+    player: { kind: "name", rawName: "Alice", match: "base" },
+  });
+});
 
 it("replaces the active server without retaining a history", () => {
   state().activate(server, "3", "Katabatic");

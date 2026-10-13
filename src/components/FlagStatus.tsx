@@ -8,7 +8,8 @@ import {
 } from "../state/streamSnapshotStore";
 import { streamClock } from "../state/streamPlaybackStore";
 import { flagReturnSecondsRemaining } from "../stream/flagReturnTimer";
-import type { TeamScore } from "../stream/types";
+import type { FlagState } from "../../relay/flagState";
+import { getPlayerResolver } from "../state/playerResolver";
 import { ColoredName } from "./ColoredName";
 import styles from "./FlagStatus.module.css";
 
@@ -46,53 +47,35 @@ function DroppedFlagLabel({ teamId }: { teamId: number }) {
   );
 }
 
-function ColoredCarrierName({
-  name,
-  rawName,
-}: {
-  name: string;
-  rawName?: string;
-}) {
-  const raw = useStreamSnapshot((snapshot) => {
-    if (rawName) return rawName;
-    const matches = snapshot?.playerRoster.filter(
-      (player) => player.name === name,
-    );
-    return matches?.length === 1 ? matches[0].rawName || name : name;
-  });
-  return <ColoredName raw={raw} />;
-}
-
 export function FlagStatus({
-  team,
+  flag,
   icons = "status",
   coloredNames = false,
 }: {
-  team: Pick<
-    TeamScore,
-    "teamId" | "flagStatus" | "flagCarrier" | "flagCarrierRawName"
-  >;
+  flag: FlagState;
   icons?: "status" | "flag" | false;
   coloredNames?: boolean;
 }) {
+  const players = useStreamSnapshot(getPlayerResolver);
+  const { rawName, name } = flag.carrier ? players.display(flag.carrier) : {};
   let Icon;
   let label;
-  switch (team.flagStatus) {
+  switch (flag.status) {
     case "held":
       Icon = FaHand;
-      label =
-        team.flagCarrier && coloredNames ? (
-          <ColoredCarrierName
-            name={team.flagCarrier}
-            rawName={team.flagCarrierRawName}
-          />
+      label = name ? (
+        coloredNames ? (
+          <ColoredName raw={rawName || name} />
         ) : (
-          (team.flagCarrier ?? "Held")
-        );
+          name
+        )
+      ) : (
+        "Held"
+      );
       break;
     case "field":
       Icon = ImArrowDownRight;
-      label = <DroppedFlagLabel teamId={team.teamId} />;
+      label = <DroppedFlagLabel teamId={flag.teamId} />;
       break;
     case "home":
       Icon = ImHome;
@@ -107,7 +90,7 @@ export function FlagStatus({
       {icons && <Icon aria-hidden />}
       <span
         className={styles.Label}
-        title={team.flagStatus === "held" ? team.flagCarrier : undefined}
+        title={flag.status === "held" ? name : undefined}
       >
         {label}
       </span>

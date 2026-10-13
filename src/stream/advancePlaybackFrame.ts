@@ -80,7 +80,9 @@ export function advancePlaybackFrame(
         .getState()
         .completePlaybackSeek(recording, nonce, atEnd ? "paused" : undefined);
     } else if (atEnd && engineStore.getState().playback.status === "playing") {
-      engineStore.getState().setPlaybackStatus("paused");
+      engineStore
+        .getState()
+        .setPlaybackStatus(recording.source === "demo" ? "ending" : "paused");
     }
   } catch (error) {
     if (isCurrentPlayback(recording, nonce)) {

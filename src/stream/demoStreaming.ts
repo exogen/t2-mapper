@@ -1445,6 +1445,7 @@ export class DemoStreamAdapter extends StreamEngine {
       backpackHud,
       teamScores,
       flagTargets,
+      playerTargets,
       playerRoster,
     } = this.buildCachedHudState();
 
@@ -1456,6 +1457,9 @@ export class DemoStreamAdapter extends StreamEngine {
       camera: this.camera,
       entities,
       flagTargets,
+      playerTargets,
+      playerIdentityScope: this.playerIdentity.scope,
+      flags: Array.from(this.flagStates.values()),
       controlPlayerGhostId: this.controlPlayerGhostId,
       flagDroppedAtSec: this.flagDroppedAtSec,
       flagReturnDelaySec: flagReturnDelaySec(

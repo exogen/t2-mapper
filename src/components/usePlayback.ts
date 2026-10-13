@@ -14,8 +14,12 @@ export function useRecording(): StreamRecording | null {
   return useEngineSelector((state) => state.playback.recording);
 }
 
+/** Playback controls stay pauseable while the final chat audio finishes. */
 export function useIsPlaying(): boolean {
-  return useEngineSelector((state) => state.playback.status === "playing");
+  return useEngineSelector(
+    (state) =>
+      state.playback.status === "playing" || state.playback.status === "ending",
+  );
 }
 
 export function useIsSeeking(): boolean {

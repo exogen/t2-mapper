@@ -1,3 +1,4 @@
+import { playerForEntity } from "../state/playerResolver";
 import { useMemo, useRef } from "react";
 import { useStore } from "zustand";
 import { useFrame } from "@react-three/fiber";
@@ -216,7 +217,7 @@ function VisiblePlayerNameplate({ entity }: { entity: PlayerEntity }) {
 
     // Name + health plate, redrawn only when its content changes (the
     // color matters too: the health fill is tinted by it).
-    const name = entity.playerName ?? entity.id;
+    const name = playerForEntity(entity).name || entity.id;
     const healthPx = hasHealthData
       ? Math.round(Math.max(0, Math.min(1, health)) * HEALTH_INNER_WIDTH)
       : -1;

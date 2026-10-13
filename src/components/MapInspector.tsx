@@ -693,7 +693,7 @@ export function MapInspector() {
                 </div>
                 {hasStreamData && !scoreScreenOpen ? (
                   <Suspense>
-                    <PlayerHUD />
+                    <PlayerHUD onOpenScoreScreen={handleOpenScoreScreen} />
                   </Suspense>
                 ) : null}
                 {dataSource === "map" && !splashVisible ? <MapCompass /> : null}

@@ -1,8 +1,7 @@
 import type { IconType } from "react-icons";
 import type { SavedCamera } from "../state/casterStore";
-import { findLivingPlayersByName } from "../state/watchFollow";
+import { getPlayerResolver, resolvePlayerBody } from "../state/playerResolver";
 import { useStreamSnapshot } from "../state/streamSnapshotStore";
-import { taglessPlayerName } from "../stream/streamHelpers";
 import {
   IFF_ENEMY,
   IFF_FRIENDLY,
@@ -28,19 +27,12 @@ export function QuickCamIcon({
     let teamId = flagTeamId;
     const observer = snapshot?.playerSensorGroup === 0;
     if (camera?.kind === "player") {
-      const matches = findLivingPlayersByName(camera.playerName);
-      if (matches.length === 1)
+      const body = resolvePlayerBody(camera.player);
+      if (body)
         return rgbString(
-          resolveIffDisplay(matches[0], observer, observerTeamColors).color,
+          resolveIffDisplay(body, observer, observerTeamColors).color,
         );
-      if (matches.length === 0) {
-        const name = camera.playerName.toLowerCase();
-        teamId = snapshot?.playerRoster.find(
-          (player) =>
-            taglessPlayerName(player.rawName, player.name).toLowerCase() ===
-            name,
-        )?.teamId;
-      }
+      teamId = getPlayerResolver(snapshot).resolve(camera.player)?.teamId;
     } else if (teamId === undefined && camera?.kind !== "flag") {
       return undefined;
     }

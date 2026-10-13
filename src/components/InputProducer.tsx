@@ -31,11 +31,15 @@ export function InputProvider({ children }: { children: ReactNode }) {
     moveQueue.current.push(frame);
   }, []);
 
+  const clearInput = useCallback(() => {
+    moveQueue.current.length = 0;
+  }, []);
+
   // Stable identity except on real mode changes — consumers include every
   // input handler, so a fresh object here invalidates all of them.
   const value = useMemo(
-    () => ({ moveQueue, onInput, mode, setMode }),
-    [onInput, mode],
+    () => ({ moveQueue, onInput, clearInput, mode, setMode }),
+    [onInput, clearInput, mode],
   );
 
   return (

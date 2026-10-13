@@ -1,3 +1,5 @@
+import { useStreamSnapshot } from "../state/streamSnapshotStore";
+import { getPlayerResolver } from "../state/playerResolver";
 import { BsShiftFill } from "react-icons/bs";
 import { FaClosedCaptioning } from "react-icons/fa";
 import { casterStore, useCaster, QUICK_CAM_SLOTS } from "../state/casterStore";
@@ -72,6 +74,7 @@ function CameraBindings({ watching }: { watching: boolean }) {
   const settings = useCaster((s) => s.settings);
   const liveReady = useLiveSelector((s) => s.liveReady);
   const flags = useFlagCameras();
+  const players = useStreamSnapshot(getPlayerResolver);
   if (!settings)
     return (
       <p className={styles.Description}>Waiting for mission information…</p>
@@ -92,6 +95,7 @@ function CameraBindings({ watching }: { watching: boolean }) {
             slot,
             camera,
             flags,
+            players,
           );
           return (
             <div key={slot} className={cameraStyles.Camera}>

@@ -28,6 +28,26 @@
 
 /* ── Team Scores (bottom-left) ── */
 
+.Action {
+  pointer-events: auto;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: inherit;
+  text-shadow: inherit;
+}
+
+.Action:enabled {
+  cursor: pointer;
+}
+
+.Action:focus-visible {
+  outline: 1px solid currentColor;
+  outline-offset: 2px;
+}
+
 .TeamScores {
   align-self: flex-start;
   flex: 0 0 auto;
@@ -112,7 +132,14 @@
   color: rgb(203, 205, 173);
 }
 
+.TeamFlag .Action {
+  display: flex;
+  align-items: center;
+  max-width: 100%;
+}
+
 .TeamFlag svg {
+  flex-shrink: 0;
   margin-right: 7px;
   width: 10px;
   height: 10px;
@@ -268,11 +295,6 @@
 
 .BroadcastTeam[data-side="left"] .PlayerCount {
   order: 1;
-}
-
-.PlayerCount,
-.FlagStatus {
-  pointer-events: auto;
 }
 
 .FlagStatus {

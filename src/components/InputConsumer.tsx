@@ -159,7 +159,7 @@ function applyProcessTickPosition(
  */
 export function InputConsumer() {
   const { followBehindPlayer } = useSettings();
-  const { moveQueue, mode, setMode } = useInputContext();
+  const { moveQueue, clearInput, mode, setMode } = useInputContext();
   const adapter = useLiveSelector((s) => s.adapter);
   const gameStatus = useLiveSelector((s) => s.gameStatus);
   const liveReady = useLiveSelector((s) => s.liveReady);
@@ -485,7 +485,7 @@ export function InputConsumer() {
         if (frame.triggers[i]) frameTriggers[i] = true;
       }
     }
-    moveQueue.current.length = 0;
+    clearInput();
 
     if (liveInput) {
       // Live mode: stage for the ticks — look deltas and triggers

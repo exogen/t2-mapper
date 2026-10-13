@@ -51,10 +51,16 @@ const state = () => engineStore.getState();
 let demo: StreamRecording;
 let context: TestAudioContext;
 let fade: ReturnType<typeof createAudioPlaybackFade>;
+const worldFade = { setPlaying: vi.fn() };
+const chatFade = { setPlaying: vi.fn() };
 let connection: ReturnType<typeof connectAudioPlayback>;
 
 function connect() {
-  connection = connectAudioPlayback(context as unknown as AudioContext, fade);
+  connection = connectAudioPlayback(context as unknown as AudioContext, {
+    output: fade,
+    world: worldFade,
+    chat: chatFade,
+  });
 }
 
 beforeEach(() => {
@@ -73,6 +79,41 @@ afterEach(() => {
 });
 
 describe("audio transport synchronization", () => {
+  it("keeps only chat audible at natural EOF, then suspends when it finishes", async () => {
+    connect();
+    await context.flush();
+    state().setPlaybackStatus("ending");
+    expect(worldFade.setPlaying).toHaveBeenLastCalledWith(false);
+    expect(chatFade.setPlaying).toHaveBeenLastCalledWith(true);
+    expect(context.suspend).not.toHaveBeenCalled();
+    expect(context.state).toBe("running");
+    state().setPlaybackStatus("paused");
+    expect(chatFade.setPlaying).toHaveBeenLastCalledWith(false);
+    await context.flush();
+    expect(context.state).toBe("suspended");
+  });
+
+  it.each(["pause", "toggle", "seek", "replace", "unload"])(
+    "silences the EOF audio tail on %s",
+    async (action) => {
+      connect();
+      await context.flush();
+      state().setPlaybackStatus("ending");
+      if (action === "pause") state().setPlaybackStatus("paused");
+      else if (action === "toggle") {
+        state().togglePlayback(demo);
+        expect(state().playback.status).toBe("paused");
+      } else if (action === "seek") {
+        state().seekPlayback(20);
+        expect(state().playback.resumeAfterSeek).toBe("paused");
+      } else state().setRecording(action === "unload" ? null : { ...demo });
+      expect(worldFade.setPlaying).toHaveBeenLastCalledWith(false);
+      expect(chatFade.setPlaying).toHaveBeenLastCalledWith(false);
+      await context.flush();
+      expect(context.state).toBe("suspended");
+    },
+  );
+
   it("mutes and resumes a seek completed in the same turn, before any React effect", async () => {
     connect();
     await context.flush();

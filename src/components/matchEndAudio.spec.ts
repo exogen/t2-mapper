@@ -20,7 +20,9 @@ const test = vi.hoisted(() => ({
   effects: [] as Array<() => void | (() => void)>,
   cleanups: [] as Array<() => void>,
   pending: [] as Array<() => void>,
+  pendingErrors: [] as Array<() => void>,
   defer: false,
+  audioEnabled: true,
   looping: true,
   contextRunning: true,
   failPlay: false,
@@ -73,7 +75,12 @@ vi.mock("three", async (importOriginal) => {
   return { ...three, Audio: TestAudio };
 });
 vi.mock("./AudioContext", () => ({
-  useAudio: () => ({ audioLoader: {}, audioListener: new Group() }),
+  useAudio: () => ({
+    audioLoader: {},
+    audioListener: Object.assign(new Group(), {
+      createChatSound: () => new Audio(null!),
+    }),
+  }),
 }));
 vi.mock("./AudioEmitter", () => ({
   createPositionalAudio: () => new Audio(null!),
@@ -89,9 +96,12 @@ vi.mock("./AudioEmitter", () => ({
     _url: string,
     _loader: unknown,
     cb: (buffer: unknown) => void,
+    onError?: () => void,
   ) => {
-    if (test.defer) test.pending.push(() => cb({}));
-    else cb({});
+    if (test.defer) {
+      test.pending.push(() => cb({}));
+      if (onError) test.pendingErrors.push(onError);
+    } else cb({});
   },
   stopAndDetachSound: (sound: Audio) => {
     sound.stop();
@@ -106,12 +116,25 @@ vi.mock("./AudioEmitter", () => ({
 }));
 vi.mock("./audioPlaybackRate", () => ({ getEffectiveSoundRate: () => 1 }));
 vi.mock("./SettingsProvider", () => ({
-  useSettings: () => ({ audioEnabled: true, animationEnabled: true }),
+  useSettings: () => ({
+    audioEnabled: test.audioEnabled,
+    animationEnabled: true,
+  }),
   useDebug: () => ({ debugMode: false }),
 }));
 vi.mock("../loaders", () => ({ audioToUrl: (path: string) => path }));
 vi.mock("../state/engineStore", () => ({
-  engineStore: { getState: () => ({ playback: test.playback }) },
+  engineStore: {
+    getState: () => ({
+      playback: test.playback,
+      setPlaybackStatus: (status: string) => {
+        test.playback.status = status;
+      },
+    }),
+  },
+  useEngineSelector: (
+    selector: (state: { playback: typeof test.playback }) => unknown,
+  ) => selector({ playback: test.playback }),
   effectDeltaSec: () => 0,
   effectNow: () => 0,
 }));
@@ -198,6 +221,7 @@ beforeEach(() => {
   resetStreamPlayback();
   streamClock.time = 10;
   test.defer = false;
+  test.audioEnabled = true;
   test.looping = true;
   test.contextRunning = true;
   test.failPlay = false;
@@ -213,6 +237,7 @@ afterEach(() => {
   test.frames.length = 0;
   test.effects.length = 0;
   test.pending.length = 0;
+  test.pendingErrors.length = 0;
   resetStreamPlayback();
 });
 
@@ -648,7 +673,7 @@ it("skips chat sounds that became stale before the effect could run", () => {
     ],
   } as StreamSnapshot;
   ChatSoundPlayer();
-  test.snapshot = { ...test.snapshot, timeSec: 13 };
+  test.snapshot = { ...test.snapshot, timeSec: 15.01 };
   flushEffects();
   expect(trackSound).not.toHaveBeenCalled();
 });
@@ -659,6 +684,345 @@ function mountChatSound() {
   flushEffects();
   return processMessages;
 }
+
+it.each(["before effect", "while loading", "while playing"])(
+  "finishes chat sounds when natural EOF happens %s",
+  (phase) => {
+    test.defer = phase === "while loading";
+    test.snapshot = {
+      timeSec: 10,
+      exhausted: true,
+      chatMessages: [
+        { id: 1, timeSec: 10, soundPath: "voice/announcer/ann.stowins.wav" },
+        {
+          id: 2,
+          timeSec: 10,
+          soundPath: "voice/male1/gbl.grtgame.wav",
+          sender: "player",
+        },
+      ],
+    } as StreamSnapshot;
+    ChatSoundPlayer();
+    const processMessages = test.effects.at(-1)!;
+    if (phase !== "before effect") flushEffects();
+    test.playback.status = "ending";
+    flushEffects();
+    processMessages();
+    expect(test.playback.status).toBe("ending");
+    for (const load of test.pending.splice(0)) load();
+    const sounds = vi.mocked(trackSound).mock.calls.map(([sound]) => sound);
+    expect(sounds).toHaveLength(2);
+    expect(sounds.every((sound) => sound.isPlaying)).toBe(true);
+    sounds[0].onEnded();
+    expect(test.playback.status).toBe("ending");
+    sounds[1].onEnded();
+    expect(test.playback.status).toBe("paused");
+    processMessages();
+    expect(trackSound).toHaveBeenCalledTimes(2);
+  },
+);
+
+it("waits for the final chat batch even if an earlier sound finishes first", () => {
+  test.snapshot = {
+    timeSec: 10,
+    chatMessages: [
+      { id: 1, timeSec: 10, soundPath: "voice/male1/gbl.grtgame.wav" },
+    ],
+  } as StreamSnapshot;
+  const processMessages = mountChatSound();
+  test.snapshot = {
+    ...test.snapshot,
+    exhausted: true,
+    chatMessages: [
+      ...test.snapshot.chatMessages,
+      {
+        id: 2,
+        timeSec: 10,
+        soundPath: "voice/announcer/ann.stowins.wav",
+        sender: "",
+        text: "Match has ended.",
+        kind: "server",
+      },
+    ],
+  };
+  test.playback.status = "ending";
+  vi.mocked(trackSound).mock.calls[0][0].onEnded();
+  expect(test.playback.status).toBe("ending");
+  processMessages();
+  expect(trackSound).toHaveBeenCalledTimes(2);
+  expect(test.playback.status).toBe("ending");
+  vi.mocked(trackSound).mock.calls[1][0].onEnded();
+  expect(test.playback.status).toBe("paused");
+});
+
+it.each(["oldest first", "newest first"])(
+  "only plays the newest pending voice bind from a sender (%s)",
+  (order) => {
+    test.defer = true;
+    test.snapshot = {
+      timeSec: 10,
+      chatMessages: [
+        {
+          id: 1,
+          timeSec: 10,
+          soundPath: "voice/male1/gbl.grtgame.wav",
+          sender: "player",
+        },
+      ],
+    } as StreamSnapshot;
+    const processMessages = mountChatSound();
+    const [oldLoad] = test.pending.splice(0);
+    test.snapshot = {
+      ...test.snapshot,
+      chatMessages: [
+        ...test.snapshot.chatMessages,
+        {
+          ...test.snapshot.chatMessages[0],
+          id: 2,
+          soundPath: "voice/male1/gbl.thanks.wav",
+        },
+      ],
+    };
+    test.playback.status = "ending";
+    processMessages();
+    const [newLoad] = test.pending.splice(0);
+    if (order === "oldest first") oldLoad();
+    newLoad();
+    if (order === "newest first") oldLoad();
+    expect(trackSound).toHaveBeenCalledOnce();
+    const sound = vi.mocked(trackSound).mock.calls[0][0];
+    expect(sound.isPlaying).toBe(true);
+    expect(test.playback.status).toBe("ending");
+    sound.onEnded();
+    expect(test.playback.status).toBe("paused");
+  },
+);
+
+it("does not wait at EOF for a voice bind superseded by a cached sound", () => {
+  test.defer = true;
+  test.snapshot = {
+    timeSec: 10,
+    chatMessages: [
+      {
+        id: 1,
+        timeSec: 10,
+        soundPath: "voice/male1/gbl.grtgame.wav",
+        sender: "player",
+      },
+    ],
+  } as StreamSnapshot;
+  const processMessages = mountChatSound();
+  test.defer = false;
+  test.snapshot = {
+    ...test.snapshot,
+    chatMessages: [
+      ...test.snapshot.chatMessages,
+      { ...test.snapshot.chatMessages[0], id: 2 },
+    ],
+  };
+  test.playback.status = "ending";
+  processMessages();
+  expect(trackSound).toHaveBeenCalledOnce();
+  vi.mocked(trackSound).mock.calls[0][0].onEnded();
+  expect(test.playback.status).toBe("paused");
+  for (const load of test.pending.splice(0)) load();
+  expect(trackSound).toHaveBeenCalledOnce();
+});
+
+it.each([0, 3])(
+  "expires an unfinished EOF sound load using its remaining age budget (age %s)",
+  (age) => {
+    vi.useFakeTimers();
+    try {
+      test.defer = true;
+      test.playback.status = "ending";
+      test.snapshot = {
+        timeSec: 10,
+        chatMessages: [
+          {
+            id: 1,
+            timeSec: 10 - age,
+            soundPath: "voice/announcer/ann.stowins.wav",
+          },
+        ],
+      } as StreamSnapshot;
+      mountChatSound();
+      vi.advanceTimersByTime((5 - age) * 1000 - 1);
+      expect(test.playback.status).toBe("ending");
+      vi.advanceTimersByTime(1);
+      expect(test.playback.status).toBe("paused");
+      expect(vi.getTimerCount()).toBe(0);
+      for (const load of test.pending.splice(0)) load();
+      expect(trackSound).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  },
+);
+
+it("cancels the load deadline once audio starts and lets a long sound finish", () => {
+  vi.useFakeTimers();
+  try {
+    test.defer = true;
+    test.playback.status = "ending";
+    test.snapshot = {
+      timeSec: 10,
+      chatMessages: [
+        { id: 1, timeSec: 10, soundPath: "voice/announcer/ann.stowins.wav" },
+      ],
+    } as StreamSnapshot;
+    mountChatSound();
+    vi.advanceTimersByTime(4000);
+    for (const load of test.pending.splice(0)) load();
+    expect(vi.getTimerCount()).toBe(0);
+    vi.advanceTimersByTime(10_000);
+    expect(test.playback.status).toBe("ending");
+    const sound = vi.mocked(trackSound).mock.calls[0][0];
+    expect(sound.isPlaying).toBe(true);
+    sound.onEnded();
+    expect(test.playback.status).toBe("paused");
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("rejects an expired buffer even if its callback beats the timeout after a stall", () => {
+  vi.useFakeTimers();
+  const now = vi.spyOn(performance, "now").mockReturnValue(0);
+  try {
+    test.defer = true;
+    test.playback.status = "ending";
+    test.snapshot = {
+      timeSec: 10,
+      chatMessages: [
+        { id: 1, timeSec: 10, soundPath: "voice/announcer/ann.stowins.wav" },
+      ],
+    } as StreamSnapshot;
+    mountChatSound();
+    now.mockReturnValue(6000);
+    for (const load of test.pending.splice(0)) load();
+    expect(trackSound).not.toHaveBeenCalled();
+    expect(test.playback.status).toBe("paused");
+    expect(vi.getTimerCount()).toBe(0);
+  } finally {
+    now.mockRestore();
+    vi.useRealTimers();
+  }
+});
+
+it.each([
+  "muted",
+  "no sound",
+  "blocked context",
+  "play failure",
+  "load failure",
+])("settles natural EOF without leaving audio running (%s)", (reason) => {
+  test.audioEnabled = reason !== "muted";
+  test.contextRunning = reason !== "blocked context";
+  test.failPlay = reason === "play failure";
+  test.defer = reason === "load failure";
+  test.playback.status = "ending";
+  test.snapshot = {
+    timeSec: 10,
+    exhausted: true,
+    chatMessages: [
+      {
+        id: 1,
+        timeSec: 10,
+        soundPath:
+          reason === "no sound" ? undefined : "voice/announcer/ann.stowins.wav",
+      },
+    ],
+  } as StreamSnapshot;
+  mountChatSound();
+  for (const fail of test.pendingErrors.splice(0)) fail();
+  expect(test.playback.status).toBe("paused");
+  expect(
+    vi.mocked(trackSound).mock.calls.every(([sound]) => !sound.isPlaying),
+  ).toBe(true);
+});
+
+it("cancels pending chat loads when the sound player unmounts", () => {
+  test.defer = true;
+  test.snapshot = {
+    timeSec: 10,
+    chatMessages: [
+      { id: 1, timeSec: 10, soundPath: "voice/announcer/ann.stowins.wav" },
+    ],
+  } as StreamSnapshot;
+  mountChatSound();
+  for (const cleanup of test.cleanups.splice(0)) cleanup();
+  test.playback.status = "ending";
+  for (const load of test.pending.splice(0)) load();
+  expect(trackSound).not.toHaveBeenCalled();
+});
+
+it("restarts a canceled load after React replays mount effects", () => {
+  test.defer = true;
+  test.playback.status = "ending";
+  test.snapshot = {
+    timeSec: 10,
+    chatMessages: [
+      { id: 1, timeSec: 10, soundPath: "voice/announcer/ann.stowins.wav" },
+    ],
+  } as StreamSnapshot;
+  const processMessages = mountChatSound();
+  for (const cleanup of test.cleanups.splice(0)) cleanup();
+  processMessages();
+  for (const load of test.pending.splice(0)) load();
+  expect(trackSound).toHaveBeenCalledOnce();
+  expect(test.playback.status).toBe("ending");
+  vi.mocked(trackSound).mock.calls[0][0].onEnded();
+  expect(test.playback.status).toBe("paused");
+});
+
+it.each(["pause", "seek", "replace"])(
+  "drops an EOF chat load after %s without changing the new transport state",
+  (action) => {
+    test.defer = true;
+    test.playback.status = "ending";
+    test.snapshot = {
+      timeSec: 10,
+      chatMessages: [
+        { id: 1, timeSec: 10, soundPath: "voice/announcer/ann.stowins.wav" },
+      ],
+    } as StreamSnapshot;
+    mountChatSound();
+    const previous = test.playback;
+    test.playback = {
+      ...previous,
+      status: action === "pause" ? "paused" : "playing",
+      seekNonce: previous.seekNonce + (action === "seek" ? 1 : 0),
+      recording:
+        action === "replace" ? { ...previous.recording } : previous.recording,
+    };
+    const nextStatus = test.playback.status;
+    for (const load of test.pending.splice(0)) load();
+    expect(trackSound).not.toHaveBeenCalled();
+    expect(test.playback.status).toBe(nextStatus);
+  },
+);
+
+it.each(["processing", "loading"])(
+  "plays a chat sound after a five-second %s delay",
+  (stage) => {
+    test.defer = stage === "loading";
+    test.snapshot = {
+      timeSec: 10,
+      chatMessages: [
+        { id: 1, timeSec: 10, soundPath: "voice/announcer/ann.stowins.wav" },
+      ],
+    } as StreamSnapshot;
+    ChatSoundPlayer();
+    if (stage === "loading") flushEffects();
+    streamClock.time = 15;
+    test.snapshot.timeSec = 15;
+    flushEffects();
+    for (const load of test.pending.splice(0)) load();
+    expect(trackSound).toHaveBeenCalledOnce();
+    expect(vi.mocked(trackSound).mock.calls[0][0].isPlaying).toBe(true);
+  },
+);
 
 it("replays a voice bind after rewinding and crossing the same message again", () => {
   const message = {
@@ -757,7 +1121,7 @@ it.each(["seek", "completed seek", "pause", "stale"])(
     } else if (change === "pause") {
       test.playback.status = "paused";
     } else {
-      streamClock.time = 13;
+      streamClock.time = 15.01;
     }
     for (const load of test.pending.splice(0)) load();
     expect(trackSound).not.toHaveBeenCalled();

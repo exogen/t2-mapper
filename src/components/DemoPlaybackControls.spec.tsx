@@ -19,9 +19,9 @@ const state = vi.hoisted(() => ({
 }));
 
 vi.mock("./InputControls", () => ({ useInputAction() {} }));
-vi.mock("./usePlayback", () => ({
+vi.mock("./usePlayback", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./usePlayback")>()),
   useRecording: () => state.recording,
-  useIsPlaying: () => false,
   useIsSeeking: () => false,
   useCurrentTime: () => 0,
   useDuration: () => state.recording.duration,
@@ -59,6 +59,18 @@ beforeEach(() => {
   state.recording.duration = 100;
   state.observerPerspective = false;
   state.observerTeamColors = "blueOrange";
+  state.playback.status = "paused";
+});
+
+it("shows Pause while the final announcement is finishing, then Play", () => {
+  state.playback.status = "ending";
+  expect(renderToStaticMarkup(<DemoPlaybackControls />)).toContain(
+    'aria-label="Pause" title="Pause (Space)"',
+  );
+  state.playback.status = "paused";
+  expect(renderToStaticMarkup(<DemoPlaybackControls />)).toContain(
+    'aria-label="Play" title="Play (Space)"',
+  );
 });
 
 function markers(...events: TimelineEvent[]) {

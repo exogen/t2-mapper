@@ -49,6 +49,26 @@ afterEach(() => {
 });
 
 describe("frame publication and transport", () => {
+  it("allows final chat audio only when playing into natural EOF", () => {
+    step.mockReturnValue(snapshot(0.032, true));
+    frame();
+    expect(streamSnapshotStore.getState().snapshot?.exhausted).toBe(true);
+    expect(state().playback.status).toBe("ending");
+    frame();
+    expect(state().playback.status).toBe("ending");
+
+    state().seekPlayback(100);
+    frame();
+    expect(state().playback.status).toBe("paused");
+  });
+
+  it("does not enter the audio tail at an incomplete download frontier", () => {
+    streamComplete = false;
+    step.mockReturnValue(snapshot(0.032, true));
+    frame();
+    expect(state().playback.status).toBe("playing");
+  });
+
   it.each([60, 80])(
     "publishes a restored checkpoint scene while a seek to %s stays pending",
     (target) => {

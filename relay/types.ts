@@ -1,3 +1,5 @@
+import type { FlagState } from "./flagState.js";
+import type { ServerMessageRosterEntry } from "./serverMessageState.js";
 import type {
   ConnectionProtocolState,
   GhostUpdate,
@@ -88,21 +90,10 @@ export type WatchEndReason = "watchingDisabled";
  *  stream (MsgPlayerScore only updates existing roster entries).
  *  Structured stand-in for a .rec's demoValues sections. */
 export interface WatchHudStatePayload {
-  playerRoster: Array<{
-    clientId: number;
-    guid?: string;
-    isAdmin?: boolean;
-    isSuperAdmin?: boolean;
-    isSmurf?: boolean;
-    name: string;
-    rawName: string;
-    targetId?: number;
-    teamId: number;
-    score: number;
-    ping: number;
-    packetLoss: number;
-    kills?: number;
-  }>;
+  playerIdentity?: { scope: string; generations: Array<[number, number]> };
+  targetGenerations?: Array<[number, number]>;
+  flags?: FlagState[];
+  playerRoster: Array<ServerMessageRosterEntry & { clientId: number }>;
   teamScores: Array<{
     teamId: number;
     name: string;

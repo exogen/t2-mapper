@@ -37,7 +37,7 @@ export interface MutableRosterEntry {
 /** $flagStatus[team] text → our enum. "<At Base>" / "<In the Field>" /
  *  otherwise a carrier name (or empty → home). */
 export function decodeFlagStatus(statusText: string): FlagStatus {
-  return statusText.startsWith("<At Base")
+  return statusText.startsWith("<At Base") || statusText.startsWith("<At Home")
     ? "home"
     : statusText.startsWith("<In the Field")
       ? "field"

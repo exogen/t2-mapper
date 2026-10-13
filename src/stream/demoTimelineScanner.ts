@@ -173,6 +173,8 @@ export async function scanDemoTimelineParser(
   const registry = parser.getRegistry();
   const parsedDemoValues = parseDemoValues(initialBlock.demoValues);
   const rosterState = {
+    flags: new Map(),
+    playerIdentity: { scope: "demo", generations: new Map<number, number>() },
     playerRoster: new Map<number, ServerMessageRosterEntry>(
       parsedDemoValues.playerRoster,
     ),

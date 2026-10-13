@@ -1,3 +1,4 @@
+import { getPlayerResolver } from "../state/playerResolver";
 import { useEffect, useRef } from "react";
 import { BsShiftFill } from "react-icons/bs";
 import { FaClosedCaptioning } from "react-icons/fa";
@@ -15,16 +16,12 @@ import { useSettings } from "./SettingsProvider";
 import styles from "./QuickCamHUD.module.css";
 
 function QuickCamFlagStatus({ teamId }: { teamId: number }) {
-  const team = useStreamSnapshot((snapshot) =>
-    snapshot?.teamScores.find((team) => team.teamId === teamId),
+  const flag = useStreamSnapshot((snapshot) =>
+    snapshot?.flags?.find((flag) => flag.teamId === teamId),
   );
   return (
     <small className={styles.FlagStatus}>
-      {team?.flagStatus ? (
-        <FlagStatus team={team} icons={false} />
-      ) : (
-        "Status unknown"
-      )}
+      {flag ? <FlagStatus flag={flag} icons={false} /> : "Status unknown"}
     </small>
   );
 }
@@ -40,6 +37,7 @@ export function QuickCamHUD({
   const seenAction = useRef(lastCameraAction);
   const hudRef = useRef<HTMLElement>(null);
   const flags = useFlagCameras();
+  const players = useStreamSnapshot(getPlayerResolver);
   const source = useDataSource();
   const liveReady = useLiveSelector((s) => s.role === "watcher" && s.liveReady);
   const ready = source === "demo" || (source === "live" && liveReady);
@@ -78,6 +76,7 @@ export function QuickCamHUD({
             slot,
             camera,
             flags,
+            players,
           );
           if (quickCamHideUnassignedSlots && empty) return null;
           return (

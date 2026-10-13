@@ -7,16 +7,11 @@ import {
 } from "../state/streamPlaybackStore";
 import { gameEntityStore } from "../state/gameEntityStore";
 import { useStreamSnapshot } from "../state/streamSnapshotStore";
-import { stripTaggedStringMarkup } from "../stream/streamHelpers";
+import { playerForEntity } from "../state/playerResolver";
 import { flagLabel } from "../state/flagTeam";
 import styles from "./WatchedPlayerHUD.module.css";
 import { usePlayerOrbitAvailable } from "./usePlayerOrbitLocked";
 import { useSettings } from "./SettingsProvider";
-
-function clean(name: string | null | undefined): string | null {
-  if (!name) return null;
-  return stripTaggedStringMarkup(name).trim() || null;
-}
 
 /**
  * The followed player's name — or the followed flag's, e.g. "Storm Flag"
@@ -48,7 +43,7 @@ function resolveFollowedName(
     return flagLabel(entity, "original", teamNames);
   }
   if (entity.renderType !== "Player") return null;
-  return clean(entity.playerName ?? null);
+  return playerForEntity(entity).name || null;
 }
 
 /**

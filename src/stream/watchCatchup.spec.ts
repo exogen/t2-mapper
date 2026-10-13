@@ -12,6 +12,7 @@ import { LiveStreamAdapter } from "./liveStreaming";
 import type { RelayClient } from "./relayClient";
 import type { ImageSlot, ThreadState } from "./types";
 import { WatchStateAccumulator } from "../../relay/watchState";
+import { PlayerResolver } from "../../relay/playerReference";
 import { buildCatchupPayload } from "../../relay/watchCatchup";
 import { GAME_PROTOCOL_VERSION } from "../../relay/shared";
 import {
@@ -52,6 +53,113 @@ function demoPath(): string | null {
 const fakeRelay = {} as unknown as RelayClient;
 
 describe("live wire protocol propagation", () => {
+  it("does not reuse player identities across catch-ups without connection identity metadata", () => {
+    const adapter = new LiveStreamAdapter(fakeRelay, { mode: "watch" });
+    const hydrate = (name: string) => {
+      const watchState = new WatchStateAccumulator();
+      watchState.applyPacket({
+        gameState: {},
+        events: [
+          {
+            parsedData: {
+              type: "RemoteCommandEvent",
+              funcName: "ServerMessage",
+              args: [
+                "MsgClientJoin",
+                "",
+                name,
+                "7",
+                "32",
+                "0",
+                "0",
+                "0",
+                "1",
+                "0",
+              ],
+            },
+          },
+        ],
+      } as unknown as PacketData);
+      const payload = buildCatchupPayload({
+        packetParser: createLiveParser({
+          protocolVersion: GAME_PROTOCOL_VERSION,
+        }).packetParser,
+        ghostState: new GhostStateAccumulator(),
+        watchState,
+        epoch: 1,
+        serverAddress: "test:28000",
+      });
+      delete payload.hudState.playerIdentity;
+      delete payload.hudState.targetGenerations;
+      for (const player of payload.hudState.playerRoster)
+        delete player.clientGeneration;
+      adapter.hydrate(payload);
+      const snapshot = adapter.getSnapshot();
+      return new PlayerResolver(
+        snapshot.playerIdentityScope!,
+        snapshot.playerRoster,
+        snapshot.playerTargets,
+      );
+    };
+    const original = hydrate("Alice").reference("Alice");
+    expect(hydrate("Other").resolve(original)).toBeUndefined();
+    expect(hydrate("Alice").resolve(original)).toMatchObject({ name: "Alice" });
+  });
+
+  it.each([false, true])(
+    "hydrates renamed carriers from a relay (legacy payload: %s)",
+    (legacy) => {
+      const watchState = new WatchStateAccumulator();
+      const messages = [
+        ["MsgClientJoin", "", "Alice", "7", "32", "0", "0", "0", "1", "0"],
+        ["MsgCTFAddTeam", "", "1", "Storm", "Alice", "0"],
+        ["MsgClientNameChanged", "", "Alice", "\x0cSmurf", "7"],
+      ];
+      watchState.applyPacket({
+        gameState: {},
+        events: messages.map((args) => ({
+          parsedData: {
+            type: "RemoteCommandEvent",
+            funcName: "ServerMessage",
+            args,
+          },
+        })),
+      } as unknown as PacketData);
+      const payload = buildCatchupPayload({
+        packetParser: createLiveParser({
+          protocolVersion: GAME_PROTOCOL_VERSION,
+        }).packetParser,
+        ghostState: new GhostStateAccumulator(),
+        watchState,
+        epoch: 1,
+        serverAddress: "test:28000",
+      });
+      if (legacy) {
+        delete payload.hudState.flags;
+        delete payload.hudState.playerIdentity;
+        delete payload.hudState.targetGenerations;
+        for (const player of payload.hudState.playerRoster)
+          delete player.clientGeneration;
+      }
+      const adapter = new LiveStreamAdapter(fakeRelay, { mode: "watch" });
+      adapter.hydrate(
+        deserializeCatchupPayload(serializeCatchupPayload(payload)),
+      );
+      const snapshot = adapter.getSnapshot();
+      const resolver = new PlayerResolver(
+        snapshot.playerIdentityScope!,
+        snapshot.playerRoster,
+        snapshot.playerTargets,
+      );
+      expect(resolver.display(snapshot.flags![0].carrier!)).toMatchObject({
+        name: "Smurf",
+        rawName: "\x0cSmurf",
+      });
+      expect(snapshot.playerRoster[0].guid).toBeUndefined();
+      expect(snapshot.teamScores[0].flag).toBe(snapshot.flags![0]);
+    },
+  );
+
   it("carries the playhead's mission sequence through catch-up and resets same-map games", () => {
     const watchState = new WatchStateAccumulator();
     watchState.applyMissionStart("MissionStartPhase1", ["21", "Katabatic"]);

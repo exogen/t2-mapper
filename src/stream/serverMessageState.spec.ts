@@ -1,3 +1,5 @@
+import { legacyFlagFields } from "../../relay/flagState";
+import { PlayerResolver } from "../../relay/playerReference";
 import { describe, expect, it, vi } from "vitest";
 import type { PacketData } from "t2-demo-parser";
 import { WatchStateAccumulator } from "../../relay/watchState";
@@ -60,6 +62,18 @@ class MessageStream extends LiveStreamAdapter {
     this.targetRawNames.set(targetId, rawName);
   }
 
+  flag(teamId: number) {
+    return this.flagStates.get(teamId);
+  }
+  players() {
+    const hud = this.buildCachedHudState();
+    return new PlayerResolver(
+      this.playerIdentity.scope,
+      hud.playerRoster,
+      hud.playerTargets,
+    );
+  }
+
   target(targetId: number) {
     return {
       name: this.entities.get("player")?.playerName,
@@ -113,23 +127,12 @@ function debrief(...data: string[]) {
 }
 
 // The browser additionally derives player counts and flag skins for rendering.
-function commonTeam({
-  teamId,
-  name,
-  score,
-  flagStatus,
-  flagCarrier,
-  flagCarrierRawName,
-}: Pick<
-  TeamScore,
-  | "teamId"
-  | "name"
-  | "score"
-  | "flagStatus"
-  | "flagCarrier"
-  | "flagCarrierRawName"
->) {
-  return { teamId, name, score, flagStatus, flagCarrier, flagCarrierRawName };
+function commonTeam(team: { teamId: number; name: string; score: number }) {
+  const { teamId, name, score } = team;
+  return { teamId, name, score };
+}
+function flagFields(team: TeamScore) {
+  return legacyFlagFields(team.flag, new PlayerResolver("test", []));
 }
 
 function fixture() {
@@ -365,8 +368,7 @@ describe("browser and relay server-message state", () => {
     });
     expect(updatedHud.teamScores[0]).toMatchObject({
       score: 4,
-      flagStatus: "held",
-      flagCarrier: "Alice",
+      flag: { status: "held", carrier: { rawName: "Alice" } },
       playerCount: 1,
     });
     expect(updatedHud.matchStarted).toBe(true);
@@ -394,6 +396,7 @@ describe("browser and relay server-message state", () => {
 
     send(join(rawName, "7", "32", "009007199254740993"));
     expect(relay.getPlayerRoster().get(7)).toEqual({
+      clientGeneration: 1,
       name: "TAG|Alice",
       rawName,
       guid: "9007199254740993",
@@ -413,6 +416,7 @@ describe("browser and relay server-message state", () => {
     send(join("Anonymous", "7", "45", "0"));
     expect(browser.hud().playerRoster[0]).toEqual({
       clientId: 7,
+      clientGeneration: 2,
       name: "Anonymous",
       rawName: "Anonymous",
       guid: undefined,
@@ -505,16 +509,14 @@ describe("browser and relay server-message state", () => {
     expect(browser.hud().teamScores[0]).toMatchObject({
       teamId: 1,
       score: 2,
-      flagStatus: "held",
-      flagCarrier: "Alice",
+      flag: { status: "held", carrier: { rawName: "Alice" } },
     });
     expect(browser.matchStarted).toBe(true);
     send(["MsgCTFAddTeam", "", "1", "Storm renamed", "<In the Field>", "n/a"]);
     expect(browser.hud().teamScores[0]).toMatchObject({
       name: "Storm renamed",
       score: 2,
-      flagStatus: "field",
-      flagCarrier: undefined,
+      flag: { status: "field" },
     });
     send(["MsgTeamScoreIs", "", "1", "5"], ["MsgTeamScore", "", "1", "n/a"]);
     expect(browser.hud().teamScores[0].score).toBe(5);
@@ -526,7 +528,7 @@ describe("browser and relay server-message state", () => {
       ["MsgCTFFlagCapped", "home"],
     ]) {
       send([msgType, "", "\x0bAlice", "Storm", "1"]);
-      expect(browser.hud().teamScores[0]).toMatchObject({
+      expect(flagFields(browser.hud().teamScores[0])).toMatchObject({
         flagStatus,
         flagCarrier: flagStatus === "held" ? "Alice" : undefined,
       });
@@ -545,7 +547,7 @@ describe("browser and relay server-message state", () => {
     setString(12, raw);
     send(["MsgCTFAddTeam", "", "1", "Storm", "\x0112", "0"]);
     const expectCarrier = () =>
-      expect(browser.hud().teamScores[0]).toMatchObject({
+      expect(flagFields(browser.hud().teamScores[0])).toMatchObject({
         flagStatus: "held",
         flagCarrier: "=TAG=Carrier",
         flagCarrierRawName: raw,
@@ -557,7 +559,7 @@ describe("browser and relay server-message state", () => {
     ).toBe(raw);
     const checkpoint = browser.checkpoint();
     send(["MsgCTFFlagDropped", "", "\x0112", "Storm", "1"]);
-    expect(browser.hud().teamScores[0].flagCarrierRawName).toBeUndefined();
+    expect(browser.hud().teamScores[0].flag?.carrier).toBeUndefined();
     browser.restore(checkpoint);
     expectCarrier();
     send(["MsgCTFFlagTaken", "", "\x0112", "Storm", "1"]);
@@ -651,5 +653,129 @@ describe("browser and relay server-message state", () => {
       [],
       [[9, "", 2, 0]],
     ]);
+  });
+});
+
+describe("current flag carrier identity", () => {
+  it.each(["0", "12345"])(
+    "keeps carrier identity and current colors through renames, GUID %s",
+    (guid) => {
+      const { browser, relay, send } = fixture();
+      send(join("Alice", "7", "32", guid));
+      send(["MsgCTFAddTeam", "", "1", "Storm", "Alice", "0"]);
+      const carrier = browser.flag(1)!.carrier!;
+      expect(carrier.kind).toBe("player");
+      send(["MsgClientNameChanged", "", "Alice", "\x0cSmurf", "7"]);
+      expect(browser.flag(1)!.carrier).toMatchObject({
+        kind: "player",
+        clientId: 7,
+        clientGeneration: 1,
+      });
+      expect(browser.players().display(carrier)).toMatchObject({
+        name: "Smurf",
+        rawName: "\x0cSmurf",
+      });
+      expect(relay.getHudState().teamScores[0].flagCarrierRawName).toBe(
+        "\x0cSmurf",
+      );
+      const checkpoint = browser.checkpoint();
+      send(["MsgClientDrop", "", "Smurf", "7"]);
+      send(join("Someone else", "7", "32", "999"));
+      expect(browser.players().resolve(carrier)).toBeUndefined();
+      browser.restore(checkpoint);
+      expect(browser.players().display(browser.flag(1)!.carrier!).name).toBe(
+        "Smurf",
+      );
+    },
+  );
+
+  it("normalizes older name-only checkpoints and does not mutate them", () => {
+    const browser = new MessageStream();
+    browser.message(join("Alice", "7", "32", "0"));
+    browser.message(["MsgCTFAddTeam", "", "1", "Storm", "Alice", "0"]);
+    const checkpoint = browser.checkpoint();
+    // Fields absent in existing v11/v12 files. Keep their original team carrier fields.
+    Reflect.deleteProperty(checkpoint.state, "flagStates");
+    Reflect.deleteProperty(checkpoint.state, "playerIdentity");
+    for (const player of checkpoint.state.playerRoster.values())
+      delete player.clientGeneration;
+    const original = structuredClone(checkpoint);
+    browser.restore(checkpoint);
+    browser.message(["MsgClientNameChanged", "", "Alice", "Renamed", "7"]);
+    expect(browser.players().display(browser.flag(1)!.carrier!).name).toBe(
+      "Renamed",
+    );
+    expect(checkpoint).toEqual(original);
+  });
+
+  it("resolves the same post-checkpoint client when an older checkpoint omitted join counters", () => {
+    class DemoMessageStream extends MessageStream {
+      constructor() {
+        super();
+        this.playerIdentity.scope = "demo";
+      }
+    }
+    const browser = new DemoMessageStream();
+    browser.message(join("Previous", "7", "32", "0"));
+    const oldCheckpoint = browser.checkpoint();
+    Reflect.deleteProperty(oldCheckpoint.state, "playerIdentity");
+    for (const player of oldCheckpoint.state.playerRoster.values())
+      delete player.clientGeneration;
+    const rejoin = () => {
+      browser.message(["MsgClientDrop", "", "Previous", "7"]);
+      browser.message(join("Alice", "7", "33", "0"));
+    };
+    rejoin();
+    const ref = browser.players().reference("Alice");
+    const currentCheckpoint = browser.checkpoint();
+    browser.restore(oldCheckpoint);
+    rejoin();
+    expect(browser.players().resolve(ref)).toMatchObject({
+      clientId: 7,
+      targetId: 33,
+      name: "Alice",
+    });
+    const legacyRef = browser.players().reference("Alice");
+    browser.restore(currentCheckpoint);
+    expect(browser.players().resolve(legacyRef)).toMatchObject({
+      clientId: 7,
+      targetId: 33,
+      name: "Alice",
+    });
+  });
+
+  it("binds a carrier received before the roster, before a subsequent rename", () => {
+    const browser = new MessageStream();
+    browser.message(["MsgCTFFlagTaken", "", "Alice", "", "2"]);
+    expect(browser.flag(2)?.carrier?.kind).toBe("name");
+    browser.message(join("Alice", "7", "32", "0"));
+    browser.message(["MsgClientNameChanged", "", "Alice", "New name", "7"]);
+    expect(browser.players().display(browser.flag(2)!.carrier!).name).toBe(
+      "New name",
+    );
+  });
+
+  it("tracks Rabbit independently of teams, including home, pickups, drops, and mission changes", () => {
+    const { browser, relay, send } = fixture();
+    send(join("Rabbit", "7", "32", "0"));
+    send(["MsgRabbitFlagStatus", "", "<At Home>"]);
+    expect(browser.flag(0)).toMatchObject({ teamId: 0, status: "home" });
+    send(["MsgRabbitFlagTaken", "", "Rabbit"]);
+    expect(browser.players().display(browser.flag(0)!.carrier!).name).toBe(
+      "Rabbit",
+    );
+    send(["MsgClientNameChanged", "", "Rabbit", "Fast Rabbit", "7"]);
+    expect(browser.players().display(browser.flag(0)!.carrier!).name).toBe(
+      "Fast Rabbit",
+    );
+    expect(relay.getHudState().flags?.[0].carrier?.kind).toBe("player");
+    send(["MsgRabbitFlagDropped", ""]);
+    expect(browser.flag(0)).toEqual({ teamId: 0, status: "field" });
+    send(["MsgRabbitFlagReturned", ""]);
+    expect(browser.flag(0)).toEqual({ teamId: 0, status: "home" });
+    expect(browser.hud().teamScores).toEqual([]);
+    send(["MsgClientReady", "", "LakRabbitGame"]);
+    expect(browser.flag(0)).toBeUndefined();
+    expect(relay.getHudState().flags).toEqual([]);
   });
 });

@@ -1,3 +1,4 @@
+import type { FlagState } from "./flagState.js";
 import { describe, expect, it, vi } from "vitest";
 import {
   applyServerMessageState,
@@ -14,6 +15,8 @@ function harness(strings: Record<string, string> = {}) {
   const state = {
     playerRoster: new Map<number, ServerMessageRosterEntry>(),
     teamScores: [] as BrowserTeam[],
+    flags: new Map<number, FlagState>(),
+    playerIdentity: { scope: "test", generations: new Map<number, number>() },
   };
   const resolve = (value: string) => strings[value] ?? value;
   const createTeam = vi.fn((entry: ServerMessageTeamScore): BrowserTeam => ({
@@ -174,6 +177,7 @@ describe("applyServerMessageState", () => {
       joinedClientId: 7,
     });
     expect(state.playerRoster.get(7)).toEqual({
+      clientGeneration: 1,
       name: "[TAG] Alice",
       rawName,
       guid: "12345678901234567890",
@@ -329,9 +333,6 @@ describe("applyServerMessageState", () => {
       teamId: 1,
       name: "Storm",
       score: 3,
-      flagStatus: "held",
-      flagCarrier: "Alice",
-      flagCarrierRawName: "Alice",
       playerCount: 0,
     });
     state.teamScores[0].playerCount = 8;
@@ -339,8 +340,6 @@ describe("applyServerMessageState", () => {
     expect(state.teamScores[0]).toMatchObject({
       name: "Defenders",
       score: 3,
-      flagStatus: "held",
-      flagCarrier: "Alice",
       playerCount: 8,
     });
     expect(createTeam).toHaveBeenCalledOnce();
@@ -367,7 +366,6 @@ describe("applyServerMessageState", () => {
     expect(state.teamScores[0]).toMatchObject({
       name: "Storm",
       score: 9,
-      flagStatus: "home",
     });
   });
 
@@ -383,10 +381,9 @@ describe("applyServerMessageState", () => {
       playerCount: 4,
     });
     message("MsgCTFFlagTaken", "@actor", "1", "@team");
-    expect(state.teamScores[0]).toMatchObject({
-      flagStatus: "held",
-      flagCarrier: "Alice",
-      flagCarrierRawName: "\x02 Alice ",
+    expect(state.flags.get(2)).toMatchObject({
+      status: "held",
+      carrier: { kind: "name", rawName: "\x02 Alice " },
     });
     for (const [type, status] of [
       ["MsgCTFFlagDropped", "field"],
@@ -394,13 +391,15 @@ describe("applyServerMessageState", () => {
       ["MsgCTFFlagCapped", "home"],
     ]) {
       expect(message(type, "@actor", "1", "@team")).toMatchObject({
-        teamScoresChanged: true,
+        flagsChanged: true,
       });
-      expect(state.teamScores[0].flagStatus).toBe(status);
-      expect(state.teamScores[0].flagCarrier).toBeUndefined();
-      expect(state.teamScores[0].flagCarrierRawName).toBeUndefined();
+      expect(state.flags.get(2)?.status).toBe(status);
+      expect(state.flags.get(2)?.carrier).toBeUndefined();
     }
-    expect(message("MsgCTFFlagTaken", "Alice", "1", "99")).toEqual({});
+    expect(message("MsgCTFFlagTaken", "Alice", "1", "99")).toEqual({
+      flagsChanged: true,
+    });
+    expect(state.flags.get(99)?.status).toBe("held");
     expect(state.teamScores).toHaveLength(1);
   });
 

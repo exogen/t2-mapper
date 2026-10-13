@@ -41,6 +41,7 @@ export function updateGameEntityFromStream(
   e.armAction = stream.armAction;
   e.targetRenderFlags = stream.targetRenderFlags;
   e.targetId = stream.targetId;
+  e.targetGeneration = stream.targetGeneration;
   e.iffColor = stream.iffColor;
   e.playerName = stream.playerName;
   e.targetTypeName = stream.targetTypeName;
@@ -153,6 +154,7 @@ function positionedBase(entity: StreamEntity, spawnTime?: number) {
     turretAim: entity.turretAim,
     targetRenderFlags: entity.targetRenderFlags,
     targetId: entity.targetId,
+    targetGeneration: entity.targetGeneration,
     iffColor: entity.iffColor,
     playerName: entity.playerName,
     targetTypeName: entity.targetTypeName,

@@ -4,32 +4,42 @@ import type { createAudioPlaybackFade } from "./audioPlaybackFade";
 import { getAudioDevice } from "./audioDevice";
 
 const connections = new WeakMap<AudioContext, () => void>();
+type PlaybackFade = Pick<
+  ReturnType<typeof createAudioPlaybackFade>,
+  "setPlaying"
+>;
 
 /** Bind the audio device to every transport transition, including short seeks. */
 export function connectAudioPlayback(
   context: AudioContext,
-  fade: Pick<ReturnType<typeof createAudioPlaybackFade>, "setPlaying">,
+  fades: { output: PlaybackFade; world: PlaybackFade; chat: PlaybackFade },
 ) {
   // A new view can mount before the old view's passive cleanup runs.
   connections.get(context)?.();
   const device = getAudioDevice(context);
   let disposed = false;
-  const shouldPlay = () => {
+  const channels = () => {
     const { recording, status } = engineStore.getState().playback;
     // A new recording can arrive before StreamingController changes the
     // scene's data source. Its stopped/seeking state already owns audio.
     const source = recording?.source ?? gameEntityStore.getState().dataSource;
-    return (
-      !isStreamingSource(source) || (recording != null && status === "playing")
-    );
+    const world =
+      !isStreamingSource(source) || (recording != null && status === "playing");
+    const chat = world || (recording?.source === "demo" && status === "ending");
+    return { world, chat };
   };
   const updateFade = () => {
-    if (!disposed) fade.setPlaying(shouldPlay());
+    if (disposed) return;
+    const { world, chat } = channels();
+    fades.world.setPlaying(world);
+    fades.chat.setPlaying(chat);
+    fades.output.setPlaying(world || chat);
   };
   const reconcile = () => {
     if (disposed) return;
     updateFade();
-    device.setRunning(shouldPlay());
+    const { world, chat } = channels();
+    device.setRunning(world || chat);
   };
 
   const unsubscribePlayback = engineStore.subscribe((state, previous) => {
@@ -55,7 +65,9 @@ export function connectAudioPlayback(
     unsubscribePlayback();
     unsubscribeSource();
     unsubscribeDevice();
-    fade.setPlaying(false);
+    fades.world.setPlaying(false);
+    fades.chat.setPlaying(false);
+    fades.output.setPlaying(false);
     device.setRunning(false);
   };
   connections.set(context, dispose);

@@ -13,8 +13,14 @@ import type {
   TorqueRuntime,
 } from "../torqueScript";
 
-export type PlaybackStatus = "stopped" | "playing" | "paused" | "seeking";
-type SettledPlaybackStatus = Exclude<PlaybackStatus, "seeking">;
+export type PlaybackStatus =
+  | "stopped"
+  | "playing"
+  | "paused"
+  | "seeking"
+  /** Natural EOF: the playhead is stopped while final chat sounds finish. */
+  | "ending";
+type SettledPlaybackStatus = Exclude<PlaybackStatus, "seeking" | "ending">;
 
 export interface RuntimeSliceState {
   runtime: TorqueRuntime | null;
@@ -90,7 +96,7 @@ export interface EngineStoreState {
     nonce: number,
     status?: SettledPlaybackStatus,
   ): void;
-  setPlaybackStatus(status: SettledPlaybackStatus): void;
+  setPlaybackStatus(status: SettledPlaybackStatus | "ending"): void;
   togglePlayback(recording: StreamRecording): void;
   setPlaybackRate(rate: number): void;
 }
@@ -349,7 +355,8 @@ export const engineStore = createStore<EngineStoreState>()(
           demoBuffer: recording?.source === "demo" ? demoBuffer : null,
           status: recording
             ? "stopped"
-            : state.playback.status === "seeking"
+            : state.playback.status === "seeking" ||
+                state.playback.status === "ending"
               ? "paused"
               : state.playback.status,
           resumeAfterSeek: null,
@@ -396,7 +403,9 @@ export const engineStore = createStore<EngineStoreState>()(
           resumeAfterSeek:
             state.playback.status === "seeking"
               ? state.playback.resumeAfterSeek
-              : state.playback.status,
+              : state.playback.status === "ending"
+                ? "paused"
+                : state.playback.status,
           seekTime: target,
           seekNonce: state.playback.seekNonce + 1,
           pendingSeekSec: null,
@@ -469,13 +478,13 @@ export const engineStore = createStore<EngineStoreState>()(
       });
     },
 
-    setPlaybackStatus(status: SettledPlaybackStatus) {
+    setPlaybackStatus(status) {
       set((state) => ({
         ...state,
         playback: {
           ...state.playback,
           ...(state.playback.status === "seeking"
-            ? { resumeAfterSeek: status }
+            ? { resumeAfterSeek: status === "ending" ? "paused" : status }
             : { status }),
         },
       }));
@@ -486,7 +495,10 @@ export const engineStore = createStore<EngineStoreState>()(
         const playback = state.playback;
         if (playback.recording !== recording) return state;
         const intendedStatus = playback.resumeAfterSeek ?? playback.status;
-        const status = intendedStatus === "playing" ? "paused" : "playing";
+        const status =
+          intendedStatus === "playing" || intendedStatus === "ending"
+            ? "paused"
+            : "playing";
         return {
           playback: {
             ...playback,
