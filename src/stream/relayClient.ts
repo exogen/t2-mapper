@@ -390,7 +390,9 @@ export class RelayClient {
     this.send({ type: "sendGhostAck", sequence, ghostCount });
   }
 
-  /** Send moves to the relay for immediate forwarding to the game server. */
+  /**
+   * Queue new moves on the relay, which resends them until acked.
+   */
   sendMoves(moves: ClientMove[], moveStartIndex: number): void {
     this.send({ type: "sendMoves", moves, moveStartIndex });
   }

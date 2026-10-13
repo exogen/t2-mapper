@@ -319,8 +319,9 @@ export class LiveStreamAdapter extends StreamEngine {
     }
 
     // Control object: the relay's server-side observer camera. The relay
-    // never sends moves, so this is exactly where the server placed its
-    // observer (per-map drop point) — the initial view a real client gets.
+    // only sends neutral moves, so this is exactly where the server placed
+    // its observer (per-map drop point) — the initial view a real client
+    // gets.
     // Build the camera immediately so the first snapshot carries it
     // (otherwise it only materializes on the first live packet).
     this.processControlObject({

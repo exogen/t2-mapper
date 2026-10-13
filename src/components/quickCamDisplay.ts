@@ -13,22 +13,35 @@ export function quickCamDisplay(
     camera?.kind === "flag" ? camera.slot : !camera ? slot : null;
   const flag = flags.find((flag) => flag.slot === flagSlot);
   const empty = !camera && !flag;
-  const isPlayer = camera?.kind === "follow" || camera?.kind === "fp";
-  const savedLabel = camera?.label.replace(/^(?:Command circuit · |CC: )/, "");
-  const label = flag
-    ? flag.label
-    : isPlayer
-      ? savedLabel!.replace(/ · (?:First person|Follow)$/, "")
-      : camera?.kind === "fly"
-        ? `Camera ${slot === 0 ? 10 : slot}`
-        : (savedLabel ?? "Not set");
+  let label: string;
+  if (flag) {
+    label = flag.label;
+  } else {
+    switch (camera?.kind) {
+      case "player":
+        label = camera.displayName;
+        break;
+      case "flag":
+        label = `Flag ${camera.slot}`;
+        break;
+      case "fly":
+        label = `Camera ${slot === 0 ? 10 : slot}`;
+        break;
+      case "original":
+        label = "Original view";
+        break;
+      case undefined:
+        label = "Not set";
+        break;
+    }
+  }
   const Icon =
     flag || camera?.kind === "flag"
       ? PiFlagBannerFill
-      : isPlayer
+      : camera?.kind === "player"
         ? LuUser
         : camera
           ? BiSolidCameraHome
           : null;
-  return { label, Icon, empty, flagTeamId: flag?.teamId };
+  return { label, Icon, empty, flagSlot, flagTeamId: flag?.teamId };
 }

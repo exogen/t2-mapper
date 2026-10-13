@@ -109,6 +109,7 @@ export interface WatchHudStatePayload {
     score: number;
     flagStatus?: "home" | "field" | "held";
     flagCarrier?: string;
+    flagCarrierRawName?: string;
   }>;
   /** MsgSystemClock replay: original duration (0 ⇒ count-up clock) and
    *  ms elapsed since it was received, held at match end. */

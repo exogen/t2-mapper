@@ -116,8 +116,9 @@ it.each([
     streamPlaybackStore.setState({ cameraMode: mode });
     saveQuickCam(3);
     expect(casterStore.getState().settings?.quickCams[3]).toMatchObject({
-      kind: mode === "firstPersonOverride" ? "fp" : "follow",
-      label: `Player · ${mode === "firstPersonOverride" ? "First person" : "Follow"}`,
+      kind: "player",
+      mode: mode === "firstPersonOverride" ? "firstPerson" : "follow",
+      displayName: "Player",
       playerName: "Player",
     });
     exitToFreeFly();
@@ -138,7 +139,6 @@ it("saves Original demo view as the recorder's camera rather than a frozen pose"
   saveQuickCam(0);
   expect(casterStore.getState().settings?.quickCams[0]).toMatchObject({
     kind: "original",
-    label: "Original view",
   });
   exitToFreeFly();
   restoreQuickCam(0);
@@ -158,6 +158,11 @@ it.each(["orbitOverride", "firstPersonOverride"] as const)(
       orbitOverrideDistance: 40,
     });
     saveQuickCam(1);
+    expect(casterStore.getState().settings?.quickCams[1]).toMatchObject({
+      kind: "player",
+      playerName: "Player",
+      displayName: "[OLD]Player",
+    });
     casterStore.getState().suspend();
     casterStore.getState().activate("test:28000", "1", "Katabatic");
     body("new-body", 90, 0, "Player[NEW]", "\x10\x08Player\x0b[NEW]\x11");
@@ -362,7 +367,8 @@ it("can save the pending player and view into another slot", () => {
   restoreQuickCam(3);
   saveQuickCam(4);
   expect(casterStore.getState().settings?.quickCams[4]).toMatchObject({
-    kind: "fp",
+    kind: "player",
+    mode: "firstPerson",
     playerName: "Player",
   });
 });
@@ -428,7 +434,8 @@ it("saves the chosen follow view while waiting for a respawn", () => {
   });
   saveQuickCam(3);
   expect(casterStore.getState().settings?.quickCams[3]).toMatchObject({
-    kind: "fp",
+    kind: "player",
+    mode: "firstPerson",
     playerName: "Player",
   });
 });

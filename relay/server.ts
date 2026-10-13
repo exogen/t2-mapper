@@ -5,7 +5,11 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { WebSocketServer, WebSocket } from "ws";
 import { queryServerList, queryServerInfo } from "./masterQuery.js";
-import { GameConnection } from "./gameConnection.js";
+import {
+  GameConnection,
+  type GameConnectionOptions,
+} from "./gameConnection.js";
+import { parseMoveBatch } from "./moveList.js";
 import { getConnectionRetryPolicy } from "./connectionRetryPolicy.js";
 import { ServerPasswords } from "./serverPasswords.js";
 import { loadChatEnabled } from "./chatPolicy.js";
@@ -397,11 +401,11 @@ function findKnownServer(
 /** Shared by player joins and every watch-session connection/reconnect. */
 function createGameConnection(
   address: string,
-  warriorName?: string,
+  options: Pick<GameConnectionOptions, "warriorName" | "generateMoves"> = {},
 ): GameConnection {
   const key = normalizeAddress(address);
   return new GameConnection(key, {
-    warriorName,
+    ...options,
     getJoinPassword: async () => {
       // Display metadata may be retained indefinitely, but password selection
       // must re-probe old entries: the server may have changed its lock/name.
@@ -773,7 +777,7 @@ wss.on("connection", (ws, req) => {
       gameConnection.disconnect();
     }
 
-    gameConnection = createGameConnection(address, warriorName);
+    gameConnection = createGameConnection(address, { warriorName });
     activeGameConnections.add(gameConnection);
 
     // Set mapName from the cached server list if available.
@@ -1131,20 +1135,11 @@ wss.on("connection", (ws, req) => {
       }
 
       case "sendMoves": {
-        if (gameConnection) {
-          gameConnection.sendMoves(
-            message.moves.map((m) => ({
-              x: m.x,
-              y: m.y,
-              z: m.z,
-              yaw: m.yaw,
-              pitch: m.pitch,
-              roll: m.roll,
-              freeLook: m.freeLook,
-              trigger: m.trigger,
-            })),
-            message.moveStartIndex,
-          );
+        // Queued moves are re-encoded by the send loop's timer, where a
+        // malformed one would throw outside any handler.
+        const batch = parseMoveBatch(message.moves, message.moveStartIndex);
+        if (gameConnection && batch) {
+          gameConnection.sendMoves(batch.moves, batch.startIndex);
         }
         break;
       }

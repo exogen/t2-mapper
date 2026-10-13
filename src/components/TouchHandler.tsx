@@ -4,6 +4,7 @@ import { useJoystick } from "./JoystickContext";
 import { useOnInput } from "./InputContext";
 import { commandCircuitStore } from "../state/commandCircuitStore";
 import { useInputState, type TouchState } from "./InputControls";
+import { FramePriority } from "./framePriority";
 
 const LOOK_SENSITIVITY = 0.004;
 const STICK_LOOK_SENSITIVITY = 2.5;
@@ -136,7 +137,7 @@ export function TouchHandler() {
       triggers: [],
       delta,
     });
-  });
+  }, FramePriority.InputTouch);
 
   return null;
 }

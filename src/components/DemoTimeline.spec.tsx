@@ -186,6 +186,39 @@ it("updates observer flag colors when the configured palette changes", () => {
   expect(flagColor(event)).toBe("rgb(255, 60, 10)");
 });
 
+it("keeps every cap and its event-time color when captures share a timestamp", () => {
+  const markup = renderMarkup(
+    {
+      type: "flag-cap",
+      timeSec: 25,
+      description: "First capture",
+      actorTeamId: 1,
+      teamAffinity: "friendly",
+    },
+    {
+      type: "flag-cap",
+      timeSec: 25,
+      description: "Second capture",
+      actorTeamId: 1,
+      teamAffinity: "neutral",
+    },
+    {
+      type: "flag-cap",
+      timeSec: 25,
+      description: "Third capture",
+      actorTeamId: 2,
+      teamAffinity: "neutral",
+    },
+  );
+  expect(markup.match(/data-type="flag-cap"/g)).toHaveLength(3);
+  expect(markup).toContain("Caps (3)");
+  expect(
+    [...markup.matchAll(/data-type="flag-cap" style="color:([^"]+)"/g)].map(
+      (match) => match[1],
+    ),
+  ).toEqual(["rgb(0, 212, 71)", "rgb(45, 162, 255)", "rgb(255, 100, 15)"]);
+});
+
 it.each([undefined, 0, 3])(
   "keeps unknown observer action team %s neutral",
   (actorTeamId) => {

@@ -34,6 +34,12 @@ import {
 } from "./connectionRetryPolicy.js";
 import type { ConnectionStatus } from "./types.js";
 import { computeGameCRC, type CRCDataBlock } from "./crc.js";
+import {
+  ClientMoveList,
+  MAX_MOVE_COUNT,
+  MOVE_TICK_MS,
+  NEUTRAL_MOVE,
+} from "./moveList.js";
 
 // Net::process (FUN_0055a820) passes a 1500-byte buffer to recvfrom.
 // Winsock rejects larger datagrams before protocol dispatch or recording.
@@ -51,6 +57,12 @@ const PACKET_UPDATE_DELAY_MS = 32;
 // checkPacketSend allocates the packet stream at exactly this size, so
 // events that don't fit wait for the next send slot.
 const PACKET_SIZE = 450;
+/**
+ * Largest event a command may encode to. The first queued event always
+ * rides along, even past the packet budget, while everything else in the
+ * packet stays within PACKET_SIZE — so no packet outgrows a datagram.
+ */
+const MAX_EVENT_SIZE = MAX_PACKET_DATA_SIZE - PACKET_SIZE;
 // ConnectionProtocol::windowFull (FUN_0043d720): no sends while
 // lastSendSeq - highestAckedSeq > 0x1d, i.e. 30 packets unacked.
 const SEND_WINDOW = 30;
@@ -69,10 +81,42 @@ const SEND_LOOP_INTERVAL_MS = 8;
 const OOB_PING_INTERVAL_MS = 4000;
 /** Consecutive unanswered probes before falling back to ack-derived RTT. */
 const OOB_PING_FALLBACK_MISSES = 3;
-// While move batches have arrived this recently, the browser's tick drives
-// the send clock and the loop's empty keepalives stand down.
+// While browser moves have arrived this recently, the browser's tick drives
+// the send clock and packets with nothing new stand down.
 const MOVE_STREAM_TIMEOUT_MS = 100;
+/**
+ * Unacked depth at which generated moves stop. Once its control object has
+ * processed every queued move, the real client stalls at MaxMoveCount
+ * (isBacklogged, FUN_00601e50), but Tribes2.exe playback evaluates the
+ * same test against the recorded moves and, while stalled, reads no
+ * further demo blocks — including the ack that would release it.
+ * Stopping one short keeps relay demos playable through a lag spike.
+ */
+const GENERATED_MOVE_BACKLOG = MAX_MOVE_COUNT - 1;
 const CONNECT_TIMEOUT_MS = 30000;
+
+/**
+ * Whether a commandToServer call encodes within MAX_EVENT_SIZE. Browsers
+ * send commands as JSON, so anything may arrive: every argument must be a
+ * string short enough for the Huffman string's 8-bit length.
+ */
+function canEncodeCommand(command: unknown, args: unknown[]): boolean {
+  const isNetString = (value: unknown): value is string =>
+    typeof value === "string" && value.length <= 255;
+  if (!isNetString(command) || !args.every(isNetString)) return false;
+  try {
+    const events = buildRemoteCommandEvent(
+      new ClientNetStringTable(),
+      command,
+      ...(args as string[]),
+    );
+    for (const event of events)
+      event.write(new BitStreamWriter(MAX_EVENT_SIZE));
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 /** Decode the final string in an OOB rejection/disconnect packet. */
 function readConnectionReason(data: Uint8Array): string | undefined {
@@ -97,6 +141,18 @@ interface QueuedEvent {
   size?: number;
 }
 
+export interface GameConnectionOptions {
+  warriorName?: string;
+  getJoinPassword?: () => Promise<string | undefined>;
+  cooldowns?: ConnectionCooldowns;
+  /**
+   * Collect a neutral move every client tick, like an idle real client
+   * (watch sessions). Otherwise moves come only from sendMoves (a browser
+   * player, which predicts them) — a connection has one move producer.
+   */
+  generateMoves?: boolean;
+}
+
 interface GameConnectionEvents {
   status: [status: ConnectionStatus, message?: string];
   packet: [data: Uint8Array];
@@ -106,6 +162,12 @@ interface GameConnectionEvents {
    * sequence number and never fire this; neither do OOB packets.
    */
   sent: [];
+  /**
+   * A generated move was queued (one 32 ms client tick, `generateMoves`
+   * only) — the demo's Move block, which is its playback clock. Generated
+   * moves are always neutral.
+   */
+  move: [];
   ping: [ms: number];
   error: [error: Error];
   close: [];
@@ -153,9 +215,15 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
   private sentMaxRateByPacket = new Set<number>();
   /** Mirror of NetConnection::mLastUpdateTime — the send-rate gate. */
   private lastPacketSendTime = 0;
-  /** Moves staged for the next send slot (latest browser tick wins). */
-  private pendingMoves: ClientMoveData[] = [];
-  private pendingMoveStartIndex = 0;
+  private readonly moveList: ClientMoveList;
+  /**
+   * Moves come from the relay's own tick clock, not from sendMoves.
+   */
+  private readonly generateMoves: boolean;
+  /**
+   * When the next generated move is due.
+   */
+  private nextMoveTickTime = 0;
   /** When the last move batch arrived from the browser. */
   private lastMoveArrivalTime = 0;
   private dataPacketCount = 0;
@@ -196,18 +264,18 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
     return `${this.host}:${this.port}`;
   }
 
-  constructor(
-    address: string,
-    options?: {
-      warriorName?: string;
-      getJoinPassword?: () => Promise<string | undefined>;
-      cooldowns?: ConnectionCooldowns;
-    },
-  ) {
+  constructor(address: string, options?: GameConnectionOptions) {
     super();
     const [host, portStr] = normalizeAddress(address).split(":");
     this.host = host;
     this.port = parseInt(portStr, 10);
+    this.generateMoves = options?.generateMoves ?? false;
+    // Generated moves keep the engine's resend limit; a lost one is only
+    // an idle tick. Browser moves carry the player's input, so they are
+    // resent until acked rather than dropped after four packets.
+    this.moveList = new ClientMoveList(
+      this.generateMoves ? {} : { maxSends: Infinity },
+    );
     this.warriorName = options?.warriorName || "";
     this.#getJoinPassword = options?.getJoinPassword;
     this.cooldowns = options?.cooldowns ?? connectionCooldowns;
@@ -715,6 +783,7 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
       ackByteCount,
       ackMask,
     });
+    if (result.dispatchData) this.readMoveAck(bs);
 
     // A PingPacket (type 1) is the server's checkTimeout probing us —
     // processRawPacket answers it with an AckPacket (sendPingResponse,
@@ -803,6 +872,22 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
         });
       }
     }
+  }
+
+  /**
+   * The server's move ack (its lastMoveAck less any moves it still has
+   * queued), which GameConnection::readPacket (FUN_005fb9f0) reads right
+   * after handlePacket's two optional rate blocks.
+   */
+  private readMoveAck(bs: BitStream): void {
+    for (let i = 0; i < 2; i++) {
+      if (bs.readFlag()) {
+        bs.readInt(10); // updateDelay
+        bs.readInt(10); // packetSize
+      }
+    }
+    const ack = bs.readInt(32);
+    if (!bs.isError()) this.moveList.acknowledge(ack);
   }
 
   /** Handle a parsed T2csri event from the browser. */
@@ -937,6 +1022,15 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
 
   /** Send a commandToServer as a RemoteCommandEvent. */
   sendCommand(command: string, ...args: string[]): void {
+    // Queued events are encoded later by the send loop's timer, where a
+    // throw would crash the relay; refuse what can't be encoded here.
+    if (!canEncodeCommand(command, args)) {
+      connLog.warn(
+        { command: String(command).slice(0, 64), argCount: args.length },
+        "Dropping a command that cannot be encoded",
+      );
+      return;
+    }
     connLog.debug(
       { command, args, eventSeq: this.nextSendEventSeq },
       "Sending commandToServer",
@@ -948,26 +1042,31 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
     // observer. Guaranteed event ordering puts this after the final phase ACK
     // for both relay-driven Watch and browser-driven mission loading.
     if (command === "MissionStartPhase3Done") this.requestObserver();
+    // An unpoked auth wait ends at Phase1 (missionStartedWithoutAuth). A
+    // browser player answers Phase1 itself, so its answer is the cue.
+    if (command === "MissionStartPhase1Done") this.missionStartedWithoutAuth();
   }
 
   /**
    * Mirror of NetConnection::checkPacketSend (Tribes2.exe FUN_005877e0):
    * called opportunistically whenever there's new work and continuously
    * by the send loop. Gates on the send rate and the ack window, then
-   * emits ONE packet bundling staged moves plus queued events.
+   * emits ONE packet bundling the unacked moves plus queued events.
    *
    * While the browser's move stream is active, its 32ms tick is the only
-   * clock: empty keepalives are suppressed so every move batch finds the
-   * gate open and ships the moment it arrives — reproducing the engine's
-   * coupling of move generation to its send loop, without the relay's
-   * timer phase adding staging delay. Idle (menus, hidden tab), the send
-   * loop's keepalives keep the ack stream flowing.
+   * clock: packets with nothing new are suppressed so every move finds
+   * the gate open and ships the moment it arrives — reproducing the
+   * engine's coupling of move generation to its send loop, without the
+   * relay's timer phase adding staging delay. Idle (menus, hidden tab),
+   * the send loop keeps the ack stream and move resends flowing.
    */
   private checkPacketSend(): void {
+    // Nothing follows our Disconnect, even while it is being retransmitted.
+    if (this._status === "disconnected") return;
     const now = Date.now();
     if (now < this.lastPacketSendTime + PACKET_UPDATE_DELAY_MS) return;
     const hasContent =
-      this.pendingMoves.length > 0 ||
+      this.moveList.hasUnsent ||
       this.pendingEvents.length > 0 ||
       this.eventSendQueue.length > 0 ||
       this.maxRateChanged;
@@ -981,10 +1080,7 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
       (this.protocol.lastSendSeq - this.protocol.highestAckedSeq) >>> 0;
     if (unacked >= SEND_WINDOW) return;
     this.lastPacketSendTime = now;
-    const moves = this.pendingMoves;
-    const moveStartIndex = this.pendingMoveStartIndex;
-    this.pendingMoves = [];
-    this.emitDataPacket(moves, moveStartIndex);
+    this.emitDataPacket();
   }
 
   /** Handle packet delivery notification from the protocol layer. */
@@ -1044,13 +1140,15 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
   }
 
   /**
-   * Stage moves for the next send slot. The browser owns move indices and
-   * re-sends all unacked moves each tick (like moveWritePacket), so the
-   * latest call supersedes any still-staged batch. The opportunistic
-   * checkPacketSend sends immediately when the rate gate allows — the
-   * engine likewise sends the tick's moves in that tick's packet.
+   * Queue the browser's moves. The browser owns move indices (it predicts
+   * each move), so batches merge by index: new moves are appended and
+   * resent until acked; moves the browser sends again are skipped. The
+   * opportunistic checkPacketSend sends immediately when the rate gate
+   * allows — the engine likewise sends the tick's move in that tick's
+   * packet.
    */
   sendMoves(moves: ClientMoveData[], moveStartIndex: number): void {
+    if (this.generateMoves) return;
     if (moves.length > 0) {
       const m = moves[moves.length - 1];
       const key = `${m.yaw.toFixed(4)},${m.pitch.toFixed(4)},${m.x.toFixed(2)},${m.y.toFixed(2)},${m.z.toFixed(2)},${m.trigger.map(Number).join("")}`;
@@ -1071,10 +1169,24 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
         );
       }
     }
-    this.pendingMoves = moves;
-    this.pendingMoveStartIndex = moveStartIndex;
+    this.moveList.merge(moveStartIndex, moves);
     this.lastMoveArrivalTime = Date.now();
     this.checkPacketSend();
+  }
+
+  /**
+   * advanceClientTime (FUN_00602430) runs collectMove (FUN_00601ca0) once
+   * per elapsed tick: here, one neutral move. Ticks that elapse while
+   * backlogged are dropped, not deferred — the engine advances its clock
+   * without ticking — so a stalled connection compresses demo time as a
+   * real recording does.
+   */
+  private collectMoves(now: number): void {
+    while (now >= this.nextMoveTickTime) {
+      this.nextMoveTickTime += MOVE_TICK_MS;
+      if (this.moveList.size >= GENERATED_MOVE_BACKLOG) continue;
+      if (this.moveList.push(NEUTRAL_MOVE)) this.emit("move");
+    }
   }
 
   /** Serialized size of an event in bytes, plus per-event header bits.
@@ -1090,14 +1202,13 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
   }
 
   /**
-   * Internal: build and send ONE data packet with the staged moves and as
-   * many queued events as fit in the packet size budget. Only called via
-   * checkPacketSend, which owns the rate gate.
+   * Internal: build and send ONE data packet with the unacked moves and
+   * as many queued events as fit in the packet size budget. Only called
+   * via checkPacketSend, which owns the rate gate.
    */
-  private emitDataPacket(
-    moves: ClientMoveData[],
-    moveStartIndex: number,
-  ): void {
+  private emitDataPacket(): void {
+    const { start: moveStartIndex, moves } = this.moveList.takePacketMoves();
+
     // Record send time for RTT measurement using the full 32-bit sequence
     // (not the 9-bit wire value) to avoid stale timestamps after wrap.
     const nextSeqFull = (this.protocol.lastSendSeq + 1) >>> 0;
@@ -1165,12 +1276,15 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
   }
 
   /**
-   * Start the send loop — the analogue of the engine calling
-   * checkPacketSend every frame. The 32ms gate inside checkPacketSend
-   * provides the actual pacing; this just polls it, keeping the steady
-   * ack/keepalive stream flowing when the browser isn't sending moves.
+   * Start the send loop — the analogue of the engine's frame: collect the
+   * elapsed ticks' moves, then checkPacketSend. The 32ms gate inside
+   * checkPacketSend provides the actual pacing; this just polls it,
+   * keeping the steady ack/keepalive stream flowing when the browser
+   * isn't sending moves.
    */
   private startKeepalive(): void {
+    // Like the real client, moves start once the connection is established.
+    this.nextMoveTickTime = Date.now() + MOVE_TICK_MS;
     let loopCount = 0;
     this.keepaliveTimer = setInterval(() => {
       loopCount++;
@@ -1183,11 +1297,15 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
             ourAck: this.protocol.lastSeqRecvd,
             theirAck: this.protocol.highestAckedSeq,
             queuedEvents: this.eventSendQueue.length,
+            nextMove: this.moveList.nextIndex,
+            unackedMoves: this.moveList.size,
           },
           "Connection status",
         );
       }
       this.checkTimeout();
+      if (this._status === "disconnected") return;
+      if (this.generateMoves) this.collectMoves(Date.now());
       this.checkPacketSend();
     }, SEND_LOOP_INTERVAL_MS);
   }

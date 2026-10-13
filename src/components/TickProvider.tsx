@@ -11,6 +11,7 @@ import {
 import { useFrame } from "@react-three/fiber";
 
 import { STREAM_TICK_SEC } from "../stream/streamHelpers";
+import { FramePriority } from "./framePriority";
 
 // ProcessList schedules 32 ms ticks; the physics TickSec constant is separate.
 const TICK_INTERVAL = STREAM_TICK_SEC;
@@ -48,7 +49,7 @@ export function TickProvider({ children }: TickProviderProps) {
         }
       }
     }
-  });
+  }, FramePriority.Tick);
 
   const subscribe = useCallback((callback: TickCallback) => {
     callbacksRef.current ??= new Set();

@@ -4,6 +4,7 @@ import fsp from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import {
+  BlockTypeInfo,
   BlockTypeMove,
   BlockTypePacket,
   BlockTypeSendPacket,
@@ -116,6 +117,7 @@ describe("DemoRecorder", () => {
       const packet = buildPingPacket(i);
       packets.push(packet);
       recorder.onPacket(packet);
+      recorder.onMove();
       if (i === 3) recorder.onSent();
       time += 100;
     }
@@ -128,22 +130,36 @@ describe("DemoRecorder", () => {
       const packet = buildPingPacket(i);
       packets.push(packet);
       recorder.onPacket(packet);
+      recorder.onMove();
       time += 100;
     }
-    const lastEventTime = time - 100;
 
     const result = await recorder.finalize("test");
     expect(result).not.toBeNull();
     expect(recorder.state).toBe("done");
 
     const { header, initialBlock, blocks } = await parseDemoFile(result!.path);
-    const moveBlocks = blocks.filter((b) => b.type === BlockTypeMove);
     const packetBlocks = blocks.filter((b) => b.type === BlockTypePacket);
     const sendBlocks = blocks.filter((b) => b.type === BlockTypeSendPacket);
 
-    // The move clock covers first event → last event at 32 ms per move.
-    expect(moveBlocks.length).toBe(Math.floor((lastEventTime - 100_000) / 32));
-    expect(header.demoLengthMs).toBe(moveBlocks.length * 32);
+    // One Move block per connection move, in stream order — the demo
+    // clock follows the moves, not the wall time between events.
+    expect(
+      blocks
+        .filter((b) => b.type !== BlockTypeInfo)
+        .map((b) => b.type)
+        .slice(0, 7),
+    ).toEqual([
+      BlockTypePacket,
+      BlockTypeMove,
+      BlockTypePacket,
+      BlockTypeMove,
+      BlockTypePacket,
+      BlockTypeMove,
+      BlockTypeSendPacket,
+    ]);
+    expect(blocks.filter((b) => b.type === BlockTypeMove)).toHaveLength(15);
+    expect(header.demoLengthMs).toBe(15 * 32);
     expect(result!.durationMs).toBe(header.demoLengthMs);
     expect(sendBlocks.length).toBe(1);
     expect(packetBlocks.map((b) => b.data)).toEqual(packets);
@@ -232,7 +248,9 @@ describe("DemoRecorder", () => {
     const recorder = createRecorder({ minLengthMs: 60_000 });
     recorder.onPacket(buildPingPacket(1));
     recorder.setMissionName("Katabatic");
-    time += 1000;
+    // Only moves advance the demo clock, however long the wall-clock gap.
+    time += 120_000;
+    recorder.onMove();
     recorder.onPacket(buildPingPacket(2));
     const result = await recorder.finalize("test");
     expect(result).toBeNull();

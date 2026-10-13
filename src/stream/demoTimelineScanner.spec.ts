@@ -1726,6 +1726,145 @@ describe("flag team metadata", () => {
     ]);
   });
 
+  it("keeps observer flag actions before and after playing, and every cap through team changes", async () => {
+    recorder(0);
+    const actions = () => [
+      packet("MsgCTFFlagTaken", "", "Other", "Inferno", "2"),
+      packet("MsgCTFFlagDropped", "", "Other", "Inferno", "2"),
+      packet("MsgCTFFlagReturned", "", "Other", "Inferno", "2"),
+    ];
+    scan.blocks = [
+      ...actions(),
+      packet("MsgCTFFlagCapped", "", "Other", "Inferno", "2", "1"),
+      { type: BlockTypeMove },
+      packet("MsgClientJoinTeam", "", "Runner", "Storm", "100", "1"),
+      ...actions(),
+      packet("MsgCTFFlagCapped", "", "Other", "Inferno", "2", "1"),
+      packet("MsgCTFFlagCapped", "", "Opponent", "Storm", "1", "2"),
+      { type: BlockTypeMove },
+      packet("MsgClientJoinTeam", "", "Runner", "Observer", "100", "0"),
+      ...actions(),
+      packet("MsgCTFFlagCapped", "", "Opponent", "Storm", "1", "2"),
+      { type: BlockTypeMove },
+      packet("MsgClientJoinTeam", "", "Runner", "Inferno", "100", "2"),
+      packet("MsgCTFFlagCapped", "", "Opponent", "Storm", "1", "2"),
+    ];
+    const { events, observerPerspective } = await scanDemoTimeline(
+      new ArrayBuffer(0),
+      "Runner",
+    );
+    expect(observerPerspective).toBe(false);
+    const flagActions = events.filter((event) => event.type !== "flag-cap");
+    expect(flagActions.map(({ type, timeSec }) => [type, timeSec])).toEqual([
+      ["flag-grab", 0],
+      ["flag-drop", 0],
+      ["flag-return", 0],
+      ["flag-grab", 0.064],
+      ["flag-drop", 0.064],
+      ["flag-return", 0.064],
+    ]);
+    const caps = events.filter((event) => event.type === "flag-cap");
+    expect(
+      caps.map(({ timeSec, teamAffinity }) => [timeSec, teamAffinity]),
+    ).toEqual([
+      [0, "neutral"],
+      [0.032, "friendly"],
+      [0.032, "enemy"],
+      [0.064, "neutral"],
+      [0.096, "friendly"],
+    ]);
+    expect(caps.map((event) => event.actorTeamId)).toEqual([1, 1, 2, 2, 2]);
+  });
+
+  it.each(["MsgClientJoin", "MsgClientDrop"])(
+    "clears the recorder's old team on %s without losing or recoloring caps",
+    async (msgType) => {
+      recorder(1);
+      scan.blocks = [
+        packet("MsgCTFFlagCapped", "", "Other", "Inferno", "2", "1"),
+        packet(msgType, "", "Runner", "100"),
+        packet("MsgCTFFlagCapped", "", "Other", "Inferno", "2", "1"),
+        packet("MsgCTFFlagCapped", "", "Opponent", "Storm", "1", "2"),
+        packet("MsgCTFFlagTaken", "", "Other", "Inferno", "2"),
+        packet("MsgClientJoinTeam", "", "Runner", "Inferno", "100", "2"),
+        packet("MsgCTFFlagCapped", "", "Other", "Inferno", "2", "1"),
+      ];
+      const { events } = await scanDemoTimeline(new ArrayBuffer(0), "Runner");
+      expect(events.find((event) => event.type === "flag-grab")).toMatchObject({
+        actor: "Other",
+        teamAffinity: "neutral",
+      });
+      const caps = events.filter((event) => event.type === "flag-cap");
+      expect(caps.map((event) => event.teamAffinity)).toEqual([
+        "friendly",
+        "neutral",
+        "neutral",
+        "enemy",
+      ]);
+      expect(caps.map((event) => event.actorTeamId)).toEqual([1, 1, 2, 1]);
+    },
+  );
+
+  it("uses the wire order within a packet for caps around a roster rejoin", async () => {
+    recorder(1);
+    const command = (block: ReturnType<typeof packet>) =>
+      block.parsed.events[0];
+    scan.blocks = [
+      {
+        type: BlockTypePacket,
+        parsed: {
+          events: [
+            command(
+              packet("MsgCTFFlagCapped", "", "Other", "Inferno", "2", "1"),
+            ),
+            command(packet("MsgClientJoin", "", "Runner", "100")),
+            command(
+              packet("MsgCTFFlagCapped", "", "Other", "Inferno", "2", "1"),
+            ),
+            command(
+              packet("MsgClientJoinTeam", "", "Runner", "Inferno", "100", "2"),
+            ),
+            command(
+              packet("MsgCTFFlagCapped", "", "Other", "Inferno", "2", "1"),
+            ),
+          ],
+        },
+      },
+    ];
+    const { events } = await scanDemoTimeline(new ArrayBuffer(0), "Runner");
+    expect(events.map((event) => event.timeSec)).toEqual([0, 0, 0]);
+    expect(events.map((event) => event.teamAffinity)).toEqual([
+      "friendly",
+      "neutral",
+      "enemy",
+    ]);
+  });
+
+  it.each([0, 1])(
+    "keeps caps with missing optional fields when the recorder is on team %i",
+    async (teamId) => {
+      recorder(teamId);
+      scan.taggedStrings.set(10, "MsgCTFFlagCapped");
+      scan.blocks = [
+        packet("MsgCTFFlagCapped"),
+        packet("MsgCTFFlagCapped", ""),
+        packet("\x0110", "", "Unknown", "Inferno", "2"),
+      ];
+      const { events } = await scanDemoTimeline(new ArrayBuffer(0), "Runner");
+      expect(events).toHaveLength(3);
+      expect(events.every((event) => event.type === "flag-cap")).toBe(true);
+      expect(events.map((event) => event.description)).toEqual([
+        "Flag captured",
+        "Flag captured",
+        "Flag captured",
+      ]);
+      expect(events[2]).toMatchObject({ actorTeamId: 1, flagTeamId: 2 });
+      expect(events[2].teamAffinity).toBe(
+        teamId === 1 ? "friendly" : "neutral",
+      );
+    },
+  );
+
   it("colors the action owner's team even when flag team metadata is missing or teamless", async () => {
     recorder(1);
     scan.blocks = [

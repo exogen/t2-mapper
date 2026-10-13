@@ -779,7 +779,7 @@ export const liveConnectionStore = createStore<LiveConnectionStore>(
     },
 
     sendMoves(moves, moveStartIndex) {
-      // Watchers never send moves — the shared session has no driver.
+      // Watchers never send moves — the relay produces the shared session's.
       if (get().role === "watcher") return;
       get()._relay?.sendMoves(moves, moveStartIndex);
     },

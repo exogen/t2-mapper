@@ -33,6 +33,7 @@ export interface ServerMessageTeamScore {
   score: number;
   flagStatus?: FlagStatus;
   flagCarrier?: string;
+  flagCarrierRawName?: string;
 }
 
 export interface ServerMessageChanges {
@@ -101,6 +102,7 @@ export function applyServerMessageState<Team extends ServerMessageTeamScore>(
         if (decoded.flag) {
           team.flagStatus = decoded.flag.status;
           team.flagCarrier = decoded.flag.carrier;
+          team.flagCarrierRawName = decoded.flag.carrierRawName;
         }
       } else {
         teamScores.push(
@@ -111,6 +113,7 @@ export function applyServerMessageState<Team extends ServerMessageTeamScore>(
             ...(decoded.flag && {
               flagStatus: decoded.flag.status,
               flagCarrier: decoded.flag.carrier,
+              flagCarrierRawName: decoded.flag.carrierRawName,
             }),
           }),
         );
@@ -127,6 +130,7 @@ export function applyServerMessageState<Team extends ServerMessageTeamScore>(
       if (!team) return NO_CHANGES;
       team.flagStatus = decoded.status;
       team.flagCarrier = decoded.carrier;
+      team.flagCarrierRawName = decoded.carrierRawName;
       return { teamScoresChanged: true };
     }
     case "MsgClientJoin": {

@@ -2,8 +2,9 @@
  * Per-connection demo recording lifecycle. Packets are buffered in
  * memory until MissionStartPhase1 supplies the mission name (needed
  * up-front in the initial block), then stream through DemoFileWriter.
- * Move blocks are synthesized at the 32 ms demo tick — they are the
- * playback clock — driven purely by packet/send event timestamps.
+ * Move blocks are the connection's own moves, one per 32 ms client tick,
+ * in order with its packets and send markers — they are the playback
+ * clock.
  */
 import crypto from "node:crypto";
 import fsp from "node:fs/promises";
@@ -24,8 +25,6 @@ export type RecorderState =
 /** Give up waiting for MissionStartPhase1 past these buffering caps. */
 const BUFFER_MAX_MS = 30_000;
 const BUFFER_MAX_BYTES = 2 * 1024 * 1024;
-/** Bound move synthesis across pathological event gaps. */
-const MOVE_BURST_CAP = 300;
 /** Deflate/fs backlog beyond this means the disk stalled — strand. */
 const MAX_STREAM_BACKLOG = 16 * 1024 * 1024;
 
@@ -89,9 +88,8 @@ export interface DemoRecorderOptions {
 }
 
 interface QueuedEntry {
-  kind: "packet" | "sent";
+  kind: "packet" | "sent" | "move";
   data?: Uint8Array;
-  time: number;
 }
 
 /**
@@ -192,7 +190,9 @@ export class DemoRecorder {
   private queue: QueuedEntry[] = [];
   private queuedBytes = 0;
   private writer: DemoFileWriter | null = null;
-  /** Wall time anchoring the move clock (first observed event). */
+  /**
+   * When buffering began (first observed event), for the buffering caps.
+   */
   private t0: number | null = null;
   private moveCount = 0;
   private peakPlayers = 0;
@@ -261,13 +261,13 @@ export class DemoRecorder {
     )
       return false;
     this.sample();
-    const now = this.opts.now?.() ?? Date.now();
     // Always copy: the input is a view over the dgram pool buffer, and
     // both the queue and the deflate stream hold bytes past this call.
     const copy = data.slice();
     if (this._state === "buffering") {
+      const now = this.opts.now?.() ?? Date.now();
       this.t0 ??= now;
-      this.queue.push({ kind: "packet", data: copy, time: now });
+      this.queue.push({ kind: "packet", data: copy });
       this.queuedBytes += copy.length;
       if (
         now - this.t0 > BUFFER_MAX_MS ||
@@ -281,7 +281,7 @@ export class DemoRecorder {
         this.flush(fallback);
       }
     } else if (this._state === "recording") {
-      this.writeEntry({ kind: "packet", data: copy, time: now });
+      this.writeEntry({ kind: "packet", data: copy });
     }
     return true;
   }
@@ -330,14 +330,27 @@ export class DemoRecorder {
     return parts.join(", ");
   }
 
+  /**
+   * The connection sent a data packet (SendPacket marker).
+   */
   onSent(): void {
+    this.onConnectionEntry("sent");
+  }
+
+  /**
+   * The connection queued a move (Move block, one 32 ms client tick).
+   */
+  onMove(): void {
+    this.onConnectionEntry("move");
+  }
+
+  private onConnectionEntry(kind: "sent" | "move"): void {
     if (this.capped) return;
-    const now = this.opts.now?.() ?? Date.now();
     if (this._state === "buffering") {
-      this.t0 ??= now;
-      this.queue.push({ kind: "sent", time: now });
+      this.t0 ??= this.opts.now?.() ?? Date.now();
+      this.queue.push({ kind });
     } else if (this._state === "recording") {
-      this.writeEntry({ kind: "sent", time: now });
+      this.writeEntry({ kind });
     }
   }
 
@@ -418,10 +431,12 @@ export class DemoRecorder {
     const writer = this.writer;
     if (!writer || this.capped) return;
     try {
-      this.syncClock(entry.time);
       if (entry.kind === "packet") {
         writer.writePacket(entry.data!);
         writer.writeInfo();
+      } else if (entry.kind === "move") {
+        writer.writeMove();
+        this.moveCount++;
       } else {
         writer.writeSendMarker();
       }
@@ -464,24 +479,6 @@ export class DemoRecorder {
     this._failure = failure;
     this.setState("aborted");
     this.strandedClose = this.writer?.strand();
-  }
-
-  /** Bring the synthesized move clock up to `now` (32 ms per move). */
-  private syncClock(now: number): void {
-    this.t0 ??= now;
-    const target = Math.floor((now - this.t0) / DEMO_TICK_MS);
-    let pending = target - this.moveCount;
-    if (pending <= 0) return;
-    if (pending > MOVE_BURST_CAP) {
-      // A huge event gap: skip the dead time instead of flooding the
-      // file with silence (shift the anchor so the clock stays sane).
-      this.t0 += (pending - MOVE_BURST_CAP) * DEMO_TICK_MS;
-      pending = MOVE_BURST_CAP;
-    }
-    for (let i = 0; i < pending; i++) {
-      this.writer!.writeMove();
-      this.moveCount++;
-    }
   }
 
   /**

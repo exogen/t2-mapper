@@ -4,6 +4,7 @@ import {
   casterStore,
   CASTER_STORAGE_KEY,
   displayTeamName,
+  type SavedCamera,
 } from "./casterStore";
 import { syncDemoCaster } from "./demoCaster";
 
@@ -46,10 +47,9 @@ it("restores the active demo mission on reload and discards it when seeking to a
   state().renameTeam(1, "First mission");
   const camera = {
     kind: "original",
-    label: "Original view",
     fov: 90,
     followBehindPlayer: false,
-  } as const;
+  } satisfies SavedCamera;
   state().saveCamera(3, camera);
   state().suspend();
   syncDemoCaster(demo(), null, url);

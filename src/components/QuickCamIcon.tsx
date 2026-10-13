@@ -27,7 +27,7 @@ export function QuickCamIcon({
   const color = useStreamSnapshot((snapshot) => {
     let teamId = flagTeamId;
     const observer = snapshot?.playerSensorGroup === 0;
-    if (camera?.kind === "follow" || camera?.kind === "fp") {
+    if (camera?.kind === "player") {
       const matches = findLivingPlayersByName(camera.playerName);
       if (matches.length === 1)
         return rgbString(

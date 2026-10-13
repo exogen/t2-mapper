@@ -233,9 +233,8 @@ export async function scanDemoTimelineParser(
     }
   }
 
-  // "Observer" means the recorder was NEVER on a team — a full-match
-  // first-person demo often ENDS at teamId 0 (mission-cycle rejoin), so
-  // the current team at any single moment is not the signal.
+  // The whole-demo flag controls player filters; flag events use the
+  // recorder's current team so observing periods keep everyone's actions.
   let recorderEverOnTeam = recorderTeamId != null && recorderTeamId > 0;
 
   const events: TimelineEvent[] = [];
@@ -376,10 +375,11 @@ export async function scanDemoTimelineParser(
         if (!isServerMessageCommand(funcName)) continue;
 
         const args = rcData.args;
-        if (!args || args.length < 2) continue;
+        if (!args?.length) continue;
 
         const msgType = resolveNetString(args[0], netStrings);
         const msgTypeLower = msgType.toLowerCase();
+        if (args.length < 2 && msgTypeLower !== "msgctfflagcapped") continue;
         const metadataMessage = METADATA_MESSAGE_TYPES[msgTypeLower];
         if (metadataMessage) {
           applyServerMessageState(
@@ -471,36 +471,13 @@ export async function scanDemoTimelineParser(
           }
         }
 
-        // Track recorder's team changes.
-        if (
-          msgTypeLower === "msgclientjointeam" &&
-          recorderClientId != null &&
-          args.length >= 6
-        ) {
-          const clientId = parseInt(resolveNetString(args[4], netStrings), 10);
-          if (clientId === recorderClientId) {
-            const teamId = parseInt(resolveNetString(args[5], netStrings), 10);
-            if (!isNaN(teamId)) {
-              recorderTeamId = teamId;
-              if (teamId > 0 && !recorderEverOnTeam) {
-                recorderEverOnTeam = true;
-                // The recorder turned out to be a player: drop the
-                // everyone's-events collected under observer rules so the
-                // whole timeline follows first-person rules (on team 0
-                // until now, the recorder had no own events to lose).
-                for (let i = events.length - 1; i >= 0; i--) {
-                  const e = events[i];
-                  if (
-                    (e.type === "flag-grab" ||
-                      e.type === "flag-drop" ||
-                      e.type === "flag-return") &&
-                    e.teamAffinity === "neutral"
-                  ) {
-                    events.splice(i, 1);
-                  }
-                }
-              }
-            }
+        // The shared roster handles joins, drops and team changes in wire
+        // order. Read it instead of retaining a team across a roster reset.
+        if (recorderClientId != null) {
+          recorderTeamId =
+            rosterState.playerRoster.get(recorderClientId)?.teamId ?? null;
+          if (recorderTeamId != null && recorderTeamId > 0) {
+            recorderEverOnTeam = true;
           }
         }
 
@@ -564,11 +541,9 @@ export async function scanDemoTimelineParser(
           continue;
         }
 
-        // An observer recording (relay auto-capture, or a spectator's
-        // demo): the recorder never plays, so recorder-relative
-        // filtering would drop every kill, grab, and return — include
-        // everyone's events from a neutral perspective instead.
-        const isObserverPerspective = !recorderEverOnTeam;
+        // Preserve observer actions before, between and after played periods.
+        const isObserverPerspective =
+          recorderTeamId == null || recorderTeamId <= 0;
 
         // A player changed their name — the community tag-change script
         // (TacoServer dtChatCmdGame.cs). Wire: args[2]=old name,
@@ -746,11 +721,11 @@ export async function scanDemoTimelineParser(
           continue;
         }
 
-        // Flag capture.
+        // Captures are global milestones, independent of recorder filtering.
         // Wire: args[2]=capturerName, args[3]=teamName, args[4]=flag.team, args[5]=capturer.team
-        if (msgTypeLower === "msgctfflagcapped" && args.length >= 2) {
+        if (msgTypeLower === "msgctfflagcapped") {
           const description = formatEventDescription(
-            args[1],
+            args[1] ?? "",
             args.slice(2),
             netStrings,
           );
@@ -828,7 +803,7 @@ export async function scanDemoTimelineParser(
           // Observer recordings keep only flag and match events —
           // other players' kills and deaths are noise at timeline
           // scale (Ctrl+K suicides are already excluded globally).
-          if (!isObserverPerspective && normalizedRecorder) {
+          if (recorderEverOnTeam && normalizedRecorder) {
             const normalizedKiller = killerName.toLowerCase();
             const normalizedVictim = victimName.toLowerCase();
             const isSelfInflicted = SELF_INFLICTED_MSG_TYPES.has(msgTypeLower);

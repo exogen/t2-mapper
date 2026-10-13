@@ -23,6 +23,7 @@ import {
 } from "t2-demo-parser";
 import { BitStreamWriter } from "./BitStreamWriter.js";
 import { writeString } from "./HuffmanWriter.js";
+import { MOVE_TICK_MS } from "./moveList.js";
 
 export const DEMO_IDENT_STRING = "Tribes2 Recording";
 export const DEMO_PROTOCOL_VERSION = 0x00330004;
@@ -30,8 +31,10 @@ export const DEMO_PROTOCOL_VERSION = 0x00330004;
 export const DEMO_LENGTH_MS_OFFSET = 1 + DEMO_IDENT_STRING.length + 4;
 /** Max payload bytes per block (12-bit size field). */
 export const MAX_BLOCK_SIZE = 0xfff;
-/** Playback advances this much per Move block — the demo's clock. */
-export const DEMO_TICK_MS = 32;
+/**
+ * Playback advances this much per Move block — the demo's clock.
+ */
+export const DEMO_TICK_MS = MOVE_TICK_MS;
 
 const HEADER_SIZE = DEMO_LENGTH_MS_OFFSET + 8;
 
@@ -160,9 +163,11 @@ export interface InitialBlockOptions {
  * consumes it from a fresh connection.
  *
  * The recorder must be attached before the connection's first sequenced
- * packet and write one SendPacket marker per packet actually sent, in
- * order with the received packets: the engine's playback replays those
- * markers to keep its notify queue in step with the server's acks.
+ * packet and write one SendPacket marker per packet actually sent and one
+ * Move block per move queued, in order with the received packets: the
+ * engine's playback replays those markers to keep its notify queue in
+ * step with the server's acks, and admits the moves the recorded
+ * lastMoveAcks pop.
  */
 export function buildInitialBlock(opts: InitialBlockOptions): Uint8Array {
   const bs = new BitStreamWriter(4096, { growable: true });
@@ -174,8 +179,10 @@ export function buildInitialBlock(opts: InitialBlockOptions): Uint8Array {
   bs.writeU32(0);
   bs.writeFlag(false);
 
-  // firstPerson + connection fields (cameraPos, cameraSpeed=10.0f,
-  // lastMoveAck, lastClientMove, firstMoveIndex, moveListSize).
+  // firstPerson + the six connection fields readDemoStartBlock
+  // (FUN_005fb5c0) restores: cameraPos, cameraSpeed=10.0f, lastMoveAck,
+  // lastClientMove, firstMoveIndex and an unidentified +0x8434. The
+  // connection's first move gets index 0.
   bs.writeU8(1);
   bs.writeU32(0);
   bs.writeU32(0x41200000);
@@ -184,7 +191,7 @@ export function buildInitialBlock(opts: InitialBlockOptions): Uint8Array {
   bs.writeU32(0);
   bs.writeU32(0);
 
-  // Target-visible mask (16 U32s) + score count.
+  // Target-visible mask (16 U32s) + queued move count (none queued).
   for (let i = 0; i < 16; i++) bs.writeU32(0);
   bs.writeU32(0);
 
@@ -255,7 +262,10 @@ export function buildInitialBlock(opts: InitialBlockOptions): Uint8Array {
   return bytes;
 }
 
-/** Zero-input observer Move struct: packed pos fields are 16 ("centered"). */
+/**
+ * The Move struct of a neutral move (moveList's NEUTRAL_MOVE, which the
+ * relay generates): packed pos fields are 16 ("centered").
+ */
 export const ZERO_MOVE: Uint8Array = (() => {
   const bytes = new Uint8Array(64);
   const view = new DataView(bytes.buffer);

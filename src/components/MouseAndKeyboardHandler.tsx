@@ -16,6 +16,7 @@ import {
 } from "../state/commandCircuitStore";
 import { liveConnectionStore } from "../state/liveConnectionStore";
 import { resolveCameraOwner } from "../state/cameraOwner";
+import { FramePriority } from "./framePriority";
 import {
   streamPlaybackStore,
   MIN_ORBIT_DISTANCE,
@@ -309,7 +310,7 @@ export function MouseAndKeyboardHandler() {
       triggers,
       delta,
     });
-  });
+  }, FramePriority.InputKeyboardMouse);
 
   return null;
 }

@@ -9,6 +9,7 @@ import type {
 } from "node:http";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ClientMessage } from "./types";
+import { NEUTRAL_MOVE } from "./moveList";
 import type { WatchSessionManagerOptions } from "./watchSession";
 import type { DemoCoordinatorOptions } from "./demoCoordinator";
 import type { PatrolOptions } from "./patrol";
@@ -836,6 +837,18 @@ describe("relay browser input", () => {
         connectionId: entries[0].connectionId,
       });
     }
+  });
+
+  it("validates move batches before they reach the game connection", async () => {
+    const browser = await connect("player", "true");
+    for (const message of [
+      { type: "sendMoves", moves: [null], moveStartIndex: 3 },
+      { type: "sendMoves", moves: [], moveStartIndex: "3" },
+      { type: "sendMoves", moveStartIndex: 3 },
+    ]) {
+      await browser.request(message as unknown as ClientMessage);
+    }
+    expect(harness.sendMoves.mock.calls).toEqual([[[NEUTRAL_MOVE], 3]]);
   });
 
   it("attributes malformed/binary inputs, control frames, errors, and disconnects", async () => {

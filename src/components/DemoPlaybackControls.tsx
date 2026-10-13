@@ -215,7 +215,6 @@ export function DemoPlaybackControls() {
   // Timeline match starts and captures ride above the seek track, with
   // match descriptions or the scoring team/capper, plus each timestamp.
   const timelineEvents = useDemoTimeline((s) => s.events);
-  const observerPerspective = useDemoTimeline((s) => s.observerPerspective);
   const { observerTeamColors } = useSettings();
   const seekMarkers = useMemo(
     () =>
@@ -451,11 +450,7 @@ export function DemoPlaybackControls() {
                 }}
                 style={{
                   left: `${Math.max(0, Math.min(100, (event.timeSec / duration) * 100))}%`,
-                  color: timelineFlagColor(
-                    event,
-                    observerPerspective,
-                    observerTeamColors,
-                  ),
+                  color: timelineFlagColor(event, observerTeamColors),
                 }}
               >
                 {event.type === "flag-cap" && (

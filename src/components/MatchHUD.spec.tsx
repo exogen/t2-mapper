@@ -3,7 +3,11 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { MatchHUD } from "./MatchHUD";
 import { casterStore } from "../state/casterStore";
 import { streamClock } from "../state/streamPlaybackStore";
-import type { StreamSnapshot, TeamScore } from "../stream/types";
+import type {
+  PlayerRosterEntry,
+  StreamSnapshot,
+  TeamScore,
+} from "../stream/types";
 import type { TeamColorScheme } from "./iffTheme";
 import type { ScoreStyle } from "./SettingsProvider";
 
@@ -12,7 +16,7 @@ const state = vi.hoisted(() => ({
     timeSec: 0,
     teamScores: [] as TeamScore[],
     playerSensorGroup: 0,
-    playerRoster: [],
+    playerRoster: [] as PlayerRosterEntry[],
     flagDroppedAtSec: {} as Partial<Record<number, number>>,
     flagReturnDelaySec: 45 as number | null,
     matchEndedAtSec: null as number | null,
@@ -63,6 +67,7 @@ beforeEach(() => {
     },
   ];
   state.snapshot.playerSensorGroup = 0;
+  state.snapshot.playerRoster = [];
   state.snapshot.timeSec = 0;
   state.snapshot.flagDroppedAtSec = {};
   state.snapshot.flagReturnDelaySec = 45;
@@ -121,6 +126,47 @@ it("uses custom team names and the existing match clock in the Broadcast HUD", (
   expect(html).toContain(">Home</span>");
   expect(html).toContain(">Carrier</span>");
   expect(html).not.toContain("Own flag");
+});
+
+it("renders the broadcast flag carrier's clan and name colors from the flag message", () => {
+  state.snapshot.teamScores[1].flagCarrier = "=TAG=Carrier";
+  state.snapshot.teamScores[1].flagCarrierRawName =
+    "\x10\x0b=TAG=\x0cCarrier\x11";
+  const html = renderToStaticMarkup(<MatchHUD variant="broadcast" />);
+  expect(html).toContain('data-status="held"');
+  expect(html).toContain('title="=TAG=Carrier"');
+  expect(html).toContain('style="color:var(--tribes-color-7)">=TAG=</span>');
+  expect(html).toContain('style="color:var(--tribes-color-8)">Carrier</span>');
+  const classic = renderToStaticMarkup(<MatchHUD variant="classic" />);
+  expect(classic).toContain(">=TAG=Carrier</span>");
+  expect(classic).not.toContain("--tribes-color-7");
+});
+
+it("uses roster name colors for older checkpoint state without raw carrier names", () => {
+  state.snapshot.teamScores[1].flagCarrier = "=TAG=Carrier";
+  state.snapshot.playerRoster = [
+    {
+      clientId: 7,
+      name: "=TAG=Carrier",
+      rawName: "\x10\x0b=TAG=\x08Carrier\x11",
+      teamId: 1,
+      score: 0,
+      ping: 0,
+      packetLoss: 0,
+    },
+  ];
+  const render = () => renderToStaticMarkup(<MatchHUD variant="broadcast" />);
+  expect(render()).toContain(
+    'style="color:var(--tribes-color-7)">=TAG=</span>',
+  );
+  // A duplicate display name cannot identify which raw name belongs to the carrier.
+  state.snapshot.playerRoster.push({
+    ...state.snapshot.playerRoster[0],
+    clientId: 8,
+    rawName: "=TAG=Carrier",
+  });
+  expect(render()).not.toContain("--tribes-color-7");
+  expect(render()).toContain(">=TAG=Carrier</span>");
 });
 
 it("shows every team without inventing flags for non-CTF games", () => {

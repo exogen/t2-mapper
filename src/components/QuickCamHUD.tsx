@@ -4,13 +4,30 @@ import { FaClosedCaptioning } from "react-icons/fa";
 import { LuCircleDashed } from "react-icons/lu";
 import { QUICK_CAM_SLOTS, useCaster } from "../state/casterStore";
 import { useDataSource } from "../state/gameEntityStore";
+import { useStreamSnapshot } from "../state/streamSnapshotStore";
 import { useLiveSelector } from "../state/liveConnectionStore";
 import { useFlagCameras } from "./useFlagCameras";
 import { quickCamDisplay } from "./quickCamDisplay";
 import { QuickCamIcon } from "./QuickCamIcon";
+import { FlagStatus } from "./FlagStatus";
 import { useQuickCams } from "./useQuickCams";
 import { useSettings } from "./SettingsProvider";
 import styles from "./QuickCamHUD.module.css";
+
+function QuickCamFlagStatus({ teamId }: { teamId: number }) {
+  const team = useStreamSnapshot((snapshot) =>
+    snapshot?.teamScores.find((team) => team.teamId === teamId),
+  );
+  return (
+    <small className={styles.FlagStatus}>
+      {team?.flagStatus ? (
+        <FlagStatus team={team} icons={false} />
+      ) : (
+        "Status unknown"
+      )}
+    </small>
+  );
+}
 
 export function QuickCamHUD({
   position = "left",
@@ -57,7 +74,7 @@ export function QuickCamHUD({
       <div className={styles.CameraList}>
         {QUICK_CAM_SLOTS.map((slot) => {
           const camera = settings.quickCams[slot];
-          const { label, Icon, empty, flagTeamId } = quickCamDisplay(
+          const { label, Icon, empty, flagSlot, flagTeamId } = quickCamDisplay(
             slot,
             camera,
             flags,
@@ -89,7 +106,7 @@ export function QuickCamHUD({
                   />
                 )
               )}
-              <span className={styles.Label}>
+              <span className={styles.LabelGroup}>
                 {empty ? (
                   <span className={styles.SetHint}>
                     Press{" "}
@@ -102,7 +119,16 @@ export function QuickCamHUD({
                     </span>
                   </span>
                 ) : (
-                  label
+                  <>
+                    <span className={styles.Label}>{label}</span>
+                    {flagSlot != null && (
+                      <QuickCamFlagStatus
+                        teamId={
+                          flagTeamId === null ? 0 : (flagTeamId ?? flagSlot)
+                        }
+                      />
+                    )}
+                  </>
                 )}
               </span>
               {camera?.commandCircuit && (

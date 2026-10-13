@@ -9,6 +9,7 @@ import { GAME_PROTOCOL_VERSION } from "./shared";
 import { writeString } from "./HuffmanWriter";
 import { connLog } from "./logger";
 import { ConnectionCooldowns } from "./connectionCooldown";
+import { NEUTRAL_MOVE } from "./moveList";
 
 let cooldowns: ConnectionCooldowns;
 beforeEach(() => {
@@ -558,6 +559,37 @@ describe("GameConnection.missionStartedWithoutAuth", () => {
 
     expect(conn.sendCommand).not.toHaveBeenCalled();
   });
+
+  it("promotes when a browser player answers Phase1", () => {
+    const conn = new GameConnection("1.2.3.4:28000", { cooldowns });
+    (conn as any)._status = "authenticating";
+
+    conn.sendCommand("MissionStartPhase1Done", "7");
+
+    expect(conn.status).toBe("connected");
+  });
+});
+
+describe("GameConnection commands", () => {
+  it("drops commands that cannot be encoded instead of queuing them", () => {
+    const conn = new GameConnection("1.2.3.4:28000", { cooldowns });
+    const inner = conn as unknown as {
+      _status: string;
+      pendingEvents: unknown[];
+      checkPacketSend(): void;
+    };
+    inner._status = "connected";
+    vi.spyOn(inner, "checkPacketSend").mockImplementation(() => {});
+
+    // Browser JSON can carry anything; the send loop would throw on these.
+    conn.sendCommand("x", 1 as unknown as string);
+    conn.sendCommand("x", "a".repeat(256));
+    conn.sendCommand("x", ...Array<string>(19).fill("~".repeat(255)));
+    expect(inner.pendingEvents).toEqual([]);
+
+    conn.sendCommand("x", "a".repeat(255));
+    expect(inner.pendingEvents).toHaveLength(2); // name registration + call
+  });
 });
 
 describe("GameConnection authentication", () => {
@@ -585,5 +617,203 @@ describe("GameConnection authentication", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe("GameConnection moves", () => {
+  interface MoveInternals extends ReceiveInternals {
+    _status: string;
+    startKeepalive(): void;
+    checkPacketSend(): void;
+    keepaliveTimer: ReturnType<typeof setInterval> | null;
+  }
+
+  /**
+   * The move section of a client data packet.
+   */
+  function readMoves(packet: Uint8Array): { start: number; yaws: number[] } {
+    const bs = new BitStream(packet);
+    bs.readFlag(); // gameFlag
+    bs.readInt(1); // connectSeqBit
+    bs.readInt(9); // seqNumber
+    bs.readInt(9); // highestAck
+    bs.readInt(2); // packetType
+    const ackByteCount = bs.readInt(3);
+    if (ackByteCount > 0) bs.readInt(ackByteCount * 8);
+    bs.readFlag(); // mCurRate.changed
+    if (bs.readFlag()) bs.readInt(20); // mMaxRate
+    bs.readFlag(); // firstPerson
+    bs.readU32(); // control object checksum
+    const start = bs.readU32();
+    const count = bs.readInt(5);
+    const yaws: number[] = [];
+    for (let i = 0; i < count; i++) {
+      yaws.push(bs.readFlag() ? bs.readInt(16) : 0);
+      for (let r = 0; r < 2; r++) if (bs.readFlag()) bs.readInt(16);
+      expect([bs.readInt(6), bs.readInt(6), bs.readInt(6)]).toEqual([
+        16, 16, 16,
+      ]);
+      bs.readInt(7); // freeLook + triggers
+    }
+    return { start, yaws };
+  }
+
+  /**
+   * A server data packet acking our packets through `highestAck`.
+   */
+  function serverPacket(
+    seq: number,
+    highestAck: number,
+    moveAck: number,
+    withRates = false,
+  ): Buffer {
+    const bs = new BitStreamWriter(32);
+    bs.writeFlag(true);
+    bs.writeInt(0, 1); // connectSeqBit
+    bs.writeInt(seq, 9);
+    bs.writeInt(highestAck, 9);
+    bs.writeInt(0, 2); // DataPacket
+    bs.writeInt(4, 3);
+    bs.writeInt(0xffffffff, 32);
+    for (let i = 0; i < 2; i++) {
+      bs.writeFlag(withRates);
+      if (withRates) {
+        bs.writeInt(32, 10);
+        bs.writeInt(450, 10);
+      }
+    }
+    bs.writeU32(moveAck);
+    return Buffer.from(bs.getBuffer());
+  }
+
+  /**
+   * A browser move whose yaw packs to `yaw` (16-bit fractional turns).
+   */
+  const move = (yaw: number) => ({
+    ...NEUTRAL_MOVE,
+    yaw: (yaw / 65536) * 2 * Math.PI,
+  });
+
+  function connected(generateMoves: boolean) {
+    const conn = new GameConnection("1.2.3.4:28000", {
+      cooldowns,
+      generateMoves,
+    });
+    const inner = conn as unknown as MoveInternals;
+    inner._status = "connected";
+    const packets: Uint8Array[] = [];
+    vi.spyOn(inner, "sendRaw").mockImplementation((data) => {
+      packets.push(data);
+    });
+    const moves = vi.fn();
+    conn.on("move", moves);
+    return { conn, inner, packets, moves };
+  }
+
+  it("collects one neutral move per tick and resends unacked moves", () => {
+    vi.useFakeTimers();
+    try {
+      const { inner, packets, moves } = connected(true);
+      inner.startKeepalive();
+      vi.advanceTimersByTime(31);
+      expect(moves).not.toHaveBeenCalled();
+      // The first loop pass already sent the rate advert, without moves.
+      expect(packets.map(readMoves)).toEqual([{ start: 0, yaws: [] }]);
+      vi.advanceTimersByTime(1);
+      expect(moves).toHaveBeenCalledTimes(1);
+      vi.advanceTimersByTime(8); // the next send slot
+      expect(readMoves(packets.at(-1)!)).toEqual({ start: 0, yaws: [0] });
+
+      vi.advanceTimersByTime(64);
+      expect(moves).toHaveBeenCalledTimes(3);
+      expect(readMoves(packets.at(-1)!)).toEqual({
+        start: 0,
+        yaws: [0, 0, 0],
+      });
+
+      inner.handleMessage(serverPacket(1, 3, 2, true));
+      vi.advanceTimersByTime(32);
+      expect(readMoves(packets.at(-1)!)).toEqual({ start: 2, yaws: [0, 0] });
+      clearInterval(inner.keepaliveTimer!);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("drops ticks while backlogged instead of catching them up", () => {
+    vi.useFakeTimers();
+    try {
+      const { inner, packets, moves } = connected(true);
+      inner.startKeepalive();
+      vi.advanceTimersByTime(5_000);
+      // One short of the real client's 30 keeps Tribes2.exe playback of
+      // the recording from stalling on the same test.
+      expect(moves).toHaveBeenCalledTimes(29);
+
+      inner.handleMessage(serverPacket(1, packets.length, 29));
+      // The next tick, then the send slot after it.
+      vi.advanceTimersByTime(48);
+      expect(moves).toHaveBeenCalledTimes(30);
+      expect(readMoves(packets.at(-1)!)).toEqual({ start: 29, yaws: [0] });
+      clearInterval(inner.keepaliveTimer!);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("queues each browser move once, merging legacy resent batches", () => {
+    vi.useFakeTimers();
+    try {
+      const { conn, packets, moves } = connected(false);
+      // The browser sends each move once; unacked ones ride along again.
+      conn.sendMoves([move(1)], 7000);
+      vi.advanceTimersByTime(32);
+      conn.sendMoves([move(2)], 7001);
+      vi.advanceTimersByTime(32);
+      // A legacy full-buffer resend overlaps what is already queued.
+      conn.sendMoves([move(2), move(3)], 7001);
+      expect(packets.map(readMoves)).toEqual([
+        { start: 7000, yaws: [1] },
+        { start: 7000, yaws: [1, 2] },
+        { start: 7000, yaws: [1, 2, 3] },
+      ]);
+      expect(moves).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("resends browser moves until acked, past the engine's four sends", () => {
+    vi.useFakeTimers();
+    try {
+      const { conn, inner, packets } = connected(false);
+      conn.sendMoves([move(1), move(2)], 0);
+      // Once the browser goes quiet, the send loop carries the resends.
+      vi.advanceTimersByTime(100);
+      for (let i = 0; i < 5; i++) {
+        inner.checkPacketSend();
+        vi.advanceTimersByTime(32);
+      }
+      expect(packets.map(readMoves)).toEqual(
+        Array(6).fill({ start: 0, yaws: [1, 2] }),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("ignores browser moves on a connection that generates its own", () => {
+    const { conn, inner, packets } = connected(true);
+    conn.sendMoves([{ ...NEUTRAL_MOVE, x: 1 }], 0);
+    inner.checkPacketSend();
+    expect(packets.map(readMoves)).toEqual([{ start: 0, yaws: [] }]);
+  });
+
+  it("sends no data packets after disconnecting", () => {
+    const { conn, packets } = connected(false);
+    conn.disconnect();
+    conn.sendMoves([move(1)], 0);
+    conn.sendCommand("Foo");
+    expect(packets).toEqual([]);
   });
 });

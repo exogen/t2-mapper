@@ -10,7 +10,6 @@ const state = () => casterStore.getState();
 const server = "example:28000";
 const camera: SavedCamera = {
   kind: "fly",
-  label: "Base",
   fov: 90,
   followBehindPlayer: false,
   position: [1, 2, 3],
@@ -19,7 +18,6 @@ const camera: SavedCamera = {
 const flagCamera = {
   kind: "flag",
   slot: 1,
-  label: "Flag 1",
   fov: 90,
   followBehindPlayer: false,
   yaw: 0,
@@ -120,8 +118,9 @@ it("resets on the next mission even when the map name repeats", () => {
 it("persists a followed player's base name without any roster or account identity", () => {
   state().activate(server, "3", "Katabatic");
   const follow: SavedCamera = {
-    kind: "fp",
-    label: "Player · First person",
+    kind: "player",
+    mode: "firstPerson",
+    displayName: "[TAG]Player",
     playerName: "Player",
     yaw: 0.4,
     pitch: 0.2,
@@ -134,6 +133,55 @@ it("persists a followed player's base name without any roster or account identit
   state().activate(server, "3", "Katabatic");
   expect(state().settings?.quickCams[3]).toEqual(follow);
 });
+
+it.each([
+  ["follow", "follow"],
+  ["fp", "firstPerson"],
+] as const)(
+  "migrates legacy %s cameras using structured fields only",
+  (kind, mode) => {
+    state().activate(server, "3", "Katabatic");
+    state().renameTeam(1, "Knights");
+    const player = {
+      playerName: "CC: Player · Follow",
+      yaw: 0.4,
+      pitch: 0.2,
+      distance: 20,
+      fov: 90,
+      followBehindPlayer: true,
+      commandCircuit: { x: 40, z: 60, zoom: 4 },
+    };
+    const original = { kind: "original", fov: 90, followBehindPlayer: false };
+    sessionStorage.setItem(
+      CASTER_STORAGE_KEY,
+      JSON.stringify({
+        ...JSON.parse(sessionStorage.getItem(CASTER_STORAGE_KEY)!),
+        version: 1,
+        quickCams: {
+          0: { ...camera, label: "CC: Free-fly" },
+          1: { ...flagCamera, label: "Command circuit · Flag 1" },
+          2: { ...original, label: "Original view" },
+          3: { kind, ...player, label: "Unrelated presentation text" },
+        },
+      }),
+    );
+    state().suspend();
+    state().activate(server, "3", "Katabatic");
+    expect(state().settings).toEqual({
+      teamNames: { 1: "Knights" },
+      quickCams: {
+        0: camera,
+        1: flagCamera,
+        2: original,
+        3: { kind: "player", mode, displayName: player.playerName, ...player },
+      },
+    });
+    state().renameTeam(2, "Dragons");
+    const stored = JSON.parse(sessionStorage.getItem(CASTER_STORAGE_KEY)!);
+    expect(stored.version).toBe(2);
+    expect(stored.quickCams).toEqual(state().settings?.quickCams);
+  },
+);
 
 it("replaces the active server without retaining a history", () => {
   state().activate(server, "3", "Katabatic");
@@ -285,6 +333,18 @@ it("ignores incompatible stored cameras while preserving default flags, names an
           distance: 20,
           player: { clientId: 7, connectionId: "first" },
         },
+        5: {
+          kind: "player",
+          mode: "invalid",
+          playerName: "Player",
+          displayName: "Player",
+          fov: 90,
+          followBehindPlayer: false,
+          yaw: 0,
+          pitch: 0,
+          distance: 20,
+        },
+        6: { ...camera, commandCircuit: "CC: Bad view" },
       },
     }),
   );

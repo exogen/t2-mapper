@@ -1,0 +1,9 @@
+.Label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.Separator {
+  opacity: 0.5;
+}

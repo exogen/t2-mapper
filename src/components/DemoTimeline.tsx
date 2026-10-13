@@ -335,11 +335,7 @@ export function DemoTimeline() {
                 className={styles.EventIcon}
                 data-type={event.type}
                 style={{
-                  color: timelineFlagColor(
-                    event,
-                    observerPerspective,
-                    observerTeamColors,
-                  ),
+                  color: timelineFlagColor(event, observerTeamColors),
                 }}
               >
                 {EVENT_ICON[event.type]}

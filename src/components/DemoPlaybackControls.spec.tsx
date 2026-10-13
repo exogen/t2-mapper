@@ -159,13 +159,86 @@ it("keeps an unknown scoring team neutral", () => {
   ).toContain("color:rgb(200, 200, 200)");
 });
 
+it.each([
+  ["blueOrange", "rgb(45, 162, 255)", "rgb(255, 100, 15)"],
+  ["greenRed", "rgb(0, 212, 71)", "rgb(255, 60, 10)"],
+  ["redGreen", "rgb(255, 60, 10)", "rgb(0, 212, 71)"],
+] as const)(
+  "uses %s team colors for captures after a player returns to observer mode",
+  (scheme, team1, team2) => {
+    state.observerTeamColors = scheme;
+    const result = markers(
+      {
+        type: "flag-cap",
+        timeSec: 10,
+        description: "Friendly capture while playing",
+        actorTeamId: 1,
+        teamAffinity: "friendly",
+      },
+      {
+        type: "flag-cap",
+        timeSec: 20,
+        description: "Enemy capture while playing",
+        actorTeamId: 2,
+        teamAffinity: "enemy",
+      },
+      {
+        type: "flag-cap",
+        timeSec: 25,
+        description: "Storm capture while observing",
+        actorTeamId: 1,
+        teamAffinity: "neutral",
+      },
+      {
+        type: "flag-cap",
+        timeSec: 75,
+        description: "Inferno capture while observing",
+        actorTeamId: 2,
+        teamAffinity: "neutral",
+      },
+      {
+        type: "flag-cap",
+        timeSec: 80,
+        description: "Unknown capture while observing",
+        teamAffinity: "neutral",
+      },
+    );
+    expect(result[0]).toContain("color:rgb(0, 212, 71)");
+    expect(result[1]).toContain("color:rgb(255, 60, 10)");
+    expect(result[2]).toContain(`color:${team1}`);
+    expect(result[3]).toContain(`color:${team2}`);
+    expect(result[4]).toContain("color:rgb(200, 200, 200)");
+  },
+);
+
 it("handles a capture-only timeline and multiple captures at the same timestamp", () => {
-  expect(
-    markers(
-      { type: "flag-cap", timeSec: 25, description: "First capture" },
-      { type: "flag-cap", timeSec: 25, description: "Second capture" },
-    ),
-  ).toHaveLength(2);
+  const result = markers(
+    {
+      type: "flag-cap",
+      timeSec: 25,
+      description: "First capture",
+      actorTeamId: 1,
+      teamAffinity: "friendly",
+    },
+    {
+      type: "flag-cap",
+      timeSec: 25,
+      description: "Second capture",
+      actorTeamId: 1,
+      teamAffinity: "neutral",
+    },
+    {
+      type: "flag-cap",
+      timeSec: 25,
+      description: "Third capture",
+      actorTeamId: 2,
+      teamAffinity: "neutral",
+    },
+  );
+  expect(result).toHaveLength(3);
+  expect(result[0]).toContain("color:rgb(0, 212, 71)");
+  expect(result[1]).toContain("color:rgb(45, 162, 255)");
+  expect(result[2]).toContain("color:rgb(255, 100, 15)");
 });
 
 it("omits markers before scanning and when the duration is zero", () => {

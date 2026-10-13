@@ -282,18 +282,20 @@
   gap: var(--hud-flag-icon-gap);
 }
 
+.FlagStatus[data-status="home"] {
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.FlagStatus[data-status="held"] {
+  color: rgba(255, 255, 255, 1);
+}
+
+.FlagStatus[data-status="field"] {
+  color: rgba(255, 255, 255, 0.7);
+}
+
 .FlagStatus svg {
   font-size: 18px;
-}
-
-.FlagLabel {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.FlagSeparator {
-  opacity: 0.5;
 }
 
 .Clock {

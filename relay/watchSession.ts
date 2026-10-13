@@ -11,7 +11,10 @@ import {
   type CRCChallengeEventData,
   type GhostingMessageEventData,
 } from "t2-demo-parser";
-import { GameConnection } from "./gameConnection.js";
+import {
+  GameConnection,
+  type GameConnectionOptions,
+} from "./gameConnection.js";
 import { getConnectionRetryPolicy } from "./connectionRetryPolicy.js";
 import {
   decodeGlobalChat,
@@ -152,7 +155,10 @@ export interface WatchSessionManagerOptions {
    */
   tourneySkipTypes?: string[];
   /** Construct the game connection, including relay-only credentials. */
-  createConnection?: (address: string) => GameConnection;
+  createConnection?: (
+    address: string,
+    options: Pick<GameConnectionOptions, "generateMoves">,
+  ) => GameConnection;
 }
 
 export class WatchSessionManager {
@@ -593,8 +599,11 @@ export class WatchSession {
     this.delayMs = this.options.tourneyDelayMs ?? 0;
     this.epochDelayed = this.delayMs > 0;
 
+    // Watchers are read-only, so the relay is the connection's only move
+    // producer: an idle client's neutral moves, recorded as they are queued.
     const conn =
-      this.options.createConnection?.(this.key) ?? new GameConnection(this.key);
+      this.options.createConnection?.(this.key, { generateMoves: true }) ??
+      new GameConnection(this.key, { generateMoves: true });
     this.connection = conn;
     const cached = this.options.getCachedServer(this.key);
     if (cached?.mapName) conn.setMapName(cached.mapName);
@@ -663,6 +672,10 @@ export class WatchSession {
     conn.on("sent", () => {
       if (this.connection !== conn) return;
       this.recorder?.onSent();
+    });
+    conn.on("move", () => {
+      if (this.connection !== conn) return;
+      this.recorder?.onMove();
     });
     conn.on("ping", (ms: number) => {
       if (this.connection !== conn) return;

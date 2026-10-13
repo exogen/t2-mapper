@@ -24,7 +24,12 @@
  * 4. camera *selection* settles who is followed and in which mode;
  * 5. the director picks the shot and writes its orbit parameters;
  * 6. the stream applies the resulting pose (recorded, orbit, first person);
- * 7. tour, local input and the command circuit override it in turn;
+ * 7. tour, input and the command circuit override it in turn. Input runs
+ *    as a pipeline: it is sampled (touch first, then keyboard and mouse,
+ *    whose handler clears the raw deltas), then drained (local input poses
+ *    the camera here, live input is staged), then the 32 ms ticks turn
+ *    staged live input into moves, and only then does the live prediction
+ *    pose the camera — so every tick of a slow frame sees that frame's input;
  * 8. projection follows the selected camera mode and recorded FOV;
  * 9. the watchdog inspects the final pose.
  *
@@ -49,8 +54,29 @@ export const FramePriority = {
   CameraStream: -30,
   /** Map tour animation. */
   CameraTour: -25,
-  /** Free-fly and orbit from local input. */
-  CameraInput: -20,
+  /**
+   * Touch sticks and drag-look sample this frame's input — ahead of the
+   * keyboard and mouse handler, which clears every raw input delta (touch
+   * drags included) once it has read its own.
+   */
+  InputTouch: -24,
+  /**
+   * Keyboard and mouse sample this frame's input, then clear the raw deltas.
+   */
+  InputKeyboardMouse: -23,
+  /**
+   * Input drain: free-fly and orbit from local input; live input staged
+   * for the ticks.
+   */
+  CameraInput: -22,
+  /**
+   * 32 ms ticks (TickProvider): live moves collect the staged input.
+   */
+  Tick: -21,
+  /**
+   * The live prediction's pose: server reconciliation and interpolateTick.
+   */
+  CameraLive: -20,
   /** The command circuit's orthographic rig. */
   CameraCommandCircuit: -15,
   /** Perspective FOV, after all camera-mode changes for this frame. */

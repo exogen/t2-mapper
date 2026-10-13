@@ -144,10 +144,10 @@ export function SpectatorController() {
       streamPlaybackStore.setState({ cameraMode: "freeFly" });
     }
     if (placedRef.current || !liveReady) return;
-    // The relay never sends moves, so its server-side observer camera sits
-    // exactly where the server placed it (an observer drop point, chosen
-    // per map on connect and on each mission change). Placing spectators
-    // there gives the same initial view a real client gets.
+    // The relay only sends neutral moves, so its server-side observer camera
+    // sits exactly where the server placed it (an observer drop point,
+    // chosen per map on connect and on each mission change). Placing
+    // spectators there gives the same initial view a real client gets.
     // Wait for the REGISTERED render camera: ObserverCamera mounts under
     // Suspense and replaces the default camera (makeDefault, at [0,256,0])
     // — placing before it registers writes to a camera that's about to be

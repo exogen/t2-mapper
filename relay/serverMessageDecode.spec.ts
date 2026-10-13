@@ -44,7 +44,7 @@ describe("decodeTeamAdd", () => {
       teamId: 1,
       name: "Storm",
       score: 3,
-      flag: { status: "held", carrier: "Vaxity" },
+      flag: { status: "held", carrier: "Vaxity", carrierRawName: "Vaxity" },
     });
   });
 
@@ -58,7 +58,7 @@ describe("decodeTeamAdd", () => {
       teamId: 2,
       name: "Inferno",
       score: 0,
-      flag: { status: "home", carrier: undefined },
+      flag: { status: "home", carrier: undefined, carrierRawName: undefined },
     });
   });
 
@@ -102,7 +102,12 @@ describe("decodeFlagEvent", () => {
   it("taken → held with actor as carrier", () => {
     expect(
       decodeFlagEvent("MsgCTFFlagTaken", ["x", "", "Vaxity", "", "2"], id),
-    ).toEqual({ teamId: 2, status: "held", carrier: "Vaxity" });
+    ).toEqual({
+      teamId: 2,
+      status: "held",
+      carrier: "Vaxity",
+      carrierRawName: "Vaxity",
+    });
   });
   it("dropped → field, returned/capped → home, no carrier", () => {
     expect(

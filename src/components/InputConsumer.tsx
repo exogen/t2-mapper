@@ -1,4 +1,4 @@
-import { useRef, useEffect } from "react";
+import { useRef, useEffect, useEffectEvent } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
 import { Camera, Euler, Vector3 } from "three";
 import { createLogger } from "../logger";
@@ -22,6 +22,11 @@ import {
 } from "../stream/streamHelpers";
 import type { StreamRecording } from "../stream/types";
 import type { LiveStreamAdapter } from "../stream/liveStreaming";
+import {
+  claimMoveIndex,
+  pruneAcknowledgedMoves,
+  type PendingMove,
+} from "../stream/liveMoveBuffer";
 import type { ClientMove } from "../../relay/types";
 import { FramePriority } from "./framePriority";
 import { useSettings } from "./SettingsProvider";
@@ -33,14 +38,10 @@ const MAX_SPEED = 200;
 const LOCAL_MAX_PITCH = Math.PI / 2 - 0.01; // ~89°
 
 /**
- * Max moves in the unacked buffer. Matches Torque's MaxMoveQueueSize.
- * Also the max we can send per packet (5-bit count = 31), but we keep
- * a slightly larger buffer to avoid losing moves during high latency.
+ * Camera::processTick (Tribes2.exe FUN_005cbc80) clamps pitch to ±80°
+ * (0x0079acf0) in every mode — tighter than a Player's MAX_PITCH.
  */
-const MAX_MOVE_BUFFER = 45;
-
-/** Max moves per packet (MoveCountBits = 5 → 2^5 - 1). */
-const MAX_MOVES_PER_PACKET = 31;
+const CAMERA_MAX_PITCH = 1.3962;
 
 /**
  * $Camera::movementSpeed (default 40 in Tribes2.exe at _DAT_0079abe8).
@@ -67,6 +68,18 @@ function quantizeRotation(radians: number): number {
   return (signed * M_2PI) / 65536;
 }
 
+/**
+ * Quantize a movement axis through the Move's 6-bit packing (0-32,
+ * centered at 16): the value the server's Camera actually applies.
+ */
+function quantizeAxis(value: number): number {
+  return Math.max(0, Math.min(32, Math.round(value * 16 + 16))) / 16 - 1;
+}
+
+function clampCameraPitch(pitch: number): number {
+  return Math.max(-CAMERA_MAX_PITCH, Math.min(CAMERA_MAX_PITCH, pitch));
+}
+
 // Scratch objects to avoid per-frame allocations.
 const _forwardVec = new Vector3();
 const _sideVec = new Vector3();
@@ -74,12 +87,10 @@ const _moveVec = new Vector3();
 const _orbitDir = new Vector3();
 const _lookEuler = new Euler(0, 0, 0, "YXZ");
 
-/** A buffered move sent to the server, awaiting acknowledgment. */
-interface BufferedMove {
-  /** Browser-assigned move index. */
-  moveIndex: number;
-  /** The full move data for re-sending to the server. */
-  move: ClientMove;
+/**
+ * A move sent to the server, kept for prediction replay until acked.
+ */
+interface BufferedMove extends PendingMove {
   /** Rotation deltas for prediction replay. */
   yaw: number;
   pitch: number;
@@ -137,12 +148,14 @@ function applyProcessTickPosition(
  * 1. Camera::processTick — apply rotation + position at tick rate.
  * 2. Camera::interpolateTick — interpolate between tick states for smooth
  *    frame-rate rendering.
- * 3. Send ALL unacked moves to the server at tick rate (like moveWritePacket).
+ * 3. Collect one move per tick, pausing while the server is 30 moves
+ *    behind (isBacklogged), and hand each new move to the relay, whose
+ *    move list resends it until acked (moveWritePacket).
  * 4. On server correction (readPacketData), snap to authoritative state and
  *    replay all unacknowledged moves.
  *
- * The browser owns the move index counter and re-sends unacked moves for
- * UDP reliability, just like the real Tribes 2 client.
+ * The browser owns the move index counter, which runs for the whole
+ * connection: the server's lastMoveAck survives mission changes.
  */
 export function InputConsumer() {
   const { followBehindPlayer } = useSettings();
@@ -160,8 +173,6 @@ export function InputConsumer() {
   const moveBuffer = useRef<BufferedMove[]>([]);
   // Browser-owned move index counter.
   const nextMoveIndex = useRef(0);
-  // The last lastMoveAck we processed (to detect new server corrections).
-  const lastProcessedAck = useRef(0);
   // Simulation snapshots also change each tick; only packets are corrections.
   const lastReconciledUpdate = useRef(-1);
 
@@ -172,9 +183,7 @@ export function InputConsumer() {
   // Predicted position in Torque world coords (x=east, y=north, z=up).
   const predPos = useRef({ x: 0, y: 0, z: 0 });
 
-  // ── Previous tick state for interpolateTick ──
-  const prevYaw = useRef(0);
-  const prevPitch = useRef(0);
+  // ── Previous tick position for interpolateTick ──
   const prevPos = useRef({ x: 0, y: 0, z: 0 });
 
   // Whether prediction has been initialized from a server snapshot.
@@ -191,13 +200,24 @@ export function InputConsumer() {
   /** Snapshot reference from last orbit target update (identity check). */
   const lastOrbitSnapshot = useRef<unknown>(null);
 
-  // ── Accumulated input for current tick (live mode) ──
+  // ── Input for the next move (live mode): look deltas and triggers
+  // accumulate until a tick consumes them; the axes hold the current input.
   const tickDeltaYaw = useRef(0);
   const tickDeltaPitch = useRef(0);
   const tickMoveX = useRef(0);
   const tickMoveY = useRef(0);
   const tickMoveZ = useRef(0);
   const tickTriggers = useRef([false, false, false, false, false, false]);
+  // Pending input belongs to the connection and mission it was collected
+  // in, and a backlog can hold a whole stall's worth (triggers included).
+  const resetTickInput = useEffectEvent(() => {
+    tickDeltaYaw.current = 0;
+    tickDeltaPitch.current = 0;
+    tickMoveX.current = 0;
+    tickMoveY.current = 0;
+    tickMoveZ.current = 0;
+    tickTriggers.current.fill(false);
+  });
 
   const isLive =
     !!adapter &&
@@ -231,8 +251,8 @@ export function InputConsumer() {
       lastOrbitSnapshot.current = null;
       moveBuffer.current.length = 0;
       nextMoveIndex.current = 0;
-      lastProcessedAck.current = 0;
       lastReconciledUpdate.current = -1;
+      resetTickInput();
 
       setMode("fly");
     } else if (!isLive && activeAdapterRef.current) {
@@ -245,6 +265,7 @@ export function InputConsumer() {
       orbitTargetInitialized.current = false;
       lastOrbitSnapshot.current = null;
       moveBuffer.current.length = 0;
+      resetTickInput();
 
       setMode("local");
     }
@@ -261,16 +282,11 @@ export function InputConsumer() {
       predInitialized.current = false;
       orbitTargetInitialized.current = false;
       lastOrbitSnapshot.current = null;
+      // Keep nextMoveIndex: the server's lastMoveAck persists across
+      // missions and drops any index below it as already received.
       moveBuffer.current.length = 0;
-      nextMoveIndex.current = 0;
-      lastProcessedAck.current = 0;
       lastReconciledUpdate.current = -1;
-      tickDeltaYaw.current = 0;
-      tickDeltaPitch.current = 0;
-      tickMoveX.current = 0;
-      tickMoveY.current = 0;
-      tickMoveZ.current = 0;
-      tickTriggers.current.fill(false);
+      resetTickInput();
       setMode("fly");
     }
   }, [liveReady, setMode]);
@@ -295,8 +311,51 @@ export function InputConsumer() {
 
   // ── processTick: collect/send one move every 32 ms. ──
   useTick(() => {
-    if (!activeAdapterRef.current || gameStatus !== "connected" || !liveReady)
+    const liveAdapter = activeAdapterRef.current;
+    if (!liveAdapter || gameStatus !== "connected" || !liveReady) return;
+
+    // ── Orbit target position tracking (follow mode) ──
+    // Read the orbit target's position from the snapshot at tick rate,
+    // matching Camera::processTick which reads getWorldBox().getCenter().
+    // Only update when the simulation snapshot has actually changed,
+    // otherwise prev gets overwritten with current on every useTick, destroying
+    // the interpolation endpoints between packets.
+    const snap = liveAdapter.getSnapshot();
+    if (snap !== lastOrbitSnapshot.current) {
+      lastOrbitSnapshot.current = snap;
+      const cam = snap?.camera;
+      if (cam?.orbitTargetId) {
+        const targetEntity = snap.entities.find(
+          (e) => e.id === cam.orbitTargetId,
+        );
+        if (targetEntity?.position) {
+          prevOrbitTargetPos.current = { ...currentOrbitTargetPos.current };
+          currentOrbitTargetPos.current = {
+            x: targetEntity.position[0],
+            y: targetEntity.position[1],
+            z: targetEntity.position[2],
+          };
+          if (!orbitTargetInitialized.current) {
+            prevOrbitTargetPos.current = { ...currentOrbitTargetPos.current };
+            orbitTargetInitialized.current = true;
+          }
+        }
+      }
+    }
+
+    const buffer = moveBuffer.current;
+    const moveIndex = claimMoveIndex(
+      buffer,
+      liveAdapter.lastMoveAck,
+      nextMoveIndex.current,
+    );
+    if (moveIndex === null) {
+      // Backlogged: no tick. Look deltas and triggers carry into the next
+      // move, like getNextMove's accumulators, and the pose holds still.
+      prevPos.current = { ...predPos.current };
       return;
+    }
+    nextMoveIndex.current = moveIndex + 1;
 
     // Consume accumulated deltas.
     const yaw = tickDeltaYaw.current;
@@ -304,12 +363,13 @@ export function InputConsumer() {
     tickDeltaYaw.current = 0;
     tickDeltaPitch.current = 0;
 
-    const mx = tickMoveX.current;
-    const my = tickMoveY.current;
-    const mz = tickMoveZ.current;
-    tickMoveX.current = 0;
-    tickMoveY.current = 0;
-    tickMoveZ.current = 0;
+    // The axes are the input held this frame (sampled just before the
+    // ticks), like the key state getNextMove reads, so every tick of a slow
+    // frame sees the same current input. The server applies them packed,
+    // so predict with the packed values too.
+    const mx = quantizeAxis(tickMoveX.current);
+    const my = quantizeAxis(tickMoveY.current);
+    const mz = quantizeAxis(tickMoveZ.current);
 
     const triggers = [...tickTriggers.current];
     tickTriggers.current.fill(false);
@@ -324,13 +384,11 @@ export function InputConsumer() {
     predYaw.current += qYaw - yaw;
     predPitch.current += qPitch - pitch;
 
-    // Save previous tick state for interpolateTick.
-    prevYaw.current = predYaw.current;
-    prevPitch.current = predPitch.current;
+    // Save previous tick position for interpolateTick.
     prevPos.current = { ...predPos.current };
 
-    // NOTE: Rotation is NOT re-applied here — useFrame already applied
-    // (now corrected to quantized). useTick only buffers and sends.
+    // NOTE: Rotation is NOT re-applied here — the input drain already
+    // applied it (now corrected to quantized).
 
     // Apply position using the PREVIOUS tick's rotation, matching Tribes2.exe:
     // processTick reads the old transform matrix (built at end of previous
@@ -356,36 +414,23 @@ export function InputConsumer() {
     // producer (MouseAndKeyboardHandler) to the movement axes.
     triggers[1] = true;
 
-    // Build the move and assign a browser-owned index.
-    const moveIndex = nextMoveIndex.current++;
+    // The move as the server will decode it.
     const move: ClientMove = {
       x: mx,
       y: my,
       z: mz,
-      yaw,
-      pitch,
+      yaw: qYaw,
+      pitch: qPitch,
       roll: 0,
       trigger: triggers,
       freeLook: false,
     };
 
-    activeAdapterRef.current.submitMove(
-      {
-        ...move,
-        yaw: qYaw,
-        pitch: qPitch,
-        x: Math.max(0, Math.min(32, Math.round(mx * 16 + 16))) / 16 - 1,
-        y: Math.max(0, Math.min(32, Math.round(my * 16 + 16))) / 16 - 1,
-        z: Math.max(0, Math.min(32, Math.round(mz * 16 + 16))) / 16 - 1,
-      },
-      moveIndex,
-    );
+    liveAdapter.submitMove(move, moveIndex);
 
-    // Buffer for prediction replay and re-sending.
-    const buffer = moveBuffer.current;
+    // Buffer for prediction replay until the server acknowledges it.
     buffer.push({
       moveIndex,
-      move,
       yaw: qYaw,
       pitch: qPitch,
       x: mx,
@@ -393,139 +438,105 @@ export function InputConsumer() {
       z: mz,
     });
 
-    // Cap buffer size.
-    if (buffer.length > MAX_MOVE_BUFFER) {
-      buffer.splice(0, buffer.length - MAX_MOVE_BUFFER);
-    }
-
-    // Prune acknowledged moves before sending.
-    const ack = activeAdapterRef.current.lastMoveAck;
-    while (buffer.length > 0 && buffer[0].moveIndex < ack) {
-      buffer.shift();
-    }
-
-    // Send ALL unacked moves, just like Tribes 2's moveWritePacket.
-    // The server deduplicates based on moveStartIndex.
-    if (buffer.length > 0) {
-      const movesToSend = buffer.slice(0, MAX_MOVES_PER_PACKET);
-      sendMoves(
-        movesToSend.map((m) => m.move),
-        movesToSend[0].moveIndex,
-      );
-    }
-
-    // ── Orbit target position tracking (follow mode) ──
-    // Read the orbit target's position from the snapshot at tick rate,
-    // matching Camera::processTick which reads getWorldBox().getCenter().
-    // Only update when the simulation snapshot has actually changed,
-    // otherwise prev gets overwritten with current on every useTick, destroying
-    // the interpolation endpoints between packets.
-    const snap = activeAdapterRef.current.getSnapshot();
-    if (snap !== lastOrbitSnapshot.current) {
-      lastOrbitSnapshot.current = snap;
-      const cam = snap?.camera;
-      if (cam?.orbitTargetId) {
-        const targetEntity = snap.entities.find(
-          (e) => e.id === cam.orbitTargetId,
-        );
-        if (targetEntity?.position) {
-          prevOrbitTargetPos.current = { ...currentOrbitTargetPos.current };
-          currentOrbitTargetPos.current = {
-            x: targetEntity.position[0],
-            y: targetEntity.position[1],
-            z: targetEntity.position[2],
-          };
-          if (!orbitTargetInitialized.current) {
-            prevOrbitTargetPos.current = { ...currentOrbitTargetPos.current };
-            orbitTargetInitialized.current = true;
-          }
-        }
-      }
-    }
+    // Each move goes to the relay once; its move list resends it in every
+    // packet until acked (moveWritePacket, without the four-send limit).
+    sendMoves([move], moveIndex);
   });
 
-  // ── useFrame: drain moveQueue, reconcile, interpolateTick + render. ──
-  useFrame((state, delta) => {
+  // ── Drain this frame's input: after the producers, before the ticks. ──
+  useFrame(() => {
     const frames = moveQueue.current;
-    if (frames.length > 0) {
-      // Drain the move queue.
-      let dYaw = 0;
-      let dPitch = 0;
-      let x = 0;
-      let y = 0;
-      let z = 0;
-      let frameDelta = 0;
-      const frameTriggers = [false, false, false, false, false, false];
-
-      for (const frame of frames) {
-        dYaw += frame.deltaYaw;
-        dPitch += frame.deltaPitch;
-        // Use the value with the largest magnitude across all producers.
-        // This prevents a keyboard-only frame (x=0) from overwriting
-        // joystick movement from another producer in the same frame.
-        if (Math.abs(frame.x) > Math.abs(x)) x = frame.x;
-        if (Math.abs(frame.y) > Math.abs(y)) y = frame.y;
-        if (Math.abs(frame.z) > Math.abs(z)) z = frame.z;
-        frameDelta += frame.delta;
-        for (let i = 0; i < frame.triggers.length; i++) {
-          if (frame.triggers[i]) frameTriggers[i] = true;
-        }
+    const liveInput =
+      isLive &&
+      !!activeAdapterRef.current &&
+      gameStatus === "connected" &&
+      liveReady;
+    if (frames.length === 0) {
+      // Producers emit a frame every frame while any input is held, so an
+      // empty queue means the movement keys are up.
+      if (liveInput) {
+        tickMoveX.current = 0;
+        tickMoveY.current = 0;
+        tickMoveZ.current = 0;
       }
-      moveQueue.current.length = 0;
-
-      if (
-        isLive &&
-        activeAdapterRef.current &&
-        gameStatus === "connected" &&
-        liveReady
-      ) {
-        // Live mode: accumulate for useTick to consume and send.
-        tickDeltaYaw.current += dYaw;
-        tickDeltaPitch.current += dPitch;
-        tickMoveX.current = x;
-        tickMoveY.current = y;
-        tickMoveZ.current = z;
-        for (let i = 0; i < frameTriggers.length; i++) {
-          if (frameTriggers[i]) tickTriggers.current[i] = true;
-        }
-
-        // Apply look deltas to prediction immediately for frame-rate
-        // responsiveness (the pending deltas haven't been consumed by useTick
-        // yet, but we still want them to affect the camera this frame).
-        predYaw.current += dYaw;
-        predPitch.current = Math.max(
-          -MAX_PITCH,
-          Math.min(MAX_PITCH, predPitch.current + dPitch),
-        );
-      } else {
-        // Local mode: apply input directly to camera.
-        const spState = streamPlaybackStore.getState();
-        if (spState.playback) {
-          if (spState.cameraMode === "freeFly") {
-            applyLocalCamera(camera, dYaw, dPitch, x, y, z, frameDelta);
-          } else if (
-            spState.cameraMode === "orbitOverride" &&
-            !isPlayerOrbitLocked(followBehindPlayer)
-          ) {
-            // Accumulate orbit yaw/pitch for StreamingController to read.
-            streamPlaybackStore.setState({
-              orbitOverrideYaw: spState.orbitOverrideYaw + dYaw,
-              orbitOverridePitch: Math.max(
-                -MAX_PITCH,
-                Math.min(MAX_PITCH, spState.orbitOverridePitch + dPitch),
-              ),
-            });
-          }
-          return;
-        }
-
-        applyLocalCamera(camera, dYaw, dPitch, x, y, z, frameDelta);
-        return;
-      }
+      return;
     }
 
-    // ── Live mode: server reconciliation + interpolateTick ──
+    // Drain the move queue.
+    let dYaw = 0;
+    let dPitch = 0;
+    let x = 0;
+    let y = 0;
+    let z = 0;
+    let frameDelta = 0;
+    const frameTriggers = [false, false, false, false, false, false];
 
+    for (const frame of frames) {
+      dYaw += frame.deltaYaw;
+      dPitch += frame.deltaPitch;
+      // Use the value with the largest magnitude across all producers.
+      // This prevents a keyboard-only frame (x=0) from overwriting
+      // joystick movement from another producer in the same frame.
+      if (Math.abs(frame.x) > Math.abs(x)) x = frame.x;
+      if (Math.abs(frame.y) > Math.abs(y)) y = frame.y;
+      if (Math.abs(frame.z) > Math.abs(z)) z = frame.z;
+      frameDelta += frame.delta;
+      for (let i = 0; i < frame.triggers.length; i++) {
+        if (frame.triggers[i]) frameTriggers[i] = true;
+      }
+    }
+    moveQueue.current.length = 0;
+
+    if (liveInput) {
+      // Live mode: stage for the ticks — look deltas and triggers
+      // accumulate; the axes hold this frame's input.
+      tickDeltaYaw.current += dYaw;
+      tickMoveX.current = x;
+      tickMoveY.current = y;
+      tickMoveZ.current = z;
+      for (let i = 0; i < frameTriggers.length; i++) {
+        if (frameTriggers[i]) tickTriggers.current[i] = true;
+      }
+
+      // Apply look deltas to prediction immediately for frame-rate
+      // responsiveness (the pending deltas haven't been consumed by useTick
+      // yet, but we still want them to affect the camera this frame).
+      predYaw.current += dYaw;
+      // Send the pitch change the clamp allowed, i.e. what the user saw:
+      // pitch held past the limit through a backlog must not reach the
+      // server, nor overflow the Move's 16-bit field.
+      const pitchBefore = predPitch.current;
+      predPitch.current = clampCameraPitch(pitchBefore + dPitch);
+      tickDeltaPitch.current += predPitch.current - pitchBefore;
+    } else {
+      // Local mode: apply input directly to camera.
+      const spState = streamPlaybackStore.getState();
+      if (spState.playback) {
+        if (spState.cameraMode === "freeFly") {
+          applyLocalCamera(camera, dYaw, dPitch, x, y, z, frameDelta);
+        } else if (
+          spState.cameraMode === "orbitOverride" &&
+          !isPlayerOrbitLocked(followBehindPlayer)
+        ) {
+          // Accumulate orbit yaw/pitch for StreamingController to read.
+          streamPlaybackStore.setState({
+            orbitOverrideYaw: spState.orbitOverrideYaw + dYaw,
+            orbitOverridePitch: Math.max(
+              -MAX_PITCH,
+              Math.min(MAX_PITCH, spState.orbitOverridePitch + dPitch),
+            ),
+          });
+        }
+        return;
+      }
+
+      applyLocalCamera(camera, dYaw, dPitch, x, y, z, frameDelta);
+    }
+  }, FramePriority.CameraInput);
+
+  // ── Live prediction's pose, after this frame's ticks: server
+  // reconciliation + interpolateTick. ──
+  useFrame((state) => {
     if (
       !isLive ||
       !activeAdapterRef.current ||
@@ -548,15 +559,7 @@ export function InputConsumer() {
     ) {
       lastReconciledUpdate.current = adapterRef.serverUpdateId;
 
-      // Prune acknowledged moves from the buffer.
-      const ack = adapterRef.lastMoveAck;
-      if (ack > lastProcessedAck.current) {
-        lastProcessedAck.current = ack;
-        const buffer = moveBuffer.current;
-        while (buffer.length > 0 && buffer[0].moveIndex < ack) {
-          buffer.shift();
-        }
-      }
+      pruneAcknowledgedMoves(moveBuffer.current, adapterRef.lastMoveAck);
 
       // Snap to server's authoritative state (rotation + position).
       predYaw.current = serverCam.yaw;
@@ -566,6 +569,9 @@ export function InputConsumer() {
         y: serverCam.position[1],
         z: serverCam.position[2],
       };
+      // Camera::readPacketData zeroes the deltas: with no move to replay,
+      // the pose holds still.
+      prevPos.current = { ...predPos.current };
 
       // Replay all unacknowledged moves on top of server state.
       // This is exactly what ProcessList::advanceClientTime does:
@@ -574,6 +580,10 @@ export function InputConsumer() {
       // then rotation is updated for the next move.
       const speed = CAMERA_SPEED * 2;
       for (const move of moveBuffer.current) {
+        // processTick records each move's step as the delta interpolateTick
+        // renders, so the frame keeps interpolating across the last replayed
+        // move — a packet that agrees with the prediction changes nothing.
+        prevPos.current = { ...predPos.current };
         // Position first, using pre-move rotation (matches Tribes2.exe).
         applyProcessTickPosition(
           predPos.current,
@@ -586,24 +596,14 @@ export function InputConsumer() {
         );
         // Then update rotation for the next move.
         predYaw.current += move.yaw;
-        predPitch.current = Math.max(
-          -MAX_PITCH,
-          Math.min(MAX_PITCH, predPitch.current + move.pitch),
-        );
+        predPitch.current = clampCameraPitch(predPitch.current + move.pitch);
       }
 
       // Also add any pending deltas not yet consumed by useTick.
       predYaw.current += tickDeltaYaw.current;
-      predPitch.current = Math.max(
-        -MAX_PITCH,
-        Math.min(MAX_PITCH, predPitch.current + tickDeltaPitch.current),
+      predPitch.current = clampCameraPitch(
+        predPitch.current + tickDeltaPitch.current,
       );
-
-      // After reconciliation, snap prev state to match (no interpolation
-      // glitch — we want the corrected state to appear immediately).
-      prevYaw.current = predYaw.current;
-      prevPitch.current = predPitch.current;
-      prevPos.current = { ...predPos.current };
 
       predInitialized.current = true;
 
@@ -677,7 +677,7 @@ export function InputConsumer() {
         serverCam?.orbitTargetId,
       );
     }
-  }, FramePriority.CameraInput);
+  }, FramePriority.CameraLive);
 
   // Clean up on unmount.
   useEffect(() => {

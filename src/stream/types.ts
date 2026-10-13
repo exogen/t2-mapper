@@ -571,6 +571,8 @@ export interface TeamScore {
   /** Name of the player holding this team's flag, while flagStatus is
    *  "held" (from MsgCTFFlagTaken / MsgCTFAddTeam). */
   flagCarrier?: string;
+  /** Unstripped carrier name for rendering clan and name colors. */
+  flagCarrierRawName?: string;
 }
 
 export interface PlayerRosterEntry {

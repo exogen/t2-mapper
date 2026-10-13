@@ -331,6 +331,7 @@ describe("applyServerMessageState", () => {
       score: 3,
       flagStatus: "held",
       flagCarrier: "Alice",
+      flagCarrierRawName: "Alice",
       playerCount: 0,
     });
     state.teamScores[0].playerCount = 8;
@@ -385,6 +386,7 @@ describe("applyServerMessageState", () => {
     expect(state.teamScores[0]).toMatchObject({
       flagStatus: "held",
       flagCarrier: "Alice",
+      flagCarrierRawName: "\x02 Alice ",
     });
     for (const [type, status] of [
       ["MsgCTFFlagDropped", "field"],
@@ -396,6 +398,7 @@ describe("applyServerMessageState", () => {
       });
       expect(state.teamScores[0].flagStatus).toBe(status);
       expect(state.teamScores[0].flagCarrier).toBeUndefined();
+      expect(state.teamScores[0].flagCarrierRawName).toBeUndefined();
     }
     expect(message("MsgCTFFlagTaken", "Alice", "1", "99")).toEqual({});
     expect(state.teamScores).toHaveLength(1);

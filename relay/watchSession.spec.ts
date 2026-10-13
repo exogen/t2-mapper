@@ -5,7 +5,12 @@ import os from "node:os";
 import path from "node:path";
 import { gunzipSync } from "node:zlib";
 import type { WebSocket } from "ws";
-import type { PacketData, ParsedData } from "t2-demo-parser";
+import {
+  BlockTypeMove,
+  DemoParser,
+  type PacketData,
+  type ParsedData,
+} from "t2-demo-parser";
 import {
   WatchSessionManager,
   type WatchSessionManagerOptions,
@@ -3426,19 +3431,28 @@ describe("WatchSession demo recording", () => {
       onFinalized: (filePath) => finalized.push(filePath),
     });
     const connections: FakeGameConnection[] = [];
+    const connectionOptions: unknown[] = [];
     const manager = new WatchSessionManager({
       gameBasePath: "/nonexistent",
       getCachedServer: () => undefined,
       demoCoordinator: coordinator,
       adminVotePolicies: singleAdminPolicies,
       initialMissionControls: overrides.initialMissionControls,
-      createConnection: (address) => {
+      createConnection: (address, options) => {
         const conn = new FakeGameConnection(address);
         connections.push(conn);
+        connectionOptions.push(options);
         return conn as unknown as GameConnection;
       },
     });
-    return { manager, connections, coordinator, finalized, dir };
+    return {
+      manager,
+      connections,
+      connectionOptions,
+      coordinator,
+      finalized,
+      dir,
+    };
   }
 
   function getSession(manager: WatchSessionManager) {
@@ -3732,6 +3746,51 @@ describe("WatchSession demo recording", () => {
       );
       expect(sidecar.players).toEqual(["Alice", "Bob"]);
       expect(sidecar.playerCount).toBe(2);
+    } finally {
+      manager.shutdown();
+      await coordinator.shutdown(5000);
+      await fsp.rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("records the connection's generated moves as the demo clock", async () => {
+    const {
+      manager,
+      connections,
+      connectionOptions,
+      coordinator,
+      finalized,
+      dir,
+    } = await createRecordingManager();
+    try {
+      manager.watch(
+        new FakeWebSocket() as unknown as WebSocket,
+        "1.2.3.4:28000",
+      );
+      expect(connectionOptions).toEqual([{ generateMoves: true }]);
+      const session = getSession(manager);
+      connections[0].setStatus("connected");
+      // Buffered until Phase1 names the file, then written in order.
+      connections[0].emit("move");
+      firePhase1(session, "Katabatic");
+      session.watchState.matchStarted = true;
+      for (let i = 0; i < 4; i++) connections[0].emit("move");
+
+      fireEndGhosting(session);
+      // A detached recorder takes no more moves.
+      connections[0].emit("move");
+      await vi.waitFor(() => expect(finalized).toHaveLength(1));
+
+      const parser = new DemoParser(
+        new Uint8Array(await fsp.readFile(finalized[0])),
+      );
+      const { header } = await parser.load();
+      let moves = 0;
+      for (let block = parser.nextBlock(); block; block = parser.nextBlock()) {
+        if (block.type === BlockTypeMove) moves++;
+      }
+      expect(moves).toBe(5);
+      expect(header.demoLengthMs).toBe(5 * 32);
     } finally {
       manager.shutdown();
       await coordinator.shutdown(5000);

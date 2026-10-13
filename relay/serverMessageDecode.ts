@@ -54,7 +54,7 @@ export interface TeamAddDecoded {
   score: number | null;
   /** Present only for CTF (`MsgCTFAddTeam`), the only *AddTeam with flag
    *  state; the caller applies it just for that message. */
-  flag?: { status: FlagStatus; carrier?: string };
+  flag?: { status: FlagStatus; carrier?: string; carrierRawName?: string };
 }
 
 /**
@@ -74,7 +74,8 @@ export function decodeTeamAdd(
     if (args.length < 6) return null;
     const teamId = parseInt(resolve(args[2]), 10);
     const name = stripTaggedStringMarkup(resolve(args[3]));
-    const statusText = stripTaggedStringMarkup(resolve(args[4]));
+    const rawStatusText = resolve(args[4]);
+    const statusText = stripTaggedStringMarkup(rawStatusText);
     const status = decodeFlagStatus(statusText);
     const score = parseInt(resolve(args[5]), 10);
     const carrier =
@@ -83,7 +84,11 @@ export function decodeTeamAdd(
       teamId,
       name,
       score: isNaN(score) ? null : score,
-      flag: { status, carrier },
+      flag: {
+        status,
+        carrier,
+        carrierRawName: carrier ? rawStatusText : undefined,
+      },
     };
   }
   if (
@@ -108,6 +113,8 @@ export interface FlagEventDecoded {
   status: FlagStatus;
   /** Carrier name while held (empty otherwise). */
   carrier?: string;
+  /** Unstripped carrier name, including clan and name color codes. */
+  carrierRawName?: string;
 }
 
 /**
@@ -129,11 +136,13 @@ export function decodeFlagEvent(
       : msgType === "MsgCTFFlagDropped"
         ? "field"
         : "home";
-  const actor = stripTaggedStringMarkup(resolve(args[2])).trim();
+  const rawActor = resolve(args[2]);
+  const actor = stripTaggedStringMarkup(rawActor).trim();
   return {
     teamId,
     status,
     carrier: status === "held" && actor ? actor : undefined,
+    carrierRawName: status === "held" && actor ? rawActor : undefined,
   };
 }
 

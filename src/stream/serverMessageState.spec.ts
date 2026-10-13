@@ -119,11 +119,17 @@ function commonTeam({
   score,
   flagStatus,
   flagCarrier,
+  flagCarrierRawName,
 }: Pick<
   TeamScore,
-  "teamId" | "name" | "score" | "flagStatus" | "flagCarrier"
+  | "teamId"
+  | "name"
+  | "score"
+  | "flagStatus"
+  | "flagCarrier"
+  | "flagCarrierRawName"
 >) {
-  return { teamId, name, score, flagStatus, flagCarrier };
+  return { teamId, name, score, flagStatus, flagCarrier, flagCarrierRawName };
 }
 
 function fixture() {
@@ -531,6 +537,31 @@ describe("browser and relay server-message state", () => {
       ["MsgCTFFlagTaken", "", "Alice", "Storm"],
     );
     expect(browser.hud().teamScores).toEqual(before);
+  });
+
+  it("retains carrier name colors across relay state, browser snapshots and checkpoint restores", () => {
+    const { browser, relay, send, setString } = fixture();
+    const raw = "\x10\x0b=TAG=\x0cCarrier\x11";
+    setString(12, raw);
+    send(["MsgCTFAddTeam", "", "1", "Storm", "\x0112", "0"]);
+    const expectCarrier = () =>
+      expect(browser.hud().teamScores[0]).toMatchObject({
+        flagStatus: "held",
+        flagCarrier: "=TAG=Carrier",
+        flagCarrierRawName: raw,
+      });
+    expectCarrier();
+    expect(
+      JSON.parse(JSON.stringify(relay.getHudState())).teamScores[0]
+        .flagCarrierRawName,
+    ).toBe(raw);
+    const checkpoint = browser.checkpoint();
+    send(["MsgCTFFlagDropped", "", "\x0112", "Storm", "1"]);
+    expect(browser.hud().teamScores[0].flagCarrierRawName).toBeUndefined();
+    browser.restore(checkpoint);
+    expectCarrier();
+    send(["MsgCTFFlagTaken", "", "\x0112", "Storm", "1"]);
+    expectCarrier();
   });
 
   it.each(["MsgCnHAddTeam", "MsgHuntAddTeam", "MsgSiegeAddTeam"])(

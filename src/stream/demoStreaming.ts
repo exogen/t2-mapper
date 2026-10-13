@@ -1419,10 +1419,11 @@ export class DemoStreamAdapter extends StreamEngine {
         MAX_RECORDED_PENDING_MOVES
     )
       return;
-    // Relay timing blocks can violate the native input-queue limit because
-    // the server never received them. This does not identify the recorder:
-    // any such input history is unusable. Recover from packet movement state
-    // instead of replaying an unbounded queue or freezing the entire viewer.
+    // Older relay demos synthesized timing blocks the server never received,
+    // so they can violate the native input-queue limit. This does not
+    // identify the recorder: any such input history is unusable. Recover
+    // from packet movement state instead of replaying an unbounded queue or
+    // freezing the entire viewer.
     this.pendingPlayerMoves.length = 0;
     this.controlMovesAvailable = false;
     const id = this.entityIdByGhostIndex.get(this.latestControl.ghostIndex);

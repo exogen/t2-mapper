@@ -63,14 +63,12 @@ export function saveQuickCam(
   ) {
     saved = {
       kind: "original",
-      label: "Original view",
       fov,
       followBehindPlayer,
     };
   } else if (!following) {
     saved = {
       kind: "fly",
-      label: "Free-fly",
       position: perspective.position.toArray(),
       quaternion: perspective.quaternion.toArray(),
       fov,
@@ -81,7 +79,6 @@ export function saveQuickCam(
       kind: "flag",
       slot: stream.followFlagSlot,
       ...orbit,
-      label: `Flag ${stream.followFlagSlot}`,
       fov,
       followBehindPlayer,
     };
@@ -99,11 +96,12 @@ export function saveQuickCam(
       (stream.cameraMode === "freeFly" &&
         stream.followCameraMode === "firstPersonOverride");
     saved = {
-      kind: firstPerson ? "fp" : "follow",
+      kind: "player",
+      mode: firstPerson ? "firstPerson" : "follow",
       ...orbit,
       fov,
       followBehindPlayer,
-      label: `${body?.playerName || playerName} · ${firstPerson ? "First person" : "Follow"}`,
+      displayName: body?.playerName || playerName,
       playerName,
     };
   }
@@ -133,7 +131,7 @@ export function restoreQuickCam(slot: QuickCamSlot): SavedCamera | undefined {
     if (!entityId) return;
   } else if (!saved) {
     return;
-  } else if (saved.kind === "follow" || saved.kind === "fp") {
+  } else if (saved.kind === "player") {
     const matches = findLivingPlayersByName(saved.playerName);
     if (matches.length > 1) return;
     const entity = matches[0];
@@ -168,8 +166,9 @@ export function restoreQuickCam(slot: QuickCamSlot): SavedCamera | undefined {
     exitToFreeFly();
     cameraRegistry.perspective.position.fromArray(saved.position);
     cameraRegistry.perspective.quaternion.fromArray(saved.quaternion);
-  } else if (entityId || pendingPlayerName) {
-    const mode = saved?.kind === "fp" ? "firstPersonOverride" : "orbitOverride";
+  } else if (saved?.kind === "player" && (entityId || pendingPlayerName)) {
+    const mode =
+      saved.mode === "firstPerson" ? "firstPersonOverride" : "orbitOverride";
     streamPlaybackStore.setState({
       cameraMode: pendingPlayerName ? "freeFly" : mode,
       followCameraMode: mode,

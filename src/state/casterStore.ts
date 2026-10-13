@@ -7,7 +7,6 @@ export const QUICK_CAM_SLOTS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 0] as const;
 export type QuickCamSlot = (typeof QUICK_CAM_SLOTS)[number];
 type Orbit = { yaw: number; pitch: number; distance: number };
 export type SavedCamera = {
-  label: string;
   fov: number;
   followBehindPlayer: boolean;
   commandCircuit?: { x: number; z: number; zoom: number };
@@ -16,8 +15,11 @@ export type SavedCamera = {
   | { kind: "fly"; position: number[]; quaternion: number[] }
   | ({ kind: "flag"; slot: number } & Orbit)
   | ({
-      kind: "follow" | "fp";
+      kind: "player";
+      mode: "follow" | "firstPerson";
+      /** Tagless name used to find the player after respawning or reconnecting. */
       playerName: string;
+      displayName: string;
     } & Orbit)
 );
 
@@ -32,7 +34,7 @@ interface MissionContext {
 }
 
 interface StoredSettings extends MissionSettings, MissionContext {
-  version: 1;
+  version: 2;
 }
 
 interface CasterState {
@@ -56,7 +58,7 @@ function read(): StoredSettings | null {
       sessionStorage.getItem(CASTER_STORAGE_KEY) ?? "null",
     );
     if (
-      value?.version !== 1 ||
+      (value?.version !== 1 && value?.version !== 2) ||
       typeof value.server !== "string" ||
       typeof value.mission !== "string" ||
       !value.teamNames ||
@@ -69,11 +71,15 @@ function read(): StoredSettings | null {
     )
       return null;
     return {
-      ...value,
+      version: 2,
+      server: value.server,
+      mission: value.mission,
+      teamNames: value.teamNames,
       quickCams: Object.fromEntries(
-        Object.entries(value.quickCams).filter(([, camera]) =>
-          isSavedCamera(camera),
-        ),
+        Object.entries(value.quickCams).flatMap(([slot, cameraValue]) => {
+          const camera = readCamera(cameraValue, value.version);
+          return camera ? [[slot, camera]] : [];
+        }),
       ),
     };
   } catch {
@@ -81,41 +87,93 @@ function read(): StoredSettings | null {
   }
 }
 
-function isSavedCamera(value: unknown): value is SavedCamera {
-  if (!value || typeof value !== "object") return false;
-  const c = value as SavedCamera;
+function readCamera(value: unknown, version: number): SavedCamera | null {
+  if (!value || typeof value !== "object") return null;
+  const c = value as Record<string, unknown>;
   if (
-    typeof c.label !== "string" ||
+    typeof c.fov !== "number" ||
     !Number.isFinite(c.fov) ||
     c.fov <= 0 ||
     c.fov >= 180 ||
     typeof c.followBehindPlayer !== "boolean"
   )
-    return false;
-  if (
-    c.commandCircuit &&
-    ![c.commandCircuit.x, c.commandCircuit.z, c.commandCircuit.zoom].every(
-      Number.isFinite,
+    return null;
+  const common: Pick<
+    SavedCamera,
+    "fov" | "followBehindPlayer" | "commandCircuit"
+  > = {
+    fov: c.fov,
+    followBehindPlayer: c.followBehindPlayer,
+  };
+  if (c.commandCircuit !== undefined) {
+    if (!c.commandCircuit || typeof c.commandCircuit !== "object") return null;
+    const view = c.commandCircuit as Record<string, unknown>;
+    if (
+      typeof view.x !== "number" ||
+      typeof view.z !== "number" ||
+      typeof view.zoom !== "number" ||
+      ![view.x, view.z, view.zoom].every(Number.isFinite)
     )
-  )
-    return false;
-  if (c.kind === "original") return true;
-  if (c.kind === "fly")
-    return (
+      return null;
+    common.commandCircuit = { x: view.x, z: view.z, zoom: view.zoom };
+  }
+  if (c.kind === "original") return { kind: "original", ...common };
+  if (c.kind === "fly") {
+    if (
       Array.isArray(c.position) &&
       c.position.length === 3 &&
       c.position.every(Number.isFinite) &&
       Array.isArray(c.quaternion) &&
       c.quaternion.length === 4 &&
       c.quaternion.every(Number.isFinite)
-    );
-  if (![c.yaw, c.pitch, c.distance].every(Number.isFinite)) return false;
-  if (c.kind === "flag") return Number.isInteger(c.slot) && c.slot > 0;
-  return (
-    (c.kind === "follow" || c.kind === "fp") &&
-    typeof c.playerName === "string" &&
-    c.playerName.trim().length > 0
-  );
+    )
+      return {
+        kind: "fly",
+        position: c.position,
+        quaternion: c.quaternion,
+        ...common,
+      };
+    return null;
+  }
+  if (
+    typeof c.yaw !== "number" ||
+    typeof c.pitch !== "number" ||
+    typeof c.distance !== "number" ||
+    ![c.yaw, c.pitch, c.distance].every(Number.isFinite)
+  )
+    return null;
+  const orbit = { yaw: c.yaw, pitch: c.pitch, distance: c.distance };
+  if (c.kind === "flag")
+    return typeof c.slot === "number" && Number.isInteger(c.slot) && c.slot > 0
+      ? { kind: "flag", slot: c.slot, ...orbit, ...common }
+      : null;
+  if (typeof c.playerName !== "string" || !c.playerName.trim()) return null;
+  if (version === 1 && (c.kind === "follow" || c.kind === "fp")) {
+    // Old labels mixed names with presentation text. Migrate from identity fields only.
+    return {
+      kind: "player",
+      mode: c.kind === "fp" ? "firstPerson" : "follow",
+      playerName: c.playerName,
+      displayName: c.playerName,
+      ...orbit,
+      ...common,
+    };
+  }
+  if (
+    c.kind === "player" &&
+    (c.mode === "follow" || c.mode === "firstPerson") &&
+    typeof c.displayName === "string" &&
+    c.displayName.trim()
+  )
+    return {
+      kind: "player",
+      mode: c.mode,
+      playerName: c.playerName,
+      displayName: c.displayName,
+      ...orbit,
+      ...common,
+    };
+  return null;
 }
 
 function write(context: MissionContext, settings: MissionSettings) {
@@ -126,7 +184,7 @@ function write(context: MissionContext, settings: MissionSettings) {
     ) {
       sessionStorage.setItem(
         CASTER_STORAGE_KEY,
-        JSON.stringify({ version: 1, ...context, ...settings }),
+        JSON.stringify({ version: 2, ...context, ...settings }),
       );
     } else {
       sessionStorage.removeItem(CASTER_STORAGE_KEY);

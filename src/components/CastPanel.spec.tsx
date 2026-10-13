@@ -11,8 +11,13 @@ import { casterStore } from "../state/casterStore";
 import type { SavedCamera } from "../state/casterStore";
 import { gameEntityStore } from "../state/gameEntityStore";
 import { streamEntityToGameEntity } from "../stream/entityBridge";
-import type { PlayerRosterEntry, StreamSnapshot } from "../stream/types";
+import type {
+  PlayerRosterEntry,
+  StreamSnapshot,
+  TeamScore,
+} from "../stream/types";
 import { setStreamSnapshot } from "../state/streamSnapshotStore";
+import { streamClock } from "../state/streamPlaybackStore";
 import type { TeamColorScheme } from "./iffTheme";
 import { commentaryTracksStore } from "../state/commentaryTracksStore";
 
@@ -23,6 +28,7 @@ const fixture = vi.hoisted(() => ({
   observerTeamColors: "blueOrange" as TeamColorScheme,
   playerSensorGroup: 0,
   playerRoster: [] as PlayerRosterEntry[],
+  teamScores: [] as TeamScore[],
   quickCamHideUnassignedSlots: false,
 }));
 
@@ -61,11 +67,7 @@ vi.mock("../state/streamSnapshotStore", async (original) => ({
     select({
       playerSensorGroup: fixture.playerSensorGroup,
       playerRoster: fixture.playerRoster,
-      teamScores: [
-        { teamId: 1, name: "Storm" },
-        { teamId: 2, name: "Inferno" },
-        { teamId: 3, name: "Starwolf" },
-      ],
+      teamScores: fixture.teamScores,
     }),
 }));
 vi.mock("../state/liveConnectionStore", async (original) => ({
@@ -79,6 +81,12 @@ beforeEach(() => {
   fixture.observerTeamColors = "blueOrange";
   fixture.playerSensorGroup = 0;
   fixture.playerRoster = [];
+  fixture.teamScores = ["Storm", "Inferno", "Starwolf"].map((name, index) => ({
+    teamId: index + 1,
+    name,
+    score: 0,
+    playerCount: 0,
+  }));
   fixture.quickCamHideUnassignedSlots = false;
   gameEntityStore.getState().setAllStreamEntities([flag("1", 1), flag("2", 2)]);
   casterStore.getState().activate("test:28000", "1", "Katabatic");
@@ -88,6 +96,7 @@ afterEach(async () => {
   casterStore.getState().suspend();
   gameEntityStore.getState().clearStreamEntities();
   setStreamSnapshot(null);
+  streamClock.time = 0;
   await commentaryTracksStore.getState().load(null);
 });
 
@@ -135,7 +144,6 @@ it("shows default flags, saved views and empty slot shortcuts in the quick cam H
   casterStore.getState().renameTeam(1, "Knights");
   casterStore.getState().saveCamera(0, {
     kind: "fly",
-    label: "Free-fly",
     fov: 90,
     followBehindPlayer: false,
     position: [1, 2, 3],
@@ -158,13 +166,80 @@ it("hides the quick cam HUD after leaving the mission", () => {
 });
 
 it.each(["live", "demo"] as const)(
+  "shows current flag status below default and saved flag names in the %s HUD",
+  (source) => {
+    fixture.source = source;
+    fixture.teamScores[0].flagStatus = "home";
+    fixture.teamScores[1].flagStatus = "held";
+    fixture.teamScores[1].flagCarrier = "[TAG]Carrier";
+    casterStore.getState().saveCamera(3, {
+      kind: "flag",
+      slot: 2,
+      fov: 90,
+      followBehindPlayer: false,
+      yaw: 0,
+      pitch: 0,
+      distance: 10,
+    });
+    const render = () => renderToStaticMarkup(<QuickCamHUD />);
+    const html = render();
+    expect(html).toMatch(
+      />Storm Flag<\/span><small[^>]*><span[^>]*>Home<\/span><\/small>/,
+    );
+    expect(
+      html.match(
+        />Inferno Flag<\/span><small[^>]*><span[^>]*title="\[TAG\]Carrier">\[TAG\]Carrier<\/span><\/small>/g,
+      ),
+    ).toHaveLength(2);
+    expect(renderToStaticMarkup(<QuickCamPanel watching />)).not.toContain(
+      "[TAG]Carrier",
+    );
+
+    fixture.teamScores[1].flagStatus = "field";
+    setStreamSnapshot({
+      timeSec: 10,
+      flagDroppedAtSec: { 2: 10 },
+      flagReturnDelaySec: 45,
+      matchEndedAtSec: null,
+    } as unknown as StreamSnapshot);
+    streamClock.time = 25;
+    expect(render().match(/Dropped <span[^>]*>–<\/span> 30s/g)).toHaveLength(2);
+    streamClock.time = 26;
+    expect(render().match(/Dropped <span[^>]*>–<\/span> 29s/g)).toHaveLength(2);
+    streamClock.time = 20;
+    expect(render().match(/Dropped <span[^>]*>–<\/span> 35s/g)).toHaveLength(2);
+    fixture.teamScores[1].flagStatus = "home";
+    expect(render()).not.toContain("Dropped");
+    expect(render().match(/>Home<\/span>/g)).toHaveLength(3);
+  },
+);
+
+it("shows status only for flag entries and handles incomplete flag metadata", () => {
+  fixture.teamScores[0].flagStatus = "held";
+  fixture.teamScores[1].flagStatus = "field";
+  setStreamSnapshot({
+    flagDroppedAtSec: {},
+    flagReturnDelaySec: null,
+  } as StreamSnapshot);
+  let html = renderToStaticMarkup(<QuickCamHUD />);
+  expect(html).toContain(">Held</span>");
+  expect(html).toContain(">Dropped</span>");
+  expect(html.match(/<small\b/g)).toHaveLength(2);
+  casterStore.getState().saveCamera(1, playerCamera);
+  fixture.teamScores[1].flagStatus = undefined;
+  html = renderToStaticMarkup(<QuickCamHUD />);
+  expect(html).not.toContain(">Held</span>");
+  expect(html).toContain(">Status unknown</small>");
+  expect(html.match(/<small\b/g)).toHaveLength(1);
+});
+
+it.each(["live", "demo"] as const)(
   "hides unassigned slots only in the %s HUD while retaining default flags and saved views",
   (source) => {
     fixture.source = source;
     fixture.quickCamHideUnassignedSlots = true;
     casterStore.getState().saveCamera(0, {
       kind: "fly",
-      label: "Free-fly",
       fov: 90,
       followBehindPlayer: false,
       position: [1, 2, 3],
@@ -223,7 +298,6 @@ it.each(["live", "demo"] as const)(
     casterStore.getState().saveCamera(1, {
       kind: "flag",
       slot: 1,
-      label: "Flag 1",
       fov: 90,
       followBehindPlayer: false,
       yaw: 0,
@@ -324,7 +398,6 @@ it("labels saved flags outside the default number slots using their actual team"
   casterStore.getState().saveCamera(3, {
     kind: "flag",
     slot: 10,
-    label: "Flag 10",
     fov: 90,
     followBehindPlayer: false,
     yaw: 0,
@@ -375,15 +448,71 @@ it.each([1, 2])(
 );
 
 const playerCamera: SavedCamera = {
-  kind: "follow",
+  kind: "player",
+  mode: "follow",
   playerName: "Player",
-  label: "Player",
+  displayName: "Player",
   fov: 90,
   followBehindPlayer: false,
   yaw: 0,
   pitch: 0,
   distance: 10,
 };
+
+it.each([
+  ["follow", "CC: Player · Follow", undefined],
+  ["firstPerson", "Command circuit · Player · First person", undefined],
+  ["follow", "CC: Player · Follow", { x: 40, z: 60, zoom: 4 }],
+  [
+    "firstPerson",
+    "Command circuit · Player · First person",
+    { x: 40, z: 60, zoom: 4 },
+  ],
+] as const)(
+  "displays the full player name verbatim in %s quick cams: %s",
+  (mode, displayName, commandCircuit) => {
+    casterStore.getState().saveCamera(3, {
+      ...playerCamera,
+      mode,
+      displayName,
+      commandCircuit,
+    });
+    for (const html of [
+      renderToStaticMarkup(<QuickCamHUD />),
+      renderToStaticMarkup(<QuickCamPanel watching />),
+    ]) {
+      expect(html).toContain(`title="Recall camera 3: ${displayName}"`);
+      expect(html).toContain(`>${displayName}</span>`);
+      expect(html.includes('aria-label="Command circuit"')).toBe(
+        !!commandCircuit,
+      );
+    }
+  },
+);
+
+it("derives original-view and missing-flag labels from their camera types", () => {
+  casterStore.getState().saveCamera(3, {
+    kind: "original",
+    fov: 90,
+    followBehindPlayer: false,
+  });
+  casterStore.getState().saveCamera(4, {
+    kind: "flag",
+    slot: 10,
+    fov: 90,
+    followBehindPlayer: false,
+    yaw: 0,
+    pitch: 0,
+    distance: 10,
+  });
+  for (const html of [
+    renderToStaticMarkup(<QuickCamHUD />),
+    renderToStaticMarkup(<QuickCamPanel watching />),
+  ]) {
+    expect(html).toContain('title="Recall camera 3: Original view"');
+    expect(html).toContain('title="Recall camera 4: Flag 10"');
+  }
+});
 
 it("updates player icon affiliation in place and honors the engine's viewer-relative IFF", () => {
   const entity = streamEntityToGameEntity({
@@ -432,7 +561,6 @@ it("keeps a waiting player's team color using their current roster entry", () =>
 it("does not tint free-fly or unset icons", () => {
   const camera: SavedCamera = {
     kind: "fly",
-    label: "Free-fly",
     fov: 90,
     followBehindPlayer: false,
     position: [1, 2, 3],
