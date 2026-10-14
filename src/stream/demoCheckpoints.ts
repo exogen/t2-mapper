@@ -3,9 +3,11 @@ import type { DemoSeekCheckpoint } from "./demoStreaming";
 import { decodeCompressedCheckpoint } from "./checkpointCodec";
 import { TICK_DURATION_MS } from "./streamHelpers";
 
-// New writes use this version. Raise the minimum only for incompatible state changes.
-export const DEMO_CHECKPOINT_VERSION = 12;
-const MIN_SUPPORTED_CHECKPOINT_VERSION = 11;
+// New writes use this version. Raise the minimum for incompatible state
+// changes, or when older sidecars would restore wrong state (v12 holds sensor
+// group 0 until the recorder spawns; 13 seeds it from the start block).
+export const DEMO_CHECKPOINT_VERSION = 13;
+const MIN_SUPPORTED_CHECKPOINT_VERSION = 13;
 export const DEMO_CHECKPOINT_SUFFIX = ".checkpoints.json";
 const CHECKPOINT_INTERVAL_TICKS = (12 * 60 * 1000) / TICK_DURATION_MS;
 
@@ -142,9 +144,6 @@ async function visitDemoCheckpoints(
       !(checkpoint.parser?.ghosts instanceof Map)
     )
       throw new Error("Invalid seek checkpoint state");
-    // v11 has no drop timestamps. Clear them on restore, including when seeking backward.
-    if (sidecar.version === 11)
-      checkpoint.simulation.state.flagDroppedAtSec ??= {};
     visit?.(checkpoint);
   }
   signal?.throwIfAborted();

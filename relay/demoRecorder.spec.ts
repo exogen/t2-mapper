@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { EventEmitter } from "node:events";
 import fsp from "node:fs/promises";
 import os from "node:os";
@@ -9,6 +9,7 @@ import {
   BlockTypePacket,
   BlockTypeSendPacket,
   DemoParser,
+  freshConnectionProtocolState,
   type DemoBlock,
 } from "t2-demo-parser";
 import {
@@ -21,9 +22,11 @@ import {
   buildDemoFilename,
   type ServerIdentity,
 } from "./demoRecorder.js";
+import * as demoStart from "./demoStart.js";
 import type { ServerInfo } from "./types.js";
 import type { DemoPlayerRoster } from "./demoPlayers.js";
 import { GameConnection } from "./gameConnection.js";
+import { demoLog } from "./logger.js";
 
 const CONNECT_SEQUENCE = 0x0badf00d;
 
@@ -72,6 +75,9 @@ describe("DemoRecorder", () => {
     dir = await fsp.mkdtemp(path.join(os.tmpdir(), "demo-recorder-"));
     time = 100_000;
   });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
 
   function createRecorder(
     overrides: {
@@ -111,12 +117,15 @@ describe("DemoRecorder", () => {
   }
 
   it("buffers until setMissionName, then records a parseable demo", async () => {
+    const info = vi.spyOn(demoLog, "info").mockImplementation(() => {});
+    const warn = vi.spyOn(demoLog, "warn").mockImplementation(() => {});
+    const error = vi.spyOn(demoLog, "error").mockImplementation(() => {});
     const recorder = createRecorder();
     const packets: Uint8Array[] = [];
     for (let i = 1; i <= 10; i++) {
       const packet = buildPingPacket(i);
       packets.push(packet);
-      recorder.onPacket(packet);
+      recorder.onPacket(packet, false);
       recorder.onMove();
       if (i === 3) recorder.onSent();
       time += 100;
@@ -124,12 +133,28 @@ describe("DemoRecorder", () => {
     expect(recorder.state).toBe("buffering");
 
     recorder.setMissionName("Katabatic");
+    recorder.setMissionName("Katabatic", 42);
     expect(recorder.state).toBe("recording");
+    expect(info).toHaveBeenCalledOnce();
+    expect(info).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: "demo_recording_started",
+        startMode: "from_connect",
+        bufferedEntries: 21,
+        bufferedBytes: packets.reduce((sum, packet) => sum + packet.length, 0),
+        bufferedMs: 1000,
+        skippedEntries: 0,
+        fallbackReason: undefined,
+      }),
+      "Demo recording started",
+    );
+    expect(warn).not.toHaveBeenCalled();
+    expect(error).not.toHaveBeenCalled();
 
     for (let i = 11; i <= 15; i++) {
       const packet = buildPingPacket(i);
       packets.push(packet);
-      recorder.onPacket(packet);
+      recorder.onPacket(packet, false);
       recorder.onMove();
       time += 100;
     }
@@ -166,13 +191,13 @@ describe("DemoRecorder", () => {
 
     expect(initialBlock.missionName).toBe("Katabatic");
     expect(initialBlock.connectionState.connectSequence).toBe(CONNECT_SEQUENCE);
-    const info = extractMissionInfo(initialBlock.demoValues);
-    expect(info.recorderName).toBe("Observer");
-    expect(info.recorderClientId).toBe(1);
-    expect(info.serverDisplayName).toBe("| the cut |");
-    expect(info.missionDisplayName).toBe("Katabatic");
-    expect(info.missionType).toBe("Capture the Flag");
-    expect(info.mod).toBe("classic");
+    const missionInfo = extractMissionInfo(initialBlock.demoValues);
+    expect(missionInfo.recorderName).toBe("Observer");
+    expect(missionInfo.recorderClientId).toBe(1);
+    expect(missionInfo.serverDisplayName).toBe("| the cut |");
+    expect(missionInfo.missionDisplayName).toBe("Katabatic");
+    expect(missionInfo.missionType).toBe("Capture the Flag");
+    expect(missionInfo.mod).toBe("classic");
 
     // The standard saveDemoSettings sections must parse cleanly:
     // without them, positional readers (real client + app playback)
@@ -186,6 +211,176 @@ describe("DemoRecorder", () => {
     // relay demo counts up from 00:00 until the joiner-sync MsgSystemClock
     // re-anchors it, exactly as the real client shows.
     expect(hudState.clockTimeMin).toBe(0);
+  });
+
+  it("writes an Info block only after packets the connection dispatched", async () => {
+    const warn = vi.spyOn(demoLog, "warn").mockImplementation(() => {});
+    const info = vi.spyOn(demoLog, "info").mockImplementation(() => {});
+    const error = vi.spyOn(demoLog, "error").mockImplementation(() => {});
+    // The connection decides (Tribes2.exe writes Info from readPacket);
+    // the recorder only follows its flag, buffered or not.
+    const recorder = createRecorder();
+    recorder.onPacket(buildPingPacket(1), true);
+    recorder.onPacket(buildPingPacket(2), false);
+    time += 250;
+    recorder.setMissionName("Katabatic", 42);
+    recorder.setMissionName("Katabatic", 42);
+    expect(warn).toHaveBeenCalledOnce();
+    expect(warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: "demo_recording_started",
+        startMode: "fallback",
+        address: serverInfo.address,
+        serverName: serverInfo.name,
+        missionName: "Katabatic",
+        missionSequence: 42,
+        connectSequence: CONNECT_SEQUENCE,
+        bufferedEntries: 2,
+        bufferedBytes: buildPingPacket(1).length * 2,
+        bufferedMs: 250,
+        skippedEntries: 0,
+        fallbackReason: "packet 0 dispatch differs from the connection's",
+        err: undefined,
+      }),
+      expect.stringContaining("recording from connect"),
+    );
+    expect(info).not.toHaveBeenCalled();
+    expect(error).not.toHaveBeenCalled();
+    recorder.onPacket(buildPingPacket(3), false);
+    recorder.onPacket(buildPingPacket(4), true);
+    recorder.onMove();
+
+    const result = await recorder.finalize("test");
+    expect(warn.mock.calls[0][0]).toMatchObject({
+      file: path.basename(result!.path),
+    });
+    const { blocks } = await parseDemoFile(result!.path);
+    expect(blocks.map((b) => b.type)).toEqual([
+      BlockTypePacket,
+      BlockTypeInfo,
+      BlockTypePacket,
+      BlockTypePacket,
+      BlockTypePacket,
+      BlockTypeInfo,
+      BlockTypeMove,
+    ]);
+  });
+
+  it("starts the file where the start plan puts it", async () => {
+    const info = vi.spyOn(demoLog, "info").mockImplementation(() => {});
+    const warn = vi.spyOn(demoLog, "warn").mockImplementation(() => {});
+    const error = vi.spyOn(demoLog, "error").mockImplementation(() => {});
+    const plan = vi.spyOn(demoStart, "planDemoStart").mockReturnValue({
+      skip: 3,
+      gravity: Math.fround(-26.9),
+      start: {
+        taggedStrings: new Map([[0, "t2csri_pokeClient"]]),
+        lastMoveAck: 0,
+        lastClientMove: 0,
+        firstMoveIndex: 0,
+        sensorGroup: 0,
+        queuedMoves: 1,
+        protocol: {
+          ...freshConnectionProtocolState(CONNECT_SEQUENCE),
+          lastSeqRecvd: 1,
+          lastSendSeq: 1,
+        },
+        nextRecvEventSeq: 3,
+      },
+    });
+    const recorder = createRecorder();
+    const packets = [1, 2, 3].map(buildPingPacket);
+    recorder.onPacket(packets[0], false);
+    recorder.onMove();
+    recorder.onSent();
+    recorder.onPacket(packets[1], false);
+    recorder.onMove();
+    recorder.setMissionName("Katabatic");
+    expect(info).toHaveBeenCalledOnce();
+    expect(info).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: "demo_recording_started",
+        startMode: "after_handshake",
+        bufferedEntries: 5,
+        skippedEntries: 3,
+        fallbackReason: undefined,
+      }),
+      "Demo recording started",
+    );
+    expect(warn).not.toHaveBeenCalled();
+    expect(error).not.toHaveBeenCalled();
+    recorder.onPacket(packets[2], false);
+    recorder.onMove();
+
+    const result = await recorder.finalize("test");
+    expect(plan).toHaveBeenCalledOnce();
+    expect(plan.mock.calls[0][0]).toHaveLength(5);
+    expect(plan.mock.calls[0][1]).toBe(CONNECT_SEQUENCE);
+    const { header, initialBlock, blocks } = await parseDemoFile(result!.path);
+    expect(blocks.map((b) => b.type)).toEqual([
+      BlockTypePacket,
+      BlockTypeMove,
+      BlockTypePacket,
+      BlockTypeMove,
+    ]);
+    expect(
+      blocks.filter((b) => b.type === BlockTypePacket).map((b) => b.data),
+    ).toEqual(packets.slice(1));
+    // Only the moves in the file are on its clock.
+    expect(header.demoLengthMs).toBe(2 * 32);
+    expect(result!.durationMs).toBe(header.demoLengthMs);
+    expect(initialBlock.taggedStrings).toEqual(
+      new Map([[0, "t2csri_pokeClient"]]),
+    );
+    expect(initialBlock.moves).toHaveLength(1);
+    expect(initialBlock.nextRecvEventSeq).toBe(3);
+    expect(initialBlock.notifyCount).toBe(1);
+    expect(parseDemoValues(initialBlock.demoValues).gravity).toBe(-26.9);
+  });
+
+  it("records from connect if start planning throws", async () => {
+    const error = vi.spyOn(demoLog, "error").mockImplementation(() => {});
+    const info = vi.spyOn(demoLog, "info").mockImplementation(() => {});
+    const warn = vi.spyOn(demoLog, "warn").mockImplementation(() => {});
+    const err = new Error("planner bug");
+    vi.spyOn(demoStart, "planDemoStart").mockImplementation(() => {
+      throw err;
+    });
+    const recorder = createRecorder();
+    const packet = buildPingPacket(1);
+    recorder.onPacket(packet, false);
+    recorder.onMove();
+    recorder.setMissionName("Katabatic", 42);
+    expect(error).toHaveBeenCalledOnce();
+    expect(error).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: "demo_recording_started",
+        startMode: "fallback",
+        address: serverInfo.address,
+        serverName: serverInfo.name,
+        missionName: "Katabatic",
+        missionSequence: 42,
+        connectSequence: CONNECT_SEQUENCE,
+        bufferedEntries: 2,
+        bufferedBytes: packet.length,
+        bufferedMs: 0,
+        skippedEntries: 0,
+        fallbackReason: "Unexpected error reconstructing demo start",
+        err,
+      }),
+      expect.stringContaining("recording from connect"),
+    );
+    expect(info).not.toHaveBeenCalled();
+    expect(warn).not.toHaveBeenCalled();
+
+    const result = await recorder.finalize("test");
+    expect(error.mock.calls[0][0]).toMatchObject({
+      file: path.basename(result!.path),
+    });
+    const { initialBlock, blocks } = await parseDemoFile(result!.path);
+    expect(blocks.map((b) => b.data)).toEqual([packet, expect.anything()]);
+    expect(initialBlock.taggedStrings.size).toBe(0);
+    expect(parseDemoValues(initialBlock.demoValues).gravity).toBe(-20);
   });
 
   it("parseDemoValues skips section parsing for legacy tail-only demoValues", () => {
@@ -208,9 +403,9 @@ describe("DemoRecorder", () => {
 
   it("flushes with the server-info mission name when buffering caps expire", async () => {
     const recorder = createRecorder();
-    recorder.onPacket(buildPingPacket(1));
+    recorder.onPacket(buildPingPacket(1), false);
     time += 31_000;
-    recorder.onPacket(buildPingPacket(2));
+    recorder.onPacket(buildPingPacket(2), false);
     expect(recorder.state).toBe("recording");
 
     const result = await recorder.finalize("test");
@@ -221,9 +416,9 @@ describe("DemoRecorder", () => {
 
   it("adds a late mission sequence after the buffering fallback without relabeling the map", async () => {
     const recorder = createRecorder();
-    recorder.onPacket(buildPingPacket(1));
+    recorder.onPacket(buildPingPacket(1), false);
     time += 31_000;
-    recorder.onPacket(buildPingPacket(2));
+    recorder.onPacket(buildPingPacket(2), false);
     recorder.setMissionName("Katabatic", 40);
     recorder.setMissionName("Damnation", 41);
     const result = await recorder.finalize("test");
@@ -237,7 +432,7 @@ describe("DemoRecorder", () => {
 
   it("returns null and keeps no file when finalized while buffering", async () => {
     const recorder = createRecorder();
-    recorder.onPacket(buildPingPacket(1));
+    recorder.onPacket(buildPingPacket(1), false);
     const result = await recorder.finalize("test");
     expect(result).toBeNull();
     expect(recorder.state).toBe("aborted");
@@ -246,12 +441,12 @@ describe("DemoRecorder", () => {
 
   it("drops demos shorter than minLengthMs", async () => {
     const recorder = createRecorder({ minLengthMs: 60_000 });
-    recorder.onPacket(buildPingPacket(1));
+    recorder.onPacket(buildPingPacket(1), false);
     recorder.setMissionName("Katabatic");
     // Only moves advance the demo clock, however long the wall-clock gap.
     time += 120_000;
     recorder.onMove();
-    recorder.onPacket(buildPingPacket(2));
+    recorder.onPacket(buildPingPacket(2), false);
     const result = await recorder.finalize("test");
     expect(result).toBeNull();
     expect(recorder.state).toBe("aborted");
@@ -260,10 +455,10 @@ describe("DemoRecorder", () => {
 
   it("drops demos whose peak player count stayed below minPlayers", async () => {
     const recorder = createRecorder({ minPlayers: 2, playerCount: () => 1 });
-    recorder.onPacket(buildPingPacket(1));
+    recorder.onPacket(buildPingPacket(1), false);
     recorder.setMissionName("Katabatic");
     time += 1000;
-    recorder.onPacket(buildPingPacket(2));
+    recorder.onPacket(buildPingPacket(2), false);
     const result = await recorder.finalize("test");
     expect(result).toBeNull();
     expect(recorder.state).toBe("aborted");
@@ -277,24 +472,24 @@ describe("DemoRecorder", () => {
       minPlayers: 2,
       playerCount: () => players,
     });
-    recorder.onPacket(buildPingPacket(1));
+    recorder.onPacket(buildPingPacket(1), false);
     recorder.setMissionName("Katabatic");
     // Peak during the recording (pre-flush samples are discarded as the
     // previous mission's), then dip before finalize.
-    recorder.onPacket(buildPingPacket(2));
+    recorder.onPacket(buildPingPacket(2), false);
     players = 0;
     time += 1000;
-    recorder.onPacket(buildPingPacket(3));
+    recorder.onPacket(buildPingPacket(3), false);
     const result = await recorder.finalize("test");
     expect(result).not.toBeNull();
   });
 
   it("drops demos where the match never started (pre-match warmup)", async () => {
     const recorder = createRecorder({ matchStarted: () => false });
-    recorder.onPacket(buildPingPacket(1));
+    recorder.onPacket(buildPingPacket(1), false);
     recorder.setMissionName("Katabatic");
     time += 1000;
-    recorder.onPacket(buildPingPacket(2));
+    recorder.onPacket(buildPingPacket(2), false);
     const result = await recorder.finalize("test");
     expect(result).toBeNull();
     expect(recorder.state).toBe("aborted");
@@ -305,11 +500,11 @@ describe("DemoRecorder", () => {
   it("keeps demos once the match started, even mid-recording", async () => {
     let started = false;
     const recorder = createRecorder({ matchStarted: () => started });
-    recorder.onPacket(buildPingPacket(1));
+    recorder.onPacket(buildPingPacket(1), false);
     recorder.setMissionName("Katabatic");
     started = true;
     time += 1000;
-    recorder.onPacket(buildPingPacket(2));
+    recorder.onPacket(buildPingPacket(2), false);
     const result = await recorder.finalize("test");
     expect(result).not.toBeNull();
   });
@@ -322,11 +517,11 @@ describe("DemoRecorder", () => {
       [4, { rawName: "  " }],
     ]);
     const recorder = createRecorder({ playerRoster: () => roster });
-    recorder.onPacket(buildPingPacket(1));
+    recorder.onPacket(buildPingPacket(1), false);
     time += 100;
     recorder.setMissionName("Katabatic");
     for (let i = 2; i <= 5; i++) {
-      recorder.onPacket(buildPingPacket(i));
+      recorder.onPacket(buildPingPacket(i), false);
       time += 100;
     }
     // Bob leaves (stays in the union); Chloé joins wrapped in C1/DEL junk.
@@ -334,7 +529,7 @@ describe("DemoRecorder", () => {
     roster.set(2, { rawName: "\x10\x0b[TAG]\x08Alice\x11" });
     roster.set(4, { rawName: "\x9fChloé\x7f" });
     for (let i = 6; i <= 10; i++) {
-      recorder.onPacket(buildPingPacket(i));
+      recorder.onPacket(buildPingPacket(i), false);
       time += 100;
     }
 
@@ -374,12 +569,12 @@ describe("DemoRecorder", () => {
     // received) — the stream names the server mid-recording.
     let identity: ServerIdentity = {};
     const recorder = createRecorder({ serverIdentity: () => identity });
-    recorder.onPacket(buildPingPacket(1));
+    recorder.onPacket(buildPingPacket(1), false);
     time += 100;
     recorder.setMissionName("Katabatic", 41);
     identity = { name: "| the cut |", gameType: "LCTF" };
     for (let i = 2; i <= 5; i++) {
-      recorder.onPacket(buildPingPacket(i));
+      recorder.onPacket(buildPingPacket(i), false);
       time += 100;
     }
 
@@ -413,10 +608,10 @@ describe("DemoRecorder", () => {
     const recorder = createRecorder({
       serverIdentity: () => ({ gameType: "CTF", tournament: true }),
     });
-    recorder.onPacket(buildPingPacket(1));
+    recorder.onPacket(buildPingPacket(1), false);
     recorder.setMissionName("Katabatic");
     for (let i = 2; i <= 5; i++) {
-      recorder.onPacket(buildPingPacket(i));
+      recorder.onPacket(buildPingPacket(i), false);
       time += 100;
     }
     const result = await recorder.finalize("test");
@@ -431,12 +626,12 @@ describe("DemoRecorder", () => {
     // not mark the newly recorded mission's match as started.
     let started = true;
     const recorder = createRecorder({ matchStarted: () => started });
-    recorder.onPacket(buildPingPacket(1));
+    recorder.onPacket(buildPingPacket(1), false);
     time += 100;
     started = false;
     recorder.setMissionName("Katabatic");
     for (let i = 2; i <= 6; i++) {
-      recorder.onPacket(buildPingPacket(i));
+      recorder.onPacket(buildPingPacket(i), false);
       time += 100;
     }
     expect(await recorder.finalize("test")).toBeNull();
@@ -451,12 +646,12 @@ describe("DemoRecorder", () => {
       minPlayers: 2,
       playerCount: () => count,
     });
-    recorder.onPacket(buildPingPacket(1));
+    recorder.onPacket(buildPingPacket(1), false);
     time += 100;
     count = 0;
     recorder.setMissionName("Katabatic");
     for (let i = 2; i <= 6; i++) {
-      recorder.onPacket(buildPingPacket(i));
+      recorder.onPacket(buildPingPacket(i), false);
       time += 100;
     }
     expect(await recorder.finalize("test")).toBeNull();
@@ -468,10 +663,10 @@ describe("DemoRecorder", () => {
       playerCount: () => 3,
       recordContext: () => ({ pinned: true, watchers: 2 }),
     });
-    recorder.onPacket(buildPingPacket(1));
+    recorder.onPacket(buildPingPacket(1), false);
     time += 100;
     recorder.setMissionName("Katabatic");
-    recorder.onPacket(buildPingPacket(2));
+    recorder.onPacket(buildPingPacket(2), false);
     const result = await recorder.finalize("test");
     const sidecar = JSON.parse(
       await fsp.readFile(`${result!.path}.json`, "utf-8"),
@@ -492,7 +687,9 @@ describe("DemoRecorder", () => {
     };
     receiver._status = "connected";
     receiver.protocol.connectSequence = CONNECT_SEQUENCE;
-    const recordPacket = vi.fn((data: Uint8Array) => recorder.onPacket(data));
+    const recordPacket = vi.fn((data: Uint8Array, dispatched: boolean) =>
+      recorder.onPacket(data, dispatched),
+    );
     conn.on("packet", recordPacket);
     const receive = (seq: number, size?: number) => {
       const packet = buildPingPacket(seq);
@@ -535,7 +732,7 @@ describe("DemoRecorder", () => {
 
   it("stops growing at the size cap but keeps the recording", async () => {
     const recorder = createRecorder({ maxBytes: 1 });
-    recorder.onPacket(buildPingPacket(1));
+    recorder.onPacket(buildPingPacket(1), false);
     recorder.setMissionName("Katabatic");
     // The cap is judged on bytes that reached the file; wait for the
     // header to land so the next write trips it.
@@ -546,9 +743,9 @@ describe("DemoRecorder", () => {
       ).toBeGreaterThan(1);
     });
     time += 100;
-    recorder.onPacket(buildPingPacket(2));
+    recorder.onPacket(buildPingPacket(2), false);
     time += 100;
-    recorder.onPacket(buildPingPacket(3));
+    recorder.onPacket(buildPingPacket(3), false);
     expect(recorder.state).toBe("recording");
 
     const result = await recorder.finalize("test");
@@ -570,7 +767,7 @@ describe("DemoRecorder", () => {
       playerCount: () => players,
       matchStarted: () => started,
     });
-    recorder.onPacket(buildPingPacket(1));
+    recorder.onPacket(buildPingPacket(1), false);
     recorder.setMissionName("Katabatic");
     await vi.waitFor(() => {
       expect(
@@ -578,11 +775,11 @@ describe("DemoRecorder", () => {
           .bytesWritten,
       ).toBeGreaterThan(1);
     });
-    expect(recorder.onPacket(buildPingPacket(2))).toBe(true);
+    expect(recorder.onPacket(buildPingPacket(2), false)).toBe(true);
     recorder.sampleRecordedState();
     players = 2;
     started = true;
-    expect(recorder.onPacket(buildPingPacket(3))).toBe(false);
+    expect(recorder.onPacket(buildPingPacket(3), false)).toBe(false);
     expect(await recorder.finalize("test")).toBeNull();
   });
 
@@ -592,7 +789,7 @@ describe("DemoRecorder", () => {
       maxBytes: 1,
       playerRoster: () => roster,
     });
-    recorder.onPacket(buildPingPacket(1));
+    recorder.onPacket(buildPingPacket(1), false);
     recorder.setMissionName("Katabatic");
     await vi.waitFor(() => {
       expect(
@@ -600,12 +797,12 @@ describe("DemoRecorder", () => {
           .bytesWritten,
       ).toBeGreaterThan(1);
     });
-    expect(recorder.onPacket(buildPingPacket(2))).toBe(true);
+    expect(recorder.onPacket(buildPingPacket(2), false)).toBe(true);
     // Live packet state applies after its bytes are accepted.
     roster.set(3, { rawName: "Bob" });
     recorder.sampleRecordedState();
     roster.set(4, { rawName: "After cutoff" });
-    expect(recorder.onPacket(buildPingPacket(3))).toBe(false);
+    expect(recorder.onPacket(buildPingPacket(3), false)).toBe(false);
     const result = await recorder.finalize("test");
     const sidecar = JSON.parse(
       await fsp.readFile(`${result!.path}.json`, "utf8"),
@@ -617,17 +814,17 @@ describe("DemoRecorder", () => {
   it("retains aliases from the recorded backlog and freezes them before async finalization", async () => {
     const roster = new Map([[2, { rawName: "Before Phase1" }]]);
     const recorder = createRecorder({ playerRoster: () => roster });
-    recorder.onPacket(buildPingPacket(1));
+    recorder.onPacket(buildPingPacket(1), false);
     roster.clear();
     recorder.setMissionName("Katabatic");
     roster.set(3, { rawName: "During match" });
-    recorder.onPacket(buildPingPacket(2));
+    recorder.onPacket(buildPingPacket(2), false);
     const finishing = recorder.finalize("test");
     // A reconnect/new epoch cannot leak into the detached recorder.
     roster.clear();
     roster.set(4, { rawName: "Next connection" });
     recorder.sampleRecordedState();
-    expect(recorder.onPacket(buildPingPacket(3))).toBe(false);
+    expect(recorder.onPacket(buildPingPacket(3), false)).toBe(false);
     const result = await finishing;
     const sidecar = JSON.parse(
       await fsp.readFile(`${result!.path}.json`, "utf8"),
@@ -638,7 +835,7 @@ describe("DemoRecorder", () => {
 
   it("strands the spool on a stream error instead of deleting it", async () => {
     const recorder = createRecorder();
-    recorder.onPacket(buildPingPacket(1));
+    recorder.onPacket(buildPingPacket(1), false);
     recorder.setMissionName("Katabatic");
     const partial = recorder.partialPath!;
     const writer = (
@@ -646,7 +843,7 @@ describe("DemoRecorder", () => {
     ).writer;
     writer.deflate.emit("error", new Error("disk gone"));
     time += 100;
-    recorder.onPacket(buildPingPacket(2));
+    recorder.onPacket(buildPingPacket(2), false);
     expect(recorder.state).toBe("aborted");
     expect(recorder.failure).toBe("stream-error");
     // The spool stays for the boot salvage; abort() must not remove it.
@@ -661,7 +858,7 @@ describe("DemoRecorder", () => {
   it("exposes its spool path only while a file is open", async () => {
     const recorder = createRecorder();
     expect(recorder.partialPath).toBeNull();
-    recorder.onPacket(buildPingPacket(1));
+    recorder.onPacket(buildPingPacket(1), false);
     recorder.setMissionName("Katabatic");
     expect(recorder.partialPath).toMatch(/\.rec\.partial$/);
     expect(path.dirname(recorder.partialPath!)).toBe(dir);
@@ -670,13 +867,13 @@ describe("DemoRecorder", () => {
 
   it("explicitly discards a failed spool when a server admin disables recording", async () => {
     const recorder = createRecorder();
-    recorder.onPacket(buildPingPacket(1));
+    recorder.onPacket(buildPingPacket(1), false);
     recorder.setMissionName("Katabatic");
     const writer = (
       recorder as unknown as { writer: { deflate: EventEmitter } }
     ).writer;
     writer.deflate.emit("error", new Error("disk gone"));
-    recorder.onPacket(buildPingPacket(2));
+    recorder.onPacket(buildPingPacket(2), false);
     expect(recorder.state).toBe("aborted");
     await recorder.abort({ discardStranded: true });
     expect(await fsp.readdir(dir)).toEqual([]);
@@ -684,7 +881,7 @@ describe("DemoRecorder", () => {
 
   it("abort is idempotent and clears the partial file", async () => {
     const recorder = createRecorder();
-    recorder.onPacket(buildPingPacket(1));
+    recorder.onPacket(buildPingPacket(1), false);
     recorder.setMissionName("Katabatic");
     await recorder.abort();
     await recorder.abort();

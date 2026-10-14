@@ -8,7 +8,11 @@ import {
 } from "t2-demo-parser";
 import { createRecordingFromParser, DemoStreamAdapter } from "./demoStreaming";
 import { bytesToBase64, encodeCheckpoint } from "./checkpointCodec";
-import { demoSha256, readDemoCheckpoints } from "./demoCheckpoints";
+import {
+  DEMO_CHECKPOINT_VERSION,
+  demoSha256,
+  readDemoCheckpoints,
+} from "./demoCheckpoints";
 import { flagReturnSecondsRemaining } from "./flagReturnTimer";
 
 const player = {
@@ -64,6 +68,7 @@ function fixture(
     roster?: string[];
     metadata?: string[];
     secondPlayer?: boolean;
+    sensorGroup?: number;
   } = {},
 ) {
   let cursor = 0;
@@ -117,7 +122,10 @@ function fixture(
         ...(options.metadata ?? []),
       ],
       firstPerson: true,
-      connectionFields: [0, 0, 0, 0, 0, 0],
+      lastMoveAck: 0,
+      lastClientMove: 0,
+      firstMoveIndex: 0,
+      sensorGroup: options.sensorGroup ?? 0,
       moves: [],
     },
     get blockCursor() {
@@ -156,8 +164,8 @@ function fixture(
   return { parser, nextBlock };
 }
 
-describe("v11 checkpoint playback", () => {
-  it("seeks without stale flag timing, then times newly observed drops", async () => {
+describe("imported checkpoint playback", () => {
+  it("seeks back to a checkpoint's flag timing, then times newly observed drops", async () => {
     const { parser } = fixture([
       serverMessage("MsgClientReady", "", "CTFGame"),
       serverMessage("MsgCTFAddTeam", "", "1", "Storm", "At Home", "0"),
@@ -172,11 +180,10 @@ describe("v11 checkpoint playback", () => {
     stream.setPlayerPredictionEnabled(true);
     stream.stepToTime(3);
     const checkpoint = stream.captureCheckpoint();
-    Reflect.deleteProperty(checkpoint.simulation.state, "flagDroppedAtSec");
     const buffer = new ArrayBuffer(3);
     const text = JSON.stringify({
       format: "t2-mapper-seek-checkpoints",
-      version: 11,
+      version: DEMO_CHECKPOINT_VERSION,
       demoBytes: buffer.byteLength,
       demoSha256: await demoSha256(buffer),
       requestedCount: 1,
@@ -198,11 +205,10 @@ describe("v11 checkpoint playback", () => {
     expect(stream.lastStepStartTimeSec).toBe(
       checkpoint.cursor.moveTicks * 0.032,
     );
+    // The first drop, at 0:00, as the checkpoint saved it.
     expect(snapshot.teamScores[0].flag?.status).toBe("field");
-    expect(snapshot.flagDroppedAtSec).toEqual({});
-    expect(
-      flagReturnSecondsRemaining(snapshot, 1, snapshot.timeSec),
-    ).toBeNull();
+    expect(snapshot.flagDroppedAtSec).toEqual({ 1: 0 });
+    expect(flagReturnSecondsRemaining(snapshot, 1, snapshot.timeSec)).toBe(42);
 
     const later = stream.stepToTime(4);
     expect(later.flagDroppedAtSec).toEqual({ 1: 3.2 });
@@ -660,5 +666,18 @@ describe("bounded demo metadata fallback", () => {
     expect(stream.connectedPlayerName).toBeNull();
     expect(stream.connectedClientId).toBeNull();
     expect(stream.serverDisplayName).toBeNull();
+  });
+});
+
+describe("recording connection state", () => {
+  it("starts from the recorded sensor group, even while observing", () => {
+    const { parser } = fixture(Array.from({ length: 10 }, move), {
+      sensorGroup: 2,
+    });
+    const stream = createRecordingFromParser(parser)
+      .streamingPlayback as DemoStreamAdapter;
+    expect(stream.stepToTime(0.1).playerSensorGroup).toBe(2);
+    stream.reset();
+    expect(stream.stepToTime(0.1).playerSensorGroup).toBe(2);
   });
 });

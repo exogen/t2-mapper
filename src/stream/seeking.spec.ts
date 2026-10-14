@@ -305,7 +305,10 @@ function demo(
       initialEvents: [],
       demoValues: [],
       firstPerson: true,
-      connectionFields: [0, 0, 0, 0, 0, 0],
+      lastMoveAck: 0,
+      lastClientMove: 0,
+      firstMoveIndex: 0,
+      sensorGroup: 0,
       moves: [],
     },
     getRegistry: () => ({

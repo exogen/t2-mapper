@@ -47,6 +47,27 @@ const NetStringEventClassId = NetEventClassFirst + 7; // index 7
 const RemoteCommandEventClassId = NetEventClassFirst + 9; // index 9
 
 /**
+ * The fields of a received packet's dnet header.
+ */
+export interface ReceivedPacketHeader {
+  seqNumber: number;
+  highestAck: number;
+  packetType: number;
+  connectSeqBit: number;
+  ackByteCount: number;
+  ackMask: number;
+}
+
+export type ReceivedHeaderCheck =
+  | { accepted: false }
+  | {
+      accepted: true;
+      dispatchData: boolean;
+      seqNumber: number;
+      highestAck: number;
+    };
+
+/**
  * Manages the connection protocol state for the client side.
  * Mirrors ConnectionProtocol from dnet.cc, but for building outgoing packets.
  */
@@ -125,20 +146,19 @@ export class ConnectionProtocol {
     return bs;
   }
 
-  /** Process a received packet header, updating our state. */
-  processReceivedHeader(header: {
-    seqNumber: number;
-    highestAck: number;
-    packetType: number;
-    connectSeqBit: number;
-    ackByteCount: number;
-    ackMask: number;
-  }): { accepted: boolean; dispatchData: boolean; highestAck: number } {
+  /**
+   * What processReceivedHeader would decide for a header, without changing
+   * any state: whether processRawPacket (FUN_0043d4d0) accepts it, and
+   * whether it dispatches the packet's data (an accepted DataPacket with a
+   * new sequence number), along with the sequence numbers widened past
+   * their 9 wire bits.
+   */
+  checkReceivedHeader(header: ReceivedPacketHeader): ReceivedHeaderCheck {
     if (header.connectSeqBit !== (this.connectSequence & 1)) {
-      return { accepted: false, dispatchData: false, highestAck: 0 };
+      return { accepted: false };
     }
     if (header.ackByteCount > 4 || header.packetType > 2) {
-      return { accepted: false, dispatchData: false, highestAck: 0 };
+      return { accepted: false };
     }
 
     let seqNumber =
@@ -147,7 +167,7 @@ export class ConnectionProtocol {
       seqNumber = (seqNumber + 0x200) >>> 0;
     }
     if (this.lastSeqRecvd + 0x1f < seqNumber) {
-      return { accepted: false, dispatchData: false, highestAck: 0 };
+      return { accepted: false };
     }
 
     let highestAck =
@@ -156,8 +176,29 @@ export class ConnectionProtocol {
       highestAck = (highestAck + 0x200) >>> 0;
     }
     if (this.lastSendSeq < highestAck) {
+      return { accepted: false };
+    }
+
+    return {
+      accepted: true,
+      dispatchData:
+        this.lastSeqRecvd !== seqNumber && header.packetType === DataPacket,
+      seqNumber,
+      highestAck,
+    };
+  }
+
+  /** Process a received packet header, updating our state. */
+  processReceivedHeader(header: ReceivedPacketHeader): {
+    accepted: boolean;
+    dispatchData: boolean;
+    highestAck: number;
+  } {
+    const check = this.checkReceivedHeader(header);
+    if (!check.accepted) {
       return { accepted: false, dispatchData: false, highestAck: 0 };
     }
+    const { seqNumber, highestAck, dispatchData } = check;
 
     const seqShift = (seqNumber - this.lastSeqRecvd) & 0x1f;
     this.ackMask = (this.ackMask << seqShift) >>> 0;
@@ -183,9 +224,6 @@ export class ConnectionProtocol {
       this.lastRecvAckAck = seqNumber - 0x20;
     }
     this.highestAckedSeq = highestAck;
-
-    const dispatchData =
-      this.lastSeqRecvd !== seqNumber && header.packetType === DataPacket;
     this.lastSeqRecvd = seqNumber;
 
     return { accepted: true, dispatchData, highestAck };
@@ -323,7 +361,8 @@ export interface ClientEvent {
 }
 
 /**
- * Write a Move struct to the stream.
+ * Write a Move struct to the stream: Move::pack (FUN_00601740), which
+ * both moveWritePacket and the demo start block use.
  *
  * Wire format (from Tribes2.exe FUN_00601800):
  *   flag(yaw?) + optional 16-bit yaw    (rotation, signed)
@@ -332,7 +371,7 @@ export interface ClientEvent {
  *   6-bit x + 6-bit y + 6-bit z         (movement, unsigned 0-32, center=16)
  *   flag(freeLook) + 6×flag(trigger)
  */
-function writeMove(bs: BitStreamWriter, move: ClientMoveData): void {
+export function writeMove(bs: BitStreamWriter, move: ClientMoveData): void {
   // Rotation (flag + optional 16-bit signed).
   // Matches Torque's Move::clamp(): pyaw = (yaw / M_2PI) * 0x10000.
   // Server's Move::unclamp() reverses: yaw = (short)pyaw * M_2PI / 0x10000.

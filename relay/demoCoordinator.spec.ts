@@ -216,7 +216,7 @@ describe("demo retention at match end", () => {
     const now = vi.spyOn(Date, "now").mockReturnValue(startedAt);
     const active = recorder(true);
     coordinator.observeMission(active, address, controls(true));
-    active.onPacket(new Uint8Array([1, 2, 3]));
+    active.onPacket(new Uint8Array([1, 2, 3]), true);
     active.setMissionName("Katabatic", 1);
     const folder = path.dirname(active.partialPath!);
     now.mockReturnValue(startedAt + 10_000);

@@ -11,7 +11,10 @@ import {
   DemoParser,
   type DemoBlock,
 } from "t2-demo-parser";
-import { extractMissionInfo } from "../src/stream/demoStreaming";
+import {
+  extractMissionInfo,
+  parseDemoValues,
+} from "../src/stream/demoStreaming";
 import { BitStreamWriter } from "./BitStreamWriter.js";
 import {
   DEMO_PROTOCOL_VERSION,
@@ -61,6 +64,24 @@ function buildPingPacket(seq: number): Uint8Array {
 }
 
 describe("buildInitialBlock", () => {
+  it("cuts each demo value to the 255 characters the engine writes", async () => {
+    const long = "x".repeat(300);
+    const initialBlock = buildInitialBlock({
+      connectSequence: CONNECT_SEQUENCE,
+      missionName: "Katabatic",
+      demoValues: [long, "next"],
+    });
+    const parser = new DemoParser(
+      buildDemoFile(
+        buildHeader(initialBlock.length),
+        initialBlock,
+        zlib.deflateRawSync(new Uint8Array(0)),
+      ),
+    );
+    const { initialBlock: parsed } = await parser.load();
+    expect(parsed.demoValues).toEqual([long.slice(0, 255), "next"]);
+  });
+
   it("round-trips a from-connect initial block through DemoParser", async () => {
     const initialBlock = buildInitialBlock({
       connectSequence: CONNECT_SEQUENCE,
@@ -84,10 +105,23 @@ describe("buildInitialBlock", () => {
     expect(parsed.taggedStrings.size).toBe(0);
     expect(parsed.dataBlockCount).toBe(0);
     expect(parsed.dataBlocks.size).toBe(0);
-    expect(parsed.firstPerson).toBe(true);
-    expect(parsed.connectionFields[1]).toBe(0x41200000);
+    // A fresh GameConnection's fields.
+    expect(parsed).toMatchObject({
+      firstPerson: true,
+      cameraPos: 0,
+      cameraSpeed: 10,
+      lastMoveAck: 0,
+      lastClientMove: 0,
+      firstMoveIndex: 0,
+      sensorGroup: 0,
+    });
+    expect(parsed.targetVisibleMask).toEqual(Array(16).fill(0));
     expect(parsed.moves).toEqual([]);
     expect(parsed.demoValues).toEqual(demoValues);
+    // Tribes2.exe adopts this as its process-wide default IFF color.
+    expect(parsed.defaultIffColor).toEqual({ r: 255, g: 0, b: 0, a: 255 });
+    expect(parsed.sensorGroupColors).toEqual([]);
+    expect(parsed.targetEntries).toEqual([]);
     expect(parsed.connectionState.lastSeqRecvd).toBe(0);
     expect(parsed.connectionState.highestAckedSeq).toBe(0);
     // Fresh-connection seed: the engine requires notifyCount to equal
@@ -105,14 +139,105 @@ describe("buildInitialBlock", () => {
     expect(parsed.initialGhosts).toEqual([]);
     expect(parsed.controlObjectGhostIndex).toBe(-1);
     expect(parsed.missionName).toBe("Katabatic");
-    expect(parsed.missionCRC).toBe(0);
+    // The GameConnection constructor's value until SetMissionCRCEvent.
+    expect(parsed.missionCRC).toBe(0xffffffff);
+    const freshProcessList = {
+      dirty: false,
+      currentTag: 0,
+      lastTick: 0,
+      lastTime: 0,
+      lastDelta: 0,
+    };
+    expect(parsed.clientProcessList).toEqual(freshProcessList);
+    expect(parsed.serverProcessList).toEqual(freshProcessList);
     expect(parsed.phase2Valid).toBe(true);
     // Bit padding plus the trailing pad byte: neither the engine nor the
-    // parser byte-aligns before the simple TargetManagers.
+    // parser byte-aligns before the ProcessList states.
     expect(parsed.phase2TrailingBits).toBeGreaterThanOrEqual(8);
     expect(parsed.phase2TrailingBits).toBeLessThan(16);
     expect(parsed.warnings).toEqual([]);
     expect(parser.blockCount).toBe(0);
+  });
+
+  it("writes the connection's state where a later stream starts", async () => {
+    const lastSeqRecvdAtSend = Array.from({ length: 32 }, (_, i) =>
+      i < 26 ? Math.min(i, 4) : 0,
+    );
+    const initialBlock = buildInitialBlock({
+      connectSequence: CONNECT_SEQUENCE,
+      missionName: "Slapdash_RV",
+      demoValues,
+      start: {
+        taggedStrings: new Map([
+          [0, "t2csri_pokeClient"],
+          [8, "\u0003%1 joined the game."],
+        ]),
+        lastMoveAck: 21,
+        lastClientMove: 21,
+        firstMoveIndex: 21,
+        sensorGroup: 3,
+        queuedMoves: 3,
+        protocol: {
+          lastSeqRecvdAtSend,
+          lastSeqRecvd: 5,
+          highestAckedSeq: 22,
+          lastSendSeq: 25,
+          ackMask: 0x1f,
+          lastRecvAckAck: 4,
+          connectionEstablished: true,
+        },
+        nextRecvEventSeq: 7,
+      },
+    });
+    const parser = new DemoParser(
+      buildDemoFile(
+        buildHeader(initialBlock.length),
+        initialBlock,
+        zlib.deflateRawSync(new Uint8Array(0)),
+      ),
+    );
+    const { initialBlock: parsed } = await parser.load();
+    expect(parsed.warnings).toEqual([]);
+    expect(parsed.phase2Valid).toBe(true);
+    expect(parsed.taggedStrings).toEqual(
+      new Map([
+        [0, "t2csri_pokeClient"],
+        [8, "\u0003%1 joined the game."],
+      ]),
+    );
+    expect(parsed).toMatchObject({
+      lastMoveAck: 21,
+      lastClientMove: 21,
+      firstMoveIndex: 21,
+      sensorGroup: 3,
+      nextRecvEventSeq: 7,
+      // One PacketNotify per packet still in flight.
+      notifyCount: 3,
+      connectionState: {
+        lastSeqRecvdAtSend,
+        lastSeqRecvd: 5,
+        highestAckedSeq: 22,
+        lastSendSeq: 25,
+        ackMask: 0x1f,
+        connectSequence: CONNECT_SEQUENCE,
+        lastRecvAckAck: 4,
+      },
+    });
+    // The unacked moves, neutral as the relay sent them.
+    expect(parsed.moves).toEqual(
+      Array(3).fill({
+        px: 16,
+        py: 16,
+        pz: 16,
+        pyaw: 0,
+        ppitch: 0,
+        proll: 0,
+        freeLook: false,
+        trigger: Array(6).fill(false),
+      }),
+    );
+    expect(parsed.demoValues).toEqual(demoValues);
+    expect(parsed.missionCRC).toBe(0xffffffff);
   });
 });
 
@@ -126,6 +251,69 @@ describe("buildDemoValues", () => {
     expect(info.missionDisplayName).toBe("Katabatic");
     expect(info.mod).toBe("classic");
     expect(info.missionType).toBe("Capture the Flag");
+  });
+
+  it("saves script state where loadDemoSettings and the app read it", () => {
+    const name = "\x10\x0bTDD|\x08Guardzilla\x11";
+    const values = buildDemoValues({
+      recorderName: "Observer",
+      serverName: "tournament-server-1",
+      serverAddress: "1.2.3.4:28000",
+      date: new Date(0),
+      missionDisplayName: "BeachBlitz",
+      mod: "classic",
+      gameType: "Capture the Flag",
+      script: {
+        voting: true,
+        players: [
+          [name, "4514538", "26497", "", "0", "0", "0", "0"].concat([
+            "0",
+            "0",
+            "0",
+            "1",
+            "0",
+            "",
+            "",
+            "0",
+          ]),
+        ],
+        clockMinutes: 599904 / 60000,
+        chat: [...Array(10).fill("older"), "", "\x03Guardzilla joined."],
+      },
+    });
+    expect(values[0]).toBe("Standard\t\t\t1\t0\t");
+    expect(values[8]).toBe("0\t9.9984");
+    expect(values.slice(17, 19)).toEqual(["<BLANK>", "\x03Guardzilla joined."]);
+    const parsed = parseDemoValues(values);
+    expect([...parsed.playerRoster]).toEqual([
+      [26497, expect.objectContaining({ name: "TDD|Guardzilla", teamId: 0 })],
+    ]);
+    expect(parsed.clockTimeMin).toBe(9.9984);
+    // The last ten lines, less the blank one.
+    expect(parsed.chatMessages).toHaveLength(9);
+    expect(parsed.chatMessages.at(-1)).toBe("\x03Guardzilla joined.");
+    expect(parsed.gravity).toBe(-20);
+    expect(extractMissionInfo(values).missionDisplayName).toBe("BeachBlitz");
+  });
+
+  it.each([
+    [undefined, "-20"],
+    [Math.fround(-26.9), "-26.9"],
+    [Math.fround(-9.81), "-9.81"],
+  ])("saves gravity %s the way getGravity() prints it", (gravity, row) => {
+    const values = buildDemoValues({
+      recorderName: "Observer",
+      serverName: "biergarten",
+      serverAddress: "1.2.3.4:28000",
+      date: new Date(0),
+      missionDisplayName: "Slapdash",
+      mod: "classic",
+      gameType: "Capture the Flag",
+      gravity,
+    });
+    // GRAVITY ends the standard sections, just before the PJ tail.
+    expect(values[values.indexOf("NewDemoData") - 1]).toBe(row);
+    expect(parseDemoValues(values).gravity).toBe(Number(row));
   });
 });
 

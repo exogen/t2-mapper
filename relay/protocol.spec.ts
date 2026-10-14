@@ -123,3 +123,42 @@ describe("PingTimeout", () => {
     expect(t.check(2 * PING_TIMEOUT_MS + 101)).toBe("ping");
   });
 });
+
+describe("ConnectionProtocol received headers", () => {
+  const header = (seqNumber: number, packetType = 0, highestAck = 0) => ({
+    seqNumber,
+    highestAck,
+    packetType,
+    connectSeqBit: 0,
+    ackByteCount: 0,
+    ackMask: 0,
+  });
+
+  it("checks a header without changing state, as processReceivedHeader decides", () => {
+    const protocol = new ConnectionProtocol();
+    const decisions = [
+      header(1),
+      header(1), // duplicate
+      header(2, 1), // ping
+      header(40), // past the receive window
+      header(3, 0, 5), // acks a packet never sent
+      header(3),
+    ].map((received) => {
+      const before = { ...protocol };
+      const check = protocol.checkReceivedHeader(received);
+      expect({ ...protocol }).toEqual(before);
+      const result = protocol.processReceivedHeader(received);
+      expect(check.accepted).toBe(result.accepted);
+      expect(check.accepted && check.dispatchData).toBe(result.dispatchData);
+      return [result.accepted, result.dispatchData];
+    });
+    expect(decisions).toEqual([
+      [true, true],
+      [true, false],
+      [true, false],
+      [false, false],
+      [false, false],
+      [true, true],
+    ]);
+  });
+});

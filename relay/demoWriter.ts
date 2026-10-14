@@ -1,7 +1,7 @@
 /**
- * Tribes 2 demo (.rec) format writer: file header, from-connect initial
- * block, and the deflated block stream. Pure format code — recording
- * lifecycle lives in demoRecorder.ts.
+ * Tribes 2 demo (.rec) format writer: file header, initial block, and the
+ * deflated block stream. Pure format code — recording lifecycle lives in
+ * demoRecorder.ts.
  *
  * Layout (verified against retail demos and t2-demo-parser):
  *   U8 0x11 + "Tribes2 Recording"
@@ -20,10 +20,13 @@ import {
   BlockTypeMove,
   BlockTypePacket,
   BlockTypeSendPacket,
+  freshConnectionProtocolState,
+  type ConnectionProtocolState,
 } from "t2-demo-parser";
 import { BitStreamWriter } from "./BitStreamWriter.js";
 import { writeString } from "./HuffmanWriter.js";
-import { MOVE_TICK_MS } from "./moveList.js";
+import { MOVE_TICK_MS, NEUTRAL_MOVE } from "./moveList.js";
+import { writeMove } from "./protocol.js";
 
 export const DEMO_IDENT_STRING = "Tribes2 Recording";
 export const DEMO_PROTOCOL_VERSION = 0x00330004;
@@ -64,7 +67,33 @@ export interface DemoValuesInfo {
   mod: string;
   /** e.g. "Capture the Flag"; empty string ok. */
   gameType: string;
+  /** World gravity where the recording starts; the T2 default if omitted. */
+  gravity?: number;
+  /** Script state where the recording starts; a new client's if omitted. */
+  script?: DemoScriptState;
 }
+
+/**
+ * What saveDemoSettings (recordings.cs) saves of the client script state
+ * the server's remote commands change before the mission loads.
+ */
+export interface DemoScriptState {
+  /** voteHud.voting */
+  voting: boolean;
+  /** PlayerListGroup's reps, each its PLAYERLIST fields. */
+  players: readonly (readonly string[])[];
+  /** clockHud.getTime() */
+  clockMinutes: number;
+  /** HudMessageVector's lines, oldest first. */
+  chat: readonly string[];
+}
+
+const NEW_CLIENT_SCRIPT_STATE: DemoScriptState = {
+  voting: false,
+  players: [],
+  clockMinutes: 0,
+  chat: [],
+};
 
 const MONTHS = [
   "Jan",
@@ -90,20 +119,36 @@ export function formatDemoDate(date: Date): string {
   return `${MONTHS[date.getUTCMonth()]}-${date.getUTCDate()}-${date.getUTCFullYear()} ${hours12}:${minutes}${meridiem}`;
 }
 
+/** A float as the console returns it (%g, six significant digits). */
+function formatConsoleFloat(value: number): string {
+  return String(Number(Math.fround(value).toPrecision(6)));
+}
+
+/** recordings.cs addDemoValue: the engine stops saving at an empty value. */
+function demoValue(value: string): string {
+  return value === "" ? "<BLANK>" : value;
+}
+
 /**
  * The standard saveDemoSettings sections (recordings.cs — MISC,
  * PLAYERLIST, RETICLE, BACKPACK, WEAPON, INVENTORY, SCORE, CLOCK,
- * CHAT×10, GRAVITY) for a fresh observer connection: empty roster,
- * hidden HUDs, no chat backlog. Empty values are written as "<BLANK>" —
- * PJ's reader treats a truly empty value as end-of-array.
+ * CHAT×10, GRAVITY) for an observer connection that has not loaded a
+ * mission yet: hidden HUDs, plus the roster, chat, clock and vote flag
+ * its script state holds. Empty values are written as "<BLANK>" — PJ's
+ * reader treats a truly empty value as end-of-array.
  */
-export function buildStandardDemoSections(): string[] {
+export function buildStandardDemoSections(
+  gravity = -20,
+  script = NEW_CLIENT_SCRIPT_STATE,
+): string[] {
+  const chat = script.chat.slice(-10);
   return [
     // MISC: hudMode/type/node, voting, passengerKeys, musicTrack.
-    "Standard\t\t\t0\t0\t",
-    // PLAYERLIST: empty — playback rebuilds the roster from the
-    // recorded join-message backlog.
-    "0",
+    `Standard\t\t\t${script.voting ? 1 : 0}\t0\t`,
+    // PLAYERLIST: the count, then each rep. The server sends its whole
+    // roster again once the handshake ends.
+    String(script.players.length),
+    ...script.players.map((fields) => demoValue(fields.join("\t"))),
     // RETICLE: bitmap + visibility flags, all hidden.
     "\t0\t0\t0\t\t0\t0",
     // BACKPACK: bitmap, frame/text visibility, pack.
@@ -114,12 +159,13 @@ export function buildStandardDemoSections(): string[] {
     "0\t\t\t\t0\t0\t-1",
     // SCORE: visible/gameType/objCount — no objectives yet.
     "0\t\t0",
-    // CLOCK: hidden, zero.
-    "0\t0",
-    // CHAT: the last 10 HUD lines — none at recording start.
-    ...Array<string>(10).fill("<BLANK>"),
-    // GRAVITY: T2 default.
-    "-20",
+    // CLOCK: hidden, then getTime() in minutes.
+    `0\t${formatConsoleFloat(script.clockMinutes)}`,
+    // CHAT: the last 10 HUD lines, blank-padded in front.
+    ...Array<string>(10 - chat.length).fill("<BLANK>"),
+    ...chat.map(demoValue),
+    // GRAVITY: getGravity(), which playback restores with setGravity.
+    formatConsoleFloat(gravity),
   ];
 }
 
@@ -134,7 +180,7 @@ export function buildStandardDemoSections(): string[] {
  */
 export function buildDemoValues(info: DemoValuesInfo): string[] {
   return [
-    ...buildStandardDemoSections(),
+    ...buildStandardDemoSections(info.gravity, info.script),
     "NewDemoData",
     "1",
     "readplayerinfo",
@@ -148,32 +194,77 @@ export function buildDemoValues(info: DemoValuesInfo): string[] {
   ];
 }
 
+/**
+ * A client connection's state where its recording starts, as
+ * writeDemoStartBlock (FUN_005fb2b0) saves it, for a start before the
+ * server has sent any datablock, target, ghost or control object.
+ */
+export interface DemoStartState {
+  /** The connection string table (NetStringEvents), id → string. */
+  taggedStrings: ReadonlyMap<number, string>;
+  lastMoveAck: number;
+  lastClientMove: number;
+  firstMoveIndex: number;
+  sensorGroup: number;
+  /** Moves queued and not yet acknowledged, all neutral (as recorded). */
+  queuedMoves: number;
+  /** The connect sequence always comes from the connection itself. */
+  protocol: Omit<ConnectionProtocolState, "connectSequence">;
+  nextRecvEventSeq: number;
+}
+
+/**
+ * A connection that has not exchanged a sequenced packet yet: what the
+ * GameConnection constructor and a fresh ConnectionProtocol hold. Its
+ * first move gets index 0.
+ */
+const CONNECT_STATE: DemoStartState = {
+  taggedStrings: new Map(),
+  lastMoveAck: 0,
+  lastClientMove: 0,
+  firstMoveIndex: 0,
+  sensorGroup: 0,
+  queuedMoves: 0,
+  protocol: freshConnectionProtocolState(0),
+  nextRecvEventSeq: 0,
+};
+
 export interface InitialBlockOptions {
   /** Full 32-bit connect sequence — parity must match packets' connectSeqBit. */
   connectSequence: number;
   /** Mission file name (from MissionStartPhase1 arg 1). */
   missionName: string;
   demoValues: string[];
+  /**
+   * The connection's state where the recorded stream begins; omitted for
+   * a stream that begins with the connection's first packet.
+   */
+  start?: DemoStartState;
 }
 
 /**
- * Build a from-connect initial block: no tagged strings, datablocks,
- * scores, targets, events, ghosts, or control object — all of that
- * arrives in the recorded packet stream, exactly as the live parser
- * consumes it from a fresh connection.
+ * Build an initial block for a stream that begins before the mission
+ * loads: no datablocks, scores, targets, pending events, ghosts, or
+ * control object — all of that arrives in the recorded packet stream,
+ * exactly as the live parser consumes it.
  *
- * The recorder must be attached before the connection's first sequenced
- * packet and write one SendPacket marker per packet actually sent and one
- * Move block per move queued, in order with the received packets: the
- * engine's playback replays those markers to keep its notify queue in
+ * The recorder must write one SendPacket marker per packet actually sent
+ * and one Move block per move queued, in order with the received packets:
+ * the engine's playback replays those markers to keep its notify queue in
  * step with the server's acks, and admits the moves the recorded
  * lastMoveAcks pop.
  */
 export function buildInitialBlock(opts: InitialBlockOptions): Uint8Array {
+  const start = opts.start ?? CONNECT_STATE;
   const bs = new BitStreamWriter(4096, { growable: true });
 
-  // Tagged string table: 1024 empty slots.
-  for (let i = 0; i < 1024; i++) bs.writeFlag(false);
+  // Tagged string table (FUN_005899a0): a flag per slot, then its string.
+  // The start block's stream has no string-prefix buffer.
+  for (let id = 0; id < 1024; id++) {
+    const value = start.taggedStrings.get(id);
+    bs.writeFlag(value !== undefined);
+    if (value !== undefined) writeString(bs, value);
+  }
 
   // DataBlocks: count 0, then loop terminator.
   bs.writeU32(0);
@@ -181,35 +272,41 @@ export function buildInitialBlock(opts: InitialBlockOptions): Uint8Array {
 
   // firstPerson + the six connection fields readDemoStartBlock
   // (FUN_005fb5c0) restores: cameraPos, cameraSpeed=10.0f, lastMoveAck,
-  // lastClientMove, firstMoveIndex and an unidentified +0x8434. The
-  // connection's first move gets index 0.
+  // lastClientMove, firstMoveIndex and the sensor group (later changes
+  // arrive as SetSensorGroupEvents).
   bs.writeU8(1);
   bs.writeU32(0);
   bs.writeU32(0x41200000);
-  bs.writeU32(0);
-  bs.writeU32(0);
-  bs.writeU32(0);
-  bs.writeU32(0);
+  bs.writeU32(start.lastMoveAck >>> 0);
+  bs.writeU32(start.lastClientMove >>> 0);
+  bs.writeU32(start.firstMoveIndex >>> 0);
+  bs.writeU32(start.sensorGroup >>> 0);
 
-  // Target-visible mask (16 U32s) + queued move count (none queued).
+  // mTargetVisibleMask (16 U32s): the server's record of the visibility
+  // bits it last sent, which a client never fills in. Then the queued
+  // moves, which playback numbers from firstMoveIndex; the server's next
+  // lastMoveAcks pop them.
   for (let i = 0; i < 16; i++) bs.writeU32(0);
-  bs.writeU32(0);
+  bs.writeU32(start.queuedMoves);
+  for (let i = 0; i < start.queuedMoves; i++) writeMove(bs, NEUTRAL_MOVE);
 
-  // DemoValues.
+  // DemoValues, each cut to the 255 characters FUN_005fb2b0 writes.
   for (const row of opts.demoValues) {
     bs.writeFlag(true);
-    writeString(bs, row);
+    writeString(bs, row.slice(0, 0xff));
   }
   bs.writeFlag(false);
 
-  // Complex TargetManager: 4 U8s, 32×32 IFF color grid, 512 targets.
-  for (let i = 0; i < 4; i++) bs.writeU8(0);
+  // TargetManager: the default IFF color, the 32×32 IFF color grid, 512
+  // targets. Playback (FUN_00670660) loads the default into Tribes2.exe's
+  // process-wide one (static 255, 0, 0, 255), which SensorGroupColorEvent
+  // entries sent as "default" decode to (enemy red among them) and which
+  // outlives the demo, so it must stay red.
+  for (const channel of [255, 0, 0, 255]) bs.writeU8(channel);
   for (let i = 0; i < 32 * 32; i++) bs.writeFlag(false);
   for (let i = 0; i < 512; i++) bs.writeFlag(false);
 
-  // ConnectionProtocol state of a connection that has not exchanged a
-  // sequenced packet yet (t2-demo-parser freshConnectionProtocolState):
-  // everything zero except the live connection's connect sequence.
+  // ConnectionProtocol state, with the live connection's connect sequence.
   //
   // This must be the real state, not a parser convenience. Tribes2.exe
   // playback rebuilds the client side from it: each SendPacket marker
@@ -220,25 +317,29 @@ export function buildInitialBlock(opts: InitialBlockOptions): Uint8Array {
   // lastSendSeq of 0x1fffffff (the parser's passive-observer seed) kept
   // the window permanently full, so no notify was ever queued and the
   // game crashed on the first acked packet.
-  for (let i = 0; i < 32; i++) bs.writeU32(0); // lastSeqRecvdAtSend
-  bs.writeU32(0); // lastSeqRecvd
-  bs.writeU32(0); // highestAckedSeq
-  bs.writeU32(0); // lastSendSeq
-  bs.writeU32(0); // ackMask
+  const { protocol } = start;
+  for (let i = 0; i < 32; i++)
+    bs.writeU32(protocol.lastSeqRecvdAtSend[i] >>> 0);
+  bs.writeU32(protocol.lastSeqRecvd >>> 0);
+  bs.writeU32(protocol.highestAckedSeq >>> 0);
+  bs.writeU32(protocol.lastSendSeq >>> 0);
+  bs.writeU32(protocol.ackMask >>> 0);
   bs.writeU32(opts.connectSequence >>> 0);
-  bs.writeU32(0); // lastRecvAckAck
-  bs.writeU8(1); // connectionEstablished
+  bs.writeU32(protocol.lastRecvAckAck >>> 0);
+  bs.writeU8(protocol.connectionEstablished ? 1 : 0);
 
   // rtt, packetLoss (F32 zeros), PathManager count.
   bs.writeU32(0);
   bs.writeU32(0);
   bs.writeU32(0);
   // Notify count: one PacketNotify per in-flight packet, i.e. exactly
-  // lastSendSeq - highestAckedSeq. Nothing is in flight at connect time.
-  bs.writeU32(0);
+  // lastSendSeq - highestAckedSeq.
+  bs.writeU32((protocol.lastSendSeq - protocol.highestAckedSeq) >>> 0);
 
-  // Events: nextRecvEventSeq 0 + terminator; ghosts: sequence 0 + terminator.
-  bs.writeU32(0);
+  // Events: nextRecvEventSeq + terminator (none waiting: the engine saves
+  // waiting events without their sequence numbers); ghosts: sequence 0 +
+  // terminator.
+  bs.writeU32(start.nextRecvEventSeq >>> 0);
   bs.writeFlag(false);
   bs.writeU32(0);
   bs.writeFlag(false);
@@ -247,10 +348,16 @@ export function buildInitialBlock(opts: InitialBlockOptions): Uint8Array {
   bs.writeU32(0xffffffff);
 
   writeString(bs, opts.missionName);
-  bs.writeU32(0); // missionCRC (consumed by nothing)
+  // mMissionCRC as the GameConnection constructor leaves it; the recorded
+  // SetMissionCRCEvent delivers the real one. Tribes2.exe names and
+  // validates its lighting caches by it.
+  bs.writeU32(0xffffffff);
 
-  // Two simple TargetManager blocks, read by FUN_006021b0 at the current
-  // bit position (the engine does not byte-align here).
+  // Client then server ProcessList state (U8 dirty, U32 currentTag,
+  // lastTick, lastTime, lastDelta), read by FUN_006021b0 at the current
+  // bit position (the engine does not byte-align here). All zero is a
+  // consistent state; a nonzero lastTick must stay a multiple of 32, or
+  // advanceServerTime's tick loop never ends.
   for (let i = 0; i < 2; i++) {
     bs.writeU8(0);
     for (let j = 0; j < 4; j++) bs.writeU32(0);
@@ -275,7 +382,10 @@ export const ZERO_MOVE: Uint8Array = (() => {
   return bytes;
 })();
 
-/** Info block written after each packet: firstPerson flag + camera FOV. */
+/**
+ * Info block (firstPerson flag + camera FOV), written after each received
+ * packet the connection dispatches.
+ */
 export function buildInfoBlock(firstPerson = true, fov = 90): Uint8Array {
   const bytes = new Uint8Array(8);
   const view = new DataView(bytes.buffer);

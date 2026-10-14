@@ -1,10 +1,10 @@
 /**
  * Per-connection demo recording lifecycle. Packets are buffered in
  * memory until MissionStartPhase1 supplies the mission name (needed
- * up-front in the initial block), then stream through DemoFileWriter.
- * Move blocks are the connection's own moves, one per 32 ms client tick,
- * in order with its packets and send markers — they are the playback
- * clock.
+ * up-front in the initial block), then stream through DemoFileWriter,
+ * starting after the T2CSRI handshake (demoStart.ts). Move blocks are
+ * the connection's own moves, one per 32 ms client tick, in order with
+ * its packets and send markers — they are the playback clock.
  */
 import crypto from "node:crypto";
 import fsp from "node:fs/promises";
@@ -16,6 +16,11 @@ import {
   buildDemoValues,
   buildInitialBlock,
 } from "./demoWriter.js";
+import {
+  planDemoStart,
+  type DemoStartPlan,
+  type DemoStreamEntry,
+} from "./demoStart.js";
 import type { ServerInfo } from "./types.js";
 import { DemoPlayers, type DemoPlayerRoster } from "./demoPlayers.js";
 
@@ -85,11 +90,6 @@ export interface DemoRecorderOptions {
   onStateChange?: (state: RecorderState) => void;
   /** Clock override for tests. */
   now?: () => number;
-}
-
-interface QueuedEntry {
-  kind: "packet" | "sent" | "move";
-  data?: Uint8Array;
 }
 
 /**
@@ -187,7 +187,7 @@ export function buildDemoFilename(
 export class DemoRecorder {
   private opts: DemoRecorderOptions;
   private _state: RecorderState = "buffering";
-  private queue: QueuedEntry[] = [];
+  private queue: DemoStreamEntry[] = [];
   private queuedBytes = 0;
   private writer: DemoFileWriter | null = null;
   /**
@@ -253,8 +253,14 @@ export class DemoRecorder {
     this.opts.onStateChange?.(state);
   }
 
-  /** Whether this packet was accepted into the recording. */
-  onPacket(data: Uint8Array): boolean {
+  /**
+   * Record a received data packet; returns whether it was accepted into
+   * the recording. A `dispatched` packet (the connection applies its data)
+   * is followed by an Info block, as Tribes2.exe writes one only from
+   * GameConnection::readPacket; pings, acks, duplicates and rejected
+   * packets get the Packet block alone.
+   */
+  onPacket(data: Uint8Array, dispatched: boolean): boolean {
     if (
       this.capped ||
       (this._state !== "buffering" && this._state !== "recording")
@@ -267,7 +273,7 @@ export class DemoRecorder {
     if (this._state === "buffering") {
       const now = this.opts.now?.() ?? Date.now();
       this.t0 ??= now;
-      this.queue.push({ kind: "packet", data: copy });
+      this.queue.push({ kind: "packet", data: copy, dispatched });
       this.queuedBytes += copy.length;
       if (
         now - this.t0 > BUFFER_MAX_MS ||
@@ -281,7 +287,7 @@ export class DemoRecorder {
         this.flush(fallback);
       }
     } else if (this._state === "recording") {
-      this.writeEntry({ kind: "packet", data: copy });
+      this.writeEntry({ kind: "packet", data: copy, dispatched });
     }
     return true;
   }
@@ -368,7 +374,10 @@ export class DemoRecorder {
     // Samples taken while buffering belong to the previous mission
     // (e.g. connecting into an intermission debrief) — the keep gates
     // must describe the mission this file actually records. Keep names:
-    // buffered packets are also written, so those aliases are in the demo.
+    // buffered packets after the handshake are also written, and the
+    // server sends its roster after the handshake, so those aliases are
+    // in the demo (all but a name changed during the handshake, which
+    // the start's roster holds only in its new form).
     // Current players re-latch immediately from the live roster. (The
     // buffering-cap fallback keeps them: with no Phase1, the buffered
     // packets are the same mission the file records.)
@@ -378,6 +387,24 @@ export class DemoRecorder {
   }
 
   private flush(missionName: string, missionSequence?: number): void {
+    const connectSequence = this.opts.getConnectSequence();
+    const bufferedMs =
+      this.t0 === null ? 0 : (this.opts.now?.() ?? Date.now()) - this.t0;
+    let plan: DemoStartPlan;
+    let startLogLevel: "info" | "warn" | "error" = "info";
+    let reconstructionError: unknown;
+    try {
+      plan = planDemoStart(this.queue, connectSequence);
+      if (plan.fallback) startLogLevel = "warn";
+    } catch (err) {
+      // Preserve the recording even if reconstructing its start fails.
+      plan = {
+        skip: 0,
+        fallback: "Unexpected error reconstructing demo start",
+      };
+      startLogLevel = "error";
+      reconstructionError = err;
+    }
     const identity = this.opts.getServerIdentity();
     const date = new Date();
     const serverName = identity.name ?? this.opts.address;
@@ -390,11 +417,14 @@ export class DemoRecorder {
       missionDisplayName: missionName,
       mod: identity.mod ?? "",
       gameType: identity.gameType ?? "",
+      gravity: plan.gravity,
+      script: plan.script,
     });
     const initialBlock = buildInitialBlock({
-      connectSequence: this.opts.getConnectSequence(),
+      connectSequence,
       missionName,
       demoValues,
+      start: plan.start,
     });
     this.meta = {
       recordedAt: date.toISOString(),
@@ -409,31 +439,52 @@ export class DemoRecorder {
     this.writer = new DemoFileWriter(path.join(this.opts.dir, filename));
     this.writer.begin(initialBlock);
     this.setState("recording");
-    log.info(
-      { address: this.opts.address, file: filename, missionName },
-      "Demo recording started",
+    log[startLogLevel](
+      {
+        event: "demo_recording_started",
+        startMode: plan.fallback
+          ? "fallback"
+          : plan.start
+            ? "after_handshake"
+            : "from_connect",
+        address: this.opts.address,
+        serverName,
+        file: filename,
+        missionName,
+        missionSequence,
+        connectSequence,
+        bufferedEntries: this.queue.length,
+        bufferedBytes: this.queuedBytes,
+        bufferedMs,
+        skippedEntries: plan.skip,
+        fallbackReason: plan.fallback,
+        err: reconstructionError,
+      },
+      plan.fallback
+        ? "Demo start reconstruction failed; recording from connect (authentication may remain in demo)"
+        : "Demo recording started",
     );
 
     const queue = this.queue;
     this.queue = [];
     this.queuedBytes = 0;
     log.debug(
-      { address: this.opts.address, entries: queue.length },
+      { address: this.opts.address, entries: queue.length, skipped: plan.skip },
       "Draining buffered packets into demo",
     );
-    for (const entry of queue) {
+    for (let i = plan.skip; i < queue.length; i++) {
       if (this._state !== "recording") break;
-      this.writeEntry(entry);
+      this.writeEntry(queue[i]);
     }
   }
 
-  private writeEntry(entry: QueuedEntry): void {
+  private writeEntry(entry: DemoStreamEntry): void {
     const writer = this.writer;
     if (!writer || this.capped) return;
     try {
       if (entry.kind === "packet") {
-        writer.writePacket(entry.data!);
-        writer.writeInfo();
+        writer.writePacket(entry.data);
+        if (entry.dispatched) writer.writeInfo();
       } else if (entry.kind === "move") {
         writer.writeMove();
         this.moveCount++;

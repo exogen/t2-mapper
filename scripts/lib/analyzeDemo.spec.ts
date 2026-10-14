@@ -1,5 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { BlockTypePacket, DemoParser, type DemoBlock } from "t2-demo-parser";
+import {
+  BlockTypeMove,
+  BlockTypePacket,
+  DemoParser,
+  type DemoBlock,
+} from "t2-demo-parser";
 import { buildDemoValues } from "../../relay/demoWriter.js";
 import { analyzeDemo } from "./analyzeDemo";
 
@@ -65,6 +70,8 @@ function source(
   blocks: DemoBlock[],
   initialPlayers: string[] = [],
   recorderClientId = 0,
+  // A retail mid-match demo starts with the mission's datablocks loaded.
+  beforeMission = initialPlayers.length === 0,
 ) {
   const demoValues = buildDemoValues({
     recorderName: "Recorder",
@@ -83,7 +90,7 @@ function source(
     initialBlock: {
       demoValues,
       taggedStrings: new Map(),
-      dataBlocks: new Map(),
+      dataBlocks: new Map<number, unknown>(beforeMission ? [] : [[0, {}]]),
       missionName: "Test",
     },
   } as Awaited<ReturnType<DemoParser["load"]>>);
@@ -155,6 +162,28 @@ describe("demo metadata replay", () => {
       { mission: "Test", missionSequence: 41 },
       { mission: "Test", missionSequence: 42 },
     ]);
+  });
+
+  it("links the seeded game when players joined before the recording started", async () => {
+    // A relay recording that starts after the T2CSRI handshake, during
+    // which a player joined: its roster is not empty, but the mission has
+    // not loaded yet.
+    source(
+      [
+        { index: 1, type: BlockTypeMove, size: 0, data: new Uint8Array() },
+        remoteCommand("MissionStartPhase1", "41", "Test"),
+        packet("MsgMissionStart", "Match started"),
+      ],
+      ["Alice\t1\t10\t\t0\t0\t0\t0"],
+      0,
+      true,
+    );
+    const record = await analyzeDemo(new Uint8Array(), "test.rec");
+    expect(record.games).toMatchObject([
+      { mission: "Test", missionSequence: 41, startMs: 0 },
+    ]);
+    expect(record.games).toHaveLength(1);
+    expect(record.players).toEqual(["Alice"]);
   });
 
   it.each([undefined, "", "invalid"])(

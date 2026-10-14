@@ -73,8 +73,10 @@ export async function analyzeDemo(
       ? info.recorderClientId
       : null;
   watchState.selfClientId = recorderClientId;
-  const fromConnect =
-    initialBlock.dataBlocks.size === 0 && initialRoster.size === 0;
+  // Recorded before the mission loaded (relay: from connect or the end of
+  // the handshake, whose roster can already hold players who joined
+  // during it): the stream carries the datablocks and the welcome join.
+  const beforeMission = initialBlock.dataBlocks.size === 0;
   for (const [id, value] of initialBlock.taggedStrings) {
     watchState.netStrings.set(id, value);
   }
@@ -83,7 +85,7 @@ export async function analyzeDemo(
   const samplePlayers = () =>
     players.sample(
       watchState.getPlayerRoster(),
-      recorderClientId ?? (fromConnect ? watchState.selfClientId : null),
+      recorderClientId ?? (beforeMission ? watchState.selfClientId : null),
     );
   samplePlayers();
   const games: DemoGame[] = [];
@@ -101,12 +103,12 @@ export async function analyzeDemo(
   // current (its MsgLoadInfo type may arrive after the match starts).
   let lastGame: DemoGame | null = null;
   let currentMission = pending?.mission ?? null;
-  // A from-connect recording (relay: empty initial datablock table, the
-  // stream carries them) replays MissionStartPhase1 for the mission the
-  // initial block already seeded — ignore that one repeat only, so a
-  // later back-to-back rematch on the same map still opens a new game.
-  // A retail mid-match demo's first Phase1 is always a new match.
-  let awaitingSeedPhase1 = pending !== null && fromConnect;
+  // A recording from before the mission loaded replays MissionStartPhase1
+  // for the mission the initial block already seeded — ignore that one
+  // repeat only, so a later back-to-back rematch on the same map still
+  // opens a new game. A retail mid-match demo's first Phase1 is always a
+  // new match.
+  let awaitingSeedPhase1 = pending !== null && beforeMission;
   let moveTicks = 0;
   const MOVE_TICK_MS = 32;
 

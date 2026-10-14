@@ -6,7 +6,9 @@ import path from "node:path";
 import { gunzipSync } from "node:zlib";
 import type { WebSocket } from "ws";
 import {
+  BlockTypeInfo,
   BlockTypeMove,
+  BlockTypePacket,
   DemoParser,
   type PacketData,
   type ParsedData,
@@ -3791,6 +3793,51 @@ describe("WatchSession demo recording", () => {
       }
       expect(moves).toBe(5);
       expect(header.demoLengthMs).toBe(5 * 32);
+    } finally {
+      manager.shutdown();
+      await coordinator.shutdown(5000);
+      await fsp.rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("writes an Info block only after packets the connection dispatched", async () => {
+    const { manager, connections, coordinator, finalized, dir } =
+      await createRecordingManager();
+    try {
+      manager.watch(
+        new FakeWebSocket() as unknown as WebSocket,
+        "1.2.3.4:28000",
+      );
+      const session = getSession(manager);
+      connections[0].setStatus("connected");
+      firePhase1(session, "Katabatic");
+      session.watchState.matchStarted = true;
+      // The recorder only sees packets the parser handled.
+      session.parserKit.packetParser.parsePacket = () => ({
+        gameState: {},
+        ghosts: [],
+        events: [],
+      });
+      connections[0].emit("packet", new Uint8Array([1, 2, 3]), true);
+      connections[0].emit("packet", new Uint8Array([4, 5, 6]), false);
+      connections[0].emit("move");
+      fireEndGhosting(session);
+      await vi.waitFor(() => expect(finalized).toHaveLength(1));
+
+      const parser = new DemoParser(
+        new Uint8Array(await fsp.readFile(finalized[0])),
+      );
+      await parser.load();
+      const types: number[] = [];
+      for (let block = parser.nextBlock(); block; block = parser.nextBlock()) {
+        types.push(block.type);
+      }
+      expect(types).toEqual([
+        BlockTypePacket,
+        BlockTypeInfo,
+        BlockTypePacket,
+        BlockTypeMove,
+      ]);
     } finally {
       manager.shutdown();
       await coordinator.shutdown(5000);

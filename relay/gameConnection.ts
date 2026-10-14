@@ -14,6 +14,7 @@ import {
   buildGamePingRequest,
   type ClientEvent,
   type ClientMoveData,
+  type ReceivedPacketHeader,
 } from "./protocol.js";
 import { BitStream } from "t2-demo-parser";
 import { BitStreamWriter } from "./BitStreamWriter.js";
@@ -118,6 +119,38 @@ function canEncodeCommand(command: unknown, args: unknown[]): boolean {
   }
 }
 
+/**
+ * Read a data packet's dnet header, leaving `bs` at the packet's data, or
+ * null when the packet is too short to hold one.
+ */
+function readPacketHeader(
+  data: Uint8Array,
+): { header: ReceivedPacketHeader; bs: BitStream } | null {
+  if (data.length < 4) return null;
+  const bs = new BitStream(data);
+  bs.readFlag(); // gameFlag
+  const connectSeqBit = bs.readInt(1);
+  const seqNumber = bs.readInt(9);
+  const highestAck = bs.readInt(9);
+  const packetType = bs.readInt(2);
+  const ackByteCount = bs.readInt(3);
+  // Invalid counts are rejected by processReceivedHeader without reading
+  // their mask, matching processRawPacket (FUN_0043d4d0).
+  const ackMask =
+    ackByteCount > 0 && ackByteCount <= 4 ? bs.readInt(8 * ackByteCount) : 0;
+  return {
+    header: {
+      seqNumber,
+      highestAck,
+      packetType,
+      connectSeqBit,
+      ackByteCount,
+      ackMask,
+    },
+    bs,
+  };
+}
+
 /** Decode the final string in an OOB rejection/disconnect packet. */
 function readConnectionReason(data: Uint8Array): string | undefined {
   const bs = new BitStream(data);
@@ -155,7 +188,12 @@ export interface GameConnectionOptions {
 
 interface GameConnectionEvents {
   status: [status: ConnectionStatus, message?: string];
-  packet: [data: Uint8Array];
+  /**
+   * A data packet arrived. `dispatched` says whether processRawPacket
+   * hands its data on (an accepted DataPacket with a new sequence number)
+   * — only those get a demo Info block.
+   */
+  packet: [data: Uint8Array, dispatched: boolean];
   /**
    * A data packet was sent — the demo's SendPacket marker, which is
    * what advances the recorded send sequence. Pings and acks take no
@@ -751,38 +789,28 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
       );
     }
 
+    // Whether processRawPacket dispatches the packet's data, decided up
+    // front: the header is only applied once the listeners have run.
+    const received = readPacketHeader(data);
+    const check =
+      received && this.protocol.checkReceivedHeader(received.header);
+    const dispatched = !!check && check.accepted && check.dispatchData;
+
     // Forward the raw packet to the browser for parsing
-    this.emit("packet", data);
+    this.emit("packet", data, dispatched);
 
     // We still need to process the dnet header locally to track ack state
-    this.processPacketForAcks(data);
+    if (received) this.processPacketForAcks(received.header, received.bs);
   }
 
   /** Process a packet's dnet header to maintain ack state. */
-  private processPacketForAcks(data: Uint8Array): void {
-    if (data.length < 4) return;
-
-    const bs = new BitStream(data);
-
-    bs.readFlag(); // gameFlag
-    const connectSeqBit = bs.readInt(1);
-    const seqNumber = bs.readInt(9);
-    const highestAck = bs.readInt(9);
-    const packetType = bs.readInt(2);
-    const ackByteCount = bs.readInt(3);
-    // Invalid counts are rejected by processReceivedHeader without reading
-    // their mask, matching processRawPacket (FUN_0043d4d0).
-    const ackMask =
-      ackByteCount > 0 && ackByteCount <= 4 ? bs.readInt(8 * ackByteCount) : 0;
-
-    const result = this.protocol.processReceivedHeader({
-      seqNumber,
-      highestAck,
-      packetType,
-      connectSeqBit,
-      ackByteCount,
-      ackMask,
-    });
+  private processPacketForAcks(
+    header: ReceivedPacketHeader,
+    bs: BitStream,
+  ): void {
+    const { connectSeqBit, seqNumber, highestAck, packetType, ackByteCount } =
+      header;
+    const result = this.protocol.processReceivedHeader(header);
     if (result.dispatchData) this.readMoveAck(bs);
 
     // A PingPacket (type 1) is the server's checkTimeout probing us —

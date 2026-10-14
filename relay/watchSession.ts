@@ -662,12 +662,12 @@ export class WatchSession {
       if (this.connection !== conn) return;
       this.handleStatus(conn, status, message);
     });
-    conn.on("packet", (data: Uint8Array) => {
+    conn.on("packet", (data: Uint8Array, dispatched: boolean) => {
       if (this.connection !== conn) return;
       // ConnectAccept identifies our exact connection before any roster
       // packets arrive. Welcome-message inference is only for old demos.
       this.watchState.selfClientId = conn.selfClientId;
-      this.handlePacket(data);
+      this.handlePacket(data, dispatched);
     });
     conn.on("sent", () => {
       if (this.connection !== conn) return;
@@ -999,10 +999,10 @@ export class WatchSession {
 
   // ── Packet pipeline ──
 
-  private handlePacket(data: Uint8Array): void {
+  private handlePacket(data: Uint8Array, dispatched: boolean): void {
     this.processingPacket = true;
     try {
-      this.processPacket(data);
+      this.processPacket(data, dispatched);
     } finally {
       this.processingPacket = false;
       // A responder can finish the handshake or lift the delay inside
@@ -1014,7 +1014,7 @@ export class WatchSession {
     }
   }
 
-  private processPacket(data: Uint8Array): void {
+  private processPacket(data: Uint8Array, dispatched: boolean): void {
     // Frozen for a pending mission-cycle rotation: the epoch's parser
     // state is dead and watchers are deliberately left on their
     // end-of-match view until the reconnect re-hydrates them.
@@ -1056,7 +1056,7 @@ export class WatchSession {
     // finalizes the recording, so the file stays valid to its last byte).
     const recorder = this.recorder;
     const sampleRecordedState =
-      recorder && recorder.onPacket(data)
+      recorder && recorder.onPacket(data, dispatched)
         ? () => recorder.sampleRecordedState()
         : undefined;
 

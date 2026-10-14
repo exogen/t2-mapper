@@ -862,14 +862,14 @@ export class DemoStreamAdapter extends StreamEngine {
       this.lastAbsPitch = initialAbsRot.pitch;
     }
     const initial = this.parser.initialBlock;
-    const firstMoveIndex = initial.connectionFields[4] ?? 0;
+    const { firstMoveIndex } = initial;
     this.lastRecordedMoveAck = firstMoveIndex;
     this.pendingPlayerMoves = initial.moves.map((move, i) => ({
       id: firstMoveIndex + i,
       move: unclampMove(move),
     }));
     this.nextPlayerMoveId = firstMoveIndex + this.pendingPlayerMoves.length;
-    this.lastClientMoveId = initial.connectionFields[3] ?? firstMoveIndex;
+    this.lastClientMoveId = initial.lastClientMove;
     this.validateControlMoves();
     this.exhausted = false;
     this.latestFov = 100;
@@ -899,7 +899,10 @@ export class DemoStreamAdapter extends StreamEngine {
           )
         : undefined;
 
-    // Derive playerSensorGroup from the control player entity
+    // The recording connection's sensor group, which Tribes2.exe's HUD
+    // colors by. SetSensorGroupEvents change it from here.
+    this.playerSensorGroup = initial.sensorGroup;
+    // Without one, derive it from the control player entity.
     if (
       this.playerSensorGroup === 0 &&
       this.lastControlType === "player" &&

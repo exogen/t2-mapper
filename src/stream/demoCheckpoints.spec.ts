@@ -136,16 +136,19 @@ describe("checkpoint sidecar loading", () => {
       readDemoCheckpoints(text, new Uint8Array([3, 2, 1]).buffer),
     ).rejects.toThrow("do not match");
   });
-  it.each([10, DEMO_CHECKPOINT_VERSION + 1, 11.5, "11"])(
-    "rejects unsupported checkpoint version %s",
-    async (version) => {
-      const buffer = new ArrayBuffer(3);
-      const original = await sidecar(buffer);
-      await expect(
-        readDemoCheckpoints(JSON.stringify({ ...original, version }), buffer),
-      ).rejects.toThrow("version");
-    },
-  );
+  it.each([
+    11,
+    DEMO_CHECKPOINT_VERSION - 1,
+    DEMO_CHECKPOINT_VERSION + 1,
+    DEMO_CHECKPOINT_VERSION - 0.5,
+    String(DEMO_CHECKPOINT_VERSION),
+  ])("rejects unsupported checkpoint version %s", async (version) => {
+    const buffer = new ArrayBuffer(3);
+    const original = await sidecar(buffer);
+    await expect(
+      readDemoCheckpoints(JSON.stringify({ ...original, version }), buffer),
+    ).rejects.toThrow("version");
+  });
   it("preserves flag timing in current checkpoints", async () => {
     const buffer = new ArrayBuffer(3);
     const original = await sidecar(buffer);

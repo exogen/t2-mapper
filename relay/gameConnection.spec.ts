@@ -439,6 +439,42 @@ describe("GameConnection ping validation", () => {
   });
 });
 
+describe("GameConnection packet events", () => {
+  /**
+   * A DataPacket with no rate changes and move ack 0.
+   */
+  function dataDatagram(seq: number): Buffer {
+    const bs = new BitStreamWriter(16);
+    bs.writeFlag(true);
+    bs.writeInt(0, 1); // connectSeqBit
+    bs.writeInt(seq, 9);
+    bs.writeInt(0, 9); // highestAck
+    bs.writeInt(0, 2); // DataPacket
+    bs.writeInt(0, 3); // ackByteCount
+    bs.writeFlag(false);
+    bs.writeFlag(false);
+    bs.writeU32(0);
+    return Buffer.from(bs.getBuffer());
+  }
+
+  it("say whether processRawPacket dispatches each packet", () => {
+    const conn = authenticating();
+    const receiver = conn as unknown as ReceiveInternals;
+    vi.spyOn(receiver, "sendRaw").mockImplementation(() => {});
+    const dispatched: boolean[] = [];
+    conn.on("packet", (_data, isDispatched) => dispatched.push(isDispatched));
+
+    receiver.handleMessage(dataDatagram(1));
+    receiver.handleMessage(dataDatagram(1)); // duplicate
+    receiver.handleMessage(pingDatagram(2, 4));
+    receiver.handleMessage(pingDatagram(40, 4)); // past the receive window
+    receiver.handleMessage(dataDatagram(3));
+
+    expect(dispatched).toEqual([true, false, false, false, true]);
+    expect(receiver.protocol.lastSeqRecvd).toBe(3);
+  });
+});
+
 describe("GameConnection UDP receive limit", () => {
   it.each([450, 1191, 1500])("accepts a %i-byte datagram intact", (size) => {
     const conn = authenticating();
@@ -450,7 +486,7 @@ describe("GameConnection UDP receive limit", () => {
 
     receiver.handleMessage(data);
 
-    expect(packet).toHaveBeenCalledExactlyOnceWith(new Uint8Array(data));
+    expect(packet).toHaveBeenCalledExactlyOnceWith(new Uint8Array(data), false);
     expect(receiver.protocol.lastSeqRecvd).toBe(1);
     expect(send).toHaveBeenCalledTimes(1);
   });
@@ -473,7 +509,10 @@ describe("GameConnection UDP receive limit", () => {
 
       const next = pingDatagram(1, 4);
       receiver.handleMessage(next);
-      expect(packet).toHaveBeenCalledExactlyOnceWith(new Uint8Array(next));
+      expect(packet).toHaveBeenCalledExactlyOnceWith(
+        new Uint8Array(next),
+        false,
+      );
       expect(receiver.protocol.lastSeqRecvd).toBe(1);
       expect(send).toHaveBeenCalledTimes(1);
     },

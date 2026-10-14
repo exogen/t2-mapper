@@ -115,18 +115,22 @@ describe("offline checkpoint generation", () => {
     await expect(fs.access(output)).rejects.toThrow();
   });
 
-  it("reuses compatible v11 output without rescanning or rewriting it", async () => {
+  it("regenerates output from the previous checkpoint version", async () => {
     await generateDemoCheckpoints(file, output, "/absent-assets");
     const sidecar = JSON.parse(await fs.readFile(output, "utf8"));
-    sidecar.version = 11;
-    const text = JSON.stringify(sidecar);
-    await fs.writeFile(output, text);
+    sidecar.version = checkpoints.DEMO_CHECKPOINT_VERSION - 1;
+    await fs.writeFile(output, JSON.stringify(sidecar));
     const scan = vi.spyOn(timelineScanner, "scanDemoTimelineParser");
     expect(
       await generateDemoCheckpoints(file, output, "/absent-assets"),
-    ).toMatchObject({ version: 11, reused: true });
-    expect(scan).not.toHaveBeenCalled();
-    expect(await fs.readFile(output, "utf8")).toBe(text);
+    ).toMatchObject({
+      version: checkpoints.DEMO_CHECKPOINT_VERSION,
+      reused: false,
+    });
+    expect(scan).toHaveBeenCalledOnce();
+    expect(JSON.parse(await fs.readFile(output, "utf8")).version).toBe(
+      checkpoints.DEMO_CHECKPOINT_VERSION,
+    );
   });
 
   it("regenerates when the requested count changes and then reuses short-demo output", async () => {
