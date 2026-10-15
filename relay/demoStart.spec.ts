@@ -6,12 +6,8 @@ import {
   BlockTypePacket,
   BlockTypeSendPacket,
   DemoParser,
-  NetEventClassFirst,
-  createDefaultRegistry,
   type NetEventInfo,
 } from "t2-demo-parser";
-import { BitStreamWriter } from "./BitStreamWriter.js";
-import { packNetString, writeString } from "./HuffmanWriter.js";
 import { planDemoStart, type DemoStreamEntry } from "./demoStart.js";
 import {
   ZERO_MOVE,
@@ -20,46 +16,42 @@ import {
   buildInfoBlock,
   buildInitialBlock,
 } from "./demoWriter.js";
+import {
+  CONNECT_SEQUENCE,
+  command,
+  gravityEvent,
+  netString,
+  serverPacket,
+  type ServerEvent,
+} from "./serverPacketFixtures.js";
 
-const CONNECT_SEQUENCE = 0x0badf00d;
-const registry = createDefaultRegistry();
-
-interface ServerEvent {
-  seq: number;
-  className: string;
-  write: (bs: BitStreamWriter) => void;
-}
-
-const netString = (seq: number, id: number, value: string): ServerEvent => ({
+/**
+ * A positional sound at an absolute position.
+ */
+const sound = (seq: number): ServerEvent => ({
   seq,
-  className: "NetStringEvent",
+  className: "Sim3DAudioEvent",
   write(bs) {
-    bs.writeInt(id, 10);
-    bs.writeFlag(true);
-    writeString(bs, value, true);
+    bs.writeInt(42, 11); // AudioProfile datablock
+    bs.writeFlag(false); // no cone
+    bs.writeInt(3, 2); // absolute position
+    for (let i = 0; i < 3; i++) bs.writeU32(0);
   },
 });
 
-/** commandToClient with a tagged function name, as the server packs it. */
-const command = (seq: number, tag: number, ...args: string[]): ServerEvent => ({
+const targetFree = (seq: number): ServerEvent => ({
   seq,
-  className: "RemoteCommandEvent",
-  write(bs) {
-    bs.writeInt(1 + args.length, 5);
-    bs.writeInt(2, 2);
-    bs.writeInt(tag, 10);
-    for (const arg of args) packNetString(bs, arg, true);
-  },
+  className: "TargetFreeEvent",
+  write: (bs) => bs.writeInt(17, 9),
 });
 
-const gravityEvent = (seq: number, gravity: number): ServerEvent => ({
+/**
+ * A lightning strike with no strike data.
+ */
+const lightning = (seq: number): ServerEvent => ({
   seq,
-  className: "GravityEvent",
-  write(bs) {
-    const view = new DataView(new ArrayBuffer(4));
-    view.setFloat32(0, gravity, true);
-    bs.writeU32(view.getUint32(0, true));
-  },
+  className: "LightningStrikeEvent",
+  write: (bs) => bs.writeFlag(false),
 });
 
 const missionCRC = (seq: number, crc: number): ServerEvent => ({
@@ -67,61 +59,6 @@ const missionCRC = (seq: number, crc: number): ServerEvent => ({
   className: "SetMissionCRCEvent",
   write: (bs) => bs.writeU32(crc),
 });
-
-/**
- * A server→client data packet: dnet header, rate info, the client half of
- * GameConnection::readPacket (FUN_005fb9f0), guaranteed events, no ghosts.
- */
-function serverPacket(
-  seq: number,
-  opts: {
-    /** Highest of our data packets acknowledged, all acked through it. */
-    ack?: number;
-    lastMoveAck?: number;
-    events?: ServerEvent[];
-    compressionPoint?: boolean;
-  } = {},
-): Uint8Array {
-  const bs = new BitStreamWriter(1500);
-  bs.writeFlag(true);
-  bs.writeInt(CONNECT_SEQUENCE & 1, 1);
-  bs.writeInt(seq & 0x1ff, 9);
-  const ack = opts.ack ?? 0;
-  bs.writeInt(ack & 0x1ff, 9);
-  bs.writeInt(0, 2); // DataPacket
-  const ackMask = ack ? (1 << Math.min(ack, 8)) - 1 : 0;
-  bs.writeInt(ackMask ? 1 : 0, 3);
-  if (ackMask) bs.writeInt(ackMask, 8);
-  bs.writeFlag(false); // rate info
-  bs.writeFlag(false);
-  bs.writeU32(opts.lastMoveAck ?? 0);
-  bs.writeFlag(false); // damage flash
-  bs.writeFlag(false); // lock state
-  bs.writeFlag(false); // seeker
-  bs.writeFlag(false); // pinged
-  bs.writeFlag(false); // jammed
-  bs.writeFlag(opts.compressionPoint ?? false);
-  if (opts.compressionPoint) {
-    bs.writeFlag(false); // no control object: a compression point
-    for (let i = 0; i < 3; i++) bs.writeU32(0);
-  }
-  bs.writeFlag(false); // target visibility
-  bs.writeFlag(false); // fov
-  bs.writeFlag(false); // no unguaranteed events
-  for (const event of opts.events ?? []) {
-    bs.writeFlag(true);
-    bs.writeFlag(false); // explicit sequence number
-    bs.writeInt(event.seq & 0x7f, 7);
-    bs.writeInt(
-      registry.getEventClassId(event.className)! - NetEventClassFirst,
-      6,
-    );
-    event.write(bs);
-  }
-  bs.writeFlag(false);
-  bs.writeFlag(false); // no ghosts
-  return bs.getBuffer();
-}
 
 const packet = (data: Uint8Array): DemoStreamEntry => ({
   kind: "packet",
@@ -261,6 +198,21 @@ describe("planDemoStart", () => {
         lastSeqRecvdAtSend: [0, 1, 1, 1, ...Array(28).fill(0)],
       },
     });
+  });
+
+  it("leaves out sounds, lightning and target frees during the handshake", () => {
+    const plan = planDemoStart(
+      handshake([
+        sound(3),
+        lightning(4),
+        targetFree(5),
+        ...CHALLENGE_EVENTS.map((event) => ({ ...event, seq: event.seq + 3 })),
+      ]),
+      CONNECT_SEQUENCE,
+    );
+    expect(plan.fallback).toBeUndefined();
+    expect(plan.skip).toBe(8);
+    expect(plan.start?.nextRecvEventSeq).toBe(10);
   });
 
   it("writes a start block that the rest of the stream continues", async () => {

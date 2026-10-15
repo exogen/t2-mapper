@@ -39,13 +39,23 @@ export function r2Client(runHint?: string): {
   return { client, config };
 }
 
+export interface BucketObject {
+  key: string;
+  size: number;
+  lastModified?: Date;
+  /**
+   * Quoted, as S3 sends it.
+   */
+  etag?: string;
+}
+
 /** Every object under the prefix (the bucket's demo folder by default). */
 export async function listAllObjects(
   client: S3Client,
   config: DemoUploadConfig,
   prefix = config.prefix,
-): Promise<{ key: string; size: number; lastModified?: Date }[]> {
-  const out: { key: string; size: number; lastModified?: Date }[] = [];
+): Promise<BucketObject[]> {
+  const out: BucketObject[] = [];
   let token: string | undefined;
   do {
     const res = await client.send(
@@ -61,6 +71,7 @@ export async function listAllObjects(
           key: o.Key,
           size: o.Size ?? 0,
           lastModified: o.LastModified,
+          etag: o.ETag,
         });
       }
     }

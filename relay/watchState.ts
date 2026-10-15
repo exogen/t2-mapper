@@ -10,7 +10,7 @@ import {
   type FlagState,
 } from "./flagState.js";
 import type { PacketData, ParsedData, SensorGroupColor } from "t2-demo-parser";
-import { stripTaggedStringMarkup } from "./shared.js";
+import { resolveNetString, stripTaggedStringMarkup } from "./shared.js";
 import { updateFlagDropTimes, type FlagDropTimes } from "./flagReturnState.js";
 import {
   resolvePendingTargetStrings,
@@ -180,11 +180,7 @@ export class WatchStateAccumulator {
   }
 
   resolveNetString(s: string): string {
-    if (s.length >= 2 && s.charCodeAt(0) === 1) {
-      const id = parseInt(s.slice(1), 10);
-      if (Number.isFinite(id)) return this.netStrings.get(id) ?? s;
-    }
-    return s;
+    return resolveNetString(s, this.netStrings);
   }
 
   /** Notify in wire order, before a later event can rename or drop the same client. */

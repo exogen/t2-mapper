@@ -24,6 +24,7 @@ import {
   type ConnectionProtocolState,
 } from "t2-demo-parser";
 import { BitStreamWriter } from "./BitStreamWriter.js";
+import type { DemoStreamEntry } from "./demoStart.js";
 import { writeString } from "./HuffmanWriter.js";
 import { MOVE_TICK_MS, NEUTRAL_MOVE } from "./moveList.js";
 import { writeMove } from "./protocol.js";
@@ -39,10 +40,11 @@ export const MAX_BLOCK_SIZE = 0xfff;
  */
 export const DEMO_TICK_MS = MOVE_TICK_MS;
 
-const HEADER_SIZE = DEMO_LENGTH_MS_OFFSET + 8;
+/** Bytes before the initial block. */
+export const DEMO_HEADER_SIZE = DEMO_LENGTH_MS_OFFSET + 8;
 
 export function buildHeader(initialBlockSize: number): Uint8Array {
-  const bytes = new Uint8Array(HEADER_SIZE);
+  const bytes = new Uint8Array(DEMO_HEADER_SIZE);
   const view = new DataView(bytes.buffer);
   bytes[0] = DEMO_IDENT_STRING.length;
   for (let i = 0; i < DEMO_IDENT_STRING.length; i++) {
@@ -508,6 +510,22 @@ export class DemoFileWriter {
 
   writeSendMarker(): void {
     this.writeBlock(BlockTypeSendPacket);
+  }
+
+  /**
+   * The blocks a recorded connection entry becomes. A dispatched packet is
+   * followed by an Info block, as Tribes2.exe writes one only from
+   * GameConnection::readPacket.
+   */
+  writeEntry(entry: DemoStreamEntry): void {
+    if (entry.kind === "packet") {
+      this.writePacket(entry.data);
+      if (entry.dispatched) this.writeInfo();
+    } else if (entry.kind === "move") {
+      this.writeMove();
+    } else {
+      this.writeSendMarker();
+    }
   }
 
   async finalize(demoLengthMs: number): Promise<void> {

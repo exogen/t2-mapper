@@ -25,7 +25,7 @@ vi.mock("@aws-sdk/lib-storage", () => ({
 }));
 
 interface FakeCommand {
-  type: "GetObject" | "PutObject";
+  type: "GetObject" | "HeadObject" | "PutObject";
   input: {
     Key: string;
     Body?: string;
@@ -35,6 +35,8 @@ interface FakeCommand {
   };
 }
 const s3Commands: FakeCommand[] = [];
+/** ETags of objects the fake bucket holds, by key (HeadObject only). */
+const bucketEtags = new Map<string, string>();
 /** Simulated stored index.json object (null = NoSuchKey). */
 let storedIndex: string | null = null;
 let indexVersion = 0;
@@ -44,6 +46,12 @@ vi.mock("@aws-sdk/client-s3", () => ({
   S3Client: class {
     async send(cmd: FakeCommand) {
       s3Commands.push(cmd);
+      if (cmd.type === "HeadObject") {
+        const etag = bucketEtags.get(cmd.input.Key);
+        if (etag === undefined)
+          throw Object.assign(new Error("Not Found"), { name: "NotFound" });
+        return { ETag: `"${etag}"` };
+      }
       if (cmd.type === "GetObject") {
         if (storedIndex === null) {
           const err = new Error("The specified key does not exist.");
@@ -74,6 +82,13 @@ vi.mock("@aws-sdk/client-s3", () => ({
   },
   GetObjectCommand: class {
     readonly type = "GetObject";
+    input: FakeCommand["input"];
+    constructor(input: FakeCommand["input"]) {
+      this.input = input;
+    }
+  },
+  HeadObjectCommand: class {
+    readonly type = "HeadObject";
     input: FakeCommand["input"];
     constructor(input: FakeCommand["input"]) {
       this.input = input;
@@ -134,6 +149,7 @@ describe("DemoUploader", () => {
     indexVersion = 0;
     beforeIndexPut = undefined;
     failUploads = false;
+    bucketEtags.clear();
   });
 
   function makeRecord(filename: string) {
@@ -203,6 +219,41 @@ describe("DemoUploader", () => {
       lastUploaded: { key: "demos/auto-capture_test.rec" },
       lastError: null,
     });
+  });
+
+  it("retries a demo the bucket already holds the same copy of", async () => {
+    const file = path.join(dir, "again.rec");
+    await fsp.writeFile(file, new Uint8Array([1, 2, 3]));
+    // MD5 of bytes 1, 2, 3: the upload that landed before a crash.
+    bucketEtags.set("demos/again.rec", "5289df737df57326fcdd22597afb1fac");
+    const uploader = new DemoUploader(config, dir);
+    uploader.enqueue(file);
+    await vi.waitFor(() => expect(uploader.getStats().uploaded).toBe(1));
+    expect(uploadCalls).toEqual([
+      { Bucket: "t2-demos", Key: "demos/again.rec" },
+    ]);
+  });
+
+  it("keeps the bucket's copy of a demo rewritten since it was uploaded", async () => {
+    const file = path.join(dir, "rewritten.rec");
+    await fsp.writeFile(file, new Uint8Array([1, 2, 3]));
+    await fsp.writeFile(
+      `${file}.json`,
+      JSON.stringify(makeRecord("rewritten.rec")),
+    );
+    bucketEtags.set("demos/rewritten.rec", "0123456789abcdef0123456789abcdef");
+    const uploader = new DemoUploader(config, dir);
+    uploader.enqueue(file);
+    await vi.waitFor(() => expect(uploader.getStats().uploaded).toBe(1));
+    expect(uploadCalls).toEqual([]);
+    expect(
+      s3Commands.filter(
+        (cmd) =>
+          cmd.type === "PutObject" && !cmd.input.Key.endsWith("index.json"),
+      ),
+    ).toEqual([]);
+    expect(JSON.parse(storedIndex!)).toEqual([makeRecord("rewritten.rec")]);
+    expect(await fsp.readdir(dir)).toEqual([]);
   });
 
   it("uploads the sidecar and appends its record to the index", async () => {
@@ -302,7 +353,7 @@ describe("DemoUploader", () => {
       expect(await fsp.readdir(dir)).toEqual([]);
     });
     expect(uploadCalls).toHaveLength(1);
-    expect(s3Commands).toEqual([]);
+    expect(s3Commands.map((cmd) => cmd.type)).toEqual(["HeadObject"]);
     expect(storedIndex).toBeNull();
   });
 
@@ -328,7 +379,7 @@ describe("DemoUploader", () => {
       ),
     );
     expect(uploadCalls).toHaveLength(1);
-    expect(s3Commands).toEqual([]);
+    expect(s3Commands.map((cmd) => cmd.type)).toEqual(["HeadObject"]);
     complete();
     await vi.waitFor(async () => expect(await fsp.readdir(dir)).toEqual([]));
     expect(JSON.parse(storedIndex!)).toEqual([record]);

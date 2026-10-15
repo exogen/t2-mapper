@@ -12,6 +12,8 @@ import {
   buildGhostingMessageEvent,
   buildDisconnectPacket,
   buildGamePingRequest,
+  readPacketHeader,
+  skipRateBlocks,
   type ClientEvent,
   type ClientMoveData,
   type ReceivedPacketHeader,
@@ -37,7 +39,7 @@ import type { ConnectionStatus } from "./types.js";
 import { computeGameCRC, type CRCDataBlock } from "./crc.js";
 import {
   ClientMoveList,
-  MAX_MOVE_COUNT,
+  GENERATED_MOVE_BACKLOG,
   MOVE_TICK_MS,
   NEUTRAL_MOVE,
 } from "./moveList.js";
@@ -85,15 +87,6 @@ const OOB_PING_FALLBACK_MISSES = 3;
 // While browser moves have arrived this recently, the browser's tick drives
 // the send clock and packets with nothing new stand down.
 const MOVE_STREAM_TIMEOUT_MS = 100;
-/**
- * Unacked depth at which generated moves stop. Once its control object has
- * processed every queued move, the real client stalls at MaxMoveCount
- * (isBacklogged, FUN_00601e50), but Tribes2.exe playback evaluates the
- * same test against the recorded moves and, while stalled, reads no
- * further demo blocks — including the ack that would release it.
- * Stopping one short keeps relay demos playable through a lag spike.
- */
-const GENERATED_MOVE_BACKLOG = MAX_MOVE_COUNT - 1;
 const CONNECT_TIMEOUT_MS = 30000;
 
 /**
@@ -117,38 +110,6 @@ function canEncodeCommand(command: unknown, args: unknown[]): boolean {
   } catch {
     return false;
   }
-}
-
-/**
- * Read a data packet's dnet header, leaving `bs` at the packet's data, or
- * null when the packet is too short to hold one.
- */
-function readPacketHeader(
-  data: Uint8Array,
-): { header: ReceivedPacketHeader; bs: BitStream } | null {
-  if (data.length < 4) return null;
-  const bs = new BitStream(data);
-  bs.readFlag(); // gameFlag
-  const connectSeqBit = bs.readInt(1);
-  const seqNumber = bs.readInt(9);
-  const highestAck = bs.readInt(9);
-  const packetType = bs.readInt(2);
-  const ackByteCount = bs.readInt(3);
-  // Invalid counts are rejected by processReceivedHeader without reading
-  // their mask, matching processRawPacket (FUN_0043d4d0).
-  const ackMask =
-    ackByteCount > 0 && ackByteCount <= 4 ? bs.readInt(8 * ackByteCount) : 0;
-  return {
-    header: {
-      seqNumber,
-      highestAck,
-      packetType,
-      connectSeqBit,
-      ackByteCount,
-      ackMask,
-    },
-    bs,
-  };
 }
 
 /** Decode the final string in an OOB rejection/disconnect packet. */
@@ -908,12 +869,7 @@ export class GameConnection extends EventEmitter<GameConnectionEvents> {
    * after handlePacket's two optional rate blocks.
    */
   private readMoveAck(bs: BitStream): void {
-    for (let i = 0; i < 2; i++) {
-      if (bs.readFlag()) {
-        bs.readInt(10); // updateDelay
-        bs.readInt(10); // packetSize
-      }
-    }
+    skipRateBlocks(bs);
     const ack = bs.readInt(32);
     if (!bs.isError()) this.moveList.acknowledge(ack);
   }

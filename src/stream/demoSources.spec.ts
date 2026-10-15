@@ -99,7 +99,11 @@ describe("demo source registry", () => {
     await source.load(signal);
     expect(source.url).toBe("https://demos.example/demos/my%20demo%20%231.rec");
     expect(source.sidecarSourceUrl).toBe(source.url);
-    expect(fetch).toHaveBeenCalledWith(source.url, { signal });
+    // Rewritten demos must not come from a stale immutable cache entry.
+    expect(fetch).toHaveBeenCalledWith(source.url, {
+      signal,
+      cache: "no-cache",
+    });
   });
 
   it.each([

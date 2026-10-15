@@ -2,9 +2,11 @@
  * Per-connection demo recording lifecycle. Packets are buffered in
  * memory until MissionStartPhase1 supplies the mission name (needed
  * up-front in the initial block), then stream through DemoFileWriter,
- * starting after the T2CSRI handshake (demoStart.ts). Move blocks are
- * the connection's own moves, one per 32 ms client tick, in order with
- * its packets and send markers — they are the playback clock.
+ * starting after the T2CSRI handshake (demoStart.ts), with a welcome page
+ * that would strand Tribes2.exe playback rewritten (joinGameOver.ts).
+ * Move blocks are the connection's own moves, one per 32 ms client tick,
+ * in order with its packets and send markers — they are the playback
+ * clock.
  */
 import crypto from "node:crypto";
 import fsp from "node:fs/promises";
@@ -23,6 +25,7 @@ import {
 } from "./demoStart.js";
 import type { ServerInfo } from "./types.js";
 import { DemoPlayers, type DemoPlayerRoster } from "./demoPlayers.js";
+import { JoinGameOverFilter } from "./joinGameOver.js";
 
 export type RecorderState =
   "buffering" | "recording" | "finalizing" | "done" | "aborted";
@@ -190,6 +193,7 @@ export class DemoRecorder {
   private queue: DemoStreamEntry[] = [];
   private queuedBytes = 0;
   private writer: DemoFileWriter | null = null;
+  private joinGameOver: JoinGameOverFilter | null = null;
   /**
    * When buffering began (first observed event), for the buffering caps.
    */
@@ -438,6 +442,10 @@ export class DemoRecorder {
     const filename = buildDemoFilename(date, serverName, missionName);
     this.writer = new DemoFileWriter(path.join(this.opts.dir, filename));
     this.writer.begin(initialBlock);
+    this.joinGameOver = JoinGameOverFilter.forRecording(
+      plan.start,
+      connectSequence,
+    );
     this.setState("recording");
     log[startLogLevel](
       {
@@ -481,16 +489,18 @@ export class DemoRecorder {
   private writeEntry(entry: DemoStreamEntry): void {
     const writer = this.writer;
     if (!writer || this.capped) return;
+    if (this.joinGameOver?.apply(entry)) {
+      log.info(
+        {
+          address: this.opts.address,
+          atMs: this.moveCount * DEMO_TICK_MS,
+        },
+        "Rewrote a welcome page that would leave Tribes2.exe on the debrief screen",
+      );
+    }
     try {
-      if (entry.kind === "packet") {
-        writer.writePacket(entry.data);
-        if (entry.dispatched) writer.writeInfo();
-      } else if (entry.kind === "move") {
-        writer.writeMove();
-        this.moveCount++;
-      } else {
-        writer.writeSendMarker();
-      }
+      writer.writeEntry(entry);
+      if (entry.kind === "move") this.moveCount++;
     } catch (err) {
       log.error({ err, address: this.opts.address }, "Demo write failed");
       this.strand("write-failed");

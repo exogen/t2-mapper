@@ -123,7 +123,10 @@ export function directDemoSource(url: string): DemoSource {
   return {
     url,
     sidecarSourceUrl: url,
-    load: (signal) => fetch(url, { signal }),
+    // Demos are served immutable but have been rewritten in place
+    // (scripts/migrate-relay-demos.ts): revalidate any cached copy, which
+    // also refreshes the one the download button saves.
+    load: (signal) => fetch(url, { signal, cache: "no-cache" }),
   };
 }
 

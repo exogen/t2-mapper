@@ -23,6 +23,7 @@ import {
   type ServerIdentity,
 } from "./demoRecorder.js";
 import * as demoStart from "./demoStart.js";
+import { JoinGameOverFilter } from "./joinGameOver.js";
 import type { ServerInfo } from "./types.js";
 import type { DemoPlayerRoster } from "./demoPlayers.js";
 import { GameConnection } from "./gameConnection.js";
@@ -336,6 +337,32 @@ describe("DemoRecorder", () => {
     expect(initialBlock.nextRecvEventSeq).toBe(3);
     expect(initialBlock.notifyCount).toBe(1);
     expect(parseDemoValues(initialBlock.demoValues).gravity).toBe(-26.9);
+  });
+
+  it("passes every entry it writes through the welcome-page filter", async () => {
+    const info = vi.spyOn(demoLog, "info").mockImplementation(() => {});
+    vi.spyOn(demoStart, "planDemoStart").mockReturnValue({ skip: 1 });
+    const forRecording = vi.spyOn(JoinGameOverFilter, "forRecording");
+    const filtered: string[] = [];
+    vi.spyOn(JoinGameOverFilter.prototype, "apply").mockImplementation(
+      (entry) => {
+        filtered.push(entry.kind);
+        return entry.kind === "packet";
+      },
+    );
+    const recorder = createRecorder();
+    recorder.onPacket(buildPingPacket(1), false);
+    recorder.onMove();
+    recorder.setMissionName("Katabatic");
+    recorder.onSent();
+    recorder.onPacket(buildPingPacket(2), false);
+    await recorder.finalize("test");
+    expect(forRecording).toHaveBeenCalledWith(undefined, CONNECT_SEQUENCE);
+    expect(filtered).toEqual(["move", "sent", "packet"]);
+    expect(info).toHaveBeenCalledWith(
+      expect.objectContaining({ atMs: 32 }),
+      "Rewrote a welcome page that would leave Tribes2.exe on the debrief screen",
+    );
   });
 
   it("records from connect if start planning throws", async () => {

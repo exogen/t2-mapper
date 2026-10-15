@@ -11,6 +11,15 @@ export const MOVE_TICK_MS = 32;
  */
 export const MAX_MOVE_COUNT = 30;
 /**
+ * Unacked depth at which generated moves stop. Once its control object has
+ * processed every queued move, the real client stalls at MaxMoveCount
+ * (isBacklogged, FUN_00601e50), but Tribes2.exe playback evaluates the
+ * same test against the recorded moves and, while stalled, reads no
+ * further demo blocks — including the ack that would release it.
+ * Stopping one short keeps relay demos playable through a lag spike.
+ */
+export const GENERATED_MOVE_BACKLOG = MAX_MOVE_COUNT - 1;
+/**
  * getNextMove (FUN_006019b0) refuses new moves above this many queued.
  */
 export const MAX_MOVE_QUEUE_SIZE = 45;

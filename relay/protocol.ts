@@ -1,3 +1,4 @@
+import { BitStream } from "t2-demo-parser";
 import { BitStreamWriter } from "./BitStreamWriter.js";
 import { packNetString, writeString } from "./HuffmanWriter.js";
 import { connLog } from "./logger.js";
@@ -56,6 +57,69 @@ export interface ReceivedPacketHeader {
   connectSeqBit: number;
   ackByteCount: number;
   ackMask: number;
+}
+
+/**
+ * Read a data packet's dnet header, leaving `bs` at the packet's data, or
+ * null when the packet is too short to hold one.
+ */
+export function readPacketHeader(
+  data: Uint8Array,
+): { header: ReceivedPacketHeader; bs: BitStream } | null {
+  if (data.length < 4) return null;
+  const bs = new BitStream(data);
+  bs.readFlag(); // gameFlag
+  const connectSeqBit = bs.readInt(1);
+  const seqNumber = bs.readInt(9);
+  const highestAck = bs.readInt(9);
+  const packetType = bs.readInt(2);
+  const ackByteCount = bs.readInt(3);
+  // Invalid counts are rejected by processReceivedHeader without reading
+  // their mask, matching processRawPacket (FUN_0043d4d0).
+  const ackMask =
+    ackByteCount > 0 && ackByteCount <= 4 ? bs.readInt(8 * ackByteCount) : 0;
+  return {
+    header: {
+      seqNumber,
+      highestAck,
+      packetType,
+      connectSeqBit,
+      ackByteCount,
+      ackMask,
+    },
+    bs,
+  };
+}
+
+/**
+ * Skip handlePacket's two optional rate blocks, which follow a dispatched
+ * packet's dnet header, leaving `bs` at the data GameConnection::readPacket
+ * (FUN_005fb9f0) reads, the move ack first.
+ */
+export function skipRateBlocks(bs: BitStream): void {
+  for (let i = 0; i < 2; i++) {
+    if (bs.readFlag()) {
+      bs.readInt(10); // updateDelay
+      bs.readInt(10); // packetSize
+    }
+  }
+}
+
+/**
+ * Overwrite bits of a packet in place, least significant first, as
+ * BitStream writes them.
+ */
+export function writeBits(
+  data: Uint8Array,
+  offset: number,
+  value: number,
+  count: number,
+): void {
+  for (let i = 0; i < count; i++) {
+    const bit = offset + i;
+    if ((value >>> i) & 1) data[bit >> 3] |= 1 << (bit & 7);
+    else data[bit >> 3] &= ~(1 << (bit & 7));
+  }
 }
 
 export type ReceivedHeaderCheck =

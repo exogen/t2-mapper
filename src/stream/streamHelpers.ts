@@ -1,6 +1,10 @@
 import { Matrix4, Quaternion, Vector3 } from "three";
 import type { ParsedData } from "t2-demo-parser";
-import { resolveShapeName, stripTaggedStringMarkup } from "../../relay/shared";
+import {
+  resolveNetString,
+  resolveShapeName,
+  stripTaggedStringMarkup,
+} from "../../relay/shared";
 import type {
   ProjectileLight,
   StreamVisual,
@@ -670,22 +674,6 @@ export function parseWeaponImageStates(
 export { stripTaggedStringMarkup };
 
 /**
- * Resolve a net-string reference (`\x01<id>`) against the connection's
- * net-string table, or return the literal. Shared by StreamEngine (via
- * `this.netStrings`) and the demo timeline scanner.
- */
-export function resolveNetString(
-  s: string,
-  netStrings: Map<number, string>,
-): string {
-  if (s.length >= 2 && s.charCodeAt(0) === 1) {
-    const id = parseInt(s.slice(1), 10);
-    if (Number.isFinite(id)) return netStrings.get(id) ?? s;
-  }
-  return s;
-}
-
-/**
  * Expand a `messageClient` template: resolve the template + each arg net
  * string, substitute `%1..%N` with the tag-stripped args, drop leftover
  * `%N`, and strip tagged markup. (Callers wanting chat display also strip
@@ -736,23 +724,12 @@ export function formatRemoteArgsColored(
 
 export {
   detectColorCode,
+  extractWavTag,
   normalizePlayerGuid,
   parseColorSegments,
+  resolveNetString,
   taglessPlayerName,
 } from "../../relay/shared";
-
-/** Extract an embedded `~w<path>` sound tag from a message string. */
-export function extractWavTag(text: string): {
-  text: string;
-  wavPath: string | null;
-} {
-  const idx = text.indexOf("~w");
-  if (idx === -1) return { text, wavPath: null };
-  return {
-    text: text.substring(0, idx),
-    wavPath: text.substring(idx + 2),
-  };
-}
 
 // ── Control object detection ──
 

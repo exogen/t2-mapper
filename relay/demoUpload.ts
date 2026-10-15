@@ -11,12 +11,17 @@
 import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
-import { PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import {
+  HeadObjectCommand,
+  PutObjectCommand,
+  S3Client,
+} from "@aws-sdk/client-s3";
 import { Upload } from "@aws-sdk/lib-storage";
 import { DEMO_CHECKPOINT_SUFFIX } from "../src/stream/demoCheckpoints";
 import { demoLog as log } from "./logger.js";
 import type { DemoMetadata } from "./demoRecorder.js";
 import { updateDemoIndex } from "./demoIndexStorage.js";
+import { UPLOAD_PART_BYTES, fileEtags, unquoteEtag } from "./objectEtag.js";
 import {
   FAILED_SUFFIX,
   PARTIAL_SUFFIX,
@@ -219,6 +224,14 @@ export class DemoUploader {
     }
     const key = `${config.prefix}${basename}`;
     const record = await this.readSidecar(`${filePath}.json`);
+    if (await this.rewrittenInBucket(filePath, key)) {
+      log.warn(
+        { key },
+        "Demo was rewritten in the bucket after this copy was uploaded — keeping the bucket's",
+      );
+      if (record) await this.updateIndex(record);
+      return key;
+    }
     await this.uploadDemoFile(filePath, key);
     await this.publishCheckpoints?.(filePath, key);
     if (record) {
@@ -234,6 +247,35 @@ export class DemoUploader {
       await this.updateIndex(record);
     }
     return key;
+  }
+
+  /**
+   * Whether the bucket holds another version of this demo: names are
+   * unique and uploads whole, so this recording was uploaded before, and
+   * its objects have been rewritten in place since
+   * (scripts/migrate-relay-demos.ts) — which a copy left behind here, by a
+   * crash between upload and unlink, must not undo.
+   */
+  private async rewrittenInBucket(
+    filePath: string,
+    key: string,
+  ): Promise<boolean> {
+    let etag: string;
+    try {
+      const head = await this.client!.send(
+        new HeadObjectCommand({ Bucket: this.config!.bucket, Key: key }),
+      );
+      etag = unquoteEtag(head.ETag);
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        (error.name === "NotFound" || error.name === "NoSuchKey")
+      )
+        return false;
+      throw error;
+    }
+    const local = await fileEtags(filePath);
+    return etag !== local.md5 && etag !== local.multipartEtag;
   }
 
   /**
@@ -305,7 +347,7 @@ export class DemoUploader {
           // immutable — cache them as hard as anything will allow.
           CacheControl: "public, max-age=31536000, immutable",
         },
-        partSize: 8 * 1024 * 1024,
+        partSize: UPLOAD_PART_BYTES,
         queueSize: 2,
       });
       await upload.done();

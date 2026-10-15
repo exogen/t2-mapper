@@ -19,7 +19,11 @@ import {
 import { ClientScriptState } from "./clientScriptState.js";
 import type { DemoScriptState, DemoStartState } from "./demoWriter.js";
 import { MOVE_TICK_MS } from "./moveList.js";
-import { AUTH_COMMANDS, GAME_PROTOCOL_VERSION } from "./shared.js";
+import {
+  AUTH_COMMANDS,
+  GAME_PROTOCOL_VERSION,
+  NetStringTable,
+} from "./shared.js";
 
 /**
  * A recorded connection entry, in the order the connection saw it.
@@ -57,6 +61,20 @@ const START_BLOCK_EVENTS = new Set([
 ]);
 
 /**
+ * Events a start block can leave out because they leave nothing behind
+ * this early: sounds and lightning strikes, whose AudioProfile datablock
+ * and Lightning ghost the connection doesn't have yet, and frees of
+ * target slots it holds nothing in (target info before the start is
+ * unrepresentable, so none was sent).
+ */
+const STATELESS_EVENTS = new Set([
+  "LightningStrikeEvent",
+  "Sim2DAudioEvent",
+  "Sim3DAudioEvent",
+  "TargetFreeEvent",
+]);
+
+/**
  * checkPacketSend (FUN_005877e0) sends no data packet with more than this
  * many in flight, so playback would skip a marker past it.
  */
@@ -67,12 +85,6 @@ function dispatchedCount(parser: PacketParser): number {
   return (
     parser.packetsParsed - parser.protocolRejected - parser.protocolNoDispatch
   );
-}
-
-/** A tagged-string argument ("\x01<id>"), resolved through the table. */
-function resolveTag(strings: ReadonlyMap<number, string>, arg: string): string {
-  if (arg.charCodeAt(0) !== 1) return arg;
-  return strings.get(parseInt(arg.slice(1), 10)) ?? arg;
 }
 
 /**
@@ -93,7 +105,7 @@ export function planDemoStart(
     protocolVersion: GAME_PROTOCOL_VERSION,
     connectionProtocolState: freshConnectionProtocolState(connectSequence),
   });
-  const taggedStrings = new Map<number, string>();
+  const taggedStrings = new NetStringTable();
   const script = new ClientScriptState();
   let elapsedMs = 0;
   let gravity: number | undefined;
@@ -162,6 +174,7 @@ export function planDemoStart(
     for (const { classId, parsedData } of packet.events) {
       const type = parsedData?.type;
       const name = typeof type === "string" ? type : `event class ${classId}`;
+      if (STATELESS_EVENTS.has(name)) continue;
       if (!START_BLOCK_EVENTS.has(name))
         return unrepresentable(`${name} before the start`);
       if (name === "GravityEvent") {
@@ -169,13 +182,10 @@ export function planDemoStart(
       } else if (name === "SetSensorGroupEvent") {
         sensorGroup = (parsedData as SetSensorGroupEventData).sensorGroup;
       } else if (name === "NetStringEvent") {
-        // NetStringEvent::process (FUN_00589c80): no value frees the id.
-        const { id, value } = parsedData as NetStringEventData;
-        if (value === undefined) taggedStrings.delete(id);
-        else taggedStrings.set(id, value);
+        taggedStrings.apply(parsedData as NetStringEventData);
       } else {
         const { argv, funcName } = parsedData as RemoteCommandEventData;
-        const command = resolveTag(taggedStrings, funcName);
+        const command = taggedStrings.resolve(funcName);
         if (AUTH_COMMANDS.includes(command)) handshakeSeen = true;
         if (command === HANDSHAKE_END) handshakeEnded = true;
         script.apply(argv, taggedStrings, elapsedMs);
@@ -191,7 +201,7 @@ export function planDemoStart(
         gravity,
         script: script.save(elapsedMs),
         start: {
-          taggedStrings,
+          taggedStrings: new Map(taggedStrings),
           lastMoveAck,
           lastClientMove,
           firstMoveIndex,

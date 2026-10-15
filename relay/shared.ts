@@ -71,6 +71,66 @@ export function stripTaggedStringMarkup(s: string): string {
   return stripped;
 }
 
+/**
+ * Resolve a net-string reference (`\x01<id>`) against a connection's
+ * net-string table, or return the literal.
+ */
+export function resolveNetString(
+  s: string,
+  netStrings: ReadonlyMap<number, string>,
+): string {
+  if (s.length >= 2 && s.charCodeAt(0) === 1) {
+    const id = parseInt(s.slice(1), 10);
+    if (Number.isFinite(id)) return netStrings.get(id) ?? s;
+  }
+  return s;
+}
+
+/**
+ * A connection's net-string table, as its NetStringEvents build it.
+ */
+export class NetStringTable extends Map<number, string> {
+  /**
+   * NetStringEvent::process (FUN_00589c80): no value frees the id.
+   */
+  apply({ id, value }: { id: number; value?: string }): void {
+    if (value === undefined) this.delete(id);
+    else this.set(id, value);
+  }
+
+  resolve(arg: string): string {
+    return resolveNetString(arg, this);
+  }
+}
+
+/**
+ * Extract an embedded `~w<path>` sound tag from a message string.
+ */
+export function extractWavTag(text: string): {
+  text: string;
+  wavPath: string | null;
+} {
+  const idx = text.indexOf("~w");
+  if (idx === -1) return { text, wavPath: null };
+  return {
+    text: text.substring(0, idx),
+    wavPath: text.substring(idx + 2),
+  };
+}
+
+/**
+ * Whether a MsgGameOver's body says anything, as a real match end's does.
+ * An empty one is Classic's welcome page, opening the debrief screen
+ * during play.
+ */
+export function hasGameOverAnnouncement(rawBody: string | undefined): boolean {
+  return (
+    extractWavTag(stripTaggedStringMarkup(rawBody ?? ""))
+      .text.replace(/<[^>]*>/g, "")
+      .trim().length > 0
+  );
+}
+
 /** GUID 0 is shared by hidden identities; never use it as an account key. */
 export function normalizePlayerGuid(
   value: string | undefined,
