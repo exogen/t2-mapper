@@ -10,7 +10,9 @@
   "scripts": {
     "demos:checkpoints": "node --env-file-if-exists=.env.development.local --import=tsx/esm scripts/generate-demo-checkpoints.ts",
     "demos:backfill-checkpoints": "node --env-file-if-exists=.env.development.local --import=tsx/esm scripts/backfill-demo-checkpoints.ts",
+    "demos:backup": "node --env-file-if-exists=.env.development.local --import=tsx/esm scripts/backup-demo-bucket.ts",
     "demos:delete": "node --env-file-if-exists=.env.development.local --import=tsx/esm scripts/delete-demos.ts",
+    "demos:migrate": "node --env-file-if-exists=.env.development.local --import=tsx/esm scripts/migrate-relay-demos.ts",
     "build:manifest": "tsx --tsconfig tsconfig.node.json scripts/generate-manifest.ts -o src/manifest.json",
     "build:parser": "peggy TorqueScript.pegjs -o generated/TorqueScript.js --format es",
     "cast:export-schema": "tsx --tsconfig tsconfig.node.json scripts/export-cast-schema.ts",
